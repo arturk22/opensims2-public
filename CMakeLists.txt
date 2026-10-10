@@ -18,6 +18,7 @@ add_library(os2_formats
   src/formats/rcol.cpp
   src/formats/resindex.cpp
   src/formats/scenegraph.cpp
+  src/formats/simantics.cpp
   src/formats/strings.cpp
   src/formats/txmt.cpp
 )

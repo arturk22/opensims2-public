@@ -2,6 +2,8 @@
 
 #include "resindex.hpp"
 #include "scenegraph.hpp"
+#include "simantics.hpp"
+#include "strings.hpp"
 
 #include <optional>
 
@@ -107,6 +109,17 @@ struct NodeTree {
 };
 
 } // namespace
+
+std::string objectCresName(ResourceIndex& index, const Tgi& objd) {
+    const auto objdBytes = index.read(objd);
+    if (!objdBytes)
+        throw FormatError("OBJD not found");
+    const auto def = ObjectDefinition::parse(*objdBytes);
+    const auto names = index.read(Tgi{0x53545223, objd.group, 0x85, 0});
+    if (!names)
+        return {};
+    return StringTable::parse(*names).get(def.modelIndex(), lang::EnglishUS);
+}
 
 std::string baseTextureName(const MaterialDefinition& m) {
     auto tex = m.property("stdMatBaseTextureName");

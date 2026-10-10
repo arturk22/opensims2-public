@@ -36,6 +36,11 @@ struct ObjectModel {
 // `cresName` may omit the "_cres" suffix.
 ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName);
 
+// CRES name of an object: OBJD -> "3D Object Names" STR# (instance 0x85, same
+// group) -> entry modelIndex(), in US English (other languages hold junk).
+// Empty if the object has no 3D model.
+std::string objectCresName(ResourceIndex& index, const Tgi& objd);
+
 // TXTR name of a material's base texture ("..._txtr"), or empty.
 std::string baseTextureName(const MaterialDefinition& m);
 

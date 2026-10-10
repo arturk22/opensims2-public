@@ -4,6 +4,7 @@
 #include "formats/image.hpp"
 #include "formats/rcol.hpp"
 #include "formats/scenegraph.hpp"
+#include "formats/simantics.hpp"
 #include "formats/strings.hpp"
 #include "formats/txmt.hpp"
 
@@ -239,15 +240,102 @@ std::string describeStrings(std::span<const uint8_t> data) {
     return out;
 }
 
+namespace sa {
+constexpr uint32_t OBJD = 0x4F424A44, OBJf = 0x4F424A66, BCON = 0x42434F4E, GLOB = 0x474C4F42, TPRP = 0x54505250,
+                   SLOT = 0x534C4F54, TTAB = 0x54544142;
+}
+
+bool isSimAnticsType(uint32_t type) {
+    switch (type) {
+    case sa::OBJD: case sa::OBJf: case sa::BCON: case sa::GLOB: case sa::TPRP: case sa::SLOT: case sa::TTAB:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::string describeSimAntics(uint32_t type, std::span<const uint8_t> data) {
+    std::string out;
+    switch (type) {
+    case sa::OBJD: {
+        const auto o = ObjectDefinition::parse(data);
+        appendf(out, "name=%s title=%s version=0x%X fields=%zu\n", o.fileName.c_str(), o.title.c_str(), o.version,
+                o.fields.size());
+        appendf(out, "  guid=0x%08X proxy=0x%08X original=0x%08X type=%u price=%u\n", o.guid(), o.proxyGuid(),
+                o.originalGuid(), o.objectType(), o.price());
+        appendf(out, "  baseGraphic=%u numGraphics=%u interactionGroup=%u masterId=0x%X subIndex=0x%X slotId=%u\n",
+                o.baseGraphic(), o.numGraphics(), o.interactionGroup(), o.masterId(), o.subIndex(), o.slotId());
+        break;
+    }
+    case sa::OBJf: {
+        const auto f = ObjectFunctions::parse(data);
+        appendf(out, "name=%s functions=%zu\n", f.fileName.c_str(), f.functions.size());
+        for (size_t i = 0; i < f.functions.size(); ++i)
+            if (f.functions[i].guard || f.functions[i].action)
+                appendf(out, "  %2zu %-15s guard=0x%04X action=0x%04X\n", i, ObjectFunctions::functionName(i),
+                        f.functions[i].guard, f.functions[i].action);
+        break;
+    }
+    case sa::BCON: {
+        const auto c = Constants::parse(data);
+        appendf(out, "name=%s flags=0x%02X values=", c.fileName.c_str(), c.flags);
+        for (auto v : c.values)
+            appendf(out, " %d", v);
+        appendf(out, "\n");
+        break;
+    }
+    case sa::GLOB: {
+        const auto g = SemiGlobal::parse(data);
+        appendf(out, "name=%s semiglobal=%s\n", g.fileName.c_str(), g.semiGlobalName.c_str());
+        break;
+    }
+    case sa::TPRP: {
+        const auto t = BhavLabels::parse(data);
+        appendf(out, "name=%s version=0x%X\n", t.fileName.c_str(), t.version);
+        for (size_t i = 0; i < t.params.size(); ++i)
+            appendf(out, "  param %zu: %s\n", i, t.params[i].c_str());
+        for (size_t i = 0; i < t.locals.size(); ++i)
+            appendf(out, "  local %zu: %s\n", i, t.locals[i].c_str());
+        break;
+    }
+    case sa::SLOT: {
+        const auto s = Slots::parse(data);
+        appendf(out, "name=%s version=0x%X layout=%s slots=%zu\n", s.fileName.c_str(), s.version,
+                s.sims2Layout ? "ts2" : "ts1", s.slots.size());
+        for (const auto& sl : s.slots)
+            appendf(out, "  type=%u offset=(%g %g %g) flags=0x%X height=%d facing=%d\n", sl.type, sl.offset[0],
+                    sl.offset[1], sl.offset[2], sl.flags, sl.height, sl.facing);
+        break;
+    }
+    case sa::TTAB: {
+        const auto t = InteractionTable::parse(data);
+        appendf(out, "name=%s version=0x%X interactions=%zu %s\n", t.fileName.c_str(), t.version,
+                t.interactions.size(), t.name.c_str());
+        for (const auto& it : t.interactions) {
+            size_t ads = 0;
+            for (const auto& m : it.motives)
+                for (const auto& a : m)
+                    ads += a.minimum || a.delta;
+            appendf(out, "  action=0x%04X guard=0x%04X string=%u flags=0x%04X/0x%04X autonomy=%u ads=%zu\n", it.action,
+                    it.guard, it.stringIndex, it.flags, it.flags2, it.autonomy, ads);
+        }
+        break;
+    }
+    }
+    return out;
+}
+
 } // namespace
 
-bool hasDecoder(uint32_t type) { return isRcolType(type) || isStringType(type); }
+bool hasDecoder(uint32_t type) { return isRcolType(type) || isStringType(type) || isSimAnticsType(type); }
 
 std::string describeResource(uint32_t type, std::span<const uint8_t> data) {
     if (isRcolType(type))
         return describeRcol(data);
     if (isStringType(type))
         return describeStrings(data);
+    if (isSimAnticsType(type))
+        return describeSimAntics(type, data);
     throw std::runtime_error("no decoder for this type");
 }
 

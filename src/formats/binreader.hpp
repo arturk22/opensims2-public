@@ -88,6 +88,16 @@ public:
         if (!atEnd())
             throw FormatError(std::string(what) + ": " + std::to_string(remaining()) + " trailing bytes");
     }
+    // Like expectEnd, but accepts padding made of one repeated byte (the game's
+    // tools leave 0x00 or 0xA3 fill after some resources).
+    void expectEndOrFill(const char* what) {
+        if (atEnd())
+            return;
+        const auto rest = bytes(remaining());
+        for (auto b : rest)
+            if (b != rest[0])
+                throw FormatError(std::string(what) + ": " + std::to_string(rest.size()) + " trailing bytes");
+    }
 
 private:
     std::span<const uint8_t> data_;

@@ -1,0 +1,146 @@
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace os2 {
+
+// SimAntics object resources. All start with a 64-byte, NUL-padded file name.
+
+// OBJD: object definition. The body is an array of 16-bit fields (layout
+// inherited from The Sims 1) followed by the object's title.
+struct ObjectDefinition {
+    std::string fileName;
+    uint32_t version = 0;
+    std::vector<uint16_t> fields; // starting at file offset 0x44
+    std::string title;
+
+    static ObjectDefinition parse(std::span<const uint8_t> data);
+
+    uint16_t field(size_t fileOffset) const; // 16-bit field at a file offset (>= 0x44), 0 if absent
+    uint32_t field32(size_t fileOffset) const;
+
+    uint16_t initialStackSize() const { return field(0x44); }
+    uint16_t baseGraphic() const { return field(0x46); }
+    uint16_t numGraphics() const { return field(0x48); }
+    uint16_t mainBhav() const { return field(0x4A); }
+    uint16_t interactionGroup() const { return field(0x50); }
+    uint16_t objectType() const { return field(0x52); }
+    uint16_t masterId() const { return field(0x54); }
+    uint16_t subIndex() const { return field(0x56); }
+    uint32_t guid() const { return field32(0x5C); }
+    uint16_t price() const { return field(0x64); }
+    uint16_t slotId() const { return field(0x68); }
+    uint32_t proxyGuid() const { return field32(0x7A); }
+    uint32_t originalGuid() const { return field32(0xCC); }
+    // 0-based index into the group's "3D Object Names" STR# (instance 0x85).
+    // Inferred from the data: for 97% of the objects whose name matches one of
+    // the model names, this field selects that entry.
+    uint16_t modelIndex() const { return field(0xD0); }
+};
+
+// OBJf: object functions, i.e. the (guard, action) BHAV pair for each engine
+// event (init, main, load, cleanup, ...), indexed by function number.
+struct ObjectFunctions {
+    struct Entry {
+        uint16_t guard = 0;
+        uint16_t action = 0;
+    };
+    std::string fileName;
+    uint32_t unknown1 = 0, unknown2 = 0;
+    std::vector<Entry> functions;
+
+    static ObjectFunctions parse(std::span<const uint8_t> data);
+    static const char* functionName(size_t index); // "init", "main", ... or ""
+};
+
+// BCON: constants used by BHAV operands.
+struct Constants {
+    std::string fileName;
+    uint8_t flags = 0; // bit 15 of the stored count
+    std::vector<int16_t> values;
+
+    static Constants parse(std::span<const uint8_t> data);
+};
+
+// GLOB: name of the semi-global group an object's BHAVs may call into.
+struct SemiGlobal {
+    std::string fileName;
+    std::string semiGlobalName;
+
+    static SemiGlobal parse(std::span<const uint8_t> data);
+};
+
+// TPRP: parameter and local variable labels of a BHAV (same instance).
+struct BhavLabels {
+    std::string fileName;
+    uint32_t version = 0;
+    std::vector<std::string> params;
+    std::vector<std::string> locals;
+    std::vector<uint8_t> paramFlags;
+    std::array<uint32_t, 3> unknown{};
+
+    static BhavLabels parse(std::span<const uint8_t> data);
+};
+
+// SLOT: routing/containment slots. Sims 1 layout (versions 4-10) or Sims 2
+// layout (versions 0x43-0x47, 8 extra bytes per slot).
+struct Slots {
+    struct Slot {
+        uint16_t type = 0; // 0: container, 1: location, 2: routing, 3: target
+        std::array<float, 3> offset{};
+        int32_t standing = 0, sitting = 0, ground = 0;
+        uint32_t flags = 0;
+        int32_t snapTargetSlot = 0;
+        int32_t minProximity = 0, maxProximity = 0, optimalProximity = 0, maxSize = 0, unknown10 = 0; // v >= 6
+        float gradient = 0;                                                                         // v >= 7
+        int32_t height = 0;                                                                          // v >= 8
+        int32_t facing = 0, resolution = 0;                                                          // v >= 9/10
+        std::array<uint32_t, 2> ts2Extra{};                                                          // Sims 2 layout
+    };
+    std::string fileName;
+    uint32_t version = 0;
+    bool sims2Layout = false;
+    std::vector<Slot> slots;
+
+    static Slots parse(std::span<const uint8_t> data);
+};
+
+// TTAB: interactions (pie menu entries) with their action/guard BHAVs and
+// motive advertisements. Versions 0x3F-0x4E as stored by the base game.
+struct InteractionTable {
+    struct Advertisement {
+        int16_t minimum = 0;
+        int16_t delta = 0; // added when the personality type matches
+        uint16_t personality = 0;
+    };
+    struct Interaction {
+        uint16_t action = 0;
+        uint16_t guard = 0;
+        uint16_t flags = 0, flags2 = 0;
+        uint32_t stringIndex = 0; // into the TTAs with the same instance
+        uint32_t attenuationCode = 0;
+        float attenuationValue = 0;
+        uint32_t autonomy = 0;
+        int32_t joinIndex = -1;
+        uint16_t uiDisplayType = 0;      // version >= 0x45
+        uint32_t facialAnimation = 0;    // version >= 0x46
+        float memoryMultiplier = 0;      // version >= 0x4A
+        uint32_t objectType = 0;         // version >= 0x4C
+        uint32_t modelTableId = 0;       // version >= 0x4C
+        std::vector<std::vector<Advertisement>> motives; // 1 table before 0x44, 7 after (one per age group)
+    };
+    std::string fileName;
+    int32_t typeCode = -1;
+    uint32_t version = 0;
+    uint32_t unused = 0;
+    std::vector<Interaction> interactions;
+    std::string name; // optional trailing name, e.g. "Private Function Table"
+
+    static InteractionTable parse(std::span<const uint8_t> data);
+};
+
+} // namespace os2

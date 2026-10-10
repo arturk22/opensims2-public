@@ -61,13 +61,7 @@ StringTable StringTable::parse(std::span<const uint8_t> data) {
     default:
         throw FormatError("STR#: unknown format 0x" + std::to_string(t.format));
     }
-    // Some tables are padded with one repeated fill byte (0x00, 0xA3, ...).
-    if (!r.atEnd()) {
-        const uint8_t fill = r.u8();
-        while (!r.atEnd())
-            if (r.u8() != fill)
-                throw FormatError("STR#: " + std::to_string(r.remaining() + 1) + " unexpected bytes after the last entry");
-    }
+    r.expectEndOrFill("STR#");
     return t;
 }
 

@@ -1,5 +1,6 @@
 #include "formats/image.hpp"
 #include "formats/resindex.hpp"
+#include "formats/simantics.hpp"
 #include "formats/strings.hpp"
 
 #include <cstdio>
@@ -143,6 +144,25 @@ static void testStrings() {
     check(p.entries.size() == 2 && p.get(1) == "off", "STR# legacy Pascal table");
 }
 
+static void testSimAntics() {
+    // BCON: u16 count with a flag in bit 15.
+    std::vector<uint8_t> bcon(64, 0);
+    bcon.insert(bcon.end(), {0x02, 0x80, 0x05, 0x00, 0xFF, 0xFF});
+    const auto c = Constants::parse(bcon);
+    check(c.flags == 1 && c.values.size() == 2 && c.values[0] == 5 && c.values[1] == -1, "BCON");
+
+    // OBJf: two u32, 'fJBO', count, (guard, action) pairs.
+    std::vector<uint8_t> objf(64, 0);
+    objf.insert(objf.end(), {0, 0, 0, 0, 0, 0, 0, 0, 'f', 'J', 'B', 'O', 2, 0, 0, 0, 0, 0, 0x00, 0x10, 0x01, 0x10, 0x02, 0x10});
+    const auto f = ObjectFunctions::parse(objf);
+    check(f.functions.size() == 2 && f.functions[0].action == 0x1000 && f.functions[1].guard == 0x1001, "OBJf");
+
+    // GLOB: Pascal or C string, with optional fill padding.
+    std::vector<uint8_t> glob(64, 0);
+    glob.insert(glob.end(), {4, 'T', 'e', 's', 't', 0xA3, 0xA3});
+    check(SemiGlobal::parse(glob).semiGlobalName == "Test", "GLOB");
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
@@ -150,6 +170,7 @@ int main() {
     testPng();
     testNameHash();
     testStrings();
+    testSimAntics();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

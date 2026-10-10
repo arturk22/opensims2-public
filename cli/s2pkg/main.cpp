@@ -4,6 +4,7 @@
 #include "formats/gmdc.hpp"
 #include "formats/image.hpp"
 #include "formats/model.hpp"
+#include "formats/simantics.hpp"
 #include "formats/resindex.hpp"
 
 #include <cstdio>
@@ -175,9 +176,34 @@ int cmdMesh(DbpfPackage& pkg, const Tgi& tgi, const std::filesystem::path& out) 
     return 0;
 }
 
-int cmdObject(const std::filesystem::path& root, const std::string& name, const std::filesystem::path& outDir) {
+// CRES name for an object given as a CRES name, an OBJD GUID (0x...) or part of an OBJD name.
+std::string resolveObject(ResourceIndex& index, const std::string& query) {
+    if (index.findByName(query.ends_with("_cres") ? query : query + "_cres", 0xE519C933))
+        return query;
+    const bool isGuid = query.starts_with("0x") || query.starts_with("0X");
+    const uint32_t guid = isGuid ? uint32_t(std::stoul(query, nullptr, 16)) : 0;
+    auto lower = [](std::string s) {
+        for (auto& c : s)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const auto needle = lower(query);
+    for (const auto& loc : index.ofType(0x4F424A44)) {
+        const auto def = ObjectDefinition::parse(index.read(loc));
+        if (isGuid ? def.guid() != guid : lower(def.fileName).find(needle) == std::string::npos)
+            continue;
+        auto cres = objectCresName(index, loc.entry->tgi);
+        if (cres.empty())
+            continue;
+        std::printf("object \"%s\" (GUID 0x%08X) -> %s\n", def.fileName.c_str(), def.guid(), cres.c_str());
+        return cres;
+    }
+    throw std::runtime_error("no object or CRES matches '" + query + "'");
+}
+
+int cmdObject(const std::filesystem::path& root, const std::string& query, const std::filesystem::path& outDir) {
     ResourceIndex index(root);
-    const auto model = loadObjectModel(index, name);
+    const auto model = loadObjectModel(index, resolveObject(index, query));
     std::filesystem::create_directories(outDir);
     const std::string base = model.name.substr(0, model.name.size() - 5); // without "_cres"
 
@@ -260,7 +286,7 @@ int usage() {
                          "       s2pkg texture <file.package> <tgi> <out.png>\n"
                          "       s2pkg mesh <file.package> <tgi> <out.obj>\n"
                          "       s2pkg find <Res-dir> <name> <type-hex>\n"
-                         "       s2pkg object <Res-dir> <cres-name> <out-dir>\n");
+                         "       s2pkg object <Res-dir> <cres-name|0xGUID|object-name> <out-dir>\n");
     return 2;
 }
 
