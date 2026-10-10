@@ -4,6 +4,8 @@
 #include "dbpf.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 
 namespace os2 {
@@ -12,9 +14,11 @@ namespace {
 
 constexpr uint32_t kType2DArray = 0x6B943B43, kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40,
                    kTypeWallGraph = 0x0A284D0B, kTypeWallLayer = 0x8A84D7B0, kTypeLotTexture = 0x4B58975B,
-                   kTypeObject = 0xFA1C39F7;
+                   kTypeObject = 0xFA1C39F7, kTypeFencePosts = 0xAB4BA572, kTypeRoof = 0xAB9406AA,
+                   kTypePool = 0x0C900FDB;
 constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
-                   kWallLayerPartitions = 0x04, kPaintMaskFirst = 0x5CBC;
+                   kWallLayerPartitions = 0x04, kPaintMaskFirst = 0x5CBC,
+                   kFencePostLayer = 0x11, kWaterLevels = 0x3B76;
 constexpr size_t kFileNameSize = 64;
 
 // Every lot resource: 64-byte file name, block id, version.
@@ -116,6 +120,21 @@ float Lot::elevation(int level, int x, int y) const {
         return 3.0f * float(level);
     x = std::clamp(x, 0, w - 1), y = std::clamp(y, 0, h - 1);
     return elevations[(size_t(level - minLevel) * w + size_t(x)) * h + size_t(y)];
+}
+
+float Lot::elevationAt(int level, float x, float y) const {
+    const int ix = int(std::floor(x)), iy = int(std::floor(y));
+    const float fx = x - float(ix), fy = y - float(iy);
+    const float a = elevation(level, ix, iy) * (1 - fx) + elevation(level, ix + 1, iy) * fx;
+    const float b = elevation(level, ix, iy + 1) * (1 - fx) + elevation(level, ix + 1, iy + 1) * fx;
+    return a * (1 - fy) + b * fy;
+}
+
+float Lot::waterLevel(int x, int y) const {
+    const int w = int(width) + 1, h = int(height) + 1;
+    if (water.size() != size_t(w) * size_t(h) || x < 0 || y < 0 || x >= w || y >= h)
+        return -std::numeric_limits<float>::infinity();
+    return water[size_t(y) * size_t(w) + size_t(x)];
 }
 
 const std::array<uint16_t, 4>& Lot::floor(int level, uint32_t x, uint32_t y) const {
@@ -268,6 +287,78 @@ Lot Lot::load(DbpfPackage& pkg) {
                 continue;
             }
             lot.paints.push_back(std::move(p));
+        }
+    }
+
+    if (auto bytes = readResource(pkg, kTypeFencePosts, kFencePostLayer)) {
+        try {
+            BinReader r = blockReader(*bytes, kTypeFencePosts);
+            expectName(r, "cFencePostLayer");
+            for (uint32_t n = r.u32(); n; --n) {
+                FencePost p;
+                p.level = r.i32();
+                p.x = r.f32(), p.y = r.f32();
+                p.fence = r.u32();
+                lot.fencePosts.push_back(p);
+            }
+        } catch (const std::exception& ex) {
+            lot.warnings.push_back(std::string("fence posts: ") + ex.what());
+        }
+    }
+
+    // Layouts from OpenTS2 (RoofCodec, PoolCodec): no block name.
+    if (auto bytes = readResource(pkg, kTypeRoof, 0)) {
+        try {
+            uint32_t version = 0;
+            BinReader r = blockReader(*bytes, kTypeRoof, &version);
+            for (uint32_t n = r.u32(); n; --n) {
+                Roof f;
+                f.id = r.u32();
+                f.x0 = r.f32(), f.y0 = r.f32(), f.level = r.i32();
+                f.x1 = r.f32(), f.y1 = r.f32(), f.levelTo = r.i32();
+                f.type = r.u32();
+                f.pattern = r.u32();
+                if (version >= 2)
+                    f.angle = r.f32();
+                if (version >= 3)
+                    f.style = r.u32();
+                lot.roofs.push_back(f);
+            }
+        } catch (const std::exception& ex) {
+            lot.warnings.push_back(std::string("roofs: ") + ex.what());
+        }
+    }
+    if (auto bytes = readResource(pkg, kTypePool, 0)) {
+        try {
+            BinReader r = blockReader(*bytes, kTypePool);
+            for (uint32_t n = r.u32(); n; --n) {
+                SwimmingPool p;
+                p.id = r.u32();
+                p.x = r.f32(), p.y = r.f32();
+                p.level = r.i32();
+                p.width = r.u32(), p.height = r.u32();
+                r.u32();
+                p.depth = r.f32();
+                r.u32();
+                lot.pools.push_back(p);
+            }
+        } catch (const std::exception& ex) {
+            lot.warnings.push_back(std::string("pools: ") + ex.what());
+        }
+    }
+    if (auto bytes = readResource(pkg, kType2DArray, kWaterLevels)) {
+        try {
+            BinReader m = blockReader(*bytes, kType2DArray);
+            expectName(m, "c2DArray");
+            const uint32_t w = m.u32(), h = m.u32();
+            if (w != lot.width + 1 || h != lot.height + 1)
+                throw FormatError("size " + std::to_string(w) + "x" + std::to_string(h));
+            const auto values = m.bytes(size_t(w) * h * 4);
+            lot.water.resize(size_t(w) * h);
+            for (size_t i = 0; i < lot.water.size(); ++i)
+                lot.water[i] = std::bit_cast<float>(le32(&values[i * 4]));
+        } catch (const std::exception& ex) {
+            lot.warnings.push_back(std::string("water levels: ") + ex.what());
         }
     }
 

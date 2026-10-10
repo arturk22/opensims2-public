@@ -54,6 +54,55 @@ struct Lot {
     };
     enum WallType : uint32_t { Normal = 1, Attic = 3, DeckSkirt = 4, Foundation = 0x17, Pool = 0x1D };
     std::vector<Wall> walls;
+    // Fences are walls whose type is the fence's catalog GUID (0x2CB230B8
+    // property sets); some also carry coverings (half walls).
+    static bool isFence(uint32_t type) { return type > 0xFF; }
+
+    // FPL 0xAB4BA572 (cFencePostLayer, instance 0x11): one post per fence
+    // corner or end, with the fence GUID.
+    struct FencePost {
+        int level = 0;
+        float x = 0, y = 0;
+        uint32_t fence = 0;
+    };
+    std::vector<FencePost> fencePosts;
+
+    // ROOF 0xAB9406AA: one entry per roof drawn in build mode, over the
+    // rectangle from (x0, y0) to (x1, y1) on `level` (its base is that level's
+    // floor). `pattern` is the catalog GUID of the roof (0xACA8EA06 property
+    // sets); the game uses one pattern for the whole lot.
+    struct Roof {
+        uint32_t id = 0;
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        int level = 0, levelTo = 0;
+        uint32_t type = 0; // see RoofType
+        uint32_t pattern = 0;
+        float angle = 0.5f; // rise per half tile (version 2+)
+        uint32_t style = 0; // version 3+
+    };
+    enum RoofType : uint32_t {
+        ShedGable = 1, ShedHip, ShortGable, LongGable, Hip, Mansard, Cone, Dome, Octagonal,
+        DiagonalLongGable, DiagonalShortGable, DiagonalHip, DiagonalShedGable, DiagonalShedHip,
+        GreenhouseLongGable, PagodaHip, PagodaLongGable, PagodaShedGable, DiagonalPagodaHip,
+        DiagonalPagodaLongGable, DiagonalPagodaShedGable
+    };
+    std::vector<Roof> roofs;
+
+    // POOL 0x0C900FDB: one entry per pool, its tiles from (x, y) to
+    // (x + width, y + height) on `level`; the water surface is `depth` below
+    // that level's floor.
+    struct SwimmingPool {
+        uint32_t id = 0;
+        float x = 0, y = 0;
+        int level = 0;
+        uint32_t width = 0, height = 0;
+        float depth = 0;
+    };
+    std::vector<SwimmingPool> pools;
+
+    // 2ARY 0x3B76: terrain water level at every grid point, [y][x] over
+    // (width+1) x (height+1); water shows where it is above the terrain.
+    std::vector<float> water;
 
     // Terrain paints (LTTX + 2ARY 0x5CBC...): the base texture covers the lot
     // and each paint is blended over it by its mask over (maskWidth x
@@ -93,6 +142,10 @@ struct Lot {
     bool hasLevel(int level) const { return level >= minLevel && level < minLevel + levelCount; }
     // Elevation of grid point (x, y) on a level; clamped to the grid.
     float elevation(int level, int x, int y) const;
+    // Elevation at a point inside the grid, bilinear between the grid points.
+    float elevationAt(int level, float x, float y) const;
+    // Water level at grid point (x, y); -infinity without water data.
+    float waterLevel(int x, int y) const;
     const std::array<uint16_t, 4>& floor(int level, uint32_t x, uint32_t y) const;
 };
 

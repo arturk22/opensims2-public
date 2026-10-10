@@ -358,6 +358,18 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
                           (o.position[0] != 0 || o.position[1] != 0);
             }
             std::printf("  %zu objects: %zu with a model in the world, %zu Sims\n", lot.objects.size(), placed, people);
+            size_t wet = 0;
+            for (uint32_t x = 0; x <= lot.width; ++x)
+                for (uint32_t y = 0; y <= lot.height; ++y)
+                    wet += lot.waterLevel(int(x), int(y)) > lot.elevation(0, int(x), int(y));
+            std::printf("  %zu roofs, %zu fence posts, %zu pools, %zu grid points under water\n", lot.roofs.size(),
+                        lot.fencePosts.size(), lot.pools.size(), wet);
+            for (const auto& r : lot.roofs)
+                std::printf("    roof %u: type %u (%g, %g)-(%g, %g) level %d, angle %g, pattern 0x%08X\n", r.id, r.type,
+                            r.x0, r.y0, r.x1, r.y1, r.level, r.angle, r.pattern);
+            for (const auto& p : lot.pools)
+                std::printf("    pool %u: (%g, %g) %ux%u level %d, depth %g\n", p.id, p.x, p.y, p.width, p.height,
+                            p.level, p.depth);
             for (const auto& w : lot.warnings)
                 std::printf("  %s\n", w.c_str());
             for (const auto& w : model.warnings)
