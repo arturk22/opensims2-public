@@ -274,9 +274,9 @@ static void testYieldAndErrors() {
     t = fx.run(0x1FFF);
     check(t.status == Thread::Status::Failed, "missing tree fails");
 
-    fx.code.add(kObjGroup, 0x1006, tree({expr(0x17, 0, Assign, Lit, 1, T, E)}));
+    fx.code.add(kObjGroup, 0x1006, tree({expr(0x0D, 0, Assign, Lit, 1, T, E)}));
     t = fx.run(0x1006);
-    check(t.status == Thread::Status::Failed && fx.vm.missingOwners[0x17] == 1, "missing data owner fails");
+    check(t.status == Thread::Status::Failed && fx.vm.missingOwners[0x0D] == 1, "missing data owner fails");
 }
 
 static uint8_t lo(uint32_t v, int byte) { return uint8_t(v >> (8 * byte)); }
@@ -628,6 +628,47 @@ static void testPushInteraction() {
           "Push Interaction queues the interaction and Generic Sims Call 13 aborts it");
 }
 
+static void testDefinitionOwners() {
+    Fixture fx;
+    constexpr uint32_t kMaster = 0x0A0B0C0D, kPart = 0x01020304;
+    auto field = [](ObjectDefinition& d, size_t label) -> uint16_t& { return d.fields[(0x40 + 2 * label - 0x44) / 2]; };
+    ObjectDefinition master = definition(kMaster), part = definition(kPart);
+    for (auto* d : {&master, &part}) {
+        d->fields.resize(120);
+        d->fields[(0x54 - 0x44) / 2] = 7; // master id
+    }
+    master.fields[(0x56 - 0x44) / 2] = 0xFFFF; // sub index -1
+    field(master, 90) = 3;                     // num type attributes
+    fx.code.add(kObjGroup, 0x80, std::move(master));
+    fx.code.add(kObjGroup, 0x81, std::move(part));
+    ObjectFunctions functions;
+    functions.functions = {{0, 0x1001}, {0, 0x1002}};
+    fx.code.add(kObjGroup, 0x81, std::move(functions));
+    fx.code.add(kGlobalGroup, 0x140, Constants{"", 0, {0, 30, 48, 60}});
+    fx.vm.instantiate(kObjGroup, 0x81); // id 1: me
+    fx.vm.instantiate(kObjGroup, 0x81); // id 2: another part of the same type
+    fx.vm.rooms[2] = {100, 0, 1, 12, 0, 2};
+    constexpr uint8_t Room = 0x17, Function = 0x23, MyType = 0x24, SType = 0x25, ConstTemp = 0x2F, Master = 0x33;
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, 2, go(1), E),
+                      expr(MyType, 1, Assign, Lit, 5, go(2), E),
+                      expr(Temp, 0, Assign, SType, 1, go(3), E),          // shared by the type: 5
+                      expr(Temp, 1, Assign, Master, 14, go(4), E),        // master's GUID low word
+                      expr(Temp, 2, Assign, Function, 1, go(5), E),       // 0x1002
+                      expr(Temp, 3, Assign, Function, 9, go(6), E),       // none: 0
+                      expr(Temp, 3, Assign, Lit, 2, go(7), E),
+                      expr(Temp, 4, Assign, ConstTemp, 0x4203, go(8), E), // BCON 0x140 [temp 3] = 48
+                      expr(Temp, 0, Assign, Lit, 2, go(9), E),
+                      expr(Temp, 5, Assign, Room, 2, go(10), E),          // room 2 level: 1
+                      expr(Temp, 0, Assign, Lit, 3, go(11), E),
+                      expr(Temp, 6, Assign, Room, 2, T, E)}));            // no room 3
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Failed && t.error.find("room 3 does not exist") != std::string::npos &&
+              t.temps[1] == int16_t(kMaster & 0xFFFF) && t.temps[2] == 0x1002 && t.temps[3] == 2 && t.temps[4] == 48 &&
+              t.temps[5] == 1 && fx.vm.typeAttributes[kMaster].size() == 3 && fx.vm.typeAttributes[kMaster][1] == 5,
+          "type attributes, master definition, object functions, constants [temp] and rooms");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -646,6 +687,7 @@ int main() {
     testNeighbors();
     testGenericSimsCall();
     testPushInteraction();
+    testDefinitionOwners();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -31,6 +31,7 @@ constexpr uint32_t kTypeBhav = 0x42484156;
 constexpr uint32_t kTypeBcon = 0x42434F4E;
 constexpr uint32_t kTypeGlob = 0x474C4F42;
 constexpr uint32_t kTypeTtab = 0x54544142;
+constexpr uint32_t kTypeObjf = 0x4F424A66;
 
 // Group of the semi-global library a GLOB resource names: CRC24 of the
 // lowercased name with the high byte 0x7F (holds for every GLOB in the game).
@@ -183,6 +184,11 @@ public:
     std::optional<uint16_t> behaviorByName(uint32_t group, const std::string& name);
     // OBJD (group, instance) with this GUID; the first scan reads every OBJD.
     std::optional<std::pair<uint32_t, uint16_t>> definitionByGuid(uint32_t guid);
+    // OBJf with the same (group, instance) as an OBJD: the object's function table.
+    const ObjectFunctions* functions(uint32_t group, uint16_t instance);
+    // OBJD instance of the master of a multi-tile object of `group` (the OBJD
+    // with that master ID and sub index -1), read with the GUID scan.
+    std::optional<uint16_t> masterDefinition(uint32_t group, uint16_t masterId);
     // Semi-global group the objects of `group` use (from their GLOB), 0 if none.
     uint32_t semiGlobalFor(uint32_t group);
     // Number of (English) labels in the group's STR# 0x100: the attribute
@@ -193,6 +199,7 @@ public:
     void add(uint32_t group, uint16_t instance, Constants c);
     void add(uint32_t group, uint16_t instance, ObjectDefinition d);
     void add(uint32_t group, uint16_t instance, StringTable t);
+    void add(uint32_t group, uint16_t instance, ObjectFunctions f);
     void setSemiGlobal(uint32_t group, uint32_t semiGroup) { semiGlobals_[group] = semiGroup; }
     void setAttributeLabelCount(uint32_t group, size_t n) { labelCounts_[group] = n; }
 
@@ -206,6 +213,9 @@ private:
     Cache<Constants> constants_;
     Cache<ObjectDefinition> definitions_;
     Cache<StringTable> strings_;
+    Cache<ObjectFunctions> functions_;
+    std::map<std::pair<uint32_t, uint16_t>, uint16_t> masters_;
+    void scanDefinitions();
     std::unordered_map<uint32_t, std::unordered_map<std::string, uint16_t>> byName_;
     bool namesScanned_ = false;
     std::unordered_map<uint32_t, uint32_t> semiGlobals_;
@@ -240,6 +250,7 @@ struct Object {
     uint32_t group = 0;     // private BHAVs/BCONs (the group of the object's OBJD)
     uint32_t semiGroup = 0; // semi-global BHAVs/BCONs, 0 if none
     const ObjectDefinition* definition = nullptr; // shared by every instance; may be null (tests)
+    uint16_t definitionInstance = 0;              // of the OBJD (and of its OBJf)
     // Private to each instance: attributes are declared by the object, semi-attributes
     // by its semi-global library (both labelled in STR# 0x100 of their group).
     std::vector<int16_t> attributes;
@@ -353,6 +364,17 @@ public:
     // Neighbors by neighbor ID. There is no neighborhood yet, so they are only
     // the ones added here (tests, stand-ins).
     std::map<int16_t, Neighbor> neighbors;
+
+    // Type attributes (data owners 0x24/0x25): shared by every object of a
+    // type, keyed by the GUID of its (master) definition; they grow on demand.
+    std::map<uint32_t, std::vector<int16_t>> typeAttributes;
+
+    // Rooms of the lot by room ID, with the values labelled in STR# 0xDB
+    // (0 ambient light 0-100, 1 outside, 2 level, 3 area, 4 pool, 5 number of
+    // windows), read by data owner 0x17 with the room in temp 0. The lot is
+    // what knows its rooms; there is none yet, so only the ones set here exist.
+    static constexpr size_t kRoomValueCount = 6;
+    std::map<int16_t, std::array<int16_t, kRoomValueCount>> rooms;
     Neighbor* neighbor(int16_t id) {
         auto it = neighbors.find(id);
         return it == neighbors.end() ? nullptr : &it->second;
@@ -408,6 +430,9 @@ public:
     // Resolves a call opcode for code owned by `owner`: {group, BHAV} or {0, null}.
     std::pair<uint32_t, const Behavior*> resolveTree(const Object& owner, uint16_t treeId);
     const Constants& resolveConstants(const Object& owner, uint16_t table);
+    // A BCON by where it is (0 private 0x1000+, 1 semi-global 0x2000+, 2 global
+    // 0x100+) and its number there.
+    const Constants& resolveConstants(const Object& owner, int scope, uint16_t table);
 
 private:
     CodeLibrary& code_;

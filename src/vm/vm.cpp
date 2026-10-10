@@ -109,16 +109,37 @@ std::optional<uint16_t> CodeLibrary::behaviorByName(uint32_t group, const std::s
     return it == g->second.end() ? std::nullopt : std::optional<uint16_t>(it->second);
 }
 
-std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByGuid(uint32_t guid) {
-    if (!guidsScanned_ && index_) {
-        guidsScanned_ = true;
-        for (const auto& loc : index_->ofType(kTypeObjd)) {
-            const auto& tgi = loc.entry->tgi;
-            // Keeps the first OBJD of a GUID, like the rest of the index.
-            byGuid_.emplace(ObjectDefinition::parse(index_->read(loc)).guid(),
-                            std::pair{tgi.group, uint16_t(tgi.instance)});
-        }
+void CodeLibrary::scanDefinitions() {
+    if (guidsScanned_ || !index_)
+        return;
+    guidsScanned_ = true;
+    for (const auto& loc : index_->ofType(kTypeObjd)) {
+        const auto& tgi = loc.entry->tgi;
+        const auto d = ObjectDefinition::parse(index_->read(loc));
+        // Keeps the first OBJD of a GUID, like the rest of the index.
+        byGuid_.emplace(d.guid(), std::pair{tgi.group, uint16_t(tgi.instance)});
+        if (d.masterId() && d.subIndex() == 0xFFFF)
+            masters_.emplace(std::pair{tgi.group, d.masterId()}, uint16_t(tgi.instance));
     }
+}
+
+std::optional<uint16_t> CodeLibrary::masterDefinition(uint32_t group, uint16_t masterId) {
+    scanDefinitions();
+    if (auto it = masters_.find({group, masterId}); it != masters_.end())
+        return it->second;
+    return std::nullopt;
+}
+
+const ObjectFunctions* CodeLibrary::functions(uint32_t group, uint16_t instance) {
+    return loadCached(functions_, index_, kTypeObjf, group, instance);
+}
+
+void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectFunctions f) {
+    functions_[key(group, instance)] = std::make_unique<ObjectFunctions>(std::move(f));
+}
+
+std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByGuid(uint32_t guid) {
+    scanDefinitions();
     if (auto it = byGuid_.find(guid); it != byGuid_.end())
         return it->second;
     return std::nullopt;
@@ -164,6 +185,8 @@ void CodeLibrary::add(uint32_t group, uint16_t instance, StringTable t) {
 
 void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectDefinition d) {
     byGuid_.emplace(d.guid(), std::pair{group, instance});
+    if (d.masterId() && d.subIndex() == 0xFFFF)
+        masters_.emplace(std::pair{group, d.masterId()}, instance);
     definitions_[key(group, instance)] = std::make_unique<ObjectDefinition>(std::move(d));
 }
 
@@ -224,6 +247,30 @@ static int16_t neighborField(const Context& c, int16_t field) {
     }
 }
 
+// Definition of a multi-tile object's master (the OBJD of its group with the
+// same master ID and sub index -1); an object that is not multi-tile, or whose
+// master is not found, is its own master (as FreeSO does).
+static const ObjectDefinition& masterDefinitionOf(VM& vm, const Object& o) {
+    if (!o.definition)
+        throw VMError("object " + std::to_string(o.id) + " has no definition");
+    if (const uint16_t master = o.definition->masterId())
+        if (auto instance = vm.code().masterDefinition(o.group, master))
+            if (const ObjectDefinition* d = vm.code().definition(o.group, *instance))
+                return *d;
+    return *o.definition;
+}
+
+// Type attributes of an object's type: keyed by its master definition's GUID
+// (inferred; the OBJD's "type attr guid" fields are labelled unused in The
+// Sims 2), starting with "num type attributes" (field 90) entries.
+static std::vector<int16_t>& typeAttributesOf(VM& vm, const Object& o) {
+    const ObjectDefinition& d = masterDefinitionOf(vm, o);
+    auto [it, added] = vm.typeAttributes.try_emplace(d.guid());
+    if (added)
+        it->second.resize(std::min<size_t>(uint16_t(definitionField(d, 90)), kMaxAttributes));
+    return it->second;
+}
+
 // Storage behind a data owner, or null for the computed/read-only ones.
 // Owners whose index comes from another variable read it first.
 static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
@@ -247,6 +294,8 @@ static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     case 0x16:
         return &growing(c.stackObject().attributes, slot(c.frame.params, data, "param"), "stack object attribute[param]");
     case 0x19: return &slot(c.frame.locals, data, "local");
+    case 0x24: return &growing(typeAttributesOf(c.vm, c.me()), data, "type attribute");
+    case 0x25: return &growing(typeAttributesOf(c.vm, c.stackObject()), data, "stack object type attribute");
     case 0x20: return &slot(neighborPersonData(c), data, "neighbor's person data");
     case 0x1E: return &slot(personOf(c.me()).data, slot(t.temps, data, "temp"), "person data[temp]");
     case 0x1F:
@@ -329,6 +378,34 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
     case 0x27: return tokenField(me().tempToken, data);
     case 0x28: return tokenField(stackObject().tempToken, data);
     case 0x15: return definitionField(stackObject(), data);
+    case 0x33: return definitionField(masterDefinitionOf(vm, stackObject()), data);
+    case 0x17: { // room [temp 0]
+        auto it = vm.rooms.find(thread.temps[0]);
+        if (it == vm.rooms.end())
+            throw VMError("room " + std::to_string(thread.temps[0]) + " does not exist");
+        return slot(it->second, data, "room value");
+    }
+    case 0x23: { // stack object's function: the action tree of its OBJf entry, 0 if none
+        const Object& o = stackObject();
+        const ObjectFunctions* f = vm.code().functions(o.group, o.definitionInstance);
+        if (data < 0)
+            throw VMError("object function " + std::to_string(data) + " out of range");
+        return f && size_t(data) < f->functions.size() ? int16_t(f->functions[size_t(data)].action) : int16_t(0);
+    }
+    case 0x2F: {
+        // Constants [temp]: bits 13-14 pick private, semi-global or global
+        // tables (as for 0x1A), bits 3-12 the table and bits 0-2 the temp
+        // holding the entry ("G - Logarithms Table" 0x140/0x141 are 0x4200 and
+        // 0x4208 in "Get in Temp 0 - Logarithmic Modifier").
+        auto* owner = vm.object(frame.codeOwner);
+        if (!owner)
+            throw VMError("code owner does not exist");
+        const int scope = uint16_t(data) >> 13;
+        if (scope > 2)
+            throw VMError("constant [temp] " + hexString(uint16_t(data)) + " out of range");
+        const auto& c = vm.resolveConstants(*owner, scope, uint16_t((data & 0x1FFF) >> 3));
+        return slot(c.values, thread.temps[size_t(data & 7)], "constant [temp]");
+    }
     case 0x18: return neighborField(*this, data);
     case 0x26: {
         auto def = vm.code().definitionByGuid(stackNeighbor(*this).guid);
@@ -362,9 +439,13 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
     case 0x28: setTokenField(stackObject().tempToken, data, value); return;
     case 0x07:
     case 0x15: // the editor marks only some definition fields read-only; writes are not supported yet
+    case 0x17:
     case 0x18:
     case 0x1A:
-    case 0x26: throw VMError("data owner " + hexString(owner) + " is read-only");
+    case 0x23:
+    case 0x26:
+    case 0x2F:
+    case 0x33: throw VMError("data owner " + hexString(owner) + " is read-only");
     default:
         ++vm.missingOwners[owner];
         throw VMError("data owner " + hexString(owner) + " not implemented");
@@ -397,6 +478,7 @@ Object& VM::instantiate(uint32_t group, uint16_t definitionInstance) {
         throw VMError("OBJD " + hexString(group) + "/" + hexString(definitionInstance) + " not found");
     Object& o = createObject(group, std::max<size_t>(def->numAttributes(), code_.attributeLabelCount(group)));
     o.definition = def;
+    o.definitionInstance = definitionInstance;
     if (def->objectType() == kObjectTypePerson)
         o.person.emplace();
     return o;
@@ -443,16 +525,24 @@ std::pair<uint32_t, const Behavior*> VM::resolveTree(const Object& owner, uint16
 }
 
 const Constants& VM::resolveConstants(const Object& owner, uint16_t table) {
+    if (table < 64)
+        return resolveConstants(owner, 0, table);
+    if (table < 128)
+        return resolveConstants(owner, 1, uint16_t(table - 64));
+    return resolveConstants(owner, 2, uint16_t(table - 128));
+}
+
+const Constants& VM::resolveConstants(const Object& owner, int scope, uint16_t table) {
     // Private and semi-global tables resolve against the code owner, also
     // when the running code is semi-global or global.
     uint32_t group;
     uint16_t instance;
-    if (table < 64)
+    if (scope == 0)
         group = owner.group, instance = uint16_t(0x1000 + table);
-    else if (table < 128)
-        group = owner.semiGroup, instance = uint16_t(0x2000 + table - 64);
+    else if (scope == 1)
+        group = owner.semiGroup, instance = uint16_t(0x2000 + table);
     else
-        group = kGlobalGroup, instance = uint16_t(0x100 + table - 128);
+        group = kGlobalGroup, instance = uint16_t(0x100 + table);
     const Constants* c = group ? code_.constants(group, instance) : nullptr;
     if (!c)
         throw VMError("BCON " + hexString(group) + "/" + hexString(instance) + " not found");
