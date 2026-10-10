@@ -4,3 +4,4 @@ build/
 # Regenerable from the CD images via tools/setup_data.sh
 data/iso/
 data/disc*/
+decode_errors.txt
