@@ -57,7 +57,18 @@ private:
 // the terrain, roofs and water get materials built here (the game draws them
 // with its own shaders), with each terrain paint blended over the base by its
 // mask. Fences (see lotFencePieces), stairs and objects are not included.
-ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns);
+//
+// Walls are drawn as in the game's wall modes: up, cutaway (walls with a room
+// behind them as seen along `viewDirection`, a horizontal vector from the
+// camera into the scene, are cut down) or down (all walls cut down); the roof
+// shows only with walls up.
+struct LotViewOptions {
+    enum class Walls { Up, Cutaway, Down };
+    Walls walls = Walls::Up;
+    std::array<float, 2> viewDirection{1, 0};
+};
+ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns,
+                          const LotViewOptions& view = {});
 
 // One rail or post of a fence: the CRES (without "_cres") and its placement
 // in lot space, a column-major 4x4 matrix (rails are sheared to follow the

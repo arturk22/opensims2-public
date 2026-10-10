@@ -6,7 +6,8 @@
 // zoom, R/F or Page Up/Down tilt, right/middle drag rotates and tilts freely,
 // Home resets. --lighting <state> picks a lighting state from Lighting.txt
 // (day, night, neighbourhood, ...); --lot <N001_Lot82 | file.package> shows a
-// lot's terrain, floors, walls and objects. --sim [body,hair,skin tone] shows
+// lot's terrain, floors, walls, roofs, fences, water and objects (--walls
+// up | cutaway | down picks the wall mode, cutaway as seen from the starting view). --sim [body,hair,skin tone] shows
 // an adult Sim built from catalog parts, --skinned <cres,cres,...> skinned
 // meshes on the adult skeleton; either plays --anim <name> (looped; --time
 // <seconds> picks the moment of a --screenshot), --overlay <name>[@bone] over
@@ -223,7 +224,8 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
 
 // Loads --lot into the renderer in place of the test floor. Returns the middle
 // of the lot at ground level, for the camera.
-std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& index) {
+// --walls up|cutaway|down picks the wall mode; cutaway uses `viewDirection`.
+std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& index, simd_float2 viewDirection) {
     const auto query = argument(@"--lot");
     if (!query)
         return std::nullopt;
@@ -231,7 +233,16 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     os2::DbpfPackage pkg(lotPath(*query));
     const os2::Lot lot = os2::Lot::load(pkg);
     const os2::PatternCatalog patterns(index, gameDir() / "TSData/Res");
-    const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns);
+    os2::LotViewOptions view;
+    view.viewDirection = {viewDirection.x, viewDirection.y};
+    const std::string walls = argument(@"--walls").value_or("up");
+    if (walls == "cutaway")
+        view.walls = os2::LotViewOptions::Walls::Cutaway;
+    else if (walls == "down")
+        view.walls = os2::LotViewOptions::Walls::Down;
+    else if (walls != "up")
+        throw std::runtime_error("--walls: expected up, cutaway or down");
+    const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, view);
     for (const auto& w : model.warnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     renderer.hideTestScene();
@@ -677,17 +688,21 @@ enum Key : unsigned short {
         const simd_float3 objects = loadObjects(*_viewDelegate.renderer, index);
         const auto skinned = loadSkinned(*_viewDelegate.renderer, index);
         const auto uiCanvas = loadUi(*_viewDelegate.renderer, index, view);
-        simd_float3 pivot = loadLot(*_viewDelegate.renderer, index).value_or(skinned.value_or(objects));
-        // --pivot <x,y>: look at that point instead (tiles, at the same height).
-        float px, py;
-        if (auto p = argument(@"--pivot"); p && std::sscanf(p->c_str(), "%f,%f", &px, &py) == 2)
-            pivot.x = px, pivot.y = py;
-        view.camera->setPivot(pivot);
         // --zoom <levels> / --orientation <steps>: start the camera that many steps from its default.
         if (auto z = argument(@"--zoom"))
             view.camera->zoomBy(std::stoi(*z));
         if (auto o = argument(@"--orientation"))
             view.camera->rotateBy(std::stoi(*o));
+        view.camera->snap();
+        // The lot's cutaway walls follow the starting view direction.
+        const simd_float3 look = view.camera->pivot() - view.camera->eye();
+        simd_float3 pivot = loadLot(*_viewDelegate.renderer, index, simd_make_float2(look.x, look.y))
+                                .value_or(skinned.value_or(objects));
+        // --pivot <x,y>: look at that point instead (tiles, at the same height).
+        float px, py;
+        if (auto p = argument(@"--pivot"); p && std::sscanf(p->c_str(), "%f,%f", &px, &py) == 2)
+            pivot.x = px, pivot.y = py;
+        view.camera->setPivot(pivot);
         view.camera->snap();
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
         if (auto shot = argument(@"--screenshot")) {

@@ -32,6 +32,28 @@ constexpr float kStoryHeight = 3.0f;
 // half thickness), half walls under a fence this far above their floor.
 constexpr float kAtticRoofOffset = 0.1875f;
 constexpr float kHalfWallHeight = 1.0f;
+// Height of walls cut down by the wall modes (OpenTS2's WallsDownHeight).
+constexpr float kWallsDownHeight = 0.2f;
+
+// Room of the quarter tile on the `normal` side of a wall through `mid`, the
+// quarter (west, north, east, south) that faces the wall; diagonal walls look
+// at both quarters on their side. 0 is outdoors.
+uint16_t roomBeside(const Lot& lot, int level, float midX, float midY, float nx, float ny) {
+    if (lot.rooms.empty() || !lot.hasLevel(level))
+        return 0;
+    const float px = midX + nx * 0.25f, py = midY + ny * 0.25f;
+    if (px < 0 || py < 0 || px >= float(lot.width) || py >= float(lot.height))
+        return 0;
+    const uint32_t x = uint32_t(px), y = uint32_t(py);
+    const auto& q = lot.rooms[(size_t(level - lot.minLevel) * lot.width + x) * lot.height + y];
+    // Directions of the quarters; the facing one points back at the wall (-normal).
+    const std::array<std::array<float, 2>, 4> dirs{{{-1, 0}, {0, 1}, {1, 0}, {0, -1}}};
+    uint16_t room = 0;
+    for (size_t i = 0; i < 4; ++i)
+        if (dirs[i][0] * -nx + dirs[i][1] * -ny > 0.5f && q[i])
+            room = q[i];
+    return room;
+}
 
 // `kind` "floorPattern" / "wallPattern" blocks of a catalog script, each
 // followed by a `material "..."` line.
@@ -169,7 +191,7 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, std::map<std::str
 // Each slab is stretched by its half thickness at both ends to close corners;
 // texture coordinates follow world position, so overlaps line up. Attic walls
 // (gables) rise to the roof above them, half walls under a fence to 1 tile.
-void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs,
+void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs, const LotViewOptions& view,
               std::map<std::string, MeshBuilder>& out, std::vector<std::string>& warnings) {
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.wallPatterns)
@@ -190,6 +212,22 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         dx /= len, dy /= len;
         const int level = w.a.level;
         const bool attic = w.type == Lot::Attic;
+        const float nx = dy, ny = -dx; // right of a -> b
+        // Wall modes cut down the walls of the house (not foundations, pool
+        // sides or deck skirts, which stand below the floors).
+        bool lowered = false;
+        if (view.walls != LotViewOptions::Walls::Up && (w.type == Lot::Normal || attic || fence)) {
+            if (view.walls == LotViewOptions::Walls::Down) {
+                lowered = true;
+            } else {
+                // The far side from the camera: the one its normal points along the view.
+                const float facing = nx * view.viewDirection[0] + ny * view.viewDirection[1];
+                if (std::abs(facing) > 1e-3f) {
+                    const float s = facing > 0 ? 1.0f : -1.0f;
+                    lowered = roomBeside(lot, level, (w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2, nx * s, ny * s) != 0;
+                }
+            }
+        }
         // Bottom and top of the wall at a point along it (grid points or the middle).
         auto bottom = [&](float x, float y) { return lot.elevationAt(level, x, y); };
         auto top = [&](float x, float y) {
@@ -199,10 +237,11 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 z1 = std::max(roofs.heightAt(x, y, level, z1, kAtticRoofOffset), z0);
             else if (fence)
                 z1 = std::min(z1, z0 + kHalfWallHeight);
+            if (lowered)
+                z1 = std::min(z1, z0 + kWallsDownHeight);
             return z1;
         };
         const float t = kWallHalfThickness;
-        const float nx = dy, ny = -dx; // right of a -> b
         // Attic walls follow the roof through their middle too.
         std::vector<std::array<float, 2>> points{{w.a.x - dx * t, w.a.y - dy * t}};
         if (attic)
@@ -413,7 +452,8 @@ std::string PatternCatalog::material(const std::map<std::string, std::string>& s
     return pattern;
 }
 
-ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns) {
+ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns,
+                          const LotViewOptions& view) {
     ObjectModel model;
     model.name = "lot";
     model.warnings = lot.warnings;
@@ -464,7 +504,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     model.warnings.insert(model.warnings.end(), roofs.warnings.begin(), roofs.warnings.end());
     std::map<std::string, MeshBuilder> built;
     addFloors(lot, patterns, built, model.warnings);
-    addWalls(lot, patterns, roofs, built, model.warnings);
+    addWalls(lot, patterns, roofs, view, built, model.warnings);
     addWater(lot, built);
     model.materials["water:terrain"] = terrainWaterMaterial();
     model.materials["water:pool"] = poolWaterMaterial();
@@ -477,7 +517,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         }
     std::erase_if(built, [](const auto& kv) { return kv.first.rfind("water:", 0) == 0; });
 
-    if (roofs.count()) {
+    if (roofs.count() && view.walls == LotViewOptions::Walls::Up) {
         const PatternCatalog::Roof* pattern = patterns.roof(roofs.pattern());
         if (!pattern) {
             model.warnings.push_back("roof pattern " + hexString(roofs.pattern()) + " not in the catalog");
