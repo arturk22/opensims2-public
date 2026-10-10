@@ -55,7 +55,7 @@ float readValue(BinReader& r, Animation::Value type, uint16_t* preceding) {
     return animFixedToFloat(type, r.i16());
 }
 
-float tangent(BinReader& r) { return animFixedToFloat(Animation::Value::Fixed5_10, r.i16()); }
+float tangent(BinReader& r) { return halfToFloat(r.u16()); }
 
 uint32_t readCrc(BinReader& r) {
     const uint32_t v = r.u32();
@@ -64,6 +64,18 @@ uint32_t readCrc(BinReader& r) {
 }
 
 } // namespace
+
+float halfToFloat(uint16_t h) {
+    const int exponent = (h >> 10) & 0x1F, mantissa = h & 0x3FF;
+    float v;
+    if (exponent == 0)
+        v = std::ldexp(float(mantissa), -24);
+    else if (exponent == 31)
+        v = mantissa ? NAN : INFINITY;
+    else
+        v = std::ldexp(float(1024 + mantissa), exponent - 25);
+    return (h & 0x8000) ? -v : v;
+}
 
 float animFixedToFloat(Animation::Value type, int32_t raw) {
     switch (type) {
@@ -92,8 +104,14 @@ float Animation::Component::sample(float ticks, uint32_t duration) const {
     (void)duration;
     if (b.time == a.time)
         return b.value;
-    const float u = (ticks - a.time) / float(b.time - a.time);
-    return a.value + (b.value - a.value) * u;
+    const float dt = float(b.time - a.time);
+    const float u = (ticks - a.time) / dt;
+    if (curve == Curve::Baked)
+        return a.value + (b.value - a.value) * u;
+    // Cubic Hermite: tangents are slopes per kTangentTicks ticks.
+    const float m0 = a.tangentOut * dt / kTangentTicks, m1 = b.tangentIn * dt / kTangentTicks;
+    const float u2 = u * u, u3 = u2 * u;
+    return (2 * u3 - 3 * u2 + 1) * a.value + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * b.value + (u3 - u2) * m1;
 }
 
 Animation Animation::parse(std::span<const uint8_t> body) {

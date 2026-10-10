@@ -110,7 +110,7 @@ static std::vector<uint8_t> buildAnim() {
     for (int k = 0; k < 3; ++k)
         w.u16(1), w.u8(0x10), w.u8(0), w.u32(0); // translation: baked floats
     // spine0 X: t=0 value 90 (raw 11520 = 5760*2), t=1000 value -45.0078125 (raw -5761, odd: low bit in time's top bit)
-    w.u16(0), w.u16(5760), w.u16(1024);       // tangent 1.0
+    w.u16(0), w.u16(5760), w.u16(0x3C00);     // tangent 1.0 (half float)
     w.u16(1000 | 0x8000), w.u16(uint16_t(int16_t(-2881))), w.u16(0);
     w.u16(uint16_t(int16_t(-128)));           // Y: -1.0
     w.f32(10), w.f32(30);                     // Z: 10 -> 30
@@ -157,7 +157,12 @@ static void testDecode() {
     check(x.keys.size() == 2 && x.keys[0].time == 0 && near(x.keys[0].value, 90.0f) && near(x.keys[0].tangentIn, 1.0f),
           "first key");
     check(x.keys[1].time == 1000 && near(x.keys[1].value, -5761.0f / 128.0f), "16-bit value borrows the time's top bit");
-    check(near(x.sample(500, 1000), (90.0f - 5761.0f / 128.0f) / 2), "linear sample");
+    // Hermite at u = 0.5: the mean plus (m0 - m1) / 8, m0 = 1 * 1000 / kTangentTicks.
+    check(near(x.sample(500, 1000), (90.0f - 5761.0f / 128.0f) / 2 + 1000.0f / Animation::kTangentTicks / 8),
+          "Hermite sample");
+    check(near(halfToFloat(0x3C00), 1) && near(halfToFloat(0xC000), -2) && halfToFloat(0x8000) == 0 &&
+              near(halfToFloat(0x0001), 5.96e-8f, 1e-9f),
+          "half floats");
     check(near(x.sample(-5, 1000), 90.0f) && near(x.sample(2000, 1000), -5761.0f / 128.0f), "clamped sample");
     check(rot.components[1].keys.size() == 1 && near(rot.components[1].keys[0].value, -1.0f), "baked 8.7");
     const auto& z = rot.components[2];

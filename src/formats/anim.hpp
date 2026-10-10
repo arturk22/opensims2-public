@@ -24,6 +24,11 @@ namespace os2 {
 // millisecond and the walk 1.37 m/s (inferred; OpenTS2 assumes 24 fps).
 struct Animation {
     static constexpr float kTicksPerSecond = 1000.0f;
+    // Tangents are half floats in value per ~154 ticks: over the 150,325 keys
+    // of smooth continuous curves of the base game, tangent / central slope
+    // has a median of 154 ticks (128-189 for 90% of them) whatever the key
+    // spacing or the channel length (inferred; the unit's origin is unknown).
+    static constexpr float kTangentTicks = 154.0f;
 
     enum class Curve : uint8_t {
         Baked = 0,         // values only, evenly spaced over the channel's duration
@@ -48,7 +53,7 @@ struct Animation {
     struct Key {
         uint16_t time = 0; // ticks; for baked curves the key's index scaled over the duration
         float value = 0;
-        float tangentIn = 0, tangentOut = 0;
+        float tangentIn = 0, tangentOut = 0; // continuous keys: both the same
     };
 
     struct Component {
@@ -59,7 +64,8 @@ struct Animation {
         uint32_t unknown2 = 0;
         std::vector<Key> keys;
 
-        // Value at `ticks` (clamped to the keys; linear between keys).
+        // Value at `ticks` (clamped to the keys; linear between baked keys,
+        // cubic Hermite with the keys' tangents otherwise).
         float sample(float ticks, uint32_t duration) const;
     };
 
@@ -143,6 +149,9 @@ float animationTime(const Animation& a, float seconds, bool loop);
 // between them). Chains with an IK weight channel are blended by its value
 // at `ticks`. Updates `local` in place.
 void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ticks, std::vector<Xform>& local);
+
+// IEEE 754 half float (the curves' tangents).
+float halfToFloat(uint16_t h);
 
 // Decodes one fixed-point value (sign-extended `bits`-bit integer over 2^fraction).
 float animFixedToFloat(Animation::Value type, int32_t raw);
