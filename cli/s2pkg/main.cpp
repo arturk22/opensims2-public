@@ -8,11 +8,14 @@
 #include "formats/model.hpp"
 #include "formats/simantics.hpp"
 #include "formats/resindex.hpp"
+#include "vm/vm.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <regex>
 #include <memory>
 #include <string>
 #include <vector>
@@ -306,6 +309,128 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
     return failed ? 1 : 0;
 }
 
+// --- SimAntics VM ------------------------------------------------------------
+
+// Attribute count of the stand-in objects until the object model reads it from the OBJD.
+constexpr size_t kStandInAttributes = 256;
+
+// Stand-in "me" for running a tree of `group`: the object itself, or for a
+// semi-global group one of the objects that use it.
+vm::Object& standInObject(vm::VM& machine, uint32_t group, const std::map<uint32_t, uint32_t>& semiUsers) {
+    auto user = semiUsers.find(group);
+    vm::Object& me = machine.createObject(user != semiUsers.end() ? user->second : group, kStandInAttributes);
+    if (user != semiUsers.end())
+        me.semiGroup = group;
+    return me;
+}
+
+// Semi-global group -> one object group whose GLOB names it.
+std::map<uint32_t, uint32_t> semiGlobalUsers(ResourceIndex& index) {
+    std::map<uint32_t, uint32_t> users;
+    for (const auto& loc : index.ofType(vm::kTypeGlob))
+        users.emplace(vm::semiGlobalGroup(SemiGlobal::parse(index.read(loc)).semiGlobalName), loc.entry->tgi.group);
+    return users;
+}
+
+const char* statusName(const vm::Thread& t) {
+    switch (t.status) {
+    case vm::Thread::Status::Running: return "yielded";
+    case vm::Thread::Status::Finished: return t.result ? "returned true" : "returned false";
+    case vm::Thread::Status::Failed: return "failed";
+    }
+    return "?";
+}
+
+// Runs one tree with zeroed state and prints every instruction it executes.
+int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance, const std::vector<int16_t>& args) {
+    ResourceIndex index(root);
+    vm::CodeLibrary code(&index);
+    vm::VM machine(code);
+    const auto users = semiGlobalUsers(index);
+    vm::Object& me = standInObject(machine, group, users);
+    machine.trace = [](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
+        std::string ops;
+        char buf[8];
+        for (auto b : in.operands)
+            std::snprintf(buf, sizeof buf, "%02X", b), ops += buf;
+        const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
+        std::printf("%*s0x%04X #%-3u %-30s [%s]\n", int(t.stack.size() - 1) * 2, "", f.instance, f.pc, op.c_str(),
+                    ops.c_str());
+    };
+    vm::Thread t = machine.start(me.id, instance, args);
+    if (t.status == vm::Thread::Status::Running && t.stack.back().group != group)
+        std::fprintf(stderr, "warning: tree resolved in group 0x%08X\n", t.stack.back().group);
+    machine.run(t);
+    std::printf("%s after %zu instructions\n", statusName(t), t.instructions);
+    if (t.status == vm::Thread::Status::Failed)
+        std::printf("error: %s\n", t.error.c_str());
+    std::printf("temps:");
+    for (auto v : t.temps)
+        std::printf(" %d", v);
+    std::printf("\nstack object: %d\n", t.stackObject);
+    return t.status == vm::Thread::Status::Failed ? 1 : 0;
+}
+
+// Runs every BHAV of the game from a zeroed state and tallies how far the
+// interpreter gets: outcomes, failure reasons and the missing primitives and
+// data owners that stopped it, most frequent first.
+int cmdBhavSweep(const std::filesystem::path& root) {
+    ResourceIndex index(root);
+    vm::CodeLibrary code(&index);
+    const auto users = semiGlobalUsers(index);
+    std::map<std::string, size_t> outcomes, reasons;
+    std::map<uint16_t, size_t> missingPrimitives;
+    std::map<uint8_t, size_t> missingOwners;
+    size_t total = 0, instructions = 0;
+    const std::regex number("0x[0-9A-F]+|\\d+");
+    for (const auto& loc : index.ofType(vm::kTypeBhav)) {
+        const auto& tgi = loc.entry->tgi;
+        if (tgi.instance < 0x100)
+            continue; // not callable
+        vm::VM machine(code);
+        vm::Object& me = standInObject(machine, tgi.group, users);
+        uint16_t instance = uint16_t(tgi.instance);
+        // Private trees of a global/semi-global group are not reachable by call opcodes.
+        if (machine.resolveTree(me, instance).first != tgi.group)
+            continue;
+        vm::Thread t = machine.start(me.id, instance);
+        machine.run(t, 20000);
+        ++total;
+        instructions += t.instructions;
+        ++outcomes[statusName(t)];
+        if (t.status == vm::Thread::Status::Failed) {
+            std::string reason = t.error.substr(0, t.error.find('\n'));
+            if (reason.find("not implemented") == std::string::npos)
+                reason = std::regex_replace(reason, number, "N");
+            ++reasons[reason];
+        }
+        for (auto [op, n] : machine.missingPrimitives)
+            missingPrimitives[op] += n;
+        for (auto [owner, n] : machine.missingOwners)
+            missingOwners[owner] += n;
+    }
+    auto byCount = [](const auto& m) {
+        std::vector<std::pair<size_t, typename std::decay_t<decltype(m)>::key_type>> v;
+        for (const auto& [k, n] : m)
+            v.emplace_back(n, k);
+        std::sort(v.rbegin(), v.rend());
+        return v;
+    };
+    std::printf("%zu trees, %zu instructions executed\n", total, instructions);
+    for (const auto& [n, k] : byCount(outcomes))
+        std::printf("  %6zu %s\n", n, k.c_str());
+    std::printf("failure reasons:\n");
+    for (const auto& [n, k] : byCount(reasons))
+        std::printf("  %6zu %s\n", n, k.c_str());
+    std::printf("missing primitives:\n");
+    for (const auto& [n, op] : byCount(missingPrimitives))
+        std::printf("  %6zu 0x%02X %s\n", n, op, primitiveName(op).c_str());
+    std::printf("missing data owners:\n");
+    for (const auto& [n, owner] : byCount(missingOwners))
+        std::printf("  %6zu 0x%02X\n", n, owner);
+    return 0;
+}
+
 int usage() {
     std::fprintf(stderr, "usage: s2pkg ls|stats|verify|decode-all <file.package>\n"
                          "       s2pkg dump <file.package> <TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII>\n"
@@ -314,7 +439,9 @@ int usage() {
                          "       s2pkg mesh <file.package> <tgi> <out.obj>\n"
                          "       s2pkg find <Res-dir> <name> <type-hex>\n"
                          "       s2pkg object <Res-dir> <cres-name|0xGUID|object-name> <out-dir>\n"
-                         "       s2pkg lot <Res-dir> <lot.package>...\n");
+                         "       s2pkg lot <Res-dir> <lot.package>...\n"
+                         "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
+                         "       s2pkg bhav-sweep <Res-dir>\n");
     return 2;
 }
 
@@ -328,6 +455,14 @@ int main(int argc, char** argv) {
         if (cmd == "find" && argc == 5) return cmdFind(argv[2], argv[3], argv[4]);
         if (cmd == "object" && argc == 5) return cmdObject(argv[2], argv[3], argv[4]);
         if (cmd == "lot" && argc >= 4) return cmdLot(argv[2], {argv + 3, argv + argc});
+        if (cmd == "bhav-sweep" && argc == 3) return cmdBhavSweep(argv[2]);
+        if (cmd == "bhav" && argc >= 5) {
+            std::vector<int16_t> args;
+            for (int i = 5; i < argc; ++i)
+                args.push_back(int16_t(std::stoi(argv[i], nullptr, 0)));
+            return cmdBhav(argv[2], uint32_t(std::stoul(argv[3], nullptr, 16)),
+                           uint16_t(std::stoul(argv[4], nullptr, 16)), args);
+        }
         DbpfPackage pkg(argv[2]);
         if (cmd == "ls") return cmdLs(pkg);
         if (cmd == "stats") return cmdStats(pkg);

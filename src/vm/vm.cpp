@@ -1,0 +1,321 @@
+#include "vm.hpp"
+
+#include "formats/binreader.hpp"
+#include "formats/resindex.hpp"
+
+#include <algorithm>
+#include <cstdio>
+
+namespace os2::vm {
+
+namespace {
+
+uint64_t key(uint32_t group, uint16_t instance) { return uint64_t(group) << 32 | instance; }
+
+template <class T>
+const T* loadCached(std::unordered_map<uint64_t, std::unique_ptr<T>>& cache, ResourceIndex* index, uint32_t type,
+                    uint32_t group, uint16_t instance) {
+    const auto k = key(group, instance);
+    if (auto it = cache.find(k); it != cache.end())
+        return it->second.get();
+    std::unique_ptr<T> value;
+    if (index)
+        if (auto data = index->read(Tgi{type, group, instance, 0}))
+            value = std::make_unique<T>(T::parse(*data));
+    return cache.emplace(k, std::move(value)).first->second.get();
+}
+
+std::string treeName(const Frame& f) {
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "0x%08X/0x%04X", f.group, f.instance);
+    return std::string(buf) + " \"" + f.behavior->fileName + "\"";
+}
+
+template <class V>
+auto& slot(V& values, int idx, const char* what) {
+    if (idx < 0 || size_t(idx) >= values.size())
+        throw VMError(std::string(what) + " " + std::to_string(idx) + " out of range (" +
+                      std::to_string(values.size()) + ")");
+    return values[size_t(idx)];
+}
+
+} // namespace
+
+uint32_t semiGlobalGroup(std::string_view name) { return (nameInstanceHash(name) & 0x00FFFFFF) | 0x7F000000; }
+
+const Behavior* CodeLibrary::behavior(uint32_t group, uint16_t instance) {
+    return loadCached(behaviors_, index_, kTypeBhav, group, instance);
+}
+
+const Constants* CodeLibrary::constants(uint32_t group, uint16_t instance) {
+    return loadCached(constants_, index_, kTypeBcon, group, instance);
+}
+
+uint32_t CodeLibrary::semiGlobalFor(uint32_t group) {
+    if (auto it = semiGlobals_.find(group); it != semiGlobals_.end())
+        return it->second;
+    uint32_t semi = 0;
+    if (index_)
+        for (uint32_t instance : {0x01u, 0x80u})
+            if (auto data = index_->read(Tgi{kTypeGlob, group, instance, 0})) {
+                semi = semiGlobalGroup(SemiGlobal::parse(*data).semiGlobalName);
+                break;
+            }
+    semiGlobals_[group] = semi;
+    return semi;
+}
+
+void CodeLibrary::add(uint32_t group, uint16_t instance, Behavior b) {
+    behaviors_[key(group, instance)] = std::make_unique<Behavior>(std::move(b));
+}
+
+void CodeLibrary::add(uint32_t group, uint16_t instance, Constants c) {
+    constants_[key(group, instance)] = std::make_unique<Constants>(std::move(c));
+}
+
+// --- Context ---------------------------------------------------------------
+
+Object& Context::me() const {
+    auto* o = vm.object(thread.me);
+    if (!o)
+        throw VMError("thread object " + std::to_string(thread.me) + " does not exist");
+    return *o;
+}
+
+Object& Context::stackObject() const {
+    auto* o = vm.object(thread.stackObject);
+    if (!o)
+        throw VMError("stack object " + std::to_string(thread.stackObject) + " does not exist");
+    return *o;
+}
+
+// Data owners, numbered as in The Sims 1 (the ones used by the interpreter
+// itself; motives, person data, slots, ... arrive with the object model).
+int16_t Context::get(uint8_t owner, int16_t data) const {
+    switch (owner) {
+    case 0x00: return slot(me().attributes, data, "attribute");
+    case 0x01: return slot(stackObject().attributes, data, "stack object attribute");
+    case 0x03: return slot(me().data, data, "object data");
+    case 0x04: return slot(stackObject().data, data, "stack object data");
+    case 0x06: return slot(vm.globals, data, "global");
+    case 0x07: return data; // literal
+    case 0x08: return slot(thread.temps, data, "temp");
+    case 0x09: return slot(frame.params, data, "param");
+    case 0x0A: return thread.stackObject;
+    case 0x0B: return slot(thread.temps, slot(thread.temps, data, "temp"), "temp[temp]");
+    case 0x16: return slot(stackObject().attributes, slot(frame.params, data, "param"), "stack object attribute[param]");
+    case 0x19: return slot(frame.locals, data, "local");
+    case 0x1A: {
+        // High bits pick the BCON (private, semi-global or global), low 7 bits the entry.
+        auto* owner = vm.object(frame.codeOwner);
+        if (!owner)
+            throw VMError("code owner does not exist");
+        const auto& c = vm.resolveConstants(*owner, uint16_t(data) >> 7);
+        return slot(c.values, data & 0x7F, "constant");
+    }
+    default:
+        ++vm.missingOwners[owner];
+        throw VMError("data owner " + hexString(owner) + " not implemented");
+    }
+}
+
+void Context::set(uint8_t owner, int16_t data, int16_t value) const {
+    switch (owner) {
+    case 0x00: slot(me().attributes, data, "attribute") = value; return;
+    case 0x01: slot(stackObject().attributes, data, "stack object attribute") = value; return;
+    case 0x03: slot(me().data, data, "object data") = value; return;
+    case 0x04: slot(stackObject().data, data, "stack object data") = value; return;
+    case 0x06: slot(vm.globals, data, "global") = value; return;
+    case 0x08: slot(thread.temps, data, "temp") = value; return;
+    case 0x09: slot(frame.params, data, "param") = value; return;
+    case 0x0A: thread.stackObject = value; return;
+    case 0x0B: slot(thread.temps, slot(thread.temps, data, "temp"), "temp[temp]") = value; return;
+    case 0x16:
+        slot(stackObject().attributes, slot(frame.params, data, "param"), "stack object attribute[param]") = value;
+        return;
+    case 0x19: slot(frame.locals, data, "local") = value; return;
+    case 0x07:
+    case 0x1A: throw VMError("data owner " + hexString(owner) + " is read-only");
+    default:
+        ++vm.missingOwners[owner];
+        throw VMError("data owner " + hexString(owner) + " not implemented");
+    }
+}
+
+// --- VM --------------------------------------------------------------------
+
+VM::VM(CodeLibrary& code) : code_(code) { registerPrimitives(*this); }
+
+Object& VM::createObject(uint32_t group, size_t attributeCount) {
+    ObjectId id = 1;
+    while (objects_.count(id))
+        ++id;
+    Object& o = objects_[id];
+    o.id = id;
+    o.group = group;
+    o.semiGroup = code_.semiGlobalFor(group);
+    o.attributes.resize(attributeCount);
+    return o;
+}
+
+Object* VM::object(ObjectId id) {
+    auto it = objects_.find(id);
+    return it == objects_.end() ? nullptr : &it->second;
+}
+
+std::pair<uint32_t, const Behavior*> VM::resolveTree(const Object& owner, uint16_t treeId) {
+    uint32_t group = 0;
+    if (treeId >= 0x100 && treeId < 0x1000)
+        group = kGlobalGroup;
+    else if (treeId >= 0x1000 && treeId < 0x2000)
+        group = owner.group;
+    else if (treeId >= 0x2000)
+        group = owner.semiGroup;
+    const Behavior* b = group ? code_.behavior(group, treeId) : nullptr;
+    return {b ? group : 0, b};
+}
+
+const Constants& VM::resolveConstants(const Object& owner, uint16_t table) {
+    // Private and semi-global tables resolve against the code owner, also
+    // when the running code is semi-global or global.
+    uint32_t group;
+    uint16_t instance;
+    if (table < 64)
+        group = owner.group, instance = uint16_t(0x1000 + table);
+    else if (table < 128)
+        group = owner.semiGroup, instance = uint16_t(0x2000 + table - 64);
+    else
+        group = kGlobalGroup, instance = uint16_t(0x100 + table - 128);
+    const Constants* c = group ? code_.constants(group, instance) : nullptr;
+    if (!c)
+        throw VMError("BCON " + hexString(group) + "/" + hexString(instance) + " not found");
+    return *c;
+}
+
+Thread VM::start(ObjectId me, uint16_t treeId, std::span<const int16_t> args) {
+    Thread t;
+    t.me = me;
+    std::array<int16_t, 4> a{};
+    std::copy_n(args.begin(), std::min<size_t>(args.size(), 4), a.begin());
+    try {
+        push(t, me, treeId, a);
+    } catch (const std::exception& e) {
+        fail(t, e.what());
+    }
+    return t;
+}
+
+void VM::push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t, 4> args) {
+    const Object* owner = object(codeOwner);
+    if (!owner)
+        throw VMError("code owner " + std::to_string(codeOwner) + " does not exist");
+    auto [group, behavior] = resolveTree(*owner, treeId);
+    if (!behavior)
+        throw VMError("tree " + hexString(treeId) + " not found");
+    if (t.stack.size() >= kMaxStackDepth)
+        throw VMError("stack overflow");
+    Frame f;
+    f.behavior = behavior;
+    f.group = group;
+    f.instance = treeId;
+    f.codeOwner = codeOwner;
+    f.params.assign(std::max<size_t>(behavior->argCount, args.size()), 0);
+    std::copy(args.begin(), args.end(), f.params.begin());
+    f.locals.assign(behavior->localCount, 0);
+    if (behavior->instructions.empty())
+        throw VMError("tree " + hexString(treeId) + " has no instructions");
+    t.stack.push_back(std::move(f));
+}
+
+void VM::fail(Thread& t, const std::string& message) {
+    t.status = Thread::Status::Failed;
+    t.error = message;
+    constexpr size_t kShownFrames = 8;
+    for (size_t i = 0; i < t.stack.size() && i < kShownFrames; ++i) {
+        const Frame& f = t.stack[t.stack.size() - 1 - i];
+        t.error += "\n  at " + treeName(f) + " #" + std::to_string(f.pc);
+    }
+    if (t.stack.size() > kShownFrames)
+        t.error += "\n  ... " + std::to_string(t.stack.size() - kShownFrames) + " more frames";
+}
+
+bool VM::branch(Thread& t, Behavior::Target target) {
+    for (;;) {
+        switch (target.kind) {
+        case Behavior::TargetKind::Instruction:
+            t.stack.back().pc = target.index;
+            return true;
+        case Behavior::TargetKind::Error:
+            fail(t, "error branch taken");
+            return false;
+        case Behavior::TargetKind::True:
+        case Behavior::TargetKind::False: {
+            const bool value = target.kind == Behavior::TargetKind::True;
+            t.stack.pop_back();
+            if (t.stack.empty()) {
+                t.status = Thread::Status::Finished;
+                t.result = value;
+                return false;
+            }
+            // The caller's call instruction branches on the returned value.
+            const Frame& caller = t.stack.back();
+            const auto& call = caller.behavior->instructions[caller.pc];
+            target = value ? call.onTrue : call.onFalse;
+            break;
+        }
+        }
+    }
+}
+
+void VM::run(Thread& t, size_t maxInstructions) {
+    for (size_t budget = maxInstructions; t.status == Thread::Status::Running;) {
+        if (budget-- == 0) {
+            fail(t, "instruction budget exhausted (" + std::to_string(maxInstructions) + ")");
+            return;
+        }
+        Frame& frame = t.stack.back();
+        const auto& in = frame.behavior->instructions[frame.pc];
+        if (trace)
+            trace(t, frame, in);
+        ++t.instructions;
+        try {
+            Context ctx{*this, t, frame, in};
+            if (in.opcode >= 0x100) {
+                // Call: four arguments, either literals, the temps 0-3 (all
+                // literals 0xFFFF) or, with byte 12 = 1, (owner u8, data u16) pairs.
+                const auto& o = in.operands;
+                std::array<int16_t, 4> args{};
+                if (o[12] == 1) {
+                    const Object* owner = object(frame.codeOwner);
+                    const Behavior* callee = owner ? resolveTree(*owner, in.opcode).second : nullptr;
+                    const size_t n = callee ? std::min<size_t>(callee->argCount, 4) : 0;
+                    for (size_t k = 0; k < n; ++k)
+                        args[k] = ctx.get(o[k * 3], int16_t(le16(&o[k * 3 + 1])));
+                } else if (std::all_of(o.begin(), o.begin() + 8, [](uint8_t b) { return b == 0xFF; })) {
+                    std::copy_n(t.temps.begin(), 4, args.begin());
+                } else {
+                    for (size_t k = 0; k < 4; ++k)
+                        args[k] = int16_t(le16(&o[k * 2]));
+                }
+                push(t, frame.codeOwner, in.opcode, args);
+                continue;
+            }
+            auto it = primitives_.find(in.opcode);
+            if (it == primitives_.end()) {
+                ++missingPrimitives[in.opcode];
+                fail(t, "primitive " + hexString(in.opcode) + " (" + primitiveName(in.opcode) + ") not implemented");
+                return;
+            }
+            switch (it->second(ctx)) {
+            case Exit::Yield: return;
+            case Exit::Error: fail(t, "primitive " + primitiveName(in.opcode) + " returned error"); return;
+            case Exit::True: branch(t, in.onTrue); break;
+            case Exit::False: branch(t, in.onFalse); break;
+            }
+        } catch (const std::exception& e) { // VMError, or a resource that failed to parse
+            fail(t, e.what());
+        }
+    }
+}
+
+} // namespace os2::vm

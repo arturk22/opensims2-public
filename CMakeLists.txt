@@ -37,9 +37,17 @@ target_compile_options(os2_formats PRIVATE -Wall -Wextra)
 find_package(ZLIB REQUIRED)
 target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB)
 
+add_library(os2_vm
+  src/vm/primitives.cpp
+  src/vm/vm.cpp
+)
+target_include_directories(os2_vm PUBLIC src)
+target_compile_options(os2_vm PRIVATE -Wall -Wextra)
+target_link_libraries(os2_vm PUBLIC os2_formats)
+
 add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
-target_link_libraries(s2pkg PRIVATE os2_formats)
+target_link_libraries(s2pkg PRIVATE os2_vm)
 
 if(APPLE)
   # Shaders are compiled at runtime (the Command Line Tools have no offline
@@ -78,6 +86,10 @@ add_test(NAME qfs COMMAND test_qfs)
 add_executable(test_formats tests/test_formats.cpp)
 target_link_libraries(test_formats PRIVATE os2_formats ZLIB::ZLIB)
 add_test(NAME formats COMMAND test_formats)
+
+add_executable(test_vm tests/test_vm.cpp)
+target_link_libraries(test_vm PRIVATE os2_vm)
+add_test(NAME vm COMMAND test_vm)
 
 if(APPLE)
   add_executable(test_camera tests/test_camera.cpp)
