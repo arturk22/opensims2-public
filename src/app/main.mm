@@ -9,7 +9,9 @@
 // lot's terrain, floors, walls and objects. --sim [body,hair,skin tone] shows
 // an adult Sim built from catalog parts, --skinned <cres,cres,...> skinned
 // meshes on the adult skeleton; either plays --anim <name> (looped; --time
-// <seconds> picks the moment of a --screenshot). --play-sound <name | TGI>
+// <seconds> picks the moment of a --screenshot), --overlay <name>[@bone] over
+// the bones under <bone>, or --walk <seconds> (idle, a straight walk along
+// --heading <degrees>, idle). --play-sound <name | TGI>
 // plays a sound (the --sound-index'th sample of a track; --sound-wav <out.wav>
 // also saves it) and exits without opening a window. --ui <instance-hex> draws a
 // UI script from ui.package over the scene (1024x768 canvas, letterboxed;
@@ -33,6 +35,7 @@
 #include "formats/lot_model.hpp"
 #include "formats/model.hpp"
 #include "formats/sim.hpp"
+#include "formats/sim_actor.hpp"
 #include "formats/skinning.hpp"
 #include "formats/font.hpp"
 #include "formats/ui_resources.hpp"
@@ -247,23 +250,8 @@ simd_float3 loadObjects(os2::Renderer& renderer, os2::ResourceIndex& index) {
     return simd_make_float3(2.5f + 1.5f * float(cols - 1), -2.5f - 1.5f * float(rows - 1), 0);
 }
 
-constexpr uint32_t kTypeAnim = 0xFB00791E;
-
-// A skinned model on a skeleton, posed every frame from its animation.
-struct Actor {
-    os2::SkinnedModel skin;
-    std::optional<os2::Animation> anim;
-    int model = -1;
-    os2::ObjectModel posed;
-};
-std::vector<std::unique_ptr<Actor>> gActors;
-
-os2::Rcol::Block findBlock(const os2::Rcol& rc, const char* cls, const std::string& what) {
-    const auto* b = rc.find(cls);
-    if (!b)
-        throw std::runtime_error(what + " has no " + cls);
-    return *b;
-}
+// Skinned models posed every frame by their animation players.
+std::vector<std::unique_ptr<os2::SimActor>> gActors;
 
 os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
     auto loc = index.findByName(cres + "_cres", kTypeCres);
@@ -273,29 +261,10 @@ os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
     return os2::Skeleton::fromCres(os2::Rcol(bytes));
 }
 
-os2::Animation loadAnimation(os2::ResourceIndex& index, std::string name) {
-    if (!name.ends_with("_anim"))
-        name += "_anim";
-    auto loc = index.findByName(name, kTypeAnim);
-    if (!loc)
-        throw std::runtime_error("animation not found: " + name);
-    const auto bytes = index.read(*loc);
-    os2::Rcol rc(bytes);
-    return os2::Animation::parse(findBlock(rc, "cAnimResourceConst", name).body);
-}
-
 // Poses every actor at `seconds` and hands the vertices to the renderer.
 void poseActors(os2::Renderer& renderer, double seconds) {
     for (auto& a : gActors) {
-        std::vector<os2::Xform> local = a->skin.skeleton.restPose();
-        if (a->anim)
-            if (const auto* target = a->anim->findTarget(a->skin.skeleton.bones.empty() ? "auskel"
-                                                                                         : a->skin.skeleton.bones[0].name)) {
-                const float ticks = os2::animationTime(*a->anim, float(seconds), true);
-                local = os2::samplePose(*target, a->skin.skeleton, ticks);
-                os2::applyIk(*target, a->skin.skeleton, ticks, local);
-            }
-        a->skin.pose(a->skin.skeleton.world(local), a->posed);
+        a->update(seconds);
         renderer.updateObject(a->model, a->posed);
     }
 }
@@ -307,7 +276,7 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
     const auto sim = argument(@"--sim");
     if (!list && !sim)
         return std::nullopt;
-    auto actor = std::make_unique<Actor>();
+    os2::SkinnedModel skin;
     if (sim) {
         os2::SimLook look;
         std::vector<std::string> fields;
@@ -323,10 +292,11 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
         if (fields.size() > 2 && !fields[2].empty())
             look.skinTone = std::stoi(fields[2]);
         look.prefix = look.body.substr(0, 2);
-        actor->skin = os2::loadSim(index, os2::loadSimParts(index), look);
+        skin = os2::loadSim(index, os2::loadSimParts(index), look);
     } else {
-        actor->skin = os2::SkinnedModel(loadSkeleton(index, "auskel"));
+        skin = os2::SkinnedModel(loadSkeleton(index, "auskel"));
     }
+    auto actor = std::make_unique<os2::SimActor>(std::move(skin));
     for (size_t start = 0; list && start <= list->size();) {
         size_t end = list->find(',', start);
         if (end == std::string::npos)
@@ -339,15 +309,39 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
     }
     for (const auto& w : actor->skin.model.warnings)
         std::fprintf(stderr, "opensims2: %s\n", w.c_str());
-    if (auto name = argument(@"--anim"))
-        actor->anim = loadAnimation(index, *name);
+    actor->position = {2.5f, -2.5f, 0};
+    std::string playing;
+    if (auto walk = argument(@"--walk")) {
+        // Idle, then walk straight ahead for <seconds>, then idle again;
+        // the walk's locomotion velocity moves the Sim.
+        const double seconds = std::stod(*walk);
+        const auto& idle = actor->animation(index, argument(@"--anim").value_or("a-idle-neutral-armsSide-wtC-breatheLoop"));
+        const auto& walkAnim = actor->animation(index, "a-male-walk-alt0-normal");
+        actor->cue(0, idle);
+        actor->cue(0.5, walkAnim, {.fade = 0.3f});
+        actor->cue(0.5 + seconds, idle, {.fade = 0.3f});
+        actor->rootMotion = true;
+        if (auto h = argument(@"--heading"))
+            actor->heading = std::stof(*h) * 3.14159265f / 180;
+        playing = "idle, walk, idle";
+    } else if (auto name = argument(@"--anim")) {
+        actor->cue(0, actor->animation(index, *name));
+        playing = actor->animations.back()->resource.fileName;
+    }
+    // --overlay <anim>[@bone]: a second animation over the bones under <bone>
+    // (default spine0), with its own priority.
+    if (auto overlay = argument(@"--overlay")) {
+        std::string name = *overlay, root = "spine0";
+        if (auto at = name.find('@'); at != std::string::npos)
+            root = name.substr(at + 1), name.resize(at);
+        const auto& anim = actor->animation(index, name);
+        actor->cue(0, anim, {.fade = 0, .mask = os2::boneMask(actor->skin.skeleton, root), .priority = 100});
+        playing += " + " + anim.resource.fileName + "@" + root;
+    }
     actor->model = renderer.addObject(actor->skin.model, index, true);
-    simd_float4x4 at = matrix_identity_float4x4;
-    at.columns[3] = simd_make_float4(2.5f, -2.5f, 0, 1);
-    renderer.addInstance(actor->model, at);
+    renderer.addInstance(actor->model, matrix_identity_float4x4); // placement is in the vertices
     std::printf("opensims2: skinned %s (%zu parts, %zu bones)%s%s\n", actor->skin.model.name.c_str(), actor->skin.model.parts.size(),
-                actor->skin.skeleton.bones.size(), actor->anim ? ", playing " : "",
-                actor->anim ? actor->anim->resource.fileName.c_str() : "");
+                actor->skin.skeleton.bones.size(), playing.empty() ? "" : ", playing ", playing.c_str());
     gActors.push_back(std::move(actor));
     return simd_make_float3(2.5f, -2.5f, 0.9f);
 }
@@ -597,6 +591,7 @@ enum Key : unsigned short {
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
         if (auto shot = argument(@"--screenshot")) {
             const double time = std::stod(argument(@"--time").value_or("0"));
+            poseActors(*_viewDelegate.renderer, 0);
             poseActors(*_viewDelegate.renderer, time);
             _viewDelegate.renderer->setTime(time); // texture animations
             const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;

@@ -1,5 +1,6 @@
 // Skeletons, ANIM decoding and pose sampling on hand-built data.
 #include "formats/anim.hpp"
+#include "formats/anim_player.hpp"
 #include "formats/property_set.hpp"
 #include "formats/resindex.hpp"
 #include "formats/sim.hpp"
@@ -295,7 +296,60 @@ static void testIk() {
     check(near(thigh, 0.5f, 1e-3f), "IK: bone lengths kept");
 }
 
+// An animation on one bone: rotation about Z by `degrees`, constant.
+static Animation constantAnim(const char* bone, float degrees, uint8_t priority, float velocity) {
+    Animation a;
+    a.duration = 1000;
+    a.priority = priority;
+    a.velocity = velocity;
+    a.skeletonTag = "auskel";
+    Animation::Target t;
+    t.tag = "auskel";
+    Animation::Channel c;
+    c.name = bone;
+    c.flags = 1000u | 0u << 17 | 3u << 22 | 0xFu << 25 | 3u << 29;
+    c.components.resize(3);
+    for (auto& comp : c.components)
+        comp.keys.push_back({0, 0, 0, 0});
+    c.components[2].keys[0].value = degrees;
+    t.channels.push_back(c);
+    a.targets.push_back(t);
+    return a;
+}
+
+static void testPlayer() {
+    Skeleton s;
+    s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
+    s.bones.push_back({"pelvis", 0, Xform{}, 1, 1});
+    s.bones.push_back({"spine0", 1, Xform{}, 2, 2});
+    s.bones.push_back({"spine1", 2, Xform{}, 3, 3});
+    const auto mask = boneMask(s, "spine0");
+    check(mask.size() == 4 && mask[0] == 0 && mask[1] == 0 && mask[2] == 1 && mask[3] == 1, "bone mask: subtree");
+
+    auto angle = [](const Quat& q) { return 2 * std::atan2(q.z, q.w) * 180 / 3.14159265f; };
+    const Animation walk = constantAnim("pelvis", 40, 0, 0.002f), idle = constantAnim("pelvis", 0, 0, 0);
+    AnimPlayer p(&s);
+    p.play(walk, 0);
+    check(near(angle(p.pose(0.1)[1].q), 40, 1e-2f), "first base layer plays at once");
+    check(near(p.pose(0.1)[2].q.w, 1), "bones the layer does not key keep the rest pose");
+    p.play(idle, 1.0, {.fade = 0.5f});
+    check(near(angle(p.pose(1.25)[1].q), 20, 0.5f), "crossfade halfway");
+    check(near(angle(p.pose(1.6)[1].q), 0, 1e-2f) && p.layerCount() == 1, "crossfade done, old layer dropped");
+
+    const Animation wave = constantAnim("spine1", 30, 5, 0);
+    p.play(wave, 2.0, {.fade = 0, .mask = boneMask(s, "spine0")});
+    const auto both = p.pose(2.1);
+    check(near(angle(both[3].q), 30, 1e-2f) && near(angle(both[1].q), 0, 1e-2f) && p.layerCount() == 2,
+          "overlay of a higher priority on its own bones");
+
+    AnimPlayer m(&s);
+    m.play(walk, 0);
+    m.advance(0);
+    check(near(m.advance(2.0), 4.0f, 1e-3f), "root motion: velocity per tick over two seconds");
+}
+
 int main() {
+    testPlayer();
     testIk();
     testSimCatalog();
     testSkinning();

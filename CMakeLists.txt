@@ -22,6 +22,7 @@ target_compile_options(os2_speex PRIVATE -w)
 
 add_library(os2_formats
   src/formats/anim.cpp
+  src/formats/anim_player.cpp
   src/formats/audio.cpp
   src/formats/audio_spx.cpp
   src/formats/bhav.cpp
@@ -44,6 +45,7 @@ add_library(os2_formats
   src/formats/resindex.cpp
   src/formats/scenegraph.cpp
   src/formats/sim.cpp
+  src/formats/sim_actor.cpp
   src/formats/simantics.cpp
   src/formats/skeleton.cpp
   src/formats/skinning.cpp
