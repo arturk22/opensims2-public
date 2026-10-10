@@ -150,6 +150,14 @@ Exit removeObjectInstance(Context& c) {
     return Exit::True;
 }
 
+// Person data of a neighbor: its Sim's while it is on the lot, else the
+// neighborhood's copy (as data owner 0x20 sees it).
+std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor& n) {
+    if (Object* sim = vm.neighborSim(id))
+        return sim->person->data;
+    return n.personData;
+}
+
 // Set to Next (0x1F): GUID u32, flags u8 (low 7 bits: search type, STR# 0xA4;
 // 0x80: the target is (owner u8 at 5, data u16 at 7) instead of the stack
 // object ID), local u8 at 6 (for the searches relative to an object in a
@@ -161,7 +169,12 @@ Exit removeObjectInstance(Context& c) {
 // vehicle; most uses also carry a GUID that no OBJD has, so it is ignored.
 // Parts of a multi-tile object (3) cycle through the target's group (the
 // trees go around until they are back at the object they started from); a
-// single-tile object has none.
+// single-tile object has none. The family searches (21 parent, 22 sibling,
+// 23 child, 31 spouse of the neighbor ID in temp 0) go through VM::familyTree
+// in neighbor ID order; siblings share at least one parent (inferred).
+// Family members (17) are the neighbors whose person data "family number"
+// is temp 0; 28 the neighbors whose relationship variable 3 to the neighbor
+// in temp 0 is not zero (that direction is inferred).
 Exit setToNext(Context& c) {
     const auto& o = c.instruction.operands;
     const uint32_t guid = le32(&o[0]);
@@ -186,7 +199,45 @@ Exit setToNext(Context& c) {
     switch (type) {
     case 5: return nextNeighbor([](const Neighbor&) { return true; });                  // neighbor id
     case 7: return nextNeighbor([guid](const Neighbor& n) { return n.guid == guid; }); // neighbor of type
+    case 17: {                                                                         // neighbor of family in temp 0
+        const int16_t family = c.thread.temps[0];
+        auto& neighbors = c.vm.neighbors;
+        for (auto it = neighbors.upper_bound(current); it != neighbors.end(); ++it)
+            if (neighborData(c.vm, it->first, it->second)[persondata::FamilyNumber] == family)
+                return found(it->first);
+        return Exit::False;
+    }
+    case 28: {                    // neighbor with a non-zero relationship variable 3 to the neighbor in temp 0
+        const VM::RelationshipKey to{true, c.thread.temps[0]};
+        auto& neighbors = c.vm.neighbors;
+        for (auto it = neighbors.upper_bound(current); it != neighbors.end(); ++it) {
+            auto rel = c.vm.relationships.find({VM::RelationshipKey{true, it->first}, to});
+            if (rel != c.vm.relationships.end() && rel->second.size() > 3 && rel->second[3] != 0)
+                return found(it->first);
+        }
+        return Exit::False;
+    }
     case 29: return c.vm.neighbor(current) ? Exit::True : Exit::False;                 // verify neighbor id
+    case 21:                                                                           // parent of temp 0
+    case 22:                                                                           // sibling of temp 0
+    case 23:                                                                           // child of temp 0
+    case 31: {                                                                         // spouse of temp 0
+        const int16_t of = c.thread.temps[0];
+        std::set<int16_t> ids;
+        if (auto it = c.vm.familyTree.find(of); it != c.vm.familyTree.end()) {
+            const auto& ties = it->second;
+            if (type == 22) {
+                for (int16_t parent : ties.parents)
+                    if (auto p = c.vm.familyTree.find(parent); p != c.vm.familyTree.end())
+                        ids.insert(p->second.children.begin(), p->second.children.end());
+                ids.erase(of);
+            } else {
+                ids = type == 21 ? ties.parents : type == 23 ? ties.children : ties.spouses;
+            }
+        }
+        auto next = ids.upper_bound(current);
+        return next == ids.end() ? Exit::False : found(*next);
+    }
     case 3: {                                                                          // part of a multi-tile object
         const Object* x = c.vm.object(current);
         if (!x)
@@ -684,14 +735,6 @@ Exit pushInteraction(Context& c) {
     return Exit::True;
 }
 
-// Person data of a neighbor: its Sim's while it is on the lot, else the
-// neighborhood's copy (as data owner 0x20 sees it).
-std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor& n) {
-    if (Object* sim = vm.neighborSim(id))
-        return sim->person->data;
-    return n.personData;
-}
-
 // Generic Sims Call (0x01): call index u8 at 0 (the other bytes are 0); the
 // arguments and results are in the temps, as the editor's labels describe each
 // call (STR# 0xDC, 54 calls). Calls that only ask the engine for something
@@ -703,7 +746,8 @@ std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor
 // Sims), 6 remove from family, 10/11 build and buy off/on, 13 abort the
 // interactions whose object is the stack object from every queue, 14 house radio station, 18
 // simulator speed (0 pause, 1 unpause, 2-4 into the Speed global as is), 25
-// selected Sim, 40 game state transitions off/on, 48 remapped neighbor ID
+// selected Sim, 21-23 the family tree (child of, spouse of, remove the ties
+// between two Sims; VM::familyTree), 40 game state transitions off/on, 48 remapped neighbor ID
 // (false: there are no imported lots). 7 is deprecated ("tree error" in the
 // labels). The rest need the neighborhood, outfits or the world.
 Exit genericSimsCall(Context& c) {
@@ -781,6 +825,20 @@ Exit genericSimsCall(Context& c) {
             vm.globals[global::Paused] = temps[0] == 0;
         else
             vm.globals[global::Speed] = temps[0], vm.globals[global::Paused] = 0;
+        return Exit::True;
+    case 21: // add child (temp 0) of parent (temp 1) to the family tree
+        vm.familyTree[temps[0]].parents.insert(temps[1]);
+        vm.familyTree[temps[1]].children.insert(temps[0]);
+        return Exit::True;
+    case 22: // add spouse (temp 0) of the initial spouse (temp 1)
+        vm.familyTree[temps[0]].spouses.insert(temps[1]);
+        vm.familyTree[temps[1]].spouses.insert(temps[0]);
+        return Exit::True;
+    case 23: // remove the ties between temp 0 and its relative in temp 1
+        for (auto [a, b] : {std::pair{temps[0], temps[1]}, std::pair{temps[1], temps[0]}}) {
+            auto& t = vm.familyTree[a];
+            t.parents.erase(b), t.children.erase(b), t.spouses.erase(b);
+        }
         return Exit::True;
     case 25: vm.globals[global::SelectedPersonId] = temps[0]; return Exit::True;
     case 40: vm.gameStateTransitionsEnabled = temps[0] != 0; return Exit::True;

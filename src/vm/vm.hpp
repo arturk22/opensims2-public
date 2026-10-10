@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -364,6 +365,14 @@ public:
     // Neighbors by neighbor ID. There is no neighborhood yet, so they are only
     // the ones added here (tests, stand-ins).
     std::map<int16_t, Neighbor> neighbors;
+
+    // The family tree by neighbor ID ("Family Relationship Array"), built by
+    // Generic Sims Call 21-23 and searched by Set to Next 21-23 and 31. It
+    // will come from the neighborhood; until then only those calls fill it.
+    struct FamilyTies {
+        std::set<int16_t> parents, children, spouses;
+    };
+    std::map<int16_t, FamilyTies> familyTree;
 
     // Type attributes (data owners 0x24/0x25): shared by every object of a
     // type, keyed by the GUID of its (master) definition; they grow on demand.

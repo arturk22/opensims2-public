@@ -701,6 +701,48 @@ static void testDefinitionOwners() {
           "type attributes, master definition, object functions, constants [temp] and rooms");
 }
 
+static void testFamilyTree() {
+    Fixture fx;
+    fx.obj();
+    auto call = [](uint8_t i, Target t) { return instr(0x01, t, E, {i}); };
+    auto next = [](uint8_t type, uint8_t temp, Target t, Target f) {
+        return instr(0x1F, t, f, {0, 0, 0, 0, uint8_t(type | 0x80), Temp, 0, temp, 0});
+    };
+    // Children 3 and 4 of parent 1, child 5 of parent 2; 1 and 2 are spouses.
+    for (int16_t id : {1, 2, 3, 4, 5})
+        fx.vm.neighbors[id] = {};
+    fx.vm.neighbors[4].personData[persondata::FamilyNumber] = 6;
+    std::vector<Behavior::Instruction> code;
+    for (auto [child, parent] : {std::pair{3, 1}, {4, 1}, {5, 2}}) {
+        const auto n = uint16_t(code.size());
+        code.push_back(expr(Temp, 0, Assign, Lit, int16_t(child), go(n + 1), E));
+        code.push_back(expr(Temp, 1, Assign, Lit, int16_t(parent), go(n + 2), E));
+        code.push_back(call(21, go(n + 3)));
+    }
+    const auto n = uint16_t(code.size());
+    for (auto in : {expr(Temp, 0, Assign, Lit, 1, go(n + 1), E), expr(Temp, 1, Assign, Lit, 2, go(n + 2), E),
+                    call(22, go(n + 3)),
+                    expr(Temp, 0, Assign, Lit, 3, go(n + 4), E),
+                    next(22, 6, go(n + 5), E),                // sibling of 3: 4
+                    next(22, 6, E, go(n + 6)),                // no more
+                    next(21, 7, go(n + 7), E),                // parent of 3: 1
+                    expr(Temp, 0, Assign, Lit, 1, go(n + 8), E),
+                    next(31, 8, go(n + 9), E),                // spouse of 1: 2
+                    next(23, 9, go(n + 10), E),               // first child of 1: 3
+                    expr(Temp, 1, Assign, Lit, 3, go(n + 11), E),
+                    call(23, go(n + 12)),                     // 3 is no longer 1's child
+                    next(23, 10, go(n + 13), E),              // first child of 1: 4
+                    expr(Temp, 0, Assign, Lit, 6, go(n + 14), E),
+                    next(17, 11, go(n + 15), E),              // first neighbor of family 6: 4
+                    next(17, 11, E, T)})                      // and no other
+        code.push_back(in);
+    fx.code.add(kObjGroup, 0x1000, tree(std::move(code)));
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Finished && t.temps[6] == 4 && t.temps[7] == 1 && t.temps[8] == 2 &&
+              t.temps[9] == 3 && t.temps[10] == 4 && t.temps[11] == 4,
+          "family tree calls and Set to Next family searches");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -721,6 +763,7 @@ int main() {
     testPushInteraction();
     testDefinitionOwners();
     testRemoveAndRandom();
+    testFamilyTree();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
