@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace os2 {
 
@@ -19,30 +20,48 @@ namespace {
 
 struct Vertex {
     float position[3];
-    float color[3];
+    float normal[3];
 };
 
-struct Uniforms {
-    simd_float4x4 mvp;
+struct Instance {
+    simd_float4x4 model;
+    simd_float4 tint;
 };
 
-// Right-handed, looking down -Z, Metal clip depth in [0, 1].
-simd_float4x4 perspective(float fovY, float aspect, float near, float far) {
-    float ys = 1.0f / std::tan(fovY * 0.5f);
-    float xs = ys / aspect;
-    float zs = far / (near - far);
-    return simd_matrix(simd_make_float4(xs, 0, 0, 0), simd_make_float4(0, ys, 0, 0),
-                       simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, zs * near, 0));
+struct Frame {
+    simd_float4x4 viewProj;
+    simd_float4 lightDir;
+};
+
+// Unit cube [0,1]^3 scaled to `size` with its base centered on `base`.
+simd_float4x4 box(simd_float3 base, simd_float3 size) {
+    return simd_matrix(simd_make_float4(size.x, 0, 0, 0), simd_make_float4(0, size.y, 0, 0),
+                       simd_make_float4(0, 0, size.z, 0),
+                       simd_make_float4(base.x - size.x * 0.5f, base.y - size.y * 0.5f, base.z, 1));
 }
 
-simd_float4x4 translation(float x, float y, float z) {
-    return simd_matrix(simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0),
-                       simd_make_float4(0, 0, 1, 0), simd_make_float4(x, y, z, 1));
-}
-
-simd_float4x4 rotation(float angle, simd_float3 axis) {
-    simd_quatf q = simd_quaternion(angle, simd_normalize(axis));
-    return simd_matrix4x4(q);
+std::vector<Instance> testScene() {
+    std::vector<Instance> s;
+    struct V3 {
+        float x, y, z;
+    };
+    auto add = [&](V3 base, V3 size, V3 rgb, bool checker = false) {
+        s.push_back({box(simd_make_float3(base.x, base.y, base.z), simd_make_float3(size.x, size.y, size.z)),
+                     simd_make_float4(rgb.x, rgb.y, rgb.z, checker ? 1.0f : 0.0f)});
+    };
+    // 32x32 tiles of floor, top surface at z = 0.
+    add({0, 0, -0.05f}, {32, 32, 0.05f}, {0.55f, 0.62f, 0.45f}, true);
+    // Axis markers: +X red, +Y green, origin white.
+    for (int i = 1; i <= 4; ++i) {
+        add({float(i) + 0.5f, 0.5f, 0}, {0.6f, 0.6f, 0.15f}, {0.85f, 0.25f, 0.2f});
+        add({0.5f, float(i) + 0.5f, 0}, {0.6f, 0.6f, 0.15f}, {0.25f, 0.7f, 0.3f});
+    }
+    add({0.5f, 0.5f, 0}, {0.6f, 0.6f, 0.6f}, {0.95f, 0.95f, 0.95f});
+    // Blocks of 1, 2 and 3 m (wall height is 3 tiles) to judge scale and depth.
+    add({-4.5f, -3.5f, 0}, {1, 1, 1}, {0.3f, 0.45f, 0.85f});
+    add({-6.5f, 2.5f, 0}, {1, 2, 2}, {0.85f, 0.7f, 0.25f});
+    add({5.5f, -6.5f, 0}, {4, 0.2f, 3}, {0.8f, 0.78f, 0.72f});
+    return s;
 }
 
 std::string errorText(NS::Error* error) {
@@ -51,26 +70,23 @@ std::string errorText(NS::Error* error) {
     return error->localizedDescription()->utf8String();
 }
 
-// One color per face, four vertices per face so faces stay flat-colored.
+// Unit cube [0,1]^3, four vertices per face so normals stay flat.
 void buildCube(std::array<Vertex, 24>& v, std::array<uint16_t, 36>& idx) {
     static const float faces[6][4][3] = {
-        {{1, -1, -1}, {1, 1, -1}, {1, 1, 1}, {1, -1, 1}},         // +X
-        {{-1, -1, 1}, {-1, 1, 1}, {-1, 1, -1}, {-1, -1, -1}},     // -X
-        {{-1, 1, -1}, {-1, 1, 1}, {1, 1, 1}, {1, 1, -1}},         // +Y
-        {{-1, -1, 1}, {-1, -1, -1}, {1, -1, -1}, {1, -1, 1}},     // -Y
-        {{-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1}},         // +Z
-        {{1, -1, -1}, {-1, -1, -1}, {-1, 1, -1}, {1, 1, -1}},     // -Z
+        {{1, 0, 0}, {1, 1, 0}, {1, 1, 1}, {1, 0, 1}}, // +X
+        {{0, 0, 1}, {0, 1, 1}, {0, 1, 0}, {0, 0, 0}}, // -X
+        {{0, 1, 0}, {0, 1, 1}, {1, 1, 1}, {1, 1, 0}}, // +Y
+        {{0, 0, 1}, {0, 0, 0}, {1, 0, 0}, {1, 0, 1}}, // -Y
+        {{0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}}, // +Z
+        {{1, 0, 0}, {0, 0, 0}, {0, 1, 0}, {1, 1, 0}}, // -Z
     };
-    static const float colors[6][3] = {
-        {0.90f, 0.30f, 0.25f}, {0.25f, 0.70f, 0.35f}, {0.30f, 0.45f, 0.90f},
-        {0.95f, 0.80f, 0.25f}, {0.70f, 0.35f, 0.85f}, {0.25f, 0.80f, 0.85f},
-    };
+    static const float normals[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
     for (int f = 0; f < 6; ++f) {
         for (int c = 0; c < 4; ++c) {
             Vertex& out = v[f * 4 + c];
             for (int k = 0; k < 3; ++k) {
-                out.position[k] = faces[f][c][k] * 0.5f;
-                out.color[k] = colors[f][k];
+                out.position[k] = faces[f][c][k];
+                out.normal[k] = normals[f][k];
             }
         }
         const uint16_t base = uint16_t(f * 4);
@@ -128,8 +144,11 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     buildCube(verts, idx);
     vertices_ = device_->newBuffer(verts.data(), sizeof(verts), MTL::ResourceStorageModeShared);
     indices_ = device_->newBuffer(idx.data(), sizeof(idx), MTL::ResourceStorageModeShared);
-    for (auto& u : uniforms_)
-        u = device_->newBuffer(sizeof(Uniforms), MTL::ResourceStorageModeShared);
+    std::vector<Instance> scene = testScene();
+    instanceCount_ = uint32_t(scene.size());
+    instances_ = device_->newBuffer(scene.data(), scene.size() * sizeof(Instance), MTL::ResourceStorageModeShared);
+    for (auto& f : frames_)
+        f = device_->newBuffer(sizeof(Frame), MTL::ResourceStorageModeShared);
 
     pool->release();
 }
@@ -141,8 +160,9 @@ Renderer::~Renderer() {
     // libdispatch traps if a semaphore is freed below its initial value.
     for (int i = 0; i < kFramesInFlight; ++i)
         dispatch_semaphore_signal(sema(inFlight_));
-    for (auto* u : uniforms_)
-        u->release();
+    for (auto* f : frames_)
+        f->release();
+    instances_->release();
     indices_->release();
     vertices_->release();
     depth_->release();
@@ -152,27 +172,18 @@ Renderer::~Renderer() {
     dispatch_release(sema(inFlight_));
 }
 
-void Renderer::resize(double width, double height) {
-    if (width > 0 && height > 0)
-        aspect_ = float(width / height);
-}
-
-void Renderer::draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable, double dt) {
+void Renderer::draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable, const FrameView& view) {
     if (!pass || !drawable)
         return;
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
 
     dispatch_semaphore_wait(sema(inFlight_), DISPATCH_TIME_FOREVER);
     frame_ = (frame_ + 1) % kFramesInFlight;
-    time_ += dt;
 
-    const float t = float(time_);
-    simd_float4x4 model = simd_mul(rotation(t, simd_make_float3(0, 1, 0)),
-                                   rotation(t * 0.6f, simd_make_float3(1, 0, 0)));
-    simd_float4x4 view = translation(0, 0, -3.0f);
-    simd_float4x4 proj = perspective(float(M_PI) / 3.0f, aspect_, 0.1f, 100.0f);
-    auto* u = static_cast<Uniforms*>(uniforms_[frame_]->contents());
-    u->mvp = simd_mul(proj, simd_mul(view, model));
+    auto* f = static_cast<Frame*>(frames_[frame_]->contents());
+    f->viewProj = simd_mul(view.projection, view.view);
+    simd_float3 light = simd_normalize(simd_make_float3(-0.4f, -0.6f, -1.0f));
+    f->lightDir = simd_make_float4(light.x, light.y, light.z, 0);
 
     MTL::CommandBuffer* cmd = queue_->commandBuffer();
     dispatch_semaphore_t sem = sema(inFlight_);
@@ -184,9 +195,11 @@ void Renderer::draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable
     enc->setFrontFacingWinding(MTL::WindingCounterClockwise);
     enc->setCullMode(MTL::CullModeBack);
     enc->setVertexBuffer(vertices_, 0, 0);
-    enc->setVertexBuffer(uniforms_[frame_], 0, 1);
-    enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(36), MTL::IndexTypeUInt16,
-                               indices_, NS::UInteger(0));
+    enc->setVertexBuffer(instances_, 0, 1);
+    enc->setVertexBuffer(frames_[frame_], 0, 2);
+    enc->setFragmentBuffer(frames_[frame_], 0, 2);
+    enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(36), MTL::IndexTypeUInt16, indices_,
+                               NS::UInteger(0), NS::UInteger(instanceCount_));
     enc->endEncoding();
 
     cmd->presentDrawable(drawable);

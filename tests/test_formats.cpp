@@ -1,4 +1,5 @@
 #include "formats/bhav.hpp"
+#include "formats/camera_config.hpp"
 #include "formats/image.hpp"
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
@@ -191,6 +192,38 @@ static void testBhav() {
     check(threw, "BHAV rejects out-of-range branches");
 }
 
+static void testCameraConfig() {
+    const char* text = R"(# comment
+version 1
+sinclude "missing.txt"
+camera "Live" Live
+zoom        1 (70   40   25)
+fov           (45   45   45)
+pitch         (30   22   14)   (40  45  50)
+orientation 1 (10 55 100)   # trailing comment
+smoothing   5 8
+setparam KeyboardTranslationSpeed 50
+if (maxVersion() >= 3)
+   setparam keyboardtranslationspeed 99
+endif
+camera     "CAS" CreateASim
+clip       0.2 2000
+)";
+    auto cams = parseCameraConfig(text);
+    check(cams.size() == 2, "camera count");
+    const CameraDef* live = findCamera(cams, "live");
+    check(live && live->controller == "Live", "find camera by name");
+    if (live) {
+        check(live->defaultZoom == 1 && live->distances.size() == 3 && live->distances[1] == 40, "zoom table");
+        check(live->pitchMin[2] == 14 && live->pitchMax[2] == 50, "pitch tables");
+        check(live->defaultOrientation == 1 && live->yaws.size() == 3 && live->yaws[2] == 100, "orientation");
+        check(live->zoomSmoothing == 5 && live->spinSmoothing == 8, "smoothing");
+        check(live->param("keyboardtranslationspeed", 0) == 50, "setparam (if block skipped)");
+    }
+    const CameraDef* cas = findCamera(cams, "CAS");
+    check(cas && cas->nearClip.size() == 1 && cas->nearClip[0] == 0.2f && cas->farClip[0] == 2000, "scalar clip");
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
@@ -200,6 +233,7 @@ int main() {
     testStrings();
     testSimAntics();
     testBhav();
+    testCameraConfig();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

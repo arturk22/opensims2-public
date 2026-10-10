@@ -14,6 +14,7 @@ endif()
 
 add_library(os2_formats
   src/formats/bhav.cpp
+  src/formats/camera_config.cpp
   src/formats/dbpf.cpp
   src/formats/gmdc.cpp
   src/formats/image.cpp
@@ -43,13 +44,14 @@ if(APPLE)
   configure_file(src/render/shaders_src.hpp.in ${CMAKE_BINARY_DIR}/generated/shaders_src.hpp @ONLY)
 
   add_library(os2_render
+    src/render/camera.cpp
     src/render/metal_impl.cpp
     src/render/renderer.cpp
   )
   target_include_directories(os2_render PUBLIC src third_party/metal-cpp
                              PRIVATE ${CMAKE_BINARY_DIR}/generated)
   target_compile_options(os2_render PRIVATE -Wall -Wextra)
-  target_link_libraries(os2_render PUBLIC
+  target_link_libraries(os2_render PUBLIC os2_formats
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
   add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm)
@@ -70,3 +72,9 @@ add_test(NAME qfs COMMAND test_qfs)
 add_executable(test_formats tests/test_formats.cpp)
 target_link_libraries(test_formats PRIVATE os2_formats ZLIB::ZLIB)
 add_test(NAME formats COMMAND test_formats)
+
+if(APPLE)
+  add_executable(test_camera tests/test_camera.cpp)
+  target_link_libraries(test_camera PRIVATE os2_render)
+  add_test(NAME camera COMMAND test_camera)
+endif()
