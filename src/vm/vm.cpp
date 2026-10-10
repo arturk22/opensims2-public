@@ -163,6 +163,14 @@ void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectDefinition d) {
     definitions_[key(group, instance)] = std::make_unique<ObjectDefinition>(std::move(d));
 }
 
+Object::Array& Object::array(int idx) {
+    if (idx < 0 || size_t(idx) >= kMaxObjectArrays)
+        throw VMError("object array " + std::to_string(idx) + " out of range");
+    if (size_t(idx) >= arrays.size())
+        arrays.resize(size_t(idx) + 1);
+    return arrays[size_t(idx)];
+}
+
 // --- Context ---------------------------------------------------------------
 
 Object& Context::me() const {
@@ -208,6 +216,20 @@ static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     case 0x32:
         return &growing(c.stackObject().semiAttributes, slot(c.frame.params, data, "param"),
                         "stack object semi-attribute[param]");
+    // Object arrays: `data` is the array; the element is the one at its
+    // iterator index or at temp 0.
+    case 0x29: return &c.me().array(data).iterator;
+    case 0x2A: return &c.stackObject().array(data).iterator;
+    case 0x2B: {
+        auto& a = c.me().array(data);
+        return &slot(a.values, a.iterator, "my object array element");
+    }
+    case 0x2C: {
+        auto& a = c.stackObject().array(data);
+        return &slot(a.values, a.iterator, "stack object's object array element");
+    }
+    case 0x2D: return &slot(c.me().array(data).values, t.temps[0], "my object array element");
+    case 0x2E: return &slot(c.stackObject().array(data).values, t.temps[0], "stack object's object array element");
     default: return nullptr;
     }
 }

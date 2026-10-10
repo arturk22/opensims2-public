@@ -67,6 +67,11 @@ namespace persondata {
 constexpr int16_t NeighborId = 31;
 } // namespace persondata
 
+// Object arrays (Array Operation, data owners 0x29-0x2E) are created on
+// demand; this bounds their number and length.
+constexpr size_t kMaxObjectArrays = 32;
+constexpr size_t kMaxArrayLength = 4096;
+
 // Relationship variables grow when written past their end; this bounds that
 // (the trees use indices up to 11).
 constexpr size_t kMaxRelationshipVars = 32;
@@ -144,6 +149,13 @@ struct Object {
     std::vector<int16_t> semiAttributes;
     std::array<int16_t, kObjectDataCount> data{};
     std::optional<Person> person;
+    // Object arrays, each with an iterator index.
+    struct Array {
+        std::vector<int16_t> values;
+        int16_t iterator = 0;
+    };
+    std::vector<Array> arrays;
+    Array& array(int idx); // created on demand; throws VMError past kMaxObjectArrays
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };

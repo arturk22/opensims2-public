@@ -2,6 +2,7 @@
 
 #include "formats/binreader.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 
 namespace os2::vm {
@@ -299,6 +300,58 @@ Exit relationship(Context& c) {
     return Exit::True;
 }
 
+// Array Operation (0x76): byte 0 always 0, operation u8, whose u8 (0 me, 1
+// stack object), array u8, then two operands (owner u8, data u16 at 5 and 8).
+// There are no editor labels for the operations; these come from how the
+// trees use them: 0 clears ("Speech - Face Crowd" clears, then appends 8
+// zeros), 1 stores the length in the first operand (loops counting down from
+// it), 4 and 5 append the first operand and store its index in the second
+// (parallel arrays in "CT - Create STFX" share that index; how 4 and 5
+// differ is not known), 9 removes the element at the second operand and
+// stores it in the first, 10 finds the first operand and stores its index in
+// the second, false if absent (the only operation whose false branch is
+// used). 2, 3, 7 and 8 (39 uses) are not understood.
+Exit arrayOperation(Context& c) {
+    const auto& o = c.instruction.operands;
+    const uint8_t op = o[1];
+    if (o[2] > 1)
+        throw VMError("Array Operation: owner " + std::to_string(o[2]) + " not implemented");
+    auto& values = (o[2] == 0 ? c.me() : c.stackObject()).array(o[3]).values;
+    auto get1 = [&] { return c.get(o[5], int16_t(le16(&o[6]))); };
+    auto set1 = [&](int16_t v) { c.set(o[5], int16_t(le16(&o[6])), v); };
+    auto get2 = [&] { return c.get(o[8], int16_t(le16(&o[9]))); };
+    auto set2 = [&](int16_t v) { c.set(o[8], int16_t(le16(&o[9])), v); };
+    switch (op) {
+    case 0: values.clear(); return Exit::True;
+    case 1: set1(int16_t(values.size())); return Exit::True;
+    case 4:
+    case 5:
+        if (values.size() >= kMaxArrayLength)
+            throw VMError("Array Operation: array full");
+        values.push_back(get1());
+        set2(int16_t(values.size() - 1));
+        return Exit::True;
+    case 9: {
+        const int16_t i = get2();
+        if (i < 0 || size_t(i) >= values.size())
+            throw VMError("Array Operation: remove at " + std::to_string(i) + " out of range (" +
+                          std::to_string(values.size()) + ")");
+        const int16_t v = values[size_t(i)];
+        values.erase(values.begin() + i);
+        set1(v);
+        return Exit::True;
+    }
+    case 10: {
+        auto it = std::find(values.begin(), values.end(), get1());
+        if (it == values.end())
+            return Exit::False;
+        set2(int16_t(it - values.begin()));
+        return Exit::True;
+    }
+    default: throw VMError("Array Operation: operation " + std::to_string(op) + " not implemented");
+    }
+}
+
 } // namespace
 
 void registerPrimitives(VM& vm) {
@@ -313,6 +366,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x1F, setToNext);
     vm.setPrimitive(0x20, testObjectType);
     vm.setPrimitive(0x2A, createObjectInstance);
+    vm.setPrimitive(0x76, arrayOperation);
 }
 
 } // namespace os2::vm

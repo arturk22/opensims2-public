@@ -274,9 +274,9 @@ static void testYieldAndErrors() {
     t = fx.run(0x1FFF);
     check(t.status == Thread::Status::Failed, "missing tree fails");
 
-    fx.code.add(kObjGroup, 0x1006, tree({expr(0x2B, 0, Assign, Lit, 1, T, E)}));
+    fx.code.add(kObjGroup, 0x1006, tree({expr(0x17, 0, Assign, Lit, 1, T, E)}));
     t = fx.run(0x1006);
-    check(t.status == Thread::Status::Failed && fx.vm.missingOwners[0x2B] == 1, "missing data owner fails");
+    check(t.status == Thread::Status::Failed && fx.vm.missingOwners[0x17] == 1, "missing data owner fails");
 }
 
 static uint8_t lo(uint32_t v, int byte) { return uint8_t(v >> (8 * byte)); }
@@ -417,6 +417,30 @@ static void testRelationship() {
           "Relationship sets and gets; Sims are keyed by neighbor ID");
 }
 
+static void testArrays() {
+    Fixture fx;
+    fx.obj();
+    // Array op: (op, whose, array, owner1, data1, owner2, data2)
+    auto arr = [](uint8_t op, uint8_t array, uint8_t o1, int16_t d1, uint8_t o2, int16_t d2, Target t, Target f) {
+        return instr(0x76, t, f, {0, op, 0, array, 0, o1, uint8_t(d1), 0, o2, uint8_t(d2), 0});
+    };
+    fx.code.add(kObjGroup, 0x1000,
+                tree({arr(4, 2, Lit, 10, Temp, 0, go(1), E),     // [10], temp0 = 0
+                      arr(5, 2, Lit, 20, Temp, 0, go(2), E),     // [10, 20], temp0 = 1
+                      arr(4, 2, Lit, 30, Temp, 0, go(3), E),     // [10, 20, 30]
+                      arr(10, 2, Lit, 20, 0x29, 2, go(4), E),    // iterator := 1
+                      expr(Temp, 1, Assign, 0x2B, 2, go(5), E),  // temp1 := 20 (element at iterator)
+                      arr(9, 2, Temp, 2, Lit, 0, go(6), E),      // remove [0] -> temp2 = 10
+                      arr(1, 2, Temp, 3, Temp, 3, go(7), E),     // temp3 := 2
+                      arr(10, 2, Lit, 10, Temp, 4, E, go(8)),    // 10 is gone: false
+                      arr(0, 2, Temp, 0, Temp, 0, go(9), E),     // clear
+                      arr(1, 2, Temp, 5, Temp, 5, T, E)}));      // temp5 := 0
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Finished && t.temps[1] == 20 && t.temps[2] == 10 && t.temps[3] == 2 &&
+              t.temps[5] == 0,
+          "Array Operation appends, finds, removes and clears");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -428,6 +452,7 @@ int main() {
     testPrimitives();
     testRunTreeByName();
     testRelationship();
+    testArrays();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
