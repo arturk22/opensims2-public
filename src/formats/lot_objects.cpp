@@ -13,13 +13,16 @@ constexpr uint32_t kTypeObjectModule = 0x4F626A4D, kTypeSaveTypes = 0x6F626A74, 
 constexpr size_t kFileNameSize = 64;
 
 // Object data fields saved by each object module version (OpenTS2: 0xAD is
-// the base game's, 0xD8 a later expansion's).
+// the base game's, 0xD8 a later expansion's). The game's older lots (0xA4 in
+// CAS!, 0xAC in the tutorial's) have the same layout up to the object data;
+// 88 fields are read from them too (their object ID field is the instance in
+// every state), though how many they save is not known.
 size_t dataCount(uint32_t version) {
-    switch (version) {
-    case 0xAD: return 0x58;
-    case 0xD8: return 0x72;
-    default: throw FormatError("object state version " + hexString(version) + " not supported");
-    }
+    if (version >= 0xA4 && version <= 0xAD)
+        return 0x58;
+    if (version == 0xD8)
+        return 0x72;
+    throw FormatError("object state version " + hexString(version) + " not supported");
 }
 
 std::vector<int16_t> shorts(BinReader& r, size_t n) {
@@ -119,6 +122,9 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
             continue;
         try {
             State s = parseState(pkg.read(e), lot.version);
+            if (s.data.size() <= 11 || s.data[11] != id)
+                throw FormatError("object ID field " + std::to_string(s.data.size() > 11 ? s.data[11] : 0) +
+                                  " is not the instance");
             s.id = id;
             s.person = person;
             states[id] = std::move(s);

@@ -482,10 +482,15 @@ public:
 
     // Rooms of the lot by room ID, with the values labelled in STR# 0xDB
     // (0 ambient light 0-100, 1 outside, 2 level, 3 area, 4 pool, 5 number of
-    // windows), read by data owner 0x17 with the room in temp 0. The lot is
-    // what knows its rooms; there is none yet, so only the ones set here exist.
+    // windows), read by data owner 0x17 with the room in temp 0. A lot fills
+    // in the ones it can tell (vm::loadLot: level and area); reading a value
+    // that is not known is an error.
     static constexpr size_t kRoomValueCount = 6;
-    std::map<int16_t, std::array<int16_t, kRoomValueCount>> rooms;
+    struct Room {
+        std::array<int16_t, kRoomValueCount> values{};
+        uint8_t known = 0x3F; // bit per value
+    };
+    std::map<int16_t, Room> rooms;
     Neighbor* neighbor(int16_t id) {
         auto it = neighbors.find(id);
         return it == neighbors.end() ? nullptr : &it->second;

@@ -31,6 +31,9 @@ struct Lot {
     // (west, north, east, south) as SMAP 0x0E references; 0 is no floor.
     std::vector<std::array<uint16_t, 4>> floors;
 
+    // 3ARY 0x09: room ID of every quarter tile, laid out as `floors`; 0 is no room.
+    std::vector<std::array<uint16_t, 4>> rooms;
+
     // SMAP 0x0E / 0x0D: pattern reference -> pattern name ("sidewalk", "blank")
     // or catalog GUID as 8 lowercase hex digits ("ccc26098").
     std::map<uint16_t, std::string> floorPatterns, wallPatterns;

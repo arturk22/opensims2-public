@@ -445,6 +445,12 @@ static void setTokenField(TempToken& t, int16_t field, int16_t value) {
     }
 }
 
+// Room values, as STR# 0xDB labels them.
+static std::string roomValueName(int16_t v) {
+    static const char* const names[] = {"ambient light", "outside", "level", "area", "pool", "number of windows"};
+    return v >= 0 && size_t(v) < std::size(names) ? names[v] : "value " + std::to_string(v);
+}
+
 static int16_t slotIndex(int16_t slot) {
     if (slot < 0)
         throw VMError("slot " + std::to_string(slot) + " out of range");
@@ -465,7 +471,10 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
         auto it = vm.rooms.find(thread.temps[0]);
         if (it == vm.rooms.end())
             throw VMError("room " + std::to_string(thread.temps[0]) + " does not exist");
-        return slot(it->second, data, "room value");
+        const int16_t& v = slot(it->second.values, data, "room value");
+        if (!(it->second.known & (1u << data)))
+            throw VMError("room " + std::to_string(thread.temps[0]) + ": " + roomValueName(data) + " not known");
+        return v;
     }
     case 0x23: { // stack object's function: the action tree of its OBJf entry, 0 if none
         const Object& o = stackObject();

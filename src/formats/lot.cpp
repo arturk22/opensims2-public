@@ -13,7 +13,7 @@ namespace {
 constexpr uint32_t kType2DArray = 0x6B943B43, kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40,
                    kTypeWallGraph = 0x0A284D0B, kTypeWallLayer = 0x8A84D7B0, kTypeLotTexture = 0x4B58975B,
                    kTypeObject = 0xFA1C39F7;
-constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
+constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
                    kWallLayerPartitions = 0x04, kPaintMaskFirst = 0x5CBC;
 constexpr size_t kFileNameSize = 64;
 
@@ -191,6 +191,21 @@ Lot Lot::load(DbpfPackage& pkg) {
             for (size_t i = 0; i < lot.floors.size(); ++i)
                 for (int q = 0; q < 4; ++q)
                     lot.floors[i][size_t(q)] = le16(&a.data[i * 8 + size_t(q) * 2]);
+        }
+    }
+
+    // Rooms: same layout as the floors (checked against the "room" object
+    // data of the saved objects: 411 of 418 in-world objects of N001_Lot11).
+    if (auto bytes = readResource(pkg, kType3DArray, kArrayRooms)) {
+        BinReader r = blockReader(*bytes, kType3DArray);
+        const Array3 a = readArray3(r, 8);
+        if (a.x != lot.width || a.y != lot.height || int(a.z) != lot.levelCount) {
+            lot.warnings.push_back("room array size does not match the elevations");
+        } else {
+            lot.rooms.resize(size_t(a.x) * a.y * a.z);
+            for (size_t i = 0; i < lot.rooms.size(); ++i)
+                for (int q = 0; q < 4; ++q)
+                    lot.rooms[i][size_t(q)] = le16(&a.data[i * 8 + size_t(q) * 2]);
         }
     }
 

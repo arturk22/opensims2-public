@@ -35,6 +35,28 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
     for (const auto& o : lot.objects)
         cObjects[o.instance] = &o;
 
+    // Rooms: their level (as the saved objects number levels: the arrays'
+    // first level is 1) and area in tiles (a quarter tile counts a quarter;
+    // inferred). Light, outside, pool and windows are not known.
+    if (!lot.rooms.empty()) {
+        std::map<int16_t, std::pair<int, size_t>> rooms; // level, quarter tiles
+        for (int li = 0; li < lot.levelCount; ++li)
+            for (uint32_t x = 0; x < lot.width; ++x)
+                for (uint32_t y = 0; y < lot.height; ++y)
+                    for (uint16_t room : lot.rooms[(size_t(li) * lot.width + x) * lot.height + y])
+                        if (room) {
+                            auto& r = rooms[int16_t(room)];
+                            r.first = li + 1;
+                            ++r.second;
+                        }
+        for (const auto& [id, r] : rooms) {
+            VM::Room& room = vm.rooms[id];
+            room.values[2] = int16_t(r.first);
+            room.values[3] = int16_t(r.second / 4);
+            room.known = 0x0C;
+        }
+    }
+
     LotLoad out;
     for (const auto& s : saved.objects) {
         LotLoad::Entry e;

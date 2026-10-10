@@ -5,10 +5,12 @@
 #include "formats/gmdc.hpp"
 #include "formats/image.hpp"
 #include "formats/lot.hpp"
+#include "formats/lot_objects.hpp"
 #include "formats/lot_model.hpp"
 #include "formats/model.hpp"
 #include "formats/simantics.hpp"
 #include "formats/resindex.hpp"
+#include "vm/lot.hpp"
 #include "vm/vm.hpp"
 
 #include <algorithm>
@@ -572,6 +574,155 @@ int cmdBhavSweep(const std::filesystem::path& root) {
     return 0;
 }
 
+// Failure reason of a thread without the numbers that vary (IDs, counts),
+// unless it names a missing primitive or data owner.
+std::string failureReason(const vm::Thread& t) {
+    static const std::regex number("0x[0-9A-F]+|\\d+");
+    std::string reason = t.error.substr(0, t.error.find('\n'));
+    if (reason.find("not implemented") == std::string::npos)
+        reason = std::regex_replace(reason, number, "N");
+    return reason;
+}
+
+template <class M>
+std::vector<std::pair<size_t, typename M::key_type>> byCount(const M& m) {
+    std::vector<std::pair<size_t, typename M::key_type>> v;
+    for (const auto& [k, n] : m)
+        v.emplace_back(n, k);
+    std::sort(v.rbegin(), v.rend());
+    return v;
+}
+
+// Loads the objects of each lot into a VM (no rendering), runs every
+// object's Init, then ticks the Main threads, and reports how far they got.
+int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool list, int traceId) {
+    const auto root = resRootOf(lots.front());
+    if (root.empty())
+        throw std::runtime_error("the lot is not under a TSData/Res directory");
+    ResourceIndex index(root);
+    vm::CodeLibrary code(&index);
+    constexpr size_t kTop = 15;
+    int failed = 0;
+    for (const auto& path : lots) {
+        DbpfPackage pkg(path);
+        Lot lot;
+        try {
+            lot = Lot::load(pkg);
+        } catch (const std::exception& e) {
+            std::printf("%s: error: %s\n", path.filename().string().c_str(), e.what());
+            ++failed;
+            continue;
+        }
+        const LotObjects saved = LotObjects::load(pkg);
+        vm::VM machine(code);
+        machine.initCreatedObjects = true;
+        machine.instructionsPerTurn = 20000; // as bhav-sweep: the endless multi-tile loops end sooner
+        machine.setClockGlobals();
+        size_t traced = 0;
+        if (traceId)
+            machine.trace = [traceId, &traced](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
+                if (t.me != traceId || ++traced > 2000)
+                    return;
+                const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
+                std::printf("%*s0x%04X #%-3u %-30s %s\n", int(t.stack.size() - 1) * 2, "", f.instance, f.pc,
+                            op.c_str(), f.behavior->fileName.c_str());
+            };
+        const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(path));
+
+        std::map<std::string, size_t> unresolved, initOutcomes, mainOutcomes, reasons;
+        std::map<vm::ObjectId, std::string> initOf;
+        for (const auto& e : load.objects)
+            if (!e.created)
+                ++unresolved[std::regex_replace(e.error, std::regex("\"[^\"]*\"|0x[0-9A-F]+|N\\d+_User\\d+"), "X")];
+        for (const auto& e : load.objects) {
+            if (!e.created || !machine.object(e.id))
+                continue;
+            const auto t = machine.runFunction(e.id, 0);
+            std::string outcome = !t ? "no init" : statusName(*t);
+            if (t && t->status == vm::Thread::Status::Running)
+                outcome = "still running";
+            if (t && t->status == vm::Thread::Status::Failed)
+                ++reasons["init: " + failureReason(*t)];
+            ++initOutcomes[outcome];
+            initOf[e.id] = t && t->status == vm::Thread::Status::Failed ? "init failed: " + failureReason(*t) : outcome;
+        }
+        size_t mains = 0;
+        for (const auto& e : load.objects)
+            mains += e.created && machine.startMain(e.id);
+        for (long i = 0; i < ticks; ++i)
+            machine.tick();
+        for (const auto& [id, t] : machine.threads) {
+            ++mainOutcomes[t.status == vm::Thread::Status::Running ? "running (yielded)" : statusName(t)];
+            if (t.status == vm::Thread::Status::Failed)
+                ++reasons["main: " + failureReason(t)];
+        }
+        for (const auto& t : machine.createdInits)
+            if (t.status == vm::Thread::Status::Failed)
+                ++reasons["init of a created object: " + failureReason(t)];
+
+        std::printf("%s: %zu saved objects, %zu in the VM (%zu Sims), %zu objects now; %ld ticks (%02d:%02d)\n",
+                    path.filename().string().c_str(), load.objects.size(), load.created,
+                    size_t(std::count_if(load.objects.begin(), load.objects.end(),
+                                         [](const auto& e) { return e.created && e.person; })),
+                    machine.objects().size(), ticks, machine.clock.hour, machine.clock.minute);
+        std::map<std::string, size_t> warnings;
+        for (const auto& w : saved.warnings)
+            ++warnings[std::regex_replace(w, std::regex("state 0x[0-9A-F]+"), "state X")];
+        for (const auto& [n, w] : byCount(warnings))
+            std::printf("  warning: %zu x %s\n", n, w.c_str());
+        if (!unresolved.empty()) {
+            std::printf("  not created:\n");
+            for (const auto& [n, k] : byCount(unresolved))
+                std::printf("    %5zu %s\n", n, k.c_str());
+        }
+        std::printf("  init:");
+        for (const auto& [n, k] : byCount(initOutcomes))
+            std::printf(" %zu %s,", n, k.c_str());
+        std::printf("\n  main threads (%zu started):", mains);
+        for (const auto& [n, k] : byCount(mainOutcomes))
+            std::printf(" %zu %s,", n, k.c_str());
+        std::printf("\n  created while running: %zu (inits: %zu failed)\n", machine.createdInits.size(),
+                    size_t(std::count_if(machine.createdInits.begin(), machine.createdInits.end(),
+                                         [](const auto& t) { return t.status == vm::Thread::Status::Failed; })));
+        std::printf("  failure reasons:\n");
+        size_t shown = 0;
+        for (const auto& [n, k] : byCount(reasons))
+            if (shown++ < kTop)
+                std::printf("    %5zu %s\n", n, k.c_str());
+        std::printf("  missing primitives:");
+        shown = 0;
+        for (const auto& [n, op] : byCount(machine.missingPrimitives))
+            if (shown++ < kTop)
+                std::printf(" %s %zu,", primitiveName(op).c_str(), n);
+        std::printf("\n  missing data owners:");
+        for (const auto& [n, owner] : byCount(machine.missingOwners))
+            std::printf(" 0x%02X %zu,", owner, n);
+        std::printf("\n");
+        if (list)
+            for (const auto& e : load.objects) {
+                std::printf("  %5d %-45s ", e.id, e.name.c_str());
+                if (!e.created) {
+                    std::printf("not created: %s\n", e.error.c_str());
+                    continue;
+                }
+                const vm::Object* o = machine.object(e.id);
+                if (o)
+                    std::printf("(%.2f, %.2f, %d) dir %d in %d/%d; ", o->position.x, o->position.y, o->position.level,
+                                o->data[vm::objdata::Direction], o->data[vm::objdata::ContainerId],
+                                o->data[vm::objdata::SlotNumber]);
+                std::printf("init %s", initOf[e.id].c_str());
+                if (auto it = machine.threads.find(e.id); it != machine.threads.end())
+                    std::printf("; main %s%s", it->second.status == vm::Thread::Status::Running ? "running"
+                                                                                               : statusName(it->second),
+                                it->second.status == vm::Thread::Status::Failed
+                                    ? (": " + failureReason(it->second)).c_str()
+                                    : "");
+                std::printf("\n");
+            }
+    }
+    return failed ? 1 : 0;
+}
+
 int usage() {
     std::fprintf(stderr, "usage: s2pkg ls|stats|verify|decode-all <file.package>\n"
                          "       s2pkg dump <file.package> <TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII>\n"
@@ -585,6 +736,7 @@ int usage() {
                          "       s2pkg lot <Res-dir> <lot.package>...\n"
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
+                         "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id]\n"
                          "%s", animUsage());
     return 2;
 }
@@ -602,6 +754,26 @@ int main(int argc, char** argv) {
         if (cmd == "object" && argc == 5) return cmdObject(argv[2], argv[3], argv[4]);
         if (cmd == "lot" && argc >= 4) return cmdLot(argv[2], {argv + 3, argv + argc});
         if (cmd == "bhav-sweep" && argc == 3) return cmdBhavSweep(argv[2]);
+        if (cmd == "lot-run") {
+            std::vector<std::filesystem::path> lots;
+            long ticks = 300;
+            bool list = false;
+            int traceId = 0;
+            for (int i = 2; i < argc; ++i) {
+                const std::string a = argv[i];
+                if (a == "--ticks" && i + 1 < argc)
+                    ticks = std::stol(argv[++i]);
+                else if (a == "--list")
+                    list = true;
+                else if (a == "--trace" && i + 1 < argc)
+                    traceId = std::stoi(argv[++i]);
+                else
+                    lots.emplace_back(a);
+            }
+            if (lots.empty())
+                return usage();
+            return cmdLotRun(lots, ticks, list, traceId);
+        }
         if (cmd == "bhav" && argc >= 5) {
             std::vector<int16_t> args;
             for (int i = 5; i < argc; ++i)

@@ -683,7 +683,7 @@ static void testDefinitionOwners() {
     fx.code.add(kGlobalGroup, 0x140, Constants{"", 0, {0, 30, 48, 60}});
     fx.vm.instantiate(kObjGroup, 0x81); // id 1: me
     fx.vm.instantiate(kObjGroup, 0x81); // id 2: another part of the same type
-    fx.vm.rooms[2] = {100, 0, 1, 12, 0, 2};
+    fx.vm.rooms[2].values = {100, 0, 1, 12, 0, 2};
     constexpr uint8_t Room = 0x17, Function = 0x23, MyType = 0x24, SType = 0x25, ConstTemp = 0x2F, Master = 0x33;
     fx.code.add(kObjGroup, 0x1000,
                 tree({expr(StackId, 0, Assign, Lit, 2, go(1), E),
@@ -874,7 +874,7 @@ static void testSavedObjectState() {
     check(s.data.size() == 88 && s.data[1] == 4 && s.data[2] == 615 && s.data[11] == 1, "saved object data");
     bool threw = false;
     try {
-        LotObjects::parseState(b, 0xB0);
+        LotObjects::parseState(b, 0xC0);
     } catch (const std::exception&) {
         threw = true;
     }
@@ -916,6 +916,15 @@ static void testSlots() {
     fx.code.add(kObjGroup, 0x1002, tree({expr(Temp, 0, Assign, MySlot, -1, T, E)}));
     t = fx.run(0x1002);
     check(t.status == Thread::Status::Failed, "negative slot");
+
+    // A lot's rooms know only some of their values.
+    fx.vm.rooms[4].values = {0, 0, 2, 12, 0, 0};
+    fx.vm.rooms[4].known = 0x0C;
+    fx.code.add(kObjGroup, 0x1003, tree({expr(Temp, 0, Assign, Lit, 4, go(1), E), expr(Temp, 1, Assign, 0x17, 3, go(2), E),
+                                         expr(Temp, 2, Assign, 0x17, 1, T, E)}));
+    t = fx.run(0x1003);
+    check(t.status == Thread::Status::Failed && t.temps[1] == 12 && t.error.find("outside not known") != std::string::npos,
+          "unknown room values fail");
 }
 
 // Scheduler: Init runs to completion (its sleeps do not wait for ticks), Main
