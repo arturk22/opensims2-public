@@ -245,18 +245,23 @@ LevelInfo LevelInfo::read(BinReader& r) {
     return l;
 }
 
-TextureLevels loadTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index) {
+namespace {
+
+ImageData parseImageData(std::span<const uint8_t> txtrResource) {
     Rcol rc(txtrResource);
     const auto* block = rc.find("cImageData");
     if (!block)
         throw FormatError("TXTR without cImageData");
-    const auto img = ImageData::parse(block->body);
+    auto img = ImageData::parse(block->body);
     if (img.textures.empty() || img.textures[0].mips.empty())
         throw FormatError("TXTR without mip levels");
+    return img;
+}
 
+TextureLevels levelsOf(const ImageData& img, size_t texture, ResourceIndex* index) {
     TextureLevels out;
     out.format = img.format;
-    const auto& mips = img.textures[0].mips;
+    const auto& mips = img.textures[texture].mips;
     std::string missing;
     for (size_t i = mips.size(); i-- > 0;) {
         const auto& m = mips[i];
@@ -288,6 +293,20 @@ TextureLevels loadTextureLevels(std::span<const uint8_t> txtrResource, ResourceI
     }
     if (out.levels.empty())
         throw FormatError("no loadable mip level (missing LIFO " + missing + ")");
+    return out;
+}
+
+} // namespace
+
+TextureLevels loadTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index) {
+    return levelsOf(parseImageData(txtrResource), 0, index);
+}
+
+std::vector<TextureLevels> loadAllTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index) {
+    const auto img = parseImageData(txtrResource);
+    std::vector<TextureLevels> out;
+    for (size_t t = 0; t < img.textures.size(); ++t)
+        out.push_back(levelsOf(img, t, index));
     return out;
 }
 

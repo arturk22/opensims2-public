@@ -95,6 +95,9 @@ struct TextureLevels {
     std::vector<Level> levels;
 };
 TextureLevels loadTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index);
+// Every texture of a TXTR (six for an env cube: +X, -X, +Y, -Y, +Z, -Z in
+// Direct3D order), each loaded like loadTextureLevels.
+std::vector<TextureLevels> loadAllTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index);
 
 // Largest loadable level of a TXTR resource, decoded.
 RgbaImage loadTexture(std::span<const uint8_t> txtrResource, ResourceIndex* index);
