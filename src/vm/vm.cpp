@@ -92,6 +92,14 @@ const StringTable* CodeLibrary::strings(uint32_t group, uint16_t instance) {
     return loadCached(strings_, index_, kTypeStr, group, instance);
 }
 
+const Slots* CodeLibrary::slots(uint32_t group, uint16_t instance) {
+    return loadCached(slots_, index_, kTypeSlot, group, instance);
+}
+
+void CodeLibrary::add(uint32_t group, uint16_t instance, Slots sl) {
+    slots_[key(group, instance)] = std::make_unique<Slots>(std::move(sl));
+}
+
 std::optional<uint16_t> CodeLibrary::behaviorByName(uint32_t group, const std::string& name) {
     if (!namesScanned_ && index_) {
         namesScanned_ = true;
@@ -170,6 +178,7 @@ std::vector<uint16_t> CodeLibrary::addPackage(DbpfPackage& pkg, uint32_t group) 
         case kTypeBcon: add(group, instance, Constants::parse(pkg.read(e))); break;
         case kTypeStr: add(group, instance, StringTable::parse(pkg.read(e))); break;
         case kTypeObjf: add(group, instance, ObjectFunctions::parse(pkg.read(e))); break;
+        case kTypeSlot: add(group, instance, Slots::parse(pkg.read(e))); break;
         case kTypeGlob: semi = semiGlobalGroup(SemiGlobal::parse(pkg.read(e)).semiGlobalName); break;
         case kTypeObjd: {
             auto d = ObjectDefinition::parse(pkg.read(e));
@@ -436,6 +445,12 @@ static void setTokenField(TempToken& t, int16_t field, int16_t value) {
     }
 }
 
+static int16_t slotIndex(int16_t slot) {
+    if (slot < 0)
+        throw VMError("slot " + std::to_string(slot) + " out of range");
+    return slot;
+}
+
 int16_t Context::get(uint8_t owner, int16_t data) const {
     if (int16_t* v = storage(*this, owner, data))
         return *v;
@@ -473,6 +488,13 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
         const auto& c = vm.resolveConstants(*owner, scope, uint16_t((data & 0x1FFF) >> 3));
         return slot(c.values, thread.temps[size_t(data & 7)], "constant [temp]");
     }
+    // Slots: the object in a slot of mine / of the stack object, 0 if the slot
+    // is empty; the slot is `data` or the temp it names. FreeSO reads slots the
+    // same way, and also gives 0 past the object's last slot.
+    case 0x10: return vm.containedIn(stackObject().id, slotIndex(data));
+    case 0x14: return vm.containedIn(me().id, slotIndex(data));
+    case 0x30: return vm.containedIn(me().id, slotIndex(slot(thread.temps, data, "temp")));
+    case 0x31: return vm.containedIn(stackObject().id, slotIndex(slot(thread.temps, data, "temp")));
     case 0x18: return neighborField(*this, data);
     case 0x26: {
         auto def = vm.code().definitionByGuid(stackNeighbor(*this).guid);
@@ -505,6 +527,10 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
     case 0x27: setTokenField(me().tempToken, data, value); return;
     case 0x28: setTokenField(stackObject().tempToken, data, value); return;
     case 0x07:
+    case 0x10: // slots change by moving objects, not by writing to them
+    case 0x14:
+    case 0x30:
+    case 0x31:
     case 0x15: // the editor marks only some definition fields read-only; writes are not supported yet
     case 0x17:
     case 0x18:
@@ -576,6 +602,12 @@ Object& VM::instantiatePart(uint32_t group, uint16_t definitionInstance, ObjectI
     Object& o = createObject(group, std::max<size_t>(def->numAttributes(), code_.attributeLabelCount(group)), id);
     o.definition = def;
     o.definitionInstance = definitionInstance;
+    // Engine-maintained, as the lots' saved states show (600 of the 665 objects
+    // of N001_Lot11; the rest are multi-tile parts and leftovers): the
+    // number of container slots (type 0) of the object's SLOT.
+    if (const Slots* sl = code_.slots(group, def->slotId()))
+        o.data[objdata::SlotCount] = int16_t(std::count_if(sl->slots.begin(), sl->slots.end(),
+                                                           [](const Slots::Slot& x) { return x.type == 0; }));
     if (def->objectType() == kObjectTypePerson)
         o.person.emplace();
     return o;

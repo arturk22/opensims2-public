@@ -881,6 +881,43 @@ static void testSavedObjectState() {
     check(threw, "other versions are not guessed at");
 }
 
+// Slots: data owners 0x14/0x10 (my / stack object's slot), 0x30/0x31 (slot in
+// a temp) give the object in that slot of the container, 0 if empty; the slot
+// count comes from the SLOT the OBJD names.
+static void testSlots() {
+    Fixture fx;
+    ObjectDefinition counter = definition(0x0C0C0C0C);
+    counter.fields[(0x68 - 0x44) / 2] = 0x80; // slots id
+    fx.code.add(kObjGroup, 0x80, std::move(counter));
+    Slots sl;
+    sl.slots.resize(3);
+    sl.slots[1].type = 3; // a target slot; the others are containers
+    fx.code.add(kObjGroup, 0x80, std::move(sl));
+    Object& c = fx.vm.instantiate(kObjGroup, 0x80);   // id 1
+    Object& plate = fx.vm.createObject(kObjGroup);     // id 2, in slot 1 of 1
+    Object& other = fx.vm.createObject(kObjGroup);     // id 3, holds 1 in its slot 0
+    check(c.data[objdata::SlotCount] == 2, "slot count from the SLOT's container slots");
+    plate.data[objdata::ContainerId] = c.id, plate.data[objdata::SlotNumber] = 1;
+    c.data[objdata::ContainerId] = other.id, c.data[objdata::SlotNumber] = 0;
+    check(fx.vm.containedIn(c.id, 1) == plate.id && fx.vm.containedIn(c.id, 0) == 0, "containment");
+    enum : uint8_t { SSlot = 0x10, MySlot = 0x14, MySlotTemp = 0x30, SSlotTemp = 0x31 };
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, other.id, go(1), E), expr(Temp, 0, Assign, MySlot, 1, go(2), E),
+                      expr(Temp, 1, Assign, MySlot, 0, go(3), E), expr(Temp, 5, Assign, Lit, 1, go(4), E),
+                      expr(Temp, 2, Assign, MySlotTemp, 5, go(5), E), expr(Temp, 3, Assign, SSlot, 0, go(6), E),
+                      expr(Temp, 6, Assign, Lit, 0, go(7), E), expr(Temp, 4, Assign, SSlotTemp, 6, T, E)}));
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Finished && t.temps[0] == plate.id && t.temps[1] == 0 &&
+              t.temps[2] == plate.id && t.temps[3] == c.id && t.temps[4] == c.id,
+          "slot data owners");
+    fx.code.add(kObjGroup, 0x1001, tree({expr(MySlot, 0, Assign, Lit, 2, T, E)}));
+    t = fx.run(0x1001);
+    check(t.status == Thread::Status::Failed && t.error.find("read-only") != std::string::npos, "slots are read-only");
+    fx.code.add(kObjGroup, 0x1002, tree({expr(Temp, 0, Assign, MySlot, -1, T, E)}));
+    t = fx.run(0x1002);
+    check(t.status == Thread::Status::Failed, "negative slot");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -905,6 +942,7 @@ int main() {
     testMultiTileAndIds();
     testAddPackage();
     testSavedObjectState();
+    testSlots();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

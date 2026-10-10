@@ -41,6 +41,7 @@ uint32_t semiGlobalGroup(std::string_view name);
 
 constexpr uint32_t kTypeObjd = 0x4F424A44;
 constexpr uint32_t kTypeStr = 0x53545223;
+constexpr uint32_t kTypeSlot = 0x534C4F54;
 
 // STR# with the tree names Run Tree by Name refers to ("Call Named Tree prim
 // string set"), in object, semi-global and global groups.
@@ -72,6 +73,7 @@ constexpr int16_t ObjectId = 11;
 constexpr int16_t LeadTileObjectId = 19;
 constexpr int16_t Room = 29;
 constexpr int16_t Category = 59;
+constexpr int16_t SlotCount = 67;
 constexpr int16_t SemiAttributeCount = 79;
 } // namespace objdata
 
@@ -185,6 +187,8 @@ public:
     const Constants* constants(uint32_t group, uint16_t instance);
     const ObjectDefinition* definition(uint32_t group, uint16_t instance);
     const StringTable* strings(uint32_t group, uint16_t instance);
+    // SLOT (group, instance): an object's slots, named by its OBJD "slots id".
+    const Slots* slots(uint32_t group, uint16_t instance);
     // Instance of the BHAV of `group` with this file name; the first call reads
     // the name of every BHAV.
     std::optional<uint16_t> behaviorByName(uint32_t group, const std::string& name);
@@ -211,6 +215,7 @@ public:
     void add(uint32_t group, uint16_t instance, Constants c);
     void add(uint32_t group, uint16_t instance, ObjectDefinition d);
     void add(uint32_t group, uint16_t instance, StringTable t);
+    void add(uint32_t group, uint16_t instance, Slots s);
     void add(uint32_t group, uint16_t instance, ObjectFunctions f);
     void setSemiGlobal(uint32_t group, uint32_t semiGroup) { semiGlobals_[group] = semiGroup; }
     void setAttributeLabelCount(uint32_t group, size_t n) { labelCounts_[group] = n; }
@@ -230,6 +235,7 @@ private:
     Cache<Constants> constants_;
     Cache<ObjectDefinition> definitions_;
     Cache<StringTable> strings_;
+    Cache<Slots> slots_;
     Cache<ObjectFunctions> functions_;
     std::map<std::pair<uint32_t, uint16_t>, uint16_t> masters_;
     std::map<std::pair<uint32_t, uint16_t>, std::vector<uint16_t>> parts_;
@@ -390,6 +396,7 @@ public:
     // Containment: an object is in slot "slot number" (object data 3) of the
     // object "container id" (object data 2); outside of any slot those are 0
     // and -1, as in the lot's saved state. The object in that slot, or 0.
+    // Data owners 0x10/0x14/0x30/0x31 read slots this way.
     ObjectId containedIn(ObjectId container, int16_t slot) const;
 
     std::array<int16_t, kGlobalCount> globals{};
