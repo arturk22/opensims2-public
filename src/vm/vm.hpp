@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -71,7 +72,34 @@ constexpr int16_t SemiAttributeCount = 79;
 namespace persondata {
 constexpr int16_t NeighborId = 31;
 constexpr int16_t PersonAge = 58;
+constexpr int16_t FamilyNumber = 61;
 } // namespace persondata
+
+// Globals the engine reads or writes (names as in STR# 0x81).
+namespace global {
+constexpr int16_t SelectedPersonId = 3;
+constexpr int16_t CurrentFamily = 9;
+constexpr int16_t Speed = 16;
+constexpr int16_t Paused = 17;
+constexpr int16_t HouseRadioStation = 31;
+} // namespace global
+
+// Families hold at most 8 Sims (the game's limit; Generic Sims Call "add to
+// family" fails past it).
+constexpr size_t kMaxFamilySize = 8;
+
+// A Generic Sims Call (or other primitive) that asks the engine for something
+// outside the simulation: camera, UI, loading, lot transitions, ... It is
+// recorded for the host to act on, with the state the call reads its
+// arguments from (STR# 0xDC documents them in the temps).
+struct EngineRequest {
+    uint8_t call = 0; // Generic Sims Call index (STR# 0xDC)
+    int16_t me = 0;
+    int16_t stackObject = 0;
+    std::array<int16_t, kTempCount> temps{};
+};
+// Requests the host has not taken yet; the oldest are dropped past this.
+constexpr size_t kMaxEngineRequests = 1024;
 
 // Object arrays (Array Operation, data owners 0x29-0x2E) are created on
 // demand; this bounds their number and length.
@@ -325,6 +353,18 @@ public:
     }
 
     std::mt19937 random{0x5132};
+
+    // Engine requests not yet taken by the host (oldest first), and the
+    // switches Generic Sims Call flips: build/buy buttons and game state
+    // transitions (saving, quitting, lot transitions).
+    std::deque<EngineRequest> engineRequests;
+    void request(EngineRequest r) {
+        if (engineRequests.size() >= kMaxEngineRequests)
+            engineRequests.pop_front();
+        engineRequests.push_back(r);
+    }
+    bool buildBuyEnabled = true;
+    bool gameStateTransitionsEnabled = true;
 
     void setPrimitive(uint16_t opcode, Primitive p) { primitives_[opcode] = std::move(p); }
 

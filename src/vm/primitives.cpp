@@ -598,10 +598,116 @@ Exit manageInventory(Context& c) {
     }
 }
 
+// Person data of a neighbor: its Sim's while it is on the lot, else the
+// neighborhood's copy (as data owner 0x20 sees it).
+std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor& n) {
+    if (Object* sim = vm.neighborSim(id))
+        return sim->person->data;
+    return n.personData;
+}
+
+// Generic Sims Call (0x01): call index u8 at 0 (the other bytes are 0); the
+// arguments and results are in the temps, as the editor's labels describe each
+// call (STR# 0xDC, 54 calls). Calls that only ask the engine for something
+// outside the simulation (camera, UI, preloading, lot loading and transitions,
+// tutorial state, the Sim's 3D look, the wants recalculation) are recorded in
+// VM::engineRequests and return true. Implemented in the VM: 4 add to family
+// (neighbor in the stack object; family in temp 0, 0 = the current family,
+// negative = a new one; false without the neighbor or when the family has 8
+// Sims), 6 remove from family, 10/11 build and buy off/on, 13 abort the
+// interactions of the stack object (queued ones), 14 house radio station, 18
+// simulator speed (0 pause, 1 unpause, 2-4 into the Speed global as is), 25
+// selected Sim, 40 game state transitions off/on, 48 remapped neighbor ID
+// (false: there are no imported lots). 7 is deprecated ("tree error" in the
+// labels). The rest need the neighborhood, outfits or the world.
+Exit genericSimsCall(Context& c) {
+    const uint8_t call = c.instruction.operands[0];
+    auto& temps = c.thread.temps;
+    auto& vm = c.vm;
+    auto request = [&] {
+        vm.request({call, c.thread.me, c.frame.stackObject, temps});
+        return Exit::True;
+    };
+    switch (call) {
+    case 0:  // exit lot
+    case 1:  // center view on stack object
+    case 2:  // set action icon to stack object
+    case 3:  // uncenter view
+    case 8:  // family tutorial complete
+    case 9:  // architecture tutorial complete
+    case 15: // my routing footprint := temp 0
+    case 16: // change normal outfit
+    case 17: // swap lot (temp 0)
+    case 19: // swap lot to the lot of the family of neighbor in temp 0
+    case 20: // swap lot via family in temp 0
+    case 24: // preload new Sim age
+    case 26: // start lot transition
+    case 29: // preload visitor
+    case 30: // preload clothing
+    case 31: // preload object
+    case 33: // update footprint
+    case 37: // lot transition done
+    case 38: // unlink character
+    case 39: // force recalc of wants
+    case 41: // facial overlay zits toggle
+    case 42: // Sim fitness update
+    case 44: // hide/unhide puck
+    case 45: // copy last name
+    case 46: // set Sim hair override
+    case 47: // clear Sim hair override
+    case 51: // show info on lot loading screen
+    case 53: // set facial overlay state
+        return request();
+    case 4: { // add to family
+        Neighbor* n = vm.neighbor(c.frame.stackObject);
+        if (!n)
+            return Exit::False;
+        int16_t family = temps[0] ? temps[0] : vm.globals[global::CurrentFamily];
+        if (family <= 0) {
+            family = std::max<int16_t>(vm.globals[global::CurrentFamily], 0);
+            for (auto& [id, other] : vm.neighbors)
+                family = std::max(family, neighborData(vm, id, other)[persondata::FamilyNumber]);
+            ++family;
+        }
+        size_t members = 0;
+        for (auto& [id, other] : vm.neighbors)
+            members += id != c.frame.stackObject && neighborData(vm, id, other)[persondata::FamilyNumber] == family;
+        if (members >= kMaxFamilySize)
+            return Exit::False;
+        neighborData(vm, c.frame.stackObject, *n)[persondata::FamilyNumber] = family;
+        return Exit::True;
+    }
+    case 6: { // remove from family
+        Neighbor* n = vm.neighbor(c.frame.stackObject);
+        if (!n)
+            return Exit::False;
+        neighborData(vm, c.frame.stackObject, *n)[persondata::FamilyNumber] = 0;
+        return Exit::True;
+    }
+    case 7: throw VMError("Generic Sims Call: 7 (make new neighbor) is deprecated");
+    case 10:
+    case 11: vm.buildBuyEnabled = call == 11; return Exit::True;
+    case 14: vm.globals[global::HouseRadioStation] = temps[0]; return Exit::True;
+    case 18:
+        if (temps[0] < 0 || temps[0] > 4)
+            throw VMError("Generic Sims Call: simulator speed " + std::to_string(temps[0]) + " out of range");
+        if (temps[0] <= 1)
+            vm.globals[global::Paused] = temps[0] == 0;
+        else
+            vm.globals[global::Speed] = temps[0], vm.globals[global::Paused] = 0;
+        return Exit::True;
+    case 25: vm.globals[global::SelectedPersonId] = temps[0]; return Exit::True;
+    case 40: vm.gameStateTransitionsEnabled = temps[0] != 0; return Exit::True;
+    case 48: return Exit::False;
+    default: throw VMError("Generic Sims Call: " + std::to_string(call) + " not implemented");
+    }
+}
+
 } // namespace
 
 void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x00, countDownParam);
+    vm.setPrimitive(0x01, genericSimsCall);
     vm.setPrimitive(0x02, expression);
     vm.setPrimitive(0x08, randomNumber);
     vm.setPrimitive(0x0F, breakPoint);

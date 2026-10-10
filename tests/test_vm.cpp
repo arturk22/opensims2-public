@@ -567,6 +567,43 @@ static void testNeighbors() {
           "neighbor searches and neighbor data owners");
 }
 
+static void testGenericSimsCall() {
+    Fixture fx;
+    fx.obj();
+    Object& sim = fx.vm.createObject(kObjGroup); // id 2, a Sim on the lot (neighbor 5)
+    sim.person.emplace();
+    sim.person->data[persondata::NeighborId] = 5;
+    fx.vm.neighbors[5] = {};
+    fx.vm.neighbors[6] = {};
+    fx.vm.neighbors[6].personData[persondata::FamilyNumber] = 3;
+    fx.vm.globals[global::CurrentFamily] = 3;
+    auto call = [](uint8_t i, Target t, Target f = E) { return instr(0x01, t, f, {i}); };
+    fx.code.add(kObjGroup, 0x1000,
+                tree({call(39, go(1)),                                    // recalc wants: recorded
+                      expr(StackId, 0, Assign, Lit, 5, go(2), E),
+                      expr(Temp, 0, Assign, Lit, 0, go(3), E),
+                      call(4, go(4)),                                     // neighbor 5 joins family 3
+                      expr(Temp, 0, Assign, Lit, -1, go(5), E),
+                      expr(StackId, 0, Assign, Lit, 6, go(6), E),
+                      call(4, go(7)),                                     // neighbor 6 gets a new family: 4
+                      expr(StackId, 0, Assign, Lit, 9, go(8), E),
+                      call(6, E, go(9)),                                  // no neighbor 9
+                      call(10, go(10)),
+                      expr(Temp, 0, Assign, Lit, 0, go(11), E),
+                      call(18, go(12)),                                   // pause
+                      expr(Temp, 0, Assign, Lit, 2, go(13), E),
+                      call(25, go(14)),                                   // selected Sim := 2
+                      call(48, E, go(15)),                                // no remapped IDs
+                      call(32, T)}));                                     // outfits: not implemented
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Failed && t.error.find("32 not implemented") != std::string::npos &&
+              fx.vm.engineRequests.size() == 1 && fx.vm.engineRequests[0].call == 39 &&
+              sim.person->data[persondata::FamilyNumber] == 3 && fx.vm.neighbors[5].personData[persondata::FamilyNumber] == 0 &&
+              fx.vm.neighbors[6].personData[persondata::FamilyNumber] == 4 && !fx.vm.buildBuyEnabled &&
+              fx.vm.globals[global::Paused] == 1 && fx.vm.globals[global::SelectedPersonId] == 2,
+          "Generic Sims Call");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -583,6 +620,7 @@ int main() {
     testManageInventory();
     testSetToNextSearches();
     testNeighbors();
+    testGenericSimsCall();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
