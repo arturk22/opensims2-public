@@ -92,6 +92,59 @@ int cmdVerify(DbpfPackage& pkg) {
     return failed ? 1 : 0;
 }
 
+// Rewrite a package. Default keeps the stored bytes; "recompress" reruns our
+// QFS encoder on the resources that were compressed, "decompress" stores all raw.
+int cmdRepack(DbpfPackage& pkg, const std::filesystem::path& out, const std::string& mode) {
+    if (!mode.empty() && mode != "--recompress" && mode != "--decompress")
+        throw std::runtime_error("unknown repack option '" + mode + "'");
+    DbpfWriter w;
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.type == type::DIR)
+            continue;
+        if (mode.empty())
+            w.addStored(e.tgi, pkg.readRaw(e), e.rawSize);
+        else
+            w.add(e.tgi, pkg.read(e), mode == "--recompress" && e.compressed());
+    }
+    pkg.closeFile();
+    w.save(out);
+    DbpfPackage written(out);
+    size_t compressed = 0;
+    for (const auto& e : written.entries())
+        compressed += e.compressed();
+    std::printf("%s: %zu resources (%zu compressed), %llu bytes\n", out.string().c_str(), w.size(), compressed,
+                (unsigned long long)std::filesystem::file_size(out));
+    return 0;
+}
+
+// Same TGIs with the same decompressed bytes (DIR excluded, order ignored).
+int cmdCompare(DbpfPackage& a, DbpfPackage& b) {
+    size_t same = 0, differ = 0, missing = 0;
+    auto count = [](DbpfPackage& p) {
+        size_t n = 0;
+        for (const auto& e : p.entries())
+            n += e.tgi.type != type::DIR;
+        return n;
+    };
+    for (const auto& e : a.entries()) {
+        if (e.tgi.type == type::DIR)
+            continue;
+        const auto* o = b.find(e.tgi);
+        if (!o) {
+            ++missing;
+            std::fprintf(stderr, "%s: missing\n", tgiString(e.tgi).c_str());
+        } else if (a.read(e) != b.read(*o)) {
+            ++differ;
+            std::fprintf(stderr, "%s: differs\n", tgiString(e.tgi).c_str());
+        } else {
+            ++same;
+        }
+    }
+    const size_t extra = count(b) > same + differ ? count(b) - same - differ : 0;
+    std::printf("%zu same, %zu differ, %zu missing, %zu extra\n", same, differ, missing, extra);
+    return differ || missing || extra ? 1 : 0;
+}
+
 Tgi parseTgi(const std::string& s) {
     Tgi k;
     if (std::sscanf(s.c_str(), "%x-%x-%x-%x", &k.type, &k.group, &k.instanceHi, &k.instance) != 4)
@@ -522,6 +575,8 @@ int usage() {
     std::fprintf(stderr, "usage: s2pkg ls|stats|verify|decode-all <file.package>\n"
                          "       s2pkg dump <file.package> <TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII>\n"
                          "       s2pkg extract <file.package> <out-dir>\n"
+                         "       s2pkg repack <in.package> <out.package> [--recompress|--decompress]\n"
+                         "       s2pkg compare <a.package> <b.package>\n"
                          "       s2pkg texture <file.package> <tgi> <out.png>\n"
                          "       s2pkg mesh <file.package> <tgi> <out.obj>\n"
                          "       s2pkg find <Res-dir> <name> <type-hex>\n"
@@ -557,6 +612,11 @@ int main(int argc, char** argv) {
         if (cmd == "decode-all") return cmdDecodeAll(pkg);
         if (cmd == "dump" && argc == 4) return cmdDump(pkg, parseTgi(argv[3]));
         if (cmd == "extract" && argc == 4) return cmdExtract(pkg, argv[3]);
+        if (cmd == "repack" && (argc == 4 || argc == 5)) return cmdRepack(pkg, argv[3], argc == 5 ? argv[4] : "");
+        if (cmd == "compare" && argc == 4) {
+            DbpfPackage other(argv[3]);
+            return cmdCompare(pkg, other);
+        }
         if (cmd == "texture" && argc == 5) return cmdTexture(pkg, parseTgi(argv[3]), argv[4]);
         if (cmd == "mesh" && argc == 5) return cmdMesh(pkg, parseTgi(argv[3]), argv[4]);
         return usage();
