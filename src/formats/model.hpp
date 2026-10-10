@@ -59,7 +59,11 @@ struct StandardMaterial {
 
     std::string baseTexture; // TXTR name, empty if untextured
     std::array<float, 3> diffuse{1, 1, 1};
+    std::array<float, 3> specular{0, 0, 0};
+    float specularPower = 20.0f; // most common value; absent in about a third of the materials
+    std::array<float, 3> emissive{0, 0, 0};
     float alphaMultiplier = 1.0f;
+    float untexturedAlpha = 1.0f; // diffuse alpha when there is no base texture
     Blend blend = Blend::None;
     bool alphaTest = false;
     float alphaRef = 127.0f / 255.0f;

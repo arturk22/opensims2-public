@@ -1,6 +1,7 @@
 // Offscreen rendering checks: materials (color, blending, culling) reach the
 // framebuffer as expected. Needs a Metal device.
 #include "formats/image.hpp"
+#include "formats/lighting_config.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "render/camera.hpp"
@@ -112,6 +113,33 @@ int main() {
     img = r.capture(64, 64, view, clear);
     p = center(img);
     check(near(p[0], 128) && p[1] == 0, "null material hidden");
+
+    // Lighting: diffuse x (ambient + lights) saturates, then specular adds on top.
+    {
+        Renderer lit(device, uint32_t(MTL::PixelFormatBGRA8Unorm), uint32_t(MTL::PixelFormatDepth32Float));
+        LightingState state;
+        state.name = "test";
+        state.skyColor = {1, 1, 1};
+        state.skyStrength = 0.25f;
+        state.lights.push_back({"sun", {0, 0, 1}, {1, 1, 1}, 0.25f});        // straight down
+        state.lights.push_back({"simFill1", {0, 0, 1}, {1, 1, 1}, 10.0f});  // Sims only: ignored
+        state.lights.push_back({"under", {0, 0, -1}, {1, 1, 1}, 10.0f});    // lights the underside only
+        lit.setLighting(state);
+        ObjectModel grey;
+        grey.name = "grey";
+        grey.parts.push_back({"n", "s", "grey", quad(2)});
+        MaterialDefinition m = material("0.8,0.4,2", "none", "1");
+        for (auto& [k, v] : m.properties)
+            if (k == "stdMatLightingEnabled")
+                v = "1";
+        m.properties.push_back({"stdMatEmissiveCoef", "0,0.1,0"});
+        grey.materials["grey"] = m;
+        lit.addInstance(lit.addObject(grey, index), matrix_identity_float4x4);
+        img = lit.capture(64, 64, view, clear);
+        p = center(img);
+        // 0.8 * (0.25 + 0.25) = 0.4; 0.1 + 0.4 * 0.5 = 0.3; 2 * 0.5 saturates at 1.
+        check(near(p[0], 102) && near(p[1], 77) && p[2] == 255, "diffuse, emissive and saturation");
+    }
 
     device->release();
     if (failures)

@@ -4,7 +4,8 @@
 //
 // Camera controls: WASD/arrows pan, Q/E or ,/. rotate, Z/X, +/- or the wheel
 // zoom, R/F or Page Up/Down tilt, right/middle drag rotates and tilts freely,
-// Home resets.
+// Home resets. --lighting <state> picks a lighting state from Lighting.txt
+// (day, night, neighbourhood, ...).
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -15,6 +16,7 @@
 
 #include "formats/camera_config.hpp"
 #include "formats/image.hpp"
+#include "formats/lighting_config.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "render/camera.hpp"
@@ -36,6 +38,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kCameraConfig = "TSData/Res/UserData/Cameras/cameras.txt";
+constexpr const char* kLightingConfig = "TSData/Res/Lights/Lighting.txt";
 
 // The extracted game (data/game): --data <dir>, else $OS2_DATA, else the first
 // data/game found walking up from the executable (the repo when run from build/).
@@ -119,6 +122,17 @@ std::optional<std::string> argument(NSString* name) {
         if ([args[i] isEqualToString:name])
             return std::string(args[i + 1].UTF8String);
     return std::nullopt;
+}
+
+// Lighting state from the game's Lighting.txt: --lighting <name>, else "day".
+void applyLighting(os2::Renderer& renderer) {
+    const std::string name = argument(@"--lighting").value_or("day");
+    const fs::path path = gameDir() / kLightingConfig;
+    const os2::LightingConfig cfg = os2::loadLightingConfig(path);
+    const os2::LightingState* state = cfg.state(name);
+    if (!state)
+        throw std::runtime_error("no lighting state \"" + name + "\" in " + path.string());
+    renderer.setLighting(*state);
 }
 
 // Virtual key codes (layout independent).
@@ -303,6 +317,7 @@ enum Key : unsigned short {
     try {
         [view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
         _viewDelegate = [[OS2ViewDelegate alloc] initWithView:view];
+        applyLighting(*_viewDelegate.renderer);
         view.camera->setPivot(loadObjects(*_viewDelegate.renderer));
         // --zoom <levels> / --orientation <steps>: start the camera that many steps from its default.
         if (auto z = argument(@"--zoom"))

@@ -4,6 +4,7 @@
 #include "texture.hpp"
 
 #include "formats/image.hpp"
+#include "formats/lighting_config.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
 
@@ -12,6 +13,7 @@
 #include <QuartzCore/QuartzCore.hpp>
 #include <dispatch/dispatch.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <utility>
 #include <stdexcept>
@@ -36,13 +38,25 @@ enum : uint32_t { kLighting = 1, kAlphaTest = 2, kChecker = 4 };
 struct Draw {
     simd_float4x4 model;
     simd_float4 color;
+    simd_float4 specular;
+    simd_float4 emissive;
     float alphaRef;
     uint32_t flags;
 };
 
+constexpr size_t kMaxLights = 8;
+
+struct Light {
+    simd_float4 direction;
+    simd_float4 color;
+};
+
 struct Frame {
     simd_float4x4 viewProj;
-    simd_float4 lightDir;
+    simd_float4 eye;
+    simd_float4 ambient;
+    Light lights[kMaxLights];
+    uint32_t lightCount;
 };
 
 simd_float4x4 identity() { return matrix_identity_float4x4; }
@@ -98,6 +112,8 @@ dispatch_semaphore_t sema(void* p) { return static_cast<dispatch_semaphore_t>(p)
 struct Renderer::Material {
     MTL::Texture* texture = nullptr; // not owned (cache or white)
     simd_float4 color{1, 1, 1, 1};
+    simd_float4 specular{0, 0, 0, 1}; // power in w
+    simd_float4 emissive{0, 0, 0, 0};
     float alphaRef = 0.5f;
     uint32_t flags = kLighting;
     StandardMaterial::Blend blend = StandardMaterial::Blend::None;
@@ -127,6 +143,8 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
 
     queue_ = device_->newCommandQueue();
+    // Until setLighting: soft grey ambient and one light from above.
+    lights_.push_back({simd_normalize(simd_make_float3(0.4f, 0.6f, 1.0f)), simd_make_float3(0.55f, 0.55f, 0.55f)});
 
     NS::Error* error = nullptr;
     MTL::Library* library = device_->newLibrary(str(kShaderSource), nullptr, &error);
@@ -295,7 +313,10 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index) {
                     mat.texture = t;
             // Texture times diffuse coefficient: ground shadows are a black
             // diffuse over an alpha texture.
-            mat.color = simd_make_float4(sm.diffuse[0], sm.diffuse[1], sm.diffuse[2], sm.alphaMultiplier);
+            const float alpha = sm.alphaMultiplier * (sm.baseTexture.empty() ? sm.untexturedAlpha : 1.0f);
+            mat.color = simd_make_float4(sm.diffuse[0], sm.diffuse[1], sm.diffuse[2], alpha);
+            mat.specular = simd_make_float4(sm.specular[0], sm.specular[1], sm.specular[2], sm.specularPower);
+            mat.emissive = simd_make_float4(sm.emissive[0], sm.emissive[1], sm.emissive[2], 0);
             mat.blend = sm.blend;
             mat.alphaRef = sm.alphaRef;
             mat.flags = (sm.lighting ? kLighting : 0) | (sm.alphaTest ? kAlphaTest : 0);
@@ -329,6 +350,20 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index) {
     return int(models_.size() - 1);
 }
 
+void Renderer::setLighting(const LightingState& state) {
+    ambient_ = simd_make_float3(state.skyColor[0], state.skyColor[1], state.skyColor[2]) * state.skyStrength;
+    lights_.clear();
+    for (const auto& l : state.objectLights()) {
+        const simd_float3 dir = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
+        if (simd_length(dir) == 0)
+            continue;
+        lights_.push_back({simd_normalize(dir), simd_make_float3(l.color[0], l.color[1], l.color[2]) * l.intensity});
+    }
+    if (lights_.size() > kMaxLights)
+        std::fprintf(stderr, "opensims2: lighting %s: only the first %zu of %zu lights are used\n",
+                     state.name.c_str(), kMaxLights, lights_.size());
+}
+
 void Renderer::addInstance(int model, const simd_float4x4& transform) {
     if (model >= 0 && size_t(model) < models_.size())
         instances_.push_back({model, transform});
@@ -340,8 +375,11 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
 
     auto* f = static_cast<Frame*>(frames_[frame_]->contents());
     f->viewProj = simd_mul(view.projection, view.view);
-    simd_float3 light = simd_normalize(simd_make_float3(-0.4f, -0.6f, -1.0f));
-    f->lightDir = simd_make_float4(light.x, light.y, light.z, 0);
+    f->eye = simd_inverse(view.view).columns[3];
+    f->ambient = simd_make_float4(ambient_, 0);
+    f->lightCount = uint32_t(std::min(lights_.size(), kMaxLights));
+    for (uint32_t i = 0; i < f->lightCount; ++i)
+        f->lights[i] = {simd_make_float4(lights_[i].direction, 0), simd_make_float4(lights_[i].color, 0)};
 
     MTL::CommandBuffer* cmd = queue_->commandBuffer();
     dispatch_semaphore_t sem = sema(inFlight_);
@@ -365,7 +403,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                                             : m.blend == StandardMaterial::Blend::Additive ? additive_
                                                                                            : opaque_);
                 enc->setCullMode(m.cull);
-                Draw d{inst.transform, m.color, m.alphaRef, m.flags};
+                Draw d{inst.transform, m.color, m.specular, m.emissive, m.alphaRef, m.flags};
                 enc->setVertexBytes(&d, sizeof d, 1);
                 enc->setFragmentBytes(&d, sizeof d, 1);
                 enc->setVertexBuffer(part.vertices, 0, 0);

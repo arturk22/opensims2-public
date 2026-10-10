@@ -146,9 +146,16 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     };
     if (flag("stdMatBaseTextureEnabled", true))
         out.baseTexture = baseTextureName(m);
-    if (auto d = m.property("stdMatDiffCoef"); !d.empty())
-        std::sscanf(d.c_str(), "%f,%f,%f", &out.diffuse[0], &out.diffuse[1], &out.diffuse[2]);
+    auto color = [&](const char* name, std::array<float, 3>& c) {
+        if (auto v = m.property(name); !v.empty())
+            std::sscanf(v.c_str(), "%f,%f,%f", &c[0], &c[1], &c[2]);
+    };
+    color("stdMatDiffCoef", out.diffuse);
+    color("stdMatSpecCoef", out.specular);
+    color("stdMatEmissiveCoef", out.emissive);
+    out.specularPower = number("stdMatSpecPower", out.specularPower);
     out.alphaMultiplier = number("stdMatAlphaMultiplier", 1.0f);
+    out.untexturedAlpha = number("stdMatUntexturedDiffAlpha", 1.0f);
     const auto blend = m.property("stdMatAlphaBlendMode");
     out.blend = blend == "blend" ? StandardMaterial::Blend::Alpha
               : blend == "additive" || blend == "addNoSrcAlphaScale" ? StandardMaterial::Blend::Additive

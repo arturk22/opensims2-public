@@ -15,9 +15,11 @@ endif()
 add_library(os2_formats
   src/formats/bhav.cpp
   src/formats/camera_config.cpp
+  src/formats/config_text.cpp
   src/formats/dbpf.cpp
   src/formats/gmdc.cpp
   src/formats/image.cpp
+  src/formats/lighting_config.cpp
   src/formats/model.cpp
   src/formats/qfs.cpp
   src/formats/rcol.cpp

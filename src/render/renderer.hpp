@@ -27,6 +27,7 @@ class MetalDrawable;
 namespace os2 {
 
 class ResourceIndex;
+struct LightingState;
 struct ObjectModel;
 struct RgbaImage;
 
@@ -50,6 +51,10 @@ public:
     // Returns the model id for addInstance.
     int addObject(const ObjectModel& model, ResourceIndex& index);
     void addInstance(int model, const simd_float4x4& transform);
+
+    // Outdoor direct lighting from one of the game's lighting states:
+    // skylight as ambient plus its object lights (see LightingState).
+    void setLighting(const LightingState& state);
 
     // Encodes and commits one frame; `pass` and `drawable` come from the view.
     void draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable, const FrameView& view);
@@ -87,6 +92,12 @@ private:
         simd_float4x4 transform;
     };
     std::vector<Instance> instances_;
+    struct DirLight {
+        simd_float3 direction; // unit, towards the light
+        simd_float3 color;     // times intensity
+    };
+    simd_float3 ambient_{0.45f, 0.45f, 0.45f};
+    std::vector<DirLight> lights_;
     std::array<MTL::Buffer*, kFramesInFlight> frames_{};
     void* inFlight_; // dispatch_semaphore_t, opaque so ARC in the app shell leaves it alone
     int frame_ = 0;

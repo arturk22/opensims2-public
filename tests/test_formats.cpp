@@ -1,5 +1,6 @@
 #include "formats/bhav.hpp"
 #include "formats/camera_config.hpp"
+#include "formats/lighting_config.hpp"
 #include "formats/image.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
@@ -225,6 +226,41 @@ clip       0.2 2000
     check(cas && cas->nearClip.size() == 1 && cas->nearClip[0] == 0.2f && cas->farClip[0] == 2000, "scalar clip");
 }
 
+static void testLightingConfig() {
+    const char* text = R"(# Lighting Manager settings
+set outsideFloorAmbient                0.25
+setb morningEvening false
+lightingState day
+   control -edith true
+   skylight                      (1,1,1)  0.5
+   light sun      (1.5, 1.2, 2)    (1, .94, .875)     2
+   light fill1    (1, 1, -1)     (1,0.8,.9)    .5
+   light simFill1  (1, -1.2, 1) (1, .95, .89)  .5
+   modifiers insidePortals       0.5  .7          1.3    1  #### trailing comment
+end
+lightingState dayNoPortals : day
+   light sun      (0, 0, 1)    (1, 1, 1)     1
+end
+)";
+    auto cfg = parseLightingConfig(text);
+    check(cfg.globals["outsidefloorambient"] == "0.25" && cfg.globals["morningevening"] == "false", "lighting globals");
+    check(cfg.states.size() == 2, "lighting state count");
+    const LightingState* day = cfg.state("DAY");
+    check(day && day->skyStrength == 0.5f && day->skyColor[2] == 1, "skylight");
+    if (day) {
+        check(day->lights.size() == 3 && day->lights[0].name == "sun" && day->lights[0].direction[1] == 1.2f &&
+                  day->lights[0].color[2] == 0.875f && day->lights[0].intensity == 2,
+              "light with comma lists");
+        auto objects = day->objectLights();
+        check(objects.size() == 2 && objects[1].name == "fill1" && objects[1].direction[2] == -1,
+              "object lights skip simFill");
+    }
+    const LightingState* np = cfg.state("dayNoPortals");
+    check(np && np->parent == "day" && np->skyStrength == 0.5f && np->lights.size() == 3 &&
+              np->lights[0].intensity == 1 && np->lights[0].direction[2] == 1,
+          "inherited state overrides a light by name");
+}
+
 static void testStandardMaterial() {
     MaterialDefinition m;
     m.materialType = "StandardMaterial";
@@ -232,8 +268,12 @@ static void testStandardMaterial() {
                     {"stdMatBaseTextureEnabled", "true"},    {"stdMatBaseTextureName", "chair-shadow-alpha"},
                     {"stdMatCullMode", "cullClockwise"},     {"stdMatDiffCoef", "0,0.5,1"},
                     {"stdMatLightingEnabled", "0"},          {"stdMatAlphaTestEnabled", "1"},
-                    {"stdMatAlphaRefValue", "51"}};
+                    {"stdMatAlphaRefValue", "51"},          {"stdMatSpecCoef", "0.5,0.5,0.25"},
+                    {"stdMatSpecPower", "1e+002"},          {"stdMatEmissiveCoef", "0,0.1,0"},
+                    {"stdMatUntexturedDiffAlpha", "0.78"}};
     auto sm = standardMaterial(m);
+    check(sm.specular[2] == 0.25f && sm.specularPower == 100 && sm.emissive[1] == 0.1f && sm.untexturedAlpha == 0.78f,
+          "material specular, emissive, untextured alpha");
     check(sm.baseTexture == "chair-shadow-alpha_txtr", "material base texture");
     check(sm.blend == StandardMaterial::Blend::Alpha && sm.alphaMultiplier == 0.3f, "material blend");
     check(sm.diffuse[0] == 0 && sm.diffuse[1] == 0.5f && sm.diffuse[2] == 1, "material diffuse");
@@ -263,6 +303,7 @@ int main() {
     testSimAntics();
     testBhav();
     testCameraConfig();
+    testLightingConfig();
     testStandardMaterial();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
