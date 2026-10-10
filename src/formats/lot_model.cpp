@@ -155,8 +155,10 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, std::map<std::str
                     const Vec3f n = normalOf(a, e, c);
                     // Texture top = west edge, right = north: the road tiles' edge
                     // lines (road_sidelines_01 at the west curb, _03 at the east
-                    // one) only run along a north-south road this way.
-                    auto v = [&](const Vec3f& p) { return b.vertex(p, n, p[1] - fy, p[0] - fx); };
+                    // one) only run along a north-south road this way. The
+                    // coordinates run on across tiles, so that materials spanning
+                    // several tiles (floorMaterialScaleU/V) continue.
+                    auto v = [&](const Vec3f& p) { return b.vertex(p, n, p[1], p[0]); };
                     b.triangle(v(a), v(e), v(c));
                 }
             }
@@ -521,6 +523,27 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
             continue;
         }
         model.materials.emplace(part.material, MaterialDefinition::parse(block->body));
+    }
+
+    // Floor materials map their texture across floorMaterialScaleU x V tiles
+    // (floor.matShad: texture matrix scale 1 / floorMaterialScale).
+    for (auto& part : model.parts) {
+        auto m = model.materials.find(part.material);
+        if (part.node.rfind("floor:", 0) != 0 || m == model.materials.end())
+            continue;
+        auto scale = [&](const char* name) {
+            const std::string v = m->second.property(name);
+            try {
+                const float f = v.empty() ? 1.0f : std::stof(v);
+                return f > 0 ? f : 1.0f;
+            } catch (const std::logic_error&) {
+                return 1.0f;
+            }
+        };
+        const float su = scale("floorMaterialScaleU"), sv = scale("floorMaterialScaleV");
+        if (su != 1 || sv != 1)
+            for (auto& uv : part.mesh.uvs)
+                uv = {uv[0] / su, uv[1] / sv};
     }
     return model;
 }
