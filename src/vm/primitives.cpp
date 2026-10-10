@@ -261,6 +261,44 @@ Exit runTreeByName(Context& c) {
     return Exit::Call;
 }
 
+// Relationship (0x1A): variable u8, flags u8, from (owner u8, data u16 at
+// 2), to (owner u8 at 5, data u16), value (owner u8 at 8, data u16). Flags,
+// from the branches the trees take: 0x01 fails (false) when there is no
+// relationship yet, otherwise it is created (the false branch of the others
+// is always Error; STR# 0xAB "create new relationship"/"fail"); 0x04 sets
+// the variable from the value, otherwise gets it into the value (only these
+// write literals and constants; STR# 0xA9 get/set); 0x02 names the two by
+// neighbor ID instead of object ID (inferred: "Setup Parents", "Meet All" and
+// the trees that iterate neighbors with Set to Next set it). 0x08 (10 uses)
+// is not understood, nor bytes 11+ (non-zero in 6% of the uses).
+Exit relationship(Context& c) {
+    const auto& o = c.instruction.operands;
+    const uint8_t var = o[0], flags = o[1];
+    if (flags & ~0x07)
+        throw VMError("Relationship: flags " + hexString(flags) + " not implemented");
+    if (var >= kMaxRelationshipVars)
+        throw VMError("Relationship: variable " + std::to_string(var) + " out of range");
+    auto key = [&](uint8_t owner, const uint8_t* data) {
+        const int16_t id = c.get(owner, int16_t(le16(data)));
+        return flags & 0x02 ? VM::RelationshipKey{true, id} : c.vm.relationshipKey(id);
+    };
+    const auto pair = std::pair{key(o[2], &o[3]), key(o[5], &o[6])};
+    auto it = c.vm.relationships.find(pair);
+    if (it == c.vm.relationships.end()) {
+        if (flags & 0x01)
+            return Exit::False;
+        it = c.vm.relationships.emplace(pair, std::vector<int16_t>{}).first;
+    }
+    auto& vars = it->second;
+    if (var >= vars.size())
+        vars.resize(var + 1);
+    if (flags & 0x04)
+        vars[var] = c.get(o[8], int16_t(le16(&o[9])));
+    else
+        c.set(o[8], int16_t(le16(&o[9])), vars[var]);
+    return Exit::True;
+}
+
 } // namespace
 
 void registerPrimitives(VM& vm) {
@@ -270,6 +308,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x0F, breakPoint);
     vm.setPrimitive(0x11, countDownParam);
     vm.setPrimitive(0x12, removeObjectInstance);
+    vm.setPrimitive(0x1A, relationship);
     vm.setPrimitive(0x1C, runTreeByName);
     vm.setPrimitive(0x1F, setToNext);
     vm.setPrimitive(0x20, testObjectType);

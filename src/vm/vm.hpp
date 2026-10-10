@@ -62,6 +62,15 @@ constexpr int16_t ObjectId = 11;
 constexpr int16_t SemiAttributeCount = 79;
 } // namespace objdata
 
+// Person data fields the engine reads (names as in STR# 0xC8).
+namespace persondata {
+constexpr int16_t NeighborId = 31;
+} // namespace persondata
+
+// Relationship variables grow when written past their end; this bounds that
+// (the trees use indices up to 11).
+constexpr size_t kMaxRelationshipVars = 32;
+
 // Object type (OBJD "type") of a Sim.
 constexpr uint16_t kObjectTypePerson = 2;
 
@@ -213,6 +222,18 @@ public:
     const std::map<ObjectId, Object>& objects() const { return objects_; }
 
     std::array<int16_t, kGlobalCount> globals{};
+
+    // Relationship variables from one Sim or object to another. Sims are keyed
+    // by neighbor ID (person data), so both ways of naming them meet; other
+    // objects by object ID.
+    struct RelationshipKey {
+        bool neighbor = false;
+        int16_t id = 0;
+        auto operator<=>(const RelationshipKey&) const = default;
+    };
+    std::map<std::pair<RelationshipKey, RelationshipKey>, std::vector<int16_t>> relationships;
+    // Key of an object (its neighbor ID if it is a Sim that has one).
+    RelationshipKey relationshipKey(ObjectId id);
     std::mt19937 random{0x5132};
 
     void setPrimitive(uint16_t opcode, Primitive p) { primitives_[opcode] = std::move(p); }

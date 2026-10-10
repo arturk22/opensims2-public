@@ -392,6 +392,31 @@ static void testRunTreeByName() {
     check(tv.attributes[1] == 8, "Run Tree by Name runs the stack object's tree with arguments");
 }
 
+static void testRelationship() {
+    Fixture fx;
+    constexpr uint32_t kSim = 0x55667788;
+    fx.code.add(kObjGroup, 0x81, definition(kSim, true));
+    Object& me = fx.vm.instantiate(kObjGroup, 0x81);  // id 1
+    Object& her = fx.vm.instantiate(kObjGroup, 0x81); // id 2
+    me.person->data[persondata::NeighborId] = 5;
+    her.person->data[persondata::NeighborId] = 7;
+    const uint8_t myId = 0x0B; // object data 11
+    fx.code.add(kObjGroup, 0x1000,
+                tree({// var 1 of a relationship that does not exist yet: fail
+                      instr(0x1A, E, go(1), {1, 0x01, Data, myId, 0, StackId, 0, 0, Temp, 0, 0}),
+                      // set var 1 from me to her (object IDs) := 40
+                      instr(0x1A, go(2), E, {1, 0x04, Data, myId, 0, StackId, 0, 0, Lit, 40, 0}),
+                      // get it back by neighbor IDs into temp 1
+                      instr(0x1A, go(3), E, {1, 0x03, Lit, 5, 0, Lit, 7, 0, Temp, 1, 0}),
+                      expr(Temp, 2, Assign, Lit, 1, T, E)}));
+    Thread t = fx.vm.start(me.id, 0x1000, {}, her.id);
+    fx.vm.run(t);
+    if (t.status == Thread::Status::Failed)
+        std::fprintf(stderr, "  thread failed: %s\n", t.error.c_str());
+    check(t.status == Thread::Status::Finished && t.temps[1] == 40 && t.temps[2] == 1,
+          "Relationship sets and gets; Sims are keyed by neighbor ID");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -402,6 +427,7 @@ int main() {
     testYieldAndErrors();
     testPrimitives();
     testRunTreeByName();
+    testRelationship();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

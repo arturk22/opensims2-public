@@ -285,6 +285,15 @@ Object* VM::instantiateGuid(uint32_t guid) {
     return def ? &instantiate(def->first, def->second) : nullptr;
 }
 
+VM::RelationshipKey VM::relationshipKey(ObjectId id) {
+    const Object* o = object(id);
+    if (!o)
+        throw VMError("object " + std::to_string(id) + " does not exist");
+    if (o->person && o->person->data[persondata::NeighborId])
+        return {true, o->person->data[persondata::NeighborId]};
+    return {false, id};
+}
+
 Object* VM::object(ObjectId id) {
     auto it = objects_.find(id);
     return it == objects_.end() ? nullptr : &it->second;
