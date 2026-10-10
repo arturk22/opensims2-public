@@ -83,6 +83,21 @@ const ObjectDefinition* CodeLibrary::definition(uint32_t group, uint16_t instanc
     return loadCached(definitions_, index_, kTypeObjd, group, instance);
 }
 
+std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByGuid(uint32_t guid) {
+    if (!guidsScanned_ && index_) {
+        guidsScanned_ = true;
+        for (const auto& loc : index_->ofType(kTypeObjd)) {
+            const auto& tgi = loc.entry->tgi;
+            // Keeps the first OBJD of a GUID, like the rest of the index.
+            byGuid_.emplace(ObjectDefinition::parse(index_->read(loc)).guid(),
+                            std::pair{tgi.group, uint16_t(tgi.instance)});
+        }
+    }
+    if (auto it = byGuid_.find(guid); it != byGuid_.end())
+        return it->second;
+    return std::nullopt;
+}
+
 size_t CodeLibrary::attributeLabelCount(uint32_t group) {
     if (auto it = labelCounts_.find(group); it != labelCounts_.end())
         return it->second;
@@ -117,6 +132,7 @@ void CodeLibrary::add(uint32_t group, uint16_t instance, Constants c) {
 }
 
 void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectDefinition d) {
+    byGuid_.emplace(d.guid(), std::pair{group, instance});
     definitions_[key(group, instance)] = std::make_unique<ObjectDefinition>(std::move(d));
 }
 
@@ -130,9 +146,9 @@ Object& Context::me() const {
 }
 
 Object& Context::stackObject() const {
-    auto* o = vm.object(thread.stackObject);
+    auto* o = vm.object(frame.stackObject);
     if (!o)
-        throw VMError("stack object " + std::to_string(thread.stackObject) + " does not exist");
+        throw VMError("stack object " + std::to_string(frame.stackObject) + " does not exist");
     return *o;
 }
 
@@ -174,7 +190,7 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
         return *v;
     switch (owner) {
     case 0x07: return data; // literal
-    case 0x0A: return thread.stackObject;
+    case 0x0A: return frame.stackObject;
     case 0x15: return definitionField(stackObject(), data);
     case 0x1A: {
         // High bits pick the BCON (private, semi-global or global), low 7 bits the entry.
@@ -196,7 +212,7 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
         return;
     }
     switch (owner) {
-    case 0x0A: thread.stackObject = value; return;
+    case 0x0A: frame.stackObject = value; return;
     case 0x07:
     case 0x15: // the editor marks only some definition fields read-only; writes are not supported yet
     case 0x1A: throw VMError("data owner " + hexString(owner) + " is read-only");
@@ -235,6 +251,11 @@ Object& VM::instantiate(uint32_t group, uint16_t definitionInstance) {
     if (def->objectType() == kObjectTypePerson)
         o.person.emplace();
     return o;
+}
+
+Object* VM::instantiateGuid(uint32_t guid) {
+    auto def = code_.definitionByGuid(guid);
+    return def ? &instantiate(def->first, def->second) : nullptr;
 }
 
 Object* VM::object(ObjectId id) {
@@ -298,6 +319,8 @@ void VM::push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t
     f.group = group;
     f.instance = treeId;
     f.codeOwner = codeOwner;
+    if (!t.stack.empty())
+        f.stackObject = t.stack.back().stackObject;
     f.params.assign(std::max<size_t>(behavior->argCount, args.size()), 0);
     std::copy(args.begin(), args.end(), f.params.begin());
     f.locals.assign(behavior->localCount, 0);
@@ -350,6 +373,10 @@ void VM::run(Thread& t, size_t maxInstructions) {
     for (size_t budget = maxInstructions; t.status == Thread::Status::Running;) {
         if (budget-- == 0) {
             fail(t, "instruction budget exhausted (" + std::to_string(maxInstructions) + ")");
+            return;
+        }
+        if (!object(t.me)) {
+            t.status = Thread::Status::Killed;
             return;
         }
         Frame& frame = t.stack.back();

@@ -141,14 +141,15 @@ static void testStackObjectAndAttributes() {
     fx.obj();
     Object& other = fx.vm.createObject(kObjGroup, 4);
     other.attributes[3] = 42;
-    // Callee sets the stack object; it stays set in the caller.
-    fx.code.add(kObjGroup, 0x1001, tree({expr(StackId, 0, Assign, Lit, other.id, T, E)}));
+    // The callee starts with the caller's stack object; its own change is undone on return.
+    fx.code.add(kObjGroup, 0x1001,
+                tree({expr(Attr, 2, Assign, SAttr, 3, go(1), E), expr(StackId, 0, Assign, Lit, 1, T, E)}));
     fx.code.add(kObjGroup, 0x1000,
-                tree({instr(0x1001, go(1), E), expr(Attr, 2, Assign, SAttr, 3, go(2), E),
+                tree({expr(StackId, 0, Assign, Lit, other.id, go(1), E), instr(0x1001, go(2), E),
                       expr(Global, 7, Assign, StackId, 0, T, E)}));
     Thread t = fx.run(0x1000);
     check(t.status == Thread::Status::Finished && fx.obj().attributes[2] == 42 && fx.vm.globals[7] == other.id,
-          "stack object set by a subroutine");
+          "stack object is inherited by subroutines and restored after them");
 }
 
 static void testObjectModel() {
@@ -263,6 +264,82 @@ static void testYieldAndErrors() {
     check(t.status == Thread::Status::Failed && fx.vm.missingOwners[0x2B] == 1, "missing data owner fails");
 }
 
+static uint8_t lo(uint32_t v, int byte) { return uint8_t(v >> (8 * byte)); }
+
+// An OBJD with a GUID, optionally a person.
+static ObjectDefinition definition(uint32_t guid, bool person = false) {
+    ObjectDefinition def;
+    def.fields.resize(60);
+    def.fields[(0x5C - 0x44) / 2] = uint16_t(guid);
+    def.fields[(0x5E - 0x44) / 2] = uint16_t(guid >> 16);
+    if (person)
+        def.fields[(0x52 - 0x44) / 2] = kObjectTypePerson;
+    return def;
+}
+
+static void testPrimitives() {
+    Fixture fx;
+    constexpr uint32_t kChair = 0x11223344, kSim = 0x55667788;
+    fx.code.add(kObjGroup, 0x80, definition(kChair));
+    fx.code.add(kObjGroup, 0x81, definition(kSim, true));
+    Object& me = fx.vm.instantiate(kObjGroup, 0x81);       // id 1
+    Object& chair = fx.vm.instantiate(kObjGroup, 0x80);    // id 2
+    Object& sim = fx.vm.instantiate(kObjGroup, 0x81);      // id 3
+    Object& chair2 = fx.vm.instantiate(kObjGroup, 0x80);   // id 4
+    check(me.id == 1 && chair.guid() == kChair && sim.person && chair2.id == 4, "objects from OBJDs");
+
+    // Sleep (param 0 ticks), then Random Number temp0 := [0, 10).
+    fx.code.add(kObjGroup, 0x1000, tree({instr(0x00, go(1), E, {0, 0}),
+                                          instr(0x08, T, E, {0, 0, Temp, 0, 10, 0, Lit, 0})}, 1));
+    Thread t = fx.vm.start(1, 0x1000, std::vector<int16_t>{2});
+    fx.vm.run(t);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Running, "sleeps two ticks");
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.temps[0] >= 0 && t.temps[0] < 10, "wakes and draws a random number");
+
+    // Set to Next: count persons into temp 1, find the chairs by GUID into temps 2/3.
+    fx.code.add(kObjGroup, 0x1001,
+                tree({instr(0x1F, go(1), go(2), {0, 0, 0, 0, 0x01}),             // next person -> stack object
+                      expr(Temp, 1, Add, Lit, 1, go(0), E),
+                      expr(StackId, 0, Assign, Lit, 0, go(3), E),
+                      instr(0x1F, go(4), E, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 2, 0}),
+                      expr(Temp, 3, Assign, Temp, 2, go(5), E),
+                      instr(0x1F, go(6), E, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 3, 0}),
+                      instr(0x1F, E, T, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 3, 0})}));
+    t = fx.run(0x1001);
+    check(t.status == Thread::Status::Finished && t.temps[1] == 2, "Set to Next iterates persons");
+    check(t.temps[2] == chair.id && t.temps[3] == chair2.id, "Set to Next finds objects of a GUID in order");
+
+    // Test Object Type on the stack object; verify sim; Break Point passes through.
+    fx.code.add(kObjGroup, 0x1002,
+                tree({expr(StackId, 0, Assign, Lit, sim.id, go(1), E),
+                      instr(0x20, E, go(2), {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0, 0, StackId}),
+                      instr(0x1F, go(3), E, {0, 0, 0, 0, 30}),
+                      instr(0x0F, go(4), E, {1, 0, Lit, 0}),
+                      expr(StackId, 0, Assign, Lit, chair.id, go(5), E),
+                      instr(0x1F, E, T, {0, 0, 0, 0, 30})}));
+    t = fx.run(0x1002);
+    check(t.status == Thread::Status::Finished && t.result, "Test Object Type, verify sim and Break Point");
+
+    fx.code.add(kObjGroup, 0x1003, tree({instr(0x0F, go(0), E, {1, 0, Lit, 0})}));
+    t = fx.run(0x1003);
+    check(t.status == Thread::Status::Failed && t.error.find("halts") != std::string::npos,
+          "a Break Point that loops to itself halts");
+
+    // Create a chair out of world, then remove it; then remove me.
+    fx.code.add(kObjGroup, 0x1004,
+                tree({instr(0x2A, go(1), E, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 6}),
+                      expr(Temp, 0, Assign, StackId, 0, go(2), E),
+                      instr(0x12, go(3), E, {1, 0}),
+                      instr(0x12, go(4), E, {0, 0}),
+                      expr(Temp, 1, Assign, Lit, 1, T, E)}));
+    t = fx.vm.start(sim.id, 0x1004);
+    fx.vm.run(t);
+    check(t.temps[0] == 5 && !fx.vm.object(5) && !fx.vm.object(sim.id), "create and remove objects");
+    check(t.status == Thread::Status::Killed && t.temps[1] == 0, "removing me kills the thread");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -271,6 +348,7 @@ int main() {
     testObjectModel();
     testExpressionOperators();
     testYieldAndErrors();
+    testPrimitives();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <random>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -72,6 +73,8 @@ public:
     const Behavior* behavior(uint32_t group, uint16_t instance);
     const Constants* constants(uint32_t group, uint16_t instance);
     const ObjectDefinition* definition(uint32_t group, uint16_t instance);
+    // OBJD (group, instance) with this GUID; the first scan reads every OBJD.
+    std::optional<std::pair<uint32_t, uint16_t>> definitionByGuid(uint32_t guid);
     // Semi-global group the objects of `group` use (from their GLOB), 0 if none.
     uint32_t semiGlobalFor(uint32_t group);
     // Number of (English) labels in the group's STR# 0x100: the attribute
@@ -95,6 +98,8 @@ private:
     Cache<ObjectDefinition> definitions_;
     std::unordered_map<uint32_t, uint32_t> semiGlobals_;
     std::unordered_map<uint32_t, size_t> labelCounts_;
+    std::unordered_map<uint32_t, std::pair<uint32_t, uint16_t>> byGuid_;
+    bool guidsScanned_ = false;
 };
 
 using ObjectId = int16_t;
@@ -116,6 +121,8 @@ struct Object {
     std::vector<int16_t> semiAttributes;
     std::array<int16_t, kObjectDataCount> data{};
     std::optional<Person> person;
+
+    uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
 
 struct Frame {
@@ -124,17 +131,20 @@ struct Frame {
     uint16_t instance = 0;
     ObjectId codeOwner = 0; // object whose private/semi-global code and constants are in scope
     uint16_t pc = 0;
+    // Starts as the caller's; changing it does not change the caller's (subroutines
+    // that look an object up return its ID in a temp).
+    ObjectId stackObject = 0;
     std::vector<int16_t> params;
     std::vector<int16_t> locals;
 };
 
-// Temps and the stack object belong to the thread, so subroutines can return
-// values in them; parameters and locals belong to each frame.
+// Temps belong to the thread, so subroutines can return values in them;
+// parameters, locals and the stack object belong to each frame.
 struct Thread {
-    enum class Status { Running, Finished, Failed };
+    // Killed: the object running the thread was removed.
+    enum class Status { Running, Finished, Failed, Killed };
 
     ObjectId me = 0;
-    ObjectId stackObject = 0;
     std::array<int16_t, kTempCount> temps{};
     std::vector<Frame> stack;
 
@@ -180,9 +190,15 @@ public:
     // An instance of the OBJD (group, instance): attributes sized by the larger of
     // its "num attributes" and the group's attribute labels; Sims get a Person.
     Object& instantiate(uint32_t group, uint16_t definitionInstance);
+    // An instance of the object with this GUID, or null if no OBJD has it.
+    Object* instantiateGuid(uint32_t guid);
     Object* object(ObjectId id);
+    // Threads of a removed object are killed the next time they run.
+    void removeObject(ObjectId id) { objects_.erase(id); }
+    const std::map<ObjectId, Object>& objects() const { return objects_; }
 
     std::array<int16_t, kGlobalCount> globals{};
+    std::mt19937 random{0x5132};
 
     void setPrimitive(uint16_t opcode, Primitive p) { primitives_[opcode] = std::move(p); }
 
@@ -215,7 +231,7 @@ private:
     void fail(Thread& t, const std::string& message);
 };
 
-// Registers the primitives implemented so far (Expression).
+// Registers the primitives implemented so far.
 void registerPrimitives(VM& vm);
 
 } // namespace os2::vm

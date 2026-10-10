@@ -353,6 +353,7 @@ const char* statusName(const vm::Thread& t) {
     case vm::Thread::Status::Running: return "yielded";
     case vm::Thread::Status::Finished: return t.result ? "returned true" : "returned false";
     case vm::Thread::Status::Failed: return "failed";
+    case vm::Thread::Status::Killed: return "killed";
     }
     return "?";
 }
@@ -383,7 +384,7 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
     std::printf("temps:");
     for (auto v : t.temps)
         std::printf(" %d", v);
-    std::printf("\nstack object: %d\n", t.stackObject);
+    std::printf("\n");
     return t.status == vm::Thread::Status::Failed ? 1 : 0;
 }
 

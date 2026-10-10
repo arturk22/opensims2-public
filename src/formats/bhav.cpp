@@ -39,21 +39,35 @@ std::string targetString(const Behavior::Target& t) {
 } // namespace
 
 std::string primitiveName(uint16_t op) {
-    // The primitives The Sims 2 inherited from The Sims 1.
-    static const char* const names[] = {
-        "Sleep",                    "Generic Sims Call",       "Expression",           "Find Best Interaction",
-        "Grab",                     "Drop",                    "Change Suit/Accessory", "Update",
-        "Random Number",            "Burn",                    "Tutorial",             "Get Distance To",
-        "Get Direction To",         "Push Interaction",        "Find Best Object For Function", "Break Point",
-        "Find Location For",        "Idle For Input",          "Remove Object Instance", "Make New Character",
-        "Run Functional Tree",      "Show String",             "Look Towards",         "Play Sound Event",
-        "Old Relationship",         "Alter Budget",            "Relationship",         "Go To Relative Position",
-        "Run Tree By Name",         "Set Motive Change",       "Gosub Found Action",   "Set To Next",
-        "Test Object Type",         "Find 5 Worst Motives",    "UI Effect",            "Special Effect",
-        "Dialog",                   "Test Sim Interacting With",
+    // The labels of the game's own SimAntics editor (objects.package, STR#
+    // 0x7FE59FD0/0x8B, English). "~" marks primitives the editor lists as old or
+    // unused; 0x34-0x68 (unused, reserved or The Sims Online) are left unnamed.
+    static const char* const low[] = {
+        "Sleep", "Generic Sims Call", "Expression", "Find Best Interaction",
+        "~(old)Grab", "~(old)Drop", "~(old)Change Suit", "Refresh",
+        "Random Number", "~(old)Burn", "Tutorial", "Get Distance To",
+        "Get Direction To", "Push Interaction", "Find Best Object for Function", "Break Point",
+        "Find Location For", "Idle for Input", "Remove Object Instance", "Make New Character",
+        "Run Functional Tree", "~Show String ( UNUSED )", "Turn Body Towards", "Play / Stop Sound Event",
+        "~UNUSED (was old relationship)", "Alter Budget", "Relationship", "Go To Relative Position",
+        "Run Tree by Name", "Set Motive Change", "Gosub Found Action", "Set to Next",
+        "Test Object Type", "Find 5 Worst Motives", "UI Effect", "Camera Control",
+        "Dialog", "Test Sim Interacting With", "~unused", "~unused",
+        "~unused", "~(old)Set Balloon/Headline", "Create New Object Instance", "~(old)Drop Onto",
+        "~(old)Animate Sim [old]", "Go To Routing Slot", "Snap", "~(old)Reach",
+        "Stop ALL Sounds", "Notify the Stack Object out of Idle", "Add/Change the Action String", "Manage Inventory",
     };
-    if (op < std::size(names))
-        return names[op];
+    static const char* const high[] = { // from 0x69
+        "Animate Object", "Animate Sim", "Animate Overlay", "Animate Stop",
+        "Change Material", "Look At", "Change Light", "Effect Stop/Start",
+        "Snap Into", "Assign Locomotion Animations", "Debug", "Reach/Put",
+        "Age", "Array Operation", "Message", "RayTrace",
+        "Change Outfit", "On Timer", "Cinematic", "Want Satisfy",
+    };
+    if (op < std::size(low))
+        return low[op];
+    if (op >= 0x69 && op < 0x69 + std::size(high))
+        return high[op - 0x69];
     char buf[16];
     std::snprintf(buf, sizeof buf, "prim_0x%02X", op);
     return buf;
