@@ -146,7 +146,10 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, std::map<std::str
                     const Vec3f& a = edges[q][1];
                     const Vec3f& e = edges[q][0];
                     const Vec3f n = normalOf(a, e, c);
-                    auto v = [&](const Vec3f& p) { return b.vertex(p, n, p[0] - fx, 1.0f - (p[1] - fy)); };
+                    // Texture top = west edge, right = north: the road tiles' edge
+                    // lines (road_sidelines_01 at the west curb, _03 at the east
+                    // one) only run along a north-south road this way.
+                    auto v = [&](const Vec3f& p) { return b.vertex(p, n, p[1] - fy, p[0] - fx); };
                     b.triangle(v(a), v(e), v(c));
                 }
             }
