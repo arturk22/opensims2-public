@@ -203,8 +203,8 @@ public:
     void setPrimitive(uint16_t opcode, Primitive p) { primitives_[opcode] = std::move(p); }
 
     // A thread for `me` that starts in tree `treeId` (a call opcode: global,
-    // private or semi-global, resolved against me's code).
-    Thread start(ObjectId me, uint16_t treeId, std::span<const int16_t> args = {});
+    // private or semi-global, resolved against me's code) with this stack object.
+    Thread start(ObjectId me, uint16_t treeId, std::span<const int16_t> args = {}, ObjectId stackObject = 0);
     // Runs until the thread yields, finishes or fails. Exceeding the budget
     // fails the thread (an infinite loop, as far as the game is concerned).
     void run(Thread& thread, size_t maxInstructions = 100000);

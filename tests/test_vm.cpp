@@ -150,6 +150,12 @@ static void testStackObjectAndAttributes() {
     Thread t = fx.run(0x1000);
     check(t.status == Thread::Status::Finished && fx.obj().attributes[2] == 42 && fx.vm.globals[7] == other.id,
           "stack object is inherited by subroutines and restored after them");
+
+    // A thread can start with a stack object.
+    fx.code.add(kObjGroup, 0x1002, tree({expr(Attr, 1, Assign, SAttr, 3, T, E)}));
+    Thread s = fx.vm.start(1, 0x1002, {}, other.id);
+    fx.vm.run(s);
+    check(s.status == Thread::Status::Finished && fx.obj().attributes[1] == 42, "thread starts with a stack object");
 }
 
 static void testObjectModel() {

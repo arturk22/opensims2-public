@@ -312,10 +312,12 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
 // --- SimAntics VM ------------------------------------------------------------
 
 // What stand-in objects are built from: an object group whose GLOB names each
-// semi-global group, and an OBJD (the lowest instance) of each object group.
+// semi-global group, an OBJD (the lowest instance) of each object group, and
+// a Sim for the stack object (in interactions it is the Sim using the object).
 struct StandIns {
     std::map<uint32_t, uint32_t> semiUsers;
     std::map<uint32_t, uint16_t> definitions;
+    std::pair<uint32_t, uint16_t> person{}; // OBJD of a Sim (the first outside a neighbourhood)
 };
 
 StandIns standIns(ResourceIndex& index) {
@@ -328,6 +330,9 @@ StandIns standIns(ResourceIndex& index) {
         auto [it, added] = s.definitions.emplace(tgi.group, uint16_t(tgi.instance));
         if (!added)
             it->second = std::min(it->second, uint16_t(tgi.instance));
+        if (!s.person.first && tgi.group != 0xFFFFFFFF &&
+            ObjectDefinition::parse(index.read(loc)).objectType() == vm::kObjectTypePerson)
+            s.person = {tgi.group, uint16_t(tgi.instance)};
     }
     return s;
 }
@@ -346,6 +351,14 @@ vm::Object& standInObject(vm::VM& machine, uint32_t group, const StandIns& s) {
     if (!me.person)
         me.person.emplace();
     return me;
+}
+
+vm::Object& standInPerson(vm::VM& machine, const StandIns& s) {
+    if (s.person.first)
+        return machine.instantiate(s.person.first, s.person.second);
+    vm::Object& o = machine.createObject(0);
+    o.person.emplace();
+    return o;
 }
 
 const char* statusName(const vm::Thread& t) {
@@ -374,7 +387,7 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
         std::printf("%*s0x%04X #%-3u %-30s [%s]\n", int(t.stack.size() - 1) * 2, "", f.instance, f.pc, op.c_str(),
                     ops.c_str());
     };
-    vm::Thread t = machine.start(me.id, instance, args);
+    vm::Thread t = machine.start(me.id, instance, args, standInPerson(machine, users).id);
     if (t.status == vm::Thread::Status::Running && t.stack.back().group != group)
         std::fprintf(stderr, "warning: tree resolved in group 0x%08X\n", t.stack.back().group);
     machine.run(t);
@@ -410,7 +423,7 @@ int cmdBhavSweep(const std::filesystem::path& root) {
         // Private trees of a global/semi-global group are not reachable by call opcodes.
         if (machine.resolveTree(me, instance).first != tgi.group)
             continue;
-        vm::Thread t = machine.start(me.id, instance);
+        vm::Thread t = machine.start(me.id, instance, {}, standInPerson(machine, users).id);
         machine.run(t, 20000);
         ++total;
         instructions += t.instructions;
