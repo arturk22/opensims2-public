@@ -164,6 +164,7 @@ std::string_view typeName(uint32_t t) {
     case 0x856DDBAC: return "IMG";
     case 0xAC4F8687: return "GMDC";
     case 0xC9C81B9B: return "LAMB";
+    case 0xCCCEF852: return "LxNR";
     case 0xC9C81BA3: return "LDIR";
     case 0xC9C81BA9: return "LPNT";
     case 0xC9C81BAD: return "LSPT";
