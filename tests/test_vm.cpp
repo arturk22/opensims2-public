@@ -1,6 +1,10 @@
+#include "formats/dbpf.hpp"
+#include "formats/lot_objects.hpp"
 #include "vm/vm.hpp"
 
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
 #include <initializer_list>
 
 using namespace os2;
@@ -743,6 +747,140 @@ static void testFamilyTree() {
           "family tree calls and Set to Next family searches");
 }
 
+// Multi-tile objects: instantiating the master makes every part, all leading
+// to the part with sub index 0; Set to Next "part of a multi-tile object"
+// goes around them. Saved objects keep their IDs.
+static void testMultiTileAndIds() {
+    Fixture fx;
+    constexpr uint32_t kMaster = 0x0A0B0C0D;
+    auto mt = [](uint32_t guid, uint16_t sub) {
+        ObjectDefinition d = definition(guid);
+        d.fields[(0x54 - 0x44) / 2] = 5; // master ID
+        d.fields[(0x56 - 0x44) / 2] = sub;
+        return d;
+    };
+    fx.code.add(kObjGroup, 0x80, mt(kMaster, 0xFFFF));
+    fx.code.add(kObjGroup, 0x81, mt(0x1001, 0x0100));
+    fx.code.add(kObjGroup, 0x82, mt(0x1002, 0x0000));
+    fx.code.add(kObjGroup, 0x83, mt(0x1003, 0x0001));
+    check(fx.code.parts(kObjGroup, 5) == std::vector<uint16_t>{0x81, 0x82, 0x83}, "parts of a master");
+    Object* lead = fx.vm.instantiateGuid(kMaster);
+    check(lead && lead->definitionInstance == 0x82 && fx.vm.objects().size() == 3, "master makes all its parts");
+    size_t led = 0;
+    for (const auto& [id, o] : fx.vm.objects())
+        led += o.data[objdata::LeadTileObjectId] == lead->id;
+    check(led == 3, "every part leads to sub index 0");
+    Object& single = fx.vm.instantiatePart(kObjGroup, 0x83);
+    check(single.data[objdata::LeadTileObjectId] == single.id && single.data[objdata::SlotNumber] == -1,
+          "a single part leads itself, in no slot");
+
+    // Set to Next 3 from the lead visits the other two parts and comes back.
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, lead->id, go(1), E),
+                      instr(0x1F, go(2), E, {0, 0, 0, 0, 3}), expr(Temp, 0, Assign, StackId, 0, go(3), E),
+                      instr(0x1F, go(4), E, {0, 0, 0, 0, 3}), expr(Temp, 1, Assign, StackId, 0, go(5), E),
+                      instr(0x1F, go(6), E, {0, 0, 0, 0, 3}), expr(Temp, 2, Assign, StackId, 0, T, E)}));
+    Thread t = fx.vm.start(lead->id, 0x1000);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.temps[0] != lead->id && t.temps[1] != lead->id &&
+              t.temps[0] != t.temps[1] && t.temps[2] == lead->id,
+          "Set to Next goes around the parts");
+
+    Object& saved = fx.vm.createObject(kObjGroup, 0, 700);
+    check(saved.id == 700 && saved.data[objdata::ObjectId] == 700, "objects can keep a saved ID");
+    bool threw = false;
+    try {
+        fx.vm.createObject(kObjGroup, 0, 700);
+    } catch (const VMError&) {
+        threw = true;
+    }
+    check(threw, "an ID cannot be used twice");
+}
+
+// A package's own group (a Sim's character file) is added under a group of its own.
+static std::vector<uint8_t> named(std::vector<uint8_t> body) {
+    std::vector<uint8_t> out(64, 0);
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
+}
+
+static void put16(std::vector<uint8_t>& v, uint16_t x) { v.push_back(uint8_t(x)), v.push_back(uint8_t(x >> 8)); }
+static void put32(std::vector<uint8_t>& v, uint32_t x) { put16(v, uint16_t(x)), put16(v, uint16_t(x >> 16)); }
+
+static void testAddPackage() {
+    constexpr uint32_t kLocal = 0xFFFFFFFF, kAs = 0xFE123456, kSimGuid = 0x51515151;
+    std::vector<uint8_t> objd;
+    put32(objd, 0x8C);
+    const ObjectDefinition d = definition(kSimGuid, true);
+    for (uint16_t f : d.fields)
+        put16(objd, f);
+    put32(objd, 3);
+    objd.insert(objd.end(), {'S', 'i', 'm'});
+    std::vector<uint8_t> objf;
+    put32(objf, 0), put32(objf, 0);
+    objf.insert(objf.end(), {'f', 'J', 'B', 'O'});
+    put32(objf, 2);
+    put16(objf, 0), put16(objf, 0x1001); // init
+    put16(objf, 0), put16(objf, 0x1002); // main
+    std::vector<uint8_t> glob{8, 'P', 'e', 'r', 's', 'o', 'n', 'G', 'l'};
+    DbpfWriter w;
+    w.add({kTypeObjd, kLocal, 0x80, 0}, named(objd));
+    w.add({kTypeObjf, kLocal, 0x80, 0}, named(objf));
+    w.add({kTypeGlob, kLocal, 0x80, 0}, named(glob));
+    const auto path = std::filesystem::temp_directory_path() / "os2_test_character.package";
+    w.save(path);
+    DbpfPackage pkg(path);
+    CodeLibrary code;
+    const auto added = code.addPackage(pkg, kAs);
+    check(added == std::vector<uint16_t>{0x80}, "the package's OBJD is added");
+    check(code.definitionByGuid(kSimGuid) == std::pair{kAs, uint16_t(0x80)}, "under the group it was given");
+    check(code.semiGlobalFor(kAs) == semiGlobalGroup("PersonGl"), "with its semi-global library");
+    VM vm(code);
+    Object& sim = vm.instantiatePart(kAs, 0x80, 42);
+    const ObjectFunctions* f = code.functions(kAs, 0x80);
+    check(sim.person && f && f->functions.size() == 2 && f->functions[1].action == 0x1002, "Sim with its functions");
+    check(code.addPackage(pkg, kAs) == added && code.definition(kAs, 0x80) == sim.definition,
+          "a package is added once");
+    std::filesystem::remove(path);
+}
+
+// The saved state of an object (XOBJ), as the base game's lots store it.
+static void testSavedObjectState() {
+    std::vector<uint8_t> b(64, 0);
+    for (int i = 0; i < 4; ++i)
+        put32(b, 0);
+    auto f32 = [&](float f) {
+        uint32_t u;
+        std::memcpy(&u, &f, 4);
+        put32(b, u);
+    };
+    f32(13.5f), f32(9.5f); // y, x
+    put32(b, 2);           // level
+    put16(b, 1);
+    f32(0);
+    put32(b, 0xFFFFFFFF); // multi-tile group
+    put16(b, 0);
+    put16(b, 2), put16(b, 7), put16(b, 8); // attributes
+    put16(b, 1), put16(b, 5);              // semi-attributes
+    for (int i = 0; i < 8; ++i)
+        put16(b, uint16_t(i));
+    for (int i = 0; i < 88; ++i)
+        put16(b, uint16_t(i == 1 ? 4 : i == 2 ? 615 : i == 3 ? 0 : i == 11 ? 1 : 0));
+    const auto s = LotObjects::parseState(b, 0xAD);
+    check(s.x == 9.5f && s.y == 13.5f && s.level == 2 && s.multiTileGroup == -1, "saved position");
+    check(s.attributes == std::vector<int16_t>{7, 8} && s.semiAttributes == std::vector<int16_t>{5} &&
+              s.temps[7] == 7,
+          "saved attributes, semi-attributes and temps");
+    check(s.data.size() == 88 && s.data[1] == 4 && s.data[2] == 615 && s.data[11] == 1, "saved object data");
+    bool threw = false;
+    try {
+        LotObjects::parseState(b, 0xB0);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    check(threw, "other versions are not guessed at");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -764,6 +902,9 @@ int main() {
     testDefinitionOwners();
     testRemoveAndRandom();
     testFamilyTree();
+    testMultiTileAndIds();
+    testAddPackage();
+    testSavedObjectState();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

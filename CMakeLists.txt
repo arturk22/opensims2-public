@@ -22,6 +22,7 @@ add_library(os2_formats
   src/formats/image.cpp
   src/formats/lighting_config.cpp
   src/formats/lot.cpp
+  src/formats/lot_objects.cpp
   src/formats/lot_model.cpp
   src/formats/model.cpp
   src/formats/property_set.cpp
@@ -42,6 +43,7 @@ find_package(ZLIB REQUIRED)
 target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB)
 
 add_library(os2_vm
+  src/vm/lot.cpp
   src/vm/primitives.cpp
   src/vm/vm.cpp
 )

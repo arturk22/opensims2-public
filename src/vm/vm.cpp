@@ -1,6 +1,7 @@
 #include "vm.hpp"
 
 #include "formats/binreader.hpp"
+#include "formats/dbpf.hpp"
 #include "formats/resindex.hpp"
 #include "formats/strings.hpp"
 
@@ -109,18 +110,86 @@ std::optional<uint16_t> CodeLibrary::behaviorByName(uint32_t group, const std::s
     return it == g->second.end() ? std::nullopt : std::optional<uint16_t>(it->second);
 }
 
+// Group of the resources a package keeps for itself (Sims' character files,
+// lots): the index cannot address them, since they all share it.
+constexpr uint32_t kPackageLocalGroup = 0xFFFFFFFF;
+
+void CodeLibrary::indexDefinition(uint32_t group, uint16_t instance, const ObjectDefinition& d) {
+    // Keeps the first OBJD of a GUID or name, like the rest of the index.
+    byGuid_.emplace(d.guid(), std::pair{group, instance});
+    byFileName_.emplace(d.fileName, std::pair{group, instance});
+    if (d.masterId() && d.subIndex() == 0xFFFF)
+        masters_.emplace(std::pair{group, d.masterId()}, instance);
+    else if (d.masterId()) {
+        auto& p = parts_[{group, d.masterId()}];
+        if (std::find(p.begin(), p.end(), instance) == p.end()) {
+            p.push_back(instance);
+            std::sort(p.begin(), p.end());
+        }
+    }
+}
+
 void CodeLibrary::scanDefinitions() {
     if (guidsScanned_ || !index_)
         return;
     guidsScanned_ = true;
     for (const auto& loc : index_->ofType(kTypeObjd)) {
         const auto& tgi = loc.entry->tgi;
-        const auto d = ObjectDefinition::parse(index_->read(loc));
-        // Keeps the first OBJD of a GUID, like the rest of the index.
-        byGuid_.emplace(d.guid(), std::pair{tgi.group, uint16_t(tgi.instance)});
-        if (d.masterId() && d.subIndex() == 0xFFFF)
-            masters_.emplace(std::pair{tgi.group, d.masterId()}, uint16_t(tgi.instance));
+        if (tgi.group == kPackageLocalGroup)
+            continue;
+        indexDefinition(tgi.group, uint16_t(tgi.instance), ObjectDefinition::parse(index_->read(loc)));
     }
+}
+
+std::vector<uint16_t> CodeLibrary::parts(uint32_t group, uint16_t masterId) {
+    scanDefinitions();
+    auto it = parts_.find({group, masterId});
+    return it == parts_.end() ? std::vector<uint16_t>{} : it->second;
+}
+
+std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByName(const std::string& fileName) {
+    scanDefinitions();
+    if (auto it = byFileName_.find(fileName); it != byFileName_.end())
+        return it->second;
+    return std::nullopt;
+}
+
+std::vector<uint16_t> CodeLibrary::addPackage(DbpfPackage& pkg, uint32_t group) {
+    // Once per group: objects already made from it point at its definitions.
+    if (auto it = packages_.find(group); it != packages_.end())
+        return it->second;
+    scanDefinitions(); // first, so the package's OBJDs take over their GUIDs
+    std::vector<uint16_t> added;
+    uint32_t semi = 0;
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.group != kPackageLocalGroup)
+            continue;
+        const auto instance = uint16_t(e.tgi.instance);
+        switch (e.tgi.type) {
+        case kTypeBhav: add(group, instance, Behavior::parse(pkg.read(e))); break;
+        case kTypeBcon: add(group, instance, Constants::parse(pkg.read(e))); break;
+        case kTypeStr: add(group, instance, StringTable::parse(pkg.read(e))); break;
+        case kTypeObjf: add(group, instance, ObjectFunctions::parse(pkg.read(e))); break;
+        case kTypeGlob: semi = semiGlobalGroup(SemiGlobal::parse(pkg.read(e)).semiGlobalName); break;
+        case kTypeObjd: {
+            auto d = ObjectDefinition::parse(pkg.read(e));
+            byGuid_[d.guid()] = {group, instance};
+            byFileName_[d.fileName] = {group, instance};
+            add(group, instance, std::move(d));
+            added.push_back(instance);
+            break;
+        }
+        default: break;
+        }
+    }
+    setSemiGlobal(group, semi);
+    size_t labels = 0;
+    if (const StringTable* t = strings(group, 0x100))
+        for (const auto& e : t->entries)
+            labels += e.language == lang::EnglishUS;
+    setAttributeLabelCount(group, labels);
+    packages_[group] = added;
+    return added;
 }
 
 std::optional<uint16_t> CodeLibrary::masterDefinition(uint32_t group, uint16_t masterId) {
@@ -184,9 +253,7 @@ void CodeLibrary::add(uint32_t group, uint16_t instance, StringTable t) {
 }
 
 void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectDefinition d) {
-    byGuid_.emplace(d.guid(), std::pair{group, instance});
-    if (d.masterId() && d.subIndex() == 0xFFFF)
-        masters_.emplace(std::pair{group, d.masterId()}, instance);
+    indexDefinition(group, instance, d);
     definitions_[key(group, instance)] = std::make_unique<ObjectDefinition>(std::move(d));
 }
 
@@ -456,10 +523,14 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
 
 VM::VM(CodeLibrary& code) : code_(code) { registerPrimitives(*this); }
 
-Object& VM::createObject(uint32_t group, size_t attributeCount) {
-    ObjectId id = 1;
-    while (objects_.count(id))
-        ++id;
+Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
+    if (id <= 0) {
+        id = 1;
+        while (objects_.count(id))
+            ++id;
+    } else if (objects_.count(id)) {
+        throw VMError("object " + std::to_string(id) + " already exists");
+    }
     Object& o = objects_[id];
     o.id = id;
     o.group = group;
@@ -468,6 +539,8 @@ Object& VM::createObject(uint32_t group, size_t attributeCount) {
     if (o.semiGroup)
         o.semiAttributes.resize(code_.attributeLabelCount(o.semiGroup));
     o.data[objdata::ObjectId] = id;
+    o.data[objdata::LeadTileObjectId] = id;
+    o.data[objdata::SlotNumber] = -1;
     o.data[objdata::SemiAttributeCount] = int16_t(o.semiAttributes.size());
     return o;
 }
@@ -476,7 +549,31 @@ Object& VM::instantiate(uint32_t group, uint16_t definitionInstance) {
     const ObjectDefinition* def = code_.definition(group, definitionInstance);
     if (!def)
         throw VMError("OBJD " + hexString(group) + "/" + hexString(definitionInstance) + " not found");
-    Object& o = createObject(group, std::max<size_t>(def->numAttributes(), code_.attributeLabelCount(group)));
+    if (!def->masterId() || def->subIndex() != 0xFFFF)
+        return instantiatePart(group, definitionInstance);
+    const auto parts = code_.parts(group, def->masterId());
+    if (parts.empty())
+        throw VMError("multi-tile OBJD " + hexString(group) + "/" + hexString(definitionInstance) + " has no parts");
+    // The lead is the part with sub index 0, else the first.
+    uint16_t lead = parts.front();
+    for (uint16_t p : parts)
+        if (const ObjectDefinition* d = code_.definition(group, p); d && d->subIndex() == 0) {
+            lead = p;
+            break;
+        }
+    Object& first = instantiatePart(group, lead);
+    const ObjectId leadId = first.id;
+    for (uint16_t p : parts)
+        if (p != lead)
+            instantiatePart(group, p).data[objdata::LeadTileObjectId] = leadId;
+    return *object(leadId);
+}
+
+Object& VM::instantiatePart(uint32_t group, uint16_t definitionInstance, ObjectId id) {
+    const ObjectDefinition* def = code_.definition(group, definitionInstance);
+    if (!def)
+        throw VMError("OBJD " + hexString(group) + "/" + hexString(definitionInstance) + " not found");
+    Object& o = createObject(group, std::max<size_t>(def->numAttributes(), code_.attributeLabelCount(group)), id);
     o.definition = def;
     o.definitionInstance = definitionInstance;
     if (def->objectType() == kObjectTypePerson)
@@ -505,6 +602,15 @@ Object* VM::neighborSim(int16_t id) {
         if (o.person && o.person->data[persondata::NeighborId] == id)
             return &o;
     return nullptr;
+}
+
+ObjectId VM::containedIn(ObjectId container, int16_t slot) const {
+    if (container == 0 || slot < 0)
+        return 0;
+    for (const auto& [id, o] : objects_)
+        if (o.data[objdata::ContainerId] == container && o.data[objdata::SlotNumber] == slot && id != container)
+            return id;
+    return 0;
 }
 
 Object* VM::object(ObjectId id) {

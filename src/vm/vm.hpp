@@ -21,6 +21,7 @@
 #include <vector>
 
 namespace os2 {
+class DbpfPackage;
 class ResourceIndex;
 }
 
@@ -64,8 +65,12 @@ constexpr size_t kMaxAttributes = 256;
 
 // Object data fields the engine maintains or reads (names as in STR# 0x8D).
 namespace objdata {
+constexpr int16_t Direction = 1;
+constexpr int16_t ContainerId = 2;
+constexpr int16_t SlotNumber = 3;
 constexpr int16_t ObjectId = 11;
 constexpr int16_t LeadTileObjectId = 19;
+constexpr int16_t Room = 29;
 constexpr int16_t Category = 59;
 constexpr int16_t SemiAttributeCount = 79;
 } // namespace objdata
@@ -190,6 +195,12 @@ public:
     // OBJD instance of the master of a multi-tile object of `group` (the OBJD
     // with that master ID and sub index -1), read with the GUID scan.
     std::optional<uint16_t> masterDefinition(uint32_t group, uint16_t masterId);
+    // OBJD instances of the parts of that multi-tile object (same master ID,
+    // sub index other than -1), by instance.
+    std::vector<uint16_t> parts(uint32_t group, uint16_t masterId);
+    // OBJD (group, instance) with this file name ("Trash Can - Outside"); the
+    // first OBJD of a name, as for GUIDs.
+    std::optional<std::pair<uint32_t, uint16_t>> definitionByName(const std::string& fileName);
     // Semi-global group the objects of `group` use (from their GLOB), 0 if none.
     uint32_t semiGlobalFor(uint32_t group);
     // Number of (English) labels in the group's STR# 0x100: the attribute
@@ -203,6 +214,11 @@ public:
     void add(uint32_t group, uint16_t instance, ObjectFunctions f);
     void setSemiGlobal(uint32_t group, uint32_t semiGroup) { semiGlobals_[group] = semiGroup; }
     void setAttributeLabelCount(uint32_t group, size_t n) { labelCounts_[group] = n; }
+    // Adds the code and definitions of a package's own group (0xFFFFFFFF, as
+    // in a Sim's character file) as `group`: the index cannot tell those
+    // apart, since every such package uses the same group. Its OBJDs take
+    // over their GUIDs. Returns the OBJD instances it added.
+    std::vector<uint16_t> addPackage(DbpfPackage& package, uint32_t group);
 
 private:
     // A null entry records a resource known to be missing.
@@ -216,6 +232,10 @@ private:
     Cache<StringTable> strings_;
     Cache<ObjectFunctions> functions_;
     std::map<std::pair<uint32_t, uint16_t>, uint16_t> masters_;
+    std::map<std::pair<uint32_t, uint16_t>, std::vector<uint16_t>> parts_;
+    std::unordered_map<std::string, std::pair<uint32_t, uint16_t>> byFileName_;
+    std::map<uint32_t, std::vector<uint16_t>> packages_; // addPackage
+    void indexDefinition(uint32_t group, uint16_t instance, const ObjectDefinition& d);
     void scanDefinitions();
     std::unordered_map<uint32_t, std::unordered_map<std::string, uint16_t>> byName_;
     bool namesScanned_ = false;
@@ -246,6 +266,16 @@ struct Person {
     std::array<int16_t, kMotiveCount> motives{};
 };
 
+// Where an object is in the lot, as the lot's saved state has it: the tile
+// position (tile centres at .5), the level (1 = the ground) and the
+// direction in object data 1. Objects out of the world (controllers, ones
+// in a slot or an inventory) are at (-1, -1).
+struct Position {
+    float x = -1, y = -1;
+    int level = 0;
+    bool inWorld() const { return x >= 0 && y >= 0; }
+};
+
 struct Object {
     ObjectId id = 0;
     uint32_t group = 0;     // private BHAVs/BCONs (the group of the object's OBJD)
@@ -271,6 +301,7 @@ struct Object {
     TempToken tempToken;
     // Interactions pushed onto this object (a Sim, usually), oldest first.
     std::vector<QueuedInteraction> queue;
+    Position position;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
@@ -335,18 +366,31 @@ public:
 
     CodeLibrary& code() { return code_; }
 
-    // Objects get ids from 1 up. Attributes start with `attributeCount`
-    // entries, semi-attributes with one per label of the semi-global library.
-    Object& createObject(uint32_t group, size_t attributeCount = 0);
+    // Objects get the lowest free id from 1 up, or `id` (a lot's saved
+    // objects keep theirs; throws if it is taken). Attributes start with
+    // `attributeCount` entries, semi-attributes with one per label of the
+    // semi-global library. Object data "object id" and "lead tile object ID"
+    // are the new id (a lot's saved single-tile objects lead themselves).
+    Object& createObject(uint32_t group, size_t attributeCount = 0, ObjectId id = 0);
     // An instance of the OBJD (group, instance): attributes sized by the larger of
     // its "num attributes" and the group's attribute labels; Sims get a Person.
+    // A multi-tile master (master ID set, sub index -1) is not an object
+    // itself: each of its parts is created, they all lead to the first one
+    // (sub index 0, else the lowest), and that one is returned.
     Object& instantiate(uint32_t group, uint16_t definitionInstance);
+    // One instance of exactly that OBJD (a part stays a single part).
+    Object& instantiatePart(uint32_t group, uint16_t definitionInstance, ObjectId id = 0);
     // An instance of the object with this GUID, or null if no OBJD has it.
     Object* instantiateGuid(uint32_t guid);
     Object* object(ObjectId id);
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) { objects_.erase(id); }
     const std::map<ObjectId, Object>& objects() const { return objects_; }
+
+    // Containment: an object is in slot "slot number" (object data 3) of the
+    // object "container id" (object data 2); outside of any slot those are 0
+    // and -1, as in the lot's saved state. The object in that slot, or 0.
+    ObjectId containedIn(ObjectId container, int16_t slot) const;
 
     std::array<int16_t, kGlobalCount> globals{};
 
