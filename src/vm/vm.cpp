@@ -2,6 +2,7 @@
 
 #include "formats/binreader.hpp"
 #include "formats/resindex.hpp"
+#include "formats/strings.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -39,6 +40,33 @@ auto& slot(V& values, int idx, const char* what) {
     return values[size_t(idx)];
 }
 
+// Attributes and semi-attributes: an index past the end grows the array.
+int16_t& growing(std::vector<int16_t>& values, int idx, const char* what) {
+    if (idx < 0 || size_t(idx) >= kMaxAttributes)
+        throw VMError(std::string(what) + " " + std::to_string(idx) + " out of range");
+    if (size_t(idx) >= values.size())
+        values.resize(size_t(idx) + 1);
+    return values[size_t(idx)];
+}
+
+Person& personOf(Object& o) {
+    if (!o.person)
+        throw VMError("object " + std::to_string(o.id) + " is not a person");
+    return *o.person;
+}
+
+// Field of the editor's OBJD numbering: 0-1 are the u32 version, i >= 2 the
+// field at file offset 0x40 + 2i.
+int16_t definitionField(const Object& o, int idx) {
+    if (!o.definition)
+        throw VMError("object " + std::to_string(o.id) + " has no definition");
+    if (idx < 0)
+        throw VMError("definition field " + std::to_string(idx) + " out of range");
+    if (idx < 2)
+        return int16_t(o.definition->version >> (16 * idx));
+    return int16_t(o.definition->field(0x40 + 2 * size_t(idx)));
+}
+
 } // namespace
 
 uint32_t semiGlobalGroup(std::string_view name) { return (nameInstanceHash(name) & 0x00FFFFFF) | 0x7F000000; }
@@ -49,6 +77,21 @@ const Behavior* CodeLibrary::behavior(uint32_t group, uint16_t instance) {
 
 const Constants* CodeLibrary::constants(uint32_t group, uint16_t instance) {
     return loadCached(constants_, index_, kTypeBcon, group, instance);
+}
+
+const ObjectDefinition* CodeLibrary::definition(uint32_t group, uint16_t instance) {
+    return loadCached(definitions_, index_, kTypeObjd, group, instance);
+}
+
+size_t CodeLibrary::attributeLabelCount(uint32_t group) {
+    if (auto it = labelCounts_.find(group); it != labelCounts_.end())
+        return it->second;
+    size_t n = 0;
+    if (index_)
+        if (auto data = index_->read(Tgi{kTypeStr, group, 0x100, 0}))
+            for (const auto& e : StringTable::parse(*data).entries)
+                n += e.language == lang::EnglishUS;
+    return labelCounts_[group] = n;
 }
 
 uint32_t CodeLibrary::semiGlobalFor(uint32_t group) {
@@ -73,6 +116,10 @@ void CodeLibrary::add(uint32_t group, uint16_t instance, Constants c) {
     constants_[key(group, instance)] = std::make_unique<Constants>(std::move(c));
 }
 
+void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectDefinition d) {
+    definitions_[key(group, instance)] = std::make_unique<ObjectDefinition>(std::move(d));
+}
+
 // --- Context ---------------------------------------------------------------
 
 Object& Context::me() const {
@@ -89,22 +136,46 @@ Object& Context::stackObject() const {
     return *o;
 }
 
-// Data owners, numbered as in The Sims 1 (the ones used by the interpreter
-// itself; motives, person data, slots, ... arrive with the object model).
-int16_t Context::get(uint8_t owner, int16_t data) const {
+// Storage behind a data owner, or null for the computed/read-only ones.
+// Owners whose index comes from another variable read it first.
+static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
+    auto& t = c.thread;
     switch (owner) {
-    case 0x00: return slot(me().attributes, data, "attribute");
-    case 0x01: return slot(stackObject().attributes, data, "stack object attribute");
-    case 0x03: return slot(me().data, data, "object data");
-    case 0x04: return slot(stackObject().data, data, "stack object data");
-    case 0x06: return slot(vm.globals, data, "global");
+    case 0x00: return &growing(c.me().attributes, data, "attribute");
+    case 0x01: return &growing(c.stackObject().attributes, data, "stack object attribute");
+    case 0x02: return &growing(c.me().semiAttributes, data, "semi-attribute");
+    case 0x03: return &slot(c.me().data, data, "object data");
+    case 0x04: return &slot(c.stackObject().data, data, "stack object data");
+    case 0x05: return &growing(c.stackObject().semiAttributes, data, "stack object semi-attribute");
+    case 0x06: return &slot(c.vm.globals, data, "global");
+    case 0x08: return &slot(t.temps, data, "temp");
+    case 0x09: return &slot(c.frame.params, data, "param");
+    case 0x0B: return &slot(t.temps, slot(t.temps, data, "temp"), "temp[temp]");
+    case 0x0E: return &slot(personOf(c.me()).motives, data, "motive");
+    case 0x0F: return &slot(personOf(c.stackObject()).motives, data, "stack object motive");
+    case 0x11: return &slot(personOf(c.stackObject()).motives, slot(t.temps, data, "temp"), "stack object motive[temp]");
+    case 0x12: return &slot(personOf(c.me()).data, data, "person data");
+    case 0x13: return &slot(personOf(c.stackObject()).data, data, "stack object person data");
+    case 0x16:
+        return &growing(c.stackObject().attributes, slot(c.frame.params, data, "param"), "stack object attribute[param]");
+    case 0x19: return &slot(c.frame.locals, data, "local");
+    case 0x1E: return &slot(personOf(c.me()).data, slot(t.temps, data, "temp"), "person data[temp]");
+    case 0x1F:
+        return &slot(personOf(c.stackObject()).data, slot(t.temps, data, "temp"), "stack object person data[temp]");
+    case 0x32:
+        return &growing(c.stackObject().semiAttributes, slot(c.frame.params, data, "param"),
+                        "stack object semi-attribute[param]");
+    default: return nullptr;
+    }
+}
+
+int16_t Context::get(uint8_t owner, int16_t data) const {
+    if (int16_t* v = storage(*this, owner, data))
+        return *v;
+    switch (owner) {
     case 0x07: return data; // literal
-    case 0x08: return slot(thread.temps, data, "temp");
-    case 0x09: return slot(frame.params, data, "param");
     case 0x0A: return thread.stackObject;
-    case 0x0B: return slot(thread.temps, slot(thread.temps, data, "temp"), "temp[temp]");
-    case 0x16: return slot(stackObject().attributes, slot(frame.params, data, "param"), "stack object attribute[param]");
-    case 0x19: return slot(frame.locals, data, "local");
+    case 0x15: return definitionField(stackObject(), data);
     case 0x1A: {
         // High bits pick the BCON (private, semi-global or global), low 7 bits the entry.
         auto* owner = vm.object(frame.codeOwner);
@@ -120,21 +191,14 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
 }
 
 void Context::set(uint8_t owner, int16_t data, int16_t value) const {
-    switch (owner) {
-    case 0x00: slot(me().attributes, data, "attribute") = value; return;
-    case 0x01: slot(stackObject().attributes, data, "stack object attribute") = value; return;
-    case 0x03: slot(me().data, data, "object data") = value; return;
-    case 0x04: slot(stackObject().data, data, "stack object data") = value; return;
-    case 0x06: slot(vm.globals, data, "global") = value; return;
-    case 0x08: slot(thread.temps, data, "temp") = value; return;
-    case 0x09: slot(frame.params, data, "param") = value; return;
-    case 0x0A: thread.stackObject = value; return;
-    case 0x0B: slot(thread.temps, slot(thread.temps, data, "temp"), "temp[temp]") = value; return;
-    case 0x16:
-        slot(stackObject().attributes, slot(frame.params, data, "param"), "stack object attribute[param]") = value;
+    if (int16_t* v = storage(*this, owner, data)) {
+        *v = value;
         return;
-    case 0x19: slot(frame.locals, data, "local") = value; return;
+    }
+    switch (owner) {
+    case 0x0A: thread.stackObject = value; return;
     case 0x07:
+    case 0x15: // the editor marks only some definition fields read-only; writes are not supported yet
     case 0x1A: throw VMError("data owner " + hexString(owner) + " is read-only");
     default:
         ++vm.missingOwners[owner];
@@ -155,6 +219,21 @@ Object& VM::createObject(uint32_t group, size_t attributeCount) {
     o.group = group;
     o.semiGroup = code_.semiGlobalFor(group);
     o.attributes.resize(attributeCount);
+    if (o.semiGroup)
+        o.semiAttributes.resize(code_.attributeLabelCount(o.semiGroup));
+    o.data[objdata::ObjectId] = id;
+    o.data[objdata::SemiAttributeCount] = int16_t(o.semiAttributes.size());
+    return o;
+}
+
+Object& VM::instantiate(uint32_t group, uint16_t definitionInstance) {
+    const ObjectDefinition* def = code_.definition(group, definitionInstance);
+    if (!def)
+        throw VMError("OBJD " + hexString(group) + "/" + hexString(definitionInstance) + " not found");
+    Object& o = createObject(group, std::max<size_t>(def->numAttributes(), code_.attributeLabelCount(group)));
+    o.definition = def;
+    if (def->objectType() == kObjectTypePerson)
+        o.person.emplace();
     return o;
 }
 

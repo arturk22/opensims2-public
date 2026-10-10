@@ -311,25 +311,41 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
 
 // --- SimAntics VM ------------------------------------------------------------
 
-// Attribute count of the stand-in objects until the object model reads it from the OBJD.
-constexpr size_t kStandInAttributes = 256;
+// What stand-in objects are built from: an object group whose GLOB names each
+// semi-global group, and an OBJD (the lowest instance) of each object group.
+struct StandIns {
+    std::map<uint32_t, uint32_t> semiUsers;
+    std::map<uint32_t, uint16_t> definitions;
+};
 
-// Stand-in "me" for running a tree of `group`: the object itself, or for a
-// semi-global group one of the objects that use it.
-vm::Object& standInObject(vm::VM& machine, uint32_t group, const std::map<uint32_t, uint32_t>& semiUsers) {
-    auto user = semiUsers.find(group);
-    vm::Object& me = machine.createObject(user != semiUsers.end() ? user->second : group, kStandInAttributes);
-    if (user != semiUsers.end())
-        me.semiGroup = group;
-    return me;
+StandIns standIns(ResourceIndex& index) {
+    StandIns s;
+    for (const auto& loc : index.ofType(vm::kTypeGlob))
+        s.semiUsers.emplace(vm::semiGlobalGroup(SemiGlobal::parse(index.read(loc)).semiGlobalName),
+                            loc.entry->tgi.group);
+    for (const auto& loc : index.ofType(vm::kTypeObjd)) {
+        const auto& tgi = loc.entry->tgi;
+        auto [it, added] = s.definitions.emplace(tgi.group, uint16_t(tgi.instance));
+        if (!added)
+            it->second = std::min(it->second, uint16_t(tgi.instance));
+    }
+    return s;
 }
 
-// Semi-global group -> one object group whose GLOB names it.
-std::map<uint32_t, uint32_t> semiGlobalUsers(ResourceIndex& index) {
-    std::map<uint32_t, uint32_t> users;
-    for (const auto& loc : index.ofType(vm::kTypeGlob))
-        users.emplace(vm::semiGlobalGroup(SemiGlobal::parse(index.read(loc)).semiGlobalName), loc.entry->tgi.group);
-    return users;
+// Stand-in "me" for running a tree of `group`: an instance of the object, or
+// for a semi-global group of one of the objects that use it. Trees of any group
+// may act on a Sim, so the stand-in also carries person data.
+vm::Object& standInObject(vm::VM& machine, uint32_t group, const StandIns& s) {
+    auto user = s.semiUsers.find(group);
+    const uint32_t objGroup = user != s.semiUsers.end() ? user->second : group;
+    auto def = s.definitions.find(objGroup);
+    vm::Object& me =
+        def != s.definitions.end() ? machine.instantiate(objGroup, def->second) : machine.createObject(objGroup);
+    if (user != s.semiUsers.end())
+        me.semiGroup = group;
+    if (!me.person)
+        me.person.emplace();
+    return me;
 }
 
 const char* statusName(const vm::Thread& t) {
@@ -346,7 +362,7 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
     ResourceIndex index(root);
     vm::CodeLibrary code(&index);
     vm::VM machine(code);
-    const auto users = semiGlobalUsers(index);
+    const auto users = standIns(index);
     vm::Object& me = standInObject(machine, group, users);
     machine.trace = [](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
         std::string ops;
@@ -377,7 +393,7 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
 int cmdBhavSweep(const std::filesystem::path& root) {
     ResourceIndex index(root);
     vm::CodeLibrary code(&index);
-    const auto users = semiGlobalUsers(index);
+    const auto users = standIns(index);
     std::map<std::string, size_t> outcomes, reasons;
     std::map<uint16_t, size_t> missingPrimitives;
     std::map<uint8_t, size_t> missingOwners;

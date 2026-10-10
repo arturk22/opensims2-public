@@ -41,8 +41,9 @@ static Behavior::Instruction expr(uint8_t lo, int16_t ld, uint8_t op, uint8_t ro
                  {uint8_t(ld), uint8_t(uint16_t(ld) >> 8), uint8_t(rd), uint8_t(uint16_t(rd) >> 8), 0, op, lo, ro});
 }
 
-enum Owner : uint8_t { Attr = 0x00, SAttr = 0x01, Global = 0x06, Lit = 0x07, Temp = 0x08, Param = 0x09,
-                       StackId = 0x0A, Local = 0x19, Const = 0x1A };
+enum Owner : uint8_t { Attr = 0x00, SAttr = 0x01, Semi = 0x02, Data = 0x03, SSemi = 0x05, Global = 0x06,
+                       Lit = 0x07, Temp = 0x08, Param = 0x09, StackId = 0x0A, Motive = 0x0E, SMotiveTemp = 0x11,
+                       PData = 0x12, SPerson = 0x13, SDef = 0x15, Local = 0x19, Const = 0x1A, PersonTemp = 0x1E };
 enum Op : uint8_t { Gt = 0, Lt = 1, Eq = 2, Add = 3, Assign = 5, Mul = 6, Div = 7, FlagSet = 8, SetFlag = 9,
                     IncLt = 11, Or = 18, Xor = 19, Abs = 20 };
 
@@ -150,6 +151,56 @@ static void testStackObjectAndAttributes() {
           "stack object set by a subroutine");
 }
 
+static void testObjectModel() {
+    Fixture fx;
+    fx.code.setAttributeLabelCount(kObjGroup, 3);
+    fx.code.setAttributeLabelCount(kSemiGroup, 5);
+    // OBJD fields from offset 0x44: version 0x8C, type (0x52) person, num attributes (0xB4) 2, price (0x64) 750.
+    ObjectDefinition def;
+    def.version = 0x8C;
+    def.fields.resize(60);
+    def.fields[(0x52 - 0x44) / 2] = kObjectTypePerson;
+    def.fields[(0xB4 - 0x44) / 2] = 2;
+    def.fields[(0x64 - 0x44) / 2] = 750;
+    fx.code.add(kObjGroup, 0x80, def);
+    Object& sim = fx.vm.instantiate(kObjGroup, 0x80);
+    check(sim.attributes.size() == 3 && sim.semiAttributes.size() == 5 && sim.person, "instance sized from OBJD and labels");
+    check(sim.data[objdata::ObjectId] == sim.id && sim.data[objdata::SemiAttributeCount] == 5,
+          "engine-maintained object data");
+    Object& chair = fx.vm.createObject(kObjGroup);
+    check(!chair.person, "objects are not persons by default");
+
+    // Semi-attributes, motives, person data (direct and [temp]) and the stack object's definition.
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, sim.id, go(1), E), expr(Semi, 4, Assign, Lit, 9, go(2), E),
+                      expr(Temp, 0, Assign, SSemi, 4, go(3), E), expr(Motive, 7, Assign, Lit, -50, go(4), E),
+                      expr(Temp, 1, Assign, Lit, 7, go(5), E), expr(Temp, 2, Assign, SMotiveTemp, 1, go(6), E),
+                      expr(Temp, 1, Assign, Lit, 169, go(7), E), expr(PersonTemp, 1, Assign, Lit, 3, go(8), E),
+                      expr(Temp, 3, Assign, SPerson, 169, go(9), E), expr(Temp, 4, Assign, SDef, 18, go(10), E),
+                      expr(Temp, 5, Assign, SDef, 0, go(11), E), expr(Temp, 6, Assign, Data, objdata::ObjectId, go(12), E),
+                      expr(Attr, 10, Assign, Lit, 1, T, E)}));
+    Thread t = fx.vm.start(sim.id, 0x1000);
+    fx.vm.run(t);
+    if (t.status == Thread::Status::Failed)
+        std::fprintf(stderr, "  thread failed: %s\n", t.error.c_str());
+    check(t.status == Thread::Status::Finished, "object model tree runs");
+    check(t.temps[0] == 9 && t.temps[2] == -50 && t.temps[3] == 3, "semi-attributes, motives and person data");
+    check(t.temps[4] == 750 && t.temps[5] == 0x8C, "definition fields in the editor's numbering");
+    check(t.temps[6] == sim.id, "object id in object data");
+    check(sim.attributes.size() == 11 && sim.attributes[10] == 1, "attributes grow when written past the end");
+
+    // Person data of an object that is not a Sim fails.
+    fx.code.add(kObjGroup, 0x1001, tree({expr(Temp, 0, Assign, PData, 0, T, E)}));
+    t = fx.vm.start(chair.id, 0x1001);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Failed && t.error.find("not a person") != std::string::npos,
+          "person data needs a person");
+    fx.code.add(kObjGroup, 0x1002, tree({expr(Global, int16_t(kGlobalCount), Assign, Lit, 1, T, E)}));
+    t = fx.vm.start(chair.id, 0x1002);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Failed, "globals are bounded");
+}
+
 static void testExpressionOperators() {
     Fixture fx;
     fx.code.add(kObjGroup, 0x1000,
@@ -217,6 +268,7 @@ int main() {
     testCalls();
     testScopes();
     testStackObjectAndAttributes();
+    testObjectModel();
     testExpressionOperators();
     testYieldAndErrors();
     if (failures)

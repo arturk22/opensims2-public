@@ -11,7 +11,9 @@ namespace os2 {
 // SimAntics object resources. All start with a 64-byte, NUL-padded file name.
 
 // OBJD: object definition. The body is an array of 16-bit fields (layout
-// inherited from The Sims 1) followed by the object's title.
+// inherited from The Sims 1) followed by the object's title. The game's
+// editor labels them (objects.package, STR# 0x7FE59FD0/0xCC) counting from
+// the version: label i is the field at file offset 0x40 + 2i.
 struct ObjectDefinition {
     std::string fileName;
     uint32_t version = 0;
@@ -35,6 +37,7 @@ struct ObjectDefinition {
     uint16_t price() const { return field(0x64); }
     uint16_t slotId() const { return field(0x68); }
     uint32_t proxyGuid() const { return field32(0x7A); }
+    uint16_t numAttributes() const { return field(0xB4); } // 0 in most objects that have attributes
     uint32_t originalGuid() const { return field32(0xCC); }
     // 0-based index into the group's "3D Object Names" STR# (instance 0x85).
     // Inferred from the data: for 97% of the objects whose name matches one of

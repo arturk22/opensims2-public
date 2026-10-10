@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -31,10 +32,31 @@ constexpr uint32_t kTypeGlob = 0x474C4F42;
 // lowercased name with the high byte 0x7F (holds for every GLOB in the game).
 uint32_t semiGlobalGroup(std::string_view name);
 
+constexpr uint32_t kTypeObjd = 0x4F424A44;
+constexpr uint32_t kTypeStr = 0x53545223;
+
+// Sizes of the engine-defined variable sets, from the labels of the game's own
+// SimAntics editor (objects.package, group 0x7FE59FD0: STR# 0x81 global labels,
+// 0x8D object data, 0xC8 person data, 0x86 motives). They match the highest
+// index any BHAV uses.
 constexpr size_t kTempCount = 20;
-constexpr size_t kObjectDataCount = 128; // provisional, until the object model is known
-constexpr size_t kGlobalCount = 256;     // provisional
+constexpr size_t kObjectDataCount = 88;
+constexpr size_t kGlobalCount = 54;
+constexpr size_t kPersonDataCount = 170;
+constexpr size_t kMotiveCount = 16;
 constexpr size_t kMaxStackDepth = 128;
+// Attributes and semi-attributes grow when written past their initial size;
+// this bounds that growth (the BHAVs use at most 61 and 35).
+constexpr size_t kMaxAttributes = 256;
+
+// Object data fields the engine maintains (names as in STR# 0x8D).
+namespace objdata {
+constexpr int16_t ObjectId = 11;
+constexpr int16_t SemiAttributeCount = 79;
+} // namespace objdata
+
+// Object type (OBJD "type") of a Sim.
+constexpr uint16_t kObjectTypePerson = 2;
 
 struct VMError : std::runtime_error {
     using std::runtime_error::runtime_error;
@@ -49,12 +71,18 @@ public:
 
     const Behavior* behavior(uint32_t group, uint16_t instance);
     const Constants* constants(uint32_t group, uint16_t instance);
+    const ObjectDefinition* definition(uint32_t group, uint16_t instance);
     // Semi-global group the objects of `group` use (from their GLOB), 0 if none.
     uint32_t semiGlobalFor(uint32_t group);
+    // Number of (English) labels in the group's STR# 0x100: the attribute
+    // labels of an object group, the semi-attribute labels of a semi-global one.
+    size_t attributeLabelCount(uint32_t group);
 
     void add(uint32_t group, uint16_t instance, Behavior b);
     void add(uint32_t group, uint16_t instance, Constants c);
+    void add(uint32_t group, uint16_t instance, ObjectDefinition d);
     void setSemiGlobal(uint32_t group, uint32_t semiGroup) { semiGlobals_[group] = semiGroup; }
+    void setAttributeLabelCount(uint32_t group, size_t n) { labelCounts_[group] = n; }
 
 private:
     // A null entry records a resource known to be missing.
@@ -64,18 +92,30 @@ private:
     ResourceIndex* index_ = nullptr;
     Cache<Behavior> behaviors_;
     Cache<Constants> constants_;
+    Cache<ObjectDefinition> definitions_;
     std::unordered_map<uint32_t, uint32_t> semiGlobals_;
+    std::unordered_map<uint32_t, size_t> labelCounts_;
 };
 
 using ObjectId = int16_t;
 
-// Minimal object state the interpreter needs; the full object model comes later.
+// State only Sims have.
+struct Person {
+    std::array<int16_t, kPersonDataCount> data{};
+    std::array<int16_t, kMotiveCount> motives{};
+};
+
 struct Object {
     ObjectId id = 0;
     uint32_t group = 0;     // private BHAVs/BCONs (the group of the object's OBJD)
     uint32_t semiGroup = 0; // semi-global BHAVs/BCONs, 0 if none
+    const ObjectDefinition* definition = nullptr; // shared by every instance; may be null (tests)
+    // Private to each instance: attributes are declared by the object, semi-attributes
+    // by its semi-global library (both labelled in STR# 0x100 of their group).
     std::vector<int16_t> attributes;
+    std::vector<int16_t> semiAttributes;
     std::array<int16_t, kObjectDataCount> data{};
+    std::optional<Person> person;
 };
 
 struct Frame {
@@ -120,7 +160,8 @@ struct Context {
     Object& me() const;
     Object& stackObject() const; // throws VMError if there is none
 
-    // Variable access by data owner ("scope") and data value, as in the operands.
+    // Variable access by data owner ("scope") and data value, as in the operands
+    // (owner names in STR# 0x84 of the editor labels).
     int16_t get(uint8_t owner, int16_t data) const;
     void set(uint8_t owner, int16_t data, int16_t value) const;
 };
@@ -133,8 +174,12 @@ public:
 
     CodeLibrary& code() { return code_; }
 
-    // Objects get ids from 1 up.
-    Object& createObject(uint32_t group, size_t attributeCount);
+    // Objects get ids from 1 up. Attributes start with `attributeCount`
+    // entries, semi-attributes with one per label of the semi-global library.
+    Object& createObject(uint32_t group, size_t attributeCount = 0);
+    // An instance of the OBJD (group, instance): attributes sized by the larger of
+    // its "num attributes" and the group's attribute labels; Sims get a Person.
+    Object& instantiate(uint32_t group, uint16_t definitionInstance);
     Object* object(ObjectId id);
 
     std::array<int16_t, kGlobalCount> globals{};
