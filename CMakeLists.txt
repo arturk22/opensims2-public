@@ -18,6 +18,7 @@ add_library(os2_formats
   src/formats/rcol.cpp
   src/formats/resindex.cpp
   src/formats/scenegraph.cpp
+  src/formats/strings.cpp
   src/formats/txmt.cpp
 )
 target_include_directories(os2_formats PUBLIC src)

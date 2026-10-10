@@ -4,6 +4,7 @@
 #include "formats/image.hpp"
 #include "formats/rcol.hpp"
 #include "formats/scenegraph.hpp"
+#include "formats/strings.hpp"
 #include "formats/txmt.hpp"
 
 #include <cstdarg>
@@ -222,13 +223,31 @@ std::string describeRcol(std::span<const uint8_t> data) {
     return out;
 }
 
+bool isStringType(uint32_t type) { return type == 0x53545223 || type == 0x43545353 || type == 0x54544173; }
+
+std::string describeStrings(std::span<const uint8_t> data) {
+    std::string out;
+    const auto t = StringTable::parse(data);
+    appendf(out, "name=%s format=0x%04X entries=%zu\n", t.fileName.c_str(), t.format, t.entries.size());
+    std::vector<size_t> perLang(256, 0);
+    for (const auto& e : t.entries) {
+        appendf(out, "  [lang %2u #%zu] %s", e.language, perLang[e.language]++, e.value.c_str());
+        if (!e.description.empty())
+            appendf(out, "  -- %s", e.description.c_str());
+        appendf(out, "\n");
+    }
+    return out;
+}
+
 } // namespace
 
-bool hasDecoder(uint32_t type) { return isRcolType(type); }
+bool hasDecoder(uint32_t type) { return isRcolType(type) || isStringType(type); }
 
 std::string describeResource(uint32_t type, std::span<const uint8_t> data) {
     if (isRcolType(type))
         return describeRcol(data);
+    if (isStringType(type))
+        return describeStrings(data);
     throw std::runtime_error("no decoder for this type");
 }
 

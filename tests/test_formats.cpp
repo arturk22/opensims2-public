@@ -1,5 +1,6 @@
 #include "formats/image.hpp"
 #include "formats/resindex.hpp"
+#include "formats/strings.hpp"
 
 #include <cstdio>
 #include <filesystem>
@@ -106,12 +107,49 @@ static void testNameHash() {
     check(nameInstanceHash("6c6b10bc-8e91-45d7-8911-b92defb69a3a_TXMT") == 0xFF07B665, "instance hash is case-insensitive");
 }
 
+static std::vector<uint8_t> strHeader(uint16_t format, uint16_t count) {
+    std::vector<uint8_t> d(64, 0);
+    const char name[] = "test";
+    std::copy(name, name + 4, d.begin());
+    d.push_back(uint8_t(format)), d.push_back(uint8_t(format >> 8));
+    d.push_back(uint8_t(count)), d.push_back(uint8_t(count >> 8));
+    return d;
+}
+
+static void put(std::vector<uint8_t>& d, const std::string& s) {
+    d.insert(d.end(), s.begin(), s.end());
+    d.push_back(0);
+}
+
+static void testStrings() {
+    auto d = strHeader(0xFFFD, 5);
+    for (auto [l, v] : std::initializer_list<std::pair<uint8_t, const char*>>{
+             {1, "Chair"}, {1, "Table"}, {14, "Cadeira PT"}, {35, "Cadeira"}, {14, "Mesa"}}) {
+        d.push_back(l);
+        put(d, v);
+        put(d, "");
+    }
+    d.insert(d.end(), 7, 0xA3); // fill padding seen in the game data
+    const auto t = StringTable::parse(d);
+    check(t.fileName == "test" && t.entries.size() == 5, "STR# entries");
+    check(t.get(0) == "Cadeira", "STR# pt-BR");
+    check(t.get(1) == "Mesa", "STR# pt-BR falls back to Portuguese");
+    check(t.get(1, lang::EnglishUS) == "Table", "STR# English");
+    check(t.count(14) == 2, "STR# count per language");
+
+    std::vector<uint8_t> pascal(64, 0);
+    pascal.insert(pascal.end(), {0x00, 0x02, 2, 'o', 'n', 3, 'o', 'f', 'f'});
+    const auto p = StringTable::parse(pascal);
+    check(p.entries.size() == 2 && p.get(1) == "off", "STR# legacy Pascal table");
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
     testRaw();
     testPng();
     testNameHash();
+    testStrings();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
