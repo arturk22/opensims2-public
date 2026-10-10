@@ -1,18 +1,11 @@
 #include "dbpf.hpp"
 
+#include "binreader.hpp"
 #include "qfs.hpp"
 
 #include <cstring>
 
 namespace os2 {
-
-namespace {
-
-uint32_t le32(const uint8_t* p) {
-    return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
-}
-
-} // namespace
 
 DbpfPackage::DbpfPackage(const std::filesystem::path& path) : path_(path), file_(path, std::ios::binary) {
     if (!file_)
@@ -120,6 +113,11 @@ const DbpfEntry* DbpfPackage::find(const Tgi& tgi) const {
 
 std::vector<uint8_t> DbpfPackage::readRaw(const DbpfEntry& e) {
     std::vector<uint8_t> buf(e.size);
+    if (!file_.is_open()) {
+        file_.open(path_, std::ios::binary);
+        if (!file_)
+            throw DbpfError("cannot reopen " + path_.string());
+    }
     file_.clear();
     file_.seekg(e.offset);
     file_.read(reinterpret_cast<char*>(buf.data()), std::streamsize(buf.size()));

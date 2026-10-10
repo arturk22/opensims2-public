@@ -69,6 +69,10 @@ public:
     // Bytes after QFS decompression (when the DIR lists the resource).
     std::vector<uint8_t> read(const DbpfEntry& e);
 
+    // Release the file handle; the next read reopens it.
+    void closeFile() { file_.close(); }
+    bool fileOpen() const { return file_.is_open(); }
+
 private:
     std::filesystem::path path_;
     std::ifstream file_;

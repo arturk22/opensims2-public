@@ -1,5 +1,7 @@
 // s2pkg: inspect and extract The Sims 2 .package (DBPF) files.
 #include "formats/dbpf.hpp"
+#include "formats/rcol.hpp"
+#include "formats/resindex.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -78,6 +80,90 @@ int cmdVerify(DbpfPackage& pkg) {
     return failed ? 1 : 0;
 }
 
+Tgi parseTgi(const std::string& s) {
+    Tgi k;
+    if (std::sscanf(s.c_str(), "%x-%x-%x-%x", &k.type, &k.group, &k.instanceHi, &k.instance) != 4)
+        throw std::runtime_error("bad TGI '" + s + "' (expected TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII)");
+    return k;
+}
+
+bool isRcolType(uint32_t t) {
+    switch (t) {
+    case 0x1C4A276C: case 0x49596978: case 0x7BA3838C: case 0xAC4F8687: case 0xE519C933:
+    case 0xED534136: case 0xFC6EB1F7: case 0x4D51F042: case 0xC9C81B9B: case 0xC9C81BA3:
+    case 0xC9C81BA9: case 0xC9C81BAD: case 0xED534137: case 0x253D2018:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Decodes one resource; returns a textual dump.
+std::string decode(uint32_t type, std::span<const uint8_t> data) {
+    std::string out;
+    char line[256];
+    if (isRcolType(type)) {
+        Rcol rc(data);
+        for (const auto& l : rc.links) {
+            std::snprintf(line, sizeof line, "link %s\n", tgiString(l).c_str());
+            out += line;
+        }
+        for (const auto& b : rc.blocks) {
+            std::snprintf(line, sizeof line, "block %s 0x%08X  %zu bytes\n", b.className.c_str(), b.typeId,
+                          b.body.size());
+            out += line;
+        }
+        return out;
+    }
+    throw std::runtime_error("no decoder for " + typeLabel(type));
+}
+
+int cmdDump(DbpfPackage& pkg, const Tgi& tgi) {
+    const auto* e = pkg.find(tgi);
+    if (!e)
+        throw std::runtime_error("resource not found");
+    std::fputs(decode(tgi.type, pkg.read(*e)).c_str(), stdout);
+    return 0;
+}
+
+int cmdDecodeAll(DbpfPackage& pkg) {
+    std::map<std::string, std::pair<size_t, size_t>> byType; // ok, failed
+    for (const auto& e : pkg.entries()) {
+        if (!isRcolType(e.tgi.type))
+            continue;
+        auto& acc = byType[typeLabel(e.tgi.type)];
+        try {
+            decode(e.tgi.type, pkg.read(e));
+            ++acc.first;
+        } catch (const std::exception& ex) {
+            ++acc.second;
+            std::fprintf(stderr, "%s %s: %s\n", typeLabel(e.tgi.type).c_str(), tgiString(e.tgi).c_str(), ex.what());
+        }
+    }
+    size_t failed = 0;
+    for (const auto& [t, acc] : byType) {
+        std::printf("%s: %-6s %zu ok, %zu failed\n", pkg.path().filename().string().c_str(), t.c_str(), acc.first,
+                    acc.second);
+        failed += acc.second;
+    }
+    return failed ? 1 : 0;
+}
+
+int cmdFind(const std::string& root, const std::string& name, const std::string& type) {
+    ResourceIndex idx(root);
+    std::printf("%zu packages, %zu resources, %zu duplicate TGIs\n", idx.packageCount(), idx.resourceCount(),
+                idx.duplicateCount());
+    const uint32_t t = uint32_t(std::stoul(type, nullptr, 16));
+    std::printf("hash: instance=0x%08X instanceHi=0x%08X\n", nameInstanceHash(name), nameInstanceHiHash(name));
+    auto loc = idx.findByName(name, t);
+    if (!loc) {
+        std::printf("not found\n");
+        return 1;
+    }
+    std::printf("%s in %s\n", tgiString(loc->entry->tgi).c_str(), loc->package->path().string().c_str());
+    return 0;
+}
+
 int cmdExtract(DbpfPackage& pkg, const std::filesystem::path& outDir) {
     std::filesystem::create_directories(outDir);
     for (const auto& e : pkg.entries()) {
@@ -91,8 +177,10 @@ int cmdExtract(DbpfPackage& pkg, const std::filesystem::path& outDir) {
 }
 
 int usage() {
-    std::fprintf(stderr, "usage: s2pkg ls|stats|verify <file.package>\n"
-                         "       s2pkg extract <file.package> <out-dir>\n");
+    std::fprintf(stderr, "usage: s2pkg ls|stats|verify|decode-all <file.package>\n"
+                         "       s2pkg dump <file.package> <TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII>\n"
+                         "       s2pkg extract <file.package> <out-dir>\n"
+                         "       s2pkg find <Res-dir> <name> <type-hex>\n");
     return 2;
 }
 
@@ -103,10 +191,13 @@ int main(int argc, char** argv) {
         return usage();
     const std::string cmd = argv[1];
     try {
+        if (cmd == "find" && argc == 5) return cmdFind(argv[2], argv[3], argv[4]);
         DbpfPackage pkg(argv[2]);
         if (cmd == "ls") return cmdLs(pkg);
         if (cmd == "stats") return cmdStats(pkg);
         if (cmd == "verify") return cmdVerify(pkg);
+        if (cmd == "decode-all") return cmdDecodeAll(pkg);
+        if (cmd == "dump" && argc == 4) return cmdDump(pkg, parseTgi(argv[3]));
         if (cmd == "extract" && argc == 4) return cmdExtract(pkg, argv[3]);
         return usage();
     } catch (const std::exception& ex) {

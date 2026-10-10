@@ -12,6 +12,8 @@ endif()
 add_library(os2_formats
   src/formats/dbpf.cpp
   src/formats/qfs.cpp
+  src/formats/rcol.cpp
+  src/formats/resindex.cpp
 )
 target_include_directories(os2_formats PUBLIC src)
 target_compile_options(os2_formats PRIVATE -Wall -Wextra)
