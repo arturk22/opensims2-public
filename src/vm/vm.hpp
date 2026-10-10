@@ -28,6 +28,7 @@ constexpr uint32_t kGlobalGroup = 0x7FD46CD0;
 constexpr uint32_t kTypeBhav = 0x42484156;
 constexpr uint32_t kTypeBcon = 0x42434F4E;
 constexpr uint32_t kTypeGlob = 0x474C4F42;
+constexpr uint32_t kTypeTtab = 0x54544142;
 
 // Group of the semi-global library a GLOB resource names: CRC24 of the
 // lowercased name with the high byte 0x7F (holds for every GLOB in the game).
@@ -203,8 +204,11 @@ public:
     void setPrimitive(uint16_t opcode, Primitive p) { primitives_[opcode] = std::move(p); }
 
     // A thread for `me` that starts in tree `treeId` (a call opcode: global,
-    // private or semi-global, resolved against me's code) with this stack object.
-    Thread start(ObjectId me, uint16_t treeId, std::span<const int16_t> args = {}, ObjectId stackObject = 0);
+    // private or semi-global) with this stack object. The tree and its calls
+    // resolve against the code of `codeOwner` (0: me); interactions run an
+    // object's tree in the Sim's thread.
+    Thread start(ObjectId me, uint16_t treeId, std::span<const int16_t> args = {}, ObjectId stackObject = 0,
+                 ObjectId codeOwner = 0);
     // Runs until the thread yields, finishes or fails. Exceeding the budget
     // fails the thread (an infinite loop, as far as the game is concerned).
     void run(Thread& thread, size_t maxInstructions = 100000);

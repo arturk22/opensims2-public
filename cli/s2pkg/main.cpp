@@ -16,6 +16,7 @@
 #include <iostream>
 #include <map>
 #include <regex>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -313,18 +314,44 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
 
 // What stand-in objects are built from: an object group whose GLOB names each
 // semi-global group, an OBJD (the lowest instance) of each object group, and
-// a Sim for the stack object (in interactions it is the Sim using the object).
+// a Sim. Interaction trees (TTAB actions and guards) and the "CT - " trees
+// that Run Tree by Name calls on the stack object run in the Sim's thread with
+// the object as the stack object: in them the object's attributes are read
+// through the stack object (2,116 times in private "Interaction - " trees,
+// against 133 through "my") and person data through "my" (551 against 172).
 struct StandIns {
     std::map<uint32_t, uint32_t> semiUsers;
     std::map<uint32_t, uint16_t> definitions;
     std::pair<uint32_t, uint16_t> person{}; // OBJD of a Sim (the first outside a neighbourhood)
+    std::set<std::pair<uint32_t, uint16_t>> interactions; // (group, BHAV) named by a TTAB
 };
 
 StandIns standIns(ResourceIndex& index) {
     StandIns s;
-    for (const auto& loc : index.ofType(vm::kTypeGlob))
-        s.semiUsers.emplace(vm::semiGlobalGroup(SemiGlobal::parse(index.read(loc)).semiGlobalName),
-                            loc.entry->tgi.group);
+    std::map<uint32_t, uint32_t> semiOf;
+    for (const auto& loc : index.ofType(vm::kTypeGlob)) {
+        const uint32_t semi = vm::semiGlobalGroup(SemiGlobal::parse(index.read(loc)).semiGlobalName);
+        s.semiUsers.emplace(semi, loc.entry->tgi.group);
+        semiOf.emplace(loc.entry->tgi.group, semi);
+    }
+    for (const auto& loc : index.ofType(vm::kTypeTtab)) {
+        const uint32_t group = loc.entry->tgi.group;
+        InteractionTable table;
+        try {
+            table = InteractionTable::parse(index.read(loc));
+        } catch (const std::exception&) {
+            continue; // a few TTABs carry bytes the parser does not explain
+        }
+        for (const auto& i : table.interactions)
+            for (uint16_t tree : {i.action, i.guard}) {
+                if (tree >= 0x2000 && semiOf.count(group))
+                    s.interactions.emplace(semiOf[group], tree);
+                else if (tree >= 0x1000 && tree < 0x2000)
+                    s.interactions.emplace(group, tree);
+                else if (tree >= 0x100 && tree < 0x1000)
+                    s.interactions.emplace(vm::kGlobalGroup, tree);
+            }
+    }
     for (const auto& loc : index.ofType(vm::kTypeObjd)) {
         const auto& tgi = loc.entry->tgi;
         auto [it, added] = s.definitions.emplace(tgi.group, uint16_t(tgi.instance));
@@ -353,12 +380,26 @@ vm::Object& standInObject(vm::VM& machine, uint32_t group, const StandIns& s) {
     return me;
 }
 
+bool isInteraction(const StandIns& s, uint32_t group, uint16_t instance, const Behavior& b) {
+    return s.interactions.count({group, instance}) || b.fileName.rfind("CT - ", 0) == 0;
+}
+
 vm::Object& standInPerson(vm::VM& machine, const StandIns& s) {
     if (s.person.first)
         return machine.instantiate(s.person.first, s.person.second);
     vm::Object& o = machine.createObject(0);
     o.person.emplace();
     return o;
+}
+
+// Starts a tree of `object` with a stand-in Sim: in the Sim's thread with the
+// object as the stack object for interactions, in the object's otherwise.
+vm::Thread startStandIn(vm::VM& machine, const StandIns& s, vm::Object& object, uint32_t group, uint16_t instance,
+                        std::span<const int16_t> args, const Behavior& tree) {
+    const vm::ObjectId sim = standInPerson(machine, s).id;
+    if (isInteraction(s, group, instance, tree))
+        return machine.start(sim, instance, args, object.id, object.id);
+    return machine.start(object.id, instance, args, sim);
 }
 
 const char* statusName(const vm::Thread& t) {
@@ -377,7 +418,7 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
     vm::CodeLibrary code(&index);
     vm::VM machine(code);
     const auto users = standIns(index);
-    vm::Object& me = standInObject(machine, group, users);
+    vm::Object& object = standInObject(machine, group, users);
     machine.trace = [](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
         std::string ops;
         char buf[8];
@@ -387,7 +428,10 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
         std::printf("%*s0x%04X #%-3u %-30s [%s]\n", int(t.stack.size() - 1) * 2, "", f.instance, f.pc, op.c_str(),
                     ops.c_str());
     };
-    vm::Thread t = machine.start(me.id, instance, args, standInPerson(machine, users).id);
+    auto [treeGroup, tree] = machine.resolveTree(object, instance);
+    if (!tree)
+        throw std::runtime_error("tree not found");
+    vm::Thread t = startStandIn(machine, users, object, treeGroup, instance, args, *tree);
     if (t.status == vm::Thread::Status::Running && t.stack.back().group != group)
         std::fprintf(stderr, "warning: tree resolved in group 0x%08X\n", t.stack.back().group);
     machine.run(t);
@@ -411,21 +455,23 @@ int cmdBhavSweep(const std::filesystem::path& root) {
     std::map<std::string, size_t> outcomes, reasons;
     std::map<uint16_t, size_t> missingPrimitives;
     std::map<uint8_t, size_t> missingOwners;
-    size_t total = 0, instructions = 0;
+    size_t total = 0, instructions = 0, interactions = 0;
     const std::regex number("0x[0-9A-F]+|\\d+");
     for (const auto& loc : index.ofType(vm::kTypeBhav)) {
         const auto& tgi = loc.entry->tgi;
         if (tgi.instance < 0x100)
             continue; // not callable
         vm::VM machine(code);
-        vm::Object& me = standInObject(machine, tgi.group, users);
+        vm::Object& object = standInObject(machine, tgi.group, users);
         uint16_t instance = uint16_t(tgi.instance);
         // Private trees of a global/semi-global group are not reachable by call opcodes.
-        if (machine.resolveTree(me, instance).first != tgi.group)
+        auto [group, tree] = machine.resolveTree(object, instance);
+        if (group != tgi.group)
             continue;
-        vm::Thread t = machine.start(me.id, instance, {}, standInPerson(machine, users).id);
+        vm::Thread t = startStandIn(machine, users, object, group, instance, {}, *tree);
         machine.run(t, 20000);
         ++total;
+        interactions += t.me != object.id;
         instructions += t.instructions;
         ++outcomes[statusName(t)];
         if (t.status == vm::Thread::Status::Failed) {
@@ -446,7 +492,8 @@ int cmdBhavSweep(const std::filesystem::path& root) {
         std::sort(v.rbegin(), v.rend());
         return v;
     };
-    std::printf("%zu trees, %zu instructions executed\n", total, instructions);
+    std::printf("%zu trees (%zu run as interactions, in a Sim's thread), %zu instructions executed\n", total,
+                interactions, instructions);
     for (const auto& [n, k] : byCount(outcomes))
         std::printf("  %6zu %s\n", n, k.c_str());
     std::printf("failure reasons:\n");

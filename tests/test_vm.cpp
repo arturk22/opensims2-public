@@ -156,6 +156,15 @@ static void testStackObjectAndAttributes() {
     Thread s = fx.vm.start(1, 0x1002, {}, other.id);
     fx.vm.run(s);
     check(s.status == Thread::Status::Finished && fx.obj().attributes[1] == 42, "thread starts with a stack object");
+
+    // An interaction: another object's private tree in my thread.
+    Object& tv = fx.vm.createObject(0x7F000003, 4);
+    tv.attributes[0] = 7;
+    fx.code.add(0x7F000003, 0x1000, tree({expr(Attr, 3, Assign, SAttr, 0, T, E)}));
+    Thread i = fx.vm.start(1, 0x1000, {}, tv.id, tv.id);
+    fx.vm.run(i);
+    check(i.status == Thread::Status::Finished && fx.obj().attributes[3] == 7,
+          "a thread can run the stack object's code");
 }
 
 static void testObjectModel() {

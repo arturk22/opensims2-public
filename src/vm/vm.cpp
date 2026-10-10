@@ -292,13 +292,14 @@ const Constants& VM::resolveConstants(const Object& owner, uint16_t table) {
     return *c;
 }
 
-Thread VM::start(ObjectId me, uint16_t treeId, std::span<const int16_t> args, ObjectId stackObject) {
+Thread VM::start(ObjectId me, uint16_t treeId, std::span<const int16_t> args, ObjectId stackObject,
+                 ObjectId codeOwner) {
     Thread t;
     t.me = me;
     std::array<int16_t, 4> a{};
     std::copy_n(args.begin(), std::min<size_t>(args.size(), 4), a.begin());
     try {
-        push(t, me, treeId, a);
+        push(t, codeOwner ? codeOwner : me, treeId, a);
         t.stack.back().stackObject = stackObject;
     } catch (const std::exception& e) {
         fail(t, e.what());
