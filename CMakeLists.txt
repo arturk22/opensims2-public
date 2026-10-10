@@ -37,6 +37,7 @@ add_library(os2_formats
   src/formats/lot_objects.cpp
   src/formats/lot_model.cpp
   src/formats/model.cpp
+  src/formats/neighborhood.cpp
   src/formats/property_set.cpp
   src/formats/qfs.cpp
   src/formats/rcol.cpp
@@ -149,3 +150,6 @@ add_test(NAME audio COMMAND test_audio)
 add_executable(test_ui tests/test_ui.cpp)
 target_link_libraries(test_ui PRIVATE os2_formats)
 add_test(NAME ui COMMAND test_ui)
+add_executable(test_neighborhood tests/test_neighborhood.cpp)
+target_link_libraries(test_neighborhood PRIVATE os2_formats)
+add_test(NAME neighborhood COMMAND test_neighborhood)
