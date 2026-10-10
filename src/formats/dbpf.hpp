@@ -86,6 +86,38 @@ private:
     void applyDirectory();
 };
 
+// Builds a DBPF 1.1 package with index 7.1, the layout the game ships: 96-byte
+// header, resource data in insertion order, a generated DIR listing the
+// uncompressed size of every QFS-compressed resource, then the index.
+// Duplicate TGIs are kept as given (the format allows them); DIR resources
+// passed in are dropped, since the writer generates its own.
+class DbpfWriter {
+public:
+    // Add uncompressed bytes. With `compress`, the resource is stored as QFS
+    // unless that does not shrink it (or it exceeds QFS's 16 MiB limit).
+    void add(const Tgi& tgi, std::vector<uint8_t> data, bool compress = false);
+    // Add bytes exactly as they will be stored; a `rawSize` lists the resource
+    // in the DIR as compressed (the bytes should then be a QFS stream).
+    void addStored(const Tgi& tgi, std::vector<uint8_t> stored, std::optional<uint32_t> rawSize = {});
+
+    size_t size() const { return resources_.size(); }
+
+    // Whole package as bytes.
+    std::vector<uint8_t> build() const;
+    void save(const std::filesystem::path& path) const;
+
+private:
+    struct Resource {
+        Tgi tgi;
+        std::vector<uint8_t> stored;
+        std::optional<uint32_t> rawSize;
+    };
+    std::vector<Resource> resources_;
+};
+
+// Key the game uses for the DIR resource.
+constexpr Tgi kDirTgi{type::DIR, 0xE86B1EEF, 0x286B1F03, 0};
+
 // Short tag for well-known Sims 2 resource types ("BHAV", "GMDC", ...), or empty.
 std::string_view typeName(uint32_t type);
 

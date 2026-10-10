@@ -136,6 +136,98 @@ std::vector<uint8_t> DbpfPackage::read(const DbpfEntry& e) {
     return out;
 }
 
+namespace {
+
+void putLe32(std::vector<uint8_t>& out, uint32_t v) {
+    out.push_back(uint8_t(v));
+    out.push_back(uint8_t(v >> 8));
+    out.push_back(uint8_t(v >> 16));
+    out.push_back(uint8_t(v >> 24));
+}
+
+void setLe32(std::vector<uint8_t>& out, size_t at, uint32_t v) {
+    out[at] = uint8_t(v);
+    out[at + 1] = uint8_t(v >> 8);
+    out[at + 2] = uint8_t(v >> 16);
+    out[at + 3] = uint8_t(v >> 24);
+}
+
+} // namespace
+
+void DbpfWriter::add(const Tgi& tgi, std::vector<uint8_t> data, bool compress) {
+    if (compress && !data.empty() && data.size() <= 0xFFFFFF) {
+        auto packed = qfsCompress(data);
+        if (packed.size() < data.size()) {
+            const auto raw = uint32_t(data.size());
+            addStored(tgi, std::move(packed), raw);
+            return;
+        }
+    }
+    addStored(tgi, std::move(data));
+}
+
+void DbpfWriter::addStored(const Tgi& tgi, std::vector<uint8_t> stored, std::optional<uint32_t> rawSize) {
+    if (tgi.type == type::DIR)
+        return;
+    resources_.push_back({tgi, std::move(stored), rawSize});
+}
+
+std::vector<uint8_t> DbpfWriter::build() const {
+    std::vector<uint8_t> dir; // 7.1 records: type, group, instance, instanceHi, raw size
+    for (const auto& r : resources_) {
+        if (!r.rawSize)
+            continue;
+        putLe32(dir, r.tgi.type);
+        putLe32(dir, r.tgi.group);
+        putLe32(dir, r.tgi.instance);
+        putLe32(dir, r.tgi.instanceHi);
+        putLe32(dir, *r.rawSize);
+    }
+
+    std::vector<uint8_t> out(96);
+    std::memcpy(out.data(), "DBPF", 4);
+    std::vector<uint8_t> index;
+    auto place = [&](const Tgi& k, const std::vector<uint8_t>& bytes) {
+        if (out.size() + bytes.size() > 0xFFFFFFFFull)
+            throw DbpfError("package larger than 4 GiB");
+        putLe32(index, k.type);
+        putLe32(index, k.group);
+        putLe32(index, k.instance);
+        putLe32(index, k.instanceHi);
+        putLe32(index, uint32_t(out.size()));
+        putLe32(index, uint32_t(bytes.size()));
+        out.insert(out.end(), bytes.begin(), bytes.end());
+    };
+    for (const auto& r : resources_)
+        place(r.tgi, r.stored);
+    const bool hasDir = !dir.empty();
+    if (hasDir)
+        place(kDirTgi, dir);
+
+    const size_t count = resources_.size() + hasDir;
+    if (out.size() + index.size() > 0xFFFFFFFFull)
+        throw DbpfError("package larger than 4 GiB");
+    setLe32(out, 0x04, 1); // DBPF 1.1
+    setLe32(out, 0x08, 1);
+    setLe32(out, 0x20, 7); // index 7.1
+    setLe32(out, 0x24, uint32_t(count));
+    setLe32(out, 0x28, uint32_t(out.size()));
+    setLe32(out, 0x2C, uint32_t(index.size()));
+    setLe32(out, 0x3C, 2);
+    out.insert(out.end(), index.begin(), index.end());
+    return out;
+}
+
+void DbpfWriter::save(const std::filesystem::path& path) const {
+    const auto bytes = build();
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f)
+        throw DbpfError("cannot create " + path.string());
+    f.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+    if (!f)
+        throw DbpfError(path.string() + ": write failed");
+}
+
 std::string_view typeName(uint32_t t) {
     switch (t) {
     case 0x00000000: return "UI";

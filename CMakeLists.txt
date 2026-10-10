@@ -83,6 +83,10 @@ add_executable(test_qfs tests/test_qfs.cpp)
 target_link_libraries(test_qfs PRIVATE os2_formats)
 add_test(NAME qfs COMMAND test_qfs)
 
+add_executable(test_dbpf tests/test_dbpf.cpp)
+target_link_libraries(test_dbpf PRIVATE os2_formats)
+add_test(NAME dbpf COMMAND test_dbpf)
+
 add_executable(test_formats tests/test_formats.cpp)
 target_link_libraries(test_formats PRIVATE os2_formats ZLIB::ZLIB)
 add_test(NAME formats COMMAND test_formats)
