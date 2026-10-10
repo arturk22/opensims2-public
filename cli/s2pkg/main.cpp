@@ -2,6 +2,7 @@
 #include "anim_cmds.hpp"
 #include "material_cmds.hpp"
 #include "audio_cmds.hpp"
+#include "ui_cmds.hpp"
 #include "describe.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/gmdc.hpp"
@@ -739,7 +740,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id]\n"
-                         "%s%s%s", animUsage(), materialUsage(), audioUsage());
+                         "%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage());
     return 2;
 }
 
@@ -755,6 +756,8 @@ int main(int argc, char** argv) {
         if (int rc = materialCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = audioCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = uiCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (cmd == "find" && argc == 5) return cmdFind(argv[2], argv[3], argv[4]);
         if (cmd == "object" && argc == 5) return cmdObject(argv[2], argv[3], argv[4]);

@@ -30,6 +30,7 @@ add_library(os2_formats
   src/formats/dbpf.cpp
   src/formats/gmdc.cpp
   src/formats/image.cpp
+  src/formats/jpeg.cpp
   src/formats/lighting_config.cpp
   src/formats/lot.cpp
   src/formats/lot_objects.cpp
@@ -46,6 +47,9 @@ add_library(os2_formats
   src/formats/skinning.cpp
   src/formats/strings.cpp
   src/formats/txmt.cpp
+  src/formats/ui_image.cpp
+  src/formats/ui_resources.cpp
+  src/formats/ui_script.cpp
 )
 target_include_directories(os2_formats PUBLIC src)
 target_compile_options(os2_formats PRIVATE -Wall -Wextra)
@@ -71,7 +75,7 @@ if(APPLE)
   target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 
-add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp)
+add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/ui_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm os2_audio)
 
@@ -139,3 +143,6 @@ add_executable(test_audio tests/test_audio.cpp)
 target_link_libraries(test_audio PRIVATE os2_audio)
 target_include_directories(test_audio PRIVATE third_party/speex/include) # the test encodes with libspeex
 add_test(NAME audio COMMAND test_audio)
+add_executable(test_ui tests/test_ui.cpp)
+target_link_libraries(test_ui PRIVATE os2_formats)
+add_test(NAME ui COMMAND test_ui)
