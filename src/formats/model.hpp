@@ -26,10 +26,20 @@ struct ObjectModel {
         std::string shape;    // SHPE resource name
         std::string material; // TXMT name without "_txmt", empty if none
         MeshGroup mesh;
+        int mask = -1; // index into masks: multiplies the part's alpha
+    };
+
+    // Alpha mask laid over the model's XY plane: value (x, y) sits at
+    // model-space (x, y) * spacing, interpolated in between.
+    struct AlphaMask {
+        uint32_t width = 0, height = 0;
+        float spacing = 1.0f;
+        std::vector<uint8_t> values; // row-major: values[y * width + x]
     };
 
     std::string name; // CRES resource name
     std::vector<Part> parts;
+    std::vector<AlphaMask> masks;
     std::map<std::string, MaterialDefinition> materials; // by material name
     std::vector<std::string> warnings;                   // references that could not be resolved
 };

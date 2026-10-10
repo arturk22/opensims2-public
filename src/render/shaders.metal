@@ -13,6 +13,7 @@ enum : uint {
     kLighting = 1,  // lit with the frame's directional light
     kAlphaTest = 2, // discard below alphaRef
     kChecker = 4,   // one-tile checkerboard (test floor)
+    kMasked = 8,    // alpha times the mask texture, laid over model XY
 };
 
 struct Draw {
@@ -20,6 +21,7 @@ struct Draw {
     float4 color;    // diffuse rgb, alpha multiplier
     float4 specular; // rgb, power in w
     float4 emissive; // rgb
+    float4 mask;     // mask uv = model xy * mask.xy + mask.zw
     float alphaRef;
     uint flags;
 };
@@ -44,6 +46,7 @@ struct VertexOut {
     float3 world;
     float3 normal;
     float2 uv;
+    float2 local; // model-space xy
 };
 
 vertex VertexOut vertex_main(uint vid [[vertex_id]],
@@ -56,6 +59,7 @@ vertex VertexOut vertex_main(uint vid [[vertex_id]],
     out.world = world.xyz;
     out.normal = (draw.model * float4(float3(vertices[vid].normal), 0.0)).xyz;
     out.uv = vertices[vid].uv;
+    out.local = float3(vertices[vid].position).xy;
     return out;
 }
 
@@ -63,8 +67,12 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               constant Draw& draw [[buffer(1)]],
                               constant Frame& frame [[buffer(2)]],
                               texture2d<float> base [[texture(0)]],
-                              sampler smp [[sampler(0)]]) {
+                              texture2d<float> mask [[texture(1)]],
+                              sampler smp [[sampler(0)]],
+                              sampler maskSmp [[sampler(1)]]) {
     float4 tex = base.sample(smp, in.uv);
+    if (draw.flags & kMasked)
+        tex.a *= mask.sample(maskSmp, in.local * draw.mask.xy + draw.mask.zw).r;
     if ((draw.flags & kAlphaTest) && tex.a < draw.alphaRef)
         discard_fragment();
     float3 albedo = tex.rgb;

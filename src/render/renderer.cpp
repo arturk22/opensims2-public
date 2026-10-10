@@ -33,13 +33,14 @@ struct Vertex {
     float uv[2];
 };
 
-enum : uint32_t { kLighting = 1, kAlphaTest = 2, kChecker = 4 };
+enum : uint32_t { kLighting = 1, kAlphaTest = 2, kChecker = 4, kMasked = 8 };
 
 struct Draw {
     simd_float4x4 model;
     simd_float4 color;
     simd_float4 specular;
     simd_float4 emissive;
+    simd_float4 mask;
     float alphaRef;
     uint32_t flags;
 };
@@ -114,6 +115,7 @@ struct Renderer::Material {
     simd_float4 color{1, 1, 1, 1};
     simd_float4 specular{0, 0, 0, 1}; // power in w
     simd_float4 emissive{0, 0, 0, 0};
+    simd_float4 maskTransform{0, 0, 0, 0}; // model xy -> mask uv: xy scale, zw offset
     float alphaRef = 0.5f;
     uint32_t flags = kLighting;
     StandardMaterial::Blend blend = StandardMaterial::Blend::None;
@@ -125,6 +127,7 @@ struct Renderer::Part {
     MTL::Buffer* indices = nullptr;
     uint32_t indexCount = 0;
     Material material;
+    MTL::Texture* mask = nullptr; // owned, with kMasked
 };
 
 struct Renderer::Model {
@@ -134,6 +137,8 @@ struct Renderer::Model {
         for (auto& p : parts) {
             p.vertices->release();
             p.indices->release();
+            if (p.mask)
+                p.mask->release();
         }
     }
 };
@@ -209,6 +214,11 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     sd->setTAddressMode(MTL::SamplerAddressModeRepeat);
     sd->setMaxAnisotropy(8);
     sampler_ = device_->newSamplerState(sd);
+    sd->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
+    sd->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+    sd->setMipFilter(MTL::SamplerMipFilterNotMipmapped);
+    sd->setMaxAnisotropy(1);
+    maskSampler_ = device_->newSamplerState(sd);
     sd->release();
 
     white_ = whiteTexture(device_);
@@ -224,6 +234,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
                     identity());
     }
     addInstance(addBox({0.5f, 0.5f, 0}, {0.6f, 0.6f, 0.6f}, {0.95f, 0.95f, 0.95f}, kLighting), identity());
+    testInstances_ = instances_.size();
 
     pool->release();
 }
@@ -242,6 +253,7 @@ Renderer::~Renderer() {
     white_->release();
     for (auto* f : frames_)
         f->release();
+    maskSampler_->release();
     sampler_->release();
     depthRead_->release();
     depthWrite_->release();
@@ -338,6 +350,17 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index) {
                 v[i].uv[0] = mesh.uvs[i][0], v[i].uv[1] = mesh.uvs[i][1];
         }
         Part p;
+        if (part.mask >= 0 && size_t(part.mask) < model.masks.size()) {
+            const auto& m = model.masks[size_t(part.mask)];
+            if (m.width && m.height && m.values.size() == size_t(m.width) * m.height) {
+                p.mask = uploadMask(m);
+                mat.flags |= kMasked;
+                // Value i sits at i * spacing: sample texel centres.
+                mat.maskTransform = simd_make_float4(1.0f / (m.spacing * float(m.width)),
+                                                     1.0f / (m.spacing * float(m.height)), 0.5f / float(m.width),
+                                                     0.5f / float(m.height));
+            }
+        }
         p.vertices = device_->newBuffer(v.data(), v.size() * sizeof(Vertex), MTL::ResourceStorageModeShared);
         p.indices = device_->newBuffer(mesh.triangles.data(), mesh.triangles.size() * sizeof(uint32_t),
                                        MTL::ResourceStorageModeShared);
@@ -348,6 +371,20 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index) {
     models_.push_back(std::move(out));
     pool->release();
     return int(models_.size() - 1);
+}
+
+MTL::Texture* Renderer::uploadMask(const ObjectModel::AlphaMask& m) {
+    MTL::TextureDescriptor* d = MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatR8Unorm, m.width,
+                                                                            m.height, false);
+    d->setUsage(MTL::TextureUsageShaderRead);
+    MTL::Texture* tex = device_->newTexture(d);
+    tex->replaceRegion(MTL::Region::Make2D(0, 0, m.width, m.height), 0, m.values.data(), m.width);
+    return tex;
+}
+
+void Renderer::hideTestScene() {
+    instances_.erase(instances_.begin(), instances_.begin() + std::ptrdiff_t(testInstances_));
+    testInstances_ = 0;
 }
 
 void Renderer::setLighting(const LightingState& state) {
@@ -390,6 +427,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     enc->setVertexBuffer(frames_[frame_], 0, 2);
     enc->setFragmentBuffer(frames_[frame_], 0, 2);
     enc->setFragmentSamplerState(sampler_, 0);
+    enc->setFragmentSamplerState(maskSampler_, 1);
 
     // Opaque parts first, then blended ones over them without writing depth.
     for (int blended = 0; blended < 2; ++blended) {
@@ -403,11 +441,12 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                                             : m.blend == StandardMaterial::Blend::Additive ? additive_
                                                                                            : opaque_);
                 enc->setCullMode(m.cull);
-                Draw d{inst.transform, m.color, m.specular, m.emissive, m.alphaRef, m.flags};
+                Draw d{inst.transform, m.color, m.specular, m.emissive, m.maskTransform, m.alphaRef, m.flags};
                 enc->setVertexBytes(&d, sizeof d, 1);
                 enc->setFragmentBytes(&d, sizeof d, 1);
                 enc->setVertexBuffer(part.vertices, 0, 0);
                 enc->setFragmentTexture(m.texture, 0);
+                enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
                 enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount),
                                            MTL::IndexTypeUInt32, part.indices, NS::UInteger(0));
             }

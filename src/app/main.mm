@@ -5,7 +5,8 @@
 // Camera controls: WASD/arrows pan, Q/E or ,/. rotate, Z/X, +/- or the wheel
 // zoom, R/F or Page Up/Down tilt, right/middle drag rotates and tilts freely,
 // Home resets. --lighting <state> picks a lighting state from Lighting.txt
-// (day, night, neighbourhood, ...).
+// (day, night, neighbourhood, ...); --lot <N001_Lot82 | file.package> shows a
+// lot's terrain, floors and walls.
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -16,7 +17,10 @@
 
 #include "formats/camera_config.hpp"
 #include "formats/image.hpp"
+#include "formats/dbpf.hpp"
 #include "formats/lighting_config.hpp"
+#include "formats/lot.hpp"
+#include "formats/lot_model.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "render/camera.hpp"
@@ -75,23 +79,67 @@ os2::CameraDef loadLiveCamera() {
     return *live;
 }
 
-// Objects to show: every --object <CRES name | 0xGUID | OBJD name>, else the dining chair.
+// Value of `--name <value>`, if given.
+std::optional<std::string> argument(NSString* name) {
+    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    for (NSUInteger i = 1; i + 1 < args.count; ++i)
+        if ([args[i] isEqualToString:name])
+            return std::string(args[i + 1].UTF8String);
+    return std::nullopt;
+}
+
+// Objects to show: every --object <CRES name | 0xGUID | OBJD name>, else the
+// dining chair (unless a lot is shown).
 std::vector<std::string> objectQueries() {
     std::vector<std::string> out;
     NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
     for (NSUInteger i = 1; i + 1 < args.count; ++i)
         if ([args[i] isEqualToString:@"--object"])
             out.emplace_back(args[i + 1].UTF8String);
-    if (out.empty())
+    if (out.empty() && !argument(@"--lot"))
         out.emplace_back("0xEC7618F6"); // Chair - Dining - Value1
     return out;
 }
 
+// A lot package given as a path, or by name ("N001_Lot82") under the game's neighborhoods.
+fs::path lotPath(const std::string& query) {
+    if (fs::exists(query))
+        return query;
+    const fs::path hoods = gameDir() / "TSData/Res/UserData/Neighborhoods";
+    const std::string file = query.ends_with(".package") ? query : query + ".package";
+    if (fs::exists(hoods))
+        for (const auto& hood : fs::directory_iterator(hoods))
+            if (fs::exists(hood.path() / "Lots" / file))
+                return hood.path() / "Lots" / file;
+    throw std::runtime_error("lot not found: " + query);
+}
+
+// Loads --lot into the renderer in place of the test floor. Returns the middle
+// of the lot at ground level, for the camera.
+std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& index) {
+    const auto query = argument(@"--lot");
+    if (!query)
+        return std::nullopt;
+    CFTimeInterval start = CACurrentMediaTime();
+    os2::DbpfPackage pkg(lotPath(*query));
+    const os2::Lot lot = os2::Lot::load(pkg);
+    const os2::PatternCatalog patterns(index, gameDir() / "TSData/Res");
+    const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns);
+    for (const auto& w : model.warnings)
+        std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
+    renderer.hideTestScene();
+    renderer.addInstance(renderer.addObject(model, index), matrix_identity_float4x4);
+    std::printf("opensims2: lot %s: %ux%u tiles, levels %d..%d, %zu walls, %zu paints (%zu parts) in %.2f s\n",
+                query->c_str(), lot.width, lot.height, lot.minLevel, lot.minLevel + lot.levelCount - 1,
+                lot.walls.size(), lot.paints.size(), model.parts.size(), CACurrentMediaTime() - start);
+    const int cx = int(lot.width / 2), cy = int(lot.height / 2);
+    return simd_make_float3(float(lot.width) / 2, float(lot.height) / 2, lot.elevation(0, cx, cy));
+}
+
 // Loads the objects into the renderer on a grid, four per row, three tiles
 // apart, starting at tile (2, -3). Returns the middle of the grid, for the camera.
-simd_float3 loadObjects(os2::Renderer& renderer) {
+simd_float3 loadObjects(os2::Renderer& renderer, os2::ResourceIndex& index) {
     CFTimeInterval start = CACurrentMediaTime();
-    os2::ResourceIndex index(gameDir() / "TSData/Res");
     int slot = 0;
     for (const auto& query : objectQueries()) {
         try {
@@ -109,19 +157,11 @@ simd_float3 loadObjects(os2::Renderer& renderer) {
             std::fprintf(stderr, "opensims2: object %s: %s\n", query.c_str(), e.what());
         }
     }
-    std::printf("opensims2: loaded in %.2f s\n", CACurrentMediaTime() - start);
+    if (slot)
+        std::printf("opensims2: loaded in %.2f s\n", CACurrentMediaTime() - start);
     std::fflush(stdout);
     const int cols = std::clamp(slot, 1, 4), rows = (std::max(slot, 1) + 3) / 4;
     return simd_make_float3(2.5f + 1.5f * float(cols - 1), -2.5f - 1.5f * float(rows - 1), 0);
-}
-
-// Value of `--name <value>`, if given.
-std::optional<std::string> argument(NSString* name) {
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
-    for (NSUInteger i = 1; i + 1 < args.count; ++i)
-        if ([args[i] isEqualToString:name])
-            return std::string(args[i + 1].UTF8String);
-    return std::nullopt;
 }
 
 // Lighting state from the game's Lighting.txt: --lighting <name>, else "day".
@@ -318,7 +358,9 @@ enum Key : unsigned short {
         [view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
         _viewDelegate = [[OS2ViewDelegate alloc] initWithView:view];
         applyLighting(*_viewDelegate.renderer);
-        view.camera->setPivot(loadObjects(*_viewDelegate.renderer));
+        os2::ResourceIndex index(gameDir() / "TSData/Res");
+        const simd_float3 objects = loadObjects(*_viewDelegate.renderer, index);
+        view.camera->setPivot(loadLot(*_viewDelegate.renderer, index).value_or(objects));
         // --zoom <levels> / --orientation <steps>: start the camera that many steps from its default.
         if (auto z = argument(@"--zoom"))
             view.camera->zoomBy(std::stoi(*z));

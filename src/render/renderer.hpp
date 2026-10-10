@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "formats/model.hpp"
+
 namespace MTL {
 class Buffer;
 class CommandBuffer;
@@ -28,7 +30,6 @@ namespace os2 {
 
 class ResourceIndex;
 struct LightingState;
-struct ObjectModel;
 struct RgbaImage;
 
 struct FrameView {
@@ -51,6 +52,8 @@ public:
     // Returns the model id for addInstance.
     int addObject(const ObjectModel& model, ResourceIndex& index);
     void addInstance(int model, const simd_float4x4& transform);
+    // Removes the checkered test floor and axis markers (e.g. when a lot is shown).
+    void hideTestScene();
 
     // Outdoor direct lighting from one of the game's lighting states:
     // skylight as ambient plus its object lights (see LightingState).
@@ -68,6 +71,7 @@ private:
     struct Model;
 
     MTL::Texture* texture(const std::string& name, ResourceIndex& index);
+    MTL::Texture* uploadMask(const ObjectModel::AlphaMask& mask);
     // Waits for a frame slot, encodes the scene into `pass` and returns the
     // (uncommitted) command buffer; the slot is freed when it completes.
     MTL::CommandBuffer* encodeFrame(MTL::RenderPassDescriptor* pass, const FrameView& view);
@@ -84,6 +88,7 @@ private:
     MTL::DepthStencilState* depthWrite_ = nullptr;
     MTL::DepthStencilState* depthRead_ = nullptr; // blended parts test but do not write
     MTL::SamplerState* sampler_ = nullptr;
+    MTL::SamplerState* maskSampler_ = nullptr; // clamped, no mips
     MTL::Texture* white_ = nullptr;
     std::map<std::string, MTL::Texture*> textures_; // by TXTR name; null if it failed to load
     std::vector<std::unique_ptr<Model>> models_;
@@ -92,6 +97,7 @@ private:
         simd_float4x4 transform;
     };
     std::vector<Instance> instances_;
+    size_t testInstances_ = 0; // the first instances_ are the test scene
     struct DirLight {
         simd_float3 direction; // unit, towards the light
         simd_float3 color;     // times intensity

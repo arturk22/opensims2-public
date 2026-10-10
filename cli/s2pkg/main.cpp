@@ -3,6 +3,8 @@
 #include "formats/dbpf.hpp"
 #include "formats/gmdc.hpp"
 #include "formats/image.hpp"
+#include "formats/lot.hpp"
+#include "formats/lot_model.hpp"
 #include "formats/model.hpp"
 #include "formats/simantics.hpp"
 #include "formats/resindex.hpp"
@@ -13,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 using namespace os2;
 
@@ -257,6 +260,43 @@ int cmdExtract(DbpfPackage& pkg, const std::filesystem::path& outDir) {
     return 0;
 }
 
+// Builds the terrain/floor/wall model of each lot and reports what it holds
+// and what could not be resolved (patterns, TXMTs, textures).
+int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem::path>& lots) {
+    ResourceIndex index(root);
+    const PatternCatalog patterns(index, root);
+    std::printf("%zu catalog patterns\n", patterns.catalogSize());
+    int failed = 0;
+    for (const auto& path : lots) {
+        try {
+            DbpfPackage pkg(path);
+            const Lot lot = Lot::load(pkg);
+            const ObjectModel model = buildLotModel(lot, index, patterns);
+            size_t tris = 0, missingTextures = 0;
+            for (const auto& part : model.parts)
+                tris += part.mesh.triangles.size() / 3;
+            for (const auto& [name, m] : model.materials) {
+                const auto tex = baseTextureName(m);
+                if (!tex.empty() && !index.findByName(tex, 0x1C4A276C)) {
+                    std::printf("  missing texture %s (%s)\n", tex.c_str(), name.c_str());
+                    ++missingTextures;
+                }
+            }
+            std::printf("%s: %ux%u, levels %d..%d, %zu walls, %zu floor / %zu wall patterns, %zu paints, "
+                        "%zu parts, %zu triangles, %zu materials\n",
+                        path.filename().string().c_str(), lot.width, lot.height, lot.minLevel,
+                        lot.minLevel + lot.levelCount - 1, lot.walls.size(), lot.floorPatterns.size(),
+                        lot.wallPatterns.size(), lot.paints.size(), model.parts.size(), tris, model.materials.size());
+            for (const auto& w : model.warnings)
+                std::printf("  %s\n", w.c_str());
+        } catch (const std::exception& e) {
+            std::printf("%s: error: %s\n", path.filename().string().c_str(), e.what());
+            ++failed;
+        }
+    }
+    return failed ? 1 : 0;
+}
+
 int usage() {
     std::fprintf(stderr, "usage: s2pkg ls|stats|verify|decode-all <file.package>\n"
                          "       s2pkg dump <file.package> <TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII>\n"
@@ -264,7 +304,8 @@ int usage() {
                          "       s2pkg texture <file.package> <tgi> <out.png>\n"
                          "       s2pkg mesh <file.package> <tgi> <out.obj>\n"
                          "       s2pkg find <Res-dir> <name> <type-hex>\n"
-                         "       s2pkg object <Res-dir> <cres-name|0xGUID|object-name> <out-dir>\n");
+                         "       s2pkg object <Res-dir> <cres-name|0xGUID|object-name> <out-dir>\n"
+                         "       s2pkg lot <Res-dir> <lot.package>...\n");
     return 2;
 }
 
@@ -277,6 +318,7 @@ int main(int argc, char** argv) {
     try {
         if (cmd == "find" && argc == 5) return cmdFind(argv[2], argv[3], argv[4]);
         if (cmd == "object" && argc == 5) return cmdObject(argv[2], argv[3], argv[4]);
+        if (cmd == "lot" && argc >= 4) return cmdLot(argv[2], {argv + 3, argv + argc});
         DbpfPackage pkg(argv[2]);
         if (cmd == "ls") return cmdLs(pkg);
         if (cmd == "stats") return cmdStats(pkg);

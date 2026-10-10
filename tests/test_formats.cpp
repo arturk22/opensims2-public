@@ -1,12 +1,16 @@
 #include "formats/bhav.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/lighting_config.hpp"
+#include "formats/lot.hpp"
+#include "formats/lot_model.hpp"
 #include "formats/image.hpp"
 #include "formats/model.hpp"
+#include "formats/property_set.hpp"
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
 #include "formats/strings.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -293,6 +297,74 @@ static void testStandardMaterial() {
           "additive, no cull, texture disabled");
 }
 
+static void testPropertySet() {
+    const auto p = parsePropertySet(R"(<?xml version="1.0"?>
+<cGZPropertySetString>
+   <AnyUint32 key="guid" type="0xeb61e4f7">3435290776</AnyUint32>
+   <AnyString key="name" type="0x0b8bea18">&quot;Soft Rock&quot; Faux &amp; Stone</AnyString>
+   <AnyString key="material" type="0x0b8bea18">floor_loftcoralsandstone</AnyString>
+</cGZPropertySetString>)");
+    check(p.size() == 3 && p.at("guid") == "3435290776", "property set guid");
+    check(p.at("name") == "\"Soft Rock\" Faux & Stone", "property set entities");
+    check(p.at("material") == "floor_loftcoralsandstone", "property set material");
+}
+
+static void testLotModel() {
+    // 2x1 lot, one level of elevations at 0 and a second at 3; one floor tile
+    // with only its north and east quarters, and one wall along x = 1.
+    Lot lot;
+    lot.width = 2, lot.height = 1, lot.levelCount = 2;
+    lot.elevations.assign(3 * 2 * 2, 0.0f);
+    for (size_t i = 6; i < 12; ++i)
+        lot.elevations[i] = 3.0f;
+    lot.floors.assign(2 * 1 * 2, {});
+    lot.floors[0] = {0, 1, 1, 0};
+    lot.floorPatterns[1] = "tile";
+    lot.wallPatterns[1] = "paper";
+    Lot::Wall w;
+    w.a = {1, 0, 0}, w.b = {1, 1, 0};
+    w.type = Lot::Normal;
+    w.patterns = {1, 0xFFFF};
+    lot.walls.push_back(w);
+    check(lot.elevation(1, 2, 1) == 3.0f && lot.elevation(0, 5, 5) == 0.0f, "lot elevation lookup and clamp");
+
+    const auto empty = std::filesystem::temp_directory_path() / "os2_test_empty_res";
+    std::filesystem::create_directories(empty);
+    ResourceIndex index(empty);
+    const PatternCatalog patterns(index, empty);
+    const ObjectModel m = buildLotModel(lot, index, patterns);
+    const ObjectModel::Part* floor = nullptr;
+    const ObjectModel::Part* wall = nullptr;
+    for (const auto& part : m.parts) {
+        if (part.node == "floor:tile")
+            floor = &part;
+        if (part.node == "wall:paper")
+            wall = &part;
+    }
+    check(floor && floor->mesh.triangles.size() == 6, "two floor quarters");
+    if (floor) {
+        bool upAndCcw = true, northEast = true;
+        for (size_t t = 0; t < floor->mesh.triangles.size(); t += 3) {
+            const auto& a = floor->mesh.positions[floor->mesh.triangles[t]];
+            const auto& b = floor->mesh.positions[floor->mesh.triangles[t + 1]];
+            const auto& c = floor->mesh.positions[floor->mesh.triangles[t + 2]];
+            const float cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+            upAndCcw = upAndCcw && cross > 0 && floor->mesh.normals[floor->mesh.triangles[t]][2] > 0.99f;
+            northEast = northEast && a[0] + b[0] + c[0] >= 1.5f - 1e-4f && a[1] + b[1] + c[1] >= 1.5f - 1e-4f;
+        }
+        check(upAndCcw, "floor triangles face up, counter-clockwise");
+        check(northEast, "floor quarters are the north and east ones");
+    }
+    // Pattern 0 is the right side of a -> b: +X for a wall running +Y.
+    check(wall && wall->mesh.triangles.size() == 6 && wall->mesh.normals[0][0] == 1.0f, "wall right side faces +X");
+    if (wall) {
+        float top = 0;
+        for (const auto& p : wall->mesh.positions)
+            top = std::max(top, p[2]);
+        check(top == 3.0f, "wall reaches the next level");
+    }
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
@@ -305,6 +377,8 @@ int main() {
     testCameraConfig();
     testLightingConfig();
     testStandardMaterial();
+    testPropertySet();
+    testLotModel();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

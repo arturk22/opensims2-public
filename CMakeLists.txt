@@ -20,7 +20,10 @@ add_library(os2_formats
   src/formats/gmdc.cpp
   src/formats/image.cpp
   src/formats/lighting_config.cpp
+  src/formats/lot.cpp
+  src/formats/lot_model.cpp
   src/formats/model.cpp
+  src/formats/property_set.cpp
   src/formats/qfs.cpp
   src/formats/rcol.cpp
   src/formats/resindex.cpp
