@@ -12,8 +12,18 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+# Speex 1.2.1 (BSD, third_party/speex): decoder for the SPX1 voice resources.
+enable_language(C)
+file(GLOB OS2_SPEEX_SRC third_party/speex/libspeex/*.c)
+add_library(os2_speex STATIC ${OS2_SPEEX_SRC})
+target_include_directories(os2_speex PUBLIC third_party/speex/include)
+target_compile_definitions(os2_speex PRIVATE FLOATING_POINT VAR_ARRAYS EXPORT=)
+target_compile_options(os2_speex PRIVATE -w)
+
 add_library(os2_formats
   src/formats/anim.cpp
+  src/formats/audio.cpp
+  src/formats/audio_spx.cpp
   src/formats/bhav.cpp
   src/formats/camera_config.cpp
   src/formats/config_text.cpp
@@ -40,7 +50,7 @@ add_library(os2_formats
 target_include_directories(os2_formats PUBLIC src)
 target_compile_options(os2_formats PRIVATE -Wall -Wextra)
 find_package(ZLIB REQUIRED)
-target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB)
+target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 
 add_library(os2_vm
   src/vm/lot.cpp
@@ -51,9 +61,18 @@ target_include_directories(os2_vm PUBLIC src)
 target_compile_options(os2_vm PRIVATE -Wall -Wextra)
 target_link_libraries(os2_vm PUBLIC os2_formats)
 
-add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp)
+# Sound: decoding to PCM (MP3 through AudioToolbox), name lookup and playback.
+add_library(os2_audio src/audio/decode.cpp src/audio/sound_bank.cpp)
+target_include_directories(os2_audio PUBLIC src)
+target_compile_options(os2_audio PRIVATE -Wall -Wextra)
+target_link_libraries(os2_audio PUBLIC os2_formats)
+if(APPLE)
+  target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
+endif()
+
+add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
-target_link_libraries(s2pkg PRIVATE os2_vm)
+target_link_libraries(s2pkg PRIVATE os2_vm os2_audio)
 
 if(APPLE)
   # Shaders are compiled at runtime (the Command Line Tools have no offline
@@ -114,3 +133,8 @@ endif()
 add_executable(test_anim tests/test_anim.cpp)
 target_link_libraries(test_anim PRIVATE os2_formats)
 add_test(NAME anim COMMAND test_anim)
+
+add_executable(test_audio tests/test_audio.cpp)
+target_link_libraries(test_audio PRIVATE os2_audio)
+target_include_directories(test_audio PRIVATE third_party/speex/include) # the test encodes with libspeex
+add_test(NAME audio COMMAND test_audio)
