@@ -59,15 +59,18 @@ constexpr size_t kMaxStackDepth = 128;
 // this bounds that growth (the BHAVs use at most 61 and 35).
 constexpr size_t kMaxAttributes = 256;
 
-// Object data fields the engine maintains (names as in STR# 0x8D).
+// Object data fields the engine maintains or reads (names as in STR# 0x8D).
 namespace objdata {
 constexpr int16_t ObjectId = 11;
+constexpr int16_t LeadTileObjectId = 19;
+constexpr int16_t Category = 59;
 constexpr int16_t SemiAttributeCount = 79;
 } // namespace objdata
 
 // Person data fields the engine reads (names as in STR# 0xC8).
 namespace persondata {
 constexpr int16_t NeighborId = 31;
+constexpr int16_t PersonAge = 58;
 } // namespace persondata
 
 // Object arrays (Array Operation, data owners 0x29-0x2E) are created on
@@ -79,8 +82,18 @@ constexpr size_t kMaxArrayLength = 4096;
 // (the trees use indices up to 11).
 constexpr size_t kMaxRelationshipVars = 32;
 
-// Object type (OBJD "type") of a Sim.
+// Object types (OBJD "type", STR# 0xF6).
 constexpr uint16_t kObjectTypePerson = 2;
+constexpr uint16_t kObjectTypeVehicle = 13;
+
+// A Sim of the neighborhood, on this lot or not, known by its neighbor ID.
+// The neighborhood keeps a copy of its person data (cTSNeighbor has a person
+// data array); while the Sim is on the lot, its object's person data is used.
+struct Neighbor {
+    uint32_t guid = 0; // of the Sim's OBJD
+    int16_t house = 0; // house (lot) number; 0 = none
+    std::array<int16_t, kPersonDataCount> personData{};
+};
 
 // Inventories (Manage Inventory) and their tokens grow on demand; this bounds them.
 constexpr size_t kMaxInventoryTokens = 4096;
@@ -293,6 +306,16 @@ public:
     std::map<std::pair<RelationshipKey, RelationshipKey>, std::vector<int16_t>> relationships;
     // Key of an object (its neighbor ID if it is a Sim that has one).
     RelationshipKey relationshipKey(ObjectId id);
+
+    // Neighbors by neighbor ID. There is no neighborhood yet, so they are only
+    // the ones added here (tests, stand-ins).
+    std::map<int16_t, Neighbor> neighbors;
+    Neighbor* neighbor(int16_t id) {
+        auto it = neighbors.find(id);
+        return it == neighbors.end() ? nullptr : &it->second;
+    }
+    // The Sim on the lot with this neighbor ID, or null.
+    Object* neighborSim(int16_t id);
 
     // Inventories by kind and ID (0 for the global one), created on demand:
     // there is no neighborhood yet to say which IDs exist.

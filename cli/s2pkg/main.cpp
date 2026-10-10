@@ -375,8 +375,13 @@ vm::Object& standInObject(vm::VM& machine, uint32_t group, const StandIns& s) {
         def != s.definitions.end() ? machine.instantiate(objGroup, def->second) : machine.createObject(objGroup);
     if (user != s.semiUsers.end())
         me.semiGroup = group;
-    if (!me.person)
+    if (me.person) {
+        // A Sim on the lot is always a neighbor too.
+        me.person->data[vm::persondata::NeighborId] = 2;
+        machine.neighbors[2].guid = me.guid();
+    } else {
         me.person.emplace();
+    }
     return me;
 }
 
@@ -384,12 +389,17 @@ bool isInteraction(const StandIns& s, uint32_t group, uint16_t instance, const B
     return s.interactions.count({group, instance}) || b.fileName.rfind("CT - ", 0) == 0;
 }
 
+// The stand-in Sim is also a neighbor (ID 1), so the neighbor searches and
+// data owners have someone to find.
 vm::Object& standInPerson(vm::VM& machine, const StandIns& s) {
-    if (s.person.first)
-        return machine.instantiate(s.person.first, s.person.second);
-    vm::Object& o = machine.createObject(0);
-    o.person.emplace();
-    return o;
+    vm::Object* o = s.person.first ? &machine.instantiate(s.person.first, s.person.second) : nullptr;
+    if (!o) {
+        o = &machine.createObject(0);
+        o->person.emplace();
+    }
+    o->person->data[vm::persondata::NeighborId] = 1;
+    machine.neighbors[1].guid = o->guid();
+    return *o;
 }
 
 // Starts a tree of `object` with a stand-in Sim: in the Sim's thread with the

@@ -129,11 +129,25 @@ Exit removeObjectInstance(Context& c) {
     return Exit::True;
 }
 
+// Multi-tile objects: the parts point at the lead tile's object (object data
+// "lead tile object ID"); the lead itself may hold 0 (inferred).
+ObjectId multiTileGroup(const Object& x) {
+    const ObjectId lead = x.data[objdata::LeadTileObjectId];
+    return lead ? lead : x.id;
+}
+
 // Set to Next (0x1F): GUID u32, flags u8 (low 7 bits: search type, STR# 0xA4;
 // 0x80: the target is (owner u8 at 5, data u16 at 7) instead of the stack
 // object ID), local u8 at 6 (for the searches relative to an object in a
-// local). Iterating searches move the target to the next matching object by
-// ID and return false when there is none; the verify ones only test it.
+// local). Iterating searches move the target to the next matching object (or
+// neighbor) by ID and return false when there is none; the verify ones only
+// test it. The categories (6, 12) are object data "category", with the value
+// in parameter 0 ("sp 0", the trees set it right before) or temp 0; the GUID
+// of 18 is temp 0 (low word) and temp 1. Vehicles (16) are objects of type
+// vehicle; most uses also carry a GUID that no OBJD has, so it is ignored.
+// Parts of a multi-tile object (3) cycle through the target's group (the
+// trees go around until they are back at the object they started from); a
+// single-tile object has none.
 Exit setToNext(Context& c) {
     const auto& o = c.instruction.operands;
     const uint32_t guid = le32(&o[0]);
@@ -142,6 +156,36 @@ Exit setToNext(Context& c) {
     const uint8_t owner = explicitTarget ? o[5] : kOwnerStackObjectId;
     const auto data = explicitTarget ? int16_t(le16(&o[7])) : int16_t(0);
     const ObjectId current = c.get(owner, data);
+    auto found = [&](int16_t id) {
+        c.set(owner, data, id);
+        return Exit::True;
+    };
+
+    // Neighbor searches go through neighbor IDs instead of objects.
+    auto nextNeighbor = [&](auto matches) {
+        auto& neighbors = c.vm.neighbors;
+        for (auto it = neighbors.upper_bound(current); it != neighbors.end(); ++it)
+            if (matches(it->second))
+                return found(it->first);
+        return Exit::False;
+    };
+    switch (type) {
+    case 5: return nextNeighbor([](const Neighbor&) { return true; });                  // neighbor id
+    case 7: return nextNeighbor([guid](const Neighbor& n) { return n.guid == guid; }); // neighbor of type
+    case 29: return c.vm.neighbor(current) ? Exit::True : Exit::False;                 // verify neighbor id
+    case 3: {                                                                          // part of a multi-tile object
+        const Object* x = c.vm.object(current);
+        if (!x)
+            return Exit::False;
+        const ObjectId group = multiTileGroup(*x);
+        const auto& objects = c.vm.objects();
+        auto inGroup = [&](const auto& entry) { return entry.first != current && multiTileGroup(entry.second) == group; };
+        auto it = std::find_if(objects.upper_bound(current), objects.end(), inGroup);
+        if (it == objects.end())
+            it = std::find_if(objects.begin(), objects.end(), inGroup);
+        return it == objects.end() ? Exit::False : found(it->first);
+    }
+    }
 
     std::function<bool(const Object&)> matches;
     switch (type) {
@@ -149,6 +193,20 @@ Exit setToNext(Context& c) {
     case 1: matches = [](const Object& x) { return x.person.has_value(); }; break;  // person
     case 2: matches = [](const Object& x) { return !x.person; }; break;            // non-person
     case 4: matches = [guid](const Object& x) { return x.guid() == guid; }; break; // object of type
+    case 6:                                                                        // category == param 0
+    case 12: {                                                                     // category == temp 0
+        const int16_t category = type == 6 ? c.get(kOwnerParam, 0) : c.thread.temps[0];
+        matches = [category](const Object& x) { return x.data[objdata::Category] == category; };
+        break;
+    }
+    case 16:                                                                       // vehicle
+        matches = [](const Object& x) { return x.definition && x.definition->objectType() == kObjectTypeVehicle; };
+        break;
+    case 18: {                                                                     // object of type GUID in temp 0/1
+        const uint32_t g = uint16_t(c.thread.temps[0]) | uint32_t(uint16_t(c.thread.temps[1])) << 16;
+        matches = [g](const Object& x) { return x.guid() == g; };
+        break;
+    }
     case 26: return c.vm.object(current) ? Exit::True : Exit::False;               // verify stack object
     case 30: {                                                                     // verify sim in stack object
         const Object* x = c.vm.object(current);
@@ -158,10 +216,8 @@ Exit setToNext(Context& c) {
     }
     const auto& objects = c.vm.objects();
     for (auto it = objects.upper_bound(current); it != objects.end(); ++it)
-        if (matches(it->second)) {
-            c.set(owner, data, it->first);
-            return Exit::True;
-        }
+        if (matches(it->second))
+            return found(it->first);
     return Exit::False;
 }
 

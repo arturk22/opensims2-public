@@ -490,6 +490,83 @@ static void testManageInventory() {
           "Manage Inventory adds, finds, reads, changes and saves tokens");
 }
 
+// Set to Next (0x80 | type) with the target in a temp.
+static Behavior::Instruction next(uint8_t type, uint8_t temp, Target t, Target f, uint32_t guid = 0) {
+    return instr(0x1F, t, f, {lo(guid, 0), lo(guid, 1), lo(guid, 2), lo(guid, 3), uint8_t(0x80 | type), Temp, 0, temp, 0});
+}
+
+static void testSetToNextSearches() {
+    Fixture fx;
+    constexpr uint32_t kChair = 0x11223344, kCar = 0x0BADCAFE;
+    fx.code.add(kObjGroup, 0x80, definition(kChair));
+    ObjectDefinition car = definition(kCar);
+    car.fields[(0x52 - 0x44) / 2] = kObjectTypeVehicle;
+    fx.code.add(kObjGroup, 0x81, std::move(car));
+    fx.vm.instantiate(kObjGroup, 0x80);                    // id 1: me
+    fx.vm.instantiate(kObjGroup, 0x81);                    // id 2: a vehicle
+    fx.vm.instantiate(kObjGroup, 0x80);                    // id 3: lead tile of a 2-tile object
+    Object& part = fx.vm.instantiate(kObjGroup, 0x80);     // id 4: its other tile
+    Object& lone = fx.vm.instantiate(kObjGroup, 0x80);     // id 5
+    part.data[objdata::LeadTileObjectId] = 3;
+    lone.data[objdata::Category] = 7;
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(Temp, 0, Assign, Lit, 7, go(1), E),
+                      next(12, 7, go(2), E),                                // category == temp 0: temp7 = 5
+                      next(16, 2, go(3), E),                                // vehicle: temp2 = 2
+                      expr(Temp, 0, Assign, Lit, int16_t(kChair & 0xFFFF), go(4), E),
+                      expr(Temp, 1, Assign, Lit, int16_t(kChair >> 16), go(5), E),
+                      next(18, 3, go(6), E),                                // GUID in temps 0/1: temp3 = 1
+                      next(18, 3, go(7), E),                                // and then 3
+                      expr(Temp, 4, Assign, Lit, 4, go(8), E),
+                      next(3, 4, go(9), E),                                 // part after 4 wraps to 3
+                      expr(Temp, 5, Assign, Lit, 5, go(10), E),
+                      next(3, 5, E, go(11)),                                // a single tile has no parts
+                      next(6, 6, T, E)},                                    // category == param 0: temp6 = 5
+                     1));
+    Thread t = fx.run(0x1000, {7});
+    check(t.status == Thread::Status::Finished && t.temps[7] == 5 && t.temps[2] == 2 && t.temps[3] == 3 &&
+              t.temps[4] == 3 && t.temps[6] == 5,
+          "Set to Next by category, vehicle, GUID in temps and multi-tile part");
+}
+
+static void testNeighbors() {
+    Fixture fx;
+    constexpr uint32_t kSim = 0x55667788, kOther = 0x01020304;
+    fx.code.add(kObjGroup, 0x81, definition(kSim, true));
+    ObjectDefinition other = definition(kOther, true);
+    other.fields[(0x40 + 2 * 20 - 0x44) / 2] = 123; // editor's definition field 20
+    fx.code.add(kObjGroup, 0x82, std::move(other));
+    Object& me = fx.vm.instantiate(kObjGroup, 0x81);
+    me.person->data[persondata::NeighborId] = 5;
+    me.person->data[persondata::PersonAge] = 20;
+    fx.vm.neighbors[5] = {kSim, 3, {}};
+    Neighbor away{kOther, 3, {}};
+    away.personData[persondata::PersonAge] = 40;
+    fx.vm.neighbors[9] = away;
+    constexpr uint8_t InStack = 0x18, PersonOf = 0x20, DefOf = 0x26;
+    fx.code.add(kObjGroup, 0x1000,
+                tree({instr(0x1F, go(1), E, {0, 0, 0, 0, 5}),           // next neighbor -> stack object: 5
+                      expr(Temp, 0, Assign, InStack, 0, go(2), E),      // instance id: me
+                      expr(Temp, 1, Assign, InStack, 2, go(3), E),      // age from the Sim on the lot: 20
+                      instr(0x1F, go(4), E, {0, 0, 0, 0, 5}),           // next: 9
+                      expr(Temp, 2, Assign, InStack, 0, go(5), E),      // not on the lot: 0
+                      expr(Temp, 3, Assign, PersonOf, persondata::PersonAge, go(6), E), // 40
+                      expr(Temp, 4, Assign, InStack, 6, go(7), E),      // house number: 3
+                      expr(Temp, 5, Assign, DefOf, 20, go(8), E),       // 123
+                      instr(0x1F, E, go(9), {0, 0, 0, 0, 5}),           // no more neighbors
+                      expr(StackId, 0, Assign, Lit, 0, go(10), E),
+                      instr(0x1F, go(11), E, {lo(kOther, 0), lo(kOther, 1), lo(kOther, 2), lo(kOther, 3), 7}), // 9
+                      instr(0x1F, go(12), E, {0, 0, 0, 0, 29}),         // 9 exists
+                      expr(StackId, 0, Assign, Lit, 4, go(13), E),
+                      instr(0x1F, E, go(14), {0, 0, 0, 0, 29}),         // 4 does not
+                      expr(Temp, 6, Assign, InStack, 0, T, E)}));       // so its data is missing
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Failed && t.error.find("Missing neighbor") != std::string::npos &&
+              t.temps[0] == me.id && t.temps[1] == 20 && t.temps[2] == 0 && t.temps[3] == 40 && t.temps[4] == 3 &&
+              t.temps[5] == 123,
+          "neighbor searches and neighbor data owners");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -504,6 +581,8 @@ int main() {
     testArrays();
     testChangeMaterial();
     testManageInventory();
+    testSetToNextSearches();
+    testNeighbors();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

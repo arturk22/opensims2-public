@@ -57,14 +57,18 @@ Person& personOf(Object& o) {
 
 // Field of the editor's OBJD numbering: 0-1 are the u32 version, i >= 2 the
 // field at file offset 0x40 + 2i.
-int16_t definitionField(const Object& o, int idx) {
-    if (!o.definition)
-        throw VMError("object " + std::to_string(o.id) + " has no definition");
+int16_t definitionField(const ObjectDefinition& d, int idx) {
     if (idx < 0)
         throw VMError("definition field " + std::to_string(idx) + " out of range");
     if (idx < 2)
-        return int16_t(o.definition->version >> (16 * idx));
-    return int16_t(o.definition->field(0x40 + 2 * size_t(idx)));
+        return int16_t(d.version >> (16 * idx));
+    return int16_t(d.field(0x40 + 2 * size_t(idx)));
+}
+
+int16_t definitionField(const Object& o, int idx) {
+    if (!o.definition)
+        throw VMError("object " + std::to_string(o.id) + " has no definition");
+    return definitionField(*o.definition, idx);
 }
 
 } // namespace
@@ -187,6 +191,39 @@ Object& Context::stackObject() const {
     return *o;
 }
 
+// The neighbor whose ID is in the stack object (data owners 0x18, 0x20, 0x26);
+// the message is the game's own (Sims2.exe).
+static Neighbor& stackNeighbor(const Context& c) {
+    Neighbor* n = c.vm.neighbor(c.frame.stackObject);
+    if (!n)
+        throw VMError("Missing neighbor for data access. (neighbor " + std::to_string(c.frame.stackObject) + ")");
+    return *n;
+}
+
+// Person data of a neighbor: its Sim's while it is on the lot, else the neighborhood's copy.
+static std::array<int16_t, kPersonDataCount>& neighborPersonData(const Context& c) {
+    Neighbor& n = stackNeighbor(c);
+    if (Object* sim = c.vm.neighborSim(c.frame.stackObject))
+        return personOf(*sim).data;
+    return n.personData;
+}
+
+// Neighbor in stack object (0x18), fields labelled in STR# 0xDD. Only those
+// that do not need the neighborhood are implemented; "person age" is read
+// from person data "Person Age" (inferred).
+static int16_t neighborField(const Context& c, int16_t field) {
+    Neighbor& n = stackNeighbor(c);
+    switch (field) {
+    case 0: { // person instance id: the Sim's object, 0 when it is not on the lot
+        const Object* sim = c.vm.neighborSim(c.frame.stackObject);
+        return sim ? sim->id : 0;
+    }
+    case 2: return neighborPersonData(c)[persondata::PersonAge];
+    case 6: return n.house;
+    default: throw VMError("neighbor data " + std::to_string(field) + " not implemented");
+    }
+}
+
 // Storage behind a data owner, or null for the computed/read-only ones.
 // Owners whose index comes from another variable read it first.
 static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
@@ -210,6 +247,7 @@ static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     case 0x16:
         return &growing(c.stackObject().attributes, slot(c.frame.params, data, "param"), "stack object attribute[param]");
     case 0x19: return &slot(c.frame.locals, data, "local");
+    case 0x20: return &slot(neighborPersonData(c), data, "neighbor's person data");
     case 0x1E: return &slot(personOf(c.me()).data, slot(t.temps, data, "temp"), "person data[temp]");
     case 0x1F:
         return &slot(personOf(c.stackObject()).data, slot(t.temps, data, "temp"), "stack object person data[temp]");
@@ -291,6 +329,14 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
     case 0x27: return tokenField(me().tempToken, data);
     case 0x28: return tokenField(stackObject().tempToken, data);
     case 0x15: return definitionField(stackObject(), data);
+    case 0x18: return neighborField(*this, data);
+    case 0x26: {
+        auto def = vm.code().definitionByGuid(stackNeighbor(*this).guid);
+        const ObjectDefinition* d = def ? vm.code().definition(def->first, def->second) : nullptr;
+        if (!d)
+            throw VMError("neighbor " + std::to_string(frame.stackObject) + " has no definition");
+        return definitionField(*d, data);
+    }
     case 0x1A: {
         // High bits pick the BCON (private, semi-global or global), low 7 bits the entry.
         auto* owner = vm.object(frame.codeOwner);
@@ -316,7 +362,9 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
     case 0x28: setTokenField(stackObject().tempToken, data, value); return;
     case 0x07:
     case 0x15: // the editor marks only some definition fields read-only; writes are not supported yet
-    case 0x1A: throw VMError("data owner " + hexString(owner) + " is read-only");
+    case 0x18:
+    case 0x1A:
+    case 0x26: throw VMError("data owner " + hexString(owner) + " is read-only");
     default:
         ++vm.missingOwners[owner];
         throw VMError("data owner " + hexString(owner) + " not implemented");
@@ -366,6 +414,15 @@ VM::RelationshipKey VM::relationshipKey(ObjectId id) {
     if (o->person && o->person->data[persondata::NeighborId])
         return {true, o->person->data[persondata::NeighborId]};
     return {false, id};
+}
+
+Object* VM::neighborSim(int16_t id) {
+    if (id == 0)
+        return nullptr;
+    for (auto& [_, o] : objects_)
+        if (o.person && o.person->data[persondata::NeighborId] == id)
+            return &o;
+    return nullptr;
 }
 
 Object* VM::object(ObjectId id) {
