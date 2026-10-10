@@ -604,6 +604,30 @@ static void testGenericSimsCall() {
           "Generic Sims Call");
 }
 
+static void testPushInteraction() {
+    Fixture fx;
+    fx.obj();
+    Object& sim = fx.vm.createObject(kObjGroup); // id 2
+    sim.person.emplace();
+    fx.vm.createObject(kObjGroup);               // id 3: the object with the interaction
+    auto push = [](uint16_t i, uint8_t prio, uint8_t owner, int16_t data, Target t, Target f) {
+        return instr(0x0D, t, f, {uint8_t(i), uint8_t(i >> 8), prio, 0x0B, 0, owner, uint8_t(data), 0, 0x0A, 0, 0, 0x0A});
+    };
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, 2, go(1), E),
+                      expr(Local, 0, Assign, Lit, 3, go(2), E),
+                      push(0x1E6, 3, Local, 0, go(3), E),     // interaction 0x1E6 of object 3 onto Sim 2
+                      push(1, 2, Lit, 9, E, go(4)),           // object 9 does not exist: false
+                      push(4, 1, Lit, 1, go(5), E),
+                      expr(StackId, 0, Assign, Lit, 3, go(6), E),
+                      instr(0x01, T, E, {13})},               // abort the interactions of object 3
+                     0, 1));
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Finished && sim.queue.size() == 1 && sim.queue[0].object == 1 &&
+              sim.queue[0].interaction == 4 && sim.queue[0].priority == 1 && sim.queue[0].pushedBy == 1,
+          "Push Interaction queues the interaction and Generic Sims Call 13 aborts it");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -621,6 +645,7 @@ int main() {
     testSetToNextSearches();
     testNeighbors();
     testGenericSimsCall();
+    testPushInteraction();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

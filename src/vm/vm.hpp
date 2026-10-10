@@ -216,6 +216,19 @@ private:
 
 using ObjectId = int16_t;
 
+// An interaction pushed onto an object's queue (Push Interaction). There is
+// no queue processing yet: the record keeps what the operand says, for the
+// scheduler to come.
+struct QueuedInteraction {
+    ObjectId object = 0;      // whose interaction (TTAB) it is
+    uint16_t interaction = 0; // index into that object's interactions
+    uint8_t priority = 0;     // STR# 0xE0: inherited, maximum, autonomous, user driven
+    uint8_t flags = 0;        // byte 3, not understood
+    ObjectId pushedBy = 0;    // the object whose thread pushed it
+    std::array<uint8_t, 16> operands{}; // the whole operand, for what is not understood yet
+};
+constexpr size_t kMaxQueuedInteractions = 64;
+
 // State only Sims have.
 struct Person {
     std::array<int16_t, kPersonDataCount> data{};
@@ -244,6 +257,8 @@ struct Object {
     std::map<std::string, std::string> materials;
     // Data owners 0x27 (mine) and 0x28 (the stack object's).
     TempToken tempToken;
+    // Interactions pushed onto this object (a Sim, usually), oldest first.
+    std::vector<QueuedInteraction> queue;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
