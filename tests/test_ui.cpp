@@ -1,9 +1,12 @@
 // UI scripts and UI image files on hand-built data.
+#include "formats/font.hpp"
 #include "formats/jpeg.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_script.hpp"
 
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -190,11 +193,255 @@ static void testJpeg() {
     }
 }
 
+// Type 1 encryption (eexec r=55665, charstrings r=4330), with `skip` random bytes in front.
+static std::vector<uint8_t> encrypt(const std::vector<uint8_t>& plain, uint16_t r, size_t skip) {
+    std::vector<uint8_t> in(skip, 0x5A);
+    in.insert(in.end(), plain.begin(), plain.end());
+    std::vector<uint8_t> out;
+    for (uint8_t p : in) {
+        const uint8_t c = uint8_t(p ^ (r >> 8));
+        r = uint16_t((c + r) * 52845u + 22719u);
+        out.push_back(c);
+    }
+    return out;
+}
+
+static void cs(std::vector<uint8_t>& out, std::initializer_list<int> nums, int op) {
+    for (int v : nums) {
+        if (v >= -107 && v <= 107)
+            out.push_back(uint8_t(v + 139));
+        else if (v >= 108 && v <= 1131)
+            out.push_back(uint8_t((v - 108) / 256 + 247)), out.push_back(uint8_t((v - 108) % 256));
+        else if (v <= -108 && v >= -1131)
+            out.push_back(uint8_t((-v - 108) / 256 + 251)), out.push_back(uint8_t((-v - 108) % 256));
+    }
+    if (op >= 0)
+        out.push_back(uint8_t(op));
+}
+
+// A PFB with two glyphs: "square" (code 65, 'A') is a 500-unit box with a
+// 600 advance drawn through a subroutine; "Aacute" (code 193) is seac of A
+// and acute ("acute" is a small box).
+static std::vector<uint8_t> makeType1() {
+    std::string clear = "%!PS-AdobeFont-1.0: Test 001\n/FontName /TestFont def\n/FontMatrix [0.001 0 0 0.001 0 0] readonly def\n"
+                        "/FontBBox {0 -200 600 800} readonly def\n/Encoding 256 array\n"
+                        "0 1 255 {1 index exch /.notdef put } for\ndup 65 /A put\ndup 193 /Aacute put\nreadonly def\n"
+                        "currentfile eexec\n";
+    std::vector<uint8_t> subr; // the box's sides, then return
+    cs(subr, {500}, 6);        // hlineto
+    cs(subr, {500}, 7);        // vlineto
+    cs(subr, {-500}, 6);
+    cs(subr, {}, 11);
+    std::vector<uint8_t> a;
+    cs(a, {50, 600}, 13);     // hsbw
+    cs(a, {0, 0}, 21);        // rmoveto
+    cs(a, {0}, 10);           // callsubr 0
+    cs(a, {}, 9);             // closepath
+    cs(a, {}, 14);            // endchar
+    std::vector<uint8_t> acute;
+    cs(acute, {0, 300}, 13);
+    cs(acute, {0, 600}, 21);
+    cs(acute, {100}, 6);
+    cs(acute, {100}, 7);
+    cs(acute, {-100}, 6);
+    cs(acute, {}, 9);
+    cs(acute, {}, 14);
+    std::vector<uint8_t> aacute;
+    cs(aacute, {0, 200, 50, 65, 194}, -1); // asb adx ady bchar achar
+    aacute.push_back(12), aacute.push_back(6);
+
+    std::string priv = "dup /Private 8 dict dup begin\n/lenIV 4 def\n/Subrs 1 array\n";
+    std::vector<uint8_t> body(priv.begin(), priv.end());
+    auto entry = [&](const std::string& head, const std::vector<uint8_t>& code, const std::string& tail) {
+        const auto enc = encrypt(code, 4330, 4);
+        const std::string h = head + std::to_string(enc.size()) + " RD ";
+        body.insert(body.end(), h.begin(), h.end());
+        body.insert(body.end(), enc.begin(), enc.end());
+        body.insert(body.end(), tail.begin(), tail.end());
+    };
+    entry("dup 0 ", subr, " NP\n");
+    const std::string mid = "ND\n2 index /CharStrings 4 dict dup begin\n";
+    body.insert(body.end(), mid.begin(), mid.end());
+    entry("/A ", a, " ND\n");
+    entry("/acute ", acute, " ND\n");
+    entry("/Aacute ", aacute, " ND\n");
+    std::vector<uint8_t> notdef;
+    cs(notdef, {0, 250}, 13);
+    cs(notdef, {}, 14);
+    entry("/.notdef ", notdef, " ND\nend\nend\n");
+    const auto enc = encrypt(body, 55665, 4);
+
+    std::vector<uint8_t> pfb;
+    auto seg = [&](uint8_t type, const uint8_t* p, size_t n) {
+        pfb.push_back(0x80), pfb.push_back(type);
+        for (int i = 0; i < 4; ++i)
+            pfb.push_back(uint8_t(n >> (8 * i)));
+        pfb.insert(pfb.end(), p, p + n);
+    };
+    seg(1, reinterpret_cast<const uint8_t*>(clear.data()), clear.size());
+    seg(2, enc.data(), enc.size());
+    pfb.push_back(0x80), pfb.push_back(3);
+    return pfb;
+}
+
+static void testType1() {
+    const auto pfb = makeType1();
+    // Wrapped as the game does: MXFN, u32, key, XORed font.
+    std::vector<uint8_t> mxf = {'M', 'X', 'F', 'N', 0x02, 0x62, 0x5A, 0x00, 0x9D};
+    for (uint8_t b : pfb)
+        mxf.push_back(b ^ 0x9D);
+    check(decodeMxf(mxf) == pfb, "MXF unwraps");
+    std::unique_ptr<Font> f;
+    try {
+        f = Font::load(decodeMxf(mxf));
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "Type 1 load: %s\n", e.what());
+    }
+    check(f != nullptr, "Type 1 loads");
+    if (!f)
+        return;
+    check(f->name == "TestFont" && f->glyphCount == 4 && std::fabs(f->unitsPerEm - 1000) < 0.01f, "Type 1 header");
+    check(f->ascent == 800 && f->descent == -200, "Type 1 bbox metrics");
+    auto g = f->glyph(U'A');
+    check(g && f->advance(*g) == 600, "glyph through Encoding, hsbw width");
+    check(!f->glyph(U'B'), "unencoded glyph");
+    // 10 px/em: the box spans x 0.5..5.5, y -5..0 (pixels, y down).
+    const GlyphBitmap b = rasterizeGlyph(*f, *g, 10);
+    check(std::fabs(b.advance - 6) < 1e-4f, "advance in pixels");
+    auto cov = [&](int x, int y) { // pixel at pen-relative (x, y), y down from the baseline
+        const int bx = x - b.left, by = y + b.top;
+        if (bx < 0 || by < 0 || bx >= b.width || by >= b.height)
+            return 0;
+        return int(b.alpha[size_t(by) * size_t(b.width) + size_t(bx)]);
+    };
+    check(cov(2, -3) == 255 && cov(4, -1) == 255, "inside the box is covered");
+    check(cov(0, -3) == 128 && cov(5, -3) == 128, "half-covered edge columns");
+    check(cov(7, -3) == 0 && cov(2, 1) == 0, "outside the box is empty");
+    // "Á" is seac: the box plus the accent box above it at x offset 200 - 0 + 50 = 250 units.
+    auto aa = f->glyph(U'Á');
+    check(aa.has_value(), "seac glyph encoded");
+    if (aa) {
+        const GlyphBitmap c = rasterizeGlyph(*f, *aa, 10);
+        check(c.top >= 7 && std::fabs(c.advance - 6) < 1e-4f, "seac draws the accent above and keeps the base width");
+    }
+    const auto u = decodeUtf8("AÁ");
+    check(u == std::u32string{U'A', U'Á'}, "UTF-8 decoding");
+    check(decodeUtf8("\xC3") == std::u32string{0xFFFD}, "truncated UTF-8");
+    const TextMetrics m = measureText(*f, decodeUtf8("AAB"), 10, 1);
+    check(std::fabs(m.width - 14) < 1e-4f && m.missing == 1, "text metrics with spacing and a missing glyph");
+    RgbaImage img;
+    img.width = 20, img.height = 10;
+    img.pixels.assign(20 * 10 * 4, 0);
+    const uint8_t white[4] = {255, 255, 255, 255};
+    const float end = drawText(img, *f, U"A", 2, 8, 10, white);
+    check(std::fabs(end - 8) < 1e-4f, "pen advances");
+    check(img.pixels[(size_t(5) * 20 + 5) * 4 + 3] == 255, "text drawn into the image");
+}
+
+// A minimal TrueType font: one glyph, a triangle with one off-curve point.
+static std::vector<uint8_t> makeTrueType() {
+    auto be16 = [](std::vector<uint8_t>& v, int x) { v.push_back(uint8_t(x >> 8)), v.push_back(uint8_t(x)); };
+    auto be32 = [&](std::vector<uint8_t>& v, uint32_t x) { be16(v, int(x >> 16)), be16(v, int(x & 0xFFFF)); };
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> tables;
+    std::vector<uint8_t> head(54, 0);
+    head[18] = 0x04, head[19] = 0x00; // 1024 units/em
+    head[51] = 0;                     // short loca
+    tables.push_back({"head", head});
+    std::vector<uint8_t> hhea(36, 0);
+    hhea[4] = 0x03, hhea[5] = 0x00;   // ascent 768
+    hhea[6] = 0xFF, hhea[7] = 0x00;   // descent -256
+    hhea[35] = 2;                     // numberOfHMetrics
+    tables.push_back({"hhea", hhea});
+    std::vector<uint8_t> maxp(6, 0);
+    maxp[5] = 2;
+    tables.push_back({"maxp", maxp});
+    std::vector<uint8_t> hmtx;
+    be16(hmtx, 500), be16(hmtx, 0), be16(hmtx, 1024), be16(hmtx, 0);
+    tables.push_back({"hmtx", hmtx});
+    std::vector<uint8_t> cmap;
+    be16(cmap, 0), be16(cmap, 1), be16(cmap, 3), be16(cmap, 1), be32(cmap, 12);
+    // format 4, segments: 'X'..'X' -> glyph 1 (delta), 0xFFFF terminator
+    be16(cmap, 4), be16(cmap, 32), be16(cmap, 0), be16(cmap, 4), be16(cmap, 4), be16(cmap, 1), be16(cmap, 0);
+    be16(cmap, 'X'), be16(cmap, 0xFFFF), be16(cmap, 0), be16(cmap, 'X'), be16(cmap, 0xFFFF);
+    be16(cmap, 1 - 'X'), be16(cmap, 1), be16(cmap, 0), be16(cmap, 0);
+    tables.push_back({"cmap", cmap});
+    std::vector<uint8_t> glyf;
+    // glyph 1: 1 contour, points (0,0) on, (1024,0) on, (512,1024) off -> closes with a curve to (0,0)
+    be16(glyf, 1), be16(glyf, 0), be16(glyf, 0), be16(glyf, 1024), be16(glyf, 1024);
+    be16(glyf, 2), be16(glyf, 0); // end point, no instructions
+    glyf.push_back(1), glyf.push_back(1), glyf.push_back(0);
+    be16(glyf, 0), be16(glyf, 1024), be16(glyf, -512); // x deltas
+    be16(glyf, 0), be16(glyf, 0), be16(glyf, 1024);    // y deltas
+    glyf.push_back(0);                                 // short loca needs even offsets
+    std::vector<uint8_t> loca;
+    be16(loca, 0), be16(loca, 0), be16(loca, int(glyf.size() / 2));
+    tables.push_back({"loca", loca});
+    tables.push_back({"glyf", glyf});
+
+    std::vector<uint8_t> f;
+    be32(f, 0x00010000), be16(f, int(tables.size())), be16(f, 0), be16(f, 0), be16(f, 0);
+    uint32_t off = uint32_t(12 + 16 * tables.size());
+    std::vector<uint8_t> data;
+    for (auto& [tag, t] : tables) {
+        f.insert(f.end(), tag.begin(), tag.end());
+        be32(f, 0), be32(f, off + uint32_t(data.size())), be32(f, uint32_t(t.size()));
+        data.insert(data.end(), t.begin(), t.end());
+        while (data.size() % 4)
+            data.push_back(0);
+    }
+    f.insert(f.end(), data.begin(), data.end());
+    return f;
+}
+
+static void testTrueType() {
+    std::unique_ptr<Font> f;
+    try {
+        f = Font::load(makeTrueType());
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "TrueType load: %s\n", e.what());
+    }
+    check(f != nullptr, "TrueType loads");
+    if (!f)
+        return;
+    check(f->unitsPerEm == 1024 && f->ascent == 768 && f->descent == -256 && f->glyphCount == 2, "TrueType metrics");
+    auto g = f->glyph(U'X');
+    check(g && *g == 1 && !f->glyph(U'Y'), "cmap format 4");
+    check(g && f->advance(*g) == 1024, "hmtx advance");
+    const GlyphPath p = f->outline(*g);
+    bool quad = false;
+    for (const auto& c : p.cmds)
+        quad |= c.op == GlyphPath::Op::Quad;
+    check(p.cmds.size() == 4 && quad, "outline with an implied curve");
+    const GlyphBitmap b = rasterizeGlyph(*f, *g, 16);
+    // Bottom row of the triangle is fully covered in the middle.
+    const int bx = 8 - b.left, by = -1 + b.top;
+    check(b.alpha[size_t(by) * size_t(b.width) + size_t(bx)] == 255, "triangle base covered");
+}
+
+static void testFontStyles() {
+    const auto styles = parseFontStyles(
+        "; comment\r\n[Font Aliases]\r\nArta = Arial\r\n[Font Styles]\r\n"
+        "Default     \t\t= \"ITC Benguiat Gothic\",\t\"11\",   \"bold|aa=bg\",           0x68963c4c\r\n"
+        "NewsBody = \"Arta, Arial\", \"14\", \"Italic | LineSpacing=2\", 0xeadd276d ; trailing\r\n[Directories]\r\nFonts=x\r\n");
+    check(styles.size() == 2, "two styles");
+    if (styles.size() == 2) {
+        check(styles[0].name == "Default" && styles[0].faces == std::vector<std::string>{"ITC Benguiat Gothic"} &&
+                  styles[0].size == 11 && styles[0].bold && styles[0].guid == 0x68963C4C,
+              "Default style");
+        check(styles[1].faces.size() == 2 && styles[1].faces[1] == "Arial" && styles[1].italic && !styles[1].bold &&
+                  styles[1].guid == 0xEADD276D,
+              "face list and flags");
+    }
+}
+
 int main() {
     testScript();
     testTga();
     testBmp();
     testJpeg();
+    testType1();
+    testTrueType();
+    testFontStyles();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

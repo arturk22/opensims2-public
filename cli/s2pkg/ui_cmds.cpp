@@ -1,15 +1,18 @@
 // s2pkg commands for UI scripts, UI images and fonts.
 #include "ui_cmds.hpp"
 
+#include "formats/font.hpp"
 #include "formats/resindex.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
 #include "formats/ui_script.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -235,13 +238,95 @@ int cmdUiImage(const char* resDir, uint32_t group, uint32_t instance, const char
     return 0;
 }
 
+
+// Every glyph of every font in the directory: loads, outlines and rasterizes.
+int cmdFontSweep(const char* dir) {
+    size_t fonts = 0, failed = 0;
+    for (const auto& de : std::filesystem::directory_iterator(dir)) {
+        if (de.path().extension() != ".mxf")
+            continue;
+        ++fonts;
+        try {
+            auto f = Font::loadFile(de.path());
+            size_t errors = 0, empty = 0, latin = 0;
+            for (uint32_t g = 0; g < f->glyphCount; ++g) {
+                try {
+                    if (rasterizeGlyph(*f, g, 16).alpha.empty())
+                        ++empty;
+                } catch (const std::exception& e) {
+                    if (++errors <= 3)
+                        std::printf("  glyph %u: %s\n", g, e.what());
+                }
+            }
+            for (char32_t c = 0x20; c <= 0xFF; ++c)
+                if (c < 0x7F || c >= 0xA0)
+                    latin += f->glyph(c).has_value();
+            std::printf("%-36s %-32s %6zu glyphs, %4.0f units/em, ascent %5.0f descent %5.0f, Latin-1 %3zu/191, "
+                        "%zu blank, %zu errors\n",
+                        de.path().filename().string().c_str(),
+                        f->name.c_str(), f->glyphCount, f->unitsPerEm, f->ascent, f->descent, latin, empty, errors);
+            failed += errors ? 1 : 0;
+        } catch (const std::exception& e) {
+            ++failed;
+            std::printf("%-36s FAILED: %s\n", de.path().filename().string().c_str(), e.what());
+        }
+    }
+    std::printf("%zu fonts, %zu with errors\n", fonts, failed);
+    return failed ? 1 : 0;
+}
+
+// Renders text in a font file (.mxf) or a FontStyle.ini style (with the Fonts directory).
+int cmdFontText(const char* fontOrDir, const char* styleOrSize, const char* text, const char* out) {
+    std::unique_ptr<Font> owned;
+    std::unique_ptr<FontLibrary> lib;
+    const Font* font = nullptr;
+    float ppem = 0;
+    if (std::filesystem::is_directory(fontOrDir)) {
+        lib = std::make_unique<FontLibrary>(fontOrDir);
+        const FontStyle* st = lib->style(styleOrSize);
+        if (!st) {
+            std::fprintf(stderr, "no font style %s\n", styleOrSize);
+            return 1;
+        }
+        font = lib->font(*st);
+        ppem = float(st->size);
+        std::printf("style %s: %s %d%s\n", st->name.c_str(), st->faces.empty() ? "" : st->faces[0].c_str(), st->size,
+                    st->bold ? " bold" : "");
+    } else {
+        owned = Font::loadFile(fontOrDir);
+        font = owned.get();
+        ppem = std::stof(styleOrSize);
+    }
+    if (!font) {
+        std::fprintf(stderr, "font not found\n");
+        return 1;
+    }
+    const auto u = decodeUtf8(text);
+    const TextMetrics m = measureText(*font, u, ppem);
+    RgbaImage img;
+    img.width = uint32_t(std::ceil(m.width)) + 8;
+    img.height = uint32_t(std::ceil(m.ascent + m.descent)) + 8;
+    img.pixels.assign(size_t(img.width) * img.height * 4, 0);
+    for (size_t i = 0; i < img.pixels.size(); i += 4)
+        img.pixels[i] = 40, img.pixels[i + 1] = 50, img.pixels[i + 2] = 110, img.pixels[i + 3] = 255;
+    const uint8_t white[4] = {255, 255, 255, 255};
+    drawText(img, *font, u, 4, 4 + std::round(m.ascent), ppem, white);
+    writePng(out, img);
+    std::printf("%s at %.0f px: %.1f px wide, ascent %.1f, descent %.1f, %zu missing -> %s\n", font->name.c_str(), ppem,
+                m.width, m.ascent, m.descent, m.missing, out);
+    return 0;
+}
+
 } // namespace
 
 const char* uiUsage() {
     return "       s2pkg ui-list <Res-dir>\n"
            "       s2pkg ui-dump <Res-dir> <instance-hex> [group-hex] [--all]\n"
            "       s2pkg ui-sweep <Res-dir>\n"
-           "       s2pkg ui-image <Res-dir|file.package> <group-hex> <instance-hex> <out.png>\n";
+           "       s2pkg ui-image <Res-dir|file.package> <group-hex> <instance-hex> <out.png>\n"
+           "       s2pkg font-sweep <Fonts-dir>\n"
+           "       s2pkg font-text <file.mxf> <pixels> <text> <out.png>\n"
+           "       s2pkg font-text <Fonts-dir> <style|0xGUID> <text> <out.png>\n";
 }
 
 int uiCommand(const std::string& cmd, int argc, char** argv) {
@@ -256,6 +341,10 @@ int uiCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (cmd == "ui-image" && argc == 6)
         return cmdUiImage(argv[2], parseHex(argv[3]), parseHex(argv[4]), argv[5]);
+    if (cmd == "font-sweep" && argc == 3)
+        return cmdFontSweep(argv[2]);
+    if (cmd == "font-text" && argc == 6)
+        return cmdFontText(argv[2], argv[3], argv[4], argv[5]);
     return -1;
 }
 

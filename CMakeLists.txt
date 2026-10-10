@@ -28,6 +28,7 @@ add_library(os2_formats
   src/formats/camera_config.cpp
   src/formats/config_text.cpp
   src/formats/dbpf.cpp
+  src/formats/font.cpp
   src/formats/gmdc.cpp
   src/formats/image.cpp
   src/formats/jpeg.cpp
