@@ -93,11 +93,14 @@ Exit countDownParam(Context& c) {
 }
 
 // Random Number (0x08): destination (data u16, owner u16), range (data u16,
-// owner u16); stores a value in [0, range). A range <= 0 stores 0 (inferred).
+// owner u16); stores a value in [0, range). A range of 0 is an error (the
+// game's message, Sims2.exe); a negative one stores 0 (inferred).
 // Bytes 8+ are 1 in most uses and look like editor leftovers elsewhere.
 Exit randomNumber(Context& c) {
     const auto& o = c.instruction.operands;
     const int16_t range = c.get(o[6], int16_t(le16(&o[4])));
+    if (range == 0)
+        throw VMError("Random number range evaluated to zero.");
     int16_t value = 0;
     if (range > 0)
         value = int16_t(std::uniform_int_distribution<int>(0, range - 1)(c.vm.random));
@@ -117,23 +120,34 @@ Exit breakPoint(Context& c) {
     return Exit::True;
 }
 
-// Remove Object Instance (0x12): u16 target, 0 = me, 1 = stack object (STR#
-// 0x9C), then flags (u8 at 2: 0-3, probably "clean up all parts" of a
-// multi-tile object and "return immediately"; not used yet). A thread whose
-// object is removed is killed.
-Exit removeObjectInstance(Context& c) {
-    const uint16_t target = le16(&c.instruction.operands[0]);
-    if (target > 1)
-        throw VMError("Remove Object Instance: target " + std::to_string(target) + " not implemented");
-    c.vm.removeObject(target == 0 ? c.me().id : c.stackObject().id);
-    return Exit::True;
-}
-
 // Multi-tile objects: the parts point at the lead tile's object (object data
 // "lead tile object ID"); the lead itself may hold 0 (inferred).
 ObjectId multiTileGroup(const Object& x) {
     const ObjectId lead = x.data[objdata::LeadTileObjectId];
     return lead ? lead : x.id;
+}
+
+// Remove Object Instance (0x12): u16 target, 0 = me, 1 = stack object (STR#
+// 0x9C), then flags u8 at 2: 0x02 removes every part of a multi-tile object
+// ("clean up all"), 0x01 "return immediately" (nothing to wait for here). A
+// thread whose object is removed is killed.
+Exit removeObjectInstance(Context& c) {
+    const uint16_t target = le16(&c.instruction.operands[0]);
+    if (target > 1)
+        throw VMError("Remove Object Instance: target " + std::to_string(target) + " not implemented");
+    const Object& x = target == 0 ? c.me() : c.stackObject();
+    if (c.instruction.operands[2] & 0x02) {
+        const ObjectId group = multiTileGroup(x);
+        std::vector<ObjectId> parts;
+        for (const auto& [id, o] : c.vm.objects())
+            if (multiTileGroup(o) == group)
+                parts.push_back(id);
+        for (ObjectId id : parts)
+            c.vm.removeObject(id);
+    } else {
+        c.vm.removeObject(x.id);
+    }
+    return Exit::True;
 }
 
 // Set to Next (0x1F): GUID u32, flags u8 (low 7 bits: search type, STR# 0xA4;
@@ -266,7 +280,8 @@ Exit createObjectInstance(Context& c) {
 // owner's semi-global table and then the global one (the memory objects ask
 // for entry 85 of the global table, "CT - Add Memory", and have none); modes
 // 0 and 2 are run the same way. Mode 1 needs the stack object's own thread
-// and is not implemented, nor is a form with zeroes at 6-7 and 2 at 8 (77 uses).
+// and is not implemented. With zeroes at 6-7 and 2 at 8 (77 uses) the current
+// tree's parameters are passed on.
 Exit runTreeByName(Context& c) {
     const auto& o = c.instruction.operands;
     const uint8_t mode = o[5];
@@ -274,7 +289,11 @@ Exit runTreeByName(Context& c) {
         throw VMError("Run Tree by Name: run in stack object's stack not implemented");
     if (mode > 2)
         throw VMError("Run Tree by Name: mode " + std::to_string(mode) + " not implemented");
-    if (o[6] == 0 && o[7] == 0 && o[8] != 0)
+    // Zeros at 6-7 and 2 at 8: the arguments are the current tree's parameters
+    // (inferred from the editor string ", Passing in params from the current
+    // tree"; bytes 9+ of that form, e.g. 00 09 FD, are not understood).
+    const bool passParams = o[6] == 0 && o[7] == 0 && o[8] != 0;
+    if (passParams && o[8] != 2)
         throw VMError("Run Tree by Name: argument form " + std::to_string(o[8]) + " not implemented");
 
     auto& code = c.vm.code();
@@ -312,8 +331,11 @@ Exit runTreeByName(Context& c) {
         return Exit::False;
 
     std::array<int16_t, 4> args{};
-    for (size_t k = 0; k < 3; ++k)
-        args[k] = c.get(o[6 + 3 * k], int16_t(le16(&o[7 + 3 * k])));
+    if (passParams)
+        std::copy_n(c.frame.params.begin(), std::min<size_t>(c.frame.params.size(), 4), args.begin());
+    else
+        for (size_t k = 0; k < 3; ++k)
+            args[k] = c.get(o[6 + 3 * k], int16_t(le16(&o[7 + 3 * k])));
     c.vm.call(c.thread, target.id, *tree, args);
     return Exit::Call;
 }

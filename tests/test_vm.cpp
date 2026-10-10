@@ -390,6 +390,30 @@ static void testRunTreeByName() {
         std::fprintf(stderr, "  thread failed: %s\n", t.error.c_str());
     check(t.status == Thread::Status::Finished && t.temps[1] == 1, "Run Tree by Name branches on the result");
     check(tv.attributes[1] == 8, "Run Tree by Name runs the stack object's tree with arguments");
+
+    // Zeros at 6-7 and 2 at 8: my parameters are passed on.
+    fx.code.add(kObjGroup, 0x1001, tree({expr(StackId, 0, Assign, Lit, tv.id, go(1), E),
+                                         instr(0x1C, T, T, {0, 0, 0, 0, 1, 2, 0, 0, 2, 0, 9, 0xFD})},
+                                        2));
+    t = fx.vm.start(1, 0x1001, std::vector<int16_t>{4, 6});
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && tv.attributes[1] == 10, "Run Tree by Name passes my parameters on");
+}
+
+static void testRemoveAndRandom() {
+    Fixture fx;
+    fx.obj();
+    fx.vm.createObject(kObjGroup);                                       // id 2: lead tile
+    fx.vm.createObject(kObjGroup).data[objdata::LeadTileObjectId] = 2;   // id 3: its other tile
+    fx.vm.createObject(kObjGroup);                                       // id 4
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, 3, go(1), E),
+                      instr(0x12, go(2), E, {1, 0, 0x02}),                // remove every part of 3's object
+                      instr(0x08, T, E, {0, 0, Temp, 0, 0, 0, Lit, 0})})); // range 0: error
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Failed && t.error.find("range evaluated to zero") != std::string::npos &&
+              !fx.vm.object(2) && !fx.vm.object(3) && fx.vm.object(4),
+          "Remove Object Instance cleans up all parts; Random Number with range 0 fails");
 }
 
 static void testRelationship() {
@@ -696,6 +720,7 @@ int main() {
     testGenericSimsCall();
     testPushInteraction();
     testDefinitionOwners();
+    testRemoveAndRandom();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
