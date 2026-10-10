@@ -31,6 +31,7 @@ add_library(os2_formats
   src/formats/scenegraph.cpp
   src/formats/simantics.cpp
   src/formats/skeleton.cpp
+  src/formats/skinning.cpp
   src/formats/strings.cpp
   src/formats/txmt.cpp
 )

@@ -50,7 +50,13 @@ public:
 
     // Uploads an object's parts; base textures are loaded through `index`.
     // Returns the model id for addInstance.
-    int addObject(const ObjectModel& model, ResourceIndex& index);
+    // `dynamic` models keep one vertex buffer per frame in flight so that
+    // updateObject can replace their vertices every frame (skinned Sims).
+    int addObject(const ObjectModel& model, ResourceIndex& index, bool dynamic = false);
+    // New positions and normals for a dynamic model: `posed` must have the
+    // parts (and vertex counts) of the model it was added from. Takes effect
+    // from the next frame drawn.
+    void updateObject(int model, const ObjectModel& posed);
     void addInstance(int model, const simd_float4x4& transform);
     // Removes the checkered test floor and axis markers (e.g. when a lot is shown).
     void hideTestScene();

@@ -14,6 +14,7 @@
 #include <dispatch/dispatch.h>
 
 #include <algorithm>
+#include <cstring>
 #include <cstdio>
 #include <utility>
 #include <stdexcept>
@@ -124,6 +125,12 @@ struct Renderer::Material {
 
 struct Renderer::Part {
     MTL::Buffer* vertices = nullptr;
+    // Dynamic parts: one buffer per frame slot (vertices is the first), the
+    // part of the source model, and vertices waiting to be copied in.
+    std::array<MTL::Buffer*, kFramesInFlight> slots{};
+    size_t source = 0;
+    std::vector<Vertex> pending;
+    std::array<bool, kFramesInFlight> stale{};
     MTL::Buffer* indices = nullptr;
     uint32_t indexCount = 0;
     Material material;
@@ -135,6 +142,9 @@ struct Renderer::Model {
     std::vector<Part> parts;
     ~Model() {
         for (auto& p : parts) {
+            for (auto* b : p.slots)
+                if (b && b != p.vertices)
+                    b->release();
             p.vertices->release();
             p.indices->release();
             if (p.mask)
@@ -304,11 +314,12 @@ MTL::Texture* Renderer::texture(const std::string& name, ResourceIndex& index) {
     return tex;
 }
 
-int Renderer::addObject(const ObjectModel& model, ResourceIndex& index) {
+int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dynamic) {
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     auto out = std::make_unique<Model>();
     out->name = model.name;
-    for (const auto& part : model.parts) {
+    for (size_t source = 0; source < model.parts.size(); ++source) {
+        const auto& part = model.parts[source];
         const MeshGroup& mesh = part.mesh;
         if (mesh.positions.empty() || mesh.triangles.empty())
             continue;
@@ -362,6 +373,12 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index) {
             }
         }
         p.vertices = device_->newBuffer(v.data(), v.size() * sizeof(Vertex), MTL::ResourceStorageModeShared);
+        p.source = source;
+        if (dynamic) {
+            p.slots[0] = p.vertices;
+            for (size_t i = 1; i < p.slots.size(); ++i)
+                p.slots[i] = device_->newBuffer(v.data(), v.size() * sizeof(Vertex), MTL::ResourceStorageModeShared);
+        }
         p.indices = device_->newBuffer(mesh.triangles.data(), mesh.triangles.size() * sizeof(uint32_t),
                                        MTL::ResourceStorageModeShared);
         p.indexCount = uint32_t(mesh.triangles.size());
@@ -371,6 +388,30 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index) {
     models_.push_back(std::move(out));
     pool->release();
     return int(models_.size() - 1);
+}
+
+void Renderer::updateObject(int model, const ObjectModel& posed) {
+    if (model < 0 || size_t(model) >= models_.size())
+        return;
+    for (auto& p : models_[size_t(model)]->parts) {
+        if (!p.slots[0] || p.source >= posed.parts.size())
+            continue;
+        const MeshGroup& mesh = posed.parts[p.source].mesh;
+        const size_t n = p.vertices->length() / sizeof(Vertex);
+        if (mesh.positions.size() != n)
+            continue;
+        if (p.pending.size() != n)
+            p.pending.assign(static_cast<const Vertex*>(p.vertices->contents()),
+                             static_cast<const Vertex*>(p.vertices->contents()) + n);
+        for (size_t i = 0; i < n; ++i) {
+            for (int k = 0; k < 3; ++k)
+                p.pending[i].position[k] = mesh.positions[i][size_t(k)];
+            if (i < mesh.normals.size())
+                for (int k = 0; k < 3; ++k)
+                    p.pending[i].normal[k] = mesh.normals[i][size_t(k)];
+        }
+        p.stale.fill(true);
+    }
 }
 
 MTL::Texture* Renderer::uploadMask(const ObjectModel::AlphaMask& m) {
@@ -418,6 +459,14 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     for (uint32_t i = 0; i < f->lightCount; ++i)
         f->lights[i] = {simd_make_float4(lights_[i].direction, 0), simd_make_float4(lights_[i].color, 0)};
 
+    // The GPU is done with this slot's buffers: bring dynamic vertices up to date.
+    for (auto& m : models_)
+        for (auto& p : m->parts)
+            if (p.slots[0] && p.stale[size_t(frame_)]) {
+                std::memcpy(p.slots[size_t(frame_)]->contents(), p.pending.data(), p.pending.size() * sizeof(Vertex));
+                p.stale[size_t(frame_)] = false;
+            }
+
     MTL::CommandBuffer* cmd = queue_->commandBuffer();
     dispatch_semaphore_t sem = sema(inFlight_);
     cmd->addCompletedHandler([sem](MTL::CommandBuffer*) { dispatch_semaphore_signal(sem); });
@@ -444,7 +493,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                 Draw d{inst.transform, m.color, m.specular, m.emissive, m.maskTransform, m.alphaRef, m.flags};
                 enc->setVertexBytes(&d, sizeof d, 1);
                 enc->setFragmentBytes(&d, sizeof d, 1);
-                enc->setVertexBuffer(part.vertices, 0, 0);
+                enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
                 enc->setFragmentTexture(m.texture, 0);
                 enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
                 enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount),
