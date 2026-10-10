@@ -136,6 +136,14 @@ struct Animation {
 std::vector<Xform> samplePose(const Animation::Target& target, const Skeleton& skeleton, float ticks);
 float animationTime(const Animation& a, float seconds, bool loop);
 
+// Two-bone IK for the target's chains (e.g. legs: r_thigh -> r_calf -> r_foot
+// reaching r_foot_ikctr, knee towards r_foot_ikpole): bones are named by the
+// CRC32 of their lowercase names; the middle bone is the end bone's parent;
+// the end bone takes the goal's rotation (keeping the rest-pose offset
+// between them). Chains with an IK weight channel are blended by its value
+// at `ticks`. Updates `local` in place.
+void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ticks, std::vector<Xform>& local);
+
 // Decodes one fixed-point value (sign-extended `bits`-bit integer over 2^fraction).
 float animFixedToFloat(Animation::Value type, int32_t raw);
 

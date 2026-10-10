@@ -1,9 +1,12 @@
 // Layout after OpenTS2's AnimResourceConstBlock.cs (MPL-2.0).
 #include "anim.hpp"
 
+#include "resindex.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <unordered_map>
 
 namespace os2 {
 
@@ -271,6 +274,120 @@ std::vector<Xform> samplePose(const Animation::Target& target, const Skeleton& s
             x.t = {v[0], v[1], v[2]};
     }
     return pose;
+}
+
+namespace {
+
+Vec3 sub(const Vec3& a, const Vec3& b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
+float dot(const Vec3& a, const Vec3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+Vec3 cross(const Vec3& a, const Vec3& b) {
+    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+}
+float length(const Vec3& a) { return std::sqrt(dot(a, a)); }
+Vec3 scale(const Vec3& a, float k) { return {a[0] * k, a[1] * k, a[2] * k}; }
+Vec3 add(const Vec3& a, const Vec3& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
+
+// Shortest rotation taking direction u to direction v.
+Quat rotationBetween(const Vec3& u, const Vec3& v) {
+    const float lu = length(u), lv = length(v);
+    if (lu == 0 || lv == 0)
+        return {};
+    const Vec3 c = cross(u, v);
+    const float w = lu * lv + dot(u, v);
+    if (w < 1e-6f * lu * lv) {
+        // Opposite: half a turn about any axis perpendicular to u.
+        Vec3 axis = cross(u, {1, 0, 0});
+        if (length(axis) < 1e-6f)
+            axis = cross(u, {0, 1, 0});
+        axis = scale(axis, 1 / length(axis));
+        return {axis[0], axis[1], axis[2], 0};
+    }
+    return normalized({c[0], c[1], c[2], w});
+}
+
+Xform parentWorld(const Skeleton& s, const std::vector<Xform>& world, int bone) {
+    const int p = s.bones[size_t(bone)].parent;
+    return p >= 0 ? world[size_t(p)] : Xform{};
+}
+
+} // namespace
+
+void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, std::vector<Xform>& local) {
+    if (target.ikChains.empty())
+        return;
+    std::unordered_map<uint32_t, int> byCrc;
+    for (size_t i = 0; i < s.bones.size(); ++i)
+        byCrc.emplace(nameInstanceHiHash(s.bones[i].name), int(i));
+    auto bone = [&](uint32_t crc) {
+        auto it = crc ? byCrc.find(crc) : byCrc.end();
+        return it == byCrc.end() ? -1 : it->second;
+    };
+    const auto restWorld = s.world(s.restPose());
+
+    for (const auto& chain : target.ikChains) {
+        if (chain.strategy != 0x48EE7A41 || chain.targets.empty())
+            continue; // only the two-bone (seven degrees of freedom) chains
+        const int b0 = bone(chain.crcs[0]), b2 = bone(chain.crcs[2]);
+        if (b0 < 0 || b2 < 0)
+            continue;
+        const int b1 = s.bones[size_t(b2)].parent;
+        if (b1 < 0 || s.bones[size_t(b1)].parent != b0)
+            continue;
+        const auto& goal = chain.targets[0];
+        const int goalBone = bone(goal.crcs[4]), goalRotation = bone(goal.crcs[2]), pole = bone(chain.crcs[4]);
+        if (goalBone < 0)
+            continue;
+        float weight = 1;
+        if (chain.crcs[7]) {
+            weight = 0;
+            for (const auto& c : target.channels)
+                if (c.nameHash == chain.crcs[7] && !c.components.empty())
+                    weight = std::clamp(c.components[0].sample(ticks, c.duration()), 0.0f, 1.0f);
+        }
+        if (weight <= 0)
+            continue;
+
+        const auto world = s.world(local);
+        const Vec3 A = world[size_t(b0)].t, B = world[size_t(b1)].t, C = world[size_t(b2)].t;
+        const Vec3 T = world[size_t(goalBone)].t;
+        const float a = length(sub(B, A)), b = length(sub(C, B));
+        Vec3 toT = sub(T, A);
+        float d = length(toT);
+        if (a <= 0 || b <= 0 || d <= 1e-6f)
+            continue;
+        const Vec3 u = scale(toT, 1 / d);
+        d = std::clamp(d, std::fabs(a - b) + 1e-4f, a + b - 1e-4f);
+        // Knee in the plane of the hip, the goal and the pole (or the current knee).
+        Vec3 toP = sub(pole >= 0 ? world[size_t(pole)].t : B, A);
+        Vec3 v = sub(toP, scale(u, dot(toP, u)));
+        if (length(v) < 1e-6f)
+            continue;
+        v = scale(v, 1 / length(v));
+        const float cosA = std::clamp((a * a + d * d - b * b) / (2 * a * d), -1.0f, 1.0f);
+        const Vec3 K = add(A, add(scale(u, a * cosA), scale(v, a * std::sqrt(1 - cosA * cosA))));
+
+        const Xform p0 = parentWorld(s, world, b0);
+        Xform w0 = world[size_t(b0)];
+        w0.q = rotationBetween(sub(B, A), sub(K, A)) * w0.q;
+        Xform l0 = local[size_t(b0)];
+        l0.q = normalized(conjugate(p0.q) * w0.q);
+        w0 = p0.then(l0);
+        Xform w1 = w0.then(local[size_t(b1)]);
+        const Vec3 C1 = w1.then(local[size_t(b2)]).t;
+        w1.q = rotationBetween(sub(C1, w1.t), sub(T, w1.t)) * w1.q;
+        Xform l1 = local[size_t(b1)];
+        l1.q = normalized(conjugate(w0.q) * w1.q);
+        w1 = w0.then(l1);
+        Xform l2 = local[size_t(b2)];
+        if (goalRotation >= 0) {
+            const Quat offset = conjugate(restWorld[size_t(goalRotation)].q) * restWorld[size_t(b2)].q;
+            l2.q = normalized(conjugate(w1.q) * (world[size_t(goalRotation)].q * offset));
+        }
+
+        local[size_t(b0)].q = nlerp(local[size_t(b0)].q, l0.q, weight);
+        local[size_t(b1)].q = nlerp(local[size_t(b1)].q, l1.q, weight);
+        local[size_t(b2)].q = nlerp(local[size_t(b2)].q, l2.q, weight);
+    }
 }
 
 const Animation::Target* Animation::findTarget(std::string_view tag) const {

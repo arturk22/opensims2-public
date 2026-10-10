@@ -280,8 +280,11 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         std::vector<os2::Xform> local = a->skin.skeleton.restPose();
         if (a->anim)
             if (const auto* target = a->anim->findTarget(a->skin.skeleton.bones.empty() ? "auskel"
-                                                                                         : a->skin.skeleton.bones[0].name))
-                local = os2::samplePose(*target, a->skin.skeleton, os2::animationTime(*a->anim, float(seconds), true));
+                                                                                         : a->skin.skeleton.bones[0].name)) {
+                const float ticks = os2::animationTime(*a->anim, float(seconds), true);
+                local = os2::samplePose(*target, a->skin.skeleton, ticks);
+                os2::applyIk(*target, a->skin.skeleton, ticks, local);
+            }
         a->skin.pose(a->skin.skeleton.world(local), a->posed);
         renderer.updateObject(a->model, a->posed);
     }

@@ -1,6 +1,7 @@
 // Skeletons, ANIM decoding and pose sampling on hand-built data.
 #include "formats/anim.hpp"
 #include "formats/property_set.hpp"
+#include "formats/resindex.hpp"
 #include "formats/sim.hpp"
 #include "formats/skeleton.hpp"
 #include "formats/skinning.hpp"
@@ -258,7 +259,39 @@ static void testSkinning() {
     check(near(n[0], std::sqrt(0.5f)) && near(n[1], std::sqrt(0.5f)), "normals renormalized");
 }
 
+static void testIk() {
+    // A straight leg along -Z (thigh at z=1, knee at 0.5, foot at 0), the goal
+    // raised to z=0.3 and the pole in front (+Y): the knee must bend forward
+    // and the foot reach the goal.
+    Skeleton s;
+    s.bones.push_back({"root", -1, Xform{}, -1, 0});
+    s.bones.push_back({"thigh", 0, Xform{{}, {0, 0, 1}}, 0, 1});
+    s.bones.push_back({"calf", 1, Xform{{}, {0, 0, -0.5f}}, 1, 2});
+    s.bones.push_back({"foot", 2, Xform{{}, {0, 0, -0.5f}}, 2, 3});
+    s.bones.push_back({"goal", 0, Xform{{}, {0, 0, 0}}, -1, 4});
+    s.bones.push_back({"pole", 0, Xform{{}, {0, 1, 0.5f}}, -1, 5});
+    Animation::Target t;
+    Animation::IkChain chain;
+    chain.strategy = 0x48EE7A41;
+    chain.crcs[0] = nameInstanceHiHash("thigh");
+    chain.crcs[2] = nameInstanceHiHash("foot");
+    chain.crcs[4] = nameInstanceHiHash("pole");
+    Animation::IkTarget goal;
+    goal.crcs[2] = goal.crcs[4] = nameInstanceHiHash("goal");
+    chain.targets.push_back(goal);
+    t.ikChains.push_back(chain);
+    auto local = s.restPose();
+    local[4].t = {0, 0, 0.3f};
+    applyIk(t, s, 0, local);
+    const auto w = s.world(local);
+    check(near(w[3].t[0], 0, 1e-3f) && near(w[3].t[1], 0, 1e-3f) && near(w[3].t[2], 0.3f, 1e-3f), "IK: foot on the goal");
+    check(w[2].t[1] > 0.1f, "IK: knee bends towards the pole");
+    const float thigh = std::sqrt(w[2].t[1] * w[2].t[1] + (w[2].t[2] - 1) * (w[2].t[2] - 1));
+    check(near(thigh, 0.5f, 1e-3f), "IK: bone lengths kept");
+}
+
 int main() {
+    testIk();
     testSimCatalog();
     testSkinning();
     testFixed();
