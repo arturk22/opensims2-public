@@ -29,6 +29,7 @@ add_library(os2_formats
   src/formats/resindex.cpp
   src/formats/scenegraph.cpp
   src/formats/simantics.cpp
+  src/formats/skeleton.cpp
   src/formats/strings.cpp
   src/formats/txmt.cpp
 )
@@ -45,7 +46,7 @@ target_include_directories(os2_vm PUBLIC src)
 target_compile_options(os2_vm PRIVATE -Wall -Wextra)
 target_link_libraries(os2_vm PUBLIC os2_formats)
 
-add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp)
+add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm)
 

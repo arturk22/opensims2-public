@@ -100,6 +100,11 @@ struct MeshGroup {
     std::vector<std::array<float, 3>> normals; // empty if the link has none
     std::vector<std::array<float, 2>> uvs;     // empty if the link has none
     std::vector<uint32_t> triangles;
+    // Skinning, empty if the link has no bone assignments: up to four bones
+    // per vertex as GMDC bone ids (indices into GeometryData::transforms and
+    // the CRES joint references; 0xFF = unused slot), with their weights.
+    std::vector<std::array<uint8_t, 4>> bones;
+    std::vector<std::array<float, 4>> weights;
 };
 
 // Triangle groups of a GMDC; skips groups that are not triangle lists.

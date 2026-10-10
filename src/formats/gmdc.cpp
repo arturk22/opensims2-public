@@ -1,5 +1,6 @@
 #include "gmdc.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstdio>
 
@@ -171,6 +172,7 @@ std::vector<MeshGroup> buildMeshes(const GeometryData& g) {
         }
 
         // Value index of vertex `v` in the link's k-th element.
+        int weightElement = -1; // position in link.elements of the bone weights
         auto valueIndex = [&](size_t k, uint32_t v) -> size_t {
             if (k < link.aliases.size() && !link.aliases[k].empty())
                 return link.aliases[k].at(v);
@@ -190,6 +192,43 @@ std::vector<MeshGroup> buildMeshes(const GeometryData& g) {
                 for (auto v : used) {
                     const size_t i = valueIndex(k, v);
                     m.uvs.push_back({e.f(i, 0), e.f(i, 1)});
+                }
+            } else if (e.identity == gmdc::BoneAssignments && m.bones.empty() && e.blockFormat == 4 &&
+                       e.valueCount() > 0) {
+                // One byte per slot, low byte first: an index into the group's
+                // used joints, 0xFF for an unused slot.
+                for (auto v : used) {
+                    const uint32_t packed = e.raw.at(valueIndex(k, v));
+                    std::array<uint8_t, 4> b{0xFF, 0xFF, 0xFF, 0xFF};
+                    for (int s = 0; s < 4; ++s) {
+                        const uint32_t local = (packed >> (8 * s)) & 0xFF;
+                        if (local != 0xFF && local < gr.usedJoints.size() && gr.usedJoints[local] < 0xFF)
+                            b[s] = uint8_t(gr.usedJoints[local]);
+                    }
+                    m.bones.push_back(b);
+                }
+            } else if (e.identity == gmdc::BoneWeights && weightElement < 0 && e.blockFormat <= 2 &&
+                       e.valueCount() > 0) {
+                weightElement = int(k);
+            }
+        }
+        // Weights per slot; a slot past the stored components gets what is left
+        // of 1 (the stored weights sum to 1 in the base game meshes).
+        if (!m.bones.empty()) {
+            m.weights.assign(m.bones.size(), {0, 0, 0, 0});
+            const GeometryData::Element* we = weightElement >= 0 ? &g.elements[link.elements[size_t(weightElement)]] : nullptr;
+            for (size_t i = 0; i < used.size(); ++i) {
+                float sum = 0;
+                for (uint32_t s = 0; s < 4; ++s) {
+                    if (m.bones[i][s] == 0xFF)
+                        continue;
+                    float w;
+                    if (we && s < we->components())
+                        w = we->f(valueIndex(size_t(weightElement), used[i]), s);
+                    else
+                        w = std::max(0.0f, 1.0f - sum);
+                    m.weights[i][s] = w;
+                    sum += w;
                 }
             }
         }

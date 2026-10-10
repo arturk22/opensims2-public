@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gmdc.hpp"
+#include "skeleton.hpp"
 #include "txmt.hpp"
 
 #include <array>
@@ -27,6 +28,9 @@ struct ObjectModel {
         std::string material; // TXMT name without "_txmt", empty if none
         MeshGroup mesh;
         int mask = -1; // index into masks: multiplies the part's alpha
+        // Skinned parts (mesh.bones not empty): the GMDC's inverse bind pose
+        // of each bone id, i.e. model space -> bone space in the rest pose.
+        std::vector<Xform> bindPoses;
     };
 
     // Alpha mask laid over the model's XY plane: value (x, y) sits at
@@ -39,6 +43,7 @@ struct ObjectModel {
 
     std::string name; // CRES resource name
     std::vector<Part> parts;
+    Skeleton skeleton; // the CRES's transform nodes; skinned parts use its joint ids
     std::vector<AlphaMask> masks;
     std::map<std::string, MaterialDefinition> materials; // by material name
     std::vector<std::string> warnings;                   // references that could not be resolved

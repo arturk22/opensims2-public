@@ -4,6 +4,7 @@
 #include "scenegraph.hpp"
 #include "simantics.hpp"
 #include "strings.hpp"
+#include "xform.hpp"
 
 #include <cctype>
 #include <cstdio>
@@ -45,37 +46,6 @@ const Rcol::Block& firstBlock(const Rcol& rc, std::string_view cls, const std::s
         throw FormatError(what + " has no " + std::string(cls));
     return *b;
 }
-
-// Rigid transform: rotation (unit quaternion) then translation.
-struct Xform {
-    Quat q;
-    Vec3 t{0, 0, 0};
-
-    Vec3 rotate(const Vec3& v) const {
-        // v + 2w(q x v) + 2 q x (q x v)
-        const Vec3 u{q.x, q.y, q.z};
-        auto cross = [](const Vec3& a, const Vec3& b) {
-            return Vec3{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
-        };
-        const Vec3 c1 = cross(u, v);
-        const Vec3 c2 = cross(u, c1);
-        return {v[0] + 2 * (q.w * c1[0] + c2[0]), v[1] + 2 * (q.w * c1[1] + c2[1]), v[2] + 2 * (q.w * c1[2] + c2[2])};
-    }
-    Vec3 apply(const Vec3& v) const {
-        const Vec3 r = rotate(v);
-        return {r[0] + t[0], r[1] + t[1], r[2] + t[2]};
-    }
-    // this ∘ local
-    Xform then(const Xform& local) const {
-        Xform out;
-        const Quat& a = q;
-        const Quat& b = local.q;
-        out.q = {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-                 a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
-        out.t = apply(local.t);
-        return out;
-    }
-};
 
 // Local transforms and parent links of the CRES blocks that form the node tree.
 struct NodeTree {
@@ -197,6 +167,7 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
     Rcol cres(cresBytes);
 
     const NodeTree tree(cres);
+    model.skeleton = Skeleton::fromCres(cres);
     for (size_t bi = 0; bi < cres.blocks.size(); ++bi) {
         const auto& block = cres.blocks[bi];
         if (block.className != "cShapeRefNode")
@@ -267,6 +238,10 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
                 if (auto it = materials.find(mesh.name); it != materials.end())
                     if (it->second == kShadowOff || index.findByName(withSuffix(it->second, "_txmt"), kTypeTxmt))
                         part.material = it->second;
+                if (!mesh.bones.empty())
+                    for (const auto& t : geometry.transforms)
+                        part.bindPoses.push_back(
+                            Xform{{t.rotation[0], t.rotation[1], t.rotation[2], t.rotation[3]}, t.translation});
                 part.mesh = std::move(mesh);
                 model.parts.push_back(std::move(part));
             }
