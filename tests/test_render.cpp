@@ -141,6 +141,23 @@ int main() {
         check(near(p[0], 102) && near(p[1], 77) && p[2] == 255, "diffuse, emissive and saturation");
     }
 
+    // Blended parts are drawn back to front whatever order they were added in.
+    {
+        Renderer sorted(device, uint32_t(MTL::PixelFormatBGRA8Unorm), uint32_t(MTL::PixelFormatDepth32Float));
+        sorted.hideTestScene();
+        ObjectModel glass;
+        glass.name = "glass";
+        glass.parts.push_back({"n", "s", "near", quad(3)});
+        glass.parts.push_back({"n", "s", "far", quad(2)});
+        glass.materials["near"] = material("0,1,0", "blend", "0.5");
+        glass.materials["far"] = material("1,0,0", "blend", "0.5");
+        sorted.addInstance(sorted.addObject(glass, index), matrix_identity_float4x4);
+        img = sorted.capture(64, 64, view, clear);
+        p = center(img);
+        // far over blue: (128, 0, 128); near over that: (64, 128, 64).
+        check(near(p[0], 64) && near(p[1], 128) && near(p[2], 64), "blended parts sorted back to front");
+    }
+
     device->release();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

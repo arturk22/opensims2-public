@@ -2,6 +2,7 @@
 #include "material_cmds.hpp"
 
 #include "formats/image.hpp"
+#include "formats/model.hpp"
 #include "formats/rcol.hpp"
 #include "formats/resindex.hpp"
 #include "formats/txmt.hpp"
@@ -100,17 +101,50 @@ int cmdTextureFaces(const std::string& root, const std::string& name, const std:
     return 0;
 }
 
+// The materials of an object (CRES name, 0xGUID or object name) as the
+// renderer sees them.
+int cmdObjectMaterials(const std::string& root, const std::string& query) {
+    ResourceIndex index(root);
+    const auto model = loadObjectModel(index, resolveObjectCres(index, query));
+    for (const auto& part : model.parts)
+        std::printf("part %s/%s: %s, %zu vertices%s\n", part.shape.c_str(), part.mesh.name.c_str(), part.material.c_str(),
+                    part.mesh.positions.size(), part.mesh.colors.empty() ? "" : ", vertex colours");
+    static const char* shading[] = {"standard", "sim", "cel", "vertexcolor"};
+    static const char* blend[] = {"none", "alpha", "additive"};
+    static const char* anim[] = {"none", "transform", "tile"};
+    for (const auto& [name, def] : model.materials) {
+        const auto m = standardMaterial(def);
+        std::printf("%s: %s -> %s%s, layer %d, blend %s%s, lit %d, base %s\n", name.c_str(), def.materialType.c_str(),
+                    shading[int(m.shading)], m.visible ? "" : " (hidden)", m.layer, blend[int(m.blend)],
+                    m.alphaTest ? " +test" : "", m.lighting, m.baseTexture.c_str());
+        std::printf("    diffuse %g,%g,%g alpha x%g spec %g,%g,%g ^%g emissive %g,%g,%g\n", m.diffuse[0], m.diffuse[1],
+                    m.diffuse[2], m.alphaMultiplier, m.specular[0], m.specular[1], m.specular[2], m.specularPower,
+                    m.emissive[0], m.emissive[1], m.emissive[2]);
+        if (!m.envCube.empty())
+            std::printf("    env cube %s x %g,%g,%g blur %g%s\n", m.envCube.c_str(), m.envCubeCoef[0], m.envCubeCoef[1],
+                        m.envCubeCoef[2], m.envCubeBlur, m.envCubeLockedToCamera ? " locked to camera" : "");
+        if (!m.normalMap.empty())
+            std::printf("    normal map %s\n", m.normalMap.c_str());
+        if (m.texAnim != StandardMaterial::TexAnim::None)
+            std::printf("    texture animation %s\n", anim[int(m.texAnim)]);
+    }
+    return 0;
+}
+
 } // namespace
 
 int materialCommand(const std::string& cmd, int argc, char** argv) {
     if (cmd == "material-survey" && (argc == 3 || argc == 4))
         return cmdMaterialSurvey(argv[2], argc == 4 ? argv[3] : "");
+    if (cmd == "object-materials" && argc == 4)
+        return cmdObjectMaterials(argv[2], argv[3]);
     if (cmd == "texture-faces" && argc == 5)
         return cmdTextureFaces(argv[2], argv[3], argv[4]);
     return -1;
 }
 
 const char* materialUsage() { return "       s2pkg material-survey <Res-dir> [type-filter]\n"
+                                    "       s2pkg object-materials <Res-dir> <cres-name|0xGUID|object-name>\n"
                                     "       s2pkg texture-faces <Res-dir> <txtr-name> <out-prefix>\n"; }
 
 } // namespace os2

@@ -555,7 +555,9 @@ enum Key : unsigned short {
         view.camera->snap();
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
         if (auto shot = argument(@"--screenshot")) {
-            poseActors(*_viewDelegate.renderer, std::stod(argument(@"--time").value_or("0")));
+            const double time = std::stod(argument(@"--time").value_or("0"));
+            poseActors(*_viewDelegate.renderer, time);
+            _viewDelegate.renderer->setTime(time); // texture animations
             const uint32_t w = 1280, h = 720;
             os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
             MTLClearColor c = view.clearColor;

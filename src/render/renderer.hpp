@@ -3,6 +3,7 @@
 #include <simd/simd.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -65,6 +66,10 @@ public:
     // skylight as ambient plus its object lights (see LightingState).
     void setLighting(const LightingState& state);
 
+    // Clock for texture coordinate animations, in seconds; until it is set
+    // (or after setting it negative) the renderer uses its own running time.
+    void setTime(double seconds) { time_ = seconds; }
+
     // Encodes and commits one frame; `pass` and `drawable` come from the view.
     void draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable, const FrameView& view);
 
@@ -76,7 +81,9 @@ private:
     struct Part;
     struct Model;
 
-    MTL::Texture* texture(const std::string& name, ResourceIndex& index);
+    // A TXTR by name, cached; `cube` loads its six textures as a cube map.
+    MTL::Texture* texture(const std::string& name, ResourceIndex& index, bool cube = false);
+    Material material(const StandardMaterial& sm, ResourceIndex& index);
     MTL::Texture* uploadMask(const ObjectModel::AlphaMask& mask);
     // Waits for a frame slot, encodes the scene into `pass` and returns the
     // (uncommitted) command buffer; the slot is freed when it completes.
@@ -94,8 +101,12 @@ private:
     MTL::DepthStencilState* depthWrite_ = nullptr;
     MTL::DepthStencilState* depthRead_ = nullptr; // blended parts test but do not write
     MTL::SamplerState* sampler_ = nullptr;
-    MTL::SamplerState* maskSampler_ = nullptr; // clamped, no mips
+    MTL::SamplerState* clampSampler_ = nullptr; // like sampler_, clamped
+    MTL::SamplerState* maskSampler_ = nullptr;  // clamped, no mips
+    MTL::SamplerState* cubeSampler_ = nullptr;  // clamped, mipmapped
+    MTL::SamplerState* pointSampler_ = nullptr; // clamped, nearest (cel shading ramps)
     MTL::Texture* white_ = nullptr;
+    MTL::Texture* whiteCube_ = nullptr;
     std::map<std::string, MTL::Texture*> textures_; // by TXTR name; null if it failed to load
     std::vector<std::unique_ptr<Model>> models_;
     struct Instance {
@@ -113,6 +124,8 @@ private:
     std::array<MTL::Buffer*, kFramesInFlight> frames_{};
     void* inFlight_; // dispatch_semaphore_t, opaque so ARC in the app shell leaves it alone
     int frame_ = 0;
+    double time_ = -1;
+    std::chrono::steady_clock::time_point start_ = std::chrono::steady_clock::now();
 };
 
 } // namespace os2

@@ -8,6 +8,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <optional>
 
 namespace os2 {
@@ -104,55 +105,272 @@ std::string baseTextureName(const MaterialDefinition& m) {
     return withSuffix(tex, "_txtr");
 }
 
+namespace {
+
+// Numbers of a property value: "0.8,0.8,0.8,1", "(0.5, 0.5)", "1e+002".
+std::vector<float> numbers(const std::string& v) {
+    std::vector<float> out;
+    const char* p = v.c_str();
+    while (*p) {
+        if (*p == '(' || *p == ')' || *p == ',' || *p == ' ' || *p == '\t') {
+            ++p;
+            continue;
+        }
+        char* end = nullptr;
+        const float f = std::strtof(p, &end);
+        if (end == p)
+            break;
+        out.push_back(f);
+        p = end;
+    }
+    return out;
+}
+
+bool contains(std::string_view s, std::string_view part) { return s.find(part) != std::string_view::npos; }
+
+// The deprecated material types (deprecated.matShad): each forces some
+// StandardMaterial parameters before running the standard shaders.
+struct DeprecatedType {
+    std::string_view name;
+    int baseTexture;      // 1 on, 0 off
+    bool blend;           // alpha blending, alpha = diffuse alpha
+    bool mask;            // alpha test at alphaRefValue, alpha = diffuse alpha
+    bool envCube;         // reflection with coefficient = specular x reflectivity
+    bool normalMap;
+    bool additive;        // unlit, additive, alpha = blendStrength
+    bool alphaReplicate;
+    bool unlit;
+};
+constexpr DeprecatedType kDeprecated[] = {
+    // name                                base blend mask  env    bump   add    repl   unlit
+    {"Phong",                              0, false, false, false, false, false, false, false},
+    {"DiffuseMaterial",                    0, false, false, false, false, false, false, false},
+    {"PhongAlpha",                         0, true,  false, false, false, false, false, false},
+    {"DiffuseAlphaMaterial",               0, true,  false, false, false, false, false, false},
+    {"PhongTexture",                       1, false, false, false, false, false, false, false},
+    {"BaseTextureMaterial",                1, false, false, false, false, false, false, false},
+    {"PhongTextureSpec",                   1, false, false, false, false, false, false, false},
+    {"PhongTextureMask",                   1, false, true,  false, false, false, false, false},
+    {"PhongTextureSpecMask",               1, false, true,  false, false, false, false, false},
+    {"PhongTextureAlpha",                  1, true,  false, false, false, false, false, false},
+    {"BaseTextureAlphaMaterial",           1, true,  false, false, false, false, false, false},
+    {"UnlitTexture",                       1, false, false, false, false, false, false, true},
+    {"UnlitTextureAlpha",                  1, true,  false, false, false, false, false, true},
+    {"AdditiveTextureBlend",               1, false, false, false, false, true,  false, true},
+    {"AdditiveTextureAlphaBlend",          1, false, false, false, false, true,  true,  true},
+    {"PhongTextureBump",                   1, false, false, false, true,  false, false, false},
+    {"PhongTextureMaskBump",               1, false, true,  false, true,  false, false, false},
+    {"PhongTextureCubeMapReflection",      1, false, false, true,  false, false, false, false},
+    {"PhongAlphaCubeMapReflection",        0, true,  false, true,  false, false, false, false},
+    {"PhongTextureAlphaCubeMapReflection", 1, true,  false, true,  false, false, false, false},
+    {"SteamPlume",                         1, false, false, false, false, false, false, false},
+    {"SteamTop",                           1, false, false, false, false, false, false, false},
+};
+
+StandardMaterial::Waveform waveform(const std::string& v) {
+    if (v == "sawtooth")
+        return StandardMaterial::Waveform::Sawtooth;
+    if (v == "sine")
+        return StandardMaterial::Waveform::Sine;
+    return StandardMaterial::Waveform::Triangular;
+}
+
+} // namespace
+
 StandardMaterial standardMaterial(const MaterialDefinition& m) {
     StandardMaterial out;
+    const std::string& type = m.materialType;
+    auto has = [&](const char* name) { return !m.property(name).empty(); };
     auto flag = [&](const char* name, bool fallback) {
         auto v = m.property(name);
         return v.empty() ? fallback : v == "true" || v == "1";
     };
     auto number = [&](const char* name, float fallback) {
-        auto v = m.property(name);
-        try {
-            return v.empty() ? fallback : std::stof(v);
-        } catch (const std::logic_error&) {
-            return fallback;
-        }
+        auto v = numbers(m.property(name));
+        return v.empty() ? fallback : v[0];
     };
-    if (flag("stdMatBaseTextureEnabled", true))
-        out.baseTexture = baseTextureName(m);
-    auto color = [&](const char* name, std::array<float, 3>& c) {
-        if (auto v = m.property(name); !v.empty())
-            std::sscanf(v.c_str(), "%f,%f,%f", &c[0], &c[1], &c[2]);
+    auto vec = [&](const char* name, auto& dst) {
+        auto v = numbers(m.property(name));
+        for (size_t i = 0; i < v.size() && i < dst.size(); ++i)
+            dst[i] = v[i];
     };
-    color("stdMatDiffCoef", out.diffuse);
-    color("stdMatSpecCoef", out.specular);
-    color("stdMatEmissiveCoef", out.emissive);
-    out.specularPower = number("stdMatSpecPower", out.specularPower);
-    out.alphaMultiplier = number("stdMatAlphaMultiplier", 1.0f);
-    out.untexturedAlpha = number("stdMatUntexturedDiffAlpha", 1.0f);
+
+    // --- StandardMaterial parameters, with standard.matShad's defaults ---
+    std::array<float, 4> diffuse{1, 1, 1, 1};
+    vec("stdMatDiffCoef", diffuse);
+    vec("stdMatSpecCoef", out.specular);
+    vec("stdMatEmissiveCoef", out.emissive);
+    out.specularPower = number("stdMatSpecPower", 0);
+    out.alphaMultiplier = number("stdMatAlphaMultiplier", 1);
+    out.untexturedAlpha = number("stdMatUntexturedDiffAlpha", 1);
+    // Every TXMT that names a base texture also enables it; materials built
+    // in code (lot terrain) only give the name.
+    bool baseEnabled = flag("stdMatBaseTextureEnabled", has("stdMatBaseTextureName"));
+    bool normalEnabled = flag("stdMatNormalMapTextureEnabled", false);
     const auto blend = m.property("stdMatAlphaBlendMode");
     out.blend = blend == "blend" ? StandardMaterial::Blend::Alpha
               : blend == "additive" || blend == "addNoSrcAlphaScale" ? StandardMaterial::Blend::Additive
-                                    : StandardMaterial::Blend::None;
-    // Other material types rarely carry the StandardMaterial blend settings;
-    // their names say how they blend ("TextureAlpha" ground shadows,
-    // "AdditiveTextureBlend", ...).
-    if (blend.empty() && m.materialType != "StandardMaterial") {
-        if (m.materialType.find("Additive") != std::string::npos)
-            out.blend = StandardMaterial::Blend::Additive;
-        else if (m.materialType.find("Alpha") != std::string::npos)
-            out.blend = StandardMaterial::Blend::Alpha;
-    }
+                                                                     : StandardMaterial::Blend::None;
     out.alphaTest = flag("stdMatAlphaTestEnabled", false);
-    out.alphaRef = number("stdMatAlphaRefValue", 127.0f) / 255.0f;
+    out.alphaRef = number("stdMatAlphaRefValue", 127) / 255.0f;
     const auto cull = m.property("stdMatCullMode");
     out.cull = cull == "none" ? StandardMaterial::Cull::None
              : cull == "cullCounterClockwise" ? StandardMaterial::Cull::CounterClockwise
                                               : StandardMaterial::Cull::Clockwise;
     out.lighting = flag("stdMatLightingEnabled", true);
-    out.layer = int(number("stdMatLayer", 0));
+    const int stdLayer = int(number("stdMatLayer", 0));
+    out.alphaReplicate = flag("stdMatBaseTextureAlphaReplicate", false);
+    out.clampU = m.property("stdMatBaseTextureAddressingU") == "clamp";
+    out.clampV = m.property("stdMatBaseTextureAddressingV") == "clamp";
+    bool envReflection = m.property("stdMatEnvCubeMode") == "reflection";
+    std::string envName = m.property("stdMatEnvCubeTextureName");
+    vec("stdMatEnvCubeCoef", out.envCubeCoef);
+    out.envCubeBlur = number("stdMatEnvCubeBlurFactor", 0);
+    out.envCubeLockedToCamera = flag("stdMatEnvCubeLockedToCamera", false);
+
+    const auto anim = m.property("stdMatTextureCoordAnimMode");
+    if (anim == "tile") {
+        out.texAnim = StandardMaterial::TexAnim::Tile;
+        out.tileSpeed = number("stdMatTextureCoordTileAnimSpeed", 0);
+        vec("stdMatTextureCoordAnimNumTiles", out.tiles);
+    } else if (anim == "transform") {
+        out.texAnim = StandardMaterial::TexAnim::Transform;
+        vec("stdMatTextureCoordTfAnimOrigin", out.animOrigin);
+        auto wave = [&](const std::string& what, StandardMaterial::Wave& w, std::array<float, 2> start,
+                        std::array<float, 2> end, bool pairs) {
+            const std::string p = "stdMatTextureCoordTfAnim" + what;
+            w.waveform = waveform(m.property(p + "Waveform"));
+            w.speed = number((p + "Speed").c_str(), 0);
+            if (pairs) {
+                w.start = start, w.end = end;
+                vec((p + "Start").c_str(), w.start);
+                vec((p + "End").c_str(), w.end);
+            } else {
+                std::array<float, 2> se{start[0], end[0]};
+                vec((p + "StartEnd").c_str(), se);
+                w.start = {se[0], se[0]};
+                w.end = {se[1], se[1]};
+            }
+        };
+        wave("Rot", out.rotation, {0, 0}, {1, 1}, false);
+        wave("Scale", out.scale, {1, 1}, {2, 2}, false);
+        wave("Trans", out.translation, {0, 0}, {0, 0}, true);
+    }
+
+    // --- Material types ---
+    for (const auto& d : kDeprecated) {
+        if (type != d.name)
+            continue;
+        baseEnabled = d.baseTexture == 1;
+        normalEnabled = d.normalMap;
+        if (d.blend) {
+            out.blend = StandardMaterial::Blend::Alpha;
+            out.alphaMultiplier = diffuse[3];
+        }
+        if (d.mask) {
+            out.alphaTest = true;
+            out.alphaRef = number("alphaRefValue", 0) / 255.0f;
+            out.alphaMultiplier = diffuse[3];
+        }
+        if (d.envCube) {
+            envReflection = true;
+            out.envCubeBlur = number("blurFactor", 0);
+            const float reflectivity = number("reflectivity", 1);
+            for (int i = 0; i < 3; ++i)
+                out.envCubeCoef[i] = out.specular[i] * reflectivity;
+        }
+        if (d.additive) {
+            out.blend = StandardMaterial::Blend::Additive;
+            out.alphaMultiplier = number("blendStrength", 1);
+        }
+        out.alphaReplicate = out.alphaReplicate || d.alphaReplicate;
+        if (d.unlit)
+            out.lighting = false;
+        // Undoes a multiplication done by the exporter (go2sco).
+        const float inv = number("deprecatedStdMatInvDiffuseCoeffMultiplier", 1);
+        for (int i = 0; i < 3; ++i)
+            diffuse[i] *= inv;
+    }
+
+    bool simHair = false;
+    if (type == "SimStandardMaterial" || type == "SimSkin") {
+        // sims.matShad / DX9SimMaterials.matShad.
+        out.shading = StandardMaterial::Shading::Sim;
+        out.specularPower = 0; // "no sim material can have specular"
+        // Hair is drawn with SimHair(), which the TXMT does not name: inferred
+        // from the base texture ("ufhairlong-red", "uuhairhatcap-...").
+        simHair = type == "SimStandardMaterial" && contains(m.property("stdMatBaseTextureName"), "hair");
+        if (simHair && out.blend == StandardMaterial::Blend::Alpha) {
+            // SimHairAlphaState: blended, but writes depth and drops alpha <= 60.
+            out.depthWrite = true;
+            out.alphaTest = true;
+            out.alphaRef = 61.0f / 255.0f;
+        }
+    } else if (type.rfind("Wallpaper", 0) == 0 || type.rfind("Floor", 0) == 0) {
+        // Walls and floors are lit by light maps in their own shaders, with no specular.
+        out.specularPower = 0;
+    } else if (type == "TextureAlpha") {
+        out.lighting = false;
+        out.blend = StandardMaterial::Blend::Alpha;
+        out.textureColor = false;
+        out.alphaMultiplier = diffuse[3];
+        baseEnabled = has("stdMatBaseTextureName");
+    } else if (type == "AnimatedTexture") {
+        out.lighting = false;
+        diffuse = {1, 1, 1, 1};
+        baseEnabled = has("stdMatBaseTextureName");
+        out.texAnim = StandardMaterial::TexAnim::Tile;
+        out.tileSpeed = number("playSpeed", 15);
+        out.tiles = {number("tileCountU", 16), number("tileCountV", 1)};
+    } else if (type == "VertexAlpha") {
+        out.shading = StandardMaterial::Shading::VertexColor;
+        out.lighting = false;
+        out.blend = StandardMaterial::Blend::Alpha;
+        baseEnabled = false;
+    } else if (type == "CelShadedMaterial") {
+        out.shading = StandardMaterial::Shading::CelShaded;
+        out.celRamp = withSuffix(m.property("csRampTexture").empty() ? "64shade" : m.property("csRampTexture"), "_txtr");
+        if (flag("csAddEdge", true)) {
+            const auto edge = m.property("csEdgeRampTexture");
+            out.celEdgeRamp = withSuffix(edge.empty() ? "blackwhite" : edge, "_txtr");
+            out.celEdgeOffset = number("csEdgeOffset", 0.3f);
+        }
+        envReflection = false;
+        out.specularPower = 0;
+    } else if (contains(type, "Water")) {
+        // water.matShad: alpha blended over the water layer (5).
+        out.blend = StandardMaterial::Blend::Alpha;
+    } else if (blend.empty() && type != "StandardMaterial") {
+        // Types not described above rarely carry the StandardMaterial blend
+        // settings; their names say how they blend.
+        if (contains(type, "Additive"))
+            out.blend = StandardMaterial::Blend::Additive;
+        else if (contains(type, "Alpha"))
+            out.blend = StandardMaterial::Blend::Alpha;
+    }
+
+    out.diffuse = {diffuse[0], diffuse[1], diffuse[2]};
+    if (baseEnabled)
+        out.baseTexture = baseTextureName(m);
+    if (normalEnabled && out.lighting && out.shading != StandardMaterial::Shading::CelShaded)
+        if (auto n = m.property("stdMatNormalMapTextureName"); !n.empty())
+            out.normalMap = withSuffix(n, "_txtr");
+    // CheckForCubeMapping: off when the coefficients add up to < 0.003; unlit
+    // materials have no env cube.
+    const float coef = out.envCubeCoef[0] + out.envCubeCoef[1] + out.envCubeCoef[2];
+    if (envReflection && coef >= 0.003f && out.lighting)
+        out.envCube = withSuffix(envName.empty() ? "reflectionCubeTemplate-envcube" : envName, "_txtr");
+
+    const bool blended = out.blend != StandardMaterial::Blend::None;
+    if (blended && !simHair)
+        out.depthWrite = false;
+    out.layer = stdLayer * 8 + (blended ? (simHair ? 3 : 7) : 0);
+    if (contains(type, "Water"))
+        out.layer = stdLayer + 5;
+    if (type == "CelShadedMaterial")
+        out.layer = int(number("csMatLayer", 0)) * 8;
     // WallMask parts are the shapes doors and windows cut out of walls.
-    out.visible = m.materialType != "Null" && m.materialType != "WallMask";
+    out.visible = type != "Null" && type != "WallMask";
     return out;
 }
 

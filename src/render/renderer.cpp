@@ -14,6 +14,8 @@
 #include <dispatch/dispatch.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstring>
 #include <cstdio>
 #include <utility>
@@ -32,9 +34,26 @@ struct Vertex {
     float position[3];
     float normal[3];
     float uv[2];
+    uint32_t color = 0xFFFFFFFF; // D3DCOLOR
 };
 
-enum : uint32_t { kLighting = 1, kAlphaTest = 2, kChecker = 4, kMasked = 8, kUnderlay = 16, kOverlay1 = 32, kOverlay2 = 64 };
+enum : uint32_t {
+    kLighting = 1,
+    kAlphaTest = 2,
+    kChecker = 4,
+    kMasked = 8,
+    kUnderlay = 16,
+    kOverlay1 = 32,
+    kOverlay2 = 64,
+    kEnvCube = 128,
+    kEnvLocked = 256,
+    kNormalMap = 512,
+    kAlphaReplicate = 1024,
+    kAlphaOnly = 2048,
+    kCelShaded = 4096,
+    kCelEdge = 8192,
+    kVertexColor = 16384,
+};
 
 struct Draw {
     simd_float4x4 model;
@@ -42,9 +61,16 @@ struct Draw {
     simd_float4 specular;
     simd_float4 emissive;
     simd_float4 mask;
+    simd_float4 env;
+    simd_float4 uv0, uv1;
+    simd_float4 misc;
     float alphaRef;
     uint32_t flags;
 };
+
+// Height map to normal: height difference per texel times this (inferred;
+// the game's conversion strength is not known).
+constexpr float kBumpStrength = 2.0f;
 
 constexpr size_t kMaxLights = 8;
 
@@ -55,6 +81,7 @@ struct Light {
 
 struct Frame {
     simd_float4x4 viewProj;
+    simd_float4x4 view;
     simd_float4 eye;
     simd_float4 ambient;
     Light lights[kMaxLights];
@@ -109,19 +136,75 @@ NS::String* str(const char* s) { return NS::String::string(s, NS::UTF8StringEnco
 
 dispatch_semaphore_t sema(void* p) { return static_cast<dispatch_semaphore_t>(p); }
 
+// 0..1 over each cycle of a texture animation waveform.
+float wave(StandardMaterial::Waveform w, double t) {
+    const float phase = float(t - std::floor(t));
+    switch (w) {
+    case StandardMaterial::Waveform::Sawtooth: return phase;
+    case StandardMaterial::Waveform::Sine: return 0.5f - 0.5f * std::cos(phase * 2 * float(M_PI));
+    case StandardMaterial::Waveform::Triangular: break;
+    }
+    return 1 - std::fabs(2 * phase - 1);
+}
+
+// Value of an animated component at time t; `off` while its speed is 0.
+simd_float2 waveValue(const StandardMaterial::Wave& w, double t, simd_float2 off) {
+    if (w.speed == 0)
+        return off;
+    const float k = wave(w.waveform, t * w.speed);
+    return simd_make_float2(w.start[0] + (w.end[0] - w.start[0]) * k, w.start[1] + (w.end[1] - w.start[1]) * k);
+}
+
+// Base texture coordinate transform (rows of a 2x3 matrix) of a material's
+// texture coordinate animation at time t:
+// - tile: the texture is a grid of tiles x[0] by x[1] shown one after the
+//   other, row by row, `tileSpeed` per second;
+// - transform: rotation (turns) and scale about the origin, then translation.
+// The composition order is inferred (the game builds the matrix in code).
+std::pair<simd_float4, simd_float4> uvTransform(const StandardMaterial& m, double t) {
+    if (m.texAnim == StandardMaterial::TexAnim::Tile) {
+        const int nu = std::max(1, int(std::lround(m.tiles[0]))), nv = std::max(1, int(std::lround(m.tiles[1])));
+        const long frame = long(std::floor(t * m.tileSpeed)) % long(nu * nv);
+        const float col = float(frame % nu), row = float(frame / nu);
+        return {simd_make_float4(1.0f / float(nu), 0, col / float(nu), 0),
+                simd_make_float4(0, 1.0f / float(nv), row / float(nv), 0)};
+    }
+    if (m.texAnim == StandardMaterial::TexAnim::Transform) {
+        const float a = waveValue(m.rotation, t, simd_make_float2(0, 0)).x * 2 * float(M_PI);
+        const simd_float2 s = waveValue(m.scale, t, simd_make_float2(1, 1));
+        const simd_float2 tr = waveValue(m.translation, t, simd_make_float2(0, 0));
+        const float c = std::cos(a), sn = std::sin(a), ox = m.animOrigin[0], oy = m.animOrigin[1];
+        // uv' = R S (uv - o) + o + tr
+        const float m00 = c * s.x, m01 = -sn * s.y, m10 = sn * s.x, m11 = c * s.y;
+        return {simd_make_float4(m00, m01, ox + tr.x - m00 * ox - m01 * oy, 0),
+                simd_make_float4(m10, m11, oy + tr.y - m10 * ox - m11 * oy, 0)};
+    }
+    return {simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0)};
+}
+
 } // namespace
 
 struct Renderer::Material {
     MTL::Texture* texture = nullptr; // not owned (cache or white)
     std::array<MTL::Texture*, 3> layers{}; // underlay, overlay 1, overlay 2 (not owned, null if unused)
+    MTL::Texture* height = nullptr;   // bump height map (not owned, null if unused)
+    MTL::Texture* envCube = nullptr;  // not owned, null if unused
+    MTL::Texture* ramp = nullptr;     // cel shading ramps (not owned, null if unused)
+    MTL::Texture* edgeRamp = nullptr;
     simd_float4 color{1, 1, 1, 1};
-    simd_float4 specular{0, 0, 0, 1}; // power in w
+    simd_float4 specular{0, 0, 0, 0}; // power in w
     simd_float4 emissive{0, 0, 0, 0};
     simd_float4 maskTransform{0, 0, 0, 0}; // model xy -> mask uv: xy scale, zw offset
+    simd_float4 env{0, 0, 0, 0};           // coefficient rgb, mip bias
+    simd_float4 misc{0, 0, 0, 0};          // cel edge offset, bump strength
     float alphaRef = 0.5f;
     uint32_t flags = kLighting;
     StandardMaterial::Blend blend = StandardMaterial::Blend::None;
+    bool depthWrite = true;
+    bool clamp = false; // base texture clamped instead of tiled
+    int layer = 0;
     MTL::CullMode cull = MTL::CullModeBack;
+    StandardMaterial anim; // texture coordinate animation (texAnim and its parameters)
 };
 
 struct Renderer::Part {
@@ -134,6 +217,7 @@ struct Renderer::Part {
     std::array<bool, kFramesInFlight> stale{};
     MTL::Buffer* indices = nullptr;
     uint32_t indexCount = 0;
+    simd_float3 center{0, 0, 0}; // bounding box centre in model space (blended parts are sorted by it)
     Material material;
     MTL::Texture* mask = nullptr; // owned, with kMasked
 };
@@ -227,12 +311,20 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     sampler_ = device_->newSamplerState(sd);
     sd->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
     sd->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
-    sd->setMipFilter(MTL::SamplerMipFilterNotMipmapped);
+    sd->setMaxAnisotropy(8);
+    clampSampler_ = device_->newSamplerState(sd);
+    sd->setRAddressMode(MTL::SamplerAddressModeClampToEdge);
     sd->setMaxAnisotropy(1);
+    cubeSampler_ = device_->newSamplerState(sd);
+    sd->setMipFilter(MTL::SamplerMipFilterNotMipmapped);
     maskSampler_ = device_->newSamplerState(sd);
+    sd->setMinFilter(MTL::SamplerMinMagFilterNearest);
+    sd->setMagFilter(MTL::SamplerMinMagFilterNearest);
+    pointSampler_ = device_->newSamplerState(sd);
     sd->release();
 
     white_ = whiteTexture(device_);
+    whiteCube_ = whiteCubeTexture(device_);
     for (auto& f : frames_)
         f = device_->newBuffer(sizeof(Frame), MTL::ResourceStorageModeShared);
 
@@ -262,8 +354,12 @@ Renderer::~Renderer() {
         if (tex)
             tex->release();
     white_->release();
+    whiteCube_->release();
     for (auto* f : frames_)
         f->release();
+    pointSampler_->release();
+    cubeSampler_->release();
+    clampSampler_->release();
     maskSampler_->release();
     sampler_->release();
     depthRead_->release();
@@ -299,20 +395,89 @@ int Renderer::addBox(simd_float3 base, simd_float3 size, simd_float3 rgb, uint32
     return int(models_.size() - 1);
 }
 
-MTL::Texture* Renderer::texture(const std::string& name, ResourceIndex& index) {
-    if (auto it = textures_.find(name); it != textures_.end())
+MTL::Texture* Renderer::texture(const std::string& name, ResourceIndex& index, bool cube) {
+    const std::string key = cube ? "cube:" + name : name;
+    if (auto it = textures_.find(key); it != textures_.end())
         return it->second;
     MTL::Texture* tex = nullptr;
     try {
         auto loc = index.findByName(name, kTypeTxtr);
         if (!loc)
             throw std::runtime_error("not found");
-        tex = uploadTexture(device_, loadTextureLevels(index.read(*loc), &index));
+        if (cube) {
+            auto faces = loadAllTextureLevels(index.read(*loc), &index);
+            if (faces.size() != 6)
+                throw std::runtime_error("not a cube map (" + std::to_string(faces.size()) + " textures)");
+            tex = uploadCubeTexture(device_, faces);
+        } else {
+            tex = uploadTexture(device_, loadTextureLevels(index.read(*loc), &index));
+        }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: texture %s: %s\n", name.c_str(), e.what());
     }
-    textures_[name] = tex;
+    textures_[key] = tex;
     return tex;
+}
+
+Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex& index) {
+    Material mat;
+    mat.texture = white_;
+    if (!sm.baseTexture.empty())
+        if (MTL::Texture* t = texture(sm.baseTexture, index))
+            mat.texture = t;
+    // Texture times diffuse coefficient: ground shadows are a black
+    // diffuse over an alpha texture.
+    const float alpha = sm.alphaMultiplier * (sm.baseTexture.empty() ? sm.untexturedAlpha : 1.0f);
+    simd_float3 diffuse = simd_make_float3(sm.diffuse[0], sm.diffuse[1], sm.diffuse[2]);
+    if (sm.shading == StandardMaterial::Shading::Sim)
+        diffuse *= 0.8f; // simMaterialLightingScale
+    if (sm.shading == StandardMaterial::Shading::VertexColor)
+        diffuse = simd_make_float3(1, 1, 1);
+    mat.color = simd_make_float4(diffuse, alpha);
+    mat.specular = simd_make_float4(sm.specular[0], sm.specular[1], sm.specular[2], sm.specularPower);
+    mat.emissive = simd_make_float4(sm.emissive[0], sm.emissive[1], sm.emissive[2], 0);
+    mat.blend = sm.blend;
+    mat.depthWrite = sm.depthWrite;
+    mat.layer = sm.layer;
+    mat.clamp = sm.clampU || sm.clampV;
+    mat.alphaRef = sm.alphaRef;
+    mat.flags = (sm.lighting ? kLighting : 0) | (sm.alphaTest ? kAlphaTest : 0) |
+                (sm.alphaReplicate ? kAlphaReplicate : 0) | (sm.textureColor ? 0 : kAlphaOnly);
+    mat.cull = sm.cull == StandardMaterial::Cull::None             ? MTL::CullModeNone
+               : sm.cull == StandardMaterial::Cull::CounterClockwise ? MTL::CullModeFront
+                                                                     : MTL::CullModeBack;
+    if (sm.shading == StandardMaterial::Shading::VertexColor)
+        mat.flags |= kVertexColor;
+    if (!sm.envCube.empty())
+        if (MTL::Texture* t = texture(sm.envCube, index, true)) {
+            mat.envCube = t;
+            mat.env = simd_make_float4(sm.envCubeCoef[0], sm.envCubeCoef[1], sm.envCubeCoef[2], sm.envCubeBlur);
+            mat.flags |= kEnvCube | (sm.envCubeLockedToCamera ? kEnvLocked : 0);
+        }
+    if (!sm.normalMap.empty())
+        if (MTL::Texture* t = texture(sm.normalMap, index)) {
+            mat.height = t;
+            mat.misc.y = kBumpStrength;
+            mat.flags |= kNormalMap;
+        }
+    if (sm.shading == StandardMaterial::Shading::CelShaded) {
+        if (MTL::Texture* t = texture(sm.celRamp, index)) {
+            mat.ramp = t;
+            mat.flags |= kCelShaded;
+            if (!sm.celEdgeRamp.empty())
+                if (MTL::Texture* e = texture(sm.celEdgeRamp, index)) {
+                    mat.edgeRamp = e;
+                    mat.misc.x = sm.celEdgeOffset;
+                    mat.flags |= kCelEdge;
+                }
+        }
+    }
+    mat.anim.texAnim = sm.texAnim;
+    if (sm.texAnim != StandardMaterial::TexAnim::None) {
+        mat.anim = sm;
+        mat.anim.baseTexture.clear();
+    }
+    return mat;
 }
 
 int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dynamic) {
@@ -332,21 +497,7 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
             const StandardMaterial sm = standardMaterial(it->second);
             if (!sm.visible)
                 continue;
-            if (!sm.baseTexture.empty())
-                if (MTL::Texture* t = texture(sm.baseTexture, index))
-                    mat.texture = t;
-            // Texture times diffuse coefficient: ground shadows are a black
-            // diffuse over an alpha texture.
-            const float alpha = sm.alphaMultiplier * (sm.baseTexture.empty() ? sm.untexturedAlpha : 1.0f);
-            mat.color = simd_make_float4(sm.diffuse[0], sm.diffuse[1], sm.diffuse[2], alpha);
-            mat.specular = simd_make_float4(sm.specular[0], sm.specular[1], sm.specular[2], sm.specularPower);
-            mat.emissive = simd_make_float4(sm.emissive[0], sm.emissive[1], sm.emissive[2], 0);
-            mat.blend = sm.blend;
-            mat.alphaRef = sm.alphaRef;
-            mat.flags = (sm.lighting ? kLighting : 0) | (sm.alphaTest ? kAlphaTest : 0);
-            mat.cull = sm.cull == StandardMaterial::Cull::None             ? MTL::CullModeNone
-                       : sm.cull == StandardMaterial::Cull::CounterClockwise ? MTL::CullModeFront
-                                                                             : MTL::CullModeBack;
+            mat = material(sm, index);
         }
 
         if (!part.underlay.empty())
@@ -361,7 +512,13 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
             }
 
         std::vector<Vertex> v(mesh.positions.size());
+        simd_float3 lo = simd_make_float3(INFINITY, INFINITY, INFINITY), hi = -lo;
         for (size_t i = 0; i < v.size(); ++i) {
+            const simd_float3 p = simd_make_float3(mesh.positions[i][0], mesh.positions[i][1], mesh.positions[i][2]);
+            lo = simd_min(lo, p);
+            hi = simd_max(hi, p);
+            if (i < mesh.colors.size())
+                v[i].color = mesh.colors[i];
             for (int k = 0; k < 3; ++k)
                 v[i].position[k] = mesh.positions[i][k];
             if (i < mesh.normals.size())
@@ -394,6 +551,7 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
         p.indices = device_->newBuffer(mesh.triangles.data(), mesh.triangles.size() * sizeof(uint32_t),
                                        MTL::ResourceStorageModeShared);
         p.indexCount = uint32_t(mesh.triangles.size());
+        p.center = (lo + hi) * 0.5f;
         p.material = mat;
         out->parts.push_back(p);
     }
@@ -465,6 +623,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
 
     auto* f = static_cast<Frame*>(frames_[frame_]->contents());
     f->viewProj = simd_mul(view.projection, view.view);
+    f->view = view.view;
     f->eye = simd_inverse(view.view).columns[3];
     f->ambient = simd_make_float4(ambient_, 0);
     f->lightCount = uint32_t(std::min(lights_.size(), kMaxLights));
@@ -489,31 +648,66 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     enc->setFragmentBuffer(frames_[frame_], 0, 2);
     enc->setFragmentSamplerState(sampler_, 0);
     enc->setFragmentSamplerState(maskSampler_, 1);
+    enc->setFragmentSamplerState(cubeSampler_, 2);
+    enc->setFragmentSamplerState(pointSampler_, 3);
 
-    // Opaque parts first, then blended ones over them without writing depth.
-    for (int blended = 0; blended < 2; ++blended) {
-        enc->setDepthStencilState(blended ? depthRead_ : depthWrite_);
-        for (const auto& inst : instances_) {
-            for (const auto& part : models_[size_t(inst.model)]->parts) {
-                const Material& m = part.material;
-                if ((m.blend != StandardMaterial::Blend::None) != bool(blended))
-                    continue;
-                enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha      ? alphaBlend_
-                                            : m.blend == StandardMaterial::Blend::Additive ? additive_
-                                                                                           : opaque_);
-                enc->setCullMode(m.cull);
-                Draw d{inst.transform, m.color, m.specular, m.emissive, m.maskTransform, m.alphaRef, m.flags};
-                enc->setVertexBytes(&d, sizeof d, 1);
-                enc->setFragmentBytes(&d, sizeof d, 1);
-                enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
-                enc->setFragmentTexture(m.texture, 0);
-                enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
-                for (size_t l = 0; l < m.layers.size(); ++l)
-                    enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(2 + l));
-                enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount),
-                                           MTL::IndexTypeUInt32, part.indices, NS::UInteger(0));
+    // Draw order: by material layer (stdMatLayer x 8, +7 for blended
+    // parts), opaque parts in submission order, blended ones back to front
+    // by the distance of their bounding box centre from the eye.
+    struct Item {
+        int layer;
+        bool blended;
+        float distance;
+        const Instance* inst;
+        const Part* part;
+    };
+    std::vector<Item> items;
+    const simd_float3 eye = simd_make_float3(f->eye);
+    for (const auto& inst : instances_)
+        for (const auto& part : models_[size_t(inst.model)]->parts) {
+            const Material& m = part.material;
+            const bool blended = m.blend != StandardMaterial::Blend::None;
+            float distance = 0;
+            if (blended) {
+                const simd_float4 c = simd_mul(inst.transform, simd_make_float4(part.center, 1));
+                distance = simd_length_squared(simd_make_float3(c) - eye);
             }
+            items.push_back({m.layer, blended, distance, &inst, &part});
         }
+    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+        if (a.layer != b.layer)
+            return a.layer < b.layer;
+        if (a.blended != b.blended)
+            return !a.blended;
+        return a.blended && a.distance > b.distance;
+    });
+
+    const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+    for (const auto& item : items) {
+        const Part& part = *item.part;
+        const Material& m = part.material;
+        enc->setDepthStencilState(m.blend == StandardMaterial::Blend::None || m.depthWrite ? depthWrite_ : depthRead_);
+        enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha      ? alphaBlend_
+                                    : m.blend == StandardMaterial::Blend::Additive ? additive_
+                                                                                   : opaque_);
+        enc->setCullMode(m.cull);
+        const auto [uv0, uv1] = uvTransform(m.anim, t);
+        Draw d{item.inst->transform, m.color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
+               m.alphaRef, m.flags};
+        enc->setVertexBytes(&d, sizeof d, 1);
+        enc->setFragmentBytes(&d, sizeof d, 1);
+        enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
+        enc->setFragmentSamplerState(m.clamp ? clampSampler_ : sampler_, 0);
+        enc->setFragmentTexture(m.texture, 0);
+        enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
+        for (size_t l = 0; l < m.layers.size(); ++l)
+            enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(2 + l));
+        enc->setFragmentTexture(m.height ? m.height : white_, 5);
+        enc->setFragmentTexture(m.envCube ? m.envCube : whiteCube_, 6);
+        enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);
+        enc->setFragmentTexture(m.edgeRamp ? m.edgeRamp : white_, 8);
+        enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
+                                   part.indices, NS::UInteger(0));
     }
     enc->endEncoding();
     return cmd;

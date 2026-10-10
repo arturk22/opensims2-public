@@ -56,6 +56,7 @@ const char* gmdc::elementName(uint32_t id) {
     case VertexMorphDeltas: return "vertexMorphDeltas";
     case NormalMorphDeltas: return "normalMorphDeltas";
     case Colors: return "colors";
+    case ColorDeltas: return "colorDeltas";
     default: return "";
     }
 }
@@ -193,6 +194,9 @@ std::vector<MeshGroup> buildMeshes(const GeometryData& g) {
                     const size_t i = valueIndex(k, v);
                     m.uvs.push_back({e.f(i, 0), e.f(i, 1)});
                 }
+            } else if (e.identity == gmdc::Colors && m.colors.empty() && e.blockFormat == 4) {
+                for (auto v : used)
+                    m.colors.push_back(e.raw.at(valueIndex(k, v)));
             } else if (e.identity == gmdc::BoneAssignments && m.bones.empty() && e.blockFormat == 4 &&
                        e.valueCount() > 0) {
                 // One byte per slot, low byte first: an index into the group's

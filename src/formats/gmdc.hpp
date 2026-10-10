@@ -24,7 +24,8 @@ constexpr uint32_t TangentNormals = 0x89D92BA0;
 constexpr uint32_t Binormals = 0x9BB38AFB;
 constexpr uint32_t VertexMorphDeltas = 0x5CF2CFE1;
 constexpr uint32_t NormalMorphDeltas = 0xCB6F3A6A;
-constexpr uint32_t Colors = 0xCB7206A1;
+constexpr uint32_t Colors = 0xDB830795;      // D3DCOLOR per vertex (VertexAlpha ground shadows)
+constexpr uint32_t ColorDeltas = 0xCB7206A1; // morph deltas of some stream (OpenTS2's table is unclear)
 
 const char* elementName(uint32_t identity); // "" if unknown
 } // namespace gmdc
@@ -99,6 +100,7 @@ struct MeshGroup {
     std::vector<std::array<float, 3>> positions;
     std::vector<std::array<float, 3>> normals; // empty if the link has none
     std::vector<std::array<float, 2>> uvs;     // empty if the link has none
+    std::vector<uint32_t> colors;              // D3DCOLOR 0xAARRGGBB, empty if the link has none
     std::vector<uint32_t> triangles;
     // Skinning, empty if the link has no bone assignments: up to four bones
     // per vertex as GMDC bone ids (indices into GeometryData::transforms and

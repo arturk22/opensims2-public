@@ -74,26 +74,73 @@ std::string resolveObjectCres(ResourceIndex& index, std::string_view query, std:
 // TXTR name of a material's base texture ("..._txtr"), or empty.
 std::string baseTextureName(const MaterialDefinition& m);
 
-// The StandardMaterial properties the renderer uses, with the game's defaults
-// for missing ones.
+// What the renderer needs of a TXMT, for every material type, as the game's
+// material shaders (Res/Materials/Materials.package, "*.matShad") set it up:
+// StandardMaterial and its defaults, the deprecated Phong*/Diffuse*/BaseTexture*
+// types that map onto it (diffuse times deprecatedStdMatInvDiffuseCoeffMultiplier),
+// the Sim materials, walls, floors, CelShadedMaterial, VertexAlpha, ...
 struct StandardMaterial {
     enum class Blend { None, Alpha, Additive };
     enum class Cull { Clockwise, CounterClockwise, None }; // which winding is culled
+    enum class Shading {
+        Standard,   // texture x (emissive + diffuse x lights) + specular + env cube
+        Sim,        // Sim materials: no specular, lights scaled by simMaterialLightingScale (0.8)
+        CelShaded,  // two-tone ramp from a camera-relative light, white rim
+        VertexColor // VertexAlpha: vertex colour and alpha, unlit
+    };
+    enum class TexAnim { None, Transform, Tile };
+    enum class Waveform { Sawtooth, Triangular, Sine };
 
+    // One animated component of the 'transform' texture coordinate animation:
+    // value = start + (end - start) x waveform(time x speed); speed 0 = off.
+    struct Wave {
+        Waveform waveform = Waveform::Triangular;
+        float speed = 0;
+        std::array<float, 2> start{0, 0}, end{0, 0};
+    };
+
+    Shading shading = Shading::Standard;
     std::string baseTexture; // TXTR name, empty if untextured
     std::array<float, 3> diffuse{1, 1, 1};
     std::array<float, 3> specular{0, 0, 0};
-    float specularPower = 20.0f; // most common value; absent in about a third of the materials
+    float specularPower = 0; // 0 = no specular (the matShad default)
     std::array<float, 3> emissive{0, 0, 0};
     float alphaMultiplier = 1.0f;
     float untexturedAlpha = 1.0f; // diffuse alpha when there is no base texture
     Blend blend = Blend::None;
     bool alphaTest = false;
-    float alphaRef = 127.0f / 255.0f;
+    float alphaRef = 127.0f / 255.0f; // passes when alpha >= alphaRef
+    bool depthWrite = true;           // blended parts only write depth when this is set (Sim hair)
     Cull cull = Cull::Clockwise;
     bool lighting = true;
+    // Draw order: stdMatLayer x 8, +7 when blended (+3 for blended Sim hair);
+    // walls and floors 0, water 5. Lower layers are drawn first.
     int layer = 0;
     bool visible = true; // false for "Null" and "WallMask" materials (parts the game does not draw)
+    bool alphaReplicate = false; // stdMatBaseTextureAlphaReplicate: colour = texture alpha
+    bool textureColor = true;    // false: the base texture only gives alpha (TextureAlpha)
+    bool clampU = false, clampV = false; // stdMatBaseTextureAddressingU/V = clamp
+
+    // stdMatEnvCubeMode = reflection (with a non-zero coefficient and lighting):
+    // colour += cube(reflection vector) x envCubeCoef.
+    std::string envCube; // TXTR name of the cube, empty if off
+    std::array<float, 3> envCubeCoef{0, 0, 0};
+    float envCubeBlur = 0;        // mip bias
+    bool envCubeLockedToCamera = false; // reflection vector in camera space
+
+    // stdMatNormalMapTextureName: a grey height map ("-bump") the game turns
+    // into a normal map.
+    std::string normalMap; // TXTR name, empty if off
+
+    TexAnim texAnim = TexAnim::None;
+    float tileSpeed = 0;                 // tiles per second
+    std::array<float, 2> tiles{1, 1};    // tiles across U and V
+    std::array<float, 2> animOrigin{0.5f, 0.5f};
+    Wave rotation, scale, translation;   // rotation in turns
+
+    // CelShadedMaterial ramps (TXTR names).
+    std::string celRamp, celEdgeRamp;
+    float celEdgeOffset = 0.3f;
 };
 StandardMaterial standardMaterial(const MaterialDefinition& m);
 

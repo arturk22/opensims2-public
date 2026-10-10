@@ -1,3 +1,4 @@
+#include <cmath>
 #include "formats/bhav.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/lighting_config.hpp"
@@ -295,6 +296,60 @@ static void testStandardMaterial() {
     check(ns.blend == StandardMaterial::Blend::Additive && ns.cull == StandardMaterial::Cull::None &&
               ns.baseTexture.empty(),
           "additive, no cull, texture disabled");
+
+    // standard.matShad defaults: no specular without a power; blended parts
+    // go 7 layers up and stop writing depth.
+    MaterialDefinition plain;
+    plain.materialType = "StandardMaterial";
+    plain.properties = {{"stdMatSpecCoef", "0.5,0.5,0.5"}, {"stdMatAlphaBlendMode", "blend"}, {"stdMatLayer", "1"}};
+    auto ps = standardMaterial(plain);
+    check(ps.specularPower == 0 && ps.layer == 15 && !ps.depthWrite && ps.envCube.empty() && ps.normalMap.empty(),
+          "standard defaults and layer");
+    plain.properties = {{"stdMatEnvCubeMode", "reflection"}, {"stdMatEnvCubeCoef", "0.1,0.1,0.1"},
+                        {"stdMatEnvCubeTextureName", "reflectionkitchenhighcontrast-envcube"},
+                        {"stdMatNormalMapTextureEnabled", "true"}, {"stdMatNormalMapTextureName", "wall-bump"},
+                        {"stdMatTextureCoordAnimMode", "transform"},
+                        {"stdMatTextureCoordTfAnimRotSpeed", "16.000000"},
+                        {"stdMatTextureCoordTfAnimRotStartEnd", "0.000000,0.040000"},
+                        {"stdMatTextureCoordTfAnimRotWaveform", "sawtooth"}};
+    ps = standardMaterial(plain);
+    check(ps.envCube == "reflectionkitchenhighcontrast-envcube_txtr" && ps.envCubeCoef[1] == 0.1f &&
+              ps.normalMap == "wall-bump_txtr" && ps.layer == 0 && ps.depthWrite,
+          "env cube and normal map");
+    check(ps.texAnim == StandardMaterial::TexAnim::Transform && ps.rotation.speed == 16 &&
+              ps.rotation.end[0] == 0.04f && ps.rotation.waveform == StandardMaterial::Waveform::Sawtooth &&
+              ps.scale.speed == 0,
+          "texture coordinate animation");
+    plain.properties[1].second = "0.001,0.001,0"; // below CheckForCubeMapping's threshold
+    check(standardMaterial(plain).envCube.empty(), "weak env cube is off");
+
+    // Deprecated types (deprecated.matShad).
+    MaterialDefinition phong;
+    phong.materialType = "PhongTextureAlphaCubeMapReflection";
+    phong.properties = {{"stdMatBaseTextureName", "glass"}, {"stdMatDiffCoef", "0.5,0.5,0.5,0.25"},
+                        {"stdMatSpecCoef", "0.2,0.4,0.6"}, {"reflectivity", "0.5"},
+                        {"deprecatedStdMatInvDiffuseCoeffMultiplier", "1.2"}};
+    auto pm = standardMaterial(phong);
+    check(pm.baseTexture == "glass_txtr" && pm.blend == StandardMaterial::Blend::Alpha && pm.alphaMultiplier == 0.25f &&
+              std::abs(pm.diffuse[0] - 0.6f) < 1e-6f && std::abs(pm.envCubeCoef[2] - 0.3f) < 1e-6f &&
+              pm.envCube == "reflectionCubeTemplate-envcube_txtr" && pm.layer == 7,
+          "deprecated phong type");
+    phong.materialType = "AdditiveTextureAlphaBlend";
+    phong.properties.push_back({"blendStrength", "0.5"});
+    pm = standardMaterial(phong);
+    check(pm.blend == StandardMaterial::Blend::Additive && !pm.lighting && pm.alphaReplicate &&
+              pm.alphaMultiplier == 0.5f && pm.envCube.empty(),
+          "deprecated additive type");
+
+    // Sim hair: blended, but alpha tested at 60 and writing depth, 3 layers up.
+    MaterialDefinition hair;
+    hair.materialType = "SimStandardMaterial";
+    hair.properties = {{"stdMatBaseTextureEnabled", "true"}, {"stdMatBaseTextureName", "ufhairlong-red"},
+                       {"stdMatAlphaBlendMode", "blend"}, {"stdMatSpecPower", "2"}};
+    auto hm = standardMaterial(hair);
+    check(hm.shading == StandardMaterial::Shading::Sim && hm.layer == 3 && hm.depthWrite && hm.alphaTest &&
+              hm.alphaRef == 61.0f / 255.0f && hm.specularPower == 0,
+          "sim hair");
 }
 
 static void testPropertySet() {
