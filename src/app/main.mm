@@ -9,7 +9,9 @@
 // lot's terrain, floors, walls and objects. --sim [body,hair,skin tone] shows
 // an adult Sim built from catalog parts, --skinned <cres,cres,...> skinned
 // meshes on the adult skeleton; either plays --anim <name> (looped; --time
-// <seconds> picks the moment of a --screenshot).
+// <seconds> picks the moment of a --screenshot). --play-sound <name | TGI>
+// plays a sound (the --sound-index'th sample of a track; --sound-wav <out.wav>
+// also saves it) and exits without opening a window.
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -18,6 +20,7 @@
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
 
+#include "audio/play_sound.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/image.hpp"
 #include "formats/dbpf.hpp"
@@ -605,6 +608,16 @@ static void buildMenu() {
 
 int main() {
     @autoreleasepool {
+        if (auto sound = argument(@"--play-sound")) {
+            try {
+                const auto index = argument(@"--sound-index");
+                return os2::playSoundCommand(gameDir() / "TSData/Res", *sound, index ? std::stoul(*index) : 0,
+                                             argument(@"--sound-wav").value_or(""));
+            } catch (const std::exception& ex) {
+                std::fprintf(stderr, "error: %s\n", ex.what());
+                return 1;
+            }
+        }
         NSApplication* app = [NSApplication sharedApplication];
         app.activationPolicy = NSApplicationActivationPolicyRegular;
         buildMenu();

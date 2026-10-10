@@ -67,6 +67,7 @@ target_include_directories(os2_audio PUBLIC src)
 target_compile_options(os2_audio PRIVATE -Wall -Wextra)
 target_link_libraries(os2_audio PUBLIC os2_formats)
 if(APPLE)
+  target_sources(os2_audio PRIVATE src/audio/player.cpp src/audio/play_sound.cpp)
   target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 
@@ -99,7 +100,7 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
     MACOSX_BUNDLE_GUI_IDENTIFIER org.opensims2.app)
   target_compile_options(opensims2 PRIVATE -fobjc-arc -Wall -Wextra)
-  target_link_libraries(opensims2 PRIVATE os2_render os2_formats
+  target_link_libraries(opensims2 PRIVATE os2_render os2_audio
     "-framework AppKit" "-framework MetalKit")
 endif()
 

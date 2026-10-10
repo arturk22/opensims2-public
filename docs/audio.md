@@ -53,4 +53,8 @@ s2pkg sound-list <Res|pasta> [filtro]        # amostras: chave, grupo, tamanho, 
 s2pkg sound-info <Res|pasta> <nome>          # track settings, hit list e amostras de um nome
 s2pkg sound-extract <Res|pasta> <nome|TGI> out.wav [n]
 s2pkg sound-sweep <Res|pasta>                # decodifica tudo: contagens por formato e as hit lists que não resolvem
+opensims2 --play-sound <nome|TGI> [--sound-index n] [--sound-wav out.wav]   # toca e sai
 ```
+
+## Reprodução
+`SoundPlayer` (`src/audio/player.hpp`, C++ puro) toca PCM de 16 bits numa `AudioQueue` do AudioToolbox na saída padrão (3 buffers de 0,25 s, reabastecidos na thread do próprio AudioToolbox; para quando o último volta). `--play-sound` no app resolve o nome, imprime taxa/canais/duração/pico/RMS, grava o WAV se pedido, toca até o fim e sai, sem abrir janela. Sem como ouvir aqui, a verificação é pelo WAV (duração e níveis) e pelo tempo de reprodução: `ui_button_play` (0,645 s) toca em ~0,98 s com o fim da fila, uma fala SPX de 5,92 s em 6,13 s.
