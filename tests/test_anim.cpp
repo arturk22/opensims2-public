@@ -1,6 +1,9 @@
 // Skeletons, ANIM decoding and pose sampling on hand-built data.
 #include "formats/anim.hpp"
+#include "formats/property_set.hpp"
+#include "formats/sim.hpp"
 #include "formats/skeleton.hpp"
+#include "formats/skinning.hpp"
 #include "formats/xform.hpp"
 
 #include <cmath>
@@ -195,7 +198,69 @@ static void testXform() {
     check(s.find("B") == 1 && s.findJoint(0) == 0 && s.find("c") < 0, "bone lookup");
 }
 
+static void testSimCatalog() {
+    Writer w;
+    w.u32(0xCBE750E0);
+    w.u16(2);
+    w.u32(3);
+    w.u32(0xEB61E4F7), w.u32(3), w.b.insert(w.b.end(), {'a', 'g', 'e'}), w.u32(8);
+    w.u32(0x0B8BEA18), w.u32(4), w.b.insert(w.b.end(), {'n', 'a', 'm', 'e'}), w.u32(3),
+        w.b.insert(w.b.end(), {'a', 'm', 'x'});
+    w.u32(0xCBA908E1), w.u32(1), w.u8('b'), w.u8(1);
+    const auto props = readPropertySet(w.b);
+    check(props.size() == 3 && props.at("age") == "8" && props.at("name") == "amx" && props.at("b") == "true",
+          "binary property set");
+    const std::string xml = "<cGZPropertySetString><AnyUint32 key=\"age\" type=\"0xeb61e4f7\">8</AnyUint32>"
+                            "</cGZPropertySetString>";
+    check(readPropertySet({reinterpret_cast<const uint8_t*>(xml.data()), xml.size()}).at("age") == "8",
+          "XML property set through readPropertySet");
+
+    Writer r;
+    r.u32(0xDEADBEEF), r.u32(2), r.u32(2);
+    r.u32(0xE519C933), r.u32(0x1C0532FA), r.u32(0xFF597350), r.u32(0x66002389);
+    r.u32(0x49596978), r.u32(0x1C0532FA), r.u32(0xFF000001), r.u32(0x00000002);
+    const auto refs = parseReferenceList(r.b);
+    check(refs.size() == 2 && refs[0].type == 0xE519C933 && refs[0].instance == 0xFF597350 &&
+              refs[0].instanceHi == 0x66002389 && refs[1].type == 0x49596978,
+          "3IDR: type, group, instance, instanceHi");
+    SimPart part;
+    part.properties = {{"resourcekeyidx", "1"}, {"shapekeyidx", "5"}};
+    part.references = refs;
+    check(part.reference("resourcekeyidx") && part.reference("resourcekeyidx")->type == 0x49596978 &&
+              !part.reference("shapekeyidx") && !part.reference("missing"),
+          "part references by index");
+}
+
+static void testSkinning() {
+    // One bone at the origin, rotated 90 degrees about Z in the pose; a vertex
+    // half bound to it and half to a bone that stays put.
+    Skeleton s;
+    s.bones.push_back({"a", -1, Xform{}, 0, 0});
+    s.bones.push_back({"b", -1, Xform{}, 1, 1});
+    ObjectModel m;
+    m.skeleton = s;
+    ObjectModel::Part p;
+    p.mesh.positions = {{1, 0, 0}};
+    p.mesh.normals = {{1, 0, 0}};
+    p.mesh.bones = {{0, 1, 0xFF, 0xFF}};
+    p.mesh.weights = {{0.5f, 0.5f, 0, 0}};
+    p.bindPoses = {Xform{}, Xform{}};
+    m.parts.push_back(p);
+    SkinnedModel skin(s);
+    skin.add(m);
+    auto pose = s.restPose();
+    pose[0].q = quatFromEulerXYZ(0, 0, 3.14159265f / 2);
+    ObjectModel out;
+    skin.pose(s.world(pose), out);
+    const auto& v = out.parts[0].mesh.positions[0];
+    check(near(v[0], 0.5f) && near(v[1], 0.5f) && near(v[2], 0), "linear blend of two bones");
+    const auto& n = out.parts[0].mesh.normals[0];
+    check(near(n[0], std::sqrt(0.5f)) && near(n[1], std::sqrt(0.5f)), "normals renormalized");
+}
+
 int main() {
+    testSimCatalog();
+    testSkinning();
     testFixed();
     testDecode();
     testXform();

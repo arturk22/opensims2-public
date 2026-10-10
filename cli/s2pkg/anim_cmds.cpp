@@ -4,6 +4,7 @@
 #include "formats/anim.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
+#include "formats/sim.hpp"
 #include "formats/skeleton.hpp"
 
 #include <cmath>
@@ -162,6 +163,33 @@ int cmdAnimList(const char* res, const std::string& filter) {
     return 0;
 }
 
+// Catalog Sim parts (GZPS + 3IDR) whose name contains `filter`.
+int cmdSimParts(const char* res, const std::string& filter, bool resolve) {
+    ResourceIndex index(res);
+    const auto parts = loadSimParts(index);
+    size_t shown = 0;
+    for (const auto& p : parts) {
+        if (p.name().find(filter) == std::string::npos)
+            continue;
+        ++shown;
+        std::printf("%-44s age=%-3u gender=%u outfit=%-3u category=%-3u type=%s flags=%u refs=%zu", p.name().c_str(),
+                    p.number("age"), p.number("gender"), p.number("outfit"), p.number("category"),
+                    p.property("type").c_str(), p.number("flags"), p.references.size());
+        if (resolve) {
+            if (auto c = p.reference("resourcekeyidx"))
+                std::printf(" cres=%s", scenegraphName(index, *c).c_str());
+            for (uint32_t i = 0; i < p.number("numoverrides"); ++i) {
+                const std::string k = "override" + std::to_string(i);
+                if (auto t = p.reference(k + "resourcekeyidx"))
+                    std::printf(" %s=%s", p.property(k + "subset").c_str(), scenegraphName(index, *t).c_str());
+            }
+        }
+        std::printf("\n");
+    }
+    std::printf("%zu of %zu parts\n", shown, parts.size());
+    return 0;
+}
+
 // Decodes every ANIM resource and summarises what was found.
 int cmdAnimSweep(const char* res) {
     ResourceIndex index(res);
@@ -217,6 +245,8 @@ int animCommand(const std::string& cmd, int argc, char** argv) {
         return cmdAnim(argv[2], withSuffix(argv[3], "_anim"), argc == 5 && std::string(argv[4]) == "--keys");
     if (cmd == "anim-list" && (argc == 3 || argc == 4))
         return cmdAnimList(argv[2], argc == 4 ? argv[3] : "");
+    if (cmd == "sim-parts" && argc >= 3 && argc <= 5)
+        return cmdSimParts(argv[2], argc >= 4 ? argv[3] : "", argc == 5 && std::string(argv[4]) == "--resolve");
     if (cmd == "anim-sweep" && argc == 3)
         return cmdAnimSweep(argv[2]);
     (void)kTypeCres;
@@ -227,7 +257,8 @@ const char* animUsage() {
     return "       s2pkg skeleton <Res-dir> <cres-name>\n"
            "       s2pkg anim <Res-dir> <anim-name> [--keys]\n"
            "       s2pkg anim-list <Res-dir> [name-filter]\n"
-           "       s2pkg anim-sweep <Res-dir>\n";
+           "       s2pkg anim-sweep <Res-dir>\n"
+           "       s2pkg sim-parts <Res-dir> [name-filter [--resolve]]\n";
 }
 
 } // namespace os2

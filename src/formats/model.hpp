@@ -31,6 +31,11 @@ struct ObjectModel {
         // Skinned parts (mesh.bones not empty): the GMDC's inverse bind pose
         // of each bone id, i.e. model space -> bone space in the rest pose.
         std::vector<Xform> bindPoses;
+        // Extra TXTR names layered with the base texture (Sim skins): the
+        // underlay shows where the base texture is transparent (skin under
+        // clothes), overlays are drawn over it by their alpha (eyes, brows).
+        std::string underlay;
+        std::vector<std::string> overlays;
     };
 
     // Alpha mask laid over the model's XY plane: value (x, y) sits at

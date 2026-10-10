@@ -14,6 +14,9 @@ enum : uint {
     kAlphaTest = 2, // discard below alphaRef
     kChecker = 4,   // one-tile checkerboard (test floor)
     kMasked = 8,    // alpha times the mask texture, laid over model XY
+    kUnderlay = 16, // texture 2 shows through where the base texture is transparent (opaque result)
+    kOverlay1 = 32, // texture 3 drawn over the base by its alpha
+    kOverlay2 = 64, // texture 4 likewise
 };
 
 struct Draw {
@@ -68,9 +71,22 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               constant Frame& frame [[buffer(2)]],
                               texture2d<float> base [[texture(0)]],
                               texture2d<float> mask [[texture(1)]],
+                              texture2d<float> underlay [[texture(2)]],
+                              texture2d<float> overlay1 [[texture(3)]],
+                              texture2d<float> overlay2 [[texture(4)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]]) {
     float4 tex = base.sample(smp, in.uv);
+    if (draw.flags & kUnderlay)
+        tex = float4(mix(underlay.sample(smp, in.uv).rgb, tex.rgb, tex.a), 1.0);
+    if (draw.flags & kOverlay1) {
+        float4 o = overlay1.sample(smp, in.uv);
+        tex.rgb = mix(tex.rgb, o.rgb, o.a);
+    }
+    if (draw.flags & kOverlay2) {
+        float4 o = overlay2.sample(smp, in.uv);
+        tex.rgb = mix(tex.rgb, o.rgb, o.a);
+    }
     if (draw.flags & kMasked)
         tex.a *= mask.sample(maskSmp, in.local * draw.mask.xy + draw.mask.zw).r;
     if ((draw.flags & kAlphaTest) && tex.a < draw.alphaRef)

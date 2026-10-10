@@ -29,6 +29,7 @@ add_library(os2_formats
   src/formats/rcol.cpp
   src/formats/resindex.cpp
   src/formats/scenegraph.cpp
+  src/formats/sim.cpp
   src/formats/simantics.cpp
   src/formats/skeleton.cpp
   src/formats/skinning.cpp

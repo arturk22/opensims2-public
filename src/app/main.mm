@@ -6,9 +6,10 @@
 // zoom, R/F or Page Up/Down tilt, right/middle drag rotates and tilts freely,
 // Home resets. --lighting <state> picks a lighting state from Lighting.txt
 // (day, night, neighbourhood, ...); --lot <N001_Lot82 | file.package> shows a
-// lot's terrain, floors, walls and objects. --skinned <cres,cres,...> shows
-// skinned meshes on the adult skeleton, playing --anim <name> (looped;
-// --time <seconds> picks the moment of a --screenshot).
+// lot's terrain, floors, walls and objects. --sim [body,hair,skin tone] shows
+// an adult Sim built from catalog parts, --skinned <cres,cres,...> skinned
+// meshes on the adult skeleton; either plays --anim <name> (looped; --time
+// <seconds> picks the moment of a --screenshot).
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -25,6 +26,7 @@
 #include "formats/anim.hpp"
 #include "formats/lot_model.hpp"
 #include "formats/model.hpp"
+#include "formats/sim.hpp"
 #include "formats/skinning.hpp"
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
@@ -104,7 +106,7 @@ std::vector<std::string> objectQueries() {
     for (NSUInteger i = 1; i + 1 < args.count; ++i)
         if ([args[i] isEqualToString:@"--object"])
             out.emplace_back(args[i + 1].UTF8String);
-    if (out.empty() && !argument(@"--lot") && !argument(@"--skinned"))
+    if (out.empty() && !argument(@"--lot") && !argument(@"--skinned") && !argument(@"--sim"))
         out.emplace_back("0xEC7618F6"); // Chair - Dining - Value1
     return out;
 }
@@ -285,14 +287,34 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     }
 }
 
-// --skinned: the listed CRES on the adult skeleton at tile (2.5, -2.5).
+// --sim [body,hair,tone]: an adult Sim assembled from catalog parts; or
+// --skinned: the listed CRES on the adult skeleton. Placed at tile (2.5, -2.5).
 std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceIndex& index) {
     const auto list = argument(@"--skinned");
-    if (!list)
+    const auto sim = argument(@"--sim");
+    if (!list && !sim)
         return std::nullopt;
     auto actor = std::make_unique<Actor>();
-    actor->skin = os2::SkinnedModel(loadSkeleton(index, "auskel"));
-    for (size_t start = 0; start <= list->size();) {
+    if (sim) {
+        os2::SimLook look;
+        std::vector<std::string> fields;
+        for (size_t start = 0; start <= sim->size();) {
+            size_t end = std::min(sim->find(',', start), sim->size());
+            fields.push_back(sim->substr(start, end - start));
+            start = end + 1;
+        }
+        if (fields.size() > 0 && !fields[0].empty() && fields[0] != "default")
+            look.body = fields[0];
+        if (fields.size() > 1 && !fields[1].empty())
+            look.hair = fields[1];
+        if (fields.size() > 2 && !fields[2].empty())
+            look.skinTone = std::stoi(fields[2]);
+        look.prefix = look.body.substr(0, 2);
+        actor->skin = os2::loadSim(index, os2::loadSimParts(index), look);
+    } else {
+        actor->skin = os2::SkinnedModel(loadSkeleton(index, "auskel"));
+    }
+    for (size_t start = 0; list && start <= list->size();) {
         size_t end = list->find(',', start);
         if (end == std::string::npos)
             end = list->size();
@@ -310,7 +332,7 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
     simd_float4x4 at = matrix_identity_float4x4;
     at.columns[3] = simd_make_float4(2.5f, -2.5f, 0, 1);
     renderer.addInstance(actor->model, at);
-    std::printf("opensims2: skinned %s (%zu parts, %zu bones)%s%s\n", list->c_str(), actor->skin.model.parts.size(),
+    std::printf("opensims2: skinned %s (%zu parts, %zu bones)%s%s\n", actor->skin.model.name.c_str(), actor->skin.model.parts.size(),
                 actor->skin.skeleton.bones.size(), actor->anim ? ", playing " : "",
                 actor->anim ? actor->anim->resource.fileName.c_str() : "");
     gActors.push_back(std::move(actor));

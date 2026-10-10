@@ -34,7 +34,7 @@ struct Vertex {
     float uv[2];
 };
 
-enum : uint32_t { kLighting = 1, kAlphaTest = 2, kChecker = 4, kMasked = 8 };
+enum : uint32_t { kLighting = 1, kAlphaTest = 2, kChecker = 4, kMasked = 8, kUnderlay = 16, kOverlay1 = 32, kOverlay2 = 64 };
 
 struct Draw {
     simd_float4x4 model;
@@ -113,6 +113,7 @@ dispatch_semaphore_t sema(void* p) { return static_cast<dispatch_semaphore_t>(p)
 
 struct Renderer::Material {
     MTL::Texture* texture = nullptr; // not owned (cache or white)
+    std::array<MTL::Texture*, 3> layers{}; // underlay, overlay 1, overlay 2 (not owned, null if unused)
     simd_float4 color{1, 1, 1, 1};
     simd_float4 specular{0, 0, 0, 1}; // power in w
     simd_float4 emissive{0, 0, 0, 0};
@@ -348,6 +349,17 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
                                                                              : MTL::CullModeBack;
         }
 
+        if (!part.underlay.empty())
+            if (MTL::Texture* t = texture(part.underlay, index)) {
+                mat.layers[0] = t;
+                mat.flags |= kUnderlay;
+            }
+        for (size_t i = 0; i < part.overlays.size() && i < 2; ++i)
+            if (MTL::Texture* t = texture(part.overlays[i], index)) {
+                mat.layers[1 + i] = t;
+                mat.flags |= i == 0 ? kOverlay1 : kOverlay2;
+            }
+
         std::vector<Vertex> v(mesh.positions.size());
         for (size_t i = 0; i < v.size(); ++i) {
             for (int k = 0; k < 3; ++k)
@@ -496,6 +508,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                 enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
                 enc->setFragmentTexture(m.texture, 0);
                 enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
+                for (size_t l = 0; l < m.layers.size(); ++l)
+                    enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(2 + l));
                 enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount),
                                            MTL::IndexTypeUInt32, part.indices, NS::UInteger(0));
             }

@@ -1,0 +1,208 @@
+#include "sim.hpp"
+
+#include "binreader.hpp"
+#include "property_set.hpp"
+#include "rcol.hpp"
+#include "resindex.hpp"
+#include "scenegraph.hpp"
+#include "skeleton.hpp"
+#include "txmt.hpp"
+
+#include <cctype>
+#include <unordered_map>
+
+namespace os2 {
+
+namespace {
+
+constexpr uint32_t kTypeGzps = 0xEBCF3E27, kTypeIdr = 0xAC506764;
+
+bool equalsNoCase(std::string_view a, std::string_view b) {
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+            return false;
+    return true;
+}
+
+std::optional<ResourceIndex::Location> findTgi(ResourceIndex& index, Tgi tgi) {
+    if (auto loc = index.find(tgi))
+        return loc;
+    tgi.instanceHi = 0;
+    return index.find(tgi);
+}
+
+} // namespace
+
+std::vector<Tgi> parseReferenceList(std::span<const uint8_t> data) {
+    BinReader r(data);
+    if (r.u32() != 0xDEADBEEF)
+        throw FormatError("3IDR: bad magic");
+    const uint32_t version = r.u32();
+    if (version != 1 && version != 2)
+        throw FormatError("3IDR: unsupported version " + std::to_string(version));
+    const uint32_t n = r.u32();
+    if (n > 0x10000)
+        throw FormatError("3IDR: bad count");
+    std::vector<Tgi> out(n);
+    for (auto& t : out) {
+        t.type = r.u32();
+        t.group = r.u32();
+        t.instance = r.u32();
+        if (version == 2)
+            t.instanceHi = r.u32();
+    }
+    r.expectEnd("3IDR");
+    return out;
+}
+
+std::string SimPart::property(const std::string& key) const {
+    auto it = properties.find(key);
+    return it == properties.end() ? std::string() : it->second;
+}
+
+uint32_t SimPart::number(const std::string& key) const {
+    const auto v = property(key);
+    try {
+        return v.empty() ? 0 : uint32_t(std::stoul(v, nullptr, 0));
+    } catch (const std::logic_error&) {
+        return 0;
+    }
+}
+
+std::optional<Tgi> SimPart::reference(const std::string& indexKey) const {
+    if (!properties.count(indexKey))
+        return std::nullopt;
+    const uint32_t i = number(indexKey);
+    if (i >= references.size())
+        return std::nullopt;
+    return references[i];
+}
+
+std::vector<SimPart> loadSimParts(ResourceIndex& index) {
+    std::unordered_map<Tgi, std::vector<Tgi>, TgiHash> lists;
+    for (const auto& loc : index.ofType(kTypeIdr)) {
+        try {
+            Tgi key = loc.entry->tgi;
+            key.type = kTypeGzps;
+            lists.emplace(key, parseReferenceList(index.read(loc)));
+        } catch (const FormatError&) {
+        }
+    }
+    std::vector<SimPart> out;
+    for (const auto& loc : index.ofType(kTypeGzps)) {
+        auto it = lists.find(loc.entry->tgi);
+        if (it == lists.end())
+            continue;
+        SimPart p;
+        p.tgi = loc.entry->tgi;
+        try {
+            p.properties = readPropertySet(index.read(loc));
+        } catch (const FormatError&) {
+            continue;
+        }
+        p.references = it->second;
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+const SimPart* findSimPart(const std::vector<SimPart>& parts, std::string_view name) {
+    for (const auto& p : parts)
+        if (equalsNoCase(p.name(), name))
+            return &p;
+    return nullptr;
+}
+
+std::string scenegraphName(ResourceIndex& index, const Tgi& tgi) {
+    auto loc = findTgi(index, tgi);
+    if (!loc)
+        return {};
+    const auto bytes = index.read(*loc);
+    Rcol rc(bytes);
+    if (rc.blocks.empty())
+        return {};
+    const auto& b = rc.blocks[0];
+    if (b.className == "cResourceNode") {
+        const auto n = ResourceNode::parse(b.body);
+        return n.typeCode == 1 ? n.resource.fileName : n.graph.fileName;
+    }
+    if (b.className == "cMaterialDefinition")
+        return MaterialDefinition::parse(b.body).resource.fileName;
+    if (b.className == "cShape")
+        return Shape::parse(b.body).resource.fileName;
+    return {};
+}
+
+ObjectModel loadSimPartModel(ResourceIndex& index, const SimPart& part) {
+    const auto cres = part.reference("resourcekeyidx");
+    if (!cres)
+        throw FormatError("Sim part " + part.name() + " has no CRES reference");
+    const std::string cresName = scenegraphName(index, *cres);
+    if (cresName.empty())
+        throw FormatError("Sim part " + part.name() + ": CRES not found");
+    std::map<std::string, std::string> materials;
+    const uint32_t n = part.number("numoverrides");
+    for (uint32_t i = 0; i < n; ++i) {
+        const std::string prefix = "override" + std::to_string(i);
+        const auto subset = part.property(prefix + "subset");
+        const auto txmt = part.reference(prefix + "resourcekeyidx");
+        if (subset.empty() || !txmt)
+            continue;
+        std::string name = scenegraphName(index, *txmt);
+        if (name.ends_with("_txmt"))
+            name.resize(name.size() - 5);
+        if (!name.empty())
+            materials[subset] = name;
+    }
+    return loadObjectModel(index, cresName, materials);
+}
+
+SkinnedModel loadSim(ResourceIndex& index, const std::vector<SimPart>& parts, const SimLook& look) {
+    constexpr uint32_t kTypeCres = 0xE519C933;
+    auto cresLoc = index.findByName("auskel_cres", kTypeCres);
+    if (!cresLoc)
+        throw FormatError("auskel_cres not found");
+    const auto cresBytes = index.read(*cresLoc);
+    SkinnedModel sim(Skeleton::fromCres(Rcol(cresBytes)));
+    const std::string tone = "s" + std::to_string(look.skinTone);
+
+    // Body: clothes are SimSkin materials whose transparent texels show the
+    // naked body's skin texture (same UV layout for every adult body).
+    if (const SimPart* body = findSimPart(parts, look.body)) {
+        ObjectModel m = loadSimPartModel(index, *body);
+        for (auto& part : m.parts) {
+            auto it = m.materials.find(part.material);
+            if (it != m.materials.end() && it->second.materialType == "SimSkin")
+                part.underlay = look.prefix + "bodynaked-nude-" + tone + "_txtr";
+        }
+        sim.add(m);
+    } else {
+        sim.model.warnings.push_back("body part not found: " + look.body);
+    }
+
+    // Face: the base head with the skin tone's face texture.
+    {
+        const std::string face = look.prefix + "face_" + tone;
+        ObjectModel m = loadObjectModel(index, look.prefix + "Face", {{"face", face}});
+        for (auto& part : m.parts) {
+            if (!look.eyes.empty())
+                part.overlays.push_back(look.eyes + "_txtr");
+            if (!look.brows.empty())
+                part.overlays.push_back(look.brows + "_txtr");
+        }
+        sim.add(m);
+    }
+
+    if (!look.hair.empty()) {
+        if (const SimPart* hair = findSimPart(parts, look.hair))
+            sim.add(loadSimPartModel(index, *hair));
+        else
+            sim.model.warnings.push_back("hair part not found: " + look.hair);
+    }
+    sim.model.name = look.body;
+    return sim;
+}
+
+} // namespace os2
