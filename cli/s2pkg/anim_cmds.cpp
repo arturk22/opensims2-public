@@ -1,19 +1,23 @@
 // s2pkg commands for skeletons, animations and Sims.
 #include "anim_cmds.hpp"
 
+#include "formats/anim.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "formats/skeleton.hpp"
 
 #include <cmath>
+#include <map>
 #include <cstdio>
+#include <algorithm>
 #include <string>
+#include <vector>
 
 namespace os2 {
 
 namespace {
 
-constexpr uint32_t kTypeCres = 0xE519C933;
+constexpr uint32_t kTypeCres = 0xE519C933, kTypeAnim = 0xFB00791E;
 
 std::string withSuffix(std::string s, const char* suffix) {
     if (!s.ends_with(suffix))
@@ -84,17 +88,146 @@ int cmdSkeleton(const char* res, const std::string& cresName) {
     return 0;
 }
 
+Animation parseAnim(std::span<const uint8_t> bytes) {
+    Rcol rc(bytes);
+    const auto* b = rc.find("cAnimResourceConst");
+    if (!b)
+        throw FormatError("ANIM has no cAnimResourceConst");
+    return Animation::parse(b->body);
+}
+
+const char* curveName(Animation::Curve c) {
+    switch (c) {
+    case Animation::Curve::Baked: return "baked";
+    case Animation::Curve::Continuous: return "continuous";
+    case Animation::Curve::Discontinuous: return "discontinuous";
+    }
+    return "?";
+}
+
+const char* valueName(Animation::Value v) {
+    static const char* names[] = {"8.7", "9.7", "5.10", "5.11", "3.12", "3.13", "float"};
+    return names[size_t(v)];
+}
+
+int cmdAnim(const char* res, const std::string& name, bool keys) {
+    ResourceIndex index(res);
+    auto loc = index.findByName(name, kTypeAnim);
+    if (!loc)
+        throw FormatError("ANIM not found: " + name);
+    const Animation a = parseAnim(index.read(*loc));
+    std::printf("%s: v%u duration=%u ticks (%.2f s) flags=0x%02X priority=%u locomotion=%u skeleton=\"%s\" data=\"%s\"\n",
+                a.resource.fileName.c_str(), a.version, a.duration, a.duration / Animation::kTicksPerSecond, a.flags,
+                a.priority, a.locomotionType, a.skeletonTag.c_str(), a.dataString.c_str());
+    std::printf("heading=%g distance=%g velocity=%g turn=%g stride=%g\n", a.headingOffset, a.locomotionDistance,
+                a.velocity, a.turnRotation, a.strideLength);
+    for (const auto& t : a.targets) {
+        std::printf("target \"%s\" type=%u channels=%zu ik=%zu\n", t.tag.c_str(), t.animType, t.channels.size(),
+                    t.ikChains.size());
+        for (const auto& c : t.channels) {
+            std::printf("  %-26s attr=%u type=%u dur=%u ik=%d hash=0x%08X:", c.name.c_str(), c.attribute(), c.type(),
+                        c.duration(), c.ikChain(), c.nameHash);
+            for (const auto& comp : c.components)
+                std::printf(" [%zu %s %s]", comp.keys.size(), curveName(comp.curve), valueName(comp.value));
+            std::printf("\n");
+            if (keys)
+                for (size_t k = 0; k < c.components.size(); ++k) {
+                    std::printf("    %zu:", k);
+                    for (const auto& key : c.components[k].keys)
+                        std::printf(" %u=%.4g", key.time, key.value);
+                    std::printf("\n");
+                }
+        }
+        for (const auto& ch : t.ikChains)
+            std::printf("  ik chain 0x%08X strategy=0x%08X begin=0x%08X end=0x%08X targets=%zu\n", ch.nameCrc,
+                        ch.strategy, ch.crcs[0], ch.crcs[2], ch.targets.size());
+    }
+    for (const auto& e : a.events)
+        std::printf("event t=%u type=%d \"%s\"\n", e.ticks, e.type, e.data.c_str());
+    return 0;
+}
+
+// Names of the ANIM resources containing `filter`, with duration and targets.
+int cmdAnimList(const char* res, const std::string& filter) {
+    ResourceIndex index(res);
+    for (const auto& loc : index.ofType(kTypeAnim)) {
+        const Animation a = parseAnim(index.read(loc));
+        if (a.resource.fileName.find(filter) == std::string::npos)
+            continue;
+        std::printf("%-50s %6u ticks", a.resource.fileName.c_str(), a.duration);
+        for (const auto& t : a.targets)
+            std::printf(" %s(%zu)", t.tag.c_str(), t.channels.size());
+        std::printf("\n");
+    }
+    return 0;
+}
+
+// Decodes every ANIM resource and summarises what was found.
+int cmdAnimSweep(const char* res) {
+    ResourceIndex index(res);
+    size_t total = 0, ok = 0;
+    std::map<std::string, size_t> errors, curves, values, attributes, tags;
+    size_t keys = 0, channels = 0;
+    for (const auto& loc : index.ofType(kTypeAnim)) {
+        ++total;
+        try {
+            const Animation a = parseAnim(index.read(loc));
+            ++ok;
+            for (const auto& t : a.targets) {
+                ++tags[t.tag];
+                for (const auto& c : t.channels) {
+                    ++channels;
+                    ++attributes["attr " + std::to_string(c.attribute()) + " type " + std::to_string(c.type()) +
+                                 " x" + std::to_string(c.componentCount())];
+                    for (const auto& comp : c.components) {
+                        ++curves[curveName(comp.curve)];
+                        ++values[valueName(comp.value)];
+                        keys += comp.keys.size();
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            ++errors[e.what()];
+        }
+    }
+    std::printf("%zu of %zu ANIM resources decoded; %zu channels, %zu keys\n", ok, total, channels, keys);
+    auto dump = [](const char* what, const std::map<std::string, size_t>& m, size_t limit) {
+        std::printf("%s:\n", what);
+        std::vector<std::pair<size_t, std::string>> v;
+        for (const auto& [k, n] : m)
+            v.emplace_back(n, k);
+        std::sort(v.rbegin(), v.rend());
+        for (size_t i = 0; i < v.size() && i < limit; ++i)
+            std::printf("  %7zu %s\n", v[i].first, v[i].second.c_str());
+    };
+    dump("errors", errors, 20);
+    dump("curves", curves, 10);
+    dump("values", values, 10);
+    dump("channel kinds", attributes, 30);
+    dump("target tags", tags, 15);
+    return ok == total ? 0 : 1;
+}
+
 } // namespace
 
 int animCommand(const std::string& cmd, int argc, char** argv) {
     if (cmd == "skeleton" && argc == 4)
         return cmdSkeleton(argv[2], withSuffix(argv[3], "_cres"));
+    if (cmd == "anim" && (argc == 4 || argc == 5))
+        return cmdAnim(argv[2], withSuffix(argv[3], "_anim"), argc == 5 && std::string(argv[4]) == "--keys");
+    if (cmd == "anim-list" && (argc == 3 || argc == 4))
+        return cmdAnimList(argv[2], argc == 4 ? argv[3] : "");
+    if (cmd == "anim-sweep" && argc == 3)
+        return cmdAnimSweep(argv[2]);
     (void)kTypeCres;
     return -1;
 }
 
 const char* animUsage() {
-    return "       s2pkg skeleton <Res-dir> <cres-name>\n";
+    return "       s2pkg skeleton <Res-dir> <cres-name>\n"
+           "       s2pkg anim <Res-dir> <anim-name> [--keys]\n"
+           "       s2pkg anim-list <Res-dir> [name-filter]\n"
+           "       s2pkg anim-sweep <Res-dir>\n";
 }
 
 } // namespace os2

@@ -1,5 +1,6 @@
 #include "describe.hpp"
 
+#include "formats/anim.hpp"
 #include "formats/bhav.hpp"
 #include "formats/gmdc.hpp"
 #include "formats/image.hpp"
@@ -20,13 +21,13 @@ namespace {
 namespace t {
 constexpr uint32_t TXTR = 0x1C4A276C, TXMT = 0x49596978, GMND = 0x7BA3838C, GMDC = 0xAC4F8687, CRES = 0xE519C933,
                    LIFO = 0xED534136, SHPE = 0xFC6EB1F7, LGHT_AMB = 0xC9C81B9B,
-                   LGHT_DIR = 0xC9C81BA3, LGHT_PNT = 0xC9C81BA9, LGHT_SPT = 0xC9C81BAD;
+                   LGHT_DIR = 0xC9C81BA3, LGHT_PNT = 0xC9C81BA9, LGHT_SPT = 0xC9C81BAD, ANIM = 0xFB00791E;
 }
 
 bool isRcolType(uint32_t type) {
     switch (type) {
     case t::TXTR: case t::TXMT: case t::GMND: case t::GMDC: case t::CRES: case t::LIFO: case t::SHPE:
-    case t::LGHT_AMB: case t::LGHT_DIR: case t::LGHT_PNT: case t::LGHT_SPT:
+    case t::LGHT_AMB: case t::LGHT_DIR: case t::LGHT_PNT: case t::LGHT_SPT: case t::ANIM:
         return true;
     default:
         return false;
@@ -199,6 +200,21 @@ void describeBlock(std::string& out, const Rcol::Block& b) {
                                             : it.geometryName.c_str());
         for (const auto& p : s.parts)
             appendf(out, "  part %s -> %s\n", p.subset.c_str(), p.material.c_str());
+    } else if (c == "cAnimResourceConst") {
+        const auto a = Animation::parse(b.body);
+        size_t keys = 0, channels = 0;
+        for (const auto& t : a.targets)
+            for (const auto& ch : t.channels) {
+                ++channels;
+                for (const auto& comp : ch.components)
+                    keys += comp.keys.size();
+            }
+        appendf(out, "  name=%s duration=%u ticks skeleton=%s targets=%zu channels=%zu keys=%zu events=%zu\n",
+                a.resource.fileName.c_str(), a.duration, a.skeletonTag.c_str(), a.targets.size(), channels, keys,
+                a.events.size());
+        for (const auto& t : a.targets)
+            appendf(out, "  target %s: %zu channels, %zu IK chains\n", t.tag.c_str(), t.channels.size(),
+                    t.ikChains.size());
     } else if (c == "cGeometryNode") {
         const auto g = GeometryNode::parse(b.body);
         appendf(out, "  name=%s builders=%u\n", g.resource.fileName.c_str(), g.builderCount);

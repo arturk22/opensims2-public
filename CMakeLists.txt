@@ -13,6 +13,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 add_library(os2_formats
+  src/formats/anim.cpp
   src/formats/bhav.cpp
   src/formats/camera_config.cpp
   src/formats/config_text.cpp
@@ -105,3 +106,7 @@ if(APPLE)
   target_link_libraries(test_render PRIVATE os2_render)
   add_test(NAME render COMMAND test_render)
 endif()
+
+add_executable(test_anim tests/test_anim.cpp)
+target_link_libraries(test_anim PRIVATE os2_formats)
+add_test(NAME anim COMMAND test_anim)
