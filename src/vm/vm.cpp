@@ -234,12 +234,62 @@ static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     }
 }
 
+// Fields of a temporary token (data owners 0x27/0x28), numbered as in TempToken.
+static int16_t& tokenProperty(TempToken& t) {
+    return slot(t.token.properties, t.propertyIndex, "temporary token property");
+}
+
+static int16_t tokenField(TempToken& t, int16_t field) {
+    switch (field) {
+    case 0: return int16_t(t.kind);
+    case 1: return t.inventoryId;
+    case 2: return t.counted;
+    case 3: return t.index;
+    case 4: return int16_t(t.token.guid & 0xFFFF);
+    case 5: return int16_t(t.token.guid >> 16);
+    case 6: return t.token.flags;
+    case 7: return int16_t(t.counted ? t.token.count : t.token.properties.size());
+    case 8: return t.propertyIndex;
+    case 9: return tokenProperty(t);
+    default: throw VMError("temporary token field " + std::to_string(field) + " out of range");
+    }
+}
+
+static void setTokenField(TempToken& t, int16_t field, int16_t value) {
+    switch (field) {
+    case 0:
+        if (value < 0 || value > 3)
+            throw VMError("temporary token: inventory kind " + std::to_string(value) + " out of range");
+        t.kind = InventoryKind(value);
+        return;
+    case 1: t.inventoryId = value; return;
+    case 2: t.counted = value != 0; return;
+    case 3: t.index = value; return;
+    case 4: t.token.guid = (t.token.guid & 0xFFFF0000) | uint16_t(value); return;
+    case 5: t.token.guid = (t.token.guid & 0xFFFF) | uint32_t(uint16_t(value)) << 16; return;
+    case 6: t.token.flags = value; return;
+    case 7:
+        if (t.counted)
+            t.token.count = value;
+        else if (value < 0 || size_t(value) > kMaxTokenProperties)
+            throw VMError("temporary token: property count " + std::to_string(value) + " out of range");
+        else
+            t.token.properties.resize(size_t(value));
+        return;
+    case 8: t.propertyIndex = value; return;
+    case 9: tokenProperty(t) = value; return;
+    default: throw VMError("temporary token field " + std::to_string(field) + " out of range");
+    }
+}
+
 int16_t Context::get(uint8_t owner, int16_t data) const {
     if (int16_t* v = storage(*this, owner, data))
         return *v;
     switch (owner) {
     case 0x07: return data; // literal
     case 0x0A: return frame.stackObject;
+    case 0x27: return tokenField(me().tempToken, data);
+    case 0x28: return tokenField(stackObject().tempToken, data);
     case 0x15: return definitionField(stackObject(), data);
     case 0x1A: {
         // High bits pick the BCON (private, semi-global or global), low 7 bits the entry.
@@ -262,6 +312,8 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
     }
     switch (owner) {
     case 0x0A: frame.stackObject = value; return;
+    case 0x27: setTokenField(me().tempToken, data, value); return;
+    case 0x28: setTokenField(stackObject().tempToken, data, value); return;
     case 0x07:
     case 0x15: // the editor marks only some definition fields read-only; writes are not supported yet
     case 0x1A: throw VMError("data owner " + hexString(owner) + " is read-only");

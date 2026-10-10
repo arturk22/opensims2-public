@@ -82,6 +82,46 @@ constexpr size_t kMaxRelationshipVars = 32;
 // Object type (OBJD "type") of a Sim.
 constexpr uint16_t kObjectTypePerson = 2;
 
+// Inventories (Manage Inventory) and their tokens grow on demand; this bounds them.
+constexpr size_t kMaxInventoryTokens = 4096;
+constexpr size_t kMaxTokenProperties = 256;
+
+// An inventory token: memories, skills, wants, food units, ... are singular
+// tokens of an object GUID with flags and a list of properties; counted tokens
+// (gifts, outfits, games) have a category and a count instead.
+struct InventoryToken {
+    uint32_t guid = 0;
+    int16_t flags = 0;
+    std::vector<int16_t> properties;
+    int16_t category = 0; // counted
+    int16_t count = 0;    // counted
+};
+
+// Inventories are global, of a lot ("house"), of a family or of a neighbor
+// (the order of "Which Inventory(G = 0, H, F, N)" in the editor's labels,
+// STR# 0xFC), each identified by an ID except the global one.
+enum class InventoryKind : uint8_t { Global, Lot, Family, Neighbor };
+
+struct Inventory {
+    std::vector<InventoryToken> singular;
+    std::vector<InventoryToken> counted;
+};
+
+// The token Manage Inventory reads from an inventory, with where it came from,
+// so its properties can be changed and saved back. Fields as data owners
+// 0x27/0x28 see them, labelled in STR# 0xFC: 0 inventory kind, 1 inventory ID,
+// 2 singular (0) or counted, 3 token index, 4-5 GUID low/high word, 6 flags,
+// 7 property count, 8 property index, 9 property value (at that index).
+struct TempToken {
+    InventoryToken token;
+    bool loaded = false;
+    InventoryKind kind = InventoryKind::Global;
+    int16_t inventoryId = 0;
+    bool counted = false;
+    int16_t index = 0; // 1-based, as in the trees
+    int16_t propertyIndex = 0;
+};
+
 struct VMError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
@@ -161,6 +201,8 @@ struct Object {
     Array& array(int idx); // created on demand; throws VMError past kMaxObjectArrays
     // Materials set by Change Material: mesh group name ("" = every group) -> material name.
     std::map<std::string, std::string> materials;
+    // Data owners 0x27 (mine) and 0x28 (the stack object's).
+    TempToken tempToken;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
@@ -251,6 +293,14 @@ public:
     std::map<std::pair<RelationshipKey, RelationshipKey>, std::vector<int16_t>> relationships;
     // Key of an object (its neighbor ID if it is a Sim that has one).
     RelationshipKey relationshipKey(ObjectId id);
+
+    // Inventories by kind and ID (0 for the global one), created on demand:
+    // there is no neighborhood yet to say which IDs exist.
+    std::map<std::pair<InventoryKind, int16_t>, Inventory> inventories;
+    Inventory& inventory(InventoryKind kind, int16_t id) {
+        return inventories[{kind, kind == InventoryKind::Global ? int16_t(0) : id}];
+    }
+
     std::mt19937 random{0x5132};
 
     void setPrimitive(uint16_t opcode, Primitive p) { primitives_[opcode] = std::move(p); }

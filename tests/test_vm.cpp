@@ -456,6 +456,40 @@ static void testChangeMaterial() {
           "Change Material records mesh group materials");
 }
 
+static void testManageInventory() {
+    Fixture fx;
+    fx.obj();
+    constexpr uint32_t kGuid = 0x4DDF0E12;
+    // Neighbor 5's singular inventory: (op, guid, owner1, data1, owner2, data2).
+    auto inv = [](uint8_t op, uint32_t guid, uint8_t o1, int16_t d1, uint8_t o2, int16_t d2, Target t, Target f) {
+        return instr(0x33, t, f,
+                     {3, Lit, 5, 0, op, uint8_t(guid), uint8_t(guid >> 8), uint8_t(guid >> 16), uint8_t(guid >> 24), 0,
+                      o1, uint8_t(d1), 0, o2, uint8_t(d2), 0});
+    };
+    constexpr uint8_t Token = 0x27;
+    fx.code.add(kObjGroup, 0x1000,
+                tree({inv(0, kGuid, Lit, 0, Lit, 0, go(1), E),         // add
+                      inv(0, kGuid, Lit, 0, Lit, 0, go(2), E),         // add another
+                      inv(3, kGuid, Temp, 0, Lit, 0, go(3), E),        // find: temp0 = 1
+                      inv(4, 0, Temp, 0, Lit, 42, go(4), E),           // token 1 properties: [42]
+                      inv(10, 0, Lit, 0, Temp, 1, go(5), E),           // count: temp1 = 2
+                      inv(6, 0, Lit, 1, Lit, 0, go(6), E),             // read token 1
+                      inv(7, 0, Lit, 0, Temp, 2, go(7), E),            // temp2 = 42
+                      inv(8, 0, Lit, 0, Lit, 7, go(8), E),             // property 0 := 7
+                      inv(9, 0, Lit, 0, Lit, 0, go(9), E),             // save it back
+                      expr(Temp, 3, Assign, Token, 7, go(10), E),      // temp3 = property count = 1
+                      inv(6, kGuid, Lit, 2, Lit, 0, go(11), E),        // next of the GUID from 2: token 2
+                      inv(7, 0, Lit, 0, Temp, 6, E, go(12)),           // it has no properties: false
+                      inv(5, 0, Lit, 1, Temp, 4, go(13), E),           // pop token 1's: temp4 = 7
+                      inv(2, kGuid, Lit, 0, Lit, 0, go(14), E),        // remove all of the GUID
+                      inv(10, 0, Lit, 0, Temp, 5, go(15), E),          // temp5 = 0
+                      inv(6, 0, Lit, 1, Lit, 0, E, T)}));              // nothing to read: false
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Finished && t.temps[0] == 1 && t.temps[1] == 2 && t.temps[2] == 42 &&
+              t.temps[3] == 1 && t.temps[4] == 7 && t.temps[5] == 0,
+          "Manage Inventory adds, finds, reads, changes and saves tokens");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -469,6 +503,7 @@ int main() {
     testRelationship();
     testArrays();
     testChangeMaterial();
+    testManageInventory();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

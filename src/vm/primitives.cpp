@@ -383,6 +383,165 @@ Exit changeMaterial(Context& c) {
     return Exit::True;
 }
 
+// Manage Inventory (0x33): u8 at 0 (bits 0-1 the inventory kind, "G = 0, H,
+// F, N" in STR# 0xFC; 0x04 counted instead of singular tokens), inventory ID
+// (owner u8 at 1, data u16; not read for the global inventory), operation u8
+// at 4, GUID u32 at 5, category u8 at 9 (counted tokens), then two operands
+// (owner u8, data u16 at 10 and 13). The operation names come from the
+// editor's disassembly strings in Sims2.exe ("Add token", "Find the token",
+// "Push property on token at index from", "Set To Next token", "Save My Temp
+// Token back to the location it was loaded from", ...); which number is which,
+// and the rest, from how the trees use them:
+//   0 add a token of the GUID (0: the stack object's, as in "CT - Add Memory"
+//     and "CT - Add to Inventory"); counted: add the second operand to its count
+//   1 remove the token at index (first operand)
+//   2 remove every token of the GUID
+//   3 find the first token of the GUID, index into the first operand; false if none
+//   4 push the second operand onto the properties of the token at index (first)
+//   5 pop the last property of the token at index (first) into the second; false if none
+//   6 read the token at index (first) into my temporary token; with a GUID, the
+//     next token of that GUID from there on (the index is written back); false
+//     past the end (loops stop on it)
+//   7 property (first) of my temporary token into the second; false if out of range
+//   8 set property (first) of my temporary token to the second; false if out of range
+//   9 save my temporary token back where it was read; false if it is gone
+//  10 token count into the second operand
+//  11 add a copy of my temporary token ("Copy Marker (no dupe)", "Transport
+//     Tokens - Copy Global to Local"; "Move Invitees from Local to Global" walks
+//     the source by index while doing it, so the source keeps its token)
+// Token indices start at 1: the loops over an inventory run from 1 to the count,
+// or from the count down to 1. Not understood: bits 0x08 and 0x10 of byte 0
+// (0x08 with counted adds, 0x18 on memory and aspiration finds), and counted
+// tokens beyond add and count.
+Exit manageInventory(Context& c) {
+    const auto& o = c.instruction.operands;
+    const auto kind = InventoryKind(o[0] & 0x03);
+    const bool counted = o[0] & 0x04;
+    const int16_t id = kind == InventoryKind::Global ? 0 : c.get(o[1], int16_t(le16(&o[2])));
+    const uint8_t op = o[4];
+    const uint32_t guid = le32(&o[5]);
+    auto get1 = [&] { return c.get(o[10], int16_t(le16(&o[11]))); };
+    auto set1 = [&](int16_t v) { c.set(o[10], int16_t(le16(&o[11])), v); };
+    auto get2 = [&] { return c.get(o[13], int16_t(le16(&o[14]))); };
+    auto set2 = [&](int16_t v) { c.set(o[13], int16_t(le16(&o[14])), v); };
+    Inventory& inventory = c.vm.inventory(kind, id);
+    auto& tokens = counted ? inventory.counted : inventory.singular;
+    auto guidOrStackObject = [&] { return guid ? guid : c.stackObject().guid(); };
+    auto checkRoom = [&] {
+        if (tokens.size() >= kMaxInventoryTokens)
+            throw VMError("Manage Inventory: inventory full");
+    };
+    auto at = [&](int16_t index) -> InventoryToken& {
+        if (index < 1 || size_t(index) > tokens.size())
+            throw VMError("Manage Inventory: token index " + std::to_string(index) + " out of range (" +
+                          std::to_string(tokens.size()) + ")");
+        return tokens[size_t(index) - 1];
+    };
+    TempToken& temp = c.me().tempToken;
+
+    if (counted) {
+        switch (op) {
+        case 0: {
+            const uint32_t g = guidOrStackObject();
+            const int16_t n = get2();
+            auto it = std::find_if(tokens.begin(), tokens.end(), [&](const auto& t) { return t.guid == g; });
+            if (it == tokens.end()) {
+                checkRoom();
+                tokens.push_back({.guid = g, .category = o[9]});
+                it = tokens.end() - 1;
+            }
+            it->count = int16_t(it->count + n);
+            return Exit::True;
+        }
+        case 10: set2(int16_t(tokens.size())); return Exit::True;
+        default:
+            throw VMError("Manage Inventory: counted operation " + std::to_string(op) + " not implemented");
+        }
+    }
+
+    switch (op) {
+    case 0:
+        checkRoom();
+        tokens.push_back({.guid = guidOrStackObject()});
+        return Exit::True;
+    case 1: {
+        const int16_t index = get1();
+        at(index);
+        tokens.erase(tokens.begin() + (index - 1));
+        return Exit::True;
+    }
+    case 2:
+        std::erase_if(tokens, [&](const auto& t) { return t.guid == guid; });
+        return Exit::True;
+    case 3: {
+        auto it = std::find_if(tokens.begin(), tokens.end(), [&](const auto& t) { return t.guid == guid; });
+        if (it == tokens.end())
+            return Exit::False;
+        set1(int16_t(it - tokens.begin() + 1));
+        return Exit::True;
+    }
+    case 4: {
+        auto& props = at(get1()).properties;
+        if (props.size() >= kMaxTokenProperties)
+            throw VMError("Manage Inventory: too many token properties");
+        props.push_back(get2());
+        return Exit::True;
+    }
+    case 5: {
+        auto& props = at(get1()).properties;
+        if (props.empty())
+            return Exit::False;
+        const int16_t v = props.back();
+        props.pop_back();
+        set2(v);
+        return Exit::True;
+    }
+    case 6: {
+        const int16_t start = get1();
+        int16_t index = start;
+        if (guid) {
+            while (index >= 1 && size_t(index) <= tokens.size() && tokens[size_t(index) - 1].guid != guid)
+                ++index;
+        }
+        if (index < 1 || size_t(index) > tokens.size())
+            return Exit::False;
+        if (index != start)
+            set1(index);
+        temp = {.token = tokens[size_t(index) - 1], .loaded = true, .kind = kind, .inventoryId = id, .index = index};
+        return Exit::True;
+    }
+    case 7:
+    case 8: {
+        const int16_t p = get1();
+        if (!temp.loaded || p < 0 || size_t(p) >= temp.token.properties.size())
+            return Exit::False;
+        if (op == 7)
+            set2(temp.token.properties[size_t(p)]);
+        else
+            temp.token.properties[size_t(p)] = get2();
+        return Exit::True;
+    }
+    case 9: {
+        if (!temp.loaded)
+            return Exit::False;
+        auto& source = c.vm.inventory(temp.kind, temp.inventoryId);
+        auto& list = temp.counted ? source.counted : source.singular;
+        if (temp.index < 1 || size_t(temp.index) > list.size())
+            return Exit::False;
+        list[size_t(temp.index) - 1] = temp.token;
+        return Exit::True;
+    }
+    case 10: set2(int16_t(tokens.size())); return Exit::True;
+    case 11:
+        if (!temp.loaded)
+            return Exit::False;
+        checkRoom();
+        tokens.push_back(temp.token);
+        return Exit::True;
+    default: throw VMError("Manage Inventory: operation " + std::to_string(op) + " not implemented");
+    }
+}
+
 } // namespace
 
 void registerPrimitives(VM& vm) {
@@ -397,6 +556,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x1F, setToNext);
     vm.setPrimitive(0x20, testObjectType);
     vm.setPrimitive(0x2A, createObjectInstance);
+    vm.setPrimitive(0x33, manageInventory);
     vm.setPrimitive(0x6D, changeMaterial);
     vm.setPrimitive(0x76, arrayOperation);
 }
