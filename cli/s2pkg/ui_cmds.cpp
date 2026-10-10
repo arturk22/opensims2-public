@@ -5,6 +5,7 @@
 #include "formats/resindex.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
+#include "formats/ui_screen.hpp"
 #include "formats/ui_script.hpp"
 
 #include <algorithm>
@@ -317,6 +318,34 @@ int cmdFontText(const char* fontOrDir, const char* styleOrSize, const char* text
     return 0;
 }
 
+// Lays out a UI script and draws it on the CPU.
+int cmdUiRender(const char* resDir, uint32_t instance, const char* out, int argc, char** argv) {
+    UiLayoutOptions opt;
+    for (int i = 0; i + 1 < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--show")
+            for (const auto& id : uiList(std::string("(") + argv[i + 1] + ")"))
+                opt.show.insert(uint32_t(std::stoul(id, nullptr, 16)));
+        else if (a == "--size")
+            std::sscanf(argv[i + 1], "%dx%d", &opt.canvasWidth, &opt.canvasHeight);
+    }
+    ResourceIndex index(resDir);
+    UiResources res(index, resDir);
+    FontLibrary fonts(std::filesystem::path(resDir) / "UI/Fonts");
+    auto script = res.script(instance);
+    if (!script) {
+        std::fprintf(stderr, "no UI script %08X\n", instance);
+        return 1;
+    }
+    const UiScreen screen = layoutUi(*script, res, fonts, opt);
+    for (const auto& w : screen.warnings)
+        std::printf("warning: %s\n", w.c_str());
+    writePng(out, composeUi(screen));
+    std::printf("%zu windows, %zu drawn, %zu texts, %zu quads, %zu missing images -> %s\n", screen.windows, screen.drawn,
+                screen.texts, screen.quads.size(), screen.missingImages, out);
+    return 0;
+}
+
 } // namespace
 
 const char* uiUsage() {
@@ -324,6 +353,7 @@ const char* uiUsage() {
            "       s2pkg ui-dump <Res-dir> <instance-hex> [group-hex] [--all]\n"
            "       s2pkg ui-sweep <Res-dir>\n"
            "       s2pkg ui-image <Res-dir|file.package> <group-hex> <instance-hex> <out.png>\n"
+           "       s2pkg ui-render <Res-dir> <instance-hex> <out.png> [--show id,id...] [--size WxH]\n"
            "       s2pkg font-sweep <Fonts-dir>\n"
            "       s2pkg font-text <file.mxf> <pixels> <text> <out.png>\n"
            "       s2pkg font-text <Fonts-dir> <style|0xGUID> <text> <out.png>\n";
@@ -341,6 +371,8 @@ int uiCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (cmd == "ui-image" && argc == 6)
         return cmdUiImage(argv[2], parseHex(argv[3]), parseHex(argv[4]), argv[5]);
+    if (cmd == "ui-render" && argc >= 5)
+        return cmdUiRender(argv[2], parseHex(argv[3]), argv[4], argc - 5, argv + 5);
     if (cmd == "font-sweep" && argc == 3)
         return cmdFontSweep(argv[2]);
     if (cmd == "font-text" && argc == 6)

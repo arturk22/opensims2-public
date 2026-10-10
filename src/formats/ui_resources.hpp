@@ -21,13 +21,19 @@ namespace os2 {
 // means Text/UIText.package.
 class UiResources {
 public:
-    // `index` must cover `resRoot` (normally TSData/Res).
-    UiResources(ResourceIndex& index, const std::filesystem::path& resRoot);
+    // `index` must cover `resRoot` (normally TSData/Res). Scripts and images
+    // come first from Locale/<locale>/UI/ui.package, then UI/ui.package, then
+    // the index: the index keeps the first of duplicate keys in path order, so
+    // another locale's copy (Locale/Dutch has its own logo) would win there.
+    UiResources(ResourceIndex& index, const std::filesystem::path& resRoot,
+                const std::string& locale = "Brazilian Portuguese");
+
+    // Bytes of a UI resource, by the lookup order above.
+    std::optional<std::vector<uint8_t>> read(const Tgi& tgi);
 
     ResourceIndex& index() { return index_; }
 
-    // UI script by instance (group 0xA99D8A11). Locale overrides come first
-    // in the index (Locale/Brazilian Portuguese sorts before UI/).
+    // UI script by instance (group 0xA99D8A11).
     std::optional<UiScript> script(uint32_t instance, uint32_t group = kUiGroup);
 
     // Decoded image (cached; nullopt if missing or undecodable).
@@ -39,6 +45,7 @@ public:
 
 private:
     ResourceIndex& index_;
+    std::vector<std::unique_ptr<DbpfPackage>> uiPackages_; // locale first
     std::multimap<uint32_t, std::filesystem::path> packagesByGroup_;
     std::map<std::pair<uint32_t, uint32_t>, std::unique_ptr<StringTable>> tables_; // null if missing
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::unique_ptr<RgbaImage>> images_;

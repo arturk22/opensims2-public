@@ -10,7 +10,11 @@ namespace {
 constexpr uint32_t kTypeStr = 0x53545223;
 }
 
-UiResources::UiResources(ResourceIndex& index, const std::filesystem::path& resRoot) : index_(index) {
+UiResources::UiResources(ResourceIndex& index, const std::filesystem::path& resRoot, const std::string& locale)
+    : index_(index) {
+    for (const auto& p : {resRoot / "Locale" / locale / "UI" / "ui.package", resRoot / "UI" / "ui.package"})
+        if (std::filesystem::exists(p))
+            uiPackages_.push_back(std::make_unique<DbpfPackage>(p));
     for (const auto& de : std::filesystem::recursive_directory_iterator(resRoot)) {
         if (!de.is_regular_file())
             continue;
@@ -22,8 +26,15 @@ UiResources::UiResources(ResourceIndex& index, const std::filesystem::path& resR
     }
 }
 
+std::optional<std::vector<uint8_t>> UiResources::read(const Tgi& tgi) {
+    for (auto& p : uiPackages_)
+        if (const auto* e = p->find(tgi))
+            return p->read(*e);
+    return index_.read(tgi);
+}
+
 std::optional<UiScript> UiResources::script(uint32_t instance, uint32_t group) {
-    auto bytes = index_.read(Tgi{kTypeUiScript, group, instance, 0});
+    auto bytes = read(Tgi{kTypeUiScript, group, instance, 0});
     if (!bytes || isReia(*bytes))
         return std::nullopt;
     return UiScript::parse(*bytes);
@@ -34,7 +45,7 @@ const RgbaImage* UiResources::image(const UiResourceRef& ref) {
     auto it = images_.find(key);
     if (it == images_.end()) {
         std::unique_ptr<RgbaImage> img;
-        if (auto bytes = index_.read(Tgi{ref.type, ref.group, ref.instance, 0}))
+        if (auto bytes = read(Tgi{ref.type, ref.group, ref.instance, 0}))
             if (auto decoded = decodeUiImage(*bytes))
                 img = std::make_unique<RgbaImage>(std::move(*decoded));
         it = images_.emplace(key, std::move(img)).first;

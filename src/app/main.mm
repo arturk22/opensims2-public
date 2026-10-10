@@ -11,7 +11,10 @@
 // meshes on the adult skeleton; either plays --anim <name> (looped; --time
 // <seconds> picks the moment of a --screenshot). --play-sound <name | TGI>
 // plays a sound (the --sound-index'th sample of a track; --sound-wav <out.wav>
-// also saves it) and exits without opening a window.
+// also saves it) and exits without opening a window. --ui <instance-hex> draws a
+// UI script from ui.package over the scene (1024x768 canvas, letterboxed;
+// --ui-show <id,id,...> shows windows the script hides, e.g. the main menu's
+// background 0da36c7d).
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -31,10 +34,14 @@
 #include "formats/model.hpp"
 #include "formats/sim.hpp"
 #include "formats/skinning.hpp"
+#include "formats/font.hpp"
+#include "formats/ui_resources.hpp"
+#include "formats/ui_screen.hpp"
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
 #include "render/camera.hpp"
 #include "render/renderer.hpp"
+#include "render/ui_layer.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -345,6 +352,36 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
     return simd_make_float3(2.5f, -2.5f, 0.9f);
 }
 
+std::unique_ptr<os2::UiLayer> gUi;
+
+// --ui <instance-hex>: lays out that UI script and hands it to the renderer as
+// an overlay. Returns the canvas size, for the screenshot.
+std::optional<std::pair<uint32_t, uint32_t>> loadUi(os2::Renderer& renderer, os2::ResourceIndex& index, MTKView* view) {
+    const auto id = argument(@"--ui");
+    if (!id)
+        return std::nullopt;
+    const fs::path res = gameDir() / "TSData/Res";
+    os2::UiResources ui(index, res);
+    auto script = ui.script(uint32_t(std::stoul(*id, nullptr, 16)));
+    if (!script)
+        throw std::runtime_error("no UI script " + *id);
+    os2::UiLayoutOptions opt;
+    if (auto show = argument(@"--ui-show"))
+        for (const auto& w : os2::uiList("(" + *show + ")"))
+            opt.show.insert(uint32_t(std::stoul(w, nullptr, 16)));
+    os2::FontLibrary fonts(res / "UI/Fonts");
+    const os2::UiScreen screen = os2::layoutUi(*script, ui, fonts, opt);
+    for (const auto& w : screen.warnings)
+        std::fprintf(stderr, "opensims2: ui %s: %s\n", id->c_str(), w.c_str());
+    gUi = std::make_unique<os2::UiLayer>((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                                         uint32_t(view.depthStencilPixelFormat));
+    gUi->setScreen(screen);
+    renderer.setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) { gUi->encode(enc, w, h); });
+    std::printf("opensims2: ui %s: %zu windows, %zu drawn, %zu texts, %zu quads\n", id->c_str(), screen.windows,
+                screen.drawn, screen.texts, screen.quads.size());
+    return std::make_pair(uint32_t(screen.width), uint32_t(screen.height));
+}
+
 // Lighting state from the game's Lighting.txt: --lighting <name>, else "day".
 void applyLighting(os2::Renderer& renderer) {
     const std::string name = argument(@"--lighting").value_or("day");
@@ -544,6 +581,7 @@ enum Key : unsigned short {
         os2::ResourceIndex index(gameDir() / "TSData/Res");
         const simd_float3 objects = loadObjects(*_viewDelegate.renderer, index);
         const auto skinned = loadSkinned(*_viewDelegate.renderer, index);
+        const auto uiCanvas = loadUi(*_viewDelegate.renderer, index, view);
         simd_float3 pivot = loadLot(*_viewDelegate.renderer, index).value_or(skinned.value_or(objects));
         // --pivot <x,y>: look at that point instead (tiles, at the same height).
         float px, py;
@@ -561,7 +599,7 @@ enum Key : unsigned short {
             const double time = std::stod(argument(@"--time").value_or("0"));
             poseActors(*_viewDelegate.renderer, time);
             _viewDelegate.renderer->setTime(time); // texture animations
-            const uint32_t w = 1280, h = 720;
+            const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;
             os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
             MTLClearColor c = view.clearColor;
             auto img = _viewDelegate.renderer->capture(

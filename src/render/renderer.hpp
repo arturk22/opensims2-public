@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -19,6 +20,7 @@ class CommandQueue;
 class DepthStencilState;
 class Device;
 class RenderPassDescriptor;
+class RenderCommandEncoder;
 class RenderPipelineState;
 class SamplerState;
 class Texture;
@@ -69,6 +71,10 @@ public:
     // Clock for texture coordinate animations, in seconds; until it is set
     // (or after setting it negative) the renderer uses its own running time.
     void setTime(double seconds) { time_ = seconds; }
+    // Called at the end of every frame's render pass, after the scene, with the
+    // pass's encoder and colour target size: 2D overlays such as the UI.
+    using Overlay = std::function<void(MTL::RenderCommandEncoder*, uint32_t width, uint32_t height)>;
+    void setOverlay(Overlay overlay) { overlay_ = std::move(overlay); }
 
     // Encodes and commits one frame; `pass` and `drawable` come from the view.
     void draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable, const FrameView& view);
@@ -126,6 +132,7 @@ private:
     int frame_ = 0;
     double time_ = -1;
     std::chrono::steady_clock::time_point start_ = std::chrono::steady_clock::now();
+    Overlay overlay_;
 };
 
 } // namespace os2

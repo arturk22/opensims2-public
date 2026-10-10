@@ -50,6 +50,7 @@ add_library(os2_formats
   src/formats/txmt.cpp
   src/formats/ui_image.cpp
   src/formats/ui_resources.cpp
+  src/formats/ui_screen.cpp
   src/formats/ui_script.cpp
 )
 target_include_directories(os2_formats PUBLIC src)
@@ -92,6 +93,7 @@ if(APPLE)
     src/render/metal_impl.cpp
     src/render/renderer.cpp
     src/render/texture.cpp
+    src/render/ui_layer.cpp
   )
   target_include_directories(os2_render PUBLIC src third_party/metal-cpp
                              PRIVATE ${CMAKE_BINARY_DIR}/generated)
