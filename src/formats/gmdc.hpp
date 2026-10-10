@@ -89,6 +89,7 @@ struct GeometryData {
     SimpleMesh boundingMesh;
     std::vector<SimpleMesh> joints;
 
+    static GeometryData read(BinReader& r);
     static GeometryData parse(std::span<const uint8_t> body);
 };
 

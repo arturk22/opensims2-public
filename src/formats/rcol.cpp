@@ -1,5 +1,7 @@
 #include "rcol.hpp"
 
+#include "scenegraph.hpp"
+
 namespace os2 {
 
 namespace {
@@ -25,6 +27,13 @@ size_t findBlockHeader(std::span<const uint8_t> d, size_t from, uint32_t typeId)
                 return start - 1;
     }
     return std::string::npos;
+}
+
+bool isBlockHeaderAt(std::span<const uint8_t> d, size_t at, uint32_t typeId) {
+    if (at >= d.size())
+        return false;
+    const size_t len = d[at];
+    return len > 0 && at + 1 + len + 4 <= d.size() && d[at + 1] == 'c' && le32(&d[at + 1 + len]) == typeId;
 }
 
 } // namespace
@@ -73,7 +82,13 @@ Rcol::Rcol(std::span<const uint8_t> data) {
         const size_t start = r.pos();
         size_t end = data.size();
         if (i + 1 < blockCount) {
-            end = findBlockHeader(data, start, types[i + 1]);
+            // Known classes are measured by their parser; the header search is a
+            // fallback, since embedded blocks can repeat the next block's type id.
+            const size_t measured = measureRcolBlock(b.className, data.subspan(start));
+            if (measured != std::string::npos && isBlockHeaderAt(data, start + measured, types[i + 1]))
+                end = start + measured;
+            else
+                end = findBlockHeader(data, start, types[i + 1]);
             if (end == std::string::npos)
                 throw FormatError("RCOL: cannot find block " + std::to_string(i + 1));
         }

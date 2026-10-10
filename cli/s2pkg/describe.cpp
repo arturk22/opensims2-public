@@ -3,6 +3,8 @@
 #include "formats/gmdc.hpp"
 #include "formats/image.hpp"
 #include "formats/rcol.hpp"
+#include "formats/scenegraph.hpp"
+#include "formats/txmt.hpp"
 
 #include <cstdarg>
 #include <cstdio>
@@ -14,14 +16,14 @@ namespace {
 
 namespace t {
 constexpr uint32_t TXTR = 0x1C4A276C, TXMT = 0x49596978, GMND = 0x7BA3838C, GMDC = 0xAC4F8687, CRES = 0xE519C933,
-                   LIFO = 0xED534136, SHPE = 0xFC6EB1F7, CINE = 0x4D51F042, LGHT_AMB = 0xC9C81B9B,
+                   LIFO = 0xED534136, SHPE = 0xFC6EB1F7, LGHT_AMB = 0xC9C81B9B,
                    LGHT_DIR = 0xC9C81BA3, LGHT_PNT = 0xC9C81BA9, LGHT_SPT = 0xC9C81BAD;
 }
 
 bool isRcolType(uint32_t type) {
     switch (type) {
     case t::TXTR: case t::TXMT: case t::GMND: case t::GMDC: case t::CRES: case t::LIFO: case t::SHPE:
-    case t::CINE: case t::LGHT_AMB: case t::LGHT_DIR: case t::LGHT_PNT: case t::LGHT_SPT:
+    case t::LGHT_AMB: case t::LGHT_DIR: case t::LGHT_PNT: case t::LGHT_SPT:
         return true;
     default:
         return false;
@@ -91,6 +93,117 @@ void describeGeometry(std::string& out, const Rcol::Block& b) {
                 m.uvs.empty() ? "no" : "yes");
 }
 
+void describeMaterial(std::string& out, const Rcol::Block& b) {
+    const auto m = MaterialDefinition::parse(b.body);
+    appendf(out, "  name=%s type=%s desc=%s\n", m.resource.fileName.c_str(), m.materialType.c_str(),
+            m.description.c_str());
+    for (const auto& [k, v] : m.properties)
+        appendf(out, "  %s = %s\n", k.c_str(), v.c_str());
+    for (const auto& t : m.textureNames)
+        appendf(out, "  texture %s\n", t.c_str());
+}
+
+std::string refs(const std::vector<NodeRef>& v) {
+    std::string out;
+    for (const auto& n : v)
+        out += " " + std::to_string(n.index) + (n.enabled ? "" : "(off)");
+    return out;
+}
+
+void describeTransform(std::string& out, const TransformNode& t, const char* indent) {
+    appendf(out, "%sname=%s joint=%d children=[%s ]\n", indent, t.name().c_str(), t.jointReference,
+            refs(t.children).c_str());
+    appendf(out, "%strans=(%g %g %g) rot=(%g %g %g %g)\n", indent, t.translation[0], t.translation[1],
+            t.translation[2], t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
+}
+
+void describeExtensionValue(std::string& out, const ExtensionValue& v, int depth) {
+    out.append(size_t(2 + 2 * depth), ' ');
+    switch (v.type) {
+    case ExtensionValue::Int: appendf(out, "%s = %d\n", v.name.c_str(), v.i); break;
+    case ExtensionValue::Float: appendf(out, "%s = %g\n", v.name.c_str(), v.f[0]); break;
+    case ExtensionValue::Vector: appendf(out, "%s = (%g %g %g)\n", v.name.c_str(), v.f[0], v.f[1], v.f[2]); break;
+    case ExtensionValue::String: appendf(out, "%s = \"%s\"\n", v.name.c_str(), v.s.c_str()); break;
+    case ExtensionValue::Quaternion:
+        appendf(out, "%s = quat(%g %g %g %g)\n", v.name.c_str(), v.f[0], v.f[1], v.f[2], v.f[3]);
+        break;
+    case ExtensionValue::Binary: appendf(out, "%s = <%zu bytes>\n", v.name.c_str(), v.bytes.size()); break;
+    case ExtensionValue::Array:
+        appendf(out, "%s:\n", v.name.c_str());
+        for (const auto& it : v.items)
+            describeExtensionValue(out, it, depth + 1);
+        break;
+    }
+}
+
+void describeBlock(std::string& out, const Rcol::Block& b) {
+    const auto& c = b.className;
+    if (c == "cImageData") {
+        describeImageData(out, b);
+    } else if (c == "cLevelInfo") {
+        describeLevelInfo(out, b);
+    } else if (c == "cGeometryDataContainer") {
+        describeGeometry(out, b);
+    } else if (c == "cMaterialDefinition") {
+        describeMaterial(out, b);
+    } else if (c == "cTransformNode") {
+        describeTransform(out, TransformNode::parse(b.body), "  ");
+    } else if (c == "cShapeRefNode") {
+        const auto s = ShapeRefNode::parse(b.body);
+        describeTransform(out, s.renderable.transform, "  ");
+        std::string links;
+        for (const auto& l : s.shapes)
+            links += " " + std::to_string(l.linkIndex);
+        appendf(out, "  shape links=[%s ] blends=%zu named=%zu\n", links.c_str(), s.blendValues.size(),
+                s.blendNames.size());
+    } else if (c == "cResourceNode") {
+        const auto n = ResourceNode::parse(b.body);
+        appendf(out, "  name=%s typeCode=%u graph=[%s ] children=[%s ]\n",
+                (n.typeCode == 1 ? n.resource.fileName : n.graph.fileName).c_str(), n.typeCode,
+                refs(n.rootGraph().extensions).c_str(), refs(n.children).c_str());
+    } else if (c == "cDataListExtension") {
+        describeExtensionValue(out, DataListExtension::parse(b.body).root, 0);
+    } else if (c == "cBoneDataExtension") {
+        const auto e = BoneDataExtension::parse(b.body);
+        appendf(out, "  %d %d %d %g rot=(%g %g %g %g)\n", e.unknown[0], e.unknown[1], e.unknown[2], e.unknownFloat,
+                e.rotation.x, e.rotation.y, e.rotation.z, e.rotation.w);
+    } else if (c == "cTagExtension") {
+        appendf(out, "  tag=%s\n", TagExtension::parse(b.body).tag.c_str());
+    } else if (c == "cLightRefNode") {
+        const auto n = LightRefNode::parse(b.body);
+        describeTransform(out, n.renderable.transform, "  ");
+        appendf(out, "  light link=%d\n", n.lightLink);
+    } else if (c == "cViewerRefNode") {
+        const auto n = ViewerRefNode::parse(b.body);
+        describeTransform(out, n.renderable.transform, "  ");
+        appendf(out, "  camera data=%zu bytes\n", n.camera.size());
+    } else if (c == "cViewerRefNodeRecursive") {
+        const auto n = ViewerRefNodeRecursive::parse(b.body);
+        describeTransform(out, n.renderable.transform, "  ");
+        appendf(out, "  view=%s\n", n.name.c_str());
+    } else if (c == "cAmbientLight" || c == "cDirectionalLight" || c == "cPointLight" || c == "cSpotLight") {
+        const auto l = StandardLight::parse(c, b.body);
+        appendf(out, "  name=%s node=%s values=", l.resource.fileName.c_str(), l.name.c_str());
+        for (float v : l.values)
+            appendf(out, " %g", v);
+        appendf(out, "\n");
+    } else if (c == "cShape") {
+        const auto s = Shape::parse(b.body);
+        appendf(out, "  name=%s\n", s.resource.fileName.c_str());
+        for (const auto& it : s.items)
+            appendf(out, "  lod %d -> %s\n", it.lod,
+                    it.geometryName.empty() ? ("link " + std::to_string(it.linkIndex)).c_str()
+                                            : it.geometryName.c_str());
+        for (const auto& p : s.parts)
+            appendf(out, "  part %s -> %s\n", p.subset.c_str(), p.material.c_str());
+    } else if (c == "cGeometryNode") {
+        const auto g = GeometryNode::parse(b.body);
+        appendf(out, "  name=%s builders=%u\n", g.resource.fileName.c_str(), g.builderCount);
+    } else {
+        throw std::runtime_error("no decoder for block " + c);
+    }
+}
+
 std::string describeRcol(std::span<const uint8_t> data) {
     std::string out;
     Rcol rc(data);
@@ -99,12 +212,12 @@ std::string describeRcol(std::span<const uint8_t> data) {
     for (const auto& b : rc.blocks) {
         appendf(out, "block %s 0x%08X v%u (%zu bytes)\n", b.className.c_str(), b.typeId,
                 b.body.size() >= 4 ? le32(b.body.data()) : 0, b.body.size());
-        if (b.className == "cImageData")
-            describeImageData(out, b);
-        else if (b.className == "cLevelInfo")
-            describeLevelInfo(out, b);
-        else if (b.className == "cGeometryDataContainer")
-            describeGeometry(out, b);
+        try {
+            describeBlock(out, b);
+        } catch (const std::exception& ex) {
+            throw std::runtime_error("block " + std::to_string(&b - rc.blocks.data()) + " (" + b.className +
+                                     "): " + ex.what());
+        }
     }
     return out;
 }

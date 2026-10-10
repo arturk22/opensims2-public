@@ -16,10 +16,10 @@ class ResourceIndex;
 enum class TexFormat : uint32_t {
     Raw32 = 1,    // B,G,R,A
     Raw24 = 2,    // B,G,R
-    ExtRaw8 = 3,  // 8-bit grayscale
+    Alpha8 = 3,   // 8-bit alpha (shadow and cut-out masks)
     Dxt1 = 4,
     Dxt3 = 5,
-    Raw8 = 6,     // 8-bit grayscale
+    Raw8 = 6,     // 8-bit luminance (bump maps)
     ExtRaw24 = 7, // B,G,R
     Dxt5 = 8,
     ExtRaw32 = 9, // B,G,R,A
@@ -62,7 +62,8 @@ struct ImageData {
     std::string fileNameRepeat; // version 9
     std::vector<Texture> textures;
 
-    static ImageData parse(std::span<const uint8_t> body);
+    static ImageData read(BinReader& r);
+    static ImageData parse(std::span<const uint8_t> body); // whole block body
 
     // Size of mip `i` of `count` (the last one is full size).
     uint32_t mipWidth(size_t i, size_t count) const;
@@ -77,6 +78,7 @@ struct LevelInfo {
     uint32_t zLevel = 0;
     std::vector<uint8_t> data;
 
+    static LevelInfo read(BinReader& r);
     static LevelInfo parse(std::span<const uint8_t> body);
 };
 

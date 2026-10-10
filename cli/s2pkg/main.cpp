@@ -3,6 +3,7 @@
 #include "formats/dbpf.hpp"
 #include "formats/gmdc.hpp"
 #include "formats/image.hpp"
+#include "formats/model.hpp"
 #include "formats/resindex.hpp"
 
 #include <cstdio>
@@ -174,6 +175,57 @@ int cmdMesh(DbpfPackage& pkg, const Tgi& tgi, const std::filesystem::path& out) 
     return 0;
 }
 
+int cmdObject(const std::filesystem::path& root, const std::string& name, const std::filesystem::path& outDir) {
+    ResourceIndex index(root);
+    const auto model = loadObjectModel(index, name);
+    std::filesystem::create_directories(outDir);
+    const std::string base = model.name.substr(0, model.name.size() - 5); // without "_cres"
+
+    // Materials and their base textures.
+    std::ofstream mtl(outDir / (base + ".mtl"));
+    size_t textures = 0;
+    for (const auto& [mname, m] : model.materials) {
+        auto diffuse = m.property("stdMatDiffCoef");
+        for (auto& c : diffuse)
+            if (c == ',')
+                c = ' ';
+        mtl << "newmtl " << mname << "\nKd " << (diffuse.empty() ? "1 1 1" : diffuse) << "\n";
+        const auto blend = m.property("stdMatAlphaBlendMode");
+        const bool alpha = (!blend.empty() && blend != "none") || m.property("stdMatAlphaTestEnabled") == "true";
+        if (alpha && !m.property("stdMatAlphaMultiplier").empty())
+            mtl << "d " << m.property("stdMatAlphaMultiplier") << "\n";
+        const auto tex = baseTextureName(m);
+        if (tex.empty())
+            continue;
+        auto loc = index.findByName(tex, 0x1C4A276C);
+        if (!loc) {
+            std::fprintf(stderr, "warning: TXTR not found: %s\n", tex.c_str());
+            continue;
+        }
+        const auto png = tex + ".png";
+        writePng(outDir / png, loadTexture(index.read(*loc), &index));
+        ++textures;
+        mtl << "map_Kd " << png << "\n";
+        if (alpha)
+            mtl << "map_d " << png << "\n";
+    }
+
+    std::ofstream obj(outDir / (base + ".obj"));
+    obj << "# " << model.name << " exported by s2pkg\nmtllib " << base << ".mtl\n";
+    ObjWriter writer{obj};
+    size_t tris = 0;
+    for (const auto& part : model.parts) {
+        writer.write(part.mesh, part.material);
+        tris += part.mesh.triangles.size() / 3;
+    }
+    for (const auto& w : model.warnings)
+        std::fprintf(stderr, "warning: %s\n", w.c_str());
+    std::printf("%s: %zu parts, %zu vertices, %zu triangles, %zu materials, %zu textures -> %s\n", model.name.c_str(),
+                model.parts.size(), writer.vBase, tris, model.materials.size(), textures,
+                (outDir / (base + ".obj")).string().c_str());
+    return 0;
+}
+
 int cmdFind(const std::string& root, const std::string& name, const std::string& type) {
     ResourceIndex idx(root);
     std::printf("%zu packages, %zu resources, %zu duplicate TGIs\n", idx.packageCount(), idx.resourceCount(),
@@ -207,7 +259,8 @@ int usage() {
                          "       s2pkg extract <file.package> <out-dir>\n"
                          "       s2pkg texture <file.package> <tgi> <out.png>\n"
                          "       s2pkg mesh <file.package> <tgi> <out.obj>\n"
-                         "       s2pkg find <Res-dir> <name> <type-hex>\n");
+                         "       s2pkg find <Res-dir> <name> <type-hex>\n"
+                         "       s2pkg object <Res-dir> <cres-name> <out-dir>\n");
     return 2;
 }
 
@@ -219,6 +272,7 @@ int main(int argc, char** argv) {
     const std::string cmd = argv[1];
     try {
         if (cmd == "find" && argc == 5) return cmdFind(argv[2], argv[3], argv[4]);
+        if (cmd == "object" && argc == 5) return cmdObject(argv[2], argv[3], argv[4]);
         DbpfPackage pkg(argv[2]);
         if (cmd == "ls") return cmdLs(pkg);
         if (cmd == "stats") return cmdStats(pkg);

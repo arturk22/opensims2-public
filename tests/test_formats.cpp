@@ -64,6 +64,7 @@ static void testRaw() {
     check(pixelIs(decodeTexture(TexFormat::Raw32, 1, 1, bgra), 0, 0, 3, 2, 1, 4), "raw32 BGRA");
     const std::vector<uint8_t> gray = {7};
     check(pixelIs(decodeTexture(TexFormat::Raw8, 1, 1, gray), 0, 0, 7, 7, 7, 255), "raw8 gray");
+    check(pixelIs(decodeTexture(TexFormat::Alpha8, 1, 1, gray), 0, 0, 255, 255, 255, 7), "alpha8");
     bool threw = false;
     try {
         decodeTexture(TexFormat::Dxt1, 8, 8, bgra);

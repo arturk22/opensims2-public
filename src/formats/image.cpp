@@ -99,7 +99,7 @@ const char* texFormatName(TexFormat f) {
     switch (f) {
     case TexFormat::Raw32: return "Raw32";
     case TexFormat::Raw24: return "Raw24";
-    case TexFormat::ExtRaw8: return "ExtRaw8";
+    case TexFormat::Alpha8: return "Alpha8";
     case TexFormat::Dxt1: return "DXT1";
     case TexFormat::Dxt3: return "DXT3";
     case TexFormat::Raw8: return "Raw8";
@@ -118,7 +118,7 @@ size_t texDataSize(TexFormat f, uint32_t width, uint32_t height) {
     case TexFormat::Raw24:
     case TexFormat::ExtRaw24: return px * 3;
     case TexFormat::Raw8:
-    case TexFormat::ExtRaw8: return px;
+    case TexFormat::Alpha8: return px;
     case TexFormat::Dxt1: return size_t((width + 3) / 4) * ((height + 3) / 4) * 8;
     case TexFormat::Dxt3:
     case TexFormat::Dxt5: return size_t((width + 3) / 4) * ((height + 3) / 4) * 16;
@@ -151,7 +151,10 @@ RgbaImage decodeTexture(TexFormat f, uint32_t width, uint32_t height, std::span<
         case TexFormat::ExtRaw24:
             o[0] = data[i * 3 + 2], o[1] = data[i * 3 + 1], o[2] = data[i * 3], o[3] = 255;
             break;
-        default: // 8-bit grayscale
+        case TexFormat::Alpha8:
+            o[0] = o[1] = o[2] = 255, o[3] = data[i];
+            break;
+        default: // 8-bit luminance
             o[0] = o[1] = o[2] = data[i], o[3] = 255;
             break;
         }
@@ -161,6 +164,12 @@ RgbaImage decodeTexture(TexFormat f, uint32_t width, uint32_t height, std::span<
 
 ImageData ImageData::parse(std::span<const uint8_t> body) {
     BinReader r(body);
+    auto d = read(r);
+    r.expectEnd("cImageData");
+    return d;
+}
+
+ImageData ImageData::read(BinReader& r) {
     ImageData d;
     d.version = r.u32();
     if (d.version < 7 || d.version > 9)
@@ -200,7 +209,6 @@ ImageData ImageData::parse(std::span<const uint8_t> body) {
             tex.unknown = r.f32();
         d.textures.push_back(std::move(tex));
     }
-    r.expectEnd("cImageData");
 
     // Inline mips must match the declared format.
     for (const auto& tex : d.textures)
@@ -220,6 +228,12 @@ uint32_t ImageData::mipHeight(size_t i, size_t count) const { return std::max<ui
 
 LevelInfo LevelInfo::parse(std::span<const uint8_t> body) {
     BinReader r(body);
+    auto l = read(r);
+    r.expectEnd("cLevelInfo");
+    return l;
+}
+
+LevelInfo LevelInfo::read(BinReader& r) {
     LevelInfo l;
     l.version = r.u32();
     l.resource = SgResource::read(r);
@@ -228,7 +242,6 @@ LevelInfo LevelInfo::parse(std::span<const uint8_t> body) {
     l.zLevel = r.u32();
     auto b = r.bytes(r.u32());
     l.data.assign(b.begin(), b.end());
-    r.expectEnd("cLevelInfo");
     return l;
 }
 

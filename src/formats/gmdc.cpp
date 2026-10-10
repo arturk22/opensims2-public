@@ -75,6 +75,12 @@ float GeometryData::Element::f(size_t value, uint32_t component) const {
 
 GeometryData GeometryData::parse(std::span<const uint8_t> body) {
     BinReader r(body);
+    auto g = read(r);
+    r.expectEnd("cGeometryDataContainer");
+    return g;
+}
+
+GeometryData GeometryData::read(BinReader& r) {
     GeometryData g;
     g.version = r.u32();
     if (g.version != 1 && g.version != 2 && g.version != 4)
@@ -135,7 +141,6 @@ GeometryData GeometryData::parse(std::span<const uint8_t> body) {
     g.joints.resize(count(r, "joint"));
     for (auto& j : g.joints)
         j = readSimpleMesh(r, g.version);
-    r.expectEnd("cGeometryDataContainer");
     return g;
 }
 
