@@ -357,16 +357,26 @@ Exit relationship(Context& c) {
 }
 
 // Array Operation (0x76): byte 0 always 0, operation u8, whose u8 (0 me, 1
-// stack object), array u8, then two operands (owner u8, data u16 at 5 and 8).
-// There are no editor labels for the operations; these come from how the
-// trees use them: 0 clears ("Speech - Face Crowd" clears, then appends 8
-// zeros), 1 stores the length in the first operand (loops counting down from
-// it), 4 and 5 append the first operand and store its index in the second
-// (parallel arrays in "CT - Create STFX" share that index; how 4 and 5
-// differ is not known), 9 removes the element at the second operand and
-// stores it in the first, 10 finds the first operand and stores its index in
-// the second, false if absent (the only operation whose false branch is
-// used). 2, 3, 7 and 8 (39 uses) are not understood.
+// stack object), array u8, then two operands (owner u8, data u16 at 5 and 8):
+// a value or size in the first and an index (iterator) in the second. The
+// numbering comes from the editor's disassembly strings in Sims2.exe; which
+// operand is which, from how the trees use them:
+//   0 clear                         1 size into the first
+//   2 resize to the first (new elements 0; "Temp Array - Clear" resizes to 0)
+//   3 set every element to the first
+//   4 insert the first at the front, 5 at the end, 6 at index (second); the
+//     index it went to into the second (parallel arrays in "CT - Create STFX"
+//     share that index)
+//   7 remove the first element, 8 the last, into the first (error if empty)
+//   9 remove the element at index (second) into the first
+//  10 find the first from index (second) on and put its index in the second;
+//     false if absent (the only operation whose false branch is used;
+//     "CT - Add Duration Walk" finds a value, then removes that index from
+//     four parallel arrays with 9)
+//  11 swap the elements at the indices in the first and the second
+//  12 sort, largest first
+// 13 is not understood. Arrays are created on demand (the object data
+// "number of object arrays" is not checked).
 Exit arrayOperation(Context& c) {
     const auto& o = c.instruction.operands;
     const uint8_t op = o[1];
@@ -377,33 +387,58 @@ Exit arrayOperation(Context& c) {
     auto set1 = [&](int16_t v) { c.set(o[5], int16_t(le16(&o[6])), v); };
     auto get2 = [&] { return c.get(o[8], int16_t(le16(&o[9]))); };
     auto set2 = [&](int16_t v) { c.set(o[8], int16_t(le16(&o[9])), v); };
+    auto index = [&](int16_t i, size_t end, const char* what) {
+        if (i < 0 || size_t(i) >= end)
+            throw VMError(std::string("Array Operation: ") + what + " at " + std::to_string(i) + " out of range (" +
+                          std::to_string(values.size()) + ")");
+        return size_t(i);
+    };
+    auto insert = [&](size_t at) {
+        if (values.size() >= kMaxArrayLength)
+            throw VMError("Array Operation: array full");
+        values.insert(values.begin() + ptrdiff_t(at), get1());
+        set2(int16_t(at));
+        return Exit::True;
+    };
+    auto remove = [&](size_t at) {
+        const int16_t v = values[at];
+        values.erase(values.begin() + ptrdiff_t(at));
+        set1(v);
+        return Exit::True;
+    };
     switch (op) {
     case 0: values.clear(); return Exit::True;
     case 1: set1(int16_t(values.size())); return Exit::True;
-    case 4:
-    case 5:
-        if (values.size() >= kMaxArrayLength)
-            throw VMError("Array Operation: array full");
-        values.push_back(get1());
-        set2(int16_t(values.size() - 1));
-        return Exit::True;
-    case 9: {
-        const int16_t i = get2();
-        if (i < 0 || size_t(i) >= values.size())
-            throw VMError("Array Operation: remove at " + std::to_string(i) + " out of range (" +
-                          std::to_string(values.size()) + ")");
-        const int16_t v = values[size_t(i)];
-        values.erase(values.begin() + i);
-        set1(v);
+    case 2: {
+        const int16_t n = get1();
+        if (n < 0 || size_t(n) > kMaxArrayLength)
+            throw VMError("Array Operation: size " + std::to_string(n) + " out of range");
+        values.resize(size_t(n));
         return Exit::True;
     }
+    case 3: std::fill(values.begin(), values.end(), get1()); return Exit::True;
+    case 4: return insert(0);
+    case 5: return insert(values.size());
+    case 6: return insert(index(get2(), values.size() + 1, "insert"));
+    case 7:
+    case 8:
+        if (values.empty())
+            throw VMError("Array Operation: remove from an empty array");
+        return remove(op == 7 ? 0 : values.size() - 1);
+    case 9: return remove(index(get2(), values.size(), "remove"));
     case 10: {
-        auto it = std::find(values.begin(), values.end(), get1());
+        const int16_t from = std::max<int16_t>(get2(), 0);
+        if (size_t(from) >= values.size())
+            return Exit::False;
+        auto it = std::find(values.begin() + from, values.end(), get1());
         if (it == values.end())
             return Exit::False;
         set2(int16_t(it - values.begin()));
         return Exit::True;
     }
+    case 11: std::swap(values[index(get1(), values.size(), "swap")], values[index(get2(), values.size(), "swap")]);
+        return Exit::True;
+    case 12: std::sort(values.begin(), values.end(), std::greater<>()); return Exit::True;
     default: throw VMError("Array Operation: operation " + std::to_string(op) + " not implemented");
     }
 }

@@ -425,20 +425,28 @@ static void testArrays() {
         return instr(0x76, t, f, {0, op, 0, array, 0, o1, uint8_t(d1), 0, o2, uint8_t(d2), 0});
     };
     fx.code.add(kObjGroup, 0x1000,
-                tree({arr(4, 2, Lit, 10, Temp, 0, go(1), E),     // [10], temp0 = 0
+                tree({arr(5, 2, Lit, 10, Temp, 0, go(1), E),     // [10], temp0 = 0
                       arr(5, 2, Lit, 20, Temp, 0, go(2), E),     // [10, 20], temp0 = 1
-                      arr(4, 2, Lit, 30, Temp, 0, go(3), E),     // [10, 20, 30]
-                      arr(10, 2, Lit, 20, 0x29, 2, go(4), E),    // iterator := 1
+                      arr(4, 2, Lit, 30, Temp, 0, go(3), E),     // [30, 10, 20], temp0 = 0
+                      arr(10, 2, Lit, 20, 0x29, 2, go(4), E),    // iterator := 2
                       expr(Temp, 1, Assign, 0x2B, 2, go(5), E),  // temp1 := 20 (element at iterator)
-                      arr(9, 2, Temp, 2, Lit, 0, go(6), E),      // remove [0] -> temp2 = 10
+                      arr(9, 2, Temp, 2, Lit, 0, go(6), E),      // remove [0] -> temp2 = 30
                       arr(1, 2, Temp, 3, Temp, 3, go(7), E),     // temp3 := 2
-                      arr(10, 2, Lit, 10, Temp, 4, E, go(8)),    // 10 is gone: false
-                      arr(0, 2, Temp, 0, Temp, 0, go(9), E),     // clear
-                      arr(1, 2, Temp, 5, Temp, 5, T, E)}));      // temp5 := 0
+                      arr(10, 2, Lit, 30, Temp, 4, E, go(8)),    // 30 is gone: false
+                      arr(12, 2, Temp, 0, Temp, 0, go(9), E),    // sort: [20, 10]
+                      expr(Temp, 6, Assign, 0x2D, 2, go(10), E), // temp6 := [temp0 = 0] = 20
+                      arr(8, 2, Temp, 7, Temp, 0, go(11), E),    // pop the last: temp7 = 10, [20]
+                      arr(2, 2, Lit, 3, Temp, 0, go(12), E),     // [20, 0, 0]
+                      arr(3, 2, Lit, 7, Temp, 0, go(13), E),     // [7, 7, 7]
+                      arr(1, 2, Temp, 8, Temp, 8, go(14), E),    // temp8 := 3
+                      arr(0, 2, Temp, 0, Temp, 0, go(15), E),    // clear
+                      arr(1, 2, Temp, 5, Temp, 5, go(16), E),    // temp5 := 0
+                      arr(7, 2, Temp, 0, Temp, 0, T, E)}));      // empty: error
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Finished && t.temps[1] == 20 && t.temps[2] == 10 && t.temps[3] == 2 &&
+    check(t.status == Thread::Status::Failed && t.error.find("empty") != std::string::npos && t.temps[1] == 20 &&
+              t.temps[2] == 30 && t.temps[3] == 2 && t.temps[6] == 20 && t.temps[7] == 10 && t.temps[8] == 3 &&
               t.temps[5] == 0,
-          "Array Operation appends, finds, removes and clears");
+          "Array Operation inserts, finds, removes, sorts, resizes and clears");
 }
 
 static void testChangeMaterial() {
