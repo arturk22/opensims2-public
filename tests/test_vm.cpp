@@ -355,6 +355,43 @@ static void testPrimitives() {
     check(t.status == Thread::Status::Killed && t.temps[1] == 0, "removing me kills the thread");
 }
 
+static StringTable names(std::initializer_list<const char*> values) {
+    StringTable t;
+    for (auto v : values)
+        t.entries.push_back({lang::EnglishUS, v, "", 0});
+    return t;
+}
+
+static void testRunTreeByName() {
+    Fixture fx;
+    constexpr uint32_t kTv = 0x7F000003;
+    fx.obj();
+    Object& tv = fx.vm.createObject(kTv, 2);
+    // My code's table has one name; index 2 falls through to the global table.
+    fx.code.add(kObjGroup, kNamedTreeStrings, names({"CT - Turn On"}));
+    fx.code.add(kGlobalGroup, kNamedTreeStrings, names({"CT - Unused", "CT - Missing"}));
+    // CT - Turn On: stack object's attribute 1 := param 0 + param 1, returns false.
+    fx.code.add(kTv, 0x1000, [] {
+        Behavior b = tree({expr(SAttr, 1, Assign, Param, 0, go(1), E), expr(SAttr, 1, Add, Param, 1, F, E)}, 2);
+        b.fileName = "CT - Turn On";
+        return b;
+    }());
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, tv.id, go(1), E),
+                      // name 1, push onto my stack, args (literal 5), (temp 0)
+                      instr(0x1C, E, go(2), {0, 0, 0, 0, 1, 2, Lit, 5, 0, Temp, 0, 0, Lit, 0, 0}),
+                      // name 2 is not a tree of the stack object: false
+                      instr(0x1C, E, go(3), {0, 0, 0, 0, 2, 2}),
+                      expr(Temp, 1, Assign, Lit, 1, T, E)}));
+    Thread t = fx.vm.start(1, 0x1000, {});
+    t.temps[0] = 3;
+    fx.vm.run(t);
+    if (t.status == Thread::Status::Failed)
+        std::fprintf(stderr, "  thread failed: %s\n", t.error.c_str());
+    check(t.status == Thread::Status::Finished && t.temps[1] == 1, "Run Tree by Name branches on the result");
+    check(tv.attributes[1] == 8, "Run Tree by Name runs the stack object's tree with arguments");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -364,6 +401,7 @@ int main() {
     testExpressionOperators();
     testYieldAndErrors();
     testPrimitives();
+    testRunTreeByName();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

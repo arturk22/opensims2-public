@@ -195,6 +195,72 @@ Exit createObjectInstance(Context& c) {
     return Exit::True;
 }
 
+// Run Tree by Name (0x1C): table u16 (0x012F: the global STR# 0x12F; 0: the
+// running code's), u16 at 2 (not understood), name index u8 at 4 (1-based),
+// how u8 at 5 (STR# 0xDE: 0 run in my stack, 1 run in stack object's stack,
+// 2 push onto my stack), then up to three arguments as (owner u8, data u16)
+// at 6, 9 and 12. The tree is looked up by name in the stack object's private,
+// semi-global and global trees, in that order, and runs as a subroutine in my
+// thread with the stack object's code (CT trees read the object through the
+// stack object); the instruction branches on its result, and on false when
+// the object has no tree of that name (Standard Exit asks every object for
+// "CT - Update Dirty State"). Inferred from the data: when the running code's
+// table is missing or shorter than the index, the name comes from the code
+// owner's semi-global table and then the global one (the memory objects ask
+// for entry 85 of the global table, "CT - Add Memory", and have none); modes
+// 0 and 2 are run the same way. Mode 1 needs the stack object's own thread
+// and is not implemented, nor is a form with zeroes at 6-7 and 2 at 8 (77 uses).
+Exit runTreeByName(Context& c) {
+    const auto& o = c.instruction.operands;
+    const uint8_t mode = o[5];
+    if (mode == 1)
+        throw VMError("Run Tree by Name: run in stack object's stack not implemented");
+    if (mode > 2)
+        throw VMError("Run Tree by Name: mode " + std::to_string(mode) + " not implemented");
+    if (o[6] == 0 && o[7] == 0 && o[8] != 0)
+        throw VMError("Run Tree by Name: argument form " + std::to_string(o[8]) + " not implemented");
+
+    auto& code = c.vm.code();
+    const Object* owner = c.vm.object(c.frame.codeOwner);
+    if (!owner)
+        throw VMError("code owner does not exist");
+    const size_t index = size_t(o[4]) - 1;
+    std::string name;
+    std::vector<uint32_t> tables;
+    if (le16(&o[0]) == kNamedTreeStrings)
+        tables = {kGlobalGroup};
+    else
+        tables = {c.frame.group, c.frame.group == owner->group ? owner->semiGroup : 0, kGlobalGroup};
+    for (uint32_t group : tables)
+        if (const StringTable* t = group ? code.strings(group, kNamedTreeStrings) : nullptr)
+            if (index < t->count(lang::EnglishUS)) {
+                name = t->get(index, lang::EnglishUS);
+                break;
+            }
+    if (name.empty())
+        throw VMError("Run Tree by Name: no name at index " + std::to_string(index + 1));
+
+    const Object& target = c.stackObject();
+    std::optional<uint16_t> tree;
+    for (uint32_t group : {target.group, target.semiGroup, kGlobalGroup}) {
+        if (!group)
+            continue;
+        // Only trees a call opcode reaches (not the private trees of a library).
+        tree = code.behaviorByName(group, name);
+        if (tree && c.vm.resolveTree(target, *tree).first == group)
+            break;
+        tree.reset();
+    }
+    if (!tree)
+        return Exit::False;
+
+    std::array<int16_t, 4> args{};
+    for (size_t k = 0; k < 3; ++k)
+        args[k] = c.get(o[6 + 3 * k], int16_t(le16(&o[7 + 3 * k])));
+    c.vm.call(c.thread, target.id, *tree, args);
+    return Exit::Call;
+}
+
 } // namespace
 
 void registerPrimitives(VM& vm) {
@@ -204,6 +270,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x0F, breakPoint);
     vm.setPrimitive(0x11, countDownParam);
     vm.setPrimitive(0x12, removeObjectInstance);
+    vm.setPrimitive(0x1C, runTreeByName);
     vm.setPrimitive(0x1F, setToNext);
     vm.setPrimitive(0x20, testObjectType);
     vm.setPrimitive(0x2A, createObjectInstance);

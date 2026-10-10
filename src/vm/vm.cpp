@@ -83,6 +83,28 @@ const ObjectDefinition* CodeLibrary::definition(uint32_t group, uint16_t instanc
     return loadCached(definitions_, index_, kTypeObjd, group, instance);
 }
 
+const StringTable* CodeLibrary::strings(uint32_t group, uint16_t instance) {
+    return loadCached(strings_, index_, kTypeStr, group, instance);
+}
+
+std::optional<uint16_t> CodeLibrary::behaviorByName(uint32_t group, const std::string& name) {
+    if (!namesScanned_ && index_) {
+        namesScanned_ = true;
+        for (const auto& loc : index_->ofType(kTypeBhav)) {
+            const auto& tgi = loc.entry->tgi;
+            const auto data = index_->read(loc);
+            // The file name is the first field, a NUL-padded 64-byte string.
+            const auto end = std::find(data.begin(), data.begin() + std::min<size_t>(data.size(), 64), 0);
+            byName_[tgi.group].emplace(std::string(data.begin(), end), uint16_t(tgi.instance));
+        }
+    }
+    auto g = byName_.find(group);
+    if (g == byName_.end())
+        return std::nullopt;
+    auto it = g->second.find(name);
+    return it == g->second.end() ? std::nullopt : std::optional<uint16_t>(it->second);
+}
+
 std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByGuid(uint32_t guid) {
     if (!guidsScanned_ && index_) {
         guidsScanned_ = true;
@@ -124,11 +146,16 @@ uint32_t CodeLibrary::semiGlobalFor(uint32_t group) {
 }
 
 void CodeLibrary::add(uint32_t group, uint16_t instance, Behavior b) {
+    byName_[group][b.fileName] = instance;
     behaviors_[key(group, instance)] = std::make_unique<Behavior>(std::move(b));
 }
 
 void CodeLibrary::add(uint32_t group, uint16_t instance, Constants c) {
     constants_[key(group, instance)] = std::make_unique<Constants>(std::move(c));
+}
+
+void CodeLibrary::add(uint32_t group, uint16_t instance, StringTable t) {
+    strings_[key(group, instance)] = std::make_unique<StringTable>(std::move(t));
 }
 
 void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectDefinition d) {
@@ -416,6 +443,7 @@ void VM::run(Thread& t, size_t maxInstructions) {
             }
             switch (it->second(ctx)) {
             case Exit::Yield: return;
+            case Exit::Call: break;
             case Exit::Error: fail(t, "primitive " + primitiveName(in.opcode) + " returned error"); return;
             case Exit::True: branch(t, in.onTrue); break;
             case Exit::False: branch(t, in.onFalse); break;

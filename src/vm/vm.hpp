@@ -2,6 +2,7 @@
 
 #include "formats/bhav.hpp"
 #include "formats/simantics.hpp"
+#include "formats/strings.hpp"
 
 #include <array>
 #include <cstdint>
@@ -36,6 +37,10 @@ uint32_t semiGlobalGroup(std::string_view name);
 
 constexpr uint32_t kTypeObjd = 0x4F424A44;
 constexpr uint32_t kTypeStr = 0x53545223;
+
+// STR# with the tree names Run Tree by Name refers to ("Call Named Tree prim
+// string set"), in object, semi-global and global groups.
+constexpr uint16_t kNamedTreeStrings = 0x12F;
 
 // Sizes of the engine-defined variable sets, from the labels of the game's own
 // SimAntics editor (objects.package, group 0x7FE59FD0: STR# 0x81 global labels,
@@ -74,6 +79,10 @@ public:
     const Behavior* behavior(uint32_t group, uint16_t instance);
     const Constants* constants(uint32_t group, uint16_t instance);
     const ObjectDefinition* definition(uint32_t group, uint16_t instance);
+    const StringTable* strings(uint32_t group, uint16_t instance);
+    // Instance of the BHAV of `group` with this file name; the first call reads
+    // the name of every BHAV.
+    std::optional<uint16_t> behaviorByName(uint32_t group, const std::string& name);
     // OBJD (group, instance) with this GUID; the first scan reads every OBJD.
     std::optional<std::pair<uint32_t, uint16_t>> definitionByGuid(uint32_t guid);
     // Semi-global group the objects of `group` use (from their GLOB), 0 if none.
@@ -85,6 +94,7 @@ public:
     void add(uint32_t group, uint16_t instance, Behavior b);
     void add(uint32_t group, uint16_t instance, Constants c);
     void add(uint32_t group, uint16_t instance, ObjectDefinition d);
+    void add(uint32_t group, uint16_t instance, StringTable t);
     void setSemiGlobal(uint32_t group, uint32_t semiGroup) { semiGlobals_[group] = semiGroup; }
     void setAttributeLabelCount(uint32_t group, size_t n) { labelCounts_[group] = n; }
 
@@ -97,6 +107,9 @@ private:
     Cache<Behavior> behaviors_;
     Cache<Constants> constants_;
     Cache<ObjectDefinition> definitions_;
+    Cache<StringTable> strings_;
+    std::unordered_map<uint32_t, std::unordered_map<std::string, uint16_t>> byName_;
+    bool namesScanned_ = false;
     std::unordered_map<uint32_t, uint32_t> semiGlobals_;
     std::unordered_map<uint32_t, size_t> labelCounts_;
     std::unordered_map<uint32_t, std::pair<uint32_t, uint16_t>> byGuid_;
@@ -156,8 +169,9 @@ struct Thread {
 };
 
 // Outcome of a primitive. Yield keeps the thread on the same instruction,
-// which runs again on the next call to VM::run.
-enum class Exit : uint8_t { True, False, Error, Yield };
+// which runs again on the next call to VM::run. Call: the primitive pushed a
+// tree (VM::call); the instruction branches on its result when it returns.
+enum class Exit : uint8_t { True, False, Error, Yield, Call };
 
 class VM;
 
@@ -219,6 +233,11 @@ public:
     // Opcodes and data owners that were needed but are not implemented.
     std::map<uint16_t, size_t> missingPrimitives;
     std::map<uint8_t, size_t> missingOwners;
+
+    // Pushes tree `treeId` of `codeOwner`'s code as a subroutine of the thread.
+    void call(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t, 4> args) {
+        push(t, codeOwner, treeId, args);
+    }
 
     // Resolves a call opcode for code owned by `owner`: {group, BHAV} or {0, null}.
     std::pair<uint32_t, const Behavior*> resolveTree(const Object& owner, uint16_t treeId);
