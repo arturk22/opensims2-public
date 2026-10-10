@@ -32,6 +32,7 @@ public:
     void setPivot(simd_float3 floorPoint);
 
     void update(double dt); // advance smoothing towards the targets
+    void snap();            // jump to the targets (no smoothing)
 
     simd_float4x4 view() const;
     simd_float4x4 projection(float aspect) const;

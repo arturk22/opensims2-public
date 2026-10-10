@@ -245,7 +245,7 @@ LevelInfo LevelInfo::read(BinReader& r) {
     return l;
 }
 
-RgbaImage loadTexture(std::span<const uint8_t> txtrResource, ResourceIndex* index) {
+TextureLevels loadTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index) {
     Rcol rc(txtrResource);
     const auto* block = rc.find("cImageData");
     if (!block)
@@ -253,32 +253,48 @@ RgbaImage loadTexture(std::span<const uint8_t> txtrResource, ResourceIndex* inde
     const auto img = ImageData::parse(block->body);
     if (img.textures.empty() || img.textures[0].mips.empty())
         throw FormatError("TXTR without mip levels");
-    // Largest mip that can be loaded: a few LIFO references point to resources
-    // that do not ship with the game, so fall back to smaller levels.
-    const auto& levels = img.textures[0].mips;
+
+    TextureLevels out;
+    out.format = img.format;
+    const auto& mips = img.textures[0].mips;
     std::string missing;
-    for (size_t i = levels.size(); i-- > 0;) {
-        const auto& m = levels[i];
-        const uint32_t w = img.mipWidth(i, levels.size()), h = img.mipHeight(i, levels.size());
-        if (m.lifoName.empty())
-            return decodeTexture(img.format, w, h, m.data);
-        if (!index)
-            throw FormatError("TXTR references LIFO '" + m.lifoName + "' but no resource index was given");
-        auto loc = index->findByName(m.lifoName, kTypeLifo);
-        if (!loc) {
-            if (missing.empty())
-                missing = m.lifoName;
-            continue;
+    for (size_t i = mips.size(); i-- > 0;) {
+        const auto& m = mips[i];
+        TextureLevels::Level level{img.mipWidth(i, mips.size()), img.mipHeight(i, mips.size()), {}};
+        if (m.lifoName.empty()) {
+            level.data = m.data;
+        } else {
+            if (!index)
+                throw FormatError("TXTR references LIFO '" + m.lifoName + "' but no resource index was given");
+            auto loc = index->findByName(m.lifoName, kTypeLifo);
+            if (!loc) {
+                if (!out.levels.empty())
+                    break; // a gap below the largest level: keep what is contiguous
+                if (missing.empty())
+                    missing = m.lifoName;
+                continue;
+            }
+            const auto bytes = index->read(*loc);
+            Rcol lrc(bytes);
+            const auto* lb = lrc.find("cLevelInfo");
+            if (!lb)
+                throw FormatError("LIFO without cLevelInfo");
+            auto lifo = LevelInfo::parse(lb->body);
+            level.width = lifo.width;
+            level.height = lifo.height;
+            level.data = std::move(lifo.data);
         }
-        const auto bytes = index->read(*loc);
-        Rcol lrc(bytes);
-        const auto* lb = lrc.find("cLevelInfo");
-        if (!lb)
-            throw FormatError("LIFO without cLevelInfo");
-        const auto lifo = LevelInfo::parse(lb->body);
-        return decodeTexture(img.format, lifo.width, lifo.height, lifo.data);
+        out.levels.push_back(std::move(level));
     }
-    throw FormatError("no loadable mip level (missing LIFO " + missing + ")");
+    if (out.levels.empty())
+        throw FormatError("no loadable mip level (missing LIFO " + missing + ")");
+    return out;
+}
+
+RgbaImage loadTexture(std::span<const uint8_t> txtrResource, ResourceIndex* index) {
+    auto t = loadTextureLevels(txtrResource, index);
+    const auto& l = t.levels.front();
+    return decodeTexture(t.format, l.width, l.height, l.data);
 }
 
 void writePng(const std::filesystem::path& path, const RgbaImage& img) {

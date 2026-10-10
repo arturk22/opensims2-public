@@ -5,6 +5,8 @@
 #include "simantics.hpp"
 #include "strings.hpp"
 
+#include <cctype>
+#include <cstdio>
 #include <optional>
 
 namespace os2 {
@@ -12,7 +14,7 @@ namespace os2 {
 namespace {
 
 constexpr uint32_t kTypeCres = 0xE519C933, kTypeShpe = 0xFC6EB1F7, kTypeGmnd = 0x7BA3838C, kTypeGmdc = 0xAC4F8687,
-                   kTypeTxmt = 0x49596978;
+                   kTypeTxmt = 0x49596978, kTypeObjd = 0x4F424A44;
 
 bool endsWith(std::string_view s, std::string_view suffix) {
     return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
@@ -128,6 +130,41 @@ std::string baseTextureName(const MaterialDefinition& m) {
     return withSuffix(tex, "_txtr");
 }
 
+StandardMaterial standardMaterial(const MaterialDefinition& m) {
+    StandardMaterial out;
+    auto flag = [&](const char* name, bool fallback) {
+        auto v = m.property(name);
+        return v.empty() ? fallback : v == "true" || v == "1";
+    };
+    auto number = [&](const char* name, float fallback) {
+        auto v = m.property(name);
+        try {
+            return v.empty() ? fallback : std::stof(v);
+        } catch (const std::logic_error&) {
+            return fallback;
+        }
+    };
+    if (flag("stdMatBaseTextureEnabled", true))
+        out.baseTexture = baseTextureName(m);
+    if (auto d = m.property("stdMatDiffCoef"); !d.empty())
+        std::sscanf(d.c_str(), "%f,%f,%f", &out.diffuse[0], &out.diffuse[1], &out.diffuse[2]);
+    out.alphaMultiplier = number("stdMatAlphaMultiplier", 1.0f);
+    const auto blend = m.property("stdMatAlphaBlendMode");
+    out.blend = blend == "blend" ? StandardMaterial::Blend::Alpha
+              : blend == "additive" || blend == "addNoSrcAlphaScale" ? StandardMaterial::Blend::Additive
+                                    : StandardMaterial::Blend::None;
+    out.alphaTest = flag("stdMatAlphaTestEnabled", false);
+    out.alphaRef = number("stdMatAlphaRefValue", 127.0f) / 255.0f;
+    const auto cull = m.property("stdMatCullMode");
+    out.cull = cull == "none" ? StandardMaterial::Cull::None
+             : cull == "cullCounterClockwise" ? StandardMaterial::Cull::CounterClockwise
+                                              : StandardMaterial::Cull::Clockwise;
+    out.lighting = flag("stdMatLightingEnabled", true);
+    out.layer = int(number("stdMatLayer", 0));
+    out.visible = m.materialType != "Null";
+    return out;
+}
+
 ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName) {
     ObjectModel model;
     model.name = withSuffix(cresName, "_cres");
@@ -223,6 +260,38 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName) {
                                 MaterialDefinition::parse(firstBlock(rc, "cMaterialDefinition", "TXMT").body));
     }
     return model;
+}
+
+std::string resolveObjectCres(ResourceIndex& index, std::string_view query, std::string* match) {
+    if (index.findByName(withSuffix(query, "_cres"), kTypeCres)) {
+        if (match)
+            *match = "CRES " + withSuffix(query, "_cres");
+        return std::string(query);
+    }
+    const bool isGuid = query.starts_with("0x") || query.starts_with("0X");
+    const uint32_t guid = isGuid ? uint32_t(std::stoul(std::string(query), nullptr, 16)) : 0;
+    auto lower = [](std::string_view in) {
+        std::string s(in);
+        for (auto& c : s)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const auto needle = lower(query);
+    for (const auto& loc : index.ofType(kTypeObjd)) {
+        const auto def = ObjectDefinition::parse(index.read(loc));
+        if (isGuid ? def.guid() != guid : lower(def.fileName).find(needle) == std::string::npos)
+            continue;
+        auto cres = objectCresName(index, loc.entry->tgi);
+        if (cres.empty())
+            continue;
+        if (match) {
+            char buf[32];
+            std::snprintf(buf, sizeof buf, "0x%08X", def.guid());
+            *match = "object \"" + def.fileName + "\" (GUID " + buf + ") -> " + cres;
+        }
+        return cres;
+    }
+    throw FormatError("no object or CRES matches '" + std::string(query) + "'");
 }
 
 } // namespace os2

@@ -82,8 +82,21 @@ struct LevelInfo {
     static LevelInfo parse(std::span<const uint8_t> body);
 };
 
-// Full-size image of a TXTR resource; LIFO references are resolved through `index`
-// (when null, only textures with inline data can be loaded).
+// Mip chain of a TXTR resource's first texture, as stored (still compressed),
+// largest level first. LIFO references are resolved through `index` (when
+// null, only textures with inline data can be loaded). A few LIFOs do not ship
+// with the game; the chain then starts at the largest level that does.
+struct TextureLevels {
+    TexFormat format = TexFormat::Raw32;
+    struct Level {
+        uint32_t width = 0, height = 0;
+        std::vector<uint8_t> data;
+    };
+    std::vector<Level> levels;
+};
+TextureLevels loadTextureLevels(std::span<const uint8_t> txtrResource, ResourceIndex* index);
+
+// Largest loadable level of a TXTR resource, decoded.
 RgbaImage loadTexture(std::span<const uint8_t> txtrResource, ResourceIndex* index);
 
 void writePng(const std::filesystem::path& path, const RgbaImage& img);

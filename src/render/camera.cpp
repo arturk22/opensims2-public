@@ -129,6 +129,11 @@ void LotCamera::update(double dt) {
     yaw_ = approach(yaw_, yawTarget_, smoothing(def_.spinSmoothing, dt), minChange);
 }
 
+void LotCamera::snap() {
+    zoom_ = zoomTarget_;
+    yaw_ = yawTarget_;
+}
+
 simd_float3 LotCamera::eye() const {
     float d = distance(), y = radians(yaw_), p = radians(pitch());
     simd_float3 target = pivot_ + simd_make_float3(0, 0, pivotHeight_);

@@ -14,6 +14,9 @@
 #include <QuartzCore/QuartzCore.hpp>
 
 #include "formats/camera_config.hpp"
+#include "formats/image.hpp"
+#include "formats/model.hpp"
+#include "formats/resindex.hpp"
 #include "render/camera.hpp"
 #include "render/renderer.hpp"
 
@@ -26,6 +29,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -52,15 +56,69 @@ std::optional<fs::path> findGameDir() {
     return std::nullopt;
 }
 
-os2::CameraDef loadLiveCamera() {
+fs::path gameDir() {
     std::optional<fs::path> game = findGameDir();
     if (!game)
         throw std::runtime_error("data/game not found (pass --data <dir> or set OS2_DATA)");
-    auto cameras = os2::loadCameraConfig(*game / kCameraConfig);
+    return *game;
+}
+
+os2::CameraDef loadLiveCamera() {
+    const fs::path game = gameDir();
+    auto cameras = os2::loadCameraConfig(game / kCameraConfig);
     const os2::CameraDef* live = os2::findCamera(cameras, "Live");
     if (!live)
-        throw std::runtime_error("no \"Live\" camera in " + (*game / kCameraConfig).string());
+        throw std::runtime_error("no \"Live\" camera in " + (game / kCameraConfig).string());
     return *live;
+}
+
+// Objects to show: every --object <CRES name | 0xGUID | OBJD name>, else the dining chair.
+std::vector<std::string> objectQueries() {
+    std::vector<std::string> out;
+    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    for (NSUInteger i = 1; i + 1 < args.count; ++i)
+        if ([args[i] isEqualToString:@"--object"])
+            out.emplace_back(args[i + 1].UTF8String);
+    if (out.empty())
+        out.emplace_back("0xEC7618F6"); // Chair - Dining - Value1
+    return out;
+}
+
+// Loads the objects into the renderer on a grid, four per row, three tiles
+// apart, starting at tile (2, -3). Returns the middle of the grid, for the camera.
+simd_float3 loadObjects(os2::Renderer& renderer) {
+    CFTimeInterval start = CACurrentMediaTime();
+    os2::ResourceIndex index(gameDir() / "TSData/Res");
+    int slot = 0;
+    for (const auto& query : objectQueries()) {
+        try {
+            std::string match;
+            const auto model = os2::loadObjectModel(index, os2::resolveObjectCres(index, query, &match));
+            for (const auto& w : model.warnings)
+                std::fprintf(stderr, "opensims2: %s: %s\n", model.name.c_str(), w.c_str());
+            const int id = renderer.addObject(model, index);
+            simd_float4x4 at = matrix_identity_float4x4;
+            at.columns[3] = simd_make_float4(2.5f + 3.0f * float(slot % 4), -2.5f - 3.0f * float(slot / 4), 0, 1);
+            ++slot;
+            renderer.addInstance(id, at);
+            std::printf("opensims2: %s (%zu parts)\n", match.c_str(), model.parts.size());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: object %s: %s\n", query.c_str(), e.what());
+        }
+    }
+    std::printf("opensims2: loaded in %.2f s\n", CACurrentMediaTime() - start);
+    std::fflush(stdout);
+    const int cols = std::clamp(slot, 1, 4), rows = (std::max(slot, 1) + 3) / 4;
+    return simd_make_float3(2.5f + 1.5f * float(cols - 1), -2.5f - 1.5f * float(rows - 1), 0);
+}
+
+// Value of `--name <value>`, if given.
+std::optional<std::string> argument(NSString* name) {
+    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    for (NSUInteger i = 1; i + 1 < args.count; ++i)
+        if ([args[i] isEqualToString:name])
+            return std::string(args[i + 1].UTF8String);
+    return std::nullopt;
 }
 
 // Virtual key codes (layout independent).
@@ -168,6 +226,7 @@ enum Key : unsigned short {
 
 @interface OS2ViewDelegate : NSObject <MTKViewDelegate>
 - (instancetype)initWithView:(MTKView*)view;
+- (os2::Renderer*)renderer;
 @end
 
 @implementation OS2ViewDelegate {
@@ -183,6 +242,10 @@ enum Key : unsigned short {
         _last = CACurrentMediaTime();
     }
     return self;
+}
+
+- (os2::Renderer*)renderer {
+    return _renderer.get();
 }
 
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size {
@@ -232,7 +295,7 @@ enum Key : unsigned short {
     _window.title = @"opensims2";
 
     OS2View* view = [[OS2View alloc] initWithFrame:frame device:device];
-    view.colorPixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
+    view.colorPixelFormat = MTLPixelFormatBGRA8Unorm; // gamma space, like the game
     view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
     view.clearColor = MTLClearColorMake(0.18, 0.22, 0.28, 1.0);
     view.preferredFramesPerSecond = 60;
@@ -240,6 +303,25 @@ enum Key : unsigned short {
     try {
         [view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
         _viewDelegate = [[OS2ViewDelegate alloc] initWithView:view];
+        view.camera->setPivot(loadObjects(*_viewDelegate.renderer));
+        // --zoom <levels> / --orientation <steps>: start the camera that many steps from its default.
+        if (auto z = argument(@"--zoom"))
+            view.camera->zoomBy(std::stoi(*z));
+        if (auto o = argument(@"--orientation"))
+            view.camera->rotateBy(std::stoi(*o));
+        view.camera->snap();
+        // --screenshot <file.png>: render one frame offscreen, save it and quit.
+        if (auto shot = argument(@"--screenshot")) {
+            const uint32_t w = 1280, h = 720;
+            os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
+            MTLClearColor c = view.clearColor;
+            auto img = _viewDelegate.renderer->capture(
+                w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), float(c.alpha)));
+            os2::writePng(*shot, img);
+            std::printf("opensims2: wrote %s\n", shot->c_str());
+            std::fflush(stdout);
+            std::exit(0);
+        }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: %s\n", e.what());
         NSAlert* alert = [[NSAlert alloc] init];

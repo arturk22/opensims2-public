@@ -47,6 +47,7 @@ if(APPLE)
     src/render/camera.cpp
     src/render/metal_impl.cpp
     src/render/renderer.cpp
+    src/render/texture.cpp
   )
   target_include_directories(os2_render PUBLIC src third_party/metal-cpp
                              PRIVATE ${CMAKE_BINARY_DIR}/generated)
@@ -77,4 +78,8 @@ if(APPLE)
   add_executable(test_camera tests/test_camera.cpp)
   target_link_libraries(test_camera PRIVATE os2_render)
   add_test(NAME camera COMMAND test_camera)
+
+  add_executable(test_render tests/test_render.cpp)
+  target_link_libraries(test_render PRIVATE os2_render)
+  add_test(NAME render COMMAND test_render)
 endif()

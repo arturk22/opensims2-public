@@ -1,6 +1,7 @@
 #include "formats/bhav.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/image.hpp"
+#include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
 #include "formats/strings.hpp"
@@ -224,6 +225,34 @@ clip       0.2 2000
     check(cas && cas->nearClip.size() == 1 && cas->nearClip[0] == 0.2f && cas->farClip[0] == 2000, "scalar clip");
 }
 
+static void testStandardMaterial() {
+    MaterialDefinition m;
+    m.materialType = "StandardMaterial";
+    m.properties = {{"stdMatAlphaBlendMode", "blend"},       {"stdMatAlphaMultiplier", "0.300000"},
+                    {"stdMatBaseTextureEnabled", "true"},    {"stdMatBaseTextureName", "chair-shadow-alpha"},
+                    {"stdMatCullMode", "cullClockwise"},     {"stdMatDiffCoef", "0,0.5,1"},
+                    {"stdMatLightingEnabled", "0"},          {"stdMatAlphaTestEnabled", "1"},
+                    {"stdMatAlphaRefValue", "51"}};
+    auto sm = standardMaterial(m);
+    check(sm.baseTexture == "chair-shadow-alpha_txtr", "material base texture");
+    check(sm.blend == StandardMaterial::Blend::Alpha && sm.alphaMultiplier == 0.3f, "material blend");
+    check(sm.diffuse[0] == 0 && sm.diffuse[1] == 0.5f && sm.diffuse[2] == 1, "material diffuse");
+    check(!sm.lighting && sm.alphaTest && sm.alphaRef == 51.0f / 255.0f, "material flags");
+    check(sm.cull == StandardMaterial::Cull::Clockwise && sm.visible, "material cull");
+
+    MaterialDefinition none;
+    none.materialType = "Null";
+    auto ns = standardMaterial(none);
+    check(!ns.visible && ns.baseTexture.empty() && ns.blend == StandardMaterial::Blend::None && ns.lighting,
+          "null material defaults");
+    none.properties = {{"stdMatAlphaBlendMode", "additive"}, {"stdMatCullMode", "none"},
+                       {"stdMatBaseTextureEnabled", "false"}, {"stdMatBaseTextureName", "x"}};
+    ns = standardMaterial(none);
+    check(ns.blend == StandardMaterial::Blend::Additive && ns.cull == StandardMaterial::Cull::None &&
+              ns.baseTexture.empty(),
+          "additive, no cull, texture disabled");
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
@@ -234,6 +263,7 @@ int main() {
     testSimAntics();
     testBhav();
     testCameraConfig();
+    testStandardMaterial();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

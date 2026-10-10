@@ -3,6 +3,7 @@
 #include "gmdc.hpp"
 #include "txmt.hpp"
 
+#include <array>
 #include <map>
 #include <string>
 #include <string_view>
@@ -41,7 +42,32 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName);
 // Empty if the object has no 3D model.
 std::string objectCresName(ResourceIndex& index, const Tgi& objd);
 
+// CRES name for an object given as a CRES name (with or without "_cres"), an
+// OBJD GUID ("0x...") or part of an OBJD file name (case-insensitive). If
+// `match` is given it receives a description of the object found. Throws when
+// nothing matches.
+std::string resolveObjectCres(ResourceIndex& index, std::string_view query, std::string* match = nullptr);
+
 // TXTR name of a material's base texture ("..._txtr"), or empty.
 std::string baseTextureName(const MaterialDefinition& m);
+
+// The StandardMaterial properties the renderer uses, with the game's defaults
+// for missing ones.
+struct StandardMaterial {
+    enum class Blend { None, Alpha, Additive };
+    enum class Cull { Clockwise, CounterClockwise, None }; // which winding is culled
+
+    std::string baseTexture; // TXTR name, empty if untextured
+    std::array<float, 3> diffuse{1, 1, 1};
+    float alphaMultiplier = 1.0f;
+    Blend blend = Blend::None;
+    bool alphaTest = false;
+    float alphaRef = 127.0f / 255.0f;
+    Cull cull = Cull::Clockwise;
+    bool lighting = true;
+    int layer = 0;
+    bool visible = true; // false for "Null" materials (parts the game does not draw)
+};
+StandardMaterial standardMaterial(const MaterialDefinition& m);
 
 } // namespace os2
