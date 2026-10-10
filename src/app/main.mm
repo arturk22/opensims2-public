@@ -240,11 +240,34 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     const size_t objects = loadLotObjects(renderer, index, lot, *query);
     const size_t sims = loadLotSims(renderer, index, lot, pkg, lotPath(*query));
-    std::printf("opensims2: lot %s: %ux%u tiles, levels %d..%d, %zu walls, %zu paints (%zu parts), "
-                "%zu of %zu objects and %zu Sims placed in %.2f s\n",
+    // Fence rails and posts: one model per CRES, an instance per piece.
+    std::vector<std::string> fenceWarnings;
+    const auto fences = os2::lotFencePieces(lot, patterns, &fenceWarnings);
+    std::map<std::string, int> fenceModels;
+    for (const auto& piece : fences) {
+        auto it = fenceModels.find(piece.model);
+        if (it == fenceModels.end()) {
+            int id = -1;
+            try {
+                id = renderer.addObject(os2::loadObjectModel(index, piece.model), index);
+            } catch (const std::exception& e) {
+                fenceWarnings.push_back(piece.model + ": " + e.what());
+            }
+            it = fenceModels.emplace(piece.model, id).first;
+        }
+        if (it->second < 0)
+            continue;
+        simd_float4x4 at;
+        std::memcpy(&at, piece.transform.data(), sizeof at);
+        renderer.addInstance(it->second, at);
+    }
+    for (const auto& w : fenceWarnings)
+        std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
+    std::printf("opensims2: lot %s: %ux%u tiles, levels %d..%d, %zu walls, %zu paints (%zu parts), %zu roofs, "
+                "%zu fence pieces, %zu of %zu objects and %zu Sims placed in %.2f s\n",
                 query->c_str(), lot.width, lot.height, lot.minLevel, lot.minLevel + lot.levelCount - 1,
-                lot.walls.size(), lot.paints.size(), model.parts.size(), objects, lot.objects.size(),
-                sims, CACurrentMediaTime() - start);
+                lot.walls.size(), lot.paints.size(), model.parts.size(), lot.roofs.size(), fences.size(), objects,
+                lot.objects.size(), sims, CACurrentMediaTime() - start);
     const int cx = int(lot.width / 2), cy = int(lot.height / 2);
     return simd_make_float3(float(lot.width) / 2, float(lot.height) / 2, lot.elevation(0, cx, cy));
 }
