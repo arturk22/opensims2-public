@@ -6,7 +6,7 @@
 // zoom, R/F or Page Up/Down tilt, right/middle drag rotates and tilts freely,
 // Home resets. --lighting <state> picks a lighting state from Lighting.txt
 // (day, night, neighbourhood, ...); --lot <N001_Lot82 | file.package> shows a
-// lot's terrain, floors and walls.
+// lot's terrain, floors, walls and objects.
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -23,14 +23,17 @@
 #include "formats/lot_model.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
+#include "formats/simantics.hpp"
 #include "render/camera.hpp"
 #include "render/renderer.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -43,6 +46,7 @@ namespace {
 
 constexpr const char* kCameraConfig = "TSData/Res/UserData/Cameras/cameras.txt";
 constexpr const char* kLightingConfig = "TSData/Res/Lights/Lighting.txt";
+constexpr uint32_t kTypeCres = 0xE519C933, kTypeObjd = 0x4F424A44;
 
 // The extracted game (data/game): --data <dir>, else $OS2_DATA, else the first
 // data/game found walking up from the executable (the repo when run from build/).
@@ -114,6 +118,64 @@ fs::path lotPath(const std::string& query) {
     throw std::runtime_error("lot not found: " + query);
 }
 
+// Places the lot's objects that have a model and stand in the world. Models
+// are uploaded once per CRES and design choice. Returns the instances placed.
+size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot,
+                      const std::string& lotName) {
+    std::map<std::string, int> models; // CRES + design -> model id, -1 if it failed
+    // Some models were renamed after the lots were saved (old modular stairs);
+    // then the object's OBJD, found by file name, names the current one.
+    std::map<std::string, os2::Tgi> definitions; // lowercase OBJD file name -> OBJD
+    auto lower = [](std::string s) {
+        for (auto& c : s)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    auto cresOf = [&](const os2::Lot::Object& o) {
+        if (index.findByName(o.model + "_cres", kTypeCres))
+            return o.model;
+        if (definitions.empty())
+            for (const auto& loc : index.ofType(kTypeObjd))
+                definitions.emplace(lower(os2::ObjectDefinition::parse(index.read(loc)).fileName), loc.entry->tgi);
+        std::string name = o.definition.ends_with("_objt") ? o.definition.substr(0, o.definition.size() - 5)
+                                                           : o.definition;
+        auto it = definitions.find(lower(name));
+        std::string cres = it == definitions.end() ? std::string() : os2::objectCresName(index, it->second);
+        return cres.empty() ? o.model : cres;
+    };
+    size_t placed = 0;
+    for (const auto& o : lot.objects) {
+        if (o.model.empty() || o.model == "nullModel" || o.model == "noModel" || o.person ||
+            (o.position[0] == 0 && o.position[1] == 0))
+            continue;
+        std::string key = o.model;
+        for (const auto& [subset, material] : o.materials)
+            key += "|" + subset + "=" + material;
+        auto it = models.find(key);
+        if (it == models.end()) {
+            int id = -1;
+            try {
+                const auto model = os2::loadObjectModel(index, cresOf(o), o.materials);
+                for (const auto& w : model.warnings)
+                    std::fprintf(stderr, "opensims2: %s: %s: %s\n", lotName.c_str(), model.name.c_str(), w.c_str());
+                id = renderer.addObject(model, index);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: %s: %s (%s): %s\n", lotName.c_str(), o.model.c_str(),
+                             o.definition.c_str(), e.what());
+            }
+            it = models.emplace(key, id).first;
+        }
+        if (it->second < 0)
+            continue;
+        const auto& q = o.rotation;
+        simd_float4x4 at = simd_matrix4x4(simd_quaternion(q[0], q[1], q[2], q[3]));
+        at.columns[3] = simd_make_float4(o.position[0], o.position[1], o.position[2], 1);
+        renderer.addInstance(it->second, at);
+        ++placed;
+    }
+    return placed;
+}
+
 // Loads --lot into the renderer in place of the test floor. Returns the middle
 // of the lot at ground level, for the camera.
 std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& index) {
@@ -129,9 +191,14 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     renderer.hideTestScene();
     renderer.addInstance(renderer.addObject(model, index), matrix_identity_float4x4);
-    std::printf("opensims2: lot %s: %ux%u tiles, levels %d..%d, %zu walls, %zu paints (%zu parts) in %.2f s\n",
+    for (const auto& w : lot.warnings)
+        std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
+    const size_t objects = loadLotObjects(renderer, index, lot, *query);
+    std::printf("opensims2: lot %s: %ux%u tiles, levels %d..%d, %zu walls, %zu paints (%zu parts), "
+                "%zu of %zu objects placed in %.2f s\n",
                 query->c_str(), lot.width, lot.height, lot.minLevel, lot.minLevel + lot.levelCount - 1,
-                lot.walls.size(), lot.paints.size(), model.parts.size(), CACurrentMediaTime() - start);
+                lot.walls.size(), lot.paints.size(), model.parts.size(), objects, lot.objects.size(),
+                CACurrentMediaTime() - start);
     const int cx = int(lot.width / 2), cy = int(lot.height / 2);
     return simd_make_float3(float(lot.width) / 2, float(lot.height) / 2, lot.elevation(0, cx, cy));
 }
@@ -360,7 +427,12 @@ enum Key : unsigned short {
         applyLighting(*_viewDelegate.renderer);
         os2::ResourceIndex index(gameDir() / "TSData/Res");
         const simd_float3 objects = loadObjects(*_viewDelegate.renderer, index);
-        view.camera->setPivot(loadLot(*_viewDelegate.renderer, index).value_or(objects));
+        simd_float3 pivot = loadLot(*_viewDelegate.renderer, index).value_or(objects);
+        // --pivot <x,y>: look at that point instead (tiles, at the same height).
+        float px, py;
+        if (auto p = argument(@"--pivot"); p && std::sscanf(p->c_str(), "%f,%f", &px, &py) == 2)
+            pivot.x = px, pivot.y = py;
+        view.camera->setPivot(pivot);
         // --zoom <levels> / --orientation <steps>: start the camera that many steps from its default.
         if (auto z = argument(@"--zoom"))
             view.camera->zoomBy(std::stoi(*z));
@@ -381,6 +453,8 @@ enum Key : unsigned short {
         }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: %s\n", e.what());
+        if (argument(@"--screenshot"))
+            std::exit(1); // no one to show an alert to
         NSAlert* alert = [[NSAlert alloc] init];
         alert.messageText = @"opensims2 could not start";
         alert.informativeText = [NSString stringWithUTF8String:e.what()];

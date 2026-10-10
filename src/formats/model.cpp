@@ -16,6 +16,10 @@ namespace {
 constexpr uint32_t kTypeCres = 0xE519C933, kTypeShpe = 0xFC6EB1F7, kTypeGmnd = 0x7BA3838C, kTypeGmdc = 0xAC4F8687,
                    kTypeTxmt = 0x49596978, kTypeObjd = 0x4F424A44;
 
+// Design choice for an object's ground shadow subset: no shadow (there is no
+// such TXMT; inferred from the name and from where it is used).
+constexpr std::string_view kShadowOff = "guoboff";
+
 bool endsWith(std::string_view s, std::string_view suffix) {
     return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
 }
@@ -160,6 +164,15 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     out.blend = blend == "blend" ? StandardMaterial::Blend::Alpha
               : blend == "additive" || blend == "addNoSrcAlphaScale" ? StandardMaterial::Blend::Additive
                                     : StandardMaterial::Blend::None;
+    // Other material types rarely carry the StandardMaterial blend settings;
+    // their names say how they blend ("TextureAlpha" ground shadows,
+    // "AdditiveTextureBlend", ...).
+    if (blend.empty() && m.materialType != "StandardMaterial") {
+        if (m.materialType.find("Additive") != std::string::npos)
+            out.blend = StandardMaterial::Blend::Additive;
+        else if (m.materialType.find("Alpha") != std::string::npos)
+            out.blend = StandardMaterial::Blend::Alpha;
+    }
     out.alphaTest = flag("stdMatAlphaTestEnabled", false);
     out.alphaRef = number("stdMatAlphaRefValue", 127.0f) / 255.0f;
     const auto cull = m.property("stdMatCullMode");
@@ -168,11 +181,13 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
                                               : StandardMaterial::Cull::Clockwise;
     out.lighting = flag("stdMatLightingEnabled", true);
     out.layer = int(number("stdMatLayer", 0));
-    out.visible = m.materialType != "Null";
+    // WallMask parts are the shapes doors and windows cut out of walls.
+    out.visible = m.materialType != "Null" && m.materialType != "WallMask";
     return out;
 }
 
-ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName) {
+ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
+                            const std::map<std::string, std::string>& materials) {
     ObjectModel model;
     model.name = withSuffix(cresName, "_cres");
     auto cresLoc = index.findByName(model.name, kTypeCres);
@@ -247,6 +262,11 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName) {
                 for (const auto& p : shape.parts)
                     if (p.subset == mesh.name)
                         part.material = p.material;
+                // A design choice naming a material the game no longer ships
+                // keeps the shape's own.
+                if (auto it = materials.find(mesh.name); it != materials.end())
+                    if (it->second == kShadowOff || index.findByName(withSuffix(it->second, "_txmt"), kTypeTxmt))
+                        part.material = it->second;
                 part.mesh = std::move(mesh);
                 model.parts.push_back(std::move(part));
             }
@@ -256,7 +276,18 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName) {
     for (const auto& part : model.parts) {
         if (part.material.empty() || model.materials.count(part.material))
             continue;
+        // Hidden: shadows turned off, and the volume a mirror reflects.
+        if (part.material == kShadowOff || part.material == "mirrorboundingboxmaterial") {
+            MaterialDefinition hidden;
+            hidden.materialType = "Null";
+            model.materials.emplace(part.material, std::move(hidden));
+            continue;
+        }
         auto loc = index.findByName(withSuffix(part.material, "_txmt"), kTypeTxmt);
+        // Counter tops cut out for a sink ("..._clean-cutout-0") are made by
+        // the game at run time from the plain top.
+        if (auto cut = part.material.find("-cutout"); !loc && cut != std::string::npos)
+            loc = index.findByName(part.material.substr(0, cut) + "_txmt", kTypeTxmt);
         if (!loc) {
             model.warnings.push_back("TXMT not found: " + part.material);
             continue;

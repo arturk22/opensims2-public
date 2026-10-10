@@ -64,6 +64,25 @@ struct Lot {
     std::vector<TerrainPaint> paints;
     uint32_t maskWidth = 0, maskHeight = 0;
 
+    // Objects placed on the lot (cObject, 0xFA1C39F7, one per object instance;
+    // cAnimatable/cPerson blocks may wrap it). Position is in lot space (tiles,
+    // Z up, same as the elevations) and rotation a unit quaternion (x, y, z, w)
+    // about the model's origin. Objects with no model (controllers, phone
+    // services, ...) have an empty `model`; ones not in the world (inventory,
+    // carried, hidden) sit at the origin.
+    struct Object {
+        uint32_t instance = 0;
+        std::string definition; // OBJD file name + "_objt" ("Trash Can - Outside_objt")
+        std::string model;      // CRES name without "_cres"; "nullModel" for invisible ones
+        // Design choices: subset -> material (TXMT name without "_txmt") that
+        // replaces the SHPE's material for that subset.
+        std::map<std::string, std::string> materials;
+        std::array<float, 3> position{0, 0, 0};
+        std::array<float, 4> rotation{0, 0, 0, 1};
+        bool person = false; // a Sim (cPerson): models are body parts
+    };
+    std::vector<Object> objects;
+
     std::vector<std::string> warnings; // parts that could not be read
 
     static Lot load(DbpfPackage& package);

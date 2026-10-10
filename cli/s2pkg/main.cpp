@@ -287,6 +287,15 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
                         path.filename().string().c_str(), lot.width, lot.height, lot.minLevel,
                         lot.minLevel + lot.levelCount - 1, lot.walls.size(), lot.floorPatterns.size(),
                         lot.wallPatterns.size(), lot.paints.size(), model.parts.size(), tris, model.materials.size());
+            size_t placed = 0, people = 0;
+            for (const auto& o : lot.objects) {
+                people += o.person;
+                placed += !o.person && !o.model.empty() && o.model != "nullModel" && o.model != "noModel" &&
+                          (o.position[0] != 0 || o.position[1] != 0);
+            }
+            std::printf("  %zu objects: %zu with a model in the world, %zu Sims\n", lot.objects.size(), placed, people);
+            for (const auto& w : lot.warnings)
+                std::printf("  %s\n", w.c_str());
             for (const auto& w : model.warnings)
                 std::printf("  %s\n", w.c_str());
         } catch (const std::exception& e) {

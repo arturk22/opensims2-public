@@ -11,7 +11,8 @@ namespace os2 {
 namespace {
 
 constexpr uint32_t kType2DArray = 0x6B943B43, kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40,
-                   kTypeWallGraph = 0x0A284D0B, kTypeWallLayer = 0x8A84D7B0, kTypeLotTexture = 0x4B58975B;
+                   kTypeWallGraph = 0x0A284D0B, kTypeWallLayer = 0x8A84D7B0, kTypeLotTexture = 0x4B58975B,
+                   kTypeObject = 0xFA1C39F7;
 constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
                    kWallLayerPartitions = 0x04, kPaintMaskFirst = 0x5CBC;
 constexpr size_t kFileNameSize = 64;
@@ -65,6 +66,46 @@ std::optional<std::vector<uint8_t>> readResource(DbpfPackage& pkg, uint32_t type
         if (e.tgi.type == type && e.tgi.instance == instance)
             return pkg.read(e);
     return std::nullopt;
+}
+
+// cObject, possibly wrapped by subclass blocks (cAnimatable, cLocomotable,
+// cPerson: id, version, name, outermost first) whose own data follows it.
+Lot::Object readObject(const std::vector<uint8_t>& bytes) {
+    BinReader r(bytes);
+    r.skip(kFileNameSize);
+    Lot::Object o;
+    uint32_t version = 0;
+    for (int depth = 0;; ++depth) {
+        if (depth == 8)
+            throw FormatError("no cObject block");
+        r.u32();
+        version = r.u32();
+        const std::string cls = r.str7();
+        if (cls == "cPerson")
+            o.person = true;
+        if (cls == "cObject")
+            break;
+    }
+    o.model = r.str7();
+    // Models with their material choices; a Sim lists one per body part, an
+    // object at most one (the same name again).
+    for (uint32_t n = r.u32(); n; --n) {
+        r.str7();
+        if (version >= 0x11)
+            r.u32(); // 12 for objects, 10 for Sims
+        for (uint32_t m = r.u32(); m; --m) {
+            std::string material = r.str7();
+            o.materials[r.str7()] = std::move(material);
+        }
+    }
+    for (auto& v : o.position)
+        v = r.f32();
+    for (auto& v : o.rotation)
+        v = r.f32();
+    r.u32();
+    o.definition = r.str7();
+    // Then the position and rotation again, and the subclass data.
+    return o;
 }
 
 } // namespace
@@ -214,6 +255,20 @@ Lot Lot::load(DbpfPackage& pkg) {
             lot.paints.push_back(std::move(p));
         }
     }
+
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.type != kTypeObject)
+            continue;
+        try {
+            Object o = readObject(pkg.read(e));
+            o.instance = e.tgi.instance;
+            lot.objects.push_back(std::move(o));
+        } catch (const std::exception& ex) {
+            lot.warnings.push_back("object " + hexString(e.tgi.instance) + ": " + ex.what());
+        }
+    }
+    std::sort(lot.objects.begin(), lot.objects.end(),
+              [](const Object& a, const Object& b) { return a.instance < b.instance; });
     return lot;
 }
 

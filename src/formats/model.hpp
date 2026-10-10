@@ -44,8 +44,11 @@ struct ObjectModel {
     std::vector<std::string> warnings;                   // references that could not be resolved
 };
 
-// `cresName` may omit the "_cres" suffix.
-ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName);
+// `cresName` may omit the "_cres" suffix. `materials` (subset -> material)
+// replaces the SHPE's material of those subsets, e.g. with the design picked
+// for an object placed on a lot.
+ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
+                            const std::map<std::string, std::string>& materials = {});
 
 // CRES name of an object: OBJD -> "3D Object Names" STR# (instance 0x85, same
 // group) -> entry modelIndex(), in US English (other languages hold junk).
@@ -80,7 +83,7 @@ struct StandardMaterial {
     Cull cull = Cull::Clockwise;
     bool lighting = true;
     int layer = 0;
-    bool visible = true; // false for "Null" materials (parts the game does not draw)
+    bool visible = true; // false for "Null" and "WallMask" materials (parts the game does not draw)
 };
 StandardMaterial standardMaterial(const MaterialDefinition& m);
 
