@@ -645,6 +645,111 @@ ObjectId VM::containedIn(ObjectId container, int16_t slot) const {
     return 0;
 }
 
+uint16_t VM::functionTree(const Object& o, size_t function) {
+    const ObjectFunctions* f = code_.functions(o.group, o.definitionInstance);
+    return f && function < f->functions.size() ? f->functions[function].action : 0;
+}
+
+std::optional<Thread> VM::runFunction(ObjectId id, size_t function, size_t maxTurns) {
+    const Object* o = object(id);
+    if (!o)
+        throw VMError("object " + std::to_string(id) + " does not exist");
+    const uint16_t tree = functionTree(*o, function);
+    if (!tree)
+        return std::nullopt;
+    Thread t = start(id, tree);
+    for (size_t turn = 0; t.status == Thread::Status::Running && turn < maxTurns; ++turn)
+        run(t, instructionsPerTurn);
+    return t;
+}
+
+void VM::initialize(ObjectId id, const std::vector<ObjectId>& existing) {
+    constexpr int kMaxInitDepth = 8;
+    if (initDepth_ >= kMaxInitDepth)
+        throw VMError("objects created by Inits nest too deep");
+    const Object* o = object(id);
+    if (!o)
+        return;
+    const ObjectId lead = o->data[objdata::LeadTileObjectId] ? o->data[objdata::LeadTileObjectId] : id;
+    std::vector<ObjectId> parts;
+    for (const auto& [other, x] : objects_)
+        if ((other == id || x.data[objdata::LeadTileObjectId] == lead) &&
+            !std::binary_search(existing.begin(), existing.end(), other))
+            parts.push_back(other);
+    ++initDepth_;
+    try {
+        for (ObjectId p : parts)
+            if (auto t = runFunction(p, 0))
+                createdInits.push_back(std::move(*t));
+    } catch (...) {
+        --initDepth_;
+        throw;
+    }
+    --initDepth_;
+    for (ObjectId p : parts)
+        startMain(p);
+}
+
+bool VM::startMain(ObjectId id) {
+    const Object* o = object(id);
+    const uint16_t tree = o ? functionTree(*o, 1) : 0;
+    if (!tree)
+        return false;
+    threads.insert_or_assign(id, start(id, tree));
+    return true;
+}
+
+void VM::setClockGlobals() {
+    globals[global::Hour] = int16_t(clock.hour);
+    globals[global::Minute] = int16_t(clock.minute);
+    globals[global::Second] = int16_t(clock.tick * 60 / std::max(clock.ticksPerMinute, 1));
+    globals[global::DayOfMonth] = int16_t(clock.day);
+    globals[global::Month] = int16_t(clock.month);
+    globals[global::Year] = int16_t(clock.year);
+}
+
+void VM::tick() {
+    // The calendar is 30-day months, as FreeSO's clock (not confirmed).
+    if (++clock.tick >= clock.ticksPerMinute) {
+        clock.tick = 0;
+        if (++clock.minute == 60) {
+            clock.minute = 0;
+            if (++clock.hour == 24) {
+                clock.hour = 0;
+                if (++clock.day > 30) {
+                    clock.day = 1;
+                    if (++clock.month > 12)
+                        clock.month = 1, ++clock.year;
+                }
+            }
+        }
+    }
+    setClockGlobals();
+    ++ticks;
+    // Objects created or removed during the tick: the IDs are read first;
+    // new objects get their turn from the next tick on.
+    std::vector<ObjectId> ids;
+    for (const auto& [id, _] : threads)
+        ids.push_back(id);
+    for (ObjectId id : ids) {
+        auto it = threads.find(id);
+        if (it == threads.end())
+            continue;
+        Thread& t = it->second;
+        if (t.status == Thread::Status::Finished) {
+            const Object* o = object(id);
+            const uint16_t tree = o ? functionTree(*o, 1) : 0;
+            if (!tree)
+                continue;
+            const size_t done = t.instructions;
+            t = start(id, tree);
+            t.instructions = done;
+        }
+        if (t.status == Thread::Status::Running)
+            run(t, instructionsPerTurn);
+    }
+}
+
 Object* VM::object(ObjectId id) {
     auto it = objects_.find(id);
     return it == objects_.end() ? nullptr : &it->second;

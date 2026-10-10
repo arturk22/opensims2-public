@@ -918,6 +918,69 @@ static void testSlots() {
     check(t.status == Thread::Status::Failed, "negative slot");
 }
 
+// Scheduler: Init runs to completion (its sleeps do not wait for ticks), Main
+// gets a turn per tick and starts again when it returns; objects created while
+// running are initialized; the clock keeps the time globals.
+static void testScheduler() {
+    Fixture fx;
+    constexpr uint32_t kLamp = 0x1A2B3C4D;
+    fx.code.add(kObjGroup, 0x80, definition(0x0D0D0D0D));
+    fx.code.add(kObjGroup, 0x81, definition(kLamp));
+    ObjectFunctions f;
+    f.functions = {{0, 0x1000}, {0, 0x1001}};
+    fx.code.add(kObjGroup, 0x80, f);
+    f.functions = {{0, 0x1003}};
+    fx.code.add(kObjGroup, 0x81, f);
+    auto sleepOn = [](uint16_t param, Target t) { return instr(0x00, t, E, {uint8_t(param), uint8_t(param >> 8)}); };
+    // Init: attr 0 := 5, sleep 3 ticks, attr 2 := 1.
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(Attr, 0, Assign, Lit, 5, go(1), E), expr(Param, 0, Assign, Lit, 3, go(2), E),
+                      sleepOn(0, go(3)), expr(Attr, 2, Assign, Lit, 1, T, E)},
+                     1));
+    // Main: attr 1 += 1, sleep 1 tick, return.
+    fx.code.add(kObjGroup, 0x1001,
+                tree({expr(Attr, 1, Add, Lit, 1, go(1), E), expr(Param, 0, Assign, Lit, 1, go(2), E), sleepOn(0, T)},
+                     1));
+    // A Main that makes a lamp on its first tick, then idles.
+    fx.code.add(kObjGroup, 0x1002,
+                tree({instr(0x2A, go(1), E, {lo(kLamp, 0), lo(kLamp, 1), lo(kLamp, 2), lo(kLamp, 3), 6}),
+                      expr(Param, 0, Assign, Lit, 1000, go(2), E), sleepOn(0, T)},
+                     1));
+    fx.code.add(kObjGroup, 0x1003, tree({expr(Attr, 0, Assign, Lit, 9, T, E)})); // the lamp's Init
+
+    Object& o = fx.vm.instantiate(kObjGroup, 0x80);
+    o.attributes.resize(3);
+    auto init = fx.vm.runFunction(o.id, 0);
+    check(init && init->status == Thread::Status::Finished && o.attributes[0] == 5 && o.attributes[2] == 1,
+          "Init runs to completion");
+    check(!fx.vm.runFunction(o.id, 7), "no such function");
+    check(fx.vm.startMain(o.id), "Main starts");
+    for (int i = 0; i < 6; ++i)
+        fx.vm.tick();
+    check(o.attributes[1] == 3 && fx.vm.threads.at(o.id).status != Thread::Status::Failed,
+          "Main runs a turn per tick and starts again when it returns");
+
+    fx.vm.initCreatedObjects = true;
+    Object& maker = fx.vm.createObject(kObjGroup);
+    fx.vm.threads.insert_or_assign(maker.id, fx.vm.start(maker.id, 0x1002));
+    fx.vm.tick();
+    const Object* lamp = nullptr;
+    for (const auto& [id, x] : fx.vm.objects())
+        if (x.guid() == kLamp)
+            lamp = &x;
+    check(lamp && lamp->attributes.size() > 0 && lamp->attributes[0] == 9 && fx.vm.createdInits.size() == 1,
+          "a created object runs its Init");
+
+    fx.vm.clock = {};
+    fx.vm.clock.ticksPerMinute = 2;
+    fx.vm.clock.hour = 23, fx.vm.clock.minute = 59, fx.vm.clock.day = 30, fx.vm.clock.month = 12;
+    fx.vm.tick(), fx.vm.tick();
+    check(fx.vm.globals[global::Hour] == 0 && fx.vm.globals[global::Minute] == 0 &&
+              fx.vm.globals[global::DayOfMonth] == 1 && fx.vm.globals[global::Month] == 1 &&
+              fx.vm.globals[global::Year] == 2,
+          "the clock rolls over into the globals");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -943,6 +1006,7 @@ int main() {
     testAddPackage();
     testSavedObjectState();
     testSlots();
+    testScheduler();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

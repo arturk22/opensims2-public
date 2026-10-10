@@ -304,16 +304,24 @@ Exit testObjectType(Context& c) {
 // Create New Object Instance (0x2A): GUID u32, where u8 (STR# 0xA7), flags u8
 // (STR# 0xA8 lists 0-2, but the trees also use bits 0x04/0x10/0x80; ignored).
 // Only "out of world" (6, 72% of the uses) is implemented: the new object's ID
-// goes to the stack object. The object's init tree does not run yet.
+// goes to the stack object. With VM::initCreatedObjects, every part runs its
+// Init right away and gets its Main thread (as FreeSO's VMEntity.Init); an
+// Init that fails does not fail the creator (it is kept in createdInits).
 Exit createObjectInstance(Context& c) {
     const auto& o = c.instruction.operands;
     const uint32_t guid = le32(&o[0]);
     if (o[4] != 6)
         throw VMError("Create New Object Instance: placement " + std::to_string(o[4]) + " not implemented");
+    std::vector<ObjectId> before;
+    for (const auto& [id, _] : c.vm.objects())
+        before.push_back(id);
     Object* x = c.vm.instantiateGuid(guid);
     if (!x)
         throw VMError("Create New Object Instance: no OBJD with GUID " + hexString(guid));
-    c.frame.stackObject = x->id;
+    const ObjectId created = x->id;
+    if (c.vm.initCreatedObjects)
+        c.vm.initialize(created, before);
+    c.frame.stackObject = created;
     return Exit::True;
 }
 

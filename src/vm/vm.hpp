@@ -86,6 +86,12 @@ constexpr int16_t FamilyNumber = 61;
 
 // Globals the engine reads or writes (names as in STR# 0x81).
 namespace global {
+constexpr int16_t Hour = 0;
+constexpr int16_t DayOfMonth = 1;
+constexpr int16_t Minute = 5;
+constexpr int16_t Second = 6;
+constexpr int16_t Month = 7;
+constexpr int16_t Year = 8;
 constexpr int16_t SelectedPersonId = 3;
 constexpr int16_t CurrentFamily = 9;
 constexpr int16_t Speed = 16;
@@ -399,6 +405,51 @@ public:
     // Data owners 0x10/0x14/0x30/0x31 read slots this way.
     ObjectId containedIn(ObjectId container, int16_t slot) const;
 
+    // --- Scheduler -----------------------------------------------------------
+    // Each object has one thread of its own. Its Init (OBJf function 0) runs
+    // to completion when the object is initialized, as a check tree: sleeps
+    // count down without waiting for ticks (as FreeSO runs entry points).
+    // Then its Main (function 1) runs a turn every tick, in object ID order,
+    // until it yields; a Main that returns starts again on the next tick
+    // (as in FreeSO).
+
+    // Action tree of an object's OBJf function, 0 if it has none.
+    uint16_t functionTree(const Object& o, size_t function);
+    // Runs an OBJf function of `id` to completion in a thread of its own and
+    // returns that thread (Finished, Failed, Killed; Running if it was still
+    // going after `maxTurns` yields), or nothing if the object has no such function.
+    std::optional<Thread> runFunction(ObjectId id, size_t function, size_t maxTurns = 1000);
+    // Starts the object's Main in its thread; false if it has none.
+    bool startMain(ObjectId id);
+    std::map<ObjectId, Thread> threads; // the Main threads
+    // Instructions a thread may run in one turn before it fails as an
+    // infinite loop.
+    size_t instructionsPerTurn = 100000;
+    // Create New Object Instance initializes the new object (runs its Init
+    // and, with the scheduler running, starts its Main), as FreeSO does; off
+    // for single trees (bhav-sweep), where nothing else would run.
+    bool initCreatedObjects = false;
+    // Init threads of objects created while running (initCreatedObjects), for the host to look at.
+    std::vector<Thread> createdInits;
+    // Runs the Init of `id` and of the other parts of its multi-tile object
+    // that are not in `existing` (the IDs before it was created), then starts
+    // their Mains. Objects created by Inits that create objects nest; past a
+    // few levels that is an error.
+    void initialize(ObjectId id, const std::vector<ObjectId>& existing);
+
+    // Game time, kept in the globals Hour, Minute, Second, Day of Month,
+    // Month and Year. A minute is `ticksPerMinute` ticks (30, as in FreeSO's
+    // clock for The Sims 1; not confirmed for The Sims 2).
+    struct Clock {
+        int ticksPerMinute = 30;
+        int tick = 0; // within the minute
+        int minute = 0, hour = 8, day = 1, month = 1, year = 1;
+    } clock;
+    void setClockGlobals();
+    uint64_t ticks = 0;
+    // One tick: the clock, then a turn of every Main thread.
+    void tick();
+
     std::array<int16_t, kGlobalCount> globals{};
 
     // Relationship variables from one Sim or object to another. Sims are keyed
@@ -499,6 +550,7 @@ private:
     std::map<ObjectId, Object> objects_;
     std::unordered_map<uint16_t, Primitive> primitives_;
 
+    int initDepth_ = 0;
     void push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t, 4> args);
     // Follows a branch; returns false when the thread finished or failed.
     bool branch(Thread& t, Behavior::Target target);
