@@ -10,6 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 add_library(os2_formats
+  src/formats/bhav.cpp
   src/formats/dbpf.cpp
   src/formats/gmdc.cpp
   src/formats/image.cpp

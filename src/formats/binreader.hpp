@@ -13,6 +13,17 @@ struct FormatError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+// "0x1A2B" style hexadecimal for error messages.
+inline std::string hexString(uint32_t v) {
+    static const char digits[] = "0123456789ABCDEF";
+    std::string s;
+    do {
+        s.insert(s.begin(), digits[v & 15]);
+        v >>= 4;
+    } while (v);
+    return "0x" + s;
+}
+
 inline uint16_t le16(const uint8_t* p) { return uint16_t(p[0] | (p[1] << 8)); }
 inline uint32_t le32(const uint8_t* p) {
     return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);

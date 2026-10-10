@@ -59,7 +59,7 @@ StringTable StringTable::parse(std::span<const uint8_t> data) {
         }
         break;
     default:
-        throw FormatError("STR#: unknown format 0x" + std::to_string(t.format));
+        throw FormatError("STR#: unknown format " + hexString(t.format));
     }
     r.expectEndOrFill("STR#");
     return t;

@@ -228,7 +228,7 @@ InteractionTable InteractionTable::parse(std::span<const uint8_t> data) {
     t.typeCode = r.i32();
     t.version = r.u32();
     if (t.version < 0x3F || t.version > 0x4E)
-        throw FormatError("TTAB: unsupported version 0x" + std::to_string(t.version));
+        throw FormatError("TTAB: unsupported version " + hexString(t.version));
     t.unused = r.u32();
     t.interactions.resize(r.u16());
     const uint32_t v = t.version;

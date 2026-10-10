@@ -1,5 +1,6 @@
 #include "describe.hpp"
 
+#include "formats/bhav.hpp"
 #include "formats/gmdc.hpp"
 #include "formats/image.hpp"
 #include "formats/rcol.hpp"
@@ -241,6 +242,7 @@ std::string describeStrings(std::span<const uint8_t> data) {
 }
 
 namespace sa {
+constexpr uint32_t BHAV = 0x42484156;
 constexpr uint32_t OBJD = 0x4F424A44, OBJf = 0x4F424A66, BCON = 0x42434F4E, GLOB = 0x474C4F42, TPRP = 0x54505250,
                    SLOT = 0x534C4F54, TTAB = 0x54544142;
 }
@@ -248,6 +250,7 @@ constexpr uint32_t OBJD = 0x4F424A44, OBJf = 0x4F424A66, BCON = 0x42434F4E, GLOB
 bool isSimAnticsType(uint32_t type) {
     switch (type) {
     case sa::OBJD: case sa::OBJf: case sa::BCON: case sa::GLOB: case sa::TPRP: case sa::SLOT: case sa::TTAB:
+    case sa::BHAV:
         return true;
     default:
         return false;
@@ -257,6 +260,14 @@ bool isSimAnticsType(uint32_t type) {
 std::string describeSimAntics(uint32_t type, std::span<const uint8_t> data) {
     std::string out;
     switch (type) {
+    case sa::BHAV: {
+        const auto b = Behavior::parse(data);
+        appendf(out, "name=%s signature=0x%04X type=%u args=%u locals=%u flags=0x%02X version=%d\n",
+                b.fileName.c_str(), b.signature, b.treeType, b.argCount, b.localCount, b.flags,
+                int32_t(b.treeVersion));
+        out += b.disassemble();
+        break;
+    }
     case sa::OBJD: {
         const auto o = ObjectDefinition::parse(data);
         appendf(out, "name=%s title=%s version=0x%X fields=%zu\n", o.fileName.c_str(), o.title.c_str(), o.version,

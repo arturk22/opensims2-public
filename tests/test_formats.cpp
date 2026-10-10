@@ -1,3 +1,4 @@
+#include "formats/bhav.hpp"
 #include "formats/image.hpp"
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
@@ -163,6 +164,33 @@ static void testSimAntics() {
     check(SemiGlobal::parse(glob).semiGlobalName == "Test", "GLOB");
 }
 
+static void testBhav() {
+    std::vector<uint8_t> d(64, 0);
+    d.insert(d.end(), {0x07, 0x80, 2, 0, 0, 1, 2, 0, 0, 0, 0, 0}); // 0x8007, 2 instructions, 1 arg, 2 locals
+    auto instr = [&](uint16_t op, uint16_t t, uint16_t f) {
+        d.insert(d.end(), {uint8_t(op), uint8_t(op >> 8), uint8_t(t), uint8_t(t >> 8), uint8_t(f), uint8_t(f >> 8), 0});
+        d.insert(d.end(), 16, 0);
+    };
+    instr(0x0002, 1, 0xFFFE);      // Expression: true -> 1, false -> return false
+    instr(0x2010, 0xFFFD, 0xFFFC); // semi-global call: true -> return true, false -> error
+    const auto b = Behavior::parse(d);
+    check(b.argCount == 1 && b.localCount == 2 && b.instructions.size() == 2, "BHAV header");
+    check(b.instructions[0].onTrue.kind == Behavior::TargetKind::Instruction && b.instructions[0].onTrue.index == 1,
+          "BHAV branch to instruction");
+    check(b.instructions[0].onFalse.kind == Behavior::TargetKind::False, "BHAV return false");
+    check(b.instructions[1].onFalse.kind == Behavior::TargetKind::Error, "BHAV error target");
+    check(b.disassemble().find("call semiglobal 0x2010") != std::string::npos, "BHAV disassembly");
+
+    d[64 + 12 + 2] = 5; // branch past the end
+    bool threw = false;
+    try {
+        Behavior::parse(d);
+    } catch (const FormatError&) {
+        threw = true;
+    }
+    check(threw, "BHAV rejects out-of-range branches");
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
@@ -171,6 +199,7 @@ int main() {
     testNameHash();
     testStrings();
     testSimAntics();
+    testBhav();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
