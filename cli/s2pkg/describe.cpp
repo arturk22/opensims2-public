@@ -1,5 +1,6 @@
 #include "describe.hpp"
 
+#include "formats/gmdc.hpp"
 #include "formats/image.hpp"
 #include "formats/rcol.hpp"
 
@@ -60,6 +61,36 @@ void describeLevelInfo(std::string& out, const Rcol::Block& b) {
             l.data.size());
 }
 
+void describeGeometry(std::string& out, const Rcol::Block& b) {
+    const auto g = GeometryData::parse(b.body);
+    appendf(out, "  name=%s\n", g.resource.fileName.c_str());
+    for (size_t i = 0; i < g.elements.size(); ++i) {
+        const auto& e = g.elements[i];
+        const char* n = gmdc::elementName(e.identity);
+        appendf(out, "  element %zu %s(0x%08X) number=%u fmt=%u set=%u values=%zu items=%zu\n", i, n, e.identity,
+                e.number, e.blockFormat, e.setFormat, e.valueCount(), e.items.size());
+    }
+    for (size_t i = 0; i < g.links.size(); ++i) {
+        const auto& l = g.links[i];
+        appendf(out, "  link %zu size=%u active=%u elements=[", i, l.referencedSize, l.activeElements);
+        for (auto e : l.elements)
+            appendf(out, " %u", e);
+        appendf(out, " ] aliases=[");
+        for (const auto& a : l.aliases)
+            appendf(out, " %zu", a.size());
+        appendf(out, " ]\n");
+    }
+    for (const auto& gr : g.groups)
+        appendf(out, "  group '%s' prim=%u link=%d faces=%zu opacity=0x%X joints=%zu\n", gr.name.c_str(),
+                gr.primitiveType, gr.linkIndex, gr.faces.size(), gr.opacity, gr.usedJoints.size());
+    appendf(out, "  transforms=%zu blendNames=%zu boundingMesh=%zu/%zu joints=%zu\n", g.transforms.size(),
+            g.blendNames.size(), g.boundingMesh.vertices.size(), g.boundingMesh.faces.size(), g.joints.size());
+    for (const auto& m : buildMeshes(g))
+        appendf(out, "  mesh '%s' %zu vertices %zu triangles normals=%s uvs=%s\n", m.name.c_str(),
+                m.positions.size(), m.triangles.size() / 3, m.normals.empty() ? "no" : "yes",
+                m.uvs.empty() ? "no" : "yes");
+}
+
 std::string describeRcol(std::span<const uint8_t> data) {
     std::string out;
     Rcol rc(data);
@@ -72,6 +103,8 @@ std::string describeRcol(std::span<const uint8_t> data) {
             describeImageData(out, b);
         else if (b.className == "cLevelInfo")
             describeLevelInfo(out, b);
+        else if (b.className == "cGeometryDataContainer")
+            describeGeometry(out, b);
     }
     return out;
 }

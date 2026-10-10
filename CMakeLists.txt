@@ -11,6 +11,7 @@ endif()
 
 add_library(os2_formats
   src/formats/dbpf.cpp
+  src/formats/gmdc.cpp
   src/formats/image.cpp
   src/formats/qfs.cpp
   src/formats/rcol.cpp

@@ -1,6 +1,7 @@
 // s2pkg: inspect and extract The Sims 2 .package (DBPF) files.
 #include "describe.hpp"
 #include "formats/dbpf.hpp"
+#include "formats/gmdc.hpp"
 #include "formats/image.hpp"
 #include "formats/resindex.hpp"
 
@@ -149,6 +150,30 @@ int cmdTexture(DbpfPackage& pkg, const Tgi& tgi, const std::filesystem::path& ou
     return 0;
 }
 
+int cmdMesh(DbpfPackage& pkg, const Tgi& tgi, const std::filesystem::path& out) {
+    const auto* e = pkg.find(tgi);
+    if (!e)
+        throw std::runtime_error("resource not found");
+    const auto data = pkg.read(*e);
+    Rcol rc(data);
+    const auto* block = rc.find("cGeometryDataContainer");
+    if (!block)
+        throw std::runtime_error("not a GMDC");
+    const auto meshes = buildMeshes(GeometryData::parse(block->body));
+    std::ofstream f(out);
+    if (!f)
+        throw std::runtime_error("cannot write " + out.string());
+    ObjWriter obj{f};
+    size_t tris = 0;
+    for (const auto& m : meshes) {
+        obj.write(m, "");
+        tris += m.triangles.size() / 3;
+    }
+    std::printf("%zu groups, %zu vertices, %zu triangles -> %s\n", meshes.size(), obj.vBase, tris,
+                out.string().c_str());
+    return 0;
+}
+
 int cmdFind(const std::string& root, const std::string& name, const std::string& type) {
     ResourceIndex idx(root);
     std::printf("%zu packages, %zu resources, %zu duplicate TGIs\n", idx.packageCount(), idx.resourceCount(),
@@ -181,6 +206,7 @@ int usage() {
                          "       s2pkg dump <file.package> <TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII>\n"
                          "       s2pkg extract <file.package> <out-dir>\n"
                          "       s2pkg texture <file.package> <tgi> <out.png>\n"
+                         "       s2pkg mesh <file.package> <tgi> <out.obj>\n"
                          "       s2pkg find <Res-dir> <name> <type-hex>\n");
     return 2;
 }
@@ -201,6 +227,7 @@ int main(int argc, char** argv) {
         if (cmd == "dump" && argc == 4) return cmdDump(pkg, parseTgi(argv[3]));
         if (cmd == "extract" && argc == 4) return cmdExtract(pkg, argv[3]);
         if (cmd == "texture" && argc == 5) return cmdTexture(pkg, parseTgi(argv[3]), argv[4]);
+        if (cmd == "mesh" && argc == 5) return cmdMesh(pkg, parseTgi(argv[3]), argv[4]);
         return usage();
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "error: %s\n", ex.what());
