@@ -41,6 +41,9 @@ constexpr uint32_t kTypeStr = 0x53545223;
 // STR# with the tree names Run Tree by Name refers to ("Call Named Tree prim
 // string set"), in object, semi-global and global groups.
 constexpr uint16_t kNamedTreeStrings = 0x12F;
+// STR# of an object group with its mesh group and material names.
+constexpr uint16_t kMeshGroupStrings = 0x87;
+constexpr uint16_t kMaterialStrings = 0x88;
 
 // Sizes of the engine-defined variable sets, from the labels of the game's own
 // SimAntics editor (objects.package, group 0x7FE59FD0: STR# 0x81 global labels,
@@ -156,6 +159,8 @@ struct Object {
     };
     std::vector<Array> arrays;
     Array& array(int idx); // created on demand; throws VMError past kMaxObjectArrays
+    // Materials set by Change Material: mesh group name ("" = every group) -> material name.
+    std::map<std::string, std::string> materials;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };

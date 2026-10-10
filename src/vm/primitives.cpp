@@ -352,6 +352,37 @@ Exit arrayOperation(Context& c) {
     }
 }
 
+// Change Material (0x6D): material u8 (index into the code owner's STR#
+// 0x88 "Material Names"), u8 always 0, flags u8 (not understood), mesh group
+// u16 at 3 (index into STR# 0x87 "Mesh Groups", 0xFFFF = all of them), target
+// object (owner u8 at 5, data u16). The change is recorded on the target for
+// the renderer. Bytes 8+ (an owner at 8 that is 0x0A or 0, a u16 at 11 that is
+// 0xFFFF or small) are not understood.
+Exit changeMaterial(Context& c) {
+    const auto& o = c.instruction.operands;
+    const Object* owner = c.vm.object(c.frame.codeOwner);
+    if (!owner)
+        throw VMError("code owner does not exist");
+    auto name = [&](uint16_t table, size_t index) {
+        const StringTable* t = c.vm.code().strings(owner->group, table);
+        if (!t || index >= t->count(lang::EnglishUS))
+            throw VMError("Change Material: no entry " + std::to_string(index) + " in STR# " + hexString(table) +
+                          " of " + hexString(owner->group));
+        return t->get(index, lang::EnglishUS);
+    };
+    const uint16_t group = le16(&o[3]);
+    const std::string material = name(kMaterialStrings, o[0]);
+    const std::string meshGroup = group == 0xFFFF ? "" : name(kMeshGroupStrings, group);
+    const ObjectId target = c.get(o[5], int16_t(le16(&o[6])));
+    Object* x = c.vm.object(target);
+    if (!x)
+        throw VMError("Change Material: object " + std::to_string(target) + " does not exist");
+    if (meshGroup.empty())
+        x->materials.clear();
+    x->materials[meshGroup] = material;
+    return Exit::True;
+}
+
 } // namespace
 
 void registerPrimitives(VM& vm) {
@@ -366,6 +397,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x1F, setToNext);
     vm.setPrimitive(0x20, testObjectType);
     vm.setPrimitive(0x2A, createObjectInstance);
+    vm.setPrimitive(0x6D, changeMaterial);
     vm.setPrimitive(0x76, arrayOperation);
 }
 

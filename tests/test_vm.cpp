@@ -441,6 +441,21 @@ static void testArrays() {
           "Array Operation appends, finds, removes and clears");
 }
 
+static void testChangeMaterial() {
+    Fixture fx;
+    fx.obj();
+    fx.code.add(kObjGroup, kMaterialStrings, names({"lamp_off", "lamp_on"}));
+    fx.code.add(kObjGroup, kMeshGroupStrings, names({"shade", "bulb"}));
+    fx.code.add(kObjGroup, 0x1000,
+                tree({instr(0x6D, go(1), E, {1, 0, 0, 1, 0, Data, 0x0B, 0}),           // bulb := lamp_on on me
+                      instr(0x6D, T, E, {0, 0, 0, 0, 0, Data, 0x0B, 0})}));             // shade := lamp_off
+    Thread t = fx.run(0x1000);
+    const auto& m = fx.obj().materials;
+    check(t.status == Thread::Status::Finished && m.size() == 2 && m.at("bulb") == "lamp_on" &&
+              m.at("shade") == "lamp_off",
+          "Change Material records mesh group materials");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -453,6 +468,7 @@ int main() {
     testRunTreeByName();
     testRelationship();
     testArrays();
+    testChangeMaterial();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
