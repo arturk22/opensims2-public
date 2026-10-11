@@ -5,6 +5,7 @@
 #include "formats/resindex.hpp"
 #include "formats/sim_character.hpp"
 #include "vm/animation.hpp"
+#include "vm/autonomy.hpp"
 #include "vm/hood_bridge.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
@@ -40,6 +41,13 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
                       "%zu of %zu saved objects in the VM, %zu resumed from their saved stacks, %zu fresh Mains, %02d:%02d",
                       load.created, load.objects.size(), r.stacks, r.freshMains, m.clock.hour, m.clock.minute);
     summary_ = buf;
+    // OS2_AUTONOMY_LOG=1: what each Find Best Interaction picks (s2pkg autonomy has more).
+    if (std::getenv("OS2_AUTONOMY_LOG"))
+        vm::autonomyObserver() = [this](const vm::AutonomyDecision& d) {
+            std::fprintf(stderr, "autonomy: tick %llu Sim %d: %s\n", (unsigned long long)vm_->ticks, d.sim,
+                         d.found ? ("\"" + d.best.front().name + "\" on object " + std::to_string(d.best.front().object)).c_str()
+                                 : "nothing");
+        };
 }
 
 float LotSimulation::floorHeight(int level, float x, float y) const {
