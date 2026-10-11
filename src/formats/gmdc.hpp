@@ -101,6 +101,7 @@ struct MeshGroup {
     std::vector<std::array<float, 3>> positions;
     std::vector<std::array<float, 3>> normals; // empty if the link has none
     std::vector<std::array<float, 2>> uvs;     // empty if the link has none
+    std::vector<std::array<float, 2>> uvs2;    // light-map coordinates (lot surfaces), empty if none
     std::vector<uint32_t> colors;              // D3DCOLOR 0xAARRGGBB, empty if the link has none
     std::vector<uint32_t> triangles;
     // Skinning, empty if the link has no bone assignments: up to four bones

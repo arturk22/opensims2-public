@@ -17,7 +17,7 @@ namespace os2 {
 
 namespace {
 
-constexpr uint32_t kTypeTxmt = 0x49596978, kTypeCatalogPattern = 0xCCA8E925, kTypeCatalogRoof = 0xACA8EA06,
+constexpr uint32_t kTypeTxmt = 0x49596978, kTypeTxtr = 0x1C4A276C, kTypeCatalogPattern = 0xCCA8E925, kTypeCatalogRoof = 0xACA8EA06,
                    kTypeCatalogFence = 0x2CB230B8;
 
 // Wall slab half thickness, in tiles (inferred from screenshots of the game).
@@ -25,8 +25,10 @@ constexpr float kWallHalfThickness = 0.075f;
 // Ground floors sit on the terrain; lift them so they win the depth test
 // against the terrain paints drawn after them.
 constexpr float kGroundFloorLift = 0.005f;
-// Terrain textures repeat every this many tiles (not found in the data yet).
-constexpr float kTerrainTextureTiles = 4.0f;
+// terrain.matShad: the canvas texture spans 20 tiles (canvasBaseTextureScale,
+// paintTextureScale), its "_detail" texture 4 (canvasDetailTextureScale,
+// paintDetailTextureScale); terrainMatDiffCoef 0.9.
+constexpr float kTerrainTextureTiles = 20.0f, kTerrainDetailTiles = 4.0f;
 constexpr float kStoryHeight = 3.0f;
 // Attic walls stop this far below the roof surface (OpenTS2: 2.5 x the wall's
 // half thickness), half walls under a fence this far above their floor.
@@ -80,12 +82,23 @@ std::optional<uint32_t> parseGuid(const std::string& s) {
     return uint32_t(std::stoul(s, nullptr, 16));
 }
 
-MaterialDefinition terrainMaterial(const std::string& texture, bool blended) {
+// TerrainCanvasShader / TerrainPaint (terrain.matShad), with TerrainLighting
+// folded in: (detail over texture by the detail's alpha) x 2 x 0.9 x light
+// map. Paints take their alpha from the mask alone and drop alpha <= 10.
+MaterialDefinition terrainMaterial(const std::string& texture, bool paint, bool detail) {
     MaterialDefinition m;
-    m.materialType = "StandardMaterial";
-    m.properties = {{"stdMatBaseTextureName", texture}, {"stdMatDiffCoef", "0.8,0.8,0.8,1"}, {"osLightMapped", "true"}};
-    if (blended)
-        m.properties.emplace_back("stdMatAlphaBlendMode", "blend");
+    m.materialType = "Terrain";
+    m.properties = {{"stdMatBaseTextureName", texture},
+                    {"stdMatDiffCoef", "0.9,0.9,0.9,1"},
+                    {"osTextureScale", std::to_string(1 / kTerrainTextureTiles)}};
+    if (detail)
+        m.properties.insert(m.properties.end(), {{"osDetailTextureName", texture + "_detail"},
+                                                 {"osDetailTextureScale", std::to_string(1 / kTerrainDetailTiles)}});
+    if (paint)
+        m.properties.insert(m.properties.end(), {{"stdMatAlphaBlendMode", "blend"},
+                                                 {"stdMatAlphaTestEnabled", "true"},
+                                                 {"stdMatAlphaRefValue", "11"},
+                                                 {"osMaskAlphaOnly", "true"}});
     return m;
 }
 
@@ -99,6 +112,11 @@ struct MeshBuilder {
         mesh.normals.push_back(n);
         mesh.uvs.push_back({u, v});
         return uint32_t(mesh.positions.size() - 1);
+    }
+    // With light-map coordinates (atlas texels).
+    uint32_t vertex(const Vec3f& p, const Vec3f& n, float u, float v, std::array<float, 2> lm) {
+        mesh.uvs2.push_back(lm);
+        return vertex(p, n, u, v);
     }
     void triangle(uint32_t a, uint32_t b, uint32_t c) { mesh.triangles.insert(mesh.triangles.end(), {a, b, c}); }
     void quad(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
@@ -119,7 +137,7 @@ Vec3f normalOf(const Vec3f& a, const Vec3f& b, const Vec3f& c) {
 
 // Terrain grid over level 0; `keep(x, y)` picks the tiles to emit.
 template <typename Keep>
-MeshGroup terrainMesh(const Lot& lot, Keep&& keep) {
+MeshGroup terrainMesh(const Lot& lot, const LotLightMapLayout& lm, Keep&& keep) {
     MeshBuilder b;
     const int w = int(lot.width), h = int(lot.height);
     for (int x = 0; x <= w; ++x)
@@ -127,8 +145,10 @@ MeshGroup terrainMesh(const Lot& lot, Keep&& keep) {
             const float dx = lot.elevation(0, x + 1, y) - lot.elevation(0, x - 1, y);
             const float dy = lot.elevation(0, x, y + 1) - lot.elevation(0, x, y - 1);
             const float len = std::sqrt(dx * dx + dy * dy + 4.0f);
-            b.vertex({float(x), float(y), lot.elevation(0, x, y)}, {-dx / len, -dy / len, 2.0f / len},
-                     float(x) / kTerrainTextureTiles, float(y) / kTerrainTextureTiles);
+            // Texture coordinates in tiles: the material scales them (the
+            // light map's floor page 0 is at position / 64 in the game).
+            b.vertex({float(x), float(y), lot.elevation(0, x, y)}, {-dx / len, -dy / len, 2.0f / len}, float(x),
+                     float(y), lm.floorTexel(0, float(x), float(y)));
         }
     auto at = [&](int x, int y) { return uint32_t(x * (h + 1) + y); };
     for (int x = 0; x < w; ++x)
@@ -140,8 +160,8 @@ MeshGroup terrainMesh(const Lot& lot, Keep&& keep) {
 
 // Quarter-tile triangles (west, north, east, south) of each floor tile, with
 // the tile's own texture coordinates, one mesh per material.
-void addFloors(const Lot& lot, const PatternCatalog& patterns, std::map<std::string, MeshBuilder>& out,
-               std::vector<std::string>& warnings) {
+void addFloors(const Lot& lot, const PatternCatalog& patterns, const LotLightMapLayout& lm,
+               std::map<std::string, MeshBuilder>& out, std::vector<std::string>& warnings) {
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.floorPatterns) {
         const std::string m = patterns.floorMaterial(pattern);
@@ -180,7 +200,7 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, std::map<std::str
                     // one) only run along a north-south road this way. The
                     // coordinates run on across tiles, so that materials spanning
                     // several tiles (floorMaterialScaleU/V) continue.
-                    auto v = [&](const Vec3f& p) { return b.vertex(p, n, p[1], p[0]); };
+                    auto v = [&](const Vec3f& p) { return b.vertex(p, n, p[1], p[0], lm.floorTexel(level, p[0], p[1])); };
                     b.triangle(v(a), v(e), v(c));
                 }
             }
@@ -236,7 +256,7 @@ std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay
 // texture coordinates follow world position, so overlaps line up. Attic walls
 // (gables) rise to the roof above them, half walls under a fence to 1 tile.
 void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs, const LotViewOptions& view,
-              const std::vector<WallHole>& holes, std::map<std::string, MeshBuilder>& out,
+              const std::vector<WallHole>& holes, LotLightMapLayout& lm, std::map<std::string, MeshBuilder>& out,
               std::vector<std::string>& warnings) {
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.wallPatterns)
@@ -323,6 +343,20 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 const float s = side == 0 ? 1.0f : -1.0f;
                 const Vec3f n{nx * s, ny * s, 0};
                 const float ox = nx * t * s, oy = ny * t * s;
+                // The face's light-map cell, lit as the room it faces.
+                LotLightMapLayout::WallFace face;
+                face.origin = {ax + ox, ay + oy};
+                face.along = {dx, dy};
+                face.normal = {n[0], n[1]};
+                face.length = segLen;
+                face.base = std::min(za0, zb0);
+                face.top = std::max(za1, zb1);
+                face.level = level;
+                face.room = roomBeside(lot, level, (ax + bx) / 2, (ay + by) / 2, n[0], n[1]);
+                const size_t cell = lm.addWall(face);
+                auto lmAt = [&](const Vec3f& p) {
+                    return lm.wallTexel(cell, (p[0] - face.origin[0]) * dx + (p[1] - face.origin[1]) * dy, p[2]);
+                };
                 // u runs along the wall in world units (right to left as seen from the face).
                 auto u = [&](const Vec3f& p) { return s * (p[0] * dx + p[1] * dy); };
                 // v: 0 at the top of a full wall; attic and half walls keep the
@@ -362,10 +396,10 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                             continue;
                         const Vec3f pa0{x0, y0, band[0]}, pb0{x1, y1, band[2]}, pb1{x1, y1, band[3]},
                             pa1{x0, y0, band[1]};
-                        const uint32_t i0 = b.vertex(pa0, n, u(pa0), vv(band[0], bot0, top0)),
-                                       i1 = b.vertex(pb0, n, u(pb0), vv(band[2], bot1, top1)),
-                                       i2 = b.vertex(pb1, n, u(pb1), vv(band[3], bot1, top1)),
-                                       i3 = b.vertex(pa1, n, u(pa1), vv(band[1], bot0, top0));
+                        const uint32_t i0 = b.vertex(pa0, n, u(pa0), vv(band[0], bot0, top0), lmAt(pa0)),
+                                       i1 = b.vertex(pb0, n, u(pb0), vv(band[2], bot1, top1), lmAt(pb0)),
+                                       i2 = b.vertex(pb1, n, u(pb1), vv(band[3], bot1, top1), lmAt(pb1)),
+                                       i3 = b.vertex(pa1, n, u(pa1), vv(band[1], bot0, top0), lmAt(pa1));
                         if (side == 0)
                             b.quad(i0, i1, i2, i3);
                         else
@@ -382,7 +416,9 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 };
                 auto face = [&](Vec3f p0, Vec3f p1, Vec3f p2, Vec3f p3) {
                     const Vec3f nn = normalOf(p0, p1, p2);
-                    auto vtx = [&](const Vec3f& p) { return rev.vertex(p, nn, p[0] + p[2], p[1] + p[2]); };
+                    auto vtx = [&](const Vec3f& p) {
+                        return rev.vertex(p, nn, p[0] + p[2], p[1] + p[2], lm.floorTexel(level, p[0], p[1]));
+                    };
                     rev.quad(vtx(p0), vtx(p1), vtx(p2), vtx(p3));
                 };
                 if (c.u0 > t + 1e-3f) // jamb at u0, facing +along
@@ -396,7 +432,8 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             const Vec3f r0{ax + nx * t, ay + ny * t, za1}, r1{bx + nx * t, by + ny * t, zb1},
                 l1{bx - nx * t, by - ny * t, zb1}, l0{ax - nx * t, ay - ny * t, za1};
             const Vec3f up = normalOf(r0, r1, l1);
-            auto vtx = [&](const Vec3f& p) { return cap.vertex(p, up, p[0], p[1]); };
+            // Wall tops take the floor light map of their level (inferred).
+            auto vtx = [&](const Vec3f& p) { return cap.vertex(p, up, p[0], p[1], lm.floorTexel(level, p[0], p[1])); };
             cap.quad(vtx(r0), vtx(r1), vtx(l1), vtx(l0));
         }
     }
@@ -454,11 +491,16 @@ std::vector<WallHole> findWallHoles(const Lot& lot, ResourceIndex& index, std::v
 }
 
 // Materials for the parts the game draws with its own shaders: roofs (no
-// TXMT; OpenTS2 builds "Floor" materials around the catalog's textures) and water.
-MaterialDefinition roofMaterial(const std::string& texture, const std::string& bump) {
+// TXMT) as roof.matShad's RoofTop/RoofEdges/RoofTrim/RoofUnder definitions,
+// StandardMaterials lit by the lights like any object (no light map), cull
+// none, no specular; the top is darker (0.4, 0.385, 0.38) and bumped.
+MaterialDefinition roofMaterial(const std::string& texture, const std::string& bump, bool top) {
     MaterialDefinition m;
-    m.materialType = "Floor";
-    m.properties = {{"stdMatBaseTextureName", texture}, {"stdMatDiffCoef", "0.8,0.8,0.8,1"}, {"osLightMapped", "true"}};
+    m.materialType = "StandardMaterial";
+    m.properties = {{"stdMatBaseTextureName", texture},
+                    {"stdMatDiffCoef", top ? "0.4,0.385,0.38,1" : "0.8,0.8,0.8,1"},
+                    {"stdMatSpecPower", "0"},
+                    {"stdMatCullMode", "none"}};
     if (!bump.empty())
         m.properties.insert(m.properties.end(), {{"stdMatNormalMapTextureEnabled", "true"},
                                                  {"stdMatNormalMapTextureName", bump}});
@@ -606,10 +648,15 @@ std::string PatternCatalog::material(const std::map<std::string, std::string>& s
 }
 
 ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns,
-                          const LotViewOptions& view) {
+                          const LotViewOptions& view, LotLightMapLayout* lightMap) {
     ObjectModel model;
     model.name = "lot";
     model.warnings = lot.warnings;
+    LotLightMapLayout lm;
+    lm.init(lot);
+    auto hasDetail = [&](const std::string& texture) {
+        return index.findByName(texture + "_detail_txtr", kTypeTxtr).has_value();
+    };
 
     // Terrain: the base everywhere, then each paint over the tiles its mask
     // touches; none over pools (floors below the ground level), which would
@@ -621,10 +668,10 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         return true;
     };
     if (!lot.terrainBase.empty()) {
-        model.materials["terrain:" + lot.terrainBase] = terrainMaterial(lot.terrainBase, false);
+        model.materials["terrain:" + lot.terrainBase] = terrainMaterial(lot.terrainBase, false, hasDetail(lot.terrainBase));
         ObjectModel::Part base;
         base.material = "terrain:" + lot.terrainBase;
-        base.mesh = terrainMesh(lot, open);
+        base.mesh = terrainMesh(lot, lm, open);
         model.parts.push_back(std::move(base));
     }
     const uint32_t mw = lot.maskWidth, mh = lot.maskHeight;
@@ -646,18 +693,18 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         };
         ObjectModel::Part part;
         part.material = "terrain:" + paint.texture;
-        part.mesh = terrainMesh(lot, [&](int x, int y) { return open(x, y) && touched(x, y); });
+        part.mesh = terrainMesh(lot, lm, [&](int x, int y) { return open(x, y) && touched(x, y); });
         part.mask = int(model.masks.size());
         model.masks.push_back(std::move(mask));
-        model.materials[part.material] = terrainMaterial(paint.texture, true);
+        model.materials[part.material] = terrainMaterial(paint.texture, true, hasDetail(paint.texture));
         model.parts.push_back(std::move(part));
     }
 
     const LotRoofs roofs(lot);
     model.warnings.insert(model.warnings.end(), roofs.warnings.begin(), roofs.warnings.end());
     std::map<std::string, MeshBuilder> built;
-    addFloors(lot, patterns, built, model.warnings);
-    addWalls(lot, patterns, roofs, view, findWallHoles(lot, index, model.warnings), built, model.warnings);
+    addFloors(lot, patterns, lm, built, model.warnings);
+    addWalls(lot, patterns, roofs, view, findWallHoles(lot, index, model.warnings), lm, built, model.warnings);
     addWater(lot, built);
     model.materials["water:terrain"] = terrainWaterMaterial();
     model.materials["water:pool"] = poolWaterMaterial();
@@ -686,7 +733,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
                     continue;
                 ObjectModel::Part part;
                 part.material = part.node = "roof:" + tex.first;
-                model.materials[part.material] = roofMaterial(tex.first, tex.second);
+                model.materials[part.material] = roofMaterial(tex.first, tex.second, mesh == &meshes.top);
                 part.mesh = std::move(*mesh);
                 model.parts.push_back(std::move(part));
             }
@@ -738,6 +785,12 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
             for (auto& uv : part.mesh.uvs)
                 uv = {uv[0] / su, uv[1] / sv};
     }
+    // Light-map coordinates from atlas texels to 0-1, now that every wall has its cell.
+    for (auto& part : model.parts)
+        for (auto& uv : part.mesh.uvs2)
+            uv = {uv[0] / float(lm.width), uv[1] / float(std::max<uint32_t>(lm.height, 1))};
+    if (lightMap)
+        *lightMap = std::move(lm);
     return model;
 }
 

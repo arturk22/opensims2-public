@@ -464,6 +464,64 @@ static void testLotModel() {
             top = std::max(top, p[2]);
         check(top == 3.0f, "wall reaches the next level");
     }
+    check(wall && wall->mesh.uvs2.size() == wall->mesh.positions.size(), "walls get light-map coordinates");
+    check(floor && floor->mesh.uvs2.size() == floor->mesh.positions.size(), "floors get light-map coordinates");
+}
+
+static void testLotLightMap() {
+    // 4x4 lot, one level: a 2x2 room with floor (room 2) in the corner,
+    // the rest terrain (room 1, outdoors since it has no floor).
+    Lot lot;
+    lot.width = 4, lot.height = 4, lot.levelCount = 1;
+    lot.elevations.assign(5 * 5, 0.0f);
+    lot.floors.assign(16, {});
+    lot.rooms.assign(16, {1, 1, 1, 1});
+    for (uint32_t x = 0; x < 2; ++x)
+        for (uint32_t y = 0; y < 2; ++y) {
+            lot.floors[x * 4 + y] = {1, 1, 1, 1};
+            lot.rooms[x * 4 + y] = {2, 2, 2, 2};
+        }
+    LotLightMapLayout layout;
+    layout.init(lot);
+    check(layout.outdoor(0, 1) && !layout.outdoor(0, 2) && layout.outdoor(0, 0), "rooms without floor are outdoors");
+    check(layout.roomAt(0, 0.5f, 0.5f) == 2 && layout.roomAt(0, 3.5f, 3.5f) == 1, "light-map room lookup");
+    const auto t = layout.floorTexel(0, 1.5f, 2.0f);
+    check(t[0] == 12 && t[1] == 16, "floor page texels: 8 per tile");
+    LotLightMapLayout::WallFace face;
+    face.origin = {2, 0}, face.along = {0, 1}, face.normal = {-1, 0}, face.length = 2, face.base = 0, face.top = 3;
+    face.room = 2;
+    const size_t cell = layout.addWall(face);
+    check(layout.walls[cell].w == 18 && layout.walls[cell].h == 26 && layout.walls[cell].y == 32, "wall cell below the floor page");
+    const auto wt = layout.wallTexel(cell, 1, 3);
+    check(wt[0] == 9 && wt[1] == 33, "wall texel: one-texel border, row 0 at the top");
+
+    const auto cfg = parseLightingConfig(R"(
+lightingState day
+   skylight (1,1,1) 0.5
+   light sun (0, 0, 1) (1, 1, 1) 1
+   diffParam insideAmbientColor (1, 1, 1)
+   diffParam insideFloorAmbient 0.1
+   diffParam floorThreshold 0.5
+   modifiers insideObjects 1 1 1 1
+end
+)");
+    const LightingState& day = *cfg.state("day");
+    auto texel = [](const RgbaImage& im, uint32_t x, uint32_t y) { return im.pixels[(size_t(y) * im.width + x) * 4] / 255.0f; };
+    // Outdoors: half of skylight 0.5 + (sun - skylight) x N.L = 0.5.
+    LotLightMap dark = computeLotLightMap(layout, day, {});
+    check(std::fabs(texel(dark.image, 28, 28) - 0.5f) < 0.01f, "outdoor floor texel is half the outdoor light");
+    check(std::fabs(texel(dark.image, 4, 4) - 0.1f) < 0.01f, "indoor floor texel is the inside ambient");
+    // A lamp in the room: seeded at colour x floor scale, falling by 1 + k per half tile.
+    LightMapLight lamp;
+    lamp.position = {0.25f, 0.25f, 2};
+    lamp.color = {1, 1, 1};
+    lamp.floorScale = 0.8f;
+    LotLightMap lit = computeLotLightMap(layout, day, {lamp});
+    check(std::fabs(texel(lit.image, 1, 1) - 0.8f) < 0.02f, "lamp seeds its sample");
+    const float far = texel(lit.image, 14, 14), farther = texel(lit.image, 30, 30);
+    check(far < 0.8f && far > 0.1f, "lamp light spreads through the room");
+    check(std::fabs(farther - 0.5f) < 0.01f, "lamp light stays in its room");
+    check(lit.rooms.count({0, 2}) && lit.rooms.at({0, 2})[4][0] > dark.rooms.at({0, 2})[4][0], "room irradiance from the light map");
 }
 
 int main() {
@@ -481,6 +539,7 @@ int main() {
     testStandardMaterial();
     testPropertySet();
     testLotModel();
+    testLotLightMap();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

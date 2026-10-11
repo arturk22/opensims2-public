@@ -292,6 +292,7 @@ std::unique_ptr<os2::LotSimulation> gSimulation;
 std::unique_ptr<os2::VmObjectView> gObjectView;
 // The lot's lights from the VM: the clock's day/night, rooms, lamps (app/lot_lighting.hpp).
 std::unique_ptr<os2::LotLighting> gLighting;
+std::optional<os2::LotLightMapLayout> gLightMapLayout; // the lot's light-map atlas
 // Doors opening as the Sims walk through (app/door_portals.hpp).
 std::unique_ptr<os2::DoorPortals> gDoors;
 struct LotSim {
@@ -369,6 +370,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                                                        os2::loadLightOverrides(lights / "LotLights.txt"));
         for (const auto& s : gLotSims)
             gLighting->addSim(s.id, s.actor);
+        if (gLightMapLayout)
+            gLighting->setLightMapLayout(*gLightMapLayout);
         // --lighting <state> keeps that state instead of the clock's.
         if (auto state = argument(@"--lighting"))
             gLighting->forceState(*state);
@@ -557,7 +560,8 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         view.walls = os2::LotViewOptions::Walls::Down;
     else if (walls != "up")
         throw std::runtime_error("--walls: expected up, cutaway or down");
-    const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, view);
+    gLightMapLayout.emplace();
+    const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, view, &*gLightMapLayout);
     for (const auto& w : model.warnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     renderer.hideTestScene();
@@ -570,6 +574,15 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     startAudio(index, lot);
     if (argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") || [args containsObject:@"--vm"])
         startSimulation(renderer, index, lot, pkg, lotPath(*query));
+    // Without the VM (no lamps): the light maps of the --lighting state.
+    if (!gLighting) {
+        const os2::LightingConfig lighting = os2::loadLightingConfig(gameDir() / kLightingConfig);
+        if (const auto* state = lighting.state(argument(@"--lighting").value_or("day"))) {
+            const os2::RgbaImage lm = os2::computeLotLightMap(*gLightMapLayout, *state, {}).image;
+            renderer.setLightMap(0, lm);
+            renderer.setLightMap(1, lm);
+        }
+    }
     // Fence rails and posts: one model per CRES, an instance per piece.
     std::vector<std::string> fenceWarnings;
     const auto fences = os2::lotFencePieces(lot, patterns, &fenceWarnings);

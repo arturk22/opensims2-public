@@ -3,6 +3,7 @@
 #include "lot_vm.hpp"
 #include "vm_objects.hpp"
 
+#include "formats/image.hpp"
 #include "formats/rcol.hpp"
 #include "formats/resindex.hpp"
 #include "formats/scenegraph.hpp"
@@ -22,7 +23,6 @@ namespace os2 {
 namespace {
 
 constexpr uint32_t kTypeCres = 0xE519C933;
-constexpr float kLightRangeCutoff = 0.275f; // Lighting.txt's lightRangeCutoff
 
 std::string lower(std::string s) {
     for (auto& c : s)
@@ -32,7 +32,6 @@ std::string lower(std::string s) {
 
 simd_float3 f3(const Vec3& v) { return simd_make_float3(v[0], v[1], v[2]); }
 
-float luminance(simd_float3 c) { return 0.299f * c.x + 0.587f * c.y + 0.114f * c.z; }
 
 // The day/night phase of the hour (docs/lighting-mac.md 2).
 const char* stateOfHour(int hour) { return hour >= 7 && hour <= 18 ? "day" : "night"; }
@@ -91,7 +90,18 @@ const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::
                                 at = world[b].then(at);
                     m.position = at.t;
                     // LotLights.txt's overrides, by light name.
+                    m.diffusionIntensity = -1;
                     if (auto o = overrides_.find(m.name); o != overrides_.end()) {
+                        auto one = [&](const char* name, float& v) {
+                            if (auto it = o->second.find(name); it != o->second.end() && !it->second.empty())
+                                v = it->second[0];
+                        };
+                        one("diffusionsourceintensity", m.diffusionIntensity);
+                        one("diffusionsourcefalloff", m.diffusionFalloff);
+                        one("diffusionsourcefloorintensityscale", m.floorScale);
+                        one("diffusionsourcewallintensityscale", m.wallScale);
+                        if (auto v = o->second.find("diffusionsourcecolor"); v != o->second.end() && v->second.size() >= 3)
+                            m.diffusionColor = {v->second[0], v->second[1], v->second[2]};
                         if (auto v = o->second.find("intensity"); v != o->second.end() && !v->second.empty())
                             m.intensity = v->second[0];
                         if (auto v = o->second.find("falloffrate"); v != o->second.end() && !v->second.empty())
@@ -99,6 +109,12 @@ const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::
                         if (auto v = o->second.find("color"); v != o->second.end() && v->second.size() >= 3)
                             m.color = {v->second[0], v->second[1], v->second[2]};
                     }
+                    // Without a diffusion intensity or colour of its own, the
+                    // light's (inferred: the model's light extension is not read).
+                    if (m.diffusionIntensity < 0)
+                        m.diffusionIntensity = m.intensity;
+                    if (!m.hasDiffusionColor())
+                        m.diffusionColor = m.color;
                     out.push_back(m);
                 }
             }
@@ -191,6 +207,8 @@ std::optional<Vec3> LotLighting::roomCentre(int16_t room, int level) {
 bool LotLighting::outside(int16_t room) {
     if (!room)
         return true;
+    if (layout_)
+        return layout_->outdoor(0, uint16_t(room));
     if (!outdoorRooms_) {
         outdoorRooms_.emplace();
         if (const auto& w = sim_.machine().world) {
@@ -209,6 +227,64 @@ bool LotLighting::outside(int16_t room) {
     return std::find(outdoorRooms_->begin(), outdoorRooms_->end(), room) != outdoorRooms_->end();
 }
 
+// The lot's light maps (formats/lot_lightmap) for the lamps at their levels
+// and a lighting state, cached by both: recomputed when Change Light moves a
+// lamp, crossfaded from the previous state's over the transition.
+std::shared_ptr<const LotLightMap> LotLighting::lightMap(const std::string& stateName) {
+    std::string key = stateName;
+    std::vector<LightMapLight> lights;
+    for (const auto& l : lamps_) {
+        if (!l.level)
+            continue;
+        LightMapLight m;
+        m.position = l.position;
+        const float k = float(l.level) / 100.0f;
+        m.color = {l.diffusionColor[0] * k, l.diffusionColor[1] * k, l.diffusionColor[2] * k};
+        m.falloff = l.diffusionFalloff;
+        m.floorScale = l.floorScale;
+        m.wallScale = l.wallScale;
+        m.level = l.objectLevel;
+        m.portal = l.portal;
+        lights.push_back(m);
+        key += "|" + std::to_string(l.id) + ":" + l.light + ":" + std::to_string(l.level);
+    }
+    for (const auto& [k, map] : lightMaps_)
+        if (k == key)
+            return map;
+    const LightingState* state = config_.state(stateName);
+    if (!state)
+        return nullptr;
+    auto map = std::make_shared<const LotLightMap>(computeLotLightMap(*layout_, *state, lights));
+    lightMaps_.push_back({key, map});
+    if (lightMaps_.size() > 4)
+        lightMaps_.erase(lightMaps_.begin());
+    return map;
+}
+
+void LotLighting::updateLightMaps(double seconds) {
+    if (!layout_)
+        return;
+    const auto to = lightMap(current_);
+    const auto from = previous_.empty() ? to : lightMap(previous_);
+    if (!to)
+        return;
+    if (to != shownTo_) {
+        // OS2_LIGHTMAP_DUMP=<file.png>: writes the light-map atlas (debugging aid).
+        if (const char* dump = std::getenv("OS2_LIGHTMAP_DUMP"))
+            writePng(dump, to->image);
+        renderer_.setLightMap(1, to->image);
+        shownTo_ = to;
+    }
+    if (from && from != shownFrom_) {
+        renderer_.setLightMap(0, from->image);
+        shownFrom_ = from;
+    }
+    const LightingState* target = config_.state(current_);
+    const float in = target ? std::max(target->transitionIn, 0.0f) : 0.0f;
+    lightMapMix_ = in > 0 ? float(std::clamp((seconds - changedAt_) / in, 0.0, 1.0)) : 1.0f;
+    renderer_.setLightMapMix(lightMapMix_);
+}
+
 void LotLighting::update(double seconds) {
     last_ = seconds;
     vm::VM& m = sim_.machine();
@@ -219,11 +295,6 @@ void LotLighting::update(double seconds) {
         changedAt_ = seconds;
     }
     const LightingState state = blended();
-    auto modifier = [&](const char* name) {
-        auto it = state.modifiers.find(name);
-        return it == state.modifiers.end() ? LightingState::Modifier{} : it->second;
-    };
-    const auto inside = modifier("insideobjects"), outside_ = modifier("outsideobjects");
 
     // The lamps: every light of every drawn object's model, at its level.
     lamps_.clear();
@@ -253,6 +324,12 @@ void LotLighting::update(double seconds) {
             lamp.falloff = l.falloff;
             lamp.level = std::clamp(level, 0, 100);
             lamp.portal = portal;
+            lamp.objectLevel = o->position.level - 1; // the VM numbers levels from 1 (lot level + 1)
+            for (int c = 0; c < 3; ++c)
+                lamp.diffusionColor[size_t(c)] = l.diffusionColor[size_t(c)] * l.diffusionIntensity;
+            lamp.diffusionFalloff = l.diffusionFalloff;
+            lamp.floorScale = l.floorScale;
+            lamp.wallScale = l.wallScale;
             if (m.world) {
                 const vm::TilePos t{int(std::floor(lamp.position[0])), int(std::floor(lamp.position[1])), o->position.level};
                 lamp.room = m.world->room(t);
@@ -265,34 +342,11 @@ void LotLighting::update(double seconds) {
         static size_t printed = 0;
         if (printed++ < 1)
             for (const auto& l : lamps_)
-                std::fprintf(stderr, "opensims2: lamp %d %s at (%.2f, %.2f, %.2f) room %d level %d colour (%.2f %.2f %.2f) falloff %.2f; state %s\n",
-                             l.id, l.light.c_str(), l.position[0], l.position[1], l.position[2], l.room, l.level,
+                std::fprintf(stderr, "opensims2: lamp %d %s at (%.2f, %.2f, %.2f) floor %d room %d level %d colour (%.2f %.2f %.2f) falloff %.2f; state %s\n",
+                             l.id, l.light.c_str(), l.position[0], l.position[1], l.position[2], l.objectLevel, l.room, l.level,
                              l.color[0], l.color[1], l.color[2], l.falloff, current_.c_str());
     }
-    // Point lights for the light-mapped surfaces, strongest first.
-    std::vector<Renderer::PointLight> points;
-    const auto insidePortals = modifier("insideportals");
-    for (const auto& l : lamps_) {
-        if (!l.level)
-            continue;
-        if (l.portal)
-            continue; // the surfaces already get the outdoor lights (no light maps yet)
-        const auto& mod = outside(l.room) ? outside_ : inside;
-        const float strength = mod.practical * float(l.level) / 100.0f;
-        if (strength <= 0)
-            continue;
-        Renderer::PointLight p;
-        p.position = f3(l.position);
-        p.color = f3(l.color) * strength;
-        p.falloff = std::max(0.01f, l.falloff * mod.practicalFalloff);
-        p.range = std::sqrt((1 / kLightRangeCutoff - 1) / p.falloff);
-        points.push_back(p);
-    }
-    std::sort(points.begin(), points.end(),
-              [](const auto& a, const auto& b) { return luminance(a.color) > luminance(b.color); });
-    if (points.size() > Renderer::kMaxPointLights)
-        points.resize(Renderer::kMaxPointLights);
-    renderer_.setPointLights(std::move(points));
+    updateLightMaps(seconds);
 
     // Light sets: 0/1 outdoor objects/Sims, then 2 per room.
     std::vector<Renderer::LightSet> sets{Renderer::outdoorLights(state, false), Renderer::outdoorLights(state, true)};
@@ -305,21 +359,27 @@ void LotLighting::update(double seconds) {
             return it->second;
         if (sets.size() + 2 > Renderer::kMaxLightSets)
             return 0;
-        const auto centre = roomCentre(room, level);
-        // Irradiance from the 6 directions: +X, -X, +Y, -Y, up, down.
+        // The room's irradiance by the direction the light travels (+X, -X,
+        // +Y, -Y, up from the floor, down from the ceiling), gathered from
+        // the light maps (GatherRoomLighting, docs/lighting-mac.md 4.1),
+        // crossfading with the light maps.
         std::array<simd_float3, 6> irr{};
-        for (const auto& l : lamps_) {
-            if (l.room != room || !l.level || !centre)
-                continue;
-            const simd_float3 d = f3(l.position) - f3(*centre);
-            const float r2 = simd_length_squared(d);
-            const auto& mod = l.portal ? insidePortals : inside;
-            const float falloff = std::max(0.01f, l.falloff * mod.practicalFalloff);
-            const simd_float3 c = f3(l.color) * (mod.practical * float(l.level) / 100.0f / (1 + falloff * r2));
-            const simd_float3 u = r2 > 1e-6f ? d / std::sqrt(r2) : simd_make_float3(0, 0, 1);
-            irr[0] += c * std::max(u.x, 0.0f), irr[1] += c * std::max(-u.x, 0.0f);
-            irr[2] += c * std::max(u.y, 0.0f), irr[3] += c * std::max(-u.y, 0.0f);
-            irr[4] += c * std::max(u.z, 0.0f), irr[5] += c * std::max(-u.z, 0.0f);
+        bool found = false;
+        auto gather = [&](const LotLightMap* lm, float w) {
+            if (!lm)
+                return;
+            if (auto it = lm->rooms.find({level - 1, uint16_t(room)}); it != lm->rooms.end()) {
+                found = true;
+                for (size_t d = 0; d < 6; ++d)
+                    irr[d] += f3(it->second[d]) * w;
+            }
+        };
+        gather(shownTo_.get(), lightMapMix_);
+        gather(shownFrom_.get(), 1 - lightMapMix_);
+        if (!found) {
+            if (std::getenv("OS2_DEBUG_LIGHTS"))
+                std::fprintf(stderr, "opensims2: room %d on level %d has no light-map irradiance: outdoor lights\n", room, level);
+            return roomSets[key] = 0; // a room the light maps do not know (no floor on that level)
         }
         const int first = int(sets.size());
         for (const char* group : {"object", "sim"}) {
@@ -337,16 +397,14 @@ void LotLighting::update(double seconds) {
             for (const auto& v : L)
                 a += v;
             a /= 6;
-            // A dark room gets the state's unlitRoomColor (the first whose
-            // threshold its brightness is under; inferred).
+            // (Dark rooms are already brightened in the light maps.)
             Renderer::LightSet set;
             set.ambient = a;
-            const float bright = luminance(a);
-            for (const auto& u : state.unlitRooms)
-                if (bright < u.threshold)
-                    set.ambient = simd_max(set.ambient, f3(u.color));
             for (auto& v : L)
                 v -= a;
+            // The direction table (+X, -X, +Y, -Y, +Z, -Z) is where the
+            // light travels; the side Deltas also go down by roomSideSlope.
+            // The shader wants the direction towards the light: the opposite.
             static const simd_float3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
             for (int k = 0; k < 4; ++k) {
                 int best = -1;
@@ -358,10 +416,10 @@ void LotLighting::update(double seconds) {
                 }
                 if (best < 0)
                     break;
-                simd_float3 dir = dirs[best];
+                simd_float3 travel = dirs[best];
                 if (best < 4)
-                    dir += simd_make_float3(0, 0, slope); // towards a light above the side (inferred)
-                set.lights.push_back({simd_normalize(dir), L[size_t(best)] * boost});
+                    travel -= simd_make_float3(0, 0, slope);
+                set.lights.push_back({simd_normalize(-travel), L[size_t(best)] * boost, global(group, "roomSpecular", 0.8f)});
                 L[size_t(best)] = 0;
             }
             sets.push_back(set);

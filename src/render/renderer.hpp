@@ -78,6 +78,7 @@ public:
         struct Directional {
             simd_float3 direction; // unit, towards the light
             simd_float3 color;     // times intensity
+            float specular = 1;    // relative specular scale (roomSpecular for room lights)
         };
         simd_float3 ambient{0, 0, 0};
         std::vector<Directional> lights;
@@ -98,17 +99,13 @@ public:
     // Sims; when there are any, fill1/fill2 do not light Sims.
     static LightSet outdoorLights(const LightingState& state, bool sims);
 
-    // Lights of the lot's lamps (point lights), in world space: the colour
-    // times intensity, falling off as 1 / (1 + falloff * r^2) up to `range`
-    // (the vertex shader of docs/shaders-mac.md 4.2). At most kMaxPointLights.
-    struct PointLight {
-        simd_float3 position;
-        simd_float3 color;
-        float falloff = 1;
-        float range = 20;
-    };
-    static constexpr size_t kMaxPointLights = 32;
-    void setPointLights(std::vector<PointLight> lights) { points_ = std::move(lights); }
+    // The lot's light maps (an atlas laid out as LotLightMapLayout, RGBA8):
+    // walls, floors and terrain are drawn as 2 x texture x light map. Two
+    // slots crossfade on a lighting state change (the game's LerpLightMaps):
+    // the shaders show mix(slot 0, slot 1, mix). Until set, the light map is
+    // 0.5 everywhere (textures as they are).
+    void setLightMap(int slot, const RgbaImage& image);
+    void setLightMapMix(float mix) { lightMapMix_ = mix; }
 
     // Clock for texture coordinate animations, in seconds; until it is set
     // (or after setting it negative) the renderer uses its own running time.
@@ -133,6 +130,7 @@ private:
     MTL::Texture* texture(const std::string& name, ResourceIndex& index, bool cube = false);
     Material material(const StandardMaterial& sm, ResourceIndex& index);
     MTL::Texture* uploadMask(const ObjectModel::AlphaMask& mask);
+    MTL::Texture* rgbaTexture(const RgbaImage& image); // retained
     // Waits for a frame slot, encodes the scene into `pass` and returns the
     // (uncommitted) command buffer; the slot is freed when it completes.
     MTL::CommandBuffer* encodeFrame(MTL::RenderPassDescriptor* pass, const FrameView& view);
@@ -166,7 +164,12 @@ private:
     size_t testInstances_ = 0; // the first instances_ are the test scene
     std::vector<LightSet> lightSets_;
     std::array<MTL::Buffer*, kFramesInFlight> lightBuffers_{};
-    std::vector<PointLight> points_;
+    std::array<MTL::Texture*, 2> lightMaps_{}; // owned, null until set
+    float lightMapMix_ = 0;
+    // Light maps replaced while frames in flight may still read them: released
+    // once kFramesInFlight frames have been encoded since.
+    std::vector<std::pair<MTL::Texture*, int>> retired_;
+    MTL::Texture* grey_ = nullptr; // 0.5 everywhere: the light map until one is set
     std::array<MTL::Buffer*, kFramesInFlight> frames_{};
     void* inFlight_; // dispatch_semaphore_t, opaque so ARC in the app shell leaves it alone
     int frame_ = 0;

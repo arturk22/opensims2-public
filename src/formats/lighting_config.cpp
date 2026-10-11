@@ -50,8 +50,10 @@ void applyDirective(LightingState& s, const std::string& key, const std::vector<
     } else if (key == "transitiontimes" && t.size() >= 3) {
         s.transitionIn = configNumber(t[1]);
         s.transitionOut = configNumber(t[2]);
+    } else if (key == "diffparam" && t.size() >= 3) {
+        s.diffParams[lowerAscii(t[1].word)] = t[2].kind == ConfigToken::List ? t[2].list : std::vector<float>{configNumber(t[2])};
     }
-    // Indoor diffusion, flat shading, fog, ... are not modelled yet.
+    // Flat shading, fog, ... are not modelled yet.
 }
 
 } // namespace

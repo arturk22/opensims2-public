@@ -12,29 +12,34 @@
 // - Inside, each room gets an ambient and 4 "Delta" directional lights made
 //   from the room's irradiance in 6 directions (roomLightingType 4), for
 //   objects and for Sims with their own tuning (roomOverallStrength 0.5 /
-//   0.8, roomSideStrength, roomBounceStrength, roomDirectionalBoost, ...
-//   from Lighting.txt's globals, "object:"/"sim:" prefixes).
+//   0.8, roomSideStrength, roomBounceStrength, roomDirectionalBoost,
+//   roomSpecular ... from Lighting.txt's globals, "object:"/"sim:"
+//   prefixes). The irradiance comes from the light maps (GatherRoomLighting:
+//   floor up and ceiling down, walls and portals by their normals), and the
+//   direction table is where the light travels (docs/lighting-mac.md 4).
 // - The lamps are the lights in their models (cPointLight nodes of the
-//   CRES, with LotLights.txt's per-light overrides of intensity, falloff and
-//   colour), at the level Change Light gives them (vm::lightLevel), times
-//   the state's "modifiers insideObjects/outsideObjects" practical strength.
+//   CRES, with LotLights.txt's per-light overrides of intensity, falloff,
+//   colour and the diffusionSource* attributes), at the level Change Light
+//   gives them (vm::lightLevel); windows' and doors' lights are portals.
+// - Walls, floors and terrain are lit by the lot's light maps
+//   (formats/lot_lightmap: the game's diffusion as far as it is decoded),
+//   made for the lamps at their levels and the state, crossfading with it.
 //
-// Inferred (not decoded in the game): how a room's irradiance is gathered
-// (here: each lamp in the room, at its falloff 1 / (1 + C r^2) from the
-// room's centre, split over the 6 directions by where it is; windows are not
-// counted as lamps: their lights in the model, "..._light" spots at each
-// pane, bring the outside in with the state's "modifiers insidePortals"
-// practical strength, 0.5 by day and 0 at night), the 6 directions (+-X, +-Y, +-Z; the side lights tilted down by
-// roomSideSlope), unlitRoomColor as the minimum ambient of a room whose
-// brightness is under its threshold, C = falloffRate x the modifier's
-// practical falloff, and the range where the falloff reaches
-// lightRangeCutoff (0.275). Walls, floors and terrain should use the light
-// maps (not computed): they get the lamps as point lights instead.
+// Inferred: the outdoors = room 0 or, with the light maps, a room mostly
+// without floor (LotLightMapLayout::outdoor), else a room of the ground
+// level's tiles along the lot's edge (the lots keep the outdoors as rooms of
+// their own); a
+// light without diffusionSource* overrides diffuses with its own intensity
+// and colour (the model's cDiffusionLightExtension is not read); the
+// lamps' practical lights (which light objects directly in the game) are
+// left out: objects inside get only their room's lights.
 
 #include "formats/lighting_config.hpp"
+#include "formats/lot_lightmap.hpp"
 #include "formats/xform.hpp"
 
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -59,6 +64,9 @@ public:
     // Test aid: lamps that Change Light has not touched since the lot
     // loaded get this level (0-100) instead of their saved on/off.
     void setDefaultLampLevel(int level) { defaultLevel_ = level; }
+    // The lot's light-map atlas (from buildLotModel): update() then keeps
+    // the renderer's light maps in step with the lamps and the state.
+    void setLightMapLayout(LotLightMapLayout layout) { layout_ = std::move(layout); }
 
     // Recomputes the lights for `seconds` (the caller's clock): call each
     // frame after the objects are placed.
@@ -73,6 +81,10 @@ public:
         float falloff = 1; // falloffRate
         int level = 0;     // 0-100
         int16_t room = 0;
+        int objectLevel = 0; // the object's level, as the lot numbers them (VM level - 1)
+        // Its diffusion source (diffusionSource* attributes): colour x intensity, falloff, scales.
+        Vec3 diffusionColor{};
+        float diffusionFalloff = 1, floorScale = 0.65f, wallScale = 1;
         bool portal = false; // a window's or door's light (outside light coming in)
     };
     const std::vector<Lamp>& lamps() const { return lamps_; }
@@ -84,6 +96,9 @@ private:
         Vec3 position{};  // model space
         Vec3 color{1, 1, 1};
         float intensity = 1, falloff = 1;
+        Vec3 diffusionColor{-1, -1, -1};
+        float diffusionIntensity = -1, diffusionFalloff = 1, floorScale = 0.65f, wallScale = 1;
+        bool hasDiffusionColor() const { return diffusionColor[0] >= 0; }
     };
     const std::vector<ModelLight>& modelLights(const std::string& cres);
     LightingState blended() const;
@@ -92,6 +107,8 @@ private:
     // Room 0, or a room of the ground level's tiles along the lot's edge
     // (the lots keep the outdoors as rooms of their own; inferred).
     bool outside(int16_t room);
+    std::shared_ptr<const LotLightMap> lightMap(const std::string& state);
+    void updateLightMaps(double seconds);
 
     Renderer& renderer_;
     ResourceIndex& index_;
@@ -108,6 +125,10 @@ private:
     std::string current_, previous_; // states crossfading
     double changedAt_ = -1e9, last_ = 0;
     std::vector<Lamp> lamps_;
+    std::optional<LotLightMapLayout> layout_;
+    std::vector<std::pair<std::string, std::shared_ptr<const LotLightMap>>> lightMaps_; // by state and lamp levels
+    std::shared_ptr<const LotLightMap> shownFrom_, shownTo_;
+    float lightMapMix_ = 1;
 };
 
 } // namespace os2

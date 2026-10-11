@@ -1,0 +1,138 @@
+#pragma once
+
+// The lot's light maps: what the game's walls, floors and terrain are lit by
+// instead of lights (docs/shaders-mac.md 5-7, docs/lighting-mac.md 5).
+//
+// The game keeps floorLightMap_<page> textures (512 x 512, page 0 covering
+// the lot at 8 texels per tile: the terrain samples it at position / 64) and
+// wallLightMap_<page> textures (wall tiles of 8 x 24 texels, a 3-tile story).
+// Here all of them live in one atlas: a floor page per level, stacked, then a
+// cell per wall face (a wall side between two grid points) packed below. The
+// shaders draw walls as 2 x wallpaper x light map, floors as 2 x base x light
+// map x diffuse and the terrain as 2 x 0.9 x light map x canvas, so a
+// light map value of 0.5 shows the texture as it is.
+//
+// The light maps are filled as docs/lighting-mac.md 5 decodes the game's
+// cDiffusionManager: a grid of half-tile samples per level, cleared to the
+// inside ambient, seeded by each light (max per channel) and propagated
+// through the samples of the same room, dividing the light by 1 + k at each
+// half-tile step (k = the light's falloff x floorThreshold, x 1.4 on
+// diagonals); dark rooms get half the unlitRoomColor added. See
+// computeLotLightMap for what is inferred.
+
+#include "image.hpp"
+#include "lighting_config.hpp"
+
+#include <array>
+#include <cstdint>
+#include <map>
+#include <vector>
+
+namespace os2 {
+
+struct Lot;
+
+struct LotLightMapLayout {
+    // Floor pages: 8 texels per tile (floorTextureSize 512 / 64 tiles) and
+    // wall cells: 8 texels per tile along the wall, 8 per tile up
+    // (wallTileSizeX 8, wallTileSizeY 24 for 3 tiles).
+    static constexpr int kTexelsPerTile = 8;
+
+    uint32_t width = 0, height = 0; // atlas size in texels
+    uint32_t lotWidth = 0, lotHeight = 0;
+    int minLevel = 0, levels = 0;
+    // Room of every quarter tile (west, north, east, south), laid out as
+    // Lot::rooms, and the grid points' elevations, as Lot::elevations.
+    std::vector<std::array<uint16_t, 4>> rooms;
+    std::vector<float> elevations;
+
+    // One side of a wall stretch: texels (i, j) of its cell sit at
+    // origin + along x (i + 0.5) / 8, at height top - (j + 0.5) / 8 (row 0
+    // is the top), with a one-texel border repeating the edge.
+    struct WallFace {
+        std::array<float, 2> origin{}; // on the face, where `s` is 0
+        std::array<float, 2> along{1, 0};
+        std::array<float, 2> normal{0, 1};
+        float length = 0, base = 0, top = 0;
+        int level = 0;
+        uint16_t room = 0;    // the room the side faces, 0 outside
+        uint32_t x = 0, y = 0; // the cell's corner in the atlas (border included)
+        uint32_t w = 0, h = 0; // cell size with the border
+    };
+    std::vector<WallFace> walls;
+
+    void init(const Lot& lot);
+    // Atlas position in texels of a point on a floor page, `x`, `y` in
+    // tiles (divide by width/height once every wall is added).
+    std::array<float, 2> floorTexel(int level, float x, float y) const;
+    // Adds a wall face cell (sized from its length and heights) and returns its index.
+    size_t addWall(WallFace face);
+    // Atlas position in texels of a point on a wall face: `s` along it, `z` height.
+    std::array<float, 2> wallTexel(size_t face, float s, float z) const;
+    // Room of the quarter tile under (x, y) on a level, 0 outside the lot.
+    uint16_t roomAt(int level, float x, float y) const;
+    // Outdoors: room 0, or a room most of whose quarter tiles have no floor
+    // (the lots keep their outdoors as rooms of their own; inferred).
+    bool outdoor(int level, uint16_t room) const;
+    // Height of a level's floor at (x, y), as Lot::elevationAt.
+    float elevationAt(int level, float x, float y) const;
+
+    uint32_t pageHeight() const { return lotHeight * kTexelsPerTile; }
+    uint32_t shelfX_ = 0, shelfY_ = 0, shelfH_ = 0; // wall cell packing
+    std::vector<uint16_t> outdoorRooms_;
+};
+
+// A light feeding the light maps (a cDiffusionLightSource): a lamp of an
+// object's model at its Change Light level, or a window's or door's light
+// ("portal"), with its diffusionSource* attributes (lightAttribOverride).
+struct LightMapLight {
+    std::array<float, 3> position{};
+    std::array<float, 3> color{}; // diffusionSourceIntensity x diffusionSourceColor x level (0-1)
+    float falloff = 1;            // diffusionSourceFalloff
+    float floorScale = 0.65f;     // diffusionSourceFloorIntensityScale
+    float wallScale = 1;          // diffusionSourceWallIntensityScale
+    int level = 0;                // the object's level
+    bool portal = false;
+};
+
+struct LotLightMap {
+    RgbaImage image; // the atlas, RGBA8, alpha 255
+    // GatherRoomLighting (docs/lighting-mac.md 4.1): each indoor room's
+    // irradiance by the direction the light travels, +X, -X, +Y, -Y, +Z
+    // (up from the floor), -Z (down from the ceiling), weighted means of its
+    // floor, walls and portals; by (level, room).
+    std::map<std::pair<int, uint16_t>, std::array<std::array<float, 3>, 6>> rooms;
+};
+
+// The light maps for a lighting state. From the binary: the inside ambient
+// (insideAmbientColor x insideFloorAmbient / insideWallAmbient), the seeds
+// (colour x diffusionSourceFloorIntensityScale, or WallIntensityScale, x the
+// modifier's diffusion strength) at the light's sample in its room, the
+// propagation rule (if neighbour - c > k c: c = neighbour / (1 + k) + 0.01)
+// over up to floorPropagationSteps (50) passes with sources of equal falloff
+// together, strongest falloff first, k = falloff x the modifier's diffusion
+// falloff x floorThreshold, and +0.5 x unlitRoomColor in dark rooms; the
+// texel value is the sample's (2 x texture x value on screen).
+// Inferred (not decoded):
+// - Outdoor samples: half the state's outdoor light for the surface's
+//   normal (skylight + each light's colour minus the skylight, x N.L), not
+//   the 0.25 outside ambient (the game lights the terrain apart,
+//   LightTerrainTile*); outdoor lamps propagate over them the same way.
+// - Light passes between samples of the same room (or both outdoors): the
+//   game's neighbour bits block it at walls.
+// - A portal seeds the sample of each indoor room next to it, its colour
+//   tinted by the skylight relative to a day's 0.5; the spills and the
+//   outside portals are left out.
+// - Walls: no grid of their own; each texel takes the max of its ambient,
+//   each same-room light's seed divided by 1 + k (k from wallThreshold) per
+//   half tile of distance, and the floor under it (x 1 on walls a light
+//   reaches, 0.5 on the others, brightWall/darkWallFloorContribution)
+//   divided likewise going up; walls facing out take the outdoor light.
+// - A room is dark when its mean floor brightness is under a threshold;
+//   it gets the brightest unlitRoomColor whose threshold it is under.
+// - Floor colours count as white in the room irradiance (the game mixes in
+//   the material's mean colour by roomSaturation).
+LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingState& state,
+                               const std::vector<LightMapLight>& lights);
+
+} // namespace os2

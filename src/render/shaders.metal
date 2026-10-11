@@ -7,6 +7,7 @@ struct Vertex {
     packed_float3 position;
     packed_float3 normal;
     packed_float2 uv;
+    packed_float2 uv2; // light map
     uint color; // D3DCOLOR 0xAARRGGBB
 };
 
@@ -27,7 +28,9 @@ enum : uint {
     kCelEdge = 8192,       // ...with the edge ramp (texture 8)
     kVertexColor = 16384,  // times the vertex colour and alpha
     kOverlay3 = 32768,     // texture 9 drawn over the base by its alpha, after overlay 2
-    kLightMapped = 65536,  // walls, floors, terrain: lit 1x (the game's light maps are not computed)
+    kLightMapped = 65536,  // walls, floors, terrain: 2 x texture x light map (textures 10/11) x diffuse
+    kDetail = 131072,      // terrain: detail texture (12) at uv x misc.z over the base by its alpha
+    kMaskAlphaOnly = 262144, // terrain paints: alpha from the mask alone
 };
 
 struct Draw {
@@ -39,7 +42,7 @@ struct Draw {
     float4 env;      // env cube coefficient rgb, mip bias in w
     float4 uv0;      // base uv: u' = dot(uv0.xyz, (u, v, 1))
     float4 uv1;      //          v' = dot(uv1.xyz, (u, v, 1))
-    float4 misc;     // x: cel edge offset, y: bump strength
+    float4 misc;     // x: cel edge offset, y: bump strength, z: detail uv scale
     float alphaRef;
     uint flags;
     uint lightSet;   // index into the light sets (buffer 3)
@@ -49,14 +52,7 @@ constant uint kMaxLights = 8;
 
 struct Light {
     float4 direction; // xyz: unit vector towards the light, world space
-    float4 color;     // rgb: colour times intensity
-};
-
-constant uint kMaxPointLights = 32;
-
-struct PointLight {
-    float4 position; // xyz world, w: range squared
-    float4 color;    // rgb colour times intensity, w: falloff
+    float4 color;     // rgb: colour times intensity, w: relative specular scale
 };
 
 struct LightSet {
@@ -67,9 +63,8 @@ struct LightSet {
 struct Frame {
     float4x4 viewProj;
     float4x4 view;
-    float4 eye;     // xyz: camera position
-    PointLight points[kMaxPointLights];
-    uint pointCount;
+    float4 eye;      // xyz: camera position
+    float4 lightMap; // x: mix of light map 1 over light map 0
 };
 
 struct VertexOut {
@@ -79,6 +74,7 @@ struct VertexOut {
     float2 uv;     // as stored
     float2 baseUv; // with the texture coordinate animation
     float2 local;  // model-space xy
+    float2 lightUv;
     float4 color;
 };
 
@@ -96,6 +92,7 @@ vertex VertexOut vertex_main(uint vid [[vertex_id]],
     const float3 uv1 = float3(v.uv, 1.0);
     out.baseUv = float2(dot(draw.uv0.xyz, uv1), dot(draw.uv1.xyz, uv1));
     out.local = float3(v.position).xy;
+    out.lightUv = v.uv2;
     out.color = float4((v.color >> 16) & 0xFF, (v.color >> 8) & 0xFF, v.color & 0xFF, v.color >> 24) / 255.0;
     return out;
 }
@@ -135,11 +132,21 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               texture2d<float> ramp [[texture(7)]],
                               texture2d<float> edgeRamp [[texture(8)]],
                               texture2d<float> overlay3 [[texture(9)]],
+                              texture2d<float> lightMap0 [[texture(10)]],
+                              texture2d<float> lightMap1 [[texture(11)]],
+                              texture2d<float> detail [[texture(12)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
                               sampler pointSmp [[sampler(3)]]) {
     float4 tex = base.sample(smp, in.baseUv);
+    if (draw.flags & kDetail) {
+        // terrain.matShad: lerpTextureAlpha(detail, canvas).
+        const float4 d = detail.sample(smp, in.uv * draw.misc.z);
+        tex.rgb = mix(tex.rgb, d.rgb, d.a);
+    }
+    if (draw.flags & kMaskAlphaOnly)
+        tex.a = 1.0;
     if (draw.flags & kAlphaReplicate)
         tex.rgb = tex.a;
     if (draw.flags & kAlphaOnly)
@@ -187,15 +194,22 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         return color;
     }
 
-    if (draw.flags & kLighting) {
+    if ((draw.flags & kLighting) && (draw.flags & kLightMapped)) {
+        // Walls, floors and terrain (docs/shaders-mac.md 5-7): no lights,
+        // 2 x texture x light map (x the floor's diffuse, the terrain's 0.9;
+        // walls pass 1), crossfading between two light maps on a lighting
+        // state change.
+        const float3 lm = mix(lightMap0.sample(maskSmp, in.lightUv).rgb, lightMap1.sample(maskSmp, in.lightUv).rgb,
+                              frame.lightMap.x);
+        color.rgb = saturate(2.0 * albedo * lm * draw.color.rgb);
+    } else if (draw.flags & kLighting) {
         if (draw.flags & kNormalMap)
             n = bumpedNormal(n, in.world, in.baseUv, height, smp, draw.misc.y);
         // The game's DX8 StandardMaterial (docs/shaders-mac.md 4.2-4.3), per
         // pixel: lit = saturate(0.5 x ((ambient + lights) x diffuse +
         // emissive)), colour = saturate(2 x texture x lit), so light reaches
         // twice the texture; Sims scale their diffuse by 0.8 (0.4 in all).
-        // Specular: Phong (R.L) to the material's power x 0.4, added. The
-        // lamps are point lights falling off as 1 / (1 + C r^2) in range.
+        // Specular: Phong (R.L) to the material's power x 0.4, added.
         float3 v = normalize(frame.eye.xyz - in.world);
         float3 r = reflect(-v, n);
         constant LightSet& set = lightSets[draw.lightSet];
@@ -208,30 +222,10 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                 continue;
             diffuse += set.lights[i].color.rgb * ndl;
             if (draw.specular.w > 0.0)
-                spec += set.lights[i].color.rgb * pow(max(dot(r, l), 0.0), draw.specular.w);
+                spec += set.lights[i].color.rgb * set.lights[i].color.w * pow(max(dot(r, l), 0.0), draw.specular.w);
         }
-        // The lamps' point lights stand in for the light maps of walls,
-        // floors and terrain (not computed yet; inferred); objects get the
-        // lamps through their room's lights instead.
-        for (uint i = 0; (draw.flags & kLightMapped) && i < min(frame.pointCount, kMaxPointLights); ++i) {
-            const float3 d = frame.points[i].position.xyz - in.world;
-            const float r2 = dot(d, d);
-            if (r2 > frame.points[i].position.w)
-                continue;
-            const float3 l = d * rsqrt(max(r2, 1e-6));
-            const float ndl = dot(n, l);
-            if (ndl <= 0.0)
-                continue;
-            const float aten = 1.0 / (1.0 + frame.points[i].color.w * r2);
-            diffuse += frame.points[i].color.rgb * ndl * aten;
-            if (draw.specular.w > 0.0)
-                spec += frame.points[i].color.rgb * aten * pow(max(dot(r, l), 0.0), draw.specular.w);
-        }
-        if (draw.flags & kLightMapped)
-            color.rgb = albedo * saturate(draw.emissive.rgb + draw.color.rgb * diffuse);
-        else
-            color.rgb = saturate(2.0 * albedo * saturate(0.5 * (draw.emissive.rgb + draw.color.rgb * diffuse)));
-        color.rgb = saturate(color.rgb + draw.specular.rgb * spec);
+        color.rgb = saturate(2.0 * albedo * saturate(0.5 * (draw.emissive.rgb + draw.color.rgb * diffuse)));
+        color.rgb = saturate(color.rgb + saturate(draw.specular.rgb * spec));
         if (draw.flags & kEnvCube) {
             if (draw.flags & kEnvLocked)
                 r = (frame.view * float4(r, 0)).xyz;

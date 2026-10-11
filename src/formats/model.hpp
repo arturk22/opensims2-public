@@ -118,9 +118,18 @@ struct StandardMaterial {
     Cull cull = Cull::Clockwise;
     bool lighting = true;
     // Walls, floors and terrain: the game lights them only with its light
-    // maps (2 x texture x light map; no direct lights, docs/shaders-mac.md
-    // sections 5-7), which are not computed yet.
+    // maps (no direct lights, docs/shaders-mac.md sections 5-7): walls
+    // 2 x wallpaper x light map (diffuse 1 here), floors 2 x base x light
+    // map x diffuse, terrain 2 x 0.9 x light map x canvas (see lot_lightmap.hpp).
     bool lightMapped = false;
+    // The lot terrain (materials built in code, type "Terrain"): the base
+    // texture at uv x textureScale with a detail texture at uv x detailScale
+    // laid over it by the detail's alpha; paints take their alpha from the
+    // mask alone (maskAlphaOnly).
+    float textureScale = 1;
+    std::string detailTexture; // TXTR name, empty if none
+    float detailScale = 1;
+    bool maskAlphaOnly = false;
     // Draw order: stdMatLayer x 8, +7 when blended (+3 for blended Sim hair);
     // walls and floors 0, water 5. Lower layers are drawn first.
     int layer = 0;

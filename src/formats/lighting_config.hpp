@@ -49,6 +49,14 @@ struct LightingState {
         float threshold = 0;
     };
     std::vector<UnlitRoom> unlitRooms;
+    // `diffParam <name> <value>`: the light maps' diffusion
+    // (insideAmbientColor, insideFloorAmbient, floorThreshold, ...), by
+    // lowercased name: one number or a colour.
+    std::map<std::string, std::vector<float>> diffParams;
+    float diffParam(const std::string& name, float fallback) const {
+        auto it = diffParams.find(name);
+        return it == diffParams.end() || it->second.empty() ? fallback : it->second[0];
+    }
     // `transitionTimes <max in> <max out>`, seconds.
     float transitionIn = 0, transitionOut = 0;
 

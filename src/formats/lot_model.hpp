@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lot_lightmap.hpp"
 #include "model.hpp"
 
 #include <filesystem>
@@ -67,8 +68,12 @@ struct LotViewOptions {
     Walls walls = Walls::Up;
     std::array<float, 2> viewDirection{1, 0};
 };
+//
+// Walls, floors, wall tops and the terrain get light-map coordinates
+// (MeshGroup::uvs2) into the atlas that `lightMap`, when given, describes
+// (see lot_lightmap.hpp).
 ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns,
-                          const LotViewOptions& view = {});
+                          const LotViewOptions& view = {}, LotLightMapLayout* lightMap = nullptr);
 
 // One rail or post of a fence: the CRES (without "_cres") and its placement
 // in lot space, a column-major 4x4 matrix (rails are sheared to follow the

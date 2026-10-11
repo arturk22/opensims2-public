@@ -34,6 +34,7 @@ struct Vertex {
     float position[3];
     float normal[3];
     float uv[2];
+    float uv2[2]; // light map (lot surfaces)
     uint32_t color = 0xFFFFFFFF; // D3DCOLOR
 };
 
@@ -55,6 +56,8 @@ enum : uint32_t {
     kVertexColor = 16384,
     kOverlay3 = 32768,
     kLightMapped = 65536,
+    kDetail = 131072,
+    kMaskAlphaOnly = 262144,
 };
 
 struct Draw {
@@ -82,11 +85,6 @@ struct Light {
     simd_float4 color;
 };
 
-struct GpuPointLight {
-    simd_float4 position; // xyz, w: range squared
-    simd_float4 color;    // rgb times intensity, w: falloff
-};
-
 struct GpuLightSet {
     simd_float4 ambient; // rgb, w: light count (as float)
     Light lights[kMaxLights];
@@ -96,8 +94,7 @@ struct Frame {
     simd_float4x4 viewProj;
     simd_float4x4 view;
     simd_float4 eye;
-    GpuPointLight points[Renderer::kMaxPointLights];
-    uint32_t pointCount;
+    simd_float4 lightMap; // x: mix of light map slot 1 over slot 0
 };
 
 simd_float4x4 identity() { return matrix_identity_float4x4; }
@@ -209,12 +206,14 @@ struct Renderer::Material {
     MTL::Texture* envCube = nullptr;  // not owned, null if unused
     MTL::Texture* ramp = nullptr;     // cel shading ramps (not owned, null if unused)
     MTL::Texture* edgeRamp = nullptr;
+    MTL::Texture* detail = nullptr;   // terrain detail texture (not owned, null if unused)
+    float uvScale = 1;                // base texture coordinates scale (terrain)
     simd_float4 color{1, 1, 1, 1};
     simd_float4 specular{0, 0, 0, 0}; // power in w
     simd_float4 emissive{0, 0, 0, 0};
     simd_float4 maskTransform{0, 0, 0, 0}; // model xy -> mask uv: xy scale, zw offset
     simd_float4 env{0, 0, 0, 0};           // coefficient rgb, mip bias
-    simd_float4 misc{0, 0, 0, 0};          // cel edge offset, bump strength
+    simd_float4 misc{0, 0, 0, 0};          // cel edge offset, bump strength, detail uv scale
     float alphaRef = 0.5f;
     uint32_t flags = kLighting;
     StandardMaterial::Blend blend = StandardMaterial::Blend::None;
@@ -346,6 +345,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
 
     white_ = whiteTexture(device_);
     whiteCube_ = whiteCubeTexture(device_);
+    grey_ = rgbaTexture(RgbaImage{1, 1, {128, 128, 128, 255}});
     for (auto& f : frames_)
         f = device_->newBuffer(sizeof(Frame), MTL::ResourceStorageModeShared);
     for (auto& b : lightBuffers_)
@@ -378,6 +378,12 @@ Renderer::~Renderer() {
             tex->release();
     white_->release();
     whiteCube_->release();
+    grey_->release();
+    for (auto* t : lightMaps_)
+        if (t)
+            t->release();
+    for (auto& [t, frame] : retired_)
+        t->release();
     for (auto* f : frames_)
         f->release();
     for (auto* b : lightBuffers_)
@@ -470,7 +476,15 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     mat.clamp = sm.clampU || sm.clampV;
     mat.alphaRef = sm.alphaRef;
     mat.flags = (sm.lighting ? kLighting : 0) | (sm.lightMapped ? kLightMapped : 0) | (sm.alphaTest ? kAlphaTest : 0) |
-                (sm.alphaReplicate ? kAlphaReplicate : 0) | (sm.textureColor ? 0 : kAlphaOnly);
+                (sm.alphaReplicate ? kAlphaReplicate : 0) | (sm.textureColor ? 0 : kAlphaOnly) |
+                (sm.maskAlphaOnly ? kMaskAlphaOnly : 0);
+    mat.uvScale = sm.textureScale;
+    if (!sm.detailTexture.empty())
+        if (MTL::Texture* t = texture(sm.detailTexture, index)) {
+            mat.detail = t;
+            mat.misc.z = sm.detailScale;
+            mat.flags |= kDetail;
+        }
     mat.cull = sm.cull == StandardMaterial::Cull::None             ? MTL::CullModeNone
                : sm.cull == StandardMaterial::Cull::CounterClockwise ? MTL::CullModeFront
                                                                      : MTL::CullModeBack;
@@ -556,7 +570,13 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
                 v[i].normal[2] = 1;
             if (i < mesh.uvs.size())
                 v[i].uv[0] = mesh.uvs[i][0], v[i].uv[1] = mesh.uvs[i][1];
+            if (i < mesh.uvs2.size())
+                v[i].uv2[0] = mesh.uvs2[i][0], v[i].uv2[1] = mesh.uvs2[i][1];
         }
+        // Light-mapped materials outside the lot have no light-map page: the
+        // game then shows the texture as it is (docs/shaders-mac.md 5-6).
+        if ((mat.flags & kLightMapped) && mesh.uvs2.size() != mesh.positions.size())
+            mat.flags &= ~uint32_t(kLighting);
         Part p;
         if (part.mask >= 0 && size_t(part.mask) < model.masks.size()) {
             const auto& m = model.masks[size_t(part.mask)];
@@ -610,6 +630,24 @@ void Renderer::updateObject(int model, const ObjectModel& posed) {
         }
         p.stale.fill(true);
     }
+}
+
+MTL::Texture* Renderer::rgbaTexture(const RgbaImage& image) {
+    MTL::TextureDescriptor* d = MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm, image.width,
+                                                                            image.height, false);
+    d->setUsage(MTL::TextureUsageShaderRead);
+    MTL::Texture* tex = device_->newTexture(d);
+    tex->replaceRegion(MTL::Region::Make2D(0, 0, image.width, image.height), 0, image.pixels.data(),
+                       size_t(image.width) * 4);
+    return tex;
+}
+
+void Renderer::setLightMap(int slot, const RgbaImage& image) {
+    if (slot < 0 || slot > 1 || !image.width || !image.height || image.pixels.size() < size_t(image.width) * image.height * 4)
+        return;
+    if (lightMaps_[size_t(slot)])
+        retired_.push_back({lightMaps_[size_t(slot)], kFramesInFlight + 1});
+    lightMaps_[size_t(slot)] = rgbaTexture(image);
 }
 
 MTL::Texture* Renderer::uploadMask(const ObjectModel::AlphaMask& m) {
@@ -710,13 +748,16 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         const size_t n = std::min(ls.lights.size(), kMaxLights);
         sets[i].ambient = simd_make_float4(ls.ambient, float(n));
         for (size_t k = 0; k < n; ++k)
-            sets[i].lights[k] = {simd_make_float4(ls.lights[k].direction, 0), simd_make_float4(ls.lights[k].color, 0)};
+            sets[i].lights[k] = {simd_make_float4(ls.lights[k].direction, 0), simd_make_float4(ls.lights[k].color, ls.lights[k].specular)};
     }
-    f->pointCount = uint32_t(std::min(points_.size(), kMaxPointLights));
-    for (uint32_t i = 0; i < f->pointCount; ++i) {
-        const PointLight& p = points_[i];
-        f->points[i] = {simd_make_float4(p.position, p.range * p.range), simd_make_float4(p.color, p.falloff)};
-    }
+    f->lightMap = simd_make_float4(std::clamp(lightMapMix_, 0.0f, 1.0f), 0, 0, 0);
+    // Light maps replaced a few frames ago are no longer read.
+    for (auto& r : retired_)
+        if (--r.second <= 0)
+            r.first->release();
+    std::erase_if(retired_, [](const auto& r) { return r.second <= 0; });
+    MTL::Texture* lightMap0 = lightMaps_[0] ? lightMaps_[0] : lightMaps_[1] ? lightMaps_[1] : grey_;
+    MTL::Texture* lightMap1 = lightMaps_[1] ? lightMaps_[1] : lightMap0;
 
     // The GPU is done with this slot's buffers: bring dynamic vertices up to date.
     for (auto& m : models_)
@@ -739,6 +780,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     enc->setFragmentSamplerState(maskSampler_, 1);
     enc->setFragmentSamplerState(cubeSampler_, 2);
     enc->setFragmentSamplerState(pointSampler_, 3);
+    enc->setFragmentTexture(lightMap0, 10);
+    enc->setFragmentTexture(lightMap1, 11);
 
     // Draw order: by material layer (stdMatLayer x 8, +7 for blended
     // parts), opaque parts in submission order, blended ones back to front
@@ -780,7 +823,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                                     : m.blend == StandardMaterial::Blend::Additive ? additive_
                                                                                    : opaque_);
         enc->setCullMode(m.cull);
-        const auto [uv0, uv1] = uvTransform(m.anim, t);
+        auto [uv0, uv1] = uvTransform(m.anim, t);
+        uv0 *= m.uvScale, uv1 *= m.uvScale;
         const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
         Draw d{item.inst->transform, m.color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
                m.alphaRef, m.flags, uint32_t(set)};
@@ -796,6 +840,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentTexture(m.envCube ? m.envCube : whiteCube_, 6);
         enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);
         enc->setFragmentTexture(m.edgeRamp ? m.edgeRamp : white_, 8);
+        enc->setFragmentTexture(m.detail ? m.detail : white_, 12);
         enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
                                    part.indices, NS::UInteger(0));
     }

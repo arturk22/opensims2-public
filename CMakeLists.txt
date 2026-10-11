@@ -38,6 +38,7 @@ add_library(os2_formats
   src/formats/lot.cpp
   src/formats/lot_objects.cpp
   src/formats/lot_model.cpp
+  src/formats/lot_lightmap.cpp
   src/formats/lot_roof.cpp
   src/formats/model.cpp
   src/formats/neighborhood.cpp
