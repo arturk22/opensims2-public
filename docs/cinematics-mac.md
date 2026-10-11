@@ -234,3 +234,27 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
 - `cEventHandlerCinematics::HandleEvents`: eventos tipo 8 com
   `effectName=crossFadeSnapShort/Standard/Long` disparam o efeito (bloco
   de tela modo 4); tipo 0x3F6 é som.
+
+## 7. TVs e fliperamas (`cVideoBroadcastManager`)
+
+- O binário tem `nTSSG::cVideoBroadcastManager` (`ParseIniFilesInSegment`,
+  `AddReceiver`, `GetGroupIdFromPath`) e `cVideoBroadcastChannel`
+  (`InitializeBroadcastKeyLists`, `ChooseNextMovieKey`, `Start`/`Stop`,
+  `CreateProceduralTexture`, um emissor de som "proxy" para os receptores)
+  **[bin, nomes]**. Os canais vêm de `Res/UserData/Config/Broadcast.ini`
+  (`tvstation_sbn`, `_music`, `_children`, `_food`, `_workout`, estática;
+  `Folder`, `CommercialFolder`, `CommercialInterval=60`) e de
+  `Res/Movies/Games/INI/*.ini` (fliperamas: `IsGames=1`, um `File`).
+- Uma TV liga um canal com **Change Material**: o "CT - Turn TV On" usa o
+  STR# 0x88 do objeto do canal (grupo `0x7F8BAE91`: `tvstation_sbn --
+  This is defined in Broadcasts.ini`) no grupo de malha da tela **[dados]**.
+- No opensims2 (`app/tv_broadcast.*`, rodada 9): um material com nome de
+  canal vira um material sem luz cuja textura (`movie:<canal>`) é uma
+  textura dinâmica do renderizador (`Renderer::setDynamicTexture`) com o
+  quadro do canal: os filmes da pasta em ordem aleatória (sem repetir o
+  último), um comercial a cada `CommercialInterval` s entre programas
+  (inferido), ou o arquivo do fliperama em laço; todas as TVs no mesmo canal
+  mostram o mesmo quadro. Sem o som da TV (o proxy de som não foi seguido).
+  Captura: `docs/screenshots/r9-tv-canal.jpg` (`--lot N001_Lot49 --sim-id
+  347 --pie "Television - Floor - Moderate" --pie-select 0 --run-vm 1500
+  --frames 3 --walls cutaway --pivot 24.5,7.5 --zoom 5 --orientation 2`).

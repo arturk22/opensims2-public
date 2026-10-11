@@ -665,6 +665,23 @@ void Renderer::updateObject(int model, const ObjectModel& posed) {
     }
 }
 
+void Renderer::setDynamicTexture(const std::string& name, const RgbaImage& image) {
+    if (!image.width || !image.height || image.pixels.size() < size_t(image.width) * image.height * 4)
+        return;
+    MTL::Texture*& tex = textures_[name];
+    if (!tex) {
+        MTL::TextureDescriptor* d = MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm, image.width,
+                                                                                image.height, false);
+        d->setUsage(MTL::TextureUsageShaderRead);
+        d->setStorageMode(MTL::StorageModeShared);
+        tex = device_->newTexture(d);
+    }
+    if (tex->width() != image.width || tex->height() != image.height)
+        return; // the materials hold this texture: its size stays
+    tex->replaceRegion(MTL::Region::Make2D(0, 0, image.width, image.height), 0, image.pixels.data(),
+                       size_t(image.width) * 4);
+}
+
 MTL::Texture* Renderer::rgbaTexture(const RgbaImage& image) {
     MTL::TextureDescriptor* d = MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm, image.width,
                                                                             image.height, false);

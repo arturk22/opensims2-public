@@ -68,6 +68,10 @@ public:
     void setInstanceModel(int instance, int model);
     // Points the instances of `from` at model `to` (a Sim changing clothes).
     void retargetInstances(int from, int to);
+    // A texture the app draws itself (a TV channel's picture), found by
+    // materials as if it were the TXTR `name`: set it before the models that
+    // use it are added; later calls of the same size replace its pixels.
+    void setDynamicTexture(const std::string& name, const RgbaImage& image);
     // Removes the checkered test floor and axis markers (e.g. when a lot is shown).
     void hideTestScene();
 

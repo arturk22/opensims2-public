@@ -58,6 +58,7 @@
 #include "app/cinematic_player.hpp"
 #include "app/loading_screen.hpp"
 #include "app/scene_loader.hpp"
+#include "app/tv_broadcast.hpp"
 #include "formats/neighborhood.hpp"
 #include "formats/ui_script.hpp"
 #include "vm/wants.hpp"
@@ -191,6 +192,7 @@ std::map<int16_t, PlacedObject> gPlacedObjects;
 std::vector<std::unique_ptr<os2::SimActor>> gActors;
 std::map<int16_t, os2::SimActor*> gObjectActors; // objects the VM has animated (in gActors)
 std::unique_ptr<os2::CinematicPlayer> gCinematic; // the cinematic prepared or playing (see updateCinematic)
+std::unique_ptr<os2::TvBroadcast> gTv;             // TV channels on the lot's screens
 void cinematicActorAnimates(int16_t id);
 float gUiScale = 1; // drawable pixels per view point
 // --hood: the neighborhood view (app/hood_mode.hpp) in place of a lot.
@@ -536,6 +538,16 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     }
     perfLap("  LotSimulation");
     gObjectView = std::make_unique<os2::VmObjectView>(renderer, index, *gSimulation);
+    // TV channels and arcade screens (app/tv_broadcast.hpp): a broadcast's material shows its movies.
+    try {
+        gTv = std::make_unique<os2::TvBroadcast>(renderer, gameDir() / "TSData/Res");
+        gObjectView->adjustModel = [](os2::ObjectModel& m, const std::map<std::string, std::string>& materials) {
+            if (gTv)
+                gTv->adjust(m, materials);
+        };
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: tv: %s\n", e.what());
+    }
     gSnaps = std::make_unique<os2::AnimSnapView>(renderer, index, *gObjectView, gSimulation->machine());
     gSimulation->onSimAnimation = [](int16_t id, os2::SimActor& actor, const os2::Animation* anim, double at) {
         gSnaps->simAnimation(id, actor, anim, at);
@@ -1654,6 +1666,8 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         renderer.updateObject(a->model, a->posed);
     }
     placePlumbob(renderer, seconds);
+    if (gTv)
+        gTv->update(seconds);
     updateEffects(renderer, seconds);
     updateAudio(seconds);
 }
@@ -2109,6 +2123,7 @@ void unloadScene() {
     gLighting.reset();
     gSnaps.reset();
     gObjectView.reset();
+    gTv.reset();
     gSimulation.reset();
     gAudio.reset();
     gCameraFollow.reset();

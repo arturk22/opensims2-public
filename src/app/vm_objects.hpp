@@ -31,6 +31,7 @@
 namespace os2 {
 
 class LotSimulation;
+struct ObjectModel;
 class Renderer;
 class ResourceIndex;
 struct SimActor;
@@ -66,6 +67,9 @@ public:
     // Called when the VM changes the materials of an object drawn by an
     // actor; the host rebuilds the actor's model with materialsOf(id).
     std::function<void(int16_t id)> onActorMaterials;
+    // Called on a model loaded with the VM's materials before it is added
+    // (a TV channel's material becomes its picture: app/tv_broadcast.hpp).
+    std::function<void(ObjectModel& model, const std::map<std::string, std::string>& materials)> adjustModel;
     // The CRES of an object drawn here, empty if none.
     std::string cresOf(int16_t id) const;
 

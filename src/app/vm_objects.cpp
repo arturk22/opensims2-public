@@ -323,7 +323,9 @@ int VmObjectView::model(const std::string& cres, const std::map<std::string, std
         return it->second;
     int id = -1;
     try {
-        const ObjectModel m = loadObjectModel(index_, cres, materials);
+        ObjectModel m = loadObjectModel(index_, cres, materials);
+        if (adjustModel)
+            adjustModel(m, materials);
         auto& names = subsets_[cres];
         names.clear();
         for (const auto& p : m.parts)
