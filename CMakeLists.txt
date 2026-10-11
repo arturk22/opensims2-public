@@ -138,11 +138,31 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
-    MACOSX_BUNDLE_GUI_IDENTIFIER org.opensims2.app)
+    MACOSX_BUNDLE_GUI_IDENTIFIER org.opensims2.opensims2
+    MACOSX_BUNDLE_SHORT_VERSION_STRING 0.1.0
+    MACOSX_BUNDLE_BUNDLE_VERSION 1
+    MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/cmake/Info.plist.in)
+  # Minimum macOS for the Info.plist (the SDK's deployment target when set).
+  if(CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET_OR_DEFAULT ${CMAKE_OSX_DEPLOYMENT_TARGET})
+  else()
+    set(CMAKE_OSX_DEPLOYMENT_TARGET_OR_DEFAULT 13.0)
+  endif()
+  # `cmake --build build --target package-app`: a copy of the bundle without
+  # game data, ad-hoc signed (runs on Apple Silicon for the local user; not
+  # notarized), plus opensims2.zip, in build/package/.
+  add_custom_target(package-app
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/package
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/package
+    COMMAND ditto $<TARGET_BUNDLE_DIR:opensims2> ${CMAKE_BINARY_DIR}/package/opensims2.app
+    COMMAND codesign --force --deep -s - ${CMAKE_BINARY_DIR}/package/opensims2.app
+    COMMAND ditto -c -k --keepParent ${CMAKE_BINARY_DIR}/package/opensims2.app ${CMAKE_BINARY_DIR}/package/opensims2.zip
+    DEPENDS opensims2
+    COMMENT "Packaging build/package/opensims2.app (ad-hoc signed)")
   target_compile_options(opensims2 PRIVATE -fobjc-arc -Wall -Wextra)
   target_link_libraries(opensims2 PRIVATE os2_render os2_audio os2_vm
     "-framework AppKit" "-framework MetalKit")

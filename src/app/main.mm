@@ -71,6 +71,7 @@
 #include "render/camera.hpp"
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#include "app/data_location.hpp"
 #include "app/live_ui.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
@@ -135,7 +136,8 @@ std::map<int16_t, os2::SimActor*> gObjectActors; // objects the VM has animated 
 float gUiScale = 1; // drawable pixels per view point
 
 // The extracted game (data/game): --data <dir>, else $OS2_DATA, else the first
-// data/game found walking up from the executable (the repo when run from build/).
+// data/game found walking up from the executable (the repo when run from build/),
+// else the packaged-app places (app/data_location.hpp).
 std::optional<fs::path> findGameDir() {
     NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
     for (NSUInteger i = 1; i + 1 < args.count; ++i)
@@ -150,7 +152,8 @@ std::optional<fs::path> findGameDir() {
         if (dir == dir.parent_path())
             break;
     }
-    return std::nullopt;
+    // Packaged app: remembered folder, next to the .app, Application Support.
+    return os2::locateGameData(NSBundle.mainBundle.executablePath.UTF8String, kCameraConfig);
 }
 
 fs::path gameDir() {
@@ -1572,6 +1575,9 @@ int main() {
                 return 1;
             }
         }
+        // No data found and a window is wanted: ask for the folder (remembered).
+        if (!argument(@"--screenshot") && !findGameDir())
+            os2::askForGameData(kCameraConfig);
         NSApplication* app = [NSApplication sharedApplication];
         app.activationPolicy = NSApplicationActivationPolicyRegular;
         buildMenu();
