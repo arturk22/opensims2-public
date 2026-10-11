@@ -8,11 +8,16 @@
 #include "formats/lot.hpp"
 #include "formats/lot_edit.hpp"
 #include "formats/lot_write.hpp"
+#include "formats/build_catalog.hpp"
+#include "formats/resindex.hpp"
+#include "vm/build_edit.hpp"
+#include "vm/placement.hpp"
 
 #include <cstdio>
 #include <filesystem>
 #include <map>
 #include <tuple>
+#include <sstream>
 #include <stdexcept>
 
 namespace os2 {
@@ -101,6 +106,140 @@ int cmdRoundtrip(const std::vector<std::string>& args) {
         std::printf("  %s differs in %zu\n", k.c_str(), n);
     return differ ? 1 : 0;
 }
+
+// "a,b,c,..." -> fields.
+std::vector<std::string> fields(const std::string& v) {
+    std::vector<std::string> out;
+    std::stringstream ss(v);
+    for (std::string f; std::getline(ss, f, ',');)
+        out.push_back(f);
+    return out;
+}
+
+int num(const std::vector<std::string>& f, size_t i, int fallback) {
+    return i < f.size() && !f[i].empty() ? std::stoi(f[i]) : fallback;
+}
+
+} // namespace
+
+bool isBuildEdit(const std::string& flag) {
+    return flag == "--wall" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--build-undo" || flag == "--build-redo";
+}
+
+bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
+                     const std::vector<std::pair<std::string, std::string>>& edits) {
+    if (edits.empty())
+        return true;
+    const BuildCatalog catalog = BuildCatalog::load(index);
+    vm::BuildEditor editor(vm, lot, &catalog);
+    bool ok = true;
+    for (const auto& [flag, value] : edits) {
+        const auto f = fields(value);
+        auto pattern = [&](const std::string& key, bool floor) -> const BuildPattern* {
+            const BuildPattern* p = catalog.find(key, floor);
+            if (!p)
+                throw std::runtime_error(flag + ": no " + (floor ? "floor" : "wall") + " pattern \"" + key + "\"");
+            return p;
+        };
+        vm::BuildEditor::Result r;
+        if (flag == "--build-undo" || flag == "--build-redo") {
+            r.ok = flag == "--build-undo" ? editor.undo() : editor.redo();
+            r.message = r.ok ? "done" : "nothing to do";
+        } else if (flag == "--wall" || flag == "--room" || flag == "--delete-wall") {
+            if (f.size() < 4)
+                throw std::runtime_error(flag + ": expected x0,y0,x1,y1[,level]");
+            const int a = num(f, 0, 0), b = num(f, 1, 0), c = num(f, 2, 0), d = num(f, 3, 0), level = num(f, 4, 1);
+            r = flag == "--wall"   ? editor.drawWalls(level, a, b, c, d)
+                : flag == "--room" ? editor.drawRoom(level, a, b, c, d)
+                                   : editor.deleteWalls(level, a, b, c, d);
+        } else if (flag == "--floor") {
+            if (f.size() < 5)
+                throw std::runtime_error("--floor: expected x0,y0,x1,y1,pattern[,level]");
+            const BuildPattern* p = f[4] == "none" ? nullptr : pattern(f[4], true);
+            r = editor.paintFloor(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), p);
+        } else if (flag == "--wallpaper") {
+            if (f.size() < 6)
+                throw std::runtime_error("--wallpaper: expected x0,y0,x1,y1,side,pattern[,level]");
+            const int side = f[4] == "r" ? 1 : f[4] == "l" ? -1 : 0;
+            r = editor.paintWalls(num(f, 6, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), side,
+                                  *pattern(f[5], false));
+        } else if (flag == "--wallpaper-room") {
+            if (f.size() < 3)
+                throw std::runtime_error("--wallpaper-room: expected x,y,pattern[,level]");
+            r = editor.paintRoom(num(f, 3, 1), num(f, 0, 0), num(f, 1, 0), *pattern(f[2], false));
+        }
+        std::printf("  %s %s: %s%s (funds §%d)\n", flag.c_str(), value.c_str(), r.ok ? "" : "FAILED: ",
+                    r.message.c_str(), vm::funds(vm));
+        ok &= r.ok;
+    }
+    return ok;
+}
+
+std::vector<std::string> compareLotGeometry(const Lot& a, const Lot& b, size_t limit) {
+    std::vector<std::string> out;
+    auto say = [&](const std::string& s) {
+        if (out.size() < limit)
+            out.push_back(s);
+    };
+    std::map<uint32_t, const Lot::Wall*> wa, wb;
+    for (const auto& w : a.walls)
+        wa[w.id] = &w;
+    for (const auto& w : b.walls)
+        wb[w.id] = &w;
+    for (const auto& [id, w] : wa) {
+        auto it = wb.find(id);
+        if (it == wb.end()) {
+            say("wall " + std::to_string(id) + " missing");
+            continue;
+        }
+        const Lot::Wall& v = *it->second;
+        if (w->a.x != v.a.x || w->a.y != v.a.y || w->a.level != v.a.level || w->b.x != v.b.x || w->b.y != v.b.y ||
+            w->type != v.type || w->patterns != v.patterns)
+            say("wall " + std::to_string(id) + " differs");
+    }
+    for (const auto& [id, w] : wb)
+        if (!wa.count(id))
+            say("wall " + std::to_string(id) + " added");
+    if (a.floors != b.floors)
+        say("floors differ");
+    if (a.rooms != b.rooms)
+        say("rooms differ");
+    if (a.roomLayers != b.roomLayers)
+        say("room layers differ");
+    // Pattern names of what is used (unused references are not written).
+    auto used = [](const Lot& l, bool floor) {
+        std::map<uint16_t, std::string> m;
+        if (floor) {
+            for (const auto& q : l.floors)
+                for (uint16_t v : q)
+                    if (v && l.floorPatterns.count(v))
+                        m[v] = l.floorPatterns.at(v);
+        } else {
+            for (const auto& w : l.walls)
+                for (uint16_t v : w.patterns)
+                    if (v != 0xFFFF && l.wallPatterns.count(v))
+                        m[v] = l.wallPatterns.at(v);
+        }
+        return m;
+    };
+    if (used(a, true) != used(b, true))
+        say("floor pattern names differ");
+    if (used(a, false) != used(b, false))
+        say("wall pattern names differ");
+    if (a.wallGraphs.size() != b.wallGraphs.size())
+        say("wall graph count differs");
+    for (size_t i = 0; i < a.wallGraphs.size() && i < b.wallGraphs.size(); ++i) {
+        const auto& g = a.wallGraphs[i];
+        const auto& h = b.wallGraphs[i];
+        if (g.header != h.header || g.lines.size() != h.lines.size() || g.vertices.size() != h.vertices.size() ||
+            g.rooms != h.rooms)
+            say("wall graph " + std::to_string(g.instance) + " differs");
+    }
+    return out;
+}
+
+namespace {
 
 } // namespace
 

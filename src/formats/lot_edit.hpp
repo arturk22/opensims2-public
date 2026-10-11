@@ -48,6 +48,10 @@ bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern);
 // graphs get the rooms on their sides and the graphs their room lists.
 void updateRooms(Lot& lot);
 
+// The room (3ARY 0x09) on one side of a wall: 0 its right (seen from a to
+// b), 1 its left; 0 for none.
+int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side);
+
 // Rooms of a graph from scratch, for checking the algorithm against a
 // saved lot: for each quarter its component (an index), same layout as
 // Lot::rooms.

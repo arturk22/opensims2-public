@@ -228,6 +228,22 @@ bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern) {
     return true;
 }
 
+int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side) {
+    if (lot.rooms.empty())
+        return 0;
+    float dx = wall.b.x - wall.a.x, dy = wall.b.y - wall.a.y;
+    const float len = std::hypot(dx, dy);
+    if (len < 1e-4f)
+        return 0;
+    dx /= len, dy /= len;
+    float rx = dy, ry = -dx;
+    if (!(std::fabs(dx) > 0.3f && std::fabs(dy) > 0.3f))
+        rx = std::round(rx), ry = std::round(ry);
+    if (side)
+        rx = -rx, ry = -ry;
+    return roomBesideSegment(lot, lot.rooms, wall.a.level, wall.a.x, wall.a.y, wall.b.x, wall.b.y, rx, ry);
+}
+
 std::vector<std::array<uint32_t, 4>> roomComponents(const Lot& lot, const Lot::WallGraph& graph) {
     const int W = int(lot.width), H = int(lot.height), L = lot.levelCount;
     const size_t tiles = size_t(W) * H * size_t(L);

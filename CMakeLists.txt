@@ -27,6 +27,7 @@ add_library(os2_formats
   src/formats/audio_spx.cpp
   src/formats/bhav.cpp
   src/formats/camera_config.cpp
+  src/formats/build_catalog.cpp
   src/formats/catalog.cpp
   src/formats/config_text.cpp
   src/formats/dbpf.cpp
@@ -77,6 +78,7 @@ add_library(os2_vm
   src/vm/hood_save.cpp
   src/vm/kill.cpp
   src/vm/rooms.cpp
+  src/vm/build_edit.cpp
   src/vm/characters.cpp
   src/vm/animation.cpp
   src/vm/appearance.cpp
@@ -218,6 +220,10 @@ add_test(NAME reach COMMAND test_reach)
 add_executable(test_routing tests/test_routing.cpp)
 target_link_libraries(test_routing PRIVATE os2_vm)
 add_test(NAME routing COMMAND test_routing)
+
+add_executable(test_build tests/test_build.cpp)
+target_link_libraries(test_build PRIVATE os2_vm)
+add_test(NAME build COMMAND test_build)
 
 add_executable(test_animation_vm tests/test_animation_vm.cpp)
 target_link_libraries(test_animation_vm PRIVATE os2_vm)

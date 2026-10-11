@@ -72,12 +72,8 @@ size_t dropLeftoverCObjects(Lot& lot, DbpfPackage& lotPackage, ResourceIndex& in
     return std::erase_if(lot.objects, [&](const Lot::Object& o) { return !keep.count(o.instance); });
 }
 
-LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::filesystem::path& charactersDir) {
-    CodeLibrary& code = vm.code();
-    std::map<uint32_t, const Lot::Object*> cObjects;
-    for (const auto& o : lot.objects)
-        cObjects[o.instance] = &o;
-
+void setLotRooms(VM& vm, const Lot& lot) {
+    vm.rooms.clear();
     // Rooms: their level (as the saved objects number levels: the arrays'
     // first level is 1) and area in tiles (a quarter tile counts a quarter;
     // inferred). Light, outside, pool and windows are not known.
@@ -119,6 +115,15 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             room.known = 0x1E;
         }
     }
+}
+
+LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::filesystem::path& charactersDir) {
+    CodeLibrary& code = vm.code();
+    std::map<uint32_t, const Lot::Object*> cObjects;
+    for (const auto& o : lot.objects)
+        cObjects[o.instance] = &o;
+
+    setLotRooms(vm, lot);
 
     LotLoad out;
     // Sims whose cObject does not name their character file are found by

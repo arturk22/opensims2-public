@@ -57,6 +57,10 @@ std::set<uint32_t> currentCObjects(CodeLibrary& code, const Lot& lot, const LotO
 // object module from the lot's package. Returns how many were removed.
 size_t dropLeftoverCObjects(Lot& lot, DbpfPackage& lotPackage, ResourceIndex& index);
 
+// The VM's rooms (VM::rooms) from the lot's room array: level, area,
+// outside and pool (loadLot; Build mode after changing walls or floors).
+void setLotRooms(VM& vm, const Lot& lot);
+
 // `charactersDir` is where the Sims' character files are (empty: Sims are
 // left out with a reason).
 LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::filesystem::path& charactersDir);

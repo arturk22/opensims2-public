@@ -116,8 +116,10 @@ public:
     // with a room sort, single-tile or the master of a multi-tile object
     // (whose parts carry no catalog data), not a Sim, not an unlockable
     // reward, in a game group (not 0xFFFFFFFF: the character files').
-    // Sorted by price, as the game sorts its products.
-    static Catalog load(ResourceIndex& index);
+    // Sorted by price, as the game sorts its products. With `build`, the
+    // Build-mode objects instead: OBJDs with a "build mode type" (field 69:
+    // doors, windows, stairs, fireplaces, plants, ...) and its subsort.
+    static Catalog load(ResourceIndex& index, bool build = false);
 
     const std::vector<CatalogEntry>& entries() const { return entries_; }
     const CatalogEntry* byGuid(uint32_t guid) const;

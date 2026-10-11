@@ -2,12 +2,14 @@
 
 #include "save_cmds.hpp"
 
+#include "build_cmds.hpp"
 #include "buy_cmds.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
+#include "formats/lot_write.hpp"
 #include "formats/neighborhood.hpp"
 #include "vm/hood_bridge.hpp"
 #include "formats/resindex.hpp"
@@ -79,9 +81,12 @@ int cmdLotSave(const std::vector<std::string>& args) {
     long ticks = 0;
     bool check = false;
     std::vector<std::pair<std::string, std::string>> buyEdits; // --buy/--sell/--move (buy_cmds.hpp)
+    std::vector<std::pair<std::string, std::string>> buildEdits; // --wall/--floor/... (build_cmds.hpp)
     for (size_t i = 0; i < args.size(); ++i) {
         if ((args[i] == "--buy" || args[i] == "--sell" || args[i] == "--move") && i + 1 < args.size())
             buyEdits.emplace_back(args[i], args[i + 1]), ++i;
+        else if (isBuildEdit(args[i]) && i + 1 < args.size())
+            buildEdits.emplace_back(args[i], args[i + 1]), ++i;
         else if (args[i] == "--ticks" && i + 1 < args.size())
             ticks = std::stol(args[++i]);
         else if (args[i] == "--check")
@@ -109,6 +114,14 @@ int cmdLotSave(const std::vector<std::string>& args) {
     LoadedLot a = loadInto(code, src, src, h, characters);
     if (!buyEdits.empty() && !applyBuyEdits(*a.vm, index, buyEdits))
         throw std::runtime_error("a Buy-mode edit failed");
+    // Build-mode edits change the lot's geometry, written below.
+    std::optional<Lot> built;
+    if (!buildEdits.empty()) {
+        DbpfPackage pkg(src);
+        built = Lot::load(pkg);
+        if (!applyBuildEdits(*a.vm, *built, index, buildEdits))
+            throw std::runtime_error("a Build-mode edit failed");
+    }
     for (long i = 0; i < ticks; ++i)
         a.vm->tick();
     // Save types of objects the run may create, from the other lots' tables.
@@ -137,6 +150,9 @@ int cmdLotSave(const std::vector<std::string>& args) {
         records = vm::captureLotRecords(*a.vm, world, pkg, a.saved, captured.lot, others);
         for (const auto& w : records.warnings)
             std::printf("  warning: %s\n", w.c_str());
+        if (built)
+            for (auto& r : writeLotGeometry(*built, pkg))
+                captured.lot.otherRecords.push_back({r.type, r.group, r.instance, std::move(r.bytes)});
         captured.lot.save(pkg, dst);
     }
     std::printf("  records: %zu cObjects moved, %zu new; %zu routing states; %zu relationships changed, %zu new, "
@@ -198,12 +214,21 @@ int cmdLotSave(const std::vector<std::string>& args) {
         }
     }
     std::printf("  read back: %zu states as written, %zu different, %zu not read through\n", same, differ, unread);
+    size_t geometryDiffers = 0;
+    if (built) {
+        DbpfPackage written(dst);
+        const auto diffs = compareLotGeometry(*built, Lot::load(written));
+        geometryDiffers = diffs.size();
+        std::printf("  build-mode geometry read back: %s\n", diffs.empty() ? "the same" : "differs:");
+        for (const auto& d : diffs)
+            std::printf("    %s\n", d.c_str());
+    }
     LoadedLot b = loadInto(code, dst, src, h, characters);
     const auto diffs = vm::compareLotState(*a.vm, *b.vm);
     std::printf("  VM state after load -> save -> load: %s\n", diffs.empty() ? "the same" : "differs:");
     for (const auto& d : diffs)
         std::printf("    %s\n", d.c_str());
-    return diffs.empty() && differ == 0 ? 0 : 1;
+    return diffs.empty() && differ == 0 && geometryDiffers == 0 ? 0 : 1;
 }
 
 // hood-save: every lot of a neighborhood loaded with the neighborhood, run
@@ -415,6 +440,8 @@ int saveCommand(const std::string& cmd, int argc, char** argv) {
 
 const char* saveUsage() {
     return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
+           "              [--wall|--room|--delete-wall x0,y0,x1,y1[,level]] [--floor x0,y0,x1,y1,pattern[,level]]\n"
+           "              [--wallpaper x0,y0,x1,y1,r|l|b,pattern[,level]] [--wallpaper-room x,y,pattern[,level]]\n"
            "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
            "       s2pkg objt-check <lot.package>...\n";
 }

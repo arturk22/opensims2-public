@@ -47,7 +47,7 @@ const char* roomSortName(int bit) {
     return bit >= 0 && bit < kRoomSortCount ? names[bit] : "?";
 }
 
-Catalog Catalog::load(ResourceIndex& index) {
+Catalog Catalog::load(ResourceIndex& index, bool build) {
     Catalog c;
     std::set<uint32_t> guids;
     for (const auto& loc : index.ofType(kTypeObjd)) {
@@ -65,7 +65,8 @@ Catalog Catalog::load(ResourceIndex& index) {
         // What cTSWinProcCatalog accepts on a residential lot
         // (docs/buy-build-mac.md §1.3): room sort ≠ 0, not a Sim, and not
         // an unlockable reward (field 16; the unlocked lists are not kept).
-        if (!room || d.field(objd::ObjectType) == kObjectTypePerson || d.field(objd::Unlockable) != 0)
+        if ((build ? !d.field(objd::BuildModeType) : !room) || d.field(objd::ObjectType) == kObjectTypePerson ||
+            d.field(objd::Unlockable) != 0)
             continue;
         // A multi-tile part (master ID set, sub index other than -1) is
         // bought through its master.
