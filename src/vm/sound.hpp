@@ -33,6 +33,15 @@ std::array<std::string, 4> soundInfo(VM& vm, const Object& o);
 // group is tried when the expected table lacks it). Empty if none.
 std::string soundEventName(VM& vm, const Object* owner, uint32_t group, int id);
 
+// The voice suffix of a Sim for "vox" events (cEMVoxModifier, Mac binary):
+// an age letter (person data 58: < 2 "b", 2 "p", < 16 "c", < 19 "t", > 50
+// "e", else "a"); children add a voice letter, teens and up a gender letter
+// (data 65: "m"/"f") and then the voice letter: "g" for ghosts (bit 0 of
+// data 68, "Ghost Flags"), else 'a' + the voice type (data 88) modulo the
+// voices of the age (two for adults, one for the others). "ama", "tfa",
+// "afb", "ca", "p". Empty for objects that are not people.
+std::string voxSuffix(const Object& sim);
+
 // Registers 0x17 and 0x30.
 void registerSoundPrimitives(VM& vm);
 

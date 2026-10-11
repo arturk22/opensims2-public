@@ -198,6 +198,12 @@ SoundModifiers LotAudio::modifiersFor(vm::VM* machine, int16_t source, const Sou
     m.destSurface = surfaces_.at(level, at.x, at.y);
     if (machine) {
         if (const vm::Object* o = machine->object(source)) {
+            m.vox = vm::voxSuffix(*o); // the speaker's voice ("vox_..." events)
+            if (o->person) {
+                constexpr int kCreativitySkill = 15, kBodySkill = 17; // person data (STR# 0xC8)
+                m.physical = sound_->skillSuffix("Physical", o->person->data[kBodySkill]);
+                m.creative = sound_->skillSuffix("Creative", o->person->data[kCreativitySkill]);
+            }
             // Object sounds: what the object is made of (soundinfo), not the floor.
             const auto info = vm::soundInfo(*machine, *o);
             if (!info[0].empty())
@@ -395,6 +401,22 @@ std::string LotAudio::summary() const {
         out += "; played:";
         for (size_t i = 0; i < played.size() && i < 8; ++i)
             out += " " + played[i].second + " (" + std::to_string(played[i].first) + ")";
+    }
+    // Every name played, by kind (OS2_SOUND_LOG=1 lists them all).
+    if (std::getenv("OS2_SOUND_LOG")) {
+        out += "; all played:";
+        for (const auto& [name, n] : sound_->playedNames)
+            out += " " + name + " (" + std::to_string(n) + ")";
+    } else {
+        std::string vox;
+        size_t voxCount = 0;
+        for (const auto& [name, n] : sound_->playedNames)
+            if (name.starts_with("vox") || name.find("_vox_") != std::string::npos) {
+                if (voxCount++ < 8)
+                    vox += " " + name;
+            }
+        if (voxCount)
+            out += "; voices (" + std::to_string(voxCount) + " names):" + vox + (voxCount > 8 ? " ..." : "");
     }
     std::vector<std::pair<size_t, std::string>> missing;
     for (const auto& [name, n] : sound_->missing)

@@ -181,6 +181,9 @@ SoundSystem::SoundSystem(const std::filesystem::path& resDir, AudioMixer& mixer,
                 if (lower(key).find("curve") != std::string::npos)
                     layer.curves[lower(key)] = numberList(value);
             layers_.push_back(std::move(layer));
+        } else if (props.count("Physical") && props.count("Creative")) {
+            for (auto& [key, value] : props)
+                skillRanges_[lower(key)] = splitList(value);
         } else if (props.count("LotAmbienceZoomRadiusCurve")) {
             lotRadiusCurve_ = numberList(props["LotAmbienceZoomRadiusCurve"]);
         } else if (props.count("Nhood") && props.count("Build")) {
@@ -211,11 +214,34 @@ std::string SoundSystem::shoeName(uint32_t value) const {
     return it == shoes_.end() ? std::string() : it->second;
 }
 
+std::string SoundSystem::skillSuffix(std::string_view skill, int value) const {
+    auto it = skillRanges_.find(lower(skill));
+    if (it == skillRanges_.end() || it->second.size() < 3)
+        return {};
+    // "0,low,10,medium,20,high,30": 0-9 low, 10-19 medium, ...; outside, the extremes.
+    const auto& r = it->second;
+    std::string out = r[1];
+    for (size_t i = 1; i + 1 < r.size(); i += 2)
+        if (value >= std::atoi(r[i - 1].c_str()))
+            out = r[i];
+    return out;
+}
+
 std::string SoundSystem::resolveEvent(std::string_view event, const SoundModifiers& m) const {
     const std::string base(event);
     std::vector<std::string> suffixes;
-    if (const auto* mods = modifiersOf(base)) {
-        for (const auto& mod : *mods) {
+    // Voice events ("vox_soc_agree_hiA") take the speaker's voice suffix
+    // last, after their listed modifiers ("vox_exmach_pec_stressA" =
+    // physicalskill -> "..._hs_ama"): the tracks are named so; the events
+    // property set lists "vox" only for some cinematic ones (inferred).
+    std::vector<std::string> mods;
+    if (const auto* listed = modifiersOf(base))
+        mods = *listed;
+    if (lower(base).starts_with("vox") && std::find(mods.begin(), mods.end(), "vox") == mods.end())
+        mods.push_back("vox");
+    bool voxLast = false;
+    {
+        for (const auto& mod : mods) {
             const std::string* v = nullptr;
             if (mod == "destsurfacetype" || mod == "destfootstep")
                 v = &m.destSurface;
@@ -234,7 +260,17 @@ std::string SoundSystem::resolveEvent(std::string_view event, const SoundModifie
             if (!v || v->empty())
                 break;
             suffixes.push_back(*v);
+            voxLast = mod == "vox";
         }
+    }
+    // A voice the game has no recording of (the ghosts' "g") falls back to
+    // the first voice of that age and gender.
+    if (voxLast && !suffixes.back().empty() && suffixes.back().back() != 'a' && suffixes.back().size() > 1) {
+        std::string name = base;
+        for (const auto& sfx : suffixes)
+            name += "_" + sfx;
+        if (!exists(name) && !aliases_.count(lower(name)))
+            suffixes.back().back() = 'a';
     }
     // The longest name that exists: all the suffixes, then fewer. An alias
     // redirects the composed name ("foot_run_cpet_leath" -> "foot_run_cpet_rub",

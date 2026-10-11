@@ -148,9 +148,26 @@ static void testPrimitives() {
     const auto info = soundInfo(vm, o);
     check(info[0].empty() && info[1] == "plastic" && info[2] == "exp", "soundinfo without placeholders");
 }
+
+static void testVoxSuffix() {
+    Object sim;
+    sim.person.emplace();
+    auto& d = sim.person->data;
+    auto at = [&](int age, int gender, int voice, int ghost) {
+        d[58] = int16_t(age), d[65] = int16_t(gender), d[88] = int16_t(voice), d[68] = int16_t(ghost);
+        return voxSuffix(sim);
+    };
+    check(at(0x13, 0, 0, 0) == "ama" && at(0x13, 1, 1, 0) == "afb" && at(0x13, 0, 3, 0) == "amb", "adults: two voices");
+    check(at(0x10, 1, 1, 0) == "tfa" && at(0x33, 0, 1, 0) == "ema", "teen, elder: one voice");
+    check(at(3, 1, 0, 0) == "ca" && at(2, 0, 0, 0) == "p" && at(1, 1, 0, 0) == "b", "child, toddler, baby");
+    check(at(0x13, 1, 0, 1) == "afg", "ghost voice");
+    Object chair;
+    check(voxSuffix(chair).empty(), "objects have no voice");
+}
 } // namespace vmt
 
 int main() {
+    vmt::testVoxSuffix();
     testMixer();
     testCurvesAndFsc();
     vmt::testPrimitives();

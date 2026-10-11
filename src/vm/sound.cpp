@@ -32,6 +32,37 @@
 
 namespace os2::vm {
 
+std::string voxSuffix(const Object& sim) {
+    if (!sim.person)
+        return {};
+    const auto& d = sim.person->data;
+    const int age = d[58];
+    char letter = 'a';
+    if (age < 2)
+        letter = 'b';
+    else if (age == 2)
+        letter = 'p';
+    else if (age < 16)
+        letter = 'c';
+    else if (age < 19)
+        letter = 't';
+    else if (age > 50)
+        letter = 'e';
+    // Voices per age (thresholds 1, 2, 15, 18, 50, max; counts 1, 1, 1, 1, 2, 1).
+    char voice = 'g';
+    if ((d[68] & 1) == 0) {
+        const int voices = age > 18 && age <= 50 ? 2 : 1;
+        voice = char('a' + uint16_t(d[88]) % voices);
+    }
+    std::string out(1, letter);
+    if (age < 3)
+        return out;
+    if (age >= 16)
+        out += d[65] == 1 ? 'f' : 'm';
+    out += voice;
+    return out;
+}
+
 namespace {
 
 constexpr uint8_t kFlagLoop = 0x01, kFlagStackObjectSource = 0x02, kFlagStop = 0x40;

@@ -100,6 +100,9 @@ public:
     const std::vector<std::string>* modifiersOf(std::string_view event) const;
     // Shoe name for a GZPS "shoe" value (1 bare .. 6 slip), empty if unknown.
     std::string shoeName(uint32_t value) const;
+    // A skill's suffix for a value (0..1000) by the skill ranges property set
+    // ("Physical" = "0,ls,333,ms,666,hs,1000"); empty if the skill has none.
+    std::string skillSuffix(std::string_view skill, int value) const;
 
     // A random sample of a track or sample name, decoded (cached), and the
     // group it mixes in (from the folder it came from). Null if none.
@@ -169,6 +172,7 @@ private:
     std::map<std::string, std::string> aliases_;
     std::map<std::string, std::vector<std::string>> modifiers_;
     std::map<uint32_t, std::string> shoes_;
+    std::map<std::string, std::vector<std::string>> skillRanges_; // lowercase skill -> bound, name, bound, ...
     std::vector<AmbienceLayer> layers_;
     std::vector<float> lotRadiusCurve_{0, 20, 1, 8};
     std::vector<std::string> musicCategories_;
