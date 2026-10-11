@@ -287,16 +287,34 @@ std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
 // interaction; not a Sim = error 0x5A). When that
 // animation does not exist my age becomes "a" (the binary's reserve).
 std::string socialName(Context& c, const Object& me, const std::string& entry) {
-    const Object* other = c.vm.object(c.frame.stackObject);
-    if ((!other || !other->person) && me.person) // else the object of my current interaction (inferred)
-        other = c.vm.object(me.person->data[persondata::CurrentInteractionObject]);
+    // The other Sim is the target of my current sub-action, else of my
+    // current action (DetermineAppropriateAnimTable: GetTargetObject of the
+    // person's current (sub)action; Push Interaction's flag 0x01 sets it, as
+    // the social objects' "Person A" pushes do); without one, the stack
+    // object (inferred).
+    const Object* other = nullptr;
+    auto targetOf = [&](const QueuedInteraction& q) { return c.vm.object(q.target ? q.target : q.object); };
+    if (me.subAction)
+        other = targetOf(*me.subAction);
+    else if (me.activeInteraction >= 0 && size_t(me.activeInteraction) < me.queue.size())
+        other = targetOf(me.queue[size_t(me.activeInteraction)]);
+    else
+        other = c.vm.object(c.frame.stackObject);
     if (!other || !other->person)
-        throw gameError(0x5A, "Sim-to-Sim animation without a Sim");
-    const std::string tail = std::string("2") + ageLetter(*other) + "-" + parseItem(split(entry, ',')[0]).name;
-    std::string name = std::string(1, ageLetter(me)) + tail;
-    if (!library(c.vm).exists(name) && library(c.vm).exists("a" + tail))
-        name = "a" + tail;
-    return name;
+        throw gameError(0x5A, "Sim-to-Sim animation without a Sim: stack object " + std::to_string(c.frame.stackObject) +
+                                  ", target " + std::to_string(other ? other->id : 0));
+    // When "<mine>2<theirs>-" does not exist, the binary retries with my age
+    // as "a" (the reserve table) and then swaps the age letters for others
+    // (FUN_0068bcb0); here: mine as "a", theirs as "a" (an elder's are the
+    // adult ones: "a2e-soc-hugFriendly-hugger-reject" is missing,
+    // "a2a-..." exists; inferred), then both.
+    const std::string item = parseItem(split(entry, ',')[0]).name;
+    const char mine = ageLetter(me), theirs = ageLetter(*other);
+    auto named = [&](char a, char b) { return std::string(1, a) + "2" + b + "-" + item; };
+    for (const auto& [a, b] : {std::pair{mine, theirs}, std::pair{'a', theirs}, std::pair{mine, 'a'}, std::pair{'a', 'a'}})
+        if (library(c.vm).exists(named(a, b)))
+            return named(a, b);
+    return named(mine, theirs);
 }
 
 // The animation index of an operand: u16 at `at`, or the parameter of that

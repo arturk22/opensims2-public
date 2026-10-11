@@ -316,6 +316,10 @@ struct QueuedInteraction {
     int16_t priority = 0;     // kPriority* (interactions.hpp)
     uint8_t flags = 0;        // Push Interaction's flags byte (0 from the pie menu)
     ObjectId pushedBy = 0;    // the object whose thread pushed it (the Sim itself from the pie menu)
+    // The interaction's target (cTSInteraction +0x10, GetTargetObject): the
+    // object, unless Push Interaction's flag 0x01 named the object in a local
+    // (also the icon); the other Sim of a Sim-to-Sim animation (0 = the object).
+    ObjectId target = 0;
     std::array<uint8_t, 16> operands{}; // Push Interaction's whole operand, for what is not understood yet
     // From the TTAB entry.
     uint16_t action = 0, guard = 0; // trees, resolved against the object's code

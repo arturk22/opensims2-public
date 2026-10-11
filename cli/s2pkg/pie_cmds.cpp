@@ -50,7 +50,7 @@ std::string nameOf(const vm::Object& o) { return o.definition ? o.definition->fi
 
 int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
            int select, int ticks, bool all, std::optional<int> motives, bool fromInit, size_t trace,
-           int dialogAnswer, size_t traceChecks) {
+           int dialogAnswer, size_t traceChecks, bool anims) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -171,6 +171,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         for (size_t b = 0; b < d.buttons.size(); ++b)
             std::printf("      [%zu] %s%s\n", b, d.buttons[b].c_str(), int(b) == d.answer ? "  <- answered" : "");
     };
+    std::map<vm::ObjectId, std::string> lastAnim;
     for (int i = 0; i < ticks; ++i) {
         const bool before = s.activeInteraction >= 0;
         machine.tick();
@@ -181,6 +182,14 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         vm::Object* now = machine.object(sim);
         if (!now)
             break;
+        // --anims: every Sim's full-body animation as it changes (both sides of a social).
+        if (anims)
+            for (const auto& [oid, ob] : machine.objects())
+                if (ob.person && ob.animation.name != lastAnim[oid]) {
+                    lastAnim[oid] = ob.animation.name;
+                    std::printf("  tick %d: %d %s plays \"%s\" at (%.2f, %.2f) dir %d\n", i + 1, oid, nameOf(ob).c_str(),
+                                ob.animation.name.c_str(), ob.position.x, ob.position.y, ob.data[vm::objdata::Direction]);
+                }
         if (!before && now->activeInteraction >= 0)
             std::printf("  tick %d: running \"%s\"\n", i + 1, now->queue[size_t(now->activeInteraction)].name.c_str());
         if ((i + 1) % 60 == 0)
@@ -202,6 +211,12 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         for (const auto& [light, st] : o.lights)
             std::printf("  light of %d %s%s%s: %d%%\n", id, nameOf(o).c_str(), light.empty() ? "" : " / ",
                         light.c_str(), st.level(machine.ticks));
+    if (!machine.animations.missing.empty()) {
+        std::printf("  missing animations:");
+        for (const auto& [name, n] : machine.animations.missing)
+            std::printf(" \"%s\" %zu,", name.c_str(), n);
+        std::printf("\n");
+    }
     std::printf("queue of %s:", nameOf(s).c_str());
     for (size_t i = 0; i < s.queue.size(); ++i)
         std::printf(" [%s%s]", s.queue[i].name.c_str(), int(i) == s.activeInteraction ? ", running" : "");
@@ -220,7 +235,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     int dialogAnswer = 0;
     std::optional<int> motives;
     bool fromInit = false;
-    bool all = false;
+    bool all = false, anims = false;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--select" && i + 1 < argc)
@@ -239,17 +254,19 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
             dialogAnswer = std::stoi(argv[++i]);
         else if (a == "--all")
             all = true;
+        else if (a == "--anims")
+            anims = true;
         else
             pos.push_back(a);
     }
     if (pos.empty() || pos.size() > 3)
         return -1;
     return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives, fromInit,
-                  trace, dialogAnswer, traceChecks);
+                  trace, dialogAnswer, traceChecks, anims);
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N]] [--trace-checks N] [--motives N] [--init]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init]\n";
 }
 
 } // namespace os2

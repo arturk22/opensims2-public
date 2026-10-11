@@ -195,6 +195,14 @@ Exit pushInteraction(Context& c) {
     constexpr size_t kMaxQueue = 6;
     if (!nested && target->queue.size() > kMaxQueue)
         return failed(3);
+    // Flag 0x01: the object in the local of byte 4 is the interaction's
+    // target (and icon; TryPushAction sets it with cTSInteraction's
+    // SetTargetObject); a local out of range is error 0x33.
+    if (flags & 0x01) {
+        if (o[4] >= c.frame.locals.size())
+            throw gameError(err::LocalOutOfRange, "local " + std::to_string(o[4]));
+        q->target = c.get(kOwnerLocal, o[4]);
+    }
     q->flags = flags;
     q->pushedBy = c.thread.me;
     q->operands = o;
