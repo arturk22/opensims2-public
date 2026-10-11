@@ -748,6 +748,20 @@ void VM::setClockGlobals() {
     globals[global::DayOfMonth] = int16_t(clock.day);
     globals[global::Month] = int16_t(clock.month);
     globals[global::Year] = int16_t(clock.year);
+    globals[global::TimeOfDay] = timeOfDay(clock.hour);
+}
+
+// cTSSimulator's time of day for an hour (Mac binary, FUN_004984d4, STR#
+// 0xE1 "times of day"): 0 day 7-17, 1 dusk 18, 2 night 19-5, 3 dawn 6. The
+// simulator sets global 4 from it whenever the hour changes.
+int16_t timeOfDay(int hour) {
+    if (hour == 6)
+        return 3;
+    if (hour >= 7 && hour < 18)
+        return 0;
+    if (hour == 18)
+        return 1;
+    return 2;
 }
 
 void VM::tick() {
@@ -757,9 +771,15 @@ void VM::tick() {
         if (++clock.minute == 60) {
             clock.minute = 0;
             if (++clock.hour == 24) {
+                // A new day (cTSSimulator::SimulateOneTick): Days Running
+                // counts up, Day Of Week = Days Running % 7, and a new month
+                // sets Maximum Day Number to 30.
                 clock.hour = 0;
+                ++globals[global::DaysRunning];
+                globals[global::DayOfWeek] = int16_t(globals[global::DaysRunning] % 7);
                 if (++clock.day > 30) {
                     clock.day = 1;
+                    globals[global::MaxDayNumber] = 30;
                     if (++clock.month > 12)
                         clock.month = 1, ++clock.year;
                 }

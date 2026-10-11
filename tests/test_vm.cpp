@@ -409,6 +409,23 @@ static void testRunTreeByName() {
     check(t.status == Thread::Status::Finished && tv.attributes[1] == 10, "Run Tree by Name passes my parameters on");
 }
 
+// The clock keeps Time Of Day (global 4), Days Running and Day Of Week.
+static void testClockGlobals() {
+    Fixture fx;
+    fx.vm.clock.hour = 18, fx.vm.clock.minute = 59, fx.vm.clock.tick = fx.vm.clock.ticksPerMinute - 1;
+    fx.vm.setClockGlobals();
+    check(fx.vm.globals[global::TimeOfDay] == 1, "18:59 is dusk");
+    fx.vm.tick();
+    check(fx.vm.clock.hour == 19 && fx.vm.globals[global::TimeOfDay] == 2, "19:00 is night");
+    fx.vm.clock.hour = 23, fx.vm.clock.minute = 59, fx.vm.clock.tick = fx.vm.clock.ticksPerMinute - 1;
+    fx.vm.globals[global::DaysRunning] = 6;
+    fx.vm.tick();
+    check(fx.vm.globals[global::DaysRunning] == 7 && fx.vm.globals[global::DayOfWeek] == 0 &&
+              fx.vm.globals[global::TimeOfDay] == 2,
+          "a new day counts Days Running and Day Of Week");
+    check(timeOfDay(6) == 3 && timeOfDay(7) == 0 && timeOfDay(17) == 0 && timeOfDay(5) == 2, "dawn and day");
+}
+
 // Run Tree by Name mode 0 runs the tree at once and branches on its result;
 // with no argument flags the arguments are my temps (Mac binary).
 static void testRunTreeByNameNow() {
@@ -1296,6 +1313,7 @@ int main() {
     testSlots();
     testScheduler();
     testRunTreeByNameNow();
+    testClockGlobals();
     testMessage();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

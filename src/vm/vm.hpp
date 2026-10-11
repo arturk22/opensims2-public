@@ -100,6 +100,10 @@ constexpr int16_t Minute = 5;
 constexpr int16_t Second = 6;
 constexpr int16_t Month = 7;
 constexpr int16_t Year = 8;
+constexpr int16_t TimeOfDay = 4;     // 0 day, 1 dusk, 2 night, 3 dawn (STR# 0xE1), from the hour
+constexpr int16_t DaysRunning = 28;
+constexpr int16_t MaxDayNumber = 29;
+constexpr int16_t DayOfWeek = 34;    // Days Running % 7
 constexpr int16_t SelectedPersonId = 3;
 constexpr int16_t CurrentFamily = 9;
 constexpr int16_t Speed = 16;
@@ -726,7 +730,7 @@ public:
         int tick = 0; // within the minute
         int minute = 0, hour = 8, day = 1, month = 1, year = 1;
     } clock;
-    void setClockGlobals();
+    void setClockGlobals(); // also Time Of Day (global 4) from the hour
     uint64_t ticks = 0;
     // One tick: the clock, the objects' timers, then a turn of every Main
     // thread, then contained objects move to their (outermost) container's position.
@@ -889,6 +893,8 @@ private:
     void fail(Thread& t, const std::string& message);
 };
 
+// Global 4 "Time Of Day" for an hour (0 day, 1 dusk, 2 night, 3 dawn).
+int16_t timeOfDay(int hour);
 // Registers the primitives implemented so far.
 void registerPrimitives(VM& vm);
 // The primitives that place and move objects in the world (routing.cpp).
