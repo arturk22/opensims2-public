@@ -5,6 +5,8 @@
 // what is inferred.
 #include "animation.hpp"
 
+#include "errors.hpp"
+
 #include "vm.hpp"
 
 #include "formats/binreader.hpp"
@@ -207,22 +209,36 @@ int ticksFor(VM& vm, float seconds) {
     return int(std::ceil(double(seconds) * vm.clock.ticksPerMinute - 1e-6));
 }
 
+// The speed of an Animate Sim/Object/Overlay operand: byte 3 in 1/32 (0x20
+// = normal), or temp 2 with flag 0x02 of byte 2 (Mac binary). Taken as
+// signed (0xE0, 0xC0 in ~4% of the uses: backwards, inferred), so only its
+// size changes how long it plays. 0 is the game's error 0x7E.
+float animationSpeed(Context& c) {
+    const auto& o = c.instruction.operands;
+    const int v = o[2] & 0x02 ? int(c.thread.temps[2]) : int(int8_t(o[3]));
+    if (v == 0)
+        throw VMError("Animation speed cannot be zero");
+    return std::abs(float(v)) / 32.0f;
+}
+
 // Animate Sim (0x6A): plays a full-body animation on me and waits for it to
-// end. Operands (inferred from the trees and the editor's strings): animation
-// index u16 at 0, flags u8 at 2 (0x04: the index is in the parameter of that
-// number, "anim id in s.v."; 0x01, 0x02, 0x08, 0x40, 0x80 not understood:
-// the editor lists Interruptible, Flipped, Trans to Idle, No Blend in/out,
-// Start at tag in Temp 0, Anim Speed in Temp 2, Flip Flag in Temp 3,
-// Synching Anim to last Anim Run, Using Controlling Object as Anim Source,
-// Not Hurryable), flags u8 at 3 (0x20 in 96% of the uses), event tree u16 at
-// 4 (a call opcode, 0 none; byte 7 says where it is: 0 private, 1
-// semi-global, 2 global), the list u8 at 6 (0x80 the global list for the
-// Sim's age, else that STR#), u8 at 8 more flags, an object (owner u8 at 9,
-// data u16: the "IK Object"/controlling object?) and u8 at 12 (0-4: the
-// priority?). The animation's events would run the event tree; they are
-// not read, so it never runs. True when the animation ends; the game's
-// error for an empty name; an animation that does not exist ends at once
-// (counted in AnimationLibrary::missing).
+// end (Mac binary: it returns 2, "wait", until the animation is over, then
+// 1). Operands (editor disassembler, docs/primitives-mac.md §5): animation
+// index u16 at 0, flags u8 at 2 (0x01 flipped, 0x02 speed in temp 2, 0x04
+// the index is in the parameter of that number, "anim id in s.v.", 0x08
+// interruptible, 0x10 start at the tag in temp 0, 0x20 "Trans to Idle",
+// 0x40 no blend out, 0x80 no blend in), speed u8 at 3 (1/32: 0x20 = 1.0;
+// animationSpeed), event tree u16 at 4 (a call opcode, 0 none; s8 7 says
+// where it is: 0 private, 1 semi-global, 2 global), the list u8 at 6 (0x80
+// the global list for the Sim's age, else that STR#), flags u8 at 8 (0x01
+// flip flag in temp 3, 0x02 sync to the last animation, 0x10 the
+// controlling object as the source, 0x20 not hurryable), the IK object
+// (owner u8 at 9, data u16), priority s8 at 12 (0 low, 1 medium, 2 high)
+// and a blend weight byte 13 / 100. Only the speed and the index are used
+// here; the animation's events would run the event tree, and they are not
+// read. True when the animation ends; the game's error for an empty name;
+// an animation that does not exist ends at once (counted in
+// AnimationLibrary::missing).
 Exit animateSim(Context& c) {
     Object& me = c.me();
     AnimationState& a = me.animation;
@@ -242,7 +258,7 @@ Exit animateSim(Context& c) {
         ++c.vm.animations.missing[name];
     a.name = name;
     ++a.serial;
-    a.ticksLeft = seconds ? ticksFor(c.vm, *seconds) : 0;
+    a.ticksLeft = seconds ? ticksFor(c.vm, *seconds / animationSpeed(c)) : 0;
     a.depth = depth, a.tree = c.frame.behavior, a.node = c.frame.pc;
     if (a.ticksLeft > 0)
         return Exit::Yield;
@@ -269,26 +285,37 @@ Exit startOverlay(Context& c, Object& target, const std::string& entry) {
     return Exit::True;
 }
 
-// Animate Overlay (0x6B): animation index u16 at 0 (byte 2 flag 0x04: in a
-// parameter), u8 at 3 (0x20), event tree u16 at 4, the object (owner u8 at 6,
-// data u16), the list u8 at 9 (as Animate Sim's byte 6: 0x80 global, 0x81
-// adult, 0x86 object, ...). Byte 11 (0-4, 0xFF), 12, 14 and 15 are not
-// understood (priority? "Priority", "Loop Count in Temp 1", "Anim Speed in
-// Temp2", "Sync to calling objects Anim" in the editor's strings).
+// The loop count of Animate Object/Overlay with flag 0x20 of byte 2 is in
+// temp 1; 0 or less than -1 is the game's error 0x70 (Mac binary).
+void checkLoops(Context& c) {
+    if ((c.instruction.operands[2] & 0x20) && (c.thread.temps[1] == 0 || c.thread.temps[1] < -1))
+        throw gameError(err::BadLoopCount, std::to_string(c.thread.temps[1]));
+}
+
+// Animate Overlay (0x6B): animation index u16 at 0, flags u8 at 2 (as
+// Animate Sim's: 0x02 speed in temp 2, 0x04 index in a parameter; 0x20 loop
+// count in temp 1), speed u8 at 3, event tree u16 at 4 (s8 14 where), the
+// object (owner u8 at 6, data u16), the list u8 at 9 (as Animate Sim's byte
+// 6: 0x80 global, 0x81 adult, 0x86 object, ...), priority s8 11, byte 12 bit
+// 0 not hurryable, flags byte 15 (Mac binary, docs/primitives-mac.md §5).
+// It does not block (the binary returns 1 once it has started it).
 Exit animateOverlay(Context& c) {
     const auto& o = c.instruction.operands;
+    checkLoops(c);
     Object& target = objectAt(c, 6);
     const std::string entry = listEntry(c, target, o[9], animationIndex(c, 0, o[2] & 0x04));
     return startOverlay(c, target, entry);
 }
 
-// Animate Object (0x69): animation index u16 at 0 (byte 2 flag 0x04: in a
-// parameter), u8 at 3 (0x20), event tree u16 at 4, the object (owner u8 at
-// 6, data u16), from the object list (STR# 0x86) of the running tree's group
-// or the code owner's. Bytes 9 (0-2) and 10 (flags, 0x20 in half the uses)
-// are not understood.
+// Animate Object (0x69): animation index u16 at 0, flags u8 at 2 (as
+// Animate Overlay's), speed u8 at 3, event tree u16 at 4 (s8 9 where), the
+// object (owner u8 at 6, data u16), from the object list (STR# 0x86) of the
+// running tree's group or the code owner's; flags byte 10 (0x01 flip flag in
+// temp 3, 0x04 sync to the caller's animation, 0x08 align the end, 0x80 not
+// hurryable). It does not block (Mac binary).
 Exit animateObject(Context& c) {
     const auto& o = c.instruction.operands;
+    checkLoops(c);
     Object& target = objectAt(c, 6);
     const std::string entry = listEntry(c, target, animlist::Object, animationIndex(c, 0, o[2] & 0x04));
     if (trim(entry).empty() || trim(entry) == ".")
@@ -296,78 +323,94 @@ Exit animateObject(Context& c) {
     return startOverlay(c, target, entry);
 }
 
-// Animate Stop (0x6C): stops the overlays of an object (owner u8 at 3, data
-// u16). Byte 2 is the mode (flags: 0x01, 0x02, 0x20 in "CT - Route Waiting
-// Animation"; the editor names "All Overlay animations running", "All Full
-// Body Animations running", "All Animations running", "Carry Pose", "blended
-// Out", "short blended Out", "Stopping normal AND flipped anims"), byte 6 the
-// list and u16 at 0 / byte 7 which animation; not understood, so every
-// overlay stops.
+// Animate Stop (0x6C), by the Mac binary's disassembler
+// (docs/primitives-mac.md §5): the object (owner u8 at 3, data u16), mode s8
+// at 7: 0 one animation (u16 at 0 of the list byte 6), 1 the overlays, 2 the
+// full-body animations, 3 all, 4 the carry poses, 5 idle, 6 gestures, 7
+// reactions, 8 normals, 9 facials, 10 idle facials, 11 receptivity; flags
+// byte 2 (0x01 flipped, 0x02 blended, 0x20 short blend, 0x08 flip flag in
+// temp 3, 0x40 normal and flipped), priority s8 at 8. Here: 0 takes that
+// animation off the object's overlays, 1 and 3 take every overlay off, 4 the
+// grasp/carry overlays of what a Sim holds; the full-body animation is left
+// to the Animate Sim waiting for it, and the overlay kinds of 5-11 are not
+// told apart (nothing stops).
 Exit animateStop(Context& c) {
+    const auto& o = c.instruction.operands;
     Object& target = objectAt(c, 3);
-    if (!target.animation.overlays.empty()) {
-        target.animation.overlays.clear();
-        ++target.animation.overlaySerial;
+    auto& a = target.animation;
+    const size_t before = a.overlays.size();
+    switch (int8_t(o[7])) {
+    case 0: {
+        const std::string entry = listEntry(c, target, o[6], int16_t(le16(&o[0])));
+        const std::string first = trim(split(entry, ',')[0]);
+        if (first.empty() || first == ".")
+            break;
+        const std::string name = target.person ? resolveListAnimation(c.vm, target, entry) : parseItem(first).name;
+        if (auto it = std::find(a.overlays.begin(), a.overlays.end(), name); it != a.overlays.end())
+            a.overlays.erase(it);
+        break;
     }
+    case 1:
+    case 3: a.overlays.clear(); break;
+    case 4:
+        for (const auto& name : target.carryOverlays)
+            if (auto it = std::find(a.overlays.begin(), a.overlays.end(), name); it != a.overlays.end())
+                a.overlays.erase(it);
+        break;
+    default: break;
+    }
+    if (a.overlays.size() != before)
+        ++a.overlaySerial;
     return Exit::True;
 }
 
 // Assign Locomotion Animations (0x72): the Sim's stack of locomotion sets.
-// Mode u8 at 0: 0 pops every set ("Pop all entries from Stack."), 1 pops the
-// last ("Pop last entry from Stack."), 2 pushes ("Push group #%d onto
-// Stack"), 3 (once, in "Fix Loco" right after a pop all) is taken as a push
-// too. Where the set comes from, u8 at 2: 0 STR# 0x84 of the code owner's
-// own group, 2 of its semi-global group, 1 (unused) the global group; u8 at
-// 1 the block of six strings in it (always 0). Inferred from the trees:
-// "Get In"/"Get Out" of the pools push and pop, "CT - Walk Like A Ghost" pops
-// all and pushes the ghost walk of the Sims' semi-global, "Fix Loco" (reset)
-// pops all.
+// Mode u16 at 0 (Mac binary, docs/primitives-mac.md §5): 0 pops every set
+// ("Pop all entries from Stack."), 1 pops the last ("Pop last entry from
+// Stack."), n >= 2 pushes group n - 1 ("Push group #%d onto Stack"), taken
+// as the block of six strings n - 2 (groups numbered from 1, inferred: "CT
+// - Walk Like A Ghost" pushes 2 = the first block of the Sims' semi-global,
+// the ghost walk). Where the set comes from, byte 2: 0x02 STR# 0x84 of the
+// code owner's semi-global group, 0x04 the global group, else its own group.
 Exit assignLocomotion(Context& c) {
     const auto& o = c.instruction.operands;
     Object& me = c.me();
     auto& stack = me.animation.locomotion;
-    switch (o[0]) {
+    const uint16_t mode = le16(&o[0]);
+    switch (mode) {
     case 0: stack.clear(); return Exit::True;
     case 1:
         if (stack.empty())
             throw VMError("Invalid pop: locomotion stack is empty");
         stack.pop_back();
         return Exit::True;
-    case 2:
-    case 3: {
+    default: {
         const Object* owner = c.vm.object(c.frame.codeOwner);
-        uint32_t group = 0;
-        switch (o[2]) {
-        case 0: group = owner ? owner->group : 0; break;
-        case 1: group = kGlobalGroup; break;
-        case 2: group = owner ? owner->semiGroup : 0; break;
-        default: throw VMError("Assign Locomotion Animations: source " + std::to_string(o[2]) + " not implemented");
-        }
+        const uint32_t group = o[2] & 0x04 ? kGlobalGroup : !owner ? 0 : o[2] & 0x02 ? owner->semiGroup : owner->group;
         if (!group || !c.vm.code().strings(group, animlist::Locomotion))
             throw VMError("Assign Locomotion Animations: no locomotion set (STR# 0x84) in group " + hexString(group));
         if (stack.size() >= kMaxLocomotionDepth)
             throw VMError("Locomotion stack is too deep: check for imbalanced push/pops");
-        stack.push_back({group, o[1]});
+        stack.push_back({group, uint8_t(mode - 2)});
         return Exit::True;
     }
-    default:
-        throw VMError("Assign Locomotion Animations: mode " + std::to_string(o[0]) + " not implemented");
     }
 }
 
 // Effect Stop/Start (0x70): particle effects and balloons, which only the
-// renderer shows. Mode u8 at 0, in the order of the editor's strings: 0 soft
-// start, 1 hard start, 2 soft stop, 3 hard stop, 4 soft stop all, 5 hard
-// stop all, 6 fire and forget, 7 interrogate bone, 8 hard stop all and clear
-// the queue, 9-11 stop ALL / set state (inferred); the object (owner u8 at 1,
-// data u16), the effect u16 at 4 (0xFFFF: "Passing in effect ID in temp
-// 1"?). The rest (slot, icons, priority queue) is not understood. Starts and
-// stops are kept in AnimationState::effects; always true.
+// renderer shows. Mode u8 at 0 (Mac binary's disassembler): 0 soft start, 1
+// hard start, 2 soft stop, 3 hard stop, 4 soft stop all, 5 hard stop all, 6
+// fire and forget, 7 interrogate bone, 8 hard stop all and clear the queue,
+// 9 stop ALL, 10-13 state 1-4, 14 stop ALL soft; the object (owner u8 at 1,
+// data u16), the effect u16 at 4 (low byte -1: the default effect), slot
+// byte 6 of type s8 9, flags u16 at 10 (0x40 the effect ID is in temp 1,
+// 0x80 priority queue, others icons). Starts and stops are kept in
+// AnimationState::effects; always true.
 Exit effectStopStart(Context& c) {
     const auto& o = c.instruction.operands;
     Object& target = objectAt(c, 1);
     auto& fx = target.animation.effects;
-    const auto effect = int16_t(le16(&o[4]));
+    const auto effect = le16(&o[10]) & 0x40 ? c.thread.temps[1] : int16_t(le16(&o[4]));
     switch (o[0]) {
     case 0:
     case 1:
@@ -380,7 +423,7 @@ Exit effectStopStart(Context& c) {
     case 5:
     case 8:
     case 9:
-    case 10: fx.clear(); break;
+    case 14: fx.clear(); break;
     default: break;
     }
     return Exit::True;
