@@ -259,6 +259,15 @@ fica com o maior peso; cheio, substitui o de menor peso se o novo for maior.
   BV `0x76723c`) e aplainado (`cTSNHoodTerrain::FlattenTerrainUnderLot`,
   BV `0x4d1b10`); `UpdateImposterFading` (BV `0x76aa40`) desbota imposters
   conforme a câmera (detalhe **aberto**).
+- **Pedaços pretos em N002** (rodada 8): não é falha de material nem de
+  textura. Os 13 TXTR de cada lote (`walls_0..8`, `roofs`, `terrain`,
+  `terrainLmap`, `slices_0`) resolvem e decodificam (128x128 Raw32). As fatias
+  e telhados que saem pretos têm texels escuros nos dados: `N002_Lot4`
+  `slices_0` é cinza liso (20,20,20) nas 1.842 células opacas, o `roofs` de
+  vários lotes tem média (23..48), igual ao `N001_Lot11` (39,38,32) que sai
+  escuro também; a foto do lote 4 (`IMG 0x35CA0000`) mostra mesmo máquinas
+  e telhados pretos. Se o jogo clareia as fatias (fator do shader do
+  material de fatia, só no binário), isso falta.
 - Ao salvar o lote o jogo regenera o imposter (`cLotImposterManager::
   GenerateLotImposter`, BV `0x77ab40`; `SaveLotImposterInLot`, BV
   `0x776570`). **Inferido** pelo fluxo de mensagens: `ExitLotBegin` marca
