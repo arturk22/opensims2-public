@@ -3506,7 +3506,9 @@ void unloadScene() {
             gCas->encode(enc, w, h, gUiScale);
     });
     if (auto shot = argument(@"--screenshot")) {
-        const uint32_t w = 1024, h = 768;
+        uint32_t w = 1024, h = 768; // --cas-size WxH for another window shape
+        if (auto sz = argument(@"--cas-size"))
+            std::sscanf(sz->c_str(), "%ux%u", &w, &h);
         gCas->setCanvas(int(w), int(h));
         gCas->runScripted(processArguments());
         view.camera->setViewport(float(w), float(h));

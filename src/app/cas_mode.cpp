@@ -169,8 +169,19 @@ void CasMode::applyCamera(bool smooth) {
         return;
     const float h = editing_ >= 0 ? simHeight() : 1.75f;
     const float z = zoom_ == 0 ? h * 0.5f : zoom_ == 1 ? h * 0.78f : h * 0.95f;
-    // The Sim stands left of the panels: the pivot to its right (screen right is -X).
-    const float side = editing_ >= 0 ? (zoom_ == 0 ? -0.55f : zoom_ == 1 ? -0.32f : -0.16f) : 0.0f;
+    // The Sim stands in the middle of the room the step panels leave on the
+    // left (the frame is laid out at 1024 wide from the left edge; the panels
+    // start at x 583): the pivot moves right of it (screen right is -X) by
+    // that point's offset from the screen centre, at the zoom's distance
+    // (vertical field of view 30 degrees).
+    float side = 0;
+    if (editing_ >= 0) {
+        const float dist = zoom_ == 0 ? 4.8f : zoom_ == 1 ? 2.6f : 1.45f;
+        const float aspect = float(std::max(canvasW_, 1)) / float(std::max(canvasH_, 1));
+        const float halfW = dist * std::tan(15.0f * 3.14159265f / 180.0f) * aspect;
+        const float ndc = 2.0f * 300.0f / float(std::max(canvasW_, 1)) - 1.0f;
+        side = ndc * halfW;
+    }
     const simd_float3 p = simd_make_float3(side, 0, z);
     if (smooth)
         camera_->moveTo(p);
@@ -499,8 +510,10 @@ void CasMode::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFo
 }
 
 void CasMode::setCanvas(int width, int height) {
-    if (width != canvasW_ || height != canvasH_)
+    if (width != canvasW_ || height != canvasH_) {
         canvasW_ = width, canvasH_ = height, dirty_ = true;
+        applyCamera(false); // the Sim's place depends on the width
+    }
 }
 
 void CasMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
