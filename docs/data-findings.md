@@ -368,3 +368,20 @@ os outros, ângulos e distâncias: provavelmente o estado da câmera do lote.
 `0x8B0C79D6`: 5 u32 (2, 0, 0–2, 1, 0). `0xCD8B6498`: `01 00 01 00 00 00`.
 
 **Conclusão.** Em aberto; registrado o que cada um tem.
+
+## 15. Change Material (0x6D) e Manage Inventory (0x33): só pistas
+
+**Change Material, flags do byte 2** (128 de 1.128 usos têm alguma): 0x10
+(44 usos, material 0 em 40, 26 em "CT - Decorate") lembra "using material
+index from temp 0"; 0x01 (17: "Paint - Update Texture", "Paint - New Canvas",
+"Screen Capture") lembra "using snap shot generated material"; 0x20 (16, 8 em
+"Function - Wall Adjacency"), 0x04 (25: "Enter Bath", "Sponge Bath"), 0x08 e
+0x80 sem palpite. O byte 8 é um dono (`0x0A` em 664 usos, inclusive sem flag),
+provavelmente o "found in obj in".
+
+**Manage Inventory, bits 0x08/0x10 do byte 0** (124 e 122 usos, 73 juntos):
+quase sempre na operação 3 (procurar), em árvores de memória e desejo ("Sub -
+Add Memory Subject as nID", "Memory - Already has Woohoo?", "Memory Marker -
+Target has this marker?", "Want Satisfy - Never..."): são critérios de busca
+(`cEdithLanguage::CatManageInventoryMatchFlags`), provavelmente casar também
+pelas propriedades do token (o sujeito da memória). Em aberto.
