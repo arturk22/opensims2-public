@@ -319,6 +319,48 @@ static void testFindLocationFacing() {
     check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 3, "mask 0: facing kept");
 }
 
+// Find Best Object for Function: the nearest chair whose guard passes; Snap
+// moves me onto a routing slot at once.
+static void testFindBestAndSnap() {
+    Fixture fx;
+    fx.vm.world = World(10, 10);
+    Object& near = *fx.vm.object(fx.chair);
+    near.position = {4.5f, 2.5f, 1};
+    const ObjectId far = fx.vm.instantiate(kGroup, 0x81).id;
+    fx.vm.object(far)->attributes.resize(4);
+    fx.vm.object(far)->position = {8.5f, 8.5f, 1};
+    fx.code.add(kGroup, 0x1001, tree({instr(0x0E, go(1), F, {8, 0, 0, 0x03, 11, 0}), expr(Temp, 4, Assign, StackId, 0, T, E)}));
+    Thread t = fx.run(0x1001, 0);
+    check(t.result && t.temps[4] == fx.chair, "the nearest object that can sit");
+    near.attributes[1] = 1; // its guard fails now
+    t = fx.run(0x1001, 0);
+    check(t.result && t.temps[4] == far, "an object whose guard fails is skipped");
+    fx.vm.object(far)->data[25] = 1; // locked out
+    t = fx.run(0x1001, 0);
+    check(t.status == Thread::Status::Finished && !t.result, "none left: false");
+
+    // Snap to the chair's routing slot 0 (one tile in front of it).
+    Slots s;
+    s.slots.resize(2);
+    s.slots[1].type = 3;
+    s.slots[1].flags = 0x01;
+    s.slots[1].minDistance = s.slots[1].maxDistance = s.slots[1].optimalDistance = 1;
+    s.slots[1].facing = -2;
+    fx.code.add(kGroup, 0x84, s);
+    fx.code.add(kGroup, 0x84, definition(0xAAAA0005, 0x84));
+    Object& bench = fx.vm.instantiate(kGroup, 0x84);
+    bench.position = {5.5f, 5.5f, 1};
+    bench.data[objdata::Direction] = 2; // faces +Y
+    fx.code.add(kGroup, 0x1002, tree({instr(0x2E, T, F, {0, 0, 3, 0, 0x10})}));
+    t = fx.run(0x1002, bench.id);
+    Object& sim = *fx.vm.object(fx.sim);
+    check(t.result && sim.position.x == 2.5f, "0x10 tests only");
+    fx.code.add(kGroup, 0x1003, tree({instr(0x2E, T, F, {0, 0, 3, 0, 0x02})}));
+    t = fx.run(0x1003, bench.id);
+    check(t.result && sim.position.x == 5.5f && sim.position.y == 6.5f && sim.data[objdata::Direction] == 6,
+          "snapped in front of it, facing it");
+}
+
 int main() {
     testRunFunctionalTree();
     testReachPut();
@@ -326,6 +368,7 @@ int main() {
     testTestObjectType();
     testCreateObject();
     testFindLocationFacing();
+    testFindBestAndSnap();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -1,4 +1,5 @@
-// Run Functional Tree (0x14) and Reach/Put (0x74). Operand layouts and
+// Find Best Object for Function (0x0E), Run Functional Tree (0x14) and
+// Reach/Put (0x74). Operand layouts and
 // enumerations come from the game's own data: the SimAntics editor's labels
 // in objects.package (group 0x7FE59FD0: STR# 0xC9 "Function Table Names",
 // STR# 0xF5 "entry points"), the editor's disassembly strings left in
@@ -103,6 +104,74 @@ Exit runFunctionalTree(Context& c) {
     c.vm.call(c.thread, id, action, args);
     c.thread.stack.back().stackObject = id;
     return Exit::Call;
+}
+
+// Find Best Object for Function (0x0E): function u16 at 0 (as Run
+// Functional Tree's), flags u8 at 2, an object (owner u8 at 3, data u16:
+// the stack object, me via my object data 11, a parameter or a local),
+// bytes 8-11 (02 00 02 FD in 9 uses) not understood. As FreeSO's (The Sims
+// 1): every object in the world that is not locked out (object data 25
+// "lockout count") and has an OBJF action for the function, whose score
+// (the object data the editor labels after the function: prep 31, cook 32,
+// surface 33, dispose 36, wash dish 37, eating surface 38, dirty level 39
+// for clean, serving surface 61, gardening 64, wash hands 65, repair level
+// 15, dry/wash clothes 56/57; the others have none) is positive (dirty
+// level at least 800, repair at least 600, FreeSO's thresholds) and whose
+// guard passes, scores that value minus a third of its distance in
+// sixteenths of a tile (480 per level) from the object of bytes 3-5; the
+// best becomes the stack object (true), false if none. Inferred: the
+// distance is from that object (the trees give me or the stack object
+// there; FreeSO always uses the caller). The flags (0x40 in the "Function
+// Test - ..." trees, 0x08 with 0x01/0x02/0x04/0x10 in the maid's and the
+// handyman's successive searches, 0x04 and 0x10 in "Object in Hand -
+// Drop"; the editor's strings near it name "Only test objects in room held
+// in temp 0" and ", including Out Of World Objects") are not understood and
+// ignored, nor whether an object is in use.
+Exit findBestObjectForFunction(Context& c) {
+    const auto& o = c.instruction.operands;
+    const uint16_t function = le16(&o[0]);
+    if (function >= std::size(kFunctionEntry))
+        throw VMError("Find Best Object for Function: function " + std::to_string(function) + " out of range");
+    constexpr int16_t kNone = -1;
+    constexpr int16_t kScore[] = {31, 32, 33, 36, kNone, kNone, 37, 38, kNone, kNone, 61, 39, 64, 65,
+                                  15, 56, 57, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone};
+    constexpr int16_t kLockoutCount = 25, kDirtyLevel = 39, kRepairLevel = 15;
+    const int16_t scoreVar = kScore[function];
+    const Object* from = c.vm.object(c.get(o[3], int16_t(le16(&o[4]))));
+    if (!from)
+        from = &c.me();
+    const Position origin = from->position;
+    std::vector<std::pair<ObjectId, std::pair<uint16_t, int>>> candidates; // id, guard, base score
+    for (const auto& [id, x] : c.vm.objects()) {
+        if (!x.position.inWorld() || x.data[kLockoutCount] > 0 || id == c.thread.me)
+            continue;
+        const ObjectFunctions::Entry* e = functionEntry(c.vm, x, function);
+        if (!e || !e->action)
+            continue;
+        int score = 0;
+        if (scoreVar != kNone) {
+            score = x.data[size_t(scoreVar)];
+            if (score <= 0 || (scoreVar == kDirtyLevel && score < 800) || (scoreVar == kRepairLevel && score < 600))
+                continue;
+        }
+        candidates.push_back({id, {e->guard, score}});
+    }
+    ObjectId best = 0;
+    int bestScore = 0;
+    for (const auto& [id, gs] : candidates) {
+        const Object* x = c.vm.object(id);
+        if (!x || (gs.first && !runCheck(c, id, gs.first, {})))
+            continue;
+        const float dx = (x->position.x - origin.x) * 16, dy = (x->position.y - origin.y) * 16;
+        const float dl = float(x->position.level - origin.level) * 30 * 16;
+        const int score = gs.second - int(std::sqrt(dx * dx + dy * dy + dl * dl) / 3);
+        if (!best || score > bestScore)
+            best = id, bestScore = score;
+    }
+    if (!best)
+        return Exit::False;
+    c.frame.stackObject = best;
+    return Exit::True;
 }
 
 // --- Reach/Put -----------------------------------------------------------------
@@ -423,9 +492,93 @@ Exit reachPut(Context& c) {
     return Exit::Yield;
 }
 
+// --- Snap ----------------------------------------------------------------------
+
+// Snap (0x2E): moves me at once (no walking) to a routing slot of the stack
+// object. The Sims 1's layout (FreeSO's VMSnap), which the game's 194 uses
+// fit: slot u16 at 0, where it is u16 at 2 (0 the stack parameter of that
+// number, 1 be contained: into the stack object's containment slot 0, 2 in
+// front of it, 3 the literal routing slot (186 uses), 4 the global SLOT),
+// flags u8 at 4. The editor's strings, in code order: " to slot in temp 0",
+// ", from slot in temp 1", ", ask person to move", ", TEST ONLY"; and the
+// trees: 0x10 tests only ("Function - Can Loop?", "Function - Can Start?",
+// "Function - At Edge of Lot?", "Function - Portal - TEST" all have it; the
+// chair's "Function - Sit" asks with it before the Sim sits), 0x02 asks a
+// Sim in the way to move (FreeSO's shoo; nobody is asked here, the snap just
+// fails), 0x08 (14 uses: "CT - Snap Into Drop Location", "Marker - Snap
+// Into") taken as the slot number in temp 0 (inferred). The place is the
+// slot's goal with the lowest cost whose tile is free (the Sim's own and,
+// for a slot on the object, the object's tile do not count), with the
+// slot's facing; false when there is none. The Sims 2's SLOTs have no snap
+// target slot (-1 everywhere): sitting is a Snap followed by a Snap Into.
+Exit snap(Context& c) {
+    const auto& o = c.instruction.operands;
+    const uint16_t index = le16(&o[0]), where = le16(&o[2]);
+    const uint8_t flags = o[4];
+    Object& me = c.me();
+    Object& target = c.stackObject();
+    if (where > 4)
+        throw VMError("Snap: slot scope " + std::to_string(where) + " not implemented");
+    if (where == 1) {
+        if (c.vm.containedIn(target.id, 0) && c.vm.containedIn(target.id, 0) != me.id)
+            return Exit::False;
+        if (!(flags & 0x10))
+            putInSlot(me, target, 0);
+        return Exit::True;
+    }
+    Slots::Slot slot;
+    if (where == 2) {
+        slot.type = 3;
+        slot.flags = 0x01; // in front, relative to the object
+        slot.minDistance = slot.optimalDistance = slot.maxDistance = 1;
+        slot.facing = -2;
+    } else {
+        int n = flags & 0x08 ? c.thread.temps[0] : where == 0 ? c.get(0x09, int16_t(index)) : int(index);
+        const Slots* table = where == 4 ? c.vm.code().slots(kGlobalGroup, 0x64) : slotTable(c.vm, target);
+        const Slots::Slot* found = nullptr;
+        if (table)
+            for (const auto& s : table->slots)
+                if (s.type == 3 && n-- == 0) {
+                    found = &s;
+                    break;
+                }
+        if (!found)
+            throw VMError("Invalid routing slot specified (slot " + std::to_string(index) + ")");
+        slot = *found;
+    }
+    if (!target.position.inWorld())
+        return Exit::False;
+    const VM::RouteGoals goals = c.vm.routingGoals(slot, target);
+    std::vector<ObjectId> ignore{me.id};
+    if (goals.onTarget)
+        ignore.push_back(target.id);
+    size_t best = goals.goals.size();
+    for (size_t i = 0; i < goals.goals.size(); ++i) {
+        const TilePos t{goals.goals[i].x, goals.goals[i].y, goals.level};
+        const bool free = !c.vm.world || c.vm.tileFree(t, ignore);
+        if (free && (best == goals.goals.size() || goals.goals[i].cost < goals.goals[best].cost))
+            best = i;
+    }
+    if (best == goals.goals.size())
+        return Exit::False;
+    if (flags & 0x10)
+        return Exit::True;
+    me.data[objdata::ContainerId] = 0;
+    me.data[objdata::SlotNumber] = -1;
+    me.route.reset();
+    me.position = {goals.points[best][0], goals.points[best][1], goals.level};
+    if (goals.facings[best] >= 0)
+        me.data[objdata::Direction] = int16_t(goals.facings[best]);
+    if (c.vm.world)
+        me.data[objdata::Room] = c.vm.world->room(VM::tileOf(me));
+    return Exit::True;
+}
+
 } // namespace
 
 void registerReachPrimitives(VM& vm) {
+    vm.setPrimitive(0x2E, snap);
+    vm.setPrimitive(0x0E, findBestObjectForFunction);
     vm.setPrimitive(0x14, runFunctionalTree);
     vm.setPrimitive(0x74, reachPut);
 }

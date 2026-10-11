@@ -938,7 +938,8 @@ Exit manageInventory(Context& c) {
 // simulator speed (0 pause, 1 unpause, 2-4 into the Speed global as is), 25
 // selected Sim, 21-23 the family tree (child of, spouse of, remove the ties
 // between two Sims; VM::familyTree), 40 game state transitions off/on, 48 remapped neighbor ID
-// (false: there are no imported lots). 7 is deprecated ("tree error" in the
+// (false: there are no imported lots), 49 can change footprint (true: the
+// footprints here are whole tiles, inferred). 7 is deprecated ("tree error" in the
 // labels). Those that need the neighborhood are in hood_bridge.cpp; the rest
 // need the camera or the world.
 Exit genericSimsCall(Context& c) {
@@ -1037,6 +1038,8 @@ Exit genericSimsCall(Context& c) {
         cancelInteractionsWith(vm, c.frame.stackObject);
         return Exit::True;
     case 48: return Exit::False;
+    case 49: // can change footprint (to the footprint index in temp 0) without intersecting another object's?
+        return Exit::True; // footprints are whole tiles here, which a footprint change does not alter (inferred)
     default:
         if (auto r = neighborhoodSimsCall(c, call))
             return *r;

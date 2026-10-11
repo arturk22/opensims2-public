@@ -802,7 +802,7 @@ std::optional<ObjectId> nextVisibleObject(VM& vm, const Object& me, ObjectId cur
 void registerTimerPrimitives(VM& vm);
 // Look At (view.cpp).
 void registerViewPrimitives(VM& vm);
-// Run Functional Tree and Reach/Put (reach.cpp).
+// Find Best Object for Function, Run Functional Tree and Reach/Put (reach.cpp).
 void registerReachPrimitives(VM& vm);
 
 } // namespace os2::vm

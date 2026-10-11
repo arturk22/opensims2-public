@@ -162,9 +162,23 @@ std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
         if (const Object* owner = c.vm.object(c.frame.codeOwner))
             groups.push_back(owner->group), groups.push_back(owner->semiGroup);
         groups.push_back(kGlobalGroup);
-        for (uint32_t g : groups)
-            if (g && (table = code.strings(g, list)) && size_t(index) < table->count(lang::EnglishUS))
+        // A list whose entry is blank is a placeholder (the chair semi-global's
+        // 0x81 is all blank; the chairs' own lists hold the names): go on to
+        // the next group, keeping the first that has the entry at all.
+        const StringTable* first = nullptr;
+        for (uint32_t g : groups) {
+            const StringTable* t = g ? code.strings(g, list) : nullptr;
+            if (!t || index < 0 || size_t(index) >= t->count(lang::EnglishUS))
+                continue;
+            if (!first)
+                first = t;
+            if (!trim(t->get(size_t(index), lang::EnglishUS)).empty()) {
+                table = t;
                 break;
+            }
+        }
+        if (!table)
+            table = first;
     }
     if (!table)
         throw VMError("no animation list " + hexString(list));
