@@ -68,12 +68,18 @@ duração em ticks de 30 Hz.
   `cornersampleratio` 0,5) e sobe o pivô se o olho ficaria abaixo do piso.
 - `Update`: se o Sim selecionado está noutro andar que o andar visível, o
   andar visível passa a ser o dele (segue o andar do Sim).
-- `constraintwidth` (−10): o pivô fica preso ao retângulo do lote somado
-  dessa largura (negativo = para dentro); `SetEdgeConstraints(l, t, r, b)`
-  só aceita margens com soma < 1.
-- `subjecttrackingdeadzonemagnitude` 30 / `centerTrackingDeadZoneMagnitude`
-  (30 por padrão): seguindo um Sim, a câmera só recentra quando a projeção
-  dele se afasta mais que isso (pixels) do centro.
+- `constraintwidth` (−10, `+0x494`): o pivô fica preso ao retângulo do
+  mundo do lote (`WorldDB` vtable `0x10c`/`0x110`/`0x114`/`0x118` = x/y
+  mínimos e máximos) **encolhido** dessa largura (BV `FUN_006a456c`:
+  `x = clamp(x, mínX + w, máxX − w)`, idem y): com −10 o pivô pode ir até
+  **10 tiles para fora** das bordas do lote. `SetEdgeConstraints(l, t, r,
+  b)` só aceita margens com soma < 1.
+- `subjecttrackingdeadzonemagnitude` 30 (`+0x438`) /
+  `centerTrackingDeadZoneMagnitude` (30 por padrão): seguindo um Sim
+  (`cTSCameraSmoothSims1Controller::Update`, BV `0x86ffb8`), a câmera
+  projeta na tela o pivô atual e o Sim (menos um deslocamento `+0x1d4`,
+  zero aqui) e, se a distância entre os dois pontos (pixels, sem o z) passa
+  da zona morta, o Sim vira o alvo do pivô (vtable `0xfc`, suavizado).
 - `defaultcamerapitch`: padrão 0,15 (t ao entrar no lote).
 
 ### 1.4 Entrada (dados + binário)
@@ -114,7 +120,7 @@ Pedidos internos (`HandleRequest`, binário):
 | suavização em ticks de 30 Hz | exponencial em quadros de 50 ms com velocidade mínima |
 | pan ∝ zoom | sim, por ser em pixels de tela |
 | FOV vertical | vertical pela convenção D3D (inferido); o viewer recebe o ângulo inteiro |
-| limitar ao lote | lote + `constraintwidth` (−10 = 10 tiles para dentro) |
+| limitar ao lote | lote encolhido de `constraintwidth` (−10 = até 10 tiles para fora) |
 | seguir altura do piso/Sim | sim: andar do Sim e amostra de altura do piso |
 
 ---

@@ -32,9 +32,10 @@ namespace os2 {
 //   the pivot's screen point moved and unprojected back onto its floor, so
 //   panning scales with the zoom), wheel (d += notches * wheel * (d + 10) /
 //   -50, held between the first and last levels), zoom a level (z/x).
-// - Pivot: held inside the lot rectangle grown by `constraintwidth`
-//   (negative: inwards; a lot too small for it keeps the pivot in the
-//   middle), at `pivotheightabovefloor` over the floor sampled by the app
+// - Pivot: held inside the lot rectangle shrunk by `constraintwidth`
+//   (clamp(x, min + w, max - w): the -10 of LiveCamera.txt lets it 10 tiles
+//   out past the edges; a positive width wider than the lot keeps the pivot
+//   in the middle), at `pivotheightabovefloor` over the floor sampled by the app
 //   (the selected Sim's level), raised if the eye would be under the floor.
 //
 // The lerp's dt is in milliseconds (binary). Inferred: the FOV is the full
@@ -69,7 +70,10 @@ public:
 
     // --- Environment -------------------------------------------------------
     void setViewport(float width, float height) { viewW_ = width, viewH_ = height; }
-    // Lot rectangle in tiles; the pivot stays inside it grown by constraintwidth.
+    // A world point on the screen (viewport pixels, origin top left); empty behind the eye.
+    std::optional<simd_float2> project(simd_float3 world) const;
+    const CameraDef& definition() const { return def_; }
+    // Lot rectangle in tiles; the pivot stays inside it shrunk by constraintwidth.
     void setBounds(simd_float2 lo, simd_float2 hi);
     // Floor height under a point (the visible level's); empty = flat at the pivot's z.
     void setFloorSampler(std::function<float(float x, float y)> f) { floor_ = std::move(f); }

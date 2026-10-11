@@ -147,12 +147,15 @@ int main() {
     settle(cam);
     check(simd_length(cam.pivot()) > near1 * 1.3f, "pan scales with the distance");
 
-    // The pivot stays inside the lot shrunk by constraintwidth (-10).
+    // The pivot stays inside the lot shrunk by constraintwidth: -10 lets it
+    // 10 tiles out (clamp(x, min + w, max - w), FUN_006a456c).
     cam.setBounds(simd_make_float2(0, 0), simd_make_float2(40, 30));
-    cam.setPivot(simd_make_float3(-5, 50, 0));
-    check(near(cam.pivot().x, 10) && near(cam.pivot().y, 20), "pivot held to the lot");
+    cam.setPivot(simd_make_float3(-15, 50, 0));
+    check(near(cam.pivot().x, -10) && near(cam.pivot().y, 40), "pivot held to the lot");
+    cam.setPivot(simd_make_float3(3, 2, 0));
+    check(near(cam.pivot().x, 3) && near(cam.pivot().y, 2), "pivot near the lot's corner kept");
     cam.setBounds(simd_make_float2(0, 0), simd_make_float2(10, 10));
-    check(near(cam.pivot().x, 5) && near(cam.pivot().y, 5), "small lot: pivot in the middle");
+    check(near(cam.pivot().x, 3) && near(cam.pivot().y, 2), "small lot: pivot inside kept");
 
     // Floor height: the pivot sits on the sampled floor.
     cam.setBounds(simd_make_float2(-100, -100), simd_make_float2(100, 100));

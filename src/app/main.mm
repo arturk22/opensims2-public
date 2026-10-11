@@ -661,6 +661,14 @@ void setupLiveUi(os2::ResourceIndex& index) {
         if (auto p = simPortrait(id))
             gPie->setPortrait(std::move(*p));
     };
+    gLive->onCentreSim = [](os2::vm::ObjectId id) {
+        if (gCameraFollow)
+            gCameraFollow->centre(gSimulation->machine(), id);
+    };
+    gLive->onFollowSim = [](os2::vm::ObjectId id) {
+        if (gCameraFollow)
+            gCameraFollow->setTracked(id);
+    };
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--debug-queue"])
         gPie->setShowQueue(false);
     std::printf("opensims2: live UI: %s, %zu family members\n", gLive->ok() ? "loaded" : "missing scripts",
@@ -1294,6 +1302,8 @@ int cameraSlot(unsigned short key) {
         gPie->close();
         return;
     }
+    if (gLive && gLive->press([self canvasPoint:e], true))
+        return;
     _rotating = (e.modifierFlags & NSEventModifierFlagOption) != 0;
     if (_rotating)
         [self holdCursor:YES];
@@ -1572,7 +1582,9 @@ int cameraSlot(unsigned short key) {
             NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
             for (NSUInteger i = 1; i + 1 < args.count; ++i) {
                 float clickX, clickY;
-                if (![args[i] isEqualToString:@"--click"] ||
+                // --right-click x,y: the right button (the live panel's thumbnails follow a Sim).
+                const bool right = [args[i] isEqualToString:@"--right-click"];
+                if ((![args[i] isEqualToString:@"--click"] && !right) ||
                     std::sscanf(args[i + 1].UTF8String, "%f,%f", &clickX, &clickY) != 2)
                     continue;
                 const simd_float2 p = simd_make_float2(clickX, clickY);
@@ -1585,7 +1597,7 @@ int cameraSlot(unsigned short key) {
                 }
                 if (gLive) {
                     gLive->setCanvas(int(cw), int(ch));
-                    if (gLive->press(p))
+                    if (gLive->press(p, right) || right)
                         continue;
                 }
                 const simd_float4x4 m = simd_mul(view.camera->projection(cw / ch), view.camera->view());

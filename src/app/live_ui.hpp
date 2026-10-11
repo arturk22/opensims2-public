@@ -98,6 +98,13 @@ public:
     void setPortrait(vm::ObjectId id, RgbaImage portrait);
     // Called when the player picks another Sim in the family column.
     std::function<void(vm::ObjectId)> onSelectSim;
+    // The camera and a Sim (docs/ui-live-mac.md §4.3): a left click on the
+    // selected Sim's thumbnail (or the panel's portrait) centres on it; a
+    // right click on a thumbnail follows that Sim, again on the same Sim
+    // stops (follow = 0).
+    std::function<void(vm::ObjectId)> onCentreSim;
+    std::function<void(vm::ObjectId)> onFollowSim;
+    vm::ObjectId followed() const { return followed_; }
 
     // The puck's mode buttons (0 live, 1 buy, 2 build, 3 story, 4 options):
     // the one shown pressed; outside live mode only the puck and the family
@@ -118,7 +125,7 @@ public:
     // Mouse in canvas pixels (origin top left). press: the left (or right)
     // button down; returns whether the press was the panel's (then the
     // world below is not picked).
-    bool press(simd_float2 p);
+    bool press(simd_float2 p, bool right = false);
     void hover(simd_float2 p);
     // The canvas size clicks are laid out against before the first frame (headless).
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
@@ -135,7 +142,7 @@ public:
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 
 private:
-    enum class Action { None, SelectSim, Speed, Pause, Cancel, Mode };
+    enum class Action { None, SelectSim, Centre, Speed, Pause, Cancel, Mode };
     struct Target {
         std::array<float, 4> rect; // x0, y0, x1, y1
         Action action = Action::None;
@@ -156,7 +163,7 @@ private:
     std::map<std::string, std::string> queueConstants_;
     std::array<UiScript, 8> bars_; // a copy of the motive bar per motive (its caption)
 
-    vm::ObjectId sim_ = 0;
+    vm::ObjectId sim_ = 0, followed_ = 0;
     std::map<vm::ObjectId, std::unique_ptr<RgbaImage>> portraits_;
     std::map<uint32_t, std::unique_ptr<RgbaImage>> objectThumbs_; // by GUID (null: none)
     std::map<std::pair<vm::ObjectId, bool>, std::unique_ptr<RgbaImage>> icons_; // masked (and grey when waiting)

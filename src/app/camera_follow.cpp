@@ -20,6 +20,23 @@ void LotCameraFollow::follow(vm::VM& vm, vm::ObjectId sim) {
     const int level = o->position.level - 1; // the VM counts the ground as 1
     if (lot_->hasLevel(level))
         *level_ = level;
+    // Subject tracking (BV 0x0086ffb8): the pivot's and the subject's screen
+    // points; past the dead zone the subject becomes the pivot's target.
+    if (const vm::Object* t = tracked_ ? vm.object(tracked_) : nullptr; t && t->position.inWorld()) {
+        const float dead = camera_->definition().param("subjecttrackingdeadzonemagnitude", 30);
+        const simd_float3 pivot = camera_->pivot();
+        const simd_float3 at = simd_make_float3(t->position.x, t->position.y, pivot.z);
+        const auto a = camera_->project(pivot), b = camera_->project(at);
+        if (a && b && simd_distance(*a, *b) > dead)
+            camera_->moveTo(at);
+    }
+}
+
+bool LotCameraFollow::centre(vm::VM& vm, vm::ObjectId sim) {
+    const auto p = simPoint(vm, sim);
+    if (p)
+        camera_->moveTo(*p);
+    return p.has_value();
 }
 
 std::optional<simd_float3> LotCameraFollow::simPoint(vm::VM& vm, vm::ObjectId sim) const {

@@ -227,8 +227,10 @@ void LotCamera::setBounds(simd_float2 lo, simd_float2 hi) {
 simd_float3 LotCamera::constrain(simd_float3 p) const {
     if (!bounds_)
         return p;
+    // FUN_006a456c (BV): clamp(x, minX + w, maxX - w), so a negative width
+    // (LiveCamera.txt: -10) lets the pivot 10 tiles out past the lot's edges.
     const float w = def_.param("constraintwidth", 0);
-    simd_float2 lo = bounds_->first - w, hi = bounds_->second + w;
+    simd_float2 lo = bounds_->first + w, hi = bounds_->second - w;
     for (int k = 0; k < 2; ++k)
         if (lo[k] > hi[k])
             lo[k] = hi[k] = (bounds_->first[k] + bounds_->second[k]) / 2;
@@ -335,6 +337,13 @@ simd_float4x4 LotCamera::view() const {
     return simd_matrix(simd_make_float4(s.x, u.x, -f.x, 0), simd_make_float4(s.y, u.y, -f.y, 0),
                        simd_make_float4(s.z, u.z, -f.z, 0),
                        simd_make_float4(-simd_dot(s, e), -simd_dot(u, e), simd_dot(f, e), 1));
+}
+
+std::optional<simd_float2> LotCamera::project(simd_float3 w) const {
+    const simd_float4 c = simd_mul(simd_mul(projection(viewW_ / std::max(viewH_, 1.0f)), view()), simd_make_float4(w, 1));
+    if (c.w <= 0)
+        return std::nullopt;
+    return simd_make_float2((c.x / c.w + 1) / 2 * viewW_, (1 - c.y / c.w) / 2 * viewH_);
 }
 
 simd_float4x4 LotCamera::projection(float aspect) const {

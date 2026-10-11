@@ -473,6 +473,7 @@ UiScreen LiveUi::screen(int width, int height) {
             if (const UiElement* b = holder->child(0x0D8AB291))
                 hk.buttonState[b] = 2;
         place(live, liveX, liveY, hk);
+        target(findIn(live, 0x4BDEFFA4), Action::Centre, sim_);
         for (auto [id, v] : speeds)
             target(findIn(live, id), Action::Speed, v);
         target(findIn(live, kPause), Action::Pause, 0);
@@ -691,14 +692,31 @@ void LiveUi::togglePause() {
     dirty_ = true;
 }
 
-bool LiveUi::press(simd_float2 p) {
+bool LiveUi::press(simd_float2 p, bool right) {
     if (!ok_)
         return false;
     layoutIfNeeded();
     for (const Target& t : targets_) {
         if (!inside(t.rect, p))
             continue;
+        if (right && t.action == Action::SelectSim) {
+            // cTSWinProcSimChooserThumbnail: the right button follows the
+            // Sim, or stops following it.
+            followed_ = followed_ == vm::ObjectId(t.value) ? 0 : vm::ObjectId(t.value);
+            std::printf("opensims2: live UI: camera %s Sim %d\n", followed_ ? "follows" : "stops following", t.value);
+            if (onFollowSim)
+                onFollowSim(followed_);
+            std::fflush(stdout);
+            return true;
+        }
+        if (right && t.action != Action::Cancel) // the queue cancels with either button
+            return true;
         switch (t.action) {
+        case Action::Centre:
+            std::printf("opensims2: live UI: centre on Sim %d\n", t.value);
+            if (onCentreSim)
+                onCentreSim(vm::ObjectId(t.value));
+            break;
         case Action::Speed: setSpeed(t.value); break;
         case Action::Pause: togglePause(); break;
         case Action::SelectSim:
@@ -707,6 +725,11 @@ bool LiveUi::press(simd_float2 p) {
                 if (onSelectSim)
                     onSelectSim(vm::ObjectId(t.value));
                 setSim(vm::ObjectId(t.value));
+            } else {
+                // The selected Sim's thumbnail centres the camera on it.
+                std::printf("opensims2: live UI: centre on Sim %d\n", t.value);
+                if (onCentreSim)
+                    onCentreSim(sim_);
             }
             break;
         case Action::Cancel:
