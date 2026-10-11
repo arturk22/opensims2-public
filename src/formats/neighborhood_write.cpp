@@ -104,4 +104,44 @@ std::vector<uint8_t> Relationship::write() const {
     return std::move(w.bytes());
 }
 
+std::vector<uint8_t> LotInfo::writeBase() const {
+    BinWriter w;
+    w.u16(baseVersion);
+    w.u32(width);
+    w.u32(depth);
+    w.u8(type);
+    w.u8(roads);
+    w.u8(creationFrontEdge);
+    if (baseVersion >= 5)
+        w.u32(flags);
+    if (baseVersion > 5) {
+        str32(w, name);
+        str32(w, description);
+    }
+    if (baseVersion > 3) {
+        w.u32(uint32_t(heights.size()));
+        for (float h : heights)
+            w.f32(h);
+    }
+    if (baseVersion > 6)
+        w.f32(roadHeight);
+    if (baseVersion > 7)
+        w.u32(baseUnknown);
+    return std::move(w.bytes());
+}
+
+std::vector<uint8_t> LotInfo::write() const {
+    BinWriter w;
+    w.u16(version);
+    w.raw(writeBase());
+    w.u32(x);
+    w.u32(y);
+    w.f32(heightOffset);
+    w.i32(lotId);
+    w.u8(frontEdge);
+    str32(w, skirtTexture);
+    w.raw(rest);
+    return std::move(w.bytes());
+}
+
 } // namespace os2::hood

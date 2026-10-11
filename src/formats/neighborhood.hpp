@@ -233,7 +233,24 @@ struct LotInfo {
     std::string skirtTexture;
     std::vector<uint8_t> rest;
 
+    // Base lot info flags (cITSBaseLotInfo::eLotFlag, docs/neighborhood-mac.md
+    // §6.1): 1 the lot has been saved (cTSSaveLotController::SaveLot sets it),
+    // 4 set up the family's first day on the next load (SaveLot clears it),
+    // 8 its family was evicted (EvictFamily sets it, SaveLot clears it).
+    static constexpr uint32_t kFlagSaved = 1, kFlagFirstDay = 4, kFlagEvicted = 8;
+
     static LotInfo parse(std::span<const uint8_t> data);
+    // A base lot info alone (cTSBaseLotInfo: the 0x6C589723 record of a lot
+    // file, after its 64-byte name), as the version 13 wrapper holds it.
+    static LotInfo parseBase(std::span<const uint8_t> data);
+    std::vector<uint8_t> write() const;     // neighborhood_write.cpp: parse's inverse
+    std::vector<uint8_t> writeBase() const; // the base part (no 64-byte name)
+    // cTSLotInfo::GetCurrentSize (BV 0x48326c): the base size, swapped when
+    // the lot was turned an odd number of quarters from how it was created
+    // ((front edge - creation front edge) odd).
+    bool turned() const { return ((int(frontEdge) - int(creationFrontEdge)) & 1) != 0; }
+    uint32_t currentWidth() const { return turned() ? depth : width; }
+    uint32_t currentDepth() const { return turned() ? width : depth; }
 };
 
 // NID (0xAC8A7A2E): u32 version, u32-length prefix ("N001"), u32 ID, and from

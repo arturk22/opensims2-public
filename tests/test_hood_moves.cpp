@@ -77,6 +77,23 @@ int main() {
     check(worldLotValue(30, 50) == 8700, "30 x 50 is worth 8700");
     check(worldLotValue(50, 50) == 15200, "50 x 50 is worth 15200");
 
+    // The lot info writer is the parser's inverse; the size as the lot is
+    // turned (GetCurrentSize).
+    {
+        Writer o;
+        o.u16(13).u16(6).u32(3).u32(5).u8(0).u8(2).u8(1).u32(3).str32("51 Road").str32("A lot");
+        o.u32(24);
+        for (int i = 0; i < 24; ++i)
+            o.f32(i == 7 ? -0.375f : 0.0f);
+        o.u32(52).u32(55).f32(357.19f).u32(22).u8(1).str32("lottexture-test-01").u8(1);
+        const LotInfo li = LotInfo::parse(o.b);
+        check(li.write() == o.b, "lot info: write(parse(x)) == x");
+        check(!li.turned() && li.currentWidth() == 3 && li.currentDepth() == 5, "front 1 = creation front: not turned");
+        LotInfo t = li;
+        t.frontEdge = 2;
+        check(t.turned() && t.currentWidth() == 5 && t.currentDepth() == 3, "one quarter from creation: turned");
+    }
+
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path() / "os2_test_hood_moves" / "N998";
     fs::remove_all(dir.parent_path());

@@ -8,6 +8,7 @@
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
+#include "formats/lot_arrivals.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/lot_write.hpp"
 #include "formats/neighborhood.hpp"
@@ -64,6 +65,12 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     DbpfPackage pkg(package);
     const Lot lot = Lot::load(pkg);
     out.saved = LotObjects::load(pkg);
+    // As the app's lot load (app/lot_vm.cpp): a family that just moved in
+    // arrives and pays the lot's price, and its first day starts
+    // (formats/lot_arrivals.hpp).
+    LotArrivals arrivals;
+    if (hood)
+        arrivals = addArrivingSims(out.saved, lot, source, code.index());
     out.vm = std::make_unique<vm::VM>(code);
     vm::VM& m = *out.vm;
     m.initCreatedObjects = true;
@@ -71,6 +78,10 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     m.setClockGlobals();
     if (hood) {
         vm::loadNeighborhood(m, *hood);
+        if (arrivals.family && arrivals.charge) {
+            const auto f = int16_t(arrivals.family);
+            vm::setFamilyFunds(m, f, int32_t(int64_t(vm::familyFunds(m, f)) - arrivals.charge));
+        }
         vm::enterLot(m, vm::lotIdOf(source), hood->info ? int16_t(hood->info->id) : int16_t(0));
     }
     out.load = vm::loadLot(m, lot, out.saved, charactersDir);

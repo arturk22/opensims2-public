@@ -219,7 +219,10 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
         LotObjects::State s;
         // The same object as the one saved with this ID (an ID freed and
         // given to a new object is a new object).
-        const bool known = it != before.end() && saved.guidOf(int16_t(id)) == o.guid();
+        // A Sim that arrived on this load (formats/lot_arrivals.hpp) has a
+        // state with no person part read: written as a new object.
+        const bool known = it != before.end() && saved.guidOf(int16_t(id)) == o.guid() &&
+                           !(it->second->person && !it->second->personRead);
         int16_t saveType = 0;
         if (known) {
             s = *it->second;
@@ -289,6 +292,16 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
             lot.saveTypeOf[s.id] = st;
             lot.objects.push_back(s);
             ++out.kept;
+        }
+    // Save types the load added (a Sim that just moved in, formats/
+    // lot_arrivals.hpp) are not in the table yet: written now, as the game
+    // builds them from the definition (save_types.hpp) when it can.
+    for (const auto& [id, st] : lot.saveTypeOf)
+        if (std::find(lot.saveTypeOrder.begin(), lot.saveTypeOrder.end(), st) == lot.saveTypeOrder.end()) {
+            if (auto record = saveTypeRecord(vm.code(), lot.saveTypes.at(st).guid))
+                lot.saveTypes[st] = *record;
+            lot.saveTypeOrder.push_back(st);
+            ++out.newSaveTypes;
         }
     std::sort(lot.objects.begin(), lot.objects.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     // Keep the module's order for the objects that were in it.

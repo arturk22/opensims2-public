@@ -15,12 +15,17 @@ namespace fs = std::filesystem;
 
 namespace {
 constexpr int16_t kPersonObjectType = 2;
-constexpr size_t kGlobalPaused = 17, kGlobalCurrentFamily = 9, kGlobalBudgetMod = 13, kGlobalBudgetDiv = 14;
+constexpr size_t kGlobalHour = 0, kGlobalMinute = 5, kGlobalPaused = 17, kGlobalCurrentFamily = 9, kGlobalBudgetMod = 13,
+                 kGlobalBudgetDiv = 14;
+constexpr uint32_t kFamilyNewLot = 0x04; // FAMI flags: cTSFamily::SetNewLot
+// cTSNeighborhoodConstants "new family start hour" (docs/neighborhood-mac.md §6.1).
+constexpr int16_t kNewFamilyStartHour = 7;
 
 bool startsWith(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
 } // namespace
 
-LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path& lotFile) {
+LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path& lotFile, ResourceIndex* index) {
+    (void)index;
     LotArrivals out;
     std::error_code ec;
     const fs::path lots = fs::absolute(lotFile).parent_path();
@@ -66,7 +71,6 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
             out.characters.push_back(h.characters[size_t(n->character)].path);
         }
     }
-    const size_t before = out.sims.size();
     const hood::Family* fam = h.family(hood::familyOnLot(h, lot->id));
     if (!fam)
         return out;
@@ -132,21 +136,17 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
         saved.objects.push_back(std::move(s));
         ++k;
     }
-    // cTSNeighborhood::SetupFamilyFirstDay (BV 0x4db0c0), for a family with
-    // the "new lot" flag: the simulator resumes (cTSSimulator::Resume clears
-    // global 17 "Paused", which the lots for sale keep at 1), its expense
-    // history is cleared and the flag dropped. (Its start hour comes from a
-    // tunable not read here: the lot keeps its clock.)
-    if (out.sims.size() > before) {
-        // Moving in: the price is charged now (it was read from the lot file
-        // as it is before this load).
+    // cTSLoadLotController::LoadLot, step 0x1B (BV 0x8804ec): a family
+    // moving in (the transition that brought it carries the move, which the
+    // family's "new lot" flag stands for here: cTSFamilyManager::MoveIn
+    // raised it and only the first day drops it) pays the lot's price, read
+    // from the lot file as it is before this load, unless the lot is of type
+    // 2; then global 9 = the family and its funds go to the simulator.
+    const bool movingIn = (fam->record.flags & kFamilyNewLot) != 0;
+    if (movingIn) {
         out.family = fam->id;
         if (lot->info.type != 2)
             out.charge = hood::lotFileInfo(*lot).price;
-        if ((fam->record.flags & 0x04) && saved.globals.size() > kGlobalPaused)
-            saved.globals[kGlobalPaused] = 0;
-        // What LoadLot sets after the charge: global 9 = the family, its funds
-        // to the simulator (the lot file's are the last owner's, or none).
         const int64_t funds = int64_t(fam->record.funds) - out.charge;
         if (saved.globals.size() > kGlobalBudgetDiv) {
             saved.globals[kGlobalCurrentFamily] = int16_t(fam->id);
@@ -155,6 +155,23 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
         }
         if (saved.simulator.read)
             saved.simulator.f98 = uint32_t(int32_t(funds)), saved.simulator.f9C = 0;
+    }
+    // Step 0x1F: cTSNeighborhood::SetupFamilyFirstDay (BV 0x4db0c0) for that
+    // family, or whenever the lot info has flag 4: cTSFamily::SetNewLot(0)
+    // (the neighborhood save drops the flag, vm/hood_save.hpp),
+    // cTSSimulator::SetCurrentTime(new family start hour, 0, -1, -1, -1, -1)
+    // (BV 0x49af84: hour and minute; -1 keeps the day of the week, the day,
+    // the month and the year), ClearHistory and Resume(true), which clears
+    // global 17 "Paused" (the lots for sale keep 1).
+    out.firstDay = movingIn || (lot->info.flags & hood::LotInfo::kFlagFirstDay) != 0;
+    if (out.firstDay && saved.globals.size() > kGlobalPaused) {
+        saved.globals[kGlobalHour] = kNewFamilyStartHour;
+        saved.globals[kGlobalMinute] = 0;
+        saved.globals[kGlobalPaused] = 0;
+        // ClearHistory: the expense reports start over (inferred: the
+        // simulator's report values are that history).
+        for (auto& r : saved.simulator.reports)
+            std::fill(r.values.begin(), r.values.end(), 0u);
     }
     return out;
 }

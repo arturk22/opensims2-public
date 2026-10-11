@@ -667,3 +667,31 @@ do tile (terreno vtable `0x58(tile, mostrar, 1)`). `cTSNHoodTerrain::
 FlattenTerrainUnderLot` (BV `0x4d1b10`), para lotes sem a flag `0x80`, nivela
 (vtable `0x24`) cada vértice do retângulo que não é compartilhado com outro
 lote nem fica sob uma rua.
+
+## 12. No app (rodada 10, frente do bairro)
+
+- **Primeiro dia** (`formats/lot_arrivals.*`): a família com a flag `0x04`
+  do FAMI ("lote novo", posta pelo `MoveIn`) é a que está se mudando: paga o
+  preço na carga (passo `0x1B`) e tem o primeiro dia (passo `0x1F`, também
+  com a flag 4 do lot info): relógio às **7:00** (`SetCurrentTime(7, 0, −1…)`,
+  BV `0x49af84`: só hora e minuto), globais 17 "Paused" = 0 e os relatórios
+  de despesas zerados (`ClearHistory`; inferido que são esses). O save do
+  bairro (`vm/hood_save.*`) tira a flag `0x04` da família do lote e grava o
+  lot info do lote salvo com a flag 1 e sem as 4 e 8 (`SaveLot`, BV
+  `0x884ec4`). `r10-bairro-primeiro-dia.jpg`: Subúrbio no lote 24 às 7:02,
+  §4.280 depois de pagar §17.621.
+- **`cPerson` dos Sims que chegam** (`vm/lot_records.cpp`): o save escreve um
+  `cPerson` (cPerson 3 < cLocomotable 4 < cAnimatable 0x10 < cObject 0x11)
+  feito do de outro Sim do mesmo esqueleto (pelo dado 58: ≥ 16 `auskel`,
+  3–15 `cuskel`, 2 `puskel`): a lista de modelos do molde sem as escolhas de
+  material (os nomes são de malhas e materiais compostos na hora pelo jogo:
+  **inferido** que ele os refaz pelo personagem), a pose e o nome
+  `<arquivo do personagem> - <nome>_objt` do Sim, e os dados de subclasse do
+  molde com a pose trocada. O estado (PERS) do Sim que chegou é gravado como
+  objeto novo (com as partes vazias que o jogo grava) e o seu tipo de save
+  entra na tabela `objt` (montado pela definição do personagem). `s2pkg
+  hood-save` traz os Sims que chegam como o app (`addArrivingSims` e a
+  cobrança): mudar a família 8 para o lote 24 e `hood-save --check` dá a mesma
+  VM depois de salvar e carregar, e uma segunda passada não muda o bairro.
+  Ao entrar de novo o lote acha os Sims pelo `cPerson`
+  (`r10-bairro-cperson-de-volta.jpg`, sem nova cobrança).

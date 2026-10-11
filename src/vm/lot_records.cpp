@@ -78,6 +78,127 @@ void writePose(std::vector<uint8_t>& bytes, const SceneLayout& l, const std::arr
         std::memcpy(&bytes[l.second], p.data(), 28);
 }
 
+// A cPerson record (cPerson v3 < cLocomotable v4 < cAnimatable v0x10 <
+// cObject v0x11, outermost first): its cObject's model list, the pose, the
+// definition, the pose again, then the subclass data (the skeleton's name,
+// its bones' pose, the animations, the locomotion state).
+struct PersonLayout {
+    size_t models = 0;     // the cObject's model count (after its empty model name)
+    size_t pose = 0;       // the first pose (after the model list)
+    size_t definition = 0; // the u32 before the definition's name
+    size_t tail = 0;       // after the second pose
+    std::string skeleton;  // "auskel", "cuskel", ...
+};
+
+std::optional<PersonLayout> personLayout(std::span<const uint8_t> bytes) {
+    try {
+        BinReader r(bytes);
+        r.skip(kFileNameSize);
+        bool person = false;
+        uint32_t version = 0;
+        for (int depth = 0;; ++depth) {
+            if (depth == 8)
+                return std::nullopt;
+            r.u32();
+            version = r.u32();
+            const std::string cls = r.str7();
+            person = person || cls == "cPerson";
+            if (cls == "cObject")
+                break;
+        }
+        if (!person)
+            return std::nullopt;
+        r.str7();
+        PersonLayout l;
+        l.models = r.pos();
+        for (uint32_t n = r.u32(); n; --n) {
+            r.str7();
+            if (version >= 0x11)
+                r.u32();
+            for (uint32_t m = r.u32(); m; --m) {
+                r.str7();
+                r.str7();
+            }
+        }
+        l.pose = r.pos();
+        r.skip(28);
+        l.definition = r.pos();
+        r.u32();
+        r.str7();
+        r.skip(28);
+        l.tail = r.pos();
+        l.skeleton = r.str7();
+        return l;
+    } catch (const FormatError&) {
+        return std::nullopt;
+    }
+}
+
+// The cPerson of a Sim that has none (one that just moved in, created during
+// play), made from `templ`, another Sim's of the same skeleton: the
+// template's model list without its material choices (the game builds those
+// composited materials and the meshes, named by number, when it dresses the
+// Sim from its character file: inferred), the Sim's pose and definition, and
+// the template's subclass data with its pose replaced (a rest pose of the
+// skeleton and an idle locomotion state).
+std::vector<uint8_t> personFromTemplate(std::span<const uint8_t> templ, const PersonLayout& l,
+                                        const std::string& definition, const std::array<float, 7>& pose) {
+    BinWriter w;
+    w.raw(templ.subspan(0, l.models));
+    {
+        BinReader r(templ);
+        r.seek(l.models);
+        const uint32_t n = r.u32();
+        w.u32(n);
+        for (uint32_t i = 0; i < n; ++i) {
+            w.str7(r.str7());
+            w.u32(r.u32());
+            for (uint32_t m = r.u32(); m; --m) {
+                r.str7();
+                r.str7();
+            }
+            w.u32(0);
+        }
+    }
+    const auto old = readPose(templ, l.pose);
+    const std::span<const uint8_t> poseBytes(reinterpret_cast<const uint8_t*>(pose.data()), 28);
+    w.raw(poseBytes);
+    {
+        BinReader r(templ);
+        r.seek(l.definition);
+        w.u32(r.u32());
+    }
+    w.str7(definition);
+    w.raw(poseBytes);
+    // The subclass data keeps copies of the pose (the locomotion state's
+    // position and rotation): the Sim's there too.
+    std::vector<uint8_t> tail(templ.begin() + std::ptrdiff_t(l.tail), templ.end());
+    for (size_t i = 0; i + 28 <= tail.size(); ++i)
+        if (std::memcmp(&tail[i], old.data(), 28) == 0) {
+            std::memcpy(&tail[i], pose.data(), 28);
+            i += 27;
+        }
+    for (size_t i = 0; i + 12 <= tail.size(); ++i)
+        if (std::memcmp(&tail[i], old.data(), 12) == 0) {
+            std::memcpy(&tail[i], pose.data(), 12);
+            i += 11;
+        }
+    w.raw(tail);
+    return std::move(w.bytes());
+}
+
+// The skeleton a Sim of person data 58 "Person Age" has (lifestage values:
+// 1 baby, 2 toddler, 3-15 child, 16 and up teen, adult, elder).
+std::string skeletonForAge(int16_t age) {
+    if (age >= 16)
+        return "auskel";
+    if (age >= 3)
+        return "cuskel";
+    if (age == 2)
+        return "puskel";
+    return "buskel";
+}
+
 int16_t directionOf(const LotObjects::State& s) {
     return s.data.size() > size_t(objdata::Direction) ? s.data[objdata::Direction] : 0;
 }
@@ -149,23 +270,29 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
 
     // Scene graph objects.
     std::map<std::string, std::vector<uint8_t>> templates; // definition name -> a cObject of it
+    std::map<std::string, std::vector<uint8_t>> people;    // skeleton -> a cPerson of it
     bool templatesRead = false;
-    auto templateOf = [&](const std::string& definition) -> const std::vector<uint8_t>* {
-        if (!templatesRead) {
-            templatesRead = true;
-            for (const auto& path : templatePackages) {
-                try {
-                    DbpfPackage pkg(path);
-                    for (const auto& e : pkg.entries())
-                        if (e.tgi.type == kTypeSceneObject) {
-                            auto bytes = pkg.read(e);
-                            if (auto l = sceneLayout(bytes); l && !l->definition.empty())
-                                templates.emplace(l->definition, std::move(bytes));
-                        }
-                } catch (const std::exception&) {
-                }
+    auto readTemplates = [&] {
+        if (templatesRead)
+            return;
+        templatesRead = true;
+        for (const auto& path : templatePackages) {
+            try {
+                DbpfPackage pkg(path);
+                for (const auto& e : pkg.entries())
+                    if (e.tgi.type == kTypeSceneObject) {
+                        auto bytes = pkg.read(e);
+                        if (auto p = personLayout(bytes); p && !p->skeleton.empty())
+                            people.emplace(p->skeleton, bytes);
+                        if (auto l = sceneLayout(bytes); l && !l->definition.empty())
+                            templates.emplace(l->definition, std::move(bytes));
+                    }
+            } catch (const std::exception&) {
             }
         }
+    };
+    auto templateOf = [&](const std::string& definition) -> const std::vector<uint8_t>* {
+        readTemplates();
         auto it = templates.find(definition);
         return it == templates.end() ? nullptr : &it->second;
     };
@@ -174,7 +301,9 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
         const bool known = was && before.guidOf(s.id) == lot.guidOf(s.id);
         const uint32_t instance = uint32_t(uint16_t(s.id));
         auto it = scene.find(instance);
-        if (known) {
+        // A Sim that arrived on this load (formats/lot_arrivals.hpp) is in
+        // `before` but has no cPerson yet: it gets one below.
+        if (known && !(s.person && it == scene.end())) {
             if (!moved(s, *was) || it == scene.end())
                 continue;
             auto bytes = source.read(*it->second);
@@ -198,10 +327,23 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
         if (t) {
             bytes = *t;
         } else if (s.person) {
-            // A Sim's is a cPerson (its body parts); none to copy: the Sim
-            // is found by its GUID among the character files when the lot
-            // loads (formats/lot_arrivals.hpp).
-            out.warnings.push_back("Sim " + std::to_string(s.id) + ": no cPerson of \"" + name + "\" to copy");
+            // A Sim's is a cPerson: one of another Sim of its skeleton, made
+            // its own (personFromTemplate).
+            readTemplates();
+            const int16_t age = o->person ? o->person->data[persondata::PersonAge] : int16_t(0);
+            std::string skeleton = skeletonForAge(age);
+            auto pt = people.find(skeleton);
+            if (pt == people.end())
+                pt = people.find("auskel");
+            if (pt == people.end()) {
+                out.warnings.push_back("Sim " + std::to_string(s.id) + ": no cPerson of a " + skeleton + " Sim to copy");
+                continue;
+            }
+            const auto pl = personLayout(pt->second);
+            bytes = personFromTemplate(pt->second, *pl, name, poseOf(world, s, nullptr, nullptr));
+            addRecord(kTypeSceneObject, 0xFFFFFFFF, instance, std::move(bytes));
+            ++out.sceneNew;
+            ++out.people;
             continue;
         } else {
             // No lot has one (an object bought in Buy mode): a bare cObject

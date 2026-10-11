@@ -9,7 +9,9 @@
 // a save type for its character's GUID), standing by the lot's mailbox (else
 // at the middle of the lot's front), so the VM creates it like any saved Sim
 // and the next save writes it into the lot file. Where the game puts the
-// arriving Sims is inferred. Plain C++.
+// arriving Sims is inferred. A family moving in pays the lot's price and its
+// first day starts at 7:00 (cTSLoadLotController::LoadLot steps 0x1B and
+// 0x1F). Plain C++.
 
 #include "lot.hpp"
 #include "lot_objects.hpp"
@@ -18,6 +20,8 @@
 #include <vector>
 
 namespace os2 {
+
+class ResourceIndex;
 
 struct LotArrivals {
     // One scene-graph-like entry per arriving Sim, and per saved Sim that has
@@ -31,10 +35,16 @@ struct LotArrivals {
     // family's Sims arrive: the caller takes it from `family`'s funds.
     uint32_t family = 0;
     int64_t charge = 0;
+    // The family's first day was set up (SetupFamilyFirstDay): the clock at
+    // the new family start hour (7:00) and the lot running.
+    bool firstDay = false;
 };
 
 // `lotFile` is <neighborhood>/Lots/<P>_Lot<N>.package; `world` the lot read
 // from it.
-LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const std::filesystem::path& lotFile);
+// `index` (the game's resources) is for the eviction cleanup and the Sims'
+// cPerson records; without it they are skipped.
+LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const std::filesystem::path& lotFile,
+                            ResourceIndex* index = nullptr);
 
 } // namespace os2

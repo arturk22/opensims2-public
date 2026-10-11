@@ -224,12 +224,8 @@ Relationship Relationship::parse(std::span<const uint8_t> data, uint32_t instanc
     return rel;
 }
 
-LotInfo LotInfo::parse(std::span<const uint8_t> data) {
-    BinReader r(data);
-    LotInfo l;
-    l.version = r.u16();
-    if (l.version < 12)
-        throw FormatError("lot info: unsupported version " + std::to_string(l.version));
+namespace {
+void parseBaseLotInfo(BinReader& r, LotInfo& l) {
     l.baseVersion = r.u16();
     l.width = r.u32();
     l.depth = r.u32();
@@ -253,6 +249,24 @@ LotInfo LotInfo::parse(std::span<const uint8_t> data) {
         l.baseUnknown = r.u32();
     if (l.baseVersion == 11)
         throw FormatError("lot info: apartment base version not supported");
+}
+} // namespace
+
+LotInfo LotInfo::parseBase(std::span<const uint8_t> data) {
+    BinReader r(data);
+    r.skip(64);
+    LotInfo l;
+    parseBaseLotInfo(r, l);
+    return l;
+}
+
+LotInfo LotInfo::parse(std::span<const uint8_t> data) {
+    BinReader r(data);
+    LotInfo l;
+    l.version = r.u16();
+    if (l.version < 12)
+        throw FormatError("lot info: unsupported version " + std::to_string(l.version));
+    parseBaseLotInfo(r, l);
     l.x = r.u32();
     l.y = r.u32();
     l.heightOffset = r.f32();

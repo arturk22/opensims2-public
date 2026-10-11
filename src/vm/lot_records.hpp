@@ -41,6 +41,7 @@ namespace os2::vm {
 struct RecordsResult {
     size_t sceneMoved = 0, sceneNew = 0, routing = 0, relationshipsChanged = 0, relationshipsNew = 0,
            relationshipsGone = 0;
+    size_t people = 0; // of sceneNew: cPerson records made for Sims that had none
     std::vector<std::string> warnings;
 };
 RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, const LotObjects& before,

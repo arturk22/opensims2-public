@@ -130,16 +130,33 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
     std::map<std::pair<uint32_t, uint32_t>, std::vector<uint8_t>> replaced; // (type, instance) -> bytes
     std::vector<std::pair<Tgi, std::vector<uint8_t>>> added;
 
-    // FAMI funds.
+    // FAMI funds; the lot's family's first day was set up when the lot
+    // loaded (cTSNeighborhood::SetupFamilyFirstDay: SetNewLot(0), FAMI flag
+    // 0x04, formats/lot_arrivals.hpp).
+    const int16_t lotFamily = vm.globals[global::CurrentFamily];
     for (const auto& f : h.families) {
         const int32_t funds = familyFunds(vm, int16_t(f.id));
-        if (funds == f.record.funds)
+        const bool firstDay = lotFamily && f.id == uint32_t(lotFamily) && (f.record.flags & 0x04);
+        if (funds == f.record.funds && !firstDay)
             continue;
         hood::FamilyRecord r = f.record;
         r.funds = funds;
+        if (firstDay)
+            r.flags &= ~0x04u;
         replaced[{hoodtype::FAMI, f.id}] = r.write();
         ++res.families;
     }
+    // The lot info of the lot saved (cTSSaveLotController::SaveLot, BV
+    // 0x884ec4): flag 1 set ("saved"), 4 (first day) and 8 (evicted family,
+    // whose things the load cleaned up) cleared.
+    if (const int16_t lotId = vm.globals[global::CurrentHouse]; lotId > 0)
+        if (const hood::Lot* lot = h.lot(uint32_t(lotId))) {
+            hood::LotInfo info = lot->info;
+            info.flags = (info.flags | hood::LotInfo::kFlagSaved) &
+                         ~(hood::LotInfo::kFlagFirstDay | hood::LotInfo::kFlagEvicted);
+            if (info.flags != lot->info.flags)
+                replaced[{hoodtype::LotInfo, uint32_t(lotId)}] = info.write();
+        }
 
     // SDSC person data and relations.
     std::map<uint16_t, hood::SimDescription> descriptions;
