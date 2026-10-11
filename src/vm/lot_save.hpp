@@ -34,6 +34,7 @@ namespace os2::vm {
 struct CaptureResult {
     LotObjects lot;
     size_t updated = 0, added = 0, removed = 0;
+    size_t kept = 0; // objects the VM could not create, kept as read
     std::vector<std::string> warnings;
 };
 // `moreSaveTypes` (by GUID, from other lots' tables) gives the save types of

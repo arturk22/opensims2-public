@@ -15,7 +15,6 @@ constexpr uint32_t kTypeObjectModule = 0x4F626A4D, kTypeSaveTypes = 0x6F626A74, 
                    kTypeMultiTileState = 0x584D544F, kTypePersonState = 0x50455253;
 constexpr size_t kFileNameSize = 64;
 constexpr uint32_t kTypeSimulator = 0x53494D49;
-constexpr size_t kGlobalCount = 54;
 constexpr uint32_t kAnimatorTag = 0xDEADBEEF;
 constexpr int16_t kPersonObjectType = 2;
 
@@ -151,6 +150,25 @@ void parsePerson(BinReader& r, uint32_t v, LotObjects::State& s) {
 }
 
 } // namespace
+
+size_t simulatorGlobalCount(uint32_t v) {
+    // cTSSimulator::Read: each step holds while the version is past it.
+    if (v < 0x12)
+        return 16; // and a u32 for global 16
+    struct Step {
+        uint32_t after;
+        size_t n;
+    };
+    // (version > after) -> n; 0x7C, 0x8C and 0xAA are single-version holes.
+    size_t n = 0x20;
+    for (const Step s : {Step{0x3F, 0x21}, {0x6F, 0x22}, {0x74, 0x23}, {0x78, 0x24}, {0x7B, 0x25}, {0x7C, 0x28},
+                         {0x8B, 0x2B}, {0x8C, 0x2C}, {0x8D, 0x2D}, {0x91, 0x2E}, {0xA0, 0x32}, {0xA2, 0x33},
+                         {0xA6, 0x34}, {0xA9, 0x35}, {0xAA, 0x36}, {0xAE, 0x37}, {0xC4, 0x38}, {0xC9, 0x39},
+                         {0xCA, 0x3A}})
+        if (v > s.after)
+            n = s.n;
+    return n;
+}
 
 size_t lotObjectDataCount(uint32_t v) {
     // cTSObject::Read: each step holds while the version is past it.
@@ -504,9 +522,43 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
             r.skip(kFileNameSize);
             if (r.u32() != kTypeSimulator)
                 throw FormatError("simulator state without its \"SIMI\" tag");
-            r.u32(); // version (the object module's)
-            r.u32();
-            lot.globals = shorts(r, kGlobalCount);
+            Simulator& m = lot.simulator;
+            std::copy_n(bytes.begin(), kFileNameSize, m.fileName.begin());
+            m.version = r.u32(); // the object module's
+            m.zero = r.u32();
+            lot.globals = shorts(r, simulatorGlobalCount(m.version));
+            try {
+                const uint32_t v = m.version;
+                m.fA0 = r.u32();
+                m.f11C = r.u16();
+                if (v > 1)
+                    m.f98 = r.u32();
+                if (v > 0xD) {
+                    m.fB4 = r.u32();
+                    m.service = r.u32();
+                }
+                if (v >= 0xF)
+                    m.f9C = r.u32();
+                if (v >= 0x25) {
+                    m.fA4 = r.u32();
+                    m.fAC = r.u32();
+                    if (v >= 0xAD)
+                        m.fA8 = r.u32();
+                    m.fB0 = r.u32();
+                }
+                if (v > 0x25)
+                    for (int i = 0; i < 6; ++i) {
+                        Simulator::ExpenseReport x;
+                        x.kind = r.u32();
+                        for (int k = x.kind == 1 ? 8 : x.kind == 0 ? 7 : 10; k; --k)
+                            x.values.push_back(r.u32());
+                        m.reports.push_back(std::move(x));
+                    }
+                m.rest = copyOf(r.data().subspan(r.pos()));
+                m.read = true;
+            } catch (const FormatError& ex) {
+                lot.warnings.push_back(std::string("simulator, after the globals: ") + ex.what());
+            }
         } else if (e.tgi.type == kTypeSaveTypes) {
             const auto bytes = pkg.read(e);
             BinReader r(bytes);

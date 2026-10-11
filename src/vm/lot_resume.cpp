@@ -139,9 +139,11 @@ size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
 } // namespace
 
 void applySavedSimulator(VM& vm, const LotObjects& saved) {
-    if (saved.globals.size() < kGlobalCount)
+    // The base game's lots hold 54 globals (0x94/0x9F: 46; the rest keep
+    // what the VM has).
+    if (saved.globals.size() <= global::Year)
         return;
-    std::copy_n(saved.globals.begin(), kGlobalCount, vm.globals.begin());
+    std::copy_n(saved.globals.begin(), std::min(saved.globals.size(), kGlobalCount), vm.globals.begin());
     const auto& g = saved.globals;
     auto& c = vm.clock;
     c.hour = std::clamp<int>(g[global::Hour], 0, 23);

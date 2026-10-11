@@ -2,6 +2,7 @@
 
 #include "save_cmds.hpp"
 
+#include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
@@ -148,6 +149,23 @@ int cmdLotSave(const std::vector<std::string>& args) {
             }
             std::printf("  states byte for byte as the game wrote them: %zu, different: %zu\n", bytesSame,
                         bytesDiffer);
+            // The other records the save rewrites, by type.
+            std::map<uint32_t, std::pair<size_t, size_t>> others; // type -> (same, different)
+            for (const auto& e : original.entries()) {
+                const uint32_t t = e.tgi.type;
+                if (t == type::DIR || t == 0x584F424A || t == 0x584D544F || t == 0x50455253)
+                    continue;
+                const auto* f = written.find(e.tgi);
+                auto& c = others[t];
+                if (f && original.read(e) == written.read(*f))
+                    ++c.first;
+                else if (f || t != 0x3053CF74)
+                    ++c.second;
+            }
+            for (const auto& [t, c] : others)
+                if (c.second)
+                    std::printf("  records of type %s different from the game's: %zu of %zu\n", hexString(t).c_str(),
+                                c.second, c.first + c.second);
         }
     }
     std::printf("  read back: %zu states as written, %zu different, %zu not read through\n", same, differ, unread);

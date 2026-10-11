@@ -17,7 +17,6 @@ namespace {
 
 constexpr uint32_t kTypeObjectModule = 0x4F626A4D, kTypeSaveTypes = 0x6F626A74, kTypeObjectState = 0x584F424A,
                    kTypeMultiTileState = 0x584D544F, kTypePersonState = 0x50455253, kTypeSimulator = 0x53494D49;
-constexpr size_t kFileNameSize = 64, kGlobalCount = 54;
 
 void writeInteraction(BinWriter& w, const LotObjects::SavedInteraction& x, uint32_t v) {
     w.u32(x.u08);
@@ -267,14 +266,44 @@ std::vector<uint8_t> LotObjects::writeGroups() const {
 }
 
 std::vector<uint8_t> LotObjects::writeSimulator() const {
-    std::vector<uint8_t> out = simulatorRaw;
-    constexpr size_t at = kFileNameSize + 12;
-    if (out.size() >= at + 2 * kGlobalCount)
-        for (size_t i = 0; i < kGlobalCount && i < globals.size(); ++i) {
-            out[at + 2 * i] = uint8_t(globals[i]);
-            out[at + 2 * i + 1] = uint8_t(uint16_t(globals[i]) >> 8);
+    // cTSSimulator::Write's order, with the fields the version holds.
+    const Simulator& m = simulator;
+    if (!m.read)
+        return simulatorRaw;
+    const uint32_t v = m.version;
+    BinWriter w;
+    w.raw(m.fileName);
+    w.u32(kTypeSimulator);
+    w.u32(v);
+    w.u32(m.zero);
+    std::vector<int16_t> g = globals;
+    g.resize(simulatorGlobalCount(v), 0);
+    w.shorts(g);
+    w.u32(m.fA0);
+    w.u16(m.f11C);
+    if (v > 1)
+        w.u32(m.f98);
+    if (v > 0xD) {
+        w.u32(m.fB4);
+        w.u32(m.service);
+    }
+    if (v >= 0xF)
+        w.u32(m.f9C);
+    if (v >= 0x25) {
+        w.u32(m.fA4);
+        w.u32(m.fAC);
+        if (v >= 0xAD)
+            w.u32(m.fA8);
+        w.u32(m.fB0);
+    }
+    if (v > 0x25)
+        for (const auto& x : m.reports) {
+            w.u32(x.kind);
+            for (uint32_t y : x.values)
+                w.u32(y);
         }
-    return out;
+    w.raw(m.rest);
+    return std::move(w.bytes());
 }
 
 std::vector<uint8_t> LotObjects::writeSaveTypes() const {

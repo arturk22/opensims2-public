@@ -224,7 +224,30 @@ struct LotObjects {
     // family's funds as % and / 10000; they agree with the neighborhood).
     // Empty if the lot has none.
     std::vector<int16_t> globals;
-    std::vector<uint8_t> simulatorRaw; // the whole SIMI, for writing back
+    std::vector<uint8_t> simulatorRaw; // the whole SIMI as read
+    // The rest of the SIMI (cTSSimulator::Read/Write, docs/save-mac.md §5),
+    // named by the simulator's field offsets; the number of globals is
+    // simulatorGlobalCount(version) (54 in the base game's lots 0xAB-0xAD,
+    // 46 in 0x94/0x9F, 58 in the BV's 0xCE).
+    struct Simulator {
+        bool read = false;
+        std::array<uint8_t, 64> fileName{};
+        uint32_t version = 0, zero = 0;
+        uint32_t fA0 = 0;
+        uint16_t f11C = 0;
+        uint32_t f98 = 0;  // > 1
+        uint32_t fB4 = 0, service = 0; // > 0xD
+        uint32_t f9C = 0;  // >= 0xF
+        uint32_t fA4 = 0, fAC = 0, fA8 = 0, fB0 = 0; // >= 0x25 (fA8 >= 0xAD)
+        // > 0x25: the current expense report and 5 more (u32 kind: 0 has 7
+        // values, 1 has 8, others 10; the BV writes kind 2).
+        struct ExpenseReport {
+            uint32_t kind = 1;
+            std::vector<uint32_t> values;
+        };
+        std::vector<ExpenseReport> reports;
+        std::vector<uint8_t> rest; // bytes after what was read
+    } simulator;
     std::map<int16_t, SaveType> saveTypes;
     std::vector<int16_t> saveTypeOrder; // as in the objt
     std::vector<uint8_t> saveTypesHeader; // objt bytes before the records (name, tag, version, u32)
@@ -273,6 +296,8 @@ struct LotObjects {
 
 // Number of object data fields a state of `version` holds (cTSObject::Read).
 size_t lotObjectDataCount(uint32_t version);
+// Number of globals a SIMI of `version` holds (cTSSimulator::Read).
+size_t simulatorGlobalCount(uint32_t version);
 // Number of person data fields a PERS of `version` holds (cTSPerson::Read).
 size_t lotPersonDataCount(uint32_t version);
 

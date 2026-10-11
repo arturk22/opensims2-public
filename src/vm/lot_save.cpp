@@ -254,6 +254,18 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
         lot.objects.push_back(std::move(s));
         out.updated += known;
     }
+    // Objects the VM could not create (their GUID is in no object
+    // definition of the game: TV channels, the tutorials' import
+    // controllers): kept as they were, as the game keeps what it skips.
+    for (const auto& s : saved.objects)
+        if (!vm.object(s.id) && !vm.code().definitionByGuid(saved.guidOf(s.id))) {
+            const int16_t st = saved.saveTypeOf.at(s.id);
+            lot.pairs.emplace_back(uint32_t(uint16_t(s.id)), st);
+            lot.saveTypeOf[s.id] = st;
+            lot.objects.push_back(s);
+            ++out.kept;
+        }
+    std::sort(lot.objects.begin(), lot.objects.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     // Keep the module's order for the objects that were in it.
     std::map<uint32_t, size_t> order;
     for (size_t i = 0; i < saved.pairs.size(); ++i)
@@ -267,14 +279,16 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
         const Object* o = vm.object(s.id);
         out.removed += !o || saved.guidOf(s.id) != o->guid();
     }
+    out.removed -= out.kept;
     // The post-object table has a u32 per object ID (0xFFFF for a new one).
     uint32_t maxId = 0;
     for (const auto& p : lot.pairs)
         maxId = std::max(maxId, p.first & 0xFFFF);
     if (lot.postTable.size() < maxId)
         lot.postTable.resize(maxId, 0xFFFF);
-    if (lot.globals.size() >= kGlobalCount)
-        std::copy_n(vm.globals.begin(), kGlobalCount, lot.globals.begin());
+    // All the globals the SIMI's version holds (54 in the base game).
+    for (size_t i = 0; i < lot.globals.size() && i < kGlobalCount; ++i)
+        lot.globals[i] = vm.globals[i];
     return out;
 }
 
