@@ -227,7 +227,11 @@ ID de objeto e "para" um neighbor ID; a variável 1 é o valor de posse. Esses
 relacionamentos, e os entre objetos/Sims do lote por ID de objeto (sem 0x02),
 ficam nos SREL do pacote do lote; os de 0x02 (neighbor IDs) no bairro.
 **Para a VM:** implementar 0x08 em vez de falhar, e carregar os SREL do lote
-por ID de objeto.
+por ID de objeto. *Feito* (`relationship` em `src/vm/primitives.cpp`,
+`vm::loadLot`): SREL do lote com dois valores = posse (objeto → neighbor ID;
+os "para" 1, 15 e 16 de `N001_Lot11` são um fone e dois controladores, não
+donos); os outros por ID de objeto, Sims pelo neighbor ID; os de Sim para Sim
+ficam com os do bairro.
 
 ## 8. SREL: parentescos 4–8 e bits de flags
 
@@ -289,6 +293,7 @@ Post Entry Calls", "Standard Bunny TEST", "Message - Handle Bunny Social",
 
 **Conclusão.** Confirmado pelos dados: 0x01 compara com o GUID original,
 0x02 o ID é um neighbor ID, 0x04 testa o GUID do token temporário.
+*Feito* (`testObjectType` em `src/vm/primitives.cpp`; o token é o meu).
 
 ## 10. Create New Object Instance (0x2A): flags do byte 5
 
@@ -313,7 +318,10 @@ new Sim" e "copying design mode materials from object in temp5".
 **Conclusão.** 0x80 = GUID nos temps 0/1 (confirmado pelos dados); 0x04 =
 vizinho no stack object e 0x08 = falha com o tile ocupado (coerentes);
 0x20/0x40 em aberto. **Para a VM:** com 0x80 ler o GUID de temp 0 (baixo) e 1
-(alto) em vez do literal.
+(alto) em vez do literal. *Feito*, junto com as posições do STR# 0xA7 (o slot
+das posições 2, 4 e 10 é o byte 9: "Init - Fill Slots with Bottles" cria nos
+slots 0–4) e as flags 0x01, 0x02, 0x04, 0x08 e 0x10 da FreeSO
+(`createObjectInstance` em `src/vm/primitives.cpp`).
 
 ## 11. Find Location For (0x10): flags e byte 3
 
@@ -336,6 +344,8 @@ dois objetos explícitos e só ela tem o u16 nos bytes 12–13 (31, 35, 38,
 (bit 0 = N … bit 7 = NW, 0 = qualquer). Os bits 0x10/0x40 casam com as
 strings "on level ground"/"with empty border"/"begin in front of refobj"/
 "line of sight", sem como separar com tão poucos usos. Bytes 12–13 em aberto.
+*Feito* na VM: a direção é mantida se a máscara deixa, senão a permitida mais
+próxima (`findLocationFor` em `src/vm/routing.cpp`).
 
 ## 12. Push Interaction (0x0D): o que os dados dizem
 

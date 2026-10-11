@@ -379,12 +379,26 @@ bool tryPlace(VM& vm, Object& o, TilePos t, int direction = -1) {
 // part of the object fits. Not understood: flag 0x01 together with 0x08,
 // 0x02 (FreeSO: do not prefer empty tiles), 0x04 (user editable tiles only),
 // 0x10/0x40 (the editor's strings name "with empty border", "on level
-// ground", "begin in front of refobj", "with line of site to center"), byte
-// 3 (0xFF/0xFE/0xAA/...: allowed facings?) and bytes 12-13; facing is kept,
-// except along a vector, where it is the vector's.
+// ground", "begin in front of refobj", "with line of site to center") and
+// bytes 12-13. Byte 3 is the mask of the directions the object may face
+// (docs/data-findings.md §11: the editor prints ", facing" and then " N",
+// " NE", ... " NW" in bit order; 0 = any; 0xFB in "Interaction - Get Out"):
+// facing is kept (along a vector it is the vector's) when the mask allows
+// it, else the nearest allowed direction, turning right first (inferred).
+int allowedFacing(uint8_t mask, int dir) {
+    dir = ((dir % 8) + 8) % 8;
+    if (mask == 0 || (mask & (1u << dir)))
+        return dir;
+    for (int k = 1; k <= 4; ++k)
+        for (int d : {dir + k, dir - k})
+            if (mask & (1u << (((d % 8) + 8) % 8)))
+                return ((d % 8) + 8) % 8;
+    return dir;
+}
+
 Exit findLocationFor(Context& c) {
     const auto& o = c.instruction.operands;
-    const uint8_t mode = o[0], flags = o[2];
+    const uint8_t mode = o[0], flags = o[2], facings = o[3];
     if (mode > 8)
         throw VMError("Find Location For: mode " + std::to_string(mode) + " not implemented");
     Object* obj = nullptr;
@@ -420,7 +434,10 @@ Exit findLocationFor(Context& c) {
         std::stable_sort(order.begin(), order.end(),
                          [&](size_t a, size_t b) { return goals.goals[a].cost < goals.goals[b].cost; });
         for (size_t i : order)
-            if (tryPlace(c.vm, *obj, {goals.goals[i].x, goals.goals[i].y, goals.level}, goals.facings[i]))
+            if (tryPlace(c.vm, *obj, {goals.goals[i].x, goals.goals[i].y, goals.level},
+                         facings ? allowedFacing(facings, goals.facings[i] >= 0 ? goals.facings[i]
+                                                                                : obj->data[objdata::Direction])
+                                 : goals.facings[i]))
                 return Exit::True;
         return Exit::False;
     }
@@ -431,7 +448,8 @@ Exit findLocationFor(Context& c) {
             const int k = i / 2, sign = i % 2 ? -1 : 1;
             if (i % 2 && k == 0)
                 continue;
-            if (tryPlace(c.vm, *obj, {at.x + sign * sx * k, at.y + sign * sy * k, at.level}, dir % 8))
+            if (tryPlace(c.vm, *obj, {at.x + sign * sx * k, at.y + sign * sy * k, at.level},
+                         allowedFacing(facings, dir % 8)))
                 return Exit::True;
         }
         return Exit::False;
@@ -446,7 +464,7 @@ Exit findLocationFor(Context& c) {
                 const TilePos t{x, y, at.level};
                 if (mode == 2 && world.room(t) != room)
                     continue;
-                if (tryPlace(c.vm, *obj, t))
+                if (tryPlace(c.vm, *obj, t, facings ? allowedFacing(facings, obj->data[objdata::Direction]) : -1))
                     return Exit::True;
             }
     return Exit::False;

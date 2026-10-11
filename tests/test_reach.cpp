@@ -2,6 +2,7 @@
 // (src/vm/reach.cpp).
 
 #include "vm/vm.hpp"
+#include "vm/world.hpp"
 
 #include <cstdio>
 #include <initializer_list>
@@ -54,9 +55,11 @@ static Behavior tree(std::vector<Behavior::Instruction> code, uint8_t args = 0) 
     return b;
 }
 
-static ObjectDefinition definition(uint32_t guid, uint16_t slotsId, bool person = false) {
+static ObjectDefinition definition(uint32_t guid, uint16_t slotsId, bool person = false, uint32_t original = 0) {
     ObjectDefinition def;
-    def.fields.resize(60);
+    def.fields.resize(100);
+    def.fields[(0xCC - 0x44) / 2] = uint16_t(original);
+    def.fields[(0xCE - 0x44) / 2] = uint16_t(original >> 16);
     def.fields[(0x5C - 0x44) / 2] = uint16_t(guid);
     def.fields[(0x5E - 0x44) / 2] = uint16_t(guid >> 16);
     def.fields[(0x68 - 0x44) / 2] = slotsId;
@@ -84,7 +87,7 @@ struct Fixture {
         code.add(kGroup, 0x83, surface);
         code.add(kGroup, 0x80, definition(0xAAAA0001, 0x80, true));
         code.add(kGroup, 0x81, definition(0xAAAA0002, 0));
-        code.add(kGroup, 0x82, definition(0xAAAA0003, 0));
+        code.add(kGroup, 0x82, definition(0xAAAA0003, 0, false, 0xBBBB0003));
         code.add(kGroup, 0x83, definition(0xAAAA0004, 0x83));
         ObjectFunctions f;
         f.functions.resize(27);
@@ -212,9 +215,117 @@ static void testReachPut() {
     check(t.status == Thread::Status::Failed, "picking up nothing: the game's error");
 }
 
+// Relationship flag 0x08: an object's relationship with a neighbor (ownership).
+static void testOwnership() {
+    Fixture fx;
+    fx.vm.object(fx.sim)->person->data[persondata::NeighborId] = 7;
+    // paper -> neighbor 7, variable 1 := 15 (set, create), then read it back into temp 3.
+    fx.code.add(kGroup, 0x1001, tree({instr(0x1A, go(1), E, {1, 0x0C, StackId, 0, 0, Lit, 7, 0, Lit, 15, 0}),
+                                      instr(0x1A, T, F, {1, 0x09, StackId, 0, 0, Lit, 7, 0, Temp, 3, 0})}));
+    Thread t = fx.run(0x1001, fx.paper);
+    check(t.status == Thread::Status::Finished && t.result && t.temps[3] == 15, "0x08: set and get ownership");
+    auto it = fx.vm.relationships.find({VM::RelationshipKey{false, fx.paper}, VM::RelationshipKey{true, 7}});
+    check(it != fx.vm.relationships.end() && it->second.size() == 2 && it->second[1] == 15,
+          "kept from the object ID to the neighbor ID");
+    fx.code.add(kGroup, 0x1002, tree({instr(0x1A, T, F, {1, 0x09, StackId, 0, 0, Lit, 8, 0, Temp, 3, 0})}));
+    t = fx.run(0x1002, fx.paper);
+    check(t.status == Thread::Status::Finished && !t.result, "0x08 with 0x01: none with another neighbor, false");
+}
+
+static Behavior::Instruction testType(uint32_t guid, uint8_t owner, int16_t data, uint8_t flags) {
+    return instr(0x20, T, F,
+                 {uint8_t(guid), uint8_t(guid >> 8), uint8_t(guid >> 16), uint8_t(guid >> 24), uint8_t(data),
+                  uint8_t(uint16_t(data) >> 8), owner, flags});
+}
+
+static void testTestObjectType() {
+    Fixture fx;
+    auto result = [&](Behavior::Instruction in) {
+        fx.code.add(kGroup, 0x1001, tree({in}));
+        Thread t = fx.run(0x1001, fx.paper);
+        return t.status == Thread::Status::Finished ? int(t.result) : -1;
+    };
+    check(result(testType(0xAAAA0003, StackId, 0, 0)) == 1, "the object's GUID");
+    check(result(testType(0xBBBB0003, StackId, 0, 0)) == 0, "not its original GUID");
+    check(result(testType(0xBBBB0003, StackId, 0, 0x01)) == 1, "0x01: the original GUID");
+    Neighbor n;
+    n.guid = 0xAAAA0003;
+    fx.vm.neighbors[9] = n;
+    check(result(testType(0xAAAA0003, Lit, 9, 0x02)) == 1, "0x02: a neighbor ID");
+    check(result(testType(0xBBBB0003, Lit, 9, 0x03)) == 1, "0x03: the neighbor's original GUID");
+    check(result(testType(0xAAAA0003, Lit, 10, 0x02)) == -1, "0x02: a missing neighbor is an error");
+    fx.vm.object(fx.sim)->tempToken = {.token = {.guid = 0xCCCC0001}, .loaded = true};
+    check(result(testType(0xCCCC0001, Lit, 0, 0x04)) == 1, "0x04: my temporary token's GUID");
+    check(result(testType(0xCCCC0002, Lit, 0, 0x04)) == 0, "0x04: another GUID");
+}
+
+static Behavior::Instruction create(uint32_t guid, uint8_t where, uint8_t flags, uint8_t local = 0, uint8_t slot = 0,
+                                    Target t = T) {
+    return instr(0x2A, t, F,
+                 {uint8_t(guid), uint8_t(guid >> 8), uint8_t(guid >> 16), uint8_t(guid >> 24), where, flags, local, 0, 0,
+                  slot});
+}
+
+static void testCreateObject() {
+    Fixture fx;
+    Object& sim = *fx.vm.object(fx.sim);
+    sim.data[objdata::Direction] = 4; // faces +X
+    fx.code.add(kGroup, 0x1001, tree({create(0xAAAA0003, 0, 0, 0, 0, go(1)), expr(Temp, 5, Assign, StackId, 0, T, E)}));
+    Thread t = fx.run(0x1001, 0);
+    const Object* made = fx.vm.object(t.temps[5]);
+    check(t.result && made && made->guid() == 0xAAAA0003 && made->position.x == 3.5f && made->position.y == 2.5f &&
+              made->data[objdata::Direction] == 4,
+          "in front of me, facing my way");
+    fx.code.add(kGroup, 0x1002, tree({create(0xAAAA0003, 0, 0x01)}));
+    t = fx.run(0x1002, 0);
+    check(t.status == Thread::Status::Finished && !t.result, "0x01: not when one is already there");
+    fx.code.add(kGroup, 0x1003, tree({create(0xAAAA0003, 1, 0x08)}));
+    t = fx.run(0x1003, 0);
+    check(t.status == Thread::Status::Finished && t.result, "0x08 on my tile: only the Sim, not an object, is there");
+    t = fx.run(0x1003, 0);
+    check(t.status == Thread::Status::Finished && !t.result, "0x08: the tile is not empty any more");
+    fx.code.add(kGroup, 0x1004, tree({expr(Temp, 0, Assign, Lit, int16_t(0x0004), go(1), E),
+                                      expr(Temp, 1, Assign, Lit, int16_t(0xAAAA), go(2), E),
+                                      create(0, 4, 0x80, 0, 0, go(3)), expr(Temp, 5, Assign, StackId, 0, T, E)}));
+    t = fx.run(0x1004, fx.table);
+    made = fx.vm.object(t.temps[5]);
+    check(t.result && made && made->guid() == 0xAAAA0004, "0x80: the GUID from temps 0/1");
+    check(made && made->data[objdata::ContainerId] == fx.table && made->data[objdata::SlotNumber] == 0,
+          "in a slot of the stack object (slot byte 9)");
+    fx.code.add(kGroup, 0x1005, tree({create(0xAAAA0003, 2, 0, 0, 1, go(1)), expr(Temp, 5, Assign, StackId, 0, T, E)}));
+    t = fx.run(0x1005, 0);
+    check(t.result && fx.vm.containedIn(fx.sim, 1) == t.temps[5], "in my hand (slot 1)");
+    fx.vm.object(fx.paper)->position = {-1, -1, 0};
+    fx.code.add(kGroup, 0x1006, tree({create(0xAAAA0003, 3, 0)}));
+    const size_t count = fx.vm.objects().size();
+    t = fx.run(0x1006, fx.paper);
+    check(t.status == Thread::Status::Finished && !t.result && fx.vm.objects().size() == count,
+          "in front of an object out of the world: removed again, false");
+}
+
+// Find Location For's byte 3: the directions the object may face.
+static void testFindLocationFacing() {
+    Fixture fx;
+    fx.vm.world = World(8, 8);
+    fx.vm.object(fx.paper)->data[objdata::Direction] = 0;
+    fx.code.add(kGroup, 0x1001, tree({instr(0x10, T, F, {0, 0, 0, 0x04})}));
+    Thread t = fx.run(0x1001, fx.paper);
+    check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 2, "mask 0x04: it may only face 2");
+    fx.code.add(kGroup, 0x1002, tree({instr(0x10, T, F, {0, 0, 0, 0xFB})}));
+    t = fx.run(0x1002, fx.paper);
+    check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 3, "mask 0xFB: 2 is not allowed, 3 is");
+    fx.code.add(kGroup, 0x1003, tree({instr(0x10, T, F, {0, 0, 0, 0})}));
+    t = fx.run(0x1003, fx.paper);
+    check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 3, "mask 0: facing kept");
+}
+
 int main() {
     testRunFunctionalTree();
     testReachPut();
+    testOwnership();
+    testTestObjectType();
+    testCreateObject();
+    testFindLocationFacing();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

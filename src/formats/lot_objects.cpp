@@ -2,6 +2,7 @@
 
 #include "binreader.hpp"
 #include "dbpf.hpp"
+#include "neighborhood.hpp"
 
 
 namespace os2 {
@@ -294,6 +295,16 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
     }
     for (auto& [_, s] : states)
         lot.objects.push_back(std::move(s));
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.type != hoodtype::SREL)
+            continue;
+        try {
+            const auto rel = hood::Relationship::parse(pkg.read(e), e.tgi.instance);
+            lot.relationships.push_back({int16_t(rel.from), int16_t(rel.to), rel.values});
+        } catch (const std::exception& ex) {
+            lot.warnings.push_back("relationship " + hexString(e.tgi.instance) + ": " + ex.what());
+        }
+    }
     return lot;
 }
 

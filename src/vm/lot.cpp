@@ -178,6 +178,34 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
         }
         out.objects.push_back(std::move(e));
     }
+    // The lot's relationships, by object ID (docs/data-findings.md §7). Two
+    // values: ownership, from an object to a neighbor ID (Relationship's flag
+    // 0x08 reads variable 1 of these; their "to" are the owning family's
+    // neighbor IDs, not the lot's objects with those IDs: a phone handset and
+    // two controllers in N001_Lot11; inferred from the count). The rest name
+    // lot objects on both sides, Sims by their neighbor ID as everywhere in
+    // the VM; Sim-to-Sim ones are left to the neighborhood's.
+    auto key = [&](int16_t id) {
+        const Object* o = vm.object(id);
+        return o ? vm.relationshipKey(id) : VM::RelationshipKey{false, id};
+    };
+    for (const auto& r : saved.relationships) {
+        std::pair<VM::RelationshipKey, VM::RelationshipKey> k;
+        if (r.values.size() == 2) {
+            k = {{false, r.from}, {true, r.to}};
+        } else {
+            k = {key(r.from), key(r.to)};
+            if (k.first.neighbor && k.second.neighbor)
+                continue;
+        }
+        auto& values = vm.relationships[k];
+        values.clear();
+        for (int32_t v : r.values)
+            values.push_back(int16_t(v));
+        if (values.size() > kMaxRelationshipVars)
+            values.resize(kMaxRelationshipVars);
+        ++out.relationships;
+    }
     return out;
 }
 

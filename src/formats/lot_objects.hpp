@@ -107,6 +107,14 @@ struct LotObjects {
     std::map<int16_t, SaveType> saveTypes;
     std::map<int16_t, int16_t> saveTypeOf; // object ID -> save type
     std::vector<State> objects;            // by ID
+    // The lot's SRELs (instance = from << 16 | to), named by object ID, with
+    // their values: what the lot's objects and Sims think of each other, and
+    // ownership (docs/data-findings.md §7: two values, "to" a neighbor ID).
+    struct Relationship {
+        int16_t from = 0, to = 0;
+        std::vector<int32_t> values;
+    };
+    std::vector<Relationship> relationships;
     std::vector<std::string> warnings;
 
     static LotObjects load(DbpfPackage& package);

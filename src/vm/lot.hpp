@@ -34,6 +34,7 @@ struct LotLoad {
     };
     std::vector<Entry> objects; // in ID order
     size_t created = 0;
+    size_t relationships = 0; // from the lot's SRELs
 };
 
 // `charactersDir` is where the Sims' character files are (empty: Sims are

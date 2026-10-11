@@ -333,32 +333,154 @@ Exit setToNext(Context& c) {
     return Exit::False;
 }
 
-// Test Object Type (0x20): GUID u32, object ID (data u16, owner u8); true if
-// that object has the GUID, error if it does not exist. Byte 7 (0-4) changes
-// the test: 1 is used with one GUID (0x2C9BDEB4) on Sims and 4 with memory and
-// want GUIDs; neither is understood yet.
+// Test Object Type (0x20): GUID u32, object ID (data u16 at 4, owner u8 at
+// 6); true if that object has the GUID, error if it does not exist (as
+// "Invalid object id."). Flags u8 at 7, from the editor's strings and the
+// trees that use them (docs/data-findings.md §9): 0x01 compares the
+// object's original GUID (OBJD 0xCC) instead ("Standard Bunny TEST",
+// "Function - Portal - TEST"), 0x02 the ID is a neighbor ID ("NPC - Is
+// Type?", "Check Neighbors - Unique NPC?": the neighbor's OBJD), 0x04 tests
+// the GUID of my temporary inventory token (the wants and memories trees)
+// and not an object.
 Exit testObjectType(Context& c) {
     const auto& o = c.instruction.operands;
-    if (o[7] != 0)
-        throw VMError("Test Object Type: mode " + std::to_string(o[7]) + " not implemented");
-    const ObjectId id = c.get(o[6], int16_t(le16(&o[4])));
-    const Object* x = c.vm.object(id);
-    if (!x)
-        throw VMError("Test Object Type: object " + std::to_string(id) + " does not exist");
-    return x->guid() == le32(&o[0]) ? Exit::True : Exit::False;
+    const uint8_t flags = o[7];
+    if (flags & ~0x07)
+        throw VMError("Test Object Type: flags " + hexString(flags) + " not implemented");
+    const uint32_t guid = le32(&o[0]);
+    if (flags & 0x04)
+        return c.me().tempToken.loaded && c.me().tempToken.token.guid == guid ? Exit::True : Exit::False;
+    const int16_t id = c.get(o[6], int16_t(le16(&o[4])));
+    const ObjectDefinition* def = nullptr;
+    if (flags & 0x02) {
+        const Neighbor* n = c.vm.neighbor(id);
+        if (!n)
+            throw VMError("Missing neighbor for data access. (neighbor " + std::to_string(id) + ")");
+        if (!(flags & 0x01))
+            return n->guid == guid ? Exit::True : Exit::False;
+        if (const auto d = c.vm.code().definitionByGuid(n->guid))
+            def = c.vm.code().definition(d->first, d->second);
+        if (!def)
+            return Exit::False;
+    } else {
+        const Object* x = c.vm.object(id);
+        if (!x)
+            throw VMError("Test Object Type: object " + std::to_string(id) + " does not exist");
+        if (!(flags & 0x01))
+            return x->guid() == guid ? Exit::True : Exit::False;
+        def = x->definition;
+        if (!def)
+            return Exit::False;
+    }
+    return def->originalGuid() == guid ? Exit::True : Exit::False;
 }
 
-// Create New Object Instance (0x2A): GUID u32, where u8 (STR# 0xA7), flags u8
-// (STR# 0xA8 lists 0-2, but the trees also use bits 0x04/0x10/0x80; ignored).
-// Only "out of world" (6, 72% of the uses) is implemented: the new object's ID
-// goes to the stack object. With VM::initCreatedObjects, every part runs its
-// Init right away and gets its Main thread (as FreeSO's VMEntity.Init); an
-// Init that fails does not fail the creator (it is kept in createdInits).
+// Create New Object Instance (0x2A): GUID u32, where u8 at 4 (STR# 0xA7),
+// flags u8 at 5, local u8 at 6 (for 8 and 9), slot u8 at 9 (for 2, 4 and
+// 10: "Init - Fill Slots with Bottles" creates into slots 0-4, "Overhead
+// Meter - Create in Slot" into 1 and 2; bytes 7-8 look like editor
+// leftovers). Where (STR# 0xA7): 0 in front of me, 1 on top of me, 2 in my
+// hand, 3 in front of the stack object, 4 in a slot of the stack object, 5
+// underneath me, 6 out of world, 7 below the object in parameter 0, 8 below
+// the object in the local, 9 next to me in the direction in the local
+// (relative to mine, as FreeSO), 10 in a slot of the object in temp 0. The
+// flags are The Sims 1's (FreeSO; STR# 0xA8 names 0-2) where the game's
+// trees agree (docs/data-findings.md §10): 0x01 do not duplicate (false
+// when an object of that GUID is already there), 0x02 the new object's Main
+// gets my stack object and my ID in parameter 0, 0x04 the GUID is that of
+// the neighbor in the stack object ("Lot Transport - Generate Sims"; false
+// without one) and the new Sim is that neighbor, 0x08 fail if the tile is
+// not empty ("Find Fall Location"), 0x10 temp 0 goes to the Main's
+// parameter 0, 0x80 the GUID is in temps 0 (low word) and 1 (high), as the
+// editor's string "from GUID in temp0/1" says ("GUID - Get in Temp 0 -
+// Object of GUID"). 0x20 and 0x40 are not understood (ignored). A new
+// object that should be in the world but has nowhere to go (its anchor is
+// out of the world) is removed again and the instruction is false, as in
+// FreeSO; otherwise its ID goes to the stack object. With
+// VM::initCreatedObjects, every part runs its Init right away and gets its
+// Main thread (as FreeSO's VMEntity.Init); an Init that fails does not fail
+// the creator (it is kept in createdInits). Only the lead part of a new
+// multi-tile object is placed.
 Exit createObjectInstance(Context& c) {
     const auto& o = c.instruction.operands;
-    const uint32_t guid = le32(&o[0]);
-    if (o[4] != 6)
-        throw VMError("Create New Object Instance: placement " + std::to_string(o[4]) + " not implemented");
+    const uint8_t where = o[4], flags = o[5];
+    if (where > 10)
+        throw VMError("Create New Object Instance: placement " + std::to_string(where) + " not implemented");
+    uint32_t guid = le32(&o[0]);
+    if (flags & 0x80)
+        guid = uint16_t(c.thread.temps[0]) | uint32_t(uint16_t(c.thread.temps[1])) << 16;
+    const Neighbor* neighbor = nullptr;
+    if (flags & 0x04) {
+        neighbor = c.vm.neighbor(c.frame.stackObject);
+        if (!neighbor)
+            return Exit::False;
+        guid = neighbor->guid;
+    }
+
+    // Where it goes: a tile and direction, or a containment slot.
+    Object& me = c.me();
+    std::optional<Position> at;
+    int dir = 0;
+    const Object* container = nullptr;
+    int slot = o[9];
+    auto anchor = [&](const Object* x) {
+        if (!x)
+            throw VMError("Invalid object id.");
+        dir = x->data[objdata::Direction];
+        if (x->position.inWorld())
+            at = Position{std::floor(x->position.x) + 0.5f, std::floor(x->position.y) + 0.5f, x->position.level};
+    };
+    auto step = [&](int d) {
+        if (!at)
+            return;
+        const auto [dx, dy] = directionStep(((d % 8) + 8) % 8);
+        at->x += float(dx), at->y += float(dy);
+    };
+    switch (where) {
+    case 0: anchor(&me); step(dir); break;
+    case 1:
+    case 5: anchor(&me); break;
+    case 2: container = &me; break;
+    case 3: anchor(&c.stackObject()); step(dir); break;
+    case 4: container = &c.stackObject(); break;
+    case 6: break;
+    case 7: anchor(c.vm.object(c.get(kOwnerParam, 0))); break;
+    case 8: anchor(c.vm.object(c.get(0x19, o[6]))); break;
+    case 9: {
+        anchor(&me);
+        const int d = (c.get(0x19, o[6]) + (me.data[objdata::Direction] / 2) * 2) % 8;
+        dir = d;
+        step(d);
+        break;
+    }
+    case 10:
+        container = c.vm.object(c.thread.temps[0]);
+        if (!container)
+            throw VMError("Invalid object id.");
+        break;
+    }
+    if (container) {
+        size_t slots = 0;
+        if (const Slots* t = container->definition ? c.vm.code().slots(container->group, container->definition->slotId())
+                                                   : nullptr)
+            for (const auto& sl : t->slots)
+                slots += sl.type == 0;
+        if (size_t(slot) >= slots && !(container->person && slot < 2))
+            throw VMError("Slot number out of range. (slot " + std::to_string(slot) + " of " + std::to_string(slots) + ")");
+        if (c.vm.containedIn(container->id, int16_t(slot)))
+            return Exit::False;
+    }
+    if (at && (flags & 0x09)) {
+        const TilePos t = VM::tileOf(Object{.position = *at});
+        for (ObjectId id : c.vm.objectsOnTile(t)) {
+            if (id == me.id)
+                continue; // "non-empty" means another object (inferred)
+            const Object* x = c.vm.object(id);
+            if ((flags & 0x08) || (x && x->guid() == guid))
+                return Exit::False;
+        }
+    }
+
     std::vector<ObjectId> before;
     for (const auto& [id, _] : c.vm.objects())
         before.push_back(id);
@@ -366,8 +488,45 @@ Exit createObjectInstance(Context& c) {
     if (!x)
         throw VMError("Create New Object Instance: no OBJD with GUID " + hexString(guid));
     const ObjectId created = x->id;
-    if (c.vm.initCreatedObjects)
+    if (where != 6 && !container && !at) {
+        // Nowhere in the world to put it.
+        const ObjectId group = multiTileGroup(*x);
+        std::vector<ObjectId> parts;
+        for (const auto& [id, y] : c.vm.objects())
+            if (multiTileGroup(y) == group)
+                parts.push_back(id);
+        for (ObjectId id : parts)
+            c.vm.removeObject(id);
+        return Exit::False;
+    }
+    if (container) {
+        x->data[objdata::ContainerId] = container->id;
+        x->data[objdata::SlotNumber] = int16_t(slot);
+        x->position = container->position;
+        x->data[objdata::Room] = container->data[objdata::Room];
+    } else if (at) {
+        x->position = *at;
+        x->data[objdata::Direction] = int16_t(((dir % 8) + 8) % 8);
+        if (c.vm.world)
+            x->data[objdata::Room] = c.vm.world->room(VM::tileOf(*x));
+    }
+    if (neighbor && x->person) {
+        x->person->data = neighbor->personData;
+        x->person->data[persondata::NeighborId] = c.frame.stackObject;
+    }
+    const ObjectId stackObject = c.frame.stackObject, meId = me.id;
+    const int16_t temp0 = c.thread.temps[0];
+    if (c.vm.initCreatedObjects) {
         c.vm.initialize(created, before);
+        if (flags & 0x12)
+            if (auto it = c.vm.threads.find(created); it != c.vm.threads.end() && !it->second.stack.empty()) {
+                Frame& f = it->second.stack.front();
+                if (flags & 0x02)
+                    f.stackObject = stackObject;
+                if (!f.params.empty())
+                    f.params[0] = flags & 0x10 ? temp0 : meId;
+            }
+    }
     c.frame.stackObject = created;
     return Exit::True;
 }
@@ -453,21 +612,26 @@ Exit runTreeByName(Context& c) {
 // is always Error; STR# 0xAB "create new relationship"/"fail"); 0x04 sets
 // the variable from the value, otherwise gets it into the value (only these
 // write literals and constants; STR# 0xA9 get/set); 0x02 names the two by
-// neighbor ID instead of object ID (inferred: "Setup Parents", "Meet All" and
-// the trees that iterate neighbors with Set to Next set it). 0x08 (10 uses)
-// is not understood, nor bytes 11+ (non-zero in 6% of the uses).
+// neighbor ID instead of object ID (confirmed by the editor's strings); 0x08
+// is an object's relationship with a Sim: "from" is an object ID taken as
+// is and "to" a neighbor ID (docs/data-findings.md §7: its 15 uses are the
+// ownership trees, on variable 1 "UI Flags/Ownership Value"; the lots keep
+// these in their SRELs, vm::loadLot). Bytes 11+ (non-zero in 6% of the uses)
+// are not understood.
 Exit relationship(Context& c) {
     const auto& o = c.instruction.operands;
     const uint8_t var = o[0], flags = o[1];
-    if (flags & ~0x07)
+    if (flags & ~0x0F)
         throw VMError("Relationship: flags " + hexString(flags) + " not implemented");
     if (var >= kMaxRelationshipVars)
         throw VMError("Relationship: variable " + std::to_string(var) + " out of range");
-    auto key = [&](uint8_t owner, const uint8_t* data) {
+    auto key = [&](uint8_t owner, const uint8_t* data, bool from) {
         const int16_t id = c.get(owner, int16_t(le16(data)));
+        if (flags & 0x08)
+            return VM::RelationshipKey{!from, id};
         return flags & 0x02 ? VM::RelationshipKey{true, id} : c.vm.relationshipKey(id);
     };
-    const auto pair = std::pair{key(o[2], &o[3]), key(o[5], &o[6])};
+    const auto pair = std::pair{key(o[2], &o[3], true), key(o[5], &o[6], false)};
     auto it = c.vm.relationships.find(pair);
     if (it == c.vm.relationships.end()) {
         if (flags & 0x01)
