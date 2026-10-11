@@ -42,6 +42,13 @@ struct BuildFence {
     int price = 0;                        // per section
 };
 
+// A terrain paint (catalog property sets of type 0x4DCADB7E: "texturetname",
+// "brushwidth", free).
+struct BuildTerrainPaint {
+    uint32_t guid = 0;
+    std::string name, description, texture;
+};
+
 // Build-mode prices that are not in the data (docs/buy-build-mac.md §7).
 // A wall costs §70 a section (the game's catalog text; the binary's wall
 // cost path is not traced: inferred), and selling back what was built in
@@ -62,6 +69,14 @@ public:
 
     const std::vector<BuildPattern>& floors() const { return floors_; }
     const std::vector<BuildFence>& fences() const { return fences_; }
+    const std::vector<BuildTerrainPaint>& terrainPaints() const { return paints_; }
+    const BuildTerrainPaint* findTerrainPaint(const std::string& key) const;
+    // The terrain brushes' profiles (terrainSculptBrushes.txt
+    // profileTextureID: 32x32 grey TGAs in terrain.package, group
+    // 0x4B72DA28): raise (0x6B96E0A2) and lower (0x8B96E0CF); 32 x 32
+    // values, empty when missing.
+    const std::vector<uint8_t>& raiseProfile() const { return raise_; }
+    const std::vector<uint8_t>& lowerProfile() const { return lower_; }
     // A fence by GUID ("0x...") or (part of) its name.
     const BuildFence* findFence(const std::string& key) const;
     const BuildFence* fenceByGuid(uint32_t guid) const;
@@ -75,6 +90,8 @@ public:
 private:
     std::vector<BuildPattern> floors_, walls_;
     std::vector<BuildFence> fences_;
+    std::vector<BuildTerrainPaint> paints_;
+    std::vector<uint8_t> raise_, lower_;
 };
 
 } // namespace os2

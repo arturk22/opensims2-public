@@ -117,6 +117,7 @@ BuildEditor::Geometry BuildEditor::capture() const {
     g.floorRotations = lot_.floorRotations;
     g.objects = lot_.objects;
     g.fencePosts = lot_.fencePosts;
+    g.paints = lot_.paints;
     g.walls = lot_.walls;
     g.wallGraphs = lot_.wallGraphs;
     g.floors = lot_.floors;
@@ -133,6 +134,7 @@ void BuildEditor::restore(const Geometry& g) {
     lot_.floorRotations = g.floorRotations;
     lot_.objects = g.objects;
     lot_.fencePosts = g.fencePosts;
+    lot_.paints = g.paints;
     lot_.walls = g.walls;
     lot_.wallGraphs = g.wallGraphs;
     lot_.floors = g.floors;
@@ -817,6 +819,192 @@ BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1
     commit(std::move(before), r.cost);
     r.ok = true;
     r.message = std::to_string(r.changed) + " foundation tiles deleted for " + money(-r.cost);
+    return r;
+}
+
+bool BuildEditor::terrainFree(int x, int y) const {
+    const int W = int(lot_.width), H = int(lot_.height);
+    if (x < 0 || y < 0 || x > W || y > H)
+        return false;
+    for (int tx = x - 1; tx <= x; ++tx)
+        for (int ty = y - 1; ty <= y; ++ty)
+            if (tx >= 0 && ty >= 0 && tx < W && ty < H) {
+                for (uint16_t q : lot_.floor(0, uint32_t(tx), uint32_t(ty)))
+                    if (q)
+                        return false;
+                if (foundationTile(tx, ty))
+                    return false;
+            }
+    for (const auto& w : lot_.walls)
+        if (w.a.level == 0 && ((std::lround(w.a.x) == x && std::lround(w.a.y) == y) ||
+                               (std::lround(w.b.x) == x && std::lround(w.b.y) == y)))
+            return false;
+    return true;
+}
+
+void BuildEditor::beginTerrainStroke(TerrainOp op, float x, float y) {
+    Stroke s;
+    s.op = op;
+    s.before = capture();
+    s.height = lot_.elevationAt(0, std::clamp(x, 0.0f, float(lot_.width)), std::clamp(y, 0.0f, float(lot_.height)));
+    stroke_ = std::move(s);
+}
+
+BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size, const std::vector<uint8_t>& profile,
+                                                   const std::string& paint) {
+    Result r;
+    if (!stroke_)
+        beginTerrainStroke(TerrainOp::Raise, cx, cy);
+    Stroke& st = *stroke_;
+    const int W = int(lot_.width), H = int(lot_.height);
+    if (!lot_.hasLevel(0) || lot_.elevations.empty() || profile.size() < 32 * 32) {
+        r.message = "no terrain";
+        return r;
+    }
+    // Only exposed terrain of the ground (0x8B).
+    const int tx = int(std::floor(cx)), ty = int(std::floor(cy));
+    if (tx < 0 || ty < 0 || tx >= W || ty >= H || !terrainFree(tx, ty) || !terrainFree(tx + 1, ty + 1)) {
+        r.error = 0x8B;
+        r.message = "only exposed terrain can be edited";
+        return r;
+    }
+    const float width = 2.0f + (10.0f - 2.0f) * 0.5f * float(std::clamp(size, 0, 2));
+    auto strength = [&](float px, float py) -> int {
+        const float u = (px - cx) / width + 0.5f, v = (py - cy) / width + 0.5f;
+        if (u < 0 || v < 0 || u >= 1 || v >= 1)
+            return 0;
+        return profile[size_t(int(v * 32)) * 32 + size_t(int(u * 32))];
+    };
+    if (st.op == TerrainOp::Paint || st.op == TerrainOp::Erase) {
+        // The masks: 4 points a tile, (maskWidth x maskHeight), row by row.
+        if (!lot_.maskWidth || !lot_.maskHeight) {
+            lot_.maskWidth = uint32_t(W) * 4 + 1, lot_.maskHeight = uint32_t(H) * 4 + 1;
+            for (auto& p : lot_.paints)
+                p.mask.assign(size_t(lot_.maskWidth) * lot_.maskHeight, 0);
+        }
+        size_t target = lot_.paints.size();
+        for (size_t i = 0; i < lot_.paints.size(); ++i)
+            if (lot_.paints[i].texture == paint)
+                target = i;
+        if (st.op == TerrainOp::Paint && target == lot_.paints.size() && !paint.empty())
+            lot_.paints.push_back({paint, std::vector<uint8_t>(size_t(lot_.maskWidth) * lot_.maskHeight, 0)});
+        const float sx = float(W) / float(lot_.maskWidth - 1), sy = float(H) / float(lot_.maskHeight - 1);
+        for (uint32_t my = 0; my < lot_.maskHeight; ++my)
+            for (uint32_t mx = 0; mx < lot_.maskWidth; ++mx) {
+                const int p = strength(float(mx) * sx, float(my) * sy) / 4; // a quarter a tick (inferred)
+                if (!p)
+                    continue;
+                const size_t at = size_t(my) * lot_.maskWidth + mx;
+                for (size_t i = 0; i < lot_.paints.size(); ++i) {
+                    uint8_t& m = lot_.paints[i].mask[at];
+                    const int v = st.op == TerrainOp::Paint && i == target ? std::min(255, int(m) + p) : std::max(0, int(m) - p);
+                    if (v != m)
+                        m = uint8_t(v), ++r.changed;
+                }
+            }
+        st.changed += r.changed;
+        r.ok = true;
+        if (r.changed) {
+            ++revision_;
+        }
+        r.message = std::to_string(r.changed) + " paint mask points";
+        return r;
+    }
+    constexpr float kStep = 0.00625f;
+    const size_t base = size_t(0 - lot_.minLevel) * size_t(W + 1) * size_t(H + 1);
+    float moved = 0;
+    std::vector<std::pair<size_t, float>> changes;
+    for (int x = 0; x <= W; ++x)
+        for (int y = 0; y <= H; ++y) {
+            const int p = strength(float(x), float(y));
+            if (!p || !terrainFree(x, y))
+                continue;
+            const size_t i = base + size_t(x) * size_t(H + 1) + size_t(y);
+            const float h = lot_.elevations[i];
+            float n = h;
+            switch (st.op) {
+            case TerrainOp::Raise: n = std::ceil((h + float(p) * 0.0002f) / kStep - 1e-4f) * kStep; break;
+            case TerrainOp::Lower: n = std::floor((h - float(p) * 0.00002f) / kStep + 1e-4f) * kStep; break;
+            case TerrainOp::Flatten: n = st.height; break;
+            case TerrainOp::Smooth: {
+                float sum = 0;
+                int count = 0;
+                for (const auto& [dx, dy] : std::array<std::array<int, 2>, 4>{{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}})
+                    if (x + dx >= 0 && y + dy >= 0 && x + dx <= W && y + dy <= H)
+                        sum += lot_.elevations[base + size_t(x + dx) * size_t(H + 1) + size_t(y + dy)], ++count;
+                if (count)
+                    n = std::round((h + (sum / float(count) - h) * float(p) / 255.0f) / kStep) * kStep;
+                break;
+            }
+            default: break;
+            }
+            if (std::fabs(n - h) < 1e-6f)
+                continue;
+            changes.push_back({i, n});
+            moved += std::fabs(n - h);
+        }
+    // UpdateFundsForHeightChange: the stroke's total change, rounded, x §1;
+    // what it adds is paid now, refused when the funds are short.
+    const int owed = int(std::lround((st.moved + moved) * 1.0f)) - st.paid;
+    if (owed > funds(vm_)) {
+        r.message = "not enough money (" + money(owed) + ")";
+        return r;
+    }
+    for (const auto& [i, n] : changes) {
+        // The stories above move with the terrain (ChangeFloorElevationCoupled).
+        const float d = n - lot_.elevations[i];
+        lot_.elevations[i] = n;
+        for (int k = 1; lot_.hasLevel(k); ++k)
+            lot_.elevations[i + size_t(k) * size_t(W + 1) * size_t(H + 1)] += d;
+    }
+    st.moved += moved;
+    st.paid += owed;
+    st.changed += int(changes.size());
+    addFunds(vm_, -owed);
+    r.ok = true;
+    r.cost = owed;
+    r.changed = int(changes.size());
+    if (r.changed)
+        ++revision_;
+    r.message = std::to_string(r.changed) + " terrain points moved" + (owed ? " for " + money(owed) : "");
+    return r;
+}
+
+BuildEditor::Result BuildEditor::terrainStroke(TerrainOp op, float x, float y, int ticks, int size,
+                                               const std::vector<uint8_t>& profile, const std::string& paint) {
+    beginTerrainStroke(op, x, y);
+    Result last;
+    for (int i = 0; i < std::max(ticks, 1); ++i) {
+        last = applyTerrainBrush(x, y, size, profile, paint);
+        if (!last.ok)
+            break;
+    }
+    Result r = endTerrainStroke();
+    if (!last.ok && !r.changed) {
+        last.ok = false;
+        return last;
+    }
+    return r;
+}
+
+BuildEditor::Result BuildEditor::endTerrainStroke() {
+    Result r;
+    if (!stroke_) {
+        r.message = "no stroke";
+        return r;
+    }
+    Stroke st = std::move(*stroke_);
+    stroke_.reset();
+    r.ok = true;
+    r.cost = st.paid;
+    r.changed = st.changed;
+    if (!st.changed) {
+        r.message = "nothing changed";
+        return r;
+    }
+    changed();
+    commit(std::move(st.before), st.paid);
+    r.message = std::to_string(st.changed) + " terrain changes for " + money(st.paid);
     return r;
 }
 

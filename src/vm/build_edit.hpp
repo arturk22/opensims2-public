@@ -78,6 +78,31 @@ public:
     // A ground tile under a foundation.
     bool foundationTile(int x, int y) const;
 
+    // Terrain tools (cTSUserToolTerrainSculpt / TerrainPaint): a stroke
+    // is one undoable change; while the mouse is down the brush is applied
+    // every 100 ms (ApplyTerrainSculptBrush) around a point, its strength
+    // per grid point from the brush's profile (a 32x32 grey image,
+    // terrainSculptBrushes.txt profileTextureID) stretched over the brush
+    // width (2, 6 or 10 grid points for the small, medium and large brush:
+    // SetBrushWidthChoice). Raise: height + profile x 0.0002 rounded up to
+    // the terrain step, lower: height - profile x 0.00002 rounded down
+    // (Raise/LowerBrushFn; the step, 0.00625, is inferred from the heights
+    // the lots hold), flatten: to the height where the stroke began,
+    // smooth: towards the mean of the four neighbours (inferred). Each
+    // application is paid at once: round(total |height change| x §1)
+    // (UpdateFundsForHeightChange; catalog price 1). Only exposed terrain
+    // of the ground (0x8B); points under floors and walls stay.
+    // Paint: the paint's mask (4 points a tile) gains the profile, the
+    // others lose it (DiminishAllPaints); free.
+    enum class TerrainOp { Raise, Lower, Flatten, Smooth, Paint, Erase };
+    void beginTerrainStroke(TerrainOp op, float x, float y);
+    Result applyTerrainBrush(float x, float y, int size, const std::vector<uint8_t>& profile,
+                             const std::string& paint = "");
+    Result endTerrainStroke();
+    // A whole stroke at one point: `ticks` applications (headless runs).
+    Result terrainStroke(TerrainOp op, float x, float y, int ticks, int size, const std::vector<uint8_t>& profile,
+                         const std::string& paint = "");
+
     // Floor tool over the tiles of a rectangle (corners inclusive), or the
     // given quarters of one tile (`quarters` bits: west, north, east, south).
     // A quarter costs a quarter of the pattern's price; covering another
@@ -138,6 +163,7 @@ private:
         std::vector<std::array<uint8_t, 4>> floorRotations;
         std::vector<Lot::Object> objects;
         std::vector<Lot::FencePost> fencePosts;
+        std::vector<Lot::TerrainPaint> paints;
         std::vector<Lot::Wall> walls;
         std::vector<Lot::WallGraph> wallGraphs;
         std::vector<std::array<uint16_t, 4>> floors, rooms;
@@ -180,6 +206,17 @@ private:
     std::vector<Op> undo_, redo_;
     std::map<std::string, int> prices_; // patterns laid this session, by lot name
     std::vector<Stair> loadedStairs_;   // the world's stairs from the lot's cObjects
+    struct Stroke {
+        TerrainOp op = TerrainOp::Raise;
+        Geometry before;
+        float height = 0;   // flatten's target
+        float moved = 0;    // total |height change|
+        int paid = 0;
+        int changed = 0;
+    };
+    std::optional<Stroke> stroke_;
+    // A ground grid point no floor, wall or foundation holds.
+    bool terrainFree(int x, int y) const;
     uint32_t revision_ = 0;
 };
 

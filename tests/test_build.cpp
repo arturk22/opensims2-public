@@ -7,6 +7,7 @@
 #include "vm/placement.hpp"
 #include "vm/vm.hpp"
 
+#include <cmath>
 #include <cstdio>
 
 using namespace os2;
@@ -269,7 +270,30 @@ static void testFoundation() {
     check(ed.undo() && ed.undo() && lot.walls.empty() && lot.elevation(1, 3, 3) == 3.0f, "undo takes it all back");
 }
 
+static void testTerrain() {
+    Lot lot = flatLot();
+    lot.floors[size_t(1) * 10] = {1, 1, 1, 1}; // the sidewalk on tile (1, 0)
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    std::vector<uint8_t> profile(32 * 32, 255);
+    auto r = ed.terrainStroke(BuildEditor::TerrainOp::Raise, 6, 5, 10, 1, profile);
+    check(r.ok && r.changed > 0 && lot.elevation(0, 6, 5) > 0.4f, "raising the ground");
+    check(lot.elevation(0, 0, 0) == 0.0f, "only under the brush");
+    const float h = lot.elevation(0, 6, 5);
+    check(std::fabs(h / 0.00625f - std::round(h / 0.00625f)) < 1e-3f, "heights stay on the terrain step");
+    check(r.cost == funds(vm) * 0 + r.cost && r.cost > 0 && funds(vm) == 5000 - r.cost, "the change is paid for");
+    check(ed.undo() && lot.elevation(0, 6, 5) == 0.0f && funds(vm) == 5000, "undo flattens it again");
+    r = ed.terrainStroke(BuildEditor::TerrainOp::Raise, 1.5f, 0.5f, 3, 1, profile);
+    check(!r.ok && r.error == 0x8B, "a floored tile is not exposed terrain");
+    r = ed.terrainStroke(BuildEditor::TerrainOp::Paint, 6, 5, 4, 1, profile, "terrain-grass-b-paint");
+    check(r.ok && lot.paints.size() == 1 && lot.maskWidth == 49, "painting adds a paint and its mask");
+}
+
 int main() {
+    testTerrain();
     testFoundation();
     testRoomIds();
     testSections();

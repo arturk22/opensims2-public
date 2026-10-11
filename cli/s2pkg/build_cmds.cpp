@@ -127,7 +127,8 @@ int num(const std::vector<std::string>& f, size_t i, int fallback) {
 
 bool isBuildEdit(const std::string& flag) {
     return flag == "--door" || flag == "--wall" || flag == "--fence" || flag == "--delete-fence" ||
-           flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
+           flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
+           flag == "--terrain" || flag == "--terrain-paint" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
            flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--build-undo" || flag == "--build-redo";
 }
 
@@ -193,6 +194,25 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             if (!fence)
                 throw std::runtime_error("--fence: no fence \"" + f[4] + "\"");
             r = editor.drawFences(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), *fence);
+        } else if (flag == "--terrain" || flag == "--terrain-paint") {
+            // op|paint,x,y[,ticks[,size]]: a stroke of `ticks` brush applications.
+            if (f.size() < 3)
+                throw std::runtime_error(flag + ": expected op,x,y[,ticks[,size]]");
+            using Op = vm::BuildEditor::TerrainOp;
+            Op op = Op::Paint;
+            std::string paint;
+            if (flag == "--terrain") {
+                op = f[0] == "lower" ? Op::Lower : f[0] == "flatten" ? Op::Flatten : f[0] == "smooth" ? Op::Smooth : Op::Raise;
+            } else if (f[0] == "erase") {
+                op = Op::Erase;
+            } else {
+                const BuildTerrainPaint* t = catalog.findTerrainPaint(f[0]);
+                if (!t)
+                    throw std::runtime_error("--terrain-paint: no paint \"" + f[0] + "\"");
+                paint = t->texture;
+            }
+            r = editor.terrainStroke(op, std::stof(f[1]), std::stof(f[2]), num(f, 3, 10), num(f, 4, 1),
+                                     op == Op::Lower ? catalog.lowerProfile() : catalog.raiseProfile(), paint);
         } else if (flag == "--foundation" || flag == "--delete-foundation") {
             if (f.size() < 4)
                 throw std::runtime_error(flag + ": expected x0,y0,x1,y1");
@@ -264,6 +284,11 @@ std::vector<std::string> compareLotGeometry(const Lot& a, const Lot& b, size_t l
         say("floors differ");
     if (a.elevations != b.elevations)
         say("elevations differ");
+    if (a.paints.size() != b.paints.size() || a.terrainBase != b.terrainBase)
+        say("terrain paints differ");
+    for (size_t i = 0; i < a.paints.size() && i < b.paints.size(); ++i)
+        if (a.paints[i].texture != b.paints[i].texture || a.paints[i].mask != b.paints[i].mask)
+            say("terrain paint " + a.paints[i].texture + " differs");
     if (a.floorRotations != b.floorRotations)
         say("floor rotations differ");
     if (a.fencePosts.size() != b.fencePosts.size())

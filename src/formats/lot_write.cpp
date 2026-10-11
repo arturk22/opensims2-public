@@ -11,7 +11,8 @@ namespace os2 {
 
 namespace {
 
-constexpr uint32_t kTypeFencePosts = 0xAB4BA572, kFencePostLayer = 0x11;
+constexpr uint32_t kTypeFencePosts = 0xAB4BA572, kFencePostLayer = 0x11, kTypeLotTexture = 0x4B58975B,
+                   kType2DArray = 0x6B943B43, kPaintMaskFirst = 0x5CBC;
 constexpr uint32_t kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40, kTypeWallGraph = 0x0A284D0B,
                    kTypeWallLayer = 0x8A84D7B0;
 constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayFloorRotations = 0x15, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
@@ -159,6 +160,30 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
                 w.u32(p.fence);
             }
             out.push_back({kTypeFencePosts, h.group, kFencePostLayer, std::move(w.bytes())});
+        }
+    }
+    // LTTX 0 (the terrain's base and paints) and a 2ARY mask per paint
+    // (0x5CBC + i), when the lot has them.
+    if (!lot.terrainBase.empty() || !lot.paints.empty()) {
+        Head h = headOf(source, kTypeLotTexture, 0, 7);
+        BinWriter w;
+        w.raw(h.name);
+        w.u32(kTypeLotTexture);
+        w.u32(h.version);
+        w.u32(lot.width), w.u32(lot.height);
+        w.str7(lot.terrainBase);
+        w.u32(uint32_t(lot.paints.size()));
+        for (const auto& p : lot.paints)
+            w.str7(p.texture);
+        out.push_back({kTypeLotTexture, h.group, 0, std::move(w.bytes())});
+        for (size_t i = 0; i < lot.paints.size(); ++i) {
+            const uint32_t instance = kPaintMaskFirst + uint32_t(i);
+            const Head m = headOf(source, kType2DArray, instance, 1);
+            BinWriter b = begin(m, kType2DArray, "c2DArray");
+            b.u32(lot.maskWidth), b.u32(lot.maskHeight);
+            for (uint8_t v : lot.paints[i].mask)
+                b.u8(v);
+            out.push_back({kType2DArray, m.group, instance, std::move(b.bytes())});
         }
     }
     if (!lot.elevations.empty())

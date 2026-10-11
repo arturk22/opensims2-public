@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <stdexcept>
 
@@ -201,6 +202,16 @@ void BuildMode::selectFoundationTool() {
     tool_ = Tool::Foundation;
     pattern_ = nullptr, object_ = nullptr, fence_ = nullptr;
     say("foundation tool (" + money(kFoundationTilePrice) + " a tile)");
+}
+
+void BuildMode::selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerrainPaint* paint) {
+    cancel();
+    tool_ = Tool::Terrain;
+    terrainOp_ = paint ? vm::BuildEditor::TerrainOp::Paint : op;
+    paint_ = paint;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr;
+    static const char* const names[] = {"raise", "lower", "flatten", "smooth", "paint", "erase paint"};
+    say(std::string("terrain tool: ") + names[int(terrainOp_)] + (paint ? " " + paint->name : std::string()));
 }
 
 void BuildMode::selectPattern(const BuildPattern& p) {
@@ -433,8 +444,37 @@ bool BuildMode::mouseDown(simd_float3 eye, simd_float3 dir, bool control, bool s
         }
         return true;
     }
+    if (tool_ == Tool::Terrain) {
+        editor_->beginTerrainStroke(control ? vm::BuildEditor::TerrainOp::Erase : terrainOp_, p->x, p->y);
+        stroking_ = true;
+        lastBrush_ = 0;
+        brushTick(true);
+        return true;
+    }
     dragFrom_ = p;
     return true;
+}
+
+// The brush while the mouse is down, every 100 ms (ApplyTerrainSculptBrush);
+// the lot is redrawn at most every 0.3 s while stroking.
+void BuildMode::brushTick(bool force) {
+    if (!stroking_ || !pointer_)
+        return;
+    const double now = double(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count()) /
+                       1000.0;
+    if (!force && now - lastBrush_ < 0.1)
+        return;
+    lastBrush_ = now;
+    const auto& profile = terrainOp_ == vm::BuildEditor::TerrainOp::Lower ? patterns_.lowerProfile() : patterns_.raiseProfile();
+    const auto r = editor_->applyTerrainBrush(pointer_->x, pointer_->y, brushSize_, profile, paint_ ? paint_->texture : "");
+    if (!r.ok && r.error)
+        applied(r);
+    if (r.changed && now - lastRedraw_ > 0.3 && onGeometryChanged) {
+        lastRedraw_ = now;
+        onGeometryChanged();
+    }
 }
 
 void BuildMode::mouseDrag(simd_float3 eye, simd_float3 dir) {
@@ -446,6 +486,11 @@ void BuildMode::mouseDrag(simd_float3 eye, simd_float3 dir) {
 }
 
 bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
+    if (active_ && stroking_) {
+        stroking_ = false;
+        applied(editor_->endTerrainStroke());
+        return true;
+    }
     if (!active_ || !dragFrom_)
         return false;
     if (auto p = groundPoint(eye, dir))
@@ -490,6 +535,7 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
 }
 
 void BuildMode::update() {
+    brushTick(false);
     size_t used = 0;
     auto put = [&](bool ok, const simd_float4x4& m) {
         const int model = previewModels_[ok ? 0 : 1];
@@ -546,6 +592,10 @@ void BuildMode::update() {
                 put(true, placeQuad(float(s[0]) - sn * off, float(s[1]) + c * off, z(float(s[0]), float(s[1])), len, 0.3f,
                                     ang, false));
             }
+        } else if (tool_ == Tool::Terrain) {
+            // The brush's square (the profile is round inside it).
+            const float w = 2.0f + 4.0f * float(std::clamp(brushSize_, 0, 2));
+            put(true, placeQuad(p.x - w / 2, p.y - w / 2, z(p.x, p.y), w, w, 0, false));
         } else if (tool_ == Tool::Object && held_) {
             for (const auto& part : last_.parts)
                 put(last_.ok, placeQuad(float(part.tile.x) + 0.04f, float(part.tile.y) + 0.04f,
@@ -619,6 +669,30 @@ const RgbaImage* BuildMode::materialThumbnail(uint32_t key, const std::string& m
     return thumbs_[p.guid].get();
 }
 
+// A texture by name (a terrain paint's swatch).
+const RgbaImage* BuildMode::textureThumbnail(uint32_t key, const std::string& texture) {
+    if (auto it = thumbs_.find(key); it != thumbs_.end())
+        return it->second.get();
+    std::shared_ptr<RgbaImage> img;
+    try {
+        if (auto t = index_.findByName(texture + "_txtr", kTypeTxtr)) {
+            const TextureLevels lv = loadTextureLevels(index_.read(*t), &index_);
+            size_t pick = 0;
+            for (size_t l = 0; l < lv.levels.size(); ++l)
+                if (lv.levels[l].width >= 64)
+                    pick = l;
+            if (pick < lv.levels.size()) {
+                const auto& L = lv.levels[pick];
+                img = std::make_shared<RgbaImage>(decodeTexture(lv.format, L.width, L.height, L.data));
+            }
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: build mode: thumbnail of %s: %s\n", texture.c_str(), e.what());
+    }
+    thumbs_[key] = std::move(img);
+    return thumbs_[key].get();
+}
+
 std::vector<BuildMode::Item> BuildMode::items() {
     std::vector<Item> out;
     auto patternItems = [&](bool floor, const char* const* names, size_t count) {
@@ -680,6 +754,42 @@ std::vector<BuildMode::Item> BuildMode::items() {
         }
         it.image = materialThumbnail(0xF0F0F0F0u, "floor_plywoodFoundation");
         out.push_back(std::move(it));
+        break;
+    }
+    case 7: {
+        // B720 sculpting: catalog text "build" 128 (strings 3i price, 3i+1
+        // name, 3i+2 text; Raise 0, Lower 1, the proxy tool 2 and 3 =
+        // flatten and smooth, inferred), thumbnails 0x499DB772/0xE9261349,
+        // ...50, ...41 (userToolProxies.txt) and ...51 (inferred).
+        // B730 the terrain paints (their texture as the swatch).
+        if (subsort_ == 0 || subsort_ == 2) {
+            const StringTable* t = res_->table(packageGroupHash("Build"), 0x80);
+            static const uint32_t thumbs[4] = {0xE9261349, 0xE9261350, 0xE9261341, 0xE9261351};
+            static const char* const fallback[4] = {"Raise Terrain", "Lower Terrain", "Flatten Terrain", "Smooth Terrain"};
+            for (int k = 0; k < 4; ++k) {
+                Item it;
+                it.tool = Tool::Terrain;
+                it.terrainOp = k;
+                it.price = 1;
+                it.name = fallback[k];
+                if (t) {
+                    if (const std::string n = t->get(size_t(3 * k + 1)); !n.empty())
+                        it.name = n;
+                    it.description = t->get(size_t(3 * k + 2));
+                }
+                it.image = res_->image({kTypeUiImage, kBuildThumbGroup, thumbs[k]});
+                out.push_back(std::move(it));
+            }
+        }
+        if (subsort_ == 0 || subsort_ == 3)
+            for (const BuildTerrainPaint& p : patterns_.terrainPaints()) {
+                Item it;
+                it.tool = Tool::Terrain;
+                it.paint = &p;
+                it.name = p.name, it.description = p.description;
+                it.image = textureThumbnail(p.guid, p.texture);
+                out.push_back(std::move(it));
+            }
         break;
     }
     case 3: objectItems(8, doorSubsort(subsort_)); break;
@@ -833,8 +943,11 @@ UiScreen BuildMode::screen(int width, int height) {
             const float cy = (*r)[1] + kGridY + float(i / kColumns) * (ch + kMarginY);
             const float tx = cx + (cw - thumb) / 2;
             const bool selected = (it.pattern && it.pattern == pattern_) || (it.object && it.object == object_) ||
-                                  (it.fence && it.fence == fence_) ||
-                                  (!it.pattern && !it.object && !it.fence && it.tool == tool_);
+                                  (it.fence && it.fence == fence_) || (it.paint && it.paint == paint_ && tool_ == Tool::Terrain) ||
+                                  (it.tool == Tool::Terrain && !it.paint && tool_ == Tool::Terrain && !paint_ &&
+                                   it.terrainOp == int(terrainOp_)) ||
+                                  (!it.pattern && !it.object && !it.fence && !it.paint && it.tool != Tool::Terrain &&
+                                   it.tool == tool_);
             if (selected) {
                 UiQuad q;
                 q.x0 = tx - 2, q.y0 = cy - 2, q.x1 = tx + thumb + 2, q.y1 = cy + thumb + 2;
@@ -971,6 +1084,8 @@ bool BuildMode::press(simd_float2 p) {
                     selectObject(*it.object);
                 else if (it.tool == Tool::Foundation)
                     selectFoundationTool();
+                else if (it.tool == Tool::Terrain)
+                    selectTerrainTool(vm::BuildEditor::TerrainOp(std::max(it.terrainOp, 0)), it.paint);
                 else
                     selectWallTool(it.tool == Tool::Room);
             }
@@ -1009,7 +1124,8 @@ void BuildMode::hover(simd_float2 p) {
         }
     const bool changed = over.has_value() != hovered_.has_value() ||
                          (over && (over->pattern != hovered_->pattern || over->object != hovered_->object ||
-                                   over->fence != hovered_->fence ||
+                                   over->fence != hovered_->fence || over->paint != hovered_->paint ||
+                                   over->terrainOp != hovered_->terrainOp ||
                                    over->tool != hovered_->tool));
     if (changed)
         hovered_ = over, dirty_ = true;
@@ -1045,7 +1161,9 @@ namespace os2 {
 // --build-funds <n> (test aid: sets the family's funds),
 // --wall/--room/--delete-wall x0,y0,x1,y1, --fence x0,y0,x1,y1,<fence>,
 // --delete-fence x0,y0,x1,y1, --foundation / --delete-foundation x0,y0,x1,y1
-// (tiles, corners inclusive), --floor x0,y0,x1,y1,<pattern|none>[,rotation],
+// (tiles, corners inclusive), --terrain raise|lower|flatten|smooth,x,y[,ticks[,size]]
+// and --terrain-paint <paint|erase>,x,y[,ticks[,size]] (a brush stroke of
+// ticks of 100 ms), --floor x0,y0,x1,y1,<pattern|none>[,rotation],
 // --floor-click px,py,<pattern> (one click: the quarters under the point),
 // --floor-rotation <1|2|4|8>, --wallpaper x0,y0,x1,y1,<r|l|b>,<pattern|none>,
 // --wallpaper-room x,y,<pattern|none>, --door <guid|name>@x,y[,dir] places
@@ -1100,7 +1218,21 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             selectFoundationTool(), r = ed.drawFoundation(n(0), n(1), n(2), n(3));
         else if (a == "--delete-foundation" && f.size() >= 4)
             r = ed.deleteFoundation(n(0), n(1), n(2), n(3));
-        else if (a == "--floor-rotation")
+        else if ((a == "--terrain" || a == "--terrain-paint") && f.size() >= 3) {
+            using Op = vm::BuildEditor::TerrainOp;
+            Op op = Op::Paint;
+            const BuildTerrainPaint* paint = nullptr;
+            if (a == "--terrain")
+                op = f[0] == "lower" ? Op::Lower : f[0] == "flatten" ? Op::Flatten : f[0] == "smooth" ? Op::Smooth : Op::Raise;
+            else if (f[0] == "erase")
+                op = Op::Erase;
+            else if (!(paint = patterns_.findTerrainPaint(f[0])))
+                throw std::runtime_error("--terrain-paint: no paint \"" + f[0] + "\"");
+            selectTerrainTool(op, paint);
+            r = ed.terrainStroke(op, std::stof(f[1]), std::stof(f[2]), f.size() > 3 ? n(3) : 10, f.size() > 4 ? n(4) : 1,
+                                 op == Op::Lower ? patterns_.lowerProfile() : patterns_.raiseProfile(),
+                                 paint ? paint->texture : "");
+        } else if (a == "--floor-rotation")
             floorRotation_ = n(0);
         else if (a == "--floor" && f.size() >= 5) {
             const BuildPattern* p = pattern(f[4], true);

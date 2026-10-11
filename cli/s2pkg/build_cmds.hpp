@@ -25,6 +25,8 @@ class VM;
 //   --fence x0,y0,x1,y1,fence[,level]   a fence along a run (catalog GUID or name)
 //   --delete-fence x0,y0,x1,y1[,level]
 //   --foundation / --delete-foundation x0,y0,x1,y1  ground tiles (corners inclusive)
+//   --terrain raise|lower|flatten|smooth,x,y[,ticks[,size]]  a brush stroke (ticks of 100 ms)
+//   --terrain-paint <paint|erase>,x,y[,ticks[,size]]
 //   --floor x0,y0,x1,y1,pattern[,level[,rotation]] floor the tiles of a rectangle ("none" erases)
 //   --floor-click px,py,pattern[,level[,rotation]] one click: the quarters under a point
 //   --wallpaper x0,y0,x1,y1,side,pattern[,level]  side r, l or b (seen from x0,y0)

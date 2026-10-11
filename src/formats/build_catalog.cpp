@@ -13,7 +13,8 @@ namespace os2 {
 
 namespace {
 
-constexpr uint32_t kTypeCatalogPattern = 0xCCA8E925, kTypeCatalogFence = 0x2CB230B8, kTypeStr = 0x53545223;
+constexpr uint32_t kTypeCatalogPattern = 0xCCA8E925, kTypeCatalogFence = 0x2CB230B8, kTypeStr = 0x53545223,
+                   kTypeCatalogTerrainPaint = 0x4DCADB7E, kTypeUiImage = 0x856DDBAC, kGroupTerrain = 0x4B72DA28;
 
 std::string lower(std::string s) {
     for (auto& c : s)
@@ -100,6 +101,39 @@ BuildCatalog BuildCatalog::load(ResourceIndex& index) {
         if (f.guid && !f.rail.empty())
             c.fences_.push_back(std::move(f));
     }
+    for (const auto& loc : index.ofType(kTypeCatalogTerrainPaint)) {
+        const auto bytes = index.read(loc);
+        const auto p = parsePropertySet(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        if (number(p, "showincatalog", 1) == 0 || number(p, "deprecated") != 0)
+            continue;
+        BuildTerrainPaint t;
+        t.guid = number(p, "guid");
+        t.texture = text(p, "texturetname");
+        t.name = text(p, "name");
+        t.description = text(p, "description");
+        if (auto s = index.read(Tgi{kTypeStr, number(p, "stringsetgroupid"), number(p, "stringsetid"), 0})) {
+            try {
+                const StringTable st = StringTable::parse(*s);
+                if (const std::string n = st.get(0); !n.empty())
+                    t.name = n;
+                if (const std::string d = st.get(1); !d.empty())
+                    t.description = d;
+            } catch (const std::exception&) {
+            }
+        }
+        if (!t.texture.empty())
+            c.paints_.push_back(std::move(t));
+    }
+    std::sort(c.paints_.begin(), c.paints_.end(),
+              [](const BuildTerrainPaint& a, const BuildTerrainPaint& b) { return a.name < b.name; });
+    // The brush profiles: uncompressed 8-bit grey TGAs (image type 3).
+    for (auto [instance, out] : {std::pair{0x6B96E0A2u, &c.raise_}, std::pair{0x8B96E0CFu, &c.lower_}})
+        if (auto b = index.read(Tgi{kTypeUiImage, kGroupTerrain, instance, 0}); b && b->size() >= 18 + 32 * 32) {
+            const auto& v = *b;
+            const size_t w = size_t(v[12] | v[13] << 8), h = size_t(v[14] | v[15] << 8), at = 18 + v[0];
+            if (v[2] == 3 && v[16] == 8 && w == 32 && h == 32 && v.size() >= at + w * h)
+                out->assign(v.begin() + long(at), v.begin() + long(at + w * h));
+        }
     std::stable_sort(c.fences_.begin(), c.fences_.end(), [](const BuildFence& a, const BuildFence& b) {
         return a.price != b.price ? a.price < b.price : a.name < b.name;
     });
@@ -154,6 +188,17 @@ const BuildFence* BuildCatalog::findFence(const std::string& key) const {
     for (const auto& f : fences_)
         if (lower(f.name).find(k) != std::string::npos || lower(f.rail).find(k) != std::string::npos)
             return &f;
+    return nullptr;
+}
+
+const BuildTerrainPaint* BuildCatalog::findTerrainPaint(const std::string& key) const {
+    const std::string k = lower(key);
+    for (const auto& t : paints_)
+        if (lower(t.texture) == k || lower(t.name) == k)
+            return &t;
+    for (const auto& t : paints_)
+        if (lower(t.texture).find(k) != std::string::npos || lower(t.name).find(k) != std::string::npos)
+            return &t;
     return nullptr;
 }
 

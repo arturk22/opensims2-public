@@ -61,7 +61,7 @@ public:
     // The lot's walls, floors or doors changed: the host redraws it.
     std::function<void()> onGeometryChanged;
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -74,6 +74,10 @@ public:
     void selectPattern(const BuildPattern& p);
     void selectFence(const BuildFence& f);
     void selectFoundationTool();
+    // Terrain: a sculpt brush (raise, lower, flatten, smooth) or a paint
+    // (the paint's texture); `size` 0-2 small/medium/large.
+    void selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerrainPaint* paint = nullptr);
+    void setBrushSize(int size) { brushSize_ = size; }
     // The floor tool's pattern rotation (1, 2, 4, 8; `,`/`.` cycle it).
     int floorRotation() const { return floorRotation_; }
     void setFloorRotation(int r) { floorRotation_ = r; }
@@ -125,6 +129,8 @@ private:
         const BuildPattern* pattern = nullptr;
         const CatalogEntry* object = nullptr;
         const BuildFence* fence = nullptr;
+        const BuildTerrainPaint* paint = nullptr;
+        int terrainOp = -1;
         std::string name, description;
         int price = 0;
         const RgbaImage* image = nullptr;
@@ -133,11 +139,13 @@ private:
     const RgbaImage* patternThumbnail(const BuildPattern& p);
     const RgbaImage* fenceThumbnail(const BuildFence& f);
     const RgbaImage* materialThumbnail(uint32_t key, const std::string& material);
+    const RgbaImage* textureThumbnail(uint32_t key, const std::string& texture);
     std::optional<simd_float2> groundPoint(simd_float3 eye, simd_float3 dir) const;
     void applied(const vm::BuildEditor::Result& r);
     void say(const std::string& m);
     void layoutIfNeeded();
     void syncAfterObject();
+    void brushTick(bool force);
     // The wall face under a point: the wall's ends and the side (+1 right of a -> b).
     std::optional<std::pair<std::array<int, 4>, int>> faceAt(simd_float2 p) const;
 
@@ -162,6 +170,11 @@ private:
     const BuildPattern* pattern_ = nullptr;
     const CatalogEntry* object_ = nullptr;
     const BuildFence* fence_ = nullptr;
+    const BuildTerrainPaint* paint_ = nullptr;
+    vm::BuildEditor::TerrainOp terrainOp_ = vm::BuildEditor::TerrainOp::Raise;
+    int brushSize_ = 1;
+    bool stroking_ = false;
+    double lastBrush_ = 0, lastRedraw_ = 0;
     int floorRotation_ = 1;
     std::optional<Item> hovered_;
     std::map<uint32_t, std::shared_ptr<RgbaImage>> thumbs_;
