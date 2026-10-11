@@ -1,15 +1,17 @@
 #pragma once
 
 // Mouse control of the lot camera, as in the game's camera tools
-// (cTSUserToolCameraRightClick: hold the right button and the view scrolls
-// towards the mouse, faster the farther it is from the anchor shown where
-// the button went down; cTSUserToolCameraMiddleClick: hold the middle button
-// to rotate and tilt; cTSWinSceneGraph::DoWindowEdgeScrolling: the mouse at
-// the window's edge scrolls; the wheel zooms). Rotation, tilt and the wheel
-// go to the camera as the game's requests (pixels dragged, wheel notches:
-// LotCamera::rotateRequest / wheel). The scroll speeds and sizes are not in
-// the data found (horzedgescrollrate / vertedgescrollrate are named in
-// Sims2.exe only), so they are chosen here.
+// (docs/camera-ui-mac.md §1.4, from the Mac binary):
+// cTSUserToolCameraRightClick: hold the right button and the camera moves
+// at the mouse's offset from the anchor shown where the button went down,
+// x 0.25 (DragCamera: a move request of that many pixels, taken here per
+// 50 ms frame as the keyboard's); cTSUserToolCameraMiddleClick: the middle
+// button (or right + a modifier, Option here) rotates and tilts by the
+// pixels dragged, the cursor held where it was clicked;
+// cTSWinSceneGraph::DoWindowEdgeScrolling: the mouse at the window's edge
+// scrolls (its rates, horzedgescrollrate / vertedgescrollrate, are named in
+// Sims2.exe only, so chosen here); the wheel zooms by notches (the binary's
+// wheel axis x 1/120 = one per Windows notch).
 // Plain C++; main.mm feeds it AppKit's events.
 
 #include <utility>
@@ -19,8 +21,7 @@ namespace os2 {
 class CameraMouseInput {
 public:
     struct Config {
-        float deadZone = 6;       // points around the anchor that do not scroll
-        float fullSpeed = 160;    // points from the anchor at full scroll speed
+        float dragFactor = 0.25f; // move request per point of offset from the anchor (DragCamera)
         float edgeMargin = 4;     // points from the window edge that scroll
         bool edgeScroll = true;
         float pointsPerNotch = 10;   // trackpad scroll per wheel notch
@@ -36,10 +37,16 @@ public:
     bool anchored() const { return anchored_; }
     std::pair<float, float> anchor() const { return {ax_, ay_}; }
 
-    // Pan axes (right, forward), each in [-1, 1], for a view of w x h
-    // points: from the anchor offset while the right button is held, else
-    // from the window edges.
+    // Edge scrolling: pan axes (right, forward), each in [-1, 1], for a
+    // view of w x h points (none while the right button is held).
     std::pair<float, float> panAxes(float w, float h) const;
+    // Right button held: the move request (dx, dy points, y down) the
+    // anchor's offset asks for.
+    std::pair<float, float> dragMove() const {
+        if (!anchored_)
+            return {0, 0};
+        return {(x_ - ax_) * config_.dragFactor, (y_ - ay_) * config_.dragFactor};
+    }
 
     // Wheel notches (positive = closer) of a scroll event: one per mouse
     // wheel event, `pointsPerNotch` of trackpad scroll each.

@@ -1,4 +1,4 @@
-// Mouse camera control: anchor scrolling, edge scrolling, wheel notches.
+// Mouse camera control: right-button drag, edge scrolling, wheel notches.
 #include "app/camera_input.hpp"
 
 #include <cstdio>
@@ -18,14 +18,12 @@ int main() {
     in.mouseAt(400, 300);
     check(in.panAxes(800, 600) == std::pair<float, float>{0, 0}, "middle of the window: still");
     in.beginAnchor();
-    in.mouseAt(403, 298);
-    check(in.panAxes(800, 600) == std::pair<float, float>{0, 0}, "inside the dead zone");
-    in.mouseAt(400 + 83, 300 - 160 - 50);
-    auto [r, f] = in.panAxes(800, 600);
-    check(r > 0.49f && r < 0.51f && f == 1.0f, "half speed right, full speed up (forward)");
+    in.mouseAt(440, 280);
+    check(in.dragMove() == std::pair<float, float>{10, -5}, "right drag: offset x 0.25");
     in.mouseAt(0, 300);
-    check(in.panAxes(800, 600).first == -1.0f, "anchor wins over the edge");
+    check(in.panAxes(800, 600) == std::pair<float, float>{0, 0}, "no edge scrolling while dragging");
     in.endAnchor();
+    check(in.dragMove() == std::pair<float, float>{0, 0}, "released: still");
     check(in.panAxes(800, 600) == std::pair<float, float>{-1, 0}, "left edge scrolls left");
     in.mouseAt(799, 599);
     check(in.panAxes(800, 600) == std::pair<float, float>{1, -1}, "bottom right corner");

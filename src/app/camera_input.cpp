@@ -5,20 +5,8 @@
 
 namespace os2 {
 
-namespace {
-float axis(float d, float dead, float full) {
-    const float a = std::fabs(d);
-    if (a <= dead)
-        return 0;
-    return std::copysign(std::min(1.0f, (a - dead) / std::max(1.0f, full - dead)), d);
-}
-} // namespace
-
 std::pair<float, float> CameraMouseInput::panAxes(float w, float h) const {
-    if (anchored_)
-        return {axis(x_ - ax_, config_.deadZone, config_.fullSpeed),
-                -axis(y_ - ay_, config_.deadZone, config_.fullSpeed)};
-    if (!config_.edgeScroll || !inside_ || w <= 0 || h <= 0)
+    if (anchored_ || !config_.edgeScroll || !inside_ || w <= 0 || h <= 0)
         return {0, 0};
     const float m = config_.edgeMargin;
     float right = 0, forward = 0;

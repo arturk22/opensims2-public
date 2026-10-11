@@ -7,9 +7,9 @@
 // a level, = and - held zoom, , and . held rotate, Control/plain/Shift 4-9
 // save/restore/jump to camera positions, Return centres on the selected Sim;
 // with the mouse as in the game (app/camera_input.hpp): hold the right button
-// and move away from where it went down to scroll, hold the middle button (or
-// Option + right) to rotate and tilt, the wheel zooms, the mouse at the
-// window's edge scrolls (--no-edge-scroll). --lighting <state> picks a lighting state from Lighting.txt
+// and move away from where it went down to scroll (offset x 0.25), hold the
+// middle button (or Option + right) to rotate and tilt, the wheel zooms, the
+// mouse at the window's edge scrolls (--no-edge-scroll). --lighting <state> picks a lighting state from Lighting.txt
 // (day, night, neighbourhood, ...); --lot <N001_Lot82 | file.package> shows a
 // lot's terrain, floors, walls, roofs, fences, water and objects (--walls
 // up | cutaway | down picks the wall mode, cutaway as seen from the starting view). --sim [body,hair,skin tone] shows
@@ -1051,6 +1051,9 @@ int cameraSlot(unsigned short key) {
         forward = std::clamp(forward + mf, -fast, fast);
     }
     _camera->pan(right, forward, dt);
+    // Right button: the anchor's offset x 0.25 as a move request, per 50 ms frame.
+    const auto [dragX, dragY] = _mouse.dragMove();
+    _camera->movePixels(dragX * float(dt) * 20.0f, dragY * float(dt) * 20.0f);
     _camera->zoomHeld(int(_held.count(kEquals)) - int(_held.count(kMinus)), dt);
     _camera->rotateHeld(int(_held.count(kPeriod)) - int(_held.count(kComma)), dt);
 }
@@ -1130,14 +1133,32 @@ int cameraSlot(unsigned short key) {
         return;
     }
     _rotating = (e.modifierFlags & NSEventModifierFlagOption) != 0;
-    if (!_rotating)
+    if (_rotating)
+        [self holdCursor:YES];
+    else
         _mouse.beginAnchor();
 }
 
 - (void)rightMouseUp:(NSEvent*)e {
     [self trackMouse:e];
     _mouse.endAnchor();
+    if (_rotating)
+        [self holdCursor:NO];
     _rotating = false;
+}
+
+// While rotating the cursor stays where it was clicked (the game warps it
+// back after each move: an endless drag); the deltas keep coming.
+- (void)holdCursor:(BOOL)hold {
+    CGAssociateMouseAndMouseCursorPosition(hold ? false : true);
+}
+
+- (void)otherMouseDown:(NSEvent*)e {
+    [self holdCursor:YES];
+}
+
+- (void)otherMouseUp:(NSEvent*)e {
+    [self holdCursor:NO];
 }
 
 // Mouse position in view points, origin top left (the pie menu's canvas).
