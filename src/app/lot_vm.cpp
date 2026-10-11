@@ -95,6 +95,48 @@ void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> an
     vm::startScriptedWalk(*vm_, sim, target, animation);
 }
 
+// Overlays the VM plays on a Sim (Animate Overlay, Reach/Put's grasp and
+// carry animations: "a2o-newspaper-carry" holds the arm up), each over the
+// bones it keys, above the base animation, in the VM's order. The carry
+// poses last as long as the Sim holds the object (Object::carryOverlays;
+// the trees' Animate Stop after the grab clears the overlays). They
+// (priority 5) would hold the arm over the animations Animate Sim
+// plays with the object in hand (priority 2: "a2o-newspaper-read-start"
+// moves both arms), which already hold it: they are left out while one
+// plays (inferred: the game's blending is not decoded).
+void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
+    constexpr int kOverlayPriority = 100;
+    const bool animating = o.animation.playing() || (o.route && !o.route->climb.animation.empty());
+    std::vector<std::string> want;
+    auto isCarry = [&](const std::string& name) {
+        return std::find(o.carryOverlays.begin(), o.carryOverlays.end(), name) != o.carryOverlays.end();
+    };
+    for (const auto& name : o.animation.overlays)
+        if (!isCarry(name))
+            want.push_back(name);
+    if (!animating)
+        want.insert(want.end(), o.carryOverlays.begin(), o.carryOverlays.end());
+    if (want == b.overlays)
+        return;
+    if (std::getenv("OS2_DEBUG_VM"))
+        std::fprintf(stderr, "tick %llu sim %d overlays: %zu -> %zu%s\n", (unsigned long long)vm_->ticks, b.id,
+                     b.overlays.size(), want.size(), want.empty() ? "" : (" " + want.back()).c_str());
+    for (size_t i = 0; i < b.overlays.size(); ++i)
+        b.actor->player.stop(at, 0.2f, kOverlayPriority + int(i));
+    b.overlays.clear();
+    for (size_t i = 0; i < want.size(); ++i) {
+        try {
+            const Animation& anim = b.actor->animation(index_, want[i]);
+            // Grasps play once (into the carry); carries hold their pose.
+            const bool loop = want[i].find("grasp") == std::string::npos;
+            b.actor->cue(at, anim, {.fade = 0.2f, .loop = loop, .priority = kOverlayPriority + int(i)});
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: Sim %d: overlay %s\n", b.id, e.what());
+        }
+        b.overlays.push_back(want[i]);
+    }
+}
+
 // After a tick: what each Sim should play, cued at that tick's time.
 void LotSimulation::sampleAll(double at) {
     if (onObjectAnimation)
@@ -113,6 +155,7 @@ void LotSimulation::sampleAll(double at) {
         if (!o)
             continue;
         b.motion.sample(*vm_, *o);
+        playOverlays(b, *o, at);
         const auto& s = b.motion.current();
         if (o->person && o->person->data[kCurrentOutfit] != b.outfit) {
             b.outfit = o->person->data[kCurrentOutfit];

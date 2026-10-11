@@ -67,6 +67,7 @@
 #include "lot_audio.hpp"
 #include "camera_input.hpp"
 #include "lot_vm.hpp"
+#include "vm_objects.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -106,7 +107,9 @@ struct PlacedObject {
     std::map<std::string, std::string> materials;
     std::array<float, 3> position;
     std::array<float, 4> rotation;
+    std::string definition; // the cObject's OBJD file name ("Newspaper_objt")
     int instance = -1; // renderer instance of its static model
+    bool contained = false; // saved in a slot (at (0, 0)): hidden until the VM places it
 };
 std::map<int16_t, PlacedObject> gPlacedObjects;
 // Skinned models posed every frame by their animation players.
@@ -212,9 +215,11 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
     };
     size_t placed = 0;
     for (const auto& o : lot.objects) {
-        if (o.model.empty() || o.model == "nullModel" || o.model == "noModel" || o.person ||
-            (o.position[0] == 0 && o.position[1] == 0))
+        if (o.model.empty() || o.model == "nullModel" || o.model == "noModel" || o.person)
             continue;
+        // Objects in a slot are saved at (0, 0): drawn only where the VM's
+        // containment puts them (app/vm_objects.hpp).
+        const bool contained = o.position[0] == 0 && o.position[1] == 0;
         std::string key = o.model;
         for (const auto& [subset, material] : o.materials)
             key += "|" + subset + "=" + material;
@@ -238,8 +243,16 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
         const auto& q = o.rotation;
         simd_float4x4 at = simd_matrix4x4(simd_quaternion(q[0], q[1], q[2], q[3]));
         at.columns[3] = simd_make_float4(o.position[0], o.position[1], o.position[2], 1);
+        if (contained)
+            at.columns[3] = simd_make_float4(0, 0, -1000, 1); // hidden
         const int instance = renderer.addInstance(it->second, at);
-        gPlacedObjects[int16_t(o.instance & 0xFFFF)] = {cresOf(o), o.materials, o.position, o.rotation, instance};
+        // Stale cObjects share IDs with live ones: the first (or one in the
+        // world) keeps the ID; app/vm_objects.cpp checks it against the VM.
+        const int16_t id = int16_t(o.instance & 0xFFFF);
+        if (!gPlacedObjects.count(id) || (gPlacedObjects[id].contained && !contained))
+            gPlacedObjects[id] = {cresOf(o), o.materials, o.position, o.rotation, o.definition, instance, contained};
+        if (contained)
+            continue;
         gPickBoxes.push_back({o.instance, bounds[key].first, bounds[key].second, at});
         ++placed;
     }
@@ -273,6 +286,8 @@ std::unique_ptr<os2::ResourceIndex> gIndex;
 
 // The lot's objects in the VM (--vm, --run-vm), driving the lot's Sims.
 std::unique_ptr<os2::LotSimulation> gSimulation;
+// The lot's objects drawn where the VM puts them (app/vm_objects.hpp).
+std::unique_ptr<os2::VmObjectView> gObjectView;
 struct LotSim {
     os2::SimActor* actor;
     int16_t id; // object ID (the cObject's instance)
@@ -331,6 +346,16 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         os2::DbpfPackage character(s.character);
         gSimulation->attach(*s.actor, s.id, os2::readCharacter(character, index), s.idle);
     }
+    gObjectView = std::make_unique<os2::VmObjectView>(renderer, index, *gSimulation);
+    for (const auto& [id, p] : gPlacedObjects) {
+        std::optional<os2::Xform> saved;
+        if (!p.contained)
+            saved = os2::Xform{os2::Quat{p.rotation[0], p.rotation[1], p.rotation[2], p.rotation[3]},
+                               {p.position[0], p.position[1], p.position[2]}};
+        gObjectView->addPlaced(id, p.definition, p.cres, p.instance, saved);
+    }
+    for (const auto& s : gLotSims)
+        gObjectView->addSim(s.id, s.actor);
     // A Sim that changes clothes gets the outfit of its character file.
     gSimulation->onOutfitChange = [&renderer, &index](int16_t id, os2::SimActor& actor, uint32_t category) {
         static std::vector<os2::SimPart> parts;
@@ -371,9 +396,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                 actor->heading = 2 * std::atan2(p.rotation[2], p.rotation[3]);
                 actor->model = renderer.addObject(actor->skin.model, index, true);
                 renderer.addInstance(actor->model, matrix_identity_float4x4);
-                simd_float4x4 hidden = matrix_identity_float4x4;
-                hidden.columns[3] = simd_make_float4(0, 0, -1000, 1);
-                renderer.setInstanceTransform(p.instance, hidden);
+                gObjectView->setActor(id, actor.get()); // hides the static instance
                 it = gObjectActors.emplace(id, actor.get()).first;
                 gActors.push_back(std::move(actor));
             } catch (const std::exception& e) {
@@ -569,11 +592,25 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
 }
 
 // Poses every actor at `seconds` and hands the vertices to the renderer.
+// The Sims first: objects in their hands follow their bones (gObjectView),
+// then the objects' actors at the places that gives.
 void poseActors(os2::Renderer& renderer, double seconds) {
     if (gSimulation)
         gSimulation->update(seconds);
+    auto isObject = [](const os2::SimActor* a) {
+        for (const auto& [id, o] : gObjectActors)
+            if (o == a)
+                return true;
+        return false;
+    };
+    for (auto& a : gActors)
+        if (!isObject(a.get()))
+            a->update(seconds);
+    if (gObjectView)
+        gObjectView->update();
     for (auto& a : gActors) {
-        a->update(seconds);
+        if (isObject(a.get()))
+            a->update(seconds);
         renderer.updateObject(a->model, a->posed);
     }
     placePlumbob(renderer, seconds);

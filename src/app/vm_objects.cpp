@@ -1,0 +1,323 @@
+#include "vm_objects.hpp"
+
+#include "lot_vm.hpp"
+
+#include "formats/model.hpp"
+#include "formats/rcol.hpp"
+#include "formats/resindex.hpp"
+#include "formats/sim_actor.hpp"
+#include "formats/skeleton.hpp"
+#include "render/renderer.hpp"
+#include "vm/sim_motion.hpp"
+#include "vm/vm.hpp"
+
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+namespace os2 {
+
+namespace {
+
+constexpr uint32_t kTypeCres = 0xE519C933, kTypeObjd = 0x4F424A44;
+constexpr uint16_t kModelBoneNames = 0x90; // STR# "Model - Bones" / "Model Bone Names"
+
+simd_float4x4 matrixOf(const Xform& x) {
+    simd_float4x4 m = simd_matrix4x4(simd_quaternion(x.q.x, x.q.y, x.q.z, x.q.w));
+    m.columns[3] = simd_make_float4(x.t[0], x.t[1], x.t[2], 1);
+    return m;
+}
+
+simd_float4x4 hiddenMatrix() {
+    simd_float4x4 m = matrix_identity_float4x4;
+    m.columns[3] = simd_make_float4(0, 0, -1000, 1);
+    return m;
+}
+
+Quat aboutZ(float radians) { return quatFromEulerXYZ(0, 0, radians); }
+
+bool validDirection(int d) { return d >= 0 && d < 8; }
+
+} // namespace
+
+VmObjectView::VmObjectView(Renderer& renderer, ResourceIndex& index, LotSimulation& simulation)
+    : renderer_(renderer), index_(index), sim_(simulation) {
+    // Objects the lot already had are drawn from its cObjects (addPlaced);
+    // only the ones the VM creates from now on are added by update().
+    for (const auto& [id, o] : simulation.machine().objects())
+        triedCreate_[id] = true;
+}
+
+VmObjectView::~VmObjectView() = default;
+
+bool VmObjectView::addPlaced(int16_t id, const std::string& definition, const std::string& cres, int instance,
+                             std::optional<Xform> saved) {
+    const vm::Object* o = sim_.machine().object(id);
+    std::string name = definition;
+    if (name.ends_with("_objt"))
+        name.resize(name.size() - 5);
+    if (!o || o->person || !o->definition || o->definition->fileName != name || drawn_.count(id))
+        return false;
+    // The parts of a multi-tile object other than its lead are saved at
+    // (0, 0) with the lead's model, which draws the whole object.
+    if (!saved && vm::multiTileGroup(*o) != id)
+        return false;
+    // Saved at (0, 0) and in no slot: out of the world (inventories,
+    // controllers), whatever position the VM's state gives it.
+    if (!saved && !o->data[vm::objdata::ContainerId])
+        return false;
+    Drawn d;
+    d.cres = cres;
+    d.instance = instance;
+    d.saved = saved;
+    d.base = {o->position.x, o->position.y, o->position.level, o->data[vm::objdata::Direction],
+              o->data[vm::objdata::ContainerId], o->data[vm::objdata::SlotNumber]};
+    drawn_[id] = std::move(d);
+    return true;
+}
+
+void VmObjectView::addSim(int16_t id, SimActor* actor) { sims_[id] = actor; }
+
+void VmObjectView::setActor(int16_t id, SimActor* actor) {
+    auto it = drawn_.find(id);
+    if (it == drawn_.end())
+        return;
+    it->second.actor = actor;
+    if (it->second.instance >= 0)
+        renderer_.setInstanceTransform(it->second.instance, hiddenMatrix());
+}
+
+std::string VmObjectView::cresOf(int16_t id) const {
+    auto it = drawn_.find(id);
+    return it == drawn_.end() ? std::string() : it->second.cres;
+}
+
+const Skeleton* VmObjectView::skeleton(const std::string& cres) {
+    auto it = skeletons_.find(cres);
+    if (it != skeletons_.end())
+        return it->second.get();
+    std::unique_ptr<Skeleton> s;
+    try {
+        if (auto loc = index_.findByName(cres + "_cres", kTypeCres)) {
+            const auto bytes = index_.read(*loc);
+            s = std::make_unique<Skeleton>(Skeleton::fromCres(Rcol(bytes)));
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: %s: %s\n", cres.c_str(), e.what());
+    }
+    return skeletons_.emplace(cres, std::move(s)).first->second.get();
+}
+
+std::string VmObjectView::cresFor(int16_t id) {
+    if (auto it = drawn_.find(id); it != drawn_.end())
+        return it->second.cres;
+    if (auto it = cres_.find(id); it != cres_.end())
+        return it->second;
+    std::string cres;
+    if (const vm::Object* o = sim_.machine().object(id); o && o->definition && !o->person) {
+        try {
+            cres = objectCresName(index_, Tgi{kTypeObjd, o->group, o->definitionInstance, 0});
+        } catch (const std::exception&) {
+        }
+    }
+    return cres_[id] = cres;
+}
+
+// The bone of containment slot `slot` of `container`: its SLOT's type 0
+// entries in order, each naming an entry of the object's STR# 0x90.
+std::string VmObjectView::slotBone(int16_t container, int slot) {
+    vm::VM& m = sim_.machine();
+    const vm::Object* c = m.object(container);
+    if (!c || !c->definition || slot < 0)
+        return {};
+    const Slots* slots = m.code().slots(c->group, c->definition->slotId());
+    const StringTable* names = m.code().strings(c->group, kModelBoneNames);
+    std::string bone;
+    if (slots && names) {
+        int k = 0;
+        for (const auto& s : slots->slots) {
+            if (s.type != 0)
+                continue;
+            if (k++ != slot)
+                continue;
+            const uint32_t i = s.ts2Extra[0];
+            if (i < names->count(lang::EnglishUS))
+                bone = names->get(i, lang::EnglishUS);
+            break;
+        }
+    }
+    if (const size_t comma = bone.find(','); comma != std::string::npos)
+        bone.resize(comma);
+    // Sims without a SLOT of their own still hold things in their hands.
+    if (bone.empty() && c->person && slot < 2)
+        bone = slot == 0 ? "r_hand_grip" : "l_hand_grip";
+    return bone;
+}
+
+std::optional<Xform> VmObjectView::placement(int16_t id) {
+    if (auto it = frame_.find(id); it != frame_.end())
+        return it->second;
+    return compute(id, 0);
+}
+
+std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
+    if (auto it = frame_.find(id); it != frame_.end())
+        return it->second;
+    std::optional<Xform> out;
+    vm::VM& m = sim_.machine();
+    const vm::Object* o = m.object(id);
+    if (!o || depth > 8)
+        return frame_[id] = out;
+    if (o->person) {
+        // A Sim: its actor's placement (where the renderer draws it).
+        if (auto it = sims_.find(id); it != sims_.end() && it->second)
+            out = it->second->placement();
+        return frame_[id] = out;
+    }
+    const int16_t containerId = o->data[vm::objdata::ContainerId];
+    const int dir = o->data[vm::objdata::Direction];
+    const auto drawn = drawn_.find(id);
+    // As long as the VM leaves an object where the lot saved it, it is drawn
+    // where its cObject says (the VM's positions are tile centres; some
+    // saved objects are out of the VM's world, multi-tile parts sit in their
+    // lead's slot, ...).
+    if (drawn != drawn_.end() && drawn->second.saved) {
+        // (Contained objects move with their container each tick: only the
+        // slot counts for them.)
+        const Baseline& b = drawn->second.base;
+        const bool same = containerId ? b.container == containerId && b.slot == o->data[vm::objdata::SlotNumber]
+                                      : !b.container && b.x == o->position.x && b.y == o->position.y &&
+                                            b.level == o->position.level && b.direction == dir;
+        if (same)
+            return frame_[id] = drawn->second.saved;
+    }
+    if (containerId && containerId != id) {
+        const int16_t slot = o->data[vm::objdata::SlotNumber];
+        const vm::Object* c = m.object(containerId);
+        if (!c)
+            return frame_[id] = out;
+        const std::string bone = slotBone(containerId, slot);
+        const Skeleton* own = skeleton(cresFor(id));
+        Xform attach; // the object's node that goes to the bone (its origin by default)
+        if (own && !bone.empty())
+            if (const int b = own->find(bone); b >= 0)
+                attach = own->world(own->restPose())[size_t(b)];
+        if (c->person) {
+            auto it = sims_.find(containerId);
+            if (it == sims_.end() || !it->second)
+                return frame_[id] = out;
+            const SimActor& a = *it->second;
+            const int b = bone.empty() ? -1 : a.skin.skeleton.find(bone);
+            if (b < 0 || size_t(b) >= a.bones.size())
+                out = a.placement(); // no bone: at the Sim's feet
+            else
+                out = a.bones[size_t(b)].then(attach.inverse());
+        } else {
+            const auto at = compute(containerId, depth + 1);
+            if (!at)
+                return frame_[id] = out;
+            Xform node;
+            if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(containerId)))
+                if (const int b = cs->find(bone); b >= 0)
+                    node = cs->world(cs->restPose())[size_t(b)];
+            out = at->then(node).then(attach.inverse());
+        }
+        return frame_[id] = out;
+    }
+    if (!o->position.inWorld())
+        return frame_[id] = out;
+    const float z = sim_.floorHeight(o->position.level, o->position.x, o->position.y);
+    if (drawn != drawn_.end() && drawn->second.saved) {
+        const Drawn& d = drawn->second;
+        const Baseline& b = d.base;
+        if (b.container == 0 && b.x >= 0) {
+            // Moved from where it was saved: the same offset from its VM
+            // position (multi-tile objects, wall objects), turned by the change of direction.
+            const float bz = sim_.floorHeight(b.level, b.x, b.y);
+            const float turn = validDirection(dir) && validDirection(b.direction)
+                                   ? vm::headingOfDirection(dir) - vm::headingOfDirection(b.direction)
+                                   : 0.0f;
+            const Xform r{aboutZ(turn), {0, 0, 0}};
+            const Vec3 off = r.rotate({d.saved->t[0] - b.x, d.saved->t[1] - b.y, d.saved->t[2] - bz});
+            out = Xform{r.q * d.saved->q, {o->position.x + off[0], o->position.y + off[1], z + off[2]}};
+            return frame_[id] = out;
+        }
+    }
+    out = Xform{aboutZ(validDirection(dir) ? vm::headingOfDirection(dir) : 0.0f), {o->position.x, o->position.y, z}};
+    return frame_[id] = out;
+}
+
+void VmObjectView::place(Drawn& d, const std::optional<Xform>& at) {
+    if (d.actor) {
+        if (at)
+            d.actor->transform = *at;
+        else
+            d.actor->transform = Xform{{}, {0, 0, -1000}};
+        return;
+    }
+    if (d.instance < 0)
+        return;
+    if (!at) {
+        if (!d.hidden)
+            renderer_.setInstanceTransform(d.instance, hiddenMatrix());
+        d.hidden = true;
+        return;
+    }
+    renderer_.setInstanceTransform(d.instance, matrixOf(*at));
+    d.hidden = false;
+}
+
+// An object the VM created (or one the lot did not draw) that has a model:
+// a static instance of it, placed from now on.
+void VmObjectView::addCreated(int16_t id) {
+    triedCreate_[id] = true;
+    const std::string cres = cresFor(id);
+    if (cres.empty() || cres == "nullModel" || cres == "noModel")
+        return;
+    auto it = models_.find(cres);
+    if (it == models_.end()) {
+        int model = -1;
+        try {
+            model = renderer_.addObject(loadObjectModel(index_, cres), index_);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: object %d (%s): %s\n", id, cres.c_str(), e.what());
+        }
+        it = models_.emplace(cres, model).first;
+    }
+    if (it->second < 0)
+        return;
+    Drawn d;
+    d.cres = cres;
+    d.instance = renderer_.addInstance(it->second, hiddenMatrix());
+    d.hidden = true;
+    d.base.x = -2; // never at a saved place
+    drawn_[id] = std::move(d);
+    if (std::getenv("OS2_DEBUG_VM"))
+        std::fprintf(stderr, "opensims2: drawing created object %d (%s)\n", id, cres.c_str());
+}
+
+void VmObjectView::update() {
+    frame_.clear();
+    vm::VM& m = sim_.machine();
+    for (const auto& [id, o] : m.objects())
+        if (!o.person && !drawn_.count(id) && !triedCreate_.count(id) && vm::multiTileGroup(o) == id &&
+            (o.position.inWorld() || o.data[vm::objdata::ContainerId]))
+            addCreated(id);
+    static const bool debug = std::getenv("OS2_DEBUG_PLACE") != nullptr;
+    for (auto& [id, d] : drawn_) {
+        const auto at = compute(id, 0);
+        if (debug) {
+            const bool moved = at && (!d.saved || std::fabs(at->t[0] - d.saved->t[0]) + std::fabs(at->t[1] - d.saved->t[1]) +
+                                                          std::fabs(at->t[2] - d.saved->t[2]) > 0.01f);
+            if (moved != d.debugMoved || (!at) != d.hidden)
+                std::fprintf(stderr, "opensims2: tick %llu object %d (%s) %s (%.2f, %.2f, %.2f)\n",
+                             (unsigned long long)m.ticks, id, d.cres.c_str(),
+                             !at ? "hidden" : moved ? "placed by the VM at" : "back at its saved place",
+                             at ? at->t[0] : 0, at ? at->t[1] : 0, at ? at->t[2] : 0);
+            d.debugMoved = moved;
+        }
+        place(d, at);
+    }
+}
+
+} // namespace os2

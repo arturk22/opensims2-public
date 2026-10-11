@@ -32,6 +32,8 @@ const Animation& SimActor::animation(ResourceIndex& index, const std::string& na
 }
 
 Xform SimActor::placement() const {
+    if (transform)
+        return *transform;
     return {quatFromEulerXYZ(0, 0, heading), position};
 }
 
@@ -52,11 +54,14 @@ void SimActor::update(double now) {
         position[0] += -std::sin(heading) * d;
         position[1] += std::cos(heading) * d;
     }
-    std::vector<Xform> world = skin.skeleton.world(player.pose(now));
+    std::vector<Xform> local = player.pose(now);
+    if (adjust)
+        adjust(local, now);
+    bones = skin.skeleton.world(local);
     const Xform at = placement();
-    for (auto& w : world)
+    for (auto& w : bones)
         w = at.then(w);
-    skin.pose(world, posed, player.morphs(now));
+    skin.pose(bones, posed, player.morphs(now));
 }
 
 } // namespace os2

@@ -68,6 +68,9 @@ public:
     // there is a tick to interpolate towards).
     void update(double seconds);
     uint64_t ticks() const { return vm_->ticks; }
+    // Height of the floor (or terrain) of VM level `level` (1 = the lot's
+    // ground level) at (x, y).
+    float floorHeight(int level, float x, float y) const;
 
 private:
     struct Bound {
@@ -80,9 +83,10 @@ private:
         uint32_t climbSerial = 0;
         int16_t outfit = 0; // person data 8 the actor is dressed for
         float zOffset = 0; // the cObject's height over the floor the VM's level gives
+        std::vector<std::string> overlays; // playing over the base animation
     };
+    void playOverlays(Bound& b, const vm::Object& o, double at);
     void sampleAll(double at);
-    float floorHeight(int level, float x, float y) const;
 
     ResourceIndex& index_;
     Lot lot_;

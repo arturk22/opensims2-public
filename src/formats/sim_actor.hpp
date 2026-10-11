@@ -3,7 +3,9 @@
 #include "anim_player.hpp"
 #include "skinning.hpp"
 
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,14 @@ struct SimActor {
     bool rootMotion = false; // move along the heading by the locomotion velocity
     int model = -1;          // renderer model id
     ObjectModel posed;
+    // When set, the placement instead of position and heading (an object
+    // held in a Sim's hand or put in another object's slot).
+    std::optional<Xform> transform;
+    // Called on the animated local bone transforms before they are posed
+    // (procedural changes such as turning the head to look at something).
+    std::function<void(std::vector<Xform>& local, double now)> adjust;
+    // World transforms of the skeleton's bones after the last update().
+    std::vector<Xform> bones;
 
     explicit SimActor(SkinnedModel s) : skin(std::move(s)) { player.setSkeleton(&skin.skeleton); }
     SimActor(const SimActor&) = delete;
