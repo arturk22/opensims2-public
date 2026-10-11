@@ -160,7 +160,7 @@ MeshGroup terrainMesh(const Lot& lot, const LotLightMapLayout& lm, Keep&& keep) 
 
 // Quarter-tile triangles (west, north, east, south) of each floor tile, with
 // the tile's own texture coordinates, one mesh per material.
-void addFloors(const Lot& lot, const PatternCatalog& patterns, const LotLightMapLayout& lm,
+void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout& lm,
                std::map<std::string, MeshBuilder>& out, std::vector<std::string>& warnings) {
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.floorPatterns) {
@@ -192,6 +192,9 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, const LotLightMap
                     if (it == materials.end() || it->second.empty())
                         continue;
                     MeshBuilder& b = out["floor:" + it->second];
+                    const size_t at = (size_t(level - lot.minLevel) * lot.width + x) * lot.height + y;
+                    if (at < lm.floorMaterials.size())
+                        lm.floorMaterials[at][q] = lm.materialIndex(it->second);
                     const Vec3f& a = edges[q][1];
                     const Vec3f& e = edges[q][0];
                     const Vec3f n = normalOf(a, e, c);
@@ -353,6 +356,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 face.top = std::max(za1, zb1);
                 face.level = level;
                 face.room = roomBeside(lot, level, (ax + bx) / 2, (ay + by) / 2, n[0], n[1]);
+                face.material = lm.materialIndex(it->second);
                 const size_t cell = lm.addWall(face);
                 auto lmAt = [&](const Vec3f& p) {
                     return lm.wallTexel(cell, (p[0] - face.origin[0]) * dx + (p[1] - face.origin[1]) * dy, p[2]);
@@ -763,6 +767,44 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
             continue;
         }
         model.materials.emplace(part.material, MaterialDefinition::parse(block->body));
+    }
+
+    // The mean colour of each floor and wall material's texture, for the
+    // room irradiance (GatherRoomLighting mixes it in by roomSaturation).
+    for (size_t i = 1; i < lm.materialNames.size(); ++i) {
+        auto m = model.materials.find(lm.materialNames[i]);
+        if (m == model.materials.end())
+            continue;
+        const std::string tex = m->second.property("stdMatBaseTextureName");
+        if (tex.empty())
+            continue;
+        try {
+            auto loc = index.findByName(tex + "_txtr", kTypeTxtr);
+            if (!loc)
+                continue;
+            const auto bytes = index.read(*loc);
+            const TextureLevels t = loadTextureLevels(bytes, &index);
+            if (t.levels.empty())
+                continue;
+            // The smallest level at least 8 texels wide: its mean is the texture's.
+            size_t pick = 0;
+            for (size_t l = 0; l < t.levels.size(); ++l)
+                if (t.levels[l].width >= 8 && t.levels[l].height >= 8 &&
+                    t.levels[l].width * t.levels[l].height < t.levels[pick].width * t.levels[pick].height)
+                    pick = l;
+            const auto& lv = t.levels[pick];
+            const RgbaImage img = decodeTexture(t.format, lv.width, lv.height, lv.data);
+            double sum[3] = {0, 0, 0};
+            const size_t n = size_t(img.width) * img.height;
+            for (size_t p = 0; p < n; ++p)
+                for (size_t c = 0; c < 3; ++c)
+                    sum[c] += img.pixels[p * 4 + c];
+            if (n)
+                lm.materialColors[i] = {float(sum[0] / (255.0 * double(n))), float(sum[1] / (255.0 * double(n))),
+                                        float(sum[2] / (255.0 * double(n)))};
+        } catch (const std::exception& e) {
+            model.warnings.push_back("mean colour of " + tex + ": " + e.what());
+        }
     }
 
     // Floor materials map their texture across floorMaterialScaleU x V tiles

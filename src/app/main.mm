@@ -631,7 +631,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     if (!gLighting) {
         const os2::LightingConfig lighting = os2::loadLightingConfig(gameDir() / kLightingConfig);
         if (const auto* state = lighting.state(argument(@"--lighting").value_or("day"))) {
-            const os2::RgbaImage lm = os2::computeLotLightMap(*gLightMapLayout, *state, {}).image;
+            const os2::RgbaImage lm = os2::computeLotLightMap(*gLightMapLayout, *state, {}, os2::LightMapGlobals::from(lighting)).image;
             renderer.setLightMap(0, lm);
             renderer.setLightMap(1, lm);
         }

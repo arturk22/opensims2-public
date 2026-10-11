@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <string>
 
 namespace os2 {
@@ -39,6 +40,10 @@ void LotLightMapLayout::init(const Lot& lot) {
     minLevel = lot.minLevel, levels = lot.levelCount;
     rooms = lot.rooms;
     elevations = lot.elevations;
+    floors = lot.floors;
+    floorMaterials.assign(floors.size(), {});
+    materialNames = {""};
+    materialColors = {{1, 1, 1}};
     width = std::max<uint32_t>(256, lotWidth * kTexelsPerTile);
     height = uint32_t(levels) * pageHeight();
     shelfX_ = 0, shelfY_ = height, shelfH_ = 0;
@@ -121,8 +126,92 @@ float LotLightMapLayout::elevationAt(int level, float x, float y) const {
     return a * (1 - fy) + b * fy;
 }
 
+uint16_t LotLightMapLayout::materialIndex(const std::string& name) {
+    if (name.empty())
+        return 0;
+    for (size_t i = 1; i < materialNames.size(); ++i)
+        if (materialNames[i] == name)
+            return uint16_t(i);
+    materialNames.push_back(name);
+    materialColors.push_back({1, 1, 1});
+    return uint16_t(materialNames.size() - 1);
+}
+
+namespace {
+
+// Index of the quarter tile under (x, y) on a level in the [level][x][y]
+// arrays, and which quarter (west, north, east, south), or -1.
+long quarterAt(const LotLightMapLayout& l, int level, float x, float y, size_t& q) {
+    if (level < l.minLevel || level >= l.minLevel + l.levels || x < 0 || y < 0 || x >= float(l.lotWidth) ||
+        y >= float(l.lotHeight))
+        return -1;
+    const uint32_t ix = uint32_t(x), iy = uint32_t(y);
+    const float dx = x - float(ix) - 0.5f, dy = y - float(iy) - 0.5f;
+    q = std::abs(dx) > std::abs(dy) ? (dx < 0 ? 0 : 2) : (dy > 0 ? 1 : 3);
+    return long((size_t(level - l.minLevel) * l.lotWidth + ix) * l.lotHeight + iy);
+}
+
+} // namespace
+
+std::array<float, 3> LotLightMapLayout::floorColorAt(int level, float x, float y) const {
+    size_t q = 0;
+    const long at = quarterAt(*this, level, x, y, q);
+    if (at < 0 || size_t(at) >= floorMaterials.size())
+        return {1, 1, 1};
+    const uint16_t m = floorMaterials[size_t(at)][q];
+    return m < materialColors.size() ? materialColors[m] : std::array<float, 3>{1, 1, 1};
+}
+
+bool LotLightMapLayout::hasFloorAt(int level, float x, float y) const {
+    size_t q = 0;
+    const long at = quarterAt(*this, level, x, y, q);
+    return at >= 0 && size_t(at) < floors.size() && floors[size_t(at)][q] != 0;
+}
+
+LightMapGlobals LightMapGlobals::from(const LightingConfig& config) {
+    LightMapGlobals g;
+    auto numbers = [&](const char* name) {
+        std::vector<float> out;
+        auto it = config.globals.find(lower(name));
+        if (it == config.globals.end())
+            return out;
+        const std::string& v = it->second;
+        const char* p = v.c_str();
+        while (*p) {
+            char* end = nullptr;
+            const float f = std::strtof(p, &end);
+            if (end != p) {
+                out.push_back(f);
+                p = end;
+            } else {
+                ++p;
+            }
+        }
+        return out;
+    };
+    auto one = [&](const char* name, float& v) {
+        if (const auto n = numbers(name); !n.empty())
+            v = n[0];
+    };
+    std::array<float, 3> color{1, 1, 1};
+    if (const auto n = numbers("outsideDiffusionAmbientColor"); n.size() >= 3)
+        color = {n[0], n[1], n[2]};
+    float floor = 0.25f, wall = 0.25f;
+    one("outsideFloorAmbient", floor);
+    one("outsideWallAmbient", wall);
+    for (size_t c = 0; c < 3; ++c)
+        g.outsideAmbient[c] = color[c] * floor, g.outsideWallAmbient[c] = color[c] * wall;
+    one("terrainStrength", g.terrainStrength);
+    one("roomSaturation", g.roomSaturation);
+    one("roomCeilingStrength", g.roomCeilingStrength);
+    one("roomPortalStrength", g.roomPortalStrength);
+    one("brightWallFloorContribution", g.brightWallFloor);
+    one("darkWallFloorContribution", g.darkWallFloor);
+    return g;
+}
+
 LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingState& state,
-                               const std::vector<LightMapLight>& lights) {
+                               const std::vector<LightMapLight>& lights, const LightMapGlobals& globals) {
     LotLightMap result;
     RgbaImage& out = result.image;
     out.width = layout.width, out.height = std::max<uint32_t>(layout.height, 1);
@@ -130,35 +219,46 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
     for (size_t i = 3; i < out.pixels.size(); i += 4)
         out.pixels[i] = 255;
 
-    // Outdoors: half the state's outdoor light (docs/lighting-mac.md 3), no simFill (inferred).
+    // The state's direct light for a normal, FindIllumFromLightingState
+    // (docs/lighting-mac.md 5.3): the first four lights, sun, sky, fill1, fill2.
     const V3 sky = V3{state.skyColor[0], state.skyColor[1], state.skyColor[2]} * state.skyStrength;
     struct Dir {
-        V3 l, color;
+        V3 d, color;
+        float intensity;
     };
-    std::vector<Dir> sun;
+    std::vector<Dir> direct;
+    std::optional<Dir> sun;
     for (const auto& l : state.lights) {
-        if (lower(l.name).starts_with("simfill"))
+        const std::string name = lower(l.name);
+        if (name != "sun" && name != "sky" && name != "fill1" && name != "fill2")
             continue;
         V3 d{l.direction[0], l.direction[1], l.direction[2]};
         const float len = std::sqrt(dot(d, d));
         if (len == 0)
             continue;
-        sun.push_back({d * (1 / len), vmax(V3{l.color[0], l.color[1], l.color[2]} - sky, {0, 0, 0}) * l.intensity});
+        direct.push_back({d * (1 / len), V3{l.color[0], l.color[1], l.color[2]}, l.intensity});
+        if (name == "sun")
+            sun = direct.back();
     }
-    auto outdoorLight = [&](V3 n) {
-        V3 e = sky;
-        for (const auto& d : sun)
-            e = e + d.color * std::max(dot(n, d.l), 0.0f);
-        return e * 0.5f;
+    auto illum = [&](V3 n) {
+        float w = 0;
+        V3 e{0, 0, 0};
+        for (const auto& d : direct) {
+            const float wi = std::max(dot(n, d.d), 0.0f) * d.intensity;
+            e = e + d.color * wi;
+            w += wi;
+        }
+        return sky * (1 - w) + e;
     };
+    const float directScale = globals.terrainStrength * globals.floorLightMapScale;
+    const V3 outsideAmbient{globals.outsideAmbient[0], globals.outsideAmbient[1], globals.outsideAmbient[2]};
+    const V3 outsideWallAmbient{globals.outsideWallAmbient[0], globals.outsideWallAmbient[1], globals.outsideWallAmbient[2]};
 
     auto modifier = [&](const char* name) {
         auto it = state.modifiers.find(name);
         return it == state.modifiers.end() ? LightingState::Modifier{} : it->second;
     };
-    const auto insideObjects = modifier("insideobjects"), outsideObjects = modifier("outsideobjects"),
-               insidePortals = modifier("insideportals");
-    const V3 portalTint = sky * 2.0f;
+    const auto insideObjects = modifier("insideobjects"), outsideObjects = modifier("outsideobjects");
     V3 insideColor{1, 1, 1};
     if (auto it = state.diffParams.find("insideambientcolor"); it != state.diffParams.end() && it->second.size() >= 3)
         insideColor = {it->second[0], it->second[1], it->second[2]};
@@ -176,12 +276,13 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
     std::vector<uint8_t> outside(grid.size());
     auto sampleAt = [&](int li, float x, float y) -> long {
         const long i = long(std::floor(x * 2)), j = long(std::floor(y * 2));
-        if (i < 0 || j < 0 || i >= long(gw) || j >= long(gh))
+        if (li < 0 || li >= levels || i < 0 || j < 0 || i >= long(gw) || j >= long(gh))
             return -1;
         return long(size_t(li) * perLevel + size_t(j) * gw + size_t(i));
     };
-    const V3 up{0, 0, 1};
-    const V3 outdoorUp = outdoorLight(up);
+    auto samplePos = [&](size_t at) {
+        return std::array<float, 2>{(float(at % perLevel % gw) + 0.5f) / 2, (float(at % perLevel / gw) + 0.5f) / 2};
+    };
     for (int li = 0; li < levels; ++li) {
         const int level = layout.minLevel + li;
         for (uint32_t j = 0; j < gh; ++j)
@@ -189,7 +290,7 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
                 const size_t at = size_t(li) * perLevel + size_t(j) * gw + i;
                 room[at] = layout.roomAt(level, (float(i) + 0.5f) / 2, (float(j) + 0.5f) / 2);
                 outside[at] = layout.outdoor(level, room[at]);
-                grid[at] = outside[at] ? outdoorUp : insideFloor;
+                grid[at] = outside[at] ? outsideAmbient : insideFloor;
             }
     }
     auto connected = [&](size_t a, size_t b) { return outside[a] ? outside[b] != 0 : room[a] == room[b]; };
@@ -202,100 +303,221 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         int level = 0, li = 0;
         std::vector<size_t> seeds;
         bool outdoor = false;
-        bool portal = false;
+        bool portal = false; // directional (diffusionSourceIsDirectional): away from its wall
     };
-    std::vector<Source> sources;
-    for (const auto& l : lights) {
-        // The level whose floor the light is above (the objects' own level
-        // numbers do not always agree with their height).
+    // The level whose floor a light is above (the objects' own level numbers
+    // do not always agree with their height).
+    auto levelOf = [&](const LightMapLight& l) {
         int li = std::clamp(l.level - layout.minLevel, 0, std::max(levels - 1, 0));
         for (int c = 0; c < levels; ++c)
             if (layout.elevationAt(layout.minLevel + c, l.position[0], l.position[1]) <= l.position[2] - 0.05f)
                 li = c;
-        if (li < 0 || li >= levels)
+        return li;
+    };
+    // Outdoors, light above a level without floor falls to the floor or
+    // terrain below (sources on upper levels seed the grids below them where
+    // the floor lets light through; the inter-floor falloff is taken as 0).
+    auto settle = [&](int& li, size_t& at) {
+        const auto p = samplePos(at);
+        while (li > 0 && outside[at] && !layout.hasFloorAt(layout.minLevel + li, p[0], p[1])) {
+            const long below = sampleAt(li - 1, p[0], p[1]);
+            if (below < 0 || !outside[size_t(below)])
+                break;
+            --li, at = size_t(below);
+        }
+    };
+    std::vector<Source> sources;
+    for (const auto& l : lights) {
+        if (l.portal)
             continue;
+        int li = levelOf(l);
         Source s;
         s.position = l.position;
         s.level = layout.minLevel + li, s.li = li;
         s.floorScale = l.floorScale, s.wallScale = l.wallScale;
-        s.portal = l.portal;
-        if (l.portal) {
-            for (const auto& o : std::array<std::array<float, 2>, 4>{{{0.35f, 0}, {-0.35f, 0}, {0, 0.35f}, {0, -0.35f}}}) {
-                const long at = sampleAt(li, l.position[0] + o[0], l.position[1] + o[1]);
-                if (at < 0 || outside[size_t(at)])
-                    continue;
-                if (std::none_of(s.seeds.begin(), s.seeds.end(), [&](size_t q) { return room[q] == room[size_t(at)]; }))
-                    s.seeds.push_back(size_t(at));
-            }
-        } else {
-            const long at = sampleAt(li, l.position[0], l.position[1]);
-            if (at >= 0) {
-                s.seeds.push_back(size_t(at));
-                s.outdoor = outside[size_t(at)];
-            }
-        }
-        const auto& mod = l.portal ? insidePortals : s.outdoor ? outsideObjects : insideObjects;
-        s.color = V3{l.color[0], l.color[1], l.color[2]} * mod.diffusion;
-        if (l.portal)
-            s.color = s.color * portalTint;
-        s.falloff = std::max(0.0f, l.falloff * mod.diffusionFalloff);
-        if (s.seeds.empty() || luminance(s.color) <= 1e-3f)
+        const long found = sampleAt(li, l.position[0], l.position[1]);
+        if (found < 0)
             continue;
-        sources.push_back(std::move(s));
+        size_t at = size_t(found);
+        settle(li, at);
+        s.level = layout.minLevel + li, s.li = li;
+        s.seeds.push_back(at);
+        s.outdoor = outside[at];
+        const auto& mod = s.outdoor ? outsideObjects : insideObjects;
+        s.color = V3{l.color[0], l.color[1], l.color[2]} * mod.diffusion;
+        s.falloff = std::max(0.0f, l.falloff * mod.diffusionFalloff);
+        if (luminance(s.color) > 1e-3f)
+            sources.push_back(std::move(s));
     }
-    std::stable_sort(sources.begin(), sources.end(), [](const Source& a, const Source& b) { return a.falloff > b.falloff; });
-    if (std::getenv("OS2_DEBUG_LIGHTMAP"))
-        for (const auto& src : sources)
-            std::fprintf(stderr, "lightmap source li %d seeds %zu room %d out %d colour %.2f %.2f %.2f falloff %.2f\n", src.li,
-                         src.seeds.size(), int(room[src.seeds[0]]), int(src.outdoor), src.color[0], src.color[1], src.color[2], src.falloff);
 
     // Seed and propagate, sources of equal falloff together.
     static const int kDx[8] = {0, -1, -1, -1, 0, 1, 1, 1}, kDy[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-    for (int li = 0; li < levels; ++li) {
-        for (size_t first = 0; first < sources.size();) {
-            size_t last = first;
-            while (last < sources.size() && std::abs(sources[last].falloff - sources[first].falloff) < 0.01f)
-                ++last;
-            bool any = false;
-            for (size_t si = first; si < last; ++si) {
-                const Source& s = sources[si];
-                if (s.li != li)
+    auto diffuse = [&](std::vector<const Source*> batch) {
+        std::stable_sort(batch.begin(), batch.end(), [](const Source* a, const Source* b) { return a->falloff > b->falloff; });
+        for (int li = 0; li < levels; ++li) {
+            for (size_t first = 0; first < batch.size();) {
+                size_t last = first;
+                while (last < batch.size() && std::abs(batch[last]->falloff - batch[first]->falloff) < 0.01f)
+                    ++last;
+                bool any = false;
+                for (size_t si = first; si < last; ++si) {
+                    const Source& s = *batch[si];
+                    if (s.li != li)
+                        continue;
+                    for (size_t q : s.seeds) {
+                        grid[q] = vmax(grid[q], s.color * s.floorScale);
+                        any = true;
+                    }
+                }
+                const float k = batch[first]->falloff * floorThreshold;
+                for (int pass = 0; any && pass < 50; ++pass) {
+                    bool changed = false;
+                    const bool flipX = pass & 1, flipY = pass & 2;
+                    for (uint32_t jj = 0; jj < gh; ++jj)
+                        for (uint32_t ii = 0; ii < gw; ++ii) {
+                            const uint32_t i = flipX ? gw - 1 - ii : ii, j = flipY ? gh - 1 - jj : jj;
+                            const size_t at = size_t(li) * perLevel + size_t(j) * gw + i;
+                            V3& c = grid[at];
+                            for (int d = 0; d < 8; ++d) {
+                                const long ni = long(i) + kDx[d], nj = long(j) + kDy[d];
+                                if (ni < 0 || nj < 0 || ni >= long(gw) || nj >= long(gh))
+                                    continue;
+                                const size_t nb = size_t(li) * perLevel + size_t(nj) * gw + size_t(ni);
+                                if (!connected(at, nb))
+                                    continue;
+                                const float kk = (d & 1) ? k * 1.4f : k;
+                                for (size_t ch = 0; ch < 3; ++ch)
+                                    if (grid[nb][ch] - c[ch] > kk * c[ch] + 1e-4f) {
+                                        c[ch] = grid[nb][ch] / (1 + kk) + 0.01f;
+                                        changed = true;
+                                    }
+                            }
+                        }
+                    if (!changed)
+                        break;
+                }
+                first = last;
+            }
+        }
+    };
+    {
+        std::vector<const Source*> batch;
+        for (const auto& s : sources)
+            batch.push_back(&s);
+        diffuse(batch);
+    }
+
+    // What the light map shows at a sample: outdoors, the diffusion less the
+    // outside ambient plus the state's direct light for `n`.
+    auto shown = [&](size_t at, V3 n) {
+        if (!outside[at])
+            return grid[at];
+        return vmax(grid[at] - outsideAmbient, {0, 0, 0}) + illum(n) * directScale;
+    };
+
+    // Portals (windows and doors): one per side, shining into the room across
+    // (FindPortalLightValues, docs/lighting-mac.md 5.4), after the lamps.
+    struct Portal {
+        size_t from = 0, to = 0; // the samples it shines from and into
+        uint16_t room = 0;    // and its room
+        bool toOutside = false;
+        V3 dir{};             // the way the light travels
+        V3 color{};           // direct x f + spill x f_spill (room irradiance)
+        int level = 0;
+    };
+    std::vector<Portal> portals;
+    const auto insidePortals = modifier("insideportals"), insidePortalSpills = modifier("insideportalspills"),
+               outsidePortals = modifier("outsideportals"), outsidePortalSpills = modifier("outsideportalspills");
+    const size_t lampSources = sources.size();
+    for (const auto& l : lights) {
+        if (!l.portal)
+            continue;
+        const int li = levelOf(l);
+        // The wall it sits in: the nearest pair of neighbouring samples
+        // (along x or y, within a tile) that light does not pass between.
+        long a = -1, b = -1;
+        int axis = -1;
+        float best = 1e9f;
+        for (int ax = 0; ax < 2; ++ax)
+            for (float t = -1.25f; t <= 0.76f; t += 0.5f) {
+                const float x0 = l.position[0] + (ax == 0 ? t : 0), y0 = l.position[1] + (ax == 1 ? t : 0);
+                const long sa = sampleAt(li, x0, y0), sb = sampleAt(li, x0 + (ax == 0 ? 0.5f : 0), y0 + (ax == 1 ? 0.5f : 0));
+                if (sa < 0 || sb < 0 || sa == sb || connected(size_t(sa), size_t(sb)))
                     continue;
-                for (size_t q : s.seeds) {
-                    grid[q] = vmax(grid[q], s.color * s.floorScale);
-                    any = true;
+                if (std::abs(t + 0.25f) < best)
+                    best = std::abs(t + 0.25f), a = sa, b = sb, axis = ax;
+            }
+        if (std::getenv("OS2_DEBUG_LIGHTMAP"))
+            std::fprintf(stderr, "portal light at (%.2f %.2f %.2f) li %d axis %d rooms %d %d\n", l.position[0], l.position[1],
+                         l.position[2], li, axis, a < 0 ? -1 : int(room[size_t(a)]), b < 0 ? -1 : int(room[size_t(b)]));
+        if (axis < 0)
+            continue;
+        {
+            for (int side = 0; side < 2; ++side) {
+                const size_t from = size_t(side ? b : a), to = size_t(side ? a : b);
+                // Each window and door has a light per side: one portal per direction.
+                if (std::any_of(portals.begin(), portals.end(), [&](const Portal& p) { return p.from == from && p.to == to; }))
+                    continue;
+                const float sgn = side ? -1.0f : 1.0f;
+                const V3 dir{axis == 0 ? sgn : 0, axis == 1 ? sgn : 0, 0};
+                const V3 outward = dir * -1.0f; // the side the light comes from
+                const V3 L = shown(from, outward);
+                V3 dl{0, 0, 0}, spill{0, 0, 0};
+                float f = 1, fs = 0;
+                const bool hasSky = state.skyStrength > 0;
+                if (outside[from] && !outside[to]) {
+                    if (!hasSky || !sun) {
+                        dl = illum(outward);
+                    } else {
+                        f = std::max(0.0f, dot(sun->d, outward));
+                        dl = sun->color * sun->intensity;
+                        spill = sky, fs = 1;
+                    }
+                    dl = dl + L, spill = spill + L * 0.5f;
+                    fs = 1;
+                } else {
+                    dl = L * 0.5f;
+                    if (hasSky)
+                        spill = dl, fs = 1;
+                }
+                const bool toOut = outside[to] != 0;
+                const auto& mod = toOut ? outsidePortals : insidePortals;
+                const auto& smod = toOut ? outsidePortalSpills : insidePortalSpills;
+                Portal p;
+                p.from = from, p.to = to, p.room = room[to], p.toOutside = toOut, p.dir = dir, p.level = layout.minLevel + li;
+                p.color = dl * f + spill * fs;
+                portals.push_back(p);
+                const V3 lc{l.color[0], l.color[1], l.color[2]};
+                int seedLevel = li;
+                size_t seed = to;
+                settle(seedLevel, seed);
+                for (int part = 0; part < 2; ++part) {
+                    Source s;
+                    s.position = l.position;
+                    s.level = layout.minLevel + seedLevel, s.li = seedLevel;
+                    s.floorScale = l.floorScale, s.wallScale = l.wallScale;
+                    s.seeds.push_back(seed);
+                    s.outdoor = toOut;
+                    s.portal = true;
+                    const auto& m = part ? smod : mod;
+                    s.color = lc * (part ? spill * fs : dl * f) * m.diffusion;
+                    s.falloff = std::max(0.0f, l.falloff * m.diffusionFalloff);
+                    if (luminance(s.color) > 1e-3f)
+                        sources.push_back(std::move(s));
                 }
             }
-            const float k = sources[first].falloff * floorThreshold;
-            for (int pass = 0; any && pass < 50; ++pass) {
-                bool changed = false;
-                const bool flipX = pass & 1, flipY = pass & 2;
-                for (uint32_t jj = 0; jj < gh; ++jj)
-                    for (uint32_t ii = 0; ii < gw; ++ii) {
-                        const uint32_t i = flipX ? gw - 1 - ii : ii, j = flipY ? gh - 1 - jj : jj;
-                        const size_t at = size_t(li) * perLevel + size_t(j) * gw + i;
-                        V3& c = grid[at];
-                        for (int d = 0; d < 8; ++d) {
-                            const long ni = long(i) + kDx[d], nj = long(j) + kDy[d];
-                            if (ni < 0 || nj < 0 || ni >= long(gw) || nj >= long(gh))
-                                continue;
-                            const size_t nb = size_t(li) * perLevel + size_t(nj) * gw + size_t(ni);
-                            if (!connected(at, nb))
-                                continue;
-                            const float kk = (d & 1) ? k * 1.4f : k;
-                            for (size_t ch = 0; ch < 3; ++ch)
-                                if (grid[nb][ch] - c[ch] > kk * c[ch] + 1e-4f) {
-                                    c[ch] = grid[nb][ch] / (1 + kk) + 0.01f;
-                                    changed = true;
-                                }
-                        }
-                    }
-                if (!changed)
-                    break;
-            }
-            first = last;
         }
     }
+    {
+        std::vector<const Source*> batch;
+        for (size_t i = lampSources; i < sources.size(); ++i)
+            batch.push_back(&sources[i]);
+        diffuse(batch);
+    }
+    if (std::getenv("OS2_DEBUG_LIGHTMAP"))
+        for (const auto& src : sources)
+            std::fprintf(stderr, "lightmap source li %d room %d out %d colour %.2f %.2f %.2f falloff %.2f\n", src.li,
+                         int(room[src.seeds[0]]), int(src.outdoor), src.color[0], src.color[1], src.color[2], src.falloff);
 
     // Dark rooms: + 0.5 x unlitRoomColor (the brightest whose threshold the room's mean is under).
     std::map<std::pair<int, uint16_t>, std::pair<V3, size_t>> sums;
@@ -328,10 +550,11 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
             px[c] = toByte(e[c]);
     };
 
-    // Floor texels: the samples interpolated, those of other rooms replaced by the texel's own.
+    // Floor texels: the samples interpolated, those of other rooms replaced
+    // by the texel's own; outdoors less the outside ambient (`outdoor`).
     const int k8 = LotLightMapLayout::kTexelsPerTile;
     const uint32_t pw = layout.lotWidth * uint32_t(k8), ph = layout.pageHeight();
-    auto floorValue = [&](int li, float x, float y) -> V3 {
+    auto floorValue = [&](int li, float x, float y, bool* outdoor = nullptr) -> V3 {
         const long own = sampleAt(li, std::clamp(x, 0.0f, float(layout.lotWidth) - 1e-3f),
                                   std::clamp(y, 0.0f, float(layout.lotHeight) - 1e-3f));
         if (own < 0)
@@ -349,20 +572,46 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
             const float w = ((c & 1) ? fx : 1 - fx) * ((c >> 1) ? fy : 1 - fy);
             e = e + grid[at] * w;
         }
-        return e;
+        const bool out_ = outside[size_t(own)] != 0;
+        if (outdoor)
+            *outdoor = out_;
+        return out_ ? vmax(e - outsideAmbient, {0, 0, 0}) : e;
+    };
+    // The terrain's normal (ground level without floor; up elsewhere).
+    auto normalAt = [&](int level, float x, float y) -> V3 {
+        if (level != 0 || layout.hasFloorAt(level, x, y))
+            return {0, 0, 1};
+        const float h = 0.25f;
+        const float dx = (layout.elevationAt(level, x + h, y) - layout.elevationAt(level, x - h, y)) / (2 * h);
+        const float dy = (layout.elevationAt(level, x, y + h) - layout.elevationAt(level, x, y - h)) / (2 * h);
+        const V3 n{-dx, -dy, 1};
+        return n * (1 / std::sqrt(dot(n, n)));
     };
     for (int li = 0; li < levels; ++li)
         for (uint32_t j = 0; j < ph; ++j)
-            for (uint32_t i = 0; i < pw; ++i)
-                put(i, uint32_t(li) * ph + j, floorValue(li, (float(i) + 0.5f) / float(k8), (float(j) + 0.5f) / float(k8)));
+            for (uint32_t i = 0; i < pw; ++i) {
+                const float x = (float(i) + 0.5f) / float(k8), y = (float(j) + 0.5f) / float(k8);
+                bool outdoor = false;
+                V3 e = floorValue(li, x, y, &outdoor);
+                if (outdoor)
+                    e = e + illum(normalAt(layout.minLevel + li, x, y)) * directScale;
+                put(i, uint32_t(li) * ph + j, e);
+            }
 
-    // Room irradiance (GatherFloorLighting): I[4] += 0.25 c, I[5] += 0.25 c x roomCeilingStrength (1).
+    // Room irradiance (GatherFloorLighting): per sample, I[4] += 0.25 c x
+    // mix(white, floor colour, roomSaturation), I[5] += 0.25 c x roomCeilingStrength.
+    auto albedo = [&](const std::array<float, 3>& c) {
+        const float s = globals.roomSaturation;
+        return V3{1 - s + c[0] * s, 1 - s + c[1] * s, 1 - s + c[2] * s};
+    };
     std::map<std::pair<int, uint16_t>, std::pair<std::array<V3, 6>, std::array<float, 6>>> gather;
     for (size_t at = 0; at < grid.size(); ++at)
         if (!outside[at]) {
-            auto& g = gather[{layout.minLevel + int(at / perLevel), room[at]}];
-            g.first[4] = g.first[4] + grid[at] * 0.25f, g.second[4] += 1;
-            g.first[5] = g.first[5] + grid[at] * 0.25f, g.second[5] += 1;
+            const int level = layout.minLevel + int(at / perLevel);
+            const auto p = samplePos(at);
+            auto& g = gather[{level, room[at]}];
+            g.first[4] = g.first[4] + grid[at] * albedo(layout.floorColorAt(level, p[0], p[1])) * 0.25f, g.second[4] += 1;
+            g.first[5] = g.first[5] + grid[at] * (0.25f * globals.roomCeilingStrength), g.second[5] += 1;
         }
     auto addSide = [](std::pair<std::array<V3, 6>, std::array<float, 6>>& g, float nx, float ny, V3 c) {
         if (nx > 0)
@@ -382,10 +631,10 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
             continue;
         const V3 n{f.normal[0], f.normal[1], 0};
         const bool out_ = layout.outdoor(f.level, f.room);
-        const V3 ambient = out_ ? outdoorLight(n) : insideWall;
+        const V3 ambient = out_ ? outsideWallAmbient : insideWall;
         std::vector<const Source*> src;
         for (const auto& s : sources)
-            if (s.li == li && (out_ ? s.outdoor : !s.outdoor && std::any_of(s.seeds.begin(), s.seeds.end(), [&](size_t q) {
+            if (s.li == li && !s.portal && (out_ ? s.outdoor : !s.outdoor && std::any_of(s.seeds.begin(), s.seeds.end(), [&](size_t q) {
                                                        return room[q] == f.room;
                                                    })))
                 src.push_back(&s);
@@ -402,11 +651,12 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         // Lit directly: a light reaches the face's middle above the ambient.
         const V3 mid{f.origin[0] + f.along[0] * f.length / 2, f.origin[1] + f.along[1] * f.length / 2, (f.base + f.top) / 2};
         const bool lit = luminance(lightAt(mid)) > luminance(ambient) + 0.02f;
-        const float contribution = lit ? 1.0f : 0.5f;
+        const float contribution = lit ? globals.brightWallFloor : globals.darkWallFloor;
         V3 extra{0, 0, 0};
         if (!out_)
             if (auto it = brighten.find({f.level, f.room}); it != brighten.end())
                 extra = it->second;
+        const V3 sunlit = out_ ? illum(n) * directScale : V3{0, 0, 0};
         V3 sum{0, 0, 0};
         size_t count = 0;
         for (uint32_t j = 0; j < f.h; ++j)
@@ -415,7 +665,9 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
                 const float z = std::clamp(f.top - (float(j) - 0.5f) / float(k8), f.base, f.top);
                 const float x = f.origin[0] + f.along[0] * s, y = f.origin[1] + f.along[1] * s;
                 V3 e = lightAt(V3{x, y, z});
-                if (!out_) {
+                if (out_) {
+                    e = vmax(e - ambient, {0, 0, 0}) + sunlit;
+                } else {
                     const V3 floor = floorValue(li, x + n[0] * 0.25f, y + n[1] * 0.25f) * contribution;
                     e = vmax(e, floor * (1 / std::pow(1 + wallThreshold, 2 * (z - f.base))));
                     e = e + extra;
@@ -423,23 +675,19 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
                 put(f.x + i, f.y + j, e);
                 sum = sum + e, ++count;
             }
-        // GatherWallLighting: c = 0.5 x the wall's light, by its inward normal.
-        if (!out_ && count)
-            addSide(gather[{f.level, f.room}], n[0], n[1], sum * (0.5f / float(count)));
+        // GatherWallLighting: c = 0.5 x the wall's light x mix(white,
+        // wallpaper colour, roomSaturation), by its inward normal.
+        if (!out_ && count) {
+            const auto& wc = f.material < layout.materialColors.size() ? layout.materialColors[f.material]
+                                                                       : std::array<float, 3>{1, 1, 1};
+            addSide(gather[{f.level, f.room}], n[0], n[1], sum * (0.5f / float(count)) * albedo(wc));
+        }
     }
 
-    // Portals: colour x roomPortalStrength (0.75), by the direction into each room.
-    for (const auto& s : sources)
-        if (s.portal)
-            for (size_t q : s.seeds) {
-                const float qx = (float(q % perLevel % gw) + 0.5f) / 2, qy = (float(q % perLevel / gw) + 0.5f) / 2;
-                float dx = qx - s.position[0], dy = qy - s.position[1];
-                const float len = std::sqrt(dx * dx + dy * dy);
-                if (len < 1e-4f)
-                    continue;
-                dx /= len, dy /= len;
-                addSide(gather[{s.level, room[q]}], dx, dy, s.color * 0.75f);
-            }
+    // Portals into a room: colour x roomPortalStrength, by the way the light travels.
+    for (const auto& p : portals)
+        if (!p.toOutside)
+            addSide(gather[{p.level, p.room}], p.dir[0], p.dir[1], p.color * globals.roomPortalStrength);
     for (const auto& [key, g] : gather) {
         auto& r = result.rooms[key];
         for (size_t d = 0; d < 6; ++d)

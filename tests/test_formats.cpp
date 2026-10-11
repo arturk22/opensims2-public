@@ -524,6 +524,7 @@ lightingState day
    diffParam insideFloorAmbient 0.1
    diffParam floorThreshold 0.5
    modifiers insideObjects 1 1 1 1
+   modifiers outsideObjects 1 1 1 1
 end
 )");
     const LightingState& day = *cfg.state("day");
@@ -543,6 +544,24 @@ end
     check(far < 0.8f && far > 0.1f, "lamp light spreads through the room");
     check(std::fabs(farther - 0.5f) < 0.01f, "lamp light stays in its room");
     check(lit.rooms.count({0, 2}) && lit.rooms.at({0, 2})[4][0] > dark.rooms.at({0, 2})[4][0], "room irradiance from the light map");
+    // An outdoor lamp: a pool over the direct light (the outside ambient
+    // 0.25 only shapes the falloff and is taken away again).
+    LightMapLight garden;
+    garden.position = {3.25f, 3.25f, 1};
+    garden.color = {1, 1, 1};
+    garden.floorScale = 1;
+    LotLightMap pool = computeLotLightMap(layout, day, {garden});
+    check(std::fabs(texel(pool.image, 26, 26) - 1.0f) < 0.02f, "outdoor lamp adds to the direct light");
+    check(std::fabs(texel(pool.image, 26, 2) - 0.5f) < 0.03f, "outdoor lamp pool fades to the direct light");
+    // The floor's colour tints the light coming up (roomSaturation 0.5).
+    LotLightMapLayout red = layout;
+    red.materialColors.push_back({1, 0, 0});
+    for (auto& f : red.floorMaterials)
+        f = {1, 1, 1, 1};
+    LotLightMap tinted = computeLotLightMap(red, day, {lamp});
+    check(tinted.rooms.at({0, 2})[4][1] < lit.rooms.at({0, 2})[4][1] * 0.6f &&
+              std::fabs(tinted.rooms.at({0, 2})[4][0] - lit.rooms.at({0, 2})[4][0]) < 1e-4f,
+          "floor colour in the room irradiance");
 }
 
 int main() {

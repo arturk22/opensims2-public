@@ -256,7 +256,7 @@ std::shared_ptr<const LotLightMap> LotLighting::lightMap(const std::string& stat
     const LightingState* state = config_.state(stateName);
     if (!state)
         return nullptr;
-    auto map = std::make_shared<const LotLightMap>(computeLotLightMap(*layout_, *state, lights));
+    auto map = std::make_shared<const LotLightMap>(computeLotLightMap(*layout_, *state, lights, LightMapGlobals::from(config_)));
     lightMaps_.push_back({key, map});
     if (lightMaps_.size() > 4)
         lightMaps_.erase(lightMaps_.begin());
