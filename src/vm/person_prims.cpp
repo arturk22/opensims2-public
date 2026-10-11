@@ -10,13 +10,13 @@
 //   here) and returns true. Another value does nothing (true). The binary
 //   reads the stage from the operand only (no temp; inferred from the code).
 // - 0x78 RayTrace (nTSSG::cObject::TryRayTrace): a ray through the scene
-//   graph from the object (owner byte 5, data u16 6; its point: byte 8 =
-//   1/2/3 a slot of that kind, byte 9 its index, out of range = error 0x1B;
-//   else the middle of its bounding box) to, in mode byte 4 = 0, the object
-//   (owner byte 12, data u16 13; point bytes 15/16); missing objects are
+//   graph from the object (owner byte 1, data u16 2; its point: byte 4 =
+//   1/2/3 a slot of that kind, byte 5 its index, out of range = error 0x1B;
+//   else the middle of its bounding box) to, in mode byte 0 = 0, the object
+//   (owner byte 8, data u16 9; point bytes 11/12); missing objects are
 //   error 0x17. It writes temp 0 and returns: the target reached (temp 0 =
 //   its ID) or nothing hit: true; another object first (temp 0 = it) or a
-//   wall/floor (temp 0 = -1): false; byte 19 bit 0 lets it pass through
+//   wall/floor (temp 0 = -1): false; byte 15 bit 0 lets it pass through
 //   objects of type 9. Here there is no scene graph to trace: the ray is the
 //   tile line between the two objects (World::lineOfSight, as Set to Next
 //   24 uses), same level only; clear → temp 0 = target, true; blocked →
@@ -58,16 +58,16 @@ Exit age(Context& c) {
 
 Exit rayTrace(Context& c) {
     const auto& o = c.instruction.operands;
-    const Object* from = c.vm.object(c.get(o[5], int16_t(o[6] | o[7] << 8)));
+    const Object* from = c.vm.object(c.get(o[1], int16_t(o[2] | o[3] << 8)));
     if (!from)
         throw gameError(err::NoObject, "RayTrace: source object");
-    if (o[4] == 1) {
+    if (o[0] == 1) {
         c.thread.temps[0] = 0;
         return Exit::True;
     }
-    if (o[4] != 0)
+    if (o[0] != 0)
         return Exit::False;
-    const Object* to = c.vm.object(c.get(o[12], int16_t(o[13] | o[14] << 8)));
+    const Object* to = c.vm.object(c.get(o[8], int16_t(o[9] | o[10] << 8)));
     if (!to)
         throw gameError(err::NoObject, "RayTrace: target object");
     bool clear = from->position.level == to->position.level;

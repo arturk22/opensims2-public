@@ -1307,7 +1307,7 @@ static void testAgeRayTraceOwners() {
     fx.code.add(kObjGroup, 0x1000,
                 tree({instr(0x75, go(1), E, {3}),
                       expr(StackId, 0, Assign, Lit, 2, go(2), E),
-                      instr(0x78, go(3), E, {0, 0, 0, 0, 0, Data, 11, 0, 0, 0, 0, 0, StackId, 0, 0}),
+                      instr(0x78, go(3), E, {0, Data, 11, 0, 0, 0, 0, 0, StackId, 0, 0}),
                       expr(Temp, 5, Assign, Temp, 0, go(4), E),
                       expr(Temp, 0, Assign, Lit, 2, go(5), E),
                       expr(Temp, 1, Assign, Lit, 2, go(6), E),
