@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace os2 {
@@ -53,6 +54,11 @@ RgbaImage gradientFill(const RgbaImage& gradient, const RgbaImage& mask, float v
 // 10 divisions): the "full" image cut after floor(divisions * v / max) of
 // its divisions (equal widths), the rest transparent.
 RgbaImage segmentFill(const RgbaImage& full, float value, float max, int divisions);
+
+// The UI sound a button's script names: btnclicksnd={0,0xFFxxxxxx} keeps
+// the CRC24 of the name (as the resource index keys sounds); the name from
+// the executable's ui_* names (docs/ui-live-mac.md §7.7). Empty if none.
+std::string uiButtonSound(const UiElement& button, std::string_view attr = "btnclicksnd");
 
 // The action queue's icon positions (cTSUIActionQueue::OnTick, BV 0x1e44b0):
 // top-level icons side by side from (x0, y0), `margin` apart; the

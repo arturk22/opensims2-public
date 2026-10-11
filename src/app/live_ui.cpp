@@ -210,6 +210,10 @@ std::vector<vm::ObjectId> LiveUi::family() const {
 }
 
 void LiveUi::tick(double seconds) {
+    const bool shown = tipVisible();
+    now_ = seconds;
+    if (tipHovered_ >= 0 && shown != tipVisible())
+        dirty_ = true;
     if (lastSample_ >= 0 && seconds - lastSample_ < 0.5)
         return;
     lastSample_ = seconds;
@@ -362,7 +366,7 @@ UiScreen LiveUi::screen(int width, int height) {
     };
     auto target = [&](const UiElement* e, Action a, int value) {
         if (auto r = rectOf(e))
-            targets_.push_back({*r, a, value});
+            targets_.push_back({*r, a, value, e});
     };
     // A gradient fill bar (docs/ui-live-mac.md §5): child 3's image is the
     // mask, child 4's the gradient; the output replaces child 3's image.
@@ -758,7 +762,7 @@ UiScreen LiveUi::screen(int width, int height) {
                 best = a, tip_ = int(i);
         }
     }
-    if (tip_ >= 0)
+    if (tip_ >= 0 && tipVisible())
         drawTooltip(out, tips_[size_t(tip_)].second, *mouse_);
     return out;
 }
@@ -897,26 +901,28 @@ bool LiveUi::press(simd_float2 p, bool right) {
         if (right && t.action != Action::Cancel) // the queue cancels with either button
             return true;
         switch (t.action) {
+        case Action::Speed:
+        case Action::Pause:
+        case Action::SubPanel:
+        case Action::SelectSim:
+        case Action::Centre:
+        case Action::Mode:
+            // The button's own click sound (btnclicksnd, §7.7).
+            if (t.element)
+                if (const std::string snd = uiButtonSound(*t.element); !snd.empty())
+                    sound(snd);
+            break;
+        default: break;
+        }
+        switch (t.action) {
         case Action::Centre:
             std::printf("opensims2: live UI: centre on Sim %d\n", t.value);
             if (onCentreSim)
                 onCentreSim(vm::ObjectId(t.value));
             break;
-        case Action::Speed:
-            // SetSimulatorSpeed's sound per speed (inferred names).
-            sound(t.value == 2 ? "ui_button_play" : t.value == 3 ? "ui_button_fw" : "ui_button_ffw");
-            setSpeed(t.value);
-            break;
-        case Action::Pause:
-            togglePause();
-            if (vm_->globals[vm::global::Paused])
-                sound("ui_button_pause");
-            break;
-        case Action::SubPanel:
-            if (t.value != subPanel_)
-                sound("ui_panel_shift");
-            selectSubPanel(t.value);
-            break;
+        case Action::Speed: setSpeed(t.value); break;
+        case Action::Pause: togglePause(); break;
+        case Action::SubPanel: selectSubPanel(t.value); break;
         case Action::Callback:
             if (t.value >= 0 && size_t(t.value) < callbacks_.size()) {
                 const auto f = callbacks_[size_t(t.value)];
@@ -956,7 +962,6 @@ bool LiveUi::press(simd_float2 p, bool right) {
         case Action::Mode:
             std::printf("opensims2: live UI: mode button %d%s\n", t.value,
                         t.value == 0 ? " (live)" : onMode && (t.value == 1) ? " (buy)" : " (inert)");
-            sound("ui_primary_button");
             if (onMode)
                 onMode(t.value);
             break;
@@ -992,6 +997,8 @@ void LiveUi::hover(simd_float2 p) {
         if (inside(r, p) && a < best)
             best = a, tip = int(i);
     }
+    if (tip != tipHovered_) // another control: the count starts again
+        tipHovered_ = tip, tipSince_ = now_;
     if (tip != tip_ || tip >= 0) // a tooltip follows the mouse
         dirty_ = true;
 }

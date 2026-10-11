@@ -1,5 +1,7 @@
 #include "app/ui_panel_util.hpp"
 
+#include "formats/resindex.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -51,21 +53,26 @@ std::string formatMoney(int64_t v) {
 }
 
 uint32_t objectThumbnailInstance(uint32_t group, const std::string& modelName) {
-    static const std::array<uint32_t, 256> table = [] {
-        std::array<uint32_t, 256> t{};
-        for (uint32_t i = 0; i < 256; ++i) {
-            uint32_t c = i << 24;
-            for (int k = 0; k < 8; ++k)
-                c = (c & 0x80000000u) ? (c << 1) ^ 0x04C11DB7u : c << 1;
-            t[i] = c;
-        }
-        return t;
-    }();
-    const std::string key = std::to_string(int32_t(group)) + modelName;
-    uint32_t h = 0xFFFFFFFFu;
-    for (char ch : key)
-        h = (h << 8) ^ table[((h >> 24) ^ uint8_t(std::tolower(static_cast<unsigned char>(ch)))) & 0xFF];
-    return h;
+    // The game formats the group with "%d": signed (catalog.hpp's
+    // thumbnailKey writes it unsigned; the same for every shipped group).
+    return nameInstanceHiHash(std::to_string(int32_t(group)) + modelName);
+}
+
+std::string uiButtonSound(const UiElement& button, std::string_view attr) {
+    static const char* const kNames[] = {"ui_album_close", "ui_album_open", "ui_aspiration_powerdown", "ui_aspiration_powerup", "ui_build_deck_mdown", "ui_build_deck_mup", "ui_build_deck_section", "ui_build_door_green", "ui_build_door_plop", "ui_build_flooring_plop", "ui_build_garden_plop", "ui_build_pool_mdown", "ui_build_pool_mup", "ui_build_rail_plop", "ui_build_roof_mdown", "ui_build_roof_mup", "ui_build_stair_green", "ui_build_stair_plop", "ui_build_terrain_level_mdown", "ui_build_terrain_level_mup", "ui_build_terrain_lp", "ui_build_terrain_paint_lp", "ui_build_wall_mdown", "ui_build_wall_mup", "ui_build_wall_section", "ui_build_wallcovering_appear", "ui_build_wallcovering_plop", "ui_build_walldelete_mdown", "ui_build_walldelete_section", "ui_build_water_lp", "ui_button_ffw", "ui_button_fw", "ui_button_pause", "ui_button_play", "ui_button_rotate_lp", "ui_button_zoom_in", "ui_button_zoom_out", "ui_camera_photo", "ui_cas_camera", "ui_cas_personalityeight", "ui_cas_personalityfive", "ui_cas_personalityfour", "ui_cas_personalitynine", "ui_cas_personalityone", "ui_cas_personalityseven", "ui_cas_personalitysix", "ui_cas_personalityten", "ui_cas_personalitythree", "ui_cas_personalitytwo", "ui_cas_randomize_mup", "ui_error", "ui_flatten_lot", "ui_hardwindow_close", "ui_hardwindow_open", "ui_object_buy", "ui_object_pickup", "ui_object_plop", "ui_object_rotate", "ui_object_sell", "ui_pane_primary", "ui_panel_close", "ui_panel_collapse", "ui_panel_expand", "ui_panel_open", "ui_panel_shift", "ui_piemenu_primary", "ui_piemenu_secondary", "ui_primary_button", "ui_queue", "ui_queue_delete", "ui_redo", "ui_secondary_button", "ui_softwindow_close", "ui_softwindow_open", "ui_tertiary_button", "ui_text_description_close", "ui_text_description_open", "ui_text_notification_close", "ui_text_notification_open", "ui_undo", "ui_wf_fear_glow", "ui_wf_want_glow", };
+    const std::string* v = button.attr(attr);
+    if (!v)
+        return {};
+    const auto comma = v->find(',');
+    if (comma == std::string::npos)
+        return {};
+    const uint32_t key = uint32_t(std::stoul(v->substr(comma + 1), nullptr, 16));
+    if (key == 0)
+        return {};
+    for (const char* n : kNames)
+        if (nameInstanceHash(n) == key)
+            return n;
+    return {};
 }
 
 RgbaImage gradientFill(const RgbaImage& gradient, const RgbaImage& mask, float value, float min, float max,

@@ -475,15 +475,20 @@ Peças de `0x8C364B93`: `…70` canto superior esquerdo (botão, 4 quadros),
 `…77` canto inferior direito. Os cantos vão aos cantos do retângulo (a
 tela); as bordas esticam entre eles.
 
-### 8.5 Sons e dicas
+### 8.5 Sons e dicas (no app)
 
-Nomes de som dos botões não estão nos dados (ponteiros preenchidos em
-tempo de execução); pelos nomes do executável: `ui_button_play`/`_fw`/
-`_ffw`/`_pause` (velocidades), `ui_queue_delete` (cancelar), `ui_panel_shift`
-(trocar de subpainel), `ui_primary_button`/`ui_secondary_button` (inferido).
+Os botões tocam o som do próprio script (`btnclicksnd`, CRC24 do nome,
+§7.7; `uiButtonSound` acha o nome entre os 84 `ui_*` do executável): as
+velocidades `ui_button_play`/`_fw`/`_ffw`/`_pause`, os botões dos
+subpainéis o deles. Sem `btnclicksnd`: cancelar na fila `ui_queue_delete`,
+filtros/páginas/abas dos subpainéis `ui_secondary_button` (inferido).
 Dicas: o `tipres` da janela, ou o `captionres` "Título|Texto" das barras e
 grupos; os campos depois do texto (`|||0x4906501c`, `|0xab211110|…`) são
-figuras e o script do balão.
+figuras e o script do balão (não desenhados). Aparecem 0,75 s depois que o
+mouse entra no controle e somem aos 2,25 s (§7.6); sem tela, `--ui-hover`
+conta do começo (a foto em 1,26 s mostra a dica). Chave da miniatura de
+objeto: o grupo vai com sinal (`%d`), o `thumbnailKey` do `catalog.*` o
+escreve sem sinal (igual para todos os grupos do jogo).
 
 ---
 

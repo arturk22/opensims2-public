@@ -154,15 +154,16 @@ std::vector<LivePanels::RelationshipRow> LivePanels::relationshipsOf(vm::VM& vm,
             r.household = family && n->second.personData[pd::FamilyNumber] == family;
         else
             continue; // not a neighbor the neighborhood knows
-        // LoadRelationships: household = the same family; relatives = a
-        // familial relation (vtable 0x44, inferred); friends = friend, best
-        // friend or a love relation (inferred from the vtable calls).
+        // LoadRelationships (docs/ui-live-mac.md §7.1): household = the same
+        // family; 2 = they know each other (variable 3; here also the
+        // household); friends = friend or best friend (or a friendship float
+        // over 0.001 that is not kept here).
         bool keep = true;
         switch (f) {
         case Filter::Household: keep = r.household; break;
         case Filter::Relatives: keep = r.household || r.familial != 0; break;
         case Filter::Friends:
-            keep = (r.flags & (relflag::Friend | relflag::BestFriend | relflag::Love | relflag::Crush)) != 0;
+            keep = (r.flags & (relflag::Friend | relflag::BestFriend)) != 0;
             break;
         case Filter::All: break;
         }
@@ -371,14 +372,18 @@ float LivePanels::job(PanelContext& c, vm::ObjectId simId, float x, float bottom
             hk.hide.insert(perf);
         }
     }
+    // Family friends, shown only while short of the next level's (§7.2):
+    // "( + %s )" with the ones missing.
     if (const UiElement* fr = root.child(0xA8)) {
-        (working ? hk.show : hk.hide).insert(fr);
         const int16_t fam = data[pd::FamilyNumber];
         const auto f = c.vm.families.find(fam);
+        const int have = f != c.vm.families.end() ? f->second.friends : 0;
+        const int need = bcon(friends, level + 1);
+        (working && have < need ? hk.show : hk.hide).insert(fr);
         if (const UiElement* e = fr->child(0x4C3CC65C))
-            hk.captions[e] = std::to_string(f != c.vm.families.end() ? f->second.friends : 0);
+            hk.captions[e] = std::to_string(have);
         if (const UiElement* e = fr->child(0x4C3CC65D))
-            hk.captions[e] = printf1(str(c, 0x89, 0x15), std::to_string(bcon(friends, level + 1)));
+            hk.captions[e] = printf1(e->get("caption"), std::to_string(need - have));
     }
     // Skills (cTSUISkillsCtrl: 0..1000 in 10 divisions; person data by the
     // captions: the windows 0x4BDEFF01-07 are cooking, mechanical, charisma,

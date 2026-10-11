@@ -154,6 +154,7 @@ private:
         std::array<float, 4> rect; // x0, y0, x1, y1
         Action action = Action::None;
         int value = 0;
+        const UiElement* element = nullptr; // the button (its click sound)
     };
     const RgbaImage* image(uint32_t instance);
     const RgbaImage* objectThumbnail(const vm::Object& o);
@@ -177,6 +178,11 @@ private:
     std::vector<std::function<void()>> callbacks_;          // Action::Callback targets of the current screen
     std::vector<std::pair<std::array<float, 4>, std::string>> tips_; // tooltips of the current screen
     int tip_ = -1;                                          // the one under the mouse
+    // Tooltip timing (cGZWinToolTipMgr, docs/ui-live-mac.md §7.6): shown
+    // 0.75 s after the mouse came over the control, hidden at 2.25 s.
+    double now_ = 0, tipSince_ = 0;
+    int tipHovered_ = -1;
+    bool tipVisible() const { return now_ - tipSince_ >= 0.75 && now_ - tipSince_ < 2.25; }
     UiScript pause_;                                        // 0x8C364B93, the pause indicator
     std::map<int16_t, std::unique_ptr<RgbaImage>> neighborPortraits_; // by neighbor ID (null: none)
     const RgbaImage* portraitOfNeighbor(int16_t id);

@@ -523,6 +523,11 @@ static void testPanelUtil() {
     check(objectThumbnailInstance(0x7FBBE64F, "trashCompactor") == objectThumbnailInstance(0x7FBBE64F, "TRASHCOMPACTOR"),
           "thumbnail key is case-blind");
     check(objectThumbnailInstance(0xFFFFFFFF, "a") != objectThumbnailInstance(0x7FFFFFFF, "a"), "group is signed decimal");
+    {
+        UiElement b;
+        b.attrs = {{"btnclicksnd", "{00000000,ffd51bad}"}};
+        check(uiButtonSound(b) == "ui_button_pause", "button sound by CRC24");
+    }
     check(formatMoney(511632) == "§511.632" && formatMoney(-1000) == "-§1.000" && formatMoney(12) == "§12", "money");
     // Action queue: two top-level icons and two sub-interactions.
     const auto q = layoutActionQueue({false, true, false, true}, QueueMetrics{});
