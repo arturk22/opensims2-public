@@ -142,7 +142,8 @@ MoveInCheck canMoveIn(const Neighborhood& hood, uint32_t family, uint32_t lotId)
     if (fam->members.empty() && fam->record.members.empty())
         return MoveInCheck::NoMembers;
     const LotFileInfo info = lotFileInfo(*lot);
-    if (info.canMoveIn && int64_t(fam->record.funds) < info.price)
+    // Not for lots of type 2 (dorms, BV), nor when the lot inhibits move-in.
+    if (lot->info.type != 2 && info.canMoveIn && int64_t(fam->record.funds) < info.price)
         return MoveInCheck::CantAfford;
     return MoveInCheck::Ok;
 }
