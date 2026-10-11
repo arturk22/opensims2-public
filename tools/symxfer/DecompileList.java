@@ -1,7 +1,8 @@
 // Decompile functions by name substring or address and write the C to a file.
 // args: <outfile> <pattern|0xADDR> [pattern...]
 // Addresses without a function get one (run without -readOnly to keep it).
-// A pattern matches when it is a substring of the function's (mangled) name.
+// A pattern matches a substring of the function name, qualified (cTSObject::TryIdle,
+// after auto-analysis demangled the names) or as stored (mangled before analysis).
 // @category Analysis
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
@@ -29,7 +30,7 @@ public class DecompileList extends GhidraScript {
                 continue;
             }
             for (Function f : currentProgram.getFunctionManager().getFunctions(true)) {
-                if (f.getName().contains(p)) fs.add(f);
+                if (f.getName(true).contains(p) || f.getName().contains(p)) fs.add(f);
             }
         }
         DecompInterface d = new DecompInterface();
@@ -37,7 +38,7 @@ public class DecompileList extends GhidraScript {
         try (PrintWriter w = new PrintWriter(args[0])) {
             for (Function f : fs) {
                 DecompileResults r = d.decompileFunction(f, 120, monitor);
-                w.println("// ==== " + f.getName() + " @ " + f.getEntryPoint());
+                w.println("// ==== " + f.getName(true) + " @ " + f.getEntryPoint());
                 if (r != null && r.getDecompiledFunction() != null) {
                     w.println(r.getDecompiledFunction().getC());
                 } else {

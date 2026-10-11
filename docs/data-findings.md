@@ -6,7 +6,10 @@ que vieram no `objects.package` (STR# do grupo `0x7FE59FD0`), strings do
 `Sims2.exe` (o disassembler do editor, `cEdithLanguage::Cat*`, fica em
 ≈0xB67000–0xB69F00, com as strings de cada função em ordem inversa à do
 código), a tabela de símbolos do binário do Mac (`references/sims2_mac_decomp`)
-e varreduras estatísticas sobre todos os pacotes.
+e varreduras estatísticas sobre todos os pacotes. Desde a rodada 3 há também
+o executável de Mac sem proteção (Bon Voyage 1.10): o que ele confirma ou
+corrige está nas notas "Binário de Mac" de cada seção e em
+`docs/primitives-mac.md`.
 
 Ferramentas (reutilizáveis):
 
@@ -177,6 +180,11 @@ anterior (byte 4 = allow push) não se sustenta no Main dos Sims:
 **Para a VM:** "allow push" no u16 do byte 2 (`src/vm/queue.cpp`). O modo
 do byte 4 (sub-fila: dados de pessoa 26, 75–78, 157) não está feito.
 
+**Binário de Mac (BV 1.10):** confirmado. `CatIdleForInputParam` lê o u16 2
+como "allow push" e o bit 0 do byte 4 como "Handle Sub Queue Interactions";
+`cTSPerson::TryIdleForInput` espera exatamente N ticks (não N + 1) e o modo
+sub-fila empilha a primeira sub-ação. Ver `docs/primitives-mac.md` §4.
+
 ## 6. Run Tree by Name (0x1C): modos e bytes 2–3
 
 **Pergunta.** Os modos 0/1/2 e o u16 nos bytes 2–3.
@@ -199,6 +207,13 @@ e ", Passing in params …").
 **Conclusão.** Modos confirmados pelos rótulos (0 ≠ 2). Os bytes 2–3 são
 lixo do editor e podem ser ignorados. **Para a VM:** o modo 0 deve rodar a
 árvore até o fim e desviar pelo resultado (como uma check tree), o 2 empilhar.
+
+**Binário de Mac (BV 1.10):** os bytes 2–3 são um u16 de flags que o
+disassembler lê (`CatCallNamedTreeParam`: 0x01/0x02 de onde vem o nome,
+0x04/0x08 impressos como true/false, 0x10 passa três (dono, dado) nos bytes
+6/9/12, 0x20 passa os parâmetros da árvore atual); o modo fica no byte 5. A
+conclusão "lixo do editor" vale para o que as árvores do jogo base fazem
+com ele, mas o campo não é lixo.
 
 ## 7. Relationship (0x1A): flag 0x08
 
@@ -232,6 +247,13 @@ por ID de objeto. *Feito* (`relationship` em `src/vm/primitives.cpp`,
 os "para" 1, 15 e 16 de `N001_Lot11` são um fone e dois controladores, não
 donos); os outros por ID de objeto, Sims pelo neighbor ID; os de Sim para Sim
 ficam com os do bairro.
+
+**Binário de Mac (BV 1.10):** confirmado e detalhado. Com 0x08 só o "de" é
+procurado como objeto e a tabela é a do próprio objeto; o "para" é usado
+cru. Sem 0x02/0x08, se os dois objetos são Sims a relação é guardada pelos
+neighbor IDs (a mesma de 0x02). 0x01 = "Fail if too small" (falso se a
+relação tem ≤ variável entradas; sem ela, cresce). Ver
+`docs/primitives-mac.md` §4.
 
 ## 8. SREL: parentescos 4–8 e bits de flags
 
@@ -295,6 +317,12 @@ Post Entry Calls", "Standard Bunny TEST", "Message - Handle Bunny Social",
 0x02 o ID é um neighbor ID, 0x04 testa o GUID do token temporário.
 *Feito* (`testObjectType` em `src/vm/primitives.cpp`; o token é o meu).
 
+**Binário de Mac (BV 1.10):** corrigido em parte. 0x04 é "Return GUID
+selected in Temp0/1": não testa objeto, devolve verdadeiro se o GUID tem
+definição e grava o GUID nos temps 0 (baixo) e 1 (alto). O GUID do token
+temporário é o GUID especial `0x4C7CAB2B` no operando, não uma flag. 0x01 e
+0x02 confirmados. Objeto inexistente dá falso, não erro.
+
 ## 10. Create New Object Instance (0x2A): flags do byte 5
 
 **Pergunta.** A flag 0x80 e as outras.
@@ -323,6 +351,11 @@ das posições 2, 4 e 10 é o byte 9: "Init - Fill Slots with Bottles" cria nos
 slots 0–4) e as flags 0x01, 0x02, 0x04, 0x08 e 0x10 da FreeSO
 (`createObjectInstance` em `src/vm/primitives.cpp`).
 
+**Binário de Mac (BV 1.10):** resolvido. 0x40 = GUID do token temporário de
+inventário; 0x20 (sem texto no editor) põe o objeto novo no mesmo nível do
+stack object; 0x02 com 0x10 é erro 0x36. Posições (byte 4) conferidas no
+código. Ver `docs/primitives-mac.md` §4.
+
 ## 11. Find Location For (0x10): flags e byte 3
 
 **Pergunta.** As flags além de 0x08 e o byte 3.
@@ -347,6 +380,14 @@ strings "on level ground"/"with empty border"/"begin in front of refobj"/
 *Feito* na VM: a direção é mantida se a máscara deixa, senão a permitida mais
 próxima (`findLocationFor` em `src/vm/routing.cpp`).
 
+**Binário de Mac (BV 1.10):** **refutado no sentido do byte 3**: bit n
+ligado = direção n *proibida* (o código usa `~byte3`; `0xFE` = só N, `0xAA`
+= N/L/S/O, 0 = qualquer). Flags pelo disassembler: 0x01 começa no local,
+0x02 *não* prefere vazios, 0x04 editável, 0x08 objetos explícitos, 0x10
+terreno plano, 0x20 borda vazia, 0x40 na frente da referência, 0x80 linha de
+visão. O modo 0 tenta primeiro o mesmo cômodo; o 2 só ele. Ver
+`docs/primitives-mac.md` §4.
+
 ## 12. Push Interaction (0x0D): o que os dados dizem
 
 **Pergunta.** Bytes e bits citados pelas strings (ícone, "Returing ID in",
@@ -368,6 +409,15 @@ continuation" do TS1 (FreeSO: byte 3, 1 ícone próprio, 2 objeto num local,
 
 **Conclusão.** Em aberto: os três pares (dono, dado) a partir do byte 5 são
 os mais seguros; os bits do byte 3 e dos bytes 14–15 não ficaram separados.
+
+**Binário de Mac (BV 1.10):** resolvido pelo `CatPushActionParam` e pelo
+`TryPushAction`: (5, 6–7) número da interação com a flag 0x10; (8, 9–10) ID
+da interação a ligar (0x40); (11, 12–13) onde devolver o ID da nova (0x80);
+byte 3: 0x01 ícone do local do byte 4, 0x02 objeto num local, 0x04 "continue
+as current", 0x08 "use name", 0x20 força a check tree; byte 14: 0x01 passa 4
+parâmetros, 0x02 interação do último Find Best Interaction, 0x04 ícone pelo
+GUID nos temps 4/5, 0x08 índice do ícone no temp 6; byte 15 índice do
+ícone. Prioridades 0–3 = herdada/100/20/50. Ver `docs/primitives-mac.md` §4.
 
 ## 13. GUIDs das classes de UI
 
@@ -419,3 +469,12 @@ Add Memory Subject as nID", "Memory - Already has Woohoo?", "Memory Marker -
 Target has this marker?", "Want Satisfy - Never..."): são critérios de busca
 (`cEdithLanguage::CatManageInventoryMatchFlags`), provavelmente casar também
 pelas propriedades do token (o sujeito da memória). Em aberto.
+
+**Binário de Mac (BV 1.10):** Change Material resolvido pelo
+`CatMaterialChangeParam` (byte 2: 0x08 material achado no objeto (dono 8,
+dado u16 9), 0x10 índice no temp 0, 0x01 grupo de malha achado no objeto,
+0x20 índice do grupo no temp 1; byte 13: 0x01 "Moving Texture", 0x02
+material de snapshot; ver `docs/primitives-mac.md` §5). A palpite "0x01 =
+snapshot" estava errado. Manage Inventory: `CatManageInventoryMatchFlags`
+casa por visível/oculto (bit 0), memória (bit 1) e compras (bit 3), cada um
+com o valor no mesmo bit de outro campo; o resto segue em aberto.

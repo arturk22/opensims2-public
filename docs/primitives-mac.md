@@ -1,0 +1,914 @@
+# Primitivas de SimAntics: o que o binário de Mac confirma
+
+Fonte: o executável da Aspyr para Mac, **The Sims 2 Bon Voyage 1.10
+(v61383)**, universal i386 + ppc e **sem SafeDisc** (fora do repositório, em
+`references/bv_mac/`). Usamos a fatia ppc, importada no projeto Ghidra
+`~/sims2` como `/mac/sims2_bv.ppc`. Os nomes das funções vêm de
+`tools/symxfer/` (ver o fim deste documento). Quando nada é dito, cada
+afirmação abaixo é **lida no código decompilado** (marcada "binário"); o que
+é dedução nossa aparece como "inferido". Onde o comportamento pode ser de
+expansão, ele é marcado **"só BV"** (o opensims2 mira o jogo base de 2004).
+Para o jogo base, o executável da 1.0 de Mac (`references/base_mac/
+sims2_base_1.0.ppc`, Aspyr v2920, 2005) serve de conferência: está quase sem
+símbolos, mas tem RTTI.
+
+Convenção: "byte n" é o byte n dos 16 bytes de operandos da instrução (como
+no resto do projeto e no SimPE); "u16 n" é um u16 little-endian que começa no
+byte n; (dono, dado) é uma referência a variável, lida por
+`cTSObject::InterpValue(dono, dado)`.
+
+---
+
+## 1. Como o jogo guarda e lê os operandos
+
+- **`XPrimParam`** (16 bytes de operandos em `+4`, a "node version" em
+  `+0x14`). `XPrimParam::Read` lê a versão de nó (só se o formato do BHAV é
+  ≥ 0x8005; senão 0), 8 bytes e mais 8 (formatos < 0x8003 só têm 8: o resto
+  fica 0). Binário.
+- Cada primitiva tem uma subclasse (`SetToNextParam`, `NewReachParam`, ...),
+  criada por `cTSBehaviorNode::GetNewPrimitiveByID(short)` (0x004885E0). O
+  vtable tem 5 virtuais: `Write`, `Read`, `UpgradeVersion`, `GetVersion` e
+  **`SwizzleParams`**. No Mac, `SwizzleParams` troca a ordem dos bytes dos
+  campos de 16 e 32 bits (o arquivo é little-endian); `Write` chama ela antes
+  e depois de gravar. Por isso **o corpo de `SwizzleParams` de cada classe dá
+  exatamente quais bytes são u16/u32 e quais são u8** (tabela na §3).
+  Binário.
+- `UpgradeVersion` converte operandos de versão de nó antiga para a atual
+  (só algumas classes: Relationship, Set to Next, Manage Inventory, Look At,
+  Animate Overlay, Change Material, Budget, Dialog, Make Action String, Run
+  Tree (chamada de árvore)). As versões antigas não aparecem nas árvores do
+  jogo base que já olhamos, mas a VM precisa saber que o byte de versão de nó
+  existe. Binário.
+- Endereço útil: `cTSObject::InterpValue` é o slot `0x4D4` do vtable de
+  `cTSObject`; os temps são lidos/escritos pelos slots `0x4C` (get temp n) e
+  `0x50` (set temp n, valor) (inferido pelo uso: Test Object Type grava o GUID
+  nos temps 0 e 1 por eles).
+
+**Códigos de retorno** de um `Try<Primitiva>` (`cITSTreeSim::ReturnCode`):
+0 = falso, 1 = verdadeiro, 2 = espera (rodar de novo no próximo tick),
+3 = empilhou uma árvore (gosub). Binário (Sleep devolve 2 enquanto conta,
+Run Functional Tree devolve 3 depois de `GosubObjectTree`).
+
+**Erros**: a primitiva lança um `short` (código de erro). A tabela código →
+texto está em `cTSObject::GetErrorString` (0x00B37720, um switch de 0x453
+casos); a lista completa está no apêndice A. Exemplos: 0x05 "Primitive not
+supported for this type of object", 0x08 "Stack number out of range", 0x15
+"No stack object present when required", 0x17 "Could not find object
+reference", 0x1B "Slot number out of range", 0x69 "Cant run Reach/Drop on
+non Sim object".
+
+## 2. Despacho: quem trata cada opcode
+
+`cTSObject::TryElement` primeiro chama o agregado do objeto (objeto 3D) e
+depois `cTSObject::OnTryElement` (0x00B07FB8). Se ninguém trata o opcode,
+erro 0x05. Binário.
+
+| opcode | primitiva (rótulo do editor) | handler no binário |
+|---|---|---|
+| 0x00 | Sleep | `cTSObject::TryIdle` |
+| 0x01 | Generic Sims Call | `cTSObject::TryGenericSimCall` |
+| 0x02 | Expression | `cTSObject::TryExpression` (o `nTSSG::cObject` antes só observa donos 3/4/0x12/0x13) |
+| 0x03 | Find Best Interaction | `cTSPerson::TryFindBestAction` (só Sims) |
+| 0x07 | Refresh | `cTSObject::TryUpdate` |
+| 0x08 | Random Number | `cTSObject::TryRandom` |
+| 0x0A | Tutorial | devolve verdadeiro sem fazer nada |
+| 0x0B / 0x0C | Get Distance / Direction To | `TryDistanceTo` / `TryDirectionTo` |
+| 0x0D | Push Interaction | `cTSObject::TryPushAction` |
+| 0x0E | Find Best Object for Function | `TryFindFunctionalObject` |
+| 0x0F | Break Point | `TryTreeBreak` |
+| 0x10 | Find Location For | `TryFindGoodLocation` |
+| 0x11 | Idle for Input | `cTSPerson::TryIdleForInput` (só Sims) |
+| 0x12 | Remove Object Instance | `TryKillObject` |
+| 0x13 | Make New Character | `nTSSG::cObject` (0x0065CB14, `TryMakeNewCharacter`) |
+| 0x14 | Run Functional Tree | `TryCallFunctionalTree` |
+| 0x16 | Turn Body Towards | `cTSRoutingObjectAggregate::TryTurnTowards` |
+| 0x17 | Play / Stop Sound Event | `TryPlaySound` |
+| 0x19 | Alter Budget | `TryBudget` |
+| 0x1A | Relationship | `TryNewRelationship` |
+| 0x1B | Go To Relative Position | `cTSRoutingObjectAggregate::TryGotoRelative` |
+| 0x1C | Run Tree by Name | `TryCallNamedTree` |
+| 0x1D | Set Motive Change | `cTSPerson::TrySetMotiveDelta` |
+| 0x1E | Gosub Found Action | `cTSPerson::TryGosubAction` |
+| 0x1F | Set to Next | `TrySetToNext` |
+| 0x20 | Test Object Type | `TryTestObjectType` |
+| 0x21 | Find 5 Worst Motives | `TryFind5WorstMotives` |
+| 0x22 | UI Effect | `TryUIEffect` |
+| 0x23 | Camera Control | `TryUserEvent` |
+| 0x24 | Dialog | `TryDialog` |
+| 0x25 | Test Sim Interacting With | `cTSPerson::TryTestInteractingWith` |
+| 0x2A | Create New Object Instance | `TryCreateObject` |
+| 0x2D | Go To Routing Slot | `cTSRoutingObjectAggregate::TryGotoRoutingSlot` |
+| 0x2E | Snap | `TrySnap` |
+| 0x30 | Stop ALL Sounds | `TryKillSounds` |
+| 0x31 | Notify the Stack Object out of Idle | `TryNotifyStackObject` |
+| 0x32 | Add/Change the Action String | `TryMakeActionString` |
+| 0x33 | Manage Inventory | `TryInventoryAction` |
+| 0x69–0x6C, 0x6E | Animate Object/Sim/Overlay/Stop, Look At | `nTSSG::cAnimatable::try_animate_obj/_sim/_overlay/_stop`, `try_look_at` |
+| 0x6D | Change Material | `TryChangeMaterial` |
+| 0x6F | Change Light | `nTSSG::cObject::TryChangeLight` |
+| 0x70 | Effect Stop/Start | `TryChangeEffect` |
+| 0x71 | Snap Into | `TrySnapInto` (o `cObject` antes atualiza o modelo) |
+| 0x72 | Assign Locomotion Animations | `nTSSG::cLocomotable::try_assign_locomotion` |
+| 0x73 | Debug | `TryDebug` |
+| 0x74 | Reach/Put | `nTSSG::cAnimatable::try_new_reach` |
+| 0x75 | Age | `nTSSG::cPerson::TryAge` |
+| 0x76 | Array Operation | `TryArrayOperation` |
+| 0x77 | Message | `TryMessage` |
+| 0x78 | RayTrace | `nTSSG::cObject::TryRayTrace` |
+| 0x79 | Change Outfit | `nTSSG::cObject::TryChangeOutfit` |
+| 0x7A | On Timer | `TryOnTimer` |
+| 0x7B | Cinematic | `TryCinematic` |
+| 0x7C | Want Satisfy | `TryWantSatisfy` |
+| 0x7D | Follow Sim (sem rótulo no editor do base) | `cTSRoutingObjectAggregate::TryFollowSim` — **só BV** |
+| 0x7E | Run Script (Lua) | `TryRunScript` — **só BV** |
+
+Sem handler (erro 0x05 se aparecer): 0x04–0x06, 0x09, 0x15, 0x18, 0x26–0x29,
+0x2B, 0x2C, 0x2F, 0x34–0x68. Binário. `FollowSimParam` e `RunScriptParam` não
+existem na RTTI do executável base 1.0 (as outras 62 classes de operando
+existem), daí o "só BV". Binário (base e BV).
+
+Nos opcodes 0x16, 0x1B, 0x2D (rotas) e 0x6A, 0x74 (animação/reach), se uma
+flag do sistema de simulação (bit 0 do estado) está desligada, o handler não
+roda: a primitiva devolve 2 (espera) e o objeto é marcado para tentar de
+novo. Binário (o significado da flag é inferido: "o mundo 3D está pronto").
+
+## 3. Largura dos campos de cada primitiva (`SwizzleParams`)
+
+Bytes que não aparecem como u16/u32 são u8 (ou não usados). Binário (BV).
+
+| opcode | classe | u16 (LE) nos bytes | u32 (LE) nos bytes |
+|---|---|---|---|
+| 0x00 | `IdleParam` | 0–1 | — |
+| 0x01 | `GenericSimCallParam` | 0–1 | — |
+| 0x02 | `ExpressionParam` | 0–1, 2–3 | — |
+| 0x03 | `FindBestActionParam` | 0–1 | — |
+| 0x07 | `UpdateParam` | 0–1, 2–3 | — |
+| 0x08 | `RandomParam` | 0–1, 2–3, 4–5, 6–7 | — |
+| 0x0A | `TutorialParam` | — | — |
+| 0x0B | `DistanceToParam` | 0–1, 4–5 | — |
+| 0x0C | `DirectionToParam` | 0–1, 2–3, 6–7 | — |
+| 0x0D | `PushActionParam` | 6–7, 9–10, 12–13 | — |
+| 0x0E | `FindFunctionalObjectParam` | 0–1, 4–5 | — |
+| 0x0F | `TreeBreakParam` | 0–1, 2–3 | — |
+| 0x10 | `FindGoodLocationParam` | 5–6, 8–9, 10–11, 12–13 | — |
+| 0x11 | `IdleForInputParam` | 0–1, 2–3 | — |
+| 0x12 | `KillObjectParam` | 0–1 | — |
+| 0x13 | `MakeNewCharacterParam` | 4–5, 7–8 | 10–13 |
+| 0x14 | `CallFunctionalTreeParam` | 0–1, 2–3 | — |
+| 0x16 | `TurnTowardsParam` | 0–1, 3–4, 6–7 | — |
+| 0x17 | `PlaySoundParam` | 0–1, 2–3, 7–8 | — |
+| 0x19 | `BudgetParam` | 2–3, 4–5, 7–8 | — |
+| 0x1A | `NewRelationshipParam` | 3–4, 6–7, 9–10 | — |
+| 0x1B | `GotoRelativeParam` | 0–1, 4–5 | — |
+| 0x1C | `CallNamedTreeParam` | 0–1, 2–3, 7–8, 10–11, 13–14 | — |
+| 0x1D | `SetMotiveDeltaParam` | 4–5, 6–7 | — |
+| 0x1E | `GosubActionParam` | 0–1 | — |
+| 0x1F | `SetToNextParam` | 9–10, 11–12 | 0–3 |
+| 0x20 | `TestObjectTypeParam` | 4–5 | 0–3 |
+| 0x21 | `Find5WorstMotivesParam` | 4–5, 6–7 | — |
+| 0x22 | `UIEffectParam` | 1–2, 3–4, 6–7, 8–9, 11–12 | — |
+| 0x23 | `UserEventParam` | 0–1 | — |
+| 0x24 | `DialogParam` | 13–14 | — |
+| 0x25 | `TestInteractingWithParam` | 2–3 | — |
+| 0x2A | `CreateObjectParam` | 7–8 | 0–3 |
+| 0x2D | `GotoRoutingSlotParam` | 0–1, 2–3, 5–6, 7–8, 9–10 | — |
+| 0x2E | `SnapParam` | 0–1, 2–3, 4–5, 6–7, 8–9 | — |
+| 0x30 | `KillSoundsParam` | 0–1 | — |
+| 0x31 | `NotifyStackObjectParam` | — | — |
+| 0x32 | `MakeActionStringParam` | 0–1, 2–3, 12–13, 14–15 | 5–8 |
+| 0x33 | `ManageInventoryParam` | 2–3, 11–12, 14–15 | 5–8 |
+| 0x69 | `AnimateObjParam` | 0–1, 4–5, 7–8 | — |
+| 0x6A | `AnimateSimParam` | 0–1, 4–5, 10–11 | — |
+| 0x6B | `AnimateOverlayParam` | 0–1, 4–5, 7–8 | — |
+| 0x6C | `AnimateStopParam` | 0–1, 4–5 | — |
+| 0x6D | `MaterialChangeParam` | 0–1, 3–4, 6–7, 9–10, 11–12 | — |
+| 0x6E | `LookAtParam` | 2–3, 6–7, 9–10, 12–13 | — |
+| 0x6F | `ChangeLightParam` | 3–4, 5–6 | — |
+| 0x70 | `EffectParam` | 2–3, 4–5, 7–8, 10–11, 13–14 | — |
+| 0x71 | `SnapIntoParam` | 1–2, 4–5, 7–8 | — |
+| 0x72 | `LocoParam` | 0–1 | — |
+| 0x73 | `DebugParam` | 1–2, 4–5, 7–8, 10–11 | — |
+| 0x74 | `NewReachParam` | 1–2, 4–5, 7–8, 11–12, 13–14 | — |
+| 0x75 | `AgeParam` | — | — |
+| 0x76 | `ArrayOperationParam` | 3–4, 6–7, 9–10 | — |
+| 0x77 | `MessageParam` | 1–2, 6–7, 10–11, 13–14 | — |
+| 0x78 | `RayTraceParam` | 2–3, 6–7, 9–10, 13–14 | — |
+| 0x79 | `ChangeOutfitParam` | 2–3, 10–11 | 4–7 |
+| 0x7A | `OnTimerParam` | 0–1, 3–4, 7–8, 10–11, 13–14 | — |
+| 0x7B | `CinematicParam` | 0–1, 3–4, 7–8, 10–11 | — |
+| 0x7C | `WantSatisfyParam` | 1–2, 8–9, 11–12 | 3–6 |
+| 0x7D | `FollowSimParam` | 1–2, 3–4, 6–7 | — |
+| 0x7E | `RunScriptParam` | 0–1, 2–3, 4–5, 7–8, 10–11, 13–14 | — |
+| — | `AnimateOverlayVersion0Param` | 0–1, 4–5, 7–8, 10–11, 12–13 | — |
+| — | `LookAtVersion0Param` | 2–3, 4–5, 6–7, 9–10, 12–13 | — |
+| — | `NewRelationshipVersion0Param` | 6–7 | — |
+| — | `RunPrivateTreeParam` | 1–2, 4–5, 7–8, 8–9, 10–11, 12–13, 14–15 | — |
+| — | `UnusedParam` | 0–1, 2–3, 4–5, 6–7, 8–9, 10–11, 12–13, 14–15 | — |
+| — | `XPrimParam` | 0–1, 2–3, 4–5, 6–7, 8–9, 10–11, 12–13, 14–15 | — |
+
+Diferenças que pegam a VM hoje (ver as seções abaixo): Random Number tem os
+**donos em u16** (dado u16 0, dono u16 2, dado u16 4, dono u16 6), como no
+The Sims 1; Snap Into tem um u16 nos bytes 7–8; Reach/Put tem u16 em 1–2 e
+7–8.
+
+## 4. Primitivas em detalhe
+
+### 0x74 Reach/Put (`try_new_reach`, `NewReachParam`)
+
+Operandos (disassembler `CatNewReachParam` + `SwizzleParams`; binário):
+
+| bytes | campo |
+|---|---|
+| 1–2 | u16 (não impresso pelo editor) |
+| 3, 4–5 | o objeto: (dono u8, dado u16) — "Pick up Object in …"/"Drop onto Object in …" |
+| 6 | número do slot (de contenção) do objeto, no modo 1 |
+| 7–8 | u16 (não impresso) |
+| 9 | flags: 0x01 slot no temp 0; 0x02 espera a mão (handedness) no temp 3; 0x04 filtra a animação do objeto pela idade do Sim |
+| 10 | modo: 0 pegar o objeto, 1 pôr no slot do objeto, 2 pôr no chão |
+| 11–12 | animação de pegar ("grasp"): índice + 1 no STR# 0x81 (adulto); 0xFFFF = nenhuma |
+| 13–14 | animação do objeto: índice + 1 no STR# 0x86 (objeto); 0xFFFF = nenhuma |
+
+Execução (binário): só roda em Sims (senão erro 0x69 "Cant run Reach/Drop
+on non Sim object"; sem pessoa 3D 0x42, sem animador 0x41). Na primeira
+execução zera o "reach object ID" e o "reach surface object ID" do Sim
+(`cTSPerson::SetReachObjectID`/`SetReachSurfaceObjectID`) e guarda no stack
+frame um ID novo de pedido de animação (`0xA0000000 | mão | contador <<
+21`; a mão vem do temp 3 com a flag 0x02); enquanto o pedido existe, a
+primitiva devolve 2 (espera). Modo 0 (pegar): objeto que não existe → os
+dois IDs = 0xFFFF e **falso**; objeto que já está nessa mão do Sim → IDs =
+0xFFFF e **verdadeiro** sem animar; senão reach object = o objeto e reach
+surface = onde ele estava. Modos 1/2 (pôr): o objeto é o que está na mão
+(`GetContainedObject(mão)`); modo 1 põe no slot (byte 6, ou temp 0 com
+0x01) do objeto alvo, que vira o reach surface (slot fora do intervalo:
+erro 0x1B); modo 2 põe no chão. A animação vem das tabelas dos bytes 11–14
+(tipo de animação errado na string: erro 0x73; sem animação: 0x71; sem o
+evento 0: 0x6E). No fim os dois IDs voltam a 0xFFFF. Inferido: a troca de
+dono acontece no evento 0 da animação (por isso o erro 0x6E) e as árvores
+leem os dois IDs pelos dados de pessoa.
+
+### 0x14 Run Functional Tree (`TryCallFunctionalTree`)
+
+Operandos: função u16 0 (índice + 1 no STR# 0xC9 "functions"); flags u16 2:
+0x01 muda o ícone, 0x02 passa os parâmetros da árvore atual, 0x04 roda só a
+check tree. Binário.
+
+Execução (binário): o alvo é o **stack object** (sem stack object: erro
+0x15). O índice da primitiva não é o índice da OBJf: é traduzido por uma
+tabela fixa —
+
+| u16 0 | 0–9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17–23 | 24 | 25 | 26 | 27 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| entrada da OBJf | 0x12–0x1B | 0x0E | 0x1C | 0x10 | 0x11 | 0x1D | 0x1F | 0x20 | 0x24–0x2A | (falso) | 0x2C | 0x2E | 0x35 |
+
+(rótulos do STR# 0xC9: 0 "prepare food" … 9 "stand", 10 "serving surface",
+11 "clean", 12 "garden", 13 "wash hands", 14 "repair", 15 "dry clothes", 16
+"wash clothes", 17 "message handler", 18 "pre route", 19 "post route", 20
+"goal check", 21 "reaction Handler", 22 "along route callback", 23
+"awareness", 24 "reset" (sem entrada: sempre falso), 25 "lookatTarget", 26
+"Utility State Change", 27 "Global Awareness")
+
+— e pega a action tree dessa entrada (com 0x04, a check tree). Árvore 0 →
+falso. Senão `GosubObjectTree(stack object, parâmetros, árvore, mudar ícone)`
+e devolve 3 (a árvore roda empilhada, na thread de quem chamou, com o stack
+object como "me"; inferido pelo nome). Se o gosub falha → falso.
+
+### 0x1A Relationship (`TryNewRelationship`, `NewRelationshipParam`)
+
+Operandos (versão de nó 1; binário): variável u8 0 (rótulo: STR# 0x102
+índice + 1), flags u8 1, de (dono 2, dado u16 3), para (dono 5, dado u16
+6), valor (dono 8, dado u16 9). Flags (disassembler): 0x01 "Fail if too
+small", 0x02 "Use Neighbor IDs", 0x04 **"Get value from"** o valor (ou seja,
+grava a variável), sem 0x04 **"Put value into"** o valor (lê a variável).
+
+Execução (binário):
+
+- 0x02: de/para são neighbor IDs; vizinho que não existe → erro 0x1C. A
+  tabela é a do vizinho "de".
+- sem 0x02 e **com 0x08**: só o "de" é procurado como objeto (erro 0x17 se
+  não existe) e a tabela é a do próprio objeto (`+0x1AC`); o "para" é usado
+  cru, sem procurar objeto nenhum (confirma o achado §7 do
+  `data-findings.md`: "para" é um neighbor ID). A flag não aparece no
+  disassembler.
+- sem 0x02 e sem 0x08: os dois são objetos (erro 0x17 se faltar um). **Se os
+  dois são Sims, a relação é guardada pelos neighbor IDs deles** (a mesma
+  tabela que 0x02 usa); senão, na tabela do objeto "de", com o ID de objeto
+  do "para" como chave.
+- Sem tabela → erro 0x68 "The relationship matrix requested could not be
+  found".
+- Se a relação com "para" tem ≤ `variável` entradas: com 0x01 → falso; sem
+  0x01 ela cresce para `variável + 1` entradas (zeradas) e segue.
+- Ler (sem 0x04): o destino tem de ser gravável (erro 0x13) e o valor tem de
+  caber no intervalo do destino (erro 0x14); verdadeiro. Gravar (0x04):
+  verdadeiro, ou erro 0x14 se a tabela recusa.
+
+Versão de nó 0 (`NewRelationshipVersion0Param`, convertida no load): byte 1
+era um modo (0 eu→stack object, 1 stack object→eu, 2 stack object→local,
+3 local→stack object) e com o bit 0x02 os IDs viravam person data 31
+(neighbor ID) em vez de object data 11 (ID do objeto). Binário.
+
+**Contradiz o código**: a VM falha com 0x08 e não trata "dois Sims por ID de
+objeto = mesma relação que por neighbor ID".
+
+### 0x2A Create New Object Instance (`TryCreateObject`)
+
+Operandos (binário): GUID u32 0; posição s8 4 (STR# 0xA7 índice + 1); flags
+u8 5; local u8 6 (posições 8 e 9); u16 7 (não impresso); slot u8 9
+(posições 4 e 10); flags u8 10.
+
+Flags do byte 5 (disassembler + código): 0x01 não duplica (falso se já há
+um objeto do mesmo tipo no tile), 0x02 passa IDs ao Main (parâmetro 0 = meu
+ID, 1 = ID do stack object), 0x04 Sim a partir do **vizinho no stack
+object**, 0x08 falso se o tile não está vazio, 0x10 passa o temp 0 ao Main
+(parâmetro 0), **0x20 (sem texto no editor) põe o objeto novo no mesmo nível
+(andar) do stack object**, **0x40 GUID do token temporário de inventário**,
+0x80 GUID nos temps 0 (baixo) e 1 (alto). 0x02 junto com 0x10 → erro 0x36
+"More than one passing value specified". Flags do byte 10: 0x01 "Moving in a
+new Sim" (vai para a criação), 0x02 copia os materiais de design do objeto
+no temp 5 (objeto inexistente → erro 0x0A).
+
+Posições (byte 4; rótulos do STR# 0xA7 e código; binário): 0 "in front of
+me" (meu tile + 1 na direção em que olho); 1 "on top of me" e 2 "in my hand"
+(os dois: no meu slot 0); 3 "in front of stack object"; 4 "in user defined
+slot of stack object" (slot do byte 9); 5 "underneath me" (meu tile); 6 "out
+of world" (sem testes de posição); 7 "below object in stack param 0" (no tile
+do objeto cujo ID está no parâmetro 0; sem parâmetros → erro 0x08); 8 "below
+object in local" (local do byte 6; fora do intervalo → erro 0x08); 9 "next to
+me in direction of local" (local + minha direção, só N/L/S/O, virado para
+mim); 10 "in user defined slot of object in temp 0" (slot do byte 9).
+
+Falso (sem erro): GUID sem definição; definição "morta" (tipo 0x11); posição
+inválida ou tile ocupado (flags acima); a criação falha; o objeto não cabe
+(`TSObjectCanSetPosition`/`CanPlaceInSlot`: o objeto criado é apagado).
+Definição de template (tipo 0x10) → erro 0x90. No fim, **o stack object
+passa a ser o objeto novo** e devolve verdadeiro.
+
+### 0x20 Test Object Type (`TryTestObjectType`)
+
+Operandos (binário): GUID u32 0, objeto (dono u8 6, dado u16 4), flags u8 7.
+
+- GUID `0x4C7CAB2B` = "the GUID of the temporary inventory token"
+  (disassembler): o GUID testado é o do token temporário.
+- 0x04 "Return GUID selected in Temp0/1": não testa objeto; se o GUID tem
+  definição, temp 1 = metade alta, temp 0 = metade baixa e verdadeiro; senão
+  falso.
+- 0x02 "incoming ID is a neighbor ID": o objeto é procurado como vizinho.
+- 0x01 "Checking against original, not current GUID".
+- Sem 0x04: verdadeiro se o GUID é o da definição do objeto (com 0x01, da
+  definição original) ou, se não for, o da definição "mestre" dela (slot
+  `0x6C`; inferido: objetos multi-tile e trocas de tipo).
+- **Objeto que não existe → falso (não erro).** Contradiz o comentário em
+  `src/vm/primitives.cpp` ("error if it does not exist").
+
+### 0x10 Find Location For (`TryFindGoodLocation`)
+
+Operandos (binário): modo u8 0 (STR# 0xEF); local u8 1; flags u8 2; byte 3 =
+**máscara de direções proibidas**; objeto (dono 4, dado u16 5); referência
+(dono 7, dado u16 8); routing slot u16 10; u16 12 (não usado aqui).
+
+Flags (disassembler): 0x01 começa no objeto do local (byte 1), 0x02 **não**
+prefere tiles vazios (o texto ", prefer empty" sai quando o bit está
+desligado), 0x04 só tiles editáveis, 0x08 objetos explícitos (bytes 4–9),
+0x10 em terreno plano, 0x20 com borda vazia, 0x40 começa na frente da
+referência, 0x80 com linha de visão até o centro.
+
+Byte 3 (binário): o código usa `~byte3` como máscara das direções
+permitidas: **bit n ligado = direção n proibida** (bit 0 N, 1 NE, 2 L, 3 SE,
+4 S, 5 SO, 6 O, 7 NO). `0xFE` = só N, `0xAA` = só N/L/S/O, `0xFB` = todas menos
+L, 0 = todas. O §11 do `data-findings.md` tinha a leitura invertida.
+
+Execução (binário): sem 0x08 o objeto é o stack object (sem: erro 0x15) e a
+referência sou eu, ou o objeto do local (0x01; local fora do intervalo:
+0x33). Com 0x08 os dois vêm dos operandos (faltando: 0x17). Modo 1: põe fora
+do mundo, verdadeiro. Modos 5–8 (slot no parâmetro / local / literal /
+global, u16 10; fora do intervalo: 0x08 e 0x1B): tenta cada posição do slot;
+se o slot não fixa a direção, tenta as 8 direções a partir de uma aleatória,
+pulando as proibidas. Modos 3/4 (ao longo do vetor da referência / lateral
+= +90°; sem referência: 0x3D): busca a partir da direção da referência.
+Modos 0 e 2: busca normal; **o modo 0 tenta primeiro no mesmo cômodo e, se
+não achar, em qualquer lugar; o modo 2 só no mesmo cômodo**. Achou →
+posiciona, verdadeiro; não achou → falso.
+
+### 0x1F Set to Next (`TrySetToNext`, `SetToNextParam`)
+
+Operandos (binário): GUID u32 0; tipo de busca = byte 4 & 0x7F (STR# 0xA4);
+**byte 4 bit 7: alvo explícito** = (dono byte 5, dado **byte 7**) — sem ele o
+alvo é o stack object; local u8 6 (tipos 9 e 0x22); flags u8 8: 0x01 "including
+disabled objects", 0x02 "where" object data (u16 9, rótulo STR# 0x8D) ==
+valor u16 11. A versão de nó 0 não tinha as flags nem o filtro (zerados no
+load).
+
+Execução (binário):
+
+- O alvo tem de ser gravável (erro 0x13). A busca recomeça **depois** do
+  valor atual do alvo (0 = do começo) e grava o achado no alvo; nada achado →
+  falso.
+- Filtro comum (`SetToNextIsObjectEligible`): objeto válido; sem a flag 0x01,
+  pula objetos com o bit 0 do object data 56 ligado; **sem a flag 0x04 (não
+  impressa pelo editor), pula objetos com object data 107 ≠ 0**; com 0x02,
+  object data [u16 9] tem de ser igual a u16 11. Os rótulos do jogo base
+  (STR# 0x8D) só vão até o object data 87 e chamam o 56 de "dry clothes
+  value": a flag 0x01 ("including disabled objects", string ausente no exe
+  base 1.0) e o campo 107 são **só BV**.
+- Lista de objetos do lote: 0 objeto; 2 não-pessoa; 6 categoria (object data
+  59) = parâmetro 0; 12 categoria = temp 0; 25 objeto no cômodo do temp 0; 27
+  "Utility Using Object" (object data 76 ou 77 ≠ 0); 33 "Hauntable" (campo
+  0x1C da definição); 37 categoria de desejo = temp 0 (os rótulos do jogo base
+  vão até o tipo 37). Tipo fora da lista → erro 0x1E.
+- 1 pessoa: lista de pessoas do lote, a partir do Sim cujo ID está no alvo.
+  Os tipos 0x28–0x2D (só BV) filtram pelo dado de pessoa 186 (espécie?:
+  0x29 < 0, 0x2A 1–2, 0x2B 1, 0x2C 2, 0x2D 3), e **no BV o tipo 1 só aceita
+  dado 186 = 0** (o jogo base não tem esse campo: 170 rótulos de dados de
+  pessoa).
+- 3 parte de multi-tile: a próxima parte do grupo do objeto do alvo.
+- 4 objeto do tipo (GUID u32 0) e 18 GUID nos temps 0/1: definição pelo GUID
+  (sem definição → falso), instâncias depois da atual.
+- 5 neighbor ID (e 0x2E–0x33, só BV): o próximo vizinho pelo ID, com o
+  mesmo filtro do dado 186 (tipo 5: = 0, só BV); se o vizinho está no lote, o
+  objeto dele também passa pelo filtro comum.
+- 7 vizinho do tipo: próximos vizinhos cuja definição tem o GUID u32 0.
+- 8 objeto no mesmo tile: precisa de alvo ≠ 0 (senão falso); objetos do tile
+  do alvo, no mesmo nível, depois dele.
+- 9 objeto adjacente ao objeto do local (byte 6; fora do intervalo: erro
+  0x08; objeto inexistente: 0x0A): o último objeto válido dos tiles +X, −X,
+  +Y, −Y que esteja no mesmo cômodo.
+- 10 carreira: sempre falso. 11 Lot ID: o próximo lote.
+- 13 pessoa mais perto da pessoa do temp 0: grava a distância e a direção
+  relativa no objeto (lidas pelos temps 4 e 5, pelo rótulo).
+- 14/15 instância do "job object" pelo GUID nos dados de pessoa 89/90 do Sim
+  no stack object / do vizinho (vizinho inexistente: erro 0x37).
+- 16 veículo: a lista de veículos do lote (o GUID não é usado — confirma o
+  que o `hood_bridge` já faz).
+- 17 vizinho da família do temp 0 (dado de pessoa 61 = temp 0).
+
+### 0x7A On Timer (`TryOnTimer`, `OnTimerParam`)
+
+Operandos (binário): u16 0 = árvore/ID do timer; byte 2; u16 3; flags u8 5;
+três (dono 6, dado u16 7), (dono 9, dado u16 10), (dono 12, dado u16 13);
+modo u8 15.
+
+Execução (binário): pega o gerenciador de timers do lote (sem ele: erro
+0x17). u16 0, ou o temp 1 com a flag 0x08. Modo 0 (criar): argumentos =
+os três (dono, dado) acima, ou, com a flag 0x01, os parâmetros da árvore
+atual; chama o gerenciador com (u16 0, u16 3, flag 0x02, persistente?, n
+argumentos) e **grava no temp 0 o ID do timer criado**. Modo 1: altera o
+timer cujo ID está no temp 0 (u16 0, u16 3, flags 0x02 | 0x04→2). Modo 2:
+cancela o timer do temp 0. Sempre verdadeiro. Inferido: u16 3 é o intervalo,
+0x02 repete.
+
+### 0x17 Play / Stop Sound Event (`TryPlaySound`)
+
+Operandos (binário): som s16 0; flags byte 4; (dono 6, dado u16 7). O
+binário de Mac não tem `CatPlaySoundParam` (o texto do editor não foi
+achado).
+
+Execução (binário): a fonte é o stack object com a flag 0x02 (e byte 4 ≠
+0xFF), senão eu. O número escolhe a tabela de sons: |n| ≥ 20000 → tabela
+global (n − 20000), 10000–19999 → semi-global (n − 10000), < 10000 →
+privada. **n negativo: o índice vem da variável (dono 6, dado u16 7)** (a
+tabela continua escolhida por |n|). O nome achado vai em minúsculas para o
+sistema de áudio numa mensagem com o ID do objeto, a posição (para Sims, o
+osso `root_rot` e os dados de pessoa 58, 65 e 88) e um de dois eventos
+conforme a flag 0x40 (inferido: tocar em laço / uma vez). Object data 34
+(flags de som): bit 0x02, ou 0x10 com nome começando por "vox", não manda a
+posição. **Sempre verdadeiro** (o fim da função é `li r3,1`).
+
+### 0x11 Idle for Input (`cTSPerson::TryIdleForInput`)
+
+Operandos (disassembler + `SwizzleParams`; binário): parâmetro u16 0 com os
+ticks ("for ticks in" parâmetro n); "allow push" u16 2 (≠ 0 = ", allow
+push"); byte 4 bit 0 = **"Handle Sub Queue Interactions"** (nesse modo os
+outros campos não são impressos). Confirma o §5 do `data-findings.md`.
+
+Execução (binário; `cTSPerson::ShouldInterrupt` = "há algo para fazer"):
+
+- Modo normal. Parâmetro fora do intervalo → erro 0x08. Sem nada pendente:
+  contador ≠ 0 → decrementa e devolve 2; contador = 0 → desliga a flag 6
+  ("notified by idle for input", bit 0x40 do object data 8) e devolve
+  verdadeiro. **Espera exatamente N ticks** (a VM, como a FreeSO, espera N + 1:
+  ela só devolve verdadeiro quando o contador fica negativo).
+- Com algo pendente: liga a flag 6. Se "allow push" ≠ 0 e a fila tem
+  entradas: dentro de uma interação de prioridade alta (o frame diz 1) a
+  interação da frente só entra se puder interromper; senão verdadeiro. A
+  entrada da frente sai da fila, as sub-ações são limpas, a check tree roda
+  (`cEdithObjectTestSim::TestInteraction`); passou e tem action tree →
+  `GosubObjectTree` no objeto dela, ela vira a ação atual, o contador vai a
+  0 e a primitiva devolve **3** (a action tree roda em cima desta árvore);
+  não passou → `ActionSkipped` e devolve 2. Sem "allow push" ou fila vazia →
+  verdadeiro.
+- Modo "Handle Sub Queue Interactions" (byte 4 bit 0): se há sub-ações
+  (`CountSubActions`), tira a primeira, testa e empilha a action tree dela
+  como sub-ação atual (devolve 3); falhou → limpa as sub-ações e verdadeiro.
+  Sem sub-ações → verdadeiro.
+
+### 0x0D Push Interaction (`TryPushAction`, `PushActionParam`)
+
+Operandos (disassembler `CatPushActionParam`; binário):
+
+| bytes | campo |
+|---|---|
+| 0 | número da interação (TTA) |
+| 1 | onde está o objeto: parâmetro n, ou local n com a flag 0x02 |
+| 2 | prioridade (STR# 0xE0) |
+| 3 | flags: 0x01 ícone do objeto no local (byte 4); 0x02 objeto num local; 0x04 "continue as current"; 0x08 "use name"; 0x10 número da interação numa variável (dono 5, dado u16 6); 0x20 "Force run check tree"; 0x40 liga à interação cujo ID está em (dono 8, dado u16 9); 0x80 devolve o ID da interação nova em (dono 11, dado u16 12) |
+| 4 | local com o objeto do ícone (flag 0x01) |
+| 5, 6–7 | (dono, dado) do número da interação (flag 0x10) |
+| 8, 9–10 | (dono, dado) do ID da interação a que liga (flag 0x40) |
+| 11, 12–13 | (dono, dado) onde gravar o ID da interação nova (flag 0x80) |
+| 14 | flags: 0x01 passa os 4 primeiros parâmetros; 0x02 interação = resultado do último Find Best Interaction; 0x04 ícone pelo GUID do seletor nos temps 4/5; 0x08 índice do ícone no temp 6 |
+| 15 | índice do ícone (sem 0x08 no byte 14) |
+
+A interação vai para a fila do **stack object** ("onto the stack object's
+queue"). Resolve o §12 do `data-findings.md` (os três pares e os bits).
+
+Execução (binário):
+
+- Começa gravando 0 no meu object data 52 ("primitive result"); as falhas
+  "esperadas" gravam ali um código e devolvem falso: 1 prioridade herdada
+  mas eu não tenho prioridade (dado de pessoa 33 = 0), 2 a check tree
+  recusou, 3 fila do alvo cheia (mais de 6 entradas e não deu para trocar),
+  4 sub-fila cheia (interação aninhada, mais de 4), 6 o alvo recusou a
+  entrada.
+- O alvo (stack object) tem de existir (erro 0x15) e ser um Sim (erro 0x1C).
+- Objeto: parâmetro do byte 1 (fora do intervalo: 0x08) ou local (0x02;
+  0x33); com o byte 14 bit 1 (último Find Best Interaction) o objeto é o dado
+  de pessoa 53 do alvo ("FindBestAction result Interaction Object ID") e a
+  interação o object data 20 dele ("tree table entry"). Objeto inexistente →
+  0x17; sem definição → falso; sem TTAB → 0x1F; entrada inexistente → 0x16.
+- Prioridade (byte 2): 0 herdada = meu dado de pessoa 33 (objeto que não é
+  Sim: 1), 1 máxima = 100, 2 autônoma = 20, 3 do usuário = 50; outro valor →
+  erro 0x2D.
+- Interação aninhada sem o alvo estar numa interação que permite → erro 0x6F.
+- Flag 0x80: grava o ID da interação nova (fora do intervalo do destino:
+  0x14). Flag 0x40: liga a nova à interação de ID (dono 8, dado u16 9).
+  Byte 14 bit 0: copia os 4 primeiros parâmetros da árvore atual (ou menos).
+- Se eu sou Sim (e não é o caso do Find Best Interaction), a interação herda
+  algo da minha interação atual (slot 0xBC; inferido: o "dono"/grupo).
+- Verdadeiro quando a entrada vai para a fila (ou sub-fila) do alvo.
+
+### 0x00 Sleep (`cTSObject::TryIdle`)
+
+Parâmetro u16 0 com os ticks (fora do intervalo: erro 0x08). Se o valor é 0
+→ verdadeiro; senão decrementa o parâmetro e devolve 2 (espera). Valor
+negativo vira 0. Binário.
+
+## 5. Outras primitivas: operandos pelo disassembler
+
+Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
+que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
+`SwizzleParams` dizem. Binário, salvo indicação.
+
+- **0x02 Expression**: esquerda (dono byte 6, dado u16 0), operador byte 5
+  (STR# 0x88), direita (dono byte 7, dado u16 2).
+- **0x08 Random Number**: destino (dado u16 0, **dono u16 2**), limite (dado
+  u16 4, **dono u16 6**): "dest := random from 0 to < limite". Execução:
+  **limite 0 grava 0 no destino e devolve verdadeiro** (o erro 0x04 "Random
+  number range evaluated to zero" não é lançado aqui; a VM hoje lança);
+  destino só leitura → 0x13; resultado fora do intervalo do destino → 0x14;
+  um destino float (motivo) também é aceito. Sempre verdadeiro.
+- **0x0B Get Distance To**: destino = temp (u16 0); flags byte 6: 0x02 em
+  centésimos de tile; distância de mim (ou do objeto do operando) ao stack
+  object.
+- **0x0C Get Direction To**: destino (dado u16 0, dono u16 2); flags byte 8:
+  0x02 em graus.
+- **0x0E Find Best Object for Function**: função u16 0 (STR# 0xC9); flags
+  byte 2: 0x01 só fora, 0x02 só dentro, 0x04 só no cômodo, 0x08 relativo ao
+  objeto (dono 3, dado u16 4), 0x10 com linha de visão, 0x80 ignorando
+  "lockout".
+- **0x0F Break Point**: (dado u16 0, dono u16 2) "if != 0"; byte 4 bit 0 =
+  ignorar no jogo final.
+- **0x12 Remove Object Instance**: alvo u16 0 (STR# 0x9C: 0 eu, 1 stack
+  object, 2 "target - UNUSED" = ID 0; > 2 → erro 0x09); byte 2: 0x01 volta na
+  hora, sem 0x02 "cleanup all" (passado à remoção). Objetos cujo GUID está
+  numa lista fixa de 7 GUIDs não são removidos (binário; quais são não foi
+  conferido).
+- **0x16 Turn Body Towards**: tipo u16 0 (STR# 0xD8 dos globais).
+- **0x1B Go To Relative Position**: lugar s8 2 (STR# 0x82, índice + 3),
+  direção s8 3 (STR# 0x83, índice + 3), flags byte 6: **0x02 sem árvores de
+  falha, 0x04 permite outro nível**. Contradiz o `routing.cpp`, que usa os
+  bits do The Sims 1 (0x01 altitude, 0x02 sem falha).
+- **0x1C Run Tree by Name**: flags u16 2 (0x01/0x02 de onde vem o nome,
+  0x04 e 0x08 impressos como true/false, 0x10 passa três (dono, dado) em 6,
+  9, 12, 0x20 passa os parâmetros da árvore atual); modo byte 5 (STR# 0xDE).
+- **0x1D Set Motive Change**: motivo byte 2 ("motive" n), += (dono byte 0,
+  dado u16 4) por hora, até (dono byte 1, dado u16 6); byte 3: 0x01 limpa
+  todos, 0x02 zera a "Motive Decay" dos dados de pessoa.
+- **0x1E Gosub Found Action**: u16 0 (STR# 0x1FE).
+- **0x21 Find 5 Worst Motives**: u16 4 (STR# 0x99) e u16 6 (STR# 0xA5),
+  resultado nos temps 0–4.
+- **0x22 UI Effect**: modo s8 0 (0 aperta controle, 1 desliga, 2 liga, 3
+  efeito, 4 árvore de evento, 5 reseta todos, 6 desliga todos, 7 reseta
+  árvores, 8 árvore de evento em nó TNS, 9 mostra, 10 esconde), controle u16
+  3, janela u16 1, flags byte 5, efeito u16 6, árvore u16 8 com o lugar s8 10
+  (0 privada, 1 semi-global, 2 global), (dono 13, dado u16 11).
+- **0x23 Camera Control**: byte 4: 0x01 mostra o stack object, 0x08 centra,
+  0x20 timeout no temp 0 (senão u16 0), sem 0x40 "slow down"; zoom byte 3
+  (1 longe, 2 médio, 3 perto).
+- **0x24 Dialog**: tipo s8 5 (0 mensagem, 1 escolha, 2 três escolhas, 3
+  texto, 4 tutorial, 5–0x46 diálogos especiais: telefone, revistas, roupas,
+  aspirações, ...), mensagem u16 13 (STR# 0x12D), temp do texto = (byte 7 >>
+  4) & 7, ícone (byte 7 >> 1) & 7 com o índice no byte 1, flags byte 8
+  (0x01/0x02/0x40 de onde vem o texto: privado/semi-global/global, 0x04–0x20
+  índices de botões e título no temp 0), prioridade byte 9 + 1, timeout byte
+  10, tipo de notificação s8 12.
+- **0x2D Go To Routing Slot**: slot u16 0; de onde u16 2 (0 parâmetro, 1
+  literal, 2 global, 3 "???"); flags byte 4: 0x01 sem árvores de falha, 0x02
+  slot no temp 0 (com u16 2 = 1), **0x04 ignora a área do objeto de
+  destino, 0x08 permite outro nível**. Resolve o "0x02–0x10 not understood"
+  do `routing.cpp`.
+- **0x2E Snap**: modo u16 2 (STR# 0xCF); slot u16 0 (modos 0, 3 e 4); flags
+  u16 4: 0x02 pede para a pessoa sair, 0x08 slot no temp 0, 0x10 só testa
+  ("TEST ONLY"); u16 8 = 1 "from slot in temp 1".
+- **0x30 Stop ALL Sounds**: u16 0: 0 os meus, ≠ 0 os do stack object.
+- **0x32 Add/Change the Action String**: modo s8 9 (0 texto, ≠ 0 ícone);
+  flags u16 2 (0x04/0x08 tabela global/semi-global, 0x10 índice no temp 0,
+  0x100/0x200 desligada propagando/não, 0x1000 para a sub-fila, 0x20/0x40/
+  0x80 no modo ícone); texto u16 14; ícone: objeto (dono 11, dado u16 12),
+  GUID u32 5, índice byte 10.
+- **0x69/0x6B Animate Object/Overlay** e **0x6A Animate Sim**: animação u16
+  0; flags byte 2: 0x01 espelhada, 0x02 velocidade no temp 2, 0x04 índice num
+  parâmetro ("anim id in s.v."), 0x08 interrompível, 0x10 começa na tag do
+  temp 0, 0x20 (Sim: "Trans to Idle"; objeto/overlay: repetições no temp 1),
+  0x40 sem blend de saída, 0x80 sem blend de entrada; árvore de evento u16 4
+  com o lugar s8 7 (Sim) / s8 9 (objeto) / s8 14 (overlay); lista byte 6 (Sim)
+  / byte 9 (overlay): 0x80 global, 0x81 adulto, 0x82 criança, 0x83 social,
+  0x89 bebê que anda, 0x8A adolescente, 0x8B idoso, 0x91 bebê, 0x8C gato,
+  0x8D cão (os dois já existem no exe base 1.0); 0x99/0x9A filhote de cão/
+  gato: **só BV**; objeto (dono 6, dado u16 7)
+  (objeto/overlay). Sim: flags byte 8 (0x01 espelhamento no temp 3, 0x02
+  sincroniza com a última animação, 0x10 usa o objeto controlador como fonte,
+  0x20 não apressável), objeto IK (dono 9, dado u16 10), prioridade s8 12 (0
+  baixa, 1 média, 2 alta). Objeto: flags byte 10 (0x01 espelhamento no temp 3,
+  0x04 sincroniza com a animação de quem chama, 0x08 alinha o fim, 0x80 não
+  apressável). Overlay: flags byte 15 (0x01, 0x10, 0x20 como acima, 0x40 usa a
+  lista do dono da árvore), byte 12 bit 0 não apressável, prioridade s8 11.
+- **0x6C Animate Stop**: modo s8 7 (0 uma animação: u16 0 da lista byte 6;
+  1 overlays, 2 corpo inteiro, 3 todas, 4 poses de carregar, 5 idle, 6
+  gestos, 7 reações, 8 normais, 9 faciais, 10 faciais idle, 11
+  receptividade); objeto (dono 3, dado u16 4); flags byte 2 (0x01 espelhada,
+  0x02 com blend, 0x20 blend curto, 0x08 espelhamento no temp 3, 0x40 para as
+  normais e as espelhadas); prioridade s8 8 (0 qualquer, 1 baixa, 2 média, 3
+  alta).
+- **0x6D Change Material**: material u16 0; byte 2: 0x08 o material é
+  procurado no objeto (dono 8, dado u16 9) em vez de em mim, 0x10 índice do
+  material no temp 0, 0x02/0x04 qual tabela de nomes; 0x01 o grupo de malha é
+  procurado no objeto (dono 8, dado u16 9), 0x20 índice do grupo no temp 1,
+  0x40/0x80 qual tabela de nomes do grupo; grupo de malha s16 6 (< 0 = o
+  modelo todo); afeta (dono 5, dado u16 6); byte 13: 0x01 índice de "Moving
+  Texture" em vez de material, 0x02 usa o material gerado por snapshot.
+- **0x6E Look At**: flags byte 0 (0x01 parar, 0x80 câmera, 0x02 sem saída
+  antecipada, 0x04 inclui a coluna, 0x08 velocidade no temp 1, 0x10 duração
+  no temp 0, 0x20 ignora cômodo, 0x40 ignora o frustum); alvo (dono 1, dado
+  u16 2); velocidades byte 4 / byte 5 × 2 °/s; slot byte 8 do tipo s8 14 (0
+  altura 3/4, 1 alvo, 2 rota, 3 contenção); árvore u16 9 com lugar s8 11;
+  byte 15 (0x01/0x02 velocidade de volta nos temps 1/2, 0x04 não apressável).
+- **0x6F Change Light**: objeto (dono 2, dado u16 3); luz s8 8 (−1 todas);
+  duração u16 5 (ou temp 1 com byte 1 & 0x01); intensidade byte 7 % (ou temp
+  0 com byte 1 & 0x02).
+- **0x70 Effect Stop/Start**: modo byte 0 (0/1 começa suave/forte, 2/3 para
+  suave/forte, 4/5 para todos, 6 dispara e esquece, 7 interroga o osso, 8
+  para tudo e limpa a fila, 9 para TODOS, 10–13 estado 1–4, 14 para TODOS
+  suave); objeto (dono 1, dado u16 2); efeito u16 4 (byte baixo −1 = o efeito padrão);
+  slot byte 6 do tipo s8 9; flags u16 10 (0x40 ID do efeito no temp 1, 0x80
+  fila de prioridade, 0x04/0x10/0x20/0x400/0x800/0x1000 ícones); (dono 12,
+  dado u16 13); folha byte 15.
+- **0x71 Snap Into**: objeto (dono 0, dado u16 1) no objeto (dono 3, dado u16
+  4), slot byte 6 (ou temp 0 com 0x01); flags byte 9: 0x01 slot no temp 0,
+  **0x02 só testa ("TEST ONLY")**, 0x04 reseta os ossos raiz. Resolve o
+  "0x02 not understood" do `routing.cpp`.
+- **0x72 Assign Locomotion Animations**: modo u16 0 (0 tira todos, 1 tira o
+  último, n ≥ 2 empilha o grupo n − 1); byte 2: 0x02 semi-global, 0x04
+  global (senão privado).
+- **0x73 Debug**: ação byte 13 (0 imprime, 1–7 janelas/cheats), quatro (dono,
+  dado) em 0, 3, 6, 9, byte 12, flags byte 14.
+- **0x75 Age**: idade byte 0 (0 adulto, 1 criança, 2 bebê que anda, 3
+  adolescente, 4 idoso, 0xD bebê, 0xE jovem adulto — **0xE só BV**: "Young
+  Adult" não existe no exe base 1.0), byte 1 bit 0 = idade no temp 0.
+- **0x76 Array Operation**: de quem byte 2 (0 meu, ≠ 0 do stack object);
+  array u16 3; operação byte 1 (0 limpa, 1 tamanho, 2 redimensiona, 3
+  preenche, 4/5 insere na frente/atrás, 6 insere no iterador, 7/8 tira da
+  frente/de trás, 9 tira no iterador, 10 avança o iterador até o valor, 11
+  troca, 12/13 ordena); (dono 5, dado u16 6) e (dono 8, dado u16 9).
+- **0x77 Message**: ID da mensagem (dono 15, dado u16 1); prioridade byte 8;
+  alvo: com byte 4 & 0x02 um alvo (dono 5, dado u16 6), senão o conjunto byte
+  3 (0 Sims selecionáveis, ..., 6 objetos, 7 tudo) e o filtro byte 0 (0 mesmo
+  cômodo, 1 mesmo nível, 2 lote, 3 dentro, 4 fora); dados (dono 9, dado u16
+  10) e (dono 12, dado u16 13).
+- **0x79 Change Outfit**: flags byte 0 (0x10 reconstrói a roupa atual, 0x01/
+  0x02/0x40 fonte: GUID u32 4, stack object, temps 0/1; 0x04 índice numa
+  variável (dono 1, dado u16 2), senão byte 8 (STR# 0xFA); 0x20 limpa os GUIDs
+  dos dados de pessoa; 0x08 grava no arquivo); Sim (dono 9, dado u16 10).
+- **0x7C Want Satisfy**: Sim (dono 0, dado u16 1), desejo u32 3; tipo do
+  desejo (0 valor, 1 pessoa, 2/3 objeto, 4 habilidade, 5 carreira) com (dono 7,
+  dado u16 8) e nível (dono 10, dado u16 11).
+- **0x13 Make New Character**: sem byte 9 & 0x01: idade/sexo/cor da pele nos
+  locais dos bytes 1, 2, 0; com 0x01: bebê dos pais (dono 6, dado u16 7) e
+  (dono 3, dado u16 4), 0x02/0x04 por neighbor ID; 0x08/0x10 dados do objeto
+  com GUID nos temps 0/1 / no token; 0x20 personagem do "Bin"; 0x40 GUID
+  externo para a roupa da miniatura (0x80: nos temps 2/3, senão u32 10).
+
+## 6. `tools/symxfer`: como os nomes chegaram ao binário
+
+O executável só tem ~20 mil símbolos (externos e weak, todos no
+`__textcoal_nt`); o `__text` (25 MB, 33.101 funções) não tem nome nenhum.
+`references/sims2_mac_decomp/baserom.sym` lista 82 mil funções de **outro**
+build ppc do mesmo port (dezembro de 2007), ligado de outro jeito (inlines
+no meio do objeto, objetos em outra ordem). O que liga os dois é o
+`__eh_frame`: uma FDE por função, com início e tamanho exatos.
+`tools/symxfer/symxfer.py` alinha, por seção, a sequência de tamanhos das
+nossas funções com a do `baserom.sym` (âncoras: nomes iguais no coal e 4
+tamanhos seguidos únicos nos dois lados; cadeias de âncoras; DP entre elas;
+funções que mudaram de lugar dentro do objeto; thunks `addi r3,r3,-k; b
+alvo` nomeados pelo alvo).
+
+Cobertura: 22.461 das 33.101 funções do `__text` (68%), mais 4.663 em
+trechos sem FDE e 30.648 do coal (17.596 com nome próprio). Confiança,
+medida pelos thunks (o nome derivado do alvo existe no `baserom.sym`?):
+`exact` 90%, `gap` 92%, `near` 52%, `moved` 47%; a classe `sum` (9%) é
+descartada. A tabela de despacho (§2) bate com o nome de todos os 40
+handlers que ela chama, e cada classe de operando bate com a primitiva. Há
+erros isolados mesmo em `exact` (ex.: a busca de string de STR# que os
+`Cat*` chamam aparece como `nTSWorld::cWorldDB::TerrainElevation`): conferir
+pelo código antes de confiar num nome.
+
+- `tools/symxfer/run.sh [mapa] [--ghidra]`: gera o mapa (`addr nome
+  confiança`, ~5 MB, fora do repositório) e, com `--ghidra`, reimporta a
+  fatia ppc em `~/sims2:/mac/sims2_bv.ppc` aplicando os nomes
+  (`ApplySymxferMap.java`). `map_simantics.txt` é o recorte da VM.
+- `manual.txt`: nomes postos à mão (com a justificativa);
+  `paramvtables.py`: vtables das classes de operando pela RTTI (nomes de
+  `SwizzleParams`, `UpgradeVersion`, ...).
+- `vtables.py`: vtable de uma classe com o nome de cada slot (para resolver
+  `(**(code **)(*this + 0x4d4))`); `annotate.py` põe esses nomes no C do
+  Ghidra; `DecompileList.java <saída> <padrão|0xEND>...` decompila em lote.
+
+## Apêndice A. Códigos de erro da VM (`cTSObject::GetErrorString`)
+
+| código | texto |
+|---|---|
+| 0x0 | No Error |
+| 0x1 | Bad operator. |
+| 0x2 | Temporary reference out of range. |
+| 0x3 | Bad parameter to update primitive. |
+| 0x4 | Random number range evaluated to zero. |
+| 0x5 | Primitive not supported for this type of object. |
+| 0x6 | Attribute number out of range. |
+| 0x7 | Data number out of range. |
+| 0x8 | Stack number out of range. |
+| 0x9 | Illegal owner field in data reference. |
+| 0xa | Reference to tree tree parameter when no parameter exists. |
+| 0xb | Gosub?? |
+| 0xc | Reference to target object when none exists. |
+| 0xd | Flag reference is out of range. |
+| 0xe | Undefined transition found. |
+| 0xf | Reference to stack object out of range. |
+| 0x10 | Bad alert tree number. |
+| 0x11 | Bad gosub tree number. |
+| 0x12 | Zero distance in finding direction. |
+| 0x13 | Expression attempting to write in a read-only area. |
+| 0x14 | Data value out of range. |
+| 0x15 | No stack object present when required. |
+| 0x16 | Reference to tree table entry that does not exist. |
+| 0x17 | Could not find object reference. |
+| 0x18 | Standard number for a weight assignment is out of range. |
+| 0x19 | Weight number for a weight assignment is out of range. |
+| 0x1a | Motive number out of range or not an acceptable value. |
+| 0x1b | Slot number out of range. |
+| 0x1c | Object referred to must be a person. |
+| 0x1d | Balloon Type Is Invalid. Values are 0:thought, 1:scream, 2:speak. |
+| 0x1e | Search type is invalid. Types are 0: all motive, 1:mental motives, 2:physical motives. |
+| 0x1f | Tree table not found |
+| 0x20 | Bad target slot specified in routing slot. |
+| 0x21 | Person data field is out of range. |
+| 0x22 | Show hide parameter is out of expected range. |
+| 0x23 | Index into object definition out of range. |
+| 0x24 | Invalid snapping mode specified |
+| 0x25 | Invalid routing slot specified |
+| 0x26 | Divide by zero. |
+| 0x27 | Bad parameter in look towards primitive. |
+| 0x28 | Bad room id specified |
+| 0x29 | Bad room value requested. |
+| 0x2a | Invalid global sim call. |
+| 0x2b | Named tree does not exist. |
+| 0x2c | Bad parameter to call named tree. |
+| 0x2e | Invalid constant. |
+| 0x2f | Invalid suit location. |
+| 0x30 | Invalid suit index. |
+| 0x31 | Invalid dynamic sprite index |
+| 0x32 | Invalid object id. |
+| 0x33 | Local out of range. |
+| 0x34 | Stack object for routing either does not exist or is out of world. |
+| 0x35 | Invalid action in tutorial primitive. |
+| 0x36 | More than one passing value specified. |
+| 0x37 | Missing neighbor for data access. |
+| 0x38 | Bad expense type specified. |
+| 0x39 | Career id not found. |
+| 0x3a | Job data not found. |
+| 0x3b | Invalid skin color. |
+| 0x3c | Neighborhood data index out of range. |
+| 0x3d | Start object required. |
+| 0x3e | Tree break encountered. |
+| 0x41 | 3D object is not animatable. |
+| 0x42 | 3D object is not a person. |
+| 0x43 | Animation name is empty string. |
+| 0x44 | IsGlobal flag not implemented yet. |
+| 0x45 | Material Change on Non 3D object. |
+| 0x46 | Missing Material / Mesh Group Name. |
+| 0x47 | Animation Primitive called on non Animating object - look at 3DObjectID in obj def. |
+| 0x48 | Change graphic expression called on non 3D object |
+| 0x49 | Event Tree handler called on deleted object or invalid object ID |
+| 0x4a | Trying to use a Global Animation on a non Edith Person object. Naughty naughty! |
+| 0x4b | Trying to look_at a non 3D object |
+| 0x4c | Trying to change a light on a non 3d Object |
+| 0x4d | Missing Light Name |
+| 0x4e | Requesting to play an animation on an object for the third time |
+| 0x4f | Missing Effect Name |
+| 0x50 | Trying to change an effect on a non 3d Object |
+| 0x51 | Turn rate must be positive |
+| 0x52 | Trying to change an effect on an object with too many Particle Emitters |
+| 0x53 | Missing requested bone for slot |
+| 0x54 | No bone on model corresponding to name in routing slot on destination object |
+| 0x55 | Can't place in world for some reason |
+| 0x56 | Temporary token field out of range. |
+| 0x57 | Inventory doesn't exist for ID passed to Manage Inventory. |
+| 0x58 | Index passed to Manage Inventory out of bounds. |
+| 0x59 | Bad parameter value set in Manage Inventory Primitive. |
+| 0x5a | Trying to perform an animation from the Social Interaction list against a non person. |
+| 0x5b | Hit Break Point Primitive. |
+| 0x5c | Missing table for model bone names. |
+| 0x5d | Missing (or empty) model bone name. |
+| 0x5e | Missing Action String in table. |
+| 0x5f | 3D object is not locomotable. |
+| 0x60 | Invalid pop: locomotion stack is empty |
+| 0x61 | Locomotion stack is too deep: check for imbalanced push/pops |
+| 0x62 | IK target animation requires other object |
+| 0x63 | IK target animation requires 3D model on other object |
+| 0x64 | IK target animation cannot find bone on other object |
+| 0x65 | IK target animation cannot find bone on self |
+| 0x66 | Trying to modify variable in const type tree |
+| 0x67 | Requesting a look_at operation that is already running on the object |
+| 0x68 | The relationship matrix requested could not be found. |
+| 0x69 | Cant run Reach/Drop on non Sim object. |
+| 0x6a | No Object for Reach to work on. |
+| 0x6c | Bad Object Array |
+| 0x6d | Trying to access array element via iterator that does not exist. |
+| 0x6e | Reach animation does not contain event 0. |
+| 0x6f | Trying to push nested interaction on someone not in an 'allow nested' interaction |
+| 0x70 | Invalid number of loops |
+| 0x71 | Missing reach animation. |
+| 0x72 | Missing Job Title / Phone Services Table (table 147) in Object. |
+| 0x73 | Invalid animation type specified in animation string |
+| 0x74 | Inventory token index out of range. |
+| 0x75 | Inventory token propert index out of range. |
+| 0x76 | Request for babies count out of range. |
+| 0x77 | Temp0 does not point at a Sim ObjectID. |
+| 0x78 | Bad destination for a 32bit write. |
+| 0x79 | Could load the specified memory icon. |
+| 0x7a | You sent me a crappy GUID, please fix it. |
+| 0x7b | Trying to route while out of world. |
+| 0x7c | Not enough local vars. |
+| 0x7d | Bad or empty button or window GUID. |
+| 0x7e | Animation speed cannot be zero |
+| 0x7f | Couldn't load memory icon |
+| 0x80 | Trying to route while in an pre route callback. |
+| 0x81 | Trying to route while in an pre route callback. |
+| 0x82 | Trying to route while in an post route callback. |
+| 0x83 | Trying to run default effect - not supported anymore. |
+| 0x84 | Invalid Lot ID. |
+| 0x85 | Hit data break point - Value Changed! |
+| 0x86 | Person is not selectable. |
+| 0x87 | Cinematic scene not found |
+| 0x88 | Cinematic animation not found |
+| 0x89 | Required cinematic actor is missing |
+| 0x8a | Required cinematic actor is invalid |
+| 0x8b | Required cinematic actor has no 3D model |
+| 0x8c | Cinematic origin actor (for camera and light rig) is invalid |
+| 0x8d | Cinematic origin actor (for camera and light rig) has no 3D model |
+| 0x8e | Cinematic autoCreate actor is not 0 |
+| 0x8f | Trying to animate a cinematic actor that is not animatable |
+| 0x90 | Trying to create instance of Template Object |
+| 0x91 | Last Find Best Action was Not Successful. Quit trying to run gosub. |
+| 0x92 | Attempt to change light on object that has no model. |
+| 0x93 | Attempting to Save UI Mode to mode it's already saved at. |
+| 0x94 | Attempting to create object type that's been unlinked (ie is dead, and has had data removed from it's .package file). |
+| 0x95 | Attempted too many look_at requests in one simulator turn on this Sim |
+| 0x96 | Target object out of world. |
+| 0x97 | Unknown cinematic error. |
+| 0x98 | Another cinematic already is active. |
+| 0x99 | Cinematic camera does not have a choreo queue. |
+| 0x9a | Bad family id. |
+| 0x9c | Trying to save a temp token with instance data into inventory. |
+| 0x9d | Trying to overwrite an inventory token with instance data. |
+| 0x9e | Invalid species. |
+| 0x9f | Bad number of function parameters. |
+| 0xa0 | NULL tree table entry. |
+| 0x3e8 | Stack overflow. |
+| 0x3e9 | Stack underflow. |
+| 0x44c | Undefined Transition. |
+| 0x44d | Too many iterations. |
+| 0x44e | Behavior not found. Probably a reset() problem. |
+| 0x44f | Tree not found. Probably a reset() problem. |
+| 0x450 | Transition to node that does not exist. |
+| 0x451 | Check tree primitive blocked completion. |
+| 0x452 | Max stack depth exceeded. |
+
+Os outros códigos até 0x452 caem em "Unrecognized error condition : %d". Binário.
