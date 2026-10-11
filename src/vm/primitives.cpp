@@ -1234,7 +1234,21 @@ Exit genericSimsCall(Context& c) {
 
 } // namespace
 
+// Opcodes the game has no handler for (cTSObject::OnTryElement in the Mac
+// binary, base 1.0 and Bon Voyage; docs/primitives-mac.md §2): the game's
+// error 0x05. 0x7D Follow Sim and 0x7E Run Script are Bon Voyage only.
+// Tutorial (0x0A) returns true and does nothing.
+static Exit noHandler(Context& c) {
+    throw gameError(err::NotSupported, "opcode " + hexString(c.instruction.opcode));
+}
+static Exit tutorial(Context&) { return Exit::True; }
+
 void registerPrimitives(VM& vm) {
+    for (uint16_t op : {0x04, 0x05, 0x06, 0x09, 0x15, 0x18, 0x26, 0x27, 0x28, 0x29, 0x2B, 0x2C, 0x2F, 0x7D, 0x7E})
+        vm.setPrimitive(op, noHandler);
+    for (uint16_t op = 0x34; op <= 0x68; ++op)
+        vm.setPrimitive(op, noHandler);
+    vm.setPrimitive(0x0A, tutorial);
     vm.setPrimitive(0x00, countDownParam);
     vm.setPrimitive(0x01, genericSimsCall);
     vm.setPrimitive(0x02, expression);
