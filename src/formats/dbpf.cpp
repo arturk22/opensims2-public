@@ -5,6 +5,9 @@
 
 #include <cstring>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 namespace os2 {
 
 DbpfPackage::DbpfPackage(const std::filesystem::path& path) : path_(path), file_(path, std::ios::binary) {
@@ -128,6 +131,50 @@ std::vector<uint8_t> DbpfPackage::readRaw(const DbpfEntry& e) {
 
 std::vector<uint8_t> DbpfPackage::read(const DbpfEntry& e) {
     auto raw = readRaw(e);
+    if (!e.compressed() || !qfsIsCompressed(raw))
+        return raw;
+    auto out = qfsDecompress(raw);
+    if (out.size() != *e.rawSize)
+        throw DbpfError(path_.string() + ": decompressed size differs from DIR");
+    return out;
+}
+
+DbpfPackage::SharedFd& DbpfPackage::SharedFd::operator=(SharedFd&& o) noexcept {
+    if (this != &o) {
+        if (fd && *fd >= 0)
+            ::close(*fd);
+        fd = std::move(o.fd);
+    }
+    return *this;
+}
+
+DbpfPackage::SharedFd::~SharedFd() {
+    if (fd && *fd >= 0)
+        ::close(*fd);
+}
+
+std::vector<uint8_t> DbpfPackage::readConcurrent(const DbpfEntry& e) const {
+    std::vector<uint8_t> raw(e.size);
+    int fd = shared_.fd->load(std::memory_order_acquire);
+    if (fd < 0) {
+        const int mine = ::open(path_.c_str(), O_RDONLY | O_CLOEXEC);
+        if (mine < 0)
+            throw DbpfError("cannot reopen " + path_.string());
+        int expected = -1;
+        if (shared_.fd->compare_exchange_strong(expected, mine))
+            fd = mine;
+        else
+            ::close(mine), fd = expected; // another thread opened it first
+    }
+    size_t got = 0;
+    while (got < raw.size()) {
+        const ssize_t n = ::pread(fd, raw.data() + got, raw.size() - got, off_t(e.offset + got));
+        if (n <= 0)
+            break;
+        got += size_t(n);
+    }
+    if (got != raw.size())
+        throw DbpfError(path_.string() + ": short read");
     if (!e.compressed() || !qfsIsCompressed(raw))
         return raw;
     auto out = qfsDecompress(raw);

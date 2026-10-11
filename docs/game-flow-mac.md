@@ -37,7 +37,8 @@ Trocar de cena (`requestScene`) descarrega a atual (`unloadScene`: VM, UI,
 áudio, atores, objetos, luz) e cria um `Renderer` novo, depois carrega a
 próxima — no mesmo processo (antes o app se reiniciava com `execv`). Com
 janela a troca roda no próximo giro do run loop (`dispatch_async`), fora do
-evento que a pediu. Os caminhos do jogo (`cTSGameStateController`,
+evento que a pediu. A carga roda numa thread de fundo atrás da tela de carregamento
+Reia, com a janela respondendo (`docs/loading-mac.md`). Os caminhos do jogo (`cTSGameStateController`,
 `docs/neighborhood-mac.md` §6):
 
 - partida (com janela): os vídeos de abertura (`app/movie_host.hpp`,

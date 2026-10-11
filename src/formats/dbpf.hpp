@@ -1,7 +1,9 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
@@ -68,6 +70,10 @@ public:
     std::vector<uint8_t> readRaw(const DbpfEntry& e);
     // Bytes after QFS decompression (when the DIR lists the resource).
     std::vector<uint8_t> read(const DbpfEntry& e);
+    // The same as read(), safe to call from several threads at once (and
+    // alongside read()): positioned reads on a descriptor of its own, opened
+    // on first use and kept.
+    std::vector<uint8_t> readConcurrent(const DbpfEntry& e) const;
 
     // Release the file handle; the next read reopens it.
     void closeFile() { file_.close(); }
@@ -80,6 +86,15 @@ private:
     DbpfHeader header_;
     std::vector<DbpfEntry> entries_;
     std::unordered_map<Tgi, size_t, TgiHash> byTgi_;
+    // readConcurrent's descriptor (-1 until first used).
+    struct SharedFd {
+        std::unique_ptr<std::atomic<int>> fd = std::make_unique<std::atomic<int>>(-1);
+        SharedFd() = default;
+        SharedFd(SharedFd&&) noexcept = default;
+        SharedFd& operator=(SharedFd&& o) noexcept;
+        ~SharedFd();
+    };
+    SharedFd shared_;
 
     void readHeader();
     void readIndex();

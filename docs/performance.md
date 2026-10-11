@@ -63,6 +63,32 @@ Final comparison, same load for both binaries, one after the other:
 | Resource index build | 0.40-0.51 s | 0.22 s |
 | Live window, CPU per frame without the drawable wait | not measured (10 ms with it) | 4.1-4.5 ms |
 
+## Round 9: loading
+
+Scenes now load on a worker thread behind the loading screens (`docs/loading-mac.md`);
+the main thread keeps drawing at 60 Hz and spends 1-3 ms on the scene's main-thread
+part (`OS2_PERF=1` prints `scene loaded in <worker> ms, then <main> ms on the main
+thread`). Before, the window froze for the whole load (its delegate was unset).
+
+| What (N001 lot 11, `--hood N001 --hood-lot 11 --vm --ui live`) | before | after |
+| --- | --- | --- |
+| `loadSimParts` | 0.46-0.47 s | 0.03-0.06 s, and once per app run (shared by lot entries, outfit changes, `--character`) |
+| Lot load ("placed in" line) | 1.97 s | 1.46-1.48 s |
+| Whole headless run with `--run-vm 600 --screenshot` | 3.0-3.6 s wall | 2.5-2.7 s wall |
+| Main thread blocked by a lot load in the window | the whole load (~2 s) | 1-3 ms |
+
+`loadSimParts` read all 26,167 3IDRs of the game to keep the 6,828 that belong to a
+GZPS: it now reads only those, on 8 threads, through `ResourceIndex::readConcurrent`
+(positioned reads on a descriptor per package, so the threads and the index's own
+`read` do not share a file position). The result is the same vector, checked element
+by element against the old code. Screenshots stay byte identical (`cmp` of the lot run
+above with and without `--loading-shot`, and before/after the change); no VM code
+changed, so `lot-run`/`autonomy` were not rerun.
+
+Left: `loadLotObjects` (0.25-0.5 s: about 40% model parsing, 55% texture decoding in
+`Renderer::addObject`), the Sims' textures (70-100 ms each), Buy and Build mode setup
+(85 ms each, both reading the catalog), `LotSimulation` (0.19 s).
+
 ## What is left (not done)
 
 - The scans of all objects per tick (`followContainers`, `tickOverlayEvents`,
@@ -71,6 +97,5 @@ Final comparison, same load for both binaries, one after the other:
 - The quadtree of the planner is still rebuilt on every plan (summed-area tables of
   512x512 cells for a 64-tile lot); caching it needs a cheap way to know the obstacles
   did not change.
-- Load: `loadSimParts` reads every GZPS/3IDR of the game (0.4 s); the Sims' textures take
-  45 ms each to upload; `Catalog::load` reads 47 resources again after the lot's.
+- Load: the Sims' textures take 45 ms each to upload; `Catalog::load` reads 47 resources again after the lot's.
   8% of the resource bytes read at load are the same resource read twice (4.9 of 64 MB).

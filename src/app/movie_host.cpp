@@ -8,6 +8,7 @@
 
 #include <Metal/Metal.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -81,6 +82,110 @@ struct ReiaClip : Clip {
         char b[96];
         std::snprintf(b, sizeof b, "Reia %ux%u, %zu frames, %.2f s%s", reia.width(), reia.height(), reia.frameCount(),
                       reia.duration(), loop ? ", looped" : "");
+        return b;
+    }
+};
+
+// A loading screen: a Reia played once, paced by the load's progress, with
+// an icon over it.
+struct LoadingClip : Clip {
+    Reia reia;
+    ReiaDecoder decoder;
+    std::function<float()> progress;
+    RgbaImage icon; // already scaled
+    int iconLeft = 0, iconTop = 0;
+    RgbaImage picture_;
+    double t = 0, lastWall = 0, tailSpeed = 0;
+    bool finishing = false, skipped = false, fresh = true;
+    long shownFrame = -1;
+
+    LoadingClip(std::vector<uint8_t> bytes, LoadingScreen screen, std::function<float()> progress)
+        : reia(std::move(bytes)), decoder(reia), progress(std::move(progress)) {
+        decoder.seekFrame(0);
+        if (screen.icon && screen.icon->width && screen.icon->height) {
+            const RgbaImage& src = *screen.icon;
+            const float scale = std::min({1.0f, screen.iconW / float(src.width), screen.iconH / float(src.height)});
+            icon.width = std::max(1u, uint32_t(std::lround(float(src.width) * scale)));
+            icon.height = std::max(1u, uint32_t(std::lround(float(src.height) * scale)));
+            icon.pixels.resize(size_t(icon.width) * icon.height * 4);
+            // Box filter over the source pixels each target pixel covers.
+            for (uint32_t y = 0; y < icon.height; ++y)
+                for (uint32_t x = 0; x < icon.width; ++x) {
+                    const uint32_t x0 = x * src.width / icon.width, x1 = std::max(x0 + 1, (x + 1) * src.width / icon.width);
+                    const uint32_t y0 = y * src.height / icon.height, y1 = std::max(y0 + 1, (y + 1) * src.height / icon.height);
+                    float acc[4] = {0, 0, 0, 0};
+                    for (uint32_t sy = y0; sy < y1; ++sy)
+                        for (uint32_t sx = x0; sx < x1; ++sx) {
+                            const uint8_t* q = &src.pixels[(size_t(sy) * src.width + sx) * 4];
+                            const float a = q[3] / 255.0f;
+                            acc[0] += q[0] * a, acc[1] += q[1] * a, acc[2] += q[2] * a, acc[3] += a;
+                        }
+                    uint8_t* d = &icon.pixels[(size_t(y) * icon.width + x) * 4];
+                    const float n = float((x1 - x0) * (y1 - y0));
+                    for (int c = 0; c < 3; ++c)
+                        d[c] = acc[3] > 0 ? uint8_t(std::clamp(acc[c] / acc[3], 0.0f, 255.0f)) : 0; // unpremultiplied
+                    d[3] = uint8_t(std::clamp(acc[3] / n * 255.0f, 0.0f, 255.0f));
+                }
+            iconLeft = int(std::lround(screen.iconX - float(icon.width) / 2));
+            iconTop = int(std::lround(screen.iconY - float(icon.height) / 2));
+        }
+        compose();
+    }
+    void compose() {
+        picture_ = decoder.picture();
+        if (icon.pixels.empty())
+            return;
+        for (uint32_t y = 0; y < icon.height; ++y) {
+            const int py = iconTop + int(y);
+            if (py < 0 || py >= int(picture_.height))
+                continue;
+            for (uint32_t x = 0; x < icon.width; ++x) {
+                const int px = iconLeft + int(x);
+                if (px < 0 || px >= int(picture_.width))
+                    continue;
+                const uint8_t* s = &icon.pixels[(size_t(y) * icon.width + x) * 4];
+                uint8_t* d = &picture_.pixels[(size_t(py) * picture_.width + size_t(px)) * 4];
+                const int a = s[3];
+                for (int c = 0; c < 3; ++c)
+                    d[c] = uint8_t((s[c] * a + d[c] * (255 - a) + 127) / 255);
+            }
+        }
+    }
+    bool update(double wall) override {
+        const double dt = std::clamp(wall - lastWall, 0.0, 0.1);
+        lastWall = wall;
+        const double end = reia.duration() - reia.frameSeconds() * 0.5;
+        // While loading, the clock does not pass the progress (its bar is the
+        // load's); it runs at twice the speed while far behind; finishing,
+        // the rest plays at three times the speed or faster, in 0.5 s at most.
+        const double cap = finishing ? end : std::min(end, double(progress ? progress() : 0) * reia.duration());
+        if (finishing && tailSpeed == 0)
+            tailSpeed = std::max(3.0, (end - t) / 0.5);
+        const double speed = finishing ? tailSpeed : (cap - t > 0.5 ? 2 : 1);
+        t = std::max(t, std::min(t + dt * speed, cap));
+        decoder.seek(t);
+        if (decoder.current() == shownFrame && !fresh)
+            return false;
+        fresh = false;
+        shownFrame = decoder.current();
+        compose();
+        return true;
+    }
+    const RgbaImage& picture() const override { return picture_; }
+    bool finished() const override {
+        return skipped || (finishing && t >= reia.duration() - reia.frameSeconds() * 0.5);
+    }
+    void skip() override {
+        if (finishing)
+            skipped = true;
+    }
+    double time() const override { return t; }
+    double duration() const override { return reia.duration(); }
+    long frame() const override { return decoder.current(); }
+    std::string describe() const override {
+        char b[96];
+        std::snprintf(b, sizeof b, "Reia %ux%u, %zu frames, %.2f s, loading screen%s", reia.width(), reia.height(),
+                      reia.frameCount(), reia.duration(), icon.pixels.empty() ? "" : " with an icon");
         return b;
     }
 };
@@ -174,6 +279,50 @@ void playMovies(std::vector<std::string> names, std::function<void()> onDone) {
     playMovie(first, [names = std::move(names), onDone = std::move(onDone)]() mutable {
         playMovies(std::move(names), std::move(onDone));
     });
+}
+
+bool playLoadingScreen(LoadingScreen screen, std::function<float()> progress, std::function<void()> onDone) {
+    Host& h = host();
+    h.player.reset();
+    h.onDone = nullptr;
+    char name[32];
+    std::snprintf(name, sizeof name, "reia:%08X", screen.reia);
+    try {
+        auto bytes = readUiReia(h.options.resDir, screen.reia);
+        if (!bytes)
+            throw std::runtime_error("not in ui.package");
+        h.player = std::make_unique<LoadingClip>(std::move(*bytes), std::move(screen), std::move(progress));
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: loading screen %s: %s\n", name, e.what());
+        if (onDone)
+            onDone();
+        return false;
+    }
+    h.onDone = std::move(onDone);
+    h.start = std::chrono::steady_clock::now();
+    std::printf("opensims2: movie %s (%s)\n", name, h.player->describe().c_str());
+    std::fflush(stdout);
+    if (h.layer)
+        h.layer->setFrame(h.player->picture());
+    return true;
+}
+
+void finishLoadingScreen() {
+    if (auto* clip = dynamic_cast<LoadingClip*>(host().player.get()))
+        clip->finishing = true;
+}
+
+bool loadingScreenPlaying() { return dynamic_cast<LoadingClip*>(host().player.get()) != nullptr; }
+
+RgbaImage movieHostCapture(uint32_t width, uint32_t height, double seconds) {
+    Host& h = host();
+    if (!h.player || !h.layer)
+        return {};
+    for (double t = 1.0 / 30; t < seconds + 1e-9; t += 1.0 / 30)
+        h.player->update(t);
+    h.player->update(seconds);
+    h.layer->setFrame(h.player->picture());
+    return h.layer->capture(width, height);
 }
 
 bool moviePlaying() { return host().player != nullptr; }

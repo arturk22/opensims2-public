@@ -42,7 +42,11 @@
 // --dialog-click x,y (repeatable) clicks each dialog in turn.
 // --movie <name> plays a .movie fullscreen and quits (headless with --screenshot:
 // frames and A/V timestamps, app/movie_host.hpp); --intro plays the start-up
-// movies before the scene.
+// movies before the scene. With a window, scenes load on a worker thread
+// behind the game's Reia loading screens (app/scene_loader.hpp,
+// docs/loading-mac.md); headless, --loading-shot <png> [--loading-at <f>]
+// loads the first scene that way and saves its loading screen, and
+// --loading-hold <seconds> keeps a window's loading screen up that long.
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -52,6 +56,8 @@
 #include <QuartzCore/QuartzCore.hpp>
 
 #include "app/cinematic_camera.hpp"
+#include "app/loading_screen.hpp"
+#include "app/scene_loader.hpp"
 #include "app/movie_host.hpp"
 #include "render/movie_layer.hpp"
 #include "vm/engine.hpp"
@@ -103,6 +109,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -198,6 +206,14 @@ std::function<void()> gOnSceneRequest; // the app delegate's switch (interactive
 // Hook for the intro movies (the video agent): called once, before the
 // first main menu is shown; null plays nothing.
 std::function<void()> gIntroMovies;
+// Scene loading off the main thread (app/scene_loader.hpp, docs/loading-mac.md).
+// While gSceneLoading, a worker builds the next scene (the globals below,
+// the new renderer, the view's camera) and the main thread only draws the
+// loading screen: frames and input leave the scene alone.
+os2::BackgroundJob gLoadJob;
+bool gSceneLoading = false;                    // main thread
+std::function<void()> gPollLoad;               // the app delegate's check, each frame while loading
+os2::LotEntry gLotEntry;                       // the lot being entered (its loading screen)
 
 // The extracted game (data/game): --data <dir>, else $OS2_DATA, else the first
 // data/game found walking up from the executable (the repo when run from build/),
@@ -262,6 +278,7 @@ bool perfOn() {
 }
 void perfLap(const char* what) {
     static CFTimeInterval last = CACurrentMediaTime();
+    os2::loading::phase(what); // the loading screen's progress (app/scene_loader.hpp)
     if (!perfOn())
         return;
     const CFTimeInterval now = CACurrentMediaTime();
@@ -397,6 +414,20 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
 // it, so it lives as long as the app (not just while the window is set up).
 std::unique_ptr<os2::ResourceIndex> gIndex;
 
+// Every Sim part of the game (GZPS with a 3IDR), read once for the app's
+// life: every lot entry and outfit change uses them. On the loading thread
+// or the main thread, never both at once (the main thread reads it only
+// between loads).
+const std::vector<os2::SimPart>& simParts(os2::ResourceIndex& index) {
+    static std::vector<os2::SimPart> parts;
+    static const os2::ResourceIndex* of = nullptr;
+    if (of != &index) {
+        parts = os2::loadSimParts(index);
+        of = &index;
+    }
+    return parts;
+}
+
 // The lot's objects in the VM (--vm, --run-vm), driving the lot's Sims.
 std::unique_ptr<os2::LotSimulation> gSimulation;
 // The lot's objects drawn where the VM puts them (app/vm_objects.hpp).
@@ -494,6 +525,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         os2::DbpfPackage character(s.character);
         gSimulation->attach(*s.actor, s.id, os2::readCharacter(character, index), s.idle);
     }
+    perfLap("  LotSimulation");
     gObjectView = std::make_unique<os2::VmObjectView>(renderer, index, *gSimulation);
     gSnaps = std::make_unique<os2::AnimSnapView>(renderer, index, *gObjectView, gSimulation->machine());
     gSimulation->onSimAnimation = [](int16_t id, os2::SimActor& actor, const os2::Animation* anim, double at) {
@@ -508,6 +540,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     }
     for (const auto& s : gLotSims)
         gObjectView->addSim(s.id, s.actor);
+    perfLap("  object view");
     try {
         const fs::path lights = gameDir() / "TSData/Res/Lights";
         gLighting = std::make_unique<os2::LotLighting>(renderer, index, *gSimulation, *gObjectView,
@@ -526,16 +559,14 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: lighting: %s\n", e.what());
     }
+    perfLap("  LotLighting");
     // A Sim that changes clothes gets the outfit of its character file.
     gSimulation->onOutfitChange = [&renderer, &index](int16_t id, os2::SimActor& actor, uint32_t category) {
-        static std::vector<os2::SimPart> parts;
         const auto it = std::find_if(gLotSims.begin(), gLotSims.end(), [&](const LotSim& s) { return s.id == id; });
         if (it == gLotSims.end())
             return;
         try {
-            if (parts.empty())
-                parts = os2::loadSimParts(index);
-            actor.skin = os2::loadCharacterSim(index, parts, it->character, category);
+            actor.skin = os2::loadCharacterSim(index, simParts(index), it->character, category);
             actor.player.setSkeleton(&actor.skin.skeleton);
             const int model = renderer.addObject(actor.skin.model, index, true);
             renderer.retargetInstances(actor.model, model);
@@ -668,12 +699,17 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                                               argument(@"--sim-id").value_or(""));
     for (const auto& b : gPickBoxes)
         gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
+    perfLap("  VM hooks");
     setupPieMenu(index);
+    perfLap("  pie menu");
     if (liveUiRequested())
         setupLiveUi(index);
+    perfLap("  live UI");
     if (liveUiRequested() || argument(@"--mode")) {
         setupBuyMode(renderer, index);
+        perfLap("  Buy mode");
         setupBuildMode(renderer, index);
+        perfLap("  Build mode");
     }
     if (liveUiRequested())
         setupOptions(index); // below: the puck's Options mode
@@ -1421,7 +1457,7 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
     for (const auto& st : saved.objects)
         if (st.person && st.x >= 0)
             inWorld.insert(uint32_t(uint16_t(st.id)));
-    std::vector<os2::SimPart> parts;
+    const std::vector<os2::SimPart>* parts = nullptr;
     const std::string idle = argument(@"--sim-anim").value_or("a-idle-neutral-armsSide-wtC-breatheLoop");
     size_t placed = 0;
     for (const auto& o : lot.objects) {
@@ -1430,10 +1466,10 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
         const std::string stem = o.definition.substr(0, o.definition.find(" - "));
         try {
             const fs::path file = lotFile.parent_path().parent_path() / "Characters" / (stem + ".package");
-            if (parts.empty())
-                parts = os2::loadSimParts(index);
+            if (!parts)
+                parts = &simParts(index);
             perfLap("  loadSimParts");
-            auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(index, parts, file));
+            auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(index, *parts, file));
             perfLap("  loadCharacterSim");
             for (const auto& w : actor->skin.model.warnings)
                 std::fprintf(stderr, "opensims2: %s: %s\n", stem.c_str(), w.c_str());
@@ -1477,7 +1513,7 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
         return std::nullopt;
     os2::SkinnedModel skin;
     if (character) {
-        skin = os2::loadCharacterSim(index, os2::loadSimParts(index), characterPath(*character));
+        skin = os2::loadCharacterSim(index, simParts(index), characterPath(*character));
     } else if (sim) {
         os2::SimLook look;
         std::vector<std::string> fields;
@@ -1493,7 +1529,7 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
         if (fields.size() > 2 && !fields[2].empty())
             look.skinTone = std::stoi(fields[2]);
         look.prefix = look.body.substr(0, 2);
-        skin = os2::loadSim(index, os2::loadSimParts(index), look);
+        skin = os2::loadSim(index, simParts(index), look);
     } else {
         skin = os2::SkinnedModel(loadSkeleton(index, "auskel"));
     }
@@ -1938,6 +1974,14 @@ void unloadScene() {
 }
 
 - (void)keyDown:(NSEvent*)e {
+    if (gSceneLoading) { // the scene is the worker's; Esc, Space or Return skip the intro, not the loading screen
+        if (os2::moviePlaying() && !os2::loadingScreenPlaying() && !e.isARepeat &&
+            (e.keyCode == kEscape || e.keyCode == kReturn || e.keyCode == kEnter || e.keyCode == 49)) {
+            os2::skipMovie();
+            std::printf("opensims2: movie skipped (key %d)\n", int(e.keyCode));
+        }
+        return;
+    }
     if (gCas) { // Create-a-Sim takes every key (names, undo, turning the Sim)
         gCas->keyDown(e.keyCode, e.characters ? std::string(e.characters.UTF8String) : std::string(),
                       e.modifierFlags & NSEventModifierFlagControl);
@@ -2024,6 +2068,8 @@ void unloadScene() {
 }
 
 - (void)keyUp:(NSEvent*)e {
+    if (gSceneLoading)
+        return;
     if (gCas)
         gCas->keyUp(e.keyCode);
     _held.erase(e.keyCode);
@@ -2036,11 +2082,15 @@ void unloadScene() {
 }
 
 - (void)scrollWheel:(NSEvent*)e {
+    if (gSceneLoading)
+        return;
     _camera->wheel(_mouse.wheelNotches(e.scrollingDeltaY, e.hasPreciseScrollingDeltas));
 }
 
 // The game's rotate request: pixels dragged (only the dominant axis counts).
 - (void)dragRotate:(NSEvent*)e {
+    if (gSceneLoading)
+        return;
     _camera->rotateRequest(float(e.deltaX), float(e.deltaY));
 }
 
@@ -2069,6 +2119,8 @@ void unloadScene() {
 
 - (void)rightMouseDown:(NSEvent*)e {
     [self trackMouse:e];
+    if (gSceneLoading)
+        return;
     if (gPie && gPie->isOpen()) { // the right button cancels the pie menu
         gPie->close();
         return;
@@ -2114,6 +2166,13 @@ void unloadScene() {
 // else casts a ray from the camera through the mouse and opens the menu of
 // the object hit.
 - (void)mouseDown:(NSEvent*)e {
+    if (gSceneLoading) { // a click skips the intro, not the loading screen
+        if (os2::moviePlaying() && !os2::loadingScreenPlaying()) {
+            os2::skipMovie();
+            std::printf("opensims2: movie skipped (click)\n");
+        }
+        return;
+    }
     if (gCas) {
         gCas->setCanvas(int(self.bounds.size.width), int(self.bounds.size.height));
         gCas->mouseDown([self canvasPoint:e]);
@@ -2176,6 +2235,8 @@ void unloadScene() {
 
 // The pie menu picks on release (a drag from the opening press is a gesture).
 - (void)mouseUp:(NSEvent*)e {
+    if (gSceneLoading)
+        return;
     if (gCas)
         gCas->mouseUp([self canvasPoint:e]);
     if (gPie && gPie->isOpen())
@@ -2194,6 +2255,8 @@ void unloadScene() {
 
 - (void)mouseMoved:(NSEvent*)e {
     [self trackMouse:e];
+    if (gSceneLoading)
+        return;
     if (gHood)
         gHood->mouseMoved(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
     if (gPie)
@@ -2216,6 +2279,8 @@ void unloadScene() {
 
 - (void)mouseDragged:(NSEvent*)e {
     [self trackMouse:e];
+    if (gSceneLoading)
+        return;
     if (gCas)
         gCas->mouseDragged([self canvasPoint:e]);
     if (gPie)
@@ -2239,6 +2304,7 @@ void unloadScene() {
 - (instancetype)initWithView:(MTKView*)view;
 - (os2::Renderer*)renderer;
 - (void)resetRenderer:(MTKView*)view;
+- (void)restartClock;
 @end
 
 @implementation OS2ViewDelegate {
@@ -2270,6 +2336,11 @@ void unloadScene() {
     _last = _start = CACurrentMediaTime();
 }
 
+// The scene clock starts when the scene is shown (after its load).
+- (void)restartClock {
+    _last = _start = CACurrentMediaTime();
+}
+
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size {
 }
 
@@ -2284,6 +2355,17 @@ void unloadScene() {
     perf.began = now;
     double dt = std::min(now - _last, 0.1); // no huge steps after a stall
     _last = now;
+
+    // A scene loading on the worker (app/scene_loader.hpp): only the loading
+    // screen (or the intro) is drawn; the scene's objects are the worker's.
+    if (gSceneLoading) {
+        if (gPollLoad)
+            gPollLoad();
+        MTLRenderPassDescriptor* pass = mtkView.currentRenderPassDescriptor;
+        id<CAMetalDrawable> drawable = mtkView.currentDrawable;
+        os2::movieHostDraw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable);
+        return;
+    }
 
     if (!view.camera) { // no scene (--movie): only a movie
         MTLRenderPassDescriptor* pass = view.currentRenderPassDescriptor;
@@ -2342,6 +2424,15 @@ void unloadScene() {
     OS2ViewDelegate* _viewDelegate; // MTKView holds its delegate weakly
     bool _introPlayed;
     int _flowShot;
+    // The scene being loaded (prepareScene -> finishScene).
+    os2::Scene _scene;
+    bool _cas;
+    std::optional<std::pair<uint32_t, uint32_t>> _uiCanvas; // the lot's --ui canvas
+    simd_float3 _pivot;                                     // the lot's camera pivot
+    std::vector<fs::path> _menuDirs;                        // the main menu's neighborhoods
+    os2::LoadingScreen _loadingScreen;
+    bool _loadCompletionQueued;
+    CFTimeInterval _loadStart;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification*)note {
@@ -2394,24 +2485,19 @@ void unloadScene() {
             if (!os2::moviePlaying())
                 os2::playMovies(os2::introMovies());
         };
-        gIndex = std::make_unique<os2::ResourceIndex>(gameDir() / "TSData/Res");
-        perfLap("ResourceIndex");
-        // The user's folder (app/user_data.hpp): --user-dir, $OS2_USER_DIR,
-        // else ~/Library/Application Support/opensims2.
-        fs::path user = os2::defaultUserDir();
-        if (const char* env = std::getenv("OS2_USER_DIR"))
-            user = env;
-        if (auto u = argument(@"--user-dir"))
-            user = *u;
-        gUser = std::make_unique<os2::UserData>(gameDir(), user);
-        gSettings = os2::GameSettings::load(*gUser);
         __weak OS2AppDelegate* weakSelf = self;
         gOnSceneRequest = [weakSelf] {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [weakSelf switchScene];
             });
         };
-        [self runScenes];
+        gPollLoad = [weakSelf] { [weakSelf pollSceneLoad]; };
+        // Headless, the scenes load in order on this thread; with a window
+        // the first one loads behind the loading screen (below).
+        if (headless()) {
+            [self ensureGameState];
+            [self runScenes];
+        }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: %s\n", e.what());
         if (argument(@"--screenshot"))
@@ -2430,14 +2516,180 @@ void unloadScene() {
     [_window makeKeyAndOrderFront:nil];
     [_window makeFirstResponder:view];
     [NSApp activateIgnoringOtherApps:YES];
+    [self beginSceneLoad];
+}
+
+// Quitting while a scene loads: the worker cannot be stopped, so the process
+// ends at once (nothing is being saved: saves run on the main thread).
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)app {
+    if (gLoadJob.active()) {
+        std::fflush(stdout);
+        std::_Exit(0);
+    }
+    return NSTerminateNow;
+}
+
+// The game's resources and the user's folder, made once (with a window, on
+// the loading thread of the first scene).
+- (void)ensureGameState {
+    if (!gIndex) {
+        gIndex = std::make_unique<os2::ResourceIndex>(gameDir() / "TSData/Res");
+        perfLap("ResourceIndex");
+    }
+    if (!gUser) {
+        // The user's folder (app/user_data.hpp): --user-dir, $OS2_USER_DIR,
+        // else ~/Library/Application Support/opensims2.
+        fs::path user = os2::defaultUserDir();
+        if (const char* env = std::getenv("OS2_USER_DIR"))
+            user = env;
+        if (auto u = argument(@"--user-dir"))
+            user = *u;
+        gUser = std::make_unique<os2::UserData>(gameDir(), user);
+        gSettings = os2::GameSettings::load(*gUser);
+    }
+}
+
+// --- Loading behind the loading screen (app/scene_loader.hpp) ---------------
+
+// With a window: starts loading the scene the arguments pick on the worker,
+// and shows its loading screen (after the intro movies, when they play).
+// --loading-hold <seconds>: test aid, the worker waits that long after the
+// load, so the loading screen can be looked at.
+- (void)beginSceneLoad {
+    const os2::Scene scene = os2::sceneOf(processArguments());
+    const bool cas = [sceneArgs() containsObject:@"--cas"];
+    if (scene.kind == os2::Scene::Kind::MainMenu && !cas && !_introPlayed) {
+        _introPlayed = true;
+        if (gIntroMovies)
+            gIntroMovies();
+    }
+    _loadingScreen = os2::loadingScreenFor(gameDir() / "TSData/Res", scene, cas, gLotEntry);
+    gLotEntry = {};
+    os2::loading::begin();
+    gSceneLoading = true;
+    _loadCompletionQueued = false;
+    _loadStart = CACurrentMediaTime();
+    [self showLoadingScreen];
+    const double hold = std::stod(argument(@"--loading-hold").value_or("0"));
+    gLoadJob.start([self, hold] {
+        @autoreleasepool {
+            [self prepareScene];
+        }
+        if (hold > 0)
+            std::this_thread::sleep_for(std::chrono::duration<double>(hold));
+    });
+}
+
+// The loading screen, unless another movie (the intro) is playing.
+- (void)showLoadingScreen {
+    if (os2::moviePlaying())
+        return;
+    os2::playLoadingScreen(_loadingScreen, [] { return os2::loading::shown(); });
+}
+
+// Each frame while loading (from the view's draw): the loading screen once
+// the intro is over, and the end of the load handed to the run loop.
+- (void)pollSceneLoad {
+    if (!gSceneLoading)
+        return;
+    if (!os2::moviePlaying())
+        [self showLoadingScreen];
+    if (!gLoadJob.done() || _loadCompletionQueued)
+        return;
+    _loadCompletionQueued = true;
+    __weak OS2AppDelegate* weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf completeSceneLoad];
+    });
+}
+
+// The worker is done: the main thread's part of the scene (AppKit, the view,
+// the headless steps), then frames and input go to the scene again.
+- (void)completeSceneLoad {
+    std::exception_ptr error = gLoadJob.collect();
+    const CFTimeInterval worked = CACurrentMediaTime() - _loadStart;
+    gSceneLoading = false;
+    os2::loading::end();
+    os2::finishLoadingScreen(); // plays out quickly over the first frames
+    try {
+        if (error)
+            std::rethrow_exception(error);
+        const CFTimeInterval mainStart = CACurrentMediaTime();
+        [self finishScene];
+        if (perfOn())
+            std::printf("opensims2: perf: scene loaded in %.1f ms (worker), then %.1f ms on the main thread\n",
+                        worked * 1000, (CACurrentMediaTime() - mainStart) * 1000);
+        std::fflush(stdout);
+    } catch (const std::exception& e) {
+        [self sceneFailed:e.what()];
+        return;
+    }
+    [_viewDelegate restartClock];
+    [_window makeFirstResponder:_view];
+}
+
+// A scene that could not load: an alert, then the main menu (or quit, when
+// the main menu itself failed).
+- (void)sceneFailed:(const char*)what {
+    std::fprintf(stderr, "opensims2: %s\n", what);
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = gIndex ? @"opensims2 could not load the scene" : @"opensims2 could not start";
+    alert.informativeText = [NSString stringWithUTF8String:what];
+    [alert runModal];
+    if (!gIndex || !gUser || (_scene.kind == os2::Scene::Kind::MainMenu && !_cas)) {
+        [NSApp terminate:nil];
+        return;
+    }
+    os2::Scene menu;
+    menu.kind = os2::Scene::Kind::MainMenu;
+    gPendingScene = menu;
+    [self applyPendingScene];
+    [self beginSceneLoad];
+}
+
+// Headless --loading-shot <file.png> [--loading-at <fraction>]: the first
+// scene loads on the worker as with a window, and the loading screen is
+// saved once the load has reported that much progress (default 0.5).
+- (void)loadSceneWithLoadingShot {
+    const os2::Scene scene = os2::sceneOf(processArguments());
+    const bool cas = [sceneArgs() containsObject:@"--cas"];
+    os2::loading::begin();
+    os2::playLoadingScreen(os2::loadingScreenFor(gameDir() / "TSData/Res", scene, cas, gLotEntry),
+                           [] { return os2::loading::shown(); });
+    const float at = std::stof(argument(@"--loading-at").value_or("0.5"));
+    const CFTimeInterval start = CACurrentMediaTime();
+    gLoadJob.start([self] {
+        @autoreleasepool {
+            [self prepareScene];
+        }
+    });
+    while (!gLoadJob.done() && os2::loading::reported() < at)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    const double elapsed = CACurrentMediaTime() - start;
+    const float shown = os2::loading::shown();
+    const os2::RgbaImage img = os2::movieHostCapture(1280, 720, elapsed);
+    const std::string file = *argument(@"--loading-shot");
+    os2::writePng(file, img);
+    std::printf("opensims2: wrote loading screen %s (%.2f s into the load, progress %.0f%%)\n", file.c_str(), elapsed,
+                shown * 100);
+    std::exception_ptr error = gLoadJob.collect();
+    os2::loading::end();
+    os2::finishLoadingScreen();
+    if (error)
+        std::rethrow_exception(error);
+    std::printf("opensims2: scene loaded on the worker in %.2f s\n", CACurrentMediaTime() - start);
+    [self finishScene];
 }
 
 // Loads the scene the arguments pick. Headless (--screenshot) each scene runs
 // its steps; while one asks for another scene, that one is loaded in turn,
 // and the last saves the screenshot and exits.
 - (void)runScenes {
-    for (;;) {
-        [self loadScene];
+    for (bool first = true;; first = false) {
+        if (first && argument(@"--loading-shot"))
+            [self loadSceneWithLoadingShot];
+        else
+            [self loadScene];
         if (!gPendingScene || !headless())
             return;
         if (auto shot = argument(@"--screenshot"); shot && [sceneArgs() containsObject:@"--flow-shots"])
@@ -2446,24 +2698,49 @@ void unloadScene() {
     }
 }
 
+// A scene loads in two parts (docs/loading-mac.md): prepareScene builds its
+// data, models, textures and VM, and may run on the worker (it touches no
+// AppKit object: window titles and the view's colours wait for the other part);
+// finishScene does the rest on the main thread (the view, the UI layers'
+// attachment, the headless steps and screenshot). Headless both run here.
 - (void)loadScene {
-    const os2::Scene scene = os2::sceneOf(processArguments());
+    [self prepareScene];
+    [self finishScene];
+}
+
+- (void)prepareScene {
+    [self ensureGameState];
+    _scene = os2::sceneOf(processArguments());
+    _cas = [sceneArgs() containsObject:@"--cas"]; // Create-a-Sim (app/cas_mode.hpp)
     gStepsUsed = 0;
-    _view.clearColor = MTLClearColorMake(0.18, 0.22, 0.28, 1.0);
     applyLighting(*_viewDelegate.renderer);
-    if ([sceneArgs() containsObject:@"--cas"]) { // Create-a-Sim (app/cas_mode.hpp)
-        [self startCas:_view];
+    if (_cas) {
+        [self prepareCas:_view];
+        return;
+    }
+    switch (_scene.kind) {
+    case os2::Scene::Kind::MainMenu: [self prepareMainMenu:_scene]; break;
+    case os2::Scene::Kind::Neighborhood: [self prepareHood:_view query:hoodFolder(_scene.hood).string()]; break;
+    case os2::Scene::Kind::Lot:
+        gHoodLot = os2::hoodLotPackage(gameDir() / "TSData/Res", hoodFolder(_scene.hood).string(), _scene.lot).string();
+        [self prepareLot];
+        break;
+    case os2::Scene::Kind::Other: [self prepareLot]; break;
+    }
+}
+
+- (void)finishScene {
+    _view.clearColor = MTLClearColorMake(0.18, 0.22, 0.28, 1.0);
+    if (_cas) {
+        [self finishCas:_view];
         std::fflush(stdout);
         return;
     }
-    switch (scene.kind) {
-    case os2::Scene::Kind::MainMenu: [self startMainMenu:scene]; break;
-    case os2::Scene::Kind::Neighborhood: [self startHood:_view query:hoodFolder(scene.hood).string()]; break;
+    switch (_scene.kind) {
+    case os2::Scene::Kind::MainMenu: [self finishMainMenu:_scene]; break;
+    case os2::Scene::Kind::Neighborhood: [self finishHood:_view]; break;
     case os2::Scene::Kind::Lot:
-        gHoodLot = os2::hoodLotPackage(gameDir() / "TSData/Res", hoodFolder(scene.hood).string(), scene.lot).string();
-        [self startLot];
-        break;
-    case os2::Scene::Kind::Other: [self startLot]; break;
+    case os2::Scene::Kind::Other: [self finishLot]; break;
     }
     std::fflush(stdout);
 }
@@ -2486,28 +2763,13 @@ void unloadScene() {
     std::fflush(stdout);
 }
 
-// With a window: the scene asked for, in place of this one.
+// With a window: the scene asked for, in place of this one, loaded behind
+// its loading screen.
 - (void)switchScene {
-    if (!gPendingScene)
+    if (!gPendingScene || gSceneLoading)
         return;
-    _view.delegate = nil; // no frames while the scenes change
     [self applyPendingScene];
-    try {
-        [self loadScene];
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "opensims2: %s\n", e.what());
-        NSAlert* alert = [[NSAlert alloc] init];
-        alert.messageText = @"opensims2 could not load the scene";
-        alert.informativeText = [NSString stringWithUTF8String:e.what()];
-        [alert runModal];
-        os2::Scene menu;
-        menu.kind = os2::Scene::Kind::MainMenu;
-        gPendingScene = menu;
-        [self applyPendingScene];
-        [self loadScene];
-    }
-    _view.delegate = _viewDelegate;
-    [_window makeFirstResponder:_view];
+    [self beginSceneLoad];
 }
 
 // Renders the current scene offscreen at 1280x720 and saves it.
@@ -2528,12 +2790,7 @@ void unloadScene() {
 // --menu (or no scene flag): the main menu, which chooses the neighborhood
 // (app/main_menu.hpp). Headless: --menu-select <i> opens the preview of
 // neighborhood i, and the steps click it.
-- (void)startMainMenu:(const os2::Scene&)scene {
-    if (!_introPlayed) {
-        _introPlayed = true;
-        if (gIntroMovies && !headless())
-            gIntroMovies();
-    }
+- (void)prepareMainMenu:(const os2::Scene&)scene {
     os2::Renderer& renderer = *_viewDelegate.renderer;
     renderer.hideTestScene();
     [_view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
@@ -2544,6 +2801,12 @@ void unloadScene() {
             dirs.push_back(gUser->neighborhoodForReading(prefix));
     gMenu = std::make_unique<os2::MainMenu>(*gIndex, gameDir() / "TSData/Res", os2::readMainMenuHoods(dirs),
                                             scene.fromNeighborhood);
+    _menuDirs = dirs;
+}
+
+- (void)finishMainMenu:(const os2::Scene&)scene {
+    os2::Renderer& renderer = *_viewDelegate.renderer;
+    const std::vector<fs::path>& dirs = _menuDirs;
     gMenu->attach((__bridge MTL::Device*)_view.device, uint32_t(_view.colorPixelFormat),
                   uint32_t(_view.depthStencilPixelFormat));
     renderer.setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
@@ -2578,7 +2841,7 @@ void unloadScene() {
 }
 
 // A lot (--lot, or --hood <N> --hood-lot <id>), or the test objects and Sims.
-- (void)startLot {
+- (void)prepareLot {
     OS2View* view = _view;
     [view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
     gCamera = view.camera;
@@ -2606,6 +2869,16 @@ void unloadScene() {
             pivot.x = px, pivot.y = py;
         view.camera->setPivot(pivot);
         view.camera->snap();
+        _uiCanvas = uiCanvas;
+        _pivot = pivot;
+    }
+}
+
+- (void)finishLot {
+    OS2View* view = _view;
+    const auto uiCanvas = _uiCanvas;
+    const simd_float3 pivot = _pivot;
+    { // (indented as it was inside the start-up's try block)
         // --pie <object> [--pie-select N]: open an object's pie menu for the
         // selected Sim (--sim-id <id|name>) and queue entry N; --click x,y
         // (repeatable) clicks like the mouse. Before --run-vm's ticks.
@@ -2842,13 +3115,14 @@ void unloadScene() {
 
 // --hood <N>: the neighborhood view (app/hood_mode.hpp); with --screenshot
 // runs the steps (clicks on lots and the dialog), then renders one frame and quits.
-- (void)startHood:(OS2View*)view query:(const std::string&)query {
+- (void)prepareHood:(OS2View*)view query:(const std::string&)query {
     os2::Renderer& renderer = *_viewDelegate.renderer;
     gHood = std::make_unique<os2::HoodMode>(renderer, *gIndex, gameDir(), query, processArguments());
     for (const auto& line : gHood->view().report())
         std::printf("opensims2: %s\n", line.c_str());
     // Entering a lot and the main menu switch scenes in place (app/game_flow.hpp).
     gHood->onEnterLot = [](const os2::HoodLot& lot) {
+        gLotEntry = {true, lot.type, lot.family != 0}; // its loading screen
         os2::Scene next;
         next.kind = os2::Scene::Kind::Lot;
         next.hood = os2::sceneOf(processArguments()).hood;
@@ -2864,12 +3138,16 @@ void unloadScene() {
     };
     [view setCamera:gHood->makeCamera()];
     gCamera = view.camera;
-    view.clearColor = MTLClearColorMake(0.42, 0.55, 0.72, 1.0);
     if (auto z = argument(@"--zoom"))
         view.camera->zoomBy(std::stoi(*z));
     if (auto o = argument(@"--orientation"))
         view.camera->rotateBy(std::stoi(*o));
     view.camera->snap();
+}
+
+- (void)finishHood:(OS2View*)view {
+    os2::Renderer& renderer = *_viewDelegate.renderer;
+    view.clearColor = MTLClearColorMake(0.42, 0.55, 0.72, 1.0);
     gHood->ui().attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                        uint32_t(view.depthStencilPixelFormat));
     renderer.setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
@@ -2906,7 +3184,7 @@ void unloadScene() {
 }
 
 // --cas: Create-a-Sim (app/cas_mode.hpp); with --screenshot renders one frame and quits.
-- (void)startCas:(OS2View*)view {
+- (void)prepareCas:(OS2View*)view {
     os2::Renderer& renderer = *_viewDelegate.renderer;
     const os2::LightingConfig lighting = os2::loadLightingConfig(gameDir() / kLightingConfig);
     if (const auto* state = lighting.state(argument(@"--lighting").value_or("CAS"))) {
@@ -2931,6 +3209,10 @@ void unloadScene() {
     [view setCamera:gCas->makeCamera()];
     gCamera = view.camera;
     gCas->setCamera(view.camera);
+}
+
+- (void)finishCas:(OS2View*)view {
+    os2::Renderer& renderer = *_viewDelegate.renderer;
     view.clearColor = MTLClearColorMake(0.33, 0.36, 0.45, 1.0);
     gCas->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                  uint32_t(view.depthStencilPixelFormat));

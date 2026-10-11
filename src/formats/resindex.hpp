@@ -49,6 +49,9 @@ public:
 
     std::optional<Location> find(const Tgi& tgi) const;
     std::vector<uint8_t> read(const Location& loc);
+    // read() that is safe from several threads at once (each call opens the
+    // file itself): for loaders that decode many resources in parallel.
+    static std::vector<uint8_t> readConcurrent(const Location& loc) { return loc.package->readConcurrent(*loc.entry); }
     std::optional<std::vector<uint8_t>> read(const Tgi& tgi);
 
     // Scenegraph lookup by resource name ("foo_txtr"; "##0x1C050000!foo_txtr" selects the group,

@@ -8,8 +8,13 @@
 #include "skeleton.hpp"
 #include "txmt.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <optional>
+#include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace os2 {
 
@@ -80,31 +85,82 @@ std::optional<Tgi> SimPart::reference(const std::string& indexKey) const {
     return references[i];
 }
 
+namespace {
+
+// Runs body(i) for i in [0, n) on up to 8 threads (index reads through
+// ResourceIndex::readConcurrent only).
+template <class F>
+void parallelFor(size_t n, F body) {
+    const size_t threads = n < 64 ? 1 : std::min<size_t>(8, std::max(1u, std::thread::hardware_concurrency()));
+    std::atomic<size_t> next{0};
+    auto run = [&] {
+        for (size_t i; (i = next.fetch_add(1)) < n;)
+            body(i);
+    };
+    std::vector<std::thread> pool;
+    for (size_t t = 1; t < threads; ++t)
+        pool.emplace_back(run);
+    run();
+    for (auto& t : pool)
+        t.join();
+}
+
+} // namespace
+
+// Every GZPS with a 3IDR, in package order. The reading and parsing (about
+// 0.4 s in one thread for the base game) runs on several threads; the result
+// is the same as reading them in turn.
 std::vector<SimPart> loadSimParts(ResourceIndex& index) {
-    std::unordered_map<Tgi, std::vector<Tgi>, TgiHash> lists;
+    // Only the 3IDRs of a GZPS matter (a quarter of the 26,000 in the game).
+    std::unordered_set<Tgi, TgiHash> gzpsKeys;
+    const auto allGzps = index.ofType(kTypeGzps);
+    for (const auto& loc : allGzps)
+        gzpsKeys.insert(loc.entry->tgi);
+    std::vector<ResourceIndex::Location> idrs;
     for (const auto& loc : index.ofType(kTypeIdr)) {
+        Tgi key = loc.entry->tgi;
+        key.type = kTypeGzps;
+        if (gzpsKeys.count(key))
+            idrs.push_back(loc);
+    }
+    std::vector<std::optional<std::vector<Tgi>>> refs(idrs.size());
+    parallelFor(idrs.size(), [&](size_t i) {
         try {
-            Tgi key = loc.entry->tgi;
+            refs[i] = parseReferenceList(ResourceIndex::readConcurrent(idrs[i]));
+        } catch (const FormatError&) {
+        }
+    });
+    std::unordered_map<Tgi, std::vector<Tgi>, TgiHash> lists;
+    for (size_t i = 0; i < idrs.size(); ++i)
+        if (refs[i]) {
+            Tgi key = idrs[i].entry->tgi;
             key.type = kTypeGzps;
-            lists.emplace(key, parseReferenceList(index.read(loc)));
-        } catch (const FormatError&) {
+            lists.emplace(key, std::move(*refs[i]));
         }
-    }
-    std::vector<SimPart> out;
-    for (const auto& loc : index.ofType(kTypeGzps)) {
-        auto it = lists.find(loc.entry->tgi);
-        if (it == lists.end())
-            continue;
+    std::vector<ResourceIndex::Location> gzps;
+    std::vector<const std::vector<Tgi>*> gzpsRefs;
+    for (const auto& loc : allGzps)
+        if (auto it = lists.find(loc.entry->tgi); it != lists.end()) {
+            gzps.push_back(loc);
+            gzpsRefs.push_back(&it->second);
+        }
+    std::vector<std::optional<SimPart>> parts(gzps.size());
+    parallelFor(gzps.size(), [&](size_t i) {
         SimPart p;
-        p.tgi = loc.entry->tgi;
+        p.tgi = gzps[i].entry->tgi;
         try {
-            p.properties = readPropertySet(index.read(loc));
+            p.properties = readPropertySet(ResourceIndex::readConcurrent(gzps[i]));
         } catch (const FormatError&) {
-            continue;
+            return;
         }
-        p.references = it->second;
-        out.push_back(std::move(p));
-    }
+        p.references = *gzpsRefs[i];
+        parts[i] = std::move(p);
+    });
+    std::vector<SimPart> out;
+    out.reserve(parts.size());
+    for (auto& p : parts)
+        if (p)
+            out.push_back(std::move(*p));
     return out;
 }
 

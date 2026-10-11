@@ -12,8 +12,11 @@
 // the main thread when the movie ends or is skipped (also at once when the
 // movie is missing, after a message on stderr); it may start another movie.
 
+#include "formats/image.hpp"
+
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,6 +38,22 @@ void playMovies(std::vector<std::string> names, std::function<void()> onDone = {
 bool moviePlaying();
 void skipMovie();
 
+// A loading screen (docs/loading-mac.md): a Reia of ui.package played once,
+// its clock held back by progress() (0..1, polled every frame) so that the
+// progress bar drawn into the animation follows the load, with an icon
+// drawn over it (fitted into iconW x iconH, centred at iconX, iconY of the
+// picture: the lot loading screen's middle tile). finishLoadingScreen()
+// plays the rest quickly and then ends it (onDone runs); until then
+// skipMovie() leaves it alone.
+struct LoadingScreen {
+    uint32_t reia = 0; // instance (type 0, group kReiaGroup)
+    std::optional<RgbaImage> icon;
+    float iconX = 0, iconY = 0, iconW = 0, iconH = 0;
+};
+bool playLoadingScreen(LoadingScreen screen, std::function<float()> progress, std::function<void()> onDone = {});
+void finishLoadingScreen();
+bool loadingScreenPlaying();
+
 // The movies the game plays before the main menu, in order.
 std::vector<std::string> introMovies();
 
@@ -47,6 +66,10 @@ void movieHostInit(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
 // Each frame: when a movie is playing, draws it into the drawable and
 // returns true (the caller then draws nothing else); runs onDone when it ends.
 bool movieHostDraw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable);
+
+// Headless: moves the playing movie `seconds` on in steps of 1/30 s from its
+// start and renders it at width x height (empty when nothing plays).
+RgbaImage movieHostCapture(uint32_t width, uint32_t height, double seconds);
 
 // --movie <name> --screenshot out.png [--frames n] [--time seconds]
 // [--sound-wav mix.wav]: plays the movie headless with an offline mixer as
