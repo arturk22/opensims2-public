@@ -89,8 +89,35 @@ script de UI; é criado pelo código:
   (campo +0x14: casos 0, 1, 3/5, 6, 7) e o tipo de lote (comunitário,
   vazio, da família, de outra família), com um ícone IMG do mesmo grupo
   (`0x8DA3ADF0`–`FA`, p. ex. `F2` = ferramentas de construção) ou uma
-  imagem do lote/família (`0xACDC0021`–`35`) no ladrilho do meio. O mapa exato
-  caso → animação não foi seguido.
+  imagem do lote/família (`0xACDC0021`–`35`) no ladrilho do meio. O mapa
+  caso → animação está no §2.1 (rodada 10).
+
+### 2.1 Tela de entrada: caso → Reia, ícone e título (rodada 10, BV `0x23be6c`)
+
+`SetupWindow(reia, ícone, buffer)`; "família" = a família do lote (ou a
+selecionada); títulos são chaves (grupo, instância, índice) de texto:
+`T(i, n)` = (`0x7FA7DC7C`, i, n), `U(i, n)` = (`0x7F3A262A`, i, n); o tipo de
+bairro 2 (BV) troca `T(7, …)` por `T(200, …)`.
+
+| caso (`+0x14`) | condição | Reia | ícone / imagem | título |
+|---|---|---|---|---|
+| 0 | o lote tem família | `0x8DA3ADE8` | — (foto da família, `CreateFamilyThumbnail`: imagem 320×320 da família mostrada em 360×360) | `T(7, 4)` com o nome da família; subtítulo `U(0x84, 0x10)` |
+| 0 | sem família, lote tipo 4/6 (BV) | `ADEA` | `0xACDC0023` com a imagem do lote (`GetCommunityLotImage`) se achou, senão `ADF1` | nome do lote |
+| 0 | sem família, residencial (tipo ≠ 1, 5) | `ADE9` | `ADF2` (ferramentas de construção) | nome do lote |
+| 0 | sem família, comunitário | `ADEA` | sem lotes comunitários no bairro (`+0x5c`→`0x68` = 0) `ADF2`; com o objeto `0x9327CE01` no lote `0xACDC0023` + imagem; com o `0x13203C11` `0xACDC0035`; senão `ADF1` | nome do lote |
+| 1 | — | `ADEC` | `ADF0` (`ADF5` no bairro tipo 2) | `T(7, 3)` |
+| 3 / 5 | bairro atual (tipo `0x48`) | `ADEB` | tipo 2 → `ADF6`; 3 → `ADF8` (caso 3) / `ADF7` (5); 4 com `0x58` = 3 → `ADF9`/`ADFA`; 5–7 → `0xACDC0021`/`22`; outro (o jogo base) → `ADF3`; bairro "Tutorial" → `ADF4` sem títulos | nome do bairro; subtítulo `U(0x84, 0x10)` (caso 3) ou `U(0xCD, 0x13)` (5) |
+| 3 / 5 | o jogo guarda um lote de destino diferente do atual | `ADEA`/`ADEB` com a lógica da imagem comunitária acima | | |
+| 6 | com família | `ADEB` | — (foto da família) | `T(7, 4)` com o nome |
+| 6 | sem família | `ADEB` | `ADF3` | nome do bairro, `U(0x84, 0x10)` |
+| 7 | — | `ADED` | `ADF4` | `U(0x84, 0x2C)`, `U(0x84, 0x10)` |
+
+A imagem do lote comunitário (`GetCommunityLotImage`, BV `0x23b970`) é a
+miniatura 320×320 (`0x20732180`) de um objeto do lote cujo catálogo tem o
+bit `0x20` do campo `0x5E`, criada pela câmera de miniaturas. Os números de
+caso vêm de quem cria a janela (não seguido): pelo conteúdo, 0 = entrar num
+lote, 3/5 = carregar um bairro, 6 = voltar ao bairro com uma família, 7 =
+tutorial (inferido).
 
 ## 3. CINE (`cCinematicScene`)
 
