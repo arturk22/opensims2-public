@@ -254,7 +254,136 @@ um ícone novo na fila toca o som `PTR 0x02788cec`.
 
 ---
 
-## 7. O que falta
+## 7. Painéis do modo vivo (rodada 7, binário + dados)
+
+As strings citadas são de `TSData/Res/Text/Live.package` (o grupo global
+`0x7F96C284` nos caminhos do binário). `FUN_000da4b0(buf, STR#, índice, grupo)`
+usa o **índice a partir de 1**, como o `tipres` dos scripts.
+
+### 7.1 Relacionamentos (`cTSWinProcPanelRelationships`, `cTSWinProcRelationshipThumbnail`)
+
+- **Dados** (`cTSUIBridgeRelationshipInfo::Init`, BV `0x1807b8`), lidos do
+  SREL de mim → outro: variável 0 = **diário** (STR, `+0xc`), 2 =
+  **vitalício** (LTR, `+0x10`), 1 = **flags** (`+0x24`), 3 ≠ 0 = "já se
+  conhecem" (`+0x2c`), "da família" pelo gerente de famílias (`+0x2d`), |LTR|
+  > 4 (`+0x2e`), dado de pessoa 0x44 bit 0 do outro (`+0x30`), e dois valores
+  do vizinho (`vtable 0xb4`, 1/0) e dois floats (`0xb8`/`0xbc`, o 2º é o
+  "amizade" do ícone diário).
+- **Bits da variável 1** (pelos getters da vtable e pelos ícones): 0 paixão
+  (crush), 1 amor, 2 noivos, 3 casados, 4 amigo, 5 melhor amigo, 6
+  namorando, 7 inimigo. Os bits 9–13 e 15 têm getters, mas o painel base não
+  os usa.
+- **Ícones**: uma tira de **11 quadros** (largura/11), com tooltip do STR#
+  0x84 do `Live`. Quadro 0 amor ("Love"), 1 paixão ("Crush"), 5 casados
+  ("Married/Joined"), 6 noivos ("Engaged"), 7 amigo ("Friend"), 8 inimigo
+  ("Enemy"), 9 melhor amigo ("Best Friend"), 10 namorando ("Going Steady").
+  - ícone do **diário** (`UpdateSTRUI`, BV `0x3a2080`): paixão se bit 0;
+    o segundo ícone é amigo (7) se o bit 4 está ligado ou o float de amizade
+    passa de **0,001**; senão some;
+  - ícone do **vitalício** (`UpdateLTRUI`, BV `0x3a228c`), por prioridade:
+    casados (bit 3) > noivos (2) > namorando (6) > amor (1). O segundo: melhor
+    amigo (5) > inimigo (7);
+  - com pet envolvido (só BV) os ícones somem.
+- **Barras**: o valor −100..100 de cada variável vai para uma barra
+  (`vtable 0x20`) e para a cor (`FUN_008c0488`, a mesma rampa das barras de
+  motivo, §3.2).
+- **Filtros** (`LoadRelationships`, BV `0x3a4140`, botões `0x0BA16775…79`):
+  1 = família (`+0x2d`), 2 = conhecidos (`+0x2c`), 3 = amigos (bit 4 ou 5,
+  ou amizade > 0,001), 4 = um valor > 4 (`0x78`; química, só BV), 5 = todos.
+  Ordem: `cFriendshipSortPredicate` (no filtro 4,
+  `cChemistrySortPredicate`). Sims mortos e sem SREL (vtables `0x64`/`0x68`
+  do info) não entram.
+- Tooltip do retrato: "%s %s" + a relação familiar ("%s %s is the %s of
+  %s.", STR# 0x84 #19), "Family Tree of %s" (#33).
+
+### 7.2 Emprego (`cTSWinProcPanelJob::ShowJobInfo`, BV `0x24679c`)
+
+Janelas por ID (script do painel de emprego):
+- `0x77E74B47` título do cargo ("%s|%s", STR# 0x89 #18 = título|descrição);
+- `0x27E74B64` horário: "%s to %s" (#11) com início e início+duração, e
+  **a carona = 1 hora antes do início** (início 0 → 23 h), no tooltip "Hours|
+  %s-%s\rCarpool arrives: %s" (#13; escola: #17 "Bus arrives");
+- `0x47E74B6D` salário (o mesmo formatador de dinheiro do §2);
+- `0xEC2CFCFD` desempenho: se o dado de pessoa 0xC3 = 0, valor do desempenho
+  ÷ 100, arredondado e ≥ 0, com a cor da rampa e o texto do STR# 0x88 #12;
+  senão mostra o nome de um item do gerente de carreiras;
+- amigos da família: mostrado só se tem menos que o exigido (`0x104 <
+  0x108`): "( + %s )" (#20) com os que faltam; "Job Performance|…" (#21) é o
+  tooltip.
+- Dias de trabalho (`ShowDaysInfo`), adolescente/escola/idoso
+  (`ShowTeenInfo`/`ShowSchoolInfo`/`ShowElderInfo`) e aposentadoria usam as
+  entradas #23/#24/#28 do mesmo STR#.
+
+### 7.3 Personalidade e habilidades
+
+- `cTSWinProcPanelPersonality::UpdatePersonalityBar` (BV `0x37389c`) põe o
+  dado de pessoa da personalidade (2 gentil, 3 ativo, 5 brincalhão, 6
+  extrovertido, 7 arrumado; o 4 não é usado) numa **barra em degraus**
+  (`cTSWinProcStepFillBar`); os limites e o número de degraus vêm da barra.
+- `cTSUISkillsCtrl::UpdateUI` (BV `0xa86188`): **dados de pessoa 9 a 18**,
+  um por barra em degraus (9 limpeza, 10 culinária, 11 carisma, 12 mecânica,
+  15 criatividade, 17 corpo, 18 lógica; 13/14/16 são "xxxi" sem uso e o script
+  os esconde).
+- **Barra em degraus** (`cTSWinProcStepFillBar::ComputeValue`/`RefreshFillBar`,
+  BV `0x2be900`/`0x2bef40`): valor preso a [mín, máx] (`+0x68`/`+0x6c`)
+  mapeado linearmente na largura da imagem e **arredondado para o degrau**
+  (largura / nº de degraus `+0x78`). **Inferido**: personalidade e habilidade são 0..1000 em 10 degraus. Horizontal (`+0x5c` = 0) ou vertical (1, invertida com `+0x60`
+  = 3).
+
+### 7.4 Desejos e medos (`cTSWinProcPanelWantsAndFears`)
+
+O painel tem subpainéis por quantidade de slots (IDs `0x2E9E02BA`,
+`0xCE9C9E38`, `0xEE9C9E55`, `0xCE9C9F29`, `0xCE9C9F2D`, `0xCE9C9F39`,
+`0xCE9C9F40`) e anima a troca (esconde um e mostra outro: `HideWFSubpanel`/
+`ShowWFSubpanel`). No jogo base, **4 desejos e 3 medos**. Os slots
+extras e o cadeado (`LockWant`, `CheckForTooManyLocks`) são só BV. O som
+de brilho é `ui_wf_want_glow`/`ui_wf_fear_glow`, e o caça-níquel da troca é
+`kAnimationSound=ui_wf_slotmachine_lp`/`kEndSound=ui_wf_slotmachine_stop` (constantes do
+script).
+
+### 7.5 Ícones da fila e miniaturas (`cTSWinActionQueueIcon::Refresh`, BV `0x9d6bc4`)
+
+- O objeto do ícone é o **"action icon" da interação** (`vtable 0xfc`: o alvo,
+  ou o que a árvore pôs com o Generic Sims Call 2 "set action icon to stack
+  object"), mais um par (GUID, ?) da interação (`vtable 0x124`).
+- Com GUID válido (≠ 0, −1): miniatura do **seletor desse GUID**
+  (`GetObjectThumbnail(seletor)`). Senão: miniatura do objeto do ícone pelo
+  serviço (`vtable 0x78`; Sims → retrato). É o mesmo serviço e cache das
+  miniaturas do catálogo (`docs/buy-build-mac.md` §1.5): renderizadas na hora
+  com o rig `UIObjectThumbnails` e guardadas em
+  `Thumbnails/ObjectThumbnails.package` (imagem `0x856DDBAC`, chave da fábrica
+  `0xAC2950C1`). Quando o par muda, o ícone é refeito.
+- A máscara redonda é a imagem do filho 3 (`0xC12CEA13`, `ApplyAlphaMask`).
+  Os quadros 1/2/4–7 da moldura vêm do mesmo script.
+
+### 7.6 Tooltips (`cGZWinToolTipMgr`, BV `0x91f360`…)
+
+Um temporizador de **750 ms** (`0x2EE`). Ao entrar num controle com tooltip,
+a contagem zera: aparece no **1º tique (0,75 s)** e some no **3º (2,25 s)**.
+Com a flag 1 do controle aparece na hora, e com a flag 2 não some pelo tempo.
+Mensagens `0x22C010D3` (mostrou) e `0x22C010D4` (escondeu).
+
+### 7.7 Sons dos botões (dados + binário)
+
+Cada botão do script tem **`btnclicksnd={0,0xFFxxxxxx}`** (e às vezes
+`btnupsnd`). Os 24 bits baixos são o **CRC24 do nome do som**, o mesmo do
+índice de recursos: `ui_tertiary_button` 623 botões, `ui_secondary_button`
+517, `ui_primary_button` 236, `ui_pane_primary` 18, zoom in/out 7 cada,
+velocidades `ui_button_ffw/fw/play/pause`; `btnupsnd` = 
+`ui_text_notification_close`, `ui_secondary_button`, `ui_button_pause`.
+`nTSUI::PlaySound(nome)` (BV `0x8c1254`) toca `0xFF000000 | CRC24(nome)`
+pelo gerente de som (`vtable 0x28`, tipo 1). As listas tocam
+`ui_secondary_button` ao escolher uma linha. Há 82 nomes `ui_*` no binário
+(`ui_queue`, `ui_queue_delete`, `ui_panel_open/close`, `ui_error`,
+`ui_undo/redo`…).
+
+**Diferença com o código atual**: `src/app/live_ui.*` não tem estes
+painéis, os tooltips nem os sons de botão. Os sons são achados pelo índice
+global por CRC24 (`ResourceIndex`), e o `sound-list` deve listar os `ui_*`.
+
+---
+
+## 8. O que falta
 
 - O nome exato do serviço de thumbnails e da função de desaturação.
 - Cores dos textos/tooltips do painel (vêm dos scripts).
