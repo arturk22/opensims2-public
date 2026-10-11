@@ -72,7 +72,7 @@ public:
     void hideTestScene();
 
     // Lights for groups of instances (light set 0 is the default): an
-    // ambient colour and up to 8 directional lights, as the game gives each
+    // ambient colour and up to 16 directional and point lights, as the game gives each
     // object the lights of its room and group (docs/lighting-mac.md).
     struct LightSet {
         struct Directional {
@@ -80,8 +80,17 @@ public:
             simd_float3 color;     // times intensity
             float specular = 1;    // relative specular scale (roomSpecular for room lights)
         };
+        // A lamp's practical light (docs/lighting-mac.md 6): colour x
+        // intensity / (1 + falloff x d^2) out to `range`, 0 beyond.
+        struct Point {
+            simd_float3 position;
+            simd_float3 color;
+            float falloff = 1, range = 0;
+            float specular = 1;
+        };
         simd_float3 ambient{0, 0, 0};
         std::vector<Directional> lights;
+        std::vector<Point> points; // after the directionals, up to 16 lights in all
     };
     static constexpr size_t kMaxLightSets = 256;
     // Replaces every light set (set 0 included).

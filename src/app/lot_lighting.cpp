@@ -351,8 +351,51 @@ void LotLighting::update(double seconds) {
     }
     updateLightMaps(seconds);
 
+    // The lamps' practical lights (docs/lighting-mac.md 4.1, 6): the model's
+    // point light at its Change Light level, intensity x the modifier's
+    // practical strength and FalloffRate x its practical falloff
+    // (insideObjects in a room, outsideObjects outside), out to the range
+    // where I / (1 + C d^2) reaches lightRangeCutoff; they light the
+    // objects and Sims of the lamp's room (the outside's, for lamps outside).
+    std::map<std::pair<int, int16_t>, std::vector<Renderer::LightSet::Point>> practical; // by (VM level, room); outside: (0, 0)
+    {
+        auto modifier = [&](const char* name) {
+            auto it = state.modifiers.find(name);
+            return it == state.modifiers.end() ? LightingState::Modifier{} : it->second;
+        };
+        const auto inside = modifier("insideobjects"), outsideMod = modifier("outsideobjects");
+        const float cutoff = global("", "lightRangeCutoff", 0.5f);
+        for (const auto& l : lamps_) {
+            if (l.portal || l.level <= 0)
+                continue;
+            const bool out = outside(l.room);
+            const auto& mod = out ? outsideMod : inside;
+            const float k = float(l.level) / 100.0f * mod.practical;
+            Renderer::LightSet::Point p;
+            p.position = f3(l.position);
+            p.color = f3(l.color) * k;
+            p.falloff = l.falloff * mod.practicalFalloff;
+            const float I = simd_length(p.color);
+            if (cutoff <= 0 || I / cutoff <= 1)
+                continue;
+            p.range = p.falloff <= 0 ? 10000.0f : std::sqrt((I / cutoff - 1) / p.falloff);
+            practical[out ? std::make_pair(0, int16_t(0)) : std::make_pair(l.objectLevel + 1, l.room)].push_back(p);
+        }
+        for (auto& [key, points] : practical) {
+            // The brightest first, as many as a light set holds next to the 4 Deltas.
+            std::stable_sort(points.begin(), points.end(), [](const auto& a, const auto& b) {
+                return simd_length(a.color) > simd_length(b.color);
+            });
+            if (points.size() > 12)
+                points.resize(12);
+        }
+    }
+
     // Light sets: 0/1 outdoor objects/Sims, then 2 per room.
     std::vector<Renderer::LightSet> sets{Renderer::outdoorLights(state, false), Renderer::outdoorLights(state, true)};
+    if (auto it = practical.find({0, 0}); it != practical.end())
+        for (auto& set : sets)
+            set.points = it->second;
     std::map<std::pair<int, int16_t>, int> roomSets; // (level, room) -> objects' set; +1 Sims'
     auto roomSet = [&](int level, int16_t room) -> int {
         if (outside(room))
@@ -425,6 +468,8 @@ void LotLighting::update(double seconds) {
                 set.lights.push_back({simd_normalize(-travel), L[size_t(best)] * boost, global(group, "roomSpecular", 0.8f)});
                 L[size_t(best)] = 0;
             }
+            if (auto it = practical.find(key); it != practical.end())
+                set.points = it->second;
             sets.push_back(set);
         }
         return roomSets[key] = first;

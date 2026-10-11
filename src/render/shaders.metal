@@ -49,12 +49,26 @@ struct Draw {
     uint lightSet;   // index into the light sets (buffer 3)
 };
 
-constant uint kMaxLights = 8;
+constant uint kMaxLights = 16;
 
 struct Light {
-    float4 direction; // xyz: unit vector towards the light, world space
+    float4 direction; // xyz: unit vector towards the light, world space (a point light: its position)
     float4 color;     // rgb: colour times intensity, w: relative specular scale
+    float4 params;    // a point light: x: FalloffRate C (I / (1 + C d^2)), y: range, z: 1
 };
+
+// Unit vector towards a light and its attenuation at `world` (directional
+// lights: their direction, 1; the lamps' practical point lights:
+// I / (1 + C d^2) inside the range, 0 beyond, docs/lighting-mac.md 6).
+float3 lightVector(constant Light& light, float3 world, thread float& att) {
+    att = 1.0;
+    if (light.params.z < 0.5)
+        return light.direction.xyz;
+    const float3 d = light.direction.xyz - world;
+    const float dist = max(length(d), 1e-4);
+    att = dist < light.params.y ? 1.0 / (1.0 + light.params.x * dist * dist) : 0.0;
+    return d / dist;
+}
 
 struct LightSet {
     float4 ambient; // rgb, w: number of lights
@@ -217,8 +231,11 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         // Fixed-function light, ambient = diffuse = stdMatDiffCoef, x1.
         constant LightSet& set = lightSets[draw.lightSet];
         float3 diffuse = set.ambient.rgb;
-        for (uint i = 0; i < min(uint(set.ambient.w), kMaxLights); ++i)
-            diffuse += set.lights[i].color.rgb * max(dot(n, set.lights[i].direction.xyz), 0.0);
+        for (uint i = 0; i < min(uint(set.ambient.w), kMaxLights); ++i) {
+            float att;
+            const float3 l = lightVector(set.lights[i], in.world, att);
+            diffuse += set.lights[i].color.rgb * att * max(dot(n, l), 0.0);
+        }
         color.rgb = albedo * saturate(draw.color.rgb * diffuse);
     } else if (draw.flags & kLighting) {
         if (draw.flags & kNormalMap)
@@ -234,13 +251,14 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         float3 diffuse = set.ambient.rgb;
         float3 spec = 0.0;
         for (uint i = 0; i < min(uint(set.ambient.w), kMaxLights); ++i) {
-            float3 l = set.lights[i].direction.xyz;
+            float att;
+            const float3 l = lightVector(set.lights[i], in.world, att);
             float ndl = dot(n, l);
-            if (ndl <= 0.0)
+            if (ndl <= 0.0 || att <= 0.0)
                 continue;
-            diffuse += set.lights[i].color.rgb * ndl;
+            diffuse += set.lights[i].color.rgb * att * ndl;
             if (draw.specular.w > 0.0)
-                spec += set.lights[i].color.rgb * set.lights[i].color.w * pow(max(dot(r, l), 0.0), draw.specular.w);
+                spec += set.lights[i].color.rgb * att * set.lights[i].color.w * pow(max(dot(r, l), 0.0), draw.specular.w);
         }
         // Ambient only (no lights in the set): 0.5 x ambient x diffuse, no emissive.
         const float3 emissive = set.ambient.w > 0.0 ? draw.emissive.rgb : float3(0.0);

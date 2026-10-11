@@ -79,11 +79,12 @@ struct Draw {
 // the game's conversion strength is not known).
 constexpr float kBumpStrength = 2.0f;
 
-constexpr size_t kMaxLights = 8;
+constexpr size_t kMaxLights = 16;
 
 struct Light {
     simd_float4 direction;
     simd_float4 color;
+    simd_float4 params; // point lights: falloff rate, range, 1
 };
 
 struct GpuLightSet {
@@ -758,9 +759,16 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     for (size_t i = 0; i < lightSets_.size() && i < kMaxLightSets; ++i) {
         const LightSet& ls = lightSets_[i];
         const size_t n = std::min(ls.lights.size(), kMaxLights);
-        sets[i].ambient = simd_make_float4(ls.ambient, float(n));
+        const size_t np = std::min(ls.points.size(), kMaxLights - n);
+        sets[i].ambient = simd_make_float4(ls.ambient, float(n + np));
         for (size_t k = 0; k < n; ++k)
-            sets[i].lights[k] = {simd_make_float4(ls.lights[k].direction, 0), simd_make_float4(ls.lights[k].color, ls.lights[k].specular)};
+            sets[i].lights[k] = {simd_make_float4(ls.lights[k].direction, 0), simd_make_float4(ls.lights[k].color, ls.lights[k].specular),
+                                 simd_make_float4(0, 0, 0, 0)};
+        for (size_t k = 0; k < np; ++k) {
+            const auto& p = ls.points[k];
+            sets[i].lights[n + k] = {simd_make_float4(p.position, 1), simd_make_float4(p.color, p.specular),
+                                     simd_make_float4(p.falloff, p.range, 1, 0)};
+        }
     }
     const double now = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
     f->params = simd_make_float4(std::clamp(lightMapMix_, 0.0f, 1.0f), float(std::fmod(now, 3600.0)), 0, 0);
