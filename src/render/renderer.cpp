@@ -292,11 +292,14 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
         color->setPixelFormat(MTL::PixelFormat(colorFormat));
         if (blend != StandardMaterial::Blend::None) {
             color->setBlendingEnabled(true);
-            const auto src = blend == StandardMaterial::Blend::AddNoSrcAlpha ? MTL::BlendFactorOne : MTL::BlendFactorSourceAlpha;
+            const auto src = blend == StandardMaterial::Blend::AddNoSrcAlpha || blend == StandardMaterial::Blend::Premultiplied
+                                 ? MTL::BlendFactorOne
+                                 : MTL::BlendFactorSourceAlpha;
             color->setSourceRGBBlendFactor(src);
             color->setSourceAlphaBlendFactor(src);
-            const auto dst = blend == StandardMaterial::Blend::Alpha ? MTL::BlendFactorOneMinusSourceAlpha
-                                                                     : MTL::BlendFactorOne;
+            const auto dst = blend == StandardMaterial::Blend::Alpha || blend == StandardMaterial::Blend::Premultiplied
+                                 ? MTL::BlendFactorOneMinusSourceAlpha
+                                 : MTL::BlendFactorOne;
             color->setDestinationRGBBlendFactor(dst);
             color->setDestinationAlphaBlendFactor(dst);
         }
@@ -312,6 +315,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
         alphaBlend_ = pipeline(StandardMaterial::Blend::Alpha);
         additive_ = pipeline(StandardMaterial::Blend::Additive);
         addOne_ = pipeline(StandardMaterial::Blend::AddNoSrcAlpha);
+        premultiplied_ = pipeline(StandardMaterial::Blend::Premultiplied);
     } catch (...) {
         vs->release();
         fs->release();
@@ -407,6 +411,7 @@ Renderer::~Renderer() {
     depthWrite_->release();
     additive_->release();
     addOne_->release();
+    premultiplied_->release();
     alphaBlend_->release();
     opaque_->release();
     queue_->release();
@@ -866,6 +871,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha      ? alphaBlend_
                                     : m.blend == StandardMaterial::Blend::Additive ? additive_
                                     : m.blend == StandardMaterial::Blend::AddNoSrcAlpha ? addOne_
+                                    : m.blend == StandardMaterial::Blend::Premultiplied ? premultiplied_
                                                                                    : opaque_);
         enc->setCullMode(m.cull);
         auto [uv0, uv1] = uvTransform(m.anim, t);

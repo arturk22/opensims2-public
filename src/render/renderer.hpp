@@ -165,6 +165,7 @@ private:
     MTL::RenderPipelineState* alphaBlend_ = nullptr;
     MTL::RenderPipelineState* additive_ = nullptr;
     MTL::RenderPipelineState* addOne_ = nullptr; // one + one (addNoSrcAlphaScale)
+    MTL::RenderPipelineState* premultiplied_ = nullptr; // one + (1 - src alpha) (lot imposters)
     MTL::DepthStencilState* depthWrite_ = nullptr;
     MTL::DepthStencilState* depthRead_ = nullptr; // blended parts test but do not write
     MTL::SamplerState* sampler_ = nullptr;

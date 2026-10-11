@@ -487,11 +487,18 @@ void imposterMaterials(ObjectModel& model, const std::string& scope) {
         MaterialDefinition m;
         if (type == "ImposterWallMaterial") {
             m = unlit("walls_" + page);
-            m.properties.insert(m.properties.end(), {{"stdMatAlphaTestEnabled", "true"}, {"stdMatAlphaRefValue", "65"}});
+            // Rendered from the lot, the imposter textures have premultiplied
+            // alpha: blended as such (one, 1 - alpha) over the alpha test,
+            // their soft edges (railings, the watchtower of N002_Lot22)
+            // fade into what is behind instead of coming out black.
+            m.properties.insert(m.properties.end(), {{"stdMatAlphaTestEnabled", "true"},
+                                                     {"stdMatAlphaRefValue", "65"},
+                                                     {"stdMatAlphaBlendMode", "premultiplied"}});
         } else if (type == "ImposterDualPackedSliceMaterial") {
             m = unlit("slices_" + page);
             m.properties.insert(m.properties.end(), {{"stdMatAlphaTestEnabled", "true"},
                                                      {"stdMatAlphaRefValue", "128"},
+                                                     {"stdMatAlphaBlendMode", "premultiplied"},
                                                      {"stdMatCullMode", "none"}});
         } else if (type == "ImposterRoofMaterial") {
             m = unlit("roofs");
@@ -500,6 +507,10 @@ void imposterMaterials(ObjectModel& model, const std::string& scope) {
                                                      {"stdMatBaseTextureAddressingV", "clamp"}});
         } else if (type == "ImposterTerrainMaterial") {
             m = unlit("terrain");
+            // Kept a plain blend (the game's is premultiplied too): drawn
+            // whole, the lots' own ground and street pieces cut the
+            // neighborhood roads in front of them, as the terrain under the
+            // imposters is not hidden yet.
             m.properties.insert(m.properties.end(), {{"stdMatAlphaBlendMode", "blend"},
                                                      {"stdMatCullMode", "none"},
                                                      {"stdMatLayer", std::to_string(kImposterTerrainLayer)},

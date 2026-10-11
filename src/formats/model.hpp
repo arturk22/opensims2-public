@@ -86,7 +86,7 @@ std::string baseTextureName(const MaterialDefinition& m);
 // the Sim materials, walls, floors, CelShadedMaterial, VertexAlpha, ...
 struct StandardMaterial {
     // Additive: srcAlpha + one ("additive"); AddNoSrcAlpha: one + one ("addNoSrcAlphaScale").
-    enum class Blend { None, Alpha, Additive, AddNoSrcAlpha };
+    enum class Blend { None, Alpha, Additive, AddNoSrcAlpha, Premultiplied }; // Premultiplied: one + (1 - src alpha)
     enum class Cull { Clockwise, CounterClockwise, None }; // which winding is culled
     enum class Shading {
         Standard,   // texture x (emissive + diffuse x lights) + specular + env cube

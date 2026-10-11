@@ -211,6 +211,7 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     out.blend = blend == "blend"                ? StandardMaterial::Blend::Alpha
               : blend == "additive"             ? StandardMaterial::Blend::Additive
               : blend == "addNoSrcAlphaScale"   ? StandardMaterial::Blend::AddNoSrcAlpha
+              : blend == "premultiplied"        ? StandardMaterial::Blend::Premultiplied
                                                 : StandardMaterial::Blend::None;
     out.alphaTest = flag("stdMatAlphaTestEnabled", false);
     out.alphaRef = number("stdMatAlphaRefValue", 127) / 255.0f;
@@ -409,7 +410,9 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         out.envCube = withSuffix(envName.empty() ? "reflectionCubeTemplate-envcube" : envName, "_txtr");
 
     const bool blended = out.blend != StandardMaterial::Blend::None;
-    if (blended && !simHair)
+    // Premultiplied (lot imposters' walls and slices) keeps the depth write
+    // its alpha-tested passes have.
+    if (blended && !simHair && out.blend != StandardMaterial::Blend::Premultiplied)
         out.depthWrite = false;
     out.layer = stdLayer * 8 + (blended ? (simHair ? 3 : 7) : 0);
     if (contains(type, "Water"))
