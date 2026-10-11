@@ -144,7 +144,72 @@ static void testSetToNextTiles() {
           "person intersection lets Sims through; ignored objects");
 }
 
+// A* on synthetic grids: around walls, through a door, past objects, to the
+// cheapest of several goals, and no path.
+static void testPathfinder() {
+    World w(10, 10);
+    for (int y = 0; y < 9; ++y)
+        w.addWall(1, 5, y, 5, y + 1); // a wall at x = 5 with a gap at the top row
+    BlockedGrid open(100, 0);
+    Path p;
+    check(findPath(w, open, {1, 1, 1}, {{8, 1, 0}}, p) && p.tiles.back() == TilePos{8, 1, 1}, "path around a wall");
+    bool crosses = false;
+    for (size_t i = 0; i + 1 < p.tiles.size(); ++i)
+        crosses |= p.tiles[i].x == 4 && p.tiles[i + 1].x == 5 && p.tiles[i].y < 9;
+    check(!crosses && p.cost > 14, "the path goes through the gap");
+    for (size_t i = 0; i < p.tiles.size(); ++i) {
+        const TilePos from = i ? p.tiles[i - 1] : TilePos{1, 1, 1};
+        crosses |= !canStep(w, open, from, p.tiles[i].x - from.x, p.tiles[i].y - from.y);
+    }
+    check(!crosses, "every step of the path is allowed");
+    w.openDoor({4, 1, 1}, 0); // a door in the wall, facing -X
+    check(findPath(w, open, {1, 1, 1}, {{8, 1, 0}}, p) && p.tiles.size() == 7 && std::fabs(p.cost - 7) < 1e-4f,
+          "straight through the door");
+    check(findPath(w, open, {1, 1, 1}, {{3, 3, 0}}, p) && p.tiles.size() == 2 && std::fabs(p.cost - 2 * M_SQRT2) < 1e-4f,
+          "diagonal steps");
+    check(findPath(w, open, {1, 1, 1}, {{8, 1, 5}, {1, 8, 0}}, p) && p.goal == 1, "the cheapest goal wins");
+    check(findPath(w, open, {1, 1, 1}, {{1, 1, 0}}, p) && p.tiles.empty(), "already there");
+    BlockedGrid wall(100, 0);
+    for (int x = 0; x < 10; ++x)
+        wall[w.index(x, 5)] = 1;
+    check(!findPath(w, wall, {1, 1, 1}, {{1, 8, 0}}, p), "no path past a row of objects");
+    check(!findPath(w, wall, {1, 1, 1}, {{3, 5, 0}}, p), "a blocked goal");
+    wall[w.index(1, 1)] = 1;
+    check(findPath(w, wall, {1, 1, 1}, {{2, 2, 0}}, p), "leaving a blocked start tile");
+}
+
+// Routing slot goals: a ring of directions around the object, rotated with
+// it; a point slot on the object's tile.
+static void testRoutingGoals() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(10, 10);
+    Object& o = place(vm, 5, 5);
+    o.data[objdata::Direction] = 2; // faces +Y
+    Slots::Slot front;
+    front.type = 3;
+    front.flags = 0x01; // direction 0 relative to the object: its front
+    front.minDistance = front.maxDistance = front.optimalDistance = 1;
+    front.facing = -2;
+    auto g = vm.routingGoals(front, o);
+    check(g.goals.size() == 1 && g.goals[0].x == 5 && g.goals[0].y == 6 && g.facings[0] == 6,
+          "in front of an object facing +Y, facing it");
+    front.flags = 0x55;
+    g = vm.routingGoals(front, o);
+    check(g.goals.size() == 4, "four sides");
+    vm.world->addWall(1, 5, 5, 6, 5); // a wall just behind it (y = 5)
+    g = vm.routingGoals(front, o);
+    check(g.goals.size() == 3, "not through a wall");
+    Slots::Slot point;
+    point.type = 3;
+    point.facing = -2;
+    g = vm.routingGoals(point, o);
+    check(g.goals.size() == 1 && g.onTarget && g.facings[0] == 2, "a bone slot is on the object, facing its way");
+}
+
 int main() {
+    testPathfinder();
+    testRoutingGoals();
     testDirections();
     testWorldWalls();
     testSetToNextTiles();

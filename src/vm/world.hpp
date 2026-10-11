@@ -98,4 +98,24 @@ using BlockedGrid = std::vector<uint8_t>;
 // around it must be open, as Sims do not squeeze past wall ends or objects).
 bool canStep(const World& world, const BlockedGrid& blocked, TilePos from, int dx, int dy);
 
+// A goal of a route: a tile and what reaching it costs on top of the walk
+// (slot positions further from the optimal distance cost more).
+struct PathGoal {
+    int x = 0, y = 0;
+    float cost = 0;
+};
+
+struct Path {
+    std::vector<TilePos> tiles; // from the first step to the goal; empty when already on it
+    size_t goal = 0;            // index of the goal reached
+    float cost = 0;             // walk + goal cost
+};
+
+// A* over the tiles of `start`'s level, 8-connected (straight steps cost 1,
+// diagonal ones sqrt 2, as canStep allows them), to the goal with the lowest
+// walk + goal cost. The start tile may be blocked (a walker leaves the tile
+// it is on); goal tiles must not be. False if no goal can be reached.
+bool findPath(const World& world, const BlockedGrid& blocked, TilePos start, const std::vector<PathGoal>& goals,
+              Path& out);
+
 } // namespace os2::vm

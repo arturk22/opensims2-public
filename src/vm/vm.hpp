@@ -437,6 +437,18 @@ public:
     // Objects placed on a tile (in the world and not in a slot), by ID.
     std::vector<ObjectId> objectsOnTile(TilePos t) const;
 
+    // Where a walker may stand to use a routing slot of `target`: goal
+    // tiles with their costs, the exact point and facing of each (facing -1:
+    // any). See routingGoals in routing.cpp for how the SLOT fields are read.
+    struct RouteGoals {
+        int level = 0;
+        std::vector<PathGoal> goals;
+        std::vector<std::array<float, 2>> points;
+        std::vector<int> facings;
+        bool onTarget = false; // the goal is on the target's own tile (its parts do not block it)
+    };
+    RouteGoals routingGoals(const Slots::Slot& slot, const Object& target);
+
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) { objects_.erase(id); }
     const std::map<ObjectId, Object>& objects() const { return objects_; }

@@ -1,5 +1,7 @@
 #include "simantics.hpp"
 
+#include <bit>
+
 #include "binreader.hpp"
 
 namespace os2 {
@@ -205,6 +207,18 @@ Slots Slots::parse(std::span<const uint8_t> data) {
             sl.resolution = r.i32();
         if (s.sims2Layout)
             sl.ts2Extra = {r.u32(), r.u32()};
+        if (s.sims2Layout) {
+            sl.minDistance = std::bit_cast<float>(sl.minProximity);
+            sl.maxDistance = std::bit_cast<float>(sl.maxProximity);
+            sl.optimalDistance = std::bit_cast<float>(sl.optimalProximity);
+            const float res = std::bit_cast<float>(sl.resolution);
+            sl.resolutionTiles = res > 0.01f && res < 64.0f ? res : float(sl.resolution) / 16.0f;
+        } else {
+            sl.minDistance = float(sl.minProximity) / 16.0f;
+            sl.maxDistance = float(sl.maxProximity) / 16.0f;
+            sl.optimalDistance = float(sl.optimalProximity) / 16.0f;
+            sl.resolutionTiles = float(sl.resolution) / 16.0f;
+        }
     }
     r.expectEnd("SLOT");
     return s;
