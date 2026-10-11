@@ -8,6 +8,7 @@
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
+#include "formats/lot_arrivals.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
 #include "vm/autonomy.hpp"
@@ -47,7 +48,10 @@ std::filesystem::path resRoot(const std::filesystem::path& pkg) {
     for (auto p = std::filesystem::absolute(pkg).parent_path(); p.has_relative_path(); p = p.parent_path())
         if (p.filename() == "Res")
             return p;
-    throw std::runtime_error("the lot is not under a TSData/Res directory");
+    // A lot in the player's folder: the game's data from $OS2_DATA (as lot-save).
+    if (const char* data = std::getenv("OS2_DATA"); data && std::filesystem::is_directory(std::filesystem::path(data) / "TSData/Res"))
+        return std::filesystem::path(data) / "TSData/Res";
+    throw std::runtime_error("the lot is not under a TSData/Res directory (set OS2_DATA to data/game)");
 }
 
 std::string simName(const vm::Object& o) {
@@ -107,7 +111,11 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
     const Lot lot = Lot::load(pkg);
-    const LotObjects saved = LotObjects::load(pkg);
+    LotObjects saved = LotObjects::load(pkg);
+    // A family that just moved in: its Sims join the lot, as the app's
+    // LotSimulation does (formats/lot_arrivals.hpp; the charge is left out).
+    if (const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile); !arrivals.characters.empty())
+        std::printf("%zu Sims of family %u arrive\n", arrivals.characters.size(), arrivals.family);
     vm::VM machine(code);
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;

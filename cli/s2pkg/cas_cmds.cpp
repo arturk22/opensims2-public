@@ -161,6 +161,7 @@ int cmdCasMake(int argc, char** argv) {
     std::string objectName = out.stem().string();
     uint32_t seed = 0;
     std::string hoodSource, hoodOut, familyName;
+    std::vector<std::string> members; // --member first:age:gender:tie (more Sims of the family)
     std::vector<std::pair<std::string, std::string>> deferred; // options that need the age and gender
     for (int i = 4; i + 1 < argc; i += 2) {
         const std::string a = argv[i], v = argv[i + 1];
@@ -176,6 +177,7 @@ int cmdCasMake(int argc, char** argv) {
         else if (a == "--hood") hoodSource = v;
         else if (a == "--hood-out") hoodOut = v;
         else if (a == "--family") familyName = v;
+        else if (a == "--member") members.push_back(v);
         else deferred.emplace_back(a, v);
     }
     for (const auto& [a, v] : deferred) {
@@ -213,26 +215,79 @@ int cmdCasMake(int argc, char** argv) {
         // A one-Sim family added to a copy of the neighborhood (vm/family_write.hpp).
         if (hoodOut.empty())
             throw std::runtime_error("--hood needs --hood-out <folder>");
-        vm::NewSim sim;
-        sim.firstName = spec.firstName;
-        sim.lastName = spec.lastName;
-        sim.ageBit = spec.age;
-        sim.genderBit = spec.gender;
-        sim.fitness = spec.fitness;
-        sim.zodiac = cas::zodiacSign(sim.personality);
-        sim.aspiration = spec.age <= cas::age::Child ? cas::aspiration::GrowUp : cas::suggestedAspiration(sim.zodiac);
+        // The first Sim, then each --member first:age:gender:tie, tie to the
+        // first Sim: spouse, child (of the first and its spouse), sibling,
+        // roommate (family_write.hpp: 2 married, 3 sibling, 4/0/1 child/parent).
+        std::vector<cas::CharacterSpec> specs{spec};
+        std::vector<std::string> ties{""};
+        for (const std::string& m : members) {
+            std::vector<std::string> f;
+            for (size_t a = 0, b; a <= m.size(); a = b + 1) {
+                b = m.find(':', a);
+                if (b == std::string::npos)
+                    b = m.size();
+                f.push_back(m.substr(a, b - a));
+            }
+            if (f.size() != 4)
+                throw std::runtime_error("--member first:age:gender:tie");
+            cas::CharacterSpec o;
+            o.firstName = f[0];
+            o.lastName = spec.lastName;
+            o.age = parseAge(f[1]);
+            o.gender = parseGender(f[2]);
+            o.skinTone = spec.skinTone;
+            cas::completeSpec(catalog, o, (seed ? seed : 1) + uint32_t(specs.size()));
+            specs.push_back(o);
+            ties.push_back(f[3]);
+        }
+        std::vector<vm::NewSim> sims;
         uint32_t s = seed ? seed : 1;
-        sim.dna = genetics::dnaFromLook(cas::toneFamily(spec.hairTone), cas::toneFamily(spec.skinTone), spec.eyes,
-                                        spec.gender == cas::gender::Female,
-                                        [&s](uint32_t n) { s = s * 1103515245u + 12345u; return n ? (s >> 8) % n : 0u; })
-                      .toProperties();
-        sim.writeCharacter = [&](const std::string& name, const std::filesystem::path& file) {
-            return cas::writeCharacter(index, catalog, baker, spec, name, file).guid;
-        };
+        for (size_t k = 0; k < specs.size(); ++k) {
+            const cas::CharacterSpec& sp = specs[k];
+            vm::NewSim sim;
+            sim.firstName = sp.firstName;
+            sim.lastName = sp.lastName;
+            sim.ageBit = sp.age;
+            sim.genderBit = sp.gender;
+            sim.fitness = sp.fitness;
+            sim.zodiac = cas::zodiacSign(sim.personality);
+            sim.aspiration = sp.age <= cas::age::Child ? cas::aspiration::GrowUp : cas::suggestedAspiration(sim.zodiac);
+            sim.dna = genetics::dnaFromLook(cas::toneFamily(sp.hairTone), cas::toneFamily(sp.skinTone), sp.eyes,
+                                            sp.gender == cas::gender::Female,
+                                            [&s](uint32_t n) { s = s * 1103515245u + 12345u; return n ? (s >> 8) % n : 0u; })
+                          .toProperties();
+            sim.writeCharacter = [&index, &catalog, &baker, &specs, k](const std::string& name, const std::filesystem::path& file) {
+                return cas::writeCharacter(index, catalog, baker, specs[k], name, file).guid;
+            };
+            sims.push_back(std::move(sim));
+        }
+        size_t spouse = 0;
+        for (size_t k = 1; k < sims.size(); ++k)
+            if (ties[k] == "spouse") {
+                sims[0].ties.push_back({k, 2});
+                sims[k].ties.push_back({0, 2});
+                spouse = k;
+            }
+        for (size_t k = 1; k < sims.size(); ++k) {
+            if (ties[k] == "child") {
+                sims[k].ties.push_back({0, 0});
+                sims[0].ties.push_back({k, 4});
+                if (spouse) {
+                    sims[k].ties.push_back({spouse, 1});
+                    sims[spouse].ties.push_back({k, 4});
+                }
+            } else if (ties[k] == "sibling") {
+                sims[k].ties.push_back({0, 3});
+                sims[0].ties.push_back({k, 3});
+            }
+        }
         const auto fr = vm::writeNewFamily(hoodSource, std::filesystem::path(hoodOut) / std::filesystem::path(hoodSource).filename(),
-                                           familyName.empty() ? spec.lastName : familyName, "", {sim}, seed ? seed : 1);
-        std::printf("family %u written to %s: neighbor %u, %s\n", fr.family, fr.neighborhood.string().c_str(),
-                    unsigned(fr.neighbors.front()), fr.characters.front().filename().string().c_str());
+                                           familyName.empty() ? spec.lastName : familyName, "", std::move(sims), seed ? seed : 1);
+        std::printf("family %u written to %s:", fr.family, fr.neighborhood.string().c_str());
+        for (size_t k = 0; k < fr.neighbors.size(); ++k)
+            std::printf(" neighbor %u (%s, %s)", unsigned(fr.neighbors[k]), specs[k].firstName.c_str(),
+                        fr.characters[k].filename().string().c_str());
+        std::printf("\n");
         return 0;
     }
     const auto r = cas::writeCharacter(index, catalog, baker, spec, objectName, out);
@@ -349,7 +404,7 @@ const char* casUsage() {
            "       s2pkg cas-make <Res-dir> <out.package> [--age adult] [--gender f|m] [--skin 1-4] [--hair-tone 1-5]\n"
            "              [--hair|--top|--bottom|--body|--formal part] [--archetype name] [--mod name=weight]...\n"
            "              [--eyes overlay] [--overlay overlay]... [--first name] [--last name] [--object N001_User00100] [--seed N]\n"
-           "              [--hood <neighborhood dir> --hood-out <dir> [--family name]]  (adds a one-Sim family to a copy)\n"
+           "              [--hood <neighborhood dir> --hood-out <dir> [--family name] [--member first:age:gender:spouse|child|sibling|roommate]...]  (adds the family to a copy)\n"
            "       s2pkg cas-lxnr <Res-dir> <character.package>  (the LxNR face structure, checked against the face meshes)\n";
 }
 
