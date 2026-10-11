@@ -195,23 +195,7 @@ bool runCheckTree(VM& vm, ObjectId sim, const Candidate& c, Ads& ads, std::vecto
                 return; // a Main; the check tree and the threads it starts are shown
             const int depth = int(th.stack.size()) + (&th == &t ? 0 : 8);
             const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
-            std::string detail;
-            if (in.opcode == 0x02) {
-                const auto& o = in.operands;
-                Context cx{vm, const_cast<Thread&>(th), const_cast<Frame&>(f), in};
-                auto val = [&](uint8_t owner, int16_t data) {
-                    try {
-                        return std::to_string(cx.get(owner, data));
-                    } catch (...) {
-                        return std::string("?");
-                    }
-                };
-                const auto l = int16_t(le16(&o[0])), r = int16_t(le16(&o[2]));
-                char buf[128];
-                std::snprintf(buf, sizeof buf, "[%02X:%d=%s op%d %02X:%d=%s]", o[6], l, val(o[6], l).c_str(), o[5], o[7], r,
-                              val(o[7], r).c_str());
-                detail = buf;
-            }
+            const std::string detail = describeOperands(vm, th, f, in);
             std::fprintf(stderr, "  %*s%04X #%-3u %-28s %-40s %s\n", (depth - 1) * 2, "", f.instance, f.pc,
                          op.c_str(), detail.c_str(), f.behavior->fileName.c_str());
         };
@@ -480,6 +464,25 @@ void foundActionReturned(VM& vm, Thread& t, bool result) {
 
 bool availableToAge(const Object& sim, const InteractionTable& table, const InteractionTable::Interaction& e) {
     return availableForAge(sim, table, e);
+}
+
+std::string describeOperands(VM& vm, const Thread& th, const Frame& f, const Behavior::Instruction& in) {
+    if (in.opcode != 0x02)
+        return {};
+    const auto& o = in.operands;
+    Context cx{vm, const_cast<Thread&>(th), const_cast<Frame&>(f), in};
+    auto val = [&](uint8_t owner, int16_t data) {
+        try {
+            return std::to_string(cx.get(owner, data));
+        } catch (...) {
+            return std::string("?");
+        }
+    };
+    const auto l = int16_t(le16(&o[0])), r = int16_t(le16(&o[2]));
+    char buf[128];
+    std::snprintf(buf, sizeof buf, "[%02X:%d=%s op%d %02X:%d=%s]", o[6], l, val(o[6], l).c_str(), o[5], o[7], r,
+                  val(o[7], r).c_str());
+    return buf;
 }
 
 std::function<void(const AutonomyDecision&)>& autonomyObserver() {

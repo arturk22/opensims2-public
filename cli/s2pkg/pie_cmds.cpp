@@ -12,6 +12,7 @@
 #include "formats/resindex.hpp"
 #include "vm/hood_bridge.hpp"
 #include "vm/lot_neighborhood.hpp"
+#include "vm/autonomy.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
@@ -117,8 +118,8 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             if (t.me != sim || checkTraced++ >= traceChecks)
                 return;
             const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
-            std::printf("    %*s%08X %04X #%-3u %-28s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
-                        op.c_str(), f.behavior->fileName.c_str());
+            std::printf("    %*s%08X %04X #%-3u %-28s %s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
+                        op.c_str(), f.behavior->fileName.c_str(), vm::describeOperands(machine, t, f, in).c_str());
         };
     const auto pie = vm::pieMenu(machine, sim, object);
     machine.trace = nullptr;
@@ -158,8 +159,8 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
             if (everyThread)
                 std::printf("[%d]", t.me);
-            std::printf("    %*s%08X %04X #%-3u %-28s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
-                        op.c_str(), f.behavior->fileName.c_str());
+            std::printf("    %*s%08X %04X #%-3u %-28s %s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
+                        op.c_str(), f.behavior->fileName.c_str(), vm::describeOperands(machine, t, f, in).c_str());
         };
     uint32_t lastDialog = 0;
     auto showDialog = [&](const vm::Dialog& d, int tick) {

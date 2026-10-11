@@ -116,6 +116,11 @@ float adValue(const Object& sim, int16_t min, int16_t range, uint16_t personalit
 constexpr uint8_t CheckTreeScanned = 0x01, CheckTreeChangesAds = 0x02, CheckTreeActionStrings = 0x04;
 uint8_t checkTreeAdFlags(VM& vm, const Object& codeOwner, uint16_t treeId);
 
+// For traces: an Expression's operands with their current values,
+// "[owner:data=value opN owner:data=value]" (reading may grow attribute
+// vectors); empty for other instructions.
+std::string describeOperands(VM& vm, const Thread& t, const Frame& f, const Behavior::Instruction& in);
+
 // The Generic Sims Calls of the idle system: 43 "Is It Ok to Idle Here"
 // (true: nothing here tells a bad spot, inferred) and 52 "Wall in Front?"
 // (direction in temp 0: true if a wall stands between the Sim's tile and
