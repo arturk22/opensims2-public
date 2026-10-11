@@ -680,6 +680,8 @@ Exit createObjectInstance(Context& c) {
         x->data[objdata::Direction] = int16_t(((dir % 8) + 8) % 8);
         if (c.vm.world)
             x->data[objdata::Room] = c.vm.world->room(VM::tileOf(*x));
+    } else {
+        x->data[objdata::Room] = -1; // out of world: every saved one has room -1
     }
     if (materialSource)
         x->materials = materialSource->materials;

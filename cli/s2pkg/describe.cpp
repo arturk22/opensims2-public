@@ -330,8 +330,12 @@ std::string describeSimAntics(uint32_t type, std::span<const uint8_t> data) {
         appendf(out, "name=%s version=0x%X layout=%s slots=%zu\n", s.fileName.c_str(), s.version,
                 s.sims2Layout ? "ts2" : "ts1", s.slots.size());
         for (const auto& sl : s.slots)
-            appendf(out, "  type=%u offset=(%g %g %g) flags=0x%X height=%d facing=%d snap=%d\n", sl.type, sl.offset[0],
-                    sl.offset[1], sl.offset[2], sl.flags, sl.height, sl.facing, sl.snapTargetSlot);
+            appendf(out,
+                    "  type=%u offset=(%g %g %g) flags=0x%X height=%d facing=%d snap=%d dist=%g/%g/%g u10=0x%X "
+                    "extra=0x%X,0x%X\n",
+                    sl.type, sl.offset[0], sl.offset[1], sl.offset[2], sl.flags, sl.height, sl.facing,
+                    sl.snapTargetSlot, sl.minDistance, sl.optimalDistance, sl.maxDistance, uint32_t(sl.unknown10),
+                    sl.ts2Extra[0], sl.ts2Extra[1]);
         break;
     }
     case sa::TTAB: {

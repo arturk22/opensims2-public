@@ -543,8 +543,11 @@ Exit reachPut(Context& c) {
 // only; u16 8 = 1 "from slot in temp 1" (not done). No stack object: error
 // 0x15; a slot that does not exist: error 0x1B. A failure is false and
 // writes my object data 52 "primitive result": 1 when a Sim in the way was
-// asked to move (0x02), else 0x0E (the binary also writes placement error
-// codes + 2; which one when is not known). The place is the slot's goal
+// asked to move (0x02), else the placement error + 2 (TrySnap: the first
+// error of the placement test's list): 0x0C "Can't intersect other
+// objects" + 2 = 0x0E for a goal taken, 2 "Location out of bounds" + 2 = 4
+// when every goal is off the lot (the carpool's "Drive - Drive Leave" waits
+// for 4 to know the car has reached the end of the street). The place is the slot's goal
 // with the lowest cost whose tile is free (the Sim's own and, for a slot on
 // the object, the object's tile do not count), with the slot's facing. The
 // Sims 2's SLOTs have no snap target slot (-1 everywhere): sitting is a Snap
@@ -558,8 +561,8 @@ Exit snap(Context& c) {
         throw gameError(err::NoStackObject, "Snap");
     Object& target = c.stackObject();
     constexpr int16_t kPrimitiveResult = 52;
-    auto fail = [&] {
-        me.data[kPrimitiveResult] = flags & 0x02 ? 1 : 0x0E;
+    auto fail = [&](int placementError = 0x0C) {
+        me.data[kPrimitiveResult] = int16_t(placementError == 0x0C && (flags & 0x02) ? 1 : placementError + 2);
         return Exit::False;
     };
     if (where > 4)
@@ -604,17 +607,44 @@ Exit snap(Context& c) {
         if (free && (best == goals.goals.size() || goals.goals[i].cost < goals.goals[best].cost))
             best = i;
     }
-    if (best == goals.goals.size())
-        return fail();
+    if (best == goals.goals.size()) {
+        bool onLot = goals.goals.empty() || !c.vm.world;
+        for (const auto& g : goals.goals)
+            onLot = onLot || c.vm.world->contains(TilePos{g.x, g.y, goals.level});
+        return fail(onLot ? 0x0C : 2);
+    }
     if (flags & 0x10)
         return Exit::True;
     me.data[objdata::ContainerId] = 0;
     me.data[objdata::SlotNumber] = -1;
     if (!(me.route && me.route->inPortal)) // a portal tree moves the walker
         me.route.reset();
+    const Position from = me.position;
+    const int fromDir = me.data[objdata::Direction];
     me.position = {goals.points[best][0], goals.points[best][1], goals.level};
     if (goals.facings[best] >= 0)
         me.data[objdata::Direction] = int16_t(goals.facings[best]);
+    // A multi-tile object moves whole: its other parts keep their places
+    // around me, turned with me (the carpool's car snapping down the street
+    // to its "slot_travel_drive" bone; inferred, as placement moves groups).
+    if (const ObjectId group = multiTileGroup(me); group && !me.person && from.inWorld()) {
+        const int turn = ((me.data[objdata::Direction] - fromDir) % 8 + 8) % 8;
+        const double a = -turn * M_PI / 4; // directions go clockwise
+        std::vector<ObjectId> parts;
+        for (const auto& [id, x] : c.vm.objects())
+            if (id != me.id && multiTileGroup(x) == group && x.position.inWorld() && !x.person)
+                parts.push_back(id);
+        for (ObjectId id : parts) {
+            Object& part = *c.vm.object(id);
+            const float dx = part.position.x - from.x, dy = part.position.y - from.y;
+            part.position.x = me.position.x + float(dx * std::cos(a) - dy * std::sin(a));
+            part.position.y = me.position.y + float(dx * std::sin(a) + dy * std::cos(a));
+            part.position.level = me.position.level;
+            part.data[objdata::Direction] = int16_t(((part.data[objdata::Direction] + turn) % 8 + 8) % 8);
+            if (c.vm.world)
+                part.data[objdata::Room] = c.vm.world->room(VM::tileOf(part));
+        }
+    }
     if (c.vm.world)
         me.data[objdata::Room] = c.vm.world->room(VM::tileOf(me));
     return Exit::True;

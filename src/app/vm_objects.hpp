@@ -133,6 +133,10 @@ private:
     std::map<int16_t, std::string> cres_;          // objects' CRES from their OBJD (cache)
     std::map<std::string, int> models_;            // CRES + materials -> renderer model (-1 failed)
     std::map<std::string, std::vector<std::string>> subsets_; // CRES -> its meshes' subset names
+    // The definition each ID had when last seen: the VM reuses the IDs of
+    // removed objects (the carpool's car takes a deleted object's ID), and a
+    // new object under an old ID is drawn anew.
+    std::map<int16_t, const void*> seenDefinition_;
     std::map<int16_t, bool> triedCreate_;
     std::set<int16_t> suppressed_;
     std::map<int16_t, std::optional<Xform>> frame_; // this update's placements

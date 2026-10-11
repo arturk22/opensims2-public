@@ -104,51 +104,6 @@ std::vector<ObjectId> VM::objectsOnTile(TilePos t) const {
 
 namespace os2::vm {
 
-// Where the bone a routing slot names is, in the object's model space
-// (tiles; +Y the model's forward axis, Z up), if the object's model has it.
-// The Sims 2's SLOT entries name a bone of the model by index into the
-// object's STR# 0x90 ("Model - Bones"), in the first u32 after the Sims 1
-// fields (Slots::Slot::ts2Extra[0]), as the containment slots do
-// (app/vm_objects.cpp); a slot with flag 0x20000 stands at that bone (the
-// Mac binary's RoutingSlotOffset leaves such slots out of the offset it
-// computes from the slot's own fields). Inferred.
-std::optional<std::array<float, 3>> VM::slotBone(const Slots::Slot& slot, const Object& target) {
-    constexpr uint16_t kModelBoneNames = 0x90;
-    constexpr uint32_t kTypeCresId = 0xE519C933, kTypeObjdId = 0x4F424A44;
-    if (!target.definition || !code().index())
-        return std::nullopt;
-    const StringTable* names = code().strings(target.group, kModelBoneNames);
-    if (!names || slot.ts2Extra[0] >= names->count(lang::EnglishUS))
-        return std::nullopt;
-    std::string bone = names->get(slot.ts2Extra[0], lang::EnglishUS);
-    if (const size_t comma = bone.find(','); comma != std::string::npos)
-        bone.resize(comma);
-    if (bone.empty())
-        return std::nullopt;
-    // Skeletons by OBJD, read once.
-    static std::map<std::pair<uint32_t, uint16_t>, std::shared_ptr<Skeleton>> skeletons;
-    const auto key = std::pair{target.group, target.definitionInstance};
-    auto it = skeletons.find(key);
-    if (it == skeletons.end()) {
-        std::shared_ptr<Skeleton> sk;
-        try {
-            ResourceIndex& index = *code().index();
-            const std::string cres = objectCresName(index, Tgi{kTypeObjdId, target.group, target.definitionInstance, 0});
-            if (auto loc = index.findByName(cres + "_cres", kTypeCresId))
-                sk = std::make_shared<Skeleton>(Skeleton::fromCres(Rcol(index.read(*loc))));
-        } catch (const std::exception&) {
-        }
-        it = skeletons.emplace(key, sk).first;
-    }
-    if (!it->second)
-        return std::nullopt;
-    const int b = it->second->find(bone);
-    if (b < 0)
-        return std::nullopt;
-    const Vec3 t = it->second->world(it->second->restPose())[size_t(b)].t;
-    return std::array<float, 3>{t[0], t[1], t[2]};
-}
-
 namespace {
 
 // cTSRoute::EvalTileForGoal (docs/routing-mac.md §8.2), for a candidate
@@ -295,35 +250,56 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
 
     float ox = slot.offset[0], oy = slot.offset[1];
     if (dirs == 0 || ox != 0 || oy != 0) {
-        // A slot at a bone of the model (flag 0x20000 of the u32 after the
-        // proximities, Slots::Slot::unknown10) stands there.
-        bool atBone = false;
-        if ((slot.unknown10 & 0x20000) && ox == 0 && oy == 0)
-            if (const auto bone = slotBone(slot, target))
-                ox = (*bone)[0], oy = (*bone)[1], atBone = true;
         const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
-        const float px = cx + float(ox * std::cos(yaw) - oy * std::sin(yaw));
-        const float py = cy + float(ox * std::sin(yaw) + oy * std::cos(yaw));
-        out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
-        // A bone slot's goals are the bone's points (GetPossibleSlotsFromModel-
-        // RoutingSlot: score 100 less the penalties; one point per bone here).
-        add(px, py, 0);
+        auto turn = [&](float x, float y) {
+            return std::array<float, 2>{cx + float(x * std::cos(yaw) - y * std::sin(yaw)),
+                                        cy + float(x * std::sin(yaw) + y * std::cos(yaw))};
+        };
+        // A slot at the bones of the model (flag 0x20000 of the u32 after the
+        // proximities, Slots::Slot::unknown10) stands there: one goal per
+        // bone, facing the object's direction plus the bone's
+        // (GetPossibleSlotsFromModelRoutingSlot: score 100 less the
+        // penalties; slot_bones.cpp).
+        std::vector<SlotBone> bones;
+        if ((slot.unknown10 & 0x20000) && ox == 0 && oy == 0)
+            bones = slotBones(slot, target);
+        if (bones.empty()) {
+            const auto [px, py] = turn(ox, oy);
+            out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
+            add(px, py, 0);
+            return out;
+        }
+        auto addFacing = [&](float px, float py, float cost, int facing) {
+            if (add(px, py, cost))
+                out.facings.back() = facing;
+        };
+        bool first = true;
+        for (const SlotBone& b : bones) {
+            const auto [px, py] = turn(b.x, b.y);
+            if (first)
+                out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
+            first = false;
+            addFacing(px, py, 0, (objDir + b.facing) % 8);
+        }
         // Ours, not the binary's: points half a tile and three quarters out
-        // around a bone's point, on the target's side of any wall, each
+        // around each bone's point, on the target's side of any wall, each
         // costing its distance more (1.5, 1.75: a later tier than the point
         // itself), for when the point cannot be reached (a chair pushed under
         // a table, which here fills its whole tile for want of the model's
         // footprint).
-        if (atBone && world)
-            for (const float r : {0.5f, 0.75f})
-                for (int k = 0; k < 16; ++k) {
-                    const double a = k * M_PI / 8;
-                    const float qx = px + r * float(std::cos(a)), qy = py + r * float(std::sin(a));
-                    const TilePos t{int(std::floor(qx)), int(std::floor(qy)), out.level};
-                    if (!world->contains(t) || !world->lineOfSight(centre, t))
-                        continue;
-                    add(qx, qy, 1 + r);
-                }
+        if (world)
+            for (const SlotBone& b : bones) {
+                const auto [px, py] = turn(b.x, b.y);
+                for (const float r : {0.5f, 0.75f})
+                    for (int k = 0; k < 16; ++k) {
+                        const double a = k * M_PI / 8;
+                        const float qx = px + r * float(std::cos(a)), qy = py + r * float(std::sin(a));
+                        const TilePos t{int(std::floor(qx)), int(std::floor(qy)), out.level};
+                        if (!world->contains(t) || !world->lineOfSight(centre, t))
+                            continue;
+                        addFacing(qx, qy, 1 + r, (objDir + b.facing) % 8);
+                    }
+            }
         return out;
     }
     if (!world)
@@ -1767,9 +1743,14 @@ Exit findLocationFor(Context& c) {
             ref = &c.me();
         }
     }
-    if (mode == 1) { // out of world
+    if (mode == 1) { // out of world: out of its container too (the binary's
+                     // vtable 0x2ac "remove from world"; the car's "Sub - Send
+                     // Passengers Out of World" loops until its slots are empty)
         obj->position.x = obj->position.y = -1;
         obj->route.reset();
+        if (obj->data[objdata::ContainerId] != 0)
+            leaveSlot(*obj);
+        obj->data[objdata::Room] = -1; // as every out-of-world object of a saved lot; "Get Out TEST" reads it
         return Exit::True;
     }
     if ((mode == 3 || mode == 4) && !ref)
@@ -1813,6 +1794,13 @@ Exit findLocationFor(Context& c) {
         return Exit::False;
     }
     if (mode == 3 || mode == 4) {
+        // Along a vector the forbidden directions are taken relative to
+        // the line (the reference's direction): the carpool's car, placed at
+        // the "Car - Start" portal with only N allowed (0xFE), faces down the
+        // street the way the portal does, and a new puddle (0xAA, along its
+        // parent) keeps a side direction its "rotate until straight" loop can
+        // reach. Inferred: TryFindGoodLocation hands these modes to the
+        // object's vtable 0x2d8 with the parameters, which was not read.
         const int dir = ((ref->data[objdata::Direction] % 8) + 8) % 8 + (mode == 4 ? 2 : 0);
         const auto [sx, sy] = directionStep(dir % 8);
         for (int i = 0; i < 32; ++i) {
@@ -1820,7 +1808,7 @@ Exit findLocationFor(Context& c) {
             if (i % 2 && k == 0)
                 continue;
             if (tryPlace(c.vm, *obj, {at.x + sign * sx * k, at.y + sign * sy * k, at.level},
-                         allowedFacing(forbidden, dir % 8)))
+                         (dir + allowedFacing(forbidden, 0)) % 8))
                 return Exit::True;
         }
         return Exit::False;

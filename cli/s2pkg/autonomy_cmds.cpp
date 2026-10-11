@@ -20,6 +20,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <array>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -98,6 +99,24 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     std::printf("%s: %zu Sims in the world, %ld ticks from %s (%ld game minutes)\n",
                 lotFile.filename().string().c_str(), sims.size(), ticks, clockText(machine).c_str(),
                 ticks / machine.clock.ticksPerMinute);
+    // The family's funds and each Sim's job (person data 56 school grade, 57
+    // job level, 63 job performance), printed again when they change, and
+    // when a Sim leaves the lot (out of world: at work or school) or comes back.
+    const int16_t family = machine.globals[vm::global::CurrentFamily];
+    int32_t funds = vm::familyFunds(machine, family);
+    std::printf("  family %d funds %d\n", family, funds);
+    std::map<vm::ObjectId, std::array<int16_t, 3>> job;
+    std::map<vm::ObjectId, bool> onLot;
+    auto jobOf = [](const vm::Object& s) {
+        return std::array<int16_t, 3>{s.person->data[56], s.person->data[57], s.person->data[63]};
+    };
+    for (vm::ObjectId id : sims) {
+        const vm::Object& s = *machine.object(id);
+        job[id] = jobOf(s);
+        onLot[id] = true;
+        std::printf("  %-12s grade %d, job level %d, job performance %d\n", simName(s).c_str(), job[id][0], job[id][1],
+                    job[id][2]);
+    }
     printMotivesHeader();
     for (vm::ObjectId id : sims)
         printMotives(*machine.object(id));
@@ -171,8 +190,20 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         machine.tick();
         for (vm::ObjectId id : sims) {
             const vm::Object* s = machine.object(id);
-            if (!s)
-                continue;
+            if (!s || !s->person)
+                continue; // gone (a visitor who left; its ID may be another object's now)
+            if (const bool in = s->position.inWorld(); in != onLot[id]) {
+                onLot[id] = in;
+                std::printf("  tick %6llu %s %-10s %s\n", static_cast<unsigned long long>(machine.ticks),
+                            clockText(machine).c_str(), simName(*s).c_str(),
+                            in ? "back on the lot" : "leaves the lot (out of world)");
+            }
+            if (const auto now = jobOf(*s); now != job[id]) {
+                std::printf("  tick %6llu %s %-10s grade %d -> %d, job level %d -> %d, job performance %d -> %d\n",
+                            static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
+                            simName(*s).c_str(), job[id][0], now[0], job[id][1], now[1], job[id][2], now[2]);
+                job[id] = now;
+            }
             std::string now;
             if (s->activeInteraction >= 0 && size_t(s->activeInteraction) < s->queue.size())
                 now = s->queue[size_t(s->activeInteraction)].name;
@@ -201,24 +232,29 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                 running[id] = now;
             }
         }
+        if (const int32_t f = vm::familyFunds(machine, family); f != funds) {
+            std::printf("  tick %6llu %s family funds %d -> %d (%+d)\n", static_cast<unsigned long long>(machine.ticks),
+                        clockText(machine).c_str(), funds, f, f - funds);
+            funds = f;
+        }
         if (every > 0 && (i + 1) % every == 0) {
             std::printf("  motives at tick %ld (%s):\n", i + 1, clockText(machine).c_str());
             printMotivesHeader();
             for (vm::ObjectId id : sims)
-                if (const vm::Object* s = machine.object(id))
+                if (const vm::Object* s = machine.object(id); s && s->person)
                     printMotives(*s);
         }
     }
     vm::autonomyObserver() = nullptr;
 
-    std::printf("after %ld ticks (%s):\n", ticks, clockText(machine).c_str());
+    std::printf("after %ld ticks (%s): family funds %d\n", ticks, clockText(machine).c_str(), funds);
     printMotivesHeader();
     for (vm::ObjectId id : sims)
-        if (const vm::Object* s = machine.object(id))
+        if (const vm::Object* s = machine.object(id); s && s->person)
             printMotives(*s);
     for (vm::ObjectId id : sims) {
         const vm::Object* s = machine.object(id);
-        if (!s)
+        if (!s || !s->person)
             continue;
         std::printf("  %-12s %zu searches, %zu picks", simName(*s).c_str(), searches[id], choices[id]);
         if (auto it = machine.threads.find(id); it != machine.threads.end()) {

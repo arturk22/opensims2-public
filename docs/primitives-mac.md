@@ -1032,6 +1032,86 @@ O Sim pronto entra pelo `cTSNeighborManager::AddNewCharacter` (BV
 basta criar o personagem na hora a partir de um modelo e devolver 1. O
 resultado "2" só importa para quem espera o nascimento.
 
+## 4d. Rodada 8 (VM): carona, trabalho e volta
+
+### Slots nos ossos do modelo (`cTSRoute::GetPossibleSlotsFromModelRoutingSlot`, BV `0x475b98`)
+
+Um slot de rota com a flag `0x20000` no u32 depois das proximidades
+(`Slots::Slot::unknown10`) fica nos **ossos** do modelo: o primeiro u32 extra
+do SLOT do TS2 é o índice no STR# 0x90 ("Model - Bones"), cuja entrada pode
+listar vários ossos separados por vírgula (o "Multislot" do sedã). O binário
+faz um objetivo por osso (contagem pela vtable `0x140` do objeto, cada ponto
+pela `0x148`) e dá a cada um a direção **do objeto + a do osso**:
+`objDir + (8 − k) mod 8` (k da vtable `0x14c`, convertido por
+`FUN_008b6334`), seja qual for o campo de direção do slot. O `TrySnap` faz o
+mesmo para um slot com `0x20000` (sem ela usa o campo do slot, e só se o slot
+fixa a direção; senão fico com a minha). Aqui (`vm/slot_bones.cpp`): k = o
+eixo +Y do osso na pose de repouso girado em Z, em oitavos de volta no
+sentido anti-horário (inferido da conversão). Assim o carro da carona, que
+anda com Snap no seu próprio slot 1 ("slot_travel_drive", 2 tiles à frente),
+mantém o rumo; antes virava para o centro (direção "para o objeto") e ia e
+voltava no lugar. Um objeto multi-tile que faz Snap leva as outras partes
+junto (inferido).
+
+### Snap: o código no object data 52
+
+`TrySnap` (BV `0xe43624`): se falhar, od 52 := 0; o primeiro erro da lista
+de colocação é 0x0C ("Can't intersect other objects") e havia uma pessoa
+com a flag 0x02 → pede para ela sair, od 52 = 1; senão od 52 = **código do
+erro + 2**: 0x0E para objeto no caminho, **4 para "Location out of bounds"**
+(código 2). O "Drive - Drive Leave" do carro testa od 52 = 4 depois do Snap
+de teste no slot 0 ("slot_travel_start", 8 tiles à frente) para saber que
+chegou ao fim da rua; com 0x0E o carro ficava parado na borda.
+
+### Find Location For fora do mundo e ao longo de um vetor
+
+Modo 1 (fora do mundo): o binário chama a vtable `0x2ac` do objeto ("tirar
+do mundo"), que também o tira do contêiner. O "Sub - Send Passengers Out of
+World" do carro repete enquanto houver alguém nos slots: sem isso era um laço
+infinito. A sala (od 29) de um objeto fora do mundo é **−1** (todos os
+objetos fora do mundo dos lotes salvos têm −1; vale também para Create New
+Object Instance com "fora do mundo"); o "Get Out TEST" do carro, que a "Sub -
+Return to World" empurra, testa sala < 0. Modos 3/4 (ao longo do vetor /
+lateral): `TryFindGoodLocation` entrega a busca à vtable `0x2d8` do objeto
+com os parâmetros (não lida); aqui a máscara de direções proibidas vale
+**relativa à direção da referência** (inferido): o carro sai do portal "Car -
+Start" (só N, `0xFE`) virado para a rua como o portal, e a poça nova (`0xAA`)
+fica num lado que o laço "girar até ficar reto" da árvore alcança. Com a
+leitura absoluta o carro saía virado para o oeste, atravessado na rua.
+
+### Set to Next 18 (GUID nos temps) e a escola particular
+
+BV (`TrySetToNext` `0xe47288`): os tipos 4 e 0x12 percorrem a lista de
+**instâncias da definição** do GUID; com valor atual ≠ 0 procuram o atual
+nessa lista e seguem do próximo; se o atual não está na lista, **não acham**.
+Jogo base 1.0 (`cTSObject_TrySetToNext` `0xb577b0`): o tipo 0x12 é outro
+caso, que anda na lista geral de objetos do lote a partir do objeto atual
+(comparando o GUID da definição, campo `0xca`); o tipo 4 é como no BV. O
+"Sub - Is Stack Obj my Student?" dos JobData de escola faz Set to Next 18 a
+partir do **aluno** (stack object) procurando o JobData da escola dele (dados
+de pessoa 107/108). No BV não acha nunca; no 1.0 só acharia se o JobData
+viesse depois do aluno na lista do lote, e os lotes salvos estão em ordem de
+ID (o JobData particular do N001_Lot11 é o 70, o Alexander o 142). Depois
+disso a árvore só aceita a escola pública (Test Object Type `0xB58867D0`)
+para quem tem 107/108 = 0. Então, com esse estado, o jogo também não manda o
+Alexander (escola particular) para a escola: não é um erro nosso. A VM segue
+o BV.
+
+### O dia de trabalho (só SimAntics)
+
+Nada disso precisa de C++ além do que está acima: às 07:00 o "Sub - Process"
+do JobData avisa, às 08:00 cria o carro (motorista NPC no slot), o carro
+anda pela rua de Snap em Snap até parar perto do portal "Car - Stop", buzina,
+o Sim recebe "Ir Trabalhar", anda até o carro, entra ("o-policeCar-getIn"),
+o "Interaction - At Work" atualiza o desempenho (dado de pessoa 63) e põe o
+Sim fora do mundo quando o carro sai do lote. O Sim fica esperando no "At
+Work" (Wait For Notify), fora do mundo, com a hora passando no lote. Na hora
+do fim do turno o JobData chama "Sub - Return to World": cria o carro, empurra
+"Get Out" (sub-fila) e o carro traz o Sim de volta à calçada; o "Sub - Get
+Paid" põe o salário nos fundos da família (globais de orçamento → FAMI). Não
+há "trabalho fora do lote" em C++: o que acontece enquanto o Sim está fora
+é a espera da árvore.
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto

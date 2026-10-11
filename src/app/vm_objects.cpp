@@ -44,8 +44,10 @@ VmObjectView::VmObjectView(Renderer& renderer, ResourceIndex& index, LotSimulati
     : renderer_(renderer), index_(index), sim_(simulation) {
     // Objects the lot already had are drawn from its cObjects (addPlaced);
     // only the ones the VM creates from now on are added by update().
-    for (const auto& [id, o] : simulation.machine().objects())
+    for (const auto& [id, o] : simulation.machine().objects()) {
         triedCreate_[id] = true;
+        seenDefinition_[id] = o.definition;
+    }
 }
 
 VmObjectView::~VmObjectView() = default;
@@ -389,6 +391,14 @@ void VmObjectView::forget(int16_t id) {
 void VmObjectView::update() {
     frame_.clear();
     vm::VM& m = sim_.machine();
+    for (const auto& [id, o] : m.objects()) {
+        const void* def = o.definition;
+        if (auto it = seenDefinition_.find(id); it != seenDefinition_.end() && it->second != def) {
+            if (auto d = drawn_.find(id); d == drawn_.end() || !d->second.actor)
+                forget(id);
+        }
+        seenDefinition_[id] = def;
+    }
     for (const auto& [id, o] : m.objects())
         if (!o.person && !drawn_.count(id) && !triedCreate_.count(id) && vm::multiTileGroup(o) == id &&
             (o.position.inWorld() || o.data[vm::objdata::ContainerId]))

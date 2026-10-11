@@ -23,11 +23,12 @@ void printShorts(const char* label, const std::vector<int16_t>& v) {
 }
 
 void printState(const LotObjects::State& s, bool hex) {
-    std::printf("%s %d at (%.2f, %.2f, %d) dir %d, data 80/81 %d %d%s%s\n",
+    std::printf("%s %d at (%.2f, %.2f, %d) dir %d, room %d, data 80/81 %d %d%s%s\n",
                 s.kind == LotObjects::Kind::Person      ? "PERS"
                 : s.kind == LotObjects::Kind::MultiTile ? "XMTO"
                                                         : "XOBJ",
-                s.id, s.x, s.y, s.level, s.data.size() > 1 ? s.data[1] : 0, s.data.size() > 81 ? s.data[80] : 0,
+                s.id, s.x, s.y, s.level, s.data.size() > 1 ? s.data[1] : 0, s.data.size() > 29 ? s.data[29] : 0,
+                s.data.size() > 81 ? s.data[80] : 0,
                 s.data.size() > 81 ? s.data[81] : 0, s.tailError.empty() ? "" : "  tail error: ", s.tailError.c_str());
     if (s.kind == LotObjects::Kind::MultiTile)
         std::printf("    multi-tile: lead %d, %u %u %u / %u %u %u; object data 19 = %d\n", s.leadObject, s.multiTile[0],

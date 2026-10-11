@@ -105,6 +105,7 @@ add_library(os2_vm
   src/vm/routing.cpp
   src/vm/save_types.cpp
   src/vm/sim_motion.cpp
+  src/vm/slot_bones.cpp
   src/vm/sound.cpp
   src/vm/timer.cpp
   src/vm/turn.cpp
