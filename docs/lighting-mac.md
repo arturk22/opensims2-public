@@ -444,6 +444,53 @@ Change Light (`docs/primitives-mac.md`) muda a intensidade em % do nível
 de cada luz do modelo; o renderizador faz o fade em
 `objectLightTransitionTime`.
 
+## 6.1 Cômodos sem luz: `FindUnlitRooms` / `BrightenUnlitRooms` (binário)
+
+Endereços no BV (achados pela ordem das funções do `baserom.sym`, que o
+symxfer não transferiu): `FindUnlitRooms` `0x701a28`, `BrightenUnlitRooms`
+`0x707820`, o preenchimento de meio tile `0x700368`, a soma das luzes da
+sala `0x70009c`/`0x700710`. Lidos de `unlitRoomColor (r, g, b) -threshold t`
+do estado de luz (`Lighting.txt`: `(.3,.275,.275) -threshold .33`, ...;
+o arquivo avisa "do not set threshold to 0").
+
+```
+FindUnlitRooms (só se a cor ≠ preto e a difusão está ligada, +0x54):
+  para cada sala r ≠ 0:
+      L = média das 6 cores de luz da descrição da sala (soma / 6)
+      m = maior componente de L
+      f[r] = m < t ? 1 − m/t : 0
+  (t ≤ 0: f = um valor denormal ≈ 0 para as salas sem luz própria e 0 para
+   as que têm: sem efeito visível — daí o aviso do arquivo)
+  para cada sala com f > 0: soma cor · f às 5 primeiras cores de luz da
+  descrição da sala (o que ilumina os objetos lá dentro)
+BrightenUnlitRooms (se alguma sala tem f > 0):
+  piso: para cada tile de piso da sala, soma cor · f · escala do light map
+        de piso (vtable 0x5C(1)) a cada texel do tile (AddToARGB32, satura);
+        tiles diagonais (tipos 3, 6, 12) só no lado da diagonal que é da
+        sala (teste x·(±1) + y contra 0,99/−0,01 em coordenadas do tile)
+  paredes: para cada lado de parede cuja sala tem f > 0 (o lado e o oposto,
+        OppositeWallLocator), soma cor · f · escala do light map de
+        parede (0x5C(0)) a todos os texels daquele lado
+```
+
+Ou seja, é um **piso de luz por sala**, somado depois da difusão, que some
+quando a sala já tem luz ≥ t (no componente mais forte).
+
+## 6.2 Luz direta nas paredes: `AddDirectWallLighting` (BV `0x708590`)
+
+Para cada lado de parede (e o oposto) que dá para **fora** (sala 0) ou é do
+tipo 3:
+
+- calcula a iluminação externa no ponto do lado (`FindExternalIllumination`
+  com a normal do lado, BV `0x70465c`: sol + céu do estado de luz) e a
+  multiplica pela escala do light map de parede;
+- com sombras ligadas (`+0x6C` e `+0x6D`) e o lado virado para o sol
+  (sol · normal > 0): `LightWallTileWithShadows` (BV `0x704d54`), que
+  sombreia texel a texel; senão soma a mesma cor a todos os texels do lado;
+- parede do tipo 3 com sala do lado: pula as primeiras `3 · largura` linhas
+  de texels do lado (só a parte de cima recebe a luz direta; inferido: muro
+  baixo/meia parede).
+
 ## 7. O que o código atual faz diferente (branch `r6-lighting`: `src/formats/lot_lightmap.cpp`, `src/app/lot_lighting.cpp`)
 
 | tema | jogo | `src/` hoje |
@@ -458,8 +505,7 @@ de cada luz do modelo; o renderizador faz o fade em
 
 ## 8. O que falta
 
-- Quem escolhe os cômodos escuros (`FindUnlitRooms`, `BrightenUnlitRooms`)
-  e o `thresholdLightsByArea`.
+- O `thresholdLightsByArea` (a string existe; o uso não foi achado).
 - A propagação nas paredes e a escrita dos texels de parede; a cópia
   exata das amostras do piso para os texels (interpolação).
 - Os valores padrão da `cDiffusionLightExtension` (quando o modelo e os
