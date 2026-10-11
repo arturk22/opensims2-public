@@ -967,6 +967,81 @@ bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocke
 
 enum class Step { Walking, Arrived, Failed, Call };
 
+// How far the walker still has to go along its route (tiles).
+float remainingLength(const Object& me, const Object::Route& r) {
+    float length = 0;
+    Point2 at{me.position.x, me.position.y};
+    for (const auto& p : r.points) {
+        length += std::hypot(p.x - at[0], p.y - at[1]);
+        at = {p.x, p.y};
+    }
+    return length;
+}
+
+int16_t hundredths(float tiles) {
+    return int16_t(std::clamp(tiles * 100.0f, 0.0f, 32767.0f));
+}
+
+// Pushes a route callback tree (`tree` of `owner`) on the walker's thread
+// with `stackObject` and `params`; the routing instruction runs again when it
+// returns.
+void callRouteTree(Context& c, ObjectId owner, uint16_t tree, ObjectId stackObject, std::span<const int16_t> params) {
+    c.vm.call(c.thread, owner, tree, {});
+    Frame& f = c.thread.stack.back();
+    f.stackObject = stackObject;
+    f.params.resize(std::max(f.params.size(), params.size()));
+    std::copy(params.begin(), params.end(), f.params.begin());
+    f.rerunCaller = true;
+    f.routeCallback = true;
+}
+
+// While walking, now and then (docs/routing-mac.md §6, DoWalking BV
+// 0x576acc): the target's goal check tree (OBJf entry 0x27, "goal check"
+// of STR# 0xC9; TriggerGoalCheckTree BV 0x575e34), on the walker's thread
+// with the target as the stack object and the parameters 0 the routing
+// slot (WorkOutSlotIndex), 1 which of the slot's places (the goal's +0x14:
+// 0 here), 2 the goal's object (0 for a standing goal) and 3 the distance
+// left in hundredths of a tile; its false fails the route with 13 "goal
+// not available" (DoWalkingWaitingForGoalCheckTree). Then the walker's own
+// along route tree (entry 0x29; TriggerAlongRouteTree BV 0x5766a0; the
+// person's "Function - Along Route": idles, looks at things, greets people
+// it passes) with itself as the stack object and 0 the target, 1 the
+// routing slot, 2 the place, 3/4 the current sub-goal object and its
+// index (0, -1), 5 a route field (vtable 0x1D0, 0 here), 6 the distance
+// left in hundredths; its false fails the route with 16 "interrupted by
+// callback" (DoWaitingForAlongRouteTree).
+bool startGoalCheck(Context& c, Object& me, Object::Route& r) {
+    const Object* target = c.vm.object(r.target);
+    if (!me.person || !target || r.goals.empty())
+        return false;
+    const uint16_t tree = c.vm.functionTree(*target, 0x27);
+    if (!tree)
+        return false;
+    const std::array<int16_t, 4> params{me.person->data[37], 0, 0, hundredths(remainingLength(me, r))};
+    callRouteTree(c, target->id, tree, target->id, params);
+    r.check = 1;
+    return true;
+}
+
+bool startAlongRoute(Context& c, Object& me, Object::Route& r) {
+    if (!me.person || !c.vm.object(r.target))
+        return false;
+    const uint16_t tree = c.vm.functionTree(me, 0x29);
+    if (!tree)
+        return false;
+    const std::array<int16_t, 7> params{int16_t(r.target), me.person->data[37], 0, 0, -1, 0,
+                                        hundredths(remainingLength(me, r))};
+    callRouteTree(c, me.id, tree, me.id, params);
+    r.check = 2;
+    return true;
+}
+
+// How often the walk checks (inferred: the binary checks when the walker
+// reaches a new section of its path or its tile changes, DoAlongRouteCheckTest,
+// gated by a timer at GRS_State +0x20 that is not decoded; here at a new
+// path point, at most every 15 ticks).
+constexpr uint64_t kCheckTicks = 15;
+
 // Runs a global tree (by name) on the walker's thread in the middle of the
 // walk: the instruction runs again when it returns.
 bool runWalkTree(Context& c, const std::string& name, std::array<int16_t, 4> args) {
@@ -996,7 +1071,18 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         why = RouteFail::Interrupted;
         return Step::Failed;
     }
-    const std::optional<bool> treeResult = std::exchange(c.thread.rerunResult, std::nullopt);
+    std::optional<bool> treeResult = std::exchange(c.thread.rerunResult, std::nullopt);
+    if (r.check) { // back from the goal check or along route tree
+        const int which = std::exchange(r.check, 0);
+        const bool ok = treeResult.value_or(true);
+        treeResult.reset();
+        if (!ok) {
+            why = which == 1 ? RouteFail::GoalNotAvailable : RouteFail::InterruptedByCallback;
+            return Step::Failed;
+        }
+        if (which == 1 && startAlongRoute(c, me, r))
+            return Step::Call;
+    }
     if (r.inPortal) {
         // Back from the portal tree (DoWaitingForPortal): the walk goes on
         // from the portal's other end; false fails the route ("interrupted
@@ -1057,6 +1143,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         f.params.resize(std::max(f.params.size(), p.portalParams.size()));
         std::copy(p.portalParams.begin(), p.portalParams.end(), f.params.begin());
         f.rerunCaller = true;
+        f.routeCallback = true;
         r.inPortal = true;
         r.waiting = true;
         return Step::Call;
@@ -1109,6 +1196,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     }
     r.waiting = false;
     float budget = walkTilesPerTick(vm, me);
+    bool section = false; // a path point was reached
     while (budget > 0 && !r.points.empty()) {
         const Object::Route::Point& p = r.points.front();
         if (p.portal)
@@ -1138,13 +1226,20 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             moveTo(vm, me, p.x, p.y, p.level);
             budget -= d;
             r.points.erase(r.points.begin());
+            section = true;
         } else {
             moveTo(vm, me, me.position.x + dx / d * budget, me.position.y + dy / d * budget, p.level);
             budget = 0;
         }
     }
-    if (!r.points.empty())
+    if (!r.points.empty()) {
+        if (section && vm.ticks >= r.lastCheck + kCheckTicks) {
+            r.lastCheck = vm.ticks;
+            if (startGoalCheck(c, me, r) || startAlongRoute(c, me, r))
+                return Step::Call;
+        }
         return Step::Walking;
+    }
     setDirection(me, r.facing);
     me.route.reset();
     return Step::Arrived;
@@ -1158,7 +1253,40 @@ Step advance(Context& c, Object& me, RouteFail& why) {
 // feedback, as DoPostFailedOrSucceeded comes after DoNeedFailureFeedback:
 // a route the feedback tree walks does not overwrite it) and the primitive
 // returns false (docs/routing-mac.md §7).
-Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees) {
+// The walker's post-route tree (OBJf entry 0x26, "post route" of STR#
+// 0xC9; the person's "Function - Post Route": it stops the walk's overlays,
+// sits the Sim on a chair goal through the chair's function, and runs the
+// toddler's states), as DoFailedOrSucceeded runs it (BV 0x577ea0;
+// TriggerPostRouteTree BV 0x577cf4) after an arrival or a failure of a base
+// route (not a route inside another's callback tree), on the walker's
+// thread with the parameters 0 the goal's object (a chair goal's chair; 0
+// for a standing goal) and 1 the route result; DoWaitingForPostRouteTree:
+// its false after an arrival fails the route with 12 "post-route failed".
+bool startPostRoute(Context& c, int stage, int16_t result) {
+    Object& me = c.me();
+    if (!me.person)
+        return false;
+    for (const Frame& f : c.thread.stack)
+        if (f.routeCallback)
+            return false;
+    const uint16_t tree = c.vm.functionTree(me, 0x26);
+    if (!tree)
+        return false;
+    const std::array<int16_t, 4> params{0, result, 0, 0};
+    c.frame.postRoute = uint8_t(stage);
+    callRouteTree(c, me.id, tree, me.id, params);
+    return true;
+}
+
+// A failed route: if the primitive allows them, "CT - Route Failure
+// Feedback" (global) runs first on the walker's thread, with the failure
+// code, the blocker, 1 and 0 as TriggerFailureAnimation passes them (the
+// last two: whether the slot has a distance and that distance; not decoded
+// further); then the post-route tree; then the route result goes to person
+// data 62 (after the feedback, as DoPostFailedOrSucceeded comes after
+// DoNeedFailureFeedback: a route the feedback tree walks does not overwrite
+// it) and the primitive returns false (docs/routing-mac.md §7).
+Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees, bool postRoute = true) {
     Object& me = c.me();
     if (std::getenv("OS2_ROUTE_FAILS")) // why routes fail, for looking into
         std::fprintf(stderr, "route of %d failed with %d in \"%s\" #%u op %02X (stack object %d) at (%.2f, %.2f, %d)\n", me.id,
@@ -1167,14 +1295,21 @@ Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees) {
     me.route.reset();
     if (why == RouteFail::Success)
         why = RouteFail::Unknown;
+    c.frame.pendingRouteResult = int16_t(why);
     if (failureTrees) {
         if (const auto tree = c.vm.code().behaviorByName(kGlobalGroup, "CT - Route Failure Feedback")) {
-            c.frame.pendingRouteResult = int16_t(why);
+            if (!postRoute)
+                c.frame.postRoute = 3; // no post-route tree after it
             c.vm.call(c.thread, me.id, *tree, {int16_t(why), blocker, 1, 0});
             c.thread.stack.back().rerunCaller = true;
+            c.thread.stack.back().routeCallback = true;
             return Exit::Call;
         }
     }
+    if (postRoute && startPostRoute(c, 2, int16_t(why)))
+        return Exit::Call;
+    c.frame.pendingRouteResult = -1;
+    c.frame.postRoute = 0;
     if (me.person)
         me.person->data[62] = int16_t(why);
     return Exit::False;
@@ -1188,11 +1323,24 @@ Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees) {
 Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& plan, bool failureTrees) {
     Object& me = c.me();
     const size_t depth = c.thread.stack.size();
-    if (c.frame.pendingRouteResult >= 0) { // back from the failure feedback
-        c.thread.rerunResult.reset();
+    if (c.frame.postRoute == 1) { // back from the post-route tree after an arrival
+        const bool ok = std::exchange(c.thread.rerunResult, std::nullopt).value_or(true);
+        c.frame.postRoute = 0;
+        if (!ok)
+            return failRoute(c, RouteFail::PostRouteFailed, 0, failureTrees, false);
         if (me.person)
-            me.person->data[62] = c.frame.pendingRouteResult;
+            me.person->data[62] = 0;
+        return Exit::True;
+    }
+    if (c.frame.pendingRouteResult >= 0) { // back from the failure feedback or the post-route tree
+        c.thread.rerunResult.reset();
+        const int16_t result = c.frame.pendingRouteResult;
+        if (c.frame.postRoute == 0 && startPostRoute(c, 2, result))
+            return Exit::Call;
+        if (me.person)
+            me.person->data[62] = result;
         c.frame.pendingRouteResult = -1;
+        c.frame.postRoute = 0;
         return Exit::False;
     }
     if (me.route && me.route->depth == depth && me.route->tree == c.frame.behavior && me.route->node == c.frame.pc) {
@@ -1202,6 +1350,8 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
         case Step::Walking: return Exit::Yield;
         case Step::Call: return Exit::Call;
         case Step::Arrived:
+            if (startPostRoute(c, 1, 0))
+                return Exit::Call;
             if (me.person)
                 me.person->data[62] = 0;
             return Exit::True;
@@ -1257,6 +1407,7 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
             f.params[1] = me.person->data[37];
             f.params[5] = int16_t(std::floor(length + 0.5f));
             f.rerunCaller = true;
+            f.routeCallback = true;
             return Exit::Call;
         }
     }
@@ -1268,6 +1419,8 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
     case Step::Walking: return Exit::Yield;
     case Step::Call: return Exit::Call;
     case Step::Arrived:
+        if (startPostRoute(c, 1, 0))
+            return Exit::Call;
         if (me.person)
             me.person->data[62] = 0;
         return Exit::True;
@@ -1278,8 +1431,11 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
 
 Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& plan, bool failureTrees) {
     const Exit e = walkStep(c, target, plan, failureTrees);
-    if (e != Exit::Yield && e != Exit::Call)
+    if (e != Exit::Yield && e != Exit::Call) {
         c.frame.preRouteRan = false; // the instruction is done
+        c.frame.postRoute = 0;
+        c.frame.routeSlot = -1;
+    }
     return e;
 }
 
@@ -1349,7 +1505,7 @@ Exit goToRoutingSlot(Context& c) {
     int index = scope == 0 ? c.get(kOwnerParam, int16_t(data))
               : scope == 1 && (flags & 0x02) ? c.thread.temps[0]
                                               : int(data);
-    if (c.frame.preRouteRan) // as read before the pre-route tree
+    if (c.frame.routeSlot >= 0) // mid-instruction: as read before the route's trees (they change the temps)
         index = c.frame.routeSlot;
     c.frame.routeSlot = int16_t(index);
     const Slots::Slot& slot = routingSlot(c.vm, *target, scope == 2, index);

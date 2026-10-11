@@ -479,6 +479,11 @@ struct Object {
         bool failureTrees = true; // "CT - Route Failure Feedback" when it fails
         ObjectId blocker = 0;     // the Sim in the way
         bool inPortal = false;    // a portal tree runs (routing.cpp)
+        // The goal check / along route trees (routing.cpp): which one runs
+        // (1 goal check, 2 along route), the tick of the last check and
+        // how many path points were walked by then.
+        int check = 0;
+        uint64_t lastCheck = 0;
         struct Climb {
             std::string animation; // empty between phases
             uint32_t serial = 0;   // bumped as each phase starts
@@ -576,6 +581,12 @@ struct Frame {
     // temps it came from).
     bool preRouteRan = false;
     int16_t routeSlot = -1;
+    // The walker's post-route tree runs for this frame's routing instruction
+    // (1 after an arrival, 2 after a failure; routing.cpp).
+    uint8_t postRoute = 0;
+    // A route callback tree (pre/post-route, goal check, along route,
+    // portal) the routing pushed: routes inside it are not base routes.
+    bool routeCallback = false;
 };
 
 // Temps belong to the thread, so subroutines can return values in them;
