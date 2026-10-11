@@ -307,10 +307,51 @@ no person data 0xBA.
 5. Bebê: `PickGene` e `DetermineDescendantFace` (§5); o Make New Character
    pode continuar síncrono enquanto não houver espera visível.
 
+## 9b. Miniaturas do CAS (`CASThumbnails.package`, rodada 9, binário + dados)
+
+`TSData/Res/UserData/Thumbnails/CASThumbnails.package`: 5623 imagens tipo
+**`0x0C7E9A76`**, grupo **`0xEC7E9A54`** (o grupo do serviço,
+`cTSUIThumbnailService` `+0xAC`; `FixInstanceOnlyCASKey` completa tipo e grupo
+de uma chave só com instância). O índice do pacote tem entradas de 20 bytes
+(sem instância alta): a instância guardada é a **parte baixa** do u64 que o
+jogo calcula, sempre um **CRC-32** (o mesmo `crc32Lower` do
+`formats/resindex`: polinômio 0x04C11DB7, início 0xFFFFFFFF, sem xor final,
+texto em minúsculas; `FUN_00120ff8`) de um nome montado assim
+(`nTSUICAS::Create*ThumbnailInstanceId`, BV `0x983be0`/`0x983d30`/`0x983ea0`):
+
+- prefixo `CreateCASFileName(idade, sexo, espécie)` (`0x983994`): idade
+  `toddler`/`child`/`teen`/`youngadult`/`adult`/`elder` + `male`/`female`
+  (+ `dog`/`smalldog`/`cat` no BV), colados: `adultfemale`;
+- **roupa** (GZPS sem `hairtone`): `"<prefixo>_<grupo>-<tipo>-<instância>"`
+  da chave do GZPS, em **decimal com sinal** (`%d`), tipo `0xEBCF3E27`;
+  ex. `adultfemale_739751754-...`; a parte alta do u64 é a instância do GZPS;
+- **cabelo** (GZPS com `hairtone`): `"<prefixo>_<chave como acima>_<GUID do
+  hairtone>"` (o texto do GUID como está no GZPS, `00000005-0000-...`);
+- **overlays** (XTOL `0x2C1FD8A1` / XMOL `0x0C1FE246`): `"<prefixo>_<GUID
+  family>_<GUID hairtone>"` (GUID nulo `00000000-0000-0000-0000-000000000000`
+  quando não tem); a parte alta é o CRC-24 do mesmo texto.
+
+Conferido nos dados: roupa 1590, cabelo 1213 e overlays 1180 das 5623
+instâncias batem (uma por idade/sexo em que a peça vale); as outras ~1640 são
+de outros caminhos (tons de pele/olhos `GetCASSkinEntryThumbnailContext`,
+roupas de Sims salvos `GetCASOutfitDataThumbnailContext`: `"%x-%x-%x-%d"` da
+chave da roupa + flag `0x20`, CRC-24 e CRC-32), não conferidos. Uma miniatura
+que falta é gerada na hora (`cTSUIThumbnailFactoryCAS`, câmeras de
+`casThumbnailCameras2_cres`, "camera_thumbnail_adult_entireSim_cropH"…).
+
+**LxNR (ainda aberto).** O tipo `0xCCCEF852` é registrado em
+`cTSCASBodyPartSystem::Init` (BV `0x7f2e10`) com a classe `0x6CCEF9F2` (fábrica
+genérica). Na memória é um `cTSBodyPartData`: um mapa chave → `vector` de
+`cVector3f` por parte (`SetPartData`, `BuildDataKey(…, int, …, bool)` /
+`SplitDataKey`), o que casa com o cabeçalho visto (`u32 3`, `u32 0x18` = 24
+entradas de 4 × u16 = as chaves, depois os vetores de floats). O leitor não foi
+achado (a fábrica usa uma vtable importada).
+
 ## 10. Aberto
 
-- O formato do LxNR (os pesos por modificador/região) e a mistura exata de
-  arquétipos e modificadores (`BlendDeltas`).
+- O formato do LxNR (os pesos por modificador/região; pistas no §9b) e a
+  mistura exata de arquétipos e modificadores (`BlendDeltas`).
+- As chaves das miniaturas de tons de pele/olhos e de roupas salvas (§9b).
 - Como o tom de pele "do meio" (tipo 6) vira o tom expressado; o uso da
   aspiração sugerida por signo.
 - As categorias de roupa de cada passo e o "random clothing" do CAS
