@@ -11,7 +11,7 @@
 # that differ and the instruction budget being hit. Scratch saves and
 # screenshots are deleted after each check.
 #
-# usage: tools/soak.sh [--out DIR] [--report FILE] [lot.package ...]
+# usage: tools/soak.sh [--out DIR] [--report FILE] [--report-only] [lot.package ...]
 # env:   S2PKG  (build/s2pkg)            APP (build/opensims2.app/Contents/MacOS/opensims2)
 #        DATA   (data/game)               SOAK_TICKS (129600)
 #        SOAK_JOBS (4)                    SOAK_HANG (seconds per command, default 900; app 300)
@@ -36,11 +36,11 @@ run_limited() {
     rm -f "$flag"
     "$@" >"$out" 2>&1 &
     local pid=$!
-    ( sleep "$limit"; if kill -0 "$pid" 2>/dev/null; then : >"$flag"; kill -9 "$pid" 2>/dev/null; fi ) &
+    ( sleep "$limit"; if kill -0 "$pid" 2>/dev/null; then : >"$flag"; kill -9 "$pid" 2>/dev/null; fi ) >/dev/null 2>&1 &
     local wd=$!
     wait "$pid" 2>/dev/null
     local rc=$?
-    kill "$wd" 2>/dev/null; wait "$wd" 2>/dev/null
+    pkill -P "$wd" 2>/dev/null; kill "$wd" 2>/dev/null; wait "$wd" 2>/dev/null
     if [ -e "$flag" ]; then rm -f "$flag"; return 999; fi
     return $rc
 }
@@ -63,7 +63,9 @@ one() { # one <lot> <outdir>
     S2PKG_ERRORS=1 run_limited "$SOAK_HANG" "$log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY"; rc=$?
     t1=$(date +%s); echo "auto_secs=$((t1-t0))" >>"$res"
     if [ $rc -eq 999 ]; then echo "hang|autonomy|killed after ${SOAK_HANG}s; last: $(tail -c 300 "$log" | tr '\n' ' ')" >>"$res"
-    elif [ $rc -ge 128 ] || [ $rc -ne 0 ] && ! grep -q "^after " "$log"; then
+    elif [ $rc -ne 0 ] && [ $rc -lt 128 ] && ! grep -q "^after " "$log"; then
+        echo "error|autonomy|exit $rc: $(grep -m1 -E '^error' "$log")" >>"$res"
+    elif [ $rc -ge 128 ]; then
         echo "crash|autonomy|exit $rc: $(tail -n 2 "$log" | tr '\n' ' ')" >>"$res"
         backtrace "$scratch/lldb1.log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" | sed 's/^/bt|autonomy|/' >>"$res"
     fi
@@ -83,7 +85,10 @@ one() { # one <lot> <outdir>
                 if (v == -100) { run[key]++; if (run[key] > 6 && !(key in said)) { said[key]=1; printf "pinned|autonomy|%s %s at -100 for more than 6 game hours\n", $1, mn[k] } } else run[key]=0 }
         }
         /^  tick|^[A-Za-z]/ { if ($0 !~ /^  motives/) intable=0 }
-        END { for (n in start) if (total-start[n] > limit) printf "stuck|autonomy|%s in \"%s\" since tick %d (%.1f game hours at the end)\n", n, what[n], start[n], (total-start[n])/1800 }
+        END { for (n in start) if (total-start[n] > limit) {
+                  # "Falecer" (die) is a death; "Leave" means the Sim left the lot and its id is reused.
+                  if (what[n] == "Leave") continue
+                  printf "%s|autonomy|%s in \"%s\" since tick %d (%.1f game hours at the end)\n", (what[n] == "Falecer" ? "died" : "stuck"), n, what[n], start[n], (total-start[n])/1800 } }
     ' "$log" >>"$res"
     rm -f "$log"
 
@@ -95,6 +100,8 @@ one() { # one <lot> <outdir>
     elif [ $rc -ge 128 ]; then
         echo "crash|lot-save|exit $rc" >>"$res"
         backtrace "$scratch/lldb2.log" "$S2PKG" lot-save "$lot" "$scratch/out2.package" --ticks 300 --check | sed 's/^/bt|lot-save|/' >>"$res"
+    elif [ $rc -ne 0 ] && ! grep -q "differs:" "$log"; then
+        echo "error|lot-save|exit $rc: $(grep -m1 '^error' "$log")" >>"$res"
     elif [ $rc -ne 0 ]; then
         echo "roundtrip|lot-save|exit $rc: $(awk '/differs:|error|usage|refusing/ {p=1} p' "$log" | head -4 | sed 's/|/ /g' | tr '\n' ';')" >>"$res"
     fi
@@ -108,6 +115,8 @@ one() { # one <lot> <outdir>
         OS2_DATA="$DATA" run_limited 300 "$log" "$APP" --lot "$lot" --vm --ui live --run-vm 600 --screenshot "$scratch/x.png" --no-audio; rc=$?
         t1=$(date +%s); echo "app_secs=$((t1-t0))" >>"$res"
         if [ $rc -eq 999 ]; then echo "hang|app|killed after 300s" >>"$res"
+        elif [ $rc -lt 128 ] && [ $rc -ne 0 ]; then
+            echo "error|app|exit $rc: $(tail -n 1 "$log")" >>"$res"
         elif [ $rc -ne 0 ] || [ ! -s "$scratch/x.png" ]; then
             echo "crash|app|exit $rc: $(tail -n 2 "$log" | tr '\n' ' ')" >>"$res"
             backtrace "$scratch/lldb3.log" "$APP" --lot "$lot" --vm --ui live --run-vm 600 --screenshot "$scratch/x.png" --no-audio | sed 's/^/bt|app|/' >>"$res"
@@ -120,18 +129,20 @@ one() { # one <lot> <outdir>
 
 if [ "${1:-}" = "--one" ]; then one "$2" "$3"; exit 0; fi
 
-OUT="${TMPDIR:-/tmp}/os2-soak"; REPORT="$ROOT/docs/soak-report.md"; LOTS=()
+OUT="${TMPDIR:-/tmp}/os2-soak"; REPORT="$ROOT/docs/soak-report.md"; LOTS=(); REPORT_ONLY=
 while [ $# -gt 0 ]; do
-    case "$1" in --out) OUT=$2; shift 2;; --report) REPORT=$2; shift 2;; *) LOTS+=("$1"); shift;; esac
+    case "$1" in --out) OUT=$2; shift 2;; --report-only) REPORT_ONLY=1; shift;; --report) REPORT=$2; shift 2;; *) LOTS+=("$1"); shift;; esac
 done
 if [ ${#LOTS[@]} -eq 0 ]; then
     for h in N001 N002 N003 Tutorial; do
         for f in "$DATA"/TSData/Res/UserData/Neighborhoods/$h/Lots/*.package; do LOTS+=("$f"); done
     done
 fi
-rm -rf "$OUT/results" "$OUT/scratch"; mkdir -p "$OUT/results"
-export S2PKG APP DATA SOAK_TICKS SOAK_HANG SOAK_NO_APP SOAK_NO_LLDB
-printf '%s\n' "${LOTS[@]}" | xargs -P "$SOAK_JOBS" -I{} "$0" --one {} "$OUT"
+if [ -z "$REPORT_ONLY" ]; then
+    rm -rf "$OUT/results" "$OUT/scratch"; mkdir -p "$OUT/results"
+    export S2PKG APP DATA SOAK_TICKS SOAK_HANG SOAK_NO_APP SOAK_NO_LLDB SOAK_STUCK_TICKS
+    printf '%s\n' "${LOTS[@]}" | xargs -P "$SOAK_JOBS" -I{} "$0" --one {} "$OUT"
+fi
 
 # Report
 {
@@ -143,7 +154,7 @@ printf '%s\n' "${LOTS[@]}" | xargs -P "$SOAK_JOBS" -I{} "$0" --one {} "$OUT"
     echo
     echo "| Category | Lots | Findings |"
     echo "|---|---|---|"
-    for c in crash hang dead stuck pinned roundtrip; do
+    for c in crash hang error dead stuck died pinned roundtrip; do
         l=$(grep -l "^$c|" "$OUT"/results/*.txt 2>/dev/null | wc -l | tr -d ' ')
         n=$(cat "$OUT"/results/*.txt 2>/dev/null | grep -c "^$c|")
         echo "| $c | $l | $n |"
@@ -158,7 +169,7 @@ printf '%s\n' "${LOTS[@]}" | xargs -P "$SOAK_JOBS" -I{} "$0" --one {} "$OUT"
     echo "|---|---|---|---|"
     for f in "$OUT"/results/*.txt; do
         n=$(basename "$f" .txt)
-        grep -E '^(crash|hang|dead|stuck|pinned|roundtrip)\|' "$f" | sort -u | while IFS='|' read -r c w d; do
+        grep -E '^(crash|hang|error|dead|stuck|died|pinned|roundtrip)\|' "$f" | sort -u | while IFS='|' read -r c w d; do
             echo "| $n | $c | $w | ${d//|/\\|} |"
         done
         grep -E '^budget_[a-z]+=[1-9]' "$f" | while IFS='=' read -r k v; do echo "| $n | budget | ${k#budget_} | $v times |"; done
