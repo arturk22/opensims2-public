@@ -1,0 +1,495 @@
+# Shaders e materiais: o que o binário de Mac faz com os `.matShad`
+
+Fontes: o executável de Mac **Bon Voyage 1.10** (`/mac/sims2_bv.ppc` no
+projeto Ghidra `~/sims2`, nomes de `tools/symxfer/`), conferido com o **Mac
+1.0 base** (`/mac/sims2_base_1.0.ppc`), e o texto dos 67 scripts de material
+de `TSData/Res/Materials/Materials.package` (tipo `0xCD7FE87A`, nomes no
+recurso `0x4E6D6150`; `config.matShad` é a raiz). Mesmas convenções de
+`docs/primitives-mac.md`: "binário" = lido no código decompilado, "texto" =
+lido nos `.matShad`, "inferido" = dedução nossa, "só BV" = ausente no 1.0.
+
+Resumo para quem implementa o renderer Metal:
+
+1. **O Mac roda o caminho "DX8" dos `.matShad`, não o "DX9".** A camada
+   Direct3D da Aspyr declara `vs_1_1` e `ps_1_1` em qualquer placa (§1). Com
+   isso `DetermineHardwareSupport()` liga `useHWShader1Path`, e os materiais
+   seguem `DX8HardwarePath()`, `PS1WallRendering()`, `PixelShaderFloors()` e,
+   para os Sims, o caminho de função fixa (`CreateSimStandardMaterialFixedFunction`).
+   Tudo o que o código atual tirou de `DX9HardwarePath`/`PS2WallRendering`/
+   `DX9SimMaterials` não é o que o jogo de Mac desenha.
+2. **Iluminação por vértice com escala "HDR" ×2** (§4): a cor difusa sai do
+   vertex shader pela metade e saturada, e o pixel shader multiplica por 2.
+   O resultado satura em **2× a textura**, não em 1× como hoje.
+3. **Paredes, pisos e terreno não têm luzes diretas**: são textura × *light
+   map* × 2 (§5, §6, §7). Os light maps (`wallLightMap_<página>`,
+   `floorLightMap_<página>`) são calculados pelo motor (ver
+   `docs/lighting-mac.md`).
+4. Especular só num passe aditivo separado, por vértice, Phong (R·L) com
+   expoente `stdMatSpecPower × 0,4`, e só quando `stdMatSpecPower > 1` e a
+   soma de `stdMatSpecCoef` > 0,3 (§4.3).
+
+---
+
+## 1. A camada Direct3D da Aspyr (`IDirect3D*_Mac`)
+
+O jogo de Mac é o código de Windows compilado contra uma reimplementação de
+Direct3D 9 sobre OpenGL (`IDirect3DDevice_Mac`, `IDirect3DVertexShader_Mac`,
+...). Os `.matShad` são os mesmos do PC; quem muda é o que o "dispositivo"
+declara e como os shaders viram OpenGL.
+
+### 1.1 Capacidades declaradas (binário, base e BV)
+
+A função sem nome em `0x1c150` (BV; `0x16700` no 1.0) preenche o
+`D3DCAPS9` de cada adaptador, depois de criar um contexto AGL de teste:
+
+| campo D3DCAPS9 | valor |
+|---|---|
+| `VertexShaderVersion` (+0xC4) | `0xFFFE0101` (vs_1_1) **se** `GL_ARB_vertex_program`; senão 0 |
+| `MaxVertexShaderConst` (+0xC8) | `GL_MAX_PROGRAM_ENV_PARAMETERS_ARB` do contexto |
+| `PixelShaderVersion` (+0xCC) | `0xFFFF0101` (**ps_1_1, sempre**) |
+| `MaxSimultaneousTextures` | `max(8, GL_MAX_TEXTURE_UNITS)` |
+
+O scan de todo o `__text` por `lis 0xFFFF/0xFFFE` + `ori 0x200/0x300` só
+acha essas duas escritas na camada D3D (as outras ocorrências, em
+`0xb76a18..0xb76cec`, são a tabela de versões do `cShaderProgramsManagerDX`).
+No 1.0 é igual (`0x167cc`/`0x167f4`). Logo, para os `.matShad`:
+
+- `queryIntegerGraphicsDeviceCap(maxPixelProgramVersionMajor)` = 1;
+- `queryIntegerGraphicsDeviceCap(maxVertexProgramVersionMajorHW)` = 1 (0 sem
+  `GL_ARB_vertex_program`).
+
+A tabela de nomes de capacidade (`0x27a4218`, binário) é: booleanas
+`hasFixedFunctionVPHW` 0, `hasProgrammableVPHW` 2, `hasUByte4VertexType` 4,
+`hasCubeMapSupport` 6; inteiras `maxVertexProgramVersionMajorHW` 4,
+`...MinorHW` 5, `maxPixelProgramVersionMajor` 8, `...Minor` 9,
+`numSimultaneousRTs` 1, `maxSimultaneousTextures` 3.
+
+### 1.2 Seleção do caminho (`DetermineHardwareSupport`, texto `vsfragments.matShad`)
+
+```
+psVersion = maxPixelProgramVersionMajor ; vsVersion = maxVertexProgramVersionMajorHW
+if kUseShaderPrograms:
+   if psVersion = 2 and not kForceNoDX9   -> useHWShader2Path   (DX9)
+   elif psVersion >= 1 and not kForceNoDX8 -> useHWShader1Path  (DX8)   <- Mac
+   elif (not ffgpHW and psVersion = 0) or kForceNoDX7 -> useSWVertexShaderPath
+default: useFixedFunctionPath
+```
+
+`kUseShaderPrograms` vale `true` no script; `cTSConfigMaterialSettings::
+SetUseShaderPrograms(false)` (binário) cria a sobreposição
+`kUseShaderPrograms = "0"` (opção `useShaders` das regras gráficas; a Aspyr
+também tem o argumento `-noShaders`). Os outros ajustes que o
+`cTSConfigMaterialSettings` empurra para os scripts: `bumpMapping`,
+`specHighlights`, `reduceBoneWeights`, `morph`, `vs2LoopsFunctional`,
+`simpleTerrain`, `flagSkinnedObjects`, `gpuCompositing`, `causticsEnabled`,
+`useLODs`, `kUsePS30`, `kRaiseLightSnowFF`, `kUseMacPorts` (este só existe
+nos scripts de expansão).
+
+Os blocos `#<` ... `#>` são **comentários de bloco** (inferido, mas forte: em
+`SimSkin()` um `#<` engole um `else`/`endif` cujo `if` está comentado com
+`#`; sem isso o script não fecharia). Em particular o trecho de
+`DetermineHardwareSupport` que força `useHWShader1Path true` é comentário.
+
+### 1.3 Shaders → OpenGL (binário)
+
+- **Vertex shaders** (`vs_1_1` assemblados dos `shaderSource`/fragmentos):
+  `D3DShader_CompileToARB` (`FUN_00057a28`) traduz o bytecode para
+  `!!ARBvp1.0` (constantes em `program.env[0..N]`, `ATTRIB vN =
+  vertex.attrib[k]` com `#pragma dcl_*`, `oTn.z = 0`/`oTn.w = 1` quando o
+  shader não escreve). `FUN_00018e50` (criação do `IDirect3DVertexShader_Mac`)
+  aceita texto que já começa com `!!ARB`; se a tradução falhar e o shader não
+  puder ir para o emulador por software (`CanEmulateSoftwareShader`,
+  `FUN_00048178`: só `vs_3_0` com opcodes da tabela `PVE::*`), usa
+  `HardcodedTranslationToARB` (abaixo).
+- **Pixel shaders** `ps_1_x`: traduzidos para `GL_ATI_text_fragment_shader`
+  (Radeon 8500/9000/9200, conferido pelo nome do renderer), senão
+  `GL_NV_register_combiners`, senão `GL_ARB_fragment_program`
+  (`IDirect3DDevice_Mac::Create`, flags em `+0xf123..0xf125`).
+- **HLSL** (`shaderProgram -method compile`): `_D3DXCompileShader` **não
+  compila**. Lê `<nome do material>.bin` dos recursos do bundle
+  (`MacGetMaterialNameHint`, `FUN_00047cfc`, posto por `MacSetMaterialNameHint`
+  em `FUN_00047c88`), desfaz o endianness do bytecode e da tabela `CTAB` e
+  passa para o tradutor. Só 7 programas usam `-method compile` (piscina
+  `RegularWavesHLSL`, cáusticas, animais, pós-processamento, reflexo). A
+  nossa cópia do `.app` não tem os `.bin`; para o Metal isso não importa (o
+  HLSL está no próprio `.matShad`).
+
+`HardcodedTranslationToARB` (`FUN_00048100`, **só BV**: o 1.0 não tem esses
+textos) devolve um `!!ARBvp1.0` escrito à mão para 4 hashes de bytecode
+(`0x0EFC024E`, `0x0BB4C76C`, `0x88D497D4`, `0xC3BAFF2B`): são os vertex
+programs **de transformação pura + cor do vértice** dos passes de sombra/cor
+chapada (`DX8ShadowRendering`, passe de `ShapeColor`): `oPos = v1 ×
+c[4..7]` (`geomToClip`), `oD0 = v2`; a segunda variante também escreve
+`oT1.xy = pos.zw` (profundidade); as duas últimas são as mesmas com
+skinning de 4 ossos (paleta em `c[56 + 3·índice]`, 3 linhas por osso, pesos
+`x,y,z` e o 4º = 1 − soma, `c50 = (765.01, −1, 1, 4)`, `c51 = (255, 3, 0.5,
+1e-4)`, `c52 = (0, 0.5, 1, 2)`). Nada disso muda a imagem: é contorno de
+bug de driver/tradutor. Para o Metal basta saber o que esses passes fazem.
+
+---
+
+## 2. A linguagem dos `.matShad` (texto + nomes no binário)
+
+O motor (`nGZCommandParser::cBaseParser`, `nGZSceneGraph::cMaterialParser`)
+lê um script de comandos, um por linha, `#` comenta até o fim da linha.
+
+- **Variáveis**: `set nome valor` (texto), `seti`/`setf`/`setb`/`setc`
+  (cor)/`sete nome valor (opções)` (enum)/`setv2`/`setv3`/`setv4`. Uso:
+  `$nome`, `${nome}` dentro de texto, `&nome`/`&{nome}` para parâmetros de
+  macro. Expressões entre parênteses: `+ - * /`, `= != < > <= >=`, `and or
+  not`, `?:`, swizzles (`($v).xyz`, `(a, 1).xxxy`) e funções: `strcmp`,
+  `varExists`, `hasVertexFormat(tipo, índice)`, `numLightsOfType(tipo)`,
+  `isEnabled(skinning|morphing)`, `maxBonesPerVertex`, `numPoseTransforms`,
+  `queryIntegerGraphicsDeviceCap`, `queryBooleanGraphicsDeviceCap`,
+  `viewerRenderType`.
+- **Macros**: `define Nome(params) ... enddef`; `create Nome(args)` expande.
+  `include arquivo.matShad`.
+- **Fluxo**: `if/elseif/else/endif` avaliados na hora de criar o material
+  (não por pixel).
+- **Definições**: `materialDefinition nome` + `setDefinition Macro` +
+  `addParam p v` (é o que o TXMT faz: `cMaterialDefinition` com tipo = nome
+  da macro e propriedades = variáveis). O material é a expansão da macro
+  com as propriedades do TXMT por cima dos defaults `set*` globais.
+- **Estrutura**: `material` → um ou mais `shader [-layer n]` → `pass
+  [-fixedFunction] [-modifiedEachFrameHint] [-clipAlways]` → estados +
+  `stage` (função fixa) ou `shaderProgram` + `sampler n` (programável).
+  Um material com vários `shader` = **alternativas**: o motor usa a
+  primeira cujos predicados (`viewerRenderTypePred`, `vertexFormatPred`,
+  `validateRenderShaderContext -numLights/-vertexFormat/-viewerRenderType`,
+  `supportedRenderShaderContexts`) batem com o contexto de desenho e que
+  valida no dispositivo (inferido pelas mensagens "Shader validation",
+  "...failed on cIShaderController::InitDeviceResourcesAndValidate() at pass
+  %d", "...failed -- render shader context does not have required flag %d
+  set"). Ex.: `DX8HardwarePath` cria o shader duas vezes, a segunda com
+  `reduceLights` (uma luz spot a menos no 2º passe especular) como reserva.
+- **Estados**: `alphaBlend srcFactor(f) add|sub dstFactor(f)`, `alphaTest
+  bool ref` + `alphaTestFunction acceptIfGreater|acceptIfGreaterOrEqual|
+  acceptIfEqual|acceptIfLess`, `depthTest bool -enableDepthWrite bool`,
+  `depthTestFunction accept|acceptIfLess|acceptIfLessOrEqual|acceptIfEqual`,
+  `cullmode none|cullClockwise|cullCounterClockwise`, `fillmode`,
+  `ffDepthOffset n`, `stencil*`, `colorScalar (r,g,b) a [-applyShapeColor i]
+  [-applyTextureLightColor i j] [-animAlpha onda vel fase (a,b)]`.
+- **Função fixa**: `ffLighting -enable -localViewer -normalizeNormals`,
+  `ffMatCoef -amb -diff -diffAlpha -spec -specPow -emit [-applyShapeColor
+  i]`, `addSpecular`, `stage` com `texture`, `textureAddressing`,
+  `ffTextureCoordsSource n|fromReflectionVector|fromPosition`,
+  `ffTextureMatrix -scalev/-trans/-invert/-cameraToGlobal/-orientCameraToGlobal`,
+  `textureTransformType vector2|vector3`, `textureBlend <cor>(a b)
+  <alfa>(a b)` com operações `select`, `multiply`, `multiplyScale2`,
+  `multiplyScale1`, `add`, `multiplyAdd`, `lerpTextureAlpha`,
+  `lerpColorScalarAlpha` e argumentos `texture`, `diffuse`, `outRegister`
+  (resultado do estágio anterior), `colorScalar[:invert]`.
+- **Programável**: `shaderProgram -target vertexProgram|pixelProgram
+  -method assemble|link|compile`. `assemble`: o texto entre `shaderSource`
+  e `endShaderSource` é assembly D3D (`vs_1_1`, `ps_1_1`, ...). `link`: o
+  vertex program é montado de **fragmentos** (`shaderFragment Nome`), cada
+  um um `vertexfragment Nome = asm_fragment { ... };` com registradores
+  simbólicos (`r_diffuse_r2`, `c_lightColors[a0.x]`, ...) ligados pelo
+  `cShaderProgramsManagerDX`/`IDirect3DFragmentLinker_Mac::LinkShader`.
+  `bindConstants reg -bindingID id [-constantCount n] [-data (...)]` liga
+  constantes; ids (ordem da tabela no binário, `0x10483a0`): `geomToCamera`,
+  `cameraToGeom`, `globalToCamera`, `cameraToGlobal`, `geomToGlobal`,
+  `globalToGeom`, `clipToCamera`, `cameraToClip`, `clipToViewTarget`,
+  `geomToClip`, `geomToClipFromParentView`, `clipToGeom`, `globalToClip`,
+  `clipToGlobal`, `cameraToClipWithDepthOffset`, `posesToCamera`,
+  `posesToCameraPacked`, `morphWeights`, `cameraToLightClip(Adj)`,
+  `frameInfo`, `frameTimeInfo`, `sunLightDir`, `ambientLight`,
+  `cursorTerrainPosition`, `immediateData`, `shapeColorIndex0`,
+  `allTextureLights`, `allStandardLightData`, `allStandardLightData2`
+  (exige 32 constantes), `allStandardLightCameraSpaceDirections/Positions`,
+  `allStandardLightColors(Half)`, `allStandardLightSquaredRangesPacked`,
+  `allStandardLightFalloffRatesPacked`, `allStandardLightSpotHelper1/2Packed`,
+  `allStandardLightLoopDataPerVertex/PerPixel`, `allStandardLightExtraData`
+  (8), `perPixelLightColors`.
+- **Animação de textura**: `textureMatrixAnimation -targetType
+  fixedFunction|vsConstants -targetRegister 11 -aorigin -arot onda vel fase
+  (início,fim) -ascale ... -atrans ...`, `textureTileAnimation vel -tiles
+  (u,v)`. No DX8 a matriz vai para `c11..c13` e o fragmento
+  `TextureMatrix2DTransformTex0` a aplica.
+- **Camada** (`shader -layer n`): ordem de desenho; menor primeiro. Valores
+  usados: StandardMaterial `stdMatLayer·8 (+7 se blend)`, Sims `+3` cabelo
+  com blend / `+7` outros, paredes 0, máscara de parede −16, pisos 0, grade
+  3, terreno: canvas `(−2−3)·8 = −40`, pintura −32, luz −24; água
+  `stdMatLayer + 5`; sombra de Sim 4; overlay de sombra 2; skirt −2.
+- **Tipos de luz** para `numLightsOfType`: `directional`, `point`, `spot`,
+  `environmentCube` ("texture lights": cor que escurece reflexos à noite),
+  `drawState`, `linearFog`, `kShapeColorLight` (fantasma/destaque),
+  `kAdditiveLight`, `kShadeLight`.
+
+`viewerRenderType`: `kRenderTypeNormal`, `kRenderTypeShadow` (passe que
+desenha só a silhueta na cor `stdMatShadowColor`), `kRenderTypeReflection`,
+`kRenderTypeMirror`, `kRenderTypeThumbnail`.
+
+---
+
+## 3. Função fixa: o que o "D3D" faz (para os passes `-fixedFunction`)
+
+É D3D7/8 clássico, emulado pela Aspyr com GL 1.x (`MacApplyLightSettings`,
+`MacSetColorCombine`). Para reproduzir:
+
+- Cor do vértice = `emit + amb·ambienteGlobal + Σ diff·cor_luz·max(N·L,0)·aten`,
+  **saturada por canal em [0,1]** antes da interpolação.
+- `multiplyScale2(texture diffuse)` = `saturate(2·tex·cor)`. Quase todos os
+  materiais de função fixa usam ×2 e põem `diff = amb = coef·0,5` (ou
+  `coef·0,4` nos Sims), então o efeito é o mesmo do caminho DX8: luz até 2×.
+- `AttenuatedMatCoef(s)` = `amb = diff = stdMatDiffCoef·s`, `emit =
+  stdMatEmissiveCoef·s`, especular sem escala.
+
+---
+
+## 4. StandardMaterial no caminho DX8 (`DX8HardwarePath`, texto)
+
+### 4.1 Modo de iluminação (`DetermineLightingMode`)
+
+- Sem normais ou `stdMatLightingEnabled = false` → `kNoLighting`.
+- Com luz: soma de `stdMatDiffCoef` e de `stdMatSpecCoef` = 0 → sem luz;
+  senão `kFullLighting`; sem nenhuma luz direcional/ponto/spot no contexto →
+  `kAmbientOnly`.
+- `stdMatAlphaBlendMode = additive` → sempre `kNoLighting`.
+- Sem `texcoord 0` → textura base, máscara especular e normal map
+  desligados.
+
+### 4.2 Passe difuso (`StandardMaterialDiffusePassDX8`)
+
+Até **4 luzes por passe**. Com mais de 4, o 1º passe leva até 4
+direcionais, depois pontos e spots até completar 4; o 2º passe (aditivo,
+`one + one`, `depthTest ≤` sem escrita) leva o resto (no máximo 4 de novo,
+já que o contexto tem no máximo 8). O ambiente só entra no 1º passe.
+
+Vertex shader (fragmentos `vslightfragments.matShad`, registradores em
+`vsfragments.matShad`: `c14` difusa do material (w = `stdMatAlphaMultiplier`),
+`c15` especular (w = `stdMatSpecPower·0,4`), `c16` ambiente, `c17`
+emissiva, `c18..c25` direções, `c26..c33` cores (w = escala especular
+relativa), `c34..c41` posições, `c42..43` atenuação (uma componente por
+luz), `c44..45` alcances², `c46`/`c48` auxiliares do cone):
+
+```
+para cada luz i do passe (espaço de câmera, N normalizada):
+   direcional:  d_i = max(N·L_i, 0)
+   ponto/spot:  v = P_i − pos; r² = v·v; L = v/|v|
+                aten = (r² ≤ alcance_i²) / (1 + C_i·r²)
+                spot: aten *= clamp((L·D_i − h1_i)·h2_i, 0, 1)
+                d_i = max(N·L, 0)·aten
+difusa = Σ d_i·cor_i
+1º passe: oD0.rgb = 0.5·((difusa + ambiente)·difMaterial + emissiva)
+2º passe: oD0.rgb = 0.5·(difusa·difMaterial)          (sem ambiente nem emissiva)
+oD0.a = stdMatAlphaMultiplier        (saturado pelo hardware, como toda cor de vértice)
+```
+
+A emissiva **não** é multiplicada pela difusa do material. `C_i`, os
+alcances e os auxiliares do cone vêm do motor (`docs/lighting-mac.md`).
+
+Pixel shader (`DX8StandardMaterialDiffusePixelShader`, `ps_1_1`):
+
+```
+com textura:  r.rgb = tex.rgb·v0.rgb        (AlphaReplicate: r = tex.a·v0)
+              r.a   = tex.a·stdMatAlphaMultiplier
+              cutout: r.a = cutout.a ; alphaTest ≥ 127
+sem textura:  r.rgb = v0.rgb ; r.a = stdMatAlphaMultiplier·stdMatUntexturedDiffAlpha
+r.rgb = 2·r.rgb                              ("HDR": mov_x2)
+env cube:     r.rgb += stdMatEnvCubeCoef·cube(R)  [·allTextureLights se houver luz environmentCube]
+ShapeColor:   r *= shapeColorIndex0
+passes 2+ com blend: r.rgb *= r.a (pré-multiplicado, somado ao fundo)
+saída saturada em [0,1]
+```
+
+Resultado prático: `cor = saturate(2·tex·saturate(0,5·(luz·dif + emis)))`,
+isto é, o lit satura em **2× a textura** e não em 1×.
+
+Estados: `blend` → `srcAlpha/invSrcAlpha`, sem escrita de z; alpha test do
+TXMT só no 1º passe (`acceptIfGreaterOrEqual`, ref `stdMatAlphaRefValue`);
+`additive` → `srcAlpha/one`; `addNoSrcAlphaScale` → `one/one`.
+
+Normal map (`bumpMapping` ligado nas opções e `stdMatNormalMapTextureEnabled`):
+até 2 luzes por pixel (a 1ª direcional e/ou o 1º ponto/spot) com `dp3_sat`
+entre o normal map e a direção da luz no espaço tangente (passada em `v1`/
+`t2`), cores em `allStandardLightColorsHalf`; as outras luzes ficam no
+vértice. `r = 2·tex·dif·(v0 + Σ N·L·cor/2)`. Normal map desliga o env cube
+salvo no passe extra `BumpyShinyPass` (`texm3x3vspec`).
+
+### 4.3 Passe especular (`StandardMaterialSpecularPassDX8`)
+
+Só se `stdMatSpecPower > 1` **e** `Σ stdMatSpecCoef > 0,3` (`CheckForSpecular`;
+abaixo disso a potência é zerada). Aditivo (`one + one`, sem escrita de z),
+as mesmas divisões de 4 luzes:
+
+```
+R = reflexo do vetor de visão em N (espaço de câmera)
+s_i = pow(max(R·L_i, 0), stdMatSpecPower·0,4)·(N·L_i − 1e-4 > 0)·aten_i·corLuz_i.w
+oD0.rgb = (Σ s_i·corLuz_i)·stdMatSpecCoef           (sem ×0,5 e sem ×2)
+pixel: r.rgb = v0 ; com blend/alpha test r.a = tex.a·alfa e r.rgb *= r.a
+```
+
+É Phong (R·L), por vértice, com expoente 0,4× o do TXMT. O código atual faz
+Blinn (N·H) por pixel com o expoente cheio.
+
+### 4.4 Sem luz / só ambiente
+
+Um passe: `AmbientLighting` → `oD0 = 0,5·ambiente·difMaterial`; pixel
+`2·tex·v0` (HDR). `kNoLighting` → `UnlitPixelShader`: `tex·stdMatDiffCoef`
+(alfa `tex.a·stdMatAlphaMultiplier`), sem ×2.
+
+### 4.5 Fantasma/destaque (`kShapeColorLight`)
+
+Com essa luz no contexto: blend ligado, layer +7, e um passe extra antes
+que só escreve z (`srcFactor(zero) + dstFactor(one)`, `ps` devolve 0); a
+cor final é multiplicada por `shapeColorIndex0`.
+
+### 4.6 Sombra (`viewerRenderType = kRenderTypeShadow`)
+
+`DX8ShadowRendering`: transforma (com skinning/morph) e pinta
+`stdMatShadowColor`, alfa 1. Os Sims usam `SimShadowDX7` (função fixa, a
+mesma cor).
+
+### 4.7 Tipos obsoletos (`deprecated.matShad`)
+
+Iguais ao que o código já faz (`kDeprecated` em `src/formats/model.cpp`):
+cada tipo força parâmetros e chama `StandardMaterial`. O caminho DX8 vale
+para eles também.
+
+---
+
+## 5. Paredes (`wall.matShad`, `pixelShaderWalls.matShad`)
+
+`WallpaperAndMask` com `useHWShader1Path` → `PS1WallRendering`:
+
+- **Sem máscara** (`wallMaskTextureName` ausente) →
+  `PS1MasklessWallRendering`: `cor = 2·papel·wallLightMap_<page>` (sem
+  `page`: só o papel).
+- **Com máscara, sem bump** → `PS1BasicWallRendering`, um passe: alpha test
+  `> 127` no alfa da máscara (UV 1, `clamp`, espelhada por
+  `ffTextureMatrix -scalev (−1,1) -trans (1,0)` quando `wallMaskMirrorFlag`),
+  `cor = 2·papel(UV 0, tile)·lightmap(UV 2)`. **Sem luzes diretas, sem
+  difusa do material, sem normais.** Sem `page`: `cor = 2·papel`.
+- **Com bump** (`bumpMapping` e `wallpaperNormalMapTextureEnabled` e
+  `wallNormalMappingEnabled`) → `PS1BumpMapWallRendering`, 2 passes: 1º
+  escreve `dp3_sat(normal map, wallIncidenceMap_<page>)` com o recorte da
+  máscara; 2º multiplica o framebuffer (`destColor·zero`, z igual) por
+  `2·papel·lightmap`.
+- Destaque (`wallHighlightOn`): `papel·t3.a + wallHighlightIntensity`
+  (`wall_selection_colors`). Cáusticas de piscina somadas quando
+  `tsCausticsPass` (só `wall-poolroundedlipblue-base`).
+- `Wallpaper`/`WallpaperBump`/`WallpaperPool` (paredes sem máscara, ex.:
+  catálogo) → `PixelShaderWallTextureShader`: `2·base·lightmap`, depth test
+  desligado. `WallMask` não desenha nada (shader vazio).
+
+---
+
+## 6. Pisos (`floor.matShad`, `pixelShaderFloors.matShad`)
+
+`Floor`/`FloorPool` com DX8 ou DX9 → `PixelShaderFloors` (o mesmo nos dois):
+
+```
+oT0 = uv0 · (1/floorMaterialScaleU, 1/floorMaterialScaleV)   (tile)
+oT1 = uv1                                                   (espaço do light map)
+cor = 2·base·floorLightMap_<page>·stdMatDiffCoef ; alfa 1
+bump: cor = 2·base·lightmap·dif·dp3_sat(normal map(oT0), floorIncidenceMap(oT1))
+cáusticas (piscina): 2·base·lightmap·dif + cáustica[·allTextureLights]
+sem page/uv1: cor = base
+```
+
+Sem luzes diretas, sem especular. Grade de construção: `TileGridMaterial`
+(camada 3, alfa `floorGridAlpha` 0,775).
+
+---
+
+## 7. Terreno (`terrain.matShad`) e skirt
+
+Três materiais desenhados por cima um do outro, **todos sem luzes**:
+
+1. `TerrainCanvasShader` (camada −40): textura do tipo de terreno com UV ×
+   (1/20) (`canvasBaseTextureScale` 20, matriz invertida) e `<textura>_detail`
+   × (1/4) por cima com `lerpTextureAlpha` (a textura de detalhe decide pelo
+   seu alfa).
+2. `TerrainPaint` (−32): cada pintura, blend `srcAlpha/invSrcAlpha`, alpha
+   test > 10; cor = pintura (escala 20, detalhe 4), alfa do `alphaMap`
+   (`clamp`, escala `alphaMapScaleU/V`).
+3. `TerrainLighting` (−24): multiplica o framebuffer (`destColor·zero`) por
+   `2·floorLightMap_0(pos/64)·terrainMatDiffCoef(0,9)`. A página 0 do light
+   map de piso cobre o lote; UV = posição em tiles / 64.
+
+O código atual ilumina o terreno como StandardMaterial e repete a textura a
+cada 4 tiles; o jogo usa 1/20 + detalhe 1/4 e o light map.
+
+---
+
+## 8. Sims (`sims.matShad`, `DX7SimMaterials.matShad`)
+
+Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
+**todos** para `CreateSimStandardMaterialFixedFunction` (o caminho
+`CreateSimStandardMaterialDX8` está comentado no script):
+
+- Textura de pele/roupa já composta na CPU (`useCPUCompositedTextures`
+  true; `compositeBaseTextureName` vira `stdMatBaseTextureName`).
+- Luz de função fixa com `amb = diff = stdMatDiffCoef·simMaterialLightingScale·0,5`
+  = **dif·0,4**, sem especular ("no sim material can have specular"),
+  emissiva 0. Estágio `multiplyScale2(texture diffuse)`, alfa
+  `texture·diffuse`, `clamp` em U/V. Resultado: `saturate(2·tex·saturate(0,4·
+  dif·(ambiente + Σ luzes)))`.
+- `SimHair` com `blend`: `srcAlpha/invSrcAlpha`, **escreve z**, alpha test
+  `> 60`; com `additive`: `srcAlpha/one`. Camada `stdMatLayer·8 + 3` (cabelo)
+  ou `+7` (outros com blend).
+- Env cube (`stdMatEnvCubeMode reflection`, sem blend): passe extra
+  `srcAlpha/one` com `cube(R)·stdMatEnvCubeCoef`.
+- Reserva (2º shader): só a cor `2·dif·0,4·luz` sem textura.
+- Sombra: `SimShadowDX7`. "Fantasma" (`kShapeColorLight`): `DX7GhostPass`.
+
+`simMaterialLightingScale 0,8` já está em `renderer.cpp`; falta o resto
+(×0,5 e ×2, a saturação no vértice).
+
+---
+
+## 9. Água, piscina, sombras de chão, overlays
+
+- **Objetos de água** (`WaterAnimatingTextures`, caminho DX8 →
+  `LowEndWater`): função fixa, luz `amb = diff = stdMatDiffCoef`; dois
+  estágios da mesma textura com escala animada `sawtooth` (`waterSpeed`,
+  fase 0 e 0,5, escala 1→2) misturados por um alfa `triangular` do
+  `colorScalar`, vezes a cor do vértice; blend `srcAlpha/invSrcAlpha`, sem
+  escrita de z (reserva: `TwoPassWater`, os dois estágios em passes).
+- **Piscina** (`PoolWaterSurfaceMaterial`): no DX8 (`useHWShader1Path`) usa
+  `RegularWavesHLSL` (vertex program HLSL 1.1: ondas por `frameInfo`,
+  reflexo do env cube, `one + one`); a reserva é `SimplifiedWaterSurface`
+  (`(0,2, 0,3, 1,0)` alfa 0,4). As camadas de profundidade
+  (`poolWaterLayer-1`, `swimming_pool_deeplayer` × `poolLayerColour`, alfa
+  0,9 × `allTextureLights`) e o gerador de cáusticas só existem fora do
+  caminho FF/SWVS, ou seja, **existem no Mac**.
+- **Água do terreno** (`TerrainWaterShader`): reflexo de
+  `reflectionoutdoorwater-envcube` (`fromReflectionVector`,
+  `-orientCameraToGlobal`, sem mipmap) × `colorScalar(1,1,1)` ×
+  `allTextureLights`, alfa da cor do vértice.
+- **Sombra de objeto/Sim no chão** (`ShadowShader`, camada 4):
+  multiplica o framebuffer (`destColor·zero`) pela textura da sombra
+  (`clamp`, sem mipmap), sem escrita de z.
+- **Overlay de sombra** (`OverlayShadowMaterial`, camada 2): no DX8 sem
+  `lmIntegratedShadows`, a sombra é misturada com o light map de piso
+  (`lerpTextureAlpha(outRegister diffuse)` com `floorLightMap_0`).
+
+---
+
+## 10. O que o código atual faz diferente
+
+| tema | jogo (Mac, DX8) | `src/` hoje |
+|---|---|---|
+| saturação da luz | `saturate(2·tex·saturate(0,5·L))`, até 2× | `tex·saturate(L)`, até 1× (`shaders.metal`) |
+| luz | por vértice, 4 por passe, 2 passes | por pixel, até 8 de uma vez |
+| emissiva | somada à luz já × difusa, não multiplicada | somada antes de saturar, ok; mas sem o ×0,5/×2 |
+| especular | passe aditivo, Phong R·L, expoente ×0,4, só se pot. > 1 e Σcoef > 0,3 | Blinn N·H, expoente cheio, sempre que pot. > 0 |
+| paredes | `2·papel·lightmap`, máscara alpha test > 127 | iluminadas como StandardMaterial |
+| pisos | `2·base·lightmap·dif` | iluminados como StandardMaterial |
+| terreno | canvas 1/20 + detalhe 1/4, pinturas, × `2·0,9·lightmap` | textura a cada 4 tiles, iluminada |
+| Sims | FF, `2·tex·saturate(0,4·dif·L)` | `0,8·dif` e satura em 1 |
+| env cube | só se Σcoef ≥ 0,003; × `allTextureLights` à noite | igual sem a luz de textura |
+| cabelo | alpha test > 60 com blend, escreve z | igual (`SimHairAlphaState`) |
+| `TODO.md` "no caminho DX9 a difusa interpolada não é saturada" | não se aplica: o Mac usa DX8, que satura no vértice | — |
+
+## 11. O que falta
+
+- Como o motor calcula os light maps de parede/piso (`cLightMapManager`,
+  `cDiffusionManager`) e as constantes de luz (`allStandardLightData2`):
+  `docs/lighting-mac.md`.
+- O parser em si não foi decompilado (a maior parte está no `__textcoal_nt`
+  sem nome); a semântica acima vem do uso nos scripts e das strings. Em
+  especial `#<`/`#>` = comentário é inferido.
+- Os passes de reflexo (`reflection.matShad`, espelhos), imposters,
+  pós-processamento e efeitos não foram descritos.
