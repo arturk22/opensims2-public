@@ -343,6 +343,27 @@ static void testStandardMaterial() {
               ns.baseTexture.empty(),
           "additive, no cull, texture disabled");
 
+    MaterialDefinition add;
+    add.materialType = "StandardMaterial";
+    add.properties = {{"stdMatAlphaBlendMode", "additive"}};
+    check(!standardMaterial(add).lighting, "additive StandardMaterial is unlit (DetermineLightingMode)");
+    add.properties = {{"stdMatAlphaBlendMode", "addNoSrcAlphaScale"}};
+    const auto one = standardMaterial(add);
+    check(one.blend == StandardMaterial::Blend::AddNoSrcAlpha && one.lighting, "addNoSrcAlphaScale adds one + one, lit");
+    MaterialDefinition water;
+    water.materialType = "WaterAnimatingTextures";
+    water.properties = {{"stdMatBaseTextureName", "bathtubwater-water"}, {"stdMatBaseTextureEnabled", "true"},
+                        {"stdMatSpecPower", "20"}, {"stdMatSpecCoef", "0.5,0.5,0.5"}, {"stdMatAlphaBlendMode", "none"}};
+    const auto wm = standardMaterial(water);
+    check(wm.shading == StandardMaterial::Shading::Water && wm.blend == StandardMaterial::Blend::Alpha &&
+              wm.specularPower == 0 && wm.waterSpeed == 0.3f && !wm.depthWrite,
+          "WaterAnimatingTextures as LowEndWater");
+    MaterialDefinition wallpaper;
+    wallpaper.materialType = "Wallpaper";
+    wallpaper.properties = {{"stdMatDiffCoef", "0.5,0.5,0.5,1"}};
+    const auto wp = standardMaterial(wallpaper);
+    check(wp.lightMapped && wp.diffuse[0] == 1, "walls are light-mapped and ignore the diffuse");
+
     // standard.matShad defaults: no specular without a power; blended parts
     // go 7 layers up and stop writing depth.
     MaterialDefinition plain;

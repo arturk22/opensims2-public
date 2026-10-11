@@ -50,6 +50,10 @@ void applyDirective(LightingState& s, const std::string& key, const std::vector<
     } else if (key == "transitiontimes" && t.size() >= 3) {
         s.transitionIn = configNumber(t[1]);
         s.transitionOut = configNumber(t[2]);
+    } else if (key == "environment" && t.size() >= 2) {
+        const auto c = vec3(t[1]);
+        const float k = t.size() >= 3 ? configNumber(t[2]) : 1.0f;
+        s.environment = {c[0] * k, c[1] * k, c[2] * k};
     } else if (key == "diffparam" && t.size() >= 3) {
         s.diffParams[lowerAscii(t[1].word)] = t[2].kind == ConfigToken::List ? t[2].list : std::vector<float>{configNumber(t[2])};
     }

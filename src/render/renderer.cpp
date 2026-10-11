@@ -58,6 +58,7 @@ enum : uint32_t {
     kLightMapped = 65536,
     kDetail = 131072,
     kMaskAlphaOnly = 262144,
+    kWater = 524288,
 };
 
 struct Draw {
@@ -94,7 +95,8 @@ struct Frame {
     simd_float4x4 viewProj;
     simd_float4x4 view;
     simd_float4 eye;
-    simd_float4 lightMap; // x: mix of light map slot 1 over slot 0
+    simd_float4 params;      // x: mix of light map slot 1 over slot 0, y: time (s)
+    simd_float4 environment; // rgb: the environment light (env cubes)
 };
 
 simd_float4x4 identity() { return matrix_identity_float4x4; }
@@ -284,10 +286,11 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
         color->setPixelFormat(MTL::PixelFormat(colorFormat));
         if (blend != StandardMaterial::Blend::None) {
             color->setBlendingEnabled(true);
-            color->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
-            color->setSourceAlphaBlendFactor(MTL::BlendFactorSourceAlpha);
-            const auto dst = blend == StandardMaterial::Blend::Additive ? MTL::BlendFactorOne
-                                                                        : MTL::BlendFactorOneMinusSourceAlpha;
+            const auto src = blend == StandardMaterial::Blend::AddNoSrcAlpha ? MTL::BlendFactorOne : MTL::BlendFactorSourceAlpha;
+            color->setSourceRGBBlendFactor(src);
+            color->setSourceAlphaBlendFactor(src);
+            const auto dst = blend == StandardMaterial::Blend::Alpha ? MTL::BlendFactorOneMinusSourceAlpha
+                                                                     : MTL::BlendFactorOne;
             color->setDestinationRGBBlendFactor(dst);
             color->setDestinationAlphaBlendFactor(dst);
         }
@@ -302,6 +305,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
         opaque_ = pipeline(StandardMaterial::Blend::None);
         alphaBlend_ = pipeline(StandardMaterial::Blend::Alpha);
         additive_ = pipeline(StandardMaterial::Blend::Additive);
+        addOne_ = pipeline(StandardMaterial::Blend::AddNoSrcAlpha);
     } catch (...) {
         vs->release();
         fs->release();
@@ -396,6 +400,7 @@ Renderer::~Renderer() {
     depthRead_->release();
     depthWrite_->release();
     additive_->release();
+    addOne_->release();
     alphaBlend_->release();
     opaque_->release();
     queue_->release();
@@ -470,6 +475,8 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     const bool specular = sm.specularPower > 1 && sm.specular[0] + sm.specular[1] + sm.specular[2] > 0.3f;
     mat.specular = simd_make_float4(sm.specular[0], sm.specular[1], sm.specular[2], specular ? sm.specularPower * 0.4f : 0);
     mat.emissive = simd_make_float4(sm.emissive[0], sm.emissive[1], sm.emissive[2], 0);
+    if (sm.shading == StandardMaterial::Shading::Sim || sm.shading == StandardMaterial::Shading::Water)
+        mat.emissive = simd_make_float4(0, 0, 0, 0); // their fixed-function light has no emissive
     mat.blend = sm.blend;
     mat.depthWrite = sm.depthWrite;
     mat.layer = sm.layer;
@@ -479,6 +486,10 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
                 (sm.alphaReplicate ? kAlphaReplicate : 0) | (sm.textureColor ? 0 : kAlphaOnly) |
                 (sm.maskAlphaOnly ? kMaskAlphaOnly : 0);
     mat.uvScale = sm.textureScale;
+    if (sm.shading == StandardMaterial::Shading::Water) {
+        mat.flags |= kWater;
+        mat.misc.w = sm.waterSpeed;
+    }
     if (!sm.detailTexture.empty())
         if (MTL::Texture* t = texture(sm.detailTexture, index)) {
             mat.detail = t;
@@ -685,6 +696,7 @@ Renderer::LightSet Renderer::outdoorLights(const LightingState& state, bool sims
 }
 
 void Renderer::setLighting(const LightingState& state) {
+    environment_ = simd_make_float3(state.environment[0], state.environment[1], state.environment[2]);
     if (lightSets_.size() < 2)
         lightSets_.resize(2);
     lightSets_[0] = outdoorLights(state, false);
@@ -750,7 +762,9 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         for (size_t k = 0; k < n; ++k)
             sets[i].lights[k] = {simd_make_float4(ls.lights[k].direction, 0), simd_make_float4(ls.lights[k].color, ls.lights[k].specular)};
     }
-    f->lightMap = simd_make_float4(std::clamp(lightMapMix_, 0.0f, 1.0f), 0, 0, 0);
+    const double now = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+    f->params = simd_make_float4(std::clamp(lightMapMix_, 0.0f, 1.0f), float(std::fmod(now, 3600.0)), 0, 0);
+    f->environment = simd_make_float4(environment_, 1);
     // Light maps replaced a few frames ago are no longer read.
     for (auto& r : retired_)
         if (--r.second <= 0)
@@ -821,6 +835,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setDepthStencilState(m.blend == StandardMaterial::Blend::None || m.depthWrite ? depthWrite_ : depthRead_);
         enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha      ? alphaBlend_
                                     : m.blend == StandardMaterial::Blend::Additive ? additive_
+                                    : m.blend == StandardMaterial::Blend::AddNoSrcAlpha ? addOne_
                                                                                    : opaque_);
         enc->setCullMode(m.cull);
         auto [uv0, uv1] = uvTransform(m.anim, t);

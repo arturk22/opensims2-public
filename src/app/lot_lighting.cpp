@@ -163,6 +163,8 @@ LightingState LotLighting::blended() const {
         l.intensity = 1;
         s.lights.push_back(l);
     }
+    for (int k = 0; k < 3; ++k)
+        s.environment[k] = from->environment[k] * (1 - t) + to->environment[k] * t;
     for (auto& [name, m] : s.modifiers)
         if (auto f = from->modifiers.find(name); f != from->modifiers.end()) {
             m.practical = f->second.practical * (1 - t) + m.practical * t;
@@ -295,6 +297,7 @@ void LotLighting::update(double seconds) {
         changedAt_ = seconds;
     }
     const LightingState state = blended();
+    renderer_.setEnvironmentLight(simd_make_float3(state.environment[0], state.environment[1], state.environment[2]));
 
     // The lamps: every light of every drawn object's model, at its level.
     lamps_.clear();

@@ -208,9 +208,10 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     bool baseEnabled = flag("stdMatBaseTextureEnabled", has("stdMatBaseTextureName"));
     bool normalEnabled = flag("stdMatNormalMapTextureEnabled", false);
     const auto blend = m.property("stdMatAlphaBlendMode");
-    out.blend = blend == "blend" ? StandardMaterial::Blend::Alpha
-              : blend == "additive" || blend == "addNoSrcAlphaScale" ? StandardMaterial::Blend::Additive
-                                                                     : StandardMaterial::Blend::None;
+    out.blend = blend == "blend"                ? StandardMaterial::Blend::Alpha
+              : blend == "additive"             ? StandardMaterial::Blend::Additive
+              : blend == "addNoSrcAlphaScale"   ? StandardMaterial::Blend::AddNoSrcAlpha
+                                                : StandardMaterial::Blend::None;
     out.alphaTest = flag("stdMatAlphaTestEnabled", false);
     out.alphaRef = number("stdMatAlphaRefValue", 127) / 255.0f;
     const auto cull = m.property("stdMatCullMode");
@@ -351,6 +352,19 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         }
         envReflection = false;
         out.specularPower = 0;
+    } else if (type == "WaterAnimatingTextures" || type == "WaterMorphAnimatingTextures") {
+        // water.matShad, DX8 path (LowEndWater/SinglePassWater): the texture
+        // at two scales animated 1 -> 2 (sawtooth, waterSpeed, phases 0 and
+        // 0.5) crossfaded, times the fixed-function light (ambient = diffuse
+        // = stdMatDiffCoef, x1); always alpha blended, no z write, no
+        // specular, no env cube.
+        out.shading = StandardMaterial::Shading::Water;
+        out.blend = StandardMaterial::Blend::Alpha;
+        out.specularPower = 0;
+        envReflection = false;
+        normalEnabled = false;
+        out.texAnim = StandardMaterial::TexAnim::None;
+        out.waterSpeed = number("waterSpeed", 0.3f);
     } else if (contains(type, "Water")) {
         // water.matShad: alpha blended over the water layer (5).
         out.blend = StandardMaterial::Blend::Alpha;
@@ -363,6 +377,11 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
             out.blend = StandardMaterial::Blend::Alpha;
     }
 
+    // DetermineLightingMode: "additive" materials are never lit; neither are
+    // those whose diffuse and specular coefficients are all 0 (unlit, the
+    // texture times a black diffuse: the same colour as lit).
+    if (out.blend == StandardMaterial::Blend::Additive && out.shading == StandardMaterial::Shading::Standard)
+        out.lighting = false;
     out.diffuse = {diffuse[0], diffuse[1], diffuse[2]};
     if (baseEnabled)
         out.baseTexture = baseTextureName(m);

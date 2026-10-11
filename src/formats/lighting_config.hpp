@@ -34,6 +34,9 @@ struct LightingState {
     std::array<float, 3> skyColor{0, 0, 0};
     float skyStrength = 0;
     std::vector<Light> lights; // in file order; redefining a name replaces it
+    // `environment (colour) [strength]`: the "environmentCube" texture light
+    // that scales env cube reflections (and particles): colour x strength.
+    std::array<float, 3> environment{1, 1, 1};
     // `modifiers <type> <practical> <diffusion> [<practical falloff> <diffusion falloff>]`:
     // how strongly lights of a kind ("insideObjects", "outsideObjects",
     // "insidePortals", ...) light objects (practical) and the light maps

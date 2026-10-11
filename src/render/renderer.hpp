@@ -106,6 +106,9 @@ public:
     // 0.5 everywhere (textures as they are).
     void setLightMap(int slot, const RgbaImage& image);
     void setLightMapMix(float mix) { lightMapMix_ = mix; }
+    // The state's "environment" light (colour x strength): env cube
+    // reflections are multiplied by it (allTextureLights), dimming them at night.
+    void setEnvironmentLight(simd_float3 rgb) { environment_ = rgb; }
 
     // Clock for texture coordinate animations, in seconds; until it is set
     // (or after setting it negative) the renderer uses its own running time.
@@ -144,6 +147,7 @@ private:
     MTL::RenderPipelineState* opaque_ = nullptr;
     MTL::RenderPipelineState* alphaBlend_ = nullptr;
     MTL::RenderPipelineState* additive_ = nullptr;
+    MTL::RenderPipelineState* addOne_ = nullptr; // one + one (addNoSrcAlphaScale)
     MTL::DepthStencilState* depthWrite_ = nullptr;
     MTL::DepthStencilState* depthRead_ = nullptr; // blended parts test but do not write
     MTL::SamplerState* sampler_ = nullptr;
@@ -166,6 +170,7 @@ private:
     std::array<MTL::Buffer*, kFramesInFlight> lightBuffers_{};
     std::array<MTL::Texture*, 2> lightMaps_{}; // owned, null until set
     float lightMapMix_ = 0;
+    simd_float3 environment_{1, 1, 1};
     // Light maps replaced while frames in flight may still read them: released
     // once kFramesInFlight frames have been encoded since.
     std::vector<std::pair<MTL::Texture*, int>> retired_;

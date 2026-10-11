@@ -84,13 +84,15 @@ std::string baseTextureName(const MaterialDefinition& m);
 // types that map onto it (diffuse times deprecatedStdMatInvDiffuseCoeffMultiplier),
 // the Sim materials, walls, floors, CelShadedMaterial, VertexAlpha, ...
 struct StandardMaterial {
-    enum class Blend { None, Alpha, Additive };
+    // Additive: srcAlpha + one ("additive"); AddNoSrcAlpha: one + one ("addNoSrcAlphaScale").
+    enum class Blend { None, Alpha, Additive, AddNoSrcAlpha };
     enum class Cull { Clockwise, CounterClockwise, None }; // which winding is culled
     enum class Shading {
         Standard,   // texture x (emissive + diffuse x lights) + specular + env cube
         Sim,        // Sim materials: no specular, lights scaled by simMaterialLightingScale (0.8)
         CelShaded,  // two-tone ramp from a camera-relative light, white rim
-        VertexColor // VertexAlpha: vertex colour and alpha, unlit
+        VertexColor, // VertexAlpha: vertex colour and alpha, unlit
+        Water        // WaterAnimatingTextures (LowEndWater): two animated scales of the texture, lit x1
     };
     enum class TexAnim { None, Transform, Tile };
     enum class Waveform { Sawtooth, Triangular, Sine };
@@ -158,6 +160,7 @@ struct StandardMaterial {
     // CelShadedMaterial ramps (TXTR names).
     std::string celRamp, celEdgeRamp;
     float celEdgeOffset = 0.3f;
+    float waterSpeed = 0.3f; // Water: texture animation speed
 };
 StandardMaterial standardMaterial(const MaterialDefinition& m);
 

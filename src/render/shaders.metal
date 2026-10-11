@@ -31,6 +31,7 @@ enum : uint {
     kLightMapped = 65536,  // walls, floors, terrain: 2 x texture x light map (textures 10/11) x diffuse
     kDetail = 131072,      // terrain: detail texture (12) at uv x misc.z over the base by its alpha
     kMaskAlphaOnly = 262144, // terrain paints: alpha from the mask alone
+    kWater = 524288,         // WaterAnimatingTextures: two animated scales of the base (speed misc.w), lit x1
 };
 
 struct Draw {
@@ -42,7 +43,7 @@ struct Draw {
     float4 env;      // env cube coefficient rgb, mip bias in w
     float4 uv0;      // base uv: u' = dot(uv0.xyz, (u, v, 1))
     float4 uv1;      //          v' = dot(uv1.xyz, (u, v, 1))
-    float4 misc;     // x: cel edge offset, y: bump strength, z: detail uv scale
+    float4 misc;     // x: cel edge offset, y: bump strength, z: detail uv scale, w: water speed
     float alphaRef;
     uint flags;
     uint lightSet;   // index into the light sets (buffer 3)
@@ -64,7 +65,8 @@ struct Frame {
     float4x4 viewProj;
     float4x4 view;
     float4 eye;      // xyz: camera position
-    float4 lightMap; // x: mix of light map 1 over light map 0
+    float4 params;      // x: mix of light map 1 over light map 0, y: time in seconds
+    float4 environment; // rgb: the environment light, scaling env cube reflections
 };
 
 struct VertexOut {
@@ -140,6 +142,15 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               sampler cubeSmp [[sampler(2)]],
                               sampler pointSmp [[sampler(3)]]) {
     float4 tex = base.sample(smp, in.baseUv);
+    if (draw.flags & kWater) {
+        // SinglePassWater: the texture scaled 1 -> 2 (sawtooth) at phases 0
+        // and 0.5, crossfaded so that neither shows its wrap (the scale's
+        // origin, 0, and the waveform's start are inferred).
+        const float p = fract(frame.params.y * draw.misc.w);
+        const float4 t0 = base.sample(smp, in.baseUv * (1.0 + p));
+        const float4 t1 = base.sample(smp, in.baseUv * (1.0 + fract(p + 0.5)));
+        tex = mix(t1, t0, 1.0 - abs(2.0 * p - 1.0));
+    }
     if (draw.flags & kDetail) {
         // terrain.matShad: lerpTextureAlpha(detail, canvas).
         const float4 d = detail.sample(smp, in.uv * draw.misc.z);
@@ -200,8 +211,15 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         // walls pass 1), crossfading between two light maps on a lighting
         // state change.
         const float3 lm = mix(lightMap0.sample(maskSmp, in.lightUv).rgb, lightMap1.sample(maskSmp, in.lightUv).rgb,
-                              frame.lightMap.x);
+                              frame.params.x);
         color.rgb = saturate(2.0 * albedo * lm * draw.color.rgb);
+    } else if ((draw.flags & kLighting) && (draw.flags & kWater)) {
+        // Fixed-function light, ambient = diffuse = stdMatDiffCoef, x1.
+        constant LightSet& set = lightSets[draw.lightSet];
+        float3 diffuse = set.ambient.rgb;
+        for (uint i = 0; i < min(uint(set.ambient.w), kMaxLights); ++i)
+            diffuse += set.lights[i].color.rgb * max(dot(n, set.lights[i].direction.xyz), 0.0);
+        color.rgb = albedo * saturate(draw.color.rgb * diffuse);
     } else if (draw.flags & kLighting) {
         if (draw.flags & kNormalMap)
             n = bumpedNormal(n, in.world, in.baseUv, height, smp, draw.misc.y);
@@ -224,12 +242,14 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
             if (draw.specular.w > 0.0)
                 spec += set.lights[i].color.rgb * set.lights[i].color.w * pow(max(dot(r, l), 0.0), draw.specular.w);
         }
-        color.rgb = saturate(2.0 * albedo * saturate(0.5 * (draw.emissive.rgb + draw.color.rgb * diffuse)));
+        // Ambient only (no lights in the set): 0.5 x ambient x diffuse, no emissive.
+        const float3 emissive = set.ambient.w > 0.0 ? draw.emissive.rgb : float3(0.0);
+        color.rgb = saturate(2.0 * albedo * saturate(0.5 * (emissive + draw.color.rgb * diffuse)));
         color.rgb = saturate(color.rgb + saturate(draw.specular.rgb * spec));
         if (draw.flags & kEnvCube) {
             if (draw.flags & kEnvLocked)
                 r = (frame.view * float4(r, 0)).xyz;
-            color.rgb += envCube.sample(cubeSmp, r, bias(draw.env.w)).rgb * draw.env.rgb;
+            color.rgb += envCube.sample(cubeSmp, r, bias(draw.env.w)).rgb * draw.env.rgb * frame.environment.rgb;
         }
     }
     return color;
