@@ -25,6 +25,7 @@ class VM;
 //   --floor x0,y0,x1,y1,pattern[,level] floor the tiles of a rectangle ("none" erases)
 //   --wallpaper x0,y0,x1,y1,side,pattern[,level]  side r, l or b (seen from x0,y0)
 //   --wallpaper-room x,y,pattern[,level]
+//   --door <guid|name>@x,y[,dir[,level]]  a door or window (object tool rules)
 //   --build-undo / --build-redo (value ignored)
 // Patterns are catalog GUIDs (0x...) or names/materials. Prints what
 // happened; false if one failed.

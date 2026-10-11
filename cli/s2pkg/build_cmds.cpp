@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <tuple>
 #include <sstream>
 #include <stdexcept>
@@ -124,7 +125,7 @@ int num(const std::vector<std::string>& f, size_t i, int fallback) {
 } // namespace
 
 bool isBuildEdit(const std::string& flag) {
-    return flag == "--wall" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
+    return flag == "--door" || flag == "--wall" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
            flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--build-undo" || flag == "--build-redo";
 }
 
@@ -133,6 +134,7 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
     if (edits.empty())
         return true;
     const BuildCatalog catalog = BuildCatalog::load(index);
+    std::optional<Catalog> objects;
     vm::BuildEditor editor(vm, lot, &catalog);
     bool ok = true;
     for (const auto& [flag, value] : edits) {
@@ -144,7 +146,26 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             return p;
         };
         vm::BuildEditor::Result r;
-        if (flag == "--build-undo" || flag == "--build-redo") {
+        if (flag == "--door") {
+            // A door or window from the build catalog, by the object tool's
+            // rules (vm/placement.hpp), bought; the world opens it.
+            if (!objects)
+                objects = Catalog::load(index, true);
+            const auto at = value.find('@');
+            const CatalogEntry* e = objects->find(value.substr(0, at));
+            if (!e || at == std::string::npos)
+                throw std::runtime_error("--door: expected <guid|name>@x,y[,dir][,level]");
+            const auto g = fields(value.substr(at + 1));
+            const vm::ObjectId id = vm::createGhost(vm, e->group, e->instance);
+            const vm::Placement p = vm::checkPlacement(vm, id, {num(g, 0, 0), num(g, 1, 0), num(g, 3, 1)}, num(g, 2, 2));
+            std::string why = p.reason;
+            r.ok = p.ok && vm::buy(vm, id, p, e->price, &why);
+            if (!r.ok)
+                vm::deleteGroup(vm, id);
+            else
+                editor.syncWorld();
+            r.message = r.ok ? e->name + " bought as object " + std::to_string(id) : e->name + ": " + why;
+        } else if (flag == "--build-undo" || flag == "--build-redo") {
             r.ok = flag == "--build-undo" ? editor.undo() : editor.redo();
             r.message = r.ok ? "done" : "nothing to do";
         } else if (flag == "--wall" || flag == "--room" || flag == "--delete-wall") {
