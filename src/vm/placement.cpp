@@ -329,6 +329,7 @@ void deleteGroup(VM& vm, ObjectId id) {
         vm.removeObject(part);
     }
     vm.planner.reset();
+    computeLotData(vm);
 }
 
 int32_t funds(VM& vm) {
@@ -364,6 +365,7 @@ bool buy(VM& vm, ObjectId ghost, const Placement& p, int price, std::string* why
     addFunds(vm, -price);
     for (const auto& part : p.parts)
         vm.startMain(part.id);
+    computeLotData(vm);
     return true;
 }
 
@@ -374,6 +376,7 @@ int sell(VM& vm, ObjectId id) {
         runEntry(vm, id, entry::UserDelete);
     pickUp(vm, id);
     addFunds(vm, value);
+    computeLotData(vm);
     return value;
 }
 
@@ -394,6 +397,43 @@ void dayPassed(VM& vm) {
             v = limit;
         x->data[objdata::CurrentValue] = int16_t(v);
     }
+    computeLotData(vm); // cTSLot on the day's message 0x89
+}
+
+void computeLotData(VM& vm) {
+    constexpr int16_t kMovementFlags = 43; // bit 0x10: stays after evict (STR# 0xCB #4)
+    int32_t family = 0, lot = 0;
+    for (const auto& [id, o] : vm.objects()) {
+        if (!o.definition || o.person || multiTileGroup(o) != id)
+            continue;
+        // In the world: placed, or in a slot of something in the world.
+        const Object* at = &o;
+        for (int depth = 0; at && !at->position.inWorld() && at->data[objdata::ContainerId] && depth < 8; ++depth)
+            at = vm.object(at->data[objdata::ContainerId]);
+        if (!at || !at->position.inWorld())
+            continue;
+        const ObjectDefinition& d = *o.definition;
+        const uint16_t type = d.objectType();
+        if (type == 7 || (d.field(0x90) & 0x400))
+            continue;
+        const int value = o.data[objdata::CurrentValue];
+        const bool buyMode = d.field(0xCA) == 0;
+        if (buyMode && !(o.data[kMovementFlags] & 0x10))
+            family += value; // IsDeletedByEvict
+        else if (!buyMode || type == 0xB || type == 0xC)
+            lot += value;    // Build mode objects; stairs and railings (+ RailingCost, not modelled)
+    }
+    auto& v = vm.lotValues;
+    if (!v.known)
+        v.lot = int32_t(vm.globals[46]) * 1000 + vm.globals[47];
+    v.lotObjects = lot;
+    v.familyObjects = family;
+    v.known = true;
+    const int32_t total = lot + family;
+    vm.globals[48] = int16_t(total / 1000);
+    vm.globals[49] = int16_t(total - 1000 * (total / 1000));
+    vm.globals[46] = int16_t(v.lot / 1000);
+    vm.globals[47] = int16_t(v.lot - 1000 * (v.lot / 1000));
 }
 
 int saleValue(VM& vm, ObjectId id) {

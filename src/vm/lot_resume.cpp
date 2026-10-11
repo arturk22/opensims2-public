@@ -1,6 +1,7 @@
 // Starting a lot's objects from their saved state (lot_resume.hpp).
 
 #include "lot_resume.hpp"
+#include "placement.hpp"
 
 #include "formats/lot_objects.hpp"
 #include "interactions.hpp"
@@ -218,6 +219,12 @@ void applySavedSimulator(VM& vm, const LotObjects& saved) {
     c.month = std::clamp<int>(g[global::Month], 1, 12);
     c.year = g[global::Year];
     vm.setClockGlobals();
+    if (saved.simulator.read) {
+        vm.lotValues.lot = int32_t(saved.simulator.fA4);
+        vm.lotValues.lotObjects = int32_t(saved.simulator.fA8);
+        vm.lotValues.familyObjects = int32_t(saved.simulator.fAC);
+        vm.lotValues.known = true;
+    }
 }
 
 void applySavedMotives(VM& vm, const LotLoad& load, const LotObjects& saved) {
@@ -348,8 +355,11 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
 
 ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved, bool fromInit) {
     applySavedSimulator(vm, saved);
-    if (!fromInit)
-        return resumeLotObjects(vm, load, saved);
+    if (!fromInit) {
+        ResumeResult r = resumeLotObjects(vm, load, saved);
+        computeLotData(vm); // the lot loaded (cTSLot, message 0x8B)
+        return r;
+    }
     for (const auto& e : load.objects)
         if (e.created && vm.object(e.id))
             vm.runFunction(e.id, 0);
@@ -357,6 +367,7 @@ ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved,
     ResumeResult out;
     for (const auto& e : load.objects)
         out.freshMains += e.created && vm.startMain(e.id);
+    computeLotData(vm);
     return out;
 }
 

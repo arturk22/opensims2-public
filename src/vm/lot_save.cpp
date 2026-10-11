@@ -319,6 +319,12 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
     if (lot.simulator.read && lot.globals.size() > size_t(global::BudgetDiv10000))
         lot.simulator.f98 = uint32_t(int32_t(vm.globals[global::BudgetDiv10000]) * 10000 +
                                      vm.globals[global::BudgetMod10000]);
+    // The lot and objects values (+0xA4/+0xA8/+0xAC, placement.hpp computeLotData).
+    if (lot.simulator.read && vm.lotValues.known) {
+        lot.simulator.fA4 = uint32_t(vm.lotValues.lot);
+        lot.simulator.fA8 = uint32_t(vm.lotValues.lotObjects);
+        lot.simulator.fAC = uint32_t(vm.lotValues.familyObjects);
+    }
     return out;
 }
 

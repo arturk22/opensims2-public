@@ -1199,10 +1199,18 @@ recálculo dos desejos (`Wants - Refresh - Recalc`, global `0x03A5`).
   `SetFamilyObjectsValue` gravam `+0xA8`/`+0xAC` e `UpdateTotalObjectsValue`
   põe (`+0xA8` + `+0xAC`) ÷ 1000 e o resto nos globais 48/49. São os
   campos do SIMI (`docs/save-mac.md` §5) e os globais também vão salvos;
-  **o opensims2 lê os globais salvos, mas não os refaz quando o valor do lote
-  ou dos objetos muda** (compra, venda, construção, depreciação): quem chama
-  esses `Set*` é o `cTSLot::ComputeAndStoreLotData`, na virada do dia e na
-  mensagem `0x8B` de lote mudado (`docs/neighborhood-mac.md` §11.1).
+  quem chama esses `Set*` é o `cTSLot::ComputeAndStoreLotData` (rodada 10,
+  `docs/neighborhood-mac.md` §11.1) com o `cEdithObjectModule::ComputeStats`
+  (BV `0x52c638`), na virada do dia e quando o lote muda. O opensims2 refaz os
+  globais 46–49 e o SIMI +0xA4/+0xA8/+0xAC (`vm::computeLotData`) ao
+  carregar, na meia-noite (depois da depreciação), ao comprar, vender e
+  apagar. Pelo decompilado, o `ComputeStats` soma o dado 41 de objeto líder no
+  mundo (fora tipo 7 e o bit 0x400 do campo 40): `IsDeletedByEvict` (modo
+  compra, campo 0x45 = 0, sem o bit 0x10 do dado 43) → família; senão objeto
+  do modo construção, ou tipo 0xB/0xC (+ corrimão, não feito) → lote.
+  `N001_Lot11`, 3 dias (`s2pkg autonomy --ticks 130000`): conta de 466 no dia
+  1 às 10:18 (globais 46 = 4, 48 = 75) e de 400 no dia 3 (48 = 64, depois de
+  duas depreciações).
 - **A constante `0x81`** (dono `0x1A`: tabela 1 = BCON privado 0x1001,
   entrada 1) do `CT - Calculate Bill` (`0x1017` das contas, Σ valor atual
   / 10 dos objetos sem o bit 14 do dado 40) vale **10**, mas essa árvore é

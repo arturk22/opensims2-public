@@ -151,6 +151,24 @@ int sell(VM& vm, ObjectId id);
 // their lead.
 void dayPassed(VM& vm);
 
+// cTSLot::ComputeAndStoreLotData (BV 0x46fbd4) with cEdithObjectModule::
+// ComputeStats (BV 0x52c638; docs/neighborhood-mac.md §11.1): the current
+// value (od 41) of every lead object in the world, not of type 7 nor with
+// catalog field 40 bit 0x400, goes to the family's objects when
+// cTSObject::IsDeletedByEvict (a Buy mode object, OBJD field 0x45 "build
+// mode type" 0, without "stays after evict", od 43 bit 0x10), else to the
+// lot's objects when it is a Build mode object or of type 0xB/0xC (then
+// plus its railing, RailingCost: not modelled, 0); the decompiled
+// ComputeStats adds a Build mode object to the lot and a Buy mode one only
+// for those two types (the round-10 RE note's table reads it the other
+// way). Then the simulator's
+// setters: globals 48/49 = (lot + family objects) / 1000 and the rest,
+// 46/47 = the lot value / 1000 and the rest (the land, kept from the
+// SIMI: the lot's size does not change in play). The game runs it on the
+// day's turn (message 0x89) and when the lot changes (0x8B); here at the
+// day's turn, after buying, selling or deleting, and when a lot loads.
+void computeLotData(VM& vm);
+
 // The current family's funds (the Budget globals, else the family's).
 int32_t funds(VM& vm);
 void addFunds(VM& vm, int32_t amount);

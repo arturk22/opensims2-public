@@ -943,6 +943,13 @@ public:
     // host calls it with real time.
     bool dialogTimeouts = true;
     bool dialogClockIsTicks = true;
+    // The simulator's values (SIMI +0xA4 lot, +0xA8 lot objects, +0xAC
+    // family objects), as cTSLot::ComputeAndStoreLotData leaves them
+    // (placement.hpp computeLotData); `known` once read or computed.
+    struct LotValues {
+        int32_t lot = 0, lotObjects = 0, familyObjects = 0;
+        bool known = false;
+    } lotValues;
     // Ours, not the binary's: Find Best Interaction leaves out what the Sim
     // ran autonomously and failed in the last 9999 ticks (autonomy.cpp). Off
     // by default: the binary's autonomy memory changes nothing in the base game.

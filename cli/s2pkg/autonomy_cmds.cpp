@@ -25,6 +25,7 @@
 #include <array>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -136,6 +137,12 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     // when a Sim leaves the lot (out of world: at work or school) or comes back.
     const int16_t family = machine.globals[vm::global::CurrentFamily];
     int32_t funds = vm::familyFunds(machine, family);
+    constexpr uint32_t kBillsGuid = 0xD840F488;
+    std::set<vm::ObjectId> seenBills;
+    for (const auto& [oid, ob] : machine.objects())
+        if (ob.guid() == kBillsGuid)
+            seenBills.insert(oid); // already in the lot
+    std::array<int16_t, 4> values{-1, -1, -1, -1};
     std::printf("  family %d funds %d\n", family, funds);
     std::map<vm::ObjectId, std::array<int16_t, 3>> job;
     std::map<vm::ObjectId, bool> onLot;
@@ -286,6 +293,24 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                                 clockText(machine).c_str(), simName(*s).c_str(), running[id].c_str());
                 running[id] = now;
             }
+        }
+        // Bills the mailman brings (the "Bills" object, its attribute 0 the
+        // amount: docs/primitives-mac.md §4e) and the lot and objects values
+        // the bill is made from (globals 46/47 and 48/49).
+        for (const auto& [oid, ob] : machine.objects())
+            if (ob.guid() == kBillsGuid && !seenBills.count(oid)) {
+                seenBills.insert(oid);
+                std::printf("  tick %6llu %s bill %d: amount %d (globals 46 %d, 48 %d: 4 x 46 + 6 x 48 = %d)\n",
+                            static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(), oid,
+                            ob.attributes.empty() ? 0 : ob.attributes[0], machine.globals[46], machine.globals[48],
+                            4 * machine.globals[46] + 6 * machine.globals[48]);
+            }
+        if (std::array<int16_t, 4> v{machine.globals[46], machine.globals[47], machine.globals[48], machine.globals[49]};
+            v != values) {
+            std::printf("  tick %6llu %s lot value %d, objects value %d (globals 46-49 %d %d %d %d)\n",
+                        static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(), v[0] * 1000 + v[1],
+                        v[2] * 1000 + v[3], v[0], v[1], v[2], v[3]);
+            values = v;
         }
         if (const int32_t f = vm::familyFunds(machine, family); f != funds) {
             std::printf("  tick %6llu %s family funds %d -> %d (%+d)\n", static_cast<unsigned long long>(machine.ticks),
