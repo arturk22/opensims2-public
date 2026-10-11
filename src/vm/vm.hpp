@@ -491,6 +491,9 @@ struct Object {
         uint16_t node = 0;
     };
     std::optional<Route> route;
+    // A routing slot 0 the engine gave the object (the synthetic slot of a
+    // move-out-of-way destination, routing.cpp), instead of its SLOT's.
+    std::optional<Slots::Slot> syntheticSlot;
     // What the animation primitives play on it (animation.hpp).
     AnimationState animation;
     // Where the head looks (Look At, view.cpp): the target object, from which

@@ -2,6 +2,7 @@
 #include "vm.hpp"
 
 #include "errors.hpp"
+#include "interactions.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/model.hpp"
@@ -647,6 +648,131 @@ ObjectId simAhead(VM& vm, const Object& me, const Object::Route& r) {
     return 0;
 }
 
+// MoveOutOfWay (docs/routing-mac.md §8.1): a destination object ("Destination
+// - For Go Here & Shoo", GUID 0x7C4) is created on the blocker, with a
+// routing slot 0 to where it should go, and its "Interaction - Move Out Of
+// Way" (the TTAB entry whose action is 0x100B: Go To Routing Slot 0 of the
+// destination) is queued on the blocker with the asker's priority.
+constexpr uint32_t kDestinationGuid = 0x000007C4;
+constexpr uint16_t kMoveOutOfWayTree = 0x100B;
+
+// Whether the Sim already has a "move out of the way" queued (IsAskedToMove).
+bool askedToMove(VM& vm, const Object& sim) {
+    for (const auto& q : sim.queue)
+        if (const Object* o = vm.object(q.object); o && o->definition && o->definition->guid() == kDestinationGuid &&
+                                                   q.action == kMoveOutOfWayTree)
+            return true;
+    return false;
+}
+
+// Where a blocker steps aside to (CreateMoveOutOfWayDestination, mode 0):
+// to a side of its facing (first the one whose point a tile out is farther
+// from the asker, then the other), 1 to 6 tiles out in that direction or 45
+// degrees either way, on a free spot it can reach, clear of the asker's way
+// ahead. Inferred from the decompiled setup of the synthetic slot (the
+// binary aims it 45 degrees off the blocker's facing, towards the side
+// farther from the asker; its distances and width are float constants not
+// read here).
+std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& blocker) {
+    PathPlanner& planner = plannerOf(vm);
+    const std::vector<ObjectId> ignore{me.id, blocker.id};
+    addObstacles(vm, planner, blocker, ignore);
+    const int dir = ((blocker.data[objdata::Direction] % 8) + 8) % 8;
+    auto sidePoint = [&](int d) {
+        const auto [sx, sy] = directionStep(d % 8);
+        return Point2{blocker.position.x + float(sx), blocker.position.y + float(sy)};
+    };
+    const Point2 left = sidePoint(dir + 6), right = sidePoint(dir + 2);
+    const float dl = std::hypot(left[0] - me.position.x, left[1] - me.position.y);
+    const float dr = std::hypot(right[0] - me.position.x, right[1] - me.position.y);
+    const int side = dl <= dr ? dir + 2 : dir + 6, otherSide = side + 4;
+    // Clear of the asker's line through the blocker (from the asker to two
+    // tiles past the blocker; the binary aims the slot by the direction
+    // from the asker to the blocker).
+    const float lx = blocker.position.x - me.position.x, ly = blocker.position.y - me.position.y;
+    const float ll = std::max(std::hypot(lx, ly), 1e-3f);
+    const Point2 a{me.position.x, me.position.y}, b{blocker.position.x + lx / ll * 2, blocker.position.y + ly / ll * 2};
+    auto nearWay = [&](Point2 q) {
+        const float vx = b[0] - a[0], vy = b[1] - a[1], len2 = vx * vx + vy * vy;
+        const float u = len2 > 0 ? std::clamp(((q[0] - a[0]) * vx + (q[1] - a[1]) * vy) / len2, 0.0f, 1.0f) : 0;
+        return std::hypot(a[0] + vx * u - q[0], a[1] + vy * u - q[1]) < 0.75f;
+    };
+    for (int dist = 1; dist <= 6; ++dist)
+        for (const int d : {side, side + 1, side + 7, otherSide, otherSide + 1, otherSide + 7}) {
+            const auto [sx, sy] = directionStep(d % 8);
+            const float n = std::hypot(float(sx), float(sy));
+            const Point2 q{blocker.position.x + float(sx) / n * float(dist), blocker.position.y + float(sy) / n * float(dist)};
+            if (!planner.free(blocker.position.level, q) || nearWay(q))
+                continue;
+            PlannedPath path;
+            RouteFail why;
+            if (planner.plan({blocker.position.x, blocker.position.y}, blocker.position.level, blocker.position.level,
+                             {{q[0], q[1], 0}}, path, why))
+                return q;
+        }
+    return std::nullopt;
+}
+
+// AskBlockerToMove → the blocker's MoveOutOfWay (docs/routing-mac.md §8.1):
+// refused when the blocker is already asked or is blocked by me, unless its
+// person data 159 has bit 0x02 its priority (person data 33) must be below
+// mine less one (at least 1), my route must have more than one goal, we
+// must be within 4 tiles and a place to step aside to must exist. Accepted:
+// the move-out-of-way interaction goes on its queue with that priority.
+bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocker) {
+    if (!me.person || !blocker.person || askedToMove(vm, blocker))
+        return false;
+    if (blocker.route && (blocker.route->blocker == me.id || blocker.route->blocker != 0))
+        return false;
+    const int16_t priority = int16_t(std::max(1, me.person->data[persondata::Priority] - 1));
+    if (!(blocker.person->data[159] & 0x02) && blocker.person->data[persondata::Priority] >= priority)
+        return false;
+    if (r.goals.size() < 2 || blocker.position.level != me.position.level ||
+        std::hypot(blocker.position.x - me.position.x, blocker.position.y - me.position.y) > 4)
+        return false;
+    const auto spot = moveOutOfWayPoint(vm, me, blocker);
+    if (!spot)
+        return false;
+    std::vector<ObjectId> existing;
+    for (const auto& [id, o] : vm.objects())
+        existing.push_back(id);
+    Object* dest = vm.instantiateGuid(kDestinationGuid);
+    if (!dest)
+        return false;
+    // The destination stands where the blocker is ("Interaction - Move Out
+    // Of Way" walks only when it is on it), and its routing slot 0 is the
+    // place to step aside to (the binary attaches a synthetic slot; here a
+    // point offset from the destination).
+    const ObjectId destId = dest->id;
+    auto place = [&](Object& d) {
+        moveTo(vm, d, blocker.position.x, blocker.position.y, blocker.position.level);
+        d.data[objdata::Direction] = 0; // model +Y = world +X: offset (dy, -dx)
+        Slots::Slot slot;
+        slot.type = 3;
+        slot.facing = -3;
+        slot.offset = {(*spot)[1] - blocker.position.y, blocker.position.x - (*spot)[0], 0};
+        d.syntheticSlot = slot;
+    };
+    place(*dest);
+    vm.initialize(destId, existing);
+    dest = vm.object(destId);
+    if (!dest)
+        return false;
+    place(*dest); // its Init may move it
+    const auto table = interactionTable(vm, *dest);
+    if (table && table->table)
+        for (const auto& e : table->table->interactions)
+            if (e.action == kMoveOutOfWayTree)
+                if (auto q = makeInteraction(vm, destId, uint16_t(e.stringIndex))) {
+                    q->priority = priority;
+                    q->pushedBy = me.id;
+                    enqueue(vm, blocker, *q);
+                    return true;
+                }
+    vm.removeObject(destId);
+    return false;
+}
+
 enum class Step { Walking, Arrived, Failed, Call };
 
 // Runs a global tree (by name) on the walker's thread in the middle of the
@@ -764,6 +890,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             ++r.replans;
             if (stationary && r.replans <= kAskToMoveTries) {
                 r.blockedTicks = 1;
+                if (!treeResult)
+                    askBlockerToMove(vm, me, r, *vm.object(b));
                 if (!treeResult && runWalkTree(c, "CT - Route Ask To Move Animation", {b, 0, 0, 0}))
                     return Step::Call;
                 return Step::Walking;
@@ -977,6 +1105,8 @@ const Slots* slotTable(VM& vm, const Object& o) {
 // Routing slot `index` of `target` (or of the global SLOT); the game's error
 // when there is none.
 const Slots::Slot& routingSlot(VM& vm, const Object& target, bool global, int index) {
+    if (!global && index == 0 && target.syntheticSlot)
+        return *target.syntheticSlot;
     const auto slots = routingSlots(global ? vm.code().slots(kGlobalGroup, kGlobalSlots) : slotTable(vm, target));
     if (index < 0 || size_t(index) >= slots.size())
         throw VMError("Invalid routing slot specified (" + std::string(global ? "global " : "") + "slot " +
