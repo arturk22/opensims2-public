@@ -1006,8 +1006,18 @@ Exit changeMaterial(Context& c) {
         if (!other)
             throw gameError(err::NoObject, "Change Material: object " + std::to_string(id));
     }
+    // The names come from the running tree's group (TryChangeMaterial looks
+    // the table up in the group of the code the stack element runs, BV): the
+    // semi-global "Events - Use Remote" of the TVs names the screens in its
+    // own STR# 0x88; the code owner's group when that has none.
     auto name = [&](const Object& from, uint16_t table, int index) {
-        const StringTable* t = c.vm.code().strings(from.group, table);
+        const StringTable* t = nullptr;
+        if (&from == owner && c.frame.group)
+            if (const StringTable* f = c.vm.code().strings(c.frame.group, table);
+                f && index >= 0 && size_t(index) < f->count(lang::EnglishUS))
+                t = f;
+        if (!t)
+            t = c.vm.code().strings(from.group, table);
         if (!t || index < 0 || size_t(index) >= t->count(lang::EnglishUS))
             throw VMError("Change Material: no entry " + std::to_string(index) + " in STR# " + hexString(table) +
                           " of " + hexString(from.group));

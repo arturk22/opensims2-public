@@ -453,7 +453,16 @@ Exit changeActionString(Context& c) {
 std::optional<InteractionTableRef> interactionTable(VM& vm, const Object& o) {
     if (!o.definition)
         return std::nullopt;
-    const uint16_t tt = o.definition->field(kObjdTreeTableId);
+    uint16_t tt = o.definition->field(kObjdTreeTableId);
+    // A multi-tile part that leads its interaction group (OBJD interaction
+    // group < 0) without a table of its own uses its master's (the vehicles'
+    // 0,5 part; the master "Car - Career - Sedan" has the rides the riders
+    // push; inferred).
+    if (tt == 0xFFFF && int16_t(o.definition->interactionGroup()) < 0)
+        if (const uint16_t m = o.definition->masterId())
+            if (auto mi = vm.code().masterDefinition(o.group, m))
+                if (const ObjectDefinition* md = vm.code().definition(o.group, *mi))
+                    tt = md->field(kObjdTreeTableId);
     if (tt == 0 || tt == 0xFFFF)
         return std::nullopt;
     for (uint32_t g : {o.group, o.semiGroup})

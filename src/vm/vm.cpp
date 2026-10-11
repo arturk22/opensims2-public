@@ -643,23 +643,32 @@ Object& VM::instantiate(uint32_t group, uint16_t definitionInstance) {
             lead = p;
             break;
         }
-    // A master with a Main of its own while the 0,0 part has none is an
-    // object too, out of the world, and leads (cEdithObjectModule::
-    // MakeNewOutOfWorldObject makes the master first, docs/primitives-mac.md
-    // §4c): the vehicles' masters ("Car - Career - Sedan") have the Main and
-    // the interactions the riders push ("Sub - Send to Work" finds the car
-    // by category and pushes its entry 1); the parts' semi-global Main sleeps
-    // when it is not the lead. Inferred which masters: the lots' saved gates
-    // and wedding arches lead from 0,0, whose Main they have.
+    // When the 0,0 part has no Main, the lead is the part that leads the
+    // interaction group (OBJD interaction group < 0), else the first part
+    // with a Main: the vehicles' 0,5 / 0,8 parts, whose semi-global
+    // "Functional - Main" fetches the riders while the others' sleeps on its
+    // "am I the lead?" test (inferred; the saved gates and wedding arches
+    // lead from 0,0, whose Main they have). The master's interactions are
+    // the parts' (interactionTable: tree table 0xFFFF).
     auto hasMain = [&](uint16_t instance) {
         const ObjectFunctions* f = code_.functions(group, instance);
         return f && f->functions.size() > 1 && f->functions[1].action;
     };
-    const bool masterLeads = hasMain(definitionInstance) && !hasMain(lead);
-    Object& first = instantiatePart(group, masterLeads ? definitionInstance : lead);
+    if (!hasMain(lead)) {
+        std::optional<uint16_t> withMain, groupLead;
+        for (uint16_t p : parts) {
+            if (!withMain && hasMain(p))
+                withMain = p;
+            if (const ObjectDefinition* d = code_.definition(group, p); !groupLead && d && int16_t(d->interactionGroup()) < 0)
+                groupLead = p;
+        }
+        if (groupLead || withMain)
+            lead = groupLead ? *groupLead : *withMain;
+    }
+    Object& first = instantiatePart(group, lead);
     const ObjectId leadId = first.id;
     for (uint16_t p : parts)
-        if (masterLeads || p != lead)
+        if (p != lead)
             instantiatePart(group, p).data[objdata::LeadTileObjectId] = leadId;
     return *object(leadId);
 }
