@@ -1,4 +1,5 @@
 #include "hood_bridge.hpp"
+#include "wants.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/neighborhood.hpp"
@@ -137,6 +138,7 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
             vm.inventory(kind, int16_t(inv.id)) = toInventory(inv);
             ++out.inventories;
         }
+    loadWants(vm, h); // wants.cpp: the want library and the SWAF records
     return out;
 }
 

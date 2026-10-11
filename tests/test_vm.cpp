@@ -728,7 +728,7 @@ static void testGenericSimsCall() {
     fx.vm.globals[global::CurrentFamily] = 3;
     auto call = [](uint8_t i, Target t, Target f = E) { return instr(0x01, t, f, {i}); };
     fx.code.add(kObjGroup, 0x1000,
-                tree({call(39, go(1)),                                    // recalc wants: recorded
+                tree({call(38, go(1)),                                    // unlink character: recorded (39, wants, is test_wants')
                       expr(StackId, 0, Assign, Lit, 5, go(2), E),
                       expr(Temp, 0, Assign, Lit, 0, go(3), E),
                       call(4, go(4)),                                     // neighbor 5 joins family 3
@@ -747,7 +747,7 @@ static void testGenericSimsCall() {
                       call(60, T)}));                                     // no such call
     Thread t = fx.run(0x1000);
     check(t.status == Thread::Status::Failed && t.error.find("Invalid global sim call.") != std::string::npos &&
-              fx.vm.engineRequests.size() == 1 && fx.vm.engineRequests[0].call == 39 &&
+              fx.vm.engineRequests.size() == 1 && fx.vm.engineRequests[0].call == 38 &&
               sim.person->data[persondata::FamilyNumber] == 3 && fx.vm.neighbors[5].personData[persondata::FamilyNumber] == 0 &&
               fx.vm.neighbors[6].personData[persondata::FamilyNumber] == 4 && !fx.vm.buildBuyEnabled &&
               fx.vm.globals[global::Paused] == 1 && fx.vm.globals[global::SelectedPersonId] == 2,

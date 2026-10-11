@@ -17,6 +17,8 @@
 #include "vm/lot_neighborhood.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/motives.hpp"
+#include "vm/wants.hpp"
+#include "wants_cmds.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -211,10 +213,29 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                         vm::describeOperands(machine, t, f, in).c_str());
         };
 
+    // Wants and fears rolled, fulfilled and come true, and the aspiration
+    // score (src/vm/wants), as they happen.
+    size_t wantEvents = 0;
+    auto printWantEvents = [&] {
+        vm::WantSystem* ws = vm::wantSystem(machine);
+        if (!ws)
+            return;
+        while (wantEvents < ws->events.size()) {
+            const auto& e = ws->events[wantEvents++];
+            if (e.kind == vm::WantEvent::Kind::Satisfied && !verbose)
+                continue;
+            std::printf("  %s %s\n", clockText(machine).c_str(), describeWantEvent(machine, e).c_str());
+        }
+        if (ws->events.size() >= 4000) { // keep the window small
+            ws->events.clear();
+            wantEvents = 0;
+        }
+    };
     std::map<vm::ObjectId, std::string> running;
     std::map<vm::ObjectId, std::pair<uint64_t, size_t>> lastMemory; // newest remembered tick, count
     for (long i = 0; i < ticks; ++i) {
         machine.tick();
+        printWantEvents();
         for (vm::ObjectId id : sims) {
             const vm::Object* s = machine.object(id);
             if (!s || !s->person)

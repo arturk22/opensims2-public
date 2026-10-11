@@ -1,6 +1,7 @@
 #include "characters.hpp"
 #include "engine.hpp"
 #include "vm.hpp"
+#include "wants.hpp"
 
 #include "hood_bridge.hpp"
 #include "autonomy.hpp"
@@ -449,6 +450,11 @@ Exit setToNext(Context& c) {
     case 27:                                                                        // utility using object
         matches = [](const Object& x) { return x.data[76] != 0 || x.data[77] != 0; };
         break;
+    case 37: { // want category in temp 0: OBJD field 0x2F (offset 0x9E), as the want trees' categories (BV TrySetToNext 0x25)
+        const int16_t category = c.thread.temps[0];
+        matches = [category](const Object& x) { return x.definition && int16_t(x.definition->field(0x9E)) == category; };
+        break;
+    }
     default:
         if (type <= 37)
             throw VMError("Set to Next: search type " + std::to_string(type) + " not implemented");
@@ -1258,7 +1264,6 @@ Exit genericSimsCall(Context& c) {
     case 33: // update footprint
     case 37: // lot transition done
     case 38: // unlink character
-    case 39: // force recalc of wants
     case 41: // facial overlay zits toggle
     case 42: // Sim fitness update
     case 44: // hide/unhide puck
@@ -1268,6 +1273,8 @@ Exit genericSimsCall(Context& c) {
     case 51: // show info on lot loading screen
     case 53: // set facial overlay state
         return request();
+    case 39: // force recalc of wants (wants.cpp)
+        return wantsGenericCall(c);
     case 4: { // add to family
         Neighbor* n = vm.neighbor(c.frame.stackObject);
         if (!n)

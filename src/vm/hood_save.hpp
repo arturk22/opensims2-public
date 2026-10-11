@@ -11,7 +11,9 @@
 // - SREL: the Sim-to-Sim relationships the VM changed or added (values the
 //   VM cut to 16 bits keep their saved 32 bits while the cut agrees);
 // - NGBH: the inventories (global, lot, family, neighbor) when the VM's
-//   differ from the package's.
+//   differ from the package's;
+// - SWAF: the wants, fears and achievement history of the Sims whose want
+//   state changed (wants.hpp).
 // Everything else of the package is copied as it is.
 
 #include "vm.hpp"
@@ -29,6 +31,7 @@ namespace os2::vm {
 struct HoodSaveResult {
     size_t families = 0, descriptions = 0, relationshipsChanged = 0, relationshipsNew = 0;
     bool inventories = false;
+    size_t wants = 0; // SWAF records written (wants.hpp)
     std::vector<std::string> warnings;
 };
 

@@ -4,6 +4,7 @@
 #include "dialog.hpp"
 
 #include "vm.hpp"
+#include "wants.hpp"
 
 #include "formats/binreader.hpp"
 
@@ -112,15 +113,8 @@ Exit changeOutfit(Context& c) {
 // §5): the Sim (owner byte 0, data u16 1), the want's GUID u32 3, its type
 // (0 value, 1 person, 2/3 object, 4 skill, 5 career) with (owner 7, data
 // u16 8) and a level (owner 10, data u16 11). Wants and aspiration points
-// are not simulated yet, so it only checks the Sim and returns true (the
-// job offer, "CT - Offer Job", satisfies "get a job" this way).
-Exit wantSatisfy(Context& c) {
-    const auto& o = c.instruction.operands;
-    const Object* sim = c.vm.object(c.get(o[0], int16_t(le16(&o[1]))));
-    if (!sim || !sim->person)
-        return Exit::False;
-    return Exit::True;
-}
+// are simulated in wants.cpp (cTSWantSimulator::MarkWantAsAchieved).
+Exit wantSatisfy(Context& c) { return wantSatisfyPrimitive(c); } // wants.cpp
 
 } // namespace
 

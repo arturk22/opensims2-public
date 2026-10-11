@@ -3,6 +3,7 @@
 #include "hood_save.hpp"
 
 #include "hood_bridge.hpp"
+#include "wants.hpp"
 
 #include "formats/dbpf.hpp"
 #include "formats/neighborhood.hpp"
@@ -264,6 +265,18 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         }
     }
 
+    // SWAF: each Sim's wants, fears and achievement history, for those whose
+    // state changed (pending want updates are run first, as WritePerson does).
+    std::map<uint32_t, std::vector<uint8_t>> swaf;
+    if (WantSystem* ws = wantSystem(vm)) {
+        flushWants(vm);
+        for (const auto& [id, s] : ws->sims)
+            if (wantRecordChanged(vm, id)) {
+                swaf[uint32_t(uint16_t(id))] = wantRecord(vm, id).write();
+                ++res.wants;
+            }
+    }
+
     // The package: every resource as it is but the replaced ones.
     DbpfPackage pkg(source);
     DbpfWriter w;
@@ -274,12 +287,17 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         if (auto it = replaced.find({e.tgi.type, instance}); it != replaced.end()) {
             w.add(e.tgi, std::move(it->second), e.compressed());
             replaced.erase(it);
+        } else if (auto sw = e.tgi.type == wants::kTypeSwaf ? swaf.find(e.tgi.instance) : swaf.end(); sw != swaf.end()) {
+            w.add(e.tgi, std::move(sw->second), e.compressed());
+            swaf.erase(sw);
         } else {
             w.addStored(e.tgi, pkg.readRaw(e), e.rawSize);
         }
     }
     for (auto& [tgi, bytes] : added)
         w.add(tgi, std::move(bytes), true);
+    for (auto& [instance, bytes] : swaf) // Sims that had no SWAF
+        w.add(Tgi{wants::kTypeSwaf, 0xFFFFFFFF, instance, 0}, std::move(bytes), true);
     pkg.closeFile();
     w.save(out);
     return res;
@@ -344,6 +362,8 @@ std::vector<std::string> compareNeighborhoodState(VM& a, VM& b, size_t limit) {
                 break;
             }
     }
+    for (const auto& d : compareWantState(a, b, limit))
+        diff(d);
     if (more)
         out.push_back("... and " + std::to_string(more) + " more");
     return out;

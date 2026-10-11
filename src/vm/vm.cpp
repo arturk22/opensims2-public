@@ -835,6 +835,7 @@ void VM::tick() {
     setClockGlobals();
     ++ticks;
     tickMotives(*this); // motives.cpp
+    tickWants(*this);   // wants.cpp
     handleTimers();
     // Objects created or removed during the tick: the IDs are read first;
     // new objects get their turn from the next tick on.

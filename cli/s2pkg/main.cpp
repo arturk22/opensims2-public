@@ -13,6 +13,7 @@
 #include "hood_cmds.hpp"
 #include "pie_cmds.hpp"
 #include "autonomy_cmds.hpp"
+#include "wants_cmds.hpp"
 #include "route_cmds.hpp"
 #include "state_cmds.hpp"
 #include "save_cmds.hpp"
@@ -949,7 +950,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
-                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage(), casUsage());
+                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), wantsUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage(), casUsage());
     return 2;
 }
 
@@ -983,6 +984,8 @@ int main(int argc, char** argv) {
         if (int rc = routeCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = autonomyCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = wantsCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = stateCommand(cmd, argc, argv); rc >= 0)
             return rc;

@@ -32,6 +32,8 @@ class ResourceIndex;
 
 namespace os2::vm {
 
+struct WantSystem; // wants.hpp
+
 // Group of the global BHAVs/BCONs (opcodes 0x100-0xFFF, in objects.package).
 constexpr uint32_t kGlobalGroup = 0x7FD46CD0;
 constexpr uint32_t kTypeBhav = 0x42484156;
@@ -903,6 +905,9 @@ public:
 
     std::mt19937 random{0x5132};
 
+    // Wants, fears and aspiration (wants.hpp); null without want data.
+    std::shared_ptr<WantSystem> wants;
+
     // Engine requests not yet taken by the host (oldest first), and the
     // switches Generic Sims Call flips: build/buy buttons and game state
     // transitions (saving, quitting, lot transitions).
@@ -1006,6 +1011,7 @@ void registerViewPrimitives(VM& vm);
 void registerReachPrimitives(VM& vm);
 // The motive engine's tick, Set Motive Change and Find 5 Worst Motives (motives.cpp).
 void tickMotives(VM& vm);
+void tickWants(VM& vm); // wants.cpp
 void registerMotivePrimitives(VM& vm);
 // Find Best Interaction and Gosub Found Action (autonomy.cpp).
 void registerAutonomyPrimitives(VM& vm);
