@@ -523,3 +523,167 @@ uma pasta sob os dados do jogo nunca é escrita: vai para uma cópia sob
 `HoodMode::familyCreated` (relê o bairro, abre o painel de famílias e
 seleciona a nova, com os 20.000 de `kDefaultFamilyFunds`) → mudar para um
 lote → jogar. O Sair do puck chama `CasMode::onExit` (volta sem família).
+
+## 17. Envelhecer, nascer e os laços da família nova (rodada 10, binário + dados)
+
+Lido no BV 1.10 (Ghidra headless com os nomes do `symxfer`) e nas árvores do
+`objects.package` (`s2pkg dump`, `s2pkg prim-usage`).
+
+### 17.1 A primitiva Age (0x75, `nTSSG::cPerson::TryAge`, BV `0x673238`)
+
+Lê só o byte 0 do operando (não há leitura de temp no código; os 11 usos do
+jogo têm os outros bytes 0) e o converte em (dado de pessoa 58, bit de idade):
+
+| byte 0 | dado 58 | idade |
+|---|---|---|
+| 0 adulto | 0x13 (19) | 0x08 |
+| 1 criança | 3 | 0x02 |
+| 2 bebê que anda | 2 | 0x01 |
+| 3 adolescente | 0x10 (16) | 0x04 |
+| 4 idoso | 0x33 (51) | 0x10 |
+| 0xD bebê | 0 | 0x20 |
+| 0xE jovem adulto (só BV) | −1 → 0x13 | 0x40 |
+| outro | nada | — (devolve verdadeiro) |
+
+Em ordem:
+1. tira do Sim os objetos dos slots dele (vtable `0x2ac`) e guarda a lista;
+2. se o AGED preparado (`cPerson +0x340`) não é da idade nova (ou não
+   existe), chama `ComputeAging(dado 58 novo)` (vtable `0x4a0`, §17.2);
+3. dado 175 = 1 só para jovem adulto; o AGED do personagem (`0xAC598EAC`,
+   instância 1, grupo do personagem) recebe o preparado por
+   `MergeOutfits` (vtable `0x17c`, com a máscara `0x110` em 0 antes e `0xFFFF`
+   depois) e o `+0x340` é solto;
+4. dados 119 e 120 ("Outfit Source GUID1/2") = 0, **dado 58 = o valor da
+   tabela**; solta a roupa em uso (`+0x33c`) e refaz o modelo (vtable
+   `0x138(0, 1)`);
+5. **rosto**: se o pacote do personagem não tem rosto dessa idade
+   (`HasFace(chave, idade)`, BV `0x66ca78`: procura no segmento `0x656B8F0C`
+   do personagem um GZPS de rosto da idade), `UpdateFaces` (BV `0x672eb4`):
+   o editor gera o rosto e o CAS grava o personagem com o pedido de
+   gravação de flags `0xB` (`cTSCASSystem` vtable `0x20`; é o
+   `ProcessSaveSimRequest` do §7, que exporta o GMDC/CRES do rosto da idade
+   nova e o **LxNR**), depois `ResetOutfit`;
+6. vtable `0x498`; esvazia a fila de animações da interface `0x1AFF3BD4`;
+   devolve os objetos aos slots;
+7. mensagem **`0x97`** (idade mudou) com o ID do vizinho e o dado 61
+   (família); o painel vivo responde com `onSelectedPersonAgeChanged`.
+
+Devolve sempre verdadeiro. O opensims2 (`vm/person_prims.cpp`) já grava os
+dados 58/119/120/175 assim; o resto (§17.2) é o trabalho do renderizador.
+O "byte 1 bit 0 = idade no temp 0" do `docs/primitives-mac.md` (operandos, 0x75) vem das
+strings do editor: o código do Mac não lê temp.
+
+### 17.2 Roupa e cabelo da idade nova (`ComputeAging` e `MakeNewAge`)
+
+`nTSSG::cPerson::ComputeAging(dado 58)` (BV `0x6729cc`) mapeia a idade
+como a animação (`< 2` bebê 0x20, 2 bebê que anda 1, 3–15 criança 2, 16–18
+adolescente 4, 19–50 adulto 8, `> 50` idoso 0x10; jovem adulto 0x40 com −1) e,
+se o `+0x340` não é dessa idade, cria um AGED novo (`GZCOM` `0xAC598EAC`) e
+chama **`cTSSimOutfitData::MakeNewAge(idade, novo, true)`** (BV `0x8210f4`,
+vtable `0x190`) do AGED do personagem; avisa a interface (miniatura).
+É o que o **Generic Sims Call 24 "Preload New Sim Age"** faz antes da hora
+(`TryGenericSimCall` caso 0x18: temp 0 = dado 58 novo, pela interface
+`0x1A34F3F4` do `cPerson`, vtable `0x300`; não faz nada com a velocidade do
+jogo > 3); a árvore "Preload - Next Age Skin" (`0x1020` do Controller - Age)
+o chama ~antes da transição, então o `TryAge` normalmente já acha o AGED
+pronto.
+
+`MakeNewAge(idade, saída, sortear)`:
+1. saída = cópia do AGED (máscara `0xFFFB`), `SetAge(idade)`; **idoso:
+   `SetHairColor(LID nulo)`** (o cabelo grisalho; inferido); `DetermineSkeleton`.
+2. Lê o pacote do personagem (`0x656B8F0C`): os GZPS de **mesma idade e
+   sexo** que a saída entram como rosto (parte 2) e vão para todas as 13
+   categorias (`SetEntries`, só as partes de bits < 0x40 nos humanos) — são
+   os "2 GZPS de rosto" do §7 (o da idade atual e o da próxima).
+3. `SetupNakedEntries`. **Cabelo**: para cada categoria menos a nu (`0x80`),
+   apaga o cabelo (parte 1) e, para cada cabelo da idade velha, procura
+   (`FUN_00820508`) um GZPS da **mesma `family`** na idade nova e categoria
+   (idoso: com o hairtone fixo do idoso em BSS `0x2c359d0`); se não acha,
+   afrouxa os filtros (exclui flags 9, depois sem a flag 0x40/0x400 do
+   filtro); bebê → `FindRandomHairForAge` (BV `0x8132e0`: categoria
+   `0x1779`, exclui flags `0xB`) quando a categoria (`& 0x1779`) ficou vazia.
+4. **Roupas sorteadas de novo** (o `true` do `ComputeAging`): humanos apagam
+   as partes `0x1C` (top 4, body 8, bottom 0x10) de todas as categorias menos
+   a nu, depois `SetValidFlags(0xFFDF)` + `Randomize(4, 0)` e
+   `SetValidFlags(0xFFDF)` + `Randomize(−1, 9)`. Os bits "válidos" dizem o que
+   o `RandomizeForHumans` (BV `0x818734`) **não** sorteia (0x80 idade, 0x100
+   sexo, 0x40 forma física, 1 pele, 2 cor do cabelo, 4 cabelo, 8/0x10 rosto,
+   **0x20 roupas**): com `0xFFDF` só as roupas. Para cada categoria (menos
+   `0x80` e `0x800`, e as que o catálogo marca com o bit 2), 49 % das vezes
+   tenta primeiro uma roupa inteira (parte 8), senão top + bottom; os
+   argumentos filtram as flags do GZPS (`Randomize(incluir, excluir)`:
+   primeiro só as com a flag 4, depois todas sem as flags 1|8).
+5. Acessórios (categoria `0x800`, duas partes de `0x27375e0`): os que valem
+   para a idade ficam; os outros são trocados pelo item do catálogo
+   equivalente.
+
+### 17.3 A transição no jogo (dados: "Controller - Age")
+
+Tudo em SimAntics, no objeto **"Controller - Age"** (OBJD `0x2C085A2B`, grupo
+`0x7F07FBBC`, tipo 7): "Age Transition" (`0x1009`) é a única árvore que
+chama Age fora das de depuração (bytes 1, 3, 0, 4: criança, adolescente,
+adulto, idoso; o bebê → bebê que anda é "Interaction - Person B - Baby",
+`7F63E31E`/`0x1001`). Ela escolhe a animação pela idade
+(`a2b-/b2a-growUpBaby-*`, `*-react-growUp-good/badMemory` do STR# "Anims"),
+roda a cinemática (STR# 0x97 do grupo: `ageTransTeen2AdultMale/Female`,
+`ageTransToddler2Child`, `ageTransChild2TeenMale/Female`,
+`ageTransAdult2Elder`; "Cinematic - …" `0x102E`/`0x1031`–`0x1033`, câmera
+`o-cineCam-Age*`), "Sub - Post Age FX & Sound" (`0x101E`: som + 5 efeitos
+`*_grip_ageTransitionGroup<Adult|Teen|...>` nos ossos root/neck/pulsos/
+chapéu, STR# "Effects"), "Transition Relationships - Child to Teen/Teen to
+Adult/Adult to Elder" (`0x1021`–`0x1023`), "Want Satisfy - Grow Up",
+"Memory - Grow Up", "Work - Retire Notification" e o diálogo "has grown into
+…". O bolo: "BirthdayCakeList - Add/Remove/Find/Empty?" (`0x100E`–`0x1013`),
+"Sub - Kill the Cake", "Sub - Is Cake Day?", "Get in Temp 0 - Age Duration"
+(`0x1014`) e o aviso "will grow up in just one day at 6 p.m.". Rodar essas
+árvores na VM dá o fluxo; o motor só precisa do §17.1/17.2.
+
+### 17.4 Bebê novo: o pedido do CAS (`ProcessCreateBabyRequest`, BV `0x55a8f4`)
+
+Complementa o §5 (genética): a máquina de estados avança um estado por tick:
+
+| estado | faz |
+|---|---|
+| 0 | pede (assíncrono, prazo 60 000 ms) os **LxNR** (`0xCCCEF852`, instância 1) dos dois pais, no grupo do personagem de cada um, se humanos |
+| 1 | sexo (§5); dado 58 = 1, dado 0xBA = espécie (BV), dado 65 = sexo, 82 = 500, 81 = 0; AGED novo com idade 0x20, sexo, espécie, forma `FLOAT_0274b470`, grupo e chave do personagem novo; registra no sim system |
+| 2 | o editor (`EdithEditor`) carrega o AGED; o gerente de genética (`FUN_000c7fb0()` vtable `0x6c`, slot `0x28`) monta o DNA e o rosto do filho a partir dos dois pais e do ID novo (`"%d"`) — §5 `DetermineGenetics`/`DetermineDescendantFace`, o editor mistura os dois LxNR por região; humanos: cor do cabelo pela genética (`GetBodyPartSystemHairColor(0x20, sexo, cor)`), olhos, e **uma roupa de bebê sorteada** entre os itens do bin (`UIServiceManager` `0x68`, idade 0x20) sem a flag 1; o editor exporta para o personagem (vtable `0x30` com o ID) |
+| 3 | `ClearAllEntries`, `SetupNakedEntries`, `SetValidFlags(0x3DB)`, `Randomize(−1, 8)` |
+| 4 | nome: STR# `0x7F96C284` #0x37/0x38 (bebê menino/menina; criança 2/1 do STR# 0x95, bebê que anda e adolescente 0x37/0x38, adulto 0x44/0x43) + sobrenome do pai do primeiro ID |
+| 5 | humanos: o neighbor manager grava o personagem (vtable `0xa0(vizinho, 0, 1)`: o `ProcessSaveSimRequest` do §7, que escreve GZPS/AGED/CRES/GMND/SHPE/TXMT/TXTR/3IDR/IMG e o **LxNR** exportado pelo editor) |
+| 6 | pronto |
+
+`CreateNewBaby(pai1, pai2, modelo, ...)` (BV `0x5634b8`): sem modelo,
+sorteia qual pai dá a espécie (`rand(100) < 51` → o segundo) e usa o modelo
+padrão dela (humano `0x7FD96B54`).
+
+### 17.5 Relacionamentos de uma família nova (dados)
+
+Não há código C++: quando um Sim da família do lote começa o Main ("Function
+- Main" da pessoa, `7F01EC29`/`0x2001`, instrução 0: dado 61 == global 9),
+chama **"Init - Relationships"** (`0x2013`, semi-global da pessoa). Ela chama
+"Family - Relationships - Init" (`0x20E`, global: grava o parentesco, var 3)
+e, para cada outro membro da família (Set to Next por dado 61), pega o
+parentesco ("Family - Get Relation", `0x1DA`: o que o outro é para mim) e
+grava as 4 variáveis **diária e vitalícia, nos dois sentidos** = mínimo + rand
+(faixa), com o mínimo no BCON `0x201E` "Relationships - Resident Init - Min"
+e a faixa no `0x2031` "... - Range" (grupo `0x7F01EC29`):
+
+| o outro é | eu→outro diária | eu→outro vitalícia | outro→eu diária | outro→eu vitalícia |
+|---|---|---|---|---|
+| 1 filho | 30 + r30 | 30 + r30 | 35 + r10 | 20 + r10 |
+| 2 pai/mãe | 35 + r10 | 20 + r10 | 30 + r30 | 30 + r30 |
+| 3 irmão | −10 + r59 | 1 + r48 | −10 + r59 | 1 + r48 |
+| 9 cônjuge | 70 + r20 | 70 + r10 | 70 + r20 | 70 + r10 |
+| 4 neto | 30 + r30 | 30 + r30 | 10 + r30 | 10 + r30 |
+| 5 avô | 10 + r30 | 10 + r30 | 30 + r30 | 30 + r30 |
+| 6 sobrinho | 1 + r48 | 1 + r48 | 1 + r48 | 1 + r48 |
+| 7 tio | 1 + r48 | 1 + r48 | 1 + r48 | 1 + r48 |
+| 8 primo | 1 + r48 | 1 + r48 | 1 + r48 | 1 + r48 |
+| 0/outro (colega) | 10 + r35 | 0 + r20 | 10 + r35 | 0 + r20 |
+
+(r n = Random Number 0…n−1; "eu→outro" = as locais 2/3 que o Relationship
+grava de mim para o stack object, inferido pela ordem dos operandos.) Depois
+compara as diárias com o BCON global `0x102`[0] e as vitalícias com
+`0x102`[15] e liga as flags 5/6 do BCON `0x11C` ("G - Relationship - UI
+Flags": amigo / melhor amigo) na var 1 dos dois lados. Um bebê novo passa
+pelo mesmo Main, então ganha esses valores com pais e irmãos.
