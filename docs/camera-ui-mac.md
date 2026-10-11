@@ -29,8 +29,14 @@ sin h)). `t` ∈ [0, 1] é a posição dentro da faixa de pitch do nível
 (convertidos por π/180 no `SetPitchAngles`/`SetOrientations`).
 
 `fov` por nível (graus; sem tabela: **60°**); `fov` 0 = ortográfica com
-meia-largura = d·0,2. `clip` = perto/longe por nível. Não confirmado se o
-FOV é vertical ou horizontal (vai para o viewer do scene graph).
+meia-largura = d·0,2. `clip` = perto/longe por nível. O FOV vai para o
+viewer do scene graph (`cViewerRefNode::SetFieldOfView`, BV `0x1b33d94`:
+guarda o ângulo em radianos no volume de visão e marca o volume sujo); o
+`cTSWinSimView::SetFOV` (BV `0x1a590c`) passa `2·f·π/180`, ou seja, recebe
+o **meio ângulo** em graus. A matriz é montada pela camada D3D da Aspyr no
+estilo `PerspectiveFov` do Direct3D, em que o ângulo é o **vertical**
+(inferido: a montagem da matriz não foi achada; nenhum código ajusta o FOV
+pela razão de aspecto).
 
 ### 1.2 Suavização (binário, `FUN_008c77d4` escalar, `FUN_008c78a0` ângulo, `FUN_008c7c64` vetor)
 
@@ -38,13 +44,17 @@ Cada valor animado tem (passos N, mínimo m) e a cada atualização com Δt:
 
 ```
 r    = alvo − atual
-step = r · Δt / 50 / N            (Δt em ms: N é o número de "quadros de 50 ms"; inferido)
+step = r · Δt / 50 / N            (Δt em ms: N = nº de "quadros de 50 ms")
 se step² < m²:  se r² ≤ m² → atual = alvo; senão step = sign(r)·m
 se step² > r²:  atual = alvo
 senão atual += step
 ```
 
 É uma aproximação exponencial com velocidade mínima, não uma duração fixa.
+**Δt é em milissegundos** (binário): é um `unsigned long` inteiro, a
+diferença entre duas leituras do relógio do jogo (`Update(unsigned long Δt,
+viewer)`), e a mesma função anima a UI (`cTSWinActionQueueIcon::GZOnTick`
+passa `agora − antes` do timer em ms).
 `smoothing 5 8` = N do zoom e do giro; `defaultminchange` (0,02) é o m de
 todos; `keyboard*lerpsteps`/`lerpminchange` sobrescrevem os do teclado. O
 ângulo usa o caminho mais curto (−π..π). O código atual interpola por
@@ -103,7 +113,7 @@ Pedidos internos (`HandleRequest`, binário):
 | distância da zoom table horizontal | distância 3D ao longo da visão |
 | suavização em ticks de 30 Hz | exponencial em quadros de 50 ms com velocidade mínima |
 | pan ∝ zoom | sim, por ser em pixels de tela |
-| FOV vertical | não confirmado |
+| FOV vertical | vertical pela convenção D3D (inferido); o viewer recebe o ângulo inteiro |
 | limitar ao lote | lote + `constraintwidth` (−10 = 10 tiles para dentro) |
 | seguir altura do piso/Sim | sim: andar do Sim e amostra de altura do piso |
 
@@ -168,8 +178,25 @@ Começo no topo e sentido horário: iguais. Faltam: raio 68 px, as cores
 alinhamentos por ângulo, submenu centrado no item com "voltar" no centro,
 escolha no soltar e o gesto, e o ajuste à tela.
 
+## 2.5 Botões do mouse (binário, `cTSMainToolbar::AddDefaultTools`, BV `0x1a9f44`)
+
+O modo vivo liga ferramentas a códigos de botão (`0x80000000 | botão`,
+modificadores nos bits 24–25; botão 1 esquerdo, 2 direito, 4 do meio):
+
+| código | ferramenta (CLSID) | o que faz |
+|---|---|---|
+| `0x03000001` (esquerdo) | `0x692EE271` (ação padrão) | escolher, menu de pie |
+| `0x80000002` (direito) e aliases `0x82000002`, `0x83000002` | `cTSUserToolCameraRightClick` (`0x692EE7EE`) | **pan contínuo**: segura e afasta o mouse do ponto onde clicou (mostra a âncora); a câmera anda com velocidade = deslocamento em pixels × 0,25 (`DragCamera`, BV `0x34c764`, evento `0x9B66110A`); soltar manda velocidade 0 |
+| `0x80000004` (meio) e aliases `0x81000004`, `0x82000004`, `0x83000004`, **`0x81000002` (direito + modificador 1)** | `cTSUserToolCameraMiddleClick` (`0x4BB0EF8E`) | **girar**: no clique manda `0x9C17E418` (começo) e mostra o cursor de giro; cada movimento manda `0xBC17E41C` com (dx, dy) desde o clique (dx invertido por uma opção global) e devolve o cursor ao ponto do clique (arrasto infinito); o `cCameraLive` faz o giro de §1.4 |
+| — | `cTSUserToolCameraHandDrag` (`0x69518882`) | pan 1:1 pelo deslocamento em pixels entre movimentos (mesmo evento `0x9B66110A`); usada quando outra parte da UI a ativa |
+| roda | `cCameraLive::FillDeviceMap` (BV `0x6a4474`): eixo da roda × 1/120 por "clique" (`0xBC17E412`, `0x9C17E415`) | zoom (§1.4) |
+
+O modificador 1 não foi identificado (o mais provável é Shift ou a tecla
+de opção do Mac, para o botão direito virar giro num mouse de dois
+botões). Num mouse de um botão o Mac manda Ctrl-clique como botão direito.
+
 ## 3. O que falta
 
-- O mapa de dispositivo do mouse (`FillDeviceMap`): qual botão gira/move.
-- Se o FOV é vertical; a unidade de Δt do lerp (ms, inferido).
+- O nome do modificador `0x01000000` dos códigos de botão.
+- A montagem da matriz de projeção (para confirmar FOV vertical).
 - A tabela de offsets do item "mais" e a cor de desabilitado.
