@@ -32,9 +32,103 @@ std::vector<int16_t> shorts(BinReader& r, size_t n) {
     return v;
 }
 
+// After the object data (OpenTS2's SimsObjectCodec, checked on the game's
+// lots: every XOBJ ends right after its timers).
+// `runningFields`: the frames carry the objects they run as and on (the
+// current layout); stale states written by an older build lack them.
+void parseTail(BinReader& r, uint32_t version, LotObjects::State& s, bool runningFields) {
+    for (auto& t : s.tempTokenFields)
+        t = r.i16();
+    s.token.guid = r.u32();
+    s.token.flags = r.u16();
+    if (version > 0xCA)
+        r.skip(2 + 4 + 2); // stack ID, personal inventory instance, category
+    s.token.properties = shorts(r, r.u32());
+    for (auto n = r.i16(); n > 0; --n)
+        s.arrays.push_back(shorts(r, uint16_t(r.i16())));
+    shorts(r, uint16_t(r.i16())); // not understood
+    s.ownership = r.i32();
+    for (auto n = r.i16(); n > 0; --n)
+        s.materialSubstitutes.push_back(r.str7());
+    r.u16(); // persistent flag
+    const int32_t frames = r.i32();
+    if (frames < 0 || frames > 1024)
+        throw FormatError("tree stack of " + std::to_string(frames) + " frames");
+    r.u32();
+    for (int32_t i = 0; i < frames; ++i) {
+        LotObjects::State::Frame f;
+        f.objectId = r.u16();
+        f.treeId = r.u16();
+        f.node = r.u16();
+        const uint8_t locals = r.u8(), params = r.u8();
+        if (runningFields) {
+            f.runningObject = r.u16();
+            f.runningOn = r.u16();
+        }
+        f.params = shorts(r, params);
+        f.locals = shorts(r, locals);
+        f.primitiveState = r.i32();
+        f.behaviorSaveType = r.u16();
+        s.stack.push_back(std::move(f));
+    }
+    // Relationship table.
+    const int32_t relFlag = r.i32();
+    if (relFlag < 0) {
+        for (auto n = r.i32(); n > 0; --n) {
+            if (!r.i32())
+                continue;
+            r.u32();
+            r.skip(4 * size_t(uint32_t(r.i32())));
+        }
+    } else if (relFlag == 2 || relFlag == 3) {
+        r.skip(4 * size_t(uint32_t(r.i32())));
+    }
+    // Slots.
+    const int16_t slots = r.i16();
+    if (slots < 0) {
+        if (slots == -100)
+            r.u16();
+        r.skip(2 * size_t(uint16_t(r.i16())));
+    } else {
+        if (slots > 0)
+            r.skip(4);
+        for (int i = 0; i < slots - 1; ++i)
+            r.skip(4);
+    }
+    // Effects.
+    if (r.i16() != 0 && r.u16() == 1)
+        for (auto n = r.u32(); n; --n) {
+            r.str7();
+            r.str7();
+            r.skip(8);
+        }
+    for (auto n = r.i16(); n > 0; --n) { // overrides
+        r.str7();
+        r.str7();
+        r.str7();
+    }
+    const uint32_t timers = r.u32();
+    if (timers > 1024)
+        throw FormatError(std::to_string(timers) + " timers");
+    for (uint32_t i = 0; i < timers; ++i) {
+        LotObjects::State::Timer t;
+        t.a = r.u32();
+        t.b = r.u32();
+        t.c = r.u16();
+        t.d = r.u32();
+        t.e = r.i32();
+        t.f = r.i32();
+        for (auto& p : t.params)
+            p = r.i16();
+        s.timers.push_back(t);
+    }
+    const auto rest = r.bytes(r.remaining());
+    s.rest.assign(rest.begin(), rest.end());
+}
+
 } // namespace
 
-LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_t version) {
+LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_t version, bool person) {
     BinReader r(bytes);
     r.skip(kFileNameSize);
     r.skip(16); // four floats, zero in the game's lots
@@ -54,10 +148,44 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
     s.semiAttributes = shorts(r, semiAttributes);
     for (auto& t : s.temps)
         t = r.i16();
-    s.data = shorts(r, dataCount(version));
-    // Then the temporary token, object arrays, the tree stack, relationships,
-    // slots, effects and timers, which are not read yet.
-    return s;
+    // Two layouts after the attributes, told apart by where they end: the
+    // current one (the object data's 88 fields, frames with the objects they
+    // run as/on) and an older one (87 fields, frames without them) that some
+    // states keep. In N001_Lot11, 566 of 745 XOBJs end exactly with the first
+    // layout and 85 with the second; most of the older ones belong to objects
+    // the object module does not list (stale states). A PERS goes on after its
+    // timers, so the first layout that reads through is taken.
+    const size_t dataStart = r.pos();
+    const size_t count = dataCount(version);
+    std::string firstError;
+    State best;
+    bool found = false;
+    for (int layout = 0; layout < 2 && !found; ++layout) {
+        State t = s;
+        BinReader q(bytes);
+        q.seek(dataStart);
+        t.data = shorts(q, count - size_t(layout));
+        if (layout)
+            t.data.push_back(0);
+        try {
+            parseTail(q, version, t, layout == 0);
+            if (t.rest.empty() || person) {
+                best = std::move(t);
+                found = true;
+            } else if (firstError.empty()) {
+                firstError = std::to_string(t.rest.size()) + " bytes after the timers";
+                best = std::move(t);
+            }
+        } catch (const FormatError& e) {
+            if (firstError.empty()) {
+                firstError = e.what();
+                best = std::move(t);
+            }
+        }
+    }
+    if (!found)
+        best.tailError = firstError;
+    return best;
 }
 
 uint32_t LotObjects::guidOf(int16_t id) const {
@@ -121,7 +249,7 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
         if (auto it = states.find(id); it != states.end() && it->second.person)
             continue;
         try {
-            State s = parseState(pkg.read(e), lot.version);
+            State s = parseState(pkg.read(e), lot.version, person);
             if (s.data.size() <= 11 || s.data[11] != id)
                 throw FormatError("object ID field " + std::to_string(s.data.size() > 11 ? s.data[11] : 0) +
                                   " is not the instance");

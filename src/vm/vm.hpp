@@ -344,6 +344,19 @@ struct Position {
     bool inWorld() const { return x >= 0 && y >= 0; }
 };
 
+// A timer On Timer (0x7A) set on an object (cTSObject::AddTimer; the saved
+// state keeps them, cTSObject::WriteTimers): after `ticks` ticks the event
+// tree runs on the object, with these parameters. Looping timers start
+// over with `period`.
+struct ObjectTimer {
+    uint16_t tree = 0; // call opcode, resolved against the object's code
+    int32_t ticks = 0; // left
+    int32_t period = 0;
+    bool looping = false;
+    std::array<int16_t, 8> params{};
+};
+constexpr size_t kMaxTimersPerObject = 64;
+
 struct Object {
     ObjectId id = 0;
     uint32_t group = 0;     // private BHAVs/BCONs (the group of the object's OBJD)
@@ -394,6 +407,8 @@ struct Object {
     std::optional<Route> route;
     // What the animation primitives play on it (animation.hpp).
     AnimationState animation;
+    // On Timer's timers, in the order they were set.
+    std::vector<ObjectTimer> timers;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
@@ -591,8 +606,13 @@ public:
     } clock;
     void setClockGlobals();
     uint64_t ticks = 0;
-    // One tick: the clock, then a turn of every Main thread.
+    // One tick: the clock, the objects' timers, then a turn of every Main thread.
     void tick();
+    // Counts down every object's timers and runs the event trees of the
+    // ones that are due (timer.cpp).
+    void handleTimers();
+    // Event trees of timers that failed (the latest; for the host to look at).
+    std::deque<Thread> failedTimerEvents;
 
     std::array<int16_t, kGlobalCount> globals{};
 
@@ -744,5 +764,7 @@ void registerRoutingPrimitives(VM& vm);
 void registerNeighborhoodPrimitives(VM& vm);
 // Get Distance To and Get Direction To (measure.cpp).
 void registerMeasurePrimitives(VM& vm);
+// On Timer (timer.cpp).
+void registerTimerPrimitives(VM& vm);
 
 } // namespace os2::vm

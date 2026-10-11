@@ -45,6 +45,44 @@ struct LotObjects {
         std::vector<int16_t> attributes, semiAttributes;
         std::array<int16_t, 8> temps{};
         std::vector<int16_t> data; // object data, numbered as in STR# 0x8D
+
+        // The rest of a cTSObject, in OpenTS2's layout (SimsObjectCodec).
+        std::array<int16_t, 8> tempTokenFields{};
+        struct Token {
+            uint32_t guid = 0;
+            uint16_t flags = 0;
+            std::vector<int16_t> properties;
+        } token;
+        std::vector<std::vector<int16_t>> arrays; // object arrays
+        int32_t ownership = 0;
+        std::vector<std::string> materialSubstitutes;
+        // The tree stack (cTSTreeStack), the root first: tree, node, locals,
+        // parameters and the objects it runs as/on, with the BHAV's save type.
+        struct Frame {
+            uint16_t objectId = 0;
+            uint16_t treeId = 0;
+            uint16_t node = 0;
+            uint16_t runningObject = 0, runningOn = 0;
+            std::vector<int16_t> params, locals;
+            int32_t primitiveState = 0;
+            uint16_t behaviorSaveType = 0;
+        };
+        std::vector<Frame> stack;
+        // Timers set by On Timer (cTSObject::WriteTimers): seven raw fields
+        // and the eight parameters the event tree gets.
+        struct Timer {
+            uint32_t a = 0, b = 0;
+            uint16_t c = 0;
+            uint32_t d = 0;
+            int32_t e = 0, f = 0;
+            std::array<int16_t, 8> params{};
+        };
+        std::vector<Timer> timers;
+        // Bytes after the timers: in a PERS, the Sim's own data (cTSPerson).
+        std::vector<uint8_t> rest;
+        // Why the part after the object data could not be read (the fields
+        // above stay as far as they got).
+        std::string tailError;
     };
 
     uint32_t version = 0; // of the object module; the states' layout depends on it
@@ -55,7 +93,7 @@ struct LotObjects {
 
     static LotObjects load(DbpfPackage& package);
     // One XOBJ/PERS resource, for an object module of `version`.
-    static State parseState(std::span<const uint8_t> data, uint32_t version);
+    static State parseState(std::span<const uint8_t> data, uint32_t version, bool person = false);
 
     // GUID of the object with this ID, 0 if the object module does not say.
     uint32_t guidOf(int16_t id) const;

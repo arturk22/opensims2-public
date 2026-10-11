@@ -897,6 +897,7 @@ void registerPrimitives(VM& vm) {
     registerNeighborhoodPrimitives(vm);
     registerAnimationPrimitives(vm);
     registerMeasurePrimitives(vm);
+    registerTimerPrimitives(vm);
     registerInteractionPrimitives(vm); // Push Interaction, Idle for Input (queue.cpp)
     registerSoundPrimitives(vm);       // Play / Stop Sound Event, Stop ALL Sounds (sound.cpp)
 }

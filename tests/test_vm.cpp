@@ -820,6 +820,40 @@ static void testAddPackage() {
     std::filesystem::remove(path);
 }
 
+// On Timer (0x7A): the event tree runs on the object after the ticks, with
+// the parameters given or the current tree's; op 1 replaces the timer of
+// the same tree; flag 0x08 takes the ticks from temp 1.
+static void testOnTimer() {
+    Fixture fx;
+    fx.obj();
+    // Event: attribute 0 += param 0; attribute 1 += 1.
+    fx.code.add(kObjGroup, 0x1001, tree({expr(Attr, 0, Add, Param, 0, go(1), E), expr(Attr, 1, Add, Lit, 1, T, E)}, 1));
+    // 3 ticks, op 0, tree 0x1001, params (literal 5, 0, 0).
+    fx.code.add(kObjGroup, 0x1000, tree({instr(0x7A, T, E, {3, 0, 0, 0x01, 0x10, 0, Lit, 5, 0, Lit, 0, 0, Lit, 0, 0})}));
+    check(fx.run(0x1000).result && fx.obj().timers.size() == 1, "On Timer sets a timer");
+    fx.vm.tick(), fx.vm.tick();
+    check(fx.obj().attributes[1] == 0, "the timer has not fired yet");
+    fx.vm.tick();
+    check(fx.obj().attributes[0] == 5 && fx.obj().attributes[1] == 1 && fx.obj().timers.empty(),
+          "the event tree ran with the parameters after 3 ticks");
+    // Current params (flag 0x01), op 1 twice: one timer, the latest parameters.
+    fx.code.add(kObjGroup, 0x1002, tree({instr(0x7A, T, E, {2, 0, 1, 0x01, 0x10, 0x01})}, 1));
+    fx.run(0x1002, {7});
+    fx.run(0x1002, {9});
+    check(fx.obj().timers.size() == 1 && fx.obj().timers[0].params[0] == 9, "op 1 replaces the tree's timer");
+    fx.vm.tick(), fx.vm.tick();
+    check(fx.obj().attributes[0] == 14, "the event got the current tree's parameters");
+    // Ticks from temp 1 (flag 0x08), op 2 twice: two timers.
+    fx.code.add(kObjGroup, 0x1003,
+                tree({expr(Temp, 1, Assign, Lit, 1, go(1), E),
+                      instr(0x7A, go(2), E, {50, 0, 2, 0x01, 0x10, 0x08, Lit, 1, 0, Lit, 0, 0, Lit, 0, 0}),
+                      instr(0x7A, T, E, {50, 0, 2, 0x01, 0x10, 0x08, Lit, 1, 0, Lit, 0, 0, Lit, 0, 0})}));
+    fx.run(0x1003);
+    check(fx.obj().timers.size() == 2, "op 2 adds another timer of the same tree");
+    fx.vm.tick();
+    check(fx.obj().attributes[0] == 16 && fx.obj().timers.empty(), "ticks from temp 1");
+}
+
 // The saved state of an object (XOBJ), as the base game's lots store it.
 static void testSavedObjectState() {
     std::vector<uint8_t> b(64, 0);
@@ -855,6 +889,40 @@ static void testSavedObjectState() {
         threw = true;
     }
     check(threw, "other versions are not guessed at");
+
+    // The rest: temp token fields, token, arrays, tree stack and a timer.
+    auto tail = b;
+    for (int i = 0; i < 8; ++i)
+        put16(tail, 0);
+    put32(tail, 0x1234), put16(tail, 0), put32(tail, 1), put16(tail, 9); // token with one property
+    put16(tail, 1), put16(tail, 2), put16(tail, 3), put16(tail, 4);      // one array {3, 4}
+    put16(tail, 0);                                                      // second array
+    put32(tail, 0);                                                      // ownership
+    put16(tail, 0);                                                      // material substitutes
+    put16(tail, 0);                                                      // persistent flag
+    put32(tail, 1), put32(tail, 0);                                      // one frame
+    put16(tail, 0), put16(tail, 0x1000), put16(tail, 5);                 // object, tree, node
+    tail.push_back(1), tail.push_back(1);                                // a local, a parameter
+    put16(tail, 1), put16(tail, 1);                                      // running as/on
+    put16(tail, 77), put16(tail, 66);                                    // parameter, local
+    put32(tail, 0), put16(tail, 124);                                    // primitive state, save type
+    put32(tail, 3), put32(tail, 0);                                      // relationships
+    put16(tail, uint16_t(-101)), put16(tail, 0);                         // slots
+    put16(tail, 0), put16(tail, 0);                                      // effects, overrides
+    put32(tail, 1);                                                      // one timer
+    put32(tail, 0x2001), put32(tail, 30), put16(tail, 0), put32(tail, 0), put32(tail, 0), put32(tail, 0);
+    for (int i = 0; i < 8; ++i)
+        put16(tail, uint16_t(i + 1));
+    const auto t = LotObjects::parseState(tail, 0xAD);
+    check(t.tailError.empty() && t.token.guid == 0x1234 && t.token.properties == std::vector<int16_t>{9} &&
+              t.arrays.size() == 1 && t.arrays[0] == std::vector<int16_t>{3, 4},
+          "saved token and arrays");
+    check(t.stack.size() == 1 && t.stack[0].treeId == 0x1000 && t.stack[0].node == 5 &&
+              t.stack[0].params == std::vector<int16_t>{77} && t.stack[0].locals == std::vector<int16_t>{66} &&
+              t.stack[0].runningObject == 1,
+          "saved tree stack");
+    check(t.timers.size() == 1 && t.timers[0].a == 0x2001 && t.timers[0].params[7] == 8 && t.rest.empty(),
+          "saved timers");
 }
 
 // Slots: data owners 0x14/0x10 (my / stack object's slot), 0x30/0x31 (slot in
@@ -989,6 +1057,7 @@ int main() {
     testMultiTileAndIds();
     testAddPackage();
     testSavedObjectState();
+    testOnTimer();
     testSlots();
     testScheduler();
     if (failures)
