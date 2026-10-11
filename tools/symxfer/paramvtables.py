@@ -10,24 +10,69 @@ SwizzleParams, writes 16 bytes, calls SwizzleParams again) and Read.
 usage: paramvtables.py <sims2_bv.ppc> <map.txt>  >> manual names
 """
 import struct, re, sys
+
+def segments(path):
+    """(vmaddr, vmsize, fileoff) of each segment, from otool -l."""
+    import subprocess
+    out = subprocess.run(['otool', '-l', path], capture_output=True, text=True).stdout
+    segs, cur = [], None
+    for line in out.splitlines():
+        t = line.split()
+        if not t:
+            continue
+        if t[0] == 'cmd' and t[1] == 'LC_SEGMENT':
+            cur = {}
+        elif cur is not None and t[0] in ('vmaddr', 'vmsize', 'fileoff'):
+            cur[t[0]] = int(t[1], 0)
+            if len(cur) == 3:
+                segs.append((cur['vmaddr'], cur['vmsize'], cur['fileoff']))
+                cur = None
+    return segs
+
+
+def make_maps(path):
+    segs = [x for x in segments(path) if x[1]]
+    def f2v(o):
+        for va, sz, fo in segs:
+            if fo <= o < fo + sz and fo + va:
+                return o - fo + va
+        return o + 0x1000
+    def v2f(v):
+        for va, sz, fo in segs:
+            if va <= v < va + sz:
+                return v - va + fo
+        raise ValueError(hex(v))
+    data_off = [fo for va, sz, fo in segs if fo and va > 0x1000][0]
+    return f2v, v2f, data_off
 B=open(sys.argv[1],'rb').read()
-DATA_VM, DATA_OFF = 0x2778000, 41381888
-def f2v(o): return o+0x1000 if o<DATA_OFF else o-DATA_OFF+DATA_VM
-def v2f(v): return v-0x1000 if v<DATA_VM else v-DATA_VM+DATA_OFF
+f2v, v2f, DATA_OFF = make_maps(sys.argv[1])
 def w(v): o=v2f(v); return struct.unpack('>I',B[o:o+4])[0]
 def cstr(v):
-    o=v2f(v); e=B.index(b'\0',o); return B[o:e].decode()
+    try:
+        o=v2f(v); e=B.index(b'\0',o); n=B[o:e].decode()
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return n if re.match(r'^\d+[A-Za-z_]\w*$', n) else None
 names={}
 for l in open(sys.argv[2]):
     if l[0]=='#': continue
     a,n,c=l.split(); names[int(a,16)]=n
-XTI=0x02ab0698
+def find_typeinfo(name):
+    for m in re.finditer(re.escape(name + b'\0'), B):
+        if m.start() and B[m.start() - 1:m.start()].isalnum():
+            continue
+        sv = f2v(m.start())
+        for t in re.finditer(re.escape(struct.pack('>I', sv)), B):
+            if t.start() % 4 == 0 and t.start() >= DATA_OFF:
+                return f2v(t.start()) - 4
+    raise SystemExit('no typeinfo for %r' % name)
+XTI = find_typeinfo(b'10XPrimParam')
 res=[]
 for m in re.finditer(re.escape(struct.pack('>I',XTI)),B):
     if m.start()%4 or m.start()<DATA_OFF: continue
     ti=f2v(m.start())-8
-    if w(ti)!=8: continue
     nm=cstr(w(ti+4))
+    if nm is None: continue
     for v in re.finditer(re.escape(struct.pack('>I',ti)),B):
         if v.start()%4 or v.start()<DATA_OFF: continue
         vt=f2v(v.start())

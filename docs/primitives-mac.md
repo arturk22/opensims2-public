@@ -439,6 +439,18 @@ Execução (binário):
 - 16 veículo: a lista de veículos do lote (o GUID não é usado — confirma o
   que o `hood_bridge` já faz).
 - 17 vizinho da família do temp 0 (dado de pessoa 61 = temp 0).
+- 26 "Verify Stack Object", 29 "Verify Neighbor ID in Stack Object", 30
+  "Verify Sim in Stack Object": só testam o stack object (o objeto existe e é
+  válido / o vizinho existe / o objeto é um Sim); não mexem no alvo.
+- 28, 35, 36: vizinhos depois do valor atual cuja relação com o vizinho do
+  **temp 0** passa num teste (a tabela é a do vizinho do temp 0): 28 a
+  variável 3 ≠ 0; 35 a variável 0 (diária) > **temp 1** (o rótulo diz "temp
+  0 to me", o código usa temp 0 = de quem e temp 1 = limite); **36 a variável
+  1 & temp 1 ≠ 0** (bits de relação, `docs/data-findings.md` §8). Vizinho do
+  temp 0 inexistente ou sem tabela → falso.
+- 38 e 39 (sem rótulo no jogo base; só BV): 38 percorre uma lista por índice
+  comparando dois campos com os temps 0 e 1 (< 0 = qualquer) e devolve o GUID
+  do achado nos temps 2 (baixo) e 3 (alto).
 
 ### 0x7A On Timer (`TryOnTimer`, `OnTimerParam`)
 
@@ -550,6 +562,125 @@ Execução (binário):
 Parâmetro u16 0 com os ticks (fora do intervalo: erro 0x08). Se o valor é 0
 → verdadeiro; senão decrementa o parâmetro e devolve 2 (espera). Valor
 negativo vira 0. Binário.
+
+### 0x03 Find Best Interaction (`cTSPerson::TryFindBestAction`)
+
+Operandos: motivo u16 0 (0 = os N piores motivos, escolhidos pelas curvas de
+motivo do Sim; rótulos no disassembler: 0 "Shopping", 1 "Scratch-Chew" (só
+BV), 3 humor, 4 meta-humor, 5 energia, 6 conforto, 7 fome, 8 higiene, 9
+bexiga, 11 alerta, 13 ambiente, 14 social, 15 diversão); flags byte 3: 0x01
+depois da primeira passada escolhe os motivos restantes entre os piores,
+0x02 só objetos no cômodo do temp 0, 0x04 inclui objetos fora do mundo,
+0x08 só interações aninhadas, 0x10 só no objeto da interação atual, 0x20 usa
+a posição do objeto do temp 1. Execução (binário): `FBA_Init`, depois até
+200 passadas de `FBA_FindStaticInteractions` → `FBA_ScoreStaticInteractions`
+→ `FBA_ScoreDynamicInteractions` → `FBA_CheckInteractions`, e
+`FBA_DoInteraction` decide o retorno (essas funções têm nome no mapa e são o
+ponto de partida para o motor de autonomia). As curvas de motivo vêm de
+`cTSPerson::LoadMotiveEffects` (um `cTSMotiveCurveSet` por Sim, pelo campo
+0x33 da definição ou pela idade; o dado de pessoa 84 bit 0x200 escolhe a
+tabela 0x298).
+
+### 0x0E Find Best Object for Function (`TryFindFunctionalObject`)
+
+Função u16 0 (STR# 0xC9) → (object data com o "valor" da função, entrada da
+OBJf), binário: 0 prep (31, 0x12), 1 cook (32, 0x13), 2 flat surface (33,
+0x14), 3 dispose (36, 0x15), 6 wash dish (37, 0x18), 7 eating surface (38,
+0x19), 8 sit (26 "Sitting Value", 0x1A), 10 serving surface (61, 0x0E), 11
+clean (39 "dirty level", 0x1C), 12 garden (64, 0x10), 13 wash hands (65,
+0x11), 14 repair (15 "Repair Level", 0x1D), 15 dry clothes (sem valor: 50,
+0x1F), 23 awareness (sem valor, 0x2A), 25 lookatTarget (sem valor, 0x2C), 27
+Global Awareness (0x35, só BV); **as outras funções (4 eat, 5 pick up, 9
+stand, 16–22, 24, 26) dão falso direto**. Percorre os objetos que anunciam
+essa entrada; pula desligados (object data 56 bit 0; só BV) e com object data
+107 ≠ 0; com 0x80 ignora o "lockout"; as flags do byte 2 (fora/dentro/
+cômodo/linha de visão/relativo ao objeto) filtram; a check tree da entrada
+tem de passar. Pontuação = valor (gravado no meu object data 66 "function
+score") × 1 / (1 + distância / k) × (1 + fator do Sim) × multiplicador de
+autonomia; o melhor vira o **stack object** e devolve verdadeiro; nenhum →
+falso. Binário (k e os fatores do Sim não foram conferidos).
+
+### 0x21 Find 5 Worst Motives (`TryFind5WorstMotives`)
+
+De quem u16 4 (0 eu, 1 o Sim do stack object, 2 outro); tipo u16 6 (> 2 →
+erro 0x1E). Ordena os motivos {5 energia, 6 conforto, 7 fome, 8 higiene, 9
+bexiga, 13 ambiente, 14 social, 15 diversão} pelo valor (crescente) e grava
+os 5 primeiros números de motivo nos temps 0–4; verdadeiro. **O tipo (todos/
+mentais/físicos) é validado mas não filtra nada** no BV. Não-Sim → erro 0x0A.
+Binário.
+
+### 0x1D Set Motive Change e o motor de motivos
+
+`cTSPerson::TrySetMotiveDelta` (binário): byte 3 bit 0 limpa todos os
+deltas; senão motivo = byte 2 (só 0, 1, 5, 6, 7, 8, 9, 14, 15; outro → erro
+0x1A), delta por hora = (dono byte 0, dado u16 4), para em (dono byte 1,
+dado u16 6), e guarda {motivo, delta / 60 / 30 por tick, limite} na lista do
+Sim (**confirma 30 ticks por minuto de jogo**); byte 3 bit 1 zera o dado de
+pessoa "Decay … per Day" do motivo (5→96, 6→94, 7→93, 8→97, 9→95, 14→99,
+15→101; 0→100 e 1→106 no BV).
+
+`cTSPerson::OnSimulatorTick` (binário), a cada tick: dado de pessoa 27
+("tick counter") += 1; se o dado 29 ("Motives Static?") < 2, aplica cada
+delta da lista ao motivo (float): delta ≥ 0 sobe até o limite, < 0 desce até
+o limite (sem passar); a cada 60 ticks, com o dado 29 = 0, atualiza as
+memórias; zera o dado 1 ("Money Amount over Head"). **O decaimento em si não
+está no código**: os "Decay … per Day" são lidos pelas árvores (inferido:
+elas chamam Set Motive Change com esses valores), então a VM só precisa da
+lista de deltas e deste laço.
+
+### 0x24 Dialog (`TryDialog`)
+
+Na primeira execução marca o frame (estado 1) e abre o diálogo; **devolve 2
+(espera) enquanto ele está aberto**. Resposta (binário): botão 1 →
+verdadeiro (entrada de texto: guarda o texto); botão 2 → falso; três
+escolhas: grava 0/1/2 no temp `(byte 7 >> 4) & 7` (> 7: erro). Os tipos 8–10
+e 0x1C (notificações TNS) não bloqueiam e usam o objeto do stack object
+(ausente: erro 0x17); 0x16/0x19 (tutorial) só bloqueiam com o temp 1 ≠ 0.
+Textos: STR# 0x12D da tabela escolhida pelas flags do byte 8 (0x01 privada,
+0x40 global, senão semi-global), índice u16 13 (ou temp 0 com 0x02), título
+pelo byte 6 (ou temp 3 com 0x10). Binário, com os detalhes de botão
+inferidos pelo disassembler.
+
+### 0x2E Snap (`TrySnap`)
+
+**Quem se move sou eu**, em relação ao stack object (sem stack object: erro
+0x15; eu inválido: 0x17). Modo u16 2 (STR# 0xCF): 0 slot do número no
+parâmetro u16 0 (fora do intervalo: 0x08), 1 contido no stack object, 2 na
+frente dele, 3 slot literal u16 0, 4 slot global; slot inexistente → 0x1B.
+Falha → falso e grava no meu object data 52 ("primitive result") 1 (pediu a
+um Sim no caminho para sair, flag 0x02), 0x0E, ou o código do erro de
+posicionamento + 2. Com 0x10 só testa. Binário.
+
+### 0x6F Change Light (`nTSSG::cObject::TryChangeLight`)
+
+Objeto (dono byte 2, dado u16 3; inexistente: 0x17). Intensidade = byte 7
+(ou temp 0 com o byte 1 bit 1) em %, **> 100 vira 50**; com o byte 1 bit 0 o
+temp 1 é lido (duração). Luz byte 8 = 0xFF: todas as luzes do modelo; senão
+o nome é a entrada do STR# 0x8E do stack object (sem stack object: 0x0A;
+nome vazio: 0x4D). Sem modelo: 0x4C. Instantâneo (o fade é do renderizador),
+verdadeiro. Binário.
+
+### 0x79 Change Outfit (`nTSSG::cObject::TryChangeOutfit`)
+
+Sim (dono byte 9, dado u16 10; inexistente: 0x32; não pessoa: 0x1C). Fonte
+(byte 0): 0x01 a definição do stack object (stack object ausente = sem
+fonte), 0x02 GUID u32 4, 0x40 GUID nos temps 0/1, nenhuma = as roupas do
+próprio Sim; categoria = byte 8 (ou a variável (dono 1, dado u16 2) com
+0x04); 0x20 zera os dados de pessoa 119 e 120; troca (0x10 reconstrói a
+atual); 0x08 grava. Binário.
+
+### 0x69/0x6A/0x6B Animate Object/Sim/Overlay (`try_animate_*`)
+
+**O byte 3 não é flag: é a velocidade em 1/32** (0x20 = 1,0; com a flag 0x02
+do byte 2, o temp 2). Isso explica o "0x20 em 96% dos usos" do código atual.
+Animate Sim (binário): na primeira execução resolve o nome (lista byte 6;
+0x80 = global da idade; senão a lista privada e, se não achar, as outras),
+nome vazio → 0x43, tipo errado → 0x73; guarda o pedido no frame e **devolve
+2 até a animação acabar, depois 1**; árvore de animação que não existe →
+verdadeiro na hora ("missing animation tree"). Byte 13 / 100 é um peso de
+blend (0 ou fora de 0–1 = 1,0). Animate Object/Overlay devolvem 1 logo depois
+de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → erro
+0x70). Sem animador: 0x41; sem pessoa (Sim): 0x42.
 
 ## 5. Outras primitivas: operandos pelo disassembler
 
@@ -705,6 +836,41 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
   (dono 3, dado u16 4), 0x02/0x04 por neighbor ID; 0x08/0x10 dados do objeto
   com GUID nos temps 0/1 / no token; 0x20 personagem do "Bin"; 0x40 GUID
   externo para a roupa da miniatura (0x80: nos temps 2/3, senão u32 10).
+
+## 5b. Conferência com o jogo base (Mac 1.0)
+
+O executável de Mac 1.0 (`/mac/sims2_base_1.0.ppc` no mesmo projeto Ghidra,
+auto-analisado) não tem nomes, mas tem RTTI: `paramvtables.py` acha as 64
+classes de operando dele, e o `OnTryElement` (0x00B3A8F4, slot do vtable de
+`cTSObject`) dá os handlers. Binário (base):
+
+- O despacho é o mesmo do BV para 0x00–0x7C (0x0A também devolve verdadeiro);
+  0x7D Follow Sim e 0x7E Run Script não existem.
+- `SwizzleParams` dá **a mesma largura de campos** que no BV para todas as
+  classes, menos: Set to Next (no base só o GUID u32 0: os u16 9 e 11 do
+  filtro "where" são **só BV**) e Add/Change the Action String (o u16 14 é só
+  BV); Run Tree (chamada de árvore) muda a conversão de versão.
+- Classes com conversão de versão no base: Animate Overlay, Dialog, Look At,
+  Relationship e Run Tree. **O BV acrescenta versões novas de Alter Budget,
+  Add/Change the Action String, Manage Inventory, Change Material e Set to
+  Next**: nessas o BV tem campos que os BHAVs do base (versão 0) não têm
+  (zerados no load).
+- Conferidos iguais ao BV no código do base: Relationship (inclusive 0x08 e
+  "dois Sims = pelos neighbor IDs"), Create New Object Instance (0x20, 0x40,
+  0x80, erro 0x36), Test Object Type (`0x4C7CAB2B`, flags 1/2/4), Random
+  Number (limite 0 → 0), Find Location For (o modo 0 tenta o mesmo cômodo e
+  depois qualquer lugar), Play Sound (tabelas por 10000/20000), Set to Next
+  (alvo explícito no byte 4 bit 7; tipos 0–37, sem filtro de espécie).
+- Run Functional Tree: a tabela é a mesma, mas no base a função 27 "Global
+  Awareness" (→ 0x35) não existe (dá falso).
+- Set to Next: nos tipos que percorrem listas (1 pessoa, 4/18 GUID, 3, 16, …)
+  **o alvo vira 0 quando nada é achado** (base e BV). Contradiz o "Set to
+  Next sem achar não mexe no alvo" do `TODO.md`.
+- Strings do editor que só existem no BV (ausentes no exe base): "Young
+  Adult", "Kitten list"/"Puppy list", "Scratch-Chew", "including disabled
+  objects", "To Sub Queue", "Disabled (NonPropagating)", "Receptivity
+  Animations", "Transportation Picker", "Hire Employees", erros 0x98–0x9E
+  ("Another cinematic…", "Bad family id", "Invalid species", …).
 
 ## 6. `tools/symxfer`: como os nomes chegaram ao binário
 
