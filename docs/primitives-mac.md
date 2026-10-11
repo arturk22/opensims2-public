@@ -1112,6 +1112,46 @@ Paid" põe o salário nos fundos da família (globais de orçamento → FAMI). N
 há "trabalho fora do lote" em C++: o que acontece enquanto o Sim está fora
 é a espera da árvore.
 
+## 4e. Rodada 8: o Sim no trabalho e as contas (árvores dos dados + binário)
+
+Não há código C++ para isso no binário: o trabalho e as contas são árvores.
+Nomes pela lista de BHAVs (`objects.package`); donos de dados como na FreeSO
+(`0x0E` meus motivos, `0x12` meus person data, `0x19` local, `0x1A`
+constante de ajuste).
+
+**Sair do mundo**: `Sub - Send out of World` (BHAV `0x2011` do grupo
+`0x7F8F4EB6`, o semi-global das carreiras) é um **Find Location For no modo
+1** (STR# `0xEF` #1 "out of world"): o Sim sai do mundo como os objetos de
+§4c (sem tile; testes de "fora do mundo" do apêndice A). O carro tem
+`Sub - Send Passengers Out of World` (grupo `0x7F4EA230`).
+
+**Enquanto está fora** roda `Interaction - At Work` (`0x200E`, 54 instruções),
+um laço por hora de jogo (`Function - End Hour?` `0x2002`, teste da hora de
+saída; não lido em detalhe): `Sub - Work Idle` (`0x2039`), motivos do
+trabalho (`Sub - Start Motive Deltas` `0x2015`, `Check Motives` `0x2023`),
+carta de sorte (`Sub - Chance Card` `0x2003`), doença (`0x2026`), aspiração
+de poder (`0x2038`), `TNS - Bad Mood` (`0x2012`) e **`Sub - Update Job
+Performance`** (`0x205A`): `local0 = meus motivos[3] / 2` (dono `0x0E`, dado
+3; inferido: humor), **person data 63 "job performance" += local0**, preso em
+−100..100. No fim do turno: **`Sub - Get Paid`** (`0x2004`: salário do nível
+pela `Budget - Make Transaction` global `0x0294`, PTO `0x201F`, promoção
+`Sub - Level Change` `0x203F` quando `Function - Qualify for Level?` `0x2005`
+passa, demissão `CT - Lose Job` `0x2025` com desempenho muito baixo) e
+**`Sub - Return to World`** (`0x2016`: cria o carro, `Function - Create Car`
+`0x200B`, empurra a interação de chegada no Sim, tenta trazer amigo
+`0x202C`; falhando, `Sub - Return to World - Failsafe` `0x2063`). Depois:
+recálculo dos desejos (`Wants - Refresh - Recalc`, global `0x03A5`).
+
+**Contas** (objeto `MailBox`, grupo `0x7FE4B434`, e `Bills`, grupo
+`0x7FBD8997`): `CT - Reschedule Bills` (`0x1017` da caixa) cria o objeto que
+agenda (GUID `0xD840F488`) e o carteiro (`Create Mailman` `0x1004`); a conta
+nasce em `Create Bill` (`0x1006`). O valor é `CT - Calculate Bill` (`0x1017`
+das contas): percorre todos os objetos (Set to Next), pula os que têm o bit
+14 do dado 40 ligado, e soma **valor atual (od 41) / constante `0x81`**
+(dono `0x1A`) de cada um; se a soma estoura, vira 32767. A cor da conta
+(branca, amarela, laranja, vermelha) segue o atraso (`CT - Set Bill Colour`
+`0x1009`). Quando: pelo agendamento da caixa (não seguido aqui).
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto

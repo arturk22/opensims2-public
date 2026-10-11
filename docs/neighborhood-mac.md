@@ -192,7 +192,14 @@ fica com o maior peso; cheio, substitui o de menor peso se o novo for maior.
   quando nVariantes ≥ 2. O mapa alfa (`CreateAlphaTextureForPaint`, BV
   `0x6db584`) é uma textura de 8 bits do tamanho da grade de vértices,
   preenchida pelos pesos (o preenchimento exato, `UpdateTopMipSurface`, não
-  foi lido: **inferido** peso/256 → alfa).
+  foi lido: **inferido** peso/256 → alfa). Rodada 8: o binário não
+  converte: `NormalizePaintWeights` (BV `0x4d3478`) grava em cada vértice,
+  no mapa de 8 bits de cada pintura (`SetPaintValue`, BV `0x4d33e4`;
+  `GetPaintAlphaMap`, BV `0x4d31e0`), o byte baixo de
+  `peso · 250 / Σ pesos` (até 3 pinturas por vértice; a soma dá ≈ 250), e o
+  `cNHoodTerrainPaintAlphaTextureUpdateStrategy::UpdateTopMipSurface` (BV
+  `0x6dc1c8`) copia esse mapa direto (8 bits → 8 bits, só o retângulo sujo)
+  para a textura alfa. Alfa = esse byte / 255.
 - Variante: a grade é dividida em células de `TextureVariantGridSize` tiles
   (padrão 4, ini 13; `InitPaintVariants`, BV `0x6d8d50`), cada célula
   sorteia um byte e variante = byte mod nVariantes.
@@ -206,7 +213,19 @@ fica com o maior peso; cheio, substitui o de menor peso se o novo for maior.
   Pelo `docs/lighting-mac.md` §5, com `lightMap` o iluminamento de uma
   normal é o texel do mapa ambiente em ((n.x+1)/2, (n.y+1)/2) × a cor;
   **inferido**: o `nhoodLightMap` é isso por vértice, com a sombra do height
-  map. A geração não foi achada.
+  map. Rodada 8: a geração é o
+  `cLightingManager::CreateNeighborhoodLightMap` (BV `0x706920`, casado com o
+  `baserom.sym`): duas texturas TXTR (`0x1C4A276C`) com lado = a potência de 2
+  ≥ (vértices − 2); para cada vértice lê a altura e a normal do terreno; uma
+  segunda grade de alturas sobe os retângulos dos lotes ("blobs":
+  altura × `+0x284`, alargados por `+0x288`, máximo com o terreno); onde a
+  altura da sombra do sol (grade `+0x228`, do `UpdateHeightMapShadows`) passa
+  da do vértice, a normal é desviada pela diferença (`FUN_01809070`);
+  depois o texel = **mapa de luz do estado de luz amostrado em
+  ((n.x·0,5 + 0,5)·L, (n.y·0,5 + 0,5)·A)** (o mesmo `lightMap` de
+  `docs/lighting-mac.md` §5), vezes a cor do estado (`+0xd8`), arredondado e
+  preso em 255, alfa 255. A primeira textura usa só o terreno e a segunda
+  também os lotes. A intensidade da sombra é `hmNHoodShadowStrength`.
 - Água: material `nhoodWaterMaterial` (`NeighborhoodWater`, parâmetros
   `ratioW`, `ratioH`, `useReflection`; `CreateWaterMaterial`, BV `0x6d8978`),
   plano no nível da água; constantes no texto (`nhoodWaterAlpha 0,35`,

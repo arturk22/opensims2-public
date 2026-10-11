@@ -405,8 +405,23 @@ tem o objeto em `+0x20`, então os offsets abaixo são os do objeto: direções
 fileira a 0,3 tile do bloqueador, a 45° da direção de quem pede, com passo de
 1/16 e largura praticamente ilimitada (o custo de §8.2 escolhe). Os tipos 1/2
 dariam fileiras de 1 a 3 ou 6 tiles. Isso substitui os "1 a 6 tiles" do texto acima (que
-eram o tipo 2). Quem chama com 1/2 (`FUN_0057f52c`, sem nome) não foi
-seguido.
+eram o tipo 2).
+
+**Quem pede cada tipo** (rodada 8, binário): o tipo vem de quem chama.
+- `DoBlockedGoalStillAvailable` (BV `0x57a8d4`) chama
+  `AskBlockerToMove` (vtable `0xcc`, BV `0x57d8e8`) com prioridade = dado
+  33 − 1 (mín. 1), só nas primeiras 3 tentativas (`+0x3c` ≤ 3), e
+  **tipo 1** quando a rota tem um objeto de destino (vtable `0x118`) e o
+  bloqueador está a **menos de 1,5 tile** dele (`FLOAT_0274b6b4`), ou seja,
+  em cima do meu objetivo; senão **tipo 0**. `AskBlockerToMove` repassa o
+  tipo ao `MoveOutOfWay` do bloqueador (vtable `0x90`), que o repassa ao
+  `CreateMoveOutOfWayDestination`.
+- **Tipo 2**: `MoveOutOfWay(long prioridade)` (vtable `0x8c`, BV
+  `0x57f488`; o Ghidra o junta ao fim do `MoveOutOfWay` de 4 argumentos):
+  sem quem peça, o próprio Sim procura um lugar a 1–6 tiles e empurra a
+  interação "sair do caminho" (tipo 3) com a prioridade dada. Quem chama a
+  vtable `0x8c` não foi achado (provavelmente uma chamada da VM).
+
 
 ## 9. Comparação com o código atual (main `3b4c4db`: `src/vm/path_planner.*`, `routing.cpp`)
 
