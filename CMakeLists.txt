@@ -142,7 +142,7 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
@@ -235,7 +235,7 @@ add_executable(test_audio tests/test_audio.cpp)
 target_link_libraries(test_audio PRIVATE os2_audio)
 target_include_directories(test_audio PRIVATE third_party/speex/include) # the test encodes with libspeex
 add_test(NAME audio COMMAND test_audio)
-add_executable(test_ui tests/test_ui.cpp)
+add_executable(test_ui tests/test_ui.cpp src/app/ui_panel_util.cpp)
 target_link_libraries(test_ui PRIVATE os2_formats)
 add_test(NAME ui COMMAND test_ui)
 add_executable(test_locale tests/test_locale.cpp)

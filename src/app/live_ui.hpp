@@ -41,6 +41,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace MTL {
@@ -51,6 +52,7 @@ class RenderCommandEncoder;
 namespace os2 {
 
 class DbpfPackage;
+struct DbpfEntry;
 class FontLibrary;
 class ResourceIndex;
 class UiLayer;
@@ -150,7 +152,7 @@ private:
     };
     const RgbaImage* image(uint32_t instance);
     const RgbaImage* objectThumbnail(const vm::Object& o);
-    const RgbaImage* queueIcon(const vm::QueuedInteraction& q, bool running);
+    const RgbaImage* queueIcon(const vm::QueuedInteraction& q, bool running, bool nested);
     uint64_t stamp() const;
     void layoutIfNeeded();
 
@@ -166,7 +168,8 @@ private:
     vm::ObjectId sim_ = 0, followed_ = 0;
     std::map<vm::ObjectId, std::unique_ptr<RgbaImage>> portraits_;
     std::map<uint32_t, std::unique_ptr<RgbaImage>> objectThumbs_; // by GUID (null: none)
-    std::map<std::pair<vm::ObjectId, bool>, std::unique_ptr<RgbaImage>> icons_; // masked (and grey when waiting)
+    std::map<uint32_t, const DbpfEntry*> thumbIndex_;             // ObjectThumbnails.package by instance
+    std::map<std::tuple<vm::ObjectId, bool, bool>, std::unique_ptr<RgbaImage>> icons_; // masked (grey when waiting), by variant
     std::vector<std::unique_ptr<RgbaImage>> frameImages_; // fills made for the current screen
 
     std::array<MotiveTrend, 8> trends_;

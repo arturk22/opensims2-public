@@ -1,8 +1,11 @@
 #include "app/live_ui.hpp"
 
+#include "app/ui_panel_util.hpp"
+
 #include "formats/dbpf.hpp"
 #include "formats/font.hpp"
 #include "formats/image.hpp"
+#include "formats/strings.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
 #include "render/ui_layer.hpp"
@@ -51,49 +54,10 @@ constexpr std::array<BarInfo, 8> kBars = {{{0xA1, vm::motive::Hunger, 2},
                                            {0xA7, vm::motive::Hygiene, 10},
                                            {0xA8, vm::motive::Environment, 16}}};
 
-const UiElement* findIn(const UiElement& e, uint32_t id) {
-    if (e.attr("id") && e.id() == id)
-        return &e;
-    for (const auto& c : e.children)
-        if (const UiElement* f = findIn(c, id))
-            return f;
-    return nullptr;
-}
-UiElement* findIn(UiElement& e, uint32_t id) { return const_cast<UiElement*>(findIn(std::as_const(e), id)); }
-
-std::string area(int x0, int y0, int x1, int y1) {
-    return "(" + std::to_string(x0) + "," + std::to_string(y0) + "," + std::to_string(x1) + "," + std::to_string(y1) +
-           ")";
-}
-
-bool inside(const std::array<float, 4>& r, simd_float2 p) {
-    return p.x >= r[0] && p.x < r[2] && p.y >= r[1] && p.y < r[3];
-}
-
-// Thousands with '.' (the Brazilian Portuguese format; the game asks the
-// locale's format service).
-std::string money(int32_t v) {
-    std::string digits = std::to_string(v < 0 ? -int64_t(v) : int64_t(v)), out;
-    for (size_t i = 0; i < digits.size(); ++i) {
-        if (i && (digits.size() - i) % 3 == 0)
-            out += '.';
-        out += digits[i];
-    }
-    return std::string(v < 0 ? "-" : "") + "§" + out;
-}
-
-RgbaImage scaled(const RgbaImage& src, uint32_t w, uint32_t h) {
-    RgbaImage out;
-    out.width = w, out.height = h;
-    out.pixels.resize(size_t(w) * h * 4);
-    for (uint32_t y = 0; y < h; ++y)
-        for (uint32_t x = 0; x < w; ++x) {
-            const uint32_t sx = std::min(src.width - 1, uint32_t((x + 0.5f) * float(src.width) / float(w)));
-            const uint32_t sy = std::min(src.height - 1, uint32_t((y + 0.5f) * float(src.height) / float(h)));
-            std::copy_n(&src.pixels[(size_t(sy) * src.width + sx) * 4], 4, &out.pixels[(size_t(y) * w + x) * 4]);
-        }
-    return out;
-}
+const UiElement* findIn(const UiElement& e, uint32_t id) { return findWindow(e, id); }
+UiElement* findIn(UiElement& e, uint32_t id) { return findWindow(e, id); }
+std::string area(int x0, int y0, int x1, int y1) { return uiArea(x0, y0, x1, y1); }
+bool inside(const std::array<float, 4>& r, simd_float2 p) { return insideRect(r, p.x, p.y); }
 
 } // namespace
 
@@ -268,53 +232,65 @@ void LiveUi::tick(double seconds) {
         trends_[i].add(float(sim->person->motives[size_t(kBars[i].motive)]));
 }
 
-const RgbaImage* LiveUi::objectThumbnail(const vm::Object& o) {
+const RgbaImage* LiveUi::objectThumbnail(const vm::Object& part) {
+    // A multi-tile object's thumbnail is its lead's (GetObjectThumbnail).
+    const vm::Object* lead = vm_->object(vm::multiTileGroup(part));
+    const vm::Object& o = lead && lead->definition ? *lead : part;
     const uint32_t guid = o.guid();
     auto it = objectThumbs_.find(guid);
     if (it == objectThumbs_.end()) {
         std::unique_ptr<RgbaImage> img;
-        // ObjectThumbnails.package: JPEG (with ALFA) per object, keyed by
-        // the OBJD's GUID (inferred).
-        if (thumbnails_ && guid)
-            for (const auto& e : thumbnails_->entries())
-                if (e.tgi.instance == guid) {
-                    if (auto d = decodeUiImage(thumbnails_->read(e)))
-                        img = std::make_unique<RgbaImage>(std::move(*d));
-                    break;
-                }
+        // ObjectThumbnails.package (cTSUIThumbnailService::
+        // GetObjectThumbnailGUIDAndModelName): instance = CRC32 of the
+        // lower-cased "<OBJD group as signed decimal><model name>", the model
+        // name being the OBJD's entry of its group's STR# 0x85.
+        std::string model;
+        if (o.definition)
+            if (const StringTable* names = vm_->code().strings(o.group, 0x85))
+                model = names->get(o.definition->modelIndex(), lang::EnglishUS);
+        if (thumbnails_ && !model.empty() && model != "embedded") {
+            if (thumbIndex_.empty())
+                for (const auto& e : thumbnails_->entries())
+                    thumbIndex_.emplace(e.tgi.instance, &e);
+            if (auto e = thumbIndex_.find(objectThumbnailInstance(o.group, model)); e != thumbIndex_.end())
+                if (auto d = decodeUiImage(thumbnails_->read(*e->second)))
+                    img = std::make_unique<RgbaImage>(std::move(*d));
+        }
         if (!img && std::getenv("OS2_LIVE_UI_DUMP"))
-            std::fprintf(stderr, "opensims2: live UI: no thumbnail for %s (GUID %08X)\n",
-                         o.definition ? o.definition->fileName.c_str() : "?", guid);
+            std::fprintf(stderr, "opensims2: live UI: no thumbnail for %s (model \"%s\")\n",
+                         o.definition ? o.definition->fileName.c_str() : "?", model.c_str());
         it = objectThumbs_.emplace(guid, std::move(img)).first;
     }
     return it->second.get();
 }
 
 // The icon of a queue entry: the target Sim's portrait or the object's
-// thumbnail, scaled to the icon window, cut by the circular mask (child 3's
-// image) and grey while waiting (docs/ui-live-mac.md §6.2).
-const RgbaImage* LiveUi::queueIcon(const vm::QueuedInteraction& q, bool running) {
-    const auto key = std::make_pair(q.object, running);
+// thumbnail (the interaction's target, else its object), scaled to the icon
+// window, cut by the variant's circular mask (child 3's image) and grey while
+// waiting (docs/ui-live-mac.md §6.2).
+const RgbaImage* LiveUi::queueIcon(const vm::QueuedInteraction& q, bool running, bool nested) {
+    const vm::ObjectId who = q.target ? q.target : q.object;
+    const auto key = std::make_tuple(who, running, nested);
     if (auto it = icons_.find(key); it != icons_.end())
         return it->second.get();
     const RgbaImage* src = nullptr;
-    if (const vm::Object* o = vm_->object(q.object)) {
+    if (const vm::Object* o = vm_->object(who)) {
         if (o->person) {
-            if (auto p = portraits_.find(q.object); p != portraits_.end())
+            if (auto p = portraits_.find(who); p != portraits_.end())
                 src = p->second.get();
         } else {
             src = objectThumbnail(*o);
         }
     }
     std::unique_ptr<RgbaImage> out;
-    const UiElement* top = icon_.roots.empty() ? nullptr : &icon_.roots.front();
+    const UiElement* top = icon_.roots.size() > size_t(nested) ? &icon_.roots[size_t(nested)] : nullptr;
     const UiElement* maskWin = top ? top->child(3) : nullptr;
     const RgbaImage* mask = nullptr;
     if (maskWin)
         if (auto ref = uiResourceRef(maskWin->get("image")))
             mask = res_->image(*ref);
     if (src && mask) {
-        out = std::make_unique<RgbaImage>(scaled(*src, mask->width, mask->height));
+        out = std::make_unique<RgbaImage>(scaledImage(*src, mask->width, mask->height));
         for (size_t i = 0; i < out->pixels.size(); i += 4) {
             uint8_t* p = &out->pixels[i];
             if (!running) {
@@ -346,6 +322,10 @@ uint64_t LiveUi::stamp() const {
         mix(uint64_t(sim->activeInteraction + 1));
         for (const auto& q : sim->queue)
             mix(uint64_t(q.uid) << 2 | uint64_t(q.cancelled) << 1), mix(uint64_t(uint16_t(q.object)));
+        for (const auto& q : sim->subQueue)
+            mix(uint64_t(q.uid) << 3 | 4), mix(uint64_t(uint16_t(q.object)));
+        if (sim->subAction)
+            mix(uint64_t(sim->subAction->uid) << 3 | uint64_t(sim->subAction->cancelled) << 1 | 1);
     }
     for (const auto& t : trends_)
         mix(uint64_t(t.arrows() + 8));
@@ -534,7 +514,7 @@ UiScreen LiveUi::screen(int width, int height) {
             const int32_t funds = it != vm_->families.end()
                                       ? it->second.funds
                                       : int32_t(g[vm::global::BudgetDiv10000]) * 10000 + g[vm::global::BudgetMod10000];
-            hk.captions[f] = money(funds);
+            hk.captions[f] = formatMoney(funds);
         }
         // The family column grows up from the puck by the members' thumbnails (inferred).
         UiScript column;
@@ -599,56 +579,81 @@ UiScreen LiveUi::screen(int width, int height) {
 
     // --- The action queue (docs/ui-live-mac.md §6) ----------------------------
     hoverIcon_ = -1;
-    if (mode_ == 0 && sim && !icon_.roots.empty()) {
+    if (mode_ == 0 && sim && icon_.roots.size() >= 2) {
         auto constant = [&](const char* k, float d) {
             auto it = queueConstants_.find(k);
             return it == queueConstants_.end() ? d : std::stof(it->second);
         };
         const float x0 = constant("kLocationX", 60), y0 = constant("kLocationY", 10),
                     margin = constant("kIconMarginX", 5);
-        std::vector<int> order;
+        // cTSUIActionQueue::OnTick: the running interaction, the running
+        // sub-interaction, the queue, then the sub-queue (at most 12 icons).
+        struct Entry {
+            const vm::QueuedInteraction* q;
+            bool running, nested;
+        };
+        std::vector<Entry> order;
         if (sim->activeInteraction >= 0 && size_t(sim->activeInteraction) < sim->queue.size())
-            order.push_back(sim->activeInteraction);
-        for (size_t i = 0; i < sim->queue.size() && order.size() < 12; ++i)
+            order.push_back({&sim->queue[size_t(sim->activeInteraction)], true, false});
+        if (sim->subAction)
+            order.push_back({&*sim->subAction, true, true});
+        for (size_t i = 0; i < sim->queue.size(); ++i)
             if (int(i) != sim->activeInteraction)
-                order.push_back(int(i));
-        const UiElement& top = icon_.roots.front();
-        const float w = float(top.area()[2] - top.area()[0]), h = float(top.area()[3] - top.area()[1]);
-        float x = x0;
+                order.push_back({&sim->queue[i], false, false});
+        for (const auto& q : sim->subQueue)
+            order.push_back({&q, false, true});
+        if (order.size() > 12)
+            order.resize(12);
+        const UiElement& topWin = icon_.roots[0];
+        const UiElement& subWin = icon_.roots[1];
+        QueueMetrics qm;
+        qm.x0 = x0, qm.y0 = y0, qm.margin = margin;
+        qm.topWidth = float(topWin.area()[2] - topWin.area()[0]);
+        qm.subHeight = float(subWin.area()[3] - subWin.area()[1]);
+        qm.subOffset = float(subWin.area()[1] - topWin.area()[3]);
+        std::vector<bool> nestedFlags;
+        for (const Entry& e : order)
+            nestedFlags.push_back(e.nested);
+        const std::vector<QueueSlot> slots = layoutActionQueue(nestedFlags, qm);
+        const float w = qm.topWidth, subH = qm.subHeight;
         std::string hoverName;
         std::array<float, 4> hoverRect{};
         for (size_t k = 0; k < order.size(); ++k) {
-            const auto& q = sim->queue[size_t(order[k])];
-            const bool running = order[k] == sim->activeInteraction;
-            const std::array<float, 4> r{x, y0, x + w, y0 + h};
+            const auto& [qp, running, nested] = order[k];
+            const vm::QueuedInteraction& q = *qp;
+            const UiElement& win = nested ? subWin : topWin;
+            const float ix = slots[k].x, iy = slots[k].y, iw = float(win.area()[2] - win.area()[0]);
+            const bool connected = slots[k].connected;
+            const std::array<float, 4> r{ix, iy, ix + iw, iy + subH};
             const bool hovered = mouse_ && inside(r, *mouse_);
             if (hovered)
                 hoverIcon_ = int(k), hoverName = q.name, hoverRect = r;
             UiDrawHooks hk;
-            const RgbaImage* ic = queueIcon(q, running);
-            if (const UiElement* c = top.child(1))
-                hk.show.insert(c);
-            if (const UiElement* c = top.child(2))
-                hk.hide.insert(c);
-            if (const UiElement* c = top.child(3)) {
+            const RgbaImage* ic = queueIcon(q, running, nested);
+            if (const UiElement* c = win.child(1))
+                (connected ? hk.hide : hk.show).insert(c);
+            if (const UiElement* c = win.child(2))
+                (connected ? hk.show : hk.hide).insert(c);
+            if (const UiElement* c = win.child(3)) {
                 if (ic)
                     hk.images[c] = ic;
                 else
                     hk.hide.insert(c);
             }
-            if (const UiElement* c = top.child(7))
-                (ic ? hk.hide : hk.show).insert(c);
+            // Child 7 shows only behind an embedded thumbnail (Refresh).
+            if (const UiElement* c = win.child(7))
+                hk.hide.insert(c);
             const bool cancelled = q.cancelled || cancelled_.count({sim_, q.uid});
-            if (const UiElement* c = top.child(4))
+            if (const UiElement* c = win.child(4))
                 (cancelled ? hk.show : hk.hide).insert(c);
-            if (const UiElement* c = top.child(5))
-                (running ? hk.show : hk.hide).insert(c);
-            if (const UiElement* c = top.child(6))
+            // The "active" frame on the running ones, unless highlighted.
+            if (const UiElement* c = win.child(5))
+                (running && !hovered ? hk.show : hk.hide).insert(c);
+            if (const UiElement* c = win.child(6))
                 (hovered ? hk.show : hk.hide).insert(c);
-            place(top, x, y0, hk);
+            place(win, ix, iy, hk);
             targets_.push_back({r, Action::Cancel, q.uid});
             solid_.push_back(r);
-            x += w + margin;
         }
         // The interaction's name under the hovered icon (the game opens a
         // cTSWinCalloutBox; its look is inferred).
@@ -734,7 +739,14 @@ bool LiveUi::press(simd_float2 p, bool right) {
             break;
         case Action::Cancel:
             if (vm::Object* sim = vm_->object(sim_); sim && !cancelled_.count({sim_, uint16_t(t.value)})) {
-                const bool ok = vm::cancelInteraction(*vm_, *sim, uint16_t(t.value));
+                const uint16_t uid = uint16_t(t.value);
+                bool ok = vm::cancelInteraction(*vm_, *sim, uid);
+                // A sub-interaction: a waiting one leaves the sub-queue, the
+                // running one is told to stop (its Idle for Input returns).
+                if (!ok && sim->subAction && sim->subAction->uid == uid)
+                    sim->subAction->cancelled = ok = true;
+                if (!ok)
+                    ok = std::erase_if(sim->subQueue, [&](const vm::QueuedInteraction& x) { return x.uid == uid; }) > 0;
                 std::printf("opensims2: live UI: cancel queue entry %d: %s\n", t.value, ok ? "ok" : "refused");
                 if (ok)
                     cancelled_.insert({sim_, uint16_t(t.value)});

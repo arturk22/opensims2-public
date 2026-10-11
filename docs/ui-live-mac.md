@@ -219,10 +219,15 @@ interação em execução, depois a fila principal e a fila de sub-interações
 
 - ícones de nível superior lado a lado: `x = kLocationX`, depois
   `x += largura + kIconMarginX`, `y = kLocationY`;
-- sub-interações empilhadas para baixo em `x = kLocationX`, a primeira
-  deslocada pelo `GetSubActionOffset` do ícone;
-- conector: o primeiro ícone de nível superior e as sub-interações depois
-  da primeira mostram o traço de ligação.
+- sub-interações empilhadas para baixo em `x = kLocationX`: `y += altura`
+  do ícone, a primeira também `+= GetSubActionOffset` = topo da janela
+  `0x200` − base da `0x100` no script `0x0609A1C0` (78 − 82 = **−4**);
+- conector (`SetHasConnectedIcon`, só quando há ícones dos dois tipos): o
+  primeiro ícone de nível superior e as sub-interações depois da primeira
+  mostram o filho 2 em vez do 1 (nível superior "w/Nest cutout"; aninhada
+  "mid level").
+- Animação dos ícones: o script tem `kAnimationSteps=4`, `kAnimationDelta=1`
+  (padrões 6 e 1 no código, `Initialize` BV `0x9d66d4`).
 
 O layout de um ícone vem do UI script `0x0609A1C0` (filhos: 3 imagem do
 ícone; 4 "cancelado"; 5 moldura de "em execução"; 7 marca extra; 1, 2
@@ -233,7 +238,29 @@ com a máscara circular no filho 3).
 
 - Fonte: o ícone da interação (o objeto alvo, ou o Sim alvo pelo seu
   retrato: miniaturas do serviço de thumbnails), recortado pela máscara
-  circular (`ApplyAlphaMask`).
+  circular (`ApplyAlphaMask`). O objeto é o alvo da interação (vtable
+  `0xfc`); um par (vizinho, ...) da vtable `0x124` faz usar a miniatura do
+  Sim (`GetSimThumbnail`). Objeto de várias peças: a miniatura é a da peça
+  líder (`GetObjectThumbnail(cITSObject*)`, BV `0x29e780`).
+- **Chave da miniatura de objeto** (`cTSUIThumbnailService::
+  GetObjectThumbnailGUIDAndModelName`, BV `0x2a0ba8`; `GetThumbnail`
+  `0x2a53fc`): tipo `0xAC2950C1`, grupo do serviço (`+0xa0`; `+0xa8` com
+  materiais trocados), instância = `FUN_00120ff8(texto, minúsculas)` =
+  **CRC32** (polinômio `0x04C11DB7`, MSB primeiro, início `0xFFFFFFFF`,
+  sem xor final) do texto `"<grupo do OBJD em decimal com sinal><nome do
+  modelo>"` (+ os nomes dos materiais trocados, se houver); o nome do
+  modelo é a entrada do STR# `0x85` do grupo indicada pelo OBJD (o campo
+  "model index", offset `0xD0`); `"embedded"` usa a miniatura embutida.
+  Ex.: compactador de lixo, grupo `0x7FBBE64F` → `"2143020623trashCompactor"`
+  → `0x4C413C51`. Em `UserData/Thumbnails/ObjectThumbnails.package` (grupo
+  `0x6C2A22C3`, um cache que o jogo gera ao renderizar o objeto; JPEG com
+  ALFA), 531 das 532 entradas batem com algum OBJD. Sem miniatura em
+  cache o jogo renderiza o objeto (`cTSUIThumbnailFactoryObject`); aqui o
+  ícone fica vazio.
+- Filho 7 ("icon background") só aparece atrás de miniatura embutida
+  (`Refresh`: `local_58`); sem miniatura, só a moldura.
+- O quadro "active" (filho 5) aparece na interação/sub-interação corrente,
+  **menos** quando o ícone está destacado (filho 6, mouse em cima).
 - Desaturado (cinza) enquanto a interação ainda não começou (o Sim não
   confirmou/está na fila); colorido quando é a que está rodando (inferido do
   teste `0x1F0` do Sim; nome da função de cinza não confirmado).
@@ -385,7 +412,7 @@ global por CRC24 (`ResourceIndex`), e o `sound-list` deve listar os `ui_*`.
 
 ## 8. O que falta
 
-- O nome exato do serviço de thumbnails e da função de desaturação.
+- O nome da função de desaturação (o símbolo transferido diz `LotFamilyAccessor::GetDataStr`, errado).
 - Cores dos textos/tooltips do painel (vêm dos scripts).
 - O conteúdo das imagens de gradiente dos motivos (agente d: ler os filhos
   4 das barras no script do painel de motivos).

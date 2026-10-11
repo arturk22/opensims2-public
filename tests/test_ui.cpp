@@ -1,4 +1,5 @@
 // UI scripts and UI image files on hand-built data.
+#include "app/ui_panel_util.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/font.hpp"
 #include "formats/resindex.hpp"
@@ -514,7 +515,27 @@ static void testLayout() {
     fs::remove_all(root);
 }
 
+// Panel helpers (app/ui_panel_util.hpp).
+static void testPanelUtil() {
+    // ObjectThumbnails.package keys: the trash compactor (OBJD group
+    // 0x7FBBE64F, model "trashCompactor") is the shipped 0x4C413C51.
+    check(objectThumbnailInstance(0x7FBBE64F, "trashCompactor") == 0x4C413C51, "object thumbnail key");
+    check(objectThumbnailInstance(0x7FBBE64F, "trashCompactor") == objectThumbnailInstance(0x7FBBE64F, "TRASHCOMPACTOR"),
+          "thumbnail key is case-blind");
+    check(objectThumbnailInstance(0xFFFFFFFF, "a") != objectThumbnailInstance(0x7FFFFFFF, "a"), "group is signed decimal");
+    check(formatMoney(511632) == "§511.632" && formatMoney(-1000) == "-§1.000" && formatMoney(12) == "§12", "money");
+    // Action queue: two top-level icons and two sub-interactions.
+    const auto q = layoutActionQueue({false, true, false, true}, QueueMetrics{});
+    check(q.size() == 4 && q[0].x == 50 && q[0].y == 10 && q[0].connected, "queue: first top-level, connected");
+    check(q[1].x == 50 && q[1].y == 10 + 52 - 4 && !q[1].connected, "queue: first sub under it, offset -4");
+    check(q[2].x == 50 + 51 + 4 && q[2].y == 10 && !q[2].connected, "queue: second top-level beside");
+    check(q[3].x == 50 && q[3].y == 10 + 52 - 4 + 52 && q[3].connected, "queue: next sub below, connector");
+    const auto t = layoutActionQueue({false, false}, QueueMetrics{});
+    check(!t[0].connected && !t[1].connected, "queue: no connector without sub-interactions");
+}
+
 int main() {
+    testPanelUtil();
     testConstants();
     testScript();
     testTga();
