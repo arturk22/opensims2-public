@@ -98,12 +98,53 @@ void HoodBins::selectFamily(uint32_t family) {
 void HoodBins::cancelTool() {
     tool_ = Tool::None;
     selected_ = 0;
+    emptySize_ = binLot_ = -1;
     dirty_ = true;
 }
 
 void HoodBins::showMessage(const std::string& message) {
     dialog_ = Dialog{message, {}};
     dirty_ = true;
+}
+
+void HoodBins::setLotBin(std::vector<hood::BinLot> lots) {
+    binLots_ = std::move(lots);
+    binPictures_.clear();
+    if (binLot_ >= int(binLots_.size()))
+        binLot_ = -1;
+    dirty_ = true;
+}
+
+void HoodBins::pickEmptyLot(int size) {
+    selected_ = 0;
+    emptySize_ = size;
+    binLot_ = -1;
+    tool_ = size >= 0 ? Tool::PlaceEmpty : Tool::None;
+    dirty_ = true;
+}
+
+void HoodBins::pickBinLot(size_t index) {
+    selected_ = 0;
+    emptySize_ = -1;
+    binLot_ = index < binLots_.size() ? int(index) : -1;
+    tool_ = binLot_ >= 0 ? Tool::PlaceBin : Tool::None;
+    dirty_ = true;
+}
+
+const RgbaImage* HoodBins::binPicture(size_t index) {
+    if (auto it = binPictures_.find(index); it != binPictures_.end())
+        return it->second.get();
+    std::unique_ptr<RgbaImage> img;
+    if (index < binLots_.size())
+        try {
+            DbpfPackage pkg(binLots_[index].file);
+            for (const auto& e : pkg.entries())
+                if (e.tgi.type == 0x856DDBAC && e.tgi.instance == 0x35CA0000)
+                    if (auto d = decodeUiImage(pkg.read(e)))
+                        img = std::make_unique<RgbaImage>(std::move(*d));
+        } catch (const std::exception&) {
+        }
+    return (binPictures_[index] = std::move(img)).get();
 }
 
 void HoodBins::openQuestion(const std::string& message, Request onAccept) {
@@ -154,6 +195,27 @@ void HoodBins::lotClicked(uint32_t lotId) {
                                "and the family will lose any Rewards they may have earned.)"),
                           hood_->family(f)->name),
                      {Request::Kind::MoveOut, f, lotId});
+        return;
+    }
+    case Tool::PlaceEmpty:
+    case Tool::PlaceBin:
+    case Tool::MoveLot: return; // the neighborhood mode places
+    case Tool::ToBin: {
+        // cTSUserToolMoveLotToCatalog: a lot without a house cannot go
+        // (STR# 0x83 #26); a lot with one asks #28.
+        if (const uint32_t f = hood::familyOnLot(*hood_, lotId)) {
+            // The game moves the family with the lot (#31): not done.
+            showMessage(fill(text(0x83, 30, "The %s family living in the lot will be moved with the lot."),
+                             hood_->family(f)->name));
+            return;
+        }
+        if (!hood::lotFileInfo(*lot).hasHouse) {
+            showMessage(text(0x83, 25, "Cannot move empty lots to the Lots & Houses Bin."));
+            return;
+        }
+        openQuestion(fill(text(0x83, 27, "Are you sure you want to move the lot %s to the Lots & Houses Bin?"),
+                          lotName),
+                     {Request::Kind::ToBin, 0, lotId});
         return;
     }
     case Tool::Bulldoze: {
@@ -329,19 +391,98 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
         const auto ra = root.area();
         UiDrawHooks hk;
         hk.rects = &rects;
-        // The lots bin (catalog) and empty lots: placing lots is not done.
-        if (const UiElement* c = root.child(0xC000))
-            hk.hide.insert(c);
-        for (uint32_t id : {0xA000u, 0xE000u, 0xC100u, 0xD100u})
+        // SetPanel: the bin (0xC000, its picture 0xC200) or the empty lots
+        // (0xD000, 0xD200).
+        const UiElement* binPanel = root.child(0xC000);
+        const UiElement* emptyPanel = root.child(0xD000);
+        for (auto [id, show] : {std::pair{0xC000u, lotsPanel_ == 0}, {0xC200u, lotsPanel_ == 0},
+                                {0xD000u, lotsPanel_ == 1}, {0xD200u, lotsPanel_ == 1}})
             if (const UiElement* e = root.child(id))
-                hk.buttonState[e] = 0;
+                (show ? hk.show : hk.hide).insert(e);
+        if (const UiElement* e = root.child(0xC100))
+            hk.buttonState[e] = lotsPanel_ == 0 ? 2 : 1;
+        if (const UiElement* e = root.child(0xD100))
+            hk.buttonState[e] = lotsPanel_ == 1 ? 2 : 1;
+        if (const UiElement* e = root.child(0xA000))
+            hk.buttonState[e] = tool_ == Tool::MoveLot ? 2 : 1;
+        if (const UiElement* e = root.child(0xE000))
+            hk.buttonState[e] = tool_ == Tool::ToBin ? 2 : 1;
         if (const UiElement* bd = root.child(kBulldoze))
             hk.buttonState[bd] = tool_ == Tool::Bulldoze ? 2 : 1;
+        if (emptyPanel)
+            for (uint32_t k = 0; k < uint32_t(hood::kEmptyLotSizes); ++k)
+                if (const UiElement* b = emptyPanel->child(0xD001 + k))
+                    hk.buttonState[b] = tool_ == Tool::PlaceEmpty && emptySize_ == int(k) ? 2 : 1;
+        const UiElement* binView = nullptr;
+        if (binPanel)
+            if (const UiElement* c3 = binPanel->child(0xC300)) {
+                const UiElement* collapsed = c3->child(0x1000);
+                const UiElement* expanded = c3->child(0x2000);
+                if (collapsed && expanded)
+                    (binExpanded_ ? hk.show : hk.hide).insert(expanded),
+                        (binExpanded_ ? hk.hide : hk.show).insert(collapsed);
+                binView = binExpanded_ ? expanded : collapsed;
+            }
         layoutUiElement(root, o.x - float(ra[0]), o.y - float(ra[1]), *res_, *fonts_, out, hk);
         for (const auto& [e, r] : rects)
             if (e->get("clsid") != "GZWinFlatRect")
                 solids.push_back({r, Hit::Solid});
         target(root.child(kBulldoze), Hit::Bulldoze);
+        target(root.child(0xA000), Hit::MoveLotTool);
+        target(root.child(0xE000), Hit::ToBinTool);
+        target(root.child(0xC100), Hit::LotsPanel, 0);
+        target(root.child(0xD100), Hit::LotsPanel, 1);
+        if (lotsPanel_ == 1 && emptyPanel)
+            for (uint32_t k = 0; k < uint32_t(hood::kEmptyLotSizes); ++k)
+                target(emptyPanel->child(0xD001 + k), Hit::EmptySize, k);
+        if (lotsPanel_ == 0 && binView) {
+            const uint32_t base = binExpanded_ ? 0x2000 : 0x1000;
+            target(binView->child(base + 4), Hit::BinPrev);
+            target(binView->child(base + 5), Hit::BinNext);
+            target(binView->child(base + 9), Hit::BinExpand);
+            // The bin's lots in the hidden rectangle 0x?006, the lot's picture
+            // (4:3) under the item's button overlay.
+            const UiElement* slot = binView->child(base + 6);
+            if (auto vr = rectOf(binView); vr && slot) {
+                const auto sa = slot->area();
+                const float x0 = (*vr)[0] + float(sa[0]), y0 = (*vr)[1] + float(sa[1]);
+                const float w = float(sa[2] - sa[0]), h = float(sa[3] - sa[1]);
+                const int cols = 2, rows = binExpanded_ ? 2 : 1;
+                const float cw = w / float(cols), ch = h / float(rows);
+                const float iw = std::floor(std::min(cw - 4, (ch - 4) * 4 / 3)), ih = std::floor(iw * 3 / 4);
+                const size_t per = size_t(cols * rows);
+                const size_t pages = std::max<size_t>(1, (binLots_.size() + per - 1) / per);
+                binPage_ = std::min(binPage_, pages - 1);
+                for (size_t k = 0; k < per && binPage_ * per + k < binLots_.size(); ++k) {
+                    const size_t idx = binPage_ * per + k;
+                    const float ix = x0 + float(k % cols) * cw + (cw - iw) / 2;
+                    const float iy = y0 + float(k / cols) * ch + (ch - ih) / 2;
+                    UiElement pic;
+                    pic.tag = "LEGACY";
+                    pic.attrs = {{"clsid", "GZWinBMP"}, {"winflag_visible", "yes"},
+                                 {"area", area(0, 0, int(iw), int(ih))}};
+                    UiDrawHooks ph;
+                    if (const RgbaImage* img = binPicture(idx))
+                        ph.images[&pic] = img;
+                    layoutUiElement(pic, ix, iy, *res_, *fonts_, out, ph);
+                    if (int(idx) == binLot_) {
+                        // The pick: a frame round it.
+                        for (auto [fx, fy, fw, fh] : {std::array<float, 4>{ix - 2, iy - 2, iw + 4, 2},
+                                                      {ix - 2, iy + ih, iw + 4, 2},
+                                                      {ix - 2, iy, 2, ih},
+                                                      {ix + iw, iy, 2, ih}}) {
+                            UiElement f;
+                            f.tag = "LEGACY";
+                            f.attrs = {{"clsid", "GZWinFlatRect"}, {"winflag_visible", "yes"},
+                                       {"fillcolor", "(255,255,255)"},
+                                       {"area", area(0, 0, int(fw), int(fh))}};
+                            layoutUiElement(f, fx, fy, *res_, *fonts_, out, {});
+                        }
+                    }
+                    targets_.push_back({{ix, iy, ix + iw, iy + ih}, Hit::BinItem, uint32_t(idx)});
+                }
+            }
+        }
     }
     targets_.insert(targets_.end(), solids.begin(), solids.end());
 
@@ -414,7 +555,7 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
             const Request r = dialog_ ? dialog_->onAccept : Request{};
             dialog_.reset();
             if (r.kind == Request::Kind::MoveIn || r.kind == Request::Kind::MoveOut ||
-                r.kind == Request::Kind::Bulldoze)
+                r.kind == Request::Kind::Bulldoze || r.kind == Request::Kind::ToBin)
                 tool_ = Tool::None, selected_ = 0;
             return r.kind == Request::Kind::None ? Request{Request::Kind::Consumed} : r;
         }
@@ -435,6 +576,36 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
             selected_ = 0;
             tool_ = tool_ == Tool::Bulldoze ? Tool::None : Tool::Bulldoze;
             return {Request::Kind::Consumed};
+        case Hit::LotsPanel:
+            lotsPanel_ = int(t.value);
+            return {Request::Kind::Consumed};
+        case Hit::EmptySize:
+            pickEmptyLot(tool_ == Tool::PlaceEmpty && emptySize_ == int(t.value) ? -1 : int(t.value));
+            return {Request::Kind::Consumed};
+        case Hit::BinItem:
+            if (tool_ == Tool::PlaceBin && binLot_ == int(t.value))
+                cancelTool();
+            else
+                pickBinLot(t.value);
+            return {Request::Kind::Consumed};
+        case Hit::BinExpand: binExpanded_ = !binExpanded_; return {Request::Kind::Consumed};
+        case Hit::BinPrev:
+            if (binPage_ > 0)
+                --binPage_;
+            return {Request::Kind::Consumed};
+        case Hit::BinNext: ++binPage_; return {Request::Kind::Consumed};
+        case Hit::MoveLotTool: {
+            const bool on = tool_ == Tool::MoveLot;
+            cancelTool();
+            tool_ = on ? Tool::None : Tool::MoveLot;
+            return {Request::Kind::Consumed};
+        }
+        case Hit::ToBinTool: {
+            const bool on = tool_ == Tool::ToBin;
+            cancelTool();
+            tool_ = on ? Tool::None : Tool::ToBin;
+            return {Request::Kind::Consumed};
+        }
         case Hit::Solid:
         case Hit::Request: return {Request::Kind::Consumed};
         }

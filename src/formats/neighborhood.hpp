@@ -241,10 +241,11 @@ struct LotInfo {
 
     static LotInfo parse(std::span<const uint8_t> data);
     // A base lot info alone (cTSBaseLotInfo: the 0x6C589723 record of a lot
-    // file, after its 64-byte name), as the version 13 wrapper holds it.
+    // file, after its 64-byte name): as the version 13 wrapper holds it, but
+    // with 7-bit-length names.
     static LotInfo parseBase(std::span<const uint8_t> data);
     std::vector<uint8_t> write() const;     // neighborhood_write.cpp: parse's inverse
-    std::vector<uint8_t> writeBase() const; // the base part (no 64-byte name)
+    std::vector<uint8_t> writeBase(bool str7Names = false) const; // the base part (true: as a lot file's 0x6C589723)
     // cTSLotInfo::GetCurrentSize (BV 0x48326c): the base size, swapped when
     // the lot was turned an odd number of quarters from how it was created
     // ((front edge - creation front edge) odd).

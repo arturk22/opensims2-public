@@ -3765,6 +3765,13 @@ void unloadScene() {
         next.returnHood = os2::sceneOf(processArguments()).hood;
         requestScene(next);
     };
+    // A lot placed, moved or binned: the neighborhood view built again.
+    gHood->onReload = [] {
+        os2::Scene next;
+        next.kind = os2::Scene::Kind::Neighborhood;
+        next.hood = os2::sceneOf(processArguments()).hood;
+        requestScene(next);
+    };
     gHood->onMainMenu = [] {
         os2::Scene next;
         next.kind = os2::Scene::Kind::MainMenu;

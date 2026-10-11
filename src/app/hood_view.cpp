@@ -175,6 +175,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         throw std::runtime_error(hood_.package.string() + ": no neighborhood terrain");
     (void)haveOccupants;
     const hood::TerrainSettings settings = hood::TerrainSettings::load(sysDir);
+    rawTerrain_ = terrain_; // as saved, for the lot tools' checks
     // FlattenTerrainUnderLot for every lot (formats/hood_lot_terrain.hpp).
     if (const size_t n = hood::flattenTerrainUnderLots(terrain_, hood_.lots, occupants_))
         report_.push_back(std::to_string(n) + " terrain vertices flattened under the lots");
@@ -365,7 +366,37 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         }
         lots_.push_back(std::move(lot));
     }
+    // The lot tools' checks (formats/hood_lots.hpp).
+    place_.hood = &hood_;
+    place_.terrain = &rawTerrain_;
+    place_.occupants = &occupants_;
+    place_.objects = hood::loadOccupantFlags(index);
     // The lot highlight: a unit square, scaled onto the lot when shown.
+    // AddLotPlopHighlight's footprint: the same square, green where the lot
+    // may go and red where not (inferred colours).
+    auto square = [&](const char* material, const char* colour, const char* alpha) {
+        ObjectModel m;
+        m.name = material;
+        ObjectModel::Part part;
+        part.node = part.shape = "highlight";
+        part.material = material;
+        part.mesh.positions = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
+        part.mesh.normals.assign(4, {0, 0, 1});
+        part.mesh.uvs = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        part.mesh.triangles = {0, 1, 2, 0, 2, 3};
+        m.parts.push_back(part);
+        MaterialDefinition mat;
+        mat.materialType = "StandardMaterial";
+        mat.properties = {{"stdMatDiffCoef", colour},          {"stdMatUntexturedDiffAlpha", alpha},
+                          {"stdMatAlphaBlendMode", "blend"}, {"stdMatLightingEnabled", "false"},
+                          {"stdMatCullMode", "none"},        {"stdMatLayer", "-1"}};
+        m.materials[part.material] = mat;
+        simd_float4x4 away = matrix_identity_float4x4;
+        away.columns[0].x = away.columns[1].y = 0;
+        return renderer.addInstance(renderer.addObject(m, index), away);
+    };
+    plopOk_ = square("nhood-lot-plop-ok", "0.35,1,0.35,1", "0.45");
+    plopBad_ = square("nhood-lot-plop-bad", "1,0.3,0.25,1", "0.45");
     {
         ObjectModel m;
         m.name = "lot highlight";
@@ -418,6 +449,50 @@ void HoodView::highlight(const HoodLot* lot) {
         m.columns[3] = simd_make_float4(lot->footLo.x, lot->footLo.y, lot->ground + 0.6f, 1);
     }
     renderer_->setInstanceTransform(highlight_, m);
+}
+
+void HoodView::showPlacement(const hood::TileRect* rect, bool ok, float height) {
+    simd_float4x4 away = matrix_identity_float4x4;
+    away.columns[0].x = away.columns[1].y = 0;
+    renderer_->setInstanceTransform(plopOk_, away);
+    renderer_->setInstanceTransform(plopBad_, away);
+    if (!rect)
+        return;
+    simd_float4x4 m = matrix_identity_float4x4;
+    m.columns[0].x = float(rect->width()) * hood::kHoodCellSize;
+    m.columns[1].y = float(rect->depth()) * hood::kHoodCellSize;
+    // HighlightOffsetAboveTerrain (Neighborhood.ini [LotPlopTunables]): 0.6.
+    m.columns[3] = simd_make_float4(float(rect->x0) * hood::kHoodCellSize, float(rect->y0) * hood::kHoodCellSize,
+                                    height + 0.6f, 1);
+    renderer_->setInstanceTransform(ok ? plopOk_ : plopBad_, m);
+}
+
+std::optional<simd_float2> HoodView::groundAt(simd_float3 origin, simd_float3 dir) const {
+    // Marching the ray down to the terrain (or the sea).
+    dir = simd_normalize(dir);
+    float prev = 0;
+    for (float t = 1; t < 4000; t += 2) {
+        const simd_float3 p = origin + dir * t;
+        if (p.x < 0 || p.y < 0 || p.x > terrain_.worldWidth() || p.y > terrain_.worldHeight()) {
+            if (t > 2000)
+                break;
+            prev = t;
+            continue;
+        }
+        if (p.z <= std::max(terrain_.heightAt(p.x, p.y), terrain_.seaLevel)) {
+            // Refine between the last two steps.
+            float lo = prev, hi = t;
+            for (int k = 0; k < 12; ++k) {
+                const float mid = (lo + hi) / 2;
+                const simd_float3 q = origin + dir * mid;
+                (q.z <= std::max(terrain_.heightAt(q.x, q.y), terrain_.seaLevel) ? hi : lo) = mid;
+            }
+            const simd_float3 q = origin + dir * hi;
+            return simd_make_float2(q.x, q.y);
+        }
+        prev = t;
+    }
+    return std::nullopt;
 }
 
 void HoodView::reload() {

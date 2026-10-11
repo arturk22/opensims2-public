@@ -19,6 +19,7 @@
 // ImposterZOffset. The camera keeps its pivot inside the "constrain"
 // fractions of the terrain (section 5).
 
+#include "formats/hood_lots.hpp"
 #include "formats/hood_terrain.hpp"
 #include "formats/neighborhood.hpp"
 
@@ -88,6 +89,13 @@ public:
     // A point to frame a lot from (middle of its box top).
     simd_float3 lotCentre(const HoodLot& lot) const;
 
+    // The lot tools (formats/hood_lots.hpp): what they check against, the
+    // footprint highlight (null hides it) and the ground under a ray.
+    const hood::PlacementWorld& placementWorld() const { return place_; }
+    void showPlacement(const hood::TileRect* rect, bool ok, float height);
+    std::optional<simd_float2> groundAt(simd_float3 origin, simd_float3 dir) const;
+    const hood::Terrain& rawTerrain() const { return rawTerrain_; }
+
     // Rereads the neighborhood package after a family moved or a lot was
     // bulldozed (formats/hood_moves.hpp): the lots' families, and the lots
     // that are gone leave the view.
@@ -100,7 +108,9 @@ public:
 
 private:
     hood::Neighborhood hood_;
-    hood::Terrain terrain_;
+    hood::Terrain terrain_, rawTerrain_;
+    hood::PlacementWorld place_;
+    int plopOk_ = -1, plopBad_ = -1;
     hood::Occupants occupants_;
     std::optional<hood::SavedCamera> saved_;
     std::vector<HoodLot> lots_;

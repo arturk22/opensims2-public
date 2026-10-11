@@ -226,7 +226,9 @@ Occupants Occupants::parse(std::span<const uint8_t> data) {
     o.floraVersion = r.u16();
     if (o.floraVersion <= 7)
         throw FormatError("flora: unsupported version");
+    o.floraCountAt = r.pos();
     for (uint32_t i = 0, n = count(r, 30, "flora"); i < n; ++i) {
+        const size_t begin = r.pos();
         Flora f;
         f.at = position(r);
         if (r.u8() <= 7)
@@ -234,6 +236,7 @@ Occupants Occupants::parse(std::span<const uint8_t> data) {
         f.rotation = r.f32();
         f.guid = r.u32();
         o.flora.push_back(f);
+        o.floraSpans.emplace_back(begin, r.pos());
     }
     o.roadVersion = r.u16();
     if (o.roadVersion <= 2)
@@ -260,7 +263,9 @@ Occupants Occupants::parse(std::span<const uint8_t> data) {
     o.propVersion = r.u16();
     if (o.propVersion < 7)
         throw FormatError("props: unsupported version");
+    o.propCountAt = r.pos();
     for (uint32_t i = 0, n = count(r, 30, "props"); i < n; ++i) {
+        const size_t begin = r.pos();
         Prop p;
         p.at = position(r);
         if (r.u8() <= 7)
@@ -268,9 +273,32 @@ Occupants Occupants::parse(std::span<const uint8_t> data) {
         p.guid = r.u32();
         p.rotation = r.f32();
         o.props.push_back(p);
+        o.propSpans.emplace_back(begin, r.pos());
     }
     r.expectEnd("neighborhood occupants");
     return o;
+}
+
+std::vector<uint8_t> Occupants::removeOccupants(std::span<const uint8_t> data, const Occupants& o,
+                                                const std::vector<size_t>& flora, const std::vector<size_t>& props) {
+    std::vector<std::pair<size_t, size_t>> cut;
+    for (size_t i : flora)
+        if (i < o.floraSpans.size())
+            cut.push_back(o.floraSpans[i]);
+    for (size_t i : props)
+        if (i < o.propSpans.size())
+            cut.push_back(o.propSpans[i]);
+    std::sort(cut.begin(), cut.end());
+    std::vector<uint8_t> out(data.begin(), data.end());
+    auto setCount = [&](size_t at, uint32_t n) {
+        for (int k = 0; k < 4; ++k)
+            out[at + size_t(k)] = uint8_t(n >> (8 * k));
+    };
+    setCount(o.floraCountAt, uint32_t(o.flora.size() - std::count_if(flora.begin(), flora.end(), [&](size_t i) { return i < o.flora.size(); })));
+    setCount(o.propCountAt, uint32_t(o.props.size() - std::count_if(props.begin(), props.end(), [&](size_t i) { return i < o.props.size(); })));
+    for (auto it = cut.rbegin(); it != cut.rend(); ++it)
+        out.erase(out.begin() + std::ptrdiff_t(it->first), out.begin() + std::ptrdiff_t(it->second));
+    return out;
 }
 
 std::map<uint32_t, std::string> loadNeighborhoodObjects(ResourceIndex& index) {

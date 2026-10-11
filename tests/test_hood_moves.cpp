@@ -2,6 +2,7 @@
 // neighborhood: lot prices without a lot file, the move-in checks, moving in
 // and out (the family's funds and lot in its FAMI), bulldozing.
 #include "formats/dbpf.hpp"
+#include "formats/hood_lots.hpp"
 #include "formats/hood_moves.hpp"
 #include "formats/lot_evict.hpp"
 
@@ -115,8 +116,27 @@ static void evictCleanup() {
     check(lot.simulator.fAC == 0 && lot.globals[48] == 1 && lot.globals[49] == 500, "evicted: no family objects value");
 }
 
+// The lot tools' geometry (formats/hood_lots.hpp).
+static void lotTools() {
+    const EmptyLotSize s = emptyLotSize(2); // button 0xD003, "3x4": 4 wide, 3 deep
+    check(s.width == 4 && s.depth == 3, "empty lot size 2 is 4 x 3");
+    const TileRect r0 = emptyLotRect(s, 10, 20, 0), r1 = emptyLotRect(s, 10, 20, 1);
+    check(r0.x0 == 9 && r0.x1 == 14 && r0.y0 == 20 && r0.y1 == 23, "rotation 0: the road strip on x-min");
+    check(r1.x0 == 10 && r1.x1 == 13 && r1.y0 == 20 && r1.y1 == 25, "rotation 1: turned, the road strip on y-max");
+    LotInfo base;
+    base.roads = 2, base.creationFrontEdge = 1; // a road on edge 1 when it was made
+    check(roadsMatch(base, 1, {false, true, false, false}), "front = creation front: the road stays on edge 1");
+    check(roadsMatch(base, 3, {false, false, false, true}), "turned twice: the road on edge 3");
+    check(!roadsMatch(base, 3, {false, true, false, false}), "turned twice, the road on edge 1 does not match");
+    LotInfo li;
+    li.x = 5, li.y = 6, li.width = 3, li.depth = 5, li.creationFrontEdge = 1, li.frontEdge = 2;
+    const TileRect lr = lotRect(li);
+    check(lr.x1 - lr.x0 == 5 && lr.y1 - lr.y0 == 3, "a lot turned a quarter: its size swapped");
+}
+
 int main() {
     evictCleanup();
+    lotTools();
     // nTSWorld::LotValue, rounding down as the saved values show.
     check(worldLotValue(20, 30) == 2900, "3x3 lot (road off) is worth 2900");
     check(worldLotValue(20, 20) == 1600, "3x2 lot is worth 1600");

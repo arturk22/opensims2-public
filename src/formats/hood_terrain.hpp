@@ -105,8 +105,15 @@ struct Occupants {
     std::vector<Road> roads;
     std::vector<Bridge> bridges;
     std::vector<Prop> props;
+    // Where each flora and prop record and the two counts sit in the
+    // resource (for removeOccupants).
+    std::vector<std::pair<size_t, size_t>> floraSpans, propSpans; // [begin, end)
+    size_t floraCountAt = 0, propCountAt = 0;
 
     static Occupants parse(std::span<const uint8_t> data);
+    // The resource without the flora and props of the given indices.
+    static std::vector<uint8_t> removeOccupants(std::span<const uint8_t> data, const Occupants& parsed,
+                                                const std::vector<size_t>& flora, const std::vector<size_t>& props);
 };
 
 // Neighborhood objects (catalog 0x6D619378): GUID -> CRES name ("..._cres").

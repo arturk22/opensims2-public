@@ -11,9 +11,13 @@
 //               button overlay), "Create New Family" 0x0A and "Move Family"
 //               0x6D13DDA1 (the evict tool)
 //   0x49001003  "Lots & Houses" (0x4BE6F571, F2): "Bulldoze" 0xB000 (the
-//               bulldoze tool); move/rotate lot 0xA000, move to the bin
-//               0xE000, the lots bin 0xC100 and the empty lots 0xD100 are
-//               shown disabled (placing lots is not done)
+//               bulldoze tool), move/rotate lot 0xA000, move to the bin
+//               0xE000, and the panels the binary's SetPanel switches:
+//               0xC100 the lots bin (0xC000: items in 0xC300's 0x1006 /
+//               0x2006, the lot's picture IMG 0x35CA0000), 0xD100 the empty
+//               lots (0xD000: sizes 0xD001-0xD00A = cTSUserToolPlaceNewLot
+//               sizes 0-9, cTSWinProcNeighborhoodUCPSubPanelTools::
+//               onBtnClickedID)
 //   0x49001035  the small "Rename this lot?" dialog, reused for the
 //               questions and errors (its text, Accept 0xA000, Cancel 0xA001)
 //
@@ -29,6 +33,7 @@
 // window procedures add (cTSWinProcNeighborhoodUCPSubPanelFamilies) is
 // inferred: the bin's items fill its rectangle, two per row.
 
+#include "formats/hood_lots.hpp"
 #include "formats/image.hpp"
 #include "formats/ui_screen.hpp"
 #include "formats/ui_script.hpp"
@@ -49,6 +54,7 @@ class FontLibrary;
 class UiResources;
 namespace hood {
 struct Neighborhood;
+struct BinLot;
 }
 
 class HoodBins {
@@ -57,12 +63,21 @@ public:
     ~HoodBins();
 
     enum class Panel { None, Families, Lots };
-    enum class Tool { None, MoveIn, Evict, Bulldoze };
+    enum class Tool { None, MoveIn, Evict, Bulldoze, PlaceEmpty, PlaceBin, MoveLot, ToBin };
     // What a click asked for: the neighborhood mode carries it out.
     struct Request {
-        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze } kind = Kind::None;
+        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin } kind = Kind::None;
         uint32_t family = 0, lot = 0;
     };
+    // The Lots & Houses bin's lots (formats/hood_lots.hpp) and the tools'
+    // picks: the empty lot size (0-9, buttons 0xD001-0xD00A), the bin lot.
+    void setLotBin(std::vector<hood::BinLot> lots);
+    const std::vector<hood::BinLot>& lotBin() const { return binLots_; }
+    int emptySize() const { return emptySize_; }
+    int binLot() const { return binLot_; }
+    void pickEmptyLot(int size);  // the place-empty-lot tool
+    void pickBinLot(size_t index); // the place-from-bin tool
+    void setLotsPanel(int which) { lotsPanel_ = which, dirty_ = true; } // 0 bin, 1 empty lots
 
     Panel panel() const { return panel_; }
     Tool tool() const { return tool_; }
@@ -112,7 +127,14 @@ private:
     };
     std::optional<Dialog> dialog_;
 
-    enum class Hit { Request, Family, Expand, Prev, Next, Create, Evict, Bulldoze, Accept, Cancel, Solid };
+    enum class Hit { Request, Family, Expand, Prev, Next, Create, Evict, Bulldoze, Accept, Cancel, Solid, LotsPanel,
+                     EmptySize, BinItem, BinExpand, BinPrev, BinNext, MoveLotTool, ToBinTool };
+    const RgbaImage* binPicture(size_t index);
+    std::vector<hood::BinLot> binLots_;
+    std::map<size_t, std::unique_ptr<RgbaImage>> binPictures_;
+    int lotsPanel_ = 0, emptySize_ = -1, binLot_ = -1;
+    size_t binPage_ = 0;
+    bool binExpanded_ = false;
     struct Target {
         std::array<float, 4> rect;
         Hit hit;

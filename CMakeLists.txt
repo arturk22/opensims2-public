@@ -49,6 +49,7 @@ add_library(os2_formats
   src/formats/hood_moves.cpp
   src/formats/lot_arrivals.cpp
   src/formats/lot_evict.cpp
+  src/formats/hood_lots.cpp
   src/formats/hood_scene.cpp
   src/formats/hood_terrain.cpp
   src/formats/lot.cpp

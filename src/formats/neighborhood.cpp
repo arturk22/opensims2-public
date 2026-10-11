@@ -225,7 +225,7 @@ Relationship Relationship::parse(std::span<const uint8_t> data, uint32_t instanc
 }
 
 namespace {
-void parseBaseLotInfo(BinReader& r, LotInfo& l) {
+void parseBaseLotInfo(BinReader& r, LotInfo& l, bool str7Names = false) {
     l.baseVersion = r.u16();
     l.width = r.u32();
     l.depth = r.u32();
@@ -235,8 +235,8 @@ void parseBaseLotInfo(BinReader& r, LotInfo& l) {
     if (l.baseVersion >= 5)
         l.flags = r.u32();
     if (l.baseVersion > 5) {
-        l.name = str32(r);
-        l.description = str32(r);
+        l.name = str7Names ? r.str7() : str32(r);
+        l.description = str7Names ? r.str7() : str32(r);
     }
     if (l.baseVersion > 3) {
         l.heights.resize(count(r, 4, "lot heights"));
@@ -256,7 +256,7 @@ LotInfo LotInfo::parseBase(std::span<const uint8_t> data) {
     BinReader r(data);
     r.skip(64);
     LotInfo l;
-    parseBaseLotInfo(r, l);
+    parseBaseLotInfo(r, l, true);
     return l;
 }
 

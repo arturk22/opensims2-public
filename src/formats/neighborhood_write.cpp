@@ -104,7 +104,7 @@ std::vector<uint8_t> Relationship::write() const {
     return std::move(w.bytes());
 }
 
-std::vector<uint8_t> LotInfo::writeBase() const {
+std::vector<uint8_t> LotInfo::writeBase(bool str7Names) const {
     BinWriter w;
     w.u16(baseVersion);
     w.u32(width);
@@ -115,8 +115,13 @@ std::vector<uint8_t> LotInfo::writeBase() const {
     if (baseVersion >= 5)
         w.u32(flags);
     if (baseVersion > 5) {
-        str32(w, name);
-        str32(w, description);
+        if (str7Names) {
+            w.str7(name);
+            w.str7(description);
+        } else {
+            str32(w, name);
+            str32(w, description);
+        }
     }
     if (baseVersion > 3) {
         w.u32(uint32_t(heights.size()));

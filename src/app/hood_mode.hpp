@@ -65,13 +65,34 @@ public:
     // move in. Without a handler the button does nothing.
     std::function<void(const std::filesystem::path& hoodFolder)> onCreateFamily;
     void familyCreated(uint32_t family);
+    // A lot was placed, moved or sent to the bin: the view is rebuilt (the
+    // terrain under the imposters changes). Without a handler, refresh().
+    std::function<void()> onReload;
     // Rereads the neighborhood after it changed on disk.
     void refresh();
 
     // --hood-hover / --hood-select for screenshots; moves the camera to the lot.
     void scriptedView(LotCamera& camera, float w, float h);
 
+    // The lot tools (formats/hood_lots.hpp): where the picked lot would go
+    // with its corner near tile (x, y), shown as the footprint highlight;
+    // place() writes it when it may go there.
+    struct LotPlacement {
+        bool any = false, ok = false;
+        hood::TileRect rect;
+        int x = 0, y = 0, turn = 0; // empty lot: rotation; bin or moved lot: front edge
+        float height = 0;
+        std::string why;
+    };
+    LotPlacement placementAt(int x, int y) const;
+    bool place(const LotPlacement& p);
+
 private:
+    std::optional<simd_int2> tileAt(const LotCamera& camera, simd_float2 p, float w, float h) const;
+    void updatePlacement(const LotCamera& camera, simd_float2 p, float w, float h);
+    void lotsChanged();
+    LotPlacement pending_;
+    uint32_t movingLot_ = 0; // the move tool's lot
     const HoodLot* lotAt(const LotCamera& camera, simd_float2 p, float w, float h) const;
     void carryOut(const HoodBins::Request& r);
     void lotClicked(const HoodLot& lot);

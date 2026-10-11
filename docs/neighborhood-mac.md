@@ -733,3 +733,34 @@ lote nem fica sob uma rua.
   de dentro de um lote (a saia do lote), com distância 2500 (`+0x78`,
   "neighborhoodPropFadeDistance"): alfa = (d / 2500)² perto da câmera. Na
   vista do bairro não há desbotamento.
+- **Pôr, mover e mandar lotes para a caixa** (`formats/hood_lots.*`,
+  `app/hood_bins.*`, `app/hood_mode.*`; §11.4): o painel Lotes & Casas liga
+  a caixa (`0xC100` → painel `0xC000`, os lotes do `LotCatalog` do jogador
+  com a foto IMG `0x35CA0000`, preço pelo `GetLotFileInfo`), os lotes vazios
+  (`0xD100` → `0xD000`: botões `0xD001`–`0xD00A` = tamanhos 0–9 das tabelas
+  do binário, `onBtnClickedID`), mover/girar (`0xA000`) e mandar para a
+  caixa (`0xE000`). O retângulo do lote vazio é o tamanho mais a faixa da rua
+  no lado do giro (`UpdateLotRect`); a validade é o `IsOKToPlaceLotCommon`
+  (§11.4, itens 1–6: terreno, outros lotes fora das ruas, flora/enfeites que
+  não podem ficar nem sair (`allowedinlot`/`removeonlotplop` do catálogo;
+  **inferido** que a vtable `0x34` é isso), água, rua, declive > 0,5, ruas só
+  nas bordas, uma borda inteira de rua, as pontas ligadas a ela); a frente do
+  lote vazio é a primeira borda de rua; lote da caixa e lote movido exigem as
+  ruas nas suas bordas giradas. Pôr ou mover tira a flora e os enfeites com
+  `removeonlotplop` sobre o lote (`FUN_00a284cc`; o recurso de ocupantes é
+  regravado cortando os registros). O lote vazio ganha um lot info (versão
+  13, base 6) sem pacote (preço = valor do mundo); o da caixa, o pacote
+  copiado como `<P>_Lot<id>` (id = `AcquireNextAvailableLotID`) e o lot info
+  da base; o movido só muda posição, frente e altura. Mandar para a caixa
+  (só casa sem família; `#26` para lote vazio) copia o pacote como
+  `cx_<próximo>` com a base `0x6C589723` (nomes de 7 bits, ao contrário do
+  lot info do bairro) e tira o lote do bairro. Depois de cada mudança a vista
+  do bairro é refeita (troca de cena). Conferência: `s2pkg hood-lot-check`
+  passa 58 dos 63 lotes do jogo onde estão (os outros 5: uma árvore de
+  floresta 0,4 unidade dentro, uma rua de lado), `r10-bairro-caixa-de-lotes.jpg`,
+  `r10-bairro-lote-vazio-vermelho.jpg`, `r10-bairro-lote-colocado.jpg`.
+  **Não feito**: conformar o terreno ao lote e alisá-lo (a vista aplaina sob
+  os lotes ao carregar), girar com as teclas (a ferramenta escolhe o primeiro
+  giro que cabe: conveniência), a caixa de nome/zona do lote novo (fica
+  residencial com o nome da base), lotes de praia e mandar lote ocupado com a
+  família para a caixa.

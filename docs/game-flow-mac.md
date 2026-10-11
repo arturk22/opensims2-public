@@ -120,3 +120,10 @@ opensims2 --user-dir /tmp/u --no-audio --hood N001 --hood-panel families \
   --hood-family 8 --hood-lot-click 24 --click 605,423 --wait 300 \
   --click 139,690 --wait 2 --click 208,678 --wait 2 --screenshot out.png
 ```
+
+Lotes (rodada 10, `docs/neighborhood-mac.md` §12): `--hood-place
+empty:<0-9>|bin:<n>|move:<lote>` escolhe a ferramenta, `--hood-place-at x,y`
+mostra a pegada (verde/vermelha) com o canto no tile (x, y) e
+`--hood-place-click x,y` põe o lote; a vista é refeita por uma troca de cena
+(`HoodMode::onReload`). `--hood-tool move|tobin` dão as ferramentas de mover e
+de mandar para a caixa.
