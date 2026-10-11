@@ -127,7 +127,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         if (!all && (e.debug || !e.available()))
             continue;
         shown.push_back(&e);
-        std::printf("  [%d] TTA %-3u %-9s %s", n++, e.interaction, e.debug ? "debug" : e.hidden ? "hidden" : checkName(e.check),
+        std::printf("  [%d] TTA %-3u %-9s %s", n++, e.interaction, e.debug ? "debug" : e.wrongAge ? "age" : e.hidden ? "hidden" : checkName(e.check),
                     e.name.c_str());
         if (!e.error.empty())
             std::printf("  -- %s", e.error.substr(0, e.error.find('\n')).c_str());

@@ -162,7 +162,10 @@ struct PieEntry {
     // Menu" (global 0x109) does: the entry exists (autonomy and pushes may
     // use it) but the menu does not show it (FreeSO's GetPieMenu).
     bool hidden = false;
-    bool available() const { return !hidden && (check == CheckResult::NoGuard || check == CheckResult::True); }
+    // Not for the Sim's age (availableToAge, autonomy.hpp): not shown, and
+    // its check tree is not run.
+    bool wrongAge = false;
+    bool available() const { return !hidden && !wrongAge && (check == CheckResult::NoGuard || check == CheckResult::True); }
 };
 
 struct PieOptions {

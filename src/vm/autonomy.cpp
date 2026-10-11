@@ -59,6 +59,8 @@ int simAge(const Object& sim) {
 // tables a set bit 4/6 means "not for children/adults" (the teen runaway
 // entry, 0x850, is for teens only).
 bool availableForAge(const Object& sim, const InteractionTable& table, const InteractionTable::Interaction& e) {
+    if (!sim.person)
+        return true;
     static constexpr uint32_t kBits[6] = {0x40, 0x10, 0x200, 0x800, 0x400, 0x1000};
     uint32_t flags = uint32_t(e.flags) | uint32_t(e.flags2) << 16;
     if (table.version < 0x52)
@@ -117,6 +119,29 @@ float attenuationOf(const InteractionTable::Interaction& e) {
     return e.attenuationCode < std::size(kAttenuation) ? kAttenuation[e.attenuationCode] : 0.0f;
 }
 
+// The biases cTSPerson::FBA_ScoreInteraction multiplies the attenuated
+// score by (Mac binary, Ghidra headless), as they come out in the base game:
+// - ownership, x (1 + GetOwnerShipBias): 0.1 x relationship variable 1 of
+//   the interaction leader towards the Sim, when that relationship has more
+//   than one variable (the binary also needs bit 0 of a definition field,
+//   GetDef()->field 0x19, not identified: not checked here; objects with
+//   relationships to Sims are rare in the base game);
+// - GetAutonomyBias (the autonomy memory and "interaction is for my
+//   family"): only with bit 0x04 of a tuning word that is 1 in the binary's
+//   data: 1;
+// - GetRelationshipBias: 1 + 0.01 x global constant 0x15B entry 11 for
+//   Sims with relationship flag 0x800, but that BCON is not in the base
+//   game: 1;
+// - CalcWeatherFactor and GetTemperatureBias: weather and temperature
+//   (expansion packs; GetTemperatureBias needs an expansion flag): 1.
+float ownershipFactor(VM& vm, const Object& sim, ObjectId leader) {
+    const auto& rels = vm.relationships;
+    auto it = rels.find({vm.relationshipKey(leader), vm.relationshipKey(sim.id)});
+    if (it == rels.end() || it->second.size() < 2)
+        return 1.0f;
+    return 1.0f + 0.1f * float(it->second[1]);
+}
+
 float distanceBetween(const Object& a, const Object& b) {
     const float dx = a.position.x - b.position.x, dy = a.position.y - b.position.y;
     return std::sqrt(dx * dx + dy * dy) + kFloorToFloorDistance * float(std::abs(a.position.level - b.position.level));
@@ -128,6 +153,7 @@ struct Candidate {
     std::string name;
     float staticScore = 0;
     float distance = 0;
+    float bias = 1; // the FBA_ScoreInteraction biases (ownershipFactor)
 };
 
 // Runs a candidate's check tree for autonomy: parameter 0 = 1, the ads in
@@ -245,7 +271,8 @@ Exit findBestInteraction(Context& c) {
             cand.object = leaderId;
             cand.entry = &e;
             cand.distance = distance;
-            cand.staticScore = scoreAds(vm, sim, ads) / (1.0f + attenuationOf(e) * distance);
+            cand.bias = ownershipFactor(vm, sim, leaderId);
+            cand.staticScore = scoreAds(vm, sim, ads) / (1.0f + attenuationOf(e) * distance) * cand.bias;
             if (ref->strings)
                 cand.name = ref->strings->get(e.stringIndex, lang::BrazilianPortuguese);
             candidates.push_back(std::move(cand));
@@ -275,7 +302,7 @@ Exit findBestInteraction(Context& c) {
         Object* s = vm.object(simId);
         if (!s)
             return Exit::False;
-        const float score = scoreAds(vm, *s, ads) / (1.0f + attenuationOf(*cand.entry) * cand.distance);
+        const float score = scoreAds(vm, *s, ads) / (1.0f + attenuationOf(*cand.entry) * cand.distance) * cand.bias;
         if (score > kMinScore)
             passed.push_back({&cand, score, args});
     }
@@ -348,6 +375,10 @@ void foundActionReturned(VM& vm, Thread& t, bool result) {
                       vm.ticks, !result});
     if (memory.size() > kMemoryCount)
         memory.erase(memory.begin());
+}
+
+bool availableToAge(const Object& sim, const InteractionTable& table, const InteractionTable::Interaction& e) {
+    return availableForAge(sim, table, e);
 }
 
 std::function<void(const AutonomyDecision&)>& autonomyObserver() {

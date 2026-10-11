@@ -2,6 +2,7 @@
 // (interactions.hpp). The queue logic follows FreeSO's
 // tso.simantics/Engine/VMThread.cs (MPL-2.0), rewritten for this VM.
 
+#include "autonomy.hpp"
 #include "interactions.hpp"
 
 #include "errors.hpp"
@@ -608,7 +609,9 @@ std::vector<PieEntry> pieMenu(VM& vm, ObjectId sim, ObjectId object, const PieOp
         // Debug interactions are only offered with the testing cheats; their
         // check trees are not run (as FreeSO does for its debug flag).
         std::vector<ActionString> strings;
-        if (!p.debug) {
+        if (const Object* s = vm.object(sim))
+            p.wrongAge = !availableToAge(*s, *ref->table, e);
+        if (!p.debug && !p.wrongAge) {
             if (Object* s = vm.object(sim))
                 s->data[objdata::HideInteraction] = 0;
             p.check = checkInteraction(vm, sim, q, &p.error, opt.autonomous, opt.maxTurns, &strings);

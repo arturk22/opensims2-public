@@ -32,7 +32,10 @@
 //   attenuation x distance): attenuation from the entry (custom value, none,
 //   low 0.1, moderate 0.3, high 0.6, FCNS 2), distance in tiles plus 10 per
 //   level ("autonomy floor to floor distance cost"). ad = min + range x
-//   personality / 1000 (type 0: min + range).
+//   personality / 1000 (type 0: min + range). Times the biases of
+//   FBA_ScoreInteraction: ownership (1 + 0.1 x the object's relationship
+//   variable 1 towards the Sim); memory, relationship, weather and
+//   temperature are 1 in the base game (autonomy.cpp, ownershipFactor).
 // - in the order of that score, the check trees run (autonomous, parameter
 //   0 = 1, with the ads in data owners 0x0C/0x1C/0x1D so they can change
 //   them), at most 200 ("max check tree in fba count"); the entries that
@@ -74,6 +77,12 @@ struct AutonomyDecision {
 };
 // Called after every Find Best Interaction (empty by default).
 std::function<void(const AutonomyDecision&)>& autonomyObserver();
+
+// Whether a TTAB entry serves the Sim's age (cTSPerson::GetAvailabilityBitset:
+// adult 0x40, child 0x10, toddler 0x200, teen 0x800, elder 0x400, baby 0x1000
+// in the entry's u32 of flags, 0x10/0x40 inverted before TTAB version 0x52).
+// Autonomy and the pie menu leave out the others. True for non-Sims.
+bool availableToAge(const Object& sim, const InteractionTable& table, const InteractionTable::Interaction& e);
 
 // The value of a TTAB ad for a Sim: min + range x the personality or skill
 // the type names (STR# 0xE8) / 1000.
