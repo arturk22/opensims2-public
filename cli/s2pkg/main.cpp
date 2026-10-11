@@ -773,6 +773,7 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                     size_t(std::count_if(load.objects.begin(), load.objects.end(),
                                          [](const auto& e) { return e.created && e.person; })),
                     machine.objects().size(), ticks, machine.clock.hour, machine.clock.minute);
+        std::printf("  world: %zu stairs, %zu door parts opening a wall (all cObjects: %zu stairs)\n", load.stairs, load.doors, vm::lotStairs(lot).size());
         if (hood)
             std::printf("  neighborhood %s: %zu neighbors; lot %d, family %d, funds %d; %zu Sims are neighbors\n",
                         hood->prefix.c_str(), machine.neighbors.size(), machine.globals[vm::global::CurrentHouse],
@@ -822,6 +823,8 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
         if (list)
             for (const auto& e : load.objects) {
                 std::printf("  %5d %-45s ", e.id, e.name.c_str());
+                if (!e.cObject.empty())
+                    std::printf("[leftover cObject \"%s\"] ", e.cObject.c_str());
                 if (!e.created) {
                     std::printf("not created: %s\n", e.error.c_str());
                     continue;

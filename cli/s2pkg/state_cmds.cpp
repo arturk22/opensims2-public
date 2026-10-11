@@ -23,19 +23,19 @@ void printShorts(const char* label, const std::vector<int16_t>& v) {
 }
 
 void printState(const LotObjects::State& s, bool hex) {
-    std::printf("%s %d at (%.1f, %.1f, %d)%s%s\n",
+    std::printf("%s %d at (%.2f, %.2f, %d) dir %d, data 80/81 %d %d%s%s\n",
                 s.kind == LotObjects::Kind::Person      ? "PERS"
                 : s.kind == LotObjects::Kind::MultiTile ? "XMTO"
                                                         : "XOBJ",
-                s.id, s.x, s.y, s.level,
-                s.tailError.empty() ? "" : "  tail error: ", s.tailError.c_str());
-    if (!s.token.guid && s.token.properties.empty() && s.arrays.empty() && s.stack.empty() && s.timers.empty() &&
-        s.rest.empty())
-        return;
+                s.id, s.x, s.y, s.level, s.data.size() > 1 ? s.data[1] : 0, s.data.size() > 81 ? s.data[80] : 0,
+                s.data.size() > 81 ? s.data[81] : 0, s.tailError.empty() ? "" : "  tail error: ", s.tailError.c_str());
     if (s.kind == LotObjects::Kind::MultiTile)
         std::printf("    multi-tile: lead %d, %u %u %u / %u %u %u; object data 19 = %d\n", s.leadObject, s.multiTile[0],
                     s.multiTile[1], s.multiTile[2], s.multiTile[3], s.multiTile[4], s.multiTile[5],
                     s.data.size() > 19 ? s.data[19] : 0);
+    if (!s.token.guid && s.token.properties.empty() && s.arrays.empty() && s.stack.empty() && s.timers.empty() &&
+        s.rest.empty())
+        return;
     if (!s.slots.empty()) {
         std::printf("    slots:");
         for (int16_t x : s.slots)

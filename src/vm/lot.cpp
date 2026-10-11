@@ -32,6 +32,46 @@ std::filesystem::path charactersDirOf(const std::filesystem::path& lotPackage) {
     return std::filesystem::is_directory(characters) ? characters : std::filesystem::path{};
 }
 
+std::set<uint32_t> currentCObjects(CodeLibrary& code, const Lot& lot, const LotObjects& saved) {
+    std::set<uint32_t> out;
+    std::map<uint32_t, std::string> names; // GUID -> OBJD file name
+    for (const auto& o : lot.objects) {
+        const auto id = int16_t(o.instance & 0xFFFF);
+        const LotObjects::State* s = saved.state(id);
+        if (!s || (o.instance >> 16))
+            continue;
+        if (s->person) {
+            if (o.person)
+                out.insert(o.instance);
+            continue;
+        }
+        const uint32_t guid = saved.guidOf(id);
+        auto it = names.find(guid);
+        if (it == names.end()) {
+            std::string name;
+            if (const auto def = code.definitionByGuid(guid))
+                if (const ObjectDefinition* d = code.definition(def->first, def->second))
+                    name = d->fileName;
+            it = names.emplace(guid, name).first;
+        }
+        std::string name = o.definition;
+        if (name.ends_with(kObjtSuffix))
+            name.resize(name.size() - kObjtSuffix.size());
+        if (!it->second.empty() && it->second == name)
+            out.insert(o.instance);
+    }
+    return out;
+}
+
+size_t dropLeftoverCObjects(Lot& lot, DbpfPackage& lotPackage, ResourceIndex& index) {
+    const LotObjects saved = LotObjects::load(lotPackage);
+    if (saved.pairs.empty())
+        return 0;
+    CodeLibrary code(&index);
+    const auto keep = currentCObjects(code, lot, saved);
+    return std::erase_if(lot.objects, [&](const Lot::Object& o) { return !keep.count(o.instance); });
+}
+
 LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::filesystem::path& charactersDir) {
     CodeLibrary& code = vm.code();
     std::map<uint32_t, const Lot::Object*> cObjects;
@@ -78,34 +118,6 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             room.values[4] = int16_t(pool.count(id));
             room.known = 0x1E;
         }
-    }
-
-    // The world: walls, floors and rooms, with the walls opened where the
-    // lot's doors (and gates) are. Doors are taken from the cObjects, whose
-    // positions match the walls; some saved door states do not (in
-    // N001_Lot11 all eight are elsewhere: leftovers?). The direction comes
-    // from the model's rotation: 90 - 45 * direction degrees about Z.
-    vm.world = World::fromLot(lot);
-    for (const auto& o : lot.objects) {
-        std::string name = o.definition;
-        if (name.size() > kObjtSuffix.size() &&
-            name.compare(name.size() - kObjtSuffix.size(), kObjtSuffix.size(), kObjtSuffix) == 0)
-            name.resize(name.size() - kObjtSuffix.size());
-        const auto def = name.empty() ? std::nullopt : code.definitionByName(name);
-        const ObjectDefinition* d = def ? code.definition(def->first, def->second) : nullptr;
-        if (!d || d->objectType() != kObjectTypeDoor)
-            continue;
-        const auto& q = o.rotation;
-        const double yaw = std::atan2(2 * (q[3] * q[2] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2])) * 180 / M_PI;
-        const int dir = ((int(std::lround((90 - yaw) / 45)) % 8) + 8) % 8;
-        // The level is the one whose floor height at the door is nearest
-        // the cObject's (a foundation lifts the ground floor to 0.75).
-        const int x = int(std::floor(o.position[0])), y = int(std::floor(o.position[1]));
-        int level = 0;
-        for (int l = lot.minLevel; l < lot.minLevel + lot.levelCount; ++l)
-            if (std::fabs(lot.elevation(l, x, y) - o.position[2]) < std::fabs(lot.elevation(level, x, y) - o.position[2]))
-                level = l;
-        vm.world->openDoor({x, y, level + 1}, dir);
     }
 
     LotLoad out;
@@ -178,8 +190,11 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             } else {
                 throw VMError("the object module does not say what object it is");
             }
-            if (const ObjectDefinition* d = code.definition(def->first, def->second); d && !s.person)
+            if (const ObjectDefinition* d = code.definition(def->first, def->second); d && !s.person) {
                 e.name = d->fileName;
+                if (!cName.empty() && d->fileName != cName)
+                    e.cObject = cName; // a leftover cObject with this ID
+            }
             Object& o = vm.instantiatePart(def->first, def->second, s.id);
             o.position = {s.x, s.y, s.level};
             for (int16_t field : {objdata::Direction, objdata::ContainerId, objdata::SlotNumber, objdata::Room})
@@ -196,6 +211,69 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
         }
         out.objects.push_back(std::move(e));
     }
+    // The world: walls, floors, rooms and stairs, from the lot's current
+    // cObjects only (the packages keep stale copies of the stairs), with the
+    // walls opened where the doors (and gates) are: each part of a door
+    // object opens the wall behind it when the tile behind is another part
+    // of the same door (a door's parts stand on both sides of its wall,
+    // facing the same way; the direction is object data 1).
+    {
+        Lot current = lot;
+        const auto keep = currentCObjects(code, lot, saved);
+        std::erase_if(current.objects, [&](const Lot::Object& o) { return !keep.count(o.instance); });
+        vm.world = World::fromLot(current);
+        // The straight (multi-tile) staircases, which lotStairs does not
+        // know: their bottom landing is the "Lo ... Pad" part on the lower
+        // level, the top one the "Hi ... Pad" part on the level above, and
+        // the steps fill the tiles between them (the "Lo" parts).
+        std::map<ObjectId, std::pair<const Object*, const Object*>> pads; // lead -> bottom, top
+        for (const auto& e : out.objects) {
+            const Object* o = e.created ? vm.object(e.id) : nullptr;
+            if (!o || !o->definition || !o->position.inWorld() || !e.name.starts_with("Stairs - Straight") ||
+                !e.name.ends_with(" Pad"))
+                continue;
+            auto& p = pads[multiTileGroup(*o)];
+            (e.name.find(" - Lo ") != std::string::npos ? p.first : p.second) = o;
+        }
+        for (const auto& [lead, p] : pads) {
+            const auto [bottom, top] = p;
+            if (!bottom || !top || top->position.level != bottom->position.level + 1)
+                continue;
+            const float dx = top->position.x - bottom->position.x, dy = top->position.y - bottom->position.y;
+            const float length = std::hypot(dx, dy);
+            if (length < 1.5f || (std::fabs(dx) > 0.01f && std::fabs(dy) > 0.01f))
+                continue; // along an axis, with a step between the landings
+            Stair st;
+            st.up = {dx / length, dy / length};
+            st.bottomEdge = {bottom->position.x + st.up[0] * 0.5f, bottom->position.y + st.up[1] * 0.5f};
+            st.steps = int(std::lround((length - 1) * 4));
+            st.direction = directionOf(st.up[0], st.up[1]);
+            st.bottom = {int(std::floor(bottom->position.x)), int(std::floor(bottom->position.y)), bottom->position.level};
+            st.top = {int(std::floor(top->position.x)), int(std::floor(top->position.y)), top->position.level};
+            st.bottomZ = lot.elevationAt(st.bottom.level - 1, bottom->position.x, bottom->position.y);
+            st.topZ = lot.elevationAt(st.top.level - 1, top->position.x, top->position.y);
+            vm.world->addStair(st);
+        }
+        out.stairs = vm.world->stairs().size();
+    }
+    for (const auto& e : out.objects) {
+        const Object* o = e.created ? vm.object(e.id) : nullptr;
+        if (!o || !o->definition || o->definition->objectType() != kObjectTypeDoor || !o->position.inWorld())
+            continue;
+        const int dir = o->data[objdata::Direction];
+        const auto [dx, dy] = directionStep(dir + 4);
+        const TilePos t{int(std::floor(o->position.x)), int(std::floor(o->position.y)), o->position.level};
+        for (const auto& f : out.objects) {
+            const Object* p = f.created && f.id != e.id ? vm.object(f.id) : nullptr;
+            if (p && multiTileGroup(*p) == multiTileGroup(*o) && p->position.level == t.level &&
+                int(std::floor(p->position.x)) == t.x + dx && int(std::floor(p->position.y)) == t.y + dy) {
+                vm.world->openDoor(t, dir);
+                ++out.doors;
+                break;
+            }
+        }
+    }
+
     // The lot's relationships, by object ID (docs/data-findings.md §7). Two
     // values: ownership, from an object to a neighbor ID (Relationship's flag
     // 0x08 reads variable 1 of these; their "to" are the owning family's

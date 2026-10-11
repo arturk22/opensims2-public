@@ -70,6 +70,7 @@
 #include "vm_objects.hpp"
 #include "lot_lighting.hpp"
 #include "door_portals.hpp"
+#include "vm/lot.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -549,7 +550,9 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         return std::nullopt;
     CFTimeInterval start = CACurrentMediaTime();
     os2::DbpfPackage pkg(lotPath(*query));
-    const os2::Lot lot = os2::Lot::load(pkg);
+    os2::Lot lot = os2::Lot::load(pkg);
+    const size_t leftovers = os2::vm::dropLeftoverCObjects(lot, pkg, index); // stale copies the package keeps
+    std::printf("opensims2: %zu leftover cObjects not drawn\n", leftovers);
     const os2::PatternCatalog patterns(index, gameDir() / "TSData/Res");
     os2::LotViewOptions view;
     view.viewDirection = {viewDirection.x, viewDirection.y};

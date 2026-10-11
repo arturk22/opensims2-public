@@ -3,12 +3,15 @@
 #include "vm.hpp"
 
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace os2 {
 struct Lot;
 struct LotObjects;
+class DbpfPackage;
+class ResourceIndex;
 } // namespace os2
 
 namespace os2::vm {
@@ -34,11 +37,25 @@ struct LotLoad {
         bool person = false;
         bool created = false;
         std::string error; // why it was not created
+        std::string cObject; // the cObject with this ID when it names another object (a leftover)
     };
     std::vector<Entry> objects; // in ID order
     size_t created = 0;
     size_t relationships = 0; // from the lot's SRELs
+    size_t stairs = 0, doors = 0; // in the world: staircases, door parts that opened a wall
 };
+
+// The cObjects (by instance) that are the current scenegraph objects of the
+// lot's objects: the cObject's instance is the object's ID and it names the
+// object's OBJD (only the lead part of a multi-tile object has one), or it
+// is the cPerson of a Sim of the object module. The other cObjects are
+// leftovers the package keeps (N001_Lot11 has 834 cObjects for 627 objects:
+// six old toilets, two espresso machines, three pianos, stair steps, a
+// second Don, ...).
+std::set<uint32_t> currentCObjects(CodeLibrary& code, const Lot& lot, const LotObjects& saved);
+// Removes the leftover cObjects from `lot` (for drawing it), reading the
+// object module from the lot's package. Returns how many were removed.
+size_t dropLeftoverCObjects(Lot& lot, DbpfPackage& lotPackage, ResourceIndex& index);
 
 // `charactersDir` is where the Sims' character files are (empty: Sims are
 // left out with a reason).
