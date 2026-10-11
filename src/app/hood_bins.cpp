@@ -352,36 +352,52 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
         std::map<const UiElement*, std::array<float, 4>> drects;
         dh.rects = &drects;
         const bool question = dialog_->onAccept.kind != Request::Kind::None;
-        // Taller for the text: the text-entry box and its frame go.
-        const int extra = 30;
+        // Sized for the text (inferred: about 7 px a character, 18 px a
+        // line); the text-entry box and its frame go.
+        const std::string& msg = dialog_->message;
+        const int wide = msg.size() > 70 ? 140 : 0;
+        const int perLine = std::max(1, (190 + wide) / 8);
+        int lines = 0;
+        for (size_t at = 0; at <= msg.size();) {
+            const size_t nl = std::min(msg.find('\n', at), msg.size());
+            lines += std::max<int>(1, int((nl - at + size_t(perLine) - 1) / size_t(perLine)));
+            at = nl + 1;
+        }
+        const int extra = std::max(30, 18 * lines - 40);
         const auto a = d.area();
-        d.set("area", area(0, 0, a[2] - a[0], a[3] - a[1] + extra));
+        d.set("area", area(0, 0, a[2] - a[0] + wide, a[3] - a[1] + extra));
         for (auto& c : d.children) {
             const auto ca = c.area();
             if (c.get("clsid") == "GZWinTextEdit" || (c.get("clsid") == "GZWinBMP" && ca[1] >= 60))
                 c.set("winflag_visible", "no");
             else if (c.get("clsid") == "GZWinText") {
-                c.set("area", area(ca[0], ca[1], ca[2] + 8, ca[3] + 40 + extra));
+                c.set("area", area(ca[0], ca[1], ca[2] + 8 + wide, ca[3] + 40 + extra));
                 c.set("caption", dialog_->message);
                 c.set("captionres", "");
                 c.set("wrapped", "yes");
             } else if (c.get("clsid") == "GZWinBtn") {
-                int x0 = ca[0];
+                int x0 = ca[0] + wide / 2;
                 if (!question && c.id() == 0xA000)
-                    x0 = ((a[2] - a[0]) - (ca[2] - ca[0])) / 2;
+                    x0 = ((a[2] - a[0] + wide) - (ca[2] - ca[0])) / 2;
                 if (!question && c.id() == 0xA001)
                     c.set("winflag_visible", "no");
                 c.set("area", area(x0, ca[1] + extra, x0 + (ca[2] - ca[0]), ca[3] + extra));
             }
         }
-        const float w = float(a[2] - a[0]), h = float(a[3] - a[1] + extra);
+        const float w = float(a[2] - a[0] + wide), h = float(a[3] - a[1] + extra);
         const float x = std::round((float(width) - w) / 2), y = std::round((float(height) - h) / 2);
         layoutUiElement(d, x, y, *res_, *fonts_, out, dh);
         // Modal: the dialog's buttons first, everything else swallowed.
         std::vector<Target> modal;
         for (const auto& c : d.children)
-            if (auto it = drects.find(&c); it != drects.end() && c.get("clsid") == "GZWinBtn")
+            if (auto it = drects.find(&c); it != drects.end() && c.get("clsid") == "GZWinBtn") {
                 modal.push_back({it->second, c.id() == 0xA000 ? Hit::Accept : Hit::Cancel});
+                if (!dialog_->announced) // where to click, for scripted runs
+                    std::printf("opensims2: dialog %s at (%.0f, %.0f)\n", c.id() == 0xA000 ? "Accept" : "Cancel",
+                                (it->second[0] + it->second[2]) / 2, (it->second[1] + it->second[3]) / 2);
+            }
+        dialog_->announced = true;
+        std::fflush(stdout);
         modal.push_back({{0, 0, float(width), float(height)}, Hit::Solid});
         targets_ = std::move(modal);
     }

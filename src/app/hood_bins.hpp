@@ -108,6 +108,7 @@ private:
     struct Dialog {
         std::string message;
         Request onAccept; // Kind::None: a message (Accept only closes it)
+        bool announced = false;
     };
     std::optional<Dialog> dialog_;
 

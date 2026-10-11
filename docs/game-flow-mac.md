@@ -103,3 +103,20 @@ opensims2 --user-dir /tmp/u --no-audio --flow-shots \
 ```
 
 O lote volta às 17:22 com 628 objetos (abriu às 17:02 com 627).
+
+## 6. Jogar o bairro (rodada 9)
+
+O puck do bairro abre Famílias e Lotes & Casas (`app/hood_bins.*`,
+`docs/neighborhood-mac.md` §6.1/§10). Mudar uma família e confirmar entra no
+lote (a mesma troca de cena de "Entrar no Lote"); "Criar Nova Família" chama
+`HoodMode::onCreateFamily(pasta do bairro)` e o CAS devolve com
+`HoodMode::familyCreated(id)`. Sem tela: `--hood-panel families|lots`,
+`--hood-family <id>`, `--hood-tool evict|bulldoze`, `--hood-lot-click <id>`
+(o bairro imprime "dialog Accept at (x, y)" para o `--click` seguinte).
+Exemplo (Subúrbio para o lote 24, entra, 300 ticks, Opções → Salvar):
+
+```
+opensims2 --user-dir /tmp/u --no-audio --hood N001 --hood-panel families \
+  --hood-family 8 --hood-lot-click 24 --click 605,423 --wait 300 \
+  --click 139,690 --wait 2 --click 208,678 --wait 2 --screenshot out.png
+```
