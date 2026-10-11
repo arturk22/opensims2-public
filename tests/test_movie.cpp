@@ -2,6 +2,7 @@
 // intra/inter frames built by hand, EA ADPCM R1 and the sound header.
 #include "formats/movie.hpp"
 #include "formats/reia.hpp"
+#include "formats/cinematic.hpp"
 
 #include <cstdio>
 #include <algorithm>
@@ -281,7 +282,39 @@ static void testReia() {
     check(d.seekFrame(0) && px(32, 0)[2] == 10, "seeking back restarts from black");
 }
 
+// A CINE as the game writes it (cCinematicScene::WriteTo).
+static void testCinematic() {
+    std::vector<uint8_t> b = {0x01, 0x00, 0xFF, 0xFF, 0, 0, 0, 0, 1, 0, 0, 0, 0x42, 0xF0, 0x51, 0x4D};
+    auto u32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(v >> (8 * i))); };
+    auto str = [&](const std::string& t) { b.push_back(uint8_t(t.size())); b.insert(b.end(), t.begin(), t.end()); };
+    str("cCinematicScene");
+    u32(kTypeCinematic);
+    u32(4);
+    str("cSGResource");
+    u32(0);
+    u32(2);
+    str("test_cine");
+    str("o-cinecam-test");
+    u32(2);
+    str("sim"); b.push_back(1); str("auskel::1"); u32(7); b.push_back(0); b.push_back(0); str(""); str("");
+    str("rig"); b.push_back(1); str("lightrig::1"); u32(0); b.push_back(1); b.push_back(1);
+    str("cineLightRig-template"); str("o-rig-1_anim,o-rig-2_anim");
+    u32(1); // origin actor
+    u32(2); // sequences
+    const auto c = CinematicScene::parse(b);
+    check(c.version == 4 && c.name == "test_cine" && c.cameraAnimation == "o-cinecam-test", "CINE header");
+    check(c.cameraAnimationResource() == "o-cinecam-test_anim", "camera ANIM name");
+    check(c.actors.size() == 2 && c.actors[0].name == "sim" && c.actors[0].required &&
+              c.actors[0].sgObjectName == "auskel::1" && c.actors[0].renderGroups == 7 && !c.actors[0].autoCreate,
+          "CINE actor 0");
+    check(c.actors[1].autoCreate && c.actors[1].autoOrigin && c.actors[1].autoModel == "cineLightRig-template" &&
+              c.actors[1].autoAnimations.size() == 2 && c.actors[1].autoAnimations[1] == "o-rig-2_anim",
+          "CINE actor 1 with its animation list");
+    check(c.originActor == 1 && c.sequencedAnimations == 2, "CINE origin and sequences");
+}
+
 int main() {
+    testCinematic();
     testReia();
     testBitReader();
     testAcCodes();

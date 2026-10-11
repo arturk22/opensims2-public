@@ -29,6 +29,7 @@ add_library(os2_formats
   src/formats/camera_config.cpp
   src/formats/build_catalog.cpp
   src/formats/catalog.cpp
+  src/formats/cinematic.cpp
   src/formats/config_text.cpp
   src/formats/dbpf.cpp
   src/formats/font.cpp

@@ -1,6 +1,8 @@
 // s2pkg commands for the .movie files (EA MAD video + EA ADPCM sound).
 #include "movie_cmds.hpp"
 
+#include "formats/cinematic.hpp"
+#include "formats/dbpf.hpp"
 #include "formats/movie.hpp"
 #include "formats/reia.hpp"
 
@@ -125,6 +127,41 @@ int cmdReiaFrame(const std::string& res, const std::string& what, double seconds
     return ok ? 0 : 1;
 }
 
+// Every CINE of the packages under <Res>/Sims3D, decoded.
+int cmdCineList(const fs::path& res) {
+    int n = 0, bad = 0;
+    for (const auto& e : fs::directory_iterator(res / "Sims3D")) {
+        if (e.path().extension() != ".package")
+            continue;
+        DbpfPackage pkg(e.path());
+        for (const auto& entry : pkg.entries()) {
+            if (entry.tgi.type != kTypeCinematic)
+                continue;
+            ++n;
+            try {
+                const auto s = CinematicScene::parse(pkg.read(entry));
+                std::printf("%s (v%u): camera %s, origin actor %u, %u sequence(s)\n", s.name.c_str(), s.version,
+                            s.cameraAnimation.c_str(), s.originActor, s.sequencedAnimations);
+                for (const auto& a : s.actors) {
+                    std::string anims;
+                    for (const auto& x : a.autoAnimations)
+                        anims += (anims.empty() ? "" : ", ") + x;
+                    std::printf("  %-18s %s %-22s groups %u%s%s%s%s%s\n", a.name.c_str(),
+                                a.required ? "required" : "optional", a.sgObjectName.c_str(), a.renderGroups,
+                                a.autoCreate ? " auto-create" : "", a.autoOrigin ? " auto-origin" : "",
+                                a.autoModel.empty() ? "" : (" model " + a.autoModel).c_str(),
+                                anims.empty() ? "" : " anims ", anims.c_str());
+                }
+            } catch (const std::exception& ex) {
+                ++bad;
+                std::printf("%08X: %s\n", entry.tgi.instance, ex.what());
+            }
+        }
+    }
+    std::printf("%d CINE, %d failed\n", n, bad);
+    return bad ? 1 : 0;
+}
+
 } // namespace
 
 const char* movieUsage() {
@@ -133,6 +170,7 @@ const char* movieUsage() {
            "       s2pkg movie-sound <Res-dir> <name|file.movie> <out.wav>\n"
            "       s2pkg movie-sweep <Res-dir>\n"
            "       s2pkg reia-list <Res-dir>\n"
+           "       s2pkg cine-list <Res-dir>\n"
            "       s2pkg reia-frame <Res-dir> <instance-hex|file.reia> <seconds> <out.png>\n";
 }
 
@@ -145,6 +183,8 @@ int movieCommand(const std::string& cmd, int argc, char** argv) {
         return cmdMovieSound(resolve(argv[2], argv[3]), argv[4]);
     if (cmd == "movie-sweep" && argc == 3)
         return cmdMovieSweep(argv[2]);
+    if (cmd == "cine-list" && argc == 3)
+        return cmdCineList(argv[2]);
     if (cmd == "reia-list" && argc == 3)
         return cmdReiaList(argv[2]);
     if (cmd == "reia-frame" && argc == 6)
