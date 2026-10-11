@@ -785,8 +785,15 @@ o bit 0x04 do byte 2); a **tabela = byte 6**:
   **prefixo + a entrada**, e só vale se a animação existe. Se falhar, tenta
   com a tabela de reserva, e por fim `FUN_0068bcb0` troca a letra da idade
   do prefixo pelas alternativas (`d`, `f`, `w`, `l`, `k`).
-- Só depois disso: nome vazio → erro **0x43**; animação que não existe →
-  **0x73**.
+- Só depois disso (BV `0x69da50..`): o nome é classificado pelo tipo
+  (vtable `0x380`; inferido: pelo prefixo `a2o`/`o2a`/`a2a`/...); tipo não
+  reconhecido → erro **0x73** ("Invalid animation type specified in
+  animation string"); nome vazio → erro **0x43**.
+- **Animação que não existe não é erro**: a busca acima falha em silêncio e
+  fica com o último nome montado; o pedido de animação (vtable `0x2E0`)
+  volta nulo, o Sim loga "missing animation tree" e a primitiva **devolve
+  verdadeiro na hora**, sem duração (o mesmo no base 1.0, que tem a mesma
+  string). Só um nome sem prefixo de tipo válido vira 0x73.
 
 A tabela e o prefixo vêm de `DetermineAppropriateAnimTable` (BV `0x68f7c8`),
 pela espécie (dado de pessoa 186, só BV; 0 = humano no base) e a idade
