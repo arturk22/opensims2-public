@@ -269,10 +269,14 @@ static void testPushInteraction() {
                 tree({expr(Local, 0, Assign, Data, objdata::ObjectId, go(1), E),
                       expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(2), E),
                       push(1, 0, 2, 0x02, go(3), E),      // Clean, autonomous, object in local 0
-                      push(9, 0, 3, 0x02, E, go(4)),      // no interaction 9: false
-                      push(0, 0, 1, 0x00, go(5), E),      // Have Snack, maximum, object in param 0
-                      push(3, 1, 3, 0x00, E, T)},         // param 1 = 0: no such object, false
+                      push(0, 0, 1, 0x00, T, E)},         // Have Snack, maximum, object in param 0
                      2, 1));
+    // The game's errors (Mac binary): no such interaction (0x16), no such object (0x17).
+    fx.code.add(kObjGroup, 0x1011,
+                tree({expr(Local, 0, Assign, Data, objdata::ObjectId, go(1), E),
+                      expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(2), E), push(9, 0, 3, 0x02, T, T)}, 2, 1));
+    fx.code.add(kObjGroup, 0x1012,
+                tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E), push(3, 1, 3, 0x00, T, T)}, 2, 1));
     const int16_t args[] = {int16_t(fx.fridge), 0};
     Thread t = fx.vm.start(fx.fridge, 0x1010, args);
     fx.vm.run(t);
@@ -284,6 +288,14 @@ static void testPushInteraction() {
               s.queue[1].interaction == 1 && s.queue[1].priority == kPriorityAutonomous &&
               s.queue[1].pushedBy == fx.fridge && s.queue[1].flags == 0x02,
           "Push Interaction queues onto the stack object by priority");
+    Thread e1 = fx.vm.start(fx.fridge, 0x1011, args);
+    fx.vm.run(e1);
+    check(e1.status == Thread::Status::Failed && e1.error.find("tree table entry") != std::string::npos,
+          "no such interaction: error 0x16");
+    Thread e2 = fx.vm.start(fx.fridge, 0x1012, args);
+    fx.vm.run(e2);
+    check(e2.status == Thread::Status::Failed && e2.error.find("Could not find object") != std::string::npos,
+          "no such object: error 0x17");
 }
 
 static void testNotifyFlag() {

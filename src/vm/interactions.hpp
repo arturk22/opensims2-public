@@ -38,11 +38,12 @@ namespace os2::vm {
 
 struct LotLoad;
 
-// Queue priorities (FreeSO's VMQueuePriority). Push Interaction's priority
-// byte (STR# 0xE0: inherited, maximum, autonomous, user driven) maps onto
-// these; the pie menu queues user driven ones.
+// Queue priorities. Push Interaction's priority byte (STR# 0xE0: inherited,
+// maximum, autonomous, user driven) maps onto these numbers in the Mac
+// binary (TryPushAction: 100, 20, 50; docs/primitives-mac.md §4); the pie
+// menu queues user driven ones.
 constexpr int16_t kPriorityIdle = 0;
-constexpr int16_t kPriorityAutonomous = 2;
+constexpr int16_t kPriorityAutonomous = 20;
 constexpr int16_t kPriorityUserDriven = 50;
 constexpr int16_t kPriorityMaximum = 100;
 
@@ -57,6 +58,15 @@ constexpr int16_t CurrentInteractionObject = 80;
 constexpr int16_t CurrentRunningInteractionIndex = 102;
 constexpr int16_t InteractionAutonomous = 166;
 } // namespace persondata
+
+// Object data 52 "primitive result": Push Interaction and Snap leave why
+// they failed there (Mac binary).
+constexpr int16_t kObjdataPrimitiveResult = 52;
+// Person data 53 "FindBestAction result Interaction Object ID" and object
+// data 20 "tree table entry" (STR# 0xC8, 0x8D): what the last Find Best
+// Interaction picked, for Push Interaction's byte 14 bit 1.
+constexpr int16_t kPersondataFindBestObject = 53;
+constexpr int16_t kObjdataTreeTableEntry = 20;
 
 // Object flags (object data 8, STR# 0x8E; bit = label index).
 constexpr int16_t kFlagNotifiedByIdleForInput = 1 << 6;

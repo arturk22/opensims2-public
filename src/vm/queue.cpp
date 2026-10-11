@@ -4,6 +4,7 @@
 
 #include "interactions.hpp"
 
+#include "errors.hpp"
 #include "formats/binreader.hpp"
 #include "lot.hpp"
 
@@ -74,62 +75,128 @@ QueuedInteraction entryFor(ObjectId object, const InteractionTableRef& ref, cons
     return q;
 }
 
-// Push Interaction (0x0D), The Sims 1's layout (FreeSO's VMPushInteraction),
-// which the game's trees agree with: interaction (TTA index) u8 at 0, object
-// location u8 at 1 (a local with flag 0x02, else a parameter: 1,299 of the
-// 1,305 pushes in the game name one the tree has), priority u8 at 2 (STR#
-// 0xE0: inherited, maximum, autonomous, user driven), flags u8 at 3 (0x01
-// custom icon, 0x02 object in a local, 0x04 push head continuation; 0x08,
-// 0x10, 0x20 and 0x40 are new and unknown), icon location u8 at 4. Bytes
-// 5-13 are three (owner u8, data u16) variables and byte 15 is 0/1; the
-// editor's disassembly strings (Sims2.exe) suggest "getting interaction #
-// from", "Returing ID in", "Linking to interaction with ID in" and "Passing
-// first 4 params in", but which is which is not known, so they are kept
-// in the queue entry and not used. The entry goes onto the stack object's
-// queue ("... onto the stack object's queue"); an object that does not
-// exist or has no such interaction fails the push (false, as in FreeSO).
+// Push Interaction (0x0D), as the Mac binary has it (TryPushAction,
+// PushActionParam; docs/primitives-mac.md §4): interaction (TTA index) u8
+// at 0, where the object is u8 at 1 (a parameter, or a local with flag
+// 0x02), priority u8 at 2 (STR# 0xE0: 0 inherited = my person data 33, 1 for
+// an object that is not a Sim; 1 maximum = 100; 2 autonomous = 20; 3 user
+// driven = 50; others: error 0x2D), flags u8 at 3 (0x01 icon of the object
+// in the local of byte 4, 0x02 object in a local, 0x04 "continue as
+// current": at the head of the queue, 0x08 "use name", 0x10 the interaction
+// number is in (owner u8 at 5, data u16), 0x20 "force run check tree",
+// 0x40 link to the interaction whose ID is in (owner u8 at 8, data u16),
+// 0x80 the new interaction's ID goes to (owner u8 at 11, data u16)), flags
+// u8 at 14 (0x01 pass the first 4 parameters, 0x02 the interaction is the
+// last Find Best Interaction's: the object in the target's person data 53
+// and the entry in that object's data 20, 0x04/0x08 icon from the temps),
+// icon index u8 at 15. The entry goes onto the stack object's queue, which
+// must exist (error 0x15) and be a Sim (0x1C). The object must exist
+// (0x17), have a TTAB (0x1F) and the entry (0x16); a parameter or local out
+// of range is 0x08/0x33. My object data 52 "primitive result" is set to 0,
+// or to why the push failed (false): 1 inherited priority but I have none,
+// 2 the forced check tree said no, 3 the target's queue is full (more than 6
+// entries). Not done: icons and names (no UI here), the link of 0x40 (kept
+// in the entry's operand), nested pushes (sub-queue 4, error 0x6F) and the
+// part of my running interaction a Sim's push inherits (inferred: its
+// owner/group).
 Exit pushInteraction(Context& c) {
     const auto& o = c.instruction.operands;
-    const uint8_t flags = o[3];
-    const ObjectId source = c.get(flags & 0x02 ? kOwnerLocal : kOwnerParam, o[1]);
-    if (!c.vm.object(source))
+    const uint8_t flags = o[3], flags2 = o[14];
+    Object& me = c.me();
+    me.data[kObjdataPrimitiveResult] = 0;
+    auto failed = [&](int16_t why) {
+        if (Object* m = c.vm.object(c.thread.me))
+            m->data[kObjdataPrimitiveResult] = why;
         return Exit::False;
-    Object& target = c.stackObject();
-    auto q = makeInteraction(c.vm, source, o[0]);
+    };
+    if (!c.vm.object(c.frame.stackObject))
+        throw gameError(err::NoStackObject, "Push Interaction");
+    const ObjectId targetId = c.frame.stackObject;
+    if (!c.vm.object(targetId)->person)
+        throw gameError(err::NotAPerson, "Push Interaction onto object " + std::to_string(targetId));
+
+    ObjectId source = 0;
+    uint16_t number = flags & 0x10 ? uint16_t(c.get(o[5], int16_t(le16(&o[6])))) : o[0];
+    if (flags2 & 0x02) {
+        source = c.vm.object(targetId)->person->data[kPersondataFindBestObject];
+        const Object* x = c.vm.object(source);
+        if (!x)
+            throw gameError(err::NoObject, "object " + std::to_string(source));
+        number = uint16_t(x->data[kObjdataTreeTableEntry]);
+    } else if (flags & 0x02) {
+        if (o[1] >= c.frame.locals.size())
+            throw gameError(err::LocalOutOfRange, "local " + std::to_string(o[1]));
+        source = c.get(kOwnerLocal, o[1]);
+    } else {
+        if (o[1] >= c.frame.params.size())
+            throw gameError(err::StackNumberOutOfRange, "parameter " + std::to_string(o[1]));
+        source = c.get(kOwnerParam, o[1]);
+    }
+    const Object* x = c.vm.object(source);
+    if (!x)
+        throw gameError(err::NoObject, "object " + std::to_string(source));
+    if (!x->definition)
+        return Exit::False;
+    if (!interactionTable(c.vm, *x))
+        throw gameError(err::NoTreeTable, "object " + std::to_string(source));
+    auto q = makeInteraction(c.vm, source, number);
     if (!q)
-        return Exit::False;
+        throw gameError(err::NoTreeTableEntry, "interaction " + std::to_string(number) + " of object " +
+                                                   std::to_string(source));
     switch (o[2]) {
-    case 0: { // inherited: the running interaction's priority (at least 1)
-        int16_t old = 1;
-        if (inInteraction(c.thread))
-            old = currentPriority(c.me());
-        q->priority = std::max<int16_t>(1, old);
+    case 0: { // inherited: my priority
+        const int16_t mine = me.person ? me.person->data[persondata::Priority] : int16_t(1);
+        if (mine == 0)
+            return failed(1);
+        q->priority = mine;
         break;
     }
     case 1: q->priority = kPriorityMaximum; break;
     case 2: q->priority = kPriorityAutonomous; break;
     case 3: q->priority = kPriorityUserDriven; break;
-    default: throw VMError("Push Interaction: priority " + std::to_string(o[2]) + " not implemented");
+    default: throw gameError(err::BadPriority, "Push Interaction priority " + std::to_string(o[2]));
     }
+    if (flags2 & 0x01)
+        for (size_t i = 0; i < 4 && i < c.frame.params.size(); ++i)
+            q->args[i] = c.frame.params[i];
+    if (flags & 0x20) {
+        const CheckResult r = checkInteraction(c.vm, targetId, *q);
+        if (r != CheckResult::NoGuard && r != CheckResult::True)
+            return failed(2);
+    }
+    Object* target = c.vm.object(targetId);
+    if (!target)
+        throw gameError(err::NoStackObject, "Push Interaction");
+    constexpr size_t kMaxQueue = 6;
+    if (target->queue.size() > kMaxQueue)
+        return failed(3);
     q->flags = flags;
     q->pushedBy = c.thread.me;
     q->operands = o;
-    enqueue(c.vm, target, std::move(*q), flags & 0x04);
+    const uint16_t uid = enqueue(c.vm, *target, std::move(*q), flags & 0x04);
+    if (flags & 0x80)
+        c.set(o[11], int16_t(le16(&o[12])), int16_t(uid));
     return Exit::True;
 }
 
-// Idle for Input (0x11): u16 index of the parameter holding the ticks left,
-// u16 "allow push" at 2 (as in The Sims 1; the editor's strings "allow
-// push" / "do not allow push"); byte 4 = 1 in 106 of the game's 111 uses
-// ("_Handle SubQueue" trees; the strings name a "Handle Sub Queue
-// Interactions" mode), not implemented: those idle like the rest. As in
-// FreeSO: the parameter counts down once per tick (the instruction returns
-// true when it goes below 0); outside an interaction, "allow push" runs the
-// next queued interaction (its action tree is pushed on top and, when it
-// returns, this instruction returns true on the next tick); a queue with
-// something waiting returns true at once and sets the object flag "notified
-// by idle for input"; inside an interaction that was cancelled it returns
-// true at once.
+// Idle for Input (0x11), as the Mac binary has it (cTSPerson::
+// TryIdleForInput; docs/primitives-mac.md §4): the parameter (u16 at 0)
+// holding the ticks left (out of range: error 0x08), "allow push" u16 at 2
+// (non-zero), byte 4 bit 0 "Handle Sub Queue Interactions". With nothing to
+// do (ShouldInterrupt: an interaction waiting in the queue, the running one
+// cancelled, or a Notify the Stack Object out of Idle) it counts the
+// parameter down and yields while it is above 0 and, at 0, clears the
+// object flag "notified by idle for input" and returns true: it waits
+// exactly N ticks. With something to do it sets that flag; with "allow push"
+// outside an interaction the next queued interaction that may run (its
+// priority beats the running one and its check tree passes: attemptPush)
+// is started: its action tree is pushed on top of this tree and the counter
+// goes to 0; when it returns, this instruction returns true on the next
+// tick. Otherwise true. In the sub-queue mode the binary runs the queued
+// sub-actions; nested interactions are not pushed here, so there are none
+// and the instruction returns true at once. Not done: the binary's
+// "ActionSkipped" (an entry whose check tree fails makes it yield; here the
+// next entry is tried at once).
 Exit idleForInput(Context& c) {
     Thread& t = c.thread;
     if (t.interactionReturned == 1) {
@@ -141,23 +208,36 @@ Exit idleForInput(Context& c) {
         return Exit::True;
     }
     const auto& o = c.instruction.operands;
+    if (o[4] & 0x01)
+        return Exit::True; // Handle Sub Queue Interactions: no sub-actions
     const auto param = int16_t(le16(&o[0]));
-    const bool allowPush = le16(&o[2]) == 1;
-    const auto left = int16_t(c.get(kOwnerParam, param) - 1);
-    c.set(kOwnerParam, param, left);
-    const bool inAction = inInteraction(t);
-    if (allowPush && !inAction && attemptPush(c.vm, t))
-        return Exit::Call;
+    if (param < 0 || size_t(param) >= c.frame.params.size())
+        throw gameError(err::StackNumberOutOfRange, "Idle for Input parameter " + std::to_string(param));
+    const bool allowPush = le16(&o[2]) != 0;
     Object& me = c.me();
-    if (me.idleInterrupt) {
-        me.idleInterrupt = false;
+    const bool inAction = inInteraction(t);
+    const bool waiting = size_t(me.activeInteraction + 1) < me.queue.size();
+    const bool pending = me.idleInterrupt || (inAction ? interactionCancelled(me) : waiting);
+    const int16_t ticks = c.get(kOwnerParam, param);
+    if (!pending) {
+        if (ticks > 0) {
+            c.set(kOwnerParam, param, int16_t(ticks - 1));
+            return Exit::Yield;
+        }
+        me.data[objdata::Flags] = int16_t(me.data[objdata::Flags] & ~kFlagNotifiedByIdleForInput);
         return Exit::True;
     }
-    if (inAction ? interactionCancelled(me) : size_t(me.activeInteraction + 1) < me.queue.size()) {
-        me.data[objdata::Flags] = int16_t(me.data[objdata::Flags] | kFlagNotifiedByIdleForInput);
-        return Exit::True;
+    me.data[objdata::Flags] = int16_t(me.data[objdata::Flags] | kFlagNotifiedByIdleForInput);
+    me.idleInterrupt = false;
+    if (allowPush && !inAction && waiting) {
+        c.set(kOwnerParam, param, 0); // before the push, which may move this frame
+        const size_t depth = t.stack.size();
+        if (attemptPush(c.vm, t))
+            return Exit::Call;
+        if (t.stack.size() == depth) // nothing could run: the counter is left as it was
+            t.stack.back().params[size_t(param)] = ticks;
     }
-    return left < 0 ? Exit::True : Exit::Yield;
+    return Exit::True;
 }
 
 // Notify the Stack Object out of Idle (0x31): its next Idle for Input
