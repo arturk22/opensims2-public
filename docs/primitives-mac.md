@@ -776,6 +776,39 @@ Textos: STR# 0x12D da tabela escolhida pelas flags do byte 8 (0x01 privada,
 pelo byte 6 (ou temp 3 com 0x10). Binário, com os detalhes de botão
 inferidos pelo disassembler.
 
+**Tempo esgotado (rodada 9, binário).** Os diálogos que bloqueiam não ficam
+esperando para sempre. O `TryDialog` (BV `0xe2bb64`) põe o pedido na fila do
+`cEdithObjectModule` (`EnqueueObjectDialog`, `0x527cf4`); o diálogo mostrado
+é um `cTSObjectDialog` (tipos 0–4 do STR# 0xD9: 0 mensagem, 1 sim/não, 2
+sim/não/cancelar, 3 entrada de texto, 4 tutorial). `cTSObjectDialog::SetParams`
+(`0x1d2b20`) guarda o tipo (byte 5), o bit 0 do byte 7 e "não bloqueia" =
+!(byte 7 & 0x80); o `SetupDialog` (`0x1d0da8`, chamado no `Show`) cria os
+botões (ids 2, 3, 4 = botões 1, 2, 3 da primitiva) e, **salvo no tipo 4
+(tutorial)**, chama `cTSWinPictureDialog::SetTimeout(último botão, ms)` com
+
+    ms = "dialog TimeOut Default Milliseconds" (4000)
+       + "dialog TimeOut Multipler Milliseconds" (40) × comprimento do texto
+
+(dois `cTSFloatConstants`, padrões 4000 e 40 no código, existem iguais no
+base 1.0). O "último botão" é o 1 no tipo 0 (e no 3: OK com o texto que
+houver), o **2 no sim/não** (→ falso) e o **3 no sim/não/cancelar** (→ 2
+no temp). O `cTSWinPictureDialog::Init` arma um `cRZCallbackTimer` de uma
+vez com esse tempo (tempo **real**, não do jogo; inferido que não para com o
+jogo pausado) e, ao estourar, o diálogo recebe o clique nesse botão
+(`static_dialog_timeout_callback`, comando `0x287259F6`); a primitiva vê a
+resposta como se o jogador tivesse clicado. Ex.: uma mensagem de 120
+caracteres some em 8,8 s; um sim/não de 200 caracteres responde "não" em
+12 s. Os diálogos especiais (telefone, revistas, roupas, ... outras classes
+`cTSWinProc*Dialog`) não passam por aqui (não conferido se têm tempo).
+
+**Notificações (tipos 8–10, 0x1C)**: o byte 10 é o tempo de vida
+(`cTSUINotificationService::SetNotificationTimeOut`) e o byte 9 a prioridade
+(`SetNotificationPriority`). A fila (`cTSUINotificationQueue`) conta com um
+`cRZTimer` em **segundos** (`SetUnits(5)`, unidade base ms ÷ 1000) desde que
+a notificação apareceu; `cTSWinNotification::IsDone`: some quando tempo ≠ 0
+e decorrido ≥ tempo. 0 = fica até ser fechada (ou até o tipo 9 "Stop Text
+Notification").
+
 ### 0x2E Snap (`TrySnap`)
 
 **Quem se move sou eu**, em relação ao stack object (sem stack object: erro
