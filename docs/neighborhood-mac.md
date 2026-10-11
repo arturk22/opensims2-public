@@ -278,6 +278,19 @@ fica com o maior peso; cheio, substitui o de menor peso se o novo for maior.
   BV `0x76723c`) e aplainado (`cTSNHoodTerrain::FlattenTerrainUnderLot`,
   BV `0x4d1b10`); `UpdateImposterFading` (BV `0x76aa40`) desbota imposters
   conforme a câmera (detalhe **aberto**).
+- **Tom de sombra dos imposters** (rodada 10, `imposter.matShad` +
+  Ghidra headless): `ImposterColorScalar()` põe `colorScalar (1,1,1,1)
+  -applyShapeColor 0` e, se a cena tem uma luz `kShadeLight` (`user1`) e
+  nenhuma `kShapeColorLight` (destaque), `tsUserLight shadeLight 0`: paredes,
+  fatias, telhado e chão do imposter multiplicam a textura pela cor dessa
+  luz. No bairro (modo de iluminação 2) `cLightingManager::AddOutdoorLights`
+  (BV `0x70cd3c`) cria um `nTSSG::cTerrainShadeLight` (tipo 8; no caminho de
+  luzes interpoladas, uma ambiente "LM_OutdoorShade" de tipo 7). A cor da
+  luz não foi decodificada; pelo nome, tomada como a sombra do terreno sob o
+  lote: o light map do bairro no centro do lote ÷ o do chão plano aberto,
+  por canal, entre 0,4 e 1 (`hood::terrainShade`; só paredes, fatias e
+  telhado, o chão é da frente do bairro). Nos três bairros nenhum lote cai
+  numa sombra de morro (o terreno é aplainado sob eles), então o tom fica 1.
 - **Pedaços pretos em N002** (rodada 8): não é falha de material nem de
   textura. Os 13 TXTR de cada lote (`walls_0..8`, `roofs`, `terrain`,
   `terrainLmap`, `slices_0`) resolvem e decodificam (128x128 Raw32). As fatias

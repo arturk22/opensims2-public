@@ -267,9 +267,11 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
             const float3 l = lightVector(set.lights[i], in.world, att);
             float ndl = dot(n, l);
             // Hair: strands lit from either side, never fully dark (the
-            // inner layers' normals point every way, often down into the shell).
+            // inner layers' normals point every way, often down into the
+            // shell); the far side only a little, or every lamp behind
+            // and below washes the hair out (red hair came out salmon).
             if (draw.flags & kTwoSidedLight)
-                ndl = max(0.15, ndl > 0.0 ? ndl : -0.6 * ndl);
+                ndl = max(0.08, ndl > 0.0 ? ndl : -0.3 * ndl);
             if (ndl <= 0.0 || att <= 0.0)
                 continue;
             diffuse += set.lights[i].color.rgb * att * ndl;

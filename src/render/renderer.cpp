@@ -483,7 +483,8 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     // Hairdos darken their inner layer (diffuse 0.4 on "_l1"), which came out
     // near black inside the shell (the sides of a bob in Create-a-Sim): kept
     // darker, but lifted most of the way to the outer layers.
-    if (sm.hair)
+    // (Only those: the outer layers keep their own, 0.8 or 1.)
+    if (sm.hair && simd_reduce_max(diffuse) < 0.6f)
         diffuse = simd_mix(diffuse, simd_make_float3(1, 1, 1), simd_make_float3(0.6f, 0.6f, 0.6f));
     if (sm.shading == StandardMaterial::Shading::Sim)
         diffuse *= 0.8f; // simMaterialLightingScale

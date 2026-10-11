@@ -517,14 +517,28 @@ RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, cons
     return img;
 }
 
-void imposterMaterials(ObjectModel& model, const std::string& scope) {
-    auto unlit = [&](const std::string& texture) {
+std::array<float, 3> terrainShade(const Terrain& t, const RgbaImage& lightMap, const RgbaImage& lookup, float x, float y) {
+    std::array<float, 3> out{1, 1, 1};
+    if (!lightMap.width || !lookup.width)
+        return out;
+    const auto uv = hoodLightMapUv(t, x, y);
+    const auto here = sample(lightMap, uv[0], uv[1]);
+    const auto open = sample(lookup, 0.5f, 0.5f);
+    for (size_t k = 0; k < 3; ++k)
+        out[k] = open[k] > 1e-3f ? std::clamp(here[k] / open[k], 0.4f, 1.0f) : 1.0f;
+    return out;
+}
+
+void imposterMaterials(ObjectModel& model, const std::string& scope, std::array<float, 3> shade) {
+    char coef[64];
+    std::snprintf(coef, sizeof coef, "%g,%g,%g,1", shade[0], shade[1], shade[2]);
+    auto unlit = [&](const std::string& texture, bool shaded = true) {
         MaterialDefinition m;
         m.materialType = "StandardMaterial";
         m.properties = {{"stdMatBaseTextureName", scope + "!" + texture},
                         {"stdMatBaseTextureEnabled", "true"},
                         {"stdMatLightingEnabled", "false"},
-                        {"stdMatDiffCoef", "1,1,1,1"}};
+                        {"stdMatDiffCoef", shaded ? coef : "1,1,1,1"}};
         return m;
     };
     std::map<std::string, std::string> types;
@@ -554,7 +568,7 @@ void imposterMaterials(ObjectModel& model, const std::string& scope) {
                                                      {"stdMatBaseTextureAddressingU", "clamp"},
                                                      {"stdMatBaseTextureAddressingV", "clamp"}});
         } else if (type == "ImposterTerrainMaterial") {
-            m = unlit("terrain");
+            m = unlit("terrain", false);
             // Premultiplied like the walls (rendered from the lot), over the
             // neighborhood terrain or, where the game hides that, the lot's
             // imposter terrain (buildHoodTerrainPatch).
@@ -580,7 +594,7 @@ void imposterMaterials(ObjectModel& model, const std::string& scope) {
             ObjectModel::Part p = part;
             p.material = part.material + "_lmap";
             if (!model.materials.count(p.material)) {
-                MaterialDefinition m = unlit("terrainLmap");
+                MaterialDefinition m = unlit("terrainLmap", false);
                 m.properties.insert(m.properties.end(), {{"stdMatAlphaBlendMode", "multiply"},
                                                          {"stdMatCullMode", "none"},
                                                          {"stdMatLayer", std::to_string(kImposterTerrainLayer - 1)}});

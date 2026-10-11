@@ -191,8 +191,9 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     if (!lookup.width)
         report_.push_back("no neighborhood light map image (IMG 0x0BE702EF)");
     const RgbaImage gradient = readTexture(index, "neighborhood-underwater-gradient_txtr");
+    RgbaImage lightMap; // (the imposters take its shade, below)
     if (state) {
-        const RgbaImage lm = hood::computeHoodLightMap(terrain_, *state, lookup, gradient, kNHoodShadowStrength);
+        const RgbaImage& lm = lightMap = hood::computeHoodLightMap(terrain_, *state, lookup, gradient, kNHoodShadowStrength);
         renderer.setLightMap(0, lm);
         renderer.setLightMap(1, lm);
         if (const char* dump = std::getenv("OS2_HOOD_LIGHTMAP_DUMP"))
@@ -349,7 +350,14 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         HoodLot& lot = p.lot;
         if (!p.model.parts.empty() && lot.indexSlot >= 0) {
             ObjectModel& m = p.model;
-            hood::imposterMaterials(m, hood_.prefix + "_Lot" + std::to_string(lot.id));
+            // ImposterColorScalar: the terrain's shade under the lot (cTerrainShadeLight).
+            const auto shade = hood::terrainShade(terrain_, lightMap, lookup, (lot.footLo.x + lot.footHi.x) / 2,
+                                                  (lot.footLo.y + lot.footHi.y) / 2);
+            if (shade[0] < 0.99f || shade[1] < 0.99f || shade[2] < 0.99f)
+                report_.push_back("lot " + std::to_string(lot.id) + " in the terrain's shade: " +
+                                  std::to_string(shade[0]).substr(0, 4) + " " + std::to_string(shade[1]).substr(0, 4) +
+                                  " " + std::to_string(shade[2]).substr(0, 4));
+            hood::imposterMaterials(m, hood_.prefix + "_Lot" + std::to_string(lot.id), shade);
             const int id = renderer.addObject(m, *lotIndexes_[size_t(lot.indexSlot)]);
             lot.instance = renderer.addInstance(id, p.at);
             const auto [lo, hi] = bounds(m, p.at);

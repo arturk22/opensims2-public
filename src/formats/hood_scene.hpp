@@ -104,7 +104,18 @@ RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, cons
 // and the lot's ground (ImposterTerrainMaterial: "terrain", premultiplied
 // over the neighborhood terrain or the lot's imposter terrain), all unlit (pre-rendered). `scope` is the lot's
 // resource prefix ("N001_Lot11").
-void imposterMaterials(ObjectModel& model, const std::string& scope);
+// `shade` is ImposterColorScalar's colour scalar on the walls, slices and
+// roofs: the game's neighbourhood lighting adds a cTerrainShadeLight (a user
+// light, kShadeLight) whose colour the imposters take (Mac BV
+// cLightingManager::AddOutdoorLights, lighting mode 2); here the terrain's
+// shade under the lot (terrainShade).
+void imposterMaterials(ObjectModel& model, const std::string& scope, std::array<float, 3> shade = {1, 1, 1});
+
+// The neighbourhood light map's shade at (x, y) relative to open flat
+// ground (the light map's (0, 0, 1) normal, unshadowed), per channel and at
+// most 1: a lot in a hill's height-map shadow comes out darker, like the
+// ground around it (inferred: the light's colour is not decoded).
+std::array<float, 3> terrainShade(const Terrain& t, const RgbaImage& lightMap, const RgbaImage& lookup, float x, float y);
 
 } // namespace hood
 } // namespace os2
