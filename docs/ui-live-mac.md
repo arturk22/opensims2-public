@@ -279,8 +279,6 @@ solto). Só uma vez: pede ao Sim para cancelar a interação pelo ID
 interação some quando a árvore termina (o Sim decide quando parar). Ao entrar
 um ícone novo na fila toca o som `PTR 0x02788cec`.
 
----
-
 ## 7. Painéis do modo vivo (rodada 7, binário + dados)
 
 As strings citadas são de `TSData/Res/Text/Live.package` (o grupo global
@@ -404,13 +402,92 @@ pelo gerente de som (`vtable 0x28`, tipo 1). As listas tocam
 (`ui_queue`, `ui_queue_delete`, `ui_panel_open/close`, `ui_error`,
 `ui_undo/redo`…).
 
-**Diferença com o código atual**: `src/app/live_ui.*` não tem estes
-painéis, os tooltips nem os sons de botão. Os sons são achados pelo índice
-global por CRC24 (`ResourceIndex`), e o `sound-list` deve listar os `ui_*`.
+**No código**: os painéis, tooltips e sons estão em `src/app/live_ui.*` e `src/app/live_panels.*` (§8).
 
 ---
 
-## 8. O que falta
+## 8. Subpainéis no app (`cTSWinProcLivePanel::CreateAndAddSubPanel`, BV `0x262d04`)
+
+| nº | script | classe | botão (`ButtonHolder`) |
+|---|---|---|---|
+| 0 | `0x49064905` | `cTSWinProcPanelMotives` (necessidades) | `0x0D8AB291` |
+| 1 | `0x49065002` | `cTSWinProcPanelRelationships` | `0x17DEFBF5` |
+| 2 | `0x49065003` | `cTSWinProcPanelJob` + `cTSUISkillsCtrl` | `0x57DEFBF4` |
+| 3 | `0x49064820` | `cTSWinProcPanelSimology` (personalidade, interesses, lembranças) | `0x47DEFBF2` |
+| 4 | `0x49064800` | `cTSWinProcPanelRewards` (recompensas de carreira; as de aspiração são de expansão) | `0x8B85BA4E` |
+
+### 8.1 Relacionamentos
+
+- Miniatura: script **`0x49065005`** (`CreateThumbnail`, BV `0x3a4cf8`),
+  6 colunas × 1 linha recolhido (2 linhas expandido; "Constants Table"
+  `0x3000`), na janela de grade `0x1006`; páginas com `0x1004`/`0x1005`.
+- Filtros (`LoadRelationships`, BV `0x3a4140`): botões `0x0BA16776` = 1
+  só da família (casa), `0x0BA16779` = 2 parentes e família, `0x0BA16778` =
+  3 amigos, `0x0BA16777` = 5 todos; o atual fica pressionado. Ordem:
+  `cFriendshipSortPredicate` (aqui: permanente, depois diário, do maior;
+  inferido); filtro 4 ordena por química (expansão).
+- Uma miniatura (`onAttach` BV `0x3a2bc4`): `0xA3` retrato, `0xA4` botão
+  (moldura), `0xA1`/`0xA2` barras de gradiente do diário/permanente
+  (−100..100, máscara no filho 3, gradiente no 4), `0xA9`/`0xAA` os números,
+  `0xAB` ícone de família, `0xA5`–`0xA8` ícones: quadros da tira
+  `a9300037` (11 quadros de 15 px; `SetRelationshipIcon` BV `0x3a1c1c`,
+  textos do STR# `0x84`, refs com base 1): 0 amor, 1 paixão, 5 casados, 6
+  noivado, 7 amizade, 8 inimizade, 9 amizade especial, 10 namoro firme.
+  `UpdateSTRUI`: `0xA5` paixão; `0xA6` amizade (amigo, ou o diário passa de
+  um limiar não lido; aqui só o bit de amigo). `UpdateLTRUI`: `0xA7` casados
+  > noivado > namoro > amor; `0xA8` amizade especial > inimizade.
+  Bits do SREL: 0 paixão, 1 amor, 2 noivado, 3 casados, 4 amigo, 5 melhor
+  amigo, 6 namoro, 7 inimigo. Dica: o nome do Sim (`UpdateTooltip`).
+
+### 8.2 Habilidades e carreira
+
+- Grupo por idade: `0xA1` bebê, `0xA2` criança, `0xA3` adolescente (`0xB1`
+  escola sem emprego, `0xB3` emprego), `0xA4` adulto (`0xA5` sem emprego),
+  `0xA9` idoso (`0xC2` aposentado, `0xC3` emprego).
+- Emprego: GUID do objeto de emprego = dado de pessoa 89 | 90 << 16 (ex.:
+  Cassandra → `0x0C9EBD47` "JobData - Adult - Science"), nível = 57,
+  desempenho = 63 (barra `0xA7`, gradiente por colunas, −100..100), folga =
+  69 / 100. Do objeto: título = STR# `0x93` entrada 2·nível − 1 (as pares são
+  as descrições), salário BCON `0x1000`[nível], início `0x1001`, horas
+  `0x1002`, amigos da família `0x1003` (o "( %s )" mostra o do próximo
+  nível; inferido), dias `0x101A` (bit 0 = domingo; inferido). Textos do STR#
+  `0x88`/`0x89` ("Dias de folga: %s", "%s até %s").
+- Habilidades (`cTSUISkillsCtrl::Init` BV `0xa85e00`): barras 0..1000 em 10
+  divisões; filho 3 = a barra cheia, cortada. Janelas pelas legendas:
+  `0x4BDEFF01` culinária (dado 10), `02` mecânica (12), `03` carisma (11),
+  `04` físico (17), `05` lógica (18), `06` criatividade (15), `07` limpeza (9).
+
+### 8.3 Simologia
+
+- Abas `0x10000000` personalidade, `0x20000000` interesses, `0x30000000`
+  lembranças (botões `0x40000000`/`0x50000000`/`0x60000000`).
+- Personalidade (`CreatePersonalityFillBar` BV `0x374de4`,
+  `UpdatePersonalityBar` `0x37389c`): 0..1000 em 10 divisões, a barra = o
+  valor atual, o contorno `0xAA` = o original. `0x1001` ordeiro (dado 7,
+  original 47), `0x1003` sociável (6/50), `0x1005` ativo (3/49), `0x1004`
+  brincalhão (5/51), `0x1002` gentil (2/48).
+
+### 8.4 Indicador de pausa (`cTSUIPauseIndicator::SetArea`, BV `0x96ea30`)
+
+Peças de `0x8C364B93`: `…70` canto superior esquerdo (botão, 4 quadros),
+`…71` borda de cima, `…72` canto superior direito, `…73` borda esquerda,
+`…74` borda direita, `…75` canto inferior esquerdo, `…76` borda de baixo,
+`…77` canto inferior direito. Os cantos vão aos cantos do retângulo (a
+tela); as bordas esticam entre eles.
+
+### 8.5 Sons e dicas
+
+Nomes de som dos botões não estão nos dados (ponteiros preenchidos em
+tempo de execução); pelos nomes do executável: `ui_button_play`/`_fw`/
+`_ffw`/`_pause` (velocidades), `ui_queue_delete` (cancelar), `ui_panel_shift`
+(trocar de subpainel), `ui_primary_button`/`ui_secondary_button` (inferido).
+Dicas: o `tipres` da janela, ou o `captionres` "Título|Texto" das barras e
+grupos; os campos depois do texto (`|||0x4906501c`, `|0xab211110|…`) são
+figuras e o script do balão.
+
+---
+
+## 9. O que falta
 
 - O nome da função de desaturação (o símbolo transferido diz `LotFamilyAccessor::GetDataStr`, errado).
 - Cores dos textos/tooltips do painel (vêm dos scripts).

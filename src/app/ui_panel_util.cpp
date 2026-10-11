@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <utility>
 
 namespace os2 {
@@ -65,6 +66,40 @@ uint32_t objectThumbnailInstance(uint32_t group, const std::string& modelName) {
     for (char ch : key)
         h = (h << 8) ^ table[((h >> 24) ^ uint8_t(std::tolower(static_cast<unsigned char>(ch)))) & 0xFF];
     return h;
+}
+
+RgbaImage gradientFill(const RgbaImage& gradient, const RgbaImage& mask, float value, float min, float max,
+                       bool vertical) {
+    RgbaImage out;
+    out.width = mask.width, out.height = mask.height;
+    out.pixels.assign(size_t(out.width) * out.height * 4, 0);
+    const uint32_t n = vertical ? gradient.width : gradient.height;
+    if (n == 0 || max <= min)
+        return out;
+    const float t = std::clamp((value - min) / (max - min), 0.0f, 1.0f);
+    const uint32_t i = std::min(n - 1, uint32_t(std::lround(float(n) * t)));
+    for (uint32_t y = 0; y < out.height; ++y)
+        for (uint32_t x = 0; x < out.width; ++x) {
+            const uint32_t gx = vertical ? i : std::min(x, gradient.width - 1);
+            const uint32_t gy = vertical ? std::min(y, gradient.height - 1) : i;
+            const uint8_t* g = &gradient.pixels[(size_t(gy) * gradient.width + gx) * 4];
+            uint8_t* o = &out.pixels[(size_t(y) * out.width + x) * 4];
+            o[0] = g[0], o[1] = g[1], o[2] = g[2];
+            o[3] = uint8_t(unsigned(g[3]) * mask.pixels[(size_t(y) * mask.width + x) * 4 + 3] / 255);
+        }
+    return out;
+}
+
+RgbaImage segmentFill(const RgbaImage& full, float value, float max, int divisions) {
+    RgbaImage out = full;
+    if (divisions <= 0 || max <= 0)
+        return out;
+    const int n = std::clamp(int(std::floor(float(divisions) * value / max)), 0, divisions);
+    const uint32_t keep = uint32_t(std::lround(float(full.width) * float(n) / float(divisions)));
+    for (uint32_t y = 0; y < out.height; ++y)
+        for (uint32_t x = keep; x < out.width; ++x)
+            out.pixels[(size_t(y) * out.width + x) * 4 + 3] = 0;
+    return out;
 }
 
 std::vector<QueueSlot> layoutActionQueue(const std::vector<bool>& nested, const QueueMetrics& m) {

@@ -665,6 +665,42 @@ void setupLiveUi(os2::ResourceIndex& index) {
         if (gCameraFollow)
             gCameraFollow->centre(gSimulation->machine(), id);
     };
+    if (gAudio)
+        gLive->playSound = [](const std::string& name) {
+            os2::SoundSystem::PlayOptions o;
+            o.group = os2::SoundGroup::Ui;
+            gAudio->sound().play(name, o);
+        };
+    // Relationship thumbnails of Sims off the lot: the small portrait of the
+    // character file (in the lot's neighborhood) whose OBJD has the GUID.
+    if (auto query = argument(@"--lot"))
+        gLive->neighborPortrait = [dir = lotPath(*query).parent_path().parent_path() / "Characters",
+                                   byGuid = std::make_shared<std::map<uint32_t, fs::path>>()](uint32_t guid)
+            -> std::optional<os2::RgbaImage> {
+            std::error_code ec;
+            if (byGuid->empty() && fs::is_directory(dir, ec))
+                for (const auto& de : fs::directory_iterator(dir, ec))
+                    try {
+                        os2::DbpfPackage p(de.path());
+                        for (const auto& e : p.entries())
+                            if (e.tgi.type == kTypeObjd) {
+                                byGuid->emplace(os2::ObjectDefinition::parse(p.read(e)).guid(), de.path());
+                                break;
+                            }
+                    } catch (const std::exception&) {
+                    }
+            const auto it = byGuid->find(guid);
+            if (it == byGuid->end())
+                return std::nullopt;
+            try {
+                os2::DbpfPackage character(it->second);
+                for (const auto& e : character.entries())
+                    if (e.tgi.type == os2::kTypeUiImage && e.tgi.instance < 0x100)
+                        return os2::decodeUiImage(character.read(e));
+            } catch (const std::exception&) {
+            }
+            return std::nullopt;
+        };
     gLive->onFollowSim = [](os2::vm::ObjectId id) {
         if (gCameraFollow)
             gCameraFollow->setTracked(id);

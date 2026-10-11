@@ -532,6 +532,17 @@ static void testPanelUtil() {
     check(q[3].x == 50 && q[3].y == 10 + 52 - 4 + 52 && q[3].connected, "queue: next sub below, connector");
     const auto t = layoutActionQueue({false, false}, QueueMetrics{});
     check(!t[0].connected && !t[1].connected, "queue: no connector without sub-interactions");
+    // Stepped bar: 80 px in 10 divisions, 400 of 1000 keeps 32 px.
+    RgbaImage full;
+    full.width = 80, full.height = 2;
+    full.pixels.assign(80 * 2 * 4, 255);
+    const RgbaImage s = segmentFill(full, 450, 1000, 10);
+    check(s.pixels[(31) * 4 + 3] == 255 && s.pixels[32 * 4 + 3] == 0, "segment fill: 4 of 10 divisions");
+    // Gradient fill by rows: the row picked by the value.
+    RgbaImage grad, mask;
+    grad.width = 2, grad.height = 3, grad.pixels = {0,0,0,255, 0,0,0,255, 9,9,9,255, 9,9,9,255, 7,7,7,255, 7,7,7,255};
+    mask.width = 2, mask.height = 1, mask.pixels.assign(8, 255);
+    check(gradientFill(grad, mask, 0, -100, 100, false).pixels[0] == 7, "gradient fill: row round(3 * 0.5) = 2");
 }
 
 int main() {

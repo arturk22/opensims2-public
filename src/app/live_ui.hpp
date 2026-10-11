@@ -27,6 +27,7 @@
 // selects that Sim (onSelectSim), a queue icon cancels its interaction on
 // the press, the mode buttons other than Live do nothing.
 
+#include "app/ui_panel_util.hpp"
 #include "formats/ui_screen.hpp"
 #include "vm/vm.hpp"
 
@@ -57,13 +58,7 @@ class FontLibrary;
 class ResourceIndex;
 class UiLayer;
 class UiResources;
-
-// The colour of a gradient fill bar (cTSWinProcGradientFillBar,
-// docs/ui-live-mac.md §5): the mask's size, each row (horizontal) or column
-// (vertical) a copy of the gradient's row/column i = round(N (v - min) /
-// (max - min)), limited to N - 1, alpha from the mask.
-RgbaImage gradientFill(const RgbaImage& gradient, const RgbaImage& mask, float value, float min, float max,
-                       bool vertical);
+class LivePanels;
 
 // The mood colour of a family thumbnail (docs/ui-live-mac.md §4.2): pixel
 // (0, y) of the gradient, y = H - round(H (m + 100) / 200), limited to H - 1.
@@ -107,6 +102,16 @@ public:
     std::function<void(vm::ObjectId)> onCentreSim;
     std::function<void(vm::ObjectId)> onFollowSim;
     vm::ObjectId followed() const { return followed_; }
+    // UI sounds by name (the lot audio's UI group): speeds, pause, queue,
+    // panel buttons.
+    std::function<void(const std::string&)> playSound;
+    // The portrait of a Sim by the GUID of its OBJD (relationship
+    // thumbnails of Sims not on the lot); empty if none.
+    std::function<std::optional<RgbaImage>(uint32_t guid)> neighborPortrait;
+    // The open subpanel (LivePanels::Panel: 0 needs, 1 relationships, 2
+    // skills and career, 3 simology, 4 rewards), as its button does.
+    void selectSubPanel(int panel);
+    int subPanel() const { return subPanel_; }
 
     // The puck's mode buttons (0 live, 1 buy, 2 build, 3 story, 4 options):
     // the one shown pressed; outside live mode only the puck and the family
@@ -144,7 +149,7 @@ public:
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 
 private:
-    enum class Action { None, SelectSim, Centre, Speed, Pause, Cancel, Mode };
+    enum class Action { None, SelectSim, Centre, Speed, Pause, Cancel, Mode, SubPanel, Callback };
     struct Target {
         std::array<float, 4> rect; // x0, y0, x1, y1
         Action action = Action::None;
@@ -155,6 +160,7 @@ private:
     const RgbaImage* queueIcon(const vm::QueuedInteraction& q, bool running, bool nested);
     uint64_t stamp() const;
     void layoutIfNeeded();
+    void drawTooltip(UiScreen& out, const std::string& text, simd_float2 at);
 
     vm::VM* vm_;
     std::unique_ptr<UiResources> res_;
@@ -166,6 +172,18 @@ private:
     std::array<UiScript, 8> bars_; // a copy of the motive bar per motive (its caption)
 
     vm::ObjectId sim_ = 0, followed_ = 0;
+    std::unique_ptr<LivePanels> panels_;
+    int subPanel_ = 0;
+    std::vector<std::function<void()>> callbacks_;          // Action::Callback targets of the current screen
+    std::vector<std::pair<std::array<float, 4>, std::string>> tips_; // tooltips of the current screen
+    int tip_ = -1;                                          // the one under the mouse
+    UiScript pause_;                                        // 0x8C364B93, the pause indicator
+    std::map<int16_t, std::unique_ptr<RgbaImage>> neighborPortraits_; // by neighbor ID (null: none)
+    const RgbaImage* portraitOfNeighbor(int16_t id);
+    void sound(const std::string& name) {
+        if (playSound)
+            playSound(name);
+    }
     std::map<vm::ObjectId, std::unique_ptr<RgbaImage>> portraits_;
     std::map<uint32_t, std::unique_ptr<RgbaImage>> objectThumbs_; // by GUID (null: none)
     std::map<uint32_t, const DbpfEntry*> thumbIndex_;             // ObjectThumbnails.package by instance

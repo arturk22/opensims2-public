@@ -1,5 +1,6 @@
 #include "app/live_ui.hpp"
 
+#include "app/live_panels.hpp"
 #include "app/ui_panel_util.hpp"
 
 #include "formats/dbpf.hpp"
@@ -26,6 +27,12 @@ constexpr uint32_t kPuckScript = 0x4905F85B, kLiveScript = 0x49060005, kMotivesS
                    kBarScript = 0x4906500B, kMemberScript = 0x49060053, kIconScript = 0x0609A1C0,
                    kQueueConstants = 0xCCD02691;
 constexpr uint32_t kMoodGradient = 0xE9100002; // docs/ui-live-mac.md §4.2
+constexpr uint32_t kPauseScript = 0x8C364B93;  // cTSUIPauseIndicator
+// The subpanel buttons in the button holder, by LivePanels::Panel.
+constexpr std::array<uint32_t, 5> kSubButtons = {0x0D8AB291, 0x17DEFBF5, 0x57DEFBF4, 0x47DEFBF2, 0x8B85BA4E};
+// Person data: aspiration (46, a bit: 1 romance, 2 family, 4 fortune, 16
+// popularity, 32 knowledge, 64 grow up; SimPE's names) and its score (160).
+constexpr int kPdAspiration = 46, kPdAspirationScore = 160;
 // Live panel placements (inferred): the mood meter group after the front
 // cap (316 + 13), the needs panel's background after the group (its mood
 // box ends at +87), 347 px wide.
@@ -60,28 +67,6 @@ std::string area(int x0, int y0, int x1, int y1) { return uiArea(x0, y0, x1, y1)
 bool inside(const std::array<float, 4>& r, simd_float2 p) { return insideRect(r, p.x, p.y); }
 
 } // namespace
-
-RgbaImage gradientFill(const RgbaImage& gradient, const RgbaImage& mask, float value, float min, float max,
-                       bool vertical) {
-    RgbaImage out;
-    out.width = mask.width, out.height = mask.height;
-    out.pixels.assign(size_t(out.width) * out.height * 4, 0);
-    const uint32_t n = vertical ? gradient.width : gradient.height;
-    if (n == 0 || max <= min)
-        return out;
-    const float t = std::clamp((value - min) / (max - min), 0.0f, 1.0f);
-    const uint32_t i = std::min(n - 1, uint32_t(std::lround(float(n) * t)));
-    for (uint32_t y = 0; y < out.height; ++y)
-        for (uint32_t x = 0; x < out.width; ++x) {
-            const uint32_t gx = vertical ? i : std::min(x, gradient.width - 1);
-            const uint32_t gy = vertical ? std::min(y, gradient.height - 1) : i;
-            const uint8_t* g = &gradient.pixels[(size_t(gy) * gradient.width + gx) * 4];
-            uint8_t* o = &out.pixels[(size_t(y) * out.width + x) * 4];
-            o[0] = g[0], o[1] = g[1], o[2] = g[2];
-            o[3] = uint8_t(unsigned(g[3]) * mask.pixels[(size_t(y) * mask.width + x) * 4 + 3] / 255);
-        }
-    return out;
-}
 
 std::array<float, 4> moodColor(const RgbaImage& gradient, float mood) {
     if (gradient.height == 0 || gradient.width == 0)
@@ -147,6 +132,9 @@ LiveUi::LiveUi(vm::VM& vm, ResourceIndex& index, const std::filesystem::path& re
         std::fprintf(stderr, "opensims2: live UI: %s\n", e.what());
     }
 
+    panels_ = std::make_unique<LivePanels>(*res_);
+    if (auto p = res_->script(kPauseScript))
+        pause_ = std::move(*p);
     if (!ok_)
         return;
     // --- What the panel's code does once (inferred placements: TODO.md) ----
@@ -347,6 +335,8 @@ UiScreen LiveUi::screen(int width, int height) {
     targets_.clear();
     solid_.clear();
     frameImages_.clear();
+    callbacks_.clear();
+    tips_.clear();
     if (!ok_)
         return out;
     const vm::Object* sim = vm_->object(sim_);
@@ -448,11 +438,29 @@ UiScreen LiveUi::screen(int width, int height) {
             if (const UiElement* m = findIn(live, 0x49064803))
                 fill(*m, float(sim->person->motives[vm::motive::Mood]), hk);
         }
-        // The needs button of the open subpanel, pressed.
-        if (const UiElement* holder = findIn(live, 0xA94E97E8))
-            if (const UiElement* b = holder->child(0x0D8AB291))
-                hk.buttonState[b] = 2;
+        // The open subpanel's button, pressed.
+        const UiElement* holder = findIn(live, 0xA94E97E8);
+        if (holder)
+            for (size_t i = 0; i < kSubButtons.size(); ++i)
+                if (const UiElement* b = holder->child(kSubButtons[i]))
+                    hk.buttonState[b] = int(i) == subPanel_ ? 2 : 1;
+        if (sim && sim->person) {
+            // The aspiration's icon (CD8B8B11-16) and meter (inferred: the
+            // score in -100..100 on the gradient fill bar 0x4BDEFFA1).
+            const int asp = sim->person->data[kPdAspiration];
+            const std::array<std::pair<uint32_t, int>, 6> icons = {
+                {{0xCD8B8B11, 2}, {0xCD8B8B12, 32}, {0xCD8B8B13, 1}, {0xCD8B8B14, 4}, {0xCD8B8B15, 16}, {0xCD8B8B16, 64}}};
+            for (auto [id, bit] : icons)
+                if (const UiElement* e = findIn(live, id))
+                    (asp == bit || (asp == 0 && bit == 64) ? hk.show : hk.hide).insert(e);
+            if (const UiElement* bar = findIn(live, 0x4BDEFFA1))
+                fill(*bar, float(sim->person->data[kPdAspirationScore]), hk);
+        }
         place(live, liveX, liveY, hk);
+        if (holder)
+            for (size_t i = 0; i < kSubButtons.size(); ++i)
+                if (panels_ && (i == 0 || panels_->ok(LivePanels::Panel(i))))
+                    target(holder->child(kSubButtons[i]), Action::SubPanel, int(i));
         target(findIn(live, 0x4BDEFFA4), Action::Centre, sim_);
         for (auto [id, v] : speeds)
             target(findIn(live, id), Action::Speed, v);
@@ -464,8 +472,23 @@ UiScreen LiveUi::screen(int width, int height) {
             solid_.push_back({(*r)[0], (*r)[1] + 60, (*r)[2], (*r)[3]});
     }
 
+    // --- The other subpanels (app/live_panels.hpp) ----------------------------
+    if (mode_ == 0 && sim && sim->person && subPanel_ != 0 && panels_) {
+        PanelContext c{*vm_, *res_, *fonts_, out, rects,
+                       keep,
+                       [&](std::array<float, 4> r, std::function<void()> f) {
+                           callbacks_.push_back(std::move(f));
+                           targets_.push_back({r, Action::Callback, int(callbacks_.size() - 1)});
+                       },
+                       [&](std::array<float, 4> r) { solid_.push_back(r); },
+                       [&](int16_t id) { return portraitOfNeighbor(id); },
+                       [&](const std::string& name) { sound(name); },
+                       [&](std::array<float, 4> r, std::string t) { tips_.push_back({r, std::move(t)}); }};
+        panels_->layout(LivePanels::Panel(subPanel_), c, sim_, liveX + float(kSubPanelX), liveY + 140 + 138);
+    }
+
     // --- The needs subpanel ------------------------------------------------
-    if (mode_ == 0 && sim && sim->person) {
+    if (mode_ == 0 && sim && sim->person && subPanel_ == 0) {
         const UiElement& panel = motives_.roots.front();
         const std::string age = vm::agePrefix(*sim);
         const uint32_t group = age == "p" || age == "b" ? 0xA003 : age == "c" ? 0xA004 : 0xA005;
@@ -546,6 +569,14 @@ UiScreen LiveUi::screen(int width, int height) {
             UiDrawHooks ch;
             const auto ca = column.roots.front().area();
             place(column.roots.front(), puckX + float(ca[0]), puckY + float(ca[1]), ch);
+            // The column is a local copy: drop its windows from the rectangles
+            // (the tooltips read them after this block).
+            std::function<void(const UiElement&)> forget = [&](const UiElement& e) {
+                rects.erase(&e);
+                for (const auto& k : e.children)
+                    forget(k);
+            };
+            forget(column.roots.front());
             // The thumbnails, centred on the column's middle piece.
             const RgbaImage* moodGradient = image(kMoodGradient);
             const UiElement& m = member_.roots.front();
@@ -675,7 +706,156 @@ UiScreen LiveUi::screen(int width, int height) {
             layoutUiElement(t, tx, ty, *res_, *fonts_, out, th);
         }
     }
+
+    // --- The pause indicator (cTSUIPauseIndicator::SetArea, BV 0x96ea30) -----
+    // Its eight pieces frame the screen: the corners at the corners, the
+    // edges stretched between them.
+    if (paused && pause_.roots.size() >= 8) {
+        const float W = float(width), H = float(height);
+        auto piece = [&](size_t i) -> const UiElement& { return pause_.roots[i]; };
+        auto wOf = [&](size_t i) { return float(piece(i).area()[2] - piece(i).area()[0]); };
+        auto hOf = [&](size_t i) { return float(piece(i).area()[3] - piece(i).area()[1]); };
+        // 0 top left, 1 top, 2 top right, 3 left, 4 right, 5 bottom left, 6 bottom, 7 bottom right.
+        const std::array<std::array<float, 4>, 8> at = {{
+            {0, 0, wOf(0), hOf(0)},
+            {wOf(0), 0, W - wOf(2), hOf(1)},
+            {W - wOf(2), 0, W, hOf(2)},
+            {0, hOf(0), wOf(3), H - hOf(5)},
+            {W - wOf(4), hOf(2), W, H - hOf(7)},
+            {0, H - hOf(5), wOf(5), H},
+            {wOf(5), H - hOf(6), W - wOf(7), H},
+            {W - wOf(7), H - hOf(7), W, H},
+        }};
+        for (size_t i = 0; i < 8; ++i) {
+            UiElement e = piece(i);
+            e.set("area", area(0, 0, int(std::lround(at[i][2] - at[i][0])), int(std::lround(at[i][3] - at[i][1]))));
+            UiDrawHooks ph;
+            ph.buttonState[&e] = 1;
+            layoutUiElement(e, at[i][0], at[i][1], *res_, *fonts_, out, ph);
+        }
+    }
+
+    // --- Tooltips: the windows' tip strings (tipres) under the mouse --------
+    // (Bars and groups carry theirs as a "Title|Body" captionres.)
+    for (const auto& [e, r] : rects) {
+        const std::string* t = e->attr("tipres");
+        const std::string cls = e->clsid();
+        if (!t && (cls == "GZWinGen" || cls == "GZWinFlatRect"))
+            t = e->attr("captionres");
+        if (t)
+            if (auto ref = uiStringRef(*t))
+                if (auto text = res_->string(*ref); text && !text->empty() &&
+                                                    (e->attr("tipres") || text->find('|') != std::string::npos))
+                    tips_.push_back({r, *text});
+    }
+    tip_ = -1;
+    if (mouse_) {
+        float best = 1e30f;
+        for (size_t i = 0; i < tips_.size(); ++i) {
+            const auto& r = tips_[i].first;
+            const float a = (r[2] - r[0]) * (r[3] - r[1]);
+            if (inside(r, *mouse_) && a < best)
+                best = a, tip_ = int(i);
+        }
+    }
+    if (tip_ >= 0)
+        drawTooltip(out, tips_[size_t(tip_)].second, *mouse_);
     return out;
+}
+
+// A tooltip (inferred look: the game's cTSWinCalloutBox): "Title|Body|||..."
+// drawn as the title, then the body wrapped at 260 px, under the mouse.
+void LiveUi::drawTooltip(UiScreen& out, const std::string& text, simd_float2 at) {
+    // The fields after the body ("|||0x4906501c", "|0xab211110|...") name
+    // pictures and the callout's script: not drawn.
+    std::string t = text.substr(0, std::min(text.find("|||"), text.find("|0x")));
+    while (!t.empty() && (t.back() == '\n' || t.back() == '\r' || t.back() == ' '))
+        t.pop_back();
+    std::string title = t, body;
+    if (auto bar = t.find('|'); bar != std::string::npos)
+        title = t.substr(0, bar), body = t.substr(bar + 1);
+    const FontStyle* st = fonts_->style("LiveModePanelPuck");
+    const Font* f = st ? fonts_->font(*st) : nullptr;
+    const float ppem = st ? float(st->size) : 12;
+    auto width = [&](const std::string& s) { return f ? measureText(*f, decodeUtf8(s), ppem).width : float(s.size()) * 6; };
+    std::vector<std::string> lines;
+    float w = width(title);
+    lines.push_back(title);
+    std::string line;
+    auto flush = [&] {
+        if (!line.empty())
+            w = std::max(w, width(line)), lines.push_back(line), line.clear();
+    };
+    std::string word;
+    auto addWord = [&] {
+        if (word.empty())
+            return;
+        const std::string tryLine = line.empty() ? word : line + " " + word;
+        if (!line.empty() && width(tryLine) > 260)
+            flush(), line = word;
+        else
+            line = tryLine;
+        word.clear();
+    };
+    for (char ch : body) {
+        if (ch == ' ')
+            addWord();
+        else if (ch == '\n' || ch == '\r') {
+            addWord();
+            flush();
+        } else
+            word += ch;
+    }
+    addWord();
+    flush();
+    const float lineH = std::ceil(ppem * 1.4f), bw = std::ceil(w) + 12, bh = lineH * float(lines.size()) + 6;
+    float x = at.x + 12, y = at.y + 18;
+    x = std::clamp(x, 0.0f, std::max(0.0f, float(out.width) - bw));
+    if (y + bh > float(out.height))
+        y = std::max(0.0f, at.y - bh - 4);
+    UiElement box;
+    box.tag = "LEGACY";
+    box.attrs = {{"clsid", "GZWinFlatRect"}, {"fillcolor", "(178,193,255)"}, {"winflag_visible", "yes"},
+                 {"area", area(0, 0, int(bw), int(bh))}};
+    UiDrawHooks bh0;
+    layoutUiElement(box, x, y, *res_, *fonts_, out, bh0);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        UiElement e;
+        e.tag = "LEGACY";
+        e.attrs = {{"clsid", "GZWinText"}, {"caption", lines[i]}, {"font", "LiveModePanelPuck"},
+                   {"forecolor", "(5,6,113)"}, {"align", "lefttop"}, {"winflag_visible", "yes"},
+                   {"area", area(0, 0, int(bw), int(lineH))}};
+        UiDrawHooks th;
+        layoutUiElement(e, x + 6, y + 3 + float(i) * lineH, *res_, *fonts_, out, th);
+    }
+}
+
+const RgbaImage* LiveUi::portraitOfNeighbor(int16_t id) {
+    auto it = neighborPortraits_.find(id);
+    if (it == neighborPortraits_.end()) {
+        std::unique_ptr<RgbaImage> img;
+        // A Sim on the lot: its portrait; else the character file's.
+        for (const auto& [oid, o] : vm_->objects())
+            if (o.person && o.person->data[vm::persondata::NeighborId] == id)
+                if (auto p = portraits_.find(oid); p != portraits_.end())
+                    img = std::make_unique<RgbaImage>(*p->second);
+        if (!img && neighborPortrait)
+            if (auto n = vm_->neighbors.find(id); n != vm_->neighbors.end())
+                if (auto p = neighborPortrait(n->second.guid))
+                    img = std::make_unique<RgbaImage>(std::move(*p));
+        it = neighborPortraits_.emplace(id, std::move(img)).first;
+    }
+    return it->second.get();
+}
+
+void LiveUi::selectSubPanel(int panel) {
+    if (panel < 0 || panel >= LivePanels::Count || panel == subPanel_)
+        return;
+    subPanel_ = panel;
+    if (panels_)
+        panels_->resetPages();
+    std::printf("opensims2: live UI: subpanel %d\n", panel);
+    dirty_ = true;
 }
 
 void LiveUi::layoutIfNeeded() {
@@ -722,8 +902,27 @@ bool LiveUi::press(simd_float2 p, bool right) {
             if (onCentreSim)
                 onCentreSim(vm::ObjectId(t.value));
             break;
-        case Action::Speed: setSpeed(t.value); break;
-        case Action::Pause: togglePause(); break;
+        case Action::Speed:
+            // SetSimulatorSpeed's sound per speed (inferred names).
+            sound(t.value == 2 ? "ui_button_play" : t.value == 3 ? "ui_button_fw" : "ui_button_ffw");
+            setSpeed(t.value);
+            break;
+        case Action::Pause:
+            togglePause();
+            if (vm_->globals[vm::global::Paused])
+                sound("ui_button_pause");
+            break;
+        case Action::SubPanel:
+            if (t.value != subPanel_)
+                sound("ui_panel_shift");
+            selectSubPanel(t.value);
+            break;
+        case Action::Callback:
+            if (t.value >= 0 && size_t(t.value) < callbacks_.size()) {
+                const auto f = callbacks_[size_t(t.value)];
+                f();
+            }
+            break;
         case Action::SelectSim:
             if (vm::ObjectId(t.value) != sim_) {
                 std::printf("opensims2: live UI: select Sim %d\n", t.value);
@@ -748,13 +947,16 @@ bool LiveUi::press(simd_float2 p, bool right) {
                 if (!ok)
                     ok = std::erase_if(sim->subQueue, [&](const vm::QueuedInteraction& x) { return x.uid == uid; }) > 0;
                 std::printf("opensims2: live UI: cancel queue entry %d: %s\n", t.value, ok ? "ok" : "refused");
-                if (ok)
+                if (ok) {
                     cancelled_.insert({sim_, uint16_t(t.value)});
+                    sound("ui_queue_delete");
+                }
             }
             break;
         case Action::Mode:
             std::printf("opensims2: live UI: mode button %d%s\n", t.value,
                         t.value == 0 ? " (live)" : onMode && (t.value == 1) ? " (buy)" : " (inert)");
+            sound("ui_primary_button");
             if (onMode)
                 onMode(t.value);
             break;
@@ -781,6 +983,16 @@ void LiveUi::hover(simd_float2 p) {
             ++k;
         }
     if (over != hoverIcon_)
+        dirty_ = true;
+    int tip = -1;
+    float best = 1e30f;
+    for (size_t i = 0; i < tips_.size(); ++i) {
+        const auto& r = tips_[i].first;
+        const float a = (r[2] - r[0]) * (r[3] - r[1]);
+        if (inside(r, p) && a < best)
+            best = a, tip = int(i);
+    }
+    if (tip != tip_ || tip >= 0) // a tooltip follows the mouse
         dirty_ = true;
 }
 

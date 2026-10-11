@@ -42,6 +42,18 @@ std::string formatMoney(int64_t value);
 // of its group's STR# 0x85. 531 of the 532 shipped thumbnails match.
 uint32_t objectThumbnailInstance(uint32_t group, const std::string& modelName);
 
+// The colour of a gradient fill bar (cTSWinProcGradientFillBar,
+// docs/ui-live-mac.md §5): the mask's size, each row (horizontal) or column
+// (vertical) a copy of the gradient's row/column i = round(N (v - min) /
+// (max - min)), limited to N - 1, alpha from the mask.
+RgbaImage gradientFill(const RgbaImage& gradient, const RgbaImage& mask, float value, float min, float max,
+                       bool vertical);
+
+// A stepped bar (the skills' and personality's fill bars: range 0..1000 in
+// 10 divisions): the "full" image cut after floor(divisions * v / max) of
+// its divisions (equal widths), the rest transparent.
+RgbaImage segmentFill(const RgbaImage& full, float value, float max, int divisions);
+
 // The action queue's icon positions (cTSUIActionQueue::OnTick, BV 0x1e44b0):
 // top-level icons side by side from (x0, y0), `margin` apart; the
 // sub-interactions stacked down at x0 under them, the first moved by
