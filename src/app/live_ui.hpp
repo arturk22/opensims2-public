@@ -120,6 +120,14 @@ public:
     void setMode(int mode) { mode_ = mode, dirty_ = true; }
     int mode() const { return mode_; }
     std::function<void(int)> onMode;
+    // The options panel (puck button 4, script 0x49060001: the lot's
+    // cTSWinProcPanelOptions): "Vizinhança" leaves the lot for the
+    // neighborhood (only shown when setCanLeave(true): the lot came from
+    // one), "Sair" quits. The graphics, audio, game and camera options,
+    // Save and the credits are not wired.
+    std::function<void()> onNeighborhood, onQuit;
+    void setCanLeave(bool can) { canLeave_ = can, dirty_ = true; }
+    bool optionsOpen() const { return optionsOpen_; }
     // The puck's floor buttons ("Subir um Andar (Page Up)" 0x2001, "Descer
     // um Andar (Page Down)" 0x2000): +1 / -1.
     std::function<void(int)> onFloor;
@@ -174,7 +182,8 @@ private:
     std::unique_ptr<FontLibrary> fonts_;
     std::unique_ptr<DbpfPackage> thumbnails_;
     bool ok_ = false;
-    UiScript puck_, live_, motives_, bar_, member_, icon_;
+    UiScript puck_, live_, motives_, bar_, member_, icon_, options_;
+    bool optionsOpen_ = false, canLeave_ = false;
     std::map<std::string, std::string> queueConstants_;
     std::array<UiScript, 8> bars_; // a copy of the motive bar per motive (its caption)
 

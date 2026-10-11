@@ -28,6 +28,7 @@ constexpr uint32_t kPuckScript = 0x4905F85B, kLiveScript = 0x49060005, kMotivesS
                    kQueueConstants = 0xCCD02691;
 constexpr uint32_t kMoodGradient = 0xE9100002; // docs/ui-live-mac.md §4.2
 constexpr uint32_t kPauseScript = 0x8C364B93;  // cTSUIPauseIndicator
+constexpr uint32_t kOptionsScript = 0x49060001; // the options panel
 // The subpanel buttons in the button holder, by LivePanels::Panel.
 constexpr std::array<uint32_t, 5> kSubButtons = {0x0D8AB291, 0x17DEFBF5, 0x57DEFBF4, 0x47DEFBF2, 0x8B85BA4E};
 // Person data: aspiration (46, a bit: 1 romance, 2 family, 4 fortune, 16
@@ -135,6 +136,8 @@ LiveUi::LiveUi(vm::VM& vm, ResourceIndex& index, const std::filesystem::path& re
     panels_ = std::make_unique<LivePanels>(*res_);
     if (auto p = res_->script(kPauseScript))
         pause_ = std::move(*p);
+    if (auto p = res_->script(kOptionsScript))
+        options_ = std::move(*p);
     if (!ok_)
         return;
     // --- What the panel's code does once (inferred placements: TODO.md) ----
@@ -410,7 +413,8 @@ UiScreen LiveUi::screen(int width, int height) {
         }
 
     // --- The live panel (only in live mode: Buy mode draws its own) ----------
-    if (mode_ == 0) {
+    const bool showLive = mode_ == 0 && !optionsOpen_; // the options panel takes the live panel's place
+    if (showLive) {
         UiDrawHooks hk;
         // Speed and pause: the marked one pressed (docs/ui-live-mac.md §1.3).
         const std::array<std::pair<uint32_t, int>, 3> speeds = {{{kSpeed2, 2}, {kSpeed3, 3}, {kSpeed4, 4}}};
@@ -499,7 +503,7 @@ UiScreen LiveUi::screen(int width, int height) {
     }
 
     // --- The other subpanels (app/live_panels.hpp) ----------------------------
-    if (mode_ == 0 && sim && sim->person && subPanel_ != 0 && panels_) {
+    if (showLive && sim && sim->person && subPanel_ != 0 && panels_) {
         PanelContext c{*vm_, *res_, *fonts_, out, rects,
                        keep,
                        [&](std::array<float, 4> r, std::function<void()> f) {
@@ -518,7 +522,7 @@ UiScreen LiveUi::screen(int width, int height) {
     }
 
     // --- The needs subpanel ------------------------------------------------
-    if (mode_ == 0 && sim && sim->person && subPanel_ == 0) {
+    if (showLive && sim && sim->person && subPanel_ == 0) {
         const UiElement& panel = motives_.roots.front();
         const std::string age = vm::agePrefix(*sim);
         const uint32_t group = age == "p" || age == "b" ? 0xA003 : age == "c" ? 0xA004 : 0xA005;
@@ -554,13 +558,60 @@ UiScreen LiveUi::screen(int width, int height) {
             }
     }
 
+    // --- The options panel (puck button 4) -----------------------------------
+    // Joined to the puck like the live panel: its hidden rectangle captioned
+    // "4bdeffaa:bl" (child 0xAAAA of 0xA200) over the puck's window.
+    if (optionsOpen_ && !options_.roots.empty()) {
+        const UiElement& root = options_.roots.front();
+        const UiElement* box = findIn(root, 0xA200);
+        const UiElement* anchor = findIn(root, 0xAAAA);
+        float ox = puckX + 5, oy = puckY - 40;
+        if (const UiElement* a = puck.child(0x4BDEFFAA); a && box && anchor) {
+            ox = puckX + float(a->area()[0]) - float(box->area()[0] + anchor->area()[0]);
+            oy = puckY + float(a->area()[1]) - float(box->area()[1] + anchor->area()[1]);
+        }
+        UiDrawHooks hk;
+        for (uint32_t id : {0xA211u, 0xA250u})
+            if (const UiElement* e = findIn(root, id))
+                hk.hide.insert(e);
+        if (const UiElement* e = findIn(root, 0xA210))
+            if (!canLeave_)
+                hk.hide.insert(e);
+        place(root, ox, oy, hk);
+        for (uint32_t id : {0xA000u, 0xA100u})
+            if (auto r = rectOf(findIn(root, id)))
+                solid_.push_back(*r);
+        auto button = [&](uint32_t id, std::function<void()> f) {
+            const UiElement* b = findIn(root, id);
+            if (auto r = rectOf(b)) {
+                callbacks_.push_back([this, f = std::move(f), snd = uiButtonSound(*b)] {
+                    if (!snd.empty())
+                        sound(snd);
+                    if (f)
+                        f();
+                });
+                targets_.push_back({*r, Action::Callback, int(callbacks_.size() - 1)});
+            }
+        };
+        button(0xA210, [this] {
+            std::printf("opensims2: live UI: to the neighborhood\n");
+            if (onNeighborhood)
+                onNeighborhood();
+        });
+        button(0xA220, [this] {
+            std::printf("opensims2: live UI: quit\n");
+            if (onQuit)
+                onQuit();
+        });
+    }
+
     // --- The puck ----------------------------------------------------------
     const std::vector<vm::ObjectId> members = family();
     {
         UiDrawHooks hk;
         for (size_t i = 0; i < kModes.size(); ++i)
             if (const UiElement* b = puck.child(kModes[i]))
-                hk.buttonState[b] = int(i) == mode_ ? 2 : 1;
+                hk.buttonState[b] = int(i) == mode_ || (i == 4 && optionsOpen_) ? 2 : 1;
         if (const UiElement* f = puck.child(kFunds)) {
             const int16_t fam = g[vm::global::CurrentFamily];
             const auto it = vm_->families.find(fam);
@@ -1146,6 +1197,12 @@ bool LiveUi::press(simd_float2 p, bool right) {
                 onFloor(t.value);
             break;
         case Action::Mode:
+            if (t.value == 4) { // options: opens and closes its panel
+                optionsOpen_ = !optionsOpen_;
+                std::printf("opensims2: live UI: options panel %s\n", optionsOpen_ ? "open" : "closed");
+                break;
+            }
+            optionsOpen_ = false;
             std::printf("opensims2: live UI: mode button %d%s\n", t.value,
                         t.value == 0 ? " (live)" : onMode && (t.value == 1) ? " (buy)" : " (inert)");
             if (onMode)

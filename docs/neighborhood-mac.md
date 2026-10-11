@@ -326,6 +326,16 @@ parser de `src/formats/camera_config.*`): `zoom 1 (650 450 230)`, `fov 33`,
   `0x146850`) recriam a vista (imposters do zero, `ConstructLotImposters`,
   BV `0x76d340`). Com a flag `0x800` sai sem salvar (`0xACFD5984`).
 
+**No app** (rodada 8): o valor do lote do popup e o patrimônio do diálogo
+vêm do `SIMI` do pacote do lote (`docs/save-mac.md` §5: `+0xA4` valor do lote,
+`+0xAC` valor dos objetos da família, `+0xA8` dos do lote). Lote vazio mostra
+o valor do lote mais o dos objetos; família, os fundos (`FAMI`) mais o valor do
+lote e dos objetos da família (**inferido**: "Patrimônio"). Sair do lote:
+o painel de opções do puck (script `0x49060001`, botão `0xA210`, "Vizinhança";
+`0xA220` Sair; `0xA230` Salvar não ligado) além do Esc; só aparece quando o
+lote veio do bairro. O puck do bairro: zoom `0x2BE6FB48`/`0x2BE6FB4E`,
+rotação `0x2BE6FB52`/`0x2BE6FB57`.
+
 ---
 
 ## 7. Base vs BV

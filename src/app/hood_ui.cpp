@@ -1,6 +1,9 @@
 #include "hood_ui.hpp"
 
 #include "app/hood_view.hpp"
+#include "app/ui_panel_util.hpp"
+#include "formats/binreader.hpp"
+#include "formats/lot_objects.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/font.hpp"
 #include "formats/resindex.hpp"
@@ -85,6 +88,61 @@ const RgbaImage* HoodUi::lotPicture(const HoodLot& lot) {
     return (pictures_[lot.id] = std::move(img)).get();
 }
 
+const HoodUi::LotValues& HoodUi::lotValues(const HoodLot& lot) {
+    auto it = values_.find(lot.id);
+    if (it != values_.end())
+        return it->second;
+    LotValues v;
+    try {
+        if (!lot.package.empty() && std::filesystem::exists(lot.package)) {
+            DbpfPackage pkg(lot.package);
+            for (const auto& e : pkg.entries())
+                if (e.tgi.type == 0x53494D49 && e.tgi.instance == 1) {
+                    // cTSSimulator::Read (docs/save-mac.md §5): the name, "SIMI",
+                    // the version, a u32, the globals, then the offsets 0xA0, 0x11C,
+                    // 0x98, 0xB4 and the random seed, 0x9C, and from version 0x25
+                    // the lot's value (0xA4), the family's objects' (0xAC) and
+                    // (from 0xAD) the lot's objects' (0xA8).
+                    const auto bytes = pkg.read(e);
+                    BinReader r(bytes);
+                    r.skip(64);
+                    r.u32();
+                    const uint32_t version = r.u32();
+                    r.u32();
+                    r.skip(simulatorGlobalCount(version) * 2);
+                    if (version < 0x12) // the speed
+                        r.u32();
+                    r.u32(); // 0xA0
+                    r.u16(); // 0x11C
+                    if (version > 1)
+                        r.u32();
+                    if (version > 0xD)
+                        r.skip(8);
+                    if (version >= 0xF)
+                        r.u32();
+                    if (version >= 0x25) {
+                        v.lot = r.u32();
+                        v.familyObjects = r.u32();
+                        if (version >= 0xAD)
+                            v.lotObjects = r.u32();
+                        v.ok = true;
+                    }
+                    break;
+                }
+        }
+    } catch (const std::exception&) {
+    }
+    return values_[lot.id] = v;
+}
+
+int64_t HoodUi::netWorth(const HoodLot& lot) {
+    const LotValues& v = lotValues(lot);
+    int64_t funds = 0;
+    if (const auto* fam = view_->neighborhood().family(lot.family))
+        funds = fam->record.funds;
+    return funds + v.lot + v.familyObjects;
+}
+
 void HoodUi::hoverLot(const HoodLot* lot, simd_float2 mouse) {
     if (lot != hover_ || (lot && simd_distance(mouse, mouse_) > 0.5f))
         dirty_ = true;
@@ -149,6 +207,11 @@ UiScreen HoodUi::screen(int width, int height) {
         const auto a = puck->area();
         UiDrawHooks hk;
         place(*puck, 2, float(height - (a[3] - a[1]) - 2), hk);
+        // The camera buttons: "Mais Zoom +", "Menos Zoom -" and the two "Rotacionar".
+        target(puck->child(0x2BE6FB48), Action::ZoomIn);
+        target(puck->child(0x2BE6FB4E), Action::ZoomOut);
+        target(puck->child(0x2BE6FB52), Action::RotateLeft);
+        target(puck->child(0x2BE6FB57), Action::RotateRight);
     }
 
     // Hover popup next to the mouse (not while the dialog is open).
@@ -170,10 +233,14 @@ UiScreen HoodUi::screen(int width, int height) {
                     hk.hide.insert(e);
             };
             const RgbaImage* pic = lotPicture(lot);
+            const LotValues v = lotValues(lot); // the lot's value (SIMI)
             if (panel == 0xA000) {
                 caption(0xA001, lot.familyName);
                 caption(0xA002, lot.name);
-                hide(0xA003); // value (not computed)
+                if (v.ok)
+                    caption(0xA003, formatMoney(v.lot));
+                else
+                    hide(0xA003);
                 caption(0xA005, sizeText(lot));
                 const auto* fam = view_->neighborhood().family(lot.family);
                 if (fam && !fam->description.empty())
@@ -183,7 +250,10 @@ UiScreen HoodUi::screen(int width, int height) {
             } else {
                 const uint32_t base = panel; // B000 / C000
                 caption(base + 1, lot.name);
-                hide(base + 2);
+                if (v.ok)
+                    caption(base + 2, formatMoney(v.lot));
+                else
+                    hide(base + 2);
                 caption(base + 3, sizeText(lot));
                 if (const UiElement* e = pe->child(base + 4); e && pic)
                     hk.images[e] = pic;
@@ -217,16 +287,24 @@ UiScreen HoodUi::screen(int width, int height) {
                 hk.captions[e] = lot.familyName;
             if (auto* e = child(0xB007))
                 hk.captions[e] = lot.name;
-            if (auto* e = child(0xB008))
-                hk.hide.insert(e);
+            if (auto* e = child(0xB008)) { // "Patrimônio": the family's net worth
+                if (lotValues(lot).ok)
+                    hk.captions[e] = formatMoney(netWorth(lot));
+                else
+                    hk.hide.insert(e);
+            }
             if (auto* e = child(0xB005))
                 if (const RgbaImage* snap = familySnapshot(lot.family))
                     hk.images[e] = snap;
         } else if (panel == 0xD000) {
             if (auto* e = child(0xD003))
                 hk.captions[e] = lot.name;
-            if (auto* e = child(0xD004))
-                hk.hide.insert(e);
+            if (auto* e = child(0xD004)) { // an empty lot's value
+                if (const LotValues& v = lotValues(lot); v.ok)
+                    hk.captions[e] = formatMoney(v.lot + v.lotObjects);
+                else
+                    hk.hide.insert(e);
+            }
         } else {
             if (auto* e = child(0xE003))
                 hk.captions[e] = lot.name;

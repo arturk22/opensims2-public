@@ -44,11 +44,19 @@ void HoodMode::mouseMoved(const LotCamera& camera, simd_float2 p, float w, float
     view_->highlight(lot);
 }
 
-void HoodMode::mouseDown(const LotCamera& camera, simd_float2 p, float w, float h) {
+void HoodMode::mouseDown(LotCamera& camera, simd_float2 p, float w, float h) {
     ui_->setCanvas(int(w), int(h));
     const HoodUi::Action a = ui_->press(p);
     if (a == HoodUi::Action::EnterLot && ui_->dialogLot())
         enterLot(*ui_->dialogLot());
+    if (a == HoodUi::Action::ZoomIn)
+        camera.zoomBy(1);
+    else if (a == HoodUi::Action::ZoomOut)
+        camera.zoomBy(-1);
+    else if (a == HoodUi::Action::RotateLeft)
+        camera.rotateBy(-1);
+    else if (a == HoodUi::Action::RotateRight)
+        camera.rotateBy(1);
     if (a != HoodUi::Action::None)
         return;
     if (ui_->dialogLot())

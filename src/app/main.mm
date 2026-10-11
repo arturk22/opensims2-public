@@ -698,6 +698,12 @@ void setupLiveUi(os2::ResourceIndex& index) {
             o.group = os2::SoundGroup::Ui;
             gAudio->sound().play(name, o);
         };
+    // The options panel: "Vizinhança" is the way back to the neighborhood the lot was entered from (as Esc).
+    if (auto hood = argument(@"--hood"); hood && gHoodLot) {
+        gLive->setCanLeave(true);
+        gLive->onNeighborhood = [hood = *hood] { os2::restartWith(os2::hoodArguments(processArguments(), hood)); };
+    }
+    gLive->onQuit = [] { [NSApp terminate:nil]; };
     gLive->onFloor = [](int delta) { changeFloor(delta); };
     gLive->onZoom = [](int steps) {
         if (gCamera)

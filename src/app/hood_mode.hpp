@@ -45,7 +45,7 @@ public:
 
     // Mouse in canvas pixels (origin top left) of a canvas w x h seen by `camera`.
     void mouseMoved(const LotCamera& camera, simd_float2 p, float w, float h);
-    void mouseDown(const LotCamera& camera, simd_float2 p, float w, float h);
+    void mouseDown(LotCamera& camera, simd_float2 p, float w, float h);
     // Esc: closes the dialog.
     void escape();
     // Enters a lot: restarts the app in it (does not return).
