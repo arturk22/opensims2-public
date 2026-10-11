@@ -33,8 +33,8 @@
 //   regions as gene 5; docs/cas-mac.md §5), from the parents' DNA (the
 //   neighborhood's SDNA); gender: a lone parent's (both the same Sim), else
 //   a coin flip; person data 58 = 1, fatness (82) 500, body flags (81) 0.
-//   The baby looks like every baby (buFace, its skin tone): the face it
-//   inherits shows from toddler on, which needs the parents' LxNR (open).
+//   The host's babyCharacterWriter (baby_character.hpp) writes its
+//   character file with the face mixed from the parents' LxNR.
 //
 // The binary writes byte 14's local as a skin tone (< 4, else error 0x9E),
 // but the base game's trees all leave byte 14 at 0, which names the age's
@@ -54,6 +54,8 @@
 // neighborhood entry is saved yet.
 
 #include "characters.hpp"
+
+#include "baby_character.hpp"
 
 #include "errors.hpp"
 #include "genetics.hpp"
@@ -217,7 +219,12 @@ Exit makeNewCharacter(Context& c) {
         baby.personData[kFatness] = 500;
         baby.personData[kBodyFlags] = 0;
         baby.personData[persondata::FamilyNumber] = familyNumber;
+        baby.parentA = a;
+        baby.parentB = b;
         list.values.push_back(id);
+        // The character file with the inherited face (baby_character.hpp).
+        if (auto& write = babyCharacterWriter())
+            write(vm, BabyRequest{id, a, b, female, baby.dna, face.regions});
     }
     return Exit::True;
 }

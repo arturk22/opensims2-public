@@ -116,6 +116,7 @@
 #include "door_portals.hpp"
 #include "vm/lot.hpp"
 #include "vm/placement.hpp"
+#include "vm/baby_character.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -629,6 +630,14 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             std::fprintf(stderr, "opensims2: Sim %d: outfit 0x%03X: %s\n", id, category, e.what());
         }
     };
+    // Babies born in play get their character files (vm/baby_character.hpp),
+    // kept with the session's until the game is saved.
+    if (const auto q = lotQuery())
+        try {
+            os2::vm::installBabyCharacterWriter(index, os2::vm::charactersDirOf(lotPath(*q)), os2::sessionCharactersDir());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: babies' characters: %s\n", e.what());
+        }
     // A Sim that grows up (the Age primitive) gets its character file grown
     // into the new age (cas::writeAgedCharacter: MakeNewAge's hair and
     // clothes, the face of the new age from its LxNR), written beside the

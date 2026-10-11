@@ -13,7 +13,9 @@
 // - NGBH: the inventories (global, lot, family, neighbor) when the VM's
 //   differ from the package's;
 // - SWAF: the wants, fears and achievement history of the Sims whose want
-//   state changed (wants.hpp).
+//   state changed (wants.hpp);
+// - Sims born in play (Make New Character): SDSC, SDNA, FAMI member, family
+//   tree.
 // Everything else of the package is copied as it is.
 
 #include "vm.hpp"
@@ -32,6 +34,7 @@ struct HoodSaveResult {
     size_t families = 0, descriptions = 0, relationshipsChanged = 0, relationshipsNew = 0;
     bool inventories = false;
     size_t wants = 0; // SWAF records written (wants.hpp)
+    size_t born = 0;  // Sims born in play written (SDSC, SDNA, FAMI member, family tree)
     std::vector<std::string> warnings;
 };
 

@@ -95,6 +95,7 @@ add_library(os2_vm
   src/vm/rooms.cpp
   src/vm/build_edit.cpp
   src/vm/characters.cpp
+  src/vm/baby_character.cpp
   src/vm/genetics.cpp
   src/vm/family_write.cpp
   src/vm/animation.cpp

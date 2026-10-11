@@ -75,15 +75,17 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
                 out.lines.push_back("warning: " + w);
         }
         fs::rename(tmpLot, lotFile);
-        // Character files rewritten in play (aging) replace the neighborhood's.
+        // Character files written in play (a Sim grown up, a baby born) go to the neighborhood's.
         if (const fs::path chars = lotFile.parent_path().parent_path() / "Characters"; fs::is_directory(chars)) {
             std::error_code ec;
             for (const auto& f : fs::directory_iterator(sessionCharactersDir(), ec))
-                if (f.path().extension() == ".package" && fs::exists(chars / f.path().filename())) {
+                if (f.path().extension() == ".package" &&
+                    (fs::exists(chars / f.path().filename()) ||
+                     f.path().filename().string().rfind(lotFile.filename().string().substr(0, 4) + "_User", 0) == 0)) {
                     const fs::path tmp = chars / (f.path().filename().string() + ".saving");
                     fs::copy_file(f.path(), tmp, fs::copy_options::overwrite_existing);
                     fs::rename(tmp, chars / f.path().filename());
-                    out.lines.push_back("character " + f.path().filename().string() + " (grown up)");
+                    out.lines.push_back("character " + f.path().filename().string() + " (grown up or born)");
                 }
         }
         if (const fs::path hoodPackage = vm::neighborhoodPackageOf(lotFile); !hoodPackage.empty()) {

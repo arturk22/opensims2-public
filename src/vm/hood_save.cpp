@@ -6,10 +6,13 @@
 #include "wants.hpp"
 
 #include "formats/dbpf.hpp"
+#include "formats/binwriter.hpp"
+#include "formats/character_write.hpp"
 #include "formats/neighborhood.hpp"
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <tuple>
 
 namespace os2::vm {
@@ -172,6 +175,108 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         }
     }
 
+    // Sims born in play (Make New Character, characters.cpp): an SDSC as the
+    // game writes a new neighbor's (version 0x20, header words as the CAS
+    // families', family_write.hpp), its SDNA, its GUID among its family's
+    // members (FAMI) and its parents in the family tree. Their character
+    // files are written beside (vm/baby_character.hpp; the app's save copies
+    // them into Characters).
+    std::set<uint16_t> bornIds;
+    std::map<uint16_t, hood::SimDescription> born;
+    std::map<uint32_t, hood::FamilyRecord> famiChanged;
+    for (const auto& [id, n] : vm.neighbors) {
+        if (id <= 0 || h.neighbor(uint16_t(id)) || !n.guid || !n.parentA)
+            continue;
+        bornIds.insert(uint16_t(id));
+        hood::SimDescription d;
+        d.unknown0 = 0x70;
+        d.version = 0x20;
+        d.unknown2 = 0x20;
+        d.unknown3 = 3;
+        d.trailer = 1;
+        d.neighborId = uint16_t(id);
+        d.guid = n.guid;
+        const Object* sim = nullptr;
+        for (const auto& [_, o] : vm.objects())
+            if (o.person && o.guid() == n.guid)
+                sim = &o;
+        for (size_t i : persistentPersonData())
+            if (i < hood::kSdscPersonDataCount)
+                d.personData[i] = sim ? sim->person->data[i] : n.personData[i];
+        born[uint16_t(id)] = d;
+        if (!n.dna.empty()) {
+            std::map<std::string, cas::PropertyValue> props;
+            for (const auto& [k, v] : n.dna)
+                props[k] = {cas::PropertyValue::String, v};
+            added.push_back({Tgi{hoodtype::SDNA, 0xFFFFFFFF, uint32_t(id), 0}, cas::writePropertySetXml(props)});
+        }
+        const uint32_t family = uint32_t(uint16_t(n.personData[persondata::FamilyNumber]));
+        for (const auto& f : h.families)
+            if (f.id == family) {
+                auto it = famiChanged.find(family);
+                if (it == famiChanged.end())
+                    it = famiChanged.emplace(family, f.record).first;
+                if (auto r = replaced.find({hoodtype::FAMI, family}); r != replaced.end())
+                    it->second.funds = familyFunds(vm, int16_t(family));
+                if (std::find(it->second.members.begin(), it->second.members.end(), n.guid) == it->second.members.end())
+                    it->second.members.push_back(n.guid);
+            }
+    }
+    for (auto& [family, r] : famiChanged)
+        replaced[{hoodtype::FAMI, family}] = r.write();
+    if (!bornIds.empty()) {
+        // The family tree (u32 version, u32 count, per Sim u16 neighbor ID,
+        // u32 1, u32 n, n x (u32 type, u16 neighbor ID)), the parents gaining
+        // the child (4) and the child its parents (0, 1).
+        std::map<uint16_t, std::vector<std::pair<uint32_t, uint16_t>>> rows;
+        std::vector<uint16_t> order;
+        uint32_t version = 1;
+        Tgi tiesTgi{hoodtype::FamilyTies, 0xFFFFFFFF, 0, 0};
+        {
+            DbpfPackage src(source);
+            for (const auto& e : src.entries())
+                if (e.tgi.type == hoodtype::FamilyTies) {
+                    tiesTgi = e.tgi;
+                    const auto old = hood::FamilyTies::parse(src.read(e));
+                    version = old.version ? old.version : 1;
+                    for (const auto& sm : old.sims) {
+                        order.push_back(sm.neighborId);
+                        for (const auto& t : sm.ties)
+                            rows[sm.neighborId].push_back({uint32_t(t.type), t.other});
+                    }
+                    break;
+                }
+        }
+        auto addTie = [&](uint16_t who, uint32_t type, uint16_t other) {
+            if (!rows.count(who))
+                order.push_back(who);
+            rows[who].push_back({type, other});
+        };
+        for (uint16_t id : bornIds) {
+            const Neighbor& n = vm.neighbors.at(int16_t(id));
+            addTie(id, 0, uint16_t(n.parentA));
+            if (n.parentB && n.parentB != n.parentA)
+                addTie(id, 1, uint16_t(n.parentB));
+            addTie(uint16_t(n.parentA), 4, id);
+            if (n.parentB && n.parentB != n.parentA)
+                addTie(uint16_t(n.parentB), 4, id);
+        }
+        BinWriter tw;
+        tw.u32(version);
+        tw.u32(uint32_t(order.size()));
+        for (uint16_t who : order) {
+            tw.u16(who);
+            tw.u32(1);
+            tw.u32(uint32_t(rows[who].size()));
+            for (const auto& [type, other] : rows[who]) {
+                tw.u32(type);
+                tw.u16(other);
+            }
+        }
+        replaced[{hoodtype::FamilyTies, tiesTgi.instance}] = std::move(tw.bytes());
+        res.born = bornIds.size();
+    }
+
     // Sim-to-Sim relationships.
     std::map<std::pair<uint16_t, uint16_t>, const hood::Relationship*> saved;
     for (const auto& r : h.relationships)
@@ -197,6 +302,21 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         if (trimmed(values).empty())
             continue;
         const hood::Neighbor* a = h.neighbor(from);
+        if (bornIds.count(from) || bornIds.count(to)) {
+            if ((a || bornIds.count(from)) && (h.neighbor(to) || bornIds.count(to))) {
+                hood::Relationship r;
+                r.from = from;
+                r.to = to;
+                r.unknown = 2;
+                r.values = values;
+                added.push_back({Tgi{hoodtype::SREL, 0xFFFFFFFF, instance, 0}, r.write()});
+                auto& d = a ? description(*a) : born[from];
+                if (std::find(d.relations.begin(), d.relations.end(), to) == d.relations.end())
+                    d.relations.push_back(to);
+                ++res.relationshipsNew;
+            }
+            continue;
+        }
         if (!a || !h.neighbor(to)) {
             res.warnings.push_back("relationship " + std::to_string(from) + " -> " + std::to_string(to) +
                                    ": not between neighbors of the package");
@@ -296,6 +416,12 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
     }
     for (auto& [tgi, bytes] : added)
         w.add(tgi, std::move(bytes), true);
+    for (const auto& [id, d] : born)
+        w.add(Tgi{hoodtype::SDSC, 0xFFFFFFFF, id, 0}, d.write(), true);
+    // Replaced records the package did not have (a first family tree).
+    for (auto& [key, bytes] : replaced)
+        if (key.first == hoodtype::FamilyTies)
+            w.add(Tgi{key.first, 0xFFFFFFFF, key.second, 0}, std::move(bytes), true);
     for (auto& [instance, bytes] : swaf) // Sims that had no SWAF
         w.add(Tgi{wants::kTypeSwaf, 0xFFFFFFFF, instance, 0}, std::move(bytes), true);
     pkg.closeFile();

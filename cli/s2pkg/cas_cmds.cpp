@@ -405,7 +405,8 @@ const char* casUsage() {
            "              [--hair|--top|--bottom|--body|--formal part] [--archetype name] [--mod name=weight]...\n"
            "              [--eyes overlay] [--overlay overlay]... [--first name] [--last name] [--object N001_User00100] [--seed N]\n"
            "              [--hood <neighborhood dir> --hood-out <dir> [--family name] [--member first:age:gender:spouse|child|sibling|roommate]...]  (adds the family to a copy)\n"
-           "       s2pkg cas-lxnr <Res-dir> <character.package>  (the LxNR face structure, checked against the face meshes)\n";
+           "       s2pkg cas-lxnr <Res-dir> <character.package>  (the LxNR face structure, checked against the face meshes)\n"
+           "       s2pkg cas-age <Res-dir> <character.package> <age> <out.package>  (grown up as the Age primitive does)\n";
 }
 
 int casCommand(const std::string& cmd, int argc, char** argv) {
@@ -427,6 +428,18 @@ int casCommand(const std::string& cmd, int argc, char** argv) {
         return cmdCasLxnr(argv[2], argv[3]);
     if (cmd == "cas-make" && argc >= 4)
         return cmdCasMake(argc, argv);
+    if (cmd == "cas-age" && argc >= 6) {
+        // A character grown into another age as the Age primitive does it
+        // (cas::writeAgedCharacter): the new age's face from its LxNR.
+        ResourceIndex index(argv[2]);
+        const cas::CasCatalog catalog = cas::CasCatalog::load(index);
+        cas::FaceBaker baker(index, catalog);
+        const auto r = cas::writeAgedCharacter(index, catalog, baker, argv[3], parseAge(argv[4]), argv[5]);
+        std::printf("wrote %s: %zu resources, GUID 0x%08X\n", argv[5], r.resources, r.guid);
+        for (const auto& w : r.warnings)
+            std::printf("  warning: %s\n", w.c_str());
+        return 0;
+    }
     return -1;
 }
 

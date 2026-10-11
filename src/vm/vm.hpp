@@ -179,6 +179,9 @@ struct Neighbor {
     std::string firstName, lastName; // for the dialogs' $ tokens
     // The SDNA property set (genetics.hpp): genes a baby inherits.
     std::map<std::string, std::string> dna;
+    // A Sim born in play (Make New Character): its parents' neighbor IDs,
+    // for the family tree the save writes (hood_save.hpp).
+    int16_t parentA = 0, parentB = 0;
 };
 
 // Inventories (Manage Inventory) and their tokens grow on demand; this bounds them.

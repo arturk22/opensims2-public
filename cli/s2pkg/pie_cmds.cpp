@@ -18,6 +18,9 @@
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/placement.hpp"
+#include "vm/baby_character.hpp"
+#include "vm/hood_save.hpp"
+#include "formats/neighborhood.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -56,7 +59,8 @@ std::string nameOf(const vm::Object& o) { return o.definition ? o.definition->fi
 
 int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
            int select, int ticks, bool all, std::optional<int> motives, bool fromInit, size_t trace,
-           int dialogAnswer, size_t traceChecks, bool anims, const std::vector<std::string>& creates) {
+           int dialogAnswer, size_t traceChecks, bool anims, const std::vector<std::string>& creates,
+           const std::string& birth, const std::string& userDir, const std::string& saveHood) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -83,6 +87,43 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     for (const std::string& spec : creates) {
         const vm::ObjectId id = vm::createTestObject(machine, spec);
         std::printf("created %d: %s\n", id, nameOf(*machine.object(id)).c_str());
+    }
+    // Babies' character files (Make New Character, vm/baby_character.hpp)
+    // go to <--user-dir>/Characters, never into the game's data.
+    if (!userDir.empty())
+        vm::installBabyCharacterWriter(index, vm::charactersDirOf(lotFile), std::filesystem::path(userDir) / "Characters");
+    // --birth mother,father (Sims' names or IDs): test aid, Make New Character
+    // 0x13 with flag 0x01 (a baby of those two, as "Home Birth - Make
+    // Baby(ies)" runs it), from a one-instruction tree run on the mother.
+    if (!birth.empty()) {
+        const auto comma = birth.find(',');
+        const vm::ObjectId ma = vm::findSim(machine, birth.substr(0, comma));
+        const vm::ObjectId pa = comma == std::string::npos ? 0 : vm::findSim(machine, birth.substr(comma + 1));
+        if (!ma || !pa)
+            throw std::runtime_error("--birth: no Sim " + birth);
+        Behavior b;
+        b.fileName = "Test - Make Baby";
+        b.signature = 0x8009;
+        b.argCount = 2;
+        Behavior::Instruction in;
+        in.opcode = 0x13;
+        in.onTrue = {Behavior::TargetKind::True, 0};
+        in.onFalse = {Behavior::TargetKind::False, 0};
+        in.operands = {0, 0, 0, 0x09, 1, 0, 0x09, 0, 0, 0x01};
+        b.instructions.push_back(in);
+        const vm::Object& mother = *machine.object(ma);
+        code.add(mother.group, 0x1FF0, std::move(b));
+        std::array<int16_t, vm::kTempCount> temps{};
+        temps[0] = 1; // one baby
+        const std::array<int16_t, 2> params{ma, pa};
+        const bool ok = vm::runOneTickTree(machine, temps, ma, ma, ma, 0x1FF0, params);
+        std::printf("Make New Character (baby of %d and %d): %s;", ma, pa, ok ? "true" : "false");
+        for (int16_t id : machine.object(ma)->array(0).values)
+            if (const vm::Neighbor* n = machine.neighbor(id))
+                std::printf(" neighbor %d (GUID 0x%08X, person data 58 %d, gender %d, family %d)", id, n->guid,
+                            n->personData[vm::persondata::PersonAge], n->personData[65],
+                            n->personData[vm::persondata::FamilyNumber]);
+        std::printf("\n");
     }
     const vm::ObjectId sim = vm::findSim(machine, simQuery);
     if (!sim)
@@ -298,6 +339,18 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             std::printf(" \"%s\" %zu,", name.c_str(), n);
         std::printf("\n");
     }
+    // --save-hood <out.package>: what the run changed in the neighborhood
+    // (FAMI, SDSC, SREL, the Sims born: vm/hood_save.hpp), to a new file.
+    if (!saveHood.empty()) {
+        const std::filesystem::path src = vm::neighborhoodPackageOf(lotFile);
+        const hood::Neighborhood h = hood::Neighborhood::load(src, true);
+        const vm::HoodSaveResult r = vm::saveNeighborhood(machine, h, src, saveHood);
+        std::printf("neighborhood saved to %s: %zu families, %zu descriptions, relationships %zu changed, %zu new, "
+                    "%zu Sims born\n",
+                    saveHood.c_str(), r.families, r.descriptions, r.relationshipsChanged, r.relationshipsNew, r.born);
+        for (const auto& w : r.warnings)
+            std::printf("  warning: %s\n", w.c_str());
+    }
     std::printf("queue of %s:", nameOf(s).c_str());
     for (size_t i = 0; i < s.queue.size(); ++i)
         std::printf(" [%s%s]", s.queue[i].name.c_str(), int(i) == s.activeInteraction ? ", running" : "");
@@ -318,6 +371,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     bool fromInit = false;
     bool all = false, anims = false;
     std::vector<std::string> creates;
+    std::string birth, userDir, saveHood;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--select" && i + 1 < argc)
@@ -340,17 +394,23 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
             anims = true;
         else if (a == "--create" && i + 1 < argc)
             creates.push_back(argv[++i]);
+        else if (a == "--birth" && i + 1 < argc)
+            birth = argv[++i];
+        else if (a == "--user-dir" && i + 1 < argc)
+            userDir = argv[++i];
+        else if (a == "--save-hood" && i + 1 < argc)
+            saveHood = argv[++i];
         else
             pos.push_back(a);
     }
     if (pos.empty() || pos.size() > 3)
         return -1;
     return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives, fromInit,
-                  trace, dialogAnswer, traceChecks, anims, creates);
+                  trace, dialogAnswer, traceChecks, anims, creates, birth, userDir, saveHood);
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init] [--create GUID[:attr=value,...]]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init] [--create GUID[:attr=value,...]] [--birth mother,father] [--user-dir dir] [--save-hood out.package]\n";
 }
 
 } // namespace os2
