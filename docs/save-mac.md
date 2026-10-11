@@ -167,13 +167,22 @@ caso da vtable 0x24) ; u32 campo 0xD0 do OBJD
 e um u32 0 no fim. O save type liga o ObjM (`ID → save type`) à definição.
 
 As duas "versões de árvore" (`cTSObjectSelector::GetInitTreeVersion`/
-`GetMainTreeVersion`, BV `0x51d6bc`/`0x51d76c`) são o campo *tree version*
-do cabeçalho do BHAV que a tabela de árvores (TTAB/OBJf) dá para Init
-(entrada 0) e Main (entrada 1; 0 se o objeto não tem Main), lido uma vez e
-guardado no seletor. Um tipo novo no lote ganha um registro com esses
-valores tirados dos BHAVs da definição; ao carregar, uma versão diferente
-da do pacote indica que as árvores do objeto mudaram (inferido: o uso no
-Read não foi seguido).
+`GetMainTreeVersion`, BV `0x51d6bc`/`0x51d76c`) vêm da árvore que a tabela
+de funções dá para Init (entrada 0) e Main (entrada 1; 0 se o objeto não
+tem Main), lidas uma vez e guardadas no seletor, por `cTSBehavior` vtable
+0x74 (BV `0x48d9f0`): o campo *tree version* do cabeçalho do BHAV raiz nos
+16 bits de cima **mais a soma** dos *tree version* da raiz e de todas as
+árvores que ela alcança (cada nó com opcode ≥ 0x100 empilha a árvore
+chamada; cada uma conta uma vez). Conferido contra os lotes
+(`vm/save_types.cpp`, `s2pkg objt-check`): dos 25.608 registros com
+definição, 20.807 batem em todos os campos; os outros são de definições
+mais velhas que as do jogo lançado. Os outros campos: 0x3A/0x3B são os
+campos do OBJD nos offsets 0xB4/0xB6; o nº de strings é o do STR# 0x100 do
+grupo semi-global (os rótulos dos semi-atributos); o nome é a string 0 do
+CTSS do campo 0x29 do OBJD, ou "*" + nome do OBJD sem catálogo (os Sims: o
+primeiro nome); o tipo é 1 (sem nome) nas partes de multi-tile, 0 nos
+outros (3 em 12 árvores, não decifrado); o campo 0xD0 é o próprio GUID
+(nos Sims, o GUID original do OBJD, 0x7FD96B54).
 
 **XOBJ / XMTO / PERS**: o tipo do registro é o CLSID da classe do objeto
 (`GetGZCLSID`): `XOBJ` (`0x584F424A`) objeto comum, `XMTO` (`0x584D544F`)
