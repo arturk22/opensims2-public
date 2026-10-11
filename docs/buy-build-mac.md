@@ -1107,6 +1107,44 @@ inteiro; os preços por tile são os do §7.1: fundação 4, deck 2–3, piscina
 e arredonda; `CanAfford` decide o cursor.
 O resto das regras (escavar piscina, telhados, aplainar terreno) não foi lido.
 
+### 7.11 Terreno, escadas, telhados e piscinas (rodada 9, lido e inferido)
+
+- **Pincel de terreno** (`cTSUserToolTerrainSculpt`): `ApplyTerrainSculptBrush`
+  (BV `0x32a214`) roda a cada 100 ms (`OncePerFrameUpdate`). A largura do
+  pincel é `W0 + (10 − W0) × 0,5 × escolha` (`SetBrushWidthChoice`, escolha
+  0–2; tamanhos do cursor 2, 5,5, 10; aqui W0 = 2, inferido). O perfil é a
+  imagem `profileTextureID` do `terrainSculptBrushes.txt`: TGA 32×32 cinza
+  (tipo 3) no `terrain.package`, grupo `0x4B72DA28`, tipo `0x856DDBAC`.
+  `RaiseBrushFn`/`LowerBrushFn`: altura nova = (altura ± perfil × força) / passo,
+  arredondada para cima (subir) ou para baixo (descer), × passo; o passo é a
+  vtable `0x158` do `WorldDB` (não lido; os lotes salvos têm alturas em
+  múltiplos de 0,00625, que é o que usamos). `ChangeTerrainElevation` (BV
+  `0x4010e0`): vértice que não pode mudar (`FUN_009e9550`) não muda;
+  `UpdateFundsForHeightChange` acumula |Δ| e cobra `round(Σ|Δ| × custo por
+  unidade)` − o já cobrado, recusando sem fundos; `ChangeFloorElevationCoupled`
+  leva os andares de cima junto. As funções de nivelar/suavizar não têm nome
+  (aqui: até a altura do início do traço / pela média dos vizinhos).
+- **Pinturas**: `DiminishAllPaints` tira das outras o que a pintura ganha;
+  máscaras de 4 pontos por tile (`2ARY 0x5CBC + i`, `LTTX` com a base e os
+  nomes).
+- **Escadarias**: as do jogo base são objetos ("Stairs - Straight - *", tipo
+  de construção 1, subsort 0x20); as partes "Hi" ficam um andar acima pelo
+  campo de OBJD 0xB0 "level offset" (o mesmo põe a parte da escada de piscina
+  no fundo, −1). As escadas modulares (`modularstairs.txt`) são as de ligação.
+- **Telhados**: o ROOF guarda id, retângulo, nível (o andar de cima das
+  paredes), tipo, padrão (um só no lote), ângulo (v2) e estilo (v3). Empenas
+  curtas/longas têm paredes de sótão (estilo 3) nas pontas; a regra "pontas
+  não cobertas por outro telhado do andar" dá 788 das 905 paredes de sótão dos
+  62 lotes (`MakeShedWalls` não foi lido).
+- **Fundações**: o andar 1 fica a 0,75 acima do terreno nos vértices da
+  fundação (e os de cima junto), paredes 23 na borda, piso
+  "floor_plywoodFoundation".
+- **Piscinas**: POOL = id, (x, y) do canto, nível 0, largura, altura, 1,
+  profundidade da água (0,25), 0; o lote tem o andar −1 (elevações −3), o
+  fundo tem o piso "floor_poolroundedlipblue" e as paredes 29 ficam no andar
+  −1. Na colocação, tile de piscina sem od 42 0x800 → `0x8F`.
+- **Rotação de piso**: 3ARY `0x15`, um byte por quarto (1/2/4/8).
+
 ---
 
 ## 8. Base vs BV
