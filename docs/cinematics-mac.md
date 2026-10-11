@@ -166,3 +166,21 @@ encontrada, `0x89`–`0x8B` ator obrigatório ausente/inválido/sem modelo 3D,
 `0x8C`/`0x8D` ator de origem inválido/sem modelo, `0x8E` ator auto-criado não
 é 0, `0x8F` ator não animável, `0x97` erro desconhecido, `0x98` já há uma
 cinemática ativa, `0x99` câmera sem fila de coreografia.
+
+## 5. No opensims2
+
+- `.movie` e Reia: `formats/movie.*`, `formats/reia.*`; tocados em tela cheia
+  por `app/movie_host.hpp` (`playMovie(nome, onDone)`, `playMovies`,
+  `introMovies()`, `"reia:<instância>[:loop]"`), com o som numa saída
+  própria e a imagem pelo relógio do som (`media/movie_player.*`). `--movie`,
+  `--intro`; `s2pkg movie-*`, `reia-*`.
+- CINE: `formats/cinematic.*`, `s2pkg cine-list`. A primitiva grava
+  `vm::cinematicRequests()` (cena e atores resolvidos); o app
+  (`app/cinematic_camera.*`) põe a câmera na junta `cinecam` composta com a
+  colocação do ator de origem (Sim: a do `SimActor`; objeto: posição da VM e
+  direção do dado 1), olhando pelo +Y da junta com +Z para cima (inferido: com
+  −Z/+Y de câmera do Maya o primeiro beijo olharia para o chão; com +Y os
+  planos saem por cima do ombro, em altura de cabeça), FOV vertical do
+  `viewersGroup` e as barras do letterbox. `--cinematic <cena>[@objeto]`.
+  Não tocados ainda: animações automáticas dos atores, rig de luz,
+  pós-processamento e os cortes.
