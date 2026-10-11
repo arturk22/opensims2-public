@@ -709,8 +709,12 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                 if (t.me != traceId || ++traced > 2000)
                     return;
                 const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
-                std::printf("%*s0x%04X #%-3u %-30s %s\n", int(t.stack.size() - 1) * 2, "", f.instance, f.pc,
-                            op.c_str(), f.behavior->fileName.c_str());
+                std::string ops;
+                char buf[8];
+                for (auto b : in.operands)
+                    std::snprintf(buf, sizeof buf, "%02X", b), ops += buf;
+                std::printf("%*s0x%04X #%-3u %-30s %s [%s]\n", int(t.stack.size() - 1) * 2, "", f.instance, f.pc,
+                            op.c_str(), f.behavior->fileName.c_str(), ops.c_str());
             };
         const hood::Neighborhood* hood = nullptr;
         if (const auto hoodPackage = useHoods ? vm::neighborhoodPackageOf(path) : std::filesystem::path{};
@@ -769,6 +773,15 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
         for (const auto& t : machine.createdInits)
             if (t.status == vm::Thread::Status::Failed)
                 ++reasons["init of a created object: " + failureReason(t)];
+        if (std::getenv("S2PKG_ERRORS")) // the whole message and stack of each failure
+            for (const auto* list : {&machine.createdInits})
+                for (const auto& t : *list)
+                    if (t.status == vm::Thread::Status::Failed)
+                        std::printf("  [init of %d] %s\n", t.me, t.error.c_str());
+        if (std::getenv("S2PKG_ERRORS"))
+            for (const auto& [id, t] : machine.threads)
+                if (t.status == vm::Thread::Status::Failed)
+                    std::printf("  [main of %d] %s\n", id, t.error.c_str());
 
         std::printf("%s: %zu saved objects, %zu in the VM (%zu Sims), %zu objects now; %ld ticks (%02d:%02d)\n",
                     path.filename().string().c_str(), load.objects.size(), load.created,

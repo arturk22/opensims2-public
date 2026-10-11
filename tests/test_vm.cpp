@@ -678,9 +678,9 @@ static void testNeighbors() {
                       instr(0x1F, go(12), E, {0, 0, 0, 0, 29}),         // 9 exists
                       expr(StackId, 0, Assign, Lit, 4, go(13), E),
                       instr(0x1F, E, go(14), {0, 0, 0, 0, 29}),         // 4 does not
-                      expr(Temp, 6, Assign, InStack, 0, T, E)}));       // so its data is missing
+                      expr(Temp, 6, Assign, InStack, 0, T, E)}));       // its fields read 0 (GetNeighborData)
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Failed && t.error.find("Missing neighbor") != std::string::npos &&
+    check(t.status == Thread::Status::Finished && t.temps[6] == 0 &&
               t.temps[0] == me.id && t.temps[1] == 20 && t.temps[2] == 0 && t.temps[3] == 40 && t.temps[4] == 3 &&
               t.temps[5] == 123,
           "neighbor searches and neighbor data owners");
@@ -757,9 +757,9 @@ static void testDefinitionOwners() {
                       expr(Temp, 0, Assign, Lit, 2, go(9), E),
                       expr(Temp, 5, Assign, Room, 2, go(10), E),          // room 2 level: 1
                       expr(Temp, 0, Assign, Lit, 3, go(11), E),
-                      expr(Temp, 6, Assign, Room, 2, T, E)}));            // no room 3
+                      expr(Temp, 6, Assign, Room, 1, T, E)}));            // no room 3: not outside (0)
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Failed && t.error.find("room 3 does not exist") != std::string::npos &&
+    check(t.status == Thread::Status::Finished && t.temps[6] == 0 &&
               t.temps[1] == int16_t(kMaster & 0xFFFF) && t.temps[2] == 0x1002 && t.temps[3] == 2 && t.temps[4] == 48 &&
               t.temps[5] == 1 && fx.vm.typeAttributes[kMaster].size() == 3 && fx.vm.typeAttributes[kMaster][1] == 5,
           "type attributes, master definition, object functions, constants [temp] and rooms");
@@ -1224,7 +1224,7 @@ static void testSlots() {
     fx.code.add(kObjGroup, 0x1003, tree({expr(Temp, 0, Assign, Lit, 4, go(1), E), expr(Temp, 1, Assign, 0x17, 3, go(2), E),
                                          expr(Temp, 2, Assign, 0x17, 1, T, E)}));
     t = fx.run(0x1003);
-    check(t.status == Thread::Status::Failed && t.temps[1] == 12 && t.error.find("outside not known") != std::string::npos,
+    check(t.status == Thread::Status::Failed && t.temps[1] == 12 && t.error.find("value 1 not known") != std::string::npos,
           "unknown room values fail");
 }
 

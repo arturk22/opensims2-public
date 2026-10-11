@@ -1,6 +1,7 @@
 #include "engine.hpp"
 #include "vm.hpp"
 #include "placement.hpp"
+#include "rooms.hpp"
 
 #include "hood_bridge.hpp"
 #include "interactions.hpp"
@@ -337,7 +338,13 @@ static std::array<int16_t, kPersonDataCount>& neighborPersonData(const Context& 
 // Neighbor in stack object (0x18), fields labelled in STR# 0xDD. Only those
 // that do not need the neighborhood are implemented; "person age" is read
 // from person data "Person Age" (inferred).
+// A neighbor the neighborhood does not have reads 0, any field
+// (cTSNeighborManager::GetNeighborData returns 0 without one; the binary's
+// error 0x37 is only for owner 0x20, neighbor's person data). Lots keep IDs of
+// neighbors deleted since (Controller - Chat on N001_Lot80: 144, 164, 170).
 static int16_t neighborField(const Context& c, int16_t field) {
+    if (!c.vm.neighbor(c.frame.stackObject))
+        return 0;
     Neighbor& n = stackNeighbor(c);
     switch (field) {
     case 0: { // person instance id: the Sim's object, 0 when it is not on the lot
@@ -488,12 +495,6 @@ static void setTokenField(TempToken& t, int16_t field, int16_t value) {
     }
 }
 
-// Room values, as STR# 0xDB labels them.
-static std::string roomValueName(int16_t v) {
-    static const char* const names[] = {"ambient light", "outside", "level", "area", "pool", "number of windows"};
-    return v >= 0 && size_t(v) < std::size(names) ? names[v] : "value " + std::to_string(v);
-}
-
 static int16_t slotIndex(int16_t slot) {
     if (slot < 0)
         throw VMError("slot " + std::to_string(slot) + " out of range");
@@ -512,24 +513,7 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
     case 0x28: return tokenField(stackObject().tempToken, data);
     case 0x15: return definitionField(stackObject(), data);
     case 0x33: return definitionField(masterDefinitionOf(vm, stackObject()), data);
-    case 0x17: { // room [temp 0]
-        auto it = vm.rooms.find(thread.temps[0]);
-        // Room 0 is a tile that no room covers (fence lamps stand on such
-        // tiles; "Is Objects's Room Outside?" asks about it): outside, with
-        // nothing else known to be there (inferred; 370 failures in lot-run).
-        if (it == vm.rooms.end() && thread.temps[0] == 0) {
-            if (data == 1)
-                return 1;
-            if (data >= 0 && size_t(data) < VM::kRoomValueCount)
-                return 0;
-        }
-        if (it == vm.rooms.end())
-            throw VMError("room " + std::to_string(thread.temps[0]) + " does not exist");
-        const int16_t& v = slot(it->second.values, data, "room value");
-        if (!(it->second.known & (1u << data)))
-            throw VMError("room " + std::to_string(thread.temps[0]) + ": " + roomValueName(data) + " not known");
-        return v;
-    }
+    case 0x17: return roomValue(vm, thread.temps[0], data); // room [temp 0] (rooms.cpp)
     case 0x23: { // stack object's function: the action tree of its OBJf entry, 0 if none
         const Object& o = stackObject();
         const ObjectFunctions* f = vm.code().functions(o.group, o.definitionInstance);

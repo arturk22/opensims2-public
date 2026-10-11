@@ -35,10 +35,13 @@ Exit expression(Context& c) {
         return Exit::True;
     };
     auto test = [](bool b) { return b ? Exit::True : Exit::False; };
+    // Flags are numbered from 1. cTSObject::TryExpression only refuses a flag
+    // above 16 as a u16 (error 0x0D); flag 0 shifts by 63 on the PPC: setting
+    // or clearing it changes nothing, testing it tests the sign (sraw).
     auto bit = [&] {
-        if (rhs < 1 || rhs > 16)
+        if (uint16_t(rhs) > 16)
             throw VMError("Expression: flag " + std::to_string(rhs) + " out of range");
-        return int32_t(1) << (rhs - 1); // flags are numbered from 1
+        return rhs == 0 ? int32_t(0) : int32_t(1) << (rhs - 1);
     };
 
     switch (op) {
@@ -53,7 +56,7 @@ Exit expression(Context& c) {
         if (rhs == 0)
             throw VMError("Expression: division by zero");
         return assign(lhs() / rhs);
-    case 8: return test(lhs() & bit());
+    case 8: return test(rhs == 0 && bit() == 0 ? int16_t(lhs()) < 0 : (lhs() & bit()) != 0);
     case 9: return assign(lhs() | bit());
     case 10: return assign(lhs() & ~bit());
     case 11: {
@@ -1036,7 +1039,8 @@ Exit changeMaterial(Context& c) {
 //     and "CT - Add to Inventory"); counted: add the second operand to its count
 //   1 remove the token at index (first operand)
 //   2 remove every token of the GUID
-//   3 find the first token of the GUID, index into the first operand; false if none
+//   3 find the next token of the GUID after the index in the first operand
+//     (0: the first), index into the first operand; false if none
 //   4 push the second operand onto the properties of the token at index (first)
 //   5 pop the last property of the token at index (first) into the second; false if none
 //   6 read the token at index (first) into my temporary token (the GUID is
@@ -1116,7 +1120,12 @@ Exit manageInventory(Context& c) {
         std::erase_if(tokens, [&](const auto& t) { return t.guid == guid; });
         return Exit::True;
     case 3: {
-        auto it = std::find_if(tokens.begin(), tokens.end(), [&](const auto& t) { return t.guid == guid; });
+        // From the index in the first operand on (0: the start), as
+        // cTSObject::TryInventoryAction passes it to the find (BV): the
+        // loops of "NPC - Lot Familiar NPC - Get in T[0]" go back to it to
+        // find the next one.
+        const int16_t from = std::clamp<int16_t>(get1(), 0, int16_t(tokens.size()));
+        auto it = std::find_if(tokens.begin() + from, tokens.end(), [&](const auto& t) { return t.guid == guid; });
         if (it == tokens.end())
             return Exit::False;
         set1(int16_t(it - tokens.begin() + 1));

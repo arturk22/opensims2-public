@@ -74,6 +74,7 @@ add_library(os2_vm
   src/vm/hood_bridge.cpp
   src/vm/hood_save.cpp
   src/vm/kill.cpp
+  src/vm/rooms.cpp
   src/vm/animation.cpp
   src/vm/appearance.cpp
   src/vm/dialog.cpp
