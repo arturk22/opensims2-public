@@ -128,7 +128,8 @@ int num(const std::vector<std::string>& f, size_t i, int fallback) {
 bool isBuildEdit(const std::string& flag) {
     return flag == "--door" || flag == "--wall" || flag == "--fence" || flag == "--delete-fence" ||
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
-           flag == "--terrain" || flag == "--terrain-paint" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
+           flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
+           flag == "--roof-pattern" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
            flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--build-undo" || flag == "--build-redo";
 }
 
@@ -194,6 +195,19 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             if (!fence)
                 throw std::runtime_error("--fence: no fence \"" + f[4] + "\"");
             r = editor.drawFences(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), *fence);
+        } else if (flag == "--roof") {
+            if (f.size() < 4)
+                throw std::runtime_error("--roof: expected x0,y0,x1,y1[,type[,level]]");
+            r = editor.drawRoof(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), uint32_t(num(f, 4, 5)));
+        } else if (flag == "--delete-roof") {
+            if (f.size() < 2)
+                throw std::runtime_error("--delete-roof: expected x,y[,level]");
+            r = editor.deleteRoof(num(f, 2, 1), std::stof(f[0]), std::stof(f[1]));
+        } else if (flag == "--roof-pattern") {
+            const BuildRoofPattern* p = catalog.findRoofPattern(value);
+            if (!p)
+                throw std::runtime_error("--roof-pattern: no pattern \"" + value + "\"");
+            r = editor.setRoofPattern(p->guid);
         } else if (flag == "--terrain" || flag == "--terrain-paint") {
             // op|paint,x,y[,ticks[,size]]: a stroke of `ticks` brush applications.
             if (f.size() < 3)
@@ -284,6 +298,12 @@ std::vector<std::string> compareLotGeometry(const Lot& a, const Lot& b, size_t l
         say("floors differ");
     if (a.elevations != b.elevations)
         say("elevations differ");
+    if (a.roofs.size() != b.roofs.size())
+        say("roofs differ");
+    for (size_t i = 0; i < a.roofs.size() && i < b.roofs.size(); ++i)
+        if (a.roofs[i].id != b.roofs[i].id || a.roofs[i].type != b.roofs[i].type || a.roofs[i].x0 != b.roofs[i].x0 ||
+            a.roofs[i].y1 != b.roofs[i].y1 || a.roofs[i].level != b.roofs[i].level || a.roofs[i].pattern != b.roofs[i].pattern)
+            say("roof " + std::to_string(a.roofs[i].id) + " differs");
     if (a.paints.size() != b.paints.size() || a.terrainBase != b.terrainBase)
         say("terrain paints differ");
     for (size_t i = 0; i < a.paints.size() && i < b.paints.size(); ++i)

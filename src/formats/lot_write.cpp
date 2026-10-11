@@ -11,6 +11,7 @@ namespace os2 {
 
 namespace {
 
+constexpr uint32_t kTypeRoof = 0xAB9406AA;
 constexpr uint32_t kTypeFencePosts = 0xAB4BA572, kFencePostLayer = 0x11, kTypeLotTexture = 0x4B58975B,
                    kType2DArray = 0x6B943B43, kPaintMaskFirst = 0x5CBC;
 constexpr uint32_t kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40, kTypeWallGraph = 0x0A284D0B,
@@ -184,6 +185,33 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
             for (uint8_t v : lot.paints[i].mask)
                 b.u8(v);
             out.push_back({kType2DArray, m.group, instance, std::move(b.bytes())});
+        }
+    }
+    {
+        // ROOF 0 (OpenTS2's RoofCodec layout, no block name), when the lot
+        // has one or has roofs now.
+        bool had = false;
+        for (const auto& e : source.entries())
+            had |= e.tgi.type == kTypeRoof && e.tgi.instance == 0;
+        if (had || !lot.roofs.empty()) {
+            const Head h = headOf(source, kTypeRoof, 0, 1);
+            BinWriter w;
+            w.raw(h.name);
+            w.u32(kTypeRoof);
+            w.u32(h.version);
+            w.u32(uint32_t(lot.roofs.size()));
+            for (const auto& f : lot.roofs) {
+                w.u32(f.id);
+                w.f32(f.x0), w.f32(f.y0), w.i32(f.level);
+                w.f32(f.x1), w.f32(f.y1), w.i32(f.levelTo);
+                w.u32(f.type);
+                w.u32(f.pattern);
+                if (h.version >= 2)
+                    w.f32(f.angle);
+                if (h.version >= 3)
+                    w.u32(f.style);
+            }
+            out.push_back({kTypeRoof, h.group, 0, std::move(w.bytes())});
         }
     }
     if (!lot.elevations.empty())

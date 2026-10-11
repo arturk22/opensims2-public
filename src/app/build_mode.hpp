@@ -61,7 +61,7 @@ public:
     // The lot's walls, floors or doors changed: the host redraws it.
     std::function<void()> onGeometryChanged;
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -78,6 +78,8 @@ public:
     // (the paint's texture); `size` 0-2 small/medium/large.
     void selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerrainPaint* paint = nullptr);
     void setBrushSize(int size) { brushSize_ = size; }
+    // Roof tool: Lot::RoofType 1-6 (roofs.txt "roof 0-5").
+    void selectRoofTool(uint32_t type);
     // The floor tool's pattern rotation (1, 2, 4, 8; `,`/`.` cycle it).
     int floorRotation() const { return floorRotation_; }
     void setFloorRotation(int r) { floorRotation_ = r; }
@@ -130,7 +132,9 @@ private:
         const CatalogEntry* object = nullptr;
         const BuildFence* fence = nullptr;
         const BuildTerrainPaint* paint = nullptr;
+        const BuildRoofPattern* roofPattern = nullptr;
         int terrainOp = -1;
+        uint32_t roofType = 0;
         std::string name, description;
         int price = 0;
         const RgbaImage* image = nullptr;
@@ -173,6 +177,7 @@ private:
     const BuildTerrainPaint* paint_ = nullptr;
     vm::BuildEditor::TerrainOp terrainOp_ = vm::BuildEditor::TerrainOp::Raise;
     int brushSize_ = 1;
+    uint32_t roofType_ = 0;
     bool stroking_ = false;
     double lastBrush_ = 0, lastRedraw_ = 0;
     int floorRotation_ = 1;

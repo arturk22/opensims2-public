@@ -14,7 +14,7 @@ namespace os2 {
 namespace {
 
 constexpr uint32_t kTypeCatalogPattern = 0xCCA8E925, kTypeCatalogFence = 0x2CB230B8, kTypeStr = 0x53545223,
-                   kTypeCatalogTerrainPaint = 0x4DCADB7E, kTypeUiImage = 0x856DDBAC, kGroupTerrain = 0x4B72DA28;
+                   kTypeCatalogTerrainPaint = 0x4DCADB7E, kTypeCatalogRoof = 0xACA8EA06, kTypeUiImage = 0x856DDBAC, kGroupTerrain = 0x4B72DA28;
 
 std::string lower(std::string s) {
     for (auto& c : s)
@@ -124,6 +124,31 @@ BuildCatalog BuildCatalog::load(ResourceIndex& index) {
         if (!t.texture.empty())
             c.paints_.push_back(std::move(t));
     }
+    for (const auto& loc : index.ofType(kTypeCatalogRoof)) {
+        const auto bytes = index.read(loc);
+        const auto p = parsePropertySet(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        if (number(p, "showincatalog", 1) == 0 || number(p, "deprecated") != 0)
+            continue;
+        BuildRoofPattern t;
+        t.guid = number(p, "guid");
+        t.texture = text(p, "texturetop");
+        t.name = text(p, "name");
+        t.description = text(p, "description");
+        if (auto s = index.read(Tgi{kTypeStr, number(p, "stringsetgroupid"), number(p, "stringsetid"), 0})) {
+            try {
+                const StringTable st = StringTable::parse(*s);
+                if (const std::string n = st.get(0); !n.empty())
+                    t.name = n;
+                if (const std::string d = st.get(1); !d.empty())
+                    t.description = d;
+            } catch (const std::exception&) {
+            }
+        }
+        if (t.guid)
+            c.roofs_.push_back(std::move(t));
+    }
+    std::sort(c.roofs_.begin(), c.roofs_.end(),
+              [](const BuildRoofPattern& a, const BuildRoofPattern& b) { return a.name < b.name; });
     std::sort(c.paints_.begin(), c.paints_.end(),
               [](const BuildTerrainPaint& a, const BuildTerrainPaint& b) { return a.name < b.name; });
     // The brush profiles: uncompressed 8-bit grey TGAs (image type 3).
@@ -188,6 +213,21 @@ const BuildFence* BuildCatalog::findFence(const std::string& key) const {
     for (const auto& f : fences_)
         if (lower(f.name).find(k) != std::string::npos || lower(f.rail).find(k) != std::string::npos)
             return &f;
+    return nullptr;
+}
+
+const BuildRoofPattern* BuildCatalog::findRoofPattern(const std::string& key) const {
+    if (key.size() > 2 && key[0] == '0' && (key[1] == 'x' || key[1] == 'X')) {
+        const uint32_t guid = uint32_t(std::strtoul(key.c_str(), nullptr, 16));
+        for (const auto& t : roofs_)
+            if (t.guid == guid)
+                return &t;
+        return nullptr;
+    }
+    const std::string k = lower(key);
+    for (const auto& t : roofs_)
+        if (lower(t.texture).find(k) != std::string::npos || lower(t.name).find(k) != std::string::npos)
+            return &t;
     return nullptr;
 }
 

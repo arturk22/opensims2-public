@@ -49,6 +49,13 @@ struct BuildTerrainPaint {
     std::string name, description, texture;
 };
 
+// A roof pattern (catalog property sets of type 0xACA8EA06; "texturetop"
+// is its picture; free). The game draws every roof of a lot with one.
+struct BuildRoofPattern {
+    uint32_t guid = 0;
+    std::string name, description, texture;
+};
+
 // Build-mode prices that are not in the data (docs/buy-build-mac.md §7).
 // A wall costs §70 a section (the game's catalog text; the binary's wall
 // cost path is not traced: inferred), and selling back what was built in
@@ -70,6 +77,8 @@ public:
     const std::vector<BuildPattern>& floors() const { return floors_; }
     const std::vector<BuildFence>& fences() const { return fences_; }
     const std::vector<BuildTerrainPaint>& terrainPaints() const { return paints_; }
+    const std::vector<BuildRoofPattern>& roofPatterns() const { return roofs_; }
+    const BuildRoofPattern* findRoofPattern(const std::string& key) const;
     const BuildTerrainPaint* findTerrainPaint(const std::string& key) const;
     // The terrain brushes' profiles (terrainSculptBrushes.txt
     // profileTextureID: 32x32 grey TGAs in terrain.package, group
@@ -91,6 +100,7 @@ private:
     std::vector<BuildPattern> floors_, walls_;
     std::vector<BuildFence> fences_;
     std::vector<BuildTerrainPaint> paints_;
+    std::vector<BuildRoofPattern> roofs_;
     std::vector<uint8_t> raise_, lower_;
 };
 

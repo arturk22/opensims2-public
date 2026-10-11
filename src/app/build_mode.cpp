@@ -214,6 +214,14 @@ void BuildMode::selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerr
     say(std::string("terrain tool: ") + names[int(terrainOp_)] + (paint ? " " + paint->name : std::string()));
 }
 
+void BuildMode::selectRoofTool(uint32_t type) {
+    cancel();
+    tool_ = Tool::Roof;
+    roofType_ = type;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
+    say("roof tool, type " + std::to_string(type));
+}
+
 void BuildMode::selectPattern(const BuildPattern& p) {
     cancel();
     tool_ = p.floor ? Tool::Floor : Tool::Wallpaper;
@@ -520,6 +528,9 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
             applied(control_ ? editor_->deleteWalls(level_, r[0], r[1], r[2], r[3])
                              : editor_->drawWalls(level_, r[0], r[1], r[2], r[3]));
         }
+    } else if (tool_ == Tool::Roof) {
+        const int x0 = int(std::lround(a.x)), y0 = int(std::lround(a.y)), x1 = int(std::lround(b.x)), y1 = int(std::lround(b.y));
+        applied(control_ ? editor_->deleteRoof(level_, b.x, b.y) : editor_->drawRoof(level_, x0, y0, x1, y1, roofType_));
     } else if (tool_ == Tool::Foundation) {
         const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
         applied(control_ ? editor_->deleteFoundation(x0, y0, x1, y1) : editor_->drawFoundation(x0, y0, x1, y1));
@@ -550,11 +561,11 @@ void BuildMode::update() {
     if (active_ && pointer_) {
         const simd_float2 p = *pointer_;
         auto z = [&](float x, float y) { return sim_.floorHeight(level_, x, y) + 0.03f; };
-        if (tool_ == Tool::Wall || tool_ == Tool::Room || tool_ == Tool::Fence) {
+        if (tool_ == Tool::Wall || tool_ == Tool::Room || tool_ == Tool::Fence || tool_ == Tool::Roof) {
             std::vector<std::array<int, 4>> runs;
             if (dragFrom_) {
                 const simd_float2 a = *dragFrom_;
-                if (tool_ == Tool::Room || (shift_ && tool_ == Tool::Wall)) {
+                if (tool_ == Tool::Room || tool_ == Tool::Roof || (shift_ && tool_ == Tool::Wall)) {
                     const int x0 = int(std::lround(a.x)), y0 = int(std::lround(a.y)), x1 = int(std::lround(p.x)),
                               y1 = int(std::lround(p.y));
                     runs = {{x0, y0, x1, y0}, {x1, y0, x1, y1}, {x1, y1, x0, y1}, {x0, y1, x0, y0}};
@@ -792,6 +803,42 @@ std::vector<BuildMode::Item> BuildMode::items() {
             }
         break;
     }
+    case 9: {
+        // B920 roof types: roofs.txt "roof 0-5" (Lot::RoofType 1-6), catalog
+        // text "build" 140 at their catalogTextIndex (0 1 3 2 4 5), price 0,
+        // thumbnails 0x499DB772/0xE9261580, ...85, ...60, ...65, ...70, ...75.
+        // B930 the roof patterns (their top texture as the swatch).
+        if (subsort_ == 0 || subsort_ == 2) {
+            const StringTable* t = res_->table(packageGroupHash("Build"), 0x8C);
+            static const int text[6] = {0, 1, 3, 2, 4, 5};
+            static const uint32_t thumbs[6] = {0xE9261580, 0xE9261585, 0xE9261560, 0xE9261565, 0xE9261570, 0xE9261575};
+            static const char* const fallback[6] = {"Shed Gable Roof", "Shed Hip Roof", "Short Gable Roof",
+                                                    "Long Gable Roof", "Hip Roof", "Mansard Roof"};
+            for (int k = 0; k < 6; ++k) {
+                Item it;
+                it.tool = Tool::Roof;
+                it.roofType = uint32_t(k + 1);
+                it.name = fallback[k];
+                if (t) {
+                    if (const std::string n = t->get(size_t(3 * text[k] + 1)); !n.empty())
+                        it.name = n;
+                    it.description = t->get(size_t(3 * text[k] + 2));
+                }
+                it.image = res_->image({kTypeUiImage, kBuildThumbGroup, thumbs[k]});
+                out.push_back(std::move(it));
+            }
+        }
+        if (subsort_ == 0 || subsort_ == 3)
+            for (const BuildRoofPattern& p : patterns_.roofPatterns()) {
+                Item it;
+                it.tool = Tool::Roof;
+                it.roofPattern = &p;
+                it.name = p.name, it.description = p.description;
+                it.image = textureThumbnail(p.guid, p.texture);
+                out.push_back(std::move(it));
+            }
+        break;
+    }
     case 3: objectItems(8, doorSubsort(subsort_)); break;
     case 6: // B630 staircases (build type 1, subsort 0x20; placed with the object tool)
         if (subsort_ == 0 || subsort_ == 3)
@@ -946,8 +993,9 @@ UiScreen BuildMode::screen(int width, int height) {
                                   (it.fence && it.fence == fence_) || (it.paint && it.paint == paint_ && tool_ == Tool::Terrain) ||
                                   (it.tool == Tool::Terrain && !it.paint && tool_ == Tool::Terrain && !paint_ &&
                                    it.terrainOp == int(terrainOp_)) ||
+                                  (it.tool == Tool::Roof && !it.roofPattern && tool_ == Tool::Roof && it.roofType == roofType_) ||
                                   (!it.pattern && !it.object && !it.fence && !it.paint && it.tool != Tool::Terrain &&
-                                   it.tool == tool_);
+                                   it.tool != Tool::Roof && it.tool == tool_);
             if (selected) {
                 UiQuad q;
                 q.x0 = tx - 2, q.y0 = cy - 2, q.x1 = tx + thumb + 2, q.y1 = cy + thumb + 2;
@@ -1084,6 +1132,10 @@ bool BuildMode::press(simd_float2 p) {
                     selectObject(*it.object);
                 else if (it.tool == Tool::Foundation)
                     selectFoundationTool();
+                else if (it.roofPattern)
+                    applied(editor_->setRoofPattern(it.roofPattern->guid));
+                else if (it.tool == Tool::Roof)
+                    selectRoofTool(it.roofType);
                 else if (it.tool == Tool::Terrain)
                     selectTerrainTool(vm::BuildEditor::TerrainOp(std::max(it.terrainOp, 0)), it.paint);
                 else
@@ -1125,7 +1177,8 @@ void BuildMode::hover(simd_float2 p) {
     const bool changed = over.has_value() != hovered_.has_value() ||
                          (over && (over->pattern != hovered_->pattern || over->object != hovered_->object ||
                                    over->fence != hovered_->fence || over->paint != hovered_->paint ||
-                                   over->terrainOp != hovered_->terrainOp ||
+                                   over->terrainOp != hovered_->terrainOp || over->roofType != hovered_->roofType ||
+                                   over->roofPattern != hovered_->roofPattern ||
                                    over->tool != hovered_->tool));
     if (changed)
         hovered_ = over, dirty_ = true;
@@ -1160,7 +1213,9 @@ namespace os2 {
 // --build-open <category>[,<subsort>] opens a panel, --build-level <n>,
 // --build-funds <n> (test aid: sets the family's funds),
 // --wall/--room/--delete-wall x0,y0,x1,y1, --fence x0,y0,x1,y1,<fence>,
-// --delete-fence x0,y0,x1,y1, --foundation / --delete-foundation x0,y0,x1,y1
+// --delete-fence x0,y0,x1,y1, --roof x0,y0,x1,y1[,type 1-6] (over the
+// walls of the current level), --delete-roof x,y, --roof-pattern <name|guid>,
+// --foundation / --delete-foundation x0,y0,x1,y1
 // (tiles, corners inclusive), --terrain raise|lower|flatten|smooth,x,y[,ticks[,size]]
 // and --terrain-paint <paint|erase>,x,y[,ticks[,size]] (a brush stroke of
 // ticks of 100 ms), --floor x0,y0,x1,y1,<pattern|none>[,rotation],
@@ -1214,7 +1269,17 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             r = ed.drawFences(level_, n(0), n(1), n(2), n(3), *fence);
         } else if (a == "--delete-fence" && f.size() >= 4)
             r = ed.deleteFences(level_, n(0), n(1), n(2), n(3));
-        else if (a == "--foundation" && f.size() >= 4)
+        else if (a == "--roof" && f.size() >= 4)
+            selectRoofTool(uint32_t(f.size() > 4 ? n(4) : 5)),
+                r = ed.drawRoof(level_, n(0), n(1), n(2), n(3), uint32_t(f.size() > 4 ? n(4) : 5));
+        else if (a == "--delete-roof" && f.size() >= 2)
+            r = ed.deleteRoof(level_, std::stof(f[0]), std::stof(f[1]));
+        else if (a == "--roof-pattern") {
+            const BuildRoofPattern* p = patterns_.findRoofPattern(v);
+            if (!p)
+                throw std::runtime_error("--roof-pattern: no pattern \"" + v + "\"");
+            r = ed.setRoofPattern(p->guid);
+        } else if (a == "--foundation" && f.size() >= 4)
             selectFoundationTool(), r = ed.drawFoundation(n(0), n(1), n(2), n(3));
         else if (a == "--delete-foundation" && f.size() >= 4)
             r = ed.deleteFoundation(n(0), n(1), n(2), n(3));

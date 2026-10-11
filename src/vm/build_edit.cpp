@@ -118,6 +118,7 @@ BuildEditor::Geometry BuildEditor::capture() const {
     g.objects = lot_.objects;
     g.fencePosts = lot_.fencePosts;
     g.paints = lot_.paints;
+    g.roofs = lot_.roofs;
     g.walls = lot_.walls;
     g.wallGraphs = lot_.wallGraphs;
     g.floors = lot_.floors;
@@ -135,6 +136,7 @@ void BuildEditor::restore(const Geometry& g) {
     lot_.objects = g.objects;
     lot_.fencePosts = g.fencePosts;
     lot_.paints = g.paints;
+    lot_.roofs = g.roofs;
     lot_.walls = g.walls;
     lot_.wallGraphs = g.wallGraphs;
     lot_.floors = g.floors;
@@ -819,6 +821,168 @@ BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1
     commit(std::move(before), r.cost);
     r.ok = true;
     r.message = std::to_string(r.changed) + " foundation tiles deleted for " + money(-r.cost);
+    return r;
+}
+
+std::vector<std::array<int, 4>> BuildEditor::atticWalls(int lotLevel) const {
+    std::vector<std::array<int, 4>> out;
+    auto covered = [&](const Lot::Roof* self, float mx, float my) {
+        // Inside another roof of the level (not on its edge).
+        for (const auto& r : lot_.roofs) {
+            if (&r == self || r.level != lotLevel)
+                continue;
+            const float ax = std::min(r.x0, r.x1), bx = std::max(r.x0, r.x1), ay = std::min(r.y0, r.y1),
+                        by = std::max(r.y0, r.y1);
+            if (mx > ax + 0.01f && mx < bx - 0.01f && my > ay + 0.01f && my < by - 0.01f)
+                return true;
+        }
+        return false;
+    };
+    for (const auto& r : lot_.roofs) {
+        if (r.level != lotLevel)
+            continue;
+        const int ax = int(std::lround(std::min(r.x0, r.x1))), bx = int(std::lround(std::max(r.x0, r.x1)));
+        const int ay = int(std::lround(std::min(r.y0, r.y1))), by = int(std::lround(std::max(r.y0, r.y1)));
+        std::vector<std::array<int, 4>> ends; // runs along the gable ends
+        const bool xLonger = bx - ax >= by - ay;
+        switch (r.type) {
+        case Lot::LongGable: // the ridge along the longer side: gables on the short ends
+            if (xLonger)
+                ends = {{ax, ay, ax, by}, {bx, ay, bx, by}};
+            else
+                ends = {{ax, ay, bx, ay}, {ax, by, bx, by}};
+            break;
+        case Lot::ShortGable:
+            if (xLonger)
+                ends = {{ax, ay, bx, ay}, {ax, by, bx, by}};
+            else
+                ends = {{ax, ay, ax, by}, {bx, ay, bx, by}};
+            break;
+        case Lot::ShedGable: {
+            // The slope rises the way of the drag: the sides and the high edge.
+            const float dx = r.x1 - r.x0, dy = r.y1 - r.y0;
+            if (std::fabs(dx) >= std::fabs(dy))
+                ends = {{ax, ay, bx, ay}, {ax, by, bx, by}, dx > 0 ? std::array<int, 4>{bx, ay, bx, by} : std::array<int, 4>{ax, ay, ax, by}};
+            else
+                ends = {{ax, ay, ax, by}, {bx, ay, bx, by}, dy > 0 ? std::array<int, 4>{ax, by, bx, by} : std::array<int, 4>{ax, ay, bx, ay}};
+            break;
+        }
+        default: break;
+        }
+        for (const auto& e : ends)
+            for (const auto& s : wallSections(e[0], e[1], e[2], e[3])) {
+                if (covered(&r, (float(s[0]) + float(s[2])) / 2, (float(s[1]) + float(s[3])) / 2))
+                    continue;
+                if (std::none_of(out.begin(), out.end(), [&](const auto& o) {
+                        return (o[0] == s[0] && o[1] == s[1] && o[2] == s[2] && o[3] == s[3]) ||
+                               (o[0] == s[2] && o[1] == s[3] && o[2] == s[0] && o[3] == s[1]);
+                    }))
+                    out.push_back(s);
+            }
+    }
+    return out;
+}
+
+void BuildEditor::syncAtticWalls(int lotLevel, const std::vector<std::array<int, 4>>& before) {
+    // Only what the change of roofs changes: the lot's other attic walls
+    // stay as they are (the saved lots do not always follow the rule).
+    const auto after = atticWalls(lotLevel);
+    auto in = [](const std::vector<std::array<int, 4>>& v, const std::array<int, 4>& s) {
+        return std::any_of(v.begin(), v.end(), [&](const auto& o) {
+            return (o[0] == s[0] && o[1] == s[1] && o[2] == s[2] && o[3] == s[3]) ||
+                   (o[0] == s[2] && o[1] == s[3] && o[2] == s[0] && o[3] == s[1]);
+        });
+    };
+    for (const auto& s : before)
+        if (!in(after, s))
+            if (const Lot::Wall* w = findWall(lot_, lotLevel, s[0], s[1], s[2], s[3]); w && w->type == Lot::Attic)
+                removeWall(lot_, lotLevel, s[0], s[1], s[2], s[3]);
+    const uint16_t blank = patternRef(lot_.wallPatterns, kDefaultWallPattern, 0);
+    for (const auto& s : after)
+        if (!in(before, s) && !findWall(lot_, lotLevel, s[0], s[1], s[2], s[3]))
+            addWall(lot_, lotLevel, s[0], s[1], s[2], s[3], Lot::Attic, {blank, blank});
+}
+
+BuildEditor::Result BuildEditor::drawRoof(int level, int x0, int y0, int x1, int y1, uint32_t type) {
+    Result r;
+    const int li = level - 1 + 1; // the roof's base: the floor of the VM level above the walls
+    if (x0 == x1 || y0 == y1) {
+        r.message = "a roof needs an area";
+        return r;
+    }
+    if (!lot_.hasLevel(li)) {
+        r.error = 0x03;
+        r.message = "cannot put a roof there: no level above";
+        return r;
+    }
+    const int W = int(lot_.width), H = int(lot_.height);
+    if (std::min({x0, x1, y0, y1}) < 0 || std::max(x0, x1) > W || std::max(y0, y1) > H) {
+        r.error = 0x02;
+        r.message = "cannot put a roof there: out of the lot";
+        return r;
+    }
+    if (type < Lot::ShedGable || type > Lot::Mansard)
+        type = Lot::Hip;
+    Geometry before = capture();
+    Lot::Roof roof;
+    for (const auto& o : lot_.roofs)
+        roof.id = std::max(roof.id, o.id + 1);
+    roof.id = std::max(roof.id, 1u);
+    roof.x0 = float(x0), roof.y0 = float(y0), roof.x1 = float(x1), roof.y1 = float(y1);
+    roof.level = roof.levelTo = li;
+    roof.type = type;
+    roof.pattern = lot_.roofs.empty() ? 0 : lot_.roofs.back().pattern;
+    roof.angle = 0.5f;
+    const auto attic = atticWalls(li);
+    lot_.roofs.push_back(roof);
+    syncAtticWalls(li, attic);
+    r.changed = 1;
+    changed();
+    commit(std::move(before), 0);
+    r.ok = true;
+    r.message = "a roof of type " + std::to_string(type) + " over " + point(x0, y0) + "-" + point(x1, y1);
+    return r;
+}
+
+BuildEditor::Result BuildEditor::setRoofPattern(uint32_t guid) {
+    Result r;
+    Geometry before = capture();
+    for (auto& f : lot_.roofs)
+        if (f.pattern != guid)
+            f.pattern = guid, ++r.changed;
+    r.ok = true;
+    if (!r.changed) {
+        r.message = lot_.roofs.empty() ? "no roofs" : "the roofs have that pattern";
+        return r;
+    }
+    ++revision_;
+    commit(std::move(before), 0);
+    r.message = std::to_string(r.changed) + " roofs take the pattern";
+    return r;
+}
+
+BuildEditor::Result BuildEditor::deleteRoof(int level, float x, float y) {
+    Result r;
+    const int li = level;
+    // The last roof of the level over the point (the one drawn on top).
+    for (size_t i = lot_.roofs.size(); i-- > 0;) {
+        const Lot::Roof& f = lot_.roofs[i];
+        if (f.level != li || x < std::min(f.x0, f.x1) || x > std::max(f.x0, f.x1) || y < std::min(f.y0, f.y1) ||
+            y > std::max(f.y0, f.y1))
+            continue;
+        Geometry before = capture();
+        const auto attic = atticWalls(li);
+        lot_.roofs.erase(lot_.roofs.begin() + long(i));
+        syncAtticWalls(li, attic);
+        r.changed = 1;
+        changed();
+        commit(std::move(before), 0);
+        r.ok = true;
+        r.message = "roof deleted";
+        return r;
+    }
+    r.ok = true;
+    r.message = "no roof there";
     return r;
 }
 

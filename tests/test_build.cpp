@@ -292,7 +292,38 @@ static void testTerrain() {
     check(r.ok && lot.paints.size() == 1 && lot.maskWidth == 49, "painting adds a paint and its mask");
 }
 
+static void testRoof() {
+    Lot lot = flatLot();
+    lot.levelCount = 2;
+    lot.elevations.resize(13 * 11 * 2, 3.0f);
+    lot.floors.resize(12 * 10 * 2);
+    lot.rooms.resize(12 * 10 * 2);
+    for (auto& [k, l] : lot.roomLayers)
+        l.resize(12 * 10 * 2);
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    ed.drawRoom(1, 2, 2, 8, 5);
+    auto r = ed.drawRoof(1, 2, 2, 8, 5, Lot::LongGable);
+    check(r.ok && lot.roofs.size() == 1 && lot.roofs[0].level == 1 && r.cost == 0, "a free roof over the walls");
+    size_t attic = 0;
+    for (const auto& w : lot.walls)
+        attic += w.type == Lot::Attic && w.a.level == 1;
+    check(attic == 6, "attic walls on the two gable ends (the short sides)");
+    r = ed.drawRoof(1, 2, 2, 8, 5, Lot::Hip);
+    r = ed.deleteRoof(1, 5, 3);
+    check(r.ok && lot.roofs.size() == 1, "deleting the roof on top");
+    r = ed.deleteRoof(1, 5, 3);
+    attic = 0;
+    for (const auto& w : lot.walls)
+        attic += w.type == Lot::Attic;
+    check(r.ok && lot.roofs.empty() && attic == 0, "the attic walls go with the roof");
+}
+
 int main() {
+    testRoof();
     testTerrain();
     testFoundation();
     testRoomIds();

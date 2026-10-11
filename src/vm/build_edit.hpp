@@ -78,6 +78,22 @@ public:
     // A ground tile under a foundation.
     bool foundationTile(int x, int y) const;
 
+    // Roof tool (cTSUserToolRoof, roofs.txt "roof 0-5" = Lot::RoofType 1-6:
+    // shed gable, shed hip, short gable, long gable, hip, mansard): a roof
+    // over the rectangle between two grid points, its base on `level` (the
+    // VM level above the walls it covers; the lot keeps it as level - 1 +
+    // 1), its slope the way of the drag for shed roofs, the lot's roof
+    // pattern (the game draws every roof with one). Free. Gable ends get
+    // attic walls (style 3, floorToRoof) where no other roof of the level
+    // covers them (inferred: MakeShedWalls is not read; the rule gives 788
+    // of the 905 attic walls of the 62 saved lots, and 74 they lack). Ctrl deletes the roof under a point with its attic
+    // walls (attic walls go with deleteTool roof).
+    Result drawRoof(int level, int x0, int y0, int x1, int y1, uint32_t type);
+    Result deleteRoof(int level, float x, float y);
+    // Roof patterns (cTSUserToolUndoableRoofPattern::SetRoofPatternProduct):
+    // every roof of the lot takes the pattern (catalog GUID). Free.
+    Result setRoofPattern(uint32_t guid);
+
     // Terrain tools (cTSUserToolTerrainSculpt / TerrainPaint): a stroke
     // is one undoable change; while the mouse is down the brush is applied
     // every 100 ms (ApplyTerrainSculptBrush) around a point, its strength
@@ -164,6 +180,7 @@ private:
         std::vector<Lot::Object> objects;
         std::vector<Lot::FencePost> fencePosts;
         std::vector<Lot::TerrainPaint> paints;
+        std::vector<Lot::Roof> roofs;
         std::vector<Lot::Wall> walls;
         std::vector<Lot::WallGraph> wallGraphs;
         std::vector<std::array<uint16_t, 4>> floors, rooms;
@@ -195,6 +212,9 @@ private:
     bool levelPoints(const std::vector<std::array<int, 2>>& points, float height,
                      const std::vector<std::array<int, 4>>& free = {});
     Result eraseRun(int level, int x0, int y0, int x1, int y1, bool fences);
+    // The attic walls the roofs of a lot level need (gable ends over walls).
+    std::vector<std::array<int, 4>> atticWalls(int lotLevel) const;
+    void syncAtticWalls(int lotLevel, const std::vector<std::array<int, 4>>& before);
     // Foundation walls along the edge between foundation and other tiles.
     void foundationWalls();
     Result cover(std::vector<std::pair<uint32_t, int>> faces, const BuildPattern* pattern, const std::string& what);
