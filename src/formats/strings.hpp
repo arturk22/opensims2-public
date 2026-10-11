@@ -12,6 +12,10 @@ namespace lang {
 constexpr uint8_t EnglishUS = 1;
 constexpr uint8_t Portuguese = 14;          // Portugal
 constexpr uint8_t BrazilianPortuguese = 35; // localized names, e.g. "Andrade" for "Antonio"
+// The language strings are read in by default: setPreferred's, else the
+// language of defaultLocale() (OS2_LOCALE; Brazilian Portuguese).
+uint8_t preferred();
+void setPreferred(uint8_t language);
 } // namespace lang
 
 // String tables (STR#, CTSS catalog descriptions, TTAs pie-menu strings):
@@ -36,9 +40,10 @@ struct StringTable {
     static StringTable parse(std::span<const uint8_t> data);
 
     // The index-th string in a language: entries of each language are listed in
-    // order. Brazilian Portuguese falls back to Portuguese; every language falls
-    // back to US English, then to the raw entry order. Empty if missing.
-    std::string get(size_t index, uint8_t language = lang::BrazilianPortuguese) const;
+    // order. Brazilian Portuguese falls back to Portuguese (and Portuguese to
+    // Brazilian Portuguese); every language falls back to US English, then to
+    // the raw entry order. Empty if missing.
+    std::string get(size_t index, uint8_t language = lang::preferred()) const;
     // Number of strings in a language.
     size_t count(uint8_t language) const;
 };

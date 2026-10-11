@@ -26,7 +26,7 @@ public:
     // the index: the index keeps the first of duplicate keys in path order, so
     // another locale's copy (Locale/Dutch has its own logo) would win there.
     UiResources(ResourceIndex& index, const std::filesystem::path& resRoot,
-                const std::string& locale = "Brazilian Portuguese");
+                const std::string& locale = defaultLocale());
 
     // Bytes of a UI resource, by the lookup order above.
     std::optional<std::vector<uint8_t>> read(const Tgi& tgi);
@@ -40,7 +40,7 @@ public:
     const RgbaImage* image(const UiResourceRef& ref);
 
     // Localized string, or nullopt if the table or entry is missing.
-    std::optional<std::string> string(const UiStringRef& ref, uint8_t language = lang::BrazilianPortuguese);
+    std::optional<std::string> string(const UiStringRef& ref, uint8_t language = lang::preferred());
     const StringTable* table(uint32_t group, uint32_t instance);
 
 private:

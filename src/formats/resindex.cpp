@@ -48,15 +48,29 @@ uint32_t crc32msb(std::string_view s) {
 uint32_t nameInstanceHash(std::string_view name) { return crc24(lower(name)) | 0xFF000000; }
 uint32_t nameInstanceHiHash(std::string_view name) { return crc32msb(lower(name)); }
 
-ResourceIndex::ResourceIndex(const std::filesystem::path& root) {
-    std::vector<std::filesystem::path> paths;
-    for (const auto& de : std::filesystem::recursive_directory_iterator(root)) {
+ResourceIndex::ResourceIndex(const std::filesystem::path& root, const std::string& locale) {
+    const auto localeDir = root / "Locale";
+    const bool localized = std::filesystem::is_directory(localeDir);
+    if (localized)
+        locale_ = locale;
+    std::vector<std::filesystem::path> paths, localePaths;
+    for (auto it = std::filesystem::recursive_directory_iterator(root); it != std::filesystem::recursive_directory_iterator();
+         ++it) {
+        const auto& de = *it;
+        if (localized && de.is_directory() && de.path().parent_path() == localeDir) {
+            if (de.path().filename() != locale)
+                it.disable_recursion_pending();
+            continue;
+        }
         if (!de.is_regular_file())
             continue;
         auto ext = lower(de.path().extension().string());
-        if (ext == ".package")
-            paths.push_back(de.path());
+        if (ext != ".package")
+            continue;
+        const bool inLocale = localized && de.path().lexically_relative(localeDir).begin()->string() != "..";
+        (inLocale ? localePaths : paths).push_back(de.path());
     }
+    addPackages(std::move(localePaths));
     addPackages(std::move(paths));
 }
 

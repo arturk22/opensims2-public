@@ -1,8 +1,24 @@
 #include "strings.hpp"
 
 #include "binreader.hpp"
+#include "locale.hpp"
 
 namespace os2 {
+
+namespace lang {
+namespace {
+uint8_t preferredLanguage = 0;
+}
+uint8_t preferred() {
+    if (!preferredLanguage) {
+        preferredLanguage = localeLanguage(defaultLocale());
+        if (!preferredLanguage)
+            preferredLanguage = BrazilianPortuguese;
+    }
+    return preferredLanguage;
+}
+void setPreferred(uint8_t language) { preferredLanguage = language; }
+} // namespace lang
 
 StringTable StringTable::parse(std::span<const uint8_t> data) {
     BinReader r(data);
@@ -73,7 +89,9 @@ size_t StringTable::count(uint8_t language) const {
 }
 
 std::string StringTable::get(size_t index, uint8_t language) const {
-    const uint8_t secondary = language == lang::BrazilianPortuguese ? lang::Portuguese : language;
+    const uint8_t secondary = language == lang::BrazilianPortuguese ? lang::Portuguese
+                              : language == lang::Portuguese        ? lang::BrazilianPortuguese
+                                                                    : language;
     for (uint8_t l : {language, secondary, lang::EnglishUS}) {
         size_t i = 0;
         for (const auto& e : entries)

@@ -34,6 +34,7 @@ add_library(os2_formats
   src/formats/image.cpp
   src/formats/jpeg.cpp
   src/formats/lighting_config.cpp
+  src/formats/locale.cpp
   src/formats/lot.cpp
   src/formats/lot_objects.cpp
   src/formats/lot_model.cpp
@@ -164,6 +165,9 @@ add_test(NAME audio COMMAND test_audio)
 add_executable(test_ui tests/test_ui.cpp)
 target_link_libraries(test_ui PRIVATE os2_formats)
 add_test(NAME ui COMMAND test_ui)
+add_executable(test_locale tests/test_locale.cpp)
+target_link_libraries(test_locale PRIVATE os2_formats)
+add_test(NAME locale COMMAND test_locale)
 add_executable(test_neighborhood tests/test_neighborhood.cpp)
 target_link_libraries(test_neighborhood PRIVATE os2_formats)
 add_test(NAME neighborhood COMMAND test_neighborhood)

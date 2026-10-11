@@ -1,5 +1,7 @@
 #include "font.hpp"
 
+#include "locale.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -1217,7 +1219,12 @@ std::vector<FontStyle> parseFontStyles(std::string_view ini) {
 }
 
 FontLibrary::FontLibrary(const std::filesystem::path& dir) : dir_(dir) {
-    std::ifstream in(dir / "FontStyle.ini", std::ios::binary);
+    // Res/UI/Fonts: the locale's own FontStyle.ini (Res/Locale/<locale>/UI/
+    // Fonts, which the Asian locales have) replaces the base one.
+    auto ini = dir / "FontStyle.ini";
+    if (dir.filename() == "Fonts" && dir.parent_path().filename() == "UI")
+        ini = localizedFile(dir.parent_path().parent_path(), "UI/Fonts/FontStyle.ini", defaultLocale());
+    std::ifstream in(ini, std::ios::binary);
     if (in) {
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         styles_ = parseFontStyles(text);

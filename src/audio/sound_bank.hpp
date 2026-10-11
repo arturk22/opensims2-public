@@ -32,7 +32,7 @@ public:
 
     // `dir` is TSData/Res (indexes Sound/ and Locale/<locale>/Sound/, the
     // latter taking precedence) or any directory of sound packages.
-    explicit SoundBank(const std::filesystem::path& dir, std::string_view locale = "Brazilian Portuguese");
+    explicit SoundBank(const std::filesystem::path& dir, std::string_view locale = defaultLocale());
 
     static Key nameKey(std::string_view name);
 

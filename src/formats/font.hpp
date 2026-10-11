@@ -105,8 +105,9 @@ struct FontStyle {
 };
 std::vector<FontStyle> parseFontStyles(std::string_view ini);
 
-// The game's fonts directory: styles from FontStyle.ini and faces loaded on
-// demand from "<face>.mxf" or "<face> (bold).mxf".
+// The game's fonts directory: styles from FontStyle.ini (for Res/UI/Fonts,
+// the one of defaultLocale() when Res/Locale/<locale>/UI/Fonts has one) and
+// faces loaded on demand from "<face>.mxf" or "<face> (bold).mxf".
 class FontLibrary {
 public:
     explicit FontLibrary(const std::filesystem::path& fontsDir);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dbpf.hpp"
+#include "locale.hpp"
 
 #include <deque>
 #include <filesystem>
@@ -29,12 +30,20 @@ public:
         const DbpfEntry* entry = nullptr;
     };
 
-    explicit ResourceIndex(const std::filesystem::path& root);
+    // Every package under `root`. When `root` has a Locale folder (Res), only
+    // that of `locale` is indexed, and its packages come first, so they
+    // replace the base game's (as the DBSegments of Sys/default.ini put
+    // Res\Locale\%Language%\UI\ui.package over Res\UI\ui.package); the
+    // other locales are left out (they used to win by sorting first: Czech's
+    // ui.package, Dutch's Sims3D/Objects.package).
+    explicit ResourceIndex(const std::filesystem::path& root, const std::string& locale = defaultLocale());
     // An overlay: the resources of `packages`, then (for find/findByName)
     // those of `fallback`, e.g. a Sim's character file over the game's.
     ResourceIndex(const std::vector<std::filesystem::path>& packages, const ResourceIndex* fallback);
 
     size_t packageCount() const { return packages_.size(); }
+    // The locale indexed (empty for a root without a Locale folder or an overlay).
+    const std::string& locale() const { return locale_; }
     size_t resourceCount() const { return byTgi_.size(); }
     size_t duplicateCount() const { return duplicates_; }
 
@@ -56,6 +65,7 @@ private:
     const ResourceIndex* fallback_ = nullptr;
     void addPackages(std::vector<std::filesystem::path> paths);
     size_t duplicates_ = 0;
+    std::string locale_;
 };
 
 } // namespace os2
