@@ -116,7 +116,7 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/pie_menu.cpp src/app/lot_audio.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/pie_menu.cpp src/app/lot_audio.cpp src/app/camera_input.cpp)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
@@ -189,3 +189,6 @@ add_test(NAME neighborhood COMMAND test_neighborhood)
 add_executable(test_sound tests/test_sound.cpp)
 target_link_libraries(test_sound PRIVATE os2_audio os2_vm)
 add_test(NAME sound COMMAND test_sound)
+add_executable(test_camera_input tests/test_camera_input.cpp src/app/camera_input.cpp)
+target_include_directories(test_camera_input PRIVATE src)
+add_test(NAME camera_input COMMAND test_camera_input)

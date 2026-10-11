@@ -3,8 +3,10 @@
 // metal-cpp; this file only bridges the Objective-C objects across.
 //
 // Camera controls: WASD/arrows pan, Q/E or ,/. rotate, Z/X, +/- or the wheel
-// zoom, R/F or Page Up/Down tilt, right/middle drag rotates and tilts freely,
-// Home resets. --lighting <state> picks a lighting state from Lighting.txt
+// zoom, R/F or Page Up/Down tilt, Home resets; with the mouse as in the game
+// (app/camera_input.hpp): hold the right button and move away from where it
+// went down to scroll, hold the middle button (or Option + right) to rotate
+// and tilt, the mouse at the window's edge scrolls (--no-edge-scroll). --lighting <state> picks a lighting state from Lighting.txt
 // (day, night, neighbourhood, ...); --lot <N001_Lot82 | file.package> shows a
 // lot's terrain, floors, walls, roofs, fences, water and objects (--walls
 // up | cutaway | down picks the wall mode, cutaway as seen from the starting view). --sim [body,hair,skin tone] shows
@@ -60,6 +62,7 @@
 #include "render/ui_layer.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
+#include "camera_input.hpp"
 #include "lot_vm.hpp"
 
 #include <algorithm>
@@ -629,7 +632,8 @@ enum Key : unsigned short {
 @implementation OS2View {
     std::unique_ptr<os2::LotCamera> _camera;
     std::set<unsigned short> _held;
-    double _scroll; // accumulated precise (trackpad) scroll
+    os2::CameraMouseInput _mouse;
+    bool _rotating; // right button with Option: rotate instead of scroll
 }
 
 - (os2::LotCamera*)camera {
@@ -651,6 +655,12 @@ enum Key : unsigned short {
 - (void)applyHeldKeys:(double)dt {
     float right = float([self held:kD orKey:kRight]) - float([self held:kA orKey:kLeft]);
     float forward = float([self held:kW orKey:kUp]) - float([self held:kS orKey:kDown]);
+    if (self.window.isKeyWindow) {
+        _mouse.config().edgeScroll = !argument(@"--no-edge-scroll");
+        const auto [mr, mf] = _mouse.panAxes(float(self.bounds.size.width), float(self.bounds.size.height));
+        right = std::clamp(right + mr, -1.0f, 1.0f);
+        forward = std::clamp(forward + mf, -1.0f, 1.0f);
+    }
     _camera->pan(right, forward, dt);
     float tilt = float([self held:kR orKey:kPageUp]) - float([self held:kF orKey:kPageDown]);
     if (tilt != 0)
@@ -683,26 +693,50 @@ enum Key : unsigned short {
 }
 
 - (void)scrollWheel:(NSEvent*)e {
-    if (!e.hasPreciseScrollingDeltas) {
-        if (e.scrollingDeltaY != 0)
-            _camera->zoomBy(e.scrollingDeltaY > 0 ? 1 : -1);
-        return;
-    }
-    _scroll += e.scrollingDeltaY;
-    const double notch = 40.0; // points of trackpad scroll per zoom level
-    while (_scroll >= notch) {
-        _camera->zoomBy(1);
-        _scroll -= notch;
-    }
-    while (_scroll <= -notch) {
-        _camera->zoomBy(-1);
-        _scroll += notch;
-    }
+    if (const int steps = _mouse.wheel(e.scrollingDeltaY, e.hasPreciseScrollingDeltas))
+        _camera->zoomBy(steps);
 }
 
 - (void)dragRotate:(NSEvent*)e {
-    _camera->freeRotate(float(e.deltaX) * 0.3f);
-    _camera->tilt(float(e.deltaY) * 0.2f);
+    const auto [yaw, tilt] = _mouse.rotateDrag(float(e.deltaX), float(e.deltaY));
+    _camera->freeRotate(yaw);
+    _camera->tilt(tilt);
+}
+
+// The mouse position for edge and anchor scrolling.
+- (void)trackMouse:(NSEvent*)e {
+    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+    _mouse.mouseAt(float(p.x), float(self.bounds.size.height - p.y), NSPointInRect(p, self.bounds));
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea* a in self.trackingAreas)
+        [self removeTrackingArea:a];
+    [self addTrackingArea:[[NSTrackingArea alloc]
+                              initWithRect:NSZeroRect
+                                   options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved |
+                                           NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+                                     owner:self
+                                  userInfo:nil]];
+}
+
+- (void)mouseExited:(NSEvent*)e {
+    [self trackMouse:e];
+    _mouse.mouseAt(-1, -1, false);
+}
+
+- (void)rightMouseDown:(NSEvent*)e {
+    [self trackMouse:e];
+    _rotating = (e.modifierFlags & NSEventModifierFlagOption) != 0;
+    if (!_rotating)
+        _mouse.beginAnchor();
+}
+
+- (void)rightMouseUp:(NSEvent*)e {
+    [self trackMouse:e];
+    _mouse.endAnchor();
+    _rotating = false;
 }
 
 // Mouse position in view points, origin top left (the pie menu's canvas).
@@ -731,12 +765,19 @@ enum Key : unsigned short {
 }
 
 - (void)mouseMoved:(NSEvent*)e {
+    [self trackMouse:e];
     if (gPie)
         gPie->hover([self canvasPoint:e]);
 }
 
+- (void)mouseDragged:(NSEvent*)e {
+    [self trackMouse:e];
+}
+
 - (void)rightMouseDragged:(NSEvent*)e {
-    [self dragRotate:e];
+    [self trackMouse:e];
+    if (_rotating)
+        [self dragRotate:e];
 }
 
 - (void)otherMouseDragged:(NSEvent*)e {
