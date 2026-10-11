@@ -43,6 +43,12 @@ namespace cas {
 struct FaceSpec {
     std::string archetype;                  // facearchetype family (lowercase GUID); empty = the neutral face
     std::map<std::string, float> modifiers; // facemodifier family -> slider weight
+    // A region taken from another archetype (the "Change Eyes", "Change
+    // Nose", ... bins): the bin's region mask list ("eyes;cheekbones", the
+    // panel's kCAFArchetypeRegionMask) -> archetype family. The faceregion
+    // masks are partial heads whose vertex colours weigh the blend (inferred:
+    // the largest colour channel / 255).
+    std::map<std::string, std::string> regions;
 };
 
 class FaceBaker {

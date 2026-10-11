@@ -51,6 +51,7 @@ struct FaceBaker::Mesh {
     std::string name;
     std::vector<Vec3> positions;
     std::vector<std::array<float, 2>> uvs;
+    std::vector<float> weights; // region masks: vertex colour weight (1 without colours)
     std::unordered_multimap<int64_t, size_t> byUv;
     std::vector<uint8_t> bytes;
     size_t bodyOffset = 0;
@@ -94,6 +95,12 @@ const FaceBaker::Mesh& FaceBaker::meshByName(const std::string& name) {
             m->byUv.emplace(uvKey(uv[0], uv[1]), m->positions.size());
             m->positions.push_back(g.positions[i]);
             m->uvs.push_back(uv);
+            float w = 1;
+            if (i < g.colors.size()) {
+                const uint32_t c = g.colors[i];
+                w = float(std::max({(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF})) / 255.0f;
+            }
+            m->weights.push_back(w);
         }
     }
     return *meshes_.emplace(name, std::move(m)).first->second;
@@ -222,6 +229,44 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
                     disp[i] = sub(am->positions[size_t(j)], slots[i].pos);
                     covered[i] = true;
                 }
+    }
+    for (const auto& [maskList, fam] : spec.regions) {
+        const SimPart* a = archetypeFor(fam, ageBit, genderBit);
+        const Mesh* am = a ? meshOfEntry(*a) : nullptr;
+        if (!am) {
+            out.warnings.push_back("region archetype " + fam + " has no " + ageName(ageBit) + " head");
+            continue;
+        }
+        std::vector<float> w(slots.size(), 0.0f);
+        size_t start = 0;
+        while (start <= maskList.size()) {
+            const size_t end = std::min(maskList.find(';', start), maskList.size());
+            const std::string region = maskList.substr(start, end - start);
+            start = end + 1;
+            if (region.empty())
+                continue;
+            const SimPart* maskEntry = nullptr;
+            for (const auto& e : catalog_.regions)
+                if (e.name() == region && fits(e, ageBit, genderBit))
+                    maskEntry = &e;
+            const Mesh* mm = maskEntry ? meshOfEntry(*maskEntry) : nullptr;
+            if (!mm) {
+                out.warnings.push_back("no region mask " + region);
+                continue;
+            }
+            for (size_t i = 0; i < slots.size(); ++i)
+                if (long j = mm->match(slots[i].uv[0], slots[i].uv[1], slots[i].pos); j >= 0)
+                    w[i] = std::max(w[i], mm->weights[size_t(j)]);
+        }
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (w[i] <= 0)
+                continue;
+            if (long j = am->match(slots[i].uv[0], slots[i].uv[1], slots[i].pos); j >= 0) {
+                const Vec3 target = sub(am->positions[size_t(j)], slots[i].pos);
+                disp[i] = add(scale(disp[i], 1 - w[i]), scale(target, w[i]));
+                covered[i] = true;
+            }
+        }
     }
     for (const auto& [fam, weight] : spec.modifiers) {
         if (weight == 0)

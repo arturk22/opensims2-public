@@ -295,7 +295,10 @@ struct Layout {
             text(e, x, y, w, h, caption(e), rgba(e, "forecolor", {0, 0, 0, 1}), e.flag("wrapped"));
             drew = true;
         } else if (cls == "GZWinTextEdit") {
-            text(e, x, y, w, h, e.get("initvalue"), rgba(e, "caretcolor", {0, 0, 0, 1}), true);
+            // The text typed so far: a hook's caption (code-driven screens), else the initial value.
+            auto it = hooks ? hooks->captions.find(&e) : decltype(hooks->captions)::const_iterator{};
+            const bool hooked = hooks && it != hooks->captions.end();
+            text(e, x, y, w, h, hooked ? it->second : e.get("initvalue"), rgba(e, "caretcolor", {0, 0, 0, 1}), true);
             drew = true;
         }
         out.drawn += drew;

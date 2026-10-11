@@ -1,4 +1,5 @@
 // Genetics (vm/genetics.hpp): dominant regions, PickGene, descendant face.
+#include "formats/cas_personality.hpp"
 #include "vm/genetics.hpp"
 
 #include <cstdio>
@@ -61,5 +62,16 @@ int main() {
           "DNA: SDNA keys t and 0x10000000 + t");
     check(babyIsFemale(true, true, scripted({1})) && !babyIsFemale(true, false, scripted({0})),
           "a lone parent's baby has its gender");
+    // Zodiac (docs/cas-mac.md §6): a sign's own points give it back; 5 everywhere is Cancer.
+    bool signs = true;
+    for (int z = 1; z <= 12; ++z)
+        signs = signs && os2::cas::zodiacSign(os2::cas::zodiacPersonality(z)) == z;
+    check(signs, "every sign's points compute to that sign");
+    check(os2::cas::zodiacSign(os2::cas::Personality{}) == 4, "5 points in each trait is Cancer");
+    check(os2::cas::compatibleSigns(1) == std::array<int, 2>{3, 2} && os2::cas::incompatibleSigns(1) == std::array<int, 2>{4, 7},
+          "Aries attracts Gemini and Taurus, repels Cancer and Libra");
+    os2::cas::Personality p{10, 10, 5, 0, 0};
+    os2::cas::setTrait(p, 3, 4);
+    check(p.neat == 0 && p.total() == 25, "a trait cannot pass the 25 points");
     return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

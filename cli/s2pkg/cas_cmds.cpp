@@ -7,6 +7,8 @@
 #include "formats/cas_face.hpp"
 #include "formats/character_write.hpp"
 #include "formats/resindex.hpp"
+#include "vm/family_write.hpp"
+#include "vm/genetics.hpp"
 
 #include <cstdio>
 #include <cctype>
@@ -151,6 +153,7 @@ int cmdCasMake(int argc, char** argv) {
     spec.lastName = "Sim";
     std::string objectName = out.stem().string();
     uint32_t seed = 0;
+    std::string hoodSource, hoodOut, familyName;
     std::vector<std::pair<std::string, std::string>> deferred; // options that need the age and gender
     for (int i = 4; i + 1 < argc; i += 2) {
         const std::string a = argv[i], v = argv[i + 1];
@@ -163,6 +166,9 @@ int cmdCasMake(int argc, char** argv) {
         else if (a == "--object") objectName = v;
         else if (a == "--seed") seed = uint32_t(std::stoul(v));
         else if (a == "--guid") spec.guid = uint32_t(std::stoul(v, nullptr, 16));
+        else if (a == "--hood") hoodSource = v;
+        else if (a == "--hood-out") hoodOut = v;
+        else if (a == "--family") familyName = v;
         else deferred.emplace_back(a, v);
     }
     for (const auto& [a, v] : deferred) {
@@ -196,6 +202,32 @@ int cmdCasMake(int argc, char** argv) {
     }
     cas::completeSpec(catalog, spec, seed);
     cas::FaceBaker baker(index, catalog);
+    if (!hoodSource.empty()) {
+        // A one-Sim family added to a copy of the neighborhood (vm/family_write.hpp).
+        if (hoodOut.empty())
+            throw std::runtime_error("--hood needs --hood-out <folder>");
+        vm::NewSim sim;
+        sim.firstName = spec.firstName;
+        sim.lastName = spec.lastName;
+        sim.ageBit = spec.age;
+        sim.genderBit = spec.gender;
+        sim.fitness = spec.fitness;
+        sim.zodiac = cas::zodiacSign(sim.personality);
+        sim.aspiration = spec.age <= cas::age::Child ? cas::aspiration::GrowUp : cas::suggestedAspiration(sim.zodiac);
+        uint32_t s = seed ? seed : 1;
+        sim.dna = genetics::dnaFromLook(cas::toneFamily(spec.hairTone), cas::toneFamily(spec.skinTone), spec.eyes,
+                                        spec.gender == cas::gender::Female,
+                                        [&s](uint32_t n) { s = s * 1103515245u + 12345u; return n ? (s >> 8) % n : 0u; })
+                      .toProperties();
+        sim.writeCharacter = [&](const std::string& name, const std::filesystem::path& file) {
+            return cas::writeCharacter(index, catalog, baker, spec, name, file).guid;
+        };
+        const auto fr = vm::writeNewFamily(hoodSource, std::filesystem::path(hoodOut) / std::filesystem::path(hoodSource).filename(),
+                                           familyName.empty() ? spec.lastName : familyName, "", {sim}, seed ? seed : 1);
+        std::printf("family %u written to %s: neighbor %u, %s\n", fr.family, fr.neighborhood.string().c_str(),
+                    unsigned(fr.neighbors.front()), fr.characters.front().filename().string().c_str());
+        return 0;
+    }
     const auto r = cas::writeCharacter(index, catalog, baker, spec, objectName, out);
     std::printf("wrote %s: %zu resources, GUID 0x%08X, %s %s %s, skin s%d, hair tone %d\n", out.string().c_str(),
                 r.resources, r.guid, spec.firstName.c_str(), spec.lastName.c_str(), cas::ageName(spec.age), spec.skinTone,
@@ -217,7 +249,8 @@ const char* casUsage() {
     return "       s2pkg cas-catalog <Res-dir> [--age adult] [--gender f|m] [tones|face|overlays|hair|clothes]\n"
            "       s2pkg cas-make <Res-dir> <out.package> [--age adult] [--gender f|m] [--skin 1-4] [--hair-tone 1-5]\n"
            "              [--hair|--top|--bottom|--body|--formal part] [--archetype name] [--mod name=weight]...\n"
-           "              [--eyes overlay] [--overlay overlay]... [--first name] [--last name] [--object N001_User00100] [--seed N]\n";
+           "              [--eyes overlay] [--overlay overlay]... [--first name] [--last name] [--object N001_User00100] [--seed N]\n"
+           "              [--hood <neighborhood dir> --hood-out <dir> [--family name]]  (adds a one-Sim family to a copy)\n";
 }
 
 int casCommand(const std::string& cmd, int argc, char** argv) {

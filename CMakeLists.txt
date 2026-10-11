@@ -29,6 +29,7 @@ add_library(os2_formats
   src/formats/camera_config.cpp
   src/formats/cas_catalog.cpp
   src/formats/cas_face.cpp
+  src/formats/cas_personality.cpp
   src/formats/character_write.cpp
   src/formats/build_catalog.cpp
   src/formats/catalog.cpp
@@ -88,6 +89,7 @@ add_library(os2_vm
   src/vm/build_edit.cpp
   src/vm/characters.cpp
   src/vm/genetics.cpp
+  src/vm/family_write.cpp
   src/vm/animation.cpp
   src/vm/appearance.cpp
   src/vm/dialog.cpp
@@ -175,7 +177,7 @@ if(APPLE)
 
   add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/lot_effects.cpp)
   # The game flow: main menu, user folder, in-game save, options (app/game_flow.hpp).
-  target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/options_panel.cpp)
+  target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/options_panel.cpp src/app/cas_mode.cpp)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2

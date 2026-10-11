@@ -88,6 +88,7 @@
 #include "app/options_panel.hpp"
 #include "app/user_data.hpp"
 #include "app/lot_effects.hpp"
+#include "app/cas_mode.hpp"
 #include "app/live_ui.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
@@ -178,6 +179,7 @@ std::map<int16_t, os2::SimActor*> gObjectActors; // objects the VM has animated 
 float gUiScale = 1; // drawable pixels per view point
 // --hood: the neighborhood view (app/hood_mode.hpp) in place of a lot.
 std::unique_ptr<os2::HoodMode> gHood;
+std::unique_ptr<os2::CasMode> gCas; // --cas: Create-a-Sim (app/cas_mode.hpp)
 // --hood <N> --hood-lot <id>: that lot's package, shown as --lot is.
 std::optional<std::string> gHoodLot;
 std::vector<std::string> processArguments();
@@ -1849,6 +1851,7 @@ void unloadScene() {
     gOptions.reset();
     gMenu.reset();
     gHood.reset();
+    gCas.reset();
     gDoors.reset();
     gLighting.reset();
     gSnaps.reset();
@@ -1913,6 +1916,8 @@ void unloadScene() {
 
 - (void)applyHeldKeys:(double)dt {
     _camera->setViewport(float(self.bounds.size.width), float(self.bounds.size.height));
+    if (gCas)
+        return; // the CAS camera only follows the Sim and the zoom buttons
     // Shift: "Move ... Faster" (twice the speed).
     const float fast = (NSEvent.modifierFlags & NSEventModifierFlagShift) ? 2.0f : 1.0f;
     float right = float([self held:kD orKey:kRight]) - float([self held:kA orKey:kLeft]);
@@ -1933,6 +1938,11 @@ void unloadScene() {
 }
 
 - (void)keyDown:(NSEvent*)e {
+    if (gCas) { // Create-a-Sim takes every key (names, undo, turning the Sim)
+        gCas->keyDown(e.keyCode, e.characters ? std::string(e.characters.UTF8String) : std::string(),
+                      e.modifierFlags & NSEventModifierFlagControl);
+        return;
+    }
     if (os2::moviePlaying()) { // Esc, Space or Return skips a movie
         if (!e.isARepeat && (e.keyCode == kEscape || e.keyCode == kReturn || e.keyCode == kEnter || e.keyCode == 49)) {
             os2::skipMovie();
@@ -2014,6 +2024,8 @@ void unloadScene() {
 }
 
 - (void)keyUp:(NSEvent*)e {
+    if (gCas)
+        gCas->keyUp(e.keyCode);
     _held.erase(e.keyCode);
 }
 
@@ -2102,6 +2114,11 @@ void unloadScene() {
 // else casts a ray from the camera through the mouse and opens the menu of
 // the object hit.
 - (void)mouseDown:(NSEvent*)e {
+    if (gCas) {
+        gCas->setCanvas(int(self.bounds.size.width), int(self.bounds.size.height));
+        gCas->mouseDown([self canvasPoint:e]);
+        return;
+    }
     if (os2::moviePlaying()) { // a click skips a movie
         os2::skipMovie();
         std::printf("opensims2: movie skipped (click)\n");
@@ -2155,6 +2172,8 @@ void unloadScene() {
 
 // The pie menu picks on release (a drag from the opening press is a gesture).
 - (void)mouseUp:(NSEvent*)e {
+    if (gCas)
+        gCas->mouseUp([self canvasPoint:e]);
     if (gPie && gPie->isOpen())
         gPie->release([self canvasPoint:e]);
     if (gBuild && gBuild->active())
@@ -2193,6 +2212,8 @@ void unloadScene() {
 
 - (void)mouseDragged:(NSEvent*)e {
     [self trackMouse:e];
+    if (gCas)
+        gCas->mouseDragged([self canvasPoint:e]);
     if (gPie)
         gPie->hover([self canvasPoint:e]);
     if (gBuild && gBuild->active())
@@ -2278,6 +2299,8 @@ void unloadScene() {
     float aspect = size.height > 0 ? float(size.width / size.height) : 1.0f;
     poseActors(*_renderer, now - _start);
     const os2::FrameView frame = cinematicView({view.camera->view(), view.camera->projection(aspect)}, now - _start, aspect);
+    if (gCas)
+        gCas->update(now - _start);
     if (gBuy)
         gBuy->update();
     if (gBuild)
@@ -2424,6 +2447,11 @@ void unloadScene() {
     gStepsUsed = 0;
     _view.clearColor = MTLClearColorMake(0.18, 0.22, 0.28, 1.0);
     applyLighting(*_viewDelegate.renderer);
+    if ([sceneArgs() containsObject:@"--cas"]) { // Create-a-Sim (app/cas_mode.hpp)
+        [self startCas:_view];
+        std::fflush(stdout);
+        return;
+    }
     switch (scene.kind) {
     case os2::Scene::Kind::MainMenu: [self startMainMenu:scene]; break;
     case os2::Scene::Kind::Neighborhood: [self startHood:_view query:hoodFolder(scene.hood).string()]; break;
@@ -2867,6 +2895,62 @@ void unloadScene() {
         [self captureScene:*shot];
         std::exit(0);
     }
+}
+
+// --cas: Create-a-Sim (app/cas_mode.hpp); with --screenshot renders one frame and quits.
+- (void)startCas:(OS2View*)view {
+    os2::Renderer& renderer = *_viewDelegate.renderer;
+    const os2::LightingConfig lighting = os2::loadLightingConfig(gameDir() / kLightingConfig);
+    if (const auto* state = lighting.state(argument(@"--lighting").value_or("CAS"))) {
+        renderer.setLighting(*state); // Lighting.txt's "CAS" state unless --lighting names another
+        if (!argument(@"--lighting")) {
+            // The CAS state leaves the Sim to the studio lamps of GlobalLots/CAS!.package, which
+            // is not loaded here: its boom light (casStudio_lightingFloorStudioBoom_light,
+            // intensity 1.25, colour (1, .95, .85) by the state's lightAttribOverride) stands in
+            // as a directional light from the camera's side, above (inferred placement).
+            auto set = os2::Renderer::outdoorLights(*state, true);
+            set.lights.push_back({simd_normalize(simd_make_float3(0.35f, 1.0f, 0.9f)), simd_make_float3(1.0f, 0.95f, 0.85f) * 1.25f * 0.6f});
+            renderer.setLightSets({set, set});
+        }
+    }
+    // Families are saved into the user's neighborhoods (app/user_data.hpp) unless --cas-out says otherwise.
+    std::vector<std::string> casArgs = processArguments();
+    if (gUser && !argument(@"--cas-out")) {
+        casArgs.push_back("--cas-out");
+        casArgs.push_back(gUser->neighborhoodsDir().string());
+    }
+    gCas = std::make_unique<os2::CasMode>(renderer, *gIndex, gameDir(), casArgs);
+    [view setCamera:gCas->makeCamera()];
+    gCamera = view.camera;
+    gCas->setCamera(view.camera);
+    view.clearColor = MTLClearColorMake(0.33, 0.36, 0.45, 1.0);
+    gCas->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                 uint32_t(view.depthStencilPixelFormat));
+    renderer.setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
+        if (gCas)
+            gCas->encode(enc, w, h, gUiScale);
+    });
+    if (auto shot = argument(@"--screenshot")) {
+        const uint32_t w = 1024, h = 768;
+        gCas->setCanvas(int(w), int(h));
+        gCas->runScripted(processArguments());
+        view.camera->setViewport(float(w), float(h));
+        view.camera->snap();
+        gCas->update(0.5);
+        view.camera->snap();
+        for (const auto& line : gCas->report())
+            std::printf("opensims2: %s\n", line.c_str());
+        const os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
+        MTLClearColor c = view.clearColor;
+        gUiScale = 1;
+        const auto img = renderer.capture(w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), 1));
+        os2::writePng(*shot, img);
+        std::printf("opensims2: wrote %s\n", shot->c_str());
+        std::fflush(stdout);
+        std::exit(0);
+    }
+    gCas->runScripted(processArguments());
+    _window.title = [NSString stringWithUTF8String:gCas->title().c_str()];
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)app {

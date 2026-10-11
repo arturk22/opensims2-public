@@ -317,3 +317,28 @@ no person data 0xBA.
   (`MatchHairStyle`, `MatchJewelry`, `GetMatchingHair`, BV `0x55cf50`…).
 - Base 1.0: as tabelas de signo e de regiões não foram conferidas no base
   (sem símbolos), só a existência das strings.
+
+## 11. O que está implementado (rodada 8)
+
+- Catálogo: `src/formats/cas_catalog.*` (`s2pkg cas-catalog`). A flag 0x01 do
+  GZPS esconde a parte do CAS (uniformes de carreira e NPC, alienígena,
+  manequim, cópias de cabelo por categoria); as partes "nu" dos personagens
+  são as `CASIE_<p>topnaked_nude_s<N>`/`bottomnaked`/`hairbald_skin`.
+- Rosto: `src/formats/cas_face.*`. Todas as malhas de rosto são a mesma
+  cabeça (~521 vértices) com grupos e ordem diferentes; os vértices casam
+  pela coordenada de textura. Arquétipo = cabeça absoluta (amArchBase =
+  amFace); modificador = cabeça unissex, direção = modificador − neutro do
+  `compareage`/`comparegender` (afFace); regiões de outro arquétipo
+  misturadas pelas máscaras `faceregion` (cor do vértice = peso, inferido).
+  Sem o formato do LxNR, o rosto é assado direto no GMDC copiado do neutro.
+- Personagem: `src/formats/character_write.*` (`s2pkg cas-make`), no layout
+  do §7 (AGED/3IDR, GZPS de rosto da idade e da próxima, cadeia
+  CRES/SHPE/GMND/GMDC com nomes `#0x7fe09489!0x<id>_age<n>_0_*`, TXMT
+  SimSkin com `caf*`, objeto do TemplatePerson, CTSS). Não grava LxNR nem
+  miniaturas.
+- Genética: `src/vm/genetics.*` (§5); o Make New Character 0x01 usa.
+- Personalidade/signo/aspiração: `src/formats/cas_personality.*` (§6).
+- Família no bairro: `src/vm/family_write.*` (SDSC 0x20, SDNA, FAMI 0x4E com
+  `kDefaultFamilyFunds` 20000, STR# do nome, inventários no NGBH).
+- Telas: `src/app/cas_mode.*` (`--cas`); os painéis ficam presos à âncora
+  que a janela oculta `0xAAAA` de cada um nomeia ("2d050914:bl").
