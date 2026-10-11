@@ -1093,6 +1093,16 @@ void LiveUi::togglePause() {
     dirty_ = true;
 }
 
+bool LiveUi::overModeButton(simd_float2 p) {
+    if (!ok_)
+        return false;
+    layoutIfNeeded();
+    for (const Target& t : targets_)
+        if (t.action == Action::Mode && inside(t.rect, p))
+            return true;
+    return false;
+}
+
 bool LiveUi::press(simd_float2 p, bool right) {
     if (!ok_)
         return false;
@@ -1204,7 +1214,7 @@ bool LiveUi::press(simd_float2 p, bool right) {
             }
             optionsOpen_ = false;
             std::printf("opensims2: live UI: mode button %d%s\n", t.value,
-                        t.value == 0 ? " (live)" : onMode && (t.value == 1) ? " (buy)" : " (inert)");
+                        t.value == 0 ? " (live)" : !onMode ? " (inert)" : t.value == 1 ? " (buy)" : t.value == 2 ? " (build)" : "");
             if (onMode)
                 onMode(t.value);
             break;

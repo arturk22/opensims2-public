@@ -147,6 +147,10 @@ public:
     // button down; returns whether the press was the panel's (then the
     // world below is not picked).
     bool press(simd_float2 p, bool right = false);
+    // Whether p is on one of the puck's mode buttons (Live, Buy, Build, ...).
+    // They stay clickable over Buy and Build mode's panels, whose backdrops
+    // would otherwise take the click.
+    bool overModeButton(simd_float2 p);
     void hover(simd_float2 p);
     // The canvas size clicks are laid out against before the first frame (headless).
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }

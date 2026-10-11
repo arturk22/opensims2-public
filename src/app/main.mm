@@ -1623,6 +1623,8 @@ int cameraSlot(unsigned short key) {
         return;
     if (gPie->isOpen() && gPie->press(p))
         return;
+    if (gLive && gLive->overModeButton(p) && gLive->press(p)) // the puck's modes win over the panels
+        return;
     if (gBuy && gBuy->active() && gBuy->press(p))
         return;
     if (gBuild && gBuild->active() && gBuild->press(p))
@@ -1912,6 +1914,11 @@ int cameraSlot(unsigned short key) {
                 const simd_float2 p = simd_make_float2(clickX, clickY);
                 if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p))
                     continue;
+                if (gLive && !right) {
+                    gLive->setCanvas(int(cw), int(ch));
+                    if (gLive->overModeButton(p) && gLive->press(p))
+                        continue;
+                }
                 if (gBuy && gBuy->active()) {
                     gBuy->setCanvas(int(cw), int(ch));
                     if (gBuy->press(p))
