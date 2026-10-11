@@ -59,8 +59,8 @@ int simAge(const Object& sim) {
 // tables a set bit 4/6 means "not for children/adults" (the teen runaway
 // entry, 0x850, is for teens only).
 bool availableForAge(const Object& sim, const InteractionTable& table, const InteractionTable::Interaction& e) {
-    if (!sim.person)
-        return true;
+    if (!sim.person || sim.person->data[persondata::PersonAge] == 0)
+        return true; // not a Sim, or an age nobody set (stand-ins, tests)
     static constexpr uint32_t kBits[6] = {0x40, 0x10, 0x200, 0x800, 0x400, 0x1000};
     uint32_t flags = uint32_t(e.flags) | uint32_t(e.flags2) << 16;
     if (table.version < 0x52)
