@@ -30,9 +30,9 @@
 // level's tiles along the lot's edge (the lots keep the outdoors as rooms of
 // their own); a
 // light without diffusionSource* overrides diffuses with its own intensity
-// and colour (the model's cDiffusionLightExtension is not read); the
-// lamps' practical lights (which light objects directly in the game) are
-// left out: objects inside get only their room's lights.
+// and colour (the model's cDiffusionLightExtension is not read). The
+// lamps' practical lights light the objects and Sims of their room
+// directly (point lights, docs/lighting-mac.md 6).
 
 #include "formats/lighting_config.hpp"
 #include "formats/lot_lightmap.hpp"

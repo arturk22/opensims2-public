@@ -355,8 +355,26 @@ texel += E(n) · terrainStrength (1) · escala do light map de piso
    amostra do height map de sombra (terreno) ou a altura da sombra acima
    do tile (pisos).
 
-Não há a metade (0,5) nem a subtração do skylight que as luzes de objeto
-de fora usam (§3). Não foi conferido se o parser normaliza a direção das
+A escala do light map de piso (`cLightMapManager` vtable `0x5C`, tipo 1,
+BV `0x6f5350`) é o campo `+0x68`, que o construtor (BV `0x6fa6e0`) põe em
+**0,5** (o de parede, tipo 0, `+0x6C`, também 0,5); `+0x1a8` do gerenciador
+de luz multiplica junto (`terrainStrength`, inferido pelo nome lido no
+`UpdateFromConfigFile`). Então `texel += E(n) · terrainStrength · 0,5`: com
+o `2·textura·light map` do shader, a luz direta chega à tela como
+`textura · E`. Não há a subtração do skylight que as luzes de objeto de
+fora usam (§3).
+
+A difusão é copiada sem escala (`CopyDiffusionToLightMaps` passa a mesma
+escala 0,5, e `FUN_00ee9120` multiplica por `2·escala` antes do
+`PackToARGB32`, que leva [0, 1] a [0, 255]), mas, com a flag `+0x40` da
+grade ligada, as amostras de fora (`+0x1A`) **perdem o ambiente de fora**
+antes da interpolação (`FUN_00ee9874`, `FUN_01808a08` = subtração de
+`outsideDiffusionAmbientColor · outsideFloorAmbient`; amostra inexistente
+vale o ambiente de fora ou de dentro). É o que o comentário do
+`Lighting.txt` diz ("If auto-lighting is active, this has no absolute
+effect, but it does factor into how quickly lights fall off"): o 0,25 só
+molda a queda das poças. Inferido: a flag `+0x40` ligada no térreo (não se
+achou quem a escreve). Não foi conferido se o parser normaliza a direção das
 `light` (com `sun (1,5, 1,2, 2)` sem normalizar, Σw passaria de 1 de dia).
 
 **Quem é "fora"**: no binário, os tiles da sala 0 (`AddDirectFloorLighting`
@@ -391,6 +409,19 @@ cor do portal (+0x30) = direta·f_direta + spill·f_spill
 Essa cor alimenta a "LM_PortalDirect"/"LM_PortalSpill" (§4.1), a fonte de
 difusão do portal e o rateio de `I[0..3]` (× `roomPortalStrength`).
 
+Lido no BV (`SetAndAddPortalLights` → `FindPortalLightValues(gerenciador,
+sala, portal, ...)`): os portais ficam na lista de cada cômodo (`+0x7C` do
+`cRoomLightingDesc`), e "lado 0" é **a sala dona da lista** (`param_2 == 0`)
+com o outro lado (`+8`) ≠ 0: a luz de fora entrando num cômodo. Os
+modificadores escolhem-se pelo **outro lado**: ≠ 0 → `insidePortals(Spills)`,
+0 → `outsidePortals(Spills)` (à noite 4 4: a luz de um cômodo saindo pela
+janela faz poça no gramado). As luzes vão para o grupo da sala do outro
+lado; a prática "LM_PortalDirect" tem intensidade `jitter · intensidade da
+luz · practical · f_direta` e cor `cor da luz ⊙ direta`; a fonte de difusão
+tem cor `cor da fonte ⊙ direta · diffusion · f_direta` e queda × *diffusion
+falloff*, e outra igual para o spill com os modificadores `*Spills`. Cada
+janela/porta tem uma luz por lado no modelo (`..._n_light`/`..._s_light`).
+
 ## 6. Luzes de objeto: `FalloffRate`, alcance e cone (binário)
 
 `cStandardLightBase`: cor (`+0x50`), `DiffuseScale` (`+0x48`),
@@ -413,15 +444,16 @@ Change Light (`docs/primitives-mac.md`) muda a intensidade em % do nível
 de cada luz do modelo; o renderizador faz o fade em
 `objectLightTransitionTime`.
 
-## 7. O que o código atual faz diferente (main `194c21e`: `src/formats/lot_lightmap.cpp`, `src/app/lot_lighting.cpp`)
+## 7. O que o código atual faz diferente (branch `r6-lighting`: `src/formats/lot_lightmap.cpp`, `src/app/lot_lighting.cpp`)
 
 | tema | jogo | `src/` hoje |
 |---|---|---|
-| terreno e pisos fora | difusão de fora (0,25 + lâmpadas de fora com `outsideObjects` *diffusion*) **mais** `E(n)` = (1 − Σw)·skylight + Σw·cor (sun, sky, fill1, fill2) × `terrainStrength`, sombra do sol no alfa (§5.3) | metade da luz de fora pela normal (skylight + luzes − skylight), sem a difusão das lâmpadas de fora: à noite o terreno fica claro e uniforme |
-| quem é "fora" | sala 0 do mundo (§5.3) | salas em que metade dos quartos de tile não tem piso |
-| portais | sol × max(0, sol·dir) + skylight + light map de fora, por `portalSaturation` (§5.4) | cor = skylight × 2 |
-| irradiância do cômodo | piso e paredes × cor do material dessaturada por `roomSaturation` (§4.1) | piso/teto e paredes sem a cor do material |
-| lâmpadas nos objetos | luz prática direta (`insideObjects` *practical*) além da luz do cômodo (inferido) | só pela luz do cômodo |
+| terreno e pisos fora | difusão de fora (0,25 + lâmpadas de fora com `outsideObjects` *diffusion*) menos o ambiente de fora, **mais** `E(n)·terrainStrength·0,5` (sun, sky, fill1, fill2), sombra do sol no alfa (§5.3) | igual (direções normalizadas, inferido); `n` = gradiente das elevações no térreo sem piso, (0,0,1) nos pisos; sem a sombra do sol (alfa 255); luz de fora acima de um andar sem piso cai para o de baixo (inferido) |
+| quem é "fora" | sala 0 do mundo (§5.3) | sala 0 ou sala em que metade dos quartos de tile não tem piso (inferido: os pátios do `3ARY`) |
+| portais | por sentido: de fora para um cômodo `sol·max(0, sol·fora) + skylight + L` (+ spill 0,5·L), de um cômodo `L`; modificadores pelo outro lado (§5.4) | igual; a parede do portal é a amostra vizinha mais próxima que a luz não atravessa, `L` = light map do lado de onde vem depois da difusão das lâmpadas; sem a supressão entre janelas nem as práticas das janelas |
+| irradiância do cômodo | piso e paredes × cor do material dessaturada por `roomSaturation` (§4.1) | igual: cor média da textura (`stdMatBaseTextureName`) do piso de cada quarto de tile e do papel de cada face |
+| lâmpadas nos objetos | luz prática direta (`insideObjects`/`outsideObjects` *practical*) além da luz do cômodo (inferido) | `LightSet::points`: até 12 por sala (as mais fortes), `I/(1 + C·d²)` até o alcance de §6, por pixel |
+| hora → estado | `UpdateLightingState` a cada hora (§2) | pelo relógio da VM, também durante os ticks das capturas `--run-vm` |
 | difusão, `I[k]`, Delta, `unlitRoomColor` | §4–§5 | segue o doc |
 
 ## 8. O que falta
