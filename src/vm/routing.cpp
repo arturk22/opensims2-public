@@ -995,10 +995,11 @@ void callRouteTree(Context& c, ObjectId owner, uint16_t tree, ObjectId stackObje
     f.routeCallback = true;
 }
 
-// While walking, now and then (docs/routing-mac.md §6, DoWalking BV
-// 0x576acc): the target's goal check tree (OBJf entry 0x27, "goal check"
-// of STR# 0xC9; TriggerGoalCheckTree BV 0x575e34), on the walker's thread
-// with the target as the stack object and the parameters 0 the routing
+// While walking, at each tile crossed (docs/routing-mac.md §6 and §8.3,
+// DoWalking BV 0x576acc): the goal check tree (OBJf entry 0x27, "goal
+// check" of STR# 0xC9; TriggerGoalCheckTree BV 0x575e34) of the object
+// whose code called the Go To, on the walker's thread with that frame's
+// stack object and the parameters 0 the routing
 // slot (WorkOutSlotIndex), 1 which of the slot's places (the goal's +0x14:
 // 0 here), 2 the goal's object (0 for a standing goal) and 3 the distance
 // left in hundredths of a tile; its false fails the route with 13 "goal
@@ -1011,14 +1012,18 @@ void callRouteTree(Context& c, ObjectId owner, uint16_t tree, ObjectId stackObje
 // left in hundredths; its false fails the route with 16 "interrupted by
 // callback" (DoWaitingForAlongRouteTree).
 bool startGoalCheck(Context& c, Object& me, Object::Route& r) {
-    const Object* target = c.vm.object(r.target);
-    if (!me.person || !target || r.goals.empty())
+    // The goal check of the object whose code called the Go To (its frame's
+    // code owner; docs/routing-mac.md §8.3), with that frame's stack object
+    // (the route's target when it has none).
+    const Object* owner = c.vm.object(c.frame.codeOwner);
+    if (!me.person || !owner || !c.vm.object(r.target) || r.goals.empty())
         return false;
-    const uint16_t tree = c.vm.functionTree(*target, 0x27);
+    const uint16_t tree = c.vm.functionTree(*owner, 0x27);
     if (!tree)
         return false;
+    const ObjectId stack = c.vm.object(c.frame.stackObject) ? c.frame.stackObject : r.target;
     const std::array<int16_t, 4> params{me.person->data[37], 0, 0, hundredths(remainingLength(me, r))};
-    callRouteTree(c, target->id, tree, target->id, params);
+    callRouteTree(c, owner->id, tree, stack, params);
     r.check = 1;
     return true;
 }
@@ -1036,11 +1041,9 @@ bool startAlongRoute(Context& c, Object& me, Object::Route& r) {
     return true;
 }
 
-// How often the walk checks (inferred: the binary checks when the walker
-// reaches a new section of its path or its tile changes, DoAlongRouteCheckTest,
-// gated by a timer at GRS_State +0x20 that is not decoded; here at a new
-// path point, at most every 15 ticks).
-constexpr uint64_t kCheckTicks = 15;
+// The walk checks at each tile crossed (DoAlongRouteCheckTest); the
+// binary also gates the callbacks by a timer (GRS_State +0x20) not decoded
+// here.
 
 // Runs a global tree (by name) on the walker's thread in the middle of the
 // walk: the instruction runs again when it returns.
@@ -1196,7 +1199,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     }
     r.waiting = false;
     float budget = walkTilesPerTick(vm, me);
-    bool section = false; // a path point was reached
+    const TilePos tileBefore = VM::tileOf(me);
     while (budget > 0 && !r.points.empty()) {
         const Object::Route::Point& p = r.points.front();
         if (p.portal)
@@ -1226,14 +1229,13 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             moveTo(vm, me, p.x, p.y, p.level);
             budget -= d;
             r.points.erase(r.points.begin());
-            section = true;
         } else {
             moveTo(vm, me, me.position.x + dx / d * budget, me.position.y + dy / d * budget, p.level);
             budget = 0;
         }
     }
     if (!r.points.empty()) {
-        if (section && vm.ticks >= r.lastCheck + kCheckTicks) {
+        if (!(VM::tileOf(me) == tileBefore)) {
             r.lastCheck = vm.ticks;
             if (startGoalCheck(c, me, r) || startAlongRoute(c, me, r))
                 return Step::Call;
