@@ -17,8 +17,10 @@ Resumo para o renderer:
 2. As luzes do estado (`sun`, `sky`, `fill1`, `fill2`, `simFill1..3` +
    `skylight`) **só iluminam o que está fora de casa** (sala 0). Objetos e
    Sims dentro de uma sala recebem as **luzes da sala**: um ambiente + N
-   direcionais "Delta" calculadas da irradiância da sala em 6 direções (§4).
-   Paredes, pisos e terreno não usam luzes: usam os light maps (§5).
+   direcionais "Delta" calculadas da irradiância da sala em 6 direções (§4),
+   que sai dos light maps (§4.1), não direto das lâmpadas.
+   Paredes, pisos e terreno não usam luzes: usam os light maps (§5), uma
+   difusão em grade de meio tile que divide a luz por `1 + k` a cada passo.
 3. Cada luz tem uma máscara de grupo: as `simFill*` só iluminam Sims; com
    alguma `simFill` presente, `fill1`/`fill2` deixam de iluminar Sims (§3).
 4. Na versão "WithAmbient" a cor de cada direcional é **subtraída** da cor
@@ -168,58 +170,196 @@ repetir N vezes:
    (k = 0 e CrossBias > 0: ajusta o par oposto)
 ```
 
-A tabela das 6 direções é montada num inicializador estático (`0x20e6a90`,
-não decodificado). Todas essas luzes recebem o ID da sala
+**Tabela das 6 direções** (binário: `DAT_02c1bf2c`, preenchida no
+inicializador estático `FUN_020e6a90` com os vetores unitários e o negador
+`FUN_0017267c`): `0 = +X`, `1 = −X`, `2 = +Y`, `3 = −Y`, `4 = +Z`, `5 = −Z`.
+`V` = `(0, 0, 1)` (`DAT_02c1c874`). O vetor é a direção **em que a luz
+viaja** (mesma convenção das luzes de fora, que usam −direção do arquivo):
+`I[0]` é a luz que anda para +X (vem das paredes do lado −X), e a Delta
+dos lados aponta `tabela[d] − SideSlope·(0,0,1)`, isto é, para o lado e
+para baixo. `I[4]` (+Z) é a luz que sobe do piso, `I[5]` (−Z) a que desce
+do teto (§4.1). Todas essas luzes recebem o ID da sala
 (`SetRenderGroupIDAndCompareMode`): **só objetos daquela sala as recebem**.
 
-De onde vem `I`: `GatherRoomLighting`/`AddLightsToRoom*` somam as luzes de
-objeto da sala (lâmpadas, com o nível do Change Light), as janelas
-(`modifiers insidePortals`/`insidePortalSpills`: luz de fora entrando,
-"LM_PortalDirect", "LM_PortalSpill") e `unlitRoomColor` quando a sala fica
-abaixo do `-threshold`. **Não decompilado** (BV `FUN_0070ae3c`,
-`FUN_007149fc` e vizinhos).
+### 4.1 De onde vem `I`: o light map, não as lâmpadas (binário)
 
-## 5. Light maps de parede, piso e terreno (nomes + texto)
+`GatherRoomLighting` (BV `FUN_007147c8`) **não soma as lâmpadas**: lê a
+luz já difundida nos light maps (§5) de cada cômodo e as janelas. Cada
+cômodo tem um `cRoomLightingDesc` (vetor em `+0x1AC` do gerenciador):
+`I[6]` (cores, `+0x00`), pesos `w[6]` (`+0x48`), contadores em `+0x60..`,
+e a lista de luzes de portal (`+0x7C`).
 
-`cLightMapManager` mantém as texturas `floorLightMap_<página>` (512²,
-`floorTextureSize`), `wallLightMap_<página>` (256², tiles de parede 8×24
-texels: `wallTileSizeX/Y`), e os mapas de incidência (`*IncidenceMap_*`,
-direção da luz para o bump). A página 0 de piso cobre o lote (o terreno
-usa UV = posição/64). `cDiffusionManager` propaga a luz numa grade por
-cômodo (`floorPropagationSteps`/`wallPropagationSteps` 50), com fontes das
-luzes de objeto (`diffusionSourceIntensity`, `...WallIntensityScale`,
-`...FloorIntensityScale`, `...IsDirectional`, `...Falloff`), das janelas e
-do ambiente de fora (`outsideFloorAmbient`/`outsideWallAmbient` 0,25,
-`outsideDiffusionAmbientColor`) e de dentro (`diffParam
-insideAmbientColor/insideFloorAmbient/insideWallAmbient`, limiares
-`floorThreshold`/`wallThreshold`). `LerpLightMaps` interpola na troca de
-estado. O algoritmo da difusão não foi decompilado.
+```
+para cada cômodo: I[k] = 0, w[k] = 0
+GatherFloorLighting (FUN_00714258), cada quarto de tile do cômodo:
+   c   = difusão do piso naquele ponto (light map, §5)
+   alb = Mix(branco, cor do piso, roomSaturation)        (roomSaturation 0,5)
+   I[4] += 0,25·c ⊙ alb ;  w[4] += 1                      (luz que sobe do piso)
+   I[5] += 0,25·c · roomCeilingStrength ;  w[5] += 1      (teto, 1)
+GatherWallLighting (FUN_00713ca0), cada lado de parede do cômodo:
+   c   = difusão da parede (light map) · 0,5
+   alb = Mix(branco, cor do papel de parede, roomSaturation)
+   n   = normal do lado (dy, −dx)/|…| (aponta para dentro do cômodo)
+   n.x > 0: I[0] += n.x·c⊙alb, w[0] += n.x ;  n.x < 0: I[1] += |n.x|·c⊙alb, w[1] += |n.x|
+   n.y > 0: I[2] += …,          w[2] += n.y ;  n.y < 0: I[3] += …,           w[3] += |n.y|
+FUN_0070010c, cada luz de portal (janela/porta) do cômodo:
+   cor = cor do portal · roomPortalStrength (0,75); (dx, dy) = direção do portal
+   mesmo rateio por sinal em I[0..3]/w[0..3] no cômodo de destino
+depois: I[k] /= w[k] onde w[k] ≠ 0     (média ponderada)
+```
 
-## 6. Luzes de objeto e Change Light
+A cor do piso/papel é a cor média da textura do material (consulta por
+nome, `FUN_000c82f8` → vtable `0xC`). Daí `AddRoomLights` (§4) monta o
+ambiente e as Delta. Conferido em BV; no 1.0 só se conferiu que os mesmos
+nomes de configuração existem.
 
-`cStandardLightBase` (binário, nomes): cor, `DiffuseScale`,
-`RelSpecularScale`, `FalloffRate`, `Range` (calculado por `ComputeRange`),
-`ConeAngle`, `ConePenumbra`. No vertex shader (ver `docs/shaders-mac.md`
-§4.2) a atenuação é `1/(1 + C·d²)` com corte em `d² ≤ alcance²`; `C` sai
-de `FalloffRate` e o alcance do `lightRangeCutoff` 0,275 (inferido:
-alcance onde a atenuação cai a 0,275). Change Light
-(`docs/primitives-mac.md`) muda a intensidade em % do nível de cada luz do
-modelo; o renderizador faz o fade em `objectLightTransitionTime`.
+As lâmpadas entram na luz dos objetos por dois caminhos: como **luzes
+práticas** (a `cPointLight`/`cSpotLight` do modelo, que ilumina objetos e
+Sims diretamente, com `modifiers insideObjects` *practical* na intensidade
+e *practical falloff* no `FalloffRate`; inferido pelo comentário do
+`Lighting.txt` e pela estrutura de `FUN_0070ae3c`, que faz o mesmo com as
+janelas) e como **fontes de difusão** (escala *diffusion* e queda
+*diffusion falloff*, §5), que chegam a `I` pelo light map.
 
-## 7. O que o código atual faz diferente
+Janelas e portas (`SetAndAddPortalLights`, BV `FUN_0070ae3c`): para cada
+portal, `FindPortalLightValues` (`FUN_0070a884`) dá cor e as quatro forças
+do `modifiers insidePortals/insidePortalSpills/outside*`; a luz prática é
+uma spot "LM_PortalDirect" com intensidade `jitter · intensidade ·
+practical · supressão` e queda `falloff · practicalFalloff`, mais a
+"LM_PortalSpill"; e o portal vira fonte de difusão com cor × *diffusion* e
+queda × *diffusion falloff*. A supressão vem de `FindPortalSuppression`
+quando `portalSuppressionAmount > 0` (fórmula do comentário do
+`Lighting.txt`: `1 − (1 − r/R)·f`; não conferida). `portalLightJitter` 0
+→ fator 1.
+
+## 5. Light maps de parede, piso e terreno: a difusão (binário)
+
+`cLightMapManager` mantém as texturas `floorLightMap_<página>`
+(`floorTextureSize` 512), `wallLightMap_<página>` (tiles de parede 8×24
+texels: `wallTileSizeX/Y`) e os mapas de incidência. **Página 0 do piso =
+o lote**: texels por tile = `tamanho >> 6` (8 com 512, a página cobre 64
+tiles); o tile (x, y) ocupa `u ∈ [8x, 8x+8)`, `v ∈ [512 − 8y − 8, 512 − 8y)`
+(V invertido) (`FloorTileLightMapTexels`, BV `0x6f65f8`). As outras
+páginas (andares de cima) guardam tiles soltos numa tabela.
+
+`cDiffusionManager` (BV `0xd7cad4..0xd7fdc0`) calcula a luz por **grades
+de difusão**: uma `cFloorColorGrid` por andar e o `cWallDiffusionManager`
+para as paredes. A cada atualização, `DoDiffusionPass` (BV `0xd7dd80`):
+limpa cada grade, semeia as luzes, propaga, copia para os light maps, e
+depois faz o mesmo nas paredes.
+
+### 5.1 A grade do piso
+
+Amostras em **meio tile** (grade `2·largura × 2·altura` do lote); cada
+amostra tem duas metades (os dois triângulos de um tile cortado na
+diagonal, `+0x00` e `+0x24`), cada uma com cor RGB, ID da sala (`+0x20`),
+"existe" (`+0x1B`), "de fora" (`+0x1A`) e os bits de vizinhança (`+0x18`:
+para quais das 8 direções a luz passa, isto é, sem parede no caminho;
+`+0x19`: qual metade do vizinho).
+
+1. **Limpa** (`FUN_00eeb8a4`): dentro = `insideAmbientColor ·
+   insideFloorAmbient`; fora = `outsideDiffusionAmbientColor ·
+   outsideFloorAmbient` (do estado: `diffParam`; dia 0,001 dentro, 0,25
+   fora).
+2. **Fontes** (`cDiffusionLightSource`, montada de cada luz de objeto com
+   `cDiffusionLightExtension`, `FUN_00d82498`): cor = `diffusionSourceIntensity
+   · diffusionSourceColor`; `diffusionSourceFalloff` (`+0x38`),
+   `...DirectionalFalloff`, `...WallIntensityScale` (`+0x3C`),
+   `...FloorIntensityScale` (`+0x40`), `...InterFloorFalloff` (`+0x44`),
+   `...IsDirectional`; retângulo `diffusionSourceMin/Max` (em tiles,
+   relativo à luz) girado pela direção do objeto e somado à posição
+   (`FUN_00d82334`); sala = a do ponto um pouco à frente do objeto. Esses
+   valores vêm da extensão da luz no modelo e dos `lightAttribOverride` de
+   `objects/*.txt` e `windows/windows.txt`.
+3. **Semeia e propaga** (`FUN_00eeccc0`, por grade): pega as fontes do
+   andar da grade ou acima, que tocam uma amostra da sua sala
+   (`FUN_00eeba10`), **ordena pela queda** (`+0x38`, decrescente) e trata
+   juntas as de queda igual (|Δ| < 0,01):
+   - semente (`FUN_00eebdec`): em cada amostra do retângulo **da mesma
+     sala**, `cor = max(cor, corFonte · FloorIntensityScale)` por canal;
+     fonte em andar acima: × `(1 − InterFloorFalloff)` por andar, e só se
+     o piso deixa passar;
+   - propagação (`FUN_00eec3a4`), até `floorPropagationSteps` (50)
+     passadas ou até nada mudar: cada passada varre o retângulo ativo nos
+     4 sentidos, e cada amostra puxa das vizinhas que mudaram na passada
+     anterior, pelas 8 direções (`d`: 0 (0,−1), 1 (−1,−1), 2 (−1,0),
+     3 (−1,1), 4 (0,1), 5 (1,1), 6 (1,0), 7 (1,−1); `DAT_02747cb8`):
+
+```
+k = falloff_da_fonte · floorThreshold          (diffParam floorThreshold: dia 0,4, noite 0,2)
+diagonal (d ímpar): k ·= 1,4
+por canal:  se (viz − cor) > k·cor:  cor = viz / (1 + k) + 0,01   (FUN_00ee7c6c)
+```
+
+   Ou seja: cada passo de meio tile divide a luz por `1 + k` e a luz não
+   atravessa paredes (só segue os bits de vizinhança).
+4. **Cômodos escuros** (`BrightenRoom`, BV `0xd7d028`): soma
+   `0,5 · unlitRoomColor` em todas as amostras (piso e paredes) do cômodo.
+   Quem decide quais cômodos (`FindUnlitRooms`/`BrightenUnlitRooms`, com
+   o `-threshold`) não foi decompilado.
+5. **Cópia** (`FUN_00eea560` → `FUN_00ee9874`/`FUN_00ee95d0`): por tile,
+   as 4 amostras dos cantos (amostra vazia = o ambiente de dentro/fora)
+   viram os texels do tile por interpolação; metade diagonal à parte.
+
+### 5.2 Paredes
+
+`cWallDiffusionManager` (BV `0xee6000..0xef5000`, sem nomes): mesmos
+parâmetros com prefixo de parede (`insideWallAmbient`, `outsideWallAmbient`,
+`wallThreshold`, `wallPropagationSteps`). Ordem em `DoDiffusionPass`:
+limpa cada parede (`FUN_00eee87c`, ambiente por parede); semeia as fontes
+da mesma sala com `WallIntensityScale` e `k = wallThreshold · falloff`,
+atenuada por andar como no piso (`FUN_00ef28ac` → `FUN_00ef2594`, a
+`AddDirectLight`); traz o piso para a parede (`FillWallsFromFloors`,
+`FUN_00ef0e68`: `brightWallFloorContribution` 1 para paredes com luz
+direta, `darkWallFloorContribution` 0,5 para as outras); propaga; escurece
+cantos junto de paredes escuras (com uma opção global); copia para as
+páginas de parede. A fórmula da propagação na parede não foi lida (deve
+ser a mesma do piso; não conferido).
+
+## 6. Luzes de objeto: `FalloffRate`, alcance e cone (binário)
+
+`cStandardLightBase`: cor (`+0x50`), `DiffuseScale` (`+0x48`),
+`FalloffRate` (`+0x60`), alcance (`+0x64`), cone (`+0x68`/`+0x6C`).
+**`FalloffRate` é a própria constante `C`** da atenuação
+`I / (1 + C·d²)`; o alcance é onde ela chega ao corte
+(`cPointLight::OnLightRadiantPropertiesChanged`, BV `0xca0e48`; spot em
+`0xca0ab8`):
+
+```
+I = |DiffuseScale · cor|            (norma do vetor RGB)
+c = lightRadianceRangeCutoff = lightRangeCutoff do Lighting.txt (0,275; sem ele 0,5)
+I/c ≤ 1 → alcance 0 ;  C ≤ 0 → alcance 10000
+senão     alcance = sqrt((I/c − 1) / C)
+spot: ângulo e penumbra em radianos, valor absoluto, a soma presa num
+      máximo; cos externo = cos((ângulo + penumbra)/2), interno = cos(ângulo/2)
+```
+
+Change Light (`docs/primitives-mac.md`) muda a intensidade em % do nível
+de cada luz do modelo; o renderizador faz o fade em
+`objectLightTransitionTime`.
+
+## 7. O que o código atual faz diferente (`src/app/lot_lighting.cpp`)
 
 | tema | jogo | `src/` hoje |
 |---|---|---|
-| hora → estado | `day` 7–18 h, `night` 19–6 h | estado fixo escolhido em `main.mm` |
-| luzes de fora | só sala 0; cor − skylight; `simFill*` só Sims | todas as luzes do estado em todos os objetos, sem subtrair o skylight; `objectLights()` tira as `simFill*` de todos |
-| dentro de casa | ambiente + 4 "Delta" da irradiância da sala, por grupo (Sims 0,8, objetos 0,5) | as mesmas luzes de fora |
-| paredes/pisos/terreno | light maps | luzes diretas |
-| lâmpadas | entram na irradiância da sala e nos light maps | não iluminam |
+| irradiância do cômodo | média ponderada do light map (piso → `I[4]`, teto → `I[5]`, paredes e portais pela normal → `I[0..3]`), com a cor do material dessaturada (§4.1) | soma de cada lâmpada do cômodo com `1/(1 + C r²)` a partir do centro, rateada pela direção lâmpada − centro |
+| sentido de `I[k]` | direção em que a luz anda (`I[0]` vem do lado −X) | direção de onde vem (`irr[0]` = lâmpada no lado +X); as Delta saem coerentes porque a direção também é invertida, mas `I[4]`/`I[5]` trocam de papel (jogo: 4 = do piso para cima) |
+| alcance | `sqrt((I/c − 1)/C)` com `I = |DiffuseScale·cor|` | `sqrt((1/c − 1)/C)` (I = 1) |
+| `C` | `FalloffRate` direto (× `practicalFalloff` do modificador, inferido) | igual |
+| paredes/pisos/terreno | light maps da difusão (§5) | luzes diretas |
+| cômodo escuro | `+0,5·unlitRoomColor` nas amostras da difusão | `max(ambiente, unlitRoomColor)` |
 
 ## 8. O que falta
 
-- `GatherRoomLighting` (de onde vem a irradiância de 6 direções), as luzes
-  de janela, `BrightenUnlitRooms`, e a difusão dos light maps.
-- A tabela de direções do §4 e o vetor `V`.
-- A conversão `FalloffRate` → constante de atenuação e o alcance.
+- Quem escolhe os cômodos escuros (`FindUnlitRooms`, `BrightenUnlitRooms`)
+  e o `thresholdLightsByArea`.
+- A propagação nas paredes e a escrita dos texels de parede; a cópia
+  exata das amostras do piso para os texels (interpolação).
+- Os valores padrão da `cDiffusionLightExtension` (quando o modelo e os
+  `lightAttribOverride` não dão um campo) e o leitor dela no CRES.
+- A cor e a direção das luzes de portal (`FindPortalLightValues`), a
+  supressão entre janelas, o `portalSaturation`.
+- Luzes práticas: confirmar no binário que `modifiers insideObjects`
+  multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
 - O comando `skylight` (se guarda cor × força).
+- Terreno (`LightTerrainTile*`, sombra por height map).
