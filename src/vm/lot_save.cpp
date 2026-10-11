@@ -420,6 +420,30 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
         if (a.globals[i] != b.globals[i])
             diff("global " + std::to_string(i) + " " + std::to_string(a.globals[i]) + " vs " +
                  std::to_string(b.globals[i]));
+    // The lot's relationships (one side at least a lot object; Sim-to-Sim
+    // ones are the neighborhood's).
+    auto lotRelationships = [&](VM& m) {
+        std::map<std::pair<VM::RelationshipKey, VM::RelationshipKey>, std::vector<int16_t>> r;
+        for (const auto& [k, v] : m.relationships)
+            if (!(k.first.neighbor && k.second.neighbor) && !trimmed(v).empty())
+                r[k] = trimmed(v);
+        return r;
+    };
+    {
+        const auto ra = lotRelationships(a), rb = lotRelationships(b);
+        for (const auto& [k, v] : ra) {
+            auto it = rb.find(k);
+            if (it == rb.end() || it->second != v)
+                diff("relationship " + std::to_string(k.first.id) + (k.first.neighbor ? "n" : "") + " -> " +
+                     std::to_string(k.second.id) + (k.second.neighbor ? "n" : "") + ": " + join(v) + " vs " +
+                     (it == rb.end() ? std::string("none") : join(it->second)));
+        }
+        for (const auto& [k, v] : rb)
+            if (!ra.count(k))
+                diff("relationship " + std::to_string(k.first.id) + (k.first.neighbor ? "n" : "") + " -> " +
+                     std::to_string(k.second.id) + (k.second.neighbor ? "n" : "") + ": " + join(v) +
+                     " only in the second");
+    }
     if (a.clock.hour != b.clock.hour || a.clock.minute != b.clock.minute || a.clock.day != b.clock.day ||
         a.clock.month != b.clock.month || a.clock.year != b.clock.year)
         diff("clock");

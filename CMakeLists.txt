@@ -75,6 +75,7 @@ add_library(os2_vm
   src/vm/autonomy.cpp
   src/vm/lot.cpp
   src/vm/lot_neighborhood.cpp
+  src/vm/lot_records.cpp
   src/vm/lot_resume.cpp
   src/vm/lot_save.cpp
   src/vm/measure.cpp

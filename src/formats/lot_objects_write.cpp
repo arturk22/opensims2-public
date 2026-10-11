@@ -9,7 +9,9 @@
 #include "binwriter.hpp"
 #include "dbpf.hpp"
 
+#include <algorithm>
 #include <map>
+#include <tuple>
 
 namespace os2 {
 
@@ -333,10 +335,22 @@ void LotObjects::save(DbpfPackage& source, const std::filesystem::path& out) con
     std::map<std::pair<uint32_t, uint32_t>, const DbpfEntry*> states;
     DbpfWriter w;
     auto add = [&](const DbpfEntry& e, std::vector<uint8_t> bytes) { w.add(e.tgi, std::move(bytes), e.compressed()); };
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, const Record*> others;
+    for (const auto& r : otherRecords)
+        others[{r.type, r.group, r.instance}] = &r;
     for (const auto& e : source.entries()) {
         const uint32_t t = e.tgi.type;
         if (t == type::DIR)
             continue;
+        if (std::any_of(deletedRecords.begin(), deletedRecords.end(), [&](const Record& r) {
+                return r.type == t && r.group == e.tgi.group && r.instance == e.tgi.instance;
+            }))
+            continue;
+        if (auto it = others.find({t, e.tgi.group, e.tgi.instance}); it != others.end()) {
+            add(e, it->second->bytes);
+            others.erase(it);
+            continue;
+        }
         if (t == kTypeObjectState || t == kTypeMultiTileState || t == kTypePersonState) {
             states[{t, e.tgi.instance & 0xFFFF}] = &e;
             continue; // written below, orphans dropped
@@ -363,6 +377,8 @@ void LotObjects::save(DbpfPackage& source, const std::filesystem::path& out) con
         }
         w.add(tgi, writeState(s, version), compress);
     }
+    for (const auto& [key, r] : others)
+        w.add(Tgi{r->type, r->group, r->instance, 0}, r->bytes, true);
     source.closeFile();
     w.save(out);
 }

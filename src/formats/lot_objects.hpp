@@ -267,6 +267,14 @@ struct LotObjects {
         std::vector<int32_t> values;
     };
     std::vector<Relationship> relationships;
+    // Other records a save writes over the source's (same key) or adds:
+    // scene graph objects, routing states, relationships (vm/lot_records.hpp).
+    struct Record {
+        uint32_t type = 0, group = 0, instance = 0;
+        std::vector<uint8_t> bytes;
+    };
+    std::vector<Record> otherRecords;
+    std::vector<Record> deletedRecords; // keys the save leaves out
     // States no ObjM pair names (stale records), by resource type.
     std::map<uint32_t, size_t> orphans;
     std::vector<std::string> warnings;

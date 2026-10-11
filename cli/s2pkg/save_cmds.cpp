@@ -13,7 +13,9 @@
 #include "vm/lot_resume.hpp"
 #include "vm/lot_save.hpp"
 #include "vm/save_types.hpp"
+#include "vm/lot_records.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <map>
@@ -109,13 +111,30 @@ int cmdLotSave(const std::vector<std::string>& args) {
             for (auto& [g, t] : LotObjects::loadSaveTypes(other))
                 more.emplace(g, std::move(t));
         }
-    const vm::CaptureResult captured = vm::captureLot(*a.vm, a.saved, &more);
+    vm::CaptureResult captured = vm::captureLot(*a.vm, a.saved, &more);
     for (const auto& w : captured.warnings)
         std::printf("  warning: %s\n", w.c_str());
+    vm::RecordsResult records;
     {
         DbpfPackage pkg(src);
+        const Lot world = Lot::load(pkg);
+        // cObjects for created objects are copied from the other lots.
+        std::vector<fs::path> others;
+        for (const auto& d : fs::directory_iterator(res / "UserData" / "Neighborhoods"))
+            if (fs::is_directory(d.path() / "Lots"))
+                for (const auto& f : fs::directory_iterator(d.path() / "Lots"))
+                    if (f.path().extension() == ".package" && !fs::equivalent(f.path(), src))
+                        others.push_back(f.path());
+        std::sort(others.begin(), others.end());
+        records = vm::captureLotRecords(*a.vm, world, pkg, a.saved, captured.lot, others);
+        for (const auto& w : records.warnings)
+            std::printf("  warning: %s\n", w.c_str());
         captured.lot.save(pkg, dst);
     }
+    std::printf("  records: %zu cObjects moved, %zu new; %zu routing states; %zu relationships changed, %zu new, "
+                "%zu gone\n",
+                records.sceneMoved, records.sceneNew, records.routing, records.relationshipsChanged,
+                records.relationshipsNew, records.relationshipsGone);
     std::printf("%s: %zu objects saved after %ld ticks (%zu updated, %zu added, %zu gone, %zu kept as read; %zu new "
                 "objt records) to %s\n",
                 src.filename().string().c_str(), captured.lot.objects.size(), ticks, captured.updated, captured.added,
