@@ -163,6 +163,25 @@ int cmdAnimList(const char* res, const std::string& filter) {
     return 0;
 }
 
+// One line per ANIM event (name, duration, locomotion distance/velocity,
+// event tick, type and data with newlines as '|'), for sweeps that relate the
+// tick to sounds and other timed data.
+int cmdAnimEvents(const char* res, const std::string& filter) {
+    ResourceIndex index(res);
+    for (const auto& loc : index.ofType(kTypeAnim)) {
+        const Animation a = parseAnim(index.read(loc));
+        if (a.resource.fileName.find(filter) == std::string::npos)
+            continue;
+        for (const auto& e : a.events) {
+            std::string data = e.data;
+            std::replace(data.begin(), data.end(), '\n', '|');
+            std::printf("%s\t%u\t%g\t%g\t%u\t%d\t%s\n", a.resource.fileName.c_str(), a.duration,
+                        a.locomotionDistance, a.velocity, e.ticks, e.type, data.c_str());
+        }
+    }
+    return 0;
+}
+
 // Catalog Sim parts (GZPS + 3IDR) whose name contains `filter`.
 int cmdSimParts(const char* res, const std::string& filter, bool resolve) {
     ResourceIndex index(res);
@@ -247,6 +266,8 @@ int animCommand(const std::string& cmd, int argc, char** argv) {
         return cmdAnimList(argv[2], argc == 4 ? argv[3] : "");
     if (cmd == "sim-parts" && argc >= 3 && argc <= 5)
         return cmdSimParts(argv[2], argc >= 4 ? argv[3] : "", argc == 5 && std::string(argv[4]) == "--resolve");
+    if (cmd == "anim-events" && (argc == 3 || argc == 4))
+        return cmdAnimEvents(argv[2], argc == 4 ? argv[3] : "");
     if (cmd == "anim-sweep" && argc == 3)
         return cmdAnimSweep(argv[2]);
     (void)kTypeCres;
@@ -258,6 +279,7 @@ const char* animUsage() {
            "       s2pkg anim <Res-dir> <anim-name> [--keys]\n"
            "       s2pkg anim-list <Res-dir> [name-filter]\n"
            "       s2pkg anim-sweep <Res-dir>\n"
+           "       s2pkg anim-events <Res-dir> [name-filter]\n"
            "       s2pkg sim-parts <Res-dir> [name-filter [--resolve]]\n";
 }
 
