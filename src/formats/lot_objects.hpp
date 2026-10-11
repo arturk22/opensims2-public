@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -12,23 +14,67 @@ namespace os2 {
 class DbpfPackage;
 
 // SimAntics side of the objects saved in a lot package (the game's
-// cEdithObjectModule): which object each object ID is and the state of each
-// object instance. Layouts from OpenTS2 (`ObjectModuleCodec`,
-// `ObjectSaveTypeTableCodec`, `SimsObjectCodec`), checked on the game's lots.
+// cEdithObjectModule), read and written as the Mac binary does
+// (docs/save-mac.md: cEdithObjectModule::SplitLoad/read_pre_object/
+// read_post_object/ReadObjectGroups, cTSObject::Read/ReadHeader,
+// cEdithMTObject::Read, cTSPerson::Read, cTSInteraction::Read).
 //
-// - ObjM (0x4F626A4D, instance 1): version, then (object ID, save type) pairs.
-//   It does not list every object: in N001_Lot11 627 of the 745 objects with a
-//   state are in it (the rest, stairs, chairs, Sims, ..., are found by the
-//   OBJD name of their cObject).
-// - objt (0x6F626A74): save type -> object GUID and catalog name.
-// - XOBJ (0x584F424A, cTSObject) and PERS (0x50455253, cTSPerson, the same
-//   header followed by the Sim's own data): one per object, the instance is
-//   the object ID (object data 11 holds it too).
+// - ObjM (0x4F626A4D) instance 1: the module's version, then one (object ID,
+//   save type) pair per object of the lot: the game creates exactly these
+//   objects, nothing else. After the pairs, in the same resource, the
+//   "post object" part (a u32 per object ID, the list of selectable Sims,
+//   the lot's name, the message subscribers).
+// - ObjM instance 2: the object groups (the modular stairs: each group lists
+//   the step objects of one staircase).
+// - objt (0x6F626A74): save type -> object GUID, object type (2 = person),
+//   catalog name and class flags (bit 0: a multi-tile object).
+// - One state per object, the instance being the object ID, whose resource
+//   type is the class's GZCLSID: XOBJ (0x584F424A, cTSObject), XMTO
+//   (0x584D544F, cEdithMTObject: a part of a multi-tile object; the
+//   cTSObject followed by its offsets and its lead object) or PERS
+//   (0x50455253, cTSPerson: the cTSObject followed by the person). An object
+//   is saved under its class: a person (object type 2) as PERS, a multi-tile
+//   one (flags bit 0) as XMTO, the rest as XOBJ.
+//
+// The packages keep the states of objects that are gone (the persist DB does
+// not delete records): those are orphans no pair names, and are not read.
 struct LotObjects {
     struct SaveType {
         uint32_t guid = 0;
+        std::array<uint8_t, 20> unknown{}; // init/main tree versions, attribute and array counts, a string set count (OpenTS2)
+        int16_t objectType = 0;  // OBJD object type: 2 = person (read_pre_object picks the person class on it)
         std::string catalogName; // "*Trash Can - Outside"; empty for objects not in the catalog
-        uint32_t flags = 0;      // bit 0: single tile, bit 1: multi-tile master (OpenTS2)
+        uint32_t flags = 0;      // bit 0: multi-tile object (saved as XMTO)
+        uint32_t guid2 = 0;      // the GUID again (the master's for multi-tile parts?)
+    };
+
+    enum class Kind : uint8_t { Object, MultiTile, Person };
+    static uint32_t resourceType(Kind k);
+
+    // A Sim's interaction (cTSInteraction::Read; names from its getters,
+    // the rest by offset in the class).
+    struct SavedInteraction {
+        uint32_t u08 = 0;
+        uint32_t uid = 0;           // unique ID (a global counter)
+        int16_t u0C = 0;
+        int16_t stackObject = 0;    // the object whose interaction it is
+        int16_t target = 0;         // the Sim it is for / on
+        int16_t initiator = 0;      // who pushed it (> 0xA5)
+        uint32_t ttabEntry = 0;     // index in the object's TTAB
+        std::array<int16_t, 4> params{};
+        uint32_t priority = 0;      // +0x20 (inferred: 20 on the autonomous ones, as Push Interaction gives)
+        int16_t u24 = 0;            // flags? (0x1005, 0x2002)
+        float u28 = 0;
+        uint32_t u54 = 0;           // >= 0x3E
+        int16_t u30 = 0;            // > 0x6E
+        int16_t u2C = 0, u2E = 0;   // >= 0x72
+        uint16_t u40 = 0, u42 = 0;  // >= 0x7C
+        std::string name;           // > 0x96: the name shown in the queue ("Joke")
+        uint32_t u38 = 0, u3C = 0;  // > 0x96
+        int16_t u32 = 0;            // > 0xBA
+        // Whether a record of this name and object was actually saved (the
+        // fixed slots of a person are read even when empty).
+        bool empty() const { return uid == 0 && stackObject == 0 && name.empty(); }
     };
 
     // Saved state of one object instance. Position is in tiles (the centre of
@@ -37,27 +83,38 @@ struct LotObjects {
     // (Lot's level 0); a ground floor on a foundation is level 2.
     struct State {
         int16_t id = 0;
-        bool person = false; // from a PERS
+        Kind kind = Kind::Object;
+        bool person = false; // kind == Person
+        // cTSObject::ReadHeader.
+        std::array<uint8_t, 64> fileName{};
+        std::array<float, 4> headerFloats{};
         float x = -1, y = -1;
         int32_t level = 0;
+        uint16_t headerOne = 1;
         float elevation = 0;
         int32_t multiTileGroup = -1; // -1 for single-tile objects
+        int16_t header298 = 0;
+        float headerD6 = 0; // > 0xD6 (OpenTS2)
         std::vector<int16_t> attributes, semiAttributes;
         std::array<int16_t, 8> temps{};
-        std::vector<int16_t> data; // object data, numbered as in STR# 0x8D
+        std::vector<int16_t> data; // object data, numbered as in STR# 0x8D (as many as the version saves)
 
-        // The rest of a cTSObject, in OpenTS2's layout (SimsObjectCodec).
         std::array<int16_t, 8> tempTokenFields{};
         struct Token {
             uint32_t guid = 0;
             uint16_t flags = 0;
+            std::array<uint8_t, 8> extra{}; // > 0xCA: stack ID, personal inventory instance, category
             std::vector<int16_t> properties;
         } token;
         std::vector<std::vector<int16_t>> arrays; // object arrays
+        std::vector<int16_t> shortList;           // the u16 list at +0x194 (not understood)
+        uint32_t extra8E = 0;                     // 0x8E-0x8F only
         int32_t ownership = 0;
         std::vector<std::string> materialSubstitutes;
+        uint16_t persistentFlag = 0;
         // The tree stack (cTSTreeStack), the root first: tree, node, locals,
-        // parameters and the objects it runs as/on, with the BHAV's save type.
+        // parameters and the objects it runs as/on (>= 0xA5; before, the
+        // owner of the stack), with the BHAV's save type.
         struct Frame {
             uint16_t objectId = 0;
             uint16_t treeId = 0;
@@ -67,7 +124,13 @@ struct LotObjects {
             int32_t primitiveState = 0;
             uint16_t behaviorSaveType = 0;
         };
+        uint32_t stackUnknown = 0;
         std::vector<Frame> stack;
+        std::vector<uint8_t> relationshipTable; // raw
+        // Slots (cTSObject::ReadSlots): the objects in each container slot
+        // (0 = empty); raw keeps the encoding.
+        std::vector<int16_t> slots;
+        std::vector<uint8_t> slotsRaw, effectsRaw, overridesRaw;
         // Timers set by On Timer (cTSObject::WriteTimers): seven raw fields
         // and the eight parameters the event tree gets.
         struct Timer {
@@ -78,57 +141,98 @@ struct LotObjects {
             std::array<int16_t, 8> params{};
         };
         std::vector<Timer> timers;
-        // Bytes after the timers: in a PERS, the Sim's own data (cTSPerson).
-        std::vector<uint8_t> rest;
-        // The start of a cTSPerson (PERS), read from `rest`: the tag
-        // 0xDEADBEEF, a version (2 in the game's lots), two sets of the 16
+        // cEdithMTObject::Read (XMTO): two triples of u32 (offsets of the part
+        // in the object? not decoded) and the lead object's ID.
+        std::array<uint32_t, 6> multiTile{};
+        int16_t leadObject = 0;
+
+        // cTSPerson::Read (PERS): the animator (a 0xDEADBEEF tag and a
+        // version, 2 in the game's lots: nothing else then), two sets of the 16
         // motives as floats (numbered as STR# 0x86: Mood 3 ... Fun 15; the
-        // second set is clamped to 100 and lags the first slightly: which
-        // one the game simulates is not known) and the 170 person data
-        // fields (STR# 0xC8: personality, skills, neighbor ID 31, age 58,
-        // family 61, decay rates, interests, ... all check out against the
-        // neighborhood's Sims). What follows is not read yet.
+        // second set is clamped to 100 and lags the first slightly) and the
+        // person data (170 fields in the base game, STR# 0xC8).
         bool personRead = false;
-        uint32_t personVersion = 0;
+        uint32_t personTag = 0, personVersion = 0;
         std::array<float, 16> motives{}, motives2{};
         std::vector<int16_t> personData;
-        // The Sim's interaction queue (cTSInteraction records), the running
-        // one first. Layout inferred from the lots (no code read): u32
-        // unique ID, u16 the initiator (0 for self interactions), u16 the
-        // object whose interaction it is, 8 i16 parameters (the first four
-        // are the action tree's), i32 priority, 2 bytes, a float
-        // ("attenuation"?), 10 bytes of flags, two u16 IDs, the name (u8
-        // length + English TTA string, "Entertain.../Joke") and 12 bytes.
-        // Where the list starts is not understood either (8 bytes after
-        // the person data in most PERS, elsewhere in others): it is found
-        // as the first well-formed record naming this Sim near the end of
-        // the person data, and read while records stay well-formed with a
-        // non-zero ID. In the 405 PERS of the game's lots this finds the
-        // running interaction (object = person data 80) of 38 Sims, and
-        // the next one (person data 79) where there is one.
-        struct SavedInteraction {
-            uint32_t uid = 0;
-            int16_t initiator = 0, object = 0;
-            std::array<int16_t, 8> params{};
-            int32_t priority = 0;
-            std::string name;
+        uint32_t personU0C = 0;
+        // Two interaction slots (+0x5D4, +0x5D8; the second holds the running
+        // interaction while one runs, inferred) and the queue (+0x584), the
+        // running one first.
+        SavedInteraction slotA, slotB;
+        std::vector<SavedInteraction> queue;
+        struct ObjectRecord {
+            int16_t object = 0;
+            uint32_t value = 0;
+            uint8_t flag = 0;
         };
-        std::vector<SavedInteraction> interactions;
-        // Why the part after the object data could not be read (the fields
-        // above stay as far as they got).
+        std::vector<ObjectRecord> objectRecords; // cTSPerson::cObjectRecord
+        struct MotiveInc {
+            uint32_t motive = 0;
+            float a = 0, b = 0;
+        };
+        std::vector<MotiveInc> motiveIncs; // cTSPerson::cMotiveInc
+        uint16_t personU644 = 0, personU646 = 0;
+        std::optional<SavedInteraction> pending; // +0x5DC
+        std::vector<SavedInteraction> list5AC;
+        std::string personName; // +0x900 (>= 0x9D)
+        std::array<uint32_t, 3> personU90C{};
+        std::array<int16_t, 8> personU918{};
+        uint32_t personU930 = 0;
+        std::vector<SavedInteraction> list5E0;
+        uint32_t personU938 = 0, personU93C = 0;
+        // The queued interactions as the VM restores them (queue; slotB when
+        // the queue is empty and an interaction runs).
+        const std::vector<SavedInteraction>& interactions() const { return queue; }
+
+        // Bytes after what was read (none when the state reads through).
+        std::vector<uint8_t> rest;
+        // When the part after the object data does not read through: all of
+        // it, written back as it was (only the header, attributes, temps and
+        // object data can change then).
+        std::vector<uint8_t> unparsedTail;
+        // Why the state could not be read through (the fields above stay as
+        // far as they got).
         std::string tailError;
     };
 
     uint32_t version = 0; // of the object module; the states' layout depends on it
+    std::array<uint8_t, 64> moduleFileName{};
+    uint32_t moduleZero = 0;
+    // The ObjM pairs in their order: object ID (the u32 as saved), save type.
+    std::vector<std::pair<uint32_t, int32_t>> pairs;
+    // read_post_object: a u32 per object ID - 1 (flag 0x10000 on selectable
+    // Sims), a count, the selectable Sims (object IDs), a u32, the lot's name
+    // and the message subscribers (raw).
+    std::vector<uint32_t> postTable;
+    uint32_t postCount = 0;
+    std::vector<uint32_t> postList;
+    uint32_t postZero = 0;
+    std::string postName;
+    std::vector<uint8_t> postRest;
+    // ObjM 2 (ReadObjectGroups): version and the groups (key, object IDs).
+    struct Group {
+        uint32_t key = 0;
+        std::vector<int16_t> objects;
+    };
+    std::array<uint8_t, 64> groupsFileName{};
+    uint32_t groupsVersion = 0;
+    std::vector<Group> groups;
+    std::vector<uint8_t> groupsRest;
+    bool haveGroups = false;
+
     // The simulator's globals when the lot was saved (SIMI, 0x53494D49,
     // instance 1: tag, version, a u32, then the 54 globals of STR# 0x81:
     // hour, day, ..., selected person, current family, current house, the
     // family's funds as % and / 10000; they agree with the neighborhood).
     // Empty if the lot has none.
     std::vector<int16_t> globals;
+    std::vector<uint8_t> simulatorRaw; // the whole SIMI, for writing back
     std::map<int16_t, SaveType> saveTypes;
+    std::vector<int16_t> saveTypeOrder; // as in the objt
+    std::vector<uint8_t> saveTypesHeader; // objt bytes before the records (name, tag, version, u32)
     std::map<int16_t, int16_t> saveTypeOf; // object ID -> save type
-    std::vector<State> objects;            // by ID
+    std::vector<State> objects;            // the ObjM's objects, by ID
     // The lot's SRELs (instance = from << 16 | to), named by object ID, with
     // their values: what the lot's objects and Sims think of each other, and
     // ownership (docs/data-findings.md §7: two values, "to" a neighbor ID).
@@ -137,14 +241,39 @@ struct LotObjects {
         std::vector<int32_t> values;
     };
     std::vector<Relationship> relationships;
+    // States no ObjM pair names (stale records), by resource type.
+    std::map<uint32_t, size_t> orphans;
     std::vector<std::string> warnings;
 
     static LotObjects load(DbpfPackage& package);
-    // One XOBJ/PERS resource, for an object module of `version`.
-    static State parseState(std::span<const uint8_t> data, uint32_t version, bool person = false);
+    // One XOBJ/XMTO/PERS resource, for an object module of `version`.
+    static State parseState(std::span<const uint8_t> data, uint32_t version, Kind kind = Kind::Object);
+    static State parseState(std::span<const uint8_t> data, uint32_t version, bool person) {
+        return parseState(data, version, person ? Kind::Person : Kind::Object);
+    }
+    // The resource bytes of a state, as the game writes them for `version`
+    // (lot_objects_write.cpp). A state read without errors writes back the
+    // bytes it was read from.
+    static std::vector<uint8_t> writeState(const State& s, uint32_t version);
+    std::vector<uint8_t> writeModule() const;     // ObjM 1
+    std::vector<uint8_t> writeGroups() const;     // ObjM 2
+    std::vector<uint8_t> writeSimulator() const;  // SIMI with `globals`
+    std::vector<uint8_t> writeSaveTypes() const;  // objt
+
+    // Writes a lot package: every resource of `source` as it is, except the
+    // object module, the save types, the simulator and the states, which come
+    // from this (orphan states are dropped). `out` must not be `source`.
+    void save(DbpfPackage& source, const std::filesystem::path& out) const;
 
     // GUID of the object with this ID, 0 if the object module does not say.
     uint32_t guidOf(int16_t id) const;
+    const SaveType* saveTypeOfObject(int16_t id) const;
+    const State* state(int16_t id) const;
 };
+
+// Number of object data fields a state of `version` holds (cTSObject::Read).
+size_t lotObjectDataCount(uint32_t version);
+// Number of person data fields a PERS of `version` holds (cTSPerson::Read).
+size_t lotPersonDataCount(uint32_t version);
 
 } // namespace os2

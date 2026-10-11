@@ -996,7 +996,7 @@ static void testSavedObjectState() {
     check(s.data.size() == 88 && s.data[1] == 4 && s.data[2] == 615 && s.data[11] == 1, "saved object data");
     bool threw = false;
     try {
-        LotObjects::parseState(b, 0xC0);
+        LotObjects::parseState(b, 0x80);
     } catch (const std::exception&) {
         threw = true;
     }

@@ -4,29 +4,20 @@
 #include "dbpf.hpp"
 #include "neighborhood.hpp"
 
+#include <algorithm>
+#include <cstring>
 
 namespace os2 {
 
 namespace {
 
 constexpr uint32_t kTypeObjectModule = 0x4F626A4D, kTypeSaveTypes = 0x6F626A74, kTypeObjectState = 0x584F424A,
-                   kTypePersonState = 0x50455253;
+                   kTypeMultiTileState = 0x584D544F, kTypePersonState = 0x50455253;
 constexpr size_t kFileNameSize = 64;
 constexpr uint32_t kTypeSimulator = 0x53494D49;
 constexpr size_t kGlobalCount = 54;
-
-// Object data fields saved by each object module version (OpenTS2: 0xAD is
-// the base game's, 0xD8 a later expansion's). The game's older lots (0xA4 in
-// CAS!, 0xAC in the tutorial's) have the same layout up to the object data;
-// 88 fields are read from them too (their object ID field is the instance in
-// every state), though how many they save is not known.
-size_t dataCount(uint32_t version) {
-    if (version >= 0xA4 && version <= 0xAD)
-        return 0x58;
-    if (version == 0xD8)
-        return 0x72;
-    throw FormatError("object state version " + hexString(version) + " not supported");
-}
+constexpr uint32_t kAnimatorTag = 0xDEADBEEF;
+constexpr int16_t kPersonObjectType = 2;
 
 std::vector<int16_t> shorts(BinReader& r, size_t n) {
     std::vector<int16_t> v(n);
@@ -35,238 +26,394 @@ std::vector<int16_t> shorts(BinReader& r, size_t n) {
     return v;
 }
 
-// After the object data (OpenTS2's SimsObjectCodec, checked on the game's
-// lots: every XOBJ ends right after its timers).
-// `runningFields`: the frames carry the objects they run as and on (the
-// current layout); stale states written by an older build lack them.
-void parseTail(BinReader& r, uint32_t version, LotObjects::State& s, bool runningFields) {
-    for (auto& t : s.tempTokenFields)
-        t = r.i16();
-    s.token.guid = r.u32();
-    s.token.flags = r.u16();
-    if (version > 0xCA)
-        r.skip(2 + 4 + 2); // stack ID, personal inventory instance, category
-    s.token.properties = shorts(r, r.u32());
-    for (auto n = r.i16(); n > 0; --n)
-        s.arrays.push_back(shorts(r, uint16_t(r.i16())));
-    shorts(r, uint16_t(r.i16())); // not understood
-    s.ownership = r.i32();
-    for (auto n = r.i16(); n > 0; --n)
-        s.materialSubstitutes.push_back(r.str7());
-    r.u16(); // persistent flag
-    const int32_t frames = r.i32();
-    if (frames < 0 || frames > 1024)
-        throw FormatError("tree stack of " + std::to_string(frames) + " frames");
-    r.u32();
-    for (int32_t i = 0; i < frames; ++i) {
-        LotObjects::State::Frame f;
-        f.objectId = r.u16();
-        f.treeId = r.u16();
-        f.node = r.u16();
-        const uint8_t locals = r.u8(), params = r.u8();
-        if (runningFields) {
-            f.runningObject = r.u16();
-            f.runningOn = r.u16();
-        }
-        f.params = shorts(r, params);
-        f.locals = shorts(r, locals);
-        f.primitiveState = r.i32();
-        f.behaviorSaveType = r.u16();
-        s.stack.push_back(std::move(f));
-    }
-    // Relationship table.
-    const int32_t relFlag = r.i32();
-    if (relFlag < 0) {
-        for (auto n = r.i32(); n > 0; --n) {
-            if (!r.i32())
-                continue;
-            r.u32();
-            r.skip(4 * size_t(uint32_t(r.i32())));
-        }
-    } else if (relFlag == 2 || relFlag == 3) {
-        r.skip(4 * size_t(uint32_t(r.i32())));
-    }
-    // Slots.
-    const int16_t slots = r.i16();
-    if (slots < 0) {
-        if (slots == -100)
-            r.u16();
-        r.skip(2 * size_t(uint16_t(r.i16())));
-    } else {
-        if (slots > 0)
-            r.skip(4);
-        for (int i = 0; i < slots - 1; ++i)
-            r.skip(4);
-    }
-    // Effects.
-    if (r.i16() != 0 && r.u16() == 1)
-        for (auto n = r.u32(); n; --n) {
-            r.str7();
-            r.str7();
-            r.skip(8);
-        }
-    for (auto n = r.i16(); n > 0; --n) { // overrides
-        r.str7();
-        r.str7();
-        r.str7();
-    }
-    const uint32_t timers = r.u32();
-    if (timers > 1024)
-        throw FormatError(std::to_string(timers) + " timers");
-    for (uint32_t i = 0; i < timers; ++i) {
-        LotObjects::State::Timer t;
-        t.a = r.u32();
-        t.b = r.u32();
-        t.c = r.u16();
-        t.d = r.u32();
-        t.e = r.i32();
-        t.f = r.i32();
-        for (auto& p : t.params)
-            p = r.i16();
-        s.timers.push_back(t);
-    }
-    const auto rest = r.bytes(r.remaining());
-    s.rest.assign(rest.begin(), rest.end());
+std::vector<uint8_t> copyOf(std::span<const uint8_t> b) { return {b.begin(), b.end()}; }
+
+// Bytes the reader moved over since `from`.
+std::vector<uint8_t> since(const BinReader& r, size_t from) { return copyOf(r.data().subspan(from, r.pos() - from)); }
+
+template <size_t N>
+void fixedBytes(BinReader& r, std::array<uint8_t, N>& out) {
+    const auto b = r.bytes(N);
+    std::copy(b.begin(), b.end(), out.begin());
 }
 
-constexpr uint32_t kPersonTag = 0xDEADBEEF;
-constexpr size_t kPersonDataCount = 170;
-
-// The saved interaction queue after the person data (see
-// LotObjects::State::interactions for what is inferred).
-constexpr size_t kInteractionFixed = 61; // record bytes besides the name
-
-bool wellFormedInteraction(std::span<const uint8_t> b, size_t off) {
-    if (off + kInteractionFixed > b.size())
-        return false;
-    if (le32(&b[off]) >= (1u << 20))
-        return false;
-    const size_t n = b[off + 48];
-    if (n > 80 || off + kInteractionFixed + n > b.size())
-        return false;
-    for (size_t i = 0; i < n; ++i)
-        if (b[off + 49 + i] < 32 || b[off + 49 + i] >= 127)
-            return false;
-    return true;
-}
-
-void parseSavedQueue(LotObjects::State& s, size_t personEnd) {
-    std::span<const uint8_t> b(s.rest);
-    const size_t from = personEnd >= 20 ? personEnd - 20 : 0;
-    const int16_t me = s.data.size() > 11 ? s.data[11] : s.id; // object data 11 "object id" (the ID is set later)
-    for (size_t off = from; off < personEnd + 20; off += 2) {
-        if (!wellFormedInteraction(b, off) || !le32(&b[off]))
-            continue;
-        const auto initiator = int16_t(le16(&b[off + 4])), object = int16_t(le16(&b[off + 6]));
-        // Anchored on the running (person data 80) or next (79) interaction's object.
-        const int16_t running = s.personData[80], next = s.personData[79];
-        if ((initiator != me && object != me) || object <= 0 || (object != running && object != next))
-            continue;
-        // Records with a name and an object; the nameless ones that follow
-        // (priority 0, no parameters) look like stale entries.
-        while (wellFormedInteraction(b, off) && le32(&b[off]) && b[off + 48] && int16_t(le16(&b[off + 6])) > 0) {
-            LotObjects::State::SavedInteraction x;
-            x.uid = le32(&b[off]);
-            x.initiator = int16_t(le16(&b[off + 4]));
-            x.object = int16_t(le16(&b[off + 6]));
-            for (size_t i = 0; i < 8; ++i)
-                x.params[i] = int16_t(le16(&b[off + 8 + 2 * i]));
-            x.priority = int32_t(le32(&b[off + 24]));
-            const size_t n = b[off + 48];
-            x.name.assign(reinterpret_cast<const char*>(&b[off + 49]), n);
-            s.interactions.push_back(std::move(x));
-            off += kInteractionFixed + n;
-        }
-        return;
+// cTSInteraction::Read.
+LotObjects::SavedInteraction readInteraction(BinReader& r, uint32_t v) {
+    LotObjects::SavedInteraction x;
+    x.u08 = r.u32();
+    x.uid = r.u32();
+    x.u0C = r.i16();
+    x.stackObject = r.i16();
+    x.target = r.i16();
+    if (v > 0xA5)
+        x.initiator = r.i16();
+    x.ttabEntry = r.u32();
+    for (auto& p : x.params)
+        p = r.i16();
+    x.priority = r.u32();
+    x.u24 = r.i16();
+    x.u28 = r.f32();
+    if (v < 0x3E)
+        throw FormatError("interaction of version " + hexString(v) + " not supported");
+    x.u54 = r.u32();
+    if (v > 0x6E)
+        x.u30 = r.i16();
+    if (v >= 0x72) {
+        x.u2C = r.i16();
+        x.u2E = r.i16();
     }
+    if (v >= 0x7C) {
+        x.u40 = r.u16();
+        x.u42 = r.u16();
+    }
+    if (v > 0x96) {
+        x.name = r.str7();
+        x.u38 = r.u32();
+        x.u3C = r.u32();
+    }
+    if (v > 0xBA)
+        x.u32 = r.i16();
+    return x;
 }
 
-void parsePerson(LotObjects::State& s) {
-    BinReader r(s.rest);
-    if (r.remaining() < 8 || r.u32() != kPersonTag)
-        return;
+std::vector<LotObjects::SavedInteraction> readInteractions(BinReader& r, uint32_t v) {
+    const uint32_t n = r.u32();
+    if (n > 256)
+        throw FormatError(std::to_string(n) + " interactions");
+    std::vector<LotObjects::SavedInteraction> out;
+    for (uint32_t i = 0; i < n; ++i)
+        out.push_back(readInteraction(r, v));
+    return out;
+}
+
+// cTSPerson::Read after the cTSObject.
+void parsePerson(BinReader& r, uint32_t v, LotObjects::State& s) {
+    if (v < 0x3E)
+        throw FormatError("person of version " + hexString(v) + " not supported");
+    // ReadSAnimator: from 0x3E a tag and a version; version 2 and later
+    // saves nothing else (older animators are not read here).
+    s.personTag = r.u32();
+    if (s.personTag != kAnimatorTag)
+        throw FormatError("animator without its tag");
     s.personVersion = r.u32();
-    if (r.remaining() < 2 * 16 * 4 + kPersonDataCount * 2)
-        return;
+    if (s.personVersion <= 1)
+        throw FormatError("animator version " + std::to_string(s.personVersion) + " not supported");
     for (auto& m : s.motives)
         m = r.f32();
     for (auto& m : s.motives2)
         m = r.f32();
-    s.personData = shorts(r, kPersonDataCount);
+    s.personData = shorts(r, lotPersonDataCount(v));
     s.personRead = true;
-    parseSavedQueue(s, r.pos());
+    s.personU0C = r.u32();
+    s.slotA = readInteraction(r, v);
+    s.slotB = readInteraction(r, v);
+    s.queue = readInteractions(r, v);
+    for (uint32_t n = r.u32(); n; --n) {
+        LotObjects::State::ObjectRecord o;
+        o.object = r.i16();
+        o.value = r.u32();
+        o.flag = r.u8();
+        s.objectRecords.push_back(o);
+    }
+    for (uint32_t n = r.u32(); n; --n) {
+        LotObjects::State::MotiveInc m;
+        m.motive = r.u32();
+        m.a = r.f32();
+        m.b = r.f32();
+        s.motiveIncs.push_back(m);
+    }
+    if (v > 0x9A)
+        s.personU644 = r.u16();
+    if (v >= 0x9E)
+        s.personU646 = r.u16();
+    if (v > 0x71) {
+        if (r.u32())
+            s.pending = readInteraction(r, v);
+        s.list5AC = readInteractions(r, v);
+    }
+    if (v >= 0x9D) {
+        s.personName = r.str7();
+        if (v > 0xA8) {
+            for (auto& x : s.personU90C)
+                x = r.u32();
+            for (auto& x : s.personU918)
+                x = r.i16();
+        }
+    }
+    if (v > 0xB3)
+        s.personU930 = r.u32();
+    if (v > 0xB4)
+        s.list5E0 = readInteractions(r, v);
+    if (v > 0xCC) {
+        s.personU938 = r.u32();
+        s.personU93C = r.u32();
+    }
 }
 
 } // namespace
 
-LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_t version, bool person) {
+size_t lotObjectDataCount(uint32_t v) {
+    // cTSObject::Read: each step holds while the version is past it.
+    size_t n = 72;
+    if (v <= 0x7C) return n;
+    n = 78;
+    if (v == 0x7D) return n;
+    n = 79;
+    if (v <= 0x85) return n;
+    n = 80;
+    if (v <= 0x88) return n;
+    n = 83;
+    if (v <= 0x90) return n;
+    n = 84;
+    if (v <= 0x93) return n;
+    n = 85;
+    if (v <= 0x97) return n;
+    n = 86;
+    if (v == 0x98) return n;
+    n = 87;
+    if (v <= 0xA2) return n;
+    n = 88;
+    if (v <= 0xB1) return n;
+    n = 98;
+    if (v == 0xB2) return n;
+    n = 99;
+    if (v <= 0xB5) return n;
+    n = 101;
+    if (v <= 0xBA) return n;
+    n = 102;
+    if (v == 0xBB) return n;
+    n = 103;
+    if (v <= 0xBE) return n;
+    n = 104;
+    if (v == 0xBF) return n;
+    n = 108;
+    if (v <= 0xC5) return n;
+    n = 111;
+    if (v <= 0xC7) return n;
+    return v == 0xC8 ? 112 : 113;
+}
+
+size_t lotPersonDataCount(uint32_t v) {
+    // cTSPerson::Read.
+    if (v >= 0xCE) return 0xCC;
+    if (v >= 0xCC) return 0xC9;
+    if (v >= 0xC7) return 200;
+    if (v >= 0xC3) return 0xC7;
+    if (v >= 0xBD) return 0xC3;
+    if (v == 0xBC) return 0xC2;
+    if (v >= 0xBA) return 0xC1;
+    if (v == 0xB9) return 0xC0;
+    if (v >= 0xB8) return 0xBD;
+    if (v == 0xB7) return 0xBA;
+    if (v >= 0xB3) return 0xB4;
+    if (v >= 0xB0) return 0xB3;
+    if (v >= 0xAE) return 0xB2;
+    if (v >= 0xA8) return 0xAA;
+    if (v >= 0xA2) return 0xA7;
+    if (v >= 0xA0) return 0xA6;
+    if (v == 0x9F) return 0xA5;
+    if (v >= 0x9C) return 0xA3;
+    if (v >= 0x9A) return 0xA2;
+    if (v == 0x99) return 0xA1;
+    if (v >= 0x97) return 0x9E;
+    if (v >= 0x8B) return 0x9D;
+    if (v == 0x8A) return 0x90;
+    if (v >= 0x88) return 0x7C;
+    if (v >= 0x85) return 0x7B;
+    if (v >= 0x83) return 0x7A;
+    if (v == 0x82) return 0x79;
+    if (v >= 0x80) return 0x77;
+    if (v == 0x7F) return 0x76;
+    if (v >= 0x7D) return 0x70;
+    if (v == 0x7C) return 0x6F;
+    if (v == 0x7B) return 0x6B;
+    if (v >= 0x78) return 0x68;
+    if (v == 0x77) return 0x66;
+    if (v >= 0x75) return 0x5C;
+    if (v >= 0x73) return 0x5B;
+    if (v >= 0x6E) return 0x59;
+    if (v == 0x6D) return 0x58;
+    if (v >= 0x6C) return 0x53;
+    if (v >= 0x6A) return 0x51;
+    if (v >= 0x29) return 0x50;
+    return 0x40;
+}
+
+uint32_t LotObjects::resourceType(Kind k) {
+    switch (k) {
+    case Kind::MultiTile: return kTypeMultiTileState;
+    case Kind::Person: return kTypePersonState;
+    default: return kTypeObjectState;
+    }
+}
+
+LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_t v, Kind kind) {
     BinReader r(bytes);
-    r.skip(kFileNameSize);
-    r.skip(16); // four floats, zero in the game's lots
     State s;
+    s.kind = kind;
+    s.person = kind == Kind::Person;
+    if (v < 0x94)
+        throw FormatError("object state version " + hexString(v) + " not supported");
+    fixedBytes(r, s.fileName);
+    // cTSObject::ReadHeader (>= 0x86).
+    for (auto& f : s.headerFloats)
+        f = r.f32();
     s.y = r.f32();
     s.x = r.f32();
     s.level = r.i32();
-    r.u16(); // 1
+    s.headerOne = r.u16();
     s.elevation = r.f32();
     s.multiTileGroup = r.i32();
-    r.i16();
-    if (version > 0xD6)
-        r.f32();
-    const auto attributes = uint16_t(r.i16());
-    s.attributes = shorts(r, attributes);
-    const auto semiAttributes = uint16_t(r.i16());
-    s.semiAttributes = shorts(r, semiAttributes);
+    s.header298 = r.i16();
+    if (v > 0xD6)
+        s.headerD6 = r.f32();
+    s.attributes = shorts(r, uint16_t(r.i16()));
+    s.semiAttributes = shorts(r, uint16_t(r.i16()));
     for (auto& t : s.temps)
         t = r.i16();
-    // Two layouts after the attributes, told apart by where they end: the
-    // current one (the object data's 88 fields, frames with the objects they
-    // run as/on) and an older one (87 fields, frames without them) that some
-    // states keep. In N001_Lot11, 566 of 745 XOBJs end exactly with the first
-    // layout and 85 with the second; most of the older ones belong to objects
-    // the object module does not list (stale states). A PERS goes on after its
-    // timers, so the first layout that reads through is taken.
-    const size_t dataStart = r.pos();
-    const size_t count = dataCount(version);
-    std::string firstError;
-    State best;
-    bool found = false;
-    for (int layout = 0; layout < 2 && !found; ++layout) {
-        State t = s;
-        BinReader q(bytes);
-        q.seek(dataStart);
-        t.data = shorts(q, count - size_t(layout));
-        if (layout)
-            t.data.push_back(0);
-        try {
-            parseTail(q, version, t, layout == 0);
-            if (t.rest.empty() || person) {
-                best = std::move(t);
-                found = true;
-            } else if (firstError.empty()) {
-                firstError = std::to_string(t.rest.size()) + " bytes after the timers";
-                best = std::move(t);
+    s.data = shorts(r, lotObjectDataCount(v));
+    const size_t tailStart = r.pos();
+    try {
+        for (auto& t : s.tempTokenFields)
+            t = r.i16();
+        s.token.guid = r.u32();
+        s.token.flags = r.u16();
+        if (v > 0xCA)
+            fixedBytes(r, s.token.extra);
+        s.token.properties = shorts(r, r.u32());
+        for (auto n = r.i16(); n > 0; --n)
+            s.arrays.push_back(shorts(r, uint16_t(r.i16())));
+        s.shortList = shorts(r, uint16_t(r.i16()));
+        if (v == 0x8E || v == 0x8F)
+            s.extra8E = r.u32();
+        if (v >= 0x8F)
+            s.ownership = r.i32();
+        for (auto n = r.i16(); n > 0; --n)
+            s.materialSubstitutes.push_back(r.str7());
+        s.persistentFlag = r.u16();
+        // cTSTreeStack::Read.
+        const int32_t frames = r.i32();
+        if (frames < 0 || frames > 1024)
+            throw FormatError("tree stack of " + std::to_string(frames) + " frames");
+        s.stackUnknown = r.u32();
+        for (int32_t i = 0; i < frames; ++i) {
+            State::Frame f;
+            f.objectId = r.u16();
+            f.treeId = r.u16();
+            f.node = r.u16();
+            const uint8_t locals = r.u8(), params = r.u8();
+            if (v >= 0xA5) {
+                f.runningObject = r.u16();
+                f.runningOn = r.u16();
             }
-        } catch (const FormatError& e) {
-            if (firstError.empty()) {
-                firstError = e.what();
-                best = std::move(t);
+            f.params = shorts(r, params);
+            f.locals = shorts(r, locals);
+            f.primitiveState = r.i32();
+            f.behaviorSaveType = r.u16();
+            s.stack.push_back(std::move(f));
+        }
+        // Relationship table (OpenTS2's layout).
+        size_t from = r.pos();
+        const int32_t relFlag = r.i32();
+        if (relFlag < 0) {
+            for (auto n = r.i32(); n > 0; --n) {
+                if (!r.i32())
+                    continue;
+                r.u32();
+                r.skip(4 * size_t(uint32_t(r.i32())));
+            }
+        } else if (relFlag == 2 || relFlag == 3) {
+            r.skip(4 * size_t(uint32_t(r.i32())));
+        }
+        s.relationshipTable = since(r, from);
+        // cTSObject::ReadSlots.
+        from = r.pos();
+        const int16_t slots = r.i16();
+        if (slots < 0) {
+            if (slots == -100)
+                r.u16();
+            for (auto n = r.i16(); n > 0; --n)
+                s.slots.push_back(r.i16());
+        } else {
+            if (slots > 0) {
+                r.u16();
+                s.slots.push_back(r.i16());
+            }
+            for (int i = 0; i < slots - 1; ++i) {
+                r.u16();
+                s.slots.push_back(r.i16());
             }
         }
+        s.slotsRaw = since(r, from);
+        // cTSObject::ReadEffects (>= 0x93).
+        from = r.pos();
+        if (r.i16() != 0 && r.u16() == 1)
+            for (auto n = r.u32(); n; --n) {
+                r.str7();
+                r.str7();
+                r.skip(8);
+            }
+        s.effectsRaw = since(r, from);
+        from = r.pos();
+        if (v > 0x94)
+            for (auto n = r.i16(); n > 0; --n) {
+                r.str7();
+                r.str7();
+                r.str7();
+            }
+        s.overridesRaw = since(r, from);
+        if (v > 0x95) {
+            const uint32_t timers = r.u32();
+            if (timers > 1024)
+                throw FormatError(std::to_string(timers) + " timers");
+            for (uint32_t i = 0; i < timers; ++i) {
+                State::Timer t;
+                t.a = r.u32();
+                t.b = r.u32();
+                t.c = r.u16();
+                t.d = r.u32();
+                t.e = r.i32();
+                t.f = r.i32();
+                for (auto& p : t.params)
+                    p = r.i16();
+                s.timers.push_back(t);
+            }
+        }
+        if (kind == Kind::MultiTile) {
+            for (auto& x : s.multiTile)
+                x = r.u32();
+            s.leadObject = r.i16();
+        } else if (kind == Kind::Person) {
+            parsePerson(r, v, s);
+        }
+        if (!r.atEnd())
+            s.tailError = std::to_string(r.remaining()) + " bytes after the state";
+    } catch (const FormatError& e) {
+        s.tailError = e.what();
     }
-    if (!found)
-        best.tailError = firstError;
-    if (person && best.tailError.empty())
-        parsePerson(best);
-    return best;
+    s.rest = copyOf(r.data().subspan(r.pos()));
+    if (!s.tailError.empty())
+        s.unparsedTail = copyOf(r.data().subspan(tailStart));
+    return s;
 }
 
 uint32_t LotObjects::guidOf(int16_t id) const {
+    const SaveType* t = saveTypeOfObject(id);
+    return t ? t->guid : 0;
+}
+
+const LotObjects::SaveType* LotObjects::saveTypeOfObject(int16_t id) const {
     auto st = saveTypeOf.find(id);
     if (st == saveTypeOf.end())
-        return 0;
+        return nullptr;
     auto t = saveTypes.find(st->second);
-    return t == saveTypes.end() ? 0 : t->second.guid;
+    return t == saveTypes.end() ? nullptr : &t->second;
+}
+
+const LotObjects::State* LotObjects::state(int16_t id) const {
+    auto it = std::lower_bound(objects.begin(), objects.end(), id,
+                               [](const State& s, int16_t i) { return s.id < i; });
+    return it != objects.end() && it->id == id ? &*it : nullptr;
 }
 
 LotObjects LotObjects::load(DbpfPackage& pkg) {
@@ -276,17 +423,52 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
         if (e.tgi.type == kTypeObjectModule && e.tgi.instance == 1) {
             const auto bytes = pkg.read(e);
             BinReader r(bytes);
-            r.skip(kFileNameSize + 4);
+            fixedBytes(r, lot.moduleFileName);
+            lot.moduleZero = r.u32();
             lot.version = r.u32();
             if (r.u32() != kTypeObjectModule)
                 throw FormatError("object module without its \"ObjM\" tag");
             for (uint32_t n = r.u32(); n; --n) {
-                const auto id = int16_t(r.i32());
-                lot.saveTypeOf[id] = int16_t(r.i32());
+                const uint32_t id = r.u32();
+                const int32_t saveType = r.i32();
+                lot.pairs.emplace_back(id, saveType);
+                lot.saveTypeOf[int16_t(id)] = int16_t(saveType);
             }
+            // read_post_object.
+            try {
+                const uint32_t n = r.u32();
+                for (uint32_t i = 0; i < n; ++i)
+                    lot.postTable.push_back(r.u32());
+                lot.postCount = r.u32();
+                for (uint32_t m = r.u32(); m; --m)
+                    lot.postList.push_back(r.u32());
+                lot.postZero = r.u32();
+                lot.postName = r.str7();
+            } catch (const FormatError& ex) {
+                lot.warnings.push_back(std::string("object module, after the pairs: ") + ex.what());
+            }
+            lot.postRest = copyOf(r.data().subspan(r.pos()));
             haveModule = true;
+        } else if (e.tgi.type == kTypeObjectModule && e.tgi.instance == 2) {
+            const auto bytes = pkg.read(e);
+            BinReader r(bytes);
+            try {
+                fixedBytes(r, lot.groupsFileName);
+                lot.groupsVersion = r.u32();
+                for (uint32_t n = r.u32(); n; --n) {
+                    Group g;
+                    g.key = r.u32();
+                    g.objects = shorts(r, r.u32());
+                    lot.groups.push_back(std::move(g));
+                }
+                lot.haveGroups = true;
+            } catch (const FormatError& ex) {
+                lot.warnings.push_back(std::string("object groups: ") + ex.what());
+            }
+            lot.groupsRest = copyOf(r.data().subspan(r.pos()));
         } else if (e.tgi.type == kTypeSimulator && e.tgi.instance == 1) {
             const auto bytes = pkg.read(e);
+            lot.simulatorRaw = bytes;
             BinReader r(bytes);
             r.skip(kFileNameSize);
             if (r.u32() != kTypeSimulator)
@@ -304,45 +486,62 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
             if (version < 0x49)
                 throw FormatError("save type table version " + hexString(version) + " not supported");
             r.u32();
+            lot.saveTypesHeader = copyOf(r.data().subspan(0, r.pos()));
             for (;;) {
                 SaveType t;
                 t.guid = r.u32();
                 if (!t.guid)
                     break;
-                r.skip(20); // init/main tree versions, attribute and array counts, a string set count
+                fixedBytes(r, t.unknown);
                 const int16_t saveType = r.i16();
-                r.i16(); // interaction table ID
+                t.objectType = r.i16();
                 t.catalogName = r.str7();
                 t.flags = r.u32();
-                r.u32();
+                t.guid2 = r.u32();
+                lot.saveTypeOrder.push_back(saveType);
                 lot.saveTypes[saveType] = std::move(t);
             }
         }
     }
     if (!haveModule)
         return lot; // an empty lot
-    // A Sim has both: its cTSObject (XOBJ) and its cTSPerson (PERS), which is kept.
+    // The state of each object of the module, under its class's type.
     std::map<int16_t, State> states;
-    for (const auto& e : pkg.entries()) {
-        if (e.tgi.type != kTypeObjectState && e.tgi.type != kTypePersonState)
+    std::map<std::pair<uint32_t, uint32_t>, const DbpfEntry*> byKey;
+    for (const auto& e : pkg.entries())
+        if (e.tgi.type == kTypeObjectState || e.tgi.type == kTypeMultiTileState || e.tgi.type == kTypePersonState)
+            byKey[{e.tgi.type, e.tgi.instance & 0xFFFF}] = &e;
+    std::map<std::pair<uint32_t, uint32_t>, bool> used;
+    for (const auto& [rawId, saveType] : lot.pairs) {
+        const auto id = int16_t(rawId);
+        const SaveType* t = lot.saveTypeOfObject(id);
+        Kind kind = Kind::Object;
+        if (t && t->objectType == kPersonObjectType)
+            kind = Kind::Person;
+        else if (t && (t->flags & 1))
+            kind = Kind::MultiTile;
+        auto it = byKey.find({resourceType(kind), uint16_t(id)});
+        if (it == byKey.end()) {
+            lot.warnings.push_back("object " + std::to_string(id) + ": no " +
+                                   (kind == Kind::Person ? "PERS" : kind == Kind::MultiTile ? "XMTO" : "XOBJ") +
+                                   " state");
             continue;
-        const auto id = int16_t(e.tgi.instance);
-        const bool person = e.tgi.type == kTypePersonState;
-        if (auto it = states.find(id); it != states.end() && it->second.person)
-            continue;
+        }
+        used[it->first] = true;
         try {
-            State s = parseState(pkg.read(e), lot.version, person);
+            State s = parseState(pkg.read(*it->second), lot.version, kind);
             if (s.data.size() <= 11 || s.data[11] != id)
-                throw FormatError("object ID field " + std::to_string(s.data.size() > 11 ? s.data[11] : 0) +
-                                  " is not the instance");
+                lot.warnings.push_back("object " + std::to_string(id) + ": object ID field " +
+                                       std::to_string(s.data.size() > 11 ? s.data[11] : 0) + " is not the instance");
             s.id = id;
-            s.person = person;
             states[id] = std::move(s);
         } catch (const std::exception& ex) {
-            lot.warnings.push_back(std::string(person ? "person" : "object") + " state " + hexString(e.tgi.instance) +
-                                   ": " + ex.what());
+            lot.warnings.push_back("object " + std::to_string(id) + ": " + ex.what());
         }
     }
+    for (const auto& [key, _] : byKey)
+        if (!used.count(key))
+            ++lot.orphans[key.first];
     for (auto& [_, s] : states)
         lot.objects.push_back(std::move(s));
     for (const auto& e : pkg.entries()) {

@@ -5,6 +5,7 @@
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
+#include "formats/simantics.hpp"
 
 #include <cmath>
 #include <map>
@@ -108,69 +109,86 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
     }
 
     LotLoad out;
+    // Sims whose cObject does not name their character file are found by
+    // their GUID among the neighbourhood's character files (read once).
+    std::map<uint32_t, std::filesystem::path> characterByGuid;
+    auto characterFileOf = [&](uint32_t guid) -> std::filesystem::path {
+        if (characterByGuid.empty() && !charactersDir.empty())
+            for (const auto& f : std::filesystem::directory_iterator(charactersDir)) {
+                if (f.path().extension() != ".package")
+                    continue;
+                try {
+                    DbpfPackage pkg(f.path());
+                    for (const auto& e : pkg.entries())
+                        if (e.tgi.type == kTypeObjd) {
+                            const auto bytes = pkg.read(e);
+                            characterByGuid.emplace(ObjectDefinition::parse(bytes).guid(), f.path());
+                        }
+                } catch (const std::exception&) {
+                }
+            }
+        auto it = characterByGuid.find(guid);
+        return it == characterByGuid.end() ? std::filesystem::path{} : it->second;
+    };
+    // Every object of the object module (saved.objects), of the OBJD its
+    // save type's GUID names; Sims from their character files.
     for (const auto& s : saved.objects) {
         LotLoad::Entry e;
         e.id = s.id;
         e.person = s.person;
         std::optional<std::pair<uint32_t, uint16_t>> def;
         std::string cName;
-        if (auto it = cObjects.find(uint32_t(uint16_t(s.id))); it != cObjects.end()) {
-            cName = it->second->definition;
+        const auto c = cObjects.find(uint32_t(uint16_t(s.id)));
+        if (c != cObjects.end()) {
+            cName = c->second->definition;
             if (cName.size() > kObjtSuffix.size() &&
                 cName.compare(cName.size() - kObjtSuffix.size(), kObjtSuffix.size(), kObjtSuffix) == 0)
                 cName.resize(cName.size() - kObjtSuffix.size());
         }
         e.name = cName;
+        const uint32_t guid = saved.guidOf(s.id);
         try {
             if (s.person) {
-                // Person states are kept for Sims that left the lot too; the
-                // ones on it have a cPerson. "N001_User00011 - Don": the
-                // character file is the part before " - ".
-                auto c = cObjects.find(uint32_t(uint16_t(s.id)));
-                if (c == cObjects.end() || !c->second->person)
-                    throw VMError("person state without a Sim on the lot (no cPerson)");
-                const std::string stem = cName.substr(0, cName.find(" - "));
-                if (stem.empty())
-                    throw VMError("Sim without a cObject naming its character file");
-                if (charactersDir.empty())
-                    throw VMError("no character directory for " + stem);
-                const auto file = charactersDir / (stem + ".package");
-                if (!std::filesystem::exists(file))
-                    throw VMError("character file " + file.filename().string() + " not found");
+                // "N001_User00011 - Don": the character file is the part
+                // before " - "; without a cPerson naming it, the file whose
+                // OBJD has the save type's GUID.
+                std::filesystem::path file;
+                if (c != cObjects.end() && c->second->person && !cName.empty()) {
+                    if (charactersDir.empty())
+                        throw VMError("no character directory for " + cName);
+                    file = charactersDir / (cName.substr(0, cName.find(" - ")) + ".package");
+                }
+                if (file.empty() || !std::filesystem::exists(file))
+                    file = characterFileOf(guid);
+                if (file.empty())
+                    throw VMError("no character file with GUID " + hexString(guid));
                 DbpfPackage pkg(file);
+                const std::string stem = file.stem().string();
                 const uint32_t group = characterGroup(stem);
                 const auto definitions = code.addPackage(pkg, group);
                 if (definitions.size() != 1)
                     throw VMError("character file " + file.filename().string() + " has " +
                                   std::to_string(definitions.size()) + " OBJDs");
                 def = std::pair{group, definitions.front()};
-            } else if (const uint32_t guid = saved.guidOf(s.id)) {
+                e.name = stem;
+            } else if (guid) {
                 def = code.definitionByGuid(guid);
                 if (!def)
                     throw VMError("no OBJD with GUID " + hexString(guid));
-            } else if (!cName.empty()) {
-                def = code.definitionByName(cName);
-                if (!def)
-                    throw VMError("no OBJD named \"" + cName + "\"");
             } else {
-                throw VMError("neither the object module nor a cObject says what object it is");
+                throw VMError("the object module does not say what object it is");
             }
-            if (const ObjectDefinition* d = code.definition(def->first, def->second)) {
-                // The packages keep leftovers of objects that are gone (N001_Lot11
-                // has four "Piano Upright 0,0" cObjects, three of them on the
-                // same tile), and a leftover may have the ID the object module
-                // gives to another object: when the two disagree, it is not
-                // known which one is current.
-                if (!s.person && !cName.empty() && d->fileName != cName)
-                    throw VMError("the object module and the cObject disagree (\"" + d->fileName + "\", \"" +
-                                  cName + "\")");
+            if (const ObjectDefinition* d = code.definition(def->first, def->second); d && !s.person)
                 e.name = d->fileName;
-            }
             Object& o = vm.instantiatePart(def->first, def->second, s.id);
             o.position = {s.x, s.y, s.level};
             for (int16_t field : {objdata::Direction, objdata::ContainerId, objdata::SlotNumber, objdata::Room})
                 if (size_t(field) < s.data.size())
                     o.data[size_t(field)] = s.data[size_t(field)];
+            // A part of a multi-tile object leads to its lead object
+            // (cEdithMTObject::Read); the others lead themselves.
+            if (s.kind == LotObjects::Kind::MultiTile && s.leadObject)
+                o.data[objdata::LeadTileObjectId] = s.leadObject;
             e.created = true;
             ++out.created;
         } catch (const std::exception& ex) {

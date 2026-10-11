@@ -15,15 +15,18 @@ namespace os2::vm {
 
 // Puts the objects saved in a lot package into a VM, without rendering.
 //
-// Every object with a saved state (XOBJ/PERS) becomes a VM object with its
-// saved ID, of the OBJD its GUID names (ObjM + objt) or, for the objects the
-// object module does not list, of the OBJD named by its cObject ("Chair -
-// Dining - Club_objt"). Sims come from their character files
-// (Neighborhoods/N###/Characters/N###_User#####.package, named by the
-// cObject: "N001_User00011 - Don_objt"), whose code is added to the library
-// under a group of their own. The objects keep their saved position, level,
-// direction, container, slot and room (object data 1-3 and 29); everything
-// else starts fresh, for Init to fill in.
+// The objects are exactly the object module's (LotObjects: its ObjM pairs,
+// as the game's read_pre_object creates them), each a VM object with its
+// saved ID, of the OBJD its save type's GUID names (objt). Sims come from
+// their character files (Neighborhoods/N###/Characters/N###_User#####.package,
+// named by the cObject "N001_User00011 - Don_objt", else found by the GUID),
+// whose code is added to the library under a group of their own. The objects
+// keep their saved position, level, direction, container, slot and room
+// (object data 1-3 and 29), and the parts of a multi-tile object (XMTO) their
+// lead object (object data 19); everything else is restored by
+// resumeLotObjects (lot_resume.hpp) or starts fresh, for Init to fill in.
+// The packages' leftovers (cObjects and states no ObjM pair names) are not
+// loaded.
 struct LotLoad {
     struct Entry {
         int16_t id = 0;

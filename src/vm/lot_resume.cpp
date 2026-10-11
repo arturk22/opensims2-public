@@ -82,12 +82,12 @@ void restoreState(Object& o, const LotObjects::State& s) {
 // tree's root: it is marked as the interaction, so it ends the entry when
 // it returns. Records whose entry cannot be found are dropped.
 size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
-    if (!sim.person || s.interactions.empty())
+    if (!sim.person || s.queue.empty())
         return 0;
     sim.queue.clear();
     sim.activeInteraction = -1;
-    for (const auto& rec : s.interactions) {
-        const ObjectId leader = interactionLeader(vm, rec.object);
+    for (const auto& rec : s.queue) {
+        const ObjectId leader = interactionLeader(vm, rec.stackObject);
         const Object* o = vm.object(leader);
         const auto ref = o ? interactionTable(vm, *o) : std::nullopt;
         if (!ref || !ref->strings)
@@ -101,12 +101,12 @@ size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
         // The running one may carry a name its check tree gave it ("Chat"
         // on a social object): its action tree is then the frame running
         // the object's code, and its index person data 21.
-        if (!q && sim.queue.empty() && rec.object == sim.person->data[80])
+        if (!q && sim.queue.empty() && rec.stackObject == sim.person->data[80])
             if (auto t = vm.threads.find(sim.id); t != vm.threads.end())
                 for (const Frame& f : t->second.stack)
-                    if (f.codeOwner == rec.object && f.codeOwner != sim.id) {
+                    if (f.codeOwner == rec.stackObject && f.codeOwner != sim.id) {
                         q.emplace();
-                        q->object = rec.object;
+                        q->object = rec.stackObject;
                         q->interaction = uint16_t(sim.person->data[21]);
                         q->action = f.instance;
                         q->name = rec.name;
