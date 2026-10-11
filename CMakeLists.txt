@@ -28,6 +28,8 @@ add_library(os2_formats
   src/formats/bhav.cpp
   src/formats/camera_config.cpp
   src/formats/cas_catalog.cpp
+  src/formats/cas_face.cpp
+  src/formats/character_write.cpp
   src/formats/build_catalog.cpp
   src/formats/catalog.cpp
   src/formats/cinematic.cpp

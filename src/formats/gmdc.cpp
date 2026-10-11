@@ -101,6 +101,7 @@ GeometryData GeometryData::read(BinReader& r) {
         if (bytes % (4 * e.components()))
             throw FormatError("cGeometryDataContainer: element data size not a multiple of its value size");
         e.raw.resize(bytes / 4);
+        e.rawOffset = r.pos();
         for (auto& w : e.raw)
             w = r.u32();
         e.items = readList(r, g.version, "element item");

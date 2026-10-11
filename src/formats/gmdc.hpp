@@ -42,6 +42,7 @@ struct GeometryData {
         uint32_t blockFormat = 0; // 0: float, 1: float2, 2: float3, 4: u32
         uint32_t setFormat = 0;
         std::vector<uint32_t> raw; // values as 32-bit words, `components()` per value
+        size_t rawOffset = 0;      // where `raw` starts in the bytes read (the block body), for patching
         std::vector<uint32_t> items;
 
         uint32_t components() const;

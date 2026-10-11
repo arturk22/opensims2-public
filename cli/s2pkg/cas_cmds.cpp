@@ -4,10 +4,14 @@
 #include "cas_cmds.hpp"
 
 #include "formats/cas_catalog.hpp"
+#include "formats/cas_face.hpp"
+#include "formats/character_write.hpp"
 #include "formats/resindex.hpp"
 
 #include <cstdio>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <stdexcept>
 
@@ -122,10 +126,98 @@ int cmdCasCatalog(const std::string& res, uint32_t ageBit, uint32_t genderBit, c
     return 0;
 }
 
+// A catalog entry by name or family, case-insensitive.
+const SimPart* entryNamed(const std::vector<SimPart>& list, const std::string& key) {
+    std::string k = key;
+    for (auto& ch : k)
+        ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    for (const auto& e : list) {
+        std::string n = e.name();
+        for (auto& ch : n)
+            ch = char(std::tolower(static_cast<unsigned char>(ch)));
+        if (n == k || cas::family(e) == k)
+            return &e;
+    }
+    return nullptr;
+}
+
+int cmdCasMake(int argc, char** argv) {
+    const std::string res = argv[2];
+    const std::filesystem::path out = argv[3];
+    ResourceIndex index(res);
+    const cas::CasCatalog catalog = cas::CasCatalog::load(index);
+    cas::CharacterSpec spec;
+    spec.firstName = "Novo";
+    spec.lastName = "Sim";
+    std::string objectName = out.stem().string();
+    uint32_t seed = 0;
+    std::vector<std::pair<std::string, std::string>> deferred; // options that need the age and gender
+    for (int i = 4; i + 1 < argc; i += 2) {
+        const std::string a = argv[i], v = argv[i + 1];
+        if (a == "--age") spec.age = parseAge(v);
+        else if (a == "--gender") spec.gender = parseGender(v);
+        else if (a == "--skin") spec.skinTone = std::stoi(v);
+        else if (a == "--hair-tone") spec.hairTone = std::stoi(v);
+        else if (a == "--first") spec.firstName = v;
+        else if (a == "--last") spec.lastName = v;
+        else if (a == "--object") objectName = v;
+        else if (a == "--seed") seed = uint32_t(std::stoul(v));
+        else if (a == "--guid") spec.guid = uint32_t(std::stoul(v, nullptr, 16));
+        else deferred.emplace_back(a, v);
+    }
+    for (const auto& [a, v] : deferred) {
+        auto& everyday = spec.outfits[cas::category::Everyday];
+        if (a == "--hair") everyday[cas::part::Hair] = v;
+        else if (a == "--top") everyday[cas::part::Top] = v;
+        else if (a == "--bottom") everyday[cas::part::Bottom] = v;
+        else if (a == "--body") everyday[cas::part::Body] = v;
+        else if (a == "--formal") spec.outfits[cas::category::Formal][cas::part::Body] = v;
+        else if (a == "--archetype") {
+            const SimPart* e = entryNamed(catalog.archetypes, v);
+            if (!e) throw std::runtime_error("no archetype " + v);
+            spec.face.archetype = cas::family(*e);
+        } else if (a == "--mod") {
+            const auto eq = v.rfind('=');
+            if (eq == std::string::npos) throw std::runtime_error("--mod name=weight");
+            const SimPart* e = entryNamed(catalog.modifiers, v.substr(0, eq));
+            if (!e) throw std::runtime_error("no modifier " + v.substr(0, eq));
+            spec.face.modifiers[cas::family(*e)] = std::stof(v.substr(eq + 1));
+        } else if (a == "--eyes") {
+            const SimPart* e = entryNamed(catalog.textureOverlays, v);
+            if (!e) throw std::runtime_error("no eye overlay " + v);
+            spec.eyes = cas::family(*e);
+        } else if (a == "--overlay") {
+            const SimPart* e = entryNamed(catalog.textureOverlays, v);
+            if (!e) throw std::runtime_error("no overlay " + v);
+            spec.overlays.push_back(cas::family(*e));
+        } else {
+            throw std::runtime_error("unknown option " + a);
+        }
+    }
+    cas::completeSpec(catalog, spec, seed);
+    cas::FaceBaker baker(index, catalog);
+    const auto r = cas::writeCharacter(index, catalog, baker, spec, objectName, out);
+    std::printf("wrote %s: %zu resources, GUID 0x%08X, %s %s %s, skin s%d, hair tone %d\n", out.string().c_str(),
+                r.resources, r.guid, spec.firstName.c_str(), spec.lastName.c_str(), cas::ageName(spec.age), spec.skinTone,
+                spec.hairTone);
+    for (const auto& [cat, parts] : spec.outfits) {
+        std::printf("  outfit 0x%03X:", cat);
+        for (const auto& [bit, name] : parts)
+            std::printf(" %s", name.c_str());
+        std::printf("\n");
+    }
+    for (const auto& w : r.warnings)
+        std::printf("  warning: %s\n", w.c_str());
+    return 0;
+}
+
 } // namespace
 
 const char* casUsage() {
-    return "       s2pkg cas-catalog <Res-dir> [--age adult] [--gender f|m] [tones|face|overlays|hair|clothes]\n";
+    return "       s2pkg cas-catalog <Res-dir> [--age adult] [--gender f|m] [tones|face|overlays|hair|clothes]\n"
+           "       s2pkg cas-make <Res-dir> <out.package> [--age adult] [--gender f|m] [--skin 1-4] [--hair-tone 1-5]\n"
+           "              [--hair|--top|--bottom|--body|--formal part] [--archetype name] [--mod name=weight]...\n"
+           "              [--eyes overlay] [--overlay overlay]... [--first name] [--last name] [--object N001_User00100] [--seed N]\n";
 }
 
 int casCommand(const std::string& cmd, int argc, char** argv) {
@@ -143,6 +235,8 @@ int casCommand(const std::string& cmd, int argc, char** argv) {
         }
         return cmdCasCatalog(argv[2], ageBit, genderBit, only);
     }
+    if (cmd == "cas-make" && argc >= 4)
+        return cmdCasMake(argc, argv);
     return -1;
 }
 
