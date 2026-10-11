@@ -1,0 +1,89 @@
+#pragma once
+
+// The game's own SimAntics error codes and messages (cTSObject::
+// GetErrorString in the Mac binary; docs/primitives-mac.md, appendix A).
+// A primitive that fails the way the game's does throws gameError(code), so
+// the thread fails with the game's text (and the detail, in parentheses).
+
+#include "vm.hpp"
+
+#include <cstdint>
+#include <string>
+
+namespace os2::vm {
+
+namespace err {
+constexpr uint16_t RandomRangeZero = 0x04;
+constexpr uint16_t NotSupported = 0x05;
+constexpr uint16_t StackNumberOutOfRange = 0x08;
+constexpr uint16_t IllegalOwner = 0x09;
+constexpr uint16_t NoTreeParameter = 0x0A;
+constexpr uint16_t ReadOnly = 0x13;
+constexpr uint16_t ValueOutOfRange = 0x14;
+constexpr uint16_t NoStackObject = 0x15;
+constexpr uint16_t NoTreeTableEntry = 0x16;
+constexpr uint16_t NoObject = 0x17;
+constexpr uint16_t SlotOutOfRange = 0x1B;
+constexpr uint16_t NotAPerson = 0x1C;
+constexpr uint16_t BadSearchType = 0x1E;
+constexpr uint16_t NoTreeTable = 0x1F;
+constexpr uint16_t BadPriority = 0x2D; // no text in the game's table
+constexpr uint16_t InvalidObjectId = 0x32;
+constexpr uint16_t LocalOutOfRange = 0x33;
+constexpr uint16_t MoreThanOnePassingValue = 0x36;
+constexpr uint16_t MissingNeighbor = 0x37;
+constexpr uint16_t StartObjectRequired = 0x3D;
+constexpr uint16_t RelationshipNotFound = 0x68;
+constexpr uint16_t ReachOnNonSim = 0x69;
+constexpr uint16_t NoReachObject = 0x6A;
+constexpr uint16_t NoReachEvent0 = 0x6E;
+constexpr uint16_t NestedPush = 0x6F;
+constexpr uint16_t BadLoopCount = 0x70;
+constexpr uint16_t MissingReachAnimation = 0x71;
+constexpr uint16_t BadAnimationType = 0x73;
+constexpr uint16_t TemplateObject = 0x90;
+} // namespace err
+
+inline std::string errorString(uint16_t code) {
+    switch (code) {
+    case 0x04: return "Random number range evaluated to zero.";
+    case 0x05: return "Primitive not supported for this type of object.";
+    case 0x08: return "Stack number out of range.";
+    case 0x09: return "Illegal owner field in data reference.";
+    case 0x0A: return "Reference to tree tree parameter when no parameter exists.";
+    case 0x13: return "Expression attempting to write in a read-only area.";
+    case 0x14: return "Data value out of range.";
+    case 0x15: return "No stack object present when required.";
+    case 0x16: return "Reference to tree table entry that does not exist.";
+    case 0x17: return "Could not find object reference.";
+    case 0x1B: return "Slot number out of range.";
+    case 0x1C: return "Object referred to must be a person.";
+    case 0x1E: return "Search type is invalid. Types are 0: all motive, 1:mental motives, 2:physical motives.";
+    case 0x1F: return "Tree table not found";
+    case 0x32: return "Invalid object id.";
+    case 0x33: return "Local out of range.";
+    case 0x36: return "More than one passing value specified.";
+    case 0x37: return "Missing neighbor for data access.";
+    case 0x3D: return "Start object required.";
+    case 0x68: return "The relationship matrix requested could not be found.";
+    case 0x69: return "Cant run Reach/Drop on non Sim object.";
+    case 0x6A: return "No Object for Reach to work on.";
+    case 0x6E: return "Reach animation does not contain event 0.";
+    case 0x6F: return "Trying to push nested interaction on someone not in an 'allow nested' interaction";
+    case 0x70: return "Invalid number of loops";
+    case 0x71: return "Missing reach animation.";
+    case 0x73: return "Invalid animation type specified in animation string";
+    case 0x90: return "Trying to create instance of Template Object";
+    default: return "Unrecognized error condition : " + std::to_string(code);
+    }
+}
+
+// "<the game's message> (<detail>)".
+inline VMError gameError(uint16_t code, const std::string& detail = {}) {
+    std::string s = errorString(code);
+    if (!detail.empty())
+        s += " (" + detail + ")";
+    return VMError(s);
+}
+
+} // namespace os2::vm

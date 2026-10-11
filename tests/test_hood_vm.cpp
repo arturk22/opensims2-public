@@ -31,6 +31,7 @@ static Behavior::Instruction instr(uint16_t opcode, Target onTrue, Target onFals
     in.opcode = opcode;
     in.onTrue = onTrue;
     in.onFalse = onFalse;
+    in.nodeVersion = opcode == 0x1A ? 1 : 0; // Relationship: the current operand layout
     size_t i = 0;
     for (auto b : operands)
         in.operands[i++] = b;

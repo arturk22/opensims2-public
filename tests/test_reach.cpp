@@ -32,6 +32,7 @@ static Behavior::Instruction instr(uint16_t opcode, Target onTrue, Target onFals
     in.opcode = opcode;
     in.onTrue = onTrue;
     in.onFalse = onFalse;
+    in.nodeVersion = opcode == 0x1A ? 1 : 0; // Relationship: the current operand layout
     size_t i = 0;
     for (auto b : operands)
         in.operands[i++] = b;
@@ -253,10 +254,16 @@ static void testTestObjectType() {
     fx.vm.neighbors[9] = n;
     check(result(testType(0xAAAA0003, Lit, 9, 0x02)) == 1, "0x02: a neighbor ID");
     check(result(testType(0xBBBB0003, Lit, 9, 0x03)) == 1, "0x03: the neighbor's original GUID");
-    check(result(testType(0xAAAA0003, Lit, 10, 0x02)) == -1, "0x02: a missing neighbor is an error");
-    fx.vm.object(fx.sim)->tempToken = {.token = {.guid = 0xCCCC0001}, .loaded = true};
-    check(result(testType(0xCCCC0001, Lit, 0, 0x04)) == 1, "0x04: my temporary token's GUID");
-    check(result(testType(0xCCCC0002, Lit, 0, 0x04)) == 0, "0x04: another GUID");
+    check(result(testType(0xAAAA0003, Lit, 10, 0x02)) == 0, "0x02: a missing neighbor is false (Mac binary)");
+    check(result(testType(0xAAAA0003, Lit, 77, 0)) == 0, "a missing object is false (Mac binary)");
+    // 0x04: the GUID into temps 0 (low) / 1 (high), true if it has a definition.
+    fx.code.add(kGroup, 0x1001, tree({testType(0xAAAA0003, Lit, 0, 0x04)}));
+    Thread t = fx.run(0x1001, fx.paper);
+    check(t.result && t.temps[0] == 3 && uint16_t(t.temps[1]) == 0xAAAA, "0x04: the GUID in temps 0/1");
+    check(result(testType(0xCCCC0002, Lit, 0, 0x04)) == 0, "0x04: a GUID without a definition");
+    // 0x4C7CAB2B stands for my temporary token's GUID.
+    fx.vm.object(fx.sim)->tempToken = {.token = {.guid = 0xAAAA0003}, .loaded = true};
+    check(result(testType(0x4C7CAB2B, StackId, 0, 0)) == 1, "the temporary token's GUID");
 }
 
 static Behavior::Instruction create(uint32_t guid, uint8_t where, uint8_t flags, uint8_t local = 0, uint8_t slot = 0,
@@ -279,7 +286,7 @@ static void testCreateObject() {
     fx.code.add(kGroup, 0x1002, tree({create(0xAAAA0003, 0, 0x01)}));
     t = fx.run(0x1002, 0);
     check(t.status == Thread::Status::Finished && !t.result, "0x01: not when one is already there");
-    fx.code.add(kGroup, 0x1003, tree({create(0xAAAA0003, 1, 0x08)}));
+    fx.code.add(kGroup, 0x1003, tree({create(0xAAAA0003, 5, 0x08)}));
     t = fx.run(0x1003, 0);
     check(t.status == Thread::Status::Finished && t.result, "0x08 on my tile: only the Sim, not an object, is there");
     t = fx.run(0x1003, 0);
@@ -294,7 +301,7 @@ static void testCreateObject() {
           "in a slot of the stack object (slot byte 9)");
     fx.code.add(kGroup, 0x1005, tree({create(0xAAAA0003, 2, 0, 0, 1, go(1)), expr(Temp, 5, Assign, StackId, 0, T, E)}));
     t = fx.run(0x1005, 0);
-    check(t.result && fx.vm.containedIn(fx.sim, 1) == t.temps[5], "in my hand (slot 1)");
+    check(t.result && fx.vm.containedIn(fx.sim, 0) == t.temps[5], "in my hand: my slot 0, whatever byte 9 says (Mac binary)");
     fx.vm.object(fx.paper)->position = {-1, -1, 0};
     fx.code.add(kGroup, 0x1006, tree({create(0xAAAA0003, 3, 0)}));
     const size_t count = fx.vm.objects().size();

@@ -34,6 +34,7 @@ static Behavior::Instruction instr(uint16_t opcode, Target onTrue, Target onFals
     in.opcode = opcode;
     in.onTrue = onTrue;
     in.onFalse = onFalse;
+    in.nodeVersion = opcode == 0x1A ? 1 : 0; // Relationship: the current operand layout
     size_t i = 0;
     for (auto b : operands)
         in.operands[i++] = b;
@@ -326,10 +327,12 @@ static void testPrimitives() {
                       instr(0x1F, go(4), E, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 2, 0}),
                       expr(Temp, 3, Assign, Temp, 2, go(5), E),
                       instr(0x1F, go(6), E, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 3, 0}),
-                      instr(0x1F, E, T, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 3, 0})}));
+                      expr(Temp, 4, Assign, Temp, 3, go(7), E),
+                      instr(0x1F, E, T, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 4, 0})}));
     t = fx.run(0x1001);
     check(t.status == Thread::Status::Finished && t.temps[1] == 2, "Set to Next iterates persons");
     check(t.temps[2] == chair.id && t.temps[3] == chair2.id, "Set to Next finds objects of a GUID in order");
+    check(t.temps[4] == 0, "Set to Next writes 0 when there is no next object (Mac binary)");
 
     // Test Object Type on the stack object; verify sim; Break Point passes through.
     fx.code.add(kObjGroup, 0x1002,
@@ -414,11 +417,12 @@ static void testRemoveAndRandom() {
     fx.code.add(kObjGroup, 0x1000,
                 tree({expr(StackId, 0, Assign, Lit, 3, go(1), E),
                       instr(0x12, go(2), E, {1, 0, 0x02}),                // remove every part of 3's object
-                      instr(0x08, T, E, {0, 0, Temp, 0, 0, 0, Lit, 0})})); // range 0: error
+                      expr(Temp, 0, Assign, Lit, 9, go(3), E),
+                      instr(0x08, T, E, {0, 0, Temp, 0, 0, 0, Lit, 0})})); // range 0: stores 0 (Mac binary)
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Failed && t.error.find("range evaluated to zero") != std::string::npos &&
-              !fx.vm.object(2) && !fx.vm.object(3) && fx.vm.object(4),
-          "Remove Object Instance cleans up all parts; Random Number with range 0 fails");
+    check(t.status == Thread::Status::Finished && t.result && t.temps[0] == 0 && !fx.vm.object(2) && !fx.vm.object(3) &&
+              fx.vm.object(4),
+          "Remove Object Instance cleans up all parts; Random Number with range 0 stores 0");
 }
 
 static void testRelationship() {
@@ -429,6 +433,8 @@ static void testRelationship() {
     Object& her = fx.vm.instantiate(kObjGroup, 0x81); // id 2
     me.person->data[persondata::NeighborId] = 5;
     her.person->data[persondata::NeighborId] = 7;
+    fx.vm.neighbors[5] = Neighbor{};
+    fx.vm.neighbors[7] = Neighbor{};
     const uint8_t myId = 0x0B; // object data 11
     fx.code.add(kObjGroup, 0x1000,
                 tree({// var 1 of a relationship that does not exist yet: fail
@@ -719,8 +725,9 @@ static void testFamilyTree() {
         code.push_back(in);
     fx.code.add(kObjGroup, 0x1000, tree(std::move(code)));
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Finished && t.temps[6] == 4 && t.temps[7] == 1 && t.temps[8] == 2 &&
-              t.temps[9] == 3 && t.temps[10] == 4 && t.temps[11] == 4,
+    // The searches that find nothing ("no more", "no other") write 0 (Mac binary).
+    check(t.status == Thread::Status::Finished && t.temps[6] == 0 && t.temps[7] == 1 && t.temps[8] == 2 &&
+              t.temps[9] == 3 && t.temps[10] == 4 && t.temps[11] == 0,
           "family tree calls and Set to Next family searches");
 }
 

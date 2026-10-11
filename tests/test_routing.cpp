@@ -113,8 +113,8 @@ static void testDiagonalWalls() {
           "through a door in it");
 }
 
-// Set to Next 8 (same tile, round and round), 9 (adjacent to the object in a
-// local, by direction) and 34 (within one tile).
+// Set to Next 8 (same tile, after the target), 9 (adjacent to the object in
+// a local: +X, -X, +Y, -Y) and 34 (within one tile).
 static void testSetToNextTiles() {
     CodeLibrary code;
     VM vm(code);
@@ -131,16 +131,16 @@ static void testSetToNextTiles() {
     auto stn = [](uint8_t type, uint8_t local, Target t, Target f) {
         return instr(0x1F, t, f, {0, 0, 0, 0, uint8_t(0x80 | type), StackId, local, 0, 0});
     };
-    // Same tile, from b: a, then b again.
+    // Same tile, from a: b, then nothing (the target becomes 0; Mac binary).
     code.add(kGroup, 0x1000,
-             tree({expr(StackId, 0, Assign, Lit, b.id, go(1), E), stn(8, 0, go(2), E),
-                   expr(Temp, 0, Assign, StackId, 0, go(3), E), stn(8, 0, go(4), E),
+             tree({expr(StackId, 0, Assign, Lit, a.id, go(1), E), stn(8, 0, go(2), E),
+                   expr(Temp, 0, Assign, StackId, 0, go(3), E), stn(8, 0, E, go(4)),
                    expr(Temp, 1, Assign, StackId, 0, T, E)}));
     Thread t = vm.start(a.id, 0x1000);
     vm.run(t);
-    check(t.status == Thread::Status::Finished && t.temps[0] == a.id && t.temps[1] == b.id,
-          "Set to Next 8 goes round the tile's objects, not the contained one");
-    // Adjacent to a (local 0): west (direction 0) comes before east (direction 4); then none.
+    check(t.status == Thread::Status::Finished && t.temps[0] == b.id && t.temps[1] == 0,
+          "Set to Next 8 goes through the tile's objects after the target, not the contained one");
+    // Adjacent to a (local 0): +X (east) comes before -X (west); then none.
     code.add(kGroup, 0x1001,
              tree({expr(Local, 0, Assign, Lit, a.id, go(1), E), expr(StackId, 0, Assign, Lit, 0, go(2), E),
                    stn(9, 0, go(3), E), expr(Temp, 0, Assign, StackId, 0, go(4), E), stn(9, 0, go(5), E),
@@ -148,8 +148,8 @@ static void testSetToNextTiles() {
                   0, 1));
     t = vm.start(a.id, 0x1001);
     vm.run(t);
-    check(t.status == Thread::Status::Finished && t.temps[0] == west.id && t.temps[1] == east.id,
-          "Set to Next 9 by direction");
+    check(t.status == Thread::Status::Finished && t.temps[0] == east.id && t.temps[1] == west.id,
+          "Set to Next 9: +X, -X, +Y, -Y");
     // Within one tile of a: b, east, west, diag (by ID), not a itself nor the far one.
     code.add(kGroup, 0x1002,
              tree({expr(Local, 0, Assign, Lit, a.id, go(1), E), expr(StackId, 0, Assign, Lit, 0, go(2), E),
