@@ -183,7 +183,7 @@ os2::WallView gWallView;
 os2::LotModelCache gLotCache;
 bool gLevelsHidden = false; // levels above the camera's are hidden (in the game: --ui live, --mode)
 int viewLevel();                            // below loadLot's helpers
-std::set<int16_t> gWallHung;                // objects that hang on walls (hidden with a wall cut down)
+std::map<int16_t, bool> gWallHung;          // objects that hang on walls (hidden with a wall cut down)
 bool onCutWall(const os2::Xform& at);       // below viewLevel
 void setWallMode(os2::WallView::Walls walls); // likewise
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index);
@@ -837,24 +837,26 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     };
     // Windows, doors, curtains and what hangs on walls (the model's bottom
     // over the floor): hidden with the wall they are on when it is cut down.
+    // Decided once per object (bought ones by their OBJD name only).
     gWallHung.clear();
-    for (const auto& [id, o] : gPlacedObjects) {
-        std::string def = o.definition;
-        std::transform(def.begin(), def.end(), def.begin(), [](unsigned char c) { return std::tolower(c); });
-        bool hung = def.starts_with("window") || def.starts_with("door") || def.starts_with("curtain") ||
-                    def.starts_with("blinds") || def.starts_with("drapes");
-        for (const auto& b : gPickBoxes)
-            if (!hung && b.instance != 0 && int(b.instance & 0xFFFF) == int(uint16_t(id)))
-                hung = b.lo.z > 0.5f;
-        if (hung)
-            gWallHung.insert(id);
-    }
+    for (const auto& b : gPickBoxes)
+        if (b.lo.z > 0.5f)
+            gWallHung[int16_t(b.instance & 0xFFFF)] = true;
     gObjectView->visible = [](int16_t id, const os2::Xform& at) {
         if (!gLotShape)
             return true;
         if (!os2::WallView::visible(*gLotShape, viewLevel(), at.t[0], at.t[1], at.t[2]))
             return false;
-        return !gWallHung.count(id) || !onCutWall(at);
+        auto it = gWallHung.find(id);
+        if (it == gWallHung.end()) {
+            const os2::vm::Object* o = gSimulation ? gSimulation->machine().object(id) : nullptr;
+            std::string def = o && o->definition ? o->definition->fileName : "";
+            std::transform(def.begin(), def.end(), def.begin(), [](unsigned char c) { return std::tolower(c); });
+            const bool hung = def.starts_with("window") || def.starts_with("door") || def.starts_with("curtain") ||
+                              def.starts_with("blinds") || def.starts_with("drapes");
+            it = gWallHung.emplace(id, hung).first;
+        }
+        return !it->second || !onCutWall(at);
     };
     perfLap("  VM hooks");
     setupPieMenu(index);

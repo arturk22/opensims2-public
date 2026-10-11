@@ -143,7 +143,10 @@ public:
     // hidden); a choice closes it, as does a click anywhere else. setWallMode
     // shows the mode (0 down, 1 cutaway, 2 up) and the roof toggle;
     // onWallMode / onRoof are called when the player picks one.
-    void setWallMode(int mode, bool roof) { wallMode_ = mode, roof_ = roof, dirty_ = true; }
+    void setWallMode(int mode, bool roof) {
+        if (mode != wallMode_ || roof != roof_)
+            wallMode_ = mode, roof_ = roof, dirty_ = true;
+    }
     bool wallFanOpen() const { return wallFan_; }
     std::function<void(int)> onWallMode;
     std::function<void()> onRoof;
