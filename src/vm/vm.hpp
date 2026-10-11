@@ -741,6 +741,10 @@ public:
     std::vector<ObjectId> killQueue;
     std::set<ObjectId> dyingObjects;
     const std::map<ObjectId, Object>& objects() const { return objects_; }
+    // The same objects in the same (ID) order, as a table indexed by ID with
+    // null holes: scanning it is cheaper than walking the map. Objects must
+    // not be created or removed while a loop over it runs with a reference.
+    const std::vector<Object*>& objectTable() const { return byId_; }
 
     // Containment: an object is in slot "slot number" (object data 3) of the
     // object "container id" (object data 2); outside of any slot those are 0

@@ -454,10 +454,10 @@ Exit setToNext(Context& c) {
             throw VMError("Set to Next: search type " + std::to_string(type) + " not implemented");
         throw gameError(err::BadSearchType, "Set to Next type " + std::to_string(type));
     }
-    const auto& objects = c.vm.objects();
-    for (auto it = objects.upper_bound(current); it != objects.end(); ++it)
-        if (matches(it->second))
-            return found(it->first);
+    const auto& table = c.vm.objectTable(); // by ID; the objects after `current`
+    for (size_t k = current < 0 ? 0 : size_t(current) + 1; k < table.size(); ++k)
+        if (table[k] && matches(*table[k]))
+            return found(table[k]->id);
     return none();
 }
 

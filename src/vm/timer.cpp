@@ -116,9 +116,9 @@ Exit onTimer(Context& c) {
 
 void VM::handleTimers() {
     std::vector<ObjectId> ids;
-    for (const auto& [id, o] : objects_)
-        if (!o.timers.empty())
-            ids.push_back(id);
+    for (const Object* o : byId_) // by ID, as objects_ is
+        if (o && !o->timers.empty())
+            ids.push_back(o->id);
     for (ObjectId id : ids) {
         Object* o = object(id);
         if (!o)

@@ -82,11 +82,11 @@ bool VM::tileFree(TilePos t, std::span<const ObjectId> ignore) {
     for (ObjectId id : ignore)
         if (const Object* o = object(id))
             skip.insert(multiTileGroup(*o));
-    for (const auto& [id, o] : objects_) {
-        if (o.position.level != t.level || !blocksRouting(o))
+    for (const Object* o : byId_) {
+        if (!o || o->position.level != t.level || !blocksRouting(*o))
             continue;
-        const TilePos at = tileOf(o);
-        if (at.x == t.x && at.y == t.y && !skip.count(multiTileGroup(o)))
+        const TilePos at = tileOf(*o);
+        if (at.x == t.x && at.y == t.y && !skip.count(multiTileGroup(*o)))
             return false;
     }
     return true;
@@ -94,9 +94,9 @@ bool VM::tileFree(TilePos t, std::span<const ObjectId> ignore) {
 
 std::vector<ObjectId> VM::objectsOnTile(TilePos t) const {
     std::vector<ObjectId> out;
-    for (const auto& [id, o] : objects_)
-        if (o.position.inWorld() && o.data[objdata::ContainerId] == 0 && tileOf(o) == t)
-            out.push_back(id);
+    for (const Object* o : byId_) // by ID, as objects_ is
+        if (o && o->position.inWorld() && o->data[objdata::ContainerId] == 0 && tileOf(*o) == t)
+            out.push_back(o->id);
     return out;
 }
 

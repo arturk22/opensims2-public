@@ -741,8 +741,10 @@ void tickOverlayEvents(VM& vm) {
         int16_t event;
     };
     std::vector<Fire> fires;
-    for (const auto& [id, constObject] : vm.objects()) {
-        auto& list = vm.object(id)->animation.overlayEvents;
+    for (Object* po : vm.objectTable()) {
+        if (!po)
+            continue;
+        auto& list = po->animation.overlayEvents;
         for (auto it = list.begin(); it != list.end();) {
             it->played += it->perTick;
             const bool ended = it->played >= it->length;

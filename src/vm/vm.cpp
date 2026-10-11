@@ -724,9 +724,9 @@ Object* VM::neighborSim(int16_t id) {
 ObjectId VM::containedIn(ObjectId container, int16_t slot) const {
     if (container == 0 || slot < 0)
         return 0;
-    for (const auto& [id, o] : objects_)
-        if (o.data[objdata::ContainerId] == container && o.data[objdata::SlotNumber] == slot && id != container)
-            return id;
+    for (const Object* o : byId_) // by ID, as objects_ is
+        if (o && o->data[objdata::ContainerId] == container && o->data[objdata::SlotNumber] == slot && o->id != container)
+            return o->id;
     return 0;
 }
 
@@ -866,19 +866,21 @@ void VM::tick() {
 void VM::followContainers() {
     // Contained objects are where their container is (as the saved lots keep
     // them and Snap Into puts them): what a Sim carries goes along with it.
-    for (auto& [id, o] : objects_) {
+    for (Object* po : byId_) { // by ID, as objects_ is
+        if (!po)
+            continue;
+        Object& o = *po;
         const ObjectId in = o.data[objdata::ContainerId];
-        if (!in || in == id)
+        if (!in || in == o.id)
             continue;
-        auto c = objects_.find(in);
-        if (c == objects_.end())
+        const Object* top = object(in);
+        if (!top)
             continue;
-        const Object* top = &c->second;
         for (int depth = 0; depth < 8 && top->data[objdata::ContainerId]; ++depth) {
-            auto up = objects_.find(top->data[objdata::ContainerId]);
-            if (up == objects_.end() || &up->second == top)
+            const Object* up = object(top->data[objdata::ContainerId]);
+            if (!up || up == top)
                 break;
-            top = &up->second;
+            top = up;
         }
         o.position = top->position;
         o.data[objdata::Room] = top->data[objdata::Room];

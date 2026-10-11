@@ -169,10 +169,10 @@ int16_t decayDataOf(int16_t m) {
 
 void tickMotives(VM& vm) {
     const float ticksPerDay = 24.0f * 60.0f * float(vm.clock.ticksPerMinute);
-    for (const auto& [id, cobj] : vm.objects()) {
-        if (!cobj.person)
+    for (Object* po : vm.objectTable()) {
+        if (!po || !po->person)
             continue;
-        Object& sim = *vm.object(id);
+        Object& sim = *po;
         Person& p = *sim.person;
         // cTSPerson::OnSimulatorTick: person data 27 "tick counter" counts
         // the ticks (the Main's "Divide Tick Counts" reads and resets it) and
