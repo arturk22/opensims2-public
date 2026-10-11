@@ -135,6 +135,10 @@ struct StandardMaterial {
     // Draw order: stdMatLayer x 8, +7 when blended (+3 for blended Sim hair);
     // walls and floors 0, water 5. Lower layers are drawn first.
     int layer = 0;
+    // Blended Sim hair parts ("..._alpha5_...", "..._alpha11_..."): the
+    // number, drawn in increasing order after the opaque hair (inferred);
+    // 0 for every other material.
+    int alphaOrder = 0;
     bool visible = true; // false for "Null" and "WallMask" materials (parts the game does not draw)
     bool alphaReplicate = false; // stdMatBaseTextureAlphaReplicate: colour = texture alpha
     bool textureColor = true;    // false: the base texture only gives alpha (TextureAlpha)

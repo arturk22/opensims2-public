@@ -4,6 +4,7 @@
 #include "formats/property_set.hpp"
 #include "formats/resindex.hpp"
 #include "formats/sim.hpp"
+#include "formats/sim_actor.hpp"
 #include "formats/skeleton.hpp"
 #include "formats/skinning.hpp"
 #include "formats/xform.hpp"
@@ -412,7 +413,21 @@ static void testPlayer() {
     check(near(m.advance(2.0), 4.0f, 1e-3f), "root motion: velocity per tick over two seconds");
 }
 
+// Body shape morphs from person data 81 (body flags) and 58 (age).
+static void testBodyShape() {
+    auto m = bodyShapeMorphs(0x10, 19);
+    check(m["fatbot"] == 0 && m["fattop"] == 0 && m["pregbot"] == 0, "no body flags: thin, not pregnant");
+    m = bodyShapeMorphs(0x1, 19);
+    check(m["fatbot"] == 1 && m["fattop"] == 1, "flag 0x1: fat");
+    m = bodyShapeMorphs(0x4, 19);
+    check(m["pregtop"] == 0.5f, "flag 0x4: half pregnant");
+    m = bodyShapeMorphs(0x3, 16);
+    check(m["fatbot"] == 1 && !m.count("pregbot"), "teens: no pregnancy morph");
+    check(bodyShapeMorphs(0x1, 2).empty(), "toddlers: no body morphs");
+}
+
 int main() {
+    testBodyShape();
     testPlayer();
     testIk();
     testArmIk();

@@ -61,7 +61,23 @@ void SimActor::update(double now) {
     const Xform at = placement();
     for (auto& w : bones)
         w = at.then(w);
-    skin.pose(bones, posed, player.morphs(now));
+    auto morphs = player.morphs(now);
+    for (const auto& [name, w] : bodyMorphs)
+        morphs[name] = w;
+    skin.pose(bones, posed, morphs);
+}
+
+std::map<std::string, float> bodyShapeMorphs(int16_t bodyFlags, int16_t age) {
+    std::map<std::string, float> m;
+    if (age <= 2)
+        return m;
+    const float fat = bodyFlags & 0x1 ? 1.0f : 0.0f;
+    m["fattop"] = m["fatbot"] = fat;
+    if (age >= 19 && age < 19 + 32) {
+        const float preg = bodyFlags & 0x2 ? 1.0f : bodyFlags & 0x4 ? 0.5f : 0.0f;
+        m["pregtop"] = m["pregbot"] = preg;
+    }
+    return m;
 }
 
 } // namespace os2

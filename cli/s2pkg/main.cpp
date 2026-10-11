@@ -2,6 +2,7 @@
 #include "anim_cmds.hpp"
 #include "prim_cmds.hpp"
 #include "effects_cmds.hpp"
+#include "simlook_cmds.hpp"
 #include "material_cmds.hpp"
 #include "audio_cmds.hpp"
 #include "movie_cmds.hpp"
@@ -942,7 +943,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
-                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage());
+                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage());
     return 2;
 }
 
@@ -968,6 +969,8 @@ int main(int argc, char** argv) {
         if (int rc = primCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = effectsCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = simLookCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = pieCommand(cmd, argc, argv); rc >= 0)
             return rc;

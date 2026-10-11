@@ -223,6 +223,7 @@ struct Renderer::Material {
     bool depthWrite = true;
     bool clamp = false; // base texture clamped instead of tiled
     int layer = 0;
+    int alphaOrder = 0; // Sim hair layers (StandardMaterial::alphaOrder)
     MTL::CullMode cull = MTL::CullModeBack;
     StandardMaterial anim; // texture coordinate animation (texAnim and its parameters)
 };
@@ -481,6 +482,7 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     mat.blend = sm.blend;
     mat.depthWrite = sm.depthWrite;
     mat.layer = sm.layer;
+    mat.alphaOrder = sm.alphaOrder;
     mat.clamp = sm.clampU || sm.clampV;
     mat.alphaRef = sm.alphaRef;
     mat.flags = (sm.lighting ? kLighting : 0) | (sm.lightMapped ? kLightMapped : 0) | (sm.alphaTest ? kAlphaTest : 0) |
@@ -812,6 +814,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         int layer;
         bool blended;
         float distance;
+        int alphaOrder;
         const Instance* inst;
         const Part* part;
     };
@@ -823,17 +826,22 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             const bool blended = m.blend != StandardMaterial::Blend::None;
             float distance = 0;
             if (blended) {
-                const simd_float4 c = simd_mul(inst.transform, simd_make_float4(part.center, 1));
+                // A hairdo's layers sort together, by the instance's origin,
+                // then in their alpha order.
+                const simd_float4 c = m.alphaOrder ? inst.transform.columns[3]
+                                                   : simd_mul(inst.transform, simd_make_float4(part.center, 1));
                 distance = simd_length_squared(simd_make_float3(c) - eye);
             }
-            items.push_back({m.layer, blended, distance, &inst, &part});
+            items.push_back({m.layer, blended, distance, m.alphaOrder, &inst, &part});
         }
     std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
         if (a.layer != b.layer)
             return a.layer < b.layer;
         if (a.blended != b.blended)
             return !a.blended;
-        return a.blended && a.distance > b.distance;
+        if (a.blended && a.distance != b.distance)
+            return a.distance > b.distance;
+        return a.blended && a.alphaOrder < b.alphaOrder;
     });
 
     const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();

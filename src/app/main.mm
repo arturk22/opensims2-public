@@ -1383,6 +1383,15 @@ void poseActors(os2::Renderer& renderer, double seconds) {
                 return true;
         return false;
     };
+    // Body shape from person data 81 "Body Flags" and 58 age
+    // (os2::bodyShapeMorphs); OS2_BODY_FLAGS=<flags> overrides the flags (test aid).
+    if (gSimulation)
+        for (auto& s : gLotSims)
+            if (const auto* o = gSimulation->machine().object(s.id); o && o->person) {
+                const char* force = std::getenv("OS2_BODY_FLAGS");
+                s.actor->bodyMorphs = os2::bodyShapeMorphs(force ? int16_t(std::atoi(force)) : o->person->data[81],
+                                                           o->person->data[58]);
+            }
     for (auto& a : gActors)
         if (!isObject(a.get()))
             a->update(seconds);

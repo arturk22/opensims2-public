@@ -4,6 +4,7 @@
 #include "skinning.hpp"
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -36,6 +37,9 @@ struct SimActor {
     std::function<void(std::vector<Xform>& local, double now)> adjust;
     // World transforms of the skeleton's bones after the last update().
     std::vector<Xform> bones;
+    // Morph weights that hold whatever the animation does: the body shape
+    // ("fattop"/"fatbot", "pregtop"/"pregbot"; see bodyShapeMorphs).
+    std::map<std::string, float> bodyMorphs;
 
     explicit SimActor(SkinnedModel s) : skin(std::move(s)) { player.setSkeleton(&skin.skeleton); }
     SimActor(const SimActor&) = delete;
@@ -57,5 +61,13 @@ struct SimActor {
     // The placement as a transform (rotation about Z, then translation).
     Xform placement() const;
 };
+
+// The body-shape morphs of a Sim, as the game sets them on its outfit
+// (Mac BV 0x0094c318, the caller of the "fattop"/"fatbot" strings), from
+// person data 81 "Body Flags" and 58 (age: 19 adults, 16 teens, ...): for
+// ages over 2, "fattop"/"fatbot" = 1 with flag 0x1, else 0; for ages 19-50,
+// "pregtop"/"pregbot" = 1 with flag 0x2, 0.5 with 0x4, else 0. Fitness is
+// not a morph: fit and fat bodies are separate outfits (GZPS "fitness").
+std::map<std::string, float> bodyShapeMorphs(int16_t bodyFlags, int16_t age);
 
 } // namespace os2

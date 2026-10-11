@@ -306,6 +306,16 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
             out.depthWrite = true;
             out.alphaTest = true;
             out.alphaRef = 61.0f / 255.0f;
+            // "_alpha<N>" in the material name orders the layers of a hairdo.
+            const std::string& name = m.resource.fileName;
+            for (size_t at = name.find("_alpha"); at != std::string::npos; at = name.find("_alpha", at + 1)) {
+                size_t k = at + 6;
+                int n = 0;
+                while (k < name.size() && name[k] >= '0' && name[k] <= '9')
+                    n = n * 10 + (name[k++] - '0');
+                if (k > at + 6)
+                    out.alphaOrder = n;
+            }
         }
     } else if (type.rfind("Wallpaper", 0) == 0 || type.rfind("Floor", 0) == 0 || type == "Terrain") {
         // Walls, floors and the terrain are lit by light maps in their own
@@ -385,7 +395,10 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     out.diffuse = {diffuse[0], diffuse[1], diffuse[2]};
     if (baseEnabled)
         out.baseTexture = baseTextureName(m);
-    if (normalEnabled && out.lighting && out.shading != StandardMaterial::Shading::CelShaded)
+    // Not on Sims: the Mac game draws every Sim material with the fixed
+    // function path, which has no normal map (docs/shaders-mac.md 8).
+    if (normalEnabled && out.lighting && out.shading != StandardMaterial::Shading::CelShaded &&
+        out.shading != StandardMaterial::Shading::Sim)
         if (auto n = m.property("stdMatNormalMapTextureName"); !n.empty())
             out.normalMap = withSuffix(n, "_txtr");
     // CheckForCubeMapping: off when the coefficients add up to < 0.003; unlit
