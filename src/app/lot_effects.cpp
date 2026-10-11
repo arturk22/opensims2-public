@@ -90,10 +90,17 @@ std::string LotEffects::thumbnail(vm::VM& vm, uint32_t guid) {
     return name;
 }
 
-bool LotEffects::addManual(const std::string& name, int16_t object, fx::V3 at, int slot) {
+bool LotEffects::addManual(const std::string& spec, int16_t object, fx::V3 at, int slot) {
+    // "<name>~<state>": in that state (Effect Stop/Start modes 10-13).
+    std::string name = spec;
+    int state = 0;
+    if (const size_t tilde = spec.rfind('~'); tilde != std::string::npos) {
+        name = spec.substr(0, tilde);
+        state = std::atoi(spec.c_str() + tilde + 1);
+    }
     if (!library_->find(name))
         return false;
-    manual_.push_back({name, object, at, -1, slot});
+    manual_.push_back({name, object, at, -1, slot, state});
     return true;
 }
 
@@ -219,6 +226,8 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                 }
                 it->second.seen = true;
                 if (it->second.handle >= 0)
+                    system_->setState(it->second.handle, e.state);
+                if (it->second.handle >= 0)
                     if (auto at = placementOf(id, e.slotType, e.slot, view, sims, vm, e.node)) {
                         system_->move(it->second.handle, *at);
                         if (std::getenv("OS2_DEBUG_FX_MOVE"))
@@ -262,6 +271,7 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
             m.handle = system_->start(m.name, p);
         else
             system_->move(m.handle, p);
+        system_->setState(m.handle, m.state);
         ++it;
     }
 
@@ -327,8 +337,18 @@ void LotEffects::placeModels() {
             continue;
         const auto key = std::make_pair(m.handle, m.part);
         int inst = -1;
-        if (auto it = modelInstances_.find(key); it != modelInstances_.end())
-            inst = it->second;
+        auto old = modelInstances_.find(key);
+        if (old != modelInstances_.end() && instanceModel_[old->second] != mit->second) {
+            // The part now shows another model (a fish that died): its old instance goes back.
+            simd_float4x4 away = matrix_identity_float4x4;
+            away.columns[3] = simd_make_float4(0, 0, -1000, 1);
+            renderer_.setInstanceTransform(old->second, away);
+            freeModelInstances_.push_back(old->second);
+            modelInstances_.erase(old);
+            old = modelInstances_.end();
+        }
+        if (old != modelInstances_.end())
+            inst = old->second;
         else {
             for (auto f = freeModelInstances_.begin(); f != freeModelInstances_.end(); ++f)
                 if (instanceModel_[*f] == mit->second) {

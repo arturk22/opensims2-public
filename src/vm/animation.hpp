@@ -81,6 +81,7 @@ struct ActiveEffect {
     uint32_t serial = 0;
     bool oneShot = false;
     bool hard = false;      // hard start/stop: no fade
+    int8_t state = 0;       // modes 10-13: the effect's state 0-3 (float parameter 0xF)
 };
 
 struct AnimationState {

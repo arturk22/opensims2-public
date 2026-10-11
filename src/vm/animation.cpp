@@ -687,6 +687,16 @@ Exit effectStopStart(Context& c) {
     case 8:
     case 9:
     case 14: std::erase_if(fx, [](const ActiveEffect& x) { return !x.oneShot; }); break;
+    case 10:
+    case 11:
+    case 12:
+    case 13:
+        // States 1-4: the running effect's float parameter 0xF = 0..3
+        // ("Interaction - Feed Fish" mode 11, "Kill Fish" mode 12).
+        for (auto& x : fx)
+            if (x.index == effect)
+                x.state = int8_t(mode - 10);
+        break;
     default: break;
     }
     return Exit::True;

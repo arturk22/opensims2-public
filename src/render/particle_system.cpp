@@ -17,10 +17,16 @@ constexpr uint64_t kLocalSpace = 0x3;     // bits 0/1: particles follow the effe
 constexpr uint64_t kEllipsoid = 1u << 8;  // emit volume is an ellipsoid (OpenTS2)
 constexpr uint64_t kRandomWalk = 1u << 20; // set on every effect with a real random walk
 constexpr uint64_t kIcon = 1u << 24;      // balloon icon: the texture is replaced
+// Meta particle flags (MetaParticles::flags, 64 bits; inferred from the data).
+constexpr uint64_t kMetaKeepCount = 1ull << 56;   // the rate is how many are kept alive (fish, cockroaches)
+constexpr uint64_t kMetaContinues = 0x18ull << 56; // continues the meta component before it
+constexpr uint64_t kMetaBounded = 1ull << 33;     // kept inside the first step's emit volume (the fish, not the cockroaches)
+constexpr size_t kMaxMetaParticles = 64;          // per chain
 
 V3 add(V3 a, V3 b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 V3 mul(V3 a, float s) { return {a[0] * s, a[1] * s, a[2] * s}; }
 float len(V3 a) { return std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]); }
+V3 sub(V3 a, V3 b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
 
 } // namespace
 
@@ -54,18 +60,9 @@ float EffectSystem::random(float a, float b) {
     return std::uniform_real_distribution<float>(a, b)(rng_);
 }
 
-float EffectSystem::metaAge(const Emitter& e) {
-    if (!e.meta || e.metaLife <= 0)
-        return -1;
-    float age = (e.time - e.startDelay) / e.metaLife;
-    if (e.meta->rateCurveCycles == 0 && age > 1)
-        age = std::fmod(age, 1.0f); // a steady meta emitter: a new one each life (simplified)
-    return age;
-}
-
 void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& local, float emitScale,
                              float sizeScale, float alphaScale, float timeScale, float delay, float stopAt,
-                             int depth, const MetaParticles* meta, float metaLife) {
+                             int depth) {
     if (visual >= lib_.visuals.size() || depth > 8)
         return;
     const auto& comps = lib_.visuals[visual].components;
@@ -86,10 +83,13 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
             }
         chosen[g] = pick;
     }
+    MetaChain* chain = nullptr; // the meta component just added (a continuation joins it)
     for (size_t i = 0; i < comps.size(); ++i) {
         const Component& c = comps[i];
         if (c.selectionGroup && chosen[c.selectionGroup] != int(i))
             continue;
+        if (c.type != Block::MetaParticles)
+            chain = nullptr;
         Placement p;
         p.position = c.offset;
         p.rotation = c.rotation;
@@ -100,7 +100,7 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
         const float ts = timeScale * (c.timeScale > 0 ? c.timeScale : 1);
         switch (c.type) {
         case Block::Visual:
-            addEffect(inst, uint32_t(c.index), here, es, ss, as, ts, delay, stopAt, depth + 1, meta, metaLife);
+            addEffect(inst, uint32_t(c.index), here, es, ss, as, ts, delay, stopAt, depth + 1);
             break;
         case Block::Particles:
             if (c.index >= 0 && size_t(c.index) < lib_.particles.size()) {
@@ -112,21 +112,33 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
                 e.localSpace = (e.desc->flags & kLocalSpace) != 0;
                 e.startDelay = delay;
                 e.stopAt = stopAt;
-                e.meta = meta;
-                e.metaLife = metaLife;
+                e.order = inst.orderNext++;
                 inst.emitters.push_back(std::move(e));
             }
             break;
         case Block::MetaParticles:
-            // Meta particles carry whole effects. Drawn as one meta particle
-            // at the component (the balloons' case: rate 1, one cycle) whose
-            // size and alpha curves scale and fade the carried effect over
-            // the meta particle's life.
+            // Meta particles carry whole effects (each its own instance),
+            // moving as particles; see MetaChain.
             if (c.index >= 0 && size_t(c.index) < lib_.metaParticles.size()) {
-                const auto& m = lib_.metaParticles[size_t(c.index)];
-                if (auto base = lib_.indexOf(m.baseEffect))
-                    addEffect(inst, *base, here, es, ss, as, ts, delay, stopAt, depth + 1, &m,
-                              std::max(0.01f, random(m.life[0], m.life[1])));
+                const MetaParticles& m = lib_.metaParticles[size_t(c.index)];
+                const auto base = lib_.indexOf(m.baseEffect);
+                if (chain && (m.flags & kMetaContinues)) {
+                    chain->steps.push_back(&m);
+                    chain->bases.push_back(base ? int(*base) : -1);
+                    break;
+                }
+                MetaChain mc;
+                mc.steps.push_back(&m);
+                mc.bases.push_back(base ? int(*base) : -1);
+                mc.local = here;
+                mc.emitScale = es, mc.sizeScale = ss, mc.alphaScale = as, mc.timeScale = ts;
+                mc.startDelay = delay;
+                mc.stopAt = stopAt;
+                mc.orderBase = inst.orderNext;
+                inst.orderNext += 16;
+                inst.metas.push_back(std::move(mc));
+                chain = &inst.metas.back();
+                (void)depth;
             }
             break;
         case Block::Sequence:
@@ -139,6 +151,7 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
                     const float d = item.activateTime[0] < 0 ? -1 : random(item.activateTime[0], item.activateTime[1]);
                     if (child)
                         addEffect(inst, *child, here, es, ss, as, ts, t, d < 0 ? stopAt : t + d, depth + 1);
+                    chain = nullptr; // (the vector may have moved)
                     if (d < 0)
                         break;
                     t += d;
@@ -168,6 +181,7 @@ int EffectSystem::start(std::string_view name, const Placement& where) {
         return -1;
     Instance inst;
     inst.where = where;
+    inst.id = nextId_++;
     addEffect(inst, *visual, Placement{}, 1, 1, 1, 1, 0, -1, 0);
     // Pre-roll: run each emitter for its preRoll so steady effects (smoke,
     // glows) start in their steady state.
@@ -183,9 +197,28 @@ int EffectSystem::start(std::string_view name, const Placement& where) {
             left -= dt;
         }
     }
+    // Steady meta emitters likewise (the fish are swimming already); the
+    // others get their first ones now.
+    for (auto& m : inst.metas) {
+        if (m.startDelay > 0 || m.steps[0]->rateCurveCycles != 0 || m.steps[0]->preRoll <= 0) {
+            stepChain(inst, m, 0, true);
+            continue;
+        }
+        float left = std::min(m.steps[0]->preRoll, kMaxPreRoll);
+        while (left > 0) {
+            const float dt = std::min(left, kMaxStep);
+            stepChain(inst, m, dt, true);
+            left -= dt;
+        }
+    }
     const int h = next_++;
     instances_.emplace(h, std::move(inst));
     return h;
+}
+
+void EffectSystem::setState(int handle, int state) {
+    if (auto it = instances_.find(handle); it != instances_.end())
+        it->second.state = std::clamp(state, 0, 3);
 }
 
 void EffectSystem::stop(int handle, bool hard) {
@@ -261,11 +294,6 @@ void EffectSystem::stepEmitter(const Instance& inst, Emitter& e, float dt, bool 
     dt *= e.timeScale;
     e.time += dt;
     const float active = e.time - e.startDelay;
-    const float ma = metaAge(e);
-    if (ma > 1) { // the carrying meta particle died: so does its effect
-        e.particles.clear();
-        return;
-    }
     if (emit && active >= 0 && (e.stopAt < 0 || e.time < e.stopAt)) {
         // Rate curve over rateCurveTime seconds, repeated rateCurveCycles
         // times (0: forever); particles per second.
@@ -308,82 +336,295 @@ void EffectSystem::stepEmitter(const Instance& inst, Emitter& e, float dt, bool 
     std::erase_if(e.particles, [](const Particle& p) { return p.age >= p.life; });
 }
 
+void EffectSystem::enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth) {
+    const MetaParticles& d = *m.steps[step];
+    p.step = step;
+    p.age = 0;
+    p.life = std::max(0.01f, random(d.life[0], d.life[1]));
+    p.sizeScale = random(1 - d.sizeVary, 1 + d.sizeVary);
+    p.walkTimer = 0;
+    // Its carried effect (a new one when the step carries another, the
+    // fish's dead model).
+    const int base = m.bases[step];
+    if (!p.child || step == 0 || base != m.bases[step - 1]) {
+        p.child = std::make_unique<Instance>();
+        p.child->id = nextId_++;
+        if (base >= 0)
+            addEffect(*p.child, uint32_t(base), Placement{}, m.emitScale, m.sizeScale, m.alphaScale, m.timeScale, 0, -1,
+                      depth + 1);
+    }
+}
+
+void EffectSystem::spawnMeta(Instance& inst, MetaChain& m) {
+    if (m.particles.size() >= kMaxMetaParticles)
+        return;
+    const MetaParticles& d = *m.steps[0];
+    MetaParticle p;
+    V3 u;
+    for (int k = 0; k < 3; ++k)
+        u[size_t(k)] = random(d.emitVolume.lo[size_t(k)], d.emitVolume.hi[size_t(k)]);
+    p.position = u;
+    V3 dir;
+    for (int k = 0; k < 3; ++k)
+        dir[size_t(k)] = random(d.emitDirection.lo[size_t(k)], d.emitDirection.hi[size_t(k)]);
+    const float l = len(dir), speed = random(d.emitSpeed[0], d.emitSpeed[1]);
+    p.velocity = l > 1e-6f ? mul(dir, speed / l) : V3{0, 0, 0};
+    p.yaw = random(0, kTwoPi);
+    enterStep(m, p, std::min<size_t>(size_t(inst.state), m.steps.size() - 1), 0);
+    m.particles.push_back(std::move(p));
+}
+
+// A meta particle's placement in the world, for its carried effect.
+void EffectSystem::placeMeta(const Instance& inst, const MetaChain& m, MetaParticle& p) const {
+    const MetaParticles& d = *m.steps[p.step];
+    const float t = std::min(1.0f, p.age / p.life);
+    Placement local;
+    local.position = p.position;
+    if (d.alignment == 2 || d.alignment == 3) {
+        // Facing its motion: the model's +X along the velocity (alignment
+        // 2 also pitches, 3 stays level; inferred from the fish, whose
+        // models are long in X, and the cockroaches).
+        const float cy = std::cos(p.yaw), sy = std::sin(p.yaw);
+        const float pitch = d.alignment == 2 ? p.pitch : 0;
+        const float cp = std::cos(pitch), sp = std::sin(pitch);
+        // Rz(yaw) * Ry(-pitch): columns are the local axes.
+        local.rotation = {cy * cp, -sy, -cy * sp, sy * cp, cy, -sy * sp, sp, 0, cp};
+    }
+    local.scale = std::max(0.0f, sampleCurve(d.sizeCurve, t, 1) * p.sizeScale);
+    if (p.child) {
+        p.child->where = compose(inst.where, compose(m.local, local));
+        p.child->alpha = inst.alpha * std::clamp(sampleCurve(d.alphaCurve, t, 1), 0.0f, 1.0f);
+        p.child->icon = inst.icon;
+        p.child->iconFrame = inst.iconFrame;
+        p.child->stopped = inst.stopped;
+    }
+}
+
+void EffectSystem::stepChain(Instance& inst, MetaChain& m, float dt, bool emit) {
+    dt *= m.timeScale;
+    m.time += dt;
+    const MetaParticles& root = *m.steps[0];
+    const float active = m.time - m.startDelay;
+    // Births, in the first step and in state 0 only.
+    if (emit && inst.state == 0 && active >= 0 && (m.stopAt < 0 || m.time < m.stopAt)) {
+        const float period = root.rateCurveTime > 0 ? root.rateCurveTime : 1;
+        const bool done = root.rateCurveCycles > 0 && active >= period * float(root.rateCurveCycles);
+        const float rate = sampleCurve(root.rateCurve, std::fmod(std::max(active, 0.0f), period) / period, 0) * m.emitScale;
+        if (root.flags & kMetaKeepCount) {
+            // Kept alive: the rate is the count (one fish per fish chain).
+            const size_t want = size_t(std::lround(std::max(rate, 0.0f)));
+            while (!done && m.particles.size() < std::min(want, kMaxMetaParticles))
+                spawnMeta(inst, m);
+        } else if (!done) {
+            m.pending += rate * dt;
+            if (root.rateCurveCycles > 0 && active - dt <= 0 && m.pending < 1 && rate > 0)
+                m.pending = 1; // a burst's first one at once (the balloons)
+            while (m.pending >= 1) {
+                spawnMeta(inst, m);
+                m.pending -= 1;
+            }
+        }
+    }
+    const V3 lo = root.emitVolume.lo, hi = root.emitVolume.hi;
+    for (auto& p : m.particles) {
+        // The effect's state moves its particles to that step of the chain.
+        const size_t want = std::min<size_t>(size_t(inst.state), m.steps.size() - 1);
+        if (inst.state > 0 && p.step != want)
+            enterStep(m, p, want, 0);
+        else if (inst.state == 0 && p.step != 0 && m.steps[p.step]->life[1] > 1000)
+            enterStep(m, p, 0, 0); // back to swimming after feeding (steps with an endless life)
+        p.age += dt;
+        if (p.age >= p.life) {
+            // Its life in this step is over: the next step, if any.
+            if (p.step + 1 < m.steps.size() && inst.state == 0)
+                enterStep(m, p, p.step + 1, 0);
+            else {
+                p.child.reset();
+                continue;
+            }
+        }
+        const MetaParticles& d = *m.steps[p.step];
+        const float t = std::min(1.0f, p.age / p.life);
+        // The random walk: every delay a new heading, turned from the last by
+        // up to turn[0] of a full turn, climbing by up to turn[2] (slope), at a
+        // speed in the strength range (inferred: fish meander slowly, the
+        // cockroaches dash; turn[1] is not used).
+        const auto& w = d.walks[0];
+        if (w.strength[1] > 0 && (p.walkTimer -= dt) <= 0) {
+            p.walkTimer = std::max(0.05f, random(w.delay[0], w.delay[1]));
+            const float speed = random(w.strength[0], w.strength[1]);
+            float heading = std::atan2(p.velocity[1], p.velocity[0]);
+            if (std::hypot(p.velocity[0], p.velocity[1]) < 1e-5f)
+                heading = p.yaw;
+            heading += random(-w.turn[0], w.turn[0]) * kTwoPi;
+            const float slope = random(-w.turn[2], w.turn[2]);
+            V3 v{std::cos(heading), std::sin(heading), slope};
+            const float lv = len(v);
+            p.velocity = mul(v, speed / lv);
+        }
+        // Attractor: pulled towards its point (in the chain's frame) by the
+        // strength over the life, within its range.
+        if (!d.attractorStrength.empty()) {
+            const V3 to = sub(d.attractor, p.position);
+            const float dist = len(to);
+            const float range = d.attractorRange > 0 ? d.attractorRange : 1e9f;
+            if (dist > 1e-4f && dist < range)
+                p.velocity = add(p.velocity, mul(to, sampleCurve(d.attractorStrength, t, 0) * dt / dist));
+        }
+        p.velocity = add(p.velocity, mul(d.force, dt));
+        p.velocity = mul(p.velocity, std::max(0.0f, 1 - d.force2a * dt));
+        p.position = add(p.position, mul(p.velocity, dt));
+        // Kept inside the first step's volume: turned back at its sides.
+        if (root.flags & kMetaBounded)
+            for (size_t k = 0; k < 3; ++k) {
+                if (p.position[k] < lo[k] && p.velocity[k] < 0)
+                    p.velocity[k] = -p.velocity[k];
+                if (p.position[k] > hi[k] && p.velocity[k] > 0)
+                    p.velocity[k] = -p.velocity[k];
+                p.position[k] = std::clamp(p.position[k], lo[k] - 0.02f, hi[k] + 0.02f);
+            }
+        // Facing, turned smoothly towards the motion (the damping: turns per
+        // second, default 1; inferred).
+        const float horiz = std::hypot(p.velocity[0], p.velocity[1]);
+        if (horiz > 1e-4f || std::abs(p.velocity[2]) > 1e-4f) {
+            const float yaw = std::atan2(p.velocity[1], p.velocity[0]);
+            const float pitch = std::atan2(p.velocity[2], horiz);
+            if (!p.faced) {
+                p.yaw = yaw, p.pitch = pitch, p.faced = true;
+            } else {
+                const float rate = (d.alignDamp > 0 ? d.alignDamp : 1.0f) * kTwoPi * dt;
+                const float dy = std::remainder(yaw - p.yaw, kTwoPi);
+                p.yaw += std::clamp(dy, -rate, rate);
+                p.pitch += std::clamp(pitch - p.pitch, -rate, rate);
+            }
+        }
+        placeMeta(inst, m, p);
+        if (p.child)
+            stepInstance(*p.child, dt, emit);
+    }
+    std::erase_if(m.particles, [](const MetaParticle& p) { return !p.child; });
+}
+
+void EffectSystem::stepInstance(Instance& inst, float dt, bool emit) {
+    for (auto& e : inst.emitters)
+        stepEmitter(inst, e, dt, emit);
+    for (auto& dp : inst.decals)
+        dp.age += dt;
+    for (auto& mp : inst.models)
+        mp.age += dt;
+    for (auto& sp : inst.sounds)
+        sp.age += dt;
+    for (auto& m : inst.metas)
+        stepChain(inst, m, dt, emit);
+}
+
+bool EffectSystem::busy(const Instance& inst) {
+    for (const auto& dp : inst.decals) {
+        const float life = dp.desc->life;
+        if (dp.age < dp.delay || (life > 0 ? dp.age - dp.delay < life : !inst.stopped))
+            return true;
+    }
+    for (const auto& mp : inst.models)
+        if (!inst.stopped && (mp.stopAt < 0 || mp.age < mp.stopAt))
+            return true;
+    // A sound keeps its effect while it is due (an effect of only a sound runs until stopped).
+    for (const auto& sp : inst.sounds)
+        if (!inst.stopped && (sp.stopAt < 0 || sp.age < sp.stopAt))
+            return true;
+    for (const auto& e : inst.emitters) {
+        const auto& d = *e.desc;
+        const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
+        const bool emitting = !inst.stopped && (e.stopAt < 0 || e.time < e.stopAt) &&
+                              (d.rateCurveCycles == 0 || e.time - e.startDelay < period * float(d.rateCurveCycles));
+        if (!e.particles.empty() || emitting)
+            return true;
+    }
+    for (const auto& m : inst.metas) {
+        for (const auto& p : m.particles)
+            if (p.child && busy(*p.child))
+                return true;
+        const auto& d = *m.steps[0];
+        const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
+        if (!inst.stopped && (m.stopAt < 0 || m.time < m.stopAt) &&
+            (d.rateCurveCycles == 0 || m.time - m.startDelay < period * float(d.rateCurveCycles)))
+            return true;
+    }
+    return false;
+}
+
 void EffectSystem::update(float seconds) {
     if (!(seconds > 0))
         return;
     seconds = std::min(seconds, 1.0f);
     for (auto it = instances_.begin(); it != instances_.end();) {
         Instance& inst = it->second;
-        bool any = false;
         float left = seconds;
         while (left > 0) {
             const float dt = std::min(left, kMaxStep);
-            for (auto& e : inst.emitters)
-                stepEmitter(inst, e, dt, !inst.stopped);
+            stepInstance(inst, dt, !inst.stopped);
             left -= dt;
         }
-        for (auto& dp : inst.decals) {
-            dp.age += seconds;
-            const float life = dp.desc->life;
-            if (dp.age < dp.delay || (life > 0 ? dp.age - dp.delay < life : !inst.stopped))
-                any = true;
-        }
-        for (auto& mp : inst.models) {
-            mp.age += seconds;
-            if (!inst.stopped && (mp.stopAt < 0 || mp.age < mp.stopAt))
-                any = true;
-        }
-        // A sound keeps its effect while it is due (an effect of only a sound runs until stopped).
-        for (auto& sp : inst.sounds) {
-            sp.age += seconds;
-            if (!inst.stopped && (sp.stopAt < 0 || sp.age < sp.stopAt))
-                any = true;
-        }
-        for (const auto& e : inst.emitters) {
-            const auto& d = *e.desc;
-            const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
-            const bool emitting = !inst.stopped && metaAge(e) <= 1 && (e.stopAt < 0 || e.time < e.stopAt) &&
-                                  (d.rateCurveCycles == 0 || e.time - e.startDelay < period * float(d.rateCurveCycles));
-            if (!e.particles.empty() || emitting)
-                any = true;
-        }
-        if (!any)
+        if (!busy(inst))
             it = instances_.erase(it);
         else
             ++it;
     }
 }
 
-void EffectSystem::collectModels(std::vector<EffectModel>& out) const {
-    for (const auto& [h, inst] : instances_)
-        for (size_t i = 0; i < inst.models.size(); ++i) {
-            const ModelPart& m = inst.models[i];
-            if (inst.stopped || m.age < m.delay || (m.stopAt >= 0 && m.age >= m.stopAt))
-                continue;
-            EffectModel em;
-            em.handle = h;
-            em.part = int(i);
-            em.model = &m.desc->model;
-            em.where = compose(inst.where, m.local);
-            em.where.scale *= m.desc->size * m.sizeScale;
-            em.color = {m.desc->color[0], m.desc->color[1], m.desc->color[2], m.desc->alpha * m.alphaScale};
+void EffectSystem::collectModelsOf(int handle, const Instance& inst, std::vector<EffectModel>& out) const {
+    for (size_t i = 0; i < inst.models.size(); ++i) {
+        const ModelPart& m = inst.models[i];
+        if (inst.stopped || m.age < m.delay || (m.stopAt >= 0 && m.age >= m.stopAt))
+            continue;
+        EffectModel em;
+        em.handle = handle;
+        em.part = inst.id * 64 + int(i % 64);
+        em.model = &m.desc->model;
+        em.where = compose(inst.where, m.local);
+        em.where.scale *= m.desc->size * m.sizeScale;
+        em.color = {m.desc->color[0], m.desc->color[1], m.desc->color[2], m.desc->alpha * m.alphaScale * inst.alpha};
+        if (em.where.scale > 0)
             out.push_back(em);
-        }
+    }
+    for (const auto& mc : inst.metas)
+        for (const auto& p : mc.particles)
+            if (p.child)
+                collectModelsOf(handle, *p.child, out);
+}
+
+void EffectSystem::collectSoundsOf(int handle, const Instance& inst, std::vector<EffectSound>& out) const {
+    for (size_t i = 0; i < inst.sounds.size(); ++i) {
+        const SoundPart& sp = inst.sounds[i];
+        if (inst.stopped || sp.age < sp.delay || (sp.stopAt >= 0 && sp.age >= sp.stopAt))
+            continue;
+        // (part: a key unique among the instance's and its meta particles' sounds)
+        out.push_back({handle, inst.id * 64 + int(i % 64), sp.desc->audioId,
+                       compose(inst.where, sp.local).position});
+    }
+    for (const auto& mc : inst.metas)
+        for (const auto& p : mc.particles)
+            if (p.child)
+                collectSoundsOf(handle, *p.child, out);
 }
 
 void EffectSystem::collectSounds(std::vector<EffectSound>& out) const {
     for (const auto& [h, inst] : instances_)
-        for (size_t i = 0; i < inst.sounds.size(); ++i) {
-            const SoundPart& sp = inst.sounds[i];
-            if (inst.stopped || sp.age < sp.delay || (sp.stopAt >= 0 && sp.age >= sp.stopAt))
-                continue;
-            out.push_back({h, int(i), sp.desc->audioId, compose(inst.where, sp.local).position});
-        }
+        collectSoundsOf(h, inst, out);
+}
+
+void EffectSystem::collectModels(std::vector<EffectModel>& out) const {
+    for (const auto& [h, inst] : instances_)
+        collectModelsOf(h, inst, out);
 }
 
 void EffectSystem::collect(std::vector<ParticleQuad>& out) const {
     for (const auto& [h, inst] : instances_)
-        for (const auto& dp : inst.decals) {
+        collectInstance(inst, inst.where.position, 0, out);
+}
+
+void EffectSystem::collectInstance(const Instance& inst, const V3& sortRoot, int orderBase,
+                                   std::vector<ParticleQuad>& out) const {
+    for (const auto& dp : inst.decals) {
             const Decal& d = *dp.desc;
             const float age = dp.age - dp.delay;
             if (age < 0 || (d.life > 0 && age >= d.life) || (d.life <= 0 && inst.stopped))
@@ -401,30 +642,26 @@ void EffectSystem::collect(std::vector<ParticleQuad>& out) const {
             const V3 c = sampleColors(d.colors, t);
             for (int k = 0; k < 3; ++k)
                 q.color[size_t(k)] = std::clamp(c[size_t(k)], 0.0f, 1.0f);
-            q.color[3] = std::clamp(sampleCurve(d.alphaCurve, t, 1) * dp.alphaScale, 0.0f, 1.0f);
+            q.color[3] = std::clamp(sampleCurve(d.alphaCurve, t, 1) * dp.alphaScale * inst.alpha, 0.0f, 1.0f);
             q.texture = &d.texture;
             q.draw = d.drawType <= 7 ? DrawType(d.drawType) : DrawType::Decal;
             q.alignment = 1; // flat on the ground
             if (q.color[3] > 0.001f && size > 0)
                 out.push_back(q);
         }
-    for (const auto& [h, inst] : instances_)
-        for (size_t ei = 0; ei < inst.emitters.size(); ++ei) {
+    for (size_t ei = 0; ei < inst.emitters.size(); ++ei) {
             const Emitter& e = inst.emitters[ei];
             const Particles& d = *e.desc;
             const std::string* tex = e.icon && !inst.icon.empty() ? &inst.icon : &d.material;
-            const float ma = metaAge(e);
-            if (ma > 1 || (e.meta && e.time < e.startDelay))
-                continue;
-            const float metaSize = ma >= 0 ? sampleCurve(e.meta->sizeCurve, ma, 1) : 1;
-            const float metaAlpha = ma >= 0 ? sampleCurve(e.meta->alphaCurve, ma, 1) : 1;
-            const float scale = inst.where.scale * e.local.scale * metaSize;
+            const float scale = inst.where.scale * e.local.scale;
             for (const auto& p : e.particles) {
                 const float t = p.age / p.life;
                 ParticleQuad q;
                 q.position = toWorld(inst, e, p.position);
-                q.sortPosition = e.localSpace ? inst.where.position : q.position;
-                q.sortOrder = e.localSpace ? int(ei) : 0;
+                // Particles that move with the effect (balloons) sort by the
+                // effect's root position, then in component order.
+                q.sortPosition = e.localSpace ? sortRoot : q.position;
+                q.sortOrder = e.localSpace ? orderBase + e.order : 0;
                 q.velocity = e.localSpace ? rotate(inst.where, p.velocity) : p.velocity;
                 const float size = sampleCurve(d.sizeCurve, t, 1) * p.sizeScale * e.sizeScale * scale;
                 q.width = size;
@@ -433,7 +670,7 @@ void EffectSystem::collect(std::vector<ParticleQuad>& out) const {
                 const V3 c = sampleColors(d.colors, t);
                 for (int k = 0; k < 3; ++k)
                     q.color[size_t(k)] = std::clamp(c[size_t(k)] * p.colorScale[size_t(k)], 0.0f, 1.0f);
-                q.color[3] = std::clamp(sampleCurve(d.alphaCurve, t, 1) * p.alphaScale * e.alphaScale * metaAlpha, 0.0f, 1.0f);
+                q.color[3] = std::clamp(sampleCurve(d.alphaCurve, t, 1) * p.alphaScale * e.alphaScale * inst.alpha, 0.0f, 1.0f);
                 q.texture = tex;
                 if (d.tileU > 1 || d.tileV > 1) {
                     const int cells = std::max(1, int(d.tileU) * int(d.tileV));
@@ -454,6 +691,10 @@ void EffectSystem::collect(std::vector<ParticleQuad>& out) const {
                     out.push_back(q);
             }
         }
+    for (const auto& mc : inst.metas)
+        for (const auto& p : mc.particles)
+            if (p.child)
+                collectInstance(*p.child, sortRoot, orderBase + mc.orderBase, out);
 }
 
 } // namespace os2::fx

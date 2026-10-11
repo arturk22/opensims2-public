@@ -33,6 +33,11 @@ nossa, a confirmar.
   modelo, 11 tela, 12 água), transformação (byte de flags, escala, matriz 3×3,
   offset), LOD início/fim, escalas de emissão/tamanho/alpha (início/fim do
   LOD), grupo e chance de seleção (u16), escala de tempo, índice. **[OpenTS2]**
+- Um componente que é outro efeito visual (tipo 0) o **nomeia**: o índice
+  guardado é sempre 0 (as 240 referências do jogo base). Lido pelo índice,
+  todo efeito aninhado virava o efeito 0, a poeira do cursor de construção
+  (o aquário mostrava uma coluna de poeira); rodada 10: resolvido pelo nome
+  ao carregar. **[dados]**
 
 ### 1.1 Campos das partículas usados
 
@@ -91,6 +96,10 @@ Operando (bytes do operando; o XPrimParam do binário soma 4):
     (atlas de 16 ícones de 64 px) e a variável é o tópico (a célula);
   - 0x10: retrato de Sim (variável 12/13);
   - 0x2000: ícone de desejo/medo ("BalloonEffectThumbnail_WantFear_0x%08x").
+- Estados (modos 10–13, rodada 10): o efeito do índice já ligado recebe o
+  estado 0–3 (float param 0xF). O aquário (grupo `0x7F9A625F`) usa 11 em
+  "Interaction - Feed Fish" e 12 em "Kill Fish"; o estado escolhe o passo das
+  cadeias de meta-partículas (§3). **[dados][inferido]**
 - Erros do jogo: 0x17 objeto inválido, 0x4F nome vazio, 0x50 não é objeto
   3D, 0x1B slot inválido, 0x6C interroga osso sem ossos. **[bin]**
 
@@ -123,17 +132,45 @@ Escolhas nossas **[inferido]**, conferidas com `s2pkg effect-sim` e capturas:
   real; o valor padrão sem ele é 5/50); bit 24: a textura é o ícone do balão.
 - Pre-roll só nos emissores contínuos (ciclos 0): os balões têm vida 4 e
   pre-roll 4 e sumiriam.
-- Meta-partículas: uma por componente (o caso dos balões: taxa 1, um ciclo),
-  e as curvas de tamanho/alpha dela escalam o efeito carregado pela vida
-  (balão que "estoura" de 0 a 1,2 e some no fim); morta, o efeito acaba.
+- Meta-partículas (rodada 10): partículas de verdade, cada uma com o seu
+  efeito carregado (uma instância própria) que se move com ela; as curvas de
+  tamanho/alpha escalam o efeito pela vida (o balão que "estoura" de 0 a 1,2
+  e some no fim); morta, o efeito acaba. Lidos agora do bloco (layout do
+  OpenTS2): alinhamento, segundo grupo (vetor, f) com o f como arrasto,
+  wiggles, os dois passeios aleatórios (atraso, força, 3 floats de giro),
+  direção preferida, amortecimento/inclinação, atrator (ponto, curva de
+  força, alcance) e pontos de tração. Inferido pelos dados:
+  - bit 0x01 do byte alto das flags de 64 bits: a taxa é **quantas ficam
+    vivas** (um peixe por cadeia, uma barata; vida 60000 e taxa 1/s dariam
+    milhares);
+  - 0x18 no byte alto: o componente **continua** a meta-partícula anterior
+    do mesmo efeito: uma cadeia de passos. Com a vida de um passo no fim, a
+    partícula passa ao seguinte mantendo posição e velocidade (as baratas
+    `cockroachfloorbehaviour*`: parada → circulando → andando → correndo);
+    o estado do efeito (modos 10–13) põe todas no passo do estado (cada
+    peixe do aquário: nadando, comendo, morto; o morto vive 2 s). Só nascem
+    no primeiro passo, no estado 0; passos de vida sem fim (> 1000 s) voltam
+    ao 0 quando o estado volta a 0;
+  - bit 0x02 da segunda u32 (bit 33): presas ao volume de emissão do
+    primeiro passo (o tanque, ±0,4 × ±0,2 × ±0,15), voltando nas bordas; as
+    baratas (bit 32) não;
+  - passeio 1: a cada atraso (negativo = o mínimo, 0,05 s) uma nova
+    direção, girada até `giro[0]` volta da anterior, subindo até `giro[2]`
+    (inclinação), na velocidade do intervalo de força; o `giro[1]` não é
+    usado; atrator: aceleração para o ponto (no referencial do componente)
+    pela curva de força, dentro do alcance; alinhamentos 2 (o +X do modelo
+    na velocidade, com inclinação: os peixes são compridos em X) e 3 (só o
+    rumo, nivelado), virando no máximo `amortecimento` voltas/s (padrão 1).
+  - Não feitos: wiggles, pontos de tração, o segundo passeio, inclinação
+    pelo vento.
 - LOD: escalas do fim (detalhe máximo). Alinhamentos: 0 câmera, 1 chão
   (ondas, manchas), 2 velocidade (chuva), 6 eixo Z (jatos de água, feixes);
   5 (anéis, peças do despertador) desenhado como 0.
 - Decalques (rodada 9): um quadrado no chão sob o componente, tamanho,
   alfa, rotação e cor pela vida (vida ≤ 0: enquanto o efeito roda);
   modelos: o CRES do bloco desenhado no componente enquanto o efeito roda
-  (`LotEffects::placeModels`; peixes do aquário, peças do xadrez; o
-  movimento das meta-partículas que os levam não é feito). Câmeras e
+  (`LotEffects::placeModels`; peixes do aquário, peças do xadrez), que
+  andam com as meta-partículas que os levam. Câmeras e
   água não; as telas (modo 4 = crossfade de instantâneo) só nas cinemáticas.
 - Sons (rodada 10): o `audioId` do bloco de som é a **instância** da track
   (CRC24 do nome | 0xFF000000; 31 dos 33 ids do jogo base batem com uma hit
@@ -199,5 +236,9 @@ Captura: `docs/screenshots/r8-effects-balloon.jpg` (`--lot N001_Lot11
   partículas.
 - `s2pkg effect-tables <Res> <pacote> [grupo[:STR#]]`: STR# que nomeiam
   efeitos (0x8F), ou a lista de um grupo.
-- App: `--effect <nome>[@<objeto>[:<índice no STR# 0x90>] | @x,y,z]`
+- App: `--effect <nome>[~<estado>][@<objeto>[:<índice no STR# 0x90>] | @x,y,z]`
   (repetível); `OS2_DEBUG_FX=1` imprime os efeitos que a VM liga.
+- Captura (rodada 10): `docs/screenshots/r10-fx-aquario-peixes.jpg`
+  (`--lot N001_Lot11 --effect aquarium_fish_effects@6.5,17.5,1.0 --pivot
+  6.5,17.5 --zoom 9 --orientation 4 --time 6 --frames 3`; antes: a poeira do
+  efeito 0 no lugar dos peixes).

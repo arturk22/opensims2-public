@@ -56,7 +56,7 @@ public:
     // A hand-started effect at a fixed point, or on an object (followed).
     // Returns false if there is no such effect.
     // `slot` >= 0 attaches it to that node of the object (STR# 0x90 index,
-    // as Effect Stop/Start's slot type 2).
+    // as Effect Stop/Start's slot type 2). "<name>~<n>" puts it in state n.
     bool addManual(const std::string& name, int16_t object, fx::V3 at, int slot = -1);
 
     // Effects by hand at a placement (a cinematic's, the animations'):
@@ -98,6 +98,7 @@ private:
         fx::V3 at{};
         int handle = -1;
         int slot = -1;
+        int state = 0;
     };
     std::optional<fx::Placement> placementOf(int16_t id, int8_t slotType, uint8_t slot, VmObjectView* view,
                                              const SimLookup& sims, vm::VM* vm, const std::string& named = {}) const;

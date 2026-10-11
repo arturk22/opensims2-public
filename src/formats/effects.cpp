@@ -191,26 +191,37 @@ MetaParticles readMeta(BinReader& r) {
     m.alphaCurve = curve(r);
     r.f32();
     m.baseEffect = str32(r);
-    r.u8();
+    m.alignment = r.u8();
     m.force = v3(r);
     m.windStrength = r.f32();
     m.drag = r.f32();
-    v3(r);
-    r.f32();
-    r.f32();    // screw
-    wiggles(r);
+    m.force2 = v3(r);
+    m.force2a = r.f32();
+    m.screw = r.f32();
+    m.wiggles = wiggles(r);
     r.skip(4);  // bloom
     colliders(r);
     r.skip(8 * 4); // terrain
     v2(r);
-    r.skip(2 * (4 * 4 + 3 * 4)); // random walks
-    v3(r);
-    r.skip(3 * 4);
-    v3(r);
-    curve(r);
-    r.f32();
+    for (auto& w : m.walks) {
+        w.delay = v2(r);
+        w.strength = v2(r);
+        for (float& t : w.turn)
+            t = r.f32();
+    }
+    m.walkPreferDirection = v3(r);
+    m.alignDamp = r.f32();
+    m.alignBankWind = r.f32();
+    m.alignBank = r.f32();
+    m.attractor = v3(r);
+    m.attractorStrength = curve(r);
+    m.attractorRange = r.f32();
     const uint32_t tractors = r.u32();
-    r.skip(size_t(tractors) * 7 * 4);
+    if (tractors > 4096)
+        throw FormatError("effects: too many tractor points");
+    m.tractors.resize(tractors);
+    for (auto& t : m.tractors)
+        t = {v3(r), v3(r), r.f32()};
     r.f32();
     return m;
 }
@@ -421,6 +432,14 @@ EffectsLibrary EffectsLibrary::parse(std::span<const uint8_t> data) {
             break;
         lib.names[lower(name)] = id;
     }
+    // A component that is a whole effect names it: its stored index is 0
+    // (the base game's "aquarium_fish_effects" lists aquarium_effects_fish1..6,
+    // all with index 0, the construction cursor's dust). Resolved by name.
+    for (auto& v : lib.visuals)
+        for (auto& c : v.components)
+            if (c.type == Block::Visual)
+                if (auto i = lib.indexOf(c.name))
+                    c.index = int32_t(*i);
     return lib;
 }
 

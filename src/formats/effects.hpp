@@ -116,8 +116,34 @@ struct MetaParticles {
     std::vector<V3> colors;
     Curve alphaCurve;
     std::string baseEffect;      // the visual effect each meta particle carries
+    uint8_t alignment = 0;
     V3 force{};
     float windStrength = 0, drag = 0;
+    // The second (vector, float) group: the float taken as the drag factor,
+    // as the particles' (inferred).
+    V3 force2{};
+    float force2a = 0;
+    float screw = 0;
+    std::vector<Wiggle> wiggles;
+    // Two random walks (OpenTS2's RandomWalk: delay range, strength range,
+    // three turn floats) and the direction they prefer.
+    struct Walk {
+        V2 delay{}, strength{};
+        float turn[3]{};
+    };
+    std::array<Walk, 2> walks{};
+    V3 walkPreferDirection{};
+    float alignDamp = 0, alignBankWind = 0, alignBank = 0;
+    // Attractor (version < 4): point, strength over life, range.
+    V3 attractor{};
+    Curve attractorStrength;
+    float attractorRange = 0;
+    // Tractor points (OpenTS2: two vectors and a float each).
+    struct Tractor {
+        V3 a{}, b{};
+        float f = 0;
+    };
+    std::vector<Tractor> tractors;
 };
 
 struct Decal {

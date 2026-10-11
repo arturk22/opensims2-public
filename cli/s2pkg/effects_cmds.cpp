@@ -77,8 +77,8 @@ void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
         return;
     const std::string pad(size_t(depth) * 2 + 2, ' ');
     for (const auto& c : lib.visuals[index].components) {
-        std::printf("%s%s \"%s\" #%d scale=%g offset=[%g %g %g] lod=%u-%u emit=%g/%g size=%g/%g alpha=%g/%g sel=%u/%u time=%g\n",
-                    pad.c_str(), blockName(c.type), c.name.c_str(), c.index, c.scale, c.offset[0], c.offset[1],
+        std::printf("%s%s \"%s\" #%d flags=0x%X scale=%g offset=[%g %g %g] lod=%u-%u emit=%g/%g size=%g/%g alpha=%g/%g sel=%u/%u time=%g\n",
+                    pad.c_str(), blockName(c.type), c.name.c_str(), c.index, c.flags, c.scale, c.offset[0], c.offset[1],
                     c.offset[2], c.lodBegin, c.lodEnd, c.emitScale[0], c.emitScale[1], c.sizeScale[0], c.sizeScale[1],
                     c.alphaScale[0], c.alphaScale[1], c.selectionGroup, c.selectionChance, c.timeScale);
         const std::string in = pad + "    ";
@@ -103,6 +103,20 @@ void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
                             m.emitDirection.lo[1], m.emitDirection.lo[2], m.emitDirection.hi[0], m.emitDirection.hi[1],
                             m.emitDirection.hi[2], m.emitSpeed[0], m.emitSpeed[1], m.force[0], m.force[1], m.force[2],
                             m.windStrength, m.drag);
+                std::printf("%sdelay=%g..%g trigger=%g..%g volume=[%g %g %g]-[%g %g %g] align=%u force2=[%g %g %g] %g screw=%g wiggles=%zu",
+                            in.c_str(), m.rateDelay[0], m.rateDelay[1], m.rateTrigger[0], m.rateTrigger[1], m.emitVolume.lo[0], m.emitVolume.lo[1], m.emitVolume.lo[2], m.emitVolume.hi[0],
+                            m.emitVolume.hi[1], m.emitVolume.hi[2], m.alignment, m.force2[0], m.force2[1], m.force2[2],
+                            m.force2a, m.screw, m.wiggles.size());
+                for (const auto& w : m.wiggles)
+                    std::printf(" (%g [%g %g %g] [%g %g %g])", w.timeRate, w.rateDirection[0], w.rateDirection[1],
+                                w.rateDirection[2], w.wiggleDirection[0], w.wiggleDirection[1], w.wiggleDirection[2]);
+                for (const auto& w : m.walks)
+                    std::printf(" walk=%g..%g/%g..%g turn %g %g %g", w.delay[0], w.delay[1], w.strength[0],
+                                w.strength[1], w.turn[0], w.turn[1], w.turn[2]);
+                std::printf(" prefer=[%g %g %g] damp=%g bankWind=%g bank=%g attractor=[%g %g %g] %s %g tractors=%zu\n",
+                            m.walkPreferDirection[0], m.walkPreferDirection[1], m.walkPreferDirection[2], m.alignDamp,
+                            m.alignBankWind, m.alignBank, m.attractor[0], m.attractor[1], m.attractor[2],
+                            curveText(m.attractorStrength).c_str(), m.attractorRange, m.tractors.size());
                 if (auto i = lib.indexOf(m.baseEffect))
                     printEffect(lib, *i, depth + 2);
             }

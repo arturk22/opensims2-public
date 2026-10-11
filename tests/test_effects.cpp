@@ -157,6 +157,121 @@ static void testSimulation() {
     check(!sys.alive(h), "a stopped effect ends when its particles die");
 }
 
+// A hand-built library: "tank" holds a fish chain (swimming / feeding /
+// dead meta particles carrying "fishmodel" / "deadmodel"), "roach" a chain
+// of two steps that follow one another as their lives end.
+static EffectsLibrary metaLibrary() {
+    EffectsLibrary lib;
+    Model fish, dead;
+    fish.model = "fishParticle1_cres";
+    dead.model = "fishParticle1Dead_cres";
+    lib.models = {fish, dead};
+    auto visual = [&](const std::string& name, std::vector<Component> comps) {
+        VisualEffect v;
+        v.components = std::move(comps);
+        lib.names[name] = uint32_t(lib.visuals.size());
+        lib.visuals.push_back(std::move(v));
+    };
+    auto comp = [](Block type, int index) {
+        Component c;
+        c.type = type;
+        c.index = index;
+        return c;
+    };
+    visual("fishmodel", {comp(Block::Model, 0)});
+    visual("deadmodel", {comp(Block::Model, 1)});
+    MetaParticles swim;
+    swim.flags = 0x0100002200000000ull; // keep count, bounded
+    swim.life = {60000, 60000};
+    swim.rateCurve = {1};
+    swim.rateCurveTime = 1;
+    swim.emitVolume = {{-0.4f, -0.2f, -0.15f}, {0.4f, 0.2f, 0.15f}};
+    swim.baseEffect = "fishmodel";
+    swim.alignment = 2;
+    swim.walks[0].delay = {-0.25f, 0.75f};
+    swim.walks[0].strength = {0.0625f, 0.1875f};
+    swim.walks[0].turn[0] = 0.02f, swim.walks[0].turn[2] = 0.1f;
+    MetaParticles feed = swim;
+    feed.flags = 0x1900002200000000ull;
+    MetaParticles die = swim;
+    die.flags = 0x1900002100000000ull;
+    die.life = {2, 2};
+    die.baseEffect = "deadmodel";
+    lib.metaParticles = {swim, feed, die};
+    visual("tank", {comp(Block::MetaParticles, 0), comp(Block::MetaParticles, 1), comp(Block::MetaParticles, 2)});
+    MetaParticles stand = swim, run = swim;
+    stand.flags = 0x0100002100000000ull;
+    stand.life = {0.5f, 0.5f};
+    run.flags = 0x1900002100000000ull;
+    run.life = {0.5f, 0.5f};
+    run.baseEffect = "deadmodel";
+    lib.metaParticles.push_back(stand);
+    lib.metaParticles.push_back(run);
+    visual("roach", {comp(Block::MetaParticles, 3), comp(Block::MetaParticles, 4)});
+    return lib;
+}
+
+static void testMetaParticles() {
+    const EffectsLibrary lib = metaLibrary();
+    EffectSystem sys(lib, 3);
+    Placement where;
+    where.position = {5, 5, 1};
+    const int h = sys.start("tank", where);
+    std::vector<EffectModel> m;
+    sys.collectModels(m);
+    check(m.size() == 1 && *m[0].model == "fishParticle1_cres", "one swimming fish (the rate is the count kept)");
+    const V3 first = m.empty() ? V3{} : m[0].where.position;
+    bool inside = true;
+    for (int i = 0; i < 300; ++i) {
+        sys.update(0.1f);
+        m.clear();
+        sys.collectModels(m);
+        for (const auto& e : m)
+            inside = inside && std::fabs(e.where.position[0] - 5) < 0.45f && std::fabs(e.where.position[1] - 5) < 0.25f &&
+                     std::fabs(e.where.position[2] - 1) < 0.2f;
+    }
+    check(m.size() == 1, "still one fish after 30 s");
+    check(inside, "the fish stays in the tank's volume");
+    const V3 later = m.empty() ? V3{} : m[0].where.position;
+    check(std::fabs(later[0] - first[0]) + std::fabs(later[1] - first[1]) > 1e-3f, "the fish swims");
+    if (!m.empty()) {
+        // Facing its motion: the model's +X is horizontal-ish, not the identity forever.
+        const auto& r = m[0].where.rotation;
+        check(std::fabs(r[0] * r[0] + r[3] * r[3] + r[6] * r[6] - 1) < 1e-3f, "the facing is a rotation");
+    }
+    sys.setState(h, 2);
+    sys.update(0.1f);
+    m.clear();
+    sys.collectModels(m);
+    check(m.size() == 1 && *m[0].model == "fishParticle1Dead_cres", "state 2: the dead fish");
+    for (int i = 0; i < 30; ++i)
+        sys.update(0.1f);
+    m.clear();
+    sys.collectModels(m);
+    check(m.empty(), "the dead fish is gone when its life ends, and none is born out of state 0");
+    sys.setState(h, 0);
+    sys.update(0.1f);
+    m.clear();
+    sys.collectModels(m);
+    check(m.size() == 1 && *m[0].model == "fishParticle1_cres", "back in state 0 a fish is born again");
+
+    const int r = sys.start("roach", where);
+    m.clear();
+    sys.collectModels(m);
+    size_t standing = 0;
+    for (const auto& e : m)
+        standing += *e.model == "fishParticle1_cres";
+    sys.update(0.3f);
+    sys.update(0.3f);
+    m.clear();
+    sys.collectModels(m);
+    size_t next = 0;
+    for (const auto& e : m)
+        next += *e.model == "fishParticle1Dead_cres";
+    check(standing == 2 && next == 1, "a chain's particle goes to the next step when its life there ends");
+    (void)r;
+}
+
 static void testCurves() {
     check(sampleCurve({}, 0.5f, 3) == 3, "empty curve falls back");
     check(sampleCurve({1, 3}, 0.5f) == 2, "linear interpolation");
@@ -168,6 +283,7 @@ int main() {
     try {
         testParse();
         testSimulation();
+        testMetaParticles();
         testCurves();
     } catch (const std::exception& e) {
         std::fprintf(stderr, "FAIL: exception %s\n", e.what());
