@@ -234,6 +234,9 @@ void GameAudio::update(double seconds) {
         st.outsideness = 1;
         // The neighborhood has no clock of its own: its day layers (inferred).
         st.timeOfDay = 0.5f;
+        // Its water and open ground (NHWater, NHWind) as flags of the whole
+        // view; in the game they are areas around the camera (inferred).
+        st.partitions = {{"isflora", true}, {"iswater", true}, {"isempty", true}};
         if (!hoodAmbience_)
             st.onLot = true, st.partitions.clear(), st.outsideness = 0, st.paused = true;
         hood_->update(st, dt);
@@ -483,6 +486,8 @@ void LotAudio::update(vm::VM* machine, double seconds, const Listener& l) {
         st.timeOfDay = float(machine->globals[vm::global::Hour] + machine->globals[vm::global::Minute] / 60.0) / 24.0f;
         st.paused = machine->globals[vm::global::Paused] != 0;
     }
+    if (const char* h = std::getenv("OS2_SOUND_HOUR")) // test aid: the ambience at that hour
+        st.timeOfDay = float(std::atof(h)) / 24.0f;
     st.zoom = l.zoom;
     st.outsideness = surfaces_.outsideness(l.x, l.y, sound_->lotAmbienceRadius(l.zoom));
     st.inside = surfaces_.indoors(int(std::floor(l.z / kStoryHeight + 0.01f)), l.x, l.y);
