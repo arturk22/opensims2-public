@@ -89,6 +89,17 @@ void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> an
 
 // After a tick: what each Sim should play, cued at that tick's time.
 void LotSimulation::sampleAll(double at) {
+    if (onObjectAnimation)
+        for (const auto& [id, o] : vm_->objects()) {
+            if (o.person)
+                continue;
+            uint32_t& seen = objectAnimSerials_[id];
+            if (o.animation.overlaySerial == seen)
+                continue;
+            seen = o.animation.overlaySerial;
+            if (!o.animation.overlays.empty())
+                onObjectAnimation(id, o.animation.overlays.back(), at);
+        }
     for (auto& b : bound_) {
         const vm::Object* o = vm_->object(b.id);
         if (!o)

@@ -96,6 +96,19 @@ struct PickBox {
     simd_float4x4 at;
 };
 std::vector<PickBox> gPickBoxes;
+// The lot's placed objects by object ID (the cObject instance's low 16
+// bits): what is needed to pose one when the VM animates it.
+struct PlacedObject {
+    std::string cres;
+    std::map<std::string, std::string> materials;
+    std::array<float, 3> position;
+    std::array<float, 4> rotation;
+    int instance = -1; // renderer instance of its static model
+};
+std::map<int16_t, PlacedObject> gPlacedObjects;
+// Skinned models posed every frame by their animation players.
+std::vector<std::unique_ptr<os2::SimActor>> gActors;
+std::map<int16_t, os2::SimActor*> gObjectActors; // objects the VM has animated (in gActors)
 float gUiScale = 1; // drawable pixels per view point
 
 // The extracted game (data/game): --data <dir>, else $OS2_DATA, else the first
@@ -222,7 +235,8 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
         const auto& q = o.rotation;
         simd_float4x4 at = simd_matrix4x4(simd_quaternion(q[0], q[1], q[2], q[3]));
         at.columns[3] = simd_make_float4(o.position[0], o.position[1], o.position[2], 1);
-        renderer.addInstance(it->second, at);
+        const int instance = renderer.addInstance(it->second, at);
+        gPlacedObjects[int16_t(o.instance & 0xFFFF)] = {cresOf(o), o.materials, o.position, o.rotation, instance};
         gPickBoxes.push_back({o.instance, bounds[key].first, bounds[key].second, at});
         ++placed;
     }
@@ -329,6 +343,56 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             std::fprintf(stderr, "opensims2: Sim %d: outfit 0x%03X: %s\n", id, category, e.what());
         }
     };
+    // Objects the VM animates (doors, fridges, phones, ...) swap their static
+    // model for a skinned one of the same CRES, posed by the animation.
+    gSimulation->onObjectAnimation = [&renderer, &index](int16_t id, const std::string& name, double at) {
+        if (std::getenv("OS2_DEBUG_VM"))
+            std::fprintf(stderr, "opensims2: object %d starts %s (%s)\n", id, name.c_str(),
+                         gPlacedObjects.count(id) ? "placed" : "not placed");
+        auto it = gObjectActors.find(id);
+        if (it == gObjectActors.end()) {
+            const auto placed = gPlacedObjects.find(id);
+            if (placed == gPlacedObjects.end())
+                return; // no model in the world
+            const PlacedObject& p = placed->second;
+            try {
+                const os2::ObjectModel model = os2::loadObjectModel(index, p.cres, p.materials);
+                os2::SkinnedModel skin(model.skeleton);
+                skin.add(model);
+                auto actor = std::make_unique<os2::SimActor>(std::move(skin));
+                actor->position = {p.position[0], p.position[1], p.position[2]};
+                actor->heading = 2 * std::atan2(p.rotation[2], p.rotation[3]);
+                actor->model = renderer.addObject(actor->skin.model, index, true);
+                renderer.addInstance(actor->model, matrix_identity_float4x4);
+                simd_float4x4 hidden = matrix_identity_float4x4;
+                hidden.columns[3] = simd_make_float4(0, 0, -1000, 1);
+                renderer.setInstanceTransform(p.instance, hidden);
+                it = gObjectActors.emplace(id, actor.get()).first;
+                gActors.push_back(std::move(actor));
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: object %d: %s\n", id, e.what());
+                gObjectActors.emplace(id, nullptr);
+                return;
+            }
+        }
+        if (!it->second)
+            return;
+        try {
+            it->second->cue(at, it->second->animation(index, name), {.fade = 0.1f, .loop = false});
+            if (std::getenv("OS2_DEBUG_VM"))
+                std::fprintf(stderr, "opensims2: object %d plays %s\n", id, name.c_str());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: object %d: %s: %s\n", id, name.c_str(), e.what());
+        }
+    };
+    // --object-anim <id>,<animation>: test aid, an object plays an animation
+    // as if the VM's Animate Object had started it.
+    if (auto anim = argument(@"--object-anim")) {
+        const auto comma = anim->find(',');
+        if (comma == std::string::npos)
+            throw std::runtime_error("--object-anim: expected <object-id>,<animation>");
+        gSimulation->onObjectAnimation(int16_t(std::stoi(anim->substr(0, comma))), anim->substr(comma + 1), 0);
+    }
     // --outfit <type>: test aid, every Sim changes into outfit type <type>
     // (person data 8, STR# 0xFA: 0 everyday, 2 swimwear, 3 athletic, 4
     // formal, 5 pyjamas, 11 underwear, ...).
@@ -458,8 +522,6 @@ simd_float3 loadObjects(os2::Renderer& renderer, os2::ResourceIndex& index) {
     return simd_make_float3(2.5f + 1.5f * float(cols - 1), -2.5f - 1.5f * float(rows - 1), 0);
 }
 
-// Skinned models posed every frame by their animation players.
-std::vector<std::unique_ptr<os2::SimActor>> gActors;
 
 os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
     auto loc = index.findByName(cres + "_cres", kTypeCres);

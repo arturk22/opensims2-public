@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -57,6 +58,10 @@ public:
     // bit of its character file's keys (vm::outfitCategoryBit); the host
     // rebuilds the actor's model.
     std::function<void(int16_t id, SimActor& actor, uint32_t category)> onOutfitChange;
+    // Called when an object (not a Sim) starts an animation the VM plays on
+    // it (Animate Object / Animate Overlay: AnimationState::overlays), at
+    // `at` seconds in the caller's clock; the host poses the object with it.
+    std::function<void(int16_t id, const std::string& animation, double at)> onObjectAnimation;
 
     // Runs the VM up to `seconds` (whole ticks) and places and animates the
     // attached actors for that moment (one tick behind the VM, so that
@@ -84,6 +89,7 @@ private:
     std::unique_ptr<vm::CodeLibrary> code_;
     std::unique_ptr<vm::VM> vm_;
     std::vector<Bound> bound_;
+    std::map<int16_t, uint32_t> objectAnimSerials_; // objects' overlaySerial last seen
     std::string summary_;
     double last_ = 0;
     double slip_ = 0; // seconds the VM has fallen behind the caller's clock
