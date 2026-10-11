@@ -634,30 +634,123 @@ voltam com os padrões das duas faces gravados na mudança.
 
 ### 7.3 Salas (`cRoomManager`) e o que é refeito
 
-O `cPartitionManager` tem **três** gerenciadores de sala (`+0x40`, um por
-`tRoomDefinition` 0, 1, 2; `RoomContaining`/`InsideRoomIDSet` BV `0xc2f920`/
-`0xc2f988` escolhem pelo índice). Inferido: são os três mapas de sala do lote
-(3ARY `0x09`, `0x0A`, `0x0B`, o que explica os "outros IDs por quarto de tile"
-do TODO). Cada sala é um ID `short` por **quarto de tile** (4 triângulos por
-tile; o `cFloorTile` leva a máscara dos quartos: 1, 2, 4, 8; uma parede
-diagonal separa os pares 3/12 ou 6/9). `RoomContaining(tile)` (vtable `0x38`,
-BV `0xc284b8`) devolve o ID do primeiro quarto da máscara (0xFFFF fora do
-mapa). "Dentro" (`InsideRoomIDSet`, vtable `0x44`, BV `0xc28ce0`) = **todos
-os IDs ≠ 0 e ≠ −1** que existem no mapa; a sala 0 é a de fora.
+**Grafos e definições de sala (rodada 9, conferido no código).** O
+`cPartitionManager` guarda **12 grafos de parede** (`cWallGraph`, um grafo
+planar quad-edge: arestas com `Orig/Dest/LNext/Sym`, faces = salas) em
+`+0x4c..+0x78`. `AddWallToGraph` (BV `0xc2e7cc`) põe cada partição nos grafos
+conforme as propriedades do **estilo** (o `cTSProductPartition` lido de
+`walls.txt`/`fences.txt`/`fencearches.txt`: `blocksPlacement`, `bearsLoad`,
+`blocksLight`, `verticalSpan`, `notRendered`); `cPartitionManager::Save` dá
+a instância do WGRA (`0x0A284D0B`) de cada um:
 
-Recalcular (nomes do `baserom.sym`; o corpo não foi lido em detalhe):
-`AddSeed(cWallLocator, sala)` semeia os quartos dos dois lados de cada parede
-mudada, `FloodRoomFromSeed`/`FloodRoomRecurse` inundam os quartos ligados sem
-cruzar partições que dividem salas, `RefreshMap` refaz os IDs e
-`FlushRoomChangedNotifications` (BV `0xc28638`) envia uma mensagem por sala
-mudada: `0x2B4D18FB` (definição 0), `0xAC2A4F4E` (1), `0x2B4D18F6` (2).
+| grafo (`WallTopology(tipo)`) | entra | WGRA |
+|---|---|---|
+| `+0x4c` (0) | renderizada, `verticalSpan floorToFloor` | `0x16` |
+| `+0x50` (1) | renderizada, `floorToFloorBasedCeiling` (decks) | `0x08` |
+| `+0x54` (2) | renderizada, `floorToRoof` (sótão, estilo 3) | `0x17` |
+| `+0x58` (6) | arcos de cerca (`PartitionType` 2) | `0x13` |
+| **`+0x5c` (3)** | **`blocksLight`** | **`0x07`** |
+| **`+0x60` (4)** | **`bearsLoad`** | **`0x06`** |
+| **`+0x64` (5)** | **`blocksPlacement`** | **`0x05`** |
+| `+0x68` (7) | tudo menos arcos e estilos 300/301 | `0x18` |
+| `+0x6c`/`+0x78` (8/11) | meias-paredes (só BV) | `0x19`/`0x1f` |
+| `+0x70` (9) | não renderizada de tipo 4 (parede invisível de luz) | `0x1a` |
+| `+0x74` (10) | parede de palco (estilo `0x12d`, só BV) | `0x1c` |
+
+Só três grafos têm gerenciador de sala (`InitWallGraphs`, BV `0xc2f644`):
+`+0x5c` ← `tRoomDefinition` **0**, `+0x60` ← **1**, `+0x64` ← **2**. E
+`cRoomManager::Save` grava cada um num 3ARY (`0x2A51171B`): definição 0 →
+**0x0B**, 1 → **0x0A**, 2 → **0x09**. Ou seja:
+
+- **3ARY 0x09 (definição 2) = salas de colocação**: as paredes que
+  `blocksPlacement`. Mensagem `0x2B4D18F6`, escutada pelo
+  `cEdithObjectModule` (sala dos objetos na VM). É o mapa da VM.
+- **3ARY 0x0A (definição 1) = salas de carga** (`bearsLoad`).
+- **3ARY 0x0B (definição 0) = salas de luz** (`blocksLight`). Mensagem
+  `0x2B4D18FB`: paredes, pisos, cercas e light maps (`docs/lighting-mac.md`:
+  "fora" = sala 0 **deste** mapa).
+
+Pelos scripts de catálogo: parede comum: as três (padrões `true`); sótão
+(3): sem `bearsLoad`; fundação (23): as três; deck (16) e piscina (29): sem
+`blocksLight`; saia de deck (4): sem `blocksLight` nem `blocksPlacement`;
+**cercas: só `blocksPlacement`** (padrões do `fences.txt`: `bearsLoad` e
+`blocksLight` falsos); arcos de cerca: nenhuma. Portanto **as cercas dividem
+as salas do 3ARY 0x09 e não as de 0x0A/0x0B**. Conferido no `N001_Lot11`:
+em 0x09 o quintal dentro da cerca é a sala 17 (e as varandas cercadas, 20 e
+22), a faixa entre a cerca e a borda do lote é a sala 0; em 0x0A e 0x0B o
+quintal inteiro é 0 e só a casa tem salas. É assim que "as salas de pátio
+viram a sala 0": não viram; elas só existem no mapa de colocação, e luz e
+"fora" usam o 0x0B. (Corrige o que estava aqui: "cercas não mudam salas"
+vale para 0x0A/0x0B; o aviso 1/2 do `UpdateRooms` é para o render.)
+
+**Cada sala é um ID `short` por quarto de tile** (4 triângulos por tile; o
+`cFloorTile` = x, y, nível + máscara de quartos 1, 2, 4, 8; uma parede
+diagonal separa as metades 3/12 ou 6/9). `RoomIDInFloorTile` (BV
+`0xc283fc`) devolve o ID do primeiro quarto da máscara (0xFFFF fora);
+`RoomContaining` (vtable `0x38`, `0xc284b8`); "dentro" (`InsideRoomIDSet`,
+vtable `0x44`, `0xc28ce0`) = todos os IDs ≠ 0 e ≠ −1 do mapa; a sala 0 é a
+de fora. Slots do `cIRoomManager` (vtable `0x281ba30`): `0x24` `AddSeed`
+(`0xc28ffc`), `0x28` `RefreshMap` (`0xc2a36c`), `0x2c`
+`FlushRoomChangedNotifications`, `0x30` `SetRoomIDInFloorTile`
+(`0xc29618`, também mantém a lista de quartos por sala), `0x3c`
+`FloorTilesInRoom`, `0x40` `FloorTileInRoom`, `0x48`
+`InsideRoomIDSetForLevel`, `0x4c` `RandomFloorTileInRoom`.
+
+**Quem decide os IDs é o grafo, não o flood fill.**
+`cWallGraph::SetRoomsPostAttach` (BV `0xc1f1bc`, depois de cada aresta
+nova):
+
+1. Anda o ciclo da face à esquerda da aresta nova (`LNext`). Se volta pela
+   própria aresta oposta (`Sym`), a aresta **não fecha** nenhum ciclo: as duas
+   faces ficam com a sala que contém o meio da aresta (`RoomContaining`) e
+   nada muda no mapa.
+2. Se fecha, a face se divide: `CreateRoom` (`0xc1f070`) cria uma sala com o
+   **menor ID livre** (a lista de salas é ordenada; o primeiro buraco, não o
+   maior + 1). A sala nova fica com o ciclo à esquerda da aresta, **salvo**
+   quando a sala velha é a 0 (fora) e o ciclo da esquerda não cerca a
+   aresta (`FUN_00c1c480`: teste de paridade de raio contra as arestas do
+   ciclo): aí a nova vai para o ciclo da direita. Ou seja: cercar um pedaço
+   de fora sempre cria a sala do lado de dentro, e o resto continua 0;
+   dividir uma sala ≠ 0 dá o ID novo ao lado esquerdo da primeira aresta
+   (não ao menor pedaço).
+3. Para cada aresta do ciclo da sala nova: a face vira a sala nova e
+   `AddSeedToRoomManager` (`0xc1a454`) chama `AddSeed(locator do lado,
+   ID)`; depois `RefreshMap` e `AttachWallsToRoom` (`FUN_00c1b254`: toda
+   seção cujo lado virado para a sala tem esse ID ganha a face).
+
+`cWallGraph::SetRoomsPreDetach` (`0xc1de18`, antes de tirar uma aresta) é o
+inverso: se as duas faces têm salas diferentes, uma morre: sobrevive a da
+direita, **mas a sala 0 sempre sobrevive** (tirar uma parede entre uma sala
+e o lado de fora devolve a sala inteira à 0). Cada aresta do ciclo da que
+morre recebe a sobrevivente e semeia o ID dela; `RefreshMap`; os quartos que
+ainda têm o ID morto (bolsões que a inundação não alcançou) recebem a sala
+do lado da parede mais próxima (`NearestWall` + sala virada para o tile); a
+sala sai da lista.
+
+**`AddSeed`/`RefreshMap`.** `AddSeed(locator, ID)` guarda num mapa
+`cFloorTile → {ID, já coberto}` (`+0x1c`) o quarto (parede reta) ou a
+metade (diagonal) do lado do locator; se um quarto vizinho já tem semente,
+a nova não entra (ou a metade substitui os quartos dela) e as vizinhas
+ficam marcadas "já coberto". `RefreshMap`: (1) lê o ID velho no tile da
+primeira semente; (2) pinta **todas** as sementes com o ID delas
+(`SetRoomIDInFloorTile`); (3) para cada semente não marcada,
+`FloodRoomFromSeed(velho, novo, tile)` (`FUN_00c289e8`) parte dos **dois
+quartos vizinhos dentro do tile** da semente (não do outro lado da aresta,
+onde está a parede) e `FloodRoomRecurse` (`FUN_00c2887c`) segue: um quarto
+com o ID velho vira o novo e espalha para os 3 adjacentes (`FUN_0015ddc0`:
+os 2 do mesmo tile e o do outro lado da aresta do tile) que estejam no lote
+(a única condição é `cWorldDB::IsOnLot(x, y)`, conferido no assembly).
+**A inundação não testa paredes**: como só o ciclo da sala nova é semeado e
+toda aresta dele tem o quarto de dentro já pintado, a inundação nunca chega
+a um quarto de onde atravessaria uma parede. (4) limpa as sementes e marca a sala para o
+`FlushRoomChangedNotifications` (`0xc28638`), que manda `0x2B4D18FB`
+(definição 0), `0xAC2A4F4E` (1) ou `0x2B4D18F6` (2) por sala mudada.
 
 `cTSUserToolUndoableWall::UpdateRooms` (BV `0x30bec8`, chamado no
-`CommitSelf`) sempre pede o recálculo ao gerenciador de partições (vtable
-`0x98`). Depois avisa o mundo (vtable `0x54` do undoable) com **1** se
-alguma mudança foi parede (não cerca nem arco) ou meia-parede, e com **2**
-se só houve cercas; parede de piscina também atualiza o scenegraph. Ou seja:
-**cercas não mudam salas; paredes (e meias-paredes no BV) mudam.**
+`CommitSelf`) pede o recálculo ao gerenciador de partições (vtable `0x98`)
+e avisa o mundo (vtable `0x54` do undoable) com **1** se alguma mudança foi
+parede ou meia-parede e com **2** se só houve cercas; parede de piscina
+também atualiza o scenegraph.
 
 Quem escuta a mensagem de sala 0 (`FindConst`): `nTSSG::cWallManager`
 (render groups por sala), `cFenceManager`, `cFloorManager`, `cObjectModule`,
@@ -669,9 +762,13 @@ mensagens de mudança do mundo no `cTSRouteManager::DoMessage` (BV
 `0x0B537176`, `0x2B4D1900`…) e refaz os retângulos de parede
 (`AddWallRectangle`/`RemoveWallRectangles`, `docs/routing-mac.md` §2).
 
-Para implementar: depois de cada operação de parede, refazer o mapa de salas
-(flood fill por quarto de tile, paredes como barreiras, cercas não), as
-paredes do roteamento e os light maps das salas afetadas.
+Para implementar: depois de cada operação de parede, refazer os **três**
+mapas, cada um só com as partições do seu grafo (WGRA 5/6/7 ↔ 3ARY
+0x09/0x0A/0x0B): cercas dividem só o 0x09. Fechar um ciclo cria o menor ID
+livre do lado de dentro (ou à esquerda); abrir junta na da direita ou na 0.
+Um flood fill por componentes com as linhas do grafo como barreiras dá as
+mesmas regiões; só a escolha de IDs difere (ver acima). Depois as paredes
+do roteamento e os light maps das salas afetadas.
 
 ### 7.4 Pisos (`cTSUserToolFloorPattern`, BV vtable `0x27b1648`)
 
@@ -874,8 +971,6 @@ scripts de catálogo.
 - Mapa exato B7/B9 (Diversos, Hobbies "recreação") e os IDs dos sons.
 - Conferir `TestPlacementCommon` no base 1.0 (sem símbolos).
 - O que o teste de altura od 4 compara (máscara do serviço `0xBA4DA53`, vtable `0x2c`).
-- Construção: o corpo de `RefreshMap`/`AddSeed` (quais partições dividem cada
-  uma das três definições de sala, e como as salas de pátio viram a sala 0);
-  o fechamento do cômodo retangular (`FUN_009a7dd8`); como o ponto do mouse
+- Construção: o fechamento do cômodo retangular (`FUN_009a7dd8`); como o ponto do mouse
   vira a máscara de quartos do piso (`FUN_003000cc`) no base; o custo por
   unidade de altura do terreno (`SetCostForUnitHeightChange`, não decompila).
