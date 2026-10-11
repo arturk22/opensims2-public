@@ -218,6 +218,12 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             std::printf(" %s %zu,", primitiveName(op).c_str(), n);
         std::printf("\n");
     }
+    if (!machine.animations.missing.empty()) {
+        std::printf("missing animations:");
+        for (const auto& [name, n] : machine.animations.missing)
+            std::printf(" \"%s\" %zu,", name.c_str(), n);
+        std::printf("\n");
+    }
     return 0;
 }
 

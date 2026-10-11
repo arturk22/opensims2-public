@@ -166,14 +166,14 @@ LocoItem parseItem(const std::string& item) {
 // 0x91. The elder and teen lists fall back to the adult one (`reserve`).
 uint16_t globalListFor(const Object& sim, bool reserve = false) {
     const int16_t age = sim.person ? sim.person->data[persondata::PersonAge] : lifestage::Adult;
-    if (age == 0 || reserve)
+    if (age == 0)
         return animlist::Adult;
     if (age >= 51)
-        return animlist::Elder;
+        return reserve ? animlist::Adult : animlist::Elder;
     if (age >= 19)
         return animlist::Adult;
     if (age >= 16)
-        return animlist::Teen;
+        return reserve ? animlist::Adult : animlist::Teen;
     if (age >= 3)
         return animlist::Child;
     if (age == 2)
@@ -205,6 +205,32 @@ bool placeholder(const std::string& e) {
     return t.empty() || t == ".";
 }
 
+// STR# `list` of the stack object's object, else of its semi-global, the
+// running code's group, the code owner's groups and the global group: the
+// first that has a non-placeholder entry `index` (or the first that has the
+// entry at all); null if none has it.
+const StringTable* objectList(Context& c, uint16_t list, int index) {
+    CodeLibrary& code = c.vm.code();
+    std::vector<uint32_t> groups;
+    if (const Object* so = c.vm.object(c.frame.stackObject))
+        groups.push_back(so->group), groups.push_back(so->semiGroup);
+    groups.push_back(c.frame.group);
+    if (const Object* owner = c.vm.object(c.frame.codeOwner))
+        groups.push_back(owner->group), groups.push_back(owner->semiGroup);
+    groups.push_back(kGlobalGroup);
+    const StringTable* first = nullptr;
+    for (uint32_t g : groups) {
+        const StringTable* t = g ? code.strings(g, list) : nullptr;
+        if (!t || index < 0 || size_t(index) >= t->count(lang::EnglishUS))
+            continue;
+        if (!first)
+            first = t;
+        if (!placeholder(t->get(size_t(index), lang::EnglishUS)))
+            return t;
+    }
+    return first;
+}
+
 // Entry `index` of animation list `list` for code running in `frame`, as the
 // Mac binary's try_animate_sim finds it: 0x80 = the global group's list for
 // the Sim's age (FindGlobalName; an elder/teen entry whose animation does
@@ -231,27 +257,20 @@ std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
             table = code.strings(kGlobalGroup, globalListFor(sim, true));
         }
     } else {
-        std::vector<uint32_t> groups;
-        if (const Object* so = c.vm.object(c.frame.stackObject))
-            groups.push_back(so->group), groups.push_back(so->semiGroup);
-        groups.push_back(c.frame.group);
-        if (const Object* owner = c.vm.object(c.frame.codeOwner))
-            groups.push_back(owner->group), groups.push_back(owner->semiGroup);
-        groups.push_back(kGlobalGroup);
-        const StringTable* first = nullptr;
-        for (uint32_t g : groups) {
-            const StringTable* t = g ? code.strings(g, list) : nullptr;
-            if (!t || index < 0 || size_t(index) >= t->count(lang::EnglishUS))
-                continue;
-            if (!first)
-                first = t;
-            if (!placeholder(t->get(size_t(index), lang::EnglishUS))) {
-                table = t;
-                break;
-            }
+        // An object's list 0x81 is the Sim's age list too
+        // (DetermineAppropriateAnimTable: a child reads the object's 0x82,
+        // "c2o-bed-jump-start"); a teen's or elder's that has no animation
+        // there retries in 0x81 (the binary's reserve table).
+        const bool byAge = list == animlist::Adult && sim.person;
+        table = objectList(c, byAge ? globalListFor(sim) : list, index);
+        if (byAge && globalListFor(sim, true) != globalListFor(sim)) {
+            const std::string e = table ? table->get(size_t(index), lang::EnglishUS) : "";
+            if (!table || placeholder(e) || !library(c.vm).exists(resolveListAnimation(c.vm, sim, e)))
+                if (const StringTable* adult = objectList(c, animlist::Adult, index))
+                    table = adult;
         }
-        if (!table)
-            table = first;
+        if (!table && byAge)
+            table = objectList(c, list, index);
     }
     if (!table)
         throw VMError("no animation list " + hexString(list));
