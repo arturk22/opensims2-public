@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <tuple>
 
 namespace os2::vm {
 
@@ -108,15 +109,19 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
     const std::set<ObjectId> mine(group.begin(), group.end());
     const uint16_t leadSub = lead->definition->subIndex() == 0xFFFF ? 0 : lead->definition->subIndex();
     const auto leadOff = partOffset(leadSub, p.direction);
+    // OBJD field 0xB0 "level offset": parts on the levels above (the
+    // upper half of a staircase).
+    const int leadLevel = int16_t(lead->definition->field(0xB0));
     for (ObjectId part : group) {
         const Object* o = vm.object(part);
         const uint16_t sub = o->definition && o->definition->masterId() ? o->definition->subIndex() : 0;
         const auto off = partOffset(sub, p.direction);
-        p.parts.push_back({part, {tile.x + off[0] - leadOff[0], tile.y + off[1] - leadOff[1], tile.level}});
+        const int dl = o->definition ? int16_t(o->definition->field(0xB0)) - leadLevel : 0;
+        p.parts.push_back({part, {tile.x + off[0] - leadOff[0], tile.y + off[1] - leadOff[1], tile.level + dl}});
     }
-    std::set<std::pair<int, int>> tiles;
+    std::set<std::tuple<int, int, int>> tiles;
     for (const auto& part : p.parts)
-        tiles.insert({part.tile.x, part.tile.y});
+        tiles.insert({part.tile.x, part.tile.y, part.tile.level});
 
     // Step 4 of TryPlace: a free slot of an object on the tile that takes
     // this one (single-tile objects): the allowed heights hold the slot's
@@ -180,7 +185,7 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
         if (!(pf & 0x400) && !portal)
             for (int k = 0; k < 4; ++k) {
                 const auto s = directionStep(k * 2);
-                if (tiles.count({t.x + s[0], t.y + s[1]}) && w.wallBetween(t, s[0], s[1]))
+                if (tiles.count({t.x + s[0], t.y + s[1], t.level}) && w.wallBetween(t, s[0], s[1]))
                     return fail(placementerror::WallIntersect, "a wall cuts the object");
             }
         const int16_t wp = o.data[objdata::WallPlacementFlags];

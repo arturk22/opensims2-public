@@ -655,6 +655,10 @@ std::vector<BuildMode::Item> BuildMode::items() {
         break;
     }
     case 3: objectItems(8, doorSubsort(subsort_)); break;
+    case 6: // B630 staircases (build type 1, subsort 0x20; placed with the object tool)
+        if (subsort_ == 0 || subsort_ == 3)
+            objectItems(1, 0x20);
+        break;
     case 4: patternItems(true, kFloorSubsorts, std::size(kFloorSubsorts)); break;
     case 5: patternItems(false, kWallSubsorts, std::size(kWallSubsorts)); break;
     case 10:

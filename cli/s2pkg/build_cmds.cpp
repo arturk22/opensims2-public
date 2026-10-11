@@ -167,6 +167,15 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             else
                 editor.syncWorld();
             r.message = r.ok ? e->name + " bought as object " + std::to_string(id) : e->name + ": " + why;
+            if (r.ok)
+                for (const auto& part : p.parts)
+                    if (const vm::Object* o = vm.object(part.id))
+                        r.message += "; " + std::to_string(part.id) + " " +
+                                     (o->definition ? o->definition->fileName : std::string("?")) + " at (" +
+                                     std::to_string(part.tile.x) + "," + std::to_string(part.tile.y) + "," +
+                                     std::to_string(part.tile.level) + ")";
+            if (r.ok && vm.world)
+                r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
         } else if (flag == "--build-undo" || flag == "--build-redo") {
             r.ok = flag == "--build-undo" ? editor.undo() : editor.redo();
             r.message = r.ok ? "done" : "nothing to do";

@@ -47,6 +47,47 @@ bool sameSection(const std::array<int, 4>& a, const Lot::Wall& w) {
 
 } // namespace
 
+std::vector<Stair> objectStairs(const VM& vm, const Lot& lot) {
+    // A staircase object (OBJD "Stairs - Straight - <style>", build type 1
+    // subsort 0x20): its "Lo" parts stand on the lower level, from the "Lo
+    // ... Pad" (the bottom landing) along the steps, and its "Hi" parts on
+    // the level above (OBJD level offset 1), the "Hi ... Pad" being the top
+    // landing.
+    std::map<ObjectId, std::pair<std::optional<TilePos>, std::optional<TilePos>>> pads; // group -> (bottom, top)
+    for (const auto& [id, o] : vm.objects()) {
+        if (!o.definition || !o.position.inWorld())
+            continue;
+        const std::string& n = o.definition->fileName;
+        if (n.rfind("Stairs - ", 0) != 0 || n.find(" Pad") == std::string::npos)
+            continue;
+        auto& p = pads[multiTileGroup(o)];
+        if (n.find(" - Lo ") != std::string::npos)
+            p.first = VM::tileOf(o);
+        else if (n.find(" - Hi ") != std::string::npos)
+            p.second = VM::tileOf(o);
+    }
+    std::vector<Stair> out;
+    for (const auto& [group, p] : pads) {
+        if (!p.first || !p.second || p.second->level != p.first->level + 1)
+            continue;
+        const int dx = p.second->x - p.first->x, dy = p.second->y - p.first->y;
+        if ((dx != 0) == (dy != 0) || std::abs(dx + dy) < 2)
+            continue;
+        Stair st;
+        const float ux = float(dx > 0) - float(dx < 0), uy = float(dy > 0) - float(dy < 0);
+        st.bottom = *p.first, st.top = *p.second;
+        st.up = {ux, uy};
+        st.steps = 4 * (std::abs(dx + dy) - 1);
+        st.bottomEdge = {float(p.first->x) + 0.5f + ux * 0.5f, float(p.first->y) + 0.5f + uy * 0.5f};
+        st.direction = directionOf(ux, uy);
+        st.bottomZ = lot.elevationAt(st.bottom.level - 1, float(st.bottom.x) + 0.5f, float(st.bottom.y) + 0.5f);
+        st.topZ = lot.elevationAt(st.top.level - 1, float(st.top.x) + 0.5f, float(st.top.y) + 0.5f);
+        out.push_back(st);
+        (void)group;
+    }
+    return out;
+}
+
 std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1) {
     std::vector<std::array<int, 4>> out;
     const int dx = x1 - x0, dy = y1 - y0;
@@ -58,7 +99,17 @@ std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1) {
     return out;
 }
 
-BuildEditor::BuildEditor(VM& vm, Lot& lot, const BuildCatalog* catalog) : vm_(vm), lot_(lot), catalog_(catalog) {}
+BuildEditor::BuildEditor(VM& vm, Lot& lot, const BuildCatalog* catalog) : vm_(vm), lot_(lot), catalog_(catalog) {
+    // The stairs the world was loaded with (the lot's modular stair
+    // cObjects), less the staircase objects that are among them.
+    if (vm_.world) {
+        const auto objects = objectStairs(vm_, lot_);
+        for (const Stair& s : vm_.world->stairs())
+            if (std::none_of(objects.begin(), objects.end(),
+                             [&](const Stair& o) { return o.bottom == s.bottom && o.top == s.top; }))
+                loadedStairs_.push_back(s);
+    }
+}
 
 BuildEditor::Geometry BuildEditor::capture() const {
     Geometry g;
@@ -93,16 +144,18 @@ void BuildEditor::restore(const Geometry& g) {
 }
 
 void BuildEditor::syncWorld() {
-    // The world from the lot's walls, floors and rooms; the stairs (from the
-    // objects) and doors as the VM has them.
-    std::vector<Stair> stairs;
-    if (vm_.world)
-        stairs = vm_.world->stairs();
+    // The world from the lot's walls, floors and rooms; the stairs (the
+    // lot's own and the staircase objects now in the world) and doors as
+    // the VM has them.
     Lot shape = lot_;
     shape.objects.clear();
     World w = World::fromLot(shape);
-    for (const Stair& s : stairs)
+    for (const Stair& s : loadedStairs_)
         w.addStair(s);
+    for (const Stair& s : objectStairs(vm_, lot_))
+        if (std::none_of(loadedStairs_.begin(), loadedStairs_.end(),
+                         [&](const Stair& o) { return o.bottom == s.bottom && o.top == s.top; }))
+            w.addStair(s);
     // Each part of a door opens the wall behind it when the tile behind is
     // another part of the same door (vm::loadLot).
     for (const auto& [id, o] : vm_.objects()) {

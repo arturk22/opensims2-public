@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -160,8 +161,13 @@ private:
     const BuildCatalog* catalog_ = nullptr;
     std::vector<Op> undo_, redo_;
     std::map<std::string, int> prices_; // patterns laid this session, by lot name
+    std::vector<Stair> loadedStairs_;   // the world's stairs from the lot's cObjects
     uint32_t revision_ = 0;
 };
+
+// The stairs of the staircase objects in the world (their "Lo ... Pad"
+// and "Hi ... Pad" parts are the landings).
+std::vector<Stair> objectStairs(const VM& vm, const Lot& lot);
 
 // Splits a run between two grid points into tile-long sections (along an
 // axis or a 45° diagonal); empty for other slopes.
