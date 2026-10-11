@@ -723,9 +723,13 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
         machine.setClockGlobals();
         size_t traced = 0;
         if (traceId)
-            machine.trace = [traceId, &traced](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
-                // --trace -1: every thread, each line tagged with its object
-                if ((traceId != -1 && t.me != traceId) || ++traced > (traceId == -1 ? 2000000u : 2000u))
+            machine.trace = [traceId, &traced, &machine](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
+                // --trace -1: every thread, each line tagged with its object;
+                // S2PKG_TRACE_HOUR=h: only during that game hour
+                static const char* hourEnv = std::getenv("S2PKG_TRACE_HOUR");
+                if (hourEnv && machine.globals[vm::global::Hour] != std::atoi(hourEnv))
+                    return;
+                if ((traceId != -1 && t.me != traceId) || ++traced > (traceId == -1 ? 4000000u : 400000u))
                     return;
                 if (traceId == -1)
                     std::printf("[%d] ", t.me);
@@ -734,8 +738,20 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                 char buf[8];
                 for (auto b : in.operands)
                     std::snprintf(buf, sizeof buf, "%02X", b), ops += buf;
-                std::printf("%*s0x%04X #%-3u %-30s %s [%s]\n", int(t.stack.size() - 1) * 2, "", f.instance, f.pc,
+                std::printf("%*s0x%04X #%-3u %-30s %s [%s]", int(t.stack.size() - 1) * 2, "", f.instance, f.pc,
                             op.c_str(), f.behavior->fileName.c_str(), ops.c_str());
+                // S2PKG_TRACE_STATE=1: also the hour, the temps 0-3 and the frame's locals
+                static const bool state = std::getenv("S2PKG_TRACE_STATE") != nullptr;
+                if (state) {
+                    std::printf(" | %02d:%02d t %d %d %d %d l", machine.globals[vm::global::Hour],
+                                machine.globals[vm::global::Minute], t.temps[0], t.temps[1], t.temps[2], t.temps[3]);
+                    for (int16_t v : f.locals)
+                        std::printf(" %d", v);
+                    if (const vm::Object* me = machine.object(t.me))
+                        std::printf(" @ %.2f,%.2f dir %d", me->position.x, me->position.y,
+                                    me->data[vm::objdata::Direction]);
+                }
+                std::printf("\n");
             };
         const hood::Neighborhood* hood = nullptr;
         if (const auto hoodPackage = useHoods ? vm::neighborhoodPackageOf(path) : std::filesystem::path{};
@@ -882,6 +898,29 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                                     : "");
                 std::printf("\n");
             }
+        if (list) { // the objects made while running (or saved ones replaced by a new object with their ID)
+            std::map<int, std::string> saved;
+            for (const auto& e : load.objects)
+                saved[e.id] = e.name;
+            for (const auto& [id, o] : machine.objects()) {
+                const std::string name = o.definition ? o.definition->fileName : "?";
+                if (auto it = saved.find(id); it != saved.end() && it->second == name)
+                    continue;
+                if (saved.count(id) && o.person)
+                    continue; // Sims are listed by their character file
+                std::printf("  %5d %-45s (%.2f, %.2f, %d) lead %d in %d/%d; new", id, name.c_str(), o.position.x,
+                            o.position.y, o.position.level, o.data[vm::objdata::LeadTileObjectId],
+                            o.data[vm::objdata::ContainerId], o.data[vm::objdata::SlotNumber]);
+                if (auto it = machine.threads.find(id); it != machine.threads.end())
+                    std::printf("; main %s", statusName(it->second));
+                for (const auto& a : o.animation.overlays)
+                    std::printf("; overlay %s", a.c_str());
+                for (const auto& e : o.animation.overlayEvents)
+                    std::printf("; events of %s: %zu left, %.0f of %.0f", e.name.c_str(), e.pending.size(), e.played,
+                                e.length);
+                std::printf("\n");
+            }
+        }
     }
     return failed ? 1 : 0;
 }

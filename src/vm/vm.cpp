@@ -643,10 +643,23 @@ Object& VM::instantiate(uint32_t group, uint16_t definitionInstance) {
             lead = p;
             break;
         }
-    Object& first = instantiatePart(group, lead);
+    // A master with a Main of its own while the 0,0 part has none is an
+    // object too, out of the world, and leads (cEdithObjectModule::
+    // MakeNewOutOfWorldObject makes the master first, docs/primitives-mac.md
+    // §4c): the vehicles' masters ("Car - Career - Sedan") have the Main and
+    // the interactions the riders push ("Sub - Send to Work" finds the car
+    // by category and pushes its entry 1); the parts' semi-global Main sleeps
+    // when it is not the lead. Inferred which masters: the lots' saved gates
+    // and wedding arches lead from 0,0, whose Main they have.
+    auto hasMain = [&](uint16_t instance) {
+        const ObjectFunctions* f = code_.functions(group, instance);
+        return f && f->functions.size() > 1 && f->functions[1].action;
+    };
+    const bool masterLeads = hasMain(definitionInstance) && !hasMain(lead);
+    Object& first = instantiatePart(group, masterLeads ? definitionInstance : lead);
     const ObjectId leadId = first.id;
     for (uint16_t p : parts)
-        if (p != lead)
+        if (masterLeads || p != lead)
             instantiatePart(group, p).data[objdata::LeadTileObjectId] = leadId;
     return *object(leadId);
 }
@@ -715,7 +728,9 @@ std::optional<Thread> VM::runFunction(ObjectId id, size_t function, size_t maxTu
     if (!o)
         throw VMError("object " + std::to_string(id) + " does not exist");
     const uint16_t tree = functionTree(*o, function);
-    if (!tree)
+    // An OBJf entry naming a tree its object does not have (the vehicle
+    // masters' Init 0x1005) runs nothing (inferred).
+    if (!tree || !resolveTree(*o, tree).second)
         return std::nullopt;
     Thread t = start(id, tree);
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < maxTurns; ++turn)
@@ -831,6 +846,7 @@ void VM::tick() {
         if (t.status == Thread::Status::Running)
             run(t, instructionsPerTurn);
     }
+    tickOverlayEvents(*this); // animation.hpp
     flushKillQueue(*this); // kill.hpp
     followContainers();
 }

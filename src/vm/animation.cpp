@@ -492,8 +492,27 @@ Exit animateObject(Context& c) {
     const std::string entry = listEntry(c, target, animlist::Object, animationIndex(c, 0, o[2] & 0x04));
     if (trim(entry).empty() || trim(entry) == ".")
         return Exit::True; // the lists keep empty slots for objects with nothing to play there (inferred)
-    return startOverlay(c, target, entry);
+    const Exit e = startOverlay(c, target, entry);
+    // Its event tree gets the animation's tree events as it plays, in the
+    // starting thread's context, as Animate Sim's (the vehicles drive on
+    // "Event Tree - Drive": loop again or stop, which ends "Wait for Vehicle
+    // Stop"). A new one from the same code replaces the last (inferred).
+    if (const uint16_t tree = le16(&o[4])) {
+        const std::string name = target.animation.overlays.back();
+        auto& list = target.animation.overlayEvents;
+        std::erase_if(list, [&](const auto& x) { return x.codeOwner == c.frame.codeOwner; });
+        AnimationState::OverlayEvents ev;
+        ev.name = name;
+        ev.me = c.thread.me, ev.codeOwner = c.frame.codeOwner, ev.stackObject = c.frame.stackObject;
+        ev.eventTree = tree;
+        ev.pending = library(c.vm).treeEvents(name);
+        ev.length = library(c.vm).seconds(name).value_or(0) * 1000.0f;
+        ev.perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
+        list.push_back(std::move(ev));
+    }
+    return e;
 }
+
 
 // Animate Stop (0x6C), by the Mac binary's disassembler
 // (docs/primitives-mac.md §5): the object (owner u8 at 3, data u16), mode s8
@@ -713,6 +732,43 @@ void startScriptedWalk(VM& vm, int16_t simId, int16_t target, std::optional<uint
     }
     vm.code().add(sim->group, kTree, std::move(b));
     vm.threads.insert_or_assign(simId, vm.start(simId, kTree, {}, target));
+}
+
+void tickOverlayEvents(VM& vm) {
+    struct Fire {
+        int16_t me, codeOwner, stackObject;
+        uint16_t tree;
+        int16_t event;
+    };
+    std::vector<Fire> fires;
+    for (const auto& [id, constObject] : vm.objects()) {
+        auto& list = vm.object(id)->animation.overlayEvents;
+        for (auto it = list.begin(); it != list.end();) {
+            it->played += it->perTick;
+            const bool ended = it->played >= it->length;
+            while (!it->pending.empty() && (ended || it->pending.front().first <= it->played)) {
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, it->pending.front().second});
+                it->pending.erase(it->pending.begin());
+            }
+            // At its end the event tree also gets event 9999 ("Event Tree -
+            // Drive" handles the end of each drive loop on 9999: loop
+            // again, or stop and set the speed to 0; inferred from it).
+            if (ended)
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, 9999});
+            it = ended ? list.erase(it) : it + 1;
+        }
+    }
+    for (const Fire& f : fires) {
+        if (!vm.object(f.me) || !vm.object(f.codeOwner))
+            continue;
+        std::array<int16_t, kTempCount> temps{};
+        const int16_t params[5] = {f.event, 0, 0, 0, 0};
+        try {
+            runOneTickTree(vm, temps, f.me, f.codeOwner, f.stackObject, f.tree, params);
+        } catch (const VMError&) {
+            // an event tree that fails does not stop the others (inferred)
+        }
+    }
 }
 
 } // namespace os2::vm

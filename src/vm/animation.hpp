@@ -78,6 +78,16 @@ struct AnimationState {
     // Stop clears them.
     std::vector<std::string> overlays;
     uint32_t overlaySerial = 0;
+    // The tree events of the Animate Object animations playing on the object
+    // with an event tree (tickOverlayEvents runs them as the animation plays).
+    struct OverlayEvents {
+        std::string name;
+        int16_t me = 0, codeOwner = 0, stackObject = 0;
+        uint16_t eventTree = 0;
+        std::vector<std::pair<int, int16_t>> pending;
+        float played = 0, perTick = 0, length = 0;
+    };
+    std::vector<OverlayEvents> overlayEvents;
 
     // Locomotion sets, the last on top; empty = the global group's.
     std::vector<LocomotionSet> locomotion;
@@ -161,6 +171,9 @@ float walkTilesPerTick(VM& vm, const Object& sim);
 // (0x6B), Animate Stop (0x6C), Effect Stop/Start (0x70) and Assign
 // Locomotion Animations (0x72).
 void registerAnimationPrimitives(VM& vm);
+// Once per VM tick: advances the Animate Object animations that have an
+// event tree and runs it for the events they reach (all left at the end).
+void tickOverlayEvents(VM& vm);
 
 // Starts a scripted walk in `sim`'s Main thread, replacing what it runs: a
 // tree (added to the code library under a group of its own) that goes to
