@@ -28,13 +28,6 @@ std::string lower(std::string s) {
     return s;
 }
 
-int lowestBit(uint16_t v) {
-    for (int i = 0; i < 16; ++i)
-        if (v & (1u << i))
-            return i;
-    return 16;
-}
-
 } // namespace
 
 uint32_t thumbnailKey(uint32_t group, const std::string& model) {
@@ -69,10 +62,10 @@ Catalog Catalog::load(ResourceIndex& index) {
         }
         const uint16_t function = d.field(objd::FunctionSort), room = d.field(objd::RoomSort);
         const int price = d.field(objd::Price);
-        // Only the nine function sorts of the Buy panel: room sorts alone
-        // are the shader test objects; the higher function bits are rewards
-        // (the love tub), which Buy mode does not sell.
-        if (!(function & ((1u << kFunctionSortCount) - 1)) || d.field(objd::ObjectType) == kObjectTypePerson)
+        // What cTSWinProcCatalog accepts on a residential lot
+        // (docs/buy-build-mac.md §1.3): room sort ≠ 0, not a Sim, and not
+        // an unlockable reward (field 16; the unlocked lists are not kept).
+        if (!room || d.field(objd::ObjectType) == kObjectTypePerson || d.field(objd::Unlockable) != 0)
             continue;
         // A multi-tile part (master ID set, sub index other than -1) is
         // bought through its master.
@@ -125,13 +118,9 @@ Catalog Catalog::load(ResourceIndex& index) {
             e.name = d.title.empty() ? d.fileName : d.title;
         c.entries_.push_back(std::move(e));
     }
+    // By price, as CatalogSortPred (§1.1; the game's std::sort leaves equal
+    // prices in no set order: by name here).
     std::stable_sort(c.entries_.begin(), c.entries_.end(), [](const CatalogEntry& a, const CatalogEntry& b) {
-        const int fa = lowestBit(a.functionSort), fb = lowestBit(b.functionSort);
-        if (fa != fb)
-            return fa < fb;
-        const int sa = lowestBit(a.functionSubSort), sb = lowestBit(b.functionSubSort);
-        if (sa != sb)
-            return sa < sb;
         if (a.price != b.price)
             return a.price < b.price;
         return a.name < b.name;

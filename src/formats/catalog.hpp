@@ -35,6 +35,7 @@ constexpr size_t AllowedHeightFlags = 0x4C; // "default allowed height flags"
 constexpr size_t ObjectType = 0x52;
 constexpr size_t MasterId = 0x54;
 constexpr size_t SubIndex = 0x56;
+constexpr size_t Unlockable = 0x60;       // "Item Is Unlockable"
 constexpr size_t CatalogUseFlags = 0x62;
 constexpr size_t Price = 0x64;
 constexpr size_t SalePrice = 0x84;
@@ -56,6 +57,7 @@ constexpr size_t FootprintMask = 0xDA;
 constexpr size_t RatingHunger = 0xE4;      // then comfort, hygiene, bladder, energy, fun, room
 constexpr size_t RatingSkillFlags = 0xF2;
 constexpr size_t FunctionSubSort = 0xFC;
+constexpr size_t KeepBuying = 0x100;
 constexpr size_t CommunitySort = 0x108;
 } // namespace objd
 
@@ -109,11 +111,12 @@ uint32_t thumbnailKey(uint32_t group, const std::string& model);
 
 class Catalog {
 public:
-    // Every buyable object of the index: an OBJD with one of the Buy
-    // panel's function sorts, single-tile or the master of a multi-tile
-    // object (whose parts carry no catalog data), not a Sim, in a game
-    // group (not 0xFFFFFFFF: the character files'). Sorted by function,
-    // subsort, price and name, as the catalog lists them (inferred).
+    // Every object Buy mode sells on a residential lot, as cTSCatalog and
+    // cTSWinProcCatalog choose them (docs/buy-build-mac.md §1): an OBJD
+    // with a room sort, single-tile or the master of a multi-tile object
+    // (whose parts carry no catalog data), not a Sim, not an unlockable
+    // reward, in a game group (not 0xFFFFFFFF: the character files').
+    // Sorted by price, as the game sorts its products.
     static Catalog load(ResourceIndex& index);
 
     const std::vector<CatalogEntry>& entries() const { return entries_; }
