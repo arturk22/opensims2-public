@@ -27,6 +27,8 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace os2 {
 
@@ -46,6 +48,9 @@ struct PanelContext {
     std::function<const RgbaImage*(int16_t neighborId)> portrait;          // null if none
     std::function<void(const std::string&)> sound;                         // UI sound by name
     std::function<void(std::array<float, 4>, std::string)> tip;           // a tooltip over a rectangle
+    // A popup script (e.g. 0x4906502B) with the texts of its child windows
+    // (by id), its tail on the top centre of the anchor rectangle.
+    std::function<void(uint32_t script, std::array<float, 4> anchor, std::vector<std::pair<uint32_t, std::string>>)> popup;
 };
 
 // Lays a window out with its area's top-left corner at (x, y).

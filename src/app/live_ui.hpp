@@ -184,6 +184,30 @@ private:
     int tipHovered_ = -1;
     bool tipVisible() const { return now_ - tipSince_ >= 0.75 && now_ - tipSince_ < 2.25; }
     UiScript pause_;                                        // 0x8C364B93, the pause indicator
+    // The queue's icons slide to their slots (kAnimationSteps steps) and a
+    // new one plays ui_queue (docs/ui-live-mac.md §6.4).
+    struct IconSlide {
+        float fromX = 0, fromY = 0, toX = 0, toY = 0;
+        double since = 0;
+    };
+    std::map<uint32_t, IconSlide> slides_; // by (nested << 16 | uid)
+    vm::ObjectId slidesSim_ = 0;
+    bool sliding_ = false;
+    // A popup (the mood popup, the relationship description): a script
+    // drawn over the panel with its tail on an anchor, opened by a click.
+    struct Popup {
+        uint32_t script = 0;
+        std::array<float, 4> anchor{}; // x0, y0, x1, y1: the tail points at its top centre
+        std::vector<std::pair<uint32_t, std::string>> texts; // caption of the child window by id
+        double since = 0, delay = 0;
+        int kind = 0;
+    } popup_;
+    std::map<uint32_t, UiScript> popupScripts_;
+    std::array<float, 4> popupRect_{};
+    int closedPopupKind_ = 0; // the kind closed by the click being handled
+    void openPopup(uint32_t script, std::array<float, 4> anchor, std::vector<std::pair<uint32_t, std::string>> texts,
+                   double delay, int kind);
+    void closePopup();
     std::map<int16_t, std::unique_ptr<RgbaImage>> neighborPortraits_; // by neighbor ID (null: none)
     const RgbaImage* portraitOfNeighbor(int16_t id);
     void sound(const std::string& name) {

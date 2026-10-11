@@ -211,8 +211,13 @@ std::vector<vm::ObjectId> LiveUi::family() const {
 
 void LiveUi::tick(double seconds) {
     const bool shown = tipVisible();
+    const bool popupShown = popup_.script && now_ - popup_.since >= popup_.delay;
     now_ = seconds;
     if (tipHovered_ >= 0 && shown != tipVisible())
+        dirty_ = true;
+    if (popup_.script && popupShown != (now_ - popup_.since >= popup_.delay))
+        dirty_ = true;
+    if (sliding_)
         dirty_ = true;
     if (lastSample_ >= 0 && seconds - lastSample_ < 0.5)
         return;
@@ -466,6 +471,23 @@ UiScreen LiveUi::screen(int width, int height) {
                 if (panels_ && (i == 0 || panels_->ok(LivePanels::Panel(i))))
                     target(holder->child(kSubButtons[i]), Action::SubPanel, int(i));
         target(findIn(live, 0x4BDEFFA4), Action::Centre, sim_);
+        // Clicking the mood meter shows the mood popup 500 ms later, on the
+        // anchor window 0x4906480D of the collapsed variant (§4.1).
+        if (const UiElement* mb = findIn(live, 0x49064809))
+            if (auto r = rectOf(mb)) {
+                std::array<float, 4> anchor = {(*r)[0], (*r)[1] - 4, (*r)[2], (*r)[1] - 4};
+                if (const UiElement* an = findIn(live, 0x4906480D)) {
+                    const auto aa = an->area(), ba = mb->area();
+                    const float cx = (*r)[0] + float(aa[0] + aa[2]) / 2 - float(ba[0]);
+                    const float y = (*r)[1] + float(aa[1] - ba[1]);
+                    anchor = {cx, y, cx, y};
+                }
+                callbacks_.push_back([this, anchor] {
+                    if (closedPopupKind_ != 1)
+                        openPopup(0x49064908, anchor, {}, 0.5, 1);
+                });
+                targets_.push_back({*r, Action::Callback, int(callbacks_.size() - 1)});
+            }
         for (auto [id, v] : speeds)
             target(findIn(live, id), Action::Speed, v);
         target(findIn(live, kPause), Action::Pause, 0);
@@ -487,7 +509,11 @@ UiScreen LiveUi::screen(int width, int height) {
                        [&](std::array<float, 4> r) { solid_.push_back(r); },
                        [&](int16_t id) { return portraitOfNeighbor(id); },
                        [&](const std::string& name) { sound(name); },
-                       [&](std::array<float, 4> r, std::string t) { tips_.push_back({r, std::move(t)}); }};
+                       [&](std::array<float, 4> r, std::string t) { tips_.push_back({r, std::move(t)}); },
+                       [this](uint32_t script, std::array<float, 4> anchor, std::vector<std::pair<uint32_t, std::string>> texts) {
+                           if (closedPopupKind_ != 2)
+                               openPopup(script, anchor, std::move(texts), 0, 2);
+                       }};
         panels_->layout(LivePanels::Panel(subPanel_), c, sim_, liveX + float(kSubPanelX), liveY + 140 + 138);
     }
 
@@ -653,11 +679,56 @@ UiScreen LiveUi::screen(int width, int height) {
         const float w = qm.topWidth, subH = qm.subHeight;
         std::string hoverName;
         std::array<float, 4> hoverRect{};
+        // Icons slide to their slots in kAnimationSteps steps (script
+        // 0xCCD02691; the step time is inferred); a new one starts at the
+        // slot of the one before it (the first at the left of its slot) and
+        // plays ui_queue (docs/ui-live-mac.md §6.4).
+        const int steps = std::max(1, int(constant("kAnimationSteps", 4)));
+        constexpr double kStepSeconds = 1.0 / 30;
+        const bool firstLook = slidesSim_ != sim_;
+        if (firstLook)
+            slides_.clear(), slidesSim_ = sim_;
+        std::set<uint32_t> present;
+        bool added = false;
+        sliding_ = false;
+        std::vector<std::pair<float, float>> at(order.size());
+        for (size_t k = 0; k < order.size(); ++k) {
+            const uint32_t key = uint32_t(order[k].nested) << 16 | order[k].q->uid;
+            present.insert(key);
+            const float tx = slots[k].x, ty = slots[k].y;
+            auto it = slides_.find(key);
+            if (it == slides_.end()) {
+                IconSlide sl;
+                sl.toX = tx, sl.toY = ty, sl.since = now_;
+                sl.fromX = firstLook ? tx : k > 0 ? slots[k - 1].x : tx - w - margin;
+                sl.fromY = firstLook ? ty : k > 0 ? slots[k - 1].y : ty;
+                it = slides_.emplace(key, sl).first;
+                added = added || !firstLook;
+            } else if (it->second.toX != tx || it->second.toY != ty) {
+                IconSlide& sl = it->second;
+                const double p = std::min(1.0, (now_ - sl.since) / (kStepSeconds * steps));
+                const int done = std::min(steps, int(p * steps));
+                sl.fromX += (sl.toX - sl.fromX) * float(done) / float(steps);
+                sl.fromY += (sl.toY - sl.fromY) * float(done) / float(steps);
+                sl.toX = tx, sl.toY = ty, sl.since = now_;
+            }
+            const IconSlide& sl = it->second;
+            const int done = std::min(steps, int(std::floor((now_ - sl.since) / kStepSeconds)) + 1);
+            if (done < steps && (sl.fromX != sl.toX || sl.fromY != sl.toY))
+                sliding_ = true;
+            at[k] = {sl.fromX + (sl.toX - sl.fromX) * float(done) / float(steps),
+                     sl.fromY + (sl.toY - sl.fromY) * float(done) / float(steps)};
+        }
+        std::erase_if(slides_, [&](const auto& kv) { return !present.count(kv.first); });
+        if (added) {
+            std::printf("opensims2: live UI: queue icon added\n");
+            sound("ui_queue");
+        }
         for (size_t k = 0; k < order.size(); ++k) {
             const auto& [qp, running, nested] = order[k];
             const vm::QueuedInteraction& q = *qp;
             const UiElement& win = nested ? subWin : topWin;
-            const float ix = slots[k].x, iy = slots[k].y, iw = float(win.area()[2] - win.area()[0]);
+            const float ix = at[k].first, iy = at[k].second, iw = float(win.area()[2] - win.area()[0]);
             const bool connected = slots[k].connected;
             const std::array<float, 4> r{ix, iy, ix + iw, iy + subH};
             const bool hovered = mouse_ && inside(r, *mouse_);
@@ -736,6 +807,74 @@ UiScreen LiveUi::screen(int width, int height) {
             UiDrawHooks ph;
             ph.buttonState[&e] = 1;
             layoutUiElement(e, at[i][0], at[i][1], *res_, *fonts_, out, ph);
+        }
+    }
+
+    // --- The popup (over everything but the tooltip) --------------------------
+    if (mode_ == 0 && popup_.script && now_ - popup_.since >= popup_.delay) {
+        auto it = popupScripts_.find(popup_.script);
+        if (it == popupScripts_.end()) {
+            auto sc = res_->script(popup_.script);
+            it = popupScripts_.emplace(popup_.script, sc ? std::move(*sc) : UiScript{}).first;
+        }
+        if (!it->second.roots.empty()) {
+            UiElement rootCopy = it->second.roots.front();
+            // The relationship popup's description is longer than its
+            // two-line window: the box grows to wrap it (the type under it).
+            if (popup_.kind == 2) {
+                UiElement* d = findWindow(rootCopy, 0xA2);
+                UiElement* ty = findWindow(rootCopy, 0xA3);
+                UiElement* bx = findWindow(rootCopy, 1);
+                UiElement* tail = findWindow(rootCopy, 2);
+                if (d && ty && bx && tail) {
+                    std::string text;
+                    for (const auto& [id, t] : popup_.texts)
+                        if (id == 0xA2)
+                            text = t;
+                    float ppem = 12, lineH = 16, tw = 0;
+                    if (const FontStyle* st = fonts_->style(d->get("font", "LiveModePanelBody")))
+                        if (const Font* f = fonts_->font(*st)) {
+                            ppem = float(st->size);
+                            const TextMetrics m = measureText(*f, U"", ppem);
+                            lineH = std::round(m.ascent + m.descent);
+                            tw = measureText(*f, decodeUtf8(text), ppem).width;
+                        }
+                    const auto da = d->area();
+                    const float avail = float(da[2] - da[0]) - 2;
+                    const int lines = std::max(1, int(std::ceil(tw / avail * 1.12f)));
+                    const int dh = int(float(lines) * lineH) + 6;
+                    const auto ta = ty->area(), ba = bx->area(), tl = tail->area();
+                    const int tyY = da[1] + dh - 4, boxH = tyY + (ta[3] - ta[1]) + 14;
+                    ty->set("forecolor", "(5,6,113)"); // the script's light blue is unreadable on the translucent box
+                    d->set("area", area(da[0], da[1], da[2], da[1] + dh));
+                    ty->set("area", area(ta[0], tyY, ta[2], tyY + (ta[3] - ta[1])));
+                    bx->set("area", area(ba[0], ba[1], ba[2], boxH));
+                    tail->set("area", area(tl[0], boxH - 1, tl[2], boxH - 1 + (tl[3] - tl[1])));
+                    const auto ra0 = rootCopy.area();
+                    rootCopy.set("area", area(ra0[0], ra0[1], ra0[2], ra0[1] + boxH - 1 + (tl[3] - tl[1])));
+                }
+            }
+            const UiElement& root = rootCopy;
+            const auto ra = root.area();
+            const float pw = float(ra[2] - ra[0]), ph = float(ra[3] - ra[1]);
+            float tailX = pw / 2, tailBottom = ph; // the tail: child 2 (the picture under the box)
+            if (const UiElement* tail = root.child(2))
+                tailX = float(tail->area()[0] + tail->area()[2]) / 2 - float(ra[0]), tailBottom = float(tail->area()[3] - ra[1]);
+            float px = (popup_.anchor[0] + popup_.anchor[2]) / 2 - tailX, py = popup_.anchor[1] - tailBottom;
+            px = std::clamp(px, 0.0f, std::max(0.0f, float(width) - pw));
+            py = std::max(0.0f, py);
+            UiDrawHooks hk;
+            for (const auto& [id, text] : popup_.texts)
+                if (const UiElement* e = findWindow(root, id))
+                    hk.captions[e] = text;
+            hk.rects = &rects;
+            const UiElement* box = root.child(1);
+            layoutUiElement(root, px - float(ra[0]), py - float(ra[1]), *res_, *fonts_, out, hk);
+            if (auto r = rectOf(box))
+                popupRect_ = *r, solid_.push_back(*r);
+            if (!popup_.texts.empty()) // the picture under the box takes clicks too
+                if (auto r = rectOf(root.child(2)))
+                    solid_.push_back(*r);
         }
     }
 
@@ -834,6 +973,22 @@ void LiveUi::drawTooltip(UiScreen& out, const std::string& text, simd_float2 at)
     }
 }
 
+void LiveUi::openPopup(uint32_t script, std::array<float, 4> anchor,
+                       std::vector<std::pair<uint32_t, std::string>> texts, double delay, int kind) {
+    popup_ = {script, anchor, std::move(texts), now_, delay, kind};
+    sound("ui_text_description_open");
+    dirty_ = true;
+}
+
+void LiveUi::closePopup() {
+    if (!popup_.script)
+        return;
+    closedPopupKind_ = popup_.kind;
+    popup_ = {};
+    sound("ui_text_description_close");
+    dirty_ = true;
+}
+
 const RgbaImage* LiveUi::portraitOfNeighbor(int16_t id) {
     auto it = neighborPortraits_.find(id);
     if (it == neighborPortraits_.end()) {
@@ -863,7 +1018,7 @@ void LiveUi::selectSubPanel(int panel) {
 }
 
 void LiveUi::layoutIfNeeded() {
-    if (canvasW_ > 0 && canvasH_ > 0 && (laidW_ != canvasW_ || laidH_ != canvasH_ || targets_.empty()))
+    if (canvasW_ > 0 && canvasH_ > 0 && (laidW_ != canvasW_ || laidH_ != canvasH_ || targets_.empty() || dirty_))
         screen(canvasW_, canvasH_);
 }
 
@@ -885,6 +1040,15 @@ bool LiveUi::press(simd_float2 p, bool right) {
     if (!ok_)
         return false;
     layoutIfNeeded();
+    // An open popup closes on any click; a click on the popup itself does nothing else.
+    closedPopupKind_ = 0;
+    if (popup_.script) {
+        const bool shown = now_ - popup_.since >= popup_.delay;
+        const bool onPopup = shown && inside(popupRect_, p);
+        closePopup();
+        if (onPopup)
+            return true;
+    }
     for (const Target& t : targets_) {
         if (!inside(t.rect, p))
             continue;

@@ -490,6 +490,42 @@ conta do começo (a foto em 1,26 s mostra a dica). Chave da miniatura de
 objeto: o grupo vai com sinal (`%d`), o `thumbnailKey` do `catalog.*` o
 escreve sem sinal (igual para todos os grupos do jogo).
 
+### 8.6 Rodada 8: signo, nota, popups, fila (dados dos scripts; o que é inferido está marcado)
+
+- **Signo** (Simologia, janela `0x1006`): o dado de pessoa 70 (1..12,
+  inferido) em Aries..Peixes, na ordem do STR# `0x90` do `Live` (cada
+  entrada é "Nome|Descrição", a dica da janela). As 12 figuras (45x32) são
+  `ui.package` grupo `0x499DB772`, instâncias `0xAB202500..0xAB202555` de 5
+  em 5; a ordem delas não é a dos signos, então a tabela
+  (`kZodiacImages` em `live_panels.cpp`) foi feita olhando cada imagem.
+  Há um segundo conjunto de 12 (`0xCA200412..466`) que não é usado aqui.
+- **Nota escolar** (janela `0xEC2D3BBA` do painel de emprego, só criança e
+  adolescente sem emprego): as letras são as entradas 6 a 18 do STR# `0x8B`
+  (A+, A, A-, B+ ... D-, F; vazias no PT-BR, então entram as do inglês), o
+  dado de pessoa 56 vira a letra pelos limites 97, 93, 90, 87, 83, 80, 77,
+  73, 70, 67, 63, 60 (**inferido**: a escala do dado e os limites não estão
+  nos dados; as crianças de `N001_Lot11` têm 12 e saem com F).
+- **Popup do humor** (§4.1): o script `0x49064908` (título, texto, "Bônus"
+  e a ponta `0xA9600338` embaixo, filho 2). Clicar no medidor (botão
+  `0x49064809`) abre 500 ms depois; a ponta fica na âncora `0x4906480D`
+  (o topo do botão); um clique em qualquer lugar fecha (**inferido**).
+  Sons `ui_text_description_open/close` (nomes entre os `ui_*` do
+  executável; **inferido** que são os dos popups).
+- **Popup da relação** (script `0x4906502B`: nome em `0xA1`, descrição
+  `0xA2`, tipo `0xA3`, ponta no filho 2): clicar na miniatura de um
+  relacionamento. Textos do STR# `0x84`: descrições nas entradas 2 a 12
+  (casados, noivos, namoro firme, amor, paixão, amizade especial, inimigo,
+  amigo, conhecido, acabou de conhecer, família), tipos nas 23 a 34. **Inferido**:
+  a descrição de cada estado (pelo sentido do texto) e a prioridade: casados,
+  noivos, namoro firme, amor, paixão, família, amizade especial, inimigo,
+  amigo, conhecido, recém-conhecido. A caixa do script cabe 2 linhas e a
+  descrição tem 4: a caixa cresce.
+- **Fila**: os ícones deslizam até o lugar em `kAnimationSteps` = 4 passos
+  (do script `0xCCD02691`); o tempo de cada passo (1/30 s) e o ponto de
+  partida de um ícone novo (o lugar do anterior; o primeiro vem da esquerda)
+  são inferidos. Um ícone novo toca `ui_queue` (não na primeira vez que o
+  painel desenha o Sim, nem ao trocar de Sim).
+
 ---
 
 ## 9. O que falta
