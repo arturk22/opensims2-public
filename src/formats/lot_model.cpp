@@ -40,14 +40,19 @@ constexpr float kWallsDownHeight = 0.2f;
 // Room of the quarter tile on the `normal` side of a wall through `mid`, the
 // quarter (west, north, east, south) that faces the wall; diagonal walls look
 // at both quarters on their side. 0 is outdoors.
-uint16_t roomBeside(const Lot& lot, int level, float midX, float midY, float nx, float ny) {
-    if (lot.rooms.empty() || !lot.hasLevel(level))
+// `light`: from the light's room map (3ARY 0x0B, room definition 0) when
+// the lot has it, as the light maps use; else the VM's (0x09).
+uint16_t roomBeside(const Lot& lot, int level, float midX, float midY, float nx, float ny, bool light = false) {
+    const auto it = lot.roomLayers.find(0x0B);
+    const auto& rooms =
+        light && it != lot.roomLayers.end() && it->second.size() == lot.rooms.size() ? it->second : lot.rooms;
+    if (rooms.empty() || !lot.hasLevel(level))
         return 0;
     const float px = midX + nx * 0.25f, py = midY + ny * 0.25f;
     if (px < 0 || py < 0 || px >= float(lot.width) || py >= float(lot.height))
         return 0;
     const uint32_t x = uint32_t(px), y = uint32_t(py);
-    const auto& q = lot.rooms[(size_t(level - lot.minLevel) * lot.width + x) * lot.height + y];
+    const auto& q = rooms[(size_t(level - lot.minLevel) * lot.width + x) * lot.height + y];
     // Directions of the quarters; the facing one points back at the wall (-normal).
     const std::array<std::array<float, 2>, 4> dirs{{{-1, 0}, {0, 1}, {1, 0}, {0, -1}}};
     uint16_t room = 0;
@@ -367,7 +372,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 face.base = std::min(za0, zb0);
                 face.top = std::max(za1, zb1);
                 face.level = level;
-                face.room = roomBeside(lot, level, (ax + bx) / 2, (ay + by) / 2, n[0], n[1]);
+                face.room = roomBeside(lot, level, (ax + bx) / 2, (ay + by) / 2, n[0], n[1], true);
                 face.material = lm.materialIndex(it->second);
                 const size_t cell = lm.addWall(face);
                 auto lmAt = [&](const Vec3f& p) {

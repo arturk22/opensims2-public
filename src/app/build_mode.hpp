@@ -61,7 +61,7 @@ public:
     // The lot's walls, floors or doors changed: the host redraws it.
     std::function<void()> onGeometryChanged;
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -73,6 +73,7 @@ public:
     void selectWallTool(bool room);
     void selectPattern(const BuildPattern& p);
     void selectFence(const BuildFence& f);
+    void selectFoundationTool();
     // The floor tool's pattern rotation (1, 2, 4, 8; `,`/`.` cycle it).
     int floorRotation() const { return floorRotation_; }
     void setFloorRotation(int r) { floorRotation_ = r; }

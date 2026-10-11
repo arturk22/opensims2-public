@@ -47,6 +47,11 @@ struct BuildFence {
 // cost path is not traced: inferred), and selling back what was built in
 // an earlier session pays RefundRate (0.8) of it (cTSCatalog, BV).
 constexpr int kWallSectionPrice = 70;
+// A foundation tile: string 0 of the catalog text "build" 138 (Text/Build.package).
+constexpr int kFoundationTilePrice = 4;
+// What a foundation raises the ground floor by (the saved lots: level 1 at
+// the terrain + 0.75 over foundations).
+constexpr float kFoundationHeight = 0.75f;
 constexpr float kBuildRefundRate = 0.8f;
 
 class BuildCatalog {

@@ -11,6 +11,7 @@ namespace os2 {
 
 namespace {
 
+constexpr uint32_t kTypeFencePosts = 0xAB4BA572, kFencePostLayer = 0x11;
 constexpr uint32_t kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40, kTypeWallGraph = 0x0A284D0B,
                    kTypeWallLayer = 0x8A84D7B0;
 constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayFloorRotations = 0x15, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
@@ -141,6 +142,24 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
             w.u16(e.patterns[0]), w.u16(e.patterns[1]);
         }
         out.push_back({kTypeWallLayer, h.group, kWallLayerPartitions, std::move(w.bytes())});
+    }
+    {
+        // FPL 0x11 (cFencePostLayer): the posts, only when the lot has one
+        // or has posts now.
+        const Head h = headOf(source, kTypeFencePosts, kFencePostLayer, 1);
+        bool had = false;
+        for (const auto& e : source.entries())
+            had |= e.tgi.type == kTypeFencePosts && e.tgi.instance == kFencePostLayer;
+        if (had || !lot.fencePosts.empty()) {
+            BinWriter w = begin(h, kTypeFencePosts, "cFencePostLayer");
+            w.u32(uint32_t(lot.fencePosts.size()));
+            for (const auto& p : lot.fencePosts) {
+                w.i32(p.level);
+                w.f32(p.x), w.f32(p.y);
+                w.u32(p.fence);
+            }
+            out.push_back({kTypeFencePosts, h.group, kFencePostLayer, std::move(w.bytes())});
+        }
     }
     if (!lot.elevations.empty())
         out.push_back(elevationArray(source, lot));

@@ -127,7 +127,7 @@ int num(const std::vector<std::string>& f, size_t i, int fallback) {
 
 bool isBuildEdit(const std::string& flag) {
     return flag == "--door" || flag == "--wall" || flag == "--fence" || flag == "--delete-fence" ||
-           flag == "--floor-click" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
+           flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
            flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--build-undo" || flag == "--build-redo";
 }
 
@@ -193,6 +193,11 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             if (!fence)
                 throw std::runtime_error("--fence: no fence \"" + f[4] + "\"");
             r = editor.drawFences(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), *fence);
+        } else if (flag == "--foundation" || flag == "--delete-foundation") {
+            if (f.size() < 4)
+                throw std::runtime_error(flag + ": expected x0,y0,x1,y1");
+            r = flag == "--foundation" ? editor.drawFoundation(num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0))
+                                       : editor.deleteFoundation(num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0));
         } else if (flag == "--delete-fence") {
             if (f.size() < 4)
                 throw std::runtime_error("--delete-fence: expected x0,y0,x1,y1[,level]");
@@ -257,6 +262,18 @@ std::vector<std::string> compareLotGeometry(const Lot& a, const Lot& b, size_t l
             say("wall " + std::to_string(id) + " added");
     if (a.floors != b.floors)
         say("floors differ");
+    if (a.elevations != b.elevations)
+        say("elevations differ");
+    if (a.floorRotations != b.floorRotations)
+        say("floor rotations differ");
+    if (a.fencePosts.size() != b.fencePosts.size())
+        say("fence posts differ");
+    for (size_t i = 0; i < a.fencePosts.size() && i < b.fencePosts.size(); ++i)
+        if (a.fencePosts[i].x != b.fencePosts[i].x || a.fencePosts[i].y != b.fencePosts[i].y ||
+            a.fencePosts[i].level != b.fencePosts[i].level || a.fencePosts[i].fence != b.fencePosts[i].fence) {
+            say("fence post " + std::to_string(i) + " differs");
+            break;
+        }
     if (a.rooms != b.rooms)
         say("rooms differ");
     if (a.roomLayers != b.roomLayers)

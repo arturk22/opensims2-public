@@ -196,6 +196,13 @@ void BuildMode::selectFence(const BuildFence& f) {
     say("fence " + f.name + " (" + money(f.price) + " a section)");
 }
 
+void BuildMode::selectFoundationTool() {
+    cancel();
+    tool_ = Tool::Foundation;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr;
+    say("foundation tool (" + money(kFoundationTilePrice) + " a tile)");
+}
+
 void BuildMode::selectPattern(const BuildPattern& p) {
     cancel();
     tool_ = p.floor ? Tool::Floor : Tool::Wallpaper;
@@ -468,6 +475,9 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
             applied(control_ ? editor_->deleteWalls(level_, r[0], r[1], r[2], r[3])
                              : editor_->drawWalls(level_, r[0], r[1], r[2], r[3]));
         }
+    } else if (tool_ == Tool::Foundation) {
+        const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
+        applied(control_ ? editor_->deleteFoundation(x0, y0, x1, y1) : editor_->drawFoundation(x0, y0, x1, y1));
     } else if (tool_ == Tool::Floor) {
         // A click without a drag floors the quarters under the mouse
         // (FUN_003000cc: the half on its side of a diagonal wall).
@@ -517,7 +527,7 @@ void BuildMode::update() {
                 }
             // The grid point under the mouse.
             put(true, placeQuad(std::round(p.x) - 0.12f, std::round(p.y) - 0.12f, z(p.x, p.y), 0.24f, 0.24f, 0, false));
-        } else if (tool_ == Tool::Floor) {
+        } else if (tool_ == Tool::Floor || tool_ == Tool::Foundation) {
             const simd_float2 a = dragFrom_.value_or(p);
             const int x0 = int(std::floor(std::min(a.x, p.x))), x1 = int(std::floor(std::max(a.x, p.x)));
             const int y0 = int(std::floor(std::min(a.y, p.y))), y1 = int(std::floor(std::max(a.y, p.y)));
@@ -652,6 +662,24 @@ std::vector<BuildMode::Item> BuildMode::items() {
                 it.name = k ? "Room Tool" : "Wall Tool";
             out.push_back(std::move(it));
         }
+        break;
+    }
+    case 2: {
+        // B200 foundations: catalog text "build" 138 (deckfoundations.txt
+        // "foundation 0": catalogTextIndices 0 1), price 3i, name 3i+1, text 3i+2.
+        Item it;
+        it.tool = Tool::Foundation;
+        it.price = kFoundationTilePrice;
+        it.name = "Foundation";
+        if (const StringTable* t = res_->table(packageGroupHash("Build"), 0x8A)) {
+            if (const int price = std::atoi(t->get(0, lang::EnglishUS).c_str()))
+                it.price = price;
+            if (const std::string n = t->get(1); !n.empty())
+                it.name = n;
+            it.description = t->get(2);
+        }
+        it.image = materialThumbnail(0xF0F0F0F0u, "floor_plywoodFoundation");
+        out.push_back(std::move(it));
         break;
     }
     case 3: objectItems(8, doorSubsort(subsort_)); break;
@@ -941,6 +969,8 @@ bool BuildMode::press(simd_float2 p) {
                     selectFence(*it.fence);
                 else if (it.object)
                     selectObject(*it.object);
+                else if (it.tool == Tool::Foundation)
+                    selectFoundationTool();
                 else
                     selectWallTool(it.tool == Tool::Room);
             }
@@ -1014,7 +1044,8 @@ namespace os2 {
 // --build-open <category>[,<subsort>] opens a panel, --build-level <n>,
 // --build-funds <n> (test aid: sets the family's funds),
 // --wall/--room/--delete-wall x0,y0,x1,y1, --fence x0,y0,x1,y1,<fence>,
-// --delete-fence x0,y0,x1,y1, --floor x0,y0,x1,y1,<pattern|none>[,rotation],
+// --delete-fence x0,y0,x1,y1, --foundation / --delete-foundation x0,y0,x1,y1
+// (tiles, corners inclusive), --floor x0,y0,x1,y1,<pattern|none>[,rotation],
 // --floor-click px,py,<pattern> (one click: the quarters under the point),
 // --floor-rotation <1|2|4|8>, --wallpaper x0,y0,x1,y1,<r|l|b>,<pattern|none>,
 // --wallpaper-room x,y,<pattern|none>, --door <guid|name>@x,y[,dir] places
@@ -1065,6 +1096,10 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             r = ed.drawFences(level_, n(0), n(1), n(2), n(3), *fence);
         } else if (a == "--delete-fence" && f.size() >= 4)
             r = ed.deleteFences(level_, n(0), n(1), n(2), n(3));
+        else if (a == "--foundation" && f.size() >= 4)
+            selectFoundationTool(), r = ed.drawFoundation(n(0), n(1), n(2), n(3));
+        else if (a == "--delete-foundation" && f.size() >= 4)
+            r = ed.deleteFoundation(n(0), n(1), n(2), n(3));
         else if (a == "--floor-rotation")
             floorRotation_ = n(0);
         else if (a == "--floor" && f.size() >= 5) {

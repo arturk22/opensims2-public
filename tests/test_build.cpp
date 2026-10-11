@@ -233,7 +233,44 @@ static void testRoomIds() {
     check(roomAt(lot, 10, 5) == 0 && light[size_t(10) * 10 + 5][0] == 0, "fences cut no room off the lot's edge");
 }
 
+static void testFoundation() {
+    Lot lot = flatLot();
+    lot.levelCount = 3;
+    lot.elevations.resize(13 * 11 * 3);
+    for (size_t i = 0; i < 13 * 11 * 3; ++i)
+        lot.elevations[i] = 3.0f * float(i / (13 * 11));
+    lot.floors.resize(12 * 10 * 3);
+    lot.rooms.resize(12 * 10 * 3);
+    for (auto& [k, l] : lot.roomLayers)
+        l.resize(12 * 10 * 3);
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    auto r = ed.drawFoundation(2, 2, 4, 3);
+    check(r.ok && r.changed == 6 && r.cost == 6 * kFoundationTilePrice, "six foundation tiles at §4");
+    check(lot.elevation(1, 3, 3) == kFoundationHeight && lot.elevation(2, 3, 3) == 3.0f + kFoundationHeight,
+          "the stories above sit a foundation higher");
+    check(lot.elevation(1, 8, 8) == 3.0f, "elsewhere they do not");
+    check(ed.foundationTile(3, 2) && !ed.foundationTile(5, 2), "the tiles are foundation tiles");
+    size_t walls = 0;
+    for (const auto& w : lot.walls)
+        walls += w.type == Lot::Foundation;
+    check(walls == 10, "foundation walls round its edge");
+    check(lot.floor(1, 3, 3)[0] != 0, "the foundation has its floor");
+    r = ed.deleteFoundation(4, 2, 4, 3);
+    check(r.ok && r.changed == 2 && r.cost == -2 * 3, "two tiles back at int(4 x 0.8)");
+    walls = 0;
+    for (const auto& w : lot.walls)
+        walls += w.type == Lot::Foundation;
+    check(walls == 8 && lot.elevation(1, 5, 2) == 3.0f && lot.elevation(1, 4, 2) == kFoundationHeight,
+          "the walls and heights follow what is left");
+    check(ed.undo() && ed.undo() && lot.walls.empty() && lot.elevation(1, 3, 3) == 3.0f, "undo takes it all back");
+}
+
 int main() {
+    testFoundation();
     testRoomIds();
     testSections();
     testRooms();

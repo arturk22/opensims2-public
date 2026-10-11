@@ -620,6 +620,206 @@ BuildEditor::Result BuildEditor::drawFences(int level, int x0, int y0, int x1, i
     return r;
 }
 
+bool BuildEditor::foundationTile(int x, int y) const {
+    if (!lot_.hasLevel(0) || !lot_.hasLevel(1) || x < 0 || y < 0 || x >= int(lot_.width) || y >= int(lot_.height))
+        return false;
+    for (int cx = x; cx <= x + 1; ++cx)
+        for (int cy = y; cy <= y + 1; ++cy)
+            if (lot_.elevation(1, cx, cy) - lot_.elevation(0, cx, cy) > kFoundationHeight + 0.5f)
+                return false;
+    return true;
+}
+
+void BuildEditor::foundationWalls() {
+    const int W = int(lot_.width), H = int(lot_.height);
+    const uint16_t brick = patternRef(lot_.wallPatterns, "foundationbrick", 0);
+    std::vector<std::array<int, 4>> want;
+    for (int x = 0; x < W; ++x)
+        for (int y = 0; y < H; ++y) {
+            if (!foundationTile(x, y))
+                continue;
+            if (!foundationTile(x - 1, y))
+                want.push_back({x, y, x, y + 1});
+            if (!foundationTile(x + 1, y))
+                want.push_back({x + 1, y, x + 1, y + 1});
+            if (!foundationTile(x, y - 1))
+                want.push_back({x, y, x + 1, y});
+            if (!foundationTile(x, y + 1))
+                want.push_back({x, y + 1, x + 1, y + 1});
+        }
+    std::vector<std::array<int, 4>> gone;
+    for (const auto& w : lot_.walls)
+        if (w.type == Lot::Foundation && w.a.level == 0 &&
+            std::none_of(want.begin(), want.end(), [&](const auto& s) { return sameSection(s, w); }))
+            gone.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
+                            int(std::lround(w.b.y))});
+    for (const auto& s : gone)
+        removeWall(lot_, 0, s[0], s[1], s[2], s[3]);
+    for (const auto& s : want)
+        if (!findWall(lot_, 0, s[0], s[1], s[2], s[3]))
+            addWall(lot_, 0, s[0], s[1], s[2], s[3], Lot::Foundation, {brick, brick});
+}
+
+BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1) {
+    Result r;
+    auto fail = [&](int code, const std::string& why) {
+        r.error = code;
+        r.message = "cannot lay a foundation: " + why;
+        return r;
+    };
+    if (!lot_.hasLevel(0) || !lot_.hasLevel(1) || lot_.elevations.empty())
+        return fail(0x1A, "the lot has no story above the ground");
+    const int W = int(lot_.width), H = int(lot_.height);
+    const int ax = std::max(0, std::min(x0, x1)), bx = std::min(W - 1, std::max(x0, x1));
+    const int ay = std::max(0, std::min(y0, y1)), by = std::min(H - 1, std::max(y0, y1));
+    // CanPlaceTile / MayPlaceQuadrilateral (BV 0x34f5a8, 0x352a30): water
+    // (0x1E), objects that are not allowed in a foundation (0x0C, od 42
+    // without 0x200); walls and floors inside are refused too (inferred).
+    std::vector<std::array<int, 2>> tiles;
+    for (int x = ax; x <= bx; ++x)
+        for (int y = ay; y <= by; ++y) {
+            if (foundationTile(x, y))
+                continue;
+            for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
+                if (q) {
+                    auto it = lot_.floorPatterns.find(q);
+                    return fail(it != lot_.floorPatterns.end() && street(it->second) ? 0x45 : 0x0C,
+                                "a floor is in the way at " + point(x, y));
+                }
+            for (int cx = x; cx <= x + 1; ++cx)
+                for (int cy = y; cy <= y + 1; ++cy)
+                    if (lot_.waterLevel(cx, cy) > lot_.elevation(0, cx, cy))
+                        return fail(0x1E, "water at " + point(x, y));
+            for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
+                if (const Object* o = vm_.object(id); o && (o->person || !(o->data[objdata::PlacementFlags] & 0x200)))
+                    return fail(o->person ? 0x4B : 0x0C, "something is in the way at " + point(x, y));
+            tiles.push_back({x, y});
+        }
+    for (const auto& w : lot_.walls) {
+        if (w.a.level != 0 || w.type == Lot::Foundation)
+            continue;
+        const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
+        if (mx >= float(ax) && mx <= float(bx + 1) && my >= float(ay) && my <= float(by + 1))
+            return fail(0x0C, "a wall is in the way");
+    }
+    if (tiles.empty()) {
+        r.ok = true;
+        r.message = "the foundation is there already";
+        return r;
+    }
+    r.cost = int(tiles.size()) * kFoundationTilePrice;
+    if (r.cost > funds(vm_)) {
+        r.message = "not enough money (" + money(r.cost) + ")";
+        r.cost = 0;
+        return r;
+    }
+    Geometry before = capture();
+    // The terrain levelled to the first corner (MayPlaceQuadrilateral:
+    // each point not at that height must be movable, else 0x81).
+    const float height = lot_.elevation(0, std::clamp(x0, 0, W), std::clamp(y0, 0, H));
+    std::vector<std::array<int, 2>> points;
+    for (const auto& [x, y] : tiles)
+        for (int cx = x; cx <= x + 1; ++cx)
+            for (int cy = y; cy <= y + 1; ++cy)
+                points.push_back({cx, cy});
+    std::vector<std::array<int, 4>> free;
+    for (const auto& w : lot_.walls)
+        if (w.type == Lot::Foundation && w.a.level == 0)
+            free.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
+                            int(std::lround(w.b.y))});
+    if (!levelPoints(points, height, free)) {
+        restore(before);
+        return fail(0x81, "the ground cannot be levelled");
+    }
+    // The stories above sit a foundation higher there.
+    const size_t plane = size_t(W + 1) * size_t(H + 1);
+    for (const auto& [cx, cy] : points)
+        for (int k = 1; lot_.hasLevel(k); ++k)
+            lot_.elevations[size_t(k - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] =
+                height + kFoundationHeight + 3.0f * float(k - 1);
+    const uint16_t plywood = patternRef(lot_.floorPatterns, "floor_plywoodFoundation", 1);
+    for (const auto& [x, y] : tiles)
+        for (int q = 0; q < 4; ++q)
+            setFloor(lot_, 1, x, y, q, plywood), setFloorRotation(lot_, 1, x, y, q, 1);
+    foundationWalls();
+    r.changed = int(tiles.size());
+    addFunds(vm_, -r.cost);
+    changed();
+    commit(std::move(before), r.cost);
+    r.ok = true;
+    r.message = std::to_string(r.changed) + " foundation tiles for " + money(r.cost);
+    return r;
+}
+
+BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1) {
+    Result r;
+    if (!lot_.hasLevel(1)) {
+        r.message = "no foundation there";
+        return r;
+    }
+    const int W = int(lot_.width), H = int(lot_.height);
+    const int ax = std::max(0, std::min(x0, x1)), bx = std::min(W - 1, std::max(x0, x1));
+    const int ay = std::max(0, std::min(y0, y1)), by = std::min(H - 1, std::max(y0, y1));
+    std::vector<std::array<int, 2>> tiles;
+    for (int x = ax; x <= bx; ++x)
+        for (int y = ay; y <= by; ++y)
+            if (foundationTile(x, y)) {
+                // Not with something standing on it, or walls on it (inferred).
+                for (ObjectId id : vm_.objectsOnTile({x, y, 2}))
+                    if (vm_.object(id)) {
+                        r.error = 0x0C, r.message = "cannot delete the foundation: something stands on " + point(x, y);
+                        return r;
+                    }
+                tiles.push_back({x, y});
+            }
+    for (const auto& w : lot_.walls) {
+        if (w.a.level != 1)
+            continue;
+        // A wall on the tiles (one along their edge with the rest stays).
+        const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
+        if (mx > float(ax) + 0.01f && mx < float(bx + 1) - 0.01f && my > float(ay) + 0.01f &&
+            my < float(by + 1) - 0.01f) {
+            r.error = 0x0C, r.message = "cannot delete the foundation: a wall stands on it";
+            return r;
+        }
+    }
+    if (tiles.empty()) {
+        r.ok = true;
+        r.message = "no foundation there";
+        return r;
+    }
+    Geometry before = capture();
+    const size_t plane = size_t(W + 1) * size_t(H + 1);
+    std::set<std::pair<int, int>> removed;
+    for (const auto& [x, y] : tiles)
+        removed.insert({x, y});
+    auto stays = [&](int x, int y) { return !removed.count({x, y}) && foundationTile(x, y); };
+    std::vector<std::array<int, 2>> corners;
+    for (const auto& [x, y] : tiles) {
+        for (int q = 0; q < 4; ++q)
+            setFloor(lot_, 1, x, y, q, 0);
+        for (int cx = x; cx <= x + 1; ++cx)
+            for (int cy = y; cy <= y + 1; ++cy)
+                if (!stays(cx - 1, cy - 1) && !stays(cx, cy - 1) && !stays(cx - 1, cy) && !stays(cx, cy))
+                    corners.push_back({cx, cy});
+    }
+    for (const auto& [cx, cy] : corners) {
+        const float ground = lot_.elevation(0, cx, cy);
+        for (int k = 1; lot_.hasLevel(k); ++k)
+            lot_.elevations[size_t(k - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] =
+                ground + 3.0f * float(k);
+    }
+    foundationWalls();
+    r.changed = int(tiles.size());
+    r.cost = -r.changed * int(float(kFoundationTilePrice) * kBuildRefundRate);
+    addFunds(vm_, -r.cost);
+    changed();
+    commit(std::move(before), r.cost);
+    r.ok = true;
+    r.message = std::to_string(r.changed) + " foundation tiles deleted for " + money(-r.cost);
+    return r;
+}
+
 bool BuildEditor::floorable(int level, int x, int y) const {
     const int li = level - 1;
     if (li <= 0)

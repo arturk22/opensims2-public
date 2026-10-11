@@ -62,6 +62,22 @@ public:
     Result drawFences(int level, int x0, int y0, int x1, int y1, const BuildFence& fence);
     Result deleteFences(int level, int x0, int y0, int x1, int y1);
 
+    // Foundation tool (cTSUserToolDeckFoundation, deckfoundations.txt
+    // "foundation 0"): a rectangle of ground tiles (corners inclusive)
+    // raised a quarter story: the terrain under it is levelled to its first
+    // corner's height (0x81 when a point cannot move), the level above gets
+    // its floor there 0.75 higher (and the stories over it with it), with
+    // the "floor_plywoodFoundation" floor, and foundation walls (style 23,
+    // "foundationbrick") run round its edge. §4 a tile (kFoundationTilePrice).
+    // Only on the ground (0x1A), not over water (0x1E), walls, floors or
+    // objects that do not allow it (0x0C; od 42 bit 0x200 does).
+    Result drawFoundation(int x0, int y0, int x1, int y1);
+    // Ctrl: the foundation tiles of the rectangle go (int(4 x 0.8) back a
+    // tile); the walls follow the edge of what is left.
+    Result deleteFoundation(int x0, int y0, int x1, int y1);
+    // A ground tile under a foundation.
+    bool foundationTile(int x, int y) const;
+
     // Floor tool over the tiles of a rectangle (corners inclusive), or the
     // given quarters of one tile (`quarters` bits: west, north, east, south).
     // A quarter costs a quarter of the pattern's price; covering another
@@ -153,6 +169,8 @@ private:
     bool levelPoints(const std::vector<std::array<int, 2>>& points, float height,
                      const std::vector<std::array<int, 4>>& free = {});
     Result eraseRun(int level, int x0, int y0, int x1, int y1, bool fences);
+    // Foundation walls along the edge between foundation and other tiles.
+    void foundationWalls();
     Result cover(std::vector<std::pair<uint32_t, int>> faces, const BuildPattern* pattern, const std::string& what);
     int priceOf(const std::string& lotName, bool floor) const;
 
