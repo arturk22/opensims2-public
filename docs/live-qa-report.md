@@ -35,3 +35,34 @@ selecionar o processo pelo pid.
 ## Não corrigido
 
 Ver as entradas "QA ao vivo" no `TODO.md` (com passos).
+
+# Rodada 10
+
+Mesmo método (CGEvent com deltas, `screencapture -R` só na janela, pid próprio). Lotes: Belavista lote 68 (família
+com 4 Sims, pelo menu) e `--hood N001 --hood-lot 24`.
+
+| Passo | Resultado |
+|-------|-----------|
+| Atalhos 3 e P (velocidade 3 acende, pausa com borda vermelha) | passa |
+| Rotação com botão do meio (precisa de deltas no evento) e pan com botão direito | passa |
+| Pie menu num objeto da casa: abre, escolher "Ver" enfileira (ícone na fila), clicar o ícone tira da fila | passa |
+| Pie menu em Sim | não testado (Sims dentro de casa, sem corte de telhado) |
+| Comprar: escolher item, mostrar recusa, refazer/desfazer pelos botões | passa; vender não testado (ver TODO) |
+| Construir: piso (§72 debitado), desfazer volta §2659, refazer §2587 | passa |
+| Construir: parede, porta (fantasma vermelho + recusa), papel de parede | recusas mostram só o texto do jogo; papel de parede e porta dentro da casa não testados |
+| Opções sobre Construir: painel de baixo escondido, só o botão das Opções aceso | passa (corrigido) |
+| Opções → Vizinhança → Sim a partir do lote 24 (`--hood`) e do lote 68 | grava (a falha da rodada 9 era do clique já corrigido em `6e1d64c`) |
+| Menu → Belavista → Famílias → Criar Nova Família → CAS (nome, gênero, arquétipo, 2º Sim, Fazer um Filho, árvore genealógica) → Aceitar | passa |
+| Família na bandeja → mover para o lote 24 (§17.621 debitado; sobra §2.379) → jogar → Opções → Vizinhança → Sim → lote mostra a família (patrimônio §20.000) | passa |
+| Retrato do Sim e barra da família na família nova | estavam em branco; corrigido (o CAS agora grava os retratos) |
+
+## Corrigido na rodada 10
+
+- Recusa do modo construção só com o texto do jogo; a dica de Comprar também fica dentro da janela.
+- Opções por cima de Comprar/Construir: os painéis escondem e os cliques não vazam; só o botão das Opções fica aceso.
+- Criar um Sim grava os retratos (IMG 0x08 e 0x800 do Sim) nos arquivos de personagem.
+
+## Não corrigido
+
+Ver as entradas "QA ao vivo" do `TODO.md`: ícone da fila em branco, foto da família nova em branco na bandeja,
+falta de corte de paredes/telhado, ferramentas de Comprar sem ação.
