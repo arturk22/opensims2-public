@@ -597,9 +597,11 @@ Exit snap(Context& c) {
     if (!target.position.inWorld())
         return fail();
     const VM::RouteGoals goals = c.vm.routingGoals(slot, target);
-    std::vector<ObjectId> ignore{me.id};
-    if (goals.onTarget)
-        ignore.push_back(target.id);
+    // The target's own footprint does not count: a snap to its slot puts me
+    // against it or on it (standing up from a chair to the place beside it,
+    // which here falls on the chair's tile or across a wall for want of the
+    // model's footprint; inferred).
+    std::vector<ObjectId> ignore{me.id, target.id};
     size_t best = goals.goals.size();
     for (size_t i = 0; i < goals.goals.size(); ++i) {
         const TilePos t{goals.goals[i].x, goals.goals[i].y, goals.level};
