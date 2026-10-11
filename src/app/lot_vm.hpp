@@ -10,6 +10,7 @@
 #include "vm/vm.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -51,6 +52,12 @@ public:
     // entry `animation` of the global animation list if given.
     void walk(int16_t sim, int16_t target, std::optional<uint16_t> animation);
 
+    // Called when the VM changes what an attached Sim wears (person data 8
+    // "current outfit", STR# 0xFA outfit types), with the outfit category
+    // bit of its character file's keys (vm::outfitCategoryBit); the host
+    // rebuilds the actor's model.
+    std::function<void(int16_t id, SimActor& actor, uint32_t category)> onOutfitChange;
+
     // Runs the VM up to `seconds` (whole ticks) and places and animates the
     // attached actors for that moment (one tick behind the VM, so that
     // there is a tick to interpolate towards).
@@ -66,6 +73,7 @@ private:
         std::string playing; // what the actor was last cued to play
         uint32_t serial = 0;
         uint32_t climbSerial = 0;
+        int16_t outfit = 0; // person data 8 the actor is dressed for
         float zOffset = 0; // the cObject's height over the floor the VM's level gives
     };
     void sampleAll(double at);

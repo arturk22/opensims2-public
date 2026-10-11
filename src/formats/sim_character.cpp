@@ -62,6 +62,17 @@ std::map<uint32_t, Tgi> Character::outfit(uint32_t category) const {
     return out;
 }
 
+std::map<uint32_t, Tgi> Character::wear(uint32_t category) const {
+    std::map<uint32_t, Tgi> out = outfit(category);
+    if (out.empty())
+        return outfit(1);
+    if (category != 1)
+        for (const auto& [bits, tgi] : outfit(1))
+            if (bits == 1 || bits == 2) // hair, face
+                out.emplace(bits, tgi);
+    return out;
+}
+
 std::string Character::prefix(bool unisexChildren) const {
     std::string p;
     if (age & 1)
@@ -121,7 +132,7 @@ Character readCharacter(DbpfPackage& pkg, ResourceIndex& index) {
 }
 
 SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& parts,
-                              const std::filesystem::path& file) {
+                              const std::filesystem::path& file, uint32_t category) {
     ResourceIndex index({file}, &base);
     DbpfPackage pkg(file);
     const Character ch = readCharacter(pkg, index);
@@ -157,7 +168,7 @@ SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& p
         if (const std::string n = scenegraphName(index, loc.entry->tgi); !n.empty())
             localMaterials.emplace(bareName(n), n.ends_with("_txmt") ? n.substr(0, n.size() - 5) : n);
 
-    for (const auto& [bits, tgi] : ch.outfit(1)) {
+    for (const auto& [bits, tgi] : ch.wear(category)) {
         const SimPart* part = nullptr;
         if (tgi.group == 0xFFFFFFFF) {
             if (auto it = local.find(tgi.instance); it != local.end())

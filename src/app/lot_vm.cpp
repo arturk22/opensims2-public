@@ -5,6 +5,7 @@
 #include "formats/resindex.hpp"
 #include "formats/sim_character.hpp"
 #include "vm/animation.hpp"
+#include "vm/hood_bridge.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
 
@@ -14,6 +15,10 @@
 #include <cstdlib>
 
 namespace os2 {
+
+namespace {
+constexpr int16_t kCurrentOutfit = 8; // person data "current outfit" (STR# 0xC8)
+}
 
 LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& lotPackage,
                              const std::filesystem::path& lotFile, bool fromInit)
@@ -74,6 +79,7 @@ void LotSimulation::attach(SimActor& actor, int16_t id, const Character& charact
     if (std::fabs(b.zOffset) > 0.25f)
         std::fprintf(stderr, "opensims2: Sim %d stands %.2f over its floor\n", id, b.zOffset);
     b.playing = idle;
+    b.outfit = o->person ? o->person->data[kCurrentOutfit] : 0;
     bound_.push_back(std::move(b));
 }
 
@@ -89,6 +95,11 @@ void LotSimulation::sampleAll(double at) {
             continue;
         b.motion.sample(*vm_, *o);
         const auto& s = b.motion.current();
+        if (o->person && o->person->data[kCurrentOutfit] != b.outfit) {
+            b.outfit = o->person->data[kCurrentOutfit];
+            if (const uint32_t bit = vm::outfitCategoryBit(b.outfit); bit && onOutfitChange)
+                onOutfitChange(b.id, *b.actor, bit);
+        }
         std::string want = b.idle;
         bool loop = true;
         float fade = 0.2f;

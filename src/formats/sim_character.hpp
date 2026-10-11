@@ -33,6 +33,13 @@ struct Character {
 
     // The parts of one category (1 = everyday), by part bits.
     std::map<uint32_t, Tgi> outfit(uint32_t category = 1) const;
+    // What the Sim wears in outfit category `category` (bits as the keys':
+    // 0x001 everyday, 0x008 swimwear, 0x010 pyjamas, 0x020 formal, 0x040
+    // underwear, 0x080 naked, 0x200 athletic, ...): that category's parts,
+    // with the hair and face of everyday wear when it has none of its own
+    // (the "naked" lists name only hair, top and bottom); everyday wear when
+    // the Sim has no such outfit.
+    std::map<uint32_t, Tgi> wear(uint32_t category) const;
     // Prefix of the catalog names: "am", "af", "em", "cu", "pu", ...
     std::string prefix(bool unisexChildren = false) const;
 };
@@ -40,10 +47,11 @@ struct Character {
 Character readCharacter(DbpfPackage& package, ResourceIndex& index);
 
 // Assembles a Sim from its character file over the game's resources `index`:
-// its everyday outfit (with the skin tone under SimSkin clothes), its own face
-// mesh and face textures (the base and up to three overlays), on its skeleton.
-// Parts that cannot be found are reported in the model's warnings.
+// the outfit of `category` (Character::wear; with the skin tone under SimSkin
+// clothes), its own face mesh and face textures (the base and up to three
+// overlays), on its skeleton. Parts that cannot be found are reported in the
+// model's warnings.
 SkinnedModel loadCharacterSim(ResourceIndex& index, const std::vector<SimPart>& parts,
-                              const std::filesystem::path& characterFile);
+                              const std::filesystem::path& characterFile, uint32_t category = 1);
 
 } // namespace os2

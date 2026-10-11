@@ -618,6 +618,14 @@ void Renderer::addInstance(int model, const simd_float4x4& transform) {
         instances_.push_back({model, transform});
 }
 
+void Renderer::retargetInstances(int from, int to) {
+    if (to < 0 || size_t(to) >= models_.size())
+        return;
+    for (auto& i : instances_)
+        if (i.model == from)
+            i.model = to;
+}
+
 MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const FrameView& view) {
     dispatch_semaphore_wait(sema(inFlight_), DISPATCH_TIME_FOREVER);
     frame_ = (frame_ + 1) % kFramesInFlight;

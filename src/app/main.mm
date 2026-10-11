@@ -299,7 +299,8 @@ void updateAudio(double seconds) {
 
 // --vm / --run-vm: the lot's objects in the VM, with its Sims attached to
 // their actors; --vm-walk <sim>,<object>[,<anim>] starts a scripted walk.
-void startSimulation(os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg, const fs::path& lotFile) {
+void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
+                     const fs::path& lotFile) {
     CFTimeInterval start = CACurrentMediaTime();
     gSimulation = std::make_unique<os2::LotSimulation>(index, lot, pkg, lotFile,
                                                       [NSProcessInfo.processInfo.arguments containsObject:@"--init"]);
@@ -307,6 +308,32 @@ void startSimulation(os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPa
         os2::DbpfPackage character(s.character);
         gSimulation->attach(*s.actor, s.id, os2::readCharacter(character, index), s.idle);
     }
+    // A Sim that changes clothes gets the outfit of its character file.
+    gSimulation->onOutfitChange = [&renderer, &index](int16_t id, os2::SimActor& actor, uint32_t category) {
+        static std::vector<os2::SimPart> parts;
+        const auto it = std::find_if(gLotSims.begin(), gLotSims.end(), [&](const LotSim& s) { return s.id == id; });
+        if (it == gLotSims.end())
+            return;
+        try {
+            if (parts.empty())
+                parts = os2::loadSimParts(index);
+            actor.skin = os2::loadCharacterSim(index, parts, it->character, category);
+            actor.player.setSkeleton(&actor.skin.skeleton);
+            const int model = renderer.addObject(actor.skin.model, index, true);
+            renderer.retargetInstances(actor.model, model);
+            actor.model = model;
+            std::printf("opensims2: Sim %d now wears outfit category 0x%03X\n", id, category);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: Sim %d: outfit 0x%03X: %s\n", id, category, e.what());
+        }
+    };
+    // --outfit <type>: test aid, every Sim changes into outfit type <type>
+    // (person data 8, STR# 0xFA: 0 everyday, 2 swimwear, 3 athletic, 4
+    // formal, 5 pyjamas, 11 underwear, ...).
+    if (auto outfit = argument(@"--outfit"))
+        for (const auto& s : gLotSims)
+            if (auto* o = gSimulation->machine().object(s.id); o && o->person)
+                o->person->data[8] = int16_t(std::stoi(*outfit));
     if (auto walk = argument(@"--vm-walk")) {
         int sim = 0, target = 0, anim = -1;
         if (std::sscanf(walk->c_str(), "%d,%d,%d", &sim, &target, &anim) < 2)
@@ -361,7 +388,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
     startAudio(index, lot);
     if (argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") || [args containsObject:@"--vm"])
-        startSimulation(index, lot, pkg, lotPath(*query));
+        startSimulation(renderer, index, lot, pkg, lotPath(*query));
     // Fence rails and posts: one model per CRES, an instance per piece.
     std::vector<std::string> fenceWarnings;
     const auto fences = os2::lotFencePieces(lot, patterns, &fenceWarnings);
