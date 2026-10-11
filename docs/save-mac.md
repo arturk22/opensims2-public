@@ -166,6 +166,15 @@ caso da vtable 0x24) ; u32 campo 0xD0 do OBJD
 
 e um u32 0 no fim. O save type liga o ObjM (`ID → save type`) à definição.
 
+As duas "versões de árvore" (`cTSObjectSelector::GetInitTreeVersion`/
+`GetMainTreeVersion`, BV `0x51d6bc`/`0x51d76c`) são o campo *tree version*
+do cabeçalho do BHAV que a tabela de árvores (TTAB/OBJf) dá para Init
+(entrada 0) e Main (entrada 1; 0 se o objeto não tem Main), lido uma vez e
+guardado no seletor. Um tipo novo no lote ganha um registro com esses
+valores tirados dos BHAVs da definição; ao carregar, uma versão diferente
+da do pacote indica que as árvores do objeto mudaram (inferido: o uso no
+Read não foi seguido).
+
 **XOBJ / XMTO / PERS**: o tipo do registro é o CLSID da classe do objeto
 (`GetGZCLSID`): `XOBJ` (`0x584F424A`) objeto comum, `XMTO` (`0x584D544F`)
 objeto de vários tiles (`cEdithMTObject`, que escreve depois do XOBJ os
@@ -191,12 +200,41 @@ u32 tem_rota (0/1) ; [cTSRoute::SaveToStream da rota de base]
 
 Para um Sim parado: `tem_rota` 0, lista vazia, pausa 0.
 
-**`SIMI`** (instância 1; `cTSSimulator::Write`, BV `0x49985c`): u32 `SIMI`,
-u32 versão (0xCE no BV), u32 0, **58** globais i16 no BV (o código lê 54,
-os do jogo base: conferir no `SIMI` dos lotes base), u32 +0xA0, u16 +0x11E,
-u32 +0x98, i32 +0xB4, u32 (de um serviço global, vtable 0xDC), 5 × u32
-(+0x9C, +0xA4, +0xAC, +0xA8, +0xB0) e 1 + 5 relatórios de despesa
-(`WriteExpReport`). Hora, dia e fundos do lote estão nos globais.
+**`SIMI`** (instância 1; `cTSSimulator::Write`/`Read`, BV `0x49985c`/
+`0x499c20`). Layout (little-endian no arquivo), com o que depende da versão
+(= versão do módulo de objetos, 0xAD no base, 0xCE no BV):
+
+```
+u32 "SIMI" ; u32 versão ; u32 0
+N × i16 globais (STR# 0x81), N pela versão (Read):
+    v<0x12: 16 (+ u32 velocidade) ; <0x40: 32 ; <0x70: 33 ; <0x75: 34 ;
+    <0x79: 35 ; <0x7C: 36 ; 0x7C: 37 ; 0x7D–0x8B: 40 ; 0x8C: 43 ; 0x8D: 44 ;
+    0x8E–0x91: 45 ; 0x92–0xA0: 46 ; 0xA1–0xA2: 50 ; 0xA3–0xA6: 51 ;
+    0xA7–0xA9: 52 ; 0xAA: 53 ; 0xAB–0xAE: 54 ; 0xAF–0xC4: 55 ;
+    0xC5–0xC9: 56 ; 0xCA: 57 ; ≥0xCB: 58
+  → base (0xAC/0xAD): **54**, como o código lê; BV (0xCE): 58.
+u32 +0xA0  contador de ticks que avançaram o relógio (negativo → 0)
+u16        → +0x11C (o Write grava +0x11E: conferir)
+u32 +0x98  fundos da família (cópia; v>1)
+u32 +0xB4  semente do gerador aleatório do simulador (v>0xD)
+u32        semente do gerador aleatório global (serviço vtable 0xDC; v>0xD)
+u32 +0x9C  variação de fundos pendente (SetFunds: novo − +0x98; somada no
+           próximo tick; v≥0xF)
+v≥0x25: u32 +0xA4 valor do lote (padrão 4500) ; u32 +0xAC valor dos objetos
+        da família ; [v≥0xAD: u32 +0xA8 valor dos objetos do lote] ;
+        u32 +0xB0 (não identificado)
+v>0x25: 6 relatórios de despesa: u32 tipo + valores (Read: tipo 0 → 7,
+        tipo 1 → 8, outro → 10; o BV grava tipo 2 + 10). Os lotes base
+        (0xAD) têm tipo 1 + 8 u32 (36 bytes cada): 76 + 108 + 38 + 216 = 438
+        bytes, e 434 nos 0xAC (sem o +0xA8), como nos pacotes de N002.
+```
+
+Ao ler, os globais 25 e 53 **não** são tirados do arquivo (o jogo mantém
+os da sessão), o 34 (dia da semana) é recalculado como dia % 7, o 15 vem de
+um serviço e o 24 dos globais do jogo; a velocidade (global 16) fora de
+2..4 vira 2. Os globais 13/14 = fundos % 10000 e / 10000 (`SetFunds`),
+46/47 = valor do lote / 1000 e % 1000 (`SetLotValue`), 48/49 = valor dos
+objetos (`UpdateTotalObjectsValue`).
 
 O objeto `FUN_0007f178(stream, versão)` passado pela vtable 0x4C do
 stream (no `SIMI` e no `objt`) só marca a versão no contexto: não escreve
@@ -205,13 +243,47 @@ gravação (`cTSSimSystem` vtable 0x118: arquivo, stream, tipo, instância).
 
 ## 6. Escrever um lote que o jogo aceite (receita)
 
-O save de lote (`cTSSaveLotController::SaveLot`, BV `0x884ec4`) é feito por
-mensagens: cada subsistema grava os seus registros no mesmo pacote. O
-módulo de objetos (`cEdithObjectModule::Save`, BV `0x529090`) faz, nesta
-ordem: avisa os objetos (vtable 0x31C), grava cada objeto (vtable 0x410,
-acima), `ObjM` instância 1 (`write_pre_object`), os objetos de novo
-(`save_objects`), e `ObjM` instância 2 (`write_post_object`). O simulador
-grava o `SIMI`; o mundo (paredes, pisos, terreno, `HOUS`, ...) os seus.
+O save de lote (`cTSSaveLotController::SaveLot`, BV `0x884ec4`) é uma
+máquina de estados (um passo por chamada); o que importa para o pacote:
+
+| passo | o que faz |
+|---|---|
+| 0–2 | pergunta se salva (diálogo); sem salvar pula para o fim |
+| 5 | atualiza a família/lote na vizinhança (fundos, `cTSLotInfo`) |
+| 6 | abre o pacote do lote para gravação (CLSID `0x0B54E37D`) |
+| 7 | mensagem **`0xCD94C8EE`** ("vai salvar": os objetos se preparam) |
+| 8 | o persist system liga o pacote ao lote (`0x120`) |
+| 9 | **apaga do pacote** todos os recursos dos tipos `0x2DB5C0F4` e `0x6E9C59CF` (dados de importação/exportação de família/vizinhança) e registra um contexto `0xCDCBE0E3` |
+| 10 | se for modelo de lote: mensagem `0xDC` |
+| 11 | `WorldDB` grava o mundo (paredes, pisos, terreno, telhados, `HOUS`, ...) |
+| 12 | mensagem **`0xBC`** com o pacote e o lote: cada subsistema grava os seus registros (módulo de objetos §4–5, simulador `SIMI`, scene graph `0xBA353CE1`, relacionamentos `SREL`, ...) |
+| 13 | a vizinhança grava (`+0x3C`→`0x14(pacote)`) |
+| 14–15 | `cTSLotInfo` (`0x6C589723`): alturas do terreno amostradas a cada 10 unidades e a miniatura `0x3B2271C0` gravada no pacote do lote |
+| 16+ | miniaturas/imagem do lote e fecha |
+
+**Vizinhança** (o que muda fora do lote):
+
+- `FAMI` (`cTSFamily::Write`, BV `0x47c258`; versão 0x55 no BV, **0x4E**
+  no base): u32 tag ; u32 versão ; u32 0 ; u32 instância do lote (+0x30) ;
+  [v≥0x50 u32 lote de negócio] ; [v≥0x55 u32 lote de férias] ; u32 +0x40 ;
+  **u32 fundos** ; u32 +0x10 ; u32 +0x60 (flags; v≥7) ; u32 n + n membros
+  (ID de Sim, u32) ; u32 +0x3C (v>0x4A) ; [v>0x4E u32 +0xC] ;
+  [v≥0x51 u32 fundos de negócio]. Os fundos gravados são os do
+  **simulador** quando a família é a do lote aberto (`cTSFamily::Funds`), ou
+  seja, o global 13/14 do lote. Conferido contra os `FAMI` de N001 (52/56/44
+  bytes, v 0x4E).
+- `SDSC` (`cTSNeighbor`; versão 0x20 no base): ao sair do lote cada Sim
+  copia para o seu SDSC os dados de pessoa da lista
+  `cTSNeighbor::sGetPersistentDataFields` (BV `0x492524`, 143 pares
+  (dado de pessoa, versão do SDSC em que entrou); os de versão ≤ 0x20 são os
+  do base: 2–7, 70, 9–18, 58, 60, 61, 56, 57, 63, 65, 67–69, 74, 81–101,
+  106–153, 155, 156, 159, 46–51, 22, 23, 160–162, 165, 92), mais os dois
+  blocos `0x2A4(1)`/`0x2A4(2)` da pessoa (não identificados) e as relações
+  (`cTSNeighborhood::SavePersistentData`, BV `0x4d7ff8`).
+- `NGBH` (`cTSNeighborhood::Write`, BV `0x4dc43c`; 0xCB no BV, **0x6F** no
+  base): tag, versão, 0, dois u32, uma string, 16 i16 (globais da
+  vizinhança), e três mapas (ID → registro). O save de lote só precisa
+  mexer nele se mudar o que ele guarda (inventário/memórias da vizinhança).
 
 O caminho seguro para um save nosso:
 
@@ -241,6 +313,6 @@ não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
 
 - Os campos do token, da tabela de relacionamentos e dos timers; o
   `cTSRoute::SaveToStream` (rota em andamento).
-- Os 4 globais a mais do `SIMI` do BV e os campos +0x98..+0xB4.
-- O que exatamente o `SaveLot` manda gravar além do módulo de objetos e
-  do simulador (mensagens `0xCD94C8EE`, `0xBC`, `0xDC`, ...).
+- Quem responde à mensagem `0xBC` além do módulo de objetos e do simulador
+  (a ordem exata) e o gravador das `SREL` do lote.
+- O campo +0xB0 do `SIMI` e os blocos `0x2A4` da pessoa no SDSC.
