@@ -783,6 +783,29 @@ void VM::tick() {
         if (t.status == Thread::Status::Running)
             run(t, instructionsPerTurn);
     }
+    followContainers();
+}
+
+void VM::followContainers() {
+    // Contained objects are where their container is (as the saved lots keep
+    // them and Snap Into puts them): what a Sim carries goes along with it.
+    for (auto& [id, o] : objects_) {
+        const ObjectId in = o.data[objdata::ContainerId];
+        if (!in || in == id)
+            continue;
+        auto c = objects_.find(in);
+        if (c == objects_.end())
+            continue;
+        const Object* top = &c->second;
+        for (int depth = 0; depth < 8 && top->data[objdata::ContainerId]; ++depth) {
+            auto up = objects_.find(top->data[objdata::ContainerId]);
+            if (up == objects_.end() || &up->second == top)
+                break;
+            top = &up->second;
+        }
+        o.position = top->position;
+        o.data[objdata::Room] = top->data[objdata::Room];
+    }
 }
 
 Object* VM::object(ObjectId id) {

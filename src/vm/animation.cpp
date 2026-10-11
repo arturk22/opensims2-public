@@ -44,6 +44,27 @@ float AnimationLibrary::tilesPerSecond(const std::string& name) {
     return v;
 }
 
+std::optional<int> AnimationLibrary::eventTicks(const std::string& name, const std::string& line) {
+    const std::string key = name + '\n' + line;
+    if (auto it = events_.find(key); it != events_.end())
+        return it->second;
+    std::optional<int> out;
+    if (index_) {
+        try {
+            for (const auto& e : loadAnimation(*index_, name).events) {
+                const std::string first = e.data.substr(0, e.data.find_first_of("\r\n"));
+                if (first == line) {
+                    out = e.ticks;
+                    break;
+                }
+            }
+        } catch (const std::exception&) {
+        }
+    }
+    events_[key] = out;
+    return out;
+}
+
 std::string agePrefix(const Object& sim) {
     if (!sim.person)
         return "a";

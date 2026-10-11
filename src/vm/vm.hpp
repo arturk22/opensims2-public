@@ -77,6 +77,7 @@ constexpr int16_t Flags = 8; // bit 0 can be stepped over, 2 allow object and pe
 constexpr int16_t ObjectId = 11;
 constexpr int16_t LeadTileObjectId = 19;
 constexpr int16_t Room = 29;
+constexpr int16_t HideInteraction = 50;
 constexpr int16_t Category = 59;
 constexpr int16_t SlotCount = 67;
 constexpr int16_t SemiAttributeCount = 79;
@@ -417,6 +418,26 @@ struct Object {
     std::optional<LookAt> lookAt;
     // On Timer's timers, in the order they were set.
     std::vector<ObjectTimer> timers;
+    // Reach/Put in progress (reach.cpp): the instruction running it (stack
+    // depth, tree, node), the reach animation and its ticks, the tick of its
+    // event 0 (when the object changes hands), what moves where, and the
+    // grasp/carry overlays it adds on a pick up.
+    struct Reach {
+        size_t depth = 0;
+        const Behavior* tree = nullptr;
+        uint16_t node = 0;
+        uint8_t mode = 0; // 0 pick up, 1 drop onto an object, 2 drop onto the floor
+        std::string animation;
+        int tick = 0, transferAt = 0, end = 0;
+        bool transferred = false;
+        ObjectId object = 0, target = 0;
+        int hand = 0, slot = -1;
+        TilePos floor{};
+        std::vector<std::string> overlays;
+    };
+    std::optional<Reach> reach;
+    // The grasp/carry overlays of what a Sim holds, taken off when it puts it down.
+    std::vector<std::string> carryOverlays;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
@@ -614,13 +635,15 @@ public:
     } clock;
     void setClockGlobals();
     uint64_t ticks = 0;
-    // One tick: the clock, the objects' timers, then a turn of every Main thread.
+    // One tick: the clock, the objects' timers, then a turn of every Main
+    // thread, then contained objects move to their (outermost) container's position.
     void tick();
     // Counts down every object's timers and runs the event trees of the
     // ones that are due (timer.cpp).
     void handleTimers();
     // Event trees of timers that failed (the latest; for the host to look at).
     std::deque<Thread> failedTimerEvents;
+    void followContainers();
 
     std::array<int16_t, kGlobalCount> globals{};
 
@@ -779,5 +802,7 @@ std::optional<ObjectId> nextVisibleObject(VM& vm, const Object& me, ObjectId cur
 void registerTimerPrimitives(VM& vm);
 // Look At (view.cpp).
 void registerViewPrimitives(VM& vm);
+// Run Functional Tree and Reach/Put (reach.cpp).
+void registerReachPrimitives(VM& vm);
 
 } // namespace os2::vm

@@ -4,6 +4,8 @@
 
 #include "pie_cmds.hpp"
 
+#include "formats/bhav.hpp"
+#include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
@@ -44,7 +46,7 @@ const char* checkName(vm::CheckResult r) {
 std::string nameOf(const vm::Object& o) { return o.definition ? o.definition->fileName : "?"; }
 
 int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
-           int select, int ticks, bool all, std::optional<int> motives, bool fromInit) {
+           int select, int ticks, bool all, std::optional<int> motives, bool fromInit, size_t trace) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -99,7 +101,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         if (!all && (e.debug || !e.available()))
             continue;
         shown.push_back(&e);
-        std::printf("  [%d] TTA %-3u %-9s %s", n++, e.interaction, e.debug ? "debug" : checkName(e.check),
+        std::printf("  [%d] TTA %-3u %-9s %s", n++, e.interaction, e.debug ? "debug" : e.hidden ? "hidden" : checkName(e.check),
                     e.name.c_str());
         if (!e.error.empty())
             std::printf("  -- %s", e.error.substr(0, e.error.find('\n')).c_str());
@@ -118,6 +120,16 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     vm::enqueue(machine, s, *q);
     std::printf("queued \"%s\" (TTA %u, action %04X) on %s; %d ticks:\n", q->name.c_str(), q->interaction, q->action,
                 nameOf(s).c_str(), ticks);
+    // --trace N: the first N instructions the Sim's thread runs from here on.
+    size_t traced = 0;
+    if (trace)
+        machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
+            if (t.me != sim || traced++ >= trace)
+                return;
+            const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
+            std::printf("    %*s%08X %04X #%-3u %-28s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
+                        op.c_str(), f.behavior->fileName.c_str());
+        };
     for (int i = 0; i < ticks; ++i) {
         const bool before = s.activeInteraction >= 0;
         machine.tick();
@@ -132,6 +144,9 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     }
     if (auto it = machine.threads.find(sim); it != machine.threads.end() && it->second.status == vm::Thread::Status::Failed)
         std::printf("  the Sim's Main failed: %s\n", it->second.error.substr(0, it->second.error.find('\n')).c_str());
+    for (int16_t hand = 0; hand < 2; ++hand)
+        if (const vm::ObjectId held = machine.containedIn(sim, hand))
+            std::printf("  in hand %d: %d %s\n", hand, held, nameOf(*machine.object(held)).c_str());
     std::printf("queue of %s:", nameOf(s).c_str());
     for (size_t i = 0; i < s.queue.size(); ++i)
         std::printf(" [%s%s]", s.queue[i].name.c_str(), int(i) == s.activeInteraction ? ", running" : "");
@@ -146,6 +161,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
         return -1;
     std::vector<std::string> pos;
     int select = -1, ticks = 30;
+    size_t trace = 0;
     std::optional<int> motives;
     bool fromInit = false;
     bool all = false;
@@ -159,6 +175,8 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
             fromInit = true;
         else if (a == "--motives" && i + 1 < argc)
             motives = std::stoi(argv[++i]);
+        else if (a == "--trace" && i + 1 < argc)
+            trace = std::stoul(argv[++i]);
         else if (a == "--all")
             all = true;
         else
@@ -166,11 +184,12 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (pos.empty() || pos.size() > 3)
         return -1;
-    return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives, fromInit);
+    return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives, fromInit,
+                  trace);
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N]] [--motives N] [--init]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N]] [--motives N] [--init]\n";
 }
 
 } // namespace os2

@@ -98,6 +98,11 @@ public:
         cache_[name] = seconds;
         speeds_[name] = tilesPerSecond;
     }
+    // Animation ticks (1 ms) of the first event of the animation whose data
+    // starts with the line `line` ("event=0": the reaches' "transfer object
+    // to hand"), or nothing if it has none.
+    std::optional<int> eventTicks(const std::string& name, const std::string& line);
+    void addEvent(const std::string& name, const std::string& line, int ticks) { events_[name + '\n' + line] = ticks; }
     // Names the trees asked for that do not exist, with how often.
     std::map<std::string, size_t> missing;
 
@@ -105,6 +110,7 @@ private:
     ResourceIndex* index_ = nullptr;
     std::unordered_map<std::string, std::optional<float>> cache_;
     std::unordered_map<std::string, float> speeds_;
+    std::unordered_map<std::string, std::optional<int>> events_;
 };
 
 class VM;

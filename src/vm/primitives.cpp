@@ -903,6 +903,7 @@ void registerPrimitives(VM& vm) {
     registerMeasurePrimitives(vm);
     registerTimerPrimitives(vm);
     registerViewPrimitives(vm);
+    registerReachPrimitives(vm); // Run Functional Tree, Reach/Put (reach.cpp)
     registerInteractionPrimitives(vm); // Push Interaction, Idle for Input (queue.cpp)
     registerSoundPrimitives(vm);       // Play / Stop Sound Event, Stop ALL Sounds (sound.cpp)
 }

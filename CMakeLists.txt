@@ -72,6 +72,7 @@ add_library(os2_vm
   src/vm/measure.cpp
   src/vm/primitives.cpp
   src/vm/queue.cpp
+  src/vm/reach.cpp
   src/vm/routing.cpp
   src/vm/sim_motion.cpp
   src/vm/sound.cpp
@@ -153,6 +154,10 @@ add_test(NAME hood_vm COMMAND test_hood_vm)
 add_executable(test_queue tests/test_queue.cpp)
 target_link_libraries(test_queue PRIVATE os2_vm)
 add_test(NAME queue COMMAND test_queue)
+
+add_executable(test_reach tests/test_reach.cpp)
+target_link_libraries(test_reach PRIVATE os2_vm)
+add_test(NAME reach COMMAND test_reach)
 
 add_executable(test_routing tests/test_routing.cpp)
 target_link_libraries(test_routing PRIVATE os2_vm)

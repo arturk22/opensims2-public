@@ -148,7 +148,11 @@ struct PieEntry {
     // one per string, with the stack object it had as parameter 0.
     bool dynamic = false;
     std::array<int16_t, 4> args{};
-    bool available() const { return check == CheckResult::NoGuard || check == CheckResult::True; }
+    // The check tree set my object data "hide interaction" (50), as "Hide
+    // Menu" (global 0x109) does: the entry exists (autonomy and pushes may
+    // use it) but the menu does not show it (FreeSO's GetPieMenu).
+    bool hidden = false;
+    bool available() const { return !hidden && (check == CheckResult::NoGuard || check == CheckResult::True); }
 };
 
 struct PieOptions {

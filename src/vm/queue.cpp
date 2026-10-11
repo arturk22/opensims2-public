@@ -528,8 +528,15 @@ std::vector<PieEntry> pieMenu(VM& vm, ObjectId sim, ObjectId object, const PieOp
         // Debug interactions are only offered with the testing cheats; their
         // check trees are not run (as FreeSO does for its debug flag).
         std::vector<ActionString> strings;
-        if (!p.debug)
+        if (!p.debug) {
+            if (Object* s = vm.object(sim))
+                s->data[objdata::HideInteraction] = 0;
             p.check = checkInteraction(vm, sim, q, &p.error, opt.autonomous, opt.maxTurns, &strings);
+            if (Object* s = vm.object(sim)) {
+                p.hidden = s->data[objdata::HideInteraction] == 1;
+                s->data[objdata::HideInteraction] = 0;
+            }
+        }
         if (!p.available() || strings.empty()) {
             out.push_back(std::move(p));
             continue;
