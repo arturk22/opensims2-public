@@ -133,7 +133,12 @@ Exit pushInteraction(Context& c) {
         const Object* x = c.vm.object(source);
         if (!x)
             throw gameError(err::NoObject, "object " + std::to_string(source));
-        number = uint16_t(x->data[kObjdataTreeTableEntry]);
+        // The entry is the TARGET's object data 20, where its Find Best
+        // Interaction left it (TryPushAction BV 0xe33530 reads it from the
+        // stack object, not from the found object): reading the object's
+        // made every "Desespero" push fail (error 0x16) when the found object
+        // was another Sim, and its Main died (N001_Lot36 Beau).
+        number = uint16_t(c.vm.object(targetId)->data[kObjdataTreeTableEntry]);
     } else if (flags & 0x02) {
         if (o[1] >= c.frame.locals.size())
             throw gameError(err::LocalOutOfRange, "local " + std::to_string(o[1]));

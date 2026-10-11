@@ -49,6 +49,14 @@ bool VM::blocksRouting(const Object& o) {
     const int16_t placement = o.data[42];
     if ((placement & (0x1000 | 0x80)) || ((placement & 0x200) && (o.data[13] & 0x0F)))
         return false;
+    // Small things that go on surfaces too (allowed height flags, od 4,
+    // beyond bit 0 "floor": glasses, trays, bowls, books) left on the floor:
+    // their model footprints are a small part of a tile the game's walkers
+    // step around; here they would close the whole tile, and the glasses and
+    // trays piling up on a kitchen floor shut Sims away from the fridge
+    // (N001_Lot11, N001_Lot36; inferred).
+    if (o.data[4] & ~0x01)
+        return false;
     return (o.data[objdata::Flags] & (0x01 | 0x04 | 0x10)) == 0;
 }
 

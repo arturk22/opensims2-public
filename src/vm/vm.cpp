@@ -724,8 +724,13 @@ Object* VM::neighborSim(int16_t id) {
 ObjectId VM::containedIn(ObjectId container, int16_t slot) const {
     if (container == 0 || slot < 0)
         return 0;
+    // An object already on the kill queue (Remove Object Instance) is not in
+    // the slot any more: "Chess - Reset Sim" removes what the Sim holds and
+    // asks again until the hand is empty, all in one tick (it spun out the
+    // instruction budget in N002_Lot10; inferred).
     for (const Object* o : byId_) // by ID, as objects_ is
-        if (o && o->data[objdata::ContainerId] == container && o->data[objdata::SlotNumber] == slot && o->id != container)
+        if (o && o->data[objdata::ContainerId] == container && o->data[objdata::SlotNumber] == slot && o->id != container &&
+            !dyingObjects.contains(o->id))
             return o->id;
     return 0;
 }
