@@ -120,6 +120,7 @@ public:
         float volume = 1;
         float pan = 0; // for non-positional sounds
         std::optional<SoundGroup> group;
+        double startAt = 0; // seconds into the sound
     };
     // Plays a track or sample by its final name (see resolveEvent); 0 if
     // there is no such sound.

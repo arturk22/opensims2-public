@@ -44,6 +44,9 @@ AudioMixer::VoiceId AudioMixer::play(std::shared_ptr<const Pcm> pcm, const Param
     v.step = double(pcm->sampleRate) / rate_ * std::max(0.01f, params.pitch);
     v.gain = v.target = params.volume;
     v.delayFrames = int64_t(std::max(0.0, params.startDelay) * rate_);
+    v.position = std::max(0.0, params.startAt) * pcm->sampleRate;
+    if (v.position >= double(pcm->frames()))
+        return 0;
     v.pcm = std::move(pcm);
     voices_.push_back(std::move(v));
     return voices_.back().id;

@@ -342,6 +342,7 @@ SoundSystem::Handle SoundSystem::playPcm(std::shared_ptr<const Pcm> pcm, const P
     p.loop = o.loop;
     p.volume = o.volume;
     p.pan = o.pan;
+    p.startAt = o.startAt;
     float minDistance = 5;
     if (o.position) {
         auto [gain, pan] = spatialize(*o.position, minDistance);

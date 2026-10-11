@@ -527,6 +527,16 @@ void updateAudio(double seconds) {
         l.zoom = std::clamp(gCamera->zoom() / 5.0f, 0.0f, 1.0f);
     }
     gAudio->update(gSimulation ? &gSimulation->machine() : nullptr, seconds, l);
+    if (gTv && gSimulation) { // TVs on a channel play the broadcast's sound (app/tv_broadcast.hpp)
+        std::vector<os2::LotAudio::TvSource> on;
+        for (const auto& [id, o] : gSimulation->machine().objects())
+            for (const auto& [group, material] : o.materials)
+                if (const auto* s = gTv->isChannel(material) ? gTv->sound(material) : nullptr) {
+                    on.push_back({id, s->serial, s->pcm, std::max(0.0, gTv->now() - s->started)});
+                    break;
+                }
+        gAudio->tvSounds(gSimulation->machine(), on);
+    }
 }
 
 // --vm / --run-vm: the lot's objects in the VM, with its Sims attached to

@@ -81,6 +81,17 @@ public:
     // (fades) when it is no longer due; one-shots play out.
     void effectSounds(const std::vector<fx::EffectSound>& due);
 
+    // TVs showing a broadcast (TvBroadcast::sound): each plays the movie's
+    // sound from the set, `offset` seconds in; a new serial (the next show)
+    // starts over, and a TV left out (turned off, other channel) stops.
+    struct TvSource {
+        int16_t object = 0;
+        uint64_t serial = 0;
+        std::shared_ptr<const Pcm> pcm;
+        double offset = 0;
+    };
+    void tvSounds(vm::VM& machine, const std::vector<TvSource>& on);
+
     // Headless runs (no device): pulls the mixer up to `seconds` into a
     // buffer that writeMix saves as a WAV (--sound-mix), to check the mix.
     void renderOffline(double seconds);
@@ -119,6 +130,12 @@ private:
     std::map<std::pair<int, int>, EffectVoice> effectVoices_; // (effect instance, sound part)
     std::map<uint32_t, std::string> effectTracks_;            // audioId -> track key ("" none)
     size_t effectSounds_ = 0;
+    struct TvVoice {
+        uint64_t serial = 0;
+        SoundSystem::Handle handle = 0;
+    };
+    std::map<int16_t, TvVoice> tvVoices_;
+    size_t tvShows_ = 0;
     double last_ = 0;
     bool started_ = false;
     std::vector<int16_t> mix_;

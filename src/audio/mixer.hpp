@@ -37,6 +37,7 @@ public:
         bool loop = false;
         float pitch = 1;      // playback rate multiplier
         double startDelay = 0; // seconds of silence before it starts
+        double startAt = 0;    // seconds into the sound it starts from (a broadcast joined late)
     };
     // Starts a voice; the PCM is shared, so a cached sound is not copied.
     VoiceId play(std::shared_ptr<const Pcm> pcm, const Params& params);

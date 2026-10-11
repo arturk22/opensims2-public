@@ -135,6 +135,11 @@ void TvBroadcast::next(Live& l, const Definition& d, double now) {
         l.movie = std::make_unique<Movie>(Movie::load(pick));
         l.decoder = std::make_unique<MovieDecoder>(*l.movie);
         l.started = now;
+        l.sound = {};
+        l.sound.started = now;
+        l.sound.serial = ++serial_;
+        if (soundWanted_ && l.movie->hasSound())
+            l.sound.pcm = std::make_shared<const Pcm>(l.movie->decodeSound());
         if (std::getenv("OS2_DEBUG_TV"))
             std::fprintf(stderr, "opensims2: tv plays %s\n", pick.filename().c_str());
     } catch (const std::exception& e) {
@@ -177,6 +182,13 @@ void TvBroadcast::adjust(ObjectModel& model, const std::map<std::string, std::st
             if (lower(p.mesh.name) == lower(subset))
                 p.material = tex;
     }
+}
+
+const TvBroadcast::Sound* TvBroadcast::sound(const std::string& channel) const {
+    auto it = live_.find(lower(channel));
+    if (it == live_.end() || !it->second.movie || !it->second.sound.pcm)
+        return nullptr;
+    return &it->second.sound;
 }
 
 void TvBroadcast::update(double seconds) {

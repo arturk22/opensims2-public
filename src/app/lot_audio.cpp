@@ -399,6 +399,34 @@ void LotAudio::effectSounds(const std::vector<fx::EffectSound>& due) {
     }
 }
 
+void LotAudio::tvSounds(vm::VM& machine, const std::vector<TvSource>& on) {
+    std::set<int16_t> now;
+    for (const auto& t : on) {
+        now.insert(t.object);
+        const SoundPos at = positionOf(machine, t.object);
+        TvVoice& v = tvVoices_[t.object];
+        if (v.serial == t.serial && v.handle) {
+            sound_->setPosition(v.handle, at);
+            continue;
+        }
+        if (v.handle)
+            sound_->stop(v.handle);
+        v.serial = t.serial;
+        v.handle = sound_->playPcm(t.pcm, {.position = at.x >= 0 ? std::optional(at) : std::nullopt,
+                                           .group = SoundGroup::Sfx, .startAt = t.offset});
+        tvShows_ += v.handle != 0;
+    }
+    for (auto it = tvVoices_.begin(); it != tvVoices_.end();) {
+        if (now.count(it->first)) {
+            ++it;
+            continue;
+        }
+        if (it->second.handle)
+            sound_->fadeOut(it->second.handle, 0.2);
+        it = tvVoices_.erase(it);
+    }
+}
+
 void LotAudio::renderOffline(double seconds) {
     const uint64_t target = uint64_t(std::max(0.0, seconds) * mixer_.sampleRate());
     if (target <= mixFrames_)
@@ -430,9 +458,10 @@ bool LotAudio::writeMix(const std::string& path) const {
 std::string LotAudio::summary() const {
     char buf[256];
     std::snprintf(buf, sizeof buf,
-                  "%zu VM sounds, %zu animation sound events, %zu effect sounds, %zu unresolved, %zu voices played, "
-                  "%zu ambience notes",
-                  requests_, animEvents_, effectSounds_, unresolved_, sound_->played, ambience_->notesPlayed());
+                  "%zu VM sounds, %zu animation sound events, %zu effect sounds, %zu TV shows heard, %zu unresolved, "
+                  "%zu voices played, %zu ambience notes",
+                  requests_, animEvents_, effectSounds_, tvShows_, unresolved_, sound_->played,
+                  ambience_->notesPlayed());
     std::string out = buf;
     std::vector<std::pair<size_t, std::string>> played;
     for (const auto& [name, n] : sound_->playedNames)
