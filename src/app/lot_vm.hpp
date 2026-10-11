@@ -87,6 +87,9 @@ public:
     // Height of the floor (or terrain) of VM level `level` (1 = the lot's
     // ground level) at (x, y).
     float floorHeight(int level, float x, float y) const;
+    // Build mode changed the lot's shape: the heights (and levels) the
+    // floors are drawn at follow.
+    void updateGeometry(const Lot& lot);
 
 private:
     struct Bound {

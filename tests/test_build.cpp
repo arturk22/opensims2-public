@@ -322,7 +322,32 @@ static void testRoof() {
     check(r.ok && lot.roofs.empty() && attic == 0, "the attic walls go with the roof");
 }
 
+static void testPool() {
+    Lot lot = flatLot();
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    auto r = ed.drawPool(3, 3, 5, 4);
+    check(r.ok && r.cost == 6 * kPoolTilePrice && lot.pools.size() == 1, "a pool of six tiles at §75");
+    check(lot.minLevel == -1 && lot.levelCount == 2 && lot.elevation(-1, 4, 4) == -3.0f, "the lot gets its underground level");
+    check(lot.floor(-1, 4, 3)[0] != 0 && lot.floor(0, 4, 3)[0] == 0, "the pool's floor is a level down");
+    size_t walls = 0;
+    for (const auto& w : lot.walls)
+        walls += w.type == Lot::Pool && w.a.level == -1;
+    check(walls == 10, "pool walls round it");
+    check(vm.world->pool({4, 3, 1}) && !vm.world->walkable({4, 3, 1}), "nobody walks over the water");
+    r = ed.drawPool(5, 4, 6, 6);
+    check(!r.ok && r.error == 0x86, "no pool into a pool");
+    r = ed.deletePool(4, 4);
+    check(r.ok && lot.pools.empty() && r.cost == -6 * 60, "deleting it gives back int(75 x 0.8) a tile");
+    check(ed.undo() && ed.undo() && lot.minLevel == 0 && lot.levelCount == 1 && funds(vm) == 5000,
+          "undo takes the level away again");
+}
+
 int main() {
+    testPool();
     testRoof();
     testTerrain();
     testFoundation();

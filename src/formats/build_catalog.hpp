@@ -63,6 +63,8 @@ struct BuildRoofPattern {
 constexpr int kWallSectionPrice = 70;
 // A foundation tile: string 0 of the catalog text "build" 138 (Text/Build.package).
 constexpr int kFoundationTilePrice = 4;
+// A pool tile: catalog text "build" 138, deckfoundations.txt "pool 3".
+constexpr int kPoolTilePrice = 75;
 // What a foundation raises the ground floor by (the saved lots: level 1 at
 // the terrain + 0.75 over foundations).
 constexpr float kFoundationHeight = 0.75f;

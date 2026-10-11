@@ -5,13 +5,14 @@
 #include "dbpf.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <map>
 
 namespace os2 {
 
 namespace {
 
-constexpr uint32_t kTypeRoof = 0xAB9406AA;
+constexpr uint32_t kTypeRoof = 0xAB9406AA, kTypePool = 0x0C900FDB;
 constexpr uint32_t kTypeFencePosts = 0xAB4BA572, kFencePostLayer = 0x11, kTypeLotTexture = 0x4B58975B,
                    kType2DArray = 0x6B943B43, kPaintMaskFirst = 0x5CBC;
 constexpr uint32_t kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40, kTypeWallGraph = 0x0A284D0B,
@@ -213,6 +214,69 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
             }
             out.push_back({kTypeRoof, h.group, 0, std::move(w.bytes())});
         }
+    }
+    {
+        // POOL 0 (OpenTS2's PoolCodec layout, no block name).
+        bool had = false;
+        for (const auto& e : source.entries())
+            had |= e.tgi.type == kTypePool && e.tgi.instance == 0;
+        if (had || !lot.pools.empty()) {
+            const Head h = headOf(source, kTypePool, 0, 1);
+            BinWriter w;
+            w.raw(h.name);
+            w.u32(kTypePool);
+            w.u32(h.version);
+            w.u32(uint32_t(lot.pools.size()));
+            for (const auto& p : lot.pools) {
+                w.u32(p.id);
+                w.f32(p.x), w.f32(p.y);
+                w.i32(p.level);
+                w.u32(p.width), w.u32(p.height);
+                w.u32(p.unknown1);
+                w.f32(p.depth);
+                w.u32(p.unknown2);
+            }
+            out.push_back({kTypePool, h.group, 0, std::move(w.bytes())});
+        }
+    }
+    // The lot's other 3ARYs (0x03, 0x0C, 0x14, ...: not read) get the
+    // levels added below (a pool's): a copy of their lowest plane each
+    // (inferred), so that every array keeps the lot's level count.
+    {
+        uint32_t sourceLevels = 0;
+        for (const auto& e : source.entries())
+            if (e.tgi.type == kType3DArray && e.tgi.instance == kArrayElevation) {
+                const auto b = source.read(e);
+                BinReader r(b);
+                r.skip(kFileNameSize + 8);
+                r.str7();
+                r.u32(), r.u32();
+                sourceLevels = r.u32();
+            }
+        const int added = sourceLevels ? lot.levelCount - int(sourceLevels) : 0;
+        if (added > 0)
+            for (const auto& e : source.entries()) {
+                if (e.tgi.type != kType3DArray || e.tgi.instance == kArrayElevation || e.tgi.instance == kArrayFloors ||
+                    e.tgi.instance == kArrayRooms || e.tgi.instance == kArrayFloorRotations ||
+                    lot.roomLayers.count(e.tgi.instance))
+                    continue;
+                const auto b = source.read(e);
+                BinReader r(b);
+                r.skip(kFileNameSize + 8);
+                r.str7();
+                const uint32_t x = r.u32(), y = r.u32(), z = r.u32();
+                const size_t head = r.pos(), plane = b.size() > head && z ? (b.size() - head) / z : 0;
+                if (!z || plane == 0 || head + plane * z != b.size())
+                    continue;
+                std::vector<uint8_t> bytes(b.begin(), b.begin() + long(head));
+                const uint32_t nz = z + uint32_t(added);
+                std::memcpy(&bytes[head - 4], &nz, 4); // little-endian, as the source
+                for (int k = 0; k < added; ++k)
+                    bytes.insert(bytes.end(), b.begin() + long(head), b.begin() + long(head + plane));
+                bytes.insert(bytes.end(), b.begin() + long(head), b.end());
+                (void)x, (void)y;
+                out.push_back({kType3DArray, e.tgi.group, e.tgi.instance, std::move(bytes)});
+            }
     }
     if (!lot.elevations.empty())
         out.push_back(elevationArray(source, lot));

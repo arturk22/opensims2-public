@@ -67,6 +67,12 @@ World World::fromLot(const Lot& lot) {
                             lo = std::min(lo, h), hi = std::max(hi, h);
                             water |= lot.waterLevel(int(x) + cx, int(y) + cy) > h + 0.01f;
                         }
+                    // A pool's tiles are water too (inferred: swimmers go in
+                    // by the ladders' own routes).
+                    for (const auto& p : lot.pools)
+                        if (p.level == 0 && float(x) >= p.x - 0.01f && float(x) < p.x + float(p.width) - 0.01f &&
+                            float(y) >= p.y - 0.01f && float(y) < p.y + float(p.height) - 0.01f)
+                            water = true, w.setPool(t), w.setPool({t.x, t.y, t.level - 1});
                     const float rise = hi - lo;
                     if (rise >= 1.0f || water)
                         w.setWalkable(t, false);

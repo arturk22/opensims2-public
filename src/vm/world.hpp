@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <set>
 #include <vector>
 
 namespace os2 {
@@ -125,6 +126,13 @@ public:
     const std::vector<Segment>& diagonalWalls() const { return diagonalWalls_; }
     // A tile has a floor (or terrain), whatever crosses it.
     bool hasFloor(TilePos t) const;
+    // A tile of a pool (the lot's POOL entries): the ground tile over it
+    // and the tile of its bottom a level down.
+    bool pool(TilePos t) const { return contains(t) && pools_.count(cell(t)) != 0; }
+    void setPool(TilePos t) {
+        if (contains(t))
+            pools_.insert(cell(t));
+    }
     // What walking over a tile costs per tile walked (1 by default; the
     // terrain's slope raises it, World::fromLot).
     float cost(TilePos t) const;
@@ -138,6 +146,7 @@ private:
     int firstLevel_ = 1, levelCount_ = 0;
     uint32_t revision_ = 0;
     std::vector<uint8_t> walkable_;   // [level][x][y]
+    std::set<size_t> pools_;          // cells over pools
     std::vector<int16_t> rooms_;      // [level][x][y]
     std::vector<uint8_t> xWalls_;     // [level][x][y]: wall (x, y)-(x + 1, y), x < width, y <= height
     std::vector<uint8_t> yWalls_;     // [level][x][y]: wall (x, y)-(x, y + 1), x <= width, y < height

@@ -371,9 +371,9 @@ Lot Lot::load(DbpfPackage& pkg) {
                 p.x = r.f32(), p.y = r.f32();
                 p.level = r.i32();
                 p.width = r.u32(), p.height = r.u32();
-                r.u32();
+                p.unknown1 = r.u32();
                 p.depth = r.f32();
-                r.u32();
+                p.unknown2 = r.u32();
                 lot.pools.push_back(p);
             }
         } catch (const std::exception& ex) {

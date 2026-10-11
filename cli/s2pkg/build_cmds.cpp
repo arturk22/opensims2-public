@@ -129,7 +129,7 @@ bool isBuildEdit(const std::string& flag) {
     return flag == "--door" || flag == "--wall" || flag == "--fence" || flag == "--delete-fence" ||
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
-           flag == "--roof-pattern" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
+           flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
            flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--build-undo" || flag == "--build-redo";
 }
 
@@ -195,6 +195,14 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             if (!fence)
                 throw std::runtime_error("--fence: no fence \"" + f[4] + "\"");
             r = editor.drawFences(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), *fence);
+        } else if (flag == "--pool") {
+            if (f.size() < 4)
+                throw std::runtime_error("--pool: expected x0,y0,x1,y1");
+            r = editor.drawPool(num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0));
+        } else if (flag == "--delete-pool") {
+            if (f.size() < 2)
+                throw std::runtime_error("--delete-pool: expected x,y");
+            r = editor.deletePool(num(f, 0, 0), num(f, 1, 0));
         } else if (flag == "--roof") {
             if (f.size() < 4)
                 throw std::runtime_error("--roof: expected x0,y0,x1,y1[,type[,level]]");
@@ -300,6 +308,8 @@ std::vector<std::string> compareLotGeometry(const Lot& a, const Lot& b, size_t l
         say("elevations differ");
     if (a.roofs.size() != b.roofs.size())
         say("roofs differ");
+    if (a.pools.size() != b.pools.size() || a.minLevel != b.minLevel || a.levelCount != b.levelCount)
+        say("pools or levels differ");
     for (size_t i = 0; i < a.roofs.size() && i < b.roofs.size(); ++i)
         if (a.roofs[i].id != b.roofs[i].id || a.roofs[i].type != b.roofs[i].type || a.roofs[i].x0 != b.roofs[i].x0 ||
             a.roofs[i].y1 != b.roofs[i].y1 || a.roofs[i].level != b.roofs[i].level || a.roofs[i].pattern != b.roofs[i].pattern)

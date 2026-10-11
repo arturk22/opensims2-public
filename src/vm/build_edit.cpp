@@ -119,6 +119,8 @@ BuildEditor::Geometry BuildEditor::capture() const {
     g.fencePosts = lot_.fencePosts;
     g.paints = lot_.paints;
     g.roofs = lot_.roofs;
+    g.pools = lot_.pools;
+    g.minLevel = lot_.minLevel, g.levelCount = lot_.levelCount;
     g.walls = lot_.walls;
     g.wallGraphs = lot_.wallGraphs;
     g.floors = lot_.floors;
@@ -137,6 +139,8 @@ void BuildEditor::restore(const Geometry& g) {
     lot_.fencePosts = g.fencePosts;
     lot_.paints = g.paints;
     lot_.roofs = g.roofs;
+    lot_.pools = g.pools;
+    lot_.minLevel = g.minLevel, lot_.levelCount = g.levelCount;
     lot_.walls = g.walls;
     lot_.wallGraphs = g.wallGraphs;
     lot_.floors = g.floors;
@@ -1169,6 +1173,174 @@ BuildEditor::Result BuildEditor::endTerrainStroke() {
     changed();
     commit(std::move(st.before), st.paid);
     r.message = std::to_string(st.changed) + " terrain changes for " + money(st.paid);
+    return r;
+}
+
+bool BuildEditor::poolTile(int x, int y) const {
+    for (const auto& p : lot_.pools)
+        if (p.level == 0 && float(x) >= p.x - 0.01f && float(x) < p.x + float(p.width) - 0.01f &&
+            float(y) >= p.y - 0.01f && float(y) < p.y + float(p.height) - 0.01f)
+            return true;
+    return false;
+}
+
+void BuildEditor::poolWalls() {
+    if (!lot_.hasLevel(-1))
+        return;
+    const int W = int(lot_.width), H = int(lot_.height);
+    std::vector<std::array<int, 4>> want;
+    for (int x = 0; x < W; ++x)
+        for (int y = 0; y < H; ++y) {
+            if (!poolTile(x, y))
+                continue;
+            if (!poolTile(x - 1, y))
+                want.push_back({x, y, x, y + 1});
+            if (!poolTile(x + 1, y))
+                want.push_back({x + 1, y, x + 1, y + 1});
+            if (!poolTile(x, y - 1))
+                want.push_back({x, y, x + 1, y});
+            if (!poolTile(x, y + 1))
+                want.push_back({x, y + 1, x + 1, y + 1});
+        }
+    std::vector<std::array<int, 4>> gone;
+    for (const auto& w : lot_.walls)
+        if (w.type == Lot::Pool && w.a.level == -1 &&
+            std::none_of(want.begin(), want.end(), [&](const auto& s) { return sameSection(s, w); }))
+            gone.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
+                            int(std::lround(w.b.y))});
+    for (const auto& s : gone)
+        removeWall(lot_, -1, s[0], s[1], s[2], s[3]);
+    const uint16_t lip = patternRef(lot_.wallPatterns, "wall_poolroundedlipblue", 0);
+    for (const auto& s : want)
+        if (!findWall(lot_, -1, s[0], s[1], s[2], s[3]))
+            addWall(lot_, -1, s[0], s[1], s[2], s[3], Lot::Pool, {lip, lip});
+}
+
+BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
+    Result r;
+    auto fail = [&](int code, const std::string& why) {
+        r.error = code;
+        r.message = "cannot dig a pool: " + why;
+        return r;
+    };
+    if (!lot_.hasLevel(0) || lot_.elevations.empty())
+        return fail(0x8A, "no terrain");
+    const int W = int(lot_.width), H = int(lot_.height);
+    const int ax = std::max(0, std::min(x0, x1)), bx = std::min(W - 1, std::max(x0, x1));
+    const int ay = std::max(0, std::min(y0, y1)), by = std::min(H - 1, std::max(y0, y1));
+    for (int x = ax; x <= bx; ++x)
+        for (int y = ay; y <= by; ++y) {
+            if (poolTile(x, y))
+                return fail(0x86, "a pool is there at " + point(x, y));
+            if (foundationTile(x, y))
+                return fail(0x8A, "pools only go in the terrain");
+            for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
+                if (q)
+                    return fail(0x8A, "pools only go in the terrain");
+            for (int cx = x; cx <= x + 1; ++cx)
+                for (int cy = y; cy <= y + 1; ++cy)
+                    if (lot_.waterLevel(cx, cy) > lot_.elevation(0, cx, cy))
+                        return fail(0x1E, "water at " + point(x, y));
+            for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
+                if (const Object* o = vm_.object(id); o && (o->person || !(o->data[objdata::PlacementFlags] & 0x200)))
+                    return fail(o->person ? 0x4B : 0x0C, "something is in the way at " + point(x, y));
+        }
+    for (const auto& w : lot_.walls) {
+        if (w.a.level != 0)
+            continue;
+        const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
+        if (mx > float(ax) + 0.01f && mx < float(bx + 1) - 0.01f && my > float(ay) + 0.01f && my < float(by + 1) - 0.01f)
+            return fail(0x0C, "a wall is in the way");
+    }
+    const int tiles = (bx - ax + 1) * (by - ay + 1);
+    r.cost = tiles * kPoolTilePrice;
+    if (r.cost > funds(vm_)) {
+        r.message = "not enough money (" + money(r.cost) + ")";
+        r.cost = 0;
+        return r;
+    }
+    Geometry before = capture();
+    const float height = lot_.elevation(0, std::clamp(x0, 0, W), std::clamp(y0, 0, H));
+    std::vector<std::array<int, 2>> points;
+    for (int x = ax; x <= bx + 1; ++x)
+        for (int y = ay; y <= by + 1; ++y)
+            points.push_back({x, y});
+    if (!levelPoints(points, height)) {
+        restore(before);
+        return fail(0x81, "the ground cannot be levelled");
+    }
+    addLowerLevel(lot_);
+    const size_t plane = size_t(W + 1) * size_t(H + 1);
+    for (const auto& [cx, cy] : points)
+        lot_.elevations[size_t(-1 - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] = height - 3.0f;
+    const uint16_t lip = patternRef(lot_.floorPatterns, "floor_poolroundedlipblue", 1);
+    for (int x = ax; x <= bx; ++x)
+        for (int y = ay; y <= by; ++y)
+            for (int q = 0; q < 4; ++q)
+                setFloor(lot_, -1, x, y, q, lip), setFloorRotation(lot_, -1, x, y, q, 1);
+    Lot::SwimmingPool pool;
+    for (const auto& p : lot_.pools)
+        pool.id = std::max(pool.id, p.id + 1);
+    pool.id = std::max(pool.id, 1u);
+    pool.x = float(ax), pool.y = float(ay);
+    pool.level = 0;
+    pool.width = uint32_t(bx - ax + 1), pool.height = uint32_t(by - ay + 1);
+    pool.depth = 0.25f;
+    lot_.pools.push_back(pool);
+    poolWalls();
+    r.changed = tiles;
+    addFunds(vm_, -r.cost);
+    changed();
+    commit(std::move(before), r.cost);
+    r.ok = true;
+    r.message = "a pool of " + std::to_string(tiles) + " tiles for " + money(r.cost);
+    return r;
+}
+
+BuildEditor::Result BuildEditor::deletePool(int x, int y) {
+    Result r;
+    for (size_t i = 0; i < lot_.pools.size(); ++i) {
+        const Lot::SwimmingPool p = lot_.pools[i];
+        if (p.level != 0 || float(x) < p.x || float(x) >= p.x + float(p.width) || float(y) < p.y ||
+            float(y) >= p.y + float(p.height))
+            continue;
+        const int px = int(std::lround(p.x)), py = int(std::lround(p.y)), pw = int(p.width), ph = int(p.height);
+        for (const auto& [id, o] : vm_.objects()) {
+            if (!o.position.inWorld())
+                continue;
+            const TilePos t = VM::tileOf(o);
+            const bool in = t.x >= px && t.x < px + pw && t.y >= py && t.y < py + ph;
+            const bool edge = t.x >= px - 1 && t.x <= px + pw && t.y >= py - 1 && t.y <= py + ph;
+            if (o.person && in && t.level <= 1) {
+                r.error = 0x2D, r.message = "cannot delete the pool: a Sim is in it";
+                return r;
+            }
+            if (!o.person && o.definition && edge &&
+                (o.definition->fileName.find("Pool Ladder") != std::string::npos ||
+                 o.definition->fileName.find("Diving Board") != std::string::npos)) {
+                r.error = 0x2E, r.message = "cannot delete the pool: its ladder or diving board first";
+                return r;
+            }
+        }
+        Geometry before = capture();
+        lot_.pools.erase(lot_.pools.begin() + long(i));
+        for (int tx = px; tx < px + pw; ++tx)
+            for (int ty = py; ty < py + ph; ++ty)
+                if (!poolTile(tx, ty))
+                    for (int q = 0; q < 4; ++q)
+                        setFloor(lot_, -1, tx, ty, q, 0);
+        poolWalls();
+        r.changed = pw * ph;
+        r.cost = -r.changed * int(float(kPoolTilePrice) * kBuildRefundRate);
+        addFunds(vm_, -r.cost);
+        changed();
+        commit(std::move(before), r.cost);
+        r.ok = true;
+        r.message = "pool deleted for " + money(-r.cost) + " back";
+        return r;
+    }
+    r.ok = true;
+    r.message = "no pool there";
     return r;
 }
 

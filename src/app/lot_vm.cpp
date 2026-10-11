@@ -73,6 +73,15 @@ float LotSimulation::floorHeight(int level, float x, float y) const {
     return lot_.elevationAt(l, std::clamp(x, 0.0f, float(lot_.width)), std::clamp(y, 0.0f, float(lot_.height)));
 }
 
+void LotSimulation::updateGeometry(const Lot& lot) {
+    lot_.minLevel = lot.minLevel, lot_.levelCount = lot.levelCount;
+    lot_.elevations = lot.elevations;
+    lot_.floors = lot.floors;
+    lot_.rooms = lot.rooms;
+    lot_.walls = lot.walls;
+    lot_.pools = lot.pools;
+}
+
 void LotSimulation::attach(SimActor& actor, int16_t id, const Character& character, const std::string& idle) {
     vm::Object* o = vm_->object(id);
     if (!o)

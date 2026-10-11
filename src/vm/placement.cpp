@@ -170,10 +170,17 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
             return fail(placementerror::OutOfBounds, "out of the lot");
         if (!w.contains(t))
             return fail(placementerror::LevelOutOfBounds, "level out of the lot");
-        if (t.level > w.firstLevel() && !w.hasFloor(t) && !(pf & 0x200) && !(pf2 & 0x04))
+        // (The ground, VM level 1, is terrain even when a pool gives the lot
+        // a level under it.)
+        if (t.level != 1 && t.level > w.firstLevel() && !w.hasFloor(t) && !(pf & 0x200) && !(pf2 & 0x04))
             return fail(placementerror::NoFloor, "no floor");
-        if (pf && !(pf & 0x03) && !(pf & 0x200))
-            return fail(placementerror::NoFloor, "not allowed on the floor");
+        // 5 a pool tile needs p & 0x800 (0x8F); pool objects need no floor there.
+        const bool inPool = w.pool(t);
+        // (Parts in the air, p & 0x200, or on the water, 0x4000, may hang over it: inferred.)
+        if (inPool && !(pf & (0x800 | 0x200 | 0x4000)))
+            return fail(0x8F, "not in a pool");
+        if (pf && !(pf & 0x03) && !(pf & 0x200) && !(inPool && (pf & 0x800)))
+            return fail(placementerror::NoFloor, inPool || !(pf & 0x800) ? "not allowed on the floor" : "only in a pool");
         // TestPlacementWithRespectToWalls (§3.3): the wall flags (od 13) on
         // the four sides, and no wall through the object (unless p & 0x400).
         if (w.diagonalWall(t) && !(pf & 0x400))
@@ -192,7 +199,10 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
         static const char* const sides[4] = {"in front", "on the right", "behind", "on the left"};
         for (int side = 0; side < 4; ++side) {
             const auto s = sideStep(p.direction, side);
-            const bool wall = w.wallBetween(t, s[0], s[1]);
+            // For pool objects (p & 0x800) the pool's edge is a wall (the
+            // pool walls stand a level down; "Must be against a pool wall").
+            const bool poolEdge = (pf & 0x800) && w.pool(t) != w.pool({t.x + s[0], t.y + s[1], t.level});
+            const bool wall = w.wallBetween(t, s[0], s[1]) || poolEdge;
             if ((wp & (1 << side)) && !wall)
                 return fail(placementerror::NeedsWall, std::string("needs a wall ") + sides[side]);
             if ((wp & (0x100 << side)) && wall)

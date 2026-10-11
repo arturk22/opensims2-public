@@ -155,6 +155,7 @@ struct Lot {
         int level = 0;
         uint32_t width = 0, height = 0;
         float depth = 0;
+        uint32_t unknown1 = 1, unknown2 = 0; // around the depth (1 and 0 in the saved lots)
     };
     std::vector<SwimmingPool> pools;
 

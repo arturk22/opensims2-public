@@ -145,6 +145,12 @@ BuildMode::BuildMode(LotSimulation& simulation, VmObjectView& view, Renderer& re
 
 BuildMode::~BuildMode() = default;
 
+void BuildMode::redraw() {
+    sim_.updateGeometry(lot_);
+    if (onGeometryChanged)
+        onGeometryChanged();
+}
+
 void BuildMode::say(const std::string& m) {
     message_ = m;
     std::printf("opensims2: build mode: %s\n", m.c_str());
@@ -220,6 +226,13 @@ void BuildMode::selectRoofTool(uint32_t type) {
     roofType_ = type;
     pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
     say("roof tool, type " + std::to_string(type));
+}
+
+void BuildMode::selectPoolTool() {
+    cancel();
+    tool_ = Tool::Pool;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
+    say("pool tool (" + money(kPoolTilePrice) + " a tile)");
 }
 
 void BuildMode::selectPattern(const BuildPattern& p) {
@@ -312,8 +325,7 @@ bool BuildMode::placeObjectAt(int x, int y, int direction) {
 
 void BuildMode::syncAfterObject() {
     editor_->syncWorld();
-    if (onGeometryChanged)
-        onGeometryChanged();
+    redraw();
 }
 
 void BuildMode::rotate(int steps) {
@@ -335,8 +347,8 @@ void BuildMode::rotate(int steps) {
 bool BuildMode::undo() {
     cancel();
     const bool ok = editor_->undo();
-    if (ok && onGeometryChanged)
-        onGeometryChanged();
+    if (ok)
+        redraw();
     say(ok ? "undone; funds " + money(vm::funds(vm_)) : "nothing to undo");
     return ok;
 }
@@ -344,8 +356,8 @@ bool BuildMode::undo() {
 bool BuildMode::redo() {
     cancel();
     const bool ok = editor_->redo();
-    if (ok && onGeometryChanged)
-        onGeometryChanged();
+    if (ok)
+        redraw();
     say(ok ? "redone; funds " + money(vm::funds(vm_)) : "nothing to redo");
     return ok;
 }
@@ -358,8 +370,8 @@ void BuildMode::applied(const vm::BuildEditor::Result& r) {
             if (std::string g = t->get(size_t(vm::placementerror::textIndex(r.error))); !g.empty())
                 text = g + " (" + r.message + ")";
     say((r.ok ? "" : "cannot: ") + text + "; funds " + money(vm::funds(vm_)));
-    if (r.ok && r.changed && onGeometryChanged)
-        onGeometryChanged();
+    if (r.ok && r.changed)
+        redraw();
 }
 
 // --- The lot -------------------------------------------------------------------
@@ -479,9 +491,9 @@ void BuildMode::brushTick(bool force) {
     const auto r = editor_->applyTerrainBrush(pointer_->x, pointer_->y, brushSize_, profile, paint_ ? paint_->texture : "");
     if (!r.ok && r.error)
         applied(r);
-    if (r.changed && now - lastRedraw_ > 0.3 && onGeometryChanged) {
+    if (r.changed && now - lastRedraw_ > 0.3) {
         lastRedraw_ = now;
-        onGeometryChanged();
+        redraw();
     }
 }
 
@@ -531,6 +543,9 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
     } else if (tool_ == Tool::Roof) {
         const int x0 = int(std::lround(a.x)), y0 = int(std::lround(a.y)), x1 = int(std::lround(b.x)), y1 = int(std::lround(b.y));
         applied(control_ ? editor_->deleteRoof(level_, b.x, b.y) : editor_->drawRoof(level_, x0, y0, x1, y1, roofType_));
+    } else if (tool_ == Tool::Pool) {
+        const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
+        applied(control_ ? editor_->deletePool(x1, y1) : editor_->drawPool(x0, y0, x1, y1));
     } else if (tool_ == Tool::Foundation) {
         const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
         applied(control_ ? editor_->deleteFoundation(x0, y0, x1, y1) : editor_->drawFoundation(x0, y0, x1, y1));
@@ -584,7 +599,7 @@ void BuildMode::update() {
                 }
             // The grid point under the mouse.
             put(true, placeQuad(std::round(p.x) - 0.12f, std::round(p.y) - 0.12f, z(p.x, p.y), 0.24f, 0.24f, 0, false));
-        } else if (tool_ == Tool::Floor || tool_ == Tool::Foundation) {
+        } else if (tool_ == Tool::Floor || tool_ == Tool::Foundation || tool_ == Tool::Pool) {
             const simd_float2 a = dragFrom_.value_or(p);
             const int x0 = int(std::floor(std::min(a.x, p.x))), x1 = int(std::floor(std::max(a.x, p.x)));
             const int y0 = int(std::floor(std::min(a.y, p.y))), y1 = int(std::floor(std::max(a.y, p.y)));
@@ -849,6 +864,22 @@ std::vector<BuildMode::Item> BuildMode::items() {
     case 10:
         if (subsort_ == 6)
             objectItems(8, 8); // gates
+        if (subsort_ == 4) { // BA40 pools: the pool tool (catalog text "build" 138, index 6), then the pool objects
+            Item it;
+            it.tool = Tool::Pool;
+            it.price = kPoolTilePrice;
+            it.name = "Pool";
+            if (const StringTable* t = res_->table(packageGroupHash("Build"), 0x8A)) {
+                if (const int price = std::atoi(t->get(18, lang::EnglishUS).c_str()))
+                    it.price = price;
+                if (const std::string n = t->get(19); !n.empty())
+                    it.name = n;
+                it.description = t->get(20);
+            }
+            it.image = materialThumbnail(0xF0F0F0F1u, "floor_poolRoundedLipBlue");
+            out.push_back(std::move(it));
+            objectItems(1, 0x40);
+        }
         if (subsort_ == 5) // BA50 fences
             for (const BuildFence& f : patterns_.fences()) {
                 Item it;
@@ -1132,6 +1163,8 @@ bool BuildMode::press(simd_float2 p) {
                     selectObject(*it.object);
                 else if (it.tool == Tool::Foundation)
                     selectFoundationTool();
+                else if (it.tool == Tool::Pool)
+                    selectPoolTool();
                 else if (it.roofPattern)
                     applied(editor_->setRoofPattern(it.roofPattern->guid));
                 else if (it.tool == Tool::Roof)
@@ -1215,7 +1248,7 @@ namespace os2 {
 // --wall/--room/--delete-wall x0,y0,x1,y1, --fence x0,y0,x1,y1,<fence>,
 // --delete-fence x0,y0,x1,y1, --roof x0,y0,x1,y1[,type 1-6] (over the
 // walls of the current level), --delete-roof x,y, --roof-pattern <name|guid>,
-// --foundation / --delete-foundation x0,y0,x1,y1
+// --pool x0,y0,x1,y1 / --delete-pool x,y, --foundation / --delete-foundation x0,y0,x1,y1
 // (tiles, corners inclusive), --terrain raise|lower|flatten|smooth,x,y[,ticks[,size]]
 // and --terrain-paint <paint|erase>,x,y[,ticks[,size]] (a brush stroke of
 // ticks of 100 ms), --floor x0,y0,x1,y1,<pattern|none>[,rotation],
@@ -1279,7 +1312,11 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             if (!p)
                 throw std::runtime_error("--roof-pattern: no pattern \"" + v + "\"");
             r = ed.setRoofPattern(p->guid);
-        } else if (a == "--foundation" && f.size() >= 4)
+        } else if (a == "--pool" && f.size() >= 4)
+            selectPoolTool(), r = ed.drawPool(n(0), n(1), n(2), n(3));
+        else if (a == "--delete-pool" && f.size() >= 2)
+            r = ed.deletePool(n(0), n(1));
+        else if (a == "--foundation" && f.size() >= 4)
             selectFoundationTool(), r = ed.drawFoundation(n(0), n(1), n(2), n(3));
         else if (a == "--delete-foundation" && f.size() >= 4)
             r = ed.deleteFoundation(n(0), n(1), n(2), n(3));
@@ -1337,8 +1374,8 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
         if (r) {
             std::printf("opensims2: build: %s %s: %s%s (funds §%d)\n", a.c_str(), v.c_str(), r->ok ? "" : "FAILED: ",
                         r->message.c_str(), vm::funds(vm_));
-            if (r->ok && r->changed && onGeometryChanged)
-                onGeometryChanged();
+            if (r->ok && r->changed)
+                redraw();
         }
     }
     std::fflush(stdout);

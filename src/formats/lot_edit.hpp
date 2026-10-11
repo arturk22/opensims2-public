@@ -44,6 +44,11 @@ bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern);
 bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation);
 uint8_t floorRotation(const Lot& lot, int level, int x, int y, int q);
 
+// Adds the underground level a pool needs (minLevel - 1): its grid points
+// 3 below the ground, no floors or rooms; the wall graphs' level range
+// follows. False if the lot has one already.
+bool addLowerLevel(Lot& lot);
+
 // Rooms again from the walls of each room array's wall graph (rooms 5 ->
 // 3ARY 0x09, 6 -> 0x0A, 7 -> 0x0B): quarter tiles no wall separates share
 // a room. A room keeps the ID most of its quarters had (the larger room

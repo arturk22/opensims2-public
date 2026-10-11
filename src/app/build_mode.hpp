@@ -61,7 +61,7 @@ public:
     // The lot's walls, floors or doors changed: the host redraws it.
     std::function<void()> onGeometryChanged;
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -74,6 +74,7 @@ public:
     void selectPattern(const BuildPattern& p);
     void selectFence(const BuildFence& f);
     void selectFoundationTool();
+    void selectPoolTool();
     // Terrain: a sculpt brush (raise, lower, flatten, smooth) or a paint
     // (the paint's texture); `size` 0-2 small/medium/large.
     void selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerrainPaint* paint = nullptr);
@@ -150,6 +151,8 @@ private:
     void layoutIfNeeded();
     void syncAfterObject();
     void brushTick(bool force);
+    // The lot changed: the simulation's heights and the host's drawing follow.
+    void redraw();
     // The wall face under a point: the wall's ends and the side (+1 right of a -> b).
     std::optional<std::pair<std::array<int, 4>, int>> faceAt(simd_float2 p) const;
 

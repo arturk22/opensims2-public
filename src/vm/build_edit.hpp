@@ -78,6 +78,20 @@ public:
     // A ground tile under a foundation.
     bool foundationTile(int x, int y) const;
 
+    // Pool tool (deckfoundations.txt "pool 3"): a rectangle of ground tiles
+    // (corners inclusive) dug into a pool: the lot gets its underground
+    // level if it has none, the terrain round it levelled to the first
+    // corner (0x81), the pool's floor ("floor_poolRoundedLipBlue") one
+    // story down, pool walls (style 29) round the edge there and a POOL
+    // entry (the water 0.25 under the ground). §75 a tile. Only on exposed
+    // terrain of the ground (0x8A), not into another pool (0x86), water
+    // (0x1E) or objects (0x0C). Sims do not walk over it.
+    Result drawPool(int x0, int y0, int x1, int y1);
+    // Ctrl: the pool under a tile goes (int(75 x 0.8) back a tile); not
+    // with a Sim in it (0x2D) or a ladder or diving board on it (0x2E).
+    Result deletePool(int x, int y);
+    bool poolTile(int x, int y) const;
+
     // Roof tool (cTSUserToolRoof, roofs.txt "roof 0-5" = Lot::RoofType 1-6:
     // shed gable, shed hip, short gable, long gable, hip, mansard): a roof
     // over the rectangle between two grid points, its base on `level` (the
@@ -181,6 +195,8 @@ private:
         std::vector<Lot::FencePost> fencePosts;
         std::vector<Lot::TerrainPaint> paints;
         std::vector<Lot::Roof> roofs;
+        std::vector<Lot::SwimmingPool> pools;
+        int minLevel = 0, levelCount = 0;
         std::vector<Lot::Wall> walls;
         std::vector<Lot::WallGraph> wallGraphs;
         std::vector<std::array<uint16_t, 4>> floors, rooms;
@@ -217,6 +233,7 @@ private:
     void syncAtticWalls(int lotLevel, const std::vector<std::array<int, 4>>& before);
     // Foundation walls along the edge between foundation and other tiles.
     void foundationWalls();
+    void poolWalls();
     Result cover(std::vector<std::pair<uint32_t, int>> faces, const BuildPattern* pattern, const std::string& what);
     int priceOf(const std::string& lotName, bool floor) const;
 
