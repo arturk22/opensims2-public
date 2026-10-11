@@ -4,3 +4,6 @@
 00e2a158 __ZN9cTSObject17TryArrayOperationEP17cITSTreeStackElemP10XPrimParam
 # case 0x7E (beyond the editor's primitive list): Run Script (Lua)
 00e248ac __ZN9cTSObject12TryRunScriptEP17cITSTreeStackElemP10XPrimParam
+# the VM error-code -> text switch: only function of baserom's size (0x2254)
+# in the cTSObject area; its cases return the editor's error strings
+00b37720 __ZNK9cTSObject14GetErrorStringER10cIGZString

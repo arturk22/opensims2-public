@@ -1,5 +1,6 @@
 // Decompile functions by name substring or address and write the C to a file.
 // args: <outfile> <pattern|0xADDR> [pattern...]
+// Addresses without a function get one (run without -readOnly to keep it).
 // A pattern matches when it is a substring of the function's (mangled) name.
 // @category Analysis
 import ghidra.app.decompiler.DecompInterface;
@@ -18,7 +19,12 @@ public class DecompileList extends GhidraScript {
         for (int i = 1; i < args.length; i++) {
             String p = args[i];
             if (p.startsWith("0x")) {
-                Function f = getFunctionContaining(toAddr(Long.parseLong(p.substring(2), 16)));
+                ghidra.program.model.address.Address a = toAddr(Long.parseLong(p.substring(2), 16));
+                Function f = getFunctionContaining(a);
+                if (f == null) {   // not a known function yet: create it
+                    disassemble(a);
+                    f = createFunction(a, null);
+                }
                 if (f != null) fs.add(f);
                 continue;
             }

@@ -11,6 +11,12 @@ NM="$REFS/bv_mac/ppc_syms.txt"            # nm -n: "addr name"
 SYM="$REFS/sims2_mac_decomp/baserom.sym"  # nm of the other ppc build
 OUT=${1:-map.txt}
 python3 "$HERE/symxfer.py" "$BIN" "$SYM" "$NM" --manual "$HERE/manual.txt" -o "$OUT"
+# second pass: add the operand classes' virtuals found through RTTI
+TMP=$(mktemp)
+cat "$HERE/manual.txt" > "$TMP"
+python3 "$HERE/paramvtables.py" "$BIN" "$OUT" >> "$TMP"
+python3 "$HERE/symxfer.py" "$BIN" "$SYM" "$NM" --manual "$TMP" -o "$OUT"
+rm -f "$TMP"
 grep -E "^#|9cTSObject|9cTSPerson|11cAnimatable|12cLocomotable|7cObject|7cPerson|Param|14cEdithLanguage|cTSTreeSim|TreeStack|cTSBehavior|cTSRoutingObject|cTSInventory|cTSRelationship" "$OUT" \
   | grep -v "^[0-9a-f]* __ZN9__gnu_cxx\|__ZNSt\|__ZSt" > "$HERE/map_simantics.txt"
 if [ "$2" = "--ghidra" ]; then
