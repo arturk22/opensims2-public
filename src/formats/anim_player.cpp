@@ -3,6 +3,7 @@
 #include "resindex.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 
 namespace os2 {
@@ -189,6 +190,37 @@ float AnimPlayer::advance(double now) {
     }
     lastAdvance_ = now;
     return d;
+}
+
+std::vector<AnimPlayer::FiredEvent> AnimPlayer::eventsBetween(double from, double to) const {
+    std::vector<FiredEvent> out;
+    if (to <= from)
+        return out;
+    for (const auto& l : layers_) {
+        if (l.fadeOutStart >= 0 && l.fadeOutStart <= from)
+            continue;
+        const double duration = l.anim->duration / 1000.0; // 1 tick = 1 ms
+        for (const auto& e : l.anim->events) {
+            const double t = e.ticks / 1000.0;
+            if (!l.loop || duration <= 0) {
+                const double at = l.start + t;
+                if (at > from && at <= to && (l.fadeOutStart < 0 || at < l.fadeOutStart))
+                    out.push_back({at, l.anim, &e});
+                continue;
+            }
+            // Cycles k with from < start + t + k * duration <= to.
+            const double first = std::ceil((from - l.start - t) / duration + 1e-9);
+            for (double k = std::max(0.0, first);; ++k) {
+                const double at = l.start + t + k * duration;
+                if (at > to || (l.fadeOutStart >= 0 && at >= l.fadeOutStart))
+                    break;
+                if (at > from)
+                    out.push_back({at, l.anim, &e});
+            }
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.at < b.at; });
+    return out;
 }
 
 } // namespace os2

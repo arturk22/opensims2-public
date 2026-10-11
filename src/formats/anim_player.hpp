@@ -64,6 +64,16 @@ public:
 
     size_t layerCount() const { return layers_.size(); }
 
+    // Events (ANIM "events": sounds, type 1014 "sound_name=...") of the
+    // layers not fading out whose time falls in (from, to] seconds, looping
+    // layers firing again each cycle; in time order.
+    struct FiredEvent {
+        double at = 0;
+        const Animation* anim = nullptr;
+        const Animation::Event* event = nullptr;
+    };
+    std::vector<FiredEvent> eventsBetween(double from, double to) const;
+
 private:
     struct Layer {
         const Animation* anim = nullptr;

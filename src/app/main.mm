@@ -59,6 +59,7 @@
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
 #include "app/pie_menu.hpp"
+#include "lot_audio.hpp"
 #include "lot_vm.hpp"
 
 #include <algorithm>
@@ -256,6 +257,43 @@ struct LotSim {
 };
 std::vector<LotSim> gLotSims;
 
+// Sound on the lot (app/lot_audio.hpp): --no-audio leaves it out, --mute
+// keeps it silent; headless runs (--screenshot) open no device, and
+// --sound-mix <out.wav> saves what would have played. --music <category>
+// plays background music ("Build", "Buy", "CAS", "Nhood", or a radio
+// station: "pop", "rnb", ...).
+std::unique_ptr<os2::LotAudio> gAudio;
+os2::LotCamera* gCamera = nullptr;
+
+void startAudio(os2::ResourceIndex& index, const os2::Lot& lot) {
+    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    if ([args containsObject:@"--no-audio"])
+        return;
+    os2::LotAudio::Options o;
+    o.muted = [args containsObject:@"--mute"];
+    o.device = !argument(@"--screenshot");
+    o.music = argument(@"--music").value_or("");
+    gAudio = std::make_unique<os2::LotAudio>(gameDir() / "TSData/Res", index, lot, o);
+    for (const auto& s : gLotSims) {
+        os2::DbpfPackage character(s.character);
+        const std::string shoe = os2::characterShoe(index, os2::readCharacter(character, index), gAudio->sound());
+        gAudio->attachSim(*s.actor, s.id, shoe.empty() ? "rub" : shoe);
+    }
+}
+
+void updateAudio(double seconds) {
+    if (!gAudio)
+        return;
+    os2::LotAudio::Listener l;
+    if (gCamera) {
+        const simd_float3 p = gCamera->pivot(), look = p - gCamera->eye();
+        l.x = p.x, l.y = p.y, l.z = std::max(0.0f, p.z - 1);
+        l.rightX = look.y, l.rightY = -look.x; // forward x up
+        l.zoom = std::clamp(gCamera->zoom() / 5.0f, 0.0f, 1.0f);
+    }
+    gAudio->update(gSimulation ? &gSimulation->machine() : nullptr, seconds, l);
+}
+
 // --vm / --run-vm: the lot's objects in the VM, with its Sims attached to
 // their actors; --vm-walk <sim>,<object>[,<anim>] starts a scripted walk.
 void startSimulation(os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg, const fs::path& lotFile) {
@@ -317,6 +355,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     const size_t objects = loadLotObjects(renderer, index, lot, *query);
     const size_t sims = loadLotSims(renderer, index, lot, pkg, lotPath(*query));
     NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    startAudio(index, lot);
     if (argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") || [args containsObject:@"--vm"])
         startSimulation(index, lot, pkg, lotPath(*query));
     // Fence rails and posts: one model per CRES, an instance per piece.
@@ -398,6 +437,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         a->update(seconds);
         renderer.updateObject(a->model, a->posed);
     }
+    updateAudio(seconds);
 }
 
 size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
@@ -786,6 +826,7 @@ enum Key : unsigned short {
 
     try {
         [view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
+        gCamera = view.camera;
         _viewDelegate = [[OS2ViewDelegate alloc] initWithView:view];
         applyLighting(*_viewDelegate.renderer);
         os2::ResourceIndex index(gameDir() / "TSData/Res");
@@ -881,8 +922,13 @@ enum Key : unsigned short {
             for (int f = 1; f <= frames; ++f) {
                 const double at = time * f / frames;
                 // The VM in small steps, so that the Sims' turning is followed.
-                for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30)
+                for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30) {
                     gSimulation->update(t);
+                    if (gAudio) {
+                        updateAudio(t);
+                        gAudio->renderOffline(t);
+                    }
+                }
                 poseActors(*_viewDelegate.renderer, at);
                 _viewDelegate.renderer->setTime(at); // texture animations
                 const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;
@@ -898,6 +944,12 @@ enum Key : unsigned short {
                 os2::writePng(file, img);
                 std::printf("opensims2: wrote %s (%.2f s%s)\n", file.c_str(), at,
                             gSimulation ? (", " + std::to_string(gSimulation->ticks()) + " VM ticks").c_str() : "");
+            }
+            if (gAudio) {
+                gAudio->renderOffline(time);
+                std::printf("opensims2: sound: %s\n", gAudio->summary().c_str());
+                if (auto mix = argument(@"--sound-mix"))
+                    gAudio->writeMix(*mix);
             }
             std::fflush(stdout);
             std::exit(0);

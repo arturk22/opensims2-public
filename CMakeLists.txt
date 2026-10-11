@@ -116,7 +116,7 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/pie_menu.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/pie_menu.cpp src/app/lot_audio.cpp)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2

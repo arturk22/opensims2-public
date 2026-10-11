@@ -91,9 +91,9 @@ public:
     AudioMixer& mixer() { return mixer_; }
     SoundBank& bank() { return bank_; }
 
-    // The name an event is played under: the alias if there is one, plus
-    // the modifiers' suffixes; modifiers whose track does not exist are
-    // dropped from the end. Empty if nothing by that name exists.
+    // The name an event is played under: the event plus the modifiers'
+    // suffixes, through the aliases; suffixes are dropped from the end until
+    // a track exists. Empty if nothing by that name exists.
     std::string resolveEvent(std::string_view event, const SoundModifiers& m = {}) const;
     bool exists(std::string_view name) const;
     // Modifier names of an event ("destfootstep", ...), empty if it has none.
@@ -153,6 +153,7 @@ public:
 
     // Counters for logs and tests.
     size_t played = 0;
+    std::map<std::string, size_t> playedNames; // by final name
     std::map<std::string, size_t> missing; // events with no sound
 
 private:

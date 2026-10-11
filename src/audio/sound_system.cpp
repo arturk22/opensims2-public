@@ -212,9 +212,7 @@ std::string SoundSystem::shoeName(uint32_t value) const {
 }
 
 std::string SoundSystem::resolveEvent(std::string_view event, const SoundModifiers& m) const {
-    std::string base(event);
-    if (auto it = aliases_.find(lower(base)); it != aliases_.end())
-        base = it->second;
+    const std::string base(event);
     std::vector<std::string> suffixes;
     if (const auto* mods = modifiersOf(base)) {
         for (const auto& mod : *mods) {
@@ -238,11 +236,15 @@ std::string SoundSystem::resolveEvent(std::string_view event, const SoundModifie
             suffixes.push_back(*v);
         }
     }
-    // The longest name that exists: all the suffixes, then fewer.
+    // The longest name that exists: all the suffixes, then fewer. An alias
+    // redirects the composed name ("foot_run_cpet_leath" -> "foot_run_cpet_rub",
+    // and a bare "foot_step" -> "foot_step_cpet_bare").
     for (size_t n = suffixes.size() + 1; n-- > 0;) {
         std::string name = base;
         for (size_t i = 0; i < n; ++i)
             name += "_" + suffixes[i];
+        if (auto it = aliases_.find(lower(name)); it != aliases_.end() && exists(it->second))
+            return it->second;
         if (exists(name))
             return name;
     }
@@ -286,7 +288,10 @@ SoundSystem::Handle SoundSystem::play(std::string_view name, const PlayOptions& 
     PlayOptions with = o;
     if (!with.group)
         with.group = group;
-    return playPcm(std::move(pcm), with);
+    const Handle h = playPcm(std::move(pcm), with);
+    if (h)
+        ++playedNames[std::string(name)];
+    return h;
 }
 
 SoundSystem::Handle SoundSystem::playPcm(std::shared_ptr<const Pcm> pcm, const PlayOptions& o) {
@@ -458,8 +463,11 @@ void AmbiencePlayer::update(const State& s, double dt) {
         float on = weight(layer, s, layer.enabled);
         for (const auto& p : layer.andPartition)
             on *= primitive(s, p);
+        // Partitions are areas of the world in the game (flora, water, indoors
+        // around the listener); here they are lot-wide flags, except that
+        // "not inside" keeps a layer while any of the area heard is outdoors.
         for (const auto& p : layer.notPartition)
-            if (primitive(s, p) > 0)
+            if (p == "isinside" ? s.outsideness <= 0 : primitive(s, p) > 0)
                 on = 0;
         Running& r = running_[layer.name];
         const float loopVolume = on * weight(layer, s, layer.loopVolume);
