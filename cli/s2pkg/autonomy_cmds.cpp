@@ -294,6 +294,24 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         }
         std::printf("\n");
     }
+    // People who came in while running (visitors, NPCs): where they are and
+    // what their Main does.
+    for (const auto& [id, o] : machine.objects()) {
+        if (!o.person || std::find(sims.begin(), sims.end(), id) != sims.end())
+            continue;
+        std::printf("  also: %s at (%.2f, %.2f, %d)%s", simName(o).c_str(), o.position.x, o.position.y, o.position.level,
+                    o.position.inWorld() ? "" : " (out of the world)");
+        if (auto it = machine.threads.find(id); it != machine.threads.end()) {
+            const vm::Thread& t = it->second;
+            if (t.status == vm::Thread::Status::Failed)
+                std::printf("; Main failed: %s", (verbose ? t.error : t.error.substr(0, t.error.find('\n'))).c_str());
+            else if (!t.stack.empty())
+                std::printf("; Main in %s #%u", t.stack.back().behavior->fileName.c_str(), t.stack.back().pc);
+        } else {
+            std::printf("; no thread");
+        }
+        std::printf("\n");
+    }
     if (!machine.missingPrimitives.empty()) {
         std::printf("missing primitives:");
         for (const auto& [op, n] : machine.missingPrimitives)

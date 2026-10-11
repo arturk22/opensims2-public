@@ -311,8 +311,20 @@ Exit idleForInput(Context& c) {
     const bool allowPush = le16(&o[2]) != 0;
     Object& me = c.me();
     const bool inAction = inInteraction(t);
-    const bool waiting = size_t(me.activeInteraction + 1) < me.queue.size();
-    const bool pending = me.idleInterrupt || (inAction ? interactionCancelled(me) : waiting);
+    const size_t next = size_t(me.activeInteraction + 1);
+    const bool waiting = next < me.queue.size();
+    // cTSPerson::ShouldInterrupt (BV 0xad6388): person data 71
+    // "non-interruptible" says no; the current action or sub-action
+    // cancelled says yes; else only a first waiting entry whose priority is
+    // above the person's (data 33). A waiting entry of no higher priority
+    // left Mains spinning here without yielding (the social bunny's
+    // "Function - Main - Check Queue" ran out of its instruction budget).
+    const bool shouldInterrupt =
+        me.person ? me.person->data[71] == 0 &&
+                        (interactionCancelled(me) ||
+                         (waiting && me.queue[next].priority > me.person->data[persondata::Priority]))
+                  : (inAction ? interactionCancelled(me) : waiting);
+    const bool pending = me.idleInterrupt || shouldInterrupt;
     const int16_t ticks = c.get(kOwnerParam, param);
     if (!pending) {
         if (ticks > 0) {

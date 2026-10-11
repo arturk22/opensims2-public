@@ -324,9 +324,8 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     // * the slot's gradient + EvalTileForGoal's penalties + 0.001 * gradient
     // * |lateral| (a tie-break) + 10 per routing cost of its floor above 1.
     // Not done: the router's own radius added to the distances (vtable 0xB4
-    // of the router), the random thinning of big scans and the random jitter
-    // (slot flag at vtable 0x78), the +25 for a direction off the object's
-    // walls and +20 for the Sim's room (world queries not decoded), and the
+    // of the router: its "slot displacement", 0 for the base game's Sims),
+    // the +25 for a direction off the object's walls and +20 for the Sim's room (world queries not decoded), and the
     // sitting goals (ScanConeForSittingGoals) of slots with a sitting weight.
     const float minD = slot.minDistance, optimal = slot.optimalDistance;
     const float maxD = std::min(slot.maxDistance, 32.0f);
@@ -350,6 +349,23 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
         float lateral;
     };
     std::map<std::pair<int, int>, Tile> tiles; // without `evaluate`: the best point of each tile
+    // Slot flag 0x2000 "random scoring" (the slot's vtable 0x78; FreeSO's
+    // SLOTFlags.RandomScoring): when the scan has more candidates than the
+    // 100 it may look at, each is taken with a chance of 100 in the total
+    // (BV 0x4778b4: a random number below the total, at most 100 - the count
+    // so far at the start), and a goal's score gets a random 20 x [0, 1) - 10
+    // (the standing callback; here its cost, lower is better: + 10 - 20 x).
+    const bool randomScoring = slot.flags & 0x2000;
+    int total = 0;
+    if (randomScoring)
+        for (int i = 0; i <= rows; ++i)
+            for (const int sign : {-1, 1}) {
+                const float r = optimal + float(sign * i) * res;
+                if ((i == 0 && sign == 1) || r < minD || r > maxD)
+                    continue;
+                total += (int(std::ceil((r * spread) / res)) - int(std::floor(-(r * spread) / res)) + 1) *
+                         int(entries.size());
+            }
     for (int i = 0; i <= rows; ++i)
         for (const int sign : {-1, 1}) {
             if (i == 0 && sign == 1)
@@ -363,13 +379,17 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                 for (const int d : entries) {
                     if (candidates >= 100 || accepted >= 48)
                         goto done;
+                    if (total > 100 && std::uniform_int_distribution<int>(0, total - 1)(random) > 100)
+                        continue;
                     ++candidates;
                     const auto [sx, sy] = directionStep(d);
                     const float n = std::hypot(float(sx), float(sy));
                     const float fx = float(sx) / n, fy = float(sy) / n; // forward
                     const float px = cx + ex + fx * r - fy * lateral, py = cy + ey + fy * r + fx * lateral;
-                    const float cost = std::fabs(std::hypot(r, lateral) - optimal) * 16 * weight +
-                                       0.001f * weight * std::fabs(lateral);
+                    float cost = std::fabs(std::hypot(r, lateral) - optimal) * 16 * weight +
+                                 0.001f * weight * std::fabs(lateral);
+                    if (randomScoring)
+                        cost += 10 - 20 * std::uniform_real_distribution<float>(0, 1)(random);
                     if (!evaluate) {
                         const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
                         if (!world->contains(t) || (t.x == centre.x && t.y == centre.y))
