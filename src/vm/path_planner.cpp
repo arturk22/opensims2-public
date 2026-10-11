@@ -383,14 +383,21 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
     leafPool_.resize(trees.size());
     for (size_t i = 0; i < trees.size(); ++i)
         trees[i].leafOf = std::move(leafPool_[i]);
-    struct GiveBack { // the leaf maps go back to the pool on every way out
+    struct GiveBack { // the leaf maps go back to the pool on every way out, all -1 again
         std::vector<std::vector<int32_t>>& pool;
         std::vector<Tree>& trees;
+        const std::vector<Quad>& quads;
+        int first;
         ~GiveBack() {
+            for (const Quad& q : quads) {
+                Tree& t = trees[size_t(q.level - first)];
+                for (int i = q.x; i < q.x + q.size; ++i)
+                    std::fill_n(t.leafOf.begin() + ptrdiff_t(size_t(i) * t.n + size_t(q.y)), q.size, -1);
+            }
             for (size_t i = 0; i < trees.size(); ++i)
                 pool[i] = std::move(trees[i].leafOf);
         }
-    } giveBack{leafPool_, trees};
+    } giveBack{leafPool_, trees, quads, first};
     const bool allLevels = startLevel != goalLevel;
     for (int li = 0; li < levels; ++li) {
         const int level = first + li;
@@ -401,7 +408,8 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
         while (t.n < std::max(cw_, ch_))
             t.n *= 2;
         const int n = t.n;
-        t.leafOf.assign(size_t(n) * n, -1);
+        if (t.leafOf.size() != size_t(n) * n)
+            t.leafOf.assign(size_t(n) * n, -1); // pooled maps come back all -1
         // Summed area tables of the blocked cells and of the costs.
         const auto& grid = cells_[size_t(li)];
         const auto& cost = costs_[size_t(li)];
