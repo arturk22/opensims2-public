@@ -49,7 +49,8 @@ struct Terrain {
     static Terrain parse(std::span<const uint8_t> data);
 
     float vertex(int i, int j) const; // clamped to the grid
-    // Height at a world point (bilinear over the cell; the triangulation is not followed).
+    // Height at a world point as GetTerrainHeight: 0 outside the terrain, else
+    // over the tile's triangle (split along its (0,0)-(1,1) diagonal).
     float heightAt(float x, float y) const;
     float worldWidth() const { return float(width) * kHoodCellSize; }
     float worldHeight() const { return float(height) * kHoodCellSize; }
@@ -66,12 +67,12 @@ struct Flora {
     uint32_t guid = 0;  // neighborhood object
 };
 
-// One road tile: a quad over the terrain with a texture picked by its piece
-// and turned by its connections (bit 0: -X, 1: +Y, 2: +X, 3: -Y neighbour,
-// as OpenTS2 reads them).
+// One road tile: the quad already laid on the terrain, with its UVs, and the
+// piece (texture "<type>_roads_<piece | 4>").
 struct Road {
     OccupantPosition at;
     std::array<std::array<float, 3>, 4> corners{};
+    std::array<std::array<float, 2>, 4> uvs{};
     uint32_t piece = 0, underTexture = 0;
     uint8_t flags = 0, connections = 0;
     struct Addon {

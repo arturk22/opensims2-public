@@ -72,6 +72,7 @@
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
 #include "app/data_location.hpp"
+#include "app/hood_mode.hpp"
 #include "app/live_ui.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
@@ -134,6 +135,11 @@ std::map<int16_t, PlacedObject> gPlacedObjects;
 std::vector<std::unique_ptr<os2::SimActor>> gActors;
 std::map<int16_t, os2::SimActor*> gObjectActors; // objects the VM has animated (in gActors)
 float gUiScale = 1; // drawable pixels per view point
+// --hood: the neighborhood view (app/hood_mode.hpp) in place of a lot.
+std::unique_ptr<os2::HoodMode> gHood;
+// --hood <N> --hood-lot <id>: that lot's package, shown as --lot is.
+std::optional<std::string> gHoodLot;
+std::vector<std::string> processArguments();
 
 // The extracted game (data/game): --data <dir>, else $OS2_DATA, else the first
 // data/game found walking up from the executable (the repo when run from build/),
@@ -172,6 +178,15 @@ os2::CameraDef loadLiveCamera() {
     return *live;
 }
 
+// The arguments, the executable's full path first (for a restart).
+std::vector<std::string> processArguments() {
+    std::vector<std::string> out{NSBundle.mainBundle.executablePath.UTF8String};
+    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    for (NSUInteger i = 1; i < args.count; ++i)
+        out.emplace_back(args[i].UTF8String);
+    return out;
+}
+
 // Value of `--name <value>`, if given.
 std::optional<std::string> argument(NSString* name) {
     NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
@@ -179,6 +194,11 @@ std::optional<std::string> argument(NSString* name) {
         if ([args[i] isEqualToString:name])
             return std::string(args[i + 1].UTF8String);
     return std::nullopt;
+}
+
+// The lot to show: --lot, or the lot --hood-lot entered.
+std::optional<std::string> lotQuery() {
+    return gHoodLot ? gHoodLot : argument(@"--lot");
 }
 
 // Objects to show: every --object <CRES name | 0xGUID | OBJD name>, else the
@@ -189,7 +209,7 @@ std::vector<std::string> objectQueries() {
     for (NSUInteger i = 1; i + 1 < args.count; ++i)
         if ([args[i] isEqualToString:@"--object"])
             out.emplace_back(args[i + 1].UTF8String);
-    if (out.empty() && !argument(@"--lot") && !argument(@"--skinned") && !argument(@"--sim") && !argument(@"--character"))
+    if (out.empty() && !lotQuery() && !argument(@"--skinned") && !argument(@"--sim") && !argument(@"--character"))
         out.emplace_back("0xEC7618F6"); // Chair - Dining - Value1
     return out;
 }
@@ -645,7 +665,7 @@ void setupLiveUi(os2::ResourceIndex& index) {
 // of the lot at ground level, for the camera.
 // --walls up|cutaway|down picks the wall mode; cutaway uses `viewDirection`.
 std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& index, simd_float2 viewDirection) {
-    const auto query = argument(@"--lot");
+    const auto query = lotQuery();
     if (!query)
         return std::nullopt;
     CFTimeInterval start = CACurrentMediaTime();
@@ -1130,7 +1150,16 @@ int cameraSlot(unsigned short key) {
             if (auto p = gCameraFollow->simPoint(gSimulation->machine(), gPie->sim()))
                 _camera->moveTo(*p);
         break;
-    case kEscape: if (gPie) gPie->close(); break;
+    case kEscape:
+        if (gHood) {
+            gHood->escape();
+            break;
+        }
+        // A lot entered from the neighborhood: back to it (unless the pie menu is open).
+        if (auto hood = argument(@"--hood"); hood && gHoodLot && !(gPie && gPie->isOpen()))
+            os2::restartWith(os2::hoodArguments(processArguments(), *hood));
+        if (gPie) gPie->close();
+        break;
     // The speed buttons' accelerators (their tips: "Pausa - P", "Velocidade Normal - 1", ...).
     case kP: if (gLive) gLive->togglePause(); break;
     case k1: case k2: case k3: if (gLive) gLive->setSpeed(e.keyCode - k1 + 2); break;
@@ -1225,6 +1254,10 @@ int cameraSlot(unsigned short key) {
 // else casts a ray from the camera through the mouse and opens the menu of
 // the object hit.
 - (void)mouseDown:(NSEvent*)e {
+    if (gHood) {
+        gHood->mouseDown(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
+        return;
+    }
     if (!gPie)
         return;
     const simd_float2 p = [self canvasPoint:e];
@@ -1252,6 +1285,8 @@ int cameraSlot(unsigned short key) {
 
 - (void)mouseMoved:(NSEvent*)e {
     [self trackMouse:e];
+    if (gHood)
+        gHood->mouseMoved(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
     if (gPie)
         gPie->hover([self canvasPoint:e]);
     if (gLive)
@@ -1365,6 +1400,14 @@ int cameraSlot(unsigned short key) {
         applyLighting(*_viewDelegate.renderer);
         gIndex = std::make_unique<os2::ResourceIndex>(gameDir() / "TSData/Res");
         os2::ResourceIndex& index = *gIndex;
+        if (auto hood = argument(@"--hood")) {
+            if (auto lot = argument(@"--hood-lot")) {
+                gHoodLot = os2::hoodLotPackage(gameDir() / "TSData/Res", *hood, uint32_t(std::stoul(*lot))).string();
+            } else {
+                [self startHood:view query:*hood];
+                return;
+            }
+        }
         const simd_float3 objects = loadObjects(*_viewDelegate.renderer, index);
         const auto skinned = loadSkinned(*_viewDelegate.renderer, index);
         const auto uiCanvas = loadUi(*_viewDelegate.renderer, index, view);
@@ -1541,6 +1584,50 @@ int cameraSlot(unsigned short key) {
     view.delegate = _viewDelegate;
 
     _window.contentView = view;
+    [_window center];
+    _window.acceptsMouseMovedEvents = YES;
+    [_window makeKeyAndOrderFront:nil];
+    [_window makeFirstResponder:view];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+// --hood <N>: the neighborhood view (app/hood_mode.hpp); with --screenshot
+// renders one frame and quits.
+- (void)startHood:(OS2View*)view query:(const std::string&)query {
+    os2::Renderer& renderer = *_viewDelegate.renderer;
+    gHood = std::make_unique<os2::HoodMode>(renderer, *gIndex, gameDir(), query, processArguments());
+    for (const auto& line : gHood->view().report())
+        std::printf("opensims2: %s\n", line.c_str());
+    [view setCamera:gHood->makeCamera()];
+    gCamera = view.camera;
+    view.clearColor = MTLClearColorMake(0.42, 0.55, 0.72, 1.0);
+    if (auto z = argument(@"--zoom"))
+        view.camera->zoomBy(std::stoi(*z));
+    if (auto o = argument(@"--orientation"))
+        view.camera->rotateBy(std::stoi(*o));
+    view.camera->snap();
+    gHood->ui().attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                       uint32_t(view.depthStencilPixelFormat));
+    renderer.setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
+        gHood->ui().encode(enc, w, h, gUiScale);
+    });
+    std::fflush(stdout);
+    if (auto shot = argument(@"--screenshot")) {
+        const uint32_t w = 1280, h = 720;
+        view.camera->setViewport(float(w), float(h));
+        gHood->scriptedView(*view.camera, float(w), float(h));
+        view.camera->snap();
+        const os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
+        MTLClearColor c = view.clearColor;
+        const auto img = renderer.capture(w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), 1));
+        os2::writePng(*shot, img);
+        std::printf("opensims2: wrote %s\n", shot->c_str());
+        std::fflush(stdout);
+        std::exit(0);
+    }
+    view.delegate = _viewDelegate;
+    _window.contentView = view;
+    _window.title = [NSString stringWithUTF8String:("opensims2 - " + gHood->view().displayName()).c_str()];
     [_window center];
     _window.acceptsMouseMovedEvents = YES;
     [_window makeKeyAndOrderFront:nil];

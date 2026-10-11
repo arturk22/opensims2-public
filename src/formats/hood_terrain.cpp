@@ -48,9 +48,9 @@ Road road(BinReader& r) {
     const uint8_t v = r.u8();
     if (v < 3)
         throw FormatError("road: unsupported version " + std::to_string(v));
-    for (auto& c : road.corners) {
-        c = vec3(r);
-        vec2(r); // unknown
+    for (size_t k = 0; k < 4; ++k) {
+        road.corners[k] = vec3(r);
+        road.uvs[k] = vec2(r);
     }
     road.piece = r.u32();
     road.underTexture = r.u32();
@@ -206,11 +206,14 @@ float Terrain::vertex(int i, int j) const {
 }
 
 float Terrain::heightAt(float x, float y) const {
-    const float fx = x / kHoodCellSize, fy = y / kHoodCellSize;
-    const int i = int(std::floor(fx)), j = int(std::floor(fy));
-    const float u = fx - float(i), v = fy - float(j);
-    const float a = vertex(i, j), b = vertex(i + 1, j), c = vertex(i, j + 1), d = vertex(i + 1, j + 1);
-    return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+    if (x < 0 || y < 0 || x > worldWidth() || y > worldHeight() || heights.empty())
+        return 0;
+    const int i = std::min(int(x / kHoodCellSize), int(width) - 1), j = std::min(int(y / kHoodCellSize), int(height) - 1);
+    const float fx = x - float(i) * kHoodCellSize, fy = y - float(j) * kHoodCellSize;
+    const float h00 = vertex(i, j), h10 = vertex(i + 1, j), h01 = vertex(i, j + 1), h11 = vertex(i + 1, j + 1);
+    if (fy < fx)
+        return h00 + (fx * (h10 - h00) + fy * (h11 - h10)) / kHoodCellSize;
+    return h00 + (fy * (h01 - h00) + fx * (h11 - h01)) / kHoodCellSize;
 }
 
 Occupants Occupants::parse(std::span<const uint8_t> data) {
@@ -316,6 +319,8 @@ float TerrainSettings::Paint::spreadAt(float d) const {
 }
 
 std::string TerrainSettings::Paint::variantTexture(int v) const {
+    if (variants < 2) // InitPaintDisplay: "%s-%02d" only with 2 or more variants
+        return texture + "_txtr";
     char buf[8];
     std::snprintf(buf, sizeof buf, "-%02d", v);
     return texture + buf + "_txtr";

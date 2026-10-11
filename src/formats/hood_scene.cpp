@@ -35,10 +35,6 @@ Vec3 normalize(Vec3 v) {
     return v;
 }
 
-float dot(const Vec3& a, const Vec3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
-Vec3 cross(const Vec3& a, const Vec3& b) {
-    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
-}
 
 Vec3 vertexNormal(const Terrain& t, int i, int j) {
     const float dx = t.vertex(i + 1, j) - t.vertex(i - 1, j);
@@ -106,30 +102,63 @@ std::array<float, 3> sample(const RgbaImage& img, float u, float v) {
 
 } // namespace
 
-std::vector<float> roadProximity(const Terrain& t, const Occupants& o) {
-    std::vector<std::array<float, 2>> centres;
-    auto add = [&](const Road& r) {
+namespace {
+
+// Distances by flooding (4 neighbours, +1 a step) from the vertices at 0,
+// the others starting at `far` (BV 0x4d098c).
+void flood(std::vector<float>& v, size_t w, size_t h) {
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (size_t j = 0; j < h; ++j)
+            for (size_t i = 0; i < w; ++i) {
+                float& c = v[j * w + i];
+                float best = c;
+                if (i > 0) best = std::min(best, v[j * w + i - 1] + 1);
+                if (i + 1 < w) best = std::min(best, v[j * w + i + 1] + 1);
+                if (j > 0) best = std::min(best, v[(j - 1) * w + i] + 1);
+                if (j + 1 < h) best = std::min(best, v[(j + 1) * w + i] + 1);
+                if (best < c)
+                    c = best, changed = true;
+            }
+    }
+}
+
+} // namespace
+
+std::vector<float> waterProximity(const Terrain& t, const TerrainSettings& s) {
+    const size_t w = t.gridWidth, h = t.gridHeight;
+    std::vector<float> v(w * h);
+    for (size_t k = 0; k < v.size(); ++k)
+        v[k] = t.seaLevel - t.heights[k] > 0 ? 0.0f : s.maxBeachWidthInCells + 2;
+    flood(v, w, h);
+    return v;
+}
+
+std::vector<float> roadProximity(const Terrain& t, const Occupants& o, const TerrainSettings& s) {
+    const size_t w = t.gridWidth, h = t.gridHeight;
+    std::vector<float> v(w * h, s.maxRoadProximity);
+    // A vertex whose tile (x..x+1, y..y+1) holds a road is at 0.
+    auto mark = [&](const Road& r) {
         float x = 0, y = 0;
         for (const auto& c : r.corners)
             x += c[0] / 4, y += c[1] / 4;
-        centres.push_back({x / kHoodCellSize, y / kHoodCellSize});
+        const int ti = int(std::floor(x / kHoodCellSize)), tj = int(std::floor(y / kHoodCellSize));
+        for (int dj = 0; dj <= 1; ++dj)
+            for (int di = 0; di <= 1; ++di) {
+                const int i = ti + di, j = tj + dj;
+                if (i >= 0 && j >= 0 && i < int(w) && j < int(h))
+                    v[size_t(j) * w + size_t(i)] = 0;
+            }
     };
     for (const auto& r : o.roads)
-        add(r);
+        mark(r);
     for (const auto& b : o.bridges)
-        add(b.road);
-    std::vector<float> out(size_t(t.gridWidth) * t.gridHeight, 1e6f);
-    for (uint32_t j = 0; j < t.gridHeight; ++j)
-        for (uint32_t i = 0; i < t.gridWidth; ++i) {
-            float best = 1e12f;
-            for (const auto& c : centres) {
-                const float dx = float(i) - c[0], dy = float(j) - c[1];
-                best = std::min(best, dx * dx + dy * dy);
-            }
-            if (!centres.empty())
-                out[size_t(j) * t.gridWidth + i] = std::sqrt(best);
-        }
-    return out;
+        mark(b.road);
+    flood(v, w, h);
+    for (auto& x : v)
+        x = std::min(15.0f, std::floor(std::min(x, s.maxRoadProximity) * 16 / s.maxRoadProximity));
+    return v;
 }
 
 PaintWeights computePaintWeights(const Terrain& t, const Occupants& o, const TerrainSettings& s) {
@@ -142,87 +171,107 @@ PaintWeights computePaintWeights(const Terrain& t, const Occupants& o, const Ter
     if (mapIt == s.paintMaps.end() || mapIt->second.empty())
         throw std::runtime_error("no paint map for terrain type \"" + t.type + "\"");
     const auto& table = mapIt->second;
-    const std::vector<float> prox = roadProximity(t, o);
+    const std::vector<float> road = roadProximity(t, o, s);
+    const std::vector<float> water = waterProximity(t, s);
+    const float cosMin = std::cos(s.cliffAngleMin * float(M_PI) / 180), cosMax = std::cos(s.cliffAngleMax * float(M_PI) / 180);
+    const float k = 1 / std::max(cosMin - cosMax, 1e-6f);
+    auto depth = [&](size_t v) { return t.seaLevel - t.heights[v]; };
+    auto isBeach = [&](size_t v) {
+        return t.heights[v] <= t.seaLevel + s.maxBeachAltitude && water[v] <= s.maxBeachWidthInCells;
+    };
 
-    // Distance (cells) to the nearest vertex under water, for the beach.
-    const int beachCells = int(std::ceil(s.maxBeachWidthInCells));
-    std::vector<float> strength(n, 1.0f); // cliffness for cliff vertices
+    // AddLandTypeAtVertex: up to 3 (paint, weight) pairs per vertex.
+    struct Pair {
+        uint32_t paint;
+        float weight;
+    };
+    std::vector<std::array<Pair, 3>> pairs(n, {Pair{0, 0}, Pair{0, 0}, Pair{0, 0}});
+    auto add = [&](size_t v, uint32_t p, float wgt) {
+        auto& ps = pairs[v];
+        for (auto& q : ps)
+            if (q.weight > 0 && q.paint == p) {
+                q.weight = std::max(q.weight, wgt);
+                return;
+            }
+        auto low = std::min_element(ps.begin(), ps.end(), [](const Pair& a, const Pair& b) { return a.weight < b.weight; });
+        if (wgt > low->weight)
+            *low = {p, wgt};
+    };
+    auto spread = [&](size_t v, uint32_t p, bool normal) {
+        auto it = s.paints.find(p);
+        if (it == s.paints.end() || it->second.spread.empty())
+            return;
+        const auto& paint = it->second;
+        const float reach = paint.spread.back()[0];
+        const int cells = int(std::ceil(reach / kHoodCellSize));
+        const int i0 = int(v % w), j0 = int(v / w);
+        for (int dj = -cells; dj <= cells; ++dj)
+            for (int di = -cells; di <= cells; ++di) {
+                if (!di && !dj)
+                    continue;
+                const int i = i0 + di, j = j0 + dj;
+                if (i < 0 || j < 0 || i >= int(w) || j >= int(h))
+                    continue;
+                const size_t u = size_t(j) * w + size_t(i);
+                if (normal && depth(u) > s.waterDepthThresholdForPaint)
+                    continue;
+                if (isBeach(u) && depth(u) <= 0)
+                    continue;
+                const float d = std::sqrt(float(di * di + dj * dj)) * kHoodCellSize;
+                const float c = paint.spreadAt(d);
+                if (d < reach && c * paint.maxStrength > 0)
+                    add(u, p, c);
+            }
+    };
     for (size_t j = 0; j < h; ++j)
         for (size_t i = 0; i < w; ++i) {
             const size_t v = j * w + i;
-            const float alt = t.heights[v] - t.seaLevel;
-            const Vec3 nrm = vertexNormal(t, int(i), int(j));
-            const float slope = std::acos(std::clamp(nrm[2], -1.0f, 1.0f)) * 57.29578f;
-            const float cliff = std::clamp((slope - s.cliffAngleMin) / std::max(s.cliffAngleMax - s.cliffAngleMin, 1e-3f), 0.0f, 1.0f);
-            bool beach = alt < 0;
-            if (!beach && alt <= s.maxBeachAltitude)
-                for (int dj = -beachCells; dj <= beachCells && !beach; ++dj)
-                    for (int di = -beachCells; di <= beachCells && !beach; ++di) {
-                        if (float(di * di + dj * dj) > s.maxBeachWidthInCells * s.maxBeachWidthInCells)
-                            continue;
-                        beach = t.vertex(int(i) + di, int(j) + dj) < t.seaLevel;
-                    }
-            if (cliff >= 0.5f) {
+            if (depth(v) > s.waterDepthThresholdForPaint)
+                continue;
+            const float nz = std::abs(vertexNormal(t, int(i), int(j))[2]);
+            if (nz < cosMin) {
+                float wgt = nz <= cosMax ? 1.0f : (cosMin - nz) * k;
+                auto it = s.paints.find(type.cliff);
+                wgt *= it == s.paints.end() ? 1.0f : it->second.maxStrength;
                 out.assigned[v] = type.cliff;
-                strength[v] = cliff;
-            } else if (beach) {
+                if (wgt > 0)
+                    add(v, type.cliff, wgt);
+            } else if (isBeach(v)) {
                 out.assigned[v] = type.beach;
+                add(v, type.beach, 1);
+                spread(v, type.beach, false);
             } else {
-                const size_t rows = table.size();
-                const size_t row = size_t(std::clamp(alt / s.heightRangeForTemperature * float(rows), 0.0f, float(rows - 1)));
+                const int tt = int(std::floor((t.heights[v] - t.seaLevel) * 31 / s.heightRangeForTemperature));
+                const size_t row = size_t(std::clamp(31 - tt, 0, int(table.size()) - 1));
                 const auto& cols = table[row];
                 if (cols.empty())
                     throw std::runtime_error("empty paint map row");
-                const size_t col = size_t(std::clamp(prox[v] / s.maxRoadProximity * float(cols.size()), 0.0f,
-                                                     float(cols.size() - 1)));
-                out.assigned[v] = cols[col];
+                const uint32_t p = cols[std::min(size_t(road[v]), cols.size() - 1)];
+                out.assigned[v] = p;
+                add(v, p, 1);
+                spread(v, p, true);
             }
         }
 
-    // Spread each paint from its vertices by its curve.
+    // NormalizePaintWeights.
     std::map<uint32_t, size_t> slot;
-    for (uint32_t p : out.assigned)
-        if (!slot.count(p)) {
-            slot[p] = out.paints.size();
-            out.paints.push_back(p);
-        }
-    out.weights.assign(out.paints.size(), std::vector<float>(n, 0.0f));
-    for (size_t k = 0; k < out.paints.size(); ++k) {
-        const uint32_t id = out.paints[k];
-        auto pit = s.paints.find(id);
-        TerrainSettings::Paint paint;
-        if (pit != s.paints.end())
-            paint = pit->second;
-        const float reach = paint.spread.empty() ? 0.0f : paint.spread.back()[0];
-        const int cells = int(std::ceil(reach / kHoodCellSize));
-        auto& wk = out.weights[k];
-        for (size_t j = 0; j < h; ++j)
-            for (size_t i = 0; i < w; ++i) {
-                const size_t v = j * w + i;
-                if (out.assigned[v] != id)
-                    continue;
-                for (int dj = -cells; dj <= cells; ++dj)
-                    for (int di = -cells; di <= cells; ++di) {
-                        const int x = int(i) + di, y = int(j) + dj;
-                        if (x < 0 || y < 0 || x >= int(w) || y >= int(h))
-                            continue;
-                        const float d = std::sqrt(float(di * di + dj * dj)) * kHoodCellSize;
-                        const float value = paint.spreadAt(d) * paint.maxStrength * strength[v];
-                        float& dst = wk[size_t(y) * w + size_t(x)];
-                        dst = std::max(dst, value);
-                    }
-            }
-    }
+    auto slotOf = [&](uint32_t p) {
+        auto it = slot.find(p);
+        if (it != slot.end())
+            return it->second;
+        out.paints.push_back(p);
+        out.weights.emplace_back(n, 0.0f);
+        return slot[p] = out.paints.size() - 1;
+    };
     for (size_t v = 0; v < n; ++v) {
         float sum = 0;
-        for (auto& wk : out.weights)
-            sum += wk[v];
-        if (sum <= 0) {
-            out.weights[slot[out.assigned[v]]][v] = 1;
-            continue;
-        }
-        for (auto& wk : out.weights)
-            wk[v] /= sum;
+        for (const auto& q : pairs[v])
+            sum += q.weight;
+        if (sum <= 0)
+            continue; // deep water: no paint (the canvas is black)
+        for (const auto& q : pairs[v])
+            if (q.weight > 0)
+                out.weights[slotOf(q.paint)][v] = q.weight / sum;
     }
     return out;
 }
@@ -318,44 +367,6 @@ ObjectModel buildHoodTerrainModel(const Terrain& t, const Occupants& o, const Te
     return model;
 }
 
-namespace {
-
-// OpenTS2's GetUVsForConnectionFlags: corner UVs of a road tile turned by
-// its connections (bit 0: -X, 1: +Y, 2: +X, 3: -Y).
-std::array<std::array<float, 2>, 4> roadUvs(uint8_t c) {
-    using U = std::array<std::array<float, 2>, 4>;
-    U uv{{{1, 1}, {1, 0}, {0, 0}, {0, 1}}};
-    if (c & 1)
-        uv = U{{{0, 1}, {1, 1}, {1, 0}, {0, 0}}};
-    const int n = (c & 1) + ((c >> 1) & 1) + ((c >> 2) & 1) + ((c >> 3) & 1);
-    const U r1{{{1, 0}, {0, 0}, {0, 1}, {1, 1}}};
-    const U r2{{{0, 0}, {0, 1}, {1, 1}, {1, 0}}};
-    const U r3{{{1, 1}, {1, 0}, {0, 0}, {0, 1}}};
-    if (n == 1) {
-        if (c == 4)
-            uv = r1;
-        else if (c == 2)
-            uv = r2;
-    } else if (n == 2) {
-        if (c == 12)
-            uv = r1;
-        else if (c == 9)
-            uv = r3;
-        else if (c == 6)
-            uv = r2;
-    } else if (n == 3) {
-        if (c == 13)
-            uv = r1;
-        else if (c == 11)
-            uv = r3;
-        else if (c == 14)
-            uv = r2;
-    }
-    return uv;
-}
-
-} // namespace
-
 ObjectModel buildHoodRoadModel(const Terrain& t, const Occupants& o) {
     ObjectModel model;
     model.name = "neighborhood roads";
@@ -364,13 +375,12 @@ ObjectModel buildHoodRoadModel(const Terrain& t, const Occupants& o) {
         char tex[64];
         std::snprintf(tex, sizeof tex, "%s_roads_%08x", t.type.c_str(), r.piece | 4);
         MeshGroup& m = meshes[tex];
-        const auto uv = roadUvs(r.connections);
         const uint32_t base = uint32_t(m.positions.size());
         for (size_t k = 0; k < 4; ++k) {
             const auto& c = r.corners[k];
             m.positions.push_back({c[0], c[1], c[2] + 0.05f});
             m.normals.push_back({0, 0, 1});
-            m.uvs.push_back(uv[k]);
+            m.uvs.push_back(r.uvs[k]);
             m.uvs2.push_back(hoodLightMapUv(t, c[0], c[1]));
         }
         m.triangles.insert(m.triangles.end(), {base, base + 2, base + 3, base + 2, base, base + 1});
@@ -420,7 +430,6 @@ RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, cons
         if (l.name == "sun")
             sun = l.direction;
     const Vec3 L = normalize(sun);
-    const Vec3 right = normalize(cross(L, {0, 0, 1}));
     const Vec3 flat = normalize({L[0], L[1], 0});
     RgbaImage img;
     img.width = img.height = size;
@@ -439,8 +448,6 @@ RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, cons
                                    : std::array<float, 3>{0.2f, 0.3f, 0.4f};
             } else {
                 const Vec3 n = normalAt(t, x, y);
-                float u = std::max(0.0f, dot(n, L) + dot(n, right));
-                float v = std::max(0.0f, dot(n, L));
                 // Height-map shadow: walk towards the sun over the terrain.
                 bool shadow = false;
                 for (float d = step; d < 800 && !shadow; d += step) {
@@ -449,9 +456,10 @@ RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, cons
                         break;
                     shadow = t.heightAt(sx, sy) > z + 0.5f + d * rise;
                 }
+                c = sample(lookup, (n[0] + 1) / 2, (n[1] + 1) / 2);
                 if (shadow)
-                    u *= 1 - shadowStrength, v *= 1 - shadowStrength;
-                c = sample(lookup, u, 1 - v); // v = 0 at the image's bottom row
+                    for (auto& x : c)
+                        x *= 1 - shadowStrength;
             }
             uint8_t* p = &img.pixels[(size_t(py) * size + px) * 4];
             for (int k = 0; k < 3; ++k)
