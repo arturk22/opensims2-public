@@ -1,6 +1,7 @@
 #include "app/live_ui.hpp"
 
 #include "app/live_panels.hpp"
+#include "app/wants_panel.hpp"
 #include "app/ui_panel_util.hpp"
 
 #include "formats/dbpf.hpp"
@@ -145,7 +146,7 @@ LiveUi::LiveUi(vm::VM& vm, ResourceIndex& index, const std::filesystem::path& re
     // the caps of the other states (the script keeps them side by side as a
     // palette) are hidden; the mood meter and the subpanel buttons follow
     // the front cap at the offset the expanded palette shows (13 px into
-    // it), with no wants area (the wants and fears are not simulated); the
+    // it), with no wants area of the script (app/wants_panel.hpp draws ours); the
     // subpanel's tile runs from there under the needs panel to its end cap.
     UiElement& root = live_.roots.front();
     auto hideId = [&](uint32_t id) {
@@ -153,8 +154,9 @@ LiveUi::LiveUi(vm::VM& vm, ResourceIndex& index, const std::filesystem::path& re
             e->set("winflag_visible", "no");
     };
     // The platinum aspiration glows (0x49064805/07, 0x4BDEFFA2) only show
-    // past 74 aspiration points (docs/ui-live-mac.md §4.2); aspiration is
-    // not simulated yet.
+    // past 74 aspiration points (docs/ui-live-mac.md §4.2); the score is
+    // simulated now (vm/wants.hpp), but these windows are not placed right
+    // yet (shown, they cover the mood meter): kept hidden.
     for (uint32_t id : {0xA94E97F1u, 0xA94E97E6u, 0xA94E97ECu, 0x49064802u, 0xA94E97F4u, 0xA94E97F2u, 0x49064805u,
                         0x49064807u, 0x4BDEFFA2u, 0xA94E97E5u})
         hideId(id);
@@ -519,6 +521,21 @@ UiScreen LiveUi::screen(int width, int height) {
                                openPopup(script, anchor, std::move(texts), 0, 2);
                        }};
         panels_->layout(LivePanels::Panel(subPanel_), c, sim_, liveX + float(kSubPanelX), liveY + 140 + 138);
+    }
+
+    // --- Wants & Fears (app/wants_panel.hpp): a strip above the subpanel -----
+    if (showLive && sim && sim->person) {
+        PanelContext c{*vm_, *res_, *fonts_, out, rects, keep,
+                       [&](std::array<float, 4> r, std::function<void()> f) {
+                           callbacks_.push_back(std::move(f));
+                           targets_.push_back({r, Action::Callback, int(callbacks_.size() - 1)});
+                       },
+                       [&](std::array<float, 4> r) { solid_.push_back(r); },
+                       [&](int16_t id) { return portraitOfNeighbor(id); },
+                       [&](const std::string& name) { sound(name); },
+                       [&](std::array<float, 4> r, std::string t) { tips_.push_back({r, std::move(t)}); },
+                       nullptr};
+        layoutWantsPanel(c, sim_, liveX + float(kSubPanelX) + 8, liveY + 140 - 76, float(kSubPanelWidth) - 16);
     }
 
     // --- The needs subpanel ------------------------------------------------

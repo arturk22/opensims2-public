@@ -1,4 +1,5 @@
 #include "app/live_panels.hpp"
+#include "app/wants_panel.hpp"
 
 #include "formats/font.hpp"
 #include "formats/simantics.hpp"
@@ -541,6 +542,10 @@ float LivePanels::simology(PanelContext& c, vm::ObjectId simId, float x, float b
         if (auto r = rectOf(c, stat->child(0x1006)); r && sign >= 0)
             c.tip(*r, str(c, 0x90, uint32_t(sign + 1)));
     }
+    if (simologyTab_ == 2) // the memories (app/wants_panel.hpp)
+        if (const UiElement* t = root.child(0x30000000))
+            if (auto r = rectOf(c, t->child(0x1000)))
+                layoutMemories(c, simId, *r);
     for (int i = 0; i < 3; ++i)
         if (auto r = rectOf(c, root.child(buttons[size_t(i)])))
             c.click(*r, [this, i, snd = c.sound] { simologyTab_ = i, snd("ui_secondary_button"); });
