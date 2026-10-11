@@ -17,6 +17,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace os2::vm {
 
@@ -608,6 +609,25 @@ std::pair<ObjectId, ObjectId> stairSteps(VM& vm, const Stair& st) {
     return {best, bottom == best ? 0 : bottom};
 }
 
+// The pads of a straight staircase ("Stairs - Straight - ... - Lo 0,5 Pad" on
+// its bottom landing and "... - Hi 0,0 Pad" on its top one), which carry its
+// portal function (OBJf entry 15, StairsStraightGlobals' "Portal"): the
+// top and bottom ones, or none.
+std::pair<ObjectId, ObjectId> straightStairPads(VM& vm, const Stair& st) {
+    static const uint32_t globals = semiGlobalGroup("StairsStraightGlobals");
+    ObjectId top = 0, bottom = 0;
+    for (const auto& [id, o] : vm.objects()) {
+        if (o.semiGroup != globals || !o.position.inWorld() || !vm.functionTree(o, 15))
+            continue;
+        const TilePos t = VM::tileOf(o);
+        if (t == st.bottom)
+            bottom = id;
+        else if (t == st.top)
+            top = id;
+    }
+    return {top, bottom};
+}
+
 // The portal tree of a portal crossed one way, as the binary's
 // TriggerPortalTree / TSObjectPortalLockedCB set it up (docs/routing-mac.md
 // §8): the objects at the entry and the exit end (a door at both; the
@@ -653,7 +673,10 @@ std::optional<PortalUse> portalUse(VM& vm, const PathPlanner& planner, size_t in
                 db = kb, slotB = int(k);
         }
     } else if (p.stair >= 0) {
-        const auto [top, bottom] = stairSteps(vm, planner.world().stairs()[size_t(p.stair)]);
+        const Stair& st = planner.world().stairs()[size_t(p.stair)];
+        auto [top, bottom] = stairSteps(vm, st);
+        if (!top || !bottom)
+            std::tie(top, bottom) = straightStairPads(vm, st);
         if (!top || !bottom)
             return std::nullopt;
         u.entry = bottom, u.exit = top; // end a is the bottom landing
