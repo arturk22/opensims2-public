@@ -757,15 +757,13 @@ void syncQueueData(Object& sim) {
     const size_t next = size_t(sim.activeInteraction + 1);
     d[persondata::NextInteractionIndex] = next < q.size() ? int16_t(q[next].interaction) : 0;
     d[persondata::NextInteractionObject] = next < q.size() ? q[next].object : 0;
-    // 72 "cn: Next Queued Interaction Continuation?" would say whether the
-    // next entry was pushed "continue as current" (Push Interaction byte 3
-    // bit 0x04): "Function - Main - Process Autonomy" reads it after Gosub
-    // Found Action and, when set, waits for input before "Post Interaction",
-    // so an autonomous snack goes on to "Eat" before Main's "Kill - Objects in
-    // Hands" takes it. Not set yet: with today's routing, Sims then stay
-    // seated after "Ler" and every later route fails (118 interactions
-    // returning false in a day instead of 3; TODO.md, round 7).
-    d[72] = 0;
+    // 72 "cn: Next Queued Interaction Continuation?": the next entry was
+    // pushed "continue as current" (Push Interaction byte 3 bit 0x04).
+    // "Function - Main - Process Autonomy" reads it after Gosub Found Action
+    // and, when set, waits for input (Wait For Notify) instead of running
+    // "Post Interaction", so an autonomous snack goes on to "Eat" before
+    // Main's "Kill - Objects in Hands" takes it (inferred from the label).
+    d[72] = next < q.size() && (q[next].flags & 0x04) ? 1 : 0;
     // The sub-queue: its size, the interaction it nests in (the running
     // one), the next waiting entry and the running sub-action (labels of
     // STR# 0xC8; filled in as the queue's are, inferred).

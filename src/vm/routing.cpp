@@ -1118,10 +1118,53 @@ bool startGoalCheck(Context& c, Object& me, Object::Route& r) {
     if (!tree)
         return false;
     const ObjectId stack = c.vm.object(c.frame.stackObject) ? c.frame.stackObject : r.target;
-    const std::array<int16_t, 4> params{me.person->data[37], 0, 0, hundredths(remainingLength(me, r))};
+    // 1: the goal's +0x14, its multi slot index (person data 38).
+    const std::array<int16_t, 4> params{me.person->data[37], me.person->data[38], 0, hundredths(remainingLength(me, r))};
     callRouteTree(c, owner->id, tree, stack, params);
     r.check = 1;
     return true;
+}
+
+// The walker's eye attractor, as cTSRoutingObjectAggregate::AlongRouteUpdate
+// keeps it (BV 0x56e2b8..): a "Routing - Eye Attractor" (GUID 0xAC3FB057)
+// made the first time it is needed and put at the furthest point of the way
+// ahead the walker can see, tried every half tile from 2 tiles on (or from
+// the end, when nearer), up to the end; its ID is the route's 0x1D0 that the
+// along route tree gets as parameter 5 ("CT - Start Routing Look At" looks at
+// it). None when no point ahead is in sight (it stays where it was). The
+// binary's look-ahead length (route vtable 0x2C4) is taken as the rest of
+// the way (inferred).
+ObjectId eyeAttractor(VM& vm, Object& me, const Object::Route& r) {
+    constexpr uint32_t kEyeAttractorGuid = 0xAC3FB057;
+    const float rest = remainingLength(me, r);
+    const TilePos from = VM::tileOf(me);
+    std::optional<Point2> seen;
+    for (float d = std::min(2.0f, rest); d < rest + 0.5f; d += 0.5f) {
+        const Point2 p = alongRoute(me, std::min(d, rest));
+        const TilePos t{int(std::floor(p[0])), int(std::floor(p[1])), me.position.level};
+        if (!vm.world || !vm.world->contains(t) || !vm.world->lineOfSight(from, t))
+            break;
+        seen = p;
+    }
+    if (!seen)
+        return vm.object(me.eyeAttractor) ? me.eyeAttractor : 0;
+    if (!vm.object(me.eyeAttractor)) {
+        const auto def = vm.code().definitionByGuid(kEyeAttractorGuid);
+        if (!def)
+            return 0;
+        std::vector<ObjectId> before;
+        for (const auto& [id, _] : vm.objects())
+            before.push_back(id);
+        const ObjectId id = vm.instantiate(def->first, def->second).id;
+        me.eyeAttractor = id;
+        if (vm.initCreatedObjects)
+            vm.initialize(id, before);
+        if (!vm.object(id))
+            return me.eyeAttractor = 0;
+    }
+    Object& eye = *vm.object(me.eyeAttractor);
+    moveTo(vm, eye, (*seen)[0], (*seen)[1], me.position.level);
+    return eye.id;
 }
 
 bool startAlongRoute(Context& c, Object& me, Object::Route& r) {
@@ -1130,7 +1173,8 @@ bool startAlongRoute(Context& c, Object& me, Object::Route& r) {
     const uint16_t tree = c.vm.functionTree(me, 0x29);
     if (!tree)
         return false;
-    const std::array<int16_t, 7> params{int16_t(r.target), me.person->data[37], 0, 0, -1, 0,
+    const ObjectId eye = eyeAttractor(c.vm, me, r);
+    const std::array<int16_t, 7> params{int16_t(r.target), me.person->data[37], me.person->data[38], 0, -1, eye,
                                         hundredths(remainingLength(me, r))};
     callRouteTree(c, me.id, tree, me.id, params);
     r.check = 2;

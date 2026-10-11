@@ -507,6 +507,9 @@ struct Object {
         uint16_t node = 0;
     };
     std::optional<Route> route;
+    // The walker's "Routing - Eye Attractor" (routing.cpp): the object the
+    // along route tree's parameter 5 names, kept on the way ahead.
+    ObjectId eyeAttractor = 0;
     // A routing slot 0 the engine gave the object (the synthetic slot of a
     // move-out-of-way destination, routing.cpp), instead of its SLOT's.
     std::optional<Slots::Slot> syntheticSlot;
