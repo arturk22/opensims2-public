@@ -154,7 +154,12 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
             // S2PKG_TRACE_ALL=1: every thread, each line tagged with its object.
             static const bool everyThread = std::getenv("S2PKG_TRACE_ALL") != nullptr;
-            if ((!everyThread && t.me != sim) || traced++ >= trace)
+            // S2PKG_TRACE_ID=n: that object's threads instead; S2PKG_TRACE_FROM=tick: from then on.
+            static const long traceId = std::getenv("S2PKG_TRACE_ID") ? std::atol(std::getenv("S2PKG_TRACE_ID")) : 0;
+            static const long traceFrom = std::getenv("S2PKG_TRACE_FROM") ? std::atol(std::getenv("S2PKG_TRACE_FROM")) : 0;
+            if (long(machine.ticks) < traceFrom)
+                return;
+            if ((!everyThread && t.me != (traceId ? vm::ObjectId(traceId) : sim)) || traced++ >= trace)
                 return;
             const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
             if (everyThread)
@@ -173,7 +178,50 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             std::printf("      [%zu] %s%s\n", b, d.buttons[b].c_str(), int(b) == d.answer ? "  <- answered" : "");
     };
     std::map<vm::ObjectId, std::string> lastAnim;
+    // S2PKG_PIE_ALSO="sim,object,entry,tick": at that tick another Sim also
+    // picks that entry (the available ones, numbered as listed) - for
+    // socials towards a busy Sim.
+    std::string also = std::getenv("S2PKG_PIE_ALSO") ? std::getenv("S2PKG_PIE_ALSO") : "";
+    std::map<vm::ObjectId, std::string> lastQueue; // with S2PKG_PIE_ALSO: every Sim's queue as it changes
+    const bool showQueues = !also.empty();
     for (int i = 0; i < ticks; ++i) {
+        if (showQueues)
+            for (const auto& [oid, ob] : machine.objects()) {
+                if (!ob.person)
+                    continue;
+                std::string text;
+                for (size_t k = 0; k < ob.queue.size(); ++k)
+                    text += " [" + ob.queue[k].name + (int(k) == ob.activeInteraction ? "*" : "") + "]";
+                if (text != lastQueue[oid]) {
+                    lastQueue[oid] = text;
+                    std::printf("  tick %d: queue of %d:%s\n", i, oid, text.empty() ? " empty" : text.c_str());
+                }
+            }
+        if (!also.empty()) {
+            std::vector<std::string> f;
+            for (size_t a = 0, b; a <= also.size(); a = b + 1) {
+                b = also.find(',', a);
+                if (b == std::string::npos)
+                    b = also.size();
+                f.push_back(also.substr(a, b - a));
+            }
+            if (f.size() == 4 && std::stoi(f[3]) == i) {
+                const vm::ObjectId other = vm::findSim(machine, f[0]);
+                const vm::ObjectId obj = vm::findInteractionObject(machine, f[1]);
+                std::vector<vm::PieEntry> menu = other && obj ? vm::pieMenu(machine, other, obj, vm::PieOptions{}) : std::vector<vm::PieEntry>{};
+                std::vector<const vm::PieEntry*> ok;
+                for (const auto& e2 : menu)
+                    if (!e2.debug && e2.available())
+                        ok.push_back(&e2);
+                if (size_t k = size_t(std::stoi(f[2])); k < ok.size()) {
+                    auto q2 = vm::interactionFromPie(machine, *ok[k]);
+                    q2->pushedBy = other;
+                    vm::enqueue(machine, *machine.object(other), *q2);
+                    std::printf("  tick %d: %d also queued \"%s\"\n", i, other, q2->name.c_str());
+                }
+                also.clear();
+            }
+        }
         const bool before = s.activeInteraction >= 0;
         machine.tick();
         for (const auto& [who, d] : machine.dialogs)
