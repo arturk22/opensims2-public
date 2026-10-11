@@ -9,6 +9,8 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <string>
+#include <vector>
 #include <span>
 
 namespace os2::vm {
@@ -45,5 +47,20 @@ struct UiEvent {
     std::array<uint8_t, 16> operands{};
 };
 std::deque<UiEvent>& uiEvents();
+
+// A Cinematic (0x7B) a tree ran, resolved when it ran (docs/cinematics-mac.md
+// §4): the scene name from STR# 0x97 "Cinematics" (index in operands 0-1, or
+// from the variable in 6/7-8 with flag 0x10; the table of the code's group,
+// the global group with flag 0x20, the semi-global one with 0x40 — the two
+// flags inferred) and the actors, array 0 of the object whose ID is in the
+// variable of operands 9/10-11. The CINE is "<scene>_cine". The latest 32.
+struct CinematicRequest {
+    std::string scene;
+    std::vector<ObjectId> actors;
+    uint8_t flags = 0;
+    ObjectId me = 0;
+    uint64_t tick = 0;
+};
+std::deque<CinematicRequest>& cinematicRequests();
 
 } // namespace os2::vm

@@ -51,7 +51,10 @@
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
 
+#include "app/cinematic_camera.hpp"
 #include "app/movie_host.hpp"
+#include "render/movie_layer.hpp"
+#include "vm/engine.hpp"
 #include "audio/play_sound.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/image.hpp"
@@ -1176,12 +1179,102 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
     renderer.setInstanceTransform(gPlumbob, at);
 }
 
+// Cinematics (app/cinematic_camera.hpp): the Cinematic primitive's scene
+// played as a camera path from its origin actor, letterboxed; or
+// --cinematic <scene>[@object-id] (from the first Sim of the lot) to try one.
+std::unique_ptr<os2::CinematicCamera> gCinematic;
+std::unique_ptr<os2::MovieLayer> gLetterbox;
+float gLetterboxShare = 0;
+size_t gCinematicsSeen = 0;
+
+// Where an actor stands: a Sim's or an animated object's placement, else
+// its VM position and direction (object data 1, eighths of a turn).
+std::optional<os2::Xform> cinematicOrigin(int16_t id) {
+    for (const auto& s : gLotSims)
+        if (s.id == id)
+            return s.actor->placement();
+    if (auto it = gObjectActors.find(id); it != gObjectActors.end())
+        return it->second->placement();
+    if (!gSimulation)
+        return std::nullopt;
+    const os2::vm::Object* o = gSimulation->machine().object(id);
+    if (!o || !o->position.inWorld())
+        return std::nullopt;
+    const float heading = -float(o->data[1]) * float(M_PI) / 4; // inferred direction convention
+    return os2::Xform{os2::quatFromEulerXYZ(0, 0, heading),
+                      {o->position.x, o->position.y, gSimulation->floorHeight(o->position.level, o->position.x, o->position.y)}};
+}
+
+void startCinematic(const std::string& scene, int16_t originId, double now) {
+    try {
+        auto cam = std::make_unique<os2::CinematicCamera>(*gIndex, scene);
+        const auto origin = cinematicOrigin(originId);
+        if (!origin)
+            throw std::runtime_error("origin actor " + std::to_string(originId) + " is not in the world");
+        cam->start(*origin, now);
+        std::printf("opensims2: cinematic %s from object %d (%.2f s, camera %s)\n", cam->scene().name.c_str(),
+                    originId, cam->duration(), cam->scene().cameraAnimation.c_str());
+        gCinematic = std::move(cam);
+    } catch (const std::exception& e) {
+        std::printf("opensims2: cinematic %s: %s\n", scene.c_str(), e.what());
+    }
+    std::fflush(stdout);
+}
+
+// Starts the cinematics the VM asked for since the last call; ends the one that is over.
+void updateCinematic(double now) {
+    auto& requests = os2::vm::cinematicRequests();
+    if (gCinematicsSeen > requests.size())
+        gCinematicsSeen = 0;
+    for (; gCinematicsSeen < requests.size(); ++gCinematicsSeen) {
+        const auto& r = requests[gCinematicsSeen];
+        if (r.scene.empty())
+            continue;
+        int16_t origin = r.me;
+        if (gIndex)
+            try { // the origin actor of the scene among the actors the tree passed
+                const os2::CinematicCamera probe(*gIndex, r.scene);
+                if (probe.scene().originActor < r.actors.size())
+                    origin = r.actors[probe.scene().originActor];
+            } catch (const std::exception&) {
+            }
+        startCinematic(r.scene, origin, now);
+    }
+    if (gCinematic && !gCinematic->active(now)) {
+        std::printf("opensims2: cinematic %s ended\n", gCinematic->scene().name.c_str());
+        gCinematic.reset();
+    }
+    gLetterboxShare = gCinematic ? gCinematic->shot(now).letterbox : 0;
+}
+
+// The frame's view: the cinematic camera while one plays.
+os2::FrameView cinematicView(const os2::FrameView& normal, double now, float aspect) {
+    if (!gCinematic || !gCinematic->active(now))
+        return normal;
+    return {gCinematic->view(now), gCinematic->projection(now, aspect)};
+}
+
+// Draws the letterbox after the overlays the renderer already has.
+void attachLetterbox(os2::Renderer& renderer, MTL::Device* device, uint32_t color, uint32_t depth) {
+    if (!gLetterbox)
+        gLetterbox = std::make_unique<os2::MovieLayer>(device, color, depth);
+    auto previous = renderer.overlay();
+    renderer.setOverlay([previous](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
+        if (previous)
+            previous(enc, w, h);
+        if (gLetterbox && gLetterboxShare > 0)
+            gLetterbox->encodeLetterbox(enc, gLetterboxShare);
+    });
+}
+
 // Poses every actor at `seconds` and hands the vertices to the renderer.
 // The Sims first: objects in their hands follow their bones (gObjectView),
 // then the objects' actors at the places that gives.
 void poseActors(os2::Renderer& renderer, double seconds) {
+    const double real = seconds;
     if (gSimulation)
         seconds = gSimulation->update(seconds); // the scene clock (game speed)
+    updateCinematic(real);
     if (gDoors && gSimulation) {
         std::vector<os2::Vec3> sims;
         for (const auto& s : gLotSims)
@@ -1770,8 +1863,8 @@ int cameraSlot(unsigned short key) {
     view.camera->update(dt);
     CGSize size = view.drawableSize;
     float aspect = size.height > 0 ? float(size.width / size.height) : 1.0f;
-    os2::FrameView frame{view.camera->view(), view.camera->projection(aspect)};
     poseActors(*_renderer, now - _start);
+    const os2::FrameView frame = cinematicView({view.camera->view(), view.camera->projection(aspect)}, now - _start, aspect);
     if (gBuy)
         gBuy->update();
     if (gBuild)
@@ -2001,6 +2094,16 @@ int cameraSlot(unsigned short key) {
             }
             std::fflush(stdout);
         }
+        attachLetterbox(*_viewDelegate.renderer, (__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                        uint32_t(view.depthStencilPixelFormat));
+        // --cinematic <scene>[@object-id]: a cinematic's camera from that actor (default: the lot's first Sim).
+        if (auto cine = argument(@"--cinematic")) {
+            const auto at = cine->find('@');
+            const int16_t id = at != std::string::npos ? int16_t(std::stoi(cine->substr(at + 1)))
+                               : gLotSims.empty()      ? 0
+                                                       : gLotSims.front().id;
+            startCinematic(cine->substr(0, at), id, 0);
+        }
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
         if (auto shot = argument(@"--screenshot")) {
             // --run-vm <ticks>: the moment after that many VM ticks; --frames
@@ -2048,7 +2151,8 @@ int cameraSlot(unsigned short key) {
                 poseActors(*_viewDelegate.renderer, at);
                 _viewDelegate.renderer->setTime(at); // texture animations
                 const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;
-                os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
+                const os2::FrameView fv = cinematicView({view.camera->view(), view.camera->projection(float(w) / float(h))}, at,
+                                                        float(w) / float(h));
                 MTLClearColor c = view.clearColor;
                 auto img = _viewDelegate.renderer->capture(
                     w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), float(c.alpha)));

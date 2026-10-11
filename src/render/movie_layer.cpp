@@ -19,7 +19,8 @@ constexpr const char* kMovieShader = R"(
 using namespace metal;
 
 struct MovieQuad {
-    float2 scale;  // NDC half-extent of the picture
+    float2 scale;  // NDC half-extent of the quad
+    float2 offset; // NDC centre
 };
 
 struct MovieOut {
@@ -31,7 +32,7 @@ vertex MovieOut movie_vertex(uint vid [[vertex_id]], constant MovieQuad& q [[buf
     const float2 corners[6] = {float2(-1, 1), float2(1, 1), float2(1, -1), float2(-1, 1), float2(1, -1), float2(-1, -1)};
     MovieOut out;
     const float2 c = corners[vid];
-    out.position = float4(c * q.scale, 0.0, 1.0);
+    out.position = float4(c * q.scale + q.offset, 0.0, 1.0);
     out.uv = float2((c.x + 1) * 0.5, (1 - c.y) * 0.5);
     return out;
 }
@@ -135,7 +136,7 @@ void MovieLayer::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t
     enc->setDepthStencilState(noDepth_);
     enc->setCullMode(MTL::CullModeNone);
     enc->setFragmentSamplerState(sampler_, 0);
-    float full[2] = {1, 1};
+    float full[4] = {1, 1, 0, 0};
     enc->setVertexBytes(full, sizeof full, 0);
     enc->setFragmentTexture(black_, 0);
     enc->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(6));
@@ -143,10 +144,26 @@ void MovieLayer::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t
         return;
     // Fit, keeping the picture's aspect.
     const float s = std::min(float(width) / float(frameW_), float(height) / float(frameH_));
-    float scale[2] = {frameW_ * s / float(width), frameH_ * s / float(height)};
+    float scale[4] = {frameW_ * s / float(width), frameH_ * s / float(height), 0, 0};
     enc->setVertexBytes(scale, sizeof scale, 0);
     enc->setFragmentTexture(texture_, 0);
     enc->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(6));
+}
+
+void MovieLayer::encodeLetterbox(MTL::RenderCommandEncoder* enc, float share) {
+    if (share <= 0)
+        return;
+    share = std::min(share, 0.5f);
+    enc->setRenderPipelineState(pipeline_);
+    enc->setDepthStencilState(noDepth_);
+    enc->setCullMode(MTL::CullModeNone);
+    enc->setFragmentSamplerState(sampler_, 0);
+    enc->setFragmentTexture(black_, 0);
+    for (float side : {1.0f, -1.0f}) { // top, bottom: each `share` of the height
+        float q[4] = {1, share, 0, side * (1 - share)};
+        enc->setVertexBytes(q, sizeof q, 0);
+        enc->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(6));
+    }
 }
 
 void MovieLayer::draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable) {

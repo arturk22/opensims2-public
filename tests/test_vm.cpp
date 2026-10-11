@@ -1,5 +1,6 @@
 #include "formats/dbpf.hpp"
 #include "formats/lot_objects.hpp"
+#include "vm/engine.hpp"
 #include "vm/kill.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/lot_save.hpp"
@@ -412,6 +413,35 @@ static void testRunTreeByName() {
     t = fx.vm.start(1, 0x1001, std::vector<int16_t>{4, 6});
     fx.vm.run(t);
     check(t.status == Thread::Status::Finished && tv.attributes[1] == 10, "Run Tree by Name passes my parameters on");
+}
+
+// Cinematic (0x7B): the scene from STR# 0x97 of the tree's group and the
+// actors from array 0 of the object in temp 0 (docs/cinematics-mac.md §4).
+static void testCinematicRequest() {
+    Fixture fx;
+    Object& me = fx.obj();
+    Object& holder = fx.vm.createObject(0x7F000004, 0);
+    holder.array(0).values = {1, 7};
+    fx.code.add(kObjGroup, 0x97, names({"firstKiss", "firstKissTeen"}));
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(Temp, 0, Assign, Lit, holder.id, go(1), E),
+                      // scene 1, flags 0x02, scene variable (stack object id), actors in temp 0
+                      instr(0x7B, T, E, {1, 0, 0, 0, 0, 0x02, StackId, 0, 0, Temp, 0, 0})}));
+    os2::vm::cinematicRequests().clear();
+    Thread t = fx.vm.start(me.id, 0x1000, {});
+    fx.vm.run(t);
+    const auto& r = os2::vm::cinematicRequests();
+    check(t.status == Thread::Status::Finished && r.size() == 1, "Cinematic is true and asks for a cinematic");
+    check(!r.empty() && r.back().scene == "firstKissTeen" && r.back().flags == 0x02 && r.back().me == me.id,
+          "Cinematic scene from STR# 0x97 by index");
+    check(!r.empty() && r.back().actors == std::vector<ObjectId>{1, 7}, "Cinematic actors from the holder's array 0");
+    // Flag 0x10: the index from the variable in operands 6/7-8 (temp 1 = 0).
+    fx.code.add(kObjGroup, 0x1001,
+                tree({expr(Temp, 0, Assign, Lit, holder.id, go(1), E), expr(Temp, 1, Assign, Lit, 0, go(2), E),
+                      instr(0x7B, T, E, {1, 0, 0, 0, 0, 0x10, Temp, 1, 0, Temp, 0, 0})}));
+    t = fx.vm.start(me.id, 0x1001, {});
+    fx.vm.run(t);
+    check(r.size() == 2 && r.back().scene == "firstKiss", "Cinematic scene index from a variable");
 }
 
 // The clock keeps Time Of Day (global 4), Days Running and Day Of Week.
@@ -1381,6 +1411,7 @@ static void testMakeNewCharacter() {
 
 int main() {
     testLoopWithLocalsAndParams();
+    testCinematicRequest();
     testCalls();
     testScopes();
     testStackObjectAndAttributes();

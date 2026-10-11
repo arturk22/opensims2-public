@@ -36,6 +36,9 @@ public:
     void setFrame(const RgbaImage& img);
     // Encodes the black background and the picture into a pass.
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height);
+    // Black bars over the top and bottom, each `share` of the height (a
+    // cinematic's letterbox; 0.5 covers everything).
+    void encodeLetterbox(MTL::RenderCommandEncoder* enc, float share);
     // A whole frame into a drawable (clears to black, presents).
     void draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable);
     // Offscreen, read back as RGBA.

@@ -126,6 +126,7 @@ public:
     // pass's encoder and colour target size: 2D overlays such as the UI.
     using Overlay = std::function<void(MTL::RenderCommandEncoder*, uint32_t width, uint32_t height)>;
     void setOverlay(Overlay overlay) { overlay_ = std::move(overlay); }
+    const Overlay& overlay() const { return overlay_; }
 
     // Encodes and commits one frame; `pass` and `drawable` come from the view.
     void draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable, const FrameView& view);

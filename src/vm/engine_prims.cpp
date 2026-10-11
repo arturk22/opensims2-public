@@ -11,7 +11,8 @@
 //   0x7B Cinematic (TryCinematic): camera moves, UI highlights and
 //   cinematics. Headless they do nothing and are true (the binary returns 1,
 //   or 2 while a camera move with a timeout runs); the host may look at
-//   `uiEvents()` to act on them.
+//   `uiEvents()` to act on them, and at `cinematicRequests()` for the
+//   cinematics with their scene and actors resolved (docs/cinematics-mac.md).
 // - 0x25 Test Sim Interacting With (cTSPerson::TryTestInteractingWith):
 //   true if the stack object is one of the objects I hold a reference to
 //   (cTSPerson::HasObjectReference: a list of (?, object) entries; taken as
@@ -21,6 +22,7 @@
 #include "errors.hpp"
 #include "formats/binreader.hpp"
 #include "vm.hpp"
+#include "formats/strings.hpp"
 
 #include <deque>
 
@@ -29,11 +31,49 @@ namespace os2::vm {
 namespace {
 
 std::deque<UiEvent> events;
+std::deque<CinematicRequest> cinematics;
+constexpr uint16_t kCinematicsTable = 0x97;
 
 void record(Context& c) {
     if (events.size() >= 256)
         events.pop_front();
     events.push_back({uint8_t(c.instruction.opcode), c.thread.me, c.frame.stackObject, c.instruction.operands});
+}
+
+Exit cinematic(Context& c) {
+    record(c);
+    const auto& o = c.instruction.operands;
+    CinematicRequest r;
+    r.flags = o[5];
+    r.me = c.thread.me;
+    r.tick = c.vm.ticks;
+    try {
+        const int index = (r.flags & 0x10) ? c.get(o[6], int16_t(le16(&o[7]))) : int(le16(&o[0]));
+        // The table the flags name, else the running tree's own (every use in
+        // the game has its scenes there).
+        uint32_t named = c.frame.group;
+        if (r.flags & 0x20)
+            named = kGlobalGroup;
+        else if (r.flags & 0x40)
+            named = c.vm.code().semiGlobalFor(c.frame.group);
+        for (uint32_t group : {named, c.frame.group}) {
+            const StringTable* t = group ? c.vm.code().strings(group, kCinematicsTable) : nullptr;
+            if (t && index >= 0 && size_t(index) < t->count(lang::EnglishUS)) {
+                r.scene = t->get(size_t(index), lang::EnglishUS);
+                break;
+            }
+        }
+        if (Object* holder = c.vm.object(c.get(o[9], int16_t(le16(&o[10])))))
+            if (!holder->arrays.empty())
+                for (int16_t v : holder->arrays[0].values)
+                    r.actors.push_back(ObjectId(v));
+    } catch (const std::exception&) {
+        // An unreadable variable: the request goes out without what it names.
+    }
+    if (cinematics.size() >= 32)
+        cinematics.pop_front();
+    cinematics.push_back(std::move(r));
+    return Exit::True;
 }
 
 Exit refresh(Context& c) {
@@ -98,12 +138,16 @@ std::deque<UiEvent>& uiEvents() {
     return events;
 }
 
+std::deque<CinematicRequest>& cinematicRequests() {
+    return cinematics;
+}
+
 void registerEnginePrimitives(VM& vm) {
     vm.setPrimitive(0x07, refresh);
     vm.setPrimitive(0x73, debug);
     vm.setPrimitive(0x22, uiPrimitive);
     vm.setPrimitive(0x23, uiPrimitive);
-    vm.setPrimitive(0x7B, uiPrimitive);
+    vm.setPrimitive(0x7B, cinematic);
     vm.setPrimitive(0x25, testSimInteractingWith);
 }
 
