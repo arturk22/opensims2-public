@@ -34,6 +34,7 @@
 
 #include <array>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -76,6 +77,8 @@ public:
     const HoodBins::Request& binRequest() const { return binRequest_; }
     // A left click (canvas pixels): on the dialog or the HUD it is the UI's.
     Action press(simd_float2 p);
+    // UI sounds by name (the buttons' own: their "clicksound" attribute).
+    std::function<void(const std::string&)> playSound;
     void hover(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
 
@@ -114,6 +117,7 @@ private:
     struct Target {
         std::array<float, 4> rect;
         Action action;
+        std::string sound; // the button's click sound
     };
     std::vector<Target> targets_;
     std::vector<std::array<float, 4>> solid_; // areas that take clicks

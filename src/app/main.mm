@@ -1874,6 +1874,12 @@ void finishHeadlessAudio() {
         log += " " + m;
     std::printf("opensims2: music:%s; playing %s\n", log.empty() ? " none" : log.c_str(),
                 gGameAudio->nowPlaying().empty() ? "nothing" : gGameAudio->nowPlaying().c_str());
+    std::string names; // every sound played by name in the run (UI clicks, voices, ...)
+    for (const auto& [name, n] : gGameAudio->sound().playedNames)
+        if (!name.starts_with("7B1ACFCD-")) // (effect tracks by key)
+            names += " " + name + (n > 1 ? " (" + std::to_string(n) + ")" : "");
+    if (!names.empty() && (std::getenv("OS2_SOUND_LOG") || gGameAudio->sound().playedNames.size() <= 24))
+        std::printf("opensims2: sounds played in the run:%s\n", names.c_str());
     if (auto mix = argument(@"--sound-mix"); mix && gGameAudio->unwritten())
         gGameAudio->writeMix(*mix);
     std::fflush(stdout);
@@ -3095,6 +3101,8 @@ void unloadScene() {
 
 - (void)finishMainMenu:(const os2::Scene&)scene {
     os2::Renderer& renderer = *_viewDelegate.renderer;
+    if (gGameAudio) // the buttons' click sounds
+        gMenu->setSoundPlayer([](const std::string& name) { gGameAudio->playUi(name); });
     const std::vector<fs::path>& dirs = _menuDirs;
     gMenu->attach((__bridge MTL::Device*)_view.device, uint32_t(_view.colorPixelFormat),
                   uint32_t(_view.depthStencilPixelFormat));
@@ -3491,6 +3499,8 @@ void unloadScene() {
 
 - (void)finishHood:(OS2View*)view {
     os2::Renderer& renderer = *_viewDelegate.renderer;
+    if (gGameAudio) // the buttons' click sounds
+        gHood->ui().playSound = [](const std::string& name) { gGameAudio->playUi(name); };
     view.clearColor = MTLClearColorMake(0.42, 0.55, 0.72, 1.0);
     gHood->ui().attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                        uint32_t(view.depthStencilPixelFormat));

@@ -175,6 +175,8 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
     }
     for (const auto& t : targets_)
         if (inside(t.rect, p)) {
+            if (playSound && !t.sound.empty())
+                playSound(t.sound);
             if (t.action == Action::Close)
                 openLot(nullptr);
             if (t.action == Action::Families || t.action == Action::Lots) {
@@ -217,7 +219,7 @@ UiScreen HoodUi::screen(int width, int height) {
     };
     auto target = [&](const UiElement* e, Action a) {
         if (auto r = e ? rects.find(e) : rects.end(); r != rects.end())
-            targets_.push_back({r->second, a});
+            targets_.push_back({r->second, a, uiButtonSound(*e)});
     };
 
     // HUD: the chooser at the top left, the puck at the bottom left.
