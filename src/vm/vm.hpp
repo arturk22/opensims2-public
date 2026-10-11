@@ -421,6 +421,11 @@ struct Object {
     std::vector<QueuedInteraction> queue;
     int activeInteraction = -1;
     uint16_t nextInteractionUid = 1;
+    // Nested interactions (TTAB flag 0x8000) wait in the sub-queue until an
+    // Idle for Input in "Handle Sub Queue Interactions" mode runs them as the
+    // current sub-action (queue.cpp).
+    std::vector<QueuedInteraction> subQueue;
+    std::optional<QueuedInteraction> subAction;
     // Notify the Stack Object out of Idle: its next Idle for Input returns at once.
     bool idleInterrupt = false;
     Position position;
@@ -537,6 +542,9 @@ struct Frame {
     // An interaction run by Gosub Found Action (autonomy.cpp): it ends the
     // same way, but the Gosub Found Action instruction branches on its result.
     bool foundAction = false;
+    // A sub-queue interaction's action tree: when it returns, the sub-action
+    // ends and the Idle for Input that ran it branches on its result.
+    bool subInteraction = false;
     // When this frame returns, the caller's instruction branches on this
     // instead of the returned value (a primitive that ran a tree for its
     // own ends: the route failure feedback; routing.cpp).

@@ -399,6 +399,44 @@ static void testInteractionGroupLeader() {
     check(pie.size() == 1 && pie[0].name == "Dormir" && pie[0].object == h.id, "the part's pie menu is the leader's");
 }
 
+// Nested interactions: a "TV" whose interaction allows nesting (TTAB flag
+// 0x4000) loops on an Idle for Input in "Handle Sub Queue Interactions"
+// mode; a nested entry (0x8000) waits in the sub-queue and runs there as the
+// current sub-action, inside the running interaction.
+static void testSubQueue() {
+    Fixture fx;
+    constexpr uint32_t kTvGroup = 0x7F000030;
+    fx.code.add(kTvGroup, 0x80, definition(4, 1, 0x0B1E0002));
+    InteractionTable t;
+    t.version = 0x4D;
+    auto watch = entry(0x1001, 0, 0), react = entry(0x1002, 0, 1);
+    watch.flags = 0x4000;
+    react.flags = 0x8000;
+    t.interactions = {watch, react};
+    fx.code.add(kTvGroup, 1, std::move(t));
+    fx.code.addInteractionStrings(kTvGroup, 1, ttas({"Watch", "React"}, {"Assistir", "Reagir"}));
+    fx.code.add(kTvGroup, 0x1001, tree({instr(0x11, go(1), go(1), {0, 0, 0, 0, 1}), // handle the sub-queue
+                                        expr(Param, 0, Assign, Lit, 1, go(2), E), idle(0, false, go(0))},
+                                       4));
+    fx.code.add(kTvGroup, 0x1002, tree({expr(SAttr, 2, Assign, Lit, 5, T, E)}));
+    const ObjectId tv = fx.vm.instantiate(kTvGroup, 0x80).id;
+    Object& s = fx.s();
+    enqueue(fx.vm, s, *makeInteraction(fx.vm, tv, 0));
+    fx.vm.tick();
+    check(s.activeInteraction == 0 && s.queue[0].object == tv, "watching");
+    enqueue(fx.vm, s, *makeInteraction(fx.vm, tv, 1));
+    check(s.queue.size() == 1 && s.subQueue.size() == 1 && s.person->data[persondata::SubQueueCount] == 1 &&
+              s.person->data[persondata::NextSubQueueObject] == tv &&
+              s.person->data[persondata::SubQueueMasterObject] == tv,
+          "a nested interaction waits in the sub-queue (person data 26, 78, 75)");
+    fx.vm.tick();
+    fx.vm.tick();
+    Object& o = *fx.vm.object(tv);
+    check(o.attributes.size() > 2 && o.attributes[2] == 5 && s.subQueue.empty() && !s.subAction &&
+              s.activeInteraction == 0,
+          "it ran as a sub-action inside the running interaction");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -410,6 +448,7 @@ int main() {
     testActionStrings();
     testTurnBodyTowards();
     testInteractionGroupLeader();
+    testSubQueue();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -57,7 +57,17 @@ constexpr int16_t NextInteractionObject = 79;
 constexpr int16_t CurrentInteractionObject = 80;
 constexpr int16_t CurrentRunningInteractionIndex = 102;
 constexpr int16_t InteractionAutonomous = 166;
+// The sub-queue (STR# 0xC8 labels).
+constexpr int16_t SubQueueCount = 26;
+constexpr int16_t SubQueueMasterObject = 75;
+constexpr int16_t SubQueueMasterIndex = 76;
+constexpr int16_t NextSubQueueIndex = 77;
+constexpr int16_t NextSubQueueObject = 78;
+constexpr int16_t SubQueueObject = 157;
 } // namespace persondata
+// More than this many waiting nested interactions: Push Interaction fails
+// with result 4 (Mac binary).
+constexpr size_t kMaxSubQueue = 4;
 
 // Object data 52 "primitive result": Push Interaction and Snap leave why
 // they failed there (Mac binary).
@@ -136,6 +146,8 @@ bool attemptPush(VM& vm, Thread& t);
 // non-interruptible, and has the Idle for Input that ran it return true on
 // the next tick.
 void endInteraction(VM& vm, Thread& t);
+// A sub-queue interaction's action tree returned: the sub-action is over.
+void endSubInteraction(VM& vm, Thread& t);
 
 // Whether a frame of the thread runs a queued interaction.
 bool inInteraction(const Thread& t);

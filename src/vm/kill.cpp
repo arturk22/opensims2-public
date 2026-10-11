@@ -54,6 +54,13 @@ void unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone
     for (size_t i = 0; i <= first; ++i)
         if (t.stack[i].interaction && !t.stack[i].foundAction)
             action = i;
+    const bool sub = std::any_of(t.stack.begin() + std::ptrdiff_t(action ? *action : first), t.stack.end(),
+                                 [](const Frame& f) { return f.subInteraction; });
+    if (sub)
+        if (Object* me = vm.object(owner)) {
+            me->subAction.reset();
+            syncQueueData(*me);
+        }
     if (action && *action > 0) {
         t.stack.resize(*action);
         endInteraction(vm, t);

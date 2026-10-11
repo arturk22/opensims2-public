@@ -969,6 +969,7 @@ bool VM::branch(Thread& t, Behavior::Target target) {
             const bool value = target.kind == Behavior::TargetKind::True;
             const bool interaction = t.stack.back().interaction;
             const bool foundAction = t.stack.back().foundAction;
+            const bool subInteraction = t.stack.back().subInteraction;
             const std::optional<bool> forced = t.stack.back().callerResult;
             const bool rerun = t.stack.back().rerunCaller;
             t.stack.pop_back();
@@ -981,6 +982,8 @@ bool VM::branch(Thread& t, Behavior::Target target) {
                 t.rerunResult = value;
                 return true;
             }
+            if (subInteraction)
+                endSubInteraction(*this, t); // and its Idle for Input branches on the result
             if (interaction) {
                 // A queued interaction's action tree: the Idle for Input that ran it runs again.
                 endInteraction(*this, t);

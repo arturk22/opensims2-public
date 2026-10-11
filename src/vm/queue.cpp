@@ -77,6 +77,17 @@ QueuedInteraction entryFor(ObjectId object, const InteractionTableRef& ref, cons
     return q;
 }
 
+// A nested interaction goes to the end of the sub-queue.
+uint16_t enqueueSub(Object& sim, QueuedInteraction q) {
+    if (sim.nextInteractionUid == 0)
+        ++sim.nextInteractionUid;
+    q.uid = sim.nextInteractionUid++;
+    const uint16_t uid = q.uid;
+    sim.subQueue.push_back(std::move(q));
+    syncQueueData(sim);
+    return uid;
+}
+
 // Push Interaction (0x0D), as the Mac binary has it (TryPushAction,
 // PushActionParam; docs/primitives-mac.md §4): interaction (TTA index) u8
 // at 0, where the object is u8 at 1 (a parameter, or a local with flag
@@ -170,24 +181,70 @@ Exit pushInteraction(Context& c) {
     if (!target)
         throw gameError(err::NoStackObject, "Push Interaction");
     // A nested interaction (TTAB flag 0x8000) needs the target's current
-    // interaction to allow nesting (TTAB flag 0x4000), else error 0x6F
-    // (cTSObject::TryPushAction, docs/primitives-mac.md §4b). The binary then
-    // puts it in the sub-queue, which is not done: it goes to the queue.
-    if (q->ttabFlags & 0x8000) {
+    // interaction to allow nesting (TTAB flag 0x4000), else error 0x6F, and
+    // goes to the sub-queue, which takes 4 (more: result 4)
+    // (cTSObject::TryPushAction, docs/primitives-mac.md §4b).
+    const bool nested = q->ttabFlags & 0x8000;
+    if (nested) {
         const bool running = target->activeInteraction >= 0 && size_t(target->activeInteraction) < target->queue.size();
         if (!running || !(target->queue[size_t(target->activeInteraction)].ttabFlags & 0x4000))
             throw gameError(err::NestedPush, "Push Interaction");
+        if (target->subQueue.size() > kMaxSubQueue)
+            return failed(4);
     }
     constexpr size_t kMaxQueue = 6;
-    if (target->queue.size() > kMaxQueue)
+    if (!nested && target->queue.size() > kMaxQueue)
         return failed(3);
     q->flags = flags;
     q->pushedBy = c.thread.me;
     q->operands = o;
-    const uint16_t uid = enqueue(c.vm, *target, std::move(*q), flags & 0x04);
+    const uint16_t uid = nested ? enqueueSub(*target, std::move(*q)) : enqueue(c.vm, *target, std::move(*q), flags & 0x04);
     if (flags & 0x80)
         c.set(o[11], int16_t(le16(&o[12])), int16_t(uid));
     return Exit::True;
+}
+
+// Idle for Input in "Handle Sub Queue Interactions" mode (byte 4 bit 0;
+// cTSPerson::TryIdleForInput, Mac BV): with nothing in the sub-queue, true.
+// Else the first entry leaves it and its check tree runs; when it passes
+// and the entry has an action tree, that becomes the current sub-action and
+// its tree is pushed on top of this one (the primitive's 3); unlike the
+// queue's, this tree's result is what this instruction branches on (the
+// binary does not ask for the re-run here). A failed check clears the whole
+// sub-queue and the result is true.
+Exit handleSubQueue(Context& c) {
+    Object& me = c.me();
+    if (me.subQueue.empty())
+        return Exit::True;
+    const QueuedInteraction item = me.subQueue.front();
+    me.subQueue.erase(me.subQueue.begin());
+    bool ok = c.vm.object(item.object) != nullptr && item.action != 0;
+    if (ok) {
+        const CheckResult r = checkInteraction(c.vm, c.thread.me, item);
+        ok = r == CheckResult::NoGuard || r == CheckResult::True;
+    }
+    Object* sim = c.vm.object(c.thread.me);
+    if (!sim)
+        return Exit::True;
+    if (ok) {
+        try {
+            c.vm.call(c.thread, item.object, item.action, item.args);
+        } catch (const VMError&) {
+            ok = false;
+        }
+    }
+    if (!ok) {
+        sim->subQueue.clear();
+        syncQueueData(*sim);
+        return Exit::True;
+    }
+    Frame& f = c.thread.stack.back();
+    f.stackObject = item.object;
+    f.subInteraction = true;
+    sim->subAction = item;
+    updateObjectOwnership(c.vm, c.thread.me, item.object);
+    syncQueueData(*sim);
+    return Exit::Call;
 }
 
 // Idle for Input (0x11), as the Mac binary has it (cTSPerson::
@@ -229,7 +286,7 @@ Exit idleForInput(Context& c) {
     }
     const auto& o = c.instruction.operands;
     if (o[4] & 0x01)
-        return Exit::True; // Handle Sub Queue Interactions: no sub-actions
+        return handleSubQueue(c);
     const auto param = int16_t(le16(&o[0]));
     if (param < 0 || size_t(param) >= c.frame.params.size())
         throw gameError(err::StackNumberOutOfRange, "Idle for Input parameter " + std::to_string(param));
@@ -406,6 +463,11 @@ std::optional<QueuedInteraction> makeInteraction(VM& vm, ObjectId object, uint16
 }
 
 uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead) {
+    // A nested interaction picked while the running one allows nesting goes
+    // to the sub-queue (as Push Interaction puts it; inferred for the menu).
+    if ((q.ttabFlags & 0x8000) && sim.activeInteraction >= 0 && size_t(sim.activeInteraction) < sim.queue.size() &&
+        (sim.queue[size_t(sim.activeInteraction)].ttabFlags & 0x4000) && sim.subQueue.size() <= kMaxSubQueue)
+        return enqueueSub(sim, std::move(q));
     auto& queue = sim.queue;
     if (queue.size() >= kMaxQueuedInteractions)
         throw VMError("interaction queue of object " + std::to_string(sim.id) + " is full");
@@ -452,7 +514,7 @@ bool cancelInteraction(VM& vm, Object& sim, uint16_t uid) {
 void cancelInteractionsWith(VM& vm, ObjectId object) {
     std::vector<ObjectId> ids;
     for (const auto& [id, o] : vm.objects())
-        if (!o.queue.empty())
+        if (!o.queue.empty() || !o.subQueue.empty())
             ids.push_back(id);
     for (ObjectId id : ids) {
         Object& sim = *vm.object(id);
@@ -465,6 +527,7 @@ void cancelInteractionsWith(VM& vm, ObjectId object) {
             else
                 q[i].cancelled = true;
         }
+        std::erase_if(sim.subQueue, [&](const QueuedInteraction& x) { return x.object == object; });
         syncQueueData(sim);
     }
 }
@@ -576,6 +639,13 @@ void endInteraction(VM& vm, Thread& t) {
     syncQueueData(*sim);
 }
 
+void endSubInteraction(VM& vm, Thread& t) {
+    if (Object* sim = vm.object(t.me)) {
+        sim->subAction.reset();
+        syncQueueData(*sim);
+    }
+}
+
 bool inInteraction(const Thread& t) {
     return std::any_of(t.stack.begin(), t.stack.end(), [](const Frame& f) { return f.interaction; });
 }
@@ -594,6 +664,16 @@ void syncQueueData(Object& sim) {
     const size_t next = size_t(sim.activeInteraction + 1);
     d[persondata::NextInteractionIndex] = next < q.size() ? int16_t(q[next].interaction) : 0;
     d[persondata::NextInteractionObject] = next < q.size() ? q[next].object : 0;
+    // The sub-queue: its size, the interaction it nests in (the running
+    // one), the next waiting entry and the running sub-action (labels of
+    // STR# 0xC8; filled in as the queue's are, inferred).
+    const auto& sq = sim.subQueue;
+    d[persondata::SubQueueCount] = int16_t(sq.size());
+    d[persondata::SubQueueMasterObject] = a && (!sq.empty() || sim.subAction) ? a->object : 0;
+    d[persondata::SubQueueMasterIndex] = a && (!sq.empty() || sim.subAction) ? int16_t(a->interaction) : 0;
+    d[persondata::NextSubQueueIndex] = sq.empty() ? 0 : int16_t(sq.front().interaction);
+    d[persondata::NextSubQueueObject] = sq.empty() ? 0 : sq.front().object;
+    d[persondata::SubQueueObject] = sim.subAction ? sim.subAction->object : 0;
 }
 
 std::vector<std::string> splitPiePath(const std::string& name) {
