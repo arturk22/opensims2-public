@@ -32,6 +32,9 @@ enum : uint {
     kDetail = 131072,      // terrain: detail texture (12) at uv x misc.z over the base by its alpha
     kMaskAlphaOnly = 262144, // terrain paints: alpha from the mask alone
     kWater = 524288,         // WaterAnimatingTextures: two animated scales of the base (speed misc.w), lit x1
+    kOverlayMore = 1u << 20, // bits 20-24: textures 13-17 over the base by their alpha, after overlay 3
+    kTwoSidedLight = 1u << 25, // lit from both sides, wrapped (Sim hair)
+    kUnderlayFlat = 1u << 26,  // the underlay's average colour (its smallest mip)
 };
 
 struct Draw {
@@ -151,6 +154,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               texture2d<float> lightMap0 [[texture(10)]],
                               texture2d<float> lightMap1 [[texture(11)]],
                               texture2d<float> detail [[texture(12)]],
+                              array<texture2d<float>, 5> moreOverlays [[texture(13)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
@@ -176,8 +180,11 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         tex.rgb = tex.a;
     if (draw.flags & kAlphaOnly)
         tex.rgb = 1.0;
-    if (draw.flags & kUnderlay)
-        tex = float4(mix(underlay.sample(smp, in.uv).rgb, tex.rgb, tex.a), 1.0);
+    if (draw.flags & kUnderlay) {
+        const float3 under = (draw.flags & kUnderlayFlat) ? underlay.sample(smp, float2(0.5), level(16.0)).rgb
+                                                          : underlay.sample(smp, in.uv).rgb;
+        tex = float4(mix(under, tex.rgb, tex.a), 1.0);
+    }
     if (draw.flags & kOverlay1) {
         float4 o = overlay1.sample(smp, in.uv);
         tex.rgb = mix(tex.rgb, o.rgb, o.a);
@@ -190,6 +197,11 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         float4 o = overlay3.sample(smp, in.uv);
         tex.rgb = mix(tex.rgb, o.rgb, o.a);
     }
+    for (uint i = 0; i < 5; ++i)
+        if (draw.flags & (kOverlayMore << i)) {
+            float4 o = moreOverlays[i].sample(smp, in.uv);
+            tex.rgb = mix(tex.rgb, o.rgb, o.a);
+        }
     if (draw.flags & kVertexColor)
         tex *= in.color;
     if (draw.flags & kMasked)
@@ -254,6 +266,10 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
             float att;
             const float3 l = lightVector(set.lights[i], in.world, att);
             float ndl = dot(n, l);
+            // Hair: strands lit from either side, never fully dark (the
+            // inner layers' normals point every way, often down into the shell).
+            if (draw.flags & kTwoSidedLight)
+                ndl = max(0.15, ndl > 0.0 ? ndl : -0.6 * ndl);
             if (ndl <= 0.0 || att <= 0.0)
                 continue;
             diffuse += set.lights[i].color.rgb * att * ndl;

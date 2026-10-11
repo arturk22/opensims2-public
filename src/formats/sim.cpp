@@ -252,8 +252,18 @@ SkinnedModel loadSim(ResourceIndex& index, const std::vector<SimPart>& parts, co
     }
 
     if (!look.hair.empty()) {
-        if (const SimPart* hair = findSimPart(parts, look.hair))
-            sim.add(loadSimPartModel(index, *hair));
+        if (const SimPart* hair = findSimPart(parts, look.hair)) {
+            ObjectModel m = loadSimPartModel(index, *hair);
+            // The scalp showing through the hair's skin layer: the skin's colour.
+            for (auto& part : m.parts) {
+                auto it = m.materials.find(part.material);
+                if (it != m.materials.end() && it->second.materialType == "SimSkin") {
+                    part.underlay = look.prefix + "bodynaked-nude-" + tone + "_txtr";
+                    part.underlayFlat = true;
+                }
+            }
+            sim.add(m);
+        }
         else
             sim.model.warnings.push_back("hair part not found: " + look.hair);
     }

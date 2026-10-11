@@ -300,7 +300,8 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         out.specularPower = 0; // "no sim material can have specular"
         // Hair is drawn with SimHair(), which the TXMT does not name: inferred
         // from the base texture ("ufhairlong-red", "uuhairhatcap-...").
-        simHair = type == "SimStandardMaterial" && contains(m.property("stdMatBaseTextureName"), "hair");
+        out.hair = contains(m.property("stdMatBaseTextureName"), "hair");
+        simHair = type == "SimStandardMaterial" && out.hair;
         if (simHair && out.blend == StandardMaterial::Blend::Alpha) {
             // SimHairAlphaState: blended, but writes depth and drops alpha <= 60.
             out.depthWrite = true;

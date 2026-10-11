@@ -59,7 +59,11 @@ enum : uint32_t {
     kDetail = 131072,
     kMaskAlphaOnly = 262144,
     kWater = 524288,
+    kOverlayMore = 1u << 20, // bits 20-24: textures 13-17 drawn over the base by their alpha, after overlay 3
+    kTwoSidedLight = 1u << 25, // lit from both sides (Sim hair: the inside of a hairdo's shell)
+    kUnderlayFlat = 1u << 26,  // the underlay's smallest mip (its average colour)
 };
+constexpr size_t kMaxOverlays = 8; // a face's composited layers: eyes, brows, makeup, beard...
 
 struct Draw {
     simd_float4x4 model;
@@ -204,7 +208,7 @@ std::pair<simd_float4, simd_float4> uvTransform(const StandardMaterial& m, doubl
 
 struct Renderer::Material {
     MTL::Texture* texture = nullptr; // not owned (cache or white)
-    std::array<MTL::Texture*, 4> layers{}; // underlay, overlays 1-3 (not owned, null if unused)
+    std::array<MTL::Texture*, 1 + kMaxOverlays> layers{}; // underlay, overlays 1-8 (not owned, null if unused)
     MTL::Texture* height = nullptr;   // bump height map (not owned, null if unused)
     MTL::Texture* envCube = nullptr;  // not owned, null if unused
     MTL::Texture* ramp = nullptr;     // cel shading ramps (not owned, null if unused)
@@ -467,6 +471,11 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     // diffuse over an alpha texture.
     const float alpha = sm.alphaMultiplier * (sm.baseTexture.empty() ? sm.untexturedAlpha : 1.0f);
     simd_float3 diffuse = simd_make_float3(sm.diffuse[0], sm.diffuse[1], sm.diffuse[2]);
+    // Hairdos darken their inner layer (diffuse 0.4 on "_l1"), which came out
+    // near black inside the shell (the sides of a bob in Create-a-Sim): kept
+    // darker, but lifted most of the way to the outer layers.
+    if (sm.hair)
+        diffuse = simd_mix(diffuse, simd_make_float3(1, 1, 1), simd_make_float3(0.6f, 0.6f, 0.6f));
     if (sm.shading == StandardMaterial::Shading::Sim)
         diffuse *= 0.8f; // simMaterialLightingScale
     if (sm.shading == StandardMaterial::Shading::VertexColor)
@@ -504,6 +513,8 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
                                                                      : MTL::CullModeBack;
     if (sm.shading == StandardMaterial::Shading::VertexColor)
         mat.flags |= kVertexColor;
+    if (sm.hair)
+        mat.flags |= kTwoSidedLight;
     if (!sm.envCube.empty())
         if (MTL::Texture* t = texture(sm.envCube, index, true)) {
             mat.envCube = t;
@@ -559,12 +570,15 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
         if (!part.underlay.empty())
             if (MTL::Texture* t = texture(part.underlay, index)) {
                 mat.layers[0] = t;
-                mat.flags |= kUnderlay;
+                mat.flags |= kUnderlay | (part.underlayFlat ? kUnderlayFlat : 0);
             }
-        for (size_t i = 0; i < part.overlays.size() && i < 3; ++i)
+        // Every composited layer (the game bakes them into one texture; a
+        // face with makeup has more than three).
+        for (size_t i = 0, slot = 0; i < part.overlays.size() && slot < kMaxOverlays; ++i)
             if (MTL::Texture* t = texture(part.overlays[i], index)) {
-                mat.layers[1 + i] = t;
-                mat.flags |= i == 0 ? kOverlay1 : i == 1 ? kOverlay2 : kOverlay3;
+                mat.layers[1 + slot] = t;
+                mat.flags |= slot == 0 ? kOverlay1 : slot == 1 ? kOverlay2 : slot == 2 ? kOverlay3 : (kOverlayMore << (slot - 3));
+                ++slot;
             }
 
         std::vector<Vertex> v(mesh.positions.size());
@@ -865,8 +879,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentSamplerState(m.clamp ? clampSampler_ : sampler_, 0);
         enc->setFragmentTexture(m.texture, 0);
         enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
-        for (size_t l = 0; l < m.layers.size(); ++l) // textures 2-4, overlay 3 at 9
-            enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(l < 3 ? 2 + l : 9));
+        for (size_t l = 0; l < m.layers.size(); ++l) // textures 2-4, overlay 3 at 9, overlays 4-8 at 13-17
+            enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(l < 3 ? 2 + l : l == 3 ? 9 : 9 + l));
         enc->setFragmentTexture(m.height ? m.height : white_, 5);
         enc->setFragmentTexture(m.envCube ? m.envCube : whiteCube_, 6);
         enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);

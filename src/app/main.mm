@@ -1548,6 +1548,8 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
         std::fprintf(stderr, "opensims2: %s\n", w.c_str());
     actor->position = {2.5f, -2.5f, 0};
     std::string playing;
+    if (auto h = argument(@"--heading")) // degrees about Z
+        actor->heading = std::stof(*h) * 3.14159265f / 180;
     // The idle and walk of the skeleton's age (child cuskel, toddler puskel,
     // baby buskel; auskel for the rest); --walk-anim names another walk.
     const char age = char(std::tolower(static_cast<unsigned char>(actor->skin.skeleton.name.empty() ? 'a' : actor->skin.skeleton.name[0])));
@@ -1566,10 +1568,8 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
         actor->cue(0.5, walkAnim, {.fade = 0.3f});
         actor->cue(0.5 + seconds, idle, {.fade = 0.3f});
         actor->rootMotion = true;
-        if (auto h = argument(@"--heading"))
-            actor->heading = std::stof(*h) * 3.14159265f / 180;
         playing = "idle, walk, idle";
-    } else if (auto name = argument(@"--anim"); name || character) {
+    } else if (auto name = argument(@"--anim"); name || character || sim) {
         actor->cue(0, actor->animation(index, name.value_or(ageIdle)));
         playing = actor->animations.back()->resource.fileName;
     }
@@ -2851,7 +2851,12 @@ void unloadScene() {
 // A lot (--lot, or --hood <N> --hood-lot <id>), or the test objects and Sims.
 - (void)prepareLot {
     OS2View* view = _view;
-    [view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
+    os2::CameraDef liveCamera = loadLiveCamera();
+    // --camera-scale <k>: every zoom distance times k (close-ups of Sims below the closest level).
+    if (auto k = argument(@"--camera-scale"))
+        for (float& d : liveCamera.distances)
+            d *= std::stof(*k);
+    [view setCamera:std::make_unique<os2::LotCamera>(liveCamera)];
     gCamera = view.camera;
     os2::ResourceIndex& index = *gIndex;
     { // (indented as it was inside the start-up's try block)
@@ -3083,6 +3088,11 @@ void unloadScene() {
                 }
                 const CFTimeInterval simmed = CACurrentMediaTime();
                 followSelectedSim();
+                // --track-sim: each shot centred on the selected Sim (close-ups of poses).
+                if ([shotArgs containsObject:@"--track-sim"] && gPie)
+                    for (const auto& s : gLotSims)
+                        if (s.id == gPie->sim())
+                            view.camera->setPivot(simd_make_float3(s.actor->position[0], s.actor->position[1], s.actor->position[2]));
                 view.camera->setViewport(float(shotW), float(shotH));
                 view.camera->snap();
                 poseActors(*_viewDelegate.renderer, base + at);

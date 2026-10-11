@@ -209,8 +209,13 @@ SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& p
             } else {
                 for (auto& p : m.parts) {
                     auto it = m.materials.find(p.material);
-                    if (it != m.materials.end() && it->second.materialType == "SimSkin")
+                    if (it != m.materials.end() && it->second.materialType == "SimSkin") {
                         p.underlay = skin;
+                        // Hair: its UVs are not the body's, so the scalp
+                        // showing through takes the skin's average colour
+                        // (else a pale patch of the body texture).
+                        p.underlayFlat = it->second.property("stdMatBaseTextureName").find("hair") != std::string::npos;
+                    }
                 }
             }
             sim.add(m);

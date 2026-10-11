@@ -39,6 +39,7 @@ struct ObjectModel {
         // underlay shows where the base texture is transparent (skin under
         // clothes), overlays are drawn over it by their alpha (eyes, brows).
         std::string underlay;
+        bool underlayFlat = false; // the underlay's average colour instead (a hairdo's scalp shows skin)
         std::vector<std::string> overlays;
     };
 
@@ -139,6 +140,7 @@ struct StandardMaterial {
     // number, drawn in increasing order after the opaque hair (inferred);
     // 0 for every other material.
     int alphaOrder = 0;
+    bool hair = false; // a Sim's hair (SimSkin or SimStandardMaterial with "hair" in the base texture's name)
     bool visible = true; // false for "Null" and "WallMask" materials (parts the game does not draw)
     bool alphaReplicate = false; // stdMatBaseTextureAlphaReplicate: colour = texture alpha
     bool textureColor = true;    // false: the base texture only gives alpha (TextureAlpha)
