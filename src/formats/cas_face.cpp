@@ -403,6 +403,10 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
                 out.structure.push_back({disp[i], slots[i].uv[0], slots[i].uv[1]});
             }
     }
+    for (size_t i = 0; i < slots.size(); ++i) {
+        out.positions.push_back(slots[i].pos);
+        out.displacements.push_back(disp[i]);
+    }
     out.gmdc = t.bytes;
     auto put = [&](size_t offset, const Vec3& v) {
         for (int c = 0; c < 3; ++c) {
@@ -426,6 +430,46 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
             }
         }
     }
+    return out;
+}
+
+std::vector<uint8_t> FaceBaker::deformToFace(const std::vector<uint8_t>& bytes, const Baked& face) {
+    std::vector<uint8_t> out = bytes;
+    if (face.positions.empty())
+        return out;
+    Rcol rc(bytes);
+    const auto* block = rc.find("cGeometryDataContainer");
+    if (!block)
+        return out;
+    const size_t bodyOffset = size_t(block->body.data() - bytes.data());
+    const GeometryData g = GeometryData::parse(block->body);
+    std::vector<bool> done(g.elements.size(), false);
+    for (const auto& link : g.links)
+        for (size_t k = 0; k < link.elements.size(); ++k) {
+            const size_t ei = link.elements[k];
+            if (ei >= g.elements.size() || done[ei] || (k < link.aliases.size() && !link.aliases[k].empty()))
+                continue;
+            const auto& e = g.elements[ei];
+            if (e.identity != gmdc::Vertices || e.blockFormat != 2)
+                continue;
+            done[ei] = true;
+            for (size_t i = 0; i < e.valueCount(); ++i) {
+                const Vec3 p{e.f(i, 0), e.f(i, 1), e.f(i, 2)};
+                size_t best = 0;
+                float bestD = -1;
+                for (size_t j = 0; j < face.positions.size(); ++j) {
+                    const float d = dist2(p, face.positions[j]);
+                    if (bestD < 0 || d < bestD)
+                        best = j, bestD = d;
+                }
+                const Vec3 q = add(p, face.displacements[best]);
+                for (int c = 0; c < 3; ++c) {
+                    const uint32_t w = std::bit_cast<uint32_t>(q[c]);
+                    for (int b = 0; b < 4; ++b)
+                        out[bodyOffset + e.rawOffset + i * 12 + 4 * c + b] = uint8_t(w >> (8 * b));
+                }
+            }
+        }
     return out;
 }
 

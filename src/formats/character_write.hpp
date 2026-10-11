@@ -56,6 +56,9 @@ struct CharacterSpec {
     // Other texture overlays by family (brows, lipstick, blush, eye shadow,
     // facial hair, costume makeup); brows and facial hair follow the hair tone.
     std::vector<std::string> overlays;
+    // Mesh overlays by family (glasses, beards with a mesh; a beard follows
+    // the hair tone).
+    std::vector<std::string> meshOverlays;
     FaceSpec face;
     // Catalog part names per outfit category, by part bit (hair, top,
     // bottom, body). Missing categories are filled by completeOutfits.

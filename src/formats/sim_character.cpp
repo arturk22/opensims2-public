@@ -73,6 +73,14 @@ std::map<uint32_t, Tgi> Character::wear(uint32_t category) const {
     return out;
 }
 
+std::vector<Tgi> Character::faceExtras(uint32_t category) const {
+    for (uint32_t cat : {category, 1u})
+        for (const auto& [key, tgis] : outfits)
+            if (((key >> 16) & cat) && (key & 0xFFFF) == 2 && tgis.size() > 1)
+                return std::vector<Tgi>(tgis.begin() + 1, tgis.end());
+    return {};
+}
+
 std::string Character::prefix(bool unisexChildren) const {
     std::string p;
     if (age & 1)
@@ -221,6 +229,18 @@ SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& p
             sim.add(m);
         } catch (const std::exception& e) {
             sim.model.warnings.push_back(part->name() + ": " + e.what());
+        }
+    }
+    // The face's mesh overlays (glasses, beards with a mesh): the file's own
+    // GZPS and chain, with the overlay's materials.
+    for (const Tgi& t : ch.faceExtras(category)) {
+        auto it = local.find(t.instance);
+        if (t.group != 0xFFFFFFFF || it == local.end())
+            continue;
+        try {
+            sim.add(loadSimPartModel(index, it->second));
+        } catch (const std::exception& e) {
+            sim.model.warnings.push_back("face overlay " + hexString(t.instance) + ": " + e.what());
         }
     }
     sim.model.name = file.stem().string();

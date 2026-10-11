@@ -489,3 +489,26 @@ keep diffusion at zero") e `CAS_lights.txt`, mais `LotLights.txt` →
 esqueleto que dá as posições é o do `loadObjectModel` (o `fromCres` puro
 perde o deslocamento das juntas `platform_trans`). A ordem em que os membros
 ocupam as marcas é inferida (do meio para fora, trás e depois frente).
+
+## 15. Overlays de malha no personagem (óculos, barbas com malha; rodada 9)
+
+Visto nos personagens do jogo (`N001_User00002`, Cassandra de óculos): cada
+overlay de malha vira uma **parte de rosto a mais**, com GZPS e cadeia
+próprios por idade: `age3_1_cres` → `age3_10_shpe` (as partes `lens`/`frame`
+com os materiais globais do overlay, `afaccessoryeyeglassesthinrims_lensclear`)
+→ `age3_1_gmnd` → `age3_1_gmdc` (a malha já deformada para o rosto; 303
+vértices). Os GZPS se numeram por idade: 1 o rosto, 2 o overlay (`category`
+do overlay, 807; `outfit` 2, `family` vazio), 3 o rosto da próxima idade, 4
+o overlay dela. No AGED a lista do rosto de cada categoria tem `ls` = 2 e
+`le<i>_0` = o rosto, `le<i>_1` = o overlay (a categoria nu não tem rosto).
+Os overlays de malha do catálogo: subtipo 5 bin 15 = óculos (82), subtipo 0
+bin 2 = barbas/bigodes com malha (19, por cor de cabelo); flag 1 = fora do
+CAS. Cada um tem CRES/SHPE, uma "máscara" (`maskresourcekeyidx`, não usada
+aqui) e os TXMT por subconjunto.
+
+Aqui: o `writeCharacter` grava assim (a malha movida pelo deslocamento do
+vértice neutro mais próximo do rosto assado, inferido; o GZPS leva a
+`family` para reabrir); o `loadCharacterSim` carrega as entradas extras da
+lista do rosto (os óculos dos Sims do jogo aparecem); o `readCharacterSpec`
+acha o overlay de um GZPS sem família pelos hashes dos materiais do SHPE
+contra as referências TXMT do overlay.

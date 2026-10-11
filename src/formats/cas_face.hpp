@@ -68,6 +68,8 @@ public:
         // Per vertex of the neutral mesh: (baked - neutral position, uv),
         // what the LxNR keeps for this age, gender and detail.
         std::vector<FaceStructure::Vertex> structure;
+        // Per vertex of the neutral mesh: its position and how far it moved.
+        std::vector<std::array<float, 3>> positions, displacements;
         std::vector<std::string> warnings;
     };
     // The face for `spec` at an age and gender (its archetype family's head
@@ -79,6 +81,12 @@ public:
     // head for, both genders' keys as the game writes them, both levels of
     // detail.
     FaceStructure structureOf(const FaceSpec& spec, uint32_t genderBit);
+
+    // A mesh overlay's GMDC (glasses, a beard with a mesh: made on the
+    // neutral face) moved with the baked face: each vertex by the
+    // displacement of the nearest neutral vertex (inferred; the game exports
+    // its own deformed copy, "age<n>_1_gmdc"). Positions only.
+    static std::vector<uint8_t> deformToFace(const std::vector<uint8_t>& gmdc, const Baked& face);
 
     // The archetype of a family at an age and gender, if the catalog has one.
     const SimPart* archetypeFor(const std::string& family, uint32_t ageBit, uint32_t genderBit) const;

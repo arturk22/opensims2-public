@@ -1037,6 +1037,48 @@ UiScreen CasMode::screen(int width, int height) {
         }
         return items;
     };
+    // Mesh overlays (glasses: subtype 5 bin 15; beards with a mesh: subtype 0
+    // bin 2), one per family (a beard in the hair's tone), without the
+    // CAS-hidden ones (flag 0x01).
+    auto meshOverlayItems = [&](uint32_t subtype, uint32_t bin, bool removable) {
+        std::vector<Item> items;
+        const std::string hair = cas::toneFamily(s.age == cas::age::Elder ? 5 : s.hairTone);
+        auto same = [this, subtype, bin](const std::string& f) {
+            const SimPart* o = catalog_->byFamily(catalog_->meshOverlays, f);
+            return o && o->number("subtype") == subtype && o->number("bin") == bin;
+        };
+        bool any = false;
+        for (const auto& f : s.meshOverlays)
+            any |= same(f);
+        if (removable)
+            items.push_back({"(nenhum)", !any, nullptr, [this, same]() {
+                                 pushUndo();
+                                 auto& mo = edit_.spec.meshOverlays;
+                                 mo.erase(std::remove_if(mo.begin(), mo.end(), same), mo.end());
+                                 changed();
+                             }});
+        std::vector<std::string> seen;
+        for (const SimPart* o : catalog_->meshOverlaysFor(s.age, s.gender)) {
+            if (o->number("subtype") != subtype || o->number("bin") != bin || (o->number("flags") & 1))
+                continue;
+            const std::string fam = cas::family(*o);
+            const std::string ht = lower(o->property("hairtone"));
+            if (!ht.empty() && ht != "00000000-0000-0000-0000-000000000000" && ht != hair)
+                continue;
+            if (std::find(seen.begin(), seen.end(), fam) != seen.end())
+                continue;
+            seen.push_back(fam);
+            const bool sel = std::find(s.meshOverlays.begin(), s.meshOverlays.end(), fam) != s.meshOverlays.end();
+            items.push_back({label(o->name()), sel, thumb(cas::entryThumbnailId(*o, s.age, s.gender)), [this, fam, same]() {
+                                 pushUndo();
+                                 auto& mo = edit_.spec.meshOverlays;
+                                 mo.erase(std::remove_if(mo.begin(), mo.end(), same), mo.end());
+                                 mo.push_back(fam);
+                                 changed();
+                             }});
+        }
+        return items;
+    };
     auto archetypeItems = [&](const std::string& maskList, const std::string& region) {
         std::vector<Item> items;
         for (const SimPart* a : catalog_->archetypesFor(s.age, s.gender)) {
@@ -1205,10 +1247,50 @@ UiScreen CasMode::screen(int width, int height) {
             std::vector<Item> items;
             switch (cosmeticTab_) {
             case 1: items = overlayItems(cas::overlay::Costume, -1, true); break;
-            case 2: items.push_back({"(óculos: overlays de malha, ainda não)", false, nullptr, [] {}}); break;
+            case 2: items = meshOverlayItems(5, 15, true); break; // glasses
             case 3: items = overlayItems(cas::overlay::Brows, -1, false); break;
             case 4: items = overlayItems(cas::overlay::FacialHair, 1, true); break;
-            case 5: items = overlayItems(cas::overlay::FacialHair, 2, true); break;
+            case 5: { // facial hair: the textures, then the beards with a mesh
+                items = overlayItems(cas::overlay::FacialHair, 2, true);
+                auto mesh = meshOverlayItems(0, 2, true);
+                if (!items.empty() && !mesh.empty()) {
+                    // One "(none)" for both kinds.
+                    items[0].selected = items[0].selected && mesh[0].selected;
+                    auto a = items[0].pick, b = mesh[0].pick;
+                    items[0].pick = [a, b]() {
+                        a();
+                        b();
+                    };
+                    mesh.erase(mesh.begin());
+                }
+                // A texture beard and a mesh one exclude each other.
+                for (size_t i = 1; i < items.size(); ++i) {
+                    auto pick = items[i].pick;
+                    items[i].pick = [this, pick]() {
+                        auto& mo = edit_.spec.meshOverlays;
+                        mo.erase(std::remove_if(mo.begin(), mo.end(), [this](const std::string& f) {
+                                     const SimPart* o = catalog_->byFamily(catalog_->meshOverlays, f);
+                                     return o && o->number("subtype") == 0;
+                                 }),
+                                 mo.end());
+                        pick();
+                    };
+                }
+                for (auto& m : mesh) {
+                    auto pick = m.pick;
+                    m.pick = [this, pick]() {
+                        auto& ov = edit_.spec.overlays;
+                        ov.erase(std::remove_if(ov.begin(), ov.end(), [this](const std::string& f) {
+                                     const SimPart* o = catalog_->byFamily(catalog_->textureOverlays, f);
+                                     return o && o->number("subtype") == cas::overlay::FacialHair && o->number("bin") == 2;
+                                 }),
+                                 ov.end());
+                        pick();
+                    };
+                }
+                items.insert(items.end(), std::make_move_iterator(mesh.begin()), std::make_move_iterator(mesh.end()));
+                break;
+            }
             default: break;
             }
             addGrid(overlays, 0x4011, "cosmetic" + std::to_string(cosmeticTab_), 3, 3, std::move(items));
@@ -1303,7 +1385,20 @@ UiScreen CasMode::screen(int width, int height) {
     }
     default: break;
     }
+    const size_t panelQuads = out.quads.size();
     layoutUiElement(panel, panelX - float(pa[0]), panelY - float(pa[1]), *res_, *fonts_, out, hk);
+    if (step_ == 3 && cosmeticTab_ != 0)
+        if (const UiElement* oc = find(panel, 0x6CA52066))
+            if (auto r = rects.find(oc); r != rects.end())
+                if (const RgbaImage* bg = res_->image(UiResourceRef{kTypeUiImage, 0x499DB772, 0xCA2B0160})) {
+                    // The overlays component draws no background of its own in the
+                    // script (its code does): the makeup panel's, behind it.
+                    UiQuad q;
+                    q.image = bg;
+                    q.x0 = r->second[0] - 56, q.x1 = q.x0 + 436;
+                    q.y0 = r->second[1], q.y1 = r->second[3] + 9;
+                    out.quads.insert(out.quads.begin() + std::ptrdiff_t(panelQuads), q);
+                }
     if (auto r = rects.find(&panel); r != rects.end())
         solid_.push_back(r->second);
 

@@ -40,6 +40,9 @@ struct Character {
     // (the "naked" lists name only hair, top and bottom); everyday wear when
     // the Sim has no such outfit.
     std::map<uint32_t, Tgi> wear(uint32_t category) const;
+    // The face list's other entries in that category (or everyday wear):
+    // the mesh overlays (glasses, beards with a mesh) as their own GZPS.
+    std::vector<Tgi> faceExtras(uint32_t category) const;
     // Prefix of the catalog names: "am", "af", "em", "cu", "pu", ...
     std::string prefix(bool unisexChildren = false) const;
 };

@@ -225,6 +225,55 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
             c = char(std::tolower(static_cast<unsigned char>(c)));
         return v;
     };
+    // The game leaves a mesh overlay's GZPS without its family: find the
+    // catalog's overlay by the materials of the GZPS's shape (the overlay's
+    // TXMT references, by name hash).
+    auto meshOverlayOfGzps = [&](uint32_t instance) -> std::string {
+        auto idr = read(kTypeIdr, instance);
+        if (!idr)
+            return {};
+        const auto gr = parseReferenceList(*idr);
+        if (gr.empty())
+            return {};
+        std::vector<uint32_t> mats;
+        try {
+            for (const auto& e : pkg.entries()) {
+                if (e.tgi.type != kTypeCres || e.tgi.group != group || e.tgi.instance != gr[0].instance ||
+                    e.tgi.instanceHi != gr[0].instanceHi)
+                    continue;
+                const auto cb = pkg.read(e);
+                Rcol cr(cb);
+                for (const auto& l : cr.links) {
+                    if (l.type != kTypeShpe)
+                        continue;
+                    for (const auto& se : pkg.entries())
+                        if (se.tgi.type == kTypeShpe && se.tgi.instance == l.instance && se.tgi.instanceHi == l.instanceHi) {
+                            const auto sb = pkg.read(se);
+                            Rcol sr(sb);
+                            if (const auto* b = sr.find("cShape"))
+                                for (const auto& part : Shape::parse(b->body).parts)
+                                    mats.push_back(nameInstanceHash(part.material + "_txmt"));
+                        }
+                }
+                break;
+            }
+        } catch (const std::exception&) {
+            return {};
+        }
+        if (mats.empty())
+            return {};
+        for (const auto& o : catalog.meshOverlays) {
+            size_t hit = 0;
+            for (const auto& ref : o.references)
+                if (ref.type == kTypeTxmt && std::find(mats.begin(), mats.end(), ref.instance) != mats.end())
+                    ++hit;
+            if (hit == mats.size()) {
+                std::string f = family(o);
+                return f;
+            }
+        }
+        return {};
+    };
     CharacterSpec spec;
     spec.age = num("age", age::Adult);
     spec.gender = num("gender", gender::Female);
@@ -240,7 +289,29 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
         const uint32_t lk = num("lk" + std::to_string(i), 0);
         const uint32_t idx = num("le" + std::to_string(i) + "_0", 0xFFFFFFFF);
         const uint32_t cat = lk >> 16, bits = lk & 0xFFFF;
-        if (bits == part::Face || idx >= refs.size() || !cat)
+        if (bits == part::Face) {
+            // The mesh overlays' GZPS (le<i>_1...): the family we write in them.
+            for (uint32_t k = 1; k < num("ls" + std::to_string(i), 1); ++k) {
+                const uint32_t r = num("le" + std::to_string(i) + "_" + std::to_string(k), 0xFFFFFFFF);
+                if (r >= refs.size() || refs[r].type != kTypeGzps)
+                    continue;
+                if (auto g = read(kTypeGzps, refs[r].instance)) {
+                    const auto gp = readPropertySet(*g);
+                    std::string fam;
+                    if (auto f = gp.find("family"); f != gp.end())
+                        fam = f->second;
+                    for (auto& c : fam)
+                        c = char(std::tolower(static_cast<unsigned char>(c)));
+                    if (!catalog.byFamily(catalog.meshOverlays, fam))
+                        fam = meshOverlayOfGzps(refs[r].instance);
+                    if (!fam.empty() &&
+                        std::find(spec.meshOverlays.begin(), spec.meshOverlays.end(), fam) == spec.meshOverlays.end())
+                        spec.meshOverlays.push_back(fam);
+                }
+            }
+            continue;
+        }
+        if (idx >= refs.size() || !cat)
             continue;
         const Tgi& t = refs[idx];
         for (const auto& p : catalog.parts)
@@ -460,9 +531,15 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
     std::stable_sort(layers.begin(), layers.end(), [](const Layer& a, const Layer& b) { return a.layer < b.layer; });
 
     // One face per age: the current one (GZPS 1) and the next (GZPS 2).
+    struct MeshOut {
+        Tgi cres;
+        uint32_t category = 0;
+        std::string family;
+    };
     struct FaceOut {
         uint32_t age;
         Tgi cres;
+        std::vector<MeshOut> meshes; // the mesh overlays: "<id>_age<n>_<k>_cres", k from 1
     };
     std::vector<FaceOut> faces;
     for (uint32_t a : {spec.age, nextAge(spec.age)}) {
@@ -577,7 +654,90 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         std::sort(m.properties.begin(), m.properties.end());
         m.textureNames.clear();
         pkg.add(txmtT, writeMaterial(m, sgId, sgVersion, std::string(kPrefix) + matName + "_txmt"), true);
-        faces.push_back({a, cresT});
+
+        // The mesh overlays (glasses, beards with a mesh) as the game keeps
+        // them: a scenegraph chain of their own per age ("age3_1_cres" ->
+        // "age3_10_shpe" -> "age3_1_gmnd" -> "age3_1_gmdc", N001_User00002),
+        // the mesh moved with the face; the SHPE keeps the overlay's
+        // materials.
+        std::vector<MeshOut> meshes;
+        int k = 1;
+        for (const auto& fam : spec.meshOverlays) {
+            const SimPart* o = nullptr;
+            const std::string tone = a == age::Elder ? toneFamily(5) : hairFamily;
+            for (const auto& e : catalog.meshOverlays)
+                if (family(e) == fam && fits(e, a, spec.gender)) {
+                    const std::string ht = lower(e.property("hairtone"));
+                    const bool toned = !ht.empty() && ht != "00000000-0000-0000-0000-000000000000";
+                    if (!o || (toned && ht == tone))
+                        o = &e;
+                }
+            if (!o) {
+                res.warnings.push_back("no mesh overlay " + fam + " for this age");
+                continue;
+            }
+            try {
+                const auto oc = o->reference("resourcekeyidx");
+                auto ocLoc = oc ? findAny(index, *oc) : std::nullopt;
+                if (!ocLoc)
+                    throw FormatError(o->name() + ": no CRES");
+                const auto ocBytes = index.read(*ocLoc);
+                Rcol ocRc(ocBytes);
+                if (ocRc.links.empty())
+                    throw FormatError(o->name() + ": CRES without shape");
+                auto osLoc = findAny(index, ocRc.links[0]);
+                if (!osLoc)
+                    throw FormatError(o->name() + ": shape not found");
+                const auto osBytes = index.read(*osLoc);
+                Rcol osRc(osBytes);
+                std::string oShpe, oGmnd;
+                if (const auto* b = osRc.find("cShape")) {
+                    const Shape sh = Shape::parse(b->body);
+                    oShpe = sh.resource.fileName;
+                    for (const auto& item : sh.items)
+                        if (item.lod == 0 || oGmnd.empty())
+                            oGmnd = item.geometryName;
+                }
+                auto ogLoc = index.findByName(oGmnd, kTypeGmnd);
+                if (!ogLoc)
+                    throw FormatError(o->name() + ": " + oGmnd + " not found");
+                const auto ogBytes = index.read(*ogLoc);
+                Rcol ogRc(ogBytes);
+                std::optional<ResourceIndex::Location> odLoc;
+                for (const auto& l : ogRc.links)
+                    if (l.type == kTypeGmdc)
+                        odLoc = findAny(index, l);
+                if (!odLoc)
+                    throw FormatError(o->name() + ": GMDC not found");
+                const auto odBytes = index.read(*odLoc);
+                std::string oGmdc;
+                {
+                    Rcol r(odBytes);
+                    if (const auto* d = r.find("cGeometryDataContainer")) {
+                        BinReader br(d->body);
+                        br.u32();
+                        oGmdc = SgResource::read(br).fileName;
+                    }
+                }
+                const std::string ks = std::to_string(k);
+                const std::string mb = id + "_age" + std::to_string(ai) + "_" + ks;
+                const std::string mc = mb + "_cres", ms = mb + "0_shpe", mn = mb + "_gmnd", md = mb + "_gmdc";
+                const Tgi mcT = localTgi(kTypeCres, mc), msT = localTgi(kTypeShpe, ms), mnT = localTgi(kTypeGmnd, mn),
+                          mdT = localTgi(kTypeGmdc, md);
+                const std::map<std::string, std::string> mnames = {
+                    {scenegraphName(index, ocLoc->entry->tgi), kPrefix + mc}, {oShpe, kPrefix + ms},
+                    {oGmnd, kPrefix + mn}, {oGmdc, kPrefix + md}};
+                pkg.add(mcT, rewriteRcol(ocBytes, {msT}, mnames), true);
+                pkg.add(msT, rewriteRcol(osBytes, {}, mnames), true);
+                pkg.add(mnT, rewriteRcol(ogBytes, {mdT}, mnames), true);
+                pkg.add(mdT, rewriteRcol(FaceBaker::deformToFace(odBytes, baked), {}, mnames), true);
+                meshes.push_back({mcT, o->number("category"), fam});
+                ++k;
+            } catch (const std::exception& e) {
+                res.warnings.push_back(std::string("mesh overlay: ") + e.what());
+            }
+        }
+        faces.push_back({a, cresT, std::move(meshes)});
     }
     if (faces.empty())
         throw FormatError("no face for this age");
@@ -601,6 +761,15 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
     const uint32_t faceShapeIdx = uint32_t(refs.size());
     refs.push_back(Tgi{});
     const Tgi faceGzps{kTypeGzps, kLocal, 1, 0};
+    // The GZPS instances: per age the face, then its mesh overlays (1 face,
+    // 2.. overlays, then the next age's), as the game numbers them.
+    std::vector<std::vector<uint32_t>> gzpsOf(faces.size());
+    {
+        uint32_t next = 1;
+        for (size_t f = 0; f < faces.size(); ++f)
+            for (size_t j = 0; j <= faces[f].meshes.size(); ++j)
+                gzpsOf[f].push_back(next++);
+    }
 
     std::map<std::string, PropertyValue> aged;
     uint32_t list = 0;
@@ -627,8 +796,12 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         for (const auto& [bit, tgi] : entries) {
             const std::string i = std::to_string(list++);
             aged["lk" + i] = u32v(cat << 16 | bit);
-            aged["ls" + i] = u32v(1);
             aged["le" + i + "_0"] = u32v(refIndex(Tgi{tgi.type, tgi.group, tgi.instance, tgi.instanceHi}));
+            uint32_t count = 1;
+            if (bit == part::Face) // the face list also names the mesh overlays' GZPS
+                for (size_t j = 1; j < gzpsOf[0].size(); ++j)
+                    aged["le" + i + "_" + std::to_string(count++)] = u32v(refIndex(Tgi{kTypeGzps, kLocal, gzpsOf[0][j], 0}));
+            aged["ls" + i] = u32v(count);
         }
     }
     aged["activecat"] = u32v(1);
@@ -670,10 +843,20 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
     pkg.add(Tgi{kTypeAged, kLocal, 1, 0}, writePropertySetXml(aged), true);
     pkg.add(Tgi{kTypeIdr, kLocal, 1, 0}, writeReferenceList(refs), true);
     pkg.add(faceGzps, writePropertySetXml(faceGzpsProps(faces[0].age, faceCresIdx, faceShapeIdx)), true);
-    if (faces.size() > 1) {
-        pkg.add(Tgi{kTypeIdr, kLocal, 2, 0}, writeReferenceList({faces[1].cres, Tgi{}}), true);
-        pkg.add(Tgi{kTypeGzps, kLocal, 2, 0}, writePropertySetXml(faceGzpsProps(faces[1].age, 0, 1)), true);
-    }
+    for (size_t f = 0; f < faces.size(); ++f)
+        for (size_t j = 0; j < gzpsOf[f].size(); ++j) {
+            const uint32_t inst = gzpsOf[f][j];
+            if (inst == 1)
+                continue; // shares 3IDR 1 with the AGED, written above
+            const Tgi cres = j == 0 ? faces[f].cres : faces[f].meshes[j - 1].cres;
+            pkg.add(Tgi{kTypeIdr, kLocal, inst, 0}, writeReferenceList({cres, Tgi{}}), true);
+            auto props = faceGzpsProps(faces[f].age, 0, 1);
+            if (j > 0) {
+                props["category"] = u32v(faces[f].meshes[j - 1].category);
+                props["family"] = strv(faces[f].meshes[j - 1].family); // to edit it again (the game leaves it empty)
+            }
+            pkg.add(Tgi{kTypeGzps, kLocal, inst, 0}, writePropertySetXml(props), true);
+        }
 
     // The Sim's object, from the template person.
     std::optional<Tgi> templateObjd;
