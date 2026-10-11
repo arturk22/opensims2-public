@@ -14,6 +14,7 @@
 #include "vm/lot_save.hpp"
 #include "vm/save_types.hpp"
 #include "vm/lot_records.hpp"
+#include "vm/hood_save.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -198,6 +199,142 @@ int cmdLotSave(const std::vector<std::string>& args) {
     return diffs.empty() && differ == 0 ? 0 : 1;
 }
 
+// hood-save: every lot of a neighborhood loaded with the neighborhood, run
+// and saved to <out>/Lots, each lot's changes written back to the
+// neighborhood package (<out>/<P>_Neighborhood.package, which the next lot
+// is loaded with); the character files and the rest of the folder are
+// copied. With --check each saved lot is loaded back with the saved
+// neighborhood and compared with the VM that saved it.
+int cmdHoodSave(const std::vector<std::string>& args) {
+    std::vector<fs::path> paths;
+    long ticks = 0;
+    bool check = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--ticks" && i + 1 < args.size())
+            ticks = std::stol(args[++i]);
+        else if (args[i] == "--check")
+            check = true;
+        else
+            paths.emplace_back(args[i]);
+    }
+    if (paths.size() != 2)
+        throw std::runtime_error("usage: s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check]");
+    const fs::path hoodDir = fs::canonical(paths[0]);
+    const fs::path outDir = fs::weakly_canonical(fs::absolute(paths[1]));
+    const std::string prefix = hoodDir.filename().string();
+    const fs::path hoodPackage = hoodDir / (prefix + "_Neighborhood.package");
+    if (!fs::exists(hoodPackage))
+        throw std::runtime_error("no " + hoodPackage.filename().string() + " in " + hoodDir.string());
+    std::vector<fs::path> lots;
+    if (fs::is_directory(hoodDir / "Lots"))
+        for (const auto& f : fs::directory_iterator(hoodDir / "Lots"))
+            if (f.path().extension() == ".package")
+                lots.push_back(f.path());
+    std::sort(lots.begin(), lots.end());
+    if (lots.empty())
+        throw std::runtime_error("no lots in " + hoodDir.string());
+    const fs::path res = resRootOfLot(lots.front());
+    const fs::path game = fs::weakly_canonical(res.parent_path().parent_path());
+    if (outDir.string().starts_with(game.string()) || outDir == hoodDir)
+        throw std::runtime_error("refusing to write into the game's data: pick an output outside " + game.string());
+    fs::create_directories(outDir / "Lots");
+    // The folder's other files (characters, thumbnails, images) as they are.
+    for (const auto& e : fs::recursive_directory_iterator(hoodDir)) {
+        const fs::path rel = fs::relative(e.path(), hoodDir);
+        if (*rel.begin() == "Lots" || e.path() == hoodPackage)
+            continue;
+        const fs::path to = outDir / rel;
+        if (e.is_directory())
+            fs::create_directories(to);
+        else if (!fs::exists(to))
+            fs::copy_file(e.path(), to);
+    }
+    const fs::path outHood = outDir / hoodPackage.filename();
+    const fs::path tmpHood = outDir / (prefix + "_Neighborhood.package.tmp");
+    fs::copy_file(hoodPackage, outHood, fs::copy_options::overwrite_existing);
+    ResourceIndex index(res);
+    const fs::path characters = hoodDir / "Characters";
+    std::vector<fs::path> templates;
+    for (const auto& d : fs::directory_iterator(res / "UserData" / "Neighborhoods"))
+        if (fs::is_directory(d.path() / "Lots"))
+            for (const auto& f : fs::directory_iterator(d.path() / "Lots"))
+                if (f.path().extension() == ".package")
+                    templates.push_back(f.path());
+    std::sort(templates.begin(), templates.end());
+    std::map<uint32_t, LotObjects::SaveType> more;
+    for (const auto& f : lots) {
+        DbpfPackage other(f);
+        for (auto& [g, t] : LotObjects::loadSaveTypes(other))
+            more.emplace(g, std::move(t));
+    }
+    size_t same = 0, differ = 0, skipped = 0;
+    for (const auto& src : lots) {
+        const fs::path dst = outDir / "Lots" / src.filename();
+        vm::CodeLibrary code(&index); // each lot adds its Sims' character files
+        const hood::Neighborhood hood = hood::Neighborhood::load(outHood, true);
+        std::unique_ptr<LoadedLot> a;
+        try {
+            a = std::make_unique<LoadedLot>(loadInto(code, src, src, &hood, characters));
+        } catch (const std::exception& ex) {
+            std::printf("%s: not saved (%s); copied as it is\n", src.filename().string().c_str(), ex.what());
+            fs::copy_file(src, dst, fs::copy_options::overwrite_existing);
+            ++skipped;
+            continue;
+        }
+        for (long i = 0; i < ticks; ++i)
+            a->vm->tick();
+        std::vector<fs::path> others;
+        for (const auto& t : templates)
+            if (!fs::equivalent(t, src))
+                others.push_back(t);
+        vm::CaptureResult captured = vm::captureLot(*a->vm, a->saved, &more);
+        vm::RecordsResult records;
+        {
+            DbpfPackage pkg(src);
+            const Lot world = Lot::load(pkg);
+            records = vm::captureLotRecords(*a->vm, world, pkg, a->saved, captured.lot, others);
+            captured.lot.save(pkg, dst);
+        }
+        const vm::HoodSaveResult h = vm::saveNeighborhood(*a->vm, hood, outHood, tmpHood);
+        fs::rename(tmpHood, outHood);
+        std::printf("%s: %zu objects (%zu added, %zu gone, %zu new objt records); cObjects %zu moved, %zu new; %zu "
+                    "routing states; lot relationships %zu changed, %zu new, %zu gone; neighborhood: %zu families, %zu "
+                    "Sim descriptions, relationships %zu changed, %zu new%s\n",
+                    src.filename().string().c_str(), captured.lot.objects.size(), captured.added, captured.removed,
+                    captured.newSaveTypes, records.sceneMoved, records.sceneNew, records.routing,
+                    records.relationshipsChanged, records.relationshipsNew, records.relationshipsGone, h.families,
+                    h.descriptions, h.relationshipsChanged, h.relationshipsNew, h.inventories ? ", inventories" : "");
+        for (const auto& w : captured.warnings)
+            std::printf("  warning: %s\n", w.c_str());
+        for (const auto& w : records.warnings)
+            std::printf("  warning: %s\n", w.c_str());
+        for (const auto& w : h.warnings)
+            std::printf("  warning: %s\n", w.c_str());
+        if (!check)
+            continue;
+        vm::CodeLibrary code2(&index);
+        const hood::Neighborhood back = hood::Neighborhood::load(outHood, true);
+        LoadedLot b = loadInto(code2, dst, dst, &back, characters);
+        auto diffs = vm::compareLotState(*a->vm, *b.vm);
+        for (auto& d : vm::compareNeighborhoodState(*a->vm, *b.vm))
+            diffs.push_back("neighborhood: " + d);
+        if (diffs.empty()) {
+            ++same;
+        } else {
+            ++differ;
+            std::printf("  load -> save -> load differs:\n");
+            for (const auto& d : diffs)
+                std::printf("    %s\n", d.c_str());
+        }
+    }
+    std::printf("%s: %zu lots saved to %s after %ld ticks", prefix.c_str(), lots.size() - skipped, outDir.string().c_str(),
+                ticks);
+    if (check)
+        std::printf("; the same VM after load -> save -> load in %zu, different in %zu", same, differ);
+    std::printf("\n");
+    return differ ? 1 : 0;
+}
+
 // objt-check: each record of the lots' save type tables against the one
 // saveTypeRecord builds from the definition, field by field.
 int cmdObjtCheck(const std::vector<std::string>& args) {
@@ -262,11 +399,17 @@ int cmdObjtCheck(const std::vector<std::string>& args) {
 int saveCommand(const std::string& cmd, int argc, char** argv) {
     if (cmd == "lot-save" && argc >= 4)
         return cmdLotSave({argv + 2, argv + argc});
+    if (cmd == "hood-save" && argc >= 4)
+        return cmdHoodSave({argv + 2, argv + argc});
     if (cmd == "objt-check" && argc >= 3)
         return cmdObjtCheck({argv + 2, argv + argc});
     return -1;
 }
 
-const char* saveUsage() { return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check]\n"; }
+const char* saveUsage() {
+    return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check]\n"
+           "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check]\n"
+           "       s2pkg objt-check <lot.package>...\n";
+}
 
 } // namespace os2

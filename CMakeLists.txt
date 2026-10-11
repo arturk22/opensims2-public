@@ -43,6 +43,7 @@ add_library(os2_formats
   src/formats/lot_roof.cpp
   src/formats/model.cpp
   src/formats/neighborhood.cpp
+  src/formats/neighborhood_write.cpp
   src/formats/property_set.cpp
   src/formats/qfs.cpp
   src/formats/rcol.cpp
@@ -68,6 +69,7 @@ target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 
 add_library(os2_vm
   src/vm/hood_bridge.cpp
+  src/vm/hood_save.cpp
   src/vm/animation.cpp
   src/vm/appearance.cpp
   src/vm/dialog.cpp

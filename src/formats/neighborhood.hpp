@@ -81,6 +81,7 @@ struct NeighborhoodInventories {
     uint8_t trailer = 0;
 
     static NeighborhoodInventories parse(std::span<const uint8_t> data);
+    std::vector<uint8_t> write() const; // neighborhood_write.cpp: parse's inverse
 };
 
 // ---------------------------------------------------------------------------
@@ -118,6 +119,7 @@ struct SimDescription {
     uint8_t trailer = 0;
 
     static SimDescription parse(std::span<const uint8_t> data);
+    std::vector<uint8_t> write() const;
 
     int16_t age() const { return personData[sdsc::Age]; }
     bool female() const { return personData[sdsc::Gender] == 1; }
@@ -145,6 +147,7 @@ struct FamilyRecord {
     uint32_t albumGuid = 0;
 
     static FamilyRecord parse(std::span<const uint8_t> data);
+    std::vector<uint8_t> write() const;
 };
 
 // ---------------------------------------------------------------------------
@@ -202,6 +205,7 @@ struct Relationship {
     std::vector<int32_t> stale;
 
     static Relationship parse(std::span<const uint8_t> data, uint32_t instance);
+    std::vector<uint8_t> write() const; // u32, count, values, stale
     int32_t value(size_t i) const { return i < values.size() ? values[i] : 0; }
 };
 

@@ -271,8 +271,26 @@ static void testLoad() {
     fs::remove_all(dir.parent_path());
 }
 
+// The writers give back the bytes the parsers read.
+static void testWriters() {
+    for (const auto& second : {std::string(), std::string("Temperate")}) {
+        const auto b = ngbh(second);
+        check(NeighborhoodInventories::parse(b).write() == b, "NGBH writes back as read");
+    }
+    const auto d = makeSdsc(7, 0xCAFE, lifestage::Adult, 1, 3, {1, 2});
+    check(SimDescription::parse(d).write() == d, "SDSC writes back as read");
+    const auto f = fami(11, 20000, {0xCAFE, 0xBEEF});
+    check(FamilyRecord::parse(f).write() == f, "FAMI writes back as read");
+    const auto r = srel({10, 0xC000, -5, 9}, 2);
+    check(Relationship::parse(r, 0x00010002).write() == r, "SREL writes back as read, stale values too");
+    FamilyRecord rec = FamilyRecord::parse(f);
+    rec.funds = 12345;
+    check(FamilyRecord::parse(rec.write()).funds == 12345, "FAMI funds written");
+}
+
 int main() {
     testDecoders();
+    testWriters();
     testLoad();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
