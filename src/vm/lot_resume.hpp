@@ -1,0 +1,46 @@
+#pragma once
+
+#include "lot.hpp"
+
+#include <map>
+#include <string>
+#include <vector>
+
+namespace os2::vm {
+
+// Starting a lot's objects the way the game loads a saved lot, instead of
+// running every Init: the editor's description of the OBJf entry points
+// (STR# 0xF5) says Init runs when an object is placed or reset, and "load"
+// whenever an instance is loaded from a save file, only if its "object
+// version" (object data 58) differs from its definition's (OBJD label 49).
+
+// The simulator's saved globals (SIMI) and the clock they hold (hour,
+// minute, second, day, month, year).
+void applySavedSimulator(VM& vm, const LotObjects& saved);
+
+// Only the Sims' saved motives (the first set of floats of the PERS,
+// clamped to -100..100), for when the objects start from their Inits.
+void applySavedMotives(VM& vm, const LotLoad& load, const LotObjects& saved);
+
+// Restores each created object's saved state (attributes, semi-attributes,
+// object data, person data and motives, object arrays, temporary token,
+// timers), rebuilds its Main thread from the saved tree stack (frame by
+// frame: tree, node, parameters, locals, stack object, code owner = the
+// object it runs on, and the 8 saved temps) and runs the load entry point
+// of objects whose version changed. Objects without a usable stack start
+// their Main afresh. The instruction a frame was at runs again; the
+// primitives' saved state, the Sims' interaction queues and the frames of
+// queued interactions are not restored yet.
+struct ResumeResult {
+    size_t restored = 0, stacks = 0, freshMains = 0, loads = 0;
+    std::map<std::string, size_t> problems; // why a stack was not resumed
+    std::vector<Thread> failedLoads;
+};
+ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& saved);
+
+// The whole start: the saved globals and clock, then either the saved state
+// (resumeLotObjects, the default) or, with `fromInit`, every Init and Main
+// afresh (startLotObjects) with the saved motives.
+ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved, bool fromInit = false);
+
+} // namespace os2::vm

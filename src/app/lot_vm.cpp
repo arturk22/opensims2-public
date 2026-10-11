@@ -6,6 +6,7 @@
 #include "formats/sim_character.hpp"
 #include "vm/animation.hpp"
 #include "vm/lot.hpp"
+#include "vm/lot_resume.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -15,7 +16,7 @@
 namespace os2 {
 
 LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& lotPackage,
-                             const std::filesystem::path& lotFile)
+                             const std::filesystem::path& lotFile, bool fromInit)
     : index_(index), lot_(lot), code_(std::make_unique<vm::CodeLibrary>(&index)),
       vm_(std::make_unique<vm::VM>(*code_)) {
     vm::VM& m = *vm_;
@@ -24,20 +25,15 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     m.setClockGlobals();
     const LotObjects saved = LotObjects::load(lotPackage);
     const vm::LotLoad load = vm::loadLot(m, lot, saved, vm::charactersDirOf(lotFile));
-    size_t inits = 0, initFailed = 0, mains = 0;
-    for (const auto& e : load.objects) {
-        if (!e.created || !m.object(e.id))
-            continue;
-        if (auto t = m.runFunction(e.id, 0)) {
-            ++inits;
-            initFailed += t->status == vm::Thread::Status::Failed;
-        }
-    }
-    for (const auto& e : load.objects)
-        mains += e.created && m.startMain(e.id);
+    const vm::ResumeResult r = vm::startSavedLot(m, load, saved, fromInit);
     char buf[256];
-    std::snprintf(buf, sizeof buf, "%zu of %zu saved objects in the VM, %zu Inits (%zu failed), %zu Mains",
-                  load.created, load.objects.size(), inits, initFailed, mains);
+    if (fromInit)
+        std::snprintf(buf, sizeof buf, "%zu of %zu saved objects in the VM, from their Inits, %zu Mains", load.created,
+                      load.objects.size(), r.freshMains);
+    else
+        std::snprintf(buf, sizeof buf,
+                      "%zu of %zu saved objects in the VM, %zu resumed from their saved stacks, %zu fresh Mains, %02d:%02d",
+                      load.created, load.objects.size(), r.stacks, r.freshMains, m.clock.hour, m.clock.minute);
     summary_ = buf;
 }
 

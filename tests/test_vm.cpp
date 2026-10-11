@@ -1,5 +1,6 @@
 #include "formats/dbpf.hpp"
 #include "formats/lot_objects.hpp"
+#include "vm/lot_resume.hpp"
 #include "vm/vm.hpp"
 
 #include <cstdio>
@@ -892,6 +893,58 @@ static void testVisibleObjects() {
     check(me.attributes[0] == 1, "Set to Next 24: walls hide objects");
 }
 
+// Resuming a lot from its saved state: globals and clock (SIMI), motives and
+// person data (PERS), attributes, timers and the tree stack, with no Init.
+static void testResumeSavedLot() {
+    Fixture fx;
+    Object& sim = fx.obj();
+    sim.person.emplace();
+    // Init would set attribute 0 to 99; the Main tree loops on a Sleep.
+    fx.code.add(kObjGroup, 0x1000, tree({expr(Attr, 0, Assign, Lit, 99, T, E)}));
+    fx.code.add(kObjGroup, 0x1001,
+                tree({expr(Attr, 1, Add, Lit, 1, go(1), E), instr(0x00, go(0), E, {0, 0})}, 1));
+    LotObjects saved;
+    saved.globals.assign(54, 0);
+    saved.globals[0] = 17, saved.globals[5] = 2, saved.globals[1] = 16, saved.globals[7] = 6, saved.globals[8] = 1997;
+    saved.globals[9] = 1;
+    LotObjects::State st;
+    st.id = sim.id;
+    st.person = true;
+    st.attributes = {5, 7};
+    st.data.assign(88, 0);
+    st.personRead = true;
+    st.motives[3] = 232.1f, st.motives[7] = 36.6f, st.motives[15] = -150.0f;
+    st.personData.assign(170, 0);
+    st.personData[31] = 12;
+    st.temps[2] = 4;
+    LotObjects::State::Frame f;
+    f.treeId = 0x1001, f.node = 1, f.runningObject = uint16_t(sim.id), f.runningOn = uint16_t(sim.id);
+    f.params = {3};
+    st.stack.push_back(f);
+    LotObjects::State::Timer timer;
+    timer.b = 0x1000, timer.e = 30, timer.f = 2;
+    st.timers.push_back(timer);
+    saved.objects.push_back(st);
+    LotLoad load;
+    load.objects.push_back({sim.id, "sim", true, true, ""});
+    const ResumeResult r = startSavedLot(fx.vm, load, saved);
+    check(r.stacks == 1 && r.freshMains == 0, "the saved stack is resumed");
+    check(fx.vm.clock.hour == 17 && fx.vm.clock.minute == 2 && fx.vm.clock.year == 1997 &&
+              fx.vm.globals[vm::global::CurrentFamily] == 1,
+          "saved globals and clock");
+    check(sim.attributes[0] == 5 && sim.attributes[1] == 7, "saved attributes, no Init");
+    check(sim.person->motives[3] == 100 && sim.person->motives[7] == 37 && sim.person->motives[15] == -100 &&
+              sim.person->data[31] == 12,
+          "saved motives (clamped) and person data");
+    const Thread& t = fx.vm.threads.at(sim.id);
+    check(t.stack.size() == 1 && t.stack[0].pc == 1 && t.stack[0].params[0] == 3 && t.temps[2] == 4,
+          "saved frame: node, parameters, temps");
+    fx.vm.tick(); // the Sleep at node 1 (param 0 = 3) counts down
+    check(sim.attributes[1] == 7 && t.stack[0].params[0] == 2, "the resumed thread goes on from its node");
+    fx.vm.tick();
+    check(sim.attributes[0] == 99 && sim.timers.empty(), "the saved timer fires");
+}
+
 // The saved state of an object (XOBJ), as the base game's lots store it.
 static void testSavedObjectState() {
     std::vector<uint8_t> b(64, 0);
@@ -1097,6 +1150,7 @@ int main() {
     testSavedObjectState();
     testOnTimer();
     testVisibleObjects();
+    testResumeSavedLot();
     testSlots();
     testScheduler();
     if (failures)

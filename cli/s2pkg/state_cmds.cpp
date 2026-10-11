@@ -49,6 +49,16 @@ void printState(const LotObjects::State& s, bool hex) {
             std::printf(" %d", p);
         std::printf("\n");
     }
+    if (s.personRead) {
+        std::printf("    person v%u motives", s.personVersion);
+        for (size_t i = 3; i < s.motives.size(); ++i)
+            std::printf(" %.1f", s.motives[i]);
+        std::printf(" / second set");
+        for (size_t i = 3; i < s.motives2.size(); ++i)
+            std::printf(" %.1f", s.motives2[i]);
+        std::printf("\n");
+        printShorts("person data", s.personData);
+    }
     if (!s.rest.empty()) {
         std::printf("    rest: %zu bytes\n", s.rest.size());
         if (hex) {
@@ -85,6 +95,11 @@ int cmdLotState(const std::vector<std::string>& args) {
         if (lots.size() == 1 || only)
             std::printf("%s: object module version %X, %zu states\n", path.filename().string().c_str(), saved.version,
                         saved.objects.size());
+        if ((lots.size() == 1 || only) && !saved.globals.empty()) {
+            const auto& g = saved.globals;
+            std::printf("  saved at %02d:%02d, day %d month %d year %d; selected %d, family %d, house %d\n", g[0], g[5],
+                        g[1], g[7], g[8], g[3], g[9], g[10]);
+        }
         for (const auto& w : saved.warnings)
             std::printf("  warning: %s\n", w.c_str());
         for (const auto& s : saved.objects) {

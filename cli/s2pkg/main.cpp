@@ -7,6 +7,7 @@
 #include "hood_cmds.hpp"
 #include "pie_cmds.hpp"
 #include "state_cmds.hpp"
+#include "vm/lot_resume.hpp"
 #include "describe.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/gmdc.hpp"
@@ -671,7 +672,7 @@ std::vector<std::pair<size_t, typename M::key_type>> byCount(const M& m) {
 
 // Loads the objects of each lot into a VM (no rendering), runs every
 // object's Init, then ticks the Main threads, and reports how far they got.
-int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool list, int traceId) {
+int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool list, int traceId, bool fromInit) {
     const auto root = resRootOf(lots.front());
     if (root.empty())
         throw std::runtime_error("the lot is not under a TSData/Res directory");
@@ -725,8 +726,17 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
         for (const auto& e : load.objects)
             if (!e.created)
                 ++unresolved[std::regex_replace(e.error, std::regex("\"[^\"]*\"|0x[0-9A-F]+|N\\d+_User\\d+"), "X")];
+        // By default the objects resume their saved state, as the game loads
+        // a lot (lot_resume.hpp); --init starts them from their Inits.
+        vm::applySavedSimulator(machine, saved);
+        std::optional<vm::ResumeResult> resumed;
+        if (!fromInit) {
+            resumed = vm::resumeLotObjects(machine, load, saved);
+            for (const auto& t : resumed->failedLoads)
+                ++reasons["load: " + failureReason(t)];
+        }
         for (const auto& e : load.objects) {
-            if (!e.created || !machine.object(e.id))
+            if (!fromInit || !e.created || !machine.object(e.id))
                 continue;
             const auto t = machine.runFunction(e.id, 0);
             std::string outcome = !t ? "no init" : statusName(*t);
@@ -738,8 +748,13 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
             initOf[e.id] = t && t->status == vm::Thread::Status::Failed ? "init failed: " + failureReason(*t) : outcome;
         }
         size_t mains = 0;
-        for (const auto& e : load.objects)
-            mains += e.created && machine.startMain(e.id);
+        if (fromInit) {
+            vm::applySavedMotives(machine, load, saved);
+            for (const auto& e : load.objects)
+                mains += e.created && machine.startMain(e.id);
+        } else {
+            mains = resumed->stacks + resumed->freshMains;
+        }
         for (long i = 0; i < ticks; ++i)
             machine.tick();
         for (const auto& [id, t] : machine.threads) {
@@ -771,9 +786,17 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
             for (const auto& [n, k] : byCount(unresolved))
                 std::printf("    %5zu %s\n", n, k.c_str());
         }
-        std::printf("  init:");
-        for (const auto& [n, k] : byCount(initOutcomes))
-            std::printf(" %zu %s,", n, k.c_str());
+        if (resumed) {
+            std::printf("  resumed: %zu states restored, %zu saved tree stacks, %zu fresh Mains, %zu loads;",
+                        resumed->restored, resumed->stacks, resumed->freshMains, resumed->loads);
+            for (const auto& [n, k] : byCount(resumed->problems))
+                std::printf(" %zu %s,", n, k.c_str());
+            std::printf("\n");
+        } else {
+            std::printf("  init:");
+            for (const auto& [n, k] : byCount(initOutcomes))
+                std::printf(" %zu %s,", n, k.c_str());
+        }
         std::printf("\n  main threads (%zu started):", mains);
         for (const auto& [n, k] : byCount(mainOutcomes))
             std::printf(" %zu %s,", n, k.c_str());
@@ -835,7 +858,7 @@ int usage() {
                          "       s2pkg lot <Res-dir> <lot.package>...\n"
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
-                         "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id]\n"
+                         "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
                          "%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage());
     return 2;
 }
@@ -871,6 +894,7 @@ int main(int argc, char** argv) {
             std::vector<std::filesystem::path> lots;
             long ticks = 300;
             bool list = false;
+            bool fromInit = false;
             int traceId = 0;
             for (int i = 2; i < argc; ++i) {
                 const std::string a = argv[i];
@@ -880,12 +904,14 @@ int main(int argc, char** argv) {
                     list = true;
                 else if (a == "--trace" && i + 1 < argc)
                     traceId = std::stoi(argv[++i]);
+                else if (a == "--init")
+                    fromInit = true;
                 else
                     lots.emplace_back(a);
             }
             if (lots.empty())
                 return usage();
-            return cmdLotRun(lots, ticks, list, traceId);
+            return cmdLotRun(lots, ticks, list, traceId, fromInit);
         }
         if (cmd == "bhav" && argc >= 5) {
             std::vector<int16_t> args;

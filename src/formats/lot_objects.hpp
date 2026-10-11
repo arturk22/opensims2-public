@@ -80,12 +80,30 @@ struct LotObjects {
         std::vector<Timer> timers;
         // Bytes after the timers: in a PERS, the Sim's own data (cTSPerson).
         std::vector<uint8_t> rest;
+        // The start of a cTSPerson (PERS), read from `rest`: the tag
+        // 0xDEADBEEF, a version (2 in the game's lots), two sets of the 16
+        // motives as floats (numbered as STR# 0x86: Mood 3 ... Fun 15; the
+        // second set is clamped to 100 and lags the first slightly: which
+        // one the game simulates is not known) and the 170 person data
+        // fields (STR# 0xC8: personality, skills, neighbor ID 31, age 58,
+        // family 61, decay rates, interests, ... all check out against the
+        // neighborhood's Sims). What follows is not read yet.
+        bool personRead = false;
+        uint32_t personVersion = 0;
+        std::array<float, 16> motives{}, motives2{};
+        std::vector<int16_t> personData;
         // Why the part after the object data could not be read (the fields
         // above stay as far as they got).
         std::string tailError;
     };
 
     uint32_t version = 0; // of the object module; the states' layout depends on it
+    // The simulator's globals when the lot was saved (SIMI, 0x53494D49,
+    // instance 1: tag, version, a u32, then the 54 globals of STR# 0x81:
+    // hour, day, ..., selected person, current family, current house, the
+    // family's funds as % and / 10000; they agree with the neighborhood).
+    // Empty if the lot has none.
+    std::vector<int16_t> globals;
     std::map<int16_t, SaveType> saveTypes;
     std::map<int16_t, int16_t> saveTypeOf; // object ID -> save type
     std::vector<State> objects;            // by ID

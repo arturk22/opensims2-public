@@ -301,7 +301,8 @@ void updateAudio(double seconds) {
 // their actors; --vm-walk <sim>,<object>[,<anim>] starts a scripted walk.
 void startSimulation(os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg, const fs::path& lotFile) {
     CFTimeInterval start = CACurrentMediaTime();
-    gSimulation = std::make_unique<os2::LotSimulation>(index, lot, pkg, lotFile);
+    gSimulation = std::make_unique<os2::LotSimulation>(index, lot, pkg, lotFile,
+                                                      [NSProcessInfo.processInfo.arguments containsObject:@"--init"]);
     for (const auto& s : gLotSims) {
         os2::DbpfPackage character(s.character);
         gSimulation->attach(*s.actor, s.id, os2::readCharacter(character, index), s.idle);
@@ -315,7 +316,7 @@ void startSimulation(os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPa
     }
     std::printf("opensims2: VM: %s, %zu Sims attached (%.2f s)\n", gSimulation->summary().c_str(), gLotSims.size(),
                 CACurrentMediaTime() - start);
-    // --motives <n>: test aid, every Sim's motives at n (the saved ones are not read yet).
+    // --motives <n>: test aid, every Sim's motives at n (instead of the saved ones).
     if (auto m = argument(@"--motives"))
         os2::vm::setAllMotives(gSimulation->machine(), int16_t(std::stoi(*m)));
     // Pie menus over the same VM.

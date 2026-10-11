@@ -32,8 +32,10 @@ struct Character;
 // Sim's idle plays otherwise.
 class LotSimulation {
 public:
+    // The lot's objects resume their saved state (vm/lot_resume.hpp), or
+    // start from their Inits with `fromInit`.
     LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& lotPackage,
-                  const std::filesystem::path& lotFile);
+                  const std::filesystem::path& lotFile, bool fromInit = false);
     LotSimulation(const LotSimulation&) = delete;
     LotSimulation& operator=(const LotSimulation&) = delete;
 

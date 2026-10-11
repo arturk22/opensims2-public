@@ -11,6 +11,8 @@ namespace {
 constexpr uint32_t kTypeObjectModule = 0x4F626A4D, kTypeSaveTypes = 0x6F626A74, kTypeObjectState = 0x584F424A,
                    kTypePersonState = 0x50455253;
 constexpr size_t kFileNameSize = 64;
+constexpr uint32_t kTypeSimulator = 0x53494D49;
+constexpr size_t kGlobalCount = 54;
 
 // Object data fields saved by each object module version (OpenTS2: 0xAD is
 // the base game's, 0xD8 a later expansion's). The game's older lots (0xA4 in
@@ -126,6 +128,24 @@ void parseTail(BinReader& r, uint32_t version, LotObjects::State& s, bool runnin
     s.rest.assign(rest.begin(), rest.end());
 }
 
+constexpr uint32_t kPersonTag = 0xDEADBEEF;
+constexpr size_t kPersonDataCount = 170;
+
+void parsePerson(LotObjects::State& s) {
+    BinReader r(s.rest);
+    if (r.remaining() < 8 || r.u32() != kPersonTag)
+        return;
+    s.personVersion = r.u32();
+    if (r.remaining() < 2 * 16 * 4 + kPersonDataCount * 2)
+        return;
+    for (auto& m : s.motives)
+        m = r.f32();
+    for (auto& m : s.motives2)
+        m = r.f32();
+    s.personData = shorts(r, kPersonDataCount);
+    s.personRead = true;
+}
+
 } // namespace
 
 LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_t version, bool person) {
@@ -185,6 +205,8 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
     }
     if (!found)
         best.tailError = firstError;
+    if (person && best.tailError.empty())
+        parsePerson(best);
     return best;
 }
 
@@ -212,6 +234,15 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
                 lot.saveTypeOf[id] = int16_t(r.i32());
             }
             haveModule = true;
+        } else if (e.tgi.type == kTypeSimulator && e.tgi.instance == 1) {
+            const auto bytes = pkg.read(e);
+            BinReader r(bytes);
+            r.skip(kFileNameSize);
+            if (r.u32() != kTypeSimulator)
+                throw FormatError("simulator state without its \"SIMI\" tag");
+            r.u32(); // version (the object module's)
+            r.u32();
+            lot.globals = shorts(r, kGlobalCount);
         } else if (e.tgi.type == kTypeSaveTypes) {
             const auto bytes = pkg.read(e);
             BinReader r(bytes);

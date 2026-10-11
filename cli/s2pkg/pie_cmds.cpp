@@ -10,6 +10,7 @@
 #include "formats/resindex.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
+#include "vm/lot_resume.hpp"
 
 #include <cstdio>
 #include <filesystem>
@@ -43,7 +44,7 @@ const char* checkName(vm::CheckResult r) {
 std::string nameOf(const vm::Object& o) { return o.definition ? o.definition->fileName : "?"; }
 
 int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
-           int select, int ticks, bool all, std::optional<int> motives) {
+           int select, int ticks, bool all, std::optional<int> motives, bool fromInit) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -54,9 +55,10 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     machine.instructionsPerTurn = 20000;
     machine.setClockGlobals();
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
+    // The saved state (motives, tree stacks, clock), or every Init with --init.
+    vm::startSavedLot(machine, load, saved, fromInit);
     if (motives)
         vm::setAllMotives(machine, int16_t(*motives));
-    vm::startLotObjects(machine, load, 0);
 
     const vm::ObjectId sim = vm::findSim(machine, simQuery);
     if (!sim)
@@ -145,6 +147,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     std::vector<std::string> pos;
     int select = -1, ticks = 30;
     std::optional<int> motives;
+    bool fromInit = false;
     bool all = false;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
@@ -152,6 +155,8 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
             select = std::stoi(argv[++i]);
         else if (a == "--ticks" && i + 1 < argc)
             ticks = std::stoi(argv[++i]);
+        else if (a == "--init")
+            fromInit = true;
         else if (a == "--motives" && i + 1 < argc)
             motives = std::stoi(argv[++i]);
         else if (a == "--all")
@@ -161,11 +166,11 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (pos.empty() || pos.size() > 3)
         return -1;
-    return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives);
+    return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives, fromInit);
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N]] [--motives N]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N]] [--motives N] [--init]\n";
 }
 
 } // namespace os2
