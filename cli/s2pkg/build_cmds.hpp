@@ -22,7 +22,10 @@ class VM;
 //   --wall x0,y0,x1,y1[,level]          walls along a run (axis or 45°)
 //   --room x0,y0,x1,y1[,level]          walls around a rectangle
 //   --delete-wall x0,y0,x1,y1[,level]
-//   --floor x0,y0,x1,y1,pattern[,level] floor the tiles of a rectangle ("none" erases)
+//   --fence x0,y0,x1,y1,fence[,level]   a fence along a run (catalog GUID or name)
+//   --delete-fence x0,y0,x1,y1[,level]
+//   --floor x0,y0,x1,y1,pattern[,level[,rotation]] floor the tiles of a rectangle ("none" erases)
+//   --floor-click px,py,pattern[,level[,rotation]] one click: the quarters under a point
 //   --wallpaper x0,y0,x1,y1,side,pattern[,level]  side r, l or b (seen from x0,y0)
 //   --wallpaper-room x,y,pattern[,level]
 //   --door <guid|name>@x,y[,dir[,level]]  a door or window (object tool rules)

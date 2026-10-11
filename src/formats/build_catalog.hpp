@@ -30,6 +30,18 @@ struct BuildPattern {
     std::string lotName() const;
 };
 
+// A fence (cTSCatalog::LoadFences: the catalog's property sets of type
+// 0x2CB230B8 in catpatterns.bundle.package, "cost" a section, "rail",
+// "diagrail" and "post" models, the name and description in the STR#
+// "stringsetid" of group "stringsetgroupid"). A lot keeps a fence as a
+// wall whose type is the fence's GUID (Lot::isFence).
+struct BuildFence {
+    uint32_t guid = 0;
+    std::string name, description;
+    std::string rail, diagonalRail, post; // CRES names
+    int price = 0;                        // per section
+};
+
 // Build-mode prices that are not in the data (docs/buy-build-mac.md §7).
 // A wall costs §70 a section (the game's catalog text; the binary's wall
 // cost path is not traced: inferred), and selling back what was built in
@@ -44,6 +56,10 @@ public:
     static BuildCatalog load(ResourceIndex& index);
 
     const std::vector<BuildPattern>& floors() const { return floors_; }
+    const std::vector<BuildFence>& fences() const { return fences_; }
+    // A fence by GUID ("0x...") or (part of) its name.
+    const BuildFence* findFence(const std::string& key) const;
+    const BuildFence* fenceByGuid(uint32_t guid) const;
     const std::vector<BuildPattern>& walls() const { return walls_; }
     // A pattern by GUID ("0x...") or (part of) its name or material.
     const BuildPattern* find(const std::string& key, bool floor) const;
@@ -53,6 +69,7 @@ public:
 
 private:
     std::vector<BuildPattern> floors_, walls_;
+    std::vector<BuildFence> fences_;
 };
 
 } // namespace os2

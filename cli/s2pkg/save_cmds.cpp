@@ -444,7 +444,8 @@ int saveCommand(const std::string& cmd, int argc, char** argv) {
 
 const char* saveUsage() {
     return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
-           "              [--wall|--room|--delete-wall x0,y0,x1,y1[,level]] [--floor x0,y0,x1,y1,pattern[,level]]\n"
+           "              [--wall|--room|--delete-wall x0,y0,x1,y1[,level]] [--floor x0,y0,x1,y1,pattern[,level[,rot]]]\n"
+           "              [--fence x0,y0,x1,y1,fence[,level]] [--delete-fence x0,y0,x1,y1[,level]] [--floor-click px,py,pattern[,level]]\n"
            "              [--wallpaper x0,y0,x1,y1,r|l|b,pattern[,level]] [--wallpaper-room x,y,pattern[,level]]\n"
            "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
            "       s2pkg objt-check <lot.package>...\n";

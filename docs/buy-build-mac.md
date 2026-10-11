@@ -626,6 +626,28 @@ trecho:
   inteiro, mas só as paredes de sauna do BV o ligam). Parede: 56 por trecho.
 - Paredes de palco e invisíveis (estilos 301/300, BV) têm caminhos próprios.
 
+Rodada 9 (lido): `UserMayEraseWallOrFence` testa os dois lados com
+`FUN_009ab944` (BV): para cada objeto do tile do lado (salvo od `0x22` ≠ 0),
+um Sim → `0x4B`; um objeto **preso àquele trecho** (vtable `0x26c` com o
+locator; para multi-tile, qualquer parte presa conta pelo grupo) e em uso
+(`FUN_009ab5f8`) → `0x1B`. Ou seja, o `0x1B` só vale para objetos presos à
+parede, não para qualquer vizinho. `EraseWallAttachedObjects` (BV `0x30c514`,
+nomeado errado `cTSUserToolMoveLot::DoMouseMove`) percorre os objetos do tile
+do lado (`WorldDB` vtable `0xe4`/`ObjectOnTileAtIndex`) e apaga
+(`cTSUserToolUndoableWall::EraseObject`) os que se prendem ao locator
+(vtable `0x26c`), salvo os de categoria od `0x3B` = `0x7D` com vtable `0x348`
+≠ 0. Aqui (inferido, o corpo do `0x26c` não foi lido): preso = porta/janela
+com o trecho na frente ou atrás, ou objeto cujas flags de parede (od 13)
+exigem parede do lado do trecho; em uso = od `0x3E` > 0 ou um Sim num slot
+dele.
+
+**Terraplanagem sob a parede** (`TryAdjustFloorElevationForWall`,
+`0x9a7f48` → `FUN_009a79d0` por vértice): com `requiresFlatBottom`, cada
+vértice do trecho (os dois da parede reta; a caixa do tile para a diagonal)
+vai para uma altura dada (`FUN_009a5a68`); com `requiresFlatTop`, o vértice do
+andar de cima também. Aqui a altura é a do início do traço e um vértice preso
+por piso ou por outra parede não se move (inferido; o leveler não foi lido).
+
 O preço cheio só volta pelo **desfazer** (a mudança gravada sai com o custo).
 
 **Desfazer** (`ToggleChange`, BV `0x30c134`): percorre as mudanças de trás
@@ -780,9 +802,18 @@ do roteamento e os light maps das salas afetadas.
   `0x9a4e80`) com a máscara 0xF (tile inteiro); num clique sem arrastar, o
   tile do cursor com a máscara de quartos que veio do ponto do mouse
   (`+0x80`). Encher a sala = `UserSetFloorPatternRoom` (BV `0x9a4f90`).
+- **Máscara do clique** (`FUN_003000cc`, lido na rodada 9): se o tile tem
+  parede diagonal (`WorldDB` vtable `0xbc`/`0xc0`), a metade do lado do
+  mouse; senão o tile inteiro (0xF), salvo com o modo de quarto de tile (só
+  BV); no caminho de cima, os quartos da mesma sala do quarto clicado.
 - **Girar** o padrão: tecla `0xACB3A629` (`,`/`.`) cicla o modo de rotação do
   `cTSMainToolbar` 1 → 2 → 4 → 8. A tecla `0xB1265EF3` (alterna o modo de
-  quarto de tile no sim system, vtable `0xcc`/`0xdc`) é **só BV**.
+  quarto de tile no sim system, vtable `0xcc`/`0xdc`) é **só BV**. O
+  `ChangeTile` compara o padrão (`WorldDB` vtable `0x9c`) **e** a rotação
+  (`0xa0`) de cada quarto com os da ferramenta (toolbar vtable `0x78`). Nos
+  lotes a rotação fica no **3ARY `0x15`**, um byte por quarto de tile, 1 em
+  quase todos os quartos dos 62 lotes (inferido pelos dados: os valores do
+  modo da toolbar; nenhum lote gira um piso).
 - **Ao soltar** (BV `0x301324`): se pintou (modo 0 ou 2), cria um undoable de
   elevação como pré-operação e **aplaina o terreno** sob o retângulo (a altura
   do tile inicial, `LevelRect`) ou sob a sala; submete e toca o som.
@@ -791,6 +822,13 @@ do roteamento e os light maps das salas afetadas.
   térreo (salvo `UnevenTilesFloorable` do `WorldDB`) → `0x53`; tile não
   "floorable" (no andar de cima, sem parede/apoio) → `0x52`; objeto no tile
   sem a flag od `0x2A` bit 1 → `0x55`.
+- **`IsFloorable`** (BV `0x16a990`): acima do térreo o tile tem que ser plano
+  e editável; passa se `HasSupport(tile)`; senão, se um dos 4 vizinhos está
+  `SupportedUnderneath` (o quarto virado para o tile); e, se algum vizinho tem
+  piso (`WorldDB` vtable `0xb4`), se algum tile a até 2 (|dx| + |dy| < 4,
+  fora os cantos ±2/±2) está apoiado, ou um do 3×3 passa em `FUN_001654b4`.
+  Aqui `HasSupport`/`SupportedUnderneath` = piso no tile de baixo ou parede
+  que carrega peso numa aresta dele (inferido).
 - **Custo** (`cTSUserToolUndoableFloorPattern::ChangeTile`, BV `0x3ee7e0`):
 
 ```
@@ -1117,6 +1155,7 @@ scripts de catálogo.
 - Mapa exato B7/B9 (Diversos, Hobbies "recreação") e os IDs dos sons.
 - Conferir `TestPlacementCommon` no base 1.0 (sem símbolos).
 - O que o teste de altura od 4 compara (máscara do serviço `0xBA4DA53`, vtable `0x2c`).
-- Construção: o fechamento do cômodo retangular (`FUN_009a7dd8`); como o ponto do mouse
-  vira a máscara de quartos do piso (`FUN_003000cc`) no base; o custo por
+- Construção: o fechamento do cômodo retangular (`FUN_009a7dd8`); o corpo de
+  `HasSupport`/`SupportedUnderneath`, do leveler `FUN_009a5a68` e do "preso
+  à parede" (vtable `0x26c`); o custo por
   unidade de altura do terreno (`SetCostForUnitHeightChange`, não decompila).

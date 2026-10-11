@@ -38,7 +38,12 @@ uint8_t toByte(float v) { return uint8_t(std::lround(std::clamp(v, 0.0f, 1.0f) *
 void LotLightMapLayout::init(const Lot& lot) {
     lotWidth = lot.width, lotHeight = lot.height;
     minLevel = lot.minLevel, levels = lot.levelCount;
-    rooms = lot.rooms;
+    // The light's rooms: 3ARY 0x0B (room definition 0, flooded from the
+    // light-blocking walls; fences do not split it), where outdoors is room
+    // 0 (docs/buy-build-mac.md §7.3, docs/lighting-mac.md).
+    const auto light = lot.roomLayers.find(0x0B);
+    const bool lightRooms = light != lot.roomLayers.end() && light->second.size() == lot.rooms.size();
+    rooms = lightRooms ? light->second : lot.rooms;
     elevations = lot.elevations;
     floors = lot.floors;
     floorMaterials.assign(floors.size(), {});
@@ -49,12 +54,11 @@ void LotLightMapLayout::init(const Lot& lot) {
     shelfX_ = 0, shelfY_ = height, shelfH_ = 0;
     walls.clear();
     outdoorRooms_.clear();
-    // A room is outdoors when most of its quarter tiles have no floor
-    // (terrain): the lots keep fenced yards and the strip along the lot's
-    // edge as rooms of their own (inferred; the game keeps an "outside" flag
-    // per room that the lot data does not seem to hold).
+    // Without that map (lots that lack it), from 3ARY 0x09: a room is
+    // outdoors when most of its quarters have no floor (inferred: fenced
+    // yards are rooms of their own there).
     std::map<uint16_t, std::pair<size_t, size_t>> counts; // room -> (quarters, without floor)
-    for (size_t i = 0; i < rooms.size() && i < lot.floors.size(); ++i)
+    for (size_t i = 0; !lightRooms && i < rooms.size() && i < lot.floors.size(); ++i)
         for (size_t q = 0; q < 4; ++q)
             if (const uint16_t r = rooms[i][q]) {
                 auto& c = counts[r];
@@ -64,6 +68,27 @@ void LotLightMapLayout::init(const Lot& lot) {
     for (const auto& [r, c] : counts)
         if (c.second * 2 >= c.first)
             outdoorRooms_.push_back(r);
+    // The VM's rooms (3ARY 0x09) that are outdoors for the light: most of
+    // their quarters outdoors in the light's map (a fenced yard).
+    outdoorPlacementRooms_ = outdoorRooms_;
+    if (lightRooms) {
+        std::map<uint16_t, std::pair<size_t, size_t>> placement; // room -> (quarters, outdoors)
+        for (size_t i = 0; i < lot.rooms.size(); ++i)
+            for (size_t q = 0; q < 4; ++q)
+                if (const uint16_t r = lot.rooms[i][q]) {
+                    auto& c = placement[r];
+                    ++c.first;
+                    c.second += rooms[i][q] == 0;
+                }
+        for (const auto& [r, c] : placement)
+            if (c.second * 2 > c.first)
+                outdoorPlacementRooms_.push_back(r);
+    }
+}
+
+bool LotLightMapLayout::outdoorPlacementRoom(uint16_t room) const {
+    return !room ||
+           std::find(outdoorPlacementRooms_.begin(), outdoorPlacementRooms_.end(), room) != outdoorPlacementRooms_.end();
 }
 
 std::array<float, 2> LotLightMapLayout::floorTexel(int level, float x, float y) const {

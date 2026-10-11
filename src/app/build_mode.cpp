@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 
 namespace os2 {
 
@@ -170,7 +171,7 @@ void BuildMode::exit() {
     if (!active_)
         return;
     cancel();
-    editor_->resetHistory();
+    editor_->resetHistory([this](vm::ObjectId part) { view_.forget(part); });
     vm_.globals[vm::global::Paused] = savedPaused_;
     active_ = false;
     tool_ = Tool::None;
@@ -183,15 +184,23 @@ void BuildMode::exit() {
 void BuildMode::selectWallTool(bool room) {
     cancel();
     tool_ = room ? Tool::Room : Tool::Wall;
-    pattern_ = nullptr, object_ = nullptr;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr;
     say(room ? "room tool" : "wall tool");
+}
+
+void BuildMode::selectFence(const BuildFence& f) {
+    cancel();
+    tool_ = Tool::Fence;
+    fence_ = &f;
+    pattern_ = nullptr, object_ = nullptr;
+    say("fence " + f.name + " (" + money(f.price) + " a section)");
 }
 
 void BuildMode::selectPattern(const BuildPattern& p) {
     cancel();
     tool_ = p.floor ? Tool::Floor : Tool::Wallpaper;
     pattern_ = &p;
-    object_ = nullptr;
+    object_ = nullptr, fence_ = nullptr;
     say(std::string(p.floor ? "floor " : "wall covering ") + p.name + " (" + money(p.price) + ")");
 }
 
@@ -206,7 +215,7 @@ bool BuildMode::selectObject(const CatalogEntry& e) {
     }
     tool_ = Tool::Object;
     object_ = &e;
-    pattern_ = nullptr;
+    pattern_ = nullptr, fence_ = nullptr;
     last_ = {};
     say("holding " + e.name + " (" + money(e.price) + ")");
     return true;
@@ -282,6 +291,16 @@ void BuildMode::syncAfterObject() {
 }
 
 void BuildMode::rotate(int steps) {
+    if (tool_ == Tool::Floor) {
+        // The toolbar's rotation mode: 1 -> 2 -> 4 -> 8 (key 0xACB3A629).
+        int k = 0;
+        while ((1 << k) < floorRotation_ && k < 3)
+            ++k;
+        k = ((k + (steps > 0 ? 1 : -1)) % 4 + 4) % 4;
+        floorRotation_ = 1 << k;
+        say("floor rotation " + std::to_string(90 * k) + " degrees");
+        return;
+    }
     direction_ = ((direction_ + steps) % 8 + 8) % 8;
     if (held_ && !last_.parts.empty())
         holdObjectAt(last_.parts.front().tile.x, last_.parts.front().tile.y, direction_);
@@ -426,7 +445,13 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
         pointer_ = p;
     const simd_float2 a = *dragFrom_, b = pointer_.value_or(a);
     dragFrom_.reset();
-    if (tool_ == Tool::Wall || tool_ == Tool::Room) {
+    if (tool_ == Tool::Fence && fence_) {
+        const auto r = snapRun(a, b);
+        if (r[0] == r[2] && r[1] == r[3])
+            return true;
+        applied(control_ ? editor_->deleteFences(level_, r[0], r[1], r[2], r[3])
+                         : editor_->drawFences(level_, r[0], r[1], r[2], r[3], *fence_));
+    } else if (tool_ == Tool::Wall || tool_ == Tool::Room) {
         if (tool_ == Tool::Room || shift_) {
             const int x0 = int(std::lround(a.x)), y0 = int(std::lround(a.y)), x1 = int(std::lround(b.x)),
                       y1 = int(std::lround(b.y));
@@ -444,8 +469,12 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
                              : editor_->drawWalls(level_, r[0], r[1], r[2], r[3]));
         }
     } else if (tool_ == Tool::Floor) {
+        // A click without a drag floors the quarters under the mouse
+        // (FUN_003000cc: the half on its side of a diagonal wall).
+        const bool click = int(std::floor(a.x)) == int(std::floor(b.x)) && int(std::floor(a.y)) == int(std::floor(b.y));
+        const int quarters = click ? editor_->clickQuarters(level_, b.x, b.y) : 0xF;
         applied(editor_->paintFloor(level_, int(std::floor(a.x)), int(std::floor(a.y)), int(std::floor(b.x)),
-                                    int(std::floor(b.y)), control_ ? nullptr : pattern_));
+                                    int(std::floor(b.y)), control_ ? nullptr : pattern_, quarters, floorRotation_));
     }
     return true;
 }
@@ -465,11 +494,11 @@ void BuildMode::update() {
     if (active_ && pointer_) {
         const simd_float2 p = *pointer_;
         auto z = [&](float x, float y) { return sim_.floorHeight(level_, x, y) + 0.03f; };
-        if ((tool_ == Tool::Wall || tool_ == Tool::Room)) {
+        if (tool_ == Tool::Wall || tool_ == Tool::Room || tool_ == Tool::Fence) {
             std::vector<std::array<int, 4>> runs;
             if (dragFrom_) {
                 const simd_float2 a = *dragFrom_;
-                if (tool_ == Tool::Room || shift_) {
+                if (tool_ == Tool::Room || (shift_ && tool_ == Tool::Wall)) {
                     const int x0 = int(std::lround(a.x)), y0 = int(std::lround(a.y)), x1 = int(std::lround(p.x)),
                               y1 = int(std::lround(p.y));
                     runs = {{x0, y0, x1, y0}, {x1, y0, x1, y1}, {x1, y1, x0, y1}, {x0, y1, x0, y0}};
@@ -479,7 +508,9 @@ void BuildMode::update() {
             }
             for (const auto& run : runs)
                 for (const auto& s : vm::wallSections(run[0], run[1], run[2], run[3])) {
-                    const bool ok = control_ || editor_->wallBlocked(level_, s[0], s[1], s[2], s[3]).empty();
+                    const bool ok = control_ || editor_->wallBlocked(level_, s[0], s[1], s[2], s[3], nullptr,
+                                                                     tool_ == Tool::Fence, true)
+                                                    .empty();
                     const float len = std::hypot(float(s[2] - s[0]), float(s[3] - s[1]));
                     put(ok, placeQuad(float(s[0]), float(s[1]), z(float(s[0]), float(s[1])), len, 0.18f,
                                       std::atan2(float(s[3] - s[1]), float(s[2] - s[0])), true));
@@ -517,9 +548,33 @@ void BuildMode::update() {
 
 // --- The panel -----------------------------------------------------------------
 
-const RgbaImage* BuildMode::patternThumbnail(const BuildPattern& p) {
-    if (auto it = thumbs_.find(p.guid); it != thumbs_.end())
+const RgbaImage* BuildMode::patternThumbnail(const BuildPattern& p) { return materialThumbnail(p.guid, p.material); }
+
+// Fences have no catalog thumbnail in the game's cache: their rail's
+// material texture stands in for it (as patterns show their texture).
+const RgbaImage* BuildMode::fenceThumbnail(const BuildFence& f) {
+    if (auto it = thumbs_.find(f.guid); it != thumbs_.end())
         return it->second.get();
+    std::string material;
+    try {
+        const ObjectModel m = loadObjectModel(index_, f.rail);
+        for (const auto& part : m.parts)
+            if (!part.material.empty()) {
+                material = part.material;
+                break;
+            }
+    } catch (const std::exception&) {
+    }
+    if (material.empty())
+        return thumbs_.emplace(f.guid, nullptr).first->second.get();
+    return materialThumbnail(f.guid, material);
+}
+
+const RgbaImage* BuildMode::materialThumbnail(uint32_t key, const std::string& materialName) {
+    if (auto it = thumbs_.find(key); it != thumbs_.end())
+        return it->second.get();
+    BuildPattern p;
+    p.guid = key, p.material = materialName;
     std::shared_ptr<RgbaImage> img;
     // The material's base texture (the game renders its catalog swatches
     // from the material: wallthumbnailmat; here the texture itself).
@@ -550,7 +605,8 @@ const RgbaImage* BuildMode::patternThumbnail(const BuildPattern& p) {
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: build mode: thumbnail of %s: %s\n", p.material.c_str(), e.what());
     }
-    return thumbs_.emplace(p.guid, std::move(img)).first->second.get();
+    thumbs_[p.guid] = std::move(img);
+    return thumbs_[p.guid].get();
 }
 
 std::vector<BuildMode::Item> BuildMode::items() {
@@ -604,6 +660,14 @@ std::vector<BuildMode::Item> BuildMode::items() {
     case 10:
         if (subsort_ == 6)
             objectItems(8, 8); // gates
+        if (subsort_ == 5) // BA50 fences
+            for (const BuildFence& f : patterns_.fences()) {
+                Item it;
+                it.tool = Tool::Fence;
+                it.fence = &f;
+                it.name = f.name, it.description = f.description, it.price = f.price;
+                out.push_back(std::move(it));
+            }
         break;
     default: break;
     }
@@ -737,7 +801,8 @@ UiScreen BuildMode::screen(int width, int height) {
             const float cy = (*r)[1] + kGridY + float(i / kColumns) * (ch + kMarginY);
             const float tx = cx + (cw - thumb) / 2;
             const bool selected = (it.pattern && it.pattern == pattern_) || (it.object && it.object == object_) ||
-                                  (!it.pattern && !it.object && it.tool == tool_);
+                                  (it.fence && it.fence == fence_) ||
+                                  (!it.pattern && !it.object && !it.fence && it.tool == tool_);
             if (selected) {
                 UiQuad q;
                 q.x0 = tx - 2, q.y0 = cy - 2, q.x1 = tx + thumb + 2, q.y1 = cy + thumb + 2;
@@ -747,6 +812,8 @@ UiScreen BuildMode::screen(int width, int height) {
             const RgbaImage* img = it.image;
             if (!img && it.pattern)
                 img = patternThumbnail(*it.pattern);
+            if (!img && it.fence)
+                img = fenceThumbnail(*it.fence);
             if (!img && it.object)
                 img = objects_.thumbnail(*it.object);
             if (img) {
@@ -806,6 +873,8 @@ UiScreen BuildMode::screen(int width, int height) {
                 const RgbaImage* t = hovered_->image;
                 if (!t && hovered_->pattern)
                     t = patternThumbnail(*hovered_->pattern);
+                if (!t && hovered_->fence)
+                    t = fenceThumbnail(*hovered_->fence);
                 if (!t && hovered_->object)
                     t = objects_.thumbnail(*hovered_->object);
                 if (t)
@@ -864,6 +933,8 @@ bool BuildMode::press(simd_float2 p) {
                 const Item& it = list[size_t(t.value)];
                 if (it.pattern)
                     selectPattern(*it.pattern);
+                else if (it.fence)
+                    selectFence(*it.fence);
                 else if (it.object)
                     selectObject(*it.object);
                 else
@@ -904,6 +975,7 @@ void BuildMode::hover(simd_float2 p) {
         }
     const bool changed = over.has_value() != hovered_.has_value() ||
                          (over && (over->pattern != hovered_->pattern || over->object != hovered_->object ||
+                                   over->fence != hovered_->fence ||
                                    over->tool != hovered_->tool));
     if (changed)
         hovered_ = over, dirty_ = true;
@@ -928,6 +1000,113 @@ void BuildMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t 
         dirty_ = false;
     }
     layers_[layer_]->encode(enc, width, height);
+}
+
+} // namespace os2
+
+namespace os2 {
+
+// Headless steps, in order (levels default to the current one):
+// --build-open <category>[,<subsort>] opens a panel, --build-level <n>,
+// --build-funds <n> (test aid: sets the family's funds),
+// --wall/--room/--delete-wall x0,y0,x1,y1, --fence x0,y0,x1,y1,<fence>,
+// --delete-fence x0,y0,x1,y1, --floor x0,y0,x1,y1,<pattern|none>[,rotation],
+// --floor-click px,py,<pattern> (one click: the quarters under the point),
+// --floor-rotation <1|2|4|8>, --wallpaper x0,y0,x1,y1,<r|l|b>,<pattern|none>,
+// --wallpaper-room x,y,<pattern|none>, --door <guid|name>@x,y[,dir] places
+// a door, window or gate, --build-undo / --build-redo (with any value).
+void BuildMode::runSteps(const std::vector<std::string>& args) {
+    if (!active_)
+        return;
+    for (size_t i = 1; i + 1 < args.size(); ++i) {
+        const std::string& a = args[i];
+        const std::string& v = args[i + 1];
+        std::vector<std::string> f;
+        {
+            std::string cur;
+            for (char c : v + ",")
+                if (c == ',')
+                    f.push_back(cur), cur.clear();
+                else
+                    cur += c;
+        }
+        auto n = [&](size_t k) { return k < f.size() && !f[k].empty() ? std::stoi(f[k]) : 0; };
+        auto pattern = [&](const std::string& key, bool floor) -> const BuildPattern* {
+            if (key == "none")
+                return nullptr;
+            const BuildPattern* p = patterns_.find(key, floor);
+            if (!p)
+                throw std::runtime_error(a + ": no pattern \"" + key + "\"");
+            return p;
+        };
+        vm::BuildEditor& ed = *editor_;
+        std::optional<vm::BuildEditor::Result> r;
+        if (a == "--build-open")
+            openCategory(n(0), n(1));
+        else if (a == "--build-funds") // test aid: the family's funds
+            vm::addFunds(vm_, n(0) - vm::funds(vm_));
+        else if (a == "--build-level")
+            setLevel(n(0));
+        else if (a == "--wall" && f.size() >= 4)
+            r = ed.drawWalls(level_, n(0), n(1), n(2), n(3)), selectWallTool(false);
+        else if (a == "--room" && f.size() >= 4)
+            r = ed.drawRoom(level_, n(0), n(1), n(2), n(3)), selectWallTool(true);
+        else if (a == "--delete-wall" && f.size() >= 4)
+            r = ed.deleteWalls(level_, n(0), n(1), n(2), n(3));
+        else if (a == "--fence" && f.size() >= 5) {
+            const BuildFence* fence = patterns_.findFence(f[4]);
+            if (!fence)
+                throw std::runtime_error("--fence: no fence \"" + f[4] + "\"");
+            selectFence(*fence);
+            r = ed.drawFences(level_, n(0), n(1), n(2), n(3), *fence);
+        } else if (a == "--delete-fence" && f.size() >= 4)
+            r = ed.deleteFences(level_, n(0), n(1), n(2), n(3));
+        else if (a == "--floor-rotation")
+            floorRotation_ = n(0);
+        else if (a == "--floor" && f.size() >= 5) {
+            const BuildPattern* p = pattern(f[4], true);
+            if (p)
+                selectPattern(*p);
+            r = ed.paintFloor(level_, n(0), n(1), n(2), n(3), p, 0xF, f.size() >= 6 ? n(5) : floorRotation_);
+        } else if (a == "--floor-click" && f.size() >= 3) {
+            const float px = std::stof(f[0]), py = std::stof(f[1]);
+            const BuildPattern* p = pattern(f[2], true);
+            if (p)
+                selectPattern(*p);
+            const int x = int(std::floor(px)), y = int(std::floor(py));
+            r = ed.paintFloor(level_, x, y, x, y, p, ed.clickQuarters(level_, px, py), floorRotation_);
+        } else if (a == "--wallpaper" && f.size() >= 6) {
+            const BuildPattern* p = pattern(f[5], false);
+            r = ed.paintWalls(level_, n(0), n(1), n(2), n(3), f[4] == "r" ? 1 : f[4] == "l" ? -1 : 0, p);
+            if (p)
+                selectPattern(*p);
+        } else if (a == "--wallpaper-room" && f.size() >= 3) {
+            r = ed.paintRoom(level_, n(0), n(1), pattern(f[2], false));
+        } else if (a == "--door") {
+            const auto at = v.find('@');
+            const CatalogEntry* e = objects_.find(v.substr(0, at));
+            if (!e)
+                throw std::runtime_error("--door: no build object \"" + v.substr(0, at) + "\"");
+            int x = 0, y = 0, dir = 2;
+            if (at != std::string::npos)
+                std::sscanf(v.c_str() + at + 1, "%d,%d,%d", &x, &y, &dir);
+            selectObject(*e);
+            if (at != std::string::npos)
+                placeObjectAt(x, y, dir);
+        } else if (a == "--build-undo") {
+            undo();
+        } else if (a == "--build-redo") {
+            redo();
+        }
+        if (r) {
+            std::printf("opensims2: build: %s %s: %s%s (funds §%d)\n", a.c_str(), v.c_str(), r->ok ? "" : "FAILED: ",
+                        r->message.c_str(), vm::funds(vm_));
+            if (r->ok && r->changed && onGeometryChanged)
+                onGeometryChanged();
+        }
+    }
+    std::fflush(stdout);
+    update();
 }
 
 } // namespace os2

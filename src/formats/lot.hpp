@@ -31,7 +31,23 @@ struct Lot {
     // (west, north, east, south) as SMAP 0x0E references; 0 is no floor.
     std::vector<std::array<uint16_t, 4>> floors;
 
-    // 3ARY 0x09: room ID of every quarter tile, laid out as `floors`; 0 is no room.
+    // 3ARY 0x15: the rotation of every quarter tile's floor pattern, laid
+    // out as `floors`: 1, 2, 4 or 8 (0, 90, 180, 270 degrees; the
+    // cTSMainToolbar rotation mode the floor tool's `,`/`.` cycle). The
+    // shipped lots hold 1 everywhere (0 in a few tiles). Inferred from the
+    // data: one byte per quarter, the values of the toolbar's modes.
+    std::vector<std::array<uint8_t, 4>> floorRotations;
+
+    // Room ID of every quarter tile, laid out as `floors`; 0 is outdoors.
+    // The game keeps three room maps (cPartitionManager, docs/buy-build-mac.md
+    // §7.3), each flooded from the walls of its own wall graph: 3ARY 0x09
+    // (`rooms`, room definition 2) from the partitions that block placement
+    // (WGRA 5: every wall but the deck skirts, and fences), which the VM's
+    // objects take as their room; 0x0A (definition 1) from the load-bearing
+    // ones (WGRA 6); 0x0B (definition 0, `roomLayers`) from the light-blocking
+    // ones (WGRA 7: walls, attic and foundation walls, no fences), which the
+    // light maps use, so a fenced yard is a room of its own in 0x09 and
+    // outdoors (0) in 0x0B.
     std::vector<std::array<uint16_t, 4>> rooms;
 
     // SMAP 0x0E / 0x0D: pattern reference -> pattern name ("sidewalk", "blank")

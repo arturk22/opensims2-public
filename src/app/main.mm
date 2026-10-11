@@ -954,6 +954,44 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
     }
 }
 
+// Fence rails and posts (os2::lotFencePieces): one model per CRES, an
+// instance per piece; called again after Build mode changed the fences
+// (instances are reused, extra ones hidden). Returns the pieces placed.
+size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot,
+                        const os2::PatternCatalog& patterns, std::vector<std::string>* warnings) {
+    static std::map<std::string, int> models;
+    static std::vector<int> instances;
+    const auto pieces = os2::lotFencePieces(lot, patterns, warnings);
+    size_t used = 0;
+    for (const auto& piece : pieces) {
+        auto it = models.find(piece.model);
+        if (it == models.end()) {
+            int id = -1;
+            try {
+                id = renderer.addObject(os2::loadObjectModel(index, piece.model), index);
+            } catch (const std::exception& e) {
+                if (warnings)
+                    warnings->push_back(piece.model + ": " + e.what());
+            }
+            it = models.emplace(piece.model, id).first;
+        }
+        if (it->second < 0)
+            continue;
+        simd_float4x4 at;
+        std::memcpy(&at, piece.transform.data(), sizeof at);
+        if (used < instances.size())
+            renderer.setInstanceModel(instances[used], it->second), renderer.setInstanceTransform(instances[used], at);
+        else
+            instances.push_back(renderer.addInstance(it->second, at));
+        ++used;
+    }
+    simd_float4x4 away = matrix_identity_float4x4;
+    away.columns[3] = simd_make_float4(0, 0, -1000, 1);
+    for (size_t i = used; i < instances.size(); ++i)
+        renderer.setInstanceTransform(instances[i], away);
+    return used;
+}
+
 // Redraws the lot after Build mode changed it: the model (walls cut away
 // as seen from the camera now, holes for the doors and windows), and the
 // light-map atlas and light maps.
@@ -969,6 +1007,7 @@ void rebuildLotModel(os2::Renderer& renderer, os2::ResourceIndex& index) {
     gLightMapLayout.emplace();
     const os2::ObjectModel model = os2::buildLotModel(*gLotShape, index, *gLotPatterns, view, &*gLightMapLayout);
     renderer.setInstanceModel(gLotInstance, renderer.addObject(model, index));
+    placeFencePieces(renderer, index, *gLotShape, *gLotPatterns, nullptr);
     if (gLighting) {
         gLighting->setLightMapLayout(*gLightMapLayout);
     } else {
@@ -983,12 +1022,7 @@ void rebuildLotModel(os2::Renderer& renderer, os2::ResourceIndex& index) {
 }
 
 // Build mode over the lot's VM: the puck's Build button (mode 2) or --mode
-// build. Headless steps (in order, levels default to the current one):
-// --build-open <category>[,<subsort>] opens a panel, --wall/--room/
-// --delete-wall x0,y0,x1,y1, --floor x0,y0,x1,y1,<pattern|none>,
-// --wallpaper x0,y0,x1,y1,<r|l|b>,<pattern|none>, --wallpaper-room
-// x,y,<pattern|none>, --door <guid|name>@x,y[,dir] places a door or window,
-// --build-undo / --build-redo (with any value), --build-level <n>.
+// build; headless steps in BuildMode::runSteps (build_mode.cpp).
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
     if (!gLotShape)
         return;
@@ -1020,77 +1054,10 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
 void runBuildSteps() {
     if (!gBuild || !gBuild->active())
         return;
-    NSArray<NSString*>* args = sceneArgs();
-    for (NSUInteger i = 1; i + 1 < args.count; ++i) {
-        const std::string a = args[i].UTF8String, v = args[i + 1].UTF8String;
-        std::vector<std::string> f;
-        {
-            std::string cur;
-            for (char c : v + ",")
-                if (c == ',')
-                    f.push_back(cur), cur.clear();
-                else
-                    cur += c;
-        }
-        auto n = [&](size_t k) { return k < f.size() && !f[k].empty() ? std::stoi(f[k]) : 0; };
-        const int level = gBuild->level();
-        os2::vm::BuildEditor& ed = gBuild->editor();
-        auto pattern = [&](const std::string& key, bool floor) -> const os2::BuildPattern* {
-            if (key == "none")
-                return nullptr;
-            const os2::BuildPattern* p = gBuild->patterns().find(key, floor);
-            if (!p)
-                throw std::runtime_error(a + ": no pattern \"" + key + "\"");
-            return p;
-        };
-        std::optional<os2::vm::BuildEditor::Result> r;
-        if (a == "--build-open")
-            gBuild->openCategory(n(0), n(1));
-        else if (a == "--build-level")
-            gBuild->setLevel(n(0));
-        else if (a == "--wall" && f.size() >= 4)
-            r = ed.drawWalls(level, n(0), n(1), n(2), n(3)), gBuild->selectWallTool(false);
-        else if (a == "--room" && f.size() >= 4)
-            r = ed.drawRoom(level, n(0), n(1), n(2), n(3)), gBuild->selectWallTool(true);
-        else if (a == "--delete-wall" && f.size() >= 4)
-            r = ed.deleteWalls(level, n(0), n(1), n(2), n(3));
-        else if (a == "--floor" && f.size() >= 5) {
-            const os2::BuildPattern* p = pattern(f[4], true);
-            r = ed.paintFloor(level, n(0), n(1), n(2), n(3), p);
-            if (p)
-                gBuild->selectPattern(*p);
-        } else if (a == "--wallpaper" && f.size() >= 6) {
-            const os2::BuildPattern* p = pattern(f[5], false);
-            r = ed.paintWalls(level, n(0), n(1), n(2), n(3), f[4] == "r" ? 1 : f[4] == "l" ? -1 : 0, p);
-            if (p)
-                gBuild->selectPattern(*p);
-        } else if (a == "--wallpaper-room" && f.size() >= 3) {
-            r = ed.paintRoom(level, n(0), n(1), pattern(f[2], false));
-        } else if (a == "--door") {
-            const auto at = v.find('@');
-            const os2::CatalogEntry* e = gBuild->objects().find(v.substr(0, at));
-            if (!e)
-                throw std::runtime_error("--door: no build object \"" + v.substr(0, at) + "\"");
-            int x = 0, y = 0, dir = 2;
-            if (at != std::string::npos)
-                std::sscanf(v.c_str() + at + 1, "%d,%d,%d", &x, &y, &dir);
-            gBuild->selectObject(*e);
-            if (at != std::string::npos)
-                gBuild->placeObjectAt(x, y, dir);
-        } else if (a == "--build-undo") {
-            gBuild->undo();
-        } else if (a == "--build-redo") {
-            gBuild->redo();
-        }
-        if (r) {
-            std::printf("opensims2: build: %s %s: %s%s (funds §%d)\n", a.c_str(), v.c_str(), r->ok ? "" : "FAILED: ",
-                        r->message.c_str(), os2::vm::funds(gSimulation->machine()));
-            if (r->ok && r->changed && gBuild->onGeometryChanged)
-                gBuild->onGeometryChanged();
-        }
-    }
-    std::fflush(stdout);
-    gBuild->update();
+    std::vector<std::string> args;
+    for (NSString* a in sceneArgs())
+        args.push_back(a.UTF8String);
+    gBuild->runSteps(args);
 }
 
 // The --buy/--hold/--place/--grab/--sell/--undo steps of a headless run, in order.
@@ -1187,32 +1154,14 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     }
     // Fence rails and posts: one model per CRES, an instance per piece.
     std::vector<std::string> fenceWarnings;
-    const auto fences = os2::lotFencePieces(lot, patterns, &fenceWarnings);
-    std::map<std::string, int> fenceModels;
-    for (const auto& piece : fences) {
-        auto it = fenceModels.find(piece.model);
-        if (it == fenceModels.end()) {
-            int id = -1;
-            try {
-                id = renderer.addObject(os2::loadObjectModel(index, piece.model), index);
-            } catch (const std::exception& e) {
-                fenceWarnings.push_back(piece.model + ": " + e.what());
-            }
-            it = fenceModels.emplace(piece.model, id).first;
-        }
-        if (it->second < 0)
-            continue;
-        simd_float4x4 at;
-        std::memcpy(&at, piece.transform.data(), sizeof at);
-        renderer.addInstance(it->second, at);
-    }
+    const size_t fences = placeFencePieces(renderer, index, lot, patterns, &fenceWarnings);
     for (const auto& w : fenceWarnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     perfLap("fences");
     std::printf("opensims2: lot %s: %ux%u tiles, levels %d..%d, %zu walls, %zu paints (%zu parts), %zu roofs, "
                 "%zu fence pieces, %zu of %zu objects and %zu Sims placed in %.2f s\n",
                 query->c_str(), lot.width, lot.height, lot.minLevel, lot.minLevel + lot.levelCount - 1,
-                lot.walls.size(), lot.paints.size(), model.parts.size(), lot.roofs.size(), fences.size(), objects,
+                lot.walls.size(), lot.paints.size(), model.parts.size(), lot.roofs.size(), fences, objects,
                 lot.objects.size(), sims, CACurrentMediaTime() - start);
     if (gCamera)
         gCameraFollow = std::make_unique<os2::LotCameraFollow>(*gCamera, lot);

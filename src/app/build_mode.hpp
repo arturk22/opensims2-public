@@ -61,7 +61,7 @@ public:
     // The lot's walls, floors or doors changed: the host redraws it.
     std::function<void()> onGeometryChanged;
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -72,6 +72,14 @@ public:
     // Picks a tool with what it lays (a pattern for floors and walls).
     void selectWallTool(bool room);
     void selectPattern(const BuildPattern& p);
+    void selectFence(const BuildFence& f);
+    // The floor tool's pattern rotation (1, 2, 4, 8; `,`/`.` cycle it).
+    int floorRotation() const { return floorRotation_; }
+    void setFloorRotation(int r) { floorRotation_ = r; }
+
+    // Headless steps of a run (--wall, --floor, --fence, ... in order; see
+    // the comment in build_mode.cpp), from the command line's arguments.
+    void runSteps(const std::vector<std::string>& args);
     bool selectObject(const CatalogEntry& e);
     // Headless: places the held object (a door or window) at a tile.
     bool placeObjectAt(int x, int y, int direction);
@@ -115,12 +123,15 @@ private:
         Tool tool = Tool::None;
         const BuildPattern* pattern = nullptr;
         const CatalogEntry* object = nullptr;
+        const BuildFence* fence = nullptr;
         std::string name, description;
         int price = 0;
         const RgbaImage* image = nullptr;
     };
     std::vector<Item> items();
     const RgbaImage* patternThumbnail(const BuildPattern& p);
+    const RgbaImage* fenceThumbnail(const BuildFence& f);
+    const RgbaImage* materialThumbnail(uint32_t key, const std::string& material);
     std::optional<simd_float2> groundPoint(simd_float3 eye, simd_float3 dir) const;
     void applied(const vm::BuildEditor::Result& r);
     void say(const std::string& m);
@@ -149,6 +160,8 @@ private:
     size_t page_ = 0;
     const BuildPattern* pattern_ = nullptr;
     const CatalogEntry* object_ = nullptr;
+    const BuildFence* fence_ = nullptr;
+    int floorRotation_ = 1;
     std::optional<Item> hovered_;
     std::map<uint32_t, std::shared_ptr<RgbaImage>> thumbs_;
 

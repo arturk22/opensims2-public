@@ -13,7 +13,7 @@ namespace os2 {
 
 namespace {
 
-constexpr uint32_t kTypeCatalogPattern = 0xCCA8E925, kTypeStr = 0x53545223;
+constexpr uint32_t kTypeCatalogPattern = 0xCCA8E925, kTypeCatalogFence = 0x2CB230B8, kTypeStr = 0x53545223;
 
 std::string lower(std::string s) {
     for (auto& c : s)
@@ -76,6 +76,33 @@ BuildCatalog BuildCatalog::load(ResourceIndex& index) {
             continue;
         (b.floor ? c.floors_ : c.walls_).push_back(std::move(b));
     }
+    for (const auto& loc : index.ofType(kTypeCatalogFence)) {
+        const auto bytes = index.read(loc);
+        const auto p = parsePropertySet(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        if (number(p, "showincatalog", 1) == 0 || number(p, "deprecated") != 0)
+            continue;
+        BuildFence f;
+        f.guid = number(p, "guid");
+        f.price = int(number(p, "cost"));
+        f.name = text(p, "name");
+        f.description = text(p, "description");
+        f.rail = text(p, "rail"), f.diagonalRail = text(p, "diagrail"), f.post = text(p, "post");
+        if (auto s = index.read(Tgi{kTypeStr, number(p, "stringsetgroupid"), number(p, "stringsetid"), 0})) {
+            try {
+                const StringTable t = StringTable::parse(*s);
+                if (const std::string n = t.get(0); !n.empty())
+                    f.name = n;
+                if (const std::string d = t.get(1); !d.empty())
+                    f.description = d;
+            } catch (const std::exception&) {
+            }
+        }
+        if (f.guid && !f.rail.empty())
+            c.fences_.push_back(std::move(f));
+    }
+    std::stable_sort(c.fences_.begin(), c.fences_.end(), [](const BuildFence& a, const BuildFence& b) {
+        return a.price != b.price ? a.price < b.price : a.name < b.name;
+    });
     for (auto* v : {&c.floors_, &c.walls_})
         std::stable_sort(v->begin(), v->end(), [](const BuildPattern& a, const BuildPattern& b) {
             return a.price != b.price ? a.price < b.price : a.name < b.name;
@@ -107,6 +134,26 @@ const BuildPattern* BuildCatalog::find(const std::string& key, bool floor) const
     for (const auto& b : v)
         if (lower(b.material).find(k) != std::string::npos || lower(b.name).find(k) != std::string::npos)
             return &b;
+    return nullptr;
+}
+
+const BuildFence* BuildCatalog::fenceByGuid(uint32_t guid) const {
+    for (const auto& f : fences_)
+        if (f.guid == guid)
+            return &f;
+    return nullptr;
+}
+
+const BuildFence* BuildCatalog::findFence(const std::string& key) const {
+    if (key.size() > 2 && key[0] == '0' && (key[1] == 'x' || key[1] == 'X'))
+        return fenceByGuid(uint32_t(std::strtoul(key.c_str(), nullptr, 16)));
+    const std::string k = lower(key);
+    for (const auto& f : fences_)
+        if (lower(f.name) == k || lower(f.rail) == k)
+            return &f;
+    for (const auto& f : fences_)
+        if (lower(f.name).find(k) != std::string::npos || lower(f.rail).find(k) != std::string::npos)
+            return &f;
     return nullptr;
 }
 

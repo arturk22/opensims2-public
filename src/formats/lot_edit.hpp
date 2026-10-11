@@ -39,6 +39,11 @@ uint16_t patternRef(std::map<uint16_t, std::string>& map, const std::string& nam
 // for none. Out of range: no change, false.
 bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern);
 
+// The rotation of quarter `q`'s floor pattern (Lot::floorRotations: 1, 2,
+// 4 or 8); 1 when the lot has none.
+bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation);
+uint8_t floorRotation(const Lot& lot, int level, int x, int y, int q);
+
 // Rooms again from the walls of each room array's wall graph (rooms 5 ->
 // 3ARY 0x09, 6 -> 0x0A, 7 -> 0x0B): quarter tiles no wall separates share
 // a room. A room keeps the ID most of its quarters had (the larger room

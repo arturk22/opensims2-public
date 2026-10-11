@@ -13,15 +13,20 @@ constexpr uint32_t kGraphAll = 5, kGraphAll2 = 0x18, kGraphLoadBearing = 6, kGra
                    kGraphStandard = 0x16, kGraphAttic = 0x17;
 constexpr uint32_t kRoomsLoadBearing = 0x0A, kRoomsLight = 0x0B;
 
-// The graphs a partition type goes into, from what the saved lots hold
-// (82 lots of the base game: every type in 5 and 0x18; walls 1, 23
-// (foundation), 29 (pool), 16 and 4 (deck skirts) in 6; 1, 3 (attic) and 23
-// in 7; 1, 23 and 29 in 0x16; 3 in 0x17; 16 in 8). Their meaning follows
-// walls.txt (bearsLoad, blocksLight, verticalSpan floorToFloor with a
-// standard thickness, floorToRoof); fences are in 5 and 0x18 only.
+// The graphs a partition type goes into: cPartitionManager::AddWallToGraph
+// (BV 0xc2e7cc) puts every partition but fence arches in one graph (0x18
+// here), the ones that block placement in another (5: every type but the
+// deck skirt 4, blocksPlacement false in walls.txt; fences too), the
+// load-bearing ones in 6, the light-blocking ones in 7, and by vertical
+// span floor-to-floor (0x16), floor-to-floor-based-ceiling (8: deck skirt
+// 16), floor-to-roof (0x17: attic 3); fence arches have their own (0x13,
+// none in the shipped lots). The instance of each graph comes from the
+// saved lots (82 lots of the base game: 5 = every type but 4; 0x18 every
+// type; 6 = 1, 23 (foundation), 29 (pool), 16 and 4; 7 = 1, 3 and 23; 0x16
+// = 1, 23, 29; 0x17 = 3; 8 = 16).
 bool inGraph(uint32_t graph, uint32_t type) {
     switch (graph) {
-    case kGraphAll:
+    case kGraphAll: return type != 4;
     case kGraphAll2: return true;
     case kGraphLoadBearing: return type == 1 || type == 23 || type == 29 || type == 16 || type == 4;
     case kGraphLight: return type == 1 || type == 3 || type == 23;
@@ -217,6 +222,8 @@ bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern) {
     if (lot.floors.empty())
         lot.floors.assign(size_t(lot.width) * lot.height * size_t(lot.levelCount), {});
     lot.floors[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)] = pattern;
+    if (lot.floorRotations.empty())
+        lot.floorRotations.assign(lot.floors.size(), {1, 1, 1, 1});
     // A quarter left without a floor above the ground is in no room.
     if (!pattern && level != 0) {
         if (!lot.rooms.empty())
@@ -226,6 +233,22 @@ bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern) {
                 layer[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)] = 0;
     }
     return true;
+}
+
+bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation) {
+    if (!lot.hasLevel(level) || x < 0 || y < 0 || x >= int(lot.width) || y >= int(lot.height) || q < 0 || q > 3)
+        return false;
+    if (lot.floorRotations.empty())
+        lot.floorRotations.assign(size_t(lot.width) * lot.height * size_t(lot.levelCount), {1, 1, 1, 1});
+    lot.floorRotations[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)] = rotation;
+    return true;
+}
+
+uint8_t floorRotation(const Lot& lot, int level, int x, int y, int q) {
+    if (lot.floorRotations.empty() || !lot.hasLevel(level) || x < 0 || y < 0 || x >= int(lot.width) ||
+        y >= int(lot.height) || q < 0 || q > 3)
+        return 1;
+    return lot.floorRotations[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)];
 }
 
 int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side) {
@@ -324,28 +347,28 @@ void updateRooms(Lot& lot) {
         struct Comp {
             size_t size = 0;
             std::map<uint16_t, size_t> old;
-            bool edge = false;
+            bool edge = false, outside = false; // reaches the lot's edge; holds quarters of room 0 with terrain
             uint16_t id = 0;
         };
         std::map<uint32_t, Comp> cs;
-        uint16_t next = 1;
         for (size_t i = 0; i < comps.size(); ++i) {
             const int li = int(i / (size_t(W) * size_t(H)));
             const int x = int(i / size_t(H) % size_t(W)), y = int(i % size_t(H));
             for (int q = 0; q < 4; ++q) {
                 Comp& c = cs[comps[i][size_t(q)]];
                 ++c.size;
-                if (const uint16_t r = (*rooms)[i][size_t(q)]) {
+                if (const uint16_t r = (*rooms)[i][size_t(q)])
                     ++c.old[r];
-                    next = std::max<uint16_t>(next, uint16_t(r + 1));
-                }
+                else if (li == -lot.minLevel)
+                    c.outside = true;
                 c.edge |= (x == 0 && q == QWest) || (y == 0 && q == QSouth) || (x == W - 1 && q == QEast) ||
                           (y == H - 1 && q == QNorth);
-                (void)li;
             }
         }
         // Larger rooms pick first; each keeps the old ID most of its
-        // quarters had, if no larger room took it.
+        // quarters had, if no larger room took it. Room 0 always survives
+        // (cWallGraph::SetRoomsPreDetach): a region joined to the outdoors
+        // of the ground (room 0 reaching the lot's edge) is outdoors.
         std::vector<std::pair<uint32_t, Comp*>> order;
         for (auto& [k, c] : cs)
             order.push_back({k, &c});
@@ -353,6 +376,10 @@ void updateRooms(Lot& lot) {
                          [](const auto& a, const auto& b) { return a.second->size > b.second->size; });
         std::set<uint16_t> taken;
         for (auto& [k, c] : order) {
+            if (c->edge && c->outside) {
+                c->old.clear();
+                continue;
+            }
             std::vector<std::pair<size_t, uint16_t>> cand;
             for (const auto& [r, n] : c->old)
                 cand.push_back({n, r});
@@ -373,13 +400,23 @@ void updateRooms(Lot& lot) {
                 // A region reaching the edge of the lot that had no room
                 // stays out (the street beyond the lot's boundary, the
                 // outdoors of the upper levels).
-                const bool keep = (r != 0 || floorAt(i, q)) && !(c.edge && c.old.empty());
+                // The ground's terrain counts as a floor (a room drawn on
+                // bare ground is a room).
+                const bool ground = int(i / (size_t(W) * size_t(H))) == -lot.minLevel;
+                const bool keep = (r != 0 || floorAt(i, q) || ground) && !(c.edge && c.old.empty());
                 if (!keep) {
                     r = 0;
                     continue;
                 }
-                if (!c.id)
-                    c.id = next++;
+                // A new room takes the smallest free ID (CreateRoom: the
+                // first hole in the graph's sorted room list).
+                if (!c.id) {
+                    uint16_t id = 1;
+                    while (taken.count(id))
+                        ++id;
+                    c.id = id;
+                    taken.insert(id);
+                }
                 r = c.id;
             }
         }

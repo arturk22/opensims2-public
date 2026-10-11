@@ -135,10 +135,110 @@ static void testEditor() {
     check(funds(vm) == 2000 && lot.walls.empty(), "undoing everything restores the lot and the funds");
 }
 
+// Round 9: the ground levelled under walls and floors, fences and their
+// posts, floor rotation, a click's quarters, the upper floors' support.
+static void testRound9() {
+    Lot lot = flatLot();
+    // A slope along x: elevation = x / 4.
+    for (int x = 0; x <= 12; ++x)
+        for (int y = 0; y <= 10; ++y)
+            lot.elevations[size_t(x) * 11 + size_t(y)] = float(x) * 0.25f;
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetDiv10000] = 0;
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    auto r = ed.drawWalls(1, 2, 3, 6, 3);
+    check(r.ok && r.changed == 4, "a wall across a slope");
+    check(lot.elevation(0, 6, 3) == 0.5f && lot.elevation(0, 4, 3) == 0.5f, "the ground under it is levelled to the start");
+    check(lot.elevation(0, 6, 4) == 1.5f, "the ground beside it is not");
+    check(ed.undo() && lot.elevation(0, 6, 3) == 1.5f, "undo puts the ground back");
+    // Floors level the rectangle to the first tile's height.
+    BuildPattern tile;
+    tile.guid = 0x77, tile.floor = true, tile.price = 4, tile.name = "tile";
+    r = ed.paintFloor(1, 8, 5, 9, 6, &tile, 0xF, 4);
+    check(r.ok && r.changed == 16, "a floor on the slope");
+    check(lot.elevation(0, 10, 7) == lot.elevation(0, 8, 5) && lot.elevation(0, 8, 5) == 2.125f,
+          "the ground under the floor is level at the first tile's mean height");
+    check(floorRotation(lot, 0, 8, 5, 0) == 4, "the floor keeps its rotation");
+    r = ed.paintFloor(1, 8, 5, 8, 5, &tile, 0xF, 4);
+    check(r.ok && r.changed == 0, "the same pattern and rotation is no change");
+    r = ed.paintFloor(1, 8, 5, 8, 5, &tile, 0xF, 2);
+    check(r.ok && r.changed == 4 && r.cost == 4, "another rotation pays the pattern again");
+    // A diagonal wall: a click floors the half under the mouse.
+    ed.drawWalls(1, 2, 6, 3, 7);
+    check(ed.clickQuarters(1, 2.2f, 6.8f) == 0x3 && ed.clickQuarters(1, 2.8f, 6.2f) == 0xC, "a click's half of a diagonal");
+    check(ed.clickQuarters(1, 5.5f, 5.5f) == 0xF, "a click floors a whole tile");
+    // Fences: their cost a section, a post at each point, the refund.
+    BuildFence picket;
+    picket.guid = 0x12345678, picket.price = 10, picket.name = "picket";
+    BuildCatalog none;
+    const int before = funds(vm);
+    r = ed.drawFences(1, 1, 8, 4, 8, picket);
+    check(r.ok && r.changed == 3 && r.cost == 30, "three fence sections at their cost");
+    check(lot.fencePosts.size() == 4, "a post at each grid point of the run");
+    check(funds(vm) == before - 30, "the fence is paid for");
+    r = ed.deleteFences(1, 3, 8, 4, 8);
+    check(r.ok && r.changed == 1 && lot.fencePosts.size() == 3, "the post left with no fence goes");
+    check(ed.undo() && lot.fencePosts.size() == 4 && funds(vm) == before - 30, "undo puts the fence back");
+    // Upper floors: supported from below or near a supported tile.
+    Lot two = flatLot();
+    two.levelCount = 2;
+    two.elevations.resize(13 * 11 * 2, 3.0f);
+    two.floors.resize(12 * 10 * 2);
+    two.rooms.resize(12 * 10 * 2);
+    for (auto& [k, l] : two.roomLayers)
+        l.resize(12 * 10 * 2);
+    for (int x = 2; x < 5; ++x)
+        for (int y = 2; y < 5; ++y)
+            two.floors[size_t(x) * 10 + size_t(y)] = {1, 1, 1, 1};
+    VM vm2(code);
+    vm2.globals[global::BudgetMod10000] = 5000;
+    vm2.world = World::fromLot(two);
+    BuildEditor ed2(vm2, two);
+    check(ed2.floorable(2, 3, 3), "a tile over a floor is floorable");
+    check(!ed2.floorable(2, 9, 9), "a tile over nothing is not");
+    r = ed2.paintFloor(2, 9, 9, 9, 9, &tile);
+    check(!r.ok && r.error == 0x52, "flooring in the air is refused (0x52)");
+    r = ed2.paintFloor(2, 2, 2, 5, 2, &tile);
+    check(r.ok && ed2.floorable(2, 6, 2) && !ed2.floorable(2, 8, 8), "a floor reaches out next to a supported tile");
+}
+
+// Room IDs as cWallGraph makes them: outdoors 0, a new room the smallest
+// free ID, opening a room onto the outdoors gives it back to room 0.
+static void testRoomIds() {
+    Lot lot = flatLot();
+    for (auto* m : {&lot.rooms, &lot.roomLayers[0x0A], &lot.roomLayers[0x0B]})
+        m->assign(12 * 10, {0, 0, 0, 0});
+    auto room = [&](int x0, int y0, int x1, int y1) {
+        for (const auto& s : std::array<std::array<int, 4>, 4>{{{x0, y0, x1, y0}, {x1, y0, x1, y1}, {x1, y1, x0, y1}, {x0, y1, x0, y0}}})
+            for (const auto& t : wallSections(s[0], s[1], s[2], s[3]))
+                addWall(lot, 0, t[0], t[1], t[2], t[3], 1, {0xFFFF, 0xFFFF});
+        updateRooms(lot);
+    };
+    room(1, 1, 3, 3);
+    room(5, 1, 7, 3);
+    check(roomAt(lot, 2, 2) == 1 && roomAt(lot, 6, 2) == 2 && roomAt(lot, 0, 0) == 0, "rooms 1 and 2, outdoors 0");
+    removeWall(lot, 0, 1, 1, 2, 1);
+    updateRooms(lot);
+    check(roomAt(lot, 2, 2) == 0 && roomAt(lot, 6, 2) == 2, "an opened room goes back to the outdoors");
+    room(1, 5, 3, 7);
+    check(roomAt(lot, 2, 6) == 1, "a new room takes the smallest free ID");
+    // A fence splits the placement rooms (0x09) only.
+    for (const auto& t : wallSections(8, 0, 8, 10))
+        addWall(lot, 0, t[0], t[1], t[2], t[3], 0x12345678, {0xFFFF, 0xFFFF});
+    updateRooms(lot);
+    const auto& light = lot.roomLayers[0x0B];
+    check(roomAt(lot, 10, 5) == 0 && light[size_t(10) * 10 + 5][0] == 0, "fences cut no room off the lot's edge");
+}
+
 int main() {
+    testRoomIds();
     testSections();
     testRooms();
     testEditor();
+    testRound9();
     if (failures) {
         std::fprintf(stderr, "%d failures\n", failures);
         return 1;

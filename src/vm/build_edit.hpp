@@ -10,9 +10,11 @@
 
 #include "formats/build_catalog.hpp"
 #include "formats/lot.hpp"
+#include "placement.hpp"
 #include "vm.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -35,21 +37,47 @@ public:
     // Wall tool: a wall along a straight run of grid points, along the
     // grid or diagonal (cTSUserToolWall drags in 45° steps), one section
     // per tile, §70 each (kWallSectionPrice). Sections that are there
-    // already are skipped; one that breaks a rule stops the whole run
-    // (nothing is built), as does a price over the family's funds.
+    // already are skipped; the first one that breaks a rule stops the run
+    // there (PlaceWallLine: the sections before it are built), and a price
+    // over the family's funds builds nothing. On the ground the terrain
+    // under each section is levelled first to the height of the run's
+    // start (TryAdjustFloorElevationForWall, free: FloorElevationUnitChangeCost
+    // is 0), unless a floor or another wall holds a point it would move.
     Result drawWalls(int level, int x0, int y0, int x1, int y1);
     // Room tool: the walls around the rectangle between two grid points.
     Result drawRoom(int level, int x0, int y0, int x1, int y1);
     // Ctrl-drag: the walls along the run go for int(70 x 0.8) = 56 a
-    // section (the full price comes back only by undo).
+    // section (the full price comes back only by undo). The objects
+    // attached to a deleted section are sold with it (EraseWallAttachedObjects:
+    // doors and windows in it, objects that need a wall on that side);
+    // one of them in use stops the run there (0x1B), as does a Sim beside
+    // it (0x4B).
     Result deleteWalls(int level, int x0, int y0, int x1, int y1);
+
+    // Fence tool: a fence of the catalog's `fence` along a run, its `cost` a
+    // section, with a post at every grid point of the run that has none
+    // (UserMayPlaceFence: no slope steeper than 60°, 0x31). Ctrl deletes
+    // fences (int(cost x 0.8) back a section; posts left with no fence go).
+    Result drawFences(int level, int x0, int y0, int x1, int y1, const BuildFence& fence);
+    Result deleteFences(int level, int x0, int y0, int x1, int y1);
 
     // Floor tool over the tiles of a rectangle (corners inclusive), or the
     // given quarters of one tile (`quarters` bits: west, north, east, south).
     // A quarter costs a quarter of the pattern's price; covering another
-    // pattern pays the new one in full; a null pattern erases (a quarter of
-    // floor(price x 0.8) back).
-    Result paintFloor(int level, int x0, int y0, int x1, int y1, const BuildPattern* pattern, int quarters = 0xF);
+    // pattern (or the same with another rotation) pays the new one in full;
+    // a null pattern erases (a quarter of floor(price x 0.8) back).
+    // `rotation` is the pattern's (1, 2, 4, 8 = 0-270 degrees). Painting on
+    // the ground levels the terrain under the rectangle to the height of
+    // its first tile (LevelRect, free); above it a tile must be floorable
+    // (IsFloorable: supported from below or near a supported tile, 0x52).
+    Result paintFloor(int level, int x0, int y0, int x1, int y1, const BuildPattern* pattern, int quarters = 0xF,
+                      int rotation = 1);
+    // The quarters a click on point (px, py) of a tile floors
+    // (FUN_003000cc): the whole tile, or the half on the point's side when
+    // a diagonal wall splits it.
+    int clickQuarters(int level, float px, float py) const;
+    // A floor tile could go there above the ground (IsFloorable).
+    bool floorable(int level, int x, int y) const;
 
     // Wallpaper tool: the faces of the walls along a run, on its right
     // (side +1, seen from (x0, y0) to (x1, y1)), left (-1) or both (0), at
@@ -65,8 +93,10 @@ public:
     bool redo();
     bool canUndo() const { return !undo_.empty(); }
     bool canRedo() const { return !redo_.empty(); }
-    // Leaving Build mode: the history goes (cTSUserToolUndoManager reset).
-    void resetHistory();
+    // Leaving Build mode: the history goes (cTSUserToolUndoManager reset),
+    // and what was sold with the walls dies (`forget` is told each part
+    // first).
+    void resetHistory(const std::function<void(ObjectId)>& forget = {});
 
     // Bumped by every change, for whoever draws the lot.
     uint32_t revision() const { return revision_; }
@@ -79,11 +109,18 @@ public:
     // Why a wall section cannot go there ("" if it can).
     // `code` gets the game's error code (UserMayPlacePartition: 0x40 out of
     // the lot, 0x45 not editable, 0x48 no support, 0x49 slope, 0x4B Sim,
-    // 0x0C object).
-    std::string wallBlocked(int level, int ax, int ay, int bx, int by, int* code = nullptr) const;
+    // 0x0C object). `fence` tests a fence's rules (60° slope at most,
+    // 0x31) instead of a wall's flat bottom; `levelled` leaves the slope
+    // out (the wall tool levels the ground first).
+    std::string wallBlocked(int level, int ax, int ay, int bx, int by, int* code = nullptr, bool fence = false,
+                            bool levelled = false) const;
 
 private:
     struct Geometry {
+        std::vector<float> elevations;
+        std::vector<std::array<uint8_t, 4>> floorRotations;
+        std::vector<Lot::Object> objects;
+        std::vector<Lot::FencePost> fencePosts;
         std::vector<Lot::Wall> walls;
         std::vector<Lot::WallGraph> wallGraphs;
         std::vector<std::array<uint16_t, 4>> floors, rooms;
@@ -91,15 +128,30 @@ private:
         std::map<uint16_t, std::string> floorPatterns, wallPatterns;
         std::map<uint32_t, Lot::LayerEntry> staleWallLayer;
     };
+    // An object sold with a wall: where it was, for undo.
+    struct Sold {
+        ObjectId id = 0;
+        Placement where;
+    };
     struct Op {
         Geometry before, after;
         int cost = 0;
+        std::vector<Sold> sold;
     };
     Geometry capture() const;
     void restore(const Geometry& g);
     // After a change: rooms, then the VM.
     void changed();
-    void commit(Geometry before, int cost);
+    void commit(Geometry before, int cost, std::vector<Sold> sold = {});
+    // The objects attached to a wall section (lead IDs), and whether one
+    // of them is in use.
+    std::vector<ObjectId> attachedObjects(int level, int ax, int ay, int bx, int by, bool* inUse) const;
+    // Levels the ground's grid points to `height` (the lot's level 0);
+    // false (nothing changed) if one of them is held by a floor or by a
+    // wall that is not among `free`.
+    bool levelPoints(const std::vector<std::array<int, 2>>& points, float height,
+                     const std::vector<std::array<int, 4>>& free = {});
+    Result eraseRun(int level, int x0, int y0, int x1, int y1, bool fences);
     Result cover(std::vector<std::pair<uint32_t, int>> faces, const BuildPattern* pattern, const std::string& what);
     int priceOf(const std::string& lotName, bool floor) const;
 

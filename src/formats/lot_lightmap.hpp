@@ -83,15 +83,19 @@ struct LotLightMapLayout {
     std::array<float, 2> wallTexel(size_t face, float s, float z) const;
     // Room of the quarter tile under (x, y) on a level, 0 outside the lot.
     uint16_t roomAt(int level, float x, float y) const;
-    // Outdoors: room 0, or a room most of whose quarter tiles have no floor
-    // (the lots keep their outdoors as rooms of their own; inferred).
+    // Outdoors: room 0 of the light's rooms (3ARY 0x0B); for lots without
+    // that map, room 0 or a room of 0x09 most of whose quarter tiles have
+    // no floor (inferred).
     bool outdoor(int level, uint16_t room) const;
+    // A room of the VM (3ARY 0x09, which fences split) that is outdoors for
+    // the light: most of its quarters are outdoors in 0x0B.
+    bool outdoorPlacementRoom(uint16_t room) const;
     // Height of a level's floor at (x, y), as Lot::elevationAt.
     float elevationAt(int level, float x, float y) const;
 
     uint32_t pageHeight() const { return lotHeight * kTexelsPerTile; }
     uint32_t shelfX_ = 0, shelfY_ = 0, shelfH_ = 0; // wall cell packing
-    std::vector<uint16_t> outdoorRooms_;
+    std::vector<uint16_t> outdoorRooms_, outdoorPlacementRooms_;
 };
 
 // A light feeding the light maps (a cDiffusionLightSource): a lamp of an

@@ -96,6 +96,10 @@ struct Placement {
     int slot = -1;
 };
 
+// The step to the tile on a side of an object facing `direction`: 0 front,
+// 1 right, 2 behind, 3 left (the order of the wall flags, STR# 0xE5).
+std::array<int, 2> sideStep(int direction, int side);
+
 // The objects of `id`'s multi-tile group (just `id` for a single-tile one).
 std::vector<ObjectId> groupOf(VM& vm, ObjectId id);
 
@@ -103,6 +107,10 @@ std::vector<ObjectId> groupOf(VM& vm, ObjectId id);
 // its own tiles do not count) fits with its lead part on `tile` facing
 // `direction` (0, 2, 4, 6), and how.
 Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction);
+
+// Where the group of `id` is now (its lead's direction, level, container
+// slot and each part's tile), for putting it back with applyPlacement.
+Placement currentPlacement(VM& vm, ObjectId id);
 
 // Puts the group where `p` says (positions, direction, container slot) and
 // runs the placement tree of each part. Does not check.

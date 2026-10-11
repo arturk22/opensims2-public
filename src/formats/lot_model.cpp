@@ -203,7 +203,19 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
                     // one) only run along a north-south road this way. The
                     // coordinates run on across tiles, so that materials spanning
                     // several tiles (floorMaterialScaleU/V) continue.
-                    auto v = [&](const Vec3f& p) { return b.vertex(p, n, p[1], p[0], lm.floorTexel(level, p[0], p[1])); };
+                    // The pattern's rotation (Lot::floorRotations: 1, 2, 4, 8 =
+                    // 0, 90, 180, 270 degrees) turns the texture about the
+                    // tile's centre.
+                    int turns = 0;
+                    if (at < lot.floorRotations.size())
+                        for (uint8_t r = lot.floorRotations[at][q]; r > 1 && turns < 3; r >>= 1)
+                            ++turns;
+                    auto v = [&](const Vec3f& p) {
+                        float lu = p[1] - fy - 0.5f, lv = p[0] - fx - 0.5f;
+                        for (int k = 0; k < turns; ++k)
+                            std::swap(lu, lv), lv = -lv;
+                        return b.vertex(p, n, fy + 0.5f + lu, fx + 0.5f + lv, lm.floorTexel(level, p[0], p[1]));
+                    };
                     b.triangle(v(a), v(e), v(c));
                 }
             }

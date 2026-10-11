@@ -24,18 +24,6 @@ int16_t layers(const Object& o) {
 
 int normDir(int d) { return ((d % 8) + 8) % 8; }
 
-// The step to the tile on a side of an object facing `direction`: 0 front,
-// 1 right, 2 behind, 3 left (the order of the wall flags, STR# 0xE5).
-std::array<int, 2> sideStep(int direction, int side) {
-    const auto f = directionStep(direction);
-    switch (side) {
-    case 0: return f;
-    case 1: return {f[1], -f[0]}; // clockwise of the front
-    case 2: return {-f[0], -f[1]};
-    default: return {-f[1], f[0]};
-    }
-}
-
 // Container slots of an object's SLOT, in slot-number order.
 std::vector<const Slots::Slot*> containerSlots(VM& vm, const Object& o) {
     std::vector<const Slots::Slot*> out;
@@ -57,6 +45,19 @@ void runEntry(VM& vm, ObjectId id, size_t function) {
 }
 
 } // namespace
+
+// The step to the tile on a side of an object facing `direction`: 0 front,
+// 1 right, 2 behind, 3 left (the order of the wall flags, STR# 0xE5).
+std::array<int, 2> sideStep(int direction, int side) {
+    const auto f = directionStep(direction);
+    switch (side) {
+    case 0: return f;
+    case 1: return {f[1], -f[0]}; // clockwise of the front
+    case 2: return {-f[0], -f[1]};
+    default: return {-f[1], f[0]};
+    }
+}
+
 
 void runUserPlacement(VM& vm, ObjectId id) {
     for (ObjectId part : groupOf(vm, id))
@@ -221,6 +222,22 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
     if (!(lead->data[objdata::AllowedHeightFlags] & 1))
         return fail(placementerror::PlaceList, "needs a surface");
     p.ok = true;
+    return p;
+}
+
+Placement currentPlacement(VM& vm, ObjectId id) {
+    Placement p;
+    const Object* lead = vm.object(id);
+    if (!lead)
+        return p;
+    p.ok = lead->position.inWorld();
+    p.level = lead->position.level;
+    p.direction = lead->data[objdata::Direction];
+    p.container = lead->data[objdata::ContainerId];
+    p.slot = p.container ? lead->data[objdata::SlotNumber] : -1;
+    for (ObjectId part : groupOf(vm, id))
+        if (const Object* o = vm.object(part))
+            p.parts.push_back({part, VM::tileOf(*o)});
     return p;
 }
 

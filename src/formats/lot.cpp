@@ -16,7 +16,7 @@ constexpr uint32_t kType2DArray = 0x6B943B43, kType3DArray = 0x2A51171B, kTypeSt
                    kTypeWallGraph = 0x0A284D0B, kTypeWallLayer = 0x8A84D7B0, kTypeLotTexture = 0x4B58975B,
                    kTypeObject = 0xFA1C39F7, kTypeFencePosts = 0xAB4BA572, kTypeRoof = 0xAB9406AA,
                    kTypePool = 0x0C900FDB;
-constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayRoomsLoadBearing = 0x0A, kArrayRoomsLight = 0x0B, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
+constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayRoomsLoadBearing = 0x0A, kArrayRoomsLight = 0x0B, kArrayFloorRotations = 0x15, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
                    kWallLayerPartitions = 0x04, kPaintMaskFirst = 0x5CBC,
                    kFencePostLayer = 0x11, kWaterLevels = 0x3B76;
 constexpr size_t kFileNameSize = 64;
@@ -216,6 +216,17 @@ Lot Lot::load(DbpfPackage& pkg) {
             for (size_t i = 0; i < lot.floors.size(); ++i)
                 for (int q = 0; q < 4; ++q)
                     lot.floors[i][size_t(q)] = le16(&a.data[i * 8 + size_t(q) * 2]);
+        }
+    }
+
+    if (auto bytes = readResource(pkg, kType3DArray, kArrayFloorRotations)) {
+        BinReader r = blockReader(*bytes, kType3DArray);
+        const Array3 a = readArray3(r, 4);
+        if (a.x == lot.width && a.y == lot.height && int(a.z) == lot.levelCount) {
+            lot.floorRotations.resize(size_t(a.x) * a.y * a.z);
+            for (size_t i = 0; i < lot.floorRotations.size(); ++i)
+                for (int q = 0; q < 4; ++q)
+                    lot.floorRotations[i][size_t(q)] = a.data[i * 4 + size_t(q)];
         }
     }
 

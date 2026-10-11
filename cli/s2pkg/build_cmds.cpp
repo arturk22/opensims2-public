@@ -14,6 +14,7 @@
 #include "vm/build_edit.hpp"
 #include "vm/placement.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <map>
@@ -125,7 +126,8 @@ int num(const std::vector<std::string>& f, size_t i, int fallback) {
 } // namespace
 
 bool isBuildEdit(const std::string& flag) {
-    return flag == "--door" || flag == "--wall" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
+    return flag == "--door" || flag == "--wall" || flag == "--fence" || flag == "--delete-fence" ||
+           flag == "--floor-click" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
            flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--build-undo" || flag == "--build-redo";
 }
 
@@ -175,11 +177,30 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             r = flag == "--wall"   ? editor.drawWalls(level, a, b, c, d)
                 : flag == "--room" ? editor.drawRoom(level, a, b, c, d)
                                    : editor.deleteWalls(level, a, b, c, d);
+        } else if (flag == "--fence") {
+            if (f.size() < 5)
+                throw std::runtime_error("--fence: expected x0,y0,x1,y1,fence[,level]");
+            const BuildFence* fence = catalog.findFence(f[4]);
+            if (!fence)
+                throw std::runtime_error("--fence: no fence \"" + f[4] + "\"");
+            r = editor.drawFences(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), *fence);
+        } else if (flag == "--delete-fence") {
+            if (f.size() < 4)
+                throw std::runtime_error("--delete-fence: expected x0,y0,x1,y1[,level]");
+            r = editor.deleteFences(num(f, 4, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0));
         } else if (flag == "--floor") {
             if (f.size() < 5)
-                throw std::runtime_error("--floor: expected x0,y0,x1,y1,pattern[,level]");
+                throw std::runtime_error("--floor: expected x0,y0,x1,y1,pattern[,level[,rotation]]");
             const BuildPattern* p = f[4] == "none" ? nullptr : pattern(f[4], true);
-            r = editor.paintFloor(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), p);
+            r = editor.paintFloor(num(f, 5, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), p, 0xF,
+                                  num(f, 6, 1));
+        } else if (flag == "--floor-click") {
+            if (f.size() < 3)
+                throw std::runtime_error("--floor-click: expected px,py,pattern[,level[,rotation]]");
+            const float px = std::stof(f[0]), py = std::stof(f[1]);
+            const int level = num(f, 3, 1), x = int(std::floor(px)), y = int(std::floor(py));
+            r = editor.paintFloor(level, x, y, x, y, f[2] == "none" ? nullptr : pattern(f[2], true),
+                                  editor.clickQuarters(level, px, py), num(f, 4, 1));
         } else if (flag == "--wallpaper") {
             if (f.size() < 6)
                 throw std::runtime_error("--wallpaper: expected x0,y0,x1,y1,side,pattern[,level]");
@@ -195,6 +216,8 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                     r.message.c_str(), vm::funds(vm));
         ok &= r.ok;
     }
+    // As leaving Build mode: what was sold with the walls dies now.
+    editor.resetHistory();
     return ok;
 }
 

@@ -210,7 +210,7 @@ bool LotLighting::outside(int16_t room) {
     if (!room)
         return true;
     if (layout_)
-        return layout_->outdoor(0, uint16_t(room));
+        return layout_->outdoorPlacementRoom(uint16_t(room)); // a VM room (3ARY 0x09)
     if (!outdoorRooms_) {
         outdoorRooms_.emplace();
         if (const auto& w = sim_.machine().world) {
