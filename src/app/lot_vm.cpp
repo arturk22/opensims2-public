@@ -101,14 +101,14 @@ void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> an
 // carry animations: "a2o-newspaper-carry" holds the arm up), each over the
 // bones it keys, above the base animation, in the VM's order. The carry
 // poses last as long as the Sim holds the object (Object::carryOverlays;
-// the trees' Animate Stop after the grab clears the overlays). They
-// (priority 5) would hold the arm over the animations Animate Sim
-// plays with the object in hand (priority 2: "a2o-newspaper-read-start"
-// moves both arms), which already hold it: they are left out while one
-// plays (inferred: the game's blending is not decoded).
+// the trees' Animate Stop after the grab clears the overlays), also while
+// Animate Sim plays: the trees stop them themselves before an animation
+// that needs the arm (Animate Stop mode 4, 237 uses: "Eat - Anim - Bite",
+// "Interaction - Drink", "Sub - Put Cup Down", ...), and the newspaper's
+// "Read" never does: its animations reach the paper by the arms' IK, which
+// AnimPlayer solves over the carry pose.
 void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
     constexpr int kOverlayPriority = 100;
-    const bool animating = o.animation.playing() || (o.route && !o.route->climb.animation.empty());
     std::vector<std::string> want;
     auto isCarry = [&](const std::string& name) {
         return std::find(o.carryOverlays.begin(), o.carryOverlays.end(), name) != o.carryOverlays.end();
@@ -116,8 +116,7 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
     for (const auto& name : o.animation.overlays)
         if (!isCarry(name))
             want.push_back(name);
-    if (!animating)
-        want.insert(want.end(), o.carryOverlays.begin(), o.carryOverlays.end());
+    want.insert(want.end(), o.carryOverlays.begin(), o.carryOverlays.end());
     if (want == b.overlays)
         return;
     if (std::getenv("OS2_DEBUG_VM"))
@@ -191,6 +190,8 @@ void LotSimulation::sampleAll(double at) {
         try {
             const Animation& anim = b.actor->animation(index_, want);
             b.actor->cue(at, anim, {.fade = fade, .loop = loop});
+            if (onSimAnimation)
+                onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: Sim %d: %s\n", b.id, e.what());
         }

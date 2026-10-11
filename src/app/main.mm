@@ -69,6 +69,7 @@
 #include "render/ui_layer.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
+#include "anim_snaps.hpp"
 #include "camera_follow.hpp"
 #include "camera_input.hpp"
 #include "lot_vm.hpp"
@@ -296,6 +297,7 @@ std::unique_ptr<os2::ResourceIndex> gIndex;
 std::unique_ptr<os2::LotSimulation> gSimulation;
 // The lot's objects drawn where the VM puts them (app/vm_objects.hpp).
 std::unique_ptr<os2::VmObjectView> gObjectView;
+std::unique_ptr<os2::AnimSnapView> gSnaps; // models the animations' snap events put in the Sims' hands
 // The lot's lights from the VM: the clock's day/night, rooms, lamps (app/lot_lighting.hpp).
 std::unique_ptr<os2::LotLighting> gLighting;
 std::optional<os2::LotLightMapLayout> gLightMapLayout; // the lot's light-map atlas
@@ -369,6 +371,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         gSimulation->attach(*s.actor, s.id, os2::readCharacter(character, index), s.idle);
     }
     gObjectView = std::make_unique<os2::VmObjectView>(renderer, index, *gSimulation);
+    gSnaps = std::make_unique<os2::AnimSnapView>(renderer, index, *gObjectView, gSimulation->machine());
+    gSimulation->onSimAnimation = [](int16_t id, os2::SimActor& actor, const os2::Animation* anim, double at) {
+        gSnaps->simAnimation(id, actor, anim, at);
+    };
     for (const auto& [id, p] : gPlacedObjects) {
         std::optional<os2::Xform> saved;
         if (!p.contained)
@@ -418,6 +424,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // Objects the VM animates (doors, fridges, phones, ...) swap their static
     // model for a skinned one of the same CRES, posed by the animation.
     gSimulation->onObjectAnimation = [&renderer, &index](int16_t id, const std::string& name, double at) {
+        if (gSnaps)
+            gSnaps->objectAnimation(id, name, at);
         if (std::getenv("OS2_DEBUG_VM"))
             std::fprintf(stderr, "opensims2: object %d starts %s (%s)\n", id, name.c_str(),
                          gPlacedObjects.count(id) ? "placed" : "not placed");
@@ -795,6 +803,8 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     for (auto& a : gActors)
         if (!isObject(a.get()))
             a->update(seconds);
+    if (gSnaps)
+        gSnaps->update(seconds);
     choosePlumbob(renderer);
     if (gObjectView)
         gObjectView->update();

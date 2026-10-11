@@ -139,9 +139,34 @@ int cmdAnim(const char* res, const std::string& name, bool keys) {
                     std::printf("\n");
                 }
         }
-        for (const auto& ch : t.ikChains)
+        // CRC names: the channels' (and with --keys, every CRC field).
+        auto crcName = [&](uint32_t crc) -> std::string {
+            if (!crc)
+                return "0";
+            for (const auto& c : t.channels)
+                if (c.nameHash == crc)
+                    return c.name;
+            char buf[16];
+            std::snprintf(buf, sizeof buf, "0x%08X", crc);
+            return buf;
+        };
+        for (const auto& ch : t.ikChains) {
             std::printf("  ik chain 0x%08X strategy=0x%08X begin=0x%08X end=0x%08X targets=%zu\n", ch.nameCrc,
                         ch.strategy, ch.crcs[0], ch.crcs[2], ch.targets.size());
+            if (!keys)
+                continue;
+            std::printf("    begin/mirror/end/mirror/twist/twistbone/mirror/weight:");
+            for (uint32_t c : ch.crcs)
+                std::printf(" %s", crcName(c).c_str());
+            std::printf("\n");
+            for (const auto& g : ch.targets) {
+                std::printf("    target index=%u chain=%u type=%u bone/mirror/rot/rot2/trans/contact:", g.targetIndex,
+                            g.chainIndex, g.type);
+                for (uint32_t c : g.crcs)
+                    std::printf(" %s", crcName(c).c_str());
+                std::printf("\n");
+            }
+        }
     }
     for (const auto& e : a.events)
         std::printf("event t=%u type=%d \"%s\"\n", e.ticks, e.type, e.data.c_str());

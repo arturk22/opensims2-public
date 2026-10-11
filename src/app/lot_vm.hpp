@@ -63,6 +63,9 @@ public:
     // it (Animate Object / Animate Overlay: AnimationState::overlays), at
     // `at` seconds in the caller's clock; the host poses the object with it.
     std::function<void(int16_t id, const std::string& animation, double at)> onObjectAnimation;
+    // Called when a Sim starts an animation the VM's Animate Sim plays (null:
+    // it walks, climbs or idles instead), cued at `at` seconds.
+    std::function<void(int16_t id, SimActor& actor, const Animation* animation, double at)> onSimAnimation;
 
     // Runs the VM up to `seconds` (whole ticks) and places and animates the
     // attached actors for that moment (one tick behind the VM, so that

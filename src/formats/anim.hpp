@@ -7,6 +7,7 @@
 #include "skeleton.hpp"
 
 #include <array>
+#include <map>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -144,13 +145,42 @@ struct Animation {
 std::vector<Xform> samplePose(const Animation::Target& target, const Skeleton& skeleton, float ticks);
 float animationTime(const Animation& a, float seconds, bool loop);
 
-// Two-bone IK for the target's chains (e.g. legs: r_thigh -> r_calf -> r_foot
-// reaching r_foot_ikctr, knee towards r_foot_ikpole): bones are named by the
-// CRC32 of their lowercase names; the middle bone is the end bone's parent;
-// the end bone takes the goal's rotation (keeping the rest-pose offset
-// between them). Chains with an IK weight channel are blended by its value
-// at `ticks`. Updates `local` in place.
-void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ticks, std::vector<Xform>& local);
+// Two-joint IK for the target's chains (legs: r_thigh -> r_calf -> r_foot
+// reaching r_foot_ikctr, knee towards r_foot_ikpole; arms: r_upperarm ->
+// r_forearm -> r_hand reaching r_handcontrol0, elbow towards r_hand_ikpole,
+// the bicep and wrist twist bones carried along): bones are named by the
+// CRC32 of their lowercase names; the joint is the chain's bone farthest
+// from both ends. The goal (and the pole) are their nodes' animated local
+// transforms in the space of the target's (the chain's twist) bone, or of the
+// model root when it has none (spine0 for a2o-newspaper-read-start's hands,
+// none for the read loops), not where the skeleton hangs them. The end bone
+// takes the goal's rotation: the second rotation node's (the hands'
+// *_handcontrol0rot) as it is, else the rotation node's with the rest-pose
+// offset between them (the feet). Chains with an IK weight channel are
+// blended by its value at `ticks`. Updates `local` in place. `goals`: the
+// local transforms the goal and pole nodes are read from (the animation's
+// own pose when `local` is a blend of several layers); default `local`.
+void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ticks, std::vector<Xform>& local,
+             const std::vector<Xform>* goals = nullptr);
+
+// Snap events (ANIM event type 1005): "snapObjectRoot=<object>:__<model>__"
+// and "snapTargetSlot=<skeleton>:__<bone>__" or "Oblivion". They move a
+// model an object shows into a slot of the animated skeleton or out of
+// sight while the animation plays: a2o-newspaper-read-start holds the
+// rolled paper ("newspaper:__newspaperRolled__") in the right hand grip,
+// passes a second copy ("newspaperRoll_02") to the left hand, swaps it for
+// the open paper ("newspaperRead_02:__newspaperReading__") and gives that
+// to the right hand. The object names are the object's own (its 3D object
+// name, "newspaper") or extra copies the animation names.
+struct AnimSnap {
+    uint16_t ticks = 0;
+    std::string object, model;  // "newspaper", "newspaperRolled"
+    std::string skeleton, bone; // "auSkel", "R_Hand_grip"; both empty: Oblivion
+};
+std::vector<AnimSnap> animSnaps(const Animation& a);
+// Where every object the snaps name is at `ticks` (events at or before it,
+// in order): its model and slot (empty bone: out of sight).
+std::map<std::string, AnimSnap> snapStateAt(const std::vector<AnimSnap>& snaps, float ticks);
 
 // IEEE 754 half float (the curves' tangents).
 float halfToFloat(uint16_t h);

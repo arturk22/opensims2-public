@@ -4,8 +4,10 @@
 #include "resindex.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <cctype>
 #include <cmath>
+#include <tuple>
 #include <unordered_map>
 
 namespace os2 {
@@ -330,7 +332,8 @@ Xform parentWorld(const Skeleton& s, const std::vector<Xform>& world, int bone) 
 
 } // namespace
 
-void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, std::vector<Xform>& local) {
+void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, std::vector<Xform>& local,
+             const std::vector<Xform>* goals) {
     if (target.ikChains.empty())
         return;
     std::unordered_map<uint32_t, int> byCrc;
@@ -341,33 +344,58 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         return it == byCrc.end() ? -1 : it->second;
     };
     const auto restWorld = s.world(s.restPose());
+    // A goal node's transform in the space of `frame` (a bone, or the model
+    // root when -1), from its local (animated) transform: the skeleton's own
+    // parenting of the controls is not what the animations mean (the hand
+    // controls hang under root_trans in auskel, yet a chain with no frame
+    // bone keys them in model space, as OpenTS2 also found).
+    const std::vector<Xform>& goalLocal = goals && goals->size() == local.size() ? *goals : local;
+    auto inFrame = [&](const std::vector<Xform>& world, int frame, int node) {
+        return (frame >= 0 ? world[size_t(frame)] : Xform{}).then(goalLocal[size_t(node)]);
+    };
 
     for (const auto& chain : target.ikChains) {
         if (chain.strategy != 0x48EE7A41 || chain.targets.empty())
-            continue; // only the two-bone (seven degrees of freedom) chains
+            continue; // only the two-joint (seven degrees of freedom) chains
         const int b0 = bone(chain.crcs[0]), b2 = bone(chain.crcs[2]);
         if (b0 < 0 || b2 < 0)
             continue;
-        const int b1 = s.bones[size_t(b2)].parent;
-        if (b1 < 0 || s.bones[size_t(b1)].parent != b0)
+        // The joint between: of the bones from the end up to the begin bone
+        // (calf; forearm, past the bicep and wrist twist bones), the one
+        // farthest from both ends in the rest pose.
+        int b1 = -1;
+        float best = -1;
+        bool linked = false;
+        for (int b = s.bones[size_t(b2)].parent; b >= 0; b = s.bones[size_t(b)].parent) {
+            if (b == b0) {
+                linked = true;
+                break;
+            }
+            const float d = std::min(length(sub(restWorld[size_t(b)].t, restWorld[size_t(b0)].t)),
+                                     length(sub(restWorld[size_t(b)].t, restWorld[size_t(b2)].t)));
+            if (d > best)
+                best = d, b1 = b;
+        }
+        if (!linked || b1 < 0)
             continue;
         const auto& goal = chain.targets[0];
-        const int goalBone = bone(goal.crcs[4]), goalRotation = bone(goal.crcs[2]), pole = bone(chain.crcs[4]);
+        const int goalBone = bone(goal.crcs[4]), goalRotation = bone(goal.crcs[2]), goalRotation2 = bone(goal.crcs[3]);
+        const int frame = bone(goal.crcs[0]), pole = bone(chain.crcs[4]), poleFrame = bone(chain.crcs[5]);
         if (goalBone < 0)
             continue;
         float weight = 1;
         if (chain.crcs[7]) {
             weight = 0;
             for (const auto& c : target.channels)
-                if (c.nameHash == chain.crcs[7] && !c.components.empty())
+                if (c.nameHash == chain.crcs[7] && c.attribute() == Animation::WeightIk && !c.components.empty())
                     weight = std::clamp(c.components[0].sample(ticks, c.duration()), 0.0f, 1.0f);
         }
         if (weight <= 0)
             continue;
 
-        const auto world = s.world(local);
+        auto world = s.world(local);
         const Vec3 A = world[size_t(b0)].t, B = world[size_t(b1)].t, C = world[size_t(b2)].t;
-        const Vec3 T = world[size_t(goalBone)].t;
+        const Vec3 T = inFrame(world, frame, goalBone).t;
         const float a = length(sub(B, A)), b = length(sub(C, B));
         Vec3 toT = sub(T, A);
         float d = length(toT);
@@ -375,8 +403,8 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
             continue;
         const Vec3 u = scale(toT, 1 / d);
         d = std::clamp(d, std::fabs(a - b) + 1e-4f, a + b - 1e-4f);
-        // Knee in the plane of the hip, the goal and the pole (or the current knee).
-        Vec3 toP = sub(pole >= 0 ? world[size_t(pole)].t : B, A);
+        // Knee/elbow in the plane of the root, the goal and the pole (or the current joint).
+        Vec3 toP = sub(pole >= 0 ? inFrame(world, poleFrame, pole).t : B, A);
         Vec3 v = sub(toP, scale(u, dot(toP, u)));
         if (length(v) < 1e-6f)
             continue;
@@ -384,28 +412,93 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         const float cosA = std::clamp((a * a + d * d - b * b) / (2 * a * d), -1.0f, 1.0f);
         const Vec3 K = add(A, add(scale(u, a * cosA), scale(v, a * std::sqrt(1 - cosA * cosA))));
 
-        const Xform p0 = parentWorld(s, world, b0);
-        Xform w0 = world[size_t(b0)];
-        w0.q = rotationBetween(sub(B, A), sub(K, A)) * w0.q;
-        Xform l0 = local[size_t(b0)];
-        l0.q = normalized(conjugate(p0.q) * w0.q);
-        w0 = p0.then(l0);
-        Xform w1 = w0.then(local[size_t(b1)]);
-        const Vec3 C1 = w1.then(local[size_t(b2)]).t;
-        w1.q = rotationBetween(sub(C1, w1.t), sub(T, w1.t)) * w1.q;
-        Xform l1 = local[size_t(b1)];
-        l1.q = normalized(conjugate(w0.q) * w1.q);
-        w1 = w0.then(l1);
-        Xform l2 = local[size_t(b2)];
-        if (goalRotation >= 0) {
-            const Quat offset = conjugate(restWorld[size_t(goalRotation)].q) * restWorld[size_t(b2)].q;
-            l2.q = normalized(conjugate(w1.q) * (world[size_t(goalRotation)].q * offset));
-        }
+        // The goal's rotation for the end bone: through the second rotation
+        // node when there is one (the hands' *_handcontrol0rot, which the
+        // hand follows as it is), else the rotation node with the rest-pose
+        // offset between it and the end bone (the feet).
+        std::optional<Quat> endRotation;
+        if (goalRotation >= 0 && goalRotation2 >= 0)
+            endRotation = inFrame(world, frame, goalRotation).then(goalLocal[size_t(goalRotation2)]).q;
+        else if (goalRotation >= 0)
+            endRotation = inFrame(world, frame, goalRotation).q *
+                          (conjugate(restWorld[size_t(goalRotation)].q) * restWorld[size_t(b2)].q);
 
-        local[size_t(b0)].q = nlerp(local[size_t(b0)].q, l0.q, weight);
-        local[size_t(b1)].q = nlerp(local[size_t(b1)].q, l1.q, weight);
-        local[size_t(b2)].q = nlerp(local[size_t(b2)].q, l2.q, weight);
+        const Quat q0 = local[size_t(b0)].q, q1 = local[size_t(b1)].q, q2 = local[size_t(b2)].q;
+        // Root bone: the joint onto K.
+        Xform w0 = world[size_t(b0)];
+        local[size_t(b0)].q =
+            normalized(conjugate(parentWorld(s, world, b0).q) * (rotationBetween(sub(B, A), sub(K, A)) * w0.q));
+        world = s.world(local);
+        // Joint: the end onto the goal.
+        const Vec3 B1 = world[size_t(b1)].t, C1 = world[size_t(b2)].t;
+        local[size_t(b1)].q = normalized(conjugate(parentWorld(s, world, b1).q) *
+                                         (rotationBetween(sub(C1, B1), sub(T, B1)) * world[size_t(b1)].q));
+        if (endRotation) {
+            world = s.world(local);
+            local[size_t(b2)].q = normalized(conjugate(parentWorld(s, world, b2).q) * *endRotation);
+        }
+        if (weight < 1) {
+            local[size_t(b0)].q = nlerp(q0, local[size_t(b0)].q, weight);
+            local[size_t(b1)].q = nlerp(q1, local[size_t(b1)].q, weight);
+            local[size_t(b2)].q = nlerp(q2, local[size_t(b2)].q, weight);
+        }
     }
+}
+
+namespace {
+// The value of "key=value" on its own line of an event's text.
+std::string eventField(const std::string& text, std::string_view key) {
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find_first_of("\r\n", at);
+        if (end == std::string::npos)
+            end = text.size();
+        const std::string_view line(text.data() + at, end - at);
+        if (line.size() > key.size() && line.substr(0, key.size()) == key && line[key.size()] == '=')
+            return std::string(line.substr(key.size() + 1));
+        at = end + 1;
+    }
+    return {};
+}
+// "name:__inner__" -> {name, inner}.
+std::pair<std::string, std::string> splitSnapName(const std::string& v) {
+    const size_t colon = v.find(':');
+    if (colon == std::string::npos)
+        return {v, {}};
+    std::string inner = v.substr(colon + 1);
+    while (!inner.empty() && inner.front() == '_')
+        inner.erase(inner.begin());
+    while (!inner.empty() && inner.back() == '_')
+        inner.pop_back();
+    return {v.substr(0, colon), inner};
+}
+} // namespace
+
+std::vector<AnimSnap> animSnaps(const Animation& a) {
+    std::vector<AnimSnap> out;
+    for (const auto& e : a.events) {
+        if (e.type != 1005)
+            continue;
+        const std::string root = eventField(e.data, "snapObjectRoot"), slot = eventField(e.data, "snapTargetSlot");
+        if (root.empty() || slot.empty())
+            continue;
+        AnimSnap s;
+        s.ticks = e.ticks;
+        std::tie(s.object, s.model) = splitSnapName(root);
+        if (slot != "Oblivion")
+            std::tie(s.skeleton, s.bone) = splitSnapName(slot);
+        out.push_back(std::move(s));
+    }
+    std::stable_sort(out.begin(), out.end(), [](const AnimSnap& x, const AnimSnap& y) { return x.ticks < y.ticks; });
+    return out;
+}
+
+std::map<std::string, AnimSnap> snapStateAt(const std::vector<AnimSnap>& snaps, float ticks) {
+    std::map<std::string, AnimSnap> out;
+    for (const auto& s : snaps)
+        if (float(s.ticks) <= ticks)
+            out[s.object] = s;
+    return out;
 }
 
 const Animation::Target* Animation::findTarget(std::string_view tag) const {

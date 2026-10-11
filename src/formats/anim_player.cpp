@@ -136,12 +136,27 @@ std::vector<Xform> AnimPlayer::pose(double now) {
             continue;
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
         std::vector<Xform> p = samplePose(*l.target, *skeleton_, ticks);
-        applyIk(*l.target, *skeleton_, ticks, p);
         std::vector<float> mask(skeleton_->bones.size(), 0.0f);
         for (size_t i = 0; i < mask.size(); ++i)
             mask[i] = (i < l.keyed.size() && l.keyed[i] ? 1.0f : 0.0f) *
                       (l.mask.empty() ? 1.0f : (i < l.mask.size() ? l.mask[i] : 0.0f));
         blendPose(out, p, w, mask);
+    }
+    // IK over the blend: each layer's chains reach its goals from the
+    // blended body (an a2o animation's hands find the object even under a
+    // carry pose of higher priority, which the trees leave on while reading
+    // the paper).
+    for (const auto& l : layers_) {
+        if (!l.target || l.target->ikChains.empty())
+            continue;
+        const float w = l.replaced ? (weight(l, now) > 0 ? 1.0f : 0.0f) : weight(l, now);
+        if (w <= 0)
+            continue;
+        const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
+        const std::vector<Xform> goals = samplePose(*l.target, *skeleton_, ticks);
+        std::vector<Xform> solved = out;
+        applyIk(*l.target, *skeleton_, ticks, solved, &goals);
+        blendPose(out, solved, w, l.mask);
     }
     return out;
 }

@@ -305,6 +305,61 @@ static void testIk() {
     check(near(thigh, 0.5f, 1e-3f), "IK: bone lengths kept");
 }
 
+static void testArmIk() {
+    // An arm along +X from the shoulder at (0, 0, 1.5): upperarm 0.3, a
+    // twist bone halfway, forearm 0.3, wrist twist bone, hand. The goal is
+    // keyed in the frame of "spine" (at z = 1), as a2o-newspaper-read-start
+    // keys the hand controls; the skeleton hangs the control elsewhere.
+    Skeleton s;
+    s.bones.push_back({"root", -1, Xform{}, -1, 0});
+    s.bones.push_back({"spine", 0, Xform{{}, {0, 0, 1}}, 0, 1});
+    s.bones.push_back({"upperarm", 1, Xform{{}, {0, 0, 0.5f}}, 1, 2});
+    s.bones.push_back({"bicep", 2, Xform{{}, {0.15f, 0, 0}}, 2, 3});
+    s.bones.push_back({"forearm", 3, Xform{{}, {0.15f, 0, 0}}, 3, 4});
+    s.bones.push_back({"wrist", 4, Xform{{}, {0.15f, 0, 0}}, 4, 5});
+    s.bones.push_back({"hand", 5, Xform{{}, {0.15f, 0, 0}}, 5, 6});
+    s.bones.push_back({"handcontrol", 0, Xform{{}, {5, 5, 5}}, -1, 7}); // misplaced on purpose
+    s.bones.push_back({"handcontrolrot", 7, Xform{}, -1, 8});
+    s.bones.push_back({"pole", 0, Xform{{}, {0.3f, -1, 1.5f}}, -1, 9});
+    Animation::Target t;
+    Animation::IkChain chain;
+    chain.strategy = 0x48EE7A41;
+    chain.crcs[0] = nameInstanceHiHash("upperarm");
+    chain.crcs[2] = nameInstanceHiHash("hand");
+    chain.crcs[4] = nameInstanceHiHash("pole");
+    Animation::IkTarget goal;
+    goal.crcs[0] = nameInstanceHiHash("spine");
+    goal.crcs[2] = goal.crcs[4] = nameInstanceHiHash("handcontrol");
+    goal.crcs[3] = nameInstanceHiHash("handcontrolrot");
+    chain.targets.push_back(goal);
+    t.ikChains.push_back(chain);
+    auto local = s.restPose();
+    local[7].t = {0.3f, 0, 0.6f}; // world (0.3, 0, 1.6): 0.32 from the shoulder
+    applyIk(t, s, 0, local);
+    const auto w = s.world(local);
+    check(near(w[6].t[0], 0.3f, 1e-3f) && near(w[6].t[1], 0, 1e-3f) && near(w[6].t[2], 1.6f, 1e-3f),
+          "arm IK: hand on the goal in the frame bone's space");
+    check(w[4].t[1] < -0.1f, "arm IK: elbow (forearm, past the twist bone) towards the pole");
+    check(near(w[6].q.w, 1, 1e-3f), "arm IK: hand takes the control rotation node's");
+}
+
+static void testSnaps() {
+    Animation a;
+    a.events.push_back({0, 1005, "event=101\ncomment=x\nsnapObjectRoot=newspaper:__newspaperRolled__\nsnapTargetSlot=auSkel:__R_Hand_grip__\nsnapObjectPose=\n"});
+    a.events.push_back({0, 1014, "sound_name=newsp_start\n"});
+    a.events.push_back({2100, 1005, "event=102\nsnapObjectRoot=newspaper:__newspaperRolled__\nsnapTargetSlot=Oblivion\n"});
+    a.events.push_back({2466, 1005, "event=301\nsnapObjectRoot=newspaperRead_02:__newspaperReading__\nsnapTargetSlot=auSkel:__L_Hand_grip__\n"});
+    const auto snaps = animSnaps(a);
+    check(snaps.size() == 3 && snaps[0].object == "newspaper" && snaps[0].model == "newspaperRolled" &&
+              snaps[0].skeleton == "auSkel" && snaps[0].bone == "R_Hand_grip" && snaps[1].bone.empty(),
+          "snap events parsed");
+    auto at = snapStateAt(snaps, 1000);
+    check(at.size() == 1 && at["newspaper"].bone == "R_Hand_grip", "snap state: rolled paper in the right hand");
+    at = snapStateAt(snaps, 3000);
+    check(at.size() == 2 && at["newspaper"].bone.empty() && at["newspaperRead_02"].bone == "L_Hand_grip",
+          "snap state: rolled paper gone, open paper in the left hand");
+}
+
 // An animation on one bone: rotation about Z by `degrees`, constant.
 static Animation constantAnim(const char* bone, float degrees, uint8_t priority, float velocity) {
     Animation a;
@@ -360,6 +415,8 @@ static void testPlayer() {
 int main() {
     testPlayer();
     testIk();
+    testArmIk();
+    testSnaps();
     testSimCatalog();
     testSkinning();
     testFixed();
