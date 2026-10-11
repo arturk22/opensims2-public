@@ -132,6 +132,55 @@ void parseTail(BinReader& r, uint32_t version, LotObjects::State& s, bool runnin
 constexpr uint32_t kPersonTag = 0xDEADBEEF;
 constexpr size_t kPersonDataCount = 170;
 
+// The saved interaction queue after the person data (see
+// LotObjects::State::interactions for what is inferred).
+constexpr size_t kInteractionFixed = 61; // record bytes besides the name
+
+bool wellFormedInteraction(std::span<const uint8_t> b, size_t off) {
+    if (off + kInteractionFixed > b.size())
+        return false;
+    if (le32(&b[off]) >= (1u << 20))
+        return false;
+    const size_t n = b[off + 48];
+    if (n > 80 || off + kInteractionFixed + n > b.size())
+        return false;
+    for (size_t i = 0; i < n; ++i)
+        if (b[off + 49 + i] < 32 || b[off + 49 + i] >= 127)
+            return false;
+    return true;
+}
+
+void parseSavedQueue(LotObjects::State& s, size_t personEnd) {
+    std::span<const uint8_t> b(s.rest);
+    const size_t from = personEnd >= 20 ? personEnd - 20 : 0;
+    const int16_t me = s.data.size() > 11 ? s.data[11] : s.id; // object data 11 "object id" (the ID is set later)
+    for (size_t off = from; off < personEnd + 20; off += 2) {
+        if (!wellFormedInteraction(b, off) || !le32(&b[off]))
+            continue;
+        const auto initiator = int16_t(le16(&b[off + 4])), object = int16_t(le16(&b[off + 6]));
+        // Anchored on the running (person data 80) or next (79) interaction's object.
+        const int16_t running = s.personData[80], next = s.personData[79];
+        if ((initiator != me && object != me) || object <= 0 || (object != running && object != next))
+            continue;
+        // Records with a name and an object; the nameless ones that follow
+        // (priority 0, no parameters) look like stale entries.
+        while (wellFormedInteraction(b, off) && le32(&b[off]) && b[off + 48] && int16_t(le16(&b[off + 6])) > 0) {
+            LotObjects::State::SavedInteraction x;
+            x.uid = le32(&b[off]);
+            x.initiator = int16_t(le16(&b[off + 4]));
+            x.object = int16_t(le16(&b[off + 6]));
+            for (size_t i = 0; i < 8; ++i)
+                x.params[i] = int16_t(le16(&b[off + 8 + 2 * i]));
+            x.priority = int32_t(le32(&b[off + 24]));
+            const size_t n = b[off + 48];
+            x.name.assign(reinterpret_cast<const char*>(&b[off + 49]), n);
+            s.interactions.push_back(std::move(x));
+            off += kInteractionFixed + n;
+        }
+        return;
+    }
+}
+
 void parsePerson(LotObjects::State& s) {
     BinReader r(s.rest);
     if (r.remaining() < 8 || r.u32() != kPersonTag)
@@ -145,6 +194,7 @@ void parsePerson(LotObjects::State& s) {
         m = r.f32();
     s.personData = shorts(r, kPersonDataCount);
     s.personRead = true;
+    parseSavedQueue(s, r.pos());
 }
 
 } // namespace

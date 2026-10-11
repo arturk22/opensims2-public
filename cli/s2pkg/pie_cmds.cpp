@@ -68,6 +68,14 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     if (!sim)
         throw std::runtime_error("no Sim \"" + simQuery + "\" in the lot's world");
     std::printf("Sim %d: %s\n", sim, nameOf(*machine.object(sim)).c_str());
+    // The queue as the saved lot left it (vm/lot_resume.hpp).
+    if (const vm::Object* so = machine.object(sim); so && !so->queue.empty()) {
+        std::printf("saved queue:");
+        for (size_t i = 0; i < so->queue.size(); ++i)
+            std::printf(" [%s on %d%s]", so->queue[i].name.c_str(), so->queue[i].object,
+                        int(i) == so->activeInteraction ? ", running" : "");
+        std::printf("\n");
+    }
 
     if (objectQuery.empty()) {
         // Every object in the world with interactions, by interaction leader.

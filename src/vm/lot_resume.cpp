@@ -74,6 +74,66 @@ void restoreState(Object& o, const LotObjects::State& s) {
     }
 }
 
+// The saved interaction queue of a Sim (LotObjects::State::interactions):
+// each record becomes a queue entry of the TTAB entry whose English TTA
+// string is the record's name, on the record's object, with its priority
+// and parameters. When the running one's object is the code owner of a
+// frame of the resumed Main, that frame (the first such) is its action
+// tree's root: it is marked as the interaction, so it ends the entry when
+// it returns. Records whose entry cannot be found are dropped.
+size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
+    if (!sim.person || s.interactions.empty())
+        return 0;
+    sim.queue.clear();
+    sim.activeInteraction = -1;
+    for (const auto& rec : s.interactions) {
+        const ObjectId leader = interactionLeader(vm, rec.object);
+        const Object* o = vm.object(leader);
+        const auto ref = o ? interactionTable(vm, *o) : std::nullopt;
+        if (!ref || !ref->strings)
+            continue;
+        std::optional<QueuedInteraction> q;
+        for (const auto& e : ref->table->interactions)
+            if (ref->strings->get(e.stringIndex, lang::EnglishUS) == rec.name) {
+                q = makeInteraction(vm, leader, uint16_t(e.stringIndex));
+                break;
+            }
+        // The running one may carry a name its check tree gave it ("Chat"
+        // on a social object): its action tree is then the frame running
+        // the object's code, and its index person data 21.
+        if (!q && sim.queue.empty() && rec.object == sim.person->data[80])
+            if (auto t = vm.threads.find(sim.id); t != vm.threads.end())
+                for (const Frame& f : t->second.stack)
+                    if (f.codeOwner == rec.object && f.codeOwner != sim.id) {
+                        q.emplace();
+                        q->object = rec.object;
+                        q->interaction = uint16_t(sim.person->data[21]);
+                        q->action = f.instance;
+                        q->name = rec.name;
+                        break;
+                    }
+        if (!q || sim.queue.size() >= kMaxQueuedInteractions)
+            continue;
+        q->priority = int16_t(std::clamp<int32_t>(rec.priority, 0, kPriorityMaximum));
+        q->pushedBy = rec.initiator ? rec.initiator : sim.id;
+        for (size_t i = 0; i < 4; ++i)
+            q->args[i] = rec.params[i];
+        q->uid = sim.nextInteractionUid++;
+        sim.queue.push_back(std::move(*q));
+    }
+    if (sim.queue.empty())
+        return 0;
+    if (auto t = vm.threads.find(sim.id); t != vm.threads.end() && sim.queue[0].object == sim.person->data[80])
+        for (Frame& f : t->second.stack)
+            if (f.codeOwner == sim.queue[0].object && f.codeOwner != sim.id) {
+                f.interaction = true;
+                sim.activeInteraction = 0;
+                break;
+            }
+    syncQueueData(sim);
+    return sim.queue.size();
+}
+
 } // namespace
 
 void applySavedSimulator(VM& vm, const LotObjects& saved) {
@@ -168,6 +228,11 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
             out.freshMains += vm.startMain(id);
         }
     }
+    // The Sims' saved interaction queues, now that their stacks are back.
+    for (ObjectId id : ids)
+        if (auto it = states.find(id); it != states.end())
+            if (Object* o = vm.object(id))
+                out.queued += restoreQueue(vm, *o, *it->second);
     // The load entry point runs only when the object's version differs from
     // its definition's (the editor's description of OBJf entry 2).
     for (ObjectId id : ids) {

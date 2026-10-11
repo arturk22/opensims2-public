@@ -395,6 +395,20 @@ const Slots::Slot& routingSlot(VM& vm, const Object& target, bool global, int in
     return *slots[size_t(index)];
 }
 
+// The routing person data the trees read after a Go To Routing Slot (labels
+// of STR# 0xC8): 37 "route slot" (the routing slot number), 38 "route multi
+// slot index" (which of the places the slot gives was taken; "Sofa -
+// Animate - Get In" passes it on as the seat; here always 0: the goals of a
+// slot are not told apart yet) and 40 "route goal" (the object). Inferred
+// from the labels and those uses; 39 "route status" is left alone.
+void noteRouteSlot(Object& me, int slot, ObjectId target) {
+    if (!me.person)
+        return;
+    me.person->data[37] = int16_t(slot);
+    me.person->data[38] = 0;
+    me.person->data[40] = target;
+}
+
 // Go To Routing Slot (0x2D): slot u16 at 0, where it is u16 at 2 (STR#
 // 0xD7: 0 the stack param of that number, 1 the literal routing slot, 2 the
 // global slot; 3 "???" is not done), flags u8 at 4, from the editor's
@@ -421,6 +435,7 @@ Exit goToRoutingSlot(Context& c) {
                                                     : int(data);
     const Slots::Slot& slot = routingSlot(c.vm, *target, scope == 2, index);
     const ObjectId id = target->id;
+    noteRouteSlot(c.me(), index, id);
     const bool ignoreFootprint = flags & 0x04;
     return walk(c, id, [&] {
         VM::RouteGoals g = c.vm.routingGoals(slot, *c.vm.object(id));

@@ -92,6 +92,28 @@ struct LotObjects {
         uint32_t personVersion = 0;
         std::array<float, 16> motives{}, motives2{};
         std::vector<int16_t> personData;
+        // The Sim's interaction queue (cTSInteraction records), the running
+        // one first. Layout inferred from the lots (no code read): u32
+        // unique ID, u16 the initiator (0 for self interactions), u16 the
+        // object whose interaction it is, 8 i16 parameters (the first four
+        // are the action tree's), i32 priority, 2 bytes, a float
+        // ("attenuation"?), 10 bytes of flags, two u16 IDs, the name (u8
+        // length + English TTA string, "Entertain.../Joke") and 12 bytes.
+        // Where the list starts is not understood either (8 bytes after
+        // the person data in most PERS, elsewhere in others): it is found
+        // as the first well-formed record naming this Sim near the end of
+        // the person data, and read while records stay well-formed with a
+        // non-zero ID. In the 405 PERS of the game's lots this finds the
+        // running interaction (object = person data 80) of 38 Sims, and
+        // the next one (person data 79) where there is one.
+        struct SavedInteraction {
+            uint32_t uid = 0;
+            int16_t initiator = 0, object = 0;
+            std::array<int16_t, 8> params{};
+            int32_t priority = 0;
+            std::string name;
+        };
+        std::vector<SavedInteraction> interactions;
         // Why the part after the object data could not be read (the fields
         // above stay as far as they got).
         std::string tailError;

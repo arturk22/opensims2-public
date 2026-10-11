@@ -58,6 +58,9 @@ void printState(const LotObjects::State& s, bool hex) {
             std::printf(" %.1f", s.motives2[i]);
         std::printf("\n");
         printShorts("person data", s.personData);
+        for (const auto& q : s.interactions)
+            std::printf("    queued: \"%s\" on %d by %d, priority %d, params %d %d %d %d (uid %u)\n", q.name.c_str(), q.object,
+                        q.initiator, q.priority, q.params[0], q.params[1], q.params[2], q.params[3], q.uid);
     }
     if (!s.rest.empty()) {
         std::printf("    rest: %zu bytes\n", s.rest.size());

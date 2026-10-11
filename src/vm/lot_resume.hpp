@@ -29,10 +29,12 @@ void applySavedMotives(VM& vm, const LotLoad& load, const LotObjects& saved);
 // object it runs on, and the 8 saved temps) and runs the load entry point
 // of objects whose version changed. Objects without a usable stack start
 // their Main afresh. The instruction a frame was at runs again; the
-// primitives' saved state, the Sims' interaction queues and the frames of
-// queued interactions are not restored yet.
+// primitives' saved state is not restored. The Sims' saved interaction
+// queues are (what of them LotObjects finds), with the frame of the
+// running one marked as its action tree's root.
 struct ResumeResult {
     size_t restored = 0, stacks = 0, freshMains = 0, loads = 0;
+    size_t queued = 0; // interactions put back in the Sims' queues
     std::map<std::string, size_t> problems; // why a stack was not resumed
     std::vector<Thread> failedLoads;
 };

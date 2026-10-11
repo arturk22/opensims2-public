@@ -787,8 +787,8 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                 std::printf("    %5zu %s\n", n, k.c_str());
         }
         if (resumed) {
-            std::printf("  resumed: %zu states restored, %zu saved tree stacks, %zu fresh Mains, %zu loads;",
-                        resumed->restored, resumed->stacks, resumed->freshMains, resumed->loads);
+            std::printf("  resumed: %zu states restored, %zu saved tree stacks, %zu fresh Mains, %zu loads, %zu queued interactions;",
+                        resumed->restored, resumed->stacks, resumed->freshMains, resumed->loads, resumed->queued);
             for (const auto& [n, k] : byCount(resumed->problems))
                 std::printf(" %zu %s,", n, k.c_str());
             std::printf("\n");
