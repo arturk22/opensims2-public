@@ -114,19 +114,19 @@ int main() {
     }
 
     const MoveResult in = moveIn(dir, 1, 11);
-    check(in.ok && in.price == 2900 && in.fundsAfter == 17100, "moving in costs the price");
+    check(in.ok && in.price == 2900 && in.fundsAfter == 20000, "moving in charges nothing yet (the lot load does)");
     {
         const Neighborhood h = Neighborhood::load(dir, false);
         check(h.family(1)->record.lot == 11, "family 1 lives on lot 11");
         check((h.family(1)->record.flags & 4) != 0, "the new lot flag");
-        check(h.family(1)->record.funds == 17100, "funds saved");
+        check(h.family(1)->record.funds == 20000, "funds unchanged");
         check(homelessFamilies(h) == std::vector<uint32_t>({2}), "the bin has family 2 left");
     }
     check(!moveIn(dir, 2, 11).ok, "a second family cannot move into lot 11");
     check(!bulldoze(dir, 11).ok, "an occupied lot cannot be bulldozed");
 
     const MoveResult out = moveOut(dir, 11);
-    check(out.ok && out.price == 2900 && out.fundsAfter == 20000, "moving out gives the price back");
+    check(out.ok && out.price == 2900 && out.fundsAfter == 22900, "moving out gives the price back");
     {
         const Neighborhood h = Neighborhood::load(dir, false);
         check(h.family(1)->record.lot == 0, "family 1 is back in the bin");

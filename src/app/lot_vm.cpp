@@ -1,6 +1,7 @@
 #include "lot_vm.hpp"
 
 #include "formats/dbpf.hpp"
+#include "formats/lot_arrivals.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
 #include "formats/sim_character.hpp"
@@ -33,9 +34,17 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     m.clock.ticksPerSecond = kTicksPerSecond;
     m.walkTilesPerTick = float(2.0 / kTicksPerSecond);
     m.setClockGlobals();
-    const LotObjects saved = LotObjects::load(lotPackage);
+    LotObjects saved = LotObjects::load(lotPackage);
+    // A family that just moved in: its Sims join the lot (formats/lot_arrivals.hpp).
+    const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile);
     // The neighborhood first, as lot-run (lot_neighborhood.hpp).
     const bool hood = vm::loadLotNeighborhood(m, lotFile);
+    if (hood && arrivals.family && arrivals.charge) {
+        // The move-in charge (LoadLot step 0x1B), into the budget globals.
+        const auto f = int16_t(arrivals.family);
+        vm::setFamilyFunds(m, f, int32_t(int64_t(vm::familyFunds(m, f)) - arrivals.charge));
+        std::fprintf(stderr, "opensims2: family %d moved in: charged %lld\n", f, (long long)arrivals.charge);
+    }
     const vm::LotLoad load = vm::loadLot(m, lot, saved, vm::charactersDirOf(lotFile));
     if (hood)
         vm::bindLotSims(m);

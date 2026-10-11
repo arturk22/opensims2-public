@@ -19,8 +19,9 @@
 //   least the price.
 // - Moving in (cTSFamilyManager::MoveIn, BV 0x4fb730): the family's lot is
 //   set and its "new lot" flag (FAMI flags bit 0x04, cTSFamily::SetNewLot)
-//   raised; the price is taken from the family's funds ("Cost to move in",
-//   Neighborhood.package STR# 0x82; inferred where the binary takes it).
+//   raised. The price is charged when the lot loads for the family
+//   (cTSLoadLotController::LoadLot, step 0x1B: funds -= GetLotFileInfo's
+//   price unless the lot is of type 2): see formats/lot_arrivals.hpp.
 // - Moving out (cTSGameStateController::EvictFamily, BV 0x139740): the family
 //   gets the lot's price back (unless the lot is a dorm or a business type,
 //   2/3), its lot becomes 0, the lot is flagged 8 and, the next time it
@@ -75,9 +76,9 @@ enum class MoveInCheck {
 MoveInCheck canMoveIn(const Neighborhood& hood, uint32_t family, uint32_t lot);
 const char* moveInCheckName(MoveInCheck c);
 
-// The families in the family bin (cTSFamilyManager::GetHomelessFamilyIDs):
-// families with members and no lot, other than the townies' and the NPCs'
-// (0x7FFE/0x7FFF) and family 0.
+// The families in the family bin (cTSFamilyManager::GetHomelessFamilyIDs,
+// BV 0x4fbfe0): lot < 1 and ID 1..0x7FD8 (the ones above are the NPCs' and
+// townies').
 std::vector<uint32_t> homelessFamilies(const Neighborhood& hood);
 // The family living on a lot (0: none).
 uint32_t familyOnLot(const Neighborhood& hood, uint32_t lot);

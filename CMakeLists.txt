@@ -44,6 +44,7 @@ add_library(os2_formats
   src/formats/lighting_config.cpp
   src/formats/locale.cpp
   src/formats/hood_moves.cpp
+  src/formats/lot_arrivals.cpp
   src/formats/hood_scene.cpp
   src/formats/hood_terrain.cpp
   src/formats/lot.cpp

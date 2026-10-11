@@ -197,6 +197,12 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
         std::vector<uint8_t> bytes;
         if (t) {
             bytes = *t;
+        } else if (s.person) {
+            // A Sim's is a cPerson (its body parts); none to copy: the Sim
+            // is found by its GUID among the character files when the lot
+            // loads (formats/lot_arrivals.hpp).
+            out.warnings.push_back("Sim " + std::to_string(s.id) + ": no cPerson of \"" + name + "\" to copy");
+            continue;
         } else {
             // No lot has one (an object bought in Buy mode): a bare cObject
             // as the game writes for objects without an animatable part

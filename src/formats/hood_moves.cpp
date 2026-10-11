@@ -163,7 +163,7 @@ const char* moveInCheckName(MoveInCheck c) {
 std::vector<uint32_t> homelessFamilies(const Neighborhood& hood) {
     std::vector<uint32_t> out;
     for (const auto& f : hood.families)
-        if (f.id != 0 && f.id < 0x7FFE && f.record.lot == 0 && !f.members.empty())
+        if (f.id >= 1 && f.id < 0x7FD9 && f.record.lot < 1)
             out.push_back(f.id);
     return out;
 }
@@ -188,39 +188,15 @@ MoveResult moveIn(const fs::path& folder, uint32_t family, uint32_t lotId, const
             throw std::runtime_error(std::string("cannot move in: ") + moveInCheckName(c));
         const Family& fam = *hood.family(family);
         const Lot& lot = *hood.lot(lotId);
-        const LotFileInfo info = lotFileInfo(lot);
-        out.price = info.price;
-        out.fundsBefore = fam.record.funds;
+        out.price = lotFileInfo(lot).price;
+        out.fundsBefore = out.fundsAfter = fam.record.funds;
         FamilyRecord r = fam.record;
         r.lot = lotId;
         r.flags |= 0x04; // cTSFamily::SetNewLot(1)
-        r.funds = int32_t(int64_t(r.funds) - info.price);
-        out.fundsAfter = r.funds;
         rewritePackage(hood.package, {{{hoodtype::FAMI, family}, r.write()}}, {});
         out.lines.push_back("family " + std::to_string(family) + " \"" + fam.name + "\" moved into lot " +
-                            std::to_string(lotId) + " for " + std::to_string(info.price) + ": funds " +
-                            std::to_string(out.fundsBefore) + " -> " + std::to_string(out.fundsAfter));
-        // The lot file's simulator: the family's funds and number (what the
-        // game's lot load sets: Current Family, the budget globals).
-        if (!lot.package.empty() && fs::exists(lot.package)) {
-            const fs::path tmp = lot.package.parent_path() / (lot.package.filename().string() + ".saving");
-            {
-                DbpfPackage pkg(lot.package);
-                LotObjects objects = LotObjects::load(pkg);
-                if (objects.simulator.read) {
-                    objects.simulator.f98 = uint32_t(r.funds);
-                    objects.simulator.f9C = 0;
-                    if (objects.globals.size() > kGlobalCurrentFamily)
-                        objects.globals[kGlobalCurrentFamily] = int16_t(family);
-                    setFunds(objects.globals, r.funds);
-                    objects.save(pkg, tmp);
-                }
-            }
-            if (fs::exists(tmp)) {
-                fs::rename(tmp, lot.package);
-                out.lines.push_back("lot file " + lot.package.filename().string() + ": current family and funds");
-            }
-        }
+                            std::to_string(lotId) + " (the price, " + std::to_string(out.price) +
+                            ", is charged when the lot loads)");
         out.ok = true;
     } catch (const std::exception& e) {
         out.error = e.what();

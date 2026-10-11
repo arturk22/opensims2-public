@@ -95,6 +95,7 @@
 #include "app/game_flow.hpp"
 #include "app/game_save.hpp"
 #include "app/hood_mode.hpp"
+#include "formats/lot_arrivals.hpp"
 #include "app/main_menu.hpp"
 #include "app/options_panel.hpp"
 #include "app/user_data.hpp"
@@ -1674,7 +1675,9 @@ void poseActors(os2::Renderer& renderer, double seconds) {
 
 size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
                    const fs::path& lotFile) {
-    const os2::LotObjects saved = os2::LotObjects::load(pkg);
+    os2::LotObjects saved = os2::LotObjects::load(pkg);
+    // A family that just moved in: its Sims arrive (formats/lot_arrivals.hpp).
+    const os2::LotArrivals arrivals = os2::addArrivingSims(saved, lot, lotFile);
     std::set<uint32_t> inWorld; // object IDs of the Sims standing on the lot
     for (const auto& st : saved.objects)
         if (st.person && st.x >= 0)
@@ -1682,7 +1685,9 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
     const std::vector<os2::SimPart>* parts = nullptr;
     const std::string idle = argument(@"--sim-anim").value_or("a-idle-neutral-armsSide-wtC-breatheLoop");
     size_t placed = 0;
-    for (const auto& o : lot.objects) {
+    std::vector<os2::Lot::Object> people = lot.objects;
+    people.insert(people.end(), arrivals.sims.begin(), arrivals.sims.end());
+    for (const auto& o : people) {
         if (!o.person || !inWorld.count(o.instance & 0xFFFF))
             continue;
         const std::string stem = o.definition.substr(0, o.definition.find(" - "));
