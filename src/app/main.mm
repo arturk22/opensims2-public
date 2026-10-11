@@ -1688,6 +1688,63 @@ uint32_t gLastFrameW = 1280, gLastFrameH = 720;
 constexpr double kCrossfadeSeconds = 2.0; // crossfadeshort/standard: screen mode 4, length 2, strength 1 -> 0
 constexpr double kCinematicWait = 1.0;    // without "Start Animations Now": the longest wait for an actor
 
+// What a scene forces while it plays (the binary's Start/Stop,
+// docs/cinematics-mac.md §6): the game speed (here normal and unpaused,
+// inferred: a paused game would freeze the scene) and, with "Show Entire
+// House" (flag 0x08; movein_cine always), the walls up and the top floor.
+// Put back when the scene ends.
+struct CinematicForced {
+    bool active = false;
+    int16_t speed = 0, paused = 0;
+    std::optional<os2::LotViewOptions::Walls> walls; // the mode before, if the walls were not up
+    std::optional<int> level;                       // the camera's floor before
+};
+CinematicForced gCinematicForced;
+bool gCinematicWholeHouse = false; // the prepared scene shows the whole house
+
+void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
+    if (!gCinematicForced.active) {
+        gCinematicForced = {};
+        gCinematicForced.active = true;
+        if (gSimulation) {
+            const auto& g = gSimulation->machine().globals;
+            gCinematicForced.speed = g[os2::vm::global::Speed];
+            gCinematicForced.paused = g[os2::vm::global::Paused];
+        }
+        if (wholeHouse && gLotView.walls != os2::LotViewOptions::Walls::Up && gIndex) {
+            gCinematicForced.walls = gLotView.walls;
+            gLotView.walls = os2::LotViewOptions::Walls::Up;
+            rebuildLotModel(renderer, *gIndex);
+        }
+        if (wholeHouse && gCameraFollow) {
+            gCinematicForced.level = gCameraFollow->level();
+            gCameraFollow->setLevel(gCameraFollow->highestLevel());
+        }
+    }
+    if (gSimulation) { // held for the whole scene (the speed buttons wait)
+        auto& g = gSimulation->machine().globals;
+        g[os2::vm::global::Speed] = 2;
+        g[os2::vm::global::Paused] = 0;
+    }
+}
+
+void restoreCinematicState(os2::Renderer& renderer) {
+    if (!gCinematicForced.active)
+        return;
+    if (gSimulation) {
+        auto& g = gSimulation->machine().globals;
+        g[os2::vm::global::Speed] = gCinematicForced.speed;
+        g[os2::vm::global::Paused] = gCinematicForced.paused;
+    }
+    if (gCinematicForced.walls && gIndex) {
+        gLotView.walls = *gCinematicForced.walls;
+        rebuildLotModel(renderer, *gIndex);
+    }
+    if (gCinematicForced.level && gCameraFollow)
+        gCameraFollow->setLevel(*gCinematicForced.level);
+    gCinematicForced = {};
+}
+
 // Where an actor stands: a Sim's or an animated object's placement, else
 // its VM position and direction (object data 1, eighths of a turn).
 std::optional<os2::Xform> cinematicOrigin(int16_t id) {
@@ -1699,8 +1756,15 @@ std::optional<os2::Xform> cinematicOrigin(int16_t id) {
     if (gObjectView && gObjectView->hasModel(id))
         if (auto x = gObjectView->placement(id))
             return x;
-    if (!gSimulation)
+    if (!gSimulation) {
+        // No VM (--cinematic on a lot without --run-vm): where the lot put it
+        // (the moveIn's mailbox; it fell back to the first Sim before).
+        if (auto it = gPlacedObjects.find(id); it != gPlacedObjects.end() && !it->second.contained) {
+            const auto& q = it->second.rotation;
+            return os2::Xform{os2::Quat{q[0], q[1], q[2], q[3]}, it->second.position};
+        }
         return std::nullopt;
+    }
     const os2::vm::Object* o = gSimulation->machine().object(id);
     if (!o || !o->position.inWorld())
         return std::nullopt;
@@ -1723,7 +1787,7 @@ void cinematicSnapshot(os2::Renderer& renderer, double now) {
 }
 
 void startCinematic(os2::Renderer& renderer, const std::string& scene, std::vector<int16_t> actors, int16_t origin,
-                    bool mirror, bool now, bool guessSims = false) {
+                    bool mirror, bool now, bool guessSims = false, bool wholeHouse = false) {
     if (gCinematic) {
         std::printf("opensims2: cinematic %s: another cinematic is playing\n", scene.c_str());
         std::fflush(stdout);
@@ -1751,6 +1815,7 @@ void startCinematic(os2::Renderer& renderer, const std::string& scene, std::vect
                     mirror ? ", mirrored" : "", now ? "" : ", waits for its actors");
         player->setGuessSimAnimations(guessSims);
         gCinematic = std::move(player);
+        gCinematicWholeHouse = wholeHouse || strcasecmp(scene.c_str(), "moveIn") == 0;
         gCinematicPrepared = -1;
         gCinematicForce = now;
     } catch (const std::exception& e) {
@@ -1781,7 +1846,7 @@ void updateCinematic(os2::Renderer& renderer, double now) {
         if (r.scene.empty())
             continue;
         std::vector<int16_t> actors(r.actors.begin(), r.actors.end());
-        startCinematic(renderer, r.scene, actors, r.me, r.mirrored(), r.startNow());
+        startCinematic(renderer, r.scene, actors, r.me, r.mirrored(), r.startNow(), false, r.flags & 0x08);
     }
     if (gLighting && !gLighting->extraLights)
         gLighting->extraLights = [](int16_t id) {
@@ -1797,7 +1862,9 @@ void updateCinematic(os2::Renderer& renderer, double now) {
         if (gCinematicForce || now - gCinematicPrepared >= kCinematicWait) {
             gCinematicLast = now - 1e-3;
             if (gCinematic->start(now)) {
-                std::printf("opensims2: cinematic %s starts at %.2f s\n", gCinematic->camera().scene().name.c_str(), now);
+                std::printf("opensims2: cinematic %s starts at %.2f s%s\n", gCinematic->camera().scene().name.c_str(), now,
+                            gCinematicWholeHouse ? " (whole house)" : "");
+                forceCinematicState(renderer, gCinematicWholeHouse);
             } else {
                 std::printf("opensims2: cinematic %s: its origin actor is not in the world\n",
                             gCinematic->camera().scene().name.c_str());
@@ -1813,7 +1880,9 @@ void updateCinematic(os2::Renderer& renderer, double now) {
             cinematicSnapshot(renderer, now); // the last shot fades into the game's camera
             gCinematic->finish();
             gCinematic.reset();
+            restoreCinematicState(renderer);
         } else {
+            forceCinematicState(renderer, gCinematicWholeHouse);
             gCinematic->update(now);
             const double t0 = gCinematicLast - gCinematic->camera().startTime(), t1 = now - gCinematic->camera().startTime();
             for (const auto& e : gCinematic->camera().effects())
@@ -2397,6 +2466,7 @@ void runTicksHeadless(long ticks) {
 void unloadScene() {
     gFlowDialog = FlowDialog::None;
     gCinematic.reset(); // (the VM's request list stays counted: gCinematicsSeen)
+    gCinematicForced = {};
     gScreenFxParams = {};
     gCrossfadeAt = -1e9;
     gBuild.reset();
@@ -3608,11 +3678,13 @@ void unloadScene() {
         }
         attachLetterbox(*_viewDelegate.renderer, (__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                         uint32_t(view.depthStencilPixelFormat));
-        // --cinematic <scene>[@id[,id...]][:mirror]: a cinematic with those actors (in the CINE's
+        // --cinematic <scene>[@id[,id...]][:mirror][:house]: a cinematic with those actors (in the CINE's
         // order; default: the lot's Sims for its Sim actors), started at once.
         if (auto cine = argument(@"--cinematic")) {
             std::string spec = *cine;
-            bool mirror = false;
+            bool mirror = false, house = false;
+            if (spec.ends_with(":house")) // "Show Entire House" (flag 0x08)
+                house = true, spec.resize(spec.size() - 6);
             if (spec.ends_with(":mirror"))
                 mirror = true, spec.resize(spec.size() - 7);
             const auto at = spec.find('@');
@@ -3644,7 +3716,7 @@ void unloadScene() {
                 }
             }
             startCinematic(*_viewDelegate.renderer, scene, actors, gLotSims.empty() ? 0 : gLotSims.front().id, mirror, true,
-                           true);
+                           true, house);
         }
         if (gPendingScene)
             return; // headless: the steps left the lot (runScenes loads the next scene)

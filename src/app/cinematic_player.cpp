@@ -132,6 +132,11 @@ bool CinematicPlayer::start(double now) {
     if (!origin)
         return false;
     camera_->start(*origin, now, mirror_);
+    if (debug()) {
+        const Vec3 fwd = origin->rotate({0, 1, 0});
+        std::fprintf(stderr, "opensims2: cinematic origin (%.2f %.2f %.2f), +Y towards (%.2f %.2f %.2f)\n", origin->t[0],
+                     origin->t[1], origin->t[2], fwd[0], fwd[1], fwd[2]);
+    }
     started_ = true;
     start_ = now;
     for (size_t i = 0; i < sc.actors.size(); ++i) {
@@ -174,7 +179,7 @@ bool CinematicPlayer::start(double now) {
                         const std::string n = std::string(ages) + "-cinematic-" + a.name + "-" + sn + "_anim";
                         if (!found && index_.findByName(n, 0xFB00791E)) {
                             const Animation& anim = s->animation(index_, n);
-                            s->cue(at, anim, {.fade = 0.1f, .loop = false});
+                            s->cue(at, anim, {.fade = 0.1f, .loop = false, .mirror = mirror_});
                             found = true;
                             if (debug())
                                 std::fprintf(stderr, "opensims2: cinematic actor %s plays %s\n", a.name.c_str(), n.c_str());
@@ -184,13 +189,13 @@ bool CinematicPlayer::start(double now) {
             for (const auto& n : a.autoAnimations) {
                 if (actor) {
                     const Animation& anim = actor->animation(index_, n);
-                    actor->cue(at, anim, {.fade = 0.0f, .loop = false});
+                    actor->cue(at, anim, {.fade = 0.0f, .loop = false, .mirror = mirror_});
                     at += anim.duration / 1000.0;
                 } else if (id) {
                     SimActor* s = host_.sim ? host_.sim(id) : nullptr;
                     if (s) {
                         const Animation& anim = s->animation(index_, n);
-                        s->cue(at, anim, {.fade = 0.1f, .loop = false});
+                        s->cue(at, anim, {.fade = 0.1f, .loop = false, .mirror = mirror_});
                         at += anim.duration / 1000.0;
                         if (a.autoOrigin && !moved_.count(s)) {
                             moved_[s] = s->transform;
@@ -198,6 +203,10 @@ bool CinematicPlayer::start(double now) {
                         }
                     } else if (host_.objectAnimation) {
                         SimActor* o = host_.objectAnimation(id, n, at);
+                        if (o && mirror_) // flipped like the rest of the scene
+                            for (auto& cue : o->cues)
+                                if (std::abs(cue.at - at) < 1e-9)
+                                    cue.options.mirror = true;
                         at += loadAnimation(index_, n).duration / 1000.0;
                         if (o && a.autoOrigin && !moved_.count(o)) {
                             moved_[o] = o->transform;

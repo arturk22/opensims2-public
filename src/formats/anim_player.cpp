@@ -52,6 +52,57 @@ std::vector<bool> keyedBones(const Animation::Target& target, const Skeleton& s)
     return keyed;
 }
 
+std::vector<int> mirrorBones(const Skeleton& s) {
+    std::vector<int> twins(s.bones.size());
+    for (size_t i = 0; i < s.bones.size(); ++i) {
+        twins[i] = int(i);
+        const std::string& n = s.bones[i].name;
+        if (n.size() > 2 && n[1] == '_' && (n[0] == 'l' || n[0] == 'r' || n[0] == 'L' || n[0] == 'R')) {
+            std::string other = n;
+            other[0] = (n[0] == 'l' || n[0] == 'L') ? 'r' : 'l';
+            if (const int t = s.find(other); t >= 0)
+                twins[i] = t;
+        }
+    }
+    return twins;
+}
+
+namespace {
+// S x S with S the reflection x -> -x: still a rigid transform.
+Xform reflectX(const Xform& x) {
+    Xform o;
+    o.q = {x.q.x, -x.q.y, -x.q.z, x.q.w};
+    o.t = {-x.t[0], x.t[1], x.t[2]};
+    return o;
+}
+} // namespace
+
+std::vector<Xform> mirrorPose(const Skeleton& s, const std::vector<int>& twins, const std::vector<Xform>& restWorld,
+                              const std::vector<Xform>& local) {
+    const size_t n = s.bones.size();
+    if (twins.size() != n || restWorld.size() != n || local.size() != n)
+        return local;
+    const std::vector<Xform> world = s.world(local);
+    std::vector<Xform> out(n);
+    for (size_t b = 0; b < n; ++b) {
+        const size_t t = size_t(twins[b]);
+        out[b] = reflectX(world[t].then(restWorld[t].inverse())).then(restWorld[b]);
+    }
+    std::vector<Xform> result(n);
+    for (size_t b = 0; b < n; ++b) {
+        const int p = s.bones[b].parent;
+        result[b] = p >= 0 ? out[size_t(p)].inverse().then(out[b]) : out[b];
+    }
+    return result;
+}
+
+void AnimPlayer::prepareMirror() {
+    if (!skeleton_ || !twins_.empty())
+        return;
+    twins_ = mirrorBones(*skeleton_);
+    restWorld_ = skeleton_->world(skeleton_->restPose());
+}
+
 void blendPose(std::vector<Xform>& from, const std::vector<Xform>& to, float weight, const std::vector<float>& mask) {
     const size_t n = std::min(from.size(), to.size());
     for (size_t i = 0; i < n; ++i) {
@@ -84,6 +135,9 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     // T-pose). The header priority orders the masked overlays.
     l.priority = o.priority >= 0 ? o.priority : (o.mask.empty() ? 0 : int(anim.priority));
     l.mask = o.mask;
+    l.mirror = o.mirror;
+    if (l.mirror)
+        prepareMirror();
     if (skeleton_ && l.target) {
         if (anim.flags & 1)
             l.keyed.assign(skeleton_->bones.size(), true);
@@ -146,6 +200,18 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         for (size_t i = 0; i < mask.size(); ++i)
             mask[i] = (i < l.keyed.size() && l.keyed[i] ? 1.0f : 0.0f) *
                       (l.mask.empty() ? 1.0f : (i < l.mask.size() ? l.mask[i] : 0.0f));
+        if (l.mirror && twins_.size() == mask.size()) {
+            // IK first (the chains name their own side), then the whole pose flipped.
+            if (!l.target->ikChains.empty()) {
+                const std::vector<Xform> goals = p;
+                applyIk(*l.target, *skeleton_, ticks, p, &goals);
+            }
+            p = mirrorPose(*skeleton_, twins_, restWorld_, p);
+            std::vector<float> flipped(mask.size());
+            for (size_t i = 0; i < mask.size(); ++i)
+                flipped[i] = mask[size_t(twins_[i])];
+            mask = std::move(flipped);
+        }
         blendPose(out, p, w, mask);
     }
     // IK over the blend: each layer's chains reach its goals from the
@@ -153,7 +219,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     // carry pose of higher priority, which the trees leave on while reading
     // the paper).
     for (const auto& l : layers_) {
-        if (!l.target || l.target->ikChains.empty())
+        if (!l.target || l.target->ikChains.empty() || l.mirror)
             continue;
         const float w = l.replaced ? (weight(l, now) > 0 ? 1.0f : 0.0f) : weight(l, now);
         if (w <= 0)

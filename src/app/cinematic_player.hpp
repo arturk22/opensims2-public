@@ -9,7 +9,7 @@
 //   "plumbobCinematic", "UFO3", ...) are created for the scene; actors with
 //   auto-origin are put at the origin actor's placement; each actor's auto
 //   animation list plays one animation after the other from the start
-//   (mirrored like the camera: not done for the actors' bones).
+//   (mirrored like the camera, the actors' bones too: AnimPlayer::Options::mirror).
 // - The light rig ("tsCineLightRig.i", skeleton "lightrig") is not drawn:
 //   its animation places and colours its lights (point1a/b, spot1a/b of rig
 //   1, 2 and 3: "diffuse" x "diffuseScale"), and the actors whose

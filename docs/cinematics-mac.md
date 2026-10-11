@@ -219,7 +219,7 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
   pontuais dos atores cujos grupos de render têm o bit 1/2/4; spots como
   pontos, inferido), as câmeras em sequência (`-1_anim`, `-2_anim`), os
   cortes (chaves na mesma hora), o espelhamento (flag 0x01, ou 0x02 com o
-  temp 0 ≠ 0: só a câmera e o rig; os ossos dos atores não são espelhados),
+  temp 0 ≠ 0: a câmera, o rig e, desde a rodada 10, os ossos dos atores),
   pós-processamento (letterbox, vinheta, granulado e um "bloom" barato:
   cena × w + rgb como clareamento, inferido), crossfade de instantâneo
   (tela modo 4, 2 s, força 1 → 0) nos eventos `crossFadeSnap*` da câmera e
@@ -234,6 +234,34 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
   `<idades>-cinematic-<ator>-<cena>_anim`, que no jogo vem da árvore).
   Capturas: `docs/screenshots/r9-cinematic-firstkiss.jpg`,
   `r9-cinematic-abduction.jpg`, `r9-cinematic-movein.jpg`.
+- Rodada 10:
+  - **Espelhamento dos ossos**: as animações da cena (as listas automáticas
+    dos atores criados, dos Sims e dos objetos) tocam espelhadas com a
+    câmera e o rig. O espelho é feito no espaço do modelo, pelo plano YZ do
+    esqueleto (+Y é a frente do Sim): cada osso toma o reflexo do movimento
+    do seu par (`l_*` ↔ `r_*`) em relação à pose de repouso,
+    W'ᵦ = S (Wₚ Rₚ⁻¹) S Rᵦ (S o reflexo), e volta a local; assim a malha
+    sai a imagem espelhada da não espelhada qualquer que seja a convenção
+    dos eixos das juntas (`mirrorPose`, `AnimPlayer::Options::mirror`; a IK
+    da camada roda antes do espelho). A VM também guarda a flag de espelho
+    do Animate Sim (byte 2 `0x01`, ou com o byte 8 `0x01` o temp 3; inferido
+    que o temp substitui a literal) e o app toca a animação espelhada.
+  - **"Mostrar a casa inteira"** (flag `0x08`; `movein_cine` sempre): na
+    cena as paredes sobem (o modelo do lote é refeito com paredes altas se o
+    lote estava em corte/baixas) e a câmera vai ao andar mais alto; a
+    **velocidade** é forçada (normal e sem pausa, inferido: pausado, o relógio
+    da cena pararia) durante a cena inteira; tudo volta no fim (Stop).
+    `--cinematic <cena>[:mirror][:house]`.
+  - O `moveIn` que "terminava dentro da casa" no `N001_Lot11` não era a
+    orientação: sem a VM (`--cinematic` sem `--run-vm`) a caixa de correio
+    não tinha posição e a cena caía no primeiro Sim (no jardim); agora usa a
+    posição do objeto carregado. Com a caixa em (31,5, 14,5) o táxi para na
+    rua e a câmera termina na calçada olhando a casa (com e sem a VM).
+  - Capturas: `docs/screenshots/r10-cinematic-movein.jpg` (antes/depois,
+    `--lot N001_Lot11 [--walls down] --cinematic moveIn --time 8 --frames 4`),
+    `r10-cinematic-espelhada.jpg` (`--cinematic firstKiss:mirror`: antes o
+    beijador de costas para a câmera espelhada, depois a imagem espelhada da
+    cena normal).
 
 ## 6. O que o binário faz com a cena (Mac BV)
 

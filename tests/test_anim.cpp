@@ -426,7 +426,33 @@ static void testBodyShape() {
     check(bodyShapeMorphs(0x1, 2).empty(), "toddlers: no body morphs");
 }
 
+// Mirroring: a left arm's motion lands on the right arm, reflected across
+// the YZ plane, whatever the joints' own axes (the right one here is turned
+// 180 degrees about Y in its rest pose).
+static void testMirror() {
+    Skeleton s;
+    s.bones.push_back({"root", -1, Xform{}, 0, 0});
+    s.bones.push_back({"l_arm", 0, Xform{Quat{}, {0.2f, 0, 1}}, 1, 1});
+    s.bones.push_back({"r_arm", 0, Xform{Quat{0, 1, 0, 0}, {-0.2f, 0, 1}}, 2, 2});
+    s.bones.push_back({"l_hand", 1, Xform{Quat{}, {0.3f, 0, 0}}, 3, 3});
+    s.bones.push_back({"r_hand", 2, Xform{Quat{}, {0.3f, 0, 0}}, 4, 4});
+    const auto twins = mirrorBones(s);
+    check(twins == std::vector<int>({0, 2, 1, 4, 3}), "mirror twins by l_/r_");
+    std::vector<Xform> local = s.restPose();
+    local[1].q = quatFromEulerXYZ(0, 0, 0.5f); // the left arm swings forward (+Y)
+    const auto restWorld = s.world(s.restPose());
+    const auto mirrored = mirrorPose(s, twins, restWorld, local);
+    const auto w = s.world(local), mw = s.world(mirrored);
+    // The right hand ends where the left one was, reflected (x -> -x).
+    check(near(mw[4].t[0], -w[3].t[0], 1e-4f) && near(mw[4].t[1], w[3].t[1], 1e-4f) && near(mw[4].t[2], w[3].t[2], 1e-4f),
+          "mirrored hand position");
+    check(near(mw[3].t[0], 0.5f, 1e-4f) && near(mw[3].t[1], 0, 1e-4f), "the other arm stays at rest");
+    const auto twice = mirrorPose(s, twins, restWorld, mirrored);
+    check(near(s.world(twice)[3].t[1], w[3].t[1], 1e-4f), "mirroring twice gives the pose back");
+}
+
 int main() {
+    testMirror();
     testBodyShape();
     testPlayer();
     testIk();

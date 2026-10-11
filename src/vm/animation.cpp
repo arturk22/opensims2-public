@@ -419,6 +419,7 @@ Exit animateSim(Context& c) {
         ++c.vm.animations.missing[name];
     a.name = name;
     ++a.serial;
+    a.flipped = (o[8] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0; // the flag in temp 3 replaces the literal one (inferred)
     a.ticksLeft = seconds ? ticksFor(c.vm, *seconds / animationSpeed(c)) : 0;
     a.depth = depth, a.tree = c.frame.behavior, a.node = c.frame.pc;
     a.pendingEvents = library(c.vm).treeEvents(name);

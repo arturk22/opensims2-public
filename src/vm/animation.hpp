@@ -89,6 +89,8 @@ struct AnimationState {
     // "_anim", resolved for the Sim's age and gender), while it plays.
     std::string name;
     uint32_t serial = 0;    // bumped each time one starts, so the host restarts it
+    // Flipped horizontally: byte 2 flag 0x01, or with byte 8 flag 0x01 temp 3 != 0.
+    bool flipped = false;
     int ticksLeft = 0;      // VM ticks until it ends
     bool playing() const { return !name.empty(); }
     // The instruction waiting for it: its thread's stack depth, tree and node.

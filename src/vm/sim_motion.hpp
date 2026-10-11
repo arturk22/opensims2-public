@@ -36,6 +36,7 @@ public:
         bool walking = false;
         std::string animation;  // Animate Sim's, while it plays
         uint32_t serial = 0;    // of that animation
+        bool flipped = false;   // played mirrored (Animate Sim's flip flags)
         std::string walk;       // the locomotion walk animation while walking
         // On a stair (Object::Route::climb): the phase's animation, bumped
         // serial per phase, and the height of the walker's anchor.

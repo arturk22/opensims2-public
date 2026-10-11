@@ -224,7 +224,8 @@ void LotSimulation::sampleAll(double at) {
             continue;
         try {
             const Animation& anim = b.actor->animation(index_, want);
-            b.actor->cue(at, anim, {.fade = fade, .loop = loop});
+            const bool flipped = s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() && s.flipped;
+            b.actor->cue(at, anim, {.fade = fade, .loop = loop, .mirror = flipped});
             if (onSimAnimation)
                 onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
         } catch (const std::exception& e) {

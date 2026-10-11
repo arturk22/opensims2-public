@@ -23,6 +23,19 @@ std::vector<bool> keyedBones(const Animation::Target& target, const Skeleton& sk
 void blendPose(std::vector<Xform>& from, const std::vector<Xform>& to, float weight,
                const std::vector<float>& mask = {});
 
+// For each bone, its mirror twin: "l_..." <-> "r_..." (itself otherwise).
+std::vector<int> mirrorBones(const Skeleton& skeleton);
+
+// A local pose mirrored left to right across the skeleton's YZ plane (+Y is
+// the Sim's front, X its side), as the game's flipped animations ("Flip
+// Cinematic Anims Horizontally", Animate Sim's flip flag): each bone takes
+// the reflection of its twin's motion relative to the rest pose
+// (W'_b = S (W_t R_t^-1) S R_b in model space, S the reflection), so the
+// skinned mesh comes out as the mirror image of the unflipped one whatever
+// the joints' axis conventions are. `restWorld` = skeleton.world(restPose()).
+std::vector<Xform> mirrorPose(const Skeleton& skeleton, const std::vector<int>& twins,
+                              const std::vector<Xform>& restWorld, const std::vector<Xform>& local);
+
 // Plays animations on one skeleton as layers. Layers are applied over the rest
 // pose in order of the animation's priority, then of start time; each one
 // moves only the bones it keys (all of them for full-body animations, flag
@@ -34,13 +47,17 @@ void blendPose(std::vector<Xform>& from, const std::vector<Xform>& to, float wei
 class AnimPlayer {
 public:
     explicit AnimPlayer(const Skeleton* skeleton = nullptr) : skeleton_(skeleton) {}
-    void setSkeleton(const Skeleton* skeleton) { skeleton_ = skeleton; }
+    void setSkeleton(const Skeleton* skeleton) {
+        skeleton_ = skeleton;
+        twins_.clear();
+    }
 
     struct Options {
         float fade = 0.25f;      // seconds to blend in (and to blend the replaced layers out)
         bool loop = true;
         std::vector<float> mask; // per bone, empty = every bone it keys
         int priority = -1;       // -1: base layer 0 without a mask, else the animation's own
+        bool mirror = false;     // flipped horizontally (left and right swapped)
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.
@@ -87,7 +104,11 @@ private:
         int priority = 0;
         std::vector<float> mask;
         std::vector<bool> keyed;
+        bool mirror = false;
     };
+    void prepareMirror();
+    std::vector<int> twins_;          // mirrorBones of the skeleton (empty until a flipped layer plays)
+    std::vector<Xform> restWorld_;
     float weight(const Layer& l, double now) const;
     float velocity(double now) const; // per second
 
