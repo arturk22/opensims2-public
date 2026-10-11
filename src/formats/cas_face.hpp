@@ -27,6 +27,7 @@
 
 #include "cas_catalog.hpp"
 #include "gmdc.hpp"
+#include "lxnr.hpp"
 
 #include <array>
 #include <map>
@@ -49,6 +50,10 @@ struct FaceSpec {
     // masks are partial heads whose vertex colours weigh the blend (inferred:
     // the largest colour channel / 255).
     std::map<std::string, std::string> regions;
+    // A saved face (the character file's LxNR): its deltas for the age and
+    // gender replace the archetype head (regions and modifiers still apply
+    // on top). Picking an archetype in CAS drops it.
+    std::shared_ptr<const FaceStructure> structure;
 };
 
 class FaceBaker {
@@ -60,11 +65,20 @@ public:
         std::string neutral;       // neutral face name ("afFace")
         std::vector<uint8_t> gmdc; // the neutral's GMDC resource with positions and normals replaced
         size_t vertices = 0, moved = 0, matched = 0;
+        // Per vertex of the neutral mesh: (baked - neutral position, uv),
+        // what the LxNR keeps for this age, gender and detail.
+        std::vector<FaceStructure::Vertex> structure;
         std::vector<std::string> warnings;
     };
     // The face for `spec` at an age and gender (its archetype family's head
     // of that age, else the neutral face).
-    Baked bake(const FaceSpec& spec, uint32_t ageBit, uint32_t genderBit);
+    // `lowDetail`: the neutral face's low level of detail (its SHPE's other
+    // LOD), for the LxNR's 0xF0000 keys.
+    Baked bake(const FaceSpec& spec, uint32_t ageBit, uint32_t genderBit, bool lowDetail = false);
+    // The LxNR of a face: every age the archetype (or the structure) has a
+    // head for, both genders' keys as the game writes them, both levels of
+    // detail.
+    FaceStructure structureOf(const FaceSpec& spec, uint32_t genderBit);
 
     // The archetype of a family at an age and gender, if the catalog has one.
     const SimPart* archetypeFor(const std::string& family, uint32_t ageBit, uint32_t genderBit) const;
@@ -72,7 +86,7 @@ public:
 private:
     struct Mesh;
     const Mesh& meshByName(const std::string& gmdcName);
-    const Mesh* meshOfEntry(const SimPart& entry); // its SHPE's LOD 0 GMDC
+    const Mesh* meshOfEntry(const SimPart& entry, bool lowDetail = false); // its SHPE's LOD 0 (or other) GMDC
 
     ResourceIndex& index_;
     const CasCatalog& catalog_;

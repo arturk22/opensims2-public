@@ -6,10 +6,17 @@
 #include "formats/cas_catalog.hpp"
 #include "formats/cas_face.hpp"
 #include "formats/character_write.hpp"
+#include "formats/dbpf.hpp"
+#include "formats/gmdc.hpp"
+#include "formats/lxnr.hpp"
+#include "formats/property_set.hpp"
+#include "formats/rcol.hpp"
 #include "formats/resindex.hpp"
+#include "formats/sim_character.hpp"
 #include "vm/family_write.hpp"
 #include "vm/genetics.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cctype>
 #include <cstring>
@@ -243,6 +250,98 @@ int cmdCasMake(int argc, char** argv) {
     return 0;
 }
 
+// The character's LxNR: its keys, and the face baked from it at the
+// character's age against the character's own face meshes (by texture
+// coordinate).
+int cmdCasLxnr(const char* resDir, const char* file) {
+    ResourceIndex index(resDir);
+    DbpfPackage pkg(file);
+    const DbpfEntry* lx = nullptr;
+    for (const auto& e : pkg.entries())
+        if (e.tgi.type == cas::kTypeLxnr)
+            lx = &e;
+    if (!lx) {
+        std::printf("no LxNR\n");
+        return 1;
+    }
+    const auto bytes = pkg.read(*lx);
+    auto fs = std::make_shared<cas::FaceStructure>(cas::FaceStructure::parse(bytes));
+    std::printf("LxNR version %u, %zu keys:", fs->version, fs->keys.size());
+    for (uint32_t k : fs->keys)
+        std::printf(" %x(%zu)", k, fs->data[k].size());
+    std::printf("\n");
+    const auto again = fs->write();
+    const auto re = cas::FaceStructure::parse(again);
+    std::printf("rewritten: %zu bytes (stored %zu), %s\n", again.size(), bytes.size(),
+                re.data == fs->data ? "same data" : "DIFFERENT");
+    const Character ch = readCharacter(pkg, index);
+    std::printf("character: age %u gender %u\n", ch.age, ch.gender);
+    const auto catalog = cas::CasCatalog::load(index);
+    cas::FaceBaker baker(index, catalog);
+    for (bool low : {false, true}) {
+        cas::FaceSpec spec;
+        spec.structure = fs;
+        cas::FaceBaker::Baked b;
+        try {
+            b = baker.bake(spec, ch.age, ch.gender, low);
+        } catch (const std::exception& e) {
+            std::printf("bake: %s\n", e.what());
+            continue;
+        }
+        if (const auto* sv = fs->find(ch.age, ch.gender, low)) {
+            size_t same = 0;
+            for (size_t i = 0; i < sv->size() && i < b.structure.size(); ++i)
+                same += std::fabs((*sv)[i].u - b.structure[i].u) < 1e-4f && std::fabs((*sv)[i].v - b.structure[i].v) < 1e-4f;
+            std::printf("%s detail: stored %zu corners, neutral mesh %zu, same uv in order %zu\n", low ? "low" : "high",
+                        sv->size(), b.structure.size(), same);
+        }
+        Rcol brc(b.gmdc);
+        const auto mine = buildMeshes(GeometryData::parse(brc.find("cGeometryDataContainer")->body));
+        // Each GMDC of the character file: the mean distance per matched texture coordinate.
+        for (const auto& e : pkg.entries()) {
+            if (e.tgi.type != 0xAC4F8687)
+                continue;
+            try {
+                const auto gb = pkg.read(e);
+                Rcol rc(gb);
+                const auto* blk = rc.find("cGeometryDataContainer");
+                if (!blk)
+                    continue;
+                const auto theirs = buildMeshes(GeometryData::parse(blk->body));
+                std::multimap<std::pair<long, long>, std::array<float, 3>> byUv;
+                size_t n = 0;
+                for (const auto& g : theirs)
+                    for (size_t i = 0; i < g.positions.size() && i < g.uvs.size(); ++i)
+                        byUv.emplace(std::make_pair(std::lround(g.uvs[i][0] * 4096), std::lround(g.uvs[i][1] * 4096)), g.positions[i]), ++n;
+                double sum = 0, worst = 0;
+                size_t matched = 0;
+                for (const auto& g : mine)
+                    for (size_t i = 0; i < g.positions.size() && i < g.uvs.size(); ++i) {
+                        auto [lo, hi] = byUv.equal_range({std::lround(g.uvs[i][0] * 4096), std::lround(g.uvs[i][1] * 4096)});
+                        double best = -1;
+                        for (auto it = lo; it != hi; ++it) {
+                            double d = 0;
+                            for (int c = 0; c < 3; ++c)
+                                d += double(it->second[c] - g.positions[i][c]) * double(it->second[c] - g.positions[i][c]);
+                            if (best < 0 || d < best)
+                                best = d;
+                        }
+                        if (best >= 0) {
+                            sum += std::sqrt(best), worst = std::max(worst, std::sqrt(best)), ++matched;
+                        }
+                    }
+                if (matched)
+                    std::printf("%s detail vs GMDC %08x (%zu vertices): %zu matched, mean %.6f, worst %.6f\n",
+                                low ? "low" : "high", e.tgi.instance, n, matched, sum / double(matched), worst);
+            } catch (const std::exception&) {
+            }
+        }
+        for (const auto& w : b.warnings)
+            std::printf("  warning: %s\n", w.c_str());
+    }
+    return 0;
+}
+
 } // namespace
 
 const char* casUsage() {
@@ -250,7 +349,8 @@ const char* casUsage() {
            "       s2pkg cas-make <Res-dir> <out.package> [--age adult] [--gender f|m] [--skin 1-4] [--hair-tone 1-5]\n"
            "              [--hair|--top|--bottom|--body|--formal part] [--archetype name] [--mod name=weight]...\n"
            "              [--eyes overlay] [--overlay overlay]... [--first name] [--last name] [--object N001_User00100] [--seed N]\n"
-           "              [--hood <neighborhood dir> --hood-out <dir> [--family name]]  (adds a one-Sim family to a copy)\n";
+           "              [--hood <neighborhood dir> --hood-out <dir> [--family name]]  (adds a one-Sim family to a copy)\n"
+           "       s2pkg cas-lxnr <Res-dir> <character.package>  (the LxNR face structure, checked against the face meshes)\n";
 }
 
 int casCommand(const std::string& cmd, int argc, char** argv) {
@@ -268,6 +368,8 @@ int casCommand(const std::string& cmd, int argc, char** argv) {
         }
         return cmdCasCatalog(argv[2], ageBit, genderBit, only);
     }
+    if (cmd == "cas-lxnr" && argc >= 4)
+        return cmdCasLxnr(argv[2], argv[3]);
     if (cmd == "cas-make" && argc >= 4)
         return cmdCasMake(argc, argv);
     return -1;

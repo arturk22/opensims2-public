@@ -1,5 +1,7 @@
 // Genetics (vm/genetics.hpp): dominant regions, PickGene, descendant face.
+#include "formats/cas_catalog.hpp"
 #include "formats/cas_personality.hpp"
+#include "formats/lxnr.hpp"
 #include "vm/genetics.hpp"
 
 #include <cstdio>
@@ -73,5 +75,22 @@ int main() {
     os2::cas::Personality p{10, 10, 5, 0, 0};
     os2::cas::setTrait(p, 3, 4);
     check(p.neat == 0 && p.total() == 25, "a trait cannot pass the 25 points");
+    // The LxNR face structure: keys, the shared vector pool, round trip.
+    {
+        using os2::cas::FaceStructure;
+        check(FaceStructure::key(os2::cas::age::Adult, os2::cas::gender::Female) == 0x003, "LxNR key: adult female 0x003");
+        check(FaceStructure::key(os2::cas::age::Baby, os2::cas::gender::Male, true) == 0xF0105,
+              "LxNR key: baby male low detail 0xF0105");
+        FaceStructure fs;
+        fs.set(0x003, {{{0.001f, -0.002f, 0.0f}, 0.25f, 0.5f}, {{0.001f, -0.002f, 0.0f}, 0.75f, 0.5f}});
+        fs.set(0x103, {{{0.0f, 0.0f, 0.0f}, 0.25f, 0.5f}});
+        const auto bytes = fs.write();
+        // 8 + 2 keys + 'keye' + u16 + 4 distinct vectors + 'mstr' + (2 + 8) + (2 + 4) + 'data'
+        check(bytes.size() == 8 + 8 + 4 + 2 + 4 * 12 + 4 + 10 + 6 + 4, "LxNR: equal vectors are pooled once");
+        const FaceStructure back = FaceStructure::parse(bytes);
+        check(back.keys == fs.keys && back.data == fs.data, "LxNR: write then parse gives the same data");
+        check(back.find(os2::cas::age::Adult, os2::cas::gender::Male) && back.find(os2::cas::age::Adult, os2::cas::gender::Male)->size() == 1,
+              "LxNR: find by age and gender");
+    }
     return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

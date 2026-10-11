@@ -1,5 +1,6 @@
 #include "cas_face.hpp"
 
+#include "config_text.hpp"
 #include "rcol.hpp"
 #include "resindex.hpp"
 #include "scenegraph.hpp"
@@ -106,7 +107,7 @@ const FaceBaker::Mesh& FaceBaker::meshByName(const std::string& name) {
     return *meshes_.emplace(name, std::move(m)).first->second;
 }
 
-const FaceBaker::Mesh* FaceBaker::meshOfEntry(const SimPart& entry) {
+const FaceBaker::Mesh* FaceBaker::meshOfEntry(const SimPart& entry, bool lowDetail) {
     const auto shpe = entry.reference("shapekeyidx");
     if (!shpe)
         return nullptr;
@@ -120,7 +121,7 @@ const FaceBaker::Mesh* FaceBaker::meshOfEntry(const SimPart& entry) {
         return nullptr;
     const Shape shape = Shape::parse(b->body);
     for (const auto& item : shape.items) {
-        if (item.lod != 0 && shape.items.size() > 1)
+        if (shape.items.size() > 1 && item.lod != 0)
             continue;
         std::optional<ResourceIndex::Location> gmnd;
         if (!item.geometryName.empty())
@@ -141,7 +142,18 @@ const FaceBaker::Mesh* FaceBaker::meshOfEntry(const SimPart& entry) {
                         BinReader r(d->body);
                         r.u32();
                         const std::string n = SgResource::read(r).fileName;
-                        return &meshByName(n);
+                        if (!lowDetail)
+                            return &meshByName(n);
+                        // The low level of detail: "<x>LOD15_tslocator_gmdc" beside
+                        // "<x>_tslocator_gmdc" (CASFace.package, Sims03.package).
+                        const std::string tail = "_tslocator_gmdc";
+                        if (n.size() <= tail.size() || lowerAscii(n).compare(n.size() - tail.size(), tail.size(), tail) != 0)
+                            return nullptr;
+                        try {
+                            return &meshByName(n.substr(0, n.size() - tail.size()) + "LOD15" + tail);
+                        } catch (const std::exception&) {
+                            return nullptr;
+                        }
                     }
                 }
     }
@@ -155,13 +167,13 @@ const SimPart* FaceBaker::archetypeFor(const std::string& fam, uint32_t ageBit, 
     return nullptr;
 }
 
-FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t genderBit) {
+FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t genderBit, bool lowDetail) {
     Baked out;
     const SimPart* neutralEntry = catalog_.neutralFor(ageBit, genderBit);
     if (!neutralEntry)
         throw FormatError(std::string("no neutral face for ") + ageName(ageBit));
     out.neutral = neutralEntry->name();
-    const Mesh* tp = meshOfEntry(*neutralEntry);
+    const Mesh* tp = meshOfEntry(*neutralEntry, lowDetail);
     if (!tp)
         throw FormatError("neutral face " + out.neutral + ": mesh not found");
     const Mesh& t = *tp;
@@ -218,9 +230,36 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
     std::vector<Vec3> disp(slots.size(), Vec3{0, 0, 0});
     std::vector<bool> covered(slots.size(), false);
 
-    if (!spec.archetype.empty()) {
+    if (spec.structure) {
+        const auto* sv = spec.structure->find(ageBit, genderBit, lowDetail);
+        if (!sv && lowDetail)
+            sv = spec.structure->find(ageBit, genderBit, false);
+        if (!sv)
+            out.warnings.push_back(std::string("the face structure has no ") + ageName(ageBit) + " face");
+        else {
+            std::unordered_multimap<int64_t, size_t> byUv;
+            for (size_t k = 0; k < sv->size(); ++k)
+                byUv.emplace(uvKey((*sv)[k].u, (*sv)[k].v), k);
+            std::vector<bool> used(sv->size(), false);
+            for (size_t i = 0; i < slots.size(); ++i) {
+                auto [lo, hi] = byUv.equal_range(uvKey(slots[i].uv[0], slots[i].uv[1]));
+                // Shared texture coordinates: the first entry not taken yet.
+                long pick = -1;
+                for (auto it = lo; it != hi; ++it)
+                    if (pick < 0 || (!used[it->second] && used[size_t(pick)]))
+                        pick = long(it->second);
+                if (pick >= 0) {
+                    used[size_t(pick)] = true;
+                    disp[i] = (*sv)[size_t(pick)].delta;
+                    covered[i] = true;
+                }
+            }
+        }
+    } else if (!spec.archetype.empty()) {
         const SimPart* a = archetypeFor(spec.archetype, ageBit, genderBit);
-        const Mesh* am = a ? meshOfEntry(*a) : nullptr;
+        const Mesh* am = a ? meshOfEntry(*a, lowDetail) : nullptr;
+        if (!am && lowDetail)
+            am = a ? meshOfEntry(*a) : nullptr;
         if (!am)
             out.warnings.push_back("archetype " + spec.archetype + " has no " + ageName(ageBit) + " head");
         else
@@ -349,6 +388,21 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
         }
     }
 
+    // The LxNR's order: every triangle corner of the mesh's groups, in group
+    // and face order (the game's cMeshEntry lists: 2211 = 3 x 737 corners for
+    // the adult faces, 1335 for their low detail).
+    for (const auto& gr : g.groups) {
+        if (gr.primitiveType != 2 || gr.linkIndex < 0 || size_t(gr.linkIndex) >= links.size())
+            continue;
+        const LinkInfo& info = links[size_t(gr.linkIndex)];
+        if (info.vertices < 0 || info.uvs < 0)
+            continue;
+        for (uint32_t f : gr.faces)
+            if (f < info.count) {
+                const size_t i = info.first + f;
+                out.structure.push_back({disp[i], slots[i].uv[0], slots[i].uv[1]});
+            }
+    }
     out.gmdc = t.bytes;
     auto put = [&](size_t offset, const Vec3& v) {
         for (int c = 0; c < 3; ++c) {
@@ -373,6 +427,42 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
         }
     }
     return out;
+}
+
+FaceStructure FaceBaker::structureOf(const FaceSpec& spec, uint32_t genderBit) {
+    FaceStructure fs;
+    fs.version = 3;
+    const uint32_t ages[6] = {age::Toddler, age::Child, age::Teen, age::Adult, age::Elder, age::Baby};
+    // The game's characters hold both genders' keys (0x000 and 0x100); the
+    // other gender's face is the same face over that gender's neutral (inferred).
+    for (uint32_t g : {gender::Female, gender::Male})
+        for (uint32_t a : ages) {
+            const bool has = spec.structure ? spec.structure->find(a, genderBit) != nullptr
+                                            : (spec.archetype.empty() || archetypeFor(spec.archetype, a, genderBit));
+            if (!has || !catalog_.neutralFor(a, g))
+                continue;
+            for (bool low : {false, true}) {
+                try {
+                    FaceSpec s = spec;
+                    Baked b;
+                    if (g == genderBit)
+                        b = bake(s, a, g, low);
+                    else {
+                        // The face of this gender at its own neutral: the deltas carry over by UV.
+                        Baked own = bake(s, a, genderBit, low);
+                        auto tmp = std::make_shared<FaceStructure>();
+                        tmp->set(FaceStructure::key(a, g, low), own.structure);
+                        FaceSpec t;
+                        t.structure = tmp;
+                        b = bake(t, a, g, low);
+                    }
+                    if (!b.structure.empty())
+                        fs.set(FaceStructure::key(a, g, low), std::move(b.structure));
+                } catch (const std::exception&) {
+                }
+            }
+        }
+    return fs;
 }
 
 } // namespace os2::cas

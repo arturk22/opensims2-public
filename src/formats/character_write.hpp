@@ -27,9 +27,10 @@
 //   person object type and "<file> - <first name>" as its name; CTSS 0x7D0
 //   with the first name, description and last name; the 0xEBFEE342 record
 //   ("The Sims 2", the version that wrote it).
-// Not written (yet): the LxNR (its format is not decoded; the game reads it
-// back to edit the face again), the thumbnails (IMG 0x856DDBAC) and mesh
-// overlays (glasses, beards with a mesh).
+// - the LxNR (0xCCCEF852, instance 1), the face structure the game reads
+//   back to edit the face and to grow the Sim up (formats/lxnr.hpp).
+// Not written (yet): the faces' low level of detail chain (LOD15), the
+// thumbnails (IMG 0x856DDBAC).
 
 #include "cas_catalog.hpp"
 #include "cas_face.hpp"
@@ -83,9 +84,23 @@ struct CharacterWriteResult {
 
 // Writes the character package to `out`. `objectName` names the file's
 // object ("N001_User00012"); the OBJD is called "<objectName> - <first>".
+// `faceStructure`: also the LxNR (formats/lxnr.hpp: the face at every age,
+// both genders and levels of detail; a second or so of baking, which a
+// preview can skip).
 CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& catalog, FaceBaker& baker,
                                     const CharacterSpec& spec, const std::string& objectName,
-                                    const std::filesystem::path& out);
+                                    const std::filesystem::path& out, bool faceStructure = true);
+
+// The other way: a saved Sim as CAS choices, to edit it again or to start
+// from a premade one. `group` is the Sim's group in `package`: 0xFFFFFFFF
+// in a character file, the Sim's own (0x7F...) in the premade Sim bin
+// (Catalog/Bins/globalcatbin.bundle.package: per Sim an AGED, its 3IDR, a
+// face GZPS with its mesh chain, the face TXMT and the LxNR in one group,
+// listed by a BINX whose objectidx names the AGED). Reads the AGED (age,
+// gender, fitness, skin, hair and eye colours, the outfit lists, resolved
+// to catalog part names), the face TXMT's cafOverlay* (the overlays), the
+// LxNR (face.structure) and the CTSS names. Throws without an AGED.
+CharacterSpec readCharacterSpec(class DbpfPackage& package, uint32_t group, const CasCatalog& catalog);
 
 // The next life stage's age bit (baby -> toddler -> child -> teen -> adult
 // -> elder), 0 for elders.

@@ -96,11 +96,7 @@ em `TSData/Res/Sims3D/CASFace.package` (685 GMDC/CRES/SHPE). O editor
 deltas; os modificadores somam deltas com peso no intervalo do slider. O
 resultado é exportado (`cTSCASSystem::ExportFace`, BV `0x558e4c`) como a
 malha de rosto do personagem + o **LxNR** (`0xCCCEF852`, instância 1, a
-"estrutura facial": os pesos que geraram a malha). Cabeçalho visto num
-personagem (`N001_User00001`): `u32 3` (versão), `u32 0x18`, 24 entradas de
-`(u16, u16, u16, u16)` e depois blocos de floats por região. O formato
-completo não foi decodificado (o leitor/gravador fica no editor do Sim,
-`TS::EdithEditor`, vtable `0xfc`/`0x14`).
+"estrutura facial", §13).
 
 ## 4. Overlays, maquiagem, barba: o TXMT do rosto
 
@@ -349,9 +345,10 @@ achado (a fábrica usa uma vtable importada).
 
 ## 10. Aberto
 
-- O formato do LxNR (os pesos por modificador/região; pistas no §9b) e a
-  mistura exata de arquétipos e modificadores (`BlendDeltas`).
-- As chaves das miniaturas de tons de pele/olhos e de roupas salvas (§9b).
+- A mistura exata de arquétipos e modificadores (`BlendDeltas`); a ordem
+  dos cantos de triângulo do LxNR no nível alto (§13).
+- As chaves das miniaturas de tons de pele/olhos e de roupas salvas (§9b;
+  olhos e maquiagem o jogo renderiza na hora, §12).
 - Como o tom de pele "do meio" (tipo 6) vira o tom expressado; o uso da
   aspiração sugerida por signo.
 - As categorias de roupa de cada passo e o "random clothing" do CAS
@@ -418,3 +415,52 @@ sobrancelhas, maquiagem de fantasia, óculos) e 1.224 arquétipos (4.477 de
 renderiza na hora (`GetSkinOverlayThumbnail`, BV `0xdf7d1c` → fábrica de
 miniaturas do CAS); aqui viram a textura do overlay sobre a pele do rosto,
 recortada na parte que pinta (`cas::overlayPreview`).
+
+## 13. LxNR: a estrutura facial (rodada 9)
+
+É o `nTSCASCore::cTSBodyPartData` gravado (gravador BV `0x18c79b4`, leitor
+`0x18c6ae0`; sem nome no BV, achados pelas marcas de quatro letras):
+
+```
+u32 versão              3 ou 4 nos personagens do jogo base (5 no BV); o leitor
+                        aceita 1..5, e 3..5 têm este layout
+u32 n, u32 chave[n]
+u32 'keye' (0x6B657965)
+u16 qtd, qtd × (f32, f32, f32)   um "pool" de vetores distintos (o gravador
+                        junta os iguais, |d| < epsilon)
+u32 'mstr' (0x6D737472)
+por chave: u16 m, m × u16        índices no pool
+u32 'data' (0x64617461)
+```
+
+Os vetores de uma chave vêm em pares por vértice da malha de rosto
+(`ConvertFacialDataToDeltas`, BV `0x805854`): (posição − posição do rosto
+neutro, (u, v, 0)). Chaves: byte baixo = índice de idade do editor (0
+criança pequena, 1 criança, 2 adolescente, 3 adulto, 4 idoso, 5 bebê),
+`0x100` = homem, `0xF0000` = o nível de detalhe baixo (as malhas
+`<x>LOD15_tslocator_gmdc` ao lado de `<x>_tslocator_gmdc`). Todo Sim guarda
+o rosto em **todas as idades e nos dois sexos** (o bebê só quando foi feito
+bebê); é assim que o rosto sobrevive ao crescer. A chave do outro sexo tem
+os mesmos deltas por UV (conferido em `N001_User00001`: mediana 0). Cada
+"vértice" é um canto de triângulo, na ordem das faces: 2.211 = 3 × 737 no
+rosto adulto, 1.335 no LOD15, 2.052/1.176 no bebê. No LOD15 a ordem é a das
+faces do GMDC (igual nos dados); no nível alto os triângulos do jogo vêm em
+outra ordem (blocos permutados; há duas ordens diferentes entre os
+personagens de N001), então aqui a leitura casa pelos UVs e a gravação usa
+a ordem das faces do GMDC.
+
+Conferido (`s2pkg cas-lxnr <Res> <personagem>`): regravar o LxNR de
+`N001_User00001` dá os mesmos 184.846 bytes; o rosto refeito do neutro +
+deltas casa com a malha do próprio personagem (distância média 0,00007, LOD15
+0,000004). O `--cas-edit <personagem>` abre um Sim gravado no CAS
+(`cas::readCharacterSpec`: AGED, listas de roupa, `cafOverlay*` do TXMT do
+rosto, LxNR, CTSS), e o `writeCharacter` grava o LxNR (todas as idades que o
+arquétipo tem, os dois sexos, os dois níveis).
+
+**Sims prontos** (`Catalog/Bins/globalcatbin.bundle.package`): 208 Sims,
+cada um num grupo `0x7F…` com AGED, 3IDR, GZPS do rosto, cadeia
+CRES/SHPE/GMND/GMDC, TXMT e LxNR; um BINX (`0x0C560F39`) por Sim com
+`objectidx` → o AGED e `binidx` → a coleção (`0x6C4F359D`). Miniaturas
+(`GetCASOutfitDataThumbnailContext`): `crc32("ac598eac-<grupo>-1-<f>")`
+(`%x` da chave do AGED), f = 0 o rosto, f = 1 o corpo inteiro (417 no
+pacote).

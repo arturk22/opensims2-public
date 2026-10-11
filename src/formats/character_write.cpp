@@ -3,6 +3,9 @@
 #include "binreader.hpp"
 #include "binwriter.hpp"
 #include "dbpf.hpp"
+#include "lxnr.hpp"
+#include "property_set.hpp"
+#include "strings.hpp"
 #include "rcol.hpp"
 #include "resindex.hpp"
 #include "scenegraph.hpp"
@@ -191,6 +194,111 @@ const SimPart* partByName(const CasCatalog& c, const std::string& name) {
 
 } // namespace
 
+CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatalog& catalog) {
+    auto read = [&](uint32_t type, uint32_t instance) -> std::optional<std::vector<uint8_t>> {
+        for (const auto& e : pkg.entries())
+            if (e.tgi.type == type && e.tgi.group == group && e.tgi.instance == instance)
+                return pkg.read(e);
+        return std::nullopt;
+    };
+    const auto agedBytes = read(kTypeAged, 1);
+    if (!agedBytes)
+        throw FormatError("no AGED");
+    const auto aged = readPropertySet(*agedBytes);
+    std::vector<Tgi> refs;
+    if (auto idr = read(kTypeIdr, 1))
+        refs = parseReferenceList(*idr);
+    auto num = [&](const std::string& k, uint32_t fallback) -> uint32_t {
+        auto it = aged.find(k);
+        if (it == aged.end() || it->second.empty())
+            return fallback;
+        try {
+            return uint32_t(std::stoul(it->second, nullptr, 0));
+        } catch (const std::logic_error&) {
+            return fallback;
+        }
+    };
+    auto str = [&](const std::string& k) {
+        auto it = aged.find(k);
+        std::string v = it == aged.end() ? "" : it->second;
+        for (auto& c : v)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return v;
+    };
+    CharacterSpec spec;
+    spec.age = num("age", age::Adult);
+    spec.gender = num("gender", gender::Female);
+    spec.fitness = int(num("fitness", 0));
+    if (int t = toneNumber(str("skincolor")))
+        spec.skinTone = std::clamp(t, 1, 4);
+    if (int t = toneNumber(str("haircolor")))
+        spec.hairTone = std::clamp(t, 1, 5);
+    spec.eyes = str("eyecolor");
+    // Outfits: lk<i> = category << 16 | part bits, le<i>_0 = the GZPS's 3IDR index.
+    const uint32_t n = num("listcnt", 0);
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t lk = num("lk" + std::to_string(i), 0);
+        const uint32_t idx = num("le" + std::to_string(i) + "_0", 0xFFFFFFFF);
+        const uint32_t cat = lk >> 16, bits = lk & 0xFFFF;
+        if (bits == part::Face || idx >= refs.size() || !cat)
+            continue;
+        const Tgi& t = refs[idx];
+        for (const auto& p : catalog.parts)
+            if (p.tgi.type == t.type && p.tgi.group == t.group && p.tgi.instance == t.instance) {
+                // One entry per part bit (hair, top, bottom, body): the lowest
+                // category bit set (the lists name a part for several).
+                for (uint32_t c = 1; c <= 0x800; c <<= 1)
+                    if (cat & c)
+                        spec.outfits[c][bits] = p.name();
+                break;
+            }
+    }
+    // The face TXMT: the overlays it composites.
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.type != kTypeTxmt || e.tgi.group != group)
+            continue;
+        try {
+            const auto bytes = pkg.read(e);
+            Rcol rc(bytes);
+            const auto* b = rc.find("cMaterialDefinition");
+            if (!b)
+                continue;
+            const auto md = MaterialDefinition::parse(b->body);
+            const std::string cnt = md.property("cafNumOverlays");
+            if (cnt.empty())
+                continue;
+            for (int k = 0; k < std::atoi(cnt.c_str()); ++k) {
+                std::string f = md.property("cafOverlay" + std::to_string(k));
+                for (auto& c : f)
+                    c = char(std::tolower(static_cast<unsigned char>(c)));
+                if (f.empty() || f == spec.eyes ||
+                    std::find(spec.overlays.begin(), spec.overlays.end(), f) != spec.overlays.end())
+                    continue;
+                if (catalog.byFamily(catalog.textureOverlays, f))
+                    spec.overlays.push_back(f);
+            }
+            break;
+        } catch (const std::exception&) {
+        }
+    }
+    if (auto lx = read(kTypeLxnr, 1)) {
+        try {
+            spec.face.structure = std::make_shared<FaceStructure>(FaceStructure::parse(*lx));
+        } catch (const std::exception&) {
+        }
+    }
+    if (auto ctss = read(kTypeCtss, 0x7D0)) {
+        try {
+            const auto st = StringTable::parse(*ctss);
+            spec.firstName = st.get(0);
+            spec.description = st.get(1);
+            spec.lastName = st.get(2);
+        } catch (const std::exception&) {
+        }
+    }
+    return spec;
+}
+
 uint32_t nextAge(uint32_t a) {
     switch (a) {
     case age::Baby: return age::Toddler;
@@ -318,7 +426,7 @@ void completeSpec(const CasCatalog& c, CharacterSpec& spec, uint32_t seed) {
 
 CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& catalog, FaceBaker& baker,
                                     const CharacterSpec& spec, const std::string& objectName,
-                                    const std::filesystem::path& out) {
+                                    const std::filesystem::path& out, bool faceStructure) {
     CharacterWriteResult res;
     DbpfWriter pkg;
     std::mt19937 rng(std::random_device{}());
@@ -602,6 +710,11 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         }
     } else {
         res.warnings.push_back("TemplatePerson (0x7FD96B54) not found: no object written");
+    }
+    if (faceStructure) {
+        const FaceStructure fs = baker.structureOf(spec.face, spec.gender);
+        if (!fs.keys.empty())
+            pkg.add(Tgi{kTypeLxnr, kLocal, 1, 0}, fs.write(), true);
     }
     pkg.add(Tgi{kTypeCtss, kLocal, 0x7D0, 0}, writeStrings({spec.firstName, spec.description, spec.lastName}), true);
     {

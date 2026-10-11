@@ -101,6 +101,11 @@ public:
     void keyDown(unsigned short keyCode, const std::string& characters, bool control);
     void keyUp(unsigned short keyCode);
 
+    // Edits a saved Sim: a character file (group 0xFFFFFFFF) or a premade
+    // Sim of the bin (its group), through cas::readCharacterSpec; false (and
+    // a status line) if it cannot be read.
+    bool openCharacter(const std::filesystem::path& file, uint32_t group = 0xFFFFFFFF);
+
     // The --cas-* options of a headless run, before the screenshot.
     void runScripted(const std::vector<std::string>& args);
     std::vector<std::string> report() const;

@@ -2,6 +2,7 @@
 
 #include "app/ui_panel_util.hpp"
 #include "formats/cas_thumbnails.hpp"
+#include "formats/dbpf.hpp"
 #include "formats/font.hpp"
 #include "formats/resindex.hpp"
 #include "formats/sim_actor.hpp"
@@ -273,7 +274,7 @@ void CasMode::rebuild() {
             cas::CharacterSpec spec = m.spec;
             if (spec.firstName.empty())
                 spec.firstName = "Sim";
-            const auto r = cas::writeCharacter(index_, *catalog_, *baker_, spec, "CAS_Preview", file);
+            const auto r = cas::writeCharacter(index_, *catalog_, *baker_, spec, "CAS_Preview", file, false);
             for (const auto& w : r.warnings)
                 warnings_.push_back(w);
             const uint32_t category =
@@ -361,6 +362,29 @@ void CasMode::setStep(int step) {
     dirty_ = true;
     if ((before == 4) != (step_ == 4) || step_ == 4)
         rebuild(); // the clothes step shows the category being chosen
+}
+
+bool CasMode::openCharacter(const fs::path& file, uint32_t group) {
+    try {
+        DbpfPackage pkg(file);
+        Member m;
+        m.spec = cas::readCharacterSpec(pkg, group, *catalog_);
+        cas::completeSpec(*catalog_, m.spec);
+        edit_ = std::move(m);
+        if (!edit_.spec.lastName.empty() && familyName_.empty())
+            familyName_ = edit_.spec.lastName;
+        editing_ = int(family_.size());
+        undo_.clear();
+        redo_.clear();
+        step_ = 0;
+        status_ = "Editando " + (edit_.spec.firstName.empty() ? file.stem().string() : edit_.spec.firstName);
+        rebuild();
+        return true;
+    } catch (const std::exception& e) {
+        status_ = "Não abriu " + file.filename().string() + ": " + e.what();
+        dirty_ = true;
+        return false;
+    }
 }
 
 void CasMode::finishSim() {
@@ -630,6 +654,8 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
             newSim();
         else if (a == "--cas-accept")
             acceptFamily();
+        else if (a == "--cas-edit")
+            openCharacter(v);
         else if (a == "--cas-turn")
             heading_ = std::stof(v) * 3.14159265f / 180;
         else if (a == "--click") {
@@ -936,6 +962,7 @@ UiScreen CasMode::screen(int width, int height) {
                                  pushUndo();
                                  if (maskList.empty()) {
                                      edit_.spec.face.archetype = fam;
+                                     edit_.spec.face.structure.reset(); // a saved face gives way to the head
                                      edit_.spec.face.regions.clear();
                                  } else {
                                      edit_.spec.face.regions[maskList] = fam;
