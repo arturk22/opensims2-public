@@ -113,21 +113,23 @@ static void testEditor() {
     check(r.ok && r.changed == 8 && r.cost == 16, "two tiles of carpet at §8 a tile");
     check(lot.floorPatterns.count(2) && lot.floorPatterns[2] == "1234", "the pattern gets a reference by GUID");
     r = ed.paintFloor(1, 3, 2, 3, 2, nullptr);
-    check(r.ok && r.cost == -8, "erasing a tile laid this session pays its price back");
+    check(r.ok && r.cost == -6, "erasing a tile gives back floor(8 x 0.8) a tile");
     BuildPattern paint;
     paint.guid = 0xabc, paint.price = 3, paint.name = "paint";
-    r = ed.paintRoom(1, 3, 3, paint);
+    r = ed.paintRoom(1, 3, 3, &paint);
     check(r.ok && r.changed == 14 && r.cost == 42, "the room's 14 wall faces at §3");
-    r = ed.paintWalls(1, 2, 2, 6, 2, -1, paint);
+    r = ed.paintWalls(1, 2, 2, 6, 2, -1, &paint);
     check(r.ok && r.changed == 0, "the inside faces are painted already");
-    r = ed.paintWalls(1, 2, 2, 6, 2, 1, paint);
+    r = ed.paintWalls(1, 2, 2, 6, 2, 1, &paint);
     check(r.ok && r.changed == 4, "the outside faces of a run");
+    r = ed.paintWalls(1, 2, 2, 6, 2, 1, nullptr);
+    check(r.ok && r.changed == 4 && r.cost == -8, "taking paint off gives back int(3 x 0.8) a face");
     const int before = funds(vm);
     r = ed.deleteWalls(1, 2, 2, 6, 2);
-    check(r.ok && r.changed == 4 && r.cost == -280, "walls built this session come back at full price");
+    check(r.ok && r.changed == 4 && r.cost == -224, "walls come back at int(70 x 0.8) a section");
     check(!vm.world->wallBetween({2, 2, 1}, 0, -1), "the wall is gone from the world");
     check(ed.undo() && funds(vm) == before && vm.world->wallBetween({2, 2, 1}, 0, -1), "undo puts it back");
-    check(ed.redo() && funds(vm) == before + 280, "redo takes it again");
+    check(ed.redo() && funds(vm) == before + 224, "redo takes it again");
     while (ed.undo()) {
     }
     check(funds(vm) == 2000 && lot.walls.empty(), "undoing everything restores the lot and the funds");

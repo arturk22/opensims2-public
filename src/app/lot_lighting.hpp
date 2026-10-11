@@ -66,7 +66,12 @@ public:
     void setDefaultLampLevel(int level) { defaultLevel_ = level; }
     // The lot's light-map atlas (from buildLotModel): update() then keeps
     // the renderer's light maps in step with the lamps and the state.
-    void setLightMapLayout(LotLightMapLayout layout) { layout_ = std::move(layout); }
+    // A new layout (Build mode changed the lot): the light maps again.
+    void setLightMapLayout(LotLightMapLayout layout) {
+        layout_ = std::move(layout);
+        lightMaps_.clear();
+        outdoorRooms_.reset();
+    }
 
     // Recomputes the lights for `seconds` (the caller's clock): call each
     // frame after the objects are placed.

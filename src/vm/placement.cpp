@@ -172,7 +172,11 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
         // the four sides, and no wall through the object (unless p & 0x400).
         if (w.diagonalWall(t) && !(pf & 0x400))
             return fail(placementerror::WallIntersect, "diagonal wall");
-        if (!(pf & 0x400))
+        // Doors and windows are wall portals (IsWallPortal, §3.3): the wall
+        // runs between their parts.
+        const bool portal = o.definition && (o.definition->objectType() == kObjectTypeDoor ||
+                                             o.definition->objectType() == kObjectTypeWindow);
+        if (!(pf & 0x400) && !portal)
             for (int k = 0; k < 4; ++k) {
                 const auto s = directionStep(k * 2);
                 if (tiles.count({t.x + s[0], t.y + s[1]}) && w.wallBetween(t, s[0], s[1]))

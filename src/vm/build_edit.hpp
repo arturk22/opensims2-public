@@ -28,6 +28,7 @@ public:
         bool ok = false;
         int cost = 0;    // paid (negative: refunded)
         int changed = 0; // wall sections, quarter tiles or wall sides changed
+        int error = 0;   // the game's placement error code when refused (STR# 0x89)
         std::string message;
     };
 
@@ -39,22 +40,26 @@ public:
     Result drawWalls(int level, int x0, int y0, int x1, int y1);
     // Room tool: the walls around the rectangle between two grid points.
     Result drawRoom(int level, int x0, int y0, int x1, int y1);
-    // Ctrl-drag: the walls along the run go; what was built in this
-    // session comes back at its price, the rest at the refund rate (0.8).
+    // Ctrl-drag: the walls along the run go for int(70 x 0.8) = 56 a
+    // section (the full price comes back only by undo).
     Result deleteWalls(int level, int x0, int y0, int x1, int y1);
 
     // Floor tool over the tiles of a rectangle (corners inclusive), or the
     // given quarters of one tile (`quarters` bits: west, north, east, south).
     // A quarter costs a quarter of the pattern's price; covering another
-    // pattern pays the new one in full; a null pattern erases (refund).
+    // pattern pays the new one in full; a null pattern erases (a quarter of
+    // floor(price x 0.8) back).
     Result paintFloor(int level, int x0, int y0, int x1, int y1, const BuildPattern* pattern, int quarters = 0xF);
 
     // Wallpaper tool: the faces of the walls along a run, on its right
     // (side +1, seen from (x0, y0) to (x1, y1)), left (-1) or both (0), at
     // the pattern's price per side.
-    Result paintWalls(int level, int x0, int y0, int x1, int y1, int side, const BuildPattern& pattern);
-    // Shift: every wall face of the room of a tile.
-    Result paintRoom(int level, int x, int y, const BuildPattern& pattern);
+    // A null pattern takes the coverings off (Ctrl).
+    Result paintWalls(int level, int x0, int y0, int x1, int y1, int side, const BuildPattern* pattern);
+    // Shift: every wall face of the room of a tile (the game floods the
+    // ring of faces that had the clicked face's pattern; here the whole
+    // room: simplified).
+    Result paintRoom(int level, int x, int y, const BuildPattern* pattern);
 
     bool undo();
     bool redo();
@@ -72,7 +77,10 @@ public:
     const Lot& lot() const { return lot_; }
 
     // Why a wall section cannot go there ("" if it can).
-    std::string wallBlocked(int level, int ax, int ay, int bx, int by) const;
+    // `code` gets the game's error code (UserMayPlacePartition: 0x40 out of
+    // the lot, 0x45 not editable, 0x48 no support, 0x49 slope, 0x4B Sim,
+    // 0x0C object).
+    std::string wallBlocked(int level, int ax, int ay, int bx, int by, int* code = nullptr) const;
 
 private:
     struct Geometry {
@@ -92,13 +100,13 @@ private:
     // After a change: rooms, then the VM.
     void changed();
     void commit(Geometry before, int cost);
+    Result cover(std::vector<std::pair<uint32_t, int>> faces, const BuildPattern* pattern, const std::string& what);
+    int priceOf(const std::string& lotName, bool floor) const;
 
     VM& vm_;
     Lot& lot_;
     const BuildCatalog* catalog_ = nullptr;
     std::vector<Op> undo_, redo_;
-    std::set<uint32_t> builtWalls_;  // walls built this session (full refund)
-    std::set<size_t> builtFloors_;   // quarter tiles floored this session
     std::map<std::string, int> prices_; // patterns laid this session, by lot name
     uint32_t revision_ = 0;
 };

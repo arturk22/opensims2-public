@@ -9,6 +9,7 @@
 #include "formats/lot_edit.hpp"
 #include "formats/lot_write.hpp"
 #include "formats/build_catalog.hpp"
+#include "formats/catalog.hpp"
 #include "formats/resindex.hpp"
 #include "vm/build_edit.hpp"
 #include "vm/placement.hpp"
@@ -163,11 +164,11 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                 throw std::runtime_error("--wallpaper: expected x0,y0,x1,y1,side,pattern[,level]");
             const int side = f[4] == "r" ? 1 : f[4] == "l" ? -1 : 0;
             r = editor.paintWalls(num(f, 6, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), side,
-                                  *pattern(f[5], false));
+                                  f[5] == "none" ? nullptr : pattern(f[5], false));
         } else if (flag == "--wallpaper-room") {
             if (f.size() < 3)
                 throw std::runtime_error("--wallpaper-room: expected x,y,pattern[,level]");
-            r = editor.paintRoom(num(f, 3, 1), num(f, 0, 0), num(f, 1, 0), *pattern(f[2], false));
+            r = editor.paintRoom(num(f, 3, 1), num(f, 0, 0), num(f, 1, 0), f[2] == "none" ? nullptr : pattern(f[2], false));
         }
         std::printf("  %s %s: %s%s (funds §%d)\n", flag.c_str(), value.c_str(), r.ok ? "" : "FAILED: ",
                     r.message.c_str(), vm::funds(vm));
@@ -241,16 +242,51 @@ std::vector<std::string> compareLotGeometry(const Lot& a, const Lot& b, size_t l
 
 namespace {
 
+// The Build-mode catalog: patterns by subsort, build objects by type and subsort.
+int cmdBuildCatalog(const std::string& res, bool verbose) {
+    ResourceIndex index(res);
+    const BuildCatalog patterns = BuildCatalog::load(index);
+    for (bool floor : {true, false}) {
+        std::map<std::string, std::vector<const BuildPattern*>> by;
+        for (const auto& p : floor ? patterns.floors() : patterns.walls())
+            by[p.subsort].push_back(&p);
+        std::printf("%s patterns: %zu\n", floor ? "floor" : "wall", (floor ? patterns.floors() : patterns.walls()).size());
+        for (const auto& [sub, v] : by) {
+            std::printf("  %-10s %3zu (e.g. %s, §%d, %s)\n", sub.c_str(), v.size(), v.front()->name.c_str(),
+                        v.front()->price, v.front()->material.c_str());
+            if (verbose)
+                for (const auto* p : v)
+                    std::printf("      %08x §%-3d %s (%s)\n", p->guid, p->price, p->name.c_str(), p->material.c_str());
+        }
+    }
+    const Catalog objects = Catalog::load(index, true);
+    std::map<std::pair<int, int>, std::vector<const CatalogEntry*>> by;
+    for (const auto& e : objects.entries())
+        by[{e.buildModeType, e.buildModeSubsort}].push_back(&e);
+    std::printf("build objects: %zu\n", objects.entries().size());
+    for (const auto& [k, v] : by) {
+        std::printf("  type %d subsort 0x%x: %zu (e.g. %s, §%d)\n", k.first, k.second, v.size(), v.front()->name.c_str(),
+                    v.front()->price);
+        if (verbose)
+            for (const auto* e : v)
+                std::printf("      %08x §%-5d %s (%s)\n", e->guid, e->price, e->name.c_str(), e->fileName.c_str());
+    }
+    return 0;
+}
+
 } // namespace
 
 int buildCommand(const std::string& cmd, int argc, char** argv) {
+    if (cmd == "build-catalog" && argc >= 3)
+        return cmdBuildCatalog(argv[2], argc > 3 && std::string(argv[3]) == "-v");
     if (cmd == "build-roundtrip" && argc >= 3)
         return cmdRoundtrip({argv + 2, argv + argc});
     return -1;
 }
 
 const char* buildUsage() {
-    return "       s2pkg build-roundtrip <lot.package>... [--rooms]\n";
+    return "       s2pkg build-catalog <Res-dir> [-v]\n"
+           "       s2pkg build-roundtrip <lot.package>... [--rooms]\n";
 }
 
 } // namespace os2

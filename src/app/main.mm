@@ -72,6 +72,7 @@
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
 #include "app/buy_mode.hpp"
+#include "app/build_mode.hpp"
 #include "app/data_location.hpp"
 #include "app/hood_mode.hpp"
 #include "app/live_ui.hpp"
@@ -117,6 +118,14 @@ bool liveUiRequested();
 // Buy mode (app/buy_mode.hpp): the puck's Buy button, or --mode buy.
 std::unique_ptr<os2::BuyMode> gBuy;
 void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index); // below setupLiveUi
+// Build mode (app/build_mode.hpp): the puck's Build button, or --mode build.
+// It changes gLotShape (the lot as drawn); rebuildLotModel redraws it.
+std::unique_ptr<os2::BuildMode> gBuild;
+std::unique_ptr<os2::Lot> gLotShape;
+std::unique_ptr<os2::PatternCatalog> gLotPatterns;
+os2::LotViewOptions gLotView;
+int gLotInstance = -1;
+void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index);
 struct PickBox {
     uint32_t instance;
     simd_float3 lo, hi;
@@ -611,8 +620,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     setupPieMenu(index);
     if (liveUiRequested())
         setupLiveUi(index);
-    if (liveUiRequested() || argument(@"--mode"))
+    if (liveUiRequested() || argument(@"--mode")) {
         setupBuyMode(renderer, index);
+        setupBuildMode(renderer, index);
+    }
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
@@ -784,6 +795,145 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
     }
 }
 
+// Redraws the lot after Build mode changed it: the model (walls cut away
+// as seen from the camera now, holes for the doors and windows), and the
+// light-map atlas and light maps.
+void rebuildLotModel(os2::Renderer& renderer, os2::ResourceIndex& index) {
+    if (!gLotShape || gLotInstance < 0 || !gLotPatterns)
+        return;
+    os2::LotViewOptions view = gLotView;
+    if (gCamera) {
+        const simd_float3 d = gCamera->pivot() - gCamera->eye();
+        if (std::hypot(d.x, d.y) > 1e-3f)
+            view.viewDirection = {d.x, d.y};
+    }
+    gLightMapLayout.emplace();
+    const os2::ObjectModel model = os2::buildLotModel(*gLotShape, index, *gLotPatterns, view, &*gLightMapLayout);
+    renderer.setInstanceModel(gLotInstance, renderer.addObject(model, index));
+    if (gLighting) {
+        gLighting->setLightMapLayout(*gLightMapLayout);
+    } else {
+        const os2::LightingConfig lighting = os2::loadLightingConfig(gameDir() / kLightingConfig);
+        if (const auto* state = lighting.state(argument(@"--lighting").value_or("day"))) {
+            const os2::RgbaImage lm =
+                os2::computeLotLightMap(*gLightMapLayout, *state, {}, os2::LightMapGlobals::from(lighting)).image;
+            renderer.setLightMap(0, lm);
+            renderer.setLightMap(1, lm);
+        }
+    }
+}
+
+// Build mode over the lot's VM: the puck's Build button (mode 2) or --mode
+// build. Headless steps (in order, levels default to the current one):
+// --build-open <category>[,<subsort>] opens a panel, --wall/--room/
+// --delete-wall x0,y0,x1,y1, --floor x0,y0,x1,y1,<pattern|none>,
+// --wallpaper x0,y0,x1,y1,<r|l|b>,<pattern|none>, --wallpaper-room
+// x,y,<pattern|none>, --door <guid|name>@x,y[,dir] places a door or window,
+// --build-undo / --build-redo (with any value), --build-level <n>.
+void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
+    if (!gLotShape)
+        return;
+    gBuild = std::make_unique<os2::BuildMode>(*gSimulation, *gObjectView, renderer, index, gameDir() / "TSData/Res",
+                                              *gLotShape);
+    gBuild->onGeometryChanged = [&renderer, &index]() { rebuildLotModel(renderer, index); };
+    if (gLive) {
+        auto previous = gLive->onMode;
+        gLive->onMode = [previous](int mode) {
+            if (mode == 2) {
+                if (gBuy)
+                    gBuy->exit();
+                gBuild->enter();
+                gLive->setMode(2);
+                return;
+            }
+            gBuild->exit();
+            if (previous)
+                previous(mode);
+        };
+    }
+    if (argument(@"--mode").value_or("") == "build") {
+        gBuild->enter();
+        if (gLive)
+            gLive->setMode(2);
+    }
+}
+
+void runBuildSteps() {
+    if (!gBuild || !gBuild->active())
+        return;
+    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    for (NSUInteger i = 1; i + 1 < args.count; ++i) {
+        const std::string a = args[i].UTF8String, v = args[i + 1].UTF8String;
+        std::vector<std::string> f;
+        {
+            std::string cur;
+            for (char c : v + ",")
+                if (c == ',')
+                    f.push_back(cur), cur.clear();
+                else
+                    cur += c;
+        }
+        auto n = [&](size_t k) { return k < f.size() && !f[k].empty() ? std::stoi(f[k]) : 0; };
+        const int level = gBuild->level();
+        os2::vm::BuildEditor& ed = gBuild->editor();
+        auto pattern = [&](const std::string& key, bool floor) -> const os2::BuildPattern* {
+            if (key == "none")
+                return nullptr;
+            const os2::BuildPattern* p = gBuild->patterns().find(key, floor);
+            if (!p)
+                throw std::runtime_error(a + ": no pattern \"" + key + "\"");
+            return p;
+        };
+        std::optional<os2::vm::BuildEditor::Result> r;
+        if (a == "--build-open")
+            gBuild->openCategory(n(0), n(1));
+        else if (a == "--build-level")
+            gBuild->setLevel(n(0));
+        else if (a == "--wall" && f.size() >= 4)
+            r = ed.drawWalls(level, n(0), n(1), n(2), n(3)), gBuild->selectWallTool(false);
+        else if (a == "--room" && f.size() >= 4)
+            r = ed.drawRoom(level, n(0), n(1), n(2), n(3)), gBuild->selectWallTool(true);
+        else if (a == "--delete-wall" && f.size() >= 4)
+            r = ed.deleteWalls(level, n(0), n(1), n(2), n(3));
+        else if (a == "--floor" && f.size() >= 5) {
+            const os2::BuildPattern* p = pattern(f[4], true);
+            r = ed.paintFloor(level, n(0), n(1), n(2), n(3), p);
+            if (p)
+                gBuild->selectPattern(*p);
+        } else if (a == "--wallpaper" && f.size() >= 6) {
+            const os2::BuildPattern* p = pattern(f[5], false);
+            r = ed.paintWalls(level, n(0), n(1), n(2), n(3), f[4] == "r" ? 1 : f[4] == "l" ? -1 : 0, p);
+            if (p)
+                gBuild->selectPattern(*p);
+        } else if (a == "--wallpaper-room" && f.size() >= 3) {
+            r = ed.paintRoom(level, n(0), n(1), pattern(f[2], false));
+        } else if (a == "--door") {
+            const auto at = v.find('@');
+            const os2::CatalogEntry* e = gBuild->objects().find(v.substr(0, at));
+            if (!e)
+                throw std::runtime_error("--door: no build object \"" + v.substr(0, at) + "\"");
+            int x = 0, y = 0, dir = 2;
+            if (at != std::string::npos)
+                std::sscanf(v.c_str() + at + 1, "%d,%d,%d", &x, &y, &dir);
+            gBuild->selectObject(*e);
+            if (at != std::string::npos)
+                gBuild->placeObjectAt(x, y, dir);
+        } else if (a == "--build-undo") {
+            gBuild->undo();
+        } else if (a == "--build-redo") {
+            gBuild->redo();
+        }
+        if (r) {
+            std::printf("opensims2: build: %s %s: %s%s (funds §%d)\n", a.c_str(), v.c_str(), r->ok ? "" : "FAILED: ",
+                        r->message.c_str(), os2::vm::funds(gSimulation->machine()));
+            if (r->ok && r->changed && gBuild->onGeometryChanged)
+                gBuild->onGeometryChanged();
+        }
+    }
+    std::fflush(stdout);
+    gBuild->update();
+}
+
 // The --buy/--hold/--place/--grab/--sell/--undo steps of a headless run, in order.
 void runBuySteps() {
     if (!gBuy || !gBuy->active())
@@ -848,7 +998,10 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     perfLap("buildLotModel");
     renderer.hideTestScene();
-    renderer.addInstance(renderer.addObject(model, index), matrix_identity_float4x4);
+    gLotInstance = renderer.addInstance(renderer.addObject(model, index), matrix_identity_float4x4);
+    gLotShape = std::make_unique<os2::Lot>(lot);
+    gLotPatterns = std::make_unique<os2::PatternCatalog>(patterns);
+    gLotView = view;
     perfLap("lot model to the GPU");
     for (const auto& w : lot.warnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
@@ -1312,6 +1465,17 @@ int cameraSlot(unsigned short key) {
             _camera->restorePosition(slot, !(e.modifierFlags & NSEventModifierFlagShift));
         return;
     }
+    // Build mode: Ctrl-Z/Ctrl-Y undo and redo, , and . turn a door or window.
+    if (gBuild && gBuild->active()) {
+        const bool control = e.modifierFlags & NSEventModifierFlagControl;
+        if (control && e.keyCode == kZ) { gBuild->undo(); return; }
+        if (control && e.keyCode == kY) { gBuild->redo(); return; }
+        if (gBuild->tool() == os2::BuildMode::Tool::Object && (e.keyCode == kComma || e.keyCode == kPeriod)) {
+            gBuild->rotate(e.keyCode == kPeriod ? 2 : -2);
+            _held.erase(e.keyCode);
+            return;
+        }
+    }
     // Buy mode: , and . turn what is held, Delete sells it, Ctrl-Z/Ctrl-Y undo and redo.
     if (gBuy && gBuy->active()) {
         const bool control = e.modifierFlags & NSEventModifierFlagControl;
@@ -1335,6 +1499,10 @@ int cameraSlot(unsigned short key) {
                 _camera->moveTo(*p);
         break;
     case kEscape:
+        if (gBuild && gBuild->active() && gBuild->tool() != os2::BuildMode::Tool::None) {
+            gBuild->cancel();
+            break;
+        }
         if (gBuy && gBuy->active() && gBuy->held()) { // drops what Buy mode holds
             gBuy->cancel();
             break;
@@ -1457,6 +1625,8 @@ int cameraSlot(unsigned short key) {
         return;
     if (gBuy && gBuy->active() && gBuy->press(p))
         return;
+    if (gBuild && gBuild->active() && gBuild->press(p))
+        return;
     if (gLive && gLive->press(p))
         return;
     const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
@@ -1465,6 +1635,11 @@ int cameraSlot(unsigned short key) {
     const simd_float3 eye = _camera->eye();
     if (gBuy && gBuy->active()) { // the object tool, not the pie menu
         gBuy->click(eye, simd_normalize(q.xyz / q.w - eye));
+        return;
+    }
+    if (gBuild && gBuild->active()) { // Build mode's tools
+        gBuild->mouseDown(eye, simd_normalize(q.xyz / q.w - eye), e.modifierFlags & NSEventModifierFlagControl,
+                          e.modifierFlags & NSEventModifierFlagShift);
         return;
     }
     const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
@@ -1477,6 +1652,16 @@ int cameraSlot(unsigned short key) {
 - (void)mouseUp:(NSEvent*)e {
     if (gPie && gPie->isOpen())
         gPie->release([self canvasPoint:e]);
+    if (gBuild && gBuild->active())
+        gBuild->mouseUp(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
+}
+
+// The mouse ray (world space) through a canvas point.
+- (simd_float3)rayAt:(simd_float2)p {
+    const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
+    const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
+    const simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
+    return simd_normalize(q.xyz / q.w - _camera->eye());
 }
 
 - (void)mouseMoved:(NSEvent*)e {
@@ -1495,12 +1680,18 @@ int cameraSlot(unsigned short key) {
         const simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
         gBuy->pointAt(_camera->eye(), simd_normalize(q.xyz / q.w - _camera->eye()));
     }
+    if (gBuild && gBuild->active()) {
+        gBuild->hover([self canvasPoint:e]);
+        gBuild->pointAt(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
+    }
 }
 
 - (void)mouseDragged:(NSEvent*)e {
     [self trackMouse:e];
     if (gPie)
         gPie->hover([self canvasPoint:e]);
+    if (gBuild && gBuild->active())
+        gBuild->mouseDrag(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
 }
 
 - (void)rightMouseDragged:(NSEvent*)e {
@@ -1565,6 +1756,8 @@ int cameraSlot(unsigned short key) {
     poseActors(*_renderer, now - _start);
     if (gBuy)
         gBuy->update();
+    if (gBuild)
+        gBuild->update();
     if (view.bounds.size.width > 0)
         gUiScale = float(size.width / view.bounds.size.width);
 
@@ -1669,11 +1862,16 @@ int cameraSlot(unsigned short key) {
             if (gBuy)
                 gBuy->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                              uint32_t(view.depthStencilPixelFormat));
+            if (gBuild)
+                gBuild->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                               uint32_t(view.depthStencilPixelFormat));
             _viewDelegate.renderer->setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
                 if (gUi)
                     gUi->encode(enc, w, h);
                 if (gBuy) // under the puck
                     gBuy->encode(enc, w, h, gUiScale);
+                if (gBuild)
+                    gBuild->encode(enc, w, h, gUiScale);
                 if (gLive)
                     gLive->encode(enc, w, h, gUiScale);
                 gPie->encode(enc, w, h, gUiScale);
@@ -1719,6 +1917,11 @@ int cameraSlot(unsigned short key) {
                     if (gBuy->press(p))
                         continue;
                 }
+                if (gBuild && gBuild->active()) {
+                    gBuild->setCanvas(int(cw), int(ch));
+                    if (gBuild->press(p))
+                        continue;
+                }
                 if (gLive) {
                     gLive->setCanvas(int(cw), int(ch));
                     if (gLive->press(p, right) || right)
@@ -1744,9 +1947,14 @@ int cameraSlot(unsigned short key) {
                 gLive->hover(simd_make_float2(hx, hy));
             }
             runBuySteps();
+            runBuildSteps();
             if (auto h = argument(@"--ui-hover"); gBuy && h && std::sscanf(h->c_str(), "%f,%f", &hx, &hy) == 2) {
                 gBuy->setCanvas(int(cw), int(ch));
                 gBuy->hover(simd_make_float2(hx, hy));
+            }
+            if (auto h = argument(@"--ui-hover"); gBuild && h && std::sscanf(h->c_str(), "%f,%f", &hx, &hy) == 2) {
+                gBuild->setCanvas(int(cw), int(ch));
+                gBuild->hover(simd_make_float2(hx, hy));
             }
             std::fflush(stdout);
         }

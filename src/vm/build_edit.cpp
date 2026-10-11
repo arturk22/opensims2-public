@@ -114,13 +114,18 @@ void BuildEditor::commit(Geometry before, int cost) {
     redo_.clear();
 }
 
-std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by) const {
+std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by, int* code) const {
+    auto fail = [&](int c, const char* why) {
+        if (code)
+            *code = c;
+        return std::string(why);
+    };
     const int li = level - 1;
     if (!lot_.hasLevel(li))
-        return "no such level";
+        return fail(0x40, "no such level");
     const int W = int(lot_.width), H = int(lot_.height);
     if (std::min({ax, bx, ay, by}) < 0 || std::max(ax, bx) > W || std::max(ay, by) > H)
-        return "out of the lot";
+        return fail(0x40, "out of the lot");
     // The tiles on both sides (an edge) or the tile crossed (a diagonal).
     std::vector<TilePos> tiles;
     if (ax != bx && ay != by) {
@@ -137,11 +142,11 @@ std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by) 
         for (uint16_t q : lot_.floor(li, uint32_t(t.x), uint32_t(t.y)))
             if (q)
                 if (auto it = lot_.floorPatterns.find(q); it != lot_.floorPatterns.end() && street(it->second))
-                    return "not on the street";
+                    return fail(0x45, "not on the street");
     // requiresFlatBottom (walls.txt): on the ground the terrain under the
     // wall must be level.
     if (li == 0 && std::fabs(lot_.elevation(0, ax, ay) - lot_.elevation(0, bx, by)) > 0.01f)
-        return "the ground must be flat";
+        return fail(0x49, "the ground must be flat");
     // Above the ground a wall stands on a wall or next to a floor (inferred
     // from requiresSupportUnderneath; the game's exact support test is not read).
     if (li > 0 && !findWall(lot_, li - 1, ax, ay, bx, by)) {
@@ -150,22 +155,27 @@ std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by) 
             for (uint16_t q : lot_.floor(li, uint32_t(t.x), uint32_t(t.y)))
                 floor |= q != 0;
         if (!floor)
-            return "nothing holds it up";
+            return fail(0x48, "nothing holds it up");
     }
     // Objects: a wall does not cut a multi-tile object in two, and a
     // diagonal does not cross a tile something stands on (the walls'
     // blocksPlacement; IntersectsWalls of the placement tests, §3.3).
+    // A Sim on either side (MayPlaceWallWithRespectToObjects: 0x4B).
+    for (const auto& [id, o] : vm_.objects())
+        if (o.person && o.position.inWorld() &&
+            std::find(tiles.begin(), tiles.end(), VM::tileOf(o)) != tiles.end())
+            return fail(0x4B, "a Sim is in the way");
     if (tiles.size() == 1) {
         for (ObjectId id : vm_.objectsOnTile(tiles[0]))
             if (const Object* o = vm_.object(id); o && !o->person)
-                return "an object is in the way";
+                return fail(0x0C, "an object is in the way");
     } else if (tiles.size() == 2) {
         for (ObjectId a : vm_.objectsOnTile(tiles[0]))
             for (ObjectId b : vm_.objectsOnTile(tiles[1])) {
                 const Object* oa = vm_.object(a);
                 const Object* ob = vm_.object(b);
                 if (oa && ob && multiTileGroup(*oa) == multiTileGroup(*ob))
-                    return "an object is in the way";
+                    return fail(0x0C, "an object is in the way");
             }
     }
     return "";
@@ -182,7 +192,7 @@ BuildEditor::Result BuildEditor::drawWalls(int level, int x0, int y0, int x1, in
     for (const auto& s : sections) {
         if (findWall(lot_, level - 1, s[0], s[1], s[2], s[3]))
             continue;
-        if (const std::string why = wallBlocked(level, s[0], s[1], s[2], s[3]); !why.empty()) {
+        if (const std::string why = wallBlocked(level, s[0], s[1], s[2], s[3], &r.error); !why.empty()) {
             r.message = "cannot build a wall from (" + std::to_string(s[0]) + "," + std::to_string(s[1]) + ") to (" +
                         std::to_string(s[2]) + "," + std::to_string(s[3]) + "): " + why;
             return r;
@@ -198,8 +208,8 @@ BuildEditor::Result BuildEditor::drawWalls(int level, int x0, int y0, int x1, in
     Geometry before = capture();
     const uint16_t blank = patternRef(lot_.wallPatterns, kDefaultWallPattern, 0);
     for (const auto& s : todo)
-        if (auto id = addWall(lot_, level - 1, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
-            builtWalls_.insert(*id), ++r.changed;
+        if (addWall(lot_, level - 1, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
+            ++r.changed;
     if (!r.changed) {
         r.ok = true;
         r.message = "the walls are there already";
@@ -226,7 +236,7 @@ BuildEditor::Result BuildEditor::drawRoom(int level, int x0, int y0, int x1, int
         for (const auto& s : wallSections(side[0], side[1], side[2], side[3])) {
             if (findWall(lot_, level - 1, s[0], s[1], s[2], s[3]))
                 continue;
-            if (const std::string why = wallBlocked(level, s[0], s[1], s[2], s[3]); !why.empty()) {
+            if (const std::string why = wallBlocked(level, s[0], s[1], s[2], s[3], &r.error); !why.empty()) {
                 r.message = "cannot build the room: " + why;
                 return r;
             }
@@ -240,8 +250,8 @@ BuildEditor::Result BuildEditor::drawRoom(int level, int x0, int y0, int x1, int
     const uint16_t blank = patternRef(lot_.wallPatterns, kDefaultWallPattern, 0);
     for (const auto& side : sides)
         for (const auto& s : wallSections(side[0], side[1], side[2], side[3]))
-            if (auto id = addWall(lot_, level - 1, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
-                builtWalls_.insert(*id), ++r.changed;
+            if (addWall(lot_, level - 1, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
+                ++r.changed;
     r.cost = r.changed * kWallSectionPrice;
     r.ok = true;
     if (!r.changed)
@@ -261,24 +271,32 @@ BuildEditor::Result BuildEditor::deleteWalls(int level, int x0, int y0, int x1, 
         return r;
     }
     Geometry before = capture();
-    float refund = 0;
+    int refund = 0;
     for (const auto& s : sections) {
         const Lot::Wall* w = findWall(lot_, level - 1, s[0], s[1], s[2], s[3]);
         // Only the wall tool's own walls (walls.txt deleteTool partition:
         // walls and fences; foundations, deck skirts and pools go with
-        // their own tools).
+        // their own tools). UserMayEraseWallOrFence: no wall there is
+        // skipped (0x42), a Sim beside it stops the run (0x4B).
         if (!w || !(w->type == Lot::Normal || Lot::isFence(w->type)))
             continue;
-        const bool fresh = builtWalls_.count(w->id) != 0;
-        refund += fresh ? float(kWallSectionPrice) : float(kWallSectionPrice) * kBuildRefundRate;
-        builtWalls_.erase(w->id);
+        int code = 0;
+        if (wallBlocked(level, s[0], s[1], s[2], s[3], &code) == "a Sim is in the way") {
+            restore(before);
+            r.error = 0x4B;
+            r.message = "cannot delete the wall: a Sim is in the way";
+            return r;
+        }
+        // TryRemoveWallOrFence: int(price x RefundRate) a section; the full
+        // price comes back only through undo.
+        refund += int(float(kWallSectionPrice) * kBuildRefundRate);
         removeWall(lot_, level - 1, s[0], s[1], s[2], s[3]);
         ++r.changed;
     }
     r.ok = true;
     if (!r.changed)
         return r.message = "no walls there", r;
-    r.cost = -int(std::lround(refund));
+    r.cost = -refund;
     addFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
@@ -313,23 +331,11 @@ BuildEditor::Result BuildEditor::paintFloor(int level, int x0, int y0, int x1, i
                 const std::string old = q[size_t(k)] ? (names.count(q[size_t(k)]) ? names[q[size_t(k)]] : "") : "";
                 if (li == 0 && street(old))
                     continue; // the street stays
-                const size_t at = ((size_t(li) * size_t(W) + size_t(x)) * size_t(H) + size_t(y)) * 4 + size_t(k);
+                // FloorPatternCost (BV 0x9a3e50): floor(price x (refund ? 0.8 : 1)).
                 if (pattern) {
                     cost += float(pattern->price) * 0.25f;
                 } else if (q[size_t(k)]) {
-                    // The pattern's price back (the full price if it was laid
-                    // this session).
-                    float price = 0;
-                    if (auto it = prices_.find(old); it != prices_.end()) {
-                        price = float(it->second);
-                    } else if (catalog_) {
-                        try {
-                            if (const BuildPattern* p = catalog_->byGuid(uint32_t(std::stoul(old, nullptr, 16))))
-                                price = float(p->price);
-                        } catch (const std::exception&) {
-                        }
-                    }
-                    cost -= price * (builtFloors_.count(at) ? 1.0f : kBuildRefundRate) * 0.25f;
+                    cost -= std::floor(float(priceOf(old, true)) * kBuildRefundRate) * 0.25f;
                 }
                 changes.push_back({{x, y, k}, ref});
             }
@@ -350,11 +356,6 @@ BuildEditor::Result BuildEditor::paintFloor(int level, int x0, int y0, int x1, i
         prices_[pattern->lotName()] = pattern->price;
     for (const auto& [t, v] : changes) {
         setFloor(lot_, li, t[0], t[1], t[2], v);
-        const size_t at = ((size_t(li) * size_t(W) + size_t(t[0])) * size_t(H) + size_t(t[1])) * 4 + size_t(t[2]);
-        if (v)
-            builtFloors_.insert(at);
-        else
-            builtFloors_.erase(at);
     }
     r.changed = int(changes.size());
     addFunds(vm_, -r.cost);
@@ -366,38 +367,44 @@ BuildEditor::Result BuildEditor::paintFloor(int level, int x0, int y0, int x1, i
     return r;
 }
 
-BuildEditor::Result BuildEditor::paintWalls(int level, int x0, int y0, int x1, int y1, int side,
-                                            const BuildPattern& pattern) {
+// ChangeWallPattern (BV 0x394914): + the new pattern's price a face;
+// taking a covering off (back to the style's "blank") gives back
+// int(old price x 0.8); covering over another gives nothing back.
+BuildEditor::Result BuildEditor::cover(std::vector<std::pair<uint32_t, int>> faces, const BuildPattern* pattern,
+                                       const std::string& what) {
     Result r;
-    const auto sections = wallSections(x0, y0, x1, y1);
     Geometry before = capture();
     std::map<uint16_t, std::string> names = lot_.wallPatterns;
-    const uint16_t ref = patternRef(names, pattern.lotName(), 0);
-    std::vector<std::pair<uint32_t, int>> faces; // wall ID, pattern index
-    for (const auto& s : sections) {
-        const Lot::Wall* w = findWall(lot_, level - 1, s[0], s[1], s[2], s[3]);
-        if (!w || Lot::isFence(w->type) || w->type == Lot::DeckSkirt)
-            continue; // mayChangeSurface false
-        // The wall may run the other way: its right is the run's left.
-        const bool same = std::lround(w->a.x) == s[0] && std::lround(w->a.y) == s[1];
-        for (int k = 0; k < 2; ++k) {
-            const int runSide = (k == 0) == same ? 1 : -1;
-            if ((side == 0 || side == runSide) && w->patterns[size_t(k)] != ref)
-                faces.push_back({w->id, k});
-        }
-    }
+    const uint16_t ref = patternRef(names, pattern ? pattern->lotName() : kDefaultWallPattern, 0);
+    float cost = 0;
+    std::erase_if(faces, [&](const std::pair<uint32_t, int>& f) {
+        for (const auto& w : lot_.walls)
+            if (w.id == f.first) {
+                const uint16_t old = w.patterns[size_t(f.second)];
+                if (old == ref)
+                    return true;
+                if (pattern)
+                    cost += float(pattern->price);
+                else if (auto it = names.find(old); it != names.end())
+                    cost -= float(int(float(priceOf(it->second, false)) * kBuildRefundRate));
+                return false;
+            }
+        return true;
+    });
     if (faces.empty()) {
         r.ok = true;
-        r.message = "no wall faces to cover there";
+        r.message = "no wall faces to change " + what;
         return r;
     }
-    r.cost = int(faces.size()) * pattern.price;
+    r.cost = int(std::lround(cost));
     if (r.cost > funds(vm_)) {
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
         return r;
     }
     lot_.wallPatterns = names;
+    if (pattern)
+        prices_[pattern->lotName()] = pattern->price;
     for (const auto& [id, k] : faces)
         for (auto& w : lot_.walls)
             if (w.id == id)
@@ -407,11 +414,31 @@ BuildEditor::Result BuildEditor::paintWalls(int level, int x0, int y0, int x1, i
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
-    r.message = std::to_string(r.changed) + " wall sides covered with " + pattern.name + " for " + money(r.cost);
+    r.message = std::to_string(r.changed) + " wall sides " + what + " " +
+                (pattern ? "covered with " + pattern->name : std::string("uncovered")) +
+                (r.cost >= 0 ? " for " + money(r.cost) : ", " + money(-r.cost) + " back");
     return r;
 }
 
-BuildEditor::Result BuildEditor::paintRoom(int level, int x, int y, const BuildPattern& pattern) {
+BuildEditor::Result BuildEditor::paintWalls(int level, int x0, int y0, int x1, int y1, int side,
+                                            const BuildPattern* pattern) {
+    std::vector<std::pair<uint32_t, int>> faces; // wall ID, pattern index
+    for (const auto& s : wallSections(x0, y0, x1, y1)) {
+        const Lot::Wall* w = findWall(lot_, level - 1, s[0], s[1], s[2], s[3]);
+        if (!w || Lot::isFence(w->type) || w->type == Lot::DeckSkirt)
+            continue; // mayChangeSurface false
+        // The wall may run the other way: its right is the run's left.
+        const bool same = std::lround(w->a.x) == s[0] && std::lround(w->a.y) == s[1];
+        for (int k = 0; k < 2; ++k) {
+            const int runSide = (k == 0) == same ? 1 : -1;
+            if (side == 0 || side == runSide)
+                faces.push_back({w->id, k});
+        }
+    }
+    return cover(std::move(faces), pattern, "along the run");
+}
+
+BuildEditor::Result BuildEditor::paintRoom(int level, int x, int y, const BuildPattern* pattern) {
     Result r;
     const int li = level - 1;
     if (lot_.rooms.empty() || !lot_.hasLevel(li) || x < 0 || y < 0 || x >= int(lot_.width) || y >= int(lot_.height)) {
@@ -425,39 +452,15 @@ BuildEditor::Result BuildEditor::paintRoom(int level, int x, int y, const BuildP
         r.message = "no room there";
         return r;
     }
-    Geometry before = capture();
-    std::map<uint16_t, std::string> names = lot_.wallPatterns;
-    const uint16_t ref = patternRef(names, pattern.lotName(), 0);
-    std::vector<std::pair<Lot::Wall*, int>> faces;
-    for (auto& w : lot_.walls) {
+    std::vector<std::pair<uint32_t, int>> faces;
+    for (const auto& w : lot_.walls) {
         if (w.a.level != li || Lot::isFence(w.type) || w.type == Lot::DeckSkirt)
             continue;
         for (int k = 0; k < 2; ++k)
-            if (wallSideRoom(lot_, w, k) == room && w.patterns[size_t(k)] != ref)
-                faces.push_back({&w, k});
+            if (wallSideRoom(lot_, w, k) == room)
+                faces.push_back({w.id, k});
     }
-    if (faces.empty()) {
-        r.ok = true;
-        r.message = "no wall faces to cover in that room";
-        return r;
-    }
-    r.cost = int(faces.size()) * pattern.price;
-    if (r.cost > funds(vm_)) {
-        r.message = "not enough money (" + money(r.cost) + ")";
-        r.cost = 0;
-        return r;
-    }
-    lot_.wallPatterns = names;
-    for (auto& [w, k] : faces)
-        w->patterns[size_t(k)] = ref, w->layered = true;
-    r.changed = int(faces.size());
-    addFunds(vm_, -r.cost);
-    changed();
-    commit(std::move(before), r.cost);
-    r.ok = true;
-    r.message = "room " + std::to_string(room) + ": " + std::to_string(r.changed) + " wall sides covered with " +
-                pattern.name + " for " + money(r.cost);
-    return r;
+    return cover(std::move(faces), pattern, "of room " + std::to_string(room));
 }
 
 bool BuildEditor::undo() {
@@ -486,9 +489,18 @@ bool BuildEditor::redo() {
     return true;
 }
 
-void BuildEditor::resetHistory() {
-    undo_.clear(), redo_.clear();
-    builtWalls_.clear(), builtFloors_.clear();
+void BuildEditor::resetHistory() { undo_.clear(), redo_.clear(); }
+
+int BuildEditor::priceOf(const std::string& lotName, bool floor) const {
+    if (auto it = prices_.find(lotName); it != prices_.end())
+        return it->second;
+    if (catalog_)
+        try {
+            if (const BuildPattern* p = catalog_->byGuid(uint32_t(std::stoul(lotName, nullptr, 16))); p && p->floor == floor)
+                return p->price;
+        } catch (const std::exception&) {
+        }
+    return 0;
 }
 
 } // namespace os2::vm
