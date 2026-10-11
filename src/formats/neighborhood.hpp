@@ -182,13 +182,15 @@ struct FamilyTies {
 // 0x101 "Rel. Labels": 0 STR (daily), 1 UI flags, 2 LTR (lifetime), 3
 // familial relation. Flag bits in SimPE's naming: 0 crush, 1 love, 2 engaged,
 // 3 married, 4 friend, 5 best friend, 14 family, 15 known (confirmar o que
-// foi inferido). The familial relation is what the other Sim is to this one:
-// checked against the family tree, 1 = child (251 of 251 SRELs with a child
-// tie), 2 = parent (252/252), 3 = sibling (98), 9 = spouse (185); 4-8 have no
-// tie and are taken, from the order of Sims2.exe's strings ("Parent",
+// foi inferido). The familial relation is what the other Sim is to this one,
+// checked against the family tree of the four shipped neighborhoods
+// (docs/data-findings.md): 1 = child (252 of 301 SRELs with that value), 2 =
+// parent (254/296), 3 = sibling (98/188), 4 = grandchild (256/297), 5 =
+// grandparent (256/288), 6 = nephew/niece (61/82), 7 = uncle/aunt (61/81), 8 =
+// cousin (36/42), 9 = spouse (185/196); the rest have no path in the tree
+// (Sims whose parents it does not hold). Sims2.exe's strings ("Parent",
 // "Sibling", "GrandParent", "GrandChild", "Uncle/Aunt", "Nephew/Niece",
-// "Cousin", "Spouse"), as grandparent, grandchild, uncle/aunt, nephew/niece
-// and cousin (confirmar o que foi inferido).
+// "Cousin", "Spouse") name the other side: what this Sim is to the other.
 namespace relvar {
 constexpr size_t Daily = 0, Flags = 1, Lifetime = 2, Familial = 3;
 }

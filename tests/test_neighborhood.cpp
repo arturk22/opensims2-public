@@ -190,7 +190,9 @@ static void testDecoders() {
         const auto r = Relationship::parse(srel({45, 0xC000, 19, 1}, 3), 0x0001000F);
         check(r.from == 1 && r.to == 15 && r.values.size() == 4 && r.stale.size() == 3, "SREL key and values");
         check(r.value(relvar::Lifetime) == 19 && r.value(relvar::Familial) == 1 && r.value(9) == 0, "SREL value");
-        check(std::string(familialName(1)) == "child" && std::string(familialName(9)) == "spouse", "familial names");
+        check(std::string(familialName(1)) == "child" && std::string(familialName(9)) == "spouse" &&
+                  std::string(familialName(4)) == "grandchild" && std::string(familialName(7)) == "uncle/aunt",
+              "familial names");
         auto odd = srel({1});
         odd.push_back(0);
         throws([&] { Relationship::parse(odd, 0); }, "SREL odd size");

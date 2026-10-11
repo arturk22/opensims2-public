@@ -108,8 +108,8 @@ const char* tieTypeName(TieType t) {
 }
 
 const char* familialName(int32_t v) {
-    static const char* const names[] = {"",           "child",        "parent", "sibling", "grandparent",
-                                        "grandchild", "uncle/aunt",   "nephew/niece", "cousin", "spouse"};
+    static const char* const names[] = {"",            "child",        "parent",     "sibling", "grandchild",
+                                        "grandparent", "nephew/niece", "uncle/aunt", "cousin",  "spouse"};
     return v >= 0 && v < 10 ? names[v] : "?";
 }
 
