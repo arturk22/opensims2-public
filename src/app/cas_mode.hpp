@@ -27,9 +27,10 @@
 //             swimwear, athletic) and part (top, bottom, whole outfit)
 //   CB980E83  step 6: aspiration, zodiac and the five traits (25 points)
 //
-// The grids show the entries' names in their cells: the game's
-// thumbnails (UserData/Thumbnails/CASThumbnails.package, 5623 JPEGs) are
-// keyed by an instance whose derivation is not decoded yet. Which tab
+// The grids show the game's thumbnails (UserData/Thumbnails/
+// CASThumbnails.package, keyed as formats/cas_thumbnails says); the
+// overlays it has none of (eyes, makeup) show their texture over the face
+// skin, and entries without either their name. Which tab
 // button opens which face panel is inferred from their order (hair, full
 // face, brow, eyes, nose, mouth, jaw, as the panels' titles go).
 //
@@ -66,6 +67,9 @@ class RenderCommandEncoder;
 
 namespace os2 {
 
+namespace cas {
+class CasThumbnails;
+}
 class FontLibrary;
 class LotCamera;
 class Renderer;
@@ -134,6 +138,8 @@ private:
     std::unique_ptr<cas::FaceBaker> baker_;
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;
+    std::unique_ptr<cas::CasThumbnails> thumbs_;
+    std::map<std::string, std::unique_ptr<RgbaImage>> previews_; // overlay previews (face|texture)
     std::map<uint32_t, UiScript> scripts_;
     LotCamera* camera_ = nullptr;
 

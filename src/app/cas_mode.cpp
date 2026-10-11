@@ -1,6 +1,7 @@
 #include "cas_mode.hpp"
 
 #include "app/ui_panel_util.hpp"
+#include "formats/cas_thumbnails.hpp"
 #include "formats/font.hpp"
 #include "formats/resindex.hpp"
 #include "formats/sim_actor.hpp"
@@ -39,6 +40,8 @@ constexpr uint32_t kControls = 0x8C6B1CA2, kStepButton0 = 0x8C6B0000, kDone = 0x
 
 // The face panels of CB980E82, in the order of faceTab_.
 constexpr uint32_t kFaceTabs[7] = {0x4CB80000, 0x4CB80006, 0x4CB80001, 0x4CB80002, 0x4CB80003, 0x4CB80004, 0x4CB80005};
+// The archetype thumbnails' region suffix per face panel (GetCASArchetypeThumbnailContext).
+const char* const kRegionThumbs[7] = {"", "", "brow", "eyes", "nose", "mouth", "jaw"};
 constexpr uint32_t kFacePanels[7] = {0x6CB8A784, 0xED2A53C1, 0x8CB8A7A5, 0xACB8A7BB, 0x2CB8A844, 0x4CB8A856, 0x4CB8A868};
 // CB980E85's tabs in the order of cosmeticTab_ and the overlays component's titles.
 constexpr uint32_t kCosmeticTabs[6] = {0x6C6E0002, 0x6C6E0003, 0x6C6E0001, 0x6C6E0000, 0x6C6E0004, 0x6C6E0005};
@@ -52,7 +55,7 @@ constexpr uint32_t kClothesParts[3] = {cas::part::Top, cas::part::Bottom, cas::p
 constexpr uint32_t kTraitBars[5] = {0x4BDEFF00, 0x4BDEFF01, 0x4BDEFF02, 0x4BDEFF03, 0x4BDEFF04};
 
 constexpr std::array<float, 4> kCellColor{0.80f, 0.84f, 0.98f, 1}, kCellSelected{1.0f, 0.95f, 0.55f, 1},
-    kCellText{0.02f, 0.03f, 0.40f, 1};
+    kCellText{0.02f, 0.03f, 0.40f, 1}, kThumbBg{0.16f, 0.22f, 0.45f, 1}, kThumbSelectedBg{0.30f, 0.40f, 0.75f, 1};
 
 bool inside(const std::array<float, 4>& r, simd_float2 p) {
     return p.x >= r[0] && p.x < r[2] && p.y >= r[1] && p.y < r[3];
@@ -110,6 +113,7 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
     baker_ = std::make_unique<cas::FaceBaker>(index_, *catalog_);
     res_ = std::make_unique<UiResources>(index_, res);
     fonts_ = std::make_unique<FontLibrary>(res / "UI/Fonts");
+    thumbs_ = std::make_unique<cas::CasThumbnails>(res / "UserData/Thumbnails/CASThumbnails.package");
     for (uint32_t id : {kFrame, kStepScripts[0], kStepScripts[1], kStepScripts[2], kStepScripts[3], kStepScripts[4],
                         kStepScripts[5]})
         if (auto s = res_->script(id); s && !s->roots.empty())
@@ -827,6 +831,7 @@ UiScreen CasMode::screen(int width, int height) {
     struct Item {
         std::string text;
         bool selected = false;
+        const RgbaImage* thumb = nullptr; // from CASThumbnails.package
         std::function<void()> pick;
         float slider = NAN; // modifiers: the weight
         std::function<void(float)> slide;
@@ -849,6 +854,21 @@ UiScreen CasMode::screen(int width, int height) {
             return;
         grids.push_back({g, key, cols, rows, std::move(items), find(*component, prevId), find(*component, nextId)});
     };
+    auto thumb = [&](uint32_t id) { return thumbs_ ? thumbs_->image(id) : nullptr; };
+    // A texture overlay: the cached thumbnail, else its texture over the face skin.
+    auto overlayThumb = [&](const SimPart& o) -> const RgbaImage* {
+        if (const RgbaImage* t = thumb(cas::entryThumbnailId(o, s.age, s.gender)))
+            return t;
+        const std::string face = cas::agePrefix(s.age, s.gender, true) + "face-s" + std::to_string(s.skinTone);
+        const std::string tex = cas::overlayTexture(index_, o);
+        const std::string key = face + "|" + tex;
+        auto it = previews_.find(key);
+        if (it == previews_.end()) {
+            auto img = cas::overlayPreview(index_, face, tex, o.number("subtype"));
+            it = previews_.emplace(key, img ? std::make_unique<RgbaImage>(std::move(*img)) : nullptr).first;
+        }
+        return it->second.get();
+    };
     auto overlayItems = [&](uint32_t subtype, int bin, bool removable) {
         std::vector<Item> items;
         const std::string hair = cas::toneFamily(s.age == cas::age::Elder ? 5 : s.hairTone);
@@ -859,7 +879,7 @@ UiScreen CasMode::screen(int width, int height) {
                 if (o->number("subtype") == subtype && (bin < 0 || int(o->number("bin")) == bin))
                     current = int(i);
         if (removable)
-            items.push_back({"(nenhum)", current < 0, [this, subtype, bin]() {
+            items.push_back({"(nenhum)", current < 0, nullptr, [this, subtype, bin]() {
                                  pushUndo();
                                  auto& ov = edit_.spec.overlays;
                                  ov.erase(std::remove_if(ov.begin(), ov.end(),
@@ -884,7 +904,7 @@ UiScreen CasMode::screen(int width, int height) {
             }
             seen.push_back(fam);
             const bool sel = current >= 0 && s.overlays[size_t(current)] == fam;
-            items.push_back({label(o->name()), sel, [this, fam, subtype, bin]() {
+            items.push_back({label(o->name()), sel, overlayThumb(*o), [this, fam, subtype, bin]() {
                                  pushUndo();
                                  auto& ov = edit_.spec.overlays;
                                  ov.erase(std::remove_if(ov.begin(), ov.end(),
@@ -900,7 +920,7 @@ UiScreen CasMode::screen(int width, int height) {
         }
         return items;
     };
-    auto archetypeItems = [&](const std::string& maskList) {
+    auto archetypeItems = [&](const std::string& maskList, const std::string& region) {
         std::vector<Item> items;
         for (const SimPart* a : catalog_->archetypesFor(s.age, s.gender)) {
             const std::string fam = cas::family(*a);
@@ -911,7 +931,8 @@ UiScreen CasMode::screen(int width, int height) {
                 auto it = s.face.regions.find(maskList);
                 sel = it != s.face.regions.end() && it->second == fam;
             }
-            items.push_back({label(a->name().substr(0, a->name().find('_'))), sel, [this, fam, maskList]() {
+            items.push_back({label(a->name().substr(0, a->name().find('_'))), sel,
+                             thumb(cas::archetypeThumbnailId(s.age, s.gender, fam, region)), [this, fam, maskList]() {
                                  pushUndo();
                                  if (maskList.empty()) {
                                      edit_.spec.face.archetype = fam;
@@ -966,7 +987,7 @@ UiScreen CasMode::screen(int width, int height) {
     case 1: // the head bin
         if (const UiElement* g = find(panel, 0x0CFD6EC6))
             hk.hide.insert(g);
-        addGrid(&panel, 0x4011, "heads", 3, 3, archetypeItems(""));
+        addGrid(&panel, 0x4011, "heads", 3, 3, archetypeItems("", ""));
         break;
     case 2: { // hair and face
         for (int k = 0; k < 7; ++k) {
@@ -985,7 +1006,7 @@ UiScreen CasMode::screen(int width, int height) {
             const std::string current = everyday.count(cas::part::Hair) ? lower(everyday.at(cas::part::Hair)) : "";
             for (const SimPart* h : catalog_->hairStyles(s.age, s.gender, tone)) {
                 const std::string name = h->name();
-                items.push_back({label(name), lower(name) == current, [this, name]() {
+                items.push_back({label(name), lower(name) == current, thumb(cas::entryThumbnailId(*h, s.age, s.gender)), [this, name]() {
                                      pushUndo();
                                      for (auto& [cat, parts] : edit_.spec.outfits)
                                          if (parts.count(cas::part::Hair) || cat == cas::category::Everyday)
@@ -1018,7 +1039,7 @@ UiScreen CasMode::screen(int width, int height) {
                 readConstants(*ac, c);
                 const std::string mask = c.count("kCAFArchetypeRegionMask") ? c["kCAFArchetypeRegionMask"] : "";
                 addGrid(ac, 0x4011, "arch" + std::to_string(faceTab_), constantInt(c, "kCAFArchetypesGridNumColumns", 3),
-                        constantInt(c, "kCAFArchetypesGridNumRows", 2), archetypeItems(mask));
+                        constantInt(c, "kCAFArchetypesGridNumRows", 2), archetypeItems(mask, kRegionThumbs[faceTab_]));
             }
             for (const UiElement* mc : modComps) {
                 std::map<std::string, std::string> c;
@@ -1032,7 +1053,7 @@ UiScreen CasMode::screen(int width, int height) {
                     std::vector<Item> items;
                     for (const SimPart* o : catalog_->overlaysFor(cas::overlay::Eyes, s.age, s.gender)) {
                         const std::string fam = cas::family(*o);
-                        items.push_back({label(o->name()).substr(4), s.eyes == fam, [this, fam]() {
+                        items.push_back({label(o->name()).substr(4), s.eyes == fam, overlayThumb(*o), [this, fam]() {
                                              pushUndo();
                                              edit_.spec.eyes = fam;
                                              changed();
@@ -1066,7 +1087,7 @@ UiScreen CasMode::screen(int width, int height) {
             std::vector<Item> items;
             switch (cosmeticTab_) {
             case 1: items = overlayItems(cas::overlay::Costume, -1, true); break;
-            case 2: items.push_back({"(óculos: overlays de malha, ainda não)", false, [] {}}); break;
+            case 2: items.push_back({"(óculos: overlays de malha, ainda não)", false, nullptr, [] {}}); break;
             case 3: items = overlayItems(cas::overlay::Brows, -1, false); break;
             case 4: items = overlayItems(cas::overlay::FacialHair, 1, true); break;
             case 5: items = overlayItems(cas::overlay::FacialHair, 2, true); break;
@@ -1093,7 +1114,7 @@ UiScreen CasMode::screen(int width, int height) {
         for (const SimPart* p : catalog_->outfitParts(partBit, s.age, s.gender, cat, s.fitness == 2)) {
             const std::string name = p->name();
             const bool sel = current.count(partBit) && lower(current.at(partBit)) == lower(name);
-            items.push_back({label(name), sel, [this, name, cat, partBit]() {
+            items.push_back({label(name), sel, thumb(cas::entryThumbnailId(*p, s.age, s.gender)), [this, name, cat, partBit]() {
                                  pushUndo();
                                  auto& o = edit_.spec.outfits[cat];
                                  if (partBit == cas::part::Body) {
@@ -1322,6 +1343,21 @@ UiScreen CasMode::screen(int width, int height) {
             Item& it = g.items[idx];
             const float x0 = gr[0] + cw * float(i % g.cols) + 3, y0 = gr[1] + ch * float(i / g.cols) + 3;
             const float x1 = x0 + cw - 6, y1 = y0 + ch - 6;
+            if (it.thumb && std::isnan(it.slider)) {
+                // The thumbnail, square in the cell; the selected one framed.
+                const float side = std::min(x1 - x0, y1 - y0);
+                const float tx0 = (x0 + x1 - side) / 2, ty0 = (y0 + y1 - side) / 2;
+                if (it.selected)
+                    rect(tx0 - 2, ty0 - 2, tx0 + side + 2, ty0 + side + 2, kCellSelected);
+                rect(tx0, ty0, tx0 + side, ty0 + side, it.selected ? kThumbSelectedBg : kThumbBg);
+                UiQuad q;
+                q.image = it.thumb;
+                q.x0 = tx0, q.y0 = ty0, q.x1 = tx0 + side, q.y1 = ty0 + side;
+                out.quads.push_back(q);
+                auto pick = it.pick;
+                targets_.push_back({{x0, y0, x1, y1}, [pick](simd_float2) { pick(); }});
+                continue;
+            }
             rect(x0, y0, x1, y1, it.selected ? kCellSelected : kCellColor);
             if (!std::isnan(it.slider)) {
                 text(x0 + 4, y0 + 4, x1 - x0 - 8, it.text, kCellText);

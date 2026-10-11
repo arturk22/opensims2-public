@@ -383,3 +383,38 @@ achado (a fábrica usa uma vtable importada).
   `kDefaultFamilyFunds` 20000, STR# do nome, inventários no NGBH).
 - Telas: `src/app/cas_mode.*` (`--cas`); os painéis ficam presos à âncora
   que a janela oculta `0xAAAA` de cada um nomeia ("2d050914:bl").
+
+## 12. Miniaturas do CAS (rodada 9)
+
+`TSData/Res/UserData/Thumbnails/CASThumbnails.package`: 5.623 JPEGs 256×256
+com o segmento ALFA, tipo `0x0C7E9A76`, grupo `0xEC7E9A54` (o
+`cTSUIThumbnailService` guarda o grupo em `+0xAC`; `FixInstanceOnlyCASKey`, BV
+`0x29eabc`, completa tipo e grupo de uma chave "só instância"). A instância é
+um hash que a UI do CAS monta por tipo de entrada:
+
+- `CreateCASFileName` (BV `0x983994`): idade `toddler`/`child`/`teen`/
+  `youngadult`/`adult`/`elder` (nada para bebê) + `female`/`male` + espécie
+  (`dog`/`smalldog`/`cat`, nada para humanos), p. ex. `adultfemale`.
+- Roupas (`CreateClothingThumbnailInstanceId`, BV `0x983ea0`; GZPS com
+  `hairtone` nulo): `crc32("<arquivo>_<grupo>-<tipo>-<instância>")`, a chave
+  do GZPS em `%d` (com sinal).
+- Cabelo (`CreateHairThumbnailInstanceId`, BV `0x983d30`; GZPS com `hairtone`):
+  `crc32("<arquivo>_<grupo>-<tipo>-<instância>_<GUID do hairtone>")`.
+- Overlays de textura e de malha (`CreateOverlayThumbnailInstanceId`, BV
+  `0x983be0`, chamado pelo `GetCASOverlayThumbnailContext`, BV `0x987918`):
+  `crc32("<arquivo>_<GUID da família>_<GUID do hairtone>")`.
+- Arquétipos (`GetCASArchetypeThumbnailContext`, BV `0x988f30`):
+  `crc32("<arquivo><GUID da família><região>")`, sem `_`, região vazia (rosto
+  inteiro) ou `brow`, `eyes`, `nose`, `mouth`, `jaw`.
+- Sims prontos (`GetCASOutfitDataThumbnailContext`, BV `0x988264`):
+  `"%x-%x-%x"` de três campos do `cITSSimOutfitData` + `"-%d"` (bit 0x20),
+  com crc24 e crc32 (não conferido nos dados).
+
+`crc32` = o CRC-32 MSB-first do texto em minúsculas (`FUN_00120ff8`, o mesmo
+do `nameInstanceHiHash`); os GUIDs como `%08x-%04x-%04x-%04x-%04x%08x`
+(`FUN_015a40ac`). Conferido no pacote: 2.803 GZPS, 450 overlays (barbas,
+sobrancelhas, maquiagem de fantasia, óculos) e 1.224 arquétipos (4.477 de
+5.623). Olhos, batom, blush, sombra e delineador não estão no cache: o jogo os
+renderiza na hora (`GetSkinOverlayThumbnail`, BV `0xdf7d1c` → fábrica de
+miniaturas do CAS); aqui viram a textura do overlay sobre a pele do rosto,
+recortada na parte que pinta (`cas::overlayPreview`).

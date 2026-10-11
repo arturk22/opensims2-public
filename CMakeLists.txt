@@ -29,6 +29,7 @@ add_library(os2_formats
   src/formats/camera_config.cpp
   src/formats/cas_catalog.cpp
   src/formats/cas_face.cpp
+  src/formats/cas_thumbnails.cpp
   src/formats/cas_personality.cpp
   src/formats/character_write.cpp
   src/formats/build_catalog.cpp
