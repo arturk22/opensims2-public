@@ -715,9 +715,9 @@ VM::RelationshipKey VM::relationshipKey(ObjectId id) {
 Object* VM::neighborSim(int16_t id) {
     if (id == 0)
         return nullptr;
-    for (auto& [_, o] : objects_)
-        if (o.person && o.person->data[persondata::NeighborId] == id)
-            return &o;
+    for (Object* o : byId_) // by ID, as objects_ is
+        if (o && o->person && o->person->data[persondata::NeighborId] == id)
+            return o;
     return nullptr;
 }
 

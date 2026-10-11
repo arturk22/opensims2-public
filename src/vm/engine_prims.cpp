@@ -77,9 +77,11 @@ int16_t useCount(VM& vm, const Object& o) {
         return x && (x->data[objdata::LeadTileObjectId] ? x->data[objdata::LeadTileObjectId] : x->id) == lead;
     };
     int16_t users = 0;
-    for (const auto& [id, sim] : vm.objects()) {
-        if (!sim.person || id == o.id)
+    for (const Object* simp : vm.objectTable()) {
+        if (!simp || !simp->person || simp->id == o.id)
             continue;
+        const Object& sim = *simp;
+        const ObjectId id = sim.id;
         bool uses = false;
         for (int i = 0; i <= sim.activeInteraction && size_t(i) < sim.queue.size() && !uses; ++i)
             uses = part(sim.queue[size_t(i)].object);
