@@ -66,7 +66,9 @@ target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 add_library(os2_vm
   src/vm/lot.cpp
   src/vm/primitives.cpp
+  src/vm/routing.cpp
   src/vm/vm.cpp
+  src/vm/world.cpp
 )
 target_include_directories(os2_vm PUBLIC src)
 target_compile_options(os2_vm PRIVATE -Wall -Wextra)
@@ -132,6 +134,10 @@ add_test(NAME formats COMMAND test_formats)
 add_executable(test_vm tests/test_vm.cpp)
 target_link_libraries(test_vm PRIVATE os2_vm)
 add_test(NAME vm COMMAND test_vm)
+
+add_executable(test_routing tests/test_routing.cpp)
+target_link_libraries(test_routing PRIVATE os2_vm)
+add_test(NAME routing COMMAND test_routing)
 
 if(APPLE)
   add_executable(test_camera tests/test_camera.cpp)

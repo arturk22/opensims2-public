@@ -3,8 +3,10 @@
 #include "formats/bhav.hpp"
 #include "formats/simantics.hpp"
 #include "formats/strings.hpp"
+#include "world.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -69,6 +71,7 @@ namespace objdata {
 constexpr int16_t Direction = 1;
 constexpr int16_t ContainerId = 2;
 constexpr int16_t SlotNumber = 3;
+constexpr int16_t Flags = 8; // bit 0 can be stepped over, 2 allow object and person intersection, 4 allow person intersection (STR# 0x8E)
 constexpr int16_t ObjectId = 11;
 constexpr int16_t LeadTileObjectId = 19;
 constexpr int16_t Room = 29;
@@ -127,6 +130,11 @@ constexpr size_t kMaxRelationshipVars = 32;
 
 // Object types (OBJD "type", STR# 0xF6).
 constexpr uint16_t kObjectTypePerson = 2;
+constexpr uint16_t kObjectTypeDoor = 8;
+constexpr uint16_t kObjectTypeWindow = 9;
+constexpr uint16_t kObjectTypeStairs = 10;
+constexpr uint16_t kObjectTypeModularStairs = 11;
+constexpr uint16_t kObjectTypeModularStairsPortal = 12;
 constexpr uint16_t kObjectTypeVehicle = 13;
 
 // A Sim of the neighborhood, on this lot or not, known by its neighbor ID.
@@ -318,6 +326,13 @@ struct Object {
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
 
+// Multi-tile objects: the parts point at the lead tile's object (object data
+// "lead tile object ID"); the lead itself may hold 0 (inferred).
+inline ObjectId multiTileGroup(const Object& x) {
+    const ObjectId lead = x.data[objdata::LeadTileObjectId];
+    return lead ? lead : x.id;
+}
+
 struct Frame {
     const Behavior* behavior = nullptr;
     uint32_t group = 0;  // where the BHAV was found
@@ -395,6 +410,33 @@ public:
     // An instance of the object with this GUID, or null if no OBJD has it.
     Object* instantiateGuid(uint32_t guid);
     Object* object(ObjectId id);
+    // --- World ---------------------------------------------------------------
+    // The lot's walls, floors and rooms (vm::loadLot builds it); without one
+    // (single trees, tests) positions mean nothing to the primitives that
+    // need them, which then fail with the reason.
+    std::optional<World> world;
+    // The tile an object stands on (its position rounded down), whether or
+    // not it is in the world.
+    static TilePos tileOf(const Object& o) {
+        return {int(std::floor(o.position.x)), int(std::floor(o.position.y)), o.position.level};
+    }
+    // Whether an object stands in the way of Sims walking: placed in the world
+    // (not in a slot), not a Sim, not a door, window or stair (stairs join
+    // levels, which routing does not do yet), and none of the object data
+    // "flags" that let people through (can be stepped over, allow object and
+    // person intersection, allow person intersection). Inferred from what the
+    // Inits set: flowers, paintings, emitters and doors set them, furniture
+    // does not. Wall-mounted lamps and mirrors set none, so they block the
+    // tile in front of their wall too.
+    static bool blocksRouting(const Object& o);
+    // The blocked tiles of a level, leaving out the objects in `ignore` (and
+    // the other parts of their multi-tile objects). Needs a world.
+    BlockedGrid blockedTiles(int level, std::span<const ObjectId> ignore = {});
+    // A tile is in the world, has a floor and nothing that blocks stands on it.
+    bool tileFree(TilePos t, std::span<const ObjectId> ignore = {});
+    // Objects placed on a tile (in the world and not in a slot), by ID.
+    std::vector<ObjectId> objectsOnTile(TilePos t) const;
+
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) { objects_.erase(id); }
     const std::map<ObjectId, Object>& objects() const { return objects_; }

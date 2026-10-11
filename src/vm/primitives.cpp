@@ -120,13 +120,6 @@ Exit breakPoint(Context& c) {
     return Exit::True;
 }
 
-// Multi-tile objects: the parts point at the lead tile's object (object data
-// "lead tile object ID"); the lead itself may hold 0 (inferred).
-ObjectId multiTileGroup(const Object& x) {
-    const ObjectId lead = x.data[objdata::LeadTileObjectId];
-    return lead ? lead : x.id;
-}
-
 // Remove Object Instance (0x12): u16 target, 0 = me, 1 = stack object (STR#
 // 0x9C), then flags u8 at 2: 0x02 removes every part of a multi-tile object
 // ("clean up all"), 0x01 "return immediately" (nothing to wait for here). A
@@ -237,6 +230,48 @@ Exit setToNext(Context& c) {
         }
         auto next = ids.upper_bound(current);
         return next == ids.end() ? Exit::False : found(*next);
+    }
+    case 8: {                                                                          // object on the same tile
+        // Objects placed on the target's tile, by ID, round and round: the
+        // trees ("Tile unobstructed", "Repair - Repair Failed?") go on until
+        // they are back at the object they started from. False when the
+        // target is not on a tile itself (as in FreeSO).
+        const Object* x = c.vm.object(current);
+        if (!x || !x->position.inWorld() || x->data[objdata::ContainerId] != 0)
+            return Exit::False;
+        const auto ids = c.vm.objectsOnTile(VM::tileOf(*x));
+        auto it = std::upper_bound(ids.begin(), ids.end(), current);
+        return found(it == ids.end() ? ids.front() : *it);
+    }
+    case 9:                                                                            // adjacent to object in local
+    case 34: {                                                                         // within one tile of object in local
+        // 9: the objects on the four tiles next to the anchor, a direction
+        // at a time (0, 2, 4, 6), by ID within a tile; 34: the objects on
+        // the anchor's tile and the eight around it, by ID. The anchor's ID
+        // is in the local of byte 6. Objects in slots are not on tiles.
+        const Object* anchor = c.vm.object(c.get(0x19, o[6]));
+        if (!anchor || !anchor->position.inWorld())
+            return Exit::False;
+        const TilePos at = VM::tileOf(*anchor);
+        std::vector<ObjectId> ids;
+        if (type == 9) {
+            for (int dir : {0, 2, 4, 6}) {
+                const auto [dx, dy] = directionStep(dir);
+                for (ObjectId id : c.vm.objectsOnTile({at.x + dx, at.y + dy, at.level}))
+                    ids.push_back(id);
+            }
+            auto it = std::find(ids.begin(), ids.end(), current);
+            it = it == ids.end() ? ids.begin() : it + 1;
+            return it == ids.end() ? Exit::False : found(*it);
+        }
+        for (const auto& [id, x] : c.vm.objects()) {
+            const TilePos t = VM::tileOf(x);
+            if (id != anchor->id && x.position.inWorld() && x.data[objdata::ContainerId] == 0 && t.level == at.level &&
+                std::abs(t.x - at.x) <= 1 && std::abs(t.y - at.y) <= 1)
+                ids.push_back(id);
+        }
+        auto it = std::upper_bound(ids.begin(), ids.end(), current);
+        return it == ids.end() ? Exit::False : found(*it);
     }
     case 3: {                                                                          // part of a multi-tile object
         const Object* x = c.vm.object(current);

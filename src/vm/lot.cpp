@@ -6,6 +6,7 @@
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
 
+#include <cmath>
 #include <map>
 
 namespace os2::vm {
@@ -55,6 +56,34 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             room.values[3] = int16_t(r.second / 4);
             room.known = 0x0C;
         }
+    }
+
+    // The world: walls, floors and rooms, with the walls opened where the
+    // lot's doors (and gates) are. Doors are taken from the cObjects, whose
+    // positions match the walls; some saved door states do not (in
+    // N001_Lot11 all eight are elsewhere: leftovers?). The direction comes
+    // from the model's rotation: 90 - 45 * direction degrees about Z.
+    vm.world = World::fromLot(lot);
+    for (const auto& o : lot.objects) {
+        std::string name = o.definition;
+        if (name.size() > kObjtSuffix.size() &&
+            name.compare(name.size() - kObjtSuffix.size(), kObjtSuffix.size(), kObjtSuffix) == 0)
+            name.resize(name.size() - kObjtSuffix.size());
+        const auto def = name.empty() ? std::nullopt : code.definitionByName(name);
+        const ObjectDefinition* d = def ? code.definition(def->first, def->second) : nullptr;
+        if (!d || d->objectType() != kObjectTypeDoor)
+            continue;
+        const auto& q = o.rotation;
+        const double yaw = std::atan2(2 * (q[3] * q[2] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2])) * 180 / M_PI;
+        const int dir = ((int(std::lround((90 - yaw) / 45)) % 8) + 8) % 8;
+        // The level is the one whose floor height at the door is nearest
+        // the cObject's (a foundation lifts the ground floor to 0.75).
+        const int x = int(std::floor(o.position[0])), y = int(std::floor(o.position[1]));
+        int level = 0;
+        for (int l = lot.minLevel; l < lot.minLevel + lot.levelCount; ++l)
+            if (std::fabs(lot.elevation(l, x, y) - o.position[2]) < std::fabs(lot.elevation(level, x, y) - o.position[2]))
+                level = l;
+        vm.world->openDoor({x, y, level + 1}, dir);
     }
 
     LotLoad out;
