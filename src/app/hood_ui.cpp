@@ -269,12 +269,15 @@ UiScreen HoodUi::screen(int width, int height) {
                     hk.hide.insert(e);
             };
             const RgbaImage* pic = lotPicture(lot);
-            const LotValues v = lotValues(lot); // the lot's value (SIMI)
+            const LotValues v = lotValues(lot); // the lot's SIMI
+            // The lot's price (GetLotFileInfo: lot, objects and architecture).
+            const hood::Lot* hl = view_->neighborhood().lot(lot.id);
+            const int64_t price = hl ? hood::lotFileInfo(*hl).price : v.lot;
             if (panel == 0xA000) {
                 caption(0xA001, lot.familyName);
                 caption(0xA002, lot.name);
                 if (v.ok)
-                    caption(0xA003, formatMoney(v.lot));
+                    caption(0xA003, formatMoney(price));
                 else
                     hide(0xA003);
                 caption(0xA005, sizeText(lot));
@@ -287,7 +290,7 @@ UiScreen HoodUi::screen(int width, int height) {
                 const uint32_t base = panel; // B000 / C000
                 caption(base + 1, lot.name);
                 if (v.ok)
-                    caption(base + 2, formatMoney(v.lot));
+                    caption(base + 2, formatMoney(price));
                 else
                     hide(base + 2);
                 caption(base + 3, sizeText(lot));

@@ -294,10 +294,12 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
             color->setBlendingEnabled(true);
             const auto src = blend == StandardMaterial::Blend::AddNoSrcAlpha || blend == StandardMaterial::Blend::Premultiplied
                                  ? MTL::BlendFactorOne
-                                 : MTL::BlendFactorSourceAlpha;
+                             : blend == StandardMaterial::Blend::Multiply ? MTL::BlendFactorDestinationColor
+                                                                          : MTL::BlendFactorSourceAlpha;
             color->setSourceRGBBlendFactor(src);
-            color->setSourceAlphaBlendFactor(src);
-            const auto dst = blend == StandardMaterial::Blend::Alpha || blend == StandardMaterial::Blend::Premultiplied
+            color->setSourceAlphaBlendFactor(blend == StandardMaterial::Blend::Multiply ? MTL::BlendFactorZero : src);
+            const auto dst = blend == StandardMaterial::Blend::Alpha || blend == StandardMaterial::Blend::Premultiplied ||
+                                     blend == StandardMaterial::Blend::Multiply
                                  ? MTL::BlendFactorOneMinusSourceAlpha
                                  : MTL::BlendFactorOne;
             color->setDestinationRGBBlendFactor(dst);
@@ -316,6 +318,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
         additive_ = pipeline(StandardMaterial::Blend::Additive);
         addOne_ = pipeline(StandardMaterial::Blend::AddNoSrcAlpha);
         premultiplied_ = pipeline(StandardMaterial::Blend::Premultiplied);
+        multiply_ = pipeline(StandardMaterial::Blend::Multiply);
     } catch (...) {
         vs->release();
         fs->release();
@@ -412,6 +415,7 @@ Renderer::~Renderer() {
     additive_->release();
     addOne_->release();
     premultiplied_->release();
+    multiply_->release();
     alphaBlend_->release();
     opaque_->release();
     queue_->release();
@@ -889,6 +893,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                                     : m.blend == StandardMaterial::Blend::Additive ? additive_
                                     : m.blend == StandardMaterial::Blend::AddNoSrcAlpha ? addOne_
                                     : m.blend == StandardMaterial::Blend::Premultiplied ? premultiplied_
+                                    : m.blend == StandardMaterial::Blend::Multiply ? multiply_
                                                                                    : opaque_);
         enc->setCullMode(m.cull);
         auto [uv0, uv1] = uvTransform(m.anim, t);

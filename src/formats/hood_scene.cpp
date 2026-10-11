@@ -522,6 +522,28 @@ void imposterMaterials(ObjectModel& model, const std::string& scope) {
         m.resource = def.resource;
         def = m;
     }
+    // ImposterTerrainMaterial's first pass (includeLightMap): the lot's
+    // "terrainLmap" (same texture coordinates, tiled) multiplies what is
+    // drawn under the lot (srcFactor(destColor) add dstFactor(invSrcAlpha)):
+    // the house's shade on the neighborhood ground. A copy of each ground
+    // part, drawn just before it.
+    std::vector<ObjectModel::Part> lightMapped;
+    for (const auto& part : model.parts)
+        if (types[part.material] == "ImposterTerrainMaterial") {
+            ObjectModel::Part p = part;
+            p.material = part.material + "_lmap";
+            if (!model.materials.count(p.material)) {
+                MaterialDefinition m = unlit("terrainLmap");
+                m.properties.insert(m.properties.end(), {{"stdMatAlphaBlendMode", "multiply"},
+                                                         {"stdMatCullMode", "none"},
+                                                         {"stdMatLayer", std::to_string(kImposterTerrainLayer - 1)}});
+                m.resource = model.materials[part.material].resource;
+                model.materials[p.material] = m;
+                types[p.material] = "ImposterTerrainLightMap";
+            }
+            lightMapped.push_back(std::move(p));
+        }
+    model.parts.insert(model.parts.end(), lightMapped.begin(), lightMapped.end());
     // ImposterRoofMaterial's vertex shader: uv = (x / 64, 1 - y / 64).
     for (auto& part : model.parts)
         if (types[part.material] == "ImposterRoofMaterial") {

@@ -212,6 +212,7 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
               : blend == "additive"             ? StandardMaterial::Blend::Additive
               : blend == "addNoSrcAlphaScale"   ? StandardMaterial::Blend::AddNoSrcAlpha
               : blend == "premultiplied"        ? StandardMaterial::Blend::Premultiplied
+              : blend == "multiply"             ? StandardMaterial::Blend::Multiply
                                                 : StandardMaterial::Blend::None;
     out.alphaTest = flag("stdMatAlphaTestEnabled", false);
     out.alphaRef = number("stdMatAlphaRefValue", 127) / 255.0f;

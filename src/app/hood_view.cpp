@@ -3,6 +3,7 @@
 #include "formats/camera_config.hpp"
 #include "formats/config_text.hpp"
 #include "formats/dbpf.hpp"
+#include "formats/hood_lot_terrain.hpp"
 #include "formats/hood_scene.hpp"
 #include "formats/image.hpp"
 #include "formats/lighting_config.hpp"
@@ -94,6 +95,25 @@ bool rayBox(simd_float3 o, simd_float3 d, simd_float3 lo, simd_float3 hi, float&
     return true;
 }
 
+// Möller-Trumbore, both faces.
+bool rayTriangle(simd_float3 o, simd_float3 d, simd_float3 a, simd_float3 b, simd_float3 c, float& t) {
+    const simd_float3 e1 = b - a, e2 = c - a, p = simd_cross(d, e2);
+    const float det = simd_dot(e1, p);
+    if (std::abs(det) < 1e-9f)
+        return false;
+    const float inv = 1.0f / det;
+    const simd_float3 s = o - a;
+    const float u = simd_dot(s, p) * inv;
+    if (u < 0 || u > 1)
+        return false;
+    const simd_float3 q = simd_cross(s, e1);
+    const float v = simd_dot(d, q) * inv;
+    if (v < 0 || u + v > 1)
+        return false;
+    t = simd_dot(e2, q) * inv;
+    return t > 0;
+}
+
 } // namespace
 
 fs::path neighborhoodFolder(const fs::path& resDir, const std::string& query) {
@@ -131,6 +151,9 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         throw std::runtime_error(hood_.package.string() + ": no neighborhood terrain");
     (void)haveOccupants;
     const hood::TerrainSettings settings = hood::TerrainSettings::load(sysDir);
+    // FlattenTerrainUnderLot for every lot (formats/hood_lot_terrain.hpp).
+    if (const size_t n = hood::flattenTerrainUnderLots(terrain_, hood_.lots, occupants_))
+        report_.push_back(std::to_string(n) + " terrain vertices flattened under the lots");
 
     // Lighting: the "neighbourhood" state and its light map.
     const LightingConfig lighting = loadLightingConfig(resDir / "Lights/Lighting.txt");
@@ -255,6 +278,12 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
                     const int id = renderer.addObject(m, *lotIndex);
                     lot.instance = renderer.addInstance(id, at);
                     const auto [lo, hi] = bounds(m, at);
+                    for (const auto& part : m.parts)
+                        for (size_t k = 0; k + 2 < part.mesh.triangles.size(); k += 3)
+                            for (int c = 0; c < 3; ++c) {
+                                const auto& v = part.mesh.positions[part.mesh.triangles[k + size_t(c)]];
+                                lot.triangles.push_back(simd_mul(at, simd_make_float4(v[0], v[1], v[2], 1)).xyz);
+                            }
                     lot.lo = simd_min(lot.lo, lo);
                     lot.hi = simd_max(lot.hi, hi);
                     lot.imposter = true;
@@ -399,8 +428,22 @@ const HoodLot* HoodView::pick(simd_float3 origin, simd_float3 dir) const {
     float bestT = 1e30f;
     for (const auto& l : lots_) {
         float t;
-        if (rayBox(origin, dir, l.lo, l.hi, t) && t < bestT)
-            bestT = t, best = &l;
+        if (!rayBox(origin, dir, l.lo, l.hi, t) || t >= bestT)
+            continue;
+        if (l.triangles.empty()) {
+            // No imposter: the footprint at the lot's elevation.
+            if (std::abs(dir.z) > 1e-6f) {
+                const float tg = (l.ground - origin.z) / dir.z;
+                const simd_float3 p = origin + dir * tg;
+                if (tg > 0 && tg < bestT && p.x >= l.footLo.x && p.x <= l.footHi.x && p.y >= l.footLo.y &&
+                    p.y <= l.footHi.y)
+                    bestT = tg, best = &l;
+            }
+            continue;
+        }
+        for (size_t k = 0; k + 2 < l.triangles.size(); k += 3)
+            if (rayTriangle(origin, dir, l.triangles[k], l.triangles[k + 1], l.triangles[k + 2], t) && t < bestT)
+                bestT = t, best = &l;
     }
     return best;
 }

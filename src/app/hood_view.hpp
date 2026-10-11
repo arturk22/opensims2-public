@@ -8,9 +8,11 @@
 // UserData/Cameras/NeighborhoodCamera.txt starting where the neighborhood
 // package's saved camera (0xEC44BDDC) looks.
 //
-// Lots are picked by the box of their imposter (or, without one, their
-// footprint); the game intersects the scene graph and climbs to the node's
-// "LotData" property set (docs/neighborhood-mac.md 6). Imposters are placed
+// Lots are picked as cTSNHoodUserToolBase::PickLot does: the nearest hit of
+// the mouse ray on an imposter's triangles (its walls, roofs and ground; the
+// game intersects the scene graph and climbs to the node's "LotData"
+// property set, docs/neighborhood-mac.md 6), or on the footprint of a lot
+// without one. Imposters are placed
 // as SetOrientationAndTranslationForImposterNode does (section 4): turned
 // -(front edge mod 4) x 90 degrees about Z and moved onto the lot's
 // footprint (cells x 10), at the lot's elevation plus Neighborhood.ini's
@@ -47,6 +49,7 @@ struct HoodLot {
     bool imposter = false;
     uint32_t width = 0, depth = 0; // cells
     int instance = -1;             // the imposter's renderer instance
+    std::vector<simd_float3> triangles; // the imposter's triangles in the world (3 per), for picking
 };
 
 // The folder of a neighborhood given as "N001" (under
@@ -70,7 +73,7 @@ public:
     // The Neighborhood camera, starting at the saved view.
     std::unique_ptr<LotCamera> makeCamera(const std::filesystem::path& camerasTxt) const;
 
-    // The lot whose box the ray enters first, or null.
+    // The lot whose imposter (or footprint) the ray hits first, or null.
     const HoodLot* pick(simd_float3 origin, simd_float3 dir) const;
     // HighlightLot's terrain highlight over a lot's footprint (null: none).
     // Inferred look: a white rectangle at alpha 0.3, HighlightOffsetAboveTerrain
