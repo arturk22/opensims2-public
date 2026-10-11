@@ -54,6 +54,29 @@ struct LocomotionSet {
 constexpr size_t kMaxLocomotionDepth = 8;
 
 // Per object (vm::Object::animation).
+// One effect an Effect Stop/Start started (docs/effects-mac.md): its name
+// from STR# 0x8F (entry index + 1 in the binary's lookup; the global table
+// with flag 0x01, the code's semi-global with 0x02, else the running tree's
+// group), where it attaches (slot type 0/1/2 and slot index: Sims' type 2
+// slot 4 is the head's balloon slot) and the operand flags (icons: 0x04 an
+// object's thumbnail, 0x20 a cell of a STR# 0x95 icon atlas, ...). `serial` grows
+// with every start, so the renderer restarts an effect started again;
+// `oneShot` (mode 6, fire and forget) entries play once.
+struct ActiveEffect {
+    int16_t index = 0;
+    std::string name;
+    uint8_t slot = 0;
+    int8_t slotType = 0;
+    uint16_t flags = 0;
+    std::string icon;       // icon atlas texture (flag 0x20: STR# 0x95 entry operand byte 15), else empty
+    int16_t iconFrame = 0;  // its cell (the variable owner u8 12, data u16 13; float param 0xD)
+    int16_t iconObject = 0; // object whose thumbnail is the icon (flag 0x04), else 0
+    uint32_t iconGuid = 0;  // GUID whose thumbnail is the icon (flag 0x04 with 0x400)
+    uint32_t serial = 0;
+    bool oneShot = false;
+    bool hard = false;      // hard start/stop: no fade
+};
+
 struct AnimationState {
     // The full-body animation Animate Sim plays (resource name without
     // "_anim", resolved for the Sim's age and gender), while it plays.
@@ -92,9 +115,8 @@ struct AnimationState {
     // Locomotion sets, the last on top; empty = the global group's.
     std::vector<LocomotionSet> locomotion;
 
-    // Effects started on the object (Effect Stop/Start): the effect's index
-    // in its table, as the operand gives it.
-    std::vector<int16_t> effects;
+    // Effects started on the object (Effect Stop/Start), for the renderer.
+    std::vector<ActiveEffect> effects;
 };
 
 // ANIM resources by name, for their lengths. Reads them on demand from a

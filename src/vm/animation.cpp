@@ -15,6 +15,7 @@
 #include "formats/resindex.hpp"
 #include "formats/sim_actor.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace os2::vm {
@@ -589,32 +590,93 @@ Exit assignLocomotion(Context& c) {
 }
 
 // Effect Stop/Start (0x70): particle effects and balloons, which only the
-// renderer shows. Mode u8 at 0 (Mac binary's disassembler): 0 soft start, 1
-// hard start, 2 soft stop, 3 hard stop, 4 soft stop all, 5 hard stop all, 6
-// fire and forget, 7 interrogate bone, 8 hard stop all and clear the queue,
-// 9 stop ALL, 10-13 state 1-4, 14 stop ALL soft; the object (owner u8 at 1,
-// data u16), the effect u16 at 4 (low byte -1: the default effect), slot
-// byte 6 of type s8 9, flags u16 at 10 (0x40 the effect ID is in temp 1,
-// 0x80 priority queue, others icons). Starts and stops are kept in
-// AnimationState::effects; always true.
+// renderer shows (cTSObject::TryChangeEffect, docs/effects-mac.md). Mode u8
+// at 0: 0 soft start, 1 hard start, 2 soft stop, 3 hard stop, 4 soft stop
+// all, 5 hard stop all, 6 fire and forget, 7 interrogate bone, 8 hard stop
+// all and clear the queue, 9 stop ALL, 10-13 state 1-4, 14 stop ALL soft;
+// the object (owner u8 at 1, data u16), the effect u16 at 4 (-1: the
+// default effect, an error in TS2 except for the stop-all modes), slot byte
+// 6 of type s8 9, flags u16 at 10: 0x01 the global STR# 0x8F, 0x02 the
+// semi-global's, else the running tree's group; 0x08 the effect index in
+// temp 0; 0x80 priority queue; icons 0x04 (object owner u8 12, data u16 13;
+// 0x400 GUID in temps 4/5), 0x20 (atlas texture from STR# 0x95 entry byte
+// 15, cell from that variable), 0x10, 0x1000, 0x2000. Always true.
 Exit effectStopStart(Context& c) {
     const auto& o = c.instruction.operands;
     Object& target = objectAt(c, 1);
     auto& fx = target.animation.effects;
-    const auto effect = le16(&o[10]) & 0x40 ? c.thread.temps[1] : int16_t(le16(&o[4]));
-    switch (o[0]) {
+    const uint16_t flags = le16(&o[10]);
+    const int16_t effect = flags & 0x08 ? c.thread.temps[0] : int16_t(le16(&o[4]));
+    const uint8_t mode = o[0];
+    static uint32_t serial = 0;
+    // The name: entry `effect` of STR# 0x8F (the binary adds 1: its string
+    // lookups count from 1).
+    auto tableName = [&](uint16_t list, int index) -> std::string {
+        CodeLibrary& code = c.vm.code();
+        std::vector<uint32_t> groups;
+        if (flags & 0x01)
+            groups = {kGlobalGroup};
+        else if (flags & 0x02)
+            groups = {code.semiGlobalFor(c.frame.group)};
+        else
+            groups = {c.frame.group};
+        if (list == 0x95) // icon names fall back like the binary: tree, semi-global, global
+            groups = {c.frame.group, code.semiGlobalFor(c.frame.group), kGlobalGroup};
+        for (uint32_t g : groups) {
+            const StringTable* t = g ? code.strings(g, list) : nullptr;
+            if (t && index >= 0 && size_t(index) < t->count(lang::EnglishUS)) {
+                auto n = t->get(size_t(index), lang::EnglishUS);
+                if (!n.empty())
+                    return n;
+            }
+        }
+        return {};
+    };
+    switch (mode) {
     case 0:
     case 1:
-        if (std::find(fx.begin(), fx.end(), effect) == fx.end() && fx.size() < 64)
-            fx.push_back(effect);
+    case 6: {
+        if (effect == -1 || (effect & 0xFF) == 0xFF)
+            break; // "Trying to run default effect - not supported anymore."
+        ActiveEffect e;
+        e.index = effect;
+        e.name = tableName(0x8F, effect);
+        e.slot = o[6];
+        e.slotType = int8_t(o[9]);
+        e.flags = flags;
+        e.serial = ++serial;
+        e.oneShot = mode == 6;
+        e.hard = mode == 1;
+        if (flags & 0x20) {
+            // The atlas named by STR# 0x95 entry byte 15 ("Set FX - Topic -
+            // Speech Balloon" passes 4-9: conversationshared01-06), the
+            // cell from the variable (the topic).
+            e.icon = tableName(0x95, o[15]);
+            e.iconFrame = c.get(o[12], int16_t(le16(&o[13])));
+        }
+        else if (flags & 0x04) {
+            if (flags & 0x400)
+                e.iconGuid = uint32_t(uint16_t(c.thread.temps[4])) | (uint32_t(uint16_t(c.thread.temps[5])) << 16);
+            else if (!(flags & 0x100))
+                e.iconObject = c.get(o[12], int16_t(le16(&o[13])));
+        }
+        if (!e.oneShot)
+            std::erase_if(fx, [&](const ActiveEffect& x) { return !x.oneShot && x.index == effect && x.flags == flags; });
+        else if (std::count_if(fx.begin(), fx.end(), [](const ActiveEffect& x) { return x.oneShot; }) >= 8)
+            fx.erase(std::find_if(fx.begin(), fx.end(), [](const ActiveEffect& x) { return x.oneShot; }));
+        if (fx.size() < 64)
+            fx.push_back(std::move(e));
         break;
+    }
     case 2:
-    case 3: std::erase(fx, effect); break;
+    case 3:
+        std::erase_if(fx, [&](const ActiveEffect& x) { return !x.oneShot && x.index == effect; });
+        break;
     case 4:
     case 5:
     case 8:
     case 9:
-    case 14: fx.clear(); break;
+    case 14: std::erase_if(fx, [](const ActiveEffect& x) { return !x.oneShot; }); break;
     default: break;
     }
     return Exit::True;

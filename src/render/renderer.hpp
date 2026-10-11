@@ -127,6 +127,13 @@ public:
     using Overlay = std::function<void(MTL::RenderCommandEncoder*, uint32_t width, uint32_t height)>;
     void setOverlay(Overlay overlay) { overlay_ = std::move(overlay); }
     const Overlay& overlay() const { return overlay_; }
+    // Called after the scene and before the overlay, with the frame's view
+    // and view-projection matrices: 3D extras such as particle effects.
+    using SceneHook = std::function<void(MTL::RenderCommandEncoder*, const simd_float4x4& view, const simd_float4x4& viewProj)>;
+    void setSceneHook(SceneHook hook) { sceneHook_ = std::move(hook); }
+    MTL::Device* device() const { return device_; }
+    uint32_t colorFormat() const { return colorFormat_; }
+    uint32_t depthFormat() const { return depthFormat_; }
 
     // Encodes and commits one frame; `pass` and `drawable` come from the view.
     void draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable, const FrameView& view);
@@ -191,6 +198,7 @@ private:
     double time_ = -1;
     std::chrono::steady_clock::time_point start_ = std::chrono::steady_clock::now();
     Overlay overlay_;
+    SceneHook sceneHook_;
 };
 
 } // namespace os2

@@ -182,6 +182,24 @@ std::optional<Xform> VmObjectView::placement(int16_t id) {
     return compute(id, 0);
 }
 
+std::optional<Xform> VmObjectView::nodePlacement(int16_t id, const std::string& node) {
+    if (node.empty())
+        return std::nullopt;
+    if (auto it = sims_.find(id); it != sims_.end() && it->second) {
+        const SimActor& a = *it->second;
+        const int b = a.skin.skeleton.find(node);
+        if (b < 0 || size_t(b) >= a.bones.size())
+            return std::nullopt;
+        return a.bones[size_t(b)];
+    }
+    const auto at = placement(id);
+    const Skeleton* s = at ? skeleton(cresFor(id)) : nullptr;
+    const int b = s ? s->find(node) : -1;
+    if (b < 0)
+        return std::nullopt;
+    return at->then(s->world(s->restPose())[size_t(b)]);
+}
+
 std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
     if (auto it = frame_.find(id); it != frame_.end())
         return it->second;

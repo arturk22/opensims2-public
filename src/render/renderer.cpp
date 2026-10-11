@@ -867,6 +867,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
                                    part.indices, NS::UInteger(0));
     }
+    if (sceneHook_)
+        sceneHook_(enc, view.view, f->viewProj);
     if (overlay_)
         if (MTL::Texture* target = pass->colorAttachments()->object(0)->texture())
             overlay_(enc, uint32_t(target->width()), uint32_t(target->height()));

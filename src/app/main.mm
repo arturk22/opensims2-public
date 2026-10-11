@@ -87,6 +87,7 @@
 #include "app/main_menu.hpp"
 #include "app/options_panel.hpp"
 #include "app/user_data.hpp"
+#include "app/lot_effects.hpp"
 #include "app/live_ui.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
@@ -1210,6 +1211,50 @@ void choosePlumbob(os2::Renderer& renderer) {
     gPlumbobMaterial = material;
 }
 
+// The lot's particle effects (app/lot_effects.hpp): what the VM starts, and
+// --effect <name>[@<object id>[:<bone index>] | @x,y,z] (repeatable) by hand.
+std::unique_ptr<os2::LotEffects> gEffects;
+bool gEffectsFailed = false;
+void updateEffects(os2::Renderer& renderer, double seconds) {
+    if (!gEffects && !gEffectsFailed && gIndex) {
+        try {
+            gEffects = std::make_unique<os2::LotEffects>(renderer, *gIndex, gameDir() / "TSData/Res");
+            NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+            for (NSUInteger i = 1; i + 1 < args.count; ++i) {
+                if (![args[i] isEqualToString:@"--effect"])
+                    continue;
+                std::string spec = args[i + 1].UTF8String, name = spec;
+                int16_t object = 0;
+                int slot = -1;
+                os2::fx::V3 at{};
+                if (auto a = spec.find('@'); a != std::string::npos) {
+                    name = spec.substr(0, a);
+                    const std::string where = spec.substr(a + 1);
+                    if (std::sscanf(where.c_str(), "%f,%f,%f", &at[0], &at[1], &at[2]) != 3) {
+                        object = int16_t(std::stoi(where));
+                        if (auto c = where.find(':'); c != std::string::npos)
+                            slot = std::stoi(where.substr(c + 1));
+                    }
+                }
+                if (!gEffects->addManual(name, object, at, slot))
+                    std::fprintf(stderr, "opensims2: --effect: no effect named %s\n", name.c_str());
+            }
+        } catch (const std::exception& e) {
+            gEffectsFailed = true;
+            std::fprintf(stderr, "opensims2: effects: %s\n", e.what());
+        }
+    }
+    if (!gEffects)
+        return;
+    gEffects->update(seconds, gSimulation ? &gSimulation->machine() : nullptr, gObjectView.get(),
+                     [](int16_t id) -> const os2::SimActor* {
+                         for (const auto& s : gLotSims)
+                             if (s.id == id)
+                                 return s.actor;
+                         return nullptr;
+                     });
+}
+
 void placePlumbob(os2::Renderer& renderer, double seconds) {
     if (gPlumbob < 0 || !gPie)
         return;
@@ -1354,6 +1399,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         renderer.updateObject(a->model, a->posed);
     }
     placePlumbob(renderer, seconds);
+    updateEffects(renderer, seconds);
     updateAudio(seconds);
 }
 
@@ -2698,6 +2744,7 @@ void unloadScene() {
                         gLighting->update(scene);
                     if (gLive)
                         gLive->tick(base + t);
+                    updateEffects(*_viewDelegate.renderer, scene); // effects the VM starts and stops between shots
                     // --dialog-click x,y (repeatable): clicks, in turn, each dialog that opens.
                     if (gPie && gPie->dialogOpen() && dialogClick < dialogClicks.size()) {
                         gPie->setCanvas(int(shotW), int(shotH));

@@ -95,6 +95,12 @@ public:
 
     // Where an object is drawn (its model's origin), if it is drawn.
     std::optional<Xform> placement(int16_t id);
+    // Where a bone or model node of an object is: a Sim's posed bone, else
+    // the node of the object's model (rest pose) at its placement; nothing
+    // if the object or the node is missing (effect slots).
+    std::optional<Xform> nodePlacement(int16_t id, const std::string& node);
+    // The bone of an object's containment slot `slot` (empty if none).
+    std::string containerSlotBone(int16_t id, int slot) { return slotBone(id, slot); }
 
 private:
     struct Baseline {
