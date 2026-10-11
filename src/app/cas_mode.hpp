@@ -52,6 +52,7 @@
 #include <simd/simd.h>
 
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -70,6 +71,7 @@ namespace os2 {
 namespace cas {
 class CasThumbnails;
 }
+class CasStudio;
 class FontLibrary;
 class LotCamera;
 class Renderer;
@@ -144,6 +146,18 @@ private:
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;
     std::unique_ptr<cas::CasThumbnails> thumbs_;
+    std::unique_ptr<CasStudio> studio_; // the studio lot, null with --cas-no-studio
+    // Where the Sims stand and the way they face (towards the camera): the
+    // podium for the edited Sim, the backdrop for the family; the origin
+    // facing +Y without the studio.
+    simd_float3 spot() const;
+    simd_float2 facing() const;
+    size_t familyMark(size_t member) const; // index into the studio's family marks
+    // The heading that turns the skeleton's +Y to facing().
+    float baseHeading() const {
+        const simd_float2 f = facing();
+        return std::atan2(-f.x, f.y);
+    }
     std::map<std::string, std::unique_ptr<RgbaImage>> previews_; // overlay previews (face|texture)
     std::map<uint32_t, UiScript> scripts_;
     LotCamera* camera_ = nullptr;

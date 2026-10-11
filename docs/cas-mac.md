@@ -464,3 +464,28 @@ CRES/SHPE/GMND/GMDC, TXMT e LxNR; um BINX (`0x0C560F39`) por Sim com
 (`GetCASOutfitDataThumbnailContext`): `crc32("ac598eac-<grupo>-1-<f>")`
 (`%x` da chave do AGED), f = 0 o rosto, f = 1 o corpo inteiro (417 no
 pacote).
+
+## 14. O estúdio (`GlobalLots/CAS!.package`, rodada 9)
+
+Um lote de 60×50 com um loft de tijolos; quase tudo do estúdio está em dois
+objetos de modelo grande: `CAS - Podium` (`CASPodiumArea`: o tapete redondo,
+o espelho, as luzes do pódio) e `CAS - Backdrop` (`CASFamilyArea`: o fundo
+cinza, o sofá, a planta). Os CRES deles têm localizadores:
+
+| modelo | localizador | o que é |
+|---|---|---|
+| CASPodiumArea | `slot_casstudio_simmark_podium` | onde o Sim editado fica, e o giro dele |
+| CASPodiumArea | `camera_face_<idade>`, `camera_clothes_<idade>` | câmeras do rosto e das roupas (toddler, child, teen, adult) |
+| CASFamilyArea | `slot_casstudio_simmark_0..7` | a família: fila de trás 0–3, da frente 4–7, cada um virado para o centro |
+| CASFamilyArea | `slot_casstudio_simmark_baby_0/1` | bebês |
+| CASFamilyArea | `camera_family_0`, `camera_thumbnail_family_0` | a câmera da família |
+
+Luzes: lâmpadas dos próprios modelos (`CASPodiumArea_podiumKey7`, `...Fill7`,
+`...Bounce7`, `...ObjectsOnly7`, `CAS_FamilyAreaKey9`, `CASFamilyArea_Fill9`,
+`_leftrim9`, `_rfill9`, `_bouncelight9`, halógenas com intensidade 0) com os
+atributos de `Lights/CAS_lighting.txt` ("should only use practical light
+keep diffusion at zero") e `CAS_lights.txt`, mais `LotLights.txt` →
+`cas/casStudio.txt` (as lâmpadas de estúdio: só a "Boom" acesa, 1,25). O
+esqueleto que dá as posições é o do `loadObjectModel` (o `fromCres` puro
+perde o deslocamento das juntas `platform_trans`). A ordem em que os membros
+ocupam as marcas é inferida (do meio para fora, trás e depois frente).

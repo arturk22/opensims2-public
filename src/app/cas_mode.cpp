@@ -1,5 +1,6 @@
 #include "cas_mode.hpp"
 
+#include "app/cas_studio.hpp"
 #include "app/ui_panel_util.hpp"
 #include "formats/cas_thumbnails.hpp"
 #include "formats/dbpf.hpp"
@@ -122,6 +123,13 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
     tempDir_ = fs::temp_directory_path() / ("opensims2-cas-" + std::to_string(getpid()));
     fs::create_directories(tempDir_);
     renderer_.hideTestScene();
+    // The studio lot (app/cas_studio.hpp) unless --cas-no-studio.
+    if (std::find(args_.begin(), args_.end(), "--cas-no-studio") == args_.end()) {
+        studio_ = std::make_unique<CasStudio>(renderer_, index_, res);
+        // Its walls cut away towards the camera, which looks at the podium from its front.
+        if (!studio_->load(simd_make_float2(0, -1)))
+            studio_.reset();
+    }
     familyName_ = "";
     newSim();
 }
@@ -142,6 +150,10 @@ std::unique_ptr<LotCamera> CasMode::makeCamera() {
     def.nearClip = {0.1f};
     def.farClip = {200.0f};
     def.yaws = {90.0f};
+    if (studio_) {
+        const simd_float2 f = studio_->podium().facing;
+        def.yaws = {std::atan2(f.y, f.x) * 180.0f / 3.14159265f};
+    }
     def.zoomSmoothing = 7;
     def.spinSmoothing = 8;
     def.params["pivotheightabovefloor"] = 0;
@@ -152,6 +164,43 @@ std::unique_ptr<LotCamera> CasMode::makeCamera() {
     zoom_ = 0;
     applyCamera(false);
     return cam;
+}
+
+simd_float3 CasMode::spot() const {
+    if (!studio_)
+        return simd_make_float3(0, 0, 0);
+    if (editing_ >= 0 || studio_->familyMarks().empty())
+        return studio_->podium().position;
+    // The family: the middle of the marks its members take.
+    simd_float3 c{0, 0, 0};
+    const size_t n = std::clamp<size_t>(family_.size(), 1, studio_->familyMarks().size());
+    for (size_t i = 0; i < n; ++i)
+        c += studio_->familyMarks()[familyMark(i)].position;
+    return c / float(n);
+}
+
+size_t CasMode::familyMark(size_t member) const {
+    // Up to four in the back row (marks 0-3) from the middle out, then the
+    // front row (4-7); inferred order.
+    static const size_t order[8] = {2, 1, 3, 0, 5, 6, 4, 7};
+    const size_t n = studio_ ? studio_->familyMarks().size() : 0;
+    if (!n)
+        return 0;
+    return order[member % 8] < n ? order[member % 8] : member % n;
+}
+
+simd_float2 CasMode::facing() const {
+    if (!studio_)
+        return simd_make_float2(0, 1);
+    if (editing_ >= 0 || studio_->familyMarks().empty())
+        return studio_->podium().facing;
+    // The family looks at its camera ("camera_family_0").
+    if (auto it = studio_->cameras().find("camera_family_0"); it != studio_->cameras().end()) {
+        const simd_float3 d = it->second - spot();
+        if (simd_length(d.xy) > 0.01f)
+            return simd_normalize(d.xy);
+    }
+    return studio_->familyMarks().front().facing;
 }
 
 float CasMode::simHeight() const {
@@ -182,7 +231,21 @@ void CasMode::applyCamera(bool smooth) {
         const float ndc = 2.0f * 300.0f / float(std::max(canvasW_, 1)) - 1.0f;
         side = ndc * halfW;
     }
-    const simd_float3 p = simd_make_float3(side, 0, z);
+    // Screen right, with the camera on the side the Sims face; the camera
+    // turns to that side.
+    const simd_float2 f = facing();
+    {
+        const float yaw = std::atan2(f.y, f.x) * 180.0f / 3.14159265f;
+        float d = std::fmod(yaw - camera_->yaw(), 360.0f);
+        if (d > 180)
+            d -= 360;
+        if (d < -180)
+            d += 360;
+        if (std::fabs(d) > 0.01f)
+            camera_->freeRotate(d);
+    }
+    const simd_float3 right = simd_make_float3(-f.y, f.x, 0);
+    const simd_float3 p = spot() + right * -side + simd_make_float3(0, 0, z);
     if (smooth)
         camera_->moveTo(p);
     else {
@@ -310,9 +373,18 @@ void CasMode::rebuild() {
                     warnings_.push_back(anim + ": " + e.what());
                 }
             // The first member on the left of the screen (screen right is -X).
-            actor->position = {members.size() > 1 ? -(float(i) - float(members.size() - 1) / 2) * spacing : 0.0f, 0, 0};
-            // Facing the camera (it looks along -Y from the +Y side; the skeleton faces +Y).
-            actor->heading = editing_ >= 0 ? heading_ : 0;
+            const simd_float2 f = facing();
+            const simd_float3 right = simd_make_float3(-f.y, f.x, 0);
+            simd_float3 at = spot() + right * (members.size() > 1 ? (float(i) - float(members.size() - 1) / 2) * spacing : 0.0f);
+            float heading = baseHeading() + (editing_ >= 0 ? heading_ : 0);
+            if (studio_ && editing_ < 0 && !studio_->familyMarks().empty()) {
+                // The family area's marks, each with its own turn.
+                const auto& mark = studio_->familyMarks()[familyMark(i)];
+                at = mark.position;
+                heading = std::atan2(-mark.facing.x, mark.facing.y);
+            }
+            actor->position = {at.x, at.y, at.z};
+            actor->heading = heading; // the skeleton faces +Y
             actor->update(lastUpdate_);
             Shown s;
             actor->model = renderer_.addObject(actor->skin.model, index_, true);
@@ -340,6 +412,12 @@ void CasMode::rebuild() {
             next.push_back(std::move(s));
         }
     shown_ = std::move(next);
+    if (studio_) {
+        studio_->applyLights(spot(), editing_ < 0);
+        for (const auto& sh : shown_)
+            if (sh.instance >= 0)
+                renderer_.setInstanceLightSet(sh.instance, 1);
+    }
     applyCamera(true);
 }
 
@@ -352,7 +430,7 @@ void CasMode::update(double seconds) {
         if (!s.actor)
             continue;
         if (editing_ >= 0)
-            s.actor->heading = heading_;
+            s.actor->heading = baseHeading() + heading_;
         s.actor->update(seconds);
         renderer_.updateObject(s.actor->model, s.actor->posed);
     }

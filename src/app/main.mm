@@ -3475,10 +3475,11 @@ void unloadScene() {
     if (const auto* state = lighting.state(argument(@"--lighting").value_or("CAS"))) {
         renderer.setLighting(*state); // Lighting.txt's "CAS" state unless --lighting names another
         if (!argument(@"--lighting")) {
-            // The CAS state leaves the Sim to the studio lamps of GlobalLots/CAS!.package, which
-            // is not loaded here: its boom light (casStudio_lightingFloorStudioBoom_light,
-            // intensity 1.25, colour (1, .95, .85) by the state's lightAttribOverride) stands in
-            // as a directional light from the camera's side, above (inferred placement).
+            // The CAS state leaves the Sim to the studio lamps of GlobalLots/CAS!.package
+            // (app/cas_studio, which replaces these light sets once it loads); without the
+            // studio (--cas-no-studio) its boom light (casStudio_lightingFloorStudioBoom_light,
+            // intensity 1.25, colour (1, .95, .85)) stands in as a directional light from the
+            // camera's side, above (inferred placement).
             auto set = os2::Renderer::outdoorLights(*state, true);
             set.lights.push_back({simd_normalize(simd_make_float3(0.35f, 1.0f, 0.9f)), simd_make_float3(1.0f, 0.95f, 0.85f) * 1.25f * 0.6f});
             renderer.setLightSets({set, set});
