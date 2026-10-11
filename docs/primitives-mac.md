@@ -703,6 +703,116 @@ blend (0 ou fora de 0–1 = 1,0). Animate Object/Overlay devolvem 1 logo depois
 de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → erro
 0x70). Sem animador: 0x41; sem pessoa (Sim): 0x42.
 
+## 4b. Pendências do round 5 (binário)
+
+### Conversão da versão 0 (BHAVs do base) de Look At e Run Tree by Name
+
+O parâmetro guarda os 16 bytes de operando em `+4..+0x13` e a versão em
+`+0x14` (0 = como veio do arquivo do base; 1 = convertido). A conversão roda
+uma vez, ao ler (`XPrimParam::Read` → `UpgradeVersion`).
+
+- **Look At** (`LookAtParam::UpgradeVersion`, BV `0xac4990`): a versão 0 tem
+  um u16 no operando 4 (`LookAtVersion0Param::SwizzleParams`: u16 em 2, 4,
+  6, 9 e 12; a versão 1 só em 2, 6, 9 e 12). Conversão:
+  `op[4] = op[5] = (int16)u16_v0 / 2` (divisão com truncamento para zero) e,
+  se o byte 0 tem o bit **0x08**, liga o bit **0x02 do byte 15**
+  (`FUN_019a9768`). O resto fica igual.
+- **Run Tree by Name** (`RunPrivateTreeParam::Read`, BV `0xac4608`): na
+  versão 0, o byte 12 vira só o seu bit 0 (`op[12] = op[12] & 1`; os outros
+  bits são apagados). A troca de bytes (`SwizzleParams`) tem duas formas,
+  conforme um teste global (`FUN_016606e4`): u16 nos operandos 1, 4, 7, 10
+  ou 8, 10, 12, 14.
+
+### Remove Object Instance (0x12): os 7 GUIDs e o "cleanup all"
+
+`cTSObject::TryKillObject` (BV `0xe40d68`): **não remove** e devolve
+**falso** se o GUID do objeto é um destes (conjunto estático):
+
+| GUID | objeto |
+|---|---|
+| `0xCC7B08F8` | Portal - Car - Service Start |
+| `0x6C7B0905` | Portal - Car - Service Stop |
+| `0xCC203477` | Portal - Car - Start |
+| `0x865A6812` | Portal - Car - Stop |
+| `0x81E6BEF9` | Portal - Pedestrian |
+| `0xD20C0AEE` | Trash Can - Outside |
+| `0x39CCF441` | MailBox |
+
+(os pontos de chegada/saída do lote e os dois objetos fixos da calçada).
+Removendo: `cEdithObjectModule::AddToKillQueue(id, cleanup)` com
+`cleanup = !(byte 2 & 0x02)`. Ele marca o objeto (e as partes de um
+multi-tile) para morrer, roda a **entrada 3 do OBJD ("cleanup")** dos
+objetos contidos que não são Sims, e grava a flag de objeto **0x1000 = !cleanup**
+(com o bit 0x02 ligado o objeto morre sem rodar a própria limpeza). Volta
+**2** (espera; a thread morre junto) quando o objeto removido sou eu e o
+byte 2 não tem 0x01; senão **1**. Objeto inexistente: falso.
+
+### Push Interaction (0x0D): interação aninhada e o erro 0x6F
+
+`cTSObject::TryPushAction` (BV `0xe33530`):
+
+- O byte 3 bit **0x08** liga a flag 0x40 da interação nova (`+0x54`).
+- Aninhada = a entrada do TTAB tem o bit **0x8000** dos flags (`cTSTreeTableEntry
+  +0x30` bit 15, copiado em `cTSInteraction +0x2E`). Uma interação
+  aninhada exige que o alvo tenha **interação atual** e que a entrada do
+  TTAB dela tenha o bit **0x4000** (bit 14, `+0x2C`: "permite aninhar");
+  senão **erro 0x6F**.
+- Aninhada vai para a sub-fila (cheia com mais de 4 → resultado 4); não
+  aninhada para a fila (mais de 6 e não deu para trocar → resultado 3).
+
+### `SetReachObjectID` (`cTSPerson +0x8EA`) e `+0x8EC`
+
+Não são dados de pessoa: são campos do `cTSPerson` (**reach object** e
+**reach surface object**), escritos pelo Reach/Put (§4) e lidos só pela
+animação: `cTSPerson::GetReachObjectSelectorGUID`/`GetReachSurfaceSelectorGUID`
+e `cEventModifierBase::GetReachSelectorGUID` (BV `0xbf0d8c`) pegam a
+definição desse objeto para os eventos da animação de pegar/pôr (prender
+o objeto na mão no evento de "grasp", soltar na superfície). O SimAntics
+não lê esses campos; não vão para o PERS.
+
+### Animate Sim: como o jogo acha o nome da animação
+
+`try_animate_sim` (BV `0x69d634`): índice = u16 do operando 0 (ou temp, com
+o bit 0x04 do byte 2); a **tabela = byte 6**:
+
+- `0x80`: `FindGlobalName` (BV `0x6901e0`): a tabela de animações globais
+  da idade (abaixo), entrada = índice; se a animação não existe, tenta de
+  novo com a tabela "de reserva" (`retry`).
+- outro valor: a tabela é o **STR# com esse número**, procurado
+  (`FindSpecificName`, BV `0x690700`) **no objeto do stack object** (ou, com
+  o bit 0x10 do byte 8, no objeto que o Sim está usando) e, se a entrada
+  estiver vazia, **no semi-global desse objeto**; o nome final é o
+  **prefixo + a entrada**, e só vale se a animação existe. Se falhar, tenta
+  com a tabela de reserva, e por fim `FUN_0068bcb0` troca a letra da idade
+  do prefixo pelas alternativas (`d`, `f`, `w`, `l`, `k`).
+- Só depois disso: nome vazio → erro **0x43**; animação que não existe →
+  **0x73**.
+
+A tabela e o prefixo vêm de `DetermineAppropriateAnimTable` (BV `0x68f7c8`),
+pela espécie (dado de pessoa 186, só BV; 0 = humano no base) e a idade
+(**dado 58 "Person Age"**):
+
+| idade (dado 58) | `0x81` (global) | prefixo `0x83` |
+|---|---|---|
+| ≥ 51 | `0x8B` idoso (reserva: `0x81`) | `e2` |
+| 19–50 | `0x81` adulto | `a2` |
+| 16–18 | `0x8A` adolescente (reserva: `0x81`) | `t2` |
+| 3–15 | `0x82` criança | `c2` |
+| 2 | `0x89` bebê que anda | `p2` |
+| < 2 | `0x91` bebê | `b2` |
+
+`0x83` é a tabela de **animações entre dois Sims**: o prefixo é
+`<minha idade>2<idade do outro>` (`GetAnimPrefixStart`/`End`: o outro é o
+Sim da interação; se não for um Sim → erro 0x5A), por exemplo `a2a` +
+a entrada. Na reserva, a idade do Sim vira `a` (adulto).
+
+**O "nome vazio" do "Interaction - Standard Reaction - SG"/"Wave" na nossa
+VM** vem de ler a entrada no lugar errado: a árvore é de um semi-global e
+a tabela (byte 6 ≠ 0x80) tem de ser procurada no objeto do stack object e
+depois no semi-global dele, com o prefixo de idade; para a tabela global
+(0x80/0x81) a tabela certa depende da idade (um adolescente/idoso usa
+0x8A/0x8B e cai para 0x81 se não achar).
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
@@ -731,8 +841,7 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
 - **0x12 Remove Object Instance**: alvo u16 0 (STR# 0x9C: 0 eu, 1 stack
   object, 2 "target - UNUSED" = ID 0; > 2 → erro 0x09); byte 2: 0x01 volta na
   hora, sem 0x02 "cleanup all" (passado à remoção). Objetos cujo GUID está
-  numa lista fixa de 7 GUIDs não são removidos (binário; quais são não foi
-  conferido).
+  numa lista fixa de 7 GUIDs não são removidos (§4b).
 - **0x16 Turn Body Towards**: tipo u16 0 (STR# 0xD8 dos globais).
 - **0x1B Go To Relative Position**: lugar s8 2 (STR# 0x82, índice + 3),
   direção s8 3 (STR# 0x83, índice + 3), flags byte 6: **0x02 sem árvores de
