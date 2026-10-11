@@ -16,6 +16,7 @@
 #include "vm/lot_resume.hpp"
 
 #include <cmath>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -130,8 +131,8 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
                 w.firstLevel(), w.firstLevel() + w.levelCount() - 1, w.doors().size(), w.stairs().size(),
                 w.diagonalWalls().size());
     for (const auto& st : w.stairs())
-        std::printf("  stair (%d, %d, %d) -> (%d, %d, %d), %d steps\n", st.bottom.x, st.bottom.y, st.bottom.level, st.top.x,
-                    st.top.y, st.top.level, st.steps);
+        std::printf("  stair (%d, %d, %d) -> (%d, %d, %d), %d steps, bottom edge (%.2f, %.2f), z %.2f-%.2f\n", st.bottom.x, st.bottom.y, st.bottom.level, st.top.x,
+                    st.top.y, st.top.level, st.steps, st.bottomEdge[0], st.bottomEdge[1], st.bottomZ, st.topZ);
     if (std::getenv("OS2_STAIR_PIECES")) // the modular stairs' steps in the VM: links (80/81) and attribute 2
         for (const auto& [id, x] : machine.objects())
             if (x.definition && x.definition->fileName.starts_with("Stair Modular") && x.position.inWorld())
@@ -171,6 +172,35 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
     for (const auto id : machine.objectsOnTile(vm::VM::tileOf(o)))
         if (const vm::Object* x = machine.object(id))
             std::printf("  on its tile: %d %s%s\n", id, nameOf(*x).c_str(), vm::VM::blocksRouting(*x) ? " (blocks)" : "");
+    // S2PKG_ROUTE_TRY=x,y,level[;x,y,level...]: plan straight from the Sim
+    // to those points (objects as obstacles, as the map) and print the result.
+    if (const char* tries = std::getenv("S2PKG_ROUTE_TRY")) {
+        vm::PathPlanner planner(*machine.world);
+        for (const auto& [id, ob] : machine.objects())
+            if (ob.position.inWorld() && !ob.person && ob.data[vm::objdata::ContainerId] == 0 && vm::VM::blocksRouting(ob)) {
+                const auto t = vm::VM::tileOf(ob);
+                const auto& sts = machine.world->stairs();
+                if (std::any_of(sts.begin(), sts.end(), [&](const auto& st) { return st.bottom == t || st.top == t; }))
+                    continue; // as routing.cpp's addObstacles: landings are kept clear
+                planner.addObstacle(t.level, float(t.x), float(t.y), float(t.x + 1), float(t.y + 1), vm::PathPlanner::kObject);
+            }
+        std::string list = tries;
+        for (size_t at = 0; at < list.size();) {
+            const size_t end = std::min(list.find(';', at), list.size());
+            float x = 0, y = 0;
+            int level = 1;
+            if (std::sscanf(list.substr(at, end - at).c_str(), "%f,%f,%d", &x, &y, &level) >= 2) {
+                vm::PlannedPath path;
+                vm::RouteFail why = vm::RouteFail::Success;
+                const bool ok = planner.plan({s.position.x, s.position.y}, s.position.level, level, {{x, y, 0}}, path, why);
+                std::printf("try (%.2f, %.2f, %d): %s %d, %zu points", x, y, level, ok ? "ok" : "fails", int(why), path.points.size());
+                for (const auto& q : path.points)
+                    std::printf(" (%.2f,%.2f,%d%s)", q.x, q.y, q.level, q.portal >= 0 ? "p" : "");
+                std::printf("\n");
+            }
+            at = end + 1;
+        }
+    }
     if (map) {
         printMap(machine, s.position.level, s.position.x, s.position.y, 6, s, o);
         if (o.position.level != s.position.level || std::hypot(o.position.x - s.position.x, o.position.y - s.position.y) > 6)

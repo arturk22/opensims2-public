@@ -107,8 +107,18 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
             continue;
         Portal p;
         p.levelA = s.bottom.level, p.levelB = s.top.level;
-        p.a = s.at(-kStairLanding);
-        p.b = s.at(s.length() + kStairLanding);
+        // The portal's ends are on the landing tiles, kStairLanding in from
+        // the edge each shares with the stair (a stair whose steps start or
+        // end mid-tile, as the 6-step deck stairs of N003_Lot192, has its
+        // ends there too, not over the steps' tile).
+        auto edgeU = [&](const TilePos& t, bool bottom) {
+            const int axis = std::fabs(s.up[0]) > 0.5f ? 0 : 1;
+            const float lo = float(axis == 0 ? t.x : t.y), dir = s.up[size_t(axis)];
+            const float edge = (dir > 0) == bottom ? lo + 1 : lo;
+            return (edge - s.bottomEdge[size_t(axis)]) / dir;
+        };
+        p.a = s.at(std::min(edgeU(s.bottom, true), 0.0f) - kStairLanding);
+        p.b = s.at(std::max(edgeU(s.top, false), s.length()) + kStairLanding);
         p.cost = kPortalCost;
         p.stair = int(i);
         portals_.push_back(p);
@@ -327,6 +337,17 @@ struct Tree {
 
 bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::vector<PlanGoal>& goals,
                        PlannedPath& out, RouteFail& why) {
+    // A goal on the start's level is looked for on that level first; when
+    // none is reachable there, through the other levels too (from a deck
+    // down a stair and up another one into the house: N003_Lot192).
+    if (plan(start, startLevel, goalLevel, goals, out, why, startLevel != goalLevel) || startLevel != goalLevel ||
+        why != RouteFail::PathNotFound || world_->levelCount() < 2 || portals_.empty())
+        return why == RouteFail::Success;
+    return plan(start, startLevel, goalLevel, goals, out, why, true);
+}
+
+bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::vector<PlanGoal>& goals,
+                       PlannedPath& out, RouteFail& why, bool allLevels) {
     out = {};
     why = RouteFail::Success;
     const int first = world_->firstLevel(), levels = world_->levelCount();
@@ -401,7 +422,6 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
                 pool[i] = std::move(trees[i].leafOf);
         }
     } giveBack{leafPool_, trees, quads, first};
-    const bool allLevels = startLevel != goalLevel;
     for (int li = 0; li < levels; ++li) {
         const int level = first + li;
         if (!allLevels && level != startLevel)

@@ -156,6 +156,9 @@ public:
               RouteFail& why);
 
 private:
+    // plan() on the start's level alone, or on all of them.
+    bool plan(Point2 start, int startLevel, int goalLevel, const std::vector<PlanGoal>& goals, PlannedPath& out,
+              RouteFail& why, bool allLevels);
     const World* world_;
     size_t signature_ = 0;
     int cw_ = 0, ch_ = 0; // cells per level
