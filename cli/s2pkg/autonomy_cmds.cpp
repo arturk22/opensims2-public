@@ -31,6 +31,11 @@ namespace os2 {
 
 namespace {
 
+// --dialog-answer N: blocking dialogs (a phone call for another Sim, ...)
+// get button N at once, as `pie --dialog-answer`; by default they wait for
+// the player, as the game does.
+int gDialogAnswer = -1;
+
 std::filesystem::path resRoot(const std::filesystem::path& pkg) {
     for (auto p = std::filesystem::absolute(pkg).parent_path(); p.has_relative_path(); p = p.parent_path())
         if (p.filename() == "Res")
@@ -81,6 +86,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     vm::VM machine(code);
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
+    machine.autoDialogAnswer = gDialogAnswer;
     machine.setClockGlobals();
     const bool hood = vm::loadLotNeighborhood(machine, lotFile);
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
@@ -321,6 +327,8 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
             fbaFilter = argv[++i];
         else if (a == "--no-decay")
             noDecay = true;
+        else if (a == "--dialog-answer" && i + 1 < argc)
+            gDialogAnswer = std::stoi(argv[++i]);
         else if (lotPath.empty())
             lotPath = a;
         else
@@ -332,7 +340,7 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* autonomyUsage() {
-    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init]\n";
+    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N]\n";
 }
 
 } // namespace os2
