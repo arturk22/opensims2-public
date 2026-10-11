@@ -1,5 +1,7 @@
 #include "vm.hpp"
 
+#include "hood_bridge.hpp"
+
 #include "formats/binreader.hpp"
 
 #include <algorithm>
@@ -211,6 +213,11 @@ Exit setToNext(Context& c) {
         return Exit::False;
     }
     case 29: return c.vm.neighbor(current) ? Exit::True : Exit::False;                 // verify neighbor id
+    case 11: // lot ID
+    case 36: { // neighbor with relationship variable 1 & temp 1
+        const auto next = nextInNeighborhood(c, type, current);
+        return next ? found(*next) : Exit::False;
+    }
     case 21:                                                                           // parent of temp 0
     case 22:                                                                           // sibling of temp 0
     case 23:                                                                           // child of temp 0
@@ -792,7 +799,8 @@ Exit pushInteraction(Context& c) {
 // selected Sim, 21-23 the family tree (child of, spouse of, remove the ties
 // between two Sims; VM::familyTree), 40 game state transitions off/on, 48 remapped neighbor ID
 // (false: there are no imported lots). 7 is deprecated ("tree error" in the
-// labels). The rest need the neighborhood, outfits or the world.
+// labels). Those that need the neighborhood are in hood_bridge.cpp; the rest
+// need the camera or the world.
 Exit genericSimsCall(Context& c) {
     const uint8_t call = c.instruction.operands[0];
     auto& temps = c.thread.temps;
@@ -891,7 +899,10 @@ Exit genericSimsCall(Context& c) {
                           [&](const QueuedInteraction& q) { return q.object == c.frame.stackObject; });
         return Exit::True;
     case 48: return Exit::False;
-    default: throw VMError("Generic Sims Call: " + std::to_string(call) + " not implemented");
+    default:
+        if (auto r = neighborhoodSimsCall(c, call))
+            return *r;
+        throw VMError("Generic Sims Call: " + std::to_string(call) + " not implemented");
     }
 }
 
@@ -915,6 +926,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x6D, changeMaterial);
     vm.setPrimitive(0x76, arrayOperation);
     registerRoutingPrimitives(vm);
+    registerNeighborhoodPrimitives(vm);
 }
 
 } // namespace os2::vm

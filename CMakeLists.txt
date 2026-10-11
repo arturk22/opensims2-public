@@ -64,6 +64,7 @@ find_package(ZLIB REQUIRED)
 target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 
 add_library(os2_vm
+  src/vm/hood_bridge.cpp
   src/vm/lot.cpp
   src/vm/primitives.cpp
   src/vm/routing.cpp
@@ -135,6 +136,9 @@ add_executable(test_vm tests/test_vm.cpp)
 target_link_libraries(test_vm PRIVATE os2_vm)
 add_test(NAME vm COMMAND test_vm)
 
+add_executable(test_hood_vm tests/test_hood_vm.cpp)
+target_link_libraries(test_hood_vm PRIVATE os2_vm)
+add_test(NAME hood_vm COMMAND test_hood_vm)
 add_executable(test_routing tests/test_routing.cpp)
 target_link_libraries(test_routing PRIVATE os2_vm)
 add_test(NAME routing COMMAND test_routing)

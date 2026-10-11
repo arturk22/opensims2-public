@@ -100,6 +100,11 @@ constexpr int16_t CurrentFamily = 9;
 constexpr int16_t Speed = 16;
 constexpr int16_t Paused = 17;
 constexpr int16_t HouseRadioStation = 31;
+constexpr int16_t CurrentHouse = 10;
+constexpr int16_t BudgetMod10000 = 13; // the current family's funds % 10000
+constexpr int16_t BudgetDiv10000 = 14; // and / 10000
+constexpr int16_t CurrentNeighborhoodId = 40;
+constexpr int16_t LotZoning = 41;
 } // namespace global
 
 // Families hold at most 8 Sims (the game's limit; Generic Sims Call "add to
@@ -144,6 +149,9 @@ struct Neighbor {
     uint32_t guid = 0; // of the Sim's OBJD
     int16_t house = 0; // house (lot) number; 0 = none
     std::array<int16_t, kPersonDataCount> personData{};
+    // Outfit keys of the Sim's character file (category bit << 16 | part;
+    // see hood_bridge.hpp), for Generic Sims Call 32.
+    std::vector<uint32_t> outfits;
 };
 
 // Inventories (Manage Inventory) and their tokens grow on demand; this bounds them.
@@ -539,13 +547,32 @@ public:
     // Key of an object (its neighbor ID if it is a Sim that has one).
     RelationshipKey relationshipKey(ObjectId id);
 
-    // Neighbors by neighbor ID. There is no neighborhood yet, so they are only
+    // The neighborhood's families (funds, house, flags; members are the
+    // neighbors whose person data "family number" is the family), lots
+    // (zoning, position) and "neighborhood data" (data owner 0x22, labelled in
+    // STR# 0xF9: level complete, tutorial progress, tutorial house number,
+    // hide arrow). vm::loadNeighborhood (hood_bridge.hpp) fills them in.
+    struct Family {
+        int32_t funds = 0;
+        int16_t house = 0;
+        uint32_t flags = 0; // FAMI flags: bit 0 telephone, bit 3 computer (inferred)
+        int16_t friends = 0;
+    };
+    std::map<int16_t, Family> families;
+    struct LotRecord {
+        int16_t zoning = 0; // 0 residential, 1 community
+        float x = 0, y = 0; // neighborhood position
+    };
+    std::map<int16_t, LotRecord> lots;
+    std::array<int16_t, 4> neighborhoodData{};
+
+    // Neighbors by neighbor ID. Without a neighborhood they are only
     // the ones added here (tests, stand-ins).
     std::map<int16_t, Neighbor> neighbors;
 
     // The family tree by neighbor ID ("Family Relationship Array"), built by
-    // Generic Sims Call 21-23 and searched by Set to Next 21-23 and 31. It
-    // will come from the neighborhood; until then only those calls fill it.
+    // Generic Sims Call 21-23 and searched by Set to Next 21-23 and 31. The
+    // neighborhood's family ties (loadNeighborhood) fill it in first.
     struct FamilyTies {
         std::set<int16_t> parents, children, spouses;
     };
@@ -573,8 +600,8 @@ public:
     // The Sim on the lot with this neighbor ID, or null.
     Object* neighborSim(int16_t id);
 
-    // Inventories by kind and ID (0 for the global one), created on demand:
-    // there is no neighborhood yet to say which IDs exist.
+    // Inventories by kind and ID (0 for the global one): the neighborhood's
+    // (loadNeighborhood), and others created on demand.
     std::map<std::pair<InventoryKind, int16_t>, Inventory> inventories;
     Inventory& inventory(InventoryKind kind, int16_t id) {
         return inventories[{kind, kind == InventoryKind::Global ? int16_t(0) : id}];
@@ -641,5 +668,7 @@ private:
 void registerPrimitives(VM& vm);
 // The primitives that place and move objects in the world (routing.cpp).
 void registerRoutingPrimitives(VM& vm);
+// The primitives that need the neighborhood (hood_bridge.cpp).
+void registerNeighborhoodPrimitives(VM& vm);
 
 } // namespace os2::vm

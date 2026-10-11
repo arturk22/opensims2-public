@@ -1,5 +1,7 @@
 #include "vm.hpp"
 
+#include "hood_bridge.hpp"
+
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/resindex.hpp"
@@ -319,7 +321,7 @@ static int16_t neighborField(const Context& c, int16_t field) {
     }
     case 2: return neighborPersonData(c)[persondata::PersonAge];
     case 6: return n.house;
-    default: throw VMError("neighbor data " + std::to_string(field) + " not implemented");
+    default: return neighborhoodNeighborField(c.vm, c.frame.stackObject, n, field);
     }
 }
 
@@ -370,6 +372,7 @@ static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     case 0x16:
         return &growing(c.stackObject().attributes, slot(c.frame.params, data, "param"), "stack object attribute[param]");
     case 0x19: return &slot(c.frame.locals, data, "local");
+    case 0x22: return &slot(c.vm.neighborhoodData, data, "neighborhood data");
     case 0x24: return &growing(typeAttributesOf(c.vm, c.me()), data, "type attribute");
     case 0x25: return &growing(typeAttributesOf(c.vm, c.stackObject()), data, "stack object type attribute");
     case 0x20: return &slot(neighborPersonData(c), data, "neighbor's person data");

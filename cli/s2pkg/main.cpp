@@ -14,6 +14,8 @@
 #include "formats/model.hpp"
 #include "formats/simantics.hpp"
 #include "formats/resindex.hpp"
+#include "formats/neighborhood.hpp"
+#include "vm/hood_bridge.hpp"
 #include "vm/lot.hpp"
 #include "vm/vm.hpp"
 
@@ -25,6 +27,8 @@
 #include <regex>
 #include <set>
 #include <memory>
+#include <cstdlib>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -396,7 +400,47 @@ struct StandIns {
     std::map<uint32_t, uint16_t> definitions;
     std::pair<uint32_t, uint16_t> person{}; // OBJD of a Sim (the first outside a neighbourhood)
     std::set<std::pair<uint32_t, uint16_t>> interactions; // (group, BHAV) named by a TTAB
+    // The neighborhood the stand-ins live in (sweepNeighborhood): the Sim is
+    // the first member of the first family with a house, a Sim "me" the
+    // second, and the VM is on that family's lot.
+    std::optional<hood::Neighborhood> hood;
+    int16_t simNeighbor = 1, meNeighbor = 2, lot = 0;
 };
+
+// The neighborhood for bhav/bhav-sweep: OS2_HOOD (a neighborhood folder, or
+// "none"), else UserData/Neighborhoods/N001 under the Res directory.
+void sweepNeighborhood(const std::filesystem::path& root, StandIns& s) {
+    const char* env = std::getenv("OS2_HOOD");
+    if (env && std::string(env) == "none")
+        return;
+    const std::filesystem::path dir = env ? std::filesystem::path(env) : root / "UserData" / "Neighborhoods" / "N001";
+    if (!std::filesystem::exists(dir))
+        return;
+    s.hood = hood::Neighborhood::load(dir, true);
+    for (const auto& f : s.hood->families)
+        if (f.record.lot && f.members.size() >= 2) {
+            auto members = f.members;
+            std::sort(members.begin(), members.end());
+            s.simNeighbor = int16_t(members[0]), s.meNeighbor = int16_t(members[1]), s.lot = int16_t(f.record.lot);
+            break;
+        }
+}
+
+// A VM for running stand-in trees: in the neighborhood, on its lot.
+void prepareStandInVm(vm::VM& machine, const StandIns& s) {
+    if (!s.hood)
+        return;
+    vm::loadNeighborhood(machine, *s.hood);
+    vm::enterLot(machine, s.lot, s.hood->info ? int16_t(s.hood->info->id) : int16_t(0));
+}
+
+// A stand-in Sim is the neighbor `id`: its person data, and the stand-in's GUID.
+void makeNeighbor(vm::VM& machine, vm::Object& o, int16_t id) {
+    if (const vm::Neighbor* n = machine.neighbor(id))
+        o.person->data = n->personData;
+    o.person->data[vm::persondata::NeighborId] = id;
+    machine.neighbors[id].guid = o.guid();
+}
 
 StandIns standIns(ResourceIndex& index) {
     StandIns s;
@@ -449,8 +493,7 @@ vm::Object& standInObject(vm::VM& machine, uint32_t group, const StandIns& s) {
         me.semiGroup = group;
     if (me.person) {
         // A Sim on the lot is always a neighbor too.
-        me.person->data[vm::persondata::NeighborId] = 2;
-        machine.neighbors[2].guid = me.guid();
+        makeNeighbor(machine, me, s.meNeighbor);
     } else {
         me.person.emplace();
     }
@@ -469,8 +512,7 @@ vm::Object& standInPerson(vm::VM& machine, const StandIns& s) {
         o = &machine.createObject(0);
         o->person.emplace();
     }
-    o->person->data[vm::persondata::NeighborId] = 1;
-    machine.neighbors[1].guid = o->guid();
+    makeNeighbor(machine, *o, s.simNeighbor);
     return *o;
 }
 
@@ -507,7 +549,9 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
     ResourceIndex index(root);
     vm::CodeLibrary code(&index);
     vm::VM machine(code);
-    const auto users = standIns(index);
+    auto users = standIns(index);
+    sweepNeighborhood(root, users);
+    prepareStandInVm(machine, users);
     vm::Object& object = standInObject(machine, group, users);
     machine.trace = [](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
         std::string ops;
@@ -541,7 +585,11 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
 int cmdBhavSweep(const std::filesystem::path& root) {
     ResourceIndex index(root);
     vm::CodeLibrary code(&index);
-    const auto users = standIns(index);
+    auto users = standIns(index);
+    sweepNeighborhood(root, users);
+    if (users.hood)
+        std::printf("neighborhood %s: Sim = neighbor %d, me = neighbor %d, on lot %d\n", users.hood->prefix.c_str(),
+                    users.simNeighbor, users.meNeighbor, users.lot);
     std::map<std::string, size_t> outcomes, reasons;
     std::map<uint16_t, size_t> missingPrimitives;
     std::map<uint8_t, size_t> missingOwners;
@@ -552,6 +600,7 @@ int cmdBhavSweep(const std::filesystem::path& root) {
         if (tgi.instance < 0x100)
             continue; // not callable
         vm::VM machine(code);
+        prepareStandInVm(machine, users);
         vm::Object& object = standInObject(machine, tgi.group, users);
         uint16_t instance = uint16_t(tgi.instance);
         // Private trees of a global/semi-global group are not reachable by call opcodes.
@@ -627,6 +676,10 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
     vm::CodeLibrary code(&index);
     constexpr size_t kTop = 15;
     int failed = 0;
+    // Each lot's neighborhood (OS2_HOOD=none leaves them out), loaded once.
+    const char* hoodEnv = std::getenv("OS2_HOOD");
+    const bool useHoods = !(hoodEnv && std::string(hoodEnv) == "none");
+    std::map<std::filesystem::path, hood::Neighborhood> hoods;
     for (const auto& path : lots) {
         DbpfPackage pkg(path);
         Lot lot;
@@ -651,7 +704,18 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                 std::printf("%*s0x%04X #%-3u %-30s %s\n", int(t.stack.size() - 1) * 2, "", f.instance, f.pc,
                             op.c_str(), f.behavior->fileName.c_str());
             };
+        const hood::Neighborhood* hood = nullptr;
+        if (const auto hoodPackage = useHoods ? vm::neighborhoodPackageOf(path) : std::filesystem::path{};
+            !hoodPackage.empty()) {
+            auto it = hoods.find(hoodPackage);
+            if (it == hoods.end())
+                it = hoods.emplace(hoodPackage, hood::Neighborhood::load(hoodPackage, true)).first;
+            hood = &it->second;
+            vm::loadNeighborhood(machine, *hood);
+            vm::enterLot(machine, vm::lotIdOf(path), hood->info ? int16_t(hood->info->id) : int16_t(0));
+        }
         const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(path));
+        const size_t boundSims = hood ? vm::bindLotSims(machine) : 0;
 
         std::map<std::string, size_t> unresolved, initOutcomes, mainOutcomes, reasons;
         std::map<vm::ObjectId, std::string> initOf;
@@ -689,6 +753,11 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                     size_t(std::count_if(load.objects.begin(), load.objects.end(),
                                          [](const auto& e) { return e.created && e.person; })),
                     machine.objects().size(), ticks, machine.clock.hour, machine.clock.minute);
+        if (hood)
+            std::printf("  neighborhood %s: %zu neighbors; lot %d, family %d, funds %d; %zu Sims are neighbors\n",
+                        hood->prefix.c_str(), machine.neighbors.size(), machine.globals[vm::global::CurrentHouse],
+                        machine.globals[vm::global::CurrentFamily],
+                        vm::familyFunds(machine, machine.globals[vm::global::CurrentFamily]), boundSims);
         std::map<std::string, size_t> warnings;
         for (const auto& w : saved.warnings)
             ++warnings[std::regex_replace(w, std::regex("state 0x[0-9A-F]+"), "state X")];
