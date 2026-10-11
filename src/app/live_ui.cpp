@@ -603,6 +603,16 @@ UiScreen LiveUi::screen(int width, int height) {
             if (onQuit)
                 onQuit();
         });
+        button(0xA230, [this] {
+            std::printf("opensims2: live UI: save\n");
+            if (onSave)
+                onSave();
+        });
+        for (const auto& [id, window] : {std::pair{0xA242u, 1}, std::pair{0xA243u, 2}}) // audio, game options
+            button(id, [this, window = window] {
+                if (onOptionWindow)
+                    onOptionWindow(window);
+            });
     }
 
     // --- The puck ----------------------------------------------------------

@@ -202,6 +202,7 @@ UiScreen HoodUi::screen(int width, int height) {
         if (const UiElement* name = chooser->child(kCityName))
             hk.captions[name] = view_->displayName();
         place(*chooser, 4, 0, hk);
+        target(chooser->child(0x2), Action::MainMenu); // "Menu Principal"
     }
     if (const UiElement* puck = hudRoot.child(kPuck)) {
         const auto a = puck->area();

@@ -57,6 +57,8 @@ void HoodMode::mouseDown(LotCamera& camera, simd_float2 p, float w, float h) {
         camera.rotateBy(-1);
     else if (a == HoodUi::Action::RotateRight)
         camera.rotateBy(1);
+    if (a == HoodUi::Action::MainMenu && onMainMenu)
+        onMainMenu();
     if (a != HoodUi::Action::None)
         return;
     if (ui_->dialogLot())
@@ -74,7 +76,10 @@ void HoodMode::escape() { ui_->openLot(nullptr); }
 void HoodMode::enterLot(const HoodLot& lot) {
     std::printf("opensims2: entering lot %u (%s)\n", lot.id, lot.package.string().c_str());
     std::fflush(stdout);
-    restartWith(hoodLotArguments(args_, query_, lot.id));
+    if (onEnterLot)
+        onEnterLot(lot);
+    else
+        restartWith(hoodLotArguments(args_, query_, lot.id));
 }
 
 void HoodMode::scriptedView(LotCamera& camera, float w, float h) {

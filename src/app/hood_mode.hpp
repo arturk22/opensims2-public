@@ -4,12 +4,10 @@
 // (app/hood_view.hpp) and its UI (app/hood_ui.hpp) behind the mouse and the
 // keys, and the way between the neighborhood and a lot.
 //
-// Entering a lot (the Lot Info Dialog's Enter Lot) restarts the app on the
-// same arguments with --hood-lot <id> (and --vm --ui live, to play it):
-// --hood <N> --hood-lot <id> opens that lot of the neighborhood in the lot
-// view (headless too), and there Esc restarts it on --hood <N> again. The
-// app loads one scene at start-up, so a restart is the simplest faithful
-// way back and forth (the game shows a loading screen there too).
+// Entering a lot (the Lot Info Dialog's Enter Lot) and the chooser's Main
+// Menu button call onEnterLot / onMainMenu: the app's game flow
+// (app/game_flow.hpp) unloads the neighborhood and loads the lot (--hood <N>
+// --hood-lot <id> --vm --ui live) or the main menu in the same process.
 //
 // Headless (--screenshot): --hood-hover <id> shows the hover popup over that
 // lot, --hood-select <id> opens its Lot Info Dialog.
@@ -20,6 +18,7 @@
 #include <simd/simd.h>
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -48,8 +47,10 @@ public:
     void mouseDown(LotCamera& camera, simd_float2 p, float w, float h);
     // Esc: closes the dialog.
     void escape();
-    // Enters a lot: restarts the app in it (does not return).
-    [[noreturn]] void enterLot(const HoodLot& lot);
+    // Enters a lot (onEnterLot).
+    void enterLot(const HoodLot& lot);
+    std::function<void(const HoodLot&)> onEnterLot;
+    std::function<void()> onMainMenu;
 
     // --hood-hover / --hood-select for screenshots; moves the camera to the lot.
     void scriptedView(LotCamera& camera, float w, float h);

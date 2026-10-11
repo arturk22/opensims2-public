@@ -81,7 +81,12 @@
 #include "app/buy_mode.hpp"
 #include "app/build_mode.hpp"
 #include "app/data_location.hpp"
+#include "app/game_flow.hpp"
+#include "app/game_save.hpp"
 #include "app/hood_mode.hpp"
+#include "app/main_menu.hpp"
+#include "app/options_panel.hpp"
+#include "app/user_data.hpp"
 #include "app/live_ui.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
@@ -111,6 +116,21 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+// The arguments of the scene being shown (app/game_flow.hpp): the process's
+// at start-up, replaced when the game flow switches scenes in place.
+NSArray<NSString*>* gSceneArgs = nil;
+NSArray<NSString*>* sceneArgs() {
+    if (!gSceneArgs)
+        gSceneArgs = NSProcessInfo.processInfo.arguments;
+    return gSceneArgs;
+}
+void setSceneArguments(const std::vector<std::string>& args) {
+    NSMutableArray<NSString*>* a = [NSMutableArray array];
+    for (const auto& s : args)
+        [a addObject:[NSString stringWithUTF8String:s.c_str()]];
+    gSceneArgs = a;
+}
 
 constexpr const char* kCameraConfig = "TSData/Res/UserData/Cameras/cameras.txt";
 constexpr const char* kLightingConfig = "TSData/Res/Lights/Lighting.txt";
@@ -160,12 +180,27 @@ std::unique_ptr<os2::HoodMode> gHood;
 // --hood <N> --hood-lot <id>: that lot's package, shown as --lot is.
 std::optional<std::string> gHoodLot;
 std::vector<std::string> processArguments();
+// The game flow (app/game_flow.hpp): the user's folder, the main menu, the
+// puck's options, the scene asked for next and the steps used so far.
+std::unique_ptr<os2::UserData> gUser;
+std::unique_ptr<os2::MainMenu> gMenu;
+std::unique_ptr<os2::OptionsPanel> gOptions;
+os2::GameSettings gSettings;
+std::optional<os2::Scene> gPendingScene;
+bool gQuitRequested = false;
+size_t gStepsUsed = 0;    // --click/--wait steps this scene has taken (headless)
+double gHeadlessClock = 0; // the caller's clock of headless VM runs (--wait, --run-vm)
+fs::path gLotFile;        // the package the running lot came from (saved back to)
+std::function<void()> gOnSceneRequest; // the app delegate's switch (interactive)
+// Hook for the intro movies (the video agent): called once, before the
+// first main menu is shown; null plays nothing.
+std::function<void()> gIntroMovies;
 
 // The extracted game (data/game): --data <dir>, else $OS2_DATA, else the first
 // data/game found walking up from the executable (the repo when run from build/),
 // else the packaged-app places (app/data_location.hpp).
 std::optional<fs::path> findGameDir() {
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    NSArray<NSString*>* args = sceneArgs();
     for (NSUInteger i = 1; i + 1 < args.count; ++i)
         if ([args[i] isEqualToString:@"--data"])
             return fs::path(args[i + 1].UTF8String);
@@ -201,7 +236,7 @@ os2::CameraDef loadLiveCamera() {
 // The arguments, the executable's full path first (for a restart).
 std::vector<std::string> processArguments() {
     std::vector<std::string> out{NSBundle.mainBundle.executablePath.UTF8String};
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    NSArray<NSString*>* args = sceneArgs();
     for (NSUInteger i = 1; i < args.count; ++i)
         out.emplace_back(args[i].UTF8String);
     return out;
@@ -209,7 +244,7 @@ std::vector<std::string> processArguments() {
 
 // Value of `--name <value>`, if given.
 std::optional<std::string> argument(NSString* name) {
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    NSArray<NSString*>* args = sceneArgs();
     for (NSUInteger i = 1; i + 1 < args.count; ++i)
         if ([args[i] isEqualToString:name])
             return std::string(args[i + 1].UTF8String);
@@ -240,7 +275,7 @@ std::optional<std::string> lotQuery() {
 // dining chair (unless a lot is shown).
 std::vector<std::string> objectQueries() {
     std::vector<std::string> out;
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    NSArray<NSString*>* args = sceneArgs();
     for (NSUInteger i = 1; i + 1 < args.count; ++i)
         if ([args[i] isEqualToString:@"--object"])
             out.emplace_back(args[i + 1].UTF8String);
@@ -401,6 +436,11 @@ void changeFloor(int delta) {
 }
 
 void setupPieMenu(os2::ResourceIndex& index); // below loadLot
+void applyAudioSettings();                     // game flow, below
+void setupOptions(os2::ResourceIndex& index);  // game flow, below
+void leaveLot();                               // game flow, below
+void quitFromLot();                            // game flow, below
+bool saveGameNow();                            // game flow, below
 void setupLiveUi(os2::ResourceIndex& index);  // below setupPieMenu
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
 
@@ -411,7 +451,7 @@ void followSelectedSim() {
 }
 
 void startAudio(os2::ResourceIndex& index, const os2::Lot& lot) {
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    NSArray<NSString*>* args = sceneArgs();
     if ([args containsObject:@"--no-audio"])
         return;
     os2::LotAudio::Options o;
@@ -419,6 +459,7 @@ void startAudio(os2::ResourceIndex& index, const os2::Lot& lot) {
     o.device = !argument(@"--screenshot");
     o.music = argument(@"--music").value_or("");
     gAudio = std::make_unique<os2::LotAudio>(gameDir() / "TSData/Res", index, lot, o);
+    applyAudioSettings(); // the options' volumes (below)
     for (const auto& s : gLotSims) {
         os2::DbpfPackage character(s.character);
         const std::string shoe = os2::characterShoe(index, os2::readCharacter(character, index), gAudio->sound());
@@ -445,7 +486,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                      const fs::path& lotFile) {
     CFTimeInterval start = CACurrentMediaTime();
     gSimulation = std::make_unique<os2::LotSimulation>(index, lot, pkg, lotFile,
-                                                      [NSProcessInfo.processInfo.arguments containsObject:@"--init"]);
+                                                      [sceneArgs() containsObject:@"--init"]);
     for (const auto& s : gLotSims) {
         os2::DbpfPackage character(s.character);
         gSimulation->attach(*s.actor, s.id, os2::readCharacter(character, index), s.idle);
@@ -631,6 +672,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         setupBuyMode(renderer, index);
         setupBuildMode(renderer, index);
     }
+    if (liveUiRequested())
+        setupOptions(index); // below: the puck's Options mode
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
@@ -717,11 +760,17 @@ void setupLiveUi(os2::ResourceIndex& index) {
             gAudio->sound().play(name, o);
         };
     // The options panel: "Vizinhança" is the way back to the neighborhood the lot was entered from (as Esc).
+    // Leaving asks whether to save and switches scenes in place (game flow, below).
     if (auto hood = argument(@"--hood"); hood && gHoodLot) {
         gLive->setCanLeave(true);
-        gLive->onNeighborhood = [hood = *hood] { os2::restartWith(os2::hoodArguments(processArguments(), hood)); };
+        gLive->onNeighborhood = [] { leaveLot(); };
     }
-    gLive->onQuit = [] { [NSApp terminate:nil]; };
+    gLive->onQuit = [] { quitFromLot(); };
+    gLive->onSave = [] { saveGameNow(); };
+    gLive->onOptionWindow = [](int window) {
+        if (gOptions)
+            gOptions->toggleWindow(window);
+    };
     gLive->onFloor = [](int delta) { changeFloor(delta); };
     gLive->onZoom = [](int steps) {
         if (gCamera)
@@ -733,7 +782,7 @@ void setupLiveUi(os2::ResourceIndex& index) {
     };
     // Relationship thumbnails of Sims off the lot: the small portrait of the
     // character file (in the lot's neighborhood) whose OBJD has the GUID.
-    if (auto query = argument(@"--lot"))
+    if (auto query = lotQuery())
         gLive->neighborPortrait = [dir = lotPath(*query).parent_path().parent_path() / "Characters",
                                    byGuid = std::make_shared<std::map<uint32_t, fs::path>>()](uint32_t guid)
             -> std::optional<os2::RgbaImage> {
@@ -765,7 +814,7 @@ void setupLiveUi(os2::ResourceIndex& index) {
         if (gCameraFollow)
             gCameraFollow->setTracked(id);
     };
-    if (![NSProcessInfo.processInfo.arguments containsObject:@"--debug-queue"])
+    if (![sceneArgs() containsObject:@"--debug-queue"])
         gPie->setShowQueue(false);
     std::printf("opensims2: live UI: %s, %zu family members\n", gLive->ok() ? "loaded" : "missing scripts",
                 gLive->family().size());
@@ -868,7 +917,7 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
 void runBuildSteps() {
     if (!gBuild || !gBuild->active())
         return;
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    NSArray<NSString*>* args = sceneArgs();
     for (NSUInteger i = 1; i + 1 < args.count; ++i) {
         const std::string a = args[i].UTF8String, v = args[i + 1].UTF8String;
         std::vector<std::string> f;
@@ -945,7 +994,7 @@ void runBuildSteps() {
 void runBuySteps() {
     if (!gBuy || !gBuy->active())
         return;
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    NSArray<NSString*>* args = sceneArgs();
     for (NSUInteger i = 1; i < args.count; ++i) {
         const std::string a = args[i].UTF8String;
         const std::string v = i + 1 < args.count ? args[i + 1].UTF8String : "";
@@ -981,6 +1030,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     if (!query)
         return std::nullopt;
     CFTimeInterval start = CACurrentMediaTime();
+    gLotFile = lotPath(*query);
     os2::DbpfPackage pkg(lotPath(*query));
     perfLap("before the lot");
     os2::Lot lot = os2::Lot::load(pkg);
@@ -1016,7 +1066,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     perfLap("loadLotObjects");
     const size_t sims = loadLotSims(renderer, index, lot, pkg, lotPath(*query));
     perfLap("loadLotSims");
-    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    NSArray<NSString*>* args = sceneArgs();
     startAudio(index, lot);
     perfLap("startAudio");
     if (argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") || [args containsObject:@"--vm"] ||
@@ -1121,6 +1171,7 @@ os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
 // one plumbob.
 constexpr float kPlumbobGap = 0.2f, kPlumbobSpinSeconds = 2.316f;
 bool gVmPlumbob = false;           // the VM's PlumbBob is over the selected Sim
+std::map<std::string, int> gPlumbobModels; // plumbob model per core material (renderer ids)
 std::string gPlumbobMaterial;      // the app plumbob's core material ("" = the model's)
 void choosePlumbob(os2::Renderer& renderer) {
     if (!gSimulation || !gObjectView || !gPie)
@@ -1143,7 +1194,7 @@ void choosePlumbob(os2::Renderer& renderer) {
     }
     if (gVmPlumbob || material == gPlumbobMaterial || gPlumbob < 0 || !gIndex)
         return;
-    static std::map<std::string, int> models;
+    auto& models = gPlumbobModels;
     auto it = models.find(material);
     if (it == models.end()) {
         int m = -1;
@@ -1496,6 +1547,283 @@ int cameraSlot(unsigned short key) {
     }
 }
 
+// --- Game flow (app/game_flow.hpp) -------------------------------------------
+
+bool headless() { return argument(@"--screenshot").has_value(); }
+
+// Leaves the current scene for `next` once the current event is handled:
+// at once in a headless run (between steps), on the next turn of the run
+// loop with a window.
+void requestScene(const os2::Scene& next) {
+    gPendingScene = next;
+    if (!headless() && gOnSceneRequest)
+        gOnSceneRequest();
+}
+
+void requestQuit() {
+    gQuitRequested = true;
+    if (!headless())
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [NSApp terminate:nil];
+        });
+}
+
+// A neighborhood folder for --hood: a folder path as given, else the user's
+// copy of the shipped neighborhood of that name (made on first use).
+fs::path hoodFolder(const std::string& query) {
+    std::error_code ec;
+    if (fs::is_directory(query, ec))
+        return query;
+    if (!gUser)
+        throw std::runtime_error("no user folder for neighborhood " + query);
+    return gUser->neighborhood(query);
+}
+
+// The options' group volumes and mutes on the lot's mixer.
+void applyAudioSettings() {
+    if (!gAudio)
+        return;
+    const os2::SoundGroup groups[4] = {os2::SoundGroup::Vox, os2::SoundGroup::Sfx, os2::SoundGroup::Music,
+                                       os2::SoundGroup::Ambience};
+    for (size_t g = 0; g < 4; ++g)
+        gAudio->mixer().setGroupVolume(groups[g], gSettings.muted[g] ? 0.0f : gSettings.volume[g]);
+}
+
+// Saves the running lot and its neighborhood to the user's folder (app/game_save.hpp).
+bool saveGameNow() {
+    if (!gSimulation || gLotFile.empty()) {
+        std::printf("opensims2: save: no lot to save\n");
+        return false;
+    }
+    const CFTimeInterval start = CACurrentMediaTime();
+    const os2::GameSaveResult r = os2::saveGame(gSimulation->machine(), gLotFile, gameDir());
+    for (const auto& l : r.lines)
+        std::printf("opensims2: save: %s\n", l.c_str());
+    if (r.ok)
+        std::printf("opensims2: saved %s (%.2f s)\n", gLotFile.string().c_str(), CACurrentMediaTime() - start);
+    else
+        std::fprintf(stderr, "opensims2: save failed: %s\n", r.error.c_str());
+    std::fflush(stdout);
+    return r.ok;
+}
+
+// The "Salvar?" questions (UIText STR# 0x99: 3/4 leaving for the
+// neighborhood, 5/6 quitting with 24-26 as buttons; Sim/Não/Cancelar from
+// STR# 0x8E), put up as a dialog of no object that the pie menu draws and
+// that pauses the lot like the trees' dialogs.
+constexpr os2::vm::ObjectId kFlowDialog = -2;
+enum class FlowDialog { None, Leave, Quit };
+FlowDialog gFlowDialog = FlowDialog::None;
+std::unique_ptr<os2::UiResources> gTexts;
+
+std::string uiText(uint32_t instance, uint32_t index, const char* fallback) {
+    try {
+        if (!gTexts && gIndex)
+            gTexts = std::make_unique<os2::UiResources>(*gIndex, gameDir() / "TSData/Res");
+        if (gTexts)
+            if (auto t = gTexts->string(os2::UiStringRef{0x7fa7dc7c, instance, index}); t && !t->empty())
+                return *t;
+    } catch (const std::exception&) {
+    }
+    return fallback;
+}
+
+void openFlowDialog(FlowDialog kind) {
+    if (!gSimulation || gSimulation->machine().dialogs.count(kFlowDialog))
+        return;
+    os2::vm::Dialog d;
+    d.me = kFlowDialog;
+    d.blocking = true;
+    d.icon = 1;
+    if (kind == FlowDialog::Leave) {
+        d.title = uiText(0x99, 3, "Save?");
+        d.message = uiText(0x99, 4, "Do you want to save your game before exiting to the Neighborhood?");
+        d.buttons = {uiText(0x8E, 2, "Yes"), uiText(0x8E, 3, "No"), uiText(0x8E, 1, "Cancel")};
+    } else {
+        d.title = uiText(0x99, 5, "Quit?");
+        d.message = uiText(0x99, 6, "Do you want to save before quitting?");
+        d.buttons = {uiText(0x99, 24, "Save & Quit"), uiText(0x99, 25, "Quit without Saving"),
+                     uiText(0x99, 26, "Don't Quit")};
+    }
+    gSimulation->machine().dialogs[kFlowDialog] = std::move(d);
+    gFlowDialog = kind;
+    std::printf("opensims2: dialog \"%s\" open\n", gSimulation->machine().dialogs[kFlowDialog].title.c_str());
+    std::fflush(stdout);
+}
+
+// Acts on the answer to the open "Salvar?" dialog, if it has one.
+void pollFlowDialog() {
+    if (gFlowDialog == FlowDialog::None || !gSimulation)
+        return;
+    auto& dialogs = gSimulation->machine().dialogs;
+    auto it = dialogs.find(kFlowDialog);
+    if (it == dialogs.end()) {
+        gFlowDialog = FlowDialog::None;
+        return;
+    }
+    const int answer = it->second.answer;
+    if (answer < 0)
+        return;
+    dialogs.erase(it);
+    const FlowDialog kind = gFlowDialog;
+    gFlowDialog = FlowDialog::None;
+    if (answer == 2)
+        return; // cancel: stay
+    if (answer == 0 && !saveGameNow())
+        return; // the save failed: stay on the lot
+    if (kind == FlowDialog::Quit) {
+        requestQuit();
+        return;
+    }
+    const os2::Scene here = os2::sceneOf(processArguments());
+    os2::Scene next;
+    next.kind = os2::Scene::Kind::Neighborhood;
+    next.hood = here.hood;
+    requestScene(next);
+}
+
+// Leaving the lot as the game does (ExitLotBegin): asks whether to save,
+// then goes back to the neighborhood. The puck's options Neighborhood button
+// and Esc call it (a leave-lot button can too).
+void leaveLot() {
+    if (os2::sceneOf(processArguments()).kind != os2::Scene::Kind::Lot)
+        return;
+    openFlowDialog(FlowDialog::Leave);
+}
+
+// The option windows of the live panel's options (app/options_panel.hpp).
+void setupOptions(os2::ResourceIndex& index) {
+    if (!gLive)
+        return;
+    gOptions = std::make_unique<os2::OptionsPanel>(index, gameDir() / "TSData/Res", gSettings);
+    gOptions->onChanged = [](const os2::GameSettings& s) {
+        gSettings = s;
+        if (gUser)
+            s.save(*gUser);
+        applyAudioSettings();
+    };
+    if (gAudio)
+        gOptions->playSound = [](const std::string& name) {
+            os2::SoundSystem::PlayOptions o;
+            o.group = os2::SoundGroup::Ui;
+            gAudio->sound().play(name, o);
+        };
+}
+
+// The options panel's Sair on a lot: asks whether to save, then quits.
+void quitFromLot() {
+    if (gSimulation)
+        openFlowDialog(FlowDialog::Quit);
+    else
+        requestQuit();
+}
+
+// A click on an open option window (the options panel itself is the live
+// panel's); the window closes with the panel.
+bool pressOptions(simd_float2 p, float w, float h) {
+    if (!gOptions)
+        return false;
+    if (gLive && !gLive->optionsOpen() && gOptions->active())
+        gOptions->closeWindow();
+    if (!gOptions->active())
+        return false;
+    gOptions->setCanvas(int(w), int(h));
+    return gOptions->press(p) != os2::OptionsPanel::Action::None;
+}
+
+// A click on the main menu (canvas pixels).
+void pressMainMenu(simd_float2 p, float w, float h) {
+    if (!gMenu)
+        return;
+    gMenu->setCanvas(int(w), int(h));
+    const os2::Scene here = os2::sceneOf(processArguments());
+    os2::Scene next;
+    switch (gMenu->press(p)) {
+    case os2::MainMenu::Action::Play:
+    case os2::MainMenu::Action::Tutorial:
+        std::printf("opensims2: main menu: play %s\n", gMenu->chosen().c_str());
+        next.kind = os2::Scene::Kind::Neighborhood;
+        next.hood = gMenu->chosen();
+        requestScene(next);
+        break;
+    case os2::MainMenu::Action::Close:
+        next.kind = os2::Scene::Kind::Neighborhood;
+        next.hood = here.returnHood;
+        requestScene(next);
+        break;
+    case os2::MainMenu::Action::Quit:
+        std::printf("opensims2: main menu: quit\n");
+        requestQuit();
+        break;
+    default: break;
+    }
+    std::fflush(stdout);
+}
+
+// Runs the lot's VM `ticks` ticks headless (a --wait step).
+void runTicksHeadless(long ticks) {
+    if (!gSimulation || ticks <= 0)
+        return;
+    const uint64_t target = gSimulation->ticks() + uint64_t(ticks);
+    for (long guard = 0; gSimulation->ticks() < target && guard < ticks * 40 + 100; ++guard) {
+        gHeadlessClock += 1.0 / 30;
+        const double scene = gSimulation->update(gHeadlessClock);
+        if (gLighting && gSimulation->ticks() % 30 == 0)
+            gLighting->update(scene);
+        if (gLive)
+            gLive->tick(gHeadlessClock);
+        if (gAudio) {
+            updateAudio(gHeadlessClock);
+            gAudio->renderOffline(gHeadlessClock);
+        }
+    }
+    std::printf("opensims2: waited to VM tick %llu\n", (unsigned long long)gSimulation->ticks());
+    std::fflush(stdout);
+}
+
+// Everything a scene loaded, so that the next one starts clean (the
+// renderer is replaced by the caller).
+void unloadScene() {
+    gFlowDialog = FlowDialog::None;
+    gCinematic.reset(); // (the VM's request list stays counted: gCinematicsSeen)
+    gLetterboxShare = 0;
+    gBuild.reset();
+    gBuy.reset();
+    gLive.reset();
+    gPie.reset();
+    gOptions.reset();
+    gMenu.reset();
+    gHood.reset();
+    gDoors.reset();
+    gLighting.reset();
+    gSnaps.reset();
+    gObjectView.reset();
+    gSimulation.reset();
+    gAudio.reset();
+    gCameraFollow.reset();
+    gUi.reset();
+    gObjectActors.clear();
+    gLotSims.clear();
+    gActors.clear();
+    gPlacedObjects.clear();
+    gPickBoxes.clear();
+    gPlumbob = -1;
+    gPlumbobBottom = 0;
+    gVmPlumbob = false;
+    gPlumbobMaterial.clear();
+    gPlumbobModels.clear();
+    gLightMapLayout.reset();
+    gLotShape.reset();
+    gLotPatterns.reset();
+    gLotView = {};
+    gLotInstance = -1;
+    gHoodLot.reset();
+    gLotFile.clear();
+    gStepsUsed = 0;
+    gHeadlessClock = 0;
+    gCamera = nullptr;
+}
+
 } // namespace
 
 // MTKView that keeps the camera and the keys held down.
@@ -1536,7 +1864,7 @@ int cameraSlot(unsigned short key) {
     float forward = float([self held:kW orKey:kUp]) - float([self held:kS orKey:kDown]);
     right *= fast, forward *= fast;
     if (self.window.isKeyWindow) {
-        _mouse.config().edgeScroll = !argument(@"--no-edge-scroll");
+        _mouse.config().edgeScroll = !argument(@"--no-edge-scroll") && gSettings.edgeScrolling;
         const auto [mr, mf] = _mouse.panAxes(float(self.bounds.size.width), float(self.bounds.size.height));
         right = std::clamp(right + mr, -fast, fast);
         forward = std::clamp(forward + mf, -fast, fast);
@@ -1615,9 +1943,12 @@ int cameraSlot(unsigned short key) {
             gHood->escape();
             break;
         }
-        // A lot entered from the neighborhood: back to it (unless the pie menu is open).
-        if (auto hood = argument(@"--hood"); hood && gHoodLot && !(gPie && gPie->isOpen()))
-            os2::restartWith(os2::hoodArguments(processArguments(), *hood));
+        // A lot entered from the neighborhood: back to it, asking whether to
+        // save (unless the pie menu is open).
+        if (gHoodLot && !(gPie && (gPie->isOpen() || gPie->dialogOpen()))) {
+            leaveLot();
+            break;
+        }
         if (gPie) gPie->close();
         break;
     // The speed buttons' accelerators (their tips: "Pausa - P", "Velocidade Normal - 1", ...).
@@ -1721,6 +2052,10 @@ int cameraSlot(unsigned short key) {
         std::printf("opensims2: movie skipped (click)\n");
         return;
     }
+    if (gMenu) {
+        pressMainMenu([self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
+        return;
+    }
     if (gHood) {
         gHood->mouseDown(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
         return;
@@ -1728,8 +2063,10 @@ int cameraSlot(unsigned short key) {
     if (!gPie)
         return;
     const simd_float2 p = [self canvasPoint:e];
-    if (gPie->dialogOpen() && gPie->click(p))
+    if (gPie->dialogOpen() && gPie->click(p)) {
+        pollFlowDialog();
         return;
+    }
     if (gPie->isOpen() && gPie->press(p))
         return;
     if (gLive && gLive->overModeButton(p) && gLive->press(p)) // the puck's modes win over the panels
@@ -1739,6 +2076,8 @@ int cameraSlot(unsigned short key) {
     if (gBuild && gBuild->active() && gBuild->press(p))
         return;
     if (gLive && gLive->press(p))
+        return;
+    if (pressOptions(p, float(self.bounds.size.width), float(self.bounds.size.height))) // under the puck
         return;
     const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
     const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
@@ -1819,6 +2158,7 @@ int cameraSlot(unsigned short key) {
 @interface OS2ViewDelegate : NSObject <MTKViewDelegate>
 - (instancetype)initWithView:(MTKView*)view;
 - (os2::Renderer*)renderer;
+- (void)resetRenderer:(MTKView*)view;
 @end
 
 @implementation OS2ViewDelegate {
@@ -1841,6 +2181,15 @@ int cameraSlot(unsigned short key) {
     return _renderer.get();
 }
 
+// A new, empty renderer for the next scene (the old one waits for its frames
+// in flight); the scene clock starts again.
+- (void)resetRenderer:(MTKView*)view {
+    _renderer.reset();
+    _renderer = std::make_unique<os2::Renderer>((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                                                uint32_t(view.depthStencilPixelFormat));
+    _last = _start = CACurrentMediaTime();
+}
+
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size {
 }
 
@@ -1856,7 +2205,16 @@ int cameraSlot(unsigned short key) {
     double dt = std::min(now - _last, 0.1); // no huge steps after a stall
     _last = now;
 
+    if (!view.camera) { // no scene (--movie): only a movie
+        MTLRenderPassDescriptor* pass = view.currentRenderPassDescriptor;
+        id<CAMetalDrawable> drawable = view.currentDrawable;
+        os2::movieHostDraw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable);
+        return;
+    }
     [view applyHeldKeys:dt];
+    pollFlowDialog();
+    if (gOptions && gLive && !gLive->optionsOpen() && gOptions->active())
+        gOptions->closeWindow(); // the options panel closed
     if (gLive)
         gLive->tick(now - _start);
     followSelectedSim();
@@ -1898,7 +2256,10 @@ int cameraSlot(unsigned short key) {
 
 @implementation OS2AppDelegate {
     NSWindow* _window;
+    OS2View* _view;
     OS2ViewDelegate* _viewDelegate; // MTKView holds its delegate weakly
+    bool _introPlayed;
+    int _flowShot;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification*)note {
@@ -1922,17 +2283,15 @@ int cameraSlot(unsigned short key) {
     OS2View* view = [[OS2View alloc] initWithFrame:frame device:device];
     view.colorPixelFormat = MTLPixelFormatBGRA8Unorm; // gamma space, like the game
     view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
-    view.clearColor = MTLClearColorMake(0.18, 0.22, 0.28, 1.0);
     view.preferredFramesPerSecond = 60;
+    _view = view;
 
     try {
-        [view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
-        gCamera = view.camera;
         _viewDelegate = [[OS2ViewDelegate alloc] initWithView:view];
         applyLighting(*_viewDelegate.renderer);
         os2::movieHostInit((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                            uint32_t(view.depthStencilPixelFormat),
-                           {gameDir() / "TSData/Res", ![NSProcessInfo.processInfo.arguments containsObject:@"--no-audio"]});
+                           {gameDir() / "TSData/Res", ![sceneArgs() containsObject:@"--no-audio"]});
         // --movie <name>: play one movie in the window and quit when it ends.
         if (auto movie = argument(@"--movie")) {
             os2::playMovie(*movie, [] { [NSApp terminate:nil]; });
@@ -1945,19 +2304,199 @@ int cameraSlot(unsigned short key) {
             return;
         }
         // --intro: the start-up movies (EA logo, intro) before the scene.
-        if ([NSProcessInfo.processInfo.arguments containsObject:@"--intro"])
+        if ([sceneArgs() containsObject:@"--intro"])
             os2::playMovies(os2::introMovies());
+        // The start-up movies before the first main menu (EA logo, then the
+        // intro; skippable), unless --intro already started them.
+        gIntroMovies = [] {
+            if (!os2::moviePlaying())
+                os2::playMovies(os2::introMovies());
+        };
         gIndex = std::make_unique<os2::ResourceIndex>(gameDir() / "TSData/Res");
         perfLap("ResourceIndex");
-        os2::ResourceIndex& index = *gIndex;
-        if (auto hood = argument(@"--hood")) {
-            if (auto lot = argument(@"--hood-lot")) {
-                gHoodLot = os2::hoodLotPackage(gameDir() / "TSData/Res", *hood, uint32_t(std::stoul(*lot))).string();
-            } else {
-                [self startHood:view query:*hood];
-                return;
-            }
-        }
+        // The user's folder (app/user_data.hpp): --user-dir, $OS2_USER_DIR,
+        // else ~/Library/Application Support/opensims2.
+        fs::path user = os2::defaultUserDir();
+        if (const char* env = std::getenv("OS2_USER_DIR"))
+            user = env;
+        if (auto u = argument(@"--user-dir"))
+            user = *u;
+        gUser = std::make_unique<os2::UserData>(gameDir(), user);
+        gSettings = os2::GameSettings::load(*gUser);
+        __weak OS2AppDelegate* weakSelf = self;
+        gOnSceneRequest = [weakSelf] {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf switchScene];
+            });
+        };
+        [self runScenes];
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: %s\n", e.what());
+        if (argument(@"--screenshot"))
+            std::exit(1); // no one to show an alert to
+        NSAlert* alert = [[NSAlert alloc] init];
+        alert.messageText = @"opensims2 could not start";
+        alert.informativeText = [NSString stringWithUTF8String:e.what()];
+        [alert runModal];
+        [NSApp terminate:nil];
+        return;
+    }
+    view.delegate = _viewDelegate;
+    _window.contentView = view;
+    [_window center];
+    _window.acceptsMouseMovedEvents = YES;
+    [_window makeKeyAndOrderFront:nil];
+    [_window makeFirstResponder:view];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+// Loads the scene the arguments pick. Headless (--screenshot) each scene runs
+// its steps; while one asks for another scene, that one is loaded in turn,
+// and the last saves the screenshot and exits.
+- (void)runScenes {
+    for (;;) {
+        [self loadScene];
+        if (!gPendingScene || !headless())
+            return;
+        if (auto shot = argument(@"--screenshot"); shot && [sceneArgs() containsObject:@"--flow-shots"])
+            [self captureScene:os2::numberedShot(*shot, ++_flowShot)];
+        [self applyPendingScene];
+    }
+}
+
+- (void)loadScene {
+    const os2::Scene scene = os2::sceneOf(processArguments());
+    gStepsUsed = 0;
+    _view.clearColor = MTLClearColorMake(0.18, 0.22, 0.28, 1.0);
+    applyLighting(*_viewDelegate.renderer);
+    switch (scene.kind) {
+    case os2::Scene::Kind::MainMenu: [self startMainMenu:scene]; break;
+    case os2::Scene::Kind::Neighborhood: [self startHood:_view query:hoodFolder(scene.hood).string()]; break;
+    case os2::Scene::Kind::Lot:
+        gHoodLot = os2::hoodLotPackage(gameDir() / "TSData/Res", hoodFolder(scene.hood).string(), scene.lot).string();
+        [self startLot];
+        break;
+    case os2::Scene::Kind::Other: [self startLot]; break;
+    }
+    std::fflush(stdout);
+}
+
+// Unloads the scene and sets the arguments of the one asked for (with the
+// steps not used yet, headless).
+- (void)applyPendingScene {
+    const os2::Scene next = *gPendingScene;
+    const size_t used = gStepsUsed;
+    gPendingScene.reset();
+    const std::vector<std::string> args = os2::sceneArguments(processArguments(), next, headless() ? used : 0);
+    const CFTimeInterval start = CACurrentMediaTime();
+    unloadScene();
+    setSceneArguments(args);
+    [_viewDelegate resetRenderer:_view];
+    std::string line;
+    for (size_t i = 1; i < args.size(); ++i)
+        line += " " + args[i];
+    std::printf("opensims2: scene switch (%.2f s to unload):%s\n", CACurrentMediaTime() - start, line.c_str());
+    std::fflush(stdout);
+}
+
+// With a window: the scene asked for, in place of this one.
+- (void)switchScene {
+    if (!gPendingScene)
+        return;
+    _view.delegate = nil; // no frames while the scenes change
+    [self applyPendingScene];
+    try {
+        [self loadScene];
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: %s\n", e.what());
+        NSAlert* alert = [[NSAlert alloc] init];
+        alert.messageText = @"opensims2 could not load the scene";
+        alert.informativeText = [NSString stringWithUTF8String:e.what()];
+        [alert runModal];
+        os2::Scene menu;
+        menu.kind = os2::Scene::Kind::MainMenu;
+        gPendingScene = menu;
+        [self applyPendingScene];
+        [self loadScene];
+    }
+    _view.delegate = _viewDelegate;
+    [_window makeFirstResponder:_view];
+}
+
+// Renders the current scene offscreen at 1280x720 and saves it.
+- (void)captureScene:(const std::string&)file {
+    const uint32_t w = 1280, h = 720;
+    _view.camera->setViewport(float(w), float(h));
+    _view.camera->snap();
+    if (gSimulation)
+        poseActors(*_viewDelegate.renderer, gHeadlessClock);
+    const os2::FrameView fv{_view.camera->view(), _view.camera->projection(float(w) / float(h))};
+    const MTLClearColor c = _view.clearColor;
+    const auto img = _viewDelegate.renderer->capture(w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), 1));
+    os2::writePng(file, img);
+    std::printf("opensims2: wrote %s\n", file.c_str());
+    std::fflush(stdout);
+}
+
+// --menu (or no scene flag): the main menu, which chooses the neighborhood
+// (app/main_menu.hpp). Headless: --menu-select <i> opens the preview of
+// neighborhood i, and the steps click it.
+- (void)startMainMenu:(const os2::Scene&)scene {
+    if (!_introPlayed) {
+        _introPlayed = true;
+        if (gIntroMovies && !headless())
+            gIntroMovies();
+    }
+    os2::Renderer& renderer = *_viewDelegate.renderer;
+    renderer.hideTestScene();
+    [_view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
+    gCamera = _view.camera;
+    std::vector<fs::path> dirs;
+    for (const auto& prefix : gUser->shipped())
+        if (prefix != "Tutorial")
+            dirs.push_back(gUser->neighborhoodForReading(prefix));
+    gMenu = std::make_unique<os2::MainMenu>(*gIndex, gameDir() / "TSData/Res", os2::readMainMenuHoods(dirs),
+                                            scene.fromNeighborhood);
+    gMenu->attach((__bridge MTL::Device*)_view.device, uint32_t(_view.colorPixelFormat),
+                  uint32_t(_view.depthStencilPixelFormat));
+    renderer.setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
+        if (gMenu)
+            gMenu->encode(enc, w, h, gUiScale);
+    });
+    _view.clearColor = MTLClearColorMake(0, 0, 0, 1);
+    _window.title = @"opensims2";
+    const float w = 1280, h = 720;
+    gMenu->setCanvas(int(w), int(h));
+    for (size_t i = 0; i < dirs.size(); ++i) {
+        const auto r = gMenu->thumbnailRect(int(i));
+        std::printf("opensims2: main menu: %s at (%.0f, %.0f)-(%.0f, %.0f)\n", dirs[i].filename().string().c_str(),
+                    r[0], r[1], r[2], r[3]);
+    }
+    if (!gMenu->ok())
+        std::fprintf(stderr, "opensims2: main menu: scripts missing\n");
+    if (!headless())
+        return;
+    if (auto sel = argument(@"--menu-select"))
+        gMenu->preview(std::stoi(*sel));
+    const auto steps = os2::flowSteps(processArguments());
+    for (size_t k = 0; k < steps.size() && !gPendingScene && !gQuitRequested; ++k) {
+        gStepsUsed = k + 1;
+        if (steps[k].kind == os2::FlowStep::Kind::Click)
+            pressMainMenu(simd_make_float2(steps[k].x, steps[k].y), w, h);
+    }
+    if (gPendingScene)
+        return;
+    [self captureScene:*argument(@"--screenshot")];
+    std::exit(0);
+}
+
+// A lot (--lot, or --hood <N> --hood-lot <id>), or the test objects and Sims.
+- (void)startLot {
+    OS2View* view = _view;
+    [view setCamera:std::make_unique<os2::LotCamera>(loadLiveCamera())];
+    gCamera = view.camera;
+    os2::ResourceIndex& index = *gIndex;
+    { // (indented as it was inside the start-up's try block)
         const simd_float3 objects = loadObjects(*_viewDelegate.renderer, index);
         perfLap("loadObjects");
         const auto skinned = loadSkinned(*_viewDelegate.renderer, index);
@@ -1996,6 +2535,9 @@ int cameraSlot(unsigned short key) {
             if (gBuild)
                 gBuild->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                                uint32_t(view.depthStencilPixelFormat));
+            if (gOptions)
+                gOptions->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                                 uint32_t(view.depthStencilPixelFormat));
             _viewDelegate.renderer->setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
                 if (gUi)
                     gUi->encode(enc, w, h);
@@ -2003,6 +2545,8 @@ int cameraSlot(unsigned short key) {
                     gBuy->encode(enc, w, h, gUiScale);
                 if (gBuild)
                     gBuild->encode(enc, w, h, gUiScale);
+                if (gOptions) // under the puck, as Buy mode's panel
+                    gOptions->encode(enc, w, h, gUiScale);
                 if (gLive)
                     gLive->encode(enc, w, h, gUiScale);
                 gPie->encode(enc, w, h, gUiScale);
@@ -2032,21 +2576,32 @@ int cameraSlot(unsigned short key) {
                 if (argument(@"--pie-select") && argument(@"--run-vm"))
                     gPie->close();
             }
-            NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
-            for (NSUInteger i = 1; i + 1 < args.count; ++i) {
-                float clickX, clickY;
+            // The --click / --right-click / --wait steps, in order (app/game_flow.hpp):
+            // a step that leaves the lot leaves the rest to the next scene.
+            const auto steps = os2::flowSteps(processArguments());
+            for (size_t k = 0; k < steps.size() && !gPendingScene && !gQuitRequested; ++k) {
+                gStepsUsed = k + 1;
+                const os2::FlowStep& st = steps[k];
+                if (st.kind == os2::FlowStep::Kind::Wait) {
+                    runTicksHeadless(st.ticks);
+                    pollFlowDialog();
+                    continue;
+                }
+                const float clickX = st.x, clickY = st.y;
                 // --right-click x,y: the right button (the live panel's thumbnails follow a Sim).
-                const bool right = [args[i] isEqualToString:@"--right-click"];
-                if ((![args[i] isEqualToString:@"--click"] && !right) ||
-                    std::sscanf(args[i + 1].UTF8String, "%f,%f", &clickX, &clickY) != 2)
-                    continue;
+                const bool right = st.kind == os2::FlowStep::Kind::RightClick;
                 const simd_float2 p = simd_make_float2(clickX, clickY);
-                if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p))
+                gPie->setCanvas(int(cw), int(ch));
+                if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p)) {
+                    pollFlowDialog();
                     continue;
+                }
                 if (gLive && !right) {
                     gLive->setCanvas(int(cw), int(ch));
-                    if (gLive->overModeButton(p) && gLive->press(p))
+                    if (gLive->overModeButton(p) && gLive->press(p)) {
+                        gLive->screen(int(cw), int(ch)); // no frame lays it out again before the next step
                         continue;
+                    }
                 }
                 if (gBuy && gBuy->active()) {
                     gBuy->setCanvas(int(cw), int(ch));
@@ -2060,9 +2615,15 @@ int cameraSlot(unsigned short key) {
                 }
                 if (gLive) {
                     gLive->setCanvas(int(cw), int(ch));
-                    if (gLive->press(p, right) || right)
+                    if (gLive->press(p, right) || right) {
+                        gLive->screen(int(cw), int(ch)); // no frame lays it out again before the next step
+                        if (gOptions && !gLive->optionsOpen())
+                            gOptions->closeWindow();
                         continue;
+                    }
                 }
+                if (pressOptions(p, cw, ch)) // under the puck
+                    continue;
                 const simd_float4x4 m = simd_mul(view.camera->projection(cw / ch), view.camera->view());
                 const simd_float4 q =
                     simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / cw - 1, 1 - 2 * p.y / ch, 0.5f, 1));
@@ -2073,8 +2634,8 @@ int cameraSlot(unsigned short key) {
                             o && o->definition ? o->definition->fileName.c_str() : "nothing");
                 if (id && !gPie->open(id, p))
                     std::printf("opensims2: object %d: no interactions available\n", id);
-                for (size_t k = 0; k < gPie->entries().size(); ++k)
-                    std::printf("opensims2: pie [%zu] %s\n", k, gPie->entries()[k].name.c_str());
+                for (size_t e = 0; e < gPie->entries().size(); ++e)
+                    std::printf("opensims2: pie [%zu] %s\n", e, gPie->entries()[e].name.c_str());
             }
             // --ui-hover x,y: the mouse over the live panel (a queue icon's name).
             float hx, hy;
@@ -2104,18 +2665,21 @@ int cameraSlot(unsigned short key) {
                                                        : gLotSims.front().id;
             startCinematic(cine->substr(0, at), id, 0);
         }
+        if (gPendingScene)
+            return; // headless: the steps left the lot (runScenes loads the next scene)
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
         if (auto shot = argument(@"--screenshot")) {
+            const double base = gHeadlessClock; // after the --wait steps
             // --run-vm <ticks>: the moment after that many VM ticks; --frames
             // <n>: n shots spread up to it (out-1.png ... out-n.png).
             const auto runVm = argument(@"--run-vm");
             const double time = std::stod(argument(@"--time").value_or(
                 runVm ? std::to_string(std::stod(*runVm) / os2::LotSimulation::kTicksPerSecond) : std::string("0")));
             const int frames = std::max(1, std::stoi(argument(@"--frames").value_or("1")));
-            poseActors(*_viewDelegate.renderer, 0);
+            poseActors(*_viewDelegate.renderer, base);
             std::vector<simd_float2> dialogClicks;
             size_t dialogClick = 0;
-            NSArray<NSString*>* shotArgs = NSProcessInfo.processInfo.arguments;
+            NSArray<NSString*>* shotArgs = sceneArgs();
             for (NSUInteger i = 1; i + 1 < shotArgs.count; ++i) {
                 float x, y;
                 if ([shotArgs[i] isEqualToString:@"--dialog-click"] && std::sscanf(shotArgs[i + 1].UTF8String, "%f,%f", &x, &y) == 2)
@@ -2127,28 +2691,28 @@ int cameraSlot(unsigned short key) {
                 const double at = time * f / frames;
                 // The VM in small steps, so that the Sims' turning is followed.
                 for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30) {
-                    const double scene = gSimulation->update(t); // the scene clock (game speed)
+                    const double scene = gSimulation->update(base + t); // the scene clock (game speed)
                     // The lights follow the VM clock as in a live run (the
                     // day/night switch and its crossfade start when the clock gets there).
                     if (gLighting && gSimulation->ticks() % 30 == 0)
                         gLighting->update(scene);
                     if (gLive)
-                        gLive->tick(t);
+                        gLive->tick(base + t);
                     // --dialog-click x,y (repeatable): clicks, in turn, each dialog that opens.
                     if (gPie && gPie->dialogOpen() && dialogClick < dialogClicks.size()) {
                         gPie->setCanvas(int(shotW), int(shotH));
                         gPie->click(dialogClicks[dialogClick++]);
                     }
                     if (gAudio) {
-                        updateAudio(t);
-                        gAudio->renderOffline(t);
+                        updateAudio(base + t);
+                        gAudio->renderOffline(base + t);
                     }
                 }
                 const CFTimeInterval simmed = CACurrentMediaTime();
                 followSelectedSim();
                 view.camera->setViewport(float(shotW), float(shotH));
                 view.camera->snap();
-                poseActors(*_viewDelegate.renderer, at);
+                poseActors(*_viewDelegate.renderer, base + at);
                 _viewDelegate.renderer->setTime(at); // texture animations
                 const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;
                 const os2::FrameView fv = cinematicView({view.camera->view(), view.camera->projection(float(w) / float(h))}, at,
@@ -2173,7 +2737,7 @@ int cameraSlot(unsigned short key) {
                             "worst frame %.1f ms\n",
                             frames, perfSim / frames * 1000, perfCapture / frames * 1000, perfWorst * 1000);
             if (gAudio) {
-                gAudio->renderOffline(time);
+                gAudio->renderOffline(base + time);
                 std::printf("opensims2: sound: %s\n", gAudio->summary().c_str());
                 if (auto mix = argument(@"--sound-mix"))
                     gAudio->writeMix(*mix);
@@ -2181,34 +2745,31 @@ int cameraSlot(unsigned short key) {
             std::fflush(stdout);
             std::exit(0);
         }
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "opensims2: %s\n", e.what());
-        if (argument(@"--screenshot"))
-            std::exit(1); // no one to show an alert to
-        NSAlert* alert = [[NSAlert alloc] init];
-        alert.messageText = @"opensims2 could not start";
-        alert.informativeText = [NSString stringWithUTF8String:e.what()];
-        [alert runModal];
-        [NSApp terminate:nil];
-        return;
     }
-    view.delegate = _viewDelegate;
-
-    _window.contentView = view;
-    [_window center];
-    _window.acceptsMouseMovedEvents = YES;
-    [_window makeKeyAndOrderFront:nil];
-    [_window makeFirstResponder:view];
-    [NSApp activateIgnoringOtherApps:YES];
 }
 
 // --hood <N>: the neighborhood view (app/hood_mode.hpp); with --screenshot
-// renders one frame and quits.
+// runs the steps (clicks on lots and the dialog), then renders one frame and quits.
 - (void)startHood:(OS2View*)view query:(const std::string&)query {
     os2::Renderer& renderer = *_viewDelegate.renderer;
     gHood = std::make_unique<os2::HoodMode>(renderer, *gIndex, gameDir(), query, processArguments());
     for (const auto& line : gHood->view().report())
         std::printf("opensims2: %s\n", line.c_str());
+    // Entering a lot and the main menu switch scenes in place (app/game_flow.hpp).
+    gHood->onEnterLot = [](const os2::HoodLot& lot) {
+        os2::Scene next;
+        next.kind = os2::Scene::Kind::Lot;
+        next.hood = os2::sceneOf(processArguments()).hood;
+        next.lot = lot.id;
+        requestScene(next);
+    };
+    gHood->onMainMenu = [] {
+        os2::Scene next;
+        next.kind = os2::Scene::Kind::MainMenu;
+        next.fromNeighborhood = true;
+        next.returnHood = os2::sceneOf(processArguments()).hood;
+        requestScene(next);
+    };
     [view setCamera:gHood->makeCamera()];
     gCamera = view.camera;
     view.clearColor = MTLClearColorMake(0.42, 0.55, 0.72, 1.0);
@@ -2220,30 +2781,36 @@ int cameraSlot(unsigned short key) {
     gHood->ui().attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                        uint32_t(view.depthStencilPixelFormat));
     renderer.setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
-        gHood->ui().encode(enc, w, h, gUiScale);
+        if (gHood)
+            gHood->ui().encode(enc, w, h, gUiScale);
     });
+    _window.title = [NSString stringWithUTF8String:("opensims2 - " + gHood->view().displayName()).c_str()];
     std::fflush(stdout);
     if (auto shot = argument(@"--screenshot")) {
         const uint32_t w = 1280, h = 720;
         view.camera->setViewport(float(w), float(h));
         gHood->scriptedView(*view.camera, float(w), float(h));
         view.camera->snap();
-        const os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
-        MTLClearColor c = view.clearColor;
-        const auto img = renderer.capture(w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), 1));
-        os2::writePng(*shot, img);
-        std::printf("opensims2: wrote %s\n", shot->c_str());
-        std::fflush(stdout);
+        // Where the lots are on the 1280x720 canvas, for click steps.
+        const simd_float4x4 m = simd_mul(view.camera->projection(float(w) / float(h)), view.camera->view());
+        for (const auto& lot : gHood->view().lots()) {
+            const simd_float3 c = gHood->view().lotCentre(lot);
+            const simd_float4 q = simd_mul(m, simd_make_float4(c, 1));
+            const float x = (q.x / q.w + 1) / 2 * float(w), y = (1 - q.y / q.w) / 2 * float(h);
+            if (q.w > 0 && x >= 0 && x < float(w) && y >= 0 && y < float(h))
+                std::printf("opensims2: lot %u \"%s\" at (%.0f, %.0f)\n", lot.id, lot.name.c_str(), x, y);
+        }
+        const auto steps = os2::flowSteps(processArguments());
+        for (size_t k = 0; k < steps.size() && !gPendingScene && !gQuitRequested; ++k) {
+            gStepsUsed = k + 1;
+            if (steps[k].kind == os2::FlowStep::Kind::Click)
+                gHood->mouseDown(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+        }
+        if (gPendingScene)
+            return;
+        [self captureScene:*shot];
         std::exit(0);
     }
-    view.delegate = _viewDelegate;
-    _window.contentView = view;
-    _window.title = [NSString stringWithUTF8String:("opensims2 - " + gHood->view().displayName()).c_str()];
-    [_window center];
-    _window.acceptsMouseMovedEvents = YES;
-    [_window makeKeyAndOrderFront:nil];
-    [_window makeFirstResponder:view];
-    [NSApp activateIgnoringOtherApps:YES];
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)app {

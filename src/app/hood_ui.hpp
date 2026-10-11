@@ -21,8 +21,8 @@
 //
 // Which popup the game shows on hover and how it places it are inferred
 // (the window procedures are not decoded); the dialog is centred. Buttons
-// other than Enter Lot and Close do nothing yet, except the puck's zoom and
-// rotate buttons (the camera's). The lot's value (hover
+// other than Enter Lot, Close and the chooser's Main Menu (0x2) do nothing yet,
+// except the puck's zoom and rotate buttons (the camera's). The lot's value (hover
 // popup) and the family's net worth (dialog) come from the lot file's SIMI.
 
 #include "formats/image.hpp"
@@ -64,7 +64,7 @@ public:
     void openLot(const HoodLot* lot);
     const HoodLot* dialogLot() const { return dialog_; }
 
-    enum class Action { None, Consumed, EnterLot, Close, ZoomIn, ZoomOut, RotateLeft, RotateRight };
+    enum class Action { None, Consumed, EnterLot, Close, ZoomIn, ZoomOut, RotateLeft, RotateRight, MainMenu };
     // A left click (canvas pixels): on the dialog or the HUD it is the UI's.
     Action press(simd_float2 p);
     void hover(simd_float2 p);

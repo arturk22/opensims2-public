@@ -162,6 +162,8 @@ if(APPLE)
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
   add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp)
+  # The game flow: main menu, user folder, in-game save, options (app/game_flow.hpp).
+  target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/options_panel.cpp)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
@@ -273,6 +275,9 @@ add_test(NAME sound COMMAND test_sound)
 add_executable(test_camera_input tests/test_camera_input.cpp src/app/camera_input.cpp)
 target_include_directories(test_camera_input PRIVATE src)
 add_test(NAME camera_input COMMAND test_camera_input)
+add_executable(test_game_flow tests/test_game_flow.cpp src/app/game_flow.cpp src/app/user_data.cpp)
+target_include_directories(test_game_flow PRIVATE src)
+add_test(NAME game_flow COMMAND test_game_flow)
 add_executable(test_hood_terrain tests/test_hood_terrain.cpp)
 target_link_libraries(test_hood_terrain PRIVATE os2_formats)
 add_test(NAME hood_terrain COMMAND test_hood_terrain)

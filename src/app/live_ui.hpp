@@ -123,9 +123,12 @@ public:
     // The options panel (puck button 4, script 0x49060001: the lot's
     // cTSWinProcPanelOptions): "Vizinhança" leaves the lot for the
     // neighborhood (only shown when setCanLeave(true): the lot came from
-    // one), "Sair" quits. The graphics, audio, game and camera options,
-    // Save and the credits are not wired.
-    std::function<void()> onNeighborhood, onQuit;
+    // one), "Sair" quits, "Salvar" saves (onSave), the audio and game
+    // options buttons open their windows (onOptionWindow: 1 audio, 2 game;
+    // app/options_panel.hpp). The graphics and camera options and the
+    // credits are not wired.
+    std::function<void()> onNeighborhood, onQuit, onSave;
+    std::function<void(int)> onOptionWindow;
     void setCanLeave(bool can) { canLeave_ = can, dirty_ = true; }
     bool optionsOpen() const { return optionsOpen_; }
     // The puck's floor buttons ("Subir um Andar (Page Up)" 0x2001, "Descer
