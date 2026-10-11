@@ -42,7 +42,7 @@ Exit refresh(Context& c) {
     if (who == 1 && !c.vm.object(c.frame.stackObject))
         throw gameError(err::NoStackObject, "Refresh");
     if (who > 1 || le16(&o[2]) >= 3)
-        throw gameError(0x03, "Refresh");
+        throw gameError(err::BadUpdateParameter, "Refresh");
     return Exit::True;
 }
 

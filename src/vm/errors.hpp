@@ -13,11 +13,13 @@
 namespace os2::vm {
 
 namespace err {
+constexpr uint16_t BadUpdateParameter = 0x03;
 constexpr uint16_t RandomRangeZero = 0x04;
 constexpr uint16_t NotSupported = 0x05;
 constexpr uint16_t StackNumberOutOfRange = 0x08;
 constexpr uint16_t IllegalOwner = 0x09;
 constexpr uint16_t NoTreeParameter = 0x0A;
+constexpr uint16_t FlagOutOfRange = 0x0D;
 constexpr uint16_t ReadOnly = 0x13;
 constexpr uint16_t ValueOutOfRange = 0x14;
 constexpr uint16_t NoStackObject = 0x15;
@@ -28,6 +30,7 @@ constexpr uint16_t NotAPerson = 0x1C;
 constexpr uint16_t BadSearchType = 0x1E;
 constexpr uint16_t NoTreeTable = 0x1F;
 constexpr uint16_t BadPriority = 0x2D; // no text in the game's table
+constexpr uint16_t InvalidGlobalSimCall = 0x2A;
 constexpr uint16_t InvalidObjectId = 0x32;
 constexpr uint16_t LocalOutOfRange = 0x33;
 constexpr uint16_t MoreThanOnePassingValue = 0x36;
@@ -46,11 +49,13 @@ constexpr uint16_t TemplateObject = 0x90;
 
 inline std::string errorString(uint16_t code) {
     switch (code) {
+    case 0x03: return "Bad parameter to update primitive.";
     case 0x04: return "Random number range evaluated to zero.";
     case 0x05: return "Primitive not supported for this type of object.";
     case 0x08: return "Stack number out of range.";
     case 0x09: return "Illegal owner field in data reference.";
     case 0x0A: return "Reference to tree tree parameter when no parameter exists.";
+    case 0x0D: return "Flag reference is out of range.";
     case 0x13: return "Expression attempting to write in a read-only area.";
     case 0x14: return "Data value out of range.";
     case 0x15: return "No stack object present when required.";
@@ -60,6 +65,7 @@ inline std::string errorString(uint16_t code) {
     case 0x1C: return "Object referred to must be a person.";
     case 0x1E: return "Search type is invalid. Types are 0: all motive, 1:mental motives, 2:physical motives.";
     case 0x1F: return "Tree table not found";
+    case 0x2A: return "Invalid global sim call.";
     case 0x32: return "Invalid object id.";
     case 0x33: return "Local out of range.";
     case 0x36: return "More than one passing value specified.";

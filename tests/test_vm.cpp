@@ -281,9 +281,9 @@ static void testYieldAndErrors() {
     t = fx.run(0x1FFF);
     check(t.status == Thread::Status::Failed, "missing tree fails");
 
-    fx.code.add(kObjGroup, 0x1006, tree({expr(0x0D, 0, Assign, Lit, 1, T, E)}));
+    fx.code.add(kObjGroup, 0x1006, tree({expr(0x7F, 0, Assign, Lit, 1, T, E)}));
     t = fx.run(0x1006);
-    check(t.status == Thread::Status::Failed && fx.vm.missingOwners[0x0D] == 1, "missing data owner fails");
+    check(t.status == Thread::Status::Failed && fx.vm.missingOwners[0x7F] == 1, "missing data owner fails");
 }
 
 static uint8_t lo(uint32_t v, int byte) { return uint8_t(v >> (8 * byte)); }
@@ -707,9 +707,9 @@ static void testGenericSimsCall() {
                       call(25, go(14)),                                   // selected Sim := 2
                       call(48, E, go(15)),                                // no remapped IDs
                       call(52, E, go(16)),                                // wall in front: no world, no wall
-                      call(12, T)}));                                     // not implemented
+                      call(60, T)}));                                     // no such call
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Failed && t.error.find("12 not implemented") != std::string::npos &&
+    check(t.status == Thread::Status::Failed && t.error.find("Invalid global sim call.") != std::string::npos &&
               fx.vm.engineRequests.size() == 1 && fx.vm.engineRequests[0].call == 39 &&
               sim.person->data[persondata::FamilyNumber] == 3 && fx.vm.neighbors[5].personData[persondata::FamilyNumber] == 0 &&
               fx.vm.neighbors[6].personData[persondata::FamilyNumber] == 4 && !fx.vm.buildBuyEnabled &&

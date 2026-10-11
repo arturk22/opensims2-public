@@ -1030,9 +1030,12 @@ Exit changeMaterial(Context& c) {
 //     Tokens - Copy Global to Local"; "Move Invitees from Local to Global" walks
 //     the source by index while doing it, so the source keeps its token)
 // Token indices start at 1: the loops over an inventory run from 1 to the count,
-// or from the count down to 1. Not understood: bits 0x08 and 0x10 of byte 0
-// (0x08 with counted adds, 0x18 on memory and aspiration finds), and counted
-// tokens beyond add and count.
+// or from the count down to 1. Counted tokens (byte 0 & 0x04) add to the
+// count of their GUID (0); the other operations work on the counted list as
+// on the singular one (inferred: "Sleep - Outfit - Choose by Routine" and
+// "Dance - Get Dance Type" read them with 6, "Interaction - Dump Shopping
+// Stuff" removes them with 2). Not understood: bits 0x08 and 0x10 of byte 0 (0x08 with counted
+// adds, 0x18 on memory and aspiration finds).
 Exit manageInventory(Context& c) {
     const auto& o = c.instruction.operands;
     const auto kind = InventoryKind(o[0] & 0x03);
@@ -1075,7 +1078,7 @@ Exit manageInventory(Context& c) {
         }
         case 10: set2(int16_t(tokens.size())); return Exit::True;
         default:
-            throw VMError("Manage Inventory: counted operation " + std::to_string(op) + " not implemented");
+            break; // the others work on the counted list as on the singular one (inferred)
         }
     }
 
@@ -1127,7 +1130,8 @@ Exit manageInventory(Context& c) {
             return Exit::False;
         if (index != start)
             set1(index);
-        temp = {.token = tokens[size_t(index) - 1], .loaded = true, .kind = kind, .inventoryId = id, .index = index};
+        temp = {.token = tokens[size_t(index) - 1], .loaded = true, .kind = kind, .inventoryId = id, .counted = counted,
+                .index = index};
         return Exit::True;
     }
     case 7:
@@ -1180,7 +1184,13 @@ Exit manageInventory(Context& c) {
 // labels). Those that need the neighborhood are in hood_bridge.cpp; the rest
 // need the camera or the world.
 Exit genericSimsCall(Context& c) {
-    const uint8_t call = c.instruction.operands[0];
+    // The call is the u16 at 0 (GenericSimCallParam); one the game does not
+    // know is its error 0x2A (Mac binary: "Function - Main" of two objects
+    // passes 0xFFFF).
+    const uint16_t call16 = le16(&c.instruction.operands[0]);
+    if (call16 > 53)
+        throw gameError(err::InvalidGlobalSimCall, std::to_string(call16));
+    const auto call = uint8_t(call16);
     auto& temps = c.thread.temps;
     auto& vm = c.vm;
     auto request = [&] {
@@ -1273,6 +1283,12 @@ Exit genericSimsCall(Context& c) {
     case 40: vm.gameStateTransitionsEnabled = temps[0] != 0; return Exit::True;
     case 13: // abort the interactions of the stack object: waiting ones are removed, running ones cancelled
         cancelInteractionsWith(vm, c.frame.stackObject);
+        return Exit::True;
+    case 12: // distance to the camera in temp 0: the binary asks the stack object (no stack object:
+             // error 0x0A); there is no camera here, so the distance is 0 (inferred)
+        if (!vm.object(c.frame.stackObject))
+            throw gameError(err::NoTreeParameter, "Generic Sims Call 12");
+        temps[0] = 0;
         return Exit::True;
     case 48: return Exit::False;
     case 49: // can change footprint (to the footprint index in temp 0) without intersecting another object's?

@@ -389,6 +389,16 @@ static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     case 0x08: return &slot(t.temps, data, "temp");
     case 0x09: return &slot(c.frame.params, data, "param");
     case 0x0B: return &slot(t.temps, slot(t.temps, data, "temp"), "temp[temp]");
+    case 0x0D: { // stack object's temps: the temps belong to the object in the game (cTSObject +0x8A),
+                 // here to its thread: the running one if it is me, else its Main's
+        const ObjectId so = c.stackObject().id;
+        if (so == t.me)
+            return &slot(t.temps, data, "stack object temp");
+        auto it = c.vm.threads.find(so);
+        if (it == c.vm.threads.end())
+            throw VMError("stack object " + std::to_string(so) + " has no thread for its temps");
+        return &slot(it->second.temps, data, "stack object temp");
+    }
     case 0x0C: return &slot(t.adRange, data, "check tree ad range");
     case 0x1C: return &slot(t.adPersonality, data, "check tree ad personality var");
     case 0x1D: return &slot(t.adMin, data, "check tree ad min");
@@ -502,6 +512,15 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
     case 0x33: return definitionField(masterDefinitionOf(vm, stackObject()), data);
     case 0x17: { // room [temp 0]
         auto it = vm.rooms.find(thread.temps[0]);
+        // Room 0 is a tile that no room covers (fence lamps stand on such
+        // tiles; "Is Objects's Room Outside?" asks about it): outside, with
+        // nothing else known to be there (inferred; 370 failures in lot-run).
+        if (it == vm.rooms.end() && thread.temps[0] == 0) {
+            if (data == 1)
+                return 1;
+            if (data >= 0 && size_t(data) < VM::kRoomValueCount)
+                return 0;
+        }
         if (it == vm.rooms.end())
             throw VMError("room " + std::to_string(thread.temps[0]) + " does not exist");
         const int16_t& v = slot(it->second.values, data, "room value");

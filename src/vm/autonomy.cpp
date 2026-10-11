@@ -1,5 +1,6 @@
 // Find Best Interaction (0x03) and Gosub Found Action (0x1E): autonomy.hpp.
 
+#include "errors.hpp"
 #include "engine.hpp"
 #include "autonomy.hpp"
 
@@ -293,15 +294,21 @@ Exit findBestInteraction(Context& c) {
 }
 
 // Gosub Found Action (0x1E): u16 at 0 (STR# 0x1FE): 0 the action Find Best
-// Interaction found; 1-3 (interrupt, reaction, top user action) are not
-// done. The interaction becomes the Sim's current one (autonomous priority,
-// first in its queue) and its action tree runs on top of this tree; the
+// Interaction found; 1-3 (interrupt, reaction, top user action) are false.
+// The interaction becomes the Sim's current one (autonomous priority, first
+// in its queue) and its action tree runs on top of this tree; the
 // instruction branches on what it returns.
 Exit gosubFoundAction(Context& c) {
     const auto& o = c.instruction.operands;
-    const uint16_t mode = le16(&o[0]);
+    // cTSPerson::TryGosubAction: no stack object is error 0x15; modes 1-3
+    // (interrupt, reaction, top user action) return a code the binary does
+    // nothing else with (-1; taken as false; no tree of the base game uses
+    // them); others are error 0x0D.
+    const auto mode = int16_t(le16(&o[0]));
+    if (mode < 0 || mode > 3)
+        throw gameError(err::FlagOutOfRange, "Gosub Found Action mode " + std::to_string(mode));
     if (mode != 0)
-        throw VMError("Gosub Found Action: mode " + std::to_string(mode) + " not implemented");
+        return Exit::False;
     Object& sim = c.me();
     if (!sim.person)
         throw VMError("Gosub Found Action: object " + std::to_string(sim.id) + " is not a person");
