@@ -914,6 +914,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x33, manageInventory);
     vm.setPrimitive(0x6D, changeMaterial);
     vm.setPrimitive(0x76, arrayOperation);
+    registerRoutingPrimitives(vm);
 }
 
 } // namespace os2::vm

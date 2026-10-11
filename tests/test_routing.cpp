@@ -207,7 +207,153 @@ static void testRoutingGoals() {
     check(g.goals.size() == 1 && g.onTarget && g.facings[0] == 2, "a bone slot is on the object, facing its way");
 }
 
+static ObjectDefinition definition(uint32_t guid, uint16_t slotsId = 0, bool person = false) {
+    ObjectDefinition def;
+    def.fields.resize(60);
+    def.fields[(0x5C - 0x44) / 2] = uint16_t(guid);
+    def.fields[(0x5E - 0x44) / 2] = uint16_t(guid >> 16);
+    def.fields[(0x68 - 0x44) / 2] = slotsId;
+    if (person)
+        def.fields[(0x52 - 0x44) / 2] = kObjectTypePerson;
+    return def;
+}
+
+// A Sim walks to an object over ticks at walking speed, around a wall, and
+// ends facing it; a goal it cannot reach is false; out of the world is the
+// game's error.
+static void testWalking() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(12, 12);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0x80));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Slots table;
+    table.slots.resize(3);
+    table.slots[0].type = 0; // a container slot
+    table.slots[1].type = 3; // routing slot 0: in front, 1 tile
+    table.slots[1].flags = 0x01;
+    table.slots[1].minDistance = table.slots[1].maxDistance = table.slots[1].optimalDistance = 1;
+    table.slots[1].facing = -2;
+    table.slots[2].type = 3; // routing slot 1: on the object (a bone, in the game)
+    table.slots[2].facing = -2;
+    code.add(kGroup, 0x80, table);
+    Object& chair = vm.instantiate(kGroup, 0x80);
+    chair.position = {8.5f, 2.5f, 1};
+    chair.data[objdata::Direction] = 4; // faces +X: its front is (9, 2)
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {1.5f, 2.5f, 1};
+    vm.world->addWall(1, 5, 0, 5, 6); // in the way up to y = 6
+    // Go To Routing Slot, literal slot 0.
+    code.add(kGroup, 0x1000, tree({instr(0x2D, T, F, {0, 0, 1, 0, 0})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, chair.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Running && sim.route && sim.position.x > 1.5f, "walking yields");
+    int ticks = 1;
+    while (t.status == Thread::Status::Running && ticks < 2000)
+        vm.run(t), ++ticks;
+    const float walked = 2 * (6 - 2.5f) + 9.5f - 1.5f; // up past the wall's end and back down, roughly
+    check(t.status == Thread::Status::Finished && t.result && !sim.route, "the walk ends true");
+    check(std::fabs(sim.position.x - 9.5f) < 1e-4f && std::fabs(sim.position.y - 2.5f) < 1e-4f &&
+              sim.data[objdata::Direction] == 0,
+          "in front of the chair, facing it");
+    check(ticks > int(walked / vm.walkTilesPerTick) * 0.8 && ticks < int(walked / vm.walkTilesPerTick) * 1.5,
+          "at walking speed");
+    // Routing slot 1 is on the chair itself, which does not block it.
+    code.add(kGroup, 0x1001, tree({instr(0x2D, T, F, {1, 0, 1, 0, 0})}));
+    t = vm.start(sim.id, 0x1001, {}, chair.id);
+    for (int i = 0; i < 100 && t.status == Thread::Status::Running; ++i)
+        vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && std::fabs(sim.position.x - 8.5f) < 1e-4f &&
+              sim.data[objdata::Direction] == 4,
+          "a slot on the object");
+    code.add(kGroup, 0x1002, tree({instr(0x2D, T, F, {7, 0, 1, 0, 0})}));
+    t = vm.start(sim.id, 0x1002, {}, chair.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Failed && t.error.find("Invalid routing slot") == 0, "missing routing slot");
+
+    // Go To Relative Position: behind the chair (location 4), any direction;
+    // walled in, it cannot get there.
+    sim.position = {1.5f, 9.5f, 1};
+    code.add(kGroup, 0x1003, tree({instr(0x1B, T, F, {0, 0, 4, 0xFF, 0, 0, 2})}));
+    t = vm.start(sim.id, 0x1003, {}, chair.id);
+    for (int i = 0; i < 1000 && t.status == Thread::Status::Running; ++i)
+        vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && std::fabs(sim.position.x - 7.5f) < 1e-4f &&
+              std::fabs(sim.position.y - 2.5f) < 1e-4f,
+          "Go To Relative Position behind");
+    for (int x = 0; x < 12; ++x)
+        vm.world->addWall(1, x, 8, x + 1, 8);
+    sim.position = {1.5f, 9.5f, 1};
+    t = vm.start(sim.id, 0x1003, {}, chair.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && !t.result, "no way there: false");
+    sim.position = {-1, -1, 1};
+    t = vm.start(sim.id, 0x1003, {}, chair.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Failed && t.error.find("out of world") != std::string::npos,
+          "routing out of the world");
+}
+
+// Snap Into puts an object in a containment slot; Find Location For places
+// objects near another one, or out of the world.
+static void testSnapAndPlace() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(8, 8);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0x80));
+    Slots table;
+    table.slots.resize(3);
+    table.slots[1].type = 3; // containers: slots 0 and 2 of the table, numbered 0 and 1
+    code.add(kGroup, 0x80, table);
+    Object& counter = vm.instantiate(kGroup, 0x80);
+    counter.position = {3.5f, 3.5f, 1};
+    Object& plate = place(vm, 6, 6);
+    Object& cup = place(vm, 6, 5);
+    // Snap the stack object (plate) into me (counter), slot 1; then the cup into the same slot.
+    code.add(kGroup, 0x1000, tree({instr(0x71, T, F, {StackId, 0, 0, Data, 11, 0, 1, 0, 0, 0})}));
+    Thread t = vm.start(counter.id, 0x1000, {}, plate.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && vm.containedIn(counter.id, 1) == plate.id &&
+              plate.position.x == 3.5f,
+          "Snap Into a slot");
+    t = vm.start(counter.id, 0x1000, {}, cup.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && !t.result, "the slot is taken");
+    code.add(kGroup, 0x1001, tree({expr(Temp, 0, Assign, Lit, 2, go(1), E),
+                                   instr(0x71, T, F, {StackId, 0, 0, Data, 11, 0, 0, 0, 0, 1})}));
+    t = vm.start(counter.id, 0x1001, {}, cup.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Failed && t.error.find("Slot number out of range") == 0, "slot from temp 0");
+
+    // Find Location For, normal: the cup next to the counter (whose tile is taken).
+    code.add(kGroup, 0x1002, tree({instr(0x10, T, F, {0, 0, 0})}));
+    cup.data[objdata::ContainerId] = 0;
+    t = vm.start(counter.id, 0x1002, {}, cup.id);
+    vm.run(t);
+    const TilePos at = VM::tileOf(cup);
+    check(t.status == Thread::Status::Finished && t.result && std::max(std::abs(at.x - 3), std::abs(at.y - 3)) == 1,
+          "Find Location For next to the reference");
+    // Out of world.
+    code.add(kGroup, 0x1003, tree({instr(0x10, T, F, {1, 0, 0})}));
+    t = vm.start(counter.id, 0x1003, {}, cup.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && !cup.position.inWorld(), "Find Location For out of world");
+    // Explicit objects (flag 0x08): the plate (local 0) near the cup's... the
+    // counter (me), along its vector (mode 3): in front of it first.
+    counter.data[objdata::Direction] = 2; // faces +Y
+    code.add(kGroup, 0x1004, tree({expr(Local, 0, Assign, Lit, plate.id, go(1), E),
+                                   instr(0x10, T, F, {3, 0, 8, 0, Local, 0, 0, Data, 11, 0})},
+                                  0, 1));
+    t = vm.start(counter.id, 0x1004, {}, 0);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && VM::tileOf(plate) == TilePos{3, 4, 1} &&
+              plate.data[objdata::ContainerId] == 0,
+          "Find Location For along the vector takes it out of its slot");
+}
+
 int main() {
+    testWalking();
+    testSnapAndPlace();
     testPathfinder();
     testRoutingGoals();
     testDirections();

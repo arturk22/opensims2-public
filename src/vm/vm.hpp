@@ -322,6 +322,23 @@ struct Object {
     // Interactions pushed onto this object (a Sim, usually), oldest first.
     std::vector<QueuedInteraction> queue;
     Position position;
+    // The route the object is walking (Go To Routing Slot, Go To Relative
+    // Position), while it walks: the points still ahead (the next first; tile
+    // centres, then the goal point) on its level, the facing at the end (-1:
+    // as it arrives) and the object it walks to. The instruction that walks
+    // it keeps yielding until the last point is reached; it is kept here for
+    // the renderer to animate the walk.
+    struct Route {
+        std::vector<std::array<float, 2>> points;
+        int level = 0;
+        int facing = -1;
+        ObjectId target = 0;
+        // The instruction walking it: its thread's stack depth, tree and node.
+        size_t depth = 0;
+        const Behavior* tree = nullptr;
+        uint16_t node = 0;
+    };
+    std::optional<Route> route;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
@@ -415,6 +432,10 @@ public:
     // (single trees, tests) positions mean nothing to the primitives that
     // need them, which then fail with the reason.
     std::optional<World> world;
+    // Walking speed in tiles per tick: 1.37 m/s, the speed of the adult walk
+    // animation, with a tile taken as a metre and a tick as 1/30 s (30 ticks
+    // a game minute, a game minute a second at normal speed; inferred).
+    float walkTilesPerTick = 1.37f / 30.0f;
     // The tile an object stands on (its position rounded down), whether or
     // not it is in the world.
     static TilePos tileOf(const Object& o) {
@@ -618,5 +639,7 @@ private:
 
 // Registers the primitives implemented so far.
 void registerPrimitives(VM& vm);
+// The primitives that place and move objects in the world (routing.cpp).
+void registerRoutingPrimitives(VM& vm);
 
 } // namespace os2::vm

@@ -476,9 +476,17 @@ vm::Object& standInPerson(vm::VM& machine, const StandIns& s) {
 
 // Starts a tree of `object` with a stand-in Sim: in the Sim's thread with the
 // object as the stack object for interactions, in the object's otherwise.
+// They stand in an empty 32x32 world, the object (every part of it) on tile
+// (10, 10) facing -X and the Sim two tiles in front of it, so the
+// primitives that place and move things have somewhere to work.
 vm::Thread startStandIn(vm::VM& machine, const StandIns& s, vm::Object& object, uint32_t group, uint16_t instance,
                         std::span<const int16_t> args, const Behavior& tree) {
     const vm::ObjectId sim = standInPerson(machine, s).id;
+    machine.world = vm::World(32, 32);
+    for (const auto& [id, o] : machine.objects()) {
+        vm::Object& x = *machine.object(id);
+        x.position = id == sim ? vm::Position{8.5f, 10.5f, 1} : vm::Position{10.5f, 10.5f, 1};
+    }
     if (isInteraction(s, group, instance, tree))
         return machine.start(sim, instance, args, object.id, object.id);
     return machine.start(object.id, instance, args, sim);
@@ -726,6 +734,9 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                     std::printf("(%.2f, %.2f, %d) dir %d in %d/%d; ", o->position.x, o->position.y, o->position.level,
                                 o->data[vm::objdata::Direction], o->data[vm::objdata::ContainerId],
                                 o->data[vm::objdata::SlotNumber]);
+                if (o && o->route && !o->route->points.empty())
+                    std::printf("walking to (%.2f, %.2f) for %d; ", o->route->points.back()[0],
+                                o->route->points.back()[1], o->route->target);
                 std::printf("init %s", initOf[e.id].c_str());
                 if (auto it = machine.threads.find(e.id); it != machine.threads.end())
                     std::printf("; main %s%s", it->second.status == vm::Thread::Status::Running ? "running"
