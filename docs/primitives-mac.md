@@ -602,6 +602,120 @@ A pontuação (`FBA_ScoreInteraction`, `GetInteractionScore`,
 (`GetAvailabilityBitset`, flags u32 do TTAB) e as constantes da FCNS 2
 estão no `docs/data-findings.md` §16 e em `src/vm/autonomy.*`.
 
+#### O laço completo do Find Best Interaction (binário, rodada 7)
+
+Funções do BV: `TryFindBestAction` `0xae36cc`, `FBA_Init` `0xae0cf0`,
+`FBA_FindStaticInteractions` `0xad4130`, `FBA_ScoreStaticInteractions`
+`0xae337c`, `FBA_ScoreDynamicInteractions` `0xae3258`, `FBA_ScoreInteraction`
+`0xae2c4c`, `FBA_RunCheckTree` `0xae24e4`, `FBA_CheckInteractions`
+`0xae2978`, `FBA_DoInteraction` `0xad6658`, constantes em
+`cTSAutonomyConstantsClient::UpdateConstants` `0xac8f80` (FCNS 2 global; o
+**padrão do binário** vale quando a chave falta).
+
+```
+máscara = u16 0 (0 → piores motivos)
+usados = 0; repetir:
+    se máscara de entrada = 0: máscara = os N piores motivos fora de "usados"
+        (FUN_00e1de28; N = "random worst motive count": FCNS 8, padrão 3)
+    usados |= máscara;  com flag 0x01 a máscara de entrada só vale na 1ª passada
+    se máscara ≠ 0: FindStatic → ScoreStatic → ScoreDynamic → CheckInteractions
+continua enquanto (checks < máx e máscara ≠ 0 e veio dos piores)
+          ou (ainda não há candidato pontuado e máscara ≠ 0 e veio dos piores)
+FBA_DoInteraction
+```
+
+- **O limite de 200** ("max check tree in fba count", FCNS 200, padrão 200) é
+  o contador `+0x85c`. Ele soma 1 a **cada check tree rodada**
+  (`FBA_RunCheckTree`), tanto na pontuação quanto na escolha. Por ele o laço
+  para de abrir novos grupos de motivos (mas continua enquanto nada pontuou).
+  Dentro de `CheckInteractions`, ele interrompe a varredura quando já passou
+  de 200, não é a primeira passada e já há um escolhido.
+- **ScoreStatic**: para cada candidato do grupo, pula entradas do próprio
+  Sim sem "allow on self" (vtable `0x54` da entrada), aplica os modos
+  0x08/0x10 do operando, testa a disponibilidade (idade, vtable `0x128`) e
+  conta (`+0x860`). Se o **BHAV da check tree tem as flags 2 ou 4**
+  (`FUN_00acdbdc(…, 6)`, cache por árvore), a check tree roda **antes** de
+  pontuar (ela pode mudar os anúncios, donos 0x0C/0x1C/0x1D) e só pontua se
+  passar. Assim gasta o limite. Senão pontua direto com os anúncios da tabela.
+- **ScoreDynamic**: as interações dinâmicas (os anúncios que a check tree
+  escreveu, `+0x894`/`+0x8a0`) são pontuadas com a entrada da tabela
+  ajustada.
+- **Pontuação** (`FBA_ScoreInteraction`):
+  ```
+  Δ  = GetInteractionScore(entrada) − GetCurrentScore()          (motivos, ver acima)
+  d  = distância até o objeto (vtable 0x1f8, com "autonomy floor to floor distance cost", padrão 10)
+  at = CalcAttenuation = 1 / (1 + a·d), a = atenuação da interação (vtable 0x30:
+       baixa/média/alta da TTAB → FCNS 0,1/0,3/0,6; visitante 0,01/0,02/0,03;
+       com "autonomy attenuation formula" ≠ 0: min(1, tuning / (a·d + 1)))
+  s  = at·Δ
+  s  = s·(1 + posse) · memória · relacionamento · clima · viés (vtable 0x734)
+  descarta se s < "min autonomy score" (família, ou visitante se vtable 0x5e0) ou s < 1e-5
+  ```
+  Padrões do binário: mínimo família 0,2, visitante 0,05. A FCNS dá 0.
+- **Escolha** (`CheckInteractions`): ordena por pontuação decrescente
+  (`qsort`, 0x44 bytes por item). Se o Sim não é visitante e o primeiro não está
+  marcado, sorteia r em [0, min(n, "random selection count")) (FCNS 1 → sempre
+  0; padrão 10). Depois anda na lista: os itens cuja check tree ainda não
+  rodou (`+0x3c` = 0) rodam agora, e o **r-ésimo que passa** vira o escolhido
+  (`+0x890`).
+- **Por que a comida perde** (leitura do binário, para conferir no nosso
+  motor):
+  1. o primeiro grupo é só dos **N piores motivos** (3 por padrão, 8 na
+     FCNS). Se a fome não está entre eles, a geladeira nem é candidata até
+     um grupo seguinte, e os grupos seguintes só abrem enquanto o limite de
+     200 check trees não estourou (num lote cheio, as check trees de pré-anúncio do
+     primeiro grupo gastam o orçamento);
+  2. Δ é a diferença na **curva de utilidade**, achatada perto do topo: com
+     fome alta (> ~0), o ganho é pequeno, e a geladeira anuncia fome 0 + 5..20
+     (×0,001 no anúncio, então pouco);
+  3. a atenuação: a geladeira longe ou noutro andar (+10 por andar) cai por
+     1/(1 + a·d);
+  4. uma check tree que falha (ex.: sem comida, geladeira quebrada) descarta
+     a entrada mesmo com a melhor pontuação.
+- **Decaimento diário**: nenhuma função C++ lida aplica os "Decay … per Day"
+  (93–101). `cTSPerson::OnReset` (BV `0xad39f0`) só põe **padrões quando todos
+  são 0**: 93 fome −400, 95 bexiga −200, 96 energia −200, 97 higiene −100,
+  101 diversão −100, 98 −50, 99 social −100, 94 conforto −30, 100 −30, 106
+  −30 (106 só BV). Como antes, a aplicação segue inferida no motor.
+  `cTSPerson::DayPassed` (BV `0xad133c`) só decrementa o dado 200 (até −10,
+  só BV), chama `cTSObject::DayPassed` (a depreciação, ver
+  `docs/buy-build-mac.md` §2) e `UpdateMemories`.
+
+#### Sociais esperando o outro Sim ("Wait - Person B State", dados, rodada 7)
+
+Não há código C++ para isto. É SimAntics no grupo `0x7FD90EDB` (`objects.package`),
+lido instrução a instrução:
+
+- As duas metades de uma social compartilham um **objeto de controle** (o
+  stack object das duas threads): atributo 0 = ID do Sim A, 1 = ID do Sim B,
+  **6 = estado de A, 7 = estado de B**, 8 = flag de cancelamento, 14/15 =
+  "A/B esperando". "Get in Temp 0 - Who Am I?" (`0x2036`) compara os
+  atributos 0/1 com o meu object data 11 (A = BCON 8960, B = 8961).
+  Nenhum dos dois → **Break Point** (é o erro que a VM vê quando o
+  stack object não é o objeto de controle).
+- "Test - Person State" (`0x203F`): lê o atributo 6 ou 7 do outro e compara
+  com o parâmetro 2 (`==` se param 1 = BCON 9216, `>=` se 9217).
+- "Wait - Person X State Test Y" (`0x203E`) é um **laço de espera**: testa o
+  estado do outro; se ainda não chegou, liga o "esperando" (14/15), roda
+  "Idle System - Start", e a cada volta chama o global **"Idle" (`0x118`)
+  com 1 tick** (que cede a thread), confere a flag de cancelamento (atributo 8)
+  e o dado de pessoa **110 "Interactions Linked Deleted"** (o outro largou a
+  interação ligada → sai com falso), processa comandos do controle
+  ("Command - Process My Command", `0x2015`) e roda "Run Tree by Name"
+  (0x1C) nos ganchos de espera. Ao sair, desliga o "esperando" e chama "Idle
+  System - Stop".
+- "Wait - Person B State - ==" (`0x2010`) chama essa espera, ou a versão "+
+  Route" (`0x2067`) quando "Social - Dynamic Walk Enabled?" e o param 2 = 1.
+
+Ou seja, um **alvo ocupado** só "responde" quando a metade B da social
+começa a rodar na fila dele (Push Interaction, com a prioridade de quem pediu)
+e escreve o estado no atributo 7. Até lá, A gira 1 tick por volta. O motor só
+precisa de: Idle/Sleep cedendo a thread, Push Interaction na fila do outro,
+os atributos do objeto de controle e o dado de pessoa 110 ligado quando a
+interação ligada é apagada (ver Push Interaction e a fila). Se a metade B nunca
+começa e ninguém liga o 110, A espera para sempre. É o "as sociais esperam
+pelo outro Sim" do TODO de autonomia.
+
 ### 0x0E Find Best Object for Function (`TryFindFunctionalObject`)
 
 Função u16 0 (STR# 0xC9) → (object data com o "valor" da função, entrada da
