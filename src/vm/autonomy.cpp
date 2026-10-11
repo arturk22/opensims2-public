@@ -28,9 +28,13 @@ constexpr size_t kMemoryCount = 8;        // "autonomy memory count"
 constexpr uint64_t kMemoryDuration = 9999; // "max duration autonomy memory", taken as ticks (inferred)
 
 // Whether the Sim lately ran this interaction autonomously and it failed
-// (its action tree returned false, e.g. no route): it is not picked again
-// while remembered (inferred use of the autonomy memory).
+// (its action tree returned false, e.g. no route): with
+// VM::autonomySkipsFailures it is not picked again while remembered. Ours:
+// the binary keeps the memory (FBA_DoInteraction) but only GetAutonomyBias
+// reads it, and that is off in the base game.
 bool rememberedFailure(const VM& vm, const Object& sim, ObjectId object, uint16_t interaction) {
+    if (!vm.autonomySkipsFailures)
+        return false;
     for (const auto& m : sim.person->autonomyMemory)
         if (m.failed && m.object == object && m.interaction == interaction && vm.ticks - m.tick <= kMemoryDuration)
             return true;
@@ -268,13 +272,13 @@ Exit findBestInteraction(Context& c) {
         ids.push_back(id);
     for (ObjectId id : ids) {
         const Object* x = vm.object(id);
-        if (!x || id == simId || (!x->position.inWorld() && !(flags & 0x04)))
+        if (!x || (!x->position.inWorld() && !(flags & 0x04)))
             continue;
         const ObjectId leaderId = interactionLeader(vm, id);
         if (!seen.insert(leaderId).second)
             continue;
         const Object* leader = vm.object(leaderId);
-        if (!leader || leaderId == simId)
+        if (!leader)
             continue;
         if ((flags & 0x02) && x->data[objdata::Room] != room)
             continue;
@@ -288,6 +292,11 @@ Exit findBestInteraction(Context& c) {
         const float distance = distanceBetween(*from, *leader);
         for (const auto& e : ref->table->interactions) {
             if ((e.flags & 0x80) || int64_t(e.autonomy) > autonomyLevel || !availableForAge(sim, *ref->table, e))
+                continue;
+            // FBA_ScoreStaticInteractions: the Sim's own entries only with
+            // "allow on self" (cTSTreeTableEntry vtable 0x54: bit 20 of the
+            // entry's flags).
+            if (leaderId == simId && !((uint32_t(e.flags) | uint32_t(e.flags2) << 16) & (1u << 20)))
                 continue;
             if (rememberedFailure(vm, sim, leaderId, uint16_t(e.stringIndex)))
                 continue;
@@ -331,6 +340,11 @@ Exit findBestInteraction(Context& c) {
         const Object* leader = vm.object(cand.object);
         if (!leader || !vm.object(simId))
             continue;
+        // Not done: cTSTreeTableEntry vtable 0x128/0x124
+        // (SetLastCheckTreeCheck, per entry and object: a key from
+        // this+0x2BC's vtable 0x48, not identified, and an object ID) leaves
+        // out an entry already scored with the same key; per call it only
+        // matters across motive groups, and FCNS 2 makes one group.
         const size_t at = decision.considered.size();
         decision.considered.push_back({cand.object, cand.name, cand.staticScore, cand.staticScore, false, false});
         if (cand.entry->guard && (checkTreeAdFlags(vm, *leader, cand.entry->guard) & (CheckTreeChangesAds | CheckTreeActionStrings))) {

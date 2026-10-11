@@ -35,6 +35,7 @@ namespace {
 // get button N at once, as `pie --dialog-answer`; by default they wait for
 // the player, as the game does.
 int gDialogAnswer = -1;
+bool gSkipFailures = false; // --skip-failures: VM::autonomySkipsFailures (ours, not the binary's)
 
 std::filesystem::path resRoot(const std::filesystem::path& pkg) {
     for (auto p = std::filesystem::absolute(pkg).parent_path(); p.has_relative_path(); p = p.parent_path())
@@ -75,6 +76,24 @@ void printMotives(const vm::Object& s) {
                 m[13], m[14], m[15]);
 }
 
+// S2PKG_RELS=1: the relationships between the Sims in the world (variables
+// 0 daily, 1 flags, 2 lifetime).
+void printRelationships(vm::VM& machine, const std::vector<vm::ObjectId>& sims, const char* when) {
+    if (!std::getenv("S2PKG_RELS"))
+        return;
+    std::printf("relationships %s:\n", when);
+    for (vm::ObjectId a : sims)
+        for (vm::ObjectId b : sims) {
+            if (a == b || !machine.object(a) || !machine.object(b))
+                continue;
+            auto it = machine.relationships.find({machine.relationshipKey(a), machine.relationshipKey(b)});
+            if (it == machine.relationships.end() || it->second.size() < 3)
+                continue;
+            std::printf("    %-14s -> %-14s daily %4d lifetime %4d flags %04X\n", simName(*machine.object(a)).c_str(),
+                        simName(*machine.object(b)).c_str(), it->second[0], it->second[2], uint16_t(it->second[1]));
+        }
+}
+
 int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, const std::string& simQuery,
                 std::optional<int> motives, bool fromInit, bool verbose, bool noDecay, int traceId, size_t traceDepth,
                 size_t fbaDump, int fbaSim, const std::string& fbaFilter) {
@@ -87,6 +106,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
     machine.autoDialogAnswer = gDialogAnswer;
+    machine.autonomySkipsFailures = gSkipFailures;
     machine.setClockGlobals();
     const bool hood = vm::loadLotNeighborhood(machine, lotFile);
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
@@ -126,6 +146,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     printMotivesHeader();
     for (vm::ObjectId id : sims)
         printMotives(*machine.object(id));
+    printRelationships(machine, sims, "at the start");
 
     std::map<vm::ObjectId, size_t> choices, searches;
     vm::autonomyObserver() = [&](const vm::AutonomyDecision& d) {
@@ -252,6 +273,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         }
     }
     vm::autonomyObserver() = nullptr;
+    printRelationships(machine, sims, "at the end");
 
     std::printf("after %ld ticks (%s): family funds %d\n", ticks, clockText(machine).c_str(), funds);
     printMotivesHeader();
@@ -327,6 +349,8 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
             fbaFilter = argv[++i];
         else if (a == "--no-decay")
             noDecay = true;
+        else if (a == "--skip-failures")
+            gSkipFailures = true;
         else if (a == "--dialog-answer" && i + 1 < argc)
             gDialogAnswer = std::stoi(argv[++i]);
         else if (lotPath.empty())
@@ -340,7 +364,7 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* autonomyUsage() {
-    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N]\n";
+    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N] [--skip-failures]\n";
 }
 
 } // namespace os2
