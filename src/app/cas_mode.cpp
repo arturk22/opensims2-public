@@ -29,6 +29,60 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// The family photo: the members' head shots side by side (two rows from
+// four Sims on) over a soft blue backdrop, 512 x 512 like the shipped ones.
+RgbaImage composeFamilyPhoto(const std::vector<const RgbaImage*>& heads) {
+    constexpr uint32_t kSize = 512;
+    RgbaImage out;
+    out.width = out.height = kSize;
+    out.pixels.resize(size_t(kSize) * kSize * 4);
+    for (uint32_t y = 0; y < kSize; ++y) {
+        const float t = float(y) / float(kSize - 1);
+        for (uint32_t x = 0; x < kSize; ++x) {
+            uint8_t* px = &out.pixels[(size_t(y) * kSize + x) * 4];
+            px[0] = uint8_t(150 - 50 * t), px[1] = uint8_t(180 - 50 * t), px[2] = uint8_t(225 - 40 * t), px[3] = 255;
+        }
+    }
+    const size_t n = heads.size();
+    if (!n)
+        return out;
+    const size_t cols = n <= 3 ? n : (n + 1) / 2, rows = n <= 3 ? 1 : 2;
+    const float stride = std::min(float(kSize) / float(cols), float(kSize) / float(rows));
+    // One row: the shots overlap a little, so the family fills the picture.
+    const float cell = rows == 1 ? std::min(float(kSize), stride * 1.3f) : stride;
+    for (size_t i = 0; i < n; ++i) {
+        const RgbaImage& h = *heads[i];
+        if (!h.width || !h.height)
+            continue;
+        const size_t inRow = (i / cols + 1 == rows) ? n - (rows - 1) * cols : cols;
+        const float x0 = (float(kSize) - float(inRow) * stride) / 2 + float(i % cols) * stride - (cell - stride) / 2;
+        const float y0 = (float(kSize) - float(rows) * stride) / 2 + float(i / cols) * stride - (cell - stride) / 2 +
+                          (rows == 1 ? 0.12f * cell : 0.0f);
+        for (int dy = 0; dy < int(cell); ++dy)
+            for (int dx = 0; dx < int(cell); ++dx) {
+                const int ox = int(x0) + dx, oy = int(y0) + dy;
+                if (ox < 0 || oy < 0 || ox >= int(kSize) || oy >= int(kSize))
+                    continue;
+                const float sx = (float(dx) + 0.5f) * float(h.width) / cell - 0.5f;
+                const float sy = (float(dy) + 0.5f) * float(h.height) / cell - 0.5f;
+                const int ix = std::clamp(int(std::floor(sx)), 0, int(h.width) - 1);
+                const int iy = std::clamp(int(std::floor(sy)), 0, int(h.height) - 1);
+                const int jx = std::min(ix + 1, int(h.width) - 1), jy = std::min(iy + 1, int(h.height) - 1);
+                const float fx = std::clamp(sx - float(ix), 0.0f, 1.0f), fy = std::clamp(sy - float(iy), 0.0f, 1.0f);
+                auto at = [&](int x, int y, int c) { return float(h.pixels[(size_t(y) * h.width + size_t(x)) * 4 + size_t(c)]); };
+                uint8_t* px = &out.pixels[(size_t(oy) * kSize + size_t(ox)) * 4];
+                const float a = (at(ix, iy, 3) * (1 - fx) + at(jx, iy, 3) * fx) * (1 - fy) +
+                                (at(ix, jy, 3) * (1 - fx) + at(jx, jy, 3) * fx) * fy;
+                for (int c = 0; c < 3; ++c) {
+                    const float v = (at(ix, iy, c) * (1 - fx) + at(jx, iy, c) * fx) * (1 - fy) +
+                                    (at(ix, jy, c) * (1 - fx) + at(jx, jy, c) * fx) * fy;
+                    px[c] = uint8_t(std::lround(float(px[c]) * (1 - a / 255) + v * a / 255));
+                }
+            }
+    }
+    return out;
+}
+
 constexpr uint32_t kFrame = 0xCB980E50;
 constexpr uint32_t kSimBin = 0xCB980E86, kMakeBaby = 0xCB980E87, kFamilyTree = 0x2C054EF0, kTieDialog = 0x2C054EF3,
                    kTreeButton = 0xCCB70001;
@@ -746,6 +800,7 @@ void CasMode::acceptFamily() {
             const bool shipped = !rel.empty() && rel.rfind("..", 0) != 0;
             const fs::path target = shipped ? out / src.filename() : src;
             std::vector<vm::NewSim> sims;
+            std::vector<std::shared_ptr<RgbaImage>> heads;
             std::mt19937 rng(std::random_device{}());
             for (auto& m : family_) {
                 vm::NewSim s;
@@ -768,14 +823,28 @@ void CasMode::acceptFamily() {
                 cas::CharacterSpec spec = m.spec;
                 spec.lastName = s.lastName;
                 // The head shot the family panels and the lot's Sim picker show.
-                if (std::shared_ptr<RgbaImage> head = m.portrait ? m.portrait : portrait(m))
+                std::shared_ptr<RgbaImage> head = m.portrait ? m.portrait : portrait(m);
+                if (head) {
                     spec.portraitPng = encodePng(*head);
+                    heads.push_back(head);
+                }
                 s.writeCharacter = [this, spec](const std::string& objectName, const fs::path& file) {
                     return cas::writeCharacter(index_, *catalog_, *baker_, spec, objectName, file).guid;
                 };
                 sims.push_back(std::move(s));
             }
             const auto r = vm::writeNewFamily(src, target, familyName_, "", std::move(sims), 1, !shipped);
+            // The photo the family bin and the lot panel show.
+            if (!heads.empty()) {
+                std::vector<const RgbaImage*> ptrs;
+                for (const auto& h : heads)
+                    ptrs.push_back(h.get());
+                try {
+                    vm::writeFamilyThumbnail(r.neighborhood, r.family, encodePng(composeFamilyPhoto(ptrs)));
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "opensims2: cas: family photo: %s\n", e.what());
+                }
+            }
             status_ = "Família " + familyName_ + " (" + std::to_string(r.family) + ") salva em " + r.neighborhood.string();
             std::printf("opensims2: cas: family %u \"%s\" written to %s:", r.family, familyName_.c_str(),
                         r.neighborhood.string().c_str());

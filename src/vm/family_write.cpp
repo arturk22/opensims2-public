@@ -58,6 +58,31 @@ fs::path neighborhoodPackage(const fs::path& dir) {
 
 } // namespace
 
+void writeFamilyThumbnail(const fs::path& neighborhood, uint32_t family, const std::vector<uint8_t>& png) {
+    constexpr uint32_t kTypeFamilyThumb = 0x8C3CE95A;
+    const std::string pkgName = neighborhoodPackage(neighborhood).filename().string();
+    const std::string prefix = pkgName.substr(0, pkgName.find('_'));
+    const fs::path file = neighborhood / "Thumbnails" / (prefix + "_FamilyThumbnails.package");
+    DbpfWriter w;
+    uint32_t group = 0x7FE65A3D; // the shipped pictures' group
+    if (fs::exists(file)) {
+        DbpfPackage pkg(file);
+        for (const auto& e : pkg.entries()) {
+            if (e.tgi.type == type::DIR)
+                continue;
+            if (e.tgi.type == kTypeFamilyThumb) {
+                group = e.tgi.group;
+                if (e.tgi.instance == family)
+                    continue; // replaced below
+            }
+            w.addStored(e.tgi, pkg.readRaw(e), e.rawSize);
+        }
+    }
+    w.add(Tgi{kTypeFamilyThumb, group, family, 0}, png);
+    fs::create_directories(file.parent_path());
+    w.save(file);
+}
+
 fs::path defaultUserNeighborhoods() {
     const char* home = std::getenv("HOME");
     return fs::path(home ? home : ".") / "Documents" / "opensims2" / "Neighborhoods";

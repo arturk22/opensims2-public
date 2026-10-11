@@ -67,6 +67,12 @@ FamilyWriteResult writeNewFamily(const std::filesystem::path& source, const std:
                                  const std::string& familyName, const std::string& description,
                                  std::vector<NewSim> sims, uint32_t seed = 1, bool inPlace = false);
 
+// Adds the family's photo (a PNG) to <P>_FamilyThumbnails.package under
+// `neighborhood`/Thumbnails (type 0x8C3CE95A, instance = family id), making
+// the package when it is not there; the other pictures are kept as stored.
+void writeFamilyThumbnail(const std::filesystem::path& neighborhood, uint32_t family,
+                          const std::vector<uint8_t>& png);
+
 // The user's neighborhoods folder the app saves to when nothing else is
 // given: ~/Documents/opensims2/Neighborhoods (the game uses
 // ~/Documents/EA Games/The Sims 2/Neighborhoods).
