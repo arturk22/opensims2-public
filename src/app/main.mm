@@ -2143,6 +2143,10 @@ void unloadScene() {
         return;
     if (gLive && gLive->overModeButton(p) && gLive->press(p)) // the puck's modes win over the panels
         return;
+    // The options panel floats over Buy/Build's panels: it must take its clicks first
+    // (their backdrops would swallow Salvar/Sair and the like).
+    if (gLive && gLive->optionsOpen() && gLive->press(p))
+        return;
     if (gBuy && gBuy->active() && gBuy->press(p))
         return;
     if (gBuild && gBuild->active() && gBuild->press(p))
@@ -2685,6 +2689,10 @@ void unloadScene() {
                         gLive->screen(int(cw), int(ch)); // no frame lays it out again before the next step
                         continue;
                     }
+                }
+                if (gLive && !right && gLive->optionsOpen() && gLive->press(p)) { // over Buy/Build's panels
+                    gLive->screen(int(cw), int(ch));
+                    continue;
                 }
                 if (gBuy && gBuy->active()) {
                     gBuy->setCanvas(int(cw), int(ch));
