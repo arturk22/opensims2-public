@@ -6,6 +6,8 @@
 #include "formats/binwriter.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
+#include "formats/model.hpp"
+#include "formats/resindex.hpp"
 #include "formats/neighborhood.hpp"
 
 #include <cmath>
@@ -192,12 +194,46 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
             continue;
         const std::string name = o->definition->fileName + "_objt";
         const std::vector<uint8_t>* t = templateOf(name);
-        if (!t) {
+        std::vector<uint8_t> bytes;
+        if (t) {
+            bytes = *t;
+        } else {
+            // No lot has one (an object bought in Buy mode): a bare cObject
+            // as the game writes for objects without an animatable part
+            // (364 of N001_Lot11's 834, "Social - Talk - Chat_objt"): no
+            // name, class cObject version 0x11, the model with no design
+            // choices, the pose, 1, the definition, the pose again, 0.
+            // Inferred: the cAnimatable data of animated objects is left out.
+            std::string model;
+            if (ResourceIndex* index = vm.code().index())
+                model = objectCresName(*index, Tgi{kTypeObjd, o->group, o->definitionInstance, 0});
+            if (model.size() > 5 && model.compare(model.size() - 5, 5, "_cres") == 0)
+                model.resize(model.size() - 5);
+            BinWriter w;
+            w.raw(std::vector<uint8_t>(kFileNameSize, 0));
+            w.u32(kTypeSceneObject);
+            w.u32(0x11);
+            w.str7("cObject");
+            w.str7(model);
+            w.u32(model.empty() ? 0 : 1);
+            if (!model.empty()) {
+                w.str7(model);
+                w.u32(12);
+                w.u32(0);
+            }
+            for (int k = 0; k < 6; ++k)
+                w.f32(0);
+            w.f32(1);
+            w.u32(1);
+            w.str7(name);
+            for (int k = 0; k < 6; ++k)
+                w.f32(0);
+            w.f32(1);
+            w.u32(0);
+            bytes = std::move(w.bytes());
             out.warnings.push_back("object " + std::to_string(s.id) + ": no cObject of \"" + name +
-                                   "\" in the other lots to copy");
-            continue;
+                                   "\" in the other lots to copy; wrote a bare one");
         }
-        auto bytes = *t;
         const auto l = sceneLayout(bytes);
         writePose(bytes, *l, poseOf(world, s, nullptr, nullptr));
         addRecord(kTypeSceneObject, 0xFFFFFFFF, instance, std::move(bytes));
