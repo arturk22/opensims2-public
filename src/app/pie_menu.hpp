@@ -101,6 +101,12 @@ public:
     void setPlacementSource(std::function<std::optional<simd_float4x4>(vm::ObjectId)> placement) {
         placement_ = std::move(placement);
     }
+    // A box that moves (a Sim: the host sets it from the posed skeleton every
+    // frame), in world space, in place of the one set before; lo == hi removes it.
+    void setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi);
+    // Boxes this refuses are not picked (objects on the levels the camera
+    // hides, app/wall_view.hpp); null picks all.
+    std::function<bool(simd_float3 lo, simd_float3 hi)> pickable;
     // The nearest object hit by the ray (0: none).
     vm::ObjectId pick(simd_float3 origin, simd_float3 dir) const;
     // Middle of the top of an object's box (where its menu opens).
@@ -185,6 +191,7 @@ private:
     std::function<std::optional<simd_float4x4>(vm::ObjectId)> placement_;
     // A box in world space (a following box where its object is drawn now).
     std::optional<PickBox> worldBox(const PickBox& b) const;
+    std::map<vm::ObjectId, PickBox> moving_;
 
     bool open_ = false;
     vm::ObjectId object_ = 0;

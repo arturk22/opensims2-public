@@ -528,6 +528,23 @@ escreve sem sinal (igual para todos os grupos do jogo).
 
 ---
 
+## 8b. Paredes e telhado no puck (dados do `ui.package`, rodada 10)
+
+O script do puck (`0x4905F85B`) tem quatro botões no mesmo lugar, `(28,66)-(68,98)`:
+`0x1100` "walls down" (dica "Sem Paredes - Origem/Fim"), `0x1101` "walls cutaway"
+("Paredes Cortadas - Origem/Fim"), `0x1102` "walls up" ("Paredes Erguidas - Origem/Fim",
+o único visível no script) e `0x1103` "roof" ("Telhado - Origem/Fim"). Junto, o
+`GZWinGen 0x4000` `(61,54)-(149,123)` (imagem `0xac76ee55`) por cima dos controles
+da câmera, com os botões `1` "Sem Paredes", `2` "Paredes Cortadas", `3` "Paredes
+Erguidas" e `4` "Mostrar/Esconder Telhado" (estilo toggle, tiras de 4 quadros) e um
+`GZWinFlatRect 5` escondido que cobre o puck inteiro (inferido: pega o clique fora do
+leque para fechá-lo). No app (inferido, não lido no binário: `cTSMainToolbar::SetWallMode`
+existe mas o Ghidra não estava disponível): o botão do modo atual abre o leque, a escolha
+o fecha, Home/End trocam o modo (as dicas dizem "Origem/Fim"), o botão 4 alterna o
+telhado. O corte do jogo é do `nTSSG::cWallCutawayManager` (`SelectRoomBlockers`,
+`SelectWallsBlockingPoints`, `KeepOnlyFrontFacingOutsideWalls`, `AddTargetLocation`):
+não lido; o app corta as paredes com cômodo atrás, vistas da câmera (`formats/lot_model`).
+
 ## 9. O que falta
 
 - O nome da função de desaturação (o símbolo transferido diz `LotFamilyAccessor::GetDataStr`, errado).

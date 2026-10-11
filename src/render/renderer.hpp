@@ -60,6 +60,10 @@ public:
     // parts (and vertex counts) of the model it was added from. Takes effect
     // from the next frame drawn.
     void updateObject(int model, const ObjectModel& posed);
+    // Uploads `model` in place of model `id` (its instances draw the new one):
+    // the old buffers are released once the frames in flight are done with
+    // them. For a model rebuilt often (the lot's walls following the camera).
+    void replaceObject(int id, const ObjectModel& model, ResourceIndex& index);
     // Returns the instance's index (for setInstanceTransform), or -1.
     int addInstance(int model, const simd_float4x4& transform);
     // Moves an instance (the plumbob over the selected Sim).
@@ -197,6 +201,7 @@ private:
     // Light maps replaced while frames in flight may still read them: released
     // once kFramesInFlight frames have been encoded since.
     std::vector<std::pair<MTL::Texture*, int>> retired_;
+    std::vector<std::pair<std::unique_ptr<Model>, int>> retiredModels_; // likewise, models replaced
     MTL::Texture* grey_ = nullptr; // 0.5 everywhere: the light map until one is set
     std::array<MTL::Buffer*, kFramesInFlight> frames_{};
     void* inFlight_; // dispatch_semaphore_t, opaque so ARC in the app shell leaves it alone

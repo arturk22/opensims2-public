@@ -216,38 +216,60 @@ std::optional<PieMenuHost::PickBox> PieMenuHost::worldBox(const PickBox& b) cons
     return PickBox{b.id, wlo, whi};
 }
 
+void PieMenuHost::setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi) {
+    if (simd_equal(lo, hi))
+        moving_.erase(id);
+    else
+        moving_[id] = {id, lo, hi};
+}
+
 vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
-    vm::ObjectId best = 0;
-    float bestT = std::numeric_limits<float>::max();
-    for (const auto& box : boxes_) {
-        const auto placed = worldBox(box);
-        if (!placed)
-            continue;
-        const PickBox& b = *placed;
-        // Slab test.
-        float t0 = 0, t1 = std::numeric_limits<float>::max();
-        bool hit = true;
-        for (int k = 0; k < 3 && hit; ++k) {
-            if (std::abs(dir[k]) < 1e-8f) {
-                hit = origin[k] >= b.lo[k] && origin[k] <= b.hi[k];
-                continue;
+    // The nearest box the ray enters; ties (a box inside another) go to the
+    // smaller box. The moving boxes (Sims, tight around the skeleton) come
+    // first: a click on a Sim picks it over the coarse box of a tree or a
+    // table it stands in or behind.
+    auto nearest = [&](auto&& each) {
+        vm::ObjectId best = 0;
+        float bestT = std::numeric_limits<float>::max();
+        each([&](const PickBox& b) {
+            if (pickable && !pickable(b.lo, b.hi))
+                return;
+            // Slab test.
+            float t0 = 0, t1 = std::numeric_limits<float>::max();
+            bool hit = true;
+            for (int k = 0; k < 3 && hit; ++k) {
+                if (std::abs(dir[k]) < 1e-8f) {
+                    hit = origin[k] >= b.lo[k] && origin[k] <= b.hi[k];
+                    continue;
+                }
+                float a = (b.lo[k] - origin[k]) / dir[k], c = (b.hi[k] - origin[k]) / dir[k];
+                if (a > c)
+                    std::swap(a, c);
+                t0 = std::max(t0, a), t1 = std::min(t1, c);
+                hit = t0 <= t1;
             }
-            float a = (b.lo[k] - origin[k]) / dir[k], c = (b.hi[k] - origin[k]) / dir[k];
-            if (a > c)
-                std::swap(a, c);
-            t0 = std::max(t0, a), t1 = std::min(t1, c);
-            hit = t0 <= t1;
-        }
-        // The ray enters it nearest; ties (a box inside another) go to the smaller box.
-        if (hit && (t0 < bestT - 1e-4f)) {
-            bestT = t0;
-            best = b.id;
-        }
-    }
-    return best;
+            if (hit && (t0 < bestT - 1e-4f))
+                bestT = t0, best = b.id;
+        });
+        return best;
+    };
+    if (const vm::ObjectId sim = nearest([&](auto&& f) {
+            for (const auto& [id, b] : moving_)
+                f(b);
+        }))
+        return sim;
+    return nearest([&](auto&& f) {
+        for (const auto& box : boxes_)
+            if (!moving_.count(box.id))
+                if (const auto placed = worldBox(box))
+                    f(*placed);
+    });
 }
 
 std::optional<simd_float3> PieMenuHost::anchor(vm::ObjectId id) const {
+    if (auto it = moving_.find(id); it != moving_.end())
+        return simd_make_float3((it->second.lo.x + it->second.hi.x) / 2, (it->second.lo.y + it->second.hi.y) / 2,
+                                it->second.hi.z);
     for (const auto& box : boxes_)
         if (box.id == id)
             if (const auto b = worldBox(box))

@@ -109,6 +109,7 @@
 #include "lot_audio.hpp"
 #include "anim_snaps.hpp"
 #include "camera_follow.hpp"
+#include "wall_view.hpp"
 #include "camera_input.hpp"
 #include "lot_vm.hpp"
 #include "vm_objects.hpp"
@@ -173,8 +174,18 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index); // below 
 std::unique_ptr<os2::BuildMode> gBuild;
 std::unique_ptr<os2::Lot> gLotShape;
 std::unique_ptr<os2::PatternCatalog> gLotPatterns;
-os2::LotViewOptions gLotView;
+os2::LotViewOptions gLotView; // the view the lot model was last built for
 int gLotInstance = -1;
+int gLotModel = -1;           // the renderer model of gLotInstance (replaced on rebuilds)
+// The wall and roof view (app/wall_view.hpp): the puck's wall fan, Home/End;
+// updateLotView rebuilds the lot model when it changes what is cut.
+os2::WallView gWallView;
+os2::LotModelCache gLotCache;
+bool gLevelsHidden = false; // levels above the camera's are hidden (in the game: --ui live, --mode)
+int viewLevel();                            // below loadLot's helpers
+std::set<int16_t> gWallHung;                // objects that hang on walls (hidden with a wall cut down)
+bool onCutWall(const os2::Xform& at);       // below viewLevel
+void setWallMode(os2::WallView::Walls walls); // likewise
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index);
 struct PickBox {
     bool contained = false; // saved in a slot: the box follows where the VM draws it
@@ -489,8 +500,17 @@ void changeFloor(int delta) {
     if (gBuy && gBuy->active()) {
         if (gBuy->changeLevel(delta) && gCameraFollow)
             gCameraFollow->setLevel(gBuy->level() - 1);
+    } else if (gBuild && gBuild->active() && gCameraFollow) {
+        if (gCameraFollow->setLevel(gBuild->level() - 1 + delta))
+            gBuild->setLevel(gCameraFollow->level() + 1);
     } else if (gCameraFollow) {
-        gCameraFollow->setLevel(gCameraFollow->level() + delta);
+        // A level shown together with the one below (a foundation's top,
+        // WallView::shownLevel) is stepped over.
+        const int now = gCameraFollow->level(), shown = gWallView.shownLevel(now);
+        int to = delta > 0 ? std::min(std::max(now + delta, shown + 1), std::max(gWallView.topLevel(), now)) : now + delta;
+        while (delta < 0 && to > gCameraFollow->lowestLevel() && gWallView.shownLevel(to) == shown)
+            --to;
+        gCameraFollow->setLevel(to);
     }
 }
 
@@ -811,6 +831,31 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         m.columns[3] = simd_make_float4(x->t[0], x->t[1], x->t[2], 1);
         return m;
     });
+    // The levels above the camera's are not drawn: their objects are not picked.
+    gPie->pickable = [](simd_float3 lo, simd_float3) {
+        return !gLotShape || os2::WallView::visible(*gLotShape, viewLevel(), lo.x, lo.y, lo.z);
+    };
+    // Windows, doors, curtains and what hangs on walls (the model's bottom
+    // over the floor): hidden with the wall they are on when it is cut down.
+    gWallHung.clear();
+    for (const auto& [id, o] : gPlacedObjects) {
+        std::string def = o.definition;
+        std::transform(def.begin(), def.end(), def.begin(), [](unsigned char c) { return std::tolower(c); });
+        bool hung = def.starts_with("window") || def.starts_with("door") || def.starts_with("curtain") ||
+                    def.starts_with("blinds") || def.starts_with("drapes");
+        for (const auto& b : gPickBoxes)
+            if (!hung && b.instance != 0 && int(b.instance & 0xFFFF) == int(uint16_t(id)))
+                hung = b.lo.z > 0.5f;
+        if (hung)
+            gWallHung.insert(id);
+    }
+    gObjectView->visible = [](int16_t id, const os2::Xform& at) {
+        if (!gLotShape)
+            return true;
+        if (!os2::WallView::visible(*gLotShape, viewLevel(), at.t[0], at.t[1], at.t[2]))
+            return false;
+        return !gWallHung.count(id) || !onCutWall(at);
+    };
     perfLap("  VM hooks");
     setupPieMenu(index);
     perfLap("  pie menu");
@@ -960,6 +1005,12 @@ void setupLiveUi(os2::ResourceIndex& index) {
             gOptions->toggleWindow(window);
     };
     gLive->onFloor = [](int delta) { changeFloor(delta); };
+    gLive->onWallMode = [](int mode) { setWallMode(os2::WallView::fromPuck(mode)); };
+    gLive->onRoof = [] {
+        gWallView.setRoof(!gWallView.roof());
+        gLive->setWallMode(gWallView.puckMode(), gWallView.roof());
+    };
+    gLive->setWallMode(gWallView.puckMode(), gWallView.roof());
     gLive->onZoom = [](int steps) {
         if (gCamera)
             gCamera->zoomBy(steps);
@@ -1043,13 +1094,17 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
 // Fence rails and posts (os2::lotFencePieces): one model per CRES, an
 // instance per piece; called again after Build mode changed the fences
 // (instances are reused, extra ones hidden). Returns the pieces placed.
+// Pieces above `level` (the lot's numbering) are left out (see WallView::visible).
 size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot,
-                        const os2::PatternCatalog& patterns, std::vector<std::string>* warnings) {
+                        const os2::PatternCatalog& patterns, std::vector<std::string>* warnings,
+                        int level = os2::LotViewOptions::kAllLevels) {
     static std::map<std::string, int> models;
     static std::vector<int> instances;
     const auto pieces = os2::lotFencePieces(lot, patterns, warnings);
     size_t used = 0;
     for (const auto& piece : pieces) {
+        if (!os2::WallView::visible(lot, level, piece.transform[12], piece.transform[13], piece.transform[14]))
+            continue;
         auto it = models.find(piece.model);
         if (it == models.end()) {
             int id = -1;
@@ -1078,22 +1133,148 @@ size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, cons
     return used;
 }
 
+// The level the camera shows, whose walls follow the wall mode: Build and
+// Buy mode's level, else the camera's (the selected Sim's or the one Page
+// Up/Down chose); every level outside the game (a bare --lot view).
+int viewLevel() {
+    if (!gLevelsHidden)
+        return os2::LotViewOptions::kAllLevels;
+    if (gBuild && gBuild->active())
+        return gWallView.shownLevel(gBuild->level() - 1);
+    if (gBuy && gBuy->active())
+        return gWallView.shownLevel(gBuy->level() - 1);
+    return gCameraFollow ? gWallView.shownLevel(gCameraFollow->level()) : os2::LotViewOptions::kAllLevels;
+}
+
+// Whether an object hangs on a wall the lot model cut down: a cut wall of
+// its level within 0.6 tiles, across its front (perpendicular to its +Y).
+bool onCutWall(const os2::Xform& at) {
+    if (gLotCache.cut.empty() || !gLotShape)
+        return false;
+    const os2::Vec3 f = at.rotate({0, 1, 0});
+    for (const auto& c : gLotCache.cut) {
+        const int level = int(c[4]);
+        const float floorZ = gLotShape->elevationAt(level, std::clamp(at.t[0], 0.0f, float(gLotShape->width)),
+                                                    std::clamp(at.t[1], 0.0f, float(gLotShape->height)));
+        if (at.t[2] < floorZ - 0.2f || at.t[2] > floorZ + 2.5f)
+            continue;
+        float dx = c[2] - c[0], dy = c[3] - c[1];
+        const float len = std::hypot(dx, dy);
+        if (len < 1e-4f)
+            continue;
+        dx /= len, dy /= len;
+        if (std::abs(dx * f[0] + dy * f[1]) > 0.3f)
+            continue;
+        const float s = std::clamp((at.t[0] - c[0]) * dx + (at.t[1] - c[1]) * dy, 0.0f, len);
+        if (std::hypot(c[0] + dx * s - at.t[0], c[1] + dy * s - at.t[1]) <= 0.6f)
+            return true;
+    }
+    return false;
+}
+
+os2::LotViewOptions wantedLotView() {
+    std::array<float, 2> look{gLotView.viewDirection};
+    if (gCamera) {
+        const simd_float3 d = gCamera->pivot() - gCamera->eye();
+        look = {d.x, d.y};
+    }
+    return gWallView.options(look, viewLevel());
+}
+
+// Keeps the lot drawn for the current view (called every frame and before
+// headless shots): rebuilds the lot model when the wall mode, the roof, the
+// level or the cutaway side of the walls changed (only the geometry: the
+// cache keeps the materials and holes, and the light-map atlas is the same
+// for every view), hides the Sims above the level shown and keeps their pick
+// boxes where they stand.
+// The model part runs before the objects are placed (what hangs on cut
+// walls hides), the Sims part (`sims`) after they are posed.
+void updateLotView(os2::Renderer& renderer, bool sims) {
+    if (!gLotShape || gLotInstance < 0 || gLotModel < 0 || !gLotPatterns || !gIndex)
+        return;
+    const os2::LotViewOptions want = wantedLotView();
+    if (!sims && !os2::WallView::sameCut(gLotView, want)) {
+        const CFTimeInterval start = CACurrentMediaTime();
+        os2::LotLightMapLayout layout;
+        const os2::ObjectModel model = os2::buildLotModel(*gLotShape, *gIndex, *gLotPatterns, want, &layout, &gLotCache);
+        const CFTimeInterval built = CACurrentMediaTime();
+        renderer.replaceObject(gLotModel, model, *gIndex);
+        if (want.level != gLotView.level)
+            placeFencePieces(renderer, *gIndex, *gLotShape, *gLotPatterns, nullptr, want.level);
+        // The atlas does not depend on the view; if it did change (it should
+        // not), the light maps follow it.
+        if (gLightMapLayout && (layout.walls.size() != gLightMapLayout->walls.size() || layout.height != gLightMapLayout->height)) {
+            gLightMapLayout = std::move(layout);
+            if (gLighting)
+                gLighting->setLightMapLayout(*gLightMapLayout);
+        }
+        gLotView = want;
+        static const bool perf = std::getenv("OS2_PERF") != nullptr;
+        if (perf || !gCamera)
+            std::printf("opensims2: lot view: walls %s, level %d, roof %s (%.1f ms build, %.1f ms upload)\n",
+                        want.walls == os2::LotViewOptions::Walls::Up        ? "up"
+                        : want.walls == os2::LotViewOptions::Walls::Cutaway ? "cutaway"
+                                                                            : "down",
+                        want.level == os2::LotViewOptions::kAllLevels ? -1 : want.level, want.roof ? "on" : "off",
+                        (built - start) * 1000, (CACurrentMediaTime() - built) * 1000);
+    }
+    if (gLive)
+        gLive->setWallMode(gWallView.puckMode(), gWallView.roof());
+    if (!sims)
+        return;
+    // Sims above the level shown: out of sight, and not picked.
+    static std::map<const os2::SimActor*, int> instances;
+    simd_float4x4 away = matrix_identity_float4x4;
+    away.columns[3] = simd_make_float4(0, 0, -1000, 1);
+    for (const auto& s : gLotSims) {
+        auto it = instances.find(s.actor);
+        if (it == instances.end())
+            it = instances.emplace(s.actor, renderer.instanceOf(s.actor->model)).first;
+        const os2::Vec3 p = s.actor->transform ? os2::Vec3{s.actor->transform->t[0], s.actor->transform->t[1],
+                                                          s.actor->transform->t[2]}
+                                               : s.actor->position;
+        const bool shown = os2::WallView::visible(*gLotShape, want.level, p[0], p[1], p[2]);
+        if (it->second >= 0)
+            renderer.setInstanceTransform(it->second, shown ? matrix_identity_float4x4 : away);
+        if (!gPie)
+            continue;
+        // The pick box: the posed bones' extent, a little wider.
+        simd_float3 lo = simd_float3(1e9f), hi = simd_float3(-1e9f);
+        for (const auto& b : s.actor->bones)
+            lo = simd_min(lo, simd_make_float3(b.t[0], b.t[1], b.t[2])), hi = simd_max(hi, simd_make_float3(b.t[0], b.t[1], b.t[2]));
+        if (s.actor->bones.empty()) // not posed yet (headless clicks): a standing adult's box
+            lo = simd_make_float3(p[0] - 0.15f, p[1] - 0.15f, p[2]), hi = simd_make_float3(p[0] + 0.15f, p[1] + 0.15f, p[2] + 1.7f);
+        if (!shown || hi.z < -100) {
+            gPie->setMovingBox(os2::vm::ObjectId(s.id), simd_float3(0), simd_float3(0));
+            continue;
+        }
+        lo -= simd_make_float3(0.15f, 0.15f, 0.05f), hi += simd_make_float3(0.15f, 0.15f, 0.15f);
+        gPie->setMovingBox(os2::vm::ObjectId(s.id), lo, hi);
+    }
+}
+
+// Home / End and the puck's wall fan.
+void setWallMode(os2::WallView::Walls walls) {
+    gWallView.setWalls(walls);
+    if (gLive)
+        gLive->setWallMode(gWallView.puckMode(), gWallView.roof());
+}
+
 // Redraws the lot after Build mode changed it: the model (walls cut away
 // as seen from the camera now, holes for the doors and windows), and the
 // light-map atlas and light maps.
 void rebuildLotModel(os2::Renderer& renderer, os2::ResourceIndex& index) {
     if (!gLotShape || gLotInstance < 0 || !gLotPatterns)
         return;
-    os2::LotViewOptions view = gLotView;
-    if (gCamera) {
-        const simd_float3 d = gCamera->pivot() - gCamera->eye();
-        if (std::hypot(d.x, d.y) > 1e-3f)
-            view.viewDirection = {d.x, d.y};
-    }
+    gWallView.study(*gLotShape);
+    const os2::LotViewOptions view = wantedLotView();
+    gLotCache.geometryChanged();
     gLightMapLayout.emplace();
-    const os2::ObjectModel model = os2::buildLotModel(*gLotShape, index, *gLotPatterns, view, &*gLightMapLayout);
-    renderer.setInstanceModel(gLotInstance, renderer.addObject(model, index));
-    placeFencePieces(renderer, index, *gLotShape, *gLotPatterns, nullptr);
+    const os2::ObjectModel model =
+        os2::buildLotModel(*gLotShape, index, *gLotPatterns, view, &*gLightMapLayout, &gLotCache);
+    renderer.replaceObject(gLotModel, model, index);
+    gLotView = view;
+    placeFencePieces(renderer, index, *gLotShape, *gLotPatterns, nullptr, view.level);
     if (gLighting) {
         gLighting->setLightMapLayout(*gLightMapLayout);
     } else {
@@ -1198,22 +1379,32 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     perfLap("leftover cObjects");
     const os2::PatternCatalog patterns(index, gameDir() / "TSData/Res");
     perfLap("PatternCatalog");
-    os2::LotViewOptions view;
-    view.viewDirection = {viewDirection.x, viewDirection.y};
-    const std::string walls = argument(@"--walls").value_or("up");
+    // The game enters a lot with walls cutaway and the levels above the
+    // camera's hidden (--ui live, --mode); a bare --lot view shows every
+    // level with walls up. --walls up|cutaway|down picks the mode, --roof off hides the roof.
+    gLevelsHidden = liveUiRequested() || argument(@"--mode").has_value();
+    const std::string walls = argument(@"--walls").value_or(gLevelsHidden ? "cutaway" : "up");
     if (walls == "cutaway")
-        view.walls = os2::LotViewOptions::Walls::Cutaway;
+        gWallView.setWalls(os2::LotViewOptions::Walls::Cutaway);
     else if (walls == "down")
-        view.walls = os2::LotViewOptions::Walls::Down;
-    else if (walls != "up")
+        gWallView.setWalls(os2::LotViewOptions::Walls::Down);
+    else if (walls == "up")
+        gWallView.setWalls(os2::LotViewOptions::Walls::Up);
+    else
         throw std::runtime_error("--walls: expected up, cutaway or down");
+    gWallView.setRoof(argument(@"--roof").value_or("on") != "off");
+    gWallView.study(lot);
+    gLotCache = {};
+    const os2::LotViewOptions view = gWallView.options(
+        {viewDirection.x, viewDirection.y}, gLevelsHidden ? gWallView.shownLevel(0) : os2::LotViewOptions::kAllLevels);
     gLightMapLayout.emplace();
-    const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, view, &*gLightMapLayout);
+    const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, view, &*gLightMapLayout, &gLotCache);
     for (const auto& w : model.warnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     perfLap("buildLotModel");
     renderer.hideTestScene();
-    gLotInstance = renderer.addInstance(renderer.addObject(model, index), matrix_identity_float4x4);
+    gLotModel = renderer.addObject(model, index);
+    gLotInstance = renderer.addInstance(gLotModel, matrix_identity_float4x4);
     gLotShape = std::make_unique<os2::Lot>(lot);
     gLotPatterns = std::make_unique<os2::PatternCatalog>(patterns);
     gLotView = view;
@@ -1242,7 +1433,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     }
     // Fence rails and posts: one model per CRES, an instance per piece.
     std::vector<std::string> fenceWarnings;
-    const size_t fences = placeFencePieces(renderer, index, lot, patterns, &fenceWarnings);
+    const size_t fences = placeFencePieces(renderer, index, lot, patterns, &fenceWarnings, view.level);
     for (const auto& w : fenceWarnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     perfLap("fences");
@@ -1674,6 +1865,7 @@ void attachLetterbox(os2::Renderer& renderer, MTL::Device* device, uint32_t colo
 void poseActors(os2::Renderer& renderer, double seconds) {
     if (gSimulation)
         seconds = gSimulation->update(seconds); // the scene clock (game speed)
+    updateLotView(renderer, false);
     updateCinematic(renderer, seconds);
     if (gDoors && gSimulation) {
         std::vector<os2::Vec3> sims;
@@ -1712,6 +1904,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         renderer.updateObject(a->model, a->posed);
     }
     placePlumbob(renderer, seconds);
+    updateLotView(renderer, true);
     if (gTv)
         gTv->update(seconds);
     updateEffects(renderer, seconds);
@@ -1908,7 +2101,7 @@ void applyLighting(os2::Renderer& renderer) {
 enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
-    kEscape = 53, kHome = 115, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
+    kEscape = 53, kHome = 115, kEnd = 119, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
     kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
 };
 
@@ -2238,6 +2431,8 @@ void unloadScene() {
     gLotPatterns.reset();
     gLotView = {};
     gLotInstance = -1;
+    gLotModel = -1;
+    gLotCache = {};
     gHoodLot.reset();
     gLotFile.clear();
     gStepsUsed = 0;
@@ -2365,6 +2560,9 @@ void unloadScene() {
     }
     switch (e.keyCode) {
     case kPageUp: changeFloor(1); break;
+    // "Paredes ... - Origem/Fim": Home and End step through the wall modes.
+    case kHome: gWallView.cycle(1); break;
+    case kEnd: gWallView.cycle(-1); break;
     case kPageDown: changeFloor(-1); break;
     case kZ: case kPadPlus: _camera->zoomBy(1); break;
     case kX: case kPadMinus: _camera->zoomBy(-1); break;
@@ -3150,6 +3348,8 @@ void unloadScene() {
     _view.camera->snap();
     if (gSimulation)
         poseActors(*_viewDelegate.renderer, gHeadlessClock);
+    else
+        updateLotView(*_viewDelegate.renderer, false);
     const os2::FrameView fv{_view.camera->view(), _view.camera->projection(float(w) / float(h))};
     const MTLClearColor c = _view.clearColor;
     const auto img = _viewDelegate.renderer->capture(w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), 1));
@@ -3318,6 +3518,7 @@ void unloadScene() {
             // The --click / --right-click / --wait steps, in order (app/game_flow.hpp):
             // a step that leaves the lot leaves the rest to the next scene.
             const auto steps = os2::flowSteps(processArguments());
+            followSelectedSim(); // the camera on the Sim's floor first, as the first frame does (a floor button then holds)
             for (size_t k = 0; k < steps.size() && !gPendingScene && !gQuitRequested; ++k) {
                 gStepsUsed = k + 1;
                 const os2::FlowStep& st = steps[k];
@@ -3375,6 +3576,7 @@ void unloadScene() {
                     gBuy->click(eye, simd_normalize(q.xyz / q.w - eye));
                     continue;
                 }
+                updateLotView(*_viewDelegate.renderer, true); // the Sims' pick boxes where they stand
                 const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
                 const os2::vm::Object* o = gPie->vm().object(id);
                 std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", clickX, clickY, id,

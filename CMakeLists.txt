@@ -184,7 +184,7 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats os2_fx
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/cinematic_player.cpp src/app/lot_effects.cpp src/app/tv_broadcast.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/cinematic_player.cpp src/app/lot_effects.cpp src/app/tv_broadcast.cpp)
   # The game flow: main menu, user folder, in-game save, options (app/game_flow.hpp).
   target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/options_panel.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp)
   # Scenes loaded off the main thread behind the loading screens (docs/loading-mac.md).
@@ -227,7 +227,7 @@ add_executable(test_dbpf tests/test_dbpf.cpp)
 target_link_libraries(test_dbpf PRIVATE os2_formats)
 add_test(NAME dbpf COMMAND test_dbpf)
 
-add_executable(test_formats tests/test_formats.cpp)
+add_executable(test_formats tests/test_formats.cpp src/app/wall_view.cpp)
 target_link_libraries(test_formats PRIVATE os2_formats ZLIB::ZLIB)
 add_test(NAME formats COMMAND test_formats)
 

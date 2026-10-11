@@ -449,7 +449,7 @@ void VmObjectView::update() {
             d.debugMoved = moved;
         }
         updateMaterials(id, d);
-        place(d, suppressed_.count(id) ? std::nullopt : at);
+        place(d, suppressed_.count(id) || (at && visible && !visible(id, *at)) ? std::nullopt : at);
     }
 }
 

@@ -86,6 +86,10 @@ public:
     // Keeps an object out of sight whatever the VM does (the host draws it
     // its own way: the plumbob over the selected Sim).
     void setHidden(int16_t id, bool hidden);
+    // Objects whose placement this refuses are not drawn (the levels above
+    // the one the camera shows, what hangs on walls cut down: app/wall_view.hpp);
+    // null draws all.
+    std::function<bool(int16_t id, const Xform&)> visible;
     // The object whose slots hold `id`, through containers in containers
     // (itself when it is in no slot).
     int16_t outermostContainer(int16_t id) const;

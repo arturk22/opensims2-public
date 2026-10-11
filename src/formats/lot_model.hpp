@@ -4,6 +4,8 @@
 #include "model.hpp"
 
 #include <filesystem>
+#include <limits>
+#include <optional>
 #include <array>
 #include <map>
 #include <vector>
@@ -61,19 +63,46 @@ private:
 //
 // Walls are drawn as in the game's wall modes: up, cutaway (walls with a room
 // behind them as seen along `viewDirection`, a horizontal vector from the
-// camera into the scene, are cut down) or down (all walls cut down); the roof
-// shows only with walls up.
+// camera into the scene, are cut down) or down (all walls cut down).
+//
+// `level` is the level the camera shows (the lot's numbering, 0 = the
+// ground): levels above it are not drawn, the walls of lower levels stay up
+// and the wall mode applies to its own walls (kAllLevels: no level hidden,
+// the mode applies to every level). The roof shows with walls up, `roof` on
+// and no level hidden (the levels above `level` have no walls nor floors).
 struct LotViewOptions {
     enum class Walls { Up, Cutaway, Down };
+    static constexpr int kAllLevels = std::numeric_limits<int>::max();
     Walls walls = Walls::Up;
     std::array<float, 2> viewDirection{1, 0};
+    int level = kAllLevels;
+    bool roof = true;
 };
+// The highest level with walls or floors (lowest level if none).
+int lotTopLevel(const Lot& lot);
 //
 // Walls, floors, wall tops and the terrain get light-map coordinates
 // (MeshGroup::uvs2) into the atlas that `lightMap`, when given, describes
-// (see lot_lightmap.hpp).
+// (see lot_lightmap.hpp). The atlas does not depend on the view: walls cut
+// down or not drawn keep their full-height cells, so that light maps made for
+// one view serve all.
+//
+// `cache`, when given, keeps what does not change with the view between
+// calls (the doors' and windows' holes, the TXMTs, the textures' mean
+// colours): a rebuild for a new view then only makes the geometry. Call
+// LotModelCache::geometryChanged after the lot itself changed.
+struct LotModelCache {
+    std::optional<std::vector<std::vector<std::array<float, 3>>>> holes; // per door or window: its points
+    std::map<std::string, MaterialDefinition> materials;                // parsed TXMTs by name
+    std::map<std::string, std::optional<std::array<float, 3>>> meanColors; // by material name
+    // Out: the walls the last build cut down (x0, y0, x1, y1, level), for
+    // the host to hide what hangs on them (windows, doors, pictures).
+    std::vector<std::array<float, 5>> cut;
+    void geometryChanged() { holes.reset(); }
+};
 ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns,
-                          const LotViewOptions& view = {}, LotLightMapLayout* lightMap = nullptr);
+                          const LotViewOptions& view = {}, LotLightMapLayout* lightMap = nullptr,
+                          LotModelCache* cache = nullptr);
 
 // One rail or post of a fence: the CRES (without "_cres") and its placement
 // in lot space, a column-major 4x4 matrix (rails are sheared to follow the

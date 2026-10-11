@@ -677,7 +677,22 @@ UiScreen LiveUi::screen(int width, int height) {
                 m->set("area", area(0, 13, 18, 13 + mid));
             hk.hide.insert(c);
         }
+        // The wall button shows the current mode; the fan opens over the camera controls.
+        for (uint32_t id = 0x1100; id <= 0x1103; ++id)
+            if (const UiElement* b = findIn(puck, id))
+                (int(id - 0x1100) == wallMode_ ? hk.show : hk.hide).insert(b);
+        if (const UiElement* fan = findIn(puck, 0x4000)) {
+            if (!wallFan_)
+                hk.hide.insert(fan);
+            for (uint32_t i = 1; i <= 4; ++i)
+                if (const UiElement* b = fan->child(i))
+                    hk.buttonState[b] = (i == 4 ? roof_ : int(i) - 1 == wallMode_) ? 2 : 1;
+        }
         place(puck, puckX, puckY, hk);
+        if (const UiElement* fan = findIn(puck, 0x4000); fan && wallFan_)
+            for (uint32_t i = 1; i <= 4; ++i)
+                target(fan->child(i), Action::Walls, int(i) - 1); // before the buttons under it
+        target(findIn(puck, 0x1100 + uint32_t(wallMode_)), Action::WallFan, 0);
         for (size_t i = 0; i < kModes.size(); ++i)
             target(puck.child(kModes[i]), Action::Mode, int(i));
         target(findIn(puck, 0x2001), Action::Floor, 1);
@@ -1139,7 +1154,7 @@ bool LiveUi::overModeButton(simd_float2 p) {
         return false;
     layoutIfNeeded();
     for (const Target& t : targets_)
-        if (t.action == Action::Mode && inside(t.rect, p))
+        if ((t.action == Action::Mode || t.action == Action::WallFan || t.action == Action::Walls) && inside(t.rect, p))
             return true;
     return false;
 }
@@ -1157,9 +1172,43 @@ bool LiveUi::press(simd_float2 p, bool right) {
         if (onPopup)
             return true;
     }
+    // The wall fan closes on any click; a click on one of its buttons picks it.
+    if (wallFan_) {
+        wallFan_ = false;
+        dirty_ = true;
+        bool onFan = false;
+        for (const Target& t : targets_)
+            onFan |= (t.action == Action::Walls || t.action == Action::WallFan) && inside(t.rect, p);
+        if (!onFan) {
+            std::printf("opensims2: live UI: wall fan closed\n");
+            std::fflush(stdout);
+        }
+        for (const Target& t : targets_) {
+            if (t.action == Action::WallFan && inside(t.rect, p))
+                return true; // the wall button closes its own fan
+            if (t.action != Action::Walls || !inside(t.rect, p) || right)
+                continue;
+            if (const std::string snd = uiButtonSound(*t.element); !snd.empty())
+                sound(snd);
+            if (t.value == 3) {
+                std::printf("opensims2: live UI: roof %s\n", roof_ ? "hidden" : "shown");
+                if (onRoof)
+                    onRoof();
+            } else {
+                static const char* const kNames[] = {"down", "cutaway", "up"};
+                std::printf("opensims2: live UI: walls %s\n", kNames[t.value]);
+                if (onWallMode)
+                    onWallMode(t.value);
+            }
+            std::fflush(stdout);
+            return true;
+        }
+    }
     for (const Target& t : targets_) {
         if (!inside(t.rect, p))
             continue;
+        if (t.action == Action::Walls)
+            continue; // the fan is closed
         if (right && t.action == Action::SelectSim) {
             // cTSWinProcSimChooserThumbnail: the right button follows the
             // Sim, or stops following it.
@@ -1182,6 +1231,7 @@ bool LiveUi::press(simd_float2 p, bool right) {
         case Action::Floor:
         case Action::Zoom:
         case Action::Rotate:
+        case Action::WallFan:
             // The button's own click sound (btnclicksnd, §7.7).
             if (t.element)
                 if (const std::string snd = uiButtonSound(*t.element); !snd.empty())
@@ -1242,6 +1292,11 @@ bool LiveUi::press(simd_float2 p, bool right) {
             if (onRotate)
                 onRotate(t.value);
             break;
+        case Action::WallFan:
+            wallFan_ = true;
+            std::printf("opensims2: live UI: wall fan open\n");
+            break;
+        case Action::Walls: break;
         case Action::Floor:
             std::printf("opensims2: live UI: floor %s\n", t.value > 0 ? "up" : "down");
             if (onFloor)

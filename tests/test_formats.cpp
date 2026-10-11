@@ -4,6 +4,7 @@
 #include "formats/lighting_config.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_model.hpp"
+#include "app/wall_view.hpp"
 #include "formats/image.hpp"
 #include "formats/model.hpp"
 #include "formats/property_set.hpp"
@@ -487,6 +488,53 @@ static void testLotModel() {
     }
     check(wall && wall->mesh.uvs2.size() == wall->mesh.positions.size(), "walls get light-map coordinates");
     check(floor && floor->mesh.uvs2.size() == floor->mesh.positions.size(), "floors get light-map coordinates");
+
+    // Wall views: walls down cut the wall to its stub, a level below the
+    // wall's hides it, and the light-map atlas is the same for every view.
+    auto wallTop = [&](const ObjectModel& model) {
+        float top = -1;
+        for (const auto& part : model.parts)
+            if (part.node == "wall:paper")
+                for (const auto& p : part.mesh.positions)
+                    top = std::max(top, p[2]);
+        return top;
+    };
+    LotLightMapLayout upLayout, downLayout, hiddenLayout;
+    buildLotModel(lot, index, patterns, {}, &upLayout);
+    LotViewOptions down;
+    down.walls = LotViewOptions::Walls::Down;
+    LotModelCache cache;
+    const ObjectModel dm = buildLotModel(lot, index, patterns, down, &downLayout, &cache);
+    check(wallTop(dm) > 0 && wallTop(dm) < 0.5f, "walls down: a low stub");
+    check(cache.holes.has_value(), "the cache keeps the wall holes");
+    down.level = 0;
+    check(wallTop(buildLotModel(lot, index, patterns, down, nullptr, &cache)) < 0.5f, "walls down on the wall's level");
+    down.level = 1; // looking at the level above: this level's walls stay up
+    check(wallTop(buildLotModel(lot, index, patterns, down, nullptr, &cache)) == 3.0f, "lower levels keep their walls up");
+    down.level = -1;
+    check(wallTop(buildLotModel(lot, index, patterns, down, &hiddenLayout, &cache)) < 0, "levels above the view are hidden");
+    check(upLayout.walls.size() == downLayout.walls.size() && downLayout.walls.size() == hiddenLayout.walls.size() &&
+              !upLayout.walls.empty() && upLayout.walls[0].h == downLayout.walls[0].h &&
+              upLayout.walls[0].top == hiddenLayout.walls[0].top && upLayout.height == downLayout.height,
+          "the light-map atlas does not depend on the view");
+    check(lotTopLevel(lot) == 0, "top level: the highest with walls or floors");
+
+    // WallView: cutaway rebuilds only when the camera passes a wall direction.
+    WallView wv;
+    check(wv.walls() == LotViewOptions::Walls::Cutaway, "lots start in cutaway");
+    const LotViewOptions a = wv.options({1, 0.2f}, 0), b = wv.options({1, 0.4f}, 0), c = wv.options({1, -0.2f}, 0);
+    check(WallView::sameCut(a, b) && !WallView::sameCut(a, c), "cutaway follows the camera's side of the walls");
+    check(!WallView::sameCut(a, wv.options({1, 0.2f}, 1)), "another level rebuilds");
+    wv.cycle(1);
+    check(wv.walls() == LotViewOptions::Walls::Up, "Home: cutaway to up");
+    wv.cycle(1);
+    check(wv.walls() == LotViewOptions::Walls::Down, "Home wraps to walls down");
+    wv.cycle(-1);
+    check(wv.walls() == LotViewOptions::Walls::Up && WallView::sameCut(wv.options({1, 0}, 0), wv.options({0, 1}, 0)),
+          "End: down to up; walls up ignore the camera");
+    check(WallView::visible(lot, 0, 0.5f, 0.5f, 1.0f) && !WallView::visible(lot, 0, 0.5f, 0.5f, 3.0f) &&
+              WallView::visible(lot, 1, 0.5f, 0.5f, 3.0f),
+          "objects above the shown level are hidden");
 }
 
 static void testLotLightMap() {

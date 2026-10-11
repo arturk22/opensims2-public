@@ -165,8 +165,10 @@ MeshGroup terrainMesh(const Lot& lot, const LotLightMapLayout& lm, Keep&& keep) 
 
 // Quarter-tile triangles (west, north, east, south) of each floor tile, with
 // the tile's own texture coordinates, one mesh per material.
+// Levels above `maxLevel` are not drawn (their light-map materials are still set).
 void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout& lm,
-               std::map<std::string, MeshBuilder>& out, std::vector<std::string>& warnings) {
+               std::map<std::string, MeshBuilder>& drawn, std::vector<std::string>& warnings, int maxLevel) {
+    std::map<std::string, MeshBuilder> hidden;
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.floorPatterns) {
         const std::string m = patterns.floorMaterial(pattern);
@@ -176,6 +178,7 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
     }
     for (int level = lot.minLevel; level < lot.minLevel + lot.levelCount; ++level) {
         const float lift = level == 0 ? kGroundFloorLift : 0.0f;
+        auto& out = level > maxLevel ? hidden : drawn;
         for (uint32_t x = 0; x < lot.width; ++x)
             for (uint32_t y = 0; y < lot.height; ++y) {
                 const auto& quarters = lot.floor(level, x, y);
@@ -230,6 +233,13 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
 // A door or window: the vertices of its visible parts in lot space.
 struct WallHole {
     std::vector<Vec3f> points;
+    Vec3f lo{}, hi{}; // bounds of the points (see bound())
+    void bound() {
+        lo = {1e9f, 1e9f, 1e9f}, hi = {-1e9f, -1e9f, -1e9f};
+        for (const auto& p : points)
+            for (size_t k = 0; k < 3; ++k)
+                lo[k] = std::min(lo[k], p[k]), hi[k] = std::max(hi[k], p[k]);
+    }
 };
 // A cut out of a wall stretch: along it from its start, and heights.
 struct Cut {
@@ -245,7 +255,14 @@ std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay
                           float bottom, float top) {
     std::vector<Cut> cuts;
     const float nx = dy, ny = -dx;
+    const float bx = ax + dx * length, by = ay + dy * length;
+    const float x0 = std::min(ax, bx) - 0.25f, x1 = std::max(ax, bx) + 0.25f, y0 = std::min(ay, by) - 0.25f,
+                y1 = std::max(ay, by) + 0.25f;
     for (const auto& h : holes) {
+        // Far from the stretch: nothing to cut (most holes for most walls).
+        if (h.hi[0] < x0 || h.lo[0] > x1 || h.hi[1] < y0 || h.lo[1] > y1 || h.hi[2] < bottom - 0.1f ||
+            h.lo[2] > top + 0.1f)
+            continue;
         float u0 = 1e9f, u1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
         size_t near = 0;
         bool front = false, back = false;
@@ -276,8 +293,11 @@ std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay
 // texture coordinates follow world position, so overlaps line up. Attic walls
 // (gables) rise to the roof above them, half walls under a fence to 1 tile.
 void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs, const LotViewOptions& view,
-              const std::vector<WallHole>& holes, LotLightMapLayout& lm, std::map<std::string, MeshBuilder>& out,
-              std::vector<std::string>& warnings) {
+              const std::vector<WallHole>& holes, LotLightMapLayout& lm, std::map<std::string, MeshBuilder>& drawn,
+              std::vector<std::string>& warnings, std::vector<std::array<float, 5>>* cut) {
+    // Walls above the view's level are built into this and dropped: their
+    // light-map cells stay, so the atlas is the same for every view.
+    std::map<std::string, MeshBuilder> hidden;
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.wallPatterns)
         materials[ref] = patterns.wallMaterial(pattern);
@@ -296,12 +316,15 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             continue;
         dx /= len, dy /= len;
         const int level = w.a.level;
+        auto& out = level > view.level ? hidden : drawn;
+        // The wall mode applies to the view's level (lower levels keep their walls up).
+        const bool current = view.level == LotViewOptions::kAllLevels || level == view.level;
         const bool attic = w.type == Lot::Attic;
         const float nx = dy, ny = -dx; // right of a -> b
         // Wall modes cut down the walls of the house (not foundations, pool
         // sides or deck skirts, which stand below the floors).
         bool lowered = false;
-        if (view.walls != LotViewOptions::Walls::Up && (w.type == Lot::Normal || attic || fence)) {
+        if (current && view.walls != LotViewOptions::Walls::Up && (w.type == Lot::Normal || attic || fence)) {
             if (view.walls == LotViewOptions::Walls::Down) {
                 lowered = true;
             } else {
@@ -313,16 +336,18 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 }
             }
         }
+        if (lowered && cut && level <= view.level)
+            cut->push_back({w.a.x, w.a.y, w.b.x, w.b.y, float(level)});
         // Bottom and top of the wall at a point along it (grid points or the middle).
         auto bottom = [&](float x, float y) { return lot.elevationAt(level, x, y); };
-        auto top = [&](float x, float y) {
+        auto top = [&](float x, float y, bool cut = true) {
             const float z0 = bottom(x, y);
             float z1 = lot.hasLevel(level + 1) ? lot.elevationAt(level + 1, x, y) : z0 + kStoryHeight;
             if (attic)
                 z1 = std::max(roofs.heightAt(x, y, level, z1, kAtticRoofOffset), z0);
             else if (fence)
                 z1 = std::min(z1, z0 + kHalfWallHeight);
-            if (lowered)
+            if (lowered && cut)
                 z1 = std::min(z1, z0 + kWallsDownHeight);
             return z1;
         };
@@ -336,13 +361,14 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             return std::array<float, 2>{std::clamp(p[0], 0.0f, float(lot.width)),
                                         std::clamp(p[1], 0.0f, float(lot.height))};
         };
-        std::vector<float> zb, zt;
+        std::vector<float> zb, zt, full; // full: the uncut top (the light-map cells)
         for (size_t i = 0; i < points.size(); ++i) {
             // Heights at the wall's own ends, not at the stretched corners.
             const auto q = clampXY(i == 0 ? std::array<float, 2>{w.a.x, w.a.y}
                                    : i + 1 == points.size() ? std::array<float, 2>{w.b.x, w.b.y} : points[i]);
             zb.push_back(bottom(q[0], q[1]));
             zt.push_back(top(q[0], q[1]));
+            full.push_back(top(q[0], q[1], false));
         }
 
         for (size_t seg = 0; seg + 1 < points.size(); ++seg) {
@@ -370,7 +396,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 face.normal = {n[0], n[1]};
                 face.length = segLen;
                 face.base = std::min(za0, zb0);
-                face.top = std::max(za1, zb1);
+                face.top = std::max(full[seg], full[seg + 1]);
                 face.level = level;
                 face.room = roomBeside(lot, level, (ax + bx) / 2, (ay + by) / 2, n[0], n[1], true);
                 face.material = lm.materialIndex(it->second);
@@ -668,8 +694,20 @@ std::string PatternCatalog::material(const std::map<std::string, std::string>& s
     return pattern;
 }
 
+int lotTopLevel(const Lot& lot) {
+    int top = lot.minLevel;
+    for (const auto& w : lot.walls)
+        top = std::max(top, w.a.level);
+    for (int level = top + 1; level < lot.minLevel + lot.levelCount; ++level)
+        for (uint32_t x = 0; x < lot.width; ++x)
+            for (uint32_t y = 0; y < lot.height; ++y)
+                if (lot.floor(level, x, y) != std::array<uint16_t, 4>{})
+                    top = level, x = lot.width, y = lot.height;
+    return top;
+}
+
 ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns,
-                          const LotViewOptions& view, LotLightMapLayout* lightMap) {
+                          const LotViewOptions& view, LotLightMapLayout* lightMap, LotModelCache* cache) {
     ObjectModel model;
     model.name = "lot";
     model.warnings = lot.warnings;
@@ -724,8 +762,24 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     const LotRoofs roofs(lot);
     model.warnings.insert(model.warnings.end(), roofs.warnings.begin(), roofs.warnings.end());
     std::map<std::string, MeshBuilder> built;
-    addFloors(lot, patterns, lm, built, model.warnings);
-    addWalls(lot, patterns, roofs, view, findWallHoles(lot, index, model.warnings), lm, built, model.warnings);
+    addFloors(lot, patterns, lm, built, model.warnings, view.level);
+    std::vector<WallHole> holes;
+    if (cache && cache->holes) {
+        for (const auto& points : *cache->holes)
+            holes.push_back({points, {}, {}});
+    } else {
+        holes = findWallHoles(lot, index, model.warnings);
+        if (cache) {
+            cache->holes.emplace();
+            for (const auto& h : holes)
+                cache->holes->push_back(h.points);
+        }
+    }
+    for (auto& h : holes)
+        h.bound();
+    if (cache)
+        cache->cut.clear();
+    addWalls(lot, patterns, roofs, view, holes, lm, built, model.warnings, cache ? &cache->cut : nullptr);
     addWater(lot, built);
     model.materials["water:terrain"] = terrainWaterMaterial();
     model.materials["water:pool"] = poolWaterMaterial();
@@ -738,7 +792,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         }
     std::erase_if(built, [](const auto& kv) { return kv.first.rfind("water:", 0) == 0; });
 
-    if (roofs.count() && view.walls == LotViewOptions::Walls::Up) {
+    if (roofs.count() && view.walls == LotViewOptions::Walls::Up && view.roof && view.level >= lotTopLevel(lot)) {
         const PatternCatalog::Roof* pattern = patterns.roof(roofs.pattern());
         if (!pattern) {
             model.warnings.push_back("roof pattern " + hexString(roofs.pattern()) + " not in the catalog");
@@ -771,6 +825,11 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     for (const auto& part : model.parts) {
         if (part.material.empty() || model.materials.count(part.material))
             continue;
+        if (cache)
+            if (auto it = cache->materials.find(part.material); it != cache->materials.end()) {
+                model.materials.emplace(part.material, it->second);
+                continue;
+            }
         auto loc = index.findByName(part.material + "_txmt", kTypeTxmt);
         if (!loc) {
             model.warnings.push_back("TXMT not found: " + part.material);
@@ -784,6 +843,8 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
             continue;
         }
         model.materials.emplace(part.material, MaterialDefinition::parse(block->body));
+        if (cache)
+            cache->materials.emplace(part.material, model.materials.at(part.material));
     }
 
     // The mean colour of each floor and wall material's texture, for the
@@ -792,6 +853,14 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         auto m = model.materials.find(lm.materialNames[i]);
         if (m == model.materials.end())
             continue;
+        if (cache)
+            if (auto c = cache->meanColors.find(lm.materialNames[i]); c != cache->meanColors.end()) {
+                if (c->second)
+                    lm.materialColors[i] = *c->second;
+                continue;
+            }
+        if (cache)
+            cache->meanColors[lm.materialNames[i]] = std::nullopt; // until found below
         const std::string tex = m->second.property("stdMatBaseTextureName");
         if (tex.empty())
             continue;
@@ -817,8 +886,12 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
                 for (size_t c = 0; c < 3; ++c)
                     sum[c] += img.pixels[p * 4 + c];
             if (n)
+            {
                 lm.materialColors[i] = {float(sum[0] / (255.0 * double(n))), float(sum[1] / (255.0 * double(n))),
                                         float(sum[2] / (255.0 * double(n)))};
+                if (cache)
+                    cache->meanColors[lm.materialNames[i]] = lm.materialColors[i];
+            }
         } catch (const std::exception& e) {
             model.warnings.push_back("mean colour of " + tex + ": " + e.what());
         }

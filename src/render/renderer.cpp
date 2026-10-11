@@ -556,6 +556,15 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     return mat;
 }
 
+void Renderer::replaceObject(int id, const ObjectModel& model, ResourceIndex& index) {
+    if (id < 0 || size_t(id) >= models_.size())
+        return;
+    addObject(model, index);
+    retiredModels_.push_back({std::move(models_[size_t(id)]), kFramesInFlight + 1});
+    models_[size_t(id)] = std::move(models_.back());
+    models_.pop_back();
+}
+
 int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dynamic) {
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     auto out = std::make_unique<Model>();
@@ -820,6 +829,9 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         if (--r.second <= 0)
             r.first->release();
     std::erase_if(retired_, [](const auto& r) { return r.second <= 0; });
+    for (auto& r : retiredModels_)
+        --r.second;
+    std::erase_if(retiredModels_, [](const auto& r) { return r.second <= 0; });
     MTL::Texture* lightMap0 = lightMaps_[0] ? lightMaps_[0] : lightMaps_[1] ? lightMaps_[1] : grey_;
     MTL::Texture* lightMap1 = lightMaps_[1] ? lightMaps_[1] : lightMap0;
 
