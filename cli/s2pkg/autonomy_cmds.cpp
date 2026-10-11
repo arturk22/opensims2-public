@@ -203,7 +203,10 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     size_t traced = 0;
     if (traceId)
         machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
-            if (t.me != traceId || t.stack.empty() || &t.stack.front() != &machine.threads[traceId].stack.front())
+            // S2PKG_TRACE_ANY=1: also the object's one-tick trees (Run Tree by Name in its stack, ...).
+            static const bool any = std::getenv("S2PKG_TRACE_ANY") != nullptr;
+            if (t.me != traceId || t.stack.empty() ||
+                (!any && &t.stack.front() != &machine.threads[traceId].stack.front()))
                 return;
             static const long from = std::getenv("S2PKG_TRACE_FROM") ? std::atol(std::getenv("S2PKG_TRACE_FROM")) : 0;
             static const size_t most = std::getenv("S2PKG_TRACE_MAX") ? std::atol(std::getenv("S2PKG_TRACE_MAX")) : 3000;

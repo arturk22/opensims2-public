@@ -249,6 +249,33 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     };
 
     float ox = slot.offset[0], oy = slot.offset[1];
+    // 0x1000 "snap to direction": the slot is the object's point (plus its
+    // offset) facing the object's direction turned by the slot's facing (a
+    // direction 0-7), or by its lowest direction bit (none: N). The global
+    // SLOT's "CT - Snap Me" slots (0x0F, 0x10, 0x1F, 0x20) turn an object in
+    // place this way: "Align Trashcan To Sim" snaps the can a step at a time
+    // until it faces the Sim, and spun forever when the snap moved it one
+    // tile off without turning it (N001_Lot36). As FreeSO's VMSlotParser
+    // (inferred for the Sims 2).
+    if (slot.flags & 0x1000) {
+        int turnBy = 0;
+        if (slot.facing >= 0)
+            turnBy = slot.facing % 8;
+        else
+            for (int d = 0; d < 8; ++d)
+                if (dirs & (1u << d)) {
+                    turnBy = d;
+                    break;
+                }
+        const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
+        const float px = cx + float(ox * std::cos(yaw) - oy * std::sin(yaw));
+        const float py = cy + float(ox * std::sin(yaw) + oy * std::cos(yaw));
+        out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
+        out.goals.push_back({int(std::floor(px)), int(std::floor(py)), 0});
+        out.points.push_back({px, py});
+        out.facings.push_back((objDir + turnBy) % 8);
+        return out;
+    }
     if (dirs == 0 || ox != 0 || oy != 0) {
         const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
         auto turn = [&](float x, float y) {

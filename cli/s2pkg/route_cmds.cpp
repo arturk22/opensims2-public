@@ -139,8 +139,11 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
                 std::printf("    %d %s at (%.2f, %.2f, %d) dir %d next %d prev %d attr2 %d\n", id, nameOf(x).c_str(),
                             x.position.x, x.position.y, x.position.level, x.data[vm::objdata::Direction], x.data[80],
                             x.data[81], x.attributes.size() > 2 ? x.attributes[2] : -1);
-    // The object's routing slots and the goals each gives.
-    if (const Slots* table = o.definition ? code.slots(o.group, o.definition->slotId()) : nullptr) {
+    // The object's routing slots and the goals each gives (S2PKG_GLOBAL_SLOTS=1:
+    // the global SLOT 0x64's, as Snap's and Find Location For's global scope, on the object).
+    const bool globalSlots = std::getenv("S2PKG_GLOBAL_SLOTS") != nullptr;
+    if (const Slots* table = globalSlots ? code.slots(vm::kGlobalGroup, 0x64)
+                                         : o.definition ? code.slots(o.group, o.definition->slotId()) : nullptr) {
         int n = 0;
         if (std::getenv("OS2_STAIR_PIECES"))
             for (size_t k = 0; k < table->slots.size(); ++k)
