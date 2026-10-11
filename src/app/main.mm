@@ -1042,7 +1042,7 @@ enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
     kEscape = 53, kHome = 115, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
-    kReturn = 36, kEnter = 76,
+    kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20,
 };
 
 // Camera position slot of the keys 4-9 (-1: another key).
@@ -1128,6 +1128,9 @@ int cameraSlot(unsigned short key) {
                 _camera->moveTo(*p);
         break;
     case kEscape: if (gPie) gPie->close(); break;
+    // The speed buttons' accelerators (their tips: "Pausa - P", "Velocidade Normal - 1", ...).
+    case kP: if (gLive) gLive->togglePause(); break;
+    case k1: case k2: case k3: if (gLive) gLive->setSpeed(e.keyCode - k1 + 2); break;
     default: break;
     }
 }

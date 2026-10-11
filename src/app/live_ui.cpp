@@ -161,8 +161,10 @@ LiveUi::LiveUi(vm::VM& vm, ResourceIndex& index, const std::filesystem::path& re
         std::fprintf(stderr, "opensims2: live UI: no UI script %08X\n", id);
         return false;
     };
-    ok_ = load(kPuckScript, puck_) & load(kLiveScript, live_) & load(kMotivesScript, motives_) &
-          load(kBarScript, bar_) & load(kMemberScript, member_) & load(kIconScript, icon_);
+    ok_ = true;
+    for (auto [id, into] : {std::pair{kPuckScript, &puck_}, {kLiveScript, &live_}, {kMotivesScript, &motives_},
+                            {kBarScript, &bar_}, {kMemberScript, &member_}, {kIconScript, &icon_}})
+        ok_ = load(id, *into) && ok_;
     if (auto c = res_->script(kQueueConstants))
         queueConstants_ = uiConstants(*c);
     for (size_t i = 0; i < kBars.size(); ++i) {
@@ -673,6 +675,20 @@ void LiveUi::layoutIfNeeded() {
         screen(canvasW_, canvasH_);
 }
 
+void LiveUi::setSpeed(int speed) {
+    // SetSimulatorSpeed: already at v and paused only unpauses.
+    vm_->globals[vm::global::Speed] = int16_t(std::clamp(speed, 2, 4)), vm_->globals[vm::global::Paused] = 0;
+    std::printf("opensims2: live UI: speed %d\n", speed);
+    dirty_ = true;
+}
+
+void LiveUi::togglePause() {
+    auto& paused = vm_->globals[vm::global::Paused];
+    paused = paused ? 0 : 1;
+    std::printf("opensims2: live UI: %s\n", paused ? "paused" : "unpaused");
+    dirty_ = true;
+}
+
 bool LiveUi::press(simd_float2 p) {
     if (!ok_)
         return false;
@@ -680,17 +696,9 @@ bool LiveUi::press(simd_float2 p) {
     for (const Target& t : targets_) {
         if (!inside(t.rect, p))
             continue;
-        auto& g = vm_->globals;
         switch (t.action) {
-        case Action::Speed:
-            // SetSimulatorSpeed: already at v and paused only unpauses.
-            g[vm::global::Speed] = int16_t(t.value), g[vm::global::Paused] = 0;
-            std::printf("opensims2: live UI: speed %d\n", t.value);
-            break;
-        case Action::Pause:
-            g[vm::global::Paused] = g[vm::global::Paused] ? 0 : 1;
-            std::printf("opensims2: live UI: %s\n", g[vm::global::Paused] ? "paused" : "unpaused");
-            break;
+        case Action::Speed: setSpeed(t.value); break;
+        case Action::Pause: togglePause(); break;
         case Action::SelectSim:
             if (vm::ObjectId(t.value) != sim_) {
                 std::printf("opensims2: live UI: select Sim %d\n", t.value);

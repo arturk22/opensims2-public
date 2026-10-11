@@ -99,6 +99,11 @@ public:
     // Called when the player picks another Sim in the family column.
     std::function<void(vm::ObjectId)> onSelectSim;
 
+    // The speed buttons (docs/ui-live-mac.md §1.3): simulator speed 2-4
+    // (unpauses), pause toggled.
+    void setSpeed(int speed);
+    void togglePause();
+
     // The real clock (seconds), for the trend arrows' 500 ms samples.
     void tick(double seconds);
 
