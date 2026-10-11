@@ -259,6 +259,8 @@ struct LotSim {
     std::string idle;
 };
 std::vector<LotSim> gLotSims;
+int gPlumbob = -1; // renderer instance of the plumbob over the selected Sim (placePlumbob)
+float gPlumbobBottom = 0; // lowest point of its mesh (modelled about 1.24 over the origin)
 
 // Sound on the lot (app/lot_audio.hpp): --no-audio leaves it out, --mute
 // keeps it silent; headless runs (--screenshot) open no device, and
@@ -351,6 +353,13 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                                               argument(@"--sim-id").value_or(""));
     for (const auto& b : gPickBoxes)
         gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
+    try {
+        const auto plumbob = os2::loadObjectModel(index, "plumbob");
+        gPlumbob = renderer.addInstance(renderer.addObject(plumbob, index), matrix_identity_float4x4);
+        gPlumbobBottom = os2::modelBounds(plumbob).first.z;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: plumbob: %s\n", e.what());
+    }
     const os2::vm::Object* sim = gPie->vm().object(gPie->sim());
     std::printf("opensims2: pie menus for Sim %d (%s)\n", gPie->sim(),
                 sim && sim->definition ? sim->definition->fileName.c_str() : "none");
@@ -460,6 +469,33 @@ os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
     return os2::Skeleton::fromCres(os2::Rcol(bytes));
 }
 
+// The plumbob over the selected Sim (with the VM): the game's "plumbob"
+// model, spinning about Z once every 2.316 s as its "o-plumbob-spin"
+// animation turns its bone, floating over the Sim's head (the top of its
+// posed mesh, less the height the mesh is modelled at; the gap is a guess). Green, its material's colour: the
+// mood colours are not done.
+constexpr float kPlumbobGap = 0.2f, kPlumbobSpinSeconds = 2.316f;
+
+void placePlumbob(os2::Renderer& renderer, double seconds) {
+    if (gPlumbob < 0 || !gPie)
+        return;
+    simd_float4x4 at = matrix_identity_float4x4;
+    at.columns[3] = simd_make_float4(0, 0, -1000, 1); // hidden
+    for (const auto& s : gLotSims) {
+        if (s.id != gPie->sim())
+            continue;
+        float top = s.actor->position[2];
+        for (const auto& p : s.actor->posed.parts)
+            for (const auto& v : p.mesh.positions)
+                top = std::max(top, v[2]);
+        const float angle = float(std::fmod(seconds / kPlumbobSpinSeconds, 1.0) * 2 * M_PI);
+        at = simd_matrix4x4(simd_quaternion(angle, simd_make_float3(0, 0, 1)));
+        at.columns[3] =
+            simd_make_float4(s.actor->position[0], s.actor->position[1], top + kPlumbobGap - gPlumbobBottom, 1);
+    }
+    renderer.setInstanceTransform(gPlumbob, at);
+}
+
 // Poses every actor at `seconds` and hands the vertices to the renderer.
 void poseActors(os2::Renderer& renderer, double seconds) {
     if (gSimulation)
@@ -468,6 +504,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         a->update(seconds);
         renderer.updateObject(a->model, a->posed);
     }
+    placePlumbob(renderer, seconds);
     updateAudio(seconds);
 }
 

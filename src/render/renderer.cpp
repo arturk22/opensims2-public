@@ -613,9 +613,16 @@ void Renderer::setLighting(const LightingState& state) {
                      state.name.c_str(), kMaxLights, lights_.size());
 }
 
-void Renderer::addInstance(int model, const simd_float4x4& transform) {
-    if (model >= 0 && size_t(model) < models_.size())
-        instances_.push_back({model, transform});
+int Renderer::addInstance(int model, const simd_float4x4& transform) {
+    if (model < 0 || size_t(model) >= models_.size())
+        return -1;
+    instances_.push_back({model, transform});
+    return int(instances_.size() - 1);
+}
+
+void Renderer::setInstanceTransform(int instance, const simd_float4x4& transform) {
+    if (instance >= 0 && size_t(instance) < instances_.size())
+        instances_[size_t(instance)].transform = transform;
 }
 
 void Renderer::retargetInstances(int from, int to) {

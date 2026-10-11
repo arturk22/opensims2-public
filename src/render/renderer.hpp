@@ -60,7 +60,10 @@ public:
     // parts (and vertex counts) of the model it was added from. Takes effect
     // from the next frame drawn.
     void updateObject(int model, const ObjectModel& posed);
-    void addInstance(int model, const simd_float4x4& transform);
+    // Returns the instance's index (for setInstanceTransform), or -1.
+    int addInstance(int model, const simd_float4x4& transform);
+    // Moves an instance (the plumbob over the selected Sim).
+    void setInstanceTransform(int instance, const simd_float4x4& transform);
     // Points the instances of `from` at model `to` (a Sim changing clothes).
     void retargetInstances(int from, int to);
     // Removes the checkered test floor and axis markers (e.g. when a lot is shown).
