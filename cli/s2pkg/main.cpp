@@ -706,8 +706,11 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
         size_t traced = 0;
         if (traceId)
             machine.trace = [traceId, &traced](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
-                if (t.me != traceId || ++traced > 2000)
+                // --trace -1: every thread, each line tagged with its object
+                if ((traceId != -1 && t.me != traceId) || ++traced > (traceId == -1 ? 2000000u : 2000u))
                     return;
+                if (traceId == -1)
+                    std::printf("[%d] ", t.me);
                 const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
                 std::string ops;
                 char buf[8];

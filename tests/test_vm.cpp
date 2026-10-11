@@ -255,9 +255,9 @@ static void testYieldAndErrors() {
     fx.vm.run(t);
     check(t.status == Thread::Status::Finished && t.temps[0] == 1, "resumes after yields");
 
-    fx.code.add(kObjGroup, 0x1001, tree({instr(0x13, T, F)})); // Make New Character: not implemented
+    fx.code.add(kObjGroup, 0x1001, tree({instr(0x7E, T, F)})); // not a primitive of the game
     t = fx.run(0x1001);
-    check(t.status == Thread::Status::Failed && fx.vm.missingPrimitives[0x13] == 1, "missing primitive fails");
+    check(t.status == Thread::Status::Failed && t.error.find("not supported") != std::string::npos, "unknown primitive fails");
 
     fx.code.add(kObjGroup, 0x1002, tree({expr(Temp, 0, Div, Lit, 0, T, F)}));
     t = fx.run(0x1002);
@@ -1325,6 +1325,60 @@ static void testAgeRayTraceOwners() {
           "Set to Next 32 finds the owner over the threshold, then none (-1)");
 }
 
+// Make New Character (0x13): a new neighbor from a template (temps 0/1) into
+// the stack object's array 0, whose Sim Create New Object Instance (flag
+// 0x04) can make; then twins of two parents.
+static void testMakeNewCharacter() {
+    Fixture fx;
+    constexpr uint32_t kTemplate = 0x13572468, kHolder = 0x22334455;
+    ObjectDefinition tpl = definition(kTemplate);
+    tpl.fields[(0x52 - 0x44) / 2] = 0x10; // a template
+    tpl.fileName = "NPC - Template - Maid";
+    fx.code.add(kObjGroup, 0x80, std::move(tpl));
+    fx.code.add(kObjGroup, 0x81, definition(kHolder));
+    fx.vm.instantiate(kObjGroup, 0x81); // id 1: me and the holder of the IDs
+    fx.vm.neighbors[5].personData[persondata::FamilyNumber] = 3;
+    fx.vm.neighbors[5].lastName = "Caixao";
+    fx.vm.neighbors[5].guid = kHolder;
+    fx.vm.neighbors[6].personData[persondata::FamilyNumber] = 3;
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, 1, go(1), E),
+                      expr(Temp, 0, Assign, Lit, int16_t(kTemplate & 0xFFFF), go(2), E),
+                      expr(Temp, 1, Assign, Lit, int16_t(kTemplate >> 16), go(3), E),
+                      expr(Local, 0, Assign, Lit, 8, go(4), E), // adult
+                      expr(Local, 2, Assign, Lit, 2, go(5), E), // female
+                      instr(0x13, go(6), E, {1, 0, 2, 0, 0, 0, 0, 0, 0, 0x08}),
+                      expr(Temp, 2, Assign, 0x2C, 0, go(7), E),   // stack object's array 0 at its iterator (0): the neighbor
+                      expr(StackId, 0, Assign, Temp, 2, go(8), E),
+                      instr(0x2A, go(9), E, {0, 0, 0, 0, 6, 0x04}), // its Sim, out of the world
+                      expr(Temp, 3, Assign, StackId, 0, T, E)},
+                     0, 3));
+    Thread t = fx.run(0x1000);
+    const Neighbor* n = fx.vm.neighbor(t.temps[2]);
+    const Object* sim = fx.vm.object(t.temps[3]);
+    check(t.status == Thread::Status::Finished && t.temps[2] == 7 && n && n->personData[persondata::PersonAge] == 0x13 &&
+              n->personData[65] == 1 && n->firstName == "Maid",
+          "Make New Character makes neighbor 7, an adult woman from the template, in array 0");
+    check(sim && sim->person && sim->person->data[persondata::NeighborId] == 7 && sim->guid() == n->guid &&
+              n->guid != kTemplate,
+          "the new neighbor's Sim is created from a person copy of the template");
+
+    fx.code.add(kObjGroup, 0x1001,
+                tree({expr(StackId, 0, Assign, Lit, 1, go(1), E),
+                      expr(Temp, 0, Assign, Lit, 2, go(2), E), // twins
+                      expr(Local, 0, Assign, Lit, 5, go(3), E),
+                      expr(Local, 1, Assign, Lit, 6, go(4), E),
+                      instr(0x13, T, E, {0, 0, 0, Local, 1, 0, Local, 0, 0, 0x01 | 0x02 | 0x04})},
+                     0, 2));
+    t = fx.run(0x1001);
+    const auto& babies = fx.vm.object(1)->array(0).values;
+    check(t.status == Thread::Status::Finished && babies.size() == 2 && fx.vm.neighbor(babies[0]) &&
+              fx.vm.neighbor(babies[0])->personData[persondata::PersonAge] == 0 &&
+              fx.vm.neighbor(babies[1])->personData[persondata::FamilyNumber] == 3 &&
+              fx.vm.neighbor(babies[1])->lastName == "Caixao",
+          "Make New Character 0x01 makes temp 0 babies of two parents, in their family");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -1357,6 +1411,7 @@ int main() {
     testRunTreeByNameNow();
     testClockGlobals();
     testMessage();
+    testMakeNewCharacter();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

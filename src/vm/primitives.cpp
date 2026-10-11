@@ -1,3 +1,4 @@
+#include "characters.hpp"
 #include "engine.hpp"
 #include "vm.hpp"
 
@@ -1269,7 +1270,10 @@ Exit genericSimsCall(Context& c) {
         size_t members = 0;
         for (auto& [id, other] : vm.neighbors)
             members += id != c.frame.stackObject && neighborData(vm, id, other)[persondata::FamilyNumber] == family;
-        if (members >= kMaxFamilySize)
+        // The reserved families (BCON "G - Reserved Family IDs": 32765-32767,
+        // where the NPCs and townies go) hold any number (inferred: "NPC -
+        // Make New Character - Specific" adds every new NPC to 32767).
+        if (members >= kMaxFamilySize && family < 32765)
             return Exit::False;
         neighborData(vm, c.frame.stackObject, *n)[persondata::FamilyNumber] = family;
         return Exit::True;
@@ -1377,6 +1381,7 @@ void registerPrimitives(VM& vm) {
     registerMessagePrimitives(vm);     // Message (message.cpp)
     registerEnginePrimitives(vm);      // Refresh, Debug, UI/camera, Test Sim Interacting With (engine_prims.cpp)
     registerPersonPrimitives(vm);      // Age, RayTrace (person_prims.cpp)
+    registerCharacterPrimitives(vm);   // Make New Character (characters.cpp)
 }
 
 } // namespace os2::vm

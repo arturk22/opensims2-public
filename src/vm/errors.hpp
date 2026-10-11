@@ -65,6 +65,7 @@ inline std::string errorString(uint16_t code) {
     case 0x1C: return "Object referred to must be a person.";
     case 0x1E: return "Search type is invalid. Types are 0: all motive, 1:mental motives, 2:physical motives.";
     case 0x1F: return "Tree table not found";
+    case 0x29: return "Bad room value requested.";
     case 0x2A: return "Invalid global sim call.";
     case 0x32: return "Invalid object id.";
     case 0x33: return "Local out of range.";
@@ -80,6 +81,8 @@ inline std::string errorString(uint16_t code) {
     case 0x70: return "Invalid number of loops";
     case 0x71: return "Missing reach animation.";
     case 0x73: return "Invalid animation type specified in animation string";
+    case 0x76: return "Request for babies count out of range.";
+    case 0x94: return "Attempting to create object type that's been unlinked (ie is dead, and has had data removed from it's .package file).";
     case 0x90: return "Trying to create instance of Template Object";
     default: return "Unrecognized error condition : " + std::to_string(code);
     }
