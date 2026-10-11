@@ -64,6 +64,7 @@ void restoreState(Object& o, const LotObjects::State& s) {
         if (o.timers.size() >= kMaxTimersPerObject)
             break;
         ObjectTimer x;
+        x.id = int16_t(st.a);
         x.tree = uint16_t(st.b);
         x.period = st.e;
         x.ticks = std::max(st.f, 1);

@@ -87,8 +87,12 @@ constexpr uint8_t kOwnerStackObjectId = 0x0A;
 // Sleep (0x00): u16 index of the parameter holding the ticks left, counted
 // down once per tick (one call to VM::run). Idle for Input (0x11), which
 // also looks at the interaction queue, is in queue.cpp.
+// The Mac binary (cTSObject::TryIdle): a parameter out of range is error
+// 0x08; 0 (or less) is true at once, else it counts down and waits.
 Exit countDownParam(Context& c) {
     const auto param = int16_t(le16(&c.instruction.operands[0]));
+    if (param < 0 || size_t(param) >= c.frame.params.size())
+        throw gameError(err::StackNumberOutOfRange, "Sleep parameter " + std::to_string(param));
     const int16_t ticks = c.get(kOwnerParam, param);
     if (ticks <= 0)
         return Exit::True;

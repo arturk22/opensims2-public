@@ -12,9 +12,18 @@
 // 6-7 are a data owner and value: my object ID (3, 11) on the fireplace,
 // literal 0 mostly; with a negative event ID the event comes from it: -1 =
 // that value (temp 0 in "Vox - Choose and Play"), -N = N + the value (the
-// stereo: -20000 + the station in its attribute 11) — inferred. Events whose
-// track name ends in "_lp" loop (the game's naming; whether the track settings
-// say so is not decoded).
+// stereo: -20000 + the station in its attribute 11). The Mac binary
+// (TryPlaySound; docs/primitives-mac.md §4) settles the negative case: the
+// index comes from (owner u8 at 6, data u16 at 7) and |n| still picks the
+// table, so the event is (|n| rounded down to 0, 10000 or 20000) + the
+// value. It also takes the stack object as the source only with 0x02 and a
+// flags byte other than 0xFF, and always returns true. Which table is which:
+// the doc reads 20000+ as the global table and 10000+ as the semi-global
+// one, but the game's data says the opposite ("Pregnancy - Make Pregnant",
+// a global tree, plays 10002 = the global table's "sting_playin_make_preg";
+// the phones' "CT - Ring" play 20001 and have no table of their own), so the
+// mapping below is kept. Events whose track name ends in "_lp" loop (the
+// game's naming; whether the track settings say so is not decoded).
 #include "sound.hpp"
 
 #include "vm.hpp"
@@ -41,11 +50,12 @@ Exit playStopSoundEvent(Context& c) {
     int id = int16_t(le16(&o[0]));
     const uint8_t flags = o[4], volume = o[5];
     if (id < 0) {
-        const int value = c.get(o[6], int16_t(o[7]));
-        id = id == -1 ? value : -id + value;
+        const int value = c.get(o[6], int16_t(le16(&o[7])));
+        const int n = -id;
+        id = (n >= 20000 ? 20000 : n >= 10000 ? 10000 : 0) + value;
     }
     Object* source = &c.me();
-    if (flags & kFlagStackObjectSource)
+    if ((flags & kFlagStackObjectSource) && flags != 0xFF)
         if (Object* s = c.vm.object(c.frame.stackObject))
             source = s;
     const std::string name = soundEventName(c.vm, c.vm.object(c.frame.codeOwner ? c.frame.codeOwner : c.thread.me),
@@ -75,11 +85,11 @@ Exit playStopSoundEvent(Context& c) {
     return Exit::True;
 }
 
-// Stop ALL Sounds (0x30): byte 0 is 0 or 1 (14 uses each); taken as the
-// source, me (0) or the stack object (1) — inferred.
+// Stop ALL Sounds (0x30): u16 at 0, 0 my sounds, anything else the stack
+// object's (Mac binary).
 Exit stopAllSounds(Context& c) {
     Object* source = &c.me();
-    if (c.instruction.operands[0] == 1)
+    if (le16(&c.instruction.operands[0]) != 0)
         if (Object* s = c.vm.object(c.frame.stackObject))
             source = s;
     c.vm.loopingSounds.erase(source->id);

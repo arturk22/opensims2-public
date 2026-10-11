@@ -350,6 +350,7 @@ struct Position {
 // tree runs on the object, with these parameters. Looping timers start
 // over with `period`.
 struct ObjectTimer {
+    int16_t id = 0;    // On Timer's timer ID (the saved state's sequence number)
     uint16_t tree = 0; // call opcode, resolved against the object's code
     int32_t ticks = 0; // left
     int32_t period = 0;

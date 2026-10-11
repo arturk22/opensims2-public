@@ -829,8 +829,8 @@ static void testAddPackage() {
 }
 
 // On Timer (0x7A): the event tree runs on the object after the ticks, with
-// the parameters given or the current tree's; op 1 replaces the timer of
-// the same tree; flag 0x08 takes the ticks from temp 1.
+// the parameters given or the current tree's; timer IDs in temp 0; flag
+// 0x08 takes the ticks from temp 1.
 static void testOnTimer() {
     Fixture fx;
     fx.obj();
@@ -844,22 +844,35 @@ static void testOnTimer() {
     fx.vm.tick();
     check(fx.obj().attributes[0] == 5 && fx.obj().attributes[1] == 1 && fx.obj().timers.empty(),
           "the event tree ran with the parameters after 3 ticks");
-    // Current params (flag 0x01), op 1 twice: one timer, the latest parameters.
-    fx.code.add(kObjGroup, 0x1002, tree({instr(0x7A, T, E, {2, 0, 1, 0x01, 0x10, 0x01})}, 1));
-    fx.run(0x1002, {7});
-    fx.run(0x1002, {9});
-    check(fx.obj().timers.size() == 1 && fx.obj().timers[0].params[0] == 9, "op 1 replaces the tree's timer");
+    // Current params (flag 0x01): the timer's ID goes to temp 0; mode 1
+    // (byte 15) changes the timer of the ID in temp 0, mode 2 deletes it.
+    fx.code.add(kObjGroup, 0x1002, tree({instr(0x7A, T, E, {9, 0, 0, 0x01, 0x10, 0x01})}, 1));
+    Thread t = fx.run(0x1002, {7});
+    check(fx.obj().timers.size() == 1 && fx.obj().timers[0].params[0] == 7 && t.temps[0] == fx.obj().timers[0].id &&
+              t.temps[0] != 0,
+          "mode 0 starts a timer, its ID in temp 0");
+    const int16_t timerId = t.temps[0];
+    fx.code.add(kObjGroup, 0x1004, tree({expr(Temp, 0, Assign, Lit, timerId, go(1), E),
+                                         instr(0x7A, T, E, {2, 0, 0, 0x01, 0x10, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1})}));
+    fx.run(0x1004);
+    check(fx.obj().timers.size() == 1 && fx.obj().timers[0].ticks == 2, "mode 1 with 0x04 resets the ticks");
     fx.vm.tick(), fx.vm.tick();
-    check(fx.obj().attributes[0] == 14, "the event got the current tree's parameters");
-    // Ticks from temp 1 (flag 0x08), op 2 twice: two timers.
+    check(fx.obj().attributes[0] == 12 && fx.obj().timers.empty(), "the event got the current tree's parameters");
+    fx.run(0x1002, {7});
+    fx.code.add(kObjGroup, 0x1005, tree({instr(0x7A, T, E, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2})}));
+    Thread d = fx.vm.start(fx.obj().id, 0x1005);
+    d.temps[0] = fx.obj().timers.empty() ? 0 : fx.obj().timers[0].id;
+    fx.vm.run(d);
+    check(fx.obj().timers.empty(), "mode 2 deletes the timer of the ID in temp 0");
+    // Ticks from temp 1 (flag 0x08), twice: two timers.
     fx.code.add(kObjGroup, 0x1003,
                 tree({expr(Temp, 1, Assign, Lit, 1, go(1), E),
                       instr(0x7A, go(2), E, {50, 0, 2, 0x01, 0x10, 0x08, Lit, 1, 0, Lit, 0, 0, Lit, 0, 0}),
                       instr(0x7A, T, E, {50, 0, 2, 0x01, 0x10, 0x08, Lit, 1, 0, Lit, 0, 0, Lit, 0, 0})}));
     fx.run(0x1003);
-    check(fx.obj().timers.size() == 2, "op 2 adds another timer of the same tree");
+    check(fx.obj().timers.size() == 2, "two timers of the same tree");
     fx.vm.tick();
-    check(fx.obj().attributes[0] == 16 && fx.obj().timers.empty(), "ticks from temp 1");
+    check(fx.obj().attributes[0] == 14 && fx.obj().timers.empty(), "ticks from temp 1");
 }
 
 // Set to Next 24: objects in front of me within temp 0 tiles, with no wall
