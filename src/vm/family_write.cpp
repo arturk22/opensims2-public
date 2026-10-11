@@ -170,6 +170,53 @@ FamilyWriteResult writeNewFamily(const fs::path& source, const fs::path& target,
 
     // The NGBH with the new (empty) inventories.
     DbpfPackage pkg(pkgPath);
+    // The family tree: the new Sims' ties, added to the neighborhood's
+    // (u32 version, u32 count, per Sim u16 neighbor ID, u32 1, u32 n,
+    // n x (u32 type, u16 neighbor ID)).
+    bool anyTie = false;
+    for (const auto& sim : sims)
+        anyTie |= !sim.ties.empty();
+    if (anyTie) {
+        BinWriter tw;
+        std::vector<std::pair<uint16_t, std::vector<std::pair<uint32_t, uint16_t>>>> rows;
+        uint32_t version = 1;
+        for (const auto& e : pkg.entries())
+            if (e.tgi.type == hoodtype::FamilyTies) {
+                const auto old = hood::FamilyTies::parse(pkg.read(e));
+                version = old.version ? old.version : 1;
+                for (const auto& sm : old.sims) {
+                    std::vector<std::pair<uint32_t, uint16_t>> t;
+                    for (const auto& tie : sm.ties)
+                        t.push_back({uint32_t(tie.type), tie.other});
+                    rows.push_back({sm.neighborId, std::move(t)});
+                }
+                break;
+            }
+        for (size_t i = 0; i < sims.size(); ++i) {
+            std::vector<std::pair<uint32_t, uint16_t>> t;
+            for (const auto& [other, type] : sims[i].ties)
+                if (other < ids.size())
+                    t.push_back({type, ids[other]});
+            if (!t.empty())
+                rows.push_back({ids[i], std::move(t)});
+        }
+        tw.u32(version);
+        tw.u32(uint32_t(rows.size()));
+        for (const auto& [id, t] : rows) {
+            tw.u16(id);
+            tw.u32(1);
+            tw.u32(uint32_t(t.size()));
+            for (const auto& [type, other] : t) {
+                tw.u32(type);
+                tw.u16(other);
+            }
+        }
+        Tgi tiesTgi{hoodtype::FamilyTies, kLocal, 0, 0};
+        for (const auto& e : pkg.entries())
+            if (e.tgi.type == hoodtype::FamilyTies)
+                tiesTgi = e.tgi;
+        added[tiesTgi] = std::move(tw.bytes());
+    }
     for (const auto& e : pkg.entries())
         if (e.tgi.type == hoodtype::NGBH) {
             auto inv = hood::NeighborhoodInventories::parse(pkg.read(e));

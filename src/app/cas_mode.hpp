@@ -123,6 +123,10 @@ public:
         std::shared_ptr<RgbaImage> portrait; // a head shot rendered for the family bar
         int id = 0;                          // stable within the session (the family tree)
         std::vector<int> parents;            // ids of the family's members that are its parents
+        // The family tree from this Sim's side: other member's id -> tie
+        // (formats/neighborhood.hpp TieType: 0/1 my parent is, 2 spouse, 3
+        // sibling, 4 my child is); no entry = roommates.
+        std::map<int, uint32_t> ties;
     };
 
 private:
@@ -147,6 +151,11 @@ private:
     int mabParent_[2] = {-1, -1};
     uint32_t mabAge_ = 0x01, mabGender_ = 0;
     std::optional<Member> mabChild_;
+    // The family tree dialog (2C054EF0) and its "Make %s a ..." popup
+    // (2C054EF3): pick a member, then another, then the tie.
+    bool treeOpen_ = false;
+    int treeFirst_ = -1, treeSecond_ = -1, treeChoice_ = -1;
+    void setTie(int a, int b, int choice); // choice: 0 roomie, 1 sibling, 2 spouse, 3 child of, 4 parent of
     std::vector<BinSim> bin_;
     bool binLoaded_ = false, binOpen_ = false;
     int binSel_ = -1;

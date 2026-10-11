@@ -39,6 +39,11 @@ struct NewSim {
     uint32_t aspiration = 0;
     int zodiac = 1;
     std::map<std::string, std::string> dna; // SDNA
+    // The family tree from this Sim's side: (index of the other Sim in the
+    // family, tie type as formats/neighborhood.hpp's TieType: 0/1 my parent
+    // is, 2 I'm married to, 3 my sibling is, 4 my child is). Written into
+    // the neighborhood's family ties (0x8C870743).
+    std::vector<std::pair<size_t, uint32_t>> ties;
     // Writes the Sim's character file to `out` with the object name given
     // ("N001_User00012"); returns the OBJD GUID.
     std::function<uint32_t(const std::string& objectName, const std::filesystem::path& out)> writeCharacter;

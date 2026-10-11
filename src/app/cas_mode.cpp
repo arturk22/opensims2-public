@@ -30,7 +30,8 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr uint32_t kFrame = 0xCB980E50;
-constexpr uint32_t kSimBin = 0xCB980E86, kMakeBaby = 0xCB980E87;
+constexpr uint32_t kSimBin = 0xCB980E86, kMakeBaby = 0xCB980E87, kFamilyTree = 0x2C054EF0, kTieDialog = 0x2C054EF3,
+                   kTreeButton = 0xCCB70001;
 constexpr uint32_t kStepScripts[6] = {0xCB980E81, 0xCB980E88, 0xCB980E82, 0xCB980E85, 0xCB980E84, 0xCB980E83};
 constexpr uint32_t kSubPanelAnchor = 0x2D050914;
 constexpr uint32_t kPanelAnchor = 0x0000AAAA;
@@ -119,7 +120,7 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
     fonts_ = std::make_unique<FontLibrary>(res / "UI/Fonts");
     thumbs_ = std::make_unique<cas::CasThumbnails>(res / "UserData/Thumbnails/CASThumbnails.package");
     for (uint32_t id : {kFrame, kStepScripts[0], kStepScripts[1], kStepScripts[2], kStepScripts[3], kStepScripts[4],
-                        kStepScripts[5], kSimBin, kMakeBaby})
+                        kStepScripts[5], kSimBin, kMakeBaby, kFamilyTree, kTieDialog})
         if (auto s = res_->script(id); s && !s->roots.empty())
             scripts_.emplace(id, std::move(*s));
     tempDir_ = fs::temp_directory_path() / ("opensims2-cas-" + std::to_string(getpid()));
@@ -521,6 +522,32 @@ std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size) {
     return out;
 }
 
+void CasMode::setTie(int a, int b, int choice) {
+    if (a < 0 || b < 0 || a == b || size_t(std::max(a, b)) >= family_.size())
+        return;
+    Member& A = family_[size_t(a)];
+    Member& B = family_[size_t(b)];
+    if (!A.id)
+        A.id = nextId_++;
+    if (!B.id)
+        B.id = nextId_++;
+    A.ties.erase(B.id);
+    B.ties.erase(A.id);
+    auto parentSlot = [&](const Member& child) {
+        for (const auto& [o, t] : child.ties)
+            if (t == 0)
+                return 1u; // the other parent
+        return 0u;
+    };
+    switch (choice) {
+    case 1: A.ties[B.id] = 3, B.ties[A.id] = 3; break; // siblings
+    case 2: A.ties[B.id] = 2, B.ties[A.id] = 2; break; // spouses
+    case 3: A.ties[B.id] = parentSlot(A), B.ties[A.id] = 4; break; // A a child of B
+    case 4: B.ties[A.id] = parentSlot(B), A.ties[B.id] = 4; break; // A a parent of B
+    default: break;                                                  // roommates
+    }
+}
+
 void CasMode::makeChild() {
     if (mabParent_[0] < 0 || mabParent_[1] < 0 || size_t(std::max(mabParent_[0], mabParent_[1])) >= family_.size())
         return;
@@ -562,6 +589,8 @@ void CasMode::makeChild() {
     }
     child.zodiac = cas::zodiacSign(child.personality);
     child.parents = {a.id, b.id};
+    child.ties[a.id] = 0; // my parent is
+    child.ties[b.id] = 1; // the other parent
     child.portrait = portrait(child, 256);
     mabChild_ = std::move(child);
     std::string regions;
@@ -721,6 +750,10 @@ void CasMode::acceptFamily() {
                                                        m.spec.eyes, m.spec.gender == cas::gender::Female,
                                                        [&](uint32_t n) { return n ? uint32_t(rng() % n) : 0u; });
                 s.dna = dna.toProperties();
+                for (const auto& [otherId, tie] : m.ties)
+                    for (size_t k = 0; k < family_.size(); ++k)
+                        if (family_[k].id == otherId)
+                            s.ties.push_back({k, tie});
                 cas::CharacterSpec spec = m.spec;
                 spec.lastName = s.lastName;
                 s.writeCharacter = [this, spec](const std::string& objectName, const fs::path& file) {
@@ -783,8 +816,10 @@ void CasMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t he
 }
 
 void CasMode::mouseDown(simd_float2 p) {
-    if (dirty_ || laidW_ != canvasW_ || laidH_ != canvasH_)
+    if (dirty_ || laidW_ != canvasW_ || laidH_ != canvasH_) {
         screen(canvasW_, canvasH_);
+        dirty_ = true; // the layout only found the targets: encode still has to upload it
+    }
     for (auto it = targets_.rbegin(); it != targets_.rend(); ++it)
         if (inside(it->rect, p)) {
             auto action = it->action; // the action may lay out again
@@ -921,6 +956,13 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
             acceptFamily();
         else if (a == "--cas-edit")
             openCharacter(v);
+        else if (a == "--cas-tie") { // a,b,choice (0 roomie, 1 sibling, 2 spouse, 3 child of, 4 parent of)
+            int x = -1, y = -1, c = 0;
+            if (std::sscanf(v.c_str(), "%d,%d,%d", &x, &y, &c) == 3)
+                setTie(x, y, c);
+            treeOpen_ = true;
+            dirty_ = true;
+        }
         else if (a == "--cas-baby") { // Make a Child of the family's first two grown-ups, at an age
             mabAge_ = v == "child" ? cas::age::Child : v == "teen" ? cas::age::Teen : cas::age::Toddler;
             mabParent_[0] = mabParent_[1] = -1;
@@ -1048,6 +1090,13 @@ UiScreen CasMode::screen(int width, int height) {
             target(t, [this](simd_float2) { focus_ = Focus::FirstName; });
     }
     target(find(frame, kAccept), [this](simd_float2) { acceptFamily(); });
+    target(find(frame, kTreeButton), [this](simd_float2) {
+        if (editing_ >= 0)
+            finishSim();
+        binOpen_ = mabOpen_ = false;
+        treeOpen_ = !treeOpen_;
+        treeFirst_ = treeSecond_ = treeChoice_ = -1;
+    });
     target(find(frame, kExit), [this](simd_float2) {
         status_ = "Sair do CAS";
     });
@@ -1242,6 +1291,110 @@ UiScreen CasMode::screen(int width, int height) {
                 });
             }
     }
+    // The family tree (2C054EF0), centred: the members, picked one then
+    // another, then the tie in the popup (2C054EF3).
+    if (editing_ < 0 && treeOpen_)
+        if (auto it = scripts_.find(kFamilyTree); it != scripts_.end()) {
+            const UiElement& panel = it->second.roots.front();
+            const auto pa = panel.area();
+            const float px = ox + float(1024 - (pa[2] - pa[0])) / 2 - float(pa[0]);
+            const float py = oy + float(768 - (pa[3] - pa[1])) / 2 - float(pa[1]);
+            targets_.clear(); // modal
+            UiDrawHooks th;
+            th.rects = &rects;
+            layoutUiElement(panel, px, py, *res_, *fonts_, out, th);
+            static const char* kTieNames[5] = {"pai/mãe", "pai/mãe", "cônjuge", "irmão(ã)", "filho(a)"};
+            if (const UiElement* area = find(panel, 0x2000))
+                if (auto r = rects.find(area); r != rects.end()) {
+                    const auto ar = r->second;
+                    const float tw = std::min(72.0f, (ar[2] - ar[0]) / float(std::max<size_t>(family_.size(), 1)) - 8);
+                    for (size_t i = 0; i < family_.size(); ++i) {
+                        const float x0 = ar[0] + 8 + float(i) * (tw + 8), y0 = ar[1] + 8;
+                        const bool sel = int(i) == treeFirst_ || int(i) == treeSecond_;
+                        if (sel)
+                            rect(x0 - 3, y0 - 3, x0 + tw + 3, y0 + tw + 3, kCellSelected);
+                        rect(x0, y0, x0 + tw, y0 + tw, kThumbBg);
+                        const Member& m = family_[i];
+                        const RgbaImage* img = m.thumbnail && thumbs_ ? thumbs_->image(m.thumbnail) : m.portrait.get();
+                        if (img) {
+                            UiQuad q;
+                            q.image = img;
+                            q.x0 = x0, q.y0 = y0, q.x1 = x0 + tw, q.y1 = y0 + tw;
+                            out.quads.push_back(q);
+                        }
+                        text(x0, y0 + tw + 4, tw + 6, m.spec.firstName, kCellText);
+                        // Its ties, one line each.
+                        float ly = y0 + tw + 20;
+                        for (const auto& [otherId, tie] : m.ties)
+                            for (const auto& o : family_)
+                                if (o.id == otherId && tie < 5) {
+                                    text(x0, ly, tw + 6, std::string(kTieNames[tie]) + ": " + o.spec.firstName, kCellText);
+                                    ly += 14;
+                                }
+                        const int idx = int(i);
+                        targets_.push_back({{x0, y0, x0 + tw, y0 + tw}, [this, idx](simd_float2) {
+                                                if (treeFirst_ < 0 || treeFirst_ == idx) {
+                                                    treeFirst_ = treeFirst_ == idx ? -1 : idx;
+                                                    treeSecond_ = -1;
+                                                } else {
+                                                    treeSecond_ = idx;
+                                                    treeChoice_ = -1;
+                                                }
+                                            }});
+                    }
+                }
+            target(find(panel, 0xCC33DE0B), [this](simd_float2) { treeOpen_ = false; }); // accept
+            target(find(panel, 0xCC33DE1F), [this](simd_float2) { treeOpen_ = false; }); // cancel
+            // The popup: "Make <first> a ... of <second>".
+            if (treeFirst_ >= 0 && treeSecond_ >= 0)
+                if (auto dt = scripts_.find(kTieDialog); dt != scripts_.end()) {
+                    targets_.clear();
+                    const UiElement& dlg = dt->second.roots.front();
+                    const auto da = dlg.area();
+                    const float dx = ox + float(1024 - (da[2] - da[0])) / 2 - float(da[0]);
+                    const float dy = oy + float(768 - (da[3] - da[1])) / 2 - float(da[1]) + 60;
+                    UiDrawHooks dh;
+                    dh.rects = &rects;
+                    const std::string first = family_[size_t(treeFirst_)].spec.firstName;
+                    const std::string second = family_[size_t(treeSecond_)].spec.firstName;
+                    auto fill = [](std::string t, const std::string& name) {
+                        if (auto p = t.find("%s"); p != std::string::npos)
+                            t.replace(p, 2, name);
+                        return t;
+                    };
+                    auto resText = [&](const UiElement* e, const std::string& fallback) {
+                        if (e)
+                            if (auto ref = uiStringRef(e->get("captionres")))
+                                if (auto str = res_->string(*ref))
+                                    return *str;
+                        return fallback;
+                    };
+                    if (const UiElement* t = find(dlg, 0xECDDA449))
+                        dh.captions[t] = fill(resText(t, "Make %s a"), first);
+                    layoutUiElement(dlg, dx, dy, *res_, *fonts_, out, dh);
+                    // The five ties share one place (0x2000-0x2004): the one chosen
+                    // shows there, a click goes to the next.
+                    if (treeChoice_ < 0)
+                        treeChoice_ = 0;
+                    if (const UiElement* b = find(dlg, 0x2000 + uint32_t(treeChoice_))) {
+                        const auto ba = b->area();
+                        const float lx = dx + float(ba[0]), ly = dy + float(ba[1]);
+                        const float lw = float(ba[2] - ba[0]), lh = float(ba[3] - ba[1]);
+                        rect(lx, ly, lx + lw, ly + lh, kCellSelected);
+                        text(lx + 18, ly + 1, lw - 36, fill(resText(b, b->get("caption")), second), kCellText);
+                        text(lx + 4, ly + 1, 12, "<", kCellText);
+                        text(lx + lw - 12, ly + 1, 12, ">", kCellText);
+                        targets_.push_back({{lx, ly, lx + lw / 2, ly + lh}, [this](simd_float2) { treeChoice_ = (treeChoice_ + 4) % 5; }});
+                        targets_.push_back({{lx + lw / 2, ly, lx + lw, ly + lh}, [this](simd_float2) { treeChoice_ = (treeChoice_ + 1) % 5; }});
+                    }
+                    target(find(dlg, 0x1000), [this](simd_float2) { // accept
+                        if (treeChoice_ >= 0)
+                            setTie(treeFirst_, treeSecond_, treeChoice_);
+                        treeFirst_ = treeSecond_ = treeChoice_ = -1;
+                    });
+                    target(find(dlg, 0x1001), [this](simd_float2) { treeFirst_ = treeSecond_ = treeChoice_ = -1; });
+                }
+        }
     // Make a Child (CB980E87): the whole screen, from the "MAB anchor"
     // (0d016e8a:bl); the parents' and the child's views show head shots.
     if (editing_ < 0 && mabOpen_)
@@ -1362,6 +1515,10 @@ UiScreen CasMode::screen(int width, int height) {
                 if (!c.portrait)
                     c.portrait = portrait(c);
                 status_ = c.spec.firstName + " entrou na família";
+                for (int pid : c.parents)
+                    for (auto& m : family_)
+                        if (m.id == pid)
+                            m.ties[c.id] = 4; // my child is
                 family_.push_back(std::move(c));
                 rebuild();
             });
