@@ -497,7 +497,11 @@ enum class Step { Walking, Arrived, Failed, Call };
 // Runs a global tree (by name) on the walker's thread in the middle of the
 // walk: the instruction runs again when it returns.
 bool runWalkTree(Context& c, const std::string& name, std::array<int16_t, 4> args) {
-    const auto tree = c.vm.code().behaviorByName(kGlobalGroup, name);
+    // Global, or the walker's semi-global ("CT - Route Blocked" is the
+    // person semi-global's).
+    auto tree = c.vm.code().behaviorByName(kGlobalGroup, name);
+    if (!tree && c.me().semiGroup)
+        tree = c.vm.code().behaviorByName(c.me().semiGroup, name);
     if (!tree)
         return false;
     c.vm.call(c.thread, c.me().id, *tree, args);
@@ -529,10 +533,16 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             r.blocker = b, r.replans = 0, r.blockedTicks = 0;
         }
         if (r.blockedTicks == 0) { // DoBlocked: one more try
-            if (++r.replans > kMaxBlockedTries) {
+            if (r.replans >= kMaxBlockedTries) {
+                // Out of tries: "CT - Route Blocked" on the base route, then
+                // "blocked by person" (what the tree's result changes is not
+                // decoded; the game's returns true).
+                if (!treeResult && c.thread.stack.size() == r.depth && runWalkTree(c, "CT - Route Blocked", {b, 0, 0, 0}))
+                    return Step::Call;
                 why = RouteFail::BlockedByPerson;
                 return Step::Failed;
             }
+            ++r.replans;
             if (stationary && r.replans <= kAskToMoveTries) {
                 r.blockedTicks = 1;
                 if (!treeResult && runWalkTree(c, "CT - Route Ask To Move Animation", {b, 0, 0, 0}))

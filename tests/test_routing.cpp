@@ -591,6 +591,67 @@ static void testRouteResult() {
           "route result 2: path not found");
 }
 
+// A Sim standing in a one-tile corridor blocks another: the walker waits
+// (asking it to move), plans again, and after five tries fails with
+// "blocked by person" (14).
+static void testBlockedBySim() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(12, 3);
+    for (int x = 0; x < 12; ++x) {
+        vm.world->addWall(1, x, 1, x + 1, 1);
+        vm.world->addWall(1, x, 2, x + 1, 2);
+    }
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {11.5f, 1.5f, 1};
+    Object& walker = vm.instantiate(kGroup, 0x81);
+    walker.position = {0.5f, 1.5f, 1};
+    Object& other = vm.instantiate(kGroup, 0x81);
+    other.position = {6.5f, 1.5f, 1};
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+    Thread t = vm.start(walker.id, 0x1000, {}, lamp.id);
+    int ticks = 0, waited = 0;
+    for (; ticks < 3000 && t.status == Thread::Status::Running; ++ticks) {
+        vm.run(t);
+        waited += walker.route && walker.route->waiting && walker.route->blocker == other.id;
+    }
+    check(t.status == Thread::Status::Finished && !t.result && walker.person && walker.person->data[62] == 14 &&
+              waited > 300 && walker.position.x < 6,
+          "blocked by a Sim in a corridor: waits, then fails with 14");
+    // The Sim steps aside (out of the corridor): the way is free.
+    other.position = {-1, -1, 1};
+    t = vm.start(walker.id, 0x1000, {}, lamp.id);
+    for (int i = 0; i < 3000 && t.status == Thread::Status::Running; ++i)
+        vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && walker.position.x > 9, "and walks on once it is gone");
+
+    // Two Sims walking at each other in the open pass each other.
+    vm.world = World(12, 12);
+    Object& a = walker;
+    Object& b = other;
+    a.position = {1.5f, 6.5f, 1};
+    b.position = {10.5f, 6.5f, 1};
+    Object& lampB = vm.instantiate(kGroup, 0x80);
+    lamp.position = {11.5f, 6.5f, 1};
+    lampB.position = {0.5f, 6.5f, 1};
+    code.add(kGroup, 0x1001, tree({instr(0x1B, T, F, {0, 0, 4, 0xFE, 0, 0, 0})})); // behind the lamp (its +X side)
+    vm.threads.insert_or_assign(a.id, vm.start(a.id, 0x1000, {}, lamp.id));
+    vm.threads.insert_or_assign(b.id, vm.start(b.id, 0x1001, {}, lampB.id));
+    float closest = 99;
+    for (int i = 0; i < 2000; ++i) {
+        vm.tick();
+        closest = std::min(closest, std::hypot(a.position.x - b.position.x, a.position.y - b.position.y));
+        if (vm.threads.at(a.id).status != Thread::Status::Running && vm.threads.at(b.id).status != Thread::Status::Running)
+            break;
+    }
+    check(vm.threads.at(a.id).status == Thread::Status::Finished && vm.threads.at(a.id).result &&
+              vm.threads.at(b.id).status == Thread::Status::Finished && vm.threads.at(b.id).result && a.position.x > 9 &&
+              b.position.x < 3 && closest > 0.25f,
+          "two Sims walking at each other pass");
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -603,6 +664,7 @@ int main() {
     testSetToNextTiles();
     testPathPlanner();
     testRouteResult();
+    testBlockedBySim();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
