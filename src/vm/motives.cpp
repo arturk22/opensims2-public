@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <map>
+#include <string>
+#include <vector>
 
 namespace os2::vm {
 
@@ -24,17 +26,32 @@ constexpr uint16_t kHappyCurveStrings = 0x226;
 constexpr uint16_t kScoreCurveStrings = 0x28A;
 
 const MotiveCurveSet& curvesFrom(VM& vm, uint16_t instance) {
-    // Parsed once per string table (the code library keeps them alive).
-    static std::map<const StringTable*, MotiveCurveSet> cache;
+    // Parsed once per string table. The cache is keyed by the table's
+    // address, which a later code library may reuse for another table (the
+    // tests make one per fixture: that was the flaky autonomy test), so the
+    // texts they came from are kept and compared.
+    struct Entry {
+        std::vector<std::string> texts;
+        MotiveCurveSet curves;
+    };
+    static std::map<const StringTable*, Entry> cache;
     static const MotiveCurveSet empty{};
     const StringTable* t = vm.code().strings(kGlobalGroup, instance);
     if (!t)
         return empty;
     auto [it, added] = cache.try_emplace(t);
-    if (added)
-        for (size_t m = 0; m < kMotiveCount; ++m)
-            it->second[m] = MotiveCurve::parse(t->get(m, lang::EnglishUS));
-    return it->second;
+    Entry& e = it->second;
+    bool same = !added && e.texts.size() == kMotiveCount;
+    for (size_t m = 0; same && m < kMotiveCount; ++m)
+        same = e.texts[m] == t->get(m, lang::EnglishUS);
+    if (!same) {
+        e.texts.resize(kMotiveCount);
+        for (size_t m = 0; m < kMotiveCount; ++m) {
+            e.texts[m] = t->get(m, lang::EnglishUS);
+            e.curves[m] = MotiveCurve::parse(e.texts[m]);
+        }
+    }
+    return e.curves;
 }
 
 } // namespace
