@@ -200,6 +200,21 @@ std::optional<std::string> argument(NSString* name) {
     return std::nullopt;
 }
 
+// OS2_PERF=1: timings of the load phases and of the frames on stdout
+// (docs/performance.md); nothing else changes.
+bool perfOn() {
+    static const bool on = std::getenv("OS2_PERF") != nullptr;
+    return on;
+}
+void perfLap(const char* what) {
+    static CFTimeInterval last = CACurrentMediaTime();
+    if (!perfOn())
+        return;
+    const CFTimeInterval now = CACurrentMediaTime();
+    std::printf("opensims2: perf: %-26s %8.1f ms\n", what, (now - last) * 1000);
+    last = now;
+}
+
 // The lot to show: --lot, or the lot --hood-lot entered.
 std::optional<std::string> lotQuery() {
     return gHoodLot ? gHoodLot : argument(@"--lot");
@@ -777,10 +792,14 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         return std::nullopt;
     CFTimeInterval start = CACurrentMediaTime();
     os2::DbpfPackage pkg(lotPath(*query));
+    perfLap("before the lot");
     os2::Lot lot = os2::Lot::load(pkg);
+    perfLap("Lot::load");
     const size_t leftovers = os2::vm::dropLeftoverCObjects(lot, pkg, index); // stale copies the package keeps
     std::printf("opensims2: %zu leftover cObjects not drawn\n", leftovers);
+    perfLap("leftover cObjects");
     const os2::PatternCatalog patterns(index, gameDir() / "TSData/Res");
+    perfLap("PatternCatalog");
     os2::LotViewOptions view;
     view.viewDirection = {viewDirection.x, viewDirection.y};
     const std::string walls = argument(@"--walls").value_or("up");
@@ -794,17 +813,23 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     const os2::ObjectModel model = os2::buildLotModel(lot, index, patterns, view, &*gLightMapLayout);
     for (const auto& w : model.warnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
+    perfLap("buildLotModel");
     renderer.hideTestScene();
     renderer.addInstance(renderer.addObject(model, index), matrix_identity_float4x4);
+    perfLap("lot model to the GPU");
     for (const auto& w : lot.warnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     const size_t objects = loadLotObjects(renderer, index, lot, *query);
+    perfLap("loadLotObjects");
     const size_t sims = loadLotSims(renderer, index, lot, pkg, lotPath(*query));
+    perfLap("loadLotSims");
     NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
     startAudio(index, lot);
+    perfLap("startAudio");
     if (argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") || [args containsObject:@"--vm"] ||
         liveUiRequested())
         startSimulation(renderer, index, lot, pkg, lotPath(*query));
+    perfLap("startSimulation");
     // Without the VM (no lamps): the light maps of the --lighting state.
     if (!gLighting) {
         const os2::LightingConfig lighting = os2::loadLightingConfig(gameDir() / kLightingConfig);
@@ -837,6 +862,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     }
     for (const auto& w : fenceWarnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
+    perfLap("fences");
     std::printf("opensims2: lot %s: %ux%u tiles, levels %d..%d, %zu walls, %zu paints (%zu parts), %zu roofs, "
                 "%zu fence pieces, %zu of %zu objects and %zu Sims placed in %.2f s\n",
                 query->c_str(), lot.width, lot.height, lot.minLevel, lot.minLevel + lot.levelCount - 1,
@@ -1015,7 +1041,9 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
             const fs::path file = lotFile.parent_path().parent_path() / "Characters" / (stem + ".package");
             if (parts.empty())
                 parts = os2::loadSimParts(index);
+            perfLap("  loadSimParts");
             auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(index, parts, file));
+            perfLap("  loadCharacterSim");
             for (const auto& w : actor->skin.model.warnings)
                 std::fprintf(stderr, "opensims2: %s: %s\n", stem.c_str(), w.c_str());
             actor->position = {o.position[0], o.position[1], o.position[2]};
@@ -1031,8 +1059,10 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
                     anim = "p-idle-neutral-lookAround";
             }
             actor->cue(-0.37 * double(placed), actor->animation(index, anim));
+            perfLap("  Sim animation");
             actor->model = renderer.addObject(actor->skin.model, index, true);
             renderer.addInstance(actor->model, matrix_identity_float4x4);
+            perfLap("  Sim to the GPU");
             std::printf("opensims2: Sim %s (%s) at (%.2f, %.2f, %.2f), %zu parts\n", stem.c_str(),
                         o.definition.c_str(), o.position[0], o.position[1], o.position[2],
                         actor->skin.model.parts.size());
@@ -1480,6 +1510,12 @@ int cameraSlot(unsigned short key) {
 - (void)drawInMTKView:(MTKView*)mtkView {
     OS2View* view = (OS2View*)mtkView;
     CFTimeInterval now = CACurrentMediaTime();
+    struct FramePerf { // OS2_PERF=1: CPU time of a frame (not the wait for the drawable), over 120 frames
+        CFTimeInterval began, waited = 0, total = 0, worst = 0;
+        int count = 0;
+    };
+    static FramePerf perf;
+    perf.began = now;
     double dt = std::min(now - _last, 0.1); // no huge steps after a stall
     _last = now;
 
@@ -1497,9 +1533,21 @@ int cameraSlot(unsigned short key) {
     if (view.bounds.size.width > 0)
         gUiScale = float(size.width / view.bounds.size.width);
 
+    const CFTimeInterval beforeDrawable = CACurrentMediaTime();
     MTLRenderPassDescriptor* pass = view.currentRenderPassDescriptor;
     id<CAMetalDrawable> drawable = view.currentDrawable;
+    perf.waited = CACurrentMediaTime() - beforeDrawable;
     _renderer->draw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable, frame);
+    if (perfOn()) {
+        const CFTimeInterval spent = CACurrentMediaTime() - perf.began - perf.waited;
+        perf.total += spent, perf.worst = std::max(perf.worst, spent);
+        if (++perf.count == 120) {
+            std::printf("opensims2: perf: 120 frames, CPU %.2f ms average, %.2f ms worst\n", perf.total / 120 * 1000,
+                        perf.worst * 1000);
+            std::fflush(stdout);
+            perf.total = perf.worst = 0, perf.count = 0;
+        }
+    }
 }
 @end
 
@@ -1512,6 +1560,7 @@ int cameraSlot(unsigned short key) {
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification*)note {
+    perfLap("process start");
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
     if (!device) {
         std::fprintf(stderr, "opensims2: no Metal device\n");
@@ -1540,6 +1589,7 @@ int cameraSlot(unsigned short key) {
         _viewDelegate = [[OS2ViewDelegate alloc] initWithView:view];
         applyLighting(*_viewDelegate.renderer);
         gIndex = std::make_unique<os2::ResourceIndex>(gameDir() / "TSData/Res");
+        perfLap("ResourceIndex");
         os2::ResourceIndex& index = *gIndex;
         if (auto hood = argument(@"--hood")) {
             if (auto lot = argument(@"--hood-lot")) {
@@ -1550,8 +1600,11 @@ int cameraSlot(unsigned short key) {
             }
         }
         const simd_float3 objects = loadObjects(*_viewDelegate.renderer, index);
+        perfLap("loadObjects");
         const auto skinned = loadSkinned(*_viewDelegate.renderer, index);
+        perfLap("loadSkinned");
         const auto uiCanvas = loadUi(*_viewDelegate.renderer, index, view);
+        perfLap("loadUi");
         // --zoom <levels> / --orientation <steps>: start the camera that many steps from its default.
         if (auto z = argument(@"--zoom"))
             view.camera->zoomBy(std::stoi(*z));
@@ -1679,7 +1732,9 @@ int cameraSlot(unsigned short key) {
                 if ([shotArgs[i] isEqualToString:@"--dialog-click"] && std::sscanf(shotArgs[i + 1].UTF8String, "%f,%f", &x, &y) == 2)
                     dialogClicks.push_back(simd_make_float2(x, y));
             }
+            double perfSim = 0, perfCapture = 0, perfWorst = 0;
             for (int f = 1; f <= frames; ++f) {
+                const CFTimeInterval frameStart = CACurrentMediaTime();
                 const double at = time * f / frames;
                 // The VM in small steps, so that the Sims' turning is followed.
                 for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30) {
@@ -1700,6 +1755,7 @@ int cameraSlot(unsigned short key) {
                         gAudio->renderOffline(t);
                     }
                 }
+                const CFTimeInterval simmed = CACurrentMediaTime();
                 followSelectedSim();
                 view.camera->setViewport(float(shotW), float(shotH));
                 view.camera->snap();
@@ -1715,10 +1771,17 @@ int cameraSlot(unsigned short key) {
                     const auto dot = file.rfind('.');
                     file = file.substr(0, dot) + "-" + std::to_string(f) + (dot == std::string::npos ? "" : file.substr(dot));
                 }
+                const CFTimeInterval captured = CACurrentMediaTime();
                 os2::writePng(file, img);
+                perfSim += simmed - frameStart, perfCapture += captured - simmed;
+                perfWorst = std::max(perfWorst, captured - frameStart);
                 std::printf("opensims2: wrote %s (%.2f s%s)\n", file.c_str(), at,
                             gSimulation ? (", " + std::to_string(gSimulation->ticks()) + " VM ticks").c_str() : "");
             }
+            if (perfOn())
+                std::printf("opensims2: perf: %d frames: VM+audio steps %.1f ms, capture %.1f ms per frame on average; "
+                            "worst frame %.1f ms\n",
+                            frames, perfSim / frames * 1000, perfCapture / frames * 1000, perfWorst * 1000);
             if (gAudio) {
                 gAudio->renderOffline(time);
                 std::printf("opensims2: sound: %s\n", gAudio->summary().c_str());
