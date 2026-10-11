@@ -3,10 +3,14 @@
 #include "lot_arrivals.hpp"
 
 #include "hood_moves.hpp"
+#include "lot_evict.hpp"
+#include "resindex.hpp"
+#include "simantics.hpp"
 #include "neighborhood.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 
 namespace os2 {
@@ -15,6 +19,7 @@ namespace fs = std::filesystem;
 
 namespace {
 constexpr int16_t kPersonObjectType = 2;
+constexpr uint32_t kTypeObjd = 0x4F424A44;
 constexpr size_t kGlobalHour = 0, kGlobalMinute = 5, kGlobalPaused = 17, kGlobalCurrentFamily = 9, kGlobalBudgetMod = 13,
                  kGlobalBudgetDiv = 14;
 constexpr uint32_t kFamilyNewLot = 0x04; // FAMI flags: cTSFamily::SetNewLot
@@ -25,7 +30,6 @@ bool startsWith(const std::string& s, const char* p) { return s.rfind(p, 0) == 0
 } // namespace
 
 LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path& lotFile, ResourceIndex* index) {
-    (void)index;
     LotArrivals out;
     std::error_code ec;
     const fs::path lots = fs::absolute(lotFile).parent_path();
@@ -49,6 +53,26 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
             lot = &l;
     if (!lot)
         return out;
+    // A lot whose family was evicted: its things go first
+    // (CleanupThingsRelatedToEvictedFamily, formats/lot_evict.hpp).
+    if ((lot->info.flags & hood::LotInfo::kFlagEvicted) && index) {
+        std::map<uint32_t, EvictObjd> objds;
+        for (const auto& loc : index->ofType(kTypeObjd)) {
+            try {
+                const ObjectDefinition d = ObjectDefinition::parse(index->read(loc));
+                objds.emplace(d.guid(), EvictObjd{d.field(0x52), d.field(0xCA), d.field(0x94)});
+            } catch (const std::exception&) {
+            }
+        }
+        const EvictCleanup c = cleanupEvictedFamily(
+            saved,
+            [&](uint32_t guid) -> std::optional<EvictObjd> {
+                auto it = objds.find(guid);
+                return it == objds.end() ? std::nullopt : std::optional(it->second);
+            },
+            lot->info.type);
+        out.evictedSims = c.sims, out.evictedObjects = c.objects;
+    }
     // Saved Sims without a cPerson in the lot (saved by us after they
     // arrived): drawn from their character files, found by GUID.
     {
@@ -71,9 +95,19 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
             out.characters.push_back(h.characters[size_t(n->character)].path);
         }
     }
-    const hood::Family* fam = h.family(hood::familyOnLot(h, lot->id));
-    if (!fam)
+    const uint32_t famId = hood::familyOnLot(h, lot->id); // 0: nobody (family 0 is not one)
+    const hood::Family* fam = famId ? h.family(famId) : nullptr;
+    if (!fam) {
+        // LoadLot sets global 9 to the lot's family, none here (a lot whose
+        // family was evicted still names it, with its funds).
+        if (saved.globals.size() > kGlobalBudgetDiv && saved.globals[kGlobalCurrentFamily] != 0) {
+            saved.globals[kGlobalCurrentFamily] = 0;
+            saved.globals[kGlobalBudgetMod] = saved.globals[kGlobalBudgetDiv] = 0;
+            if (saved.simulator.read)
+                saved.simulator.f98 = saved.simulator.f9C = 0;
+        }
         return out;
+    }
 
     std::set<uint32_t> present;
     int16_t nextId = 1;
@@ -87,11 +121,19 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
 
     // By the mailbox (inferred), else the middle of the lot by its front.
     float x = float(world.width) / 2, y = 1.5f;
-    for (const auto& o : world.objects)
-        if (startsWith(o.definition, "Mailbox") || startsWith(o.definition, "mailbox")) {
-            x = o.position[0], y = o.position[1] + 1.0f;
+    // "Sub - Generate Family" (docs/neighborhood-mac.md §11.3): next to the
+    // mailbox, else the outside trash can.
+    bool found = false;
+    for (const char* name : {"Mailbox", "mailbox", "Trash Can - Outside", "TrashCan - Outside"}) {
+        for (const auto& o : world.objects)
+            if (startsWith(o.definition, name)) {
+                x = o.position[0], y = o.position[1] + 1.0f;
+                found = true;
+                break;
+            }
+        if (found)
             break;
-        }
+    }
     int k = 0;
     for (uint16_t member : fam->members) {
         const hood::Neighbor* n = h.neighbor(member);

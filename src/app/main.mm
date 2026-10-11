@@ -1917,7 +1917,7 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
                    const fs::path& lotFile) {
     os2::LotObjects saved = os2::LotObjects::load(pkg);
     // A family that just moved in: its Sims arrive (formats/lot_arrivals.hpp).
-    const os2::LotArrivals arrivals = os2::addArrivingSims(saved, lot, lotFile);
+    const os2::LotArrivals arrivals = os2::addArrivingSims(saved, lot, lotFile, &index);
     std::set<uint32_t> inWorld; // object IDs of the Sims standing on the lot
     for (const auto& st : saved.objects)
         if (st.person && st.x >= 0)

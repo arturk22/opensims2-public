@@ -695,3 +695,20 @@ lote nem fica sob uma rua.
   VM depois de salvar e carregar, e uma segunda passada não muda o bairro.
   Ao entrar de novo o lote acha os Sims pelo `cPerson`
   (`r10-bairro-cperson-de-volta.jpg`, sem nova cobrança).
+- **Despejo** (`formats/hood_moves.cpp`, `formats/lot_evict.*`): "Mudar
+  Família" devolve o preço e põe a flag 8 no lot info, sem mexer no pacote do
+  lote; o preço do lote passa a deixar de fora os objetos da família. Na
+  próxima carga (`addArrivingSims`, que o app, o desenho dos objetos —
+  `dropLeftoverCObjects` — e o `hood-save` chamam) a limpeza do §11.2 tira
+  do módulo de objetos salvo, antes da VM criá-los, os Sims, os objetos de
+  categoria `0x67`, os produtos com o bit 0 do campo `0x2A` do OBJD e o que
+  `IsDeletedByEvict` pega (tipo 2, ou modo compra sem "stays after evict"),
+  pulando o PlumbBob e as partes não-líderes (que vão com o líder), e o que
+  está nos slots deles; o +0xAC vira 0 e os globais 48/49 seguem (§11.1: o
+  que `IsDeletedByEvict` pega é tudo que conta como da família). O global 9
+  passa a 0 quando ninguém mora no lote (`LoadLot`), e o save tira a flag 8.
+  Malpaga fora do lote 36: 292 → 63 objetos, preço §10.743 (§1.600 + §2.770 +
+  0,8 × §7.967), a casa vazia (`r10-bairro-despejo-limpo.jpg`); a família 0
+  do pacote não conta mais como família do lote. Os Sims que chegam ficam ao
+  lado da caixa de correio, senão da lixeira de fora (o "Sub - Generate
+  Family" do §11.3; aqui em C++, não pela árvore).

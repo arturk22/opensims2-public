@@ -36,7 +36,7 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     m.setClockGlobals();
     LotObjects saved = LotObjects::load(lotPackage);
     // A family that just moved in: its Sims join the lot (formats/lot_arrivals.hpp).
-    const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile);
+    const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile, &index_);
     // The neighborhood first, as lot-run (lot_neighborhood.hpp).
     const bool hood = vm::loadLotNeighborhood(m, lotFile);
     if (hood && arrivals.family && arrivals.charge) {

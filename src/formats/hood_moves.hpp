@@ -24,15 +24,12 @@
 //   price unless the lot is of type 2): see formats/lot_arrivals.hpp.
 // - Moving out (cTSGameStateController::EvictFamily, BV 0x139740): the family
 //   gets the lot's price back (unless the lot is a dorm or a business type,
-//   2/3), its lot becomes 0, the lot is flagged 8 and, the next time it
-//   loads, cTSLoadLotController::CleanupThingsRelatedToEvictedFamily (BV
-//   0x87e7b0) removes the family's Sims and what cTSObject::IsDeletedByEvict
-//   picks (personal belongings, "sold for simoleons": STR# 0x83 #18). Here the
-//   cleanup is done at once in the lot file: the family's Sims' states and
-//   the objects they hold go, the furniture stays with the house and its
-//   value moves from the family's objects to the lot's (inferred: the game
-//   recounts the values when it next loads the lot). Which objects
-//   IsDeletedByEvict picks (an object kind 2, vtable 0x184) is not decoded.
+//   2/3), its lot becomes 0 and the lot info gets flag 8. The lot file is
+//   left alone: the next time the lot loads, CleanupThingsRelatedToEvicted-
+//   Family removes the family's Sims and what cTSObject::IsDeletedByEvict
+//   picks, all the Buy-mode furniture without "stays after evict"
+//   (formats/lot_evict.hpp), and the next save clears the flag; until then
+//   the lot's price leaves out the family's objects.
 // - Bulldozing (cTSUserToolBulldozeLot): only a lot nobody lives in (STR#
 //   0x83 #29); the lot info, its name and its file go.
 //

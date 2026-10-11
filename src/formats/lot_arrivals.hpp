@@ -38,6 +38,9 @@ struct LotArrivals {
     // The family's first day was set up (SetupFamilyFirstDay): the clock at
     // the new family start hour (7:00) and the lot running.
     bool firstDay = false;
+    // The lot's family had been evicted (lot info flag 8): what went
+    // (formats/lot_evict.hpp).
+    size_t evictedSims = 0, evictedObjects = 0;
 };
 
 // `lotFile` is <neighborhood>/Lots/<P>_Lot<N>.package; `world` the lot read

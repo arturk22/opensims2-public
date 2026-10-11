@@ -1,5 +1,7 @@
 #include "lot.hpp"
 
+#include "formats/lot_arrivals.hpp"
+
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
@@ -64,9 +66,12 @@ std::set<uint32_t> currentCObjects(CodeLibrary& code, const Lot& lot, const LotO
 }
 
 size_t dropLeftoverCObjects(Lot& lot, DbpfPackage& lotPackage, ResourceIndex& index) {
-    const LotObjects saved = LotObjects::load(lotPackage);
+    LotObjects saved = LotObjects::load(lotPackage);
     if (saved.pairs.empty())
         return 0;
+    // An evicted family's things are not drawn either: the load removes
+    // them (formats/lot_evict.hpp, through the arrivals of a neighborhood lot).
+    addArrivingSims(saved, lot, lotPackage.path(), &index);
     CodeLibrary code(&index);
     const auto keep = currentCObjects(code, lot, saved);
     return std::erase_if(lot.objects, [&](const Lot::Object& o) { return !keep.count(o.instance); });

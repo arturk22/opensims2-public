@@ -3,6 +3,7 @@
 // and out (the family's funds and lot in its FAMI), bulldozing.
 #include "formats/dbpf.hpp"
 #include "formats/hood_moves.hpp"
+#include "formats/lot_evict.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -69,7 +70,53 @@ static std::vector<uint8_t> strings(std::initializer_list<std::string> values) {
     return w.b;
 }
 
+// The eviction cleanup (formats/lot_evict.hpp) on a hand-made object module.
+static void evictCleanup() {
+    LotObjects lot;
+    auto add = [&](int16_t id, uint32_t guid, LotObjects::Kind kind, int16_t container = 0, int16_t movement = 0,
+                   int16_t lead = 0) {
+        LotObjects::State s;
+        s.id = id;
+        s.kind = kind;
+        s.person = kind == LotObjects::Kind::Person;
+        s.leadObject = lead;
+        s.data.assign(80, 0);
+        s.data[2] = container;
+        s.data[43] = movement;
+        lot.objects.push_back(s);
+        LotObjects::SaveType t;
+        t.guid = guid;
+        lot.saveTypes[id] = t;
+        lot.saveTypeOf[id] = id;
+        lot.pairs.emplace_back(uint32_t(id), id);
+    };
+    add(1, 0x100, LotObjects::Kind::Person);                // a Sim
+    add(2, 0x200, LotObjects::Kind::Object);                // a sofa (Buy mode)
+    add(3, 0x300, LotObjects::Kind::Object);                // a door (Build mode)
+    add(4, 0x200, LotObjects::Kind::Object, 0, 0x10);       // a sofa that stays after evict
+    add(5, 0x400, LotObjects::Kind::Object, 2);             // a plate on the sofa
+    add(6, 0xF37E5AE0, LotObjects::Kind::Object);           // the PlumbBob
+    add(7, 0x500, LotObjects::Kind::Object);                // a TV channel (field 0x2A bit 0, Build type)
+    add(8, 0x200, LotObjects::Kind::MultiTile, 0, 0, 8);    // a bed's lead part
+    add(9, 0x200, LotObjects::Kind::MultiTile, 0, 0, 8);    // its other part
+    lot.simulator.read = true;
+    lot.simulator.fA8 = 1500, lot.simulator.fAC = 9000;
+    lot.globals.assign(54, 0);
+    const EvictCleanup c = cleanupEvictedFamily(lot, [](uint32_t guid) -> std::optional<EvictObjd> {
+        if (guid == 0x300) return EvictObjd{8, 1, 0};
+        if (guid == 0x500) return EvictObjd{0, 3, 1};
+        return EvictObjd{4, 0, 0};
+    });
+    std::vector<int16_t> left;
+    for (const auto& s : lot.objects)
+        left.push_back(s.id);
+    check(left == std::vector<int16_t>({3, 4, 6}), "evicted: the door, the sofa that stays and the PlumbBob are left");
+    check(c.sims == 1 && c.objects == 5, "evicted: one Sim and five objects go");
+    check(lot.simulator.fAC == 0 && lot.globals[48] == 1 && lot.globals[49] == 500, "evicted: no family objects value");
+}
+
 int main() {
+    evictCleanup();
     // nTSWorld::LotValue, rounding down as the saved values show.
     check(worldLotValue(20, 30) == 2900, "3x3 lot (road off) is worth 2900");
     check(worldLotValue(20, 20) == 1600, "3x2 lot is worth 1600");
@@ -147,6 +194,7 @@ int main() {
     {
         const Neighborhood h = Neighborhood::load(dir, false);
         check(h.family(1)->record.lot == 0, "family 1 is back in the bin");
+        check((h.lot(11)->info.flags & LotInfo::kFlagEvicted) != 0, "the lot is flagged evicted (8)");
     }
     check(!moveIn(dir, 1, 11, dir.parent_path()).ok, "nothing is written under the forbidden folder");
 

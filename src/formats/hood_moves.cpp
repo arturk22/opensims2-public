@@ -19,7 +19,6 @@ namespace {
 
 constexpr uint32_t kTypeSimi = 0x53494D49, kTypeStr = 0x53545223;
 constexpr size_t kGlobalInhibitMoveIn = 21, kGlobalLotHasHouse = 22;
-constexpr size_t kGlobalCurrentFamily = 9, kGlobalBudgetMod = 13, kGlobalBudgetDiv = 14;
 // GetLotFileInfo takes the architecture value (SIMI +0xB0, cTSSimulator::
 // GetArchValue) at the catalog's refund rate (cTSCatalog::RefundRate, BV
 // 0xb2a66c: the float 0.8).
@@ -63,13 +62,6 @@ void checkFolder(const fs::path& folder, const fs::path& forbidden) {
         throw std::runtime_error("refusing to write into the game's data (" + folder.string() + ")");
 }
 
-void setFunds(std::vector<int16_t>& globals, int32_t funds) {
-    if (globals.size() > kGlobalBudgetDiv) {
-        globals[kGlobalBudgetMod] = int16_t(funds % 10000);
-        globals[kGlobalBudgetDiv] = int16_t(funds / 10000);
-    }
-}
-
 } // namespace
 
 int64_t worldLotValue(int width, int depth) {
@@ -95,9 +87,11 @@ LotFileInfo lotFileInfo(const Lot& lot) {
                     out.lotValue = m.fA4, out.lotObjects = m.fA8, out.familyObjects = m.fAC, out.architecture = m.fB0;
                     const int32_t arch = int32_t(double(kRefundRate) * double(float(int32_t(m.fB0))));
                     out.price = int64_t(uint32_t(m.fA4 + m.fA8 + uint32_t(arch)));
-                    // Lot flag 8 (evicted) would leave out the family objects;
-                    // moveOut zeroes them in the file instead.
-                    out.price += m.fAC;
+                    // Without the family's objects once the family was
+                    // evicted (lot info flag 8: they are sold when the lot
+                    // next loads, formats/lot_evict.hpp).
+                    if (!(lot.info.flags & LotInfo::kFlagEvicted))
+                        out.price += m.fAC;
                     const auto& g = objects.globals;
                     out.hasHouse = g.size() > kGlobalLotHasHouse && g[kGlobalLotHasHouse] != 0;
                     out.canMoveIn = !(g.size() > kGlobalInhibitMoveIn && g[kGlobalInhibitMoveIn] != 0);
@@ -227,58 +221,17 @@ MoveResult moveOut(const fs::path& folder, uint32_t lotId, const fs::path& forbi
         }
         r.lot = 0;
         out.fundsAfter = r.funds;
-        rewritePackage(hood.package, {{{hoodtype::FAMI, family}, r.write()}}, {});
+        // The lot gets flag 8 ("evicted"): the next load removes the
+        // family's Sims and what IsDeletedByEvict picks (formats/lot_evict.hpp)
+        // and the next save clears it; the lot file stays as it is.
+        LotInfo flagged = lot->info;
+        flagged.flags |= LotInfo::kFlagEvicted;
+        rewritePackage(hood.package, {{{hoodtype::FAMI, family}, r.write()}, {{hoodtype::LotInfo, lotId}, flagged.write()}},
+                       {});
         out.lines.push_back("family " + std::to_string(family) + " \"" + fam.name + "\" moved out of lot " +
                             std::to_string(lotId) + " with " + std::to_string(out.price) + ": funds " +
-                            std::to_string(out.fundsBefore) + " -> " + std::to_string(out.fundsAfter));
-        // CleanupThingsRelatedToEvictedFamily, done now: the family's Sims and
-        // the objects deleted by eviction leave the lot file, and the family's
-        // objects are worth nothing there any more.
-        if (!lot->package.empty() && fs::exists(lot->package)) {
-            const fs::path tmp = lot->package.parent_path() / (lot->package.filename().string() + ".saving");
-            {
-                DbpfPackage pkg(lot->package);
-                LotObjects objects = LotObjects::load(pkg);
-                std::set<uint32_t> members(fam.record.members.begin(), fam.record.members.end());
-                for (uint16_t id : fam.members)
-                    if (const Neighbor* n = hood.neighbor(id))
-                        members.insert(n->description.guid);
-                std::set<int16_t> gone;
-                for (const auto& s : objects.objects) {
-                    if (s.person) {
-                        if (members.count(objects.guidOf(s.id)))
-                            gone.insert(s.id), ++out.simsRemoved;
-                    }
-                }
-                // Objects held or contained by the Sims that go, go with them.
-                bool more = true;
-                while (more) {
-                    more = false;
-                    for (const auto& s : objects.objects)
-                        if (!gone.count(s.id) && s.data.size() > 2 && s.data[2] != 0 && gone.count(s.data[2])) {
-                            gone.insert(s.id), ++out.objectsRemoved, more = true;
-                        }
-                }
-                std::erase_if(objects.objects, [&](const LotObjects::State& s) { return gone.count(s.id) != 0; });
-                if (objects.simulator.read) {
-                    // The furniture stays with the house: what was the
-                    // family's is the lot's now (the game recounts the
-                    // objects' values when it next loads the lot).
-                    objects.simulator.fA8 += objects.simulator.fAC;
-                    objects.simulator.fAC = 0;
-                    objects.simulator.f98 = 0;
-                    objects.simulator.f9C = 0;
-                    if (objects.globals.size() > kGlobalCurrentFamily)
-                        objects.globals[kGlobalCurrentFamily] = 0;
-                    setFunds(objects.globals, 0);
-                }
-                objects.save(pkg, tmp);
-            }
-            fs::rename(tmp, lot->package);
-            out.lines.push_back("lot file " + lot->package.filename().string() + ": " +
-                                std::to_string(out.simsRemoved) + " Sims and " + std::to_string(out.objectsRemoved) +
-                                " things they held removed");
-        }
+                            std::to_string(out.fundsBefore) + " -> " + std::to_string(out.fundsAfter) +
+                            "; the lot is flagged evicted");
         out.ok = true;
     } catch (const std::exception& e) {
         out.error = e.what();
