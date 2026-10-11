@@ -94,6 +94,13 @@ public:
 
     // --- Picking -------------------------------------------------------------
     void addPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi, const simd_float4x4& at);
+    // An object saved in a slot (a cake on a table, a plate on a counter):
+    // its model-space box goes where `placement` says the object is drawn
+    // now, each time a ray is cast (nothing: not pickable).
+    void addFollowingPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi);
+    void setPlacementSource(std::function<std::optional<simd_float4x4>(vm::ObjectId)> placement) {
+        placement_ = std::move(placement);
+    }
     // The nearest object hit by the ray (0: none).
     vm::ObjectId pick(simd_float3 origin, simd_float3 dir) const;
     // Middle of the top of an object's box (where its menu opens).
@@ -172,8 +179,12 @@ private:
     struct PickBox {
         vm::ObjectId id;
         simd_float3 lo, hi;
+        bool follows = false; // lo/hi in model space, placed by placement_
     };
     std::vector<PickBox> boxes_;
+    std::function<std::optional<simd_float4x4>(vm::ObjectId)> placement_;
+    // A box in world space (a following box where its object is drawn now).
+    std::optional<PickBox> worldBox(const PickBox& b) const;
 
     bool open_ = false;
     vm::ObjectId object_ = 0;

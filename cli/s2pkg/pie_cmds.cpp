@@ -13,9 +13,11 @@
 #include "vm/hood_bridge.hpp"
 #include "vm/lot_neighborhood.hpp"
 #include "vm/autonomy.hpp"
+#include "vm/engine.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
+#include "vm/placement.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -51,7 +53,7 @@ std::string nameOf(const vm::Object& o) { return o.definition ? o.definition->fi
 
 int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
            int select, int ticks, bool all, std::optional<int> motives, bool fromInit, size_t trace,
-           int dialogAnswer, size_t traceChecks, bool anims) {
+           int dialogAnswer, size_t traceChecks, bool anims, const std::vector<std::string>& creates) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -71,6 +73,31 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     if (motives)
         vm::setAllMotives(machine, int16_t(*motives));
 
+    // --create GUID[:attr=value,...]: test aid, an object made out of the
+    // world as Buy mode makes one (Init only, no Main), with those
+    // attributes (e.g. a party controller for the birthday cinematic:
+    // --create 0x2C91C16A:2=1).
+    for (const std::string& spec : creates) {
+        const auto colon = spec.find(':');
+        const uint32_t guid = uint32_t(std::stoul(spec.substr(0, colon), nullptr, 0));
+        const auto at = code.definitionByGuid(guid);
+        if (!at)
+            throw std::runtime_error("--create: no OBJD with GUID " + spec.substr(0, colon));
+        const vm::ObjectId id = vm::createGhost(machine, at->first, at->second);
+        vm::Object& o = *machine.object(id);
+        for (size_t a = colon == std::string::npos ? spec.size() : colon + 1, b; a < spec.size(); a = b + 1) {
+            b = spec.find(',', a);
+            if (b == std::string::npos)
+                b = spec.size();
+            const std::string kv = spec.substr(a, b - a);
+            const auto eq = kv.find('=');
+            const size_t attr = std::stoul(kv.substr(0, eq));
+            if (o.attributes.size() <= attr)
+                o.attributes.resize(attr + 1);
+            o.attributes[attr] = int16_t(std::stoi(kv.substr(eq + 1)));
+        }
+        std::printf("created %d: %s\n", id, nameOf(o).c_str());
+    }
     const vm::ObjectId sim = vm::findSim(machine, simQuery);
     if (!sim)
         throw std::runtime_error("no Sim \"" + simQuery + "\" in the lot's world");
@@ -178,6 +205,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             std::printf("      [%zu] %s%s\n", b, d.buttons[b].c_str(), int(b) == d.answer ? "  <- answered" : "");
     };
     std::map<vm::ObjectId, std::string> lastAnim;
+    std::map<vm::ObjectId, int16_t> lastAge;
     // S2PKG_PIE_ALSO="sim,object,entry,tick": at that tick another Sim also
     // picks that entry (the available ones, numbered as listed) - for
     // socials towards a busy Sim.
@@ -228,6 +256,24 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             showDialog(d, i + 1);
         for (const auto& d : machine.notifications)
             showDialog(d, i + 1);
+        // Cinematics the trees start (Cinematic 0x7B), and ages changing (Age 0x75).
+        for (auto& r : vm::cinematicRequests()) {
+            std::printf("  tick %d: cinematic \"%s\" from %d, actors", i + 1, r.scene.c_str(), r.me);
+            for (vm::ObjectId a : r.actors)
+                std::printf(" %d", a);
+            std::printf("%s\n", r.mirrored() ? ", mirrored" : "");
+        }
+        vm::cinematicRequests().clear();
+        for (const auto& [oid, ob] : machine.objects())
+            if (ob.person) {
+                const int16_t age = ob.person->data[vm::persondata::PersonAge];
+                auto [it, fresh] = lastAge.emplace(oid, age);
+                if (!fresh && it->second != age) {
+                    std::printf("  tick %d: %d %s ages: person data 58 %d -> %d\n", i + 1, oid, nameOf(ob).c_str(),
+                                it->second, age);
+                    it->second = age;
+                }
+            }
         vm::Object* now = machine.object(sim);
         if (!now)
             break;
@@ -285,6 +331,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     std::optional<int> motives;
     bool fromInit = false;
     bool all = false, anims = false;
+    std::vector<std::string> creates;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--select" && i + 1 < argc)
@@ -305,17 +352,19 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
             all = true;
         else if (a == "--anims")
             anims = true;
+        else if (a == "--create" && i + 1 < argc)
+            creates.push_back(argv[++i]);
         else
             pos.push_back(a);
     }
     if (pos.empty() || pos.size() > 3)
         return -1;
     return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives, fromInit,
-                  trace, dialogAnswer, traceChecks, anims);
+                  trace, dialogAnswer, traceChecks, anims, creates);
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init] [--create GUID[:attr=value,...]]\n";
 }
 
 } // namespace os2

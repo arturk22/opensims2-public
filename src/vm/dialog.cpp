@@ -292,12 +292,15 @@ std::string expandDialogTokens(Context& c, const std::string& text, int depth) {
             known = !value.empty();
         } else if ((name == "privatestring" || name == "semiglobalstring" || name == "globalstring") && args.size() >= 2 &&
                    depth < 4) {
-            // <table local>:<index local> (inferred), from the code owner's scope.
+            // <table local>:<index local>, from the code owner's scope; the
+            // index is one-based like the Dialog's own (Controller - Age's
+            // "has grown into $PrivateString:4:5" with local 5 = 18 for
+            // entry 18, "an adult"; inferred from the data).
             const Object* owner = vm.object(c.frame.codeOwner);
             const int scope = name == "privatestring" ? 0 : name == "semiglobalstring" ? 1 : 2;
             const StringTable* t =
                 owner ? scopeStrings(vm, *owner, c.frame.group, scope, uint16_t(local(arg(0)))) : nullptr;
-            value = expandDialogTokens(c, stringAt(t, local(arg(1)) + 1), depth + 1);
+            value = expandDialogTokens(c, stringAt(t, local(arg(1))), depth + 1);
             known = t != nullptr;
         } else
             known = false;
@@ -340,13 +343,20 @@ Exit dialog(Context& c) {
         vm.dialogs.erase(it); // left behind by a tree that was reset
     }
 
+    // TryDialog (BV 0xe2bb64): byte 8 bit 0x01 takes the STR# 0x12D from
+    // the tree's own resource (vtable 0x118), 0x40 the global one, neither
+    // from the tree's file (vtable 0x48 -> 0x3c): the group the tree is in,
+    // so a controller's private tree ("Age Transition" of Controller - Age,
+    // run on the Sim by Run Tree by Name) finds its own strings and not
+    // its OBJD's semi-global's (PhoneCallGlobals). 0x02 takes the message
+    // from temp 0 + 1.
     const uint8_t flags = o[8];
-    const int scope = flags & 0x01 ? 0 : flags & 0x40 ? 2 : 1;
+    const int scope = flags & 0x40 ? 2 : 0;
     const Object* owner = vm.object(c.frame.codeOwner);
     if (!owner)
         owner = &me;
     const StringTable* strings = scopeStrings(vm, *owner, c.frame.group, scope, kDialogStrings);
-    const int messageIndex = flags & 0x02 ? c.thread.temps[0] : c.instruction.nodeVersion == 0 ? o[2] : le16(&o[13]);
+    const int messageIndex = flags & 0x02 ? c.thread.temps[0] + 1 : c.instruction.nodeVersion == 0 ? o[2] : le16(&o[13]);
     const int titleIndex = flags & 0x10 ? c.thread.temps[3] : o[6];
 
     Dialog d;

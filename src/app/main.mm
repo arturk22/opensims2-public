@@ -172,6 +172,7 @@ os2::LotViewOptions gLotView;
 int gLotInstance = -1;
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index);
 struct PickBox {
+    bool contained = false; // saved in a slot: the box follows where the VM draws it
     uint32_t instance;
     simd_float3 lo, hi;
     simd_float4x4 at;
@@ -395,9 +396,11 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
         const int16_t id = int16_t(o.instance & 0xFFFF);
         if (!gPlacedObjects.count(id) || (gPlacedObjects[id].contained && !contained))
             gPlacedObjects[id] = {cresOf(o), o.materials, o.position, o.rotation, o.definition, instance, contained};
-        if (contained)
+        if (contained) {
+            gPickBoxes.push_back({true, o.instance, bounds[key].first, bounds[key].second, at});
             continue;
-        gPickBoxes.push_back({o.instance, bounds[key].first, bounds[key].second, at});
+        }
+        gPickBoxes.push_back({false, o.instance, bounds[key].first, bounds[key].second, at});
         ++placed;
     }
     return placed;
@@ -744,7 +747,21 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     gPie = std::make_unique<os2::PieMenuHost>(gSimulation->machine(), gameDir() / "TSData/Res/UI/Fonts",
                                               argument(@"--sim-id").value_or(""));
     for (const auto& b : gPickBoxes)
-        gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
+        if (b.contained)
+            gPie->addFollowingPickBox(b.instance, b.lo, b.hi);
+        else
+            gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
+    // Objects in slots are picked where the VM view draws them.
+    gPie->setPlacementSource([](os2::vm::ObjectId id) -> std::optional<simd_float4x4> {
+        if (!gObjectView || !gObjectView->hasModel(id))
+            return std::nullopt;
+        const auto x = gObjectView->placement(id);
+        if (!x)
+            return std::nullopt;
+        simd_float4x4 m = simd_matrix4x4(simd_quaternion(x->q.x, x->q.y, x->q.z, x->q.w));
+        m.columns[3] = simd_make_float4(x->t[0], x->t[1], x->t[2], 1);
+        return m;
+    });
     perfLap("  VM hooks");
     setupPieMenu(index);
     perfLap("  pie menu");

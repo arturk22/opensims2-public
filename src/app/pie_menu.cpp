@@ -179,22 +179,51 @@ PieMenuHost::PieMenuHost(vm::VM& vm, const std::filesystem::path& fontsDir, cons
 
 PieMenuHost::~PieMenuHost() = default;
 
-void PieMenuHost::addPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi, const simd_float4x4& at) {
-    const auto id = vm::ObjectId(lotInstance & 0xFFFF);
-    if (!vm_->object(id) || simd_equal(lo, hi))
-        return;
+namespace {
+// The world box around a model-space box under a placement.
+std::pair<simd_float3, simd_float3> transformBox(simd_float3 lo, simd_float3 hi, const simd_float4x4& at) {
     simd_float3 wlo = simd_float3(std::numeric_limits<float>::max()), whi = -wlo;
     for (int c = 0; c < 8; ++c) {
         const simd_float4 p = simd_mul(at, simd_make_float4(c & 1 ? hi.x : lo.x, c & 2 ? hi.y : lo.y, c & 4 ? hi.z : lo.z, 1));
         wlo = simd_min(wlo, p.xyz), whi = simd_max(whi, p.xyz);
     }
+    return {wlo, whi};
+}
+} // namespace
+
+void PieMenuHost::addPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi, const simd_float4x4& at) {
+    const auto id = vm::ObjectId(lotInstance & 0xFFFF);
+    if (!vm_->object(id) || simd_equal(lo, hi))
+        return;
+    const auto [wlo, whi] = transformBox(lo, hi, at);
     boxes_.push_back({id, wlo, whi});
+}
+
+void PieMenuHost::addFollowingPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi) {
+    const auto id = vm::ObjectId(lotInstance & 0xFFFF);
+    if (!vm_->object(id) || simd_equal(lo, hi))
+        return;
+    boxes_.push_back({id, lo, hi, true});
+}
+
+std::optional<PieMenuHost::PickBox> PieMenuHost::worldBox(const PickBox& b) const {
+    if (!b.follows)
+        return b;
+    const auto at = placement_ ? placement_(b.id) : std::nullopt;
+    if (!at)
+        return std::nullopt;
+    const auto [wlo, whi] = transformBox(b.lo, b.hi, *at);
+    return PickBox{b.id, wlo, whi};
 }
 
 vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
     vm::ObjectId best = 0;
     float bestT = std::numeric_limits<float>::max();
-    for (const auto& b : boxes_) {
+    for (const auto& box : boxes_) {
+        const auto placed = worldBox(box);
+        if (!placed)
+            continue;
+        const PickBox& b = *placed;
         // Slab test.
         float t0 = 0, t1 = std::numeric_limits<float>::max();
         bool hit = true;
@@ -219,9 +248,10 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
 }
 
 std::optional<simd_float3> PieMenuHost::anchor(vm::ObjectId id) const {
-    for (const auto& b : boxes_)
-        if (b.id == id)
-            return simd_make_float3((b.lo.x + b.hi.x) / 2, (b.lo.y + b.hi.y) / 2, b.hi.z);
+    for (const auto& box : boxes_)
+        if (box.id == id)
+            if (const auto b = worldBox(box))
+                return simd_make_float3((b->lo.x + b->hi.x) / 2, (b->lo.y + b->hi.y) / 2, b->hi.z);
     return std::nullopt;
 }
 
