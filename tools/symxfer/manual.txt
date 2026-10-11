@@ -1,0 +1,6 @@
+# Manual names (addr name [note]); applied over the automatic transfer with
+# confidence "manual".  Each one is justified by the decompiled code.
+# cTSObject::OnTryElement dispatch (0x00b07fb8): case 0x76 Array Operation
+00e2a158 __ZN9cTSObject17TryArrayOperationEP17cITSTreeStackElemP10XPrimParam
+# case 0x7E (beyond the editor's primitive list): Run Script (Lua)
+00e248ac __ZN9cTSObject12TryRunScriptEP17cITSTreeStackElemP10XPrimParam
