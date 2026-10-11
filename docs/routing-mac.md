@@ -20,8 +20,11 @@ o número de níveis é `ceil(log2(lado / célula mínima)) + 1`). Cada obstácu
 retângulos e se fundem onde não há (`SubdivideCell`, `MergeCellChildren`).
 O A* (`cAStarSearch::FindPath`) anda pelas células e pelos **portais**
 (portas e escadas, `AddDoorPortal`/`AddPortal`, nós `cAStarPortalNode` com
-custo de transição próprio). A célula mínima não foi achada (o `Init` do
-planner é chamado por vtable).
+custo de transição próprio). **Célula mínima = 0,125 tile** (binário: `cTSRouteManager::DoMessage`, na
+mensagem 0xB3 de lote carregado, chama `cPathPlanner::Init(xmin, ymin,
+xmax, ymax, 0,125, 1,0)` com os limites do mundo; o `Init` guarda os seis
+valores e `ResetPathPlannerData` cria uma `cQuadTree` por andar com
+eles). Logo depois vêm os pisos, telhados, postes e toldos.
 
 ## 2. Obstáculos (binário, `cTSRouteManager`)
 
@@ -203,40 +206,102 @@ BV `0x0102366c..`).
 
 Cada portal (porta, arco, escada) é um par de pontos de entrada com uma
 direção, um **custo de transição** (`cPortal +0x34`) e uma trava por
-sentido (`IsLocked`, calculada sob demanda por um callback
-`bool(*)(bool* trancado, float* custo, nó, nó, contexto)` que o objeto
-registra em `PortalAddToPathPlannerImpl`). No A*
-(`cAStarPortalNode::CalculateTransitionCost`, BV `0xba271c`): portal livre
-→ o custo dele; trancado → `FLT_MAX`, ou 5000 se o contexto tem o flag
-`0x200` (rota que ignora trancas). As portas também põem retângulos de
-porta (`AddDoorRect`) e de bloqueio (`AddDoorBlockerRect`, a folha
-aberta). Andando, ao chegar no início do portal o roteador roda a árvore
-**de entrada 15 ("portal") do OBJD** do objeto do portal com o par de
-slots (`TriggerPortalTree`, BV `0x575248`; estado 0x1F → 2), e espera o
-portal ficar livre (`DoWaitingForPortalToBecomeFree`) se outro Sim o usa
-(dado de objeto 0x3E do portal ≠ 0).
+sentido. O objeto registra o portal em `cTSObject::PortalAddToPathPlannerImpl`
+(BV `0xe22a44`): um par de slots de portal do modelo por ligação, e
 
-## 9. Comparação com o código atual (`src/vm/world.*`, `routing.cpp`)
+```
+custo = 1 + campo 0x35 do OBJD · escala      (a escala é uma constante estática
+                                              DAT_02d86430 não lida; 0x35 = 0 → custo 1)
+callback de trava = TSObjectPortalLockedCB se o objeto tem a entrada 15
+                    ("portal") do OBJD e ela tem a versão de teste (vtable 0x3B8)
+```
+
+**A trava é a árvore de portal rodada em modo TESTE** (`TSObjectPortalLockedCB`,
+BV `0xe208c8`): na primeira vez que o A* de um Sim cruza o portal naquela
+busca, roda a árvore da entrada 15 do objeto do portal (ou do líder do
+multi-tile) **como teste** sobre o Sim, com os parâmetros: slots de
+entrada/saída (`vtable 0x380`), as salas dos dois lados e os pares de
+coordenadas; `trancado = !resultado`; o custo é recalculado como acima.
+É o "Function - Portal - TEST" das árvores (porta trancada, só família,
+portinha de animal). O resultado fica guardado por sentido até a busca
+seguinte.
+
+No A* (`cAStarPortalNode::CalculateTransitionCost`, BV `0xba271c`): livre
+→ o custo; trancado → `FLT_MAX`, ou 5000 se o contexto tem o flag `0x200`
+(rota que ignora trancas). As portas também põem retângulos de porta
+(`AddDoorRect`) e de bloqueio (`AddDoorBlockerRect`, a folha aberta).
+
+**Andando** pelo portal: quando o próximo nó do caminho é o começo de um
+portal (`IsNextPathNodeAStairStart`/`GetPortalInfo`), o roteador vai para o
+estado 0x1F e `TriggerPortalTree` (BV `0x575248`) roda a **mesma entrada
+15 de verdade** (não teste) na pilha do Sim, com os parâmetros: os dois
+slots do portal, as salas e o nível; o Sim fica em `DoWaitingForPortal`
+(estado 2) até a árvore voltar (ela anima a porta abrindo, ou sobe os
+degraus com Snap Into) e o roteador segue no fim do portal
+(`DoLocomotionContinuationAtPortalEnd`). Se outro Sim ocupa o portal (dado
+de objeto 0x3E do portal ≠ 0), espera em `DoWaitingForPortalToBecomeFree`
+(animação de espera de 24 ticks, até 126 ticks). Antes de rodar, tira o
+bit 0x40 do dado 0x44 do Sim.
+
+## 8.1 Pedir para sair: `AskBlockerToMove` / `MoveOutOfWay` (binário)
+
+`AskBlockerToMove` (BV `0x57d8e8`) recusa se o bloqueador já é o bloqueador
+de alguma rota da minha pilha (evita ciclo); senão chama o `MoveOutOfWay`
+do roteador do bloqueador (BV `0x57ee3c`), que **aceita** se:
+
+- ele ainda não foi pedido (`IsAskedToMove`);
+- os flags de pessoa (dado 159) têm o bit 0x02, **ou** a prioridade dele
+  (dado 33) é menor que a do pedido (prioridade de quem pede − 1, mín. 1);
+- os dois são roteadores ativos, a minha rota tem > 1 objetivo, estamos a
+  ≤ 4 tiles e ele não está, ele mesmo, bloqueado por alguém;
+- `CreateMoveOutOfWayDestination` (BV `0x57dcac`) acha um lugar livre perto
+  (um gerador de objetivos com raios de 1 a 6 tiles em volta dele, longe da
+  minha linha de caminho).
+
+Aceitando, o jogo **empurra uma interação "sair do caminho" (tipo 3) na
+fila dele, com a minha prioridade** (`IsMoveOutOfWay` reconhece essas
+interações), marca-o como pedido e liga a minha rota a ele; eu fico em
+`DoWaitingForPersonToMove` (§6).
+
+## 8.2 Avaliar um ponto de objetivo: `cTSRoute::EvalTileForGoal` (BV `0x475074`)
+
+Para cada ponto candidato (slot de rota, em volta do objeto), devolve um
+código e soma penalidades num custo:
+
+| código | quando |
+|---|---|
+| 0 | fora do mundo |
+| 2 | sala diferente da sala exigida (do objeto ou do Sim, conforme o slot) |
+| 3 | há parede entre o ponto e o objeto (linha de visão), sem flag que permita |
+| 4 | um círculo de 0,3 tile em volta do ponto toca parede (com 0,4 tocando: +10 no custo) |
+| 5 | altura do piso diferente da do alvo (> 0,01) ou tile não plano |
+| 1 / 6 | ocupado: por um objeto (6, ID devolvido) ou por um Sim/rota (1) |
+| 7 | **válido** |
+
+Penalidades no custo (quando o slot permite o caso em vez de recusar):
++10 por parede atravessada na linha, +10 por parede a menos de 0,4, +10 por
+sala diferente, +10 por objeto que pode ser empurrado, +5 se há porta no
+tile, +5 se o tile é água/terreno especial (consulta do mundo `0x170`). A
+geração dos candidatos (`CreateBestGoalPointList`) é feita por um
+componente à parte (CLSID `0xFBA4DA4F`, máscara de 8 direções, distâncias
+do slot) que não foi decompilado; o `cTSRoute::ScanCone` que o symxfer
+nomeou no BV é outra função (um dump de desejos).
+
+## 9. Comparação com o código atual (main `3b4c4db`: `src/vm/path_planner.*`, `routing.cpp`)
 
 | jogo | código |
 |---|---|
-| quadtree de retângulos contínuos, custos por material/desnível | A* em tiles inteiros com 8 vizinhos |
-| obstáculos inflados 1/8 de tile para o corpo | tile inteiro bloqueado |
-| portas e escadas como portais com custo de transição | portas abrem a aresta; escadas por tile de patamar |
-| caminho suavizado (Laplaciano 0,45/0,325, corte de quinas) | centros de tile |
-| A* com custo = comprimento × custo da célula, ruído U(0; 0,01) e heurística com ruído até 3 | A* em tiles sem ruído |
-| outros Sims = retângulos de custo 5/7,5/10; bloqueio → pede para sair, espera, re-rota, "CT - Route Blocked" | Sims não se bloqueiam |
-| falha grava o dado de pessoa 62 com o código do STR# 0xF1 e toca "CT - Route Failure Feedback" | a primitiva só volta false |
-
-Para o modo sem tela basta o A* em tiles; para o Sim andar como no jogo, os
-pontos 1 e 3 importam.
+| célula mínima 0,125 tile | 1/8 tile (igual; o código marcava como aproximação) |
+| custo do portal = 1 + OBJD[0x35]·escala; trava = árvore de portal (entrada 15) em modo teste | custo aproximado; portas sempre abertas para o A* |
+| ao chegar no portal roda a entrada 15 de verdade e espera; portal ocupado → espera 24 ticks, até 126 | a VM segura o Sim no portal e o app abre a porta (aproximação) |
+| `MoveOutOfWay`: interação "sair do caminho" (tipo 3) na fila do bloqueador, com a prioridade de quem pede, só se a dele é menor (ou dado 159 bit 0x02), a ≤ 4 tiles | pede até 3 vezes e espera, sem pôr nada na fila do bloqueador |
+| objetivos avaliados por `EvalTileForGoal` (códigos e penalidades +10/+5, §8.2) | aproximação da busca de objetivos (`routing.cpp`) |
+| quadtree, inflação 1/8, filtros, A* com ruído, Sims como retângulos de custo, códigos de falha, "CT - Route Blocked" | seguem o doc |
 
 ## 10. O que falta
 
-- O tamanho mínimo de célula da quadtree e o custo exato de cada
-  `ePassabilityState`.
-- Quem grava os códigos 4–10, o `CreateBestGoalPointList`/`EvalTileForGoal`
-  /`ScanCone` (escolha dos objetivos).
-- O callback de trava/custo das portas (o que o jogo pergunta ao objeto) e
-  os valores de custo dos portais.
+- O custo exato de cada `ePassabilityState` e a escala do custo de portal
+  (`DAT_02d86430`).
+- Quem grava os códigos 4–10.
+- O gerador de pontos de objetivo (CLSID `0xFBA4DA4F`).
 - O passo do locomotor (`FollowOneStep`) e quando ele diz "bloqueado".
