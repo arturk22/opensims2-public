@@ -435,6 +435,18 @@ static void testSubQueue() {
     check(o.attributes.size() > 2 && o.attributes[2] == 5 && s.subQueue.empty() && !s.subAction &&
               s.activeInteraction == 0,
           "it ran as a sub-action inside the running interaction");
+
+    // A waiting sub-action can be cancelled by its uid; taking the next
+    // queue entry clears the sub-actions (cTSPerson::ClearSubActions).
+    const uint16_t a = enqueue(fx.vm, s, *makeInteraction(fx.vm, tv, 1));
+    const uint16_t b = enqueue(fx.vm, s, *makeInteraction(fx.vm, tv, 1));
+    check(s.subQueue.size() == 2 && cancelInteraction(fx.vm, s, b) && s.subQueue.size() == 1 &&
+              s.subQueue[0].uid == a && s.person->data[persondata::SubQueueCount] == 1,
+          "cancelling a waiting sub-action takes it out of the sub-queue");
+    clearSubActions(s);
+    check(s.subQueue.empty() && !s.subAction && s.person->data[persondata::SubQueueCount] == 0 &&
+              s.person->data[persondata::SubQueueMasterObject] == 0,
+          "clearing the sub-actions resets person data 26 and 75");
 }
 
 int main() {

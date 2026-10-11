@@ -84,6 +84,62 @@ void restoreState(Object& o, const LotObjects::State& s) {
 // that frame (the first such) is its action tree's root: it is marked as the
 // interaction, so it ends the entry when it returns. Records whose entry
 // cannot be found are dropped.
+// The queue entry a saved interaction record names (see restoreQueue).
+std::optional<QueuedInteraction> entryOf(VM& vm, Object& sim, const LotObjects::SavedInteraction& rec) {
+    const ObjectId leader = interactionLeader(vm, rec.stackObject);
+    const Object* o = vm.object(leader);
+    const auto ref = o ? interactionTable(vm, *o) : std::nullopt;
+    if (!ref)
+        return std::nullopt;
+    std::optional<QueuedInteraction> q;
+    auto english = [&](uint32_t i) { return ref->strings ? ref->strings->get(i, lang::EnglishUS) : std::string(); };
+    if (rec.ttabEntry < 0x10000 && (rec.name.empty() || english(rec.ttabEntry) == rec.name))
+        q = makeInteraction(vm, leader, uint16_t(rec.ttabEntry));
+    if (!q && ref->strings && !rec.name.empty())
+        for (const auto& e : ref->table->interactions)
+            if (english(e.stringIndex) == rec.name) {
+                q = makeInteraction(vm, leader, uint16_t(e.stringIndex));
+                break;
+            }
+    if (!q)
+        return std::nullopt;
+    q->priority = int16_t(std::clamp<int64_t>(rec.priority, 0, kPriorityMaximum));
+    q->pushedBy = rec.initiator > 0 ? rec.initiator : sim.id;
+    q->args = rec.params;
+    if (sim.nextInteractionUid == 0)
+        ++sim.nextInteractionUid;
+    q->uid = sim.nextInteractionUid++;
+    return q;
+}
+
+// The saved sub-queue (+0x5AC) and current sub-action (+0x5DC), as the
+// queue's: the sub-action's frame is the first frame of the resumed Main,
+// above the running interaction's, whose code owner is its object.
+size_t restoreSubQueue(VM& vm, Object& sim, const LotObjects::State& s) {
+    sim.subQueue.clear();
+    sim.subAction.reset();
+    for (const auto& rec : s.list5AC)
+        if (auto q = entryOf(vm, sim, rec); q && sim.subQueue.size() < kMaxSubQueue)
+            sim.subQueue.push_back(std::move(*q));
+    if (s.pending && s.pending->ttabEntry != 0xFFFFFFFF && s.pending->stackObject > 0)
+        if (auto q = entryOf(vm, sim, *s.pending)) {
+            if (auto t = vm.threads.find(sim.id); t != vm.threads.end()) {
+                bool above = false;
+                for (Frame& f : t->second.stack) {
+                    above = above || f.interaction;
+                    if (above && !f.interaction && f.codeOwner != sim.id &&
+                        (f.codeOwner == s.pending->stackObject || f.codeOwner == q->object)) {
+                        f.subInteraction = true;
+                        sim.subAction = std::move(*q);
+                        break;
+                    }
+                }
+            }
+        }
+    syncQueueData(sim);
+    return sim.subQueue.size() + (sim.subAction ? 1 : 0);
+}
+
 size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
     if (!sim.person)
         return 0;
@@ -235,8 +291,11 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
     // The Sims' saved interaction queues, now that their stacks are back.
     for (ObjectId id : ids)
         if (auto it = states.find(id); it != states.end())
-            if (Object* o = vm.object(id))
+            if (Object* o = vm.object(id)) {
                 out.queued += restoreQueue(vm, *o, *it->second);
+                if (o->person)
+                    out.queued += restoreSubQueue(vm, *o, *it->second);
+            }
     // The load entry point runs only when the object's version differs from
     // its definition's (the editor's description of OBJf entry 2).
     for (ObjectId id : ids) {

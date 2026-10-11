@@ -111,13 +111,18 @@ std::optional<QueuedInteraction> makeInteraction(VM& vm, ObjectId object, uint16
 // Throws VMError when the queue is full.
 uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead = false);
 
-// Cancels an entry: a waiting one is removed, the running one is told to
-// stop (Idle for Input in its tree returns at once). False if there is none.
+// Cancels an entry of the queue or the sub-queue: a waiting one is removed,
+// the running one (or the running sub-action) is told to stop (Idle for
+// Input in its tree returns at once). False if there is none.
 bool cancelInteraction(VM& vm, Object& sim, uint16_t uid);
 
 // Generic Sims Call 13: removes the waiting interactions whose object is
 // `object` from every queue and cancels the running ones.
 void cancelInteractionsWith(VM& vm, ObjectId object);
+
+// cTSPerson::ClearSubActions: empties the sub-queue and drops the current
+// sub-action (person data 26, 75-78 and 157 go to 0).
+void clearSubActions(Object& sim);
 
 // Whether the interaction a Sim is running was cancelled (for primitives
 // that wait, like animations).

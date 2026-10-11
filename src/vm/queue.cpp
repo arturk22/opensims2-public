@@ -535,8 +535,22 @@ uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead) {
 bool cancelInteraction(VM& vm, Object& sim, uint16_t uid) {
     auto& q = sim.queue;
     auto it = std::find_if(q.begin(), q.end(), [&](const QueuedInteraction& x) { return x.uid == uid; });
-    if (it == q.end())
-        return false;
+    if (it == q.end()) {
+        // A sub-action: a waiting one leaves the sub-queue, the running one
+        // is told to stop as the running interaction is (inferred, as for
+        // the queue; the binary's cTSPerson::DeleteTopSubAction drops the
+        // first waiting one when a Sim is cleaned up).
+        auto& sq = sim.subQueue;
+        auto st = std::find_if(sq.begin(), sq.end(), [&](const QueuedInteraction& x) { return x.uid == uid; });
+        if (st != sq.end())
+            sq.erase(st);
+        else if (sim.subAction && sim.subAction->uid == uid)
+            sim.subAction->cancelled = true;
+        else
+            return false;
+        syncQueueData(sim);
+        return true;
+    }
     const auto index = int(it - q.begin());
     if (index > sim.activeInteraction) {
         const QueuedInteraction gone = *it;
@@ -573,6 +587,8 @@ void cancelInteractionsWith(VM& vm, ObjectId object) {
 }
 
 bool interactionCancelled(const Object& sim) {
+    if (sim.subAction && sim.subAction->cancelled)
+        return true;
     return sim.activeInteraction >= 0 && size_t(sim.activeInteraction) < sim.queue.size() &&
            sim.queue[size_t(sim.activeInteraction)].cancelled;
 }
@@ -615,6 +631,10 @@ bool attemptPush(VM& vm, Thread& t) {
         const QueuedInteraction item = sim->queue[next];
         if (item.priority <= compare)
             return false;
+        // Taking the next entry clears the sub-actions, whether it passes its
+        // check or not (cTSPerson::TryIdleForInput calls ClearSubActions before
+        // the test; SetCurrentAction does it again).
+        clearSubActions(*sim);
         bool ok = vm.object(item.object) != nullptr;
         if (ok) {
             const CheckResult r = checkInteraction(vm, t.me, item);
@@ -683,6 +703,14 @@ void endInteraction(VM& vm, Thread& t) {
     setPriority(*sim, sim->activeInteraction >= 0 ? q[size_t(sim->activeInteraction)].priority : kPriorityIdle);
     evaluatePriorities(vm, *sim);
     syncQueueData(*sim);
+}
+
+void clearSubActions(Object& sim) {
+    if (sim.subQueue.empty() && !sim.subAction)
+        return;
+    sim.subQueue.clear();
+    sim.subAction.reset();
+    syncQueueData(sim);
 }
 
 void endSubInteraction(VM& vm, Thread& t) {

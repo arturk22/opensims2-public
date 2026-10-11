@@ -128,6 +128,18 @@ void capturePerson(VM& vm, const Object& o, LotObjects::State& s, bool known) {
         const size_t j = i - first;
         s.queue.push_back(toRecord(vm, o, o.queue[i], j < queueBefore.size() ? &queueBefore[j] : nullptr));
     }
+    // The current sub-action (+0x5DC) and the sub-queue (+0x5AC).
+    const auto pendingBefore = s.pending;
+    s.pending.reset();
+    if (o.subAction)
+        s.pending = toRecord(vm, o, *o.subAction,
+                             pendingBefore && interactionLeader(vm, pendingBefore->stackObject) == o.subAction->object
+                                 ? &*pendingBefore
+                                 : nullptr);
+    const auto subBefore = s.list5AC;
+    s.list5AC.clear();
+    for (size_t i = 0; i < o.subQueue.size(); ++i)
+        s.list5AC.push_back(toRecord(vm, o, o.subQueue[i], i < subBefore.size() ? &subBefore[i] : nullptr));
 }
 
 void captureObject(VM& vm, const LotObjects& saved, const Object& o, LotObjects::State& s, bool known) {
