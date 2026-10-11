@@ -236,3 +236,87 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
 }
 
 } // namespace os2
+
+namespace os2 {
+
+namespace {
+
+std::string eventField(const std::string& data, const char* key) {
+    const std::string k = std::string(key) + "=";
+    size_t at = 0;
+    while (at < data.size()) {
+        const size_t end = data.find_first_of("|\r\n", at);
+        if (data.compare(at, k.size(), k) == 0)
+            return data.substr(at + k.size(), end == std::string::npos ? std::string::npos : end - at - k.size());
+        if (end == std::string::npos)
+            break;
+        at = end + 1;
+    }
+    return "";
+}
+
+std::optional<fx::Placement> bonePlacement(const SimActor& a, const std::string& bone) {
+    const int b = bone.empty() ? -1 : a.skin.skeleton.find(bone);
+    if (b >= 0 && size_t(b) < a.bones.size())
+        return fromXform(a.bones[size_t(b)]);
+    return fromXform(a.placement());
+}
+
+} // namespace
+
+void LotEffects::animationEffects(const std::vector<const SimActor*>& actors, double seconds) {
+    const double from = animScanned_ < 0 ? seconds : animScanned_;
+    animScanned_ = seconds;
+    std::set<const SimActor*> present(actors.begin(), actors.end());
+    for (const SimActor* a : actors) {
+        if (!a)
+            continue;
+        for (const auto& e : a->player.eventsBetween(from, seconds)) {
+            if (e.event->type != 8)
+                continue;
+            const std::string name = eventField(e.event->data, "effectName");
+            const std::string bone = eventField(e.event->data, "boneName");
+            const std::string op = eventField(e.event->data, "op");
+            if (name.empty())
+                continue;
+            const bool stopping = op.find("Stop") != std::string::npos || op.find("stop") != std::string::npos;
+            const bool hard = op.rfind("hard", 0) == 0;
+            for (auto& r : animEffects_)
+                if (r.actor == a && r.name == name && r.handle >= 0) {
+                    system_->stop(r.handle, hard);
+                    r.handle = -1;
+                }
+            if (stopping)
+                continue;
+            AnimEffect r;
+            r.actor = a;
+            r.name = name;
+            r.bone = bone;
+            r.end = e.at - e.event->ticks / 1000.0 + e.anim->duration / 1000.0;
+            if (auto at = bonePlacement(*a, bone))
+                r.handle = system_->start(name, *at);
+            if (std::getenv("OS2_DEBUG_FX"))
+                std::fprintf(stderr, "opensims2: animation effect %s on %s (%s) at %.2f s%s\n", name.c_str(),
+                             bone.c_str(), op.c_str(), e.at, r.handle < 0 ? " not found" : "");
+            if (r.handle >= 0)
+                animEffects_.push_back(std::move(r));
+        }
+    }
+    for (auto it = animEffects_.begin(); it != animEffects_.end();) {
+        AnimEffect& r = *it;
+        const bool gone = !present.count(r.actor);
+        if (r.handle >= 0 && !gone && seconds < r.end)
+            if (auto at = bonePlacement(*r.actor, r.bone))
+                system_->move(r.handle, *at);
+        if (r.handle >= 0 && (gone || seconds >= r.end)) {
+            system_->stop(r.handle, gone);
+            r.handle = -1;
+        }
+        if (r.handle < 0)
+            it = animEffects_.erase(it);
+        else
+            ++it;
+    }
+}
+
+} // namespace os2

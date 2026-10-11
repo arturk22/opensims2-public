@@ -54,6 +54,19 @@ public:
     // as Effect Stop/Start's slot type 2).
     bool addManual(const std::string& name, int16_t object, fx::V3 at, int slot = -1);
 
+    // Effects by hand at a placement (a cinematic's, the animations'):
+    // start returns -1 if there is no such effect.
+    int start(const std::string& name, const fx::Placement& at) { return system_->start(name, at); }
+    void move(int handle, const fx::Placement& at) { system_->move(handle, at); }
+    void stop(int handle, bool hard) { system_->stop(handle, hard); }
+
+    // The effect events of these actors' animations (ANIM event type 8:
+    // "effectName=...|boneName=...|op=softStart|hardStart|softStop|hardStop")
+    // since the last call, up to `seconds` (the actors' clock): started on
+    // the bone (the actor's placement if it has no such bone), moved with
+    // it, stopped by their stop event or when their animation is over.
+    void animationEffects(const std::vector<const SimActor*>& actors, double seconds);
+
     const fx::EffectsLibrary& library() const { return *library_; }
     size_t running() const { return system_->instanceCount(); }
 
@@ -85,6 +98,14 @@ private:
     std::unique_ptr<ParticleLayer> layer_;
     std::map<std::pair<int16_t, uint32_t>, Running> vm_; // (object, effect serial)
     std::vector<Manual> manual_;
+    struct AnimEffect {
+        const SimActor* actor = nullptr;
+        std::string name, bone;
+        int handle = -1;
+        double end = 0; // when the animation that started it is over
+    };
+    std::vector<AnimEffect> animEffects_;
+    double animScanned_ = -1;
     std::vector<fx::ParticleQuad> quads_;
     double last_ = -1;
 };

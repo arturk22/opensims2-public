@@ -481,19 +481,32 @@ void LotLighting::update(double seconds) {
             return 0;
         return m.world->room(vm::VM::tileOf(o));
     };
+    // A copy of a set with an object's extra lights after its own.
+    auto withExtras = [&](int16_t id, int set) {
+        if (!extraLights || sets.size() + 1 > Renderer::kMaxLightSets)
+            return set;
+        const auto extra = extraLights(id);
+        if (extra.empty())
+            return set;
+        Renderer::LightSet s = sets[size_t(set)];
+        for (const auto& e : extra)
+            s.points.push_back({f3(e.position), f3(e.color), e.falloff, e.range, 1.0f});
+        sets.push_back(std::move(s));
+        return int(sets.size() - 1);
+    };
     objects_.forEachDrawn([&](int16_t id, int instance, SimActor* actor) {
         const vm::Object* o = m.object(id);
         if (!o)
             return;
-        const int set = roomSet(o->position.level, roomOf(*o));
+        const int set = withExtras(id, roomSet(o->position.level, roomOf(*o)));
         renderer_.setInstanceLightSet(actor ? renderer_.instanceOf(actor->model) : instance, set);
     });
     for (const auto& [id, actor] : sims_) {
         const vm::Object* o = m.object(id);
         if (!o || !actor)
             continue;
-        const int set = roomSet(o->position.level, roomOf(*o));
-        renderer_.setInstanceLightSet(renderer_.instanceOf(actor->model), set + 1);
+        const int set = withExtras(id, roomSet(o->position.level, roomOf(*o)) + 1);
+        renderer_.setInstanceLightSet(renderer_.instanceOf(actor->model), set);
     }
     renderer_.setLightSets(std::move(sets));
 }

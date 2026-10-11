@@ -181,6 +181,56 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
   direção do dado 1), olhando pelo +Y da junta com +Z para cima (inferido: com
   −Z/+Y de câmera do Maya o primeiro beijo olharia para o chão; com +Y os
   planos saem por cima do ombro, em altura de cabeça), FOV vertical do
-  `viewersGroup` e as barras do letterbox. `--cinematic <cena>[@objeto]`.
-  Não tocados ainda: animações automáticas dos atores, rig de luz,
-  pós-processamento e os cortes.
+  `viewersGroup` e as barras do letterbox.
+- Rodada 9 (`app/cinematic_player.*`, `render/screen_fx_layer.*`): a cena
+  inteira como o §6 descreve: atores auto-criados (táxi, OVNIs, plumbobs
+  da cena) com as animações da lista em sequência a partir da origem, as
+  animações automáticas de atores existentes (bebê, OVNI, telescópio, cama:
+  objetos pelo mesmo caminho do Animate Object), o rig de luz (não é
+  desenhado: as luzes `point/spot{1,2,3}{a,b}` dele, posição pelos ossos +
+  canais de mesmo nome, cor = `diffuse` × `diffuseScale`, entram como luzes
+  pontuais dos atores cujos grupos de render têm o bit 1/2/4; spots como
+  pontos, inferido), as câmeras em sequência (`-1_anim`, `-2_anim`), os
+  cortes (chaves na mesma hora), o espelhamento (flag 0x01, ou 0x02 com o
+  temp 0 ≠ 0: só a câmera e o rig; os ossos dos atores não são espelhados),
+  pós-processamento (letterbox, vinheta, granulado e um "bloom" barato:
+  cena × w + rgb como clareamento, inferido), crossfade de instantâneo
+  (tela modo 4, 2 s, força 1 → 0) nos eventos `crossFadeSnap*` da câmera e
+  quando a cena acaba, e os eventos de efeito (tipo 8) das animações de
+  todos os atores (`LotEffects::animationEffects`: `firstKissSpiralFx`,
+  `kissMomentTeen`, os feixes dos OVNIs). Tudo no relógio da cena. Sem
+  "Start Animations Now" (0x04) a cena espera até um ator começar uma
+  animação (onSimAnimation) ou 1 s (inferido). `--cinematic
+  <cena>[@id,id...][:mirror]` (atores na ordem do CINE; sem ids, os Sims do
+  lote nos atores Sim e um objeto do lote com o modelo do ator, p. ex. a
+  caixa de correio; como ajuda de teste os Sims tocam a parte deles,
+  `<idades>-cinematic-<ator>-<cena>_anim`, que no jogo vem da árvore).
+  Capturas: `docs/screenshots/r9-cinematic-firstkiss.jpg`,
+  `r9-cinematic-abduction.jpg`, `r9-cinematic-movein.jpg`.
+
+## 6. O que o binário faz com a cena (Mac BV)
+
+- `TryCinematic` (0x00e24960) **não espera**: chama
+  `TSSGSystem->PrepCinematicScene` (vtable +0x6C, `FUN_007c82ec`) com
+  (nome, atores, espelhar, flags>>2&1, flags>>3&1, flags>>7) e devolve
+  verdadeiro se ela deu certo, falso se não, ou lança o erro que ela
+  devolveu. A árvore segue na hora; o fim da cena não volta para a VM
+  (as árvores tocam as animações dos Sims, da mesma duração).
+- `PrepCinematicScene`: carrega `<cena>_cine` e as animações da câmera
+  (`"%s-%1d"` quando há mais de uma sequência), resolve os atores (erros
+  0x87–0x8F), guarda espelhar (+0x167), 0x08 (+0x164: "mostrar a casa
+  inteira": nível mais alto e paredes em modo 3, desliga "ObjectHiding") e
+  0x80 (+0x165); a cena `movein_cine` força os dois. Marca "pronta"
+  (`IsCinematicSceneReadyToPlay`, +0x166) e, com 0x04, já chama Start.
+- Start (`FUN_007c3898`, vtable +0x70): por ator, carrega o modelo
+  automático, põe na origem os de auto-origem, encadeia as animações da
+  lista (cada uma começa no fim da anterior, espelhadas pela flag), liga os
+  grupos de render `Cinematic1/2/3` pelos bits 1/2/4; guarda e força a
+  velocidade do jogo, guarda o nível/corte das paredes, encadeia as
+  câmeras a partir da origem e guarda o pedido da última em +0x128.
+- `IsCinematicSceneActive` = há pedido da câmera e ele não acabou. Stop
+  (`FUN_007c56b4`, +0x74) restaura velocidade, nível, paredes e
+  ObjectHiding e tira os grupos de render.
+- `cEventHandlerCinematics::HandleEvents`: eventos tipo 8 com
+  `effectName=crossFadeSnapShort/Standard/Long` disparam o efeito (bloco
+  de tela modo 4); tipo 0x3F6 é som.

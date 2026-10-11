@@ -45,6 +45,7 @@ Exit cinematic(Context& c) {
     const auto& o = c.instruction.operands;
     CinematicRequest r;
     r.flags = o[5];
+    r.temp0 = c.thread.temps[0];
     r.me = c.thread.me;
     r.tick = c.vm.ticks;
     try {

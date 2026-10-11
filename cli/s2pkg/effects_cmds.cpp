@@ -123,6 +123,25 @@ void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
             if (size_t(c.index) < lib.sounds.size())
                 std::printf("%saudio=%08X\n", in.c_str(), lib.sounds[size_t(c.index)].audioId);
             break;
+        case fx::Block::Screen:
+            if (size_t(c.index) < lib.screens.size()) {
+                const auto& s = lib.screens[size_t(c.index)];
+                std::printf("%smode=%u flags=0x%X length=%g delay=%g strength=%s texture=%s colors=%zu", in.c_str(), s.mode,
+                            s.flags, s.length, s.delay, curveText(s.strength).c_str(), s.texture.c_str(), s.colors.size());
+                for (auto& col : s.colors)
+                    std::printf(" (%g %g %g)", col[0], col[1], col[2]);
+                std::printf("\n");
+            }
+            break;
+        case fx::Block::Decal:
+            if (size_t(c.index) < lib.decals.size()) {
+                const auto& d = lib.decals[size_t(c.index)];
+                std::printf("%stexture=%s draw=%u lifeType=%u life=%g size=%s alpha=%s rotate=%s aspect=%s repeat=%g colors=%zu\n",
+                            in.c_str(), d.texture.c_str(), d.drawType, d.lifeType, d.life, curveText(d.sizeCurve).c_str(),
+                            curveText(d.alphaCurve).c_str(), curveText(d.rotateCurve).c_str(),
+                            curveText(d.aspectCurve).c_str(), d.textureRepeat, d.colors.size());
+            }
+            break;
         default: break;
         }
     }

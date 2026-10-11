@@ -38,6 +38,7 @@
 #include "formats/lot_lightmap.hpp"
 #include "formats/xform.hpp"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -93,6 +94,16 @@ public:
         bool portal = false; // a window's or door's light (outside light coming in)
     };
     const std::vector<Lamp>& lamps() const { return lamps_; }
+
+    // Extra point lights on some objects and Sims (a cinematic's light rig
+    // on the actors of its render groups): asked for each drawn object and
+    // Sim by ID; they go after the room's lights (16 in all).
+    struct ExtraLight {
+        Vec3 position{};
+        Vec3 color{}; // times intensity
+        float falloff = 1, range = 0;
+    };
+    std::function<std::vector<ExtraLight>(int16_t id)> extraLights;
     const std::string& stateName() const { return current_; }
 
 private:
