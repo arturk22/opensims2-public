@@ -1268,9 +1268,11 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
   suave/forte, 4/5 para todos, 6 dispara e esquece, 7 interroga o osso, 8
   para tudo e limpa a fila, 9 para TODOS, 10–13 estado 1–4, 14 para TODOS
   suave); objeto (dono 1, dado u16 2); efeito u16 4 (byte baixo −1 = o efeito padrão);
-  slot byte 6 do tipo s8 9; flags u16 10 (0x40 ID do efeito no temp 1, 0x80
-  fila de prioridade, 0x04/0x10/0x20/0x400/0x800/0x1000 ícones); (dono 12,
-  dado u16 13); folha byte 15.
+  slot byte 6 do tipo s8 9; flags u16 10 (0x01 STR# 0x8F global, 0x02
+  semi-global, 0x08 ID do efeito no temp 0, 0x40 temp 1 passado ao início,
+  0x80 fila de prioridade, 0x04/0x10/0x20/0x400/0x800/0x1000/0x2000 ícones);
+  (dono 12, dado u16 13) = variável do ícone; byte 15 = entrada do STR# 0x95
+  (atlas do ícone). Detalhes em `docs/effects-mac.md` §2.
 - **0x71 Snap Into**: objeto (dono 0, dado u16 1) no objeto (dono 3, dado u16
   4), slot byte 6 (ou temp 0 com 0x01); flags byte 9: 0x01 slot no temp 0,
   **0x02 só testa ("TEST ONLY")**, 0x04 reseta os ossos raiz. Resolve o
