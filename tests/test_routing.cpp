@@ -744,6 +744,45 @@ static void testDoorPortalTree() {
     }
 }
 
+// The walker's pre-route tree (OBJf entry 0x25) runs once a way is found,
+// on its thread with itself as the stack object and the target in
+// parameter 0 (here it counts its runs); the route is planned again after it.
+// False fails the route with "pre-route failed" (11).
+static void testPreRouteTree() {
+    for (const bool refuse : {false, true}) {
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World(10, 6);
+        code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+        code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+        ObjectFunctions f;
+        f.functions.resize(0x26);
+        f.functions[0x25] = {0, 0x1010};
+        code.add(kGroup, 0x81, f);
+        constexpr uint8_t Global = 0x06, Param = 0x09;
+        code.add(kGroup, 0x1010, tree({expr(Global, 10, 3, Lit, 1, go(1), E),          // global 10 += 1
+                                       expr(Global, 11, Assign, Param, 0, go(2), E),   // global 11 = the target
+                                       expr(Global, 12, Assign, StackId, 0, go(3), E), // global 12 = stack object
+                                       expr(Data, 1, Assign, Lit, 0, refuse ? F : T, E)}, 6));
+        Object& lamp = vm.instantiate(kGroup, 0x80);
+        lamp.position = {8.5f, 2.5f, 1};
+        Object& sim = vm.instantiate(kGroup, 0x81);
+        sim.position = {1.5f, 2.5f, 1};
+        code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0x02})}));
+        Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+        for (int i = 0; i < 2000 && t.status == Thread::Status::Running; ++i)
+            vm.run(t);
+        if (refuse)
+            check(t.status == Thread::Status::Finished && !t.result && sim.position.x < 2 && vm.globals[10] == 1 &&
+                      sim.person && sim.person->data[62] == int16_t(RouteFail::PreRouteFailed),
+                  "a pre-route tree's false fails the route with code 11");
+        else
+            check(t.status == Thread::Status::Finished && t.result && sim.position.x > 6 && vm.globals[10] == 1 &&
+                      vm.globals[11] == lamp.id && vm.globals[12] == sim.id,
+                  "the walker's pre-route tree runs once, with the target and itself as stack object");
+    }
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -759,6 +798,7 @@ int main() {
     testBlockedBySim();
     testDoorWait();
     testDoorPortalTree();
+    testPreRouteTree();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -568,6 +568,11 @@ struct Frame {
     // A route of this frame's instruction failed with this result and its
     // failure feedback tree runs (routing.cpp); -1: none.
     int16_t pendingRouteResult = -1;
+    // The walker's pre-route tree ran for this frame's routing instruction,
+    // which keeps the routing slot it read before (the tree may change the
+    // temps it came from).
+    bool preRouteRan = false;
+    int16_t routeSlot = -1;
 };
 
 // Temps belong to the thread, so subroutines can return values in them;

@@ -861,7 +861,7 @@ Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees) {
 // false when no goal can be reached (after the failure feedback). Routing
 // out of the world is the game's own error. A goal on another level is
 // reached by the stairs.
-Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& plan, bool failureTrees) {
+Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& plan, bool failureTrees) {
     Object& me = c.me();
     const size_t depth = c.thread.stack.size();
     if (c.frame.pendingRouteResult >= 0) { // back from the failure feedback
@@ -886,6 +886,9 @@ Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& pl
     }
     me.route.reset();
     worldOf(c);
+    if (c.frame.preRouteRan) // back from the pre-route tree
+        if (const auto ran = std::exchange(c.thread.rerunResult, std::nullopt); ran && !*ran)
+            return failRoute(c, RouteFail::PreRouteFailed, 0, failureTrees);
     if (!me.position.inWorld())
         throw VMError("Trying to route while out of world.");
     const VM::RouteGoals goals = plan();
@@ -905,6 +908,34 @@ Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& pl
     RouteFail why = RouteFail::Success;
     if (!planRoute(c.vm, me, r, why))
         return failRoute(c, why, 0, failureTrees);
+    // A way was found: the walker's pre-route tree first (OBJf entry 0x25,
+    // the person's "Function - Pre Route": it stands a seated Sim up through
+    // its chair's stand function, stops the idles and decides whether to
+    // run), on its thread with itself as the stack object (TriggerPreRouteTree;
+    // parameters: 0 the target, 1 the routing slot, 5 the distance in tiles,
+    // rounded). Its false fails the route ("pre-route failed"); after it the
+    // way is planned again from where it left the walker
+    // (DoWaitingForPreRouteTree).
+    if (!c.frame.preRouteRan && me.person) {
+        if (const uint16_t tree = c.vm.functionTree(me, 0x25)) {
+            float length = 0;
+            Point2 at{me.position.x, me.position.y};
+            for (const auto& p : r.points) {
+                length += std::hypot(p.x - at[0], p.y - at[1]);
+                at = {p.x, p.y};
+            }
+            c.frame.preRouteRan = true;
+            c.vm.call(c.thread, me.id, tree, {});
+            Frame& f = c.thread.stack.back();
+            f.stackObject = me.id;
+            f.params.resize(std::max<size_t>(f.params.size(), 6));
+            f.params[0] = target;
+            f.params[1] = me.person->data[37];
+            f.params[5] = int16_t(std::floor(length + 0.5f));
+            f.rerunCaller = true;
+            return Exit::Call;
+        }
+    }
     if (me.data[objdata::ContainerId] != 0)
         leaveSlot(me);
     me.route = std::move(r);
@@ -919,6 +950,13 @@ Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& pl
     case Step::Failed: break;
     }
     return failRoute(c, later, 0, failureTrees);
+}
+
+Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& plan, bool failureTrees) {
+    const Exit e = walkStep(c, target, plan, failureTrees);
+    if (e != Exit::Yield && e != Exit::Call)
+        c.frame.preRouteRan = false; // the instruction is done
+    return e;
 }
 
 // The routing slots (type 3) of an object's SLOT, in order: the routing slot
@@ -982,9 +1020,12 @@ Exit goToRoutingSlot(Context& c) {
     const Object* target = c.vm.object(c.frame.stackObject);
     if (!target || !target->position.inWorld())
         return Exit::False;
-    const int index = scope == 0 ? c.get(kOwnerParam, int16_t(data))
-                    : scope == 1 && (flags & 0x02) ? c.thread.temps[0]
-                                                    : int(data);
+    int index = scope == 0 ? c.get(kOwnerParam, int16_t(data))
+              : scope == 1 && (flags & 0x02) ? c.thread.temps[0]
+                                              : int(data);
+    if (c.frame.preRouteRan) // as read before the pre-route tree
+        index = c.frame.routeSlot;
+    c.frame.routeSlot = int16_t(index);
     const Slots::Slot& slot = routingSlot(c.vm, *target, scope == 2, index);
     const ObjectId id = target->id;
     noteRouteSlot(c.me(), index, id);
