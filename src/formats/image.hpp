@@ -102,6 +102,8 @@ std::vector<TextureLevels> loadAllTextureLevels(std::span<const uint8_t> txtrRes
 // Largest loadable level of a TXTR resource, decoded.
 RgbaImage loadTexture(std::span<const uint8_t> txtrResource, ResourceIndex* index);
 
+// The image as PNG bytes (8-bit RGBA).
+std::vector<uint8_t> encodePng(const RgbaImage& img);
 void writePng(const std::filesystem::path& path, const RgbaImage& img);
 
 } // namespace os2

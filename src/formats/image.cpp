@@ -316,7 +316,7 @@ RgbaImage loadTexture(std::span<const uint8_t> txtrResource, ResourceIndex* inde
     return decodeTexture(t.format, l.width, l.height, l.data);
 }
 
-void writePng(const std::filesystem::path& path, const RgbaImage& img) {
+std::vector<uint8_t> encodePng(const RgbaImage& img) {
     auto be32 = [](std::vector<uint8_t>& v, uint32_t x) {
         for (int s = 24; s >= 0; s -= 8)
             v.push_back(uint8_t(x >> s));
@@ -349,7 +349,11 @@ void writePng(const std::filesystem::path& path, const RgbaImage& img) {
     chunk("IHDR", ihdr);
     chunk("IDAT", z);
     chunk("IEND", {});
+    return out;
+}
 
+void writePng(const std::filesystem::path& path, const RgbaImage& img) {
+    const std::vector<uint8_t> out = encodePng(img);
     std::ofstream f(path, std::ios::binary);
     if (!f)
         throw FormatError("cannot write " + path.string());

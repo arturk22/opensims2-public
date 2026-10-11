@@ -816,7 +816,10 @@ UiScreen BuyMode::screen(int width, int height) {
         const std::string shown = why.substr(0, why.find(" ("));
         const simd_float2 m = mouse_.value_or(simd_make_float2(float(width) / 2, float(height) / 2));
         UiQuad q;
-        q.x0 = m.x + 14, q.y0 = m.y + 14, q.x1 = m.x + 14 + 8 * float(shown.size()) + 12, q.y1 = m.y + 36;
+        const float boxW = 8 * float(shown.size()) + 12;
+        q.x0 = std::max(4.0f, std::min(m.x + 14, float(width) - boxW - 4)); // never past the window's edge
+        q.y0 = std::min(m.y + 14, float(height) - 26);
+        q.x1 = q.x0 + boxW, q.y1 = q.y0 + 22;
         q.color = {178 / 255.0f, 193 / 255.0f, 1, 0.9f};
         out.quads.push_back(q);
         text(shown, q.x0, q.y0 + 3, q.x1 - q.x0, 18, "center");

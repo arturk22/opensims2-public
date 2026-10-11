@@ -291,7 +291,12 @@ bool BuildMode::placeObjectAt(int x, int y, int direction) {
         return false;
     holdObjectAt(x, y, direction);
     if (!last_.ok) {
-        say("cannot place " + object_->name + ": " + last_.reason);
+        std::string text = last_.reason;
+        if (last_.error >= 2)
+            if (const StringTable* t = res_->table(0x7FA7DC7C, 0x89))
+                if (std::string g = t->get(size_t(vm::placementerror::textIndex(last_.error))); !g.empty())
+                    text = g + " (" + last_.reason + ")";
+        say("cannot: " + text);
         return false;
     }
     const vm::ObjectId id = held_;
@@ -1115,7 +1120,11 @@ UiScreen BuildMode::screen(int width, int height) {
     }
     // Why the last change was refused, by the mouse (the look is inferred).
     if (!message_.empty() && message_.rfind("cannot", 0) == 0) {
-        const std::string shown = message_.substr(0, message_.find(';'));
+        // Only the game's text for the refusal: no "cannot:" prefix and no internal reason in brackets.
+        std::string shown = message_.substr(0, message_.find(';'));
+        shown.erase(0, std::min<size_t>(shown.size(), 8)); // "cannot: "
+        if (size_t br = shown.find(" ("); br != std::string::npos)
+            shown.resize(br);
         const simd_float2 m = mouse_.value_or(simd_make_float2(float(width) / 2, float(height) / 2));
         UiQuad q;
         const float boxW = 7 * float(shown.size()) + 12;

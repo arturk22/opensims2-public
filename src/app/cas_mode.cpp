@@ -767,6 +767,9 @@ void CasMode::acceptFamily() {
                             s.ties.push_back({k, tie});
                 cas::CharacterSpec spec = m.spec;
                 spec.lastName = s.lastName;
+                // The head shot the family panels and the lot's Sim picker show.
+                if (std::shared_ptr<RgbaImage> head = m.portrait ? m.portrait : portrait(m))
+                    spec.portraitPng = encodePng(*head);
                 s.writeCharacter = [this, spec](const std::string& objectName, const fs::path& file) {
                     return cas::writeCharacter(index_, *catalog_, *baker_, spec, objectName, file).guid;
                 };

@@ -29,8 +29,8 @@
 //   ("The Sims 2", the version that wrote it).
 // - the LxNR (0xCCCEF852, instance 1), the face structure the game reads
 //   back to edit the face and to grow the Sim up (formats/lxnr.hpp).
-// Not written (yet): the faces' low level of detail chain (LOD15), the
-// thumbnails (IMG 0x856DDBAC).
+// The thumbnails (IMG 0x856DDBAC) are written from CharacterSpec::portraitPng when given.
+// Not written (yet): the faces' low level of detail chain (LOD15).
 
 #include "cas_catalog.hpp"
 #include "cas_face.hpp"
@@ -65,6 +65,10 @@ struct CharacterSpec {
     std::map<uint32_t, std::map<uint32_t, std::string>> outfits;
     std::string firstName, lastName, description;
     uint32_t guid = 0; // the Sim's OBJD GUID; 0 = a new one
+    // The Sim's head shot as PNG bytes: written as the thumbnails the game keeps in the file (IMG
+    // 0x856DDBAC, group 0xFFFFFFFF, instance = the age bit for the small one and the age bit << 8 for the
+    // large one: 0x08 and 0x800 for an adult). Empty = none (the family panels then show no portrait).
+    std::vector<uint8_t> portraitPng;
 };
 
 // The outfit categories a new Sim of that age and gender gets (everyday,

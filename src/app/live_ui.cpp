@@ -638,7 +638,7 @@ UiScreen LiveUi::screen(int width, int height) {
         UiDrawHooks hk;
         for (size_t i = 0; i < kModes.size(); ++i)
             if (const UiElement* b = puck.child(kModes[i]))
-                hk.buttonState[b] = int(i) == mode_ || (i == 4 && optionsOpen_) ? 2 : 1;
+                hk.buttonState[b] = optionsOpen_ ? (i == 4 ? 2 : 1) : (int(i) == mode_ ? 2 : 1); // the options panel lights only its button
         if (const UiElement* f = puck.child(kFunds)) {
             const int16_t fam = g[vm::global::CurrentFamily];
             const auto it = vm_->families.find(fam);

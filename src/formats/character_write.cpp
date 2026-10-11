@@ -899,6 +899,11 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         if (!fs.keys.empty())
             pkg.add(Tgi{kTypeLxnr, kLocal, 1, 0}, fs.write(), true);
     }
+    if (!spec.portraitPng.empty()) {
+        constexpr uint32_t kTypeImg = 0x856DDBAC;
+        pkg.add(Tgi{kTypeImg, kLocal, spec.age, 0}, spec.portraitPng, true);
+        pkg.add(Tgi{kTypeImg, kLocal, spec.age << 8, 0}, spec.portraitPng, true);
+    }
     pkg.add(Tgi{kTypeCtss, kLocal, 0x7D0, 0}, writeStrings({spec.firstName, spec.description, spec.lastName}), true);
     {
         BinWriter w;

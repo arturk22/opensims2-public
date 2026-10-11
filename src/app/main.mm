@@ -2397,9 +2397,10 @@ void unloadScene() {
     // (their backdrops would swallow Salvar/Sair and the like).
     if (gLive && gLive->optionsOpen() && gLive->press(p))
         return;
-    if (gBuy && gBuy->active() && gBuy->press(p))
+    const bool optionsOver = gLive && gLive->optionsOpen(); // Buy/Build's panels are hidden under it
+    if (!optionsOver && gBuy && gBuy->active() && gBuy->press(p))
         return;
-    if (gBuild && gBuild->active() && gBuild->press(p))
+    if (!optionsOver && gBuild && gBuild->active() && gBuild->press(p))
         return;
     if (gLive && gLive->press(p))
         return;
@@ -3100,9 +3101,10 @@ void unloadScene() {
             _viewDelegate.renderer->setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
                 if (gUi)
                     gUi->encode(enc, w, h);
-                if (gBuy) // under the puck
+                const bool optionsOver = gLive && gLive->optionsOpen(); // the options replace Buy/Build's panel
+                if (gBuy && !optionsOver) // under the puck
                     gBuy->encode(enc, w, h, gUiScale);
-                if (gBuild)
+                if (gBuild && !optionsOver)
                     gBuild->encode(enc, w, h, gUiScale);
                 if (gOptions) // under the puck, as Buy mode's panel
                     gOptions->encode(enc, w, h, gUiScale);
@@ -3166,12 +3168,12 @@ void unloadScene() {
                     gLive->screen(int(cw), int(ch));
                     continue;
                 }
-                if (gBuy && gBuy->active()) {
+                if (gBuy && gBuy->active() && !(gLive && gLive->optionsOpen())) {
                     gBuy->setCanvas(int(cw), int(ch));
                     if (gBuy->press(p))
                         continue;
                 }
-                if (gBuild && gBuild->active()) {
+                if (gBuild && gBuild->active() && !(gLive && gLive->optionsOpen())) {
                     gBuild->setCanvas(int(cw), int(ch));
                     if (gBuild->press(p))
                         continue;
