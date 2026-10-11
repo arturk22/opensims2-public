@@ -66,9 +66,9 @@ namespace {
 // either way). Inferred.
 //
 // The Mac binary's disassembler (docs/primitives-mac.md §5) names the flags
-// of byte 0 for node version 1 (415 of the 480 uses; version 0, with a u16
-// at 4, is converted by the game in a way not known, so it is read as
-// above): 0x01 STOP (the Sim stops looking: done here), 0x80 the camera is
+// of byte 0 (node version 1, 415 of the 480 uses; the game converts version
+// 0 on load, LookAtParam::UpgradeVersion: bytes 4 and 5 = the old u16 at 4
+// / 2, byte 0 bit 0x08 also sets bit 0x02 of byte 15, byte 0 stays): 0x01 STOP (the Sim stops looking: done here), 0x80 the camera is
 // the target (nothing recorded here), 0x02 no early exit, 0x04 including
 // the spine, 0x08 speed in temp 1, 0x10 the duration is in temp 0 (done; in
 // the same unit as u16 6, inferred), 0x20 ignoring the room, 0x40 ignoring
@@ -77,7 +77,7 @@ namespace {
 Exit lookAt(Context& c) {
     const auto& o = c.instruction.operands;
     Object& me = c.me();
-    const uint8_t flags = c.instruction.nodeVersion >= 1 ? o[0] : 0;
+    const uint8_t flags = o[0];
     if (flags & 0x01) {
         me.lookAt.reset();
         return Exit::True;

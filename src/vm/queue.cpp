@@ -168,6 +168,15 @@ Exit pushInteraction(Context& c) {
     Object* target = c.vm.object(targetId);
     if (!target)
         throw gameError(err::NoStackObject, "Push Interaction");
+    // A nested interaction (TTAB flag 0x8000) needs the target's current
+    // interaction to allow nesting (TTAB flag 0x4000), else error 0x6F
+    // (cTSObject::TryPushAction, docs/primitives-mac.md §4b). The binary then
+    // puts it in the sub-queue, which is not done: it goes to the queue.
+    if (q->ttabFlags & 0x8000) {
+        const bool running = target->activeInteraction >= 0 && size_t(target->activeInteraction) < target->queue.size();
+        if (!running || !(target->queue[size_t(target->activeInteraction)].ttabFlags & 0x4000))
+            throw gameError(err::NestedPush, "Push Interaction");
+    }
     constexpr size_t kMaxQueue = 6;
     if (target->queue.size() > kMaxQueue)
         return failed(3);

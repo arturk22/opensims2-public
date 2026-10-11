@@ -7,6 +7,7 @@
 #include "animation.hpp"
 
 #include "errors.hpp"
+#include "interactions.hpp"
 
 #include "vm.hpp"
 
@@ -159,39 +160,84 @@ LocoItem parseItem(const std::string& item) {
     return out;
 }
 
-// The global group's list for a Sim's age (teens and elders use the adult
-// list, whose names have their own versions; inferred).
-uint16_t globalListFor(const Object& sim) {
-    const std::string p = agePrefix(sim);
-    if (p == "c")
+// The global group's list for a Sim's age (Mac binary,
+// DetermineAppropriateAnimTable, person data 58): >= 51 elder 0x8B, 19-50
+// adult 0x81, 16-18 teen 0x8A, 3-15 child 0x82, 2 toddler 0x89, < 2 baby
+// 0x91. The elder and teen lists fall back to the adult one (`reserve`).
+uint16_t globalListFor(const Object& sim, bool reserve = false) {
+    const int16_t age = sim.person ? sim.person->data[persondata::PersonAge] : lifestage::Adult;
+    if (age == 0 || reserve)
+        return animlist::Adult;
+    if (age >= 51)
+        return animlist::Elder;
+    if (age >= 19)
+        return animlist::Adult;
+    if (age >= 16)
+        return animlist::Teen;
+    if (age >= 3)
         return animlist::Child;
-    if (p == "p")
+    if (age == 2)
         return animlist::Toddler;
-    if (p == "b")
-        return animlist::Baby;
-    return animlist::Adult;
+    return animlist::Baby;
 }
 
-// Entry `index` of animation list `list` for code running in `frame`: the
-// global group's list for the Sim's age (0x80), else STR# `list` of the
-// group the running tree is in, then of the code owner's private and
-// semi-global groups, then the global group (inferred: semi-global trees
-// carry their own lists, "Eat - Anim - Bite" uses 0x81 of its semi-global).
+// The age letter of the Sim-to-Sim prefix ("a2a-", list 0x83), by the same
+// ranges ("a" when the age is not set).
+char ageLetter(const Object& sim) {
+    const int16_t age = sim.person ? sim.person->data[persondata::PersonAge] : lifestage::Adult;
+    if (age == 0 || (age >= 19 && age < 51))
+        return 'a';
+    if (age >= 51)
+        return 'e';
+    if (age >= 16)
+        return 't';
+    if (age >= 3)
+        return 'c';
+    return age == 2 ? 'p' : 'b';
+}
+
+bool placeholder(const std::string& e) {
+    std::string t = e;
+    while (!t.empty() && (t.front() == ' ' || t.front() == '\t'))
+        t.erase(t.begin());
+    while (!t.empty() && (t.back() == ' ' || t.back() == '\t'))
+        t.pop_back();
+    return t.empty() || t == ".";
+}
+
+// Entry `index` of animation list `list` for code running in `frame`, as the
+// Mac binary's try_animate_sim finds it: 0x80 = the global group's list for
+// the Sim's age (FindGlobalName; an elder/teen entry whose animation does
+// not exist retries in the adult list); any other list is STR# `list` of
+// the stack object's object and, where its entry is blank, of that object's
+// semi-global (FindSpecificName). When the stack object has none, the
+// running code's group, the code owner's private and semi-global groups and
+// the global group are tried (inferred: the reaction semi-global's trees,
+// "Interaction - Standard Reaction - SG", read the reaction object's list
+// with the Sim as stack object). Blank and "." entries are placeholders
+// (the chair semi-global's 0x81 is all blank; the reaction semi-global's
+// lists are "." up to 19).
 std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
     CodeLibrary& code = c.vm.code();
     const StringTable* table = nullptr;
     if (list == animlist::Global) {
         table = code.strings(kGlobalGroup, globalListFor(sim));
+        if (table && index >= 0 && size_t(index) < table->count(lang::EnglishUS)) {
+            const std::string e = table->get(size_t(index), lang::EnglishUS);
+            if (globalListFor(sim) != animlist::Adult &&
+                (placeholder(e) || !library(c.vm).exists(parseItem(split(e, ',')[0]).name)))
+                table = code.strings(kGlobalGroup, globalListFor(sim, true));
+        } else if (globalListFor(sim) != animlist::Adult) {
+            table = code.strings(kGlobalGroup, globalListFor(sim, true));
+        }
     } else {
-        std::vector<uint32_t> groups{c.frame.group};
+        std::vector<uint32_t> groups;
+        if (const Object* so = c.vm.object(c.frame.stackObject))
+            groups.push_back(so->group), groups.push_back(so->semiGroup);
+        groups.push_back(c.frame.group);
         if (const Object* owner = c.vm.object(c.frame.codeOwner))
             groups.push_back(owner->group), groups.push_back(owner->semiGroup);
         groups.push_back(kGlobalGroup);
-        // A list whose entry is blank or "." is a placeholder (the chair
-        // semi-global's 0x81 is all blank; the chairs' own lists hold the
-        // names; the reaction semi-global's lists are "." up to 19, and each
-        // reaction object, "Reaction - Wave" ..., names its own): go on to
-        // the next group, keeping the first that has the entry at all.
         const StringTable* first = nullptr;
         for (uint32_t g : groups) {
             const StringTable* t = g ? code.strings(g, list) : nullptr;
@@ -199,7 +245,7 @@ std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
                 continue;
             if (!first)
                 first = t;
-            if (const std::string e = trim(t->get(size_t(index), lang::EnglishUS)); !e.empty() && e != ".") {
+            if (!placeholder(t->get(size_t(index), lang::EnglishUS))) {
                 table = t;
                 break;
             }
@@ -213,6 +259,25 @@ std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
         throw VMError("animation " + std::to_string(index) + " out of range of list " + hexString(list) + " (" +
                       std::to_string(table->count(lang::EnglishUS)) + ")");
     return table->get(size_t(index), lang::EnglishUS);
+}
+
+// List 0x83 holds Sim-to-Sim animations without their prefix: the name is
+// "<my age>2<the other Sim's age>-" + the entry ("a2a-soc-entertain-...";
+// GetAnimPrefixStart/End in the Mac binary: the other is the Sim of the
+// interaction, here the stack object, else the object of my current
+// interaction; not a Sim = error 0x5A). When that
+// animation does not exist my age becomes "a" (the binary's reserve).
+std::string socialName(Context& c, const Object& me, const std::string& entry) {
+    const Object* other = c.vm.object(c.frame.stackObject);
+    if ((!other || !other->person) && me.person) // else the object of my current interaction (inferred)
+        other = c.vm.object(me.person->data[persondata::CurrentInteractionObject]);
+    if (!other || !other->person)
+        throw gameError(0x5A, "Sim-to-Sim animation without a Sim");
+    const std::string tail = std::string("2") + ageLetter(*other) + "-" + parseItem(split(entry, ',')[0]).name;
+    std::string name = std::string(1, ageLetter(me)) + tail;
+    if (!library(c.vm).exists(name) && library(c.vm).exists("a" + tail))
+        name = "a" + tail;
+    return name;
 }
 
 // The animation index of an operand: u16 at `at`, or the parameter of that
@@ -298,7 +363,8 @@ Exit animateSim(Context& c) {
     }
     const auto& o = c.instruction.operands;
     const std::string entry = listEntry(c, me, o[6], animationIndex(c, 0, o[2] & 0x04));
-    const std::string name = resolveListAnimation(c.vm, me, entry);
+    const std::string name = o[6] == animlist::Social && !placeholder(entry) ? socialName(c, me, entry)
+                                                                             : resolveListAnimation(c.vm, me, entry);
     const auto seconds = library(c.vm).seconds(name);
     if (!seconds)
         ++c.vm.animations.missing[name];

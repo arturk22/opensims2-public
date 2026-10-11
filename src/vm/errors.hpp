@@ -71,6 +71,7 @@ inline std::string errorString(uint16_t code) {
     case 0x36: return "More than one passing value specified.";
     case 0x37: return "Missing neighbor for data access.";
     case 0x3D: return "Start object required.";
+    case 0x5A: return "Trying to perform an animation from the Social Interaction list against a non person.";
     case 0x68: return "The relationship matrix requested could not be found.";
     case 0x69: return "Cant run Reach/Drop on non Sim object.";
     case 0x6A: return "No Object for Reach to work on.";

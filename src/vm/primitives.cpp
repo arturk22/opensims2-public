@@ -152,6 +152,13 @@ Exit removeObjectInstance(Context& c) {
     if (target == 2)
         return Exit::True; // object 0: nothing to remove (inferred)
     const Object& x = target == 0 ? c.me() : c.stackObject();
+    // Objects the game never removes (cTSObject::TryKillObject, docs/
+    // primitives-mac.md §4b): the car and pedestrian portals, the outside
+    // trash can and the mailbox; false.
+    static constexpr uint32_t kProtected[] = {0xCC7B08F8, 0x6C7B0905, 0xCC203477, 0x865A6812,
+                                              0x81E6BEF9, 0xD20C0AEE, 0x39CCF441};
+    if (std::find(std::begin(kProtected), std::end(kProtected), x.guid()) != std::end(kProtected))
+        return Exit::False;
     const ObjectId group = multiTileGroup(x);
     std::vector<ObjectId> parts;
     for (const auto& [id, o] : c.vm.objects())
