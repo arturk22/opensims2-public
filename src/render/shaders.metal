@@ -26,6 +26,7 @@ enum : uint {
     kCelShaded = 4096,     // ramp (texture 7) from a camera-relative light
     kCelEdge = 8192,       // ...with the edge ramp (texture 8)
     kVertexColor = 16384,  // times the vertex colour and alpha
+    kOverlay3 = 32768,     // texture 9 drawn over the base by its alpha, after overlay 2
 };
 
 struct Draw {
@@ -119,6 +120,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               texturecube<float> envCube [[texture(6)]],
                               texture2d<float> ramp [[texture(7)]],
                               texture2d<float> edgeRamp [[texture(8)]],
+                              texture2d<float> overlay3 [[texture(9)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
@@ -136,6 +138,10 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
     }
     if (draw.flags & kOverlay2) {
         float4 o = overlay2.sample(smp, in.uv);
+        tex.rgb = mix(tex.rgb, o.rgb, o.a);
+    }
+    if (draw.flags & kOverlay3) {
+        float4 o = overlay3.sample(smp, in.uv);
         tex.rgb = mix(tex.rgb, o.rgb, o.a);
     }
     if (draw.flags & kVertexColor)

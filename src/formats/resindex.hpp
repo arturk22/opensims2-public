@@ -30,6 +30,9 @@ public:
     };
 
     explicit ResourceIndex(const std::filesystem::path& root);
+    // An overlay: the resources of `packages`, then (for find/findByName)
+    // those of `fallback`, e.g. a Sim's character file over the game's.
+    ResourceIndex(const std::vector<std::filesystem::path>& packages, const ResourceIndex* fallback);
 
     size_t packageCount() const { return packages_.size(); }
     size_t resourceCount() const { return byTgi_.size(); }
@@ -39,7 +42,8 @@ public:
     std::vector<uint8_t> read(const Location& loc);
     std::optional<std::vector<uint8_t>> read(const Tgi& tgi);
 
-    // Scenegraph lookup by resource name ("foo_txtr"; "##0x1C050000!foo_txtr" selects the group).
+    // Scenegraph lookup by resource name ("foo_txtr"; "##0x1C050000!foo_txtr" selects the group,
+    // "#0x7F861BC1!foo_cres" is a resource of the same package, group 0xFFFFFFFF).
     std::optional<Location> findByName(std::string_view name, uint32_t type) const;
 
     // All resources of one type, in package order.
@@ -49,6 +53,8 @@ private:
     std::vector<std::unique_ptr<DbpfPackage>> packages_;
     std::unordered_map<Tgi, Location, TgiHash> byTgi_;
     std::deque<DbpfPackage*> open_;
+    const ResourceIndex* fallback_ = nullptr;
+    void addPackages(std::vector<std::filesystem::path> paths);
     size_t duplicates_ = 0;
 };
 

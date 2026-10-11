@@ -53,6 +53,7 @@ enum : uint32_t {
     kCelShaded = 4096,
     kCelEdge = 8192,
     kVertexColor = 16384,
+    kOverlay3 = 32768,
 };
 
 struct Draw {
@@ -186,7 +187,7 @@ std::pair<simd_float4, simd_float4> uvTransform(const StandardMaterial& m, doubl
 
 struct Renderer::Material {
     MTL::Texture* texture = nullptr; // not owned (cache or white)
-    std::array<MTL::Texture*, 3> layers{}; // underlay, overlay 1, overlay 2 (not owned, null if unused)
+    std::array<MTL::Texture*, 4> layers{}; // underlay, overlays 1-3 (not owned, null if unused)
     MTL::Texture* height = nullptr;   // bump height map (not owned, null if unused)
     MTL::Texture* envCube = nullptr;  // not owned, null if unused
     MTL::Texture* ramp = nullptr;     // cel shading ramps (not owned, null if unused)
@@ -505,10 +506,10 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
                 mat.layers[0] = t;
                 mat.flags |= kUnderlay;
             }
-        for (size_t i = 0; i < part.overlays.size() && i < 2; ++i)
+        for (size_t i = 0; i < part.overlays.size() && i < 3; ++i)
             if (MTL::Texture* t = texture(part.overlays[i], index)) {
                 mat.layers[1 + i] = t;
-                mat.flags |= i == 0 ? kOverlay1 : kOverlay2;
+                mat.flags |= i == 0 ? kOverlay1 : i == 1 ? kOverlay2 : kOverlay3;
             }
 
         std::vector<Vertex> v(mesh.positions.size());
@@ -700,8 +701,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentSamplerState(m.clamp ? clampSampler_ : sampler_, 0);
         enc->setFragmentTexture(m.texture, 0);
         enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
-        for (size_t l = 0; l < m.layers.size(); ++l)
-            enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(2 + l));
+        for (size_t l = 0; l < m.layers.size(); ++l) // textures 2-4, overlay 3 at 9
+            enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(l < 3 ? 2 + l : 9));
         enc->setFragmentTexture(m.height ? m.height : white_, 5);
         enc->setFragmentTexture(m.envCube ? m.envCube : whiteCube_, 6);
         enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);

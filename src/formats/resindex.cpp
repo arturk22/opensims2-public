@@ -57,8 +57,16 @@ ResourceIndex::ResourceIndex(const std::filesystem::path& root) {
         if (ext == ".package")
             paths.push_back(de.path());
     }
-    std::sort(paths.begin(), paths.end());
+    addPackages(std::move(paths));
+}
 
+ResourceIndex::ResourceIndex(const std::vector<std::filesystem::path>& packages, const ResourceIndex* fallback)
+    : fallback_(fallback) {
+    addPackages(packages);
+}
+
+void ResourceIndex::addPackages(std::vector<std::filesystem::path> paths) {
+    std::sort(paths.begin(), paths.end());
     for (const auto& p : paths) {
         auto pkg = std::make_unique<DbpfPackage>(p);
         pkg->closeFile();
@@ -75,7 +83,7 @@ ResourceIndex::ResourceIndex(const std::filesystem::path& root) {
 std::optional<ResourceIndex::Location> ResourceIndex::find(const Tgi& tgi) const {
     auto it = byTgi_.find(tgi);
     if (it == byTgi_.end())
-        return std::nullopt;
+        return fallback_ ? fallback_->find(tgi) : std::nullopt;
     return it->second;
 }
 
@@ -99,7 +107,14 @@ std::optional<std::vector<uint8_t>> ResourceIndex::read(const Tgi& tgi) {
 
 std::optional<ResourceIndex::Location> ResourceIndex::findByName(std::string_view name, uint32_t type) const {
     uint32_t group = kLocalGroup;
-    if (name.starts_with("##0x")) {
+    if (name.starts_with("#0x")) {
+        // "#0xGGGGGGGG!name": a resource of the same package (character
+        // files), stored with group 0xFFFFFFFF and hashed without the prefix.
+        if (auto bang = name.find('!'); bang != std::string_view::npos) {
+            name = name.substr(bang + 1);
+            group = 0xFFFFFFFF;
+        }
+    } else if (name.starts_with("##0x")) {
         if (auto bang = name.find('!'); bang != std::string_view::npos) {
             group = uint32_t(std::stoul(std::string(name.substr(4, bang - 4)), nullptr, 16));
             name = name.substr(bang + 1);

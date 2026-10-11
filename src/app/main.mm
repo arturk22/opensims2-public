@@ -11,7 +11,9 @@
 // meshes on the adult skeleton; either plays --anim <name> (looped; --time
 // <seconds> picks the moment of a --screenshot), --overlay <name>[@bone] over
 // the bones under <bone>, or --walk <seconds> (idle, a straight walk along
-// --heading <degrees>, idle). --play-sound <name | TGI>
+// --heading <degrees>, idle). --character <N001_User00011 | file.package>
+// shows a neighbourhood Sim from its character file; with --lot the lot's
+// Sims stand where they were saved, playing an idle (--sim-anim <name>). --play-sound <name | TGI>
 // plays a sound (the --sound-index'th sample of a track; --sound-wav <out.wav>
 // also saves it) and exits without opening a window. --ui <instance-hex> draws a
 // UI script from ui.package over the scene (1024x768 canvas, letterboxed;
@@ -36,6 +38,8 @@
 #include "formats/model.hpp"
 #include "formats/sim.hpp"
 #include "formats/sim_actor.hpp"
+#include "formats/sim_character.hpp"
+#include "formats/lot_objects.hpp"
 #include "formats/skinning.hpp"
 #include "formats/font.hpp"
 #include "formats/ui_resources.hpp"
@@ -48,6 +52,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -119,7 +124,7 @@ std::vector<std::string> objectQueries() {
     for (NSUInteger i = 1; i + 1 < args.count; ++i)
         if ([args[i] isEqualToString:@"--object"])
             out.emplace_back(args[i + 1].UTF8String);
-    if (out.empty() && !argument(@"--lot") && !argument(@"--skinned") && !argument(@"--sim"))
+    if (out.empty() && !argument(@"--lot") && !argument(@"--skinned") && !argument(@"--sim") && !argument(@"--character"))
         out.emplace_back("0xEC7618F6"); // Chair - Dining - Value1
     return out;
 }
@@ -195,6 +200,27 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
     return placed;
 }
 
+// A character file given as a path, or by name ("N001_User00011") under the
+// game's neighborhoods.
+fs::path characterPath(const std::string& query) {
+    if (fs::exists(query))
+        return query;
+    const fs::path hoods = gameDir() / "TSData/Res/UserData/Neighborhoods";
+    const std::string file = query.ends_with(".package") ? query : query + ".package";
+    if (fs::exists(hoods))
+        for (const auto& hood : fs::directory_iterator(hoods))
+            if (fs::exists(hood.path() / "Characters" / file))
+                return hood.path() / "Characters" / file;
+    throw std::runtime_error("character not found: " + query);
+}
+
+// The Sims on a lot: each cPerson with a saved state in the world, built from
+// its character file (N001/Characters/<N001_User#####>.package, named by the
+// cObject's "N001_User00011 - Don_objt"), standing where it was saved and
+// playing an idle animation (--sim-anim <name> picks another).
+size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
+                   const fs::path& lotFile);
+
 // Loads --lot into the renderer in place of the test floor. Returns the middle
 // of the lot at ground level, for the camera.
 std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& index) {
@@ -213,11 +239,12 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     for (const auto& w : lot.warnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     const size_t objects = loadLotObjects(renderer, index, lot, *query);
+    const size_t sims = loadLotSims(renderer, index, lot, pkg, lotPath(*query));
     std::printf("opensims2: lot %s: %ux%u tiles, levels %d..%d, %zu walls, %zu paints (%zu parts), "
-                "%zu of %zu objects placed in %.2f s\n",
+                "%zu of %zu objects and %zu Sims placed in %.2f s\n",
                 query->c_str(), lot.width, lot.height, lot.minLevel, lot.minLevel + lot.levelCount - 1,
                 lot.walls.size(), lot.paints.size(), model.parts.size(), objects, lot.objects.size(),
-                CACurrentMediaTime() - start);
+                sims, CACurrentMediaTime() - start);
     const int cx = int(lot.width / 2), cy = int(lot.height / 2);
     return simd_make_float3(float(lot.width) / 2, float(lot.height) / 2, lot.elevation(0, cx, cy));
 }
@@ -269,15 +296,66 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     }
 }
 
+size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
+                   const fs::path& lotFile) {
+    const os2::LotObjects saved = os2::LotObjects::load(pkg);
+    std::set<uint32_t> inWorld; // object IDs of the Sims standing on the lot
+    for (const auto& st : saved.objects)
+        if (st.person && st.x >= 0)
+            inWorld.insert(uint32_t(uint16_t(st.id)));
+    std::vector<os2::SimPart> parts;
+    const std::string idle = argument(@"--sim-anim").value_or("a-idle-neutral-armsSide-wtC-breatheLoop");
+    size_t placed = 0;
+    for (const auto& o : lot.objects) {
+        if (!o.person || !inWorld.count(o.instance & 0xFFFF))
+            continue;
+        const std::string stem = o.definition.substr(0, o.definition.find(" - "));
+        try {
+            const fs::path file = lotFile.parent_path().parent_path() / "Characters" / (stem + ".package");
+            if (parts.empty())
+                parts = os2::loadSimParts(index);
+            auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(index, parts, file));
+            for (const auto& w : actor->skin.model.warnings)
+                std::fprintf(stderr, "opensims2: %s: %s\n", stem.c_str(), w.c_str());
+            actor->position = {o.position[0], o.position[1], o.position[2]};
+            actor->heading = 2 * std::atan2(o.rotation[2], o.rotation[3]);
+            // Start the idles at different moments so the Sims do not breathe in step.
+            // Children and toddlers have their own skeletons and idles.
+            std::string anim = idle;
+            if (!argument(@"--sim-anim")) {
+                const std::string sk = actor->skin.skeleton.name;
+                if (sk.size() > 2 && std::tolower(static_cast<unsigned char>(sk[0])) == 'c')
+                    anim = "c-idle-neutral-armsSide-wtC-breatheLoop50";
+                else if (sk.size() > 2 && std::tolower(static_cast<unsigned char>(sk[0])) == 'p')
+                    anim = "p-idle-neutral-lookAround";
+            }
+            actor->cue(-0.37 * double(placed), actor->animation(index, anim));
+            actor->model = renderer.addObject(actor->skin.model, index, true);
+            renderer.addInstance(actor->model, matrix_identity_float4x4);
+            std::printf("opensims2: Sim %s (%s) at (%.2f, %.2f, %.2f), %zu parts\n", stem.c_str(),
+                        o.definition.c_str(), o.position[0], o.position[1], o.position[2],
+                        actor->skin.model.parts.size());
+            gActors.push_back(std::move(actor));
+            ++placed;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: Sim %s: %s\n", o.definition.c_str(), e.what());
+        }
+    }
+    return placed;
+}
+
 // --sim [body,hair,tone]: an adult Sim assembled from catalog parts; or
 // --skinned: the listed CRES on the adult skeleton. Placed at tile (2.5, -2.5).
 std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceIndex& index) {
     const auto list = argument(@"--skinned");
     const auto sim = argument(@"--sim");
-    if (!list && !sim)
+    const auto character = argument(@"--character");
+    if (!list && !sim && !character)
         return std::nullopt;
     os2::SkinnedModel skin;
-    if (sim) {
+    if (character) {
+        skin = os2::loadCharacterSim(index, os2::loadSimParts(index), characterPath(*character));
+    } else if (sim) {
         os2::SimLook look;
         std::vector<std::string> fields;
         for (size_t start = 0; start <= sim->size();) {

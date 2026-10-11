@@ -46,6 +46,7 @@ add_library(os2_formats
   src/formats/scenegraph.cpp
   src/formats/sim.cpp
   src/formats/sim_actor.cpp
+  src/formats/sim_character.cpp
   src/formats/simantics.cpp
   src/formats/skeleton.cpp
   src/formats/skinning.cpp
