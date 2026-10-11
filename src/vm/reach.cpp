@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace os2::vm {
 
@@ -99,67 +100,100 @@ Exit runFunctionalTree(Context& c) {
     return Exit::Call;
 }
 
-// Find Best Object for Function (0x0E): function u16 at 0 (as Run
-// Functional Tree's), flags u8 at 2, an object (owner u8 at 3, data u16:
-// the stack object, me via my object data 11, a parameter or a local),
-// bytes 8-11 (02 00 02 FD in 9 uses) not understood. As FreeSO's (The Sims
-// 1): every object in the world that is not locked out (object data 25
-// "lockout count") and has an OBJF action for the function, whose score
-// (the object data the editor labels after the function: prep 31, cook 32,
-// surface 33, dispose 36, wash dish 37, eating surface 38, dirty level 39
-// for clean, serving surface 61, gardening 64, wash hands 65, repair level
-// 15, dry/wash clothes 56/57; the others have none) is positive (dirty
-// level at least 800, repair at least 600, FreeSO's thresholds) and whose
-// guard passes, scores that value minus a third of its distance in
-// sixteenths of a tile (480 per level) from the object of bytes 3-5; the
-// best becomes the stack object (true), false if none. Inferred: the
-// distance is from that object (the trees give me or the stack object
-// there; FreeSO always uses the caller). The flags (0x40 in the "Function
-// Test - ..." trees, 0x08 with 0x01/0x02/0x04/0x10 in the maid's and the
-// handyman's successive searches, 0x04 and 0x10 in "Object in Hand -
-// Drop"; the editor's strings near it name "Only test objects in room held
-// in temp 0" and ", including Out Of World Objects") are not understood and
-// ignored, nor whether an object is in use.
+// Find Best Object for Function (0x0E), as the Mac binary's
+// cTSObject::TryFindFunctionalObject (docs/primitives-mac.md §4): function
+// u16 at 0 (STR# 0xC9) -> the object data with the object's value for it
+// and its OBJf entry: prep 31, cook 32, flat surface 33, dispose 36, wash
+// dish 37, eating surface 38, sit 26 ("Sitting Value"), serving surface 61,
+// clean 39 ("dirty level"), garden 64, wash hands 65, repair 15 ("Repair
+// Level"); dry clothes, awareness and lookatTarget have no value (50); the
+// other functions are false at once. Flags u8 at 2: 0x01 only objects
+// outside, 0x02 only inside, 0x04 only in the reference object's room, 0x20
+// only outside it, 0x40 only in my room, 0x08 the reference object is
+// (owner u8 at 3, data u16 at 4) instead of me (missing: error 0x17), 0x10
+// only in its line of sight, 0x80 also objects locked out (object data 25
+// "lockout count"). For every other object with that OBJf entry: my object
+// data 66 "function score" := its value (0: skipped); the entry's check
+// tree, if any, runs and may change it (false or 0: skipped); score = that
+// x 1 / (1 + distance / 5) ("functional half value distance"; distance in
+// tiles plus 10 per level, from the reference object). The best becomes the
+// stack object (true); none: false. Inferred: the Sim's per-object biases
+// (`local_124` 0x134/0x138 in the binary) are 1; "outside" = the room's
+// "outside" value (or no room); objects in use are not told apart.
 Exit findBestObjectForFunction(Context& c) {
     const auto& o = c.instruction.operands;
     const uint16_t function = le16(&o[0]);
-    if (function >= std::size(kFunctionEntry))
-        throw VMError("Find Best Object for Function: function " + std::to_string(function) + " out of range");
-    constexpr int16_t kNone = -1;
-    constexpr int16_t kScore[] = {31, 32, 33, 36, kNone, kNone, 37, 38, kNone, kNone, 61, 39, 64, 65,
-                                  15, 56, 57, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone};
-    constexpr int16_t kLockoutCount = 25, kDirtyLevel = 39, kRepairLevel = 15;
-    const int16_t scoreVar = kScore[function];
-    const Object* from = c.vm.object(c.get(o[3], int16_t(le16(&o[4]))));
-    if (!from)
-        from = &c.me();
-    const Position origin = from->position;
-    std::vector<std::pair<ObjectId, std::pair<uint16_t, int>>> candidates; // id, guard, base score
-    for (const auto& [id, x] : c.vm.objects()) {
-        if (!x.position.inWorld() || x.data[kLockoutCount] > 0 || id == c.thread.me)
+    const uint8_t flags = o[2];
+    constexpr int16_t kNoValue = -1, kNotDone = -2;
+    constexpr int16_t kValue[] = {31, 32, 33, 36, kNotDone, kNotDone, 37, 38, 26, kNotDone, 61, 39, 64, 65,
+                                  15, kNoValue, kNotDone, kNotDone, kNotDone, kNotDone, kNotDone, kNotDone,
+                                  kNotDone, kNoValue, kNotDone, kNoValue, kNotDone, kNotDone};
+    if (function >= std::size(kValue) || kValue[function] == kNotDone)
+        return Exit::False;
+    const int16_t valueField = kValue[function];
+    const bool awareness = function == 23 || function == 25;
+    constexpr int16_t kLockoutCount = 25, kFunctionScore = 66;
+    constexpr float kHalfValueDistance = 5.0f, kFloorToFloor = 10.0f;
+    VM& vm = c.vm;
+    const ObjectId meId = c.thread.me;
+    ObjectId refId = meId;
+    if (flags & 0x08) {
+        refId = c.get(o[3], int16_t(le16(&o[4])));
+        if (!vm.object(refId))
+            throw gameError(err::NoObject, "Find Best Object for Function: reference object " + std::to_string(refId));
+    }
+    auto roomOf = [&](const Object& x) { return x.data[objdata::Room]; };
+    auto outside = [&](const Object& x) {
+        const int16_t room = roomOf(x);
+        auto it = vm.rooms.find(room);
+        return room <= 0 || (it != vm.rooms.end() && (it->second.known & 0x02) && it->second.values[1] != 0);
+    };
+    std::vector<ObjectId> ids;
+    for (const auto& [id, x] : vm.objects())
+        ids.push_back(id);
+    ObjectId best = 0;
+    float bestScore = -std::numeric_limits<float>::max();
+    for (ObjectId id : ids) {
+        const Object* x = vm.object(id);
+        if (!x || id == meId || x->person || !x->position.inWorld())
             continue;
-        const ObjectFunctions::Entry* e = functionEntry(c.vm, x, function);
-        if (!e || !e->action)
+        if (!(flags & 0x80) && x->data[kLockoutCount] > 0)
             continue;
-        int score = 0;
-        if (scoreVar != kNone) {
-            score = x.data[size_t(scoreVar)];
-            if (score <= 0 || (scoreVar == kDirtyLevel && score < 800) || (scoreVar == kRepairLevel && score < 600))
+        const ObjectFunctions::Entry* e = functionEntry(vm, *x, function);
+        if (!e || (!e->action && !e->guard))
+            continue;
+        Object& me = c.me();
+        me.data[kFunctionScore] = valueField == kNoValue ? int16_t(50) : x->data[size_t(valueField)];
+        if (me.data[kFunctionScore] == 0)
+            continue;
+        if (e->guard) {
+            if (!runCheck(c, id, e->guard, {}) || !vm.object(meId) || c.me().data[kFunctionScore] == 0)
+                continue;
+            x = vm.object(id);
+            if (!x)
                 continue;
         }
-        candidates.push_back({id, {e->guard, score}});
-    }
-    ObjectId best = 0;
-    int bestScore = 0;
-    for (const auto& [id, gs] : candidates) {
-        const Object* x = c.vm.object(id);
-        if (!x || (gs.first && !runCheck(c, id, gs.first, {})))
+        const Object* ref = vm.object(refId);
+        if (!ref)
+            ref = &c.me();
+        if ((flags & 0x01) && !outside(*x))
             continue;
-        const float dx = (x->position.x - origin.x) * 16, dy = (x->position.y - origin.y) * 16;
-        const float dl = float(x->position.level - origin.level) * 30 * 16;
-        const int score = gs.second - int(std::sqrt(dx * dx + dy * dy + dl * dl) / 3);
-        if (!best || score > bestScore)
-            best = id, bestScore = score;
+        if ((flags & 0x02) && outside(*x))
+            continue;
+        if ((flags & 0x04) && roomOf(*x) != roomOf(*ref))
+            continue;
+        if ((flags & 0x20) && roomOf(*x) == roomOf(*ref))
+            continue;
+        if ((flags & 0x40) && roomOf(*x) != roomOf(c.me()))
+            continue;
+        const float dx = x->position.x - ref->position.x, dy = x->position.y - ref->position.y;
+        const float distance = std::sqrt(dx * dx + dy * dy) + kFloorToFloor * float(std::abs(x->position.level - ref->position.level));
+        const float score = float(c.me().data[kFunctionScore]) / (distance / kHalfValueDistance + 1.0f);
+        if (score <= bestScore)
+            continue;
+        if ((flags & 0x10) && vm.world && !vm.world->lineOfSight(VM::tileOf(*ref), VM::tileOf(*x)))
+            continue;
+        best = id, bestScore = score;
     }
     if (!best)
         return Exit::False;

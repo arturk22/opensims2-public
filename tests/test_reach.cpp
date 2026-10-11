@@ -336,9 +336,21 @@ static void testFindBestAndSnap() {
     const ObjectId far = fx.vm.instantiate(kGroup, 0x81).id;
     fx.vm.object(far)->attributes.resize(4);
     fx.vm.object(far)->position = {8.5f, 8.5f, 1};
+    near.data[26] = 50; // "Sitting Value"
+    fx.vm.object(far)->data[26] = 50;
     fx.code.add(kGroup, 0x1001, tree({instr(0x0E, go(1), F, {8, 0, 0, 0x03, 11, 0}), expr(Temp, 4, Assign, StackId, 0, T, E)}));
     Thread t = fx.run(0x1001, 0);
     check(t.result && t.temps[4] == fx.chair, "the nearest object that can sit");
+    fx.vm.object(far)->data[26] = 200; // 200 / (8.49 / 5 + 1) beats 50 / (2 / 5 + 1)
+    t = fx.run(0x1001, 0);
+    check(t.result && t.temps[4] == far, "score = value / (1 + distance / 5)");
+    fx.vm.object(far)->data[26] = 0;
+    t = fx.run(0x1001, 0);
+    check(t.result && t.temps[4] == fx.chair, "a value of 0 is skipped");
+    fx.vm.object(far)->data[26] = 50;
+    fx.code.add(kGroup, 0x1004, tree({instr(0x0E, T, F, {9, 0, 0, 0x03, 11, 0})}));
+    t = fx.run(0x1004, 0);
+    check(t.status == Thread::Status::Finished && !t.result, "functions the binary does not search (9 stand) are false");
     near.attributes[1] = 1; // its guard fails now
     t = fx.run(0x1001, 0);
     check(t.result && t.temps[4] == far, "an object whose guard fails is skipped");

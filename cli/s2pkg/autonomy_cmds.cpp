@@ -201,7 +201,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         if (auto it = machine.threads.find(id); it != machine.threads.end()) {
             const vm::Thread& t = it->second;
             if (t.status == vm::Thread::Status::Failed)
-                std::printf("; Main failed: %s", t.error.substr(0, t.error.find('\n')).c_str());
+                std::printf("; Main failed: %s", (verbose ? t.error : t.error.substr(0, t.error.find('\n'))).c_str());
             else if (!t.stack.empty())
                 std::printf("; Main in %s #%u", t.stack.back().behavior->fileName.c_str(), t.stack.back().pc);
         }
