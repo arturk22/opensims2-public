@@ -3,9 +3,14 @@
 // the (mangled) name; confidence goes into the plate comment for non-native
 // names.  Also accepts plain "addr name" lines (e.g. nm output reordered).
 //
-// Headless:
-//   analyzeHeadless ~/ sims2 -process sims2_bv.ppc -noanalysis \
-//     -scriptPath tools/symxfer -postScript ApplySymxferMap.java map.txt
+// Headless (on your own clone of the project: cp -c -R ~/sims2.{gpr,rep} dir/):
+//   analyzeHeadless dir sims2/mac -process sims2_bv.ppc -noanalysis \
+//     -scriptPath tools/symxfer -postScript ApplySymxferMap.java map.txt [reset]
+// "reset": functions named by an earlier map (plate comment "symxfer: ...")
+// that the new map does not name go back to their default FUN_ name, so
+// names the new matcher dropped as wrong do not linger.  With -readOnly the
+// names live only in that session: chain -postScript DecompileList.java
+// after it to decompile with the new names without touching the project.
 // @category Symbol
 import ghidra.app.script.GhidraScript;
 import ghidra.app.cmd.function.CreateFunctionCmd;
@@ -21,7 +26,12 @@ public class ApplySymxferMap extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         String path = args.length > 0 ? args[0] : askFile("symxfer map", "Apply").getPath();
-        boolean makeFuncs = args.length < 2 || !args[1].equals("labels-only");
+        boolean makeFuncs = true, reset = false;
+        for (int i = 1; i < args.length; i++) {
+            if (args[i].equals("labels-only")) makeFuncs = false;
+            if (args[i].equals("reset")) reset = true;
+        }
+        java.util.HashSet<Address> named = new java.util.HashSet<>();
         SymbolTable st = currentProgram.getSymbolTable();
         int n = 0, made = 0, bad = 0;
         try (BufferedReader r = new BufferedReader(new FileReader(path))) {
@@ -31,6 +41,7 @@ public class ApplySymxferMap extends GhidraScript {
                 String[] p = line.trim().split("\\s+");
                 if (p.length < 2) continue;
                 Address a = toAddr(Long.parseLong(p[0], 16));
+                named.add(a);
                 String name = p[1];
                 String conf = p.length > 2 ? p[2] : "native";
                 if (monitor.isCancelled()) break;
@@ -50,14 +61,35 @@ public class ApplySymxferMap extends GhidraScript {
                     }
                     if (!conf.equals("native")) {
                         setPlateComment(a, "symxfer: " + conf);
+                    } else if (reset && getPlateComment(a) != null && getPlateComment(a).startsWith("symxfer:")) {
+                        setPlateComment(a, null);
                     }
                     n++;
                 } catch (Exception e) {
+                    String m = e.getMessage();
+                    if (m != null && m.contains("already exists at this address")) { n++; continue; }
+                    if (bad < 5) println("symxfer: error at " + a + " " + name + ": " + e.getMessage());
                     bad++;
                 }
                 if (n % 5000 == 0) println("applied " + n);
             }
         }
+        int cleared = 0;
+        if (reset) {
+            for (Function f : currentProgram.getFunctionManager().getFunctions(true)) {
+                Address a = f.getEntryPoint();
+                String pc = getPlateComment(a);
+                if (named.contains(a) || pc == null || !pc.startsWith("symxfer:")) continue;
+                try {
+                    f.setName(null, SourceType.DEFAULT);
+                    setPlateComment(a, null);
+                    cleared++;
+                } catch (Exception e) {
+                    bad++;
+                }
+            }
+        }
+        println("symxfer: cleared " + cleared + " stale names");
         println("symxfer: applied " + n + " names, created " + made + " functions, " + bad + " errors");
     }
 }

@@ -343,6 +343,149 @@ def transfer(seq, base, stats, label):
     return {a: v[:2] for a, v in out.items()}
 
 
+WEAK = ('near', 'moved', 'gap', 'fillnear', 'between')
+
+
+def refill(seq, base, allout, stats, label, kgrams=None):
+    """Second-level alignment over the names already placed (all classes,
+    including vtable-derived ones): chain them as single-entry anchors,
+    together with the unique size K-grams (kgrams, from anchors_for), keep
+    chains worth >= 3 (a strong name 1, a weak 'exact' 0.5, a K-gram whose
+    sizes are all >= 64 and add up to >= 800 bytes 3) and align every
+    stretch of our entries between two consecutive chain anchors against
+    the baserom entries between the same two anchors, then extend each
+    chain at both ends.  This reaches regions where the K-gram chains were
+    too short to be kept (one 4-size anchor) or too far apart (DP too
+    large), and code that differs a little between the two builds.
+    Unnamed entries get the aligned name (fill / fillnear); a weak name
+    (near, moved) loses to an exact-size fill."""
+    pos = {}
+    for j, b in enumerate(base):
+        pos.setdefault(b[1], j)
+    anc = []
+    wt = {}
+    for i, o in enumerate(seq):
+        v = allout.get(o[0])
+        if v and o[2] == 'F' and v[0] in pos and v[1] not in WEAK:
+            a = (pos[v[0]], i, 1)
+            anc.append(a)
+            wt[a] = 1 if v[1] in ('native', 'manual', 'vtable', 'thunk') else 0.5
+    for a in kgrams or ():
+        j, i, ln = a
+        if ln > 1:
+            szs = [seq[i + k][1] for k in range(ln)]
+            wt[a] = 3 if min(szs) >= 64 and sum(szs) >= 800 else 0.5
+            anc.append(a)
+    anc = sorted(set(anc))
+    chains = chain(anc, maxjump=300)
+    added = [0]
+
+    def put(o, b, kind):
+        if kind not in ('exact', 'near'):
+            return
+        conf = 'fill' if kind == 'exact' else 'fillnear'
+        cur = allout.get(o[0])
+        if cur is None:
+            allout[o[0]] = (b[1], conf); added[0] += 1
+            stats[label + '_refill_' + conf] += 1
+        elif cur[0] != b[1] and cur[1] in ('near', 'moved') and conf == 'fill':
+            allout[o[0]] = (b[1], conf)
+            stats[label + '_refill_replaced_' + cur[1]] += 1
+
+    def unnamed_in(O):
+        return any(o[0] not in allout or allout[o[0]][1] in WEAK for o in O if o[2] == 'F')
+    EXT = 30
+    for c in chains:
+        if sum(wt[a] for a in c) < 3:
+            continue
+        for a in c:          # the K-grams themselves
+            j, i, ln = a
+            if ln > 1:
+                for k in range(ln):
+                    if seq[i + k][0] not in allout:
+                        allout[seq[i + k][0]] = (base[j + k][1], 'fill'); added[0] += 1
+                        stats[label + '_refill_kgram'] += 1
+        for a1, a2 in zip(c, c[1:]):
+            j1, i1, l1 = a1
+            j2, i2, _ = a2
+            O = seq[i1 + l1:i2]
+            B = base[j1 + l1:j2]
+            if not O or not B:
+                continue
+            # a weak name that is not between the two anchors in baserom is
+            # out of order: drop it and let the alignment name the entry
+            tight = len(O) <= 40 and len(B) <= 2 * len(O) + 10
+            for o in O if tight else ():
+                v = allout.get(o[0])
+                if v and v[1] in ('near', 'moved') and not (j1 < pos.get(v[0], -1) < j2):
+                    del allout[o[0]]
+                    stats[label + '_refill_dropped_' + v[1]] += 1
+            if not unnamed_in(O):
+                continue
+            r = align_segment(O, B)
+            if r is None:
+                stats[label + '_refill_toolong'] += 1
+                continue
+            clean = len(O) == len(B) == len(r) and all(t[2] in ('exact', 'near') for t in r)
+            for t in r:
+                o, b = O[t[0]], B[t[1]]
+                if t[2] == 'gap':
+                    addr = o[0] + t[3]
+                    if addr not in allout:
+                        allout[addr] = (b[1], 'gap'); added[0] += 1
+                elif clean or o[1] >= TINY:
+                    put(o, b, t[2])
+        # extend after the last anchor and before the first
+        j, i, ln = c[-1]
+        O = seq[i + ln:i + ln + EXT]; B = base[j + ln:j + ln + 2 * EXT]
+        if unnamed_in(O):
+            for t in align_segment(O, B, local=True) or []:
+                if t[2] in ('exact', 'near') and O[t[0]][1] >= TINY:
+                    put(O[t[0]], B[t[1]], t[2])
+        j, i, ln = c[0]
+        O = seq[max(0, i - EXT):i][::-1]; B = base[max(0, j - 2 * EXT):j][::-1]
+        if unnamed_in(O):
+            for t in align_segment(O, B, local=True) or []:
+                if t[2] in ('exact', 'near') and O[t[0]][1] >= TINY:
+                    put(O[t[0]], B[t[1]], t[2])
+    return added[0]
+
+
+def between(seq, base, allout, stats, label):
+    """Runs of r unnamed entries whose two named neighbours are r + 1 apart
+    in baserom, with the r baserom entries in between unused: name them one
+    to one whatever their sizes (code that changed between the builds)."""
+    pos = {}
+    for j, b in enumerate(base):
+        pos.setdefault(b[1], j)
+    used = set(v[0] for v in allout.values())
+    F = [o for o in seq if o[2] == 'F']
+    i = 0
+    n = 0
+    while i < len(F):
+        if F[i][0] in allout:
+            i += 1
+            continue
+        k = i
+        while k < len(F) and F[k][0] not in allout:
+            k += 1
+        if i > 0 and k < len(F):
+            ja = pos.get(allout[F[i - 1][0]][0])
+            jc = pos.get(allout[F[k][0]][0])
+            r = k - i
+            if ja is not None and jc is not None and jc - ja - 1 == r and r <= 3 \
+                    and allout[F[i - 1][0]][1] not in WEAK and allout[F[k][0]][1] not in WEAK:
+                bs = base[ja + 1:jc]
+                if all(b[1] not in used for b in bs):
+                    for o, b in zip(F[i:k], bs):
+                        allout[o[0]] = (b[1], 'between')
+                        used.add(b[1])
+                        n += 1
+        i = k
+    stats[label + '_between'] += n
+    return n
+
+
 def fix_thunks(binary, allout, basenames, stats, funcs):
     """Name this-adjusting thunks ("addi r3,r3,-k; b T") after their target:
     runs of 8-byte thunks cannot be aligned by size, but their targets can.
@@ -386,6 +529,21 @@ def fix_thunks(binary, allout, basenames, stats, funcs):
             stats['thunk_unconfirmed_' + allout[tgt][1]] += 1
 
 
+RANK = {'manual': -1, 'native': 0, 'vtable': 0.5, 'exact': 1, 'thunk': 1, 'fill': 1.5,
+        'sum': 2, 'vtsize': 2, 'between': 3.5, 'near': 3, 'gap': 4, 'fillnear': 4.5, 'moved': 5, 'thunk?': 6}
+
+
+def dedupe(allout):
+    """a baserom name used twice -> keep the 'better' one only (in place)"""
+    best = {}
+    for addr, (name, conf) in allout.items():
+        if name not in best or RANK[conf] < RANK[allout[best[name]][1]]:
+            best[name] = addr
+    for addr in [k for k, v in allout.items() if best[v[0]] != k]:
+        del allout[addr]
+    return best
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('binary')
@@ -393,34 +551,71 @@ def main():
     ap.add_argument('nm')
     ap.add_argument('-o', '--out', required=True)
     ap.add_argument('--manual', help='addr name overrides (manual.txt)')
+    ap.add_argument('--cache', help='pickle of the first (size K-gram) stage, for development')
+    ap.add_argument('--v1', action='store_true', help='round-3 algorithm only (no refill/vtable passes)')
     a = ap.parse_args()
     seqs = build_ours(a.binary, a.nm)
     base = build_base(a.basesym)
     stats = defaultdict(int)
     allout = {}
     coalnames = set(o[3] for o in seqs['__textcoal_nt'] if o[3])
-    for sn, seq in seqs.items():
-        b = base if sn != '__text' else [e for e in base if e[1] not in coalnames]
-        for addr, v in transfer(seq, b, stats, sn).items():
-            # 'sum' names were confirmed by thunks only 9% of the time: drop
-            if addr not in allout and v[1] != 'sum':
-                allout[addr] = v
-    fix_thunks(a.binary, allout, set(e[1] for e in base), stats,
-               [o[0] for sq in seqs.values() for o in sq if o[2] == 'F'])
+    import os, pickle
+    if a.cache and os.path.exists(a.cache):
+        allout = pickle.load(open(a.cache, 'rb'))
+    else:
+        for sn, seq in seqs.items():
+            b = base if sn != '__text' else [e for e in base if e[1] not in coalnames]
+            for addr, v in transfer(seq, b, stats, sn).items():
+                # 'sum' names were confirmed by thunks only 9% of the time: drop
+                if addr not in allout and v[1] != 'sum':
+                    allout[addr] = v
+        if a.cache:
+            pickle.dump(allout, open(a.cache, 'wb'))
+    funcs = [o[0] for sq in seqs.values() for o in sq if o[2] == 'F']
+    basenames = set(e[1] for e in base)
+    fix_thunks(a.binary, allout, basenames, stats, funcs)
+    manual = []
     if a.manual:
         for line in open(a.manual):
             p = line.split()
             if len(p) >= 2 and not line.startswith('#'):
-                addr = int(p[0], 16)
-                for k in [k for k, v in allout.items() if v[0] == p[1]]:
-                    del allout[k]
-                allout[addr] = (p[1], 'manual')
-    # a baserom name used twice -> keep the 'better' one only
-    rank = {'manual': -1, 'native': 0, 'exact': 1, 'thunk': 1, 'sum': 2, 'near': 3, 'gap': 4, 'moved': 5, 'thunk?': 6}
-    best = {}
-    for addr, (name, conf) in allout.items():
-        if name not in best or rank[conf] < rank[allout[best[name]][1]]:
-            best[name] = addr
+                manual.append((int(p[0], 16), p[1]))
+
+    def apply_manual():
+        for addr, nm in manual:
+            for k in [k for k, v in allout.items() if v[0] == nm and k != addr]:
+                del allout[k]
+            allout[addr] = (nm, 'manual')
+    apply_manual()
+    if not a.v1:
+        import rtti, vtnames
+        R = rtti.RTTI(rtti.Image(a.binary))
+        groups = rtti.slot_members(R)
+        sizes = {o[0]: o[1] for sq in seqs.values() for o in sq if o[2] == 'F'}
+        basesize = {}
+        for e in base:
+            basesize.setdefault(e[1], e[2])
+        bases = {sn: base if sn != '__text' else [e for e in base if e[1] not in coalnames]
+                 for sn in seqs}
+        kg = {sn: [x for x in anchors_for(seqs[sn], bases[sn]) if x[2] > 1] for sn in seqs}
+        for it in range(3):
+            st = defaultdict(int)
+            for sn, seq in seqs.items():
+                refill(seq, bases[sn], allout, st, sn, kg[sn])
+                between(seq, bases[sn], allout, st, sn)
+            # one function per name before deriving from names
+            dedupe(allout)
+            new = vtnames.vtable_names(R, groups, allout, basenames, st, sizes, basesize)
+            allout.update(new)
+            fix_thunks(a.binary, allout, basenames, st, funcs)
+            apply_manual()
+            dedupe(allout)
+            print('pass', it, dict(st), file=sys.stderr)
+            for k, v in st.items():
+                stats['p%d_%s' % (it, k)] = v
+            if not new and not any(k.endswith('fill') for k in st):
+                break
+    best = dedupe(allout)
     with open(a.out, 'w') as f:
         f.write('# addr name confidence  (symxfer: baserom.sym -> Mac BV 1.10 ppc)\n')
         for addr in sorted(allout):

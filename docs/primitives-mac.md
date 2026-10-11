@@ -1357,16 +1357,16 @@ tamanhos seguidos únicos nos dois lados; cadeias de âncoras; DP entre elas;
 funções que mudaram de lugar dentro do objeto; thunks `addi r3,r3,-k; b
 alvo` nomeados pelo alvo).
 
-Cobertura: 22.461 das 33.101 funções do `__text` (68%), mais 4.663 em
-trechos sem FDE e 30.648 do coal (17.596 com nome próprio). Confiança,
-medida pelos thunks (o nome derivado do alvo existe no `baserom.sym`?):
-`exact` 90%, `gap` 92%, `near` 52%, `moved` 47%; a classe `sum` (9%) é
-descartada. A tabela de despacho (§2) bate com o nome de todos os 40
-handlers que ela chama, e cada classe de operando bate com a primitiva. Há
-erros isolados mesmo em `exact` (ex.: a busca de string de STR# que os
-`Cat*` chamam aparece como `nTSWorld::cWorldDB::TerrainElevation`): conferir
+Cobertura (rodada 3): 22.461 das 33.101 funções do `__text` (68%). **Rodada
+9**: com as vtables (RTTI) e um segundo alinhamento sobre os nomes já
+postos, **27.300 (82,5%)**, `exact` confirmado pelos thunks em 95%; detalhes,
+classes de confiança e medidas em `docs/symxfer.md`. A tabela de despacho
+(§2) bate com o nome de todos os 40 handlers que ela chama, e cada classe de
+operando bate com a primitiva. Há erros isolados mesmo em `exact`: conferir
 pelo código antes de confiar num nome.
 
+- `tools/symxfer/apply_clone.sh <pasta>`: clone do projeto com os nomes
+  atuais (`docs/symxfer.md` §1).
 - `tools/symxfer/run.sh [mapa] [--ghidra]`: gera o mapa (`addr nome
   confiança`, ~5 MB, fora do repositório) e, com `--ghidra`, reimporta a
   fatia ppc em `~/sims2:/mac/sims2_bv.ppc` aplicando os nomes

@@ -2,7 +2,9 @@
 # Regenerate the symbol map for the Mac Bon Voyage 1.10 ppc slice and
 # (optionally) import it into the Ghidra project ~/sims2 as /mac/sims2_bv.ppc.
 #   tools/symxfer/run.sh [out_map] [--ghidra]
-# Inputs live outside the repo (copyrighted binaries, third-party symbols):
+# Inputs live outside the repo (copyrighted binaries, third-party symbols);
+# REFS overrides where (default: the references/ folder next to the repo).
+# Applying to an existing project (your own clone): see ApplySymxferMap.java.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 REFS=${REFS:-"$HERE/../../../references"}
@@ -10,13 +12,14 @@ BIN="$REFS/bv_mac/sims2_bv.ppc"          # lipo -thin ppc of "The Sims 2.app"
 NM="$REFS/bv_mac/ppc_syms.txt"            # nm -n: "addr name"
 SYM="$REFS/sims2_mac_decomp/baserom.sym"  # nm of the other ppc build
 OUT=${1:-map.txt}
-python3 "$HERE/symxfer.py" "$BIN" "$SYM" "$NM" --manual "$HERE/manual.txt" -o "$OUT"
+TMP=$(mktemp -d)
+python3 "$HERE/symxfer.py" "$BIN" "$SYM" "$NM" --manual "$HERE/manual.txt" -o "$OUT" --cache "$TMP/stage1.pkl"
 # second pass: add the operand classes' virtuals found through RTTI
-TMP=$(mktemp)
-cat "$HERE/manual.txt" > "$TMP"
-python3 "$HERE/paramvtables.py" "$BIN" "$OUT" >> "$TMP"
-python3 "$HERE/symxfer.py" "$BIN" "$SYM" "$NM" --manual "$TMP" -o "$OUT"
-rm -f "$TMP"
+cat "$HERE/manual.txt" > "$TMP/manual.txt"
+python3 "$HERE/paramvtables.py" "$BIN" "$OUT" >> "$TMP/manual.txt"
+python3 "$HERE/symxfer.py" "$BIN" "$SYM" "$NM" --manual "$TMP/manual.txt" -o "$OUT" --cache "$TMP/stage1.pkl"
+rm -rf "$TMP"
+python3 "$HERE/evalmap.py" "$BIN" "$SYM" "$NM" "$OUT"
 grep -E "^#|9cTSObject|9cTSPerson|11cAnimatable|12cLocomotable|7cObject|7cPerson|Param|14cEdithLanguage|cTSTreeSim|TreeStack|cTSBehavior|cTSRoutingObject|cTSInventory|cTSRelationship" "$OUT" \
   | grep -v "^[0-9a-f]* __ZN9__gnu_cxx\|__ZNSt\|__ZSt" > "$HERE/map_simantics.txt"
 if [ "$2" = "--ghidra" ]; then
