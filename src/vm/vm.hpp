@@ -4,6 +4,7 @@
 #include "formats/simantics.hpp"
 #include "formats/strings.hpp"
 #include "animation.hpp"
+#include "dialog.hpp"
 #include "world.hpp"
 
 #include <array>
@@ -167,6 +168,7 @@ struct Neighbor {
     // Outfit keys of the Sim's character file (category bit << 16 | part;
     // see hood_bridge.hpp), for Generic Sims Call 32.
     std::vector<uint32_t> outfits;
+    std::string firstName, lastName; // for the dialogs' $ tokens
 };
 
 // Inventories (Manage Inventory) and their tokens grow on demand; this bounds them.
@@ -459,6 +461,8 @@ struct Object {
     std::optional<Reach> reach;
     // The grasp/carry overlays of what a Sim holds, taken off when it puts it down.
     std::vector<std::string> carryOverlays;
+    // Lights as Change Light set them (dialog.hpp).
+    ObjectLights lights;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
@@ -764,6 +768,15 @@ public:
             soundRequests.pop_front();
         soundRequests.push_back(std::move(r));
     }
+
+    // Dialogs (dialog.hpp): the blocking ones waiting for an answer, by the
+    // object whose thread waits; the text notifications shown (latest last);
+    // the answer given at once to every blocking dialog (-1: wait for the
+    // host; headless hosts set a button).
+    std::map<ObjectId, Dialog> dialogs;
+    std::deque<Dialog> notifications;
+    int autoDialogAnswer = -1;
+    uint32_t nextDialogId = 1;
 
     void setPrimitive(uint16_t opcode, Primitive p) { primitives_[opcode] = std::move(p); }
 

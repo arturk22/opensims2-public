@@ -98,6 +98,8 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
         if (n.character >= 0)
             for (const auto& o : h.characters[size_t(n.character)].outfits)
                 v.outfits.push_back(o.key);
+        v.firstName = n.firstName;
+        v.lastName = n.lastName;
         vm.neighbors[int16_t(n.id)] = std::move(v);
         ++out.neighbors;
     }

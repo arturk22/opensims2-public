@@ -73,6 +73,12 @@ Exit expression(Context& c) {
     case 18: return assign(lhs() | rhs);
     case 19: return assign(lhs() ^ rhs);
     case 20: return assign(std::abs(rhs));
+    case 21: // "Assign 32bit Value": two consecutive variables (low word first),
+             // as "CT - Offer Job" copies a job GUID from the stack object's
+             // definition into person data 89/90 (inferred from that use)
+        c.set(lhsOwner, lhsData, int16_t(rhs));
+        c.set(lhsOwner, int16_t(lhsData + 1), c.get(rhsOwner, int16_t(rhsData + 1)));
+        return Exit::True;
     default: throw VMError("Expression: operator " + std::to_string(op) + " not implemented");
     }
 }
@@ -389,6 +395,30 @@ Exit setToNext(Context& c) {
         const int16_t room = c.thread.temps[0];
         matches = [room](const Object& x) { return x.data[objdata::Room] == room; };
         break;
+    }
+    case 14:   // job object of the Sim in the target
+    case 15: { // job object of the neighbor in the target
+        // The first instance of the definition whose GUID is the Sim's
+        // person data 89 (low word) and 90 (docs/primitives-mac.md §4);
+        // none -> false. A missing neighbor is error 0x37.
+        const std::array<int16_t, kPersonDataCount>* pd = nullptr;
+        if (type == 14) {
+            const Object* sim = c.vm.object(current);
+            pd = sim && sim->person ? &sim->person->data : nullptr;
+        } else {
+            const Neighbor* n = c.vm.neighbor(current);
+            if (!n)
+                throw VMError("Set to Next: neighbor " + std::to_string(current) + " does not exist");
+            const Object* sim = c.vm.neighborSim(current);
+            pd = sim && sim->person ? &sim->person->data : &n->personData;
+        }
+        if (!pd)
+            return none();
+        const uint32_t g = uint16_t((*pd)[89]) | uint32_t(uint16_t((*pd)[90])) << 16;
+        for (const auto& [id, x] : c.vm.objects())
+            if (g && x.guid() == g)
+                return found(id);
+        return none();
     }
     case 27:                                                                        // utility using object
         matches = [](const Object& x) { return x.data[76] != 0 || x.data[77] != 0; };
@@ -1272,6 +1302,8 @@ void registerPrimitives(VM& vm) {
     registerReachPrimitives(vm); // Run Functional Tree, Reach/Put (reach.cpp)
     registerInteractionPrimitives(vm); // Push Interaction, Idle for Input (queue.cpp)
     registerSoundPrimitives(vm);       // Play / Stop Sound Event, Stop ALL Sounds (sound.cpp)
+    registerDialogPrimitives(vm);      // Dialog (dialog.cpp)
+    registerAppearancePrimitives(vm);  // Change Light, Change Outfit (appearance.cpp)
 }
 
 } // namespace os2::vm

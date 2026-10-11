@@ -29,7 +29,10 @@
 // <sim-id>,<object-id>[,<anim>] makes a Sim walk to an object (then play entry
 // <anim> of the global animation list); --run-vm <ticks> runs that many ticks
 // (30 a second) before a --screenshot, and --frames <n> saves n screenshots
-// spread over them (out-1.png ... out-n.png).
+// spread over them (out-1.png ... out-n.png). A dialog the trees put up is
+// shown over the scene and pauses the game until a button is clicked;
+// headless: --dialog-answer <n> answers every one with button n, and
+// --dialog-click x,y (repeatable) clicks each dialog in turn.
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -421,6 +424,9 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                                               argument(@"--sim-id").value_or(""));
     for (const auto& b : gPickBoxes)
         gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
+    // --dialog-answer <n>: every dialog the trees put up gets button n at once.
+    if (auto a = argument(@"--dialog-answer"))
+        gSimulation->machine().autoDialogAnswer = std::stoi(*a);
     try {
         const auto plumbob = os2::loadObjectModel(index, "plumbob");
         gPlumbob = renderer.addInstance(renderer.addObject(plumbob, index), matrix_identity_float4x4);
@@ -883,7 +889,7 @@ enum Key : unsigned short {
     if (!gPie)
         return;
     const simd_float2 p = [self canvasPoint:e];
-    if (gPie->isOpen() && gPie->click(p))
+    if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p))
         return;
     const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
     const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
@@ -1066,7 +1072,7 @@ enum Key : unsigned short {
                     std::sscanf(args[i + 1].UTF8String, "%f,%f", &clickX, &clickY) != 2)
                     continue;
                 const simd_float2 p = simd_make_float2(clickX, clickY);
-                if (gPie->isOpen() && gPie->click(p))
+                if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p))
                     continue;
                 const simd_float4x4 m = simd_mul(view.camera->projection(cw / ch), view.camera->view());
                 const simd_float4 q =
@@ -1092,11 +1098,24 @@ enum Key : unsigned short {
                 runVm ? std::to_string(std::stod(*runVm) / 30.0) : std::string("0")));
             const int frames = std::max(1, std::stoi(argument(@"--frames").value_or("1")));
             poseActors(*_viewDelegate.renderer, 0);
+            std::vector<simd_float2> dialogClicks;
+            size_t dialogClick = 0;
+            NSArray<NSString*>* shotArgs = NSProcessInfo.processInfo.arguments;
+            for (NSUInteger i = 1; i + 1 < shotArgs.count; ++i) {
+                float x, y;
+                if ([shotArgs[i] isEqualToString:@"--dialog-click"] && std::sscanf(shotArgs[i + 1].UTF8String, "%f,%f", &x, &y) == 2)
+                    dialogClicks.push_back(simd_make_float2(x, y));
+            }
             for (int f = 1; f <= frames; ++f) {
                 const double at = time * f / frames;
                 // The VM in small steps, so that the Sims' turning is followed.
                 for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30) {
                     gSimulation->update(t);
+                    // --dialog-click x,y (repeatable): clicks, in turn, each dialog that opens.
+                    if (gPie && gPie->dialogOpen() && dialogClick < dialogClicks.size()) {
+                        gPie->setCanvas(int(shotW), int(shotH));
+                        gPie->click(dialogClicks[dialogClick++]);
+                    }
                     if (gAudio) {
                         updateAudio(t);
                         gAudio->renderOffline(t);

@@ -67,6 +67,8 @@ target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 add_library(os2_vm
   src/vm/hood_bridge.cpp
   src/vm/animation.cpp
+  src/vm/appearance.cpp
+  src/vm/dialog.cpp
   src/vm/lot.cpp
   src/vm/lot_resume.cpp
   src/vm/measure.cpp
@@ -150,6 +152,10 @@ add_test(NAME vm COMMAND test_vm)
 add_executable(test_hood_vm tests/test_hood_vm.cpp)
 target_link_libraries(test_hood_vm PRIVATE os2_vm)
 add_test(NAME hood_vm COMMAND test_hood_vm)
+
+add_executable(test_dialog tests/test_dialog.cpp)
+target_link_libraries(test_dialog PRIVATE os2_vm)
+add_test(NAME dialog COMMAND test_dialog)
 
 add_executable(test_queue tests/test_queue.cpp)
 target_link_libraries(test_queue PRIVATE os2_vm)

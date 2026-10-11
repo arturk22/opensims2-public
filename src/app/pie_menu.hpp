@@ -80,6 +80,18 @@ public:
     // highlights it (opening its submenu). False if there is none.
     bool select(size_t index);
 
+    // --- Dialogs (Dialog, vm/dialog.hpp) -------------------------------------
+    // The blocking dialog waiting for the player (null: none): drawn over
+    // everything, centred, with the game's title, message and buttons. It is
+    // modal: while it is up, click() answers it with the button hit (or
+    // ignores the click).
+    const vm::Dialog* dialog() const;
+    bool dialogOpen() const { return dialog() != nullptr; }
+    // Answers the open dialog with the button at `p`; false if no button is there.
+    bool clickDialog(simd_float2 p);
+    // The canvas size clicks are laid out against before the first frame (headless).
+    void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height; }
+
     // --- Drawing ---------------------------------------------------------------
     // The menu and the queue on a canvas of this size.
     UiScreen screen(int width, int height);
@@ -96,6 +108,12 @@ private:
     };
     std::vector<Label> labels() const; // of the current ring, laid out
     std::string queueText(const vm::QueuedInteraction& q) const;
+    struct DialogLayout {
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        std::vector<std::string> lines;
+        std::vector<std::array<float, 4>> buttons; // x0, y0, x1, y1
+    };
+    DialogLayout dialogLayout(const vm::Dialog& d, int width, int height) const;
     void queueEntry(size_t index);
 
     vm::VM* vm_;

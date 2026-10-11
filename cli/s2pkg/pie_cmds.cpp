@@ -46,7 +46,8 @@ const char* checkName(vm::CheckResult r) {
 std::string nameOf(const vm::Object& o) { return o.definition ? o.definition->fileName : "?"; }
 
 int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
-           int select, int ticks, bool all, std::optional<int> motives, bool fromInit, size_t trace) {
+           int select, int ticks, bool all, std::optional<int> motives, bool fromInit, size_t trace,
+           int dialogAnswer) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -56,6 +57,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
     machine.setClockGlobals();
+    machine.autoDialogAnswer = dialogAnswer; // headless: every dialog gets this button
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
     // The saved state (motives, tree stacks, clock), or every Init with --init.
     vm::startSavedLot(machine, load, saved, fromInit);
@@ -130,9 +132,23 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             std::printf("    %*s%08X %04X #%-3u %-28s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
                         op.c_str(), f.behavior->fileName.c_str());
         };
+    uint32_t lastDialog = 0;
+    auto showDialog = [&](const vm::Dialog& d, int tick) {
+        if (d.id <= lastDialog)
+            return;
+        lastDialog = d.id;
+        std::printf("  tick %d: dialog %d \"%s\" from %d (%s): \"%s\"\n      \"%s\"\n", tick, d.type,
+                    d.typeName.c_str(), d.me, nameOf(*machine.object(d.me)).c_str(), d.title.c_str(), d.message.c_str());
+        for (size_t b = 0; b < d.buttons.size(); ++b)
+            std::printf("      [%zu] %s%s\n", b, d.buttons[b].c_str(), int(b) == d.answer ? "  <- answered" : "");
+    };
     for (int i = 0; i < ticks; ++i) {
         const bool before = s.activeInteraction >= 0;
         machine.tick();
+        for (const auto& [who, d] : machine.dialogs)
+            showDialog(d, i + 1);
+        for (const auto& d : machine.notifications)
+            showDialog(d, i + 1);
         vm::Object* now = machine.object(sim);
         if (!now)
             break;
@@ -147,6 +163,11 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     for (int16_t hand = 0; hand < 2; ++hand)
         if (const vm::ObjectId held = machine.containedIn(sim, hand))
             std::printf("  in hand %d: %d %s\n", hand, held, nameOf(*machine.object(held)).c_str());
+    // Lights Change Light set (vm/dialog.hpp), of the object and its parts.
+    for (const auto& [id, o] : machine.objects())
+        for (const auto& [light, st] : o.lights)
+            std::printf("  light of %d %s%s%s: %d%%\n", id, nameOf(o).c_str(), light.empty() ? "" : " / ",
+                        light.c_str(), st.level(machine.ticks));
     std::printf("queue of %s:", nameOf(s).c_str());
     for (size_t i = 0; i < s.queue.size(); ++i)
         std::printf(" [%s%s]", s.queue[i].name.c_str(), int(i) == s.activeInteraction ? ", running" : "");
@@ -162,6 +183,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     std::vector<std::string> pos;
     int select = -1, ticks = 30;
     size_t trace = 0;
+    int dialogAnswer = 0;
     std::optional<int> motives;
     bool fromInit = false;
     bool all = false;
@@ -177,6 +199,8 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
             motives = std::stoi(argv[++i]);
         else if (a == "--trace" && i + 1 < argc)
             trace = std::stoul(argv[++i]);
+        else if (a == "--dialog-answer" && i + 1 < argc)
+            dialogAnswer = std::stoi(argv[++i]);
         else if (a == "--all")
             all = true;
         else
@@ -185,11 +209,11 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     if (pos.empty() || pos.size() > 3)
         return -1;
     return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives, fromInit,
-                  trace);
+                  trace, dialogAnswer);
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N]] [--motives N] [--init]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N]] [--motives N] [--init]\n";
 }
 
 } // namespace os2

@@ -21,7 +21,8 @@ constexpr Color kTextHot{0.05f, 0.08f, 0.25f, 1};
 constexpr Color kTitle{0.0f, 0.0f, 0.0f, 0.55f};
 constexpr Color kRunning{0.10f, 0.45f, 0.20f, 0.85f};
 constexpr Color kCancelled{0.35f, 0.35f, 0.35f, 0.85f};
-constexpr float kPad = 8, kLabelH = 24;
+constexpr Color kDim{0, 0, 0, 0.35f};
+constexpr float kPad = 8, kLabelH = 24, kLineH = 20, kDialogPad = 16;
 
 std::string objectName(const vm::Object* o) {
     if (!o || !o->definition)
@@ -230,6 +231,10 @@ void PieMenuHost::hover(simd_float2 p) {
 }
 
 bool PieMenuHost::click(simd_float2 p, bool keepOpen) {
+    if (dialogOpen()) {
+        clickDialog(p);
+        return true; // modal
+    }
     if (!open_)
         return false;
     const auto ls = labels();
@@ -287,6 +292,92 @@ std::string PieMenuHost::queueText(const vm::QueuedInteraction& q) const {
     return objectName(vm_->object(q.object)) + ": " + name;
 }
 
+const vm::Dialog* PieMenuHost::dialog() const {
+    for (const auto& [who, d] : vm_->dialogs)
+        if (d.answer < 0)
+            return &d;
+    return nullptr;
+}
+
+PieMenuHost::DialogLayout PieMenuHost::dialogLayout(const vm::Dialog& d, int width, int height) const {
+    const FontStyle* st = fonts_->style("piemenu");
+    const Font* font = st ? fonts_->font(*st) : nullptr;
+    const float ppem = st ? float(st->size) : 14.0f;
+    auto measure = [&](const std::string& s) {
+        return font ? measureText(*font, decodeUtf8(s), ppem).width : 7.0f * float(s.size());
+    };
+    DialogLayout l;
+    const float w = std::min(480.0f, float(width) - 40), inner = w - 2 * kDialogPad;
+    // Words wrapped to the panel; the message's own line breaks kept.
+    std::string para;
+    auto flush = [&] {
+        std::string line;
+        size_t i = 0;
+        while (i <= para.size()) {
+            const size_t sp = std::min(para.find(' ', i), para.size());
+            const std::string word = para.substr(i, sp - i);
+            const std::string next = line.empty() ? word : line + " " + word;
+            if (!line.empty() && measure(next) > inner) {
+                l.lines.push_back(line);
+                line = word;
+            } else {
+                line = next;
+            }
+            i = sp + 1;
+        }
+        l.lines.push_back(line);
+        para.clear();
+    };
+    for (char ch : d.message) {
+        if (ch == '\r')
+            continue;
+        if (ch == '\n')
+            flush();
+        else
+            para += ch;
+    }
+    flush();
+    while (!l.lines.empty() && l.lines.back().empty())
+        l.lines.pop_back();
+    const float h = kLabelH + 12 + float(l.lines.size()) * kLineH + 16 + kLabelH + kDialogPad;
+    l.x0 = std::round((float(width) - w) / 2), l.x1 = l.x0 + w;
+    l.y0 = std::round((float(height) - h) / 2), l.y1 = l.y0 + h;
+    // Buttons in a row, centred at the bottom.
+    std::vector<float> bw;
+    float total = 0;
+    for (const auto& b : d.buttons) {
+        bw.push_back(std::max(100.0f, measure(b) + 2 * kPad));
+        total += bw.back();
+    }
+    total += 12 * float(bw.empty() ? 0 : bw.size() - 1);
+    float x = std::round((l.x0 + l.x1 - total) / 2);
+    const float by = l.y1 - kDialogPad - kLabelH;
+    for (float bwi : bw) {
+        l.buttons.push_back({x, by, x + bwi, by + kLabelH});
+        x += bwi + 12;
+    }
+    return l;
+}
+
+bool PieMenuHost::clickDialog(simd_float2 p) {
+    const vm::Dialog* d = dialog();
+    if (!d)
+        return false;
+    const DialogLayout l = dialogLayout(*d, canvasW_ ? canvasW_ : 1280, canvasH_ ? canvasH_ : 720);
+    for (size_t i = 0; i < l.buttons.size(); ++i) {
+        const auto& b = l.buttons[i];
+        if (p.x >= b[0] && p.x < b[2] && p.y >= b[1] && p.y < b[3]) {
+            vm::Dialog& open = vm_->dialogs[d->me];
+            open.answer = int(i);
+            std::printf("opensims2: dialog \"%s\": %s\n", open.title.c_str(), open.buttons[i].c_str());
+            std::fflush(stdout);
+            dirty_ = true;
+            return true;
+        }
+    }
+    return false;
+}
+
 UiScreen PieMenuHost::screen(int width, int height) {
     UiScreen out;
     out.width = width, out.height = height;
@@ -329,6 +420,25 @@ UiScreen PieMenuHost::screen(int width, int height) {
             paint.label(l.x0, l.y0, l.x1, l.y1, l.text, hot ? kLabelHot : kLabel, hot ? kTextHot : kText);
         }
     }
+
+    // The dialog waiting for the player, over everything.
+    if (const vm::Dialog* d = dialog()) {
+        const DialogLayout l = dialogLayout(*d, width, height);
+        paint.rect(0, 0, float(width), float(height), kDim);
+        paint.rect(l.x0, l.y0, l.x1, l.y1, kLabel);
+        paint.label(l.x0, l.y0, l.x1, l.y0 + kLabelH, d->title.empty() ? d->typeName : d->title, kTitle, kText);
+        float y = l.y0 + kLabelH + 12;
+        for (const auto& line : l.lines) {
+            paint.text(l.x0 + kDialogPad, y, line, kText);
+            y += kLineH;
+        }
+        for (size_t i = 0; i < l.buttons.size(); ++i) {
+            const auto& b = l.buttons[i];
+            const float tw = paint.width(d->buttons[i]);
+            paint.rect(b[0], b[1], b[2], b[3], kLabelHot);
+            paint.text(b[0] + std::round((b[2] - b[0] - tw) / 2), b[1] + 2, d->buttons[i], kTextHot);
+        }
+    }
     return out;
 }
 
@@ -351,6 +461,9 @@ void PieMenuHost::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_
         mix(uint64_t(sim->activeInteraction + 1));
         for (const auto& q : sim->queue)
             mix(uint64_t(q.uid) << 1 | q.cancelled), mix(std::hash<std::string>{}(q.name));
+    }
+    if (const vm::Dialog* d = dialog()) {
+        stamp = (stamp ^ (uint64_t(d->id) << 8)) * 1099511628211ull;
     }
     if (stamp != queueStamp_)
         queueStamp_ = stamp, dirty_ = true;

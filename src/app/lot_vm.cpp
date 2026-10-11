@@ -159,7 +159,13 @@ void LotSimulation::update(double seconds) {
     seconds = vmSeconds;
     // The actors show the moment one tick behind the VM.
     const auto target = uint64_t(std::max(0.0, std::floor(seconds * rate))) + 1;
-    while (vm_->ticks < target) {
+    // A dialog that blocks the game (Dialog, "engage and block") pauses it:
+    // the VM's clock slips while the player has not answered.
+    if (vm::dialogPausesGame(*vm_)) {
+        slip_ = seconds + slip_ - double(vm_->ticks - 1) / rate;
+        seconds = double(vm_->ticks - 1) / rate;
+    }
+    while (vm_->ticks < target && !vm::dialogPausesGame(*vm_)) {
         vm_->tick();
         sampleAll(double(vm_->ticks - 1) / rate + slip_); // in the caller's clock, as the actors play
     }
