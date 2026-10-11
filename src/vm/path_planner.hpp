@@ -166,6 +166,11 @@ private:
     uint32_t noise_ = 1;
     float uniform(float hi); // U(0; hi)
     std::vector<Portal> portals_;
+    // Scratch of plan(), kept between plans (the quadtree's summed area
+    // tables and per-level leaf maps) so each plan does not allocate them.
+    std::vector<int32_t> satBlocked_;
+    std::vector<double> satCost_;
+    std::vector<std::vector<int32_t>> leafPool_;
 
     size_t cellIndex(int cx, int cy) const { return size_t(cx) * size_t(ch_) + size_t(cy); }
     uint8_t cellAt(int level, int cx, int cy) const;

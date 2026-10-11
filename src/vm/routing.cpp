@@ -73,7 +73,23 @@ bool VM::tileFree(TilePos t, std::span<const ObjectId> ignore) {
         throw VMError("no world (positions need a lot)");
     if (!world->walkable(t))
         return false;
-    return !blockedTiles(t.level, ignore)[world->index(t.x, t.y)];
+    // As blockedTiles(t.level, ignore)[index], for this one tile only.
+    for (const Stair& s : world->stairs())
+        for (const TilePos& l : {s.bottom, s.top})
+            if (l.level == t.level && world->contains(l) && l.x == t.x && l.y == t.y)
+                return true; // stair landings stay open
+    std::set<ObjectId> skip;
+    for (ObjectId id : ignore)
+        if (const Object* o = object(id))
+            skip.insert(multiTileGroup(*o));
+    for (const auto& [id, o] : objects_) {
+        if (o.position.level != t.level || !blocksRouting(o))
+            continue;
+        const TilePos at = tileOf(o);
+        if (at.x == t.x && at.y == t.y && !skip.count(multiTileGroup(o)))
+            return false;
+    }
+    return true;
 }
 
 std::vector<ObjectId> VM::objectsOnTile(TilePos t) const {

@@ -380,6 +380,17 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
     // the goal is on it, else all (stairs).
     std::vector<Quad> quads;
     std::vector<Tree> trees(static_cast<size_t>(levels));
+    leafPool_.resize(trees.size());
+    for (size_t i = 0; i < trees.size(); ++i)
+        trees[i].leafOf = std::move(leafPool_[i]);
+    struct GiveBack { // the leaf maps go back to the pool on every way out
+        std::vector<std::vector<int32_t>>& pool;
+        std::vector<Tree>& trees;
+        ~GiveBack() {
+            for (size_t i = 0; i < trees.size(); ++i)
+                pool[i] = std::move(trees[i].leafOf);
+        }
+    } giveBack{leafPool_, trees};
     const bool allLevels = startLevel != goalLevel;
     for (int li = 0; li < levels; ++li) {
         const int level = first + li;
@@ -394,8 +405,13 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
         // Summed area tables of the blocked cells and of the costs.
         const auto& grid = cells_[size_t(li)];
         const auto& cost = costs_[size_t(li)];
-        std::vector<int32_t> blocked(size_t(n + 1) * (n + 1), 0);
-        std::vector<double> csum(size_t(n + 1) * (n + 1), 0);
+        // Row 0 and column 0 stay zero; every other entry is written below.
+        if (satBlocked_.size() != size_t(n + 1) * (n + 1)) {
+            satBlocked_.assign(size_t(n + 1) * (n + 1), 0);
+            satCost_.assign(size_t(n + 1) * (n + 1), 0);
+        }
+        std::vector<int32_t>& blocked = satBlocked_;
+        std::vector<double>& csum = satCost_;
         auto sat = [&](auto& v, int x, int y) -> auto& { return v[size_t(x) * (n + 1) + size_t(y)]; };
         for (int x = 0; x < n; ++x)
             for (int y = 0; y < n; ++y) {
