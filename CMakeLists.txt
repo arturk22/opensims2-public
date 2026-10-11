@@ -37,6 +37,7 @@ add_library(os2_formats
   src/formats/locale.cpp
   src/formats/lot.cpp
   src/formats/lot_objects.cpp
+  src/formats/lot_objects_write.cpp
   src/formats/lot_model.cpp
   src/formats/lot_lightmap.cpp
   src/formats/lot_roof.cpp
@@ -73,6 +74,7 @@ add_library(os2_vm
   src/vm/autonomy.cpp
   src/vm/lot.cpp
   src/vm/lot_resume.cpp
+  src/vm/lot_save.cpp
   src/vm/measure.cpp
   src/vm/motives.cpp
   src/vm/path_planner.cpp
@@ -102,7 +104,7 @@ if(APPLE)
   target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 
-add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/autonomy_cmds.cpp cli/s2pkg/route_cmds.cpp)
+add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/save_cmds.cpp cli/s2pkg/autonomy_cmds.cpp cli/s2pkg/route_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm os2_audio)
 

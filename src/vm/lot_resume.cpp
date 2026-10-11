@@ -74,58 +74,60 @@ void restoreState(Object& o, const LotObjects::State& s) {
     }
 }
 
-// The saved interaction queue of a Sim (LotObjects::State::interactions):
-// each record becomes a queue entry of the TTAB entry whose English TTA
-// string is the record's name, on the record's object, with its priority
-// and parameters. When the running one's object is the code owner of a
-// frame of the resumed Main, that frame (the first such) is its action
-// tree's root: it is marked as the interaction, so it ends the entry when
-// it returns. Records whose entry cannot be found are dropped.
+// The saved interactions of a Sim (cTSPerson: the interaction in its slot
+// at +0x5D4, which holds the running one, then the queue at +0x584; in the
+// game's lots the queues are empty and 3 of the 55 Sims have one running):
+// each record becomes a queue entry of the TTAB entry of its stack object
+// whose English TTA string is the record's name (else whose TTA index is the
+// record's tree table entry), with its priority and parameters. When the
+// running one's object is the code owner of a frame of the resumed Main,
+// that frame (the first such) is its action tree's root: it is marked as the
+// interaction, so it ends the entry when it returns. Records whose entry
+// cannot be found are dropped.
 size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
-    if (!sim.person || s.queue.empty())
+    if (!sim.person)
+        return 0;
+    std::vector<const LotObjects::SavedInteraction*> records;
+    const bool running = s.slotA.ttabEntry != 0xFFFFFFFF && s.slotA.stackObject > 0;
+    if (running)
+        records.push_back(&s.slotA);
+    for (const auto& q : s.queue)
+        records.push_back(&q);
+    if (records.empty())
         return 0;
     sim.queue.clear();
     sim.activeInteraction = -1;
-    for (const auto& rec : s.queue) {
-        const ObjectId leader = interactionLeader(vm, rec.stackObject);
+    for (const auto* rec : records) {
+        const ObjectId leader = interactionLeader(vm, rec->stackObject);
         const Object* o = vm.object(leader);
         const auto ref = o ? interactionTable(vm, *o) : std::nullopt;
-        if (!ref || !ref->strings)
+        if (!ref)
             continue;
+        // The tree table entry when its English string is the record's name
+        // (or the record has none), else the entry with that name.
         std::optional<QueuedInteraction> q;
-        for (const auto& e : ref->table->interactions)
-            if (ref->strings->get(e.stringIndex, lang::EnglishUS) == rec.name) {
-                q = makeInteraction(vm, leader, uint16_t(e.stringIndex));
-                break;
-            }
-        // The running one may carry a name its check tree gave it ("Chat"
-        // on a social object): its action tree is then the frame running
-        // the object's code, and its index person data 21.
-        if (!q && sim.queue.empty() && rec.stackObject == sim.person->data[80])
-            if (auto t = vm.threads.find(sim.id); t != vm.threads.end())
-                for (const Frame& f : t->second.stack)
-                    if (f.codeOwner == rec.stackObject && f.codeOwner != sim.id) {
-                        q.emplace();
-                        q->object = rec.stackObject;
-                        q->interaction = uint16_t(sim.person->data[21]);
-                        q->action = f.instance;
-                        q->name = rec.name;
-                        break;
-                    }
+        auto english = [&](uint32_t i) { return ref->strings ? ref->strings->get(i, lang::EnglishUS) : std::string(); };
+        if (rec->ttabEntry < 0x10000 && (rec->name.empty() || english(rec->ttabEntry) == rec->name))
+            q = makeInteraction(vm, leader, uint16_t(rec->ttabEntry));
+        if (!q && ref->strings && !rec->name.empty())
+            for (const auto& e : ref->table->interactions)
+                if (english(e.stringIndex) == rec->name) {
+                    q = makeInteraction(vm, leader, uint16_t(e.stringIndex));
+                    break;
+                }
         if (!q || sim.queue.size() >= kMaxQueuedInteractions)
             continue;
-        q->priority = int16_t(std::clamp<int32_t>(rec.priority, 0, kPriorityMaximum));
-        q->pushedBy = rec.initiator ? rec.initiator : sim.id;
-        for (size_t i = 0; i < 4; ++i)
-            q->args[i] = rec.params[i];
+        q->priority = int16_t(std::clamp<int64_t>(rec->priority, 0, kPriorityMaximum));
+        q->pushedBy = rec->initiator > 0 ? rec->initiator : sim.id;
+        q->args = rec->params;
         q->uid = sim.nextInteractionUid++;
         sim.queue.push_back(std::move(*q));
     }
     if (sim.queue.empty())
         return 0;
-    if (auto t = vm.threads.find(sim.id); t != vm.threads.end() && sim.queue[0].object == sim.person->data[80])
+    if (auto t = vm.threads.find(sim.id); running && t != vm.threads.end() && sim.queue[0].object == interactionLeader(vm, s.slotA.stackObject))
         for (Frame& f : t->second.stack)
-            if (f.codeOwner == sim.queue[0].object && f.codeOwner != sim.id) {
+            if ((f.codeOwner == s.slotA.stackObject || f.codeOwner == sim.queue[0].object) && f.codeOwner != sim.id) {
                 f.interaction = true;
                 sim.activeInteraction = 0;
                 break;

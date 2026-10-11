@@ -9,6 +9,7 @@
 #include "autonomy_cmds.hpp"
 #include "route_cmds.hpp"
 #include "state_cmds.hpp"
+#include "save_cmds.hpp"
 #include "vm/lot_resume.hpp"
 #include "describe.hpp"
 #include "formats/dbpf.hpp"
@@ -864,7 +865,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
-                         "%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), autonomyUsage(), routeUsage());
+                         "%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), routeUsage());
     return 2;
 }
 
@@ -894,6 +895,8 @@ int main(int argc, char** argv) {
         if (int rc = autonomyCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = stateCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = saveCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (cmd == "find" && argc == 5) return cmdFind(argv[2], argv[3], argv[4]);
         if (cmd == "object" && argc == 5) return cmdObject(argv[2], argv[3], argv[4]);

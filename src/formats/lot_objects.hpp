@@ -156,9 +156,9 @@ struct LotObjects {
         std::array<float, 16> motives{}, motives2{};
         std::vector<int16_t> personData;
         uint32_t personU0C = 0;
-        // Two interaction slots (+0x5D4, +0x5D8; the second holds the running
-        // interaction while one runs, inferred) and the queue (+0x584), the
-        // running one first.
+        // The current action (+0x5D4, GetCurrentAction; tree table entry -1
+        // when none), the last one (+0x5D8, GetLastAction) and the queue of
+        // top actions (+0x584).
         SavedInteraction slotA, slotB;
         std::vector<SavedInteraction> queue;
         struct ObjectRecord {
@@ -173,17 +173,14 @@ struct LotObjects {
         };
         std::vector<MotiveInc> motiveIncs; // cTSPerson::cMotiveInc
         uint16_t personU644 = 0, personU646 = 0;
-        std::optional<SavedInteraction> pending; // +0x5DC
-        std::vector<SavedInteraction> list5AC;
+        std::optional<SavedInteraction> pending; // the current sub-action (+0x5DC)
+        std::vector<SavedInteraction> list5AC;   // the sub-action queue (+0x5AC)
         std::string personName; // +0x900 (>= 0x9D)
-        std::array<uint32_t, 3> personU90C{};
+        std::array<uint32_t, 3> personU90C{};   // the last Find Best Action (GetLastFBAIconData)
         std::array<int16_t, 8> personU918{};
         uint32_t personU930 = 0;
         std::vector<SavedInteraction> list5E0;
         uint32_t personU938 = 0, personU93C = 0;
-        // The queued interactions as the VM restores them (queue; slotB when
-        // the queue is empty and an interaction runs).
-        const std::vector<SavedInteraction>& interactions() const { return queue; }
 
         // Bytes after what was read (none when the state reads through).
         std::vector<uint8_t> rest;
@@ -246,6 +243,9 @@ struct LotObjects {
     std::vector<std::string> warnings;
 
     static LotObjects load(DbpfPackage& package);
+    // Only the save type table (objt) of a package, by GUID: for objects a
+    // lot's own table lacks (the game writes one record per definition).
+    static std::map<uint32_t, SaveType> loadSaveTypes(DbpfPackage& package);
     // One XOBJ/XMTO/PERS resource, for an object module of `version`.
     static State parseState(std::span<const uint8_t> data, uint32_t version, Kind kind = Kind::Object);
     static State parseState(std::span<const uint8_t> data, uint32_t version, bool person) {

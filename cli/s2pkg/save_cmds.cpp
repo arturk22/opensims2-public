@@ -1,0 +1,172 @@
+// s2pkg lot-save: a lot loaded into the VM, run and written back (vm/lot_save.hpp).
+
+#include "save_cmds.hpp"
+
+#include "formats/dbpf.hpp"
+#include "formats/lot.hpp"
+#include "formats/lot_objects.hpp"
+#include "formats/neighborhood.hpp"
+#include "vm/hood_bridge.hpp"
+#include "formats/resindex.hpp"
+#include "vm/lot.hpp"
+#include "vm/lot_resume.hpp"
+#include "vm/lot_save.hpp"
+
+#include <cstdio>
+#include <filesystem>
+#include <map>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace os2 {
+
+namespace {
+
+namespace fs = std::filesystem;
+
+fs::path resRootOfLot(const fs::path& pkg) {
+    for (auto p = fs::absolute(pkg).parent_path(); p.has_relative_path(); p = p.parent_path())
+        if (p.filename() == "Res")
+            return p;
+    throw std::runtime_error("the lot is not under a TSData/Res directory");
+}
+
+// A VM holding the lot in `package`, resumed from its saved state; the Sims'
+// character files come from `charactersDir`.
+struct LoadedLot {
+    std::unique_ptr<vm::VM> vm;
+    LotObjects saved;
+    vm::LotLoad load;
+    vm::ResumeResult resumed;
+};
+
+// As lot-run: the lot's neighbourhood (`source` names it), entered, and the
+// Sims bound to their neighbors.
+LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::path& source,
+                   const hood::Neighborhood* hood, const fs::path& charactersDir) {
+    LoadedLot out;
+    DbpfPackage pkg(package);
+    const Lot lot = Lot::load(pkg);
+    out.saved = LotObjects::load(pkg);
+    out.vm = std::make_unique<vm::VM>(code);
+    vm::VM& m = *out.vm;
+    m.initCreatedObjects = true;
+    m.instructionsPerTurn = 20000;
+    m.setClockGlobals();
+    if (hood) {
+        vm::loadNeighborhood(m, *hood);
+        vm::enterLot(m, vm::lotIdOf(source), hood->info ? int16_t(hood->info->id) : int16_t(0));
+    }
+    out.load = vm::loadLot(m, lot, out.saved, charactersDir);
+    if (hood)
+        vm::bindLotSims(m);
+    out.resumed = vm::startSavedLot(m, out.load, out.saved);
+    return out;
+}
+
+int cmdLotSave(const std::vector<std::string>& args) {
+    std::vector<fs::path> paths;
+    long ticks = 0;
+    bool check = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--ticks" && i + 1 < args.size())
+            ticks = std::stol(args[++i]);
+        else if (args[i] == "--check")
+            check = true;
+        else
+            paths.emplace_back(args[i]);
+    }
+    if (paths.size() != 2)
+        throw std::runtime_error("usage: s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check]");
+    const fs::path& src = paths[0];
+    const fs::path& dst = paths[1];
+    if (fs::exists(dst) && fs::equivalent(src, dst))
+        throw std::runtime_error("refusing to write over the lot itself");
+    const fs::path res = resRootOfLot(src);
+    const fs::path game = fs::weakly_canonical(res.parent_path().parent_path()); // Res -> TSData -> the game
+    if (fs::weakly_canonical(fs::absolute(dst)).string().starts_with(game.string()))
+        throw std::runtime_error("refusing to write into the game's data: pick an output outside " + game.string());
+    ResourceIndex index(res);
+    vm::CodeLibrary code(&index);
+    const fs::path characters = vm::charactersDirOf(src);
+    std::optional<hood::Neighborhood> hood;
+    if (const auto hoodPackage = vm::neighborhoodPackageOf(src); !hoodPackage.empty())
+        hood = hood::Neighborhood::load(hoodPackage, true);
+    const hood::Neighborhood* h = hood ? &*hood : nullptr;
+    LoadedLot a = loadInto(code, src, src, h, characters);
+    for (long i = 0; i < ticks; ++i)
+        a.vm->tick();
+    // Save types of objects the run may create, from the other lots' tables.
+    std::map<uint32_t, LotObjects::SaveType> more;
+    for (const auto& f : fs::directory_iterator(src.parent_path()))
+        if (f.path().extension() == ".package" && !fs::equivalent(f.path(), src)) {
+            DbpfPackage other(f.path());
+            for (auto& [g, t] : LotObjects::loadSaveTypes(other))
+                more.emplace(g, std::move(t));
+        }
+    const vm::CaptureResult captured = vm::captureLot(*a.vm, a.saved, &more);
+    for (const auto& w : captured.warnings)
+        std::printf("  warning: %s\n", w.c_str());
+    {
+        DbpfPackage pkg(src);
+        captured.lot.save(pkg, dst);
+    }
+    std::printf("%s: %zu objects saved after %ld ticks (%zu updated, %zu added, %zu gone) to %s\n",
+                src.filename().string().c_str(), captured.lot.objects.size(), ticks, captured.updated, captured.added,
+                captured.removed, dst.string().c_str());
+    if (!check)
+        return 0;
+    // The saved package reads back, state by state, to what was written.
+    size_t same = 0, differ = 0, unread = 0;
+    {
+        DbpfPackage written(dst);
+        const LotObjects back = LotObjects::load(written);
+        for (const auto& w : back.warnings)
+            std::printf("  read back: %s\n", w.c_str());
+        for (const auto& s : back.objects) {
+            unread += !s.tailError.empty();
+            const LotObjects::State* w = captured.lot.state(s.id);
+            if (w && LotObjects::writeState(*w, back.version) == LotObjects::writeState(s, back.version))
+                ++same;
+            else
+                ++differ;
+        }
+        // With no ticks run, each state is written back as the game wrote it.
+        if (ticks == 0) {
+            DbpfPackage original(src);
+            size_t bytesSame = 0, bytesDiffer = 0;
+            for (const auto& s : a.saved.objects) {
+                const auto* e = original.find({LotObjects::resourceType(s.kind), 0xFFFFFFFF, uint32_t(uint16_t(s.id)), 0});
+                const auto* f = written.find({LotObjects::resourceType(s.kind), 0xFFFFFFFF, uint32_t(uint16_t(s.id)), 0});
+                if (e && f && original.read(*e) == written.read(*f))
+                    ++bytesSame;
+                else
+                    ++bytesDiffer;
+            }
+            std::printf("  states byte for byte as the game wrote them: %zu, different: %zu\n", bytesSame,
+                        bytesDiffer);
+        }
+    }
+    std::printf("  read back: %zu states as written, %zu different, %zu not read through\n", same, differ, unread);
+    LoadedLot b = loadInto(code, dst, src, h, characters);
+    const auto diffs = vm::compareLotState(*a.vm, *b.vm);
+    std::printf("  VM state after load -> save -> load: %s\n", diffs.empty() ? "the same" : "differs:");
+    for (const auto& d : diffs)
+        std::printf("    %s\n", d.c_str());
+    return diffs.empty() && differ == 0 ? 0 : 1;
+}
+
+} // namespace
+
+int saveCommand(const std::string& cmd, int argc, char** argv) {
+    if (cmd == "lot-save" && argc >= 4)
+        return cmdLotSave({argv + 2, argv + argc});
+    return -1;
+}
+
+const char* saveUsage() { return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check]\n"; }
+
+} // namespace os2

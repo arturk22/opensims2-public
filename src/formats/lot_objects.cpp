@@ -416,6 +416,37 @@ const LotObjects::State* LotObjects::state(int16_t id) const {
     return it != objects.end() && it->id == id ? &*it : nullptr;
 }
 
+std::map<uint32_t, LotObjects::SaveType> LotObjects::loadSaveTypes(DbpfPackage& pkg) {
+    std::map<uint32_t, SaveType> out;
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.type != kTypeSaveTypes)
+            continue;
+        const auto bytes = pkg.read(e);
+        BinReader r(bytes);
+        r.skip(kFileNameSize);
+        if (r.u32() != kTypeSaveTypes || r.u32() < 0x49)
+            continue;
+        r.u32();
+        try {
+            for (;;) {
+                SaveType t;
+                t.guid = r.u32();
+                if (!t.guid)
+                    break;
+                fixedBytes(r, t.unknown);
+                r.i16(); // the save type: this package's number
+                t.objectType = r.i16();
+                t.catalogName = r.str7();
+                t.flags = r.u32();
+                t.guid2 = r.u32();
+                out.emplace(t.guid, std::move(t));
+            }
+        } catch (const FormatError&) {
+        }
+    }
+    return out;
+}
+
 LotObjects LotObjects::load(DbpfPackage& pkg) {
     LotObjects lot;
     bool haveModule = false;

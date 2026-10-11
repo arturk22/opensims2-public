@@ -1,6 +1,7 @@
 #include "formats/dbpf.hpp"
 #include "formats/lot_objects.hpp"
 #include "vm/lot_resume.hpp"
+#include "vm/lot_save.hpp"
 #include "vm/vm.hpp"
 
 #include <cstdio>
@@ -964,6 +965,22 @@ static void testResumeSavedLot() {
     check(sim.attributes[1] == 7 && t.stack[0].params[0] == 2, "the resumed thread goes on from its node");
     fx.vm.tick();
     check(sim.attributes[0] == 99 && sim.timers.empty(), "the saved timer fires");
+    // Saving it back (vm/lot_save.hpp): the VM's state goes into the lot.
+    saved.pairs.push_back({uint32_t(sim.id), 1});
+    saved.saveTypeOf[sim.id] = 1;
+    saved.saveTypes[1].guid = sim.guid();
+    const auto captured = captureLot(fx.vm, saved);
+    check(captured.updated == 1 && captured.lot.objects.size() == 1, "captured the object");
+    const auto& cs = captured.lot.objects[0];
+    check(cs.attributes.size() == 2 && cs.attributes[0] == 99 && cs.attributes[1] == 7 && cs.timers.empty(),
+          "captured attributes (as many as were saved) and timers");
+    check(cs.stack.size() == 1 && cs.stack[0].treeId == 0x1001 && cs.stack[0].node == t.stack[0].pc &&
+              cs.stack[0].runningOn == uint16_t(sim.id) && cs.stack[0].params.size() == 1 &&
+              cs.stack[0].behaviorSaveType == 0,
+          "captured tree stack: tree, node, owner, the saved parameter count and save type");
+    check(cs.motives[7] == 36.6f && cs.motives[3] == float(sim.person->motives[3]) && cs.personData[31] == 12,
+          "motives: unchanged ones keep their saved floats, changed ones the VM's");
+    check(captured.lot.globals[0] == fx.vm.globals[0], "captured globals");
 }
 
 // The saved state of an object (XOBJ), as the base game's lots store it.
@@ -1035,6 +1052,59 @@ static void testSavedObjectState() {
           "saved tree stack");
     check(t.timers.size() == 1 && t.timers[0].a == 0x2001 && t.timers[0].params[7] == 8 && t.rest.empty(),
           "saved timers");
+    check(LotObjects::writeState(t, 0xAD) == tail, "a state writes back the bytes it was read from");
+    check(LotObjects::writeState(s, 0xAD) == b, "a state that does not read through keeps its tail");
+
+    // XMTO: the cTSObject, two triples (signed offsets from the lead) and the lead's ID.
+    auto mt = tail;
+    for (uint32_t v : {uint32_t(-1), 0u, 0u, 0u, 5u, 0u})
+        put32(mt, v);
+    put16(mt, 355);
+    const auto m = LotObjects::parseState(mt, 0xAD, LotObjects::Kind::MultiTile);
+    check(m.tailError.empty() && m.leadObject == 355 && int32_t(m.multiTile[0]) == -1 && m.multiTile[4] == 5,
+          "multi-tile part: offsets and lead");
+    check(LotObjects::writeState(m, 0xAD) == mt, "multi-tile part writes back");
+
+    // PERS (0xAD): animator, 2 x 16 motives, 170 person data, u32, the
+    // current and last actions, the queue, records, motive incs, u16 x 2,
+    // no sub-action, sub-action queue, name, the last Find Best Action.
+    auto pers = tail;
+    put32(pers, 0xDEADBEEF), put32(pers, 2);
+    for (int i = 0; i < 32; ++i)
+        put32(pers, 0x42000000); // 32.0
+    for (int i = 0; i < 170; ++i)
+        put16(pers, uint16_t(i == 80 ? 209 : 0));
+    put32(pers, 0);
+    auto interaction = [&](uint32_t uid, int16_t object, uint32_t entry, const std::string& name) {
+        put32(pers, 0), put32(pers, uid), put16(pers, 142), put16(pers, uint16_t(object)), put16(pers, 184);
+        put16(pers, 0xFFFF), put32(pers, entry);
+        for (int i = 0; i < 4; ++i)
+            put16(pers, 0);
+        put32(pers, 20), put16(pers, 0x1005), put32(pers, 0), put32(pers, 3200), put16(pers, 0);
+        put16(pers, 0), put16(pers, 0), put16(pers, 0), put16(pers, 0);
+        pers.push_back(uint8_t(name.size()));
+        pers.insert(pers.end(), name.begin(), name.end());
+        put32(pers, 0), put32(pers, 0);
+    };
+    interaction(43181, 209, 0, "What's This?");
+    interaction(43180, 121, 0xFFFFFFFF, "");
+    put32(pers, 0);              // queue
+    put32(pers, 1), put16(pers, 209), put32(pers, 7), pers.push_back(1); // an object record
+    put32(pers, 0);              // motive incs
+    put16(pers, 0), put16(pers, 1);
+    put32(pers, 0), put32(pers, 0); // no sub-action, no sub-action queue
+    pers.push_back(4), pers.insert(pers.end(), {'P', 'l', 'a', 'y'});
+    for (int i = 0; i < 3; ++i)
+        put32(pers, 0);
+    for (int i = 0; i < 8; ++i)
+        put16(pers, 0);
+    const auto p = LotObjects::parseState(pers, 0xAD, LotObjects::Kind::Person);
+    check(p.tailError.empty() && p.personRead && p.personData.size() == 170 && p.personData[80] == 209 &&
+              p.slotA.name == "What's This?" && p.slotA.stackObject == 209 && p.slotA.priority == 20 &&
+              p.slotB.ttabEntry == 0xFFFFFFFF && p.queue.empty() && p.objectRecords.size() == 1 &&
+              p.personName == "Play",
+          "person: the current and last actions, the queue and the rest");
+    check(LotObjects::writeState(p, 0xAD) == pers, "person writes back");
 }
 
 // Slots: data owners 0x14/0x10 (my / stack object's slot), 0x30/0x31 (slot in
