@@ -32,6 +32,7 @@ World::World(uint32_t width, uint32_t height, int firstLevel, int levelCount)
     const size_t levels = size_t(std::max(levelCount, 0));
     walkable_.assign(levels * width * height, 1);
     rooms_.assign(levels * width * height, 0);
+    diagonals_.assign(levels * width * height, 0);
     xWalls_.assign(levels * width * (height + 1), 0);
     yWalls_.assign(levels * (width + 1) * height, 0);
 }
@@ -179,7 +180,11 @@ size_t World::yEdge(int level, int x, int y) const {
     return (size_t(level - firstLevel_) * (width_ + 1) + size_t(x)) * height_ + size_t(y);
 }
 
-bool World::walkable(TilePos t) const { return contains(t) && walkable_[cell(t)]; }
+bool World::walkable(TilePos t) const {
+    return contains(t) && walkable_[cell(t)] && diagonals_[cell(t)] != 1;
+}
+
+bool World::diagonalWall(TilePos t) const { return contains(t) && diagonals_[cell(t)] != 0; }
 
 void World::setWalkable(TilePos t, bool walkable) {
     if (contains(t))
@@ -207,13 +212,31 @@ void World::setEdge(int level, int ax, int ay, int bx, int by, bool wall) {
     }
 }
 
-void World::addWall(int level, int ax, int ay, int bx, int by) { setEdge(level, ax, ay, bx, by, true); }
+void World::addWall(int level, int ax, int ay, int bx, int by) {
+    const int dx = bx - ax, dy = by - ay;
+    if (dx && std::abs(dx) == std::abs(dy)) {
+        const int sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
+        for (int i = 0; i < std::abs(dx); ++i) {
+            // Each unit step crosses the tile between its two grid points.
+            const int x0 = ax + i * sx, y0 = ay + i * sy;
+            const TilePos t{std::min(x0, x0 + sx), std::min(y0, y0 + sy), level};
+            if (contains(t) && diagonals_[cell(t)] == 0)
+                diagonals_[cell(t)] = 1;
+        }
+        return;
+    }
+    setEdge(level, ax, ay, bx, by, true);
+}
 
 void World::openDoor(TilePos t, int dir) {
     // The edge between the door's tile and the tile behind it.
+    if (contains(t) && diagonals_[cell(t)]) {
+        diagonals_[cell(t)] = 2; // a door in the diagonal wall crossing its tile
+        return;
+    }
     const auto [dx, dy] = directionStep(dir + 4);
     if (std::abs(dx) + std::abs(dy) != 1)
-        return; // a diagonal door would be in a diagonal wall, which is not kept
+        return;
     if (dx)
         setEdge(t.level, t.x + (dx > 0 ? 1 : 0), t.y, t.x + (dx > 0 ? 1 : 0), t.y + 1, false);
     else
@@ -241,6 +264,10 @@ bool World::wallBetween(TilePos t, int dx, int dy) const {
 bool World::lineOfSight(TilePos a, TilePos b) const {
     if (a.level != b.level)
         return false;
+    auto crossesDiagonal = [&](int x, int y) {
+        const TilePos t{x, y, a.level};
+        return !(t == a) && !(t == b) && contains(t) && diagonals_[cell(t)] == 1;
+    };
     // Walk the tiles the segment between the centres crosses (a supercover
     // line), checking the edge of each step; a step through a corner checks
     // both ways around it and passes if either is open.
@@ -257,14 +284,20 @@ bool World::lineOfSight(TilePos a, TilePos b) const {
             if (!viaX && !viaY)
                 return false;
             x += sx, y += sy, ++ix, ++iy;
+            if (crossesDiagonal(x, y))
+                return false;
         } else if (lhs < rhs) {
             if (wallBetween({x, y, a.level}, sx, 0))
                 return false;
             x += sx, ++ix;
+            if (crossesDiagonal(x, y))
+                return false;
         } else {
             if (wallBetween({x, y, a.level}, 0, sy))
                 return false;
             y += sy, ++iy;
+            if (crossesDiagonal(x, y))
+                return false;
         }
     }
     return true;

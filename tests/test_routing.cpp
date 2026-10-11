@@ -95,6 +95,24 @@ static void testWorldWalls() {
     check(!canStep(w, open, {3, 2, 1}, 0, 1) && !w.contains({6, 0, 1}) && !w.contains({0, 0, 2}), "floors and bounds");
 }
 
+// Diagonal walls cut tiles in half: walkers go around the tiles they cross
+// and do not slip through the line diagonally; a door in one opens it.
+static void testDiagonalWalls() {
+    World w(8, 8);
+    w.addWall(1, 1, 1, 5, 5); // "/" through tiles (1, 1) .. (4, 4)
+    w.addWall(1, 7, 1, 6, 2); // "\\" through tile (6, 1)
+    check(w.diagonalWall({2, 2, 1}) && !w.walkable({2, 2, 1}) && !w.walkable({6, 1, 1}) && w.walkable({2, 3, 1}),
+          "the tiles a diagonal wall crosses");
+    BlockedGrid open(64, 0);
+    check(!canStep(w, open, {3, 2, 1}, -1, 1), "no slipping between the halves");
+    check(!w.lineOfSight({3, 1, 1}, {1, 3, 1}) && w.lineOfSight({3, 1, 1}, {5, 3, 1}), "a diagonal wall hides");
+    Path p;
+    check(findPath(w, open, {3, 1, 1}, {{1, 3, 0}}, p) && p.cost > 5, "around the diagonal wall");
+    w.openDoor({3, 3, 1}, 1);
+    check(w.walkable({3, 3, 1}) && findPath(w, open, {4, 2, 1}, {{2, 4, 0}}, p) && p.tiles.size() <= 4,
+          "through a door in it");
+}
+
 // Set to Next 8 (same tile, round and round), 9 (adjacent to the object in a
 // local, by direction) and 34 (within one tile).
 static void testSetToNextTiles() {
@@ -457,6 +475,7 @@ int main() {
     testRoutingGoals();
     testDirections();
     testWorldWalls();
+    testDiagonalWalls();
     testSetToNextTiles();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

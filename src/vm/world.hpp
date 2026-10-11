@@ -53,8 +53,11 @@ struct Stair {
 //
 // Walls are kept as the edges between tiles: a wall from grid point (x, y)
 // to (x + 1, y) separates tiles (x, y - 1) and (x, y); one from (x, y) to
-// (x, y + 1) separates (x - 1, y) and (x, y). Diagonal walls are not kept
-// (they cut tiles in half, which a tile grid cannot hold).
+// (x, y + 1) separates (x - 1, y) and (x, y). A diagonal wall cuts the
+// tiles it crosses in half, which a tile grid cannot hold: those tiles are
+// not walkable (walkers go around them, and canStep's corner rule keeps them
+// from slipping between the halves' neighbours), unless a door stands in
+// them.
 class World {
 public:
     World() = default;
@@ -79,16 +82,21 @@ public:
     int16_t room(TilePos t) const;
     void setRoom(TilePos t, int16_t room);
 
-    // Axis-aligned wall between grid points (ax, ay) and (bx, by) on a VM
-    // level; longer walls are split into tile edges, diagonal ones ignored.
+    // Wall between grid points (ax, ay) and (bx, by) on a VM level: an
+    // axis-aligned one is split into tile edges, a diagonal one (|dx| ==
+    // |dy|) marks the tiles it crosses; other slopes are ignored.
     void addWall(int level, int ax, int ay, int bx, int by);
     // A door: opens the wall edge behind a door at tile `t` facing `dir` (a
-    // door stands in front of the wall it cuts, its back to it).
+    // door stands in front of the wall it cuts, its back to it); a door in a
+    // diagonal wall opens the tile the wall crosses.
     void openDoor(TilePos t, int dir);
     // A wall between `t` and its neighbour (t.x + dx, t.y + dy); only for
     // orthogonal steps (|dx| + |dy| == 1).
     bool wallBetween(TilePos t, int dx, int dy) const;
-    // No wall crosses the straight line between the two tile centres (same level).
+    // A diagonal wall crosses the tile.
+    bool diagonalWall(TilePos t) const;
+    // No wall crosses the straight line between the two tile centres (same
+    // level); tiles in between with a diagonal wall stop it.
     bool lineOfSight(TilePos a, TilePos b) const;
 
     // Stairs join a landing on one level with one on the level above; the
@@ -107,6 +115,7 @@ private:
     std::vector<uint8_t> xWalls_;     // [level][x][y]: wall (x, y)-(x + 1, y), x < width, y <= height
     std::vector<uint8_t> yWalls_;     // [level][x][y]: wall (x, y)-(x, y + 1), x <= width, y < height
     std::vector<Stair> stairs_;
+    std::vector<uint8_t> diagonals_;  // [level][x][y]: 1 a diagonal wall crosses it, 2 a door opens it
     size_t cell(TilePos t) const;
     size_t xEdge(int level, int x, int y) const;
     size_t yEdge(int level, int x, int y) const;
