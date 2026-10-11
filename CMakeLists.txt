@@ -35,6 +35,8 @@ add_library(os2_formats
   src/formats/jpeg.cpp
   src/formats/lighting_config.cpp
   src/formats/locale.cpp
+  src/formats/hood_scene.cpp
+  src/formats/hood_terrain.cpp
   src/formats/lot.cpp
   src/formats/lot_objects.cpp
   src/formats/lot_objects_write.cpp

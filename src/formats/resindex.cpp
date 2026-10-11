@@ -138,7 +138,14 @@ std::optional<ResourceIndex::Location> ResourceIndex::findByName(std::string_vie
     if (auto loc = find(k))
         return loc;
     k.instanceHi = 0; // older resources leave the high instance empty
-    return find(k);
+    if (auto loc = find(k))
+        return loc;
+    // "Scope!name" (a lot's imposter: "N001_Lot11!imposter_gmnd"): a resource
+    // of the same package, group 0xFFFFFFFF, hashed without the scope.
+    if (group == kLocalGroup && !name.starts_with("#"))
+        if (auto bang = name.find('!'); bang != std::string_view::npos && bang + 1 < name.size())
+            return findByName("#0xFFFFFFFF!" + std::string(name.substr(bang + 1)), type);
+    return std::nullopt;
 }
 
 std::vector<ResourceIndex::Location> ResourceIndex::ofType(uint32_t type) const {

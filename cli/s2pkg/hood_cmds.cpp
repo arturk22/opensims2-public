@@ -4,6 +4,11 @@
 
 #include "formats/dbpf.hpp"
 #include "formats/neighborhood.hpp"
+#include "formats/hood_terrain.hpp"
+#include "formats/resindex.hpp"
+
+#include <algorithm>
+#include <memory>
 
 #include <cstdio>
 #include <map>
@@ -218,16 +223,84 @@ int cmdHoodSweep(const char* dir) {
     return errors ? 1 : 0;
 }
 
+// The neighborhood view's data: terrain, occupants (trees, roads, bridges,
+// props) with their models, and the saved camera.
+int cmdHoodTerrain(const std::filesystem::path& path, const char* resDir) {
+    std::filesystem::path pkgPath = path;
+    if (std::filesystem::is_directory(path))
+        for (const auto& e : std::filesystem::directory_iterator(path))
+            if (e.path().filename().string().find("_Neighborhood.package") != std::string::npos)
+                pkgPath = e.path();
+    DbpfPackage pkg(pkgPath);
+    std::map<uint32_t, std::string> objects;
+    std::unique_ptr<ResourceIndex> index;
+    if (resDir) {
+        index = std::make_unique<ResourceIndex>(resDir);
+        objects = loadNeighborhoodObjects(*index);
+        std::printf("%zu neighborhood objects in the catalog\n", objects.size());
+    }
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.type == hoodtype::Terrain) {
+            const Terrain t = Terrain::parse(pkg.read(e));
+            float lo = 1e9f, hi = -1e9f;
+            size_t under = 0;
+            for (float h : t.heights) {
+                lo = std::min(lo, h), hi = std::max(hi, h);
+                under += h < t.seaLevel;
+            }
+            const size_t nonzero = size_t(std::count_if(t.vertexBytes.begin(), t.vertexBytes.end(), [](uint8_t b) { return b != 0; }));
+            std::printf("terrain v%u: %ux%u cells (%ux%u vertices), %s, sea level %.2f, heights %.1f..%.1f, %zu "
+                        "vertices under water, %zu vertex bytes (%zu non-zero)\n",
+                        t.version, t.width, t.height, t.gridWidth, t.gridHeight, t.type.c_str(), t.seaLevel, lo, hi,
+                        under, t.vertexBytes.size(), nonzero);
+        } else if (e.tgi.type == hoodtype::Occupants) {
+            const Occupants o = Occupants::parse(pkg.read(e));
+            std::printf("occupants v%u: %zu flora (v%u), %zu roads (v%u), %zu bridges (v%u), %zu props (v%u)\n",
+                        o.version, o.flora.size(), o.floraVersion, o.roads.size(), o.roadVersion, o.bridges.size(),
+                        o.bridgeVersion, o.props.size(), o.propVersion);
+            std::map<uint32_t, int> pieces, guids, flags, connections;
+            for (const auto& r : o.roads)
+                ++pieces[r.piece], ++flags[r.flags], ++connections[r.connections];
+            for (const auto& b : o.bridges)
+                ++pieces[b.road.piece];
+            for (const auto& [p, n] : pieces)
+                std::printf("  road piece %08x x%d\n", p, n);
+            for (const auto& [f, n] : flags)
+                std::printf("  road flags %02x x%d\n", f, n);
+            for (const auto& f : o.flora)
+                ++guids[f.guid];
+            for (const auto& p : o.props)
+                ++guids[p.guid];
+            for (const auto& [g, n] : guids) {
+                auto it = objects.find(g);
+                std::printf("  object %08x x%d %s\n", g, n, it == objects.end() ? "?" : it->second.c_str());
+            }
+            for (const auto& b : o.bridges)
+                std::printf("  bridge %04x-bridge at (%.1f, %.1f, %.1f)\n", b.road.piece >> 16, b.road.at.position[0],
+                            b.road.at.position[1], b.road.at.position[2]);
+        } else if (e.tgi.type == hoodtype::SavedCamera) {
+            SavedCamera c;
+            if (SavedCamera::parse(pkg.read(e), c))
+                std::printf("camera: distance %.1f, heading %.1f deg, pitch %.1f deg, pivot (%.1f, %.1f, %.1f)\n",
+                            c.distance, c.heading * 57.2958f, c.pitch * 57.2958f, c.pivot[0], c.pivot[1], c.pivot[2]);
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 const char* hoodUsage() {
     return "       s2pkg hood <neighborhood-dir|_Neighborhood.package>\n"
-           "       s2pkg hood-sweep <UserData/Neighborhoods>\n";
+           "       s2pkg hood-sweep <UserData/Neighborhoods>\n"
+           "       s2pkg hood-terrain <neighborhood-dir|_Neighborhood.package> [Res-dir]\n";
 }
 
 int hoodCommand(const std::string& cmd, int argc, char** argv) {
     if (cmd == "hood" && argc == 3)
         return cmdHood(argv[2]);
+    if (cmd == "hood-terrain" && (argc == 3 || argc == 4))
+        return cmdHoodTerrain(argv[2], argc == 4 ? argv[3] : nullptr);
     if (cmd == "hood-sweep" && argc == 3)
         return cmdHoodSweep(argv[2]);
     return -1;
