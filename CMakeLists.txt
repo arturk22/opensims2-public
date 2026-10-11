@@ -66,9 +66,11 @@ target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 
 add_library(os2_vm
   src/vm/hood_bridge.cpp
+  src/vm/animation.cpp
   src/vm/lot.cpp
   src/vm/primitives.cpp
   src/vm/routing.cpp
+  src/vm/sim_motion.cpp
   src/vm/vm.cpp
   src/vm/world.cpp
 )
@@ -86,7 +88,7 @@ if(APPLE)
   target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 
-add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp)
+add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/prim_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm os2_audio)
 
@@ -143,6 +145,10 @@ add_test(NAME hood_vm COMMAND test_hood_vm)
 add_executable(test_routing tests/test_routing.cpp)
 target_link_libraries(test_routing PRIVATE os2_vm)
 add_test(NAME routing COMMAND test_routing)
+
+add_executable(test_animation_vm tests/test_animation_vm.cpp)
+target_link_libraries(test_animation_vm PRIVATE os2_vm)
+add_test(NAME animation_vm COMMAND test_animation_vm)
 
 if(APPLE)
   add_executable(test_camera tests/test_camera.cpp)

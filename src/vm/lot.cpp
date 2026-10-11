@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <map>
+#include <set>
 
 namespace os2::vm {
 
@@ -50,11 +51,31 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
                             r.first = li + 1;
                             ++r.second;
                         }
+        // Outside and pool (inferred): a room is a pool when one of its tiles
+        // is in a POOL's rectangle on its level, and outside when it is a pool
+        // or reaches the edge of the lot on the ground (the terrain's room).
+        std::set<int16_t> outside, pool;
+        for (int li = 0; li < lot.levelCount; ++li)
+            for (uint32_t x = 0; x < lot.width; ++x)
+                for (uint32_t y = 0; y < lot.height; ++y)
+                    for (uint16_t room : lot.rooms[(size_t(li) * lot.width + x) * lot.height + y]) {
+                        if (!room)
+                            continue;
+                        const int level = li + lot.minLevel;
+                        if (level == 0 && (x == 0 || y == 0 || x + 1 == lot.width || y + 1 == lot.height))
+                            outside.insert(int16_t(room));
+                        for (const auto& p : lot.pools)
+                            if (p.level == level && float(x) >= p.x && float(x) < p.x + float(p.width) &&
+                                float(y) >= p.y && float(y) < p.y + float(p.height))
+                                pool.insert(int16_t(room)), outside.insert(int16_t(room));
+                    }
         for (const auto& [id, r] : rooms) {
             VM::Room& room = vm.rooms[id];
+            room.values[1] = int16_t(outside.count(id));
             room.values[2] = int16_t(r.first);
             room.values[3] = int16_t(r.second / 4);
-            room.known = 0x0C;
+            room.values[4] = int16_t(pool.count(id));
+            room.known = 0x1E;
         }
     }
 

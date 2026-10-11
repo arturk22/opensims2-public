@@ -3,6 +3,7 @@
 #include "formats/bhav.hpp"
 #include "formats/simantics.hpp"
 #include "formats/strings.hpp"
+#include "animation.hpp"
 #include "world.hpp"
 
 #include <array>
@@ -204,6 +205,7 @@ class CodeLibrary {
 public:
     CodeLibrary() = default;
     explicit CodeLibrary(ResourceIndex* index) : index_(index) {}
+    ResourceIndex* index() const { return index_; }
 
     const Behavior* behavior(uint32_t group, uint16_t instance);
     const Constants* constants(uint32_t group, uint16_t instance);
@@ -347,6 +349,8 @@ struct Object {
         uint16_t node = 0;
     };
     std::optional<Route> route;
+    // What the animation primitives play on it (animation.hpp).
+    AnimationState animation;
 
     uint32_t guid() const { return definition ? definition->guid() : 0; }
 };
@@ -444,6 +448,8 @@ public:
     // animation, with a tile taken as a metre and a tick as 1/30 s (30 ticks
     // a game minute, a game minute a second at normal speed; inferred).
     float walkTilesPerTick = 1.37f / 30.0f;
+    // Lengths of the animations the animation primitives play (animation.cpp).
+    AnimationLibrary animations;
     // The tile an object stands on (its position rounded down), whether or
     // not it is in the world.
     static TilePos tileOf(const Object& o) {

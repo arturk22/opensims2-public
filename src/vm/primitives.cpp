@@ -927,6 +927,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x76, arrayOperation);
     registerRoutingPrimitives(vm);
     registerNeighborhoodPrimitives(vm);
+    registerAnimationPrimitives(vm);
 }
 
 } // namespace os2::vm
