@@ -131,6 +131,28 @@ estado em `+0`):
 `1` (trecho acabou: próximo trecho, ou o portal (0x1F), ou sucesso 0x0D),
 `2` (continua) ou `0` (**bloqueado** → 0x18).
 
+O passo (`nTSSG::cLocomotable::FollowOneStep`, BV `0x6b80e8`) devolve 0
+quando o teste de colisão do trecho seguinte falha (vtable `0x41C`), ou
+quando o estado da locomoção termina como "bloqueado" (estado 7, ou estado
+4 com bloqueador marcado). O bloqueador vem do
+`cLocomotable::CollisionCheck` (BV `0x6b49e8`), rodado durante o passo:
+
+```
+passo = 50 / velocidade (m/s), mín. 1 tick (200 se velocidade ≤ 0,01)
+horizonte = agora + passo · 10,02 ticks, limitado ao fim do caminho
+para cada janela [t, t + passo] até o horizonte:
+    testa a trajetória prevista contra os outros (vtable 0x478: objetos
+    que andam e Sims, pelas posições estimadas deles nesse intervalo)
+    achou → bloqueador = ID; se a distância até ele (vtable 0x47C)
+    não diminui entre o começo e o fim da janela, para aqui
+achou e está a menos de 2 passos (ou no fim do caminho): estado
+"bloqueado" (0x438(2)) e o ID fica para o DoBlocked (vtable 0x1A8)
+```
+
+Ou seja, o "bloqueado" do locomotor é **previsto** (até ~10 passos à
+frente), não um contato: o Sim para antes de encostar. Ao parar, a
+desaceleração usa 5 ticks (ou 100 se a velocidade passa de 0,25).
+
 **Bloqueado** (`DoBlocked`, BV `0x5762a4`): pergunta à rota quem bloqueia
 (vtable `0x1A8`, ID do objeto):
 
@@ -178,13 +200,13 @@ escreve "Route failed because : " + o texto do `STR#` 0xF1 (grupo
 | 1 | unknown | `InitRoute`, objetivo sumiu, `DoNeedFailureFeedback` |
 | 2 | path not found | `cTSRoute::FindPathWithPlanner` (A* sem caminho), `DoBlocked` |
 | 3 | interrupted | `DoWalking`, `DoInitial`, esperas (`ShouldInterrupt`: a interação foi cancelada) |
-| 4 | couldn't sit down | |
-| 5 | couldnt stand up | |
-| 6 | no valid goals | (`CreateBestGoalPointList` vazia) |
-| 7 | destination occupied | |
-| 8 | no valid chair | |
-| 9 | wall in the way | |
-| 10 | altitudes don't match | |
+| 4 | couldn't sit down | nenhum gravador no BV |
+| 5 | couldnt stand up | nenhum gravador no BV |
+| 6 | no valid goals | `InitRoute`: o plano falhou sem código e há 0 objetivos (com objetivos → 2); gerador de objetivos de cadeira sem slot |
+| 7 | destination occupied | candidato ocupado (`EvalTileForGoal` 1 ou 6); slot de "contenção" (cadeira/cama) ocupado (BV `0x474494`) |
+| 8 | no valid chair | nenhum gravador no BV |
+| 9 | wall in the way | candidato com `EvalTileForGoal` 2, 3 ou 4 (sala errada, parede na linha, parede encostada) |
+| 10 | altitudes don't match | candidato com `EvalTileForGoal` 5 |
 | 11 | pre-route failed | árvore "pre route" (OBJf 18) devolveu false |
 | 12 | post-route failed | árvore "post route" (OBJf 19) |
 | 13 | goal not available | árvore "goal check" (OBJf 20) |
@@ -192,7 +214,14 @@ escreve "Route failed because : " + o texto do `STR#` 0xF1 (grupo
 | 15 | blocked by object | §6, `InitRoute` |
 | 16 | interrupted by callback | árvore "along route" (OBJf 22) |
 
-(4–10 não foram rastreados até quem os grava.) Com falha, se a primitiva
+Os códigos 6, 7, 9 e 10 são gravados **por candidato** enquanto os
+objetivos são gerados (BV `0x478f8c..0x4790dc`: `EvalTileForGoal` → código
+pela tabela acima; 0 "fora do mundo" não grava nada; 7 "válido" adiciona o
+objetivo, e 6 também se a rota permite empurrar objetos, flag `+0x117`),
+então o código final é o do **último candidato recusado** (e só vale se
+nenhum objetivo sobrou). O bloqueador do código 7 vai para `+0x1A4`. 4, 5
+e 8 (sentar/levantar/cadeira) não têm gravador no motor do BV (restos do
+Sims 1; árvores podem gravar o dado 62 elas mesmas). Com falha, se a primitiva
 permite (flag "sem árvores de falha" desligada), o roteador passa por
 `DoNeedFailureFeedback` (0x14): toca **"CT - Route Failure Feedback"**
 (global; o Sim faz o gesto de "não dá") com o sub-motivo em `+0x40`
@@ -210,11 +239,17 @@ sentido. O objeto registra o portal em `cTSObject::PortalAddToPathPlannerImpl`
 (BV `0xe22a44`): um par de slots de portal do modelo por ligação, e
 
 ```
-custo = 1 + campo 0x35 do OBJD · escala      (a escala é uma constante estática
-                                              DAT_02d86430 não lida; 0x35 = 0 → custo 1)
+custo = 1 + campo 0x35 do OBJD · escala      (escala: float em DAT_02d86430)
 callback de trava = TSObjectPortalLockedCB se o objeto tem a entrada 15
                     ("portal") do OBJD e ela tem a versão de teste (vtable 0x3B8)
 ```
+
+A escala `DAT_02d86430` (e o vizinho `DAT_02d86b70`, também lido só no
+`PortalAddToPathPlannerImpl`) fica no `__bss` e **não tem gravador**: nenhum
+`stw/stfs` para esse endereço (direto ou por base + deslocamento) e nenhum
+ponteiro para ele nos dados. Ou seja, vale **0,0** em execução e **todo
+portal custa 1** (o campo 0x35 do OBJD não tem efeito). Inferido de não
+haver gravador; confirmar se um dia aparecer um caminho indireto.
 
 **A trava é a árvore de portal rodada em modo TESTE** (`TSObjectPortalLockedCB`,
 BV `0xe208c8`): na primeira vez que o A* de um Sim cruza o portal naquela
@@ -281,11 +316,38 @@ código e soma penalidades num custo:
 Penalidades no custo (quando o slot permite o caso em vez de recusar):
 +10 por parede atravessada na linha, +10 por parede a menos de 0,4, +10 por
 sala diferente, +10 por objeto que pode ser empurrado, +5 se há porta no
-tile, +5 se o tile é água/terreno especial (consulta do mundo `0x170`). A
-geração dos candidatos (`CreateBestGoalPointList`) é feita por um
-componente à parte (CLSID `0xFBA4DA4F`, máscara de 8 direções, distâncias
-do slot) que não foi decompilado; o `cTSRoute::ScanCone` que o symxfer
-nomeou no BV é outra função (um dump de desejos).
+tile, +5 se o tile é água/terreno especial (consulta do mundo `0x170`). 
+
+### Gerador de pontos de objetivo (BV `0x4778b4`, `0x4788cc`)
+
+O CLSID `0xFBA4DA4F` (IID `0xFBA4DA54`) **é um slot de rota sintético**
+(`cITSRoutingSlot`), não um gerador à parte: `CreateBestGoalPointList`
+(BV `0x472b64`) cria um, liga as direções pedidas (máscara de 8 bits:
+`vtable 0x20(dir)` por bit, ou `0x18` = todas), põe distâncias mín./máx.
+1,0 (`0xD0`), o modo de facing (`0x30`/`0x28`/`0x40(valor)`) e devolve o
+slot; daí em diante ele é tratado como um slot do SLOT do objeto. O mesmo
+serve para `CreateMoveOutOfWayDestination` e para os localizadores de
+parede.
+
+A varredura (BV `0x4778b4`, chamada com um callback por candidato):
+
+- para cada direção permitida do slot, anda **em fileiras** do raio mínimo
+  ao máximo do slot com passo = resolução do slot (`+0x38`, tiles), e em
+  cada fileira de `-largura` a `+largura` do cone (`+0x44`), gerando pontos
+  na grade do slot;
+- se o ponto cai noutro andar que o do slot (escada/terreno), **+10** no
+  custo; cada ponto passa por `EvalTileForGoal` (§8.2) e vai para o
+  callback (que adiciona os válidos);
+- se há candidatos demais, sorteia uma fração (gerador aleatório do jogo);
+  para quando o número de objetivos atinge o máximo da rota (`+0xB8`, e
+  `+0xB4` para os de prioridade).
+
+Custo de um objetivo aceito (BV `0x4790xx`): penalidades de §8.2 +
+`|distância − distância preferida (+0x30)| · 16 · peso (+0x34)` − `peso ·
+0,01 · |desvio lateral|` (desempate); o A* depois escolhe pelo custo total
+(caminho + objetivo). Para cadeiras, `ScanConeForSittingGoals` usa o mesmo
+laço com o callback de slots de cadeira. O `cTSRoute::ScanCone` que o
+symxfer nomeou no BV é outra função (um dump de desejos).
 
 ## 9. Comparação com o código atual (main `3b4c4db`: `src/vm/path_planner.*`, `routing.cpp`)
 
@@ -300,8 +362,7 @@ nomeou no BV é outra função (um dump de desejos).
 
 ## 10. O que falta
 
-- O custo exato de cada `ePassabilityState` e a escala do custo de portal
-  (`DAT_02d86430`).
-- Quem grava os códigos 4–10.
-- O gerador de pontos de objetivo (CLSID `0xFBA4DA4F`).
-- O passo do locomotor (`FollowOneStep`) e quando ele diz "bloqueado".
+- O custo exato de cada `ePassabilityState`.
+- O teste de segmento do `CollisionCheck` (vtable 0x478) em detalhe.
+- Confirmar que nada escreve a escala de portal (`DAT_02d86430`) por um
+  caminho indireto.
