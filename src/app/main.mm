@@ -59,6 +59,7 @@
 #include "formats/lot_objects.hpp"
 #include "formats/skinning.hpp"
 #include "formats/font.hpp"
+#include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
 #include "formats/ui_screen.hpp"
 #include "formats/resindex.hpp"
@@ -319,6 +320,8 @@ std::unique_ptr<os2::LotAudio> gAudio;
 os2::LotCamera* gCamera = nullptr;
 std::unique_ptr<os2::LotCameraFollow> gCameraFollow; // --lot: pivot held to the lot, on the Sim's floor
 
+void setupPieMenu(os2::ResourceIndex& index); // below loadLot
+
 // The camera shows the selected Sim's level (cCameraLive::Update).
 void followSelectedSim() {
     if (gCameraFollow && gSimulation && gPie)
@@ -533,6 +536,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                                               argument(@"--sim-id").value_or(""));
     for (const auto& b : gPickBoxes)
         gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
+    setupPieMenu(index);
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
@@ -550,6 +554,33 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     const os2::vm::Object* sim = gPie->vm().object(gPie->sim());
     std::printf("opensims2: pie menus for Sim %d (%s)\n", gPie->sim(),
                 sim && sim->definition ? sim->definition->fileName.c_str() : "none");
+}
+
+// The pie menu's constants (ui.package UI script 0x090617B7), the selected
+// Sim's portrait (its character file's IMG 0x10) as the head, and the item
+// sounds through the lot's audio.
+void setupPieMenu(os2::ResourceIndex& index) {
+    os2::UiResources ui(index, gameDir() / "TSData/Res");
+    if (auto script = ui.script(0x090617B7))
+        gPie->setStyle(os2::PieMenuStyle::fromConstants(os2::uiConstants(*script)));
+    for (const auto& s : gLotSims) {
+        if (s.id != gPie->sim())
+            continue;
+        try {
+            os2::DbpfPackage character(s.character);
+            if (const os2::DbpfEntry* e = character.find({os2::kTypeUiImage, 0xFFFFFFFF, 0x10}))
+                if (auto img = os2::decodeUiImage(character.read(*e)))
+                    gPie->setPortrait(std::move(*img));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: portrait: %s\n", e.what());
+        }
+    }
+    if (gAudio)
+        gPie->setSoundPlayer([](const std::string& name) {
+            os2::SoundSystem::PlayOptions o;
+            o.group = os2::SoundGroup::Ui;
+            gAudio->sound().play(name, o);
+        });
 }
 
 // Loads --lot into the renderer in place of the test floor. Returns the middle
@@ -1018,6 +1049,8 @@ int cameraSlot(unsigned short key) {
     _held.insert(e.keyCode);
     if (e.isARepeat)
         return;
+    if (gPie && gPie->isOpen()) // any key (Shift sends no keyDown) cancels the pie menu
+        gPie->close();
     if (const int slot = cameraSlot(e.keyCode); slot >= 0) {
         if (e.modifierFlags & NSEventModifierFlagControl)
             _camera->savePosition(slot);
@@ -1082,6 +1115,10 @@ int cameraSlot(unsigned short key) {
 
 - (void)rightMouseDown:(NSEvent*)e {
     [self trackMouse:e];
+    if (gPie && gPie->isOpen()) { // the right button cancels the pie menu
+        gPie->close();
+        return;
+    }
     _rotating = (e.modifierFlags & NSEventModifierFlagOption) != 0;
     if (!_rotating)
         _mouse.beginAnchor();
@@ -1106,7 +1143,9 @@ int cameraSlot(unsigned short key) {
     if (!gPie)
         return;
     const simd_float2 p = [self canvasPoint:e];
-    if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p))
+    if (gPie->dialogOpen() && gPie->click(p))
+        return;
+    if (gPie->isOpen() && gPie->press(p))
         return;
     const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
     const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
@@ -1118,6 +1157,12 @@ int cameraSlot(unsigned short key) {
     std::fflush(stdout);
 }
 
+// The pie menu picks on release (a drag from the opening press is a gesture).
+- (void)mouseUp:(NSEvent*)e {
+    if (gPie && gPie->isOpen())
+        gPie->release([self canvasPoint:e]);
+}
+
 - (void)mouseMoved:(NSEvent*)e {
     [self trackMouse:e];
     if (gPie)
@@ -1126,6 +1171,8 @@ int cameraSlot(unsigned short key) {
 
 - (void)mouseDragged:(NSEvent*)e {
     [self trackMouse:e];
+    if (gPie)
+        gPie->hover([self canvasPoint:e]);
 }
 
 - (void)rightMouseDragged:(NSEvent*)e {

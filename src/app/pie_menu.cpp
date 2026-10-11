@@ -23,6 +23,11 @@ constexpr Color kRunning{0.10f, 0.45f, 0.20f, 0.85f};
 constexpr Color kCancelled{0.35f, 0.35f, 0.35f, 0.85f};
 constexpr Color kDim{0, 0, 0, 0.35f};
 constexpr float kPad = 8, kLabelH = 24, kLineH = 20, kDialogPad = 16;
+// Pie items: the window's corner offsets of position_item assume a window
+// about 42 high whose text starts 14 past its edge (inferred); the head's
+// size is a guess too.
+constexpr float kItemH = 42, kItemInset = 14, kHeadSize = 72;
+constexpr Color kItemBack{0, 0, 0, 0.55f};
 
 std::string objectName(const vm::Object* o) {
     if (!o || !o->definition)
@@ -101,6 +106,72 @@ std::pair<simd_float3, simd_float3> modelBounds(const ObjectModel& model) {
     return {lo, hi};
 }
 
+PieMenuStyle PieMenuStyle::fromConstants(const std::map<std::string, std::string>& c) {
+    PieMenuStyle st;
+    auto number = [&](const char* key, float& out) {
+        if (auto it = c.find(key); it != c.end())
+            try {
+                out = std::stof(it->second); // "1.6f" reads as 1.6
+            } catch (const std::exception&) {
+            }
+    };
+    auto color = [&](const char* key, std::array<float, 4>& out) {
+        auto it = c.find(key);
+        int r, g, b;
+        if (it != c.end() && std::sscanf(it->second.c_str(), "%d,%d,%d", &r, &g, &b) == 3)
+            out = {float(r) / 255, float(g) / 255, float(b) / 255, 1};
+    };
+    auto text = [&](const char* key, std::string& out) {
+        if (auto it = c.find(key); it != c.end() && !it->second.empty())
+            out = it->second;
+    };
+    number("kItemRadius", st.itemRadius);
+    number("kCancelBoundary", st.cancelBoundary);
+    number("kGesturePickBoundary", st.gesturePickBoundary);
+    number("kHeadAreaInflateForItemOverlap", st.headInflate);
+    color("kPieMenuTextColorNormal", st.textNormal);
+    color("kPieMenuTextColorHighlited", st.textHighlight);
+    text("kPieMenuFont", st.font);
+    text("kMainButtonSound", st.mainSound);
+    text("kSubmenuButtonSound", st.submenuSound);
+    if (auto it = c.find("kEnableItemAnimations"); it != c.end())
+        st.itemAnimations = it->second == "true";
+    return st;
+}
+
+void PieMenuHost::setPortrait(RgbaImage img) {
+    // The face: a square from the top middle of the 256x256 shot, in a
+    // circle (the game's callout box is not decoded; inferred).
+    if (img.width == 0 || img.height == 0) {
+        head_.reset();
+        return;
+    }
+    const int S = int(kHeadSize) * 2; // drawn at half size: smooth edges on Retina
+    const float side = float(std::min(img.width, img.height)) * 0.7f;
+    const float ox = float(img.width) * 0.48f - side / 2, oy = float(img.height) * 0.42f - side / 2;
+    auto out = std::make_unique<RgbaImage>();
+    out->width = out->height = uint32_t(S);
+    out->pixels.assign(size_t(S) * S * 4, 0);
+    for (int y = 0; y < S; ++y)
+        for (int x = 0; x < S; ++x) {
+            const float dx = float(x) + 0.5f - S / 2.0f, dy = float(y) + 0.5f - S / 2.0f;
+            const float r = std::sqrt(dx * dx + dy * dy), edge = S / 2.0f;
+            if (r > edge)
+                continue;
+            const int sx = std::clamp(int(ox + (float(x) + 0.5f) * side / float(S)), 0, int(img.width) - 1);
+            const int sy = std::clamp(int(oy + (float(y) + 0.5f) * side / float(S)), 0, int(img.height) - 1);
+            const uint8_t* src = &img.pixels[(size_t(sy) * img.width + size_t(sx)) * 4];
+            uint8_t* dst = &out->pixels[(size_t(y) * size_t(S) + size_t(x)) * 4];
+            // A thin light ring around it.
+            const bool ring = r > edge - 3;
+            for (int k = 0; k < 3; ++k)
+                dst[k] = ring ? uint8_t(std::lround(style_.textNormal[size_t(k)] * 255)) : src[k];
+            dst[3] = uint8_t(std::lround(std::clamp(edge - r, 0.0f, 1.0f) * 255));
+        }
+    head_ = std::move(out);
+    dirty_ = true;
+}
+
 PieMenuHost::PieMenuHost(vm::VM& vm, const std::filesystem::path& fontsDir, const std::string& simQuery)
     : vm_(&vm), fonts_(std::make_unique<FontLibrary>(fontsDir)) {
     sim_ = vm::findSim(vm, simQuery);
@@ -167,6 +238,7 @@ bool PieMenuHost::open(vm::ObjectId object, simd_float2 at) {
     title_ = objectName(vm_->object(entries_.front().object));
     at_ = at;
     open_ = true;
+    gesture_ = true;
     dirty_ = true;
     return true;
 }
@@ -175,12 +247,14 @@ void PieMenuHost::close() {
     open_ = false;
     entries_.clear();
     submenu_.clear();
+    gesture_ = false;
     hover_ = chosen_ = -1;
     dirty_ = true;
 }
 
-std::vector<PieMenuHost::Label> PieMenuHost::labels() const {
-    std::vector<Label> out;
+PieMenuHost::Layout PieMenuHost::layout() const {
+    Layout lay;
+    std::vector<Label>& out = lay.labels;
     for (size_t i = 0; i < entries_.size(); ++i) {
         const auto& path = entries_[i].path;
         std::string text;
@@ -200,34 +274,133 @@ std::vector<PieMenuHost::Label> PieMenuHost::labels() const {
         else
             it->entries.push_back(i);
     }
-    const float ppem = 14;
-    const FontStyle* st = fonts_->style("piemenu");
+    const FontStyle* st = fonts_->style(style_.font);
+    if (!st)
+        st = fonts_->style("piemenu");
     const Font* font = st ? fonts_->font(*st) : nullptr;
+    const float ppem = st ? float(st->size) : 14.0f;
+    const simd_float2 c = submenu_.empty() ? at_ : subAt_;
     const size_t n = out.size();
-    const float r = n <= 1 ? 0 : std::max(70.0f, float(n) * 13.0f);
+    const float R = style_.itemRadius;
     for (size_t i = 0; i < n; ++i) {
-        const float w = (font ? measureText(*font, decodeUtf8(out[i].text), font ? float(st->size) : ppem).width : 80) +
-                        2 * kPad;
-        const float a = -float(M_PI) / 2 + 2 * float(M_PI) * float(i) / float(n);
-        const float px = at_.x + r * std::cos(a), py = at_.y + r * std::sin(a);
-        // Labels grow away from the centre: right of it on the right, left on the left.
-        const float cx = px + std::cos(a) * w / 2;
-        out[i].x0 = std::round(cx - w / 2), out[i].x1 = std::round(cx + w / 2);
-        out[i].y0 = std::round(py - kLabelH / 2), out[i].y1 = out[i].y0 + kLabelH;
+        const float tw = font ? measureText(*font, decodeUtf8(out[i].text), ppem).width : 7.0f * float(out[i].text.size());
+        const float w = std::round(tw) + 2 * kItemInset;
+        // cTSWinPieMenu::layout: from the top, clockwise.
+        const float a = 2 * float(M_PI) * float(i) / float(std::max<size_t>(n, 1));
+        const float px = std::round(c.x + R * std::sin(a)), py = std::round(c.y - R * std::cos(a));
+        // determine_item / position_item: the window's corner by the angle.
+        const float deg = a * 180 / float(M_PI);
+        float x, y;
+        if (deg < 1e-3f)
+            x = px - w / 2, y = py - 48;
+        else if (deg < 45)
+            x = px - kItemInset, y = py - 26;
+        else if (deg <= 135)
+            x = px - kItemInset, y = py - 21;
+        else if (deg <= 165)
+            x = px - kItemInset, y = py - 16;
+        else if (deg < 195)
+            x = px - w / 2, y = py - 21;
+        else if (deg < 225)
+            x = px - (w - kItemInset), y = py - 16;
+        else if (deg <= 315)
+            x = px - (w - kItemInset), y = py - 21;
+        else
+            x = px - (w - kItemInset), y = py - 26;
+        out[i].px = px, out[i].py = py;
+        out[i].x0 = std::round(x), out[i].x1 = out[i].x0 + w;
+        out[i].y0 = std::round(y + (kItemH - kLabelH) / 2), out[i].y1 = out[i].y0 + kLabelH;
     }
-    return out;
+    // fit_on_screen: the whole menu moved inside the canvas.
+    lay.cx = c.x, lay.cy = c.y;
+    if (canvasW_ > 0 && canvasH_ > 0) {
+        float x0 = c.x - kHeadSize / 2, y0 = c.y - kHeadSize / 2, x1 = c.x + kHeadSize / 2, y1 = c.y + kHeadSize / 2;
+        for (const auto& l : out)
+            x0 = std::min(x0, l.x0), y0 = std::min(y0, l.y0), x1 = std::max(x1, l.x1), y1 = std::max(y1, l.y1);
+        float dx = 0, dy = 0;
+        if (x1 > float(canvasW_))
+            dx = float(canvasW_) - x1;
+        if (x0 + dx < 0)
+            dx = -x0;
+        if (y1 > float(canvasH_))
+            dy = float(canvasH_) - y1;
+        if (y0 + dy < 0)
+            dy = -y0;
+        for (auto& l : out)
+            l.x0 += dx, l.x1 += dx, l.px += dx, l.y0 += dy, l.y1 += dy, l.py += dy;
+        lay.cx += dx, lay.cy += dy;
+    }
+    return lay;
+}
+
+int PieMenuHost::labelAt(const Layout& l, simd_float2 p) const {
+    for (size_t i = 0; i < l.labels.size(); ++i) {
+        const auto& b = l.labels[i];
+        if (p.x >= b.x0 && p.x < b.x1 && p.y >= b.y0 && p.y < b.y1)
+            return int(i);
+    }
+    return -1;
+}
+
+bool PieMenuHost::headAt(const Layout& l, simd_float2 p) const {
+    return std::fabs(p.x - l.cx) <= kHeadSize / 2 && std::fabs(p.y - l.cy) <= kHeadSize / 2;
 }
 
 void PieMenuHost::hover(simd_float2 p) {
     if (!open_)
         return;
-    int h = -1;
-    const auto ls = labels();
-    for (size_t i = 0; i < ls.size(); ++i)
-        if (p.x >= ls[i].x0 && p.x < ls[i].x1 && p.y >= ls[i].y0 && p.y < ls[i].y1)
-            h = int(i);
+    const int h = labelAt(layout(), p);
     if (h != hover_)
         hover_ = h, dirty_ = true;
+}
+
+bool PieMenuHost::pickLabel(const Layout& lay, int index, bool keepOpen) {
+    const Label& l = lay.labels[size_t(index)];
+    const auto& first = entries_[l.entries.front()];
+    if (submenu_.empty() && first.path.size() > 1) {
+        // A child pie centred on the item.
+        submenu_ = l.text;
+        subAt_ = simd_make_float2(l.px, l.py);
+        hover_ = -1;
+        if (playSound_)
+            playSound_(style_.submenuSound);
+    } else {
+        if (playSound_)
+            playSound_(style_.mainSound);
+        queueEntry(l.entries.front());
+        if (!keepOpen)
+            close();
+    }
+    dirty_ = true;
+    return true;
+}
+
+bool PieMenuHost::press(simd_float2) { return open_; }
+
+bool PieMenuHost::release(simd_float2 p, bool keepOpen) {
+    if (!open_)
+        return false;
+    const Layout lay = layout();
+    const int hit = labelAt(lay, p);
+    if (gesture_) {
+        // The release of the press that opened the menu.
+        gesture_ = false;
+        const float d = simd_distance(p, at_);
+        if (d <= style_.cancelBoundary)
+            return true; // a plain click: the menu stays
+        if (d >= style_.gesturePickBoundary && hit >= 0)
+            return pickLabel(lay, hit, keepOpen);
+        close();
+        return true;
+    }
+    if (hit >= 0)
+        return pickLabel(lay, hit, keepOpen);
+    if (!submenu_.empty() && headAt(lay, p)) {
+        submenu_.clear(), hover_ = -1, dirty_ = true; // the child's "back"
+        return true;
+    }
+    close();
+    return true;
 }
 
 bool PieMenuHost::click(simd_float2 p, bool keepOpen) {
@@ -237,35 +410,25 @@ bool PieMenuHost::click(simd_float2 p, bool keepOpen) {
     }
     if (!open_)
         return false;
-    const auto ls = labels();
-    for (const auto& l : ls) {
-        if (!(p.x >= l.x0 && p.x < l.x1 && p.y >= l.y0 && p.y < l.y1))
-            continue;
-        const auto& first = entries_[l.entries.front()];
-        if (submenu_.empty() && first.path.size() > 1) {
-            submenu_ = l.text;
-            hover_ = -1;
-        } else {
-            queueEntry(l.entries.front());
-            if (!keepOpen)
-                close();
-        }
-        dirty_ = true;
-        return true;
-    }
-    if (!submenu_.empty())
-        submenu_.clear(), hover_ = -1, dirty_ = true;
-    else
-        close();
-    return true;
+    gesture_ = false;
+    press(p);
+    return release(p, keepOpen);
 }
 
 bool PieMenuHost::select(size_t index) {
     if (!open_ || index >= entries_.size())
         return false;
     const auto& e = entries_[index];
-    submenu_ = e.path.size() > 1 ? e.path[0] : "";
+    submenu_.clear();
+    if (e.path.size() > 1) {
+        const Layout top = layout();
+        for (const auto& l : top.labels)
+            if (l.text == e.path[0])
+                subAt_ = simd_make_float2(l.px, l.py);
+        submenu_ = e.path[0];
+    }
     chosen_ = int(index);
+    gesture_ = false;
     queueEntry(index);
     dirty_ = true;
     return true;
@@ -403,21 +566,28 @@ UiScreen PieMenuHost::screen(int width, int height) {
     }
 
     if (open_) {
-        const auto ls = labels();
-        // Centre marker and the object's name above the ring.
-        paint.rect(at_.x - 4, at_.y - 4, at_.x + 4, at_.y + 4, kLabelHot);
-        float top = at_.y;
-        for (const auto& l : ls)
-            top = std::min(top, l.y0);
-        const std::string title = submenu_.empty() ? title_ : title_ + " / " + submenu_;
-        const float tw = paint.width(title) + 2 * kPad;
-        paint.label(std::round(at_.x - tw / 2), top - kLabelH - 10, std::round(at_.x + tw / 2), top - 10, title, kTitle,
-                    kText);
-        for (size_t i = 0; i < ls.size(); ++i) {
-            const auto& l = ls[i];
+        const Layout lay = layout();
+        // The head in the middle (the child pie's "back").
+        const float h = kHeadSize / 2;
+        if (head_) {
+            UiQuad q;
+            q.image = head_.get();
+            q.x0 = std::round(lay.cx - h), q.y0 = std::round(lay.cy - h);
+            q.x1 = q.x0 + kHeadSize, q.y1 = q.y0 + kHeadSize;
+            out.quads.push_back(q);
+        } else {
+            paint.rect(lay.cx - h / 2, lay.cy - h / 2, lay.cx + h / 2, lay.cy + h / 2, kItemBack);
+        }
+        const float th = paint.font ? std::ceil(measureText(*paint.font, U"", paint.ppem).ascent +
+                                                measureText(*paint.font, U"", paint.ppem).descent) + 2
+                                    : 14;
+        for (size_t i = 0; i < lay.labels.size(); ++i) {
+            const auto& l = lay.labels[i];
             const bool hot = int(i) == hover_ ||
                              (chosen_ >= 0 && std::find(l.entries.begin(), l.entries.end(), size_t(chosen_)) != l.entries.end());
-            paint.label(l.x0, l.y0, l.x1, l.y1, l.text, hot ? kLabelHot : kLabel, hot ? kTextHot : kText);
+            paint.rect(l.x0, l.y0, l.x1, l.y1, kItemBack);
+            paint.text(l.x0 + kItemInset, l.y0 + std::round((l.y1 - l.y0 - th) / 2), l.text,
+                       hot ? style_.textHighlight : style_.textNormal);
         }
     }
 

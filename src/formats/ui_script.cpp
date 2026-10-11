@@ -302,4 +302,30 @@ std::optional<UiStringRef> uiStringRef(std::string_view value) {
 
 uint32_t packageGroupHash(std::string_view stem) { return (nameInstanceHash(stem) & 0xFFFFFF) | 0x7F000000; }
 
+namespace {
+const UiElement* findCaption(const std::vector<UiElement>& list, std::string_view caption) {
+    for (const auto& e : list) {
+        if (e.get("caption") == caption)
+            return &e;
+        if (const UiElement* c = findCaption(e.children, caption))
+            return c;
+    }
+    return nullptr;
+}
+} // namespace
+
+std::map<std::string, std::string> uiConstants(const UiScript& script, std::string_view table) {
+    std::map<std::string, std::string> out;
+    const UiElement* t = findCaption(script.roots, table);
+    if (!t)
+        return out;
+    for (const auto& c : t->children) {
+        const std::string text = c.get("caption");
+        const size_t eq = text.find('=');
+        if (eq != std::string::npos && eq > 0)
+            out[text.substr(0, eq)] = text.substr(eq + 1);
+    }
+    return out;
+}
+
 } // namespace os2

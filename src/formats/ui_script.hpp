@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -59,6 +60,11 @@ struct UiScript {
     // Depth-first search by id; null if none.
     const UiElement* find(uint32_t id) const;
 };
+
+// "name=value" captions of the texts under the (hidden) window captioned
+// `table`: the constants some scripts carry for the code that draws them
+// (the pie menu's 0x090617B7: "kItemRadius=68", ...). Empty if there is none.
+std::map<std::string, std::string> uiConstants(const UiScript& script, std::string_view table = "Constants Table");
 
 // True if the resource is a Reia video rather than a script.
 bool isReia(std::span<const uint8_t> data);

@@ -76,6 +76,20 @@ static void testScript() {
     check(!isReia(std::vector<uint8_t>{'#', ' '}), "script is not Reia");
 }
 
+static void testConstants() {
+    // As the pie menu's script 0x090617B7 carries them.
+    const auto s = UiScript::parse(
+        "<LEGACY clsid=GZWinGen iid=IGZWinCustom id=0x17f02f06 area=(246,170,446,445)>\n<CHILDREN>\n"
+        "<LEGACY clsid=GZWinFlatRect iid=IGZWinFlatRect id=0x0bd726b1 caption=\"Constants Table\">\n<CHILDREN>\n"
+        "<LEGACY clsid=GZWinText iid=IGZWinText id=0x00000000 caption=\"kItemRadius=68\">\n"
+        "<LEGACY clsid=GZWinText iid=IGZWinText id=0x00000000 caption=\"kPieMenuTextColorNormal=178,193,255\">\n"
+        "</CHILDREN>\n</CHILDREN>\n");
+    const auto c = uiConstants(s);
+    check(c.size() == 2 && c.at("kItemRadius") == "68" && c.at("kPieMenuTextColorNormal") == "178,193,255",
+          "constants table");
+    check(uiConstants(s, "Other").empty(), "no such table");
+}
+
 static void pixel(const RgbaImage& img, uint32_t x, uint32_t y, int r, int g, int b, int a, int tol, const char* what) {
     const uint8_t* p = &img.pixels[(size_t(y) * img.width + x) * 4];
     check(std::abs(p[0] - r) <= tol && std::abs(p[1] - g) <= tol && std::abs(p[2] - b) <= tol && std::abs(p[3] - a) <= tol,
@@ -501,6 +515,7 @@ static void testLayout() {
 }
 
 int main() {
+    testConstants();
     testScript();
     testTga();
     testBmp();
