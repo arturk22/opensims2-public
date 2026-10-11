@@ -187,12 +187,57 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, std::map<std::str
     }
 }
 
+// A door or window: the vertices of its visible parts in lot space.
+struct WallHole {
+    std::vector<Vec3f> points;
+};
+// A cut out of a wall stretch: along it from its start, and heights.
+struct Cut {
+    float u0, u1, z0, z1;
+};
+
+// Frames cover this much of the hole's edge (the hole is the object's extent less this).
+constexpr float kHoleInset = 0.1f;
+
+// Cuts of the holes whose objects sit across the stretch from (ax, ay) along
+// (dx, dy), `length` long, between z `bottom` and `top`.
+std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay, float dx, float dy, float length,
+                          float bottom, float top) {
+    std::vector<Cut> cuts;
+    const float nx = dy, ny = -dx;
+    for (const auto& h : holes) {
+        float u0 = 1e9f, u1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
+        size_t near = 0;
+        bool front = false, back = false;
+        for (const auto& p : h.points) {
+            const float rx = p[0] - ax, ry = p[1] - ay;
+            const float d = rx * nx + ry * ny, along = rx * dx + ry * dy;
+            if (std::abs(d) > 0.25f || p[2] < bottom - 0.1f || p[2] > top + 0.1f)
+                continue;
+            ++near;
+            front = front || d > 0.01f, back = back || d < -0.01f;
+            u0 = std::min(u0, along), u1 = std::max(u1, along), z0 = std::min(z0, p[2]), z1 = std::max(z1, p[2]);
+        }
+        // The object must stand across this wall (frame on both sides) and overlap the stretch.
+        if (near < 8 || !front || !back)
+            continue;
+        u0 = std::max(u0 + kHoleInset, 0.0f), u1 = std::min(u1 - kHoleInset, length);
+        // Doors go down to the floor; windows keep a sill.
+        z0 = z0 < bottom + 0.05f ? bottom : z0 + kHoleInset;
+        z1 = std::min(z1 - kHoleInset, top);
+        if (u1 - u0 > 0.05f && z1 - z0 > 0.05f)
+            cuts.push_back({u0, u1, z0, z1});
+    }
+    return cuts;
+}
+
 // Walls as slabs: one face per side with that side's covering, plus a top.
 // Each slab is stretched by its half thickness at both ends to close corners;
 // texture coordinates follow world position, so overlaps line up. Attic walls
 // (gables) rise to the roof above them, half walls under a fence to 1 tile.
 void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs, const LotViewOptions& view,
-              std::map<std::string, MeshBuilder>& out, std::vector<std::string>& warnings) {
+              const std::vector<WallHole>& holes, std::map<std::string, MeshBuilder>& out,
+              std::vector<std::string>& warnings) {
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.wallPatterns)
         materials[ref] = patterns.wallMaterial(pattern);
@@ -263,6 +308,13 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         for (size_t seg = 0; seg + 1 < points.size(); ++seg) {
             const float ax = points[seg][0], ay = points[seg][1], bx = points[seg + 1][0], by = points[seg + 1][1];
             const float za0 = zb[seg], zb0 = zb[seg + 1], za1 = zt[seg], zb1 = zt[seg + 1];
+            // Doors and windows on this stretch: intervals along it (from
+            // (ax, ay)) and heights cut out of both faces.
+            const float segLen = std::sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+            std::vector<Cut> cuts;
+            if (w.type == Lot::Normal && !fence)
+                cuts = wallCuts(holes, ax, ay, dx, dy, segLen, std::min(za0, zb0), std::max(za1, zb1));
+            auto lerp = [&](float a, float b, float f) { return a + (b - a) * f; };
             for (int side = 0; side < 2; ++side) {
                 auto it = materials.find(w.patterns[size_t(side)]);
                 if (it == materials.end() || it->second.empty())
@@ -270,8 +322,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 MeshBuilder& b = out["wall:" + it->second];
                 const float s = side == 0 ? 1.0f : -1.0f;
                 const Vec3f n{nx * s, ny * s, 0};
-                const Vec3f pa0{ax + nx * t * s, ay + ny * t * s, za0}, pb0{bx + nx * t * s, by + ny * t * s, zb0};
-                const Vec3f pa1{pa0[0], pa0[1], za1}, pb1{pb0[0], pb0[1], zb1};
+                const float ox = nx * t * s, oy = ny * t * s;
                 // u runs along the wall in world units (right to left as seen from the face).
                 auto u = [&](const Vec3f& p) { return s * (p[0] * dx + p[1] * dy); };
                 // v: 0 at the top of a full wall; attic and half walls keep the
@@ -279,14 +330,67 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 auto vv = [&](float z, float base, float top) {
                     return attic || fence ? 1.0f - (z - base) / kStoryHeight : (top - z) / kStoryHeight;
                 };
-                const uint32_t i0 = b.vertex(pa0, n, u(pa0), vv(za0, za0, za1)),
-                               i1 = b.vertex(pb0, n, u(pb0), vv(zb0, zb0, zb1)),
-                               i2 = b.vertex(pb1, n, u(pb1), vv(zb1, zb0, zb1)),
-                               i3 = b.vertex(pa1, n, u(pa1), vv(za1, za0, za1));
-                if (side == 0)
-                    b.quad(i0, i1, i2, i3);
-                else
-                    b.quad(i1, i0, i3, i2);
+                // Pieces between the cut intervals, each split around the holes over it.
+                std::vector<float> breaks{0, segLen};
+                for (const auto& c : cuts)
+                    breaks.insert(breaks.end(), {c.u0, c.u1});
+                std::sort(breaks.begin(), breaks.end());
+                for (size_t k = 0; k + 1 < breaks.size(); ++k) {
+                    const float s0 = breaks[k], s1 = breaks[k + 1];
+                    if (s1 - s0 < 1e-4f)
+                        continue;
+                    const float f0 = s0 / segLen, f1 = s1 / segLen;
+                    const float bot0 = lerp(za0, zb0, f0), bot1 = lerp(za0, zb0, f1), top0 = lerp(za1, zb1, f0),
+                                top1 = lerp(za1, zb1, f1);
+                    std::vector<std::pair<float, float>> gaps; // z ranges cut out of this piece
+                    for (const auto& c : cuts)
+                        if (c.u0 <= s0 + 1e-4f && c.u1 >= s1 - 1e-4f)
+                            gaps.push_back({c.z0, c.z1});
+                    std::sort(gaps.begin(), gaps.end());
+                    // Solid bands: from the bottom (or a gap's top) to the next gap's bottom (or the top).
+                    std::vector<std::array<float, 4>> bands; // z at s0 low/high, z at s1 low/high
+                    std::array<float, 2> low{bot0, bot1};
+                    for (const auto& [g0, g1] : gaps) {
+                        bands.push_back({low[0], std::min(g0, top0), low[1], std::min(g0, top1)});
+                        low = {std::max(g1, bot0), std::max(g1, bot1)};
+                    }
+                    bands.push_back({low[0], top0, low[1], top1});
+                    const float x0 = ax + dx * s0 + ox, y0 = ay + dy * s0 + oy, x1 = ax + dx * s1 + ox,
+                                y1 = ay + dy * s1 + oy;
+                    for (const auto& band : bands) {
+                        if (band[1] - band[0] < 1e-4f && band[3] - band[2] < 1e-4f)
+                            continue;
+                        const Vec3f pa0{x0, y0, band[0]}, pb0{x1, y1, band[2]}, pb1{x1, y1, band[3]},
+                            pa1{x0, y0, band[1]};
+                        const uint32_t i0 = b.vertex(pa0, n, u(pa0), vv(band[0], bot0, top0)),
+                                       i1 = b.vertex(pb0, n, u(pb0), vv(band[2], bot1, top1)),
+                                       i2 = b.vertex(pb1, n, u(pb1), vv(band[3], bot1, top1)),
+                                       i3 = b.vertex(pa1, n, u(pa1), vv(band[1], bot0, top0));
+                        if (side == 0)
+                            b.quad(i0, i1, i2, i3);
+                        else
+                            b.quad(i1, i0, i3, i2);
+                    }
+                }
+            }
+            // The holes' sides through the wall: jambs (where the hole ends
+            // inside this stretch), sill and head, in the wall top's material.
+            for (const auto& c : cuts) {
+                MeshBuilder& rev = out["walltop:wall_top"];
+                auto at = [&](float along, float side, float z) {
+                    return Vec3f{ax + dx * along + nx * t * side, ay + dy * along + ny * t * side, z};
+                };
+                auto face = [&](Vec3f p0, Vec3f p1, Vec3f p2, Vec3f p3) {
+                    const Vec3f nn = normalOf(p0, p1, p2);
+                    auto vtx = [&](const Vec3f& p) { return rev.vertex(p, nn, p[0] + p[2], p[1] + p[2]); };
+                    rev.quad(vtx(p0), vtx(p1), vtx(p2), vtx(p3));
+                };
+                if (c.u0 > t + 1e-3f) // jamb at u0, facing +along
+                    face(at(c.u0, -1, c.z0), at(c.u0, 1, c.z0), at(c.u0, 1, c.z1), at(c.u0, -1, c.z1));
+                if (c.u1 < segLen - t - 1e-3f) // jamb at u1, facing -along
+                    face(at(c.u1, 1, c.z0), at(c.u1, -1, c.z0), at(c.u1, -1, c.z1), at(c.u1, 1, c.z1));
+                face(at(c.u0, 1, c.z0), at(c.u0, -1, c.z0), at(c.u1, -1, c.z0), at(c.u1, 1, c.z0)); // sill, up
+                face(at(c.u0, -1, c.z1), at(c.u0, 1, c.z1), at(c.u1, 1, c.z1), at(c.u1, -1, c.z1)); // head, down
             }
             MeshBuilder& cap = out["walltop:wall_top"];
             const Vec3f r0{ax + nx * t, ay + ny * t, za1}, r1{bx + nx * t, by + ny * t, zb1},
@@ -298,6 +402,55 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
     }
     if (unknownFences)
         warnings.push_back(std::to_string(unknownFences) + " fence segments of unknown fences");
+}
+
+// Doors and windows cut holes in the walls they stand in. The game draws the
+// holes with per-tile WallMask textures (TXMTs "<object>_<x>_<y>_<level>_<dir>_wallmask",
+// only for some objects); here the hole is the extent of the object's visible
+// parts (not its wall shadows) less the frame, for objects whose definition
+// is named "Window ..." or "Door ...".
+std::vector<WallHole> findWallHoles(const Lot& lot, ResourceIndex& index, std::vector<std::string>& warnings) {
+    std::vector<WallHole> holes;
+    std::map<std::string, std::optional<std::vector<Vec3f>>> models; // model -> visible vertices
+    for (const auto& o : lot.objects) {
+        const std::string def = lowerAscii(o.definition);
+        if (o.model.empty() || o.person || (o.position[0] == 0 && o.position[1] == 0) ||
+            !(def.starts_with("window") || def.starts_with("door")))
+            continue;
+        auto it = models.find(o.model);
+        if (it == models.end()) {
+            std::optional<std::vector<Vec3f>> points;
+            try {
+                const ObjectModel m = loadObjectModel(index, o.model);
+                points.emplace();
+                for (const auto& part : m.parts) {
+                    auto mat = m.materials.find(part.material);
+                    if (mat == m.materials.end() || lowerAscii(part.material).find("shadow") != std::string::npos ||
+                        !standardMaterial(mat->second).visible)
+                        continue;
+                    points->insert(points->end(), part.mesh.positions.begin(), part.mesh.positions.end());
+                }
+            } catch (const std::exception& e) {
+                warnings.push_back("wall hole of " + o.model + ": " + e.what());
+            }
+            it = models.emplace(o.model, std::move(points)).first;
+        }
+        if (!it->second)
+            continue;
+        // Rotate by the unit quaternion (x, y, z, w), then move.
+        const auto& q = o.rotation;
+        WallHole h;
+        h.points.reserve(it->second->size());
+        for (const auto& v : *it->second) {
+            const float tx = 2 * (q[1] * v[2] - q[2] * v[1]), ty = 2 * (q[2] * v[0] - q[0] * v[2]),
+                        tz = 2 * (q[0] * v[1] - q[1] * v[0]);
+            h.points.push_back({v[0] + q[3] * tx + (q[1] * tz - q[2] * ty) + o.position[0],
+                                v[1] + q[3] * ty + (q[2] * tx - q[0] * tz) + o.position[1],
+                                v[2] + q[3] * tz + (q[0] * ty - q[1] * tx) + o.position[2]});
+        }
+        holes.push_back(std::move(h));
+    }
+    return holes;
 }
 
 // Materials for the parts the game draws with its own shaders: roofs (no
@@ -504,7 +657,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     model.warnings.insert(model.warnings.end(), roofs.warnings.begin(), roofs.warnings.end());
     std::map<std::string, MeshBuilder> built;
     addFloors(lot, patterns, built, model.warnings);
-    addWalls(lot, patterns, roofs, view, built, model.warnings);
+    addWalls(lot, patterns, roofs, view, findWallHoles(lot, index, model.warnings), built, model.warnings);
     addWater(lot, built);
     model.materials["water:terrain"] = terrainWaterMaterial();
     model.materials["water:pool"] = poolWaterMaterial();
