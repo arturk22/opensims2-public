@@ -328,6 +328,29 @@ void CasMode::redo() {
     rebuild();
 }
 
+namespace {
+// The idle that loops for a Sim of the skeleton's age (auskel, cuskel, puskel,
+// buskel): the first one of the age that the game has. Nobody stands in the
+// rest pose (a T-pose) in the studio.
+const Animation* findIdle(SimActor& actor, ResourceIndex& index, const std::string& sk, bool male) {
+    std::vector<const char*> names;
+    if (sk.starts_with("c"))
+        names = {male ? "c-UIpose-M0" : "c-UIpose-F0", "c-idle-neutral-armsSide-wtC-breatheLoop50", "c-idle-neutral-armsSide-wtC-breatheLoop"};
+    else if (sk.starts_with("p"))
+        names = {male ? "p-UIpose-m0" : "p-UIpose-F0", "p-idle-neutral-breatheLoop-CAS", "p-idle-standing-loopBreathe", "p-idle-neutral-lookAround"};
+    else if (sk.starts_with("b"))
+        names = {"b-floor-idle-loopBreathe", "b-idle-carryBaby-breathe"};
+    else
+        names = {male ? "a-UIpose-M0" : "a-UIpose-F0", "a-idle-neutral-armsSide-wtC-breatheLoop"};
+    for (const char* n : names)
+        try {
+            return &actor.animation(index, n);
+        } catch (const std::exception&) {
+        }
+    return nullptr;
+}
+} // namespace
+
 void CasMode::changed() {
     dirty_ = true;
     rebuild();
@@ -362,19 +385,8 @@ void CasMode::rebuild() {
             const std::string sk = lower(actor->skin.skeleton.name);
             if (std::getenv("OS2_CAS_DEBUG"))
                 std::fprintf(stderr, "cas: skeleton '%s'\n", actor->skin.skeleton.name.c_str());
-            std::string anim = "a-idle-neutral-armsSide-wtC-breatheLoop";
-            if (sk.starts_with("c"))
-                anim = "c-idle-neutral-armsSide-wtC-breatheLoop50";
-            else if (sk.starts_with("p"))
-                anim = "p-idle-neutral-lookAround";
-            else if (sk.starts_with("b"))
-                anim.clear();
-            if (!anim.empty())
-                try {
-                    actor->cue(-0.3 * double(i), actor->animation(index_, anim));
-                } catch (const std::exception& e) {
-                    warnings_.push_back(anim + ": " + e.what());
-                }
+            if (const auto* idle = findIdle(*actor, index_, sk, spec.gender == cas::gender::Male))
+                actor->cue(-0.3 * double(i), *idle);
             // The first member on the left of the screen (screen right is -X).
             const simd_float2 f = facing();
             const simd_float3 right = simd_make_float3(-f.y, f.x, 0);
@@ -466,15 +478,8 @@ std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size) {
         cas::writeCharacter(index_, *catalog_, *baker_, spec, "CAS_Portrait", file, false);
         SimActor actor(loadCharacterSim(index_, catalog_->parts, file, 1));
         const std::string sk = lower(actor.skin.skeleton.name);
-        std::string anim = "a-idle-neutral-armsSide-wtC-breatheLoop";
-        if (sk.starts_with("c"))
-            anim = "c-idle-neutral-armsSide-wtC-breatheLoop50";
-        else if (sk.starts_with("p"))
-            anim = "p-idle-neutral-lookAround";
-        try {
-            actor.cue(0, actor.animation(index_, anim));
-        } catch (const std::exception&) {
-        }
+        if (const auto* idle = findIdle(actor, index_, sk, spec.gender == cas::gender::Male))
+            actor.cue(0, *idle);
         // Alone, far from the studio, facing +Y.
         const simd_float3 at = simd_make_float3(1000, 1000, 0);
         actor.position = {at.x, at.y, at.z};
