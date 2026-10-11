@@ -1,0 +1,164 @@
+#pragma once
+
+// Buy mode over the lot (plain C++, driven from main.mm): the game's Buy
+// panel (UI script 0x49060004, cTSWinProcBuyPanel) with the catalog browser
+// (by function and subsort, by room and function), the catalog description
+// (0x49063004) of the item under the mouse, and the object tool
+// (cTSUserToolObject): the picked object, created at once, follows the
+// mouse on the lot grid with its footprint green or red, turns in 90°
+// steps, is bought on the click; the hand picks up placed objects to move
+// or sell them; undo and redo. What the game does is docs/buy-build-mac.md;
+// the placement rules are vm/placement.hpp. While Buy mode is on the
+// simulation is paused, as in the game.
+
+#include "formats/catalog.hpp"
+#include "formats/ui_screen.hpp"
+#include "vm/placement.hpp"
+
+#include <simd/simd.h>
+
+#include <array>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace MTL {
+class Device;
+class RenderCommandEncoder;
+} // namespace MTL
+
+namespace os2 {
+
+class FontLibrary;
+class LotSimulation;
+class Renderer;
+class ResourceIndex;
+class UiLayer;
+class UiResources;
+class VmObjectView;
+
+class BuyMode {
+public:
+    BuyMode(LotSimulation& simulation, VmObjectView& view, Renderer& renderer, ResourceIndex& index,
+            const std::filesystem::path& resDir);
+    ~BuyMode();
+
+    bool ok() const { return ok_; }
+    bool active() const { return active_; }
+    // Entering pauses the simulation; leaving drops what the hand holds,
+    // destroys what was sold (the undo history is reset, as ResetSelf) and
+    // restores the speed.
+    void enter();
+    void exit();
+
+    Catalog& catalog() { return catalog_; }
+    // Picks a catalog item: its object is created now (Init run) and held.
+    bool select(const CatalogEntry& entry);
+    // The level objects go on (1 = the lot's ground level).
+    void setLevel(int level) { level_ = level; }
+    int level() const { return level_; }
+
+    // --- The lot -------------------------------------------------------------
+    // The mouse ray over the lot (world space): what is held follows it.
+    void pointAt(simd_float3 eye, simd_float3 dir);
+    // A click on the lot: places what is held (bought, or moved), or picks
+    // up the object under the mouse with the hand. Returns whether it did.
+    bool click(simd_float3 eye, simd_float3 dir);
+    // Headless: holds at a tile / places there.
+    void holdAt(int x, int y, int direction);
+    bool placeAt(int x, int y, int direction);
+    // Picks up a placed object (the hand) by ID.
+    bool grab(vm::ObjectId id);
+    // , and . turn by 90° (2 direction steps); Esc drops what is held;
+    // Delete sells it.
+    void rotate(int steps);
+    void cancel();
+    bool deleteHeld();
+    bool undo();
+    bool redo();
+    vm::ObjectId held() const { return held_; }
+    // The last placement's verdict (with the game's error text), for the host.
+    const std::string& message() const { return message_; }
+
+    // --- The panel -------------------------------------------------------------
+    bool press(simd_float2 p); // true: the panel took it
+    void hover(simd_float2 p);
+    void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
+    UiScreen screen(int width, int height);
+    void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
+    void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
+    // Called every frame: the footprint highlight follows what is held.
+    void update();
+
+private:
+    enum class Sort { Function, Room };
+    enum class Action { None, Tab, Function, SubSort, Room, RoomFunction, Back, Prev, Next, Item, Tool, Undo, Redo };
+    struct Target {
+        std::array<float, 4> rect;
+        Action action = Action::None;
+        int value = 0;
+    };
+    struct Op {
+        enum class Kind { Created, Deleted, Moved } kind = Kind::Created;
+        vm::ObjectId id = 0;
+        vm::Placement placement; // Deleted/Moved: where it was; Created: where it went
+        int cost = 0;
+    };
+    std::vector<const CatalogEntry*> items() const;
+    std::optional<vm::TilePos> tileUnder(simd_float3 eye, simd_float3 dir) const;
+    void preview(const vm::Placement& p);
+    vm::Placement current(vm::ObjectId id);
+    void layoutIfNeeded();
+    std::string errorText(const vm::Placement& p);
+    void say(const std::string& m);
+
+    LotSimulation& sim_;
+    vm::VM& vm_;
+    VmObjectView& view_;
+    Renderer& renderer_;
+    ResourceIndex& index_;
+    std::unique_ptr<UiResources> res_;
+    std::unique_ptr<FontLibrary> fonts_;
+    Catalog catalog_;
+    UiScript panel_, puck_, description_;
+    bool ok_ = false, active_ = false;
+    int16_t savedPaused_ = 0;
+
+    // Catalog browsing (cTSWinProcBuyPanel).
+    Sort sort_ = Sort::Function;
+    int function_ = -1; // function sort bit chosen (-1: the category buttons)
+    int subSort_ = 0;   // subsort bits (0: all)
+    int room_ = -1;     // room sort bit chosen
+    int roomFunction_ = 0;
+    size_t page_ = 0;
+    const CatalogEntry* selected_ = nullptr;
+    const CatalogEntry* hovered_ = nullptr;
+
+    // The object tool.
+    vm::ObjectId held_ = 0;
+    bool heldNew_ = false; // created from the catalog (not bought yet)
+    vm::Placement heldFrom_; // where a grabbed object was
+    vm::Placement last_;     // its last test
+    int direction_ = 2;
+    int level_ = 1;
+    std::vector<Op> undo_, redo_;
+    std::string message_;
+
+    // Footprint tiles: models (green, red) and instances.
+    std::array<int, 2> tileModels_{-1, -1};
+    std::vector<int> tileInstances_;
+
+    std::vector<Target> targets_;
+    std::vector<std::array<float, 4>> solid_;
+    std::optional<simd_float2> mouse_;
+    std::vector<std::unique_ptr<RgbaImage>> frameImages_;
+    std::array<std::unique_ptr<UiLayer>, 3> layers_;
+    size_t layer_ = 0;
+    bool dirty_ = true;
+    int canvasW_ = 0, canvasH_ = 0, laidW_ = 0, laidH_ = 0;
+};
+
+} // namespace os2

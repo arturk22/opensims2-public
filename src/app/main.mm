@@ -71,6 +71,7 @@
 #include "render/camera.hpp"
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#include "app/buy_mode.hpp"
 #include "app/data_location.hpp"
 #include "app/hood_mode.hpp"
 #include "app/live_ui.hpp"
@@ -113,6 +114,9 @@ std::unique_ptr<os2::PieMenuHost> gPie;
 // --ui live: the game's live-mode panel over the same VM (app/live_ui.hpp).
 std::unique_ptr<os2::LiveUi> gLive;
 bool liveUiRequested();
+// Buy mode (app/buy_mode.hpp): the puck's Buy button, or --mode buy.
+std::unique_ptr<os2::BuyMode> gBuy;
+void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index); // below setupLiveUi
 struct PickBox {
     uint32_t instance;
     simd_float3 lo, hi;
@@ -580,6 +584,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     setupPieMenu(index);
     if (liveUiRequested())
         setupLiveUi(index);
+    if (liveUiRequested() || argument(@"--mode"))
+        setupBuyMode(renderer, index);
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
@@ -659,6 +665,63 @@ void setupLiveUi(os2::ResourceIndex& index) {
         gPie->setShowQueue(false);
     std::printf("opensims2: live UI: %s, %zu family members\n", gLive->ok() ? "loaded" : "missing scripts",
                 gLive->family().size());
+}
+
+// Buy mode over the lot's VM: the puck's mode buttons switch it (the live
+// panel gives way to the Buy panel); --mode buy starts in it; headless,
+// --buy <guid|name> picks a catalog item, --hold x,y[,dir[,level]] holds it
+// there and --place x,y[,dir[,level]] buys it there (repeatable, in order),
+// --grab <object id> picks up a placed object, --sell sells what is held,
+// --undo undoes the last change.
+void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
+    gBuy = std::make_unique<os2::BuyMode>(*gSimulation, *gObjectView, renderer, index, gameDir() / "TSData/Res");
+    if (gLive)
+        gLive->onMode = [](int mode) {
+            if (mode == 1) {
+                gBuy->enter();
+                gLive->setMode(1);
+            } else if (mode == 0) {
+                gBuy->exit();
+                gLive->setMode(0);
+            }
+        };
+    if (argument(@"--mode").value_or("") == "buy") {
+        gBuy->enter();
+        if (gLive)
+            gLive->setMode(1);
+    }
+}
+
+// The --buy/--hold/--place/--grab/--sell/--undo steps of a headless run, in order.
+void runBuySteps() {
+    if (!gBuy || !gBuy->active())
+        return;
+    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    for (NSUInteger i = 1; i < args.count; ++i) {
+        const std::string a = args[i].UTF8String;
+        const std::string v = i + 1 < args.count ? args[i + 1].UTF8String : "";
+        int x = 0, y = 0, dir = 2, level = 0;
+        if (a == "--buy") {
+            const os2::CatalogEntry* e = gBuy->catalog().find(v);
+            if (!e)
+                throw std::runtime_error("--buy: no catalog item \"" + v + "\"");
+            gBuy->select(*e);
+        } else if ((a == "--hold" || a == "--place") && std::sscanf(v.c_str(), "%d,%d,%d,%d", &x, &y, &dir, &level) >= 2) {
+            if (level > 0)
+                gBuy->setLevel(level);
+            if (a == "--hold")
+                gBuy->holdAt(x, y, dir);
+            else
+                gBuy->placeAt(x, y, dir);
+        } else if (a == "--grab") {
+            gBuy->grab(os2::vm::ObjectId(std::stoi(v)));
+        } else if (a == "--sell") {
+            gBuy->deleteHeld();
+        } else if (a == "--undo") {
+            gBuy->undo();
+        }
+    }
+    gBuy->update();
 }
 
 // Loads --lot into the renderer in place of the test floor. Returns the middle
@@ -1065,7 +1128,7 @@ enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
     kEscape = 53, kHome = 115, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
-    kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20,
+    kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
 };
 
 // Camera position slot of the keys 4-9 (-1: another key).
@@ -1142,6 +1205,18 @@ int cameraSlot(unsigned short key) {
             _camera->restorePosition(slot, !(e.modifierFlags & NSEventModifierFlagShift));
         return;
     }
+    // Buy mode: , and . turn what is held, Delete sells it, Ctrl-Z/Ctrl-Y undo and redo.
+    if (gBuy && gBuy->active()) {
+        const bool control = e.modifierFlags & NSEventModifierFlagControl;
+        if (control && e.keyCode == kZ) { gBuy->undo(); return; }
+        if (control && e.keyCode == kY) { gBuy->redo(); return; }
+        if (gBuy->held() && (e.keyCode == kComma || e.keyCode == kPeriod)) {
+            gBuy->rotate(e.keyCode == kPeriod ? 2 : -2);
+            _held.erase(e.keyCode); // not the camera's
+            return;
+        }
+        if (e.keyCode == kBackspace || e.keyCode == kForwardDelete) { gBuy->deleteHeld(); return; }
+    }
     switch (e.keyCode) {
     case kZ: case kPadPlus: _camera->zoomBy(1); break;
     case kX: case kPadMinus: _camera->zoomBy(-1); break;
@@ -1151,6 +1226,10 @@ int cameraSlot(unsigned short key) {
                 _camera->moveTo(*p);
         break;
     case kEscape:
+        if (gBuy && gBuy->active() && gBuy->held()) { // drops what Buy mode holds
+            gBuy->cancel();
+            break;
+        }
         if (gHood) {
             gHood->escape();
             break;
@@ -1265,12 +1344,18 @@ int cameraSlot(unsigned short key) {
         return;
     if (gPie->isOpen() && gPie->press(p))
         return;
+    if (gBuy && gBuy->active() && gBuy->press(p))
+        return;
     if (gLive && gLive->press(p))
         return;
     const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
     const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
     simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
     const simd_float3 eye = _camera->eye();
+    if (gBuy && gBuy->active()) { // the object tool, not the pie menu
+        gBuy->click(eye, simd_normalize(q.xyz / q.w - eye));
+        return;
+    }
     const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
     if (id && !gPie->open(id, p))
         std::printf("opensims2: object %d: no interactions available\n", id);
@@ -1291,6 +1376,14 @@ int cameraSlot(unsigned short key) {
         gPie->hover([self canvasPoint:e]);
     if (gLive)
         gLive->hover([self canvasPoint:e]);
+    if (gBuy && gBuy->active()) {
+        const simd_float2 p = [self canvasPoint:e];
+        gBuy->hover(p);
+        const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
+        const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
+        const simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
+        gBuy->pointAt(_camera->eye(), simd_normalize(q.xyz / q.w - _camera->eye()));
+    }
 }
 
 - (void)mouseDragged:(NSEvent*)e {
@@ -1353,6 +1446,8 @@ int cameraSlot(unsigned short key) {
     float aspect = size.height > 0 ? float(size.width / size.height) : 1.0f;
     os2::FrameView frame{view.camera->view(), view.camera->projection(aspect)};
     poseActors(*_renderer, now - _start);
+    if (gBuy)
+        gBuy->update();
     if (view.bounds.size.width > 0)
         gUiScale = float(size.width / view.bounds.size.width);
 
@@ -1437,9 +1532,14 @@ int cameraSlot(unsigned short key) {
             if (gLive)
                 gLive->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                               uint32_t(view.depthStencilPixelFormat));
+            if (gBuy)
+                gBuy->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                             uint32_t(view.depthStencilPixelFormat));
             _viewDelegate.renderer->setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
                 if (gUi)
                     gUi->encode(enc, w, h);
+                if (gBuy) // under the puck
+                    gBuy->encode(enc, w, h, gUiScale);
                 if (gLive)
                     gLive->encode(enc, w, h, gUiScale);
                 gPie->encode(enc, w, h, gUiScale);
@@ -1478,6 +1578,11 @@ int cameraSlot(unsigned short key) {
                 const simd_float2 p = simd_make_float2(clickX, clickY);
                 if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p))
                     continue;
+                if (gBuy && gBuy->active()) {
+                    gBuy->setCanvas(int(cw), int(ch));
+                    if (gBuy->press(p))
+                        continue;
+                }
                 if (gLive) {
                     gLive->setCanvas(int(cw), int(ch));
                     if (gLive->press(p))
@@ -1501,6 +1606,11 @@ int cameraSlot(unsigned short key) {
             if (auto h = argument(@"--ui-hover"); gLive && h && std::sscanf(h->c_str(), "%f,%f", &hx, &hy) == 2) {
                 gLive->setCanvas(int(cw), int(ch));
                 gLive->hover(simd_make_float2(hx, hy));
+            }
+            runBuySteps();
+            if (auto h = argument(@"--ui-hover"); gBuy && h && std::sscanf(h->c_str(), "%f,%f", &hx, &hy) == 2) {
+                gBuy->setCanvas(int(cw), int(ch));
+                gBuy->hover(simd_make_float2(hx, hy));
             }
             std::fflush(stdout);
         }

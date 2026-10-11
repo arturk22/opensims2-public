@@ -355,6 +355,8 @@ uint64_t LiveUi::stamp() const {
             mix(uint64_t(uint16_t(o->person->motives[vm::motive::Mood])));
     }
     mix(uint64_t(hoverIcon_ + 1));
+    mix(uint64_t(mode_ + 1));
+    mix(uint64_t(uint16_t(g[vm::global::BudgetDiv10000])) << 16 | uint16_t(g[vm::global::BudgetMod10000]));
     return h;
 }
 
@@ -428,8 +430,8 @@ UiScreen LiveUi::screen(int width, int height) {
             liveY = puckY + float(a->area()[1] - b->area()[1]);
         }
 
-    // --- The live panel ----------------------------------------------------
-    {
+    // --- The live panel (only in live mode: Buy mode draws its own) ----------
+    if (mode_ == 0) {
         UiDrawHooks hk;
         // Speed and pause: the marked one pressed (docs/ui-live-mac.md §1.3).
         const std::array<std::pair<uint32_t, int>, 3> speeds = {{{kSpeed2, 2}, {kSpeed3, 3}, {kSpeed4, 4}}};
@@ -482,7 +484,7 @@ UiScreen LiveUi::screen(int width, int height) {
     }
 
     // --- The needs subpanel ------------------------------------------------
-    if (sim && sim->person) {
+    if (mode_ == 0 && sim && sim->person) {
         const UiElement& panel = motives_.roots.front();
         const std::string age = vm::agePrefix(*sim);
         const uint32_t group = age == "p" || age == "b" ? 0xA003 : age == "c" ? 0xA004 : 0xA005;
@@ -524,7 +526,7 @@ UiScreen LiveUi::screen(int width, int height) {
         UiDrawHooks hk;
         for (size_t i = 0; i < kModes.size(); ++i)
             if (const UiElement* b = puck.child(kModes[i]))
-                hk.buttonState[b] = i == 0 ? 2 : 1;
+                hk.buttonState[b] = int(i) == mode_ ? 2 : 1;
         if (const UiElement* f = puck.child(kFunds)) {
             const int16_t fam = g[vm::global::CurrentFamily];
             const auto it = vm_->families.find(fam);
@@ -596,7 +598,7 @@ UiScreen LiveUi::screen(int width, int height) {
 
     // --- The action queue (docs/ui-live-mac.md §6) ----------------------------
     hoverIcon_ = -1;
-    if (sim && !icon_.roots.empty()) {
+    if (mode_ == 0 && sim && !icon_.roots.empty()) {
         auto constant = [&](const char* k, float d) {
             auto it = queueConstants_.find(k);
             return it == queueConstants_.end() ? d : std::stof(it->second);
@@ -716,7 +718,10 @@ bool LiveUi::press(simd_float2 p) {
             }
             break;
         case Action::Mode:
-            std::printf("opensims2: live UI: mode button %d%s\n", t.value, t.value == 0 ? " (live)" : " (inert)");
+            std::printf("opensims2: live UI: mode button %d%s\n", t.value,
+                        t.value == 0 ? " (live)" : onMode && (t.value == 1) ? " (buy)" : " (inert)");
+            if (onMode)
+                onMode(t.value);
             break;
         case Action::None: break;
         }

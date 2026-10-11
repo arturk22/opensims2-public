@@ -74,6 +74,11 @@ public:
     // (their placement is set here). Also draws objects the VM created.
     void update();
 
+    // Forgets a deleted object (Buy mode deletes ghosts and sold objects):
+    // its instance is hidden, and an object that gets its ID later is drawn
+    // anew from its own OBJD.
+    void forget(int16_t id);
+
     // Keeps an object out of sight whatever the VM does (the host draws it
     // its own way: the plumbob over the selected Sim).
     void setHidden(int16_t id, bool hidden);

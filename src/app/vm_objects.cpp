@@ -376,6 +376,16 @@ void VmObjectView::addCreated(int16_t id) {
         std::fprintf(stderr, "opensims2: drawing created object %d (%s)\n", id, cres.c_str());
 }
 
+void VmObjectView::forget(int16_t id) {
+    if (auto it = drawn_.find(id); it != drawn_.end()) {
+        if (it->second.instance >= 0)
+            renderer_.setInstanceTransform(it->second.instance, hiddenMatrix());
+        drawn_.erase(it);
+    }
+    triedCreate_.erase(id);
+    cres_.erase(id);
+}
+
 void VmObjectView::update() {
     frame_.clear();
     vm::VM& m = sim_.machine();

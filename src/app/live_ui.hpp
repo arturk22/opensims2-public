@@ -99,6 +99,14 @@ public:
     // Called when the player picks another Sim in the family column.
     std::function<void(vm::ObjectId)> onSelectSim;
 
+    // The puck's mode buttons (0 live, 1 buy, 2 build, 3 story, 4 options):
+    // the one shown pressed; outside live mode only the puck and the family
+    // column are drawn (Buy mode draws its panel itself, app/buy_mode.hpp).
+    // onMode is called when the player presses one.
+    void setMode(int mode) { mode_ = mode, dirty_ = true; }
+    int mode() const { return mode_; }
+    std::function<void(int)> onMode;
+
     // The speed buttons (docs/ui-live-mac.md §1.3): simulator speed 2-4
     // (unpauses), pause toggled.
     void setSpeed(int speed);
@@ -167,6 +175,7 @@ private:
     bool dirty_ = true;
     int canvasW_ = 0, canvasH_ = 0, laidW_ = 0, laidH_ = 0;
     uint64_t stamp_ = 0;
+    int mode_ = 0;
 };
 
 } // namespace os2

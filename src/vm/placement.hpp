@@ -70,10 +70,13 @@ std::array<int, 2> partOffset(uint16_t subIndex, int direction);
 
 // Placement error codes (cTSSimSystem::PlacementErrorString): the text is
 // string code - 2 of UIText.package's STR# 0x89 ("Local fora dos limites",
-// ...); the list codes show its "one of these places" header (code 0x5B).
+// ...); the list codes (0x19, 0x8C-0x91) show its "Sua colocação só pode
+// ser em um destes lugares:" header (string 90) and the allowed places.
 namespace placementerror {
 constexpr int OutOfBounds = 2, LevelOutOfBounds = 3, NeedsWall = 7, WallIntersect = 8, Objects = 0x0C,
-              NoPlace = 0x0E, Weight = 0x0F, PlaceList = 0x5B, NoFloor = 0x5B;
+              NoPlace = 0x0E, Weight = 0x0F, PlaceList = 0x19, NoFloor = 0x8E;
+// The index of a code's text in STR# 0x89.
+inline int textIndex(int code) { return code == 0x19 || (code >= 0x8C && code <= 0x91) ? 90 : code - 2; }
 } // namespace placementerror
 
 struct Placement {
