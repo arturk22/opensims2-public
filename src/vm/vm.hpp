@@ -326,7 +326,8 @@ struct QueuedInteraction {
     uint32_t ttabFlags = 0;         // flags | flags2 << 16
     std::string name;               // TTAs string (Brazilian Portuguese), "Sub.../Item" for submenus
     std::array<int16_t, 4> args{};  // the action tree's parameters
-    uint16_t uid = 0;               // per Sim, for cancelling a specific entry
+    uint16_t uid = 0;               // unique across Sims (links.cpp), for cancelling a specific entry
+    uint16_t link = 0;              // the interaction it is linked to (Push Interaction flag 0x40), or 0
     // Cancelled by the user or by something more important queued behind it:
     // Idle for Input in its action tree returns at once (FreeSO's NotifyIdle).
     bool cancelled = false;

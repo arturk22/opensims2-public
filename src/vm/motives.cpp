@@ -137,8 +137,11 @@ float exactMotive(Object& sim, int16_t m) {
         p.exactMotivesValid = true;
     }
     const auto k = size_t(m);
-    if (p.motives[k] != p.writtenMotives[k]) // a tree wrote it
+    if (p.motives[k] != p.writtenMotives[k]) { // a tree wrote it: kept within -100..100 (inferred; a
+        // Sim's social reached 2050 from "Motive Increment" timers without it)
+        p.motives[k] = int16_t(std::clamp<int>(p.motives[k], -100, 100));
         p.exactMotives[k] = p.writtenMotives[k] = p.motives[k];
+    }
     return p.exactMotives[k];
 }
 
@@ -190,6 +193,9 @@ void tickMotives(VM& vm) {
             if (next != v)
                 setExactMotive(sim, ch.motive, next);
         }
+        // What the trees wrote since the last tick, within range.
+        for (int16_t m : motive::kPhysicalAndMental)
+            exactMotive(sim, m);
         // Daily decay (inferred: engine side, see motives.hpp).
         if (gMotiveDecay && isStatic == 0)
             for (int16_t m : motive::kPhysicalAndMental) {

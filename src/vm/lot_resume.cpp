@@ -120,7 +120,7 @@ size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
         q->priority = int16_t(std::clamp<int64_t>(rec->priority, 0, kPriorityMaximum));
         q->pushedBy = rec->initiator > 0 ? rec->initiator : sim.id;
         q->args = rec->params;
-        q->uid = sim.nextInteractionUid++;
+        q->uid = newInteractionId(vm, sim);
         sim.queue.push_back(std::move(*q));
     }
     if (sim.queue.empty())

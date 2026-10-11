@@ -432,9 +432,7 @@ Exit gosubFoundAction(Context& c) {
     q->args = sim.person->foundActionArgs;
     if (!sim.person->foundActionName.empty())
         q->name = sim.person->foundActionName;
-    if (sim.nextInteractionUid == 0)
-        ++sim.nextInteractionUid;
-    q->uid = sim.nextInteractionUid++;
+    q->uid = newInteractionId(c.vm, sim);
     const auto at = size_t(sim.activeInteraction + 1);
     const QueuedInteraction item = *q;
     sim.queue.insert(sim.queue.begin() + std::ptrdiff_t(std::min(at, sim.queue.size())), std::move(*q));

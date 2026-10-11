@@ -78,10 +78,8 @@ QueuedInteraction entryFor(ObjectId object, const InteractionTableRef& ref, cons
 }
 
 // A nested interaction goes to the end of the sub-queue.
-uint16_t enqueueSub(Object& sim, QueuedInteraction q) {
-    if (sim.nextInteractionUid == 0)
-        ++sim.nextInteractionUid;
-    q.uid = sim.nextInteractionUid++;
+uint16_t enqueueSub(VM& vm, Object& sim, QueuedInteraction q) {
+    q.uid = newInteractionId(vm, sim);
     const uint16_t uid = q.uid;
     sim.subQueue.push_back(std::move(q));
     syncQueueData(sim);
@@ -206,7 +204,19 @@ Exit pushInteraction(Context& c) {
     q->flags = flags;
     q->pushedBy = c.thread.me;
     q->operands = o;
-    const uint16_t uid = nested ? enqueueSub(*target, std::move(*q)) : enqueue(c.vm, *target, std::move(*q), flags & 0x04);
+    const uint16_t uid = nested ? enqueueSub(c.vm, *target, std::move(*q)) : enqueue(c.vm, *target, std::move(*q), flags & 0x04);
+    if (flags & 0x40) // link to the interaction whose ID is in (owner u8 at 8, data u16)
+        if (const auto linked = uint16_t(c.get(o[8], int16_t(le16(&o[9])))))
+            if (Object* t = c.vm.object(targetId)) {
+                auto find = [&](std::vector<QueuedInteraction>& v) -> QueuedInteraction* {
+                    for (auto& x : v)
+                        if (x.uid == uid)
+                            return &x;
+                    return nullptr;
+                };
+                if (QueuedInteraction* made = nested ? find(t->subQueue) : find(t->queue))
+                    linkInteractions(c.vm, *made, linked);
+            }
     if (flags & 0x80)
         c.set(o[11], int16_t(le16(&o[12])), int16_t(uid));
     return Exit::True;
@@ -497,13 +507,11 @@ uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead) {
     // to the sub-queue (as Push Interaction puts it; inferred for the menu).
     if ((q.ttabFlags & 0x8000) && sim.activeInteraction >= 0 && size_t(sim.activeInteraction) < sim.queue.size() &&
         (sim.queue[size_t(sim.activeInteraction)].ttabFlags & 0x4000) && sim.subQueue.size() <= kMaxSubQueue)
-        return enqueueSub(sim, std::move(q));
+        return enqueueSub(vm, sim, std::move(q));
     auto& queue = sim.queue;
     if (queue.size() >= kMaxQueuedInteractions)
         throw VMError("interaction queue of object " + std::to_string(sim.id) + " is full");
-    if (sim.nextInteractionUid == 0)
-        ++sim.nextInteractionUid;
-    q.uid = sim.nextInteractionUid++;
+    q.uid = newInteractionId(vm, sim);
     const uint16_t uid = q.uid;
     const size_t first = size_t(sim.activeInteraction + 1);
     size_t at = first;
@@ -531,7 +539,9 @@ bool cancelInteraction(VM& vm, Object& sim, uint16_t uid) {
         return false;
     const auto index = int(it - q.begin());
     if (index > sim.activeInteraction) {
+        const QueuedInteraction gone = *it;
         q.erase(it);
+        unlinkInteraction(vm, sim.id, gone);
     } else {
         it->cancelled = true;
         setPriority(sim, kPriorityIdle);
@@ -658,8 +668,14 @@ void endInteraction(VM& vm, Thread& t) {
     if (interactionCancelled(*sim))
         t.interactionReturned = 2;
     if (sim->activeInteraction >= 0) {
-        if (size_t(sim->activeInteraction) < q.size())
+        if (size_t(sim->activeInteraction) < q.size()) {
+            const QueuedInteraction gone = q[size_t(sim->activeInteraction)];
             q.erase(q.begin() + sim->activeInteraction);
+            unlinkInteraction(vm, sim->id, gone);
+            sim = vm.object(t.me);
+            if (!sim)
+                return;
+        }
         --sim->activeInteraction;
     }
     if (sim->person)
@@ -671,7 +687,14 @@ void endInteraction(VM& vm, Thread& t) {
 
 void endSubInteraction(VM& vm, Thread& t) {
     if (Object* sim = vm.object(t.me)) {
-        sim->subAction.reset();
+        if (sim->subAction) {
+            const QueuedInteraction gone = *sim->subAction;
+            sim->subAction.reset();
+            unlinkInteraction(vm, sim->id, gone);
+            sim = vm.object(t.me);
+            if (!sim)
+                return;
+        }
         syncQueueData(*sim);
     }
 }
@@ -691,9 +714,19 @@ void syncQueueData(Object& sim) {
     d[persondata::CurrentRunningInteractionIndex] = a ? int16_t(a->interaction) : 0;
     d[persondata::CurrentInteractionObject] = a ? a->object : 0;
     d[persondata::InteractionAutonomous] = a && a->priority == kPriorityAutonomous;
+    // 109 "ci: Current Interaction GUID": the running interaction's ID, which
+    // trees hand to Push Interaction's link (flag 0x40; "Interaction - Read to").
+    d[109] = a ? int16_t(a->uid) : 0;
     const size_t next = size_t(sim.activeInteraction + 1);
     d[persondata::NextInteractionIndex] = next < q.size() ? int16_t(q[next].interaction) : 0;
     d[persondata::NextInteractionObject] = next < q.size() ? q[next].object : 0;
+    // 72 "cn: Next Queued Interaction Continuation?": the next entry was
+    // pushed "continue as current" (Push Interaction byte 3 bit 0x04).
+    // "Function - Main - Process Autonomy" reads it after Gosub Found Action
+    // and, when set, waits for input (Wait For Notify) instead of running
+    // "Post Interaction", so an autonomous snack goes on to "Eat" before
+    // Main's "Kill - Objects in Hands" takes it (inferred from the label).
+    d[72] = next < q.size() && (q[next].flags & 0x04) ? 1 : 0;
     // The sub-queue: its size, the interaction it nests in (the running
     // one), the next waiting entry and the running sub-action (labels of
     // STR# 0xC8; filled in as the queue's are, inferred).

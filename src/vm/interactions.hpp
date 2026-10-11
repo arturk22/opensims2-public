@@ -155,6 +155,16 @@ bool inInteraction(const Thread& t);
 // Refreshes the person data that mirrors the queue.
 void syncQueueData(Object& sim);
 
+// Linked interactions (links.cpp, cTSInteraction::UnLinkInteractions in the
+// Mac binary): IDs are unique across Sims; Push Interaction's flag 0x40
+// links the new entry to another interaction; when an interaction ends or
+// leaves a queue, the Sim running the one it links to gets person data 110
+// "Interactions Linked Deleted" (the social wait loops leave on it), and a
+// linked entry still waiting in a queue is taken out.
+uint16_t newInteractionId(VM& vm, Object& sim);
+void linkInteractions(VM& vm, QueuedInteraction& made, uint16_t other);
+void unlinkInteraction(VM& vm, ObjectId owner, const QueuedInteraction& ended);
+
 // --- Pie menu ----------------------------------------------------------------
 
 struct PieEntry {

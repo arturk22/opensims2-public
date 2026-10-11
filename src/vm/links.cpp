@@ -1,0 +1,106 @@
+// Linked interactions (interactions.hpp: newInteractionId, linkInteractions,
+// unlinkInteraction), as the Mac binary's cTSInteraction::UnLinkInteractions
+// works (docs/primitives-mac.md, "Sociais esperando o outro Sim").
+
+#include "interactions.hpp"
+
+#include <algorithm>
+
+namespace os2::vm {
+
+namespace {
+
+constexpr size_t kPersondataInteractionsLinkedDeleted = 110;
+
+// Every interaction of every Sim: the queue (the running one too), the
+// sub-queue and the running sub-action.
+template <typename F> void forEachInteraction(VM& vm, F&& f) {
+    std::vector<ObjectId> ids;
+    for (const auto& [id, o] : vm.objects())
+        if (o.person)
+            ids.push_back(id);
+    for (ObjectId id : ids) {
+        Object* sim = vm.object(id);
+        if (!sim)
+            continue;
+        for (auto& q : sim->queue)
+            if (f(*sim, q))
+                return;
+        for (auto& q : sim->subQueue)
+            if (f(*sim, q))
+                return;
+        if (sim->subAction && f(*sim, *sim->subAction))
+            return;
+    }
+}
+
+} // namespace
+
+uint16_t newInteractionId(VM& vm, Object& sim) {
+    // The binary numbers interactions for the whole world (links name them
+    // across Sims); each Sim keeps a counter here, so a new ID is one past
+    // the highest any Sim has given.
+    uint16_t next = 1;
+    for (const auto& [id, o] : vm.objects())
+        next = std::max(next, o.nextInteractionUid);
+    sim.nextInteractionUid = uint16_t(next + 1 == 0 ? 1 : next + 1);
+    return next;
+}
+
+void linkInteractions(VM& vm, QueuedInteraction& made, uint16_t other) {
+    made.link = other;
+    // The other one links back when it has no link yet, so that either end
+    // tells the other Sim (inferred: "Social - Push Social - As
+    // Continuation" pushes A with flag 0x80, then B with 0x40 to A, and
+    // both Sims' wait loops leave on person data 110).
+    forEachInteraction(vm, [&](Object&, QueuedInteraction& q) {
+        if (q.uid != other)
+            return false;
+        if (!q.link)
+            q.link = made.uid;
+        return true;
+    });
+}
+
+void unlinkInteraction(VM& vm, ObjectId owner, const QueuedInteraction& ended) {
+    // cTSInteraction::UnLinkInteractions: follow the chain of links; another
+    // Sim's interaction with the linked ID that is running (or its running
+    // sub-action) gets person data 110 "Interactions Linked Deleted" := 1,
+    // one that waits in a queue is taken out of it.
+    uint16_t link = ended.link;
+    for (int guard = 0; link && link != ended.uid && guard < 16; ++guard) {
+        uint16_t nextLink = 0;
+        bool found = false;
+        ObjectId removeFrom = 0;
+        uint16_t removeUid = 0;
+        forEachInteraction(vm, [&](Object& sim, QueuedInteraction& q) {
+            if (sim.id == owner || q.uid != link)
+                return false;
+            found = true;
+            nextLink = q.link;
+            q.link = 0;
+            const bool running = (sim.activeInteraction >= 0 && size_t(sim.activeInteraction) < sim.queue.size() &&
+                                  &sim.queue[size_t(sim.activeInteraction)] == &q) ||
+                                 (sim.subAction && &*sim.subAction == &q);
+            if (running)
+                sim.person->data[kPersondataInteractionsLinkedDeleted] = 1;
+            else
+                removeFrom = sim.id, removeUid = q.uid;
+            return true;
+        });
+        if (!found)
+            break;
+        if (removeFrom) {
+            Object* sim = vm.object(removeFrom);
+            std::erase_if(sim->subQueue, [&](const QueuedInteraction& x) { return x.uid == removeUid; });
+            auto& q = sim->queue;
+            for (size_t i = q.size(); i-- > 0;)
+                if (q[i].uid == removeUid && int(i) > sim->activeInteraction)
+                    q.erase(q.begin() + std::ptrdiff_t(i));
+            syncQueueData(*sim);
+        }
+        link = nextLink;
+    }
+}
+
+} // namespace os2::vm

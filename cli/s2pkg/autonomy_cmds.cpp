@@ -19,6 +19,7 @@
 #include "vm/motives.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -152,13 +153,16 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
             if (t.me != traceId || t.stack.empty() || &t.stack.front() != &machine.threads[traceId].stack.front())
                 return;
-            if (in.opcode == 0x03)
+            static const long from = std::getenv("S2PKG_TRACE_FROM") ? std::atol(std::getenv("S2PKG_TRACE_FROM")) : 0;
+            static const size_t most = std::getenv("S2PKG_TRACE_MAX") ? std::atol(std::getenv("S2PKG_TRACE_MAX")) : 3000;
+            if ((in.opcode == 0x03 || from > 0) && long(machine.ticks) >= from)
                 tracing = true;
-            if (!tracing || t.stack.size() > traceDepth || traced++ >= 3000)
+            if (!tracing || t.stack.size() > traceDepth || traced++ >= most)
                 return;
             const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
-            std::printf("    t%-6llu %*s%04X #%-3u %-30s %s\n", static_cast<unsigned long long>(machine.ticks),
-                        int(t.stack.size() - 1) * 2, "", f.instance, f.pc, op.c_str(), f.behavior->fileName.c_str());
+            std::printf("    t%-6llu %*s%04X #%-3u %-30s %s %s\n", static_cast<unsigned long long>(machine.ticks),
+                        int(t.stack.size() - 1) * 2, "", f.instance, f.pc, op.c_str(), f.behavior->fileName.c_str(),
+                        vm::describeOperands(machine, t, f, in).c_str());
         };
 
     std::map<vm::ObjectId, std::string> running;
