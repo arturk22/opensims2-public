@@ -42,6 +42,9 @@ public:
     std::optional<Location> sample(Key k) const;
     std::optional<Location> hitList(Key k) const;
     std::optional<Location> trackSettings(Key k) const;
+    // Every resource of a type in the sound packages (e.g. the sound
+    // property sets, type::SOUND_PROPERTIES).
+    std::vector<Location> ofType(uint32_t type) const;
 
     // The samples a track name, sample name or "TTTTTTTT-GGGGGGGG-HHHHHHHH-
     // IIIIIIII" key stands for (a track gives every entry of its hit list,

@@ -124,6 +124,14 @@ SoundBank::SoundBank(const std::filesystem::path& dir, std::string_view locale) 
     }
 }
 
+std::vector<SoundBank::Location> SoundBank::ofType(uint32_t type) const {
+    std::vector<Location> out;
+    for (const auto& i : indexes_)
+        for (const auto& loc : i->ofType(type))
+            out.push_back(loc);
+    return out;
+}
+
 size_t SoundBank::packageCount() const {
     size_t n = 0;
     for (const auto& i : indexes_)

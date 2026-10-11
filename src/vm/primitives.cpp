@@ -2,6 +2,7 @@
 
 #include "hood_bridge.hpp"
 #include "interactions.hpp"
+#include "sound.hpp"
 
 #include "formats/binreader.hpp"
 
@@ -897,6 +898,7 @@ void registerPrimitives(VM& vm) {
     registerAnimationPrimitives(vm);
     registerMeasurePrimitives(vm);
     registerInteractionPrimitives(vm); // Push Interaction, Idle for Input (queue.cpp)
+    registerSoundPrimitives(vm);       // Play / Stop Sound Event, Stop ALL Sounds (sound.cpp)
 }
 
 } // namespace os2::vm

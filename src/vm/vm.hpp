@@ -126,6 +126,18 @@ struct EngineRequest {
 // Requests the host has not taken yet; the oldest are dropped past this.
 constexpr size_t kMaxEngineRequests = 1024;
 
+// A sound the trees asked for (Play / Stop Sound Event, Stop ALL Sounds;
+// vm/sound.hpp), for the host to play from `source`'s position.
+struct SoundRequest {
+    enum class Kind : uint8_t { Play, Stop, StopAll } kind = Kind::Play;
+    int16_t source = 0;  // object the sound comes from
+    std::string event;   // name from the Sound ID Table (STR# 0x4132)
+    bool loop = false;
+    float volume = 1;
+    uint8_t flags = 0;   // operand byte 4, as is
+};
+constexpr size_t kMaxSoundRequests = 256;
+
 // Object arrays (Array Operation, data owners 0x29-0x2E) are created on
 // demand; this bounds their number and length.
 constexpr size_t kMaxObjectArrays = 32;
@@ -669,6 +681,17 @@ public:
     }
     bool buildBuyEnabled = true;
     bool gameStateTransitionsEnabled = true;
+
+    // Sounds not yet taken by the host (oldest first), and the loops each
+    // object has playing (a loop is not started twice).
+    std::deque<SoundRequest> soundRequests;
+    std::map<int16_t, std::set<std::string>> loopingSounds;
+    std::map<int, size_t> missingSounds; // sound IDs with no name, and how often
+    void requestSound(SoundRequest r) {
+        if (soundRequests.size() >= kMaxSoundRequests)
+            soundRequests.pop_front();
+        soundRequests.push_back(std::move(r));
+    }
 
     void setPrimitive(uint16_t opcode, Primitive p) { primitives_[opcode] = std::move(p); }
 

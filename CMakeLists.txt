@@ -73,6 +73,7 @@ add_library(os2_vm
   src/vm/queue.cpp
   src/vm/routing.cpp
   src/vm/sim_motion.cpp
+  src/vm/sound.cpp
   src/vm/turn.cpp
   src/vm/vm.cpp
   src/vm/world.cpp
@@ -82,12 +83,12 @@ target_compile_options(os2_vm PRIVATE -Wall -Wextra)
 target_link_libraries(os2_vm PUBLIC os2_formats)
 
 # Sound: decoding to PCM (MP3 through AudioToolbox), name lookup and playback.
-add_library(os2_audio src/audio/decode.cpp src/audio/sound_bank.cpp)
+add_library(os2_audio src/audio/decode.cpp src/audio/sound_bank.cpp src/audio/mixer.cpp src/audio/sound_system.cpp)
 target_include_directories(os2_audio PUBLIC src)
 target_compile_options(os2_audio PRIVATE -Wall -Wextra)
 target_link_libraries(os2_audio PUBLIC os2_formats)
 if(APPLE)
-  target_sources(os2_audio PRIVATE src/audio/player.cpp src/audio/play_sound.cpp)
+  target_sources(os2_audio PRIVATE src/audio/player.cpp src/audio/play_sound.cpp src/audio/mixer_output.cpp)
   target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 
@@ -185,3 +186,6 @@ add_test(NAME locale COMMAND test_locale)
 add_executable(test_neighborhood tests/test_neighborhood.cpp)
 target_link_libraries(test_neighborhood PRIVATE os2_formats)
 add_test(NAME neighborhood COMMAND test_neighborhood)
+add_executable(test_sound tests/test_sound.cpp)
+target_link_libraries(test_sound PRIVATE os2_audio os2_vm)
+add_test(NAME sound COMMAND test_sound)

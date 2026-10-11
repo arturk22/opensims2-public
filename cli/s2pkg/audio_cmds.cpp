@@ -214,13 +214,39 @@ int cmdSoundSweep(const char* dir) {
     return 0;
 }
 
+// Reads candidate names from stdin, one per line, and prints those that are
+// a track (T) or a sample (S): for guessing how the game composes names.
+int cmdSoundNames(const char* dir) {
+    SoundBank bank(dir);
+    std::string line;
+    size_t found = 0, tried = 0;
+    char buf[4096];
+    while (std::fgets(buf, sizeof buf, stdin)) {
+        line = buf;
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+            line.pop_back();
+        if (line.empty())
+            continue;
+        ++tried;
+        const auto k = SoundBank::nameKey(line);
+        const bool track = bank.hitList(k).has_value(), sample = bank.sample(k).has_value();
+        if (track || sample) {
+            ++found;
+            std::printf("%s %s\n", track ? "T" : "S", line.c_str());
+        }
+    }
+    std::fprintf(stderr, "%zu of %zu names exist\n", found, tried);
+    return 0;
+}
+
 } // namespace
 
 const char* audioUsage() {
     return "       s2pkg sound-list <Res-dir|sound-dir> [filter]\n"
            "       s2pkg sound-info <Res-dir|sound-dir> <name>\n"
            "       s2pkg sound-extract <Res-dir|sound-dir> <name|TGI> <out.wav> [index]\n"
-           "       s2pkg sound-sweep <Res-dir|sound-dir>\n";
+           "       s2pkg sound-sweep <Res-dir|sound-dir>\n"
+           "       s2pkg sound-names <Res-dir|sound-dir> < names.txt\n";
 }
 
 int audioCommand(const std::string& cmd, int argc, char** argv) {
@@ -232,6 +258,8 @@ int audioCommand(const std::string& cmd, int argc, char** argv) {
         return cmdSoundExtract(argv[2], argv[3], argv[4], argc == 6 ? std::stoul(argv[5]) : 0);
     if (cmd == "sound-sweep" && argc == 3)
         return cmdSoundSweep(argv[2]);
+    if (cmd == "sound-names" && argc == 3)
+        return cmdSoundNames(argv[2]);
     return -1;
 }
 
