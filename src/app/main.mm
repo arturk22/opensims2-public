@@ -352,7 +352,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (!p.contained)
             saved = os2::Xform{os2::Quat{p.rotation[0], p.rotation[1], p.rotation[2], p.rotation[3]},
                                {p.position[0], p.position[1], p.position[2]}};
-        gObjectView->addPlaced(id, p.definition, p.cres, p.instance, saved);
+        gObjectView->addPlaced(id, p.definition, p.cres, p.instance, saved, p.materials);
     }
     for (const auto& s : gLotSims)
         gObjectView->addSim(s.id, s.actor);
@@ -388,7 +388,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                 return; // no model in the world
             const PlacedObject& p = placed->second;
             try {
-                const os2::ObjectModel model = os2::loadObjectModel(index, p.cres, p.materials);
+                const os2::ObjectModel model = os2::loadObjectModel(index, p.cres, gObjectView->materialsOf(id));
                 os2::SkinnedModel skin(model.skeleton);
                 skin.add(model);
                 auto actor = std::make_unique<os2::SimActor>(std::move(skin));
@@ -413,6 +413,26 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                 std::fprintf(stderr, "opensims2: object %d plays %s\n", id, name.c_str());
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: object %d: %s: %s\n", id, name.c_str(), e.what());
+        }
+    };
+    // An animated object whose material the VM changes (the plumbob's
+    // colour) gets its skinned model again with the new materials.
+    gObjectView->onActorMaterials = [&renderer, &index](int16_t id) {
+        const auto it = gObjectActors.find(id);
+        if (it == gObjectActors.end() || !it->second)
+            return;
+        os2::SimActor& actor = *it->second;
+        try {
+            const os2::ObjectModel model = os2::loadObjectModel(index, gObjectView->cresOf(id), gObjectView->materialsOf(id));
+            os2::SkinnedModel skin(model.skeleton);
+            skin.add(model);
+            actor.skin = std::move(skin);
+            actor.player.setSkeleton(&actor.skin.skeleton);
+            const int m = renderer.addObject(actor.skin.model, index, true);
+            renderer.retargetInstances(actor.model, m);
+            actor.model = m;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: object %d: %s\n", id, e.what());
         }
     };
     // --object-anim <id>,<animation>: test aid, an object plays an animation
@@ -469,6 +489,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     } catch (const std::exception& e) {
         std::fprintf(stderr, "opensims2: plumbob: %s\n", e.what());
     }
+    // The Sim the player controls is the VM's "selected person ID" (global
+    // 3), as when the game selects a Sim: the game's PlumbBob follows it.
+    if (gPie->sim())
+        gSimulation->machine().globals[os2::vm::global::SelectedPersonId] = gPie->sim();
     const os2::vm::Object* sim = gPie->vm().object(gPie->sim());
     std::printf("opensims2: pie menus for Sim %d (%s)\n", gPie->sim(),
                 sim && sim->definition ? sim->definition->fileName.c_str() : "none");
@@ -579,9 +603,57 @@ os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
 // The plumbob over the selected Sim (with the VM): the game's "plumbob"
 // model, spinning about Z once every 2.316 s as its "o-plumbob-spin"
 // animation turns its bone, floating over the Sim's head (the top of its
-// posed mesh, less the height the mesh is modelled at; the gap is a guess). Green, its material's colour: the
-// mood colours are not done.
+// posed mesh, less the height the mesh is modelled at; the gap is a guess).
+//
+// The game's own plumbob is a VM object, "PlumbBob", held in slot 0 of a
+// "Head Slots Holder" that a Sim holds in its slot 2 (bone plumbbob_grip):
+// its Main ("Set Mood Effect & Material") picks its colour with Change
+// Material from the owner's aspiration score (person data 160; STR# 0x88
+// plumbBob_coreColor00/25/50/75/100, platinum). When that object is over
+// the selected Sim the VM draws it (app/vm_objects.hpp) and the app's is
+// hidden; otherwise (its "Main - Update My Owner" has not moved it to the
+// Sim the player picked) the app draws its own over the selected Sim with
+// the colour the game's one has, and the game's is hidden, so that there is
+// one plumbob.
 constexpr float kPlumbobGap = 0.2f, kPlumbobSpinSeconds = 2.316f;
+bool gVmPlumbob = false;           // the VM's PlumbBob is over the selected Sim
+std::string gPlumbobMaterial;      // the app plumbob's core material ("" = the model's)
+void choosePlumbob(os2::Renderer& renderer) {
+    if (!gSimulation || !gObjectView || !gPie)
+        return;
+    gVmPlumbob = false;
+    std::string material;
+    for (const auto& [id, o] : gSimulation->machine().objects()) {
+        if (o.person || !o.definition || o.definition->fileName != "PlumbBob")
+            continue;
+        const bool over = gObjectView->hasModel(id) && gObjectView->outermostContainer(id) == gPie->sim();
+        gObjectView->setHidden(id, !over || gVmPlumbob);
+        if (over && !gVmPlumbob)
+            gVmPlumbob = true;
+        if (material.empty() || over) {
+            if (auto it = o.materials.find("core"); it != o.materials.end())
+                material = it->second;
+            else if (!o.materials.empty())
+                material = o.materials.begin()->second;
+        }
+    }
+    if (gVmPlumbob || material == gPlumbobMaterial || gPlumbob < 0 || !gIndex)
+        return;
+    static std::map<std::string, int> models;
+    auto it = models.find(material);
+    if (it == models.end()) {
+        int m = -1;
+        try {
+            m = renderer.addObject(os2::loadObjectModel(*gIndex, "plumbob", {{"core", material}}), *gIndex);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: plumbob %s: %s\n", material.c_str(), e.what());
+        }
+        it = models.emplace(material, m).first;
+    }
+    if (it->second >= 0)
+        renderer.setInstanceModel(gPlumbob, it->second);
+    gPlumbobMaterial = material;
+}
 
 void placePlumbob(os2::Renderer& renderer, double seconds) {
     if (gPlumbob < 0 || !gPie)
@@ -589,7 +661,7 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
     simd_float4x4 at = matrix_identity_float4x4;
     at.columns[3] = simd_make_float4(0, 0, -1000, 1); // hidden
     for (const auto& s : gLotSims) {
-        if (s.id != gPie->sim())
+        if (s.id != gPie->sim() || gVmPlumbob)
             continue;
         float top = s.actor->position[2];
         for (const auto& p : s.actor->posed.parts)
@@ -618,6 +690,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     for (auto& a : gActors)
         if (!isObject(a.get()))
             a->update(seconds);
+    choosePlumbob(renderer);
     if (gObjectView)
         gObjectView->update();
     for (auto& a : gActors) {

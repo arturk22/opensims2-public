@@ -625,6 +625,11 @@ void Renderer::setInstanceTransform(int instance, const simd_float4x4& transform
         instances_[size_t(instance)].transform = transform;
 }
 
+void Renderer::setInstanceModel(int instance, int model) {
+    if (instance >= 0 && size_t(instance) < instances_.size() && model >= 0 && size_t(model) < models_.size())
+        instances_[size_t(instance)].model = model;
+}
+
 void Renderer::retargetInstances(int from, int to) {
     if (to < 0 || size_t(to) >= models_.size())
         return;

@@ -64,6 +64,8 @@ public:
     int addInstance(int model, const simd_float4x4& transform);
     // Moves an instance (the plumbob over the selected Sim).
     void setInstanceTransform(int instance, const simd_float4x4& transform);
+    // Draws an instance with another model (an object whose material the VM changed).
+    void setInstanceModel(int instance, int model);
     // Points the instances of `from` at model `to` (a Sim changing clothes).
     void retargetInstances(int from, int to);
     // Removes the checkered test floor and axis markers (e.g. when a lot is shown).

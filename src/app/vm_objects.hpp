@@ -20,9 +20,11 @@
 #include "formats/xform.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -48,14 +50,22 @@ public:
     // other objects took since, so only a cObject whose VM object of the same
     // ID has that OBJD follows the VM; the others stay where they were saved.
     // Returns whether it follows the VM.
+    // `design` is the cObject's design choice (subset -> material), kept
+    // under the materials the VM's Change Material sets.
     bool addPlaced(int16_t id, const std::string& definition, const std::string& cres, int instance,
-                   std::optional<Xform> saved);
+                   std::optional<Xform> saved, const std::map<std::string, std::string>& design = {});
     // A Sim's actor (contained objects follow its bones).
     void addSim(int16_t id, SimActor* actor);
     // An object now drawn by a skinned actor (posed by an animation the VM
     // plays on it) instead of its static instance, which is hidden.
     void setActor(int16_t id, SimActor* actor);
     bool hasModel(int16_t id) const { return drawn_.count(id) != 0; }
+    // The materials an object is drawn with (its design choice under what
+    // Change Material set), subset -> material.
+    std::map<std::string, std::string> materialsOf(int16_t id);
+    // Called when the VM changes the materials of an object drawn by an
+    // actor; the host rebuilds the actor's model with materialsOf(id).
+    std::function<void(int16_t id)> onActorMaterials;
     // The CRES of an object drawn here, empty if none.
     std::string cresOf(int16_t id) const;
 
@@ -63,6 +73,13 @@ public:
     // be posed already (their bones), the objects' actors are posed after
     // (their placement is set here). Also draws objects the VM created.
     void update();
+
+    // Keeps an object out of sight whatever the VM does (the host draws it
+    // its own way: the plumbob over the selected Sim).
+    void setHidden(int16_t id, bool hidden);
+    // The object whose slots hold `id`, through containers in containers
+    // (itself when it is in no slot).
+    int16_t outermostContainer(int16_t id) const;
 
     // Where an object is drawn (its model's origin), if it is drawn.
     std::optional<Xform> placement(int16_t id);
@@ -78,9 +95,12 @@ private:
         int instance = -1;
         SimActor* actor = nullptr;
         std::optional<Xform> saved;
+        std::map<std::string, std::string> design;
+        std::map<std::string, std::string> vmMaterials; // Object::materials drawn
         Baseline base;
         bool hidden = false;
         bool debugMoved = false; // OS2_DEBUG_PLACE
+        std::string debugMaterials;
     };
     const Skeleton* skeleton(const std::string& cres);
     std::string cresFor(int16_t id); // drawn, else from the object's OBJD
@@ -88,6 +108,9 @@ private:
     std::optional<Xform> compute(int16_t id, int depth);
     void place(Drawn& d, const std::optional<Xform>& at);
     void addCreated(int16_t id);
+    // Redraws an object with the materials the VM set on it (Change Material).
+    void updateMaterials(int16_t id, Drawn& d);
+    int model(const std::string& cres, const std::map<std::string, std::string>& materials);
 
     Renderer& renderer_;
     ResourceIndex& index_;
@@ -96,8 +119,10 @@ private:
     std::map<int16_t, SimActor*> sims_;
     std::map<std::string, std::unique_ptr<Skeleton>> skeletons_; // null if it failed to load
     std::map<int16_t, std::string> cres_;          // objects' CRES from their OBJD (cache)
-    std::map<std::string, int> models_;            // CRES -> renderer model for created objects (-1 failed)
+    std::map<std::string, int> models_;            // CRES + materials -> renderer model (-1 failed)
+    std::map<std::string, std::vector<std::string>> subsets_; // CRES -> its meshes' subset names
     std::map<int16_t, bool> triedCreate_;
+    std::set<int16_t> suppressed_;
     std::map<int16_t, std::optional<Xform>> frame_; // this update's placements
 };
 

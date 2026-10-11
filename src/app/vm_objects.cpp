@@ -51,7 +51,7 @@ VmObjectView::VmObjectView(Renderer& renderer, ResourceIndex& index, LotSimulati
 VmObjectView::~VmObjectView() = default;
 
 bool VmObjectView::addPlaced(int16_t id, const std::string& definition, const std::string& cres, int instance,
-                             std::optional<Xform> saved) {
+                             std::optional<Xform> saved, const std::map<std::string, std::string>& design) {
     const vm::Object* o = sim_.machine().object(id);
     std::string name = definition;
     if (name.ends_with("_objt"))
@@ -70,6 +70,7 @@ bool VmObjectView::addPlaced(int16_t id, const std::string& definition, const st
     d.cres = cres;
     d.instance = instance;
     d.saved = saved;
+    d.design = design;
     d.base = {o->position.x, o->position.y, o->position.level, o->data[vm::objdata::Direction],
               o->data[vm::objdata::ContainerId], o->data[vm::objdata::SlotNumber]};
     drawn_[id] = std::move(d);
@@ -77,6 +78,25 @@ bool VmObjectView::addPlaced(int16_t id, const std::string& definition, const st
 }
 
 void VmObjectView::addSim(int16_t id, SimActor* actor) { sims_[id] = actor; }
+
+void VmObjectView::setHidden(int16_t id, bool hidden) {
+    if (hidden)
+        suppressed_.insert(id);
+    else
+        suppressed_.erase(id);
+}
+
+int16_t VmObjectView::outermostContainer(int16_t id) const {
+    const vm::VM& m = sim_.machine();
+    const vm::Object* o = m.objects().count(id) ? &m.objects().at(id) : nullptr;
+    for (int depth = 0; o && depth < 8; ++depth) {
+        const int16_t c = o->data[vm::objdata::ContainerId];
+        if (!c || c == o->id || !m.objects().count(c))
+            return o->id;
+        o = &m.objects().at(c);
+    }
+    return o ? o->id : 0;
+}
 
 void VmObjectView::setActor(int16_t id, SimActor* actor) {
     auto it = drawn_.find(id);
@@ -199,9 +219,11 @@ std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
         const std::string bone = slotBone(containerId, slot);
         const Skeleton* own = skeleton(cresFor(id));
         Xform attach; // the object's node that goes to the bone (its origin by default)
-        if (own && !bone.empty())
-            if (const int b = own->find(bone); b >= 0)
+        if (own && !bone.empty()) {
+            const int b = own->find(bone);
+            if (b >= 0)
                 attach = own->world(own->restPose())[size_t(b)];
+        }
         if (c->person) {
             auto it = sims_.find(containerId);
             if (it == sims_.end() || !it->second)
@@ -212,6 +234,11 @@ std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
                 out = a.placement(); // no bone: at the Sim's feet
             else
                 out = a.bones[size_t(b)].then(attach.inverse());
+            if (std::getenv("OS2_DEBUG_SLOT") && b >= 0) {
+                const Xform& w = a.bones[size_t(b)];
+                std::fprintf(stderr, "slot: object %d in Sim %d bone %s q(%.2f %.2f %.2f %.2f) t(%.2f %.2f %.2f)\n", id,
+                             containerId, bone.c_str(), w.q.x, w.q.y, w.q.z, w.q.w, w.t[0], w.t[1], w.t[2]);
+            }
         } else {
             const auto at = compute(containerId, depth + 1);
             if (!at)
@@ -267,6 +294,68 @@ void VmObjectView::place(Drawn& d, const std::optional<Xform>& at) {
     d.hidden = false;
 }
 
+int VmObjectView::model(const std::string& cres, const std::map<std::string, std::string>& materials) {
+    std::string key = cres;
+    for (const auto& [subset, material] : materials)
+        key += "|" + subset + "=" + material;
+    auto it = models_.find(key);
+    if (it != models_.end())
+        return it->second;
+    int id = -1;
+    try {
+        const ObjectModel m = loadObjectModel(index_, cres, materials);
+        auto& names = subsets_[cres];
+        names.clear();
+        for (const auto& p : m.parts)
+            names.push_back(p.mesh.name);
+        id = renderer_.addObject(m, index_);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: %s: %s\n", cres.c_str(), e.what());
+    }
+    return models_[key] = id;
+}
+
+// Change Material names a mesh group (a subset of the model's meshes; ""
+// for all of them) and a material; the cObject's design choice stays under
+// it. The instance switches to a model loaded with those materials.
+std::map<std::string, std::string> VmObjectView::materialsOf(int16_t id) {
+    auto it = drawn_.find(id);
+    if (it == drawn_.end())
+        return {};
+    Drawn& d = it->second;
+    if (!subsets_.count(d.cres))
+        model(d.cres, d.design); // learns the subset names
+    std::map<std::string, std::string> materials = d.design;
+    for (const auto& [group, material] : d.vmMaterials) {
+        if (group.empty()) {
+            for (const auto& subset : subsets_[d.cres])
+                materials[subset] = material;
+        } else {
+            materials[group] = material;
+        }
+    }
+    return materials;
+}
+
+void VmObjectView::updateMaterials(int16_t id, Drawn& d) {
+    const vm::Object* o = sim_.machine().object(id);
+    if (!o || o->materials == d.vmMaterials)
+        return;
+    d.vmMaterials = o->materials;
+    if (std::getenv("OS2_DEBUG_VM"))
+        std::fprintf(stderr, "opensims2: object %d (%s) redrawn with the VM's materials\n", id, d.cres.c_str());
+    if (d.actor) {
+        if (onActorMaterials)
+            onActorMaterials(id);
+        return;
+    }
+    if (d.instance < 0)
+        return;
+    const int m = model(d.cres, materialsOf(id));
+    if (m >= 0)
+        renderer_.setInstanceModel(d.instance, m);
+}
+
 // An object the VM created (or one the lot did not draw) that has a model:
 // a static instance of it, placed from now on.
 void VmObjectView::addCreated(int16_t id) {
@@ -274,21 +363,12 @@ void VmObjectView::addCreated(int16_t id) {
     const std::string cres = cresFor(id);
     if (cres.empty() || cres == "nullModel" || cres == "noModel")
         return;
-    auto it = models_.find(cres);
-    if (it == models_.end()) {
-        int model = -1;
-        try {
-            model = renderer_.addObject(loadObjectModel(index_, cres), index_);
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "opensims2: object %d (%s): %s\n", id, cres.c_str(), e.what());
-        }
-        it = models_.emplace(cres, model).first;
-    }
-    if (it->second < 0)
+    const int m = model(cres, {});
+    if (m < 0)
         return;
     Drawn d;
     d.cres = cres;
-    d.instance = renderer_.addInstance(it->second, hiddenMatrix());
+    d.instance = renderer_.addInstance(m, hiddenMatrix());
     d.hidden = true;
     d.base.x = -2; // never at a saved place
     drawn_[id] = std::move(d);
@@ -309,6 +389,18 @@ void VmObjectView::update() {
         if (debug) {
             const bool moved = at && (!d.saved || std::fabs(at->t[0] - d.saved->t[0]) + std::fabs(at->t[1] - d.saved->t[1]) +
                                                           std::fabs(at->t[2] - d.saved->t[2]) > 0.01f);
+            const vm::Object* o = m.object(id);
+            const std::string mats = [&] {
+                std::string out;
+                if (o)
+                    for (const auto& [g, mat] : o->materials)
+                        out += " " + g + "=" + mat;
+                return out;
+            }();
+            if (mats != d.debugMaterials)
+                std::fprintf(stderr, "opensims2: tick %llu object %d materials%s\n", (unsigned long long)m.ticks, id,
+                             mats.c_str());
+            d.debugMaterials = mats;
             if (moved != d.debugMoved || (!at) != d.hidden)
                 std::fprintf(stderr, "opensims2: tick %llu object %d (%s) %s (%.2f, %.2f, %.2f)\n",
                              (unsigned long long)m.ticks, id, d.cres.c_str(),
@@ -316,7 +408,8 @@ void VmObjectView::update() {
                              at ? at->t[0] : 0, at ? at->t[1] : 0, at ? at->t[2] : 0);
             d.debugMoved = moved;
         }
-        place(d, at);
+        updateMaterials(id, d);
+        place(d, suppressed_.count(id) ? std::nullopt : at);
     }
 }
 
