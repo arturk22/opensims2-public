@@ -1878,10 +1878,11 @@ Exit findLocationFor(Context& c) {
         // object's vtable 0x2d8 with the parameters, which was not read.
         const int dir = ((ref->data[objdata::Direction] % 8) + 8) % 8 + (mode == 4 ? 2 : 0);
         const auto [sx, sy] = directionStep(dir % 8);
-        for (int i = 0; i < 32; ++i) {
+        // Not on the reference's own tile: a new puddle placed on its
+        // parent's tile kept "Puddle - New Puddle - Add" turning and
+        // placing it again (N002_Lot22, round 8).
+        for (int i = 2; i < 34; ++i) {
             const int k = i / 2, sign = i % 2 ? -1 : 1;
-            if (i % 2 && k == 0)
-                continue;
             if (tryPlace(c.vm, *obj, {at.x + sign * sx * k, at.y + sign * sy * k, at.level},
                          (dir + allowedFacing(forbidden, 0)) % 8))
                 return Exit::True;
