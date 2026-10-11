@@ -57,6 +57,16 @@ struct EffectModel {
     std::array<float, 4> color{1, 1, 1, 1};
 };
 
+// A sound an effect plays (Block::Sound: the track whose instance is
+// audioId), while it is due: from its component's delay until the effect
+// stops (or its sequence item ends). The host plays it at `position`.
+struct EffectSound {
+    int handle = 0; // the instance's
+    int part = 0;   // which of its sounds
+    uint32_t audioId = 0;
+    V3 position{};
+};
+
 class EffectSystem {
 public:
     explicit EffectSystem(const EffectsLibrary& library, uint32_t seed = 1);
@@ -79,6 +89,8 @@ public:
     void collect(std::vector<ParticleQuad>& out) const;
     // The models of the instances alive.
     void collectModels(std::vector<EffectModel>& out) const;
+    // The sounds due now.
+    void collectSounds(std::vector<EffectSound>& out) const;
 
 private:
     struct Particle {
@@ -117,11 +129,17 @@ private:
         Placement local;
         float sizeScale = 1, alphaScale = 1, delay = 0, stopAt = -1, age = 0;
     };
+    struct SoundPart {
+        const Sound* desc = nullptr;
+        Placement local;
+        float delay = 0, stopAt = -1, age = 0;
+    };
     struct Instance {
         Placement where;
         std::vector<Emitter> emitters;
         std::vector<DecalPart> decals;
         std::vector<ModelPart> models;
+        std::vector<SoundPart> sounds;
         bool stopped = false;
         std::string icon;
         int iconFrame = -1;

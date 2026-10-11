@@ -133,8 +133,22 @@ Escolhas nossas **[inferido]**, conferidas com `s2pkg effect-sim` e capturas:
   alfa, rotação e cor pela vida (vida ≤ 0: enquanto o efeito roda);
   modelos: o CRES do bloco desenhado no componente enquanto o efeito roda
   (`LotEffects::placeModels`; peixes do aquário, peças do xadrez; o
-  movimento das meta-partículas que os levam não é feito). Sons, câmeras e
+  movimento das meta-partículas que os levam não é feito). Câmeras e
   água não; as telas (modo 4 = crossfade de instantâneo) só nas cinemáticas.
+- Sons (rodada 10): o `audioId` do bloco de som é a **instância** da track
+  (CRC24 do nome | 0xFF000000; 31 dos 33 ids do jogo base batem com uma hit
+  list, todas de `Sfx/Tracks`: fogo `FF5EF8A5`, moscas `FFFD5C9D`, baratas
+  `FF68CBE0` — 189 componentes —, faíscas, fogos de artifício, confete das
+  contas, sirenes, a pia quebrada). `EffectSystem::collectSounds` dá os sons
+  devidos (do atraso do componente até o efeito parar ou o item da sequência
+  acabar); `LotAudio::effectSounds` toca a track pela chave, na posição do
+  componente, acompanha o efeito e, se a track faz laço, a esvazia em 0,5 s
+  quando deixa de ser devida. Laço inferido: as tracks em laço têm a chave
+  `0xff595ffd` nas track settings (`lot_outside_lp`, `water_lp`, fogo,
+  moscas, água da pia), as de uma vez não. `flags`, `playTime` e `volume`
+  dos blocos (0, 0, 0 em quase todos; `soundtest` tem `playTime` 5) e o
+  `locationUpdateDelta` (0,5 s) não são usados. Sem track: `FF14E140`
+  (`fxambsiren`) e `FFED2D23` (bola de alma do Ceifador).
 
 ## 4. Balões
 

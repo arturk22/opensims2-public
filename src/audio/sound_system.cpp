@@ -200,8 +200,14 @@ SoundSystem::SoundSystem(const std::filesystem::path& resDir, AudioMixer& mixer,
 }
 
 bool SoundSystem::exists(std::string_view name) const {
-    const auto k = SoundBank::nameKey(name);
+    const auto k = SoundBank::keyOf(name);
     return bank_.hitList(k) || bank_.sample(k);
+}
+
+bool SoundSystem::loops(std::string_view name) {
+    if (lower(name).ends_with("_lp"))
+        return true;
+    return bank_.readTrackSettings(SoundBank::keyOf(name)).count("0xff595ffd") != 0;
 }
 
 const std::vector<std::string>* SoundSystem::modifiersOf(std::string_view event) const {

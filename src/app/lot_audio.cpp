@@ -9,6 +9,7 @@
 #include "vm/vm.hpp"
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -359,6 +360,45 @@ void LotAudio::update(vm::VM* machine, double seconds, const Listener& l) {
     started_ = true;
 }
 
+void LotAudio::effectSounds(const std::vector<fx::EffectSound>& due) {
+    std::set<std::pair<int, int>> now;
+    for (const auto& e : due) {
+        const auto key = std::make_pair(e.handle, e.part);
+        now.insert(key);
+        const SoundPos at{e.position[0], e.position[1], e.position[2]};
+        if (auto it = effectVoices_.find(key); it != effectVoices_.end()) {
+            if (it->second.handle)
+                sound_->setPosition(it->second.handle, at);
+            continue;
+        }
+        // The effect names the track by its instance (CRC24 | 0xFF000000 of
+        // the name): "fire" FF5EF8A5, the flies' FFFD5C9D, ...
+        auto t = effectTracks_.find(e.audioId);
+        if (t == effectTracks_.end())
+            t = effectTracks_.emplace(e.audioId, sound_->bank().trackByInstance(e.audioId)).first;
+        EffectVoice v;
+        if (!t->second.empty()) {
+            v.loop = sound_->loops(t->second);
+            v.handle = sound_->play(t->second, {.position = at, .loop = v.loop});
+            effectSounds_ += v.handle != 0;
+        } else {
+            char id[16];
+            std::snprintf(id, sizeof id, "fx:%08X", e.audioId);
+            ++sound_->missing[id];
+        }
+        effectVoices_.emplace(key, v);
+    }
+    for (auto it = effectVoices_.begin(); it != effectVoices_.end();) {
+        if (now.count(it->first)) {
+            ++it;
+            continue;
+        }
+        if (it->second.loop && it->second.handle)
+            sound_->fadeOut(it->second.handle, 0.5);
+        it = effectVoices_.erase(it);
+    }
+}
+
 void LotAudio::renderOffline(double seconds) {
     const uint64_t target = uint64_t(std::max(0.0, seconds) * mixer_.sampleRate());
     if (target <= mixFrames_)
@@ -390,8 +430,9 @@ bool LotAudio::writeMix(const std::string& path) const {
 std::string LotAudio::summary() const {
     char buf[256];
     std::snprintf(buf, sizeof buf,
-                  "%zu VM sounds, %zu animation sound events, %zu unresolved, %zu voices played, %zu ambience notes",
-                  requests_, animEvents_, unresolved_, sound_->played, ambience_->notesPlayed());
+                  "%zu VM sounds, %zu animation sound events, %zu effect sounds, %zu unresolved, %zu voices played, "
+                  "%zu ambience notes",
+                  requests_, animEvents_, effectSounds_, unresolved_, sound_->played, ambience_->notesPlayed());
     std::string out = buf;
     std::vector<std::pair<size_t, std::string>> played;
     for (const auto& [name, n] : sound_->playedNames)

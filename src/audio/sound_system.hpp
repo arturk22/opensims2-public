@@ -96,6 +96,11 @@ public:
     // a track exists. Empty if nothing by that name exists.
     std::string resolveEvent(std::string_view event, const SoundModifiers& m = {}) const;
     bool exists(std::string_view name) const;
+    // Whether a track loops: its track settings have key 0xff595ffd (every
+    // looping track checked has it: lot_outside_lp, water_lp, the fire, the
+    // flies, the sink's water; one-shots do not; inferred, the value looks
+    // like a loop point), or its name ends in "_lp".
+    bool loops(std::string_view name);
     // Modifier names of an event ("destfootstep", ...), empty if it has none.
     const std::vector<std::string>* modifiersOf(std::string_view event) const;
     // Shoe name for a GZPS "shoe" value (1 bare .. 6 slip), empty if unknown.

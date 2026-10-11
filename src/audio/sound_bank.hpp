@@ -35,6 +35,12 @@ public:
     explicit SoundBank(const std::filesystem::path& dir, std::string_view locale = defaultLocale());
 
     static Key nameKey(std::string_view name);
+    // The key of a name, or of a "TTTTTTTT-GGGGGGGG-HHHHHHHH-IIIIIIII" key string.
+    static Key keyOf(std::string_view nameOrKey);
+    // The track (hit list) whose instance is `instance`, as a key string
+    // that resolve() and the sound system play ("7B1ACFCD-EB8AB356-...");
+    // empty if none. The effects name their sounds this way.
+    std::string trackByInstance(uint32_t instance) const;
 
     const std::vector<Location>& samples() const { return samples_; }
     const std::map<Key, Location>& tracks() const { return hitLists_; }

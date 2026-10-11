@@ -85,7 +85,7 @@ int cmdSoundList(const char* dir, const std::string& filter) {
 
 int cmdSoundInfo(const char* dir, const std::string& name) {
     SoundBank bank(dir);
-    const auto k = SoundBank::nameKey(name);
+    const auto k = SoundBank::keyOf(name);
     std::printf("%s: instance 0x%08X, instanceHi 0x%08X\n", name.c_str(), k.first, k.second);
     if (auto ts = bank.trackSettings(k)) {
         std::printf("track settings %s (%s):\n", keyString(ts->entry->tgi).c_str(), groupLabel(ts->entry->tgi.group).c_str());

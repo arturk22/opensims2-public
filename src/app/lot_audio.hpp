@@ -8,6 +8,7 @@
 
 #include "audio/sound_system.hpp"
 #include "formats/lot.hpp"
+#include "render/particle_system.hpp"
 
 #include <array>
 #include <filesystem>
@@ -75,6 +76,11 @@ public:
     // last call and `seconds`, updates the ambience, music and 3D sound.
     void update(vm::VM* machine, double seconds, const Listener& listener);
 
+    // The effects' sounds due now (LotEffects::collectSounds): a sound
+    // starts when it appears, follows its effect, and a looping one stops
+    // (fades) when it is no longer due; one-shots play out.
+    void effectSounds(const std::vector<fx::EffectSound>& due);
+
     // Headless runs (no device): pulls the mixer up to `seconds` into a
     // buffer that writeMix saves as a WAV (--sound-mix), to check the mix.
     void renderOffline(double seconds);
@@ -106,6 +112,13 @@ private:
     SurfaceMap surfaces_;
     std::vector<SimBinding> sims_;
     std::map<int16_t, std::vector<ObjectVoice>> voices_; // per source object
+    struct EffectVoice {
+        SoundSystem::Handle handle = 0;
+        bool loop = false;
+    };
+    std::map<std::pair<int, int>, EffectVoice> effectVoices_; // (effect instance, sound part)
+    std::map<uint32_t, std::string> effectTracks_;            // audioId -> track key ("" none)
+    size_t effectSounds_ = 0;
     double last_ = 0;
     bool started_ = false;
     std::vector<int16_t> mix_;

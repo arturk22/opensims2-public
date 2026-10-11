@@ -120,8 +120,11 @@ void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
                 std::printf("%smodel=%s\n", in.c_str(), lib.models[size_t(c.index)].model.c_str());
             break;
         case fx::Block::Sound:
-            if (size_t(c.index) < lib.sounds.size())
-                std::printf("%saudio=%08X\n", in.c_str(), lib.sounds[size_t(c.index)].audioId);
+            if (size_t(c.index) < lib.sounds.size()) {
+                const auto& s = lib.sounds[size_t(c.index)];
+                std::printf("%saudio=%08X flags=%X update=%g play=%g volume=%g\n", in.c_str(), s.audioId, s.flags,
+                            s.locationUpdateDelta, s.playTime, s.volume);
+            }
             break;
         case fx::Block::Screen:
             if (size_t(c.index) < lib.screens.size()) {

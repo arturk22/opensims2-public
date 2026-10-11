@@ -1354,6 +1354,11 @@ void updateEffects(os2::Renderer& renderer, double seconds) {
                                  return s.actor;
                          return nullptr;
                      });
+    if (gAudio) { // the effects' sounds (fire, flies, sparks, ...)
+        std::vector<os2::fx::EffectSound> sounds;
+        gEffects->collectSounds(sounds);
+        gAudio->effectSounds(sounds);
+    }
 }
 
 void placePlumbob(os2::Renderer& renderer, double seconds) {

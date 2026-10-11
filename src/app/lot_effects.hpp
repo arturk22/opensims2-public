@@ -83,6 +83,8 @@ public:
     std::function<std::optional<RgbaImage>(const vm::ActiveEffect&)> iconImage;
 
     const fx::EffectsLibrary& library() const { return *library_; }
+    // The effects' sounds due now (the host plays them: LotAudio::effectSounds).
+    void collectSounds(std::vector<fx::EffectSound>& out) const { system_->collectSounds(out); }
     size_t running() const { return system_->instanceCount(); }
 
 private:

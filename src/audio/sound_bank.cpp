@@ -4,6 +4,7 @@
 #include "formats/binreader.hpp"
 #include "formats/property_set.hpp"
 
+#include <cstdio>
 #include <set>
 
 namespace os2 {
@@ -191,6 +192,22 @@ std::vector<SoundBank::Location> SoundBank::resolve(std::string_view nameOrKey) 
     }
     resolveInto(nameKey(nameOrKey), out, 0);
     return out;
+}
+
+SoundBank::Key SoundBank::keyOf(std::string_view nameOrKey) {
+    if (auto tgi = parseKey(nameOrKey))
+        return {tgi->instance, tgi->instanceHi};
+    return nameKey(nameOrKey);
+}
+
+std::string SoundBank::trackByInstance(uint32_t instance) const {
+    auto it = hitLists_.lower_bound({instance, 0});
+    if (it == hitLists_.end() || it->first.first != instance)
+        return {};
+    const Tgi& t = it->second.entry->tgi;
+    char buf[40];
+    std::snprintf(buf, sizeof buf, "%08X-%08X-%08X-%08X", t.type, t.group, t.instanceHi, t.instance);
+    return buf;
 }
 
 std::map<std::string, std::string> SoundBank::readTrackSettings(Key k) {

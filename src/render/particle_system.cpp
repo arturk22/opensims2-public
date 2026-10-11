@@ -153,7 +153,11 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
             if (c.index >= 0 && size_t(c.index) < lib_.models.size())
                 inst.models.push_back({&lib_.models[size_t(c.index)], here, ss, as, delay, stopAt, 0});
             break;
-        default: break; // sounds, cameras, screens, water: not here (screens: the host's)
+        case Block::Sound:
+            if (c.index >= 0 && size_t(c.index) < lib_.sounds.size())
+                inst.sounds.push_back({&lib_.sounds[size_t(c.index)], here, delay, stopAt, 0});
+            break;
+        default: break; // cameras, screens, water: not here (screens: the host's)
         }
     }
 }
@@ -329,6 +333,12 @@ void EffectSystem::update(float seconds) {
             if (!inst.stopped && (mp.stopAt < 0 || mp.age < mp.stopAt))
                 any = true;
         }
+        // A sound keeps its effect while it is due (an effect of only a sound runs until stopped).
+        for (auto& sp : inst.sounds) {
+            sp.age += seconds;
+            if (!inst.stopped && (sp.stopAt < 0 || sp.age < sp.stopAt))
+                any = true;
+        }
         for (const auto& e : inst.emitters) {
             const auto& d = *e.desc;
             const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
@@ -358,6 +368,16 @@ void EffectSystem::collectModels(std::vector<EffectModel>& out) const {
             em.where.scale *= m.desc->size * m.sizeScale;
             em.color = {m.desc->color[0], m.desc->color[1], m.desc->color[2], m.desc->alpha * m.alphaScale};
             out.push_back(em);
+        }
+}
+
+void EffectSystem::collectSounds(std::vector<EffectSound>& out) const {
+    for (const auto& [h, inst] : instances_)
+        for (size_t i = 0; i < inst.sounds.size(); ++i) {
+            const SoundPart& sp = inst.sounds[i];
+            if (inst.stopped || sp.age < sp.delay || (sp.stopAt >= 0 && sp.age >= sp.stopAt))
+                continue;
+            out.push_back({h, int(i), sp.desc->audioId, compose(inst.where, sp.local).position});
         }
 }
 
