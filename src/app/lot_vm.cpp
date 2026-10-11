@@ -7,6 +7,7 @@
 #include "vm/animation.hpp"
 #include "vm/autonomy.hpp"
 #include "vm/hood_bridge.hpp"
+#include "vm/lot_neighborhood.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
 
@@ -30,7 +31,11 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     m.instructionsPerTurn = 20000; // as lot-run
     m.setClockGlobals();
     const LotObjects saved = LotObjects::load(lotPackage);
+    // The neighborhood first, as lot-run (lot_neighborhood.hpp).
+    const bool hood = vm::loadLotNeighborhood(m, lotFile);
     const vm::LotLoad load = vm::loadLot(m, lot, saved, vm::charactersDirOf(lotFile));
+    if (hood)
+        vm::bindLotSims(m);
     const vm::ResumeResult r = vm::startSavedLot(m, load, saved, fromInit);
     char buf[256];
     if (fromInit)

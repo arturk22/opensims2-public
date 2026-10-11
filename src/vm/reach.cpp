@@ -91,12 +91,24 @@ Exit runFunctionalTree(Context& c) {
     const uint16_t tree = flags & 0x04 ? e->guard : e->action;
     if (!tree || !c.vm.resolveTree(*target, tree).second)
         return Exit::False;
+    // With 0x02 all of the current tree's parameters go along, not only the
+    // first four ("Function - Message Handler", 8 arguments, hands its
+    // parameter 7 to the "reaction Handler" this way); without it the
+    // binary passes no parameters, and the tree sim's default ones are the
+    // object's temps (cTSTreeSim::Gosub, cTSObject::OnInit).
     std::array<int16_t, 4> args{};
+    std::vector<int16_t> params;
     if (flags & 0x02)
-        std::copy_n(c.frame.params.begin(), std::min<size_t>(c.frame.params.size(), 4), args.begin());
+        params = c.frame.params;
+    else
+        params.assign(c.thread.temps.begin(), c.thread.temps.end());
+    std::copy_n(params.begin(), std::min<size_t>(params.size(), 4), args.begin());
     const ObjectId id = target->id;
     c.vm.call(c.thread, id, tree, args);
-    c.thread.stack.back().stackObject = id;
+    Frame& callee = c.thread.stack.back();
+    callee.stackObject = id;
+    for (size_t i = 4; i < params.size() && i < callee.params.size(); ++i)
+        callee.params[i] = params[i];
     return Exit::Call;
 }
 

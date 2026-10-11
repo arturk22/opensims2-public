@@ -1,3 +1,4 @@
+#include "engine.hpp"
 #include "vm.hpp"
 
 #include "hood_bridge.hpp"
@@ -371,6 +372,8 @@ static std::vector<int16_t>& typeAttributesOf(VM& vm, const Object& o) {
     return it->second;
 }
 
+constexpr int16_t kObjectDataUseCount = 62;
+
 // Storage behind a data owner, or null for the computed/read-only ones.
 // Owners whose index comes from another variable read it first.
 static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
@@ -486,6 +489,8 @@ static int16_t slotIndex(int16_t slot) {
 }
 
 int16_t Context::get(uint8_t owner, int16_t data) const {
+    if ((owner == 0x03 || owner == 0x04) && data == kObjectDataUseCount)
+        return useCount(vm, owner == 0x03 ? me() : stackObject()); // computed (engine.hpp)
     if (int16_t* v = storage(*this, owner, data))
         return *v;
     switch (owner) {
@@ -968,10 +973,13 @@ void VM::run(Thread& t, size_t maxInstructions) {
             Context ctx{*this, t, frame, in};
             if (in.opcode >= 0x100) {
                 // Call: four arguments, either literals, the temps 0-3 (all
-                // literals 0xFFFF) or, with byte 12 = 1, (owner u8, data u16) pairs.
+                // literals 0xFFFF) or, with bit 0 of byte 12, (owner u8, data
+                // u16) pairs. Node version 0 keeps only that bit of byte 12
+                // (RunPrivateTreeParam::Read in the Mac binary; the rest is
+                // stale: "Run Accepter Anim" has 0x69 there).
                 const auto& o = in.operands;
                 std::array<int16_t, 4> args{};
-                if (o[12] == 1) {
+                if (o[12] & 1) {
                     const Object* owner = object(frame.codeOwner);
                     const Behavior* callee = owner ? resolveTree(*owner, in.opcode).second : nullptr;
                     const size_t n = callee ? std::min<size_t>(callee->argCount, 4) : 0;

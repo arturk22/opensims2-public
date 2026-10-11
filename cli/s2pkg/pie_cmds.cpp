@@ -10,6 +10,8 @@
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
+#include "vm/hood_bridge.hpp"
+#include "vm/lot_neighborhood.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
@@ -58,7 +60,10 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     machine.instructionsPerTurn = 20000;
     machine.setClockGlobals();
     machine.autoDialogAnswer = dialogAnswer; // headless: every dialog gets this button
+    const bool hood = vm::loadLotNeighborhood(machine, lotFile);
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
+    if (hood)
+        vm::bindLotSims(machine);
     // The saved state (motives, tree stacks, clock), or every Init with --init.
     vm::startSavedLot(machine, load, saved, fromInit);
     if (motives)

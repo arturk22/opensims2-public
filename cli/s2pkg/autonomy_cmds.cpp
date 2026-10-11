@@ -13,6 +13,8 @@
 #include "vm/autonomy.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
+#include "vm/hood_bridge.hpp"
+#include "vm/lot_neighborhood.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/motives.hpp"
 
@@ -77,7 +79,10 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
     machine.setClockGlobals();
+    const bool hood = vm::loadLotNeighborhood(machine, lotFile);
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
+    if (hood)
+        vm::bindLotSims(machine);
     vm::startSavedLot(machine, load, saved, fromInit);
     if (motives)
         vm::setAllMotives(machine, int16_t(*motives));

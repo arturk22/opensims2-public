@@ -1,3 +1,4 @@
+#include "engine.hpp"
 #include "vm.hpp"
 
 #include "hood_bridge.hpp"
@@ -679,56 +680,59 @@ Exit createObjectInstance(Context& c) {
     return Exit::True;
 }
 
-// Run Tree by Name (0x1C): table u16 (0x012F: the global STR# 0x12F; 0: the
-// running code's), u16 at 2 (not understood), name index u8 at 4 (1-based),
-// how u8 at 5 (STR# 0xDE: 0 run in my stack, 1 run in stack object's stack,
-// 2 push onto my stack), then up to three arguments as (owner u8, data u16)
-// at 6, 9 and 12. The tree is looked up by name in the stack object's private,
-// semi-global and global trees, in that order, and runs as a subroutine in my
-// thread with the stack object's code (CT trees read the object through the
-// stack object); the instruction branches on its result, and on false when
-// the object has no tree of that name (Standard Exit asks every object for
-// "CT - Update Dirty State"). Inferred from the data: when the running code's
-// table is missing or shorter than the index, the name comes from the code
-// owner's semi-global table and then the global one (the memory objects ask
-// for entry 85 of the global table, "CT - Add Memory", and have none); modes
-// 0 and 2 are run the same way. Mode 1 needs the stack object's own thread
-// and is not implemented. With zeroes at 6-7 and 2 at 8 (77 uses) the current
-// tree's parameters are passed on.
+// Run Tree by Name (0x1C), as the Mac binary's cTSObject::TryCallNamedTree:
+// name index u8 at 4 (1-based) in STR# 0x12F of the global group (flags u16
+// at 2 & 0x01), of the running code's semi-global (0x02) or of its own
+// group (neither; u16 0 = 0x012F also means the global one); when that
+// table is missing or shorter, the others are tried (inferred from the
+// data: the memory objects ask for entry 85 of the global table, "CT - Add
+// Memory", and have none). An empty name is false. The tree is looked up by
+// name in the stack object's private, semi-global and global trees (flags
+// 0x04/0x08 are passed to that search; not told apart here); none: false.
+// Modes (u8 at 5, STR# 0xDE): 0 "run in my stack" runs it at once to its
+// end (RunOneTickTree: my thread and temps, the stack object's code, the
+// stack object as such) and branches on its result; 1 "run in stack
+// object's stack" does the same in the stack object's own thread (it is
+// "me", with its temps); 2 "push onto my stack" pushes it as a subroutine
+// (GosubObjectTree) and branches when it returns. No stack object: error
+// 0x15. Arguments: flags 0x20 the current tree's parameters (up to 4), 0x10
+// three (owner u8, data u16) at 6, 9 and 12, neither: my temps (the tree
+// sim's default parameters are the object's temps, cTSTreeSim::OnInit).
+// Mode 3 (the tree of the object whose GUID is in temps 0/1) is not done.
 Exit runTreeByName(Context& c) {
     const auto& o = c.instruction.operands;
     const uint8_t mode = o[5];
-    if (mode == 1)
-        throw VMError("Run Tree by Name: run in stack object's stack not implemented");
+    const uint16_t flags = le16(&o[2]);
     if (mode > 2)
         throw VMError("Run Tree by Name: mode " + std::to_string(mode) + " not implemented");
-    // Zeros at 6-7 and 2 at 8: the arguments are the current tree's parameters
-    // (inferred from the editor string ", Passing in params from the current
-    // tree"; bytes 9+ of that form, e.g. 00 09 FD, are not understood).
-    const bool passParams = o[6] == 0 && o[7] == 0 && o[8] != 0;
-    if (passParams && o[8] != 2)
-        throw VMError("Run Tree by Name: argument form " + std::to_string(o[8]) + " not implemented");
 
     auto& code = c.vm.code();
     const Object* owner = c.vm.object(c.frame.codeOwner);
     if (!owner)
         throw VMError("code owner does not exist");
     const size_t index = size_t(o[4]) - 1;
-    std::string name;
+    const uint32_t semi = c.frame.group == owner->group ? owner->semiGroup : (c.frame.group == kGlobalGroup ? 0 : c.frame.group);
     std::vector<uint32_t> tables;
-    if (le16(&o[0]) == kNamedTreeStrings)
-        tables = {kGlobalGroup};
+    if ((flags & 0x01) || le16(&o[0]) == kNamedTreeStrings)
+        tables = {kGlobalGroup, c.frame.group, semi};
+    else if (flags & 0x02)
+        tables = {semi, c.frame.group, kGlobalGroup};
     else
-        tables = {c.frame.group, c.frame.group == owner->group ? owner->semiGroup : 0, kGlobalGroup};
+        tables = {c.frame.group, semi, kGlobalGroup};
+    std::string name;
     for (uint32_t group : tables)
         if (const StringTable* t = group ? code.strings(group, kNamedTreeStrings) : nullptr)
             if (index < t->count(lang::EnglishUS)) {
                 name = t->get(index, lang::EnglishUS);
                 break;
             }
+    while (!name.empty() && (name.back() == ' ' || name.back() == '\t'))
+        name.pop_back();
     if (name.empty())
-        throw VMError("Run Tree by Name: no name at index " + std::to_string(index + 1));
+        return Exit::False;
 
+    if (!c.vm.object(c.frame.stackObject))
+        throw gameError(err::NoStackObject, "Run Tree by Name");
     const Object& target = c.stackObject();
     std::optional<uint16_t> tree;
     for (uint32_t group : {target.group, target.semiGroup, kGlobalGroup}) {
@@ -743,13 +747,30 @@ Exit runTreeByName(Context& c) {
     if (!tree)
         return Exit::False;
 
-    std::array<int16_t, 4> args{};
-    if (passParams)
+    std::array<int16_t, 8> args{};
+    if (flags & 0x20)
         std::copy_n(c.frame.params.begin(), std::min<size_t>(c.frame.params.size(), 4), args.begin());
-    else
+    else if (flags & 0x10)
         for (size_t k = 0; k < 3; ++k)
             args[k] = c.get(o[6 + 3 * k], int16_t(le16(&o[7 + 3 * k])));
-    c.vm.call(c.thread, target.id, *tree, args);
+    else
+        std::copy_n(c.thread.temps.begin(), args.size(), args.begin());
+    const ObjectId targetId = target.id;
+    if (mode == 0)
+        return runOneTickTree(c.vm, c.thread.temps, c.thread.me, targetId, targetId, *tree, args) ? Exit::True
+                                                                                                 : Exit::False;
+    if (mode == 1) {
+        auto it = c.vm.threads.find(targetId);
+        std::array<int16_t, kTempCount> scratch{};
+        auto& temps = it != c.vm.threads.end() ? it->second.temps : scratch;
+        return runOneTickTree(c.vm, temps, targetId, targetId, targetId, *tree, args) ? Exit::True : Exit::False;
+    }
+    std::array<int16_t, 4> first{};
+    std::copy_n(args.begin(), 4, first.begin());
+    c.vm.call(c.thread, targetId, *tree, first);
+    Frame& callee = c.thread.stack.back();
+    for (size_t i = 4; i < args.size() && i < callee.params.size(); ++i)
+        callee.params[i] = args[i];
     return Exit::Call;
 }
 
@@ -1309,6 +1330,8 @@ void registerPrimitives(VM& vm) {
     registerAppearancePrimitives(vm);  // Change Light, Change Outfit (appearance.cpp)
     registerMotivePrimitives(vm);      // Set Motive Change, Find 5 Worst Motives (motives.cpp)
     registerAutonomyPrimitives(vm);    // Find Best Interaction, Gosub Found Action (autonomy.cpp)
+    registerMessagePrimitives(vm);     // Message (message.cpp)
+    registerEnginePrimitives(vm);      // Refresh, Debug, UI/camera, Test Sim Interacting With (engine_prims.cpp)
 }
 
 } // namespace os2::vm

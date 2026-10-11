@@ -1,5 +1,6 @@
 // Find Best Interaction (0x03) and Gosub Found Action (0x1E): autonomy.hpp.
 
+#include "engine.hpp"
 #include "autonomy.hpp"
 
 #include "formats/binreader.hpp"
@@ -222,7 +223,7 @@ Exit findBestInteraction(Context& c) {
             continue;
         if ((flags & 0x10) && leaderId != current)
             continue;
-        if (leader->data[kObjectDataUseCount] > 0)
+        if (useCount(vm, *leader) > 0)
             continue;
         const auto ref = interactionTable(vm, *leader);
         if (!ref)

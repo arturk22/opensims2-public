@@ -254,9 +254,9 @@ static void testYieldAndErrors() {
     fx.vm.run(t);
     check(t.status == Thread::Status::Finished && t.temps[0] == 1, "resumes after yields");
 
-    fx.code.add(kObjGroup, 0x1001, tree({instr(0x7B, T, F)})); // Cinematic: not implemented
+    fx.code.add(kObjGroup, 0x1001, tree({instr(0x13, T, F)})); // Make New Character: not implemented
     t = fx.run(0x1001);
-    check(t.status == Thread::Status::Failed && fx.vm.missingPrimitives[0x7B] == 1, "missing primitive fails");
+    check(t.status == Thread::Status::Failed && fx.vm.missingPrimitives[0x13] == 1, "missing primitive fails");
 
     fx.code.add(kObjGroup, 0x1002, tree({expr(Temp, 0, Div, Lit, 0, T, F)}));
     t = fx.run(0x1002);
@@ -387,8 +387,8 @@ static void testRunTreeByName() {
     }());
     fx.code.add(kObjGroup, 0x1000,
                 tree({expr(StackId, 0, Assign, Lit, tv.id, go(1), E),
-                      // name 1, push onto my stack, args (literal 5), (temp 0)
-                      instr(0x1C, E, go(2), {0, 0, 0, 0, 1, 2, Lit, 5, 0, Temp, 0, 0, Lit, 0, 0}),
+                      // name 1, push onto my stack, args (flag 0x10) (literal 5), (temp 0)
+                      instr(0x1C, E, go(2), {0, 0, 0x10, 0, 1, 2, Lit, 5, 0, Temp, 0, 0, Lit, 0, 0}),
                       // name 2 is not a tree of the stack object: false
                       instr(0x1C, E, go(3), {0, 0, 0, 0, 2, 2}),
                       expr(Temp, 1, Assign, Lit, 1, T, E)}));
@@ -400,13 +400,64 @@ static void testRunTreeByName() {
     check(t.status == Thread::Status::Finished && t.temps[1] == 1, "Run Tree by Name branches on the result");
     check(tv.attributes[1] == 8, "Run Tree by Name runs the stack object's tree with arguments");
 
-    // Zeros at 6-7 and 2 at 8: my parameters are passed on.
+    // Flag 0x20: my parameters are passed on.
     fx.code.add(kObjGroup, 0x1001, tree({expr(StackId, 0, Assign, Lit, tv.id, go(1), E),
-                                         instr(0x1C, T, T, {0, 0, 0, 0, 1, 2, 0, 0, 2, 0, 9, 0xFD})},
+                                         instr(0x1C, T, T, {0, 0, 0x20, 0, 1, 2, 0, 0, 2, 0, 9, 0xFD})},
                                         2));
     t = fx.vm.start(1, 0x1001, std::vector<int16_t>{4, 6});
     fx.vm.run(t);
     check(t.status == Thread::Status::Finished && tv.attributes[1] == 10, "Run Tree by Name passes my parameters on");
+}
+
+// Run Tree by Name mode 0 runs the tree at once and branches on its result;
+// with no argument flags the arguments are my temps (Mac binary).
+static void testRunTreeByNameNow() {
+    Fixture fx;
+    constexpr uint32_t kTv = 0x7F000003;
+    fx.obj();
+    Object& tv = fx.vm.createObject(kTv, 2);
+    fx.code.add(kObjGroup, kNamedTreeStrings, names({"CT - Turn On"}));
+    fx.code.add(kTv, 0x1000, [] {
+        Behavior b = tree({expr(SAttr, 1, Assign, Param, 0, go(1), E), expr(SAttr, 1, Add, Param, 1, F, E)}, 2);
+        b.fileName = "CT - Turn On";
+        return b;
+    }());
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(StackId, 0, Assign, Lit, tv.id, go(1), E), instr(0x1C, T, go(2), {0, 0, 0, 0, 1, 0}),
+                      expr(Temp, 2, Assign, Lit, 1, T, E)}));
+    Thread t = fx.vm.start(1, 0x1000, {});
+    t.temps[0] = 2;
+    t.temps[1] = 3;
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.temps[2] == 1 && tv.attributes[1] == 5,
+          "Run Tree by Name mode 0 runs at once with my temps as arguments");
+}
+
+// Message (0x77) to every object on the lot: each runs its OBJf function 36
+// at once, as me with it as the stack object, the message as parameters.
+static void testMessage() {
+    Fixture fx;
+    fx.code.add(kObjGroup, 0x81, definition(0x0E0E0E0E));
+    ObjectFunctions f;
+    f.functions.resize(37);
+    f.functions[36] = {0, 0x1005};
+    fx.code.add(kObjGroup, 0x81, f);
+    // Handler: stack object's attribute 0 := message ID, attribute 1 := data 1, temp 3 += 1.
+    fx.code.add(kObjGroup, 0x1005, tree({expr(SAttr, 0, Assign, Param, 0, go(1), E),
+                                         expr(SAttr, 1, Assign, Param, 3, go(2), E), expr(Temp, 3, Add, Lit, 1, T, E)},
+                                        6));
+    fx.obj();
+    Object& a = fx.vm.instantiate(kObjGroup, 0x81);
+    Object& b = fx.vm.instantiate(kObjGroup, 0x81);
+    a.attributes.resize(2);
+    b.attributes.resize(2);
+    // filter 2 (lot), ID literal 77, set 6 (objects), priority 1, data 1 literal 5.
+    fx.code.add(kObjGroup, 0x1000,
+                tree({instr(0x77, T, F, {2, 77, 0, 6, 0, 0, 0, 0, 1, Lit, 5, 0, Lit, 0, 0, Lit})}));
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Finished && t.result && a.attributes[0] == 77 && b.attributes[1] == 5 &&
+              t.temps[3] == 2,
+          "Message runs every receiver's handler");
 }
 
 static void testRemoveAndRandom() {
@@ -1244,6 +1295,8 @@ int main() {
     testResumeSavedLot();
     testSlots();
     testScheduler();
+    testRunTreeByNameNow();
+    testMessage();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

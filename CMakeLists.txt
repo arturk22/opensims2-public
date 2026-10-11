@@ -71,11 +71,14 @@ add_library(os2_vm
   src/vm/animation.cpp
   src/vm/appearance.cpp
   src/vm/dialog.cpp
+  src/vm/engine_prims.cpp
   src/vm/autonomy.cpp
   src/vm/lot.cpp
+  src/vm/lot_neighborhood.cpp
   src/vm/lot_resume.cpp
   src/vm/lot_save.cpp
   src/vm/measure.cpp
+  src/vm/message.cpp
   src/vm/motives.cpp
   src/vm/path_planner.cpp
   src/vm/primitives.cpp
