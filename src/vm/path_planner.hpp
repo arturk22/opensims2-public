@@ -15,17 +15,19 @@
 // closed, a Sim goes through the door's portal), the floor costs
 // (World::cost), the A*'s costs (segment length x the cells' cost, uniform
 // noise of up to 0.01 per node, the noisy distance heuristic), Sims as cost
-// rectangles and the order of the path filters (CreateResultPath).
-// Inferred / approximated (marked "approximation" below): the smallest
-// square (1/8 tile, the inflation; the binary's is not found), the A*'s
-// nodes (centres of the squares, joined through the middle of the edge
-// they share), the portals' costs, what each filter does exactly and how a
-// walker leaves a blocked start.
+// rectangles, the order of the path filters (CreateResultPath), the
+// smallest square (1/8 tile), the portals' cost (1) and their locks (the
+// portal object's TEST tree, PathPlanner::portalLocked).
+// Inferred / approximated (marked "approximation" below): the A*'s nodes
+// (centres of the squares, joined through the middle of the edge they
+// share), where the portals' ends are, what each filter does exactly and
+// how a walker leaves a blocked start.
 
 #include "world.hpp"
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <vector>
 
@@ -80,7 +82,7 @@ struct PlannedPath {
 
 class PathPlanner {
 public:
-    static constexpr int kCellsPerTile = 8;          // smallest square: 1/8 tile (approximation)
+    static constexpr int kCellsPerTile = 8;          // smallest square: 1/8 tile (binary: cPathPlanner::Init)
     static constexpr float kInflation = 0.12499f;    // binary: AddObjectRectangle / AddWallRectangle
 
     // What blocks a cell (bits).
@@ -127,6 +129,11 @@ public:
     void addRouter(int level, float x, float y, int direction, bool walking, bool small = false);
     // Drops the objects and Sims added (the walls and floors stay).
     void clearObstacles();
+    // Whether a portal is locked one way (from its end `a` to `b` when
+    // `forward`): asked the first time a plan crosses it that way, as the
+    // binary's TSObjectPortalLockedCB runs the portal object's TEST tree;
+    // none: every portal is open. A locked portal is not crossed.
+    std::function<bool(size_t portal, bool forward)> portalLocked;
     // Seeds the A*'s noise (the binary's generator: seed * 0x278DDE6D).
     void seed(uint32_t s) { noise_ = s ? s : 1; }
 

@@ -42,6 +42,7 @@ public:
         std::string climb;
         uint32_t climbSerial = 0;
         float z = 0;
+        bool onStep = false; // at height z (a climb phase, or in a stair's step)
     };
 
     // Records the object's state after a VM tick (call once per tick,
@@ -57,8 +58,8 @@ public:
     // Height at `t` on a stair; `floor(level, x, y)` gives it off the stair.
     template <class Floor>
     float z(float t, Floor floor) const {
-        const float a = previous_.climb.empty() ? floor(previous_.level, previous_.x, previous_.y) : previous_.z;
-        const float b = current_.climb.empty() ? floor(current_.level, x(t), y(t)) : current_.z;
+        const float a = !previous_.onStep ? floor(previous_.level, previous_.x, previous_.y) : previous_.z;
+        const float b = !current_.onStep ? floor(current_.level, x(t), y(t)) : current_.z;
         return a + (b - a) * t;
     }
 

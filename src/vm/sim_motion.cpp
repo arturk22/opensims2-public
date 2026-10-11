@@ -3,6 +3,7 @@
 #include "animation.hpp"
 #include "vm.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace os2::vm {
@@ -34,6 +35,33 @@ void SimMotion::sample(VM& vm, const Object& o) {
         s.climb = o.route->climb.animation;
         s.climbSerial = o.route->climb.serial;
         s.z = o.route->climb.z;
+        s.onStep = true;
+    } else if (const Object* step = vm.object(o.data[objdata::ContainerId]); step && vm.world) {
+        // In a stair's step (the stair's portal tree snaps the Sim into each
+        // in turn): at the step's height, playing the tree's animation as a
+        // climb phase. The step k quarter tiles up from the bottom edge
+        // (its centre at 0.125 + 0.25 k) stands at the bottom floor plus
+        // k + 1 rises, as the engine's own climb has it (inferred: the game
+        // puts the Sim at the step's containment slot, a bone of its model).
+        static const uint32_t stairGlobals = semiGlobalGroup("StairModularGlobals");
+        if (step->semiGroup == stairGlobals)
+            for (const Stair& st : vm.world->stairs()) {
+                const float u = (step->position.x - st.bottomEdge[0]) * st.up[0] +
+                                (step->position.y - st.bottomEdge[1]) * st.up[1];
+                const auto at = st.at(u);
+                if (u < -0.01f || u > st.length() + 0.01f ||
+                    std::hypot(at[0] - step->position.x, at[1] - step->position.y) > 0.3f)
+                    continue;
+                const float rise = (st.topZ - st.bottomZ) / float(std::max(st.steps, 1));
+                const int k = std::clamp(int(std::lround((u - 0.125f) / 0.25f)), 0, std::max(st.steps - 1, 0));
+                if (o.animation.playing())
+                    s.climb = o.animation.name;
+                s.onStep = true;
+                s.climbSerial = o.animation.serial;
+                s.z = st.bottomZ + rise * float(k + 1);
+                s.walking = false;
+                break;
+            }
     }
     previous_ = count_ ? current_ : s;
     current_ = std::move(s);

@@ -4,6 +4,7 @@
 
 #include "route_cmds.hpp"
 
+#include "formats/bhav.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
@@ -16,6 +17,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -71,7 +73,8 @@ void printMap(vm::VM& vm, int level, float cx, float cy, int radius, const vm::O
 }
 
 int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
-             int slot, std::optional<int> relative, int ticks, bool map, bool fromInit, int pie) {
+             int slot, std::optional<int> relative, int ticks, bool map, bool fromInit, int pie,
+             std::vector<vm::ObjectId> then) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -117,9 +120,19 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
     for (const auto& st : w.stairs())
         std::printf("  stair (%d, %d, %d) -> (%d, %d, %d), %d steps\n", st.bottom.x, st.bottom.y, st.bottom.level, st.top.x,
                     st.top.y, st.top.level, st.steps);
+    if (std::getenv("OS2_STAIR_PIECES")) // the modular stairs' steps in the VM: links (80/81) and attribute 2
+        for (const auto& [id, x] : machine.objects())
+            if (x.definition && x.definition->fileName.starts_with("Stair Modular") && x.position.inWorld())
+                std::printf("    %d %s at (%.2f, %.2f, %d) dir %d next %d prev %d attr2 %d\n", id, nameOf(x).c_str(),
+                            x.position.x, x.position.y, x.position.level, x.data[vm::objdata::Direction], x.data[80],
+                            x.data[81], x.attributes.size() > 2 ? x.attributes[2] : -1);
     // The object's routing slots and the goals each gives.
     if (const Slots* table = o.definition ? code.slots(o.group, o.definition->slotId()) : nullptr) {
         int n = 0;
+        if (std::getenv("OS2_STAIR_PIECES"))
+            for (size_t k = 0; k < table->slots.size(); ++k)
+                std::printf("  SLOT %zu: type %d flags %X extra %08X %08X\n", k, table->slots[k].type, table->slots[k].flags,
+                            table->slots[k].ts2Extra[0], table->slots[k].ts2Extra[1]);
         for (const auto& sl : table->slots) {
             if (sl.type != 3)
                 continue;
@@ -183,7 +196,7 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
                             now->person ? now->person->data[62] : 0, now->data[vm::objdata::ContainerId]);
         }
         if (auto it = machine.threads.find(sim); it != machine.threads.end() && it->second.status == vm::Thread::Status::Failed)
-            std::printf("  the Sim's Main failed: %s\n", it->second.error.substr(0, it->second.error.find('\n')).c_str());
+            std::printf("  the Sim's Main failed: %s\n", it->second.error.c_str());
         std::printf("queue:");
         for (size_t i = 0; i < s.queue.size(); ++i)
             std::printf(" [%s%s]", s.queue[i].name.c_str(), int(i) == s.activeInteraction ? ", running" : "");
@@ -208,6 +221,15 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
     go.onFalse = {Behavior::TargetKind::False, 0};
     b.instructions = {go};
     code.add(s.group, 0x1FF1, std::move(b));
+    if (std::getenv("OS2_TRACE_ROUTE")) // the walker's instructions under the walk (portal trees)
+        machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
+            if (t.me != sim || t.stack.size() < 2)
+                return;
+            if (in.opcode == 0x6A || in.opcode == 0x71 || in.opcode == 0x2E)
+                std::printf("    %llu %*s%s #%u %s, at (%.2f, %.2f, %d)\n", (unsigned long long)machine.ticks, int(t.stack.size()) * 2, "",
+                            f.behavior->fileName.c_str(), f.pc, primitiveName(in.opcode).c_str(), machine.object(sim)->position.x,
+                            machine.object(sim)->position.y, machine.object(sim)->position.level);
+        };
     machine.threads.insert_or_assign(sim, machine.start(sim, 0x1FF1, {}, object));
     bool shown = false;
     for (int i = 0; i < ticks; ++i) {
@@ -220,6 +242,10 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
             std::printf("route (%zu points):", now->route->points.size());
             for (const auto& p : now->route->points) {
                 std::printf(" (%.2f,%.2f,%d)", p.x, p.y, p.level);
+                if (p.portal)
+                    std::printf("[portal tree of %d on %d]", p.portalOwner, p.portal);
+                if (p.viaPortal)
+                    std::printf("~");
                 if (p.ticks)
                     std::printf("[%s %d%s]", p.animation.empty() ? "wait" : p.animation.c_str(), p.ticks,
                                 p.door ? (" door " + std::to_string(p.door)).c_str() : "");
@@ -228,9 +254,13 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
         }
         const auto it = machine.threads.find(sim);
         const bool done = it == machine.threads.end() || it->second.status != vm::Thread::Status::Running;
-        if ((i + 1) % 60 == 0 || done)
-            std::printf("  tick %d: at (%.2f, %.2f, %d)%s%s\n", i + 1, now->position.x, now->position.y,
+        if ((i + 1) % 60 == 0 || done || (now->route && now->route->inPortal))
+            std::printf("  tick %d: at (%.2f, %.2f, %d)%s%s%s\n", i + 1, now->position.x, now->position.y,
                         now->position.level, now->route ? (now->route->waiting ? ", waiting" : ", walking") : "",
+                        now->route && now->route->inPortal
+                            ? (", in the portal tree, container " + std::to_string(now->data[vm::objdata::ContainerId]) +
+                               (now->animation.name.empty() ? "" : " " + now->animation.name)).c_str()
+                            : "",
                         now->route && now->route->blocker ? (", blocked by " + std::to_string(now->route->blocker)).c_str() : "");
         if (done) {
             if (it != machine.threads.end())
@@ -239,11 +269,27 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
                                                                                : "failed: ",
                             it->second.status == vm::Thread::Status::Failed ? it->second.error.substr(0, it->second.error.find('\n')).c_str() : "",
                             "");
+            // --then: on to the next object from where it got to.
+            if (it != machine.threads.end() && it->second.status == vm::Thread::Status::Finished && !then.empty()) {
+                const vm::ObjectId next = then.front();
+                then.erase(then.begin());
+                if (machine.object(next)) {
+                    std::printf("then to %d %s at (%.2f, %.2f, %d)\n", next, nameOf(*machine.object(next)).c_str(),
+                                machine.object(next)->position.x, machine.object(next)->position.y,
+                                machine.object(next)->position.level);
+                    machine.threads.insert_or_assign(sim, machine.start(sim, 0x1FF1, {}, next));
+                    shown = false;
+                    continue;
+                }
+            }
             break;
         }
     }
     if (s.person)
         std::printf("route result (person data 62): %d, facing %d\n", s.person->data[62], s.data[vm::objdata::Direction]);
+    if (std::getenv("OS2_TRACE_ROUTE"))
+        for (const auto& [name, n] : machine.animations.missing)
+            std::printf("missing animation %s x%zu\n", name.c_str(), n);
     return 0;
 }
 
@@ -257,6 +303,7 @@ int routeCommand(const std::string& cmd, int argc, char** argv) {
     std::optional<int> relative;
     bool map = false, fromInit = false;
     int pie = -1;
+    std::vector<vm::ObjectId> then;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--slot" && i + 1 < argc)
@@ -267,6 +314,8 @@ int routeCommand(const std::string& cmd, int argc, char** argv) {
             ticks = std::stoi(argv[++i]);
         else if (a == "--pie" && i + 1 < argc)
             pie = std::stoi(argv[++i]);
+        else if (a == "--then" && i + 1 < argc)
+            then.push_back(vm::ObjectId(std::stoi(argv[++i])));
         else if (a == "--map")
             map = true;
         else if (a == "--init")
@@ -276,7 +325,7 @@ int routeCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (pos.size() != 3)
         return -1;
-    return cmdRoute(pos[0], pos[1], pos[2], slot, relative, ticks, map, fromInit, pie);
+    return cmdRoute(pos[0], pos[1], pos[2], slot, relative, ticks, map, fromInit, pie, then);
 }
 
 const char* routeUsage() {

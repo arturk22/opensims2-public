@@ -16,10 +16,10 @@ constexpr float kInf = std::numeric_limits<float>::infinity();
 float dist(Point2 a, Point2 b) { return std::hypot(a[0] - b[0], a[1] - b[1]); }
 
 // A door's portal reaches half a tile (a diagonal door's 0.4 tile) out from
-// the door's middle on both sides; going through costs the walk plus this
-// (approximation: the binary's cAStarPortalNode transition cost is not
-// decoded).
-constexpr float kDoorExtra = 0.25f;
+// the door's middle on both sides (approximation). Crossing any portal
+// costs 1: the binary's cost is 1 + OBJD field 0x35 x a scale that nothing
+// writes (DAT_02d86430, in __bss: 0; docs/routing-mac.md §8).
+constexpr float kPortalCost = 1.0f;
 // A stair's portal ends this far out on each landing, clear of the
 // inflated edge of the stairwell and of the steps.
 constexpr float kStairLanding = 0.3f;
@@ -96,7 +96,7 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
             p.a = {cx, cy};
             p.b = {cx + float(bx), cy + float(by)};
         }
-        p.cost = dist(p.a, p.b) + kDoorExtra;
+        p.cost = kPortalCost;
         portals_.push_back(p);
     }
     // Stairs: from the bottom landing to the top one.
@@ -109,7 +109,7 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
         p.levelA = s.bottom.level, p.levelB = s.top.level;
         p.a = s.at(-kStairLanding);
         p.b = s.at(s.length() + kStairLanding);
-        p.cost = 1.5f * (s.length() + 2 * kStairLanding); // as the tile router had it
+        p.cost = kPortalCost;
         p.stair = int(i);
         portals_.push_back(p);
     }
@@ -451,6 +451,7 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
         int goal = -1;   // index into usable
         int portal = -1; // its portal, and the node at its other end
         int other = -1;
+        bool atA = false; // the portal's end a
     };
     std::vector<Special> specials;
     specials.push_back({from, startLevel, leafAt(startLevel, from)});
@@ -464,8 +465,8 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
         if (la < 0 || lb < 0)
             continue;
         const int ia = int(specials.size());
-        specials.push_back({p.a, p.levelA, la, -1, int(i), ia + 1});
-        specials.push_back({p.b, p.levelB, lb, -1, int(i), ia});
+        specials.push_back({p.a, p.levelA, la, -1, int(i), ia + 1, true});
+        specials.push_back({p.b, p.levelB, lb, -1, int(i), ia, false});
     }
     if (specials[0].leaf < 0) {
         why = RouteFail::PathNotFound;
@@ -511,6 +512,16 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
             parent[b] = int32_t(a);
             open.push({g[b] + heuristic(b), b});
         }
+    };
+    // The portals' locks, asked once per way and plan.
+    std::vector<int8_t> lockCache(portals_.size() * 2, -1);
+    auto locked = [&](size_t portal, bool forward) {
+        if (!portalLocked)
+            return false;
+        int8_t& v = lockCache[portal * 2 + (forward ? 0 : 1)];
+        if (v < 0)
+            v = portalLocked(portal, forward) ? 1 : 0;
+        return v == 1;
     };
     int found = -1;
     while (!open.empty()) {
@@ -577,7 +588,7 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
                 const float extra = o.goal >= 0 ? usable[size_t(o.goal)].cost : 0;
                 relax(node, nq + size_t(sp), dist(s.p, o.p) * q.cost + extra);
             }
-            if (s.other >= 0)
+            if (s.other >= 0 && !locked(size_t(s.portal), s.atA))
                 relax(node, nq + size_t(s.other), portals_[size_t(s.portal)].cost);
         }
     }

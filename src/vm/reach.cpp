@@ -602,7 +602,8 @@ Exit snap(Context& c) {
         return Exit::True;
     me.data[objdata::ContainerId] = 0;
     me.data[objdata::SlotNumber] = -1;
-    me.route.reset();
+    if (!(me.route && me.route->inPortal)) // a portal tree moves the walker
+        me.route.reset();
     me.position = {goals.points[best][0], goals.points[best][1], goals.level};
     if (goals.facings[best] >= 0)
         me.data[objdata::Direction] = int16_t(goals.facings[best]);

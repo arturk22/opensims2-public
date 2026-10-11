@@ -23,7 +23,9 @@ std::optional<float> AnimationLibrary::seconds(const std::string& name) {
     if (auto it = cache_.find(name); it != cache_.end())
         return it->second;
     std::optional<float> out;
-    if (index_) {
+    if (!index_)
+        return out; // not cached: the library may get its index later (a route planned first)
+    {
         try {
             const Animation a = loadAnimation(*index_, name);
             out = float(a.duration) / Animation::kTicksPerSecond;
@@ -38,7 +40,9 @@ float AnimationLibrary::tilesPerSecond(const std::string& name) {
     if (auto it = speeds_.find(name); it != speeds_.end())
         return it->second;
     float v = 0;
-    if (index_) {
+    if (!index_)
+        return v;
+    {
         try {
             v = loadAnimation(*index_, name).velocity * Animation::kTicksPerSecond;
         } catch (const std::exception&) {
@@ -53,7 +57,9 @@ std::optional<int> AnimationLibrary::eventTicks(const std::string& name, const s
     if (auto it = events_.find(key); it != events_.end())
         return it->second;
     std::optional<int> out;
-    if (index_) {
+    if (!index_)
+        return out;
+    {
         try {
             for (const auto& e : loadAnimation(*index_, name).events) {
                 const std::string first = e.data.substr(0, e.data.find_first_of("\r\n"));

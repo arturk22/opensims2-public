@@ -454,6 +454,13 @@ struct Object {
             int direction = -1;
             std::string animation; // empty with ticks > 0: a wait (for a door to open)
             ObjectId door = 0;     // the door whose portal this point goes through
+            // The portal tree (OBJf 15 of `portalOwner`) runs on the walker's
+            // thread here, with `portal` as its stack object (routing.cpp);
+            // `viaPortal` points are the engine's own way through, skipped
+            // when the tree did it.
+            ObjectId portal = 0, portalOwner = 0;
+            std::array<int16_t, 10> portalParams{};
+            bool viaPortal = false;
         };
         std::vector<Point> points;
         int level = 0; // of the goal
@@ -471,6 +478,7 @@ struct Object {
         bool waiting = false;
         bool failureTrees = true; // "CT - Route Failure Feedback" when it fails
         ObjectId blocker = 0;     // the Sim in the way
+        bool inPortal = false;    // a portal tree runs (routing.cpp)
         struct Climb {
             std::string animation; // empty between phases
             uint32_t serial = 0;   // bumped as each phase starts
@@ -729,6 +737,10 @@ public:
     // and, with the scheduler running, starts its Main), as FreeSO does; off
     // for single trees (bhav-sweep), where nothing else would run.
     bool initCreatedObjects = false;
+    // Doors and stairs run their portal trees (OBJf entry 15: TEST while
+    // planning, the action on arrival; routing.cpp); off: the engine opens
+    // the way itself (waits at doors, climbs the stairs with its own phases).
+    bool portalTrees = true;
     // Init threads of objects created while running (initCreatedObjects), for the host to look at.
     std::vector<Thread> createdInits;
     // Runs the Init of `id` and of the other parts of its multi-tile object

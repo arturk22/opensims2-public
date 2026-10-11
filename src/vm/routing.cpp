@@ -337,6 +337,8 @@ void addObstacles(VM& vm, PathPlanner& planner, const Object& me, std::span<cons
 // The stair animation `name` ("stairs-up-loop-L") for the walker's age, and
 // how many ticks it lasts (10 when it does not exist).
 std::pair<std::string, int> stairAnimation(VM& vm, const Object& me, const std::string& name) {
+    if (!vm.animations.index())
+        vm.animations.setIndex(vm.code().index());
     const std::string age = agePrefix(me);
     for (const std::string& candidate : {age + "-" + name, "a-" + name})
         if (const auto secs = vm.animations.seconds(candidate))
@@ -401,6 +403,137 @@ ObjectId doorObject(VM& vm, const World::Door& d) {
     return 0;
 }
 
+std::vector<const Slots::Slot*> routingSlots(const Slots* table);
+const Slots* slotTable(VM& vm, const Object& o);
+
+// The steps of a modular stair in the VM: the top one ("... - Portal - A",
+// which has the portal function, OBJf entry 15) and the bottom one ("...
+// - End"), found from the top by following object data 80 ("Get - Next
+// (down)" of StairModularGlobals) to the step with none (-1). The top step
+// is the one with the portal function nearest to where the stair meets its
+// top landing.
+std::pair<ObjectId, ObjectId> stairSteps(VM& vm, const Stair& st) {
+    static const uint32_t stairGlobals = semiGlobalGroup("StairModularGlobals");
+    const auto top = st.at(st.length() - 0.125f);
+    ObjectId best = 0;
+    float bestD = 0.6f;
+    for (const auto& [id, o] : vm.objects()) {
+        if (o.semiGroup != stairGlobals || !o.position.inWorld() || o.position.level != st.top.level ||
+            !vm.functionTree(o, 15))
+            continue;
+        const float d = std::hypot(o.position.x - top[0], o.position.y - top[1]);
+        if (d < bestD)
+            best = id, bestD = d;
+    }
+    if (!best)
+        return {0, 0};
+    ObjectId bottom = best;
+    for (int i = 0; i < 64; ++i) {
+        const Object* o = vm.object(bottom);
+        const ObjectId next = o ? o->data[80] : 0;
+        if (next <= 0 || !vm.object(next))
+            break;
+        bottom = next;
+    }
+    return {best, bottom == best ? 0 : bottom};
+}
+
+// The portal tree of a portal crossed one way, as the binary's
+// TriggerPortalTree / TSObjectPortalLockedCB set it up (docs/routing-mac.md
+// §8): the objects at the entry and the exit end (a door at both; the
+// bottom and top steps of a stair), the object whose OBJf entry 15 runs
+// (the entry's if it has one, else the exit's) and its guard (the TEST
+// tree) and action, and the parameters: 0/1 the containment slots of the
+// two portal slots (0 here: not decoded, no portal tree reads them), 2/3
+// the rooms of the two objects, 4/5 their IDs, 6/7 the routing slots of
+// the two ends (the door's "Function - Portal" picks its side and the
+// opening animation from parameter 6), 8 the gait (1 walking, 2 running)
+// and 9 a constant of the binary (0 here). The stack object is the entry
+// object. Inferred: which routing slot is a stair step's portal slot
+// (the first).
+struct PortalUse {
+    ObjectId entry = 0, exit = 0, owner = 0;
+    uint16_t guard = 0, action = 0;
+    std::array<int16_t, 10> params{};
+};
+
+std::optional<PortalUse> portalUse(VM& vm, const PathPlanner& planner, size_t index, bool forward) {
+    const PathPlanner::Portal& p = planner.portals()[index];
+    PortalUse u;
+    int slotA = 0, slotB = 0;
+    if (p.door >= 0) {
+        const ObjectId door = doorObject(vm, planner.world().doors()[size_t(p.door)]);
+        if (!door)
+            return std::nullopt;
+        u.entry = u.exit = door;
+        // The door's routing slot on each side: the one whose place is
+        // nearest to that end of the portal.
+        const Object& d = *vm.object(door);
+        const auto slots = routingSlots(slotTable(vm, d));
+        float da = 1e9f, db = 1e9f;
+        for (size_t k = 0; k < slots.size(); ++k) {
+            const auto g = vm.routingGoals(*slots[k], d);
+            if (g.points.empty())
+                continue;
+            const float ka = std::hypot(g.points[0][0] - p.a[0], g.points[0][1] - p.a[1]);
+            const float kb = std::hypot(g.points[0][0] - p.b[0], g.points[0][1] - p.b[1]);
+            if (ka < da)
+                da = ka, slotA = int(k);
+            if (kb < db)
+                db = kb, slotB = int(k);
+        }
+    } else if (p.stair >= 0) {
+        const auto [top, bottom] = stairSteps(vm, planner.world().stairs()[size_t(p.stair)]);
+        if (!top || !bottom)
+            return std::nullopt;
+        u.entry = bottom, u.exit = top; // end a is the bottom landing
+    } else {
+        return std::nullopt;
+    }
+    if (!forward) {
+        std::swap(u.entry, u.exit);
+        std::swap(slotA, slotB);
+    }
+    for (const ObjectId id : {u.entry, u.exit}) {
+        const Object& o = *vm.object(id);
+        const ObjectFunctions* f = vm.code().functions(o.group, o.definitionInstance);
+        if (f && f->functions.size() > 15 && f->functions[15].action) {
+            u.owner = id;
+            u.guard = f->functions[15].guard;
+            u.action = f->functions[15].action;
+            break;
+        }
+    }
+    if (!u.owner)
+        return std::nullopt;
+    const Object &a = *vm.object(u.entry), &b = *vm.object(u.exit);
+    u.params = {0, 0, a.data[objdata::Room], b.data[objdata::Room], int16_t(u.entry), int16_t(u.exit),
+                int16_t(slotA), int16_t(slotB), 1, 0};
+    return u;
+}
+
+// The TEST tree of a portal (its OBJf entry 15's guard) for the walker:
+// false locks the portal that way. Run as a check tree on a thread of its
+// own (TSObjectPortalLockedCB runs it as a test on the Sim). No guard, or a
+// guard that cannot run here (a VM error): open (inferred; the binary has
+// no such case).
+bool portalLockedFor(VM& vm, const Object& me, const PathPlanner& planner, size_t index, bool forward) {
+    if (!vm.portalTrees || !me.person)
+        return false;
+    const auto u = portalUse(vm, planner, index, forward);
+    if (!u || !u->guard)
+        return false;
+    Thread t = vm.start(me.id, u->guard, {}, u->entry, u->owner);
+    if (t.status != Thread::Status::Running)
+        return false;
+    auto& f = t.stack.back();
+    f.params.resize(std::max(f.params.size(), u->params.size()));
+    std::copy(u->params.begin(), u->params.end(), f.params.begin());
+    for (int turn = 0; t.status == Thread::Status::Running && turn < 4; ++turn)
+        vm.run(t, vm.instructionsPerTurn);
+    return t.status == Thread::Status::Finished && !t.result;
+}
+
 // Ticks a walker waits at a door's portal for the door to open: the door's
 // open animation (approximation: the game runs the door's portal tree,
 // OBJf entry 15, which plays it and the Sim's walk through; 15 ticks when
@@ -420,7 +553,10 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     for (const auto& g : r.goals)
         goals.push_back({g[0], g[1], g[2]});
     PlannedPath path;
-    if (!planner.plan({me.position.x, me.position.y}, me.position.level, r.level, goals, path, why))
+    planner.portalLocked = [&](size_t portal, bool forward) { return portalLockedFor(vm, me, planner, portal, forward); };
+    const bool planned = planner.plan({me.position.x, me.position.y}, me.position.level, r.level, goals, path, why);
+    planner.portalLocked = nullptr;
+    if (!planned)
         return false;
     r.points.clear();
     int level = me.position.level;
@@ -429,8 +565,27 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
         Object::Route::Point p = walkPoint(wp.x, wp.y, wp.level);
         if (wp.portal >= 0) {
             const PathPlanner::Portal& portal = planner.portals()[size_t(wp.portal)];
+            // Which way: from end a when the walker is there.
+            const bool forward = std::hypot(prev[0] - portal.a[0], prev[1] - portal.a[1]) <=
+                                     std::hypot(prev[0] - portal.b[0], prev[1] - portal.b[1]) &&
+                                 level == portal.levelA;
+            const auto use = vm.portalTrees && me.person ? portalUse(vm, planner, size_t(wp.portal), forward)
+                                                         : std::nullopt;
+            const size_t engineFrom = r.points.size();
+            if (use) {
+                Object::Route::Point at = walkPoint(prev[0], prev[1], level);
+                at.direction = directionOf(wp.x - prev[0], wp.y - prev[1]);
+                at.portal = use->entry, at.portalOwner = use->owner, at.portalParams = use->params;
+                at.door = portal.door >= 0 ? use->entry : 0;
+                r.points.push_back(at);
+            }
             if (portal.stair >= 0) {
                 appendClimb(vm, me, planner.world().stairs()[size_t(portal.stair)], wp.level > level, r.points);
+                if (use) // the tree climbs: the engine's phases stay as the way if it cannot
+                    for (size_t k = engineFrom + 1; k < r.points.size(); ++k)
+                        r.points[k].viaPortal = true;
+            } else if (use) {
+                p.door = use->entry;
             } else if (portal.door >= 0) {
                 const ObjectId door = doorObject(vm, planner.world().doors()[size_t(portal.door)]);
                 Object::Route::Point wait = walkPoint(prev[0], prev[1], level);
@@ -524,6 +679,70 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         return Step::Failed;
     }
     const std::optional<bool> treeResult = std::exchange(c.thread.rerunResult, std::nullopt);
+    if (r.inPortal) {
+        // Back from the portal tree (DoWaitingForPortal): the walk goes on
+        // from the portal's other end; false fails the route ("interrupted
+        // by callback", inferred from DoWaitingForPortal's failure branch).
+        r.inPortal = false;
+        r.waiting = false;
+        r.blockedTicks = 0;
+        if (!r.points.empty())
+            r.points.erase(r.points.begin());
+        if (!treeResult.value_or(false)) {
+            why = RouteFail::InterruptedByCallback;
+            return Step::Failed;
+        }
+        while (!r.points.empty() && r.points.front().viaPortal)
+            r.points.erase(r.points.begin());
+        if (me.data[objdata::ContainerId] != 0)
+            leaveSlot(me);
+        r.climb = {};
+    }
+    if (!r.points.empty() && r.points.front().portal) {
+        // At a portal (DoStartPortalTree): wait while another Sim uses it
+        // (object data 0x3E of the portal: DoWaitingForPortalToBecomeFree,
+        // up to 126 ticks, then blocked by an object), else run its tree on
+        // my thread (TriggerPortalTree) and wait for it (DoWaitingForPortal).
+        const Object::Route::Point& p = r.points.front();
+        const float d = std::hypot(p.x - me.position.x, p.y - me.position.y);
+        const float budget = walkTilesPerTick(vm, me);
+        if (d > budget) {
+            setDirection(me, directionOf(p.x - me.position.x, p.y - me.position.y));
+            moveTo(vm, me, me.position.x + (p.x - me.position.x) / d * budget,
+                   me.position.y + (p.y - me.position.y) / d * budget, p.level);
+            r.waiting = false;
+            return Step::Walking;
+        }
+        moveTo(vm, me, p.x, p.y, p.level);
+        setDirection(me, p.direction);
+        const Object* portal = vm.object(p.portal);
+        const Object* owner = vm.object(p.portalOwner);
+        const uint16_t tree = owner ? vm.functionTree(*owner, 15) : 0;
+        if (!portal || !tree) { // gone: the engine's way
+            r.points.erase(r.points.begin());
+            return Step::Walking;
+        }
+        const int16_t user = portal->data[0x3E];
+        if (user != 0 && user != me.id && vm.object(user)) {
+            r.waiting = true;
+            if (++r.blockedTicks > kWaitForPersonTicks) {
+                why = RouteFail::BlockedByObject;
+                return Step::Failed;
+            }
+            return Step::Walking;
+        }
+        if (me.person && me.person->data.size() > 0x44)
+            me.person->data[0x44] &= int16_t(~0x40); // TriggerPortalTree clears it first
+        vm.call(c.thread, owner->id, tree, {});
+        Frame& f = c.thread.stack.back();
+        f.stackObject = p.portal;
+        f.params.resize(std::max(f.params.size(), p.portalParams.size()));
+        std::copy(p.portalParams.begin(), p.portalParams.end(), f.params.begin());
+        f.rerunCaller = true;
+        r.inPortal = true;
+        r.waiting = true;
+        return Step::Call;
+    }
     if (const ObjectId b = simAhead(vm, me, r)) {
         const Object& blocker = *vm.object(b);
         const bool stationary = !blocker.route || blocker.route->waiting;
@@ -572,6 +791,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     float budget = walkTilesPerTick(vm, me);
     while (budget > 0 && !r.points.empty()) {
         const Object::Route::Point& p = r.points.front();
+        if (p.portal)
+            return Step::Walking; // its tree starts on the next tick
         if (p.ticks > 0) {
             if (r.climb.ticksLeft == 0) { // the phase starts
                 moveTo(vm, me, p.x, p.y, p.level);
@@ -1030,7 +1251,8 @@ Exit snapInto(Context& c) {
     x->data[objdata::SlotNumber] = int16_t(slot);
     x->position = into->position;
     x->data[objdata::Room] = into->data[objdata::Room];
-    x->route.reset();
+    if (!(x->route && x->route->inPortal)) // a portal tree snaps the walker step by step
+        x->route.reset();
     return Exit::True;
 }
 

@@ -693,6 +693,57 @@ static void testDoorWait() {
           "a door: wait at its portal, then through");
 }
 
+// A door with a portal function (OBJf entry 15): planning runs its guard
+// as the TEST tree (false locks the door: no way through), arriving runs
+// its action on the walker's thread with the door as the stack object and
+// the portal's parameters (6 = the routing slot on the walker's side), and
+// the walk goes on through when it returns true.
+static void testDoorPortalTree() {
+    for (const bool locked : {false, true}) {
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World(10, 6);
+        for (int y = 0; y < 6; ++y)
+            vm.world->addWall(1, 5, y, 5, y + 1);
+        vm.world->openDoor({4, 2, 1}, 0);
+        code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+        code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+        ObjectDefinition doorDef = definition(0xAAAA0003, 0);
+        doorDef.fields[(0x52 - 0x44) / 2] = kObjectTypeDoor;
+        code.add(kGroup, 0x82, doorDef);
+        ObjectFunctions f;
+        f.functions.resize(16);
+        f.functions[15] = {0x1010, 0x1011};
+        code.add(kGroup, 0x82, f);
+        constexpr uint8_t Global = 0x06, Param = 0x09;
+        // TEST: open while global 12 is 0.
+        code.add(kGroup, 0x1010, tree({expr(Global, 12, Eq, Lit, 0, T, F)}));
+        // The portal: global 10 = parameter 6 + 100, global 11 = the stack object.
+        code.add(kGroup, 0x1011, tree({expr(Global, 10, Assign, Param, 6, go(1), E),
+                                       expr(Global, 10, 3, Lit, 100, go(2), E),
+                                       expr(Global, 11, Assign, StackId, 0, T, E)}, 8));
+        vm.globals[12] = locked ? 1 : 0;
+        Object& door = vm.instantiate(kGroup, 0x82);
+        door.position = {4.5f, 2.5f, 1};
+        Object& lamp = vm.instantiate(kGroup, 0x80);
+        lamp.position = {9.5f, 2.5f, 1};
+        Object& sim = vm.instantiate(kGroup, 0x81);
+        sim.position = {1.5f, 4.5f, 1};
+        code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0x02})}));
+        Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+        for (int i = 0; i < 2000 && t.status == Thread::Status::Running; ++i)
+            vm.run(t);
+        if (locked)
+            check(t.status == Thread::Status::Finished && !t.result && sim.position.x < 5 && vm.globals[11] == 0 &&
+                      sim.person && sim.person->data[62] == int16_t(RouteFail::PathNotFound),
+                  "a door whose portal TEST is false is locked");
+        else
+            check(t.status == Thread::Status::Finished && t.result && sim.position.x > 7 && vm.globals[11] == door.id &&
+                      vm.globals[10] == 100,
+                  "a door's portal tree runs on arrival, with the door as stack object and its side's slot");
+    }
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -707,6 +758,7 @@ int main() {
     testRouteResult();
     testBlockedBySim();
     testDoorWait();
+    testDoorPortalTree();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
