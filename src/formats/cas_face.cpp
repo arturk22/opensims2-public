@@ -473,6 +473,68 @@ std::vector<uint8_t> FaceBaker::deformToFace(const std::vector<uint8_t>& bytes, 
     return out;
 }
 
+FaceStructure FaceBaker::descendant(const FaceStructure& a, const FaceStructure& b,
+                                    const std::vector<std::pair<std::string, int>>& regions) {
+    FaceStructure out;
+    out.version = 3;
+    for (uint32_t key : a.keys) {
+        auto ia = a.data.find(key);
+        auto ib = b.data.find(key);
+        if (ia == a.data.end() || ib == b.data.end() || ia->second.empty())
+            continue;
+        const int ageIdx = int(key & 0xFF);
+        static const uint32_t kAges[6] = {age::Toddler, age::Child, age::Teen, age::Adult, age::Elder, age::Baby};
+        const uint32_t ageBit = ageIdx < 6 ? kAges[ageIdx] : age::Adult;
+        const uint32_t genderBit = (key & 0x100) ? gender::Male : gender::Female;
+        const bool low = (key & 0xF0000) != 0;
+        // b's deltas by texture coordinate.
+        std::unordered_multimap<int64_t, size_t> byUv;
+        for (size_t k = 0; k < ib->second.size(); ++k)
+            byUv.emplace(uvKey(ib->second[k].u, ib->second[k].v), k);
+        std::vector<FaceStructure::Vertex> verts = ia->second;
+        std::vector<Vec3> fromB(verts.size(), Vec3{0, 0, 0});
+        std::vector<bool> hasB(verts.size(), false);
+        for (size_t k = 0; k < verts.size(); ++k) {
+            auto it = byUv.find(uvKey(verts[k].u, verts[k].v));
+            if (it != byUv.end())
+                fromB[k] = ib->second[it->second].delta, hasB[k] = true;
+        }
+        for (size_t k = 0; k < verts.size(); ++k)
+            if (hasB[k])
+                verts[k].delta = scale(add(verts[k].delta, fromB[k]), 0.5f);
+        for (const auto& [region, parent] : regions) {
+            std::vector<std::string> masks{region};
+            if (region == "eyes")
+                masks.push_back("cheekbones");
+            if (region == "mouth")
+                masks.push_back("cheek");
+            for (const auto& m : masks) {
+                const SimPart* maskEntry = nullptr;
+                for (const auto& e : catalog_.regions)
+                    if (e.name() == m && fits(e, ageBit, genderBit))
+                        maskEntry = &e;
+                const Mesh* mm = maskEntry ? meshOfEntry(*maskEntry, low) : nullptr;
+                if (!mm && maskEntry)
+                    mm = meshOfEntry(*maskEntry);
+                if (!mm)
+                    continue;
+                for (size_t k = 0; k < verts.size(); ++k) {
+                    const long j = mm->match(verts[k].u, verts[k].v, Vec3{0, 0, 0});
+                    if (j < 0)
+                        continue;
+                    const float w = mm->weights[size_t(j)];
+                    if (w <= 0)
+                        continue;
+                    const Vec3 target = parent == 0 ? ia->second[k].delta : (hasB[k] ? fromB[k] : ia->second[k].delta);
+                    verts[k].delta = add(scale(verts[k].delta, 1 - w), scale(target, w));
+                }
+            }
+        }
+        out.set(key, std::move(verts));
+    }
+    return out;
+}
+
 FaceStructure FaceBaker::structureOf(const FaceSpec& spec, uint32_t genderBit) {
     FaceStructure fs;
     fs.version = 3;

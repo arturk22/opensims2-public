@@ -120,6 +120,9 @@ public:
         bool zodiacChosen = false;
         int zodiac = 1;
         uint32_t thumbnail = 0; // CASThumbnails head id (premade Sims), 0 if none
+        std::shared_ptr<RgbaImage> portrait; // a head shot rendered for the family bar
+        int id = 0;                          // stable within the session (the family tree)
+        std::vector<int> parents;            // ids of the family's members that are its parents
     };
 
 private:
@@ -131,6 +134,19 @@ private:
         uint32_t thumbnail = 0;
     };
     void loadBin();
+    // A head shot of a Sim (the renderer's capture of it alone, far from
+    // the studio), for the family bar and the Make a Child panel.
+    std::shared_ptr<RgbaImage> portrait(const Member& m, uint32_t size = 256);
+    int portraitInstance_ = -1;
+    bool capturing_ = false;
+    int nextId_ = 1;
+    // Make a Child (CB980E87): two of the family's grown-ups, the child's
+    // age and gender (0 = by the genes' rule), the child made.
+    void makeChild();
+    bool mabOpen_ = false;
+    int mabParent_[2] = {-1, -1};
+    uint32_t mabAge_ = 0x01, mabGender_ = 0;
+    std::optional<Member> mabChild_;
     std::vector<BinSim> bin_;
     bool binLoaded_ = false, binOpen_ = false;
     int binSel_ = -1;

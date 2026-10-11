@@ -88,6 +88,14 @@ public:
     // its own deformed copy, "age<n>_1_gmdc"). Positions only.
     static std::vector<uint8_t> deformToFace(const std::vector<uint8_t>& gmdc, const Baked& face);
 
+    // A child's face (DetermineDescendantFace's script played on the two
+    // parents' LxNR): for every key both have, each vertex starts at the
+    // parents' mean and the region masks (faceregion, the vertex colour as
+    // weight) pull it to the region's parent; "eyes" brings "cheekbones",
+    // "mouth" "cheek" (inferred: how the editor mixes is not decoded).
+    FaceStructure descendant(const FaceStructure& a, const FaceStructure& b,
+                             const std::vector<std::pair<std::string, int>>& regions);
+
     // The archetype of a family at an age and gender, if the catalog has one.
     const SimPart* archetypeFor(const std::string& family, uint32_t ageBit, uint32_t genderBit) const;
 

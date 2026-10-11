@@ -455,6 +455,123 @@ void CasMode::setStep(int step) {
         rebuild(); // the clothes step shows the category being chosen
 }
 
+std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size) {
+    const fs::path file = tempDir_ / ("portrait" + std::to_string(rebuilds_++) + ".package");
+    std::shared_ptr<RgbaImage> out;
+    try {
+        cas::CharacterSpec spec = m.spec;
+        if (spec.firstName.empty())
+            spec.firstName = "Sim";
+        cas::writeCharacter(index_, *catalog_, *baker_, spec, "CAS_Portrait", file, false);
+        SimActor actor(loadCharacterSim(index_, catalog_->parts, file, 1));
+        const std::string sk = lower(actor.skin.skeleton.name);
+        std::string anim = "a-idle-neutral-armsSide-wtC-breatheLoop";
+        if (sk.starts_with("c"))
+            anim = "c-idle-neutral-armsSide-wtC-breatheLoop50";
+        else if (sk.starts_with("p"))
+            anim = "p-idle-neutral-lookAround";
+        try {
+            actor.cue(0, actor.animation(index_, anim));
+        } catch (const std::exception&) {
+        }
+        // Alone, far from the studio, facing +Y.
+        const simd_float3 at = simd_make_float3(1000, 1000, 0);
+        actor.position = {at.x, at.y, at.z};
+        actor.heading = 0;
+        actor.update(0.4);
+        const int model = renderer_.addObject(actor.skin.model, index_, true);
+        if (portraitInstance_ < 0)
+            portraitInstance_ = renderer_.addInstance(model, matrix_identity_float4x4);
+        else
+            renderer_.setInstanceModel(portraitInstance_, model);
+        renderer_.updateObject(model, actor.posed);
+        renderer_.setInstanceLightSet(portraitInstance_, studio_ ? 1 : 0);
+        const float h = [&] {
+            switch (spec.age) {
+            case cas::age::Baby: return 0.25f;
+            case cas::age::Toddler: return 0.40f;
+            case cas::age::Child: return 1.17f;
+            case cas::age::Teen: return 1.5f;
+            default: return 1.64f;
+            }
+        }();
+        const float dist = spec.age == cas::age::Toddler || spec.age == cas::age::Baby ? 0.8f : 1.0f;
+        const simd_float3 e = at + simd_make_float3(0, dist, h + 0.03f), target = at + simd_make_float3(0, 0, h);
+        const simd_float3 f = simd_normalize(target - e);
+        const simd_float3 sv = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
+        const simd_float3 u = simd_cross(sv, f);
+        FrameView fv;
+        fv.view = simd_matrix(simd_make_float4(sv.x, u.x, -f.x, 0), simd_make_float4(sv.y, u.y, -f.y, 0),
+                              simd_make_float4(sv.z, u.z, -f.z, 0),
+                              simd_make_float4(-simd_dot(sv, e), -simd_dot(u, e), simd_dot(f, e), 1));
+        const float n = 0.05f, fa = 50, ys = 1.0f / std::tan(15.0f * 3.14159265f / 180.0f), zs = fa / (n - fa);
+        fv.projection = simd_matrix(simd_make_float4(ys, 0, 0, 0), simd_make_float4(0, ys, 0, 0),
+                                    simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, zs * n, 0));
+        capturing_ = true;
+        out = std::make_shared<RgbaImage>(renderer_.capture(size, size, fv, simd_make_float4(0, 0, 0, 0)));
+        capturing_ = false;
+        ObjectModel empty;
+        renderer_.setInstanceModel(portraitInstance_, renderer_.addObject(empty, index_, true));
+    } catch (const std::exception& e) {
+        capturing_ = false;
+        warnings_.push_back(std::string("portrait: ") + e.what());
+    }
+    std::error_code ec;
+    fs::remove(file, ec);
+    return out;
+}
+
+void CasMode::makeChild() {
+    if (mabParent_[0] < 0 || mabParent_[1] < 0 || size_t(std::max(mabParent_[0], mabParent_[1])) >= family_.size())
+        return;
+    const Member& a = family_[size_t(mabParent_[0])];
+    const Member& b = family_[size_t(mabParent_[1])];
+    std::mt19937 rng(std::random_device{}());
+    auto random = [&](uint32_t n) { return n ? uint32_t(rng() % n) : 0u; };
+    auto dnaOf = [&](const Member& m) {
+        return genetics::dnaFromLook(cas::toneFamily(m.spec.hairTone), cas::toneFamily(m.spec.skinTone), m.spec.eyes,
+                                     m.spec.gender == cas::gender::Female, random);
+    };
+    const genetics::Dna da = dnaOf(a), db = dnaOf(b);
+    genetics::Dna dna = genetics::determineGenetics(da, db, genetics::baseGameGeneticValues(), random,
+                                                    genetics::baseGameSkinTones());
+    const genetics::DescendantFace df = genetics::determineDescendantFace(da, db, random);
+    Member child;
+    cas::CharacterSpec& s = child.spec;
+    s.age = mabAge_;
+    s.gender = mabGender_ ? mabGender_
+                          : (genetics::babyIsFemale(false, false, random) ? cas::gender::Female : cas::gender::Male);
+    if (int t = cas::toneNumber(dna.expressed(genetics::gene::Hair)))
+        s.hairTone = std::clamp(t, 1, 4);
+    if (int t = cas::toneNumber(dna.expressed(genetics::gene::Skin)))
+        s.skinTone = std::clamp(t, 1, 4);
+    if (!dna.expressed(genetics::gene::Eyes).empty())
+        s.eyes = dna.expressed(genetics::gene::Eyes);
+    // The face: the parents' structures mixed region by region.
+    const cas::FaceStructure fa = baker_->structureOf(a.spec.face, a.spec.gender);
+    const cas::FaceStructure fb = baker_->structureOf(b.spec.face, b.spec.gender);
+    s.face.structure = std::make_shared<cas::FaceStructure>(baker_->descendant(fa, fb, df.regions));
+    s.lastName = familyName_;
+    cas::completeSpec(*catalog_, s, uint32_t(rng() | 1));
+    child.personality = cas::Personality{0, 0, 0, 0, 0};
+    for (int i = 0; i < cas::kPersonalityPoints; ++i) {
+        int t = int(rng() % 5);
+        while (child.personality[t] >= 10)
+            t = (t + 1) % 5;
+        ++child.personality[t];
+    }
+    child.zodiac = cas::zodiacSign(child.personality);
+    child.parents = {a.id, b.id};
+    child.portrait = portrait(child, 256);
+    mabChild_ = std::move(child);
+    std::string regions;
+    for (const auto& [r, p] : df.regions)
+        regions += r + (p ? "<" + (b.spec.firstName.empty() ? std::string("2") : b.spec.firstName) + " "
+                          : "<" + (a.spec.firstName.empty() ? std::string("1") : a.spec.firstName) + " ");
+    status_ = "Filho: " + regions;
+    dirty_ = true;
+}
+
 void CasMode::loadBin() {
     if (binLoaded_)
         return;
@@ -540,6 +657,10 @@ void CasMode::finishSim() {
         edit_.aspiration = cas::aspiration::GrowUp;
     else if (!edit_.aspiration || edit_.aspiration == cas::aspiration::GrowUp)
         edit_.aspiration = cas::suggestedAspiration(edit_.zodiac); // none chosen: the sign's (inferred)
+    if (!edit_.id)
+        edit_.id = nextId_++;
+    if (!edit_.thumbnail)
+        edit_.portrait = portrait(edit_);
     if (size_t(editing_) < family_.size())
         family_[size_t(editing_)] = edit_;
     else
@@ -648,7 +769,7 @@ void CasMode::setCanvas(int width, int height) {
 }
 
 void CasMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
-    if (!layers_[0] || width == 0 || height == 0)
+    if (!layers_[0] || width == 0 || height == 0 || capturing_)
         return;
     const int cw = int(std::lround(float(width) / std::max(scale, 0.01f)));
     const int ch = int(std::lround(float(height) / std::max(scale, 0.01f)));
@@ -800,6 +921,22 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
             acceptFamily();
         else if (a == "--cas-edit")
             openCharacter(v);
+        else if (a == "--cas-baby") { // Make a Child of the family's first two grown-ups, at an age
+            mabAge_ = v == "child" ? cas::age::Child : v == "teen" ? cas::age::Teen : cas::age::Toddler;
+            mabParent_[0] = mabParent_[1] = -1;
+            for (size_t k = 0; k < family_.size(); ++k) {
+                if (family_[k].spec.age != cas::age::Adult && family_[k].spec.age != cas::age::Elder)
+                    continue;
+                if (mabParent_[0] < 0)
+                    mabParent_[0] = int(k);
+                else if (mabParent_[1] < 0)
+                    mabParent_[1] = int(k);
+            }
+            mabOpen_ = mabParent_[1] >= 0;
+            if (mabOpen_)
+                makeChild();
+            dirty_ = true;
+        }
         else if (a == "--cas-turn")
             heading_ = std::stof(v) * 3.14159265f / 180;
         else if (a == "--click") {
@@ -939,7 +1076,8 @@ UiScreen CasMode::screen(int width, int height) {
         const float y = oy + 650;
         for (size_t i = 0; i < family_.size(); ++i) {
             const std::string n = family_[i].spec.firstName;
-            if (const RgbaImage* t = family_[i].thumbnail && thumbs_ ? thumbs_->image(family_[i].thumbnail) : nullptr) {
+            const RgbaImage* t = family_[i].thumbnail && thumbs_ ? thumbs_->image(family_[i].thumbnail) : family_[i].portrait.get();
+            if (t) {
                 rect(x - 4, y - 62, x + 56, y - 2, kThumbBg);
                 UiQuad q;
                 q.image = t;
@@ -966,7 +1104,26 @@ UiScreen CasMode::screen(int width, int height) {
                      binOpen_ = !binOpen_;
                      binSel_ = -1;
                  }},
-                {"Fazer um Filho", [this] { status_ = "Fazer um Filho: ainda não"; }},
+                {"Fazer um Filho", [this] {
+                     binOpen_ = false;
+                     mabOpen_ = true;
+                     mabChild_.reset();
+                     // The first two grown-ups as parents.
+                     mabParent_[0] = mabParent_[1] = -1;
+                     for (size_t i = 0; i < family_.size(); ++i) {
+                         const uint32_t a = family_[i].spec.age;
+                         if (a != cas::age::Adult && a != cas::age::Elder)
+                             continue;
+                         if (mabParent_[0] < 0)
+                             mabParent_[0] = int(i);
+                         else if (mabParent_[1] < 0)
+                             mabParent_[1] = int(i);
+                     }
+                     if (mabParent_[1] < 0) {
+                         mabOpen_ = false;
+                         status_ = "Fazer um Filho precisa de dois adultos ou idosos na família";
+                     }
+                 }},
             };
             float bx = x, by = y - 48; // stacked where the next member would go
             for (const auto& [label, act] : adds) {
@@ -1085,6 +1242,135 @@ UiScreen CasMode::screen(int width, int height) {
                 });
             }
     }
+    // Make a Child (CB980E87): the whole screen, from the "MAB anchor"
+    // (0d016e8a:bl); the parents' and the child's views show head shots.
+    if (editing_ < 0 && mabOpen_)
+        if (auto it = scripts_.find(kMakeBaby); it != scripts_.end()) {
+            const UiElement& panel = it->second.roots.front();
+            float ax = 0, ay = 768;
+            if (const UiElement* pan = panel.child(kPanelAnchor)) {
+                const auto a = pan->area();
+                ax = float(a[0]), ay = float(a[1]);
+            }
+            const auto pa = panel.area();
+            const float px = ox + 0 - ax - float(pa[0]), py = oy + 768 - ay - float(pa[1]);
+            UiDrawHooks mh;
+            mh.rects = &rects;
+            const uint32_t ageBits[5] = {cas::age::Toddler, cas::age::Child, cas::age::Teen, cas::age::Adult, cas::age::Elder};
+            for (int k = 0; k < 5; ++k)
+                if (const UiElement* b = find(panel, 0xCC6C0200 + uint32_t(k)); b && mabAge_ == ageBits[k])
+                    mh.buttonState[b] = 2;
+            for (int k = 0; k < 2; ++k)
+                if (const UiElement* b = find(panel, 0x4C6C0000 + uint32_t(k));
+                    b && mabGender_ == (k ? cas::gender::Male : cas::gender::Female))
+                    mh.buttonState[b] = 2;
+            // The adult and elder age buttons do nothing for a child: hidden.
+            for (int k = 3; k < 5; ++k)
+                if (const UiElement* b = find(panel, 0xCC6C0200 + uint32_t(k)))
+                    mh.hide.insert(b);
+            out.quads.clear(); // the panel covers the frame
+            out.textImages.clear();
+            targets_.clear();
+            layoutUiElement(panel, px, py, *res_, *fonts_, out, mh);
+            auto image = [&](const UiElement* w, const RgbaImage* img) {
+                if (!w || !img)
+                    return;
+                auto r = rects.find(w);
+                if (r == rects.end())
+                    return;
+                const auto rr = r->second;
+                const float side = std::min(rr[2] - rr[0], rr[3] - rr[1]);
+                UiQuad q;
+                q.image = img;
+                q.x0 = (rr[0] + rr[2] - side) / 2, q.y0 = (rr[1] + rr[3] - side) / 2;
+                q.x1 = q.x0 + side, q.y1 = q.y0 + side;
+                out.quads.push_back(q);
+            };
+            auto shot = [&](int idx) -> const RgbaImage* {
+                if (idx < 0 || size_t(idx) >= family_.size())
+                    return nullptr;
+                const Member& m = family_[size_t(idx)];
+                if (m.thumbnail && thumbs_)
+                    if (const RgbaImage* t = thumbs_->image(m.thumbnail))
+                        return t;
+                return m.portrait.get();
+            };
+            image(find(panel, 0xCCB911B8), shot(mabParent_[0]));
+            image(find(panel, 0xCCB911A2), shot(mabParent_[1]));
+            if (mabChild_)
+                image(find(panel, 0xACB91188), mabChild_->portrait.get());
+            // The parent grids: the family's adults and elders.
+            std::vector<int> grown;
+            for (size_t i = 0; i < family_.size(); ++i)
+                if (family_[i].spec.age == cas::age::Adult || family_[i].spec.age == cas::age::Elder)
+                    grown.push_back(int(i));
+            for (int side = 0; side < 2; ++side)
+                if (const UiElement* grid = find(panel, side ? 0x4CD98491 : 0x4CD98490))
+                    if (auto r = rects.find(grid); r != rects.end()) {
+                        const auto gr = r->second;
+                        const float cw = (gr[2] - gr[0]) / 2, ch = (gr[3] - gr[1]) / 3;
+                        for (size_t k = 0; k < grown.size() && k < 6; ++k) {
+                            const int idx = grown[k];
+                            const float x0 = gr[0] + cw * float(k % 2) + 2, y0 = gr[1] + ch * float(k / 2) + 2;
+                            const float x1 = x0 + cw - 4, y1 = y0 + ch - 4;
+                            const bool sel = mabParent_[side] == idx;
+                            if (sel)
+                                rect(x0 - 2, y0 - 2, x1 + 2, y1 + 2, kCellSelected);
+                            rect(x0, y0, x1, y1, kThumbBg);
+                            if (const RgbaImage* t = shot(idx)) {
+                                UiQuad q;
+                                q.image = t;
+                                const float sd = std::min(x1 - x0, y1 - y0);
+                                q.x0 = (x0 + x1 - sd) / 2, q.y0 = (y0 + y1 - sd) / 2, q.x1 = q.x0 + sd, q.y1 = q.y0 + sd;
+                                out.quads.push_back(q);
+                            } else {
+                                text(x0 + 2, y0 + 2, x1 - x0 - 4, family_[size_t(idx)].spec.firstName, kCellText);
+                            }
+                            targets_.push_back({{x0, y0, x1, y1}, [this, side, idx](simd_float2) {
+                                                    if (mabParent_[1 - side] == idx)
+                                                        std::swap(mabParent_[0], mabParent_[1]);
+                                                    else
+                                                        mabParent_[side] = idx;
+                                                    mabChild_.reset();
+                                                }});
+                        }
+                    }
+            for (int k = 0; k < 3; ++k) {
+                const uint32_t a = ageBits[k];
+                target(find(panel, 0xCC6C0200 + uint32_t(k)), [this, a](simd_float2) { mabAge_ = a; });
+            }
+            for (int k = 0; k < 2; ++k)
+                target(find(panel, 0x4C6C0000 + uint32_t(k)), [this, k](simd_float2) {
+                    const uint32_t g = k ? cas::gender::Male : cas::gender::Female;
+                    mabGender_ = mabGender_ == g ? 0 : g;
+                });
+            target(find(panel, 0x4C76BB8F), [this](simd_float2) { makeChild(); });
+            target(find(panel, 0x2C6CA64E), [this](simd_float2) {
+                mabOpen_ = false;
+                mabChild_.reset();
+            });
+            target(find(panel, 0x4C6CA66D), [this](simd_float2) {
+                if (!mabChild_ || family_.size() >= 8)
+                    return;
+                Member c = std::move(*mabChild_);
+                mabChild_.reset();
+                mabOpen_ = false;
+                c.id = nextId_++;
+                if (c.spec.firstName.empty())
+                    c.spec.firstName = c.spec.gender == cas::gender::Female ? "Filha" : "Filho";
+                c.aspiration = cas::aspiration::GrowUp;
+                if (!c.portrait)
+                    c.portrait = portrait(c);
+                status_ = c.spec.firstName + " entrou na família";
+                family_.push_back(std::move(c));
+                rebuild();
+            });
+            if (!status_.empty()) {
+                rect(ox + 200, oy + 8, ox + 820, oy + 30, {0.1f, 0.1f, 0.3f, 0.75f});
+                text(ox + 206, oy + 11, 600, status_, {1, 1, 1, 1});
+            }
+            return out;
+        }
     if (!status_.empty()) {
         rect(ox + 200, oy + 8, ox + 820, oy + 30, {0.1f, 0.1f, 0.3f, 0.75f});
         text(ox + 206, oy + 11, 600, status_, {1, 1, 1, 1});
