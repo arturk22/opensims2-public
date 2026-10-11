@@ -280,12 +280,25 @@ InteractionTable InteractionTable::parse(std::span<const uint8_t> data) {
         }
     }
     if (!r.atEnd()) {
-        // Trailing table name: u8 or u32 length.
-        const size_t rest = r.remaining();
-        if (size_t(data[r.pos()]) + 1 == rest)
-            t.name = r.str8();
-        else if (rest >= 4 && size_t(le32(&data[r.pos()])) + 4 == rest)
-            t.name = std::string(reinterpret_cast<const char*>(r.bytes(rest).data() + 4), rest - 4);
+        // Trailing table name: u8 or u32 length. One table ("Reaction
+        // Interaction Table", group 0x7F9FC607, version 0x48) has 96 zero bytes
+        // before it: 16 empty advertisements (6 bytes each) beyond what its
+        // counts (16, 0, ...) announce, skipped here (docs/data-findings.md).
+        for (size_t skip = 0; skip < r.remaining(); skip += 6) {
+            const size_t at = r.pos() + skip, rest = r.remaining() - skip;
+            if (skip && data[at - 6] | data[at - 5] | data[at - 4] | data[at - 3] | data[at - 2] | data[at - 1])
+                break;
+            const bool name8 = size_t(data[at]) + 1 == rest;
+            const bool name32 = rest >= 4 && size_t(le32(&data[at])) + 4 == rest;
+            if (!name8 && !name32)
+                continue;
+            r.bytes(skip);
+            if (name8)
+                t.name = r.str8();
+            else
+                t.name = std::string(reinterpret_cast<const char*>(r.bytes(rest).data() + 4), rest - 4);
+            break;
+        }
     }
     r.expectEnd("TTAB");
     return t;

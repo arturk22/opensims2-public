@@ -172,6 +172,28 @@ static void testSimAntics() {
     check(SemiGlobal::parse(glob).semiGlobalName == "Test", "GLOB");
 }
 
+static void testInteractionTable() {
+    // Version 0x48, one interaction with 16 advertisements for the first age
+    // group, then 96 zero bytes and the name, as in the game's "Reaction
+    // Interaction Table" (group 0x7F9FC607).
+    std::vector<uint8_t> d(64, 0);
+    auto u16 = [&](uint32_t v) { d.insert(d.end(), {uint8_t(v), uint8_t(v >> 8)}); };
+    auto u32 = [&](uint32_t v) { u16(v & 0xFFFF), u16(v >> 16); };
+    u32(0xFFFFFFFF), u32(0x48), u32(0), u16(1);
+    u16(0x2019), u16(0x0109);
+    u32(16);
+    for (int i = 0; i < 6; ++i)
+        u32(0);
+    d.insert(d.end(), 2 + 2 + 4 + 4 + 4 + 4 + 4 + 2 + 4, 0);
+    d.insert(d.end(), 16 * 6 + 96, 0);
+    const std::string name = "Reaction Interaction Table";
+    d.push_back(uint8_t(name.size()));
+    d.insert(d.end(), name.begin(), name.end());
+    const auto t = InteractionTable::parse(d);
+    check(t.interactions.size() == 1 && t.interactions[0].action == 0x2019 && t.name == name,
+          "TTAB with zero padding before the name");
+}
+
 static void testBhav() {
     std::vector<uint8_t> d(64, 0);
     d.insert(d.end(), {0x07, 0x80, 2, 0, 0, 1, 2, 0, 0, 0, 0, 0}); // 0x8007, 2 instructions, 1 arg, 2 locals
@@ -429,6 +451,7 @@ int main() {
     testStrings();
     testSimAntics();
     testBhav();
+    testInteractionTable();
     testCameraConfig();
     testLightingConfig();
     testStandardMaterial();
