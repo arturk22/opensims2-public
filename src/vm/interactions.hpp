@@ -187,9 +187,8 @@ ObjectId findInteractionObject(VM& vm, const std::string& query);
 ObjectId findSim(VM& vm, const std::string& query = {});
 
 // Test aid: sets motives 3-15 (Mood ... Fun, STR# 0x86) of every Sim to
-// `value`. The lots' saved motives (in the PERS states) are not read yet, so
-// the Sims start at 0 and refuse interactions ("Skill - Refuse Skill
-// Object" when Mood <= 0).
+// `value`, in place of the saved ones (lot_resume.hpp reads them from the
+// PERS states).
 void setAllMotives(VM& vm, int16_t value);
 
 // Runs the Init of every object a lot load created, then starts their Mains
