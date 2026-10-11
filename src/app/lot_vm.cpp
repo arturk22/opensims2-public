@@ -88,6 +88,8 @@ void LotSimulation::attach(SimActor& actor, int16_t id, const Character& charact
         std::fprintf(stderr, "opensims2: Sim %d stands %.2f over its floor\n", id, b.zOffset);
     b.playing = idle;
     b.outfit = o->person ? o->person->data[kCurrentOutfit] : 0;
+    b.look = std::make_shared<HeadLook>(actor);
+    actor.adjust = [look = b.look](std::vector<Xform>& local, double now) { look->apply(local, now); };
     bound_.push_back(std::move(b));
 }
 
@@ -197,6 +199,27 @@ void LotSimulation::sampleAll(double at) {
     }
 }
 
+// Look At's target: a Sim's head (its actor's bone), else the object's
+// position at 0.75 over its floor, about a table's or a counter's height
+// (inferred: the editor's strings name a "default 3/4 height").
+std::optional<Vec3> LotSimulation::lookTarget(const vm::Object& o) const {
+    if (!o.lookAt || (o.lookAt->ticks > 0 && vm_->ticks >= o.lookAt->since + uint64_t(o.lookAt->ticks)))
+        return std::nullopt;
+    const vm::Object* x = vm_->object(o.lookAt->target);
+    if (!x || x->id == o.id)
+        return std::nullopt;
+    for (const auto& b : bound_)
+        if (b.id == x->id) {
+            const int head = b.actor->skin.skeleton.find("head");
+            if (head >= 0 && size_t(head) < b.actor->bones.size())
+                return b.actor->bones[size_t(head)].t;
+            return Vec3{b.actor->position[0], b.actor->position[1], b.actor->position[2] + 1.6f};
+        }
+    if (!x->position.inWorld())
+        return std::nullopt;
+    return Vec3{x->position.x, x->position.y, floorHeight(x->position.level, x->position.x, x->position.y) + 0.75f};
+}
+
 void LotSimulation::update(double seconds) {
     const double rate = vm_->clock.ticksPerMinute; // ticks per second at normal speed
     // After a stall (loading, a window drag) the VM does not race to catch
@@ -229,6 +252,13 @@ void LotSimulation::update(double seconds) {
         b.actor->position = {x, y, z + b.zOffset};
         b.actor->heading = b.motion.turn(dt);
         b.actor->rootMotion = false;
+        if (const vm::Object* o = vm_->object(b.id)) {
+            const auto target = lookTarget(*o);
+            if (std::getenv("OS2_DEBUG_LOOK") && target.has_value() != b.look->target().has_value())
+                std::fprintf(stderr, "tick %llu sim %d %s %d\n", (unsigned long long)vm_->ticks, b.id,
+                             target ? "looks at" : "stops looking at", o->lookAt ? o->lookAt->target : 0);
+            b.look->setTarget(target);
+        }
     }
 }
 

@@ -423,6 +423,18 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             throw std::runtime_error("--object-anim: expected <object-id>,<animation>");
         gSimulation->onObjectAnimation(int16_t(std::stoi(anim->substr(0, comma))), anim->substr(comma + 1), 0);
     }
+    // --look-at <sim>,<object-id>: test aid, the Sim (ID or name) looks at
+    // the object as if the VM's Look At had pointed it there, until changed.
+    if (auto look = argument(@"--look-at")) {
+        const auto comma = look->find(',');
+        if (comma == std::string::npos)
+            throw std::runtime_error("--look-at: expected <sim>,<object-id>");
+        const os2::vm::ObjectId sim = os2::vm::findSim(gSimulation->machine(), look->substr(0, comma));
+        if (auto* o = gSimulation->machine().object(sim))
+            o->lookAt = os2::vm::Object::LookAt{int16_t(std::stoi(look->substr(comma + 1))), 0, 0};
+        else
+            throw std::runtime_error("--look-at: no Sim " + look->substr(0, comma));
+    }
     // --outfit <type>: test aid, every Sim changes into outfit type <type>
     // (person data 8, STR# 0xFA: 0 everyday, 2 swimwear, 3 athletic, 4
     // formal, 5 pyjamas, 11 underwear, ...).

@@ -4,6 +4,7 @@
 // it is shown, with the Sims' actors following what the VM does to them.
 // Plain C++ (no AppKit), driven from main.mm.
 
+#include "app/look_at.hpp"
 #include "formats/lot.hpp"
 #include "formats/sim_actor.hpp"
 #include "vm/sim_motion.hpp"
@@ -84,7 +85,10 @@ private:
         int16_t outfit = 0; // person data 8 the actor is dressed for
         float zOffset = 0; // the cObject's height over the floor the VM's level gives
         std::vector<std::string> overlays; // playing over the base animation
+        std::shared_ptr<HeadLook> look;    // the head turning towards Object::lookAt
     };
+    // Where a Sim's Look At points its head now (world space), if anywhere.
+    std::optional<Vec3> lookTarget(const vm::Object& o) const;
     void playOverlays(Bound& b, const vm::Object& o, double at);
     void sampleAll(double at);
 
