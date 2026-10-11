@@ -1176,14 +1176,39 @@ passa, demissão `CT - Lose Job` `0x2025` com desempenho muito baixo) e
 recálculo dos desejos (`Wants - Refresh - Recalc`, global `0x03A5`).
 
 **Contas** (objeto `MailBox`, grupo `0x7FE4B434`, e `Bills`, grupo
-`0x7FBD8997`): `CT - Reschedule Bills` (`0x1017` da caixa) cria o objeto que
-agenda (GUID `0xD840F488`) e o carteiro (`Create Mailman` `0x1004`); a conta
-nasce em `Create Bill` (`0x1006`). O valor é `CT - Calculate Bill` (`0x1017`
-das contas): percorre todos os objetos (Set to Next), pula os que têm o bit
-14 do dado 40 ligado, e soma **valor atual (od 41) / constante `0x81`**
-(dono `0x1A`) de cada um; se a soma estoura, vira 32767. A cor da conta
-(branca, amarela, laranja, vermelha) segue o atraso (`CT - Set Bill Colour`
-`0x1009`). Quando: pelo agendamento da caixa (não seguido aqui).
+`0x7FBD8997`; rodada 9, árvores lidas por inteiro):
+
+- **Quando.** O `Functional - Main` da caixa dorme 200 ticks (global
+  `0x118`) e roda `process` (`0x1002`) enquanto há casa no lote (global 10
+  ≠ 0). `process`: se **hora (global 0) = BCON 0x1000[2] = 9** e **minuto
+  (global 5) > 50**: se o **dia da semana (global 34 = Days Running % 7)** é
+  BCON 0x1001[1] = **1** ou [3] = **3**, roda `Bill due?` (`0x102E`, que
+  procura a caixa `0x39CCF441`, chama `Appraise lot value` e sempre devolve
+  verdadeiro) e então `Create Mailman` (`0x1004`: NPC carteiro pelos globais
+  `0x2EC`/`0x2E4`), que traz as contas. No dia [6] = **6** nada. Nos outros
+  dias, só se existe um objeto agendador `0xD840F488` com atributo 7 = 3
+  (o que `CT - Reschedule Bills` `0x1017` cria, com atributo 1 = dias de
+  atraso + 1). Ou seja: **contas duas vezes por semana, nos dias 1 e 3,
+  entre 9:51 e 10:00**, mais as reagendadas.
+- **Quanto.** `Create Bill` (`0x1006`) cria o objeto `Bills` e grava no
+  atributo 0 o valor de `Appraise lot value` (`0x1033`):
+  **4 × global 46 (valor do lote / 1000) + 6 × global 48 (valor dos objetos
+  / 1000)** (BCON 0x1000[5] = 4 e [6] = 6 da caixa); valor 0 → a conta é
+  apagada. Os globais vêm do `cTSSimulator`: `SetLotValue` (`0x498b80`) grava
+  `+0xA4` e os globais 46/47 (÷1000, resto); `SetLotObjectsValue`/
+  `SetFamilyObjectsValue` gravam `+0xA8`/`+0xAC` e `UpdateTotalObjectsValue`
+  põe (`+0xA8` + `+0xAC`) ÷ 1000 e o resto nos globais 48/49. São os
+  campos do SIMI (`docs/save-mac.md` §5) e os globais também vão salvos;
+  **o opensims2 lê os globais salvos, mas não os refaz quando o valor do lote
+  ou dos objetos muda** (compra, venda, construção, depreciação): quem chama
+  esses `Set*` (pela vtable) não foi seguido.
+- **A constante `0x81`** (dono `0x1A`: tabela 1 = BCON privado 0x1001,
+  entrada 1) do `CT - Calculate Bill` (`0x1017` das contas, Σ valor atual
+  / 10 dos objetos sem o bit 14 do dado 40) vale **10**, mas essa árvore é
+  **código morto**: o `Function - Init` das contas só a chama na instrução
+  7, que nenhuma outra alcança. O Init grava no atributo 1 o BCON 0x1001[0]
+  = 4 (prazo em dias, inferido) e as cores (`CT - Set Bill Colour`)
+  seguem o atraso.
 
 ## 5. Outras primitivas: operandos pelo disassembler
 
