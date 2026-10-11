@@ -39,13 +39,19 @@ class DbpfPackage;
 // The packages keep the states of objects that are gone (the persist DB does
 // not delete records): those are orphans no pair names, and are not read.
 struct LotObjects {
+    // A record of the objt (ObjectSaveTypeTable::Read/WriteSelector,
+    // docs/save-mac.md §5): what the game checks a definition against when
+    // it loads the lot (a changed tree version or count resets the objects).
     struct SaveType {
         uint32_t guid = 0;
-        std::array<uint8_t, 20> unknown{}; // init/main tree versions, attribute and array counts, a string set count (OpenTS2)
-        int16_t objectType = 0;  // OBJD object type: 2 = person (read_pre_object picks the person class on it)
+        uint32_t initTreeVersion = 0;  // tree version of the OBJf init action's BHAV
+        uint32_t mainTreeVersion = 0;  // ... of the main action's (0 without one)
+        uint32_t field3A = 0, field3B = 0; // OBJD fields 0x3A and 0x3B (file offsets 0xB4, 0xB6)
+        uint32_t stringCount = 0;     // strings in the group's STR# 0x100
+        int16_t objectType = 0;  // OBJD field 9, the object type: 2 = person (read_pre_object picks the person class on it)
         std::string catalogName; // "*Trash Can - Outside"; empty for objects not in the catalog
-        uint32_t flags = 0;      // bit 0: multi-tile object (saved as XMTO)
-        uint32_t guid2 = 0;      // the GUID again (the master's for multi-tile parts?)
+        uint32_t flags = 0;      // 0, 1 (no catalog name: saved as XMTO) or 3
+        uint32_t guid2 = 0;      // OBJD field 0xD0
     };
 
     enum class Kind : uint8_t { Object, MultiTile, Person };

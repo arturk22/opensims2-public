@@ -24,10 +24,9 @@ namespace os2::vm {
 // motives (the exact floats when the motive engine has them) and the
 // running interaction (the person's slot at +0x5D4) and queue; the globals
 // and the clock go to the SIMI. Objects that are gone leave the module.
-// Objects the VM created are added when their GUID has a save type in the
-// lot's table or in `moreSaveTypes` (the others, with a warning: the fields
-// of a save type record that come from the definition's trees are not
-// decoded). What the VM does not keep (a
+// Objects the VM created are added with the save type of their GUID in the
+// lot's table, or a new objt record built from their definition
+// (save_types.hpp), or one from `moreSaveTypes`. What the VM does not keep (a
 // frame's primitive state, the token's inventory fields, the fields after
 // the person data that are not the queue, the animator, ...) stays as read
 // for the objects and frames that were read, and is zero otherwise.
@@ -35,6 +34,7 @@ struct CaptureResult {
     LotObjects lot;
     size_t updated = 0, added = 0, removed = 0;
     size_t kept = 0; // objects the VM could not create, kept as read
+    size_t newSaveTypes = 0; // objt records added for objects created during play
     std::vector<std::string> warnings;
 };
 // `moreSaveTypes` (by GUID, from other lots' tables) gives the save types of

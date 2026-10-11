@@ -669,6 +669,10 @@ Object& VM::instantiatePart(uint32_t group, uint16_t definitionInstance, ObjectI
     if (const Slots* sl = code_.slots(group, def->slotId()))
         o.data[objdata::SlotCount] = int16_t(std::count_if(sl->slots.begin(), sl->slots.end(),
                                                            [](const Slots::Slot& x) { return x.type == 0; }));
+    // Object data 58 "object version" starts as the definition's (OBJD label
+    // 49): a saved object whose version differs runs its load tree
+    // (lot_resume.cpp). Inferred: the lots' states hold the definition's.
+    o.data[58] = int16_t(def->field(0x40 + 2 * 49));
     if (def->objectType() == kObjectTypePerson)
         o.person.emplace();
     return o;

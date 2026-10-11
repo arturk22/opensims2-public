@@ -312,7 +312,11 @@ std::vector<uint8_t> LotObjects::writeSaveTypes() const {
     for (int16_t id : saveTypeOrder) {
         const SaveType& t = saveTypes.at(id);
         w.u32(t.guid);
-        w.raw(t.unknown);
+        w.u32(t.initTreeVersion);
+        w.u32(t.mainTreeVersion);
+        w.u32(t.field3A);
+        w.u32(t.field3B);
+        w.u32(t.stringCount);
         w.i16(id);
         w.i16(t.objectType);
         w.str7(t.catalogName);

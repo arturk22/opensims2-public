@@ -12,6 +12,7 @@
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/lot_save.hpp"
+#include "vm/save_types.hpp"
 
 #include <cstdio>
 #include <filesystem>
@@ -115,9 +116,10 @@ int cmdLotSave(const std::vector<std::string>& args) {
         DbpfPackage pkg(src);
         captured.lot.save(pkg, dst);
     }
-    std::printf("%s: %zu objects saved after %ld ticks (%zu updated, %zu added, %zu gone) to %s\n",
+    std::printf("%s: %zu objects saved after %ld ticks (%zu updated, %zu added, %zu gone, %zu kept as read; %zu new "
+                "objt records) to %s\n",
                 src.filename().string().c_str(), captured.lot.objects.size(), ticks, captured.updated, captured.added,
-                captured.removed, dst.string().c_str());
+                captured.removed, captured.kept, captured.newSaveTypes, dst.string().c_str());
     if (!check)
         return 0;
     // The saved package reads back, state by state, to what was written.
@@ -177,11 +179,72 @@ int cmdLotSave(const std::vector<std::string>& args) {
     return diffs.empty() && differ == 0 ? 0 : 1;
 }
 
+// objt-check: each record of the lots' save type tables against the one
+// saveTypeRecord builds from the definition, field by field.
+int cmdObjtCheck(const std::vector<std::string>& args) {
+    std::map<std::string, size_t> wrong;
+    std::map<std::string, std::vector<std::string>> examples;
+    size_t records = 0, missing = 0, same = 0;
+    for (const auto& a : args) {
+        const fs::path src(a);
+        ResourceIndex index(resRootOfLot(src));
+        vm::CodeLibrary code(&index);
+        std::optional<hood::Neighborhood> hood;
+        if (const auto hp = vm::neighborhoodPackageOf(src); !hp.empty())
+            hood = hood::Neighborhood::load(hp, true);
+        LoadedLot l = loadInto(code, src, src, hood ? &*hood : nullptr, vm::charactersDirOf(src));
+        for (const auto& [st, t] : l.saved.saveTypes) {
+            ++records;
+            const auto g = vm::saveTypeRecord(l.vm->code(), t.guid);
+            if (!g) {
+                ++missing;
+                continue;
+            }
+            bool ok = true;
+            auto check = [&](const char* name, auto x, auto y) {
+                if (x == y)
+                    return;
+                ok = false;
+                ++wrong[name];
+                auto& e = examples[name];
+                if (e.size() < 4) {
+                    std::string sx, sy;
+                    if constexpr (std::is_same_v<decltype(x), std::string>)
+                        sx = x, sy = y;
+                    else
+                        sx = std::to_string(x), sy = std::to_string(y);
+                    e.push_back(src.stem().string() + " " + hexString(t.guid) + " \"" + t.catalogName + "\": " + sx +
+                                " vs " + sy);
+                }
+            };
+            check("init tree version", t.initTreeVersion, g->initTreeVersion);
+            check("main tree version", t.mainTreeVersion, g->mainTreeVersion);
+            check("field 0x3A", t.field3A, g->field3A);
+            check("field 0x3B", t.field3B, g->field3B);
+            check("string count", t.stringCount, g->stringCount);
+            check("object type", t.objectType, g->objectType);
+            check("name", t.catalogName, g->catalogName);
+            check("flags", t.flags, g->flags);
+            check("field 0xD0", t.guid2, g->guid2);
+            same += ok;
+        }
+    }
+    std::printf("%zu records: %zu built the same, %zu without a definition\n", records, same, missing);
+    for (const auto& [k, n] : wrong) {
+        std::printf("  %s differs in %zu\n", k.c_str(), n);
+        for (const auto& e : examples[k])
+            std::printf("    %s\n", e.c_str());
+    }
+    return 0;
+}
+
 } // namespace
 
 int saveCommand(const std::string& cmd, int argc, char** argv) {
     if (cmd == "lot-save" && argc >= 4)
         return cmdLotSave({argv + 2, argv + argc});
+    if (cmd == "objt-check" && argc >= 3)
+        return cmdObjtCheck({argv + 2, argv + argc});
     return -1;
 }
 

@@ -85,6 +85,7 @@ add_library(os2_vm
   src/vm/queue.cpp
   src/vm/reach.cpp
   src/vm/routing.cpp
+  src/vm/save_types.cpp
   src/vm/sim_motion.cpp
   src/vm/sound.cpp
   src/vm/timer.cpp

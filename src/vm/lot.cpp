@@ -160,11 +160,11 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
         e.name = cName;
         const uint32_t guid = saved.guidOf(s.id);
         try {
+            std::filesystem::path file;
             if (s.person) {
                 // "N001_User00011 - Don": the character file is the part
                 // before " - "; without a cPerson naming it, the file whose
                 // OBJD has the save type's GUID.
-                std::filesystem::path file;
                 if (c != cObjects.end() && c->second->person && !cName.empty()) {
                     if (charactersDir.empty())
                         throw VMError("no character directory for " + cName);
@@ -172,8 +172,12 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
                 }
                 if (file.empty() || !std::filesystem::exists(file))
                     file = characterFileOf(guid);
-                if (file.empty())
+                // A Sim with no character file (an NPC created during play,
+                // saved by us) is the OBJD of its GUID in the game.
+                if (file.empty() && !code.definitionByGuid(guid))
                     throw VMError("no character file with GUID " + hexString(guid));
+            }
+            if (!file.empty()) {
                 DbpfPackage pkg(file);
                 const std::string stem = file.stem().string();
                 const uint32_t group = characterGroup(stem);

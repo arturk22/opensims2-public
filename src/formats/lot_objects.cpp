@@ -451,7 +451,11 @@ std::map<uint32_t, LotObjects::SaveType> LotObjects::loadSaveTypes(DbpfPackage& 
                 t.guid = r.u32();
                 if (!t.guid)
                     break;
-                fixedBytes(r, t.unknown);
+                t.initTreeVersion = r.u32();
+                t.mainTreeVersion = r.u32();
+                t.field3A = r.u32();
+                t.field3B = r.u32();
+                t.stringCount = r.u32();
                 r.i16(); // the save type: this package's number
                 t.objectType = r.i16();
                 t.catalogName = r.str7();
@@ -575,7 +579,11 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
                 t.guid = r.u32();
                 if (!t.guid)
                     break;
-                fixedBytes(r, t.unknown);
+                t.initTreeVersion = r.u32();
+                t.mainTreeVersion = r.u32();
+                t.field3A = r.u32();
+                t.field3B = r.u32();
+                t.stringCount = r.u32();
                 const int16_t saveType = r.i16();
                 t.objectType = r.i16();
                 t.catalogName = r.str7();

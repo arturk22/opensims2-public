@@ -5,6 +5,7 @@
 #include "formats/lot_objects.hpp"
 #include "formats/binreader.hpp"
 #include "interactions.hpp"
+#include "save_types.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -209,15 +210,23 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
             saveType = saved.saveTypeOf.at(int16_t(id));
         } else {
             auto st = saveTypeOfGuid.find(o.guid());
-            if (st == saveTypeOfGuid.end() && moreSaveTypes)
-                if (auto m = moreSaveTypes->find(o.guid()); m != moreSaveTypes->end()) {
+            if (st == saveTypeOfGuid.end()) {
+                // A record built from the definition as the game writes it
+                // (save_types.hpp), else one from another lot's table.
+                std::optional<LotObjects::SaveType> record = saveTypeRecord(vm.code(), o.guid());
+                if (!record && moreSaveTypes)
+                    if (auto m = moreSaveTypes->find(o.guid()); m != moreSaveTypes->end())
+                        record = m->second;
+                if (record) {
                     int16_t next = 1;
                     for (const auto& [k, _] : lot.saveTypes)
                         next = std::max<int16_t>(next, int16_t(k + 1));
-                    lot.saveTypes[next] = m->second;
+                    lot.saveTypes[next] = *record;
                     lot.saveTypeOrder.push_back(next);
                     st = saveTypeOfGuid.emplace(o.guid(), next).first;
+                    ++out.newSaveTypes;
                 }
+            }
             if (st == saveTypeOfGuid.end()) {
                 out.warnings.push_back("object " + std::to_string(id) + " (GUID " + hexString(o.guid()) +
                                        ") has no save type in the lot: not saved");
