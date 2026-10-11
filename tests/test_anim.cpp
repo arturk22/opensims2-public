@@ -263,6 +263,15 @@ static void testSkinning() {
     check(near(v[0], 0.5f) && near(v[1], 0.5f) && near(v[2], 0), "linear blend of two bones");
     const auto& n = out.parts[0].mesh.normals[0];
     check(near(n[0], std::sqrt(0.5f)) && near(n[1], std::sqrt(0.5f)), "normals renormalized");
+
+    // Morphs: stream 1 (byte 1 of the map) moves the vertex by morph 2.
+    skin.model.parts[0].mesh.morphNames = {"a", "b", "smile"};
+    skin.model.parts[0].mesh.morphMap = {0x00000200};
+    skin.model.parts[0].mesh.morphDeltas[0] = {{5, 5, 5}};
+    skin.model.parts[0].mesh.morphDeltas[1] = {{0, 0, 2}};
+    skin.pose(s.world(s.restPose()), out, {{"smile", 0.5f}});
+    const auto& mv = out.parts[0].mesh.positions[0];
+    check(near(mv[0], 1) && near(mv[1], 0) && near(mv[2], 1), "morph delta by weight, stream k = byte k");
 }
 
 static void testIk() {

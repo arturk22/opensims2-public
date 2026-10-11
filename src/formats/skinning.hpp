@@ -3,6 +3,8 @@
 #include "model.hpp"
 #include "skeleton.hpp"
 
+#include <map>
+#include <string>
 #include <vector>
 
 namespace os2 {
@@ -26,7 +28,10 @@ struct SkinnedModel {
     // normals moved by the skeleton's model-space bone transforms `world`
     // (out keeps the same parts in the same order; pass the previous result to
     // reuse its storage).
-    void pose(const std::vector<Xform>& world, ObjectModel& out) const;
+    // `morphs` (morph name -> weight, e.g. from the "faceblends" target of an
+    // animation) moves the vertices by their morph deltas first.
+    void pose(const std::vector<Xform>& world, ObjectModel& out,
+              const std::map<std::string, float>& morphs = {}) const;
 };
 
 } // namespace os2

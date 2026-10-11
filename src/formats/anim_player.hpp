@@ -3,6 +3,8 @@
 #include "anim.hpp"
 #include "skeleton.hpp"
 
+#include <map>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -49,6 +51,11 @@ public:
 
     // Local bone transforms at `now` (drops the layers that have faded out).
     std::vector<Xform> pose(double now);
+
+    // Morph weights at `now` (channels of attribute MorphWeight of every
+    // target, e.g. "faceblends": l_brow, x_mouth, ...), blended like the
+    // bones by layer order and fade. Call after pose() for the same time.
+    std::map<std::string, float> morphs(double now) const;
 
     // Root motion: distance travelled along the Sim's forward axis (+Y of the
     // skeleton) since the last call (or time 0), from the layers' locomotion velocity

@@ -145,6 +145,27 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     return out;
 }
 
+std::map<std::string, float> AnimPlayer::morphs(double now) const {
+    std::map<std::string, float> out;
+    for (const auto& l : layers_) {
+        if (!l.anim)
+            continue;
+        const float w = l.replaced ? (weight(l, now) > 0 ? 1.0f : 0.0f) : weight(l, now);
+        if (w <= 0)
+            continue;
+        const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
+        for (const auto& t : l.anim->targets)
+            for (const auto& c : t.channels) {
+                if (c.attribute() != Animation::MorphWeight || c.components.empty())
+                    continue;
+                const float v = c.components[0].sample(ticks, c.duration());
+                float& dst = out[c.name];
+                dst += (v - dst) * w;
+            }
+    }
+    return out;
+}
+
 float AnimPlayer::velocity(double now) const {
     float v = 0;
     for (const auto& l : layers_)

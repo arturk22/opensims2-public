@@ -54,6 +54,7 @@ const char* gmdc::elementName(uint32_t id) {
     case TangentNormals: return "tangentNormals";
     case Binormals: return "binormals";
     case VertexMorphDeltas: return "vertexMorphDeltas";
+    case MorphVertexMap: return "morphVertexMap";
     case NormalMorphDeltas: return "normalMorphDeltas";
     case Colors: return "colors";
     case ColorDeltas: return "colorDeltas";
@@ -211,6 +212,16 @@ std::vector<MeshGroup> buildMeshes(const GeometryData& g) {
                     }
                     m.bones.push_back(b);
                 }
+            } else if (e.identity == gmdc::MorphVertexMap && m.morphMap.empty() && e.blockFormat == 4 &&
+                       e.valueCount() > 0) {
+                for (auto v : used)
+                    m.morphMap.push_back(e.raw.at(valueIndex(k, v)));
+            } else if (e.identity == gmdc::VertexMorphDeltas && e.repeat < 4 && e.blockFormat == 2 &&
+                       e.valueCount() > 0 && m.morphDeltas[e.repeat].empty()) {
+                for (auto v : used) {
+                    const size_t i = valueIndex(k, v);
+                    m.morphDeltas[e.repeat].push_back({e.f(i, 0), e.f(i, 1), e.f(i, 2)});
+                }
             } else if (e.identity == gmdc::BoneWeights && weightElement < 0 && e.blockFormat <= 2 &&
                        e.valueCount() > 0) {
                 weightElement = int(k);
@@ -236,6 +247,9 @@ std::vector<MeshGroup> buildMeshes(const GeometryData& g) {
                 }
             }
         }
+        if (!m.morphMap.empty())
+            for (const auto& b : g.blendNames)
+                m.morphNames.push_back(b.element);
         if (m.positions.empty() && !used.empty())
             throw FormatError("GMDC group '" + gr.name + "' has no vertex positions");
         out.push_back(std::move(m));

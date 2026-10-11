@@ -23,6 +23,7 @@ constexpr uint32_t BoneWeights = 0x3BD70105;
 constexpr uint32_t TangentNormals = 0x89D92BA0;
 constexpr uint32_t Binormals = 0x9BB38AFB;
 constexpr uint32_t VertexMorphDeltas = 0x5CF2CFE1;
+constexpr uint32_t MorphVertexMap = 0xDCF2CFDC; // u32 per vertex: morph numbers of the delta streams
 constexpr uint32_t NormalMorphDeltas = 0xCB6F3A6A;
 constexpr uint32_t Colors = 0xDB830795;      // D3DCOLOR per vertex (VertexAlpha ground shadows)
 constexpr uint32_t ColorDeltas = 0xCB7206A1; // morph deltas of some stream (OpenTS2's table is unclear)
@@ -107,6 +108,15 @@ struct MeshGroup {
     // the CRES joint references; 0xFF = unused slot), with their weights.
     std::vector<std::array<uint8_t, 4>> bones;
     std::vector<std::array<float, 4>> weights;
+    // Morphs (Sim faces, body fitness), empty if none: per vertex a u32 whose
+    // byte k (low byte first) names the morph (index into morphNames, the
+    // GMDC's blend names) that the k-th delta stream moves the vertex by;
+    // unused streams have zero deltas (checked on the N001 faces: the
+    // non-zero deltas of stream k match the non-zero byte k, not byte 3-k as
+    // OpenTS2 reads it).
+    std::vector<std::string> morphNames; // blend element names ("x_nose", "l_brow", ...)
+    std::vector<uint32_t> morphMap;
+    std::array<std::vector<std::array<float, 3>>, 4> morphDeltas;
 };
 
 // Triangle groups of a GMDC; skips groups that are not triangle lists.

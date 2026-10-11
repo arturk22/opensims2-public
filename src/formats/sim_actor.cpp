@@ -56,7 +56,7 @@ void SimActor::update(double now) {
     const Xform at = placement();
     for (auto& w : world)
         w = at.then(w);
-    skin.pose(world, posed);
+    skin.pose(world, posed, player.morphs(now));
 }
 
 } // namespace os2
