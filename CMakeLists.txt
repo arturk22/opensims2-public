@@ -86,6 +86,7 @@ add_library(os2_vm
   src/vm/motives.cpp
   src/vm/ownership.cpp
   src/vm/path_planner.cpp
+  src/vm/person_prims.cpp
   src/vm/primitives.cpp
   src/vm/queue.cpp
   src/vm/reach.cpp

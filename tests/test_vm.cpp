@@ -1291,6 +1291,40 @@ static void testScheduler() {
           "the clock rolls over into the globals");
 }
 
+// Age (0x75) writes the life stage from operand byte 0 (Mac binary); RayTrace
+// (0x78) between two objects on an open level is clear: temp 0 = the target.
+// Set to Next 32: the owners of an object (ownership.hpp).
+static void testAgeRayTraceOwners() {
+    Fixture fx;
+    constexpr uint32_t kSim = 0x55667789;
+    fx.code.add(kObjGroup, 0x81, definition(kSim, true));
+    Object& me = fx.vm.instantiate(kObjGroup, 0x81); // id 1
+    Object& other = fx.vm.instantiate(kObjGroup, 0x81); // id 2
+    me.position = {2.5f, 2.5f, 1};
+    other.position = {5.5f, 2.5f, 1};
+    fx.vm.relationships[{VM::RelationshipKey{false, 2}, VM::RelationshipKey{true, 7}}] = {0, 3};
+    fx.vm.relationships[{VM::RelationshipKey{false, 2}, VM::RelationshipKey{true, 9}}] = {0, 1};
+    fx.code.add(kObjGroup, 0x1000,
+                tree({instr(0x75, go(1), E, {3}),
+                      expr(StackId, 0, Assign, Lit, 2, go(2), E),
+                      instr(0x78, go(3), E, {0, 0, 0, 0, 0, Data, 11, 0, 0, 0, 0, 0, StackId, 0, 0}),
+                      expr(Temp, 5, Assign, Temp, 0, go(4), E),
+                      expr(Temp, 0, Assign, Lit, 2, go(5), E),
+                      expr(Temp, 1, Assign, Lit, 2, go(6), E),
+                      expr(Local, 0, Assign, Lit, 0, go(7), E),
+                      instr(0x1F, go(8), E, {0, 0, 0, 0, 0x80 | 32, Local, 0, 0}),
+                      expr(Temp, 6, Assign, Local, 0, go(9), E),
+                      instr(0x1F, E, go(10), {0, 0, 0, 0, 0x80 | 32, Local, 0, 0}),
+                      expr(Temp, 7, Assign, Local, 0, T, E)},
+                     0, 1));
+    Thread t = fx.run(0x1000);
+    check(t.status == Thread::Status::Finished && t.result && me.person->data[persondata::PersonAge] == 0x10,
+          "Age 3 makes a teen (person data 58 = 0x10)");
+    check(t.temps[5] == 2, "RayTrace on an open level reaches the target (temp 0)");
+    check(t.temps[6] == 7 && t.temps[7] == -1,
+          "Set to Next 32 finds the owner over the threshold, then none (-1)");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCalls();
@@ -1310,6 +1344,7 @@ int main() {
     testGenericSimsCall();
     testDefinitionOwners();
     testRemoveAndRandom();
+    testAgeRayTraceOwners();
     testFamilyTree();
     testMultiTileAndIds();
     testAddPackage();

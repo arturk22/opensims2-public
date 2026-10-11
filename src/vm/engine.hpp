@@ -17,6 +17,8 @@ namespace os2::vm {
 void registerMessagePrimitives(VM& vm);
 // Refresh, Debug, UI Effect, Camera Control, Cinematic, Test Sim Interacting With.
 void registerEnginePrimitives(VM& vm);
+// Age, RayTrace (person_prims.cpp).
+void registerPersonPrimitives(VM& vm);
 
 // Runs `tree` of `codeOwner`'s code to its end at once, as the binary's
 // RunOneTickTree (Message, Run Tree by Name "in stack object's stack"): a

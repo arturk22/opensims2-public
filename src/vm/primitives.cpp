@@ -1371,6 +1371,7 @@ void registerPrimitives(VM& vm) {
     registerAutonomyPrimitives(vm);    // Find Best Interaction, Gosub Found Action (autonomy.cpp)
     registerMessagePrimitives(vm);     // Message (message.cpp)
     registerEnginePrimitives(vm);      // Refresh, Debug, UI/camera, Test Sim Interacting With (engine_prims.cpp)
+    registerPersonPrimitives(vm);      // Age, RayTrace (person_prims.cpp)
 }
 
 } // namespace os2::vm
