@@ -59,14 +59,6 @@ ObjectDefinition ObjectDefinition::parse(std::span<const uint8_t> data) {
     throw FormatError("OBJD: cannot locate the title");
 }
 
-uint16_t ObjectDefinition::field(size_t off) const {
-    if (off < 0x44 || (off - 0x44) / 2 >= fields.size())
-        return 0;
-    return fields[(off - 0x44) / 2];
-}
-
-uint32_t ObjectDefinition::field32(size_t off) const { return field(off) | uint32_t(field(off + 2)) << 16; }
-
 // ---------------------------------------------------------------- OBJf
 
 ObjectFunctions ObjectFunctions::parse(std::span<const uint8_t> data) {

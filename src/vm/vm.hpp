@@ -654,6 +654,7 @@ using Primitive = std::function<Exit(Context&)>;
 class VM {
 public:
     explicit VM(CodeLibrary& code);
+    VM(const VM&) = delete; // byId_ points into objects_
 
     CodeLibrary& code() { return code_; }
 
@@ -730,7 +731,11 @@ public:
     std::optional<std::array<float, 3>> slotBone(const Slots::Slot& slot, const Object& target);
 
     // Threads of a removed object are killed the next time they run.
-    void removeObject(ObjectId id) { objects_.erase(id); }
+    void removeObject(ObjectId id) {
+        objects_.erase(id);
+        if (size_t(uint16_t(id)) < byId_.size())
+            byId_[uint16_t(id)] = nullptr;
+    }
     // Remove Object Instance queues objects to die at the end of the tick (kill.hpp).
     std::vector<ObjectId> killQueue;
     std::set<ObjectId> dyingObjects;
@@ -945,6 +950,9 @@ public:
 private:
     CodeLibrary& code_;
     std::map<ObjectId, Object> objects_;
+    // id -> object (map nodes never move); kept by createObject/removeObject,
+    // the only places that add or remove entries of objects_.
+    std::vector<Object*> byId_;
     std::unordered_map<uint16_t, Primitive> primitives_;
 
     int initDepth_ = 0;

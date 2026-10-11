@@ -605,6 +605,9 @@ Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
         throw VMError("object " + std::to_string(id) + " already exists");
     }
     Object& o = objects_[id];
+    if (size_t(uint16_t(id)) >= byId_.size())
+        byId_.resize(size_t(uint16_t(id)) + 1 + 64, nullptr);
+    byId_[uint16_t(id)] = &o;
     o.id = id;
     o.group = group;
     o.semiGroup = code_.semiGlobalFor(group);
@@ -883,8 +886,8 @@ void VM::followContainers() {
 }
 
 Object* VM::object(ObjectId id) {
-    auto it = objects_.find(id);
-    return it == objects_.end() ? nullptr : &it->second;
+    const size_t k = uint16_t(id);
+    return k < byId_.size() ? byId_[k] : nullptr;
 }
 
 std::pair<uint32_t, const Behavior*> VM::resolveTree(const Object& owner, uint16_t treeId) {

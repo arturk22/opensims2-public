@@ -22,8 +22,13 @@ struct ObjectDefinition {
 
     static ObjectDefinition parse(std::span<const uint8_t> data);
 
-    uint16_t field(size_t fileOffset) const; // 16-bit field at a file offset (>= 0x44), 0 if absent
-    uint32_t field32(size_t fileOffset) const;
+    // 16-bit field at a file offset (>= 0x44), 0 if absent
+    uint16_t field(size_t fileOffset) const {
+        if (fileOffset < 0x44 || (fileOffset - 0x44) / 2 >= fields.size())
+            return 0;
+        return fields[(fileOffset - 0x44) / 2];
+    }
+    uint32_t field32(size_t fileOffset) const { return field(fileOffset) | uint32_t(field(fileOffset + 2)) << 16; }
 
     uint16_t initialStackSize() const { return field(0x44); }
     uint16_t baseGraphic() const { return field(0x46); }
