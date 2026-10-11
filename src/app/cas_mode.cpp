@@ -733,7 +733,13 @@ void CasMode::acceptFamily() {
             fs::path src = *hood;
             if (!fs::exists(src))
                 src = gameDir_ / "TSData/Res/UserData/Neighborhoods" / *hood;
-            const fs::path target = out / src.filename();
+            // The user's own copy of the neighborhood is written in place;
+            // the shipped one (under the game data) into a copy under --cas-out.
+            std::error_code ec;
+            const fs::path canonSrc = fs::weakly_canonical(src, ec), canonGame = fs::weakly_canonical(gameDir_, ec);
+            const std::string rel = canonSrc.lexically_relative(canonGame).string();
+            const bool shipped = !rel.empty() && rel.rfind("..", 0) != 0;
+            const fs::path target = shipped ? out / src.filename() : src;
             std::vector<vm::NewSim> sims;
             std::mt19937 rng(std::random_device{}());
             for (auto& m : family_) {
@@ -761,13 +767,16 @@ void CasMode::acceptFamily() {
                 };
                 sims.push_back(std::move(s));
             }
-            const auto r = vm::writeNewFamily(src, target, familyName_, "", std::move(sims));
+            const auto r = vm::writeNewFamily(src, target, familyName_, "", std::move(sims), 1, !shipped);
             status_ = "Família " + familyName_ + " (" + std::to_string(r.family) + ") salva em " + r.neighborhood.string();
             std::printf("opensims2: cas: family %u \"%s\" written to %s:", r.family, familyName_.c_str(),
                         r.neighborhood.string().c_str());
             for (const auto& c : r.characters)
                 std::printf(" %s", c.filename().string().c_str());
             std::printf("\n");
+            std::fflush(stdout);
+            if (onFamilySaved)
+                onFamilySaved(r.family);
         } else {
             // No neighborhood: the character files alone.
             fs::create_directories(out / "CAS");
@@ -1098,7 +1107,10 @@ UiScreen CasMode::screen(int width, int height) {
         treeFirst_ = treeSecond_ = treeChoice_ = -1;
     });
     target(find(frame, kExit), [this](simd_float2) {
-        status_ = "Sair do CAS";
+        if (onExit)
+            onExit();
+        else
+            status_ = "Sair do CAS";
     });
     target(find(frame, kZoomIn), [this](simd_float2) {
         zoom_ = std::min(zoom_ + 1, 2);

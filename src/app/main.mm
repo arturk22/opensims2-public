@@ -209,6 +209,9 @@ std::unique_ptr<os2::MainMenu> gMenu;
 std::unique_ptr<os2::OptionsPanel> gOptions;
 os2::GameSettings gSettings;
 std::optional<os2::Scene> gPendingScene;
+// A family Create-a-Sim just wrote into the neighborhood: selected in the
+// family bin once the neighborhood is back (HoodMode::familyCreated).
+std::optional<uint32_t> gCreatedFamily;
 bool gQuitRequested = false;
 size_t gStepsUsed = 0;    // --click/--wait steps this scene has taken (headless)
 double gHeadlessClock = 0; // the caller's clock of headless VM runs (--wait, --run-vm)
@@ -2966,6 +2969,7 @@ void unloadScene() {
         [self prepareLot];
         break;
     case os2::Scene::Kind::Other: [self prepareLot]; break;
+    case os2::Scene::Kind::Cas: break; // handled above (_cas)
     }
 }
 
@@ -2981,6 +2985,7 @@ void unloadScene() {
     case os2::Scene::Kind::Neighborhood: [self finishHood:_view]; break;
     case os2::Scene::Kind::Lot:
     case os2::Scene::Kind::Other: [self finishLot]; break;
+    case os2::Scene::Kind::Cas: break;
     }
     std::fflush(stdout);
 }
@@ -3414,6 +3419,15 @@ void unloadScene() {
         next.lot = lot.id;
         requestScene(next);
     };
+    // "Create New Family": Create-a-Sim for this neighborhood, then back here
+    // with the new family selected in the bin.
+    gHood->onCreateFamily = [](const fs::path& folder) {
+        os2::Scene next;
+        next.kind = os2::Scene::Kind::Cas;
+        next.hood = folder.string();
+        next.returnHood = os2::sceneOf(processArguments()).hood;
+        requestScene(next);
+    };
     gHood->onMainMenu = [] {
         os2::Scene next;
         next.kind = os2::Scene::Kind::MainMenu;
@@ -3440,6 +3454,10 @@ void unloadScene() {
             gHood->ui().encode(enc, w, h, gUiScale);
     });
     _window.title = [NSString stringWithUTF8String:("opensims2 - " + gHood->view().displayName()).c_str()];
+    if (gCreatedFamily) {
+        gHood->familyCreated(*gCreatedFamily);
+        gCreatedFamily.reset();
+    }
     std::fflush(stdout);
     if (auto shot = argument(@"--screenshot")) {
         const uint32_t w = 1280, h = 720;
@@ -3492,6 +3510,22 @@ void unloadScene() {
         casArgs.push_back(gUser->neighborhoodsDir().string());
     }
     gCas = std::make_unique<os2::CasMode>(renderer, *gIndex, gameDir(), casArgs);
+    // Opened from a neighborhood (Scene::Kind::Cas): Accept saves the family
+    // there and goes back with it selected; Exit goes back without one.
+    if (const os2::Scene sc = os2::sceneOf(processArguments()); sc.kind == os2::Scene::Kind::Cas && !sc.returnHood.empty()) {
+        const std::string ret = sc.returnHood;
+        auto back = [ret] {
+            os2::Scene next;
+            next.kind = os2::Scene::Kind::Neighborhood;
+            next.hood = ret;
+            requestScene(next);
+        };
+        gCas->onFamilySaved = [back](uint32_t family) {
+            gCreatedFamily = family;
+            back();
+        };
+        gCas->onExit = back;
+    }
     [view setCamera:gCas->makeCamera()];
     gCamera = view.camera;
     gCas->setCamera(view.camera);
@@ -3512,6 +3546,8 @@ void unloadScene() {
             std::sscanf(sz->c_str(), "%ux%u", &w, &h);
         gCas->setCanvas(int(w), int(h));
         gCas->runScripted(processArguments());
+        if (gPendingScene)
+            return; // the steps went back to the neighborhood: the next scene takes the shot
         view.camera->setViewport(float(w), float(h));
         view.camera->snap();
         gCas->update(0.5);

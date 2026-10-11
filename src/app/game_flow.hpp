@@ -32,12 +32,14 @@
 namespace os2 {
 
 struct Scene {
-    enum class Kind { MainMenu, Neighborhood, Lot, Other };
+    enum class Kind { MainMenu, Neighborhood, Lot, Cas, Other };
     Kind kind = Kind::Other;
     std::string hood; // --hood value (prefix or folder)
     uint32_t lot = 0; // --hood-lot
     bool fromNeighborhood = false; // main menu opened from a neighborhood (Close goes back)
     std::string returnHood;        // that neighborhood
+    // Cas: Create-a-Sim for a new family of the neighborhood folder `hood`
+    // (--cas --cas-hood), returning to the neighborhood `returnHood`.
 };
 
 // The scene `args` pick (args[0] is the executable).

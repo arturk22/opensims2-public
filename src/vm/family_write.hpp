@@ -61,9 +61,11 @@ struct FamilyWriteResult {
 // copy of `source` when it does not exist yet (target == source is
 // refused: the shipped neighborhoods are never written). `seed` draws the
 // interests.
+// `inPlace` lets target == source (the user's own copy of a neighborhood,
+// never the shipped data: the caller checks).
 FamilyWriteResult writeNewFamily(const std::filesystem::path& source, const std::filesystem::path& target,
                                  const std::string& familyName, const std::string& description,
-                                 std::vector<NewSim> sims, uint32_t seed = 1);
+                                 std::vector<NewSim> sims, uint32_t seed = 1, bool inPlace = false);
 
 // The user's neighborhoods folder the app saves to when nothing else is
 // given: ~/Documents/opensims2/Neighborhoods (the game uses

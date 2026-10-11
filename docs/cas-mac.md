@@ -512,3 +512,14 @@ vértice neutro mais próximo do rosto assado, inferido; o GZPS leva a
 lista do rosto (os óculos dos Sims do jogo aparecem); o `readCharacterSpec`
 acha o overlay de um GZPS sem família pelos hashes dos materiais do SHPE
 contra as referências TXMT do overlay.
+
+## 16. No fluxo do jogo (rodada 9)
+
+Bairro → "Criar Nova Família" (bin de famílias) → CAS (`Scene::Kind::Cas`,
+`--cas --cas-hood <pasta do bairro> --cas-return <bairro>`) → Aceitar grava a
+família na pasta do bairro do usuário (`vm::writeNewFamily(..., inPlace)`;
+uma pasta sob os dados do jogo nunca é escrita: vai para uma cópia sob
+`--cas-out`) → `CasMode::onFamilySaved(família)` → volta ao bairro, que chama
+`HoodMode::familyCreated` (relê o bairro, abre o painel de famílias e
+seleciona a nova, com os 20.000 de `kDefaultFamilyFunds`) → mudar para um
+lote → jogar. O Sair do puck chama `CasMode::onExit` (volta sem família).

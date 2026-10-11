@@ -103,6 +103,11 @@ public:
     void keyDown(unsigned short keyCode, const std::string& characters, bool control);
     void keyUp(unsigned short keyCode);
 
+    // When opened for a neighborhood (the game flow): called after Accept
+    // wrote the family into it (its family number), and by the puck's Exit.
+    std::function<void(uint32_t family)> onFamilySaved;
+    std::function<void()> onExit;
+
     // Edits a saved Sim: a character file (group 0xFFFFFFFF) or a premade
     // Sim of the bin (its group), through cas::readCharacterSpec; false (and
     // a status line) if it cannot be read.

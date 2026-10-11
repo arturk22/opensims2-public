@@ -13,8 +13,9 @@ const std::initializer_list<const char*> kSceneFlags = {"--hood",  "--hood-lot",
                                                         "--lot",   "--ui",       "--pivot",      "--zoom",
                                                         "--orientation", "--pie", "--pie-select", "--mode",
                                                         "--menu-return", "--menu-select", "--ui-show",
-                                                        "--hood-panel", "--hood-family", "--hood-tool", "--hood-lot-click"};
-const std::initializer_list<const char*> kSceneBare = {"--vm", "--menu"};
+                                                        "--hood-panel", "--hood-family", "--hood-tool", "--hood-lot-click",
+                                                        "--cas-hood", "--cas-return"};
+const std::initializer_list<const char*> kSceneBare = {"--vm", "--menu", "--cas"};
 // Things to show other than the game's scenes.
 const std::initializer_list<const char*> kContentFlags = {"--object", "--lot", "--sim", "--skinned", "--character",
                                                           "--ui"};
@@ -40,6 +41,12 @@ Scene sceneOf(const std::vector<std::string>& args) {
         s.fromNeighborhood = true, s.returnHood = *ret;
     if (hasArg(args, "--menu")) {
         s.kind = Scene::Kind::MainMenu;
+        return s;
+    }
+    if (hasArg(args, "--cas")) {
+        s.kind = Scene::Kind::Cas;
+        s.hood = argValue(args, "--cas-hood").value_or("");
+        s.returnHood = argValue(args, "--cas-return").value_or("");
         return s;
     }
     if (auto hood = argValue(args, "--hood")) {
@@ -121,6 +128,13 @@ std::vector<std::string> sceneArguments(const std::vector<std::string>& args, co
     case Scene::Kind::Neighborhood: out.insert(out.end(), {"--hood", next.hood}); break;
     case Scene::Kind::Lot:
         out.insert(out.end(), {"--hood", next.hood, "--hood-lot", std::to_string(next.lot), "--vm", "--ui", "live"});
+        break;
+    case Scene::Kind::Cas:
+        out.push_back("--cas");
+        if (!next.hood.empty())
+            out.insert(out.end(), {"--cas-hood", next.hood});
+        if (!next.returnHood.empty())
+            out.insert(out.end(), {"--cas-return", next.returnHood});
         break;
     case Scene::Kind::Other: break;
     }

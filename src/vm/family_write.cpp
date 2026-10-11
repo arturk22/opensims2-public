@@ -64,11 +64,12 @@ fs::path defaultUserNeighborhoods() {
 }
 
 FamilyWriteResult writeNewFamily(const fs::path& source, const fs::path& target, const std::string& familyName,
-                                 const std::string& description, std::vector<NewSim> sims, uint32_t seed) {
+                                 const std::string& description, std::vector<NewSim> sims, uint32_t seed,
+                                 bool inPlace) {
     FamilyWriteResult res;
     if (sims.empty())
         throw std::runtime_error("a family needs at least one Sim");
-    if (fs::exists(target) && fs::equivalent(source, target))
+    if (fs::exists(target) && fs::equivalent(source, target) && !inPlace)
         throw std::runtime_error("refusing to write into the source neighborhood " + source.string());
     if (!fs::exists(target)) {
         fs::create_directories(target.parent_path());
