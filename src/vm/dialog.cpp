@@ -158,18 +158,26 @@ std::string stringAt(const StringTable* t, int oneBased) {
 } // namespace
 
 int autoTimeOutDialogs(VM& vm, double now) {
-    if (vm.dialogTimeoutSeconds <= 0)
+    if (!vm.dialogTimeouts)
         return 0;
     int answered = 0;
     for (auto& [who, d] : vm.dialogs) {
-        if (!d.blocking || d.answer >= 0 || !d.tree) // the host's own dialogs have no tree
+        if (!d.blocking || d.answer >= 0 || d.timeoutMs <= 0 || d.buttons.empty())
             continue;
         if (d.opened < 0)
             d.opened = now;
-        else if (now - d.opened >= vm.dialogTimeoutSeconds) {
-            d.answer = 0;
+        else if ((now - d.opened) * 1000 >= d.timeoutMs) {
+            d.answer = int(d.buttons.size()) - 1;
             ++answered;
         }
+    }
+    for (auto it = vm.notifications.begin(); it != vm.notifications.end();) {
+        if (it->opened < 0)
+            it->opened = now;
+        if (it->timeout > 0 && now - it->opened >= it->timeout)
+            it = vm.notifications.erase(it);
+        else
+            ++it;
     }
     return answered;
 }
@@ -351,6 +359,7 @@ Exit dialog(Context& c) {
     d.title = expandDialogTokens(c, stringAt(strings, titleIndex));
     d.icon = (o[7] >> 1) & 7;
     d.timeout = o[10];
+    d.priority = o[9];
     d.continueOthers = o[7] & 0x80;
     d.depth = depth, d.tree = c.frame.behavior, d.node = c.frame.pc;
     auto button = [&](int index, const char* fallback) {
@@ -393,6 +402,14 @@ Exit dialog(Context& c) {
     default: // the special dialogs (phone book, racks, clothing, ...): OK or cancel
         d.buttons = {button(o[3], "OK"), button(o[0], "Cancelar")};
         break;
+    }
+    // cTSObjectDialog's time limit (docs/primitives-mac.md, Dialog): not
+    // for the tutorial nor the special dialogs (their own classes).
+    if (type >= dialogtype::Message && type <= dialogtype::TextEntry && type != dialogtype::Tutorial) {
+        size_t chars = 0; // the message's length in characters (UTF-8)
+        for (unsigned char ch : d.message)
+            chars += (ch & 0xC0) != 0x80;
+        d.timeoutMs = 4000 + 40 * int(chars);
     }
     if (vm.autoDialogAnswer >= 0)
         d.answer = std::min<int>(vm.autoDialogAnswer, int(d.buttons.size()) - 1);

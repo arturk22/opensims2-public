@@ -1,14 +1,13 @@
 #!/bin/bash
 # Soak test: long unattended runs over every lot of the four neighborhoods to
 # find crashes, hangs, dead Mains and stuck Sims. For each lot it runs
-#   1. s2pkg autonomy <lot> --ticks N --every 1800 --dialog-answer 0   (N = SOAK_TICKS, default 129600 = 3 game days)
+#   1. s2pkg autonomy <lot> --ticks N --every 1800   (N = SOAK_TICKS, default 129600 = 3 game days)
 #   2. s2pkg lot-save <lot> <scratch>/out.package --ticks 300 --check
-#   3. the app: --lot <lot> --vm --ui live --run-vm 600 --screenshot x.png --no-audio --dialog-answer 0
-# Nobody plays during a soak, so the player's part is played by
-# --dialog-answer 0: every dialog a tree puts up (a phone call, ...) gets
-# its first button at once. Without it the game waits for the player
-# forever (the shipping game has no dialog timeout; SOAK_DIALOG=-1 keeps
-# that, any other value is the button).
+#   3. the app: --lot <lot> --vm --ui live --run-vm 600 --screenshot x.png --no-audio
+# Nobody plays during a soak: the dialogs the trees put up time out as the
+# game's (their last button after 4000 + 40 x length ms, on game time
+# headless; vm::autoTimeOutDialogs). SOAK_DIALOG=N answers button N at once
+# instead (--dialog-answer).
 # and records: crashes (signal exit, with an lldb backtrace), hangs (wall time
 # above SOAK_HANG seconds; a background watchdog kills the job), Mains that
 # died (S2PKG_ERRORS=1), Sims in the same interaction for more than 6 game
@@ -21,7 +20,7 @@
 #        DATA   (data/game)               SOAK_TICKS (129600)
 #        SOAK_JOBS (4)                    SOAK_HANG (seconds per command, default 900; app 300)
 #        SOAK_NO_APP=1 skips the app run. SOAK_NO_LLDB=1 skips the backtrace.
-#        SOAK_DIALOG (0): the button every dialog gets; -1 waits for the player.
+#        SOAK_DIALOG (-1): the button every dialog gets at once; -1 lets them time out.
 # The report is a markdown table (docs/soak-report.md by default); the raw
 # per-lot findings stay in OUT/results/*.txt.
 set -u
@@ -34,7 +33,7 @@ SOAK_JOBS="${SOAK_JOBS:-4}"
 SOAK_HANG="${SOAK_HANG:-900}"
 STUCK_TICKS=${SOAK_STUCK_TICKS:-10800}   # 6 game hours at 30 ticks per game minute
 EVERY=1800          # one motive table per game hour
-SOAK_DIALOG="${SOAK_DIALOG:-0}"
+SOAK_DIALOG="${SOAK_DIALOG:--1}"
 DIALOG_ARGS=(); [ "$SOAK_DIALOG" != "-1" ] && DIALOG_ARGS=(--dialog-answer "$SOAK_DIALOG")
 
 # run_limited <seconds> <outfile> cmd...: exit status of cmd; 999 if the watchdog killed it.

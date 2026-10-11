@@ -834,6 +834,8 @@ void VM::tick() {
     }
     setClockGlobals();
     ++ticks;
+    if (dialogClockIsTicks) // dialog.hpp: headless, game time at speed 1 is the clock
+        autoTimeOutDialogs(*this, double(ticks) / clock.ticksPerSecond);
     tickMotives(*this); // motives.cpp
     tickWants(*this);   // wants.cpp
     handleTimers();

@@ -262,6 +262,9 @@ double LotSimulation::update(double seconds) {
     // The game speed scales the scene clock the VM and the animations run on.
     scene_ += std::clamp(seconds - caller_, 0.0, 0.25) * speedScale();
     caller_ = seconds;
+    // Dialogs time out on real time, also while they pause the game.
+    vm_->dialogClockIsTicks = false;
+    vm::autoTimeOutDialogs(*vm_, seconds);
     updateScene(scene_);
     return scene_;
 }
@@ -281,9 +284,8 @@ void LotSimulation::updateScene(double seconds) {
     // The actors show the moment one tick behind the VM.
     const auto target = uint64_t(std::max(0.0, std::floor(seconds * rate))) + 1;
     // A dialog that blocks the game (Dialog, "engage and block") pauses it:
-    // the VM's clock slips while the player has not answered (unless the
-    // "autoTimeoutDialogs" option answers it, on the scene clock).
-    vm::autoTimeOutDialogs(*vm_, seconds + slip_);
+    // the VM's clock slips while the player has not answered (or the
+    // dialog times out on real time: LotSimulation::update).
     if (vm::dialogPausesGame(*vm_)) {
         slip_ = seconds + slip_ - double(vm_->ticks - 1) / rate;
         seconds = double(vm_->ticks - 1) / rate;
