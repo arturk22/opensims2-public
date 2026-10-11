@@ -415,6 +415,10 @@ struct Object {
     std::vector<int16_t> attributes;
     std::vector<int16_t> semiAttributes;
     std::array<int16_t, kObjectDataCount> data{};
+    // Kept next to `data`: the scans over every object read them (cache lines).
+    Position position;
+    // On Timer's timers, in the order they were set.
+    std::vector<ObjectTimer> timers;
     std::optional<Person> person;
     // Object arrays, each with an iterator index.
     struct Array {
@@ -439,7 +443,6 @@ struct Object {
     std::optional<QueuedInteraction> subAction;
     // Notify the Stack Object out of Idle: its next Idle for Input returns at once.
     bool idleInterrupt = false;
-    Position position;
     // The route the object is walking (Go To Routing Slot, Go To Relative
     // Position), while it walks: the points still ahead (the next first; tile
     // centres, then the goal point) on its level, the facing at the end (-1:
@@ -516,8 +519,6 @@ struct Object {
         int32_t ticks = 0;
     };
     std::optional<LookAt> lookAt;
-    // On Timer's timers, in the order they were set.
-    std::vector<ObjectTimer> timers;
     // Reach/Put in progress (reach.cpp): the instruction running it (stack
     // depth, tree, node), the reach animation and its ticks, the tick of its
     // event 0 (when the object changes hands), what moves where, and the
