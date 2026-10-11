@@ -193,7 +193,8 @@ std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor
 //   object in the room in temp 0, 27 "Utility Using Object" (object data 76
 //   or 77 non-zero): objects by ID;
 //   3 the next part of the target's multi-tile object, round its group;
-//   8 object on the target's tile and level, by ID after it (target 0: false);
+//   8 object on the target's tile and level, by ID after it, round to the
+//   first again (target 0, out of the world or contained: false, unchanged);
 //   9 object on the tiles +X, -X, +Y, -Y of the object in the local, in that
 //   order, in the anchor's room (the binary keeps "the last valid one" of
 //   those; here they are iterated, inferred);
@@ -299,17 +300,20 @@ Exit setToNext(Context& c) {
         auto next = ids.upper_bound(current);
         return next == ids.end() ? none() : found(*next);
     }
-    case 8: { // object on the same tile, after the target; after the last one, the first again
-              // (as FreeSO's ObjectOnSameTile: "Toilet - Standard Entry" and "MT - Get in Temp 0 & 1 -
-              // Max X & Y" walk the tile until they are back at the object they started from)
+    case 8: { // object on the same tile and level, after the target; after the last one the tile's
+              // list starts again, so with nothing else there the target itself is found (TrySetToNext,
+              // Mac BV: the binary walks the tile's object list round to the target; "Toilet - Standard
+              // Entry" and "MT - Get in Temp 0 & 1 - Max X & Y" stop when they are back at the start).
+              // Target 0, missing, out of the world or not on the tile's list (contained): false, and
+              // the target is left as it is (the binary returns before writing).
         if (current == 0)
-            return none();
+            return Exit::False;
         const Object* x = c.vm.object(current);
         if (!x || !x->position.inWorld() || x->data[objdata::ContainerId] != 0)
-            return none();
+            return Exit::False;
         const auto ids = c.vm.objectsOnTile(VM::tileOf(*x));
         if (ids.empty())
-            return none();
+            return Exit::False;
         auto it = std::upper_bound(ids.begin(), ids.end(), current);
         return found(it == ids.end() ? ids.front() : *it);
     }
