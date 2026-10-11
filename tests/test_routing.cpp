@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <initializer_list>
 #include <set>
 #include <string>
@@ -652,6 +653,45 @@ static void testBlockedBySim() {
           "two Sims walking at each other pass");
 }
 
+// Through a door: the walker stops at the door's portal (waiting for it to
+// open: the route's wait point names the door object), then goes through.
+static void testDoorWait() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(10, 6);
+    for (int y = 0; y < 6; ++y)
+        vm.world->addWall(1, 5, y, 5, y + 1);
+    vm.world->openDoor({4, 2, 1}, 0);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    ObjectDefinition doorDef = definition(0xAAAA0003, 0);
+    doorDef.fields[(0x52 - 0x44) / 2] = kObjectTypeDoor;
+    code.add(kGroup, 0x82, doorDef);
+    Object& door = vm.instantiate(kGroup, 0x82);
+    door.position = {4.5f, 2.5f, 1};
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {9.5f, 2.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {1.5f, 4.5f, 1};
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    int waitTicks = 0;
+    bool named = false;
+    for (int i = 0; i < 2000 && t.status == Thread::Status::Running; ++i) {
+        vm.run(t);
+        if (sim.route && sim.route->waiting) {
+            ++waitTicks;
+            named |= std::fabs(sim.position.x - 4.5f) < 1e-3f && !sim.route->points.empty() &&
+                     sim.route->points.front().door == door.id;
+        }
+    }
+    if (std::getenv("DEBUG_DOOR"))
+        std::fprintf(stderr, "door test: status %d result %d x %.2f named %d wait %d type %d\n", int(t.status), t.result,
+                     sim.position.x, named, waitTicks, door.definition ? door.definition->objectType() : -1);
+    check(t.status == Thread::Status::Finished && t.result && sim.position.x > 7 && named && waitTicks >= 10,
+          "a door: wait at its portal, then through");
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -665,6 +705,7 @@ int main() {
     testPathPlanner();
     testRouteResult();
     testBlockedBySim();
+    testDoorWait();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

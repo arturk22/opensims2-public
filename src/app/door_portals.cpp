@@ -41,7 +41,13 @@ void DoorPortals::update(vm::VM& vm, const std::vector<Vec3>& sims, double secon
             if (dist < nearest)
                 nearest = dist, side = dx * front[0] + dy * front[1];
         }
-        if (!d.open && nearest < kOpenDistance) {
+        // A Sim the VM holds at this door's portal (Route::Point::door,
+        // vm/routing.cpp) opens it whatever the distance.
+        bool atPortal = false;
+        for (const auto& [sid, so] : vm.objects())
+            if (so.person && so.route && !so.route->points.empty() && so.route->points.front().door == id)
+                atPortal = true;
+        if (!d.open && (nearest < kOpenDistance || atPortal)) {
             d.open = true;
             d.suffix = side >= 0 ? "CW" : "CCW";
             play_(id, "o-door-open-" + d.suffix, seconds);

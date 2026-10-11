@@ -4,7 +4,8 @@
 // from main.mm). The game makes doors routing portals (docs/routing-mac.md:
 // AddDoorPortal, TriggerPortalTree) whose tree plays the door's object
 // animation; the VM does not run portal trees yet, so the app plays them
-// itself: when a Sim comes within reach of a door it plays
+// itself: when a Sim comes within reach of a door, or the VM holds a Sim at
+// the door's portal (it waits there for the door to open), it plays
 // "o-door-open-CW" or "o-door-open-CCW" (by the side the Sim comes from),
 // and "o-door-close-..." once no Sim is near.
 //
