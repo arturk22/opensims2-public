@@ -164,8 +164,10 @@ std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
         if (const Object* owner = c.vm.object(c.frame.codeOwner))
             groups.push_back(owner->group), groups.push_back(owner->semiGroup);
         groups.push_back(kGlobalGroup);
-        // A list whose entry is blank is a placeholder (the chair semi-global's
-        // 0x81 is all blank; the chairs' own lists hold the names): go on to
+        // A list whose entry is blank or "." is a placeholder (the chair
+        // semi-global's 0x81 is all blank; the chairs' own lists hold the
+        // names; the reaction semi-global's lists are "." up to 19, and each
+        // reaction object, "Reaction - Wave" ..., names its own): go on to
         // the next group, keeping the first that has the entry at all.
         const StringTable* first = nullptr;
         for (uint32_t g : groups) {
@@ -174,7 +176,7 @@ std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
                 continue;
             if (!first)
                 first = t;
-            if (!trim(t->get(size_t(index), lang::EnglishUS)).empty()) {
+            if (const std::string e = trim(t->get(size_t(index), lang::EnglishUS)); !e.empty() && e != ".") {
                 table = t;
                 break;
             }
