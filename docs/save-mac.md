@@ -315,6 +315,17 @@ O caminho seguro para um save nosso:
    miniatura e o resumo do lote, `cTSNeighborhood::SaveLotInfo`); um save
    que mude fundos/Sims precisa atualizar o pacote do bairro também.
 
+O que o nosso save grava (`s2pkg lot-save`, `s2pkg hood-save`;
+`vm/lot_save.*`, `vm/save_types.*`, `vm/lot_records.*`, `vm/hood_save.*`):
+os passos 1–4 acima, com o `SIMI` campo a campo (os globais e a cópia dos
+fundos em +0x98 da VM, o resto como lido), um registro `objt` construído
+do OBJD para cada tipo novo (§5), o `cObject` reposicionado de quem andou
+e copiado de outro lote para quem foi criado, o estado de rota parado
+(versão 4 do base, 12 bytes zero) para Sims novos, as `SREL` do lote
+iguais às relações da VM e, no bairro, `FAMI`/`SDSC`/`SREL`/`NGBH`. Sem
+`0x3053CF74` (nenhum lote do jogo tem). Não grava rotas em andamento
+(`cTSRoute`), as tabelas de dados nem a miniatura/`cTSLotInfo`.
+
 Não verificado: se o jogo recusa um pacote sem os registros de partes que
 não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
 

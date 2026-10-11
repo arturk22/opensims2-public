@@ -298,6 +298,11 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
     // All the globals the SIMI's version holds (54 in the base game).
     for (size_t i = 0; i < lot.globals.size() && i < kGlobalCount; ++i)
         lot.globals[i] = vm.globals[i];
+    // The simulator keeps a copy of the family's funds (+0x98, the globals'
+    // 13/14 as SetFunds writes them; docs/save-mac.md §5).
+    if (lot.simulator.read && lot.globals.size() > size_t(global::BudgetDiv10000))
+        lot.simulator.f98 = uint32_t(int32_t(vm.globals[global::BudgetDiv10000]) * 10000 +
+                                     vm.globals[global::BudgetMod10000]);
     return out;
 }
 
