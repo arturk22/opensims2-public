@@ -143,6 +143,9 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
             for (size_t i = 0; i < g.points.size() && i < 8; ++i)
                 std::printf(" (%.2f,%.2f)", g.points[i][0], g.points[i][1]);
             std::printf("%s\n", g.onTarget ? " on target" : "");
+            const auto ev = machine.routingGoals(sl, o, true);
+            std::printf("      after EvalTileForGoal: %zu goals%s\n", ev.goals.size(),
+                        ev.refused ? (", last refused: route result " + std::to_string(ev.refused)).c_str() : "");
             if (const auto bp = machine.slotBone(sl, o))
                 std::printf("      bone at (%.2f, %.2f, %.2f) in model space\n", (*bp)[0], (*bp)[1], (*bp)[2]);
             std::printf("      raw: stand %d sit %d ground %d snap %d prox %d/%d/%d maxSize %d u10 %d grad %.2f height %d facing %d res %d extra %08X %08X\n",
