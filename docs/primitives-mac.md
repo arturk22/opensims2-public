@@ -934,6 +934,104 @@ depois no semi-global dele, com o prefixo de idade; para a tabela global
 (0x80/0x81) a tabela certa depende da idade (um adolescente/idoso usa
 0x8A/0x8B e cai para 0x81 se não achar).
 
+## 4c. Rodada 7 (VM): relógio, meia-noite, objetos fora do mundo, Make New Character
+
+### Relógio e meia-noite (`cTSSimulator::SimulateOneTick`, BV `0x49a814`)
+
+A cada tick que avança o relógio (segundo `+0x30` += 2):
+
+```
+segundo > 59 → segundo −= 60, minuto (+0x2e) += 1, ObjectModule.MinuteChanged
+               mensagem 0x88 (minuto)
+minuto > 59  → minuto −= 60, hora (+0x24) += 1, ObjectModule.HourChanged, flag "hora nova" (+0xdc)
+               mensagem 0xD08962D0 (hora)
+hora ≥ 24    → hora −= 24, dia (+0x5c) += 1, dia do mês (+0x26) += 1,
+               dia da semana (+0x68) = dia mod 7, ObjectModule.DayChanged,
+               um gerente diário (vtable 0x24 do sistema), histórico de 5 dias de
+               tokens de inventário deslocado (o de hoje zera), negócios (só BV)
+               dia do mês > 30 → 1, mês (+0x32) += 1 (> 12 → 1, ano +0x34 += 1)
+               mensagem 0x89 (dia)
+hora nova    → ComputeTimeOfDay (vtable 0xc0) e SetTimeOfDay (0xc4): a luz do dia
+depois       → ObjectModule.PostSim (vtable 0x64) com "tick sem avanço"
+```
+
+`cEdithObjectModule` (vtable `0x68/0x6c/0x70`):
+- **MinuteChanged** (BV `0x5250b8`): para cada Sim da lista de minuto,
+  `PersonalTimeMinutePassed` (só decrementa o dado de pessoa 189 até 0, BV).
+- **HourChanged** (BV `0x525144`): `PersonalTimeHourPassed` de cada Sim
+  (dado 172, BV).
+- **DayChanged** (BV `0x525a60`): `DayPassed` de **todos os objetos**:
+  `cTSObject::DayPassed` (BV `0xb07a4c`) = `UpdateAge` + depreciação
+  (`docs/buy-build-mac.md` §2) e contador `+0x140` −1 por dia;
+  `cTSPerson::DayPassed` (BV `0xad133c`) = dado 200 −1 (até −10, BV) +
+  o do objeto + `UpdateMemories`.
+
+Nada no C++ da meia-noite toca motivos, empregos ou carona: **é SimAntics**.
+As árvores leem o relógio (globais de hora e dia) e os controladores rodam
+no Main. **Carona e ônibus** (dados): o semi-global de carreira do grupo
+`0x7FBE051B` tem "CT - Get Carpool Time" (`0x200D`), "CT - Is Neighbor at Work"
+(`0x200E`), "Function - Create Car" (`0x200A`), "Function - Is Job Car
+Here?" (`0x201B`), "Sub - Return to World" (`0x201D`) e "Sub - Process"
+(`0x201F`). O grupo `0x7F8F4EB6` tem "Sub - Carpool Warnings" (`0x2027`) e outro
+"Function - Create Car" (`0x200B`). O carro é um objeto criado pela árvore
+(Create Object) que chega pela rua (portais de carro, `docs/primitives-mac.md`
+§5 "Portal - Car - …"). O Sim sai do lote pelas mesmas árvores. O motor só
+precisa do relógio, de Create Object, das rotas e dos portais de carro.
+
+### Objetos fora do mundo (`cEdithObjectModule::MakeNewOutOfWorldObject`, BV `0x533fb8`)
+
+É o mesmo caminho para Create Object com "fora do mundo", para a compra no
+modo compra (vtable `0x40` do módulo, ver `docs/buy-build-mac.md`) e para
+objetos de inventário:
+
+```
+seletor → ConstructObject (vtable 0x3c) → AddObject (0x38) dá o ID
+od 19 "lead tile object ID" := o próprio ID
+OnInit(param)            ← a árvore init (entrada 0), com o parâmetro pedido
+OnPostMultiTileJoin, JustBorn
+se não "sem reset":  Reset(1,1,1,0) e **od 41 "current value" := OBJD campo 18 (preço)**
+flag 0x80 ligada (vtable 0x68), sim flag do módulo (0x128)
+multi-tile: cria cada parte do grupo (o mestre no índice 0), liga as partes ao líder,
+            init em cada uma; uma parte que falha mata o grupo (KillOutOfWorldObject)
+```
+
+O objeto **não tem posição** (`IsInWorld` falso). Os erros de VM 0x34, 0x7B
+e 0x96 (apêndice A) são os testes de "fora do mundo". Ele só entra no mundo
+com `SetPosition`/colocação. `KillOutOfWorldObject` (BV `0x532d08`) tira do
+mundo o que estiver dentro (vtable `0x2ac`), roda o cleanup e chama
+`RemoveObject`, recursivo nos objetos contidos e nas partes. Room: um objeto
+fora do mundo não tem tile. O "room −1" dos saves é a posição (−1, −1) do XOBJ
+(`docs/save-mac.md`). O que o od 29 "room" vale nesse caso não foi lido
+(aberto).
+
+### Make New Character (0x13, `TryMakeNewCharacter`, BV `0x65cb14`)
+
+**Assíncrona**: pede ao CAS (`nTSCASCore::CASSystem`) a geração e guarda os
+IDs dos pedidos numa lista do elemento da pilha:
+
+- **bebê** (byte 9 bit 0x01): pais pelos dois operandos (ID de objeto, ou
+  neighbor ID com 0x02/0x04). O número de bebês vem do temp 0 do controle (1–10,
+  senão o erro **0x76**). Os pais precisam ter sexo diferente ou o flag 6.
+  Faz um pedido `CASSystem 0x18(pai, mãe, roupa)` por bebê, posta a mensagem
+  `0xAD90F890` (nascimento; o byte 13 bit 0x01 a cala) e devolve **2**.
+- **aleatório** (sem 0x01): idade = local do byte 5 (≤ 0 → sorteio de 1 <<
+  rand(6)), sexo = local do byte 6 (≤ 0 → 50%), cor da pele = local do
+  byte 18 (< 4). Com 0x40 vem o GUID de um "bin" de personagens (com 1 =
+  "EP2 Downtownie Bin", só BV), e um bin com vários sorteia um. O pedido é
+  `CASSystem 0x14(idade, sexo, pele, local do byte 4, GUID da roupa, 7, bin)`.
+  Devolve 1 se o pedido foi aceito (−1 → falso).
+- **De novo no tick seguinte** (o elemento marca "começado", vtable `0x48`):
+  percorre os pedidos (`CASSystem 0x30(id, &pronto)`). Algum pendente → **2
+  (espera)**, todos prontos → 1 (verdadeiro).
+- Erros: 0x15 (sem stack object), 0x6C (sem pilha), 0x7A/0x94 (GUID de
+  roupa inválido / de pet), 0x08 (local fora), 0x9E, 0x37 (pai/mãe
+  inválidos).
+
+O Sim pronto entra pelo `cTSNeighborManager::AddNewCharacter` (BV
+`0x5386dc`) e vira um objeto fora do mundo como acima. **Para nós**: sem CAS,
+basta criar o personagem na hora a partir de um modelo e devolver 1. O
+resultado "2" só importa para quem espera o nascimento.
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto

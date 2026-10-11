@@ -175,9 +175,10 @@ de 3/4 e uma luz) e guardar em cache. Não é preciso ler o pacote do usuário.
 
 - **Comprar** (`cTSUserToolUndoableObject::TryCreateImpl`, BV `0x35f178`):
   custo = campo 18. Recompensas de aspiração e de carreira custam 0. O
-  objeto é criado na hora pelo gerente de objetos (vtable `0x40`, o mesmo
-  caminho do Create Object; **inferido**: roda o init) e fica "segurado"
-  pelo cursor.
+  objeto é criado na hora por `cEdithObjectModule::MakeNewOutOfWorldObject`
+  (vtable `0x40` do módulo, BV `0x533fb8`; ver `docs/primitives-mac.md` §4c):
+  roda o init (`OnInit`), `JustBorn` e `Reset`, e grava **od 41 = preço**.
+  Fica fora do mundo, "segurado" pelo cursor.
 - **Cobrar** (`cTSUserToolBuyBuild::SubmitUndoable`, BV `0x9b3b94`): ao
   confirmar uma operação, se a ferramenta não está em "sem custo"
   (`NoCharge`, vtable `200`, cheat/tutorial), **fundos += −TotalCost()**
@@ -207,8 +208,8 @@ de 3/4 e uma luz) e guardar em cache. Não é preciso ler o pacote do usuário.
   os dois campos têm inicial ≈ 15% do preço e diária = 10%, e o limite ≈ 40%. Ao carregar
   (`cTSObject::PostLoad`, BV `0xb0b3dc`), um valor abaixo do limite é
   corrigido para o **preço** (campo 18). Os multi-tile usam o OBJD do líder.
-  Quem grava o valor inicial (od 41) na compra **não foi achado** (não é
-  um `sth …,0xec` do motor). Provavelmente é uma árvore de init (aberto).
+  O valor inicial é gravado na criação: `MakeNewOutOfWorldObject` põe od 41
+  = campo 18 (preço). A depreciação diária começa na primeira meia-noite.
 - Campo 34 "sale price" vale 35 em todos os objetos dos dados. Ele não é lido
   no caminho de compra/venda acima (aberto).
 
@@ -363,7 +364,7 @@ nível. "Must be on first level" é o código 0x22 (`TSObjectCanDropImpl`).
 
 | momento | código | entry point (STR# 0xF5) |
 |---|---|---|
-| comprar (criar) | gerente de objetos `CreateObject` (vtable `0x40`) | 0 init (**inferido**: como Create Object) |
+| comprar (criar) | `MakeNewOutOfWorldObject` (BV `0x533fb8`) | 0 init (`OnInit`), depois `JustBorn` e `Reset`; od 41 = preço |
 | clicar para colocar | `OnUserPlacement` (BV `0xafed44`) | **11 "user placement"** |
 | mudar de posição | `SetPosition` → árvore de colocação | 9 "placement" |
 | tirar do mundo | `RemoveFromWorld` | 10 "pickup" |
@@ -454,7 +455,7 @@ existem no script base. O campo 100 é lido no BV, sem conferência no base.
 
 ## 10. Aberto
 
-- Quem grava o od 41 na compra, e o papel do campo 34 "sale price" (35 em todos).
+- O papel do campo 34 "sale price" (35 em todos).
 - Mapa exato B7/B9 (Diversos, Hobbies "recreação") e os IDs dos sons.
 - Conferir `TestPlacementCommon` no base 1.0 (sem símbolos).
 - O que o teste de altura od 4 compara (máscara do serviço `0xBA4DA53`, vtable `0x2c`).
