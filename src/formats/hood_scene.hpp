@@ -66,8 +66,21 @@ inline std::array<float, 2> hoodLightMapUv(const Terrain& t, float x, float y) {
     return {x / t.worldWidth(), y / t.worldHeight()};
 }
 
+// `hiddenTiles` (width x height, x fastest; may be null): tiles whose two
+// triangles are left out (cLotImposterDisplay::HideOrShowTerrainUnderImposter).
 ObjectModel buildHoodTerrainModel(const Terrain& t, const Occupants& o, const TerrainSettings& s,
-                                  std::vector<std::string>* report = nullptr);
+                                  std::vector<std::string>* report = nullptr,
+                                  const std::vector<uint8_t>* hiddenTiles = nullptr);
+// A lot's imposter terrain (cLotImposterDisplay::TryCreateLotImposterTerrain /
+// CreateLotImposterTerrainGeometry, BV 0x7692b8 / 0x7686cc): the imposter's
+// "terrain" geometry (`mesh`, in world coordinates) drawn with the
+// neighborhood terrain's paints of `terrain` (its layers and alpha masks,
+// cropped to the mesh), where the neighborhood terrain is hidden.
+ObjectModel buildHoodTerrainPatch(const ObjectModel& terrain, const Terrain& t, const MeshGroup& mesh);
+// The game makes a lot's imposter terrain only when the imposter's ground has
+// neither 4 vertices (flat) nor one per vertex of the lot's rectangle
+// ((w + 1) x (d + 1)); for the others the neighborhood terrain stays.
+bool needsImposterTerrain(size_t groundVertices, uint32_t widthTiles, uint32_t depthTiles);
 ObjectModel buildHoodRoadModel(const Terrain& t, const Occupants& o);
 ObjectModel buildHoodWaterModel(const Terrain& t);
 
@@ -88,8 +101,8 @@ RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, cons
 // (ImposterDualPackedSliceMaterial: "slices_<page>", alpha test 127, both
 // sides), roofs (ImposterRoofMaterial: "roofs" at model xy / 64, which the
 // vertex shader generates: the parts get those texture coordinates here)
-// and the lot's ground (ImposterTerrainMaterial: "terrain", blended over the
-// neighborhood terrain), all unlit (pre-rendered). `scope` is the lot's
+// and the lot's ground (ImposterTerrainMaterial: "terrain", premultiplied
+// over the neighborhood terrain or the lot's imposter terrain), all unlit (pre-rendered). `scope` is the lot's
 // resource prefix ("N001_Lot11").
 void imposterMaterials(ObjectModel& model, const std::string& scope);
 

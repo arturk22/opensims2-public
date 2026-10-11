@@ -50,7 +50,13 @@ struct HoodLot {
     uint32_t width = 0, depth = 0; // cells
     int instance = -1;             // the imposter's renderer instance
     std::vector<simd_float3> triangles; // the imposter's triangles in the world (3 per), for picking
+    bool terrainHidden = false;         // its imposter terrain replaces the neighborhood terrain
+    int indexSlot = -1;                 // its lot file's resource index (HoodView)
 };
+
+// The imposter's placement for a lot info (SetOrientationAndTranslationFor-
+// ImposterNode) and the lot's footprint in the world.
+simd_float4x4 lotTransform(const hood::LotInfo& info, float zOffset, simd_float2& footLo, simd_float2& footHi);
 
 // The folder of a neighborhood given as "N001" (under
 // UserData/Neighborhoods), a folder or its _Neighborhood.package.

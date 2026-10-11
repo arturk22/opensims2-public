@@ -116,6 +116,30 @@ bool rayTriangle(simd_float3 o, simd_float3 d, simd_float3 a, simd_float3 b, sim
 
 } // namespace
 
+simd_float4x4 lotTransform(const hood::LotInfo& info, float zOffset, simd_float2& footLo, simd_float2& footHi) {
+    // SetOrientationAndTranslationForImposterNode (BV 0x769640): the
+    // imposter is turned by -(front edge - creation front edge) quarters
+    // about Z and moved onto the lot's rectangle (x, y)..(x + w, y + d) x 10,
+    // the base size swapped when that turn is odd (cTSLotInfo::
+    // GetCurrentSize), at the lot's elevation plus ImposterZOffset.
+    const int turns = (int(info.frontEdge) - int(info.creationFrontEdge) + 4) & 3;
+    const float W = float(info.width) * hood::kHoodCellSize, D = float(info.depth) * hood::kHoodCellSize;
+    const simd_float3 corner = simd_make_float3(float(info.x) * hood::kHoodCellSize, float(info.y) * hood::kHoodCellSize,
+                                                info.heightOffset + zOffset);
+    const simd_float4x4 rot = rotationZ(-float(turns) * 90.0f);
+    simd_float3 low = simd_make_float3(INFINITY, INFINITY, 0);
+    for (const simd_float2 c : {simd_make_float2(0, 0), simd_make_float2(W, 0), simd_make_float2(0, D),
+                                simd_make_float2(W, D)}) {
+        const simd_float4 r = simd_mul(rot, simd_make_float4(c.x, c.y, 0, 1));
+        low.x = std::min(low.x, r.x), low.y = std::min(low.y, r.y);
+    }
+    const simd_float4x4 at = simd_mul(translation(corner - low), rot);
+    const float fw = float(info.currentWidth()) * hood::kHoodCellSize, fd = float(info.currentDepth()) * hood::kHoodCellSize;
+    footLo = corner.xy;
+    footHi = corner.xy + simd_make_float2(fw, fd);
+    return at;
+}
+
 fs::path neighborhoodFolder(const fs::path& resDir, const std::string& query) {
     const fs::path q(query);
     if (fs::is_directory(q))
@@ -176,8 +200,98 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     renderer.hideTestScene();
 
     // Ground, roads and water.
-    renderer.addInstance(renderer.addObject(hood::buildHoodTerrainModel(terrain_, occupants_, settings, &report_), index),
-                         matrix_identity_float4x4);
+    // The lots first: which tiles their imposter terrains hide.
+    struct Pending {
+        HoodLot lot;
+        ObjectModel model;
+        simd_float4x4 at = matrix_identity_float4x4;
+    };
+    std::vector<Pending> pending;
+    std::vector<uint8_t> hidden(size_t(terrain_.width) * terrain_.height, 0);
+    std::vector<MeshGroup> patches;
+    size_t imposters = 0;
+    for (const auto& l : hood_.lots) {
+        Pending p;
+        HoodLot& lot = p.lot;
+        lot.id = l.id;
+        lot.name = l.name.empty() ? l.info.name : l.name;
+        lot.description = l.description;
+        lot.type = l.info.type;
+        lot.package = l.package;
+        lot.width = l.info.width, lot.depth = l.info.depth;
+        if (!l.families.empty()) {
+            lot.family = l.families.front();
+            if (const auto* f = hood_.family(lot.family))
+                lot.familyName = f->name;
+        }
+        p.at = lotTransform(l.info, settings.imposterZOffset, lot.footLo, lot.footHi);
+        lot.lo = simd_make_float3(lot.footLo, l.info.heightOffset);
+        lot.hi = simd_make_float3(lot.footHi, l.info.heightOffset + 3);
+        lot.ground = l.info.heightOffset;
+        if (!l.package.empty() && fs::exists(l.package)) {
+            try {
+                auto lotIndex = std::make_unique<ResourceIndex>(std::vector<fs::path>{l.package}, &index);
+                p.model = loadObjectModel(*lotIndex, "#0xFFFFFFFF!imposter_cres");
+                for (const auto& w : p.model.warnings)
+                    report_.push_back(l.package.filename().string() + ": " + w);
+                lotIndexes_.push_back(std::move(lotIndex));
+                lot.indexSlot = int(lotIndexes_.size()) - 1;
+            } catch (const std::exception& e) {
+                report_.push_back(l.package.filename().string() + ": " + e.what());
+            }
+        }
+        if (!p.model.parts.empty()) {
+            // HideOrShowTerrainUnderImposter: the lot's rectangle loses its
+            // terrain when the imposter's ground makes an imposter terrain.
+            MeshGroup ground;
+            for (const auto& part : p.model.parts) {
+                auto mt = p.model.materials.find(part.material);
+                if (mt == p.model.materials.end() || mt->second.materialType != "ImposterTerrainMaterial")
+                    continue;
+                const uint32_t base = uint32_t(ground.positions.size());
+                for (const auto& v : part.mesh.positions) {
+                    const simd_float4 w = simd_mul(p.at, simd_make_float4(v[0], v[1], v[2], 1));
+                    // UpdateImposterTerrainTransform (BV 0x766a40): the
+                    // imposter terrain sits ImposterZOffset below the imposter.
+                    ground.positions.push_back({w.x, w.y, w.z - settings.imposterZOffset});
+                }
+                for (uint32_t i : part.mesh.triangles)
+                    ground.triangles.push_back(base + i);
+            }
+            const uint32_t fw = l.info.currentWidth(), fd = l.info.currentDepth();
+            if (hood::needsImposterTerrain(ground.positions.size(), fw, fd)) {
+                // Inferred: the rectangle without its road strip
+                // (cTSLotInfo::GetBoundingRectExcludingRoads), which the
+                // imposter's ground does not cover.
+                uint32_t x0 = l.info.x, y0 = l.info.y, x1 = l.info.x + fw, y1 = l.info.y + fd;
+                const int turns = (int(l.info.frontEdge) - int(l.info.creationFrontEdge) + 4) & 3;
+                for (int e = 0; e < 4; ++e)
+                    if (l.info.roads & (1u << e))
+                        switch ((e + turns) & 3) {
+                        case 0: ++x0; break;
+                        case 1: --y1; break;
+                        case 2: --x1; break;
+                        default: ++y0; break;
+                        }
+                for (uint32_t j = y0; j < y1 && j < terrain_.height; ++j)
+                    for (uint32_t i = x0; i < x1 && i < terrain_.width; ++i)
+                        hidden[size_t(j) * terrain_.width + i] = 1;
+                patches.push_back(std::move(ground));
+                lot.terrainHidden = true;
+            }
+        }
+        pending.push_back(std::move(p));
+    }
+    {
+        const ObjectModel terrainModel =
+            hood::buildHoodTerrainModel(terrain_, occupants_, settings, &report_, &hidden);
+        renderer.addInstance(renderer.addObject(terrainModel, index), matrix_identity_float4x4);
+        for (const auto& mesh : patches)
+            renderer.addInstance(renderer.addObject(hood::buildHoodTerrainPatch(terrainModel, terrain_, mesh), index),
+                                 matrix_identity_float4x4);
+        if (!patches.empty())
+            report_.push_back(std::to_string(patches.size()) + " lots hide the terrain under their imposter terrain");
+    }
     renderer.addInstance(renderer.addObject(hood::buildHoodRoadModel(terrain_, occupants_), index),
                          matrix_identity_float4x4);
     renderer.addInstance(renderer.addObject(hood::buildHoodWaterModel(terrain_), index), matrix_identity_float4x4);
@@ -229,72 +343,25 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         ++placed;
     }
 
-    // Lots and their imposters.
-    size_t imposters = 0;
-    for (const auto& l : hood_.lots) {
-        HoodLot lot;
-        lot.id = l.id;
-        lot.name = l.name.empty() ? l.info.name : l.name;
-        lot.description = l.description;
-        lot.type = l.info.type;
-        lot.package = l.package;
-        lot.width = l.info.width, lot.depth = l.info.depth;
-        if (!l.families.empty()) {
-            lot.family = l.families.front();
-            if (const auto* f = hood_.family(lot.family))
-                lot.familyName = f->name;
-        }
-        const float W = float(l.info.width) * hood::kHoodCellSize, D = float(l.info.depth) * hood::kHoodCellSize;
-        const simd_float3 corner = simd_make_float3(float(l.info.x) * hood::kHoodCellSize,
-                                                    float(l.info.y) * hood::kHoodCellSize,
-                                                    l.info.heightOffset + settings.imposterZOffset);
-        // SetOrientationAndTranslationForImposterNode: turned by -(front edge
-        // mod 4) x 90 degrees about Z, moved so that the footprint covers
-        // (x, y)..(x + w, y + d) tiles x 10 (the model is w x d when not
-        // turned a quarter, d x w when it is).
-        const int turns = int(l.info.frontEdge % 4);
-        const simd_float4x4 rot = rotationZ(-float(turns) * 90.0f);
-        const float mw = turns % 2 ? D : W, md = turns % 2 ? W : D;
-        simd_float3 low = simd_make_float3(INFINITY, INFINITY, 0);
-        for (const simd_float2 c : {simd_make_float2(0, 0), simd_make_float2(mw, 0), simd_make_float2(0, md),
-                                    simd_make_float2(mw, md)}) {
-            const simd_float4 r = simd_mul(rot, simd_make_float4(c.x, c.y, 0, 1));
-            low.x = std::min(low.x, r.x), low.y = std::min(low.y, r.y);
-        }
-        const simd_float4x4 at = simd_mul(translation(corner - low), rot);
-        // Footprint (fallback box).
-        const simd_float4 a = simd_mul(at, simd_make_float4(0, 0, 0, 1)), b = simd_mul(at, simd_make_float4(mw, md, 0, 1));
-        lot.lo = simd_min(a.xyz, b.xyz);
-        lot.hi = simd_max(a.xyz, b.xyz);
-        lot.footLo = lot.lo.xy, lot.footHi = lot.hi.xy;
-        lot.ground = l.info.heightOffset;
-        lot.hi.z += 3;
-        if (!l.package.empty() && fs::exists(l.package)) {
-            try {
-                auto lotIndex = std::make_unique<ResourceIndex>(std::vector<fs::path>{l.package}, &index);
-                ObjectModel m = loadObjectModel(*lotIndex, "#0xFFFFFFFF!imposter_cres");
-                if (!m.parts.empty()) {
-                    hood::imposterMaterials(m, hood_.prefix + "_Lot" + std::to_string(l.id));
-                    const int id = renderer.addObject(m, *lotIndex);
-                    lot.instance = renderer.addInstance(id, at);
-                    const auto [lo, hi] = bounds(m, at);
-                    for (const auto& part : m.parts)
-                        for (size_t k = 0; k + 2 < part.mesh.triangles.size(); k += 3)
-                            for (int c = 0; c < 3; ++c) {
-                                const auto& v = part.mesh.positions[part.mesh.triangles[k + size_t(c)]];
-                                lot.triangles.push_back(simd_mul(at, simd_make_float4(v[0], v[1], v[2], 1)).xyz);
-                            }
-                    lot.lo = simd_min(lot.lo, lo);
-                    lot.hi = simd_max(lot.hi, hi);
-                    lot.imposter = true;
-                    ++imposters;
-                }
-                for (const auto& w : m.warnings)
-                    report_.push_back(l.package.filename().string() + ": " + w);
-                lotIndexes_.push_back(std::move(lotIndex));
-            } catch (const std::exception& e) {
-                report_.push_back(l.package.filename().string() + ": " + e.what());
-            }
+    // The lots' imposters.
+    for (auto& p : pending) {
+        HoodLot& lot = p.lot;
+        if (!p.model.parts.empty() && lot.indexSlot >= 0) {
+            ObjectModel& m = p.model;
+            hood::imposterMaterials(m, hood_.prefix + "_Lot" + std::to_string(lot.id));
+            const int id = renderer.addObject(m, *lotIndexes_[size_t(lot.indexSlot)]);
+            lot.instance = renderer.addInstance(id, p.at);
+            const auto [lo, hi] = bounds(m, p.at);
+            for (const auto& part : m.parts)
+                for (size_t k = 0; k + 2 < part.mesh.triangles.size(); k += 3)
+                    for (int c = 0; c < 3; ++c) {
+                        const auto& v = part.mesh.positions[part.mesh.triangles[k + size_t(c)]];
+                        lot.triangles.push_back(simd_mul(p.at, simd_make_float4(v[0], v[1], v[2], 1)).xyz);
+                    }
+            lot.lo = simd_min(lot.lo, lo);
+            lot.hi = simd_max(lot.hi, hi);
+            lot.imposter = true;
+            ++imposters;
         }
         lots_.push_back(std::move(lot));
     }

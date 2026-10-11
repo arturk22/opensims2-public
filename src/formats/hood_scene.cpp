@@ -277,7 +277,7 @@ PaintWeights computePaintWeights(const Terrain& t, const Occupants& o, const Ter
 }
 
 ObjectModel buildHoodTerrainModel(const Terrain& t, const Occupants& o, const TerrainSettings& s,
-                                  std::vector<std::string>* report) {
+                                  std::vector<std::string>* report, const std::vector<uint8_t>* hiddenTiles) {
     ObjectModel model;
     model.name = "neighborhood terrain";
     const size_t w = t.gridWidth, h = t.gridHeight;
@@ -292,6 +292,8 @@ ObjectModel buildHoodTerrainModel(const Terrain& t, const Occupants& o, const Te
         }
     for (size_t j = 0; j + 1 < h; ++j)
         for (size_t i = 0; i + 1 < w; ++i) {
+            if (hiddenTiles && j * (w - 1) + i < hiddenTiles->size() && (*hiddenTiles)[j * (w - 1) + i])
+                continue;
             const uint32_t a = uint32_t(j * w + i), b = a + 1, c = a + uint32_t(w) + 1, d = a + uint32_t(w);
             mesh.triangles.insert(mesh.triangles.end(), {a, b, c, a, c, d});
         }
@@ -364,6 +366,52 @@ ObjectModel buildHoodTerrainModel(const Terrain& t, const Occupants& o, const Te
             report->push_back(L.texture + ": " + std::to_string(covered) + " of " + std::to_string(size_t(mw) * mh) +
                               " mask values");
     }
+    return model;
+}
+
+bool needsImposterTerrain(size_t groundVertices, uint32_t widthTiles, uint32_t depthTiles) {
+    return groundVertices != 4 && groundVertices != size_t(widthTiles + 1) * size_t(depthTiles + 1);
+}
+
+ObjectModel buildHoodTerrainPatch(const ObjectModel& terrain, const Terrain& t, const MeshGroup& world) {
+    ObjectModel model;
+    model.name = "lot imposter terrain";
+    MeshGroup mesh = world;
+    mesh.uvs.clear(), mesh.uvs2.clear(), mesh.normals.clear();
+    float x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
+    for (const auto& p : mesh.positions) {
+        mesh.uvs.push_back({p[0], p[1]});
+        mesh.uvs2.push_back(hoodLightMapUv(t, p[0], p[1]));
+        const float fx = p[0] / kHoodCellSize, fy = p[1] / kHoodCellSize;
+        mesh.normals.push_back(vertexNormal(t, int(std::lround(fx)), int(std::lround(fy))));
+        x0 = std::min(x0, p[0]), y0 = std::min(y0, p[1]), x1 = std::max(x1, p[0]), y1 = std::max(y1, p[1]);
+    }
+    if (mesh.positions.empty())
+        return model;
+    for (const auto& part : terrain.parts) {
+        ObjectModel::Part p = part;
+        p.mesh = mesh;
+        if (part.mask >= 0 && size_t(part.mask) < terrain.masks.size()) {
+            // The mask over the patch only (and a value round it).
+            const auto& m = terrain.masks[size_t(part.mask)];
+            const int mx0 = std::max(0, int(std::floor(x0 / m.spacing)) - 1);
+            const int my0 = std::max(0, int(std::floor(y0 / m.spacing)) - 1);
+            const int mx1 = std::min(int(m.width) - 1, int(std::ceil(x1 / m.spacing)) + 1);
+            const int my1 = std::min(int(m.height) - 1, int(std::ceil(y1 / m.spacing)) + 1);
+            ObjectModel::AlphaMask c;
+            c.width = uint32_t(std::max(1, mx1 - mx0 + 1)), c.height = uint32_t(std::max(1, my1 - my0 + 1));
+            c.spacing = m.spacing;
+            c.originX = float(mx0) * m.spacing, c.originY = float(my0) * m.spacing;
+            c.values.resize(size_t(c.width) * c.height);
+            for (uint32_t y = 0; y < c.height; ++y)
+                for (uint32_t x = 0; x < c.width; ++x)
+                    c.values[size_t(y) * c.width + x] = m.values[size_t(my0 + int(y)) * m.width + size_t(mx0 + int(x))];
+            p.mask = int(model.masks.size());
+            model.masks.push_back(std::move(c));
+        }
+        model.parts.push_back(std::move(p));
+    }
+    model.materials = terrain.materials;
     return model;
 }
 
@@ -507,11 +555,10 @@ void imposterMaterials(ObjectModel& model, const std::string& scope) {
                                                      {"stdMatBaseTextureAddressingV", "clamp"}});
         } else if (type == "ImposterTerrainMaterial") {
             m = unlit("terrain");
-            // Kept a plain blend (the game's is premultiplied too): drawn
-            // whole, the lots' own ground and street pieces cut the
-            // neighborhood roads in front of them, as the terrain under the
-            // imposters is not hidden yet.
-            m.properties.insert(m.properties.end(), {{"stdMatAlphaBlendMode", "blend"},
+            // Premultiplied like the walls (rendered from the lot), over the
+            // neighborhood terrain or, where the game hides that, the lot's
+            // imposter terrain (buildHoodTerrainPatch).
+            m.properties.insert(m.properties.end(), {{"stdMatAlphaBlendMode", "premultiplied"},
                                                      {"stdMatCullMode", "none"},
                                                      {"stdMatLayer", std::to_string(kImposterTerrainLayer)},
                                                      {"stdMatBaseTextureAddressingU", "clamp"},

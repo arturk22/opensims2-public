@@ -712,3 +712,24 @@ lote nem fica sob uma rua.
   do pacote não conta mais como família do lote. Os Sims que chegam ficam ao
   lado da caixa de correio, senão da lixeira de fora (o "Sub - Generate
   Family" do §11.3; aqui em C++, não pela árvore).
+- **Imposters** (`app/hood_view.*`, `formats/hood_scene.*`): o giro é
+  −(frente − frente de criação)·90° e o tamanho troca quando esse giro é
+  ímpar (`SetOrientationAndTranslationForImposterNode`, BV `0x769640`;
+  `cTSLotInfo::GetCurrentSize`, BV `0x48326c`); antes girava pela frente só,
+  o que punha os lotes de frente de criação 1 de N002 (10, 22, 25) de lado,
+  `r10-bairro-n002-giro.jpg`. O terreno do bairro some sob os lotes cujo chão
+  do imposter não tem 4 vértices nem um por vértice do retângulo (o jogo só
+  então cria o "imposter terrain", `CreateLotImposterTerrainGeometry`, BV
+  `0x7686cc`): 10 lotes em N001, 7 em N002. No lugar entra o chão do imposter
+  com as pinturas do terreno do bairro (as mesmas camadas e máscaras,
+  recortadas; a máscara ganhou uma origem), `ImposterZOffset` abaixo do
+  imposter (`UpdateImposterTerrainTransform`, BV `0x766a40`), e o chão do
+  imposter vai por cima pré-multiplicado. **Inferido**: o retângulo escondido
+  é o sem a faixa da rua (`GetBoundingRectExcludingRoads`), que o chão do
+  imposter não cobre (com a faixa a água aparecia por baixo).
+  `r10-bairro-terreno-sob-imposter.jpg`. **Desbotamento**: o
+  `UpdateImposterFading` (BV `0x76aa40`) sai logo quando `+0x6d` está ligado,
+  e o construtor o liga (vista do bairro); ele só roda com os vizinhos vistos
+  de dentro de um lote (a saia do lote), com distância 2500 (`+0x78`,
+  "neighborhoodPropFadeDistance"): alfa = (d / 2500)² perto da câmera. Na
+  vista do bairro não há desbotamento.

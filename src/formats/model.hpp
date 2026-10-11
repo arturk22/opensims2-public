@@ -48,6 +48,7 @@ struct ObjectModel {
     struct AlphaMask {
         uint32_t width = 0, height = 0;
         float spacing = 1.0f;
+        float originX = 0, originY = 0; // model xy of value (0, 0)
         std::vector<uint8_t> values; // row-major: values[y * width + x]
     };
 

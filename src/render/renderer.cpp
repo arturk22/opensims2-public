@@ -630,9 +630,9 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
                 p.mask = uploadMask(m);
                 mat.flags |= kMasked;
                 // Value i sits at i * spacing: sample texel centres.
-                mat.maskTransform = simd_make_float4(1.0f / (m.spacing * float(m.width)),
-                                                     1.0f / (m.spacing * float(m.height)), 0.5f / float(m.width),
-                                                     0.5f / float(m.height));
+                const float sx = 1.0f / (m.spacing * float(m.width)), sy = 1.0f / (m.spacing * float(m.height));
+                mat.maskTransform = simd_make_float4(sx, sy, 0.5f / float(m.width) - m.originX * sx,
+                                                     0.5f / float(m.height) - m.originY * sy);
             }
         }
         p.vertices = device_->newBuffer(v.data(), v.size() * sizeof(Vertex), MTL::ResourceStorageModeShared);
