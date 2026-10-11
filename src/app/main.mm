@@ -1407,6 +1407,10 @@ int cameraSlot(unsigned short key) {
                 // The VM in small steps, so that the Sims' turning is followed.
                 for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30) {
                     gSimulation->update(t);
+                    // The lights follow the VM clock as in a live run (the
+                    // day/night switch and its crossfade start when the clock gets there).
+                    if (gLighting && gSimulation->ticks() % 30 == 0)
+                        gLighting->update(t);
                     // --dialog-click x,y (repeatable): clicks, in turn, each dialog that opens.
                     if (gPie && gPie->dialogOpen() && dialogClick < dialogClicks.size()) {
                         gPie->setCanvas(int(shotW), int(shotH));
