@@ -264,6 +264,10 @@ fs::path characterPath(const std::string& query) {
 size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
                    const fs::path& lotFile);
 
+// The game's resources. The VM, the pie menus and the sound keep references to
+// it, so it lives as long as the app (not just while the window is set up).
+std::unique_ptr<os2::ResourceIndex> gIndex;
+
 // The lot's objects in the VM (--vm, --run-vm), driving the lot's Sims.
 std::unique_ptr<os2::LotSimulation> gSimulation;
 struct LotSim {
@@ -997,7 +1001,8 @@ enum Key : unsigned short {
         gCamera = view.camera;
         _viewDelegate = [[OS2ViewDelegate alloc] initWithView:view];
         applyLighting(*_viewDelegate.renderer);
-        os2::ResourceIndex index(gameDir() / "TSData/Res");
+        gIndex = std::make_unique<os2::ResourceIndex>(gameDir() / "TSData/Res");
+        os2::ResourceIndex& index = *gIndex;
         const simd_float3 objects = loadObjects(*_viewDelegate.renderer, index);
         const auto skinned = loadSkinned(*_viewDelegate.renderer, index);
         const auto uiCanvas = loadUi(*_viewDelegate.renderer, index, view);
