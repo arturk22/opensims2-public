@@ -537,9 +537,23 @@ vm::Thread startStandIn(vm::VM& machine, const StandIns& s, vm::Object& object, 
         vm::Object& x = *machine.object(id);
         x.position = id == sim ? vm::Position{8.5f, 10.5f, 1} : vm::Position{10.5f, 10.5f, 1};
     }
-    if (isInteraction(s, group, instance, tree))
-        return machine.start(sim, instance, args, object.id, object.id);
-    return machine.start(object.id, instance, args, sim);
+    const bool interaction = isInteraction(s, group, instance, tree);
+    // A parameter the tree makes its stack object ("stack object ID :=
+    // param i", 1,500 of the sweep's "stack object 0 does not exist") gets
+    // the other stand-in, as the game's callers pass an object there.
+    std::vector<int16_t> given(args.begin(), args.end());
+    if (given.empty() && tree.argCount) {
+        given.assign(tree.argCount, 0);
+        for (const auto& in : tree.instructions)
+            if (in.opcode == 0x02 && in.operands[5] == 5 && in.operands[6] == 0x0A && in.operands[7] == 0x09) {
+                const uint16_t i = uint16_t(in.operands[2] | in.operands[3] << 8);
+                if (i < given.size())
+                    given[i] = interaction ? object.id : sim;
+            }
+    }
+    if (interaction)
+        return machine.start(sim, instance, given, object.id, object.id);
+    return machine.start(object.id, instance, given, sim);
 }
 
 const char* statusName(const vm::Thread& t) {
@@ -626,6 +640,10 @@ int cmdBhavSweep(const std::filesystem::path& root) {
             if (reason.find("not implemented") == std::string::npos)
                 reason = std::regex_replace(reason, number, "N");
             ++reasons[reason];
+            // S2PKG_SWEEP_REASON=text: the whole message and stack of the failures that contain it
+            static const char* only = std::getenv("S2PKG_SWEEP_REASON");
+            if (only && t.error.find(only) != std::string::npos)
+                std::printf("[%08X/%04X args %u] %s\n", tgi.group, instance, unsigned(tree->argCount), t.error.c_str());
         }
         for (auto [op, n] : machine.missingPrimitives)
             missingPrimitives[op] += n;
