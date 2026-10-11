@@ -2,11 +2,14 @@
 // and feeds input to the lot camera. The renderer itself is plain C++ on
 // metal-cpp; this file only bridges the Objective-C objects across.
 //
-// Camera controls: WASD/arrows pan, Q/E or ,/. rotate, Z/X, +/- or the wheel
-// zoom, R/F or Page Up/Down tilt, Home resets; with the mouse as in the game
-// (app/camera_input.hpp): hold the right button and move away from where it
-// went down to scroll, hold the middle button (or Option + right) to rotate
-// and tilt, the mouse at the window's edge scrolls (--no-edge-scroll). --lighting <state> picks a lighting state from Lighting.txt
+// Camera controls, the game's live-mode keys (ui.package accelerators
+// 0x6A9362F2/F5): arrows or WASD move (Shift: faster), z/x or NumPad +/- zoom
+// a level, = and - held zoom, , and . held rotate, Control/plain/Shift 4-9
+// save/restore/jump to camera positions, Return centres on the selected Sim;
+// with the mouse as in the game (app/camera_input.hpp): hold the right button
+// and move away from where it went down to scroll, hold the middle button (or
+// Option + right) to rotate and tilt, the wheel zooms, the mouse at the
+// window's edge scrolls (--no-edge-scroll). --lighting <state> picks a lighting state from Lighting.txt
 // (day, night, neighbourhood, ...); --lot <N001_Lot82 | file.package> shows a
 // lot's terrain, floors, walls, roofs, fences, water and objects (--walls
 // up | cutaway | down picks the wall mode, cutaway as seen from the starting view). --sim [body,hair,skin tone] shows
@@ -65,6 +68,7 @@
 #include "render/ui_layer.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
+#include "camera_follow.hpp"
 #include "camera_input.hpp"
 #include "lot_vm.hpp"
 #include "vm_objects.hpp"
@@ -313,6 +317,13 @@ float gPlumbobBottom = 0; // lowest point of its mesh (modelled about 1.24 over 
 // station: "pop", "rnb", ...).
 std::unique_ptr<os2::LotAudio> gAudio;
 os2::LotCamera* gCamera = nullptr;
+std::unique_ptr<os2::LotCameraFollow> gCameraFollow; // --lot: pivot held to the lot, on the Sim's floor
+
+// The camera shows the selected Sim's level (cCameraLive::Update).
+void followSelectedSim() {
+    if (gCameraFollow && gSimulation && gPie)
+        gCameraFollow->follow(gSimulation->machine(), gPie->sim());
+}
 
 void startAudio(os2::ResourceIndex& index, const os2::Lot& lot) {
     NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
@@ -614,6 +625,8 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
                 query->c_str(), lot.width, lot.height, lot.minLevel, lot.minLevel + lot.levelCount - 1,
                 lot.walls.size(), lot.paints.size(), model.parts.size(), lot.roofs.size(), fences.size(), objects,
                 lot.objects.size(), sims, CACurrentMediaTime() - start);
+    if (gCamera)
+        gCameraFollow = std::make_unique<os2::LotCameraFollow>(*gCamera, lot);
     const int cx = int(lot.width / 2), cy = int(lot.height / 2);
     return simd_make_float3(float(lot.width) / 2, float(lot.height) / 2, lot.elevation(0, cx, cy));
 }
@@ -940,7 +953,16 @@ enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
     kEscape = 53, kHome = 115, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
+    kReturn = 36, kEnter = 76,
 };
+
+// Camera position slot of the keys 4-9 (-1: another key).
+int cameraSlot(unsigned short key) {
+    switch (key) {
+    case 21: return 0; case 23: return 1; case 22: return 2; case 26: return 3; case 28: return 4; case 25: return 5;
+    default: return -1;
+    }
+}
 
 } // namespace
 
@@ -975,30 +997,42 @@ enum Key : unsigned short {
 }
 
 - (void)applyHeldKeys:(double)dt {
+    _camera->setViewport(float(self.bounds.size.width), float(self.bounds.size.height));
+    // Shift: "Move ... Faster" (twice the speed).
+    const float fast = (NSEvent.modifierFlags & NSEventModifierFlagShift) ? 2.0f : 1.0f;
     float right = float([self held:kD orKey:kRight]) - float([self held:kA orKey:kLeft]);
     float forward = float([self held:kW orKey:kUp]) - float([self held:kS orKey:kDown]);
+    right *= fast, forward *= fast;
     if (self.window.isKeyWindow) {
         _mouse.config().edgeScroll = !argument(@"--no-edge-scroll");
         const auto [mr, mf] = _mouse.panAxes(float(self.bounds.size.width), float(self.bounds.size.height));
-        right = std::clamp(right + mr, -1.0f, 1.0f);
-        forward = std::clamp(forward + mf, -1.0f, 1.0f);
+        right = std::clamp(right + mr, -fast, fast);
+        forward = std::clamp(forward + mf, -fast, fast);
     }
     _camera->pan(right, forward, dt);
-    float tilt = float([self held:kR orKey:kPageUp]) - float([self held:kF orKey:kPageDown]);
-    if (tilt != 0)
-        _camera->tilt(tilt * 40.0f * float(dt));
+    _camera->zoomHeld(int(_held.count(kEquals)) - int(_held.count(kMinus)), dt);
+    _camera->rotateHeld(int(_held.count(kPeriod)) - int(_held.count(kComma)), dt);
 }
 
 - (void)keyDown:(NSEvent*)e {
     _held.insert(e.keyCode);
     if (e.isARepeat)
         return;
+    if (const int slot = cameraSlot(e.keyCode); slot >= 0) {
+        if (e.modifierFlags & NSEventModifierFlagControl)
+            _camera->savePosition(slot);
+        else
+            _camera->restorePosition(slot, !(e.modifierFlags & NSEventModifierFlagShift));
+        return;
+    }
     switch (e.keyCode) {
-    case kQ: case kComma: _camera->rotateBy(-1); break;
-    case kE: case kPeriod: _camera->rotateBy(1); break;
-    case kZ: case kEquals: case kPadPlus: _camera->zoomBy(1); break;
-    case kX: case kMinus: case kPadMinus: _camera->zoomBy(-1); break;
-    case kHome: _camera->reset(); break;
+    case kZ: case kPadPlus: _camera->zoomBy(1); break;
+    case kX: case kPadMinus: _camera->zoomBy(-1); break;
+    case kReturn: case kEnter:
+        if (gCameraFollow && gSimulation && gPie)
+            if (auto p = gCameraFollow->simPoint(gSimulation->machine(), gPie->sim()))
+                _camera->moveTo(*p);
+        break;
     case kEscape: if (gPie) gPie->close(); break;
     default: break;
     }
@@ -1015,14 +1049,12 @@ enum Key : unsigned short {
 }
 
 - (void)scrollWheel:(NSEvent*)e {
-    if (const int steps = _mouse.wheel(e.scrollingDeltaY, e.hasPreciseScrollingDeltas))
-        _camera->zoomBy(steps);
+    _camera->wheel(_mouse.wheelNotches(e.scrollingDeltaY, e.hasPreciseScrollingDeltas));
 }
 
+// The game's rotate request: pixels dragged (only the dominant axis counts).
 - (void)dragRotate:(NSEvent*)e {
-    const auto [yaw, tilt] = _mouse.rotateDrag(float(e.deltaX), float(e.deltaY));
-    _camera->freeRotate(yaw);
-    _camera->tilt(tilt);
+    _camera->rotateRequest(float(e.deltaX), float(e.deltaY));
 }
 
 // The mouse position for edge and anchor scrolling.
@@ -1142,6 +1174,7 @@ enum Key : unsigned short {
     _last = now;
 
     [view applyHeldKeys:dt];
+    followSelectedSim();
     view.camera->update(dt);
     CGSize size = view.drawableSize;
     float aspect = size.height > 0 ? float(size.width / size.height) : 1.0f;
@@ -1306,6 +1339,9 @@ enum Key : unsigned short {
                         gAudio->renderOffline(t);
                     }
                 }
+                followSelectedSim();
+                view.camera->setViewport(float(shotW), float(shotH));
+                view.camera->snap();
                 poseActors(*_viewDelegate.renderer, at);
                 _viewDelegate.renderer->setTime(at); // texture animations
                 const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;

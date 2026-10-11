@@ -449,6 +449,13 @@ semana); `0x4d9ccdb1` tem `image`, `edgeimage`, `wparam`, `notify` e legendas
 `0xEC44BDDC` (3 por lote, instâncias `0x5129`, `0x6C7A`, `0xC284`, e 1 no
 bairro): `0x5129` traz uma posição (22,2; 21,3; 15,1), um quaternion e 5,0;
 os outros, ângulos e distâncias: provavelmente o estado da câmera do lote.
+O quaternion do `0x5129` (x, y, z, w = −0,121; −0,314; 0,879; 0,337) é o de
+uma câmera com X à direita, Y para a frente e Z para cima: a frente aponta
+para (−0,517; −0,575; −0,634), ou seja, inclinação de 39,3° e olho do lado
++(cos h, sin h) do que olha, com h = 48° (perto da orientação 55° do
+`LiveCamera.txt`); seguindo a frente até z = 1 dá o pivô (10,7; 8,6), dentro
+do lote 40×30, a 22 unidades (entre os níveis de zoom 25 e 15). Isso confirma
+pelos dados a convenção de heading do binário (`docs/camera-ui-mac.md` §1.1).
 `0x8B0C79D6`: 5 u32 (2, 0, 0–2, 1, 0). `0xCD8B6498`: `01 00 01 00 00 00`.
 
 **Conclusão.** Em aberto; registrado o que cada um tem.

@@ -33,17 +33,10 @@ std::pair<float, float> CameraMouseInput::panAxes(float w, float h) const {
     return {right, forward};
 }
 
-int CameraMouseInput::wheel(double deltaY, bool precise) {
+float CameraMouseInput::wheelNotches(double deltaY, bool precise) const {
     if (!precise)
-        return deltaY > 0 ? 1 : deltaY < 0 ? -1 : 0;
-    scroll_ += deltaY;
-    int steps = 0;
-    const double notch = config_.pointsPerZoomLevel;
-    while (scroll_ >= notch)
-        ++steps, scroll_ -= notch;
-    while (scroll_ <= -notch)
-        --steps, scroll_ += notch;
-    return steps;
+        return deltaY > 0 ? 1.0f : deltaY < 0 ? -1.0f : 0.0f;
+    return float(deltaY) / std::max(1.0f, config_.pointsPerNotch);
 }
 
 } // namespace os2

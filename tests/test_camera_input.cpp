@@ -1,4 +1,4 @@
-// Mouse camera control: anchor scrolling, edge scrolling, wheel steps.
+// Mouse camera control: anchor scrolling, edge scrolling, wheel notches.
 #include "app/camera_input.hpp"
 
 #include <cstdio>
@@ -35,10 +35,8 @@ int main() {
     in.mouseAt(0, 0);
     check(in.panAxes(800, 600) == std::pair<float, float>{0, 0}, "edge scrolling off");
 
-    check(in.wheel(3.5, false) == 1 && in.wheel(-0.1, false) == -1, "a wheel notch is a level");
-    check(in.wheel(30, true) == 0 && in.wheel(30, true) == 1 && in.wheel(-100, true) == -2, "trackpad accumulates");
-    auto [yaw, tilt] = in.rotateDrag(10, -5);
-    check(yaw == 3.0f && tilt == -1.0f, "middle drag rotates and tilts");
+    check(in.wheelNotches(3.5, false) == 1 && in.wheelNotches(-0.1, false) == -1, "a wheel event is a notch");
+    check(in.wheelNotches(30, true) == 3 && in.wheelNotches(-5, true) == -0.5f, "trackpad points per notch");
 
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
