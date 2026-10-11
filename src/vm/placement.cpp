@@ -268,8 +268,13 @@ ObjectId createGhost(VM& vm, uint32_t group, uint16_t definitionInstance) {
         o->data[objdata::ContainerId] = 0;
         o->data[objdata::SlotNumber] = -1;
     }
-    for (ObjectId part : groupOf(vm, leadId))
+    // As cEdithObjectModule::MakeNewOutOfWorldObject (docs/primitives-mac.md
+    // §4c): the Init of each part, then the current value = the OBJD's price.
+    for (ObjectId part : groupOf(vm, leadId)) {
         runEntry(vm, part, 0); // Init
+        if (Object* o = vm.object(part); o && o->definition)
+            o->data[objdata::CurrentValue] = int16_t(std::min<int>(o->definition->price(), 32767));
+    }
     return leadId;
 }
 
@@ -321,8 +326,6 @@ bool buy(VM& vm, ObjectId ghost, const Placement& p, int price, std::string* why
     applyPlacement(vm, ghost, p);
     runUserPlacement(vm, ghost);
     addFunds(vm, -price);
-    if (Object* lead = vm.object(ghost); lead && lead->data[objdata::CurrentValue] == 0)
-        lead->data[objdata::CurrentValue] = int16_t(std::min(price, 32767));
     for (const auto& part : p.parts)
         vm.startMain(part.id);
     return true;

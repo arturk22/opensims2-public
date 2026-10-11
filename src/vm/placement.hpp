@@ -112,8 +112,10 @@ void runUserPlacement(VM& vm, ObjectId id);
 // Takes the group out of the world (the pickup tree runs).
 void pickUp(VM& vm, ObjectId id);
 
-// A new object from a catalog OBJD, out of the world, with its Init run
-// (no Main yet): the ghost Buy mode moves around. Returns the lead.
+// A new object from a catalog OBJD, out of the world, as
+// MakeNewOutOfWorldObject makes it: each part's Init runs and its current
+// value (od 41) becomes its OBJD price (no Main yet; JustBorn and Reset
+// are not modelled): the ghost Buy mode moves around. Returns the lead.
 ObjectId createGhost(VM& vm, uint32_t group, uint16_t definitionInstance);
 // Removes a group from the VM at once (a ghost given up, an object sold
 // at the end of the session): the delete (49) and cleanup (3) trees run.
@@ -121,8 +123,7 @@ void deleteGroup(VM& vm, ObjectId id);
 
 // Places a ghost as bought: the user placement tree, then the parts' Mains
 // start; the current family pays `price` (false, nothing done, when the
-// funds are short or it does not fit). Its current value starts at the
-// price when the Init left none.
+// funds are short or it does not fit).
 bool buy(VM& vm, ObjectId ghost, const Placement& p, int price, std::string* why = nullptr);
 
 // What selling gives back: the lead's current value (object data 41).
