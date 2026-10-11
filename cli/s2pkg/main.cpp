@@ -5,6 +5,7 @@
 #include "audio_cmds.hpp"
 #include "ui_cmds.hpp"
 #include "buy_cmds.hpp"
+#include "build_cmds.hpp"
 #include "hood_cmds.hpp"
 #include "pie_cmds.hpp"
 #include "autonomy_cmds.hpp"
@@ -939,7 +940,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
-                         "%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), routeUsage(), buyUsage());
+                         "%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), routeUsage(), buyUsage(), buildUsage());
     return 2;
 }
 
@@ -973,6 +974,8 @@ int main(int argc, char** argv) {
         if (int rc = saveCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = buyCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = buildCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (cmd == "find" && argc == 5) return cmdFind(argv[2], argv[3], argv[4]);
         if (cmd == "object" && argc == 5) return cmdObject(argv[2], argv[3], argv[4]);

@@ -16,7 +16,7 @@ constexpr uint32_t kType2DArray = 0x6B943B43, kType3DArray = 0x2A51171B, kTypeSt
                    kTypeWallGraph = 0x0A284D0B, kTypeWallLayer = 0x8A84D7B0, kTypeLotTexture = 0x4B58975B,
                    kTypeObject = 0xFA1C39F7, kTypeFencePosts = 0xAB4BA572, kTypeRoof = 0xAB9406AA,
                    kTypePool = 0x0C900FDB;
-constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
+constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayRoomsLoadBearing = 0x0A, kArrayRoomsLight = 0x0B, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
                    kWallLayerPartitions = 0x04, kPaintMaskFirst = 0x5CBC,
                    kFencePostLayer = 0x11, kWaterLevels = 0x3B76;
 constexpr size_t kFileNameSize = 64;
@@ -159,33 +159,39 @@ Lot Lot::load(DbpfPackage& pkg) {
             continue;
         try {
             const auto bytes = pkg.read(e);
-            BinReader r = blockReader(bytes, kTypeWallGraph);
+            WallGraph wg;
+            wg.instance = e.tgi.instance;
+            BinReader r = blockReader(bytes, kTypeWallGraph, &wg.version);
             expectName(r, "cWallGraph");
-            r.skip(8);
-            const int minLevel = r.i32();
-            r.skip(20); // width, height (version-dependent units), max level, two unknowns
+            for (auto& h : wg.header)
+                h = r.i32();
+            const int minLevel = wg.header[2];
             Graph g;
             for (uint32_t n = r.u32(); n; --n) {
-                const uint32_t id = r.u32();
-                WallVertex v;
+                WallGraph::Vertex v;
+                v.id = r.u32();
                 v.x = r.f32(), v.y = r.f32(), v.level = r.i32();
-                g.vertices[id] = v;
+                wg.vertices.push_back(v);
+                g.vertices[v.id] = {v.x, v.y, v.level};
             }
-            r.skip(size_t(r.u32()) * 4); // room ids
+            for (uint32_t n = r.u32(); n; --n)
+                wg.rooms.push_back(r.i32());
             for (uint32_t n = r.u32(); n; --n) {
-                const uint32_t id = r.u32(), a = r.u32();
-                r.u32();
-                const uint32_t b = r.u32();
-                r.u32();
-                g.walls.push_back({id, a, b});
+                WallGraph::Line l;
+                l.id = r.u32(), l.a = r.u32(), l.roomRight = r.i32(), l.b = r.u32(), l.roomLeft = r.i32();
+                wg.lines.push_back(l);
+                g.walls.push_back({l.id, l.a, l.b});
             }
             lot.minLevel = minLevel;
+            lot.wallGraphs.push_back(std::move(wg));
             if (!graph || g.walls.size() > graph->walls.size())
                 graph = std::move(g);
         } catch (const std::exception& ex) {
             lot.warnings.push_back("wall graph " + hexString(e.tgi.instance) + ": " + ex.what());
         }
     }
+    std::sort(lot.wallGraphs.begin(), lot.wallGraphs.end(),
+              [](const WallGraph& a, const WallGraph& b) { return a.instance < b.instance; });
 
     if (auto bytes = readResource(pkg, kType3DArray, kArrayElevation)) {
         BinReader r = blockReader(*bytes, kType3DArray);
@@ -227,6 +233,18 @@ Lot Lot::load(DbpfPackage& pkg) {
                     lot.rooms[i][size_t(q)] = le16(&a.data[i * 8 + size_t(q) * 2]);
         }
     }
+    for (uint32_t instance : {kArrayRoomsLoadBearing, kArrayRoomsLight})
+        if (auto bytes = readResource(pkg, kType3DArray, instance)) {
+            BinReader r = blockReader(*bytes, kType3DArray);
+            const Array3 a = readArray3(r, 8);
+            if (a.x == lot.width && a.y == lot.height && int(a.z) == lot.levelCount) {
+                auto& out = lot.roomLayers[instance];
+                out.resize(size_t(a.x) * a.y * a.z);
+                for (size_t i = 0; i < out.size(); ++i)
+                    for (int q = 0; q < 4; ++q)
+                        out[i][size_t(q)] = le16(&a.data[i * 8 + size_t(q) * 2]);
+            }
+        }
 
     for (auto [instance, out] : {std::pair{kSmapFloors, &lot.floorPatterns}, std::pair{kSmapWalls, &lot.wallPatterns}})
         if (auto bytes = readResource(pkg, kTypeStringMap, instance)) {
@@ -257,10 +275,15 @@ Lot Lot::load(DbpfPackage& pkg) {
             w.a = va->second, w.b = vb->second;
             if (auto it = layer.find(id); it != layer.end())
                 w.type = it->second.first, w.patterns = it->second.second;
+            else
+                w.layered = false;
             lot.walls.push_back(w);
         }
         if (missing)
             lot.warnings.push_back(std::to_string(missing) + " walls with unknown vertices");
+        for (const auto& [id, entry] : layer)
+            if (std::none_of(lot.walls.begin(), lot.walls.end(), [&](const Wall& w) { return w.id == id; }))
+                lot.staleWallLayer[id] = {entry.first, entry.second};
     }
 
     if (auto bytes = readResource(pkg, kTypeLotTexture, 0)) {

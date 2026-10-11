@@ -51,9 +51,51 @@ struct Lot {
         // Wall pattern references (wallPatterns) for the right and the left
         // side seen from a to b; 0xFFFF for none.
         std::array<uint16_t, 2> patterns{0xFFFF, 0xFFFF};
+        bool layered = true; // has a wall layer entry (some walls of the graph have none)
     };
     enum WallType : uint32_t { Normal = 1, Attic = 3, DeckSkirt = 4, Foundation = 0x17, Pool = 0x1D };
     std::vector<Wall> walls;
+
+    // Every wall graph (WGRA) as read. The game's partition manager keeps
+    // one per class of partition (docs/buy-build-mac.md §7): instances 5 and
+    // 0x18 hold every partition by its wall ID (the IDs of the wall layer),
+    // the others a subset with IDs of their own: 6 load-bearing walls, 7
+    // light-blocking ones, 0x16 floor-to-floor walls of standard thickness,
+    // 0x17 attic walls, 8 deck skirts, 0x13 none seen. Each line keeps the
+    // room on its right and on its left (seen from a to b) from the room
+    // array of its graph: 5 -> 3ARY 0x09, 6 -> 0x0A, 7 -> 0x0B (found in the
+    // saved lots). Build mode edits them (lot_edit.hpp) and lot_write.hpp
+    // writes them back.
+    struct WallGraph {
+        uint32_t instance = 0, version = 2;
+        // 0, 0, lowest level, two sizes (units unknown), level count, next
+        // vertex ID, next line ID.
+        std::array<int32_t, 8> header{};
+        struct Vertex {
+            uint32_t id = 0;
+            float x = 0, y = 0;
+            int level = 0;
+        };
+        std::vector<Vertex> vertices;
+        std::vector<int32_t> rooms; // every room ID of the graph's room array
+        struct Line {
+            uint32_t id = 0, a = 0;
+            int32_t roomRight = 0;
+            uint32_t b = 0;
+            int32_t roomLeft = 0;
+        };
+        std::vector<Line> lines;
+    };
+    std::vector<WallGraph> wallGraphs;
+    // The room arrays of the other graphs (3ARY 0x0A, 0x0B), laid out as `rooms`.
+    std::map<uint32_t, std::vector<std::array<uint16_t, 4>>> roomLayers;
+    // Wall layer entries of IDs no graph has (stale ones the game keeps),
+    // written back as they are.
+    struct LayerEntry {
+        uint32_t type = 0;
+        std::array<uint16_t, 2> patterns{0xFFFF, 0xFFFF};
+    };
+    std::map<uint32_t, LayerEntry> staleWallLayer;
     // Fences are walls whose type is the fence's catalog GUID (0x2CB230B8
     // property sets); some also carry coverings (half walls).
     static bool isFence(uint32_t type) { return type > 0xFF; }
