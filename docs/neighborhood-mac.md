@@ -601,3 +601,69 @@ cria (o estado vem do personagem e do vizinho, como um Sim novo); a
 §17.5). O opensims2 (`formats/lot_arrivals`) põe os Sims ao lado da caixa
 de correio por inferência: **é isso**, mas pela árvore e só no primeiro dia,
 e a hora de início (7:00) ainda não é aplicada.
+
+### 11.4 Pôr, mover e girar lotes (`cTSUserToolPlaceLotBase` e filhas)
+
+Ferramentas: `cTSUserToolPlaceNewLot` (lote vazio, retângulo arrastado),
+`cTSUserToolPlaceLotFromInventory` (da caixa de lotes, `cTSWinProcLotCatalog`),
+`cTSUserToolMoveLot` (mover/girar um lote do bairro) e
+`cTSUserToolMoveLotToCatalog` (mandar para a caixa: o lote sob o cursor
+ganha o material de realce `GetLotHighlightMaterial`; o clique faz a troca,
+não decodificada). Retângulos em tiles do bairro; ×10 (`FLOAT_0274b608`)
+para unidades do mundo.
+
+**Validade comum** (`IsOKToPlaceLotCommon`, BV `0xa29e5c`), falha se:
+1. um canto do retângulo não é válido (vtable `0x58`);
+2. **outro lote** cobre o retângulo encolhido de 1 tile (`IntersectsOtherLots`,
+   BV `0xa29cd8`), ou algum tile do retângulo é de outro lote sem ocupante de
+   rua (tipo 2) nele;
+3. há **ocupantes bloqueantes** (consulta tipo `0xF`: flora, enfeites…) cujo
+   volume cruza o retângulo e que não são removíveis (vtable `0x34` = 0)
+   (`AreBlockingObjectsPresent`, BV `0xa271cc`);
+4. lote que não é de praia (flag `0x80` do lot info) com algum tile de **água**
+   (terreno vtable `0x90`);
+5. não há rua (ocupantes tipo 2) encostada, ou o **declive** passa do limite
+   (`IsLotSlopeMoreThanTheLimit`, BV `0xa26720`: entre o vértice mais baixo e
+   o mais alto do retângulo, Δaltura / (distância em tiles × 10) > **0,5**);
+6. as ruas que tocam o lote: um pedaço de rua que cruza a borda só vale se
+   tiver pelo menos 2 conexões; as bordas com rua são marcadas;
+7. vtable `0x9c(ret, 1)` (acesso pela rua) falha, ou, para praia,
+   `IsOKToPlaceBeachLot`.
+
+**Frente e giro**: o lot info guarda por borda (0–3) se ela tem rua
+(vtable `0x38`); a ferramenta guarda as bordas com rua no lugar
+(`this+0x68…0x6b`). Mover ou pôr da caixa exige, para cada borda i,
+`lote.borda(i) == lugar[(i + giro − giro_do_lote + 4) mod 4]` (a rua tem de
+ficar nas mesmas bordas, giradas); depois
+`TryModifyingTerrainToConformToLot` (BV `0xa2a918`) tenta pôr o terreno do
+bairro nas alturas dos vértices do lote (giradas, + a altura da rua da
+borda da frente): um vértice fora da faixa da rua cuja altura muda mais de
+**0,01** não pode ser de outro lote nem estar sob uma rua que não acompanha;
+senão falha. O giro do mover (`RotateLot`, BV `0x222b2c`) segue a borda
+mais próxima do cursor, muda o cursor (0x1C/0x1E/0x1F/0x1D para frente
+0/1/2/3), reavalia e gira o imposter (`RotateLotImposter`).
+
+**Lote vazio** (`cTSUserToolPlaceNewLot::PlaceLot`, BV `0x2c7344`): marca as
+bordas com rua no lot info; a **frente é a primeira borda com rua**
+(0, 1, 2, 3); calcula a altura da rua da frente (`FUN_00a265cc`) e nivela as
+ruas encostadas (`FlattenAbuttingRoadsIfPossible`); lote de praia
+(`this+0x116`) ganha a flag `0x80`; `SmoothenRoadsConnectedToLot`; **suaviza o
+terreno sob o lote** (terreno vtable `0x88` com o ângulo de talude 2,0;
+passadas 8, do ini `[SmoothingUnderNewLot] SmoothingTalusAngle` /
+`NumberOfSmoothingPasses`); grava tamanho (L, P), zona (residencial/
+comunitário), nome, posição; pinta a saia (`SetLotSkirtPaint`) e entra no
+bairro (vtable `0xf4`).
+
+**Da caixa** (`PlaceLotInternal`, BV `0x3fe320`): tira o lote provisório,
+cria o lot info pelo catálogo (`+0x10c` vtable `0x1c`), marca-o, nomeia,
+posiciona, ajusta as ruas, grava a frente, tipos 4/6 (BV) ganham a flag
+`0x10` e a mensagem `0xEC06FDD1`; entra no bairro, conforma o terreno (agora
+para valer), pinta a saia, e liga a flag `0x100`.
+
+**Terreno sob o imposter** (`cLotImposterDisplay::HideOrShowTerrainUnderImposter`,
+BV `0x76723c`): para cada tile do retângulo do lote (do lot info, vtable
+`0x34`, ou o dado), dentro do terreno, esconde/mostra os **dois triângulos**
+do tile (terreno vtable `0x58(tile, mostrar, 1)`). `cTSNHoodTerrain::
+FlattenTerrainUnderLot` (BV `0x4d1b10`), para lotes sem a flag `0x80`, nivela
+(vtable `0x24`) cada vértice do retângulo que não é compartilhado com outro
+lote nem fica sob uma rua.
