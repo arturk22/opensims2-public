@@ -215,9 +215,8 @@ bool applyBuyEdits(vm::VM& vm, ResourceIndex& index, const std::vector<std::pair
                 continue;
             }
             const std::string name = o->definition->fileName;
-            const int value = vm::saleValue(vm, id);
-            vm::deleteGroup(vm, id);
-            vm::addFunds(vm, value);
+            const int value = vm::sell(vm, id);
+            vm::deleteGroup(vm, id); // the session ends with the command
             std::printf("  sell %d (%s) for §%d; funds §%d\n", id, name.c_str(), value, vm::funds(vm));
         } else if (kind == "--move") {
             const auto [what, where] = splitAt(arg);

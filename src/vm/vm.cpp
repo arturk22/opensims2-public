@@ -1,5 +1,6 @@
 #include "engine.hpp"
 #include "vm.hpp"
+#include "placement.hpp"
 
 #include "hood_bridge.hpp"
 #include "interactions.hpp"
@@ -810,6 +811,7 @@ void VM::tick() {
                 clock.hour = 0;
                 ++globals[global::DaysRunning];
                 globals[global::DayOfWeek] = int16_t(globals[global::DaysRunning] % 7);
+                dayPassed(*this); // the objects depreciate (placement.cpp)
                 if (++clock.day > 30) {
                     clock.day = 1;
                     globals[global::MaxDayNumber] = 30;

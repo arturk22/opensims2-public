@@ -58,6 +58,12 @@ void runEntry(VM& vm, ObjectId id, size_t function) {
 
 } // namespace
 
+void runUserPlacement(VM& vm, ObjectId id) {
+    for (ObjectId part : groupOf(vm, id))
+        if (const Object* o = vm.object(part); o && (o->data[objdata::FlagField2] & 0x200))
+            runEntry(vm, part, entry::UserPlacement);
+}
+
 std::array<int, 2> partOffset(uint16_t subIndex, int direction) {
     int x = int8_t(subIndex & 0xFF), y = int8_t(subIndex >> 8);
     for (int i = 0; i < normDir(direction) / 2; ++i) {
@@ -86,15 +92,16 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
     p.level = tile.level;
     p.direction = normDir(direction);
     const Object* lead = vm.object(id);
-    auto fail = [&](std::string why) {
+    auto fail = [&](int code, std::string why) {
         p.ok = false;
+        p.error = code;
         p.reason = std::move(why);
         return p;
     };
     if (!lead || !lead->definition)
-        return fail("no such object");
+        return fail(placementerror::NoPlace, "no such object");
     if (!vm.world)
-        return fail("no lot");
+        return fail(placementerror::OutOfBounds, "no lot");
     const World& w = *vm.world;
     const std::vector<ObjectId> group = groupOf(vm, id);
     const std::set<ObjectId> mine(group.begin(), group.end());
@@ -110,38 +117,79 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
     for (const auto& part : p.parts)
         tiles.insert({part.tile.x, part.tile.y});
 
+    // Step 4 of TryPlace: a free slot of an object on the tile that takes
+    // this one (single-tile objects): the allowed heights hold the slot's
+    // height bit (FreeSO's rule for The Sims 1) and the surface is strong
+    // enough. The first such slot wins (FindFirstAvailableSlot).
+    if (group.size() == 1) {
+        const int16_t heights = lead->data[objdata::AllowedHeightFlags];
+        bool tooHeavy = false;
+        for (ObjectId other : vm.objectsOnTile(tile)) {
+            const Object& x = *vm.object(other);
+            if (mine.count(other) || x.person)
+                continue;
+            const auto slots = containerSlots(vm, x);
+            for (size_t i = 0; i < slots.size() && !p.container; ++i) {
+                const int h = slots[i]->height;
+                if (h < 1 || h > 16 || !(heights & (1 << (h - 1))))
+                    continue;
+                if (const ObjectId held = vm.containedIn(other, int16_t(i)); held && !mine.count(held))
+                    continue;
+                if (lead->data[objdata::Weight] >= x.data[objdata::SupportStrength]) {
+                    tooHeavy = true;
+                    continue;
+                }
+                p.container = other, p.slot = int(i);
+            }
+            if (p.container)
+                break;
+        }
+        if (p.container) {
+            p.ok = true;
+            return p;
+        }
+        if (tooHeavy && !(heights & 1))
+            return fail(placementerror::Weight, "the surface cannot hold it");
+    }
+
     for (const auto& part : p.parts) {
         const Object& o = *vm.object(part.id);
         const TilePos t = part.tile;
+        const int16_t pf = o.data[objdata::PlacementFlags], pf2 = o.data[objdata::PlacementFlags2];
+        // TestPlacementCommon (docs/buy-build-mac.md §3.2): 1 in the lot,
+        // 2 a level of the lot, 3 a floor under it (not in the air), 7 the
+        // floor or terrain the placement flags allow (on the ground the
+        // world cannot tell floor from terrain: either flag will do).
+        if (t.x < 0 || t.y < 0 || !w.contains({t.x, t.y, w.firstLevel()}))
+            return fail(placementerror::OutOfBounds, "out of the lot");
         if (!w.contains(t))
-            return fail("off the lot");
-        // Floors: above the ground a tile needs one; the ground is floor or
-        // terrain, which the placement flags (42: 1 floor, 2 terrain) allow.
-        const int16_t pf = o.data[objdata::PlacementFlags];
-        if (t.level > w.firstLevel() && !w.hasFloor(t))
-            return fail("no floor");
-        if (pf && !(pf & 0x03))
-            return fail("not allowed on the floor");
-        if (w.diagonalWall(t))
-            return fail("diagonal wall");
-        // No wall between two tiles of the object.
-        for (int k = 0; k < 4; ++k) {
-            const auto s = directionStep(k * 2);
-            if (tiles.count({t.x + s[0], t.y + s[1]}) && w.wallBetween(t, s[0], s[1]))
-                return fail("a wall cuts the object");
-        }
-        // Walls the object needs or does not allow on its sides (13).
+            return fail(placementerror::LevelOutOfBounds, "level out of the lot");
+        if (t.level > w.firstLevel() && !w.hasFloor(t) && !(pf & 0x200) && !(pf2 & 0x04))
+            return fail(placementerror::NoFloor, "no floor");
+        if (pf && !(pf & 0x03) && !(pf & 0x200))
+            return fail(placementerror::NoFloor, "not allowed on the floor");
+        // TestPlacementWithRespectToWalls (§3.3): the wall flags (od 13) on
+        // the four sides, and no wall through the object (unless p & 0x400).
+        if (w.diagonalWall(t) && !(pf & 0x400))
+            return fail(placementerror::WallIntersect, "diagonal wall");
+        if (!(pf & 0x400))
+            for (int k = 0; k < 4; ++k) {
+                const auto s = directionStep(k * 2);
+                if (tiles.count({t.x + s[0], t.y + s[1]}) && w.wallBetween(t, s[0], s[1]))
+                    return fail(placementerror::WallIntersect, "a wall cuts the object");
+            }
         const int16_t wp = o.data[objdata::WallPlacementFlags];
         static const char* const sides[4] = {"in front", "on the right", "behind", "on the left"};
         for (int side = 0; side < 4; ++side) {
             const auto s = sideStep(p.direction, side);
             const bool wall = w.wallBetween(t, s[0], s[1]);
             if ((wp & (1 << side)) && !wall)
-                return fail(std::string("needs a wall ") + sides[side]);
+                return fail(placementerror::NeedsWall, std::string("needs a wall ") + sides[side]);
             if ((wp & (0x100 << side)) && wall)
-                return fail(std::string("no wall allowed ") + sides[side]);
+                return fail(placementerror::WallIntersect, std::string("no wall allowed ") + sides[side]);
         }
-        // Other objects on the tile.
+        // TestPlacementWithRespectToObjects (§3.4): objects on the tile in
+        // a common exclusive layer (od 63), unless od 8 lets them through.
         const int16_t myLayers = layers(o);
         const bool meLetsPeople = o.data[objdata::Flags] & (kAllowObjectAndPerson | kAllowPerson);
         for (ObjectId other : vm.objectsOnTile(t)) {
@@ -150,39 +198,24 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
             const Object& x = *vm.object(other);
             if (x.person) {
                 if (!meLetsPeople)
-                    return fail("a Sim is in the way");
+                    return fail(placementerror::Objects, "a Sim is in the way");
                 continue;
             }
-            if (!(layers(x) & myLayers))
+            const bool sameType = (o.data[objdata::ExclusivePlacementFlags] & 0x04) && x.definition &&
+                                  o.definition && x.definition->objectType() == o.definition->objectType();
+            if (!(layers(x) & myLayers) && !sameType)
                 continue;
-            if ((x.data[objdata::Flags] | o.data[objdata::Flags]) & (kAllowObjectIntersection | kAllowObjectAndPerson))
+            if (!sameType &&
+                ((x.data[objdata::Flags] | o.data[objdata::Flags]) & (kAllowObjectIntersection | kAllowObjectAndPerson)))
                 continue;
-            // A surface: a free container slot of a height this object
-            // allows, strong enough for it (single-tile objects only).
-            const int16_t heights = o.data[objdata::AllowedHeightFlags];
-            if (group.size() == 1 && p.container == 0) {
-                const auto slots = containerSlots(vm, x);
-                for (size_t i = 0; i < slots.size(); ++i) {
-                    const int h = slots[i]->height;
-                    if (h < 1 || h > 16 || !(heights & (1 << (h - 1))))
-                        continue;
-                    if (vm.containedIn(other, int16_t(i)))
-                        continue;
-                    if (o.data[objdata::Weight] >= x.data[objdata::SupportStrength])
-                        continue;
-                    p.container = other;
-                    p.slot = int(i);
-                    break;
-                }
-                if (p.container == other)
-                    continue;
-            }
-            return fail("\"" + (x.definition ? x.definition->fileName : std::string("?")) + "\" is in the way");
+            return fail(placementerror::Objects,
+                        "\"" + (x.definition ? x.definition->fileName : std::string("?")) + "\" is in the way");
         }
     }
-    // An object that does not stand on the floor needs a surface.
-    if (!p.container && !(lead->data[objdata::AllowedHeightFlags] & 1))
-        return fail("needs a surface");
+    // The height test: on the floor needs bit 0 of od 4; otherwise only a
+    // slot will do ("Must place in one of these places").
+    if (!(lead->data[objdata::AllowedHeightFlags] & 1))
+        return fail(placementerror::PlaceList, "needs a surface");
     p.ok = true;
     return p;
 }
@@ -249,6 +282,8 @@ void deleteGroup(VM& vm, ObjectId id) {
                 held.push_back(other);
         for (ObjectId h : held)
             deleteGroup(vm, h);
+        runEntry(vm, part, entry::Delete);
+        runEntry(vm, part, entry::Cleanup);
         vm.threads.erase(part);
         vm.removeObject(part);
     }
@@ -284,14 +319,42 @@ bool buy(VM& vm, ObjectId ghost, const Placement& p, int price, std::string* why
     if (funds(vm) < price)
         return refuse("not enough funds");
     applyPlacement(vm, ghost, p);
-    for (const auto& part : p.parts)
-        runEntry(vm, part.id, entry::UserPlacement);
+    runUserPlacement(vm, ghost);
     addFunds(vm, -price);
     if (Object* lead = vm.object(ghost); lead && lead->data[objdata::CurrentValue] == 0)
         lead->data[objdata::CurrentValue] = int16_t(std::min(price, 32767));
     for (const auto& part : p.parts)
         vm.startMain(part.id);
     return true;
+}
+
+int sell(VM& vm, ObjectId id) {
+    const int value = saleValue(vm, id);
+    const auto group = groupOf(vm, id);
+    if (group.size() == 1)
+        runEntry(vm, id, entry::UserDelete);
+    pickUp(vm, id);
+    addFunds(vm, value);
+    return value;
+}
+
+void dayPassed(VM& vm) {
+    for (const auto& [id, o] : vm.objects()) {
+        if (!o.definition || o.person || multiTileGroup(o) != id)
+            continue;
+        const ObjectDefinition& d = *o.definition;
+        if (d.field(0x8A) != 0) // self depreciating
+            continue;
+        const int dep = d.field(0x86) ? int16_t(d.field(0x86)) : int16_t(d.field(0x88));
+        const int limit = int16_t(d.field(0x8C));
+        if (dep == 0 && limit == 0)
+            continue;
+        Object* x = vm.object(id);
+        int v = x->data[objdata::CurrentValue] - dep;
+        if (v < limit)
+            v = limit;
+        x->data[objdata::CurrentValue] = int16_t(v);
+    }
 }
 
 int saleValue(VM& vm, ObjectId id) {
