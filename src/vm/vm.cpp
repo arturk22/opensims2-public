@@ -386,6 +386,9 @@ static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     case 0x08: return &slot(t.temps, data, "temp");
     case 0x09: return &slot(c.frame.params, data, "param");
     case 0x0B: return &slot(t.temps, slot(t.temps, data, "temp"), "temp[temp]");
+    case 0x0C: return &slot(t.adRange, data, "check tree ad range");
+    case 0x1C: return &slot(t.adPersonality, data, "check tree ad personality var");
+    case 0x1D: return &slot(t.adMin, data, "check tree ad min");
     case 0x0E: return &slot(personOf(c.me()).motives, data, "motive");
     case 0x0F: return &slot(personOf(c.stackObject()).motives, data, "stack object motive");
     case 0x11: return &slot(personOf(c.stackObject()).motives, slot(t.temps, data, "temp"), "stack object motive[temp]");
@@ -760,6 +763,7 @@ void VM::tick() {
     }
     setClockGlobals();
     ++ticks;
+    tickMotives(*this); // motives.cpp
     handleTimers();
     // Objects created or removed during the tick: the IDs are read first;
     // new objects get their turn from the next tick on.
@@ -914,6 +918,7 @@ bool VM::branch(Thread& t, Behavior::Target target) {
         case Behavior::TargetKind::False: {
             const bool value = target.kind == Behavior::TargetKind::True;
             const bool interaction = t.stack.back().interaction;
+            const bool foundAction = t.stack.back().foundAction;
             t.stack.pop_back();
             if (t.stack.empty()) {
                 t.status = Thread::Status::Finished;
@@ -923,7 +928,9 @@ bool VM::branch(Thread& t, Behavior::Target target) {
             if (interaction) {
                 // A queued interaction's action tree: the Idle for Input that ran it runs again.
                 endInteraction(*this, t);
-                return true;
+                if (!foundAction)
+                    return true;
+                t.interactionReturned = 0; // Gosub Found Action branches instead
             }
             // The caller's call instruction branches on the returned value.
             const Frame& caller = t.stack.back();

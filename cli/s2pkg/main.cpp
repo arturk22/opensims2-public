@@ -6,6 +6,7 @@
 #include "ui_cmds.hpp"
 #include "hood_cmds.hpp"
 #include "pie_cmds.hpp"
+#include "autonomy_cmds.hpp"
 #include "state_cmds.hpp"
 #include "vm/lot_resume.hpp"
 #include "describe.hpp"
@@ -859,7 +860,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
-                         "%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage());
+                         "%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), autonomyUsage());
     return 2;
 }
 
@@ -883,6 +884,8 @@ int main(int argc, char** argv) {
         if (int rc = primCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = pieCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = autonomyCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = stateCommand(cmd, argc, argv); rc >= 0)
             return rc;

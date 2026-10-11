@@ -637,9 +637,10 @@ static void testGenericSimsCall() {
                       expr(Temp, 0, Assign, Lit, 2, go(13), E),
                       call(25, go(14)),                                   // selected Sim := 2
                       call(48, E, go(15)),                                // no remapped IDs
-                      call(52, T)}));                                     // wall in front: not implemented
+                      call(52, E, go(16)),                                // wall in front: no world, no wall
+                      call(12, T)}));                                     // not implemented
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Failed && t.error.find("52 not implemented") != std::string::npos &&
+    check(t.status == Thread::Status::Failed && t.error.find("12 not implemented") != std::string::npos &&
               fx.vm.engineRequests.size() == 1 && fx.vm.engineRequests[0].call == 39 &&
               sim.person->data[persondata::FamilyNumber] == 3 && fx.vm.neighbors[5].personData[persondata::FamilyNumber] == 0 &&
               fx.vm.neighbors[6].personData[persondata::FamilyNumber] == 4 && !fx.vm.buildBuyEnabled &&

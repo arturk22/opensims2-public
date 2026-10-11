@@ -1,6 +1,7 @@
 #include "vm.hpp"
 
 #include "hood_bridge.hpp"
+#include "autonomy.hpp"
 #include "interactions.hpp"
 #include "errors.hpp"
 #include "sound.hpp"
@@ -1258,6 +1259,8 @@ Exit genericSimsCall(Context& c) {
     default:
         if (auto r = neighborhoodSimsCall(c, call))
             return *r;
+        if (auto r = idleSimsCall(c, call)) // 43, 52 (autonomy.cpp)
+            return *r;
         throw VMError("Generic Sims Call: " + std::to_string(call) + " not implemented");
     }
 }
@@ -1304,6 +1307,8 @@ void registerPrimitives(VM& vm) {
     registerSoundPrimitives(vm);       // Play / Stop Sound Event, Stop ALL Sounds (sound.cpp)
     registerDialogPrimitives(vm);      // Dialog (dialog.cpp)
     registerAppearancePrimitives(vm);  // Change Light, Change Outfit (appearance.cpp)
+    registerMotivePrimitives(vm);      // Set Motive Change, Find 5 Worst Motives (motives.cpp)
+    registerAutonomyPrimitives(vm);    // Find Best Interaction, Gosub Found Action (autonomy.cpp)
 }
 
 } // namespace os2::vm

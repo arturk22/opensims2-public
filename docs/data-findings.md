@@ -478,3 +478,88 @@ material de snapshot; ver `docs/primitives-mac.md` §5). A palpite "0x01 =
 snapshot" estava errado. Manage Inventory: `CatManageInventoryMatchFlags`
 casa por visível/oculto (bit 0), memória (bit 1) e compras (bit 3), cada um
 com o valor no mesmo bit de outro campo; o resto segue em aberto.
+
+## 16. Motores de motivos e autonomia: onde estão os dados
+
+**Pergunta.** O que move os motivos a cada tick, como sai o humor e com que
+números o Find Best Interaction (0x03) pontua as interações.
+
+**Método.** Varredura das BHAVs (`tools/datahunt`), dos STR#/BCON/FCNS do
+grupo global `0x7FD46CD0` no `objects.package`, dos símbolos do
+`baserom.sym` e das strings do binário de Mac 1.0 (`cTSMotiveCurveSet::
+LoadFromFile : String table is missing motive curves.`), conferido contra os
+motivos salvos nos PERS de `N001_Lot11`.
+
+**Achados.**
+
+- **Curvas** (STR# globais, texto `(x;y) (x;y) ...`, a descrição de cada
+  linha nomeia o motivo, na numeração do STR# 0x86): "Happy Curve Data -
+  Elder/Adult/Teen/Child/Toddler/Baby/Dog/Cat" = 0x226–0x22D (peso de cada
+  motivo em função do valor dele: fome 15× em −100, 1× de 0 para cima; social
+  e diversão 2× a 5×; energia 0) e "Interaction Scores Curve - ..." =
+  0x28A–0x291 (utilidade de cada motivo: côncava, sobe de 0 em −100 e fica
+  plana a partir de um ponto — bexiga plana acima de 0, energia acima de −20).
+  0x2BC: curvas do ambiente.
+- **Humor = média dos motivos ponderada pelas Happy Curves**, sem os motivos
+  cujo bit está no dado de pessoa 118 "Motives Not Included in Mood"
+  ("Motives - Set Disabled Motives" liga os bits 2–4, 10, 11 = memórias,
+  humor, meta-humor, não usado, sono). Confere com os PERS: Don (#49) tem
+  conforto 88,9, fome 36,6, higiene 89,7, bexiga 92,4, ambiente 46,5, social
+  43,1, diversão 33,4 → (88,9 + 36,6 + 89,7 + 92,4 + 46,5 + 2·43,1 +
+  2·33,4) / 9 = **56,34**, e o humor salvo é 56,3. No Sim #126 o humor salvo
+  (62,6) só sai do **segundo conjunto** de motivos do PERS (fome 31,4 em vez
+  de 45,0): o segundo conjunto é o do último cálculo do humor
+  (`cTSMotives::GetOldMotive`).
+- **Decaimento**: dados de pessoa 93–101 "Decay <motivo> per Day" (93 fome,
+  94 conforto, 95 bexiga, 96 energia, 97 higiene, 99 social, 101 diversão).
+  As árvores só os escrevem: "Motives - Set Home Awake/Asleep" por idade, com
+  "Motives - Decay - Set in Range" (valor = mín + (máx − mín) ×
+  personalidade/1000; adulto acordado: fome −184 a −234 pela atividade,
+  energia −205 a −255, bexiga −300, higiene −100 a −300 pela arrumação,
+  diversão e social −120 a −220) e multiplicam por (semi-atributo 27 + 100) / 100 (inteiro).
+  Nenhuma árvore os lê nem os passa ao Set Motive Change, e o Set Motive
+  Change com o bit 0x02 os zera: **quem aplica é o motor** (inferido; o
+  `OnSimulatorTick` do binário não aplica, então deve ser outra função, p.
+  ex. `PersonalTimeMinutePassed`). Unidade tomada como pontos por dia de 24 h
+  de jogo (fome −224/dia: de 100 a −100 em ~21 h). Os PERS de `N001_Lot11`
+  já trazem os valores (−224, −140, −300, −215, −280, −190, −170).
+- **Constantes de autonomia: FCNS 2 do grupo global** (`0x46434E53`,
+  "NSCF", versão 78: nome pascal, float, descrição): "min autonomy score for
+  family/visitors/sitting" 0, "low/moderate/high attenuation" 0,1/0,3/0,6
+  (visitantes 0,01/0,02/0,03), "random selection count" 1, "random worst
+  motive count" 8, "functional distance attenuation" 3, "functional half
+  value distance" 5, "autonomy attenuation formula" 0, "autonomy attenuation
+  tuning" 2, "autonomy floor to floor distance cost" 10, "max check tree in
+  fba count" 200 (as "200 passadas" do `TryFindBestAction`), "autonomy memory
+  count" 8, "max duration autonomy memory" 9999, "meta mood lowest percentage
+  split" 0,33 e as do ambiente. As FCNS 1 e 5–10 são o motor de motivos do
+  The Sims 1 ("energy span", "hunger decrement ratio", ...), que o Sims 2 não
+  usa mais (inferido: os decaimentos agora vêm dos dados de pessoa).
+- **Operando do Find Best Interaction**: o u16 0 é uma **máscara de motivos**
+  (bit = número do motivo): "Interaction - Fulfill Hunger" passa 0x0080 (1 <<
+  7), "Fulfill Bladder" 0x0200, "Fulfill Hygiene" 0x0100, "Fulfill Energy"
+  0x0020, "Function - Boss Idle" 0x8000 (diversão), a checagem de desvio de
+  conduta do Main 0x0008 (humor); com máscara, o byte 2 vale 1. "Function -
+  Main - Process Autonomy" passa 0 (os piores motivos) com os bytes 8–11 =
+  1E 00 03 05, que o disassembler não imprime (sentido desconhecido).
+- **Anúncios da TTAB**: (mín, delta, tipo de personalidade do STR# 0xE8) por
+  motivo; o vaso sanitário anuncia bexiga (35, 10, arrumado), a geladeira fome
+  (0, 5..20, sem personalidade). As check trees mudam os anúncios pelos donos
+  0x1D "check tree ad min", 0x0C "check tree ad range" e 0x1C "check tree ad
+  personality var" (dado = número do motivo; "Check Trees - Nuke all ads",
+  "Social - Adj Advertising", "Immaturity - Adjust Ads"). Das sete tabelas
+  (versão ≥ 0x44), 952 entradas têm a 0 preenchida e 77 só a 0; a ordem por
+  idade não foi confirmada (usa-se a dos bits de idade dos property sets:
+  criança pequena, criança, adolescente, adulto, idoso, bebê, jovem adulto, e
+  a tabela 0 quando a da idade está vazia). O campo "autonomy" da entrada é o
+  "Autonomy Threshold" (`cTSTreeTableEntry::GetAutonomyThreshold`): 50 nas
+  entradas com anúncio, 100 nas outras; os Sims do lote têm o dado de pessoa
+  36 "autonomy level" = 50.
+
+**Conclusão.** Implementado em `src/vm/motives.*` e `src/vm/autonomy.*`
+(ver TODO.md M5 "Motor de motivos e autonomia"). Inferido: o decaimento no
+motor, a unidade por dia, a fórmula de pontuação (ganho na curva de
+utilidade de cada motivo anunciado, como o The Sims 1 da FreeSO, dividido
+por 1 + atenuação × distância; o "attenuation formula/tuning" 0/2 não foi
+decifrado), a ordem das tabelas por idade, o sentido de mín/delta (faixa
+pela personalidade).

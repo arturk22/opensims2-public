@@ -331,10 +331,28 @@ struct ActionString {
     ObjectId stackObject = 0;
 };
 
+// A motive change Set Motive Change (0x1D) put on a Sim: the motive moves
+// by `perTick` each tick until it reaches `limit` (motives.hpp).
+struct MotiveChange {
+    int16_t motive = 0;
+    float perTick = 0;
+    float limit = 0;
+};
+
 // State only Sims have.
 struct Person {
     std::array<int16_t, kPersonDataCount> data{};
     std::array<int16_t, kMotiveCount> motives{};
+    // The motive engine (motives.cpp): the changes running, and the motives
+    // with their fractions (the game keeps them as floats) as last written.
+    std::vector<MotiveChange> motiveChanges;
+    std::array<float, kMotiveCount> exactMotives{};
+    std::array<int16_t, kMotiveCount> writtenMotives{};
+    bool exactMotivesValid = false;
+    // The last Find Best Interaction's choice, for Gosub Found Action
+    // (autonomy.cpp); its object and entry are also in person data 53 and
+    // object data 20.
+    std::array<int16_t, 4> foundActionArgs{};
 };
 
 // Where an object is in the lot, as the lot's saved state has it: the tile
@@ -489,6 +507,9 @@ struct Frame {
     // when it returns, the interaction ends and the Idle for Input that ran
     // it runs again instead of branching (interactions.hpp).
     bool interaction = false;
+    // An interaction run by Gosub Found Action (autonomy.cpp): it ends the
+    // same way, but the Gosub Found Action instruction branches on its result.
+    bool foundAction = false;
 };
 
 // Temps belong to the thread, so subroutines can return values in them;
@@ -512,6 +533,10 @@ struct Thread {
     // Set while a check tree runs for the pie menu: Add/Change the Action
     // String adds entries here instead of renaming the running interaction.
     std::vector<ActionString>* actionStrings = nullptr;
+    // The motive ads of the TTAB entry whose check tree runs for Find Best
+    // Interaction, by motive: data owners 0x1D "check tree ad min", 0x0C
+    // "check tree ad range" and 0x1C "check tree ad personality var" (autonomy.cpp).
+    std::array<int16_t, kMotiveCount> adMin{}, adRange{}, adPersonality{};
 };
 
 // Outcome of a primitive. Yield keeps the thread on the same instruction,
@@ -838,5 +863,10 @@ void registerTimerPrimitives(VM& vm);
 void registerViewPrimitives(VM& vm);
 // Find Best Object for Function, Run Functional Tree and Reach/Put (reach.cpp).
 void registerReachPrimitives(VM& vm);
+// The motive engine's tick, Set Motive Change and Find 5 Worst Motives (motives.cpp).
+void tickMotives(VM& vm);
+void registerMotivePrimitives(VM& vm);
+// Find Best Interaction and Gosub Found Action (autonomy.cpp).
+void registerAutonomyPrimitives(VM& vm);
 
 } // namespace os2::vm

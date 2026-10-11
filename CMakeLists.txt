@@ -69,9 +69,11 @@ add_library(os2_vm
   src/vm/animation.cpp
   src/vm/appearance.cpp
   src/vm/dialog.cpp
+  src/vm/autonomy.cpp
   src/vm/lot.cpp
   src/vm/lot_resume.cpp
   src/vm/measure.cpp
+  src/vm/motives.cpp
   src/vm/primitives.cpp
   src/vm/queue.cpp
   src/vm/reach.cpp
@@ -98,7 +100,7 @@ if(APPLE)
   target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 
-add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp)
+add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/autonomy_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm os2_audio)
 
@@ -160,6 +162,10 @@ add_test(NAME dialog COMMAND test_dialog)
 add_executable(test_queue tests/test_queue.cpp)
 target_link_libraries(test_queue PRIVATE os2_vm)
 add_test(NAME queue COMMAND test_queue)
+
+add_executable(test_autonomy tests/test_autonomy.cpp)
+target_link_libraries(test_autonomy PRIVATE os2_vm)
+add_test(NAME autonomy COMMAND test_autonomy)
 
 add_executable(test_reach tests/test_reach.cpp)
 target_link_libraries(test_reach PRIVATE os2_vm)
