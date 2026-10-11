@@ -2244,8 +2244,15 @@ void unloadScene() {
         return;
     }
     if (gCas) { // Create-a-Sim takes every key (names, undo, turning the Sim)
-        gCas->keyDown(e.keyCode, e.characters ? std::string(e.characters.UTF8String) : std::string(),
-                      e.modifierFlags & NSEventModifierFlagControl);
+        std::string typed = e.characters ? std::string(e.characters.UTF8String) : std::string();
+        // The case typed is kept: a letter that arrives lower case with Shift (or Caps Lock) down
+        // is made capital (synthesized key events carry the flag but not always the capital).
+        const bool shifted = (e.modifierFlags & NSEventModifierFlagShift) != 0;
+        const bool caps = (e.modifierFlags & NSEventModifierFlagCapsLock) != 0;
+        if (typed.size() == 1 && typed[0] >= 'a' && typed[0] <= 'z' && (shifted != caps) &&
+            !(e.modifierFlags & (NSEventModifierFlagControl | NSEventModifierFlagCommand)))
+            typed[0] = char(typed[0] - 'a' + 'A');
+        gCas->keyDown(e.keyCode, typed, e.modifierFlags & NSEventModifierFlagControl);
         return;
     }
     if (os2::moviePlaying()) { // Esc, Space or Return skips a movie

@@ -408,6 +408,31 @@ const Animation* findIdle(SimActor& actor, ResourceIndex& index, const std::stri
 void CasMode::changed() {
     dirty_ = true;
     rebuild();
+    ensureArchetypeShots();
+}
+
+void CasMode::ensureArchetypeShots() {
+    if (editing_ < 0 || step_ != 1 || !thumbs_ || !catalog_)
+        return;
+    for (const SimPart* a : catalog_->archetypesFor(edit_.spec.age, edit_.spec.gender)) {
+        const std::string fam = cas::family(*a);
+        if (thumbs_->image(cas::archetypeThumbnailId(edit_.spec.age, edit_.spec.gender, fam, "")))
+            continue;
+        const std::string key = cas::casFileName(edit_.spec.age, edit_.spec.gender) + "|" + fam + "|" +
+                                std::to_string(edit_.spec.skinTone);
+        if (archetypeShots_.count(key))
+            continue;
+        Member m = edit_;
+        m.spec.face.archetype = fam;
+        m.spec.face.structure.reset();
+        m.spec.face.regions.clear();
+        m.spec.guid = 0; // its own resource names: the baked face of the Sim shown must not be reused
+        for (auto& [category, parts] : m.spec.outfits) // bald, like the cached thumbnails
+            for (auto it = parts.begin(); it != parts.end();)
+                it = lower(it->second).find("hair") != std::string::npos ? parts.erase(it) : std::next(it);
+        archetypeShots_[key] = portrait(m, 160, 0.62f);
+    }
+    dirty_ = true;
 }
 
 void CasMode::rebuild() {
@@ -520,9 +545,10 @@ void CasMode::setStep(int step) {
     dirty_ = true;
     if ((before == 4) != (step_ == 4) || step_ == 4)
         rebuild(); // the clothes step shows the category being chosen
+    ensureArchetypeShots();
 }
 
-std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size) {
+std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size, float closeness) {
     const fs::path file = tempDir_ / ("portrait" + std::to_string(rebuilds_++) + ".package");
     std::shared_ptr<RgbaImage> out;
     try {
@@ -555,8 +581,9 @@ std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size) {
             default: return 1.64f;
             }
         }();
-        const float dist = spec.age == cas::age::Toddler || spec.age == cas::age::Baby ? 0.8f : 1.0f;
-        const simd_float3 e = at + simd_make_float3(0, dist, h + 0.03f), target = at + simd_make_float3(0, 0, h);
+        const float dist = (spec.age == cas::age::Toddler || spec.age == cas::age::Baby ? 0.8f : 1.0f) * closeness;
+        const float aim = h + (1 - closeness) * 0.3f; // closer shots look at the head, not the neck
+        const simd_float3 e = at + simd_make_float3(0, dist, aim + 0.03f), target = at + simd_make_float3(0, 0, aim);
         const simd_float3 f = simd_normalize(target - e);
         const simd_float3 sv = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
         const simd_float3 u = simd_cross(sv, f);
@@ -1806,8 +1833,12 @@ UiScreen CasMode::screen(int width, int height) {
                 auto it = s.face.regions.find(maskList);
                 sel = it != s.face.regions.end() && it->second == fam;
             }
-            items.push_back({label(a->name().substr(0, a->name().find('_'))), sel,
-                             thumb(cas::archetypeThumbnailId(s.age, s.gender, fam, region)), [this, fam, maskList]() {
+            const RgbaImage* shot = thumb(cas::archetypeThumbnailId(s.age, s.gender, fam, region));
+            if (!shot)
+                if (auto it = archetypeShots_.find(cas::casFileName(s.age, s.gender) + "|" + fam + "|" + std::to_string(s.skinTone));
+                    it != archetypeShots_.end())
+                    shot = it->second.get();
+            items.push_back({label(a->name().substr(0, a->name().find('_'))), sel, shot, [this, fam, maskList]() {
                                  pushUndo();
                                  if (maskList.empty()) {
                                      edit_.spec.face.archetype = fam;

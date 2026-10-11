@@ -145,7 +145,11 @@ private:
     void loadBin();
     // A head shot of a Sim (the renderer's capture of it alone, far from
     // the studio), for the family bar and the Make a Child panel.
-    std::shared_ptr<RgbaImage> portrait(const Member& m, uint32_t size = 256);
+    std::shared_ptr<RgbaImage> portrait(const Member& m, uint32_t size = 256, float closeness = 1.0f);
+    // Head shots of the archetypes the CAS thumbnail cache has none of (the
+    // alien), made when the face step opens, by age, gender and family.
+    void ensureArchetypeShots();
+    std::map<std::string, std::shared_ptr<RgbaImage>> archetypeShots_;
     int portraitInstance_ = -1;
     bool capturing_ = false;
     int nextId_ = 1;
