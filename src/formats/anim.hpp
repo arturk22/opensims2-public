@@ -20,8 +20,10 @@ namespace os2 {
 //
 // Times are in ticks. Baked curves hold 0.03 keys per tick (OpenTS2's
 // FramesPerTick), and walk cycles move at velocity = distance / duration
-// ≈ 0.00137 per tick; taking the keys as 30 frames per second makes a tick one
-// millisecond and the walk 1.37 m/s (inferred; OpenTS2 assumes 24 fps).
+// ≈ 0.002 per tick. A tick is one millisecond: in 92 of the 144 animations
+// with a single sound the duration in ticks is the sound's length in ms. The
+// normal adult walk then moves 2.0 m/s (1.45 cycles a second, two steps of
+// 0.70 m); 1.37 m/s is the elders' and the Grim Reaper's walk.
 struct Animation {
     static constexpr float kTicksPerSecond = 1000.0f;
     // Tangents are half floats in value per ~154 ticks: over the 150,325 keys

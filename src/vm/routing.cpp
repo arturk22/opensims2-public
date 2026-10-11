@@ -190,7 +190,7 @@ void leaveSlot(Object& o) {
 // has arrived (the route is then dropped and the final facing set).
 bool advance(VM& vm, Object& me) {
     auto& r = *me.route;
-    float budget = vm.walkTilesPerTick;
+    float budget = walkTilesPerTick(vm, me);
     while (budget > 0 && !r.points.empty()) {
         const auto [px, py] = r.points.front();
         const float dx = px - me.position.x, dy = py - me.position.y;

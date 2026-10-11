@@ -928,6 +928,7 @@ void registerPrimitives(VM& vm) {
     registerRoutingPrimitives(vm);
     registerNeighborhoodPrimitives(vm);
     registerAnimationPrimitives(vm);
+    registerMeasurePrimitives(vm);
 }
 
 } // namespace os2::vm

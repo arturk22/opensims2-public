@@ -68,6 +68,7 @@ add_library(os2_vm
   src/vm/hood_bridge.cpp
   src/vm/animation.cpp
   src/vm/lot.cpp
+  src/vm/measure.cpp
   src/vm/primitives.cpp
   src/vm/routing.cpp
   src/vm/sim_motion.cpp

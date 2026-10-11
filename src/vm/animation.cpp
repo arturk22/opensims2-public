@@ -30,6 +30,20 @@ std::optional<float> AnimationLibrary::seconds(const std::string& name) {
     return out;
 }
 
+float AnimationLibrary::tilesPerSecond(const std::string& name) {
+    if (auto it = speeds_.find(name); it != speeds_.end())
+        return it->second;
+    float v = 0;
+    if (index_) {
+        try {
+            v = loadAnimation(*index_, name).velocity * Animation::kTicksPerSecond;
+        } catch (const std::exception&) {
+        }
+    }
+    speeds_[name] = v;
+    return v;
+}
+
 std::string agePrefix(const Object& sim) {
     if (!sim.person)
         return "a";
@@ -397,6 +411,15 @@ std::string locomotionAnimation(VM& vm, const Object& sim, std::string_view role
         if (lib.exists(candidate))
             return candidate;
     return {};
+}
+
+float walkTilesPerTick(VM& vm, const Object& sim) {
+    if (sim.person) {
+        const std::string walk = locomotionAnimation(vm, sim, "walk");
+        if (const float v = walk.empty() ? 0 : library(vm).tilesPerSecond(walk); v > 0)
+            return v / float(vm.clock.ticksPerMinute);
+    }
+    return vm.walkTilesPerTick;
 }
 
 void registerAnimationPrimitives(VM& vm) {

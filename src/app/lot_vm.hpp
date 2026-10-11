@@ -23,8 +23,8 @@ struct Character;
 
 // The VM runs at 30 ticks a second (a game minute a second, normal speed).
 // Walkers move as the VM moves them, from tile centre to tile centre at its
-// fixed walking speed (VM::walkTilesPerTick, 1.37 tiles/s), not by the walk
-// animation's root motion: the VM's position is the truth (routing, slots,
+// walking speed, the speed of the Sim's walk animation (vm::walkTilesPerTick:
+// 2 tiles/s for the normal adult walk), not by the walk animation's root motion: the VM's position is the truth (routing, slots,
 // other trees read it), and the renderer only interpolates between the last
 // two ticks and turns the Sim smoothly towards where it goes. The walk
 // animation loops while the VM says the Sim walks (its locomotion set's

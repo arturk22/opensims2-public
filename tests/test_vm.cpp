@@ -251,9 +251,9 @@ static void testYieldAndErrors() {
     fx.vm.run(t);
     check(t.status == Thread::Status::Finished && t.temps[0] == 1, "resumes after yields");
 
-    fx.code.add(kObjGroup, 0x1001, tree({instr(0x0B, T, F)}));
+    fx.code.add(kObjGroup, 0x1001, tree({instr(0x24, T, F)})); // Dialog: not implemented
     t = fx.run(0x1001);
-    check(t.status == Thread::Status::Failed && fx.vm.missingPrimitives[0x0B] == 1, "missing primitive fails");
+    check(t.status == Thread::Status::Failed && fx.vm.missingPrimitives[0x24] == 1, "missing primitive fails");
 
     fx.code.add(kObjGroup, 0x1002, tree({expr(Temp, 0, Div, Lit, 0, T, F)}));
     t = fx.run(0x1002);

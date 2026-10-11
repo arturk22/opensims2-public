@@ -444,10 +444,11 @@ public:
     // (single trees, tests) positions mean nothing to the primitives that
     // need them, which then fail with the reason.
     std::optional<World> world;
-    // Walking speed in tiles per tick: 1.37 m/s, the speed of the adult walk
-    // animation, with a tile taken as a metre and a tick as 1/30 s (30 ticks
-    // a game minute, a game minute a second at normal speed; inferred).
-    float walkTilesPerTick = 1.37f / 30.0f;
+    // Walking speed in tiles per tick of walkers without a walk animation
+    // (Sims walk at their walk animation's speed, animation.hpp): 2 m/s, the
+    // normal adult walk, with a tile taken as a metre and a tick as 1/30 s
+    // (30 ticks a game minute, a game minute a second at normal speed; inferred).
+    float walkTilesPerTick = 2.0f / 30.0f;
     // Lengths of the animations the animation primitives play (animation.cpp).
     AnimationLibrary animations;
     // The tile an object stands on (its position rounded down), whether or
@@ -676,5 +677,7 @@ void registerPrimitives(VM& vm);
 void registerRoutingPrimitives(VM& vm);
 // The primitives that need the neighborhood (hood_bridge.cpp).
 void registerNeighborhoodPrimitives(VM& vm);
+// Get Distance To and Get Direction To (measure.cpp).
+void registerMeasurePrimitives(VM& vm);
 
 } // namespace os2::vm

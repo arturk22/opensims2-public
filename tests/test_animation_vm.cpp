@@ -66,7 +66,7 @@ static void addGlobals(CodeLibrary& code, VM& vm) {
     code.add(kGlobalGroup, animlist::Child, strings({"c-noExpression", ".", "c-blockedPath-long"}));
     for (const char* name : {"a-male-walk-alt0-normal", "a-female-walk-alt0-normal", "c-walk-alt0-normal",
                              "a-male-run-alt0-normal", "a-male-swimSlow", "a-swimPose"})
-        vm.animations.add(name, 0.7f);
+        vm.animations.add(name, 0.7f, 2.0f);
     vm.animations.add("a-blockedPath-long", 0.5f); // 15 ticks
     vm.animations.add("c-blockedPath-long", 0.5f);
     vm.animations.add("t-blockedPath-long", 0.4f);
@@ -223,7 +223,7 @@ static void testScriptedWalk() {
             // Steps between ticks are the walking speed; halfway is halfway.
             const float step = std::hypot(motion.current().x - motion.previous().x,
                                           motion.current().y - motion.previous().y);
-            smooth = smooth && step <= vm.walkTilesPerTick + 1e-4f &&
+            smooth = smooth && step <= walkTilesPerTick(vm, s) + 1e-4f &&
                      std::fabs(motion.x(0.5f) - (motion.previous().x + motion.current().x) / 2) < 1e-5f;
             // Four frames per tick, turning at most 7 rad/s.
             for (int f = 0; f < 4; ++f) {
@@ -243,8 +243,9 @@ static void testScriptedWalk() {
     const float d = std::hypot(8.5f - s.position.x, 6.5f - s.position.y);
     check(d >= 0.5f && d <= 2.6f && !s.route, "ends next to the target");
     check(s.data[objdata::Direction] == directionOf(8.5f - s.position.x, 6.5f - s.position.y), "facing it");
-    // 7+ tiles at 1.37 tiles/s is 5+ seconds, then 15 ticks of animation.
-    check(ticks > 120 && ticks < 400, "takes the time the walk takes");
+    // 6-7 tiles at the walk animation's 2 tiles/s is 3+ seconds, then 15 ticks of animation.
+    check(std::fabs(walkTilesPerTick(vm, s) - 2.0f / 30) < 1e-6f, "the walk animation's speed");
+    check(ticks > 90 && ticks < 300, "takes the time the walk takes");
     // The heading settles on the direction the Sim faces.
     for (int f = 0; f < 120; ++f)
         motion.turn(1.0f / 60);
@@ -256,7 +257,30 @@ static void testScriptedWalk() {
           "headings: direction 2 and +Y are 0, direction 0 is -X");
 }
 
+// Get Distance To and Get Direction To, from me or from an object in a temp.
+static void testMeasure() {
+    CodeLibrary code;
+    VM vm(code);
+    Object& s = sim(vm, 1.5f, 1.5f);
+    Object& far = vm.createObject(kGroup);
+    far.position = {4.5f, 5.5f, 2};
+    Object& east = vm.createObject(kGroup);
+    east.position = {3.5f, 1.5f, 1};
+    code.add(kGroup, 0x1000,
+             tree({instr(0x0B, go(1), E, {0, 0, 0}),                    // temp 0 := distance me -> stack object
+                   instr(0x0B, go(2), E, {1, 0, 0, 0, 0, 0, 0x02}),     // temp 1 := in hundredths
+                   instr(0x0C, go(3), E, {2, 0, 0x08, 0, 0}),           // temp 2 := direction me -> stack object
+                   instr(0x0C, T, E, {3, 0, 0x08, 0, 1, 0x08, 4, 0})})); // temp 3 := from the object in temp 4
+    Thread t = vm.start(s.id, 0x1000, {}, far.id);
+    t.temps[4] = east.id;
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && t.temps[0] == 5 + 20 && t.temps[1] == 500 + 20,
+          "distance: whole tiles (or hundredths) plus 20 a level");
+    check(t.temps[2] == directionOf(3, 4) && t.temps[3] == directionOf(1, 4), "direction to the stack object");
+}
+
 int main() {
+    testMeasure();
     testLocomotionNames();
     testAssignLocomotion();
     testAnimateSim();

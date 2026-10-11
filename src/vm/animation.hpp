@@ -90,13 +90,21 @@ public:
     // "_anim") lasts, or nothing if there is no such resource.
     std::optional<float> seconds(const std::string& name);
     bool exists(const std::string& name) { return seconds(name).has_value(); }
-    void add(const std::string& name, float seconds) { cache_[name] = seconds; }
+    // Locomotion speed of the animation (ANIM "velocity", distance per
+    // animation tick, a tick being 1 ms) in tiles per second (a tile is a
+    // metre); 0 if it does not move or does not exist.
+    float tilesPerSecond(const std::string& name);
+    void add(const std::string& name, float seconds, float tilesPerSecond = 0) {
+        cache_[name] = seconds;
+        speeds_[name] = tilesPerSecond;
+    }
     // Names the trees asked for that do not exist, with how often.
     std::map<std::string, size_t> missing;
 
 private:
     ResourceIndex* index_ = nullptr;
     std::unordered_map<std::string, std::optional<float>> cache_;
+    std::unordered_map<std::string, float> speeds_;
 };
 
 class VM;
@@ -125,6 +133,10 @@ std::string resolveListAnimation(VM& vm, const Object& sim, std::string entry);
 // that give no roles at all ("swimSlowShort,swimSlow,swimPose"), where the
 // order is short, normal, pose (inferred).
 std::string locomotionAnimation(VM& vm, const Object& sim, std::string_view role);
+// How far `sim` walks in a VM tick: the speed of its locomotion walk
+// animation (2 m/s for the normal adult walk, 1.37 for elders' and the
+// Grim Reaper's), or VM::walkTilesPerTick when it has none.
+float walkTilesPerTick(VM& vm, const Object& sim);
 
 // Registers Animate Object (0x69), Animate Sim (0x6A), Animate Overlay
 // (0x6B), Animate Stop (0x6C), Effect Stop/Start (0x70) and Assign
