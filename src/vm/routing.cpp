@@ -452,10 +452,18 @@ constexpr int kAskToMoveTries = 3;
 constexpr int kMaxBlockedTries = 5;
 constexpr int kWaitForPersonTicks = 126;
 constexpr float kPersonMovedAway = 1.25f;
-// When the walker counts as blocked: another Sim's centre within this of
-// the next stretch of the path (the binary's locomotor test, FollowOneStep,
-// is not decoded; approximation: a Sim's 0.25-tile core plus a margin).
-constexpr float kBlockedReach = 0.35f, kLookAhead = 0.5f;
+// The locomotor's predicted blocking (cLocomotable::CollisionCheck, BV
+// 0x6b49e8; docs/routing-mac.md §6): it looks 10.02 steps of 50 ms each
+// ahead (a step is 50 / speed ms, so the horizon is half a tile whatever
+// the speed), window by window, at where the others will be; a window in
+// which another router collides blocks the walk if the two are getting
+// closer (else the scan goes on), when it starts within 2 steps plus the
+// stopping time (5 ms) of travel. Inferred: the collision test (vtable
+// 0x478, not decoded) as two bodies' radii (0.25 tile for an adult, 0.1875
+// for a child, as AddBlockerToPathPlanner sizes them).
+constexpr float kStepTiles = 0.05f;  // 50 ms of a walk at 1 tile per second, times the speed: 0.05 / speed s
+constexpr int kHorizonSteps = 10;    // 10.02 steps
+constexpr float kBlockedWithin = 2 * kStepTiles + 0.005f;
 
 PathPlanner& plannerOf(VM& vm) {
     World& w = *vm.world;
@@ -820,44 +828,60 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     return true;
 }
 
-// Another Sim in the way of the next stretch of the route, or 0.
-ObjectId simAhead(VM& vm, const Object& me, const Object::Route& r) {
-    if (r.points.empty() || r.points.front().ticks > 0)
-        return 0;
-    // The stretch: up to kLookAhead along the points from here.
-    std::vector<Point2> line{{me.position.x, me.position.y}};
-    float left = kLookAhead;
-    for (const auto& p : r.points) {
-        if (p.ticks > 0 || p.level != me.position.level || left <= 0)
+// Where a walker will be `tiles` further along its route points (on its
+// level; stops at a phase or the end).
+Point2 alongRoute(const Object& o, float tiles) {
+    Point2 at{o.position.x, o.position.y};
+    if (!o.route)
+        return at;
+    for (const auto& p : o.route->points) {
+        if (p.ticks > 0 || p.portal || p.level != o.position.level)
             break;
-        const Point2 a = line.back();
-        const float d = std::hypot(p.x - a[0], p.y - a[1]);
-        if (d >= left) {
-            line.push_back({a[0] + (p.x - a[0]) * left / d, a[1] + (p.y - a[1]) * left / d});
-            break;
+        const float d = std::hypot(p.x - at[0], p.y - at[1]);
+        if (d >= tiles) {
+            if (d > 0)
+                at = {at[0] + (p.x - at[0]) * tiles / d, at[1] + (p.y - at[1]) * tiles / d};
+            return at;
         }
-        line.push_back({p.x, p.y});
-        left -= d;
+        at = {p.x, p.y};
+        tiles -= d;
     }
-    if (line.size() < 2)
+    return at;
+}
+
+// Another Sim the walker is predicted to run into (CollisionCheck), or 0.
+ObjectId simAhead(VM& vm, const Object& me, const Object::Route& r) {
+    if (r.points.empty() || r.points.front().ticks > 0 || r.points.front().portal)
         return 0;
+    const float mySpeed = std::max(walkTilesPerTick(vm, me), 1e-4f);
+    const float myRadius = smallSim(me) ? 0.1875f : 0.25f;
     for (const auto& [id, o] : vm.objects()) {
         if (id == me.id || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
             o.position.level != me.position.level)
             continue;
-        const float ox = o.position.x, oy = o.position.y;
         // Overlapping already (both on one spot): walking off is the way out.
-        if (std::hypot(ox - me.position.x, oy - me.position.y) < 0.3f)
+        if (std::hypot(o.position.x - me.position.x, o.position.y - me.position.y) < 0.3f)
             continue;
-        for (size_t i = 1; i < line.size(); ++i) {
-            const float ax = line[i - 1][0], ay = line[i - 1][1], bx = line[i][0], by = line[i][1];
-            const float vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy;
-            float u = len2 > 0 ? ((ox - ax) * vx + (oy - ay) * vy) / len2 : 0;
-            if (i == 1 && u <= 0)
-                continue; // behind the walker
-            u = std::clamp(u, 0.0f, 1.0f);
-            if (std::hypot(ax + vx * u - ox, ay + vy * u - oy) < kBlockedReach)
+        // The Sim walked to (a social's partner) is met, not run into (inferred).
+        if (id == r.target)
+            continue;
+        const bool walking = o.route && !o.route->waiting;
+        const float ratio = walking ? walkTilesPerTick(vm, o) / mySpeed : 0;
+        const float reach = myRadius + (smallSim(o) ? 0.1875f : 0.25f);
+        for (int k = 0; k < kHorizonSteps; ++k) {
+            const float t0 = kStepTiles * float(k), t1 = kStepTiles * float(k + 1);
+            const Point2 a0 = alongRoute(me, t0), a1 = alongRoute(me, t1);
+            const Point2 b0 = walking ? alongRoute(o, t0 * ratio) : Point2{o.position.x, o.position.y};
+            const Point2 b1 = walking ? alongRoute(o, t1 * ratio) : b0;
+            const float d0 = std::hypot(a0[0] - b0[0], a0[1] - b0[1]);
+            const float d1 = std::hypot(a1[0] - b1[0], a1[1] - b1[1]);
+            if (std::min(d0, d1) >= reach)
+                continue;
+            if (d1 > d0)
+                continue; // moving apart: the scan goes on
+            if (t0 <= kBlockedWithin)
                 return id;
+            break;
         }
     }
     return 0;
@@ -880,30 +904,33 @@ bool askedToMove(VM& vm, const Object& sim) {
     return false;
 }
 
-// Where a blocker steps aside to (CreateMoveOutOfWayDestination, mode 0):
-// to a side of its facing (first the one whose point a tile out is farther
-// from the asker, then the other), 1 to 6 tiles out in that direction or 45
-// degrees either way, on a free spot it can reach, clear of the asker's way
-// ahead. Inferred from the decompiled setup of the synthetic slot (the
-// binary aims it 45 degrees off the blocker's facing, towards the side
-// farther from the asker; its distances and width are float constants not
-// read here).
+// Where a blocker steps aside to (CreateMoveOutOfWayDestination, type 0,
+// BV 0x57dcac; docs/routing-mac.md §8.3): the synthetic slot looks from the
+// blocker 45 degrees off the asker's direction d: d+7 when the blocker is
+// nearer the point a tenth of a tile to the asker's left (d+6), else d+1;
+// its row is 0.3 tile out (minimum and maximum distance 0.3) on a grid of
+// 1/16 tile, as wide as wanted (width 100), the nearest the middle first.
+// Here: the first point of that row, outwards from its middle up to 6
+// tiles either way, that is free, reachable and clear of the asker's way
+// (0.75 tile of its line from it to 2 tiles past the blocker; inferred, the
+// binary leaves that to the slot's costs).
 std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& blocker) {
     PathPlanner& planner = plannerOf(vm);
     const std::vector<ObjectId> ignore{me.id, blocker.id};
     addObstacles(vm, planner, blocker, ignore);
-    const int dir = ((blocker.data[objdata::Direction] % 8) + 8) % 8;
-    auto sidePoint = [&](int d) {
-        const auto [sx, sy] = directionStep(d % 8);
-        return Point2{blocker.position.x + float(sx), blocker.position.y + float(sy)};
+    auto unit = [](int d) {
+        const auto [sx, sy] = directionStep(((d % 8) + 8) % 8);
+        const float n = std::hypot(float(sx), float(sy));
+        return Point2{float(sx) / n, float(sy) / n};
     };
-    const Point2 left = sidePoint(dir + 6), right = sidePoint(dir + 2);
-    const float dl = std::hypot(left[0] - me.position.x, left[1] - me.position.y);
-    const float dr = std::hypot(right[0] - me.position.x, right[1] - me.position.y);
-    const int side = dl <= dr ? dir + 2 : dir + 6, otherSide = side + 4;
-    // Clear of the asker's line through the blocker (from the asker to two
-    // tiles past the blocker; the binary aims the slot by the direction
-    // from the asker to the blocker).
+    const int d = ((me.data[objdata::Direction] % 8) + 8) % 8;
+    const Point2 l = unit(d + 6), rgt = unit(d + 2);
+    const Point2 pl{me.position.x + 0.1f * l[0], me.position.y + 0.1f * l[1]};
+    const Point2 pr{me.position.x + 0.1f * rgt[0], me.position.y + 0.1f * rgt[1]};
+    const bool nearerLeft = std::hypot(blocker.position.x - pl[0], blocker.position.y - pl[1]) <=
+                            std::hypot(blocker.position.x - pr[0], blocker.position.y - pr[1]);
+    const int dir = nearerLeft ? d + 7 : d + 1;
+    const Point2 f = unit(dir), side = unit(dir + 2);
     const float lx = blocker.position.x - me.position.x, ly = blocker.position.y - me.position.y;
     const float ll = std::max(std::hypot(lx, ly), 1e-3f);
     const Point2 a{me.position.x, me.position.y}, b{blocker.position.x + lx / ll * 2, blocker.position.y + ly / ll * 2};
@@ -912,11 +939,28 @@ std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& 
         const float u = len2 > 0 ? std::clamp(((q[0] - a[0]) * vx + (q[1] - a[1]) * vy) / len2, 0.0f, 1.0f) : 0;
         return std::hypot(a[0] + vx * u - q[0], a[1] + vy * u - q[1]) < 0.75f;
     };
+    for (int j = 0; j <= 96; ++j)
+        for (const int sign : {1, -1}) {
+            if (j == 0 && sign == -1)
+                continue;
+            const float lat = float(sign * j) * 0.0625f;
+            const Point2 q{blocker.position.x + f[0] * 0.3f + side[0] * lat, blocker.position.y + f[1] * 0.3f + side[1] * lat};
+            if (!planner.free(blocker.position.level, q) || nearWay(q))
+                continue;
+            PlannedPath path;
+            RouteFail why;
+            if (planner.plan({blocker.position.x, blocker.position.y}, blocker.position.level, blocker.position.level,
+                             {{q[0], q[1], 0}}, path, why))
+                return q;
+        }
+    // None: the wider slot of types 1/2 (§8.3: directions 1, 2, 6 and 7
+    // relative to the blocker's facing, 1 to 6 tiles; who uses those types
+    // is not traced, so this fallback is inferred).
+    const int facing = ((blocker.data[objdata::Direction] % 8) + 8) % 8;
     for (int dist = 1; dist <= 6; ++dist)
-        for (const int d : {side, side + 1, side + 7, otherSide, otherSide + 1, otherSide + 7}) {
-            const auto [sx, sy] = directionStep(d % 8);
-            const float n = std::hypot(float(sx), float(sy));
-            const Point2 q{blocker.position.x + float(sx) / n * float(dist), blocker.position.y + float(sy) / n * float(dist)};
+        for (const int rel : {2, 6, 1, 7}) {
+            const Point2 u = unit(facing + rel);
+            const Point2 q{blocker.position.x + u[0] * float(dist), blocker.position.y + u[1] * float(dist)};
             if (!planner.free(blocker.position.level, q) || nearWay(q))
                 continue;
             PlannedPath path;
@@ -926,6 +970,33 @@ std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& 
                 return q;
         }
     return std::nullopt;
+}
+
+// The destinations the engine made for "move out of the way" go once no
+// Sim has their interaction queued or running any more (the binary keeps
+// them as managed destination objects of the router and flushes them,
+// cTSRoutingObjectAggregate::FlushManagedDestinationObjects BV 0x4f9eb4;
+// when exactly is inferred). Once a tick.
+void flushMoveOutOfWayDestinations(VM& vm) {
+    static std::map<const VM*, uint64_t> lastTick;
+    auto& last = lastTick[&vm];
+    if (last == vm.ticks + 1)
+        return;
+    last = vm.ticks + 1;
+    std::vector<ObjectId> done;
+    for (const auto& [id, o] : vm.objects()) {
+        if (!o.syntheticSlot || !o.definition || o.definition->guid() != kDestinationGuid)
+            continue;
+        bool used = false;
+        for (const auto& [sid, sim] : vm.objects())
+            if (sim.person)
+                for (const auto& q : sim.queue)
+                    used = used || q.object == id;
+        if (!used)
+            done.push_back(id);
+    }
+    for (const ObjectId id : done)
+        vm.removeObject(id);
 }
 
 // AskBlockerToMove → the blocker's MoveOutOfWay (docs/routing-mac.md §8.1):
@@ -1098,6 +1169,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         return Step::Failed;
     }
     std::optional<bool> treeResult = std::exchange(c.thread.rerunResult, std::nullopt);
+    flushMoveOutOfWayDestinations(vm);
     if (r.check) { // back from the goal check or along route tree
         const int which = std::exchange(r.check, 0);
         const bool ok = treeResult.value_or(true);

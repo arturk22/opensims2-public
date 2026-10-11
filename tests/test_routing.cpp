@@ -860,6 +860,8 @@ static void testMoveOutOfWay() {
         if (lowPriority)
             check(t.status == Thread::Status::Finished && t.result && walker.position.x > 9 && other.position.y > 2,
                   "a Sim in the way is asked to move: it steps into the alcove and the walker gets through");
+        if (lowPriority)
+            check(vm.objects().size() == 3, "the move-out-of-way destination is gone once its interaction is");
         else
             check(t.status == Thread::Status::Finished && !t.result && other.position.y < 2 && other.queue.empty(),
                   "a Sim of the same priority is not asked to move");
