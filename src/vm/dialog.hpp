@@ -55,7 +55,8 @@ struct Dialog {
     // (STR# 0xED "dialog behavior"; inferred); without it the game pauses.
     bool continueOthers = false;
     int icon = 0;      // STR# 0xF4: 0 automatic, 1 none, 2 neighbor, 3 indexed, 4 named
-    int timeout = 0;   // operand byte 10, as is
+    int timeout = 0;   // operand byte 10, as is (the text notifications' time on screen)
+    double opened = -1; // host clock (seconds) when autoTimeOutDialogs first saw it
     int answer = -1;   // set by the host
     // The instruction waiting for it (the thread's stack depth, tree, node).
     size_t depth = 0;
@@ -68,6 +69,16 @@ constexpr size_t kMaxNotifications = 64;
 // the game pauses every Sim until it is answered (STR# 0xED "engage and
 // block sim"). Hosts stop ticking meanwhile.
 bool dialogPausesGame(const VM& vm);
+
+// The binary's "autoTimeoutDialogs" (a debug property of the game's
+// config, off in the shipping game): a dialog the player has not answered
+// closes by itself some time after it opened. Every tree dialog still
+// waiting `vm.dialogTimeoutSeconds` (0: never, as the game) after the host
+// clock `now` first saw it gets its first button (inferred: the default
+// button). The game's blocking dialogs do not read operand byte 10
+// (docs/primitives-mac.md, Dialog): only the text notifications hand it
+// to the notification window. Returns how many were answered.
+int autoTimeOutDialogs(VM& vm, double now);
 
 // Expands the `$` tokens of a dialog string (`$Me`, `$Object`, `$Local:n`,
 // `$NameLocal:n`, `$TimeLocal:n`, ...; see dialog.cpp) for the instruction

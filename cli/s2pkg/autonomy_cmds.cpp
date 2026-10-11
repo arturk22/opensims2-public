@@ -37,6 +37,10 @@ namespace {
 // get button N at once, as `pie --dialog-answer`; by default they wait for
 // the player, as the game does.
 int gDialogAnswer = -1;
+// --dialog-timeout S: the game's "autoTimeoutDialogs" debug property
+// (vm::autoTimeOutDialogs): an unanswered dialog takes its first button S
+// seconds of game time (at speed 1) after it opened.
+double gDialogTimeout = 0;
 bool gSkipFailures = false; // --skip-failures: VM::autonomySkipsFailures (ours, not the binary's)
 
 std::filesystem::path resRoot(const std::filesystem::path& pkg) {
@@ -108,6 +112,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
     machine.autoDialogAnswer = gDialogAnswer;
+    machine.dialogTimeoutSeconds = gDialogTimeout;
     machine.autonomySkipsFailures = gSkipFailures;
     machine.setClockGlobals();
     const bool hood = vm::loadLotNeighborhood(machine, lotFile);
@@ -236,6 +241,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     for (long i = 0; i < ticks; ++i) {
         machine.tick();
         printWantEvents();
+        vm::autoTimeOutDialogs(machine, double(machine.ticks) / machine.clock.ticksPerSecond);
         for (vm::ObjectId id : sims) {
             const vm::Object* s = machine.object(id);
             if (!s || !s->person)
@@ -393,6 +399,8 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
             gSkipFailures = true;
         else if (a == "--dialog-answer" && i + 1 < argc)
             gDialogAnswer = std::stoi(argv[++i]);
+        else if (a == "--dialog-timeout" && i + 1 < argc)
+            gDialogTimeout = std::stod(argv[++i]);
         else if (lotPath.empty())
             lotPath = a;
         else
@@ -404,7 +412,7 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* autonomyUsage() {
-    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N] [--skip-failures]\n";
+    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N] [--dialog-timeout seconds] [--skip-failures]\n";
 }
 
 } // namespace os2

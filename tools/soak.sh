@@ -1,9 +1,14 @@
 #!/bin/bash
 # Soak test: long unattended runs over every lot of the four neighborhoods to
 # find crashes, hangs, dead Mains and stuck Sims. For each lot it runs
-#   1. s2pkg autonomy <lot> --ticks N --every 1800   (N = SOAK_TICKS, default 129600 = 3 game days)
+#   1. s2pkg autonomy <lot> --ticks N --every 1800 --dialog-answer 0   (N = SOAK_TICKS, default 129600 = 3 game days)
 #   2. s2pkg lot-save <lot> <scratch>/out.package --ticks 300 --check
-#   3. the app: --lot <lot> --vm --ui live --run-vm 600 --screenshot x.png --no-audio
+#   3. the app: --lot <lot> --vm --ui live --run-vm 600 --screenshot x.png --no-audio --dialog-answer 0
+# Nobody plays during a soak, so the player's part is played by
+# --dialog-answer 0: every dialog a tree puts up (a phone call, ...) gets
+# its first button at once. Without it the game waits for the player
+# forever (the shipping game has no dialog timeout; SOAK_DIALOG=-1 keeps
+# that, any other value is the button).
 # and records: crashes (signal exit, with an lldb backtrace), hangs (wall time
 # above SOAK_HANG seconds; a background watchdog kills the job), Mains that
 # died (S2PKG_ERRORS=1), Sims in the same interaction for more than 6 game
@@ -16,6 +21,7 @@
 #        DATA   (data/game)               SOAK_TICKS (129600)
 #        SOAK_JOBS (4)                    SOAK_HANG (seconds per command, default 900; app 300)
 #        SOAK_NO_APP=1 skips the app run. SOAK_NO_LLDB=1 skips the backtrace.
+#        SOAK_DIALOG (0): the button every dialog gets; -1 waits for the player.
 # The report is a markdown table (docs/soak-report.md by default); the raw
 # per-lot findings stay in OUT/results/*.txt.
 set -u
@@ -28,6 +34,8 @@ SOAK_JOBS="${SOAK_JOBS:-4}"
 SOAK_HANG="${SOAK_HANG:-900}"
 STUCK_TICKS=${SOAK_STUCK_TICKS:-10800}   # 6 game hours at 30 ticks per game minute
 EVERY=1800          # one motive table per game hour
+SOAK_DIALOG="${SOAK_DIALOG:-0}"
+DIALOG_ARGS=(); [ "$SOAK_DIALOG" != "-1" ] && DIALOG_ARGS=(--dialog-answer "$SOAK_DIALOG")
 
 # run_limited <seconds> <outfile> cmd...: exit status of cmd; 999 if the watchdog killed it.
 run_limited() {
@@ -60,14 +68,14 @@ one() { # one <lot> <outdir>
 
     # 1. autonomy
     log="$scratch/auto.log"; t0=$(date +%s)
-    S2PKG_ERRORS=1 run_limited "$SOAK_HANG" "$log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY"; rc=$?
+    S2PKG_ERRORS=1 run_limited "$SOAK_HANG" "$log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"}; rc=$?
     t1=$(date +%s); echo "auto_secs=$((t1-t0))" >>"$res"
     if [ $rc -eq 999 ]; then echo "hang|autonomy|killed after ${SOAK_HANG}s; last: $(tail -c 300 "$log" | tr '\n' ' ')" >>"$res"
     elif [ $rc -ne 0 ] && [ $rc -lt 128 ] && ! grep -q "^after " "$log"; then
         echo "error|autonomy|exit $rc: $(grep -m1 -E '^error' "$log")" >>"$res"
     elif [ $rc -ge 128 ]; then
         echo "crash|autonomy|exit $rc: $(tail -n 2 "$log" | tr '\n' ' ')" >>"$res"
-        backtrace "$scratch/lldb1.log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" | sed 's/^/bt|autonomy|/' >>"$res"
+        backtrace "$scratch/lldb1.log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"} | sed 's/^/bt|autonomy|/' >>"$res"
     fi
     grep "Main failed:" "$log" | sed -E 's/^ *([^ ]+) .*Main failed: /dead|autonomy|\1: /' >>"$res"
     grep -c "instruction budget exhausted" "$log" | sed 's/^/budget_autonomy=/' >>"$res"
@@ -112,14 +120,14 @@ one() { # one <lot> <outdir>
     # 3. app
     if [ -z "${SOAK_NO_APP:-}" ] && [ -x "$APP" ]; then
         log="$scratch/app.log"; t0=$(date +%s)
-        OS2_DATA="$DATA" run_limited 300 "$log" "$APP" --lot "$lot" --vm --ui live --run-vm 600 --screenshot "$scratch/x.png" --no-audio; rc=$?
+        OS2_DATA="$DATA" run_limited 300 "$log" "$APP" --lot "$lot" --vm --ui live --run-vm 600 --screenshot "$scratch/x.png" --no-audio ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"}; rc=$?
         t1=$(date +%s); echo "app_secs=$((t1-t0))" >>"$res"
         if [ $rc -eq 999 ]; then echo "hang|app|killed after 300s" >>"$res"
         elif [ $rc -lt 128 ] && [ $rc -ne 0 ]; then
             echo "error|app|exit $rc: $(tail -n 1 "$log")" >>"$res"
         elif [ $rc -ne 0 ] || [ ! -s "$scratch/x.png" ]; then
             echo "crash|app|exit $rc: $(tail -n 2 "$log" | tr '\n' ' ')" >>"$res"
-            backtrace "$scratch/lldb3.log" "$APP" --lot "$lot" --vm --ui live --run-vm 600 --screenshot "$scratch/x.png" --no-audio | sed 's/^/bt|app|/' >>"$res"
+            backtrace "$scratch/lldb3.log" "$APP" --lot "$lot" --vm --ui live --run-vm 600 --screenshot "$scratch/x.png" --no-audio ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"} | sed 's/^/bt|app|/' >>"$res"
         fi
         rm -f "$scratch/x.png" "$log"
     fi
@@ -140,7 +148,7 @@ if [ ${#LOTS[@]} -eq 0 ]; then
 fi
 if [ -z "$REPORT_ONLY" ]; then
     rm -rf "$OUT/results" "$OUT/scratch"; mkdir -p "$OUT/results"
-    export S2PKG APP DATA SOAK_TICKS SOAK_HANG SOAK_NO_APP SOAK_NO_LLDB SOAK_STUCK_TICKS
+    export S2PKG APP DATA SOAK_TICKS SOAK_HANG SOAK_NO_APP SOAK_NO_LLDB SOAK_STUCK_TICKS SOAK_DIALOG
     printf '%s\n' "${LOTS[@]}" | xargs -P "$SOAK_JOBS" -I{} "$0" --one {} "$OUT"
 fi
 

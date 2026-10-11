@@ -938,6 +938,10 @@ public:
     std::map<ObjectId, Dialog> dialogs;
     std::deque<Dialog> notifications;
     int autoDialogAnswer = -1;
+    // The game's "autoTimeoutDialogs" debug property (autoTimeOutDialogs in
+    // dialog.hpp): seconds of the host clock before an unanswered tree
+    // dialog takes its first button; 0 = never (the shipping game).
+    double dialogTimeoutSeconds = 0;
     // Ours, not the binary's: Find Best Interaction leaves out what the Sim
     // ran autonomously and failed in the last 9999 ticks (autonomy.cpp). Off
     // by default: the binary's autonomy memory changes nothing in the base game.

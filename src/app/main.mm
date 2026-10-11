@@ -743,6 +743,11 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
+    // --dialog-timeout <seconds>: the game's "autoTimeoutDialogs" debug
+    // property; a dialog nobody answers takes its first button after that
+    // long (vm::autoTimeOutDialogs; the shipping game waits forever).
+    if (auto a = argument(@"--dialog-timeout"))
+        gSimulation->machine().dialogTimeoutSeconds = std::stod(*a);
     try {
         const auto plumbob = os2::loadObjectModel(index, "plumbob");
         gPlumbob = renderer.addInstance(renderer.addObject(plumbob, index), matrix_identity_float4x4);

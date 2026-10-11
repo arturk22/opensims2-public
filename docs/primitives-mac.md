@@ -1268,6 +1268,22 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
   (0x01/0x02/0x40 de onde vem o texto: privado/semi-global/global, 0x04–0x20
   índices de botões e título no temp 0), prioridade byte 9 + 1, timeout byte
   10, tipo de notificação s8 12.
+  **Timeout** (rodada 9, `TryDialog` BV `0xe2bb64`): o byte 10 só vai para as
+  notificações de texto (tipos 8, 10 e 0x1C): `cTSUINotificationService::
+  SetNotificationTimeOut` (vtable 0x18) com o byte 10 e `SetNotificationPriority`
+  (0x1C) com o byte 9; a janela (`cTSWinNotification::IsDone`) termina quando o
+  relógio passa do tempo guardado em +0x150. Os diálogos que esperam vão para
+  `cEdithObjectModule::EnqueueObjectDialog` (vtable 0x134) e a classe criada
+  por `cTSUIDialogManager::GetObjectDialog` pelo tipo (padrão CLSID
+  0x3798E2DB, `SetParams` em `0x1d2b20`) não lê o byte 10: enquanto o estado
+  do diálogo (vtable 0x1C) é 0/1 o `TryDialog` devolve "esperar" (2). Nada no
+  jogo lançado fecha um diálogo sozinho; só a propriedade de depuração
+  `autoTimeoutDialogs` (lida no `onTick` de algumas janelas de diálogo, p.ex.
+  `0x3707d8`: fecha pela vtable 0x9C depois de N ms desde a abertura; as
+  strings "dialog TimeOut Default/Multipler Milliseconds" ficam ao lado, sem
+  referência achada). No VM: `VM::dialogTimeoutSeconds` / `autoTimeOutDialogs`
+  (desligado), `s2pkg autonomy --dialog-timeout S` e `--dialog-timeout` no app;
+  o botão escolhido no timeout é o primeiro (inferido).
 - **0x2D Go To Routing Slot**: slot u16 0; de onde u16 2 (0 parâmetro, 1
   literal, 2 global, 3 "???"); flags byte 4: 0x01 sem árvores de falha, 0x02
   slot no temp 0 (com u16 2 = 1), **0x04 ignora a área do objeto de

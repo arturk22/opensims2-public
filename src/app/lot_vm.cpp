@@ -281,7 +281,9 @@ void LotSimulation::updateScene(double seconds) {
     // The actors show the moment one tick behind the VM.
     const auto target = uint64_t(std::max(0.0, std::floor(seconds * rate))) + 1;
     // A dialog that blocks the game (Dialog, "engage and block") pauses it:
-    // the VM's clock slips while the player has not answered.
+    // the VM's clock slips while the player has not answered (unless the
+    // "autoTimeoutDialogs" option answers it, on the scene clock).
+    vm::autoTimeOutDialogs(*vm_, seconds + slip_);
     if (vm::dialogPausesGame(*vm_)) {
         slip_ = seconds + slip_ - double(vm_->ticks - 1) / rate;
         seconds = double(vm_->ticks - 1) / rate;

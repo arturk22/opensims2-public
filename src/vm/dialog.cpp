@@ -157,6 +157,23 @@ std::string stringAt(const StringTable* t, int oneBased) {
 
 } // namespace
 
+int autoTimeOutDialogs(VM& vm, double now) {
+    if (vm.dialogTimeoutSeconds <= 0)
+        return 0;
+    int answered = 0;
+    for (auto& [who, d] : vm.dialogs) {
+        if (!d.blocking || d.answer >= 0 || !d.tree) // the host's own dialogs have no tree
+            continue;
+        if (d.opened < 0)
+            d.opened = now;
+        else if (now - d.opened >= vm.dialogTimeoutSeconds) {
+            d.answer = 0;
+            ++answered;
+        }
+    }
+    return answered;
+}
+
 bool dialogPausesGame(const VM& vm) {
     for (const auto& [who, d] : vm.dialogs)
         if (d.blocking && d.answer < 0 && !d.continueOthers)
