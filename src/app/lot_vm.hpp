@@ -63,6 +63,10 @@ public:
     // bit of its character file's keys (vm::outfitCategoryBit); the host
     // rebuilds the actor's model.
     std::function<void(int16_t id, SimActor& actor, uint32_t category)> onOutfitChange;
+    // Called when a Sim's person data 58 "Person Age" changes (the Age
+    // primitive): `ageBit` is the new life stage (1 toddler, 2 child, 4
+    // teen, 8 adult, 0x10 elder, 0x20 baby); the host rebuilds the body.
+    std::function<void(int16_t id, SimActor& actor, uint32_t ageBit)> onAgeChange;
     // Called when an object (not a Sim) starts an animation the VM plays on
     // it (Animate Object / Animate Overlay: AnimationState::overlays), at
     // `at` seconds in the caller's clock; the host poses the object with it.
@@ -101,6 +105,7 @@ private:
         uint32_t serial = 0;
         uint32_t climbSerial = 0;
         int16_t outfit = 0; // person data 8 the actor is dressed for
+        int16_t age = 0;    // person data 58 the actor was built for
         float zOffset = 0; // the cObject's height over the floor the VM's level gives
         std::vector<std::string> overlays; // playing over the base animation
         std::shared_ptr<HeadLook> look;    // the head turning towards Object::lookAt

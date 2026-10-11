@@ -68,6 +68,9 @@
 #include "vm/engine.hpp"
 #include "audio/play_sound.hpp"
 #include "formats/camera_config.hpp"
+#include "formats/cas_catalog.hpp"
+#include "formats/cas_face.hpp"
+#include "formats/character_write.hpp"
 #include "formats/image.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lighting_config.hpp"
@@ -112,6 +115,7 @@
 #include "lot_lighting.hpp"
 #include "door_portals.hpp"
 #include "vm/lot.hpp"
+#include "vm/placement.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -625,6 +629,37 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             std::fprintf(stderr, "opensims2: Sim %d: outfit 0x%03X: %s\n", id, category, e.what());
         }
     };
+    // A Sim that grows up (the Age primitive) gets its character file grown
+    // into the new age (cas::writeAgedCharacter: MakeNewAge's hair and
+    // clothes, the face of the new age from its LxNR), written beside the
+    // session's other files, and is rebuilt from it.
+    gSimulation->onAgeChange = [&renderer, &index](int16_t id, os2::SimActor& actor, uint32_t ageBit) {
+        const auto it = std::find_if(gLotSims.begin(), gLotSims.end(), [&](const LotSim& s) { return s.id == id; });
+        if (it == gLotSims.end())
+            return;
+        try {
+            static std::unique_ptr<os2::cas::CasCatalog> catalog;
+            static std::unique_ptr<os2::cas::FaceBaker> baker;
+            if (!catalog) {
+                catalog = std::make_unique<os2::cas::CasCatalog>(os2::cas::CasCatalog::load(index));
+                baker = std::make_unique<os2::cas::FaceBaker>(index, *catalog);
+            }
+            const fs::path dir = os2::sessionCharactersDir(); // the save copies it to the neighborhood
+            const fs::path out = dir / (it->character.stem().string() + ".package");
+            const fs::path tmp = dir / (it->character.stem().string() + ".new.package");
+            os2::cas::writeAgedCharacter(index, *catalog, *baker, it->character, ageBit, tmp, uint32_t(id) * 7919u + ageBit);
+            fs::rename(tmp, out);
+            it->character = out;
+            actor.skin = os2::loadCharacterSim(index, simParts(index), it->character, 1);
+            actor.player.setSkeleton(&actor.skin.skeleton);
+            const int model = renderer.addObject(actor.skin.model, index, true);
+            renderer.retargetInstances(actor.model, model);
+            actor.model = model;
+            std::printf("opensims2: Sim %d grew into age 0x%02X (%s)\n", id, ageBit, out.string().c_str());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: Sim %d: age 0x%02X: %s\n", id, ageBit, e.what());
+        }
+    };
     // Objects the VM animates (doors, fridges, phones, ...) swap their static
     // model for a skinned one of the same CRES, posed by the animation.
     gSimulation->onObjectAnimation = [&renderer, &index](int16_t id, const std::string& name, double at) {
@@ -740,6 +775,11 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     }
     std::printf("opensims2: VM: %s, %zu Sims attached (%.2f s)\n", gSimulation->summary().c_str(), gLotSims.size(),
                 CACurrentMediaTime() - start);
+    // --vm-create GUID[:attr=value,...]: test aid, an object made out of the
+    // world (vm::createTestObject; a party controller 0x2C91C16A:2=1 makes
+    // the birthday play its cinematic).
+    if (auto spec = argument(@"--vm-create"))
+        std::printf("opensims2: created object %d\n", os2::vm::createTestObject(gSimulation->machine(), *spec));
     // --motives <n>: test aid, every Sim's motives at n (instead of the saved ones).
     if (auto m = argument(@"--motives"))
         os2::vm::setAllMotives(gSimulation->machine(), int16_t(std::stoi(*m)));

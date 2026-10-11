@@ -114,6 +114,7 @@ void LotSimulation::attach(SimActor& actor, int16_t id, const Character& charact
         std::fprintf(stderr, "opensims2: Sim %d stands %.2f over its floor\n", id, b.zOffset);
     b.playing = idle;
     b.outfit = o->person ? o->person->data[kCurrentOutfit] : 0;
+    b.age = o->person ? o->person->data[vm::persondata::PersonAge] : 0;
     b.look = std::make_shared<HeadLook>(actor);
     actor.adjust = [look = b.look](std::vector<Xform>& local, double now) { look->apply(local, now); };
     bound_.push_back(std::move(b));
@@ -184,6 +185,14 @@ void LotSimulation::sampleAll(double at) {
         b.motion.sample(*vm_, *o);
         playOverlays(b, *o, at);
         const auto& s = b.motion.current();
+        if (o->person && o->person->data[vm::persondata::PersonAge] != b.age) {
+            // The life stage as ComputeAging maps person data 58 (docs/cas-mac.md §17.2).
+            b.age = o->person->data[vm::persondata::PersonAge];
+            const int a = b.age;
+            const uint32_t bit = a < 2 ? 0x20 : a == 2 ? 0x01 : a <= 15 ? 0x02 : a <= 18 ? 0x04 : a <= 50 ? 0x08 : 0x10;
+            if (onAgeChange)
+                onAgeChange(b.id, *b.actor, bit);
+        }
         if (o->person && o->person->data[kCurrentOutfit] != b.outfit) {
             b.outfit = o->person->data[kCurrentOutfit];
             if (const uint32_t bit = vm::outfitCategoryBit(b.outfit); bit && onOutfitChange)

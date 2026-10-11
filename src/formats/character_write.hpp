@@ -49,7 +49,11 @@ namespace cas {
 
 struct CharacterSpec {
     uint32_t age = age::Adult, gender = gender::Female;
-    int skinTone = 1; // 1..4 (Light, Medium, Medium-Dark, Dark)
+    int skinTone = 1; // 1..4 (Light, Medium, Medium-Dark, Dark); the textures' "s<N>" (5: alien)
+    // A skin tone family that is not "0000000N-..." (the alien skin of
+    // Strangetown's Sims), kept for the AGED and the face TXMT; empty =
+    // the family of skinTone.
+    std::string skinFamily;
     int hairTone = 2; // 1 black, 2 brown, 3 blond, 4 red, 5 grey
     int fitness = 0;  // AGED "fitness": 0 normal, 2 fat (the fat outfit versions)
     std::string eyes; // textureoverlay family (subtype 3)
@@ -108,6 +112,21 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
 // to catalog part names), the face TXMT's cafOverlay* (the overlays), the
 // LxNR (face.structure) and the CTSS names. Throws without an AGED.
 CharacterSpec readCharacterSpec(class DbpfPackage& package, uint32_t group, const CasCatalog& catalog);
+
+// A Sim grown into the age `newAge`, as cTSSimOutfitData::MakeNewAge
+// does it for the Age primitive (docs/cas-mac.md §17.2): the same Sim
+// (tones, eyes, overlays, the LxNR face, which gives the new age's face)
+// with, per category, the hair of the same family in the new age (else one
+// in the hair tone; elders grey), and new clothes drawn at random (`seed`).
+void ageSpec(const CasCatalog& catalog, CharacterSpec& spec, uint32_t newAge, uint32_t seed);
+
+// Reads the character file `file` (its AGED, LxNR, names and its OBJD's
+// GUID), grows it into `newAge` (ageSpec) and writes the new character
+// file to `out` under the same object name and GUID, with the LxNR (the
+// game rewrites the character on aging: TryAge's UpdateFaces, §17.1).
+CharacterWriteResult writeAgedCharacter(ResourceIndex& index, const CasCatalog& catalog, FaceBaker& baker,
+                                        const std::filesystem::path& file, uint32_t newAge,
+                                        const std::filesystem::path& out, uint32_t seed = 1);
 
 // The next life stage's age bit (baby -> toddler -> child -> teen -> adult
 // -> elder), 0 for elders.

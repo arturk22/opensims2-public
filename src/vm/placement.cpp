@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <stdexcept>
 #include <tuple>
 
 namespace os2::vm {
@@ -312,6 +313,28 @@ ObjectId createGhost(VM& vm, uint32_t group, uint16_t definitionInstance) {
             o->data[objdata::CurrentValue] = int16_t(std::min<int>(o->definition->price(), 32767));
     }
     return leadId;
+}
+
+ObjectId createTestObject(VM& vm, const std::string& spec) {
+    const auto colon = spec.find(':');
+    const uint32_t guid = uint32_t(std::stoul(spec.substr(0, colon), nullptr, 0));
+    const auto at = vm.code().definitionByGuid(guid);
+    if (!at)
+        throw std::runtime_error("no OBJD with GUID " + spec.substr(0, colon));
+    const ObjectId id = createGhost(vm, at->first, at->second);
+    Object& o = *vm.object(id);
+    for (size_t a = colon == std::string::npos ? spec.size() : colon + 1, b; a < spec.size(); a = b + 1) {
+        b = spec.find(',', a);
+        if (b == std::string::npos)
+            b = spec.size();
+        const std::string kv = spec.substr(a, b - a);
+        const auto eq = kv.find('=');
+        const size_t attr = std::stoul(kv.substr(0, eq));
+        if (o.attributes.size() <= attr)
+            o.attributes.resize(attr + 1);
+        o.attributes[attr] = int16_t(std::stoi(kv.substr(eq + 1)));
+    }
+    return id;
 }
 
 void deleteGroup(VM& vm, ObjectId id) {

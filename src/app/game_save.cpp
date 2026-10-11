@@ -10,6 +10,8 @@
 #include "vm/lot_save.hpp"
 
 #include <algorithm>
+#include <string>
+#include <unistd.h>
 #include <cstdio>
 #include <map>
 
@@ -73,6 +75,17 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
                 out.lines.push_back("warning: " + w);
         }
         fs::rename(tmpLot, lotFile);
+        // Character files rewritten in play (aging) replace the neighborhood's.
+        if (const fs::path chars = lotFile.parent_path().parent_path() / "Characters"; fs::is_directory(chars)) {
+            std::error_code ec;
+            for (const auto& f : fs::directory_iterator(sessionCharactersDir(), ec))
+                if (f.path().extension() == ".package" && fs::exists(chars / f.path().filename())) {
+                    const fs::path tmp = chars / (f.path().filename().string() + ".saving");
+                    fs::copy_file(f.path(), tmp, fs::copy_options::overwrite_existing);
+                    fs::rename(tmp, chars / f.path().filename());
+                    out.lines.push_back("character " + f.path().filename().string() + " (grown up)");
+                }
+        }
         if (const fs::path hoodPackage = vm::neighborhoodPackageOf(lotFile); !hoodPackage.empty()) {
             const fs::path tmpHood = hoodPackage.parent_path() / (hoodPackage.filename().string() + ".saving");
             const hood::Neighborhood hood = hood::Neighborhood::load(hoodPackage, true);
@@ -92,6 +105,16 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
         out.error = e.what();
     }
     return out;
+}
+
+fs::path sessionCharactersDir() {
+    static const fs::path dir = [] {
+        fs::path d = fs::temp_directory_path() / ("opensims2-characters-" + std::to_string(::getpid()));
+        std::error_code ec;
+        fs::create_directories(d, ec);
+        return d;
+    }();
+    return dir;
 }
 
 } // namespace os2

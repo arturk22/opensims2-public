@@ -32,4 +32,9 @@ struct GameSaveResult {
 // the cObjects of objects created during play).
 GameSaveResult saveGame(vm::VM& vm, const std::filesystem::path& lotFile, const std::filesystem::path& gameDir);
 
+// Where this session keeps the character files it rewrote (a Sim grown up:
+// the game saves the character on aging, docs/cas-mac.md §17.1); saveGame
+// copies each over the neighborhood's file of the same name.
+std::filesystem::path sessionCharactersDir();
+
 } // namespace os2

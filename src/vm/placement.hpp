@@ -125,6 +125,11 @@ void pickUp(VM& vm, ObjectId id);
 // value (od 41) becomes its OBJD price (no Main yet; JustBorn and Reset
 // are not modelled): the ghost Buy mode moves around. Returns the lead.
 ObjectId createGhost(VM& vm, uint32_t group, uint16_t definitionInstance);
+// Test aid (s2pkg pie --create, the app's --vm-create): "GUID[:attr=value,
+// ...]" made as createGhost makes it, with those attributes (e.g. a party
+// controller, "0x2C91C16A:2=1", for the birthday cinematic). Throws when
+// the GUID has no OBJD.
+ObjectId createTestObject(VM& vm, const std::string& spec);
 // Removes a group from the VM at once (a ghost given up, an object sold
 // at the end of the session): the delete (49) and cleanup (3) trees run.
 void deleteGroup(VM& vm, ObjectId id);

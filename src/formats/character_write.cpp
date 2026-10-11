@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <map>
 #include <random>
 
 namespace os2::cas {
@@ -280,6 +281,13 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
     spec.fitness = int(num("fitness", 0));
     if (int t = toneNumber(str("skincolor")))
         spec.skinTone = std::clamp(t, 1, 4);
+    else if (!str("skincolor").empty()) {
+        // Another family: the alien skin's textures are "s5" (tmface-s5 in the
+        // Smiths' files; inferred for others).
+        spec.skinFamily = str("skincolor");
+        if (const SimPart* t = catalog.byFamily(catalog.skinTones, spec.skinFamily); t && lower(t->name()).find("alien") != std::string::npos)
+            spec.skinTone = 5;
+    }
     if (int t = toneNumber(str("haircolor")))
         spec.hairTone = std::clamp(t, 1, 5);
     spec.eyes = str("eyecolor");
@@ -505,7 +513,7 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
     char idText[16];
     std::snprintf(idText, sizeof idText, "0x%08x", unsigned(res.guid * 2654435761u));
     const std::string id = idText;
-    const std::string skinFamily = toneFamily(spec.skinTone), hairFamily = toneFamily(spec.hairTone);
+    const std::string skinFamily = spec.skinFamily.empty() ? toneFamily(spec.skinTone) : spec.skinFamily, hairFamily = toneFamily(spec.hairTone);
     const std::string prefix = agePrefix(spec.age, spec.gender, true);
 
     // The overlays drawn over the face skin, in layer order (eyes first).
@@ -925,6 +933,56 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
     std::filesystem::create_directories(out.parent_path().empty() ? "." : out.parent_path());
     pkg.save(out);
     return res;
+}
+
+void ageSpec(const CasCatalog& c, CharacterSpec& spec, uint32_t newAge, uint32_t seed) {
+    // The hair families worn, by category (MakeNewAge step 3).
+    std::map<uint32_t, std::string> hairFamily;
+    for (const auto& [cat, parts] : spec.outfits)
+        if (auto it = parts.find(part::Hair); it != parts.end())
+            if (const SimPart* h = partByName(c, it->second))
+                hairFamily[cat] = family(*h);
+    spec.age = newAge;
+    if (newAge == age::Elder)
+        spec.hairTone = 5; // SetHairColor(null LID): grey
+    const std::string tone = toneFamily(spec.hairTone);
+    spec.outfits.clear();
+    for (const auto& [cat, fam] : hairFamily)
+        for (const SimPart* h : c.hairStyles(newAge, spec.gender, tone))
+            if (family(*h) == fam) {
+                spec.outfits[cat][part::Hair] = h->name();
+                break;
+            }
+    // Brows of the new age.
+    std::vector<std::string> keep;
+    for (const auto& f : spec.overlays)
+        if (const SimPart* o = c.byFamily(c.textureOverlays, f); !o || o->number("subtype") != overlay::Brows)
+            keep.push_back(f);
+    spec.overlays = std::move(keep);
+    // The clothes drawn again (Randomize with only the clothes valid), the
+    // rest as a new Sim's (completeSpec).
+    completeSpec(c, spec, seed ? seed : 1);
+    for (uint32_t cat : outfitCategories(newAge, spec.gender))
+        if (cat != category::Everyday && cat != category::Naked && spec.outfits[cat].count(part::Hair) == 0)
+            if (auto it = spec.outfits[category::Everyday].find(part::Hair); it != spec.outfits[category::Everyday].end())
+                spec.outfits[cat][part::Hair] = it->second;
+}
+
+CharacterWriteResult writeAgedCharacter(ResourceIndex& index, const CasCatalog& catalog, FaceBaker& baker,
+                                        const std::filesystem::path& file, uint32_t newAge,
+                                        const std::filesystem::path& out, uint32_t seed) {
+    CharacterSpec spec;
+    {
+        DbpfPackage pkg(file);
+        spec = readCharacterSpec(pkg, 0xFFFFFFFF, catalog);
+        for (const auto& e : pkg.entries())
+            if (e.tgi.type == 0x4F424A44) { // OBJD: the Sim's GUID stays
+                spec.guid = ObjectDefinition::parse(pkg.read(e)).guid();
+                break;
+            }
+    }
+    ageSpec(catalog, spec, newAge, seed);
+    return writeCharacter(index, catalog, baker, spec, file.stem().string(), out, true);
 }
 
 } // namespace os2::cas

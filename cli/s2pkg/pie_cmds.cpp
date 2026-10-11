@@ -81,25 +81,8 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     // attributes (e.g. a party controller for the birthday cinematic:
     // --create 0x2C91C16A:2=1).
     for (const std::string& spec : creates) {
-        const auto colon = spec.find(':');
-        const uint32_t guid = uint32_t(std::stoul(spec.substr(0, colon), nullptr, 0));
-        const auto at = code.definitionByGuid(guid);
-        if (!at)
-            throw std::runtime_error("--create: no OBJD with GUID " + spec.substr(0, colon));
-        const vm::ObjectId id = vm::createGhost(machine, at->first, at->second);
-        vm::Object& o = *machine.object(id);
-        for (size_t a = colon == std::string::npos ? spec.size() : colon + 1, b; a < spec.size(); a = b + 1) {
-            b = spec.find(',', a);
-            if (b == std::string::npos)
-                b = spec.size();
-            const std::string kv = spec.substr(a, b - a);
-            const auto eq = kv.find('=');
-            const size_t attr = std::stoul(kv.substr(0, eq));
-            if (o.attributes.size() <= attr)
-                o.attributes.resize(attr + 1);
-            o.attributes[attr] = int16_t(std::stoi(kv.substr(eq + 1)));
-        }
-        std::printf("created %d: %s\n", id, nameOf(o).c_str());
+        const vm::ObjectId id = vm::createTestObject(machine, spec);
+        std::printf("created %d: %s\n", id, nameOf(*machine.object(id)).c_str());
     }
     const vm::ObjectId sim = vm::findSim(machine, simQuery);
     if (!sim)
