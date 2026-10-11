@@ -960,6 +960,7 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
                 gLive->setMode(0);
             }
         };
+    gBuy->pickObject = [](simd_float3 eye, simd_float3 dir) { return gPie ? gPie->pick(eye, dir) : os2::vm::ObjectId(0); };
     if (gAudio)
         gBuy->playSound = [](const std::string& name) {
             os2::SoundSystem::PlayOptions o;
@@ -1102,6 +1103,8 @@ void runBuySteps() {
                 gBuy->placeAt(x, y, dir);
         } else if (a == "--grab") {
             gBuy->grab(os2::vm::ObjectId(std::stoi(v)));
+        } else if (a == "--eyedrop") {
+            gBuy->eyedrop(os2::vm::ObjectId(std::stoi(v)));
         } else if (a == "--sell") {
             gBuy->deleteHeld();
         } else if (a == "--undo") {
@@ -3295,6 +3298,10 @@ void unloadScene() {
                 const simd_float4 q =
                     simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / cw - 1, 1 - 2 * p.y / ch, 0.5f, 1));
                 const simd_float3 eye = view.camera->eye();
+                if (gBuy && gBuy->active()) { // the object tools, not the pie menu
+                    gBuy->click(eye, simd_normalize(q.xyz / q.w - eye));
+                    continue;
+                }
                 const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
                 const os2::vm::Object* o = gPie->vm().object(id);
                 std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", clickX, clickY, id,

@@ -28,7 +28,7 @@ constexpr uint32_t kBgFunction = 0x4CC48AA1, kBgRoom = 0x4CC48AA2, kBgCollection
 constexpr uint32_t kFunctionSort = 0x0A00, kFunctionButtons = 0xA000, kRoomSort = 0x0C00, kRoomButtons = 0xC000,
                    kRoomFunctions = 0xD000, kRoomBack = 0xDA00, kCollections = 0x0E00;
 constexpr uint32_t kCatalog = 0x898F42CD, kCollapsed = 0x1000, kPrev = 0x1004, kNext = 0x1005;
-constexpr uint32_t kToolHand = 0xCC607031, kUndo = 0xCC607033, kRedo = 0xCC607034;
+constexpr uint32_t kToolHand = 0xCC607031, kToolEyedropper = 0xCC607032, kToolTag = 0xCC607030, kUndo = 0xCC607033, kRedo = 0xCC607034;
 // The collapsed grid (window 0x1006 of 0x1000: 176 x 100). The columns,
 // rows and margins are the collections window's constants on the same
 // panel (kCollapsedColumns=3, kCollapsedRows=2, margins 2 and 6;
@@ -170,6 +170,7 @@ void BuyMode::exit() {
     if (!active_)
         return;
     cancel();
+    tool_ = Tool::Hand;
     // The history is reset: what was sold dies now (ResetSelf).
     for (const Op& op : undo_)
         if (op.kind == Op::Kind::Deleted && vm_.object(op.id)) {
@@ -378,24 +379,77 @@ bool BuyMode::grab(vm::ObjectId id) {
     return true;
 }
 
+// What the tools act on: the object under the mouse ray, else (and for a
+// slot's contents first) what stands on the tile under it. People are never
+// picked.
+vm::ObjectId BuyMode::objectAt(simd_float3 eye, simd_float3 dir, const std::optional<vm::TilePos>& tile) const {
+    auto usable = [&](vm::ObjectId id) {
+        const vm::Object* o = vm_.object(id);
+        return o && !o->person && o->definition;
+    };
+    if (pickObject)
+        if (const vm::ObjectId id = pickObject(eye, dir); usable(id))
+            return id;
+    if (!tile)
+        return 0;
+    // An object in a slot of something on the tile first, then what stands on it.
+    const std::vector<vm::ObjectId> on = vm_.objectsOnTile(*tile);
+    for (vm::ObjectId id : on)
+        for (const auto& [other, x] : vm_.objects())
+            if (x.data[vm::objdata::ContainerId] == id && !x.person && x.definition)
+                return other;
+    for (vm::ObjectId id : on)
+        if (usable(id))
+            return id;
+    return 0;
+}
+
+void BuyMode::setTool(Tool t) {
+    cancel();
+    tool_ = t;
+    dirty_ = true;
+}
+
+bool BuyMode::eyedrop(vm::ObjectId id) {
+    const vm::Object* o = vm_.object(id);
+    if (!o || o->person || !o->definition)
+        return false;
+    const vm::ObjectId lead = vm::multiTileGroup(*o);
+    const vm::Object* l = vm_.object(lead);
+    const CatalogEntry* entry = l ? catalog_.byGuid(l->guid()) : nullptr;
+    if (!entry && l)
+        entry = catalog_.find(l->definition->fileName);
+    if (!entry) {
+        say(std::string(o->definition->fileName) + " is not in the catalog");
+        sound("ui_error");
+        return false;
+    }
+    if (!select(*entry))
+        return false;
+    tool_ = Tool::Hand; // the object tool takes over, as after a catalog click
+    return true;
+}
+
 bool BuyMode::click(simd_float3 eye, simd_float3 dir) {
     if (!active_)
         return false;
     const auto t = tileUnder(eye, dir);
-    if (!t)
-        return false;
-    if (held_)
+    if (held_) {
+        if (!t)
+            return false;
         return placeAt(t->x, t->y, direction_);
-    // The hand: an object in a slot of something on the tile first, then
-    // what stands on it.
-    std::vector<vm::ObjectId> on = vm_.objectsOnTile(*t);
-    for (vm::ObjectId id : on)
-        for (const auto& [other, x] : vm_.objects())
-            if (x.data[vm::objdata::ContainerId] == id && !x.person && x.definition)
-                return grab(other);
-    for (vm::ObjectId id : on)
-        if (grab(id))
-            return true;
+    }
+    const vm::ObjectId id = objectAt(eye, dir, t);
+    if (!id)
+        return false;
+    switch (tool_) {
+    case Tool::Eyedropper: return eyedrop(id);
+    case Tool::Sell:
+        if (!grab(id))
+            return false;
+        return deleteHeld();
+    case Tool::Hand: return grab(id);
+    }
     return false;
 }
 
@@ -637,7 +691,11 @@ UiScreen BuyMode::screen(int width, int height) {
     if (const UiElement* e = root.child(kTabCollections)) // collections are Bon Voyage's
         hk.hide.insert(e);
     if (const UiElement* e = root.child(kToolHand))
-        hk.buttonState[e] = held_ && !heldNew_ ? 2 : 1;
+        hk.buttonState[e] = (held_ && !heldNew_) || (tool_ == Tool::Hand && !held_) ? 2 : 1;
+    if (const UiElement* e = root.child(kToolEyedropper))
+        hk.buttonState[e] = tool_ == Tool::Eyedropper ? 2 : 1;
+    if (const UiElement* e = root.child(kToolTag))
+        hk.buttonState[e] = tool_ == Tool::Sell ? 2 : 1;
     if (const UiElement* e = root.child(kUndo))
         hk.buttonState[e] = undo_.empty() ? 0 : 1;
     if (const UiElement* e = root.child(kRedo))
@@ -728,6 +786,8 @@ UiScreen BuyMode::screen(int width, int height) {
     target(root.child(kTabFunction), Action::Tab, 0);
     target(root.child(kTabRoom), Action::Tab, 1);
     target(root.child(kToolHand), Action::Tool, 0);
+    target(root.child(kToolEyedropper), Action::Tool, 1);
+    target(root.child(kToolTag), Action::Tool, 2);
     target(root.child(kUndo), Action::Undo, 0);
     target(root.child(kRedo), Action::Redo, 0);
     if (collapsed) {
@@ -875,7 +935,7 @@ bool BuyMode::press(simd_float2 p) {
                 select(*list[size_t(t.value)]);
             break;
         }
-        case Action::Tool: cancel(); break;
+        case Action::Tool: setTool(Tool(t.value)); break;
         case Action::Undo: undo(); break;
         case Action::Redo: redo(); break;
         case Action::None: break;

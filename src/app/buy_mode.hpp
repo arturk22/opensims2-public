@@ -66,6 +66,17 @@ public:
     // UI sounds by name (the drop, the turn, the pickup, a refusal: the
     // ui_* sounds of docs/buy-build-mac.md §6).
     std::function<void(const std::string&)> playSound;
+    // The object under a mouse ray (the host's picking, as the pie menu does
+    // it); without it the tool falls back to the tile under the mouse.
+    std::function<vm::ObjectId(simd_float3 eye, simd_float3 dir)> pickObject;
+    // The left column's tools: the hand (move/sell), the eyedropper (picks
+    // the catalog item of the object clicked) and the tag (sells the object
+    // clicked at once, for what a pickup and Delete would give).
+    enum class Tool { Hand, Eyedropper, Sell };
+    Tool tool() const { return tool_; }
+    void setTool(Tool t);
+    // The eyedropper on a placed object: holds a new one of its catalog item.
+    bool eyedrop(vm::ObjectId id);
 
     // --- The lot -------------------------------------------------------------
     // The mouse ray over the lot (world space): what is held follows it.
@@ -101,6 +112,8 @@ public:
 
 private:
     enum class Sort { Function, Room };
+    Tool tool_ = Tool::Hand;
+    vm::ObjectId objectAt(simd_float3 eye, simd_float3 dir, const std::optional<vm::TilePos>& tile) const;
     enum class Action { None, Tab, Function, SubSort, Room, RoomFunction, Back, Prev, Next, Expand, Item, Tool, Undo, Redo };
     struct Target {
         std::array<float, 4> rect;
