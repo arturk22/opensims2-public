@@ -642,10 +642,19 @@ Object& VM::instantiate(uint32_t group, uint16_t definitionInstance) {
     const auto parts = code_.parts(group, def->masterId());
     if (parts.empty())
         throw VMError("multi-tile OBJD " + hexString(group) + "/" + hexString(definitionInstance) + " has no parts");
-    // The lead is the part with sub index 0, else the first.
+    // The lead is the part whose OBJD "multi-tile lead object" (label 63,
+    // offset 0xBE) is set, else the one with sub index 0, else the first: the
+    // saved lots lead a double bed by its "E - Head" (sub index 0x0002, the
+    // flagged part), which the game created first (the lowest ID).
     uint16_t lead = parts.front();
+    bool flagged = false;
     for (uint16_t p : parts)
-        if (const ObjectDefinition* d = code_.definition(group, p); d && d->subIndex() == 0) {
+        if (const ObjectDefinition* d = code_.definition(group, p); d && d->field(0xBE) != 0) {
+            lead = p, flagged = true;
+            break;
+        }
+    for (uint16_t p : parts)
+        if (const ObjectDefinition* d = code_.definition(group, p); !flagged && d && d->subIndex() == 0) {
             lead = p;
             break;
         }

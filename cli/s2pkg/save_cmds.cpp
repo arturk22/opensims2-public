@@ -2,6 +2,8 @@
 
 #include "save_cmds.hpp"
 
+#include "buy_cmds.hpp"
+
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
@@ -76,8 +78,11 @@ int cmdLotSave(const std::vector<std::string>& args) {
     std::vector<fs::path> paths;
     long ticks = 0;
     bool check = false;
+    std::vector<std::pair<std::string, std::string>> buyEdits; // --buy/--sell/--move (buy_cmds.hpp)
     for (size_t i = 0; i < args.size(); ++i) {
-        if (args[i] == "--ticks" && i + 1 < args.size())
+        if ((args[i] == "--buy" || args[i] == "--sell" || args[i] == "--move") && i + 1 < args.size())
+            buyEdits.emplace_back(args[i], args[i + 1]), ++i;
+        else if (args[i] == "--ticks" && i + 1 < args.size())
             ticks = std::stol(args[++i]);
         else if (args[i] == "--check")
             check = true;
@@ -102,6 +107,8 @@ int cmdLotSave(const std::vector<std::string>& args) {
         hood = hood::Neighborhood::load(hoodPackage, true);
     const hood::Neighborhood* h = hood ? &*hood : nullptr;
     LoadedLot a = loadInto(code, src, src, h, characters);
+    if (!buyEdits.empty() && !applyBuyEdits(*a.vm, index, buyEdits))
+        throw std::runtime_error("a Buy-mode edit failed");
     for (long i = 0; i < ticks; ++i)
         a.vm->tick();
     // Save types of objects the run may create, from the other lots' tables.
@@ -407,8 +414,8 @@ int saveCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* saveUsage() {
-    return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check]\n"
-           "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check]\n"
+    return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
+           "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
            "       s2pkg objt-check <lot.package>...\n";
 }
 
