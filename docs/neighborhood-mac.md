@@ -364,6 +364,57 @@ o painel de opções do puck (script `0x49060001`, botão `0xA210`, "Vizinhança
 lote veio do bairro. O puck do bairro: zoom `0x2BE6FB48`/`0x2BE6FB4E`,
 rotação `0x2BE6FB52`/`0x2BE6FB57`.
 
+### 6.1 Famílias, mudar para um lote, despejar e preço dos lotes (rodada 9, binário)
+
+- **Caixa de famílias** (`cTSWinProcFamilyCatalog`): as famílias "sem casa"
+  de `cTSFamilyManager::GetHomelessFamilyIDs` (BV `0x4fbfe0`): lote da
+  família (vtable `0xa8`) < 1 e ID entre 1 e 32728 (`< 0x7FD9`; as de cima
+  são as reservadas de NPCs/townies).
+- **Família nova** (`MakeNewFamily`, `0x4ffd28`): o menor ID livre a partir
+  de 1, índice de criação = maior + 1 (a caixa ordena por ele), **fundos =
+  "money for new family" = 20000** (`cTSNeighborhoodConstants`, constantes
+  float do bairro com padrões no código; a string existe no base 1.0) e
+  mensagem `0xA5`. Outras constantes do mesmo bloco (base): "new family
+  start hour" 7, "perfect family friend count" 15, "weight of lot size in
+  overall score" 3, "yard score multiplier" 0,33, "upkeep penalty per dirty
+  object" 6 e "... per broken object" 15 (a pontuação do lote; não seguido).
+- **Preço de um lote** (`cTSNeighborhood::GetLotFileInfo`, `0x4d8d8c`, vtable
+  `0x5c`): lê o `SIMI` do pacote do lote; preço = **+0xA4 (valor do lote) +
+  +0xA8 (objetos do lote) + round(+0xB0 × fator)** (+0xB0 e o fator, vtable
+  `0x13c` de um serviço, não identificados)
+  **+ +0xAC (objetos da família) se o lote não tem a flag 8** ("família
+  despejada", abaixo). Também devolve "tem casa" = global 22 do SIMI ("Lot
+  Has House") ≠ 0 e "pode mudar" = global 21 ("Inhibit Move In") = 0. Lote
+  sem SIMI (nunca salvo): `nTSWorld::LotValue(L, P)` (`0x1635f4`) com L, P =
+  tamanho em tiles de lote (tiles do bairro × 10): **100 · round(6,5 · L · P
+  / 100) − 1000** (40×30 → 6800). No BV, aluguel e negócios mudam isso.
+- **Pode mudar?** (`cTSFamilyManager::CanMoveFamilyIntoLot`, `0x4fb804`):
+  sem bairro −1, sem lote 2, sem família 1; tipo do lote (`LotInfo` vtable
+  `0x10`→`0x20`): **1 (comunitário) → 3** ("Families cannot move into
+  community lots.", STR# 0x82 #3 do `Neighborhood.package`), tipos do BV 3/5/6
+  → 4/10/2; lote vazio: família sem a flag 1 → 9; **fundos < preço → 7**
+  ("The %s family cannot afford this lot.", #2) salvo em lote de tipo 2;
+  lote ocupado → 5/6/8/9 conforme a relação entre as famílias (juntar).
+  Os textos são o índice − 1 do STR# 0x82 (ou 0xC9 nos modos do BV).
+- **Confirmar** (`cTSUserToolNeighborhoodMoveIn::ConfirmAndMoveInFamily`,
+  `0x3b9ae8`): diálogo "Move %s family into this lot?" (#5) + "Cost to move
+  in: " (#6) com o preço; Sim → mensagem `0x2BEA2063` (transição para o lote)
+  com a família e o lote. **A cobrança é na carga** do lote
+  (`cTSLoadLotController::LoadLot`, passo `0x1B`, `0x8804ec`): mudando
+  (`+0x34` e não `+0x35`), fundos −= preço de `GetLotFileInfo` (salvo lote
+  de tipo 2); depois global 9 = família, fundos para o simulador, e no
+  primeiro dia `cTSNeighborhood::SetupFamilyFirstDay` (vtable `0x44`).
+  `cTSFamilyManager::MoveIn` (`0x4fb730`) só liga família e lote.
+- **Despejar** (`cTSGameStateController::EvictFamily`, `0x139740`/`0x1434cc`;
+  ferramenta `cTSUserToolEvictFamily`): **fundos += preço do lote**
+  (`GetLotFileInfo`, ainda sem a flag 8, então com os objetos da família),
+  salvo lotes de tipo 2/3; a família fica sem lote, o lote ganha a **flag 8**
+  e perde a família (tipo 3: o bairro limpa as referências); mensagens
+  `0xA7` e `0xA6`. Ao entrar de novo num lote com a flag 8
+  (`CleanupThingsRelatedToEvictedFamily`, `0x87e7b0`) o jogo apaga os Sims e
+  os objetos da família que ficaram (pessoas, categoria `0x67`, produtos com
+  o bit 0 da propriedade `0x2A`; inferido pelos testes).
+
 ---
 
 ## 7. Base vs BV
