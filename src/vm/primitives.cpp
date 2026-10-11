@@ -287,15 +287,19 @@ Exit setToNext(Context& c) {
         auto next = ids.upper_bound(current);
         return next == ids.end() ? none() : found(*next);
     }
-    case 8: { // object on the same tile, after the target
+    case 8: { // object on the same tile, after the target; after the last one, the first again
+              // (as FreeSO's ObjectOnSameTile: "Toilet - Standard Entry" and "MT - Get in Temp 0 & 1 -
+              // Max X & Y" walk the tile until they are back at the object they started from)
         if (current == 0)
             return none();
         const Object* x = c.vm.object(current);
         if (!x || !x->position.inWorld() || x->data[objdata::ContainerId] != 0)
             return none();
         const auto ids = c.vm.objectsOnTile(VM::tileOf(*x));
+        if (ids.empty())
+            return none();
         auto it = std::upper_bound(ids.begin(), ids.end(), current);
-        return it == ids.end() ? none() : found(*it);
+        return found(it == ids.end() ? ids.front() : *it);
     }
     case 9: { // adjacent to the object in the local: tiles +X, -X, +Y, -Y, in its room
         const int16_t anchorId = c.get(0x19, o[6]);
@@ -1022,7 +1026,7 @@ Exit changeMaterial(Context& c) {
 //   6 read the token at index (first) into my temporary token; with a GUID, the
 //     next token of that GUID from there on (the index is written back); false
 //     past the end (loops stop on it)
-//   7 property (first) of my temporary token into the second; false if out of range
+//   7 property (first, from 1) of my temporary token into the second; false if out of range
 //   8 set property (first) of my temporary token to the second; false if out of range
 //   9 save my temporary token back where it was read; false if it is gone
 //  10 token count into the second operand
@@ -1136,13 +1140,16 @@ Exit manageInventory(Context& c) {
     }
     case 7:
     case 8: {
+        // Property numbers start at 1, as token indices (no tree uses 0 as a
+        // literal; "Food - Update - Food Unit Info Token" pushes three and
+        // sets 2 and 3 after checking the count is at least 3).
         const int16_t p = get1();
-        if (!temp.loaded || p < 0 || size_t(p) >= temp.token.properties.size())
+        if (!temp.loaded || p < 1 || size_t(p) > temp.token.properties.size())
             return Exit::False;
         if (op == 7)
-            set2(temp.token.properties[size_t(p)]);
+            set2(temp.token.properties[size_t(p) - 1]);
         else
-            temp.token.properties[size_t(p)] = get2();
+            temp.token.properties[size_t(p) - 1] = get2();
         return Exit::True;
     }
     case 9: {

@@ -586,12 +586,12 @@ static void testManageInventory() {
                       inv(4, 0, Temp, 0, Lit, 42, go(4), E),           // token 1 properties: [42]
                       inv(10, 0, Lit, 0, Temp, 1, go(5), E),           // count: temp1 = 2
                       inv(6, 0, Lit, 1, Lit, 0, go(6), E),             // read token 1
-                      inv(7, 0, Lit, 0, Temp, 2, go(7), E),            // temp2 = 42
-                      inv(8, 0, Lit, 0, Lit, 7, go(8), E),             // property 0 := 7
+                      inv(7, 0, Lit, 1, Temp, 2, go(7), E),            // temp2 = 42 (properties from 1)
+                      inv(8, 0, Lit, 1, Lit, 7, go(8), E),             // property 1 := 7
                       inv(9, 0, Lit, 0, Lit, 0, go(9), E),             // save it back
                       expr(Temp, 3, Assign, Token, 7, go(10), E),      // temp3 = property count = 1
                       inv(6, kGuid, Lit, 2, Lit, 0, go(11), E),        // next of the GUID from 2: token 2
-                      inv(7, 0, Lit, 0, Temp, 6, E, go(12)),           // it has no properties: false
+                      inv(7, 0, Lit, 1, Temp, 6, E, go(12)),           // it has no properties: false
                       inv(5, 0, Lit, 1, Temp, 4, go(13), E),           // pop token 1's: temp4 = 7
                       inv(2, kGuid, Lit, 0, Lit, 0, go(14), E),        // remove all of the GUID
                       inv(10, 0, Lit, 0, Temp, 5, go(15), E),          // temp5 = 0

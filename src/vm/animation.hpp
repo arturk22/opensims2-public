@@ -65,6 +65,12 @@ struct AnimationState {
     size_t depth = 0;
     const Behavior* tree = nullptr;
     uint16_t node = 0;
+    // Its tree events (ANIM events of type 1005 "event=N", in animation
+    // ticks) not run yet, the event tree that gets them, and how long it
+    // has played (animation ticks: ms at speed 1).
+    std::vector<std::pair<int, int16_t>> pendingEvents;
+    uint16_t eventTree = 0;
+    float playedTicks = 0, ticksPerVmTick = 0;
 
     // Animations that play over the object without blocking (Animate
     // Overlay on a Sim or an object, Animate Object), oldest first; Animate
@@ -103,6 +109,11 @@ public:
     // to hand"), or nothing if it has none.
     std::optional<int> eventTicks(const std::string& name, const std::string& line);
     void addEvent(const std::string& name, const std::string& line, int ticks) { events_[name + '\n' + line] = ticks; }
+    // The tree events of an animation: its type-1005 events whose data
+    // starts with "event=N" (N = the event number its event tree gets), as
+    // (animation ticks, N), in order.
+    const std::vector<std::pair<int, int16_t>>& treeEvents(const std::string& name);
+    void addTreeEvent(const std::string& name, int ticks, int16_t event) { treeEvents_[name].push_back({ticks, event}); }
     // Names the trees asked for that do not exist, with how often.
     std::map<std::string, size_t> missing;
 
@@ -111,6 +122,7 @@ private:
     std::unordered_map<std::string, std::optional<float>> cache_;
     std::unordered_map<std::string, float> speeds_;
     std::unordered_map<std::string, std::optional<int>> events_;
+    std::unordered_map<std::string, std::vector<std::pair<int, int16_t>>> treeEvents_;
 };
 
 class VM;

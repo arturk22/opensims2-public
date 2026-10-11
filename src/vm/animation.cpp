@@ -3,6 +3,7 @@
 // the game's trees use them (`s2pkg prim-usage`) and from the strings of the
 // SimAntics editor's disassembler left in Sims2.exe; see TODO.md (M5) for
 // what is inferred.
+#include "engine.hpp"
 #include "animation.hpp"
 
 #include "errors.hpp"
@@ -64,6 +65,28 @@ std::optional<int> AnimationLibrary::eventTicks(const std::string& name, const s
         }
     }
     events_[key] = out;
+    return out;
+}
+
+const std::vector<std::pair<int, int16_t>>& AnimationLibrary::treeEvents(const std::string& name) {
+    if (auto it = treeEvents_.find(name); it != treeEvents_.end())
+        return it->second;
+    auto& out = treeEvents_[name];
+    if (index_) {
+        try {
+            for (const auto& e : loadAnimation(*index_, name).events) {
+                if (e.type != 1005 || e.data.rfind("event=", 0) != 0)
+                    continue;
+                const auto end = e.data.find_first_of("|\r\n");
+                try {
+                    out.push_back({e.ticks, int16_t(std::stoi(e.data.substr(6, end == std::string::npos ? end : end - 6)))});
+                } catch (const std::exception&) {
+                }
+            }
+        } catch (const std::exception&) {
+        }
+    }
+    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     return out;
 }
 
@@ -241,13 +264,34 @@ float animationSpeed(Context& c) {
 // read. True when the animation ends; the game's error for an empty name;
 // an animation that does not exist ends at once (counted in
 // AnimationLibrary::missing).
+// Runs the event tree for the tree events the animation has reached
+// (all of them once it ends): at once, in my thread, with the event number
+// as parameter 0 (inferred from "Events - Get - Bag Snack": it branches on
+// parameter 0 = 100, 101, 201, the "event=" numbers of
+// a2o-snackBag-get's events, which put the bag in the hand and take it
+// away). The tree resolves against the running code, as a call would.
+void runAnimationEvents(Context& c, AnimationState& a, bool all) {
+    while (!a.pendingEvents.empty() && (all || a.pendingEvents.front().first <= a.playedTicks)) {
+        const int16_t event = a.pendingEvents.front().second;
+        a.pendingEvents.erase(a.pendingEvents.begin());
+        if (!a.eventTree)
+            continue;
+        const int16_t params[5] = {event, 0, 0, 0, 0};
+        runOneTickTree(c.vm, c.thread.temps, c.thread.me, c.frame.codeOwner, c.frame.stackObject, a.eventTree, params);
+    }
+}
+
 Exit animateSim(Context& c) {
     Object& me = c.me();
     AnimationState& a = me.animation;
     const size_t depth = c.thread.stack.size();
     if (a.playing() && a.depth == depth && a.tree == c.frame.behavior && a.node == c.frame.pc) {
-        if (--a.ticksLeft > 0)
+        a.playedTicks += a.ticksPerVmTick;
+        if (--a.ticksLeft > 0) {
+            runAnimationEvents(c, a, false);
             return Exit::Yield;
+        }
+        runAnimationEvents(c, a, true);
         a.name.clear();
         a.tree = nullptr;
         return Exit::True;
@@ -262,8 +306,15 @@ Exit animateSim(Context& c) {
     ++a.serial;
     a.ticksLeft = seconds ? ticksFor(c.vm, *seconds / animationSpeed(c)) : 0;
     a.depth = depth, a.tree = c.frame.behavior, a.node = c.frame.pc;
-    if (a.ticksLeft > 0)
+    a.pendingEvents = library(c.vm).treeEvents(name);
+    a.eventTree = le16(&o[4]);
+    a.playedTicks = 0;
+    a.ticksPerVmTick = 1000.0f / float(c.vm.clock.ticksPerMinute) * animationSpeed(c);
+    if (a.ticksLeft > 0) {
+        runAnimationEvents(c, a, false);
         return Exit::Yield;
+    }
+    runAnimationEvents(c, a, true);
     a.name.clear();
     a.tree = nullptr;
     return Exit::True;

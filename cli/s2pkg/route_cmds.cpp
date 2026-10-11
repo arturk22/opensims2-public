@@ -8,6 +8,8 @@
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
+#include "vm/hood_bridge.hpp"
+#include "vm/lot_neighborhood.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
@@ -79,7 +81,10 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
     machine.setClockGlobals();
+    const bool hood = vm::loadLotNeighborhood(machine, lotFile); // as lot-run (socials read neighbors)
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
+    if (hood)
+        vm::bindLotSims(machine);
     vm::startSavedLot(machine, load, saved, fromInit);
     vm::ObjectId sim = 0;
     try { // a Sim by object ID too (the lots have two Dons)

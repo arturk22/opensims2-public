@@ -177,6 +177,27 @@ static void testAnimateSim() {
     check(t.status == Thread::Status::Failed && t.error.find("Animation name is empty string.") == 0,
           "an empty entry is the game's error");
 
+    // Tree events: the event tree gets each "event=N" when the animation
+    // reaches it, with N in parameter 0 (here: attribute 0 += parameter 0,
+    // as Expression 0x02 with owners attribute 0x00 / parameter 0x09).
+    s.person->data[58] = 0;
+    s.attributes.assign(1, 0);
+    vm.animations.addTreeEvent("a-blockedPath-long", 250, 7);
+    vm.animations.addTreeEvent("a-blockedPath-long", 499, 5);
+    Behavior ev = tree({instr(0x02, T, E, {0, 0, 0, 0, 0, 3, 0x00, 0x09})});
+    ev.argCount = 5;
+    code.add(kGroup, 0x1005, ev);
+    code.add(kGroup, 0x1006, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0x05, 0x10, 0x80})}));
+    t = vm.start(s.id, 0x1006);
+    vm.run(t);
+    check(s.attributes[0] == 0, "no event before its time");
+    for (int i = 0; i < 9; ++i)
+        vm.run(t);
+    check(s.attributes[0] == 7, "the first event at 250 ms");
+    while (t.status == Thread::Status::Running && turns < 200)
+        vm.run(t), ++turns;
+    check(t.status == Thread::Status::Finished && s.attributes[0] == 12, "every event has run when it ends");
+
     // Overlays do not block; Animate Stop clears them.
     Object& thing = vm.createObject(kGroup);
     code.add(kGroup, animlist::Object, strings({"o-thing-open", ""}));

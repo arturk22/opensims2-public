@@ -140,7 +140,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     if (size_t(select) >= shown.size())
         throw std::runtime_error("--select: no entry " + std::to_string(select));
     const vm::PieEntry& e = *shown[size_t(select)];
-    auto q = vm::makeInteraction(machine, e.object, e.interaction);
+    auto q = vm::interactionFromPie(machine, e); // keeps a dynamic entry's name and parameter 0
     q->pushedBy = sim;
     vm::Object& s = *machine.object(sim);
     vm::enqueue(machine, s, *q);
