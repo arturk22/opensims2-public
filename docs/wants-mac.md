@@ -231,3 +231,67 @@ desejo vitalício gravado (v3; University), influência e "Boundless Influence"
   `lifetime` 200 do exemplo).
 - Quem pede atualização com os tipos 0–2 (reroll ao acordar etc.).
 - Os parâmetros exatos da check tree e o objeto controlador (qual GUID).
+
+## 8. Rodada 8: o que o código faz e o que se achou depois (Ghidra headless, BV)
+
+Implementado em `src/formats/wants.*` e `src/vm/wants.*`; painel em
+`src/app/wants_panel.*`. Fechando o §7 e corrigindo detalhes:
+
+- **Histórico de conquistas** (escrito por `WritePerson` logo depois do
+  `Write`, FUN_00aee07c): `u32 versão (2)`, `i32 relógio pessoal`,
+  `u32 nº de entradas`, por GUID de desejo (ordem crescente, há entradas com
+  0 instâncias): `u32 GUID`, `u32 n`, `n` instâncias. Depois dele, 611 dos
+  1.045 SWAF do base têm **bytes velhos** (o jogo regrava o recurso sem
+  cortar): ignorados na leitura, guardados para regravar igual. Os 1.045
+  voltam byte a byte (`s2pkg wants-sweep`).
+- **Relógio**: `OnTick` soma 2 por tick da simulação; o nó lê `lifetime` ×
+  **0xE10** (3600 por hora de jogo). O relógio pessoal do Sim (histórico +0/+4)
+  anda com o do simulador sempre que é lido (FUN_00aedfd0). O leitor do nó
+  procura `adFrequency`, que nenhum XML tem: o `frequency` dos XMLs não é
+  usado; com `regeneration` e prazo, o prazo vira o período (e o prazo 0).
+  `regeneration` é o "evergreen" (oferecido de novo depois de cumprido).
+  Padrões do nó: visível, herda o assunto, `maxScore` 100, `scoreOverride`
+  ausente = sentinela 0x42424242 (vale o `score` da definição).
+- **Fatores** (`cTSWantNode`, vtable 0x68..0x90): `UseFactor(k)` = peso ≥ 1
+  ou exclusivo; os intervalos (humor, relação, pontuação, dado de pessoa)
+  só contam se min ou max ≠ 0; a soma ponderada é acumulada num **inteiro**
+  (truncada a cada fator); relação = variável 2 (vitalícia) do SREL do Sim
+  para o assunto; humor = motivo 3 do Sim no lote (0 fora dele). Enumerações
+  das chaves `bool`: idade Adult 0, Child 1, Toddler 2, Teen 3, Elder 4,
+  Baby 13; aspiração = os valores do dado 46 (Romance 1, Family 2, Fortune 4,
+  Popularity 16, Knowledge 32, Grow Up 64); personalidade Nice 1, Mean 2,
+  Active 3, Lazy 4, Playful 7, Serious 8, Outgoing 9, Shy 10, Neat 11,
+  Sloppy 12.
+- **Escolha**: depois de escolher, os slots soltam a conquista de origem
+  (vtable 0x94); a ordenação é `std::sort` (aqui estável: inferido para
+  empates). Nenhum número aleatório entra na escolha.
+- **Check tree**: as árvores ficam no código do objeto "Wants - Check Trees"
+  (grupo `0x7F739728`, que não está no lote) e rodam no "Wants - Controller"
+  (GUID `0x6D9E58F0`, está nos lotes): me = stack object = o controlador. 8
+  parâmetros: dono, GUID (baixo, alto), neighbor ID do assunto (Sim), GUID do
+  assunto objeto/carreira (baixo, alto), o short do assunto (+4 do
+  `cTSWantSubject`: o valor de Sim/habilidade, a metade alta dos de 32 bits) e
+  o número. A **feedback tree** recebe 15: esses 8, cumprido, pontos, o vtable
+  0x24 da definição (inferido: o nível), pontuação crua antiga / 10, a
+  normalizada antiga, o objeto da Want Satisfy e a influência.
+- **Sim array tree** (FUN_00508b10): roda no controlador com o dono no
+  parâmetro 0; a lista é a array 0 do objeto que fica no temp 0 (inferido).
+- **Quem pede atualização**: Generic Sims Call **39** "Force Recalc of Wants"
+  (`TryGenericSimCall` caso 0x27): temp 0 = operação (+10: Sim = vizinho do
+  temp 1, argumento no temp 2; senão o Sim sou eu, argumento no temp 1);
+  0 pedir atualização do tipo do argumento (< 4, senão 0), 1 limpar o
+  histórico, 2/3 pôr a pontuação (normalizada / crua ÷ 10), 4 `RecheckGoals`,
+  5/6 pôr/somar o relógio pessoal (horas × 3600), 7 desejo vitalício (BV), 8
+  alternar o pulo das check trees. Os chamadores são os globais "Wants -
+  Refresh - Recalc/Verify", o "Function - Main" das pessoas, a falha de
+  aspiração e o "Decay" (que baixa a pontuação ao longo do dia).
+  `ReadPerson` pede o tipo 3 e grava a conquista "Is Born" (`0xAD9ACD9A`) se
+  faltar.
+- **Want Satisfy** (`TryWantSatisfy`): byte 13 bit 0 = o Sim é neighbor ID
+  (senão objeto), bit 1 = o assunto Sim é neighbor ID; o tipo vem da
+  definição; categoria e GUID viram GUID do objeto (o tipo 3 vira 2); erros
+  0x1C (sem vizinho), 0x07 (sem desejo), 0x17 (sem objeto); devolve verdadeiro.
+- **Categoria de um objeto** (desejos `Category`, Set to Next 37): campo
+  **0x2F** do OBJD (offset 0x9E), 10000..10052 em 689 definições.
+- `NormalizedAspirationScore` arredonda ao par mais próximo (truque do float
+  1,5·2²³): o Sim 17 de N001 tem cru 1050 → −12,5 → **−12**, como no SDSC.
