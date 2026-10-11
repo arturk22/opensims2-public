@@ -1201,7 +1201,8 @@ recálculo dos desejos (`Wants - Refresh - Recalc`, global `0x03A5`).
   campos do SIMI (`docs/save-mac.md` §5) e os globais também vão salvos;
   **o opensims2 lê os globais salvos, mas não os refaz quando o valor do lote
   ou dos objetos muda** (compra, venda, construção, depreciação): quem chama
-  esses `Set*` (pela vtable) não foi seguido.
+  esses `Set*` é o `cTSLot::ComputeAndStoreLotData`, na virada do dia e na
+  mensagem `0x8B` de lote mudado (`docs/neighborhood-mac.md` §11.1).
 - **A constante `0x81`** (dono `0x1A`: tabela 1 = BCON privado 0x1001,
   entrada 1) do `CT - Calculate Bill` (`0x1017` das contas, Σ valor atual
   / 10 dos objetos sem o bit 14 do dado 40) vale **10**, mas essa árvore é

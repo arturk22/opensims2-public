@@ -487,3 +487,117 @@ limpa o pacote do lote na hora (os Sims da família e o que carregam; o valor
 dos objetos da família passa para os do lote, **inferido**: o jogo recalcula
 ao carregar) em vez da flag 8. Demolir: só lote vazio (STR# 0x83 #26/#29), sai
 o lot info, o nome e o pacote. A hora de início do primeiro dia não é aplicada.
+
+---
+
+## 11. Valores do lote, despejo e o primeiro dia (rodada 10, binário + dados)
+
+### 11.1 Quem refaz os globais 46–49 e o SIMI +0xA4…+0xB0
+
+`cTSLot::ComputeAndStoreLotData` (BV `0x46fbd4`, vtable `0x2c` do `cTSLot`;
+o nome vem da ordem do `baserom.sym`) faz tudo de uma vez:
+
+```
+cEdithObjectModule::ComputeStats(&família, &lote, &b1, &b2, &b3, &temCasa)   (BV 0x52c638)
+arq  = nTSWorld::ArchitectureValue()                                          (BV 0x168a74)
+temCasa |= FUN_001646b8()            (algum tile do lote com piso/parede construída)
+lot info (se o lote não é ...): vtables 0x108/0x118/0x110 ← b1, b2, b3   (estatísticas do lote)
+simulador: SetFamilyObjectsValue(família)  → +0xAC, globais 48/49  (UpdateTotalObjectsValue)
+           SetLotObjectsValue(lote)        → +0xA8, globais 48/49
+           SetArchValue(arq)               → +0xB0
+           SetLotValue(nTSWorld::LotValue(L, P)) → +0xA4, globais 46/47
+           SetGlobal(23 "Lot Size", área do mundo, vtable 0x11c do WorldDB)
+           SetGlobal(22 "Lot Has House", temCasa)
+```
+
+(`L, P` = largura e profundidade do retângulo do lote × `FLOAT_0274b608`,
+o `100 · round(6,5 · L · P / 100) − 1000` do §6.1.) `UpdateTotalObjectsValue`
+(BV `0x498418`): soma = +0xA8 + +0xAC; global 48 = soma / 1000, 49 = soma −
+1000 · (soma / 1000).
+
+**Quando**: `cTSLot::DoMessage` (BV `0x4700c8`) chama a vtable `0x2c` nas
+mensagens **`0x89`** (virada do dia, a mesma do relógio em
+`docs/primitives-mac.md` §4c), **`0x8B`** e **`0xCD94C8EE`**. A `0x8B` também é
+assinada pelo módulo de objetos, telhados, cercas, roteamento, pontuação de
+ambiente e a janela de valor do lote sem Sims (`cTSWinProcSimlessLotValueUI`)
+— é a mensagem de "o lote mudou" (quem a envia não foi achado: não há
+`li r4,0x8b` fora dos assinantes). Ou seja: **todo dia e a cada mudança do
+lote**, não a cada compra pela primitiva.
+
+`ComputeStats` (por objeto do módulo; pula os com bit `0x10000`/`0x20000` em
+`+0x214`, os com o bit `0x400` da propriedade de catálogo `0x28`, as partes
+não-líderes de multi-tile, tipo 7 e os fora do mundo):
+
+| objeto | vai para |
+|---|---|
+| `IsDeletedByEvict` (§11.2) | **família** (+0xAC) |
+| senão, `GetBuildModeType()` = 0 (objeto do modo compra) | **lote** (+0xA8) |
+| senão, tipo (OBJD campo 9) 0xB ou 0xC | lote, com o preço do corrimão (`RailingCost`: 0, 1 ou 2 × o preço do objeto `0x2C7BF690` conforme o modelo do corrimão) |
+| outros objetos do modo construção | nada (entram na arquitetura) |
+
+O valor é `GetCurrentValue` (dado 41). Pessoas: só ligam um dos booleanos
+(dado de pessoa `0x4c` = 0xD). `temCasa` liga para um objeto de catálogo no
+mundo sobre algo construído (vtable `0xc4` do mundo). O opensims2 lê os
+globais salvos e não os refaz.
+
+### 11.2 `IsDeletedByEvict`, a flag 8 e a limpeza
+
+`cTSObject::IsDeletedByEvict` (BV `0xafeb84`) = **pessoa** (tipo 2) **ou
+objeto do modo compra** (`GetBuildModeType` = 0, o campo `0x45` do catálogo)
+**sem o bit 4 de "movement flags"** (dado 43, `+0xF0`; STR# 0xCB #4 **"stays
+after evict"**). Portanto o despejo leva **toda a mobília comprada** (é o
+"vendido por §" do STR# 0x83 #18), menos o que tem "stays after evict"; a
+construção (paredes, portas, janelas, escadas…) fica. Isso fecha o preço do
+§6.1: o lote com a flag 8 vale +0xA4 + +0xA8 + arquitetura, sem os objetos
+da família.
+
+`cTSLoadLotController::CleanupThingsRelatedToEvictedFamily` (BV `0x87e7b0`,
+chamado no `LoadLot`): só se o lot info tem a **flag 8**; manda a mensagem
+`0xDD`; para cada objeto sem contêiner (`GetContainer` = 0) ou pessoa,
+apaga (módulo vtable `0x48(id, 1)`) se for **pessoa ou categoria `0x67`**,
+**produto com o bit 0 da propriedade `0x2A`**, ou `IsDeletedByEvict` num lote
+residencial (para o tipo 0 só se o bairro (`+0x8c`→`0x18`→`0x48`) ≠ 2; os
+tipos 2/3 do BV não apagam por `IsDeletedByEvict`); pula o GUID `0xF37E5AE0` e
+as partes não-líderes. No fim, vtables `0x54` e `0x20(1)` do módulo e `0xa8`
+(limpa a flag, inferido). O módulo de objetos também tem um despachante de
+eventos de lote (vtable `0xd8`, `FUN_00524490`) que roda a árvore por nome
+"import lot" (0), **"evict lot"** (1) ou "msg show special" (2) em todos os
+objetos.
+
+**Contradição com o código**: `formats/hood_moves.cpp` apaga só os Sims da
+família e o que eles carregam e passa o +0xAC para o +0xA8; o jogo apaga
+também toda a mobília comprada sem "stays after evict" e recalcula os
+valores na carga (§11.1).
+
+### 11.3 O primeiro dia e os Sims que chegam
+
+`cTSNeighborhood::SetupFamilyFirstDay` (BV `0x4db0c0`): `SetNewLot(0)`;
+`SetCurrentTime(hora, 0, −1, −1, −1, −1)` com a hora = "new family start
+hour" (constante do bairro, **7**; −1 = campo não muda: só a hora e o minuto
+0 mudam, o dia fica); `ClearHistory`; `Resume(true)`; e **roda a árvore por
+nome "reset lot" em todos os objetos** (vtable `0xec` do
+`cIEdithObjectModule`).
+
+No "Controller - Age" (`0x7F07FBBC`), "reset lot" (`0x100C`) → "Sub - Set
+Age - All" (`0x1019`) → **"Sub - Generate Family"** (`0x101A`), e depois
+"Preg - Check For Pregnant Sims". O Generate Family é quem cria os Sims que
+chegam (nada no C++):
+
+1. sai se o lote é o CAS ("Lot - Is CAS?") ou não é residencial;
+2. referência = a **caixa de correio** (Set to Next GUID `0x39CCF441`) ou, sem
+   ela, a **lixeira de fora** (`0xD20C0AEE`);
+3. para cada vizinho da família (dado 61 = família do lote) que não está
+   morto ("Death - Is Sim Dead? (NID)") e ainda não tem objeto no lote:
+   **Create New Object Instance** com flag 0x04 (Sim a partir do vizinho no
+   stack object, posição 6), então **Find Location For** modo 4 (ao lado da
+   referência, flags 0x09: começa no objeto do local, objetos explícitos),
+   senão modo 0 duas vezes (mesmo cômodo, depois qualquer lugar); achou →
+   "Selectable: Set"; não achou → "Selectable: Unselect Sim" e Remove Object
+   Instance.
+
+O `cPerson` desses Sims é o que o Create New Object Instance com vizinho
+cria (o estado vem do personagem e do vizinho, como um Sim novo); a
+"Function - Main" dele então chama "Init - Relationships" (`docs/cas-mac.md`
+§17.5). O opensims2 (`formats/lot_arrivals`) põe os Sims ao lado da caixa
+de correio por inferência: **é isso**, mas pela árvore e só no primeiro dia,
+e a hora de início (7:00) ainda não é aplicada.
