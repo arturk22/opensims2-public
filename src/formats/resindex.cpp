@@ -1,6 +1,10 @@
 #include "resindex.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <exception>
+#include <memory>
+#include <thread>
 #include <array>
 #include <cctype>
 #include <string>
@@ -9,7 +13,7 @@ namespace os2 {
 
 namespace {
 
-constexpr size_t kMaxOpenFiles = 32;
+constexpr size_t kMaxOpenFiles = 128; // under the 256 a macOS app starts with
 
 std::string lower(std::string_view s) {
     std::string out(s);
@@ -18,35 +22,64 @@ std::string lower(std::string_view s) {
     return out;
 }
 
-// OpenPGP CRC-24 (poly 0x864CFB, init 0xB704CE).
-uint32_t crc24(std::string_view s) {
-    uint32_t crc = 0xB704CE;
-    for (unsigned char c : s) {
-        crc ^= uint32_t(c) << 16;
-        for (int i = 0; i < 8; ++i) {
-            crc <<= 1;
-            if (crc & 0x1000000)
-                crc ^= 0x864CFB;
+// OpenPGP CRC-24 (poly 0x864CFB, init 0xB704CE), a byte at a time from a table
+// built from the bitwise form.
+const std::array<uint32_t, 256>& crc24Table() {
+    static const auto table = [] {
+        std::array<uint32_t, 256> t{};
+        for (uint32_t b = 0; b < 256; ++b) {
+            uint32_t crc = b << 16;
+            for (int i = 0; i < 8; ++i) {
+                crc <<= 1;
+                if (crc & 0x1000000)
+                    crc ^= 0x864CFB;
+            }
+            t[b] = crc & 0xFFFFFF;
         }
+        return t;
+    }();
+    return table;
+}
+
+uint32_t crc24Lower(std::string_view s) {
+    const auto& t = crc24Table();
+    uint32_t crc = 0xB704CE;
+    for (char c : s) {
+        const unsigned char l = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(c)));
+        crc = ((crc << 8) & 0xFFFFFF) ^ t[((crc >> 16) ^ l) & 0xFF];
     }
     return crc & 0xFFFFFF;
 }
 
-// MSB-first CRC-32 (poly 0x04C11DB7, init 0xFFFFFFFF, no final xor).
-uint32_t crc32msb(std::string_view s) {
+// MSB-first CRC-32 (poly 0x04C11DB7, init 0xFFFFFFFF, no final xor), likewise.
+const std::array<uint32_t, 256>& crc32Table() {
+    static const auto table = [] {
+        std::array<uint32_t, 256> t{};
+        for (uint32_t b = 0; b < 256; ++b) {
+            uint32_t crc = b << 24;
+            for (int i = 0; i < 8; ++i)
+                crc = (crc & 0x80000000) ? (crc << 1) ^ 0x04C11DB7 : crc << 1;
+            t[b] = crc;
+        }
+        return t;
+    }();
+    return table;
+}
+
+uint32_t crc32Lower(std::string_view s) {
+    const auto& t = crc32Table();
     uint32_t crc = 0xFFFFFFFF;
-    for (unsigned char c : s) {
-        crc ^= uint32_t(c) << 24;
-        for (int i = 0; i < 8; ++i)
-            crc = (crc & 0x80000000) ? (crc << 1) ^ 0x04C11DB7 : crc << 1;
+    for (char c : s) {
+        const unsigned char l = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(c)));
+        crc = (crc << 8) ^ t[((crc >> 24) ^ l) & 0xFF];
     }
     return crc;
 }
 
 } // namespace
 
-uint32_t nameInstanceHash(std::string_view name) { return crc24(lower(name)) | 0xFF000000; }
-uint32_t nameInstanceHiHash(std::string_view name) { return crc32msb(lower(name)); }
+uint32_t nameInstanceHash(std::string_view name) { return crc24Lower(name) | 0xFF000000; }
+uint32_t nameInstanceHiHash(std::string_view name) { return crc32Lower(name); }
 
 ResourceIndex::ResourceIndex(const std::filesystem::path& root, const std::string& locale) {
     const auto localeDir = root / "Locale";
@@ -81,9 +114,33 @@ ResourceIndex::ResourceIndex(const std::vector<std::filesystem::path>& packages,
 
 void ResourceIndex::addPackages(std::vector<std::filesystem::path> paths) {
     std::sort(paths.begin(), paths.end());
-    for (const auto& p : paths) {
-        auto pkg = std::make_unique<DbpfPackage>(p);
-        pkg->closeFile();
+    // The packages' headers and indexes are read in parallel (hundreds of
+    // files); they are added in path order, so the first of two duplicates
+    // is the same one as when reading them one after the other.
+    std::vector<std::unique_ptr<DbpfPackage>> built(paths.size());
+    std::vector<std::exception_ptr> failed(paths.size());
+    std::atomic<size_t> next{0};
+    auto work = [&] {
+        for (size_t i; (i = next++) < paths.size();) {
+            try {
+                built[i] = std::make_unique<DbpfPackage>(paths[i]);
+                built[i]->closeFile();
+            } catch (...) {
+                failed[i] = std::current_exception();
+            }
+        }
+    };
+    const size_t threads = paths.size() < 8 ? 0 : std::min<size_t>(8, std::max(1u, std::thread::hardware_concurrency()));
+    std::vector<std::thread> pool;
+    for (size_t t = 1; t < threads; ++t)
+        pool.emplace_back(work);
+    work();
+    for (auto& t : pool)
+        t.join();
+    for (size_t i = 0; i < paths.size(); ++i) {
+        if (failed[i])
+            std::rethrow_exception(failed[i]);
+        auto pkg = std::move(built[i]);
         for (const auto& e : pkg->entries()) {
             if (e.tgi.type == type::DIR)
                 continue;
