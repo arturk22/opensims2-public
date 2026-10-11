@@ -271,19 +271,33 @@ const RgbaImage* LiveUi::objectThumbnail(const vm::Object& part) {
 // window, cut by the variant's circular mask (child 3's image) and grey while
 // waiting (docs/ui-live-mac.md §6.2).
 const RgbaImage* LiveUi::queueIcon(const vm::QueuedInteraction& q, bool running, bool nested) {
-    const vm::ObjectId who = q.target ? q.target : q.object;
+    // The picture of an object or Sim: a person's portrait, an object's
+    // thumbnail (null when it has none, like the invisible markers).
+    auto pictureOf = [&](vm::ObjectId id) -> const RgbaImage* {
+        if (const vm::Object* o = vm_->object(id)) {
+            if (o->person) {
+                if (auto p = portraits_.find(id); p != portraits_.end())
+                    return p->second.get();
+                return nullptr;
+            }
+            return objectThumbnail(*o);
+        }
+        return nullptr;
+    };
+    // The interaction's target, else its object; when neither has a picture
+    // (an interaction on a marker such as "Come And See"), the object, then
+    // the Sim the queue belongs to, instead of an empty blue frame.
+    vm::ObjectId who = q.target ? q.target : q.object;
+    const RgbaImage* src = pictureOf(who);
+    if (!src && q.object && q.object != who)
+        if (const RgbaImage* alt = pictureOf(q.object))
+            src = alt, who = q.object;
+    if (!src)
+        if (const RgbaImage* own = pictureOf(sim_))
+            src = own, who = sim_;
     const auto key = std::make_tuple(who, running, nested);
     if (auto it = icons_.find(key); it != icons_.end())
         return it->second.get();
-    const RgbaImage* src = nullptr;
-    if (const vm::Object* o = vm_->object(who)) {
-        if (o->person) {
-            if (auto p = portraits_.find(who); p != portraits_.end())
-                src = p->second.get();
-        } else {
-            src = objectThumbnail(*o);
-        }
-    }
     std::unique_ptr<RgbaImage> out;
     const UiElement* top = icon_.roots.size() > size_t(nested) ? &icon_.roots[size_t(nested)] : nullptr;
     const UiElement* maskWin = top ? top->child(3) : nullptr;
