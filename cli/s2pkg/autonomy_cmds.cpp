@@ -288,14 +288,15 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         if (auto it = machine.threads.find(id); it != machine.threads.end()) {
             const vm::Thread& t = it->second;
             if (t.status == vm::Thread::Status::Failed)
-                std::printf("; Main failed: %s", (verbose ? t.error : t.error.substr(0, t.error.find('\n'))).c_str());
+                std::printf("; its Main died: %s", (verbose ? t.error : t.error.substr(0, t.error.find('\n'))).c_str());
             else if (!t.stack.empty())
                 std::printf("; Main in %s #%u", t.stack.back().behavior->fileName.c_str(), t.stack.back().pc);
         }
         std::printf("\n");
     }
     // People who came in while running (visitors, NPCs): where they are and
-    // what their Main does.
+    // what their Main does ("its Main died", not "Main failed": tools/soak.sh
+    // counts the household's dead Mains by that).
     for (const auto& [id, o] : machine.objects()) {
         if (!o.person || std::find(sims.begin(), sims.end(), id) != sims.end())
             continue;
@@ -304,7 +305,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         if (auto it = machine.threads.find(id); it != machine.threads.end()) {
             const vm::Thread& t = it->second;
             if (t.status == vm::Thread::Status::Failed)
-                std::printf("; Main failed: %s", (verbose ? t.error : t.error.substr(0, t.error.find('\n'))).c_str());
+                std::printf("; its Main died: %s", (verbose ? t.error : t.error.substr(0, t.error.find('\n'))).c_str());
             else if (!t.stack.empty())
                 std::printf("; Main in %s #%u", t.stack.back().behavior->fileName.c_str(), t.stack.back().pc);
         } else {
