@@ -3,10 +3,11 @@
 Fontes e convenções como em `docs/primitives-mac.md`. Funções:
 `cEdithObjectModule::Save`/`write_pre_object`/`write_post_object`,
 `cTSObject::Write`/`Read`/`ReadHeader`/`WriteTimers`, `cTSTreeStackElem::Read`,
-`cTSPerson::Write`, `cTSInteraction::Read` (BV). **Cobertura parcial**: o
-formato que o BV escreve (versão do módulo 0xCE) e as condições de versão do
-leitor, que dizem como ler os lotes do jogo base (versão 0xAD) e os mais
-velhos. Cada recurso começa pelo nome de 64 bytes do arquivo (como
+`cTSPerson::Write`, `cTSInteraction::Read` (BV). Cobre o formato que
+o BV escreve (versão do módulo 0xCE), as condições de versão do leitor
+(como ler e **escrever** os lotes do jogo base, versão 0xAD), o PERS inteiro
+(§3), a tabela `objt`, o `SIMI`, o estado de rota e a lista do que um save
+de lote contém (§5–§6). Cada recurso começa pelo nome de 64 bytes do arquivo (como
 `src/formats/lot_objects.cpp` já faz).
 
 ## 1. A versão escolhe o layout (binário)
@@ -77,6 +78,51 @@ listas de registros (`cMotiveInc`: u32 motivo, f32, f32; `cObjectRecord`:
 objeto, u32, u8), u16, u16, objeto opcional (u32 0/1 + dados), mais um
 vetor, uma string, 3 × u32, 8 × u16, u32, um vetor e 2 × u32.
 
+Ordem exata do leitor (`cTSPerson::Read`, BV `0xadf658`; `v` = versão do
+módulo; `u16`/`u32`/`f32` pelos métodos 0x18/0x20/0x30 do stream, string
+pelo 0x3C):
+
+```
+XOBJ inteiro (cTSObject::Read)
+v < 0x0B: 28 × f32 legados (descartados)
+v ≥ 3:  animador (ReadSAnimator)
+v > 3:  16 × f32 motivos            (vtable 0x5CC)
+v > 7:  16 × f32 (vtable 0x5D0; v ≤ 7: zera)
+v > 10: N × i16 dados de pessoa, o resto até 204 zerado
+        N por versão: ≥0xCE 204 | 0xCC–0xCD 201 | 0xC7–0xCB 200 | 0xC3–0xC6 199 |
+        0xBD–0xC2 195 | 0xBC 194 | 0xBA–0xBB 193 | 0xB9 192 | 0xB8 189 | 0xB7 186 |
+        0xB3–0xB6 180 | 0xB0–0xB2 179 | 0xAE–0xAF 178 | **0xA8–0xAD 170** | 0xA2–0xA7 167 |
+        0xA0–0xA1 166 | 0x9F 165 | 0x9C–0x9E 163 | 0x9A–0x9B 162 | 0x99 161 | 0x97–0x98 158 |
+        0x8B–0x96 157 | 0x8A 144 | 0x88–0x89 124 | 0x85–0x87 123 | 0x83–0x84 122 | 0x82 121 |
+        0x80–0x81 119 | 0x7F 118 | 0x7D–0x7E 112 | 0x7C 111 | 0x7B 107 | 0x78–0x7A 104 |
+        0x77 102 | 0x75–0x76 92 | 0x73–0x74 91 | 0x6E–0x72 89 | 0x6D 88 | 0x6C 83 |
+        0x6A–0x6B 81 | 0x29–0x69 80 | ≤0x28 64
+        (sem nenhum dos motivos-espelho 0x5D–0x6A em ≠ 0, o leitor põe valores padrão neles)
+v > 0x0C: u32 (sempre 0 no BV)
+v > 0x2A: interação atual (+0x5D4, GetCurrentAction)      — cTSInteraction, sempre presente
+          última interação (+0x5D8, GetLastAction)          — idem
+          u32 n + n × interação: a FILA (+0x584, as "top actions")
+          u32 n + n × cObjectRecord (+0x60C, objetos que as ações referenciam)
+v > 0x2B: u32 n + n × cMotiveInc (+0x618)
+v > 0x2C:
+  v > 0x9A: u16 (+0x644, mexido por ClearSubActions/SetCurrentSubAction)
+  v ≥ 0x9E: u16 (+0x646, mexido por SetCurrentAction)
+  v > 0x71: u32 tem_sub; tem_sub ≠ 0 → interação: sub-ação atual (+0x5DC)
+            u32 n + n × interação: fila de sub-ações (+0x5AC)
+  v ≥ 0x9D: string (+0x900)
+  v > 0xA8: u32 +0x90C, u32 +0x910, u32 +0x914, 8 × u16 +0x918 (último "find best
+            action": ícone/dados, GetLastFBAIconData)
+v > 0xB3: u32 (+0x930)                                 — só BV
+v > 0xB4: u32 n + n × interação (+0x5E0, candidatas do FBA)  — só BV
+v > 0xCC: 2 × i32 (+0x938, +0x93C)                       — só BV
+```
+
+**Jogo base (0xAD)**: termina depois dos 8 × u16 do FBA. Ou seja, PERS base =
+XOBJ + animador + 16 f32 + 16 f32 + 170 i16 + u32 + 2 interações + fila +
+registros de objeto + incrementos de motivo + u16 + u16 + u32 (+ sub-ação)
++ fila de sub-ações + string + 3 u32 + 8 u16. O escritor do BV
+(`cTSPerson::Write`) segue a mesma ordem com tudo da versão 0xCE.
+
 ### Interação na fila (`cTSInteraction::Read`, campos por versão)
 
 ```
@@ -103,10 +149,98 @@ do TTAB, +0x44 nome) vêm dos getters (`GetStackObject`, `GetTargetObject`,
   mensagens (`WriteSubscribers`). Os grupos de objetos (`WriteObjectGroups`:
   u16 2, u32 n, n × (u32 ID, grupo)) também são escritos.
 
-## 5. O que falta
+## 5. Os outros registros do estado (binário)
 
-- `cTSPersistDB*`/`cTSSaveGameInfo` (o que entra no pacote do lote e do
-  bairro além do módulo de objetos) não foram vistos.
-- Os campos do token, da tabela de relacionamentos e dos timers, e o resto
-  do PERS depois dos dados de pessoa no formato base (o leitor
-  `cTSPerson::Read`, 4140 bytes, tem os portões por versão).
+**`objt`** (tipo `0x6F626A74`, instância 0; `ObjectSaveTypeTable::Write`,
+BV `0x4e6f64`): tag `objt`, u32 versão **0x55**, u32 0; para cada definição
+de objeto com save type ≠ 0 (seletores do lote e depois os globais):
+
+```
+u32 GUID ; u32 versão da árvore Init ; u32 versão da Main ;
+u32 campo 0x3A do OBJD ; u32 campo 0x3B do OBJD ;
+u32 nº de strings do STR# de catálogo (instância = campo do OBJD, grupo 0x100) ;
+u16 save type ; u16 campo 9 do OBJD (tabela de interações) ;
+string (nome do catálogo/objeto) ; u32 tipo (0 pessoa, 1 objeto, 3 o outro
+caso da vtable 0x24) ; u32 campo 0xD0 do OBJD
+```
+
+e um u32 0 no fim. O save type liga o ObjM (`ID → save type`) à definição.
+
+**XOBJ / XMTO / PERS**: o tipo do registro é o CLSID da classe do objeto
+(`GetGZCLSID`): `XOBJ` (`0x584F424A`) objeto comum, `XMTO` (`0x584D544F`)
+objeto de vários tiles (`cEdithMTObject`, que escreve depois do XOBJ os
+dados de multi-tile e o ID do líder), `PERS` (`0x50455253`) Sim. Instância =
+ID do objeto, grupo `0xFFFFFFFF`. Os pacotes guardam cópias velhas de outro
+tipo para o mesmo ID; vale só a do tipo da classe.
+
+**Por objeto**, `cTSObject` vtable 0x410 (BV `0xb00fb0`) grava: o estado
+acima; o registro `0x3053CF74` (`cTSDataTables`, instância = ID) se o
+objeto tem tabelas de dados, e **apaga** esse registro se não tem; e a parte
+do grafo de cena (`cObject`, tipo `0xFA1C39F7`, que o código já lê).
+
+**Estado de rota** (`0xBC66BAEC`, instância = ID do Sim;
+`cTSRoutingObjectAggregate::SaveToStream`, BV `0x56eff0`):
+
+```
+u32 0xBC66BAEC ; u32 versão 6 ; string "cTSRoutingObjectAggregate" ;
+u32 (i16 +0x44) | 0x10000 se +0x48 ; f32 +0x4C ;
+u32 pausa_marcada ; [se ≠ 0: 4 × u16] ;
+u32 n + n × u16 (lista +0x70) ;
+u32 tem_rota (0/1) ; [cTSRoute::SaveToStream da rota de base]
+```
+
+Para um Sim parado: `tem_rota` 0, lista vazia, pausa 0.
+
+**`SIMI`** (instância 1; `cTSSimulator::Write`, BV `0x49985c`): u32 `SIMI`,
+u32 versão (0xCE no BV), u32 0, **58** globais i16 no BV (o código lê 54,
+os do jogo base: conferir no `SIMI` dos lotes base), u32 +0xA0, u16 +0x11E,
+u32 +0x98, i32 +0xB4, u32 (de um serviço global, vtable 0xDC), 5 × u32
+(+0x9C, +0xA4, +0xAC, +0xA8, +0xB0) e 1 + 5 relatórios de despesa
+(`WriteExpReport`). Hora, dia e fundos do lote estão nos globais.
+
+O objeto `FUN_0007f178(stream, versão)` passado pela vtable 0x4C do
+stream (no `SIMI` e no `objt`) só marca a versão no contexto: não escreve
+bytes. O nome de 64 bytes do começo de cada registro vem da camada de
+gravação (`cTSSimSystem` vtable 0x118: arquivo, stream, tipo, instância).
+
+## 6. Escrever um lote que o jogo aceite (receita)
+
+O save de lote (`cTSSaveLotController::SaveLot`, BV `0x884ec4`) é feito por
+mensagens: cada subsistema grava os seus registros no mesmo pacote. O
+módulo de objetos (`cEdithObjectModule::Save`, BV `0x529090`) faz, nesta
+ordem: avisa os objetos (vtable 0x31C), grava cada objeto (vtable 0x410,
+acima), `ObjM` instância 1 (`write_pre_object`), os objetos de novo
+(`save_objects`), e `ObjM` instância 2 (`write_post_object`). O simulador
+grava o `SIMI`; o mundo (paredes, pisos, terreno, `HOUS`, ...) os seus.
+
+O caminho seguro para um save nosso:
+
+1. Copiar todos os registros do pacote original (terreno, paredes, pisos,
+   telhados, `HOUS`, imagens, `3IDR`, etc.): eles só mudam no modo
+   construção.
+2. Reescrever, com a **mesma versão do módulo** do original (0xAD no base;
+   o leitor decide tudo por ela, §1): `ObjM` 1 e 2, `objt`, um
+   `XOBJ`/`XMTO`/`PERS` por objeto vivo (instância = ID), o `cObject`
+   (`0xFA1C39F7`) de cada objeto, `0x3053CF74` de quem tem tabelas, o
+   estado de rota (`0xBC66BAEC`) de cada Sim, as `SREL` do lote
+   (`0xCC364C2A`, instância = de << 16 | para) e o `SIMI`.
+3. **Apagar** os registros de estado de objetos que já não existem e as
+   cópias de tipo errado (o jogo apaga o `0x3053CF74` vazio; os restos que
+   os pacotes originais guardam mostram que ele não apaga os outros, mas um
+   pacote limpo é aceito do mesmo jeito: o leitor só procura o que o ObjM
+   lista).
+4. Fora do pacote do lote: o bairro guarda o que o jogo mostra fora do
+   lote (fundos da família no `FAMI`, dados de pessoa no `SDSC`, a
+   miniatura e o resumo do lote, `cTSNeighborhood::SaveLotInfo`); um save
+   que mude fundos/Sims precisa atualizar o pacote do bairro também.
+
+Não verificado: se o jogo recusa um pacote sem os registros de partes que
+não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
+
+## 7. O que falta
+
+- Os campos do token, da tabela de relacionamentos e dos timers; o
+  `cTSRoute::SaveToStream` (rota em andamento).
+- Os 4 globais a mais do `SIMI` do BV e os campos +0x98..+0xB4.
+- O que exatamente o `SaveLot` manda gravar além do módulo de objetos e
+  do simulador (mensagens `0xCD94C8EE`, `0xBC`, `0xDC`, ...).
