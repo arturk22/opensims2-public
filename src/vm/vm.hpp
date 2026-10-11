@@ -174,6 +174,8 @@ struct Neighbor {
     // see hood_bridge.hpp), for Generic Sims Call 32.
     std::vector<uint32_t> outfits;
     std::string firstName, lastName; // for the dialogs' $ tokens
+    // The SDNA property set (genetics.hpp): genes a baby inherits.
+    std::map<std::string, std::string> dna;
 };
 
 // Inventories (Manage Inventory) and their tokens grow on demand; this bounds them.

@@ -1371,6 +1371,15 @@ static void testMakeNewCharacter() {
     fx.vm.neighbors[5].lastName = "Caixao";
     fx.vm.neighbors[5].guid = kHolder;
     fx.vm.neighbors[6].personData[persondata::FamilyNumber] = 3;
+    // Black-haired dark-brown-eyed light-skinned and blond green-eyed dark-skinned parents.
+    fx.vm.neighbors[5].dna = {{"1", "00000001-0000-0000-0000-000000000000"}, {"268435457", "00000003-0000-0000-0000-000000000000"},
+                              {"2", "00000001-0000-0000-0000-000000000000"}, {"268435458", "00000001-0000-0000-0000-000000000000"},
+                              {"3", "32dee745-b6ce-419f-9e86-ae93802d2682"}, {"268435459", "32dee745-b6ce-419f-9e86-ae93802d2682"},
+                              {"5", "nose,brow,"}};
+    fx.vm.neighbors[6].dna = {{"1", "00000003-0000-0000-0000-000000000000"}, {"268435457", "00000003-0000-0000-0000-000000000000"},
+                              {"2", "00000004-0000-0000-0000-000000000000"}, {"268435458", "00000004-0000-0000-0000-000000000000"},
+                              {"3", "51c4a750-c9f4-4cfe-801c-898efc360cb7"}, {"268435459", "51c4a750-c9f4-4cfe-801c-898efc360cb7"},
+                              {"5", "eyes,"}};
     fx.code.add(kObjGroup, 0x1000,
                 tree({expr(StackId, 0, Assign, Lit, 1, go(1), E),
                       expr(Temp, 0, Assign, Lit, int16_t(kTemplate & 0xFFFF), go(2), E),
@@ -1403,10 +1412,22 @@ static void testMakeNewCharacter() {
     t = fx.run(0x1001);
     const auto& babies = fx.vm.object(1)->array(0).values;
     check(t.status == Thread::Status::Finished && babies.size() == 2 && fx.vm.neighbor(babies[0]) &&
-              fx.vm.neighbor(babies[0])->personData[persondata::PersonAge] == 0 &&
+              fx.vm.neighbor(babies[0])->personData[persondata::PersonAge] == 1 &&
               fx.vm.neighbor(babies[1])->personData[persondata::FamilyNumber] == 3 &&
               fx.vm.neighbor(babies[1])->lastName == "Caixao",
           "Make New Character 0x01 makes temp 0 babies of two parents, in their family");
+    bool genes = true;
+    for (int16_t id : babies) {
+        const auto& dna = fx.vm.neighbor(id)->dna;
+        const auto get = [&](const char* k) { auto it = dna.find(k); return it == dna.end() ? std::string() : it->second; };
+        // Hair: black (genetic 1) beats blond (2) when both are drawn; eyes:
+        // dark brown (1) beats green (2); skin: a tone between Light and Dark in gene 6.
+        genes = genes && (get("1") == "00000001-0000-0000-0000-000000000000" || get("268435457") == "00000003-0000-0000-0000-000000000000");
+        genes = genes && get("3") == "32dee745-b6ce-419f-9e86-ae93802d2682" &&
+                get("268435459") == "51c4a750-c9f4-4cfe-801c-898efc360cb7";
+        genes = genes && !get("6").empty() && fx.vm.neighbor(id)->personData[82] == 500;
+    }
+    check(genes, "the babies' genes come from the parents' DNA by PickGene (dominant = lower genetic value)");
 }
 
 int main() {

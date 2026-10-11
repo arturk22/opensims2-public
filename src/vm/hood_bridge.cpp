@@ -100,6 +100,7 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
                 v.outfits.push_back(o.key);
         v.firstName = n.firstName;
         v.lastName = n.lastName;
+        v.dna = n.dna;
         vm.neighbors[int16_t(n.id)] = std::move(v);
         ++out.neighbors;
     }

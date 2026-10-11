@@ -28,6 +28,13 @@
 //   creates them in the background: the first run returns "wait", the
 //   reruns poll until every baby is ready (unless byte 13 bit 0, it also
 //   posts a message about the birth); here they are ready at once (true).
+//   Each baby gets its genes from genetics.hpp as ProcessCreateBabyRequest
+//   draws them (PickGene per gene type, the descendant face's dominant
+//   regions as gene 5; docs/cas-mac.md §5), from the parents' DNA (the
+//   neighborhood's SDNA); gender: a lone parent's (both the same Sim), else
+//   a coin flip; person data 58 = 1, fatness (82) 500, body flags (81) 0.
+//   The baby looks like every baby (buFace, its skin tone): the face it
+//   inherits shows from toddler on, which needs the parents' LxNR (open).
 //
 // The binary writes byte 14's local as a skin tone (< 4, else error 0x9E),
 // but the base game's trees all leave byte 14 at 0, which names the age's
@@ -49,6 +56,7 @@
 #include "characters.hpp"
 
 #include "errors.hpp"
+#include "genetics.hpp"
 #include "formats/binreader.hpp"
 
 namespace os2::vm {
@@ -58,6 +66,7 @@ namespace {
 constexpr uint32_t kTemplatePerson = 0x7FD96B54;
 constexpr int16_t kSkinColor = 60;
 constexpr int16_t kGender = 65;
+constexpr int16_t kBodyFlags = 81, kFatness = 82;
 
 int16_t ageData(int16_t ageFlag) {
     switch (ageFlag) {
@@ -183,14 +192,31 @@ Exit makeNewCharacter(Context& c) {
     if (!(flags & 0x08) && !(flags & 0x10))
         if (vm.code().definitionByGuid(vm.neighbor(a)->guid))
             templateGuid = vm.neighbor(a)->guid; // the CAS starts from a parent (inferred)
+    // The CAS's baby request (genetics.hpp): the genes of both parents, the
+    // gender (a lone parent's, else a coin flip), the face region by region.
+    const genetics::Random random = [&](uint32_t n) { return n ? vm.random() % n : 0u; };
+    const genetics::GeneticValue value = genetics::baseGameGeneticValues();
+    const auto skinTones = genetics::baseGameSkinTones();
     for (int i = 0; i < count; ++i) {
-        const int16_t parent = rand(2) ? a : b;
-        const int16_t skin = vm.neighbor(parent)->personData[kSkinColor];
-        const int16_t id = makeCharacter(vm, templateGuid, 0x20, rand(100) < 50 ? 2 : 1, skin);
+        const Neighbor& ma = *vm.neighbor(a);
+        const Neighbor& pa = *vm.neighbor(b);
+        const genetics::Dna dnaA = genetics::Dna::fromProperties(ma.dna), dnaB = genetics::Dna::fromProperties(pa.dna);
+        genetics::Dna dna = genetics::determineGenetics(dnaA, dnaB, value, random, skinTones);
+        const genetics::DescendantFace face = genetics::determineDescendantFace(dnaA, dnaB, random);
+        dna.alleles[genetics::gene::DominantRegions] = {face.dominant, ""};
+        const bool female = genetics::babyIsFemale(a == b, ma.personData[kGender] == 1, random);
+        const int16_t skin = ma.personData[kSkinColor];
+        const int16_t familyNumber = ma.personData[persondata::FamilyNumber];
+        const std::string lastName = ma.lastName;
+        const int16_t id = makeCharacter(vm, templateGuid, 0x20, female ? 2 : 1, skin);
         Neighbor& baby = vm.neighbors[id];
-        baby.lastName = vm.neighbor(a)->lastName;
+        baby.lastName = lastName;
         baby.firstName.clear();
-        baby.personData[persondata::FamilyNumber] = vm.neighbor(a)->personData[persondata::FamilyNumber];
+        baby.dna = dna.toProperties();
+        baby.personData[persondata::PersonAge] = 1; // baby (ProcessCreateBabyRequest: data 58 = 1)
+        baby.personData[kFatness] = 500;
+        baby.personData[kBodyFlags] = 0;
+        baby.personData[persondata::FamilyNumber] = familyNumber;
         list.values.push_back(id);
     }
     return Exit::True;

@@ -87,6 +87,7 @@ add_library(os2_vm
   src/vm/rooms.cpp
   src/vm/build_edit.cpp
   src/vm/characters.cpp
+  src/vm/genetics.cpp
   src/vm/animation.cpp
   src/vm/appearance.cpp
   src/vm/dialog.cpp
@@ -224,6 +225,10 @@ add_test(NAME vm COMMAND test_vm)
 add_executable(test_hood_vm tests/test_hood_vm.cpp)
 target_link_libraries(test_hood_vm PRIVATE os2_vm)
 add_test(NAME hood_vm COMMAND test_hood_vm)
+
+add_executable(test_genetics tests/test_genetics.cpp)
+target_link_libraries(test_genetics PRIVATE os2_vm)
+add_test(NAME genetics COMMAND test_genetics)
 
 add_executable(test_dialog tests/test_dialog.cpp)
 target_link_libraries(test_dialog PRIVATE os2_vm)
