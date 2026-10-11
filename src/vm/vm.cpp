@@ -931,6 +931,7 @@ bool VM::branch(Thread& t, Behavior::Target target) {
                 if (!foundAction)
                     return true;
                 t.interactionReturned = 0; // Gosub Found Action branches instead
+                foundActionReturned(*this, t, value);
             }
             // The caller's call instruction branches on the returned value.
             const Frame& caller = t.stack.back();

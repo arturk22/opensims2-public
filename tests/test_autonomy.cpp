@@ -95,7 +95,7 @@ static InteractionTable::Interaction adEntry(uint16_t action, uint16_t guard, ui
     i.autonomy = 50;
     i.attenuationCode = atten;
     i.motives.assign(7, std::vector<InteractionTable::Advertisement>(kMotiveCount));
-    i.motives[3][motiveIndex] = {min, range, personality}; // the adult table
+    i.motives[0][motiveIndex] = {min, range, personality}; // the adult table (eSimAge 0)
     return i;
 }
 
@@ -201,10 +201,10 @@ static void testMood() {
 static void testFindBestInteraction() {
     Fixture fx;
     fx.p().motives[7] = -60;
-    fx.p().motives[9] = -20;
+    fx.p().motives[9] = 20;
     check(adValue(*fx.vm.object(fx.sim), 0, 40, 1) == 20 && adValue(*fx.vm.object(fx.sim), 0, 40, 2) == 20 &&
-              adValue(*fx.vm.object(fx.sim), 10, 40, 0) == 10,
-          "ad = min + range x personality / 1000 (even types inverted)");
+              adValue(*fx.vm.object(fx.sim), 10, 40, 0) == 50 && adValue(*fx.vm.object(fx.sim), 10, 40, 5) == 10,
+          "ad = min + range x personality / 1000 (even types inverted; type 0: min + range)");
     AutonomyDecision seen;
     autonomyObserver() = [&](const AutonomyDecision& d) { seen = d; };
     // Main: Find Best Interaction (all motives), then Gosub Found Action, then temp 0 := 1.
@@ -213,12 +213,12 @@ static void testFindBestInteraction() {
     Thread t = fx.vm.start(fx.sim, 0x1100);
     fx.vm.run(t);
     autonomyObserver() = nullptr;
-    // Food: hunger -60 + 20 = -40: score 20 -> 30 = +10. Loo: bladder -20 +
-    // 30 = 10: 40 -> 50 = +10, no attenuation: a tie, the first one wins.
-    // TTA 1 of the food: its check tree zeroed the range.
+    // Food: hunger -60 + 20 / 1000: +0.01 on the curve, / 10. The loo's
+    // bladder is on the flat part: 0. TTA 1 of the food: its check tree
+    // zeroed the range.
     check(seen.found && seen.candidates == 3 && seen.checked == 3, "every advertising entry is scored and checked");
-    check(seen.best.size() == 2 && seen.best[0].object == fx.food && seen.best[0].interaction == 0 &&
-              std::abs(seen.best[0].score - 10.0f) < 1e-3f,
+    check(seen.best.size() == 1 && seen.best[0].object == fx.food && seen.best[0].interaction == 0 &&
+              std::abs(seen.best[0].score - 0.001f) < 1e-6f,
           "score = interaction curve gain; a check tree that zeroes the ad drops the entry");
     check(t.status == Thread::Status::Finished && t.temps[0] == 1, "Gosub Found Action branches when the action returns");
     check(!fx.vm.object(fx.food)->attributes.empty() && fx.vm.object(fx.food)->attributes[0] == 7,
@@ -229,7 +229,7 @@ static void testFindBestInteraction() {
     // The bigger gain wins.
     Fixture fy;
     fy.p().motives[7] = -60;
-    fy.p().motives[9] = -40; // loo: -40 + 30 = -10: +15, against +10 for the food
+    fy.p().motives[9] = -40; // loo: +0.03 x 0.5 / 10, against +0.02 x 0.5 / 10 for the food
     fy.code.add(kSimGroup, 0x1100, tree({instr(0x03, T, F, {0, 0, 0, 0})}));
     autonomyObserver() = [&](const AutonomyDecision& d) { seen = d; };
     Thread u = fy.vm.start(fy.sim, 0x1100);

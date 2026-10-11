@@ -548,18 +548,53 @@ motivos salvos nos PERS de `N001_Lot11`.
   0x1D "check tree ad min", 0x0C "check tree ad range" e 0x1C "check tree ad
   personality var" (dado = número do motivo; "Check Trees - Nuke all ads",
   "Social - Adj Advertising", "Immaturity - Adjust Ads"). Das sete tabelas
-  (versão ≥ 0x44), 952 entradas têm a 0 preenchida e 77 só a 0; a ordem por
-  idade não foi confirmada (usa-se a dos bits de idade dos property sets:
-  criança pequena, criança, adolescente, adulto, idoso, bebê, jovem adulto, e
-  a tabela 0 quando a da idade está vazia). O campo "autonomy" da entrada é o
+  (versão ≥ 0x44), 952 entradas têm a 0 preenchida e 77 só a 0 (a 0 é a do
+  adulto: ver o binário abaixo). O campo "autonomy" da entrada é o
   "Autonomy Threshold" (`cTSTreeTableEntry::GetAutonomyThreshold`): 50 nas
   entradas com anúncio, 100 nas outras; os Sims do lote têm o dado de pessoa
   36 "autonomy level" = 50.
 
+- **Binário de Mac (BV 1.10, Ghidra headless só leitura)**, o que o
+  `TryFindBestAction` faz:
+  - flags do operando = byte 3 (`param[7]`), máscara = u16 0; com máscara 0,
+    `FUN_00e1de28` escolhe os N piores motivos (ordenados pelo valor, sem o
+    3, só os que o Sim usa; N = "random worst motive count", 3 no binário e
+    8 na FCNS) e o laço repete com os restantes (flag 0x01) enquanto nada
+    passa e há check trees sobrando (200).
+  - a máscara só escolhe os candidatos (`FillInMotiveArrayWithObjectsWithAds`
+    no `FBA_FindStaticInteractions`); a **pontuação** (`FUN_00e1dbb8` −
+    `FUN_00e1dd08` = `cTSMotiveEffects::GetInteractionScore` −
+    `GetCurrentScore`) soma, nos motivos 0, 3, 5–9, 13–15 (`FUN_01be21b4`:
+    todos menos 1, 2, 4, 10, 11, 12; nos animais menos 13 em vez de 1),
+    curva(motivo + anúncio) − curva(motivo), e divide por 10 (16 motivos − 6).
+  - anúncio (`GetAdScoreForHuman`, `FUN_0049ee38`) = (mín + faixa × p) ×
+    **0,001**, com p = dado de pessoa da tabela em 0x02734540 / 1000 (pares
+    invertidos: 1000 − valor; 5/6 "generoso" sem dado: 0) e, com tipo 0,
+    mín + faixa. A tabela de anúncios é a da idade `eSimAge`.
+  - `FBA_ScoreInteraction`: pontuação × `CalcAttenuation` = 1 / (1 +
+    atenuação × distância) (com "autonomy attenuation formula" ≠ 0 seria
+    min(1, "tuning" / (...)); a FCNS diz 0), × viés de posse, de memória, de
+    relacionamento, um quarto e o fator de clima (não feitos: 1); abaixo do
+    "min autonomy score" (família/visitante; sentado) ou de 1e-5 fica fora.
+  - `cTSTreeTableEntry::Read`: depois das 7 contagens vem um **u32 de flags**
+    (os "flags/flags2" do parser); antes da versão 0x52 os bits 0x10 e 0x40
+    são invertidos ao ler. `cTSPerson::GetAvailabilityBitset` dá o bit que
+    a entrada precisa pela idade: `eSimAge` 0 adulto 0x40, 1 criança 0x10, 2
+    criança pequena 0x200, 3 adolescente 0x800, 4 idoso 0x400, 5 bebê 0x1000
+    (6–13: 0x4000000, 0x10000000, 0x20000000, 0x2000, 0x8000000, 0x1000000,
+    0x2000000, 0x10000; animais/jovem adulto). A fuga de adolescente
+    ("Portal - Pedestrian", flags 0x850 → 0x800) só serve a adolescentes; a
+    ordem das sete tabelas de anúncios segue o `eSimAge` (adulto, criança,
+    criança pequena, adolescente, idoso, bebê, ?): "Ler para o Mais Jovem"
+    tem anúncio em adulto, criança e adolescente.
+  - a mínima struct do anúncio: +4 tipo de personalidade, +6 mín, +8 faixa
+    (`GetPersonalityVarRef/MinRef/RangeRef`), lidos do arquivo nessa ordem:
+    mín, faixa, tipo.
+  - `OnSimulatorTick`, `PersonalTimeMinutePassed` e `PersonalTimeHourPassed`
+    **não aplicam o decaimento diário** (os dois últimos só contam dados de
+    pessoa 189 e 172 do BV): segue inferido.
+
 **Conclusão.** Implementado em `src/vm/motives.*` e `src/vm/autonomy.*`
-(ver TODO.md M5 "Motor de motivos e autonomia"). Inferido: o decaimento no
-motor, a unidade por dia, a fórmula de pontuação (ganho na curva de
-utilidade de cada motivo anunciado, como o The Sims 1 da FreeSO, dividido
-por 1 + atenuação × distância; o "attenuation formula/tuning" 0/2 não foi
-decifrado), a ordem das tabelas por idade, o sentido de mín/delta (faixa
-pela personalidade).
+(ver TODO.md M6, "Motor de motivos" e "Autonomia"). Inferido: o
+decaimento no motor e a unidade por dia; os vieses do `FBA_ScoreInteraction`
+(posse, memória, relacionamento, clima) ficam em 1.

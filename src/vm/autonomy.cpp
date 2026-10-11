@@ -18,31 +18,50 @@ namespace {
 constexpr float kAttenuation[] = {0.0f, 0.0f, 0.1f, 0.3f, 0.6f}; // custom, none, low, moderate, high
 constexpr float kFloorToFloorDistance = 10.0f;
 constexpr size_t kMaxCheckTrees = 200;
-constexpr float kMinScore = 0.0f;
+constexpr float kMinScore = 1e-5f; // FCNS 2 "min autonomy score" is 0; the binary also needs 1e-5
+constexpr size_t kMemoryCount = 8;        // "autonomy memory count"
+constexpr uint64_t kMemoryDuration = 9999; // "max duration autonomy memory", taken as ticks (inferred)
+
+// Whether the Sim lately ran this interaction autonomously and it failed
+// (its action tree returned false, e.g. no route): it is not picked again
+// while remembered (inferred use of the autonomy memory).
+bool rememberedFailure(const VM& vm, const Object& sim, ObjectId object, uint16_t interaction) {
+    for (const auto& m : sim.person->autonomyMemory)
+        if (m.failed && m.object == object && m.interaction == interaction && vm.ticks - m.tick <= kMemoryDuration)
+            return true;
+    return false;
+}
 
 constexpr int16_t kObjectDataTreeTableEntry = 20;
 constexpr int16_t kObjectDataUseCount = 62;
 
-// The ad table of a Sim's age: TTABs from version 0x44 have seven, taken to
-// follow the age bits of the game's property sets (toddler, child, teen,
-// adult, elder, baby, young adult); an entry whose table for the age is
-// empty uses the first one (inferred, docs/data-findings.md).
-size_t adTableOf(const Object& sim, const InteractionTable::Interaction& e) {
-    if (e.motives.size() < 7)
-        return 0;
-    size_t t = 3;
+// The Sim's age as the engine numbers it (cITSPerson::eSimAge, from the
+// Mac binary's cTSPerson::GetAvailabilityBitset and the TTAB data): 0
+// adult, 1 child, 2 toddler, 3 teen, 4 elder, 5 baby. It picks the ad table
+// (cTSTreeTableEntry::GetAdScoreForHuman) and the availability bit.
+int simAge(const Object& sim) {
     switch (curveAgeIndex(sim)) {
-    case 0: t = 4; break;
-    case 1: t = 3; break;
-    case 2: t = 2; break;
-    case 3: t = 1; break;
-    case 4: t = 0; break;
-    case 5: t = 5; break;
+    case 0: return 4;
+    case 2: return 3;
+    case 3: return 1;
+    case 4: return 2;
+    case 5: return 5;
+    default: return 0;
     }
-    const auto& table = e.motives[t];
-    const bool any = std::any_of(table.begin(), table.end(),
-                                 [](const InteractionTable::Advertisement& a) { return a.minimum || a.delta; });
-    return any ? t : 0;
+}
+
+// cTSPerson::GetAvailabilityBitset: the TTAB flag an entry needs for the
+// Sim's age (adult 0x40, child 0x10, toddler 0x200, teen 0x800, elder
+// 0x400, baby 0x1000). TTABs before version 0x52 store 0x10 and 0x40
+// inverted (cTSTreeTableEntry::Read flips them), so in the base game's
+// tables a set bit 4/6 means "not for children/adults" (the teen runaway
+// entry, 0x850, is for teens only).
+bool availableForAge(const Object& sim, const InteractionTable& table, const InteractionTable::Interaction& e) {
+    static constexpr uint32_t kBits[6] = {0x40, 0x10, 0x200, 0x800, 0x400, 0x1000};
+    uint32_t flags = uint32_t(e.flags) | uint32_t(e.flags2) << 16;
+    if (table.version < 0x52)
+        flags ^= 0x10 | 0x40;
+    return flags & kBits[simAge(sim)];
 }
 
 struct Ads {
@@ -53,7 +72,10 @@ Ads adsOf(const Object& sim, const InteractionTable::Interaction& e) {
     Ads a;
     if (e.motives.empty())
         return a;
-    const auto& table = e.motives[adTableOf(sim, e)];
+    const auto age = size_t(simAge(sim));
+    if (age >= e.motives.size())
+        return a;
+    const auto& table = e.motives[age];
     for (size_t m = 0; m < table.size() && m < kMotiveCount; ++m) {
         a.min[m] = table[m].minimum;
         a.range[m] = table[m].delta;
@@ -62,20 +84,31 @@ Ads adsOf(const Object& sim, const InteractionTable::Interaction& e) {
     return a;
 }
 
-// Sum of the score curve gains of the considered motives.
-float scoreAds(VM& vm, const Object& sim, const Ads& a, uint16_t mask) {
+// The motives a human's interaction score sums (FUN_01be21b4 in the Mac
+// binary: every motive but 1, 2, 4, 10, 11 and 12).
+constexpr std::array<int16_t, 10> kScoredMotives = {0, 3, 5, 6, 7, 8, 9, 13, 14, 15};
+
+// cTSMotiveEffects::GetInteractionScore - GetCurrentScore (Mac binary):
+// the sum over the scored motives of curve(motive + ad / 1000) -
+// curve(motive), divided by 10 (the motive count, 16, minus 6). The mask
+// only chooses the candidates.
+float scoreAds(VM& vm, const Object& sim, const Ads& a) {
     const auto& curves = scoreCurves(vm, sim);
     float score = 0;
-    for (size_t m = 0; m < kMotiveCount; ++m) {
-        if (!(mask & (1u << m)) || (!a.min[m] && !a.range[m]))
+    for (int16_t m : kScoredMotives) {
+        const auto k = size_t(m);
+        if (!a.min[k] && !a.range[k])
             continue;
-        const float ad = adValue(sim, a.min[m], a.range[m], uint16_t(a.personality[m]));
-        const float v = sim.person->motives[m];
-        score += curves[m].at(std::clamp(v + ad, -100.0f, 100.0f)) - curves[m].at(v);
+        const float ad = adValue(sim, a.min[k], a.range[k], uint16_t(a.personality[k])) * 0.001f;
+        const float v = sim.person->motives[k];
+        score += curves[k].at(v + ad) - curves[k].at(v);
     }
-    return score;
+    return score / 10.0f;
 }
 
+// The score is multiplied by 1 / (1 + attenuation x distance)
+// ((anonymous namespace)::CalcAttenuation; "autonomy attenuation formula" 1
+// would use min(1, tuning / (...)) instead, but it is 0).
 float attenuationOf(const InteractionTable::Interaction& e) {
     if (e.attenuationCode == 0)
         return e.attenuationValue;
@@ -99,7 +132,8 @@ struct Candidate {
 // the thread for data owners 0x0C/0x1C/0x1D; true if it passes (or there
 // is none). `ads` gets what the tree left, `args` the stack object of the
 // first action string it added (the action tree's parameter 0).
-bool runCheckTree(VM& vm, ObjectId sim, const Candidate& c, Ads& ads, std::array<int16_t, 4>& args) {
+bool runCheckTree(VM& vm, ObjectId sim, const Candidate& c, Ads& ads, std::array<int16_t, 4>& args,
+                  std::vector<std::string>& errors) {
     if (!c.entry->guard)
         return true;
     const int16_t params[1] = {1};
@@ -120,6 +154,10 @@ bool runCheckTree(VM& vm, ObjectId sim, const Candidate& c, Ads& ads, std::array
         vm.run(t, vm.instructionsPerTurn);
     if (Object* s = vm.object(sim))
         s->data[objdata::HideInteraction] = 0;
+    if (t.status == Thread::Status::Failed)
+        errors.push_back(c.name + ": " + t.error.substr(0, t.error.find('\n')));
+    else if (t.status == Thread::Status::Running)
+        errors.push_back(c.name + ": still running");
     if (t.status != Thread::Status::Finished || !t.result)
         return false;
     ads.min = t.adMin;
@@ -191,7 +229,9 @@ Exit findBestInteraction(Context& c) {
             continue;
         const float distance = distanceBetween(*from, *leader);
         for (const auto& e : ref->table->interactions) {
-            if ((e.flags & 0x80) || int64_t(e.autonomy) > autonomyLevel)
+            if ((e.flags & 0x80) || int64_t(e.autonomy) > autonomyLevel || !availableForAge(sim, *ref->table, e))
+                continue;
+            if (rememberedFailure(vm, sim, leaderId, uint16_t(e.stringIndex)))
                 continue;
             const Ads ads = adsOf(sim, e);
             bool advertises = false;
@@ -203,7 +243,7 @@ Exit findBestInteraction(Context& c) {
             cand.object = leaderId;
             cand.entry = &e;
             cand.distance = distance;
-            cand.staticScore = scoreAds(vm, sim, ads, mask) / (1.0f + attenuationOf(e) * distance);
+            cand.staticScore = scoreAds(vm, sim, ads) / (1.0f + attenuationOf(e) * distance);
             if (ref->strings)
                 cand.name = ref->strings->get(e.stringIndex, lang::BrazilianPortuguese);
             candidates.push_back(std::move(cand));
@@ -228,12 +268,12 @@ Exit findBestInteraction(Context& c) {
         Ads ads = adsOf(sim, *cand.entry);
         std::array<int16_t, 4> args{};
         ++decision.checked;
-        if (!runCheckTree(vm, simId, cand, ads, args))
+        if (!runCheckTree(vm, simId, cand, ads, args, decision.checkErrors))
             continue;
         Object* s = vm.object(simId);
         if (!s)
             return Exit::False;
-        const float score = scoreAds(vm, *s, ads, mask) / (1.0f + attenuationOf(*cand.entry) * cand.distance);
+        const float score = scoreAds(vm, *s, ads) / (1.0f + attenuationOf(*cand.entry) * cand.distance);
         if (score > kMinScore)
             passed.push_back({&cand, score, args});
     }
@@ -291,26 +331,41 @@ Exit gosubFoundAction(Context& c) {
 
 } // namespace
 
+void foundActionReturned(VM& vm, Thread& t, bool result) {
+    Object* sim = vm.object(t.me);
+    if (!sim || !sim->person)
+        return;
+    auto& memory = sim->person->autonomyMemory;
+    memory.push_back({sim->person->data[persondata::FindBestActionObject], uint16_t(sim->data[kObjectDataTreeTableEntry]),
+                      vm.ticks, !result});
+    if (memory.size() > kMemoryCount)
+        memory.erase(memory.begin());
+}
+
 std::function<void(const AutonomyDecision&)>& autonomyObserver() {
     static std::function<void(const AutonomyDecision&)> observer;
     return observer;
 }
 
 float adValue(const Object& sim, int16_t min, int16_t range, uint16_t personality) {
-    // STR# 0xE8 "personality ads": 1/2 nice/grouchy, 3/4 active/lazy, 5/6
-    // generous/selfish, 7/8 playful/serious, 9/10 outgoing/shy, 11/12
-    // neat/sloppy (the even ones inverted), then the skills. Person data
-    // (STR# 0xC8): personality 2-7, skills 9 cleaning, 10 cooking, 11
-    // charisma, 12 mechanical, 15 creativity, 17 body, 18 logic;
-    // gardening, music and literacy have none.
-    static constexpr int16_t kData[23] = {-1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 9, 10, 11, 12, -1, -1, 15, -1, 17, 18};
-    float factor = 0;
-    if (personality > 0 && personality < std::size(kData) && kData[personality] >= 0 && sim.person) {
-        factor = std::clamp(float(sim.person->data[size_t(kData[personality])]) / 1000.0f, 0.0f, 1.0f);
-        if (personality < 13 && personality % 2 == 0)
-            factor = 1.0f - factor;
-    }
-    return float(min) + float(range) * factor;
+    // The Mac binary's table at 0x02734540 (FUN_0049ee38): STR# 0xE8
+    // "personality ads" type -> person data, inverted: 1/2 nice (2),
+    // 3/4 active (3), 5/6 generous (none: 0), 7/8 playful (5), 9/10 outgoing
+    // (6), 11/12 neat (7) (the even ones inverted: 1000 - value), 13
+    // cleaning (9), 14 cooking (10), 15 social (11), 16 repair (12), 17
+    // gardening (13), 18 music (14), 19 creative (15), 20 literacy (16), 21
+    // physical (17), 22 logic (18). Type 0: min + range.
+    static constexpr int16_t kData[23] = {-1, 2, 2, 3, 3, -1, -1, 5, 5, 6, 6, 7, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+    if (personality == 0)
+        return float(min) + float(range);
+    if (personality >= std::size(kData))
+        return 0;
+    float p = 0;
+    if (kData[personality] >= 0 && sim.person)
+        p = float(sim.person->data[size_t(kData[personality])]);
+    if (personality < 13 && personality % 2 == 0)
+        p = 1000.0f - p;
+    return float(min) + float(range) * p * 0.001f;
 }
 
 std::optional<Exit> idleSimsCall(Context& c, uint8_t call) {

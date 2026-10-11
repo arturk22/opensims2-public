@@ -4,6 +4,8 @@
 
 #include "autonomy_cmds.hpp"
 
+#include "formats/bhav.hpp"
+#include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
@@ -65,7 +67,7 @@ void printMotives(const vm::Object& s) {
 }
 
 int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, const std::string& simQuery,
-                std::optional<int> motives, bool fromInit, bool verbose, bool noDecay) {
+                std::optional<int> motives, bool fromInit, bool verbose, bool noDecay, int traceId, size_t traceDepth) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -103,6 +105,15 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         std::printf("  tick %6llu %s %-10s Find Best Interaction (mask %04X): %zu advertise, %zu checked",
                     static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
                     objectName(machine, d.sim).c_str(), d.motiveMask, d.candidates, d.checked);
+        if (!d.checkErrors.empty())
+            std::printf(", %zu check trees failed", d.checkErrors.size());
+        if (verbose) {
+            std::map<std::string, int> why;
+            for (const auto& e : d.checkErrors)
+                ++why[e.substr(e.find(": ") + 2)];
+            for (const auto& [w, n] : why)
+                std::printf("\n      check tree failure x%d: %s", n, w.c_str());
+        }
         if (!d.found) {
             std::printf(", nothing\n");
             return;
@@ -110,11 +121,29 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         ++choices[d.sim];
         std::printf("\n");
         for (size_t i = 0; i < d.best.size() && i < (verbose ? 5u : 3u); ++i)
-            std::printf("      %s %-34s on %-38s score %7.3f, %4.1f tiles\n", i == 0 ? "->" : "  ", d.best[i].name.c_str(),
+            std::printf("      %s %-34s on %-38s score %9.3e, %4.1f tiles\n", i == 0 ? "->" : "  ", d.best[i].name.c_str(),
                         objectName(machine, d.best[i].object).c_str(), d.best[i].score, d.best[i].distance);
     };
 
+    // --trace ID: the Sim's instructions in its first frames, from its first
+    // Find Best Interaction on (at most 3000 lines).
+    bool tracing = false;
+    size_t traced = 0;
+    if (traceId)
+        machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
+            if (t.me != traceId || t.stack.empty() || &t.stack.front() != &machine.threads[traceId].stack.front())
+                return;
+            if (in.opcode == 0x03)
+                tracing = true;
+            if (!tracing || t.stack.size() > traceDepth || traced++ >= 3000)
+                return;
+            const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
+            std::printf("    t%-6llu %*s%04X #%-3u %-30s %s\n", static_cast<unsigned long long>(machine.ticks),
+                        int(t.stack.size() - 1) * 2, "", f.instance, f.pc, op.c_str(), f.behavior->fileName.c_str());
+        };
+
     std::map<vm::ObjectId, std::string> running;
+    std::map<vm::ObjectId, std::pair<uint64_t, size_t>> lastMemory; // newest remembered tick, count
     for (long i = 0; i < ticks; ++i) {
         machine.tick();
         for (vm::ObjectId id : sims) {
@@ -124,6 +153,21 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             std::string now;
             if (s->activeInteraction >= 0 && size_t(s->activeInteraction) < s->queue.size())
                 now = s->queue[size_t(s->activeInteraction)].name;
+            if (const auto& mem = s->person->autonomyMemory; !mem.empty()) {
+                const auto key = std::make_pair(mem.back().tick, mem.size());
+                if (lastMemory[id] != key) {
+                    lastMemory[id] = key;
+                    const vm::Object* o = machine.object(mem.back().object);
+                    std::string name = "#" + std::to_string(mem.back().interaction);
+                    if (o)
+                        if (auto q = vm::makeInteraction(machine, o->id, mem.back().interaction))
+                            name = q->name;
+                    std::printf("  tick %6llu %s %-10s autonomous \"%s\" on %s ended: %s\n",
+                                static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
+                                simName(*s).c_str(), name.c_str(), objectName(machine, mem.back().object).c_str(),
+                                mem.back().failed ? "false (remembered as failed)" : "true");
+                }
+            }
             if (now != running[id]) {
                 if (!now.empty())
                     std::printf("  tick %6llu %s %-10s running \"%s\"\n", static_cast<unsigned long long>(machine.ticks),
@@ -181,6 +225,8 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
     long ticks = 1800, every = 0;
     std::optional<int> motives;
     bool fromInit = false, verbose = false, noDecay = false;
+    int traceId = 0;
+    size_t traceDepth = 4;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--ticks" && i + 1 < argc)
@@ -195,6 +241,10 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
             fromInit = true;
         else if (a == "--verbose")
             verbose = true;
+        else if (a == "--trace" && i + 1 < argc)
+            traceId = std::stoi(argv[++i]);
+        else if (a == "--trace-depth" && i + 1 < argc)
+            traceDepth = std::stoul(argv[++i]);
         else if (a == "--no-decay")
             noDecay = true;
         else if (lotPath.empty())
@@ -204,11 +254,11 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (lotPath.empty())
         return -1;
-    return cmdAutonomy(lotPath, ticks, every, sim, motives, fromInit, verbose, noDecay);
+    return cmdAutonomy(lotPath, ticks, every, sim, motives, fromInit, verbose, noDecay, traceId, traceDepth);
 }
 
 const char* autonomyUsage() {
-    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--init]\n";
+    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--init]\n";
 }
 
 } // namespace os2

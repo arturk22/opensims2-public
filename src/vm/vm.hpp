@@ -353,6 +353,15 @@ struct Person {
     // (autonomy.cpp); its object and entry are also in person data 53 and
     // object data 20.
     std::array<int16_t, 4> foundActionArgs{};
+    // What autonomy did lately (autonomy.cpp): the interactions Gosub Found
+    // Action ran, newest last, and whether their action tree returned false.
+    struct AutonomyMemory {
+        ObjectId object = 0;
+        uint16_t interaction = 0;
+        uint64_t tick = 0;
+        bool failed = false;
+    };
+    std::vector<AutonomyMemory> autonomyMemory;
 };
 
 // Where an object is in the lot, as the lot's saved state has it: the tile
@@ -868,5 +877,7 @@ void tickMotives(VM& vm);
 void registerMotivePrimitives(VM& vm);
 // Find Best Interaction and Gosub Found Action (autonomy.cpp).
 void registerAutonomyPrimitives(VM& vm);
+// Called when an interaction Gosub Found Action ran returns `result`.
+void foundActionReturned(VM& vm, Thread& t, bool result);
 
 } // namespace os2::vm
