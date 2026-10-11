@@ -79,6 +79,7 @@ add_library(os2_vm
   src/vm/dialog.cpp
   src/vm/engine_prims.cpp
   src/vm/autonomy.cpp
+  src/vm/autonomy_trees.cpp
   src/vm/lot.cpp
   src/vm/lot_neighborhood.cpp
   src/vm/lot_records.cpp

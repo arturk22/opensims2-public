@@ -25,6 +25,7 @@ static void check(bool cond, const char* what) {
 constexpr uint32_t kSimGroup = 0x7F000010;
 constexpr uint32_t kFoodGroup = 0x7F000020;
 constexpr uint32_t kLooGroup = 0x7F000030;
+constexpr uint32_t kMenuGroup = 0x7F000040;
 
 using Target = Behavior::Target;
 using Kind = Behavior::TargetKind;
@@ -43,7 +44,7 @@ static Behavior::Instruction instr(uint16_t opcode, Target onTrue, Target onFals
     return in;
 }
 
-enum Owner : uint8_t { SAttr = 0x01, Lit = 0x07, Temp = 0x08, AdRange = 0x0C };
+enum Owner : uint8_t { SAttr = 0x01, Lit = 0x07, Temp = 0x08, AdRange = 0x0C, AdMin = 0x1D };
 enum Op : uint8_t { Assign = 5 };
 
 static Behavior::Instruction expr(uint8_t lo, int16_t ld, uint8_t op, uint8_t ro, int16_t rd, Target t, Target f) {
@@ -216,7 +217,8 @@ static void testFindBestInteraction() {
     // Food: hunger -60 + 20 / 1000: +0.01 on the curve, / 10. The loo's
     // bladder is on the flat part: 0. TTA 1 of the food: its check tree
     // zeroed the range.
-    check(seen.found && seen.candidates == 3 && seen.checked == 3, "every advertising entry is scored and checked");
+    check(seen.found && seen.candidates == 3 && seen.checked == 2,
+          "the check tree that sets ads runs before ranking, then the best ranked one is tested and wins");
     check(seen.best.size() == 1 && seen.best[0].object == fx.food && seen.best[0].interaction == 0 &&
               std::abs(seen.best[0].score - 0.001f) < 1e-6f,
           "score = interaction curve gain; a check tree that zeroes the ad drops the entry");
@@ -264,11 +266,55 @@ static void testFind5Worst() {
           "Find 5 Worst Motives: the five lowest motive numbers in temps 0-4");
 }
 
+
+// A check tree that adds action strings (the fridge's food menu): each one
+// is a dynamic interaction ranked with the ads of the moment it was made,
+// with parameters {stack object, temp 0}; the entry itself does not count.
+static void testDynamicInteractions() {
+    Fixture fx;
+    fx.p().motives[7] = -60;
+    fx.p().motives[9] = 100;
+    fx.code.add(kMenuGroup, 0x80, definition(4, 1, 0x0F00D002));
+    InteractionTable menu;
+    menu.version = 0x4E;
+    menu.interactions = {adEntry(0x1001, 0x1002, 0, 7, 0, 1, 0)};
+    fx.code.add(kMenuGroup, 1, std::move(menu));
+    StringTable names;
+    names.format = 0xFFFD;
+    names.entries.push_back({lang::EnglishUS, "Small", "", 0});
+    names.entries.push_back({lang::EnglishUS, "Big", "", 0});
+    fx.code.add(kMenuGroup, 0x12E, std::move(names));
+    fx.code.add(kMenuGroup, 0x1001, tree({expr(SAttr, 0, Assign, Lit, 3, T, E)}));
+    // ad min[7] := 10, "Small"; temp 0 := 4; ad min[7] := 90, "Big"; false.
+    fx.code.add(kMenuGroup, 0x1002,
+                tree({expr(AdMin, 7, Assign, Lit, 10, go(1), E), instr(0x32, go(2), go(2), {0, 0, 0, 0, 1}),
+                      expr(Temp, 0, Assign, Lit, 4, go(3), E), expr(AdMin, 7, Assign, Lit, 90, go(4), E),
+                      instr(0x32, go(5), go(5), {0, 0, 0, 0, 2}), expr(Temp, 0, Assign, Lit, 0, F, E)},
+                     1));
+    Object& m = fx.vm.instantiate(kMenuGroup, 0x80);
+    m.position = {5.5f, 6.5f, 1};
+    const ObjectId menuId = m.id;
+    check((checkTreeAdFlags(fx.vm, m, 0x1002) & (CheckTreeChangesAds | CheckTreeActionStrings)) ==
+              (CheckTreeChangesAds | CheckTreeActionStrings),
+          "the tree scan sees the ads and the action strings");
+    AutonomyDecision seen;
+    autonomyObserver() = [&](const AutonomyDecision& d) { seen = d; };
+    fx.code.add(kSimGroup, 0x1100, tree({instr(0x03, T, F, {0, 0, 0, 0})}));
+    Thread t = fx.vm.start(fx.sim, 0x1100);
+    fx.vm.run(t);
+    autonomyObserver() = nullptr;
+    check(t.result && !seen.best.empty() && seen.best[0].object == menuId && seen.best[0].name == "Big",
+          "the action string made with the bigger ad wins");
+    check(fx.p().foundActionArgs[0] == menuId && fx.p().foundActionArgs[1] == 4 && fx.p().foundActionName == "Big",
+          "its parameters are the stack object and temp 0");
+}
+
 int main() {
     testCurves();
     testMotiveChangeAndDecay();
     testMood();
     testFindBestInteraction();
+    testDynamicInteractions();
     testFind5Worst();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

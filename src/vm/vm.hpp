@@ -335,9 +335,14 @@ constexpr size_t kMaxQueuedInteractions = 64;
 
 // A pie menu entry a check tree adds (Add/Change the Action String), with
 // the stack object at that moment: the action tree gets it as parameter 0.
+// As the Mac binary makes it (cEdithObjectTestSim::sMakeNewMenuItem), the
+// parameters are {stack object, temp 0} and, for autonomy, the check tree
+// ads at that moment (Bon Voyage can also pass temps 4 and 5).
 struct ActionString {
     std::string name;
     ObjectId stackObject = 0;
+    std::array<int16_t, 4> params{};
+    std::array<int16_t, kMotiveCount> adMin{}, adRange{}, adPersonality{};
 };
 
 // A motive change Set Motive Change (0x1D) put on a Sim: the motive moves
@@ -362,6 +367,7 @@ struct Person {
     // (autonomy.cpp); its object and entry are also in person data 53 and
     // object data 20.
     std::array<int16_t, 4> foundActionArgs{};
+    std::string foundActionName; // a dynamic interaction's own name, or empty
     // What autonomy did lately (autonomy.cpp): the interactions Gosub Found
     // Action ran, newest last, and whether their action tree returned false.
     struct AutonomyMemory {

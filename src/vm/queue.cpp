@@ -384,14 +384,15 @@ std::string expandActionString(Context& c, std::string s) {
     return s;
 }
 
-// Add/Change the Action String (0x32): STR# u16 at 0 (0 = 0x12E, the
-// "MakeActionString prim string set" every group with action strings has;
-// 0x12E is also given explicitly), flags u16 at 2 (0x01: the table is the
-// semi-global one, as in the person semi-global's own trees; 0x02 global,
-// inferred; 0x04-0x80 unknown, maybe the icon), string number u8 at 4
-// (1-based); bytes 5-12 (a GUID-like value and a variable) are not used. In
-// a check tree run for the pie menu it adds an entry with the stack object
-// (FreeSO's VMChangeActionString); in an interaction it renames it.
+// Add/Change the Action String (0x32), as the Mac base-game binary has it
+// (cTSObject::TryMakeActionString, base 1.0): STR# u16 at 0 (0 = 0x12E, the
+// "MakeActionString prim string set" every group with action strings has),
+// flags u16 at 2: 0x04 the global table, 0x08 the semi-global one, neither:
+// the private one, then the semi-global, then the global one (the first
+// that has the string); 0x10 the string number is temp 0; string number u8
+// at 4 (1-based). In a check tree run for the pie menu or autonomy it adds
+// an entry with parameters {stack object, temp 0} (sMakeNewMenuItem); in an
+// interaction it renames it.
 Exit changeActionString(Context& c) {
     const auto& o = c.instruction.operands;
     uint16_t table = le16(&o[0]);
@@ -401,13 +402,34 @@ Exit changeActionString(Context& c) {
     const Object* owner = c.vm.object(c.frame.codeOwner);
     if (!owner)
         return Exit::True;
-    const uint32_t group = flags & 0x01 ? owner->semiGroup : flags & 0x02 ? kGlobalGroup : owner->group;
-    const StringTable* strings = group ? c.vm.code().strings(group, table) : nullptr;
-    if (!strings || o[4] == 0)
-        throw VMError("Add/Change the Action String: no STR# " + hexString(table) + " string " + std::to_string(o[4]));
-    const std::string name = expandActionString(c, strings->get(size_t(o[4] - 1)));
+    const int index = flags & 0x10 ? c.thread.temps[0] : o[4];
+    const StringTable* strings = nullptr;
+    auto tryGroup = [&](uint32_t group) {
+        if (strings || !group)
+            return;
+        const StringTable* t = c.vm.code().strings(group, table);
+        if (t && index >= 1 && !t->get(size_t(index - 1)).empty())
+            strings = t;
+    };
+    if (flags & 0x04)
+        tryGroup(kGlobalGroup);
+    else if (flags & 0x08)
+        tryGroup(owner->semiGroup);
+    else {
+        tryGroup(owner->group);
+        tryGroup(owner->semiGroup);
+        tryGroup(kGlobalGroup);
+    }
+    if (!strings || index < 1)
+        throw VMError("Add/Change the Action String: no STR# " + hexString(table) + " string " + std::to_string(index));
+    const std::string name = expandActionString(c, strings->get(size_t(index - 1)));
     if (c.thread.actionStrings) {
-        c.thread.actionStrings->push_back({name, c.frame.stackObject});
+        ActionString a{name, c.frame.stackObject};
+        a.params = {c.frame.stackObject, c.thread.temps[0], 0, 0};
+        a.adMin = c.thread.adMin;
+        a.adRange = c.thread.adRange;
+        a.adPersonality = c.thread.adPersonality;
+        c.thread.actionStrings->push_back(std::move(a));
     } else if (inInteraction(c.thread)) {
         Object& me = c.me();
         if (me.activeInteraction >= 0 && size_t(me.activeInteraction) < me.queue.size())
@@ -739,7 +761,7 @@ std::vector<PieEntry> pieMenu(VM& vm, ObjectId sim, ObjectId object, const PieOp
             d.dynamic = true;
             d.name = s.name;
             d.path = splitPiePath(s.name);
-            d.args[0] = s.stackObject;
+            d.args = s.params;
             out.push_back(std::move(d));
         }
     }

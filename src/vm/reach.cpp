@@ -49,9 +49,14 @@ const ObjectFunctions::Entry* functionEntry(VM& vm, const Object& o, uint16_t fu
 }
 
 // Runs `guard` of `owner`'s code for `me` as a check tree, to the end, in a
-// thread of its own (with the running thread's temps, as interaction checks
-// get the Sim's): true if it returns true. A guard that does not exist
-// passes (as FreeSO's "else Execute = true").
+// thread of its own: true if it returns true. A guard that does not exist
+// passes (as FreeSO's "else Execute = true"). The binary runs it in my own
+// tree sim (cTSObject::RunOneTickTree with no parameters: they default to
+// my temps) and does not restore my temps afterwards, so what the tree
+// writes to them is what the caller reads next: "Function - Prep - TEST"
+// returns false for a free counter in autonomy and leaves the kinds of food
+// it can prepare in temp 2, which "Function Test - Prep" hands to the
+// fridge's meal check trees.
 bool runCheck(Context& c, ObjectId owner, uint16_t guard, std::array<int16_t, 4> args) {
     const Object* o = c.vm.object(owner);
     if (!o || !c.vm.resolveTree(*o, guard).second)
@@ -61,6 +66,7 @@ bool runCheck(Context& c, ObjectId owner, uint16_t guard, std::array<int16_t, 4>
     constexpr size_t kMaxTurns = 1000; // sleeps in a check tree count down without waiting
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < kMaxTurns; ++turn)
         c.vm.run(t, c.vm.instructionsPerTurn);
+    c.thread.temps = t.temps;
     if (t.status == Thread::Status::Failed)
         throw VMError("Run Functional Tree: check tree failed: " + t.error.substr(0, t.error.find('\n')));
     return t.status == Thread::Status::Finished && t.result;
@@ -179,7 +185,9 @@ Exit findBestObjectForFunction(Context& c) {
         if (me.data[kFunctionScore] == 0)
             continue;
         if (e->guard) {
-            if (!runCheck(c, id, e->guard, {}) || !vm.object(meId) || c.me().data[kFunctionScore] == 0)
+            std::array<int16_t, 4> temps{};
+            std::copy_n(c.thread.temps.begin(), std::min<size_t>(4, c.thread.temps.size()), temps.begin());
+            if (!runCheck(c, id, e->guard, temps) || !vm.object(meId) || c.me().data[kFunctionScore] == 0)
                 continue;
             x = vm.object(id);
             if (!x)

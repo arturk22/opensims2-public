@@ -4,12 +4,15 @@
 #include "engine.hpp"
 #include "autonomy.hpp"
 
+#include "formats/bhav.hpp"
 #include "formats/binreader.hpp"
 #include "interactions.hpp"
 #include "motives.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <set>
 
 namespace os2::vm {
@@ -19,8 +22,8 @@ namespace {
 // The global FCNS 2 (objects.package, group 0x7FD46CD0) autonomy constants.
 constexpr float kAttenuation[] = {0.0f, 0.0f, 0.1f, 0.3f, 0.6f}; // custom, none, low, moderate, high
 constexpr float kFloorToFloorDistance = 10.0f;
-constexpr size_t kMaxCheckTrees = 200;
-constexpr float kMinScore = 1e-5f; // FCNS 2 "min autonomy score" is 0; the binary also needs 1e-5
+constexpr float kMinScore = 1e-5f; // FCNS 2 "min autonomy score for family" is 0; the binary also needs 1e-5
+constexpr float kOwnershipBias = 0; // FCNS 2 "autonomy ownership bias" (the binary's default is 0.1)
 constexpr size_t kMemoryCount = 8;        // "autonomy memory count"
 constexpr uint64_t kMemoryDuration = 9999; // "max duration autonomy memory", taken as ticks (inferred)
 
@@ -35,7 +38,6 @@ bool rememberedFailure(const VM& vm, const Object& sim, ObjectId object, uint16_
 }
 
 constexpr int16_t kObjectDataTreeTableEntry = 20;
-constexpr int16_t kObjectDataUseCount = 62;
 
 // The Sim's age as the engine numbers it (cITSPerson::eSimAge, from the
 // Mac binary's cTSPerson::GetAvailabilityBitset and the TTAB data): 0
@@ -121,7 +123,8 @@ float attenuationOf(const InteractionTable::Interaction& e) {
 
 // The biases cTSPerson::FBA_ScoreInteraction multiplies the attenuated
 // score by (Mac binary, Ghidra headless), as they come out in the base game:
-// - ownership, x (1 + GetOwnerShipBias): 0.1 x relationship variable 1 of
+// - ownership, x (1 + GetOwnerShipBias): "autonomy ownership bias" (FCNS
+//   2: 0; 0.1 without the FCNS) x relationship variable 1 of
 //   the interaction leader towards the Sim, when that relationship has more
 //   than one variable (the binary also needs bit 0 of a definition field,
 //   GetDef()->field 0x19, not identified: not checked here; objects with
@@ -137,9 +140,9 @@ float attenuationOf(const InteractionTable::Interaction& e) {
 float ownershipFactor(VM& vm, const Object& sim, ObjectId leader) {
     const auto& rels = vm.relationships;
     auto it = rels.find({vm.relationshipKey(leader), vm.relationshipKey(sim.id)});
-    if (it == rels.end() || it->second.size() < 2)
+    if (kOwnershipBias == 0 || it == rels.end() || it->second.size() < 2)
         return 1.0f;
-    return 1.0f + 0.1f * float(it->second[1]);
+    return 1.0f + kOwnershipBias * float(it->second[1]);
 }
 
 float distanceBetween(const Object& a, const Object& b) {
@@ -156,12 +159,15 @@ struct Candidate {
     float bias = 1; // the FBA_ScoreInteraction biases (ownershipFactor)
 };
 
-// Runs a candidate's check tree for autonomy: parameter 0 = 1, the ads in
-// the thread for data owners 0x0C/0x1C/0x1D; true if it passes (or there
-// is none). `ads` gets what the tree left, `args` the stack object of the
-// first action string it added (the action tree's parameter 0).
-bool runCheckTree(VM& vm, ObjectId sim, const Candidate& c, Ads& ads, std::array<int16_t, 4>& args,
-                  std::vector<std::string>& errors) {
+// Runs a candidate's check tree for autonomy (cEdithObjectTestSim set up
+// for autonomy: parameter 0 = 1), the ads in the thread for data owners
+// 0x0C/0x1C/0x1D; true if it passes (or there is none). `ads` gets what the
+// tree left. The action strings it adds go to `made` (when given) whatever
+// the tree returns: each is a dynamic interaction with the ads of that
+// moment (sMakeNewMenuItem); the entry itself then does not count as passed
+// (FBA_RunCheckTree).
+bool runCheckTree(VM& vm, ObjectId sim, const Candidate& c, Ads& ads, std::vector<std::string>& errors,
+                  std::vector<ActionString>* made = nullptr) {
     if (!c.entry->guard)
         return true;
     const int16_t params[1] = {1};
@@ -178,21 +184,61 @@ bool runCheckTree(VM& vm, ObjectId sim, const Candidate& c, Ads& ads, std::array
     t.adPersonality = ads.personality;
     if (auto it = vm.threads.find(sim); it != vm.threads.end())
         t.temps = it->second.temps;
+    // OS2_FBA_TRACE=<text>: prints the instructions of the check trees of
+    // candidates whose name contains the text (debugging).
+    static const char* traceName = std::getenv("OS2_FBA_TRACE");
+    auto saved = vm.trace;
+    if (traceName && c.name.find(traceName) != std::string::npos) {
+        std::fprintf(stderr, "check tree of \"%s\" on #%d:\n", c.name.c_str(), c.object);
+        vm.trace = [&t, &vm](const Thread& th, const Frame& f, const Behavior::Instruction& in) {
+            if (auto it = vm.threads.find(th.me); it != vm.threads.end() && &it->second == &th)
+                return; // a Main; the check tree and the threads it starts are shown
+            const int depth = int(th.stack.size()) + (&th == &t ? 0 : 8);
+            const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
+            std::string detail;
+            if (in.opcode == 0x02) {
+                const auto& o = in.operands;
+                Context cx{vm, const_cast<Thread&>(th), const_cast<Frame&>(f), in};
+                auto val = [&](uint8_t owner, int16_t data) {
+                    try {
+                        return std::to_string(cx.get(owner, data));
+                    } catch (...) {
+                        return std::string("?");
+                    }
+                };
+                const auto l = int16_t(le16(&o[0])), r = int16_t(le16(&o[2]));
+                char buf[128];
+                std::snprintf(buf, sizeof buf, "[%02X:%d=%s op%d %02X:%d=%s]", o[6], l, val(o[6], l).c_str(), o[5], o[7], r,
+                              val(o[7], r).c_str());
+                detail = buf;
+            }
+            std::fprintf(stderr, "  %*s%04X #%-3u %-28s %-40s %s\n", (depth - 1) * 2, "", f.instance, f.pc,
+                         op.c_str(), detail.c_str(), f.behavior->fileName.c_str());
+        };
+    }
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < 100; ++turn)
         vm.run(t, vm.instructionsPerTurn);
+    vm.trace = saved;
+    if (traceName && c.name.find(traceName) != std::string::npos)
+        std::fprintf(stderr, "  -> %s %d\n", t.status == Thread::Status::Finished ? "finished" : "not finished", int(t.result));
     if (Object* s = vm.object(sim))
         s->data[objdata::HideInteraction] = 0;
     if (t.status == Thread::Status::Failed)
         errors.push_back(c.name + ": " + t.error.substr(0, t.error.find('\n')));
     else if (t.status == Thread::Status::Running)
         errors.push_back(c.name + ": still running");
-    if (t.status != Thread::Status::Finished || !t.result)
+    if (t.status != Thread::Status::Finished)
+        return false;
+    if (!strings.empty()) {
+        if (made)
+            *made = std::move(strings);
+        return false;
+    }
+    if (!t.result)
         return false;
     ads.min = t.adMin;
     ads.range = t.adRange;
     ads.personality = t.adPersonality;
-    if (!strings.empty())
-        args[0] = strings.front().stackObject;
     return true;
 }
 
@@ -279,44 +325,97 @@ Exit findBestInteraction(Context& c) {
         }
     }
     decision.candidates = candidates.size();
-    std::stable_sort(candidates.begin(), candidates.end(),
-                     [](const Candidate& a, const Candidate& b) { return a.staticScore > b.staticScore; });
 
-    // Check trees, best static score first; the ads they leave score again.
-    struct Passed {
+    // cTSPerson::FBA_ScoreStaticInteractions: a candidate whose check tree
+    // sets ads or adds action strings (checkTreeAdFlags) has it run now, and
+    // is ranked with the ads it left (or dropped if it fails); the others
+    // keep their TTAB ads. Below the family minimum (FCNS 2: 0) or 1e-5 a
+    // candidate is not ranked at all.
+    struct Ranked {
         const Candidate* cand;
         float score;
-        std::array<int16_t, 4> args;
-    };
-    std::vector<Passed> passed;
-    for (const Candidate& cand : candidates) {
-        if (decision.checked >= kMaxCheckTrees)
-            break;
-        if (!vm.object(cand.object) || !vm.object(simId))
-            continue;
-        Ads ads = adsOf(sim, *cand.entry);
+        bool checked;      // its check tree already ran and passed (or it is dynamic)
+        size_t considered; // index in decision.considered
+        std::string name;  // a dynamic interaction's own name, else empty
         std::array<int16_t, 4> args{};
-        ++decision.checked;
-        if (!runCheckTree(vm, simId, cand, ads, args, decision.checkErrors))
+    };
+    std::vector<Ranked> ranked;
+    auto scoreOf = [&](const Object& s, const Ads& ads, const Candidate& cand) {
+        return scoreAds(vm, s, ads) / (1.0f + attenuationOf(*cand.entry) * cand.distance) * cand.bias;
+    };
+    for (const Candidate& cand : candidates) {
+        const Object* leader = vm.object(cand.object);
+        if (!leader || !vm.object(simId))
             continue;
-        Object* s = vm.object(simId);
-        if (!s)
-            return Exit::False;
-        const float score = scoreAds(vm, *s, ads) / (1.0f + attenuationOf(*cand.entry) * cand.distance) * cand.bias;
-        if (score > kMinScore)
-            passed.push_back({&cand, score, args});
+        const size_t at = decision.considered.size();
+        decision.considered.push_back({cand.object, cand.name, cand.staticScore, cand.staticScore, false, false});
+        if (cand.entry->guard && (checkTreeAdFlags(vm, *leader, cand.entry->guard) & (CheckTreeChangesAds | CheckTreeActionStrings))) {
+            Ads ads = adsOf(sim, *cand.entry);
+            std::vector<ActionString> made;
+            ++decision.checked;
+            decision.considered[at].checked = true;
+            const bool ok = runCheckTree(vm, simId, cand, ads, decision.checkErrors, &made);
+            Object* s = vm.object(simId);
+            if (!s)
+                return Exit::False;
+            decision.considered[at].score = 0;
+            // FBA_ScoreDynamicInteractions: the interactions its action
+            // strings made, scored with the ads each one was made with.
+            for (const ActionString& a : made) {
+                const Ads dyn{a.adMin, a.adRange, a.adPersonality};
+                const float score = scoreOf(*s, dyn, cand);
+                decision.considered.push_back({cand.object, a.name, cand.staticScore, score, true, true});
+                if (score >= kMinScore)
+                    ranked.push_back({&cand, score, true, decision.considered.size() - 1, a.name, a.params});
+            }
+            if (!ok)
+                continue;
+            const float score = scoreOf(*s, ads, cand);
+            decision.considered[at].passed = true;
+            decision.considered[at].score = score;
+            if (score >= kMinScore)
+                ranked.push_back({&cand, score, true, at, {}, {}});
+        } else if (cand.staticScore >= kMinScore) {
+            ranked.push_back({&cand, cand.staticScore, false, at, {}, {}});
+        }
     }
-    std::stable_sort(passed.begin(), passed.end(), [](const Passed& a, const Passed& b) { return a.score > b.score; });
-    for (const Passed& p : passed)
-        decision.best.push_back({p.cand->object, uint16_t(p.cand->entry->stringIndex), p.cand->name, p.score, p.cand->distance});
+    std::stable_sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) { return a.score > b.score; });
+
+    // cTSPerson::FBA_CheckInteractions: best first, the first whose check
+    // tree passes wins ("random selection count" 1 in FCNS 2: a random one of
+    // the first N that pass otherwise). An already checked one wins at once.
+    const Ranked* win = nullptr;
+    for (const Ranked& r : ranked) {
+        if (!vm.object(r.cand->object) || !vm.object(simId))
+            continue;
+        if (r.checked) {
+            win = &r;
+            break;
+        }
+        Ads ads = adsOf(sim, *r.cand->entry);
+        ++decision.checked;
+        decision.considered[r.considered].checked = true;
+        if (runCheckTree(vm, simId, *r.cand, ads, decision.checkErrors)) {
+            decision.considered[r.considered].passed = true;
+            win = &r;
+            break;
+        }
+        decision.considered[r.considered].score = 0;
+    }
+    // For hosts: the winner, then the candidates ranked after it.
+    if (win) {
+        for (const Ranked* r = win; r < ranked.data() + ranked.size(); ++r)
+            decision.best.push_back({r->cand->object, uint16_t(r->cand->entry->stringIndex),
+                                     r->name.empty() ? r->cand->name : r->name, r->score, r->cand->distance});
+    }
     Object* s = vm.object(simId);
-    if (passed.empty() || !s)
+    if (!win || !s)
         return report(false);
-    const Passed& win = passed.front();
-    s->person->data[persondata::FindBestActionObject] = win.cand->object;
-    s->data[kObjectDataTreeTableEntry] = int16_t(win.cand->entry->stringIndex);
-    s->person->foundActionArgs = win.args;
-    c.frame.stackObject = win.cand->object;
+    s->person->data[persondata::FindBestActionObject] = win->cand->object;
+    s->data[kObjectDataTreeTableEntry] = int16_t(win->cand->entry->stringIndex);
+    s->person->foundActionArgs = win->args;
+    s->person->foundActionName = win->name;
+    c.frame.stackObject = win->cand->object;
     return report(true);
 }
 
@@ -347,6 +446,8 @@ Exit gosubFoundAction(Context& c) {
     q->priority = kPriorityAutonomous;
     q->pushedBy = sim.id;
     q->args = sim.person->foundActionArgs;
+    if (!sim.person->foundActionName.empty())
+        q->name = sim.person->foundActionName;
     if (sim.nextInteractionUid == 0)
         ++sim.nextInteractionUid;
     q->uid = sim.nextInteractionUid++;

@@ -69,7 +69,8 @@ void printMotives(const vm::Object& s) {
 }
 
 int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, const std::string& simQuery,
-                std::optional<int> motives, bool fromInit, bool verbose, bool noDecay, int traceId, size_t traceDepth) {
+                std::optional<int> motives, bool fromInit, bool verbose, bool noDecay, int traceId, size_t traceDepth,
+                size_t fbaDump, int fbaSim, const std::string& fbaFilter) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -118,6 +119,19 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                 ++why[e.substr(e.find(": ") + 2)];
             for (const auto& [w, n] : why)
                 std::printf("\n      check tree failure x%d: %s", n, w.c_str());
+        }
+        if (fbaDump && (fbaSim == 0 || fbaSim == int(d.sim))) {
+            std::printf("\n      all candidates (static score, check, score):");
+            size_t i = 0;
+            for (const auto& c : d.considered) {
+                const bool match = !fbaFilter.empty() && (c.name.find(fbaFilter) != std::string::npos ||
+                                                          objectName(machine, c.object).find(fbaFilter) != std::string::npos);
+                if (i++ >= fbaDump && !match)
+                    continue;
+                std::printf("\n      %3zu %-34s on %-30s %9.3e %s %9.3e", i, c.name.c_str(),
+                            objectName(machine, c.object).c_str(), c.staticScore,
+                            !c.checked ? "unchecked" : c.passed ? "pass     " : "FAIL     ", c.score);
+            }
         }
         if (!d.found) {
             std::printf(", nothing\n");
@@ -238,6 +252,9 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
     bool fromInit = false, verbose = false, noDecay = false;
     int traceId = 0;
     size_t traceDepth = 4;
+    size_t fbaDump = 0;
+    int fbaSim = 0;
+    std::string fbaFilter;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--ticks" && i + 1 < argc)
@@ -256,6 +273,12 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
             traceId = std::stoi(argv[++i]);
         else if (a == "--trace-depth" && i + 1 < argc)
             traceDepth = std::stoul(argv[++i]);
+        else if (a == "--fba" && i + 1 < argc)
+            fbaDump = std::stoul(argv[++i]);
+        else if (a == "--fba-sim" && i + 1 < argc)
+            fbaSim = std::stoi(argv[++i]);
+        else if (a == "--fba-match" && i + 1 < argc)
+            fbaFilter = argv[++i];
         else if (a == "--no-decay")
             noDecay = true;
         else if (lotPath.empty())
@@ -265,11 +288,11 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (lotPath.empty())
         return -1;
-    return cmdAutonomy(lotPath, ticks, every, sim, motives, fromInit, verbose, noDecay, traceId, traceDepth);
+    return cmdAutonomy(lotPath, ticks, every, sim, motives, fromInit, verbose, noDecay, traceId, traceDepth, fbaDump, fbaSim, fbaFilter);
 }
 
 const char* autonomyUsage() {
-    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--init]\n";
+    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init]\n";
 }
 
 } // namespace os2
