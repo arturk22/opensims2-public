@@ -86,6 +86,13 @@ void restoreState(Object& o, const LotObjects::State& s) {
 // that frame (the first such) is its action tree's root: it is marked as the
 // interaction, so it ends the entry when it returns. Records whose entry
 // cannot be found are dropped.
+// The ID a saved interaction keeps (+0x40, with its link at +0x42; records
+// older than version 0x7C have none and get a new one): the IDs go on from
+// the saved global 36 (newInteractionId).
+uint16_t savedInteractionId(VM& vm, Object& sim, const LotObjects::SavedInteraction& rec) {
+    return rec.u40 ? rec.u40 : newInteractionId(vm, sim);
+}
+
 // The queue entry a saved interaction record names (see restoreQueue).
 std::optional<QueuedInteraction> entryOf(VM& vm, Object& sim, const LotObjects::SavedInteraction& rec) {
     const ObjectId leader = interactionLeader(vm, rec.stackObject);
@@ -108,9 +115,8 @@ std::optional<QueuedInteraction> entryOf(VM& vm, Object& sim, const LotObjects::
     q->priority = int16_t(std::clamp<int64_t>(rec.priority, 0, kPriorityMaximum));
     q->pushedBy = rec.initiator > 0 ? rec.initiator : sim.id;
     q->args = rec.params;
-    if (sim.nextInteractionUid == 0)
-        ++sim.nextInteractionUid;
-    q->uid = sim.nextInteractionUid++;
+    q->uid = savedInteractionId(vm, sim, rec);
+    q->link = rec.u42;
     return q;
 }
 
@@ -178,7 +184,8 @@ size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
         q->priority = int16_t(std::clamp<int64_t>(rec->priority, 0, kPriorityMaximum));
         q->pushedBy = rec->initiator > 0 ? rec->initiator : sim.id;
         q->args = rec->params;
-        q->uid = newInteractionId(vm, sim);
+        q->uid = savedInteractionId(vm, sim, *rec);
+        q->link = rec->u42;
         sim.queue.push_back(std::move(*q));
     }
     if (sim.queue.empty())

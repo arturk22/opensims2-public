@@ -116,6 +116,7 @@ constexpr int16_t BudgetMod10000 = 13; // the current family's funds % 10000
 constexpr int16_t BudgetDiv10000 = 14; // and / 10000
 constexpr int16_t CurrentNeighborhoodId = 40;
 constexpr int16_t LotZoning = 41;
+constexpr int16_t InteractionGuid = 36; // "Current Interaction GUID": the next interaction ID (links.cpp)
 } // namespace global
 
 // Families hold at most 8 Sims (the game's limit; Generic Sims Call "add to
@@ -330,7 +331,7 @@ struct QueuedInteraction {
     uint32_t ttabFlags = 0;         // flags | flags2 << 16
     std::string name;               // TTAs string (Brazilian Portuguese), "Sub.../Item" for submenus
     std::array<int16_t, 4> args{};  // the action tree's parameters
-    uint16_t uid = 0;               // unique across Sims (links.cpp), for cancelling a specific entry
+    uint16_t uid = 0;               // unique across Sims (links.cpp; global 36), for cancelling a specific entry; saved at +0x40
     uint16_t link = 0;              // the interaction it is linked to (Push Interaction flag 0x40), or 0
     // Cancelled by the user or by something more important queued behind it:
     // Idle for Input in its action tree returns at once (FreeSO's NotifyIdle).
@@ -439,7 +440,6 @@ struct Object {
     // will run; `activeInteraction` is the index of the one running (-1: none).
     std::vector<QueuedInteraction> queue;
     int activeInteraction = -1;
-    uint16_t nextInteractionUid = 1;
     // Nested interactions (TTAB flag 0x8000) wait in the sub-queue until an
     // Idle for Input in "Handle Sub Queue Interactions" mode runs them as the
     // current sub-action (queue.cpp).

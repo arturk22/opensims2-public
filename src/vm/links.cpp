@@ -36,15 +36,17 @@ template <typename F> void forEachInteraction(VM& vm, F&& f) {
 
 } // namespace
 
-uint16_t newInteractionId(VM& vm, Object& sim) {
-    // The binary numbers interactions for the whole world (links name them
-    // across Sims); each Sim keeps a counter here, so a new ID is one past
-    // the highest any Sim has given.
-    uint16_t next = 1;
-    for (const auto& [id, o] : vm.objects())
-        next = std::max(next, o.nextInteractionUid);
-    sim.nextInteractionUid = uint16_t(next + 1 == 0 ? 1 : next + 1);
-    return next;
+uint16_t newInteractionId(VM& vm, Object&) {
+    // cTSInteraction::AssignUniqueGUID (BV 0x4c5b20) asks the simulator
+    // (BV 0x4989e0) for the next ID: its global 36 "Current Interaction
+    // GUID", a u16 that skips 0, so it is saved with the globals and the
+    // IDs go on where they were after a load.
+    auto& counter = vm.globals[global::InteractionGuid];
+    if (counter == 0)
+        counter = 1;
+    const uint16_t id = uint16_t(counter);
+    counter = int16_t(uint16_t(id + 1));
+    return id;
 }
 
 void linkInteractions(VM& vm, QueuedInteraction& made, uint16_t other) {

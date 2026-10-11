@@ -86,6 +86,10 @@ LotObjects::SavedInteraction toRecord(VM& vm, const Object& sim, const QueuedInt
             r.name = ref->strings->get(q.interaction, lang::EnglishUS);
     if (!r.uid)
         r.uid = q.uid;
+    // The interaction's ID and link (cTSInteraction +0x40/+0x42; the IDs
+    // come from global 36, saved with the globals).
+    r.u40 = q.uid;
+    r.u42 = q.link;
     return r;
 }
 
@@ -420,12 +424,29 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
                 for (size_t i = 0; i < p.stack.size(); ++i) {
                     const Frame& f = p.stack[i];
                     const Frame& g = q.stack[i];
-                    if (f.instance != g.instance || f.pc != g.pc || f.codeOwner != g.codeOwner ||
-                        f.stackObject != g.stackObject || f.params != g.params || f.locals != g.locals ||
-                        f.interaction != g.interaction)
+                    std::string what;
+                    // The resume pads parameters to 4 and locals to the tree's
+                    // counts with zeros: only the values count.
+                    auto values = [](const std::vector<int16_t>& x, const std::vector<int16_t>& y) {
+                        for (size_t k = 0; k < std::max(x.size(), y.size()); ++k)
+                            if ((k < x.size() ? x[k] : 0) != (k < y.size() ? y[k] : 0))
+                                return false;
+                        return true;
+                    };
+                    auto field = [&](bool differs, const char* name) {
+                        if (differs)
+                            what += std::string(what.empty() ? "" : ", ") + name;
+                    };
+                    field(f.instance != g.instance || f.pc != g.pc, "tree/node");
+                    field(f.codeOwner != g.codeOwner, "code owner");
+                    field(f.stackObject != g.stackObject, "stack object");
+                    field(!values(f.params, g.params), "params");
+                    field(!values(f.locals, g.locals), "locals");
+                    field(f.interaction != g.interaction, "interaction");
+                    if (!what.empty())
                         diff(at + "frame " + std::to_string(i) + " (tree " + hexString(f.instance) + " node " +
                              std::to_string(f.pc) + " vs tree " + hexString(g.instance) + " node " +
-                             std::to_string(g.pc) + ")");
+                             std::to_string(g.pc) + "): " + what);
                 }
             }
         }

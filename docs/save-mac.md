@@ -135,6 +135,14 @@ u16 (+0x24) ; f32 (+0x28)
 [> 0xBA: u16 +0x32]
 ```
 
+**IDs** (rodada 9): o u16 +0x40 é o ID da interação (`GetGUID`, vtable
+0x110; o que `FindInteraction` e `UnLinkInteractions` procuram) e o u16 +0x42
+o da interação ligada. `AssignUniqueGUID` (BV `0x4c5b20`) pede o próximo ao
+simulador (BV `0x4989e0`): o global 36 "Current Interaction GUID" (pula 0,
+soma 1), salvo com os outros globais no SIMI; por isso os IDs seguem de onde
+pararam depois de carregar. O u32 +0x50 é outro contador: ao ler, um global
+do jogo (`DAT_027797f4`) fica com o maior valor lido.
+
 Os nomes (+0xE stack object, +0x10 alvo, +0x12 quem iniciou, +0x14 entrada
 do TTAB, +0x44 nome) vêm dos getters (`GetStackObject`, `GetTargetObject`,
 `GetWhatInitiated`, `GetTreeTabEntry`, `SetName`).
