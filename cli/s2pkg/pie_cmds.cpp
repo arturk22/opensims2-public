@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -42,7 +43,7 @@ const char* checkName(vm::CheckResult r) {
 std::string nameOf(const vm::Object& o) { return o.definition ? o.definition->fileName : "?"; }
 
 int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
-           int select, int ticks, bool all) {
+           int select, int ticks, bool all, std::optional<int> motives) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -53,6 +54,8 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     machine.instructionsPerTurn = 20000;
     machine.setClockGlobals();
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
+    if (motives)
+        vm::setAllMotives(machine, int16_t(*motives));
     vm::startLotObjects(machine, load, 0);
 
     const vm::ObjectId sim = vm::findSim(machine, simQuery);
@@ -121,6 +124,9 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             break;
         if (!before && now->activeInteraction >= 0)
             std::printf("  tick %d: running \"%s\"\n", i + 1, now->queue[size_t(now->activeInteraction)].name.c_str());
+        if ((i + 1) % 60 == 0)
+            std::printf("  tick %d: at (%.2f, %.2f, %d)%s\n", i + 1, now->position.x, now->position.y, now->position.level,
+                        now->route ? ", walking" : "");
     }
     if (auto it = machine.threads.find(sim); it != machine.threads.end() && it->second.status == vm::Thread::Status::Failed)
         std::printf("  the Sim's Main failed: %s\n", it->second.error.substr(0, it->second.error.find('\n')).c_str());
@@ -138,6 +144,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
         return -1;
     std::vector<std::string> pos;
     int select = -1, ticks = 30;
+    std::optional<int> motives;
     bool all = false;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
@@ -145,6 +152,8 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
             select = std::stoi(argv[++i]);
         else if (a == "--ticks" && i + 1 < argc)
             ticks = std::stoi(argv[++i]);
+        else if (a == "--motives" && i + 1 < argc)
+            motives = std::stoi(argv[++i]);
         else if (a == "--all")
             all = true;
         else
@@ -152,11 +161,11 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (pos.empty() || pos.size() > 3)
         return -1;
-    return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all);
+    return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives);
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N]]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N]] [--motives N]\n";
 }
 
 } // namespace os2

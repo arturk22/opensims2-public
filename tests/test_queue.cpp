@@ -342,6 +342,19 @@ static void testActionStrings() {
     check(waiting.status == Thread::Status::Finished, "Notify the Stack Object out of Idle ends its Idle for Input");
 }
 
+static void testTurnBodyTowards() {
+    Fixture fx;
+    fx.s().position = {2.5f, 2.5f, 1};
+    fx.o().position = {5.5f, 2.5f, 1}; // +X of the Sim
+    fx.code.add(kSimGroup, 0x1003, tree({expr(StackId, 0, Assign, Lit, int16_t(fx.fridge), go(1), E),
+                                         instr(0x16, go(2), E, {2}), expr(Temp, 0, Assign, Data, objdata::Direction, go(3), E),
+                                         instr(0x16, go(4), E, {3}), expr(Temp, 1, Assign, Data, objdata::Direction, T, E)}));
+    Thread t = fx.vm.start(fx.sim, 0x1003);
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.temps[0] == 4 && t.temps[1] == 0,
+          "Turn Body Towards: towards (+X = direction 4) and away from the stack object");
+}
+
 static void testInteractionGroupLeader() {
     CodeLibrary code;
     VM vm{code};
@@ -383,6 +396,7 @@ int main() {
     testPushInteraction();
     testNotifyFlag();
     testActionStrings();
+    testTurnBodyTowards();
     testInteractionGroupLeader();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

@@ -147,11 +147,35 @@ disassembler (ordem do código): "Handle Sub Queue Interactions", "for ticks
 in ", ", allow push" / ", do not allow push". Os bytes 8–10 (`02 00 03`) só
 aparecem em 5 instruções, como sobra de outra primitiva.
 
-**Conclusão.** Provável (dados coerentes, sem o código): no TS2 o u16 no
-byte 2 é "Handle Sub Queue Interactions" e o u16 no byte 4 é "allow push"
-(STR# 0xAC: 0 não permite, 1 permite). Se fosse o byte 2, 89% dos Idle for
-Input das interações não aceitariam interrupção. **Para a VM:** ler allow push
-no byte 4.
+**Conclusão (revista).** O u16 no byte 2 é o "allow push", como no The
+Sims 1, e o byte 4 seria o "Handle Sub Queue Interactions". A leitura
+anterior (byte 4 = allow push) não se sustenta no Main dos Sims:
+
+- O Main de pessoa ("Function - Main - Check Queue", semi-global de pessoa
+  0x205A) lê o dado de pessoa 79 "cn: Next Queued Interaction Object ID" e,
+  se há algo na fila, chama "Wait For Notify" (global 0x119) com o
+  parâmetro 1 = 1. Esse caminho vai à instrução 5, o Idle for Input
+  `00 00 01 00 00 ...`: byte 2 = 1, byte 4 = 0. É o único Idle for Input
+  desse caminho, então é nele que a interação da fila tem de entrar. Com o
+  byte 4 como "allow push", o Main nunca rodaria a fila.
+- Teste na VM (`s2pkg pie <N001_Lot11> Mortimer Newspaper --select 0
+  --ticks 300 --motives 60`): lendo o byte 2, o Mortimer começa "Procurar
+  Emprego" no tick 3 e anda até o jornal; lendo o byte 4, a entrada fica
+  parada na fila e ele não sai do lugar.
+- O byte 4 = 1 está nas esperas de dentro das interações ("_Handle SubQueue",
+  "Interaction - Buy", "Pickup - Wait On Subqueue Interaction"), onde o
+  "allow push" do The Sims 1 já não roda nada (a FreeSO só empurra fora de
+  uma árvore de ação no TSO, e no TS1 empurraria uma interação aninhada,
+  o que o TS2 chama de sub-fila). "Handle Sub Queue Interactions" nessas
+  árvores é coerente com os nomes delas. A interrupção dentro de uma
+  interação (cancelar, algo mais importante na fila) não depende do "allow
+  push": o Idle for Input volta quando a interação é cancelada.
+- O operando do TS2 mantém o layout do TS1 (como o Push Interaction) e
+  acrescenta o campo novo no fim (byte 4); a ordem das strings do
+  disassembler não diz em que byte cada campo está.
+
+**Para a VM:** "allow push" no u16 do byte 2 (`src/vm/queue.cpp`). O modo
+do byte 4 (sub-fila: dados de pessoa 26, 75–78, 157) não está feito.
 
 ## 6. Run Tree by Name (0x1C): modos e bytes 2–3
 

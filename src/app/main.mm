@@ -274,6 +274,9 @@ void startSimulation(os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPa
     }
     std::printf("opensims2: VM: %s, %zu Sims attached (%.2f s)\n", gSimulation->summary().c_str(), gLotSims.size(),
                 CACurrentMediaTime() - start);
+    // --motives <n>: test aid, every Sim's motives at n (the saved ones are not read yet).
+    if (auto m = argument(@"--motives"))
+        os2::vm::setAllMotives(gSimulation->machine(), int16_t(std::stoi(*m)));
     // Pie menus over the same VM.
     gPie = std::make_unique<os2::PieMenuHost>(gSimulation->machine(), gameDir() / "TSData/Res/UI/Fonts",
                                               argument(@"--sim-id").value_or(""));
@@ -838,6 +841,9 @@ enum Key : unsigned short {
                     std::printf("opensims2: pie [%zu] %s\n", i, gPie->entries()[i].name.c_str());
                 if (auto sel = argument(@"--pie-select"); sel && !gPie->select(std::stoul(*sel)))
                     throw std::runtime_error("--pie-select: no entry " + *sel);
+                // With --run-vm the menu closes after the pick, as a click does; else it stays, highlighted.
+                if (argument(@"--pie-select") && argument(@"--run-vm"))
+                    gPie->close();
             }
             NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
             for (NSUInteger i = 1; i + 1 < args.count; ++i) {

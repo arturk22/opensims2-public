@@ -172,6 +172,8 @@ std::vector<std::string> splitPiePath(const std::string& name);
 // Push Interaction (0x0D), Idle for Input (0x11), Notify the Stack Object
 // out of Idle (0x31) and Add/Change the Action String (0x32).
 void registerInteractionPrimitives(VM& vm);
+// Turn Body Towards (0x16, turn.cpp).
+void registerTurnPrimitive(VM& vm);
 
 // --- Hosts (s2pkg pie, the app) ---------------------------------------------
 
@@ -183,6 +185,12 @@ ObjectId findInteractionObject(VM& vm, const std::string& query);
 // one (global "selected person ID") if it is a Sim in the world, else the
 // lowest-ID Sim in the world. 0 if none.
 ObjectId findSim(VM& vm, const std::string& query = {});
+
+// Test aid: sets motives 3-15 (Mood ... Fun, STR# 0x86) of every Sim to
+// `value`. The lots' saved motives (in the PERS states) are not read yet, so
+// the Sims start at 0 and refuse interactions ("Skill - Refuse Skill
+// Object" when Mood <= 0).
+void setAllMotives(VM& vm, int16_t value);
 
 // Runs the Init of every object a lot load created, then starts their Mains
 // (as `s2pkg lot-run` does) and gives `ticks` ticks.

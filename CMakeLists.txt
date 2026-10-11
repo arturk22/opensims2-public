@@ -73,6 +73,7 @@ add_library(os2_vm
   src/vm/queue.cpp
   src/vm/routing.cpp
   src/vm/sim_motion.cpp
+  src/vm/turn.cpp
   src/vm/vm.cpp
   src/vm/world.cpp
 )

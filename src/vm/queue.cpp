@@ -560,6 +560,7 @@ void registerInteractionPrimitives(VM& vm) {
     vm.setPrimitive(0x11, idleForInput);
     vm.setPrimitive(0x31, notifyOutOfIdle);
     vm.setPrimitive(0x32, changeActionString);
+    registerTurnPrimitive(vm); // Turn Body Towards (turn.cpp)
 }
 
 namespace {
@@ -606,6 +607,16 @@ ObjectId findSim(VM& vm, const std::string& query) {
             (q.empty() || (o.definition && lower(o.definition->fileName).find(q) != std::string::npos)))
             return id;
     return 0;
+}
+
+void setAllMotives(VM& vm, int16_t value) {
+    std::vector<ObjectId> sims;
+    for (const auto& [id, o] : vm.objects())
+        if (o.person)
+            sims.push_back(id);
+    for (ObjectId id : sims)
+        for (size_t k = 3; k < kMotiveCount; ++k)
+            vm.object(id)->person->motives[k] = value;
 }
 
 void startLotObjects(VM& vm, const LotLoad& load, int ticks) {
