@@ -923,6 +923,152 @@ triangular curto, C500/C600 mistos, C300 remover, C700 laje, C400 preservar).
   `FloorElevationUnitChangeCost` devolve 0. Pintura do terreno
   (`cTSUserToolTerrainPaint`) custa 0.
 
+### 7.10 Códigos de erro de colocação e as fundações/decks/piscinas (rodada 9, binário)
+
+**Tabela completa** do `cTSSimSystem::PlacementErrorString` (BV `0x58a6d4`):
+código → índice 1-based do STR# 0x89 do `UIText.package` (o texto é o
+`#índice−1` em inglês). Código fora da tabela (ex.: 2) → 1 "Location out of
+bounds". Códigos cujo texto é vazio no jogo base (provavelmente só BV):
+0x14, 0x15, 0x1d, 0x1e, 0x1f, 0x3c, 0x3d, 0x3e, 0x3f, 0x46, 0x47, 0x54, 0x55, 0x56, 0x57, 0x5d, 0x5e, 0x5f, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0xa5.
+
+| código | STR# 0x89 | texto |
+|---|---|---|
+| `0x01` | 74 | Must be against a pool wall |
+| `0x03` | 2 | Level out of bounds |
+| `0x04` | 3 | Must be at center of tile |
+| `0x06` | 5 | Cannot create level above highest level |
+| `0x07` | 6 | Must be against wall |
+| `0x08` | 7 | Can't intersect wall |
+| `0x0a` | 9 | Must be placed outside |
+| `0x0b` | 10 | Must be placed inside |
+| `0x0c` | 11 | Can't intersect other objects |
+| `0x0e` | 13 | Can't find a place to put it |
+| `0x0f` | 14 | Can't support the weight |
+| `0x10` | 15 | Can't support the size |
+| `0x11` | 16 | Can't place on top |
+| `0x12` | 17 | Can't place on slope |
+| `0x13` | 32 | Needs something to support it |
+| `0x16` | 21 | Insufficient funds |
+| `0x17` | 22 | Must be against unused wall |
+| `0x18` | 23 | Must be on diagonal |
+| `0x19` | 91 | Must place in one of these places: |
+| `0x1a` | 25 | Foundations only allowed on terrain |
+| `0x1b` | 26 | Wall next to object in use |
+| `0x1c` | 63 | No ground at bottom |
+| `0x21` | 32 | Needs something to support it |
+| `0x22` | 33 | Mantle rotation must match chimney |
+| `0x23` | 34 | Hearth can have only one mantle |
+| `0x24` | 35 | Can't delete object |
+| `0x25` | 91 | Must place in one of these places: |
+| `0x26` | 37 | Can't pick up |
+| `0x27` | 38 | Can't select object in use |
+| `0x28` | 39 | Can't pick up—location out of bounds. |
+| `0x29` | 40 | Fireplace mantle must be all in one room |
+| `0x2a` | 41 | Must connect to upper floor |
+| `0x2b` | 42 | Can't intersect upper-floor object |
+| `0x2c` | 43 | Can't rotate |
+| `0x2d` | 44 | Can't delete pool with Sims in it |
+| `0x2e` | 45 | Must first delete ladder or diving board |
+| `0x2f` | 8 | Ceiling too low |
+| `0x30` | 97 | Ceiling too high |
+| `0x31` | 4 | Terrain too steep |
+| `0x32` | 91 | Must place in one of these places: |
+| `0x33` | 91 | Must place in one of these places: |
+| `0x34` | 91 | Must place in one of these places: |
+| `0x35` | 91 | Must place in one of these places: |
+| `0x37` | 91 | Must place in one of these places: |
+| `0x38` | 93 | Can't delete object with something on it or in it |
+| `0x39` | 38 | Can't select object in use |
+| `0x3a` | 38 | Can't select object in use |
+| `0x3b` | 98 | Cannot be placed on a diagonal wall |
+| `0x41` | 7 | Can't intersect wall |
+| `0x43` | 7 | Can't intersect wall |
+| `0x44` | 6 | Must be against wall |
+| `0x48` | 32 | Needs something to support it |
+| `0x49` | 17 | Can't place on slope |
+| `0x4a` | 76 | Can't place wall |
+| `0x4b` | 75 | Wall too close to Sim |
+| `0x4c` | 47 | Cannot build diagonally. |
+| `0x4d` | 48 | Can't place next to arch |
+| `0x4e` | 49 | Can't delete arch |
+| `0x4f` | 50 | Can't remove object on fence |
+| `0x50` | 94 | Can't place next to wall |
+| `0x52` | 32 | Needs something to support it |
+| `0x53` | 17 | Can't place on slope |
+| `0x58` | 85 | Must fill within enclosed area or on existing tiles |
+| `0x5a` | 51 | Covered by floor tile |
+| `0x5b` | 52 | Attached to wall |
+| `0x5c` | 53 | Attached to wall |
+| `0x61` | 54 | Can't move occupied terrain |
+| `0x63` | 55 | Can't raise floor any closer to floor above |
+| `0x64` | 56 | Can't lower floor any closer to floor below |
+| `0x65` | 57 | Can't lower terrain further |
+| `0x66` | 58 | Can't raise terrain further |
+| `0x68` | 59 | Can't raise terrain above stairs |
+| `0x69` | 60 | Can't raise floor above |
+| `0x6a` | 61 | Can't lower floor below |
+| `0x6b` | 55 | Can't raise floor any closer to floor above |
+| `0x6c` | 62 | No ground at top |
+| `0x6d` | 63 | No ground at bottom |
+| `0x6e` | 64 | Can't level top landing |
+| `0x6f` | 65 | Can't level bottom landing |
+| `0x70` | 66 | Can't place top landing |
+| `0x71` | 67 | Can't place bottom landing |
+| `0x72` | 68 | Can't reserve space above stairs |
+| `0x73` | 69 | Can't place step |
+| `0x74` | 69 | Can't place step |
+| `0x75` | 70 | Can't scoop out terrain |
+| `0x76` | 7 | Can't intersect wall |
+| `0x77` | 71 | Can't reach ground |
+| `0x78` | 72 | Must have at least one step |
+| `0x79` | 79 | Must be placed on a fence. |
+| `0x7a` | 11 | Can't intersect other objects |
+| `0x7b` | 73 | End points at different elevation |
+| `0x7c` | 73 | End points at different elevation |
+| `0x7f` | 11 | Can't intersect other objects |
+| `0x80` | 73 | End points at different elevation |
+| `0x81` | 12 | Can't level terrain |
+| `0x82` | 76 | Can't place wall |
+| `0x83` | 11 | Can't intersect other objects |
+| `0x84` | 7 | Can't intersect wall |
+| `0x85` | 77 | Can't place gate across arch |
+| `0x86` | 78 | Can't extend pool |
+| `0x87` | 95 | Can't delete pool |
+| `0x88` | 79 | Must be placed on a fence. |
+| `0x89` | 86 | Can't place gate on short fence |
+| `0x8a` | 90 | Pools only allowed on terrain |
+| `0x8b` | 89 | Only exposed terrain can be edited |
+| `0x8c` | 91 | Must place in one of these places: |
+| `0x8d` | 91 | Must place in one of these places: |
+| `0x8e` | 91 | Must place in one of these places: |
+| `0x8f` | 91 | Must place in one of these places: |
+| `0x90` | 91 | Must place in one of these places: |
+| `0x91` | 91 | Must place in one of these places: |
+| `0x92` | 96 | Can't delete objects in rewards mode |
+
+Os códigos 0x19, 0x25, 0x32–0x35, 0x37 e 0x8C–0x91 dão "Must place in one of
+these places:" seguido da lista de lugares (§3.2).
+
+**Fundações, decks e piscinas** (`cTSUserToolDeckFoundation`; no base a
+piscina é um tipo de deck, `deckfoundations.txt`). Cada tile da seleção
+passa por `CanPlaceTile` (BV `0x34f5a8`): tile com água (`IsPartWater`) →
+`0x1E` (sem texto no base); praia (só BV) → `0x86`; um objeto no tile que
+não tem o od 0x22 nem o bit 0x200 ("no ar") da od 42 → `0x0C` "Can't
+intersect other objects"; e para cada um dos 4 lados, se o vizinho já tem
+deck/fundação de um tipo que não casa com o lado (tabela por direção do tipo
+do vizinho: 1 → só 0, 2 → 4/6, 4 → 2/4/6, 8 → 0/2/6) → `0x86` "Can't extend
+pool". `MayPlaceQuadrilateral` (`0x352a30`) antes recusa seleção degenerada,
+cantos fora do lote (código 2), e vértices cuja altura difere da altura da
+ferramenta quando ela não pode aplainar ali (`FUN_009e9550`).
+
+**Custo mostrado** (`PreviewCost`, `0x350830`): soma, para cada tile (ou
+quarto) da seleção cuja altura atual difere da da ferramenta,
+(`DeckFoundationCost(altura da ferramenta)` − `DeckFoundationCost(altura
+atual)`) × fator (0,25 por quarto, 0,5 por metade diagonal, 1 por tile
+inteiro; os preços por tile são os do §7.1: fundação 4, deck 2–3, piscina 75),
+e arredonda; `CanAfford` decide o cursor.
+O resto das regras (escavar piscina, telhados, aplainar terreno) não foi lido.
+
 ---
 
 ## 8. Base vs BV
