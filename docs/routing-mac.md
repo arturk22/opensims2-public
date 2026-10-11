@@ -92,14 +92,32 @@ célula impassável (custo > FLT_MAX/2) → `FLT_MAX`; cruzar uma porta
 Não há "evitação" no passo a passo: cada roteador que anda (Sim, animal,
 carro) põe **retângulos de custo** na quadtree, que os outros contornam no
 A* (`AddBlockerToPathPlanner`, BV `0x571428`; `UpdateBlockerRect`
-recalcula quando ele muda de tile ou direção). Parado, centrado na posição
-e deslocado para a frente pela direção (8 direções × 45°):
+recalcula quando ele muda de tile ou direção).
 
-| retângulo (meia largura) | custo | quando |
-|---|---|---|
-| 0,375 tile | 5 | só parado (dois, um deslocado ±0,125/0,09375 pela frente) |
-| 0,25 tile (adulto, tipo 2) / 0,1875 (tipo 8, menor) | 7,5 | sempre |
-| 0,09375 tile | 10 | sempre |
+**Rodada 9 (corrige a tabela antiga):** o teste da vtable `0x98` é do
+`cITSPerson` do dono (`QueryInterface(0x5A69D3D5)`, o `cTSPerson` em
+`+0x2E0`): `FUN_00ac889c` = **"é humano"** = dado de pessoa 186 (espécie,
+`cTSPerson +0x816`) == 0. Não é um filtro de "quem pode bloquear": decide
+só a **forma** dos retângulos. No jogo base não há espécie (todos humanos).
+
+- **Humano** (`0x98` verdadeiro): três retângulos centrados na caixa do
+  roteador (`+0x54..+0x60`, em 1/65536 de tile), sem olhar a direção:
+
+  | meia largura extra | custo | quando |
+  |---|---|---|
+  | 0,375 tile | 5 | só parado (`+0x66` == 0) |
+  | 0,1875 tile | 7,5 | sempre |
+  | 0,0625 tile | 10 | sempre |
+
+- **Animal** (só BV): pela `GetSESpeciesFlag` (`0x54`: espécie 1 → 2, 2 →
+  4, 3 → 8): pares de retângulos deslocados para a frente e para trás pela
+  direção (cos/sin × 0,09375/0,125, ou ±0,5 para o corpo comprido),
+  meias larguras 0,375 (custo 5, parado), 0,25 (7,5) e 0,125 (10) na
+  espécie 1, menores (0,1875/0,0625) nas outras; outra espécie: nada.
+
+Ou seja, o coelho social (uma pessoa de espécie 0) **é** um obstáculo de
+custo no binário como qualquer Sim: o "blocked by person" contra ele vem do
+estado de bloqueio (§6), não de faltar o retângulo.
 
 Andando, o retângulo é o do tile atual do roteador ± 0,375 com custo 5.
 São custos finitos: um Sim passa por cima de outro se o desvio custar
