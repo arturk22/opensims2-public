@@ -46,6 +46,7 @@ struct HoodLot {
     float ground = 0;          // the lot's elevation
     bool imposter = false;
     uint32_t width = 0, depth = 0; // cells
+    int instance = -1;             // the imposter's renderer instance
 };
 
 // The folder of a neighborhood given as "N001" (under
@@ -77,6 +78,13 @@ public:
     void highlight(const HoodLot* lot);
     // A point to frame a lot from (middle of its box top).
     simd_float3 lotCentre(const HoodLot& lot) const;
+
+    // Rereads the neighborhood package after a family moved or a lot was
+    // bulldozed (formats/hood_moves.hpp): the lots' families, and the lots
+    // that are gone leave the view.
+    void reload();
+    // The neighborhood folder (the user's copy).
+    std::filesystem::path folder() const { return hood_.package.parent_path(); }
 
     // Loading report (counts, missing models).
     const std::vector<std::string>& report() const { return report_; }

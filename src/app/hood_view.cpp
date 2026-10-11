@@ -113,7 +113,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     : renderer_(&renderer) {
     const auto start = std::chrono::steady_clock::now();
     const fs::path dir = neighborhoodFolder(resDir, query);
-    hood_ = hood::Neighborhood::load(dir, false);
+    hood_ = hood::Neighborhood::load(dir, true); // with the Sims' names (the family bin lists them)
     DbpfPackage pkg(hood_.package);
     bool haveTerrain = false, haveOccupants = false;
     for (const auto& e : pkg.entries()) {
@@ -253,7 +253,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
                 if (!m.parts.empty()) {
                     hood::imposterMaterials(m, hood_.prefix + "_Lot" + std::to_string(l.id));
                     const int id = renderer.addObject(m, *lotIndex);
-                    renderer.addInstance(id, at);
+                    lot.instance = renderer.addInstance(id, at);
                     const auto [lo, hi] = bounds(m, at);
                     lot.lo = simd_min(lot.lo, lo);
                     lot.hi = simd_max(lot.hi, hi);
@@ -322,6 +322,33 @@ void HoodView::highlight(const HoodLot* lot) {
         m.columns[3] = simd_make_float4(lot->footLo.x, lot->footLo.y, lot->ground + 0.6f, 1);
     }
     renderer_->setInstanceTransform(highlight_, m);
+}
+
+void HoodView::reload() {
+    hood_ = hood::Neighborhood::load(hood_.package.parent_path(), true);
+    highlight(nullptr);
+    std::vector<HoodLot> kept;
+    for (auto& lot : lots_) {
+        const hood::Lot* l = hood_.lot(lot.id);
+        if (!l) {
+            // Bulldozed: the imposter goes (collapsed to nothing).
+            if (lot.instance >= 0) {
+                simd_float4x4 away = matrix_identity_float4x4;
+                away.columns[0].x = away.columns[1].y = away.columns[2].z = 0;
+                renderer_->setInstanceTransform(lot.instance, away);
+            }
+            continue;
+        }
+        lot.family = 0;
+        lot.familyName.clear();
+        if (!l->families.empty()) {
+            lot.family = l->families.front();
+            if (const auto* f = hood_.family(lot.family))
+                lot.familyName = f->name;
+        }
+        kept.push_back(std::move(lot));
+    }
+    lots_ = std::move(kept);
 }
 
 std::string HoodView::displayName() const { return hood_.name.empty() ? hood_.prefix : hood_.name; }

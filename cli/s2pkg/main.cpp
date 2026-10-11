@@ -11,6 +11,7 @@
 #include "build_cmds.hpp"
 #include "cas_cmds.hpp"
 #include "hood_cmds.hpp"
+#include "hood_play_cmds.hpp"
 #include "pie_cmds.hpp"
 #include "autonomy_cmds.hpp"
 #include "wants_cmds.hpp"
@@ -950,7 +951,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
-                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), wantsUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage(), casUsage());
+                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), hoodPlayUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), wantsUsage(), routeUsage(), buyUsage(), buildUsage(), effectsUsage(), simLookUsage(), casUsage());
     return 2;
 }
 
@@ -972,6 +973,8 @@ int main(int argc, char** argv) {
         if (int rc = uiCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = hoodCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = hoodPlayCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = primCommand(cmd, argc, argv); rc >= 0)
             return rc;

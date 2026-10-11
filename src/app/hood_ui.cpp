@@ -6,6 +6,7 @@
 #include "formats/lot_objects.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/font.hpp"
+#include "formats/hood_moves.hpp"
 #include "formats/resindex.hpp"
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
@@ -21,6 +22,7 @@ namespace {
 
 constexpr uint32_t kHudScript = 0x49000000, kHoverScript = 0x49001011, kDialogScript = 0x49001000;
 constexpr uint32_t kPuck = 0x4BE6ED7D, kChooser = 0x4BE6ED7E, kCityName = 0x3;
+constexpr uint32_t kFamiliesButton = 0x2BE6F563, kLotsButton = 0x4BE6F571;
 constexpr uint32_t kTypeImg = 0x856DDBAC, kTypeFamilyThumb = 0x8C3CE95A;
 constexpr uint32_t kLotPicture = 0x35CA0000; // the lot package's first snapshot (300x300 JPEG)
 
@@ -46,6 +48,8 @@ HoodUi::HoodUi(const HoodView& view, ResourceIndex& index, const std::filesystem
     };
     const bool a = load(kHudScript, hud_), b = load(kHoverScript, hoverScript_), c = load(kDialogScript, dialogScript_);
     ok_ = a && b && c;
+    bins_ = std::make_unique<HoodBins>(*res_, *fonts_);
+    bins_->setNeighborhood(&view.neighborhood());
     const auto& h = view.neighborhood();
     familyThumbs_ = h.package.parent_path() / "Thumbnails" / (h.prefix + "_FamilyThumbnails.package");
 }
@@ -136,11 +140,16 @@ const HoodUi::LotValues& HoodUi::lotValues(const HoodLot& lot) {
 }
 
 int64_t HoodUi::netWorth(const HoodLot& lot) {
-    const LotValues& v = lotValues(lot);
-    int64_t funds = 0;
-    if (const auto* fam = view_->neighborhood().family(lot.family))
-        funds = fam->record.funds;
-    return funds + v.lot + v.familyObjects;
+    // cTSFamilyManager::GetFamilyNetWorth: funds + the lot's price.
+    return hood::netWorth(view_->neighborhood(), lot.family);
+}
+
+void HoodUi::refresh() {
+    values_.clear();
+    pictures_.clear();
+    hover_ = dialog_ = nullptr;
+    bins_->setNeighborhood(&view_->neighborhood());
+    dirty_ = true;
 }
 
 void HoodUi::hoverLot(const HoodLot* lot, simd_float2 mouse) {
@@ -156,13 +165,29 @@ void HoodUi::openLot(const HoodLot* lot) {
 }
 
 HoodUi::Action HoodUi::press(simd_float2 p) {
-    if (laidW_ != canvasW_ || laidH_ != canvasH_ || dirty_)
+    if (laidW_ != canvasW_ || laidH_ != canvasH_ || dirty_ || bins_->dirty())
         screen(canvasW_, canvasH_); // targets for the current canvas
+    binRequest_ = {};
+    if (bins_->modal()) {
+        binRequest_ = bins_->press(p);
+        dirty_ = true;
+        return binRequest_.kind == HoodBins::Request::Kind::Consumed ? Action::Consumed : Action::Bins;
+    }
     for (const auto& t : targets_)
         if (inside(t.rect, p)) {
             if (t.action == Action::Close)
                 openLot(nullptr);
+            if (t.action == Action::Families || t.action == Action::Lots) {
+                bins_->togglePanel(t.action == Action::Families ? HoodBins::Panel::Families : HoodBins::Panel::Lots);
+                dirty_ = true;
+            }
             return t.action;
+        }
+    if (!dialog_)
+        if (auto r = bins_->press(p); r.kind != HoodBins::Request::Kind::None) {
+            binRequest_ = r;
+            dirty_ = true;
+            return r.kind == HoodBins::Request::Kind::Consumed ? Action::Consumed : Action::Bins;
         }
     for (const auto& r : solid_)
         if (inside(r, p))
@@ -204,10 +229,20 @@ UiScreen HoodUi::screen(int width, int height) {
         place(*chooser, 4, 0, hk);
         target(chooser->child(0x2), Action::MainMenu); // "Menu Principal"
     }
-    if (const UiElement* puck = hudRoot.child(kPuck)) {
+    std::optional<std::array<float, 4>> puckRect;
+    const UiElement* puckElement = hudRoot.child(kPuck);
+    if (const UiElement* puck = puckElement) {
         const auto a = puck->area();
         UiDrawHooks hk;
+        if (const UiElement* f = puck->child(kFamiliesButton))
+            hk.buttonState[f] = bins_->panel() == HoodBins::Panel::Families ? 2 : 1;
+        if (const UiElement* l = puck->child(kLotsButton))
+            hk.buttonState[l] = bins_->panel() == HoodBins::Panel::Lots ? 2 : 1;
         place(*puck, 2, float(height - (a[3] - a[1]) - 2), hk);
+        if (auto r = rects.find(puck); r != rects.end())
+            puckRect = r->second;
+        target(puck->child(kFamiliesButton), Action::Families);
+        target(puck->child(kLotsButton), Action::Lots);
         // The camera buttons: "Mais Zoom +", "Menos Zoom -" and the two "Rotacionar".
         target(puck->child(0x2BE6FB48), Action::ZoomIn);
         target(puck->child(0x2BE6FB4E), Action::ZoomOut);
@@ -272,6 +307,13 @@ UiScreen HoodUi::screen(int width, int height) {
         solid_.resize(solidBefore); // the popup does not take clicks
     }
 
+    // The Families / Lots & Houses panels over the puck (their question box on top).
+    if (puckRect && puckElement) {
+        const size_t before = targets_.size();
+        bins_->layout(out, *puckRect, *puckElement, rects, width, height);
+        (void)before;
+    }
+
     // The Lot Info Dialog, centred.
     if (dialog_) {
         const HoodLot& lot = *dialog_;
@@ -301,8 +343,8 @@ UiScreen HoodUi::screen(int width, int height) {
             if (auto* e = child(0xD003))
                 hk.captions[e] = lot.name;
             if (auto* e = child(0xD004)) { // an empty lot's value
-                if (const LotValues& v = lotValues(lot); v.ok)
-                    hk.captions[e] = formatMoney(v.lot + v.lotObjects);
+                if (const hood::Lot* l = view_->neighborhood().lot(lot.id))
+                    hk.captions[e] = formatMoney(hood::lotFileInfo(*l).price); // what moving in costs
                 else
                     hk.hide.insert(e);
             }
@@ -341,7 +383,7 @@ void HoodUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t hei
     const int ch = int(std::lround(float(height) / std::max(scale, 0.01f)));
     if (cw != canvasW_ || ch != canvasH_)
         canvasW_ = cw, canvasH_ = ch, dirty_ = true;
-    if (dirty_ || laidW_ != cw || laidH_ != ch) {
+    if (dirty_ || bins_->dirty() || laidW_ != cw || laidH_ != ch) {
         layer_ = (layer_ + 1) % layers_.size();
         const UiScreen sc = screen(cw, ch);
         layers_[layer_]->setScreen(sc);

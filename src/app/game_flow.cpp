@@ -12,7 +12,8 @@ namespace {
 const std::initializer_list<const char*> kSceneFlags = {"--hood",  "--hood-lot", "--hood-hover", "--hood-select",
                                                         "--lot",   "--ui",       "--pivot",      "--zoom",
                                                         "--orientation", "--pie", "--pie-select", "--mode",
-                                                        "--menu-return", "--menu-select", "--ui-show"};
+                                                        "--menu-return", "--menu-select", "--ui-show",
+                                                        "--hood-panel", "--hood-family", "--hood-tool", "--hood-lot-click"};
 const std::initializer_list<const char*> kSceneBare = {"--vm", "--menu"};
 // Things to show other than the game's scenes.
 const std::initializer_list<const char*> kContentFlags = {"--object", "--lot", "--sim", "--skinned", "--character",

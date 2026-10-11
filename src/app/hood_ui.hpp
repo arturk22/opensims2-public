@@ -20,11 +20,12 @@
 //               0xE007)
 //
 // Which popup the game shows on hover and how it places it are inferred
-// (the window procedures are not decoded); the dialog is centred. Buttons
-// other than Enter Lot, Close and the chooser's Main Menu (0x2) do nothing yet,
-// except the puck's zoom and rotate buttons (the camera's). The lot's value (hover
+// (the window procedures are not decoded); the dialog is centred. The puck's
+// Families and Lots & Houses buttons open their panels (app/hood_bins.hpp);
+// the zoom and rotate buttons move the camera. The lot's value (hover
 // popup) and the family's net worth (dialog) come from the lot file's SIMI.
 
+#include "app/hood_bins.hpp"
 #include "formats/image.hpp"
 #include "formats/ui_screen.hpp"
 #include "formats/ui_script.hpp"
@@ -58,13 +59,21 @@ public:
     HoodUi(const HoodView& view, ResourceIndex& index, const std::filesystem::path& resDir);
     ~HoodUi();
 
+    // After the neighborhood changed (a family moved, a lot went): forgets
+    // the lot values and pointers into the view's lots.
+    void refresh();
     // The lot under the mouse (null: none) and the mouse (canvas pixels).
     void hoverLot(const HoodLot* lot, simd_float2 mouse);
     // Opens the Lot Info Dialog of a lot (null closes it).
     void openLot(const HoodLot* lot);
     const HoodLot* dialogLot() const { return dialog_; }
 
-    enum class Action { None, Consumed, EnterLot, Close, ZoomIn, ZoomOut, RotateLeft, RotateRight, MainMenu };
+    enum class Action { None, Consumed, EnterLot, Close, ZoomIn, ZoomOut, RotateLeft, RotateRight, MainMenu,
+                        Families, Lots, Bins };
+    // The Families and Lots & Houses panels (app/hood_bins.hpp); after
+    // Action::Bins, binRequest() says what they asked for.
+    HoodBins& bins() { return *bins_; }
+    const HoodBins::Request& binRequest() const { return binRequest_; }
     // A left click (canvas pixels): on the dialog or the HUD it is the UI's.
     Action press(simd_float2 p);
     void hover(simd_float2 p);
@@ -89,6 +98,8 @@ private:
     std::map<uint32_t, LotValues> values_; // by lot
 
     const HoodView* view_;
+    std::unique_ptr<HoodBins> bins_;
+    HoodBins::Request binRequest_;
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;
     UiScript hud_, hoverScript_, dialogScript_;

@@ -10,7 +10,14 @@
 // --hood-lot <id> --vm --ui live) or the main menu in the same process.
 //
 // Headless (--screenshot): --hood-hover <id> shows the hover popup over that
-// lot, --hood-select <id> opens its Lot Info Dialog.
+// lot, --hood-select <id> opens its Lot Info Dialog, --hood-panel
+// families|lots opens a puck panel, --hood-family <id> selects a family of
+// the bin (moving it in) and --hood-tool evict|bulldoze picks a tool; a
+// --hood-lot-click <id> then clicks that lot with it.
+//
+// Moving a family in, out and bulldozing write the neighborhood folder (the
+// user's copy; never data/game) through formats/hood_moves.hpp; moving in
+// then enters the lot, as cTSUserToolNeighborhoodMoveIn does.
 
 #include "app/hood_ui.hpp"
 #include "app/hood_view.hpp"
@@ -51,12 +58,23 @@ public:
     void enterLot(const HoodLot& lot);
     std::function<void(const HoodLot&)> onEnterLot;
     std::function<void()> onMainMenu;
+    // "Create New Family" in the Families panel: Create-a-Sim for a new
+    // family of this neighborhood (its folder, the user's copy). When CAS has
+    // written the family into the neighborhood package, familyCreated(id)
+    // brings the view up to date and selects it in the family bin, ready to
+    // move in. Without a handler the button does nothing.
+    std::function<void(const std::filesystem::path& hoodFolder)> onCreateFamily;
+    void familyCreated(uint32_t family);
+    // Rereads the neighborhood after it changed on disk.
+    void refresh();
 
     // --hood-hover / --hood-select for screenshots; moves the camera to the lot.
     void scriptedView(LotCamera& camera, float w, float h);
 
 private:
     const HoodLot* lotAt(const LotCamera& camera, simd_float2 p, float w, float h) const;
+    void carryOut(const HoodBins::Request& r);
+    void lotClicked(const HoodLot& lot);
 
     std::filesystem::path gameDir_;
     std::string query_;

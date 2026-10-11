@@ -446,3 +446,59 @@ que um bairro base não precisa (os 4 bairros não têm pintura salva).
 - `0xEC44BDDC` (bairro e lote) e `0xCC2A6A34` (14 bytes, `cTSNeighborManager`).
 - Desbotamento dos imposters pela câmera.
 - Significado das peças de rua (nomes SC4) e dos 2 bytes `+0x85/+0x86`.
+
+---
+
+## 10. Famílias e lotes: mudar, despejar, demolir (rodada 9, binário)
+
+**Preço de um lote** (`cTSNeighborhood::GetLotFileInfo`, BV `0x4d8d8c`, vtable
+`0x5c` do bairro): lê o `SIMI` do pacote do lote e soma valor do lote (`+0xA4`)
++ objetos do lote (`+0xA8`) + **0,8 ×** valor da arquitetura (`+0xB0`,
+`cTSSimulator::GetArchValue`; o fator é `cTSCatalog::RefundRate`, BV
+`0xb2a66c`, float 0,8) + objetos da família (`+0xAC`), este só se o lote não
+tem a flag 8 (família despejada), + valor de negócio (só BV). É o mesmo número
+de `cTSSimulator::GetNetNonCashAssetsValue`. Os mapeamentos de vtable do
+simulador: `0x84` → `+0xA8`, `0x88` → `+0xAC`, `0x8c` → soma, `0x90` →
+`+0xB0`, `0x98` → `+0xA4` (getters de uma instrução; a ordem dos thunks no
+`baserom.sym` dá os nomes). O mesmo `SIMI` diz se o lote tem casa (global 22
+"Lot Has House" ≠ 0) e se aceita mudança (global 21 "Inhibit Move In" = 0).
+Sem pacote: `nTSWorld::LotValue(w, d)` (BV `0x1635f4`) = ⌊w·d·6,5/100⌋·100 −
+1000, com w × d em tiles de lote **sem a faixa da rua** (o lot info diz a
+borda: bits 1/4 tiram uma coluna, 2/8 uma linha). Conferido: o `+0xA4` dos 63
+lotes do jogo é exatamente essa fórmula (30 × 50 → 8700: arredonda para baixo).
+
+**Pode mudar?** (`cTSFamilyManager::CanMoveFamilyIntoLot`, BV `0x4fb804`):
+2 sem lote, 1 sem família, 3 lote comunitário (tipo 1), 4/10/2 tipos de
+expansão (3 com flag 8, 5, 6), 5/6/8 lote ocupado (pela relação com a família
+que mora), 9 família sem membros (`CountMembers(1)`: dado de pessoa 186 = 0,
+todos no base), **7 sem dinheiro**: só se o lote não inibe mudança e
+fundos < preço. Patrimônio (`GetFamilyNetWorth`) = fundos + preço do lote.
+
+**Mudar** (`cTSUserToolNeighborhoodMoveIn::ConfirmAndMoveInFamily`, BV
+`0x3b9ae8`): pergunta STR# 0x82 #5 "Mudar família %s para este lote?" + #6
+"Custo para mudar:" + preço (sem o custo se o lote é tipo 2); Sim posta a
+transição `0x2BEA2063` com a família — **a família entra no lote na hora**.
+`cTSFamilyManager::MoveIn` (BV `0x4fb730`) põe o lote na família
+(`SetLotID` → FAMI `+0x30`) e a flag "lote novo" (`SetNewLot`: bit `0x04` das
+flags `+0x60` do FAMI; `SetupFamilyFirstDay` a limpa). Onde o preço sai dos
+fundos não foi achado: **inferido** (a checagem e o texto do custo).
+Textos de erro: #2 "não pode pagar", #3 comunitário, #4 ocupado
+(`NormalNeighborhoodErrorText`, BV `0x3ba588`, para cliques sem família:
+#13/#14).
+
+**Despejar** (`cTSGameStateController::EvictFamily`, BV `0x139740`): fundos
++= preço do lote (exceto tipos 2/3), lote da família = 0, flag 8 no lote, dono
+0; ao carregar o lote de novo, `cTSLoadLotController::
+CleanupThingsRelatedToEvictedFamily` (BV `0x87e7b0`) tira os Sims e o que
+`cTSObject::IsDeletedByEvict` escolhe (tipo 2 na vtable `0x184`, ou fora do
+mundo sem a flag `0x10`; "pertences pessoais vendidos", STR# 0x83 #18). A
+mobília fica com a casa.
+
+**Demolir** (`cTSUserToolBulldozeLot`): só lote vazio (STR# 0x83 #29), pergunta
+#26.
+
+No app (`formats/hood_moves.*`, `app/hood_bins.*`; `s2pkg hood-lots`,
+`hood-move-in`, `hood-move-out`, `hood-bulldoze`): tudo isso escrito na cópia
+do jogador; a limpeza do despejo é feita na hora no pacote do lote (os Sims da
+família e o que eles carregam saem; o valor dos objetos da família passa para
+os do lote, **inferido**: o jogo recalcula ao carregar).

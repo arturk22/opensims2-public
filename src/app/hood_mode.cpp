@@ -1,5 +1,6 @@
 #include "hood_mode.hpp"
 
+#include "formats/hood_moves.hpp"
 #include "formats/neighborhood.hpp"
 #include "render/camera.hpp"
 
@@ -59,19 +60,81 @@ void HoodMode::mouseDown(LotCamera& camera, simd_float2 p, float w, float h) {
         camera.rotateBy(1);
     if (a == HoodUi::Action::MainMenu && onMainMenu)
         onMainMenu();
+    if (a == HoodUi::Action::Bins)
+        carryOut(ui_->binRequest());
     if (a != HoodUi::Action::None)
         return;
     if (ui_->dialogLot())
         return; // modal: clicks outside the dialog do nothing
-    if (const HoodLot* lot = lotAt(camera, p, w, h)) {
-        std::printf("opensims2: lot %u \"%s\" (%s)\n", lot->id, lot->name.c_str(),
-                    lot->familyName.empty() ? "no family" : lot->familyName.c_str());
+    if (const HoodLot* lot = lotAt(camera, p, w, h))
+        lotClicked(*lot);
+}
+
+void HoodMode::lotClicked(const HoodLot& lot) {
+    std::printf("opensims2: lot %u \"%s\" (%s)\n", lot.id, lot.name.c_str(),
+                lot.familyName.empty() ? "no family" : lot.familyName.c_str());
+    std::fflush(stdout);
+    if (ui_->bins().tool() != HoodBins::Tool::None) {
+        ui_->bins().lotClicked(lot.id); // the tool's question (or why not)
+        return;
+    }
+    ui_->openLot(&lot);
+}
+
+void HoodMode::carryOut(const HoodBins::Request& r) {
+    using K = HoodBins::Request::Kind;
+    const fs::path folder = view_->folder();
+    if (r.kind == K::CreateFamily) {
+        std::printf("opensims2: create a new family in %s\n", folder.string().c_str());
         std::fflush(stdout);
-        ui_->openLot(lot);
+        if (onCreateFamily)
+            onCreateFamily(folder);
+        return;
+    }
+    hood::MoveResult res;
+    if (r.kind == K::MoveIn)
+        res = hood::moveIn(folder, r.family, r.lot, gameDir_);
+    else if (r.kind == K::MoveOut)
+        res = hood::moveOut(folder, r.lot, gameDir_);
+    else if (r.kind == K::Bulldoze)
+        res = hood::bulldoze(folder, r.lot, gameDir_);
+    else
+        return;
+    for (const auto& l : res.lines)
+        std::printf("opensims2: %s\n", l.c_str());
+    if (!res.ok) {
+        std::printf("opensims2: %s\n", res.error.c_str());
+        ui_->bins().showMessage(res.error);
+    }
+    std::fflush(stdout);
+    refresh();
+    // ConfirmAndMoveInFamily posts the transition to the lot: the family
+    // goes in at once.
+    if (res.ok && r.kind == K::MoveIn)
+        if (const HoodLot* lot = view_->lot(r.lot))
+            enterLot(*lot);
+}
+
+void HoodMode::refresh() {
+    view_->reload();
+    ui_->refresh();
+}
+
+void HoodMode::familyCreated(uint32_t family) {
+    refresh();
+    if (family) {
+        if (ui_->bins().panel() != HoodBins::Panel::Families)
+            ui_->bins().togglePanel(HoodBins::Panel::Families);
+        ui_->bins().selectFamily(family);
     }
 }
 
-void HoodMode::escape() { ui_->openLot(nullptr); }
+void HoodMode::escape() {
+    if (ui_->bins().tool() != HoodBins::Tool::None)
+        ui_->bins().cancelTool();
+    else
+        ui_->openLot(nullptr);
+}
 
 void HoodMode::enterLot(const HoodLot& lot) {
     std::printf("opensims2: entering lot %u (%s)\n", lot.id, lot.package.string().c_str());
@@ -94,6 +157,23 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
         return nullptr;
     };
     ui_->setCanvas(int(w), int(h));
+    auto value = [&](const char* flag) -> std::optional<std::string> {
+        for (size_t i = 1; i + 1 < args_.size(); ++i)
+            if (args_[i] == flag)
+                return args_[i + 1];
+        return std::nullopt;
+    };
+    if (auto p = value("--hood-panel"))
+        ui_->bins().togglePanel(*p == "lots" ? HoodBins::Panel::Lots : HoodBins::Panel::Families);
+    if (auto f = value("--hood-family"))
+        ui_->bins().selectFamily(uint32_t(std::stoul(*f)));
+    if (auto t = value("--hood-tool"))
+        ui_->bins().setTool(*t == "bulldoze" ? HoodBins::Tool::Bulldoze : HoodBins::Tool::Evict);
+    if (const HoodLot* l = find("--hood-lot-click")) {
+        camera.setPivot(view_->lotCentre(*l));
+        camera.snap();
+        lotClicked(*l);
+    }
     const HoodLot* hover = find("--hood-hover");
     const HoodLot* select = find("--hood-select");
     const HoodLot* target = select ? select : hover;
@@ -143,7 +223,8 @@ bool has(const std::vector<std::string>& args, const char* flag) {
 
 std::vector<std::string> hoodLotArguments(const std::vector<std::string>& args, const std::string& hood, uint32_t lot) {
     auto out = without(args, {"--hood", "--hood-lot", "--hood-hover", "--hood-select", "--screenshot", "--pivot",
-                              "--zoom", "--orientation", "--lot"});
+                              "--zoom", "--orientation", "--lot", "--hood-panel", "--hood-family", "--hood-tool",
+                              "--hood-lot-click"});
     out.insert(out.end(), {"--hood", hood, "--hood-lot", std::to_string(lot)});
     if (!has(out, "--vm"))
         out.push_back("--vm");

@@ -43,6 +43,7 @@ add_library(os2_formats
   src/formats/jpeg.cpp
   src/formats/lighting_config.cpp
   src/formats/locale.cpp
+  src/formats/hood_moves.cpp
   src/formats/hood_scene.cpp
   src/formats/hood_terrain.cpp
   src/formats/lot.cpp
@@ -151,7 +152,7 @@ target_include_directories(os2_fx PUBLIC src)
 target_compile_options(os2_fx PRIVATE -Wall -Wextra)
 target_link_libraries(os2_fx PUBLIC os2_formats)
 
-add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/movie_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/save_cmds.cpp cli/s2pkg/autonomy_cmds.cpp cli/s2pkg/wants_cmds.cpp cli/s2pkg/route_cmds.cpp cli/s2pkg/buy_cmds.cpp cli/s2pkg/build_cmds.cpp cli/s2pkg/effects_cmds.cpp cli/s2pkg/simlook_cmds.cpp cli/s2pkg/cas_cmds.cpp)
+add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/movie_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/hood_play_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/save_cmds.cpp cli/s2pkg/autonomy_cmds.cpp cli/s2pkg/wants_cmds.cpp cli/s2pkg/route_cmds.cpp cli/s2pkg/buy_cmds.cpp cli/s2pkg/build_cmds.cpp cli/s2pkg/effects_cmds.cpp cli/s2pkg/simlook_cmds.cpp cli/s2pkg/cas_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm os2_audio os2_fx)
 
@@ -178,7 +179,7 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats os2_fx
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/cinematic_player.cpp src/app/lot_effects.cpp src/app/tv_broadcast.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/cinematic_player.cpp src/app/lot_effects.cpp src/app/tv_broadcast.cpp)
   # The game flow: main menu, user folder, in-game save, options (app/game_flow.hpp).
   target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/options_panel.cpp src/app/cas_mode.cpp)
   # Scenes loaded off the main thread behind the loading screens (docs/loading-mac.md).
@@ -308,6 +309,10 @@ add_test(NAME game_flow COMMAND test_game_flow)
 add_executable(test_hood_terrain tests/test_hood_terrain.cpp)
 target_link_libraries(test_hood_terrain PRIVATE os2_formats)
 add_test(NAME hood_terrain COMMAND test_hood_terrain)
+
+add_executable(test_hood_moves tests/test_hood_moves.cpp)
+target_link_libraries(test_hood_moves PRIVATE os2_formats)
+add_test(NAME hood_moves COMMAND test_hood_moves)
 add_executable(test_movie tests/test_movie.cpp)
 target_link_libraries(test_movie PRIVATE os2_formats)
 add_test(NAME movie COMMAND test_movie)
