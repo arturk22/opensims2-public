@@ -282,13 +282,14 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
   último), um comercial a cada `CommercialInterval` s entre programas
   (inferido), ou o arquivo do fliperama em laço; todas as TVs no mesmo canal
   mostram o mesmo quadro. Som (rodada 10): o som do próprio filme
-  (`SCHl`/`SCDl`), decodificado quando o filme começa e tocado de cada TV
-  cujo material é o canal (`vm::Object::materials`), posicional, a partir
+  (`SCHl`/`SCDl`), decodificado quando o filme começa e tocado, posicional,
+  do **primeiro receptor** do canal (a TV de menor ID cujo material é o
+  canal, `vm::Object::materials`; as outras ficam mudas, como o proxy
+  `cVideoBroadcastSoundEmitterProxy` do binário, `docs/audio.md`), a partir
   de quanto o programa já andou; o próximo programa recomeça, a TV
   desligada (ou noutro canal) esvazia em 0,2 s (`TvBroadcast::sound`,
-  `LotAudio::tvSounds`). Inferido: o jogo passa o som por um proxy de som
-  que não foi seguido; o grupo de mixagem (efeitos) e o volume cheio são
-  nossos; com a velocidade do jogo acima de 1 a imagem segue o relógio da
+  `LotAudio::tvSounds`). Nossos: o grupo de mixagem (efeitos) e o volume
+  cheio; com a velocidade do jogo acima de 1 a imagem segue o relógio da
   cena e o som não (só ressincroniza no programa seguinte). Alguns filmes
   (`tv_news_police.wav.movie`) não têm som.
   Captura: `docs/screenshots/r9-tv-canal.jpg` (`--lot N001_Lot49 --sim-id

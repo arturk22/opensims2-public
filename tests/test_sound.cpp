@@ -68,6 +68,25 @@ static void testMixer() {
     check(pcm[0] > 29000 && pcm[0] <= 32767, "two loud voices clip below full scale");
 }
 
+static void testPauseAndStartAt() {
+    AudioMixer m(44100);
+    auto id = m.play(tone(44100, 100, 16384), {});
+    std::vector<float> out(2 * 50);
+    m.renderFloat(out.data(), 50);
+    m.setPaused(id, true);
+    m.renderFloat(out.data(), 50);
+    check(out[0] == 0.0f && m.playing(id), "a paused voice is silent and stays");
+    m.setPaused(id, false);
+    m.renderFloat(out.data(), 50);
+    check(out[0] > 0.4f && !m.playing(id), "resumed where it was: the last 50 frames");
+    AudioMixer::Params late;
+    late.startAt = 90.0 / 44100;
+    auto id2 = m.play(tone(44100, 100, 16384), late);
+    m.renderFloat(out.data(), 20);
+    check(!m.playing(id2) && out[2 * 9] > 0.4f && out[2 * 10] == 0.0f, "startAt skips into the sound");
+    check(m.play(tone(44100, 100, 16384), {.startAt = 1.0}) == 0, "starting past the end plays nothing");
+}
+
 static void testCurvesAndFsc() {
     const std::vector<float> day{0, 0, 0.49f, 0, 0.5f, 1, 0.74f, 1, 0.75f, 0};
     check(evalCurve(day, 0.3f) == 0 && evalCurve(day, 0.6f) == 1 && evalCurve(day, 0.9f) == 0, "curveisday");
@@ -169,6 +188,7 @@ static void testVoxSuffix() {
 int main() {
     vmt::testVoxSuffix();
     testMixer();
+    testPauseAndStartAt();
     testCurvesAndFsc();
     vmt::testPrimitives();
     if (failures)

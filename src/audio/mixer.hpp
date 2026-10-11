@@ -49,6 +49,9 @@ public:
     void fade(VoiceId id, float volume, double seconds, bool stopAtEnd = false);
     void setVolume(VoiceId id, float volume) { fade(id, volume, 0); }
     void setPan(VoiceId id, float pan);
+    // A paused voice keeps its place and is silent until resumed (the music
+    // states of the game's music manager).
+    void setPaused(VoiceId id, bool paused);
     bool playing(VoiceId id) const;
     size_t voiceCount() const;
 
@@ -77,6 +80,7 @@ private:
         double step = 1;     // source frames per output frame
         float gain = 1, target = 1, gainStep = 0;
         bool stopAtEnd = false;
+        bool paused = false;
         int64_t delayFrames = 0;
     };
     uint32_t rate_;

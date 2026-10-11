@@ -51,18 +51,95 @@ private:
 // "shoe" value of its parts (GZPS), through the shoetypes property set.
 std::string characterShoe(ResourceIndex& index, const Character& character, const SoundSystem& sound);
 
-class LotAudio {
+// The game's sound across scenes: one mixer on the output device, the sound
+// system (its packages indexed once) and the music states of the binary's
+// cTSAudioMusicManager (docs/audio.md, "Rodada 10"): each state has its own
+// music, and switching pauses the one playing and resumes (or starts) the
+// new one with no fade — "Splash" (the opening music, Music/splash: main
+// menu), "NHood" (neighborhood), "CAS", "Buy", "Build", and the lot's state
+// "" (live mode: only the stereos, which pause in Buy/Build mode). Leaving
+// the opening music fades it over 6 s; going back to the neighborhood stops
+// everything and starts its music afresh. The neighborhood view also plays
+// the neighborhood ambience layers. Headless, renderOffline/dwell pull the
+// mixer into a buffer that writeMix saves.
+class GameAudio {
 public:
     struct Options {
-        bool muted = false;       // mixer runs silent
-        bool device = true;       // open the output device (off for headless runs)
-        std::string music;        // background music category ("Build", "Nhood", ...), "" none
+        bool muted = false; // mixer runs silent
+        bool device = true; // open the output device (off for headless runs)
     };
-    LotAudio(const std::filesystem::path& resDir, ResourceIndex& index, const Lot& lot, const Options& options);
-    ~LotAudio();
+    GameAudio(const std::filesystem::path& resDir, const Options& options);
+    ~GameAudio();
+    GameAudio(const GameAudio&) = delete;
+    GameAudio& operator=(const GameAudio&) = delete;
 
     SoundSystem& sound() { return *sound_; }
     AudioMixer& mixer() { return mixer_; }
+    const std::filesystem::path& resDir() const { return resDir_; }
+
+    // The music state: its category ("Splash", "NHood", "CAS", "Buy",
+    // "Build", a station for --music) or "" for the lot's (no music).
+    // Unchanged if it is already that one.
+    void setMusic(std::string_view category);
+    const std::string& music() const { return wanted_; }
+    // Stops every state's music (back in the neighborhood).
+    void stopAllMusic();
+    std::string nowPlaying() const;
+    // A fullscreen movie plays (the intro): the mode music waits for it.
+    void setHeld(bool held);
+    // The neighborhood's ambience (the "isneighborhood" layers) on or off.
+    void setNeighborhoodAmbience(bool on) { hoodAmbience_ = on; }
+    // A UI sound by name (the UI group).
+    void playUi(const std::string& name);
+    // Next songs, the neighborhood ambience, 3D sound; `seconds` is any
+    // clock that advances (the frame's).
+    void update(double seconds);
+
+    // A new scene: the last one's sounds stop (the music goes on) and the
+    // scene clock of renderOffline restarts at 0.
+    void beginScene();
+    // Headless (no device): pulls the mixer up to `sceneSeconds` of the
+    // current scene into the mix buffer.
+    void renderOffline(double sceneSeconds);
+    // Headless: lets the current scene run `seconds` more (music and
+    // ambience updated as it goes), for scenes without a clock of their own.
+    void dwell(double seconds);
+    double sceneSeconds() const { return sceneSeconds_; }
+    bool writeMix(const std::string& path);
+    bool unwritten() const { return mixFrames_ != written_; }
+    bool hasDevice() const { return output_ != nullptr; }
+    // The music categories set so far, in order (logs).
+    const std::vector<std::string>& musicLog() const { return musicLog_; }
+
+private:
+    AudioMixer mixer_;
+    std::filesystem::path resDir_;
+    std::unique_ptr<AudioOutput> output_;
+    std::unique_ptr<SoundSystem> sound_;
+    std::map<std::string, std::unique_ptr<MusicPlayer>> players_; // by state (category)
+    std::unique_ptr<AmbiencePlayer> hood_;
+    std::string wanted_;
+    std::vector<std::string> musicLog_;
+    bool held_ = false, hoodAmbience_ = false;
+    double last_ = -1;
+    std::vector<int16_t> mix_;
+    uint64_t mixFrames_ = 0, sceneBase_ = 0, written_ = 0;
+    double sceneSeconds_ = 0;
+};
+
+class LotAudio {
+public:
+    struct Options {
+        std::string music; // music category for live mode (--music: "Build", "Nhood", a station), "" none
+    };
+    LotAudio(GameAudio& game, ResourceIndex& index, const Lot& lot, const Options& options);
+    ~LotAudio();
+
+    SoundSystem& sound() { return *sound_; }
+    AudioMixer& mixer() { return game_.mixer(); }
+    GameAudio& game() { return game_; }
+    // The live mode music (--music), "" none.
+    const std::string& liveMusic() const { return liveMusic_; }
 
     // A Sim whose animation events play (footsteps with `shoe`).
     void attachSim(SimActor& actor, int16_t id, std::string shoe);
@@ -93,9 +170,10 @@ public:
     void tvSounds(vm::VM& machine, const std::vector<TvSource>& on);
 
     // Headless runs (no device): pulls the mixer up to `seconds` into a
-    // buffer that writeMix saves as a WAV (--sound-mix), to check the mix.
-    void renderOffline(double seconds);
-    bool writeMix(const std::string& path) const;
+    // buffer that writeMix saves as a WAV (--sound-mix), to check the mix
+    // (GameAudio's, across scenes).
+    void renderOffline(double seconds) { game_.renderOffline(seconds); }
+    bool writeMix(const std::string& path) { return game_.writeMix(path); }
 
     // For logs: requests played, events fired, ...
     std::string summary() const;
@@ -114,11 +192,10 @@ private:
     SoundPos positionOf(vm::VM& machine, int16_t id) const;
     SoundModifiers modifiersFor(vm::VM* machine, int16_t source, const SoundPos& at, const std::string& shoe) const;
 
-    AudioMixer mixer_;
-    std::unique_ptr<AudioOutput> output_;
-    std::unique_ptr<SoundSystem> sound_;
+    GameAudio& game_;
+    SoundSystem* sound_;
+    std::string liveMusic_;
     std::unique_ptr<AmbiencePlayer> ambience_;
-    std::unique_ptr<MusicPlayer> music_;
     std::map<int16_t, std::unique_ptr<MusicPlayer>> stereos_;
     SurfaceMap surfaces_;
     std::vector<SimBinding> sims_;
@@ -138,8 +215,6 @@ private:
     size_t tvShows_ = 0;
     double last_ = 0;
     bool started_ = false;
-    std::vector<int16_t> mix_;
-    uint64_t mixFrames_ = 0;
     float lastTimeOfDay_ = 0;
     size_t requests_ = 0, animEvents_ = 0, unresolved_ = 0;
 };

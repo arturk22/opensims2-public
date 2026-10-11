@@ -92,6 +92,12 @@ void AudioMixer::setPan(VoiceId id, float pan) {
         v->params.pan = std::clamp(pan, -1.0f, 1.0f);
 }
 
+void AudioMixer::setPaused(VoiceId id, bool paused) {
+    std::lock_guard lock(mutex_);
+    if (Voice* v = find(id))
+        v->paused = paused;
+}
+
 bool AudioMixer::playing(VoiceId id) const {
     std::lock_guard lock(mutex_);
     return find(id) != nullptr;
@@ -137,6 +143,8 @@ void AudioMixer::renderFloat(float* out, size_t frames) {
     std::lock_guard lock(mutex_);
     std::fill(out, out + 2 * frames, 0.0f);
     for (auto& v : voices_) {
+        if (v.paused)
+            continue;
         const Pcm& p = *v.pcm;
         const size_t n = p.frames(), ch = p.channels;
         const float group = groupVolume_[size_t(v.params.group)];

@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -153,6 +154,9 @@ public:
     bool isMusicCategory(std::string_view category) const;
     // Music tunables (TrackLogic settings): default volume 0.7, fade out 3 s.
     float defaultMusicVolume() const { return musicVolume_; }
+    // Non-positional music (the modes') at defaultmusicvolume times the
+    // sound manager's 2dMusicVolumeScalar (0.75; inferred that it means this).
+    float music2dVolume() const { return musicVolume_ * music2dScalar_; }
     double musicFadeOut() const { return musicFadeOut_; }
     // The FSC score of a name ("midday"), parsed once; null if none.
     const FscScore* score(std::string_view name);
@@ -183,6 +187,7 @@ private:
     std::vector<float> lotRadiusCurve_{0, 20, 1, 8};
     std::vector<std::string> musicCategories_;
     float musicVolume_ = 0.7f;
+    float music2dScalar_ = 0.75f;
     double musicFadeOut_ = 3.0;
     float rolloff_ = 1.2f;
     std::map<std::pair<uint32_t, uint32_t>, std::shared_ptr<const Pcm>> cache_;
@@ -242,13 +247,27 @@ class MusicPlayer {
 public:
     explicit MusicPlayer(SoundSystem& sound) : sound_(sound) {}
     ~MusicPlayer();
-    void setCategory(std::string_view category, std::optional<SoundPos> position = std::nullopt);
+    // `fadeOut` (< 0: the TrackLogic's trackfadeouttime) fades the song
+    // playing while the next category starts at once.
+    void setCategory(std::string_view category, std::optional<SoundPos> position = std::nullopt, double fadeOut = -1);
     const std::string& category() const { return category_; }
     void update();
     // The song playing (sample name key), for logs.
     std::string nowPlaying() const;
+    // Songs are decoded on a worker thread (the next one while one plays),
+    // not cached; off (headless runs), at once when needed.
+    void setBackgroundDecoding(bool on) { background_ = on; }
+    // Paused: the song holds its place, silent, and no next one starts.
+    void setPaused(bool paused);
+    bool paused() const { return paused_; }
 
 private:
+    struct Decoded {
+        std::shared_ptr<const Pcm> pcm;
+        std::string name;
+    };
+    void prefetch();
+
     SoundSystem& sound_;
     std::string category_;
     std::optional<SoundPos> position_;
@@ -256,6 +275,10 @@ private:
     size_t next_ = 0;
     SoundSystem::Handle voice_ = 0;
     std::string playing_;
+    bool background_ = false;
+    bool paused_ = false;
+    std::future<Decoded> pending_;
+    std::vector<std::future<Decoded>> discarded_;
 };
 
 } // namespace os2

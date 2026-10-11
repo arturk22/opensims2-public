@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <sstream>
 
 namespace os2 {
@@ -195,6 +196,8 @@ SoundSystem::SoundSystem(const std::filesystem::path& resDir, AudioMixer& mixer,
         } else if (props.count("rolloff")) {
             rolloff_ = numberOr(props, "rolloff", 1.2f);
         }
+        if (props.count("2dMusicVolumeScalar"))
+            music2dScalar_ = numberOr(props, "2dMusicVolumeScalar", 0.75f);
     }
     std::sort(layers_.begin(), layers_.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
 }
@@ -588,7 +591,7 @@ MusicPlayer::~MusicPlayer() {
         sound_.stop(voice_);
 }
 
-void MusicPlayer::setCategory(std::string_view category, std::optional<SoundPos> position) {
+void MusicPlayer::setCategory(std::string_view category, std::optional<SoundPos> position, double fadeOut) {
     if (category == category_ && position_.has_value() == position.has_value()) {
         if (position && voice_)
             sound_.setPosition(voice_, *position);
@@ -596,29 +599,66 @@ void MusicPlayer::setCategory(std::string_view category, std::optional<SoundPos>
         return;
     }
     if (voice_)
-        sound_.fadeOut(voice_, sound_.musicFadeOut());
+        sound_.fadeOut(voice_, fadeOut < 0 ? sound_.musicFadeOut() : fadeOut);
     voice_ = 0;
     playing_.clear();
     category_ = category;
     position_ = position;
+    if (pending_.valid() && background_)
+        discarded_.push_back(std::move(pending_)); // a song of the old category being decoded: let it finish
+    pending_ = {};
     queue_ = category_.empty() ? std::vector<SoundBank::Location>{} : sound_.musicTracks(category_);
     std::shuffle(queue_.begin(), queue_.end(), sound_.random());
     next_ = 0;
     update();
 }
 
+void MusicPlayer::prefetch() {
+    if (queue_.empty() || pending_.valid())
+        return;
+    const SoundBank::Location loc = queue_[next_++ % queue_.size()];
+    // Songs are large (minutes of 44.1 kHz stereo): decoded from the
+    // package directly (thread-safe reads), never kept in the sample cache.
+    auto job = [loc] {
+        Decoded d;
+        char buf[24];
+        std::snprintf(buf, sizeof buf, "%08X-%08X", loc.entry->tgi.instanceHi, loc.entry->tgi.instance);
+        d.name = buf;
+        try {
+            d.pcm = std::make_shared<const Pcm>(decodeSound(loc.package->readConcurrent(*loc.entry)));
+        } catch (const std::exception&) {
+        }
+        return d;
+    };
+    pending_ = std::async(background_ ? std::launch::async : std::launch::deferred, job);
+}
+
+void MusicPlayer::setPaused(bool paused) {
+    paused_ = paused;
+    if (voice_)
+        sound_.mixer().setPaused(voice_, paused);
+}
+
 void MusicPlayer::update() {
-    if (queue_.empty() || (voice_ && sound_.playing(voice_)))
+    std::erase_if(discarded_, [](auto& f) { return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready; });
+    if (queue_.empty() || paused_)
         return;
-    const auto& loc = queue_[next_++ % queue_.size()];
-    auto pcm = sound_.decodeSample(loc);
-    if (!pcm)
+    if (voice_ && sound_.playing(voice_)) {
+        prefetch(); // the next song, while this one plays
         return;
-    voice_ = sound_.playPcm(pcm, {.position = position_, .volume = sound_.defaultMusicVolume(),
-                                  .group = SoundGroup::Music});
-    char buf[24];
-    std::snprintf(buf, sizeof buf, "%08X-%08X", loc.entry->tgi.instanceHi, loc.entry->tgi.instance);
-    playing_ = buf;
+    }
+    prefetch();
+    if (background_ && pending_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return;
+    Decoded d = pending_.get();
+    if (!d.pcm || d.pcm->frames() == 0)
+        return;
+    voice_ = sound_.playPcm(d.pcm, {.position = position_,
+                                    .volume = position_ ? sound_.defaultMusicVolume() : sound_.music2dVolume(),
+                                    .group = SoundGroup::Music});
+    playing_ = d.name;
+    if (background_)
+        prefetch();
 }
 
 std::string MusicPlayer::nowPlaying() const { return playing_; }

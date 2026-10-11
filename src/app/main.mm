@@ -462,11 +462,14 @@ std::vector<LotSim> gLotSims;
 int gPlumbob = -1; // renderer instance of the plumbob over the selected Sim (placePlumbob)
 float gPlumbobBottom = 0; // lowest point of its mesh (modelled about 1.24 over the origin)
 
-// Sound on the lot (app/lot_audio.hpp): --no-audio leaves it out, --mute
-// keeps it silent; headless runs (--screenshot) open no device, and
-// --sound-mix <out.wav> saves what would have played. --music <category>
-// plays background music ("Build", "Buy", "CAS", "Nhood", or a radio
-// station: "pop", "rnb", ...).
+// Sound (app/lot_audio.hpp): gGameAudio lives across scenes (the mixer on
+// the device, the mode music: NHood, CAS, Buy, Build); gAudio is the lot's.
+// --no-audio leaves it out, --mute keeps it silent; headless runs
+// (--screenshot) open no device, and --sound-mix <out.wav> saves what would
+// have played (scenes without a clock add --sound-dwell seconds, 5 by
+// default). --music <category> plays music in live mode ("Build", "Nhood",
+// or a radio station: "pop", "rnb", ...).
+std::unique_ptr<os2::GameAudio> gGameAudio;
 std::unique_ptr<os2::LotAudio> gAudio;
 os2::LotCamera* gCamera = nullptr;
 std::unique_ptr<os2::LotCameraFollow> gCameraFollow; // --lot: pivot held to the lot, on the Sim's floor
@@ -500,15 +503,11 @@ void followSelectedSim() {
 }
 
 void startAudio(os2::ResourceIndex& index, const os2::Lot& lot) {
-    NSArray<NSString*>* args = sceneArgs();
-    if ([args containsObject:@"--no-audio"])
+    if (!gGameAudio)
         return;
     os2::LotAudio::Options o;
-    o.muted = [args containsObject:@"--mute"];
-    o.device = !argument(@"--screenshot");
     o.music = argument(@"--music").value_or("");
-    gAudio = std::make_unique<os2::LotAudio>(gameDir() / "TSData/Res", index, lot, o);
-    applyAudioSettings(); // the options' volumes (below)
+    gAudio = std::make_unique<os2::LotAudio>(*gGameAudio, index, lot, o);
     for (const auto& s : gLotSims) {
         os2::DbpfPackage character(s.character);
         const std::string shoe = os2::characterShoe(index, os2::readCharacter(character, index), gAudio->sound());
@@ -526,13 +525,23 @@ void updateAudio(double seconds) {
         l.rightX = look.y, l.rightY = -look.x; // forward x up
         l.zoom = std::clamp(gCamera->zoom() / 5.0f, 0.0f, 1.0f);
     }
+    // The mode's music state: Build, Buy, or (live mode) the lot's: only the
+    // stereos, as the game's music manager switches it.
+    gGameAudio->setMusic(gBuild && gBuild->active() ? "Build"
+                         : gBuy && gBuy->active()   ? "Buy"
+                                                    : gAudio->liveMusic());
     gAudio->update(gSimulation ? &gSimulation->machine() : nullptr, seconds, l);
-    if (gTv && gSimulation) { // TVs on a channel play the broadcast's sound (app/tv_broadcast.hpp)
+    if (gTv && gSimulation) {
+        // A channel's sound comes out of its first receiver (the lowest
+        // object ID showing it), as the binary's sound emitter proxy does
+        // (app/tv_broadcast.hpp); the other TVs on the channel are silent.
         std::vector<os2::LotAudio::TvSource> on;
-        for (const auto& [id, o] : gSimulation->machine().objects())
+        std::set<std::string> heard;
+        for (const auto& [id, o] : gSimulation->machine().objects()) // (by ID)
             for (const auto& [group, material] : o.materials)
                 if (const auto* s = gTv->isChannel(material) ? gTv->sound(material) : nullptr) {
-                    on.push_back({id, s->serial, s->pcm, std::max(0.0, gTv->now() - s->started)});
+                    if (heard.insert(material).second)
+                        on.push_back({id, s->serial, s->pcm, std::max(0.0, gTv->now() - s->started)});
                     break;
                 }
         gAudio->tvSounds(gSimulation->machine(), on);
@@ -1846,6 +1855,43 @@ int cameraSlot(unsigned short key) {
 
 bool headless() { return argument(@"--screenshot").has_value(); }
 
+// Headless: a scene without a clock of its own (the menu, the
+// neighborhood, CAS, a lot without VM ticks) sounds for --sound-dwell
+// seconds (5) before it is left, so that --sound-mix has its music.
+void dwellHeadlessAudio() {
+    if (!gGameAudio || gGameAudio->hasDevice() || gGameAudio->sceneSeconds() > 0)
+        return;
+    gGameAudio->dwell(std::stod(argument(@"--sound-dwell").value_or("5")));
+}
+
+// Headless, at exit: the last scene's dwell, the music log and the mix.
+void finishHeadlessAudio() {
+    if (!gGameAudio || gGameAudio->hasDevice())
+        return;
+    dwellHeadlessAudio();
+    std::string log;
+    for (const auto& m : gGameAudio->musicLog())
+        log += " " + m;
+    std::printf("opensims2: music:%s; playing %s\n", log.empty() ? " none" : log.c_str(),
+                gGameAudio->nowPlaying().empty() ? "nothing" : gGameAudio->nowPlaying().c_str());
+    if (auto mix = argument(@"--sound-mix"); mix && gGameAudio->unwritten())
+        gGameAudio->writeMix(*mix);
+    std::fflush(stdout);
+}
+
+// The game's sound across scenes (unless --no-audio), made on the main thread.
+void startGameAudio() {
+    if (gGameAudio || [sceneArgs() containsObject:@"--no-audio"])
+        return;
+    os2::GameAudio::Options o;
+    o.muted = [sceneArgs() containsObject:@"--mute"];
+    o.device = !headless();
+    gGameAudio = std::make_unique<os2::GameAudio>(gameDir() / "TSData/Res", o);
+    perfLap("GameAudio");
+    if (headless())
+        std::atexit([] { finishHeadlessAudio(); });
+}
+
 // Leaves the current scene for `next` once the current event is handled:
 // at once in a headless run (between steps), on the next turn of the run
 // loop with a window.
@@ -1874,14 +1920,14 @@ fs::path hoodFolder(const std::string& query) {
     return gUser->neighborhood(query);
 }
 
-// The options' group volumes and mutes on the lot's mixer.
+// The options' group volumes and mutes on the game's mixer.
 void applyAudioSettings() {
-    if (!gAudio)
+    if (!gGameAudio)
         return;
     const os2::SoundGroup groups[4] = {os2::SoundGroup::Vox, os2::SoundGroup::Sfx, os2::SoundGroup::Music,
                                        os2::SoundGroup::Ambience};
     for (size_t g = 0; g < 4; ++g)
-        gAudio->mixer().setGroupVolume(groups[g], gSettings.muted[g] ? 0.0f : gSettings.volume[g]);
+        gGameAudio->mixer().setGroupVolume(groups[g], gSettings.muted[g] ? 0.0f : gSettings.volume[g]);
 }
 
 // Saves the running lot and its neighborhood to the user's folder (app/game_save.hpp).
@@ -2568,6 +2614,10 @@ void unloadScene() {
     if (gSceneLoading) {
         if (gPollLoad)
             gPollLoad();
+        if (gGameAudio) { // the music goes on behind the loading screen
+            gGameAudio->setHeld(os2::moviePlaying());
+            gGameAudio->update(now - _start);
+        }
         MTLRenderPassDescriptor* pass = mtkView.currentRenderPassDescriptor;
         id<CAMetalDrawable> drawable = mtkView.currentDrawable;
         os2::movieHostDraw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable);
@@ -2592,6 +2642,11 @@ void unloadScene() {
     float aspect = size.height > 0 ? float(size.width / size.height) : 1.0f;
     gLastFrameW = uint32_t(std::max(1.0, size.width)), gLastFrameH = uint32_t(std::max(1.0, size.height));
     poseActors(*_renderer, now - _start);
+    if (gGameAudio) { // (on a lot, the lot's audio updates it)
+        gGameAudio->setHeld(os2::moviePlaying());
+        if (!gAudio)
+            gGameAudio->update(now - _start);
+    }
     const os2::FrameView frame = cinematicView({view.camera->view(), view.camera->projection(aspect)}, now - _start, aspect);
     if (gCas)
         gCas->update(now - _start);
@@ -2702,6 +2757,7 @@ void unloadScene() {
         gPollLoad = [weakSelf] { [weakSelf pollSceneLoad]; };
         // Headless, the scenes load in order on this thread; with a window
         // the first one loads behind the loading screen (below).
+        startGameAudio(); // (on this thread: the scenes' loads only use it)
         if (headless()) {
             [self ensureGameState];
             [self runScenes];
@@ -2940,6 +2996,26 @@ void unloadScene() {
 
 - (void)finishScene {
     _view.clearColor = MTLClearColorMake(0.18, 0.22, 0.28, 1.0);
+    applyAudioSettings(); // the options' volumes (the settings load with the first scene)
+    // The scene's music state, as the game's music manager switches it
+    // (app/lot_audio.hpp GameAudio): the opening music in the main menu,
+    // NHood in the neighborhood (afresh, unless the opening music fades
+    // into it), CAS in Create-a-Sim, the lot's (stereos only) on a lot.
+    if (gGameAudio) {
+        gGameAudio->setHeld(os2::moviePlaying()); // (the intro may still be playing)
+        if (_cas) {
+            gGameAudio->setMusic("CAS");
+        } else if (_scene.kind == os2::Scene::Kind::MainMenu) {
+            gGameAudio->setMusic("Splash");
+        } else if (_scene.kind == os2::Scene::Kind::Neighborhood) {
+            if (gGameAudio->music() != "Splash")
+                gGameAudio->stopAllMusic();
+            gGameAudio->setMusic("NHood");
+        } else {
+            gGameAudio->setMusic(argument(@"--music").value_or(""));
+        }
+        gGameAudio->setNeighborhoodAmbience(!_cas && _scene.kind == os2::Scene::Kind::Neighborhood);
+    }
     if (_cas) {
         [self finishCas:_view];
         std::fflush(stdout);
@@ -2963,7 +3039,10 @@ void unloadScene() {
     gPendingScene.reset();
     const std::vector<std::string> args = os2::sceneArguments(processArguments(), next, headless() ? used : 0);
     const CFTimeInterval start = CACurrentMediaTime();
+    dwellHeadlessAudio(); // (headless: the scene's music heard for a while)
     unloadScene();
+    if (gGameAudio)
+        gGameAudio->beginScene();
     setSceneArguments(args);
     [_viewDelegate resetRenderer:_view];
     std::string line;

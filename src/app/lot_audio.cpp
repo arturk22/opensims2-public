@@ -150,14 +150,10 @@ std::string characterShoe(ResourceIndex& index, const Character& character, cons
     return {};
 }
 
-LotAudio::LotAudio(const std::filesystem::path& resDir, ResourceIndex& index, const Lot& lot, const Options& o)
-    : mixer_(44100), surfaces_(lot, index, resDir) {
+GameAudio::GameAudio(const std::filesystem::path& resDir, const Options& o) : mixer_(44100), resDir_(resDir) {
     mixer_.setMuted(o.muted);
     sound_ = std::make_unique<SoundSystem>(resDir, mixer_);
-    ambience_ = std::make_unique<AmbiencePlayer>(*sound_);
-    music_ = std::make_unique<MusicPlayer>(*sound_);
-    if (!o.music.empty())
-        music_->setCategory(o.music);
+    hood_ = std::make_unique<AmbiencePlayer>(*sound_);
     if (o.device) {
         output_ = std::make_unique<AudioOutput>(mixer_);
         if (!output_->start()) {
@@ -167,12 +163,150 @@ LotAudio::LotAudio(const std::filesystem::path& resDir, ResourceIndex& index, co
     }
 }
 
-LotAudio::~LotAudio() {
-    stereos_.clear();
-    music_.reset();
-    ambience_.reset();
+GameAudio::~GameAudio() {
+    hood_.reset();
+    players_.clear();
     if (output_)
         output_->stop();
+}
+
+void GameAudio::setMusic(std::string_view category) {
+    if (category == wanted_)
+        return;
+    musicLog_.push_back(category.empty() ? "(lot)" : std::string(category));
+    if (auto old = players_.find(wanted_); old != players_.end()) {
+        if (lowerAscii(wanted_) == "splash") {
+            old->second->setCategory("", std::nullopt, 6.0); // the opening music fades over 6 s
+            players_.erase(old);
+        } else {
+            old->second->setPaused(true); // its state keeps it for when the game comes back
+        }
+    }
+    wanted_ = category;
+    if (wanted_.empty())
+        return;
+    auto& p = players_[wanted_];
+    if (!p) {
+        p = std::make_unique<MusicPlayer>(*sound_);
+        p->setBackgroundDecoding(output_ != nullptr);
+        p->setCategory(wanted_);
+    }
+    p->setPaused(held_);
+}
+
+void GameAudio::stopAllMusic() {
+    for (auto& [name, p] : players_)
+        p->setCategory("", std::nullopt, 0.5);
+    players_.clear();
+    if (!wanted_.empty())
+        musicLog_.push_back("(stop)");
+    wanted_.clear();
+}
+
+std::string GameAudio::nowPlaying() const {
+    auto it = players_.find(wanted_);
+    return it == players_.end() ? std::string() : it->second->nowPlaying();
+}
+
+void GameAudio::setHeld(bool held) {
+    if (held == held_)
+        return;
+    held_ = held;
+    if (auto it = players_.find(wanted_); it != players_.end())
+        it->second->setPaused(held);
+}
+
+void GameAudio::playUi(const std::string& name) {
+    SoundSystem::PlayOptions o;
+    o.group = SoundGroup::Ui;
+    sound_->play(name, o);
+}
+
+void GameAudio::update(double seconds) {
+    const double dt = last_ < 0 ? 0.0 : std::clamp(seconds - last_, 0.0, 0.25);
+    last_ = seconds;
+    for (auto& [name, p] : players_)
+        p->update();
+    if (hoodAmbience_ || !hood_->volumes().empty()) {
+        AmbiencePlayer::State st;
+        st.onLot = false;
+        st.zoom = 0;
+        st.outsideness = 1;
+        // The neighborhood has no clock of its own: its day layers (inferred).
+        st.timeOfDay = 0.5f;
+        if (!hoodAmbience_)
+            st.onLot = true, st.partitions.clear(), st.outsideness = 0, st.paused = true;
+        hood_->update(st, dt);
+    }
+    sound_->update();
+}
+
+void GameAudio::beginScene() {
+    // The scene's own sounds go; the music (and its fades) goes on.
+    hoodAmbience_ = false;
+    hood_ = std::make_unique<AmbiencePlayer>(*sound_);
+    for (SoundGroup g : {SoundGroup::Sfx, SoundGroup::Vox, SoundGroup::Ambience})
+        mixer_.stopGroup(g);
+    sceneBase_ = mixFrames_;
+    sceneSeconds_ = 0;
+}
+
+void GameAudio::renderOffline(double sceneSeconds) {
+    if (output_)
+        return;
+    sceneSeconds_ = std::max(sceneSeconds_, sceneSeconds);
+    const uint64_t target = sceneBase_ + uint64_t(std::max(0.0, sceneSeconds) * mixer_.sampleRate());
+    if (target <= mixFrames_)
+        return;
+    const size_t n = size_t(target - mixFrames_);
+    const size_t at = mix_.size();
+    mix_.resize(at + 2 * n);
+    mixer_.render(mix_.data() + at, n);
+    mixFrames_ = target;
+}
+
+void GameAudio::dwell(double seconds) {
+    const double start = sceneSeconds_;
+    for (double t = 0.25; t <= seconds + 1e-6; t += 0.25) {
+        update(start + t);
+        renderOffline(start + t);
+    }
+}
+
+bool GameAudio::writeMix(const std::string& path) {
+    Pcm pcm;
+    pcm.sampleRate = mixer_.sampleRate();
+    pcm.channels = 2;
+    pcm.samples = mix_;
+    const auto wav = encodeWav(pcm);
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f)
+        return false;
+    const bool ok = std::fwrite(wav.data(), 1, wav.size(), f) == wav.size();
+    std::fclose(f);
+    if (ok) {
+        written_ = mixFrames_;
+        std::printf("opensims2: wrote %s (%.2f s, peak %d, RMS %.1f dBFS)\n", path.c_str(), pcm.seconds(), pcm.peak(),
+                    pcm.rmsDb());
+    }
+    return ok;
+}
+
+LotAudio::LotAudio(GameAudio& game, ResourceIndex& index, const Lot& lot, const Options& o)
+    : game_(game), sound_(&game.sound()), liveMusic_(o.music), surfaces_(lot, index, game.resDir()) {
+    ambience_ = std::make_unique<AmbiencePlayer>(*sound_);
+}
+
+LotAudio::~LotAudio() {
+    stereos_.clear();
+    ambience_.reset();
+    for (auto& [id, list] : voices_)
+        for (auto& v : list)
+            sound_->stop(v.handle);
+    for (auto& [key, v] : effectVoices_)
+        sound_->stop(v.handle);
+    for (auto& [id, v] : tvVoices_)
+        sound_->stop(v.handle);
 }
 
 void LotAudio::attachSim(SimActor& actor, int16_t id, std::string shoe) {
@@ -252,8 +386,10 @@ void LotAudio::handle(vm::VM& machine, const vm::SoundRequest& r) {
     // category from the object (inferred; no track has those names).
     if (!category.empty() && sound_->isMusicCategory(category)) {
         auto& player = stereos_[r.source];
-        if (!player)
+        if (!player) {
             player = std::make_unique<MusicPlayer>(*sound_);
+            player->setBackgroundDecoding(game_.hasDevice());
+        }
         player->setCategory(category, at);
         return;
     }
@@ -352,10 +488,14 @@ void LotAudio::update(vm::VM* machine, double seconds, const Listener& l) {
     st.inside = surfaces_.indoors(int(std::floor(l.z / kStoryHeight + 0.01f)), l.x, l.y);
     ambience_->update(st, dt);
     lastTimeOfDay_ = st.timeOfDay;
-    music_->update();
-    for (auto& [id, s] : stereos_)
+    game_.update(seconds);
+    // The stereos belong to the lot's music state: paused in Buy/Build mode.
+    const bool lotState = game_.music() == liveMusic_;
+    for (auto& [id, s] : stereos_) {
+        if (s->paused() == lotState)
+            s->setPaused(!lotState);
         s->update();
-    sound_->update();
+    }
     last_ = seconds;
     started_ = true;
 }
@@ -427,34 +567,6 @@ void LotAudio::tvSounds(vm::VM& machine, const std::vector<TvSource>& on) {
     }
 }
 
-void LotAudio::renderOffline(double seconds) {
-    const uint64_t target = uint64_t(std::max(0.0, seconds) * mixer_.sampleRate());
-    if (target <= mixFrames_)
-        return;
-    const size_t n = size_t(target - mixFrames_);
-    const size_t at = mix_.size();
-    mix_.resize(at + 2 * n);
-    mixer_.render(mix_.data() + at, n);
-    mixFrames_ = target;
-}
-
-bool LotAudio::writeMix(const std::string& path) const {
-    Pcm pcm;
-    pcm.sampleRate = mixer_.sampleRate();
-    pcm.channels = 2;
-    pcm.samples = mix_;
-    const auto wav = encodeWav(pcm);
-    FILE* f = std::fopen(path.c_str(), "wb");
-    if (!f)
-        return false;
-    const bool ok = std::fwrite(wav.data(), 1, wav.size(), f) == wav.size();
-    std::fclose(f);
-    if (ok)
-        std::printf("opensims2: wrote %s (%.2f s, peak %d, RMS %.1f dBFS)\n", path.c_str(), pcm.seconds(), pcm.peak(),
-                    pcm.rmsDb());
-    return ok;
-}
-
 std::string LotAudio::summary() const {
     char buf[256];
     std::snprintf(buf, sizeof buf,
@@ -507,6 +619,11 @@ std::string LotAudio::summary() const {
     char tb[48];
     std::snprintf(tb, sizeof tb, "; ambience at %02d:%02d:", int(lastTimeOfDay_ * 24), int(lastTimeOfDay_ * 1440) % 60);
     out += tb + (layers.empty() ? std::string(" none") : layers);
+    if (!game_.musicLog().empty()) {
+        out += "; music:";
+        for (const auto& m : game_.musicLog())
+            out += " " + m;
+    }
     return out;
 }
 
