@@ -349,6 +349,65 @@ Custo de um objetivo aceito (BV `0x4790xx`): penalidades de §8.2 +
 laço com o callback de slots de cadeira. O `cTSRoute::ScanCone` que o
 symxfer nomeou no BV é outra função (um dump de desejos).
 
+## 8.3 Árvores da rota: pós-rota, goal check e along route (binário, rodada 7)
+
+Os números são os **entry points** do STR# 0xF5 (`objects.package`, grupo
+`0x7FE59FD0`), que o motor procura com `GetTreeID(entry)` (vtable `0x170`
+do `cTSObject`) e roda com `GosubObjectTree` (vtable `0x3cc`, modo 5 =
+árvore empurrada na thread do Sim, como a pré-rota): 37 (0x25) "Pre Route",
+**38 (0x26) "Post Route"**, **39 (0x27) "Goal Check"**, 40 (0x28)
+"Reaction Handler" e **41 (0x29) "Along Route Callback"**. As árvores ficam no semi-global
+da pessoa ("Function - Post Route", …). Em todas, falso ou erro levam a rota
+a `DoNeedFailureFeedback` (0x14) com o código abaixo.
+
+| árvore | quem roda, em que objeto | quando | parâmetros | falso → |
+|---|---|---|---|---|
+| **post route 0x26** (`TriggerPostRouteTree`, BV `0x577cf4`) | a árvore **do próprio Sim** que anda, stack object = ele | em `DoFailedOrSucceeded` (BV `0x577ea0`, estados 9/10), uma vez: só se a pilha de rotas tem **uma** rota, a rota tem o flag `+0xac` ligado e o `+0xad` desligado (o `+0xad` é ligado ao rodar), e o estado não pede para pular (`+0x4c`) | 0 = código de resultado da rota (`+0x64`), 1 = o `+0x10` do objetivo atual se houver objetivo (senão 0), 2–3 = 0 | código 12 "post-route failed" (estado 7/8 → `DoWaitingForPostRouteTree`, BV `0x56ddac`) |
+| **goal check 0x27** (`TriggerGoalCheckTree`, BV `0x575e34`) | a árvore 39 **do objeto dono do código do frame que chamou o Go To** (o frame logo abaixo do topo da pilha do Sim: o OBJf do seletor desse frame), rodada no Sim com stack object = o stack object desse frame (sem ele, o alvo da rota) | em `DoWalking` (BV `0x576acc`) **a cada tile cruzado** (o avanço da rota, vtable `0x60`, indica que mudou de célula e o temporizador de callbacks deixa); antes chama `AlongRouteUpdate` | 0 = índice do slot de rota (`WorkOutSlotIndex`), 1 = `+0x14` do objetivo, 2 = `+0x10` do objetivo, 3 = distância restante (vtable `0x3c`) × 100 | código 13 "goal not available" (estado 4; bloqueado: estado 0x19 → 9) |
+| **along route 0x29** (`TriggerAlongRouteTree`, BV `0x5766a0`) | a árvore **do próprio Sim**, stack object = ele | logo depois de um goal check que passou (`DoWalkingWaitingForGoalCheckTree`, BV `0x576970`), no mesmo tile, se o temporizador ainda permite; ou direto quando não há goal check | 0 = ID do alvo, 1 = índice do slot, 2 = `+0x14` do objetivo, 3/4 = dois valores da rota (vtable `0xf0`, padrão 0 e −1), 5 = vtable `0x1d0` da rota, 6 = distância restante × 100 | código 16 "interrupted by callback" (estado 0x1E → `DoWaitingForAlongRouteTree`, BV `0x56db30`) |
+
+Os testes de "sem árvore" valem para os três: sem rota/alvo (`0x118`) ou
+sem objetivos (`0xf4`), não roda e segue andando. O goal check só existe se
+o objeto que chamou define a entrada 39. Assim, uma cadeira cuja interação manda o Sim
+andar até ela pode recusar no meio do caminho se outro Sim sentou
+(texto do editor da entrada 39).
+
+**Diferença com o código atual**: `vm/routing` só roda a pré-rota. Pós-rota,
+goal check e along route não rodam (TODO "Pós-rota (entrada 0x26…)"). A
+pós-rota é do Sim, não do alvo. É a árvore do semi-global da pessoa que
+decide sentar ou chamar o alvo.
+
+### Constantes do lugar para sair (`CreateMoveOutOfWayDestination`, BV `0x57dcac`)
+
+O destino ("Destination - For Go Here & Shoo") é criado na posição do
+**bloqueador** (`this` = roteador do bloqueador, `param_1` = de quem pede)
+com um slot sintético (`0xFBA4DA4F`, §8.2) como slot 0. A interface do slot
+tem o objeto em `+0x20`, então os offsets abaixo são os do objeto: direções
+`+0x30` (máscara), `0xD0(a, b, c)` → `+0x38 = a` (a resolução de §8.2),
+`+0x3c = b`, `+0x40 = c`, `0xCC` → `+0x44` (a largura do cone de §8.2),
+`0xD4` → `+0x4c`, `0x40` → `+0x48` (direção de facing 0–7).
+
+- **Tipo 0** (pedido de quem anda; `MoveOutOfWay` com o tipo do pedido e
+  `TryGetSelfOutOfWay`, BV `0x57e9ac`, sempre 0): falha se os dois estão a
+  **mais de 4 tiles**. Toma a direção d de quem pede (dado 1) e os pontos
+  quem-pede + **0,1** tile × unit(d+6) e + 0,1 × unit(d+2) (à esquerda e à
+  direita dele). Se o bloqueador está mais perto (ou à mesma distância) do primeiro, a direção
+  do slot é **d+7** (−45°). Senão é **d+1** (+45°), mod 8. Valores:
+  `a = 0,0625`, `b = 0,3`, `c = 0,3`, largura `100`, `+0x4c = 0,025`. O facing
+  aponta do bloqueador para quem pede. As flags `0xdc(0,1)` e `0x74/0x7c/0x48/0x50 = 0`,
+  `0x8c = 1`, `0x84 = 0`.
+- **Tipo 1**: direções relativas 1, 2, 6 e 7 (±45° e ±90°), `a = 1`, `b = 3`,
+  `c = 1`, `+0x4c = 0,25`, largura `0,625`, `0x48 = 0`, `0x50 = 0`.
+- **Tipo 2**: igual ao 1 com `b = 6`, `0x48 = 1`, `0x50 = 1`, `0x94 = 1`.
+
+**Inferido**: pela varredura de §8.2 (fileiras com passo `+0x38` e largura
+`+0x44`), `b`/`c` são os raios máximo/mínimo. No tipo 0 isso daria uma
+fileira a 0,3 tile do bloqueador, a 45° da direção de quem pede, com passo de
+1/16 e largura praticamente ilimitada (o custo de §8.2 escolhe). Os tipos 1/2
+dariam fileiras de 1 a 3 ou 6 tiles. Isso substitui os "1 a 6 tiles" do texto acima (que
+eram o tipo 2). Quem chama com 1/2 (`FUN_0057f52c`, sem nome) não foi
+seguido.
+
 ## 9. Comparação com o código atual (main `3b4c4db`: `src/vm/path_planner.*`, `routing.cpp`)
 
 | jogo | código |
