@@ -10,6 +10,7 @@
 #include "vm.hpp"
 
 #include "animation.hpp"
+#include "errors.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/anim.hpp"
@@ -32,11 +33,14 @@ namespace {
 // 46, Global Awareness -> 53. The first 15 are The Sims 1's table (FreeSO's
 // VMFindBestObjectForFunction.FunctionToEntryPoint); the OBJf actions at
 // those entries are the objects' "Function - Sit", "Function - Dispose", ...
+// The Mac binary has the same fixed table, except that 24 "reset" has no
+// entry (0 here) and 27 "Global Awareness" (0x35) is Bon Voyage only
+// (docs/primitives-mac.md §4/§5b): both give false.
 constexpr uint8_t kFunctionEntry[] = {18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 14, 28, 16, 17,
-                                      29, 31, 32, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 53};
+                                      29, 31, 32, 36, 37, 38, 39, 40, 41, 42, 0, 44, 46, 0};
 
 const ObjectFunctions::Entry* functionEntry(VM& vm, const Object& o, uint16_t function) {
-    if (function >= std::size(kFunctionEntry))
+    if (function >= std::size(kFunctionEntry) || kFunctionEntry[function] == 0)
         return nullptr;
     const ObjectFunctions* f = vm.code().functions(o.group, o.definitionInstance);
     const size_t entry = kFunctionEntry[function];
@@ -61,47 +65,36 @@ bool runCheck(Context& c, ObjectId owner, uint16_t guard, std::array<int16_t, 4>
     return t.status == Thread::Status::Finished && t.result;
 }
 
-// Run Functional Tree (0x14): function u16 at 0 (STR# 0xC9), flags u8 at 2.
-// The flags are named by the editor's disassembly strings, in code order
-// ", running check tree only", ", passing parameters from calling tree",
-// ", change icon", and the trees agree: 0x04 (6 uses: "Set to Next - Good
-// Dining Chair", "Get in Temp 0 - Bar Stool ID") only asks whether the
-// object can do it, 0x02 (9 uses, all in relays: "Function - Message
-// Handler", "Function - Pre Route", "Function - Awareness - Private") passes
-// the running tree's parameters on, 0x01 changes the interaction's icon (as
-// FreeSO's only flag; there is no icon here). As in FreeSO: the stack
-// object's OBJf entry for the function runs its guard as a check tree, then
-// its action as a subroutine in my thread with the stack object as the code
-// owner; the instruction branches on its result. False when the stack
-// object is missing, has no action for the function or its guard fails;
-// 0xFFFF (one use, "zzz") is FreeSO's invalid operand, false too. Bytes 8+
-// (non-zero in 8 uses) look like editor leftovers.
+// Run Functional Tree (0x14), as the Mac binary has it
+// (TryCallFunctionalTree; docs/primitives-mac.md §4): function u16 at 0
+// (STR# 0xC9), flags u16 at 2: 0x01 changes the interaction's icon (there is
+// no icon here), 0x02 passes the running tree's parameters on, 0x04 runs
+// the entry's check tree instead of its action tree. The target is the stack
+// object (none: error 0x15); the function goes through the fixed table above
+// (24 "reset" and, in the base game, 27 "Global Awareness" have no entry:
+// false), and that OBJf entry's action tree (with 0x04, its check tree)
+// runs as a subroutine in my thread with the stack object as "me" for its
+// code (GosubObjectTree); the instruction branches on its result. Tree 0,
+// one that does not exist or a function past the table: false. The binary
+// does not run the check tree before the action tree.
 Exit runFunctionalTree(Context& c) {
     const auto& o = c.instruction.operands;
     const uint16_t function = le16(&o[0]);
-    const uint8_t flags = o[2];
-    if (function == 0xFFFF)
-        return Exit::False;
-    if (function >= std::size(kFunctionEntry))
-        throw VMError("Run Functional Tree: function " + std::to_string(function) + " out of range");
+    const uint16_t flags = le16(&o[2]);
     const Object* target = c.vm.object(c.frame.stackObject);
     if (!target)
-        return Exit::False;
+        throw gameError(err::NoStackObject, "Run Functional Tree");
     const ObjectFunctions::Entry* e = functionEntry(c.vm, *target, function);
-    if (!e || !e->action)
+    if (!e)
+        return Exit::False;
+    const uint16_t tree = flags & 0x04 ? e->guard : e->action;
+    if (!tree || !c.vm.resolveTree(*target, tree).second)
         return Exit::False;
     std::array<int16_t, 4> args{};
     if (flags & 0x02)
         std::copy_n(c.frame.params.begin(), std::min<size_t>(c.frame.params.size(), 4), args.begin());
     const ObjectId id = target->id;
-    const uint16_t action = e->action, guard = e->guard;
-    if (guard && !runCheck(c, id, guard, args))
-        return Exit::False;
-    if (flags & 0x04)
-        return Exit::True;
-    if (!c.vm.object(id) || !c.vm.resolveTree(*c.vm.object(id), action).second)
-        return Exit::False; // the check tree removed it, or the action does not exist
-    c.vm.call(c.thread, id, action, args);
+    c.vm.call(c.thread, id, tree, args);
     c.thread.stack.back().stackObject = id;
     return Exit::Call;
 }
@@ -315,41 +308,41 @@ void putInSlot(Object& x, const Object& container, int slot) {
 constexpr int kHands = 2;
 
 // Reach/Put (0x74), a Sims 2 primitive ("Reach/Put" in STR# 0x8B; The Sims
-// 1's Reach, 0x2F, is "~(old)Reach"). The editor's disassembly strings, in
-// code order: "Drop object onto Floor " / "Pick up Object in " / "Drop onto
-// Object in ", ", object anim : ", ", using Sim age as filter on object
-// Anim", ", grasp anim : ", ", expecting handedness in temp 3"; its errors:
-// "Cant run Reach/Drop on non Sim object.", "No Object for Reach to work
-// on.", "Missing reach animation.", "Reach animation does not contain event
-// 0." Operands, from how the 188 uses in the game agree with that: the
-// object (owner u8 at 3, data u16 at 4), mode u8 at 10 (0 pick up: every
-// "CT - Reach - Grab"; 1 drop onto the object; 2 drop onto the floor: "CT -
-// Reach - Drop" drops onto the object in parameter 0 with mode 1, and with
-// mode 2 when parameter 0 is 0), flags u8 at 9 and the grasp animation u16
-// at 11: an entry of the adult animation list ("a2o-newspaper-grasp,
-// a2o-newspaper-carry"). Flag 0x01: the slot to drop into is in temp 0
-// (inferred: 47 of its 51 uses set temp 0 in the same tree, 33 of the other
-// 137 do; "CT - Reach - Drop" copies its slot parameter there); 0x02: the
-// hand is in temp 3 (inferred, "expecting handedness in temp 3": 20 of its
-// 50 uses set temp 3, 12 of the other 138). Not understood: the object
-// animation (byte 7, with byte 8: 0x57/1, 0xE7/3, ...), flags 0x04-0x10, the
-// u16 at 13 and byte 15 (the chessboard's reaches give 2, 3, 8-11 there).
+// 1's Reach, 0x2F, is "~(old)Reach"), checked against the Mac binary
+// (nTSSG::cAnimatable::try_new_reach, NewReachParam; docs/primitives-mac.md
+// §4). Operands: u16 at 1 and u16 at 7 (not read), the object (owner u8 at
+// 3, data u16 at 4), the containment slot u8 at 6 (mode 1), flags u8 at 9
+// (0x01 the slot is in temp 0, 0x02 the hand is in temp 3, 0x04 the object
+// animation is filtered by the Sim's age), mode u8 at 10 (0 pick up the
+// object, 1 put what the hand holds into the object's slot, 2 put it on the
+// floor), the grasp animation u16 at 11 (an entry of the adult list STR#
+// 0x81, 0xFFFF none) and the object animation u16 at 13 (STR# 0x86, 0xFFFF
+// none; not played here). The doc reads both as index + 1, but the game's
+// lists fit 0-based indices ("CT - Reach - Grab" of the toasting glass gives
+// 0 = "a2o-toastingGlass-grasp, a2o-toastingGlass-carry" and object
+// animation 1 = "o2a-toastingGlass-pose"), so they are taken as is. Only
+// Sims reach (error 0x69). Picking up an object that does not exist is
+// false; one already in that hand is true at once. Putting: an out-of-range
+// slot is error 0x1B; a target that does not exist is error 0x6A
+// (inferred); an occupied slot or empty hands are false (inferred). The
+// animation errors are the game's (0x71 missing, 0x6E without event 0).
 //
 // The Sim plays the generic reach animation for the height where the object
 // is or goes ("a2o-floor-get", "a2o-counter-put", "a2o-tableCoffee-get",
 // ...: surfaceFor) and the object changes hands at the animation's event 0;
 // the instruction returns true when the animation ends. Picking up puts the
-// object in a free hand (slot 0, else 1; false with both full) and adds the
-// grasp and carry animations as overlays on the Sim; dropping takes them
-// off and puts what the hand holds into the object's containment slot
-// (temp 0 with flag 0x01, else the first free one; false if it is taken) or
-// on the floor tile in front of the Sim (else its own tile), facing as the
-// Sim. Dropping with empty hands is false.
+// object in the hand (temp 3 with 0x02, else the first free one; false with
+// both full) and adds the grasp and carry animations as overlays on the Sim;
+// putting takes them off and puts what the hand holds into the slot, or on
+// the floor tile in front of the Sim (else its own tile), facing as the Sim.
+// Not done: the binary's "reach object ID" / "reach surface object ID" of
+// the Sim (cTSPerson::SetReachObjectID; which person data the trees read
+// them through is not known), the object animation.
 Exit reachPut(Context& c) {
     const auto& o = c.instruction.operands;
     Object& me = c.me();
     if (!me.person)
-        throw VMError("Cant run Reach/Drop on non Sim object.");
+        throw gameError(err::ReachOnNonSim);
     const uint8_t mode = o[10], flags = o[9];
     if (mode > 2)
         throw VMError("Reach/Put: mode " + std::to_string(mode) + " not implemented");
@@ -408,9 +401,10 @@ Exit reachPut(Context& c) {
     if (mode == 0) {
         Object* x = c.vm.object(c.get(o[3], int16_t(le16(&o[4]))));
         if (!x)
-            throw VMError("No Object for Reach to work on.");
-        if (x->data[objdata::ContainerId] == me.id)
-            return Exit::True; // already in my hand
+            return Exit::False; // the binary: no such object is false
+        if (x->data[objdata::ContainerId] == me.id &&
+            (!(flags & 0x02) || x->data[objdata::SlotNumber] == c.thread.temps[3]))
+            return Exit::True; // already in (that) hand: true without animating
         r.object = x->id;
         r.hand = -1;
         if (flags & 0x02) {
@@ -425,8 +419,9 @@ Exit reachPut(Context& c) {
         if (r.hand < 0)
             return Exit::False;
         surface = surfaceOf(c.vm, *x);
-        if (const std::string entry = adultListEntry(c, le16(&o[11])); !entry.empty())
-            r.overlays = carryOverlays(c.vm, me, entry);
+        if (const uint16_t grasp = le16(&o[11]); grasp != 0xFFFF)
+            if (const std::string entry = adultListEntry(c, grasp); !entry.empty())
+                r.overlays = carryOverlays(c.vm, me, entry);
     } else {
         // What the hand holds: the hand in temp 3 with flag 0x02, else the first that holds something.
         ObjectId x = 0;
@@ -443,24 +438,14 @@ Exit reachPut(Context& c) {
         if (mode == 1) {
             const Object* to = c.vm.object(c.get(o[3], int16_t(le16(&o[4]))));
             if (!to)
-                throw VMError("No Object for Reach to work on.");
+                throw gameError(err::NoReachObject);
             r.target = to->id;
             const size_t slots = containmentSlotCount(c.vm, *to);
-            if (flags & 0x01) {
-                r.slot = c.thread.temps[0];
-                if (r.slot < 0 || size_t(r.slot) >= slots)
-                    throw VMError("Slot number out of range. (slot " + std::to_string(r.slot) + " of " +
-                                  std::to_string(slots) + ")");
-                if (const ObjectId there = c.vm.containedIn(to->id, int16_t(r.slot)); there && there != x)
-                    return Exit::False;
-            } else {
-                r.slot = -1;
-                for (size_t s = 0; s < slots && r.slot < 0; ++s)
-                    if (!c.vm.containedIn(to->id, int16_t(s)))
-                        r.slot = int(s);
-                if (r.slot < 0)
-                    return Exit::False;
-            }
+            r.slot = flags & 0x01 ? c.thread.temps[0] : o[6];
+            if (r.slot < 0 || size_t(r.slot) >= slots)
+                throw gameError(err::SlotOutOfRange, "slot " + std::to_string(r.slot) + " of " + std::to_string(slots));
+            if (const ObjectId there = c.vm.containedIn(to->id, int16_t(r.slot)); there && there != x)
+                return Exit::False;
             const Slots::Slot* s = containmentSlot(c.vm, *to, r.slot);
             surface = surfaceFor(s ? s->height : 1);
         } else {
@@ -478,10 +463,10 @@ Exit reachPut(Context& c) {
     r.animation = reachAnimation(c.vm, me, surface, mode == 0);
     const auto seconds = library(c.vm).seconds(r.animation);
     if (!seconds)
-        throw VMError("Missing reach animation. (" + r.animation + ")");
+        throw gameError(err::MissingReachAnimation, r.animation);
     const auto transfer = transferTick(c.vm, r.animation);
     if (!transfer)
-        throw VMError("Reach animation does not contain event 0. (" + r.animation + ")");
+        throw gameError(err::NoReachEvent0, r.animation);
     r.end = std::max(1, ticksFor(c.vm, *seconds));
     r.transferAt = std::clamp(*transfer, 0, r.end);
     anim.name = r.animation;
@@ -495,33 +480,39 @@ Exit reachPut(Context& c) {
 // --- Snap ----------------------------------------------------------------------
 
 // Snap (0x2E): moves me at once (no walking) to a routing slot of the stack
-// object. The Sims 1's layout (FreeSO's VMSnap), which the game's 194 uses
-// fit: slot u16 at 0, where it is u16 at 2 (0 the stack parameter of that
-// number, 1 be contained: into the stack object's containment slot 0, 2 in
-// front of it, 3 the literal routing slot (186 uses), 4 the global SLOT),
-// flags u8 at 4. The editor's strings, in code order: " to slot in temp 0",
-// ", from slot in temp 1", ", ask person to move", ", TEST ONLY"; and the
-// trees: 0x10 tests only ("Function - Can Loop?", "Function - Can Start?",
-// "Function - At Edge of Lot?", "Function - Portal - TEST" all have it; the
-// chair's "Function - Sit" asks with it before the Sim sits), 0x02 asks a
-// Sim in the way to move (FreeSO's shoo; nobody is asked here, the snap just
-// fails), 0x08 (14 uses: "CT - Snap Into Drop Location", "Marker - Snap
-// Into") taken as the slot number in temp 0 (inferred). The place is the
-// slot's goal with the lowest cost whose tile is free (the Sim's own and,
-// for a slot on the object, the object's tile do not count), with the
-// slot's facing; false when there is none. The Sims 2's SLOTs have no snap
-// target slot (-1 everywhere): sitting is a Snap followed by a Snap Into.
+// object (TrySnap in the Mac binary; docs/primitives-mac.md §4/§5): slot u16
+// at 0, mode u16 at 2 (STR# 0xCF: 0 the routing slot whose number is in the
+// parameter of u16 0, 1 be contained: into the stack object's containment
+// slot 0, 2 in front of it, 3 the literal routing slot, 4 the global SLOT),
+// flags u16 at 4: 0x02 ask a person in the way to move (nobody is asked
+// here: the snap just fails), 0x08 the slot number is in temp 0, 0x10 test
+// only; u16 8 = 1 "from slot in temp 1" (not done). No stack object: error
+// 0x15; a slot that does not exist: error 0x1B. A failure is false and
+// writes my object data 52 "primitive result": 1 when a Sim in the way was
+// asked to move (0x02), else 0x0E (the binary also writes placement error
+// codes + 2; which one when is not known). The place is the slot's goal
+// with the lowest cost whose tile is free (the Sim's own and, for a slot on
+// the object, the object's tile do not count), with the slot's facing. The
+// Sims 2's SLOTs have no snap target slot (-1 everywhere): sitting is a Snap
+// followed by a Snap Into.
 Exit snap(Context& c) {
     const auto& o = c.instruction.operands;
     const uint16_t index = le16(&o[0]), where = le16(&o[2]);
-    const uint8_t flags = o[4];
+    const uint16_t flags = le16(&o[4]);
     Object& me = c.me();
+    if (!c.vm.object(c.frame.stackObject))
+        throw gameError(err::NoStackObject, "Snap");
     Object& target = c.stackObject();
+    constexpr int16_t kPrimitiveResult = 52;
+    auto fail = [&] {
+        me.data[kPrimitiveResult] = flags & 0x02 ? 1 : 0x0E;
+        return Exit::False;
+    };
     if (where > 4)
         throw VMError("Snap: slot scope " + std::to_string(where) + " not implemented");
     if (where == 1) {
         if (c.vm.containedIn(target.id, 0) && c.vm.containedIn(target.id, 0) != me.id)
-            return Exit::False;
+            return fail();
         if (!(flags & 0x10))
             putInSlot(me, target, 0);
         return Exit::True;
@@ -543,11 +534,11 @@ Exit snap(Context& c) {
                     break;
                 }
         if (!found)
-            throw VMError("Invalid routing slot specified (slot " + std::to_string(index) + ")");
+            throw gameError(err::SlotOutOfRange, "routing slot " + std::to_string(index));
         slot = *found;
     }
     if (!target.position.inWorld())
-        return Exit::False;
+        return fail();
     const VM::RouteGoals goals = c.vm.routingGoals(slot, target);
     std::vector<ObjectId> ignore{me.id};
     if (goals.onTarget)
@@ -560,7 +551,7 @@ Exit snap(Context& c) {
             best = i;
     }
     if (best == goals.goals.size())
-        return Exit::False;
+        return fail();
     if (flags & 0x10)
         return Exit::True;
     me.data[objdata::ContainerId] = 0;

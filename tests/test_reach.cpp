@@ -147,8 +147,8 @@ static void testRunFunctionalTree() {
 
     fx.vm.object(fx.chair)->attributes[1] = 1;
     t = fx.run(0x1001, fx.chair);
-    check(t.status == Thread::Status::Finished && !t.result && fx.vm.object(fx.chair)->attributes[0] == 0,
-          "a guard that fails: false, no action");
+    check(t.status == Thread::Status::Finished && t.result && fx.vm.object(fx.chair)->attributes[0] == 5,
+          "the action runs without its guard being checked first (Mac binary)");
     fx.vm.object(fx.chair)->attributes[1] = 0;
 
     fx.code.add(kGroup, 0x1003, tree({functional(3, 0, T, F)}));
@@ -213,7 +213,7 @@ static void testReachPut() {
           "drop onto the floor: on the Sim's tile without a world");
     fx.code.add(kGroup, 0x1004, tree({reach(Lit, 0, 0, 0, 0, T, F)}));
     t = fx.run(0x1004, 0);
-    check(t.status == Thread::Status::Failed, "picking up nothing: the game's error");
+    check(t.status == Thread::Status::Finished && !t.result, "picking up nothing: false (Mac binary)");
 }
 
 // Relationship flag 0x08: an object's relationship with a neighbor (ownership).
