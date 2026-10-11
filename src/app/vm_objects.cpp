@@ -147,7 +147,7 @@ std::string VmObjectView::cresFor(int16_t id) {
 
 // The bone of containment slot `slot` of `container`: its SLOT's type 0
 // entries in order, each naming an entry of the object's STR# 0x90.
-std::string VmObjectView::slotBone(int16_t container, int slot) {
+std::string VmObjectView::slotBone(int16_t container, int slot, int type) {
     vm::VM& m = sim_.machine();
     const vm::Object* c = m.object(container);
     if (!c || !c->definition || slot < 0)
@@ -158,7 +158,7 @@ std::string VmObjectView::slotBone(int16_t container, int slot) {
     if (slots && names) {
         int k = 0;
         for (const auto& s : slots->slots) {
-            if (s.type != 0)
+            if (s.type != type)
                 continue;
             if (k++ != slot)
                 continue;
@@ -171,7 +171,7 @@ std::string VmObjectView::slotBone(int16_t container, int slot) {
     if (const size_t comma = bone.find(','); comma != std::string::npos)
         bone.resize(comma);
     // Sims without a SLOT of their own still hold things in their hands.
-    if (bone.empty() && c->person && slot < 2)
+    if (bone.empty() && c->person && slot < 2 && type == 0)
         bone = slot == 0 ? "r_hand_grip" : "l_hand_grip";
     return bone;
 }

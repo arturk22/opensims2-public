@@ -6,6 +6,7 @@
 #include "formats/strings.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/resindex.hpp"
+#include "formats/model.hpp"
 #include "formats/sim_actor.hpp"
 #include "render/particle_layer.hpp"
 #include "render/renderer.hpp"
@@ -42,7 +43,7 @@ fx::Placement fromXform(const Xform& x) {
 } // namespace
 
 LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::filesystem::path& resDir)
-    : renderer_(renderer) {
+    : renderer_(renderer), index_(index) {
     try {
         thumbnails_ = std::make_unique<DbpfPackage>(resDir / "UserData/Thumbnails/ObjectThumbnails.package");
         for (const auto& e : thumbnails_->entries())
@@ -97,17 +98,28 @@ bool LotEffects::addManual(const std::string& name, int16_t object, fx::V3 at, i
 }
 
 std::optional<fx::Placement> LotEffects::placementOf(int16_t id, int8_t slotType, uint8_t slot, VmObjectView* view,
-                                                     const SimLookup& sims, vm::VM* vm) const {
+                                                     const SimLookup& sims, vm::VM* vm, const std::string& named) const {
     // The effect's slot (TryChangeEffect): type 0 a containment slot (the
     // object's SLOT type-0 entries), type 2 a bone or model node by its
     // index in the object's STR# 0x90 ("Model - Bones": the stove's
     // slot_stove_0, a Sim's hat_grip for slot 4, where balloons go); type 1
-    // is not handled (the object's origin). Inferred from the data.
-    std::string node;
+    // a target slot (the object's SLOT entries of type 1; the binary's
+    // GetTargetSlot, only the flowers' bugs use it). Inferred from the data.
+    std::string node = named; // a saved effect names its node
     const vm::Object* o = vm ? vm->object(id) : nullptr;
-    if (view && o) {
-        if (slotType == 0 && slot > 0)
+    if (view && o && node.empty()) {
+        // Type 0 GetObjectSlot: the containment slots (SLOT type 0), else
+        // the effect/target slots (type 4: the PlumbBob's only entry,
+        // slot_plumbob_0_fx); type 1 GetTargetSlot: type 4 (the flowers'
+        // slot_flowers_0 for their bugs). Inferred: SLOT type 4 = "target"
+        // as SimPE names them; the saved effects name those nodes.
+        if (slotType == 0) {
             node = view->containerSlotBone(id, slot);
+            if (node.empty())
+                node = view->typedSlotBone(id, slot, 4);
+        } else if (slotType == 1) {
+            node = view->typedSlotBone(id, slot, 4);
+        }
         else if (slotType == 2) {
             const StringTable* names = vm->code().strings(o->group, 0x90);
             if (!names && o->person)
@@ -118,6 +130,15 @@ std::optional<fx::Placement> LotEffects::placementOf(int16_t id, int8_t slotType
                 node.resize(comma);
         }
     }
+    if (placementOverride && view)
+        if (auto moved = placementOverride(id)) {
+            Xform at = *moved;
+            if (auto base = view->placement(id); base && !node.empty())
+                if (auto n = view->nodePlacement(id, node)) // the node's height over the object, kept
+                    for (int k = 0; k < 3; ++k)
+                        at.t[size_t(k)] += n->t[size_t(k)] - base->t[size_t(k)];
+            return fromXform(at);
+        }
     const SimActor* sim = sims ? sims(id) : nullptr;
     fx::Placement p;
     if (sim)
@@ -159,7 +180,7 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                 if (it == vm_.end()) {
                     Running r;
                     fx::V3 where{-1, -1, -1};
-                    if (auto at = placementOf(id, e.slotType, e.slot, view, sims, vm)) {
+                    if (auto at = placementOf(id, e.slotType, e.slot, view, sims, vm, e.node)) {
                         where = at->position;
                         r.handle = system_->start(e.name, *at);
                         if (r.handle >= 0 && !e.icon.empty())
@@ -173,10 +194,24 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                         if (r.handle >= 0 && guid)
                             if (auto t = thumbnail(*vm, guid); !t.empty())
                                 system_->setIcon(r.handle, t);
+                        if (r.handle >= 0 && iconImage && (e.iconSim || e.iconId || e.wantSim)) {
+                            // Portraits are kept by Sim; want icons change, one texture each time.
+                            const std::string t = e.iconSim ? "portrait:" + std::to_string(e.iconSim)
+                                                            : "icon:" + std::to_string(++iconSerial_);
+                            if (e.iconSim && iconNames_.count(t))
+                                system_->setIcon(r.handle, t);
+                            else if (auto img = iconImage(e)) {
+                                if (std::getenv("OS2_DEBUG_FX"))
+                                    std::fprintf(stderr, "opensims2: balloon icon %s (%ux%u)\n", t.c_str(), img->width, img->height);
+                                layer_->setImage(t, *img);
+                                iconNames_.insert(t);
+                                system_->setIcon(r.handle, t);
+                            }
+                        }
                     }
                     if (std::getenv("OS2_DEBUG_FX"))
-                        std::fprintf(stderr, "opensims2: effect %s on %d (slot %d/%d, flags 0x%X, icon '%s') at %.2f s, (%.2f %.2f %.2f)%s\n",
-                                     e.name.c_str(), id, e.slotType, e.slot, e.flags, e.icon.c_str(), seconds, where[0], where[1], where[2],
+                        std::fprintf(stderr, "opensims2: effect %s on %d (slot %d/%d, flags 0x%X, icon '%s', sim %d) at %.2f s, (%.2f %.2f %.2f)%s\n",
+                                     e.name.c_str(), id, e.slotType, e.slot, e.flags, e.icon.c_str(), e.iconSim, seconds, where[0], where[1], where[2],
                                      r.handle < 0 ? " not shown" : "");
                     it = vm_.emplace(key, r).first;
                     if (e.oneShot && r.handle >= 0)
@@ -184,8 +219,12 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                 }
                 it->second.seen = true;
                 if (it->second.handle >= 0)
-                    if (auto at = placementOf(id, e.slotType, e.slot, view, sims, vm))
+                    if (auto at = placementOf(id, e.slotType, e.slot, view, sims, vm, e.node)) {
                         system_->move(it->second.handle, *at);
+                        if (std::getenv("OS2_DEBUG_FX_MOVE"))
+                            std::fprintf(stderr, "opensims2: effect %s on %d moved to (%.2f %.2f %.2f)\n", e.name.c_str(), id,
+                                         at->position[0], at->position[1], at->position[2]);
+                    }
             }
     }
     for (auto it = vm_.begin(); it != vm_.end();) {
@@ -227,6 +266,7 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
     }
 
     system_->update(dt);
+    placeModels();
     quads_.clear();
     system_->collect(quads_);
     layer_->setQuads(quads_);
@@ -263,6 +303,62 @@ std::optional<fx::Placement> bonePlacement(const SimActor& a, const std::string&
 }
 
 } // namespace
+
+void LotEffects::placeModels() {
+    models_.clear();
+    system_->collectModels(models_);
+    std::map<std::pair<int, int>, int> seen;
+    for (const auto& m : models_) {
+        std::string cres = *m.model;
+        if (cres.ends_with("_cres"))
+            cres.resize(cres.size() - 5);
+        auto mit = effectModels_.find(cres);
+        if (mit == effectModels_.end()) {
+            int id = -1;
+            try {
+                id = renderer_.addObject(loadObjectModel(index_, cres), index_);
+            } catch (const std::exception& e) {
+                if (std::getenv("OS2_DEBUG_FX"))
+                    std::fprintf(stderr, "opensims2: effect model %s: %s\n", cres.c_str(), e.what());
+            }
+            mit = effectModels_.emplace(cres, id).first;
+        }
+        if (mit->second < 0)
+            continue;
+        const auto key = std::make_pair(m.handle, m.part);
+        int inst = -1;
+        if (auto it = modelInstances_.find(key); it != modelInstances_.end())
+            inst = it->second;
+        else {
+            for (auto f = freeModelInstances_.begin(); f != freeModelInstances_.end(); ++f)
+                if (instanceModel_[*f] == mit->second) {
+                    inst = *f;
+                    freeModelInstances_.erase(f);
+                    break;
+                }
+            if (inst < 0) {
+                inst = renderer_.addInstance(mit->second, matrix_identity_float4x4);
+                instanceModel_[inst] = mit->second;
+            }
+        }
+        const auto& r = m.where.rotation;
+        const float k = m.where.scale;
+        simd_float4x4 t = simd_matrix(simd_make_float4(r[0] * k, r[3] * k, r[6] * k, 0),
+                                      simd_make_float4(r[1] * k, r[4] * k, r[7] * k, 0),
+                                      simd_make_float4(r[2] * k, r[5] * k, r[8] * k, 0),
+                                      simd_make_float4(m.where.position[0], m.where.position[1], m.where.position[2], 1));
+        renderer_.setInstanceTransform(inst, t);
+        seen[key] = inst;
+    }
+    for (const auto& [key, inst] : modelInstances_)
+        if (!seen.count(key)) {
+            simd_float4x4 away = matrix_identity_float4x4;
+            away.columns[3] = simd_make_float4(0, 0, -1000, 1);
+            renderer_.setInstanceTransform(inst, away);
+            freeModelInstances_.push_back(inst);
+        }
+    modelInstances_ = std::move(seen);
+}
 
 void LotEffects::animationEffects(const std::vector<const SimActor*>& actors, double seconds) {
     const double from = animScanned_ < 0 ? seconds : animScanned_;

@@ -72,6 +72,12 @@ struct ActiveEffect {
     int16_t iconFrame = 0;  // its cell (the variable owner u8 12, data u16 13; float param 0xD)
     int16_t iconObject = 0; // object whose thumbnail is the icon (flag 0x04), else 0
     uint32_t iconGuid = 0;  // GUID whose thumbnail is the icon (flag 0x04 with 0x400)
+    int16_t iconSim = 0;    // Sim whose portrait is the icon (flag 0x10: the variable of bytes 12-14)
+    int16_t iconId = 0;     // flag 0x1000: the thumbnail by ID in temp 6 (a want's, "CT - Handle Feedback - Score")
+    int16_t wantSim = 0;    // flag 0x2000: the icon of that Sim's want (temp 4 = 0) or fear, slot temp 5
+    bool wantFear = false;
+    int16_t wantSlot = 0;
+    std::string node;       // a saved effect's bone or slot node ("slot_plumbob_0_fx"), else empty
     uint32_t serial = 0;
     bool oneShot = false;
     bool hard = false;      // hard start/stop: no fade

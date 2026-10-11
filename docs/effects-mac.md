@@ -129,7 +129,12 @@ Escolhas nossas **[inferido]**, conferidas com `s2pkg effect-sim` e capturas:
 - LOD: escalas do fim (detalhe máximo). Alinhamentos: 0 câmera, 1 chão
   (ondas, manchas), 2 velocidade (chuva), 6 eixo Z (jatos de água, feixes);
   5 (anéis, peças do despertador) desenhado como 0.
-- Decalques, modelos, sons, câmeras, telas e água não são desenhados.
+- Decalques (rodada 9): um quadrado no chão sob o componente, tamanho,
+  alfa, rotação e cor pela vida (vida ≤ 0: enquanto o efeito roda);
+  modelos: o CRES do bloco desenhado no componente enquanto o efeito roda
+  (`LotEffects::placeModels`; peixes do aquário, peças do xadrez; o
+  movimento das meta-partículas que os levam não é feito). Sons, câmeras e
+  água não; as telas (modo 4 = crossfade de instantâneo) só nas cinemáticas.
 
 ## 4. Balões
 
@@ -140,6 +145,37 @@ O app sobe o balão 0,2 m sobre o `hat_grip` **[inferido]** e ordena as
 partes de um balão pela posição do efeito, na ordem dos componentes.
 Captura: `docs/screenshots/r8-effects-balloon.jpg` (`--lot N001_Lot11
 --run-vm 145 --pivot 6.5,22.5 --zoom 5`).
+
+## 4b. Rodada 9: ícones, slots, efeitos salvos, eventos de animação
+
+- Ordem dos ícones no `TryChangeEffect` **[bin]**: 0x1000, 0x04, 0x20,
+  0x10, 0x2000. 0x10: a variável (bytes 12–14) tem o **neighbor ID** do Sim
+  (os balões das memórias e dos sociais, 79 usos; inferido pelos valores) e
+  o app desenha o retrato dele (IMG pequeno do arquivo do personagem; de um
+  vizinho fora do lote, o arquivo da vizinhança com o GUID dele). 0x2000:
+  desejo (temp 4 = 0) ou medo do Sim da variável, slot no temp 5 → ícone da
+  definição (nenhum uso no jogo base). 0x1000: miniatura pelo ID no temp 6
+  ("CT - Handle Feedback - Score" dos desejos; guardado, não desenhado).
+  0x04 com 0x100: a miniatura do próprio objeto.
+- Slot tipo 0 = `GetObjectSlot` (vtable 0x3E8), tipo 1 = `GetTargetSlot`
+  (0x3DC), tipo 2 = osso (0x10C) **[bin]**. O PlumbBob só tem uma entrada
+  SLOT de tipo 4 (`slot_plumbob_0_fx`) e as flores `slot_flowers_0` para os
+  insetos: tipo 0 sem slot de contenção e tipo 1 caem nas entradas de tipo
+  4 **[inferido]** (os efeitos salvos nomeiam esses nós).
+- **Efeitos salvos** (`cTSObject::ReadEffects`, **[bin][dados]**): por
+  efeito, nome (str7), nó (str7) e 8 bytes; o `N001_Lot11` guarda
+  `fxPlumbobGlow_100` em `slot_plumbob_0_fx` e `fxBees`/`fxButterFlies`
+  das flores. O brilho do PlumbBob é ligado pelo "Set Mood Effect &
+  Material" (Effect Stop/Start com flag 0x08: índice = estado de humor no
+  temp 0) só **quando o estado muda** (compara com o atributo 0), então num
+  lote carregado ele vem do arquivo: `restoreEffects` (vm/lot_resume) põe
+  os efeitos salvos de volta na VM. O brilho do PlumbBob escondido segue o
+  plumbob que o app desenha sobre o Sim selecionado.
+- Eventos de efeito das animações (tipo 8, `effectName`/`boneName`/`op`):
+  `LotEffects::animationEffects` para Sims, objetos animados e atores das
+  cinemáticas; param no evento de parada ou no fim da animação.
+- Capturas: os balões seguem os ossos dos Sims também entre quadros
+  (`--frames`: os atores são posados em cada passo da VM).
 
 ## 5. Uso
 

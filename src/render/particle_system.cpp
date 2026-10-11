@@ -145,7 +145,15 @@ void EffectSystem::addEffect(Instance& inst, uint32_t visual, const Placement& l
                 }
             }
             break;
-        default: break; // decals, models, sounds, cameras, screens, water: not drawn yet
+        case Block::Decal:
+            if (c.index >= 0 && size_t(c.index) < lib_.decals.size())
+                inst.decals.push_back({&lib_.decals[size_t(c.index)], here, ss, as, delay, 0});
+            break;
+        case Block::Model:
+            if (c.index >= 0 && size_t(c.index) < lib_.models.size())
+                inst.models.push_back({&lib_.models[size_t(c.index)], here, ss, as, delay, stopAt, 0});
+            break;
+        default: break; // sounds, cameras, screens, water: not here (screens: the host's)
         }
     }
 }
@@ -310,6 +318,17 @@ void EffectSystem::update(float seconds) {
                 stepEmitter(inst, e, dt, !inst.stopped);
             left -= dt;
         }
+        for (auto& dp : inst.decals) {
+            dp.age += seconds;
+            const float life = dp.desc->life;
+            if (dp.age < dp.delay || (life > 0 ? dp.age - dp.delay < life : !inst.stopped))
+                any = true;
+        }
+        for (auto& mp : inst.models) {
+            mp.age += seconds;
+            if (!inst.stopped && (mp.stopAt < 0 || mp.age < mp.stopAt))
+                any = true;
+        }
         for (const auto& e : inst.emitters) {
             const auto& d = *e.desc;
             const float period = d.rateCurveTime > 0 ? d.rateCurveTime : 1;
@@ -325,7 +344,50 @@ void EffectSystem::update(float seconds) {
     }
 }
 
+void EffectSystem::collectModels(std::vector<EffectModel>& out) const {
+    for (const auto& [h, inst] : instances_)
+        for (size_t i = 0; i < inst.models.size(); ++i) {
+            const ModelPart& m = inst.models[i];
+            if (inst.stopped || m.age < m.delay || (m.stopAt >= 0 && m.age >= m.stopAt))
+                continue;
+            EffectModel em;
+            em.handle = h;
+            em.part = int(i);
+            em.model = &m.desc->model;
+            em.where = compose(inst.where, m.local);
+            em.where.scale *= m.desc->size * m.sizeScale;
+            em.color = {m.desc->color[0], m.desc->color[1], m.desc->color[2], m.desc->alpha * m.alphaScale};
+            out.push_back(em);
+        }
+}
+
 void EffectSystem::collect(std::vector<ParticleQuad>& out) const {
+    for (const auto& [h, inst] : instances_)
+        for (const auto& dp : inst.decals) {
+            const Decal& d = *dp.desc;
+            const float age = dp.age - dp.delay;
+            if (age < 0 || (d.life > 0 && age >= d.life) || (d.life <= 0 && inst.stopped))
+                continue;
+            const float t = d.life > 0 ? age / d.life : 0;
+            const Placement w = compose(inst.where, dp.local);
+            ParticleQuad q;
+            q.position = w.position;
+            q.position[2] += 0.01f; // over the floor
+            q.sortPosition = q.position;
+            const float size = sampleCurve(d.sizeCurve, t, 1) * dp.sizeScale * w.scale;
+            q.width = size;
+            q.height = size * sampleCurve(d.aspectCurve, t, 1);
+            q.rotation = sampleCurve(d.rotateCurve, t, 0) * kTwoPi;
+            const V3 c = sampleColors(d.colors, t);
+            for (int k = 0; k < 3; ++k)
+                q.color[size_t(k)] = std::clamp(c[size_t(k)], 0.0f, 1.0f);
+            q.color[3] = std::clamp(sampleCurve(d.alphaCurve, t, 1) * dp.alphaScale, 0.0f, 1.0f);
+            q.texture = &d.texture;
+            q.draw = d.drawType <= 7 ? DrawType(d.drawType) : DrawType::Decal;
+            q.alignment = 1; // flat on the ground
+            if (q.color[3] > 0.001f && size > 0)
+                out.push_back(q);
+        }
     for (const auto& [h, inst] : instances_)
         for (size_t ei = 0; ei < inst.emitters.size(); ++ei) {
             const Emitter& e = inst.emitters[ei];

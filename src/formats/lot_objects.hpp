@@ -137,6 +137,13 @@ struct LotObjects {
         // (0 = empty); raw keeps the encoding.
         std::vector<int16_t> slots;
         std::vector<uint8_t> slotsRaw, effectsRaw, overridesRaw;
+        // The effects running on it (cTSObject::ReadEffects): name, the
+        // bone or slot node, 8 bytes (not decoded).
+        struct Effect {
+            std::string name, node;
+            std::array<uint8_t, 8> data{};
+        };
+        std::vector<Effect> effects;
         // Timers set by On Timer (cTSObject::WriteTimers): seven raw fields
         // and the eight parameters the event tree gets.
         struct Timer {

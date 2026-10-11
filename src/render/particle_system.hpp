@@ -47,6 +47,16 @@ struct ParticleQuad {
     int sortOrder = 0;
 };
 
+// A model an effect shows (Block::Model: a CRES, e.g. the chessboard's FX
+// pieces or the neighbourhood's cars), where and how big; the host draws it.
+struct EffectModel {
+    int handle = 0; // the instance's
+    int part = 0;   // which of its models
+    const std::string* model = nullptr; // CRES name ("..._cres" or not)
+    Placement where;
+    std::array<float, 4> color{1, 1, 1, 1};
+};
+
 class EffectSystem {
 public:
     explicit EffectSystem(const EffectsLibrary& library, uint32_t seed = 1);
@@ -67,6 +77,8 @@ public:
     // Advances every instance; finished, stopped instances are dropped.
     void update(float seconds);
     void collect(std::vector<ParticleQuad>& out) const;
+    // The models of the instances alive.
+    void collectModels(std::vector<EffectModel>& out) const;
 
 private:
     struct Particle {
@@ -91,9 +103,25 @@ private:
         float metaLife = 0;
         std::vector<Particle> particles;
     };
+    // A decal (Block::Decal): one quad flat on the ground under the
+    // component, its size, alpha, rotation and colour over its life (life
+    // <= 0: while the effect runs); a model (Block::Model) stays while the
+    // effect runs.
+    struct DecalPart {
+        const Decal* desc = nullptr;
+        Placement local;
+        float sizeScale = 1, alphaScale = 1, delay = 0, age = 0;
+    };
+    struct ModelPart {
+        const Model* desc = nullptr;
+        Placement local;
+        float sizeScale = 1, alphaScale = 1, delay = 0, stopAt = -1, age = 0;
+    };
     struct Instance {
         Placement where;
         std::vector<Emitter> emitters;
+        std::vector<DecalPart> decals;
+        std::vector<ModelPart> models;
         bool stopped = false;
         std::string icon;
         int iconFrame = -1;

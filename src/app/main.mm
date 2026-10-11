@@ -58,6 +58,9 @@
 #include "app/cinematic_player.hpp"
 #include "app/loading_screen.hpp"
 #include "app/scene_loader.hpp"
+#include "formats/neighborhood.hpp"
+#include "formats/ui_script.hpp"
+#include "vm/wants.hpp"
 #include "app/movie_host.hpp"
 #include "render/movie_layer.hpp"
 #include "render/screen_fx_layer.hpp"
@@ -482,6 +485,7 @@ void quitFromLot();                            // game flow, below
 bool saveGameNow();                            // game flow, below
 void setupLiveUi(os2::ResourceIndex& index);  // below setupPieMenu
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
+std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
 
 // The camera shows the selected Sim's level (cCameraLive::Update).
 void followSelectedSim() {
@@ -775,6 +779,43 @@ std::optional<os2::RgbaImage> simPortrait(int16_t id) {
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: portrait: %s\n", e.what());
         }
+    }
+    return std::nullopt;
+}
+
+// The portrait of a neighbor who is not on the lot (a memory's balloon):
+// the character file in the lot's neighborhood whose OBJD GUID is the
+// neighbor's (the files are read once, for their GUIDs).
+std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId) {
+    static std::map<uint32_t, fs::path> byGuid;
+    static fs::path scanned;
+    if (!gSimulation || gLotSims.empty())
+        return std::nullopt;
+    const auto& nbs = gSimulation->machine().neighbors;
+    const auto n = nbs.find(neighborId);
+    if (n == nbs.end() || !n->second.guid)
+        return std::nullopt;
+    const fs::path dir = gLotSims.front().character.parent_path();
+    if (scanned != dir) {
+        scanned = dir;
+        byGuid.clear();
+        std::error_code ec;
+        for (const auto& f : fs::directory_iterator(dir, ec))
+            if (f.path().extension() == ".package")
+                try {
+                    byGuid[os2::hood::Character::load(f.path()).guid] = f.path();
+                } catch (const std::exception&) {
+                }
+    }
+    const auto it = byGuid.find(n->second.guid);
+    if (it == byGuid.end())
+        return std::nullopt;
+    try {
+        os2::DbpfPackage character(it->second);
+        for (const auto& e : character.entries())
+            if (e.tgi.type == os2::kTypeUiImage && e.tgi.instance < 0x100)
+                return os2::decodeUiImage(character.read(e));
+    } catch (const std::exception&) {
     }
     return std::nullopt;
 }
@@ -1217,6 +1258,8 @@ os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
 // one plumbob.
 constexpr float kPlumbobGap = 0.2f, kPlumbobSpinSeconds = 2.316f;
 bool gVmPlumbob = false;           // the VM's PlumbBob is over the selected Sim
+std::set<int16_t> gHiddenPlumbobs; // the game's PlumbBobs the app hides (its own stands in)
+std::optional<os2::Xform> gAppPlumbobAt; // where the app's plumbob is drawn, if it is
 std::map<std::string, int> gPlumbobModels; // plumbob model per core material (renderer ids)
 std::string gPlumbobMaterial;      // the app plumbob's core material ("" = the model's)
 void choosePlumbob(os2::Renderer& renderer) {
@@ -1229,6 +1272,10 @@ void choosePlumbob(os2::Renderer& renderer) {
             continue;
         const bool over = gObjectView->hasModel(id) && gObjectView->outermostContainer(id) == gPie->sim();
         gObjectView->setHidden(id, !over || gVmPlumbob);
+        if (!over || gVmPlumbob)
+            gHiddenPlumbobs.insert(id);
+        else
+            gHiddenPlumbobs.erase(id);
         if (over && !gVmPlumbob)
             gVmPlumbob = true;
         if (material.empty() || over) {
@@ -1264,6 +1311,39 @@ void updateEffects(os2::Renderer& renderer, double seconds) {
     if (!gEffects && !gEffectsFailed && gIndex) {
         try {
             gEffects = std::make_unique<os2::LotEffects>(renderer, *gIndex, gameDir() / "TSData/Res");
+            // The game's hidden PlumbBob's glow goes with the app's plumbob.
+            gEffects->placementOverride = [](int16_t id) -> std::optional<os2::Xform> {
+                if (gAppPlumbobAt && gHiddenPlumbobs.count(id))
+                    return gAppPlumbobAt;
+                return std::nullopt;
+            };
+            // Balloon icons the app draws: a Sim's portrait (0x10), a want's or fear's icon (0x2000).
+            gEffects->iconImage = [](const os2::vm::ActiveEffect& e) -> std::optional<os2::RgbaImage> {
+                if (e.iconSim && gSimulation) {
+                    // The variable holds the Sim's neighbor ID (the memories'
+                    // and socials' balloons; inferred), else its object ID.
+                    for (const auto& [id, o] : gSimulation->machine().objects())
+                        if (o.person && os2::vm::neighborIdOf(o) == e.iconSim)
+                            if (auto p = simPortrait(id))
+                                return p;
+                    if (auto p = neighborPortrait(e.iconSim))
+                        return p;
+                    return simPortrait(e.iconSim);
+                }
+                if (e.wantSim && gSimulation && gIndex) {
+                    os2::vm::VM& m = gSimulation->machine();
+                    const os2::vm::Object* sim = m.object(e.wantSim);
+                    os2::vm::WantSystem* ws = os2::vm::wantSystem(m);
+                    const os2::vm::SimWants* w = sim && ws ? os2::vm::simWants(m, os2::vm::neighborIdOf(*sim)) : nullptr;
+                    const auto& list = w ? (e.wantFear ? w->fears : w->wants) : std::vector<os2::vm::WantPtr>{};
+                    if (e.wantSlot >= 0 && size_t(e.wantSlot) < list.size() && list[size_t(e.wantSlot)])
+                        if (const auto* d = ws->library->definition(list[size_t(e.wantSlot)]->data.guid))
+                            if (uint32_t icon = d->primaryIcon ? d->primaryIcon : d->secondaryIcon)
+                                if (auto bytes = gIndex->read(os2::Tgi{os2::kTypeUiImage, os2::kUiImageGroup, icon, 0}))
+                                    return os2::decodeUiImage(*bytes);
+                }
+                return std::nullopt;
+            };
             NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
             for (NSUInteger i = 1; i + 1 < args.count; ++i) {
                 if (![args[i] isEqualToString:@"--effect"])
@@ -1312,6 +1392,7 @@ void updateEffects(os2::Renderer& renderer, double seconds) {
 }
 
 void placePlumbob(os2::Renderer& renderer, double seconds) {
+    gAppPlumbobAt.reset();
     if (gPlumbob < 0 || !gPie)
         return;
     simd_float4x4 at = matrix_identity_float4x4;
@@ -1327,6 +1408,11 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
         at = simd_matrix4x4(simd_quaternion(angle, simd_make_float3(0, 0, 1)));
         at.columns[3] =
             simd_make_float4(s.actor->position[0], s.actor->position[1], top + kPlumbobGap - gPlumbobBottom, 1);
+        gAppPlumbobAt = os2::Xform{os2::quatFromEulerXYZ(0, 0, angle),
+                                   {s.actor->position[0], s.actor->position[1], top + kPlumbobGap - gPlumbobBottom}};
+        if (std::getenv("OS2_DEBUG_FX_MOVE"))
+            std::fprintf(stderr, "opensims2: app plumbob at (%.2f %.2f %.2f)\n", s.actor->position[0], s.actor->position[1],
+                         top + kPlumbobGap - gPlumbobBottom);
     }
     renderer.setInstanceTransform(gPlumbob, at);
 }
@@ -2035,6 +2121,8 @@ void unloadScene() {
     gPlumbob = -1;
     gPlumbobBottom = 0;
     gVmPlumbob = false;
+    gHiddenPlumbobs.clear();
+    gAppPlumbobAt.reset();
     gPlumbobMaterial.clear();
     gPlumbobModels.clear();
     gLightMapLayout.reset();
@@ -3229,6 +3317,10 @@ void unloadScene() {
                         gLighting->update(scene);
                     if (gLive)
                         gLive->tick(base + t);
+                    // The Sims' bones at this step, so that balloons and other
+                    // effects on their bones follow the animations between shots.
+                    for (auto& sim : gLotSims)
+                        sim.actor->update(scene);
                     updateEffects(*_viewDelegate.renderer, scene); // effects the VM starts and stops between shots
                     // --dialog-click x,y (repeatable): clicks, in turn, each dialog that opens.
                     if (gPie && gPie->dialogOpen() && dialogClick < dialogClicks.size()) {

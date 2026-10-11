@@ -8,6 +8,8 @@
 // [:<bone index>] | @x,y,z] starts an effect by hand (test aid). See docs/effects-mac.md.
 
 #include "formats/effects.hpp"
+#include "formats/image.hpp"
+#include "formats/xform.hpp"
 #include "render/particle_system.hpp"
 
 #include <cstdint>
@@ -15,6 +17,7 @@
 #include <optional>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,8 +31,10 @@ class Renderer;
 class ResourceIndex;
 class VmObjectView;
 struct SimActor;
+struct RgbaImage;
 namespace vm {
 class VM;
+struct ActiveEffect;
 }
 
 class LotEffects {
@@ -67,6 +72,16 @@ public:
     // it, stopped by their stop event or when their animation is over.
     void animationEffects(const std::vector<const SimActor*>& actors, double seconds);
 
+    // Where the host draws an object somewhere else than the VM's view says
+    // (the app's own plumbob over the selected Sim, standing in for the
+    // game's hidden one): effects on it follow, keeping their node's offset.
+    std::function<std::optional<Xform>(int16_t id)> placementOverride;
+
+    // The icon of a balloon the app draws itself (Effect Stop/Start flags
+    // 0x10 a Sim's portrait, 0x2000 a want's or fear's icon, 0x1000 by ID):
+    // set by the host; empty = the effect's own icon.
+    std::function<std::optional<RgbaImage>(const vm::ActiveEffect&)> iconImage;
+
     const fx::EffectsLibrary& library() const { return *library_; }
     size_t running() const { return system_->instanceCount(); }
 
@@ -83,16 +98,26 @@ private:
         int slot = -1;
     };
     std::optional<fx::Placement> placementOf(int16_t id, int8_t slotType, uint8_t slot, VmObjectView* view,
-                                             const SimLookup& sims, vm::VM* vm) const;
+                                             const SimLookup& sims, vm::VM* vm, const std::string& named = {}) const;
 
     // The texture name of the thumbnail of the object with this GUID
     // (registered with the layer), empty if there is none.
     std::string thumbnail(vm::VM& vm, uint32_t guid);
 
     Renderer& renderer_;
+    ResourceIndex& index_;
+    // Effect models (Block::Model) as renderer instances, by (instance, part).
+    std::map<std::string, int> effectModels_;            // CRES -> renderer model (-1: failed)
+    std::map<std::pair<int, int>, int> modelInstances_;  // (effect handle, part) -> renderer instance
+    std::vector<int> freeModelInstances_;                // hidden, by model: reused
+    std::map<int, int> instanceModel_;                   // renderer instance -> model
+    std::vector<fx::EffectModel> models_;
+    void placeModels();
     std::unique_ptr<DbpfPackage> thumbnails_;
     std::map<uint32_t, const DbpfEntry*> thumbIndex_;
     std::map<uint32_t, std::string> thumbNames_;
+    int iconSerial_ = 0;
+    std::set<std::string> iconNames_;
     std::unique_ptr<fx::EffectsLibrary> library_;
     std::unique_ptr<fx::EffectSystem> system_;
     std::unique_ptr<ParticleLayer> layer_;

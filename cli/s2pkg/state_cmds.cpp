@@ -58,6 +58,12 @@ void printState(const LotObjects::State& s, bool hex) {
             std::printf(" %d", l);
         std::printf("\n");
     }
+    for (const auto& e : s.effects) {
+        std::printf("    effect: %s on \"%s\" data", e.name.c_str(), e.node.c_str());
+        for (uint8_t b : e.data)
+            std::printf(" %02X", b);
+        std::printf("\n");
+    }
     for (const auto& t : s.timers) {
         std::printf("    timer: %08X %08X %04X %08X %d %d params", t.a, t.b, t.c, t.d, t.e, t.f);
         for (int16_t p : t.params)

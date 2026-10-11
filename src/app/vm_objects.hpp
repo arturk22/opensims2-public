@@ -101,6 +101,9 @@ public:
     std::optional<Xform> nodePlacement(int16_t id, const std::string& node);
     // The bone of an object's containment slot `slot` (empty if none).
     std::string containerSlotBone(int16_t id, int slot) { return slotBone(id, slot); }
+    // The bone of the object's slot `slot` among its SLOT entries of `type`
+    // (Effect Stop/Start's slot types 0/1 fall back to the type-4 "target" entries).
+    std::string typedSlotBone(int16_t id, int slot, int type) { return slotBone(id, slot, type); }
 
 private:
     struct Baseline {
@@ -122,7 +125,7 @@ private:
     };
     const Skeleton* skeleton(const std::string& cres);
     std::string cresFor(int16_t id); // drawn, else from the object's OBJD
-    std::string slotBone(int16_t container, int slot);
+    std::string slotBone(int16_t container, int slot, int type = 0);
     std::optional<Xform> compute(int16_t id, int depth);
     void place(Drawn& d, const std::optional<Xform>& at);
     void addCreated(int16_t id);

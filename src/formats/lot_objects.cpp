@@ -367,9 +367,12 @@ LotObjects::State LotObjects::parseState(std::span<const uint8_t> bytes, uint32_
         from = r.pos();
         if (r.i16() != 0 && r.u16() == 1)
             for (auto n = r.u32(); n; --n) {
-                r.str7();
-                r.str7();
-                r.skip(8);
+                State::Effect e;
+                e.name = r.str7();
+                e.node = r.str7();
+                for (auto& b : e.data)
+                    b = r.u8();
+                s.effects.push_back(std::move(e));
             }
         s.effectsRaw = since(r, from);
         from = r.pos();

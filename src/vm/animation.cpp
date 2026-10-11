@@ -647,18 +647,28 @@ Exit effectStopStart(Context& c) {
         e.serial = ++serial;
         e.oneShot = mode == 6;
         e.hard = mode == 1;
-        if (flags & 0x20) {
+        // The icon, in the binary's order: 0x1000, 0x04, 0x20, 0x10, 0x2000.
+        if (flags & 0x1000) {
+            e.iconId = c.thread.temps[6];
+        } else if (flags & 0x04) {
+            if (flags & 0x400)
+                e.iconGuid = uint32_t(uint16_t(c.thread.temps[4])) | (uint32_t(uint16_t(c.thread.temps[5])) << 16);
+            else if (flags & 0x100)
+                e.iconObject = c.thread.me; // (the binary: another object of the caller's; taken as me)
+            else
+                e.iconObject = c.get(o[12], int16_t(le16(&o[13])));
+        } else if (flags & 0x20) {
             // The atlas named by STR# 0x95 entry byte 15 ("Set FX - Topic -
             // Speech Balloon" passes 4-9: conversationshared01-06), the
             // cell from the variable (the topic).
             e.icon = tableName(0x95, o[15]);
             e.iconFrame = c.get(o[12], int16_t(le16(&o[13])));
-        }
-        else if (flags & 0x04) {
-            if (flags & 0x400)
-                e.iconGuid = uint32_t(uint16_t(c.thread.temps[4])) | (uint32_t(uint16_t(c.thread.temps[5])) << 16);
-            else if (!(flags & 0x100))
-                e.iconObject = c.get(o[12], int16_t(le16(&o[13])));
+        } else if (flags & 0x10) {
+            e.iconSim = c.get(o[12], int16_t(le16(&o[13])));
+        } else if (flags & 0x2000) {
+            e.wantSim = c.get(o[12], int16_t(le16(&o[13])));
+            e.wantFear = c.thread.temps[4] != 0;
+            e.wantSlot = c.thread.temps[5];
         }
         if (!e.oneShot)
             std::erase_if(fx, [&](const ActiveEffect& x) { return !x.oneShot && x.index == effect && x.flags == flags; });

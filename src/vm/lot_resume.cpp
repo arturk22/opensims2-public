@@ -4,6 +4,8 @@
 
 #include "formats/lot_objects.hpp"
 #include "interactions.hpp"
+#include "vm.hpp"
+#include "formats/strings.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -221,6 +223,29 @@ void applySavedMotives(VM& vm, const LotLoad& load, const LotObjects& saved) {
                 restoreMotives(*o, *it->second);
 }
 
+// The effects the object had running when the lot was saved
+// (cTSObject::ReadEffects: name and node): back as the VM's effects (the
+// PlumbBob's glow, the flowers' bees), numbered by the object's own STR#
+// 0x8F (its semi-global's, the global's) so that a later stop finds them.
+void restoreEffects(VM& vm, Object& o, const LotObjects::State& s) {
+    static uint32_t serial = 0x40000000; // apart from Effect Stop/Start's serials
+    for (const auto& e : s.effects) {
+        if (e.name.empty() || o.animation.effects.size() >= 64)
+            continue;
+        ActiveEffect a;
+        a.name = e.name;
+        a.node = e.node;
+        a.index = -1;
+        for (uint32_t g : {o.group, vm.code().semiGlobalFor(o.group), kGlobalGroup})
+            if (const StringTable* t = g ? vm.code().strings(g, 0x8F) : nullptr)
+                for (size_t i = 0; i < t->count(lang::EnglishUS) && a.index < 0; ++i)
+                    if (t->get(i, lang::EnglishUS) == e.name)
+                        a.index = int16_t(i);
+        a.serial = ++serial;
+        o.animation.effects.push_back(std::move(a));
+    }
+}
+
 ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& saved) {
     ResumeResult out;
     std::map<int16_t, const LotObjects::State*> states;
@@ -234,6 +259,7 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
     for (ObjectId id : ids)
         if (auto it = states.find(id); it != states.end()) {
             restoreState(*vm.object(id), *it->second);
+            restoreEffects(vm, *vm.object(id), *it->second);
             ++out.restored;
         }
     for (ObjectId id : ids) {
