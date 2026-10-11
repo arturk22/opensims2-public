@@ -1,0 +1,191 @@
+#pragma once
+
+// Interactions: the TTAB entries of objects, the Sims' interaction queues and
+// the pie menu.
+//
+// An object's interactions are the TTAB its OBJD names ("tree table id",
+// the 16-bit field at file offset 0x4E, as in The Sims 1; 0 and 0xFFFF =
+// none), looked up in the object's own group, then in its semi-global group
+// (Sims: TTAB 0x81 of the person semi-global). The pie menu strings are the
+// TTAs with the same group and instance; an entry's "string index" is also
+// its number for Push Interaction and the queue (unique in every TTAB, as
+// FreeSO's TTA index). Parts of a multi-tile object share the interactions
+// of their "interaction group" leader: a part whose OBJD interaction group
+// (field 0x50) is N > 0 uses the part of its object whose interaction group
+// is -N (as FreeSO's GetInteractionGroupLeader).
+//
+// The queue follows FreeSO's VMThread (EnqueueAction, AttemptPush,
+// EndCurrentInteraction, CancelAction), checked against what The Sims 2's
+// own trees expect: the person Main ("Function - Main - Check Queue", person
+// semi-global 0x205A) reads person data 79 "cn: Next Queued Interaction
+// Object ID" to see whether anything is queued, calls "Wait For Notify"
+// (global 0x119), whose Idle for Input sets object flag 7 "notified by idle
+// for input" when the queue is not empty, and runs the interaction from an
+// Idle for Input with "allow push" (u16 at 2, as in The Sims 1). The engine
+// keeps the queue's person data current (labels from STR# 0xC8): 21/80
+// current interaction index/object, 33 priority, 45/79 next queued
+// interaction index/object, 102 current running interaction index, 166
+// interaction autonomous; 71 non-interruptible is cleared when an
+// interaction ends.
+
+#include "vm.hpp"
+
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace os2::vm {
+
+struct LotLoad;
+
+// Queue priorities (FreeSO's VMQueuePriority). Push Interaction's priority
+// byte (STR# 0xE0: inherited, maximum, autonomous, user driven) maps onto
+// these; the pie menu queues user driven ones.
+constexpr int16_t kPriorityIdle = 0;
+constexpr int16_t kPriorityAutonomous = 2;
+constexpr int16_t kPriorityUserDriven = 50;
+constexpr int16_t kPriorityMaximum = 100;
+
+// Person data the queue maintains (STR# 0xC8).
+namespace persondata {
+constexpr int16_t CurrentInteractionIndex = 21;
+constexpr int16_t Priority = 33;
+constexpr int16_t NextInteractionIndex = 45;
+constexpr int16_t NonInterruptible = 71;
+constexpr int16_t NextInteractionObject = 79;
+constexpr int16_t CurrentInteractionObject = 80;
+constexpr int16_t CurrentRunningInteractionIndex = 102;
+constexpr int16_t InteractionAutonomous = 166;
+} // namespace persondata
+
+// Object flags (object data 8, STR# 0x8E; bit = label index).
+constexpr int16_t kFlagNotifiedByIdleForInput = 1 << 6;
+
+// OBJD fields (file offsets).
+constexpr size_t kObjdTreeTableId = 0x4E;
+constexpr size_t kObjdInteractionGroup = 0x50;
+
+// The TTAB an object uses, with its strings (null if the group has no TTAs).
+struct InteractionTableRef {
+    uint32_t group = 0;
+    uint16_t instance = 0;
+    const InteractionTable* table = nullptr;
+    const StringTable* strings = nullptr;
+};
+std::optional<InteractionTableRef> interactionTable(VM& vm, const Object& o);
+
+// The object whose interactions a click on `id` shows (itself unless it is a
+// part of an interaction group).
+ObjectId interactionLeader(VM& vm, ObjectId id);
+
+// The queue entry for interaction `interaction` (TTA index) of `object`:
+// user driven, with the object as stack object and code owner. Nothing if
+// the object has no such entry.
+std::optional<QueuedInteraction> makeInteraction(VM& vm, ObjectId object, uint16_t interaction,
+                                                 uint8_t language = lang::BrazilianPortuguese);
+
+// Queues an interaction on a Sim (FreeSO's EnqueueAction): after the last
+// entry of the same or higher priority, or right after the running one with
+// `pushHead`. Something of a higher priority than the running interaction
+// cancels it (it is told through Idle for Input). Returns the entry's uid.
+// Throws VMError when the queue is full.
+uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead = false);
+
+// Cancels an entry: a waiting one is removed, the running one is told to
+// stop (Idle for Input in its tree returns at once). False if there is none.
+bool cancelInteraction(VM& vm, Object& sim, uint16_t uid);
+
+// Generic Sims Call 13: removes the waiting interactions whose object is
+// `object` from every queue and cancels the running ones.
+void cancelInteractionsWith(VM& vm, ObjectId object);
+
+// Whether the interaction a Sim is running was cancelled (for primitives
+// that wait, like animations).
+bool interactionCancelled(const Object& sim);
+
+// Runs an entry's guard (check) tree for `sim` to completion, as a check
+// tree: in a thread of its own, with the Sim's temps, the object as stack
+// object and code owner, parameter 0 = 1 when autonomous (FreeSO). True if
+// there is no guard or it returns true; on failure `error` gets why.
+enum class CheckResult { NoGuard, True, False, Failed, Running };
+// Pie menu entries the check tree adds (Add/Change the Action String) go to
+// `strings` if given.
+CheckResult checkInteraction(VM& vm, ObjectId sim, const QueuedInteraction& q, std::string* error = nullptr,
+                             bool autonomous = false, size_t maxTurns = 100,
+                             std::vector<ActionString>* strings = nullptr);
+
+// Idle for Input with "allow push": runs the next queued interaction whose
+// priority beats the running one (person data 33; autonomous ones fall
+// through to each other) and whose guard passes, dropping the ones whose
+// guard fails or whose object is gone. Its action tree is pushed onto the
+// thread as an interaction root. False if nothing was started.
+bool attemptPush(VM& vm, Thread& t);
+
+// Called by the VM when an interaction root returns: removes the entry
+// (unless Generic Sims Call 13 already did), resets the priority and
+// non-interruptible, and has the Idle for Input that ran it return true on
+// the next tick.
+void endInteraction(VM& vm, Thread& t);
+
+// Whether a frame of the thread runs a queued interaction.
+bool inInteraction(const Thread& t);
+
+// Refreshes the person data that mirrors the queue.
+void syncQueueData(Object& sim);
+
+// --- Pie menu ----------------------------------------------------------------
+
+struct PieEntry {
+    ObjectId object = 0;      // whose interaction (the interaction group leader)
+    uint16_t interaction = 0; // TTA index, as queued
+    size_t tableIndex = 0;    // position in the TTAB
+    std::string name;         // "Sub.../Item" for submenus
+    std::vector<std::string> path; // name split at '/'
+    bool debug = false;       // the game's debug/cheat interactions (TTAB flag 0x80 or a '*' name)
+    CheckResult check = CheckResult::NoGuard;
+    std::string error; // check tree failure
+    // Entries the check tree named itself (Add/Change the Action String):
+    // one per string, with the stack object it had as parameter 0.
+    bool dynamic = false;
+    std::array<int16_t, 4> args{};
+    bool available() const { return check == CheckResult::NoGuard || check == CheckResult::True; }
+};
+
+struct PieOptions {
+    uint8_t language = lang::BrazilianPortuguese;
+    bool autonomous = false;
+    size_t maxTurns = 100; // for each check tree
+};
+
+// Every entry of the TTAB `object` (or its interaction group leader) uses,
+// with the outcome of its check tree for `sim`, in TTAB order; an entry
+// whose check tree added action strings becomes one entry per string (as
+// FreeSO's GetPieMenu). The menu shows the available ones that are not debug.
+std::vector<PieEntry> pieMenu(VM& vm, ObjectId sim, ObjectId object, const PieOptions& opt = {});
+
+// The queue entry for a pie menu entry (user driven, its name and parameters).
+std::optional<QueuedInteraction> interactionFromPie(VM& vm, const PieEntry& e);
+
+// "Sub.../Item" -> {"Sub...", "Item"}.
+std::vector<std::string> splitPiePath(const std::string& name);
+
+// Push Interaction (0x0D), Idle for Input (0x11), Notify the Stack Object
+// out of Idle (0x31) and Add/Change the Action String (0x32).
+void registerInteractionPrimitives(VM& vm);
+
+// --- Hosts (s2pkg pie, the app) ---------------------------------------------
+
+// An object by ID ("123") or by part of its OBJD file name (case-insensitive;
+// "Fridge"): the lowest ID among the objects in the world whose interaction
+// leader has interactions. 0 if none.
+ObjectId findInteractionObject(VM& vm, const std::string& query);
+// A Sim by ID or part of its name ("Don"), or (empty query) the selected
+// one (global "selected person ID") if it is a Sim in the world, else the
+// lowest-ID Sim in the world. 0 if none.
+ObjectId findSim(VM& vm, const std::string& query = {});
+
+// Runs the Init of every object a lot load created, then starts their Mains
+// (as `s2pkg lot-run` does) and gives `ticks` ticks.
+void startLotObjects(VM& vm, const LotLoad& load, int ticks = 0);
+
+} // namespace os2::vm

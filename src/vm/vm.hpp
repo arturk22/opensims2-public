@@ -37,6 +37,7 @@ constexpr uint32_t kTypeBcon = 0x42434F4E;
 constexpr uint32_t kTypeGlob = 0x474C4F42;
 constexpr uint32_t kTypeTtab = 0x54544142;
 constexpr uint32_t kTypeObjf = 0x4F424A66;
+constexpr uint32_t kTypeTtas = 0x54544173;
 
 // Group of the semi-global library a GLOB resource names: CRC24 of the
 // lowercased name with the high byte 0x7F (holds for every GLOB in the game).
@@ -229,6 +230,10 @@ public:
     // OBJD (group, instance) with this file name ("Trash Can - Outside"); the
     // first OBJD of a name, as for GUIDs.
     std::optional<std::pair<uint32_t, uint16_t>> definitionByName(const std::string& fileName);
+    // TTAB (group, instance), null if missing or unreadable, and its strings
+    // (the TTAs with the same group and instance).
+    const InteractionTable* interactions(uint32_t group, uint16_t instance);
+    const StringTable* interactionStrings(uint32_t group, uint16_t instance);
     // Semi-global group the objects of `group` use (from their GLOB), 0 if none.
     uint32_t semiGlobalFor(uint32_t group);
     // Number of (English) labels in the group's STR# 0x100: the attribute
@@ -241,6 +246,8 @@ public:
     void add(uint32_t group, uint16_t instance, StringTable t);
     void add(uint32_t group, uint16_t instance, Slots s);
     void add(uint32_t group, uint16_t instance, ObjectFunctions f);
+    void add(uint32_t group, uint16_t instance, InteractionTable t);
+    void addInteractionStrings(uint32_t group, uint16_t instance, StringTable t);
     void setSemiGlobal(uint32_t group, uint32_t semiGroup) { semiGlobals_[group] = semiGroup; }
     void setAttributeLabelCount(uint32_t group, size_t n) { labelCounts_[group] = n; }
     // Adds the code and definitions of a package's own group (0xFFFFFFFF, as
@@ -261,6 +268,8 @@ private:
     Cache<StringTable> strings_;
     Cache<Slots> slots_;
     Cache<ObjectFunctions> functions_;
+    Cache<InteractionTable> interactions_;
+    Cache<StringTable> interactionStrings_;
     std::map<std::pair<uint32_t, uint16_t>, uint16_t> masters_;
     std::map<std::pair<uint32_t, uint16_t>, std::vector<uint16_t>> parts_;
     std::unordered_map<std::string, std::pair<uint32_t, uint16_t>> byFileName_;
@@ -277,18 +286,35 @@ private:
 
 using ObjectId = int16_t;
 
-// An interaction pushed onto an object's queue (Push Interaction). There is
-// no queue processing yet: the record keeps what the operand says, for the
-// scheduler to come.
+// An interaction in a Sim's queue: pushed by Push Interaction or picked
+// from the pie menu (interactions.hpp has the queue logic). The entry is
+// resolved from the TTAB of the object whose interaction it is when it is
+// queued.
 struct QueuedInteraction {
-    ObjectId object = 0;      // whose interaction (TTAB) it is
-    uint16_t interaction = 0; // index into that object's interactions
-    uint8_t priority = 0;     // STR# 0xE0: inherited, maximum, autonomous, user driven
-    uint8_t flags = 0;        // byte 3, not understood
-    ObjectId pushedBy = 0;    // the object whose thread pushed it
-    std::array<uint8_t, 16> operands{}; // the whole operand, for what is not understood yet
+    ObjectId object = 0;      // whose interaction (TTAB) it is (the callee; also the stack object and code owner)
+    uint16_t interaction = 0; // TTA index of the TTAB entry: the number Push Interaction and the pie menu use
+    int16_t priority = 0;     // kPriority* (interactions.hpp)
+    uint8_t flags = 0;        // Push Interaction's flags byte (0 from the pie menu)
+    ObjectId pushedBy = 0;    // the object whose thread pushed it (the Sim itself from the pie menu)
+    std::array<uint8_t, 16> operands{}; // Push Interaction's whole operand, for what is not understood yet
+    // From the TTAB entry.
+    uint16_t action = 0, guard = 0; // trees, resolved against the object's code
+    uint32_t ttabFlags = 0;         // flags | flags2 << 16
+    std::string name;               // TTAs string (Brazilian Portuguese), "Sub.../Item" for submenus
+    std::array<int16_t, 4> args{};  // the action tree's parameters
+    uint16_t uid = 0;               // per Sim, for cancelling a specific entry
+    // Cancelled by the user or by something more important queued behind it:
+    // Idle for Input in its action tree returns at once (FreeSO's NotifyIdle).
+    bool cancelled = false;
 };
 constexpr size_t kMaxQueuedInteractions = 64;
+
+// A pie menu entry a check tree adds (Add/Change the Action String), with
+// the stack object at that moment: the action tree gets it as parameter 0.
+struct ActionString {
+    std::string name;
+    ObjectId stackObject = 0;
+};
 
 // State only Sims have.
 struct Person {
@@ -329,8 +355,13 @@ struct Object {
     std::map<std::string, std::string> materials;
     // Data owners 0x27 (mine) and 0x28 (the stack object's).
     TempToken tempToken;
-    // Interactions pushed onto this object (a Sim, usually), oldest first.
+    // Interactions queued for this object (a Sim, usually), in the order they
+    // will run; `activeInteraction` is the index of the one running (-1: none).
     std::vector<QueuedInteraction> queue;
+    int activeInteraction = -1;
+    uint16_t nextInteractionUid = 1;
+    // Notify the Stack Object out of Idle: its next Idle for Input returns at once.
+    bool idleInterrupt = false;
     Position position;
     // The route the object is walking (Go To Routing Slot, Go To Relative
     // Position), while it walks: the points still ahead (the next first; tile
@@ -373,6 +404,10 @@ struct Frame {
     ObjectId stackObject = 0;
     std::vector<int16_t> params;
     std::vector<int16_t> locals;
+    // Root of a queued interaction's action tree (pushed by Idle for Input):
+    // when it returns, the interaction ends and the Idle for Input that ran
+    // it runs again instead of branching (interactions.hpp).
+    bool interaction = false;
 };
 
 // Temps belong to the thread, so subroutines can return values in them;
@@ -389,6 +424,13 @@ struct Thread {
     bool result = false;   // return value of the root tree once Finished
     std::string error;     // once Failed: the message and the stack at the failure
     size_t instructions = 0; // total executed
+    // Set when a queued interaction's action tree returned to the Idle for
+    // Input that ran it (1), which then waits for the next tick (2) and
+    // returns true.
+    uint8_t interactionReturned = 0;
+    // Set while a check tree runs for the pie menu: Add/Change the Action
+    // String adds entries here instead of renaming the running interaction.
+    std::vector<ActionString>* actionStrings = nullptr;
 };
 
 // Outcome of a primitive. Yield keeps the thread on the same instruction,

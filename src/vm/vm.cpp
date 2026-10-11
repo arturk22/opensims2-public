@@ -1,6 +1,7 @@
 #include "vm.hpp"
 
 #include "hood_bridge.hpp"
+#include "interactions.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
@@ -96,6 +97,27 @@ const StringTable* CodeLibrary::strings(uint32_t group, uint16_t instance) {
 
 const Slots* CodeLibrary::slots(uint32_t group, uint16_t instance) {
     return loadCached(slots_, index_, kTypeSlot, group, instance);
+}
+
+const InteractionTable* CodeLibrary::interactions(uint32_t group, uint16_t instance) {
+    try {
+        return loadCached(interactions_, index_, kTypeTtab, group, instance);
+    } catch (const std::exception&) {
+        // A few TTABs carry bytes the parser does not explain: no interactions.
+        return interactions_.emplace(key(group, instance), nullptr).first->second.get();
+    }
+}
+
+const StringTable* CodeLibrary::interactionStrings(uint32_t group, uint16_t instance) {
+    return loadCached(interactionStrings_, index_, kTypeTtas, group, instance);
+}
+
+void CodeLibrary::add(uint32_t group, uint16_t instance, InteractionTable t) {
+    interactions_[key(group, instance)] = std::make_unique<InteractionTable>(std::move(t));
+}
+
+void CodeLibrary::addInteractionStrings(uint32_t group, uint16_t instance, StringTable t) {
+    interactionStrings_[key(group, instance)] = std::make_unique<StringTable>(std::move(t));
 }
 
 void CodeLibrary::add(uint32_t group, uint16_t instance, Slots sl) {
@@ -867,11 +889,17 @@ bool VM::branch(Thread& t, Behavior::Target target) {
         case Behavior::TargetKind::True:
         case Behavior::TargetKind::False: {
             const bool value = target.kind == Behavior::TargetKind::True;
+            const bool interaction = t.stack.back().interaction;
             t.stack.pop_back();
             if (t.stack.empty()) {
                 t.status = Thread::Status::Finished;
                 t.result = value;
                 return false;
+            }
+            if (interaction) {
+                // A queued interaction's action tree: the Idle for Input that ran it runs again.
+                endInteraction(*this, t);
+                return true;
             }
             // The caller's call instruction branches on the returned value.
             const Frame& caller = t.stack.back();

@@ -1,6 +1,7 @@
 #include "vm.hpp"
 
 #include "hood_bridge.hpp"
+#include "interactions.hpp"
 
 #include "formats/binreader.hpp"
 
@@ -81,10 +82,9 @@ Exit expression(Context& c) {
 constexpr uint8_t kOwnerParam = 0x09;
 constexpr uint8_t kOwnerStackObjectId = 0x0A;
 
-// Sleep (0x00) and Idle for Input (0x11): u16 index of the parameter holding
-// the ticks left, counted down once per tick (one call to VM::run). Idle for
-// Input can also be cut short by a pushed interaction (u16 at 4 seems to allow
-// that); there are no interaction queues yet, so it only times out.
+// Sleep (0x00): u16 index of the parameter holding the ticks left, counted
+// down once per tick (one call to VM::run). Idle for Input (0x11), which
+// also looks at the interaction queue, is in queue.cpp.
 Exit countDownParam(Context& c) {
     const auto param = int16_t(le16(&c.instruction.operands[0]));
     const int16_t ticks = c.get(kOwnerParam, param);
@@ -756,35 +756,6 @@ Exit manageInventory(Context& c) {
     }
 }
 
-// Push Interaction (0x0D): interaction u16 at 0, priority u8 at 2 (STR#
-// 0xE0: inherited, maximum, autonomous, user driven), flags u8 at 3, u8 at 4
-// (0-8), then the object whose interaction it is (owner u8 at 5, data u16)
-// and two more variables (owner u8, data u16 at 8 and 11). It goes onto the
-// stack object's queue ("... onto the stack object's queue" in the editor's
-// disassembly strings, Sims2.exe). The same strings name what the rest may
-// hold: an icon ("use icon from", "Icon Index is %d", "Getting Icon Index from
-// Temp6", "use Icon from selector GUID in temp4/5"), "Returing ID in" and
-// "Linking to interaction with ID in" variables, "Passing first 4 params in",
-// "Force run check tree", "continue as current" and "use name"; which byte
-// and flag is which is not known, so nothing is written back and the operand
-// is kept whole in the record. Inferred: the index is not checked against the
-// object's interactions (Sims push socials with indices up to 0x1E6), and an
-// object that does not exist fails the push (false). There is no queue
-// processing yet.
-Exit pushInteraction(Context& c) {
-    const auto& o = c.instruction.operands;
-    const ObjectId source = c.get(o[5], int16_t(le16(&o[6])));
-    if (!c.vm.object(source))
-        return Exit::False;
-    Object& target = c.stackObject();
-    if (target.queue.size() >= kMaxQueuedInteractions)
-        throw VMError("Push Interaction: queue of object " + std::to_string(target.id) + " is full");
-    if (o[2] > 3)
-        throw VMError("Push Interaction: priority " + std::to_string(o[2]) + " not implemented");
-    target.queue.push_back({source, le16(&o[0]), o[2], o[3], c.thread.me, o});
-    return Exit::True;
-}
-
 // Generic Sims Call (0x01): call index u8 at 0 (the other bytes are 0); the
 // arguments and results are in the temps, as the editor's labels describe each
 // call (STR# 0xDC, 54 calls). Calls that only ask the engine for something
@@ -893,10 +864,8 @@ Exit genericSimsCall(Context& c) {
         return Exit::True;
     case 25: vm.globals[global::SelectedPersonId] = temps[0]; return Exit::True;
     case 40: vm.gameStateTransitionsEnabled = temps[0] != 0; return Exit::True;
-    case 13: // abort the interactions of the stack object (only queued ones exist)
-        for (const auto& [id, _] : vm.objects())
-            std::erase_if(vm.object(id)->queue,
-                          [&](const QueuedInteraction& q) { return q.object == c.frame.stackObject; });
+    case 13: // abort the interactions of the stack object: waiting ones are removed, running ones cancelled
+        cancelInteractionsWith(vm, c.frame.stackObject);
         return Exit::True;
     case 48: return Exit::False;
     default:
@@ -913,9 +882,7 @@ void registerPrimitives(VM& vm) {
     vm.setPrimitive(0x01, genericSimsCall);
     vm.setPrimitive(0x02, expression);
     vm.setPrimitive(0x08, randomNumber);
-    vm.setPrimitive(0x0D, pushInteraction);
     vm.setPrimitive(0x0F, breakPoint);
-    vm.setPrimitive(0x11, countDownParam);
     vm.setPrimitive(0x12, removeObjectInstance);
     vm.setPrimitive(0x1A, relationship);
     vm.setPrimitive(0x1C, runTreeByName);
@@ -929,6 +896,7 @@ void registerPrimitives(VM& vm) {
     registerNeighborhoodPrimitives(vm);
     registerAnimationPrimitives(vm);
     registerMeasurePrimitives(vm);
+    registerInteractionPrimitives(vm); // Push Interaction, Idle for Input (queue.cpp)
 }
 
 } // namespace os2::vm
