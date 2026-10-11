@@ -854,6 +854,44 @@ static void testOnTimer() {
     check(fx.obj().attributes[0] == 16 && fx.obj().timers.empty(), "ticks from temp 1");
 }
 
+// Set to Next 24: objects in front of me within temp 0 tiles, with no wall
+// in between, by ID.
+static void testVisibleObjects() {
+    Fixture fx;
+    fx.vm.world = World(10, 10);
+    Object& me = fx.obj();
+    me.position = {4.5f, 4.5f, 1};
+    me.data[objdata::Direction] = 0;
+    const auto [fx0, fy0] = directionStep(0);
+    auto place = [&](float x, float y) {
+        Object& o = fx.vm.createObject(kObjGroup);
+        o.position = {x, y, 1};
+        return o.id;
+    };
+    const ObjectId ahead = place(4.5f + 2 * fx0, 4.5f + 2 * fy0);
+    const ObjectId behind = place(4.5f - 2 * fx0, 4.5f - 2 * fy0);
+    const ObjectId far = place(4.5f + 5 * fx0, 4.5f + 5 * fy0);
+    const ObjectId ahead2 = place(4.5f + 3 * fx0, 4.5f + 3 * fy0);
+    (void)behind, (void)far;
+    // temp 0 := 3; stack object := 0; loop: Set to Next 24, attribute 0 += 1 (count), attribute 1 := stack object.
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(Temp, 0, Assign, Lit, 3, go(1), E), expr(StackId, 0, Assign, Lit, 0, go(2), E),
+                      instr(0x1F, go(3), T, {0, 0, 0, 0, 24}), expr(Attr, 0, Add, Lit, 1, go(4), E),
+                      expr(Attr, 1 + 0, Assign, StackId, 0, go(5), E), expr(Attr, 2, Add, StackId, 0, go(2), E)}));
+    check(fx.run(0x1000).status == Thread::Status::Finished, "Set to Next 24 loop ends");
+    check(me.attributes[0] == 2 && me.attributes[1] == ahead2 && me.attributes[2] == ahead + ahead2,
+          "Set to Next 24 finds the objects in front within the distance");
+    // A wall between me and them hides them.
+    const int wx = fx0 > 0 ? 7 : 2, wy = fy0 > 0 ? 7 : 2; // between the two objects ahead
+    if (fx0 != 0)
+        fx.vm.world->addWall(1, wx, 0, wx, 10);
+    else
+        fx.vm.world->addWall(1, 0, wy, 10, wy);
+    me.attributes[0] = 0;
+    fx.run(0x1000);
+    check(me.attributes[0] == 1, "Set to Next 24: walls hide objects");
+}
+
 // The saved state of an object (XOBJ), as the base game's lots store it.
 static void testSavedObjectState() {
     std::vector<uint8_t> b(64, 0);
@@ -1058,6 +1096,7 @@ int main() {
     testAddPackage();
     testSavedObjectState();
     testOnTimer();
+    testVisibleObjects();
     testSlots();
     testScheduler();
     if (failures)

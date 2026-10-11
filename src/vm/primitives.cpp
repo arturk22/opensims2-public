@@ -214,6 +214,10 @@ Exit setToNext(Context& c) {
         return Exit::False;
     }
     case 29: return c.vm.neighbor(current) ? Exit::True : Exit::False;                 // verify neighbor id
+    case 24: {                                                                         // visible object within temp 0 (view.cpp)
+        const auto next = nextVisibleObject(c.vm, c.me(), current, c.thread.temps[0]);
+        return next ? found(*next) : Exit::False;
+    }
     case 11: // lot ID
     case 36: { // neighbor with relationship variable 1 & temp 1
         const auto next = nextInNeighborhood(c, type, current);
@@ -898,6 +902,7 @@ void registerPrimitives(VM& vm) {
     registerAnimationPrimitives(vm);
     registerMeasurePrimitives(vm);
     registerTimerPrimitives(vm);
+    registerViewPrimitives(vm);
     registerInteractionPrimitives(vm); // Push Interaction, Idle for Input (queue.cpp)
     registerSoundPrimitives(vm);       // Play / Stop Sound Event, Stop ALL Sounds (sound.cpp)
 }

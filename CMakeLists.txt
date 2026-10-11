@@ -76,6 +76,7 @@ add_library(os2_vm
   src/vm/sound.cpp
   src/vm/timer.cpp
   src/vm/turn.cpp
+  src/vm/view.cpp
   src/vm/vm.cpp
   src/vm/world.cpp
 )

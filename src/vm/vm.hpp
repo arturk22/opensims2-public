@@ -407,6 +407,14 @@ struct Object {
     std::optional<Route> route;
     // What the animation primitives play on it (animation.hpp).
     AnimationState animation;
+    // Where the head looks (Look At, view.cpp): the target object, from which
+    // VM tick and for how many (0: until changed).
+    struct LookAt {
+        ObjectId target = 0;
+        uint64_t since = 0;
+        int32_t ticks = 0;
+    };
+    std::optional<LookAt> lookAt;
     // On Timer's timers, in the order they were set.
     std::vector<ObjectTimer> timers;
 
@@ -764,7 +772,12 @@ void registerRoutingPrimitives(VM& vm);
 void registerNeighborhoodPrimitives(VM& vm);
 // Get Distance To and Get Direction To (measure.cpp).
 void registerMeasurePrimitives(VM& vm);
+// Set to Next 24: the next object (by ID, after `current`) that `me` sees
+// within `distance` tiles (view.cpp).
+std::optional<ObjectId> nextVisibleObject(VM& vm, const Object& me, ObjectId current, int16_t distance);
 // On Timer (timer.cpp).
 void registerTimerPrimitives(VM& vm);
+// Look At (view.cpp).
+void registerViewPrimitives(VM& vm);
 
 } // namespace os2::vm
