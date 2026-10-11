@@ -565,8 +565,11 @@ negativo vira 0. Binário.
 
 ### 0x03 Find Best Interaction (`cTSPerson::TryFindBestAction`)
 
-Operandos: motivo u16 0 (0 = os N piores motivos, escolhidos pelas curvas de
-motivo do Sim; rótulos no disassembler: 0 "Shopping", 1 "Scratch-Chew" (só
+Operandos: u16 0 = **máscara de motivos** (bit = número do motivo:
+"Interaction - Fulfill Hunger" passa 0x0080, "Fulfill Bladder" 0x0200; o
+`TryFindBestAction` guarda o u16 como máscara e o passa à busca de objetos
+por anúncio; ver `docs/data-findings.md` §16) — 0 = os N piores motivos,
+escolhidos pelo valor (rótulos dos motivos no disassembler: 0 "Shopping", 1 "Scratch-Chew" (só
 BV), 3 humor, 4 meta-humor, 5 energia, 6 conforto, 7 fome, 8 higiene, 9
 bexiga, 11 alerta, 13 ambiente, 14 social, 15 diversão); flags byte 3: 0x01
 depois da primeira passada escolhe os motivos restantes entre os piores,
@@ -580,6 +583,10 @@ ponto de partida para o motor de autonomia). As curvas de motivo vêm de
 `cTSPerson::LoadMotiveEffects` (um `cTSMotiveCurveSet` por Sim, pelo campo
 0x33 da definição ou pela idade; o dado de pessoa 84 bit 0x200 escolhe a
 tabela 0x298).
+A pontuação (`FBA_ScoreInteraction`, `GetInteractionScore`,
+`GetAdScoreForHuman`, `CalcAttenuation`), a disponibilidade por idade
+(`GetAvailabilityBitset`, flags u32 do TTAB) e as constantes da FCNS 2
+estão no `docs/data-findings.md` §16 e em `src/vm/autonomy.*`.
 
 ### 0x0E Find Best Object for Function (`TryFindFunctionalObject`)
 
