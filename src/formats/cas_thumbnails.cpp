@@ -63,6 +63,12 @@ uint32_t archetypeThumbnailId(uint32_t ageBit, uint32_t genderBit, const std::st
     return nameInstanceHiHash(casFileName(ageBit, genderBit) + lowerGuid(fam) + region);
 }
 
+uint32_t outfitDataThumbnailId(const Tgi& aged, bool body) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%x-%x-%x-%d", aged.type, aged.group, aged.instance, body ? 1 : 0);
+    return nameInstanceHiHash(buf);
+}
+
 uint32_t entryThumbnailId(const SimPart& e, uint32_t ageBit, uint32_t genderBit) {
     if (e.tgi.type == type::TextureOverlay || e.tgi.type == type::MeshOverlay)
         return overlayThumbnailId(ageBit, genderBit, family(e), e.property("hairtone"));

@@ -50,6 +50,10 @@ uint32_t clothingThumbnailId(uint32_t ageBit, uint32_t genderBit, const Tgi& gzp
 uint32_t hairThumbnailId(uint32_t ageBit, uint32_t genderBit, const Tgi& gzps, const std::string& hairTone);
 uint32_t overlayThumbnailId(uint32_t ageBit, uint32_t genderBit, const std::string& family, const std::string& hairTone);
 uint32_t archetypeThumbnailId(uint32_t ageBit, uint32_t genderBit, const std::string& family, const std::string& region);
+// A whole Sim (GetCASOutfitDataThumbnailContext, BV 0x988264):
+// crc32("<type>-<group>-<instance>-<f>") of its AGED key in %x, f = 0 the
+// head, 1 the whole body (the premade Sims of the bin: 417 in the package).
+uint32_t outfitDataThumbnailId(const Tgi& aged, bool body);
 // The id of a catalog entry as the CAS grids show it at an age and gender:
 // GZPS parts (hair when they name a hairtone), texture/mesh overlays.
 uint32_t entryThumbnailId(const SimPart& e, uint32_t ageBit, uint32_t genderBit);

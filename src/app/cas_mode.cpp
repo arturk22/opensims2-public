@@ -4,6 +4,7 @@
 #include "app/ui_panel_util.hpp"
 #include "formats/cas_thumbnails.hpp"
 #include "formats/dbpf.hpp"
+#include "formats/property_set.hpp"
 #include "formats/font.hpp"
 #include "formats/resindex.hpp"
 #include "formats/sim_actor.hpp"
@@ -29,6 +30,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr uint32_t kFrame = 0xCB980E50;
+constexpr uint32_t kSimBin = 0xCB980E86, kMakeBaby = 0xCB980E87;
 constexpr uint32_t kStepScripts[6] = {0xCB980E81, 0xCB980E88, 0xCB980E82, 0xCB980E85, 0xCB980E84, 0xCB980E83};
 constexpr uint32_t kSubPanelAnchor = 0x2D050914;
 constexpr uint32_t kPanelAnchor = 0x0000AAAA;
@@ -117,7 +119,7 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
     fonts_ = std::make_unique<FontLibrary>(res / "UI/Fonts");
     thumbs_ = std::make_unique<cas::CasThumbnails>(res / "UserData/Thumbnails/CASThumbnails.package");
     for (uint32_t id : {kFrame, kStepScripts[0], kStepScripts[1], kStepScripts[2], kStepScripts[3], kStepScripts[4],
-                        kStepScripts[5]})
+                        kStepScripts[5], kSimBin, kMakeBaby})
         if (auto s = res_->script(id); s && !s->roots.empty())
             scripts_.emplace(id, std::move(*s));
     tempDir_ = fs::temp_directory_path() / ("opensims2-cas-" + std::to_string(getpid()));
@@ -453,6 +455,56 @@ void CasMode::setStep(int step) {
         rebuild(); // the clothes step shows the category being chosen
 }
 
+void CasMode::loadBin() {
+    if (binLoaded_)
+        return;
+    binLoaded_ = true;
+    binFile_ = gameDir_ / "TSData/Res/Catalog/Bins/globalcatbin.bundle.package";
+    try {
+        DbpfPackage pkg(binFile_);
+        constexpr uint32_t kBinx = 0x0C560F39, kIdr = 0xAC506764, kAged = 0xAC598EAC;
+        std::map<std::pair<uint32_t, uint32_t>, const DbpfEntry*> idrs, ageds;
+        for (const auto& e : pkg.entries()) {
+            if (e.tgi.type == kIdr)
+                idrs[{e.tgi.group, e.tgi.instance}] = &e;
+            else if (e.tgi.type == kAged)
+                ageds[{e.tgi.group, e.tgi.instance}] = &e;
+        }
+        for (const auto& e : pkg.entries()) {
+            if (e.tgi.type != kBinx)
+                continue;
+            const auto props = readPropertySet(pkg.read(e));
+            auto num = [&](const char* k) -> uint32_t {
+                auto it = props.find(k);
+                return it == props.end() ? 0 : uint32_t(std::strtoul(it->second.c_str(), nullptr, 0));
+            };
+            const DbpfEntry* idr = idrs.count({e.tgi.group, e.tgi.instance}) ? idrs[{e.tgi.group, e.tgi.instance}] : nullptr;
+            if (!idr)
+                continue;
+            const auto refs = parseReferenceList(pkg.read(*idr));
+            const uint32_t oi = num("objectidx");
+            if (oi >= refs.size() || refs[oi].type != kAged)
+                continue;
+            const Tgi aged = refs[oi];
+            if (auto ai = ageds.find({aged.group, aged.instance}); ai != ageds.end()) {
+                {
+                    const auto ap = readPropertySet(pkg.read(*ai->second));
+                    BinSim b;
+                    b.group = aged.group;
+                    b.age = ap.count("age") ? uint32_t(std::strtoul(ap.at("age").c_str(), nullptr, 0)) : 0;
+                    b.gender = ap.count("gender") ? uint32_t(std::strtoul(ap.at("gender").c_str(), nullptr, 0)) : 0;
+                    b.sort = int(num("sortindex"));
+                    b.thumbnail = cas::outfitDataThumbnailId(aged, false);
+                    bin_.push_back(b);
+                }
+            }
+        }
+        std::stable_sort(bin_.begin(), bin_.end(), [](const BinSim& a, const BinSim& b) { return a.sort < b.sort; });
+    } catch (const std::exception& e) {
+        warnings_.push_back(std::string("sim bin: ") + e.what());
+    }
+}
+
 bool CasMode::openCharacter(const fs::path& file, uint32_t group) {
     try {
         DbpfPackage pkg(file);
@@ -466,7 +518,8 @@ bool CasMode::openCharacter(const fs::path& file, uint32_t group) {
         undo_.clear();
         redo_.clear();
         step_ = 0;
-        status_ = "Editando " + (edit_.spec.firstName.empty() ? file.stem().string() : edit_.spec.firstName);
+        status_ = edit_.spec.firstName.empty() ? (group != 0xFFFFFFFF ? std::string("Sim do estoque") : "Editando " + file.stem().string())
+                                               : "Editando " + edit_.spec.firstName;
         rebuild();
         return true;
     } catch (const std::exception& e) {
@@ -878,28 +931,159 @@ UiScreen CasMode::screen(int width, int height) {
     if (const UiElement* gen = find(frame, kFamilyNameGen))
         target(gen, [this](simd_float2) { focus_ = Focus::FamilyName; });
 
-    // The family view: the members' names over the household bar, and a
-    // button to make another Sim.
+    // The family view: the members over the household bar (the head
+    // thumbnail when there is one, the name), and the ways to add one:
+    // create a Sim, take one from the Sim bin, make a child (STR# 0x80).
     if (editing_ < 0) {
-        float x = ox + 180, y = oy + 650;
+        float x = ox + 180;
+        const float y = oy + 650;
         for (size_t i = 0; i < family_.size(); ++i) {
             const std::string n = family_[i].spec.firstName;
-            rect(x - 4, y - 2, x + 120, y + 18, kCellColor);
-            text(x, y, 116, n, kCellText);
+            if (const RgbaImage* t = family_[i].thumbnail && thumbs_ ? thumbs_->image(family_[i].thumbnail) : nullptr) {
+                rect(x - 4, y - 62, x + 56, y - 2, kThumbBg);
+                UiQuad q;
+                q.image = t;
+                q.x0 = x - 4, q.y0 = y - 62, q.x1 = x + 56, q.y1 = y - 2;
+                out.quads.push_back(q);
+            }
+            rect(x - 4, y - 2, x + 90, y + 18, kCellColor);
+            text(x, y, 86, n, kCellText);
             const int idx = int(i);
-            targets_.push_back({{x - 4, y - 2, x + 120, y + 18}, [this, idx](simd_float2) {
+            targets_.push_back({{x - 4, y - 62, x + 90, y + 18}, [this, idx](simd_float2) {
                                     edit_ = family_[size_t(idx)];
                                     editing_ = idx;
                                     step_ = 0;
+                                    binOpen_ = false;
                                     rebuild();
                                 }});
-            x += 130;
+            x += 98;
         }
         if (family_.size() < 8) {
-            rect(x - 4, y - 2, x + 120, y + 18, kCellSelected);
-            text(x, y, 116, "+ Criar um Sim", kCellText);
-            targets_.push_back({{x - 4, y - 2, x + 120, y + 18}, [this](simd_float2) { newSim(); }});
+            const std::pair<const char*, std::function<void()>> adds[] = {
+                {"+ Criar um Sim", [this] { binOpen_ = false, newSim(); }},
+                {"Estoque de Sims", [this] {
+                     loadBin();
+                     binOpen_ = !binOpen_;
+                     binSel_ = -1;
+                 }},
+                {"Fazer um Filho", [this] { status_ = "Fazer um Filho: ainda não"; }},
+            };
+            float bx = x, by = y - 48; // stacked where the next member would go
+            for (const auto& [label, act] : adds) {
+                rect(bx - 4, by - 2, bx + 116, by + 18, kCellSelected);
+                text(bx, by, 112, label, kCellText);
+                auto a = act;
+                targets_.push_back({{bx - 4, by - 2, bx + 116, by + 18}, [a](simd_float2) { a(); }});
+                by += 24;
+            }
         }
+        // The Sim bin, hanging from the frame's "sim bin anchor" (2d016e9f:tl).
+        if (binOpen_)
+            if (auto it = scripts_.find(kSimBin); it != scripts_.end()) {
+                const UiElement& panel = it->second.roots.front();
+                float ax = 0, ay = 0;
+                if (const UiElement* pan = panel.child(kPanelAnchor)) {
+                    const auto a = pan->area();
+                    ax = float(a[0]), ay = float(a[1]);
+                }
+                float anchorX = ox + 421, anchorY = oy + 152;
+                std::function<bool(const UiElement&, float, float)> locateBin = [&](const UiElement& e, float px, float py) {
+                    const auto a = e.area();
+                    const float ex = px + float(a[0]), ey = py + float(a[1]);
+                    if (e.id() == 0x2D016E9F) {
+                        anchorX = ex, anchorY = ey;
+                        return true;
+                    }
+                    for (const auto& c : e.children)
+                        if (locateBin(c, ex, ey))
+                            return true;
+                    return false;
+                };
+                locateBin(frame, ox, oy);
+                const auto pa = panel.area();
+                const float px = anchorX - ax - float(pa[0]), py = anchorY - ay - float(pa[1]);
+                UiDrawHooks bh;
+                bh.rects = &rects;
+                for (int k = 0; k < 2; ++k)
+                    if (const UiElement* b = find(panel, 0x4C6C0000 + uint32_t(k)); b && binGender_ == (k ? cas::gender::Male : cas::gender::Female))
+                        bh.buttonState[b] = 2;
+                const uint32_t ageBits[5] = {cas::age::Toddler, cas::age::Child, cas::age::Teen, cas::age::Adult, cas::age::Elder};
+                for (int k = 0; k < 5; ++k)
+                    if (const UiElement* b = find(panel, 0xCC6C0200 + uint32_t(k)); b && binAge_ == ageBits[k])
+                        bh.buttonState[b] = 2;
+                for (uint32_t id : {0x4C6CA47Du, 0xCC6CA4E0u}) // the gender and age filters
+                    if (const UiElement* e = find(panel, id))
+                        bh.show.insert(e);
+                if (const UiElement* g = find(panel, 0x0CFD6EC6))
+                    bh.hide.insert(g); // custom collections
+                layoutUiElement(panel, px, py, *res_, *fonts_, out, bh);
+                if (auto r = rects.find(&panel); r != rects.end())
+                    solid_.push_back(r->second);
+                std::vector<int> shownSims;
+                for (size_t i = 0; i < bin_.size(); ++i)
+                    if ((!binAge_ || (bin_[i].age & binAge_)) && (!binGender_ || (bin_[i].gender & binGender_)))
+                        shownSims.push_back(int(i));
+                std::map<std::string, std::string> c;
+                readConstants(panel, c);
+                const int cols = constantInt(c, "kCASBinGridNumColumns", 4), rows = constantInt(c, "kCASBinGridNumRows", 2);
+                if (const UiElement* grid = find(panel, 0x4011))
+                    if (auto r = rects.find(grid); r != rects.end()) {
+                        const auto gr = r->second;
+                        const int perPage = cols * rows;
+                        const int pages = std::max(1, (int(shownSims.size()) + perPage - 1) / perPage);
+                        int& page = pages_["simbin"];
+                        page = std::clamp(page, 0, pages - 1);
+                        const float cw = (gr[2] - gr[0]) / float(cols), ch = (gr[3] - gr[1]) / float(rows);
+                        for (int i = 0; i < perPage; ++i) {
+                            const size_t k = size_t(page * perPage + i);
+                            if (k >= shownSims.size())
+                                break;
+                            const int sim = shownSims[k];
+                            const float x0 = gr[0] + cw * float(i % cols) + 4, y0 = gr[1] + ch * float(i / cols) + 4;
+                            const float x1 = x0 + cw - 8, y1 = y0 + ch - 8;
+                            if (sim == binSel_)
+                                rect(x0 - 3, y0 - 3, x1 + 3, y1 + 3, kCellSelected);
+                            rect(x0, y0, x1, y1, sim == binSel_ ? kThumbSelectedBg : kThumbBg);
+                            if (const RgbaImage* t = thumbs_ ? thumbs_->image(bin_[size_t(sim)].thumbnail) : nullptr) {
+                                const float side = std::min(x1 - x0, y1 - y0);
+                                UiQuad q;
+                                q.image = t;
+                                q.x0 = (x0 + x1 - side) / 2, q.y0 = (y0 + y1 - side) / 2;
+                                q.x1 = q.x0 + side, q.y1 = q.y0 + side;
+                                out.quads.push_back(q);
+                            }
+                            targets_.push_back({{x0, y0, x1, y1}, [this, sim](simd_float2) { binSel_ = sim; }});
+                        }
+                        target(find(panel, 0x4008), [this](simd_float2) { pages_["simbin"] = std::max(0, pages_["simbin"] - 1); });
+                        target(find(panel, 0x4009), [this, pages](simd_float2) {
+                            pages_["simbin"] = std::min(pages - 1, pages_["simbin"] + 1);
+                        });
+                    }
+                for (int k = 0; k < 2; ++k)
+                    target(find(panel, 0x4C6C0000 + uint32_t(k)), [this, k](simd_float2) {
+                        const uint32_t g = k ? cas::gender::Male : cas::gender::Female;
+                        binGender_ = binGender_ == g ? 0 : g;
+                        pages_["simbin"] = 0;
+                    });
+                for (int k = 0; k < 5; ++k) {
+                    const uint32_t a = ageBits[k];
+                    target(find(panel, 0xCC6C0200 + uint32_t(k)), [this, a](simd_float2) {
+                        binAge_ = binAge_ == a ? 0 : a;
+                        pages_["simbin"] = 0;
+                    });
+                }
+                target(find(panel, 0x2C6CA64E), [this](simd_float2) { binOpen_ = false; }); // cancel
+                target(find(panel, 0x4C6CA66D), [this](simd_float2) { // accept: edit the Sim chosen
+                    if (binSel_ < 0 || size_t(binSel_) >= bin_.size())
+                        return;
+                    const BinSim b = bin_[size_t(binSel_)];
+                    binOpen_ = false;
+                    if (openCharacter(binFile_, b.group)) {
+                        edit_.thumbnail = b.thumbnail;
+                        edit_.spec.lastName = familyName_;
+                    }
+                });
+            }
     }
     if (!status_.empty()) {
         rect(ox + 200, oy + 8, ox + 820, oy + 30, {0.1f, 0.1f, 0.3f, 0.75f});

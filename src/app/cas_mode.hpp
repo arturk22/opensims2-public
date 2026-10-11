@@ -119,9 +119,24 @@ public:
         uint32_t aspiration = 0;
         bool zodiacChosen = false;
         int zodiac = 1;
+        uint32_t thumbnail = 0; // CASThumbnails head id (premade Sims), 0 if none
     };
 
 private:
+    // The premade Sim bin (CB980E86): the Sims of Catalog/Bins/
+    // globalcatbin.bundle.package (one BINX per Sim, objectidx -> its AGED).
+    struct BinSim {
+        uint32_t group = 0, age = 0, gender = 0;
+        int sort = 0;
+        uint32_t thumbnail = 0;
+    };
+    void loadBin();
+    std::vector<BinSim> bin_;
+    bool binLoaded_ = false, binOpen_ = false;
+    int binSel_ = -1;
+    uint32_t binAge_ = 0, binGender_ = 0; // filters, 0 = all
+    std::filesystem::path binFile_;
+
     // Rebuilds the edited Sim's model (and the camera height for its age).
     void rebuild();
     void setStep(int step);
