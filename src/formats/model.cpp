@@ -388,13 +388,18 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
     Rcol cres(cresBytes);
 
     const NodeTree tree(cres);
-    model.skeleton = Skeleton::fromCres(cres);
+    model.skeleton = Skeleton::fromCres(cres, true);
     for (size_t bi = 0; bi < cres.blocks.size(); ++bi) {
         const auto& block = cres.blocks[bi];
         if (block.className != "cShapeRefNode")
             continue;
         const auto ref = ShapeRefNode::parse(block.body);
         const Xform toObject = tree.world(bi);
+        int carrier = -1; // the shape node's own bone
+        for (int n = int(bi), guard = 0; n >= 0 && carrier < 0 && guard < 256; n = tree.parent[size_t(n)], ++guard)
+            for (size_t b = 0; b < model.skeleton.bones.size(); ++b)
+                if (model.skeleton.bones[b].block == size_t(n))
+                    carrier = int(b);
         for (const auto& link : ref.shapes) {
             if (link.linkIndex < 0 || size_t(link.linkIndex) >= cres.links.size()) {
                 model.warnings.push_back("shape link " + std::to_string(link.linkIndex) + " out of range");
@@ -450,6 +455,7 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
                     n = toObject.rotate(n);
                 ObjectModel::Part part;
                 part.node = ref.renderable.transform.name();
+                part.bone = carrier;
                 part.shape = shape.resource.fileName;
                 for (const auto& p : shape.parts)
                     if (p.subset == mesh.name)

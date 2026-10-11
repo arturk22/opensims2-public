@@ -69,6 +69,7 @@
 #include "lot_vm.hpp"
 #include "vm_objects.hpp"
 #include "lot_lighting.hpp"
+#include "door_portals.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -291,6 +292,8 @@ std::unique_ptr<os2::LotSimulation> gSimulation;
 std::unique_ptr<os2::VmObjectView> gObjectView;
 // The lot's lights from the VM: the clock's day/night, rooms, lamps (app/lot_lighting.hpp).
 std::unique_ptr<os2::LotLighting> gLighting;
+// Doors opening as the Sims walk through (app/door_portals.hpp).
+std::unique_ptr<os2::DoorPortals> gDoors;
 struct LotSim {
     os2::SimActor* actor;
     int16_t id; // object ID (the cObject's instance)
@@ -454,6 +457,23 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             std::fprintf(stderr, "opensims2: object %d: %s\n", id, e.what());
         }
     };
+    gDoors = std::make_unique<os2::DoorPortals>(
+        [](int16_t id, const std::string& name, double at) {
+            if (gSimulation && gSimulation->onObjectAnimation)
+                gSimulation->onObjectAnimation(id, name, at);
+        },
+        [](int16_t id) -> std::optional<os2::Xform> {
+            if (gObjectView && gObjectView->hasModel(id))
+                return gObjectView->placement(id);
+            const auto p = gPlacedObjects.find(id); // a door the VM does not have: where it was saved
+            if (p == gPlacedObjects.end() || p->second.contained)
+                return std::nullopt;
+            const auto& q = p->second.rotation;
+            return os2::Xform{os2::Quat{q[0], q[1], q[2], q[3]}, {p->second.position[0], p->second.position[1], p->second.position[2]}};
+        });
+    for (const auto& [id, p] : gPlacedObjects)
+        if (p.definition.rfind("Door", 0) == 0 && !p.contained)
+            gDoors->addDoor(id);
     // --object-anim <id>,<animation>: test aid, an object plays an animation
     // as if the VM's Animate Object had started it.
     if (auto anim = argument(@"--object-anim")) {
@@ -700,6 +720,12 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
 void poseActors(os2::Renderer& renderer, double seconds) {
     if (gSimulation)
         gSimulation->update(seconds);
+    if (gDoors && gSimulation) {
+        std::vector<os2::Vec3> sims;
+        for (const auto& s : gLotSims)
+            sims.push_back(s.actor->position);
+        gDoors->update(gSimulation->machine(), sims, seconds);
+    }
     auto isObject = [](const os2::SimActor* a) {
         for (const auto& [id, o] : gObjectActors)
             if (o == a)

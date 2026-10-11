@@ -18,7 +18,7 @@ bool equalsNoCase(std::string_view a, std::string_view b) {
 
 } // namespace
 
-Skeleton Skeleton::fromCres(const Rcol& cres) {
+Skeleton Skeleton::fromCres(const Rcol& cres, bool withShapes) {
     const size_t n = cres.blocks.size();
     std::vector<std::optional<TransformNode>> nodes(n);
     std::vector<NodeRef> roots;
@@ -27,6 +27,8 @@ Skeleton Skeleton::fromCres(const Rcol& cres) {
         const auto& b = cres.blocks[i];
         if (b.className == "cTransformNode") {
             nodes[i] = TransformNode::parse(b.body);
+        } else if (withShapes && b.className == "cShapeRefNode") {
+            nodes[i] = ShapeRefNode::parse(b.body).renderable.transform;
         } else if (b.className == "cResourceNode") {
             const auto r = ResourceNode::parse(b.body);
             if (s.name.empty())

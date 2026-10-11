@@ -6,9 +6,15 @@ namespace os2 {
 
 void SkinnedModel::add(const ObjectModel& part) {
     const std::vector<int> joints = mapJoints(part.skeleton, skeleton);
+    if (restWorld.size() != skeleton.bones.size())
+        restWorld = skeleton.world(skeleton.restPose());
     for (const auto& p : part.parts) {
         model.parts.push_back(p);
         jointMaps.push_back(joints);
+        int bone = -1;
+        if (p.mesh.bones.empty() && p.bone >= 0 && size_t(p.bone) < part.skeleton.bones.size())
+            bone = skeleton.find(part.skeleton.bones[size_t(p.bone)].name);
+        rigidBones.push_back(bone);
     }
     for (const auto& [name, m] : part.materials)
         model.materials.emplace(name, m);
@@ -29,8 +35,19 @@ void SkinnedModel::pose(const std::vector<Xform>& world, ObjectModel& out,
         const auto& src = model.parts[pi];
         auto& dst = out.parts[pi].mesh;
         const auto& mesh = src.mesh;
-        if (mesh.bones.empty())
+        if (mesh.bones.empty()) {
+            // A rigid part follows the bone that carries it: rest model
+            // space -> that bone at rest -> the bone posed.
+            if (pi < rigidBones.size() && rigidBones[pi] >= 0 && size_t(rigidBones[pi]) < world.size() &&
+                size_t(rigidBones[pi]) < restWorld.size()) {
+                const Xform m = world[size_t(rigidBones[pi])].then(restWorld[size_t(rigidBones[pi])].inverse());
+                for (size_t v = 0; v < mesh.positions.size() && v < dst.positions.size(); ++v)
+                    dst.positions[v] = m.apply(mesh.positions[v]);
+                for (size_t v = 0; v < mesh.normals.size() && v < dst.normals.size(); ++v)
+                    dst.normals[v] = m.rotate(mesh.normals[v]);
+            }
             continue;
+        }
         // Morph weights by morph number; positions with the morphs applied.
         std::vector<float> weights;
         if (!morphs.empty() && !mesh.morphMap.empty())

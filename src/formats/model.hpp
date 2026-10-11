@@ -31,6 +31,10 @@ struct ObjectModel {
         // Skinned parts (mesh.bones not empty): the GMDC's inverse bind pose
         // of each bone id, i.e. model space -> bone space in the rest pose.
         std::vector<Xform> bindPoses;
+        // Rigid parts: the skeleton bone (index in ObjectModel::skeleton)
+        // of the part's cShapeRefNode (the skeleton has the shape nodes as
+        // bones), -1 if none; animating that bone moves the part.
+        int bone = -1;
         // Extra TXTR names layered with the base texture (Sim skins): the
         // underlay shows where the base texture is transparent (skin under
         // clothes), overlays are drawn over it by their alpha (eyes, brows).

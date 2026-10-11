@@ -17,11 +17,14 @@ struct SkinnedModel {
     Skeleton skeleton;
     ObjectModel model;                       // rest-pose geometry and materials of every part
     std::vector<std::vector<int>> jointMaps; // per part: GMDC bone id -> skeleton bone, -1 if unknown
+    std::vector<int> rigidBones;             // per part: the skeleton bone carrying a rigid part, -1 if none
+    std::vector<Xform> restWorld;            // the skeleton's rest pose in model space
 
     explicit SkinnedModel(Skeleton s = {}) : skeleton(std::move(s)) {}
 
     // Appends the parts and materials of `part`. Rigid parts (no bone
-    // assignments) stay where they are.
+    // assignments) follow the bone that carries their node (an object's
+    // door leaf), else stay where they are.
     void add(const ObjectModel& part);
 
     // Linear blend skinning: `out` gets the parts with their positions and

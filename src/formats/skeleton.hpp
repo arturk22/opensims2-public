@@ -26,7 +26,10 @@ struct Skeleton {
     std::string name; // CRES resource name
     std::vector<Bone> bones;
 
-    static Skeleton fromCres(const Rcol& cres);
+    // `withShapes`: the cShapeRefNodes (the nodes that carry meshes) become
+    // bones too (no joint), so that object animations that turn them (a
+    // door's "r_door_rot") move their rigid meshes.
+    static Skeleton fromCres(const Rcol& cres, bool withShapes = false);
 
     int find(std::string_view name) const; // case-insensitive, -1 if absent
     int findJoint(int joint) const;        // bone with that joint id, -1 if absent
