@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace os2 {
@@ -28,6 +29,24 @@ struct TilePos {
     bool operator==(const TilePos&) const = default;
 };
 
+// A staircase between two levels (the game's modular stairs: one object per
+// step, a quarter tile long and 3/16 of a tile high, from the "End" at the
+// bottom to the "Portal - A" at the top, all facing the way down). Sims
+// walk onto it from the landing tile in front of the bottom step or behind
+// the top one.
+struct Stair {
+    TilePos bottom, top;           // landing tiles; top.level == bottom.level + 1
+    std::array<float, 2> bottomEdge{}; // where the stair meets the bottom landing
+    std::array<float, 2> up{};     // unit vector up the stair (opposite to the steps' facing)
+    int steps = 0;                 // a quarter tile each
+    float bottomZ = 0, topZ = 0;   // heights of the landings' floors
+    int direction = 0;             // 0-7, up the stair (world.hpp directions)
+    // The point `u` tiles up the stair from its bottom edge (negative: onto
+    // the bottom landing; past steps / 4: onto the top one).
+    std::array<float, 2> at(float u) const { return {bottomEdge[0] + up[0] * u, bottomEdge[1] + up[1] * u}; }
+    float length() const { return float(steps) * 0.25f; }
+};
+
 // What does not move on a lot: its bounds, which tiles have something to
 // walk on, the walls (and fences) between tiles, and the rooms. Objects are
 // added on top of it per query (they move): see `blocked` grids below.
@@ -43,7 +62,7 @@ public:
     World(uint32_t width, uint32_t height, int firstLevel = 1, int levelCount = 1);
     // The lot's walls (all types: walls, fences, foundation and pool edges),
     // floors (the ground level is the terrain, walkable everywhere; upper
-    // levels need a floor tile) and rooms.
+    // levels need a floor tile), rooms and stairs (lotStairs).
     static World fromLot(const Lot& lot);
 
     uint32_t width() const { return width_; }
@@ -72,6 +91,11 @@ public:
     // No wall crosses the straight line between the two tile centres (same level).
     bool lineOfSight(TilePos a, TilePos b) const;
 
+    // Stairs join a landing on one level with one on the level above; the
+    // tiles under the steps are not walkable on the lower level.
+    void addStair(const Stair& s);
+    const std::vector<Stair>& stairs() const { return stairs_; }
+
     // Index of a tile within one level's grid (x * height + y).
     size_t index(int x, int y) const { return size_t(x) * height_ + size_t(y); }
 
@@ -82,11 +106,21 @@ private:
     std::vector<int16_t> rooms_;      // [level][x][y]
     std::vector<uint8_t> xWalls_;     // [level][x][y]: wall (x, y)-(x + 1, y), x < width, y <= height
     std::vector<uint8_t> yWalls_;     // [level][x][y]: wall (x, y)-(x, y + 1), x <= width, y < height
+    std::vector<Stair> stairs_;
     size_t cell(TilePos t) const;
     size_t xEdge(int level, int x, int y) const;
     size_t yEdge(int level, int x, int y) const;
     void setEdge(int level, int ax, int ay, int bx, int by, bool wall);
 };
+
+// The stairs of a lot, from the steps' cObjects: each "Stair Modular - ... -
+// Portal - A" (the top step) is followed down, a quarter tile and 3/16 of a
+// tile at a time along its facing, through the "Bridge" steps to the "End"
+// (the bottom step), bridging up to three missing steps in a row (saved lots
+// lose some); stairs that do not reach an End are left out, and
+// a stair saved twice (the lots keep stale copies) is kept once. VM levels
+// (lot level + 1).
+std::vector<Stair> lotStairs(const Lot& lot);
 
 // Tiles of one level that something stands in the way on (1 = blocked),
 // indexed by World::index. Routing builds one per route from the objects.
@@ -117,5 +151,12 @@ struct Path {
 // it is on); goal tiles must not be. False if no goal can be reached.
 bool findPath(const World& world, const BlockedGrid& blocked, TilePos start, const std::vector<PathGoal>& goals,
               Path& out);
+
+// The same across levels, by the world's stairs: `blocked` has a grid per
+// level (index level - firstLevel), the goals are on `goalLevel`, and
+// `stairs` gets, for each tile of the path, the stair taken to reach it (-1
+// for a step on a level). A stair costs 1.5 x the walk between its landings.
+bool findPath(const World& world, std::span<const BlockedGrid> blocked, TilePos start, int goalLevel,
+              const std::vector<PathGoal>& goals, Path& out, std::vector<int>& stairs);
 
 } // namespace os2::vm

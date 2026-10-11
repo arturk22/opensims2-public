@@ -395,11 +395,31 @@ struct Object {
     // as it arrives) and the object it walks to. The instruction that walks
     // it keeps yielding until the last point is reached; it is kept here for
     // the renderer to animate the walk.
+    //
+    // On stairs the route holds the climb's phases: points where the walker
+    // is put (the animation's anchor, `z` high) to play a stair animation
+    // for `ticks` ticks, as the game snaps a Sim into each step in turn
+    // (Stair, world.hpp); `climb` is the phase playing.
     struct Route {
-        std::vector<std::array<float, 2>> points;
-        int level = 0;
+        struct Point {
+            float x = 0, y = 0;
+            int level = 0;
+            // A climb phase (ticks > 0).
+            int ticks = 0;
+            float z = 0;
+            int direction = -1;
+            std::string animation;
+        };
+        std::vector<Point> points;
+        int level = 0; // of the goal
         int facing = -1;
         ObjectId target = 0;
+        struct Climb {
+            std::string animation; // empty between phases
+            uint32_t serial = 0;   // bumped as each phase starts
+            float z = 0;
+            int ticksLeft = 0;
+        } climb;
         // The instruction walking it: its thread's stack depth, tree and node.
         size_t depth = 0;
         const Behavior* tree = nullptr;

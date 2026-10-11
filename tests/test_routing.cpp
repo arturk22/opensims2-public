@@ -1,10 +1,13 @@
 // World occupancy, pathfinding and the routing primitives on synthetic lots.
 #include "vm/vm.hpp"
 #include "vm/world.hpp"
+#include "formats/lot.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
+#include <set>
+#include <string>
 
 using namespace os2;
 using namespace os2::vm;
@@ -351,7 +354,103 @@ static void testSnapAndPlace() {
           "Find Location For along the vector takes it out of its slot");
 }
 
+// Stairs: read off the steps' cObjects, then walked by the routing
+// primitives from one level to the next, phase by phase.
+static void testStairs() {
+    Lot lot;
+    lot.width = lot.height = 10;
+    lot.minLevel = 0;
+    lot.levelCount = 2; // no elevations: level l is 3 * l high
+    auto piece = [&](const char* kind, float y, float z) {
+        Lot::Object o;
+        o.definition = std::string("Stair Modular - Test - ") + kind + "_objt";
+        o.position = {4.5f, y, z};
+        o.rotation = {0, 0, -1, 0}; // yaw -180: the steps face -Y (down)
+        lot.objects.push_back(o);
+    };
+    piece("Portal - A", 8.75f, 2.8125f);
+    for (int k = 1; k < 15; ++k)
+        if (k != 7) // a step lost from the save: bridged
+            piece("Bridge", 8.75f - 0.25f * float(k), 2.8125f - 0.1875f * float(k));
+    piece("End", 5.0f, 0);
+    piece("Portal - A", 8.75f, 2.8125f); // a stale copy
+    const auto stairs = lotStairs(lot);
+    check(stairs.size() == 1, "one stair from the steps");
+    if (stairs.size() == 1) {
+        const Stair& st = stairs[0];
+        check(st.bottom == TilePos{4, 4, 1} && st.top == TilePos{4, 9, 2} && st.steps == 16 && st.direction == 2 &&
+                  std::fabs(st.bottomZ) < 1e-4f && std::fabs(st.topZ - 3) < 1e-4f,
+              "the stair's landings, steps and heights");
+    }
+
+    // A stair up +X from (2, 1) on level 1 to (5, 1) on level 2.
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(10, 4, 1, 2);
+    World& w = *vm.world;
+    for (int x = 3; x <= 4; ++x)
+        w.setWalkable({x, 1, 2}, false); // the stairwell
+    Stair st;
+    st.bottom = {2, 1, 1}, st.top = {5, 1, 2};
+    st.bottomEdge = {3.0f, 1.5f};
+    st.up = {1, 0};
+    st.steps = 8;
+    st.bottomZ = 0, st.topZ = 1.5f;
+    st.direction = 4;
+    w.addStair(st);
+    check(!w.walkable({3, 1, 1}) && !w.walkable({4, 1, 1}) && w.walkable({2, 1, 1}), "no walking under the steps");
+    std::vector<BlockedGrid> blocked(2, BlockedGrid(40, 0));
+    Path p;
+    std::vector<int> via;
+    check(findPath(w, blocked, {0, 1, 1}, 2, {{8, 1, 0}}, p, via) && p.tiles.back() == TilePos{8, 1, 2},
+          "a path up the stair");
+    size_t climbs = 0;
+    for (size_t i = 0; i < p.tiles.size(); ++i)
+        climbs += via[i] == 0 && p.tiles[i] == st.top && i > 0 && p.tiles[i - 1] == st.bottom;
+    check(climbs == 1, "the path takes the stair once, landing to landing");
+    check(!findPath(w, blocked, {0, 1, 1}, 2, {{3, 1, 0}}, p, via), "no goal in the stairwell");
+
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {8.5f, 1.5f, 2};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {0.5f, 1.5f, 1};
+    // Go To Relative Position: in front of the lamp (direction 0, -X), facing it.
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    std::set<std::string> phases;
+    float maxZ = 0;
+    int ticks = 0;
+    for (; ticks < 3000 && t.status == Thread::Status::Running; ++ticks) {
+        vm.run(t);
+        if (sim.route && !sim.route->climb.animation.empty()) {
+            phases.insert(sim.route->climb.animation);
+            maxZ = std::max(maxZ, sim.route->climb.z);
+        }
+    }
+    check(t.status == Thread::Status::Finished && t.result && sim.position.level == 2 &&
+              sim.position.x > 6 && sim.position.x < 8 && sim.data[objdata::Direction] == 4,
+          "walked upstairs to the lamp");
+    check(phases.count("a-stairs-up-start-R") && phases.count("a-stairs-up-loop-L") &&
+              phases.count("a-stairs-up-loop-R") && phases.count("a-stairs-up-stop-R") && std::fabs(maxZ - 1.5f) < 1e-4f,
+          "the climb's phases");
+    // And back down.
+    lamp.position = {1.5f, 2.5f, 1};
+    t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    phases.clear();
+    for (int i = 0; i < 3000 && t.status == Thread::Status::Running; ++i) {
+        vm.run(t);
+        if (sim.route && !sim.route->climb.animation.empty())
+            phases.insert(sim.route->climb.animation);
+    }
+    check(t.status == Thread::Status::Finished && t.result && sim.position.level == 1 &&
+              phases.count("a-stairs-down-start-R") && phases.count("a-stairs-down-stop-R"),
+          "and back down");
+}
+
 int main() {
+    testStairs();
     testWalking();
     testSnapAndPlace();
     testPathfinder();

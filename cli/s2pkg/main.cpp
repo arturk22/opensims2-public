@@ -830,8 +830,8 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                                 o->data[vm::objdata::Direction], o->data[vm::objdata::ContainerId],
                                 o->data[vm::objdata::SlotNumber]);
                 if (o && o->route && !o->route->points.empty())
-                    std::printf("walking to (%.2f, %.2f) for %d; ", o->route->points.back()[0],
-                                o->route->points.back()[1], o->route->target);
+                    std::printf("walking to (%.2f, %.2f) for %d; ", o->route->points.back().x,
+                                o->route->points.back().y, o->route->target);
                 std::printf("init %s", initOf[e.id].c_str());
                 if (auto it = machine.threads.find(e.id); it != machine.threads.end())
                     std::printf("; main %s%s", it->second.status == vm::Thread::Status::Running ? "running"

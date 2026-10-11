@@ -37,6 +37,11 @@ public:
         std::string animation;  // Animate Sim's, while it plays
         uint32_t serial = 0;    // of that animation
         std::string walk;       // the locomotion walk animation while walking
+        // On a stair (Object::Route::climb): the phase's animation, bumped
+        // serial per phase, and the height of the walker's anchor.
+        std::string climb;
+        uint32_t climbSerial = 0;
+        float z = 0;
     };
 
     // Records the object's state after a VM tick (call once per tick,
@@ -49,6 +54,13 @@ public:
     // Position at `t` (0 = the previous tick, 1 = the last one).
     float x(float t) const;
     float y(float t) const;
+    // Height at `t` on a stair; `floor(level, x, y)` gives it off the stair.
+    template <class Floor>
+    float z(float t, Floor floor) const {
+        const float a = previous_.climb.empty() ? floor(previous_.level, previous_.x, previous_.y) : previous_.z;
+        const float b = current_.climb.empty() ? floor(current_.level, x(t), y(t)) : current_.z;
+        return a + (b - a) * t;
+    }
 
     // Heading after `dt` seconds of turning at `turnSpeed` radians per
     // second towards the motion's direction (walking) or the VM's direction.

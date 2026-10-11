@@ -30,6 +30,11 @@ void SimMotion::sample(VM& vm, const Object& o) {
     s.serial = o.animation.serial;
     if (s.walking)
         s.walk = locomotionAnimation(vm, o, "walk");
+    if (o.route && !o.route->climb.animation.empty()) {
+        s.climb = o.route->climb.animation;
+        s.climbSerial = o.route->climb.serial;
+        s.z = o.route->climb.z;
+    }
     previous_ = count_ ? current_ : s;
     current_ = std::move(s);
     if (!count_)

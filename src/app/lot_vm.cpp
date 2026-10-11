@@ -91,7 +91,12 @@ void LotSimulation::sampleAll(double at) {
         const auto& s = b.motion.current();
         std::string want = b.idle;
         bool loop = true;
-        if (s.walking && !s.walk.empty())
+        float fade = 0.2f;
+        if (!s.climb.empty()) {
+            // Stair phases chain without blending (each starts where the last ended).
+            const bool chained = b.playing.find("stairs-") != std::string::npos;
+            want = s.climb, loop = false, fade = chained ? 0.0f : 0.1f;
+        } else if (s.walking && !s.walk.empty())
             want = s.walk;
         else if (!s.animation.empty())
             want = s.animation, loop = false;
@@ -103,12 +108,14 @@ void LotSimulation::sampleAll(double at) {
                          it == vm_->threads.end() ? -1 : int(it->second.status),
                          it == vm_->threads.end() ? "" : it->second.error.substr(0, 200).c_str());
         }
-        const bool restart = !s.animation.empty() && s.serial != b.serial;
+        const bool restart = (!s.climb.empty() && s.climbSerial != b.climbSerial) ||
+                             (s.climb.empty() && !s.animation.empty() && s.serial != b.serial);
+        b.climbSerial = s.climbSerial;
         if (want == b.playing && !restart)
             continue;
         try {
             const Animation& anim = b.actor->animation(index_, want);
-            b.actor->cue(at, anim, {.fade = 0.2f, .loop = loop});
+            b.actor->cue(at, anim, {.fade = fade, .loop = loop});
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: Sim %d: %s\n", b.id, e.what());
         }
@@ -138,9 +145,9 @@ void LotSimulation::update(double seconds) {
     const float dt = float(std::clamp(seconds - last_, 0.0, 0.1));
     last_ = seconds;
     for (auto& b : bound_) {
-        const auto& s = b.motion.current();
         const float x = b.motion.x(t), y = b.motion.y(t);
-        b.actor->position = {x, y, floorHeight(s.level, x, y) + b.zOffset};
+        const float z = b.motion.z(t, [this](int level, float fx, float fy) { return floorHeight(level, fx, fy); });
+        b.actor->position = {x, y, z + b.zOffset};
         b.actor->heading = b.motion.turn(dt);
         b.actor->rootMotion = false;
     }

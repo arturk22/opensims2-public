@@ -13,6 +13,12 @@ namespace os2::vm {
 bool VM::blocksRouting(const Object& o) {
     if (!o.position.inWorld() || o.person || o.data[objdata::ContainerId] != 0)
         return false;
+    // The modular stairs' landing pieces ("Stair Modular - Deck - Hi Stub",
+    // "- Hi Cutout": object type 4) share the stairs' semi-global and lie
+    // flat on the landings; Sims walk over them.
+    static const uint32_t stairGlobals = semiGlobalGroup("StairModularGlobals");
+    if (o.semiGroup == stairGlobals)
+        return false;
     if (o.definition) {
         switch (o.definition->objectType()) {
         case kObjectTypeDoor:
@@ -41,6 +47,13 @@ BlockedGrid VM::blockedTiles(int level, std::span<const ObjectId> ignore) {
         if (world->contains(t))
             grid[world->index(t.x, t.y)] = 1;
     }
+    // Stair landings stay open: build mode keeps them clear, and what the
+    // lots have there hangs on a wall (lamps, paintings), which blocks here
+    // for want of the models' footprints.
+    for (const Stair& s : world->stairs())
+        for (const TilePos& t : {s.bottom, s.top})
+            if (t.level == level && world->contains(t))
+                grid[world->index(t.x, t.y)] = 0;
     return grid;
 }
 
@@ -187,22 +200,40 @@ void leaveSlot(Object& o) {
 }
 
 // Moves a walking object along its route by one tick's worth; true once it
-// has arrived (the route is then dropped and the final facing set).
+// has arrived (the route is then dropped and the final facing set). A climb
+// phase takes whole ticks: the walker is put at its anchor when it starts
+// and stays there while its animation plays.
 bool advance(VM& vm, Object& me) {
     auto& r = *me.route;
     float budget = walkTilesPerTick(vm, me);
     while (budget > 0 && !r.points.empty()) {
-        const auto [px, py] = r.points.front();
-        const float dx = px - me.position.x, dy = py - me.position.y;
+        const Object::Route::Point& p = r.points.front();
+        if (p.ticks > 0) {
+            if (r.climb.ticksLeft == 0) { // the phase starts
+                moveTo(vm, me, p.x, p.y, p.level);
+                setDirection(me, p.direction);
+                r.climb.animation = p.animation;
+                r.climb.z = p.z;
+                r.climb.ticksLeft = p.ticks;
+                ++r.climb.serial;
+            }
+            if (--r.climb.ticksLeft == 0) {
+                r.points.erase(r.points.begin());
+                if (r.points.empty() || r.points.front().ticks == 0)
+                    r.climb.animation.clear();
+            }
+            return false; // the tick is spent
+        }
+        const float dx = p.x - me.position.x, dy = p.y - me.position.y;
         const float d = std::hypot(dx, dy);
         if (d > 0)
             setDirection(me, directionOf(dx, dy));
         if (d <= budget) {
-            moveTo(vm, me, px, py, r.level);
+            moveTo(vm, me, p.x, p.y, p.level);
             budget -= d;
             r.points.erase(r.points.begin());
         } else {
-            moveTo(vm, me, me.position.x + dx / d * budget, me.position.y + dy / d * budget, r.level);
+            moveTo(vm, me, me.position.x + dx / d * budget, me.position.y + dy / d * budget, p.level);
             budget = 0;
         }
     }
@@ -213,11 +244,73 @@ bool advance(VM& vm, Object& me) {
     return true;
 }
 
+Object::Route::Point walkPoint(float x, float y, int level) {
+    Object::Route::Point p;
+    p.x = x, p.y = y, p.level = level;
+    return p;
+}
+
+// The stair animation `name` ("stairs-up-loop-L") for the walker's age, and
+// how many ticks it lasts (10 when it does not exist).
+std::pair<std::string, int> stairAnimation(VM& vm, const Object& me, const std::string& name) {
+    const std::string age = agePrefix(me);
+    for (const std::string& candidate : {age + "-" + name, "a-" + name})
+        if (const auto secs = vm.animations.seconds(candidate))
+            return {candidate, std::max(1, int(std::ceil(*secs * float(vm.clock.ticksPerMinute))))};
+    return {age + "-" + name, 10};
+}
+
+// Appends the walk onto a stair, its climb phases and the walk off it.
+// Where each phase puts the walker (its animation's anchor) is read off the
+// adult animations' root bone, which chain from one to the next: going up,
+// "stairs-up-start-R" stands on the bottom landing with the anchor one step
+// up, then "stairs-up-loop-L"/"-R" in turn each climb one step (anchor a
+// quarter tile on and 3/16 up), steps - 1 of them, and "stairs-up-stop-R"
+// steps onto the top landing (anchor a quarter tile past the top, on its
+// floor). Going down, "stairs-down-start-R" starts on the top landing
+// (anchor a quarter tile down the stair, on the top floor), steps - 2 loops
+// go one step down each and "stairs-down-stop-R" takes the last two steps
+// (anchor a quarter tile onto the bottom landing). Inferred: the game snaps
+// the Sim into a containment slot of each step (a bone of its model), and
+// picks the animations by mood ("-happy", "-angry", ...) in the stair's
+// trees; the neutral ones are used here.
+void appendClimb(VM& vm, const Object& me, const Stair& st, bool up, std::vector<Object::Route::Point>& out) {
+    const float rise = (st.topZ - st.bottomZ) / float(std::max(st.steps, 1));
+    const float len = st.length();
+    auto walkTo = [&](float u, int level) {
+        const auto p = st.at(u);
+        out.push_back(walkPoint(p[0], p[1], level));
+    };
+    auto phase = [&](float u, float z, int level, const std::string& name, int direction) {
+        const auto p = st.at(u);
+        const auto [anim, ticks] = stairAnimation(vm, me, name);
+        out.push_back({p[0], p[1], level, ticks, z, direction, anim});
+    };
+    const int lower = st.bottom.level, upper = st.top.level;
+    if (up) {
+        walkTo(-0.1f, lower);
+        phase(0.125f, st.bottomZ + rise, lower, "stairs-up-start-R", st.direction);
+        for (int j = 1; j < st.steps; ++j)
+            phase(0.125f + 0.25f * float(j), st.bottomZ + rise * float(1 + j), lower,
+                  j % 2 ? "stairs-up-loop-L" : "stairs-up-loop-R", st.direction);
+        phase(len + 0.25f, st.topZ, upper, "stairs-up-stop-R", st.direction);
+        walkTo(len + 0.12f, upper);
+    } else {
+        const int down = (st.direction + 4) % 8;
+        walkTo(len + 0.18f, upper);
+        phase(len - 0.25f, st.topZ, upper, "stairs-down-start-R", down);
+        for (int j = 1; j + 1 < st.steps; ++j)
+            phase(len - 0.25f - 0.25f * float(j), st.topZ - rise * float(j), lower,
+                  j % 2 ? "stairs-down-loop-L" : "stairs-down-loop-R", down);
+        phase(-0.25f, st.bottomZ, lower, "stairs-down-stop-R", down);
+        walkTo(-0.27f, lower);
+    }
+}
+
 // Walks the thread's object to one of `goals` (planned once, on the first
 // run of the instruction): yields every tick while walking, true on
 // arrival, false when no goal can be reached. Routing out of the world is
-// the game's own error; routes to another level would need the stairs and
-// are not implemented.
+// the game's own error. A goal on another level is reached by the stairs.
 Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& plan) {
     Object& me = c.me();
     const size_t depth = c.thread.stack.size();
@@ -230,23 +323,41 @@ Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& pl
     const VM::RouteGoals goals = plan();
     if (goals.goals.empty())
         return Exit::False;
-    if (goals.level != me.position.level)
-        throw VMError("routing to another level not implemented");
     std::vector<ObjectId> ignore{me.id};
     if (goals.onTarget)
         ignore.push_back(target);
-    const BlockedGrid blocked = c.vm.blockedTiles(goals.level, ignore);
     Path path;
-    if (!findPath(world, blocked, VM::tileOf(me), goals.goals, path))
-        return Exit::False;
+    std::vector<int> viaStair;
+    if (goals.level == me.position.level) {
+        const BlockedGrid blocked = c.vm.blockedTiles(goals.level, ignore);
+        if (!findPath(world, blocked, VM::tileOf(me), goals.goals, path))
+            return Exit::False;
+        viaStair.assign(path.tiles.size(), -1);
+    } else {
+        if (!world.contains({0, 0, goals.level}))
+            return Exit::False;
+        std::vector<BlockedGrid> blocked;
+        for (int l = world.firstLevel(); l < world.firstLevel() + world.levelCount(); ++l)
+            blocked.push_back(c.vm.blockedTiles(l, ignore));
+        if (!findPath(world, blocked, VM::tileOf(me), goals.level, goals.goals, path, viaStair))
+            return Exit::False;
+    }
     Object::Route r;
-    for (const TilePos& t : path.tiles)
-        r.points.push_back({float(t.x) + 0.5f, float(t.y) + 0.5f});
+    int level = me.position.level;
+    for (size_t i = 0; i < path.tiles.size(); ++i) {
+        const TilePos& t = path.tiles[i];
+        if (viaStair[i] >= 0) {
+            const Stair& st = world.stairs()[size_t(viaStair[i])];
+            appendClimb(c.vm, me, st, t.level > level, r.points);
+        }
+        r.points.push_back(walkPoint(float(t.x) + 0.5f, float(t.y) + 0.5f, t.level));
+        level = t.level;
+    }
     // The last point is the goal's own (a slot's offset); a route that stays
     // on its tile only moves to it.
     if (!r.points.empty())
         r.points.pop_back();
-    r.points.push_back(goals.points[path.goal]);
+    r.points.push_back(walkPoint(goals.points[path.goal][0], goals.points[path.goal][1], goals.level));
     r.level = goals.level;
     r.facing = goals.facings[path.goal];
     r.target = target;

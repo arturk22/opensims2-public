@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <queue>
 
 namespace os2::vm {
@@ -63,7 +64,104 @@ World World::fromLot(const Lot& lot) {
         auto snap = [](float v) { return int(std::lround(v)); };
         w.addWall(wall.a.level + 1, snap(wall.a.x), snap(wall.a.y), snap(wall.b.x), snap(wall.b.y));
     }
+    for (const Stair& s : lotStairs(lot))
+        w.addStair(s);
     return w;
+}
+
+std::vector<Stair> lotStairs(const Lot& lot) {
+    constexpr float kRise = 0.1875f, kRun = 0.25f, kTolerance = 0.03f;
+    struct Step {
+        float x, y, z;
+        bool end;
+    };
+    std::vector<Step> steps;
+    std::vector<const Lot::Object*> tops;
+    for (const auto& o : lot.objects) {
+        const std::string& d = o.definition;
+        if (d.rfind("Stair Modular - ", 0) != 0)
+            continue;
+        if (d.find(" - Portal - A_objt") != std::string::npos)
+            tops.push_back(&o);
+        else if (d.find(" - Bridge_objt") != std::string::npos || d.find(" - End_objt") != std::string::npos)
+            steps.push_back({o.position[0], o.position[1], o.position[2], d.find(" - End_objt") != std::string::npos});
+    }
+    auto stepAt = [&](float x, float y, float z) -> const Step* {
+        for (const auto& s : steps)
+            if (std::fabs(s.x - x) < kTolerance && std::fabs(s.y - y) < kTolerance && std::fabs(s.z - z) < kTolerance)
+                return &s;
+        return nullptr;
+    };
+    // The VM level whose floor is at height z at a point, if any.
+    auto levelAt = [&](float x, float y, float z) -> std::optional<int> {
+        for (int l = lot.minLevel; l < lot.minLevel + lot.levelCount; ++l)
+            if (std::fabs(lot.elevationAt(l, x, y) - z) < 0.1f)
+                return l + 1;
+        return std::nullopt;
+    };
+    std::vector<Stair> out;
+    for (const Lot::Object* top : tops) {
+        // The steps face the way down; the model's forward axis is +Y, turned
+        // by the rotation about Z (a unit quaternion).
+        const auto& q = top->rotation;
+        const float yaw = 2 * std::atan2(q[2], q[3]);
+        const float downX = -std::sin(yaw), downY = std::cos(yaw);
+        const float dx = std::fabs(downX) < 0.5f ? 0 : (downX > 0 ? 1.0f : -1.0f);
+        const float dy = std::fabs(downY) < 0.5f ? 0 : (downY > 0 ? 1.0f : -1.0f);
+        if ((dx != 0) == (dy != 0))
+            continue; // only straight stairs along an axis
+        float x = top->position[0], y = top->position[1], z = top->position[2];
+        // Saved lots miss some steps (stale copies of the stair in another
+        // style fill in for each other, and some are gone from both), so a
+        // few missing steps in a row are bridged.
+        int count = 1, missing = 0;
+        bool complete = false;
+        for (int i = 0; i < 64 && missing <= 3; ++i) {
+            x += dx * kRun, y += dy * kRun, z -= kRise;
+            ++count;
+            const Step* s = stepAt(x, y, z);
+            if (!s) {
+                ++missing;
+                continue;
+            }
+            missing = 0;
+            if (s->end) {
+                complete = true;
+                break;
+            }
+        }
+        if (!complete)
+            continue;
+        Stair st;
+        st.steps = count;
+        st.up = {-dx, -dy};
+        st.bottomEdge = {x, y}; // the bottom step's position is the stair's bottom edge
+        st.direction = directionOf(-dx, -dy);
+        const auto below = st.at(-0.5f), above = st.at(st.length() + 0.5f);
+        const auto lower = levelAt(below[0], below[1], z);
+        const auto upper = levelAt(above[0], above[1], top->position[2] + kRise);
+        if (!lower || !upper || *upper != *lower + 1)
+            continue;
+        st.bottom = {int(std::floor(below[0])), int(std::floor(below[1])), *lower};
+        st.top = {int(std::floor(above[0])), int(std::floor(above[1])), *upper};
+        st.bottomZ = z;
+        st.topZ = top->position[2] + kRise;
+        const bool seen = std::any_of(out.begin(), out.end(), [&](const Stair& o) {
+            return o.bottom == st.bottom && o.top == st.top;
+        });
+        if (!seen)
+            out.push_back(st);
+    }
+    return out;
+}
+
+void World::addStair(const Stair& s) {
+    // The tiles the steps stand on, on the lower level.
+    for (int i = 0; i < s.steps; ++i) {
+        const auto p = s.at(0.125f + 0.25f * float(i));
+        setWalkable({int(std::floor(p[0])), int(std::floor(p[1])), s.bottom.level}, false);
+    }
+    stairs_.push_back(s);
 }
 
 bool World::contains(TilePos t) const {
@@ -268,6 +366,124 @@ bool findPath(const World& world, const BlockedGrid& blocked, TilePos start, con
         out.tiles.push_back({int(k / world.height()), int(k % world.height()), start.level});
     std::reverse(out.tiles.begin(), out.tiles.end());
     out.goal = size_t(goalOf[bestTile]);
+    out.cost = bestTotal;
+    return true;
+}
+
+bool findPath(const World& world, std::span<const BlockedGrid> blocked, TilePos start, int goalLevel,
+              const std::vector<PathGoal>& goals, Path& out, std::vector<int>& stairs) {
+    out = {};
+    stairs.clear();
+    if (!world.contains(start) || goals.empty() || blocked.size() < size_t(world.levelCount()))
+        return false;
+    const size_t n = size_t(world.width()) * world.height();
+    const size_t levels = size_t(world.levelCount());
+    const int first = world.firstLevel();
+    constexpr float kInf = std::numeric_limits<float>::infinity();
+    auto node = [&](TilePos t) { return size_t(t.level - first) * n + world.index(t.x, t.y); };
+    auto tileOf = [&](size_t k) {
+        const size_t i = k % n;
+        return TilePos{int(i / world.height()), int(i % world.height()), first + int(k / n)};
+    };
+    const size_t s0 = node(start);
+    std::vector<float> goalCost(n * levels, kInf);
+    std::vector<int> goalOf(n * levels, -1);
+    std::vector<std::pair<TilePos, float>> goalTiles;
+    for (size_t i = 0; i < goals.size(); ++i) {
+        const TilePos g{goals[i].x, goals[i].y, goalLevel};
+        if (!world.contains(g))
+            continue;
+        const size_t k = node(g);
+        const bool reachable =
+            (g == start) || (world.walkable(g) && !blocked[size_t(goalLevel - first)][world.index(g.x, g.y)]);
+        if (reachable && goals[i].cost < goalCost[k]) {
+            goalCost[k] = goals[i].cost;
+            goalOf[k] = int(i);
+        }
+    }
+    for (size_t k = 0; k < goalOf.size(); ++k)
+        if (goalOf[k] >= 0)
+            goalTiles.push_back({tileOf(k), goalCost[k]});
+    if (goalTiles.empty())
+        return false;
+    // Stair landings by node, both ways.
+    struct Link {
+        size_t to;
+        float cost;
+        int stair;
+    };
+    std::vector<std::vector<Link>> links(n * levels);
+    const auto& all = world.stairs();
+    for (size_t i = 0; i < all.size(); ++i) {
+        const Stair& st = all[i];
+        if (!world.contains(st.bottom) || !world.contains(st.top))
+            continue;
+        const float cost = 1.5f * (st.length() + 1.0f);
+        const size_t a = node(st.bottom), b = node(st.top);
+        links[a].push_back({b, cost, int(i)});
+        links[b].push_back({a, cost, int(i)});
+    }
+    // Octile distance to the nearest goal, ignoring levels (stairs cost more
+    // than the distance they cover, so this stays admissible).
+    auto heuristic = [&](TilePos t) {
+        float best = kInf;
+        for (const auto& [g, c] : goalTiles) {
+            const float dx = float(std::abs(g.x - t.x)), dy = float(std::abs(g.y - t.y));
+            best = std::min(best, std::max(dx, dy) + (float(M_SQRT2) - 1) * std::min(dx, dy) + c);
+        }
+        return best;
+    };
+    std::vector<float> dist(n * levels, kInf);
+    std::vector<int64_t> parent(n * levels, -1);
+    std::vector<int> via(n * levels, -1);
+    std::vector<uint8_t> closed(n * levels, 0);
+    using Entry = std::pair<float, size_t>;
+    std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
+    dist[s0] = 0;
+    open.push({heuristic(start), s0});
+    float bestTotal = kInf;
+    size_t bestNode = 0;
+    auto relax = [&](size_t from, size_t to, float d, int stair) {
+        if (d < dist[to]) {
+            dist[to] = d;
+            parent[to] = int64_t(from);
+            via[to] = stair;
+            open.push({d + heuristic(tileOf(to)), to});
+        }
+    };
+    while (!open.empty()) {
+        const auto [f, k] = open.top();
+        open.pop();
+        if (f >= bestTotal)
+            break;
+        if (closed[k])
+            continue;
+        closed[k] = 1;
+        if (goalOf[k] >= 0 && dist[k] + goalCost[k] < bestTotal) {
+            bestTotal = dist[k] + goalCost[k];
+            bestNode = k;
+        }
+        const TilePos t = tileOf(k);
+        const BlockedGrid& grid = blocked[size_t(t.level - first)];
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                if ((dx || dy) && canStep(world, grid, t, dx, dy))
+                    relax(k, node({t.x + dx, t.y + dy, t.level}), dist[k] + (dx && dy ? float(M_SQRT2) : 1.0f), -1);
+        for (const Link& l : links[k]) {
+            const TilePos to = tileOf(l.to);
+            if (world.walkable(to) && !blocked[size_t(to.level - first)][world.index(to.x, to.y)])
+                relax(k, l.to, dist[k] + l.cost, l.stair);
+        }
+    }
+    if (bestTotal == kInf)
+        return false;
+    for (size_t k = bestNode; k != s0; k = size_t(parent[k])) {
+        out.tiles.push_back(tileOf(k));
+        stairs.push_back(via[k]);
+    }
+    std::reverse(out.tiles.begin(), out.tiles.end());
+    std::reverse(stairs.begin(), stairs.end());
+    out.goal = size_t(goalOf[bestNode]);
     out.cost = bestTotal;
     return true;
 }
