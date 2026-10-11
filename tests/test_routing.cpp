@@ -435,7 +435,7 @@ static void testStairs() {
     Object& sim = vm.instantiate(kGroup, 0x81);
     sim.position = {0.5f, 1.5f, 1};
     // Go To Relative Position: in front of the lamp (direction 0, -X), facing it.
-    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE})}));
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0x04})})); // 0x04: another level
     Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
     std::set<std::string> phases;
     float maxZ = 0;

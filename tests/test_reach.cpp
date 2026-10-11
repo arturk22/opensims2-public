@@ -310,17 +310,17 @@ static void testCreateObject() {
           "in front of an object out of the world: removed again, false");
 }
 
-// Find Location For's byte 3: the directions the object may face.
+// Find Location For's byte 3: the directions the object may NOT face (Mac binary).
 static void testFindLocationFacing() {
     Fixture fx;
     fx.vm.world = World(8, 8);
     fx.vm.object(fx.paper)->data[objdata::Direction] = 0;
-    fx.code.add(kGroup, 0x1001, tree({instr(0x10, T, F, {0, 0, 0, 0x04})}));
+    fx.code.add(kGroup, 0x1001, tree({instr(0x10, T, F, {0, 0, 0, 0xFB})}));
     Thread t = fx.run(0x1001, fx.paper);
-    check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 2, "mask 0x04: it may only face 2");
-    fx.code.add(kGroup, 0x1002, tree({instr(0x10, T, F, {0, 0, 0, 0xFB})}));
+    check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 2, "mask 0xFB: it may only face 2");
+    fx.code.add(kGroup, 0x1002, tree({instr(0x10, T, F, {0, 0, 0, 0x04})}));
     t = fx.run(0x1002, fx.paper);
-    check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 3, "mask 0xFB: 2 is not allowed, 3 is");
+    check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 3, "mask 0x04: 2 is not allowed, 3 is");
     fx.code.add(kGroup, 0x1003, tree({instr(0x10, T, F, {0, 0, 0, 0})}));
     t = fx.run(0x1003, fx.paper);
     check(t.result && fx.vm.object(fx.paper)->data[objdata::Direction] == 3, "mask 0: facing kept");
