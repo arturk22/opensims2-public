@@ -122,11 +122,10 @@ public:
     // docs/routing-mac.md): a cell costs the most of its floor and the
     // rectangles over it.
     void addCost(int level, float x0, float y0, float x1, float y1, float cost);
-    // The cost rectangles of a router (a Sim) at (x, y) facing `direction`
-    // (0-7), standing or walking, as AddBlockerToPathPlanner has them:
-    // standing, half-widths 0.375 (cost 5, twice, pushed 0.125 / 0.09375
-    // forward), 0.25 (7.5; 0.1875 for a small one) and 0.09375 (10); walking,
-    // its tile +- 0.375 at cost 5.
+    // The cost rectangles of a router (a Sim) at (x, y), standing or
+    // walking, as AddBlockerToPathPlanner has them for a human (the binary
+    // looks at neither direction nor age; the arguments stay for pets):
+    // its box grown by 0.375 (cost 5, standing), 0.1875 (7.5), 0.0625 (10).
     void addRouter(int level, float x, float y, int direction, bool walking, bool small = false);
     // Drops the objects and Sims added (the walls and floors stay).
     void clearObstacles();

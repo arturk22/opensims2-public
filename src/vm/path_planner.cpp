@@ -175,23 +175,22 @@ void PathPlanner::addCost(int level, float x0, float y0, float x1, float y1, flo
             grid[cellIndex(cx, cy)] = std::max(grid[cellIndex(cx, cy)], cost);
 }
 
-void PathPlanner::addRouter(int level, float x, float y, int direction, bool walking, bool small) {
+void PathPlanner::addRouter(int level, float x, float y, int, bool walking, bool) {
+    // A human's rectangles (docs/routing-mac.md §5, round 9): the router's
+    // box grown by 0.375 (cost 5, standing only), 0.1875 (7.5) and 0.0625
+    // (10), whatever its direction or age. The box: its tile while it walks
+    // (the walking rectangle of §5), its position standing (inferred: the
+    // box of a standing Sim taken as a point).
+    float x0 = x, y0 = y, x1 = x, y1 = y;
     if (walking) {
-        const float tx = std::floor(x), ty = std::floor(y);
-        addCost(level, tx - 0.375f, ty - 0.375f, tx + 1.375f, ty + 1.375f, 5.0f);
-        return;
+        x0 = std::floor(x), y0 = std::floor(y);
+        x1 = x0 + 1, y1 = y0 + 1;
     }
-    const auto [sx, sy] = directionStep(direction);
-    const float n = std::max(1.0f, std::hypot(float(sx), float(sy)));
-    const float fx = float(sx) / n, fy = float(sy) / n;
-    auto square = [&](float half, float forward, float cost) {
-        const float cx = x + fx * forward, cy = y + fy * forward;
-        addCost(level, cx - half, cy - half, cx + half, cy + half, cost);
-    };
-    square(0.375f, 0.125f, 5.0f);
-    square(0.375f, 0.09375f, 5.0f);
-    square(small ? 0.1875f : 0.25f, 0, 7.5f);
-    square(0.09375f, 0, 10.0f);
+    auto grown = [&](float by, float cost) { addCost(level, x0 - by, y0 - by, x1 + by, y1 + by, cost); };
+    if (!walking)
+        grown(0.375f, 5.0f);
+    grown(0.1875f, 7.5f);
+    grown(0.0625f, 10.0f);
 }
 
 float PathPlanner::uniform(float hi) {
