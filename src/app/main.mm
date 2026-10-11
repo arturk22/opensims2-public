@@ -68,6 +68,7 @@
 #include "camera_input.hpp"
 #include "lot_vm.hpp"
 #include "vm_objects.hpp"
+#include "lot_lighting.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -288,6 +289,8 @@ std::unique_ptr<os2::ResourceIndex> gIndex;
 std::unique_ptr<os2::LotSimulation> gSimulation;
 // The lot's objects drawn where the VM puts them (app/vm_objects.hpp).
 std::unique_ptr<os2::VmObjectView> gObjectView;
+// The lot's lights from the VM: the clock's day/night, rooms, lamps (app/lot_lighting.hpp).
+std::unique_ptr<os2::LotLighting> gLighting;
 struct LotSim {
     os2::SimActor* actor;
     int16_t id; // object ID (the cObject's instance)
@@ -356,6 +359,22 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     }
     for (const auto& s : gLotSims)
         gObjectView->addSim(s.id, s.actor);
+    try {
+        const fs::path lights = gameDir() / "TSData/Res/Lights";
+        gLighting = std::make_unique<os2::LotLighting>(renderer, index, *gSimulation, *gObjectView,
+                                                       os2::loadLightingConfig(lights / "Lighting.txt"),
+                                                       os2::loadLightOverrides(lights / "LotLights.txt"));
+        for (const auto& s : gLotSims)
+            gLighting->addSim(s.id, s.actor);
+        // --lighting <state> keeps that state instead of the clock's.
+        if (auto state = argument(@"--lighting"))
+            gLighting->forceState(*state);
+        // --lamps <0-100>: test aid, lamps Change Light has not touched shine at that level.
+        if (auto lamps = argument(@"--lamps"))
+            gLighting->setDefaultLampLevel(std::stoi(*lamps));
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: lighting: %s\n", e.what());
+    }
     // A Sim that changes clothes gets the outfit of its character file.
     gSimulation->onOutfitChange = [&renderer, &index](int16_t id, os2::SimActor& actor, uint32_t category) {
         static std::vector<os2::SimPart> parts;
@@ -693,6 +712,8 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     choosePlumbob(renderer);
     if (gObjectView)
         gObjectView->update();
+    if (gLighting)
+        gLighting->update(seconds);
     for (auto& a : gActors) {
         if (isObject(a.get()))
             a->update(seconds);

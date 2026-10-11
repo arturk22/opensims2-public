@@ -71,9 +71,44 @@ public:
     // Removes the checkered test floor and axis markers (e.g. when a lot is shown).
     void hideTestScene();
 
-    // Outdoor direct lighting from one of the game's lighting states:
-    // skylight as ambient plus its object lights (see LightingState).
+    // Lights for groups of instances (light set 0 is the default): an
+    // ambient colour and up to 8 directional lights, as the game gives each
+    // object the lights of its room and group (docs/lighting-mac.md).
+    struct LightSet {
+        struct Directional {
+            simd_float3 direction; // unit, towards the light
+            simd_float3 color;     // times intensity
+        };
+        simd_float3 ambient{0, 0, 0};
+        std::vector<Directional> lights;
+    };
+    static constexpr size_t kMaxLightSets = 256;
+    // Replaces every light set (set 0 included).
+    void setLightSets(std::vector<LightSet> sets);
+    void setInstanceLightSet(int instance, int set);
+    // The first instance of a model, or -1 (a Sim's actor has one).
+    int instanceOf(int model) const;
+
+    // Outdoor direct lighting from one of the game's lighting states, as
+    // light sets 0 (objects) and 1 (Sims): see outdoorLights.
     void setLighting(const LightingState& state);
+    // The game's outdoor lights of a state (docs/lighting-mac.md 3): the
+    // skylight (colour x strength) as ambient, and each light's colour
+    // minus the skylight, times its intensity. simFill lights only light
+    // Sims; when there are any, fill1/fill2 do not light Sims.
+    static LightSet outdoorLights(const LightingState& state, bool sims);
+
+    // Lights of the lot's lamps (point lights), in world space: the colour
+    // times intensity, falling off as 1 / (1 + falloff * r^2) up to `range`
+    // (the vertex shader of docs/shaders-mac.md 4.2). At most kMaxPointLights.
+    struct PointLight {
+        simd_float3 position;
+        simd_float3 color;
+        float falloff = 1;
+        float range = 20;
+    };
+    static constexpr size_t kMaxPointLights = 32;
+    void setPointLights(std::vector<PointLight> lights) { points_ = std::move(lights); }
 
     // Clock for texture coordinate animations, in seconds; until it is set
     // (or after setting it negative) the renderer uses its own running time.
@@ -125,15 +160,13 @@ private:
     struct Instance {
         int model;
         simd_float4x4 transform;
+        int lightSet = 0;
     };
     std::vector<Instance> instances_;
     size_t testInstances_ = 0; // the first instances_ are the test scene
-    struct DirLight {
-        simd_float3 direction; // unit, towards the light
-        simd_float3 color;     // times intensity
-    };
-    simd_float3 ambient_{0.45f, 0.45f, 0.45f};
-    std::vector<DirLight> lights_;
+    std::vector<LightSet> lightSets_;
+    std::array<MTL::Buffer*, kFramesInFlight> lightBuffers_{};
+    std::vector<PointLight> points_;
     std::array<MTL::Buffer*, kFramesInFlight> frames_{};
     void* inFlight_; // dispatch_semaphore_t, opaque so ARC in the app shell leaves it alone
     int frame_ = 0;

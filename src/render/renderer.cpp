@@ -54,6 +54,7 @@ enum : uint32_t {
     kCelEdge = 8192,
     kVertexColor = 16384,
     kOverlay3 = 32768,
+    kLightMapped = 65536,
 };
 
 struct Draw {
@@ -67,6 +68,7 @@ struct Draw {
     simd_float4 misc;
     float alphaRef;
     uint32_t flags;
+    uint32_t lightSet;
 };
 
 // Height map to normal: height difference per texel times this (inferred;
@@ -80,16 +82,31 @@ struct Light {
     simd_float4 color;
 };
 
+struct GpuPointLight {
+    simd_float4 position; // xyz, w: range squared
+    simd_float4 color;    // rgb times intensity, w: falloff
+};
+
+struct GpuLightSet {
+    simd_float4 ambient; // rgb, w: light count (as float)
+    Light lights[kMaxLights];
+};
+
 struct Frame {
     simd_float4x4 viewProj;
     simd_float4x4 view;
     simd_float4 eye;
-    simd_float4 ambient;
-    Light lights[kMaxLights];
-    uint32_t lightCount;
+    GpuPointLight points[Renderer::kMaxPointLights];
+    uint32_t pointCount;
 };
 
 simd_float4x4 identity() { return matrix_identity_float4x4; }
+
+std::string lowerAsciiName(std::string s) {
+    for (auto& c : s)
+        c = char(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
 
 // Unit cube [0,1]^3 scaled to `size` with its base centered on `base`.
 simd_float4x4 box(simd_float3 base, simd_float3 size) {
@@ -245,7 +262,10 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
 
     queue_ = device_->newCommandQueue();
     // Until setLighting: soft grey ambient and one light from above.
-    lights_.push_back({simd_normalize(simd_make_float3(0.4f, 0.6f, 1.0f)), simd_make_float3(0.55f, 0.55f, 0.55f)});
+    LightSet initial;
+    initial.ambient = simd_make_float3(0.45f, 0.45f, 0.45f);
+    initial.lights.push_back({simd_normalize(simd_make_float3(0.4f, 0.6f, 1.0f)), simd_make_float3(0.55f, 0.55f, 0.55f)});
+    lightSets_ = {initial, initial};
 
     NS::Error* error = nullptr;
     MTL::Library* library = device_->newLibrary(str(kShaderSource), nullptr, &error);
@@ -328,6 +348,8 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     whiteCube_ = whiteCubeTexture(device_);
     for (auto& f : frames_)
         f = device_->newBuffer(sizeof(Frame), MTL::ResourceStorageModeShared);
+    for (auto& b : lightBuffers_)
+        b = device_->newBuffer(sizeof(GpuLightSet) * kMaxLightSets, MTL::ResourceStorageModeShared);
 
     // Test floor (32x32 tiles, top at z = 0) and axis markers: +X red, +Y green, origin white.
     addInstance(addBox({0, 0, -0.05f}, {32, 32, 0.05f}, {0.55f, 0.62f, 0.45f}, kLighting | kChecker), identity());
@@ -358,6 +380,8 @@ Renderer::~Renderer() {
     whiteCube_->release();
     for (auto* f : frames_)
         f->release();
+    for (auto* b : lightBuffers_)
+        b->release();
     pointSampler_->release();
     cubeSampler_->release();
     clampSampler_->release();
@@ -435,14 +459,17 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     if (sm.shading == StandardMaterial::Shading::VertexColor)
         diffuse = simd_make_float3(1, 1, 1);
     mat.color = simd_make_float4(diffuse, alpha);
-    mat.specular = simd_make_float4(sm.specular[0], sm.specular[1], sm.specular[2], sm.specularPower);
+    // The specular pass runs only for a power over 1 and coefficients over
+    // 0.3 in all, with Phong's R.L to the power x 0.4 (docs/shaders-mac.md 4.3).
+    const bool specular = sm.specularPower > 1 && sm.specular[0] + sm.specular[1] + sm.specular[2] > 0.3f;
+    mat.specular = simd_make_float4(sm.specular[0], sm.specular[1], sm.specular[2], specular ? sm.specularPower * 0.4f : 0);
     mat.emissive = simd_make_float4(sm.emissive[0], sm.emissive[1], sm.emissive[2], 0);
     mat.blend = sm.blend;
     mat.depthWrite = sm.depthWrite;
     mat.layer = sm.layer;
     mat.clamp = sm.clampU || sm.clampV;
     mat.alphaRef = sm.alphaRef;
-    mat.flags = (sm.lighting ? kLighting : 0) | (sm.alphaTest ? kAlphaTest : 0) |
+    mat.flags = (sm.lighting ? kLighting : 0) | (sm.lightMapped ? kLightMapped : 0) | (sm.alphaTest ? kAlphaTest : 0) |
                 (sm.alphaReplicate ? kAlphaReplicate : 0) | (sm.textureColor ? 0 : kAlphaOnly);
     mat.cull = sm.cull == StandardMaterial::Cull::None             ? MTL::CullModeNone
                : sm.cull == StandardMaterial::Cull::CounterClockwise ? MTL::CullModeFront
@@ -599,18 +626,49 @@ void Renderer::hideTestScene() {
     testInstances_ = 0;
 }
 
-void Renderer::setLighting(const LightingState& state) {
-    ambient_ = simd_make_float3(state.skyColor[0], state.skyColor[1], state.skyColor[2]) * state.skyStrength;
-    lights_.clear();
-    for (const auto& l : state.objectLights()) {
+Renderer::LightSet Renderer::outdoorLights(const LightingState& state, bool sims) {
+    LightSet set;
+    const simd_float3 sky = simd_make_float3(state.skyColor[0], state.skyColor[1], state.skyColor[2]) * state.skyStrength;
+    set.ambient = sky;
+    bool simFill = false;
+    for (const auto& l : state.lights)
+        simFill = simFill || lowerAsciiName(l.name).starts_with("simfill");
+    for (const auto& l : state.lights) {
+        const std::string name = lowerAsciiName(l.name);
+        if (name.starts_with("simfill") ? !sims : sims && simFill && (name == "fill1" || name == "fill2"))
+            continue;
         const simd_float3 dir = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
         if (simd_length(dir) == 0)
             continue;
-        lights_.push_back({simd_normalize(dir), simd_make_float3(l.color[0], l.color[1], l.color[2]) * l.intensity});
+        const simd_float3 color = simd_max(simd_make_float3(l.color[0], l.color[1], l.color[2]) - sky, 0);
+        set.lights.push_back({simd_normalize(dir), color * l.intensity});
     }
-    if (lights_.size() > kMaxLights)
-        std::fprintf(stderr, "opensims2: lighting %s: only the first %zu of %zu lights are used\n",
-                     state.name.c_str(), kMaxLights, lights_.size());
+    return set;
+}
+
+void Renderer::setLighting(const LightingState& state) {
+    if (lightSets_.size() < 2)
+        lightSets_.resize(2);
+    lightSets_[0] = outdoorLights(state, false);
+    lightSets_[1] = outdoorLights(state, true);
+}
+
+void Renderer::setLightSets(std::vector<LightSet> sets) {
+    if (sets.size() > kMaxLightSets)
+        sets.resize(kMaxLightSets);
+    lightSets_ = std::move(sets);
+}
+
+void Renderer::setInstanceLightSet(int instance, int set) {
+    if (instance >= 0 && size_t(instance) < instances_.size())
+        instances_[size_t(instance)].lightSet = std::max(0, set);
+}
+
+int Renderer::instanceOf(int model) const {
+    for (size_t i = 0; i < instances_.size(); ++i)
+        if (instances_[i].model == model)
+            return int(i);
+    return -1;
 }
 
 int Renderer::addInstance(int model, const simd_float4x4& transform) {
@@ -646,10 +704,19 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     f->viewProj = simd_mul(view.projection, view.view);
     f->view = view.view;
     f->eye = simd_inverse(view.view).columns[3];
-    f->ambient = simd_make_float4(ambient_, 0);
-    f->lightCount = uint32_t(std::min(lights_.size(), kMaxLights));
-    for (uint32_t i = 0; i < f->lightCount; ++i)
-        f->lights[i] = {simd_make_float4(lights_[i].direction, 0), simd_make_float4(lights_[i].color, 0)};
+    auto* sets = static_cast<GpuLightSet*>(lightBuffers_[size_t(frame_)]->contents());
+    for (size_t i = 0; i < lightSets_.size() && i < kMaxLightSets; ++i) {
+        const LightSet& ls = lightSets_[i];
+        const size_t n = std::min(ls.lights.size(), kMaxLights);
+        sets[i].ambient = simd_make_float4(ls.ambient, float(n));
+        for (size_t k = 0; k < n; ++k)
+            sets[i].lights[k] = {simd_make_float4(ls.lights[k].direction, 0), simd_make_float4(ls.lights[k].color, 0)};
+    }
+    f->pointCount = uint32_t(std::min(points_.size(), kMaxPointLights));
+    for (uint32_t i = 0; i < f->pointCount; ++i) {
+        const PointLight& p = points_[i];
+        f->points[i] = {simd_make_float4(p.position, p.range * p.range), simd_make_float4(p.color, p.falloff)};
+    }
 
     // The GPU is done with this slot's buffers: bring dynamic vertices up to date.
     for (auto& m : models_)
@@ -667,6 +734,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     enc->setFrontFacingWinding(MTL::WindingCounterClockwise);
     enc->setVertexBuffer(frames_[frame_], 0, 2);
     enc->setFragmentBuffer(frames_[frame_], 0, 2);
+    enc->setFragmentBuffer(lightBuffers_[size_t(frame_)], 0, 3);
     enc->setFragmentSamplerState(sampler_, 0);
     enc->setFragmentSamplerState(maskSampler_, 1);
     enc->setFragmentSamplerState(cubeSampler_, 2);
@@ -713,8 +781,9 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                                                                                    : opaque_);
         enc->setCullMode(m.cull);
         const auto [uv0, uv1] = uvTransform(m.anim, t);
+        const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
         Draw d{item.inst->transform, m.color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
-               m.alphaRef, m.flags};
+               m.alphaRef, m.flags, uint32_t(set)};
         enc->setVertexBytes(&d, sizeof d, 1);
         enc->setFragmentBytes(&d, sizeof d, 1);
         enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);

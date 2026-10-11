@@ -81,6 +81,13 @@ public:
     // (itself when it is in no slot).
     int16_t outermostContainer(int16_t id) const;
 
+    // Every object drawn here: its ID, renderer instance (-1 if none) and
+    // actor (null unless the VM animates it).
+    void forEachDrawn(const std::function<void(int16_t id, int instance, SimActor* actor)>& fn) const {
+        for (const auto& [id, d] : drawn_)
+            fn(id, d.instance, d.actor);
+    }
+
     // Where an object is drawn (its model's origin), if it is drawn.
     std::optional<Xform> placement(int16_t id);
 

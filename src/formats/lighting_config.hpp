@@ -34,6 +34,23 @@ struct LightingState {
     std::array<float, 3> skyColor{0, 0, 0};
     float skyStrength = 0;
     std::vector<Light> lights; // in file order; redefining a name replaces it
+    // `modifiers <type> <practical> <diffusion> [<practical falloff> <diffusion falloff>]`:
+    // how strongly lights of a kind ("insideObjects", "outsideObjects",
+    // "insidePortals", ...) light objects (practical) and the light maps
+    // (diffusion), by lowercased type.
+    struct Modifier {
+        float practical = 1, diffusion = 1, practicalFalloff = 1, diffusionFalloff = 1;
+    };
+    std::map<std::string, Modifier> modifiers;
+    // `unlitRoomColor (colour) [-threshold t]`: extra ambient for rooms
+    // darker than the threshold, in file order.
+    struct UnlitRoom {
+        std::array<float, 3> color{0, 0, 0};
+        float threshold = 0;
+    };
+    std::vector<UnlitRoom> unlitRooms;
+    // `transitionTimes <max in> <max out>`, seconds.
+    float transitionIn = 0, transitionOut = 0;
 
     // Lights for objects: everything except the Sim-only fills ("simFill*",
     // by name; inferred).
@@ -49,5 +66,21 @@ struct LightingConfig {
 
 LightingConfig parseLightingConfig(std::string_view text);
 LightingConfig loadLightingConfig(const std::filesystem::path& path);
+
+// Per-light overrides of the lights in the objects' models
+// (Res/Lights/LotLights.txt and the files it `sinclude`s, mostly
+// objects/lightObjects.txt and objects/colors.txt): macros
+//
+//   define Four(lightName)
+//       lightAttribOverride &lightName intensity 1
+//   enddef
+//   create Four(lightingWallValue_light)
+//
+// and plain `lightAttribOverride <light> <attribute> <value>` lines. By
+// lowercased light name, then lowercased attribute: the value's numbers
+// (one, or three for a colour).
+using LightOverrides = std::map<std::string, std::map<std::string, std::vector<float>>>;
+LightOverrides parseLightOverrides(std::string_view text, const std::filesystem::path& includeDir = {});
+LightOverrides loadLightOverrides(const std::filesystem::path& lotLightsFile);
 
 } // namespace os2

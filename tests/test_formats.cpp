@@ -282,6 +282,30 @@ end
         check(objects.size() == 2 && objects[1].name == "fill1" && objects[1].direction[2] == -1,
               "object lights skip simFill");
     }
+    if (day) {
+        auto it = day->modifiers.find("insideportals");
+        check(it != day->modifiers.end() && it->second.practical == 0.5f && it->second.practicalFalloff == 1.3f,
+              "lighting modifiers");
+    }
+    const auto overrides = parseLightOverrides(R"(define Four(lightName)
+	lightAttribOverride &lightName intensity 1
+	lightAttribOverride &lightName falloffRate 1 # comment
+enddef
+define Amber(lightName)
+        lightAttribOverride &lightName color (1,0.9,0.76)
+enddef
+create Four(lightingWallValue_light)
+create Amber(lightingWallValue_light)
+lightAttribOverride gardenUplight coneAngle 35
+)");
+    {
+        auto it = overrides.find("lightingwallvalue_light");
+        check(it != overrides.end() && it->second.count("intensity") && it->second.at("intensity")[0] == 1 &&
+                  it->second.count("color") && it->second.at("color").size() == 3 && it->second.at("color")[1] == 0.9f,
+              "light overrides from macros");
+        check(overrides.count("gardenuplight") && overrides.at("gardenuplight").at("coneangle")[0] == 35,
+              "plain light override");
+    }
     const LightingState* np = cfg.state("dayNoPortals");
     check(np && np->parent == "day" && np->skyStrength == 0.5f && np->lights.size() == 3 &&
               np->lights[0].intensity == 1 && np->lights[0].direction[2] == 1,

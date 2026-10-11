@@ -309,6 +309,7 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     } else if (type.rfind("Wallpaper", 0) == 0 || type.rfind("Floor", 0) == 0) {
         // Walls and floors are lit by light maps in their own shaders, with no specular.
         out.specularPower = 0;
+        out.lightMapped = true;
     } else if (type == "TextureAlpha") {
         out.lighting = false;
         out.blend = StandardMaterial::Blend::Alpha;
@@ -371,6 +372,8 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         out.layer = int(number("csMatLayer", 0)) * 8;
     // WallMask parts are the shapes doors and windows cut out of walls.
     out.visible = type != "Null" && type != "WallMask";
+    if (flag("osLightMapped", false)) // the lot terrain's materials, built in code
+        out.lightMapped = true;
     return out;
 }
 

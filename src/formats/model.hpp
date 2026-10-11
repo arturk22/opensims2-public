@@ -113,6 +113,10 @@ struct StandardMaterial {
     bool depthWrite = true;           // blended parts only write depth when this is set (Sim hair)
     Cull cull = Cull::Clockwise;
     bool lighting = true;
+    // Walls, floors and terrain: the game lights them only with its light
+    // maps (2 x texture x light map; no direct lights, docs/shaders-mac.md
+    // sections 5-7), which are not computed yet.
+    bool lightMapped = false;
     // Draw order: stdMatLayer x 8, +7 when blended (+3 for blended Sim hair);
     // walls and floors 0, water 5. Lower layers are drawn first.
     int layer = 0;

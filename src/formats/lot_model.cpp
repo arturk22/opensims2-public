@@ -83,7 +83,7 @@ std::optional<uint32_t> parseGuid(const std::string& s) {
 MaterialDefinition terrainMaterial(const std::string& texture, bool blended) {
     MaterialDefinition m;
     m.materialType = "StandardMaterial";
-    m.properties = {{"stdMatBaseTextureName", texture}, {"stdMatDiffCoef", "0.8,0.8,0.8,1"}};
+    m.properties = {{"stdMatBaseTextureName", texture}, {"stdMatDiffCoef", "0.8,0.8,0.8,1"}, {"osLightMapped", "true"}};
     if (blended)
         m.properties.emplace_back("stdMatAlphaBlendMode", "blend");
     return m;
@@ -458,7 +458,7 @@ std::vector<WallHole> findWallHoles(const Lot& lot, ResourceIndex& index, std::v
 MaterialDefinition roofMaterial(const std::string& texture, const std::string& bump) {
     MaterialDefinition m;
     m.materialType = "Floor";
-    m.properties = {{"stdMatBaseTextureName", texture}, {"stdMatDiffCoef", "0.8,0.8,0.8,1"}};
+    m.properties = {{"stdMatBaseTextureName", texture}, {"stdMatDiffCoef", "0.8,0.8,0.8,1"}, {"osLightMapped", "true"}};
     if (!bump.empty())
         m.properties.insert(m.properties.end(), {{"stdMatNormalMapTextureEnabled", "true"},
                                                  {"stdMatNormalMapTextureName", bump}});

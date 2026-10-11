@@ -128,7 +128,7 @@ int main() {
         ObjectModel grey;
         grey.name = "grey";
         grey.parts.push_back({"n", "s", "grey", quad(2)});
-        MaterialDefinition m = material("0.8,0.4,2", "none", "1");
+        MaterialDefinition m = material("0.8,0.4,4", "none", "1");
         for (auto& [k, v] : m.properties)
             if (k == "stdMatLightingEnabled")
                 v = "1";
@@ -137,8 +137,11 @@ int main() {
         lit.addInstance(lit.addObject(grey, index), matrix_identity_float4x4);
         img = lit.capture(64, 64, view, clear);
         p = center(img);
-        // 0.8 * (0.25 + 0.25) = 0.4; 0.1 + 0.4 * 0.5 = 0.3; 2 * 0.5 saturates at 1.
-        check(near(p[0], 102) && near(p[1], 77) && p[2] == 255, "diffuse, emissive and saturation");
+        // The game's DX8 path (docs/shaders-mac.md 4.2, lighting-mac.md 3): the sun's colour less the
+        // skylight, (1 - 0.25) * 0.25 = 0.1875, plus the skylight 0.25 = 0.4375; colour =
+        // saturate(2 * tex * saturate(0.5 * (diffuse * light + emissive))): red 0.8 * 0.4375 = 0.35,
+        // green 0.4 * 0.4375 + 0.1 = 0.275, blue 4 * 0.4375 = 1.75 saturates (at 2 inside, 1 out).
+        check(near(p[0], 89) && near(p[1], 70) && p[2] == 255, "diffuse, emissive and saturation");
     }
 
     // Blended parts are drawn back to front whatever order they were added in.
