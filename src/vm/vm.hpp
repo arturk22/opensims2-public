@@ -483,6 +483,7 @@ struct Object {
         // Sim in the way: no walk animation).
         std::vector<std::array<float, 3>> goals;
         std::vector<int> facings;
+        std::vector<int16_t> multi; // the goals' multi slot indices (person data 38), when any
         std::vector<ObjectId> ignore;
         int blockedTicks = 0, replans = 0;
         bool waiting = false;
@@ -722,6 +723,7 @@ public:
         std::vector<std::array<float, 2>> points;
         std::vector<int> facings;
         bool onTarget = false; // the goal is on the target's own tile (its parts do not block it)
+        std::vector<int16_t> multi; // each goal's "multi slot index" (its bone in a bone slot), when any
         // With `evaluate`: the route result of the last candidate turned down
         // (EvalTileForGoal, routing.cpp), for when none is left; 0 if none was.
         int16_t refused = 0;
@@ -733,6 +735,7 @@ public:
     struct SlotBone {
         float x = 0, y = 0, z = 0;
         int facing = 0;
+        int16_t index = 0; // in the slot's list: the goal's "multi slot index" (person data 38)
     };
     std::vector<SlotBone> slotBones(const Slots::Slot& slot, const Object& target);
     std::optional<std::array<float, 3>> slotBone(const Slots::Slot& slot, const Object& target);

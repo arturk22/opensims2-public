@@ -69,7 +69,7 @@ std::vector<VM::SlotBone> VM::slotBones(const Slots::Slot& slot, const Object& t
     const std::string list = names->get(slot.ts2Extra[0], lang::EnglishUS);
     const std::vector<Xform> world = sk->world(sk->restPose());
     size_t start = 0;
-    while (start <= list.size()) {
+    for (int16_t index = 0; start <= list.size(); ++index) {
         size_t end = list.find(',', start);
         if (end == std::string::npos)
             end = list.size();
@@ -89,7 +89,7 @@ std::vector<VM::SlotBone> VM::slotBones(const Slots::Slot& slot, const Object& t
         int turn = 0; // counter-clockwise eighths
         if (std::hypot(fwd[0], fwd[1]) > 1e-3f)
             turn = int(std::lround(std::atan2(-fwd[0], fwd[1]) / (M_PI / 4)));
-        out.push_back({x.t[0], x.t[1], x.t[2], (((8 - turn) % 8) + 8) % 8});
+        out.push_back({x.t[0], x.t[1], x.t[2], (((8 - turn) % 8) + 8) % 8, index});
     }
     return out;
 }

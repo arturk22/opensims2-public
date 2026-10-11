@@ -90,6 +90,7 @@ public:
         kWall = 0x01,     // an axis-aligned wall or fence
         kNoFloor = 0x02,  // out of the lot, nothing to stand on, steep or under water
         kObject = 0x04,
+        kObjectCore = 0x08, // inside an object's footprint itself, not only its inflation
         kDiagonal = 0x10, // a diagonal wall
         kDoor = 0x20,     // a door's opening (the door is a portal)
         kStatic = kWall | kNoFloor | kDiagonal | kDoor,

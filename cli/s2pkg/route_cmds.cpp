@@ -110,6 +110,18 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
         throw std::runtime_error("no object \"" + objectQuery + "\"");
     vm::Object& s = *machine.object(sim);
     const vm::Object& o = *machine.object(object);
+    // S2PKG_ROUTE_AT=x,y,level: the Sim starts there instead (out of any slot).
+    if (const char* at = std::getenv("S2PKG_ROUTE_AT")) {
+        float x = 0, y = 0;
+        int level = 1;
+        if (std::sscanf(at, "%f,%f,%d", &x, &y, &level) >= 2) {
+            s.position = {x, y, level};
+            s.data[vm::objdata::ContainerId] = 0;
+            s.data[vm::objdata::SlotNumber] = -1;
+            if (machine.world)
+                s.data[vm::objdata::Room] = machine.world->room(vm::VM::tileOf(s));
+        }
+    }
     std::printf("Sim %d %s at (%.2f, %.2f, %d); object %d %s at (%.2f, %.2f, %d), direction %d\n", sim, nameOf(s).c_str(),
                 s.position.x, s.position.y, s.position.level, object, nameOf(o).c_str(), o.position.x, o.position.y,
                 o.position.level, o.data[vm::objdata::Direction]);
@@ -147,7 +159,9 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
             std::printf("      after EvalTileForGoal: %zu goals%s\n", ev.goals.size(),
                         ev.refused ? (", last refused: route result " + std::to_string(ev.refused)).c_str() : "");
             if (const auto bp = machine.slotBone(sl, o))
-                std::printf("      bone at (%.2f, %.2f, %.2f) in model space\n", (*bp)[0], (*bp)[1], (*bp)[2]);
+                std::printf("      bone \"%s\" at (%.2f, %.2f, %.2f) in model space\n",
+                            code.strings(o.group, 0x90) ? code.strings(o.group, 0x90)->get(sl.ts2Extra[0], lang::EnglishUS).c_str() : "?",
+                            (*bp)[0], (*bp)[1], (*bp)[2]);
             std::printf("      raw: stand %d sit %d ground %d snap %d prox %d/%d/%d maxSize %d u10 %d grad %.2f height %d facing %d res %d extra %08X %08X\n",
                         sl.standing, sl.sitting, sl.ground, sl.snapTargetSlot, sl.minProximity, sl.maxProximity,
                         sl.optimalProximity, sl.maxSize, sl.unknown10, sl.gradient, sl.height, sl.facing, sl.resolution,

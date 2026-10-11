@@ -269,9 +269,14 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
             add(px, py, 0);
             return out;
         }
-        auto addFacing = [&](float px, float py, float cost, int facing) {
-            if (add(px, py, cost))
-                out.facings.back() = facing;
+        // Each goal keeps its bone's index in the slot's list, the goal's
+        // multi slot index (+0x14; person data 38 once the way is planned).
+        auto addFacing = [&](float px, float py, float cost, int facing, int16_t multi) {
+            if (!add(px, py, cost))
+                return;
+            out.facings.back() = facing;
+            out.multi.resize(out.goals.size() - 1, 0);
+            out.multi.push_back(multi);
         };
         bool first = true;
         for (const SlotBone& b : bones) {
@@ -279,7 +284,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
             if (first)
                 out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
             first = false;
-            addFacing(px, py, 0, (objDir + b.facing) % 8);
+            addFacing(px, py, 0, (objDir + b.facing) % 8, b.index);
         }
         // Ours, not the binary's: points half a tile and three quarters out
         // around each bone's point, on the target's side of any wall, each
@@ -297,7 +302,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                         const TilePos t{int(std::floor(qx)), int(std::floor(qy)), out.level};
                         if (!world->contains(t) || !world->lineOfSight(centre, t))
                             continue;
-                        addFacing(qx, qy, 1 + r, (objDir + b.facing) % 8);
+                        addFacing(qx, qy, 1 + r, (objDir + b.facing) % 8, b.index);
                     }
             }
         return out;
@@ -817,6 +822,11 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
         prev = {wp.x, wp.y};
     }
     r.facing = r.facings.empty() ? -1 : r.facings[path.goal];
+    // Person data 38 "route multi slot index": which of a bone slot's places
+    // the way goes to (the goal's +0x14 in the binary; "Sofa - Animate - Get
+    // In" reads it as the seat, the dining chairs as the side to sit from).
+    if (me.person && path.goal < r.multi.size())
+        me.person->data[38] = r.multi[path.goal];
     return true;
 }
 
@@ -1461,6 +1471,7 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
     for (size_t i = 0; i < goals.goals.size(); ++i)
         r.goals.push_back({goals.points[i][0], goals.points[i][1], goals.goals[i].cost});
     r.facings = goals.facings;
+    r.multi = goals.multi;
     r.level = goals.level;
     r.ignore = {me.id};
     if (goals.onTarget)
@@ -1558,8 +1569,8 @@ const Slots::Slot& routingSlot(VM& vm, const Object& target, bool global, int in
 // The routing person data the trees read after a Go To Routing Slot (labels
 // of STR# 0xC8): 37 "route slot" (the routing slot number), 38 "route multi
 // slot index" (which of the places the slot gives was taken; "Sofa -
-// Animate - Get In" passes it on as the seat; here always 0: the goals of a
-// slot are not told apart yet) and 40 "route goal" (the object). Inferred
+// Animate - Get In" passes it on as the seat; 0 here, then the bone of a
+// bone slot the planned way goes to) and 40 "route goal" (the object). Inferred
 // from the labels and those uses; 39 "route status" is left alone.
 void noteRouteSlot(Object& me, int slot, ObjectId target) {
     if (!me.person)

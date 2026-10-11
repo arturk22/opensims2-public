@@ -155,6 +155,8 @@ void PathPlanner::addObstacle(int level, float x0, float y0, float x1, float y1,
         return;
     stamp(cells_[size_t(level - world_->firstLevel())], x0 - kInflation, y0 - kInflation, x1 + kInflation,
           y1 + kInflation, kind);
+    if (kind == kObject)
+        stamp(cells_[size_t(level - world_->firstLevel())], x0, y0, x1, y1, kObjectCore);
 }
 
 void PathPlanner::clearObstacles() {
@@ -346,7 +348,9 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
         }
         out.escaped = true;
     }
-    // The goals: free points; one only crowded by a wall or a floor's edge
+    // The goals: free points; one only crowded by a wall, a floor's edge or
+    // an object's inflation (a bone slot's place right against a table:
+    // EvalTileForGoal already turned down the goals on an object's tile)
     // moves to a free point next to it, and the walker steps onto the exact
     // goal at the end.
     struct Goal {
@@ -363,7 +367,7 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
             usable.push_back({g, g, goals[i].cost, i});
             continue;
         }
-        if (bits & kObject)
+        if (bits & kObjectCore)
             object = true;
         else if (!(bits & kNoFloor)) {
             Point2 near{};

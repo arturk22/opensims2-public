@@ -591,6 +591,11 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
     auto [treeGroup, tree] = machine.resolveTree(object, instance);
     if (!tree)
         throw std::runtime_error("tree not found");
+    // S2PKG_BHAV_LIST=1: the tree's listing instead of running it.
+    if (std::getenv("S2PKG_BHAV_LIST")) {
+        std::printf("%s (group 0x%08X)\n%s", tree->fileName.c_str(), treeGroup, tree->disassemble().c_str());
+        return 0;
+    }
     vm::Thread t = startStandIn(machine, users, object, treeGroup, instance, args, *tree);
     if (t.status == vm::Thread::Status::Running && t.stack.back().group != group)
         std::fprintf(stderr, "warning: tree resolved in group 0x%08X\n", t.stack.back().group);
