@@ -64,16 +64,33 @@ namespace {
 // for the renderer, and the primitive returns at once: true, or false when
 // the target does not exist or is not in the world (the idle trees go on
 // either way). Inferred.
+//
+// The Mac binary's disassembler (docs/primitives-mac.md §5) names the flags
+// of byte 0 for node version 1 (415 of the 480 uses; version 0, with a u16
+// at 4, is converted by the game in a way not known, so it is read as
+// above): 0x01 STOP (the Sim stops looking: done here), 0x80 the camera is
+// the target (nothing recorded here), 0x02 no early exit, 0x04 including
+// the spine, 0x08 speed in temp 1, 0x10 the duration is in temp 0 (done; in
+// the same unit as u16 6, inferred), 0x20 ignoring the room, 0x40 ignoring
+// the frustum; the slot byte 8 of type s8 14, an event tree u16 9 with its
+// place s8 11, byte 15 (speeds back in temps 1/2, not hurryable).
 Exit lookAt(Context& c) {
     const auto& o = c.instruction.operands;
     Object& me = c.me();
+    const uint8_t flags = c.instruction.nodeVersion >= 1 ? o[0] : 0;
+    if (flags & 0x01) {
+        me.lookAt.reset();
+        return Exit::True;
+    }
+    if (flags & 0x80)
+        return Exit::True;
     const ObjectId target = c.get(o[1], int16_t(le16(&o[2])));
     const Object* x = c.vm.object(target);
     if (!x || (!x->position.inWorld() && !x->data[objdata::ContainerId])) {
         me.lookAt.reset();
         return Exit::False;
     }
-    const int ms = le16(&o[6]);
+    const int ms = flags & 0x10 ? int(c.thread.temps[0]) : int(le16(&o[6]));
     me.lookAt = Object::LookAt{target, c.vm.ticks, ms * 30 / 1000};
     return Exit::True;
 }

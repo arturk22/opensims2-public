@@ -905,27 +905,42 @@ Exit arrayOperation(Context& c) {
     }
 }
 
-// Change Material (0x6D): material u8 (index into the code owner's STR#
-// 0x88 "Material Names"), u8 always 0, flags u8 (not understood), mesh group
-// u16 at 3 (index into STR# 0x87 "Mesh Groups", 0xFFFF = all of them), target
-// object (owner u8 at 5, data u16). The change is recorded on the target for
-// the renderer. Bytes 8+ (an owner at 8 that is 0x0A or 0, a u16 at 11 that is
-// 0xFFFF or small) are not understood.
+// Change Material (0x6D), by the Mac binary's disassembler and
+// SwizzleParams (docs/primitives-mac.md §5): material u16 at 0 (an index into
+// STR# 0x88 "Material Names"), flags u8 at 2, mesh group u16 at 3 (into STR#
+// 0x87 "Mesh Groups"; 0xFFFF / negative = the whole model), the object it
+// affects (owner u8 at 5, data u16), an object (owner u8 at 8, data u16 at
+// 9) whose tables are used with flags 0x08 (material names) and 0x01 (mesh
+// group names) instead of the running code's, flags u8 at 13. Flags: 0x10
+// the material index is in temp 0, 0x20 the mesh group index in temp 1;
+// 0x02/0x04 and 0x40/0x80 pick other name tables (which ones is not known:
+// STR# 0x87/0x88 are used), byte 13 0x01 a "Moving Texture" index and 0x02
+// the snapshot material (not done). The change is recorded on the target
+// for the renderer.
 Exit changeMaterial(Context& c) {
     const auto& o = c.instruction.operands;
+    const uint8_t flags = o[2];
     const Object* owner = c.vm.object(c.frame.codeOwner);
     if (!owner)
         throw VMError("code owner does not exist");
-    auto name = [&](uint16_t table, size_t index) {
-        const StringTable* t = c.vm.code().strings(owner->group, table);
-        if (!t || index >= t->count(lang::EnglishUS))
+    const Object* other = nullptr;
+    if (flags & 0x09) {
+        const int16_t id = c.get(o[8], int16_t(le16(&o[9])));
+        other = c.vm.object(id);
+        if (!other)
+            throw gameError(err::NoObject, "Change Material: object " + std::to_string(id));
+    }
+    auto name = [&](const Object& from, uint16_t table, int index) {
+        const StringTable* t = c.vm.code().strings(from.group, table);
+        if (!t || index < 0 || size_t(index) >= t->count(lang::EnglishUS))
             throw VMError("Change Material: no entry " + std::to_string(index) + " in STR# " + hexString(table) +
-                          " of " + hexString(owner->group));
-        return t->get(index, lang::EnglishUS);
+                          " of " + hexString(from.group));
+        return t->get(size_t(index), lang::EnglishUS);
     };
-    const uint16_t group = le16(&o[3]);
-    const std::string material = name(kMaterialStrings, o[0]);
-    const std::string meshGroup = group == 0xFFFF ? "" : name(kMeshGroupStrings, group);
+    const int materialIndex = flags & 0x10 ? c.thread.temps[0] : int(le16(&o[0]));
+    const int group = flags & 0x20 ? c.thread.temps[1] : int(int16_t(le16(&o[3])));
+    const std::string material = name(flags & 0x08 ? *other : *owner, kMaterialStrings, materialIndex);
+    const std::string meshGroup = group < 0 ? "" : name(flags & 0x01 ? *other : *owner, kMeshGroupStrings, group);
     const ObjectId target = c.get(o[5], int16_t(le16(&o[6])));
     Object* x = c.vm.object(target);
     if (!x)

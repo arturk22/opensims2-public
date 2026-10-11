@@ -26,9 +26,8 @@ const Object& operandObject(Context& c, size_t flagAt, size_t at) {
 // Get Distance To (0x0B): temp u16 at 0 := the distance from an object
 // (flags u8 at 2, 0x01: owner u8 at 3, data u16 at 4; else me) to the stack
 // object, in whole tiles, plus 20 per level between them (FreeSO's). With
-// flag 0x02 in byte 6 it is in hundredths of a tile (inferred: the editor
-// writes " in 1/100ths of a tile" after the rest, and byte 6 is the only
-// other byte the trees set, to 0 or 2).
+// flag 0x02 in byte 6 it is in hundredths of a tile (confirmed by the Mac
+// binary's disassembler, docs/primitives-mac.md §5).
 Exit getDistanceTo(Context& c) {
     const auto& o = c.instruction.operands;
     const Object& from = operandObject(c, 2, 3);
@@ -46,13 +45,25 @@ Exit getDistanceTo(Context& c) {
 // Get Direction To (0x0C): (data u16 at 0, owner u16 at 2) := the direction
 // (0-7, as object data "direction") from an object (flags u8 at 4, 0x01:
 // owner u8 at 5, data u16 at 6; else me) to the stack object; 0 when they
-// are on the same point (FreeSO's).
+// are on the same point (FreeSO's). Flag 0x02 of byte 8: in degrees instead
+// (Mac binary's disassembler; no tree uses it), 45 per direction step.
 Exit getDirectionTo(Context& c) {
     const auto& o = c.instruction.operands;
     const Object& from = operandObject(c, 4, 5);
     const Object& to = c.stackObject();
-    const int d = directionOf(to.position.x - from.position.x, to.position.y - from.position.y);
-    c.set(uint8_t(le16(&o[2])), int16_t(le16(&o[0])), int16_t(d < 0 ? 0 : d));
+    const float dx = to.position.x - from.position.x, dy = to.position.y - from.position.y;
+    int16_t value = 0;
+    if (o[8] & 0x02) {
+        // Direction 0 faces -X, 2 +Y, 4 +X, 6 -Y (directionOf).
+        if (dx != 0 || dy != 0) {
+            const double deg = std::atan2(double(dy), double(-dx)) * 180.0 / 3.14159265358979323846;
+            value = int16_t(std::lround(deg < 0 ? deg + 360 : deg) % 360);
+        }
+    } else {
+        const int d = directionOf(dx, dy);
+        value = int16_t(d < 0 ? 0 : d);
+    }
+    c.set(uint8_t(le16(&o[2])), int16_t(le16(&o[0])), value);
     return Exit::True;
 }
 
