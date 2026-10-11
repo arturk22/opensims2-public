@@ -1,0 +1,153 @@
+#include "lot_vm.hpp"
+
+#include "formats/dbpf.hpp"
+#include "formats/lot_objects.hpp"
+#include "formats/resindex.hpp"
+#include "formats/sim_character.hpp"
+#include "vm/animation.hpp"
+#include "vm/lot.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+namespace os2 {
+
+LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& lotPackage,
+                             const std::filesystem::path& lotFile)
+    : index_(index), lot_(lot), code_(std::make_unique<vm::CodeLibrary>(&index)),
+      vm_(std::make_unique<vm::VM>(*code_)) {
+    vm::VM& m = *vm_;
+    m.initCreatedObjects = true;
+    m.instructionsPerTurn = 20000; // as lot-run
+    m.setClockGlobals();
+    const LotObjects saved = LotObjects::load(lotPackage);
+    const vm::LotLoad load = vm::loadLot(m, lot, saved, vm::charactersDirOf(lotFile));
+    size_t inits = 0, initFailed = 0, mains = 0;
+    for (const auto& e : load.objects) {
+        if (!e.created || !m.object(e.id))
+            continue;
+        if (auto t = m.runFunction(e.id, 0)) {
+            ++inits;
+            initFailed += t->status == vm::Thread::Status::Failed;
+        }
+    }
+    for (const auto& e : load.objects)
+        mains += e.created && m.startMain(e.id);
+    char buf[256];
+    std::snprintf(buf, sizeof buf, "%zu of %zu saved objects in the VM, %zu Inits (%zu failed), %zu Mains",
+                  load.created, load.objects.size(), inits, initFailed, mains);
+    summary_ = buf;
+}
+
+float LotSimulation::floorHeight(int level, float x, float y) const {
+    // VM levels count from 1 = the lot's level 0.
+    const int l = std::clamp(level - 1, lot_.minLevel, lot_.minLevel + lot_.levelCount - 1);
+    return lot_.elevationAt(l, std::clamp(x, 0.0f, float(lot_.width)), std::clamp(y, 0.0f, float(lot_.height)));
+}
+
+void LotSimulation::attach(SimActor& actor, int16_t id, const Character& character, const std::string& idle) {
+    vm::Object* o = vm_->object(id);
+    if (!o)
+        return;
+    if (o->person) {
+        // Person data 58 "Person Age" and 65 "Gender" from the character
+        // file (the lot loader does not read them from the neighbourhood yet).
+        int16_t age = vm::lifestage::Adult;
+        if (character.age & 1)
+            age = vm::lifestage::Toddler;
+        else if (character.age & 2)
+            age = vm::lifestage::Child;
+        else if (character.age & 4)
+            age = vm::lifestage::Teen;
+        else if (character.age & 16)
+            age = vm::lifestage::Elder;
+        else if (character.age & 32)
+            age = vm::lifestage::Baby;
+        if (!o->person->data[vm::persondata::PersonAge])
+            o->person->data[vm::persondata::PersonAge] = age;
+        o->person->data[65] = character.gender & 1 ? 1 : 0;
+    }
+    Bound b;
+    b.actor = &actor;
+    b.id = id;
+    b.idle = idle;
+    b.motion.sample(*vm_, *o);
+    b.zOffset = actor.position[2] - floorHeight(o->position.level, o->position.x, o->position.y);
+    if (std::fabs(b.zOffset) > 0.25f)
+        std::fprintf(stderr, "opensims2: Sim %d stands %.2f over its floor\n", id, b.zOffset);
+    b.playing = idle;
+    bound_.push_back(std::move(b));
+}
+
+void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> animation) {
+    vm::startScriptedWalk(*vm_, sim, target, animation);
+}
+
+// After a tick: what each Sim should play, cued at that tick's time.
+void LotSimulation::sampleAll(double at) {
+    for (auto& b : bound_) {
+        const vm::Object* o = vm_->object(b.id);
+        if (!o)
+            continue;
+        b.motion.sample(*vm_, *o);
+        const auto& s = b.motion.current();
+        std::string want = b.idle;
+        bool loop = true;
+        if (s.walking && !s.walk.empty())
+            want = s.walk;
+        else if (!s.animation.empty())
+            want = s.animation, loop = false;
+        // OS2_DEBUG_VM=1: each Sim's state after each tick.
+        if (std::getenv("OS2_DEBUG_VM")) {
+            auto it = vm_->threads.find(b.id);
+            std::fprintf(stderr, "tick %llu sim %d at %.2f,%.2f walking %d anim '%s' playing '%s' thread %d %s\n",
+                         (unsigned long long)vm_->ticks, b.id, s.x, s.y, s.walking, s.animation.c_str(), b.playing.c_str(),
+                         it == vm_->threads.end() ? -1 : int(it->second.status),
+                         it == vm_->threads.end() ? "" : it->second.error.substr(0, 200).c_str());
+        }
+        const bool restart = !s.animation.empty() && s.serial != b.serial;
+        if (want == b.playing && !restart)
+            continue;
+        try {
+            const Animation& anim = b.actor->animation(index_, want);
+            b.actor->cue(at, anim, {.fade = 0.2f, .loop = loop});
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: Sim %d: %s\n", b.id, e.what());
+        }
+        b.playing = want;
+        b.serial = s.serial;
+    }
+}
+
+void LotSimulation::update(double seconds) {
+    const double rate = vm_->clock.ticksPerMinute; // ticks per second at normal speed
+    // After a stall (loading, a window drag) the VM does not race to catch
+    // up: past a second behind, its clock slips instead.
+    constexpr uint64_t kMaxCatchUp = 30;
+    double vmSeconds = seconds - slip_;
+    if (vmSeconds * rate > double(vm_->ticks + kMaxCatchUp)) {
+        slip_ = seconds - double(vm_->ticks + kMaxCatchUp) / rate;
+        vmSeconds = seconds - slip_;
+    }
+    seconds = vmSeconds;
+    // The actors show the moment one tick behind the VM.
+    const auto target = uint64_t(std::max(0.0, std::floor(seconds * rate))) + 1;
+    while (vm_->ticks < target) {
+        vm_->tick();
+        sampleAll(double(vm_->ticks - 1) / rate + slip_); // in the caller's clock, as the actors play
+    }
+    const float t = float(std::clamp(seconds * rate - double(vm_->ticks - 1), 0.0, 1.0));
+    const float dt = float(std::clamp(seconds - last_, 0.0, 0.1));
+    last_ = seconds;
+    for (auto& b : bound_) {
+        const auto& s = b.motion.current();
+        const float x = b.motion.x(t), y = b.motion.y(t);
+        b.actor->position = {x, y, floorHeight(s.level, x, y) + b.zOffset};
+        b.actor->heading = b.motion.turn(dt);
+        b.actor->rootMotion = false;
+    }
+}
+
+} // namespace os2

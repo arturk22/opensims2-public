@@ -112,13 +112,13 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
     MACOSX_BUNDLE_GUI_IDENTIFIER org.opensims2.app)
   target_compile_options(opensims2 PRIVATE -fobjc-arc -Wall -Wextra)
-  target_link_libraries(opensims2 PRIVATE os2_render os2_audio
+  target_link_libraries(opensims2 PRIVATE os2_render os2_audio os2_vm
     "-framework AppKit" "-framework MetalKit")
 endif()
 

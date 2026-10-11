@@ -19,7 +19,12 @@
 // also saves it) and exits without opening a window. --ui <instance-hex> draws a
 // UI script from ui.package over the scene (1024x768 canvas, letterboxed;
 // --ui-show <id,id,...> shows windows the script hides, e.g. the main menu's
-// background 0da36c7d).
+// background 0da36c7d). --vm runs the lot's objects in the SimAntics VM while it
+// is shown, with the Sims following it (walking, animations); --vm-walk
+// <sim-id>,<object-id>[,<anim>] makes a Sim walk to an object (then play entry
+// <anim> of the global animation list); --run-vm <ticks> runs that many ticks
+// (30 a second) before a --screenshot, and --frames <n> saves n screenshots
+// spread over them (out-1.png ... out-n.png).
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -50,6 +55,7 @@
 #include "render/camera.hpp"
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#include "lot_vm.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -222,6 +228,36 @@ fs::path characterPath(const std::string& query) {
 size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
                    const fs::path& lotFile);
 
+// The lot's objects in the VM (--vm, --run-vm), driving the lot's Sims.
+std::unique_ptr<os2::LotSimulation> gSimulation;
+struct LotSim {
+    os2::SimActor* actor;
+    int16_t id; // object ID (the cObject's instance)
+    fs::path character;
+    std::string idle;
+};
+std::vector<LotSim> gLotSims;
+
+// --vm / --run-vm: the lot's objects in the VM, with its Sims attached to
+// their actors; --vm-walk <sim>,<object>[,<anim>] starts a scripted walk.
+void startSimulation(os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg, const fs::path& lotFile) {
+    CFTimeInterval start = CACurrentMediaTime();
+    gSimulation = std::make_unique<os2::LotSimulation>(index, lot, pkg, lotFile);
+    for (const auto& s : gLotSims) {
+        os2::DbpfPackage character(s.character);
+        gSimulation->attach(*s.actor, s.id, os2::readCharacter(character, index), s.idle);
+    }
+    if (auto walk = argument(@"--vm-walk")) {
+        int sim = 0, target = 0, anim = -1;
+        if (std::sscanf(walk->c_str(), "%d,%d,%d", &sim, &target, &anim) < 2)
+            throw std::runtime_error("--vm-walk: expected <sim-id>,<object-id>[,<anim>]");
+        gSimulation->walk(int16_t(sim), int16_t(target),
+                          anim >= 0 ? std::optional<uint16_t>(uint16_t(anim)) : std::nullopt);
+    }
+    std::printf("opensims2: VM: %s, %zu Sims attached (%.2f s)\n", gSimulation->summary().c_str(), gLotSims.size(),
+                CACurrentMediaTime() - start);
+}
+
 // Loads --lot into the renderer in place of the test floor. Returns the middle
 // of the lot at ground level, for the camera.
 // --walls up|cutaway|down picks the wall mode; cutaway uses `viewDirection`.
@@ -251,6 +287,8 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     const size_t objects = loadLotObjects(renderer, index, lot, *query);
     const size_t sims = loadLotSims(renderer, index, lot, pkg, lotPath(*query));
+    if (argument(@"--run-vm") || [NSProcessInfo.processInfo.arguments containsObject:@"--vm"])
+        startSimulation(index, lot, pkg, lotPath(*query));
     // Fence rails and posts: one model per CRES, an instance per piece.
     std::vector<std::string> fenceWarnings;
     const auto fences = os2::lotFencePieces(lot, patterns, &fenceWarnings);
@@ -324,6 +362,8 @@ os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
 
 // Poses every actor at `seconds` and hands the vertices to the renderer.
 void poseActors(os2::Renderer& renderer, double seconds) {
+    if (gSimulation)
+        gSimulation->update(seconds);
     for (auto& a : gActors) {
         a->update(seconds);
         renderer.updateObject(a->model, a->posed);
@@ -369,6 +409,7 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
             std::printf("opensims2: Sim %s (%s) at (%.2f, %.2f, %.2f), %zu parts\n", stem.c_str(),
                         o.definition.c_str(), o.position[0], o.position[1], o.position[2],
                         actor->skin.model.parts.size());
+            gLotSims.push_back({actor.get(), int16_t(o.instance & 0xFFFF), file, anim});
             gActors.push_back(std::move(actor));
             ++placed;
         } catch (const std::exception& e) {
@@ -706,17 +747,34 @@ enum Key : unsigned short {
         view.camera->snap();
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
         if (auto shot = argument(@"--screenshot")) {
-            const double time = std::stod(argument(@"--time").value_or("0"));
+            // --run-vm <ticks>: the moment after that many VM ticks; --frames
+            // <n>: n shots spread up to it (out-1.png ... out-n.png).
+            const auto runVm = argument(@"--run-vm");
+            const double time = std::stod(argument(@"--time").value_or(
+                runVm ? std::to_string(std::stod(*runVm) / 30.0) : std::string("0")));
+            const int frames = std::max(1, std::stoi(argument(@"--frames").value_or("1")));
             poseActors(*_viewDelegate.renderer, 0);
-            poseActors(*_viewDelegate.renderer, time);
-            _viewDelegate.renderer->setTime(time); // texture animations
-            const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;
-            os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
-            MTLClearColor c = view.clearColor;
-            auto img = _viewDelegate.renderer->capture(
-                w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), float(c.alpha)));
-            os2::writePng(*shot, img);
-            std::printf("opensims2: wrote %s\n", shot->c_str());
+            for (int f = 1; f <= frames; ++f) {
+                const double at = time * f / frames;
+                // The VM in small steps, so that the Sims' turning is followed.
+                for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30)
+                    gSimulation->update(t);
+                poseActors(*_viewDelegate.renderer, at);
+                _viewDelegate.renderer->setTime(at); // texture animations
+                const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;
+                os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
+                MTLClearColor c = view.clearColor;
+                auto img = _viewDelegate.renderer->capture(
+                    w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), float(c.alpha)));
+                std::string file = *shot;
+                if (frames > 1) {
+                    const auto dot = file.rfind('.');
+                    file = file.substr(0, dot) + "-" + std::to_string(f) + (dot == std::string::npos ? "" : file.substr(dot));
+                }
+                os2::writePng(file, img);
+                std::printf("opensims2: wrote %s (%.2f s%s)\n", file.c_str(), at,
+                            gSimulation ? (", " + std::to_string(gSimulation->ticks()) + " VM ticks").c_str() : "");
+            }
             std::fflush(stdout);
             std::exit(0);
         }
