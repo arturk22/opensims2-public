@@ -70,6 +70,7 @@ target_link_libraries(os2_formats PRIVATE ZLIB::ZLIB os2_speex)
 add_library(os2_vm
   src/vm/hood_bridge.cpp
   src/vm/hood_save.cpp
+  src/vm/kill.cpp
   src/vm/animation.cpp
   src/vm/appearance.cpp
   src/vm/dialog.cpp
@@ -83,6 +84,7 @@ add_library(os2_vm
   src/vm/measure.cpp
   src/vm/message.cpp
   src/vm/motives.cpp
+  src/vm/ownership.cpp
   src/vm/path_planner.cpp
   src/vm/primitives.cpp
   src/vm/queue.cpp

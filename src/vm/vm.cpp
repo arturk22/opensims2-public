@@ -3,6 +3,7 @@
 
 #include "hood_bridge.hpp"
 #include "interactions.hpp"
+#include "kill.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
@@ -835,6 +836,7 @@ void VM::tick() {
         if (t.status == Thread::Status::Running)
             run(t, instructionsPerTurn);
     }
+    flushKillQueue(*this); // kill.hpp
     followContainers();
 }
 

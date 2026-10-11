@@ -17,6 +17,7 @@
 #include "vm/lot_resume.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -150,9 +151,13 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     size_t traced = 0;
     if (trace)
         machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
-            if (t.me != sim || traced++ >= trace)
+            // S2PKG_TRACE_ALL=1: every thread, each line tagged with its object.
+            static const bool everyThread = std::getenv("S2PKG_TRACE_ALL") != nullptr;
+            if ((!everyThread && t.me != sim) || traced++ >= trace)
                 return;
             const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
+            if (everyThread)
+                std::printf("[%d]", t.me);
             std::printf("    %*s%08X %04X #%-3u %-28s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
                         op.c_str(), f.behavior->fileName.c_str());
         };
@@ -179,14 +184,19 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         if (!before && now->activeInteraction >= 0)
             std::printf("  tick %d: running \"%s\"\n", i + 1, now->queue[size_t(now->activeInteraction)].name.c_str());
         if ((i + 1) % 60 == 0)
-            std::printf("  tick %d: at (%.2f, %.2f, %d)%s\n", i + 1, now->position.x, now->position.y, now->position.level,
-                        now->route ? ", walking" : "");
+            std::printf("  tick %d: at (%.2f, %.2f, %d)%s, hunger %d\n", i + 1, now->position.x, now->position.y,
+                        now->position.level, now->route ? ", walking" : "", now->person ? now->person->motives[7] : 0);
     }
     if (auto it = machine.threads.find(sim); it != machine.threads.end() && it->second.status == vm::Thread::Status::Failed)
         std::printf("  the Sim's Main failed: %s\n", it->second.error.substr(0, it->second.error.find('\n')).c_str());
     for (int16_t hand = 0; hand < 2; ++hand)
-        if (const vm::ObjectId held = machine.containedIn(sim, hand))
-            std::printf("  in hand %d: %d %s\n", hand, held, nameOf(*machine.object(held)).c_str());
+        if (const vm::ObjectId held = machine.containedIn(sim, hand)) {
+            const vm::Object& h = *machine.object(held);
+            std::printf("  in hand %d: %d %s; semi-attributes", hand, held, nameOf(h).c_str());
+            for (int16_t v : h.semiAttributes)
+                std::printf(" %d", v);
+            std::printf("\n");
+        }
     // Lights Change Light set (vm/dialog.hpp), of the object and its parts.
     for (const auto& [id, o] : machine.objects())
         for (const auto& [light, st] : o.lights)

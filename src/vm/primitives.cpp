@@ -4,6 +4,8 @@
 #include "hood_bridge.hpp"
 #include "autonomy.hpp"
 #include "interactions.hpp"
+#include "kill.hpp"
+#include "ownership.hpp"
 #include "errors.hpp"
 #include "sound.hpp"
 
@@ -136,37 +138,32 @@ Exit breakPoint(Context& c) {
     return Exit::True;
 }
 
-// Remove Object Instance (0x12): target u16 at 0 (STR# 0x9C: 0 me, 1 stack
-// object, 2 "target - UNUSED", which the Mac binary takes as object ID 0;
-// anything else is the game's error 0x09), flags u8 at 2: 0x01 "return
-// immediately" (nothing to wait for here); without 0x02 the binary passes
-// "cleanup all" to the removal. What that cleans up is not known: here the
-// whole multi-tile object goes either way (inferred; leaving some parts of
-// it behind would make no sense). A thread whose object is removed is
-// killed. The binary also refuses to remove 7 fixed GUIDs (which ones was
-// not checked).
+// Remove Object Instance (0x12), as the Mac binary's cTSObject::
+// TryKillObject (docs/primitives-mac.md §4b): target u16 at 0 (STR# 0x9C: 0
+// me, 1 stack object, 2 "target - UNUSED", which the binary takes as object
+// ID 0; anything else is the game's error 0x09), flags u8 at 2. The 7 fixed
+// GUIDs (car and pedestrian portals, the outside trash can, the mailbox) are
+// never removed: false. A missing object: false. Otherwise the object goes
+// on the kill queue (kill.hpp: it dies at the end of the tick with its parts
+// and contents; without 0x02 the binary asks for its "cleanup", object flag
+// 0x1000 = !cleanup, which only the kill itself reads) and the result is
+// true, or "wait" when I removed myself without 0x01 "return immediately":
+// my thread dies with me.
 Exit removeObjectInstance(Context& c) {
-    const uint16_t target = le16(&c.instruction.operands[0]);
+    const auto& o = c.instruction.operands;
+    const uint16_t target = le16(&o[0]);
     if (target > 2)
         throw gameError(err::IllegalOwner, "Remove Object Instance target " + std::to_string(target));
-    if (target == 2)
-        return Exit::True; // object 0: nothing to remove (inferred)
-    const Object& x = target == 0 ? c.me() : c.stackObject();
-    // Objects the game never removes (cTSObject::TryKillObject, docs/
-    // primitives-mac.md §4b): the car and pedestrian portals, the outside
-    // trash can and the mailbox; false.
+    const ObjectId id = target == 0 ? c.thread.me : target == 1 ? c.frame.stackObject : 0;
+    const Object* x = c.vm.object(id);
+    if (!x)
+        return Exit::False;
     static constexpr uint32_t kProtected[] = {0xCC7B08F8, 0x6C7B0905, 0xCC203477, 0x865A6812,
                                               0x81E6BEF9, 0xD20C0AEE, 0x39CCF441};
-    if (std::find(std::begin(kProtected), std::end(kProtected), x.guid()) != std::end(kProtected))
+    if (std::find(std::begin(kProtected), std::end(kProtected), x->guid()) != std::end(kProtected))
         return Exit::False;
-    const ObjectId group = multiTileGroup(x);
-    std::vector<ObjectId> parts;
-    for (const auto& [id, o] : c.vm.objects())
-        if (id == x.id || multiTileGroup(o) == group)
-            parts.push_back(id);
-    for (ObjectId id : parts)
-        c.vm.removeObject(id);
-    return Exit::True;
+    queueKill(c.vm, id);
+    return id == c.thread.me && !(o[2] & 0x01) ? Exit::Yield : Exit::True;
 }
 
 // Person data of a neighbor: its Sim's while it is on the lot, else the
@@ -209,6 +206,7 @@ std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor
 //   neighbors whose relationship from the neighbor in temp 0 has variable 3
 //   non-zero / variable 0 > temp 1 / variable 1 & temp 1 non-zero, 11 lot
 //   ID; 24 visible object within temp 0 tiles (view.cpp); 10 career: false.
+//   32 owner of the object in temp 0 (ownership.hpp).
 // Not done: 13 (nearest person), 33 (hauntable), 37 (want category) and the
 // rest of the base game's types up to 37.
 Exit setToNext(Context& c) {
@@ -260,6 +258,13 @@ Exit setToNext(Context& c) {
                 return false;
             return type == 28 ? r->size() > 3 && (*r)[3] != 0 : !r->empty() && (*r)[0] > limit;
         });
+    }
+    case 32: { // owner of the object in temp 0 with ownership >= temp 1 (ownership.hpp); none: -1
+        if (!c.vm.object(c.thread.temps[0]))
+            return Exit::False;
+        const int16_t next = nextObjectOwner(c.vm, c.thread.temps[0], current, c.thread.temps[1]);
+        c.set(owner, data, next);
+        return next == -1 ? Exit::False : Exit::True;
     }
     case 26: return c.vm.object(c.frame.stackObject) ? Exit::True : Exit::False;                     // verify stack object
     case 29: return c.vm.neighbor(c.frame.stackObject) ? Exit::True : Exit::False;                   // verify neighbor id in stack object

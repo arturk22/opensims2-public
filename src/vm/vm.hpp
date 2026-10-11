@@ -568,8 +568,8 @@ struct Thread {
     std::string error;     // once Failed: the message and the stack at the failure
     size_t instructions = 0; // total executed
     // Set when a queued interaction's action tree returned to the Idle for
-    // Input that ran it (1), which then waits for the next tick (2) and
-    // returns true.
+    // Input that ran it (1, or 2 when it had been cancelled), which runs
+    // again at once (queue.cpp).
     uint8_t interactionReturned = 0;
     // Set while a check tree runs for the pie menu: Add/Change the Action
     // String adds entries here instead of renaming the running interaction.
@@ -682,6 +682,9 @@ public:
 
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) { objects_.erase(id); }
+    // Remove Object Instance queues objects to die at the end of the tick (kill.hpp).
+    std::vector<ObjectId> killQueue;
+    std::set<ObjectId> dyingObjects;
     const std::map<ObjectId, Object>& objects() const { return objects_; }
 
     // Containment: an object is in slot "slot number" (object data 3) of the

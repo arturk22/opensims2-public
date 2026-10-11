@@ -1,5 +1,6 @@
 #include "formats/dbpf.hpp"
 #include "formats/lot_objects.hpp"
+#include "vm/kill.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/lot_save.hpp"
 #include "vm/vm.hpp"
@@ -360,6 +361,10 @@ static void testPrimitives() {
                       expr(Temp, 1, Assign, Lit, 1, T, E)}));
     t = fx.vm.start(sim.id, 0x1004);
     fx.vm.run(t);
+    check(t.status == Thread::Status::Running && fx.vm.object(sim.id) && dying(fx.vm, sim.id),
+          "removing me waits for the kill queue");
+    flushKillQueue(fx.vm); // end of the tick
+    fx.vm.run(t);
     check(t.temps[0] == 5 && !fx.vm.object(5) && !fx.vm.object(sim.id), "create and remove objects");
     check(t.status == Thread::Status::Killed && t.temps[1] == 0, "removing me kills the thread");
 }
@@ -489,7 +494,9 @@ static void testRemoveAndRandom() {
                       expr(Temp, 0, Assign, Lit, 9, go(3), E),
                       instr(0x08, T, E, {0, 0, Temp, 0, 0, 0, Lit, 0})})); // range 0: stores 0 (Mac binary)
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Finished && t.result && t.temps[0] == 0 && !fx.vm.object(2) && !fx.vm.object(3) &&
+    const bool queued = fx.vm.object(2) && dying(fx.vm, 2) && dying(fx.vm, 3) && !dying(fx.vm, 4);
+    flushKillQueue(fx.vm);
+    check(queued && t.status == Thread::Status::Finished && t.result && t.temps[0] == 0 && !fx.vm.object(2) && !fx.vm.object(3) &&
               fx.vm.object(4),
           "Remove Object Instance cleans up all parts; Random Number with range 0 stores 0");
 }

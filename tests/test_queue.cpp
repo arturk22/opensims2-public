@@ -214,9 +214,11 @@ static void testMainRunsInteraction() {
     check(t.status == Thread::Status::Running, "the Sim's Main keeps running");
     check(fx.o().attributes.size() > 0 && fx.o().attributes[0] == 7, "the action tree ran with the object as stack object");
     check(t.temps[1] == fx.fridge, "... in the Sim's thread");
-    check(s.queue.size() == 1 && s.queue[0].interaction == 3 && s.activeInteraction == -1,
-          "the finished interaction left the queue");
-    check(t.interactionReturned == 2, "the Idle for Input that ran it waits for the next tick");
+    // The Idle for Input that ran it runs again at once (Mac binary) and
+    // returns true; Main loops into the next Idle for Input, which tries the
+    // next entry in the same tick: its guard fails and it is dropped.
+    check(s.activeInteraction == -1 && t.interactionReturned == 0, "the finished interaction left the queue");
+    check(s.queue.empty(), "the next entry was tried in the same tick");
     fx.vm.tick(); // the Idle for Input returns true; the loop idles again
     fx.vm.tick(); // allow push: the next entry's guard fails, so it is dropped
     fx.vm.tick();
@@ -243,10 +245,8 @@ static void testCancelRunning() {
     check(interactionCancelled(s), "a user driven interaction cancels an autonomous one");
     fx.vm.tick(); // Idle for Input in the interaction returns: it ends
     check(fx.o().attributes.size() > 1 && fx.o().attributes[1] == 1, "the cancelled interaction finished its tree");
-    check(s.queue.size() == 1 && s.queue[0].interaction == 0 && s.activeInteraction == -1, "and left the queue");
-    fx.vm.tick();
-    fx.vm.tick();
-    check(s.queue.empty() && fx.o().attributes[0] == 7, "then the user's interaction ran");
+    check(s.queue.empty() && s.activeInteraction == -1, "and left the queue");
+    check(fx.o().attributes[0] == 7, "then the user's interaction ran (the next Idle for Input of Main, same tick)");
     (void)uid;
 
     Fixture fy;
