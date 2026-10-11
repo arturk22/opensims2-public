@@ -70,6 +70,7 @@ struct AnimationState {
     // has played (animation ticks: ms at speed 1).
     std::vector<std::pair<int, int16_t>> pendingEvents;
     uint16_t eventTree = 0;
+    int16_t eventObject = 0; // the event tree's parameter 1 (animation.cpp)
     float playedTicks = 0, ticksPerVmTick = 0;
 
     // Animations that play over the object without blocking (Animate

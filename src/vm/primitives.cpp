@@ -1039,9 +1039,8 @@ Exit changeMaterial(Context& c) {
 //   3 find the first token of the GUID, index into the first operand; false if none
 //   4 push the second operand onto the properties of the token at index (first)
 //   5 pop the last property of the token at index (first) into the second; false if none
-//   6 read the token at index (first) into my temporary token; with a GUID, the
-//     next token of that GUID from there on (the index is written back); false
-//     past the end (loops stop on it)
+//   6 read the token at index (first) into my temporary token (the GUID is
+//     not used: Mac binary); false past the end (loops stop on it)
 //   7 property (first, from 1) of my temporary token into the second; false if out of range
 //   8 set property (first) of my temporary token to the second; false if out of range
 //   9 save my temporary token back where it was read; false if it is gone
@@ -1140,16 +1139,13 @@ Exit manageInventory(Context& c) {
         return Exit::True;
     }
     case 6: {
-        const int16_t start = get1();
-        int16_t index = start;
-        if (guid) {
-            while (index >= 1 && size_t(index) <= tokens.size() && tokens[size_t(index) - 1].guid != guid)
-                ++index;
-        }
+        // The Mac binary (cTSObject::TryInventoryAction, BV) reads the token
+        // at the index and does not look at the GUID: trees leave stale
+        // GUIDs there ("Token - Add Food Cooked" finds a token with one GUID
+        // and reads it with another).
+        const int16_t index = get1();
         if (index < 1 || size_t(index) > tokens.size())
             return Exit::False;
-        if (index != start)
-            set1(index);
         temp = {.token = tokens[size_t(index) - 1], .loaded = true, .kind = kind, .inventoryId = id, .counted = counted,
                 .index = index};
         return Exit::True;

@@ -377,14 +377,19 @@ float animationSpeed(Context& c) {
 // as parameter 0 (inferred from "Events - Get - Bag Snack": it branches on
 // parameter 0 = 100, 101, 201, the "event=" numbers of
 // a2o-snackBag-get's events, which put the bag in the hand and take it
-// away). The tree resolves against the running code, as a call would.
+// away). Parameter 1 is the Animate Sim's IK object (owner u8 at 9, data
+// u16 at 10; the binary's animation request keeps it as its target), read
+// when the animation starts (inferred: "Events - Bake" snaps the dish into
+// parameter 1, the stove that is the IK object; "Events - Mix - Load" stops
+// the spoiling of parameter 1; with 0 both fail on object 0). The tree
+// resolves against the running code, as a call would.
 void runAnimationEvents(Context& c, AnimationState& a, bool all) {
     while (!a.pendingEvents.empty() && (all || a.pendingEvents.front().first <= a.playedTicks)) {
         const int16_t event = a.pendingEvents.front().second;
         a.pendingEvents.erase(a.pendingEvents.begin());
         if (!a.eventTree)
             continue;
-        const int16_t params[5] = {event, 0, 0, 0, 0};
+        const int16_t params[5] = {event, a.eventObject, 0, 0, 0};
         runOneTickTree(c.vm, c.thread.temps, c.thread.me, c.frame.codeOwner, c.frame.stackObject, a.eventTree, params);
     }
 }
@@ -417,6 +422,11 @@ Exit animateSim(Context& c) {
     a.depth = depth, a.tree = c.frame.behavior, a.node = c.frame.pc;
     a.pendingEvents = library(c.vm).treeEvents(name);
     a.eventTree = le16(&o[4]);
+    a.eventObject = 0;
+    try {
+        a.eventObject = c.get(o[9], int16_t(le16(&o[10])));
+    } catch (const VMError&) {
+    }
     a.playedTicks = 0;
     a.ticksPerVmTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
     if (a.ticksLeft > 0) {
