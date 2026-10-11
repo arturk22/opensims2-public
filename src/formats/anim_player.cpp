@@ -77,7 +77,12 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.start = now;
     l.fadeIn = std::max(o.fade, 0.0f);
     l.loop = o.loop;
-    l.priority = o.priority >= 0 ? o.priority : int(anim.priority);
+    // Without a bone mask the animation is the Sim's main one: it takes the
+    // base layer (0) whatever its header priority, so that a walk (0)
+    // replaces an idle (2) instead of playing under it (which left the Sims
+    // sliding in their idle pose, and the child idles fading in from a
+    // T-pose). The header priority orders the masked overlays.
+    l.priority = o.priority >= 0 ? o.priority : (o.mask.empty() ? 0 : int(anim.priority));
     l.mask = o.mask;
     if (skeleton_ && l.target) {
         if (anim.flags & 1)
@@ -91,7 +96,8 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
             other.fadeOut = l.fadeIn;
             other.replaced = true;
         }
-    // The first layer of a priority has nothing to fade from.
+    // The first base layer has nothing to fade from (fading in from the
+    // rest pose would show a T-pose).
     bool alone = true;
     for (const auto& other : layers_)
         alone = alone && other.priority != l.priority;

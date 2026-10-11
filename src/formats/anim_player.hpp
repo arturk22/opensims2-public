@@ -40,7 +40,7 @@ public:
         float fade = 0.25f;      // seconds to blend in (and to blend the replaced layers out)
         bool loop = true;
         std::vector<float> mask; // per bone, empty = every bone it keys
-        int priority = -1;       // -1: the animation's own
+        int priority = -1;       // -1: base layer 0 without a mask, else the animation's own
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.

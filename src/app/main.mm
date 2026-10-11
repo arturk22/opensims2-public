@@ -1548,12 +1548,20 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
         std::fprintf(stderr, "opensims2: %s\n", w.c_str());
     actor->position = {2.5f, -2.5f, 0};
     std::string playing;
+    // The idle and walk of the skeleton's age (child cuskel, toddler puskel,
+    // baby buskel; auskel for the rest); --walk-anim names another walk.
+    const char age = char(std::tolower(static_cast<unsigned char>(actor->skin.skeleton.name.empty() ? 'a' : actor->skin.skeleton.name[0])));
+    const char* ageIdle = age == 'c'   ? "c-idle-neutral-armsSide-wtC-breatheLoop50"
+                          : age == 'p' ? "p-idle-standing-loopBreathe"
+                          : age == 'b' ? "b-idle-carryBaby-breathe"
+                                       : "a-idle-neutral-armsSide-wtC-breatheLoop";
+    const char* ageWalk = age == 'c' ? "c-walk-alt0-normal" : age == 'p' ? "p-walk" : "a-male-walk-alt0-normal";
     if (auto walk = argument(@"--walk")) {
         // Idle, then walk straight ahead for <seconds>, then idle again;
         // the walk's locomotion velocity moves the Sim.
         const double seconds = std::stod(*walk);
-        const auto& idle = actor->animation(index, argument(@"--anim").value_or("a-idle-neutral-armsSide-wtC-breatheLoop"));
-        const auto& walkAnim = actor->animation(index, "a-male-walk-alt0-normal");
+        const auto& idle = actor->animation(index, argument(@"--anim").value_or(ageIdle));
+        const auto& walkAnim = actor->animation(index, argument(@"--walk-anim").value_or(ageWalk));
         actor->cue(0, idle);
         actor->cue(0.5, walkAnim, {.fade = 0.3f});
         actor->cue(0.5 + seconds, idle, {.fade = 0.3f});
@@ -1561,8 +1569,8 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
         if (auto h = argument(@"--heading"))
             actor->heading = std::stof(*h) * 3.14159265f / 180;
         playing = "idle, walk, idle";
-    } else if (auto name = argument(@"--anim")) {
-        actor->cue(0, actor->animation(index, *name));
+    } else if (auto name = argument(@"--anim"); name || character) {
+        actor->cue(0, actor->animation(index, name.value_or(ageIdle)));
         playing = actor->animations.back()->resource.fileName;
     }
     // --overlay <anim>[@bone]: a second animation over the bones under <bone>

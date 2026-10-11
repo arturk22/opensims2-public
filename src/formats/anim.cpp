@@ -350,8 +350,42 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
     // controls hang under root_trans in auskel, yet a chain with no frame
     // bone keys them in model space, as OpenTS2 also found).
     const std::vector<Xform>& goalLocal = goals && goals->size() == local.size() ? *goals : local;
-    auto inFrame = [&](const std::vector<Xform>& world, int frame, int node) {
-        return (frame >= 0 ? world[size_t(frame)] : Xform{}).then(goalLocal[size_t(node)]);
+    // Goal and pole nodes the skeleton lacks: the child skeleton has no
+    // *_handcontrol0 nodes and the toddler's none of the hand and foot IK
+    // nodes, yet their animations key them (and move the arms and legs only
+    // through them). Such a node is its channels alone, over an identity
+    // rest transform (nullopt when the target has no channel for it).
+    auto virtualNode = [&](uint32_t crc) -> std::optional<Xform> {
+        if (!crc)
+            return std::nullopt;
+        constexpr float kDegrees = 3.14159265358979f / 180.0f;
+        std::optional<Xform> x;
+        for (const auto& c : target.channels) {
+            if (c.nameHash != crc || c.components.size() < 3)
+                continue;
+            float v[3];
+            for (int k = 0; k < 3; ++k)
+                v[k] = c.components[size_t(k)].sample(ticks, c.duration());
+            if (c.attribute() == Animation::Rotation && c.type() == Animation::EulerRotation) {
+                if (!x)
+                    x = Xform{};
+                x->q = quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
+            } else if (c.attribute() == Animation::Translation && c.type() == Animation::TransformXYZ) {
+                if (!x)
+                    x = Xform{};
+                x->t = {v[0], v[1], v[2]};
+            }
+        }
+        return x;
+    };
+    // A node's local transform: the skeleton's bone, else the channels.
+    auto nodeLocal = [&](uint32_t crc) -> std::optional<Xform> {
+        if (const int b = bone(crc); b >= 0)
+            return goalLocal[size_t(b)];
+        return virtualNode(crc);
+    };
+    auto inFrame = [&](const std::vector<Xform>& world, int frame, const Xform& node) {
+        return (frame >= 0 ? world[size_t(frame)] : Xform{}).then(node);
     };
 
     for (const auto& chain : target.ikChains) {
@@ -379,9 +413,11 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         if (!linked || b1 < 0)
             continue;
         const auto& goal = chain.targets[0];
-        const int goalBone = bone(goal.crcs[4]), goalRotation = bone(goal.crcs[2]), goalRotation2 = bone(goal.crcs[3]);
-        const int frame = bone(goal.crcs[0]), pole = bone(chain.crcs[4]), poleFrame = bone(chain.crcs[5]);
-        if (goalBone < 0)
+        const std::optional<Xform> goalNode = nodeLocal(goal.crcs[4]);
+        const std::optional<Xform> goalRotation = nodeLocal(goal.crcs[2]), goalRotation2 = nodeLocal(goal.crcs[3]);
+        const std::optional<Xform> pole = nodeLocal(chain.crcs[4]);
+        const int frame = bone(goal.crcs[0]), poleFrame = bone(chain.crcs[5]);
+        if (!goalNode)
             continue;
         float weight = 1;
         if (chain.crcs[7]) {
@@ -395,7 +431,7 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
 
         auto world = s.world(local);
         const Vec3 A = world[size_t(b0)].t, B = world[size_t(b1)].t, C = world[size_t(b2)].t;
-        const Vec3 T = inFrame(world, frame, goalBone).t;
+        const Vec3 T = inFrame(world, frame, *goalNode).t;
         const float a = length(sub(B, A)), b = length(sub(C, B));
         Vec3 toT = sub(T, A);
         float d = length(toT);
@@ -404,7 +440,7 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         const Vec3 u = scale(toT, 1 / d);
         d = std::clamp(d, std::fabs(a - b) + 1e-4f, a + b - 1e-4f);
         // Knee/elbow in the plane of the root, the goal and the pole (or the current joint).
-        Vec3 toP = sub(pole >= 0 ? inFrame(world, poleFrame, pole).t : B, A);
+        Vec3 toP = sub(pole ? inFrame(world, poleFrame, *pole).t : B, A);
         Vec3 v = sub(toP, scale(u, dot(toP, u)));
         if (length(v) < 1e-6f)
             continue;
@@ -417,11 +453,16 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         // hand follows as it is), else the rotation node with the rest-pose
         // offset between it and the end bone (the feet).
         std::optional<Quat> endRotation;
-        if (goalRotation >= 0 && goalRotation2 >= 0)
-            endRotation = inFrame(world, frame, goalRotation).then(goalLocal[size_t(goalRotation2)]).q;
-        else if (goalRotation >= 0)
-            endRotation = inFrame(world, frame, goalRotation).q *
-                          (conjugate(restWorld[size_t(goalRotation)].q) * restWorld[size_t(b2)].q);
+        if (goalRotation && goalRotation2) {
+            endRotation = inFrame(world, frame, *goalRotation).then(*goalRotation2).q;
+        } else if (goalRotation) {
+            // The rest rotation of the node: the skeleton's, else the adult
+            // skeleton's foot control (auskel *_foot_ikctr; the child and
+            // toddler feet rest the same way).
+            const int r = bone(goal.crcs[2]);
+            const Quat rest = r >= 0 ? restWorld[size_t(r)].q : Quat{0, 0.9703f, -0.2419f, 0};
+            endRotation = inFrame(world, frame, *goalRotation).q * (conjugate(rest) * restWorld[size_t(b2)].q);
+        }
 
         const Quat q0 = local[size_t(b0)].q, q1 = local[size_t(b1)].q, q2 = local[size_t(b2)].q;
         // Root bone: the joint onto K.
