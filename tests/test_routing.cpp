@@ -258,6 +258,8 @@ static void testWalking() {
     table.slots[1].flags = 0x01;
     table.slots[1].minDistance = table.slots[1].maxDistance = table.slots[1].optimalDistance = 1;
     table.slots[1].facing = -2;
+    table.slots[1].resolutionTiles = 1; // three points a row (laterals -1, 0, 1)
+    table.slots[1].gradient = 0.2f;      // the middle one is the best
     table.slots[2].type = 3; // routing slot 1: on the object (a bone, in the game)
     table.slots[2].facing = -2;
     code.add(kGroup, 0x80, table);

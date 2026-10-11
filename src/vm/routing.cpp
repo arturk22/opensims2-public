@@ -14,6 +14,8 @@
 #include <functional>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <map>
 #include <set>
 
 namespace os2::vm {
@@ -138,11 +140,15 @@ namespace {
 // 4 a wall within 0.3 tile, 5 nothing to stand on, 6 an object on it, 7
 // valid) and, when valid, the penalties added to its cost: +10 for a wall
 // within 0.4 tile, +10 for another room when the slot ignores rooms, +5 for
-// a door on its tile. Not done here: 1 (a Sim or a route on it: the planner
-// takes Sims as costs), objects that may be pushed (+10 instead of 6), the
-// water/terrain query (+5), and the slot flags that allow 2/3 with +10.
+// a door on its tile. Occupied, from TSObjectCanSetPositionAndOrientation's
+// errors in the binary: 1 for an object in the way (here: a blocking object
+// on the tile, not a part of the target) and 6 for a person (object type 2;
+// here: another Sim, not the router, whose centre is within half a tile, two
+// bodies' radii: inferred). Not done: the pushable objects (+10 instead of
+// 1: an object of type 8 when the route may push), the water/terrain query
+// (+5), and the slot flags that allow 2/3 with +10.
 int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float px, float py, int level,
-             bool ignoreRooms, float& penalty) {
+             bool ignoreRooms, ObjectId router, float& penalty) {
     penalty = 0;
     const TilePos t{int(std::floor(px)), int(std::floor(py)), level};
     if (!w.contains(t))
@@ -180,6 +186,10 @@ int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float
     const ObjectId group = multiTileGroup(target);
     for (const auto& [id, o] : vm.objects())
         if (o.position.level == level && multiTileGroup(o) != group && VM::blocksRouting(o) && VM::tileOf(o) == t)
+            return 1;
+    for (const auto& [id, o] : vm.objects())
+        if (o.person && id != router && id != target.id && o.position.inWorld() && o.position.level == level &&
+            o.data[objdata::ContainerId] == 0 && std::hypot(o.position.x - px, o.position.y - py) < 0.5f)
             return 6;
     for (const World::Door& d : w.doors())
         if (d.tile == t)
@@ -222,7 +232,7 @@ int16_t refusedResult(int code) {
 // distances becomes the tiles whose centres are within it (half a tile of
 // slack), in an allowed direction, with no wall in between and in the
 // object's room; each costs how far it is from the optimal distance.
-VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, bool evaluate) {
+VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, bool evaluate, ObjectId router) {
     RouteGoals out;
     out.level = target.position.level;
     float cx = target.position.x, cy = target.position.y;
@@ -252,7 +262,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     auto add = [&](float px, float py, float cost) {
         if (evaluate && world) {
             float penalty = 0;
-            const int code = evalGoal(*this, *world, target, centre, px, py, out.level, ignoreRooms, penalty);
+            const int code = evalGoal(*this, *world, target, centre, px, py, out.level, ignoreRooms, router, penalty);
             if (code != 7) {
                 if (const int16_t why = refusedResult(code))
                     out.refused = why;
@@ -278,12 +288,15 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
         const float px = cx + float(ox * std::cos(yaw) - oy * std::sin(yaw));
         const float py = cy + float(ox * std::sin(yaw) + oy * std::cos(yaw));
         out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
+        // A bone slot's goals are the bone's points (GetPossibleSlotsFromModel-
+        // RoutingSlot: score 100 less the penalties; one point per bone here).
         add(px, py, 0);
-        // Around a bone's point, for when something stands on it (a chair
-        // pushed under a table): points half a tile and three quarters out,
-        // on the target's side of any wall, each costing its distance more
-        // (approximation of the binary's goal scan, cTSRoute::ScanCone /
-        // EvalTileForGoal, which is not decoded).
+        // Ours, not the binary's: points half a tile and three quarters out
+        // around a bone's point, on the target's side of any wall, each
+        // costing its distance more (1.5, 1.75: a later tier than the point
+        // itself), for when the point cannot be reached (a chair pushed under
+        // a table, which here fills its whole tile for want of the model's
+        // footprint).
         if (atBone && world)
             for (const float r : {0.5f, 0.75f})
                 for (int k = 0; k < 16; ++k) {
@@ -298,31 +311,98 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     }
     if (!world)
         return out;
-    const float minD = slot.minDistance, maxD = std::max(slot.maxDistance, slot.minDistance);
-    const float optimal = slot.optimalDistance > 0 ? slot.optimalDistance : minD;
-    const int reach = int(std::ceil(maxD)) + 1;
-    for (int x = centre.x - reach; x <= centre.x + reach; ++x)
-        for (int y = centre.y - reach; y <= centre.y + reach; ++y) {
-            const TilePos t{x, y, out.level};
-            if (!world->contains(t) || (x == centre.x && y == centre.y))
+    // The binary's goal scan (docs/routing-mac.md §8.2; BV 0x478d2c, the
+    // scan 0x4778b4 and its standing callback 0x4740d8): one origin per
+    // allowed direction (the slot's offset turned that way), and from each,
+    // rows across the direction at distances from the preferred one outwards
+    // (preferred, then a step nearer, a step further, ...: the row count is
+    // the larger of max - preferred and preferred - min in tiles, rounded
+    // up, not in steps, as the binary has it), each row as wide as a cone of
+    // 45 degrees (|lateral| <= distance * tan 22.5 degrees), on the slot's
+    // grid (its resolution, at least 1/16 tile). The distances must be
+    // ordered (0 <= min <= preferred <= max, max at most 32) or there are no
+    // goals. It stops after 100 candidates or 48 accepted ones. A candidate's
+    // cost (the binary keeps a score, 100 less this) is |d - preferred| * 16
+    // * the slot's gradient + EvalTileForGoal's penalties + 0.001 * gradient
+    // * |lateral| (a tie-break) + 10 per routing cost of its floor above 1.
+    // Not done: the router's own radius added to the distances (vtable 0xB4
+    // of the router), the random thinning of big scans and the random jitter
+    // (slot flag at vtable 0x78), the +25 for a direction off the object's
+    // walls and +20 for the Sim's room (world queries not decoded), and the
+    // sitting goals (ScanConeForSittingGoals) of slots with a sitting weight.
+    const float minD = slot.minDistance, optimal = slot.optimalDistance;
+    const float maxD = std::min(slot.maxDistance, 32.0f);
+    if (minD < 0 || maxD < 0 || maxD < minD || optimal < minD || maxD < optimal)
+        return out;
+    const float res = std::max(slot.resolutionTiles, 0.0625f);
+    const float spread = std::tan(0.7853982f * 0.5f);
+    const float weight = slot.gradient;
+    const int rows = int(std::ceil(std::max(maxD - optimal, optimal - minD)));
+    std::vector<int> entries; // absolute directions
+    for (int d = 0; d < 8; ++d)
+        if (dirs & (1u << d))
+            entries.push_back(absolute ? d : (d + objDir) % 8);
+    const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
+    const float ex = float(ox * std::cos(yaw) - oy * std::sin(yaw));
+    const float ey = float(ox * std::sin(yaw) + oy * std::cos(yaw));
+    int candidates = 0, accepted = 0;
+    struct Tile {
+        float cost;
+        size_t index;
+        float lateral;
+    };
+    std::map<std::pair<int, int>, Tile> tiles; // without `evaluate`: the best point of each tile
+    for (int i = 0; i <= rows; ++i)
+        for (const int sign : {-1, 1}) {
+            if (i == 0 && sign == 1)
                 continue;
-            const float px = float(x) + 0.5f, py = float(y) + 0.5f;
-            const float d = std::hypot(px - cx, py - cy);
-            if (d < minD - 0.5f || d > maxD + 0.5f)
+            const float r = optimal + float(sign * i) * res;
+            if (r < minD || r > maxD)
                 continue;
-            int dir = directionOf(px - cx, py - cy);
-            if (!absolute)
-                dir = ((dir - objDir) % 8 + 8) % 8;
-            if (!(dirs & (1u << dir)))
-                continue;
-            if (!evaluate) {
-                if (!ignoreRooms && world->room(t) != world->room(centre))
-                    continue;
-                if (!world->lineOfSight(centre, t))
-                    continue;
+            const int lo = int(std::floor(-(r * spread) / res)), hi = int(std::ceil((r * spread) / res));
+            for (int j = lo; j <= hi; ++j) {
+                const float lateral = float(j) * res;
+                for (const int d : entries) {
+                    if (candidates >= 100 || accepted >= 48)
+                        goto done;
+                    ++candidates;
+                    const auto [sx, sy] = directionStep(d);
+                    const float n = std::hypot(float(sx), float(sy));
+                    const float fx = float(sx) / n, fy = float(sy) / n; // forward
+                    const float px = cx + ex + fx * r - fy * lateral, py = cy + ey + fy * r + fx * lateral;
+                    const float cost = std::fabs(std::hypot(r, lateral) - optimal) * 16 * weight +
+                                       0.001f * weight * std::fabs(lateral);
+                    if (!evaluate) {
+                        const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
+                        if (!world->contains(t) || (t.x == centre.x && t.y == centre.y))
+                            continue;
+                        if (!ignoreRooms && world->room(t) != world->room(centre))
+                            continue;
+                        if (!world->lineOfSight(centre, t))
+                            continue;
+                        // The tile's best point: the cheapest, then the nearest the row's middle.
+                        auto it = tiles.find({t.x, t.y});
+                        if (it != tiles.end()) {
+                            if (cost < it->second.cost ||
+                                (cost == it->second.cost && std::fabs(lateral) < it->second.lateral)) {
+                                const size_t k = it->second.index;
+                                it->second = {cost, k, std::fabs(lateral)};
+                                out.goals[k].cost = cost;
+                                out.points[k] = {px, py};
+                                out.facings[k] = facingAt(px, py);
+                            }
+                            continue;
+                        }
+                        tiles[{t.x, t.y}] = {cost, out.goals.size(), std::fabs(lateral)};
+                    }
+                    const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
+                    const float floorCost = world->contains(t) ? world->cost(t) : 1;
+                    if (add(px, py, cost + (floorCost > 1 ? (floorCost - 1) * 10 : 0)))
+                        ++accepted;
+                }
             }
-            add(px, py, std::fabs(d - optimal));
         }
+done:
     return out;
 }
 
@@ -639,12 +719,35 @@ int doorWaitTicks(VM& vm) {
 bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     PathPlanner& planner = plannerOf(vm);
     addObstacles(vm, planner, me, r.ignore);
-    std::vector<PlanGoal> goals;
-    for (const auto& g : r.goals)
-        goals.push_back({g[0], g[1], g[2]});
+    // The goals go to the planner by tiers, as TSCreateGotoRelativeSlot
+    // hands them over (BV 0x472e00, from FindPathWithPlanner): first the
+    // untried ones within 1 of the best cost (the binary: score >= best -
+    // 1), then, if none of them can be reached, the next tier the same way,
+    // then all that are left; within a tier the shortest way wins (the
+    // goals' costs are not added to the walk).
     PlannedPath path;
     planner.portalLocked = [&](size_t portal, bool forward) { return portalLockedFor(vm, me, planner, portal, forward); };
-    const bool planned = planner.plan({me.position.x, me.position.y}, me.position.level, r.level, goals, path, why);
+    std::vector<bool> tried(r.goals.size(), false);
+    bool planned = false;
+    for (int attempt = 0; !planned; ++attempt) {
+        float best = std::numeric_limits<float>::infinity();
+        for (size_t i = 0; i < r.goals.size(); ++i)
+            if (!tried[i])
+                best = std::min(best, r.goals[i][2]);
+        if (!std::isfinite(best))
+            break;
+        std::vector<PlanGoal> goals;
+        std::vector<size_t> index;
+        for (size_t i = 0; i < r.goals.size(); ++i)
+            if (!tried[i] && (attempt >= 2 || r.goals[i][2] <= best + 1)) {
+                goals.push_back({r.goals[i][0], r.goals[i][1], 0});
+                index.push_back(i);
+                tried[i] = true;
+            }
+        planned = planner.plan({me.position.x, me.position.y}, me.position.level, r.level, goals, path, why);
+        if (planned)
+            path.goal = index[path.goal];
+    }
     planner.portalLocked = nullptr;
     if (!planned)
         return false;
@@ -1058,8 +1161,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
 Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees) {
     Object& me = c.me();
     if (std::getenv("OS2_ROUTE_FAILS")) // why routes fail, for looking into
-        std::fprintf(stderr, "route of %d failed with %d in \"%s\" #%u (stack object %d) at (%.2f, %.2f, %d)\n", me.id,
-                     int(why), c.frame.behavior->fileName.c_str(), c.frame.pc, c.frame.stackObject, me.position.x,
+        std::fprintf(stderr, "route of %d failed with %d in \"%s\" #%u op %02X (stack object %d) at (%.2f, %.2f, %d)\n", me.id,
+                     int(why), c.frame.behavior->fileName.c_str(), c.frame.pc, c.instruction.opcode, c.frame.stackObject, me.position.x,
                      me.position.y, me.position.level);
     me.route.reset();
     if (why == RouteFail::Success)
@@ -1256,7 +1359,7 @@ Exit goToRoutingSlot(Context& c) {
     return walk(
         c, id,
         [&] {
-            VM::RouteGoals g = c.vm.routingGoals(slot, *c.vm.object(id), true);
+            VM::RouteGoals g = c.vm.routingGoals(slot, *c.vm.object(id), true, c.me().id);
             g.onTarget = g.onTarget || ignoreFootprint;
             return g;
         },
@@ -1293,8 +1396,11 @@ Exit goToRelativePosition(Context& c) {
         slot.minDistance = slot.optimalDistance = 1, slot.maxDistance = 1.5f;
     }
     slot.facing = direction == -2 ? -2 : direction == -1 ? -3 : direction;
+    // Inferred: the resolution and gradient the binary's CreateBestGoalPointList
+    // gives the synthetic slot are not read (whole tiles, the row's middle first).
+    slot.resolutionTiles = 1, slot.gradient = 1;
     const ObjectId id = target->id;
-    return walk(c, id, [&] { return c.vm.routingGoals(slot, *c.vm.object(id), true); }, !(o[6] & 0x02));
+    return walk(c, id, [&] { return c.vm.routingGoals(slot, *c.vm.object(id), true, c.me().id); }, !(o[6] & 0x02));
 }
 
 // Places `o` (and the other parts of its multi-tile object, keeping their

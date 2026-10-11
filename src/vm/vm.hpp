@@ -706,7 +706,7 @@ public:
         // (EvalTileForGoal, routing.cpp), for when none is left; 0 if none was.
         int16_t refused = 0;
     };
-    RouteGoals routingGoals(const Slots::Slot& slot, const Object& target, bool evaluate = false);
+    RouteGoals routingGoals(const Slots::Slot& slot, const Object& target, bool evaluate = false, ObjectId router = 0);
     // The model bone a routing slot names, in the object's model space
     // (routing.cpp); none without the game's resources.
     std::optional<std::array<float, 3>> slotBone(const Slots::Slot& slot, const Object& target);
