@@ -35,6 +35,17 @@ constexpr uint32_t kToolHand = 0xCC607031, kUndo = 0xCC607033, kRedo = 0xCC60703
 // inferred: the catalog grid's own constants are in code).
 constexpr float kGridX = 52, kGridY = 19, kGridW = 176, kGridH = 100;
 constexpr int kColumns = 3, kRows = 2;
+// The expanded catalog (window 0x2000, opened by "Expandir" 0x1009 and shut
+// by "Recolher" 0x2009): its grid window 0x2006 is 176 x 196. The script has
+// no constants for it; 4 rows keep the thumbnails the collapsed size (3
+// columns, the same margins; inferred).
+constexpr uint32_t kExpanded = 0x2000, kExpandedPrev = 0x2004, kExpandedNext = 0x2005, kExpand = 0x1009,
+                   kCollapse = 0x2009;
+constexpr float kExpandedGridH = 196;
+constexpr int kExpandedRows = 4;
+// The expanded catalog's top over the panel's origin; the collapsed one's
+// is 96 (window 0x1000).
+constexpr float kExpandedTop = 9;
 constexpr float kMarginX = 2, kMarginY = 6;
 
 // The room buttons 0xC100-0xC900: room sort bit of each (§1.4).
@@ -225,6 +236,40 @@ void BuyMode::preview(const vm::Placement& p) {
     }
 }
 
+bool BuyMode::changeLevel(int delta) {
+    if (!active_ || !vm_.world)
+        return false;
+    const int lo = vm_.world->firstLevel(), hi = lo + std::max(1, vm_.world->levelCount()) - 1;
+    const int level = std::clamp(level_ + delta, lo, hi);
+    if (level == level_)
+        return false;
+    level_ = level;
+    say("level " + std::to_string(level_));
+    // What is held goes to the new floor at the same tile.
+    if (held_ && !last_.parts.empty()) {
+        const vm::TilePos lead = last_.parts.front().tile;
+        holdAt(lead.x, lead.y, direction_);
+    }
+    return true;
+}
+
+// OnRelease's sound (docs/buy-build-mac.md §6): one for doors and windows
+// (object types 8 and 9), one for plants, one for the rest. The sound names
+// are inferred from the executable's ui_* list; plants = decorative
+// function (0x20) with subsort 8 (the "plants" button, §1.4).
+const char* BuyMode::dropSound(vm::ObjectId id) const {
+    const vm::Object* o = vm_.object(id);
+    if (!o || !o->definition)
+        return "ui_object_plop";
+    const auto& d = *o->definition;
+    const int type = d.field(objd::ObjectType);
+    if (type == 8 || type == 9)
+        return "ui_build_door_plop";
+    if ((d.field(objd::FunctionSort) & 0x20) && (d.field(objd::FunctionSubSort) & 8))
+        return "ui_build_garden_plop";
+    return "ui_object_plop";
+}
+
 std::optional<vm::TilePos> BuyMode::tileUnder(simd_float3 eye, simd_float3 dir) const {
     if (!vm_.world || std::fabs(dir.z) < 1e-5f)
         return std::nullopt;
@@ -275,6 +320,7 @@ bool BuyMode::placeAt(int x, int y, int direction) {
     const vm::Placement p = last_;
     if (!p.ok) {
         say("cannot place: " + errorText(p));
+        sound("ui_error");
         return false;
     }
     const vm::ObjectId id = held_;
@@ -283,9 +329,11 @@ bool BuyMode::placeAt(int x, int y, int direction) {
         std::string why;
         if (!vm::buy(vm_, id, p, price, &why)) {
             say("not bought: " + why);
+            sound("ui_error");
             return false;
         }
         undo_.push_back({Op::Kind::Created, id, p, price});
+        sound(dropSound(id));
         say("bought " + (selected_ ? selected_->name : std::string("?")) + " as object " + std::to_string(id) +
             " for " + money(price) + "; funds " + money(vm::funds(vm_)));
         held_ = 0;
@@ -298,6 +346,7 @@ bool BuyMode::placeAt(int x, int y, int direction) {
         vm::applyPlacement(vm_, id, p);
         vm::runUserPlacement(vm_, id);
         undo_.push_back({Op::Kind::Moved, id, heldFrom_, 0});
+        sound(dropSound(id));
         redo_.clear();
         held_ = 0;
         say("moved object " + std::to_string(id));
@@ -323,6 +372,7 @@ bool BuyMode::grab(vm::ObjectId id) {
     held_ = lead;
     heldNew_ = false;
     direction_ = heldFrom_.direction;
+    sound("ui_object_pickup");
     say("picked up object " + std::to_string(lead) + " (" + vm_.object(lead)->definition->fileName + ", worth " +
         money(vm::saleValue(vm_, lead)) + ")");
     return true;
@@ -351,6 +401,8 @@ bool BuyMode::click(simd_float3 eye, simd_float3 dir) {
 
 void BuyMode::rotate(int steps) {
     direction_ = ((direction_ + steps) % 8 + 8) % 8;
+    if (held_)
+        sound("ui_object_rotate");
     if (held_ && !last_.parts.empty()) {
         const vm::TilePos lead = last_.parts.front().tile;
         holdAt(lead.x, lead.y, direction_);
@@ -393,12 +445,14 @@ bool BuyMode::deleteHeld() {
             view_.forget(part);
         vm::deleteGroup(vm_, id);
         held_ = 0;
+        sound("ui_object_sell");
         say("returned object " + std::to_string(id) + " for its full price; funds " + money(vm::funds(vm_)));
         return true;
     }
     if (heldFrom_.ok)
         vm::applyPlacement(vm_, id, heldFrom_); // back where it was, for undo
     const int value = vm::sell(vm_, id);
+    sound("ui_object_sell");
     undo_.push_back({Op::Kind::Deleted, id, heldFrom_, -value});
     redo_.clear();
     held_ = 0;
@@ -430,6 +484,7 @@ bool BuyMode::undo() {
     }
     }
     redo_.push_back(op);
+    sound("ui_undo");
     say("undone; funds " + money(vm::funds(vm_)));
     return true;
 }
@@ -460,6 +515,7 @@ bool BuyMode::redo() {
     }
     }
     undo_.push_back(op);
+    sound("ui_redo");
     say("redone; funds " + money(vm::funds(vm_)));
     return true;
 }
@@ -621,19 +677,21 @@ UiScreen BuyMode::screen(int width, int height) {
     // selected one marked, the ones the family cannot afford dimmed
     // (UpdateAffordability, §1.5: frame 0, inferred).
     const auto list = items();
-    const size_t perPage = size_t(kColumns * kRows);
+    const int rows = expanded_ ? kExpandedRows : kRows;
+    const float gridH = expanded_ ? kExpandedGridH : kGridH;
+    const size_t perPage = size_t(kColumns * rows);
     const size_t pages = std::max<size_t>(1, (list.size() + perPage - 1) / perPage);
     page_ = std::min(page_, pages - 1);
     const int32_t funds = vm::funds(vm_);
     std::vector<std::pair<std::array<float, 4>, const CatalogEntry*>> cells;
     const UiElement* catalog = root.child(kCatalog);
-    const UiElement* collapsed = catalog ? catalog->child(kCollapsed) : nullptr;
+    const UiElement* collapsed = catalog ? catalog->child(expanded_ ? kExpanded : kCollapsed) : nullptr;
     if (catalog)
-        if (const UiElement* expanded = catalog->child(0x2000))
-            hk.hide.insert(expanded); // the collapsed grid only (no expand yet)
+        if (const UiElement* other = catalog->child(expanded_ ? kCollapsed : kExpanded))
+            hk.hide.insert(other);
     auto drawGrid = [&](UiScreen& s, float x, float y) {
             const float cw = (kGridW - kMarginX * (kColumns - 1)) / kColumns;
-            const float ch = (kGridH - kMarginY * (kRows - 1)) / kRows;
+            const float ch = (gridH - kMarginY * float(rows - 1)) / float(rows);
             const float thumb = std::min(cw, ch - 12);
             for (size_t i = 0; i < perPage && page_ * perPage + i < list.size(); ++i) {
                 const CatalogEntry* e = list[page_ * perPage + i];
@@ -673,8 +731,9 @@ UiScreen BuyMode::screen(int width, int height) {
     target(root.child(kUndo), Action::Undo, 0);
     target(root.child(kRedo), Action::Redo, 0);
     if (collapsed) {
-        target(collapsed->child(kPrev), Action::Prev, 0);
-        target(collapsed->child(kNext), Action::Next, 0);
+        target(collapsed->child(expanded_ ? kExpandedPrev : kPrev), Action::Prev, 0);
+        target(collapsed->child(expanded_ ? kExpandedNext : kNext), Action::Next, 0);
+        target(collapsed->child(expanded_ ? kCollapse : kExpand), Action::Expand, 0);
     }
     if (const UiElement* fs = root.child(kFunctionSort)) {
         if (const UiElement* c = fs->child(kFunctionButtons))
@@ -717,7 +776,7 @@ UiScreen BuyMode::screen(int width, int height) {
             n->set("winflag_visible", "no");
         const UiElement& d = dm;
         const auto da = d.area();
-        const float dx = x0 + 205, dy = y0 + 96 - float(da[3] - da[1]) - 4;
+        const float dx = x0 + 205, dy = y0 + (expanded_ ? kExpandedTop : 96) - float(da[3] - da[1]) - 4;
         UiDrawHooks dh;
         if (const UiElement* n = d.child(0x3000))
             dh.captions[n] = e->name;
@@ -797,6 +856,14 @@ bool BuyMode::press(simd_float2 p) {
                 room_ = -1, roomFunction_ = 0;
             page_ = 0;
             break;
+        case Action::Expand: {
+            // The first item shown stays on the page.
+            const size_t first = page_ * size_t(kColumns * (expanded_ ? kExpandedRows : kRows));
+            expanded_ = !expanded_;
+            page_ = first / size_t(kColumns * (expanded_ ? kExpandedRows : kRows));
+            sound(expanded_ ? "ui_panel_expand" : "ui_panel_collapse");
+            break;
+        }
         case Action::Prev: page_ = page_ ? page_ - 1 : 0; break;
         case Action::Next: ++page_; break;
         case Action::Item: {

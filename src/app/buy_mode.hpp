@@ -60,6 +60,12 @@ public:
     // The level objects go on (1 = the lot's ground level).
     void setLevel(int level) { level_ = level; }
     int level() const { return level_; }
+    // Page Up / Page Down and the puck's floor buttons: one floor up or
+    // down, within the lot's levels. Returns whether it changed.
+    bool changeLevel(int delta);
+    // UI sounds by name (the drop, the turn, the pickup, a refusal: the
+    // ui_* sounds of docs/buy-build-mac.md §6).
+    std::function<void(const std::string&)> playSound;
 
     // --- The lot -------------------------------------------------------------
     // The mouse ray over the lot (world space): what is held follows it.
@@ -95,7 +101,7 @@ public:
 
 private:
     enum class Sort { Function, Room };
-    enum class Action { None, Tab, Function, SubSort, Room, RoomFunction, Back, Prev, Next, Item, Tool, Undo, Redo };
+    enum class Action { None, Tab, Function, SubSort, Room, RoomFunction, Back, Prev, Next, Expand, Item, Tool, Undo, Redo };
     struct Target {
         std::array<float, 4> rect;
         Action action = Action::None;
@@ -114,6 +120,11 @@ private:
     void layoutIfNeeded();
     std::string errorText(const vm::Placement& p);
     void say(const std::string& m);
+    void sound(const char* name) {
+        if (playSound)
+            playSound(name);
+    }
+    const char* dropSound(vm::ObjectId id) const;
 
     LotSimulation& sim_;
     vm::VM& vm_;
@@ -134,6 +145,7 @@ private:
     int room_ = -1;     // room sort bit chosen
     int roomFunction_ = 0;
     size_t page_ = 0;
+    bool expanded_ = false; // the catalog's window 0x2000 (4 rows) instead of 0x1000 (2)
     const CatalogEntry* selected_ = nullptr;
     const CatalogEntry* hovered_ = nullptr;
 

@@ -31,12 +31,21 @@ public:
     // Floor point of a Sim (for "Center on active Sim"), if it is in the world.
     std::optional<simd_float3> simPoint(vm::VM& vm, vm::ObjectId sim) const;
     int level() const { return *level_; } // the lot's numbering (0 = the ground)
+    // Page Up / Page Down and the puck's floor buttons: the camera shows
+    // another floor than the Sim's until the Sim changes floor itself
+    // (follow() then takes his again). False if the lot has no such floor.
+    bool setLevel(int level);
+    // The lot's levels, in the lot's numbering.
+    int lowestLevel() const;
+    int highestLevel() const;
 
 private:
     LotCamera* camera_;
     std::shared_ptr<const Lot> lot_;
     std::shared_ptr<int> level_;
     vm::ObjectId tracked_ = 0;
+    vm::ObjectId followedSim_ = 0;
+    int simLevel_ = -1000; // the followed Sim's level when last seen
 };
 
 } // namespace os2

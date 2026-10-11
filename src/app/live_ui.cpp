@@ -588,6 +588,12 @@ UiScreen LiveUi::screen(int width, int height) {
         place(puck, puckX, puckY, hk);
         for (size_t i = 0; i < kModes.size(); ++i)
             target(puck.child(kModes[i]), Action::Mode, int(i));
+        target(findIn(puck, 0x2001), Action::Floor, 1);
+        target(findIn(puck, 0x2000), Action::Floor, -1);
+        target(findIn(puck, 0x1002), Action::Zoom, 1);
+        target(findIn(puck, 0x1003), Action::Zoom, -1);
+        target(findIn(puck, 0x1001), Action::Rotate, -1);
+        target(findIn(puck, 0x1000), Action::Rotate, 1);
         if (const UiElement* bmp = puck.child(0))
             if (auto r = rectOf(bmp))
                 solid_.push_back(*r);
@@ -1071,6 +1077,9 @@ bool LiveUi::press(simd_float2 p, bool right) {
         case Action::SelectSim:
         case Action::Centre:
         case Action::Mode:
+        case Action::Floor:
+        case Action::Zoom:
+        case Action::Rotate:
             // The button's own click sound (btnclicksnd, §7.7).
             if (t.element)
                 if (const std::string snd = uiButtonSound(*t.element); !snd.empty())
@@ -1122,6 +1131,19 @@ bool LiveUi::press(simd_float2 p, bool right) {
                     sound("ui_queue_delete");
                 }
             }
+            break;
+        case Action::Zoom:
+            if (onZoom)
+                onZoom(t.value);
+            break;
+        case Action::Rotate:
+            if (onRotate)
+                onRotate(t.value);
+            break;
+        case Action::Floor:
+            std::printf("opensims2: live UI: floor %s\n", t.value > 0 ? "up" : "down");
+            if (onFloor)
+                onFloor(t.value);
             break;
         case Action::Mode:
             std::printf("opensims2: live UI: mode button %d%s\n", t.value,

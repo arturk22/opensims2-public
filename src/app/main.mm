@@ -372,6 +372,18 @@ std::unique_ptr<os2::LotAudio> gAudio;
 os2::LotCamera* gCamera = nullptr;
 std::unique_ptr<os2::LotCameraFollow> gCameraFollow; // --lot: pivot held to the lot, on the Sim's floor
 
+// Page Up / Page Down and the puck's floor buttons ("Subir um Andar (Page
+// Up)", "Descer um Andar (Page Down)"): in Buy mode the floor objects go on
+// (the camera follows it), else the floor the camera shows.
+void changeFloor(int delta) {
+    if (gBuy && gBuy->active()) {
+        if (gBuy->changeLevel(delta) && gCameraFollow)
+            gCameraFollow->setLevel(gBuy->level() - 1);
+    } else if (gCameraFollow) {
+        gCameraFollow->setLevel(gCameraFollow->level() + delta);
+    }
+}
+
 void setupPieMenu(os2::ResourceIndex& index); // below loadLot
 void setupLiveUi(os2::ResourceIndex& index);  // below setupPieMenu
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
@@ -686,6 +698,15 @@ void setupLiveUi(os2::ResourceIndex& index) {
             o.group = os2::SoundGroup::Ui;
             gAudio->sound().play(name, o);
         };
+    gLive->onFloor = [](int delta) { changeFloor(delta); };
+    gLive->onZoom = [](int steps) {
+        if (gCamera)
+            gCamera->zoomBy(steps);
+    };
+    gLive->onRotate = [](int steps) {
+        if (gCamera)
+            gCamera->rotateBy(steps);
+    };
     // Relationship thumbnails of Sims off the lot: the small portrait of the
     // character file (in the lot's neighborhood) whose OBJD has the GUID.
     if (auto query = argument(@"--lot"))
@@ -743,6 +764,12 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
                 gBuy->exit();
                 gLive->setMode(0);
             }
+        };
+    if (gAudio)
+        gBuy->playSound = [](const std::string& name) {
+            os2::SoundSystem::PlayOptions o;
+            o.group = os2::SoundGroup::Ui;
+            gAudio->sound().play(name, o);
         };
     if (argument(@"--mode").value_or("") == "buy") {
         gBuy->enter();
@@ -1292,6 +1319,8 @@ int cameraSlot(unsigned short key) {
         if (e.keyCode == kBackspace || e.keyCode == kForwardDelete) { gBuy->deleteHeld(); return; }
     }
     switch (e.keyCode) {
+    case kPageUp: changeFloor(1); break;
+    case kPageDown: changeFloor(-1); break;
     case kZ: case kPadPlus: _camera->zoomBy(1); break;
     case kX: case kPadMinus: _camera->zoomBy(-1); break;
     case kReturn: case kEnter:

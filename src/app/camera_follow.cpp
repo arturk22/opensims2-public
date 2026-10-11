@@ -18,8 +18,10 @@ void LotCameraFollow::follow(vm::VM& vm, vm::ObjectId sim) {
     if (!o || !o->position.inWorld())
         return;
     const int level = o->position.level - 1; // the VM counts the ground as 1
-    if (lot_->hasLevel(level))
+    // A floor chosen by hand holds until the Sim moves to another one.
+    if (lot_->hasLevel(level) && (level != simLevel_ || sim != followedSim_))
         *level_ = level;
+    simLevel_ = level, followedSim_ = sim;
     // Subject tracking (BV 0x0086ffb8): the pivot's and the subject's screen
     // points; past the dead zone the subject becomes the pivot's target.
     if (const vm::Object* t = tracked_ ? vm.object(tracked_) : nullptr; t && t->position.inWorld()) {
@@ -31,6 +33,16 @@ void LotCameraFollow::follow(vm::VM& vm, vm::ObjectId sim) {
             camera_->moveTo(at);
     }
 }
+
+bool LotCameraFollow::setLevel(int level) {
+    if (!lot_->hasLevel(level))
+        return false;
+    *level_ = level;
+    return true;
+}
+
+int LotCameraFollow::lowestLevel() const { return lot_->minLevel; }
+int LotCameraFollow::highestLevel() const { return lot_->minLevel + lot_->levelCount - 1; }
 
 bool LotCameraFollow::centre(vm::VM& vm, vm::ObjectId sim) {
     const auto p = simPoint(vm, sim);

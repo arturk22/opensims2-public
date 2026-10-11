@@ -120,6 +120,12 @@ public:
     void setMode(int mode) { mode_ = mode, dirty_ = true; }
     int mode() const { return mode_; }
     std::function<void(int)> onMode;
+    // The puck's floor buttons ("Subir um Andar (Page Up)" 0x2001, "Descer
+    // um Andar (Page Down)" 0x2000): +1 / -1.
+    std::function<void(int)> onFloor;
+    // The puck's zoom ("Mais Zoom +" 0x1002 = +1, "Menos Zoom -" 0x1003 = -1)
+    // and rotate buttons (0x1001 on the left = -1, 0x1000 = +1, one step).
+    std::function<void(int)> onZoom, onRotate;
 
     // The speed buttons (docs/ui-live-mac.md §1.3): simulator speed 2-4
     // (unpauses), pause toggled.
@@ -149,7 +155,7 @@ public:
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 
 private:
-    enum class Action { None, SelectSim, Centre, Speed, Pause, Cancel, Mode, SubPanel, Callback };
+    enum class Action { None, SelectSim, Centre, Speed, Pause, Cancel, Mode, SubPanel, Callback, Floor, Zoom, Rotate };
     struct Target {
         std::array<float, 4> rect; // x0, y0, x1, y1
         Action action = Action::None;

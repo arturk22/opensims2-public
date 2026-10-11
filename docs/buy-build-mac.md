@@ -357,6 +357,14 @@ A posição tem nível (`cLocation +8`). O teste 2 limita o nível ao lote, e
 objetos no andar de cima precisam de piso (teste 3). Tetos e paredes vêm do
 nível. "Must be on first level" é o código 0x22 (`TSObjectCanDropImpl`).
 
+**No app** (rodada 8): as teclas são **Page Up / Page Down** ("Subir um Andar
+(Page Up)", "Descer um Andar (Page Down)": STR# `0x8A` do `UIText`, e as
+dicas dos botões `0x2001`/`0x2000` do puck `0x4905F85B`, `btnclicksnd`
+`ui_*` do script). No modo compra mudam o andar onde os objetos entram
+(`BuyMode::changeLevel`, entre o primeiro e o último nível do lote) e a
+câmera segue; no modo vivo só a câmera troca de andar, até o Sim selecionado
+mudar de andar. Os dois botões do puck fazem o mesmo.
+
 ---
 
 ## 4. O que roda na VM
@@ -408,7 +416,13 @@ motor passa a `RunEntryPoint` (vtable `0x3b4`); a tabela é a mesma da TTAB/OBJf
 (`RZ::WCM()->vtable 0x28`, ID em `PTR_DAT_02788d3c/44/50`): um para porta/janela
 (tipo 8/9), um para plantas (`IsObjectOfFoliageType`) e um para o resto. Girar
 (`TryTurn`) toca outro e "sem dinheiro" (`TryDrop`) outro. Os IDs são
-ponteiros para globais. **Aberto**: a que sons eles apontam.
+ponteiros para globais. **Aberto**: a que sons eles apontam. No app (inferido pelos nomes `ui_*`
+do executável, todos existem no `Sfx`): porta/janela `ui_build_door_plop`,
+planta (função decoração com subsort plantas) `ui_build_garden_plop`, o resto
+`ui_object_plop`; girar `ui_object_rotate`; sem dinheiro ou posição
+recusada `ui_error`; pegar com a mão `ui_object_pickup`; vender
+`ui_object_sell`; desfazer/refazer `ui_undo`/`ui_redo`; expandir/recolher o
+catálogo `ui_panel_expand`/`ui_panel_collapse`.
 
 ---
 
