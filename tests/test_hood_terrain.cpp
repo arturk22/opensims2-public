@@ -1,0 +1,121 @@
+// Neighborhood view data (formats/hood_terrain.hpp, hood_scene.hpp) on
+// hand-built resources: terrain, occupants, the ini, paint weights.
+#include "formats/hood_scene.hpp"
+#include "formats/hood_terrain.hpp"
+
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+using namespace os2;
+using namespace os2::hood;
+
+static int failures = 0;
+static void check(bool cond, const char* what) {
+    if (!cond) {
+        std::fprintf(stderr, "FAIL: %s\n", what);
+        ++failures;
+    }
+}
+
+struct Writer {
+    std::vector<uint8_t> b;
+    Writer& u8(uint8_t v) { b.push_back(v); return *this; }
+    Writer& u16(uint16_t v) { return u8(uint8_t(v)).u8(uint8_t(v >> 8)); }
+    Writer& u32(uint32_t v) { return u16(uint16_t(v)).u16(uint16_t(v >> 16)); }
+    Writer& f32(float v) { uint32_t u; std::memcpy(&u, &v, 4); return u32(u); }
+    Writer& str32(const std::string& s) { u32(uint32_t(s.size())); b.insert(b.end(), s.begin(), s.end()); return *this; }
+};
+
+// A 2x2-cell terrain: heights 0..8 row by row, sea level 1.5.
+static std::vector<uint8_t> terrain(bool withBytes) {
+    Writer w;
+    w.u32(hoodtype::Terrain).u32(4).u32(2).u32(2).f32(1.5f).str32("Temperate");
+    w.u32(0x6B943B43).u32(1).str32("c2DArray").u32(3).u32(3);
+    for (int i = 0; i < 9; ++i)
+        w.f32(float(i));
+    if (withBytes) {
+        w.u32(0x6B943B43).u32(1).str32("c2DArray").u32(3).u32(3);
+        for (int i = 0; i < 9; ++i)
+            w.u8(0);
+    }
+    return w.b;
+}
+
+static void position(Writer& w, float x, float y, float z) {
+    w.u8(2).f32(x).f32(y).f32(z).f32(0).f32(0).f32(1).f32(1);
+}
+
+static void testTerrain() {
+    const Terrain t = Terrain::parse(terrain(true));
+    check(t.width == 2 && t.gridWidth == 3 && t.heights.size() == 9, "terrain size");
+    check(t.type == "Temperate" && t.seaLevel == 1.5f && t.vertexBytes.size() == 9, "terrain header");
+    check(t.vertex(2, 1) == 5 && t.vertex(9, 9) == 8, "terrain vertex (clamped)");
+    // GetTerrainHeight: tile split along (0,0)-(1,1); fy < fx uses h10.
+    check(std::abs(t.heightAt(5, 0) - 0.5f) < 1e-5f, "height along x");
+    check(std::abs(t.heightAt(0, 5) - 1.5f) < 1e-5f, "height along y");
+    check(std::abs(t.heightAt(5, 5) - 2.0f) < 1e-5f, "height on the diagonal");
+    check(t.heightAt(-1, 5) == 0, "height outside");
+    check(Terrain::parse(terrain(false)).vertexBytes.empty(), "terrain without the byte layer");
+}
+
+static void testOccupants() {
+    Writer w;
+    w.u32(111);
+    w.u16(8).u32(1); // flora
+    position(w, 1, 2, 3);
+    w.u8(8).f32(45).u32(0x41);
+    w.u16(3).u32(1); // roads
+    position(w, 15, 15, 0);
+    w.u8(3);
+    for (int k = 0; k < 4; ++k)
+        w.f32(float(10 + 10 * (k & 1))).f32(float(10 + 10 * (k >> 1))).f32(0).f32(float(k & 1)).f32(float(k >> 1));
+    w.u32(0x4b00).u32(0).u8(1).u8(5).u32(0);
+    w.u16(3).u32(0); // bridges
+    w.u16(8).u32(1); // props
+    position(w, 4, 5, 6);
+    w.u8(8).u32(0x0C).f32(90);
+    const Occupants o = Occupants::parse(w.b);
+    check(o.flora.size() == 1 && o.flora[0].guid == 0x41 && o.flora[0].rotation == 45, "flora");
+    check(o.flora[0].at.position[2] == 3, "flora position");
+    check(o.roads.size() == 1 && o.roads[0].piece == 0x4b00 && o.roads[0].uvs[3][0] == 1, "road");
+    check(o.props.size() == 1 && o.props[0].guid == 0x0C && o.props[0].rotation == 90, "prop");
+}
+
+static void testSettings() {
+    const std::string ini = "[PaintInfos]\n0x10=1.0,nh-test-cliff,1, terrain-cliff, 0,1, 24,0\n"
+                            "0x11=1.0,nh-test-beach,1, terrain-beach, 0,1, 24,0\n"
+                            "0x01=0.9,nh-temperate-wet,2, lot, 0,1, 26,0 ; comment\n"
+                            "[TerrainTypeInfos]\nTemperate=0x10,0x11\n"
+                            "[PaintMapTable_Temperate]\n00=0x01,0x01,\n01=0x01,0x01,\n"
+                            "[NHoodTerrainTunables]\nCliffAngleMin=52\nMaxRoadProximityValue=20\n";
+    const TerrainSettings s = TerrainSettings::parse(ini, "[ImposterDisplayTunables]\nImposterZOffset=0.5\n");
+    check(s.paints.size() == 3 && s.paints.at(1).variants == 2 && s.paints.at(1).maxStrength == 0.9f, "paint infos");
+    check(s.paints.at(1).variantTexture(1) == "nh-temperate-wet-01_txtr", "variant texture");
+    check(s.paints.at(0x10).variantTexture(0) == "nh-test-cliff_txtr", "single variant texture");
+    check(std::abs(s.paints.at(1).spreadAt(13) - 0.5f) < 1e-5f, "spread curve");
+    check(s.types.at("Temperate").beach == 0x11, "terrain types");
+    check(s.paintMaps.at("Temperate").size() == 2 && s.paintMaps.at("Temperate")[1].size() == 2, "paint map");
+    check(s.imposterZOffset == 0.5f, "imposter offset");
+
+    // Weights on the flat 2x2 terrain far above the sea: one paint, weight 1.
+    Terrain t = Terrain::parse(terrain(true));
+    t.heights.assign(9, 10.0f);
+    t.seaLevel = 0;
+    const PaintWeights pw = computePaintWeights(t, Occupants{}, s);
+    check(pw.paints.size() == 1 && pw.paints[0] == 1, "one paint");
+    check(std::abs(pw.weights[0][4] - 1) < 1e-5f, "normalised weight");
+}
+
+int main() {
+    testTerrain();
+    testOccupants();
+    testSettings();
+    if (failures)
+        std::fprintf(stderr, "%d failure(s)\n", failures);
+    else
+        std::printf("hood_terrain: all tests passed\n");
+    return failures ? 1 : 0;
+}

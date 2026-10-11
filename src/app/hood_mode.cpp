@@ -39,7 +39,9 @@ const HoodLot* HoodMode::lotAt(const LotCamera& camera, simd_float2 p, float w, 
 void HoodMode::mouseMoved(const LotCamera& camera, simd_float2 p, float w, float h) {
     ui_->setCanvas(int(w), int(h));
     ui_->hover(p);
-    ui_->hoverLot(lotAt(camera, p, w, h), p);
+    const HoodLot* lot = lotAt(camera, p, w, h);
+    ui_->hoverLot(lot, p);
+    view_->highlight(lot);
 }
 
 void HoodMode::mouseDown(const LotCamera& camera, simd_float2 p, float w, float h) {
@@ -92,6 +94,7 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
         const simd_float4 q = simd_mul(simd_mul(camera.projection(w / h), camera.view()), simd_make_float4(c, 1));
         const simd_float2 p = simd_make_float2((q.x / q.w + 1) / 2 * w, (1 - q.y / q.w) / 2 * h);
         ui_->hoverLot(lotAt(camera, p, w, h), p);
+        view_->highlight(hover);
     }
     if (select)
         ui_->openLot(select);

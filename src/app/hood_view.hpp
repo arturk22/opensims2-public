@@ -42,6 +42,8 @@ struct HoodLot {
     std::string familyName;    // its name
     std::filesystem::path package; // the lot file (empty if missing)
     simd_float3 lo{}, hi{};    // world box (imposter or footprint)
+    simd_float2 footLo{}, footHi{}; // footprint (x, y)
+    float ground = 0;          // the lot's elevation
     bool imposter = false;
     uint32_t width = 0, depth = 0; // cells
 };
@@ -69,6 +71,10 @@ public:
 
     // The lot whose box the ray enters first, or null.
     const HoodLot* pick(simd_float3 origin, simd_float3 dir) const;
+    // HighlightLot's terrain highlight over a lot's footprint (null: none).
+    // Inferred look: a white rectangle at alpha 0.3, HighlightOffsetAboveTerrain
+    // (0.6) over the lot (NHoodTerrainHighlightMaterial's texture is code-set).
+    void highlight(const HoodLot* lot);
     // A point to frame a lot from (middle of its box top).
     simd_float3 lotCentre(const HoodLot& lot) const;
 
@@ -83,6 +89,9 @@ private:
     std::vector<HoodLot> lots_;
     std::vector<std::unique_ptr<ResourceIndex>> lotIndexes_; // imposter textures load through them
     std::vector<std::string> report_;
+    Renderer* renderer_ = nullptr;
+    int highlight_ = -1; // renderer instance
+    const HoodLot* highlighted_ = nullptr;
 };
 
 } // namespace os2

@@ -109,7 +109,8 @@ fs::path neighborhoodFolder(const fs::path& resDir, const std::string& query) {
 }
 
 HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& resDir, const fs::path& sysDir,
-                   const std::string& query) {
+                   const std::string& query)
+    : renderer_(&renderer) {
     const auto start = std::chrono::steady_clock::now();
     const fs::path dir = neighborhoodFolder(resDir, query);
     hood_ = hood::Neighborhood::load(dir, false);
@@ -242,6 +243,8 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         const simd_float4 a = simd_mul(at, simd_make_float4(0, 0, 0, 1)), b = simd_mul(at, simd_make_float4(mw, md, 0, 1));
         lot.lo = simd_min(a.xyz, b.xyz);
         lot.hi = simd_max(a.xyz, b.xyz);
+        lot.footLo = lot.lo.xy, lot.footHi = lot.hi.xy;
+        lot.ground = l.info.heightOffset;
         lot.hi.z += 3;
         if (!l.package.empty() && fs::exists(l.package)) {
             try {
@@ -266,6 +269,28 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         }
         lots_.push_back(std::move(lot));
     }
+    // The lot highlight: a unit square, scaled onto the lot when shown.
+    {
+        ObjectModel m;
+        m.name = "lot highlight";
+        ObjectModel::Part part;
+        part.node = part.shape = "highlight";
+        part.material = "nhood-lot-highlight";
+        part.mesh.positions = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
+        part.mesh.normals.assign(4, {0, 0, 1});
+        part.mesh.uvs = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        part.mesh.triangles = {0, 1, 2, 0, 2, 3};
+        m.parts.push_back(part);
+        MaterialDefinition mat;
+        mat.materialType = "StandardMaterial";
+        mat.properties = {{"stdMatDiffCoef", "1,1,1,1"},           {"stdMatUntexturedDiffAlpha", "0.3"},
+                          {"stdMatAlphaBlendMode", "blend"},       {"stdMatLightingEnabled", "false"},
+                          {"stdMatCullMode", "none"},              {"stdMatLayer", "-1"}};
+        m.materials[part.material] = mat;
+        simd_float4x4 away = matrix_identity_float4x4;
+        away.columns[0].x = away.columns[1].y = 0;
+        highlight_ = renderer.addInstance(renderer.addObject(m, index), away);
+    }
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     char buf[256];
     std::snprintf(buf, sizeof buf,
@@ -283,6 +308,20 @@ const HoodLot* HoodView::lot(uint32_t id) const {
         if (l.id == id)
             return &l;
     return nullptr;
+}
+
+void HoodView::highlight(const HoodLot* lot) {
+    if (lot == highlighted_ || highlight_ < 0)
+        return;
+    highlighted_ = lot;
+    simd_float4x4 m = matrix_identity_float4x4;
+    m.columns[0].x = m.columns[1].y = 0; // hidden: collapsed
+    if (lot) {
+        m.columns[0].x = lot->footHi.x - lot->footLo.x;
+        m.columns[1].y = lot->footHi.y - lot->footLo.y;
+        m.columns[3] = simd_make_float4(lot->footLo.x, lot->footLo.y, lot->ground + 0.6f, 1);
+    }
+    renderer_->setInstanceTransform(highlight_, m);
 }
 
 std::string HoodView::displayName() const { return hood_.name.empty() ? hood_.prefix : hood_.name; }
