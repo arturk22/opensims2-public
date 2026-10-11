@@ -113,19 +113,21 @@ void TvBroadcast::loadIni(const fs::path& file, const fs::path&) {
 bool TvBroadcast::isChannel(const std::string& material) const { return defs_.count(lower(material)) != 0; }
 
 void TvBroadcast::next(Live& l, const Definition& d, double now) {
+    // As cVideoBroadcastChannel::ChooseNextMovieKey: the shows in order (the
+    // index wraps), and after each one a commercial drawn at random, not the
+    // last one again; CommercialInterval is not read on that path.
     fs::path pick;
-    const bool commercial = !l.commercials.empty() && d.commercialInterval > 0 && !l.inCommercial &&
-                            now - l.lastCommercial >= d.commercialInterval;
+    const bool commercial = !l.commercials.empty() && !l.inCommercial && l.movie;
     if (commercial) {
-        pick = l.commercials[std::uniform_int_distribution<size_t>(0, l.commercials.size() - 1)(rng_)];
-        l.lastCommercial = now;
+        for (int tries = 0; tries < 4 && (pick.empty() || (pick == l.lastCommercial && l.commercials.size() > 1)); ++tries)
+            pick = l.commercials[std::uniform_int_distribution<size_t>(0, l.commercials.size() - 1)(rng_)];
+        l.lastCommercial = pick;
     } else if (!l.shows.empty()) {
-        // Not the show that just ran, when there is another.
-        const fs::path last = l.movie ? l.lastShow : fs::path{};
-        for (int tries = 0; tries < 4 && (pick.empty() || (pick == last && l.shows.size() > 1)); ++tries)
-            pick = l.shows[std::uniform_int_distribution<size_t>(0, l.shows.size() - 1)(rng_)];
+        pick = l.shows[l.nextShow++ % l.shows.size()];
         l.lastShow = pick;
     }
+    (void)d;
+    (void)now;
     l.inCommercial = commercial;
     l.decoder.reset();
     l.movie.reset();
@@ -165,7 +167,6 @@ void TvBroadcast::adjust(ObjectModel& model, const std::map<std::string, std::st
                 l.shows = moviesIn(findPath(movies_, d->second.folder));
                 l.commercials = moviesIn(findPath(movies_, d->second.commercialFolder));
             }
-            l.lastCommercial = last_;
             l.picture = RgbaImage{128, 128, std::vector<uint8_t>(128 * 128 * 4, 0)};
             for (size_t k = 3; k < l.picture.pixels.size(); k += 4)
                 l.picture.pixels[k] = 255;

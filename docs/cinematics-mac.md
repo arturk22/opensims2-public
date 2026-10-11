@@ -278,9 +278,10 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
 - No opensims2 (`app/tv_broadcast.*`, rodada 9): um material com nome de
   canal vira um material sem luz cuja textura (`movie:<canal>`) é uma
   textura dinâmica do renderizador (`Renderer::setDynamicTexture`) com o
-  quadro do canal: os filmes da pasta em ordem aleatória (sem repetir o
-  último), um comercial a cada `CommercialInterval` s entre programas
-  (inferido), ou o arquivo do fliperama em laço; todas as TVs no mesmo canal
+  quadro do canal: os programas da pasta em ordem (rodada 10, como o
+  `ChooseNextMovieKey` do binário, `docs/audio.md`), com um comercial
+  sorteado (sem repetir o último) entre cada dois — o `CommercialInterval`
+  não é usado —, ou o arquivo do fliperama em laço; todas as TVs no mesmo canal
   mostram o mesmo quadro. Som (rodada 10): o som do próprio filme
   (`SCHl`/`SCDl`), decodificado quando o filme começa e tocado, posicional,
   do **primeiro receptor** do canal (a TV de menor ID cujo material é o

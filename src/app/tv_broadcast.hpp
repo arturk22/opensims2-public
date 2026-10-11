@@ -11,9 +11,10 @@
 // defined in Broadcasts.ini") on the screen's mesh group. Here such a
 // material becomes a self-lit material whose texture ("movie:<channel>") is
 // a dynamic renderer texture with the channel's picture: the 128x128 MAD
-// movies of the folder one after another in a random order, a commercial
-// every CommercialInterval seconds (inferred: between shows), or the one
-// file of a games broadcast, looped. Every TV on a channel shows the same
+// movies of the folder in order with a random commercial (not the last
+// one) between each two (cVideoBroadcastChannel::ChooseNextMovieKey,
+// docs/audio.md "Rodada 10"; which key list is the shows is inferred), or
+// the one file of a games broadcast, looped. Every TV on a channel shows the same
 // picture, as the binary's channels feed all their receivers.
 
 #include "formats/audio.hpp"
@@ -76,9 +77,10 @@ private:
         std::vector<std::filesystem::path> shows, commercials;
         std::unique_ptr<Movie> movie;
         std::unique_ptr<MovieDecoder> decoder;
-        double started = 0, lastCommercial = 0;
+        double started = 0;
         bool inCommercial = false;
-        std::filesystem::path lastShow;
+        size_t nextShow = 0;
+        std::filesystem::path lastShow, lastCommercial;
         RgbaImage picture;
         Sound sound;
     };
