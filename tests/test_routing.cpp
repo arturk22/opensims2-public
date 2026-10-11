@@ -1,4 +1,5 @@
 // World occupancy, pathfinding and the routing primitives on synthetic lots.
+#include "vm/path_planner.hpp"
 #include "vm/vm.hpp"
 #include "vm/world.hpp"
 #include "formats/lot.hpp"
@@ -272,12 +273,14 @@ static void testWalking() {
     int ticks = 1;
     while (t.status == Thread::Status::Running && ticks < 2000)
         vm.run(t), ++ticks;
-    const float walked = 2 * (6 - 2.5f) + 9.5f - 1.5f; // up past the wall's end and back down, roughly
+    // Past the wall's end (x = 5, y = 6) with 1/8 tile to spare, and back
+    // down: a straight line each way, not tile centres.
+    const float walked = std::hypot(5 - 1.5f, 6.125f - 2.5f) + std::hypot(9.5f - 5, 6.125f - 2.5f);
     check(t.status == Thread::Status::Finished && t.result && !sim.route, "the walk ends true");
     check(std::fabs(sim.position.x - 9.5f) < 1e-4f && std::fabs(sim.position.y - 2.5f) < 1e-4f &&
               sim.data[objdata::Direction] == 0,
           "in front of the chair, facing it");
-    check(ticks > int(walked / vm.walkTilesPerTick) * 0.8 && ticks < int(walked / vm.walkTilesPerTick) * 1.5,
+    check(ticks > int(walked / vm.walkTilesPerTick) * 0.95 && ticks < int(walked / vm.walkTilesPerTick) * 1.15,
           "at walking speed");
     // Routing slot 1 is on the chair itself, which does not block it.
     code.add(kGroup, 0x1001, tree({instr(0x2D, T, F, {1, 0, 1, 0, 0})}));
@@ -467,6 +470,127 @@ static void testStairs() {
           "and back down");
 }
 
+// The continuous path planner (path_planner.hpp): inflated obstacles,
+// diagonal walls cut tiles in half, doors are portals, smoothing, costs and
+// the failure codes.
+static float pathLength(Point2 start, const PlannedPath& p) {
+    float len = 0;
+    Point2 a = start;
+    for (const auto& w : p.points) {
+        len += std::hypot(w.x - a[0], w.y - a[1]);
+        a = {w.x, w.y};
+    }
+    return len;
+}
+
+static void testPathPlanner() {
+    World w(10, 10);
+    PathPlanner planner(w);
+    PlannedPath p;
+    RouteFail why;
+    // Open ground: one straight line.
+    check(planner.plan({1.5f, 1.5f}, 1, 1, {{8.5f, 6.5f, 0}}, p, why) && p.points.size() == 1 &&
+              std::fabs(p.points[0].x - 8.5f) < 1e-4f,
+          "planner: a straight line in the open");
+    // An object's tile, inflated by 1/8 tile: the walk keeps clear of it,
+    // and is shorter than going round tile centres.
+    planner.addObstacle(1, 4, 0, 5, 9, PathPlanner::kObject); // a row of objects up to y = 9
+    check(!planner.free(1, {3.9f, 3.5f}) && planner.free(1, {3.85f, 3.5f}), "planner: obstacles inflated 1/8 tile");
+    check(planner.plan({1.5f, 1.5f}, 1, 1, {{8.5f, 1.5f, 0}}, p, why), "planner: around a row of objects");
+    bool clear = true;
+    Point2 a{1.5f, 1.5f};
+    for (const auto& q : p.points) {
+        clear &= planner.clear(1, a, {q.x, q.y});
+        a = {q.x, q.y};
+    }
+    const float len = pathLength({1.5f, 1.5f}, p);
+    // Up to (3.875, 9.125), across and down: about 17.8 tiles.
+    check(clear && len > 17.5f && len < 18.5f,
+          "planner: the path hugs the inflated corner");
+    // A gap narrower than a Sim (two objects 0.2 apart, inflated, close it).
+    planner.clearObstacles();
+    planner.addObstacle(1, 4, 0, 5, 4.9f, PathPlanner::kObject);
+    planner.addObstacle(1, 4, 5.1f, 5, 10, PathPlanner::kObject);
+    check(!planner.plan({1.5f, 5.0f}, 1, 1, {{8.5f, 5.0f, 0}}, p, why) && why == RouteFail::PathNotFound,
+          "planner: no squeezing through a gap, path not found (2)");
+    // Failure codes: no goals (6), a goal under an object (7).
+    planner.clearObstacles();
+    check(!planner.plan({1.5f, 1.5f}, 1, 1, {}, p, why) && why == RouteFail::NoValidGoals, "planner: no valid goals (6)");
+    planner.addObstacle(1, 8, 8, 9, 9, PathPlanner::kObject);
+    check(!planner.plan({1.5f, 1.5f}, 1, 1, {{8.5f, 8.5f, 0}}, p, why) && why == RouteFail::DestinationOccupied,
+          "planner: destination occupied (7)");
+    // A start inside an object (getting up from a chair) steps out first.
+    check(planner.plan({8.5f, 8.5f}, 1, 1, {{1.5f, 1.5f, 0}}, p, why) && p.escaped, "planner: out of a footprint");
+    // Another Sim is a cost, not a wall: the walk goes round it if that is cheaper.
+    planner.clearObstacles();
+    planner.addRouter(1, 5.0f, 5.0f, 0, false);
+    check(planner.plan({1.0f, 5.0f}, 1, 1, {{9.0f, 5.0f, 0}}, p, why), "planner: past another Sim");
+    float closest = 9;
+    a = {1.0f, 5.0f};
+    for (const auto& q : p.points) {
+        for (int k = 0; k <= 20; ++k) {
+            const float u = float(k) / 20, x = a[0] + (q.x - a[0]) * u, y = a[1] + (q.y - a[1]) * u;
+            closest = std::min(closest, std::hypot(x - 5.0f, y - 5.0f));
+        }
+        a = {q.x, q.y};
+    }
+    check(closest > 0.3f, "planner: round another Sim, not through");
+
+    // Diagonal walls cut tiles in half: both halves are places to stand.
+    World d(8, 8);
+    d.addWall(1, 0, 4, 4, 0); // from (0, 4) to (4, 0)
+    PathPlanner dp(d);
+    check(dp.free(1, {2.75f, 1.75f}) && dp.free(1, {2.25f, 1.25f}) && !dp.free(1, {2.5f, 1.5f}),
+          "planner: the halves of a diagonal tile");
+    check(dp.plan({6.5f, 6.5f}, 1, 1, {{2.75f, 1.75f, 0}}, p, why), "planner: to the outer half of a diagonal tile");
+    check(!dp.plan({6.5f, 6.5f}, 1, 1, {{2.2f, 1.2f, 0}}, p, why), "planner: not through the diagonal wall");
+
+    // A door is a portal: the walk goes through its two points, straight.
+    World h(10, 6);
+    for (int y = 0; y < 6; ++y)
+        h.addWall(1, 5, y, 5, y + 1); // a wall at x = 5
+    h.openDoor({4, 2, 1}, 0);          // facing -X, its back to the wall
+    PathPlanner hp(h);
+    check(hp.portals().size() == 1 && !hp.free(1, {5.0f, 2.5f}), "planner: the door's opening is closed, a portal opens it");
+    check(hp.plan({1.5f, 4.5f}, 1, 1, {{8.5f, 4.5f, 0}}, p, why), "planner: through the door");
+    bool through = false;
+    for (size_t i = 0; i < p.points.size(); ++i)
+        through |= p.points[i].portal == 0 && std::fabs(p.points[i].x - 5.5f) < 1e-4f && i > 0 &&
+                   std::fabs(p.points[i - 1].x - 4.5f) < 1e-4f && std::fabs(p.points[i - 1].y - 2.5f) < 1e-4f;
+    check(through, "planner: in front of the door, then behind it");
+
+    // Floor costs: a costly band is walked round when that is cheaper.
+    World c(12, 6);
+    for (int y = 0; y < 5; ++y)
+        c.setCost({6, y, 1}, 10);
+    PathPlanner cp(c);
+    check(cp.plan({1.5f, 1.5f}, 1, 1, {{10.5f, 1.5f, 0}}, p, why) && pathLength({1.5f, 1.5f}, p) > 9.5f,
+          "planner: round a costly floor");
+}
+
+// A failed route writes the route result (person data 62) and the
+// primitive returns false.
+static void testRouteResult() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(10, 10);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {8.5f, 8.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {1.5f, 1.5f, 1};
+    check(sim.person.has_value(), "a person");
+    for (int x = 0; x < 10; ++x)
+        vm.world->addWall(1, x, 5, x + 1, 5); // walled off
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    for (int i = 0; i < 10 && t.status == Thread::Status::Running; ++i)
+        vm.run(t);
+    check(t.status == Thread::Status::Finished && !t.result && sim.person && sim.person->data[62] == 2,
+          "route result 2: path not found");
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -477,6 +601,8 @@ int main() {
     testWorldWalls();
     testDiagonalWalls();
     testSetToNextTiles();
+    testPathPlanner();
+    testRouteResult();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

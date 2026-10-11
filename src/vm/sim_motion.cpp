@@ -24,7 +24,7 @@ void SimMotion::sample(VM& vm, const Object& o) {
     State s;
     s.x = o.position.x, s.y = o.position.y, s.level = o.position.level;
     s.direction = o.data[objdata::Direction];
-    s.walking = o.route.has_value();
+    s.walking = o.route.has_value() && !o.route->waiting; // waiting (a door, a Sim in the way): standing
     if (o.animation.playing())
         s.animation = o.animation.name;
     s.serial = o.animation.serial;

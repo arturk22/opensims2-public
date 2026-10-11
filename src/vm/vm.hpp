@@ -5,6 +5,7 @@
 #include "formats/strings.hpp"
 #include "animation.hpp"
 #include "dialog.hpp"
+#include "path_planner.hpp"
 #include "world.hpp"
 
 #include <array>
@@ -438,12 +439,25 @@ struct Object {
             int ticks = 0;
             float z = 0;
             int direction = -1;
-            std::string animation;
+            std::string animation; // empty with ticks > 0: a wait (for a door to open)
+            ObjectId door = 0;     // the door whose portal this point goes through
         };
         std::vector<Point> points;
         int level = 0; // of the goal
         int facing = -1;
         ObjectId target = 0;
+        // For planning again when the way is blocked (routing.cpp): the goal
+        // points (x, y, cost) with their facings, the objects whose
+        // footprints do not count, how long the walker has been blocked, how
+        // often it planned again, and whether it stands waiting (a door, a
+        // Sim in the way: no walk animation).
+        std::vector<std::array<float, 3>> goals;
+        std::vector<int> facings;
+        std::vector<ObjectId> ignore;
+        int blockedTicks = 0, replans = 0;
+        bool waiting = false;
+        bool failureTrees = true; // "CT - Route Failure Feedback" when it fails
+        ObjectId blocker = 0;     // the Sim in the way
         struct Climb {
             std::string animation; // empty between phases
             uint32_t serial = 0;   // bumped as each phase starts
@@ -519,6 +533,17 @@ struct Frame {
     // An interaction run by Gosub Found Action (autonomy.cpp): it ends the
     // same way, but the Gosub Found Action instruction branches on its result.
     bool foundAction = false;
+    // When this frame returns, the caller's instruction branches on this
+    // instead of the returned value (a primitive that ran a tree for its
+    // own ends: the route failure feedback; routing.cpp).
+    std::optional<bool> callerResult;
+    // When this frame returns, the caller's instruction runs again (with
+    // the returned value in Thread::rerunResult): a primitive that runs a
+    // tree in the middle of its work (the routing's waiting animations).
+    bool rerunCaller = false;
+    // A route of this frame's instruction failed with this result and its
+    // failure feedback tree runs (routing.cpp); -1: none.
+    int16_t pendingRouteResult = -1;
 };
 
 // Temps belong to the thread, so subroutines can return values in them;
@@ -530,6 +555,9 @@ struct Thread {
     ObjectId me = 0;
     std::array<int16_t, kTempCount> temps{};
     std::vector<Frame> stack;
+    // What the tree a primitive ran returned, for the primitive running
+    // again (Frame::rerunCaller); it reads and clears it.
+    std::optional<bool> rerunResult;
 
     Status status = Status::Running;
     bool result = false;   // return value of the root tree once Finished
@@ -601,6 +629,9 @@ public:
     // (single trees, tests) positions mean nothing to the primitives that
     // need them, which then fail with the reason.
     std::optional<World> world;
+    // The path planner of `world` (path_planner.hpp), built on first use
+    // (routing.cpp); reset it after changing the world.
+    std::shared_ptr<PathPlanner> planner;
     // Walking speed in tiles per tick of walkers without a walk animation
     // (Sims walk at their walk animation's speed, animation.hpp): 2 m/s, the
     // normal adult walk, with a tile taken as a metre and a tick as 1/30 s
@@ -641,6 +672,9 @@ public:
         bool onTarget = false; // the goal is on the target's own tile (its parts do not block it)
     };
     RouteGoals routingGoals(const Slots::Slot& slot, const Object& target);
+    // The model bone a routing slot names, in the object's model space
+    // (routing.cpp); none without the game's resources.
+    std::optional<std::array<float, 3>> slotBone(const Slots::Slot& slot, const Object& target);
 
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) { objects_.erase(id); }

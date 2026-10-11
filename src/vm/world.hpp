@@ -73,6 +73,9 @@ public:
     int firstLevel() const { return firstLevel_; }
     int levelCount() const { return levelCount_; }
     bool empty() const { return width_ == 0; }
+    // Bumped by every change (walls, doors, floors, stairs, costs): what
+    // was built from the world (the path planner) is stale when it differs.
+    uint32_t revision() const { return revision_; }
 
     bool contains(TilePos t) const;
     // A tile has something to stand on.
@@ -104,18 +107,45 @@ public:
     void addStair(const Stair& s);
     const std::vector<Stair>& stairs() const { return stairs_; }
 
+    // The doors openDoor opened, in order: the tile, the facing and whether
+    // the door stands in a diagonal wall (the path planner makes each a
+    // portal, path_planner.hpp).
+    struct Door {
+        TilePos tile;
+        int dir = 0;
+        bool diagonal = false;
+    };
+    const std::vector<Door>& doors() const { return doors_; }
+    // The diagonal walls as added (grid points, a VM level each): the path
+    // planner cuts their tiles in half along them.
+    struct Segment {
+        int level = 0;
+        int ax = 0, ay = 0, bx = 0, by = 0;
+    };
+    const std::vector<Segment>& diagonalWalls() const { return diagonalWalls_; }
+    // A tile has a floor (or terrain), whatever crosses it.
+    bool hasFloor(TilePos t) const;
+    // What walking over a tile costs per tile walked (1 by default; the
+    // terrain's slope raises it, World::fromLot).
+    float cost(TilePos t) const;
+    void setCost(TilePos t, float cost);
+
     // Index of a tile within one level's grid (x * height + y).
     size_t index(int x, int y) const { return size_t(x) * height_ + size_t(y); }
 
 private:
     uint32_t width_ = 0, height_ = 0;
     int firstLevel_ = 1, levelCount_ = 0;
+    uint32_t revision_ = 0;
     std::vector<uint8_t> walkable_;   // [level][x][y]
     std::vector<int16_t> rooms_;      // [level][x][y]
     std::vector<uint8_t> xWalls_;     // [level][x][y]: wall (x, y)-(x + 1, y), x < width, y <= height
     std::vector<uint8_t> yWalls_;     // [level][x][y]: wall (x, y)-(x, y + 1), x <= width, y < height
     std::vector<Stair> stairs_;
     std::vector<uint8_t> diagonals_;  // [level][x][y]: 1 a diagonal wall crosses it, 2 a door opens it
+    std::vector<float> costs_;        // [level][x][y]
+    std::vector<Door> doors_;
+    std::vector<Segment> diagonalWalls_;
     size_t cell(TilePos t) const;
     size_t xEdge(int level, int x, int y) const;
     size_t yEdge(int level, int x, int y) const;

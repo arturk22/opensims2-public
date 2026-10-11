@@ -919,11 +919,17 @@ bool VM::branch(Thread& t, Behavior::Target target) {
             const bool value = target.kind == Behavior::TargetKind::True;
             const bool interaction = t.stack.back().interaction;
             const bool foundAction = t.stack.back().foundAction;
+            const std::optional<bool> forced = t.stack.back().callerResult;
+            const bool rerun = t.stack.back().rerunCaller;
             t.stack.pop_back();
             if (t.stack.empty()) {
                 t.status = Thread::Status::Finished;
                 t.result = value;
                 return false;
+            }
+            if (rerun) { // the primitive that ran it goes on
+                t.rerunResult = value;
+                return true;
             }
             if (interaction) {
                 // A queued interaction's action tree: the Idle for Input that ran it runs again.
@@ -936,7 +942,7 @@ bool VM::branch(Thread& t, Behavior::Target target) {
             // The caller's call instruction branches on the returned value.
             const Frame& caller = t.stack.back();
             const auto& call = caller.behavior->instructions[caller.pc];
-            target = value ? call.onTrue : call.onFalse;
+            target = forced.value_or(value) ? call.onTrue : call.onFalse;
             break;
         }
         }

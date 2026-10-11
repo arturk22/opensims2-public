@@ -33,6 +33,7 @@ World::World(uint32_t width, uint32_t height, int firstLevel, int levelCount)
     walkable_.assign(levels * width * height, 1);
     rooms_.assign(levels * width * height, 0);
     diagonals_.assign(levels * width * height, 0);
+    costs_.assign(levels * width * height, 1.0f);
     xWalls_.assign(levels * width * (height + 1), 0);
     yWalls_.assign(levels * (width + 1) * height, 0);
 }
@@ -52,6 +53,25 @@ World World::fromLot(const Lot& lot) {
                         for (uint16_t q : lot.floors[i])
                             floor |= q != 0;
                     w.setWalkable(t, floor);
+                } else if (!lot.elevations.empty()) {
+                    // The terrain's slope and water, as the Mac binary's
+                    // WorkOutTileCostAndPassability has them (docs/routing-mac.md
+                    // §2): a rise of 1 or more across the tile is impassable,
+                    // 0.5-1 costs (rise - 0.5) * 20 if that is more; water
+                    // over the terrain is impassable.
+                    float lo = std::numeric_limits<float>::infinity(), hi = -lo;
+                    bool water = false;
+                    for (int cx = 0; cx < 2; ++cx)
+                        for (int cy = 0; cy < 2; ++cy) {
+                            const float h = lot.elevation(lotLevel, int(x) + cx, int(y) + cy);
+                            lo = std::min(lo, h), hi = std::max(hi, h);
+                            water |= lot.waterLevel(int(x) + cx, int(y) + cy) > h + 0.01f;
+                        }
+                    const float rise = hi - lo;
+                    if (rise >= 1.0f || water)
+                        w.setWalkable(t, false);
+                    else if (rise > 0.5f)
+                        w.setCost(t, std::max(1.0f, (rise - 0.5f) * 20.0f));
                 }
                 if (!lot.rooms.empty())
                     for (uint16_t r : lot.rooms[i])
@@ -157,6 +177,7 @@ std::vector<Stair> lotStairs(const Lot& lot) {
 }
 
 void World::addStair(const Stair& s) {
+    ++revision_;
     // The tiles the steps stand on, on the lower level.
     for (int i = 0; i < s.steps; ++i) {
         const auto p = s.at(0.125f + 0.25f * float(i));
@@ -184,9 +205,20 @@ bool World::walkable(TilePos t) const {
     return contains(t) && walkable_[cell(t)] && diagonals_[cell(t)] != 1;
 }
 
+bool World::hasFloor(TilePos t) const { return contains(t) && walkable_[cell(t)]; }
+
+float World::cost(TilePos t) const { return contains(t) ? costs_[cell(t)] : 1.0f; }
+
+void World::setCost(TilePos t, float cost) {
+    ++revision_;
+    if (contains(t))
+        costs_[cell(t)] = cost;
+}
+
 bool World::diagonalWall(TilePos t) const { return contains(t) && diagonals_[cell(t)] != 0; }
 
 void World::setWalkable(TilePos t, bool walkable) {
+    ++revision_;
     if (contains(t))
         walkable_[cell(t)] = walkable;
 }
@@ -194,11 +226,13 @@ void World::setWalkable(TilePos t, bool walkable) {
 int16_t World::room(TilePos t) const { return contains(t) ? rooms_[cell(t)] : 0; }
 
 void World::setRoom(TilePos t, int16_t room) {
+    ++revision_;
     if (contains(t))
         rooms_[cell(t)] = room;
 }
 
 void World::setEdge(int level, int ax, int ay, int bx, int by, bool wall) {
+    ++revision_;
     if (level < firstLevel_ || level >= firstLevel_ + levelCount_)
         return;
     if (ay == by && ax != bx) {
@@ -213,9 +247,12 @@ void World::setEdge(int level, int ax, int ay, int bx, int by, bool wall) {
 }
 
 void World::addWall(int level, int ax, int ay, int bx, int by) {
+    ++revision_;
     const int dx = bx - ax, dy = by - ay;
     if (dx && std::abs(dx) == std::abs(dy)) {
         const int sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
+        if (level >= firstLevel_ && level < firstLevel_ + levelCount_)
+            diagonalWalls_.push_back({level, ax, ay, bx, by});
         for (int i = 0; i < std::abs(dx); ++i) {
             // Each unit step crosses the tile between its two grid points.
             const int x0 = ax + i * sx, y0 = ay + i * sy;
@@ -229,14 +266,18 @@ void World::addWall(int level, int ax, int ay, int bx, int by) {
 }
 
 void World::openDoor(TilePos t, int dir) {
+    ++revision_;
     // The edge between the door's tile and the tile behind it.
     if (contains(t) && diagonals_[cell(t)]) {
         diagonals_[cell(t)] = 2; // a door in the diagonal wall crossing its tile
+        doors_.push_back({t, ((dir % 8) + 8) % 8, true});
         return;
     }
     const auto [dx, dy] = directionStep(dir + 4);
     if (std::abs(dx) + std::abs(dy) != 1)
         return;
+    if (contains(t))
+        doors_.push_back({t, ((dir % 8) + 8) % 8, false});
     if (dx)
         setEdge(t.level, t.x + (dx > 0 ? 1 : 0), t.y, t.x + (dx > 0 ? 1 : 0), t.y + 1, false);
     else
