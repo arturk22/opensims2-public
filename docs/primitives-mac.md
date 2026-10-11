@@ -16,6 +16,8 @@ Convenção: "byte n" é o byte n dos 16 bytes de operandos da instrução (como
 no resto do projeto e no SimPE); "u16 n" é um u16 little-endian que começa no
 byte n; (dono, dado) é uma referência a variável, lida por
 `cTSObject::InterpValue(dono, dado)`.
+"Índice + 1 no STR#" quer dizer que o código soma 1 porque a API de STR#
+do jogo conta a partir de 1: o operando é a entrada **a partir de 0**.
 
 ---
 
@@ -225,8 +227,13 @@ Operandos (disassembler `CatNewReachParam` + `SwizzleParams`; binário):
 | 7–8 | u16 (não impresso) |
 | 9 | flags: 0x01 slot no temp 0; 0x02 espera a mão (handedness) no temp 3; 0x04 filtra a animação do objeto pela idade do Sim |
 | 10 | modo: 0 pegar o objeto, 1 pôr no slot do objeto, 2 pôr no chão |
-| 11–12 | animação de pegar ("grasp"): índice + 1 no STR# 0x81 (adulto); 0xFFFF = nenhuma |
-| 13–14 | animação do objeto: índice + 1 no STR# 0x86 (objeto); 0xFFFF = nenhuma |
+| 11–12 | animação de pegar ("grasp"): **índice a partir de 0** no STR# 0x81 (adulto); 0xFFFF = nenhuma |
+| 13–14 | animação do objeto: **índice a partir de 0** no STR# 0x86 (objeto); 0xFFFF = nenhuma |
+
+Correção (r4): `cAnimatable::FindSpecificName` soma 1 ao índice porque a
+API de STR# do jogo conta a partir de 1 (como os `STR#` do Mac); o operando
+é a entrada a partir de 0, como os dados mostram (copo de brinde: grasp 0 =
+`a2o-toastingGlass-grasp`).
 
 Execução (binário): só roda em Sims (senão erro 0x69 "Cant run Reach/Drop
 on non Sim object"; sem pessoa 3D 0x42, sem animador 0x41). Na primeira
@@ -454,18 +461,21 @@ Execução (binário):
 
 ### 0x7A On Timer (`TryOnTimer`, `OnTimerParam`)
 
-Operandos (binário): u16 0 = árvore/ID do timer; byte 2; u16 3; flags u8 5;
+Operandos (binário): u16 0 = ticks até disparar ("Ticks till fire %d" no
+editor; com a flag 0x08 vem do temp 1: "Getting ticks till fire from temp
+1"); byte 2; u16 3 = árvore que o timer roda; flags u8 5;
 três (dono 6, dado u16 7), (dono 9, dado u16 10), (dono 12, dado u16 13);
 modo u8 15.
 
 Execução (binário): pega o gerenciador de timers do lote (sem ele: erro
-0x17). u16 0, ou o temp 1 com a flag 0x08. Modo 0 (criar): argumentos =
+0x17). Ticks = u16 0, ou o temp 1 com a flag 0x08. Modo (byte 15) 0 (criar): argumentos =
 os três (dono, dado) acima, ou, com a flag 0x01, os parâmetros da árvore
 atual; chama o gerenciador com (u16 0, u16 3, flag 0x02, persistente?, n
 argumentos) e **grava no temp 0 o ID do timer criado**. Modo 1: altera o
-timer cujo ID está no temp 0 (u16 0, u16 3, flags 0x02 | 0x04→2). Modo 2:
-cancela o timer do temp 0. Sempre verdadeiro. Inferido: u16 3 é o intervalo,
-0x02 repete.
+timer cujo ID está no temp 0 (ticks, árvore, flags 0x02 | 0x04→2; 0x04 =
+"Reset Timer Ticks" pelo texto do editor). Modo 2: cancela o timer do temp
+0 ("Start/Modify/Delete Timer" no editor). Sempre verdadeiro. Inferido:
+0x02 repete. (Correção r4: a versão anterior trocava ticks e árvore.)
 
 ### 0x17 Play / Stop Sound Event (`TryPlaySound`)
 
@@ -475,8 +485,12 @@ achado).
 
 Execução (binário): a fonte é o stack object com a flag 0x02 (e byte 4 ≠
 0xFF), senão eu. O número escolhe a tabela de sons: |n| ≥ 20000 → tabela
-global (n − 20000), 10000–19999 → semi-global (n − 10000), < 10000 →
-privada. **n negativo: o índice vem da variável (dono 6, dado u16 7)** (a
+**semi-global** (n − 20000), 10000–19999 → **global** (n − 10000), < 10000 →
+privada. (Correção r4: o binário só mostra três slots da vtable do dono do
+código da árvore — 0x38 para 20000+, 0x34 para 10000+, 0x3C para o resto —,
+e a versão anterior chamou 0x38 de global; os dados decidem: "Pregnancy -
+Make Pregnant", árvore global, toca 10002 = o som global
+`sting_playin_make_preg`, e os telefones tocam 20001 sem tabela própria.) **n negativo: o índice vem da variável (dono 6, dado u16 7)** (a
 tabela continua escolhida por |n|). O nome achado vai em minúsculas para o
 sistema de áudio numa mensagem com o ID do objeto, a posição (para Sims, o
 osso `root_rot` e os dados de pessoa 58, 65 e 88) e um de dois eventos
