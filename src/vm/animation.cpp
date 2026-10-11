@@ -296,7 +296,7 @@ Object& objectAt(Context& c, size_t ownerAt) {
 }
 
 int ticksFor(VM& vm, float seconds) {
-    return int(std::ceil(double(seconds) * vm.clock.ticksPerMinute - 1e-6));
+    return int(std::ceil(double(seconds) * vm.clock.ticksPerSecond - 1e-6));
 }
 
 // The speed of an Animate Sim/Object/Overlay operand: byte 3 in 1/32 (0x20
@@ -375,7 +375,7 @@ Exit animateSim(Context& c) {
     a.pendingEvents = library(c.vm).treeEvents(name);
     a.eventTree = le16(&o[4]);
     a.playedTicks = 0;
-    a.ticksPerVmTick = 1000.0f / float(c.vm.clock.ticksPerMinute) * animationSpeed(c);
+    a.ticksPerVmTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
     if (a.ticksLeft > 0) {
         runAnimationEvents(c, a, false);
         return Exit::Yield;
@@ -614,7 +614,7 @@ float walkTilesPerTick(VM& vm, const Object& sim) {
     if (sim.person) {
         const std::string walk = locomotionAnimation(vm, sim, "walk");
         if (const float v = walk.empty() ? 0 : library(vm).tilesPerSecond(walk); v > 0)
-            return v / float(vm.clock.ticksPerMinute);
+            return v / float(vm.clock.ticksPerSecond);
     }
     return vm.walkTilesPerTick;
 }

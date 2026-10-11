@@ -727,6 +727,11 @@ public:
     // clock for The Sims 1; not confirmed for The Sims 2).
     struct Clock {
         int ticksPerMinute = 30;
+        // Real seconds to ticks at normal speed, for animation and routing
+        // durations. The game runs a tick per 42 ms of its scaled clock (about
+        // 23.8 a second, docs/ui-live-mac.md §1.2); 30 here by default (tests,
+        // s2pkg), the app sets the game's rate.
+        double ticksPerSecond = 30;
         int tick = 0; // within the minute
         int minute = 0, hour = 8, day = 1, month = 1, year = 1;
     } clock;

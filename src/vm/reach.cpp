@@ -295,11 +295,11 @@ std::optional<int> transferTick(VM& vm, const std::string& name) {
     const auto t = library(vm).eventTicks(name, "event=0");
     if (!t)
         return std::nullopt;
-    return int(std::lround(double(*t) / Animation::kTicksPerSecond * vm.clock.ticksPerMinute));
+    return int(std::lround(double(*t) / Animation::kTicksPerSecond * vm.clock.ticksPerSecond));
 }
 
 int ticksFor(VM& vm, float seconds) {
-    return int(std::ceil(double(seconds) * vm.clock.ticksPerMinute - 1e-6));
+    return int(std::ceil(double(seconds) * vm.clock.ticksPerSecond - 1e-6));
 }
 
 // Entry `index` of the adult animation list (STR# 0x81) for the running code:

@@ -29,6 +29,9 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     vm::VM& m = *vm_;
     m.initCreatedObjects = true;
     m.instructionsPerTurn = 20000; // as lot-run
+    // The game's tick: 42 ms of its (speed-scaled) clock (docs/ui-live-mac.md §1.2).
+    m.clock.ticksPerSecond = kTicksPerSecond;
+    m.walkTilesPerTick = float(2.0 / kTicksPerSecond);
     m.setClockGlobals();
     const LotObjects saved = LotObjects::load(lotPackage);
     // The neighborhood first, as lot-run (lot_neighborhood.hpp).
@@ -226,11 +229,31 @@ std::optional<Vec3> LotSimulation::lookTarget(const vm::Object& o) const {
     return Vec3{x->position.x, x->position.y, floorHeight(x->position.level, x->position.x, x->position.y) + 0.75f};
 }
 
-void LotSimulation::update(double seconds) {
-    const double rate = vm_->clock.ticksPerMinute; // ticks per second at normal speed
+double LotSimulation::speedScale() const {
+    const auto& g = vm_->globals;
+    if (g[vm::global::Paused])
+        return 0;
+    switch (g[vm::global::Speed]) {
+    case 3: return speedScales[1];
+    case 4: return speedScales[2];
+    default: return speedScales[0];
+    }
+}
+
+double LotSimulation::update(double seconds) {
+    // The game speed scales the scene clock the VM and the animations run on.
+    scene_ += std::clamp(seconds - caller_, 0.0, 0.25) * speedScale();
+    caller_ = seconds;
+    updateScene(scene_);
+    return scene_;
+}
+
+void LotSimulation::updateScene(double seconds) {
+    const double rate = vm_->clock.ticksPerSecond; // ticks per second of the scene clock
     // After a stall (loading, a window drag) the VM does not race to catch
-    // up: past a second behind, its clock slips instead.
-    constexpr uint64_t kMaxCatchUp = 30;
+    // up: past 125 ticks behind (the game's limit per frame), its clock
+    // slips instead.
+    constexpr uint64_t kMaxCatchUp = 125;
     double vmSeconds = seconds - slip_;
     if (vmSeconds * rate > double(vm_->ticks + kMaxCatchUp)) {
         slip_ = seconds - double(vm_->ticks + kMaxCatchUp) / rate;

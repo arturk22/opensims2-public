@@ -79,6 +79,11 @@ public:
 
     vm::VM& vm() { return *vm_; }
     vm::ObjectId sim() const { return sim_; }
+    // Another selected Sim (its portrait comes by setPortrait).
+    void setSim(vm::ObjectId id) { sim_ = id, dirty_ = true; }
+    // The debug queue (a column of labels at the top left); off when the
+    // live-mode panel draws the game's queue.
+    void setShowQueue(bool show) { showQueue_ = show, dirty_ = true; }
 
     void setStyle(const PieMenuStyle& style) { style_ = style, dirty_ = true; }
     const PieMenuStyle& style() const { return style_; }
@@ -191,6 +196,7 @@ private:
     bool dirty_ = true;
     int canvasW_ = 0, canvasH_ = 0;
     uint64_t queueStamp_ = 0;
+    bool showQueue_ = true;
 };
 
 } // namespace os2

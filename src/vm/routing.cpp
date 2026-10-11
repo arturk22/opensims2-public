@@ -340,7 +340,7 @@ std::pair<std::string, int> stairAnimation(VM& vm, const Object& me, const std::
     const std::string age = agePrefix(me);
     for (const std::string& candidate : {age + "-" + name, "a-" + name})
         if (const auto secs = vm.animations.seconds(candidate))
-            return {candidate, std::max(1, int(std::ceil(*secs * float(vm.clock.ticksPerMinute))))};
+            return {candidate, std::max(1, int(std::ceil(*secs * float(vm.clock.ticksPerSecond))))};
     return {age + "-" + name, 10};
 }
 
@@ -407,7 +407,7 @@ ObjectId doorObject(VM& vm, const World::Door& d) {
 // the animation is not known).
 int doorWaitTicks(VM& vm) {
     if (const auto secs = vm.animations.seconds("o-door-open-CW"))
-        return std::clamp(int(std::ceil(*secs * float(vm.clock.ticksPerMinute))), 1, 45);
+        return std::clamp(int(std::ceil(*secs * float(vm.clock.ticksPerSecond))), 1, 45);
     return 15;
 }
 

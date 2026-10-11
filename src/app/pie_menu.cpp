@@ -548,7 +548,7 @@ UiScreen PieMenuHost::screen(int width, int height) {
     Painter paint{out, st ? fonts_->font(*st) : nullptr, st ? float(st->size) : 14.0f};
 
     // The selected Sim's queue, top left.
-    if (const vm::Object* sim = vm_->object(sim_)) {
+    if (const vm::Object* sim = showQueue_ ? vm_->object(sim_) : nullptr) {
         float y = 12;
         const std::string head = "Fila de " + objectName(sim);
         paint.label(12, y, 12 + paint.width(head) + 2 * kPad, y + kLabelH, head, kTitle, kText);

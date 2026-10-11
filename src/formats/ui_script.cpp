@@ -174,6 +174,26 @@ bool UiElement::flag(std::string_view key) const {
     return v && *v == "yes";
 }
 
+void UiElement::set(std::string_view key, std::string value) {
+    for (auto& [k, v] : attrs)
+        if (k == key) {
+            v = std::move(value);
+            return;
+        }
+    attrs.emplace_back(std::string(key), std::move(value));
+}
+
+UiElement* UiElement::child(uint32_t want) {
+    for (auto& c : children)
+        if (c.attr("id") && c.id() == want)
+            return &c;
+    return nullptr;
+}
+
+const UiElement* UiElement::child(uint32_t want) const {
+    return const_cast<UiElement*>(this)->child(want);
+}
+
 uint32_t UiElement::id() const {
     const auto* v = attr("id");
     return v ? hex(*v).value_or(0) : 0;

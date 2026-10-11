@@ -4,6 +4,8 @@
 #include "ui_script.hpp"
 
 #include <array>
+#include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -37,6 +39,28 @@ struct UiLayoutOptions {
     // larger than its parent is centred on the canvas instead (backgrounds).
     std::set<uint32_t> show;
 };
+
+// Per-window changes for code-driven screens (the live-mode panel): what the
+// game's window procedures do to the windows of a script, keyed by element.
+struct UiDrawHooks {
+    std::set<const UiElement*> hide, show;               // override winflag_visible
+    std::map<const UiElement*, const RgbaImage*> images; // in place of the image attribute (whole image)
+    std::map<const UiElement*, int> buttonState;         // strip frame of a button: 0 disabled, 1 normal, 2 pressed, 3 hover
+    std::map<const UiElement*, std::string> captions;    // in place of caption/captionres
+    std::map<const UiElement*, std::array<float, 4>> colors; // multiplies the window's quads
+    // Extra drawing after the window itself and before its children, given
+    // the window's canvas rectangle.
+    std::map<const UiElement*, std::function<void(UiScreen&, float x, float y, float w, float h)>> after;
+    // Out: canvas rectangle (x0, y0, x1, y1) of every visible window laid out.
+    std::map<const UiElement*, std::array<float, 4>>* rects = nullptr;
+};
+
+// Lays out one window and its children with the window's area relative to
+// (parentX, parentY), appending to `out` (whose canvas size is kept). Classes
+// known only by GUID draw as their interface says (iid=IGZWinBtn: a button,
+// IGZWinBMP: an image; the rest only their children).
+void layoutUiElement(const UiElement& e, float parentX, float parentY, UiResources& res, FontLibrary& fonts,
+                     UiScreen& out, const UiDrawHooks& hooks = {});
 
 // Lays out every root window centred on the canvas: images (GZWinBMP, and
 // GZWinGen by blttype: edge = nine-slice of the image in thirds, tiled,

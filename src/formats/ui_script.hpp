@@ -39,6 +39,11 @@ struct UiElement {
     const std::string* attr(std::string_view key) const;
     std::string get(std::string_view key, std::string_view fallback = {}) const;
     bool flag(std::string_view key) const; // value "yes"
+    // Replaces the value of `key` (appends it if absent).
+    void set(std::string_view key, std::string value);
+    // First child with this id (direct children only); null if none.
+    UiElement* child(uint32_t id);
+    const UiElement* child(uint32_t id) const;
 
     std::string clsid() const { return get("clsid"); }
     uint32_t id() const; // 0 when absent
@@ -59,6 +64,7 @@ struct UiScript {
     size_t elementCount() const;
     // Depth-first search by id; null if none.
     const UiElement* find(uint32_t id) const;
+    UiElement* find(uint32_t id) { return const_cast<UiElement*>(std::as_const(*this).find(id)); }
 };
 
 // "name=value" captions of the texts under the (hidden) window captioned

@@ -10,6 +10,7 @@
 #include "vm/sim_motion.hpp"
 #include "vm/vm.hpp"
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -24,7 +25,10 @@ class DbpfPackage;
 class ResourceIndex;
 struct Character;
 
-// The VM runs at 30 ticks a second (a game minute a second, normal speed).
+// The VM runs at the game's rate: a tick per 42 ms of the scene clock, about
+// 23.8 a second at normal speed, 30 ticks a game minute (docs/ui-live-mac.md
+// §1.2); the game speed (the VM's Speed and Paused globals) scales the scene
+// clock by TS2Config.txt's AnimSpeedMedium/Fast/Ultra (1, 3, 21).
 // Walkers move as the VM moves them, from tile centre to tile centre at its
 // walking speed, the speed of the Sim's walk animation (vm::walkTilesPerTick:
 // 2 tiles/s for the normal adult walk), not by the walk animation's root motion: the VM's position is the truth (routing, slots,
@@ -70,8 +74,16 @@ public:
     // Runs the VM up to `seconds` (whole ticks) and places and animates the
     // attached actors for that moment (one tick behind the VM, so that
     // there is a tick to interpolate towards).
-    void update(double seconds);
+    // `seconds` is the caller's (real) clock; returns the scene clock, the
+    // moment to pose the actors at (it runs slower or faster with the game
+    // speed, and stops while paused).
+    double update(double seconds);
     uint64_t ticks() const { return vm_->ticks; }
+    static constexpr double kTicksPerSecond = 1000.0 / 42.0;
+    // Scene clock scale of speeds 2, 3 and 4 (TS2Config.txt AnimSpeedMedium, Fast, Ultra).
+    std::array<double, 3> speedScales{1.0, 3.0, 21.0};
+    // The current scale (0 while paused).
+    double speedScale() const;
     // Height of the floor (or terrain) of VM level `level` (1 = the lot's
     // ground level) at (x, y).
     float floorHeight(int level, float x, float y) const;
@@ -94,6 +106,7 @@ private:
     std::optional<Vec3> lookTarget(const vm::Object& o) const;
     void playOverlays(Bound& b, const vm::Object& o, double at);
     void sampleAll(double at);
+    void updateScene(double seconds);
 
     ResourceIndex& index_;
     Lot lot_;
@@ -103,6 +116,7 @@ private:
     std::map<int16_t, uint32_t> objectAnimSerials_; // objects' overlaySerial last seen
     std::string summary_;
     double last_ = 0;
+    double scene_ = 0, caller_ = 0; // scene clock, caller's clock at the last update
     double slip_ = 0; // seconds the VM has fallen behind the caller's clock
 };
 

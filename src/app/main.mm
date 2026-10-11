@@ -24,14 +24,18 @@
 // also saves it) and exits without opening a window. --ui <instance-hex> draws a
 // UI script from ui.package over the scene (1024x768 canvas, letterboxed;
 // --ui-show <id,id,...> shows windows the script hides, e.g. the main menu's
-// background 0da36c7d). With the VM running, a left click on an object opens
+// background 0da36c7d); --ui live draws the game's live-mode panel instead
+// (app/live_ui.hpp: puck, Sim panel, needs, family, action queue, wired to
+// the VM; it replaces the pie menu's debug queue, which --debug-queue keeps;
+// headless, --click presses its buttons and --ui-hover x,y puts the mouse
+// over it). With the VM running, a left click on an object opens
 // its pie menu for the selected Sim (--sim-id) and picking an entry queues it
 // (Esc closes it); headless: --pie <object> [--pie-select N] and --click x,y
 // (repeatable), which also start the VM (app/pie_menu.hpp). --vm runs the lot's objects in the SimAntics VM while it
 // is shown, with the Sims following it (walking, animations); --vm-walk
 // <sim-id>,<object-id>[,<anim>] makes a Sim walk to an object (then play entry
 // <anim> of the global animation list); --run-vm <ticks> runs that many ticks
-// (30 a second) before a --screenshot, and --frames <n> saves n screenshots
+// (the game's 1000/42 a second at normal speed) before a --screenshot, and --frames <n> saves n screenshots
 // spread over them (out-1.png ... out-n.png). A dialog the trees put up is
 // shown over the scene and pauses the game until a button is clicked;
 // headless: --dialog-answer <n> answers every one with button n, and
@@ -67,6 +71,7 @@
 #include "render/camera.hpp"
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#include "app/live_ui.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
 #include "anim_snaps.hpp"
@@ -103,6 +108,9 @@ constexpr uint32_t kTypeCres = 0xE519C933, kTypeObjd = 0x4F424A44;
 // The pie menu over the lot's VM (app/pie_menu.hpp), with the pick boxes of
 // the drawn lot objects (collected before the VM exists).
 std::unique_ptr<os2::PieMenuHost> gPie;
+// --ui live: the game's live-mode panel over the same VM (app/live_ui.hpp).
+std::unique_ptr<os2::LiveUi> gLive;
+bool liveUiRequested();
 struct PickBox {
     uint32_t instance;
     simd_float3 lo, hi;
@@ -323,6 +331,8 @@ os2::LotCamera* gCamera = nullptr;
 std::unique_ptr<os2::LotCameraFollow> gCameraFollow; // --lot: pivot held to the lot, on the Sim's floor
 
 void setupPieMenu(os2::ResourceIndex& index); // below loadLot
+void setupLiveUi(os2::ResourceIndex& index);  // below setupPieMenu
+std::optional<os2::RgbaImage> simPortrait(int16_t id);
 
 // The camera shows the selected Sim's level (cCameraLive::Update).
 void followSelectedSim() {
@@ -545,6 +555,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     for (const auto& b : gPickBoxes)
         gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
     setupPieMenu(index);
+    if (liveUiRequested())
+        setupLiveUi(index);
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
@@ -571,24 +583,59 @@ void setupPieMenu(os2::ResourceIndex& index) {
     os2::UiResources ui(index, gameDir() / "TSData/Res");
     if (auto script = ui.script(0x090617B7))
         gPie->setStyle(os2::PieMenuStyle::fromConstants(os2::uiConstants(*script)));
-    for (const auto& s : gLotSims) {
-        if (s.id != gPie->sim())
-            continue;
-        try {
-            os2::DbpfPackage character(s.character);
-            if (const os2::DbpfEntry* e = character.find({os2::kTypeUiImage, 0xFFFFFFFF, 0x10}))
-                if (auto img = os2::decodeUiImage(character.read(*e)))
-                    gPie->setPortrait(std::move(*img));
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "opensims2: portrait: %s\n", e.what());
-        }
-    }
+    if (auto p = simPortrait(gPie->sim()))
+        gPie->setPortrait(std::move(*p));
     if (gAudio)
         gPie->setSoundPlayer([](const std::string& name) {
             os2::SoundSystem::PlayOptions o;
             o.group = os2::SoundGroup::Ui;
             gAudio->sound().play(name, o);
         });
+}
+
+bool liveUiRequested() {
+    return argument(@"--ui").value_or("") == "live";
+}
+
+// A Sim's portrait: its character file's IMG 0x10.
+std::optional<os2::RgbaImage> simPortrait(int16_t id) {
+    for (const auto& s : gLotSims) {
+        if (s.id != id)
+            continue;
+        try {
+            // The small portrait: IMG 0x10, 0x08 or 0x02 by the Sim's age
+            // (0x1000, 0x800, 0x200 are the large ones).
+            os2::DbpfPackage character(s.character);
+            for (const auto& e : character.entries())
+                if (e.tgi.type == os2::kTypeUiImage && e.tgi.instance < 0x100)
+                    return os2::decodeUiImage(character.read(e));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: portrait: %s\n", e.what());
+        }
+    }
+    return std::nullopt;
+}
+
+// --ui live: the live-mode panel (app/live_ui.hpp) in place of the pie
+// menu's debug queue (--debug-queue keeps it). Picking a Sim there selects
+// it as --sim-id does (global 3, the pie menu's Sim and head).
+void setupLiveUi(os2::ResourceIndex& index) {
+    gLive = std::make_unique<os2::LiveUi>(gSimulation->machine(), index, gameDir() / "TSData/Res");
+    for (const auto& s : gLotSims)
+        if (auto p = simPortrait(s.id))
+            gLive->setPortrait(s.id, std::move(*p));
+    gLive->setSim(gPie->sim());
+    gLive->onSelectSim = [](os2::vm::ObjectId id) {
+        gSimulation->machine().globals[os2::vm::global::SelectedPersonId] = id;
+        gPie->close();
+        gPie->setSim(id);
+        if (auto p = simPortrait(id))
+            gPie->setPortrait(std::move(*p));
+    };
+    if (![NSProcessInfo.processInfo.arguments containsObject:@"--debug-queue"])
+        gPie->setShowQueue(false);
+    std::printf("opensims2: live UI: %s, %zu family members\n", gLive->ok() ? "loaded" : "missing scripts",
+                gLive->family().size());
 }
 
 // Loads --lot into the renderer in place of the test floor. Returns the middle
@@ -625,7 +672,8 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     const size_t sims = loadLotSims(renderer, index, lot, pkg, lotPath(*query));
     NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
     startAudio(index, lot);
-    if (argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") || [args containsObject:@"--vm"])
+    if (argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") || [args containsObject:@"--vm"] ||
+        liveUiRequested())
         startSimulation(renderer, index, lot, pkg, lotPath(*query));
     // Without the VM (no lamps): the light maps of the --lighting state.
     if (!gLighting) {
@@ -787,7 +835,7 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
 // then the objects' actors at the places that gives.
 void poseActors(os2::Renderer& renderer, double seconds) {
     if (gSimulation)
-        gSimulation->update(seconds);
+        seconds = gSimulation->update(seconds); // the scene clock (game speed)
     if (gDoors && gSimulation) {
         std::vector<os2::Vec3> sims;
         for (const auto& s : gLotSims)
@@ -954,7 +1002,7 @@ std::unique_ptr<os2::UiLayer> gUi;
 // an overlay. Returns the canvas size, for the screenshot.
 std::optional<std::pair<uint32_t, uint32_t>> loadUi(os2::Renderer& renderer, os2::ResourceIndex& index, MTKView* view) {
     const auto id = argument(@"--ui");
-    if (!id)
+    if (!id || *id == "live")
         return std::nullopt;
     const fs::path res = gameDir() / "TSData/Res";
     os2::UiResources ui(index, res);
@@ -1178,6 +1226,8 @@ int cameraSlot(unsigned short key) {
         return;
     if (gPie->isOpen() && gPie->press(p))
         return;
+    if (gLive && gLive->press(p))
+        return;
     const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
     const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
     simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
@@ -1198,6 +1248,8 @@ int cameraSlot(unsigned short key) {
     [self trackMouse:e];
     if (gPie)
         gPie->hover([self canvasPoint:e]);
+    if (gLive)
+        gLive->hover([self canvasPoint:e]);
 }
 
 - (void)mouseDragged:(NSEvent*)e {
@@ -1252,6 +1304,8 @@ int cameraSlot(unsigned short key) {
     _last = now;
 
     [view applyHeldKeys:dt];
+    if (gLive)
+        gLive->tick(now - _start);
     followSelectedSim();
     view.camera->update(dt);
     CGSize size = view.drawableSize;
@@ -1331,9 +1385,14 @@ int cameraSlot(unsigned short key) {
         if (gPie) {
             gPie->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                          uint32_t(view.depthStencilPixelFormat));
+            if (gLive)
+                gLive->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                              uint32_t(view.depthStencilPixelFormat));
             _viewDelegate.renderer->setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
                 if (gUi)
                     gUi->encode(enc, w, h);
+                if (gLive)
+                    gLive->encode(enc, w, h, gUiScale);
                 gPie->encode(enc, w, h, gUiScale);
             });
             const bool headless = argument(@"--screenshot").has_value();
@@ -1370,6 +1429,11 @@ int cameraSlot(unsigned short key) {
                 const simd_float2 p = simd_make_float2(clickX, clickY);
                 if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p))
                     continue;
+                if (gLive) {
+                    gLive->setCanvas(int(cw), int(ch));
+                    if (gLive->press(p))
+                        continue;
+                }
                 const simd_float4x4 m = simd_mul(view.camera->projection(cw / ch), view.camera->view());
                 const simd_float4 q =
                     simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / cw - 1, 1 - 2 * p.y / ch, 0.5f, 1));
@@ -1383,6 +1447,12 @@ int cameraSlot(unsigned short key) {
                 for (size_t k = 0; k < gPie->entries().size(); ++k)
                     std::printf("opensims2: pie [%zu] %s\n", k, gPie->entries()[k].name.c_str());
             }
+            // --ui-hover x,y: the mouse over the live panel (a queue icon's name).
+            float hx, hy;
+            if (auto h = argument(@"--ui-hover"); gLive && h && std::sscanf(h->c_str(), "%f,%f", &hx, &hy) == 2) {
+                gLive->setCanvas(int(cw), int(ch));
+                gLive->hover(simd_make_float2(hx, hy));
+            }
             std::fflush(stdout);
         }
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
@@ -1391,7 +1461,7 @@ int cameraSlot(unsigned short key) {
             // <n>: n shots spread up to it (out-1.png ... out-n.png).
             const auto runVm = argument(@"--run-vm");
             const double time = std::stod(argument(@"--time").value_or(
-                runVm ? std::to_string(std::stod(*runVm) / 30.0) : std::string("0")));
+                runVm ? std::to_string(std::stod(*runVm) / os2::LotSimulation::kTicksPerSecond) : std::string("0")));
             const int frames = std::max(1, std::stoi(argument(@"--frames").value_or("1")));
             poseActors(*_viewDelegate.renderer, 0);
             std::vector<simd_float2> dialogClicks;
@@ -1406,11 +1476,13 @@ int cameraSlot(unsigned short key) {
                 const double at = time * f / frames;
                 // The VM in small steps, so that the Sims' turning is followed.
                 for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30) {
-                    gSimulation->update(t);
+                    const double scene = gSimulation->update(t); // the scene clock (game speed)
                     // The lights follow the VM clock as in a live run (the
                     // day/night switch and its crossfade start when the clock gets there).
                     if (gLighting && gSimulation->ticks() % 30 == 0)
-                        gLighting->update(t);
+                        gLighting->update(scene);
+                    if (gLive)
+                        gLive->tick(t);
                     // --dialog-click x,y (repeatable): clicks, in turn, each dialog that opens.
                     if (gPie && gPie->dialogOpen() && dialogClick < dialogClicks.size()) {
                         gPie->setCanvas(int(shotW), int(shotH));

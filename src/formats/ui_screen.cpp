@@ -21,6 +21,8 @@ struct Layout {
     FontLibrary& fonts;
     const UiLayoutOptions& opt;
     UiScreen out;
+    const UiDrawHooks* hooks = nullptr;
+    std::array<float, 4> tint{1, 1, 1, 1};
 
     void quad(const RgbaImage* img, float x0, float y0, float x1, float y1, float sx0, float sy0, float sx1, float sy1,
               std::array<float, 4> color = {1, 1, 1, 1}) {
@@ -35,7 +37,8 @@ struct Layout {
             q.u1 = sx1 / float(img->width);
             q.v1 = sy1 / float(img->height);
         }
-        q.color = color;
+        for (size_t k = 0; k < 4; ++k)
+            q.color[k] = color[k] * tint[k];
         out.quads.push_back(q);
     }
     void flat(float x0, float y0, float x1, float y1, std::array<float, 4> color) {
@@ -72,6 +75,9 @@ struct Layout {
     }
 
     const RgbaImage* image(const UiElement& e, std::string_view key) {
+        if (hooks)
+            if (auto it = hooks->images.find(&e); it != hooks->images.end())
+                return it->second;
         const auto* v = e.attr(key);
         if (!v)
             return nullptr;
@@ -85,6 +91,9 @@ struct Layout {
     }
 
     std::string caption(const UiElement& e) {
+        if (hooks)
+            if (auto it = hooks->captions.find(&e); it != hooks->captions.end())
+                return it->second;
         if (const auto* r = e.attr("captionres"))
             if (auto ref = uiStringRef(*r))
                 if (auto s = res.string(*ref))
@@ -190,7 +199,14 @@ struct Layout {
         ++out.windows;
         const uint32_t id = e.attr("id") ? e.id() : 0;
         const bool forced = id && opt.show.count(id);
-        if (!e.visible() && !forced)
+        bool visible = e.visible() || forced;
+        if (hooks) {
+            if (hooks->hide.count(&e))
+                visible = false;
+            else if (hooks->show.count(&e))
+                visible = true;
+        }
+        if (!visible)
             return;
         const auto a = e.area();
         float x = px + float(a[0]), y = py + float(a[1]);
@@ -199,7 +215,22 @@ struct Layout {
             x = std::round((float(opt.canvasWidth) - w) / 2);
             y = std::round((float(opt.canvasHeight) - h) / 2);
         }
-        const std::string cls = e.clsid();
+        std::string cls = e.clsid();
+        if (!cls.empty() && cls[0] == '0') { // known only by GUID: draw as its interface
+            const std::string iid = e.get("iid");
+            if (iid == "IGZWinBtn")
+                cls = "GZWinBtn";
+            else if (iid == "IGZWinBMP")
+                cls = "GZWinBMP";
+        }
+        const auto savedTint = tint;
+        if (hooks) {
+            if (hooks->rects)
+                (*hooks->rects)[&e] = {x, y, x + w, y + h};
+            if (auto it = hooks->colors.find(&e); it != hooks->colors.end())
+                for (size_t k = 0; k < 4; ++k)
+                    tint[k] *= it->second[k];
+        }
         bool drew = false;
         auto src = [&](const RgbaImage* img) {
             std::array<float, 4> s{0, 0, float(img->width), float(img->height)};
@@ -231,10 +262,15 @@ struct Layout {
         } else if (cls == "GZWinBtn") {
             if (const RgbaImage* img = image(e, "image")) {
                 const float sw = float(img->width) / 4; // disabled, normal, pressed, hover
+                float frame = 1;
+                if (hooks)
+                    if (auto it = hooks->buttonState.find(&e); it != hooks->buttonState.end())
+                        frame = float(std::clamp(it->second, 0, 3));
+                const std::array<float, 4> s{frame * sw, 0, (frame + 1) * sw, float(img->height)};
                 if (e.flag("edgeimage"))
-                    edge(img, x, y, w, h, {sw, 0, 2 * sw, float(img->height)});
+                    edge(img, x, y, w, h, s);
                 else
-                    stretched(img, x, y, w, h, {sw, 0, 2 * sw, float(img->height)});
+                    stretched(img, x, y, w, h, s);
                 drew = true;
             }
             if (e.flag("showcaption")) {
@@ -263,8 +299,12 @@ struct Layout {
             drew = true;
         }
         out.drawn += drew;
+        if (hooks)
+            if (auto it = hooks->after.find(&e); it != hooks->after.end())
+                it->second(out, x, y, w, h);
         for (const auto& c : e.children)
             window(c, x, y, w, h, false);
+        tint = savedTint;
     }
 };
 
@@ -277,6 +317,15 @@ UiScreen layoutUi(const UiScript& script, UiResources& res, FontLibrary& fonts, 
     for (const auto& r : script.roots)
         l.window(r, 0, 0, float(opt.canvasWidth), float(opt.canvasHeight), true);
     return std::move(l.out);
+}
+
+void layoutUiElement(const UiElement& e, float parentX, float parentY, UiResources& res, FontLibrary& fonts,
+                     UiScreen& out, const UiDrawHooks& hooks) {
+    const UiLayoutOptions opt{out.width, out.height, {}};
+    Layout l{res, fonts, opt, std::move(out)};
+    l.hooks = &hooks;
+    l.window(e, parentX, parentY, float(opt.canvasWidth), float(opt.canvasHeight), false);
+    out = std::move(l.out);
 }
 
 RgbaImage composeUi(const UiScreen& screen, std::array<uint8_t, 4> clear) {
