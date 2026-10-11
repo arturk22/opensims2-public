@@ -5,7 +5,10 @@
 // an output of their own, skipped with Esc, Space, Return or a click.
 //
 // For game code: playMovie("intro_eng_audio", [] { ...show the main menu... }).
-// The names are those findMovie (formats/movie.hpp) takes. onDone runs on
+// The names are those findMovie (formats/movie.hpp) takes, or
+// "reia:<instance-hex>[:loop]" for a Reia UI animation of ui.package
+// (formats/reia.hpp; "reia:8DA3ADE7:loop" is the start-up loading screen,
+// which loops until skipMovie() is called). onDone runs on
 // the main thread when the movie ends or is skipped (also at once when the
 // movie is missing, after a message on stderr); it may start another movie.
 

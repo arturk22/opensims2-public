@@ -1,8 +1,11 @@
 // The .movie decoder (formats/movie.hpp): bit reader, AC codes, IDCT, MAD
 // intra/inter frames built by hand, EA ADPCM R1 and the sound header.
 #include "formats/movie.hpp"
+#include "formats/reia.hpp"
 
 #include <cstdio>
+#include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -226,7 +229,60 @@ static void testSoundHeader() {
     check(s.sampleRate == 22050 && s.compression == -1, "defaults: 22050 Hz, ADPCM by revision");
 }
 
+// A 40x36 Reia (2x2 blocks of 32, clipped): frame 0 paints every block,
+// frame 1 changes only block 1 (top right) by a delta.
+static void testReia() {
+    auto le = [](std::vector<uint8_t>& v, uint32_t x) {
+        for (int i = 0; i < 4; ++i)
+            v.push_back(uint8_t(x >> (8 * i)));
+    };
+    std::vector<uint8_t> f0, f1;
+    for (int b = 0; b < 4; ++b) { // each block: one colour, 1024 = 8 runs of 128
+        f0.push_back(1);
+        for (int r = 0; r < 8; ++r) {
+            f0.push_back(129); // 257 - 129 = 128 copies
+            f0.push_back(uint8_t(10 * b)); f0.push_back(20); f0.push_back(200); // B, G, R
+        }
+    }
+    f1.push_back(0);
+    f1.push_back(1);
+    f1.push_back(2); // 3 literal pixels
+    for (int i = 0; i < 3; ++i) { f1.push_back(1); f1.push_back(uint8_t(-5)); f1.push_back(0); }
+    for (int left = 1024 - 3; left > 0; left -= 128) { // the rest: zero delta
+        const int n = std::min(left, 128);
+        f1.push_back(uint8_t(257 - n));
+        f1.push_back(0); f1.push_back(0); f1.push_back(0);
+    }
+    f1.push_back(0);
+    f1.push_back(0);
+    std::vector<uint8_t> r = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'R', 'e', 'i', 'a', 'h', 'e', 'a', 'd'};
+    le(r, 24);
+    for (uint32_t v : {1u, 40u, 36u, 1000000u, 33333u, 2u})
+        le(r, v);
+    for (auto* f : {&f0, &f1}) {
+        r.insert(r.end(), {'f', 'r', 'm', 'e'});
+        le(r, uint32_t(f->size()));
+        r.insert(r.end(), f->begin(), f->end());
+        if (f->size() & 1)
+            r.push_back(0);
+    }
+    check(Reia::detect(r), "Reia detected");
+    const Reia reia(r);
+    check(reia.width() == 40 && reia.height() == 36 && reia.frameCount() == 2, "Reia head");
+    check(std::abs(reia.frameSeconds() - 0.033333) < 1e-5, "Reia frame time");
+    ReiaDecoder d(reia);
+    check(d.seekFrame(0), "Reia frame 0");
+    const auto px = [&](int x, int y) { return d.picture().pixels.data() + (y * 40 + x) * 4; };
+    check(px(0, 0)[0] == 200 && px(0, 0)[1] == 20 && px(0, 0)[2] == 0, "BGR to RGB");
+    check(px(39, 0)[2] == 10 && px(0, 35)[2] == 20 && px(39, 35)[2] == 30, "blocks clipped at the edges");
+    check(d.seekFrame(1), "Reia frame 1");
+    check(px(32, 0)[0] == 200 && px(32, 0)[1] == uint8_t(20 - 5) && px(32, 0)[2] == 11, "delta added per channel");
+    check(px(35, 0)[1] == 20 && px(0, 0)[1] == 20, "zero delta and unchanged blocks");
+    check(d.seekFrame(0) && px(32, 0)[2] == 10, "seeking back restarts from black");
+}
+
 int main() {
+    testReia();
     testBitReader();
     testAcCodes();
     testIdct();

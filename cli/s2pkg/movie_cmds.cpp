@@ -2,6 +2,7 @@
 #include "movie_cmds.hpp"
 
 #include "formats/movie.hpp"
+#include "formats/reia.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -89,13 +90,50 @@ int cmdMovieSweep(const fs::path& res) {
     return bad ? 1 : 0;
 }
 
+// A Reia: a file, or an instance (hex) of group 0x499DB772 in ui.package.
+Reia loadReia(const std::string& res, const std::string& what) {
+    if (fs::is_regular_file(what)) {
+        std::ifstream f(what, std::ios::binary);
+        return Reia(std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()));
+    }
+    const uint32_t instance = uint32_t(std::stoul(what, nullptr, 16));
+    auto bytes = readUiReia(res, instance);
+    if (!bytes)
+        throw std::runtime_error("no UI resource " + what + " in group 499DB772");
+    return Reia(std::move(*bytes));
+}
+
+int cmdReiaList(const std::string& res) {
+    int found = 0;
+    for (uint32_t inst = 0x8DA3ADE0; inst <= 0x8DA3ADFF; ++inst)
+        if (auto b = readUiReia(res, inst)) {
+            const Reia r(std::move(*b));
+            std::printf("%08X: %ux%u, %zu frames at %.2f fps = %.2f s\n", inst, r.width(), r.height(), r.frameCount(),
+                        1.0 / r.frameSeconds(), r.duration());
+            ++found;
+        }
+    return found ? 0 : 1;
+}
+
+int cmdReiaFrame(const std::string& res, const std::string& what, double seconds, const std::string& out) {
+    const Reia r = loadReia(res, what);
+    ReiaDecoder d(r);
+    const bool ok = d.seek(seconds);
+    writePng(out, d.picture());
+    std::printf("frame %ld of %zu (%.2f s)%s -> %s\n", d.current(), r.frameCount(), seconds, ok ? "" : " DAMAGED",
+                out.c_str());
+    return ok ? 0 : 1;
+}
+
 } // namespace
 
 const char* movieUsage() {
     return "       s2pkg movie-info <Res-dir> <name|file.movie>\n"
            "       s2pkg movie-frame <Res-dir> <name|file.movie> <seconds> <out.png>\n"
            "       s2pkg movie-sound <Res-dir> <name|file.movie> <out.wav>\n"
-           "       s2pkg movie-sweep <Res-dir>\n";
+           "       s2pkg movie-sweep <Res-dir>\n"
+           "       s2pkg reia-list <Res-dir>\n"
+           "       s2pkg reia-frame <Res-dir> <instance-hex|file.reia> <seconds> <out.png>\n";
 }
 
 int movieCommand(const std::string& cmd, int argc, char** argv) {
@@ -107,6 +145,10 @@ int movieCommand(const std::string& cmd, int argc, char** argv) {
         return cmdMovieSound(resolve(argv[2], argv[3]), argv[4]);
     if (cmd == "movie-sweep" && argc == 3)
         return cmdMovieSweep(argv[2]);
+    if (cmd == "reia-list" && argc == 3)
+        return cmdReiaList(argv[2]);
+    if (cmd == "reia-frame" && argc == 6)
+        return cmdReiaFrame(argv[2], argv[3], std::stod(argv[4]), argv[5]);
     return -1;
 }
 

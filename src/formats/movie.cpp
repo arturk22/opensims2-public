@@ -505,7 +505,7 @@ Pcm Movie::decodeSound() const {
 size_t MovieDecoder::frameAt(double seconds) const {
     if (movie_.frames().empty())
         return 0;
-    const double f = std::floor(std::max(0.0, seconds) / movie_.frameSeconds());
+    const double f = std::floor(std::max(0.0, seconds) / movie_.frameSeconds() + 1e-6);
     return std::min(size_t(f), movie_.frames().size() - 1);
 }
 

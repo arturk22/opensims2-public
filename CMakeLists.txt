@@ -54,6 +54,7 @@ add_library(os2_formats
   src/formats/property_set.cpp
   src/formats/qfs.cpp
   src/formats/rcol.cpp
+  src/formats/reia.cpp
   src/formats/resindex.cpp
   src/formats/scenegraph.cpp
   src/formats/sim.cpp
