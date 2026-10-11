@@ -15,7 +15,7 @@ namespace fs = std::filesystem;
 
 namespace {
 constexpr int16_t kPersonObjectType = 2;
-constexpr size_t kGlobalPaused = 17;
+constexpr size_t kGlobalPaused = 17, kGlobalCurrentFamily = 9, kGlobalBudgetMod = 13, kGlobalBudgetDiv = 14;
 
 bool startsWith(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
 } // namespace
@@ -145,6 +145,16 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
             out.charge = hood::lotFileInfo(*lot).price;
         if ((fam->record.flags & 0x04) && saved.globals.size() > kGlobalPaused)
             saved.globals[kGlobalPaused] = 0;
+        // What LoadLot sets after the charge: global 9 = the family, its funds
+        // to the simulator (the lot file's are the last owner's, or none).
+        const int64_t funds = int64_t(fam->record.funds) - out.charge;
+        if (saved.globals.size() > kGlobalBudgetDiv) {
+            saved.globals[kGlobalCurrentFamily] = int16_t(fam->id);
+            saved.globals[kGlobalBudgetMod] = int16_t(funds % 10000);
+            saved.globals[kGlobalBudgetDiv] = int16_t(funds / 10000);
+        }
+        if (saved.simulator.read)
+            saved.simulator.f98 = uint32_t(int32_t(funds)), saved.simulator.f9C = 0;
     }
     return out;
 }
