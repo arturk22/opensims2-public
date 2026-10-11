@@ -19,7 +19,10 @@
 // also saves it) and exits without opening a window. --ui <instance-hex> draws a
 // UI script from ui.package over the scene (1024x768 canvas, letterboxed;
 // --ui-show <id,id,...> shows windows the script hides, e.g. the main menu's
-// background 0da36c7d). --vm runs the lot's objects in the SimAntics VM while it
+// background 0da36c7d). With the VM running, a left click on an object opens
+// its pie menu for the selected Sim (--sim-id) and picking an entry queues it
+// (Esc closes it); headless: --pie <object> [--pie-select N] and --click x,y
+// (repeatable), which also start the VM (app/pie_menu.hpp). --vm runs the lot's objects in the SimAntics VM while it
 // is shown, with the Sims following it (walking, animations); --vm-walk
 // <sim-id>,<object-id>[,<anim>] makes a Sim walk to an object (then play entry
 // <anim> of the global animation list); --run-vm <ticks> runs that many ticks
@@ -55,6 +58,7 @@
 #include "render/camera.hpp"
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#include "app/pie_menu.hpp"
 #include "lot_vm.hpp"
 
 #include <algorithm>
@@ -78,6 +82,17 @@ namespace {
 constexpr const char* kCameraConfig = "TSData/Res/UserData/Cameras/cameras.txt";
 constexpr const char* kLightingConfig = "TSData/Res/Lights/Lighting.txt";
 constexpr uint32_t kTypeCres = 0xE519C933, kTypeObjd = 0x4F424A44;
+
+// The pie menu over the lot's VM (app/pie_menu.hpp), with the pick boxes of
+// the drawn lot objects (collected before the VM exists).
+std::unique_ptr<os2::PieMenuHost> gPie;
+struct PickBox {
+    uint32_t instance;
+    simd_float3 lo, hi;
+    simd_float4x4 at;
+};
+std::vector<PickBox> gPickBoxes;
+float gUiScale = 1; // drawable pixels per view point
 
 // The extracted game (data/game): --data <dir>, else $OS2_DATA, else the first
 // data/game found walking up from the executable (the repo when run from build/).
@@ -154,6 +169,7 @@ fs::path lotPath(const std::string& query) {
 size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot,
                       const std::string& lotName) {
     std::map<std::string, int> models; // CRES + design -> model id, -1 if it failed
+    std::map<std::string, std::pair<simd_float3, simd_float3>> bounds; // for picking
     // Some models were renamed after the lots were saved (old modular stairs);
     // then the object's OBJD, found by file name, names the current one.
     std::map<std::string, os2::Tgi> definitions; // lowercase OBJD file name -> OBJD
@@ -190,6 +206,7 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
                 for (const auto& w : model.warnings)
                     std::fprintf(stderr, "opensims2: %s: %s: %s\n", lotName.c_str(), model.name.c_str(), w.c_str());
                 id = renderer.addObject(model, index);
+                bounds[key] = os2::modelBounds(model);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "opensims2: %s: %s (%s): %s\n", lotName.c_str(), o.model.c_str(),
                              o.definition.c_str(), e.what());
@@ -202,6 +219,7 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
         simd_float4x4 at = simd_matrix4x4(simd_quaternion(q[0], q[1], q[2], q[3]));
         at.columns[3] = simd_make_float4(o.position[0], o.position[1], o.position[2], 1);
         renderer.addInstance(it->second, at);
+        gPickBoxes.push_back({o.instance, bounds[key].first, bounds[key].second, at});
         ++placed;
     }
     return placed;
@@ -256,6 +274,14 @@ void startSimulation(os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPa
     }
     std::printf("opensims2: VM: %s, %zu Sims attached (%.2f s)\n", gSimulation->summary().c_str(), gLotSims.size(),
                 CACurrentMediaTime() - start);
+    // Pie menus over the same VM.
+    gPie = std::make_unique<os2::PieMenuHost>(gSimulation->machine(), gameDir() / "TSData/Res/UI/Fonts",
+                                              argument(@"--sim-id").value_or(""));
+    for (const auto& b : gPickBoxes)
+        gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
+    const os2::vm::Object* sim = gPie->vm().object(gPie->sim());
+    std::printf("opensims2: pie menus for Sim %d (%s)\n", gPie->sim(),
+                sim && sim->definition ? sim->definition->fileName.c_str() : "none");
 }
 
 // Loads --lot into the renderer in place of the test floor. Returns the middle
@@ -287,7 +313,8 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());
     const size_t objects = loadLotObjects(renderer, index, lot, *query);
     const size_t sims = loadLotSims(renderer, index, lot, pkg, lotPath(*query));
-    if (argument(@"--run-vm") || [NSProcessInfo.processInfo.arguments containsObject:@"--vm"])
+    NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+    if (argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") || [args containsObject:@"--vm"])
         startSimulation(index, lot, pkg, lotPath(*query));
     // Fence rails and posts: one model per CRES, an instance per piece.
     std::vector<std::string> fenceWarnings;
@@ -544,7 +571,7 @@ void applyLighting(os2::Renderer& renderer) {
 enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
-    kHome = 115, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
+    kEscape = 53, kHome = 115, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
 };
 
 } // namespace
@@ -597,6 +624,7 @@ enum Key : unsigned short {
     case kZ: case kEquals: case kPadPlus: _camera->zoomBy(1); break;
     case kX: case kMinus: case kPadMinus: _camera->zoomBy(-1); break;
     case kHome: _camera->reset(); break;
+    case kEscape: if (gPie) gPie->close(); break;
     default: break;
     }
 }
@@ -632,6 +660,36 @@ enum Key : unsigned short {
 - (void)dragRotate:(NSEvent*)e {
     _camera->freeRotate(float(e.deltaX) * 0.3f);
     _camera->tilt(float(e.deltaY) * 0.2f);
+}
+
+// Mouse position in view points, origin top left (the pie menu's canvas).
+- (simd_float2)canvasPoint:(NSEvent*)e {
+    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+    return simd_make_float2(float(p.x), float(self.bounds.size.height - p.y));
+}
+
+// Left click (with --vm): on an open pie menu picks an entry (or closes it);
+// else casts a ray from the camera through the mouse and opens the menu of
+// the object hit.
+- (void)mouseDown:(NSEvent*)e {
+    if (!gPie)
+        return;
+    const simd_float2 p = [self canvasPoint:e];
+    if (gPie->isOpen() && gPie->click(p))
+        return;
+    const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
+    const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
+    simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
+    const simd_float3 eye = _camera->eye();
+    const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
+    if (id && !gPie->open(id, p))
+        std::printf("opensims2: object %d: no interactions available\n", id);
+    std::fflush(stdout);
+}
+
+- (void)mouseMoved:(NSEvent*)e {
+    if (gPie)
+        gPie->hover([self canvasPoint:e]);
 }
 
 - (void)rightMouseDragged:(NSEvent*)e {
@@ -683,6 +741,8 @@ enum Key : unsigned short {
     float aspect = size.height > 0 ? float(size.width / size.height) : 1.0f;
     os2::FrameView frame{view.camera->view(), view.camera->projection(aspect)};
     poseActors(*_renderer, now - _start);
+    if (view.bounds.size.width > 0)
+        gUiScale = float(size.width / view.bounds.size.width);
 
     MTLRenderPassDescriptor* pass = view.currentRenderPassDescriptor;
     id<CAMetalDrawable> drawable = view.currentDrawable;
@@ -745,6 +805,64 @@ enum Key : unsigned short {
             pivot.x = px, pivot.y = py;
         view.camera->setPivot(pivot);
         view.camera->snap();
+        // --pie <object> [--pie-select N]: open an object's pie menu for the
+        // selected Sim (--sim-id <id|name>) and queue entry N; --click x,y
+        // (repeatable) clicks like the mouse. Before --run-vm's ticks.
+        const uint32_t shotW = uiCanvas ? uiCanvas->first : 1280, shotH = uiCanvas ? uiCanvas->second : 720;
+        if (gPie) {
+            gPie->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                         uint32_t(view.depthStencilPixelFormat));
+            _viewDelegate.renderer->setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
+                if (gUi)
+                    gUi->encode(enc, w, h);
+                gPie->encode(enc, w, h, gUiScale);
+            });
+            const bool headless = argument(@"--screenshot").has_value();
+            const float cw = headless ? float(shotW) : float(view.bounds.size.width);
+            const float ch = headless ? float(shotH) : float(view.bounds.size.height);
+            if (auto q = argument(@"--pie")) {
+                const os2::vm::ObjectId id = os2::vm::findInteractionObject(gPie->vm(), *q);
+                const auto at = id ? gPie->anchor(id) : std::nullopt;
+                if (!at)
+                    throw std::runtime_error("--pie: no drawn object \"" + *q + "\" with interactions");
+                if (!argument(@"--pivot")) {
+                    view.camera->setPivot(simd_make_float3(at->x, at->y, pivot.z));
+                    view.camera->snap();
+                }
+                const simd_float4 c = simd_mul(simd_mul(view.camera->projection(cw / ch), view.camera->view()),
+                                               simd_make_float4(at->x, at->y, at->z, 1));
+                const simd_float2 p = simd_make_float2((c.x / c.w + 1) / 2 * cw, (1 - c.y / c.w) / 2 * ch);
+                if (!gPie->open(id, p))
+                    std::printf("opensims2: object %d: no interactions available\n", id);
+                for (size_t i = 0; i < gPie->entries().size(); ++i)
+                    std::printf("opensims2: pie [%zu] %s\n", i, gPie->entries()[i].name.c_str());
+                if (auto sel = argument(@"--pie-select"); sel && !gPie->select(std::stoul(*sel)))
+                    throw std::runtime_error("--pie-select: no entry " + *sel);
+            }
+            NSArray<NSString*>* args = NSProcessInfo.processInfo.arguments;
+            for (NSUInteger i = 1; i + 1 < args.count; ++i) {
+                float clickX, clickY;
+                if (![args[i] isEqualToString:@"--click"] ||
+                    std::sscanf(args[i + 1].UTF8String, "%f,%f", &clickX, &clickY) != 2)
+                    continue;
+                const simd_float2 p = simd_make_float2(clickX, clickY);
+                if (gPie->isOpen() && gPie->click(p))
+                    continue;
+                const simd_float4x4 m = simd_mul(view.camera->projection(cw / ch), view.camera->view());
+                const simd_float4 q =
+                    simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / cw - 1, 1 - 2 * p.y / ch, 0.5f, 1));
+                const simd_float3 eye = view.camera->eye();
+                const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
+                const os2::vm::Object* o = gPie->vm().object(id);
+                std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", clickX, clickY, id,
+                            o && o->definition ? o->definition->fileName.c_str() : "nothing");
+                if (id && !gPie->open(id, p))
+                    std::printf("opensims2: object %d: no interactions available\n", id);
+                for (size_t k = 0; k < gPie->entries().size(); ++k)
+                    std::printf("opensims2: pie [%zu] %s\n", k, gPie->entries()[k].name.c_str());
+            }
+            std::fflush(stdout);
+        }
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
         if (auto shot = argument(@"--screenshot")) {
             // --run-vm <ticks>: the moment after that many VM ticks; --frames
@@ -793,6 +911,7 @@ enum Key : unsigned short {
 
     _window.contentView = view;
     [_window center];
+    _window.acceptsMouseMovedEvents = YES;
     [_window makeKeyAndOrderFront:nil];
     [_window makeFirstResponder:view];
     [NSApp activateIgnoringOtherApps:YES];
