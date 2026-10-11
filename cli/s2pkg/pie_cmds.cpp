@@ -47,7 +47,7 @@ std::string nameOf(const vm::Object& o) { return o.definition ? o.definition->fi
 
 int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, const std::string& objectQuery,
            int select, int ticks, bool all, std::optional<int> motives, bool fromInit, size_t trace,
-           int dialogAnswer) {
+           int dialogAnswer, size_t traceChecks) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
     DbpfPackage pkg(lotFile);
@@ -104,7 +104,18 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         std::printf(" (interactions of %d: %s)", leader, nameOf(*machine.object(leader)).c_str());
     const auto ref = vm::interactionTable(machine, *machine.object(leader));
     std::printf("\nTTAB %08X/%X\n", ref->group, ref->instance);
+    // --trace-checks N: the first N instructions of the entries' check trees.
+    size_t checkTraced = 0;
+    if (traceChecks)
+        machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
+            if (t.me != sim || checkTraced++ >= traceChecks)
+                return;
+            const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
+            std::printf("    %*s%08X %04X #%-3u %-28s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
+                        op.c_str(), f.behavior->fileName.c_str());
+        };
     const auto pie = vm::pieMenu(machine, sim, object);
+    machine.trace = nullptr;
     int n = 0;
     std::vector<const vm::PieEntry*> shown;
     for (const auto& e : pie) {
@@ -190,7 +201,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
         return -1;
     std::vector<std::string> pos;
     int select = -1, ticks = 30;
-    size_t trace = 0;
+    size_t trace = 0, traceChecks = 0;
     int dialogAnswer = 0;
     std::optional<int> motives;
     bool fromInit = false;
@@ -207,6 +218,8 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
             motives = std::stoi(argv[++i]);
         else if (a == "--trace" && i + 1 < argc)
             trace = std::stoul(argv[++i]);
+        else if (a == "--trace-checks" && i + 1 < argc)
+            traceChecks = std::stoul(argv[++i]);
         else if (a == "--dialog-answer" && i + 1 < argc)
             dialogAnswer = std::stoi(argv[++i]);
         else if (a == "--all")
@@ -217,11 +230,11 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
     if (pos.empty() || pos.size() > 3)
         return -1;
     return cmdPie(pos[0], pos.size() > 1 ? pos[1] : "", pos.size() > 2 ? pos[2] : "", select, ticks, all, motives, fromInit,
-                  trace, dialogAnswer);
+                  trace, dialogAnswer, traceChecks);
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N]] [--motives N] [--init]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N]] [--trace-checks N] [--motives N] [--init]\n";
 }
 
 } // namespace os2
