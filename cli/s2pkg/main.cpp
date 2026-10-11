@@ -3,6 +3,7 @@
 #include "prim_cmds.hpp"
 #include "material_cmds.hpp"
 #include "audio_cmds.hpp"
+#include "movie_cmds.hpp"
 #include "ui_cmds.hpp"
 #include "buy_cmds.hpp"
 #include "build_cmds.hpp"
@@ -940,7 +941,7 @@ int usage() {
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
-                         "%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), routeUsage(), buyUsage(), buildUsage());
+                         "%s%s%s%s%s%s%s%s%s%s%s%s%s%s", animUsage(), materialUsage(), audioUsage(), movieUsage(), uiUsage(), hoodUsage(), primUsage(), pieUsage(), stateUsage(), saveUsage(), autonomyUsage(), routeUsage(), buyUsage(), buildUsage());
     return 2;
 }
 
@@ -956,6 +957,8 @@ int main(int argc, char** argv) {
         if (int rc = materialCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = audioCommand(cmd, argc, argv); rc >= 0)
+            return rc;
+        if (int rc = movieCommand(cmd, argc, argv); rc >= 0)
             return rc;
         if (int rc = uiCommand(cmd, argc, argv); rc >= 0)
             return rc;

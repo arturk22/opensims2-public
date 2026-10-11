@@ -48,6 +48,7 @@ add_library(os2_formats
   src/formats/lot_lightmap.cpp
   src/formats/lot_roof.cpp
   src/formats/model.cpp
+  src/formats/movie.cpp
   src/formats/neighborhood.cpp
   src/formats/neighborhood_write.cpp
   src/formats/property_set.cpp
@@ -127,7 +128,13 @@ if(APPLE)
   target_link_libraries(os2_audio PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 
-add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/save_cmds.cpp cli/s2pkg/autonomy_cmds.cpp cli/s2pkg/route_cmds.cpp cli/s2pkg/buy_cmds.cpp cli/s2pkg/build_cmds.cpp)
+# Movies (.movie): playback by the sound's clock.
+add_library(os2_media src/media/movie_player.cpp)
+target_include_directories(os2_media PUBLIC src)
+target_compile_options(os2_media PRIVATE -Wall -Wextra)
+target_link_libraries(os2_media PUBLIC os2_audio)
+
+add_executable(s2pkg cli/s2pkg/main.cpp cli/s2pkg/describe.cpp cli/s2pkg/anim_cmds.cpp cli/s2pkg/material_cmds.cpp cli/s2pkg/audio_cmds.cpp cli/s2pkg/movie_cmds.cpp cli/s2pkg/ui_cmds.cpp cli/s2pkg/hood_cmds.cpp cli/s2pkg/prim_cmds.cpp cli/s2pkg/pie_cmds.cpp cli/s2pkg/state_cmds.cpp cli/s2pkg/save_cmds.cpp cli/s2pkg/autonomy_cmds.cpp cli/s2pkg/route_cmds.cpp cli/s2pkg/buy_cmds.cpp cli/s2pkg/build_cmds.cpp)
 target_include_directories(s2pkg PRIVATE cli/s2pkg)
 target_link_libraries(s2pkg PRIVATE os2_vm os2_audio)
 
@@ -144,6 +151,7 @@ if(APPLE)
     src/render/renderer.cpp
     src/render/texture.cpp
     src/render/ui_layer.cpp
+    src/render/movie_layer.cpp
   )
   target_include_directories(os2_render PUBLIC src third_party/metal-cpp
                              PRIVATE ${CMAKE_BINARY_DIR}/generated)
@@ -151,7 +159,7 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/build_mode.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/build_mode.cpp src/app/movie_host.cpp)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
@@ -177,7 +185,7 @@ if(APPLE)
     DEPENDS opensims2
     COMMENT "Packaging build/package/opensims2.app (ad-hoc signed)")
   target_compile_options(opensims2 PRIVATE -fobjc-arc -Wall -Wextra)
-  target_link_libraries(opensims2 PRIVATE os2_render os2_audio os2_vm
+  target_link_libraries(opensims2 PRIVATE os2_render os2_audio os2_media os2_vm
     "-framework AppKit" "-framework MetalKit")
 endif()
 
@@ -266,3 +274,6 @@ add_test(NAME camera_input COMMAND test_camera_input)
 add_executable(test_hood_terrain tests/test_hood_terrain.cpp)
 target_link_libraries(test_hood_terrain PRIVATE os2_formats)
 add_test(NAME hood_terrain COMMAND test_hood_terrain)
+add_executable(test_movie tests/test_movie.cpp)
+target_link_libraries(test_movie PRIVATE os2_formats)
+add_test(NAME movie COMMAND test_movie)

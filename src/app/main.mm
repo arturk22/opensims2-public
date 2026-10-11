@@ -40,6 +40,9 @@
 // shown over the scene and pauses the game until a button is clicked;
 // headless: --dialog-answer <n> answers every one with button n, and
 // --dialog-click x,y (repeatable) clicks each dialog in turn.
+// --movie <name> plays a .movie fullscreen and quits (headless with --screenshot:
+// frames and A/V timestamps, app/movie_host.hpp); --intro plays the start-up
+// movies before the scene.
 
 #import <AppKit/AppKit.h>
 #import <MetalKit/MetalKit.h>
@@ -48,6 +51,7 @@
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
 
+#include "app/movie_host.hpp"
 #include "audio/play_sound.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/image.hpp"
@@ -1453,6 +1457,13 @@ int cameraSlot(unsigned short key) {
 }
 
 - (void)keyDown:(NSEvent*)e {
+    if (os2::moviePlaying()) { // Esc, Space or Return skips a movie
+        if (!e.isARepeat && (e.keyCode == kEscape || e.keyCode == kReturn || e.keyCode == kEnter || e.keyCode == 49)) {
+            os2::skipMovie();
+            std::printf("opensims2: movie skipped (key %d)\n", int(e.keyCode));
+        }
+        return;
+    }
     _held.insert(e.keyCode);
     if (e.isARepeat)
         return;
@@ -1612,6 +1623,11 @@ int cameraSlot(unsigned short key) {
 // else casts a ray from the camera through the mouse and opens the menu of
 // the object hit.
 - (void)mouseDown:(NSEvent*)e {
+    if (os2::moviePlaying()) { // a click skips a movie
+        os2::skipMovie();
+        std::printf("opensims2: movie skipped (click)\n");
+        return;
+    }
     if (gHood) {
         gHood->mouseDown(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
         return;
@@ -1767,6 +1783,9 @@ int cameraSlot(unsigned short key) {
     MTLRenderPassDescriptor* pass = view.currentRenderPassDescriptor;
     id<CAMetalDrawable> drawable = view.currentDrawable;
     perf.waited = CACurrentMediaTime() - beforeDrawable;
+    // A fullscreen movie (app/movie_host.hpp) in place of the scene.
+    if (os2::movieHostDraw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable))
+        return;
     _renderer->draw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable, frame);
     if (perfOn()) {
         const CFTimeInterval spent = CACurrentMediaTime() - perf.began - perf.waited;
@@ -1818,6 +1837,23 @@ int cameraSlot(unsigned short key) {
         gCamera = view.camera;
         _viewDelegate = [[OS2ViewDelegate alloc] initWithView:view];
         applyLighting(*_viewDelegate.renderer);
+        os2::movieHostInit((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                           uint32_t(view.depthStencilPixelFormat),
+                           {gameDir() / "TSData/Res", ![NSProcessInfo.processInfo.arguments containsObject:@"--no-audio"]});
+        // --movie <name>: play one movie in the window and quit when it ends.
+        if (auto movie = argument(@"--movie")) {
+            os2::playMovie(*movie, [] { [NSApp terminate:nil]; });
+            view.delegate = _viewDelegate;
+            _window.contentView = view;
+            [_window center];
+            [_window makeKeyAndOrderFront:nil];
+            [_window makeFirstResponder:view];
+            [NSApp activateIgnoringOtherApps:YES];
+            return;
+        }
+        // --intro: the start-up movies (EA logo, intro) before the scene.
+        if ([NSProcessInfo.processInfo.arguments containsObject:@"--intro"])
+            os2::playMovies(os2::introMovies());
         gIndex = std::make_unique<os2::ResourceIndex>(gameDir() / "TSData/Res");
         perfLap("ResourceIndex");
         os2::ResourceIndex& index = *gIndex;
@@ -2123,6 +2159,18 @@ static void buildMenu() {
 
 int main() {
     @autoreleasepool {
+        // --movie <name> --screenshot out.png [--frames n] [--time s] [--sound-wav mix.wav]: headless frames.
+        if (auto movie = argument(@"--movie"); movie && argument(@"--screenshot")) {
+            try {
+                return os2::movieScreenshots(gameDir() / "TSData/Res", *movie, *argument(@"--screenshot"),
+                                             std::stoi(argument(@"--frames").value_or("1")),
+                                             std::stod(argument(@"--time").value_or("0")), 1280, 720,
+                                             argument(@"--sound-wav").value_or(""));
+            } catch (const std::exception& ex) {
+                std::fprintf(stderr, "error: %s\n", ex.what());
+                return 1;
+            }
+        }
         if (auto sound = argument(@"--play-sound")) {
             try {
                 const auto index = argument(@"--sound-index");
