@@ -562,6 +562,9 @@ Exit snap(Context& c) {
     Object& target = c.stackObject();
     constexpr int16_t kPrimitiveResult = 52;
     auto fail = [&](int placementError = 0x0C) {
+        if (std::getenv("OS2_SNAP_FAILS")) // why snaps fail, for looking into
+            std::fprintf(stderr, "t%llu snap of %d to %d at (%.2f, %.2f, %d) (mode %u slot %u flags %X) failed: %d\n", (unsigned long long)c.vm.ticks,
+                         me.id, c.frame.stackObject, target.position.x, target.position.y, target.position.level, where, index, flags, placementError);
         me.data[kPrimitiveResult] = int16_t(placementError == 0x0C && (flags & 0x02) ? 1 : placementError + 2);
         return Exit::False;
     };
@@ -609,6 +612,13 @@ Exit snap(Context& c) {
         if (free && (best == goals.goals.size() || goals.goals[i].cost < goals.goals[best].cost))
             best = i;
     }
+    if (best == goals.goals.size() && std::getenv("OS2_SNAP_FAILS"))
+        for (size_t i = 0; i < goals.goals.size(); ++i)
+            for (const auto& [id, x] : c.vm.objects())
+                if (id != me.id && id != target.id && VM::blocksRouting(x) &&
+                    VM::tileOf(x) == TilePos{goals.goals[i].x, goals.goals[i].y, goals.level})
+                    std::fprintf(stderr, "  goal (%d, %d, %d) taken by %d %s\n", goals.goals[i].x, goals.goals[i].y, goals.level, id,
+                                 x.definition ? x.definition->fileName.c_str() : "?");
     if (best == goals.goals.size()) {
         bool onLot = goals.goals.empty() || !c.vm.world;
         for (const auto& g : goals.goals)

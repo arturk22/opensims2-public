@@ -276,6 +276,9 @@ bool PathPlanner::escape(int level, Point2 start, Point2& out) const {
     std::vector<uint8_t> seen(size_t(side) * size_t(side), 0);
     std::deque<std::array<int, 2>> open{{sx, sy}};
     seen[size_t(r) * side + r] = 1;
+    // A walker left where there is no floor (on a stair's steps, after its
+    // climb was cut short) steps off over the floorless cells too.
+    const bool stranded = cellAt(level, sx, sy) & kNoFloor;
     while (!open.empty()) {
         const auto [cx, cy] = open.front();
         open.pop_front();
@@ -290,7 +293,7 @@ bool PathPlanner::escape(int level, Point2 start, Point2& out) const {
             if (std::abs(nx - sx) > r || std::abs(ny - sy) > r)
                 continue;
             uint8_t& s = seen[size_t(nx - sx + r) * side + size_t(ny - sy + r)];
-            if (s || (cellAt(level, nx, ny) & (kNoFloor | kDiagonal)))
+            if (s || (cellAt(level, nx, ny) & (stranded ? kDiagonal : kNoFloor | kDiagonal)))
                 continue;
             // Crossing a tile edge: not through a wall (a door's edge is open).
             const int tx = (d[0] > 0 ? cx : nx), ty = (d[1] > 0 ? cy : ny);

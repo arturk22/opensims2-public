@@ -40,6 +40,15 @@ bool VM::blocksRouting(const Object& o) {
         default: break;
         }
     }
+    // Off the floor (placement flags, od 42, STR# 0xCA): "attached to
+    // ceiling" (0x1000: the ceiling lamps), "detached from floor" (0x80), or
+    // hung on a wall in the air (0x200 "allow in air" with a wall required
+    // on a side, od 13 bits 0-3: curtains). Their model footprints, which
+    // the game routes around, are not on the floor (inferred; the VM has no
+    // footprints). A ceiling lamp blocked a tile in the middle of rooms.
+    const int16_t placement = o.data[42];
+    if ((placement & (0x1000 | 0x80)) || ((placement & 0x200) && (o.data[13] & 0x0F)))
+        return false;
     return (o.data[objdata::Flags] & (0x01 | 0x04 | 0x10)) == 0;
 }
 
@@ -71,13 +80,19 @@ BlockedGrid VM::blockedTiles(int level, std::span<const ObjectId> ignore) {
 bool VM::tileFree(TilePos t, std::span<const ObjectId> ignore) {
     if (!world)
         throw VMError("no world (positions need a lot)");
+    // A stair's landings and the tiles over its steps (on either of its
+    // levels) stay open to walkers, floor or not: the portal trees' TEST
+    // snaps the walker onto the portal's point at the top of the steps, and
+    // its goal checks look there (every stair of N003_Lot192's decks was
+    // locked). Placement (tryPlace) still wants a floor.
+    for (const Stair& s : world->stairs())
+        if ((t.level == s.bottom.level || t.level == s.top.level) && world->contains(t) &&
+            t.x >= std::min(s.bottom.x, s.top.x) && t.x <= std::max(s.bottom.x, s.top.x) &&
+            t.y >= std::min(s.bottom.y, s.top.y) && t.y <= std::max(s.bottom.y, s.top.y))
+            return true;
     if (!world->walkable(t))
         return false;
     // As blockedTiles(t.level, ignore)[index], for this one tile only.
-    for (const Stair& s : world->stairs())
-        for (const TilePos& l : {s.bottom, s.top})
-            if (l.level == t.level && world->contains(l) && l.x == t.x && l.y == t.y)
-                return true; // stair landings stay open
     std::set<ObjectId> skip;
     for (ObjectId id : ignore)
         if (const Object* o = object(id))
@@ -823,6 +838,31 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
         if (planned)
             path.goal = index[path.goal];
     }
+    if (!planned && std::getenv("OS2_ROUTE_FAILS_NEAR")) // the portals locked for the walker
+        for (size_t i = 0; i < planner.portals().size(); ++i)
+            for (const bool forward : {true, false})
+                if (planner.portalLocked(i, forward))
+                    std::fprintf(stderr, "  portal %zu (%s) locked %s for %d\n", i,
+                                 planner.portals()[i].door >= 0 ? "door" : "stair", forward ? "a->b" : "b->a", me.id);
+    if (!planned && std::getenv("OS2_ROUTE_FAILS_MAP")) { // the planner's cells around the walker, half a tile each
+        const int lv = me.position.level;
+        std::fprintf(stderr, "  map of %d at (%.2f, %.2f, %d), goals on level %d:", me.id, me.position.x, me.position.y, lv, r.level);
+        for (const auto& g : r.goals)
+            std::fprintf(stderr, " (%.2f,%.2f)", g[0], g[1]);
+        std::fprintf(stderr, "\n");
+        for (int qy = int(me.position.y * 2) + 12; qy >= int(me.position.y * 2) - 12; --qy) {
+            std::fprintf(stderr, "  %5.1f ", qy / 2.0);
+            for (int qx = int(me.position.x * 2) - 16; qx <= int(me.position.x * 2) + 16; ++qx) {
+                const Point2 q{(qx + 0.5f) / 2, (qy + 0.5f) / 2};
+                const uint8_t b = planner.at(lv, q);
+                char ch = b & PathPlanner::kWall ? '#' : b & PathPlanner::kDoor ? 'D' : b & PathPlanner::kNoFloor ? ' ' : b & PathPlanner::kObject ? 'o' : b ? '?' : planner.costAt(lv, q) > 1.5f ? '+' : '.';
+                if (int(std::floor(me.position.x * 2)) == qx && int(std::floor(me.position.y * 2)) == qy)
+                    ch = 'S';
+                std::fputc(ch, stderr);
+            }
+            std::fputc('\n', stderr);
+        }
+    }
     planner.portalLocked = nullptr;
     if (!planned)
         return false;
@@ -1479,9 +1519,15 @@ bool startPostRoute(Context& c, int stage, int16_t result) {
 Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees, bool postRoute = true) {
     Object& me = c.me();
     if (std::getenv("OS2_ROUTE_FAILS")) // why routes fail, for looking into
-        std::fprintf(stderr, "route of %d failed with %d in \"%s\" #%u op %02X (stack object %d) at (%.2f, %.2f, %d)\n", me.id,
+        std::fprintf(stderr, "t%llu route of %d failed with %d in \"%s\" #%u op %02X (stack object %d) at (%.2f, %.2f, %d)\n", (unsigned long long)c.vm.ticks, me.id,
                      int(why), c.frame.behavior->fileName.c_str(), c.frame.pc, c.instruction.opcode, c.frame.stackObject, me.position.x,
                      me.position.y, me.position.level);
+    if (std::getenv("OS2_ROUTE_FAILS_NEAR")) // and what blocks around the walker
+        for (const auto& [id, x] : c.vm.objects())
+            if (id != me.id && x.position.inWorld() && x.position.level == me.position.level &&
+                std::fabs(x.position.x - me.position.x) < 4.6f && std::fabs(x.position.y - me.position.y) < 2.6f && VM::blocksRouting(x))
+                std::fprintf(stderr, "  near: %d %s at (%.2f, %.2f) flags %X layers %X h %X p %X w %X%s%s\n", id, x.definition ? x.definition->fileName.c_str() : "?",
+                             x.position.x, x.position.y, x.data[objdata::Flags], x.data[63], x.data[4], x.data[42], x.data[13], x.person ? " person" : "", VM::blocksRouting(x) ? " blocks" : "");
     me.route.reset();
     if (why == RouteFail::Success)
         why = RouteFail::Unknown;
@@ -1764,7 +1810,7 @@ bool tryPlace(VM& vm, Object& o, TilePos t, int direction = -1) {
         TilePos pt = t;
         if (p != &o && p->position.inWorld() && o.position.inWorld())
             pt.x += VM::tileOf(*p).x - from.x, pt.y += VM::tileOf(*p).y - from.y;
-        if (!vm.tileFree(pt, ignore))
+        if (!vm.world->walkable(pt) || !vm.tileFree(pt, ignore))
             return false;
     }
     for (Object* p : parts) {
