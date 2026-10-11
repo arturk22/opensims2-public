@@ -75,3 +75,32 @@ Categorias no property set `musiccategories` (`Build`, `Buy`, `CAS`, `Nhood`, `h
 
 ## No app
 `--no-audio` desliga, `--mute` deixa mudo; com `--screenshot` nenhum dispositivo é aberto e `--sound-mix out.wav` grava o que teria tocado (mixer renderizado junto com os ticks da VM). `--music <categoria>` toca música de fundo. O log de saída resume: sons da VM, eventos de animação, nomes tocados e que faltaram, camadas de ambiência ativas e a hora.
+
+## Rodada 10: o que o binário de Mac diz (BV 1.10, Ghidra headless)
+
+### Sufixo `vox` (`cEMVoxModifier`, BV `0xbf2b64`)
+O modificador `vox` acrescenta `_<sufixo>` ao nome do evento; só vale para pessoas (senão o log "Vox event %s called on non-person object %s" e nada muda). O sufixo (BV `0x1a6f0f4`, que o `symxfer` chama por engano de `GetFloorTypeSuffixFromObjectLocation`) depende do dado 58 (idade):
+
+| idade (dado 58) | sufixo | exemplo |
+|---|---|---|
+| < 3 (bebê, bebê que anda) | idade | `b`, `p` |
+| 3–15 (criança) | idade + voz | `ca` |
+| ≥ 16 | idade + sexo + voz | `tfa`, `ama`, `amb`, `efa` |
+
+- **Idade** (`GetSuffixAgeLetterCode`, BV `0xbf07b0`): espécie (dado 0xBA) ≠ 0 → `n` (animais, BV); dado 58 < 2 → `b`; 2 → `p`; 3–15 → `c`; 16–18 → `t`; ≥ 19 com o dado 175 (jovem adulto, BV) → `t`; 19–50 → `a`; ≥ 51 → `e`.
+- **Sexo** (BV `0x1a6ee40`): humano: dado 65 = 0 → `m`, 1 → `f`, outro `?`; espécie 1 → `d`, 2 → `l`, 3 → `k` (BV).
+- **Voz** (BV `0x1a6ef00`): dado 68 ("Ghost Flags") bit 0 → `g`; humano sem jovem adulto: `'a' + (dado 88 "Voice Type" mod n)`, com n pela faixa de idade (tabela BV `0x2739a00`: limites 1, 2, 15, 18, 50, ∞ e n = 1, 1, 1, 1, **2**, 1): **só adultos têm duas vozes (`a`/`b`)**; os outros e o jovem adulto → `a`.
+
+### Efeitos de som (`cTSSoundEffect`, componente tipo 7)
+Bloco: versão u16, flags u32, **`audioId` u32**, intervalo de posição (s), duração (s), volume (como no OpenTS2). `Start` (BV `0xf55fcc`) manda ao sistema de áudio o evento `0xEA451903` com `0x0BD63077` = `audioId`, `0x6BD63081` = ID da instância (o próprio efeito), `0x8BD63096` = bit 0 das flags e, com o bit 1, o volume em `0x0BD63084`; `ApplyEffect` (BV `0xf55d60`) manda `0xCA45190F` com a posição (`0x6BD63530`) a cada "intervalo" segundos e para o efeito quando passa a duração (> 0); `Stop` manda `0x6A451908` (`0x8BD63096` = parada imediata). **O `audioId` é a instância da track** (CRC24 | `0xFF000000` do nome): 107 dos 110 sons do `effects.package` acham uma hit list com essa instância (faltam `0xFFED2D23` ×2 e `0xFF14E140`); todos têm flags 0 (sem volume próprio), intervalo 0,5 s e duração 0 (um tem 5 s).
+
+### Música (`cTSAudioMusicManager`)
+Cinco **estados** (`Init`, BV `0x617760`), cada um com as próprias instâncias tocando: `0xEC313961` bairro, `0xEC313964` CAS, `0xEC313967` lote (vivo: só aparelhos de som, sem música de fundo), `0xEC31396A` construção, `0x0D8A50AD` compra. Trocar de estado (`_SetCurrentMusicState`, BV `0x61723c`) **pausa** as instâncias do estado que tocava e **retoma** as do novo (fade 0 s, `FLOAT_0274b480`): voltar ao modo compra continua a música de onde parou, voltar ao vivo retoma os rádios. Quem troca:
+- modo de jogo (BV `0x611e38`): 2 vivo → estado lote; 3 compra → estado compra + `Start("Buy", "exp")`; 4 construção → estado construção + `Start("Build", "exp")`; 5 bairro → estado bairro + `Start("NHood", "exp")`; 6 → estado 0 (silêncio); se o estado atual não é o do lote, compra/construção só ficam enfileirados (`QueueMusicState`);
+- mensagem `0xB4` (bairro sem lote): para tudo, bairro + `Start("NHood")`; `0xB6`: a música de abertura (`Res/Sound/Music/Splash/`, instância `+0x8c`) **some em 6000 ms** e começa a do bairro;
+- `0x2BEA2063` (ir para um lote): lote `CAS!`/`YACAS!` → estado CAS e `Start("CAS")` se nada toca; outro lote → o estado lote fica como atual sem trocar o que toca (a música do bairro segue durante a carga); `0xB3` marca e `0x4C8E7905` (o lote ficou pronto) faz a instância `+0x8c` sumir em **6 s** e troca para o estado lote.
+
+`_Start(instância, sala, nível, tipo, qualidade)` (BV `0x612f28`): a playlist da pasta do tipo (`musiccategories`); com instância ≠ 0 (um objeto) a música toca **posicionada** no tile/nível e na direção do objeto (senão é 2D); qualidade **`cheap` → passa-baixa 0x2134 (8500) e passa-alta 0xDAC (3500)**, outra (`exp`) sem filtro (0xFFFF/0). Os eventos de aparelho de som (`_HandleStartStereoEvent`, BV `0x613920`) leem do nome tipo e qualidade e aceitam comandos `volume`, `lopass`, `hipass` (com o valor do evento) e `wall` (acha o alto-falante de parede, `_FindWallSpeakerSource`); sala e nível vêm das chaves `0x0C683D79`/`0x0C683D7D` do evento. Constantes do TrackLogic usadas: `defaultmusicvolume`, `musicpausefadetime`, `musicmin/maxdistance`, `musicpriority`, `music/vox/sfxdippingvolume` (abaixar a música durante falas/efeitos; não seguido).
+
+### Som da TV (`cVideoBroadcastChannel`)
+O canal abre o filme (decodificador `0x8C361FD8` se o arquivo começa com `MAD`, senão `0x4C574D00`) e liga a saída de som do decodificador a um **proxy** (`cVideoBroadcastSoundEmitterProxy`) cujo emissor é o som posicionado do **primeiro receptor** do canal (`GetMasterSoundEmmiterForReceivers`, BV `0xd8d214`: o emissor do objeto com o ID do primeiro receptor no mapa): todas as TVs no mesmo canal mostram o mesmo quadro, mas **o som sai de uma só** (a de menor ID). Ao começar (`Start`, BV `0xd8e63c`) manda o evento `0x2D41D87E` (`0x0BD63077` = ID do canal, `0x2D41D97A` = nome). Ordem (`ChooseNextMovieKey`, BV `0xd8e2ac`): a lista de `+0x38` em **ordem** (índice que dá a volta), depois um item **sorteado** da lista de `+0x44` sem repetir o último, e assim alternando; `IsGames` toca o `File` fixo. As listas são as chaves dos grupos da pasta e da pasta de comerciais (`InitializeBroadcastKeyLists`); qual é qual é **inferido** (`+0x38` = programas, `+0x44` = comerciais), e o `CommercialInterval` não é lido nesse caminho: o comercial entra entre cada dois programas. O opensims2 (`app/tv_broadcast`) sorteia os programas e põe comercial a cada 60 s, sem som.
