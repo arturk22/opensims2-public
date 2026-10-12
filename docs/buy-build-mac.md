@@ -909,7 +909,16 @@ do objeto, nível = andares acima do objeto, e a textura do TXMT (alfa 0 =
 buraco; as duas faces usam a mesma) vai na face com u = posição ao longo do
 +x do objeto a partir do começo do tile e v de 3 tiles acima do piso até ele
 (inferido pelas texturas: as metades de um arco de 2 tiles são "0" e "1e"),
-teste de alfa no shader. Diagonais ficam com o recorte retangular.
+teste de alfa no shader. Diagonais (rodada 13): os modelos "…Diagonal" ficam
+em pé alinhados aos eixos (rotação de 0/90/180/270°) e a parede deles corre
+ao longo de +x + o norte local (+x girado 90°), o que os 24 trechos diagonais
+de `N002_Lot3` confirmam; a máscara do trecho é `<base>_<k>e_<k>n_<nível>_
+<nw|se>_wallmask` (k = o trecho ao longo, a partir do do objeto: os de 2 tiles
+têm `0_0` e `1e_1n`; o sinal do norte também é tentado ao contrário, inferido),
+u ao longo da parede (√2 por trecho, inferido como o reto) e v igual.
+`N002_Lot3`: 142 → 166 faces com máscara; `docs/screenshots/r13-wallmask-diagonal.jpg`
+(as janelas da baía de `N001_Lot77`). Objetos sem máscara continuam com o
+recorte retangular.
 `SetWallCutout` passa o nome
 ao `cWallManager::SetCutoutMaterial` (BV `0x6c5d6c`), que troca o material
 daquela face pelo TXMT da máscara (alfa = buraco). Ao apagar uma parede, os

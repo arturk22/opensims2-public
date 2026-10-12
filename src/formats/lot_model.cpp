@@ -299,18 +299,33 @@ std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay
 // "<cutout>_<dx>_<dy>_<level>_<dir>_wallmask" names the mask texture, whose
 // alpha is 0 in the hole; its other faces' TXMTs (the wall seen from the
 // next tile) use the same texture. nullopt if the object has none there.
+// A diagonal stretch (`diagonal`): the tile `dx` east (west) and `dy` north
+// (south) of the object's in its own frame, faces "nw"/"se"
+// (doorclub2diagonal_1e_1n_0_nw); the other sign of north is tried too.
 std::optional<ObjectModel::AlphaMask> wallMaskValues(ResourceIndex& index, const std::string& cutout, int dx, int level,
-                                                     LotModelCache* cache) {
-    const std::string dxs = dx == 0 ? "0" : std::to_string(std::abs(dx)) + (dx > 0 ? "e" : "w");
-    const std::string key = cutout + "_" + dxs + "_" + std::to_string(level);
+                                                     LotModelCache* cache, bool diagonal = false, int dy = 0) {
+    auto offset = [](int d, const char* plus, const char* minus) {
+        return d == 0 ? std::string("0") : std::to_string(std::abs(d)) + (d > 0 ? plus : minus);
+    };
+    const std::string dxs = offset(dx, "e", "w");
+    const std::string key = cutout + "_" + dxs + "_" + std::to_string(level) + (diagonal ? "_d" + std::to_string(dy) : "");
     if (cache)
         if (auto it = cache->wallMasks.find(key); it != cache->wallMasks.end())
             return it->second;
     std::optional<ObjectModel::AlphaMask> out;
-    for (const char* face : {"0_%d_n", "1s_%d_s", "1n_%d_n", "0_%d_s"}) {
-        char mid[32];
-        std::snprintf(mid, sizeof mid, face, level);
-        // face is "<dy>_<level>_<dir>"
+    std::vector<std::string> mids; // "<dy>_<level>_<dir>"
+    if (!diagonal) {
+        for (const char* face : {"0_%d_n", "1s_%d_s", "1n_%d_n", "0_%d_s"}) {
+            char mid[32];
+            std::snprintf(mid, sizeof mid, face, level);
+            mids.push_back(mid);
+        }
+    } else {
+        for (const std::string& dys : {offset(dy, "n", "s"), offset(-dy, "n", "s")})
+            for (const char* dir : {"nw", "se"})
+                mids.push_back(dys + "_" + std::to_string(level) + "_" + dir);
+    }
+    for (const std::string& mid : mids) {
         auto loc = index.findByName(cutout + "_" + dxs + "_" + mid + "_wallmask_txmt", kTypeTxmt);
         if (!loc)
             continue;
@@ -492,17 +507,34 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             const float base = std::min(za0, zb0);
             for (auto c = cuts.begin(); c != cuts.end() && maskIndex < 0; ++c) {
                 const WallHole& h = holes[c->hole];
-                if (h.cutout.empty() || std::abs(dx * h.east[0] + dy * h.east[1]) < 0.99f)
+                if (h.cutout.empty())
                     continue;
+                // Straight: the wall runs along the object's +x. Diagonal:
+                // the "...diagonal" models stand square and their wall runs
+                // along +x + local north (rotated +90°) (the lots' diagonal
+                // windows all do), its faces "nw" and "se"; the stretch is
+                // sqrt 2 long and the next tile along is one east and one
+                // north of the object's (doorclub2diagonal_1e_1n_0_nw).
+                const float along = dx * h.east[0] + dy * h.east[1];
+                const bool diag = std::abs(std::abs(along) - 0.7071f) < 0.05f && (h.east[0] == 0 || h.east[1] == 0);
+                if (!diag && std::abs(along) < 0.99f)
+                    continue;
+                std::array<float, 2> axis{h.east[0], h.east[1]};
+                if (diag) {
+                    const float r = 1.0f / std::sqrt(2.0f);
+                    axis = {(h.east[0] - h.east[1]) * r, (h.east[1] + h.east[0]) * r};
+                }
+                const float span = diag ? std::sqrt(2.0f) : 1.0f;
                 const float mx = (w.a.x + w.b.x) / 2 - h.origin[0], my = (w.a.y + w.b.y) / 2 - h.origin[1];
-                const int k = int(std::lround(mx * h.east[0] + my * h.east[1]));
+                const int k = int(std::lround((mx * axis[0] + my * axis[1]) / span));
                 const int storey = std::max(0, int(std::lround((base - h.origin[2]) / kStoryHeight)));
-                auto values = wallMaskValues(index, h.cutout, k, storey, cache);
+                auto values = diag ? wallMaskValues(index, h.cutout, k, storey, cache, true, k)
+                                   : wallMaskValues(index, h.cutout, k, storey, cache);
                 if (!values)
                     continue;
                 values->planar = true;
-                values->planeU = {h.east[0], h.east[1], 0,
-                                  0.5f - float(k) - (h.origin[0] * h.east[0] + h.origin[1] * h.east[1])};
+                values->planeU = {axis[0] / span, axis[1] / span, 0,
+                                  0.5f - float(k) - (h.origin[0] * axis[0] + h.origin[1] * axis[1]) / span};
                 values->planeV = {0, 0, -1.0f / kStoryHeight, (base + kStoryHeight) / kStoryHeight};
                 maskIndex = int(masks.size());
                 masks.push_back(std::move(*values));
