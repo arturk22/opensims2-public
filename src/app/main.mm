@@ -1438,7 +1438,9 @@ const std::vector<os2::Tgi>* familyBin(int16_t sim, const os2::cas::CasCatalog* 
     if (f == m.families.end())
         return nullptr;
     static std::set<int16_t> filled;
-    if (f->second.wardrobe.empty() && catalog && filled.insert(family).second)
+    // Only real families (1..0x7FD9) have a bin, as cTSFamily::AddMemberClothing
+    // (BV 0x47ec68) checks; the NPC family 0x7FFF never gets one.
+    if (f->second.wardrobe.empty() && catalog && family > 0 && family < 0x7FDA && filled.insert(family).second)
         for (const auto& ls : gLotSims) {
             const os2::vm::Object* member = m.object(ls.id);
             if (!member || !member->person || member->person->data[os2::vm::persondata::FamilyNumber] != family)

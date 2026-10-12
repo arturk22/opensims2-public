@@ -1082,7 +1082,9 @@ família antiga)` (BV `0x4fddcc`, vtable `0x44` do gerente; único chamador
 achado). Se o vizinho ainda não é da família (`TestMember`, vtable `0x78`):
 `AddMember` (`0x1c`), dado de pessoa **61 := número da família** e **67
 := 0** (no vizinho e na pessoa do lote, se há), vtable `0x5c(1)` da família,
-`AddMemberClothing(ID)` e, se as duas famílias são reais (0 < número <
+`AddMemberClothing(ID)` (que volta sem fazer nada se o número da família,
+`+0x2c`, não está em 1..`0x7fd9`: a família dos NPCs `0x7FFF` nunca tem bin;
+rodada 17, o app também não o enche) e, se as duas famílias são reais (0 < número <
 `0x7fda`), **copia do bin da família antiga** (`AddClothing`, vtable `0x28`)
 as peças cujas máscaras batem com as do Sim (três máscaras lidas de um
 recurso `0xAC598EAC` do personagem; inferido: idade, gênero e categoria;

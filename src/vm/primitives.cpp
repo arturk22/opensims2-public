@@ -1584,10 +1584,13 @@ Exit addToFamily(Context& c) {
         if (std::find(bin.begin(), bin.end(), k) == bin.end())
             bin.push_back(k);
     };
-    if (vm.memberClothing)
+    auto real = [](int16_t f) { return f > 0 && f < 0x7FDA; };
+    // cTSFamily::AddMemberClothing (Mac BV 0x47ec68) returns at once unless
+    // the family's number is in 1..0x7FD9: the NPC family 0x7FFF and the
+    // other reserved ones never get a clothing bin.
+    if (vm.memberClothing && real(family))
         for (const Tgi& k : vm.memberClothing(id))
             addClothing(k);
-    auto real = [](int16_t f) { return f > 0 && f < 0x7FDA; };
     oldIt = old ? vm.families.find(old) : vm.families.end();
     if (oldIt != vm.families.end() && real(family) && real(old) && old != family) {
         const bool anyone = familyMembers(vm, old) > 0;

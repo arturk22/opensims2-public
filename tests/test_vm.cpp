@@ -938,6 +938,16 @@ static void testGenericSimsCall() {
     };
     check(has(3, 105) && !has(3, 106) && has(1, 106) && has(1, 2) && !has(1, 1) && !has(1, 105),
           "Generic Sims Call 4 fills the family's clothing bin (AddMemberClothing) and copies what fits from the old one");
+    // An NPC put in the NPC family 0x7FFF: AddMemberClothing (BV 0x47ec68)
+    // returns for a family number outside 1..0x7FD9, so that family gets no bin.
+    fx.vm.neighbors[7] = {};
+    fx.vm.families[0x7FFF] = {};
+    fx.code.add(kObjGroup, 0x1002, tree({expr(StackId, 0, Assign, Lit, 7, go(1), E),
+                                         expr(Temp, 0, Assign, Lit, 0x7FFF, go(2), E), call(4, T)}));
+    t = fx.run(0x1002);
+    check(t.status == Thread::Status::Finished &&
+              fx.vm.neighbors[7].personData[persondata::FamilyNumber] == 0x7FFF && fx.vm.families[0x7FFF].wardrobe.empty(),
+          "Generic Sims Call 4 into the NPC family 0x7FFF leaves its clothing bin empty");
     fx.code.add(kObjGroup, 0x1001, tree({expr(StackId, 0, Assign, Lit, 9, go(1), E), call(4, T)}));
     t = fx.run(0x1001);
     check(t.status == Thread::Status::Failed && t.error.find("Missing neighbor") != std::string::npos,
