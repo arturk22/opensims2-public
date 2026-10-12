@@ -9,6 +9,8 @@
 #include <array>
 #include <map>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -194,8 +196,20 @@ float animationTime(const Animation& a, float seconds, bool loop);
 // own pose when `local` is a blend of several layers); default `local`.
 // `modelFrame`: the frame of the goals keyed in model space (an animation
 // played turned by its header heading: AnimPlayer::Options::turn).
+//
+// IK target types (cIKTarget::TargetType; s2pkg anim-sweep): 0 has no
+// frame bone (the goal in model space), 1 a bone of the animated skeleton,
+// 2 a bone of the request's IK object (the object whose ID the primitive
+// passes to AddChoreoAnimRequest, Mac BV 0x696644, which finds its scene
+// graph and validates the bones against it: the baby a bottle feeder holds,
+// head_grip and bottomtarget_surface of buskel; the partner a cuddler
+// hugs). `ikObjectBone` gives such a bone (by name CRC) in the animated
+// skeleton's model space; without it, or when the IK object lacks the
+// bone, the goal is taken in model space (inferred).
+using IkObjectBone = std::function<std::optional<Xform>(uint32_t boneCrc)>;
 void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ticks, std::vector<Xform>& local,
-             const std::vector<Xform>* goals = nullptr, const Xform& modelFrame = Xform{});
+             const std::vector<Xform>* goals = nullptr, const Xform& modelFrame = Xform{},
+             const IkObjectBone* ikObjectBone = nullptr, bool mirrored = false);
 
 // Snap events (ANIM event type 1005): "snapObjectRoot=<object>:__<model>__"
 // and "snapTargetSlot=<skeleton>:__<bone>__" or "Oblivion". They move a
@@ -210,6 +224,11 @@ struct AnimSnap {
     uint16_t ticks = 0;
     std::string object, model;  // "newspaper", "newspaperRolled"
     std::string skeleton, bone; // "auSkel", "R_Hand_grip"; both empty: Oblivion
+    // "snapObjectPose=<animation>": the pose the snapped model takes in the
+    // slot (o2a-fridge-babyBottle-get-babyBottlePose turns the bottle in the
+    // hand; inferred from the data: one-frame animations of the object's
+    // skeleton); empty: none.
+    std::string pose;
 };
 std::vector<AnimSnap> animSnaps(const Animation& a);
 // Where every object the snaps name is at `ticks` (events at or before it,

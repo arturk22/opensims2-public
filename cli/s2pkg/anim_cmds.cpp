@@ -1,3 +1,4 @@
+#include <set>
 // s2pkg commands for skeletons, animations and Sims.
 #include "anim_cmds.hpp"
 
@@ -141,13 +142,24 @@ int cmdAnim(const char* res, const std::string& name, bool keys) {
                     std::printf("\n");
                 }
         }
-        // CRC names: the channels' (and with --keys, every CRC field).
+        // CRC names: the channels', else the bones of the adult, child,
+        // toddler and baby skeletons (and with --keys, every CRC field).
+        static std::map<uint32_t, std::string> boneNames;
+        if (keys && boneNames.empty())
+            for (const char* sk : {"auskel_cres", "cuskel_cres", "puskel_cres", "buskel_cres"})
+                try {
+                    for (const auto& b : loadObjectModel(index, sk).skeleton.bones)
+                        boneNames.emplace(nameInstanceHiHash(b.name), std::string(sk).substr(0, 6) + ":" + b.name);
+                } catch (const std::exception&) {
+                }
         auto crcName = [&](uint32_t crc) -> std::string {
             if (!crc)
                 return "0";
             for (const auto& c : t.channels)
                 if (c.nameHash == crc)
                     return c.name;
+            if (auto it = boneNames.find(crc); it != boneNames.end())
+                return it->second;
             char buf[16];
             std::snprintf(buf, sizeof buf, "0x%08X", crc);
             return buf;
@@ -308,6 +320,20 @@ int cmdAnimSweep(const char* res) {
     std::map<std::string, std::string> examples; // target tag and type: the first few animations
     std::vector<std::string> deltaAnims;         // animations with delta channels
     size_t keys = 0, channels = 0;
+    // IK targets: their type and where their frame bone is (the target's
+    // own skeleton, another skeleton's bone, none), with examples.
+    std::map<std::string, std::set<uint32_t>> skeletonBones; // tag -> bone name CRCs
+    std::map<uint32_t, std::string> anyBone;
+    for (const char* sk : {"auskel", "cuskel", "puskel", "buskel"})
+        try {
+            for (const auto& b : loadObjectModel(index, std::string(sk) + "_cres").skeleton.bones) {
+                skeletonBones[sk].insert(nameInstanceHiHash(b.name));
+                anyBone.emplace(nameInstanceHiHash(b.name), b.name);
+            }
+        } catch (const std::exception&) {
+        }
+    std::map<std::string, size_t> ikKinds;
+    std::map<std::string, std::string> ikExamples;
     for (const auto& loc : index.ofType(kTypeAnim)) {
         ++total;
         try {
@@ -323,6 +349,21 @@ int cmdAnimSweep(const char* res) {
                                      std::to_string(deltas) + " base=" + std::to_string(bases) +
                                      " ticks=" + std::to_string(a.duration));
             for (const auto& t : a.targets) {
+                std::string tagLower = t.tag;
+                for (char& ch : tagLower)
+                    ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                for (const auto& chain : t.ikChains)
+                    for (const auto& g : chain.targets) {
+                        const auto own = skeletonBones.find(tagLower);
+                        std::string where = !g.crcs[0]                                            ? "no frame"
+                                            : own != skeletonBones.end() && own->second.count(g.crcs[0]) ? "own bone"
+                                            : anyBone.count(g.crcs[0])                               ? "other skeleton's bone"
+                                                                                                     : "unknown";
+                        const std::string k = "type " + std::to_string(g.type) + ", " + where;
+                        if (++ikKinds[k] <= 4)
+                            ikExamples[k] += " " + a.resource.fileName + ":" +
+                                             (anyBone.count(g.crcs[0]) ? anyBone[g.crcs[0]] : std::string("?"));
+                    }
                 ++tags[t.tag];
                 std::string lower = t.tag;
                 for (char& ch : lower)
@@ -370,6 +411,9 @@ int cmdAnimSweep(const char* res) {
     std::printf("target types:\n");
     for (const auto& [k, n] : animTypes)
         std::printf("  %7zu %-28s%s\n", n, k.c_str(), examples[k].c_str());
+    std::printf("IK targets (type, frame bone):\n");
+    for (const auto& [k, n] : ikKinds)
+        std::printf("  %7zu %-34s%s\n", n, k.c_str(), ikExamples[k].c_str());
     std::sort(deltaAnims.begin(), deltaAnims.end());
     std::printf("animations with delta channels (%zu):\n", deltaAnims.size());
     for (const auto& d : deltaAnims)

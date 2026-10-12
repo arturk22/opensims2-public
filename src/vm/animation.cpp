@@ -635,6 +635,10 @@ Exit animateOverlay(Context& c) {
     ov->pending = library(c.vm).treeEvents(ov->name);
     ov->eventTree = le16(&o[4]);
     ov->me = c.thread.me, ov->codeOwner = c.frame.codeOwner, ov->stackObject = c.frame.stackObject;
+    // Its IK object: temp 6 with flag 0x08 of byte 15, else none
+    // (try_animate_overlay, Mac BV 0x69ea54, passes it to
+    // AddChoreoAnimRequest, whose IK targets of type 2 are its bones).
+    ov->ikObject = (o[15] & 0x08) ? c.thread.temps[6] : int16_t(0);
     return Exit::True;
 }
 

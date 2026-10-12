@@ -705,6 +705,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     }
     gSnaps = std::make_unique<os2::AnimSnapView>(renderer, index, *gObjectView, gSimulation->machine());
     gSimulation->seat = [](int16_t id) { return gObjectView ? gObjectView->seatPlacement(id) : std::nullopt; };
+    gSimulation->actorOf = [](int16_t id) -> const os2::SimActor* {
+        const auto it = gObjectActors.find(id);
+        return it != gObjectActors.end() ? it->second : nullptr;
+    };
     gSimulation->onSimAnimation = [](int16_t id, os2::SimActor& actor, const os2::Animation* anim, double at) {
         gSnaps->simAnimation(id, actor, anim, at);
         if (anim)
@@ -3402,6 +3406,19 @@ void poseActors(os2::Renderer& renderer, double seconds) {
             b >= 0 && size_t(b) < by.first->bones.size() ? by.first->bones[size_t(b)] : by.first->placement();
         const_cast<os2::SimActor*>(a)->update(seconds);
     }
+    // The carriers again: their hands reach the carried Sim's bones by IK
+    // (a2b-carry-belly's left hand under the baby's bottom, the bottle
+    // feeder's right hand at its head: IK targets of type 2), which only now
+    // stand where the carrier holds them (the slot bone does not move with
+    // the arms, so one more pass settles it).
+    {
+        std::set<const os2::SimActor*> again;
+        for (const auto& [a, by] : carried)
+            again.insert(by.first);
+        for (auto& a : gActors)
+            if (again.count(a.get()) && !carried.count(a.get()))
+                a->update(seconds);
+    }
     if (gSnaps)
         gSnaps->update(seconds);
     choosePlumbob(renderer);
@@ -5559,11 +5576,19 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     }
                 }
                 const CFTimeInterval simmed = CACurrentMediaTime();
-                followSelectedSim();
+                // --track-sim-id <id|name>: each shot follows and centres on that Sim
+                // instead of the selected one (a scene another Sim plays).
+                const auto trackOther = argument(@"--track-sim-id");
+                const os2::vm::ObjectId tracked =
+                    trackOther && gSimulation ? os2::vm::findSim(gSimulation->machine(), *trackOther) : 0;
+                if (tracked && gCameraFollow)
+                    gCameraFollow->follow(gSimulation->machine(), tracked);
+                else
+                    followSelectedSim();
                 // --track-sim: each shot centred on the selected Sim (close-ups of poses).
-                if ([shotArgs containsObject:@"--track-sim"] && gPie)
+                if (([shotArgs containsObject:@"--track-sim"] && gPie) || tracked)
                     for (const auto& s : gLotSims)
-                        if (s.id == gPie->sim())
+                        if (s.id == (tracked ? tracked : gPie->sim()))
                             view.camera->setPivot(simd_make_float3(s.actor->position[0], s.actor->position[1], s.actor->position[2]));
                 view.camera->setViewport(float(shotW), float(shotH));
                 view.camera->snap();

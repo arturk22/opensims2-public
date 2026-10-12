@@ -165,6 +165,7 @@ struct Overlay {
     float played = 0, perTick = 0, length = 0; // animation ticks (ms at speed 1)
     bool blendOutSent = false;
     bool flipped = false; // played mirrored (Animate Object/Overlay's flip: a chair pulled out to the Sim's side)
+    int16_t ikObject = 0; // the object its IK targets of type 2 name bones of (0: none)
     // Its event tree (Animate Overlay's u16 at 4) and where it runs: the
     // thread that started it.
     uint16_t eventTree = 0;

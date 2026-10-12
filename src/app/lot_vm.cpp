@@ -1,5 +1,7 @@
 #include "lot_vm.hpp"
 
+#include <map>
+
 #include "formats/dbpf.hpp"
 #include "formats/lot_arrivals.hpp"
 #include "formats/lot_objects.hpp"
@@ -207,7 +209,8 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
                 loop && st != b.stoppedOverlays.end() && at - st->second.first <= kRestartGap)
                 phase = at - st->second.second;
             p.start = at - phase;
-            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority, .phase = phase, .level = x.level});
+            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority, .phase = phase, .level = x.level,
+                                    .ikObjectBone = ikObjectBones(*b.actor, x.ikObject)});
             if (std::getenv("OS2_DEBUG_VM"))
                 std::fprintf(stderr, "tick %llu sim %d overlay on: %s (kind %d, level %d, loops %d)\n",
                              (unsigned long long)vm_->ticks, b.id, x.name.c_str(), x.oeType, x.level, x.loops);
@@ -336,7 +339,8 @@ void LotSimulation::sampleAll(double at) {
                 b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
                                         .mirror = mirror, .turn = animated ? anim.headingOffset : 0.0f,
                                         .phase = walkClip ? double(s.walkPhase) : 0.0, .level = level,
-                                        .weight = weight});
+                                        .weight = weight,
+                                        .ikObjectBone = animated ? ikObjectBones(*b.actor, s.animIkObject) : IkObjectBone{}});
             }
             for (int j = extras + 1; j <= b.walkExtras; ++j)
                 b.actor->player.stop(at, fade, kWalkBlend + j);
@@ -349,6 +353,36 @@ void LotSimulation::sampleAll(double at) {
         b.playing = want;
         b.serial = s.serial;
     }
+}
+
+IkObjectBone LotSimulation::ikObjectBones(const SimActor& self, int16_t object) const {
+    // OS2_NO_IK_OBJECT=1: no IK object (type-2 goals in model space), to compare.
+    if (!object || std::getenv("OS2_NO_IK_OBJECT"))
+        return {};
+    // By name CRC, cached per skeleton.
+    auto cache = std::make_shared<std::map<std::pair<const Skeleton*, uint32_t>, int>>();
+    return [this, self = &self, object, cache](uint32_t crc) -> std::optional<Xform> {
+        const SimActor* other = nullptr;
+        for (const auto& b : bound_)
+            if (b.id == object)
+                other = b.actor;
+        if (!other && actorOf)
+            other = actorOf(object);
+        if (!other || other == self || other->bones.size() != other->skin.skeleton.bones.size())
+            return std::nullopt;
+        const Skeleton* sk = &other->skin.skeleton;
+        auto it = cache->find({sk, crc});
+        if (it == cache->end()) {
+            int found = -1;
+            for (size_t i = 0; i < sk->bones.size() && found < 0; ++i)
+                if (nameInstanceHiHash(sk->bones[i].name) == crc)
+                    found = int(i);
+            it = cache->emplace(std::make_pair(sk, crc), found).first;
+        }
+        if (it->second < 0)
+            return std::nullopt;
+        return self->placement().inverse().then(other->bones[size_t(it->second)]);
+    };
 }
 
 // Look At's target: a Sim's head (its actor's bone), else the object's
@@ -418,6 +452,20 @@ void LotSimulation::updateScene(double seconds) {
     while (vm_->ticks < target && !vm::dialogPausesGame(*vm_)) {
         vm_->tick();
         sampleAll(double(vm_->ticks - 1) / rate + slip_); // in the caller's clock, as the actors play
+        // OS2_LOG_ANIMS=1: each Sim's Animate Sim and overlays as they change (as s2pkg pie --anims).
+        if (static const bool log = std::getenv("OS2_LOG_ANIMS") != nullptr; log) {
+            static std::map<vm::ObjectId, std::string> last;
+            for (const auto& [oid, ob] : vm_->objects())
+                if (ob.person) {
+                    std::string s = ob.animation.name + "@" + std::to_string(ob.animation.level) + " [";
+                    for (const auto& o : ob.animation.overlays)
+                        s += o.name + "@" + std::to_string(o.level) + (o.ikObject ? " ik " + std::to_string(o.ikObject) : "") + " ";
+                    s += "] ik " + std::to_string(ob.animation.eventObject) + " in " + std::to_string(ob.data[vm::objdata::ContainerId]);
+                    if (s != last[oid])
+                        std::printf("opensims2: tick %llu: Sim %d %s\n", (unsigned long long)vm_->ticks, oid, s.c_str()),
+                            last[oid] = s;
+                }
+        }
     }
     const float t = float(std::clamp(seconds * rate - double(vm_->ticks - 1), 0.0, 1.0));
     const float dt = float(std::clamp(seconds - last_, 0.0, 0.1));

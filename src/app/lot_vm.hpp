@@ -84,6 +84,9 @@ public:
     // slot's way: its animations (the chair's get-in, which starts from the
     // routing slot beside it) are made in the slot's frame.
     std::function<std::optional<Xform>(int16_t id)> seat;
+    // The actor drawing a VM object other than a bound Sim (an object the VM
+    // animates), for the IK targets on its bones; null: none.
+    std::function<const SimActor*(int16_t id)> actorOf;
 
     // Runs the VM up to `seconds` (whole ticks) and places and animates the
     // attached actors for that moment (one tick behind the VM, so that
@@ -137,6 +140,10 @@ private:
     };
     // Where a Sim's Look At points its head now (world space), if anywhere.
     std::optional<Vec3> lookTarget(const vm::Object& o) const;
+    // The bones of a request's IK object for `self`'s IK targets of type 2
+    // (AnimPlayer::Options::ikObjectBone): the object's actor (actorOf, else
+    // a bound Sim's) as posed last, in `self`'s model space. Empty for none.
+    IkObjectBone ikObjectBones(const SimActor& self, int16_t object) const;
     void playOverlays(Bound& b, const vm::Object& o, double at);
     void sampleAll(double at);
     void updateScene(double seconds);

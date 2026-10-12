@@ -51,6 +51,8 @@ private:
         std::unique_ptr<SimActor> actor; // null: failed to load
         std::string skeleton;            // root node name, lowercase ("newspaperrolled")
         std::string playing;             // object animation cued on it
+        std::string pose;                // the snap's snapObjectPose cued on it
+        double poseAt = -1;              // when (an older object animation does not replace it)
     };
     struct SimSnaps {
         SimActor* actor = nullptr;

@@ -368,7 +368,8 @@ Xform parentWorld(const Skeleton& s, const std::vector<Xform>& world, int bone) 
 } // namespace
 
 void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, std::vector<Xform>& local,
-             const std::vector<Xform>* goals, const Xform& modelFrame) {
+             const std::vector<Xform>* goals, const Xform& modelFrame, const IkObjectBone* ikObjectBone,
+             bool mirrored) {
     if (target.ikChains.empty())
         return;
     std::unordered_map<uint32_t, int> byCrc;
@@ -419,7 +420,13 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
             return goalLocal[size_t(b)];
         return virtualNode(crc);
     };
-    auto inFrame = [&](const std::vector<Xform>& world, int frame, const Xform& node) {
+    // The frame of a type-2 target: the IK object's bone (its mirror twin,
+    // reflected, for a layer played flipped: the whole pose is reflected
+    // after the solve).
+    std::optional<Xform> objectFrame;
+    auto inFrame = [&](const std::vector<Xform>& world, int frame, const Xform& node, bool goalNode = true) {
+        if (objectFrame && goalNode)
+            return objectFrame->then(node);
         // The model root (or the skeleton's top node, auskel) is the
         // animation's frame: turned with it.
         if (frame < 0 || s.bones[size_t(frame)].parent < 0)
@@ -455,7 +462,18 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         const std::optional<Xform> goalNode = nodeLocal(goal.crcs[4]);
         const std::optional<Xform> goalRotation = nodeLocal(goal.crcs[2]), goalRotation2 = nodeLocal(goal.crcs[3]);
         const std::optional<Xform> pole = nodeLocal(chain.crcs[4]);
-        const int frame = bone(goal.crcs[0]), poleFrame = bone(chain.crcs[5]);
+        // Type 0: no frame bone; 1: the skeleton's own; 2: the IK object's.
+        const int frame = goal.type == 1 ? bone(goal.crcs[0]) : -1, poleFrame = bone(chain.crcs[5]);
+        objectFrame.reset();
+        if (goal.type == 2 && ikObjectBone && *ikObjectBone) {
+            objectFrame = (*ikObjectBone)(mirrored && goal.crcs[1] ? goal.crcs[1] : goal.crcs[0]);
+            if (objectFrame && mirrored) {
+                Xform r;
+                r.q = {objectFrame->q.x, -objectFrame->q.y, -objectFrame->q.z, objectFrame->q.w};
+                r.t = {-objectFrame->t[0], objectFrame->t[1], objectFrame->t[2]};
+                objectFrame = r;
+            }
+        }
         if (!goalNode)
             continue;
         float weight = 1;
@@ -479,7 +497,7 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         const Vec3 u = scale(toT, 1 / d);
         d = std::clamp(d, std::fabs(a - b) + 1e-4f, a + b - 1e-4f);
         // Knee/elbow in the plane of the root, the goal and the pole (or the current joint).
-        Vec3 toP = sub(pole ? inFrame(world, poleFrame, *pole).t : B, A);
+        Vec3 toP = sub(pole ? inFrame(world, poleFrame, *pole, false).t : B, A);
         Vec3 v = sub(toP, scale(u, dot(toP, u)));
         if (length(v) < 1e-6f)
             continue;
@@ -567,6 +585,9 @@ std::vector<AnimSnap> animSnaps(const Animation& a) {
         std::tie(s.object, s.model) = splitSnapName(root);
         if (slot != "Oblivion")
             std::tie(s.skeleton, s.bone) = splitSnapName(slot);
+        s.pose = eventField(e.data, "snapObjectPose");
+        while (!s.pose.empty() && std::isspace(static_cast<unsigned char>(s.pose.back())))
+            s.pose.pop_back();
         out.push_back(std::move(s));
     }
     std::stable_sort(out.begin(), out.end(), [](const AnimSnap& x, const AnimSnap& y) { return x.ticks < y.ticks; });

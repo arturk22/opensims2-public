@@ -183,6 +183,7 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.turn = o.turn;
     l.level = o.level >= 0 ? o.level : l.priority;
     l.scale = std::clamp(o.weight, 0.0f, 1.0f);
+    l.ikObjectBone = o.ikObjectBone;
     if (l.mirror)
         prepareMirror();
     if (skeleton_ && l.target) {
@@ -296,7 +297,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
             // IK first (the chains name their own side), then the whole pose flipped.
             if (!l.target->ikChains.empty() && l.target->hasBaseChannels()) {
                 const std::vector<Xform> goals = p;
-                applyIk(*l.target, *skeleton_, ticks, p, &goals, frame);
+                applyIk(*l.target, *skeleton_, ticks, p, &goals, frame, &l.ikObjectBone, true);
             }
             p = mirrorPose(*skeleton_, twins_, restWorld_, p);
             std::vector<float> flipped(n);
@@ -400,7 +401,8 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
         const std::vector<Xform> goals = layerPose(l, ticks);
         std::vector<Xform> solved = out;
-        applyIk(*l.target, *skeleton_, ticks, solved, &goals, Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}});
+        applyIk(*l.target, *skeleton_, ticks, solved, &goals, Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}},
+                &l.ikObjectBone);
         blendPose(out, solved, w, l.mask);
     }
     return out;

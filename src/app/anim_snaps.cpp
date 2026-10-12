@@ -19,6 +19,16 @@ std::string lower(std::string s) {
     return s;
 }
 const Xform kHidden{{}, {0, 0, -1000}};
+
+// A snap applied: the object's model is where it says, and nowhere else
+// (the bottle the fridge's get put in the hand as "babyBottle" is the one
+// the feeder's start snaps there again as "o2a", the a2o object).
+void applySnap(std::map<std::string, AnimSnap>& state, const AnimSnap& snap) {
+    const std::string model = lower(snap.model);
+    for (auto it = state.begin(); it != state.end();)
+        it = it->first != snap.object && !model.empty() && lower(it->second.model) == model ? state.erase(it) : std::next(it);
+    state[snap.object] = snap;
+}
 } // namespace
 
 AnimSnapView::AnimSnapView(Renderer& renderer, ResourceIndex& index, VmObjectView& objects, vm::VM& vm)
@@ -41,7 +51,7 @@ void AnimSnapView::simAnimation(int16_t sim, SimActor& actor, const Animation* a
     // The last animation's snaps up to now (when no frame was drawn since).
     const float until = float((at - s.start) * Animation::kTicksPerSecond);
     for (; s.applied < s.snaps.size() && float(s.snaps[s.applied].ticks) <= until; ++s.applied)
-        s.state[s.snaps[s.applied].object] = s.snaps[s.applied];
+        applySnap(s.state, s.snaps[s.applied]);
     s.actor = &actor;
     s.animation = animation;
     s.start = at;
@@ -83,7 +93,7 @@ void AnimSnapView::update(double now) {
             continue;
         const float ticks = float((now - s.start) * Animation::kTicksPerSecond);
         for (; s.applied < s.snaps.size() && float(s.snaps[s.applied].ticks) <= ticks; ++s.applied)
-            s.state[s.snaps[s.applied].object] = s.snaps[s.applied];
+            applySnap(s.state, s.snaps[s.applied]);
         const auto& state = s.state;
         if (state.empty())
             continue;
@@ -97,6 +107,18 @@ void AnimSnapView::update(double now) {
                 continue;
             m.actor->transform = s.actor->bones[size_t(b)];
             shown.insert(snap.object + ":" + snap.model);
+            // The snap's pose of the model in the slot (snapObjectPose).
+            if (!snap.pose.empty() && m.pose != snap.pose) {
+                m.pose = snap.pose;
+                try {
+                    const Animation& a = m.actor->animation(index_, snap.pose);
+                    const double at = s.start + snap.ticks / Animation::kTicksPerSecond;
+                    m.actor->cue(at, a, {.fade = 0.0f, .loop = true});
+                    m.playing = snap.pose;
+                    m.poseAt = at;
+                } catch (const std::exception&) {
+                }
+            }
         }
         for (auto& [key, m] : s.models)
             if (m.actor && !shown.count(key))
@@ -109,22 +131,21 @@ void AnimSnapView::update(double now) {
 
             bool named = false;
             for (const auto& [object, snap] : state)
-                named = named || (!object.empty() && cres.rfind(lower(object), 0) == 0);
+                named = named || (!object.empty() && cres.rfind(lower(object), 0) == 0) ||
+                        (!snap.model.empty() && cres.rfind(lower(snap.model), 0) == 0); // "o2a": the a2o object
             if (!named)
                 continue;
             if (s.hidden.insert(id).second)
                 objects_.setHidden(id, true);
             const auto anim = objectAnims_.find(id);
-                std::fprintf(stderr, "snap: object %d anim %s, %zu models\n", id, anim == objectAnims_.end() ? "-" : anim->second.first.c_str(), s.models.size());
             if (anim == objectAnims_.end())
                 continue;
             for (auto& [key, m] : s.models) {
-                if (!m.actor || m.playing == anim->second.first)
+                if (!m.actor || m.playing == anim->second.first || anim->second.second < m.poseAt)
                     continue;
                 try {
                     const Animation& a = m.actor->animation(index_, anim->second.first);
                     const std::string tag = lower(a.skeletonTag.empty() && !a.targets.empty() ? a.targets[0].tag : a.skeletonTag);
-                                std::fprintf(stderr, "snap: %s tag '%s' model '%s'\n", anim->second.first.c_str(), tag.c_str(), m.skeleton.c_str());
                     if (tag != m.skeleton)
                         continue;
                     m.actor->cue(anim->second.second, a, {.fade = 0.1f, .loop = false});

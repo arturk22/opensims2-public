@@ -331,6 +331,7 @@ static void testArmIk() {
     chain.crcs[2] = nameInstanceHiHash("hand");
     chain.crcs[4] = nameInstanceHiHash("pole");
     Animation::IkTarget goal;
+    goal.type = 1; // a bone of the skeleton's own
     goal.crcs[0] = nameInstanceHiHash("spine");
     goal.crcs[2] = goal.crcs[4] = nameInstanceHiHash("handcontrol");
     goal.crcs[3] = nameInstanceHiHash("handcontrolrot");
@@ -344,15 +345,46 @@ static void testArmIk() {
           "arm IK: hand on the goal in the frame bone's space");
     check(w[4].t[1] < -0.1f, "arm IK: elbow (forearm, past the twist bone) towards the pole");
     check(near(w[6].q.w, 1, 1e-3f), "arm IK: hand takes the control rotation node's");
+
+    // Type 2: the frame bone is the IK object's (a2b-babybottle-feeder's
+    // right hand at the baby's head_grip), given in this skeleton's model
+    // space; the skeleton's own bone of that name does not count.
+    t.ikChains[0].targets[0].type = 2;
+    t.ikChains[0].targets[0].crcs[0] = nameInstanceHiHash("spine");
+    const IkObjectBone other = [](uint32_t crc) -> std::optional<Xform> {
+        if (crc != nameInstanceHiHash("spine"))
+            return std::nullopt;
+        return Xform{{}, {0, 0.1f, 1.0f}}; // the other's "spine", 0.1 in front of ours
+    };
+    local = s.restPose();
+    local[7].t = {0.3f, 0, 0.6f};
+    applyIk(t, s, 0, local, nullptr, Xform{}, &other);
+    const auto w2 = s.world(local);
+    check(near(w2[6].t[0], 0.3f, 1e-3f) && near(w2[6].t[1], 0.1f, 1e-3f) && near(w2[6].t[2], 1.6f, 1e-3f),
+          "arm IK: a type-2 goal in the IK object's bone");
+    // Flipped: the twin bone's frame reflected (the pose is reflected after).
+    const IkObjectBone twin = [](uint32_t crc) -> std::optional<Xform> {
+        return crc == nameInstanceHiHash("spinetwin") ? std::optional<Xform>(Xform{{}, {-0.05f, 0, 1.0f}}) : std::nullopt;
+    };
+    t.ikChains[0].targets[0].crcs[1] = nameInstanceHiHash("spinetwin");
+    local = s.restPose();
+    local[7].t = {0.3f, 0, 0.6f};
+    applyIk(t, s, 0, local, nullptr, Xform{}, &twin, true);
+    const auto w3 = s.world(local);
+    check(near(w3[6].t[0], 0.35f, 1e-3f) && near(w3[6].t[2], 1.6f, 1e-3f), "arm IK: flipped, the twin's frame reflected");
 }
 
 static void testSnaps() {
     Animation a;
     a.events.push_back({0, 1005, "event=101\ncomment=x\nsnapObjectRoot=newspaper:__newspaperRolled__\nsnapTargetSlot=auSkel:__R_Hand_grip__\nsnapObjectPose=\n"});
     a.events.push_back({0, 1014, "sound_name=newsp_start\n"});
+    a.events.push_back({50, 1005, "event=101\nsnapObjectRoot=babyBottle:__babybottle__\nsnapTargetSlot=auSkel:__R_Hand_grip__\nsnapObjectPose=o2a-fridge-babyBottle-get-babyBottlePose\n"});
     a.events.push_back({2100, 1005, "event=102\nsnapObjectRoot=newspaper:__newspaperRolled__\nsnapTargetSlot=Oblivion\n"});
     a.events.push_back({2466, 1005, "event=301\nsnapObjectRoot=newspaperRead_02:__newspaperReading__\nsnapTargetSlot=auSkel:__L_Hand_grip__\n"});
-    const auto snaps = animSnaps(a);
+    auto snaps = animSnaps(a);
+    check(snaps.size() == 4 && snaps[1].pose == "o2a-fridge-babyBottle-get-babyBottlePose" && snaps[0].pose.empty(),
+          "snap pose parsed");
+    std::erase_if(snaps, [](const AnimSnap& x) { return x.object == "babyBottle"; });
     check(snaps.size() == 3 && snaps[0].object == "newspaper" && snaps[0].model == "newspaperRolled" &&
               snaps[0].skeleton == "auSkel" && snaps[0].bone == "R_Hand_grip" && snaps[1].bone.empty(),
           "snap events parsed");

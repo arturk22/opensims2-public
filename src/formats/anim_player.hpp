@@ -93,6 +93,10 @@ public:
         // Playback speed (the locomotion plays blended clips at one length:
         // each runs at its own length over the blend's; docs/routing-mac.md §6.1).
         float rate = 1;
+        // The request's IK object's bones in this skeleton's model space, for
+        // the IK targets of type 2 (applyIk): the baby a2b-babybottle-feeder's
+        // hands reach. Empty: none.
+        IkObjectBone ikObjectBone;
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.
@@ -145,6 +149,7 @@ private:
         float scale = 1; // Options::weight
         float rate = 1;  // Options::rate
         bool delta = false; // has delta (additive) channels
+        IkObjectBone ikObjectBone; // Options::ikObjectBone
     };
     // The layer's pose at `ticks`, turned by its frame (Options::turn).
     std::vector<Xform> layerPose(const Layer& l, float ticks) const;
