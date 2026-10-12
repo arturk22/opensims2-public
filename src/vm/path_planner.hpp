@@ -30,6 +30,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <vector>
 
 namespace os2::vm {
@@ -188,7 +189,39 @@ private:
     // tables and per-level leaf maps) so each plan does not allocate them.
     std::vector<int32_t> satBlocked_;
     std::vector<double> satCost_;
-    std::vector<std::vector<int32_t>> leafPool_;
+    // A free square of a level's quadtree, and a level's squares by cell.
+    struct Quad {
+        int level;
+        int x, y, size; // cells
+        float cost;
+        Point2 centre() const {
+            return {(float(x) + float(size) / 2) / kCellsPerTile, (float(y) + float(size) / 2) / kCellsPerTile};
+        }
+    };
+    struct Tree {
+        int n = 0; // padded side, a power of two
+        std::vector<int32_t> leafOf; // [x * n + y]: index into the quads, -1 blocked
+    };
+    struct QuadTrees {
+        std::vector<Quad> quads;
+        std::vector<Tree> trees; // per level
+    };
+    // The obstacle and cost calls since clearObstacles(), in order: what the
+    // grids were built from (compared exactly to reuse a quadtree).
+    struct Op {
+        int level;
+        float x0, y0, x1, y1, kind; // kind >= 0: obstacle bits; < 0: a cost of -1 - kind
+        bool operator==(const Op&) const = default;
+    };
+    struct CachedTrees {
+        int level; // -1: all levels, else the start's level alone
+        std::vector<Op> ops;
+        std::shared_ptr<const QuadTrees> trees;
+    };
+    static constexpr size_t kTreeCacheSize = 4;
+    std::vector<Op> ops_;
+    std::vector<CachedTrees> treeCache_; // most recently used first
+    std::shared_ptr<const QuadTrees> quadTrees(bool allLevels, int startLevel);
     // accessibleRooms(): rooms by connected group of free static cells
     // (joined through the portals), built on first use.
     mutable bool roomGroupsBuilt_ = false;

@@ -163,6 +163,7 @@ void PathPlanner::stampDiagonal(std::vector<uint8_t>& grid, const World::Segment
 void PathPlanner::addObstacle(int level, float x0, float y0, float x1, float y1, Cell kind) {
     if (level < world_->firstLevel() || level >= world_->firstLevel() + world_->levelCount())
         return;
+    ops_.push_back({level, x0, y0, x1, y1, float(kind)});
     stamp(cells_[size_t(level - world_->firstLevel())], x0 - kInflation, y0 - kInflation, x1 + kInflation,
           y1 + kInflation, kind);
     if (kind == kObject)
@@ -170,6 +171,7 @@ void PathPlanner::addObstacle(int level, float x0, float y0, float x1, float y1,
 }
 
 void PathPlanner::clearObstacles() {
+    ops_.clear();
     cells_ = static_;
     costs_ = staticCosts_;
 }
@@ -177,6 +179,7 @@ void PathPlanner::clearObstacles() {
 void PathPlanner::addCost(int level, float x0, float y0, float x1, float y1, float cost) {
     if (level < world_->firstLevel() || level >= world_->firstLevel() + world_->levelCount())
         return;
+    ops_.push_back({level, x0, y0, x1, y1, -1.0f - cost}); // cost ops are negative, obstacle kinds are not
     auto& grid = costs_[size_t(level - world_->firstLevel())];
     const int cx0 = std::max(0, int(std::floor(x0 * K))), cy0 = std::max(0, int(std::floor(y0 * K)));
     const int cx1 = std::min(cw_, int(std::ceil(x1 * K))), cy1 = std::min(ch_, int(std::ceil(y1 * K)));
@@ -428,22 +431,83 @@ bool PathPlanner::nearFree(int level, Point2 p, uint8_t mask, Point2& out) const
     return best < kInf;
 }
 
-namespace {
-
-// A free square of a level's quadtree.
-struct Quad {
-    int level;
-    int x, y, size; // cells
-    float cost;
-    Point2 centre() const { return {(float(x) + float(size) / 2) / K, (float(y) + float(size) / 2) / K}; }
-};
-
-struct Tree {
-    int n = 0; // padded side, a power of two
-    std::vector<int32_t> leafOf; // [x * n + y]: index into the quads, -1 blocked
-};
-
-} // namespace
+std::shared_ptr<const PathPlanner::QuadTrees> PathPlanner::quadTrees(bool allLevels, int startLevel) {
+    const int first = world_->firstLevel(), levels = world_->levelCount();
+    const int key = allLevels ? -1 : startLevel;
+    for (auto it = treeCache_.begin(); it != treeCache_.end(); ++it)
+        if (it->level == key && it->ops == ops_) {
+            auto hit = it->trees;
+            if (it != treeCache_.begin())
+                std::rotate(treeCache_.begin(), it, it + 1); // most recent first
+            return hit;
+        }
+    auto out = std::make_shared<QuadTrees>();
+    std::vector<Quad>& quads = out->quads;
+    std::vector<Tree>& trees = out->trees;
+    trees.resize(static_cast<size_t>(levels));
+    for (int li = 0; li < levels; ++li) {
+        const int level = first + li;
+        if (!allLevels && level != startLevel)
+            continue;
+        Tree& t = trees[size_t(li)];
+        t.n = 1;
+        while (t.n < std::max(cw_, ch_))
+            t.n *= 2;
+        const int n = t.n;
+        if (t.leafOf.size() != size_t(n) * n)
+            t.leafOf.assign(size_t(n) * n, -1);
+        // Summed area tables of the blocked cells and of the costs.
+        const auto& grid = cells_[size_t(li)];
+        const auto& cost = costs_[size_t(li)];
+        // Row 0 and column 0 stay zero; every other entry is written below.
+        if (satBlocked_.size() != size_t(n + 1) * (n + 1)) {
+            satBlocked_.assign(size_t(n + 1) * (n + 1), 0);
+            satCost_.assign(size_t(n + 1) * (n + 1), 0);
+        }
+        std::vector<int32_t>& blocked = satBlocked_;
+        std::vector<double>& csum = satCost_;
+        auto sat = [&](auto& v, int x, int y) -> auto& { return v[size_t(x) * (n + 1) + size_t(y)]; };
+        for (int x = 0; x < n; ++x)
+            for (int y = 0; y < n; ++y) {
+                const bool inside = x < cw_ && y < ch_;
+                const int b = !inside || grid[cellIndex(x, y)] != 0;
+                const double c = inside ? cost[cellIndex(x, y)] : 0.0;
+                sat(blocked, x + 1, y + 1) = b + sat(blocked, x, y + 1) + sat(blocked, x + 1, y) - sat(blocked, x, y);
+                sat(csum, x + 1, y + 1) = c + sat(csum, x, y + 1) + sat(csum, x + 1, y) - sat(csum, x, y);
+            }
+        auto area = [&](auto& v, int x, int y, int s) {
+            return sat(v, x + s, y + s) - sat(v, x, y + s) - sat(v, x + s, y) + sat(v, x, y);
+        };
+        // Squares split until each is all free at one cost or all blocked.
+        std::vector<std::array<int, 3>> stack{{0, 0, n}};
+        while (!stack.empty()) {
+            const auto [x, y, s] = stack.back();
+            stack.pop_back();
+            const int b = area(blocked, x, y, s);
+            if (b == s * s)
+                continue;
+            if (b == 0) {
+                const float c0 = cost[cellIndex(x, y)];
+                if (s == 1 || std::fabs(area(csum, x, y, s) - double(c0) * s * s) < 1e-3) {
+                    const int id = int(quads.size());
+                    quads.push_back({level, x, y, s, c0});
+                    for (int i = x; i < x + s; ++i)
+                        std::fill_n(t.leafOf.begin() + ptrdiff_t(size_t(i) * n + size_t(y)), s, id);
+                    continue;
+                }
+            }
+            const int h = s / 2;
+            stack.push_back({x, y, h});
+            stack.push_back({x + h, y, h});
+            stack.push_back({x, y + h, h});
+            stack.push_back({x + h, y + h, h});
+        }
+    }
+    treeCache_.insert(treeCache_.begin(), {key, ops_, out});
+    if (treeCache_.size() > kTreeCacheSize)
+        treeCache_.pop_back();
+    return out;
+}
 
 bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::vector<PlanGoal>& goals,
                        PlannedPath& out, RouteFail& why) {
@@ -511,85 +575,13 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
     }
 
     // Quadtrees of the levels the search may use: the start's alone when
-    // the goal is on it, else all (stairs).
-    std::vector<Quad> quads;
-    std::vector<Tree> trees(static_cast<size_t>(levels));
-    leafPool_.resize(trees.size());
-    for (size_t i = 0; i < trees.size(); ++i)
-        trees[i].leafOf = std::move(leafPool_[i]);
-    struct GiveBack { // the leaf maps go back to the pool on every way out, all -1 again
-        std::vector<std::vector<int32_t>>& pool;
-        std::vector<Tree>& trees;
-        const std::vector<Quad>& quads;
-        int first;
-        ~GiveBack() {
-            for (const Quad& q : quads) {
-                Tree& t = trees[size_t(q.level - first)];
-                for (int i = q.x; i < q.x + q.size; ++i)
-                    std::fill_n(t.leafOf.begin() + ptrdiff_t(size_t(i) * t.n + size_t(q.y)), q.size, -1);
-            }
-            for (size_t i = 0; i < trees.size(); ++i)
-                pool[i] = std::move(trees[i].leafOf);
-        }
-    } giveBack{leafPool_, trees, quads, first};
-    for (int li = 0; li < levels; ++li) {
-        const int level = first + li;
-        if (!allLevels && level != startLevel)
-            continue;
-        Tree& t = trees[size_t(li)];
-        t.n = 1;
-        while (t.n < std::max(cw_, ch_))
-            t.n *= 2;
-        const int n = t.n;
-        if (t.leafOf.size() != size_t(n) * n)
-            t.leafOf.assign(size_t(n) * n, -1); // pooled maps come back all -1
-        // Summed area tables of the blocked cells and of the costs.
-        const auto& grid = cells_[size_t(li)];
-        const auto& cost = costs_[size_t(li)];
-        // Row 0 and column 0 stay zero; every other entry is written below.
-        if (satBlocked_.size() != size_t(n + 1) * (n + 1)) {
-            satBlocked_.assign(size_t(n + 1) * (n + 1), 0);
-            satCost_.assign(size_t(n + 1) * (n + 1), 0);
-        }
-        std::vector<int32_t>& blocked = satBlocked_;
-        std::vector<double>& csum = satCost_;
-        auto sat = [&](auto& v, int x, int y) -> auto& { return v[size_t(x) * (n + 1) + size_t(y)]; };
-        for (int x = 0; x < n; ++x)
-            for (int y = 0; y < n; ++y) {
-                const bool inside = x < cw_ && y < ch_;
-                const int b = !inside || grid[cellIndex(x, y)] != 0;
-                const double c = inside ? cost[cellIndex(x, y)] : 0.0;
-                sat(blocked, x + 1, y + 1) = b + sat(blocked, x, y + 1) + sat(blocked, x + 1, y) - sat(blocked, x, y);
-                sat(csum, x + 1, y + 1) = c + sat(csum, x, y + 1) + sat(csum, x + 1, y) - sat(csum, x, y);
-            }
-        auto area = [&](auto& v, int x, int y, int s) {
-            return sat(v, x + s, y + s) - sat(v, x, y + s) - sat(v, x + s, y) + sat(v, x, y);
-        };
-        // Squares split until each is all free at one cost or all blocked.
-        std::vector<std::array<int, 3>> stack{{0, 0, n}};
-        while (!stack.empty()) {
-            const auto [x, y, s] = stack.back();
-            stack.pop_back();
-            const int b = area(blocked, x, y, s);
-            if (b == s * s)
-                continue;
-            if (b == 0) {
-                const float c0 = cost[cellIndex(x, y)];
-                if (s == 1 || std::fabs(area(csum, x, y, s) - double(c0) * s * s) < 1e-3) {
-                    const int id = int(quads.size());
-                    quads.push_back({level, x, y, s, c0});
-                    for (int i = x; i < x + s; ++i)
-                        std::fill_n(t.leafOf.begin() + ptrdiff_t(size_t(i) * n + size_t(y)), s, id);
-                    continue;
-                }
-            }
-            const int h = s / 2;
-            stack.push_back({x, y, h});
-            stack.push_back({x + h, y, h});
-            stack.push_back({x, y + h, h});
-            stack.push_back({x + h, y + h, h});
-        }
-    }
+    // the goal is on it, else all (stairs). Built from the grids alone, so
+    // they are kept while the obstacles stay the same (the same calls since
+    // clearObstacles(): compared exactly, not by hash) and reused by the
+    // next plans; the A* reads them and never changes them.
+    const std::shared_ptr<const QuadTrees> built = quadTrees(allLevels, startLevel);
+    const std::vector<Quad>& quads = built->quads;
+    const std::vector<Tree>& trees = built->trees;
     auto leafAt = [&](int level, Point2 p) -> int {
         const Tree& t = trees[size_t(level - first)];
         if (t.n == 0)
