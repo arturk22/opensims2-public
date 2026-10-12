@@ -309,6 +309,29 @@ static void testPushInteraction() {
           "no such object: error 0x17");
 }
 
+// A queue with more than 6 entries refuses a push (false, primitive result
+// 3) unless it is "continue as current" (byte 3 bit 0x04): TryPushAction
+// tests the sizes only for the others ("Pickup - Do Carry Sim").
+static void testPushOntoFullQueue() {
+    Fixture fx;
+    fx.code.add(kObjGroup, 0x1013,
+                tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E), push(1, 0, 2, 0x00, T, F)}, 2, 1));
+    fx.code.add(kObjGroup, 0x1014,
+                tree({expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(1), E), push(1, 0, 2, 0x04, T, F)}, 2, 1));
+    for (int i = 0; i < 7; ++i)
+        enqueue(fx.vm, fx.s(), fx.make(0));
+    const int16_t args[] = {int16_t(fx.fridge), 0};
+    Thread a = fx.vm.start(fx.fridge, 0x1013, args);
+    fx.vm.run(a);
+    check(a.status == Thread::Status::Finished && !a.result && fx.s().queue.size() == 7 &&
+              fx.o().data[kObjdataPrimitiveResult] == 3,
+          "full queue: a push is refused (result 3)");
+    Thread b = fx.vm.start(fx.fridge, 0x1014, args);
+    fx.vm.run(b);
+    check(b.status == Thread::Status::Finished && b.result && fx.s().queue.size() == 8,
+          "full queue: a continue-as-current push goes in");
+}
+
 static void testNotifyFlag() {
     Fixture fx;
     // Wait For Notify, as the person Main uses it: Idle for Input without
@@ -538,6 +561,7 @@ int main() {
     testMainRunsInteraction();
     testCancelRunning();
     testPushInteraction();
+    testPushOntoFullQueue();
     testNotifyFlag();
     testActionStrings();
     testTurnBodyTowards();

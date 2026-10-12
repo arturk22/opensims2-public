@@ -201,16 +201,26 @@ Exit pushInteraction(Context& c) {
     // interaction to allow nesting (TTAB flag 0x4000), else error 0x6F, and
     // goes to the sub-queue, which takes 4 (more: result 4)
     // (cTSObject::TryPushAction, docs/primitives-mac.md §4b).
+    // The limits are only for pushes that are not "continue as current"
+    // (byte 3 bit 0x04): TryPushAction (BV 0xe33530) sets the
+    // interaction's continuation from that bit (cTSInteraction vtable 0x88,
+    // SetContinuation) and tests the queue (result 3) and sub-queue (4)
+    // sizes only when it reads back false (0x84). "Pickup - Do Carry Sim"
+    // pushes the carry onto the carrier and the carried Sim that way: with
+    // the limit the toddler's full queue (a crib Sim with queued Look Ats)
+    // made "Interaction - Give Toddler a Bath" loop without a yield, a carry
+    // object a pass (N001_Lot36, budget hits).
+    const bool continuation = flags & 0x04;
     const bool nested = q->ttabFlags & 0x8000;
     if (nested) {
         const bool running = target->activeInteraction >= 0 && size_t(target->activeInteraction) < target->queue.size();
         if (!running || !(target->queue[size_t(target->activeInteraction)].ttabFlags & 0x4000))
             throw gameError(err::NestedPush, "Push Interaction");
-        if (target->subQueue.size() > kMaxSubQueue)
+        if (!continuation && target->subQueue.size() > kMaxSubQueue)
             return failed(4);
     }
     constexpr size_t kMaxQueue = 6;
-    if (!nested && target->queue.size() > kMaxQueue)
+    if (!continuation && !nested && target->queue.size() > kMaxQueue)
         return failed(3);
     // Flag 0x01: the object in the local of byte 4 is the interaction's
     // target (and icon; TryPushAction sets it with cTSInteraction's
