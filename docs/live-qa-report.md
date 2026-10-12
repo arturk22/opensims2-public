@@ -503,3 +503,16 @@ Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, cap
 ## Bugs achados (não corrigidos)
 
 Ver o item "QA ao vivo (rodada 18, QA 16)" do `TODO.md`: ninguém atende a campainha nem cumprimenta passantes; impasse de dois Sims na porta do andar de cima; fogo sem alarme de 10 h; telefone difícil de clicar; contas no chão quase invisíveis.
+
+# Rodada 19, a cama de casal (r19-bed)
+
+O que a rodada 18 deixou na cama e nas filas, sem tela (`s2pkg pie` com `S2PKG_PIE_ALSO`, `S2PKG_ALSO_TRACE`, `OS2_LOG_PUSH`; o app com `--pie-step <objeto>:open`).
+
+| Item | Resultado |
+|------|-----------|
+| Socials da cama para o jogador (N002_Lot10, Jenny e Pollination Tech) | **corrigido**: o jogo os dá **clicando no parceiro deitado**: a entrada 183 da pessoa, "*Object Menu Subqueue" (imediata, só para o jogador), roda por nome o "CT - Object Menu Subqueue" da cama no objeto que o Sim clicado usa, que acrescenta Acariciar / Beijar / Dar um Amasso / Oba-Oba / Tentar Fazer um Bebê conforme o relacionamento; escolhido, empurra o par A/B nos dois. Nosso pie não rodava a check tree de nome com '*' e perdia os textos de árvore rodada por nome. Sem tela: menu com as 5 entradas, Oba-Oba escolhido → convite, aceite e `a2a-bed-cuddler-playin-*` (`r19-bed-pie-parceiro.jpg`). As entradas 5–17 da cama continuam escondidas no menu da cama, como no jogo |
+| Dois Sims para a mesma cama ao mesmo tempo | **corrigido**: os dois se encontravam de frente, paravam um para o outro e o primeiro desistia (14); agora o "bloqueado por mim" vem do locomotor do outro e os dois deitam (teste em `test_hood_vm`). O segundo ainda tenta primeiro o lado ocupado e a árvore da cama o manda ao outro |
+| Itens internos repetidos na fila | o "*Stop Morning Sickness" e os "*Get Sick" 6–10 são imediatos (flag 0x04: a regra da rodada 18 já os tira da fila; agora também aninhados); os "*Get Sick" 1–5 têm "Allow Consecutive" e esperam. A fila agora é como o `AddAction` do binário: a nova pula as de prioridade menor que esperam |
+| Adolescentes do Lot68 e o ônibus | **do jogo**: o "Get My Riders" do carro/ônibus (`7F4EA230/0x203C`) só leva quem tem humor > 0 (nó 8, motivo 3 do stack object); Angela (−50) e Lilith (−3) ficam, a visitante Meadow (humor positivo) recebe "Ir para a Escola" |
+| Nome dos gêmeos | **corrigido**: um nome por bebê (o temp 2 repetia o segundo) |
+| Pie: entradas novas | com a regra do '*' corrigida aparecem "Mudar para..." no som, "Entrar" na escada da piscina, "Encorajar..." nos adolescentes (conferir na janela) |
