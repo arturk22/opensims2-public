@@ -645,6 +645,30 @@ de cinco estilos (`GetShadowStyleFromEdithMode` `0x65480c`,
 | 3 | objetos de fora | a sombra do sol no height map (§5.3) | `heightMapShadows` |
 | 4 | objetos com `+0x102 == 3` | como o 1, grupo "Props" | `objectShadows` |
 
+**Quem escolhe o estilo** (rodada 16, binário): `GetShadowStyleFromEdithMode`
+(BV `0x65480c`): objeto do tipo 2 (Sim) → 1; tipos 8–12 → 3 se o objeto
+tem (vtable `0x88`/`+0x7a`), senão 0; os outros, com a flag `+0x79`: 3 se
+(vtable `0x2e4` e `0x238` do objeto de cena), 3 se `+0x102 == 2`, **4 se
+`+0x102 == 3`**, senão 2. O `+0x102` é o **dado de objeto 68** (lido com
+`0x34(0x44)` em `UpdateShadowStyleAndVisibility`, `0x666c54`; o construtor
+põe 1). `GetDesiredShadowStyle` (`0x65492c`): `+0x102 == 1` → nenhuma; um 2
+sem GUOB → 3, com GUOB e `+0x81` (fora) → 4 só com uma flag global
+(`PTR_Release`, desligada). `UpdateCurrentStyle` (`0x678710`) liga cada
+estilo pela opção: 1 → bit 0, 4 → bit 1 (`objectShadows`), 3 → bit 2
+(`heightMapShadows`), 2 → bits 1 e 3; um 3 dentro de casa vira 0. O 3, no
+`UpdateGUOBs` (`0x678488`), são as **GUOB** do objeto (o chão sempre, as de
+parede onde há parede), não o height map do lote. O estilo 4 é o 1 com o
+grupo de render "Props" em vez de "Sims" (`CreateShadow` `0x677390`).
+Nos lotes `N001_Lot11/36/68/82`, `N002_Lot10/22`, `N003_Lot192` nenhum
+objeto tem o dado 68 = 3 (só 0, e 1 nas alianças e no PlumbBob): o estilo
+4 não aparece no jogo base, e o app não o desenha.
+
+**Sims sem a VM** (rodada 16): as vistas de lote sem `--vm` também
+desenham a sombra dos Sims (`poseActors` em `main.mm`), dentro ou fora pela
+sala do light map sob os pés, com a cor e a direção do estado de
+`--lighting` (`simShadowLight`, a mesma conta do `LotLighting`). O bairro
+não tem Sims; o CAS já tinha. `docs/screenshots/r16-sombra-sim-sem-vm.jpg`.
+
 O 2 e o 3 já existiam no código (planos do modelo; height map só no
 bairro). O **estilo 1** (`cShadow::CreateShadow` `0x677390`,
 `UpdateInsideOutsideSettings` `0x67538c`, `UpdateShadowLocation`

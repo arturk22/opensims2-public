@@ -39,6 +39,51 @@ const char* stateOfHour(int hour) { return hour >= 7 && hour <= 18 ? "day" : "ni
 
 } // namespace
 
+SimShadowLight simShadowLight(const LightingState& state, float zone, float limit) {
+    SimShadowLight out;
+    simd_float3& sunTravel = out.sunTravel;
+    for (const auto& l : state.lights)
+        if (lower(l.name) == "sun") {
+            const simd_float3 d = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
+            if (simd_length(d) > 1e-4f && d.z > 0)
+                sunTravel = -simd_normalize(d);
+        }
+    // The outdoor shadow colour (the lighting manager, Mac BV 0x705f70):
+    // the state's light on an upward floor (FindIllumFromLightingState over
+    // sun, sky, fill1, fill2) with the sun's weight times max(0, 1 - s x
+    // hmSunLightTransitionZone), s = shadowStrengthLimit (1) x
+    // projectiveShadowStrength (0.73 by day, 0.4 at night), over the same
+    // without the shadow, each clamped to [0, 1] (0x7047e4); white when
+    // the transition zone is 0.
+    const float strength = state.projectiveShadowStrength >= 0 ? state.projectiveShadowStrength : 0.0f;
+    const float sunKept = std::max(0.0f, 1.0f - limit * strength * zone);
+    auto upwardLight = [&](float sunFactor) {
+        const simd_float3 sky = simd_make_float3(state.skyColor[0], state.skyColor[1], state.skyColor[2]) * state.skyStrength;
+        simd_float3 e = 0;
+        float w = 0;
+        for (const auto& l : state.lights) {
+            const std::string name = lower(l.name);
+            if (name != "sun" && name != "sky" && name != "fill1" && name != "fill2")
+                continue;
+            const simd_float3 d = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
+            if (simd_length(d) <= 0)
+                continue;
+            const float wi = std::max(simd_normalize(d).z, 0.0f) * l.intensity * (name == "sun" ? sunFactor : 1.0f);
+            e += simd_make_float3(l.color[0], l.color[1], l.color[2]) * wi;
+            w += wi;
+        }
+        return simd_clamp(sky * (1 - w) + e, simd_make_float3(0, 0, 0), simd_make_float3(1, 1, 1));
+    };
+    simd_float3& outdoorShadow = out.outdoorColor;
+    if (zone > 1e-6f) {
+        const simd_float3 lit = upwardLight(1), shaded = upwardLight(sunKept);
+        for (int c = 0; c < 3; ++c)
+            if (lit[c] > 1e-6f)
+                outdoorShadow[c] = shaded[c] / lit[c];
+    }
+    return out;
+}
+
 LotLighting::LotLighting(Renderer& renderer, ResourceIndex& index, LotSimulation& simulation, VmObjectView& objects,
                          LightingConfig config, LightOverrides overrides)
     : renderer_(renderer), index_(index), sim_(simulation), objects_(objects), config_(std::move(config)),
@@ -528,47 +573,9 @@ void LotLighting::update(double seconds) {
     // inside, straight down; outside, along the state's sun (where its
     // light travels) in the outdoor shadow colour.
     std::vector<Renderer::ShadowCaster> casters;
-    simd_float3 sunTravel = simd_make_float3(0, 0, -1);
-    for (const auto& l : state.lights)
-        if (lower(l.name) == "sun") {
-            const simd_float3 d = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
-            if (simd_length(d) > 1e-4f && d.z > 0)
-                sunTravel = -simd_normalize(d);
-        }
-    // The outdoor shadow colour (the lighting manager, Mac BV 0x705f70):
-    // the state's light on an upward floor (FindIllumFromLightingState over
-    // sun, sky, fill1, fill2) with the sun's weight times max(0, 1 - s x
-    // hmSunLightTransitionZone), s = shadowStrengthLimit (1) x
-    // projectiveShadowStrength (0.73 by day, 0.4 at night), over the same
-    // without the shadow, each clamped to [0, 1] (0x7047e4); white when
-    // the transition zone is 0.
-    const float strength = state.projectiveShadowStrength >= 0 ? state.projectiveShadowStrength : 0.0f;
-    const float zone = global("", "hmSunLightTransitionZone", 1.0f);
-    const float sunKept = std::max(0.0f, 1.0f - global("", "shadowStrengthLimit", 1.0f) * strength * zone);
-    auto upwardLight = [&](float sunFactor) {
-        const simd_float3 sky = simd_make_float3(state.skyColor[0], state.skyColor[1], state.skyColor[2]) * state.skyStrength;
-        simd_float3 e = 0;
-        float w = 0;
-        for (const auto& l : state.lights) {
-            const std::string name = lower(l.name);
-            if (name != "sun" && name != "sky" && name != "fill1" && name != "fill2")
-                continue;
-            const simd_float3 d = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
-            if (simd_length(d) <= 0)
-                continue;
-            const float wi = std::max(simd_normalize(d).z, 0.0f) * l.intensity * (name == "sun" ? sunFactor : 1.0f);
-            e += simd_make_float3(l.color[0], l.color[1], l.color[2]) * wi;
-            w += wi;
-        }
-        return simd_clamp(sky * (1 - w) + e, simd_make_float3(0, 0, 0), simd_make_float3(1, 1, 1));
-    };
-    simd_float3 outdoorShadow = simd_make_float3(1, 1, 1);
-    if (zone > 1e-6f) {
-        const simd_float3 lit = upwardLight(1), shaded = upwardLight(sunKept);
-        for (int c = 0; c < 3; ++c)
-            if (lit[c] > 1e-6f)
-                outdoorShadow[c] = shaded[c] / lit[c];
-    }
+    const SimShadowLight shadowLight =
+        simShadowLight(state, global("", "hmSunLightTransitionZone", 1.0f), global("", "shadowStrengthLimit", 1.0f));
+    const simd_float3 sunTravel = shadowLight.sunTravel, outdoorShadow = shadowLight.outdoorColor;
     for (const auto& [id, actor] : sims_) {
         const vm::Object* o = m.object(id);
         if (!o || !actor)

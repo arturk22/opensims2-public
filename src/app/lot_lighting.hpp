@@ -38,6 +38,8 @@
 #include "formats/lot_lightmap.hpp"
 #include "formats/xform.hpp"
 
+#include <simd/simd.h>
+
 #include <functional>
 #include <map>
 #include <memory>
@@ -52,6 +54,16 @@ class Renderer;
 class ResourceIndex;
 class VmObjectView;
 struct SimActor;
+
+// The Sims' outdoor shadows for a lighting state (docs/lighting-mac.md 9):
+// where the sun's light travels (straight down without a sun) and the
+// outdoor shadow colour the lighting manager computes (Mac BV 0x705f70),
+// with hmSunLightTransitionZone and shadowStrengthLimit.
+struct SimShadowLight {
+    simd_float3 sunTravel{0, 0, -1};
+    simd_float3 outdoorColor{1, 1, 1};
+};
+SimShadowLight simShadowLight(const LightingState& state, float zone, float limit);
 
 class LotLighting {
 public:

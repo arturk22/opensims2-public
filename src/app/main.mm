@@ -60,6 +60,8 @@
 #include "app/ui_panel_util.hpp"
 #include "app/loading_screen.hpp"
 #include "formats/catalog.hpp"
+#include "formats/config_text.hpp"
+#include "formats/graphics_options.hpp"
 #include "app/scene_loader.hpp"
 #include "app/tv_broadcast.hpp"
 #include "formats/neighborhood.hpp"
@@ -535,6 +537,8 @@ std::unique_ptr<os2::AnimSnapView> gSnaps; // models the animations' snap events
 // The lot's lights from the VM: the clock's day/night, rooms, lamps (app/lot_lighting.hpp).
 std::unique_ptr<os2::LotLighting> gLighting;
 std::optional<os2::LotLightMapLayout> gLightMapLayout; // the lot's light-map atlas
+// Without the VM: the Sims' shadow light of the --lighting state (with the VM, LotLighting's).
+std::optional<os2::SimShadowLight> gStaticShadowLight;
 // Doors opening as the Sims walk through (app/door_portals.hpp).
 std::unique_ptr<os2::DoorPortals> gDoors;
 struct LotSim {
@@ -2765,6 +2769,11 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
             const os2::RgbaImage lm = os2::computeLotLightMap(*gLightMapLayout, *state, {}, os2::LightMapGlobals::from(lighting)).image;
             renderer.setLightMap(0, lm);
             renderer.setLightMap(1, lm);
+            auto global = [&](const char* name, float fallback) {
+                auto it = lighting.globals.find(os2::lowerAscii(name));
+                return it == lighting.globals.end() ? fallback : std::stof(it->second);
+            };
+            gStaticShadowLight = os2::simShadowLight(*state, global("hmSunLightTransitionZone", 1), global("shadowStrengthLimit", 1));
         }
     }
     // Fence rails and posts: one model per CRES, an instance per piece.
@@ -3484,6 +3493,33 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         gObjectView->update();
     if (gLighting)
         gLighting->update(seconds);
+    else if (gStaticShadowLight && gLightMapLayout && os2::graphicsOptions().simShadows) {
+        // Without the VM the Sims still cast their shadows (cShadow style 1,
+        // docs/lighting-mac.md 9): inside or outside by the light maps' room
+        // under the feet, on the floor nearest their height.
+        std::vector<os2::Renderer::ShadowCaster> casters;
+        const os2::LotLightMapLayout& lm = *gLightMapLayout;
+        for (const auto& s : gLotSims) {
+            const int instance = renderer.instanceOf(s.actor->model);
+            if (instance < 0)
+                continue;
+            const os2::Xform at = s.actor->placement();
+            const os2::Vec3 feet = at.apply({0, 0, 0}), side = at.apply({1, 0, 0});
+            int level = lm.minLevel;
+            for (int l = lm.minLevel; l < lm.minLevel + lm.levels; ++l)
+                if (std::fabs(lm.elevationAt(l, feet[0], feet[1]) - feet[2]) < std::fabs(lm.elevationAt(level, feet[0], feet[1]) - feet[2]))
+                    level = l;
+            os2::Renderer::ShadowCaster c;
+            c.instance = instance;
+            c.feet = simd_make_float3(feet[0], feet[1], feet[2]);
+            c.heading = std::atan2(side[1] - feet[1], side[0] - feet[0]);
+            c.outside = lm.outdoor(level, lm.roomAt(level, feet[0], feet[1]));
+            c.direction = c.outside ? gStaticShadowLight->sunTravel : simd_make_float3(0, 0, -1);
+            c.color = gStaticShadowLight->outdoorColor;
+            casters.push_back(c);
+        }
+        renderer.setShadowCasters(std::move(casters));
+    }
     for (auto& a : gActors) {
         if (isObject(a.get()))
             a->update(seconds);
