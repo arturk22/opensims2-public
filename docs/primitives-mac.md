@@ -1021,7 +1021,7 @@ e a de convidados (`0x7000`/`0x8000`) com os predicados de lista
 (`ListBoxSortPredicate_Name`/`_Relationship`). `CompareByName`: sobrenome,
 depois nome (sem caixa, inferido); `CompareByRelationship`: quem tem
 paixão ou amor primeiro, depois a maior diária + vitalícia, depois o nome.
-A ordem inicial da festa não foi vista (fica a do array 0). O nome do lote
+**Rodada 15:** o `PreShow` da festa (BV `0x341688`) põe as linhas e chama `SetNeighborListBoxSort(1)` e `SetInviteListBoxSort(1)` (BV `0x3410c0`/`0x34120c`; 1 nome, 2 relacionamento, 3 química, que acendem `0x3000`/`0x4000`/`0xE000` e `0x7000`/`0x8000`/`0xF000`): as duas listas começam **por nome**, e a linha 0 da esquerda escolhida. O nome do lote
 (`SetLotName`) é o do lote onde mora a família do vizinho (`VM::LotRecord::
 name`, do nome do lote do bairro). A miniatura do serviço: o
 `cTSUIThumbnailService` renderiza o objeto ou, sem modelo, uma imagem do

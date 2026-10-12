@@ -209,9 +209,11 @@ private:
     // The phone books' view: the neighbors' mode (SetMode: 1 text by
     // relationship, 2 text by name, 4 slides by relationship, 5 slides by
     // name, the constructor's), the party lists' sorts (0 as given, 1 name,
-    // 2 relationship) and the slides' first item.
+    // 2 relationship; cTSWinProcPhoneBookParty::PreShow sorts both by name,
+    // SetNeighborListBoxSort(1) / SetInviteListBoxSort(1)) and the slides'
+    // first item.
     struct Phone {
-        int mode = 5, leftSort = 0, rightSort = 0, first = 0;
+        int mode = 5, leftSort = 1, rightSort = 1, first = 0;
     };
     std::map<uint32_t, Phone> phones_;
     // A list's rows in the order shown (party: kRowsList the neighbors not

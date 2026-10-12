@@ -95,8 +95,9 @@ const UiElement* defaultPick(const std::vector<const UiElement*>& btns) {
     return btns.front();
 }
 
-// The main display's modes (sizes in points, as the window is laid out)
-// and the one in use, for the Graphics window's lists.
+// The main display's modes (sizes in points, as the window is laid out) in
+// the order the display gives them, and the one in use, for the Graphics
+// window's lists (the panel keeps the valid ones: OptionsPanel::validMode).
 std::vector<OptionsPanel::DisplayMode> mainDisplayModes(OptionsPanel::DisplayMode& current) {
     std::vector<OptionsPanel::DisplayMode> out;
     const CGDirectDisplayID display = CGMainDisplayID();
@@ -115,10 +116,9 @@ std::vector<OptionsPanel::DisplayMode> mainDisplayModes(OptionsPanel::DisplayMod
     if (all) {
         for (CFIndex i = 0; i < CFArrayGetCount(all); ++i) {
             auto m = (CGDisplayModeRef)CFArrayGetValueAtIndex(all, i);
-            // From 800 x 600 up (the game's smallest mode; inferred for the Mac).
-            const int w = int(CGDisplayModeGetWidth(m)), h = int(CGDisplayModeGetHeight(m));
-            if (w >= 800 && h >= 600 && CGDisplayModeIsUsableForDesktopGUI(m))
-                out.push_back({w, h, int(std::lround(CGDisplayModeGetRefreshRate(m)))});
+            if (CGDisplayModeIsUsableForDesktopGUI(m))
+                out.push_back({int(CGDisplayModeGetWidth(m)), int(CGDisplayModeGetHeight(m)),
+                               int(std::lround(CGDisplayModeGetRefreshRate(m)))});
         }
         CFRelease(all);
     }
@@ -173,30 +173,57 @@ void OptionsPanel::setDisplayModes(std::vector<DisplayMode> modes, DisplayMode c
     dirty_ = true;
 }
 
+// cTSWinProcOptionsPanelPerformance's IsDisplayModeValid (BV 0x42173c): the
+// device's pixel format (32 bits here), 800 <= width <= maxResWidth and
+// 600 <= height <= maxResHeight (Graphics Rules.sgr's ScreenModeResolution
+// $High on any card of today: 1600 x 1200; the binary's defaults are the
+// same), landscape (height < width), and a refresh rate of 0 (the display
+// gives none) or 45..100 Hz.
+bool OptionsPanel::validMode(const DisplayMode& m) {
+    return m.width >= 800 && m.width <= kMaxResWidth && m.height >= 600 && m.height <= kMaxResHeight &&
+           m.height < m.width && (m.refresh == 0 || (m.refresh >= 45 && m.refresh <= 100));
+}
+
+// FillScreenSizeListBox (BV 0x421958, vtable 0x8C): the valid modes' sizes
+// in the device's order, each once; none valid: the device's first mode.
 std::vector<std::pair<int, int>> OptionsPanel::sizes() const {
     std::vector<std::pair<int, int>> out;
     for (const auto& m : modes_)
-        if (m.width > 0 && m.height > 0)
+        if (validMode(m) && std::find(out.begin(), out.end(), std::make_pair(m.width, m.height)) == out.end())
             out.push_back({m.width, m.height});
-    std::sort(out.begin(), out.end());
-    out.erase(std::unique(out.begin(), out.end()), out.end());
+    if (out.empty() && !modes_.empty())
+        out.push_back({modes_.front().width, modes_.front().height});
     return out;
 }
 
+// The size in use: the one kept in Options.txt, else the desktop's; when
+// the list has neither, its first row (the fill selects row 0).
 std::pair<int, int> OptionsPanel::pickedSize() const {
-    if (settings_.screenWidth > 0 && settings_.screenHeight > 0)
-        return {settings_.screenWidth, settings_.screenHeight};
+    const auto all = sizes();
+    for (const auto& want : {std::make_pair(settings_.screenWidth, settings_.screenHeight),
+                             std::make_pair(currentMode_.width, currentMode_.height)})
+        if (want.first > 0 && std::find(all.begin(), all.end(), want) != all.end())
+            return want;
+    if (!all.empty())
+        return all.front();
     return {currentMode_.width, currentMode_.height};
 }
 
+// FillRefreshRateListBox (BV 0x421f9c, vtable 0x98): the valid modes of the
+// picked size, their rates in the device's order, each once; none: the
+// device's first mode's rate. Then (FillScreenSizeListBox) a windowed game
+// clears the list and disables the "Refresh Rate" label 0xAD7FAA35: the
+// app is always windowed, so the list stays empty (rates() still lists
+// them, for a full screen some day).
 std::vector<int> OptionsPanel::rates() const {
     const auto size = pickedSize();
     std::vector<int> out;
     for (const auto& m : modes_)
-        if (m.width == size.first && m.height == size.second)
+        if (validMode(m) && m.width == size.first && m.height == size.second &&
+            std::find(out.begin(), out.end(), m.refresh) == out.end())
             out.push_back(m.refresh);
-    std::sort(out.begin(), out.end());
-    out.erase(std::unique(out.begin(), out.end()), out.end());
+    if (out.empty() && !modes_.empty())
+        out.push_back(modes_.front().refresh);
     return out;
 }
 
@@ -206,26 +233,32 @@ int OptionsPanel::pickedRate() const {
         return settings_.refreshRate;
     if (std::find(r.begin(), r.end(), currentMode_.refresh) != r.end())
         return currentMode_.refresh;
-    return r.empty() ? 0 : r.back();
+    return r.empty() ? 0 : r.front(); // row 0 when none is selected
 }
 
 std::vector<std::string> OptionsPanel::screenSizeRows() const {
     std::vector<std::string> out;
     char buf[32];
     for (const auto& [w, h] : sizes()) {
-        std::snprintf(buf, sizeof buf, "%u x %u", unsigned(w), unsigned(h)); // the binary's "%u x %u"
+        std::snprintf(buf, sizeof buf, "%ux%u", unsigned(w), unsigned(h)); // FillScreenSizeListBox's "%ux%u"
         out.push_back(buf);
     }
     return out;
 }
 
-std::vector<std::string> OptionsPanel::refreshRateRows() const {
+std::vector<std::string> OptionsPanel::refreshRateRows(bool windowed) const {
     std::vector<std::string> out;
+    if (windowed)
+        return out;
     char buf[32];
     for (int r : rates()) {
-        // A display that gives no rate (most built-in panels) runs at 60 Hz (inferred).
-        std::snprintf(buf, sizeof buf, "%u Hz", unsigned(r > 0 ? r : 60));
-        out.push_back(buf);
+        // "%u"; a rate of 0 is STR# 0x83 #15 of the options' text (0x7F232750).
+        if (r == 0) {
+            out.push_back(res_->string(UiStringRef{0x7F232750, 0x83, 14}).value_or("0"));
+        } else {
+            std::snprintf(buf, sizeof buf, "%u", unsigned(r));
+            out.push_back(buf);
+        }
     }
     return out;
 }
@@ -318,7 +351,7 @@ OptionsPanel::Action OptionsPanel::press(simd_float2 p) {
                 }
             } else {
                 const auto all = rates();
-                if (size_t(row) < all.size()) {
+                if (fullscreen_ && size_t(row) < all.size()) {
                     if (settings_.screenWidth <= 0)
                         settings_.screenWidth = pickedSize().first, settings_.screenHeight = pickedSize().second;
                     settings_.refreshRate = all[size_t(row)] > 0 ? all[size_t(row)] : 60;
@@ -332,7 +365,7 @@ OptionsPanel::Action OptionsPanel::press(simd_float2 p) {
             // The scroll bar: a click above the middle goes up a page, below it down.
             const int list = it->value >> 16, rows = it->value & 0xFFFF;
             const int page = std::max(1, int((it->rect[3] - it->rect[1]) / kListRowH));
-            const int count = int(list == 0 ? sizes().size() : rates().size());
+            const int count = int(list == 0 ? sizes().size() : refreshRateRows(!fullscreen_).size());
             const bool up = p.y < (it->rect[1] + it->rect[3]) / 2;
             listTop_[size_t(list)] = std::clamp(listTop_[size_t(list)] + (up ? -page : page), 0, std::max(0, count - rows));
             scrolled_[size_t(list)] = true; // the player's scroll stays (the pick may be out of view)
@@ -420,7 +453,7 @@ UiScreen OptionsPanel::screen(int width, int height) {
                         }
                 if (!box)
                     continue;
-                const std::vector<std::string> rows = li == 0 ? screenSizeRows() : refreshRateRows();
+                const std::vector<std::string> rows = li == 0 ? screenSizeRows() : refreshRateRows(!fullscreen_);
                 int picked = -1;
                 if (li == 0) {
                     const auto all = sizes();
@@ -525,8 +558,16 @@ UiScreen OptionsPanel::screen(int width, int height) {
                         wh.buttonState[b] = picks_[g] == b ? 2 : 1;
             if (window_ == 5)
                 wh.hide.insert(wr.child(0xA0));
-            if (window_ == 3)
+            if (window_ == 3) {
                 listHooks(wr, wh);
+                // Windowed: the "Refresh Rate" label 0xAD7FAA35 disabled
+                // (FillScreenSizeListBox: flag 2 off), in its colorfontdisabled.
+                if (!fullscreen_)
+                    for (const auto& c : wr.children)
+                        for (const auto& b : c.children)
+                            if (b.id() == 0xAD7FAA35)
+                                wh.buttonState[&b] = 0;
+            }
         } else {
             if (const UiElement* r = wr.child(kEdgeScrolling)) {
                 if (const UiElement* off = r->child(1))

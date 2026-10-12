@@ -297,7 +297,12 @@ struct Layout {
                 drew = true;
             }
             if (e.flag("showcaption")) {
-                text(e, x, y, w, h, caption(e), rgba(e, "colorfontnormal", {0, 0, 0, 1}), e.flag("wrapcaption"));
+                // A disabled button (state 0) writes in its colorfontdisabled.
+                const bool disabled = hooks && hooks->buttonState.count(&e) && hooks->buttonState.at(&e) == 0 &&
+                                      e.attr("colorfontdisabled");
+                text(e, x, y, w, h, caption(e),
+                     disabled ? rgba(e, "colorfontdisabled", {0, 0, 0, 1}) : rgba(e, "colorfontnormal", {0, 0, 0, 1}),
+                     e.flag("wrapcaption"));
                 drew = true;
             }
         } else if (cls == "GZWinFlatRect") {

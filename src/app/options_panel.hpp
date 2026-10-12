@@ -96,9 +96,13 @@ public:
         int width = 0, height = 0, refresh = 0; // refresh 0: the display gives none
     };
     void setDisplayModes(std::vector<DisplayMode> modes, DisplayMode current);
-    // The lists' rows as drawn: "1280 x 800", ...; "60 Hz", ... (for the picked size).
+    // The lists' rows as drawn: "1280x800", ...; "60", ... (for the picked
+    // size; none while windowed, as the game clears the list then).
     std::vector<std::string> screenSizeRows() const;
-    std::vector<std::string> refreshRateRows() const;
+    std::vector<std::string> refreshRateRows(bool windowed = true) const;
+    // IsDisplayModeValid (cTSWinProcOptionsPanelPerformance).
+    static constexpr int kMaxResWidth = 1600, kMaxResHeight = 1200;
+    static bool validMode(const DisplayMode& m);
 
     const GameSettings& settings() const { return settings_; }
     void setSettings(const GameSettings& s) { settings_ = s, dirty_ = true, syncPicks(); }
@@ -123,13 +127,15 @@ private:
     };
     void changed();
     void syncPicks();
-    // The distinct sizes (ascending) and the rates of the picked size.
+    // The distinct valid sizes and the rates of the picked size, in the
+    // display's order.
     std::vector<std::pair<int, int>> sizes() const;
     std::vector<int> rates() const;
     std::pair<int, int> pickedSize() const;
     int pickedRate() const;
     std::vector<DisplayMode> modes_;
     DisplayMode currentMode_;
+    bool fullscreen_ = false; // the app is always windowed
     std::array<int, 2> listTop_{0, 0}; // first row shown of each list
     std::array<bool, 2> scrolled_{false, false}; // scrolled by the player: the pick is not brought back into view
 

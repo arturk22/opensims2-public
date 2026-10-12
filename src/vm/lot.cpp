@@ -102,9 +102,15 @@ void setLotRooms(VM& vm, const Lot& lot) {
         // definition 2) and tests that tile alone (nTSWorld::IsPool: a deck
         // foundation of type 3 or 5). Pools share the yard's room (the saved
         // room arrays give the pool's tiles the terrain's room), so the yard
-        // is not a pool unless the tile the manager returns is one: taken
-        // here as the room's first tile in the arrays' order (inferred; the
-        // manager's tile lists were not read). Marking the whole yard a pool
+        // is not a pool unless the tile the manager returns is one. The
+        // manager returns the first tile of the room's list
+        // (cPartitionManager::FloorTileInRoom BV 0xc314f8 -> the room
+        // manager of the definition, vtable 0x40 BV 0xc28ef4: element 0, an
+        // invalid tile when the room has none), and BuildRoomTileListMap (BV
+        // 0xc29c74) fills the lists walking the WorldDB's floor tiles level
+        // by level, x outer and y inner (FUN_0015b9c8), a tile going into
+        // the list of each room one of its quarters has: the first tile in
+        // the arrays' order below, as read. Marking the whole yard a pool
         // made "Swim Here?" true on every lawn of a lot with a pool, and the
         // Go Here pie showed the swim names ("Entrar") in place of Vir Aqui.
         // Outside (inferred): a pool, or a room that reaches the edge of the
