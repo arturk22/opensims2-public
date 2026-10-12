@@ -100,6 +100,8 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     if (hood)
         vm::bindLotSims(m);
     out.resumed = vm::startSavedLot(m, out.load, out.saved);
+    if (out.resumed.globalsMade)
+        std::printf("  global sim objects made at load: %zu\n", out.resumed.globalsMade);
     // The first day: the game's "reset lot" broadcast brings the family's
     // Sims (vm/lot.hpp runResetLot).
     if (hood && arrivals.firstDay) {

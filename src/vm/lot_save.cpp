@@ -1,5 +1,6 @@
 // Saving a lot from the VM (lot_save.hpp).
 
+#include <set>
 #include "lot_save.hpp"
 
 #include "formats/lot_objects.hpp"
@@ -474,9 +475,17 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
             }
         }
     }
-    for (const auto& [id, _] : b.objects())
-        if (!a.object(id))
-            diff("object " + std::to_string(id) + ": missing from the first");
+    // The global sim objects every lot load makes when the lot has none
+    // (updateSimObjects, as cEdithObjectModule::UpdateSimObjects): the
+    // curtain and the tutorial controllers delete themselves once done, so
+    // the reload makes them again, as the game's does.
+    std::set<uint32_t> globalGuids;
+    for (const auto& g : b.code().globalSimObjects(1))
+        globalGuids.insert(g.guid);
+    for (const auto& [id, o] : b.objects())
+        if (!a.object(id) && !(o.definition && globalGuids.count(o.definition->guid())))
+            diff("object " + std::to_string(id) + (o.definition ? " (" + o.definition->fileName + ")" : std::string()) +
+                 ": missing from the first");
     for (size_t i = 0; i < kGlobalCount; ++i)
         if (a.globals[i] != b.globals[i])
             diff("global " + std::to_string(i) + " " + std::to_string(a.globals[i]) + " vs " +
