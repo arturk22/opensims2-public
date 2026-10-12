@@ -554,6 +554,43 @@ static void testLinkedInteractions() {
     (void)ub;
 }
 
+// A "Run Immediately" entry (TTAB flag 0x04, "*Push Look At" of the look-at
+// controller) never waits in the queue: Push Interaction runs its action
+// tree at once (cTSPerson::AddAction), however often it is pushed; its
+// check tree failing is the push's false (result 6). Four of them piled up
+// behind Daniel's dance in N001_Lot68 (live QA 15).
+static void testRunImmediately() {
+    Fixture fx;
+    constexpr uint32_t kLookGroup = 0x7F000040;
+    fx.code.add(kLookGroup, 0x80, definition(4, 1, 0x0B1E0002));
+    InteractionTable t;
+    t.version = 0x4D;
+    auto now = entry(0x1001, 0, 0), refused = entry(0x1001, 0x1003, 1);
+    now.flags = refused.flags = 0x04;
+    t.interactions = {now, refused};
+    fx.code.add(kLookGroup, 1, std::move(t));
+    fx.code.addInteractionStrings(kLookGroup, 1, ttas({"*Push Look At", "*Refused"}, {"*Push Look At", "*Refused"}));
+    // action 0x1001: stack object attribute 0 += 1; guard 0x1003 false
+    fx.code.add(kLookGroup, 0x1001, tree({expr(SAttr, 0, Add, Lit, 1, T, E)}));
+    fx.code.add(kLookGroup, 0x1003, tree({instr(0x02, T, F, {0, 0, 1, 0, 0, Eq, Lit, Lit})}));
+    fx.code.add(kLookGroup, 0x1010,
+                tree({expr(Local, 0, Assign, Data, objdata::ObjectId, go(1), E),
+                      expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(2), E),
+                      push(0, 0, 2, 0x02, go(3), E), push(0, 0, 2, 0x02, go(4), E), push(0, 0, 2, 0x02, go(5), E),
+                      push(0, 0, 2, 0x02, go(6), E), push(1, 0, 2, 0x02, E, T)},
+                     2, 1));
+    const ObjectId look = fx.vm.instantiate(kLookGroup, 0x80).id;
+    const int16_t args[] = {int16_t(look), 0};
+    Thread th = fx.vm.start(look, 0x1010, args);
+    fx.vm.run(th);
+    if (th.status == Thread::Status::Failed)
+        std::fprintf(stderr, "  %s\n", th.error.c_str());
+    check(th.status == Thread::Status::Finished && th.result, "run immediately: pushes true, the refused one false");
+    check(fx.s().queue.empty(), "run immediately: nothing goes into the queue");
+    check(fx.vm.object(look)->attributes.size() > 0 && fx.vm.object(look)->attributes[0] == 4,
+          "run immediately: the action tree ran once per push");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -569,6 +606,7 @@ int main() {
     testSubQueue();
     testNestedInterruption();
     testLinkedInteractions();
+    testRunImmediately();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

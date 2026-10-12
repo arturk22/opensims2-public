@@ -1650,6 +1650,19 @@ byte 2 não tem 0x01; senão **1**. Objeto inexistente: falso.
   senão **erro 0x6F**.
 - Aninhada vai para a sub-fila (cheia com mais de 4 → resultado 4); não
   aninhada para a fila (mais de 6 e não deu para trocar → resultado 3).
+- Depois vai para `cTSPerson::AddAction` (BV `0xadbbdc`). Uma entrada
+  **"Run Immediately"** (flag 0x04 do TTAB, `cTSTreeTableEntry +0x30` bit 2,
+  getter BV `0x49d7e4`; por exemplo "*Push Look At" do "Controller - Look
+  At", empurrado nos Sims perto de um social a cada poucos segundos) **não
+  entra na fila**: roda a check tree (`TestInteraction`) e, se passa e não
+  há outra imediata rodando (guarda global `DAT_02cc0210`), roda a árvore de
+  ação inteira na hora com `cTSObject::RunOneTickTree` (o Sim, o objeto da
+  interação, os parâmetros), com os dados de pessoa 33 (prioridade) e 166
+  (autônoma) trocados pelos da interação e devolvidos depois. Check que falha
+  ou outra rodando: AddAction devolve 0 e o Push Interaction dá falso com
+  resultado 6. Inferido: temps novos na árvore; um erro nela conta como
+  recusa (rodada 18; antes as "*Push Look At" se empilhavam na fila do
+  Daniel dançando, QA 15). `vm::runImmediately`.
 
 ### `SetReachObjectID` (`cTSPerson +0x8EA`) e `+0x8EC`
 

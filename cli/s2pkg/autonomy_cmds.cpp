@@ -405,7 +405,47 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             const bool ok = vm::runOneTickTree(machine, temps, fireUnder, fireUnder, fireUnder, 0x1FF1, params);
             std::printf("  tick %6ld fire set under %d: %s\n", i, fireUnder, ok ? "true" : "false");
         }
+        // S2PKG_QUEUES=1: each Sim's queue as it changes (before the first
+        // tick too: what the lot loads with). S2PKG_ANIMS=1: each Sim's
+        // Animate Sim and overlays as they change (as the app's OS2_LOG_ANIMS).
+        auto logSims = [&] {
+            static const bool queues = std::getenv("S2PKG_QUEUES") != nullptr;
+            static const bool anims = std::getenv("S2PKG_ANIMS") != nullptr;
+            static std::map<vm::ObjectId, std::string> lastQ, lastA;
+            for (const auto& [oid, ob] : machine.objects()) {
+                if (!ob.person)
+                    continue;
+                if (queues) {
+                    std::string s;
+                    for (size_t k = 0; k < ob.queue.size(); ++k)
+                        s += (int(k) == ob.activeInteraction ? "[*" : "[") + ob.queue[k].name + " on " +
+                             std::to_string(ob.queue[k].object) + " p" + std::to_string(ob.queue[k].priority) + "] ";
+                    if (ob.lookAt)
+                        s += "looks at " + std::to_string(ob.lookAt->target);
+                    if (s != lastQ[oid])
+                        std::printf("  tick %6llu Sim %d queue: %s\n", static_cast<unsigned long long>(machine.ticks), oid,
+                                    s.c_str()),
+                            lastQ[oid] = s;
+                }
+                if (anims) {
+                    std::string s = ob.animation.name + "@" + std::to_string(ob.animation.level) + " [";
+                    for (const auto& o : ob.animation.overlays)
+                        s += o.name + "@" + std::to_string(o.level) + "#" + std::to_string(o.id) + " ";
+                    s += "] carry {";
+                    for (const auto& c : ob.carryOverlays)
+                        s += c + " ";
+                    s += "} in " + std::to_string(ob.data[vm::objdata::ContainerId]);
+                    if (s != lastA[oid])
+                        std::printf("  tick %6llu Sim %d anim: %s\n", static_cast<unsigned long long>(machine.ticks), oid,
+                                    s.c_str()),
+                            lastA[oid] = s;
+                }
+            }
+        };
+        if (i == 0)
+            logSims();
         machine.tick();
+        logSims();
         if (gNameBabies)
             for (auto& [who, d] : machine.dialogs) {
                 static std::map<uint32_t, uint64_t> seen;

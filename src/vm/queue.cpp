@@ -3,6 +3,7 @@
 // tso.simantics/Engine/VMThread.cs (MPL-2.0), rewritten for this VM.
 
 #include "autonomy.hpp"
+#include "engine.hpp"
 #include "interactions.hpp"
 
 #include "errors.hpp"
@@ -85,6 +86,49 @@ uint16_t enqueueSub(VM& vm, Object& sim, QueuedInteraction q) {
     sim.subQueue.push_back(std::move(q));
     syncQueueData(sim);
     return uid;
+}
+
+// A "Run Immediately" interaction (TTAB flag 0x04: "*Push Look At" of
+// "Controller - Look At", pushed onto every Sim near a social each few
+// seconds) as cTSPerson::AddAction (Mac BV 0xadbbdc) adds it: it never goes
+// into the queue (the four "*Push Look At" piled up behind Daniel's dance in
+// N001_Lot68, shown in the queue, live QA 15). Its check tree runs
+// (cEdithObjectTestSim::TestInteraction); when it passes and no other
+// immediate interaction is running (a global guard, DAT_02cc0210), the
+// action tree runs to its end at once as a one-tick tree
+// (cTSObject::RunOneTickTree) for the Sim, the interaction's object as
+// stack object and code owner, its parameters, with the Sim's person data
+// 33 (priority) and 166 (autonomous) set to the interaction's for that
+// time and put back after. False (Push Interaction's result 6, "the target
+// refused") when the check fails or one is already running. Inferred: the
+// tree's temps are fresh, and an error in it is a refusal rather than an
+// error of the pushing tree.
+bool runImmediately(VM& vm, Object& sim, const QueuedInteraction& q) {
+    static bool running = false;
+    if (running || !sim.person || !vm.object(q.object))
+        return false;
+    const CheckResult r = checkInteraction(vm, sim.id, q);
+    if (r != CheckResult::NoGuard && r != CheckResult::True)
+        return false;
+    if (!q.action)
+        return true;
+    running = true;
+    auto& d = sim.person->data;
+    const int16_t priority = d[persondata::Priority], autonomous = d[persondata::InteractionAutonomous];
+    d[persondata::Priority] = q.priority;
+    d[persondata::InteractionAutonomous] = q.priority == kPriorityAutonomous;
+    const ObjectId id = sim.id;
+    std::array<int16_t, kTempCount> temps{};
+    try {
+        runOneTickTree(vm, temps, id, q.object, q.object, q.action, q.args);
+    } catch (const VMError&) {
+    }
+    running = false;
+    if (Object* s = vm.object(id); s && s->person) {
+        s->person->data[persondata::Priority] = priority;
+        s->person->data[persondata::InteractionAutonomous] = autonomous;
+    }
+    return true;
 }
 
 // Push Interaction (0x0D), as the Mac binary has it (TryPushAction,
@@ -233,6 +277,15 @@ Exit pushInteraction(Context& c) {
     q->flags = flags;
     q->pushedBy = c.thread.me;
     q->operands = o;
+    // A "Run Immediately" entry (TTAB flag 0x04) never waits in the queue:
+    // cTSPerson::AddAction (Mac BV 0xadbbdc) runs it at once (runImmediately).
+    if (!nested && (q->ttabFlags & 0x04)) {
+        if (!runImmediately(c.vm, *target, *q))
+            return failed(6);
+        if (flags & 0x80)
+            c.set(o[11], int16_t(le16(&o[12])), int16_t(newInteractionId(c.vm, *target)));
+        return Exit::True;
+    }
     const uint16_t uid = nested ? enqueueSub(c.vm, *target, std::move(*q)) : enqueue(c.vm, *target, std::move(*q), flags & 0x04);
     if (flags & 0x40) // link to the interaction whose ID is in (owner u8 at 8, data u16)
         if (const auto linked = uint16_t(c.get(o[8], int16_t(le16(&o[9])))))
