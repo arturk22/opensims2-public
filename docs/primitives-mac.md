@@ -1937,6 +1937,31 @@ Hipótese para as mortes do soak (a conferir pela causa da morte): um Fire
 dura ~2 h e empurra pânico a cada 30 voltas a todos que não estão em
 interação; Sims em pânico repetido por horas não comem nem dormem.
 
+**Conferido nos soaks (rodada 14, sobrevivência 4; `S2PKG_FIRES=1` no
+`s2pkg autonomy` imprime cada Fire com o tile e onde cada Sim está ao
+trocar de interação, "burning" com a flag 0x200 do od 8).** Em 20 rodadas
+de 3 dias (10 lotes que perdiam gente × sementes 1 e 2): 39 mortes, **26 de
+fogo** e 13 de fome. Todas as de fogo: o Sim estava pegando fogo e **no
+tile de um Fire** (uma a 1 tile, na borda), depois de "Fogo!" — ninguém
+pegou fogo fora do tile. Os motivos dessas mortes variam (o Daniel do
+`N001_Lot68` tinha todos acima de −60): é o fogo, não os motivos do pânico
+repetido. O pânico **afasta**: o "Interaction - Panic" vai ao slot global 9
+(SLOT 0x64: direções 0x55, distâncias 2/2/5) do Fire e para a 2 tiles dele
+(conferido no trace). Como se morre então: o fogo se espalha (10 a 32 Fires
+vivos nos lotes sem detector, horas a fio) e o pânico seguinte é empurrado
+para **outro** Fire (o "Push - Panic" escolhe o Fire pelo Set to Next): o
+objetivo a 2 tiles dele pode cair no tile de um terceiro Fire, porque o Fire
+tem a flag 0x04 do od 8 ("allow object and person intersection") e não
+bloqueia nem rota nem objetivo (o `EvalTileForGoal`, BV `0x475074`, testa
+ocupação com o `TSObjectCanSetPositionAndOrientation` do Sim, que essas
+flags liberam: o mesmo no jogo). Chance por cozinhada: 11 começos de
+incêndio para ~170 "Cozinhar" (~6,5%, perto dos 6% de quem não tem
+habilidade, mais a comida esquecida: há dos dois casos), não por tick. As
+mortes de fome são outra coisa: refeições que falham (a rota ao fridge
+interrompida por reações empurradas, "Cheira Mal", "Ficar com Nojo", baratas
+"Pisar"), e eram muitas mais com a pegada nova antes de o teste por passo e
+o Snap usarem a pegada também (`docs/routing-mac.md` §2).
+
 ## 4g. Rodada 12: Sims vivos e destravados (binário + árvores)
 
 ### Erros reiniciam o objeto (`cTSObject::HandleError`, BV `0xb05510`)
@@ -1976,8 +2001,13 @@ próprio objeto (rodada 13):
   (vtable `0x19c`) roda o **Init** (`RunTree(0)`), depois a árvore volta ao
   Main.
 O jogo grava o `ObjectError` e segue. A VM (`VM::resetAfterError`) faz o
-mesmo, menos o lugar livre da pessoa (`0x2d8`, `FUN_00af87c8`, não lido) e o
-dado 7 (fica como estava; o jogo põe o campo 45 do OBJD: TODO); os dados além do 87 não existem na VM. `S2PKG_NO_RESET=1` mantém o
+mesmo desde a rodada 14 (sobrevivência 4): o dado 7 é o campo 45 do OBJD, e
+a pessoa sai do slot e volta a um lugar livre perto (`VM::placeNearFree`:
+onde está se a caixa dela não toca a pegada de nenhum objeto nem outro Sim
+a menos de 0,5, senão o centro do tile livre mais perto, no mesmo cômodo
+primeiro, até 10 tiles; o `0x2d8`/`FUN_00af87c8` do binário não foi lido:
+inferido), o dado de pessoa 34 zerado e a árvore de cleanup rodada; os
+dados além do 87 não existem na VM. `S2PKG_NO_RESET=1` mantém o
 Main morto para depurar. O orçamento de instruções (20000 por turno, a "Too
 many iterations" 0x44d do jogo, cujo limite não foi lido) também reinicia.
 

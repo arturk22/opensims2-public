@@ -38,6 +38,64 @@ eles). Logo depois vêm os pisos, telhados, postes e toldos.
 - Pegadas de objeto que mudam são refeitas antes de cada plano
   (`UpdateDirtyFootprints` no começo de `PlanPath`).
 
+### A pegada de um objeto (binário, rodada 14)
+
+O que um objeto põe no planejador é a **pegada** dele, não o tile
+(`cTSObject::AddThisToPathPlanner`, BV `0xaf68e0`, vtable `0x518`): pula
+quem a vtable `0x35c`/`0x118` recusa, os tipos `0x12`/`0xd` com od `0x46`,
+portas/janelas/escadas (tipos 8, 9, 12) sem OBJD[`0x4b`] = `0x93`; pede a
+pegada (`GetFootprint`, vtable `0x100`) e, se o objeto não é "sem
+pegada" e `TSObjectGetPathPlannerCostAndPassibility` dá custo e passagem,
+chama `cITSRouteManager::AddObjectRectangle` (vtable `0x5c` do gerente)
+para **cada retângulo** não vazio (x0 < x1 e y0 < y1), com custo
+`od 10 (route penalty) · escala + 1`. O `AddObjectRectangle` põe o
+retângulo e, com passagem > 1, o mesmo inflado 0,12499 com custo
+`FLT_MAX` (§2). (Com a vtable `0x170(5)` — "allow intersection" — a
+passagem vira 3 ou 5 pelo `0x18c`; o detalhe não foi seguido.)
+
+`GetFootprint` (`FUN_00af9e40`) é o `TSObjectWorldSpaceFootprint` (BV
+`0x8aa40c`) calculado em (0, 0) e direção 0, guardado no objeto
+(`+0x1d4`, válido pela flag `+0x287`), e levado ao lugar e à direção do
+objeto pelo `FUN_0191fa14`, que gira cada retângulo pela direção & 6 (0:
+(x, y); 2: (−y, x); 4: (−x, −y); 6: (y, −x)). O
+`TSObjectWorldSpaceFootprint`:
+- pessoa (tipo 2): a caixa de meia largura 0,1 (`TSObjectBaseFootprintWidth`
+  = 0,2), cada lado puxado para fora pelos nibbles do dado de pessoa 73 nas
+  direções pares;
+- objeto **sem** a flag `0x80` do od 8 (STR# 0x8E: "Do NOT Use Maya Model
+  Footprint"): a pegada **do modelo** (`AggregateFootprint` com o od 9,
+  "footprint index", vtable `0x2c8` → `0x2cc` → o `cObject` do grafo de
+  cena, BV `0x658ab8`); se ela existe, é ela;
+- senão a caixa do OBJD: meia largura = OBJD[`0x43`]/16 · 0,5 (1 tile se
+  0), cada lado puxado para dentro por um nibble do OBJD[`0x4d`]/16, os
+  nibbles girados pela direção (`(8 − dir)/2`).
+
+A pegada do modelo é a extensão `cDataListExtension` **"footprint"** do
+CRES: uma lista por índice ("0", ...; com od 9 = 0, a de menor nome por
+`strcmp`), com `minx/maxx/miny/maxy` e, por tile do modelo "(x,y)", uma
+máscara binária de **32 bytes = 16 × 16 bits** (uma linha de 16 bits por
+1/16 tile em y, o bit 0 o x mais baixo). O `FUN_006537a4` reduz a máscara a
+**8 × 8** (uma célula de 1/8 tile fica marcada se **qualquer** das 4
+subcélulas estiver) e o `FUN_00656cc0` faz de cada trecho de bits seguidos
+de uma linha um retângulo (linhas iguais seguidas se juntam):
+`x = tx + c·0,125 − 0,5 + 0,01 … tx + c'·0,125 − 0,5 − 0,01`, y igual pelas
+linhas — no espaço do modelo, encolhido 0,01. Para uma parte de um
+multi-tile, o tile "(x,y)" é o da parte no modelo (`vtable 0x150`, não
+lido: aqui o deslocamento da parte ao líder girado de volta, inferido) e o
+retângulo é relativo à própria parte; uma lista sem esse tile não dá
+retângulo. Sem lista "footprint", o `cObject` usa a caixa do modelo
+cortada ao tile (±0,5; aqui a caixa do OBJD, inferido).
+
+Exemplo: o "Piano Upright" (`pianoUprightSaloon`): tiles (0,0)/(1,0) o
+piano (linhas 1–15 de 16 cheias), (0,1)/(1,1) o banco, só as linhas 0–4
+(5/16 do tile, 3/8 depois da redução) e as colunas do meio. Os ossos
+`route_piano_*_s` ficam a 1,30 no y do modelo: fora da pegada do banco
+(0,5–0,875), mas dentro do tile dele.
+
+O teste por passo do andar e o `Snap` usam a mesma pegada
+(`TSObjectCanSetPosition`: a caixa da pessoa contra as pegadas dos objetos,
+`VM::pointFree`, `footprintBlocker` em `routing.cpp`).
+
 ### Custo do piso (`WorkOutTileCostAndPassability`)
 
 ```
@@ -1006,6 +1064,7 @@ Clique com um objeto sob o mouse (rodada 13):
 | tipo 1 (1–3 tiles) quando o bloqueador está a < 1,5 tile do objeto de destino, senão tipo 0 (0,3 tile) | igual desde a rodada 12 (direções do tipo 1 relativas a quem pede, inferido) |
 | slots de osso de um objeto multi-tile: o modelo é o do líder | ossos a partir do líder desde a rodada 12 (inferido; a escada reta só funciona assim) |
 | objetivos avaliados por `EvalTileForGoal` (códigos e penalidades +10/+5, §8.2) | aproximação da busca de objetivos (`routing.cpp`) |
+| pegada do objeto: a do modelo (CRES "footprint", máscara 16×16 reduzida a 1/8 tile) ou a caixa do OBJD (flag 0x80 do od 8) | igual desde a rodada 14 (`VM::routingFootprint`); o tile da parte no modelo e a caixa do modelo sem lista são inferidos; `OS2_TILE_FOOTPRINTS=1` volta ao tile inteiro para comparar |
 | quadtree, inflação 1/8, filtros, A* com ruído, Sims como retângulos de custo, códigos de falha, "CT - Route Blocked" | seguem o doc |
 
 ## 10. O que falta
