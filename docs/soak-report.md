@@ -1,3 +1,30 @@
+# Soak report (round 15, planner)
+
+Runs of `tools/soak.sh` over the 69 lots (3 game days, 129600 ticks), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), babies named, `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main cc8cfe1 (with r15-vm-confirm; the s2pkg autonomy budget 20000); **after** is the r15-planner branch rebased on it (the binary's budget, 100000). The "failed interactions", "Dispose on a pile" and "Fogo!" rows are counted in the kept autonomy logs.
+
+| Category | before, seed 1 | after, seed 1 | before, seed 2 | after, seed 2 |
+|---|---|---|---|---|
+| Crashes / hangs | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Load errors | 1 (N002_Lot32) | 1 | 1 | 1 |
+| Household Mains reset | 0 | 3 (3 lots) | 1 | 3 (1 lot) |
+| Sims that died ("Falecer") | 29 (9 lots) | 7 (5 lots) | 20 (9 lots) | 21 (6 lots) |
+| Sims stuck > 6 game hours | 27 | 28 | 27 | 25 |
+| of them not sleeping, working or at school | 6 | 4 | 6 | 2 |
+| Motives pinned at -100 > 6 game hours | 30 | 25 | 12 | 35 |
+| Save round trips that differ | 0 | 0 | 0 | 0 |
+| Instruction budget hit | 0 | 0 | 1 (Relationship Decay, 20000) | 0 (100000) |
+| Failed autonomous interactions | 214 | 376 | 452 | 403 |
+| "Jogar Fora" on a trash pile failing | 0 | 6 (2 Sims, then "Limpar") | 16 | 0 |
+| "Fogo!" runs | 367 | 32 | 66 | 125 |
+
+What changed (TODO.md, "Rodada 15, planejador"; `docs/routing-mac.md` §2 and §8.5, `docs/primitives-mac.md` §4g "Rodada 15 (planejador)"):
+- **Pool exit**: the pool is level −1 with a floor; objects' portals as the binary gathers them (routing slots marked as a portal pair, SLOT flag 0x200000, joined by their "own,other" bone names): the ladder links the pool's bottom and the deck, the diving board the deck and the water. The portal trees get the two ends' levels as parameters 2/3 (they were the rooms), so the board's TEST locks the way up and the ladder's tree climbs out. N001_Lot68 (pie: Mary-Sue dives, then "Usar" the toilet upstairs): she swims to the ladder, plays "a2o-poolLadder-climbOut" and walks up; before she starved in the pool (seed 1, main c3dbe82). No Sim dove in these four runs (the seeds' fires and choices moved), so the soak does not show it.
+- **Trash pile**: "Jogar Fora" (Dispose, wants the pile in hand; guard "Hide Menu") and "Limpar" have the same ads; the FBA sorts with the Mac libc's qsort (not stable) and the binary's comparator: N001_Lot36 seed 1, 20 failures in a row → 2, then "Limpar".
+- **Planner admission**: stairs in by their footprints; the 0x4b = 0x93 exception (no base-game OBJD has it); the route penalty's scale has no writer (cost 1, as before).
+- **Create New Object Instance** tests the place (TestPlaceInWorld, objects by footprints, after the Init): Fires on tiles without floor, ashes on doors and helpers on chairs are no longer made. The fire counts swing with the seed either way (N002_Lot22 seeds 2–4 with/without: 125/71, 0/162, 0/73 Fires).
+- **Budget**: s2pkg autonomy and the app use the binary's 100000 nodes a turn; the Relationship Decay needs 22798 at N003_Lot192's tick 77371 (seed 2).
+- The resets after are pre-existing: "Animation name is empty string" with the babies' bottles (N002_Lot4, N001_Lot36; also in the round-15 survival-5 logs) and "Tree table not found (object 204)". The deaths are still fires and what follows them (N001_Lot68 seed 2: three Sims burn, Daniel mourns and starves); the pinned motives follow the same lots.
+
 # Soak report (round 15, survival 5)
 
 Runs of `tools/soak.sh` over the 69 lots (3 game days, 129600 ticks), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), babies named (`--name-babies`). **Before** is main c3911d1 (the round's branch point); **after** is the r15-survival5 branch rebased on main 1782c4d, run with `S2PKG_FIRES=1` and `SOAK_KEEP_LOGS=1` (new: keeps the autonomy logs).
