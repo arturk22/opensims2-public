@@ -969,7 +969,14 @@ da caixa 999 e o `TryDialog` (estado 2, tipo 3) o entrega ao simulador
 (`cTSObject+0x48`, vtable `0x68`). Nenhuma árvore do jogo base usa o tipo 3
 e quem lê esse texto não foi achado (no The Sims 1 era o nome do próximo
 Make New Character; o `TryMakeNewCharacter` do BV não lê). A VM guarda em
-`VM::enteredText`.
+`VM::enteredText`. **Rodada 14 (engine-re):** o `+0x48` é o `cTSSimSystem`
+(interface em `+0x1c`, vptr `0x27c50a0`) e a vtable `0x68` é
+**`cTSSimSystem::SetLastUserTypedName`** (BV `0x588db4`, guarda a string); os
+leitores são `GetLastUserTypedName` (`0x60` por referência, `0x64`, BV
+`0x588d70`/`0x588dac`). Nenhuma chamada direta a eles; as virtuais por esses
+slots não puderam ser separadas das de outras classes (busca ambígua), então
+quem lê o nome continua não achado (inferido: o nome de um Sim novo, como o
+"last user typed name" sugere).
 
 **Sim/não/cancelar.** O `TryDialog` grava no temp `(byte 7 >> 4) & 7`
 **0 no "não" (estado 3) e 1 no "cancelar" (estado 4)**; o "sim" não grava
