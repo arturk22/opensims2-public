@@ -386,3 +386,28 @@ Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, cap
 - Bairro N002: uma casa ao sul (perto das duas antenas parabólicas) aparece como polígonos pretos soltos (texturas/modelos faltando). Repro: `--hood N002`, vista padrão, a casa no canto inferior.
 - Log do lote N002_Lot10 e N001_Lot11: "snapped ...: animation not found: o2a-bookcase-get-middle_anim" (tapete/banquinho/dardos), "effect texture clothesChangeSwirl_clotheschangeswirl_shpe / waterStream: not found", "snap model foodTray: CRES not found", "snap model doll: CRES not found" e Sims de vizinhos sem arquivo de personagem ("Sim 224 (neighbor 308), 151 (310), 126 (311), 229 (312), 238 (363): no character file, not drawn"): vizinhos que aparecem como visitantes não são desenhados.
 - Teclas: um toque curto de tecla da ferramenta de teste dispara a câmera por muito tempo; não é do jogo (só do QA).
+
+# Rodada 16, passada 13
+
+Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`, `build/` do `main` em `a7000f3`, binário das 09:26, mais novo que o commit). Janela cheia 1280x752 em 95,49; sem diálogos do macOS (os de antes foram fechados). Desta vez as capturas que passam ficam guardadas em `docs/screenshots/r16-qa13-*.jpg` (reduzidas a 1600 px).
+
+| Passo | Resultado |
+|-------|-----------|
+| Sentar/comer: Cassandra e Mortimer no N001_Lot11 (Jantar/Sentar na cadeira da mesa) | passa em parte: o Sim vai à mesa, senta de frente para a mesa (cadeira da ponta, torso e cabeça acima da mesa) e depois levanta e sai; `r16-qa13-dining-sit-cassandra.jpg`. Não conclusivo: o "Sentar" do Mortimer à noite mostrou só a cabeça atrás do encosto da cadeira do fundo (`r16-qa13-dining-sit-head-only.jpg`, corpo escondido pela cadeira, não deu para dizer se a cadeira foi puxada); não vi a cadeira se mexer em nenhuma das capturas |
+| Dormir: Sim cansado sobe a escada e deita | passa: o Sim (energia vermelha) sobe a escada, vai ao quarto e deita na cama de solteiro com a cabeça no travesseiro (extremidade branca), coberto; `r16-qa13-sleep-bed-full.jpg` e `-crop.jpg`. "Dormir" não aparecia no pie com a energia cheia (certo) |
+| Sombras: sol da casa e das paredes no gramado | passa fraco: de dia (Terça 14:49, telhado "off") só há um escurecimento suave junto ao pé da parede sul, visível só com contraste aumentado (`r16-qa13-day-lawn.jpg`); no N001_Lot68 em nível -1 (casa escondida) o gramado mostra a sombra inteira da casa, escura e em degraus de tile (`r16-qa13-pool-level-minus1-shadow.jpg`), então o height map funciona, mas a sombra de dia com a casa visível é quase invisível |
+| Sombras: paredes sob a varanda mais escuras | não conclusivo (a varanda do Lot11 não aparece clara nas capturas) |
+| Sombra do Sim | não conclusivo: não vi sombra sob os pés dentro da casa nem fora, a esse zoom |
+| Fosso do N001_Lot82 com água | passa: água azul clara com margem de areia e a ponte (`r16-qa13-lot82-moat-water.jpg`) |
+| Cone de luz da lâmpada à noite | não conclusivo: a noite do Lot11 mostra as luminárias acesas dentro da casa e a luz do poste no gramado (`r16-qa13-night-lawn-lamps.jpg`), mas não achei um spot com cone no chão |
+| Câmera do CAS: primeira pessoa nos locators, glide, zoom no rosto e nas roupas | passa: passo 1 de corpo inteiro com o estúdio, espelho e quadros; ao ir ao passo 2 a câmera desliza (3 quadros seguidos, sem salto) para o rosto, perto, e no passo 3 (rosto, sliders) fica no rosto; no passo 5 (roupas) volta ao corpo inteiro (`r16-qa13-cas-step1.jpg`, `-step2-face.jpg`, `-step3-face-sliders.jpg`, `-step5-clothes.jpg`). Textos "Enter First Name" e "Cheek Size" ainda em inglês |
+| Piscina: Sim mergulha do trampolim do N001_Lot68 | **falha**: o pie do trampolim mostra "Mergulhar"; o Daniel veste a roupa de banho, a vista muda sozinha para o nível -1 (casa escondida) e ele fica parado em T-pose, sem cabeça visível, na borda do lote (no trampolim?) por mais de 1 minuto de jogo; não mergulhou, nadou nem saiu pela escada. Cinco ícones de fila do mesmo "Mergulhar" |
+| Telefone (obj 46 em 15,5/23,5 nível 2 no N002_Lot10) | não testado (tempo) |
+| Espelho do Lot82 e Reflexo off | não testado (Lot82 sem família) |
+| Lote vazio novo no bairro, arco sem cerca, passo 32 do tutorial | não testados (tempo) |
+
+## Bugs achados (não corrigidos)
+
+- Mergulhar no N001_Lot68 deixa o Sim em T-pose no trampolim para sempre. Repro: `--hood N001 --hood-lot 68 --vm --ui live`, zoom padrão, clicar o trampolim branco (borda leste da piscina, ~(1262,431) em 2000 px) e escolher "Mergulhar" no pie com o Daniel selecionado. A câmera troca para o nível -1 sem pedir. Log: nenhuma "animation not found" do mergulho, só `queued "Mergulhar" (Pool Diving Board - 1,0,4 - Lead, TTA 0)`.
+- A vista cai para o nível -1 (`lot view: ... level -1`) quando um Sim vai ao trampolim: some a casa e só sobra o terreno com a piscina.
+- O "Sentar" na cadeira de jantar do Lot11 deixa só a cabeça à mostra atrás do encosto em uma captura; conferir se o Sim e a cadeira ficam alinhados (a cadeira não foi vista sendo puxada).
