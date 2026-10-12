@@ -205,6 +205,78 @@ bloqueador tem o bit 0x40 do dado 8); passou disso → `DoBlocked` de novo.
 `DoWaitingForPortalToBecomeFree` é igual para portais ocupados (espera de
 24 ticks, limite 126).
 
+## 6.1 Andar ao longo da rota: o locomotor (`nTSSG::cLocomotable`, binário, rodada 13)
+
+Lido no BV (`BeginFollow` `0x6b5770`, `FollowOneStep` `0x6b80e8`,
+`OnPreSimulatorTick` `0x6b8fec`, `LocoPlaceFromSceneGraph` `0x6b2ee0`,
+`ComputeTurn` `0x6ae2e0`, `Begin*Path`). O `BeginFollow` é muito longo; o que
+segue é o que foi lido com segurança, e o resto está marcado.
+
+**O Sim anda pela animação, não por uma velocidade fixa.** A rota do planner
+vira uma **curva** (objeto COM `0x1C1D06AD` em `+0x18c`; vtable `0xc` põe um
+ponto, `0x54` o ponto num parâmetro, `100` o comprimento) e a animação de
+locomoção (o "active anim loco" do coreógrafo, `+0x1a4`) corre sobre ela. A
+cada passo o locomotor pega a **transformação da raiz** da animação
+(vtables `0x198`/`0x1a0`) e chama `LocoPlaceFromSceneGraph`:
+
+- posição = a translação da raiz, com z = a altura do piso naquele ponto
+  (`FUN_` mal nomeada `HasAnyStage`);
+- `TSObjectCanSetPosition(sim, p, 0, 0)`: passou → `SetPosition(p)` e a
+  orientação = o yaw do quaternion da raiz (vtable `0x2a0`);
+- não passou: se o Sim está preso (vtable `0x2e0`) e nem a posição atual
+  passa, põe assim mesmo; senão procura nos erros o de código **0x0C**
+  (cruza objeto), guarda o ID dele como **bloqueador** (`+0x258`,
+  `SetBlockingObjectID`) e o passo falha (→ "bloqueado", §6).
+
+**A curva** (`BeginFollow`): cada trecho da rota é dividido em pedaços de
+**0,2** (`n = ⌊|trecho| / 0,2⌋` pontos intermediários, z de cada um pela
+altura do piso). Se o Sim já está andando com velocidade v (vtable `0x428`),
+o primeiro ponto é avançado na direção em que ele olha de
+`min(v · 0,3333, 0,25)` (a curva sai da direção atual em vez de virar no
+lugar). A direção final é arredondada para **múltiplos de 45°**
+(`⌊h / (π/4) + 0,5⌋ · π/4`, em `+0x1c4`).
+
+**Viradas** (`ComputeTurn`): o ângulo entre a direção atual e a desejada,
+normalizado em [−π, π], vira um número de passos de **45°**: enquanto
+< −40°, −1 e soma 45°; enquanto > 40°, +1 e tira 45°. Ou seja, até ±40° não
+há animação de virar (a curva absorve); acima disso, viradas em passos de
+45°. No começo, com o primeiro trecho curto (≤ 0,25) o `BeginFollow` testa
+o papel **9** do conjunto de locomoção (vtable `0x28(9, −1)`; inferido: o
+"virar no lugar") e os ângulos contra π/2 para decidir se vira parado antes
+de sair (detalhe não fechado).
+
+**Fases** (`tLocoState` em `+0x188`, estado espelhado em `+0x330`): o
+`BeginFollow` monta até três caminhos guardados: o **passo curto/virada de
+saída** (`+0x190`), o **caminho para a frente** (`+0x19c`) e a **virada do
+fim** (`+0x1a0`, para olhar na direção final). `FollowOneStep` (chamado no
+`OnPreSimulatorTick` e pelo `DoWalking` do roteador):
+
+| estado | o que faz |
+|---|---|
+| 1 | cria o pedido de animação (vtable `0x42c`, `CreateLocoRequest`) e o põe na fila do coreógrafo no tick de início; → 2 |
+| 2 | animação correndo; quando o pedido termina (vtable `0xfc`) → 3 |
+| 3 | próxima fase: `+0x190` → `BeginShortStepPath`, senão `+0x19c` → `BeginCachedForwardPath`, senão `+0x1a0` → `BeginCachedEndTurnPath` (→ 1, começando no tick atual, ou no fim da fase anterior se ela acabou há menos de N ticks; N = 25 com velocidade ≤ 0,25); nada mais → 4 |
+| 4 | **chegou** (devolve 1, "FollowOneStep - Done") |
+| 6/7 | **bloqueado** (devolve 0) |
+
+Cada fase zera a velocidade/ciclo (`+0x1b4`/`+0x1b8` = −1) e passa a
+direção (`+0x1c0` ← a direção do fim da fase anterior). Ao parar antes do
+fim (bloqueio previsto), a desaceleração é de 5 ticks, ou 100 com
+velocidade > 0,25 (§6).
+
+**Velocidade e estilo de andar** (`BeginFollow`, inferido em parte): os
+pesos dos conjuntos de locomoção ficam em `+0x1dc` (20 floats); o
+dado de pessoa **0x72** (114) escolhe um conjunto (índice 2..19) com o peso
+dado de pessoa **0x73** (115) / 100 (limitado a [0, 1]) e o **0x74** (116)
+outro que recebe o resto; a velocidade (`+0x1d8`) é a do conjunto misturado
+(vtable `0x3c(pesos)`). Os rótulos desses dados não foram conferidos.
+
+O que isso muda no opensims2 (que move em linha reta de centro em centro de
+tile na velocidade da caminhada): andar sobre a rota reamostrada a cada 0,2,
+com a posição e a direção vindas da raiz da animação; virar parado só acima
+de 40° (passos de 45°); a direção final em múltiplos de 45°; bloquear quando
+a posição seguinte não passa no `TSObjectCanSetPosition`.
+
 ## 7. Códigos de falha (binário + `STR#` 0xF1 "route results")
 
 `DoPostFailedOrSucceeded` grava o código no **dado de pessoa 62
