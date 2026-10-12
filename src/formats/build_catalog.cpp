@@ -279,6 +279,36 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
             }
             c.stairs_.push_back(std::move(b));
         }
+        const auto archText = buildText(index, 143);
+        for (const auto& block : scriptBlocks(scripts / "fencearches.txt", "fenceArch")) {
+            BuildFenceArch a;
+            int text = -1;
+            for (const auto& w : block) {
+                const std::string k = lower(w[0]);
+                std::string v = w.size() > 1 ? w[1] : "";
+                std::erase(v, '"');
+                if (k == "fencearch")
+                    a.id = std::atoi(v.c_str());
+                else if (k == "catalogtextindex")
+                    text = std::atoi(v.c_str());
+                else if (k == "archcentermodel")
+                    a.center = v;
+                else if (k == "archeastmodel")
+                    a.east = v;
+                else if (k == "archwestmodel")
+                    a.west = v;
+                else if (k == "archpostmodel")
+                    a.post = v;
+            }
+            if (archText && text >= 0) {
+                a.price = priceText(archText->get(size_t(3 * text)));
+                if (!a.price)
+                    a.price = priceText(archText->get(size_t(3 * text), lang::EnglishUS));
+                a.name = archText->get(size_t(3 * text + 1));
+                a.description = archText->get(size_t(3 * text + 2));
+            }
+            c.arches_.push_back(std::move(a));
+        }
         const auto roofText = buildText(index, 140);
         for (const auto& block : scriptBlocks(scripts / "roofs.txt", "roof")) {
             BuildRoofProduct r;

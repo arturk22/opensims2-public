@@ -1,4 +1,5 @@
 #include "lot_model.hpp"
+#include "lot_edit.hpp"
 
 #include "binreader.hpp"
 #include "config_text.hpp"
@@ -10,6 +11,8 @@
 #include "image.hpp"
 
 #include <algorithm>
+#include <sstream>
+#include <fstream>
 #include <cctype>
 #include <cmath>
 #include <optional>
@@ -764,6 +767,32 @@ PatternCatalog::PatternCatalog(ResourceIndex& index, const std::filesystem::path
     const auto scripts = resRoot / "Catalog/Scripts";
     floors_ = loadPatternScript(scripts / "floorPatterns.txt", "floorPattern");
     walls_ = loadPatternScript(scripts / "wallPatterns.txt", "wallPattern");
+    {
+        std::ifstream in(scripts / "fencearches.txt");
+        for (std::string line; std::getline(in, line);) {
+            std::istringstream ss(line.substr(0, line.find('#')));
+            std::string key, value;
+            ss >> key;
+            if (key == "fenceArch") {
+                arches_.emplace_back();
+                continue;
+            }
+            if (arches_.empty())
+                continue;
+            std::getline(ss >> std::ws, value);
+            std::erase(value, '"');
+            while (!value.empty() && std::isspace(uint8_t(value.back())))
+                value.pop_back();
+            if (key == "archCenterModel")
+                arches_.back().center = value;
+            else if (key == "archEastModel")
+                arches_.back().east = value;
+            else if (key == "archWestModel")
+                arches_.back().west = value;
+            else if (key == "archPostModel")
+                arches_.back().post = value;
+        }
+    }
     auto text = [&](const ResourceIndex::Location& loc) {
         const auto bytes = index.read(loc);
         return parsePropertySet(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
@@ -1112,6 +1141,26 @@ std::vector<LotFencePiece> lotFencePieces(const Lot& lot, const PatternCatalog& 
     }
     if (unknown && warnings)
         warnings->push_back(std::to_string(unknown) + " fence posts of unknown fences");
+    // Fence arches (graph 0x13): the centre over the edge like a rail, a
+    // post at each end with the west part on the start's and the east part
+    // on the end's (placement inferred from the parts' names).
+    if (const auto* arch = patterns.fenceArch())
+        for (const auto& f : fenceArches(lot)) {
+            const float ax = float(f.ax), ay = float(f.ay), bx = float(f.bx), by = float(f.by);
+            const float dx = bx - ax, dy = by - ay, len = std::sqrt(dx * dx + dy * dy);
+            if (len == 0)
+                continue;
+            const float c = dx / len, s = dy / len, za = ground(f.level, ax, ay), zb = ground(f.level, bx, by);
+            auto put = [&](const std::string& model, float x, float y, float z) {
+                if (!model.empty())
+                    out.push_back({model, {c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, x, y, z, 1}});
+            };
+            put(arch->center, ax, ay, za);
+            put(arch->post, ax, ay, za);
+            put(arch->post, bx, by, zb);
+            put(arch->west, ax, ay, za);
+            put(arch->east, bx, by, zb);
+        }
     return out;
 }
 

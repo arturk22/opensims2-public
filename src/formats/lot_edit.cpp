@@ -280,6 +280,65 @@ bool addLowerLevel(Lot& lot) {
     return true;
 }
 
+namespace {
+constexpr uint32_t kGraphArches = 0x13;
+Lot::WallGraph* archGraph(Lot& lot) {
+    for (auto& g : lot.wallGraphs)
+        if (g.instance == kGraphArches)
+            return &g;
+    return nullptr;
+}
+} // namespace
+
+std::vector<FenceArch> fenceArches(const Lot& lot) {
+    std::vector<FenceArch> out;
+    for (const auto& g : lot.wallGraphs) {
+        if (g.instance != kGraphArches)
+            continue;
+        for (const auto& l : g.lines) {
+            const auto* a = vertexById(g, l.a);
+            const auto* b = vertexById(g, l.b);
+            if (a && b && a->level == b->level)
+                out.push_back({a->level, int(std::lround(a->x)), int(std::lround(a->y)), int(std::lround(b->x)),
+                               int(std::lround(b->y))});
+        }
+    }
+    return out;
+}
+
+bool hasFenceArch(const Lot& lot, int level, int ax, int ay, int bx, int by) {
+    for (const auto& f : fenceArches(lot))
+        if (f.level == level && ((f.ax == ax && f.ay == ay && f.bx == bx && f.by == by) ||
+                                 (f.ax == bx && f.ay == by && f.bx == ax && f.by == ay)))
+            return true;
+    return false;
+}
+
+bool addFenceArch(Lot& lot, int level, int ax, int ay, int bx, int by) {
+    Lot::WallGraph* g = archGraph(lot);
+    if (!g || std::abs(bx - ax) + std::abs(by - ay) != 1 || hasFenceArch(lot, level, ax, ay, bx, by))
+        return false;
+    Lot::WallGraph::Line l;
+    l.a = vertexAt(*g, float(ax), float(ay), level);
+    l.b = vertexAt(*g, float(bx), float(by), level);
+    l.id = uint32_t(g->header[7]++);
+    g->lines.push_back(l);
+    return true;
+}
+
+bool removeFenceArch(Lot& lot, int level, int ax, int ay, int bx, int by) {
+    Lot::WallGraph* g = archGraph(lot);
+    if (!g)
+        return false;
+    const size_t before = g->lines.size();
+    std::erase_if(g->lines, [&](const Lot::WallGraph::Line& l) {
+        const auto* a = vertexById(*g, l.a);
+        const auto* b = vertexById(*g, l.b);
+        return a && b && sameSegment({a->x, a->y, a->level}, {b->x, b->y, b->level}, level, ax, ay, bx, by);
+    });
+    return g->lines.size() != before;
+}
+
 void addUpperLevel(Lot& lot) {
     const size_t plane = size_t(lot.width + 1) * size_t(lot.height + 1), tiles = size_t(lot.width) * lot.height;
     if (lot.elevations.size() >= plane) {

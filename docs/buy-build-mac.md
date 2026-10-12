@@ -1478,6 +1478,24 @@ trecho juntadas), para a água cobrir só os tiles; Ctrl apaga a piscina inteira
 (nenhum lote salvo tem); a recusa `0x86` só vale para deck/fundação junto de
 piscina (não feita).
 
+### 7.19 Arcos de cerca (rodada 12)
+
+`fencearches.txt` tem um só arco no jogo base (`fenceArch 26`, "Arco de
+Madeira em Treliça", modelos `fenceDeckAgedWoodArchTrellis{Center,East,West,Post}`,
+STR# 143 índice 18: §50). É uma partição de `PartitionType` 2:
+`AddWallToGraph` a põe só no grafo `+0x58` (WGRA **0x13**), em nenhum outro
+(nem no 5/0x18 com os IDs da camada de paredes), então ela fica na aresta de
+uma cerca sem tirar a cerca; nenhum dos 62 lotes tem uma. Erros: `0x79`/`0x88`
+"Must be placed on a fence.", `0x4D` "Can't place next to arch"
+(`cPartitionManager::FenceArchAdjacent`), `0x4E` "Can't delete arch",
+`0x85` "Can't place gate across arch". O symxfer não acertou o corpo de
+`UserMayPlaceFenceArch` (o endereço "near" é de outra função). Aqui: o arco
+vai numa aresta com cerca (`0x79`), não numa aresta que encosta noutro arco
+(`0x4D`), custa o preço do catálogo, Ctrl tira (0,8 de volta) e apagar a
+cerca leva o arco; gravado como linha do grafo 0x13 (lido de volta como o
+estilo 26: inferido). Desenho (inferido pelos nomes): o centro sobre a aresta,
+um poste em cada ponta, a parte oeste no poste do início e a leste no do fim.
+
 ---
 
 ## 8. Base vs BV

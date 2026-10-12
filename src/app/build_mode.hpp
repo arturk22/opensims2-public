@@ -80,7 +80,7 @@ public:
     bool design(vm::ObjectId id, simd_float2 at);
     DesignTool& designTool() { return *design_; }
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs, Dormer };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs, Dormer, FenceArch };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -192,6 +192,7 @@ private:
         int product = 0; // deckfoundations.txt product (foundation tool)
         const BuildStairs* stairs = nullptr;
         const BuildRoofProduct* dormer = nullptr;
+        const BuildFenceArch* arch = nullptr;
         std::string name, description;
         int price = 0;
         const RgbaImage* image = nullptr;
@@ -253,6 +254,7 @@ private:
     int deckProduct_ = 0;
     const BuildStairs* stairs_ = nullptr;
     const BuildRoofProduct* dormer_ = nullptr;
+    const BuildFenceArch* arch_ = nullptr;
     // The flight the stairs tool would lay from the drag (or the pointer):
     // top tile, direction and the dragged end (none: found by itself).
     struct StairsDrag {

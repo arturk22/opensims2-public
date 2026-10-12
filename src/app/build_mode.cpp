@@ -832,6 +832,22 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
             done(control_ ? editor_->deleteWalls(level_, r[0], r[1], r[2], r[3])
                              : editor_->drawWalls(level_, r[0], r[1], r[2], r[3]));
         }
+    } else if (tool_ == Tool::FenceArch && arch_) {
+        // The fence edge nearest the release point.
+        const float fx = b.x - std::floor(b.x), fy = b.y - std::floor(b.y);
+        const int gx = int(std::floor(b.x)), gy = int(std::floor(b.y));
+        std::array<int, 4> e{};
+        const float dl = fx, dr = 1 - fx, dd = fy, du = 1 - fy, m = std::min({dl, dr, dd, du});
+        if (m == dl)
+            e = {gx, gy, gx, gy + 1};
+        else if (m == dr)
+            e = {gx + 1, gy, gx + 1, gy + 1};
+        else if (m == dd)
+            e = {gx, gy, gx + 1, gy};
+        else
+            e = {gx, gy + 1, gx + 1, gy + 1};
+        done(control_ ? editor_->deleteFenceArch(level_, e[0], e[1], e[2], e[3], arch_)
+                      : editor_->placeFenceArch(level_, e[0], e[1], e[2], e[3], *arch_));
     } else if (tool_ == Tool::Stairs && stairs_) {
         if (control_) {
             // The sledgehammer: the modular stair part nearest the mouse.
@@ -1292,7 +1308,15 @@ std::vector<BuildMode::Item> BuildMode::items() {
             out.push_back(std::move(it));
             objectItems(1, 0x40);
         }
-        if (subsort_ == 5) // BA50 fences
+        if (subsort_ == 5) // BA50 fences, then the fence arch (fencearches.txt, catalog text "build" 143)
+            for (const BuildFenceArch& a : patterns_.fenceArches()) {
+                Item it;
+                it.tool = Tool::FenceArch;
+                it.arch = &a;
+                it.name = a.name, it.description = a.description, it.price = a.price;
+                out.push_back(std::move(it));
+            }
+        if (subsort_ == 5)
             for (const BuildFence& f : patterns_.fences()) {
                 Item it;
                 it.tool = Tool::Fence;
@@ -1452,7 +1476,8 @@ UiScreen BuildMode::screen(int width, int height) {
                                   (it.tool == Tool::Roof && !it.roofPattern && tool_ == Tool::Roof && it.roofType == roofType_) ||
                                   (it.stairs && it.stairs == stairs_ && tool_ == Tool::Stairs) ||
                                   (it.dormer && it.dormer == dormer_ && tool_ == Tool::Dormer) ||
-                                  (!it.pattern && !it.object && !it.fence && !it.paint && !it.stairs && !it.dormer && it.tool != Tool::Terrain &&
+                                  (it.arch && tool_ == Tool::FenceArch) ||
+                                  (!it.pattern && !it.object && !it.fence && !it.paint && !it.stairs && !it.dormer && !it.arch && it.tool != Tool::Terrain &&
                                    it.tool != Tool::Roof && it.tool == tool_);
             if (selected) {
                 UiQuad q;
@@ -1619,6 +1644,12 @@ bool BuildMode::press(simd_float2 p) {
                     selectStairsTool(*it.stairs);
                 else if (it.dormer)
                     selectDormerTool(*it.dormer);
+                else if (it.arch) {
+                    cancel();
+                    tool_ = Tool::FenceArch, arch_ = it.arch;
+                    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
+                    say(it.arch->name + " (" + money(it.arch->price) + "): click a fence");
+                }
                 else if (it.roofPattern)
                     applied(editor_->setRoofPattern(it.roofPattern->guid));
                 else if (it.tool == Tool::Roof)
@@ -1865,6 +1896,10 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
                 end = std::array<float, 2>{std::stof(f[5]), std::stof(f[6])};
             r = ed.placeStairs(*b, {n(1), n(2), n(3)}, n(4), end, f.size() > 7 && f[7] == "whole");
             releaseSound(Tool::Stairs, false, *r);
+        } else if ((a == "--fence-arch" || a == "--delete-fence-arch") && f.size() >= 4 && !patterns_.fenceArches().empty()) {
+            const BuildFenceArch& arch = patterns_.fenceArches().front();
+            r = a == "--fence-arch" ? ed.placeFenceArch(f.size() > 4 ? n(4) : level_, n(0), n(1), n(2), n(3), arch)
+                                    : ed.deleteFenceArch(f.size() > 4 ? n(4) : level_, n(0), n(1), n(2), n(3), &arch);
         } else if (a == "--dormer" && f.size() >= 4) { // product 6-11,x,y,direction[,level]
             if (const BuildRoofProduct* d = patterns_.roofProduct(n(0)))
                 selectDormerTool(*d);

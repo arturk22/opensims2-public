@@ -61,6 +61,12 @@ public:
     // (UserMayPlaceFence: no slope steeper than 60°, 0x31). Ctrl deletes
     // fences (int(cost x 0.8) back a section; posts left with no fence go).
     Result drawFences(int level, int x0, int y0, int x1, int y1, const BuildFence& fence);
+    // Fence arches (fencearches.txt): on the fence of an edge (0x79 "Must be
+    // placed on a fence."), not beside another arch (an arch on an edge that
+    // shares a grid point: 0x4D), its catalog price; Ctrl takes it off
+    // (int(price x 0.8) back). Deleting the fence takes its arch with it.
+    Result placeFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch& arch);
+    Result deleteFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch* arch = nullptr);
     Result deleteFences(int level, int x0, int y0, int x1, int y1);
 
     // Foundation tool (cTSUserToolDeckFoundation, deckfoundations.txt

@@ -53,6 +53,19 @@ bool setFloor(Lot& lot, int level, int x, int y, int q, uint16_t pattern);
 bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation);
 uint8_t floorRotation(const Lot& lot, int level, int x, int y, int q);
 
+// Fence arches (fencearches.txt "fenceArch N", PartitionType 2): cPartition
+// Manager::AddWallToGraph puts them in their own wall graph (0x13) and in no
+// other, so they sit on a fence's edge beside it. None of the shipped lots
+// has one: the arch's style is taken as the base game's only arch (26),
+// inferred. Edges between two grid points, along the grid.
+struct FenceArch {
+    int level = 0, ax = 0, ay = 0, bx = 0, by = 0;
+};
+std::vector<FenceArch> fenceArches(const Lot& lot);
+bool hasFenceArch(const Lot& lot, int level, int ax, int ay, int bx, int by);
+bool addFenceArch(Lot& lot, int level, int ax, int ay, int bx, int by);
+bool removeFenceArch(Lot& lot, int level, int ax, int ay, int bx, int by);
+
 // Adds the underground level a pool needs (minLevel - 1): its grid points
 // 3 below the ground, no floors or rooms; the wall graphs' level range
 // follows. False if the lot has one already.

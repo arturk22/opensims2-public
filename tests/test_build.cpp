@@ -393,6 +393,31 @@ static void testRoof() {
     check(ed.undo() && lot.levelCount == 2 && lot.roofs.size() == roofs && funds(vm) == before, "undo takes the dormer back");
 }
 
+// Fence arches: on a fence, not beside another, gone with the fence.
+static void testFenceArch() {
+    Lot lot = flatLot();
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    BuildFence fence;
+    fence.guid = 0x2CB2A001, fence.price = 10, fence.rail = "rail", fence.post = "post";
+    BuildFenceArch arch;
+    arch.id = 26, arch.price = 50, arch.name = "arch";
+    auto r = ed.placeFenceArch(1, 3, 2, 4, 2, arch);
+    check(!r.ok && r.error == 0x79, "an arch needs a fence (0x79)");
+    ed.drawFences(1, 1, 2, 7, 2, fence);
+    r = ed.placeFenceArch(1, 3, 2, 4, 2, arch);
+    check(r.ok && r.cost == 50 && fenceArches(lot).size() == 1, "an arch on the fence for its price");
+    r = ed.placeFenceArch(1, 4, 2, 5, 2, arch);
+    check(!r.ok && r.error == 0x4D, "not next to another arch (0x4D)");
+    check(vm.world->wallBetween({3, 1, 1}, 0, 1, true), "the fence still blocks under the arch");
+    ed.deleteFences(1, 3, 2, 4, 2);
+    check(fenceArches(lot).empty(), "the arch goes with its fence");
+    check(ed.undo() && fenceArches(lot).size() == 1, "undo brings both back");
+}
+
 // The auto-roof's rectangles (ComputeRoofRects, 0x9a0a08).
 static void testAutoRoofRects() {
     const int W = 8, H = 6;
@@ -536,6 +561,7 @@ static void testWalkOver() {
 int main() {
     testStairs();
     testAutoRoofRects();
+    testFenceArch();
     testDesignCatalog();
     testWalkOver();
     testPool();

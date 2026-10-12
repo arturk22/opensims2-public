@@ -712,6 +712,65 @@ BuildEditor::Result BuildEditor::eraseRun(int level, int x0, int y0, int x1, int
     return r;
 }
 
+BuildEditor::Result BuildEditor::placeFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch& arch) {
+    Result r;
+    const int li = level - 1;
+    const Lot::Wall* w = findWall(lot_, li, ax, ay, bx, by);
+    if (std::abs(bx - ax) + std::abs(by - ay) != 1 || !w || !Lot::isFence(w->type)) {
+        r.error = 0x79;
+        r.message = "cannot place the arch: it goes on a fence";
+        return r;
+    }
+    if (hasFenceArch(lot_, li, ax, ay, bx, by)) {
+        r.ok = true;
+        r.message = "the arch is there already";
+        return r;
+    }
+    // FenceArchAdjacent: an arch on an edge meeting this one at a grid point.
+    for (const auto& f : fenceArches(lot_))
+        if (f.level == li && ((f.ax == ax && f.ay == ay) || (f.ax == bx && f.ay == by) || (f.bx == ax && f.by == ay) ||
+                              (f.bx == bx && f.by == by))) {
+            r.error = 0x4D;
+            r.message = "cannot place the arch next to another";
+            return r;
+        }
+    r.cost = arch.price;
+    if (r.cost > funds(vm_)) {
+        r.error = 0x16;
+        r.message = "not enough money (" + money(r.cost) + ")";
+        r.cost = 0;
+        return r;
+    }
+    Geometry before = capture();
+    addFenceArch(lot_, li, ax, ay, bx, by);
+    addFunds(vm_, -r.cost);
+    r.changed = 1;
+    changed();
+    commit(std::move(before), r.cost);
+    r.ok = true;
+    r.message = arch.name + " on " + point(ax, ay) + "-" + point(bx, by) + " for " + money(r.cost);
+    return r;
+}
+
+BuildEditor::Result BuildEditor::deleteFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch* arch) {
+    Result r;
+    if (!hasFenceArch(lot_, level - 1, ax, ay, bx, by)) {
+        r.ok = true;
+        r.message = "no arch there";
+        return r;
+    }
+    Geometry before = capture();
+    removeFenceArch(lot_, level - 1, ax, ay, bx, by);
+    r.cost = -int(float(arch ? arch->price : 0) * kBuildRefundRate);
+    addFunds(vm_, -r.cost);
+    r.changed = 1;
+    changed();
+    commit(std::move(before), r.cost);
+    r.ok = true;
+    r.message = "arch taken off for " + money(-r.cost);
+    return r;
+}
+
 BuildEditor::Result BuildEditor::drawFences(int level, int x0, int y0, int x1, int y1, const BuildFence& fence) {
     Result r;
     const auto sections = wallSections(x0, y0, x1, y1);

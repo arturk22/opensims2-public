@@ -46,11 +46,20 @@ public:
     };
     const Fence* fence(uint32_t guid) const;
 
+    // Fence arches (fencearches.txt): the CRES names of the part over the
+    // edge, the parts hanging east and west of the posts, and the post.
+    struct FenceArch {
+        std::string center, east, west, post;
+    };
+    // The base game's one arch (the lot keeps no style per arch: inferred).
+    const FenceArch* fenceArch() const { return arches_.empty() ? nullptr : &arches_.front(); }
+
 private:
     std::map<std::string, std::string> floors_, walls_; // lowercase pattern name -> material
     std::map<uint32_t, std::string> byGuid_;
     std::map<uint32_t, Roof> roofs_;
     std::map<uint32_t, Fence> fences_;
+    std::vector<FenceArch> arches_;
 
     std::string material(const std::map<std::string, std::string>& scripts, const std::string& pattern) const;
 };

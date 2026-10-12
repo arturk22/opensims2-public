@@ -132,7 +132,7 @@ bool isBuildEdit(const std::string& flag) {
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
            flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
-           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--delete-stairs" || flag == "--build-undo" || flag == "--build-redo";
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--fence-arch" || flag == "--delete-fence-arch" || flag == "--delete-stairs" || flag == "--build-undo" || flag == "--build-redo";
 }
 
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
@@ -195,6 +195,17 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                                    f.size() > 7 && f[7] == "whole");
             if (r.ok && vm.world)
                 r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
+        } else if (flag == "--fence-arch" || flag == "--delete-fence-arch") { // x0,y0,x1,y1[,level]
+            if (f.size() < 4)
+                throw std::runtime_error(flag + ": expected x0,y0,x1,y1[,level]");
+            const BuildFenceArch* arch = catalog.fenceArches().empty() ? nullptr : &catalog.fenceArches().front();
+            if (flag == "--fence-arch") {
+                if (!arch)
+                    throw std::runtime_error("--fence-arch: no fence arch in the catalog");
+                r = editor.placeFenceArch(num(f, 4, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), *arch);
+            } else {
+                r = editor.deleteFenceArch(num(f, 4, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), arch);
+            }
         } else if (flag == "--build-funds") { // the family's funds set to n (headless checks)
             vm::addFunds(vm, num(f, 0, 0) - vm::funds(vm));
             r.ok = true;
@@ -466,6 +477,8 @@ int cmdBuildCatalog(const std::string& res, bool verbose) {
     for (const auto& b : patterns.stairs())
         std::printf("modular stairs %d: %s, §%d a step (landing %08x, placeholder %08x, steps %08x %08x %08x)\n", b.id,
                     b.name.c_str(), b.price, b.objects[0], b.objects[1], b.objects[2], b.objects[3], b.objects[4]);
+    for (const auto& a : patterns.fenceArches())
+        std::printf("fence arch %d: %s, §%d (%s)\n", a.id, a.name.c_str(), a.price, a.center.c_str());
     for (const auto& r : patterns.roofProducts())
         std::printf("roof %d: %s, §%d (%s)\n", r.id, r.name.c_str(), r.price, r.defaultPattern.c_str());
     const Catalog objects = Catalog::load(index, true);

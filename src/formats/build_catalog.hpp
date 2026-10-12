@@ -92,6 +92,15 @@ struct BuildRoofProduct {
     uint32_t thumbnail = 0; // thumbnailResource instance (group 0x499DB772), 0 if none
 };
 
+// A fence arch (fencearches.txt "fenceArch N"): its models, and name,
+// description and price from catalog text "build" 143 at its catalogTextIndex.
+struct BuildFenceArch {
+    int id = 0;
+    std::string center, east, west, post;
+    std::string name, description;
+    int price = 0;
+};
+
 // Build-mode prices that are not in the data (docs/buy-build-mac.md §7).
 // A wall costs §70 a section (the game's catalog text; the binary's wall
 // cost path is not traced: inferred), and selling back what was built in
@@ -141,6 +150,7 @@ public:
     // roofs.txt's products (roof 0-11).
     const std::vector<BuildRoofProduct>& roofProducts() const { return roofProducts_; }
     const BuildRoofProduct* roofProduct(int id) const;
+    const std::vector<BuildFenceArch>& fenceArches() const { return arches_; }
     // A pattern by GUID ("0x...") or (part of) its name or material.
     const BuildPattern* find(const std::string& key, bool floor) const;
     const BuildPattern* byGuid(uint32_t guid) const;
@@ -156,6 +166,7 @@ private:
     std::vector<uint8_t> raise_, lower_, water_;
     std::vector<BuildStairs> stairs_;
     std::vector<BuildRoofProduct> roofProducts_;
+    std::vector<BuildFenceArch> arches_;
 };
 
 } // namespace os2

@@ -483,6 +483,7 @@ const char* saveUsage() {
            "              [--auto-roof tool 1-5|0[,keep]] (auto-roof: hip, gable, the mixes, the slab; 0 removes)\n"
            "              [--stairs product,x,y,level,dir[,endx,endy[,whole]]] [--delete-stairs part-id] (modular stairs)\n"
            "              [--dormer product 6-11,x,y,dir[,level]] (dormers)\n"
+           "              [--fence-arch|--delete-fence-arch x0,y0,x1,y1[,level]] [--build-funds n]\n"
            "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
            "       s2pkg objt-check <lot.package>...\n";
 }
