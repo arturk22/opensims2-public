@@ -1825,15 +1825,18 @@ próprio objeto (rodada 13):
   (render flags) = 0, 57 e 72–75 (alfa e RGB) = 255, 23 (rotation notches)
   = 2, 58 (versão) e 78 (look at score) = rótulos 49 e 13 do OBJD, e com
   "Use Default Placement flags" (rótulo 12) 4/5/13/42 = rótulos 6/3/5/4
-  (alturas, paredes vizinhas, colocação na parede, colocação); 7 vem de uma
-  virtual não seguida (`0x578`). Os atributos só são zerados com o
+  (alturas, paredes vizinhas, colocação na parede, colocação); 7 vem da
+  virtual `0x578`, **`cTSObject::GetDefaultNicenessMultiplier`** (BV
+  `0xb00b64`, confirmado na rodada 14): o **campo 45 do OBJD**
+  ("NicenessMultiplier" do catálogo), gravado como inteiro (`sth` em
+  `+0xa8`). Os atributos só são zerados com o
   terceiro argumento (aqui falso); os 8 temps do objeto (`+0x8a`) e
   `+0x1a0` são zerados. Para um objeto que não é parte de multi-tile
   (vtable `0x19c`) roda o **Init** (`RunTree(0)`), depois a árvore volta ao
   Main.
 O jogo grava o `ObjectError` e segue. A VM (`VM::resetAfterError`) faz o
-mesmo, menos o lugar livre da pessoa e a virtual do dado 7 (fica como
-estava); os dados além do 87 não existem na VM. `S2PKG_NO_RESET=1` mantém o
+mesmo, menos o lugar livre da pessoa (`0x2d8`, `FUN_00af87c8`, não lido) e o
+dado 7 (fica como estava; o jogo põe o campo 45 do OBJD: TODO); os dados além do 87 não existem na VM. `S2PKG_NO_RESET=1` mantém o
 Main morto para depurar. O orçamento de instruções (20000 por turno, a "Too
 many iterations" 0x44d do jogo, cujo limite não foi lido) também reinicia.
 
