@@ -88,6 +88,8 @@ one() { # one <lot> <outdir>
             if ($0 ~ / running "/) { start[name]=tick; what[name]=$0; sub(/.* running "/,"",what[name]); sub(/"$/,"",what[name]) }
             else { if (name in start && tick-start[name] > limit) printf "stuck|autonomy|%s in \"%s\" for %.1f game hours\n", name, what[name], (tick-start[name])/1800; delete start[name] }
         }
+        # a Sim removed from the lot (the dead, a child the social worker takes) ends what it was doing
+        / is gone \(removed from the lot\)$/ { if (what[$4] != "Falecer") delete start[$4] }
         /^  motives at tick|^after / { intable=1; next }
         intable && NF >= 10 && $1 ~ /#[0-9]+$/ {
             n=split("mood energy comfort hunger hygiene bladder environment social fun", mn, " ")

@@ -168,6 +168,11 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             seenBills.insert(oid); // already in the lot
     std::array<int16_t, 4> values{-1, -1, -1, -1};
     std::printf("  family %d funds %d\n", family, funds);
+    std::map<vm::ObjectId, uint32_t> simGuid; // 0 once reported gone
+    std::map<vm::ObjectId, std::string> simLabel;
+    for (vm::ObjectId id : sims)
+        if (const vm::Object* s = machine.object(id); s && s->person)
+            simGuid[id] = s->guid(), simLabel[id] = simName(*s);
     if (std::getenv("S2PKG_GLOBALS")) { // the simulator's globals (STR# 0x81) after loading
         std::printf("  globals:");
         for (size_t g = 0; g < 54; ++g)
@@ -408,8 +413,19 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         vm::cinematicRequests().clear();
         for (vm::ObjectId id : sims) {
             const vm::Object* s = machine.object(id);
-            if (!s || !s->person)
-                continue; // gone (a visitor who left; its ID may be another object's now)
+            if (!s || !s->person || s->guid() != simGuid[id]) {
+                // Gone: an urn took the dead, the social worker's car took
+                // a child away (Sub - Send Passengers Out of World removes
+                // them), a visitor left; its ID may be another object's now.
+                if (!simGuid[id])
+                    continue;
+                simGuid[id] = 0;
+                std::printf("  tick %6llu %s %-10s is gone (removed from the lot)\n",
+                            static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
+                            simLabel[id].c_str());
+                continue;
+            }
+            simLabel[id] = simName(*s);
             if (const bool in = s->position.inWorld(); in != onLot[id]) {
                 onLot[id] = in;
                 std::printf("  tick %6llu %s %-10s %s\n", static_cast<unsigned long long>(machine.ticks),
