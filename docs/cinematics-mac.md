@@ -207,8 +207,11 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
   colocação do ator de origem (Sim: a do `SimActor`; objeto: posição da VM e
   direção do dado 1), olhando pelo +Y da junta com +Z para cima (inferido: com
   −Z/+Y de câmera do Maya o primeiro beijo olharia para o chão; com +Y os
-  planos saem por cima do ombro, em altura de cabeça), FOV vertical do
-  `viewersGroup` e as barras do letterbox.
+  planos saem por cima do ombro, em altura de cabeça), FOV do
+  `viewersGroup` (radianos; rodada 15: ângulo horizontal no 4:3, a altura
+  do 4:3 mantida em janelas mais largas, `docs/camera-ui-mac.md` §1.1) e as
+  barras do letterbox (pós-processamento por cima da imagem, não mudam a
+  projeção).
 - Rodada 9 (`app/cinematic_player.*`, `render/screen_fx_layer.*`): a cena
   inteira como o §6 descreve: atores auto-criados (táxi, OVNIs, plumbobs
   da cena) com as animações da lista em sequência a partir da origem, as

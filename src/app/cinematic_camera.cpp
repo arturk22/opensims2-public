@@ -1,5 +1,7 @@
 #include "app/cinematic_camera.hpp"
 
+#include "render/camera.hpp"
+
 #include "formats/rcol.hpp"
 #include "formats/resindex.hpp"
 #include "formats/sim_actor.hpp"
@@ -152,9 +154,9 @@ simd_float4x4 CinematicCamera::view(double now) const {
 simd_float4x4 CinematicCamera::projection(double now, float aspect) const {
     const float n = 0.05f, fa = 1000.0f;
     // The scene graph viewer's convention (docs/camera-ui-mac.md 1.1): the
-    // field of view is the horizontal angle.
-    const float xs = 1.0f / std::tan(shot(now).fovY * 0.5f);
-    const float ys = xs * aspect;
+    // field of view is the horizontal angle (at 4:3; wider keeps its height).
+    const simd_float2 sc = fovScales(shot(now).fovY, aspect);
+    const float xs = sc.x, ys = sc.y;
     const float zs = fa / (n - fa);
     return simd_matrix(simd_make_float4(xs, 0, 0, 0), simd_make_float4(0, ys, 0, 0),
                        simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, zs * n, 0));

@@ -356,13 +356,10 @@ std::optional<simd_float2> LotCamera::project(simd_float3 w) const {
 
 simd_float4x4 LotCamera::projection(float aspect) const {
     float n = sample(def_.nearClip, 0.1f), fa = sample(def_.farClip, 2000.0f);
-    // The viewer's perspective (BV 0xccd254, the view volume's matrix):
-    // x scale = 1 / tan(fov / 2), y scale = x scale x width / height, so
-    // the FOV is the horizontal angle and a wider window shows less
-    // height (the game is "Vert-").
-    const float t = 1.0f / std::tan(radians(fov()) * 0.5f);
-    const float xs = def_.verticalFov ? t / aspect : t;
-    const float ys = def_.verticalFov ? t : t * aspect;
+    // The viewer's perspective (BV 0xccd254): the FOV is the horizontal
+    // angle, at 4:3 and narrower; wider windows keep the 4:3 height (ours).
+    const simd_float2 sc = fovScales(radians(fov()), aspect, def_.verticalFov);
+    const float xs = sc.x, ys = sc.y;
     float zs = fa / (n - fa);
     // Right-handed, Metal clip depth in [0, 1].
     return simd_matrix(simd_make_float4(xs, 0, 0, 0), simd_make_float4(0, ys, 0, 0),

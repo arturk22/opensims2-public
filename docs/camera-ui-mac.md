@@ -60,6 +60,41 @@ jogo). Corrigido em `LotCamera::projection` e na câmera das cinemáticas
 (`CasMode::makeCamera`) é nossa e fica com o seu FOV vertical
 (`CameraDef::verticalFov`).
 
+**Rodada 15 — releitura (binário) e o enquadramento em tela larga:**
+
+- O aspecto da matriz vem do alvo de renderização: `FUN_00ccd7b8` (o
+  `ViewDefinition` do viewer) relê o `ImplRenderTargetDef` (BV `0xecc860`:
+  largura, altura e aspecto do pixel do alvo/janela) e, se mudou,
+  `FUN_00cccfd8` guarda `+0xf4 = largura/altura` (com `usePixelAspectRatio`,
+  opção do painel de desempenho, ÷ aspecto do pixel) e marca os volumes de
+  visão sujos. O viewport do volume é normalizado (0..1, preso a 1), então
+  `a` = (w/h do viewport normalizado = 1 na tela cheia) × largura/altura
+  em pixels. Nenhum chamador converte o FOV: o `Update` (`0x86ffb8`)
+  interpola a tabela `fov` (radianos) por nível e passa direto. **O FOV é
+  horizontal para o aspecto real da janela, sem letterbox nem ajuste:** o
+  jogo é "Vert-".
+- Resoluções: `FUN_00abc90c` lê `ScreenModeResolution` (padrão **800×600**,
+  `defaultResWidth/Height`, máx. `maxResWidth/Height`) e aceita qualquer
+  modo ≥ 800×600 com largura > altura (`FUN_00abc4d4`), então tela larga
+  existe, mas o jogo foi feito e visto em 4:3.
+- Os números da câmera são os do jogo, lidos do `LiveCamera.txt` sem
+  ajuste: zoom `70 40 25 15 8 3` (distância 3D), pitch por nível
+  `(30..2)`/`(40..65)`, perto `0,6..0,1` e longe `2000` interpolados por
+  nível no `Update` (sem tabela, 1 e 100), pivô a `pivotheightabovefloor`
+  1 sobre o piso. Nada foi afinado para o FOV vertical antigo.
+- No 4:3 com `fov 45`, a vertical é `2·atan(tan 22,5°·3/4)` ≈ 34,7°: no
+  zoom mais perto (d = 3, pivô 1 sobre o piso, pitch ≈ 11°) se vê ±0,94
+  em volta do pivô, ~0,06 a 1,94 do piso, o Sim inteiro, como no jogo. Em
+  16:9 com o FOV horizontal puro seriam 26,4° (±0,70: cabeça e pés
+  cortados, o que a rodada 15 mostrava).
+- **O que o app faz (nosso, `fovScales` em `render/camera.hpp`)**: até 4:3
+  exatamente o binário (FOV horizontal); mais largo que 4:3, mantém a
+  altura do 4:3 e abre os lados ("Hor+", o que as correções de tela larga
+  do jogo fazem). Vale para o lote, o bairro (`fov 33`) e as cinemáticas.
+  O CAS segue com a câmera nossa (`fov` 30 vertical; o `CASCamera.txt` tem
+  `fov 54`/`30` por câmera do controlador `CreateASim`, não decodificado).
+  Captura: `docs/screenshots/r15-camera-fov-4x3.jpg`.
+
 **Lateralidade** (rodada 15): o mundo do jogo é destro com Z para cima,
 como o do código. Provas: no esqueleto `auskel` o Sim olha para +Y e os
 ossos `r_` ficam em +X (os `l_` em −X), o que só é a direita de quem olha
@@ -149,7 +184,7 @@ Pedidos internos (`HandleRequest`, binário):
 | distância da zoom table horizontal | distância 3D ao longo da visão |
 | suavização em ticks de 30 Hz | exponencial em quadros de 50 ms com velocidade mínima |
 | pan ∝ zoom | sim, por ser em pixels de tela |
-| FOV vertical | **horizontal** (binário, BV `0xccd254`; rodada 15: corrigido) |
+| FOV vertical | **horizontal** (binário, BV `0xccd254`); em janelas mais largas que 4:3 mantemos a altura do 4:3 (nosso) |
 | limitar ao lote | lote encolhido de `constraintwidth` (−10 = até 10 tiles para fora) |
 | seguir altura do piso/Sim | sim: andar do Sim e amostra de altura do piso |
 

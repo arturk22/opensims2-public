@@ -4,11 +4,31 @@
 
 #include <simd/simd.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <functional>
 #include <optional>
 
 namespace os2 {
+
+// The aspect at which the game's horizontal FOV is kept: its default mode,
+// 800x600 (BV 0xabc90c), and the 4:3 screens of 2004.
+inline constexpr float kFovReferenceAspect = 4.0f / 3.0f;
+
+// The projection's x and y scales for a field of view of `fovRadians`.
+// The binary (BV 0xccd254) takes it as the full horizontal angle at any
+// aspect: x = 1 / tan(fov / 2), y = x * width / height, so a window wider
+// than the game's 4:3 shows less height ("Vert-": at 16:9 the closest zoom
+// cuts a Sim's head and feet). Ours: up to 4:3 exactly that; wider, the
+// height of the 4:3 view stays and the sides open up ("Hor+", what the
+// widescreen fixes for the game do). `vertical` takes the angle as the
+// vertical one instead (our CAS framing).
+inline simd_float2 fovScales(float fovRadians, float aspect, bool vertical = false) {
+    const float t = 1.0f / std::tan(fovRadians * 0.5f);
+    const float ys = vertical ? t : t * std::min(aspect, kFovReferenceAspect);
+    return simd_make_float2(ys / aspect, ys);
+}
 
 // The live-mode lot camera, driven by a CameraDef from the game's camera
 // configuration (LiveCamera.txt), as the Mac binary's nTSSG::cCameraLive
@@ -40,7 +60,9 @@ namespace os2 {
 //
 // The lerp's dt is in milliseconds (binary). The FOV is the full
 // horizontal angle (binary: the view volume's matrix, BV 0xccd254, takes
-// x scale = 1 / tan(fov / 2) and y scale = x scale x aspect). Inferred: keyboard
+// x scale = 1 / tan(fov / 2) and y scale = x scale x aspect) at the game's
+// 4:3 (its default 800x600); wider windows keep the 4:3 height and see more
+// at the sides (ours, see fovScales). Inferred: keyboard
 // translation speed is pixels per 50 ms frame, keyboard rotation pixels per
 // second; the floor sample (centre and four corners mixed by
 // `cornersampleratio`); the minimum change is per update.

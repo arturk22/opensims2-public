@@ -183,12 +183,21 @@ int main() {
     check(!cam.restorePosition(4, true), "empty camera position");
 
     // The FOV is the horizontal angle (BV 0xccd254): x scale 1 / tan(fov / 2),
-    // y scale that times the aspect; the CAS camera keeps a vertical one.
+    // y scale that times the aspect, up to the game's 4:3; wider windows keep
+    // the 4:3 height (ours); the CAS camera keeps a vertical one.
     {
         LotCamera h(liveCamera());
-        const simd_float4x4 p = h.projection(2.0f);
         const float t = 1.0f / std::tan(45.0f * rad * 0.5f);
-        check(near(p.columns[0][0], t) && near(p.columns[1][1], 2 * t), "horizontal fov");
+        const simd_float4x4 a = h.projection(4.0f / 3.0f);
+        check(near(a.columns[0][0], t) && near(a.columns[1][1], t * 4 / 3), "horizontal fov at 4:3");
+        const simd_float4x4 s = h.projection(1.0f);
+        check(near(s.columns[0][0], t) && near(s.columns[1][1], t), "horizontal fov, narrower than 4:3");
+        const simd_float4x4 p = h.projection(16.0f / 9.0f);
+        check(near(p.columns[1][1], t * 4 / 3) && near(p.columns[0][0], t * 4 / 3 * 9 / 16),
+              "wider than 4:3 keeps the 4:3 height");
+        // At the closest zoom (3 along the view, LiveCamera.txt) a whole Sim
+        // (~1.8 tall) fits around the pivot 1 over the floor at 16:9.
+        check(3.0f / p.columns[1][1] > 0.9f, "closest zoom fits a Sim");
         CameraDef v = liveCamera();
         v.verticalFov = true;
         const simd_float4x4 q = LotCamera(v).projection(2.0f);
