@@ -5416,8 +5416,18 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 pollTutorial(gHeadlessClock);
             }
             if (auto q = argument(@"--pie")) {
-                const os2::vm::ObjectId id = os2::vm::findInteractionObject(gPie->vm(), *q);
-                const auto at = id ? gPie->anchor(id) : std::nullopt;
+                os2::vm::ObjectId id = os2::vm::findInteractionObject(gPie->vm(), *q);
+                if (!id && !q->empty()) // a Sim by its character name (N001_User00005)
+                    id = os2::vm::findSim(gPie->vm(), *q);
+                auto at = id ? gPie->anchor(id) : std::nullopt;
+                if (id && !at) // a Sim: its pick box comes with the first frame; until then where it stands, chest high
+                    for (const auto& s : gLotSims)
+                        if (os2::vm::ObjectId(s.id) == id && s.actor) {
+                            const os2::Vec3 sp = s.actor->transform ? os2::Vec3{s.actor->transform->t[0], s.actor->transform->t[1],
+                                                                                s.actor->transform->t[2]}
+                                                                    : s.actor->position;
+                            at = simd_make_float3(sp[0], sp[1], sp[2] + 1.2f);
+                        }
                 if (!at)
                     throw std::runtime_error("--pie: no drawn object \"" + *q + "\" with interactions");
                 if (!argument(@"--pivot")) {
