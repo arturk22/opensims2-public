@@ -294,7 +294,9 @@ void LotLighting::update(double seconds) {
     if (want != current_) {
         previous_ = current_;
         current_ = want;
-        changedAt_ = seconds;
+        // A forced state (the Buy/Build day/night button) snaps: the mode pauses the
+        // scene clock the blend runs on, so a fade would never advance.
+        changedAt_ = forced_.empty() ? seconds : seconds - 1.0e6;
     }
     const LightingState state = blended();
     renderer_.setEnvironmentLight(simd_make_float3(state.environment[0], state.environment[1], state.environment[2]));
