@@ -129,3 +129,41 @@ ouvido: o som foi conferido pelo log de saída (`OS2_SOUND_LOG=1`, `--sound-mix`
 | Bairro: enviar casa para a lixeira e recolocar | não achado (o botão de seta em 900,1130 da bandeja não responde; clicar numa casa abre o cartão com a família, sem a opção) |
 | Bolo, bebê, despejar, foto da família na lixeira, mudança às 7:00 | não testado ao vivo (sem tempo; `3a1656e`, `c716aec` trazem testes sem tela) |
 | Menu "Aprenda a Jogar" | não refeito (a frente do tutorial só tem a documentação em `f91bebb`) |
+
+# Rodada 12, passada 5
+
+Mesmo método (CGEvent, pid próprio, janela trazida para a frente e posição conferida antes de cada clique, captura só da região da janela).
+Lote 68 (`--hood N001 --hood-lot 68 --vm --ui live`), bairro (`--hood N001`) e o menu com "Aprenda a Jogar". Problemas de ambiente: um
+diálogo do macOS ("s2pkg would like to access files in your Documents folder", de outro agente) e um aviso de reabrir janelas após
+"crash" ficaram por cima do centro da janela o tempo todo (atrapalham a leitura do centro da cena, não os cliques); depois de matar
+o app por pid o macOS passa a perguntar "Reopen/Ignore" ao abrir de novo: abrir com `-ApplePersistenceIgnoreState YES`.
+
+| Passo | Resultado |
+|-------|-----------|
+| Menu → Aprenda a Jogar: listas O Básico (3) / Além do Básico (2), miniatura e texto mudam com a seleção, Jogar | passa |
+| Lição 1: painel "Passo n de 32", Anterior/Avançar (Anterior volta um passo), Avançar apagado nos passos que esperam um clique | passa |
+| Lição 1: clicar o controle indicado avança (zoom +, girar, modo Simulação, cabeça do João, modo Compra); câmera segue o zoom/giro; Vir Aqui (passo 12) manda o Sim andar e avança | passa |
+| Lição 1: controles desligados ficam sombreados e inertes (botão de ação do Sim) | passa |
+| Lição 1: seta vermelha saltitante | **falhava, corrigido**: a seta ficava uma seta inteira longe do controle e no passo 2 apontava para o botão vizinho (Comprar) em vez do Zoom |
+| Lição 1: "Sair" pelas Opções → "Sair sem Salvar" | fecha o app (o jogo também sai) em vez de voltar ao menu; fim da lição (passo 32, "Exit Lot") não alcançado |
+| Lição 2: abre com 13 passos, dois Sims no seletor, seta na miniatura do João | passa |
+| Comprar: Design (0xCC607030): diálogo, 4 amostras, "Custo para Atualizar: §15", Aceitar só acende com mudança, Aceitar cobra §15 (§2.250 → §2.235), desfazer devolve | passa |
+| Comprar: dia/noite | **falhava, corrigido**: mostrava o estado anterior um clique atrasado (o modo pausa o relógio da cena em que o fade corre) |
+| Comprar: conta-gotas na mesa de jantar da lote 68 | pega "A Mesa Conversa-Fiada" (§275), não a bétula; passa |
+| Comprar: conta-gotas no sofá Art Nouveau | não testado (ficou atrás do diálogo do macOS) |
+| Convés, telhado automático, sons do Construir | não testado (sem tempo; sons só pelo log no encerramento) |
+| Sentar de frente para a cadeira e sem flutuar | não observado ao vivo (Sims dentro de casa, paredes altas, câmera cobrindo a casa) |
+| Vir Aqui no gramado: pie com "Vir Aqui" / "Vir Saltitando Aqui", o Sim anda até lá | passa (Sim parado em pé durante a espera: não avaliado) |
+| Bairro: cartão do lote, painel Informações, Opções (Salvar/Sair/Vizinhança...), painel de terreno | abrem e fecham sem erro |
+| Bairro: puck sobre painéis, câmera mantida após pôr lote, diálogo de nome, lixeira com Delete e filtros | não testado |
+| Vida: bolo de aniversário e contas | não testado |
+
+## Corrigido na rodada 12, passada 5
+
+- A seta do tutorial usava o canto do controle na direção da seta; o binário (`docs/tutorial-mac.md` §3) a põe no canto **oposto**.
+  Agora a ponta cai no centro do controle quando a seta está parada e se afasta no salto.
+- O botão Dia/Noite do Comprar/Construir força o estado de luz sem fade (o fade andava pelo relógio da cena, parado nesses modos).
+
+## Não corrigido
+
+Ver as entradas "QA ao vivo" do `TODO.md` (rodada 12, passada 5).
