@@ -52,6 +52,14 @@ public:
     // Mouse in canvas pixels (origin top left) of a canvas w x h seen by `camera`.
     void mouseMoved(const LotCamera& camera, simd_float2 p, float w, float h);
     void mouseDown(LotCamera& camera, simd_float2 p, float w, float h);
+    // The lot tools press, drag and release (cTSUserToolMoveLot's MouseEvent
+    // 4/3/5): while the button is held the lot stays where it was pressed and
+    // turns to face the drag (RotateLot, hood::frontFromDrag); the release
+    // puts it down (a new empty lot asks its name first).
+    void mouseDragged(const LotCamera& camera, simd_float2 p, float w, float h);
+    void mouseUp(const LotCamera& camera, simd_float2 p, float w, float h);
+    // Headless: a press at the placement's middle dragged by (dx, dy) world units.
+    void dragTurn(float dx, float dy);
     // Esc: closes the dialog.
     void escape();
     // Enters a lot (onEnterLot).
@@ -113,6 +121,9 @@ private:
     int turn_ = -1;          // the turn the keys chose (-1: none yet)
     LotPlacement armed_;     // the empty lot waiting for the place-lot dialog
     std::optional<simd_int2> lastTile_; // the corner tile under the mouse
+    std::optional<simd_float2> pressGround_; // the ground under the press (this+0xf8), while the button is held
+    std::optional<simd_float2> groundAt(const LotCamera& camera, simd_float2 p, float w, float h) const;
+    void turnTo(int front);
     const HoodLot* lotAt(const LotCamera& camera, simd_float2 p, float w, float h) const;
     void carryOut(const HoodBins::Request& r);
     void lotClicked(const HoodLot& lot);

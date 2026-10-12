@@ -132,6 +132,14 @@ static void lotTools() {
     li.x = 5, li.y = 6, li.width = 3, li.depth = 5, li.creationFrontEdge = 1, li.frontEdge = 2;
     const TileRect lr = lotRect(li);
     check(lr.x1 - lr.x0 == 5 && lr.y1 - lr.y0 == 3, "a lot turned a quarter: its size swapped");
+    // RotateLot: the drag's direction from the press picks the front edge.
+    check(!frontFromDrag(100, 100, 110, 105), "drag: under 16 units (|dx| + |dy|) turns nothing");
+    check(frontFromDrag(100, 100, 130, 100) == 2, "drag towards +x: front 2 (x-max)");
+    check(frontFromDrag(100, 100, 100, 130) == 1, "drag towards +y: front 1 (y-max)");
+    check(frontFromDrag(100, 100, 70, 100) == 0, "drag towards -x: front 0 (x-min)");
+    check(frontFromDrag(100, 100, 100, 70) == 3, "drag towards -y: front 3 (y-min)");
+    check(frontFromDrag(100, 100, 130, 120) == 2 && frontFromDrag(100, 100, 120, 130) == 1,
+          "drag: quarters centred on the axes");
 }
 
 // Adding and removing decorations in the occupants resource (Occupants::addOccupant).

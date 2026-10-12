@@ -377,6 +377,56 @@ const HoodLot* HoodMode::lotAt(const LotCamera& camera, simd_float2 p, float w, 
     return view_->pick(eye, simd_normalize(q.xyz / q.w - eye));
 }
 
+std::optional<simd_float2> HoodMode::groundAt(const LotCamera& camera, simd_float2 p, float w, float h) const {
+    if (w <= 0 || h <= 0)
+        return std::nullopt;
+    const simd_float4x4 m = simd_mul(camera.projection(w / h), camera.view());
+    const simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
+    const simd_float3 eye = camera.eye();
+    const auto g = view_->groundAt(eye, simd_normalize(q.xyz / q.w - eye));
+    if (!g)
+        return std::nullopt;
+    return simd_make_float2(g->x, g->y);
+}
+
+// RotateLot (BV 0x222b2c): a new front from the drag, the lot where it is.
+void HoodMode::turnTo(int front) {
+    if (front == turn_)
+        return;
+    turn_ = front;
+    std::printf("opensims2: lot turned to %d by the drag\n", turn_);
+    std::fflush(stdout);
+    if (lastTile_)
+        pending_ = placementAt(lastTile_->x, lastTile_->y);
+    view_->showPlacement(pending_.any ? &pending_.rect : nullptr, pending_.ok, pending_.height);
+}
+
+void HoodMode::mouseDragged(const LotCamera& camera, simd_float2 p, float w, float h) {
+    if (!pressGround_ || !placingLot() || decorating())
+        return;
+    if (auto g = groundAt(camera, p, w, h))
+        if (auto f = hood::frontFromDrag(pressGround_->x, pressGround_->y, g->x, g->y))
+            turnTo(*f);
+}
+
+void HoodMode::mouseUp(const LotCamera&, simd_float2, float, float) {
+    if (!pressGround_)
+        return;
+    pressGround_.reset();
+    if (placingLot() && !decorating())
+        place(pending_); // invalid: the lot stays in hand
+}
+
+void HoodMode::dragTurn(float dx, float dy) {
+    if (!pending_.any)
+        return;
+    lastTile_ = simd_make_int2(pending_.x, pending_.y);
+    const float cx = float(pending_.rect.x0 + pending_.rect.x1) * hood::kHoodCellSize / 2;
+    const float cy = float(pending_.rect.y0 + pending_.rect.y1) * hood::kHoodCellSize / 2;
+    if (auto f = hood::frontFromDrag(cx, cy, cx + dx, cy + dy))
+        turnTo(*f);
+}
+
 void HoodMode::mouseMoved(const LotCamera& camera, simd_float2 p, float w, float h) {
     ui_->setCanvas(int(w), int(h));
     ui_->hover(p);
@@ -413,8 +463,11 @@ void HoodMode::mouseDown(LotCamera& camera, simd_float2 p, float w, float h) {
     if (decorClick(camera, p, w, h))
         return;
     if (t == HoodBins::Tool::PlaceEmpty || t == HoodBins::Tool::PlaceBin || (t == HoodBins::Tool::MoveLot && movingLot_)) {
+        // DoMouseDown (BV 0x222e20): the ground point kept, the lot put down on release.
         updatePlacement(camera, p, w, h);
-        place(pending_);
+        pressGround_ = groundAt(camera, p, w, h);
+        if (!pressGround_) // off the terrain: as a click
+            place(pending_);
         return;
     }
     if (const HoodLot* lot = lotAt(camera, p, w, h))
@@ -584,6 +637,7 @@ void HoodMode::escape() {
     }
     movingLot_ = 0;
     turn_ = -1;
+    pressGround_.reset();
     view_->showPlacement(nullptr, false, 0);
     if (ui_->bins().tool() != HoodBins::Tool::None)
         ui_->bins().cancelTool();
@@ -707,6 +761,15 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
                         pending_.ok ? "ok" : pending_.why.c_str(), pending_.rect.x0, pending_.rect.y0, pending_.rect.x1,
                         pending_.rect.y1, pending_.turn);
             std::fflush(stdout);
+            // --hood-drag dx,dy: the button held at the lot's middle and dragged (RotateLot).
+            if (auto d = value("--hood-drag")) {
+                const auto c = d->find(',');
+                dragTurn(std::stof(d->substr(0, c)), std::stof(d->substr(c + 1)));
+                std::printf("opensims2: after the drag: %s, rect (%d, %d)-(%d, %d), turn %d\n",
+                            pending_.ok ? "ok" : pending_.why.c_str(), pending_.rect.x0, pending_.rect.y0,
+                            pending_.rect.x1, pending_.rect.y1, pending_.turn);
+                std::fflush(stdout);
+            }
             view_->showPlacement(pending_.any ? &pending_.rect : nullptr, pending_.ok, pending_.height);
             camera.setPivot(simd_make_float3(float(pending_.rect.x0 + pending_.rect.x1) * 5.0f,
                                              float(pending_.rect.y0 + pending_.rect.y1) * 5.0f, pending_.height));
@@ -786,7 +849,7 @@ bool has(const std::vector<std::string>& args, const char* flag) {
 std::vector<std::string> hoodLotArguments(const std::vector<std::string>& args, const std::string& hood, uint32_t lot) {
     auto out = without(args, {"--hood", "--hood-lot", "--hood-hover", "--hood-select", "--screenshot", "--pivot",
                               "--zoom", "--orientation", "--lot", "--hood-panel", "--hood-family", "--hood-tool",
-                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone", "--hood-info", "--hood-options-window", "--hood-package", "--hood-friends", "--hood-story", "--hood-story-text", "--hood-decor-sort", "--hood-decor-pick", "--hood-decor-place"});
+                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-drag", "--hood-lot-name", "--hood-lot-zone", "--hood-info", "--hood-options-window", "--hood-package", "--hood-friends", "--hood-story", "--hood-story-text", "--hood-decor-sort", "--hood-decor-pick", "--hood-decor-place"});
     out.insert(out.end(), {"--hood", hood, "--hood-lot", std::to_string(lot)});
     if (!has(out, "--vm"))
         out.push_back("--vm");

@@ -3517,6 +3517,8 @@ void unloadScene() {
         gPie->release([self canvasPoint:e]);
     if (gBuild && gBuild->active())
         gBuild->mouseUp(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
+    if (gHood)
+        gHood->mouseUp(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
 }
 
 // The mouse ray (world space) through a canvas point.
@@ -3561,6 +3563,8 @@ void unloadScene() {
         gPie->hover([self canvasPoint:e]);
     if (gBuild && gBuild->active())
         gBuild->mouseDrag(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
+    if (gHood)
+        gHood->mouseDragged(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
 }
 
 - (void)rightMouseDragged:(NSEvent*)e {
@@ -4776,7 +4780,10 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         for (size_t k = 0; k < steps.size() && !gPendingScene && !gQuitRequested; ++k) {
             gStepsUsed = k + 1;
             if (steps[k].kind == os2::FlowStep::Kind::Click)
+            {
                 gHood->mouseDown(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+                gHood->mouseUp(*view.camera, simd_make_float2(steps[k].x, steps[k].y), float(w), float(h));
+            }
         }
         if (gPendingScene)
             return;

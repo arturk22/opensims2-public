@@ -216,6 +216,14 @@ LotResult moveLot(const std::filesystem::path& folder, const PlacementWorld& wor
 LotResult moveLotToBin(const std::filesystem::path& folder, uint32_t lot, const std::filesystem::path& catalogDir,
                        const std::filesystem::path& forbidden = {});
 
+// cTSUserToolPlaceLotBase::ChangeRotationDueToMouseDrag (FUN_00a27080, used
+// by RotateLot BV 0x222b2c and the other two lot tools while the button is
+// held): the front edge the drag from the press point (fromX, fromY) to the
+// mouse (toX, toY), neighborhood world units, points to; nothing while
+// |dx| + |dy| < 16. front = floor(4.5 - 2 (atan2(dy, dx) + pi) / pi) mod 4,
+// so +x -> 2, +y -> 1, -x -> 0, -y -> 3 (the edges' own numbers).
+std::optional<int> frontFromDrag(float fromX, float fromY, float toX, float toY);
+
 // The (x, y, front) placements of a lot of base info `base` with its corner
 // near (x, y) that pass the checks and the road match, the turn nearest the
 // lot's creation first (a convenience: the game turns the lot with the keys).

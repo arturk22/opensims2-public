@@ -506,6 +506,17 @@ bool roadsMatch(const LotInfo& base, int front, const std::array<bool, 4>& place
     return true;
 }
 
+std::optional<int> frontFromDrag(float fromX, float fromY, float toX, float toY) {
+    const float dx = toX - fromX, dy = toY - fromY;
+    if (std::fabs(dx) + std::fabs(dy) < 16.0f) // FLOAT_0274b69c
+        return std::nullopt;
+    const double a = std::atan2(double(dy), double(dx));
+    const float f = float((a + 3.1415927410125732) * -2.0 / 3.1415927410125732 + 4.5);
+    int n = int(std::floor(f)) + 4;
+    n %= 4; // C truncation; never negative here, the binary clamps to 0..3
+    return std::clamp(n, 0, 3);
+}
+
 std::optional<std::pair<int, Placement>> findFront(const PlacementWorld& world, const LotInfo& base, int x, int y,
                                                     uint32_t self, int preferred) {
     std::vector<int> order;
