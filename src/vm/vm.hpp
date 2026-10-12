@@ -280,13 +280,11 @@ public:
     // the name of every BHAV.
     std::optional<uint16_t> behaviorByName(uint32_t group, const std::string& name);
     // OBJD (group, instance) with this GUID; the first scan reads every OBJD.
+    // A GUID none has goes to the fallback once (the neighbourhood's
+    // character files: every neighbor's Sim has its definition in the game,
+    // loaded or not; loadLot sets it).
     std::optional<std::pair<uint32_t, uint16_t>> definitionByGuid(uint32_t guid);
-    // A neighbor's definition: definitionByGuid, or once the fallback (the
-    // neighbourhood's character files: every neighbor's Sim has its
-    // definition in the game, loaded or not; loadLot sets it). Only the
-    // neighbor's definition owner (0x26) and the sweep's stand-ins use it:
-    // letting every GUID lookup reach the characters brings the visitors
-    // to the lots and exposes what is not right with them yet (TODO.md).
+    // A neighbor's definition (the same lookup; owner 0x26 and the sweep).
     std::optional<std::pair<uint32_t, uint16_t>> characterDefinition(uint32_t guid);
     using GuidFallback = std::function<std::optional<std::pair<uint32_t, uint16_t>>(CodeLibrary&, uint32_t guid)>;
     void setGuidFallback(GuidFallback f) { guidFallback_ = std::move(f); }
