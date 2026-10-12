@@ -6,6 +6,7 @@
 #include "formats/hood_moves.hpp"
 #include "formats/lot_evict.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -214,9 +215,49 @@ static void flattenRoads() {
     };
     check(at(4, 7) == 0.9375f && at(5, 8) == 0.9375f, "flatten: a strip on the front road takes its height, in 0.1875 steps");
     check(at(10, 7) == 0.5625f && at(11, 8) == 0.5625f, "flatten: a free strip takes its first road's corner");
-    check(at(8, 4) == -100.0f, "flatten: a strip whose road meets lot vertices of two heights stays");
-    check(f.roads.size() == 2 && f.roadHeights.count(0) && f.roadHeights.at(0)[0] == 0.9375f + 0.4f,
+    // (The strip stays; SmoothenContainingRoadSegment then levels its road
+    // across, the lot's vertex height kept.)
+    check(at(8, 4) == 2.0f && at(8, 5) == 2.0f, "flatten: a strip whose road meets lot vertices of two heights stays");
+    check(f.roads.size() == 3 && f.roadHeights.count(0) && f.roadHeights.at(0)[0] == 0.9375f + 0.4f,
           "flatten: the levelled roads are laid 0.4 over the new terrain");
+}
+
+// SmoothenRoadsConnectedToRectangle / SmoothenContainingRoadSegment
+// (docs/neighborhood-mac.md 17.3): a straight road along x next to a new
+// lot, with a bump, is eased to steps of 1.1 at most; the vertices next to
+// the lot keep its height, the road's ends stay.
+static void smoothenRoadSegment() {
+    Terrain t;
+    t.width = t.height = 20, t.gridWidth = t.gridHeight = 21;
+    t.heights.assign(21 * 21, 0.0f);
+    auto set = [&](int x, int y, float h) { t.heights[size_t(y) * 21 + size_t(x)] = h; };
+    set(2, 3, 5.0f), set(2, 4, 5.0f);
+    Occupants o;
+    for (int x = 0; x < 10; ++x) {
+        Road r;
+        r.at.position = {float(x) * 10 + 5, 35, 0};
+        r.at.boundsMin = {float(x) * 10, 30};
+        r.at.boundsMax = {float(x) * 10 + 10, 40};
+        r.connections = uint8_t((x > 0 ? 0x1 : 0) | (x < 9 ? 0x4 : 0)); // along x
+        r.corners = {{{float(x) * 10, 30, 0.4f}, {float(x) * 10 + 10, 30, 0.4f},
+                      {float(x) * 10 + 10, 40, 0.4f}, {float(x) * 10, 40, 0.4f}}};
+        o.roads.push_back(r);
+    }
+    Neighborhood hood;
+    PlacementWorld world;
+    world.hood = &hood, world.terrain = &t, world.occupants = &o;
+    const TileRect R{5, 4, 8, 8};
+    const RoadFlatten f = flattenAbuttingRoads(world, R, 3, 0.0f);
+    auto at = [&](int x, int y) {
+        auto it = f.heights.find({x, y});
+        return it == f.heights.end() ? t.heights[size_t(y) * 21 + size_t(x)] : it->second;
+    };
+    check(at(2, 3) < 5.0f && at(2, 3) == at(2, 4), "smoothen: the bump comes down, level across the road");
+    bool gentle = true;
+    for (int x = 0; x < 10; ++x)
+        gentle &= std::fabs(at(x + 1, 3) - at(x, 3)) <= 1.1f + 0.35f;
+    check(gentle, "smoothen: no step much steeper than 1.1 along the road");
+    check(at(0, 3) == 0.0f && at(6, 3) == 0.0f, "smoothen: the ends and the vertices by the lot stay");
 }
 
 // IsOKToPlaceObjectAtCurrentLocation's errors (docs/neighborhood-mac.md 15.4).
@@ -260,6 +301,7 @@ static void decorationRules() {
 
 int main() {
     flattenRoads();
+    smoothenRoadSegment();
     decorationRules();
     decorations();
     evictCleanup();

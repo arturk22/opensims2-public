@@ -888,9 +888,137 @@ RoadFlatten flattenAbuttingRoads(const PlacementWorld& world, const TileRect& R,
         out.lines.push_back(std::to_string(roads.size()) + " abutting roads on edge " + std::to_string(i) +
                             " flattened to " + std::to_string(level));
     }
-    // SmoothenRoadsConnectedToLot then lays the roads on the terrain again
-    // (road vtable 0x5c(1); inferred: each corner 0.4 over its vertex, as
-    // FlattenToTerrain; SmoothenContainingRoadSegment is not reproduced).
+    // SmoothenRoadsConnectedToLot (BV 0xa26cf4) = the occupant manager's
+    // SmoothenRoadsConnectedToRectangle (BV 0x557a18): the roads over the
+    // lot are marked visited (road interface vtable 0x5c(1): a flag at
+    // +0x6c, read by 0x64); the roads of the rectangle grown by one tile
+    // (clamped to the neighborhood) that are not visited: a bend or an
+    // intersection (0x4c IsAnIntersectionOrBend) is marked visited, a
+    // straight one has its segment smoothed (SmoothenContainingRoadSegment).
+    // Inferred: the visited flags start clear (the begin message 0x0C2BD5B7).
+    {
+        std::vector<uint8_t> visited(world.occupants->roads.size(), 0);
+        auto bend = [](const Road& r) { return (r.connections & 0x5) && (r.connections & 0xA); };
+        auto roadsIn = [&](const TileRect& q) {
+            std::vector<size_t> v;
+            for (size_t k = 0; k < world.occupants->roads.size(); ++k)
+                if (overlaps(q, occupantTiles(world.occupants->roads[k].at)))
+                    v.push_back(k);
+            return v;
+        };
+        auto lotIn = [&](const TileRect& q) { return overlaps(q, R) || lotOver(world, q) != nullptr; };
+        auto visitedIn = [&](const TileRect& q) {
+            for (size_t k : roadsIn(q))
+                if (visited[k])
+                    return true;
+            return false;
+        };
+        for (size_t k : roadsIn(R))
+            visited[k] = 1;
+        const TileRect ring{std::clamp(R.x0 - 1, 0, tilesX), std::clamp(R.y0 - 1, 0, tilesY),
+                            std::clamp(R.x1 + 1, 0, tilesX), std::clamp(R.y1 + 1, 0, tilesY)};
+        // DAT_02734bd0 / DAT_02734bc0: direction 0 -x, 1 +y, 2 +x, 3 -y.
+        constexpr int kDx[4] = {-1, 0, 1, 0}, kDy[4] = {0, 1, 0, -1};
+        size_t smoothed = 0;
+        for (size_t k : roadsIn(ring)) {
+            const Road& road = world.occupants->roads[k];
+            if (visited[k])
+                continue;
+            if (bend(road)) {
+                visited[k] = 1;
+                continue;
+            }
+            // CollectRoadOccupantsInSegment (BV 0x556f40): from the road along
+            // its axis both ways, cell by cell, while the road has a
+            // connection that way and the next cell's road is no bend.
+            TileRect seg = occupantTiles(road.at);
+            const bool even = road.connections & 0x5, odd = road.connections & 0xA;
+            if (even || odd) {
+                int dir = even ? 0 : 3;
+                for (int pass = 0; pass < 2; ++pass) {
+                    if (pass == 1)
+                        dir = (dir + 2) & 3;
+                    const TileRect start = occupantTiles(road.at);
+                    int x = start.x0, y = start.y0;
+                    const Road* cur = &road;
+                    while (cur && (cur->connections & (1 << dir))) {
+                        x += kDx[dir], y += kDy[dir];
+                        const TileRect cell{x, y, x + 1, y + 1};
+                        const Road* next = nullptr;
+                        for (const Road* r : roadsOver(*world.occupants, cell)) {
+                            next = r;
+                            break;
+                        }
+                        if (next && bend(*next))
+                            next = nullptr;
+                        cur = next;
+                        if (cur)
+                            seg = {std::min(seg.x0, x), std::min(seg.y0, y), std::max(seg.x1, x + 1), std::max(seg.y1, y + 1)};
+                    }
+                }
+            }
+            // SmoothenContainingRoadSegment (BV 0x5575c0): the segment's vertex
+            // pairs across the road, one per step along it: fixed where a lot
+            // or a visited road is round the vertex or the one across (taking
+            // that one's height) and at both ends, else free within +/-10 of
+            // its height; FUN_00553d90 then, 20 times over, eases every step
+            // steeper than 1.1 by 0.3 of the excess from both sides (within
+            // their ranges); both vertices of each pair get the value.
+            const bool alongX = seg.y1 - seg.y0 == 1;
+            const int len = alongX ? seg.x1 - seg.x0 : seg.y1 - seg.y0;
+            struct Entry {
+                float v, hi, lo;
+            };
+            std::vector<Entry> e(size_t(len + 1));
+            for (int i = 0; i <= len; ++i) {
+                const int x = alongX ? seg.x0 + i : seg.x0, y = alongX ? seg.y0 : seg.y0 + i;
+                const int ox = alongX ? x : x + 1, oy = alongX ? y + 1 : y; // across the road
+                const TileRect a{x - 1, y - 1, x + 1, y + 1};
+                const TileRect b{ox - 1, oy - 1, ox + 1, oy + 1};
+                float v;
+                bool fixedHere = true;
+                if (lotIn(a))
+                    v = vertex(x, y);
+                else if (lotIn(b))
+                    v = vertex(ox, oy);
+                else if (visitedIn(a))
+                    v = vertex(x, y);
+                else if (visitedIn(b))
+                    v = vertex(ox, oy);
+                else
+                    v = vertex(x, y), fixedHere = i == 0 || i == len;
+                e[size_t(i)] = {v, fixedHere ? v : v + 10.0f, fixedHere ? v : v - 10.0f};
+            }
+            for (int it = 0; it < 20; ++it)
+                for (int i = 0; i <= len; ++i)
+                    for (int j : {i - 1, i + 1}) {
+                        if (j < 0 || j > len)
+                            continue;
+                        Entry& me = e[size_t(i)];
+                        Entry& other = e[size_t(j)];
+                        const float d = me.v - other.v;
+                        if (d > 1.1f) {
+                            const float ease = (d - 1.1f) * 0.3f;
+                            me.v = std::max(me.v - ease, me.lo);
+                            other.v = std::min(other.v + ease, other.hi);
+                        }
+                    }
+            for (int i = 0; i <= len; ++i) {
+                const int x = alongX ? seg.x0 + i : seg.x0, y = alongX ? seg.y0 : seg.y0 + i;
+                const int ox = alongX ? x : x + 1, oy = alongX ? y + 1 : y;
+                out.heights[{x, y}] = e[size_t(i)].v;
+                out.heights[{ox, oy}] = e[size_t(i)].v;
+            }
+            for (size_t r2 : roadsIn(seg))
+                out.roads.insert(r2);
+            ++smoothed;
+        }
+        if (smoothed)
+            out.lines.push_back(std::to_string(smoothed) + " road segments round the lot smoothed");
+    }
+    // Then the roads lie on the terrain again (each corner 0.4 over its
+    // vertex, cTSNHoodRoadOccupant::FlattenToTerrain; inferred to follow the
+    // end message 0x8C2BD74C).
     for (size_t k : out.roads) {
         const Road& road = world.occupants->roads[k];
         std::array<float, 4> z{};

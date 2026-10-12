@@ -1181,8 +1181,7 @@ O que o §15 leu, agora no opensims2, mais o que esta frente leu no binário
   de fora (§15.2) antes de alisar o terreno; as ruas mexidas são deitadas de
   novo no terreno, cada canto 0,4 acima do seu vértice (**inferido**: o
   `SmoothenRoadsConnectedToLot` chama a vtable `0x5c(1)` da rua, lida como o
-  `FlattenToTerrain`; o `SmoothenContainingRoadSegment` das ruas de fora do
-  anel não foi reproduzido; pontes ficam de fora). O recurso de ocupantes
+  `FlattenToTerrain`; o `SmoothenContainingRoadSegment`: rodada 14, §17.3; pontes ficam de fora). O recurso de ocupantes
   ganhou `Occupants::setRoadHeights` (só o z dos cantos). Inferido também:
   a vtable `0x50(ret, 1)` do tool é o `ExpandVertexRect` de 1, e o lote do
   bairro (vtable `0xec`) o primeiro que cruza o retângulo. Teste em
@@ -1307,4 +1306,41 @@ carga. Agora cada lote guarda o imposter lido (antes dos materiais) e o
 modelo no renderer, e o `refreshLightMap` refaz os materiais de cada um com a
 sombra nova (`Renderer::replaceObject`). Conferido só compilando e no
 caminho da carga (o clique na janela de Gráficos sem tela não foi exercitado).
+
+### 17.3 `SmoothenRoadsConnectedToRectangle` e `SmoothenContainingRoadSegment` (binário)
+
+`SmoothenRoadsConnectedToLot` (BV `0xa26cf4`) chama a vtable `0x50` do
+gerente de ocupantes = `SmoothenRoadsConnectedToRectangle(rect)` (BV
+`0x557a18`), entre as mensagens `0x0C2BD5B7` e `0x8C2BD74C`:
+
+1. as ruas do retângulo (`GetOccupants(rect, 2)`) recebem a vtable
+   **`0x5c(1)` da interface de rua, que só liga uma flag** (`+0x6c`,
+   "visitada"; `0x64` a lê) — não é o `FlattenToTerrain` (o §16 inferia);
+2. o retângulo crescido de 1 tile (preso ao tamanho do bairro, `+0x50/+0x54`):
+   para cada rua não visitada, uma curva ou cruzamento (vtable `0x4c` =
+   `IsAnIntersectionOrBend`) só fica visitada; uma reta tem o seu trecho
+   alisado por **`SmoothenContainingRoadSegment`** (BV `0x5575c0`):
+   - `CollectRoadOccupantsInSegment` (BV `0x556f40`): pelas ligações da rua
+     (vtable `0x48(dir)` = bit `dir` do byte de ligações; direções 0 −x, 1 +y,
+     2 +x, 3 −y, `DAT_02734bd0/bc0`), anda célula a célula nos dois sentidos
+     do eixo enquanto há ligação e a rua da célula seguinte não é curva; o
+     retângulo do trecho é a união das células (com ligações nos dois eixos,
+     ou nenhuma, o trecho é a própria rua);
+   - um par de vértices por passo ao longo do trecho (o vértice e o do outro
+     lado da rua); fixo (com a altura do vértice, ou a do outro lado quando é
+     ele que tem lote/rua visitada em volta) se há um lote (bairro vtable
+     `0xec`) ou uma rua visitada nas 4 células em volta de um dos dois; as
+     duas pontas fixas; os outros livres em ±**10** da altura;
+   - `FUN_00553d90(1,1, …, 20)`: 20 vezes, para cada passo e cada vizinho, um
+     degrau maior que **1,1** perde **0,3** do excesso de cada lado (dentro
+     da faixa de cada um);
+   - os dois vértices de cada par recebem o valor (terreno vtable `0x20`).
+
+No código (`hood::flattenAbuttingRoads`, depois do nivelamento): isso, com o
+lote novo contando como lote, e as ruas mexidas deitadas de novo no terreno
+(0,4 sobre cada vértice; inferido que vem da mensagem do fim). Inferido: as
+flags de visita começam limpas. `test_hood_moves` (uma lombada numa rua reta
+ao lado do lote baixa e fica nivelada de um lado ao outro);
+`hood-place-lot <cópia de N001> empty:0 82 2 2` alisa 2 trechos e o
+`hood-lot-check` continua passando os 27 lotes.
 
