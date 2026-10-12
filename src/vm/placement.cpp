@@ -109,7 +109,7 @@ std::vector<ObjectId> groupOf(VM& vm, ObjectId id) {
     return out;
 }
 
-Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
+Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots, bool footprints) {
     Placement p;
     p.level = tile.level;
     p.direction = normDir(direction);
@@ -147,7 +147,7 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
     // this one (single-tile objects): the allowed heights hold the slot's
     // height bit (FreeSO's rule for The Sims 1) and the surface is strong
     // enough. The first such slot wins (FindFirstAvailableSlot).
-    if (group.size() == 1) {
+    if (slots && group.size() == 1) {
         const int16_t heights = lead->data[objdata::AllowedHeightFlags];
         bool tooHeavy = false;
         for (ObjectId other : vm.objectsOnTile(tile)) {
@@ -234,6 +234,54 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
                 return fail(placementerror::NeedsWall, std::string("needs a wall ") + sides[side]);
             if ((wp & (0x100 << side)) && wall)
                 return fail(placementerror::WallIntersect, std::string("no wall allowed ") + sides[side]);
+        }
+        // TestPlacementWithRespectToObjects / TestPlacementWithRespectToObject
+        // (BV 0x8ace04, 0x8ac158) by footprints: each object on the tiles
+        // round the part (not the object's own parts) whose footprint
+        // (TSObjectWorldSpaceFootprint; a person's box of half width 0.1)
+        // crosses the part's. A person is in the way unless the part lets
+        // people through (CanIntersectPeople: od 8 & 0x14); another object
+        // unless either lets objects through (CanIntersectObjects: od 8 &
+        // 6) or the two are on different layers (FootprintBlocksCeiling, od
+        // 42 bit 0x1000, against FootprintBlocksFloor, the bit clear). Not
+        // done: the "allow intersection" trees (entry 5) both ways, the
+        // doors' circle and footprint tests, the roof clearance.
+        if (footprints) {
+            const auto own = vm.routingFootprint(o);
+            constexpr float kHalf = 0.1f; // TSObjectBaseFootprintWidth / 2
+            const bool letsPeople = o.data[objdata::Flags] & 0x14;
+            const bool letsObjects = o.data[objdata::Flags] & 0x06;
+            const bool ceiling = o.data[objdata::PlacementFlags] & 0x1000;
+            auto crosses = [&](const std::vector<std::array<float, 4>>& other) {
+                for (const auto& a : own)
+                    for (const auto& b : other)
+                        if (a[0] < a[2] && a[1] < a[3] && b[0] < b[2] && b[1] < b[3] && a[0] < b[2] && b[0] < a[2] &&
+                            a[1] < b[3] && b[1] < a[3])
+                            return true;
+                return false;
+            };
+            for (int dx = -1; dx <= 1; ++dx)
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (ObjectId other : vm.objectsOnTile({t.x + dx, t.y + dy, t.level})) {
+                        if (mine.count(other))
+                            continue;
+                        const Object& x = *vm.object(other);
+                        if (x.person) {
+                            if (letsPeople || ceiling)
+                                continue;
+                            const float px = x.position.x, py = x.position.y;
+                            if (crosses({{px - kHalf, py - kHalf, px + kHalf, py + kHalf}}))
+                                return fail(placementerror::Objects, "a Sim is in the way");
+                            continue;
+                        }
+                        if (letsObjects || (x.data[objdata::Flags] & 0x06) ||
+                            ceiling != bool(x.data[objdata::PlacementFlags] & 0x1000))
+                            continue;
+                        if (crosses(vm.routingFootprint(x)))
+                            return fail(placementerror::Objects, "\"" + (x.definition ? x.definition->fileName : std::string("?")) +
+                                                                     "\" is in the way");
+                    }
+            continue;
         }
         // TestPlacementWithRespectToObjects (§3.4): objects on the tile in
         // a common exclusive layer (od 63), unless od 8 lets them through.

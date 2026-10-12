@@ -113,8 +113,15 @@ std::vector<ObjectId> groupOf(VM& vm, ObjectId id);
 
 // Whether the object `id` (the lead of its group; it may be in the world:
 // its own tiles do not count) fits with its lead part on `tile` facing
-// `direction` (0, 2, 4, 6), and how.
-Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction);
+// `direction` (0, 2, 4, 6), and how. Without `slots` the position tests
+// alone (TSObjectCanSetPosition, BV 0x8ae264 -> TestPlaceInWorld: no free
+// container slot is looked for, as Create New Object Instance asks).
+// With `footprints` the objects' test is the binary's
+// TestPlacementWithRespectToObject (BV 0x8ac158) by footprints: the parts
+// must already stand where they are tested (their footprints are taken
+// where they are; Create New Object Instance places the new object first).
+Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool slots = true,
+                         bool footprints = false);
 
 // Where the group of `id` is now (its lead's direction, level, container
 // slot and each part's tile), for putting it back with applyPlacement.

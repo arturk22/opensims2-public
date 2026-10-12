@@ -8,6 +8,7 @@
 #include "interactions.hpp"
 #include "kill.hpp"
 #include "ownership.hpp"
+#include "placement.hpp"
 #include "errors.hpp"
 #include "sound.hpp"
 
@@ -614,9 +615,9 @@ Exit testObjectType(Context& c) {
 // with no error: no definition for the GUID, a dead definition (OBJD type
 // 0x11), nowhere to go, a full slot or one the container does not have;
 // a template definition (type 0x10) is error 0x90. Otherwise the stack
-// object becomes the new object and the result is true. Not done: the
-// binary's TSObjectCanSetPosition test (an object that does not fit on its
-// tile is deleted and the result is false). With VM::initCreatedObjects,
+// object becomes the new object and the result is true. An object that
+// does not fit where it goes in the world (TSObjectCanSetPosition) is
+// deleted and the result is false. With VM::initCreatedObjects,
 // every part runs its Init right away and gets its Main thread (as FreeSO's
 // VMEntity.Init); an Init that fails does not fail the creator (it is kept
 // in createdInits). Only the lead part of a new multi-tile object is placed.
@@ -789,6 +790,28 @@ Exit createObjectInstance(Context& c) {
                 if (!f.params.empty())
                     f.params[0] = flags & 0x10 ? temp0 : meId;
             }
+    }
+    // TSObjectCanSetPosition (BV 0x8ae264: TestPlaceInWorld, the buy mode's
+    // position tests without its slot search, the objects by footprints)
+    // where it goes in the world: an object that does not fit is deleted
+    // and the result is false (TryCreateObject, BV 0xe34b2c). The binary
+    // creates the object (its Init runs: the flags that let people or
+    // objects through are set there) and then tests the place; here the
+    // place is set before the Init and tested after it. The Fires a Fire
+    // spreads to a tile it cannot take are not made.
+    const Object* placed = c.vm.object(created);
+    if (at && !container && c.vm.world && c.vm.checkCreatedPlacement && placed && placed->position.inWorld() &&
+        !placed->data[objdata::ContainerId]) {
+        const TilePos t = VM::tileOf(*placed);
+        const Placement fit = checkPlacement(c.vm, created, t, placed->data[objdata::Direction], false, true);
+        if (!fit.ok) {
+            if (std::getenv("OS2_LOG_CREATE"))
+                std::fprintf(stderr, "  \"%s\" does not fit at (%d, %d, %d): %s\n", def->fileName.c_str(), t.x, t.y,
+                             t.level, fit.reason.c_str());
+            for (ObjectId id : groupOf(c.vm, created))
+                c.vm.removeObject(id);
+            return Exit::False;
+        }
     }
     c.frame.stackObject = created;
     return Exit::True;
