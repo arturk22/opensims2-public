@@ -73,6 +73,8 @@ public:
         // from the routing slot at the chair's front corner, facing that
         // way, and ends turned back by -45 degrees, seated facing the chair).
         float turn = 0;
+        // Seconds into the animation it starts at (its frame 0 at now - phase).
+        double phase = 0;
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.

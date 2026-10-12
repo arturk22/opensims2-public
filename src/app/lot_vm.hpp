@@ -124,8 +124,12 @@ private:
         struct PlayingOverlay {
             std::string name;
             int priority = 0; // its layer in the actor's player
+            double start = 0; // when its animation's frame 0 was (seconds)
         };
         std::map<uint32_t, PlayingOverlay> overlays; // by vm::Overlay::id, over the base animation
+        // Looping overlays taken off: when, and their frame 0 (a restart of
+        // the same one right after goes on in phase, LotSimulation::playOverlays).
+        std::map<std::string, std::pair<double, double>> stoppedOverlays;
         std::shared_ptr<HeadLook> look;    // the head turning towards Object::lookAt
     };
     // Where a Sim's Look At points its head now (world space), if anywhere.

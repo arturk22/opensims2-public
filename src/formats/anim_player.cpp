@@ -125,7 +125,7 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.target = skeleton_ && !skeleton_->bones.empty() ? anim.findTarget(anim.skeletonTag) : nullptr;
     if (!l.target && !anim.targets.empty())
         l.target = &anim.targets[0];
-    l.start = now;
+    l.start = now - std::max(o.phase, 0.0);
     l.fadeIn = std::max(o.fade, 0.0f);
     l.loop = o.loop;
     // Without a bone mask the animation is the Sim's main one: it takes the

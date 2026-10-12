@@ -159,6 +159,7 @@ void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> an
 void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
     constexpr int kOverlayPriority = 100;
     constexpr float kFade = 0.2f;
+    constexpr double kRestartGap = 0.25; // seconds
     // Gone from the VM: fade out.
     for (auto it = b.overlays.begin(); it != b.overlays.end();) {
         const bool kept = std::any_of(o.animation.overlays.begin(), o.animation.overlays.end(),
@@ -171,6 +172,7 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
             std::fprintf(stderr, "tick %llu sim %d overlay off: %s\n", (unsigned long long)vm_->ticks, b.id,
                          it->second.name.c_str());
         b.actor->player.stop(at, kFade, it->second.priority);
+        b.stoppedOverlays[it->second.name] = {at, it->second.start};
         it = b.overlays.erase(it);
     }
     // New ones: cue.
@@ -187,7 +189,17 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
             // Grasps play once (into the carry); what the VM ends or holds
             // loops until it is taken off.
             const bool loop = x.name.find("grasp") == std::string::npos && x.loops != 1;
-            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority});
+            // The same looping idle started again right after it went off
+            // (the route's waiting tree starts and stops the idle system
+            // every (1.25 - distance) * 24 ticks, as the game's data does):
+            // it goes on from where it was instead of from frame 0, so the
+            // breathing does not start over each time (a visual choice).
+            double phase = 0;
+            if (const auto st = b.stoppedOverlays.find(x.name);
+                loop && st != b.stoppedOverlays.end() && at - st->second.first <= kRestartGap)
+                phase = at - st->second.second;
+            p.start = at - phase;
+            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority, .phase = phase});
             if (std::getenv("OS2_DEBUG_VM"))
                 std::fprintf(stderr, "tick %llu sim %d overlay on: %s (kind %d, loops %d)\n",
                              (unsigned long long)vm_->ticks, b.id, x.name.c_str(), x.oeType, x.loops);
