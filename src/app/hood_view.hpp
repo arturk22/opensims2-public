@@ -123,6 +123,8 @@ public:
     // bulldozed (formats/hood_moves.hpp): the lots' families, and the lots
     // that are gone leave the view.
     void reload();
+    // The neighborhood's story after it was written (formats/hood_moves.hpp setDescription).
+    void setDescription(const std::string& text) { hood_.description = text; }
     // The neighborhood folder (the user's copy).
     std::filesystem::path folder() const { return hood_.package.parent_path(); }
 

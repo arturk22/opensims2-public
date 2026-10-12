@@ -245,6 +245,46 @@ void HoodUi::prefetchDecorations() {
     dirty_ = true;
 }
 
+void HoodUi::showStory(bool on, bool edit) {
+    // Closing the panel keeps what was typed (Pronto); the editor starts from the description.
+    if (!on && storyEdit_)
+        commitStory();
+    story_ = on, storyEdit_ = on && edit, dirty_ = true;
+    if (storyEdit_)
+        storyText_ = view_->neighborhood().description;
+}
+
+void HoodUi::commitStory() {
+    if (storyEdit_ && storyText_ != view_->neighborhood().description && saveStory)
+        saveStory(storyText_);
+    storyEdit_ = false, dirty_ = true;
+}
+
+void HoodUi::typeStoryKey(int keyCode, const std::string& typed) {
+    if (!storyEditing())
+        return;
+    constexpr int kReturn = 36, kEnter = 76, kEscape = 53, kBackspace = 51;
+    dirty_ = true;
+    if (keyCode == kEscape) {
+        storyEdit_ = false, story_ = false; // dropped
+        return;
+    }
+    if (keyCode == kBackspace) {
+        while (!storyText_.empty() && (uint8_t(storyText_.back()) & 0xC0) == 0x80)
+            storyText_.pop_back();
+        if (!storyText_.empty())
+            storyText_.pop_back();
+        return;
+    }
+    if (keyCode == kReturn || keyCode == kEnter) {
+        storyText_ += '\n';
+        return;
+    }
+    for (char c : typed)
+        if (uint8_t(c) >= 0x20 && c != 0x7F && storyText_.size() < 2000)
+            storyText_ += c;
+}
+
 HoodUi::Action HoodUi::press(simd_float2 p) {
     if (laidW_ != canvasW_ || laidH_ != canvasH_ || dirty_ || bins_->dirty())
         screen(canvasW_, canvasH_); // targets for the current canvas
@@ -288,11 +328,15 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
                 dirty_ = true;
             }
             if (t.action == Action::Story)
-                story_ = !story_, storyEdit_ = false, dirty_ = true;
+                showStory(!story_);
             if (t.action == Action::StoryClose)
-                story_ = false, dirty_ = true;
-            if (t.action == Action::StoryEdit)
-                storyEdit_ = !storyEdit_, dirty_ = true;
+                showStory(false);
+            if (t.action == Action::StoryEdit) {
+                if (storyEdit_)
+                    commitStory();
+                else
+                    showStory(true, true);
+            }
             return t.action;
         }
     if (!dialog_)
@@ -628,8 +672,10 @@ UiScreen HoodUi::screen(int width, int height) {
             if (id == 0x4D7407B2) // "no story"
                 (noStory && !storyEdit_ ? hk.show : hk.hide).insert(&c);
             if (id == 0xCD0A8EF7) {
-                if (noStory)
-                    (storyEdit_ ? hk.show : hk.hide).insert(&c);
+                if (storyEdit_) // the text being typed, with a caret
+                    hk.show.insert(&c), hk.captions[&c] = storyText_ + "_";
+                else if (noStory)
+                    hk.hide.insert(&c);
                 else
                     hk.captions[&c] = h.description;
             }

@@ -28,6 +28,17 @@ HoodMode::HoodMode(Renderer& renderer, ResourceIndex& index, const fs::path& gam
     ui_->bins().setLotBin(
         hood::loadLotBin(hood::playerLotCatalog(view_->folder(), res / "UserData/LotCatalog")));
     loading::phase("hood: bins");
+    // The story editor's save (F4 panel): the CTSS of the neighborhood package.
+    ui_->saveStory = [this](const std::string& text) {
+        const auto r = hood::setDescription(view_->folder(), text, gameDir_);
+        for (const auto& l : r.lines)
+            std::printf("opensims2: %s\n", l.c_str());
+        if (!r.ok)
+            std::printf("opensims2: neighborhood story not saved: %s\n", r.error.c_str());
+        std::fflush(stdout);
+        if (r.ok)
+            view_->setDescription(text);
+    };
 }
 
 std::optional<simd_int2> HoodMode::tileAt(const LotCamera& camera, simd_float2 p, float w, float h) const {
@@ -112,6 +123,11 @@ HoodMode::LotPlacement HoodMode::placementAt(int x, int y) const {
 }
 
 void HoodMode::typeKey(int keyCode, const std::string& typed) {
+    if (ui_->storyEditing()) {
+        ui_->typeStoryKey(keyCode, typed);
+        ui_->refreshLayout();
+        return;
+    }
     const HoodBins::Request r = ui_->bins().typeKey(keyCode, typed);
     ui_->refreshLayout();
     if (r.kind == HoodBins::Request::Kind::PlaceLot)
@@ -562,6 +578,7 @@ void HoodMode::escape() {
     view_->showFriends({});
     view_->showDecorationGhost(nullptr, 0, 0, 0, false);
     if (ui_->storyOpen()) {
+        ui_->typeStoryKey(53, {}); // Esc drops an edit under way
         ui_->showStory(false);
         return;
     }
@@ -634,6 +651,20 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
     }
     if (value("--hood-story"))
         ui_->showStory(true);
+    if (auto text = value("--hood-story-text")) { // the editor, typing the text (\n is a new line); with ",save" Pronto
+        ui_->showStory(true, true);
+        std::string t = *text;
+        const bool save = t.size() > 5 && t.compare(t.size() - 5, 5, ",save") == 0;
+        if (save)
+            t.resize(t.size() - 5);
+        for (size_t i = 0; i < t.size(); ++i)
+            if (t[i] == '\\' && i + 1 < t.size() && t[i + 1] == 'n')
+                ui_->typeStoryKey(36, {}), ++i;
+            else
+                ui_->typeStoryKey(0, std::string(1, t[i]));
+        if (save)
+            ui_->showStory(false);
+    }
     if (ui_->bins().panel() == HoodBins::Panel::Decorations)
         ui_->prefetchDecorations();
     if (auto f = value("--hood-family"))
@@ -755,7 +786,7 @@ bool has(const std::vector<std::string>& args, const char* flag) {
 std::vector<std::string> hoodLotArguments(const std::vector<std::string>& args, const std::string& hood, uint32_t lot) {
     auto out = without(args, {"--hood", "--hood-lot", "--hood-hover", "--hood-select", "--screenshot", "--pivot",
                               "--zoom", "--orientation", "--lot", "--hood-panel", "--hood-family", "--hood-tool",
-                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone", "--hood-info", "--hood-options-window", "--hood-package", "--hood-friends", "--hood-story", "--hood-decor-sort", "--hood-decor-pick", "--hood-decor-place"});
+                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone", "--hood-info", "--hood-options-window", "--hood-package", "--hood-friends", "--hood-story", "--hood-story-text", "--hood-decor-sort", "--hood-decor-pick", "--hood-decor-place"});
     out.insert(out.end(), {"--hood", hood, "--hood-lot", std::to_string(lot)});
     if (!has(out, "--vm"))
         out.push_back("--vm");

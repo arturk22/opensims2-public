@@ -3117,7 +3117,7 @@ void unloadScene() {
         return;
     }
     // The neighborhood's place-lot dialog takes the keys (the lot's name).
-    if (gHood && gHood->ui().bins().textEntry()) {
+    if (gHood && (gHood->ui().bins().textEntry() || gHood->ui().storyEditing())) {
         const std::string typed = e.characters ? std::string(e.characters.UTF8String) : std::string();
         gHood->typeKey(e.keyCode, typed);
         return;

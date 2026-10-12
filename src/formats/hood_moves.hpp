@@ -98,4 +98,11 @@ MoveResult moveIn(const std::filesystem::path& folder, uint32_t family, uint32_t
 MoveResult moveOut(const std::filesystem::path& folder, uint32_t lot, const std::filesystem::path& forbidden = {});
 MoveResult bulldoze(const std::filesystem::path& folder, uint32_t lot, const std::filesystem::path& forbidden = {});
 
+// The neighborhood's story (the F4 panel's "Editar a História da Vizinhança"):
+// the description, string 1 of the package's CTSS (0x43545353, instance 1; string
+// 0 is the name), replaced in every language the table has (an error when there is
+// none). Inferred: the editor writes the same CTSS the loader reads (formats/neighborhood.cpp).
+MoveResult setDescription(const std::filesystem::path& folder, const std::string& text,
+                          const std::filesystem::path& forbidden = {});
+
 } // namespace os2::hood

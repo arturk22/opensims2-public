@@ -216,6 +216,7 @@ int main() {
     hood.add({0x53545223, G, 2, 0}, strings({"Poor", ""}));
     hood.add({0x53545223, G, 3, 0}, strings({"Home", ""}));
     hood.add({0x53545223, G, 0x800B, 0}, strings({"11 Test Lane", ""}));
+    hood.add({0x43545353, G, 1, 0}, strings({"Test Town", "Old story"})); // the neighborhood's name and story
     hood.save(dir / "N998_Neighborhood.package");
 
     {
@@ -230,6 +231,17 @@ int main() {
         check(canMoveIn(h, 1, 99) == MoveInCheck::NoLot, "no lot 99");
         check(canMoveIn(h, 9, 11) == MoveInCheck::NoFamily, "no family 9");
         check(netWorth(h, 3) == 500 + 4800, "net worth: funds + the lot's price");
+    }
+
+    // The story editor's save: string 1 of the CTSS, the name untouched.
+    {
+        check(Neighborhood::load(dir, false).description == "Old story", "story: read from the CTSS");
+        const MoveResult d = setDescription(dir, "A new story\nof two lines", dir.parent_path() / "elsewhere");
+        check(d.ok, "story: written");
+        const Neighborhood h = Neighborhood::load(dir, false);
+        check(h.description == "A new story\nof two lines" && h.name == "Test Town", "story: read back, the name kept");
+        check(h.family(1) != nullptr && h.lot(11) != nullptr, "story: the rest of the package kept");
+        check(!setDescription(dir, "x", dir.parent_path()).ok, "story: nothing is written under the forbidden folder");
     }
 
     const MoveResult in = moveIn(dir, 1, 11);

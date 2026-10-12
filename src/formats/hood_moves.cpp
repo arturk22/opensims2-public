@@ -2,7 +2,9 @@
 
 #include "hood_moves.hpp"
 
+#include "binwriter.hpp"
 #include "dbpf.hpp"
+#include "strings.hpp"
 #include "lot_objects.hpp"
 
 #include <algorithm>
@@ -256,6 +258,64 @@ MoveResult bulldoze(const fs::path& folder, uint32_t lotId, const fs::path& forb
             fs::remove(lot->package);
             out.lines.push_back("removed " + lot->package.filename().string());
         }
+        out.ok = true;
+    } catch (const std::exception& e) {
+        out.error = e.what();
+    }
+    return out;
+}
+
+} // namespace os2::hood
+
+namespace os2::hood {
+
+MoveResult setDescription(const fs::path& folder, const std::string& text, const fs::path& forbidden) {
+    MoveResult out;
+    try {
+        checkFolder(folder, forbidden);
+        const Neighborhood hood = Neighborhood::load(folder, false);
+        constexpr uint32_t kTypeCtss = 0x43545353;
+        StringTable table;
+        {
+            DbpfPackage pkg(hood.package);
+            for (const auto& e : pkg.entries())
+                if (e.tgi.type == kTypeCtss && e.tgi.instance == 1) {
+                    table = StringTable::parse(pkg.read(e));
+                    break;
+                }
+        }
+        if (table.entries.empty()) {
+            throw std::runtime_error("the neighborhood package has no CTSS");
+        } else {
+            std::map<uint8_t, size_t> seen; // strings of each language so far
+            for (auto& e : table.entries)
+                if (seen[e.language]++ == 1)
+                    e.value = text;
+            // A language with a name but no description entry gets one.
+            std::map<uint8_t, size_t> counts = seen;
+            for (const auto& [language, n] : counts)
+                if (n == 1) {
+                    StringTable::Entry d;
+                    d.language = language, d.value = text;
+                    table.entries.push_back(d);
+                }
+        }
+        BinWriter w;
+        for (size_t i = 0; i < 64; ++i)
+            w.u8(i < table.fileName.size() ? uint8_t(table.fileName[i]) : 0);
+        w.u16(0xFFFD);
+        w.u16(uint16_t(table.entries.size()));
+        const auto cstr = [&](const std::string& s) {
+            w.raw(std::span(reinterpret_cast<const uint8_t*>(s.data()), s.size()));
+            w.u8(0);
+        };
+        for (const auto& e : table.entries) {
+            w.u8(e.language);
+            cstr(e.value);
+            cstr(e.description);
+        }
+        rewritePackage(hood.package, {{{kTypeCtss, 1}, w.bytes()}}, {});
+        out.lines.push_back("neighborhood story set (" + std::to_string(text.size()) + " bytes)");
         out.ok = true;
     } catch (const std::exception& e) {
         out.error = e.what();

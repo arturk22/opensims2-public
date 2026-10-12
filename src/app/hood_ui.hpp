@@ -73,8 +73,15 @@ public:
     // The dialog's "Informações" panel (headless: --hood-info [member]).
     void showInfo(bool on, size_t member = 0) { advanced_ = on, member_ = member, dirty_ = true; }
     // The story panel (F4; headless: --hood-story).
-    void showStory(bool on, bool edit = false) { story_ = on, storyEdit_ = edit, dirty_ = true; }
+    void showStory(bool on, bool edit = false);
     bool storyOpen() const { return story_; }
+    // The story editor (the "Editar" button): while it is on, keys type into the
+    // description; Return makes a new line, Esc drops the edit and closes the panel,
+    // the edit button and Pronto keep it (saveStory writes it to the neighborhood).
+    bool storyEditing() const { return story_ && storyEdit_; }
+    void typeStoryKey(int keyCode, const std::string& typed);
+    const std::string& storyText() const { return storyText_; }
+    std::function<void(const std::string&)> saveStory;
     // The decorations' pictures for the products the bin shows (call when
     // the panel opens or its page changes, never while drawing); a
     // product without a UI image is drawn by `renderDecorThumb`.
@@ -111,7 +118,7 @@ public:
         if (p == HoodBins::Panel::Decorations && bins_->panel() == p)
             prefetchDecorations();
     }
-    void toggleStory() { story_ = !story_, storyEdit_ = false, dirty_ = true; }
+    void toggleStory() { showStory(!story_); }
 
     UiScreen screen(int width, int height);
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
@@ -142,6 +149,8 @@ private:
     // of the neighborhood (CTSS), or "no story"; Pronto closes it. The
     // story's own pages (the game's Storytelling folder) are not read.
     bool story_ = false, storyEdit_ = false;
+    std::string storyText_; // the description being edited
+    void commitStory();     // saves the edit (if any) and leaves the editor
     std::unique_ptr<RgbaImage> storyPicture_;
     bool storyPictureLoaded_ = false;
     // Decorations' pictures by product: UI images (effects) or renders.
