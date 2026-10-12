@@ -1,3 +1,36 @@
+# Soak report (round 17, loops)
+
+Runs of `tools/soak.sh` over the 69 lots (3 game days), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main 9e3b2f43 (with r17-saveanim); **after** is the `r17-loops` branch rebased on it (every neighbor's definition on again, so visitors and walk-bys come). Counts from the kept autonomy logs.
+
+| Category | before, seed 1 | after, seed 1 | before, seed 2 | after, seed 2 |
+|---|---|---|---|---|
+| Crashes / hangs | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Load errors | 1 (N002_Lot32) | 1 | 1 | 1 |
+| Household Mains reset | 0 | 0 | 0 | 0 |
+| Resets after an error, outside Tutorial_Lot3 | 0 | 1 | 0 | 3 |
+| Instruction budget hit | 0 | 0 | 0 | 0 |
+| Sims that died ("Falecer") | 20 | 23 | 10 | 17 |
+| Sims stuck > 6 game hours | 25 | 15 | 34 | 16 |
+| of them not sleeping, working or at school | 1 | 3 | 2 | 3 |
+| Motives pinned at -100 > 6 game hours | 22 | 47 | 15 | 33 |
+| Save round trips that differ | 2 | 1 | 2 | 1 |
+| Autonomous interactions ended true / false | 3518 / 287 | 3372 / 372 | 4311 / 365 | 3783 / 297 |
+| "Tomar um Drinque" ended false | 23 | 27 | 44 | 15 |
+| Teddy bear "Fazer de conta..." ended false | 0 | 0 | 0 | 0 |
+| Visitors on the lots at the end (all lots) | 13 | 96 | 9 | 107 |
+| "Fogo!" runs | 104 | 283 | 102 | 208 |
+
+Intermediate builds (not in the table): every neighbor's definition on with only the queue fix, seed 1: 2 budget hits (N001_Lot68, the ghost's "Function - Goal Check"); with the object list for every Set to Next type: 28 budget hits (N001_Lot49's "Dartboard - Shoo Sims" and others); N001_Lot36 seed 3 before the queue fix: 9 budget hits and a 15-minute run (a carry object a pass).
+
+What changed (TODO.md "Rodada 17 (ramo `r17-loops`)"; `docs/primitives-mac.md` §4g "Rodada 17"):
+- **The toddler-bath loop** (N001_Lot36): Push Interaction refused the "continue as current" pushes of "Pickup - Do Carry Sim" onto a full queue (the toddler in the crib with six "*Push Look At" waiting); the binary tests the queue and sub-queue limits only without the continuation (`TryPushAction`, the interaction's `SetContinuation`). "Do Carry Sim" returned false after making a carry object and pushing the carry onto the adult, and the bath tree went round without a yield. The continuation is saved now (bit 0x02 of the interaction's +0x54), and an object made with no free ID is a VM error instead of a wrapped ID (the crash).
+- **Every neighbor's definition** in every GUID lookup again: the visitors come (about ten times as many Sims on the lots at the end).
+- **Set to Next's order**: the object types walk the object module's list (the lot's ObjM order; objects made in play in front, inferred), people and a GUID's instances their own vectors, where a current object that is not one ends the search. Fixed the ghost's loop over the stereo's two parts (N001_Lot68) and kept "Dartboard - Shoo Sims" ending.
+- **hood-save** writes the family membership Generic Sims Call 4/6 change.
+- **"Tomar um Drinque"** failures are the bar trees redirecting to the glass the tray's slot order gives (the data's; each is followed by the real drink). The teddy bear loop did not come back in any run.
+
+Left (TODO): the toddler in the crib that no one takes out ("No Berço" 16-32 h on N001_Lot36 after); "stack object N does not exist" in reactions to a Sim removed that tick (N001_Lot16, N001_Lot68); a trash "Dispose" recursion to a stack overflow (N001_Lot68 seed 2); one nested-push error (N002_Lot10); "Pisar" on roaches failing in series. The extra fires follow the visitors' and Sims' changed timelines; the ones looked at were food left to burn (a TV dinner at N001_Lot68), the game's. The pinned motives follow the deaths and fires. The round trips that differ (N003_Lot192, N001_Lot18 before) are an overlay's event object after a reload, also on main (the saved animation queue).
+
 # Soak report (round 17, animations and routes resumed)
 
 `tools/soak.sh` (`SOAK_NO_APP=1`, `SOAK_JOBS=2`, `S2PKG_FIRES=1`, 3 game days) on N001_Lot11, N001_Lot36, N002_Lot2, N002_Lot3, N003_Lot52, N001_Lot16, N003_Lot45 and N002_Lot10; **before** is main 76b04555, **after** the r17-saveanim branch (the lots' animation queues read: the overlays and Animate Sims of the game's saves come back at load, so the idle system gets its events). `hood-save N001 --ticks 43200 --check`: 24 of 26 lots the same after (the 2 left are a queue flag and a family number of the neighbourhood, `docs/save-mac.md` §7c), 26 of 26 before (the before build does not compare animations, overlays and routes).
