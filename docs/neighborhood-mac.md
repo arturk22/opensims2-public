@@ -851,3 +851,21 @@ lote nem fica sob uma rua.
   x = −28/−98), e a câmera fica onde estava quando a vista é refeita depois
   de pôr um lote (`LotCamera::pose`). `r11-bairro-puck-sobre-painel.jpg`,
   `r11-bairro-lote-conformado.jpg`.
+- **Caixa de nome e zona** (`cTSWinProcPlaceLotDialog`, script
+  `0x49001002`; `cTSUserToolPlaceNewLot::OnRelease` a mostra e, com Aceitar,
+  chama `PlaceLot(nome, zona)`): botões de opção 1 "Residencial" e 2
+  "Comunidade" (estilo `radiocheck`: imagem de 8 quadros de 20×15, marcado e
+  não marcado; residencial ligado no `Show`), o texto 3 começa com STR#
+  0x83 #29 "<Enter Lot Name>" todo selecionado (digitar substitui). Aceitar
+  (`onBtnClickedID 0xA000`): `nTSUI::ValidateUIString` recusa `\ / : * ? <
+  > | ;` (UIText STR# 0x99 #9+#10, título #11; o texto padrão, com `<>`,
+  cai aqui) e o bairro (vtable `0xe4`) recusa nome de outro lote (STR# 0x82
+  #8, título #9); Cancelar fecha sem pôr. Os índices do `FUN_000da4b0` são
+  1-based. No app: `--hood-lot-name`/`--hood-lot-zone community` sem tela,
+  `r11-bairro-nome-do-lote.jpg`, `r11-bairro-lote-comunitario-novo.jpg`.
+- **Mandar para a caixa** (`cTSUserToolMoveLotToCatalog`, BV `0x37f554`):
+  lote sem casa → STR# 0x83 #26; com família morando → a pergunta #28 ganha
+  #31 ("a família … será movida com o lote e perderá os relacionamentos") e
+  o Sim manda a mensagem `0xEC1AAC03` com o lote (o controle de estado salva
+  lote e família no catálogo); flag `0x40` do lote e família fora (BV,
+  STR# 0xD2) são de expansão.

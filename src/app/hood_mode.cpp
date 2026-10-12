@@ -110,6 +110,13 @@ HoodMode::LotPlacement HoodMode::placementAt(int x, int y) const {
     return out;
 }
 
+void HoodMode::typeKey(int keyCode, const std::string& typed) {
+    const HoodBins::Request r = ui_->bins().typeKey(keyCode, typed);
+    ui_->refreshLayout();
+    if (r.kind == HoodBins::Request::Kind::PlaceLot)
+        carryOut(r);
+}
+
 bool HoodMode::placingLot() const {
     const HoodBins::Tool t = ui_->bins().tool();
     return t == HoodBins::Tool::PlaceEmpty || t == HoodBins::Tool::PlaceBin || (t == HoodBins::Tool::MoveLot && movingLot_);
@@ -154,12 +161,23 @@ void HoodMode::updatePlacement(const LotCamera& camera, simd_float2 p, float w, 
 bool HoodMode::place(const LotPlacement& p) {
     if (!p.any || !p.ok)
         return false;
+    if (ui_->bins().tool() == HoodBins::Tool::PlaceEmpty) {
+        armed_ = p;
+        ui_->bins().openPlaceLot();
+        return true;
+    }
+    return placeNamed(p, {}, 0);
+}
+
+bool HoodMode::placeNamed(const LotPlacement& p, const std::string& name, uint8_t zone) {
+    if (!p.any || !p.ok)
+        return false;
     const fs::path folder = view_->folder();
     const HoodBins& bins = ui_->bins();
     hood::LotResult r;
     if (bins.tool() == HoodBins::Tool::PlaceEmpty)
         r = hood::placeEmptyLot(folder, view_->placementWorld(), hood::emptyLotSize(bins.emptySize()), p.x, p.y,
-                                p.turn, gameDir_);
+                                p.turn, gameDir_, name, zone);
     else if (bins.tool() == HoodBins::Tool::PlaceBin)
         r = hood::placeBinLot(folder, view_->placementWorld(), bins.lotBin()[size_t(bins.binLot())], p.x, p.y, p.turn,
                               gameDir_);
@@ -271,6 +289,10 @@ void HoodMode::carryOut(const HoodBins::Request& r) {
         std::fflush(stdout);
         if (onCreateFamily)
             onCreateFamily(folder);
+        return;
+    }
+    if (r.kind == K::PlaceLot) {
+        placeNamed(armed_, ui_->bins().placeLotName(), ui_->bins().placeLotZone());
         return;
     }
     if (r.kind == K::ToBin) {
@@ -408,8 +430,18 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
             camera.setPivot(simd_make_float3(float(pending_.rect.x0 + pending_.rect.x1) * 5.0f,
                                              float(pending_.rect.y0 + pending_.rect.y1) * 5.0f, pending_.height));
             camera.snap();
-            if (std::string(flag) == "--hood-place-click")
+            if (std::string(flag) == "--hood-place-click") {
                 place(pending_);
+                // --hood-lot-name <name> [--hood-lot-zone community]: the
+                // place-lot dialog filled in and accepted.
+                if (auto n = value("--hood-lot-name"); n && ui_->bins().textEntry()) {
+                    ui_->bins().setPlaceLotName(*n);
+                    HoodBins::Request req = ui_->bins().typeKey(36, {});
+                    if (req.kind == HoodBins::Request::Kind::PlaceLot)
+                        placeNamed(armed_, ui_->bins().placeLotName(),
+                                   value("--hood-lot-zone").value_or("") == "community" ? 1 : ui_->bins().placeLotZone());
+                }
+            }
         }
     if (const HoodLot* l = find("--hood-lot-click")) {
         camera.setPivot(view_->lotCentre(*l));
@@ -466,7 +498,7 @@ bool has(const std::vector<std::string>& args, const char* flag) {
 std::vector<std::string> hoodLotArguments(const std::vector<std::string>& args, const std::string& hood, uint32_t lot) {
     auto out = without(args, {"--hood", "--hood-lot", "--hood-hover", "--hood-select", "--screenshot", "--pivot",
                               "--zoom", "--orientation", "--lot", "--hood-panel", "--hood-family", "--hood-tool",
-                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn"});
+                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone"});
     out.insert(out.end(), {"--hood", hood, "--hood-lot", std::to_string(lot)});
     if (!has(out, "--vm"))
         out.push_back("--vm");

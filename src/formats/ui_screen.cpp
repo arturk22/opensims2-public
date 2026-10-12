@@ -259,6 +259,29 @@ struct Layout {
                 stretched(img, x, y, w, h, {0, 0, fw, float(img->height)});
                 drew = true;
             }
+        } else if (cls == "GZWinBtn" && e.get("style") == "radiocheck") {
+            // A radio/check button: the image is 8 frames (checked and
+            // unchecked for normal, pressed, hover and disabled; inferred
+            // from the art), one drawn at its size on the left, the caption
+            // after it. Hook state 2 = checked, else unchecked.
+            bool checked = false;
+            if (hooks)
+                if (auto it = hooks->buttonState.find(&e); it != hooks->buttonState.end())
+                    checked = it->second == 2;
+            float box = 0;
+            if (const RgbaImage* img = image(e, "image")) {
+                const float fw = float(img->width) / 8, fh = float(img->height);
+                const float f = checked ? 0 : 1;
+                stretched(img, x + 2, y + std::round((h - fh) / 2), fw, fh, {f * fw, 0, (f + 1) * fw, fh});
+                box = fw + 6;
+                drew = true;
+            }
+            if (e.flag("showcaption")) {
+                UiElement left = e;
+                left.set("align", "left");
+                text(left, x + box, y, w - box, h, caption(e), rgba(e, "colorfontnormal", {0, 0, 0, 1}), false);
+                drew = true;
+            }
         } else if (cls == "GZWinBtn") {
             if (const RgbaImage* img = image(e, "image")) {
                 const float sw = float(img->width) / 4; // disabled, normal, pressed, hover

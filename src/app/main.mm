@@ -2875,6 +2875,12 @@ void unloadScene() {
         }
         return;
     }
+    // The neighborhood's place-lot dialog takes the keys (the lot's name).
+    if (gHood && gHood->ui().bins().textEntry()) {
+        const std::string typed = e.characters ? std::string(e.characters.UTF8String) : std::string();
+        gHood->typeKey(e.keyCode, typed);
+        return;
+    }
     _held.insert(e.keyCode);
     if (e.isARepeat)
         return;

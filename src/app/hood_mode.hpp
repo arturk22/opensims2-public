@@ -85,12 +85,18 @@ public:
         std::string why;
     };
     LotPlacement placementAt(int x, int y) const;
+    // Writes the placement; a new empty lot first asks its name and zone
+    // (HoodBins::openPlaceLot, as cTSUserToolPlaceNewLot::OnRelease shows
+    // the place-lot dialog) and is placed when it is accepted.
     bool place(const LotPlacement& p);
+    bool placeNamed(const LotPlacement& p, const std::string& name, uint8_t zone);
     // , and . while placing or moving a lot (key 0xACB3A629: KeyCommand of
     // cTSUserToolPlaceNewLot / PlaceLotFromInventory / MoveLot): the
     // rotation or front edge one quarter on (+1) or back (-1). Until a key
     // is pressed the tool takes the first turn that fits (a convenience).
     void turnLot(int direction);
+    // A key for the place-lot dialog (HoodBins::typeKey); Return places the lot.
+    void typeKey(int keyCode, const std::string& typed);
     bool placingLot() const;
 
 private:
@@ -100,6 +106,7 @@ private:
     LotPlacement pending_;
     uint32_t movingLot_ = 0; // the move tool's lot
     int turn_ = -1;          // the turn the keys chose (-1: none yet)
+    LotPlacement armed_;     // the empty lot waiting for the place-lot dialog
     std::optional<simd_int2> lastTile_; // the corner tile under the mouse
     const HoodLot* lotAt(const LotCamera& camera, simd_float2 p, float w, float h) const;
     void carryOut(const HoodBins::Request& r);

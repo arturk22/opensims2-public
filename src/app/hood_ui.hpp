@@ -83,6 +83,7 @@ public:
     // Whether the HUD, a panel or the dialog is under `p` (canvas pixels): a lot behind it is not hovered.
     bool covers(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
+    void refreshLayout() { dirty_ = true; }
 
     UiScreen screen(int width, int height);
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);

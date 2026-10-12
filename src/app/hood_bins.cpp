@@ -17,7 +17,7 @@ namespace os2 {
 namespace {
 
 constexpr uint32_t kFamiliesScript = 0x49001004, kLotsScript = 0x49001003, kItemScript = 0x49001006,
-                   kDialogScript = 0x49001035, kCardScript = 0x49001011;
+                   kDialogScript = 0x49001035, kCardScript = 0x49001011, kPlaceLotScript = 0x49001002;
 constexpr uint32_t kTextGroup = 0x7f3a262a; // Text/Neighborhood.package
 constexpr uint32_t kPuckAnchor = 0xAABBCCDD, kPanelAnchor = 0xAAAA;
 constexpr uint32_t kBin = 0x0B, kCreateFamily = 0x0A, kMoveFamily = 0x6D13DDA1;
@@ -61,6 +61,7 @@ HoodBins::HoodBins(UiResources& res, FontLibrary& fonts) : res_(&res), fonts_(&f
     const bool a = load(kFamiliesScript, families_), b = load(kLotsScript, lots_), c = load(kItemScript, item_),
                d = load(kDialogScript, dialogScript_);
     load(kCardScript, hover_);
+    load(kPlaceLotScript, placeScript_);
     ok_ = a && b && c && d;
 }
 
@@ -105,6 +106,62 @@ void HoodBins::cancelTool() {
 void HoodBins::showMessage(const std::string& message) {
     dialog_ = Dialog{message, {}};
     dirty_ = true;
+}
+
+void HoodBins::openPlaceLot() {
+    placeLot_ = PlaceLot{};
+    placeLot_->name = text(0x83, 28, "<Enter Lot Name>");
+    dirty_ = true;
+}
+
+HoodBins::Request HoodBins::acceptPlaceLot() {
+    if (!placeLot_)
+        return {Request::Kind::Consumed};
+    const std::string& name = placeLot_->name;
+    if (name.find_first_of("\\/:*?<>|;") != std::string::npos) {
+        showMessage(text(0x99, 8, "Your lot name cannot include any of the following characters:") + " " +
+                    "\\ / : * ? < > | ;");
+        return {Request::Kind::Consumed};
+    }
+    if (hood_)
+        for (const auto& l : hood_->lots)
+            if ((l.name.empty() ? l.info.name : l.name) == name) {
+                showMessage(text(0x82, 7, "There can only be one lot with a particular name in the neighborhood. "
+                                          "Please try again!"));
+                return {Request::Kind::Consumed};
+            }
+    placedName_ = name;
+    placedZone_ = placeLot_->community ? 1 : 0;
+    placeLot_.reset();
+    dirty_ = true;
+    return {Request::Kind::PlaceLot};
+}
+
+HoodBins::Request HoodBins::typeKey(int keyCode, const std::string& typed) {
+    if (!textEntry())
+        return {};
+    dirty_ = true;
+    constexpr int kReturn = 36, kEnter = 76, kEscape = 53, kBackspace = 51;
+    if (keyCode == kReturn || keyCode == kEnter)
+        return acceptPlaceLot();
+    if (keyCode == kEscape) {
+        placeLot_.reset();
+        return {Request::Kind::Consumed};
+    }
+    std::string& name = placeLot_->name;
+    if (!placeLot_->edited) // the default text is selected: a key replaces it
+        name.clear(), placeLot_->edited = true;
+    if (keyCode == kBackspace) {
+        while (!name.empty() && (uint8_t(name.back()) & 0xC0) == 0x80)
+            name.pop_back();
+        if (!name.empty())
+            name.pop_back();
+        return {Request::Kind::Consumed};
+    }
+    for (char c : typed)
+        if (uint8_t(c) >= 0x20 && c != 0x7F && name.size() < 64)
+            name += c;
+    return {Request::Kind::Consumed};
 }
 
 void HoodBins::setLotBin(std::vector<hood::BinLot> lots) {
@@ -491,6 +548,49 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
     if (panelsEnd)
         *panelsEnd = out.quads.size();
 
+    // The place-lot dialog, centred (Show centres it on its parent).
+    if (placeLot_ && !placeScript_.roots.empty()) {
+        const UiElement& root = placeScript_.roots.front();
+        UiDrawHooks ph;
+        std::map<const UiElement*, std::array<float, 4>> prects;
+        ph.rects = &prects;
+        UiElement r = root;
+        if (const UiElement* b = r.child(1))
+            ph.buttonState[b] = placeLot_->community ? 1 : 2;
+        if (const UiElement* b = r.child(2))
+            ph.buttonState[b] = placeLot_->community ? 2 : 1;
+        if (UiElement* edit = r.child(3)) {
+            edit->set("initvalue", placeLot_->name + (placeLot_->edited ? "_" : ""));
+            edit->set("captionres", "");
+            edit->set("caption", placeLot_->name);
+        }
+        const auto a = r.area();
+        const float w = float(a[2] - a[0]), h = float(a[3] - a[1]);
+        const float x = std::round((float(width) - w) / 2), y = std::round((float(height) - h) / 2);
+        layoutUiElement(r, x - float(a[0]), y - float(a[1]), *res_, *fonts_, out, ph);
+        std::vector<Target> modal;
+        for (const auto& c : r.children) {
+            auto it = prects.find(&c);
+            if (it == prects.end())
+                continue;
+            const uint32_t id = c.id();
+            const Hit hit = id == 1 ? Hit::PlaceResidential : id == 2 ? Hit::PlaceCommunity
+                          : id == 0xA000 ? Hit::PlaceAccept : id == 0xA001 ? Hit::PlaceCancel : Hit::Solid;
+            if (hit != Hit::Solid) {
+                modal.push_back({it->second, hit});
+                if (!dialog_ && !placeLot_->announced)
+                    std::printf("opensims2: place-lot dialog %s at (%.0f, %.0f)\n",
+                                id == 1 ? "Residential" : id == 2 ? "Community" : id == 0xA000 ? "Accept" : "Cancel",
+                                (it->second[0] + it->second[2]) / 2, (it->second[1] + it->second[3]) / 2);
+            }
+        }
+        if (!dialog_)
+            placeLot_->announced = true;
+        std::fflush(stdout);
+        modal.push_back({{0, 0, float(width), float(height)}, Hit::Solid});
+        targets_ = std::move(modal);
+    }
+
     // The question / message, centred, over everything.
     if (dialog_) {
         UiElement d = dialogScript_.roots.front();
@@ -618,6 +718,13 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
             tool_ = on ? Tool::None : Tool::ToBin;
             return {Request::Kind::Consumed};
         }
+        case Hit::PlaceResidential:
+        case Hit::PlaceCommunity:
+            if (placeLot_)
+                placeLot_->community = t.hit == Hit::PlaceCommunity;
+            return {Request::Kind::Consumed};
+        case Hit::PlaceAccept: return acceptPlaceLot();
+        case Hit::PlaceCancel: placeLot_.reset(); return {Request::Kind::Consumed};
         case Hit::Solid:
         case Hit::Request: return {Request::Kind::Consumed};
         }

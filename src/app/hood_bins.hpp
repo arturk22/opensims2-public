@@ -66,7 +66,7 @@ public:
     enum class Tool { None, MoveIn, Evict, Bulldoze, PlaceEmpty, PlaceBin, MoveLot, ToBin };
     // What a click asked for: the neighborhood mode carries it out.
     struct Request {
-        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin } kind = Kind::None;
+        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot } kind = Kind::None;
         uint32_t family = 0, lot = 0;
     };
     // The Lots & Houses bin's lots (formats/hood_lots.hpp) and the tools'
@@ -82,7 +82,7 @@ public:
     Panel panel() const { return panel_; }
     Tool tool() const { return tool_; }
     uint32_t selectedFamily() const { return selected_; }
-    bool modal() const { return dialog_.has_value(); }
+    bool modal() const { return dialog_.has_value() || placeLot_.has_value(); }
     void togglePanel(Panel p);
     void selectFamily(uint32_t family); // starts moving it in (0: none)
     void cancelTool();
@@ -94,6 +94,27 @@ public:
     void lotClicked(uint32_t lot);
     // A message box with only Accept (the result of a change that failed).
     void showMessage(const std::string& text);
+
+    // The place-lot dialog (ui.package 0x49001002, cTSWinProcPlaceLotDialog)
+    // a new empty lot asks before it is placed: "Residential" 1 /
+    // "Community" 2 (one on, residential at first), the name in text edit 3
+    // starting as "<Enter Lot Name>" (STR# 0x83 #29, all selected: typing
+    // replaces it), Accept 0xA000 / Cancel 0xA001. Accept checks the name as
+    // onBtnClickedID does: none of \ / : * ? < > | ; (nTSUI::
+    // ValidateUIString; UIText STR# 0x99 #9-#11) and not another lot's name
+    // (STR# 0x82 #8/#9); then Request::Kind::PlaceLot with placeLotName()
+    // and placeLotZone() (0 residential, 1 community).
+    void openPlaceLot();
+    bool textEntry() const { return placeLot_.has_value() && !dialog_; }
+    // A key while the dialog is up: Return accepts, Esc cancels, Delete
+    // erases, `typed` (UTF-8) is added. Returns the request Return made.
+    Request typeKey(int keyCode, const std::string& typed);
+    void setPlaceLotName(const std::string& name) {
+        if (placeLot_)
+            placeLot_->name = name, placeLot_->edited = true, dirty_ = true;
+    }
+    const std::string& placeLotName() const { return placedName_; }
+    uint8_t placeLotZone() const { return placedZone_; }
 
     // Lays the panels out (the puck at `puck`, its canvas rectangle), adds
     // their click targets; then `press` answers a click.
@@ -131,9 +152,19 @@ private:
         bool announced = false;
     };
     std::optional<Dialog> dialog_;
+    struct PlaceLot {
+        std::string name;
+        bool edited = false, community = false, announced = false;
+    };
+    std::optional<PlaceLot> placeLot_;
+    std::string placedName_;
+    uint8_t placedZone_ = 0;
+    UiScript placeScript_;
+    Request acceptPlaceLot();
 
     enum class Hit { Request, Family, Expand, Prev, Next, Create, Evict, Bulldoze, Accept, Cancel, Solid, LotsPanel,
-                     EmptySize, BinItem, BinExpand, BinPrev, BinNext, MoveLotTool, ToBinTool };
+                     EmptySize, BinItem, BinExpand, BinPrev, BinNext, MoveLotTool, ToBinTool,
+                     PlaceResidential, PlaceCommunity, PlaceAccept, PlaceCancel };
     const RgbaImage* binPicture(size_t index);
     std::vector<hood::BinLot> binLots_;
     std::map<size_t, std::unique_ptr<RgbaImage>> binPictures_;
