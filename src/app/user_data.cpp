@@ -197,6 +197,7 @@ void GameSettings::applyGraphics() const {
     GraphicsOptions& g = graphicsOptions();
     const int shadows = pick("Shadows", 3); // Graphics Rules.sgr: $Low, $Medium, $High
     g.guob = g.heightMapShadows = shadows >= 2;
+    g.simShadows = shadows >= 3;
     g.reflectionWithExtraViewer = g.nhoodWaterReflection = reflections;
     g.specHighlights = pick("LightingQuality", 3) >= 2;
 }

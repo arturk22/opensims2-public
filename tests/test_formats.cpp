@@ -272,6 +272,7 @@ lightingState day
    light fill1    (1, 1, -1)     (1,0.8,.9)    .5
    light simFill1  (1, -1.2, 1) (1, .95, .89)  .5
    modifiers insidePortals       0.5  .7          1.3    1  #### trailing comment
+  projectiveShadowStrength 0.73
 end
 lightingState dayNoPortals : day
    light sun      (0, 0, 1)    (1, 1, 1)     1
@@ -282,6 +283,8 @@ end
     check(cfg.states.size() == 2, "lighting state count");
     const LightingState* day = cfg.state("DAY");
     check(day && day->skyStrength == 0.5f && day->skyColor[2] == 1, "skylight");
+    check(day && day->projectiveShadowStrength == 0.73f && cfg.state("dayNoPortals")->projectiveShadowStrength == 0.73f,
+          "projectiveShadowStrength, inherited");
     if (day) {
         check(day->lights.size() == 3 && day->lights[0].name == "sun" && day->lights[0].direction[1] == 1.2f &&
                   day->lights[0].color[2] == 0.875f && day->lights[0].intensity == 2,

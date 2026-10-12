@@ -516,9 +516,77 @@ tipo 3:
 - Luzes práticas: confirmar no binário que `modifiers insideObjects`
   multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
 - O comando `skylight` (se guarda cor × força).
-- O height map de sombra (`UpdateHeightMapShadows`, `AddBlobToHeightMap`).
+- O height map de sombra (`UpdateHeightMapShadows`, `AddBlobToHeightMap`):
+  a sombra do sol dos objetos de fora (estilo 3 do `cShadow`, §9) nos lotes.
+- Quem lê o `projectiveShadowStrength` e a cor/direção de sombra do
+  gerenciador de luz (vtable `0x78`/`0x7c`, §9).
 
 **Rodada 12 (escolha visual, não do binário):** no app, a luz direta do
 estado sobre o chão (terreno e pisos de fora) é puxada para o cinza quando é
 fria, na proporção (B − R)/B: à noite E ≈ (0,32; 0,32; 0,8) virava calçada
 lavanda forte com o `2·textura·light map`; de dia (luz quente) nada muda.
+
+## 9. Sombras projetadas: `nTSSG::cShadow` (binário, rodada 15)
+
+Dentro de casa **não há sombra de luz de cômodo, de lâmpada, de portal nem
+nos light maps**: a difusão (§5) só para em paredes, e nenhuma luz de
+objeto projeta sombra. O que escurece o chão em volta das coisas é o
+`cShadow` de cada objeto (`cObject::CreateShadow`, BV `0x6549f0`), com um
+de cinco estilos (`GetShadowStyleFromEdithMode` `0x65480c`,
+`GetDesiredShadowStyle` `0x65492c`, `UpdateCurrentStyle` `0x678710`):
+
+| estilo | quem | o que é | opção (`Graphics Rules.sgr`, bit do `+0x2c`) |
+|---|---|---|---|
+| 0 | — | nenhuma | — |
+| 1 | **Sims** (tipo de objeto 2) | silhueta renderizada numa textura e projetada no chão | `simShadows` (Shadows `$High`) |
+| 2 | objetos | os planos de sombra do modelo (`groundshadow`, `*wallshadow`: "GUOB", `InitGUOBs` `0x6747c8`) | `guob` |
+| 3 | objetos de fora | a sombra do sol no height map (§5.3) | `heightMapShadows` |
+| 4 | objetos com `+0x102 == 3` | como o 1, grupo "Props" | `objectShadows` |
+
+O 2 e o 3 já existiam no código (planos do modelo; height map só no
+bairro). O **estilo 1** (`cShadow::CreateShadow` `0x677390`,
+`UpdateInsideOutsideSettings` `0x67538c`, `UpdateShadowLocation`
+`0x676290`, `UpdateVisibility` `0x674260`, `OncePerFrameUpdate`
+`0x678ba0`):
+
+- Uma textura `shadowTexture%x` de `shadowResolution` × `shadowResolution`
+  e um viewer ortográfico próprio que só desenha o grupo de render do
+  Sim; os materiais desenham a silhueta na passada `kRenderTypeShadow`
+  (`SimShadowDX7`/`DX8ShadowRendering`: cor `stdMatShadowColor` = (0,63,
+  0,63, 0,85) do `sims.matShad`) sobre branco.
+- Ajustes do gerenciador (lidos em `0x6f2840` com estes nomes; padrões em
+  `0x6f3d30`): `shadowSize` 1, `shadowCameraDistance` 10,
+  `indoorShadowBlurRadius` 3, `outdoorShadowBlurRadius` 2 (texels; o
+  `shadowBlurRadius` os substitui), `shadowResolution` 128,
+  `baseShadowResolution` 128, `shadowW0` 0,7, `shadowH0` −1, `shadowW1`
+  0,7, `shadowH1` 2 (tiles). Nenhum arquivo do jogo os muda.
+- **Dentro** (`IsOutside` falso): o viewer olha **para baixo** (o eixo Z,
+  `DAT_02c0bbf8` = (0, 0, 1) negado), girado com o Sim, cobrindo ±W0 ×
+  ±W1; a silhueta vai para um quad (`ShadowShader`, camada
+  `simShadowLayer`·4 = 4, depois do opaco) na altura dos pés + 0,005, que
+  **multiplica** o que já foi desenhado pela textura (`srcFactor(destColor)
+  dstFactor(zero)`, sem escrita de z); o quad mostra só o miolo
+  `(resolução − 2·blur)/resolução` da textura (a margem do borrão).
+- **Fora**: o viewer olha ao longo de `−(direção de sombra do gerenciador
+  de luz)` (vtable `0x78` do `cLightingManager`; inferido: a do `sun`),
+  com a caixa ±W, alturas H0..H1 projetadas; a silhueta vai para
+  sobreposições no **piso e no terreno** (`+0x48`/`+0x4c`,
+  `OverlayShadowMaterial`: a sombra inteira na cor de sombra onde o alfa
+  da textura passa de 100/255, a cor vem da vtable `0x7c` do gerenciador),
+  e o quad de dentro fica escondido.
+- `projectiveShadowStrength` (0,73 de dia, 0,4 à noite) é guardado pelo
+  `cTSDiffusionParams`; quem o lê não foi achado.
+
+**No código** (`Renderer::ShadowCaster`, `LotLighting::update`): cada Sim
+na VM com a opção ligada (`GraphicsOptions::simShadows`, Shadows `$High`)
+desenha a silhueta num atlas de 8 × 8 texturas de 128, como acima, e os
+pisos e o terreno (as superfícies com light map voltadas para cima) a
+uma altura entre 0,6 abaixo e 0,3 acima dos pés multiplicam a cor pela
+silhueta borrada (dentro) ou pela cor de sombra onde ela cobre (fora).
+Inferido: a cor de fora, `1 − força·(1 − (0,33, 0,33, 0,39))` com a força
+= `projectiveShadowStrength` e a cor escura que o `sims.matShad` deixa
+comentada; a direção de fora = a do `sun` do estado; o borrão como uma
+caixa de 5 × 5 amostras bilineares; projetar nas superfícies em vez de
+num quad plano (o quad do jogo flutua sobre um chão mais baixo, ex. o Sim
+na escada); os estilos 3 e 4 nos lotes ainda faltam. Captura:
+`docs/screenshots/r15-fov-sombras-sims.jpg`.

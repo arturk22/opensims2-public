@@ -3,6 +3,7 @@
 #include "lot_vm.hpp"
 #include "vm_objects.hpp"
 
+#include "formats/graphics_options.hpp"
 #include "formats/image.hpp"
 #include "formats/rcol.hpp"
 #include "formats/resindex.hpp"
@@ -165,6 +166,8 @@ LightingState LotLighting::blended() const {
     }
     for (int k = 0; k < 3; ++k)
         s.environment[k] = from->environment[k] * (1 - t) + to->environment[k] * t;
+    if (from->projectiveShadowStrength >= 0 && to->projectiveShadowStrength >= 0)
+        s.projectiveShadowStrength = from->projectiveShadowStrength * (1 - t) + to->projectiveShadowStrength * t;
     for (auto& [name, m] : s.modifiers)
         if (auto f = from->modifiers.find(name); f != from->modifiers.end()) {
             m.practical = f->second.practical * (1 - t) + m.practical * t;
@@ -503,13 +506,48 @@ void LotLighting::update(double seconds) {
         const int set = withExtras(id, roomSet(o->position.level, roomOf(*o)));
         renderer_.setInstanceLightSet(actor ? renderer_.instanceOf(actor->model) : instance, set);
     });
+    // The Sims' shadows (nTSSG::cShadow style 1, docs/lighting-mac.md 9):
+    // inside, straight down; outside, along the state's sun (where its
+    // light travels) in the outdoor shadow colour.
+    std::vector<Renderer::ShadowCaster> casters;
+    simd_float3 sunTravel = simd_make_float3(0, 0, -1);
+    for (const auto& l : state.lights)
+        if (lower(l.name) == "sun") {
+            const simd_float3 d = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
+            if (simd_length(d) > 1e-4f && d.z > 0)
+                sunTravel = -simd_normalize(d);
+        }
+    // The outdoor overlay's colour: inferred from projectiveShadowStrength
+    // (0.73 by day, 0.4 at night) between white and the darker shadow
+    // colour sims.matShad leaves commented out, (0.33, 0.33, 0.39).
+    const float strength = state.projectiveShadowStrength >= 0 ? state.projectiveShadowStrength : 0.73f;
+    const simd_float3 outdoorShadow = simd_make_float3(1, 1, 1) - strength * (simd_make_float3(1, 1, 1) - simd_make_float3(0.33f, 0.33f, 0.39f));
     for (const auto& [id, actor] : sims_) {
         const vm::Object* o = m.object(id);
         if (!o || !actor)
             continue;
-        const int set = withExtras(id, roomSet(o->position.level, roomOf(*o)) + 1);
-        renderer_.setInstanceLightSet(renderer_.instanceOf(actor->model), set);
+        const int16_t room = roomOf(*o);
+        const int set = withExtras(id, roomSet(o->position.level, room) + 1);
+        const int instance = renderer_.instanceOf(actor->model);
+        renderer_.setInstanceLightSet(instance, set);
+        if (!graphicsOptions().simShadows || instance < 0 || !o->position.inWorld())
+            continue;
+        // The Sim's vertices are posed in world space: its placement is the actor's.
+        const Xform at = actor->placement();
+        const Vec3 feet = at.apply({0, 0, 0}), side = at.apply({1, 0, 0});
+        Renderer::ShadowCaster c;
+        c.instance = instance;
+        c.feet = f3(feet);
+        c.heading = std::atan2(side[1] - feet[1], side[0] - feet[0]);
+        c.outside = outside(room);
+        c.direction = c.outside ? sunTravel : simd_make_float3(0, 0, -1);
+        c.color = outdoorShadow;
+        if (std::getenv("OS2_DEBUG_SHADOWS"))
+            std::fprintf(stderr, "opensims2: shadow of %d at (%.2f, %.2f, %.2f) heading %.2f %s\n", id, c.feet.x, c.feet.y, c.feet.z,
+                         c.heading, c.outside ? "outside" : "inside");
+        casters.push_back(c);
     }
+    renderer_.setShadowCasters(std::move(casters));
     renderer_.setLightSets(std::move(sets));
 }
 

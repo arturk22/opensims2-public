@@ -138,6 +138,29 @@ public:
     void setReflections(bool on) { reflections_ = on; }
     bool reflections() const { return reflections_; }
 
+    // Sims' shadows (nTSSG::cShadow style 1, docs/lighting-mac.md 9): each
+    // caster's model is drawn as a silhouette in stdMatShadowColor (0.63,
+    // 0.63, 0.85) on white into a 128 x 128 texture from an orthographic
+    // viewer looking along `direction`, over the box shadowW0/W1 = 0.7
+    // either side of the feet and shadowH0..H1 = -1..2 high; the floors and
+    // terrain from a little under the feet to a little over them show it
+    // blurred (indoorShadowBlurRadius 3 texels, outdoor 2). Inside (straight
+    // down) it multiplies them (the game's ShadowShader quad under the
+    // feet); outside (along the sun) it is the floor overlay: `color` where
+    // the blurred silhouette passes the overlay's alpha test
+    // (OverlayShadowMaterial), else nothing. Up to 64 a frame.
+    struct ShadowCaster {
+        int instance = -1;
+        simd_float3 feet{0, 0, 0};      // the floor under the caster, world
+        float heading = 0;              // radians about Z (the viewer turns with the Sim)
+        simd_float3 direction{0, 0, -1}; // where the light travels (unit, going down)
+        bool outside = false;
+        simd_float3 color{0.5f, 0.5f, 0.55f}; // outside: the overlay's shadow colour
+    };
+    void setShadowCasters(std::vector<ShadowCaster> casters) { casters_ = std::move(casters); }
+    // The transform an instance is drawn with.
+    simd_float4x4 instanceTransform(int instance) const;
+
     // Clock for texture coordinate animations, in seconds; until it is set
     // (or after setting it negative) the renderer uses its own running time.
     void setTime(double seconds) { time_ = seconds; }
@@ -222,6 +245,10 @@ private:
     Overlay overlay_;
     SceneHook sceneHook_;
     bool reflections_ = false;
+    std::vector<ShadowCaster> casters_;
+    MTL::Texture* shadowAtlas_ = nullptr; // owned: 8 x 8 tiles of 128 x 128 silhouettes
+    MTL::Texture* shadowDepth_ = nullptr;
+    std::array<MTL::Buffer*, kFramesInFlight> shadowBuffers_{}; // the casters as the floors see them
     MTL::Texture* reflectionColor_ = nullptr; // owned, the size of the last target
     MTL::Texture* reflectionDepth_ = nullptr;
 };

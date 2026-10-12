@@ -7,8 +7,8 @@
 // Changes", and models already loaded keep their parts).
 //
 //   Shadows        $Low: guob false, heightMapShadows false; $Medium and
-//                  $High: both true (simShadows/objectShadows, $High only,
-//                  are not drawn by this engine)
+//                  $High: both true; $High also simShadows (the Sims'
+//                  shadows) and objectShadows (not drawn by this engine)
 //   Reflection     $Off/$On: reflectionWithExtraViewer, nhoodWaterReflection
 //   LightingQuality $Low: specHighlights false; $Medium/$High: true
 //
@@ -19,6 +19,7 @@ namespace os2 {
 struct GraphicsOptions {
     bool guob = true;                       // objects' ground shadow planes ("groundshadow", "*wallshadow")
     bool heightMapShadows = true;           // the neighborhood terrain's height-map shadows
+    bool simShadows = true;                 // the Sims' shadows (nTSSG::cShadow style 1)
     bool reflectionWithExtraViewer = true;  // mirrors (cViewerRefNodeRecursive "screenreflection")
     bool nhoodWaterReflection = true;
     bool specHighlights = true;

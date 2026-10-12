@@ -37,6 +37,7 @@ enum : uint {
     kUnderlayFlat = 1u << 26,  // the underlay's average colour (its smallest mip)
     kWallMask = 1u << 27,      // walls with a door or window: alpha test against the mask (texture 1)
     kMirror = 1u << 28,        // the reflecting mirror: the reflection texture (18) at this pixel
+    kShadowCaster = 1u << 29,  // a shadow silhouette: the draw's colour, alpha-tested by the texture
 };
 
 struct Draw {
@@ -155,10 +156,49 @@ float3 bumpedNormal(float3 n, float3 world, float2 uv, texture2d<float> height, 
     return normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
 }
 
+// A Sim's shadow as the floors see it (nTSSG::cShadow, docs/lighting-mac.md 9).
+struct Shadow {
+    float4 u, v;  // world -> atlas uv: dot(xyz, p) + w
+    float4 rect;  // the caster's tile (uv min, max)
+    float4 misc;  // x: blur (uv), y: outside, z: the floor under the caster
+    float4 color; // outside: the shadow colour
+};
+
+// What the Sims' shadows leave of a floor's colour at `world` (1: none).
+// The silhouette seen from the light, blurred over +-blur texels (here a
+// 5 x 5 box of bilinear taps) inside the caster's tile; inside it
+// multiplies (ShadowShader), outside the whole shadow takes the shadow
+// colour where the blurred silhouette passes the overlay's alpha test
+// (OverlayShadowMaterial: > 100 of 255; its edge softened a little here).
+float3 simShadows(float3 world, uint count, constant Shadow* shadows, texture2d<float> atlas, sampler smp) {
+    float3 k = 1.0;
+    for (uint i = 0; i < count; ++i) {
+        constant Shadow& s = shadows[i];
+        if (world.z < s.misc.z - 0.6 || world.z > s.misc.z + 0.3)
+            continue;
+        const float2 uv = float2(dot(s.u.xyz, world) + s.u.w, dot(s.v.xyz, world) + s.v.w);
+        if (any(uv < s.rect.xy) || any(uv > s.rect.zw))
+            continue;
+        float3 acc = 0.0;
+        for (int j = -2; j <= 2; ++j)
+            for (int q = -2; q <= 2; ++q)
+                acc += atlas.sample(smp, clamp(uv + float2(q, j) * s.misc.x * 0.5, s.rect.xy, s.rect.zw)).rgb;
+        acc /= 25.0;
+        if (s.misc.y > 0.5) {
+            const float cover = saturate((1.0 - acc.g) / (1.0 - 0.63));
+            k *= mix(float3(1.0), s.color.rgb, smoothstep(0.3, 0.48, cover));
+        } else {
+            k *= acc;
+        }
+    }
+    return k;
+}
+
 fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_facing]],
                               constant Draw& draw [[buffer(1)]],
                               constant Frame& frame [[buffer(2)]],
                               constant LightSet* lightSets [[buffer(3)]],
+                              constant Shadow* shadows [[buffer(4)]],
                               texture2d<float> base [[texture(0)]],
                               texture2d<float> mask [[texture(1)]],
                               texture2d<float> underlay [[texture(2)]],
@@ -174,6 +214,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               texture2d<float> detail [[texture(12)]],
                               array<texture2d<float>, 5> moreOverlays [[texture(13)]],
                               texture2d<float> reflection [[texture(18)]],
+                              texture2d<float> shadowAtlas [[texture(19)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
@@ -229,6 +270,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         tex.a *= mask.sample(maskSmp, in.local * draw.mask.xy + draw.mask.zw).r;
     if ((draw.flags & kAlphaTest) && tex.a < draw.alphaRef)
         discard_fragment();
+    if (draw.flags & kShadowCaster)
+        return float4(draw.color.rgb, 1.0);
     if (draw.flags & kWallMask) {
         // PS1BasicWallRendering: alpha test > 127 on the wall mask (clamped).
         const float2 m = saturate(float2(dot(draw.mask.xyz, in.localPos) + draw.mask.w,
@@ -267,6 +310,9 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         const float3 lm = mix(lightMap0.sample(maskSmp, in.lightUv).rgb, lightMap1.sample(maskSmp, in.lightUv).rgb,
                               frame.params.x);
         color.rgb = saturate(2.0 * albedo * lm * draw.color.rgb);
+        // The Sims' shadows fall on floors and terrain (not on walls).
+        if (frame.params.z > 0.5 && n.z > 0.7)
+            color.rgb *= simShadows(in.world, uint(frame.params.z), shadows, shadowAtlas, maskSmp);
     } else if ((draw.flags & kLighting) && (draw.flags & kWater)) {
         // Fixed-function light, ambient = diffuse = stdMatDiffCoef, x1.
         constant LightSet& set = lightSets[draw.lightSet];

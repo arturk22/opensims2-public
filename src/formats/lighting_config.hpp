@@ -62,6 +62,9 @@ struct LightingState {
     }
     // `transitionTimes <max in> <max out>`, seconds.
     float transitionIn = 0, transitionOut = 0;
+    // `projectiveShadowStrength f` (cTSDiffusionParams; -1 if not given):
+    // how dark the Sims' shadows are outside (inferred, docs/lighting-mac.md 9).
+    float projectiveShadowStrength = -1;
 
     // Lights for objects: everything except the Sim-only fills ("simFill*",
     // by name; inferred).

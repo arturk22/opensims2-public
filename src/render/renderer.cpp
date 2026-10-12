@@ -65,6 +65,26 @@ enum : uint32_t {
     kUnderlayFlat = 1u << 26,  // the underlay's smallest mip (its average colour)
     kWallMask = 1u << 27,      // walls: alpha test against a mask over the face (planes mask / maskV)
     kMirror = 1u << 28,        // the mirror reflecting this frame: the reflection texture (18) at the pixel
+    kShadowCaster = 1u << 29,  // a shadow silhouette: the draw's colour (alpha-tested by the texture)
+    kShadowDecal = 1u << 30,   // a Sim's shadow on the floor: the silhouette (texture 19) at mask/maskV
+};
+
+// Sims' shadows (nTSSG::cShadow, docs/lighting-mac.md 9): the shadow
+// manager's settings (BV 0x6f2840 reads them, the defaults are set in
+// 0x6f3d30), all in tiles and texels.
+constexpr float kShadowW0 = 0.7f, kShadowW1 = 0.7f, kShadowH0 = -1.0f, kShadowH1 = 2.0f;
+constexpr int kShadowResolution = 128, kIndoorShadowBlur = 3, kOutdoorShadowBlur = 2;
+constexpr int kShadowAtlasTiles = 8; // ours: the casters' textures in one atlas
+constexpr int kShadowAtlas = kShadowResolution * kShadowAtlasTiles;
+constexpr size_t kMaxShadowCasters = size_t(kShadowAtlasTiles * kShadowAtlasTiles);
+const simd_float3 kStdMatShadowColor{0.63f, 0.63f, 0.85f}; // sims.matShad: setc stdMatShadowColor
+
+// Must match shaders.metal: a caster's silhouette as the floors see it.
+struct GpuShadow {
+    simd_float4 u, v;   // world -> atlas uv: dot(xyz, p) + w
+    simd_float4 rect;   // the tile in the atlas (uv min, max)
+    simd_float4 misc;   // x: blur (uv), y: outside, z: the floor under the caster (z)
+    simd_float4 color;  // outside: the shadow colour
 };
 constexpr size_t kMaxOverlays = 8; // a face's composited layers: eyes, brows, makeup, beard...
 
@@ -403,6 +423,13 @@ Renderer::~Renderer() {
     for (int i = 0; i < kFramesInFlight; ++i)
         dispatch_semaphore_signal(sema(inFlight_));
     models_.clear();
+    if (shadowAtlas_)
+        shadowAtlas_->release();
+    if (shadowDepth_)
+        shadowDepth_->release();
+    for (auto* b : shadowBuffers_)
+        if (b)
+            b->release();
     if (reflectionColor_)
         reflectionColor_->release();
     if (reflectionDepth_)
@@ -828,6 +855,10 @@ void Renderer::setInstanceTransform(int instance, const simd_float4x4& transform
         instances_[size_t(instance)].transform = transform;
 }
 
+simd_float4x4 Renderer::instanceTransform(int instance) const {
+    return instance >= 0 && size_t(instance) < instances_.size() ? instances_[size_t(instance)].transform : identity();
+}
+
 void Renderer::setInstanceModel(int instance, int model) {
     if (instance >= 0 && size_t(instance) < instances_.size() && model >= 0 && size_t(model) < models_.size())
         instances_[size_t(instance)].model = model;
@@ -982,6 +1013,123 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         }
     }
 
+    // Sims' shadows: each caster's silhouette into its tile of the atlas,
+    // and its quad on the floor (drawn after the opaque parts).
+    size_t shadowCount = 0;
+    if (!casters_.empty()) {
+        if (!shadowAtlas_) {
+            MTL::TextureDescriptor* cd =
+                MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormat(colorFormat_), kShadowAtlas, kShadowAtlas, false);
+            cd->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+            cd->setStorageMode(MTL::StorageModePrivate);
+            shadowAtlas_ = device_->newTexture(cd);
+            MTL::TextureDescriptor* dd =
+                MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormat(depthFormat_), kShadowAtlas, kShadowAtlas, false);
+            dd->setUsage(MTL::TextureUsageRenderTarget);
+            dd->setStorageMode(MTL::StorageModePrivate);
+            shadowDepth_ = device_->newTexture(dd);
+            for (auto& b : shadowBuffers_)
+                b = device_->newBuffer(sizeof(GpuShadow) * kMaxShadowCasters, MTL::ResourceStorageModeShared);
+        }
+        auto* gpu = static_cast<GpuShadow*>(shadowBuffers_[size_t(frame_)]->contents());
+        MTL::RenderPassDescriptor* sp = MTL::RenderPassDescriptor::renderPassDescriptor();
+        auto* sa = sp->colorAttachments()->object(0);
+        sa->setTexture(shadowAtlas_);
+        sa->setLoadAction(MTL::LoadActionClear);
+        sa->setStoreAction(MTL::StoreActionStore);
+        sa->setClearColor(MTL::ClearColor::Make(1, 1, 1, 1));
+        sp->depthAttachment()->setTexture(shadowDepth_);
+        sp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+        sp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+        sp->depthAttachment()->setClearDepth(1.0);
+        MTL::RenderCommandEncoder* senc = cmd->renderCommandEncoder(sp);
+        senc->setRenderPipelineState(opaque_);
+        senc->setDepthStencilState(depthWrite_);
+        senc->setCullMode(MTL::CullModeNone);
+        senc->setFragmentBuffer(lightBuffers_[size_t(frame_)], 0, 3);
+        senc->setFragmentSamplerState(sampler_, 0);
+        senc->setFragmentSamplerState(maskSampler_, 1);
+        senc->setFragmentSamplerState(cubeSampler_, 2);
+        senc->setFragmentSamplerState(pointSampler_, 3);
+        for (NS::UInteger k = 1; k <= 19; ++k)
+            if (k != 6)
+                senc->setFragmentTexture(white_, k);
+        senc->setFragmentTexture(whiteCube_, 6);
+        size_t n = 0;
+        for (const auto& c : casters_) {
+            if (n >= kMaxShadowCasters || c.instance < 0 || size_t(c.instance) >= instances_.size())
+                continue;
+            const Instance& inst = instances_[size_t(c.instance)];
+            // The viewer's frame: looking along the light, turned with the Sim.
+            const simd_float3 fwd = simd_normalize(c.direction);
+            const simd_float3 hx = simd_make_float3(std::cos(c.heading), std::sin(c.heading), 0);
+            const simd_float3 hy = simd_make_float3(-hx.y, hx.x, 0);
+            simd_float3 r = simd_cross(fwd, hy);
+            if (simd_length_squared(r) < 1e-6f)
+                r = simd_cross(fwd, hx);
+            r = simd_normalize(r);
+            const simd_float3 u = simd_cross(r, fwd);
+            // UpdateInsideOutsideSettings: the box's extent seen from the light.
+            float a0 = INFINITY, a1 = -INFINITY, b0 = INFINITY, b1 = -INFINITY, d0 = INFINITY, d1 = -INFINITY;
+            for (int k = 0; k < 8; ++k) {
+                const simd_float3 q = (k & 1 ? kShadowW0 : -kShadowW0) * hx + (k & 2 ? kShadowW1 : -kShadowW1) * hy +
+                                      simd_make_float3(0, 0, k & 4 ? kShadowH1 : kShadowH0);
+                a0 = std::min(a0, simd_dot(q, r)), a1 = std::max(a1, simd_dot(q, r));
+                b0 = std::min(b0, simd_dot(q, u)), b1 = std::max(b1, simd_dot(q, u));
+                d0 = std::min(d0, simd_dot(q, fwd)), d1 = std::max(d1, simd_dot(q, fwd));
+            }
+            d0 -= 1, d1 += 1;
+            // CreateShadow: the quad shows the inner (resolution - 2 blur) /
+            // resolution of the texture, the blur's margin around it.
+            const int blur = c.outside ? kOutdoorShadowBlur : kIndoorShadowBlur;
+            const float inner = float(kShadowResolution - 2 * blur) / float(kShadowResolution);
+            const float ma = (a1 - a0) * (1 / inner - 1) / 2, mb = (b1 - b0) * (1 / inner - 1) / 2;
+            const float A0 = a0 - ma, Aw = (a1 - a0) + 2 * ma, B0 = b0 - mb, Bh = (b1 - b0) + 2 * mb, Dd = d1 - d0;
+            const simd_float3 p = c.feet;
+            const simd_float4x4 vp = simd_matrix_from_rows(
+                simd_make_float4(2 * r / Aw, -2 * (simd_dot(r, p) + A0) / Aw - 1),
+                simd_make_float4(2 * u / Bh, -2 * (simd_dot(u, p) + B0) / Bh - 1),
+                simd_make_float4(fwd / Dd, -(simd_dot(fwd, p) + d0) / Dd), simd_make_float4(0, 0, 0, 1));
+            const int tx = int(n) % kShadowAtlasTiles, ty = int(n) / kShadowAtlasTiles;
+            MTL::Viewport vpt{double(tx * kShadowResolution), double(ty * kShadowResolution), double(kShadowResolution),
+                              double(kShadowResolution), 0.0, 1.0};
+            senc->setViewport(vpt);
+            Frame sf = *f;
+            sf.viewProj = vp;
+            sf.viewport = simd_make_float4(kShadowResolution, kShadowResolution, 0, 0);
+            senc->setVertexBytes(&sf, sizeof sf, 2);
+            senc->setFragmentBytes(&sf, sizeof sf, 2);
+            for (const auto& part : models_[size_t(inst.model)]->parts) {
+                if (part.shadowPlane)
+                    continue;
+                const Material& m = part.material;
+                const bool cut = m.blend != StandardMaterial::Blend::None || (m.flags & kAlphaTest);
+                Draw d{inst.transform, simd_make_float4(kStdMatShadowColor, 1), {}, {}, m.maskTransform, {},
+                       simd_make_float4(1, 0, 0, 0), simd_make_float4(0, 1, 0, 0), {}, {},
+                       m.blend != StandardMaterial::Blend::None ? 0.5f : m.alphaRef,
+                       uint32_t(kShadowCaster) | (cut ? uint32_t(kAlphaTest) : 0u), 0};
+                senc->setVertexBytes(&d, sizeof d, 1);
+                senc->setFragmentBytes(&d, sizeof d, 1);
+                senc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
+                senc->setFragmentTexture(m.texture, 0);
+                senc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
+                                            part.indices, NS::UInteger(0));
+            }
+            // World -> atlas uv (the viewer's x and y, into the tile; v down).
+            const float S = float(kShadowResolution) / float(kShadowAtlas);
+            const simd_float4 mu = simd_make_float4(r * (S / Aw), float(tx) * S - S * (simd_dot(r, p) + A0) / Aw);
+            const simd_float4 mv = simd_make_float4(-u * (S / Bh), float(ty + 1) * S + S * (simd_dot(u, p) + B0) / Bh);
+            const float h = 0.5f / float(kShadowAtlas);
+            const simd_float4 rect = simd_make_float4(float(tx) * S + h, float(ty) * S + h, float(tx + 1) * S - h, float(ty + 1) * S - h);
+            gpu[n] = {mu, mv, rect, simd_make_float4(float(blur) / float(kShadowAtlas), c.outside ? 1.0f : 0.0f, p.z, 0),
+                      simd_make_float4(c.color, 1)};
+            ++n;
+        }
+        senc->endEncoding();
+        shadowCount = n;
+    }
+    f->params.z = float(shadowCount);
+
     const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
     // `reflected`: the pass into the reflection texture (mirrors left out).
     auto drawItems = [&](MTL::RenderCommandEncoder* enc, bool reflected, const simd_float4x4& passViewProj) {
@@ -995,6 +1143,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentTexture(lightMap0, 10);
         enc->setFragmentTexture(lightMap1, 11);
         enc->setFragmentTexture(mirror && !reflected ? reflectionColor_ : white_, 18);
+        enc->setFragmentTexture(shadowCount ? shadowAtlas_ : white_, 19);
+        enc->setFragmentBuffer(shadowCount ? shadowBuffers_[size_t(frame_)] : lightBuffers_[size_t(frame_)], 0, 4);
         for (const auto& item : items) {
             const Part& part = *item.part;
             const Material& m = part.material;
