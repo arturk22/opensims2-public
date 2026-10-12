@@ -122,6 +122,10 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     vm::VM machine(code);
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
+    // OS2_SEED=N: another seed for the VM's random numbers (to tell a
+    // change's effect from the run's chance in soaks).
+    if (const char* seed = std::getenv("OS2_SEED"))
+        machine.random.seed(uint32_t(std::strtoul(seed, nullptr, 10)));
     // S2PKG_NO_RESET=1: a Main that fails stays dead (for looking into the
     // error) instead of being reset as the game does.
     machine.resetOnError = std::getenv("S2PKG_NO_RESET") == nullptr;
