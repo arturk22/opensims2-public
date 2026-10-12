@@ -317,6 +317,7 @@ void CasMode::applyCamera(bool smooth) {
 
 void CasMode::newSim() {
     edit_ = Member{};
+    bioOpen_ = false;
     edit_.spec.gender = family_.size() % 2 ? cas::gender::Male : cas::gender::Female;
     edit_.spec.lastName = familyName_;
     edit_.spec.firstName.clear();
@@ -539,6 +540,9 @@ void CasMode::setStep(int step) {
         return;
     const int before = step_;
     step_ = std::clamp(step, 0, 5);
+    bioOpen_ = false;
+    if (focus_ == Focus::Biography)
+        focus_ = Focus::None;
     // Face steps look at the face.
     zoom_ = (step_ == 1 || step_ == 2 || step_ == 3) ? 2 : 0;
     if (camera_) {
@@ -968,7 +972,10 @@ void CasMode::mouseUp(simd_float2) { dragging_ = false; }
 void CasMode::keyDown(unsigned short keyCode, const std::string& chars, bool control) {
     constexpr unsigned short kZ = 6, kY = 16, kComma = 43, kPeriod = 47, kBackspace = 51, kReturn = 36;
     if (focus_ != Focus::None) {
-        std::string& text = focus_ == Focus::FirstName ? edit_.spec.firstName : familyName_;
+        std::string& text = focus_ == Focus::FirstName ? edit_.spec.firstName
+                            : focus_ == Focus::Biography ? edit_.spec.description
+                                                         : familyName_;
+        const size_t limit = focus_ == Focus::Biography ? 512 : 32; // inferred: the bio's limit was not read
         if (keyCode == kBackspace) {
             while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xC0) == 0x80)
                 text.pop_back(); // UTF-8 continuation bytes
@@ -978,7 +985,7 @@ void CasMode::keyDown(unsigned short keyCode, const std::string& chars, bool con
             focus_ = Focus::None;
         } else {
             for (char c : chars)
-                if (static_cast<unsigned char>(c) >= 0x20 && c != 0x7F && text.size() < 32)
+                if (static_cast<unsigned char>(c) >= 0x20 && c != 0x7F && text.size() < limit)
                     text += c;
         }
         if (focus_ == Focus::FamilyName)
@@ -1093,6 +1100,11 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
             edit_.spec.outfits.erase(cas::category::Naked);
             cas::completeSpec(*catalog_, edit_.spec);
             changed();
+        } else if (a == "--cas-bio") { // the biography window opened and its text typed
+            setStep(0);
+            bioOpen_ = true;
+            edit_.spec.description = v;
+            dirty_ = true;
         } else if (a == "--cas-done")
             finishSim();
         else if (a == "--cas-new")
@@ -1912,6 +1924,12 @@ UiScreen CasMode::screen(int width, int height) {
         if (const UiElement* gen = find(panel, 0x8C6B1EB9))
             if (const UiElement* t = gen->child(1))
                 hk.captions[t] = s.firstName.empty() ? t->get("caption") : s.firstName + (focus_ == Focus::FirstName ? "|" : "");
+        if (const UiElement* bio = find(panel, 0x4CD0FDD9)) {
+            (bioOpen_ ? hk.show : hk.hide).insert(bio);
+            if (const UiElement* t = bio->child(1); t && (!s.description.empty() || focus_ == Focus::Biography))
+                hk.captions[t] = s.description + (focus_ == Focus::Biography ? "|" : "");
+        }
+        pressed(find(panel, 0x8CB7C11F), bioOpen_);
         pressed(find(panel, 0x401), s.gender == cas::gender::Female);
         pressed(find(panel, 0x400), s.gender == cas::gender::Male);
         const uint32_t ages[5] = {cas::age::Toddler, cas::age::Child, cas::age::Teen, cas::age::Adult, cas::age::Elder};
@@ -2233,7 +2251,15 @@ UiScreen CasMode::screen(int width, int height) {
             changed();
         });
         target(find(panel, 0xAC3405DF), [this](simd_float2) { randomize(0); });
-        target(find(panel, 0x8CB7C11F), [this](simd_float2) { setStep(1); });
+        target(find(panel, 0x8CB7C11F), [this](simd_float2) {
+            bioOpen_ = !bioOpen_;
+            focus_ = bioOpen_ ? Focus::Biography : Focus::None;
+            dirty_ = true;
+        });
+        if (bioOpen_)
+            if (const UiElement* bio = find(panel, 0x4CD0FDD9))
+                if (const UiElement* t = bio->child(1))
+                    target(t, [this](simd_float2) { focus_ = Focus::Biography; });
         if (const UiElement* gen = find(panel, 0x8C6B1EB9))
             target(gen, [this](simd_float2) { focus_ = Focus::FirstName; });
         break;

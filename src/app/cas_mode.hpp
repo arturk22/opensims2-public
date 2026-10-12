@@ -230,7 +230,11 @@ private:
     int cosmeticTab_ = 0; // CB980E85: 0 makeup, 1 costume, 2 glasses, 3 brows, 4 stubble, 5 facial hair
     int clothesCategory_ = 0, clothesPart_ = 0;
     std::map<std::string, int> pages_; // grid key -> page
-    enum class Focus { None, FirstName, FamilyName } focus_ = Focus::None;
+    enum class Focus { None, FirstName, FamilyName, Biography } focus_ = Focus::None;
+    // Step 1's "Sim Biography" button (0x8CB7C11F) shows the hidden
+    // "Biography" window (0x4CD0FDD9) with its text edit: the Sim's
+    // description (CTSS 0x7D0 #2 of the character file).
+    bool bioOpen_ = false;
     std::string status_;
 
     // The Sims drawn: the edited one, or the family's side by side.

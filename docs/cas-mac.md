@@ -714,3 +714,18 @@ copiar; é uma migração nossa (`r12-rosto-antigo-migrado.jpg`).
 roupas, overlays, modificadores e regiões limpos); antes `male` caía em
 mulher e o script não limpava os modificadores.
 
+**Biografia** (rodada 12): no `CB980E81` o botão 0x8CB7C11F ("Biografia do
+Sim", `cTSUISimEditor::HandleButtonShowSimBio`, não decompilado) mostra a
+janela escondida 0x4CD0FDD9 ("Biography", fundo `ca2b0180` 350×309) com o
+`GZWinTextEdit` 1 ("Please enter a biography for this Sim . . ."). Antes o
+botão levava ao passo 2. O texto é o `description` do personagem (CTSS
+0x7D0 #2, já gravado e lido pelo `character_write`). Inferido: o limite de
+512 caracteres, fechar a janela ao trocar de passo/Sim, Return tira o foco.
+`--cas-bio <texto>` abre a janela e preenche (`r12-cas-biografia.jpg`). O
+`HandleButtonShowHouseholdBio` (bio da família) não foi feito.
+
+**Peles personalizadas** (botão 0x2CB70004, "Peles Personalizadas"): no
+base os 7 `skintone` do `Skins.package` são os 4 normais (flags 0) e
+manequim, Alien e manequim do CAS (flags 1, escondidos), então a lista do
+botão sai vazia sem conteúdo baixado (Body Shop/Downloads); não feito.
+
