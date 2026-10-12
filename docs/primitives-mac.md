@@ -1939,13 +1939,14 @@ começam essa busca **a partir do Sim** ("Sub - Is Stack Obj my Student?",
 "Sub - Set to Sim's School", "Sub - Send to School", "Work - Do I Have a
 Job?", "Neighbor - Is home?"), procurando o JobData, que tem ID menor: só
 funciona se os Sims vêm antes dos outros objetos nessa lista. **Inferido**:
-a VM anda o tipo 18 com os Sims primeiro (de um Sim: os Sims depois dele e
-depois todos os outros objetos por ID; de um objeto: os não-Sims depois
-dele). Com isso o Alexander (`N001_Lot11`) põe o uniforme, anda até o
+a VM anda o tipo 18 pelas instâncias da definição (como o BV, na ordem de
+criação), mas um Sim que não é dessa definição conta como o começo (no BV,
+"atual fora da lista" é falso; no 1.0, com os Sims primeiro na lista do
+lote, a busca a partir do aluno acha o JobData). Com isso o Alexander (`N001_Lot11`) põe o uniforme, anda até o
 ônibus às 08:07, "Na Escola" das 08:26 às 15:02, nota 12 → 13, nos dois
 dias de `s2pkg autonomy --ticks 86400`; a Jill (`N002_Lot10`), que também
 não ia, agora vai. Captura `docs/screenshots/r18-life-escola-particular.jpg`.
-Os outros tipos da lista (0, 2, 6, 12, 25, 27, 37) seguem por ID.
+
 
 ### O dia de trabalho (só SimAntics)
 
