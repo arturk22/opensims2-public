@@ -926,10 +926,18 @@ para `cWallManager::SetCutoutMaterial`. No app (rodada 12,
 `formats/lot_model`): a base é o nome do modelo (o CRES que o lote guarda);
 para cada trecho reto que a porta/janela atravessa, dx = tiles ao longo do +x
 do objeto, nível = andares acima do objeto, e a textura do TXMT (alfa 0 =
-buraco; as duas faces usam a mesma) vai na face com u = posição ao longo do
-+x do objeto a partir do começo do tile e v de 3 tiles acima do piso até ele
-(inferido pelas texturas: as metades de um arco de 2 tiles são "0" e "1e"),
-teste de alfa no shader. Diagonais (rodada 13): os modelos "…Diagonal" ficam
+buraco; as duas faces usam a mesma) vai na face com u ao longo do **−x** do
+objeto (u = 0 na borda do tile do lado +x) e v de 3 tiles acima do piso até
+ele, teste de alfa no shader. **Correção (rodada 16):** o u corria ao longo
+do +x; as metades "0" e "1e" do arco de 2 tiles (a "1e" um tile para +x) só
+se encontram na borda comum com u ao longo do −x: com +x os arcos da frente
+de `N001_Lot82` abriam nas bordas de fora e deixavam uma tira de parede no
+meio, que parecia duas folhas abertas (inferido pelas texturas: o buraco da
+"0" vai de u = 0 a 0,85, o da "1e" de 0,15 a 1, o topo do arco mais alto no
+lado comum; teste `testTwoTileArchMask`, `docs/screenshots/
+r16-portas-arco-antes-depois.jpg`). A diagonal segue a mesma convenção
+(inferido; nenhum lote do jogo base tem porta diagonal de 2 tiles para
+conferir). Diagonais (rodada 13): os modelos "…Diagonal" ficam
 em pé alinhados aos eixos (rotação de 0/90/180/270°) e a parede deles corre
 ao longo de +x + o norte local (+x girado 90°), o que os 24 trechos diagonais
 de `N002_Lot3` confirmam; a máscara do trecho é `<base>_<k>e_<k>n_<nível>_

@@ -949,6 +949,25 @@ de objeto 0x3E do portal ≠ 0), espera em `DoWaitingForPortalToBecomeFree`
 (animação de espera de 24 ticks, até 126 ticks). Antes de rodar, tira o
 bit 0x40 do dado 0x44 do Sim.
 
+**A folha da porta** (rodada 16, dados): a árvore de portal das portas
+(`Function - Portal - SG`, semi-global `0x7FD0DEBA` `0x200A`) chama `Set door
+open` (`0x200D`) **uma vez**, com o lado em temp 1 (`0x2081`/`0x2082`); o
+`0x200D` toca **uma folha**: a direita (`r_door_rot`) com o Animate Overlay
+sem flip, ou a esquerda com o mesmo nome **com flip** (byte 2 = 1; o espelho
+leva `r_` em `l_`). A lista de animações (STR# `0x86` do semi-global) é 1
+`o-door-open-CCW`, 2 `o-door-close-CW`, 3 `o-door-open-CW`, 4
+`o-door-close-CCW`: a folha que abriu CCW (−91°, último quadro) fecha com a
+CW, que começa em −91° (e vice-versa). Numa porta de 2 tiles o Sim que passa
+abre só a folha do seu lado (pelo código; não conferido no jogo). Os lotes
+do jogo base guardam as portas com os ossos na pose de repouso (fechadas):
+nenhum nó `r_door_*`/`l_door_*` salvo difere do repouso em `N001_Lot82`,
+`N001_Lot11`, `N002_Lot10` e `N001_Lot68`. No app, cada overlay que a VM
+toca num objeto é uma camada própria (`LotSimulation::onObjectOverlay`,
+prioridade e nível 1 + o id do overlay) tirada quando a VM o tira, com o
+objeto mantendo a pose daquele momento; antes a folha com flip substituía a
+camada da outra e a fechava de golpe. `OS2_DEBUG_DOORS=1` lista os ângulos
+das folhas numa corrida sem tela.
+
 **Os parâmetros 2 e 3 são os andares** (rodada 15): o
 `TSObjectPortalLockedCB` (BV `0xe208c8`) monta os parâmetros da árvore de
 teste assim: 0/1 = `vtable 0x380` (o slot de contenção de cada ponta), **2/3
