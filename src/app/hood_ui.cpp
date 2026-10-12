@@ -160,8 +160,31 @@ void HoodUi::hoverLot(const HoodLot* lot, simd_float2 mouse) {
 }
 
 void HoodUi::openLot(const HoodLot* lot) {
+    if (lot != dialog_)
+        advanced_ = false, member_ = 0;
     dialog_ = lot;
     dirty_ = true;
+}
+
+const RgbaImage* HoodUi::memberThumb(const std::filesystem::path& character) {
+    const std::string key = character.string();
+    if (auto it = memberThumbs_.find(key); it != memberThumbs_.end())
+        return it->second.get();
+    std::unique_ptr<RgbaImage> img;
+    try {
+        // The character file's head shot: the IMG whose instance is an age
+        // bit (8 adult, 0x10 elder, ...; the age bit << 8 is the
+        // silhouette, inferred from the files).
+        if (!character.empty() && std::filesystem::exists(character)) {
+            DbpfPackage pkg(character);
+            for (const auto& e : pkg.entries())
+                if (e.tgi.type == kTypeImg && e.tgi.instance > 0 && e.tgi.instance < 0x100 && !img)
+                    if (auto d = decodeUiImage(pkg.read(e)))
+                        img = std::make_unique<RgbaImage>(std::move(*d));
+        }
+    } catch (const std::exception&) {
+    }
+    return (memberThumbs_[key] = std::move(img)).get();
 }
 
 HoodUi::Action HoodUi::press(simd_float2 p) {
@@ -179,6 +202,10 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
                 playSound(t.sound);
             if (t.action == Action::Close)
                 openLot(nullptr);
+            if (t.action == Action::Info)
+                advanced_ = !advanced_, dirty_ = true;
+            if (t.action == Action::Member)
+                member_ = size_t(t.value), dirty_ = true;
             if (t.action == Action::Families || t.action == Action::Lots || t.action == Action::Options) {
                 bins_->togglePanel(t.action == Action::Families ? HoodBins::Panel::Families
                                    : t.action == Action::Lots   ? HoodBins::Panel::Lots
@@ -347,7 +374,7 @@ UiScreen HoodUi::screen(int width, int height) {
         const HoodLot& lot = *dialog_;
         const UiElement& root = dialogScript_.roots.front();
         UiDrawHooks hk;
-        const uint32_t panel = lot.type == 1 ? 0xE000 : lot.family ? 0xB000 : 0xD000;
+        const uint32_t panel = lot.type == 1 ? 0xE000 : lot.family ? (advanced_ ? 0xC000 : 0xB000) : 0xD000;
         for (uint32_t id : {0xA000u, 0xB000u, 0xC000u, 0xD000u, 0xE000u})
             if (const UiElement* e = root.child(id))
                 (id == panel ? hk.show : hk.hide).insert(e);
@@ -367,6 +394,64 @@ UiScreen HoodUi::screen(int width, int height) {
             if (auto* e = child(0xB005))
                 if (const RgbaImage* snap = familySnapshot(lot.family))
                     hk.images[e] = snap;
+        } else if (panel == 0xC000) {
+            // "Advanced": the family, the lot, the net worth and a head shot
+            // per member (up to 8); the picked member's name and
+            // aspiration (person data 46: 2 family, 64 grow up, 4 fortune,
+            // 32 knowledge, 16 popularity, 1 romance -> C201-C206).
+            if (auto* e = child(0xC006))
+                hk.captions[e] = lot.familyName;
+            if (auto* e = child(0xC007))
+                hk.captions[e] = lot.name;
+            if (auto* e = child(0xC008)) {
+                if (lotValues(lot).ok)
+                    hk.captions[e] = formatMoney(netWorth(lot));
+                else
+                    hk.hide.insert(e);
+            }
+            const hood::Neighborhood& h = view_->neighborhood();
+            if (const hood::Family* f = h.family(lot.family); f && !f->description.empty() && pe)
+                for (const auto& c : pe->children)
+                    if (c.get("clsid") == "GZWinTextEdit")
+                        hk.captions[&c] = f->description;
+            std::vector<const hood::Neighbor*> members;
+            if (const hood::Family* f = h.family(lot.family))
+                for (uint16_t m : f->members)
+                    if (const hood::Neighbor* n = h.neighbor(m); n && members.size() < 8)
+                        members.push_back(n);
+            member_ = members.empty() ? 0 : std::min(member_, members.size() - 1);
+            for (size_t k = 0; k < 8; ++k) {
+                const UiElement* win = pe ? findWindow(*pe, 0xC111 + uint32_t(k)) : nullptr;
+                const UiElement* btn = pe ? findWindow(*pe, 0xC101 + uint32_t(k)) : nullptr;
+                if (k >= members.size()) {
+                    if (win)
+                        hk.hide.insert(win);
+                    if (btn)
+                        hk.hide.insert(btn);
+                    continue;
+                }
+                const hood::Neighbor& n = *members[k];
+                if (win)
+                    if (const UiElement* pic = win->child(1))
+                        if (n.character >= 0)
+                            if (const RgbaImage* img = memberThumb(h.characters[size_t(n.character)].path))
+                                hk.images[pic] = img;
+                if (btn)
+                    hk.buttonState[btn] = k == member_ ? 2 : 1;
+            }
+            if (!members.empty()) {
+                const hood::Neighbor& n = *members[member_];
+                if (auto* e = child(0xC100) ? findWindow(*child(0xC100), 0xC110) : nullptr)
+                    hk.captions[e] = n.name();
+                if (auto* e = child(0xC100) ? findWindow(*child(0xC100), 0xC120) : nullptr)
+                    hk.captions[e] = "";
+                const int16_t asp = n.description.personData[hood::sdsc::Aspiration];
+                const std::pair<int16_t, uint32_t> icons[] = {{2, 0xC201},  {64, 0xC202}, {4, 0xC203},
+                                                              {32, 0xC204}, {16, 0xC205}, {1, 0xC206}};
+                for (auto [bit, id] : icons)
+                    if (const UiElement* e = pe ? findWindow(*pe, id) : nullptr)
+                        (asp == bit ? hk.show : hk.hide).insert(e);
+            }
         } else if (panel == 0xD000) {
             if (auto* e = child(0xD003))
                 hk.captions[e] = lot.name;
@@ -385,10 +470,17 @@ UiScreen HoodUi::screen(int width, int height) {
         const auto a = pe ? pe->area() : root.area();
         const float w = float(a[2] - a[0]), h = float(a[3] - a[1]);
         place(root, std::round((float(width) - w) / 2), std::round((float(height) - h) / 2), hk);
-        const uint32_t enter = panel == 0xB000 ? 0xB002 : panel == 0xD000 ? 0xD005 : 0xE005;
-        const uint32_t close = panel == 0xB000 ? 0xB00A : panel == 0xD000 ? 0xD007 : 0xE007;
+        const uint32_t enter = panel == 0xB000 ? 0xB002 : panel == 0xC000 ? 0xC002 : panel == 0xD000 ? 0xD005 : 0xE005;
+        const uint32_t close = panel == 0xB000 ? 0xB00A : panel == 0xC000 ? 0xC00A : panel == 0xD000 ? 0xD007 : 0xE007;
         target(child(enter), Action::EnterLot);
         target(child(close), Action::Close);
+        if (panel == 0xB000 || panel == 0xC000)
+            target(child(panel + 4), Action::Info);
+        if (panel == 0xC000)
+            for (size_t k = 0; k < 8; ++k)
+                if (const UiElement* b = pe ? findWindow(*pe, 0xC101 + uint32_t(k)) : nullptr)
+                    if (auto r = rects.find(b); r != rects.end())
+                        targets_.push_back({r->second, Action::Member, uiButtonSound(*b), int(k)});
         // The dialog panel takes the clicks (the root is larger than what is drawn).
         solid_.pop_back();
         if (pe)

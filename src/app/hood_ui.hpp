@@ -68,9 +68,11 @@ public:
     // Opens the Lot Info Dialog of a lot (null closes it).
     void openLot(const HoodLot* lot);
     const HoodLot* dialogLot() const { return dialog_; }
+    // The dialog's "Informações" panel (headless: --hood-info [member]).
+    void showInfo(bool on, size_t member = 0) { advanced_ = on, member_ = member, dirty_ = true; }
 
     enum class Action { None, Consumed, EnterLot, Close, ZoomIn, ZoomOut, RotateLeft, RotateRight, MainMenu,
-                        Families, Lots, Bins, Options };
+                        Families, Lots, Bins, Options, Info, Member };
     // The Families and Lots & Houses panels (app/hood_bins.hpp); after
     // Action::Bins, binRequest() says what they asked for.
     HoodBins& bins() { return *bins_; }
@@ -124,7 +126,14 @@ private:
         std::array<float, 4> rect;
         Action action;
         std::string sound; // the button's click sound
+        int value = 0;     // Member: the member's index
     };
+    // The Lot Info Dialog's "Informações" (B004/C004): the advanced panel
+    // C000 of an occupied lot (the members' head shots, name, aspiration).
+    bool advanced_ = false;
+    size_t member_ = 0;
+    const RgbaImage* memberThumb(const std::filesystem::path& character);
+    std::map<std::string, std::unique_ptr<RgbaImage>> memberThumbs_;
     std::vector<Target> targets_;
     std::vector<std::array<float, 4>> solid_; // areas that take clicks
     int canvasW_ = 1024, canvasH_ = 768, laidW_ = 0, laidH_ = 0;

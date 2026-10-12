@@ -486,8 +486,11 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
         ui_->hoverLot(lotAt(camera, p, w, h), p);
         view_->highlight(hover);
     }
-    if (select)
+    if (select) {
         ui_->openLot(select);
+        if (auto i = value("--hood-info"))
+            ui_->showInfo(true, size_t(std::stoul(*i)));
+    }
 }
 
 namespace {
@@ -521,7 +524,7 @@ bool has(const std::vector<std::string>& args, const char* flag) {
 std::vector<std::string> hoodLotArguments(const std::vector<std::string>& args, const std::string& hood, uint32_t lot) {
     auto out = without(args, {"--hood", "--hood-lot", "--hood-hover", "--hood-select", "--screenshot", "--pivot",
                               "--zoom", "--orientation", "--lot", "--hood-panel", "--hood-family", "--hood-tool",
-                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone"});
+                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone", "--hood-info"});
     out.insert(out.end(), {"--hood", hood, "--hood-lot", std::to_string(lot)});
     if (!has(out, "--vm"))
         out.push_back("--vm");

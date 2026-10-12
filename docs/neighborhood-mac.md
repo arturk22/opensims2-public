@@ -899,3 +899,13 @@ lote nem fica sob uma rua.
   janelas de opções `0xA241`–`0xA246` ainda não respondem aqui. Teclas F1,
   F2 e F5 abrem/fecham Famílias, Lotes & Casas e Opções (as dicas dos
   botões). `r11-bairro-opcoes.jpg`.
+- **"Informações" do Lot Info Dialog** (`0xB004`/`0xC004`): troca o painel
+  básico `0xB000` pelo avançado `0xC000` (família, lote, patrimônio, uma
+  foto de rosto por membro em `0xC111`+k com o botão `0xC101`+k que escolhe o
+  membro, o nome em `0xC110`, o ícone de aspiração `0xC201`–`0xC206` pelo
+  dado 46 e a biografia da família na caixa de texto). A foto é o IMG do
+  arquivo do personagem cuja instância é um bit de idade (8 adulto, 0x10
+  idoso…; o bit << 8 é a silhueta; inferido dos arquivos). O que o
+  `cTSWinProcLotInfo` faz exatamente não foi lido. Sem tela: `--hood-select
+  <lote> --hood-info <membro>`, `r11-bairro-info-do-lote.jpg`. "Transferir
+  Lote" (empacotar em `.Sims2Pack`) e "Ver Amigos" ainda não.
