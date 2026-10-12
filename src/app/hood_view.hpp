@@ -94,9 +94,11 @@ public:
     // The lot tools (formats/hood_lots.hpp): what they check against, the
     // footprint highlight (null hides it) and the ground under a ray.
     const hood::PlacementWorld& placementWorld() const { return place_; }
-    // "Ver Amigos": the lots of a family's friends (kind 1) and relatives (2),
-    // each lot highlighted in its colour; empty hides them all.
-    void showFriends(const std::vector<std::pair<const HoodLot*, int>>& lots);
+    // "Ver Amigos" (cTSNeighborhood::ShowFamilyRelationshipsWeb, BV 0x4da814):
+    // each lot gets the "DefaultLotHighlight" and a green arch
+    // ("RelationshipArchGreen": width 1, 45 degrees, its ends 2 under the
+    // ground at the lots' middles) from the family's lot `from`; none hides them.
+    void showFriends(const HoodLot* from, const std::vector<const HoodLot*>& lots);
     void showPlacement(const hood::TileRect* rect, bool ok, float height);
 
     // Decorations (F3, formats/hood_lots.hpp DecorProduct). The footprint of
@@ -148,8 +150,8 @@ private:
     std::map<std::string, std::array<float, 6>> modelBox_; // local bounds (min xyz, max xyz) by CRES
     int ghost_ = -1, ghostModel_ = -1;
     std::vector<int> floraInst_, propInst_; // each occupant's instance (-1: none)
-    int friendModels_[2] = {-1, -1};
-    std::vector<int> friendBoxes_;
+    int friendModels_[2] = {-1, -1}; // the lot highlight, the unit arch
+    std::vector<int> friendBoxes_, friendArches_;
     int highlight_ = -1; // renderer instance
     const HoodLot* highlighted_ = nullptr;
 };

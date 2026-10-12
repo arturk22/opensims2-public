@@ -394,9 +394,40 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         away.columns[0].x = away.columns[1].y = 0;
         return renderer.addInstance(squareModel(material, colour, alpha), away);
     };
-    // "Ver Amigos": the family's friends' and relatives' lots (inferred look: blue, violet).
-    friendModels_[0] = squareModel("nhood-lot-friend", "0.3,0.7,1,1", "0.5");
-    friendModels_[1] = squareModel("nhood-lot-relative", "0.85,0.45,1,1", "0.5");
+    // "Ver Amigos": the lots' DefaultLotHighlight (as the hover highlight;
+    // the material's look is inferred) and the unit RelationshipArchGreen:
+    // a flat ribbon of width 1 over x in [0, 1], z = x (1 - x) (45 degrees at
+    // the ends), placed between two lots by its transform (inferred shape).
+    friendModels_[0] = squareModel("DefaultLotHighlight", "1,1,1,1", "0.3");
+    {
+        ObjectModel m;
+        m.name = "RelationshipArchGreen";
+        ObjectModel::Part part;
+        part.node = part.shape = "arch";
+        part.material = "RelationshipArchGreen";
+        constexpr int kSegments = 24;
+        for (int i = 0; i <= kSegments; ++i) {
+            const float x = float(i) / kSegments, z = x * (1 - x);
+            part.mesh.positions.push_back({x, -0.5f, z});
+            part.mesh.positions.push_back({x, 0.5f, z});
+            part.mesh.normals.push_back({0, 0, 1});
+            part.mesh.normals.push_back({0, 0, 1});
+            part.mesh.uvs.push_back({x, 0});
+            part.mesh.uvs.push_back({x, 1});
+            if (i < kSegments) {
+                const uint32_t a = uint32_t(2 * i);
+                part.mesh.triangles.insert(part.mesh.triangles.end(), {a, a + 1, a + 3, a, a + 3, a + 2});
+            }
+        }
+        m.parts.push_back(part);
+        MaterialDefinition mat;
+        mat.materialType = "StandardMaterial";
+        mat.properties = {{"stdMatDiffCoef", "0.25,0.95,0.3,1"}, {"stdMatUntexturedDiffAlpha", "0.85"},
+                          {"stdMatAlphaBlendMode", "blend"},    {"stdMatLightingEnabled", "false"},
+                          {"stdMatCullMode", "none"}};
+        m.materials[part.material] = mat;
+        friendModels_[1] = renderer.addObject(m, index);
+    }
     plopOk_ = square("nhood-lot-plop-ok", "0.35,1,0.35,1", "0.45");
     plopBad_ = square("nhood-lot-plop-bad", "1,0.3,0.25,1", "0.45");
     {
@@ -589,21 +620,51 @@ std::optional<std::pair<bool, size_t>> HoodView::decorationAt(float x, float y) 
     return best;
 }
 
-void HoodView::showFriends(const std::vector<std::pair<const HoodLot*, int>>& lots) {
+void HoodView::showFriends(const HoodLot* from, const std::vector<const HoodLot*>& lots) {
     simd_float4x4 away = matrix_identity_float4x4;
-    away.columns[0].x = away.columns[1].y = 0;
+    away.columns[0].x = away.columns[1].y = away.columns[2].z = 0;
     for (int inst : friendBoxes_)
+        renderer_->setInstanceTransform(inst, away);
+    for (int inst : friendArches_)
         renderer_->setInstanceTransform(inst, away);
     while (friendBoxes_.size() < lots.size())
         friendBoxes_.push_back(renderer_->addInstance(friendModels_[0], away));
+    while (friendArches_.size() < lots.size())
+        friendArches_.push_back(renderer_->addInstance(friendModels_[1], away));
+    // A lot's middle: its rectangle's (cTSLotInfo vtable 0x30), the terrain
+    // there less 2 (FLOAT_0274b484).
+    auto middle = [&](const HoodLot& l) {
+        float x = (l.footLo.x + l.footHi.x) / 2, y = (l.footLo.y + l.footHi.y) / 2;
+        if (const hood::Lot* info = hood_.lot(l.id)) {
+            const hood::TileRect r = hood::lotRect(info->info);
+            x = (float(r.x0) + float(r.width()) * 0.5f) * hood::kHoodCellSize;
+            y = (float(r.y0) + float(r.depth()) * 0.5f) * hood::kHoodCellSize;
+        }
+        return simd_make_float3(x, y, rawTerrain_.heightAt(x, y) - 2.0f);
+    };
     for (size_t i = 0; i < lots.size(); ++i) {
-        const HoodLot& lot = *lots[i].first;
-        renderer_->setInstanceModel(friendBoxes_[i], friendModels_[lots[i].second == 2 ? 1 : 0]);
+        const HoodLot& lot = *lots[i];
         simd_float4x4 m = matrix_identity_float4x4;
         m.columns[0].x = lot.footHi.x - lot.footLo.x;
         m.columns[1].y = lot.footHi.y - lot.footLo.y;
         m.columns[3] = simd_make_float4(lot.footLo.x, lot.footLo.y, lot.ground + 0.7f, 1);
         renderer_->setInstanceTransform(friendBoxes_[i], m);
+        if (!from)
+            continue;
+        const simd_float3 a = middle(*from), b = middle(lot);
+        const simd_float3 d = b - a;
+        std::printf("opensims2: relationship arch from lot %u (%.0f, %.0f, %.1f) to lot %u (%.0f, %.0f, %.1f)\n", from->id,
+                    a.x, a.y, a.z, lot.id, b.x, b.y, b.z);
+        const float run = simd_length(simd_make_float2(d.x, d.y));
+        if (run < 1)
+            continue;
+        const simd_float3 side = simd_make_float3(-d.y / run, d.x / run, 0); // width 1
+        simd_float4x4 t;
+        t.columns[0] = simd_make_float4(d, 0);                 // along, with the climb
+        t.columns[1] = simd_make_float4(side, 0);
+        t.columns[2] = simd_make_float4(0, 0, run, 0);         // z = x (1 - x) of the run: 45 degrees
+        t.columns[3] = simd_make_float4(a, 1);
+        renderer_->setInstanceTransform(friendArches_[i], t);
     }
 }
 

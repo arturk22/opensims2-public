@@ -7,6 +7,7 @@
 #include "render/camera.hpp"
 
 #include <algorithm>
+#include <set>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -480,7 +481,7 @@ void HoodMode::mouseDown(LotCamera& camera, simd_float2 p, float w, float h) {
 }
 
 void HoodMode::lotClicked(const HoodLot& lot) {
-    view_->showFriends({});
+    view_->showFriends(nullptr, {});
     std::printf("opensims2: lot %u \"%s\" (%s)\n", lot.id, lot.name.c_str(),
                 lot.familyName.empty() ? "no family" : lot.familyName.c_str());
     std::fflush(stdout);
@@ -596,44 +597,59 @@ void HoodMode::familyCreated(uint32_t family) {
 // are the SRELs of the family's Sims with the friend or best-friend flag
 // (bits 4, 5 of the flags value) and relatives those with the family flag
 // (bit 14) or a familial relation.
+// "Ver Amigos da Família e Parentes": cTSNeighborhood::ShowFamilyRelationshipsWeb
+// (BV 0x4da814) with cTSNeighborManager::GetFamilyFriendsGuids(family, ..., true)
+// (BV 0x53a480): every neighbor outside the family with a family of its own
+// (person data 61) who, with some member, has relationships both ways and
+// either both ways the friend bits (flags bit 4 or 5) or, on either side, a
+// family relation (TestFriendsAndFamily, BV 0x537a50); the lots their
+// families live on. Friends and relatives are not told apart.
 void HoodMode::showFriends(const HoodLot& from) {
-    std::vector<std::pair<const HoodLot*, int>> out;
+    std::vector<const HoodLot*> out;
     const hood::Neighborhood& h = view_->neighborhood();
     const hood::Family* fam = h.family(from.family);
-    std::map<uint32_t, int> kindOfLot;
     if (fam) {
-        for (const auto& r : h.relationships) {
-            if (std::find(fam->members.begin(), fam->members.end(), r.from) == fam->members.end())
+        std::map<std::pair<uint16_t, uint16_t>, const hood::Relationship*> rel;
+        for (const auto& r : h.relationships)
+            rel[{r.from, r.to}] = &r;
+        std::set<uint32_t> lots;
+        for (const auto& n : h.neighbors) {
+            if (n.family == 0 || n.family == from.family ||
+                std::find(fam->members.begin(), fam->members.end(), n.id) != fam->members.end())
                 continue;
-            const hood::Neighbor* other = h.neighbor(r.to);
-            if (!other || other->family == 0 || other->family == from.family)
-                continue;
-            const int32_t flags = r.value(hood::relvar::Flags);
-            int kind = 0;
-            if (flags & ((1 << 4) | (1 << 5)))
-                kind = 1;
-            if ((flags & (1 << 14)) || r.value(hood::relvar::Familial) != 0)
-                kind = 2;
-            if (!kind)
+            bool counts = false;
+            for (uint16_t member : fam->members) {
+                const hood::Neighbor* m = h.neighbor(member);
+                if (!m)
+                    continue;
+                auto ab = rel.find({uint16_t(n.id), uint16_t(m->id)}), ba = rel.find({uint16_t(m->id), uint16_t(n.id)});
+                if (ab == rel.end() || ba == rel.end())
+                    continue;
+                auto friendly = [](const hood::Relationship& r) { return (r.value(hood::relvar::Flags) & 0x30) != 0; };
+                if ((friendly(*ab->second) && friendly(*ba->second)) || ab->second->value(hood::relvar::Familial) != 0 ||
+                    ba->second->value(hood::relvar::Familial) != 0) {
+                    counts = true;
+                    break;
+                }
+            }
+            if (!counts)
                 continue;
             for (const auto& l : h.lots)
-                if (std::find(l.families.begin(), l.families.end(), other->family) != l.families.end()) {
-                    int& k = kindOfLot[l.id];
-                    k = std::max(k, kind);
-                }
+                if (std::find(l.families.begin(), l.families.end(), n.family) != l.families.end())
+                    lots.insert(l.id);
         }
         for (const auto& l : view_->lots())
-            if (auto it = kindOfLot.find(l.id); it != kindOfLot.end() && l.id != from.id)
-                out.push_back({&l, it->second});
+            if (lots.count(l.id))
+                out.push_back(&l);
     }
     std::printf("opensims2: friends and relatives of the %s family: %zu lots\n", from.familyName.c_str(), out.size());
     std::fflush(stdout);
     ui_->openLot(nullptr);
-    view_->showFriends(out);
+    view_->showFriends(&from, out);
 }
 
 void HoodMode::escape() {
-    view_->showFriends({});
+    view_->showFriends(nullptr, {});
     view_->showDecorationGhost(nullptr, 0, 0, 0, false);
     if (ui_->storyOpen()) {
         ui_->typeStoryKey(53, {}); // Esc drops an edit under way
