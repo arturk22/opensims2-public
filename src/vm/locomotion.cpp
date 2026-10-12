@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <vector>
@@ -69,6 +70,25 @@ std::vector<Item> setString(VM& vm, const Object& sim, bool run, bool turns, boo
         if (const size_t at = it.role.find('@'); at != std::string::npos)
             it.role.resize(at);
         it.name = trimmed(text);
+        // The swimming set (the pool objects' "Loco - Anims") names its turns
+        // without roles ("swim-TurnInPlace,swimSlowTurnAndGoShort,..."): the
+        // role from the name (inferred; the order is the global set's, less
+        // the R ones). Without it a swimmer turned with the standing
+        // a-TurnInPlace, upright in the water.
+        if (turns && !blends && it.role.empty()) {
+            std::string lower = it.name;
+            for (auto& c : lower)
+                c = char(std::tolower(static_cast<unsigned char>(c)));
+            for (const char* r : {"turnInPlace", "turnAndGoShort", "turnAndGo", "turnAndStopShort", "turnAndStop"}) {
+                std::string lr = r;
+                for (auto& c : lr)
+                    c = char(std::tolower(static_cast<unsigned char>(c)));
+                if (lower.find(lr) != std::string::npos) {
+                    it.role = r;
+                    break;
+                }
+            }
+        }
         out.push_back(std::move(it));
     }
     return out;

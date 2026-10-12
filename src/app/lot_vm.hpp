@@ -106,6 +106,8 @@ public:
     double speedScale() const;
     // Height of the floor (or terrain) of VM level `level` (1 = the lot's
     // ground level) at (x, y).
+    // The pool whose water covers (x, y) of a VM level (its bottom level), if any.
+    const Lot::SwimmingPool* poolAt(int level, float x, float y) const;
     float floorHeight(int level, float x, float y) const;
     // Build mode changed the lot's shape: the heights (and levels) the
     // floors are drawn at follow.

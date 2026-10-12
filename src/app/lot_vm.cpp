@@ -85,9 +85,27 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
         };
 }
 
+const Lot::SwimmingPool* LotSimulation::poolAt(int level, float x, float y) const {
+    const int l = level - 1; // the VM's levels count from 1 = the lot's level 0
+    for (const auto& pool : lot_.pools)
+        if (l == pool.level - 1 && x >= pool.x && y >= pool.y && x < pool.x + float(pool.width) &&
+            y < pool.y + float(pool.height))
+            return &pool;
+    return nullptr;
+}
+
 float LotSimulation::floorHeight(int level, float x, float y) const {
     // VM levels count from 1 = the lot's level 0.
     const int l = std::clamp(level - 1, lot_.minLevel, lot_.minLevel + lot_.levelCount - 1);
+    // In a pool (its bottom is the level below the pool's): the water's
+    // surface, `depth` below the pool level's floor. The swim clips are made
+    // about the surface ("a-swimSlow-idle": root 0.59 below, feet 1.4 below),
+    // so a swimmer stood on the bottom was drawn under the water (inferred
+    // from the clips; the lot model draws the water at the same height).
+    if (const auto* pool = poolAt(level, x, y))
+        return lot_.elevationAt(pool->level, std::clamp(x, 0.0f, float(lot_.width)),
+                                std::clamp(y, 0.0f, float(lot_.height))) -
+               pool->depth;
     return lot_.elevationAt(l, std::clamp(x, 0.0f, float(lot_.width)), std::clamp(y, 0.0f, float(lot_.height)));
 }
 
@@ -257,6 +275,12 @@ void LotSimulation::sampleAll(double at) {
                 onOutfitChange(b.id, *b.actor, bit);
         }
         std::string want = b.idle;
+        // Treading water in a pool instead of standing (the pool's
+        // controller overlays "a-swimSlow-idle" on the swimmers, and Animate
+        // Sim leaves the base layer empty between strokes: the standing idle
+        // showed the Sim upright in the water; inferred).
+        if (poolAt(o->position.level, o->position.x, o->position.y))
+            want = "a-swimSlow-idle";
         bool loop = true;
         float fade = vm::kBlendTicks / 1000.0f;
         // The base layer's channel level: the standing idle under

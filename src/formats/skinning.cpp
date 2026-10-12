@@ -28,7 +28,15 @@ void SkinnedModel::add(const ObjectModel& part) {
 
 void SkinnedModel::pose(const std::vector<Xform>& world, ObjectModel& out,
                         const std::map<std::string, float>& morphs) const {
-    if (out.parts.size() != model.parts.size()) {
+    // A new model (a Sim that changed clothes keeps its `out`): the same
+    // number of parts is not enough, an everyday body and a swimsuit differ
+    // in their vertices (the old body's left over drew a T-posed shell).
+    bool same = out.parts.size() == model.parts.size();
+    for (size_t pi = 0; same && pi < model.parts.size(); ++pi)
+        same = out.parts[pi].mesh.positions.size() == model.parts[pi].mesh.positions.size() &&
+               out.parts[pi].mesh.triangles.size() == model.parts[pi].mesh.triangles.size() &&
+               out.parts[pi].material == model.parts[pi].material;
+    if (!same) {
         out = model;
         out.skeleton = {};
     }

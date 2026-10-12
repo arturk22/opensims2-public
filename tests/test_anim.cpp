@@ -275,6 +275,26 @@ static void testSkinning() {
     skin.pose(s.world(s.restPose()), out, {{"smile", 0.5f}});
     const auto& mv = out.parts[0].mesh.positions[0];
     check(near(mv[0], 1) && near(mv[1], 0) && near(mv[2], 1), "morph delta by weight, stream k = byte k");
+
+    // A new model with as many parts but other vertices (a Sim changing into
+    // a swimsuit keeps its posed output): the output is rebuilt, not the old
+    // body's vertices left over (live QA round 16: a T-posed shell at the
+    // diving board).
+    SkinnedModel swim(s);
+    ObjectModel m2 = m;
+    m2.parts[0].mesh.positions = {{1, 0, 0}, {0, 1, 0}};
+    m2.parts[0].mesh.normals = {{1, 0, 0}, {0, 1, 0}};
+    m2.parts[0].mesh.bones = {{0, 0xFF, 0xFF, 0xFF}, {0, 0xFF, 0xFF, 0xFF}};
+    m2.parts[0].mesh.weights = {{1, 0, 0, 0}, {1, 0, 0, 0}};
+    m2.parts[0].material = "swimsuit";
+    swim.add(m2);
+    swim.pose(s.world(pose), out);
+    check(out.parts.size() == 1 && out.parts[0].mesh.positions.size() == 2 && out.parts[0].material == "swimsuit",
+          "posed output rebuilt for a new model of as many parts");
+    if (out.parts.size() == 1 && out.parts[0].mesh.positions.size() == 2) {
+        const auto& w = out.parts[0].mesh.positions[1];
+        check(near(w[0], -1) && near(w[1], 0), "the new model's vertices posed");
+    }
 }
 
 static void testIk() {

@@ -19,11 +19,28 @@ void LotCameraFollow::follow(vm::VM& vm, vm::ObjectId sim) {
     const vm::Object* o = sim ? vm.object(sim) : nullptr;
     if (!o || !o->position.inWorld())
         return;
-    const int level = o->position.level - 1; // the VM counts the ground as 1
+    // The VM counts the ground as 1. The pool's level (-1, below the
+    // ground) is not a floor the player can show (the floor buttons stop at
+    // the ground): a swimming Sim keeps the view on the ground, with the
+    // house and the water (inferred: the binary's level setter, a service's
+    // vtable 0x68, was not read; live QA round 16 saw the house vanish).
+    const int level = std::max(o->position.level - 1, lot_->hasLevel(0) ? 0 : lot_->minLevel);
     // A floor chosen by hand holds until the Sim moves to another one.
-    if (lot_->hasLevel(level) && (level != simLevel_ || sim != followedSim_))
-        *level_ = level;
-    simLevel_ = level, followedSim_ = sim;
+    // cCameraLive::Update (BV 0x6a5450): the view goes up to the Sim's
+    // floor always, down to it only when the Sim's location is in a room
+    // (cPartitionManager::RoomContaining(location, definition 0), vtable
+    // 0x13c, non-zero): a Sim walking down outdoor stairs leaves the view
+    // where it is until it steps into a room.
+    const bool down = level < *level_;
+    const bool inRoom = o->data[vm::objdata::Room] != 0;
+    if (level != simLevel_ || sim != followedSim_) {
+        if (!lot_->hasLevel(level) || !down || inRoom) {
+            if (lot_->hasLevel(level))
+                *level_ = level;
+            simLevel_ = level; // else asked again next time (the Sim may walk into a room)
+        }
+        followedSim_ = sim;
+    }
     // Subject tracking (BV 0x0086ffb8): the pivot's and the subject's screen
     // points; past the dead zone the subject becomes the pivot's target.
     if (const vm::Object* t = tracked_ ? vm.object(tracked_) : nullptr; t && t->position.inWorld()) {

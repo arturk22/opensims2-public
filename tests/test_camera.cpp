@@ -222,6 +222,33 @@ int main() {
         check(LotCameraFollow::startLevel(lot) == 1, "camera starts on the first Sim's floor");
     }
     {
+        // Following the selected Sim's floor (cCameraLive::Update): up
+        // always, down only into a room, and never to the pool's level (a
+        // swimmer keeps the view on the ground: live QA round 16).
+        Lot lot;
+        lot.width = lot.height = 4;
+        lot.minLevel = -1, lot.levelCount = 3;
+        lot.elevations.assign(size_t(3 * 5 * 5), 0.0f);
+        LotCamera c(liveCamera());
+        LotCameraFollow f(c, lot);
+        vm::CodeLibrary code;
+        vm::VM machine(code);
+        vm::Object& sim = machine.createObject(0x7FD46CD0);
+        sim.position = {1.5f, 1.5f, 0}; // VM level 0: in the pool (lot level -1)
+        sim.data[vm::objdata::Room] = 1;
+        f.follow(machine, sim.id);
+        check(f.level() == 0, "a swimmer leaves the view on the ground");
+        sim.position.level = 2;
+        f.follow(machine, sim.id);
+        check(f.level() == 1, "the view goes up with the Sim");
+        sim.position.level = 1, sim.data[vm::objdata::Room] = 0;
+        f.follow(machine, sim.id);
+        check(f.level() == 1, "down to the yard (no room): the view stays");
+        sim.data[vm::objdata::Room] = 3;
+        f.follow(machine, sim.id);
+        check(f.level() == 0, "down into a room: the view follows");
+    }
+    {
         // The CreateASim camera (CASCamera.txt's CAS_ClothesAdult): at the
         // locator at once, zoom 0 .. 2.3 in 0.05 steps, the zoom moving the
         // eye forward and up (zoomelevation -36), then a glide to another

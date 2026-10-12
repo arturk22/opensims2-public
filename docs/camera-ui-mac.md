@@ -191,6 +191,15 @@ duração em ticks de 30 Hz.
   altura (`LotCameraFollow::startLevel`; numa fundação o piso da casa,
   0,75 acima do terreno); sem Sims, o térreo. Antes o pivô amostrava o
   nível 0 e ficava 0,75 baixo demais nos lotes com fundação (rodada 16).
+  Rodada 16 (binário, `cCameraLive::Update`, BV `0x6a5450`): o andar visível
+  **sobe** sempre para o do Sim, mas só **desce** quando o local do Sim está
+  num cômodo (`cPartitionManager::RoomContaining(local, definição 0)`, vtable
+  `0x13c` do serviço `WorldDB→0x94`, diferente de 0); no app, o cômodo do Sim
+  (dado 29). Além disso o andar da piscina (−1) nunca é mostrado por seguir
+  um Sim: quem nada deixa a vista no térreo, com a casa e a água (inferido:
+  o setter do andar, vtable `0x68` de outro serviço, não foi lido; o cômodo
+  do fundo da piscina não é 0, então só a regra do binário trocava para −1 e
+  sumia a casa, QA ao vivo passada 13).
 - `constraintwidth` (−10, `+0x494`): o pivô fica preso ao retângulo do
   mundo do lote (`WorldDB` vtable `0x10c`/`0x110`/`0x114`/`0x118` = x/y
   mínimos e máximos) **encolhido** dessa largura (BV `FUN_006a456c`:

@@ -1057,6 +1057,25 @@ Penalidades no custo (quando o slot permite o caso em vez de recusar):
 sala diferente, +10 por objeto que pode ser empurrado, +5 se há porta no
 tile, +5 se o tile é água/terreno especial (consulta do mundo `0x170`). 
 
+**Nadar no app (rodada 16, QA ao vivo passada 13).** O "Mergulhar" deixava o
+Sim em T-pose: a troca de roupa (`onOutfitChange`) dava ao Sim o modelo do
+maiô com o mesmo número de partes, e `SkinnedModel::pose` só refazia a saída
+quando o número de partes mudava, então o corpo antigo ficava sem pose (a
+casca em T, sem cabeça, "na borda do lote"); agora refaz quando os vértices,
+triângulos ou material de uma parte mudam. Na água o Sim fica na **superfície**
+(`LotSimulation::floorHeight`: no fundo de uma piscina, o piso do andar da
+piscina menos `depth`), porque os clipes de nado são feitos em torno dela
+("a-swimSlow-idle": raiz 0,59 abaixo, pés 1,4 abaixo; inferido dos clipes);
+parado na água toca "a-swimSlow-idle" no lugar do idle de pé (inferido). O
+conjunto de locomoção de nado ("Loco - Anims" dos objetos da piscina) lista as
+viradas sem papel ("swim-TurnInPlace,swimSlowTurnAndGoShort,..."): o papel sai
+do nome (inferido), e o nadador vira com "a-swim-TurnInPlace-90" e para com
+"a-swimSlowTurnAndStop-0" em vez do "a-TurnInPlace-90" de pé.
+`docs/screenshots/r16-pool-dive-swim.jpg`. Os cinco ícones de fila iguais da
+QA não se repetiram sem tela (uma entrada: o trampolim, depois "Pool -
+Controller: Nadar"); provavelmente cliques repetidos enquanto nada parecia
+acontecer.
+
 ### Gerador de pontos de objetivo (BV `0x4778b4`, `0x4788cc`)
 
 O CLSID `0xFBA4DA4F` (IID `0xFBA4DA54`) **é um slot de rota sintético**
