@@ -119,6 +119,7 @@ private:
         uint32_t climbSerial = 0;
         int16_t outfit = 0; // person data 8 the actor is dressed for
         int16_t age = 0;    // person data 58 the actor was built for
+        int partial = -1;   // the priority of a part-body Animate Sim animation playing over the base, -1 none
         float zOffset = 0; // the cObject's height over the floor the VM's level gives
         struct PlayingOverlay {
             std::string name;

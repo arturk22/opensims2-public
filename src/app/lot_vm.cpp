@@ -251,13 +251,27 @@ void LotSimulation::sampleAll(double at) {
         b.climbSerial = s.climbSerial;
         if (want == b.playing && !restart)
             continue;
+        // Seated (in a chair's or a bed's slot) with nothing to play: the
+        // body holds the last pose (the get-in's end, under the chair's
+        // idles) instead of standing up in the standing idle between two of
+        // them, or while the trees stop the idles before the get-out.
+        if (want == b.idle && seat && seat(b.id))
+            continue;
         try {
             const Animation& anim = b.actor->animation(index_, want);
             const bool animated = s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty();
             // Animate Sim's animations play in their own frame: turned by
             // their header heading (a chair's get-in from its corner).
-            b.actor->cue(at, anim, {.fade = fade, .loop = loop, .mirror = animated && s.flipped,
-                                    .turn = animated ? anim.headingOffset : 0.0f});
+            // An Animate Sim animation that keys only part of the body (the
+            // face's "a-noExpression") plays over what the body does instead
+            // of replacing it (the Sim in a chair kept its seat; inferred).
+            if (b.partial >= 0)
+                b.actor->player.stop(at, fade, b.partial), b.partial = -1;
+            const bool partial = animated && !(anim.flags & 1);
+            if (partial)
+                b.partial = std::max<int>(1, anim.priority);
+            b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
+                                    .mirror = animated && s.flipped, .turn = animated ? anim.headingOffset : 0.0f});
             if (onSimAnimation)
                 onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
         } catch (const std::exception& e) {
