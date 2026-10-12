@@ -1120,7 +1120,7 @@ void BuildEditor::syncAtticWalls(int lotLevel, const std::vector<std::array<int,
 BuildEditor::Result BuildEditor::drawRoof(int level, int x0, int y0, int x1, int y1, uint32_t type) {
     Result r;
     const int li = level - 1 + 1; // the roof's base: the floor of the VM level above the walls
-    if (x0 == x1 || y0 == y1) {
+    if ((x0 == x1 || y0 == y1) && !(type >= Lot::DiagonalLongGable && type <= Lot::DiagonalShedHip)) {
         r.message = "a roof needs an area";
         return r;
     }
@@ -1135,8 +1135,25 @@ BuildEditor::Result BuildEditor::drawRoof(int level, int x0, int y0, int x1, int
         r.message = "cannot put a roof there: out of the lot";
         return r;
     }
-    if (type < Lot::ShedGable || type > Lot::Mansard)
+    // The diagonal roofs (10-14) are drawn from a drag across the diamond
+    // (DiagonalRoofFromType); the base game's roofs.txt has no product for
+    // them (the BV's diagonal roof styles 0x12-0x16 make them), so only
+    // headless runs ask for one.
+    const bool diagonal = type >= Lot::DiagonalLongGable && type <= Lot::DiagonalShedHip;
+    if (!diagonal && (type < Lot::ShedGable || type > Lot::Mansard))
         type = Lot::Hip;
+    if (diagonal) {
+        // The diamond's corners (lot_roof's diagonalVector): all in the lot.
+        const float vx = float(x1 - x0), vy = float(y1 - y0), yD = (vy - vx) / 2, dx = vy - yD;
+        for (const auto& [cx, cy] : std::array<std::array<float, 2>, 4>{
+                 {{float(x0), float(y0)}, {float(x0) + dx, float(y0) + dx}, {float(x1), float(y1)},
+                  {float(x0) - yD, float(y0) + yD}}})
+            if (cx < 0 || cy < 0 || cx > float(W) || cy > float(H)) {
+                r.error = 0x02;
+                r.message = "cannot put a roof there: out of the lot";
+                return r;
+            }
+    }
     Geometry before = capture();
     Lot::Roof roof;
     for (const auto& o : lot_.roofs)

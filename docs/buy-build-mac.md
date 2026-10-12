@@ -1426,6 +1426,19 @@ o estreito do topo até o fim). Depois, com 2,0: a cobertura de cada célula
 com razão ≤ 2 fica; um mais alongado tem a cobertura das suas células
 diminuída e só fica se alguma célula chega a < 1.
 
+### 7.16 Telhados diagonais (rodada 12)
+
+`cTSUserToolRoof::MakeRoof` (BV `0x1e0480`) escolhe a geometria pelo
+**estilo** da ferramenta (o id do produto do `roofs.txt`): 0–5 → tipos 1–6;
+`0x0C`/`0x11` cônico, `0x0D` cúpula, `0x0E–0x10` octogonal; `0x12–0x16` →
+diagonais 10–14 (`DiagonalRoofFromType`, `IsDiagonalRoofStyle`); `0x17–0x19`
+vidro; `0x1A–0x20` pagode. O `roofs.txt` do jogo base só tem os produtos 0–11:
+**no jogo base não há como fazer telhado diagonal** (nem o auto-telhado: a
+grade dele é de tiles inteiros). Aqui a ferramenta aceita os tipos 10–14 só
+pelo headless (`--roof x0,y0,x1,y1,10..14`: arrastar de um canto do losango
+ao oposto), com a geometria do OpenTS2 que já desenhava os tipos; as paredes
+de sótão diagonais (`CheckWallLegalityDiagonal`) não são feitas.
+
 ---
 
 ## 8. Base vs BV
