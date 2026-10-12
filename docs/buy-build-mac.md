@@ -1145,6 +1145,118 @@ O resto das regras (escavar piscina, telhados, aplainar terreno) não foi lido.
   −1. Na colocação, tile de piscina sem od 42 0x800 → `0x8F`.
 - **Rotação de piso**: 3ARY `0x15`, um byte por quarto (1/2/4/8).
 
+### 7.12 Escadas modulares, auto-telhado e a ferramenta Design (rodada 11, binário)
+
+**Escadas modulares** (`cTSUserToolModularStairs`; o posicionamento é de
+`TSUserModularStairsPlacement.cpp`: `UserPlaceModularStairs` = BV
+`0x9edcf8`, `UserPlaceModularStairsFindEnd` = `0x9ece38`, o auto =
+`0x9ef328`, sem nome no symxfer). Cada produto do `modularstairs.txt` dá
+cinco objetos, nesta ordem (`produto→0xB0(i)`): 0 `landing` (patamar), 1
+`placeholder` (reserva de espaço), 2 `step`, 3 `topStep`, 4 `bottomStep`
+(0 = usa o `step`). Todos os produtos usam o mesmo patamar `0xAC400DE1` e
+reserva `0x0C400DDD`.
+
+- Clique no **tile de cima** (um tile de piso com borda livre): o tile tem
+  de ser válido (`WorldDB→0xB8(tile, 0xF, 1)`; senão `0x6C`) e não pode ser
+  água. A direção é a da borda livre do tile (byte `+0xC`: 1 → direção 2,
+  2 → 0, 4 → 6, 8 → 4, as direções de 8 do mundo).
+- **Sem arrastar** (`TryAutoPlaceStairs` → `FindEnd`): anda tile a tile na
+  direção, andar por andar para baixo, até achar onde o último degrau toca
+  o chão (para em água `0x1D`, piscina `0x1C`, parede `0x71`, objeto
+  `0x74`); depois `UserPlaceModularStairs` até lá.
+- **Arrastando até um ponto**: o ponto tem de estar na mesma linha ou coluna
+  do tile de cima e na direção da borda livre (senão `0x71`); mesmo tile →
+  `0x78`. **n degraus** = arredondado((d − 0,5) × 4 + 0,5), d = distância no
+  plano do centro do tile de cima ao ponto: **4 degraus por tile, cada um
+  com 0,25 de avanço**; com a opção de tiles inteiros (`param 3`) n sobe ao
+  múltiplo de 4. Cada degrau desce `WorldDB→0x158` (altura de um degrau; o
+  andar inteiro em 4 tiles, inferido), começando na altura do piso de cima
+  (+0,75 se o tile de cima é de fundação).
+- Por degrau: se o terreno fica a menos de 0,75 abaixo e há deck ali →
+  `0x78`; se fica acima do degrau (folga −0,09375) o **terreno é rebaixado**
+  (`ChangeFloorAndWaterElevationCoupled` nos 4 vértices do quarto de tile,
+  na altura do degrau; vértice travado → `0x6F`/`0x75`); no último degrau os
+  vértices do tile seguinte vão à altura final. Objetos: o `topStep` no
+  primeiro, `step` no meio, `bottomStep` no último (falha: `0x73`/`0x74`);
+  a cada andar atravessado, no degrau de índice 2 do tile, um `placeholder`
+  em cada andar entre o de baixo e o de cima (falha: `0x72`).
+- **Patamares**: um `landing` no tile de cima (direção da escada; falha
+  `0x70`), outro meio tile além do último degrau, virado 180°
+  (`(dir + 4) % 8`; falha `0x71`). O tile de baixo tem de ser válido e sem
+  piso alto (`0x6D`), o último degrau a no máximo 0,09375 do chão (senão
+  `0x77` "Can't reach ground"), sem parede no caminho (`0x76`), e o tile de
+  baixo nivelável (`0x6F`).
+- Os objetos vão para um `cTSUserToolUndoableModularStairs` (`AddObject`
+  BV `0x3ffc28`: põe o od 13 e o od 41 do objeto, testa
+  `TSObjectUserCanSetPositionAndOrientation`, gira e posiciona) e o
+  `LinkObjects` (`0x3ff4a4`) liga cada objeto ao anterior e ao seguinte (os
+  IDs vizinhos, −1 nas pontas) — é a cadeia que a VM e o roteamento usam.
+  Apagar (`RemoveFlight`, marreta `DeleteModularStairs`) tira a escada
+  inteira pelo grupo e devolve o preço (2× se o grupo tem 4 partes,
+  inferido do código). O custo mostrado é `CalculatePreviewCost`.
+
+**Auto-telhado** (`cTSUserToolAutoRoof::CreateAutoRoof(tipo, ...)`, BV
+`0x2560ac` → `CreateAutoRoofs(andar, tipo, ...)` `0x9a0df0` para cada andar
+1…topo):
+
+1. Marca numa grade os quartos de tile dos **cômodos do andar de baixo**
+   (`AppendRoomTilesIfValid`, `0x99947c`) que são dentro, cujo tile acima
+   não é dentro, sem piso no andar e sem telhado já cobrindo
+   (`RoofManager→0x7C`).
+2. Tipo 5 (mansarda): só **põe o piso do telhado** (`roofFloorPattern` do
+   `roofs.txt`, `CCC26098`) em cada tile marcado (`0x99977c`).
+3. Outros: `cAutoRoofData::ComputeRoofRects` (`0x9a0534`) decompõe a grade
+   em retângulos por varredura: em cada linha acha os trechos marcados;
+   `AddToActiveRects` estende para baixo o retângulo ativo com o mesmo
+   trecho x, corta os que se sobrepõem em parte; os que não continuam saem
+   da lista ativa. `0x9a0a08` (com 2,0) tira os retângulos redundantes:
+   conta a cobertura de cada célula e descarta um retângulo maior que 2,0
+   cujas células todas continuam cobertas por outros.
+4. Para cada retângulo de área > 0, o tipo do ROOF sai de `0x997f8c(tipo
+   da ferramenta, retângulo)`: 1 → 5; 2 → 4; 3 → 5 se altura ≤ largura,
+   senão 4; 4 → 3 se altura < largura, senão 4; outro → 0. Cria o telhado
+   (`cTSUserToolUndoableRoof→0x6C(padrão, mín, máx, tipo)`) no andar; os
+   tipos 3 e 4 (empenas) ganham as **paredes de sótão** nas pontas
+   (`0x9990f4` → `MakeShedWalls`).
+5. Antes, sem a flag "manter", remove os telhados auto anteriores
+   (`0x99eafc`); custo total no fim, recusado sem fundos.
+
+**Águas-furtadas** (roofs 6–11 do `roofs.txt`: 1, 2 e 3 de largura, com
+empena ou de quatro águas) são produtos de telhado comuns
+(`cTSWinProcCatalog::LoadDormers`); diferente dos telhados normais, têm
+preço (§7.9).
+
+**Ferramenta Design** (botão `0xCC607030` do modo compra;
+`cTSUserToolObjectDesign`, BV `0x3022fc…`): cursor `0x39`. Botão apertado
+sobre um objeto: se ele **não tem partes recoloríveis** → erro (STR# 0x8D
+#16 do grupo `0x7FA7DC7C`); se não há dinheiro para o **preço da
+ferramenta** (o produto do catálogo da ferramenta, `+0x4C`, lido no
+`Init`) → erro #15. Soltar sobre o mesmo objeto abre o
+`cTSWinProcObjectDesignDialog::Show(objeto, preço, x, y)` (BV `0xa16e64`).
+
+- "Recolorível" (`nTSSG::GetDesignModeInfo`, BV `0x9e2904`): percorre os
+  shapes do modelo; um subconjunto (grupo de material) entra se a
+  propriedade **`tsDesignModeEnabled`** do shape lista o nome dele e o
+  nome não contém "shadow"; o primeiro vira o **material 1** e o segundo
+  (de nome diferente) o **material 2**; para cada um, o nome da malha de
+  materiais vem da propriedade **`tsMaterialsMeshName`** do shape (+
+  `_cres`). No máximo dois.
+- O diálogo: título = STR# 0x93 #0x15 com o nome do objeto (`sprintf`),
+  nome em `0xA3000`, duas grades de opções (controles `0xA1000`/`0xA2000`;
+  a segunda some se o objeto só tem um material), carregadas pela malha de
+  materiais e o subconjunto (`→0x28(objeto, malha, subconjunto)`); a
+  janela é arrastável pela barra `0xA7000`. **Cada clique numa opção
+  (comando `0xEC58BA86`) já aplica no objeto** (`ApplyChanges`: os dois
+  materiais escolhidos como override, `objeto→0x478`, e redesenho
+  `→0x490(1)`): pré-visualização ao vivo; `0xA6002` (aceitar) fica
+  habilitado depois de uma mudança.
+- Aceito: um `cTSUserToolUndoableObjectDesign` (`0x8D0FA620`) guarda os
+  overrides antigos (`SetObject`: a lista `objeto→0x47C/0x480`) e os novos
+  (`ApplyMaterialOverride`), cobra **−preço** dos fundos no ponto do
+  clique e entra no desfazer; cancelado, volta os materiais
+  (`ResetChanges`). O objeto com o override salva o material escolhido
+  (lista de overrides do objeto; ver `docs/save-mac.md`).
+
 ---
 
 ## 8. Base vs BV
