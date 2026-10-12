@@ -92,7 +92,38 @@ float weightOf(const Object& sim, int field) {
 
 } // namespace
 
+namespace {
+// What the gait and the clips depend on: the set on top of the stack, the
+// age and sex, the walk style (and for the gait the six weights).
+std::string cacheKey(const Object& sim) {
+    LocomotionSet set{kGlobalGroup, 0};
+    if (!sim.animation.locomotion.empty())
+        set = sim.animation.locomotion.back();
+    std::string key = std::to_string(set.group) + ':' + std::to_string(set.set) + ':' + agePrefix(sim) + ':' +
+                      genderName(sim) + ':' + std::to_string(sim.data[17]);
+    return key;
+}
+} // namespace
+
+Gait computeGait(VM& vm, const Object& sim);
+std::optional<LocoPick> computeClip(VM& vm, const Object& sim, const std::string& role, int steps);
+
 Gait gaitOf(VM& vm, const Object& sim) {
+    std::string key = cacheKey(sim);
+    for (int f = 112; f <= 117; ++f)
+        key += ':' + std::to_string(sim.person && size_t(f) < sim.person->data.size() ? sim.person->data[size_t(f)] : 0);
+    auto& cache = vm.locoCache.gaits;
+    if (auto it = cache.find(key); it != cache.end())
+        return it->second;
+    if (cache.size() > 4096)
+        cache.clear();
+    Gait g = computeGait(vm, sim);
+    if (vm.animations.index() || !g.animation.empty())
+        cache.emplace(std::move(key), g);
+    return g;
+}
+
+Gait computeGait(VM& vm, const Object& sim) {
     Gait g;
     g.run = sim.data[17] == 1;
     const std::vector<Item> items = setString(vm, sim, g.run, false);
@@ -147,6 +178,19 @@ Gait gaitOf(VM& vm, const Object& sim) {
 }
 
 std::optional<LocoPick> locoClip(VM& vm, const Object& sim, const std::string& role, int steps) {
+    std::string key = cacheKey(sim) + ':' + role + ':' + std::to_string(steps);
+    auto& cache = vm.locoCache.clips;
+    if (auto it = cache.find(key); it != cache.end())
+        return it->second;
+    if (cache.size() > 4096)
+        cache.clear();
+    auto pick = computeClip(vm, sim, role, steps);
+    if (vm.animations.index() || pick)
+        cache.emplace(std::move(key), pick);
+    return pick;
+}
+
+std::optional<LocoPick> computeClip(VM& vm, const Object& sim, const std::string& role, int steps) {
     const bool run = sim.data[17] == 1;
     const std::vector<Item> items = setString(vm, sim, run, true);
     const std::string degrees = std::to_string(45 * std::min(std::abs(steps), 4));

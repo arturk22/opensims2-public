@@ -1,4 +1,5 @@
 // World occupancy, pathfinding and the routing primitives on synthetic lots.
+#include "vm/animation.hpp"
 #include "vm/go_here.hpp"
 #include "vm/interactions.hpp"
 #include "vm/path_planner.hpp"
@@ -956,6 +957,168 @@ static void testTurnInPlace() {
     }
 }
 
+// The locomotion's clips (docs/routing-mac.md §6.1): a standing Sim starts
+// with the turnAndGo of its first leg's 45-degree steps (mirrored the other
+// way round), its frame covering the clip's distance in the clip's length
+// while it stands where the clip's root is; then the gait's walk cycle at its
+// speed, and the turnAndStop at the end over what is left, which leaves it
+// facing the final way.
+static StringTable strings(std::initializer_list<const char*> values) {
+    StringTable t;
+    for (const char* v : values)
+        t.entries.push_back({lang::EnglishUS, v, "", 0});
+    return t;
+}
+
+static void addLocoSet(CodeLibrary& code, VM& vm) {
+    code.add(kGlobalGroup, 0x84,
+             strings({"turnInPlace-alt(turnInPlace),turnAndGoShort-alt(turnAndGoShort),turnAndGo-alt(turnAndGo),"
+                      "turnAndStopShort-alt(turnAndStopShort),turnAndStop-alt(turnAndStop),stepShort-alt(stepShort)",
+                      "stepInPlace-alt(stepInPlace),walk-alt0-normal(walk)", "",
+                      "turnAndGo-alt@2(turnAndGo@2),turnAndStop-alt@2(turnAndStop@2)", "run-alt0-normal(run)", ""}));
+    // Clips at 0-180 degrees: a start 0.75 s over 0.85 tile whose root lags
+    // 0.1 behind its frame and turns from where the Sim faced to the way;
+    // a stop 0.5 s over 0.34 turning to the final facing; a step 0.6 s.
+    for (int k = 0; k <= 4; ++k) {
+        const float turn = -float(k) * float(M_PI / 4);
+        const std::string deg = std::to_string(45 * k);
+        auto clip = [&](const std::string& name, int ms, float distance, float yaw0, float yaw1, float lag) {
+            LocoClip c;
+            c.ticks = ms, c.distance = distance, c.velocity = distance / (float(ms) / 1000), c.turn = turn;
+            c.cycle = 0.5f, c.type = 6;
+            const int n = int(std::ceil(float(ms) / 1000 * 30));
+            for (int i = 0; i <= n; ++i) {
+                const float u = float(i) / float(n);
+                c.root.push_back({0, lag * (1 - u), yaw0 + (yaw1 - yaw0) * u});
+            }
+            vm.animations.add(name, float(ms) / 1000, c.velocity);
+            vm.animations.addLoco(name, c);
+        };
+        clip("a-turnAndGo-alt-" + deg, 750, 0.85f, -turn, 0, -0.1f);
+        clip("a-turnAndGoShort-alt-" + deg, 750, 0.35f, -turn, 0, 0);
+        clip("a-turnAndStop-alt-" + deg, 500, 0.34f, 0, turn, 0);
+        clip("a-turnAndStopShort-alt-" + deg, 500, 0.16f, 0, turn, 0);
+        clip("a-stepShort-" + deg, 600, 0.3f, -turn, -turn, 0);
+    }
+    LocoClip walk;
+    walk.ticks = 690, walk.distance = 1.38f, walk.velocity = 2.0f, walk.type = 11;
+    walk.root.assign(22, {0, 0, 0});
+    vm.animations.add("a-male-walk-alt0-normal", 0.69f, 2.0f);
+    vm.animations.addLoco("a-male-walk-alt0-normal", walk);
+    vm.animations.add("a-male-run-alt0-normal", 0.5f, 8.0f);
+}
+
+static void testLocoPhases() {
+    using Loco = Object::Route::Loco;
+    // Facing +X (direction 4, the way), +Y (2: 90 degrees clockwise to the
+    // way) and -Y (6: 90 degrees counter-clockwise).
+    for (const int facing : {4, 2, 6}) {
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World(14, 12);
+        addLocoSet(code, vm);
+        code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+        code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+        Object& lamp = vm.instantiate(kGroup, 0x80);
+        lamp.position = {11.5f, 5.5f, 1};
+        Object& sim = vm.instantiate(kGroup, 0x81);
+        sim.position = {2.5f, 5.5f, 1};
+        sim.person->data[58] = 27;
+        sim.data[objdata::Direction] = int16_t(facing);
+        code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+        Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+        std::vector<std::string> clips;
+        std::string firstClip;
+        bool firstMirror = false;
+        int startTicks = 0, stopTicks = 0;
+        float lagMid = 0, walkStep = 0, startStep = 0;
+        float prevFx = sim.position.x;
+        int lastDir = -1;
+        for (int i = 0; i < 1000 && t.status == Thread::Status::Running; ++i) {
+            vm.run(t);
+            if (!sim.route)
+                continue;
+            const Loco& L = sim.route->loco;
+            if (L.animation.empty() || L.kind == Loco::None)
+                continue;
+            if (clips.empty() || clips.back() != L.animation)
+                clips.push_back(L.animation);
+            if (L.kind == Loco::Start) {
+                if (firstClip.empty())
+                    firstClip = L.animation, firstMirror = L.mirror;
+                ++startTicks;
+                if (L.tick == L.ticks / 2) {
+                    lagMid = std::hypot(sim.position.x - L.fx, sim.position.y - L.fy);
+                    startStep = L.fx - prevFx;
+                }
+            } else if (L.kind == Loco::Walk && L.fx - prevFx > 0.01f) {
+                walkStep = L.fx - prevFx;
+            } else if (L.kind == Loco::Stop) {
+                ++stopTicks;
+            }
+            prevFx = L.fx;
+            lastDir = sim.data[objdata::Direction];
+        }
+        if (std::getenv("DEBUG_LOCO")) {
+            std::fprintf(stderr, "facing %d: start %s%s (%d ticks, lag %.3f, step %.4f) walk step %.4f stop %d ticks, at %.2f,%.2f dir %d result %d clips:",
+                         facing, firstClip.c_str(), firstMirror ? " mirrored" : "", startTicks, lagMid, startStep, walkStep,
+                         stopTicks, sim.position.x, sim.position.y, sim.data[objdata::Direction], t.result);
+            for (const auto& c : clips)
+                std::fprintf(stderr, " %s", c.c_str());
+            std::fprintf(stderr, "\n");
+        }
+        const std::string want = facing == 4 ? "a-turnAndGo-alt-0" : "a-turnAndGo-alt-90";
+        check(t.status == Thread::Status::Finished && t.result, "loco: the walk ends there");
+        check(firstClip == want && firstMirror == (facing == 6), "loco: the start turns by the first leg's steps, mirrored counter-clockwise");
+        check(startTicks >= 22 && startTicks <= 24, "loco: the start lasts its clip (0.75 s)");
+        check(std::fabs(lagMid - 0.05f) < 0.02f, "loco: in the start the Sim stands at the clip's root, behind its frame");
+        check(std::fabs(startStep - 0.85f / 23) < 0.01f || facing != 4, "loco: the start's frame covers its distance in its length");
+        check(std::fabs(walkStep - 2.0f / 30) < 0.002f, "loco: the walk cycle at the gait's speed");
+        check(clips.size() >= 3 && clips[clips.size() - 2] == "a-male-walk-alt0-normal" &&
+                  clips.back().starts_with("a-turnAndStop-alt-") && stopTicks >= 14 && stopTicks <= 16,
+              "loco: start, walk, stop");
+        check(std::fabs(sim.position.x - 10.5f) < 0.05f && lastDir == 4, "loco: stopped in front of the lamp, facing it");
+    }
+}
+
+// A runner (steps longer than the predicted blocking looks ahead) does not
+// step into a Sim standing in its way: the locomotor's placement test refuses
+// the step and the Sim becomes the blocker.
+static void testRunnerStep() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(16, 5);
+    for (int x = 0; x < 16; ++x) {
+        vm.world->addWall(1, x, 1, x + 1, 1);
+        vm.world->addWall(1, x, 2, x + 1, 2);
+    }
+    vm.walkTilesPerTick = 0.45f; // longer steps than the prediction looks ahead
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {15.5f, 1.5f, 1};
+    Object& runner = vm.instantiate(kGroup, 0x81);
+    runner.position = {1.5f, 1.5f, 1};
+    runner.person->data[58] = 27;
+    Object& other = vm.instantiate(kGroup, 0x81);
+    other.position = {6.5f, 1.5f, 1};
+    other.person->data[58] = 27;
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+    Thread t = vm.start(runner.id, 0x1000, {}, lamp.id);
+    float closest = 99;
+    bool blocked = false;
+    for (int i = 0; i < 400 && t.status == Thread::Status::Running; ++i) {
+        vm.run(t);
+        closest = std::min(closest, std::hypot(runner.position.x - other.position.x, runner.position.y - other.position.y));
+        blocked = blocked || (runner.route && runner.route->waiting);
+    }
+    if (std::getenv("DEBUG_LOCO"))
+        std::fprintf(stderr, "runner: closest %.3f blocked %d result %d at %.2f\n", closest, blocked, t.result, runner.position.x);
+    (void)blocked;
+    check(t.status == Thread::Status::Finished && !t.result && runner.person->data[62] == 14 && closest >= 0.25f,
+          "a runner is blocked (blocked by person) before it steps into a Sim in its way");
+}
+
 // Two Sims walking at each other down a corridor with a bay block each
 // other: the binary's DoBlockedGoalStillAvailable sees the blocker blocked
 // by the walker and the walker steps aside itself (TryGetSelfOutOfWay), so
@@ -1140,6 +1303,8 @@ int main() {
     testBlockedBySim();
     testMutualBlock();
     testTurnInPlace();
+    testLocoPhases();
+    testRunnerStep();
     testDoorWait();
     testDoorPortalTree();
     testPreRouteTree();

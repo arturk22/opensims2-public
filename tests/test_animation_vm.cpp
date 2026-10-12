@@ -1,6 +1,7 @@
 // Animation primitives (Animate Sim, Assign Locomotion Animations, ...), the
 // locomotion names and a synthetic route walked with SimMotion between ticks.
 #include "vm/animation.hpp"
+#include "vm/locomotion.hpp"
 #include "vm/sim_motion.hpp"
 #include "vm/vm.hpp"
 
@@ -434,6 +435,64 @@ static void testVehicleDrive() {
           "each loop moves the car forward by the root travel");
 }
 
+// The gait (BeginFollow): person data 112/113 weigh walk-alt0/alt1, 114/115
+// another cycle times 1 - 117/100, 116 adds 117/100 to another; the speed
+// is the weighed cycles' speeds; object data 17 = 1 runs. And the start,
+// stop and turn clips by role and 45-degree steps, mirrored the other way.
+static void testGait() {
+    CodeLibrary code;
+    VM vm(code);
+    code.add(kGlobalGroup, animlist::Locomotion,
+             strings({"turnInPlace-alt(turnInPlace),turnAndGo-alt(turnAndGo),turnAndStopR-alt(turnAndStopR),"
+                      "turnAndStop-alt(turnAndStop),step-alt(step)",
+                      "stepInPlace-alt(stepInPlace),walkShort-alt0-normal(walkShort),walk-alt0-normal(walk),"
+                      "walkShort-alt1-normal,walk-alt1-normal,walkPose,walkShort-alt8-sneak,walk-alt8-sneak",
+                      "walk-alt0-normalBlend", "turnAndGo-alt@2.75(turnAndGo@2.75)",
+                      "runShort-alt0-normal(runShort),run-alt0-normal(run)", ""}));
+    vm.animations.add("a-male-walk-alt0-normal", 0.69f, 2.0f);
+    vm.animations.add("a-male-walk-alt1-normal", 0.82f, 2.2f);
+    vm.animations.add("a-male-walk-alt8-sneak", 1.0f, 1.0f);
+    vm.animations.add("a-male-walkShort-alt0-normal", 0.69f, 1.0f);
+    vm.animations.add("a-male-run-alt0-normal", 0.5f, 8.0f);
+    for (const char* n : {"a-turnAndGo-alt-90", "a-turnAndGo-alt-0", "a-turnInPlace-45", "a-step-135", "a-turnAndStop-alt-45"})
+        vm.animations.add(n, 1.0f);
+    Object& s = sim(vm, 1.5f, 1.5f);
+    Gait g = gaitOf(vm, s);
+    check(g.animation == "a-male-walk-alt0-normal" && std::fabs(g.speed - 2.0f) < 1e-4f && !g.run,
+          "no weights: the alt0 walk at its speed");
+    s.person->data[112] = 25, s.person->data[113] = 75;
+    g = gaitOf(vm, s);
+    check(g.animation == "a-male-walk-alt1-normal" && std::fabs(g.speed - 2.15f) < 1e-4f,
+          "LocoWeight 0/1: the heavier cycle plays, the speeds weighed");
+    s.person->data[116] = 8, s.person->data[117] = 80; // "Sneak Here"
+    g = gaitOf(vm, s);
+    check(g.animation == "a-male-walk-alt8-sneak" && std::fabs(g.speed - (2.0f * 0.05f + 2.2f * 0.15f + 0.8f)) < 1e-4f,
+          "LocoMoodIndex 8 with weight 80: the sneak, the others times 0.2");
+    s.person->data[114] = 1, s.person->data[115] = 100;
+    check(std::fabs(gaitOf(vm, s).speed - g.speed) < 1e-5f, "LocoPersonalityIndex below 2 does nothing");
+    s.data[17] = 1;
+    g = gaitOf(vm, s);
+    check(g.run && g.animation == "a-male-run-alt0-normal" && std::fabs(g.speed - 8.0f) < 1e-4f,
+          "walk style 1: the run");
+    check(std::fabs(walkTilesPerTick(vm, s) - 8.0f / 30) < 1e-5f, "walkTilesPerTick follows the gait");
+    auto pick = locoClip(vm, s, "turnAndGo", 2);
+    check(pick && pick->animation == "a-turnAndGo-alt-90" && pick->mirror && std::fabs(pick->speed - 2.75f) < 1e-4f,
+          "running: the run set's start, 2.75 times as fast, mirrored counter-clockwise");
+    s.data[17] = 0;
+    pick = locoClip(vm, s, "turnAndGo", -2);
+    check(pick && pick->animation == "a-turnAndGo-alt-90" && !pick->mirror && pick->speed == 1.0f,
+          "a clockwise start plays the clip as made");
+    pick = locoClip(vm, s, "turnInPlace", 1);
+    check(pick && pick->animation == "a-turnInPlace-45" && pick->mirror, "turn in place: \"turnInPlace-45\" without -alt");
+    pick = locoClip(vm, s, "step", -3);
+    check(pick && pick->animation == "a-step-135" && !pick->mirror, "step: \"step-135\"");
+    pick = locoClip(vm, s, "turnAndStopR", -1);
+    check(pick && pick->animation == "a-turnAndStop-alt-45" && !pick->mirror,
+          "the other foot's stop without a clip at that angle: the plain one (the set takes either foot)");
+    pick = locoClip(vm, s, "turnAndGoR", 0);
+    check(pick && pick->animation == "a-turnAndGo-alt-0", "a start of the other foot falls back to the plain one");
+}
+
 int main() {
     testVehicleDrive();
     testMeasure();
@@ -443,6 +502,7 @@ int main() {
     testOverlayLifetime();
     testOverlayLevels();
     testScriptedWalk();
+    testGait();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

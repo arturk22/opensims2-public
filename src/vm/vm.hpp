@@ -5,6 +5,7 @@
 #include "formats/strings.hpp"
 #include "formats/xform.hpp"
 #include "animation.hpp"
+#include "locomotion.hpp"
 #include "dialog.hpp"
 #include "path_planner.hpp"
 #include "tutorial.hpp"
@@ -775,6 +776,12 @@ public:
     float walkTilesPerTick = 2.0f / 30.0f;
     // Lengths of the animations the animation primitives play (animation.cpp).
     AnimationLibrary animations;
+    // The gaits and locomotion clips already looked up (locomotion.cpp), by
+    // what they depend on.
+    struct LocoCache {
+        std::unordered_map<std::string, Gait> gaits;
+        std::unordered_map<std::string, std::optional<LocoPick>> clips;
+    } locoCache;
     // The tile an object stands on (its position rounded down), whether or
     // not it is in the world.
     static TilePos tileOf(const Object& o) {

@@ -1699,17 +1699,20 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r) {
 
 // The other Sim the walker would stand in at `to` (TSObjectCanSetPosition
 // with error 0x0C "intersects object", whose object LocoPlaceFromSceneGraph
-// makes the blocker), or 0. Inferred: the Sims as discs of 0.25 tile (0.1875
-// for a child or a toddler), as the planner sizes them; a walker already
+// makes the blocker), or 0. Inferred: the Sims' bodies as discs half as
+// wide as the planner's (0.125 tile, 0.09375 for a child or a toddler; the
+// predicted blocking keeps them the planner's width apart, this is the
+// backstop for a step that would go into the other's body, a runner's
+// steps being longer than the prediction's reach); a walker already
 // standing in the other may walk on (LocoPlace puts it where it is stuck
-// when its own place does not pass either).
-ObjectId stepBlocker(VM& vm, const Object& me, float x, float y, int level) {
-    const float mine = smallSim(me) ? 0.1875f : 0.25f;
+// when its own place does not pass either); the Sim walked to is met.
+ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, float y, int level) {
+    const float mine = smallSim(me) ? 0.09375f : 0.125f;
     for (const auto& [id, o] : vm.objects()) {
-        if (id == me.id || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
+        if (id == me.id || id == r.target || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
             o.position.level != level || allowsIntersection(vm, o, me.id))
             continue;
-        const float reach = mine + (smallSim(o) ? 0.1875f : 0.25f);
+        const float reach = mine + (smallSim(o) ? 0.09375f : 0.125f);
         const float now = std::hypot(o.position.x - me.position.x, o.position.y - me.position.y);
         const float then = std::hypot(o.position.x - x, o.position.y - y);
         if (then < reach && now >= reach)
@@ -1831,7 +1834,9 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     ObjectId b = waitingForPerson ? r.blocker : simAhead(vm, me, r);
     if (!b && !r.points.empty() && floorPoint(r.points.front()) && me.position.inWorld()) {
         pending = locoStep(vm, me, r);
-        b = stepBlocker(vm, me, pending->x, pending->y, pending->level);
+        b = stepBlocker(vm, me, r, pending->x, pending->y, pending->level);
+        if (b && std::getenv("OS2_DEBUG_BLOCK"))
+            std::fprintf(stderr, "t%llu %d step into %d\n", (unsigned long long)vm.ticks, me.id, b);
     }
     if (b) {
         const Object& blocker = *vm.object(b);
