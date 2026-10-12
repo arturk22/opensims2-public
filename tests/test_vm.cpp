@@ -1507,6 +1507,17 @@ static void testResetAfterError() {
     check(r != fx.vm.errorResets.end() && r->second.count == 2 && o.attributes[0] == 2 &&
               fx.vm.threads.at(o.id).status == Thread::Status::Running,
           "a failed Main is reset and runs again next tick");
+    // Without a cleanup tree, Reset zeroes the object data but its list
+    // (direction, room, ...), sets the render colours to 255 and runs Init.
+    o.data[objdata::Direction] = 4;
+    o.data[objdata::Room] = 3;
+    o.data[30] = 77;
+    o.data[objdata::Flags] = 0x40;
+    fx.vm.tick();
+    check(o.data[objdata::Direction] == 4 && o.data[objdata::Room] == 3 && o.data[30] == 0 &&
+              o.data[objdata::Flags] == 0 && o.data[72] == 0xFF && o.data[23] == 2 && o.data[objdata::ObjectId] == o.id &&
+              o.attributes[0] == 3,
+          "the reset after an error zeroes the object data but its list, and keeps the attributes");
     fx.vm.resetOnError = false;
     fx.vm.tick();
     check(fx.vm.threads.at(o.id).status == Thread::Status::Failed, "without resets a failed Main stays failed");

@@ -911,13 +911,30 @@ void VM::tick() {
     followContainers();
 }
 
-// The object's reset after a SimAntics error (cTSObject::HandleError ->
-// Reset, BV 0xb05510/0xb0ab9c, outside the debugger): the tree sim is reset
-// to the Main (cTSTreeSim::Reset), the interactions go (the queue, the sub
-// action, the walk) and the Main starts over from its first node next tick.
-// Inferred and left out: Reset also zeroes most of the object data and keeps
-// a list of fields (direction, room, birth date, links, ...), and the game
-// writes an ObjectError log; here the object data stay.
+// The object's reset after a SimAntics error (cTSObject::HandleError, BV
+// 0xb05510, outside the debugger): its interactions are unlinked (vtable
+// 0x534), then Cleanup(nobody) (vtable 0x320, BV 0xb09838):
+// - a person (cTSPerson::OnCleanup, BV 0xadcbcc) drops its stack and queue,
+//   its tree sim is reset to the Main, its cleanup tree (OBJf entry 3) runs
+//   and person data 34 is cleared (the move to a free spot near where it
+//   stood is left out);
+// - an object with a cleanup tree runs it and its tree sim is reset to the
+//   Main, its data stay;
+// - an object without one is Reset (cTSObject::Reset(1, true, false, false),
+//   BV 0xb0ab9c): the object data are zeroed but for direction, container
+//   and slot, room, lead tile, object ID, the birth date, current value,
+//   target slot count, slot count, the semi-attribute count and the object
+//   links (79-81; 105-107 are past the VM's data); render flags 71 := 0,
+//   57 and the render alpha and colours 72-75 := 255, rotation notches 23 :=
+//   2, object version 58 and look at score 78 := the definition's (labels
+//   49, 13), and with "use default placement flags" (label 12) the height,
+//   wall adjacency, wall placement and placement flags (4, 5, 13, 42) := the
+//   definition's defaults (labels 6, 3, 5, 4); the niceness score 7 (a
+//   virtual not followed) stays. The attributes stay. Its Init runs (not
+//   for a multi-tile part: its group's lead handles it), then the Main
+//   starts over.
+// The game also writes an ObjectError log. The Main starts from its first
+// node the next tick.
 void VM::resetAfterError(ObjectId id, Thread& t) {
     ErrorReset& r = errorResets[id];
     if (r.count++ == 0)
@@ -938,6 +955,31 @@ void VM::resetAfterError(ObjectId id, Thread& t) {
     const size_t done = t.instructions;
     t = start(id, main);
     t.instructions = done;
+    if (!o->person && !functionTree(*o, 3) && o->definition) {
+        const auto old = o->data;
+        o->data.fill(0);
+        for (int k : {1, 2, 3, 11, 19, 21, 24, 29, 41, 45, 46, 47, 55, 67, 79, 80, 81})
+            o->data[size_t(k)] = old[size_t(k)];
+        o->data[7] = old[7];
+        o->data[71] = 0;
+        for (int k : {57, 72, 73, 74, 75})
+            o->data[size_t(k)] = 0xFF;
+        o->data[23] = 2;
+        o->data[58] = definitionField(*o, 49);
+        o->data[78] = definitionField(*o, 13);
+        if (definitionField(*o, 12)) {
+            o->data[4] = definitionField(*o, 6);
+            o->data[5] = definitionField(*o, 3);
+            o->data[13] = definitionField(*o, 5);
+            o->data[42] = definitionField(*o, 4);
+        }
+        if (!o->definition->masterId())
+            runFunction(id, 0); // Init
+    } else if (functionTree(*o, 3)) {
+        if (o->person)
+            o->person->data[34] = 0;
+        runFunction(id, 3); // the cleanup tree
+    }
 }
 
 void VM::followContainers() {
