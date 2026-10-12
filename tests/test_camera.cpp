@@ -1,3 +1,4 @@
+#include "app/camera_follow.hpp"
 #include "render/camera.hpp"
 
 #include <cmath>
@@ -202,6 +203,22 @@ int main() {
         v.verticalFov = true;
         const simd_float4x4 q = LotCamera(v).projection(2.0f);
         check(near(q.columns[1][1], t) && near(q.columns[0][0], t / 2), "vertical fov (CAS)");
+    }
+    {
+        // Before the VM: the camera starts on the floor of the lot's first
+        // Sim (a foundation's floor, 0.75 up, here level 1), else the ground.
+        Lot lot;
+        lot.width = lot.height = 4;
+        lot.minLevel = 0, lot.levelCount = 2;
+        lot.elevations.assign(size_t(2 * 5 * 5), 0.0f);
+        for (size_t i = 25; i < 50; ++i)
+            lot.elevations[i] = 0.75f;
+        check(LotCameraFollow::startLevel(lot) == 0, "camera starts on the ground without Sims");
+        Lot::Object sim;
+        sim.person = true;
+        sim.position = {2.5f, 2.5f, 0.75f};
+        lot.objects.push_back(sim);
+        check(LotCameraFollow::startLevel(lot) == 1, "camera starts on the first Sim's floor");
     }
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

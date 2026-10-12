@@ -131,7 +131,12 @@ duração em ticks de 30 Hz.
   `floorheightsamplerange` 6, `...innerrange` 2, `cornersampleoffset`/
   `cornersampleratio` 0,5) e sobe o pivô se o olho ficaria abaixo do piso.
 - `Update`: se o Sim selecionado está noutro andar que o andar visível, o
-  andar visível passa a ser o dele (segue o andar do Sim).
+  andar visível passa a ser o dele (segue o andar do Sim). No app, antes da
+  VM escolher um Sim (capturas sem `--vm`), a câmera começa no andar do
+  primeiro Sim do lote, o nível cujo piso sob ele fica mais perto da sua
+  altura (`LotCameraFollow::startLevel`; numa fundação o piso da casa,
+  0,75 acima do terreno); sem Sims, o térreo. Antes o pivô amostrava o
+  nível 0 e ficava 0,75 baixo demais nos lotes com fundação (rodada 16).
 - `constraintwidth` (−10, `+0x494`): o pivô fica preso ao retângulo do
   mundo do lote (`WorldDB` vtable `0x10c`/`0x110`/`0x114`/`0x118` = x/y
   mínimos e máximos) **encolhido** dessa largura (BV `FUN_006a456c`:

@@ -38,6 +38,8 @@ public:
     // The lot's levels, in the lot's numbering.
     int lowestLevel() const;
     int highestLevel() const;
+    // The floor the camera starts on: the lot's first Sim's (by its height), else the ground.
+    static int startLevel(const Lot& lot);
 
 private:
     LotCamera* camera_;

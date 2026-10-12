@@ -2781,7 +2781,8 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     if (gCamera)
         gCameraFollow = std::make_unique<os2::LotCameraFollow>(*gCamera, lot);
     const int cx = int(lot.width / 2), cy = int(lot.height / 2);
-    return simd_make_float3(float(lot.width) / 2, float(lot.height) / 2, lot.elevation(0, cx, cy));
+    return simd_make_float3(float(lot.width) / 2, float(lot.height) / 2,
+                            lot.elevation(os2::LotCameraFollow::startLevel(lot), cx, cy));
 }
 
 // Loads the objects into the renderer on a grid, four per row, three tiles

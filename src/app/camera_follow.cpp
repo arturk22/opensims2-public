@@ -1,12 +1,14 @@
 #include "camera_follow.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace os2 {
 
 LotCameraFollow::LotCameraFollow(LotCamera& camera, const Lot& lot)
     : camera_(&camera), lot_(std::make_shared<Lot>(lot)), level_(std::make_shared<int>(0)) {
     camera.setBounds(simd_make_float2(0, 0), simd_make_float2(float(lot.width), float(lot.height)));
+    *level_ = startLevel(lot);
     camera.setFloorSampler([lot = lot_, level = level_](float x, float y) {
         const int l = lot->hasLevel(*level) ? *level : 0;
         return lot->elevationAt(l, std::clamp(x, 0.0f, float(lot->width)), std::clamp(y, 0.0f, float(lot->height)));
@@ -32,6 +34,27 @@ void LotCameraFollow::follow(vm::VM& vm, vm::ObjectId sim) {
         if (a && b && simd_distance(*a, *b) > dead)
             camera_->moveTo(at);
     }
+}
+
+int LotCameraFollow::startLevel(const Lot& lot) {
+    // Before the VM picks a Sim (headless shots without it), the floor of
+    // the lot's first Sim, as the game's camera takes the selected Sim's
+    // floor (cCameraLive::Update): the level whose floor under the Sim is
+    // nearest its height (on a foundation the house floor, 0.75 up, not the
+    // ground); the ground without Sims.
+    for (const auto& o : lot.objects) {
+        if (!o.person || (o.position[0] == 0 && o.position[1] == 0))
+            continue;
+        int best = 0;
+        float bestD = 1e9f;
+        for (int l = lot.minLevel; l < lot.minLevel + int(lot.levelCount); ++l) {
+            const float d = std::fabs(lot.elevationAt(l, o.position[0], o.position[1]) - o.position[2]);
+            if (d < bestD - 1e-3f)
+                best = l, bestD = d;
+        }
+        return best;
+    }
+    return lot.hasLevel(0) ? 0 : lot.minLevel;
 }
 
 bool LotCameraFollow::setLevel(int level) {
