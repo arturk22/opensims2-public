@@ -759,6 +759,26 @@ Exit dialog(Context& c) {
         setupPhone(c, d, stack);
         d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
         break;
+    case DialogClass::Clothing: {
+        // cTSWinProcClothingDialog::SetParams (BV 0x330088).
+        d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
+        d.outfitSim = stack && stack->person ? stack->id : me.id;
+        switch (c.thread.temps[0]) {
+        case 1: d.outfitCategory = 0x080; break;
+        case 2: d.outfitCategory = 0x008; break;
+        case 3: d.outfitCategory = 0x200; break;
+        case 4: d.outfitCategory = 0x020; break;
+        case 5: d.outfitCategory = 0x010; break;
+        case 6: d.outfitCategory = 0x400; break;
+        case 8: d.outfitCategory = 0x100; break;
+        case 9: d.outfitCategory = 0x002; break;
+        case 10: d.outfitCategory = 0x004; break;
+        case 11: d.outfitCategory = 0x040; break;
+        case 13: d.outfitCategory = 0x1000; break;
+        default: d.outfitCategory = 0x001; break;
+        }
+        break;
+    }
     default: // the other special dialogs: OK or cancel for now
         d.buttons = {button(o[3], 1), button(o[0], 2)};
         break;

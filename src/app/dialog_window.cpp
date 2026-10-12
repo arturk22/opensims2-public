@@ -168,6 +168,18 @@ void DialogWindow::answer(vm::Dialog& d, int index) {
         return;
     if (index == 0 && !okEnabled(d))
         return;
+    if (index == 0 && d.cls.cls == vm::DialogClass::Clothing && applyOutfit)
+        if (const Outfits* o = wardrobe(d)) {
+            auto pick = [&](int t) {
+                const auto& l = o->lists[size_t(t)];
+                const int c = o->current[size_t(t)];
+                return c >= 0 && c < int(l.size()) ? l[size_t(c)].part : std::string();
+            };
+            if (o->tab == 2)
+                applyOutfit(d.outfitSim, d.outfitCategory, {}, {}, pick(2));
+            else
+                applyOutfit(d.outfitSim, d.outfitCategory, pick(0), pick(1), {});
+        }
     d.answer = index;
     if (log) {
         std::printf("opensims2: dialog \"%s\": %s\n", d.title.c_str(), d.buttons[size_t(index)].c_str());
@@ -678,6 +690,80 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
     return L;
 }
 
+// --- cTSWinProcClothingDialog ------------------------------------------------
+
+DialogWindow::Outfits* DialogWindow::wardrobe(const vm::Dialog& d) {
+    auto it = wardrobes_.find(d.id);
+    if (it == wardrobes_.end()) {
+        std::optional<Outfits> o;
+        if (outfits)
+            o = outfits(d.outfitSim, d.outfitCategory);
+        it = wardrobes_.emplace(d.id, std::move(o)).first;
+    }
+    return it->second ? &*it->second : nullptr;
+}
+
+// Script 0x8C159250: the Sim view (here the chosen part's catalog
+// thumbnail, inferred: the game renders the Sim in the outfit), the tabs
+// tops / bottoms / whole outfits (0xECC70000-2), previous / next
+// (0x8CC731A0/1), OK 0x6CC7318B and cancel 0x6CC73195.
+DialogWindow::Layout DialogWindow::wardrobeDialog(const vm::Dialog& d, int width, int height) {
+    const UiScript* s = script(0x8C159250);
+    if (!s)
+        return plainDialog(d, width, height);
+    Layout L;
+    const UiElement& top = s->roots.front();
+    const auto a = top.area();
+    const float w = float(a[2] - a[0]), h = float(a[3] - a[1]);
+    L.x0 = std::round((float(width) - w) / 2), L.y0 = std::round((float(height) - h) / 2);
+    L.x1 = L.x0 + w, L.y1 = L.y0 + h;
+    UiElement root = top;
+    root.set("area", uiArea(0, 0, int(w), int(h)));
+    Outfits* o = wardrobe(d);
+    auto rect = [&](uint32_t id) -> std::optional<std::array<float, 4>> {
+        if (const UiElement* e = root.child(id)) {
+            const auto r = e->area();
+            return std::array<float, 4>{L.x0 + float(r[0]), L.y0 + float(r[1]), L.x0 + float(r[2]), L.y0 + float(r[3])};
+        }
+        return std::nullopt;
+    };
+    if (o) {
+        const auto& list = o->lists[size_t(o->tab)];
+        const int cur = o->current[size_t(o->tab)];
+        if (cur >= 0 && cur < int(list.size()) && list[size_t(cur)].thumb)
+            if (UiElement* view = root.child(0x2CC7315A)) {
+                const auto r = view->area();
+                const RgbaImage* t = list[size_t(cur)].thumb;
+                const float vw = float(r[2] - r[0]), vh = float(r[3] - r[1]);
+                const float k = std::min(vw / float(t->width), vh / float(t->height));
+                const float tw = std::round(float(t->width) * k), th = std::round(float(t->height) * k);
+                UiElement p = element("GZWinBMP", "IGZWinBMP", float(r[0]) + std::round((vw - tw) / 2),
+                                      float(r[1]) + std::round((vh - th) / 2), float(r[0]) + std::round((vw - tw) / 2) + tw,
+                                      float(r[1]) + std::round((vh - th) / 2) + th);
+                p.set("id", hex(0x2CC7315B));
+                root.children.insert(root.children.begin() + 2, p);
+                L.images[0x2CC7315B] = t;
+            }
+    }
+    for (int t = 0; t < 3; ++t)
+        if (auto r = rect(0xECC70000u + uint32_t(t)))
+            L.regions.push_back({*r, Hit::Tab, t});
+    if (auto r = rect(0x8CC731A0))
+        L.regions.push_back({*r, Hit::Prev, 0});
+    if (auto r = rect(0x8CC731A1))
+        L.regions.push_back({*r, Hit::Next, 0});
+    if (auto r = rect(0x6CC7318B)) {
+        L.regions.push_back({*r, Hit::Button, 0});
+        L.buttonIds.push_back(0x6CC7318B);
+    }
+    if (auto r = rect(0x6CC73195)) {
+        L.regions.push_back({*r, Hit::Button, 1});
+        L.buttonIds.push_back(0x6CC73195);
+    }
+    L.root = std::move(root);
+    return L;
+}
+
 // --- the other special dialogs: an OK/cancel box (not done yet) -----------
 
 DialogWindow::Layout DialogWindow::plainDialog(const vm::Dialog& d, int width, int height) {
@@ -698,6 +784,7 @@ DialogWindow::Layout DialogWindow::layout(const vm::Dialog& d, int width, int he
     case vm::DialogClass::PhoneServices:
     case vm::DialogClass::PhoneNeighbors:
     case vm::DialogClass::PhoneParty: return phoneDialog(d, width, height);
+    case vm::DialogClass::Clothing: return wardrobeDialog(d, width, height);
     default: return plainDialog(d, width, height);
     }
 }
@@ -739,6 +826,12 @@ void DialogWindow::draw(UiScreen& out, const vm::Dialog& d, int width, int heigh
             state = 0;
         hk.buttonState[it->second] = state;
     }
+    // The wardrobe's tab in use looks pressed.
+    if (d.cls.cls == vm::DialogClass::Clothing)
+        if (const Outfits* o = wardrobe(d))
+            for (int t = 0; t < 3; ++t)
+                if (auto it = byId.find(0xECC70000u + uint32_t(t)); it != byId.end())
+                    hk.buttonState[it->second] = t == o->tab ? 2 : 1;
     // The caret in the text box, blinking every half second (the scripts'
     // caretperiod=1000).
     if (L.textBox[2] > L.textBox[0]) {
@@ -818,6 +911,21 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
             break;
         }
         case Hit::Sort: break;
+        case Hit::Tab:
+        case Hit::Prev:
+        case Hit::Next:
+            // onBtnClickedID: a tab shows its list; the arrows step through it.
+            if (Outfits* o = wardrobe(d)) {
+                if (g.kind == Hit::Tab)
+                    o->tab = g.value;
+                const int n = int(o->lists[size_t(o->tab)].size());
+                int& cur = o->current[size_t(o->tab)];
+                if (n > 0 && g.kind == Hit::Prev)
+                    cur = (cur + n - 1) % n;
+                if (n > 0 && g.kind == Hit::Next)
+                    cur = (cur + 1) % n;
+            }
+            break;
         }
         return true;
     }

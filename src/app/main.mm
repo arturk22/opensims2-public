@@ -75,6 +75,8 @@
 #include "formats/camera_config.hpp"
 #include "formats/cas_catalog.hpp"
 #include "formats/cas_face.hpp"
+#include "formats/cas_thumbnails.hpp"
+#include "vm/hood_bridge.hpp"
 #include "formats/character_write.hpp"
 #include "formats/image.hpp"
 #include "formats/dbpf.hpp"
@@ -600,6 +602,7 @@ void selectNextFamilySim();
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
 const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor);
+void setupWardrobe(os2::ResourceIndex& index);
 
 // The camera shows the selected Sim's level (cCameraLive::Update).
 void followSelectedSim() {
@@ -1061,7 +1064,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // selected Sim, to see the window (answer it with --dialog-click / --dialog-type, or keys): 0 message,
     // 1 yes/no, 2 yes/no/cancel, 3 text entry ("0i": a message with the Sim's icon, "0c": with a close box),
     // 23 baby name ("23g" a girl, "23t" twins, "23r" a rename), 5 services / 6 invite / 7 party phone books
-    // over the lot's objects and neighbors.
+    // over the lot's objects and neighbors, 17 the wardrobe ("17f" formal wear).
     if (auto spec = argument(@"--dialog-demo"); spec && gPie) {
         os2::vm::VM& m = gSimulation->machine();
         os2::vm::Dialog d;
@@ -1091,6 +1094,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             d.iconObject = gPie->sim();
         if (kind == "0c")
             d.continueOthers = true;
+        if (d.cls.cls == os2::vm::DialogClass::Clothing) { // 17: the wardrobe, everyday clothes ("17f": formal)
+            d.outfitSim = gPie->sim();
+            d.outfitCategory = kind == "17f" ? 0x020 : 0x001;
+        }
         if (d.type == BabyName) {
             const bool girl = kind == "23g";
             d.names.push_back({0, girl ? "Bebezinha" : "Bebezinho", girl});
@@ -1160,6 +1167,7 @@ void setupPieMenu(os2::ResourceIndex& index) {
         gPie->setPortrait(std::move(*p));
     gPie->setResources(index, gameDir() / "TSData/Res"); // the dialog window's scripts
     gPie->setDialogThumbnails(dialogThumbnail);
+    setupWardrobe(index);
     if (gAudio)
         gPie->setSoundPlayer([](const std::string& name) {
             os2::SoundSystem::PlayOptions o;
@@ -1275,6 +1283,109 @@ const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor) {
     if (img)
         slot = std::make_unique<os2::RgbaImage>(std::move(*img));
     return slot.get();
+}
+
+// The wardrobe dialog (cTSWinProcClothingDialog, app/dialog_window.hpp):
+// the catalog's tops, bottoms and whole outfits of the Sim's age and gender
+// in the category (CAS parts, with their CASThumbnails pictures), and OK
+// writes the Sim's character file with the new outfit (beside the
+// session's files, as a grown-up Sim's) and re-dresses it if it wears that
+// category.
+void setupWardrobe(os2::ResourceIndex& index) {
+    struct Cas {
+        std::unique_ptr<os2::cas::CasCatalog> catalog;
+        std::unique_ptr<os2::cas::FaceBaker> baker;
+        std::unique_ptr<os2::cas::CasThumbnails> thumbs;
+    };
+    static Cas cas;
+    auto load = [&index]() -> Cas& {
+        if (!cas.catalog) {
+            cas.catalog = std::make_unique<os2::cas::CasCatalog>(os2::cas::CasCatalog::load(index));
+            cas.baker = std::make_unique<os2::cas::FaceBaker>(index, *cas.catalog);
+            cas.thumbs = std::make_unique<os2::cas::CasThumbnails>(gameDir() / "TSData/Res/UserData/Thumbnails/CASThumbnails.package");
+        }
+        return cas;
+    };
+    auto simFile = [](int16_t id) -> LotSim* {
+        for (auto& s : gLotSims)
+            if (s.id == id)
+                return &s;
+        return nullptr;
+    };
+    os2::DialogWindow& w = gPie->dialogWindow();
+    w.outfits = [load, simFile](int16_t sim, uint32_t category) -> std::optional<os2::DialogWindow::Outfits> {
+        LotSim* s = simFile(sim);
+        if (!s)
+            return std::nullopt;
+        try {
+            Cas& c = load();
+            os2::DbpfPackage pkg(s->character);
+            const os2::cas::CharacterSpec spec = os2::cas::readCharacterSpec(pkg, 0xFFFFFFFF, *c.catalog);
+            os2::DialogWindow::Outfits o;
+            const uint32_t parts[3] = {os2::cas::part::Top, os2::cas::part::Bottom, os2::cas::part::Body};
+            const auto worn = spec.outfits.count(category) ? spec.outfits.at(category) : std::map<uint32_t, std::string>{};
+            for (int t = 0; t < 3; ++t) {
+                for (const os2::SimPart* p : c.catalog->outfitParts(parts[t], spec.age, spec.gender, category, spec.fitness == 2)) {
+                    os2::DialogWindow::OutfitItem item;
+                    item.part = p->name();
+                    item.thumb = c.thumbs->image(os2::cas::entryThumbnailId(*p, spec.age, spec.gender));
+                    if (auto it = worn.find(parts[t]); it != worn.end() && strcasecmp(it->second.c_str(), p->name().c_str()) == 0)
+                        o.current[size_t(t)] = int(o.lists[size_t(t)].size());
+                    o.lists[size_t(t)].push_back(std::move(item));
+                }
+            }
+            o.tab = worn.count(os2::cas::part::Body) || o.lists[0].empty() ? 2 : 0;
+            return o;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: wardrobe: %s\n", e.what());
+            return std::nullopt;
+        }
+    };
+    w.applyOutfit = [&index, load, simFile](int16_t sim, uint32_t category, const std::string& top,
+                                           const std::string& bottom, const std::string& body) {
+        LotSim* s = simFile(sim);
+        if (!s)
+            return;
+        try {
+            Cas& c = load();
+            os2::cas::CharacterSpec spec;
+            {
+                os2::DbpfPackage pkg(s->character);
+                spec = os2::cas::readCharacterSpec(pkg, 0xFFFFFFFF, *c.catalog);
+                for (const auto& e : pkg.entries())
+                    if (e.tgi.type == 0x4F424A44) { // OBJD: the Sim's GUID stays
+                        spec.guid = os2::ObjectDefinition::parse(pkg.read(e)).guid();
+                        break;
+                    }
+            }
+            auto& outfit = spec.outfits[category];
+            if (!body.empty()) {
+                outfit.erase(os2::cas::part::Top), outfit.erase(os2::cas::part::Bottom);
+                outfit[os2::cas::part::Body] = body;
+            } else {
+                outfit.erase(os2::cas::part::Body);
+                if (!top.empty())
+                    outfit[os2::cas::part::Top] = top;
+                if (!bottom.empty())
+                    outfit[os2::cas::part::Bottom] = bottom;
+            }
+            const fs::path dir = os2::sessionCharactersDir(); // the save copies it to the neighborhood
+            const fs::path out = dir / (s->character.stem().string() + ".package");
+            const fs::path tmp = dir / (s->character.stem().string() + ".new.package");
+            os2::cas::writeCharacter(index, *c.catalog, *c.baker, spec, s->character.stem().string(), tmp, true);
+            fs::rename(tmp, out);
+            s->character = out;
+            std::printf("opensims2: Sim %d's outfit 0x%03X: %s (%s)\n", sim, category,
+                        body.empty() ? (top + " + " + bottom).c_str() : body.c_str(), out.string().c_str());
+            // Wearing that category now: dressed again from the new file.
+            const os2::vm::Object* o = gSimulation ? gSimulation->machine().object(sim) : nullptr;
+            if (o && o->person && os2::vm::outfitCategoryBit(o->person->data[8]) == category && s->actor &&
+                gSimulation->onOutfitChange)
+                gSimulation->onOutfitChange(sim, *s->actor, category);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: wardrobe: %s\n", e.what());
+        }
+    };
 }
 
 // --ui live: the live-mode panel (app/live_ui.hpp) in place of the pie

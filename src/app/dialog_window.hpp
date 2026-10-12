@@ -46,7 +46,7 @@ public:
     ~DialogWindow();
 
     // A region of the window and what a click there does.
-    enum class Hit { Button, Row, Add, Remove, NameBox, Sort, Close };
+    enum class Hit { Button, Row, Add, Remove, NameBox, Sort, Close, Tab, Prev, Next };
     struct Region {
         std::array<float, 4> rect{0, 0, 0, 0}; // canvas x0, y0, x1, y1
         Hit kind = Hit::Button;
@@ -87,6 +87,26 @@ public:
     // object's catalog thumbnail or a Sim's head, by the object's ID or a
     // neighbor's ID (one of the two is 0). Null: none.
     std::function<const RgbaImage*(int16_t object, int16_t neighbor)> thumbnail;
+    // The wardrobe's choices (cTSWinProcClothingDialog): per tab (0 tops,
+    // 1 bottoms, 2 whole outfits) the catalog parts of the Sim's age and
+    // gender in the category, the one it wears, and the tab it opens on
+    // (whole outfits when it wears one, else tops: SetParams).
+    struct OutfitItem {
+        std::string part; // catalog name (GZPS)
+        const RgbaImage* thumb = nullptr;
+    };
+    struct Outfits {
+        std::array<std::vector<OutfitItem>, 3> lists;
+        std::array<int, 3> current{0, 0, 0};
+        int tab = 2;
+    };
+    std::function<std::optional<Outfits>(int16_t sim, uint32_t category)> outfits;
+    // OK in the wardrobe: dress the Sim (its character file) in the parts
+    // chosen: a whole outfit, or a top and a bottom (empty strings for the
+    // others; OnOk copies the try-on outfit into the category).
+    std::function<void(int16_t sim, uint32_t category, const std::string& top, const std::string& bottom,
+                       const std::string& body)>
+        applyOutfit;
     // Answers go to stdout (the headless runs read them).
     bool log = true;
 
@@ -96,6 +116,8 @@ private:
     Layout nameDialog(const vm::Dialog& d, int width, int height);
     Layout phoneDialog(const vm::Dialog& d, int width, int height);
     Layout plainDialog(const vm::Dialog& d, int width, int height);
+    Layout wardrobeDialog(const vm::Dialog& d, int width, int height);
+    Outfits* wardrobe(const vm::Dialog& d);
     const UiScript* script(uint32_t id);
     const RgbaImage* icon(const vm::Dialog& d);
     const RgbaImage* frame0(uint32_t image); // a four-state strip's first frame
@@ -112,6 +134,7 @@ private:
     uint32_t edited_ = 0;     // the dialog whose default text a key replaced
     int editedBox_ = -1;
     std::map<uint32_t, int> partyFocus_; // dialog id -> focused list row (list << 16 | row)
+    std::map<uint32_t, std::optional<Outfits>> wardrobes_; // dialog id -> the wardrobe's lists and choices
 };
 
 } // namespace os2

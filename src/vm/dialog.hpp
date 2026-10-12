@@ -142,6 +142,15 @@ struct Dialog {
     std::vector<DialogName> names;
     uint32_t namePanel = 0;
     int nameFocus = 0;
+    // The wardrobe (cTSWinProcClothingDialog): whose clothes (the stack
+    // object if it is a Sim, else the Sim running the tree) and which
+    // outfit category, as the bit of the character file's outfit lists
+    // (SetParams maps temp 0, a Change Outfit literal: 0 everyday 0x001,
+    // 1 naked 0x080, 2 swimwear 0x008, 3 athletic 0x200, 4 formal 0x020,
+    // 5 pajamas 0x010, 6 try-on 0x400, 8 maternity 0x100, 9/10 the other
+    // casuals 0x002/0x004, 11 underwear 0x040, 13 0x1000).
+    int16_t outfitSim = 0;
+    uint32_t outfitCategory = 0;
     int timeout = 0;   // operand byte 10: a text notification's lifetime in seconds (0: until closed)
     int priority = 0;  // operand byte 9: a text notification's priority
     // A blocking dialog's time limit (ms; 0: none): it then takes its last
