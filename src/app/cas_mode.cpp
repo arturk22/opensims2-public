@@ -461,7 +461,9 @@ void CasMode::changed() {
 constexpr int kThumbnailSkinTone = 2;
 
 void CasMode::ensureArchetypeShots() {
-    if (editing_ < 0 || step_ != 1 || !thumbs_ || !catalog_)
+    // (Step 2 lists the heads; step 3's brow, eyes, nose, mouth and jaw
+    // panels list them again, with the same made shot for the alien.)
+    if (editing_ < 0 || (step_ != 1 && step_ != 2) || !thumbs_ || !catalog_)
         return;
     for (const SimPart* a : catalog_->archetypesFor(edit_.spec.age, edit_.spec.gender, cas::flag::Hidden)) {
         const std::string fam = cas::family(*a);
