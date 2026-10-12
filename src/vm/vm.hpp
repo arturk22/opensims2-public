@@ -819,6 +819,10 @@ public:
     // does not. Wall-mounted lamps and mirrors set none, so they block the
     // tile in front of their wall too.
     static bool blocksRouting(const Object& o);
+    // The rectangles (x0, y0, x1, y1, world tiles) `o` puts in the path
+    // planner: its model's footprint for its tile, or the OBJD box
+    // (routing.cpp, cTSObject::AddThisToPathPlanner).
+    std::vector<std::array<float, 4>> routingFootprint(const Object& o);
     // The blocked tiles of a level, leaving out the objects in `ignore` (and
     // the other parts of their multi-tile objects). Needs a world.
     BlockedGrid blockedTiles(int level, std::span<const ObjectId> ignore = {});

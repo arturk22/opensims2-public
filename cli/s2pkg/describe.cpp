@@ -131,7 +131,13 @@ void describeExtensionValue(std::string& out, const ExtensionValue& v, int depth
     case ExtensionValue::Quaternion:
         appendf(out, "%s = quat(%g %g %g %g)\n", v.name.c_str(), v.f[0], v.f[1], v.f[2], v.f[3]);
         break;
-    case ExtensionValue::Binary: appendf(out, "%s = <%zu bytes>\n", v.name.c_str(), v.bytes.size()); break;
+    case ExtensionValue::Binary:
+        appendf(out, "%s = <%zu bytes>", v.name.c_str(), v.bytes.size());
+        if (v.bytes.size() <= 64) // a footprint tile's 16x16 bitmask is 32 bytes
+            for (size_t k = 0; k < v.bytes.size(); ++k)
+                appendf(out, "%s%02x", k % 2 ? "" : " ", v.bytes[k]);
+        out += '\n';
+        break;
     case ExtensionValue::Array:
         appendf(out, "%s:\n", v.name.c_str());
         for (const auto& it : v.items)

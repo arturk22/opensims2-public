@@ -9,7 +9,9 @@
 
 #include "formats/binreader.hpp"
 #include "formats/model.hpp"
+#include "formats/rcol.hpp"
 #include "formats/resindex.hpp"
+#include "formats/scenegraph.hpp"
 #include "formats/skeleton.hpp"
 
 #include <algorithm>
@@ -641,8 +643,19 @@ void addObstacles(VM& vm, PathPlanner& planner, const Object& me, std::span<cons
         const TilePos t = VM::tileOf(o);
         const bool landing = std::any_of(w.stairs().begin(), w.stairs().end(),
                                          [&](const Stair& s) { return s.bottom == t || s.top == t; });
-        if (!landing)
+        if (landing)
+            continue;
+        // Its footprint's rectangles (the model's, in 1/8 tile cells, or the
+        // OBJD box), each inflated by the planner as AddObjectRectangle does.
+        // OS2_TILE_FOOTPRINTS=1 puts back the whole tile, to compare.
+        static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
+        if (wholeTiles) {
             planner.addObstacle(t.level, float(t.x), float(t.y), float(t.x + 1), float(t.y + 1), PathPlanner::kObject);
+            continue;
+        }
+        for (const auto& r : vm.routingFootprint(o))
+            if (r[0] < r[2] && r[1] < r[3])
+                planner.addObstacle(o.position.level, r[0], r[1], r[2], r[3], PathPlanner::kObject);
     }
 }
 
@@ -3193,6 +3206,156 @@ Footprint doorFootprint(const Object& o, int index) {
         return {};
     return {{x0, y0, x1, y1}};
 }
+
+// The model's footprint (the CRES's cDataListExtension "footprint", read
+// by the scene graph object's Footprint, BV 0x658ab8): lists named by the
+// footprint index ("0", ...), each with a 16x16 bitmask (32 bytes, a u16 a
+// row, bit 0 the low x) per tile "(x,y)" of the model. The binary halves
+// it to 8x8 cells of 1/8 tile (BV 0x6537a4: a cell is set when any of its
+// four is) and makes each run of set cells in a row a rectangle (BV
+// 0x656cc0; runs of equal rows merge, which changes nothing here) of
+// x = tx + c / 8 - 0.5 + 0.01 .. tx + c' / 8 - 0.5 - 0.01, y alike from the
+// rows, in the model's space.
+struct ModelFootprints {
+    // list name -> tile -> 8 rows of 8 cells
+    std::map<std::string, std::map<std::pair<int, int>, std::array<uint8_t, 8>>> lists;
+};
+
+std::array<uint8_t, 8> halveFootprintMask(std::span<const uint8_t> m) {
+    std::array<uint8_t, 8> out{};
+    auto half = [](uint8_t b) {
+        uint8_t h = 0;
+        for (int j = 0; j < 4; ++j)
+            if (b & (3u << (2 * j)))
+                h |= uint8_t(1u << j);
+        return h;
+    };
+    for (size_t r = 0; r < 8; ++r)
+        out[r] = uint8_t(half(m[4 * r]) | half(m[4 * r + 2]) | ((half(m[4 * r + 1]) | half(m[4 * r + 3])) << 4));
+    return out;
+}
+
+// The footprints of the object's model, read once per OBJD; null without a
+// "footprint" data list (or without a model).
+const ModelFootprints* modelFootprints(VM& vm, const Object& o) {
+    constexpr uint32_t kTypeCresId = 0xE519C933, kTypeObjdId = 0x4F424A44;
+    static std::map<std::pair<uint32_t, uint16_t>, std::shared_ptr<ModelFootprints>> cache;
+    const auto key = std::pair{o.group, o.definitionInstance};
+    auto it = cache.find(key);
+    if (it != cache.end())
+        return it->second.get();
+    std::shared_ptr<ModelFootprints> fp;
+    try {
+        if (ResourceIndex* index = vm.code().index()) {
+            const std::string cres = objectCresName(*index, Tgi{kTypeObjdId, o.group, o.definitionInstance, 0});
+            if (auto loc = cres.empty() ? std::nullopt : index->findByName(cres + "_cres", kTypeCresId)) {
+                const auto bytes = index->read(*loc);
+                const Rcol rcol(bytes);
+                for (const Rcol::Block& b : rcol.blocks) {
+                    if (b.className != "cDataListExtension")
+                        continue;
+                    const DataListExtension d = DataListExtension::parse(b.body);
+                    if (d.root.name != "footprint")
+                        continue;
+                    fp = std::make_shared<ModelFootprints>();
+                    for (const ExtensionValue& list : d.root.items) {
+                        if (list.type != ExtensionValue::Array)
+                            continue;
+                        auto& tiles = fp->lists[list.name];
+                        for (const ExtensionValue& t : list.items) {
+                            int x = 0, y = 0;
+                            if (t.type == ExtensionValue::Binary && t.bytes.size() == 32 &&
+                                std::sscanf(t.name.c_str(), "(%d,%d)", &x, &y) == 2)
+                                tiles[{x, y}] = halveFootprintMask(t.bytes);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    } catch (const std::exception&) {
+        fp.reset();
+    }
+    return cache.emplace(key, fp).first->second.get();
+}
+
+} // namespace
+
+// The rectangles an object puts in the path planner (cTSObject::
+// AddThisToPathPlanner, BV 0xaf68e0: the object's GetFootprint, each
+// rectangle given to AddObjectRectangle, which inflates it by 0.12499).
+// GetFootprint is TSObjectWorldSpaceFootprint (BV 0x8aa40c): unless flag
+// 0x80 "Do NOT Use Maya Model Footprint" (object data 8), the model's
+// footprint (AggregateFootprint with object data 9, the footprint index:
+// that list by name, the first by name when 0) for the part's tile of the
+// model, else the OBJD box (footprintOf). The model's space is the lead
+// part's, as for the bone slots: the part's tile is its offset from the lead
+// turned back into it (inferred: the binary asks the object, vtable 0x150),
+// and the rectangles turn with the lead's facing as the bones do (the
+// binary's FUN_0191fa14 turns by direction & 6). A list without the part's
+// tile gives no rectangle (the bench of a piano has a tile with part of a
+// row). Inferred: a model without a footprint list takes the OBJD box
+// (the binary takes the model's bounding box within the tile).
+std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
+    if (!o.person && !(o.data[objdata::Flags] & 0x80) && o.definition) {
+        if (const ModelFootprints* mf = modelFootprints(*this, o); mf && !mf->lists.empty()) {
+            const int16_t index = o.data[9];
+            const std::map<std::pair<int, int>, std::array<uint8_t, 8>>* tiles = nullptr;
+            if (index != 0) {
+                if (auto f = mf->lists.find(std::to_string(index)); f != mf->lists.end())
+                    tiles = &f->second;
+            } else {
+                tiles = &mf->lists.begin()->second; // the smallest name (the binary keeps the least by strcmp)
+            }
+            if (!tiles)
+                return {};
+            const Object* lead = &o;
+            if (const ObjectId l = multiTileGroup(o); l != o.id)
+                if (const Object* lo = object(l); lo && lo->position.inWorld())
+                    lead = lo;
+            const int dir = ((lead->data[objdata::Direction] % 8) + 8) % 8 & 6;
+            const double yaw = (90.0 - 45.0 * dir) * M_PI / 180.0;
+            const float c = float(std::lround(std::cos(yaw))), s = float(std::lround(std::sin(yaw)));
+            // The part's tile in the model: its offset from the lead turned back.
+            const float wx = o.position.x - lead->position.x, wy = o.position.y - lead->position.y;
+            const int tx = int(std::lround(wx * c + wy * s)), ty = int(std::lround(-wx * s + wy * c));
+            const auto t = tiles->find({tx, ty});
+            if (t == tiles->end())
+                return {};
+            std::vector<std::array<float, 4>> out;
+            constexpr float kCell = 0.125f, kShrink = 0.01f;
+            for (int row = 0; row < 8; ++row) {
+                const uint8_t bits = t->second[size_t(row)];
+                for (int c0 = 0; c0 < 8;) {
+                    if (!(bits & (1u << c0))) {
+                        ++c0;
+                        continue;
+                    }
+                    int c1 = c0;
+                    while (c1 < 8 && (bits & (1u << c1)))
+                        ++c1;
+                    const float mx0 = float(tx) + float(c0) * kCell - 0.5f + kShrink;
+                    const float mx1 = float(tx) + float(c1) * kCell - 0.5f - kShrink;
+                    const float my0 = float(ty) + float(row) * kCell - 0.5f + kShrink;
+                    const float my1 = float(ty) + float(row + 1) * kCell - 0.5f - kShrink;
+                    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+                    for (const float mx : {mx0, mx1})
+                        for (const float my : {my0, my1}) {
+                            const float px = lead->position.x + mx * c - my * s;
+                            const float py = lead->position.y + mx * s + my * c;
+                            x0 = std::min(x0, px), y0 = std::min(y0, py), x1 = std::max(x1, px), y1 = std::max(y1, py);
+                        }
+                    out.push_back({x0, y0, x1, y1});
+                    c0 = c1;
+                }
+            }
+            return out;
+        }
+    }
+    return footprintOf(o);
+}
+
+namespace {
 
 // FUN_0191f6d0 (docs/routing-mac.md §8.4): `p` out of the footprint
 // inflated by d, along the shorter axis unless both moves are short.

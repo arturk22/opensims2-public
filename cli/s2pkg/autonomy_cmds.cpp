@@ -464,11 +464,41 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                 if (!now.empty())
                     std::printf("  tick %6llu %s %-10s running \"%s\"\n", static_cast<unsigned long long>(machine.ticks),
                                 clockText(machine).c_str(), simName(*s).c_str(), now.c_str());
+                // S2PKG_FIRES=1: where the Sim is and whether it burns (object
+                // data 8 bit 0x200), on a line of its own.
+                if (static const bool fires = std::getenv("S2PKG_FIRES") != nullptr; fires)
+                    std::printf("  tick %6llu   %s at (%.2f, %.2f, %d)%s\n", static_cast<unsigned long long>(machine.ticks),
+                                simName(*s).c_str(), s->position.x, s->position.y, s->position.level,
+                                (s->data[vm::objdata::Flags] & 0x200) ? " burning" : "");
                 else
                     std::printf("  tick %6llu %s %-10s done with \"%s\"\n", static_cast<unsigned long long>(machine.ticks),
                                 clockText(machine).c_str(), simName(*s).c_str(), running[id].c_str());
                 running[id] = now;
             }
+        }
+        // S2PKG_FIRES=1: the fires (objects named "Fire") made and gone, with their tiles.
+        if (static const bool fires = std::getenv("S2PKG_FIRES") != nullptr; fires) {
+            static std::map<vm::ObjectId, std::string> seenFires;
+            std::set<vm::ObjectId> alive;
+            for (const auto& [oid, ob] : machine.objects())
+                if (ob.definition && ob.definition->fileName == "Fire" && ob.position.inWorld()) {
+                    alive.insert(oid);
+                    if (!seenFires.count(oid)) {
+                        char where[64];
+                        std::snprintf(where, sizeof where, "(%.2f, %.2f, %d)", ob.position.x, ob.position.y, ob.position.level);
+                        seenFires[oid] = where;
+                        std::printf("  tick %6llu %s fire %d at %s\n", static_cast<unsigned long long>(machine.ticks),
+                                    clockText(machine).c_str(), oid, where);
+                    }
+                }
+            for (auto it = seenFires.begin(); it != seenFires.end();)
+                if (!alive.count(it->first)) {
+                    std::printf("  tick %6llu %s fire %d out\n", static_cast<unsigned long long>(machine.ticks),
+                                clockText(machine).c_str(), it->first);
+                    it = seenFires.erase(it);
+                } else {
+                    ++it;
+                }
         }
         // Bills the mailman brings (the "Bills" object, its attribute 0 the
         // amount: docs/primitives-mac.md §4e) and the lot and objects values
