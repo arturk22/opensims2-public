@@ -1507,6 +1507,45 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   get-in leaveOut do canto acaba no assento puxado e fica lá depois do
   reframe. `r18-chairs-lot68-antes-depois.jpg`,
   `r18-chairs-lot68-levantar.jpg`, `r18-chairs-n002-lot3-antes-depois.jpg`.
+- **Onde o Sim é desenhado: uma regra** (rodada 19, ramo `r19-eat`, playtests
+  do usuário 15–19.png; o que é do app é inferido). A raiz do Sim é a posição
+  e a direção da VM (interpoladas entre os dois últimos ticks) ou, contido num
+  slot, o osso do slot no quadro do modelo do contêiner; a animação toca com o
+  movimento de raiz dela e o heading do cabeçalho. Quando essa raiz pula (entra
+  ou sai de um assento, um Snap, o fim de uma escada que põe o Sim no topo),
+  o que já toca e toca uma vez fica onde estava no mundo
+  (`AnimPlayer::reframe`, `onlyOnce` fora dos assentos) e a animação seguinte
+  faz o blend a partir dali; o corte do blend depois de um Snap da rodada 17
+  saiu (a mesma regra cobre o levantar da cadeira). A VM pulando mais que um
+  passo num tick (`SimMotion::kMaxStep` = 1,5 tile; um visitante correndo faz
+  0,7) ou de andar não é interpolada: o corpo vai direto. Defeitos achados com
+  o detector (`OS2_DEBUG_JUMPS=1`, `app/jump_detector`) e as checagens de pose
+  (`OS2_DEBUG_POSES=1`), sem tela:
+  - **Slot de parte de objeto multi-tile**: os ossos dos slots estão no modelo,
+    desenhado no tile líder. O prato posto no slot 1 da parte "1,0" da mesa de
+    jantar (`slot_table_eat_1_N`) era posto a partir da posição da parte e
+    ficava um tile fora da mesa, no ar (15.png). Agora o quadro é o do líder
+    (`VmObjectView::modelFrame`), também para o Sim no assento de uma parte
+    (sofás). `r19-eat-prato-mesa-antes-depois.jpg`.
+  - **Fim da escada reta**: a VM põe o Sim no topo num tick; o app o desenhava
+    a meio caminho e depois com o último quadro da subida (raiz 4,4 tiles
+    escada acima) aplicado a partir do topo: 1,5–3,4 tiles fora por 3 quadros,
+    no topo e embaixo (o Daniel "teleportando", `N001_Lot68`).
+    `r19-eat-escada-salto-antes-depois.jpg`.
+  - **Animação de objeto no Sim**: a VM põe o `o2a-book-carry` (alvo "book",
+    chaves em `root_trans`/`root_rot`) como overlay no leitor; tocado no
+    esqueleto da criança, o corpo afundava no chão um tile ao lado e ia e
+    voltava ao andar (`N001_Lot11`). O jogo liga um alvo ao esqueleto de mesmo
+    nome: um alvo de objeto não liga osso nenhum de um esqueleto de Sim.
+  - Sem tela, os objetos agora são posados e postos a cada passo como num
+    quadro ao vivo (o assento do carro ficava onde o último quadro o deixou).
+  Conferido sem defeito (sem tela, `N001_Lot68`): poltrona Art Nouveau, banco
+  de bar (o Sim fica no banco; o do outro lado do balcão é o banco certo),
+  comer à mesa (prato na mesa à frente), café na cadeira "leaveOut", sair da
+  piscina pela escada. Teste `drawn_places` (com `OS2_DATA`): escada, prato,
+  criança lendo; `test_jump_detector`. Censo de 15000 ticks em `N001_Lot68`,
+  `N001_Lot11`, `N002_Lot10`, `N001_Lot36`: 0 saltos sem razão da VM, 0 Snaps
+  repetidos.
 - **Alvos de IK de tipo 2: o objeto de IK do pedido** (rodada 15, front
   anim3, decifrado). Os alvos de IK (`cIKTarget::TargetType`) têm 3 tipos
   nos dados (`s2pkg anim-sweep`): 0 sem osso de quadro (20.859, o alvo no

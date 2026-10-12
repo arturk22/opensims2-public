@@ -3812,6 +3812,20 @@ void sampleDrawnPlaces(double scene) {
             }
         }
     }
+    // OS2_WATCH_BONE=<object id>:<bone>: that object's actor bone (world) each frame.
+    if (const char* wb = std::getenv("OS2_WATCH_BONE")) {
+        const std::string spec = wb;
+        const int oid = std::atoi(spec.c_str());
+        const std::string bone = spec.substr(spec.find(':') + 1);
+        for (auto& [id, a] : gObjectActors)
+            if (id == oid && a) {
+                const int b = a->skin.skeleton.find(bone);
+                if (b >= 0 && size_t(b) < a->bones.size())
+                    std::printf("opensims2: bone: tick %llu %.3f %d %s (%.3f %.3f %.3f) transform %s\n", (unsigned long long)m.ticks,
+                                scene, oid, bone.c_str(), a->bones[size_t(b)].t[0], a->bones[size_t(b)].t[1],
+                                a->bones[size_t(b)].t[2], a->transform ? "set" : "unset");
+            }
+    }
     if (watch && gObjectView) {
         static std::map<int, std::string> last;
         for (const auto& [id, o] : m.objects()) {
