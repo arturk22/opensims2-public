@@ -2411,6 +2411,46 @@ passageiros são **removidos** com ele. A VM já fazia isso; o "parado em
 Levando a criança" do soak era o soak, que não via um Sim sumir (agora o
 `s2pkg autonomy` imprime "is gone (removed from the lot)").
 
+### Rodada 15 (sobrevivência 5): sociais de três, laços de habilidade e o fogo no VM
+
+**Interações ligadas** (`TryPushAction`, flag 0x40, BV `0xe33f..`): a
+interação nova pega o link da ligada e a ligada passa a apontar para a nova
+(`new.SetLinkedGUID(linked.GetLinkedGUID())`, `linked.SetLinkedGUID(new.
+AssignUniqueGUID())`; vtables `0x108` `AssignUniqueGUID`, `0x110`
+`GetUniqueGUID`, `0x114`/`0x118` `Get`/`SetLinkedGUID`, `0x11c`
+`FindInteraction`): uma corrente que sai da primeira. O `UnLinkInteractions`
+(BV `0x4c6a54`) segue a corrente: a que roda ganha o dado de pessoa 110, a
+que espera sai da fila. Na "Social - Baby - Talk To" (A, depois B e o
+"Person C - Baby Holder" ligados a A) fica A → C → B; o VM ligava A e B um
+ao outro e o C nunca sabia que A tinha saído: a Brandi (`N001_Lot36`)
+segurava o bebê 11 h no laço do C (que só sai com o estado de A ≥ 12 ou
+com o Wait For Notify verdadeiro, isto é, o 110).
+
+**Laços de habilidade** (piano, cavalete, livros: `Skill - Exit Skill
+Object?` → `Exit Object - Motive Failing?`, global `0x24F`): saem pelo
+Wait For Notify (usuário, prioridade maior, 110) ou com fome ≤ −50,
+energia ≤ −80, bexiga ≤ −75, diversão ≤ −80, conforto ≤ −70 (adulto) ou
+higiene ≤ o parâmetro (0). Nada sobre a diversão cheia: um Sim toca piano
+até a fome chegar a −50. Conferido no soak: o "Tocar" de 7,7 h do Alexander
+(`N001_Lot11`) termina com a fome em −51 (≈ 5,5 pontos por hora). O "Ler"
+do jornal (`Fun Object (Sim X) - Exit?`, `0x1DE`) sai com diversão ≥ 60,
+fome ≤ −80, bexiga ≤ −85 ou energia ≤ −80: os 6,6 h da Ophelia vão de −90 a
+60 de diversão. É o que as árvores pedem.
+
+**O fogo no VM** contra a leitura acima ("como o fogo se espalha"): o
+`Idle 3` do laço dura 3 ticks (o Sleep do binário conta o parâmetro até 0 e
+segue no mesmo tick), a unidade de 20 ticks vira uma a cada 21 (7 voltas),
+a chama inicial 73–176 dura 1.530–3.700 ticks e o Fire espera até 20 ×
+`Idle 30` antes de sumir; nos soaks a vida (do nascer ao sumir) vai de 37 a
+4.281 ticks. Num `N002_Lot22` semeado: a primeira tentativa de propagação
+de cada Fire depois de ≥ 1.117 ticks (≥ 900 pedidos), intervalo mínimo de
+219 entre tentativas (≥ 200), no máximo 5 "Create Fire" por Fire (≤ 8),
+nenhum Fire num tile que já tem um (flag 0x01 do Create New Object
+Instance). O Set to Next 8 (os objetos do tile, com o conteúdo dos slots)
+e o 9 (um objeto por lado) da lista de vizinhos agora são os do binário.
+Não conferido: o `TSObjectCanSetPosition` do Fire novo (o VM não o faz no
+Create New Object Instance).
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
