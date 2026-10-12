@@ -190,15 +190,24 @@ static void testEnqueueOrder() {
     enqueue(fx.vm, s, q(kPriorityUserDriven, 3));
     enqueue(fx.vm, s, q(kPriorityMaximum, 2));
     enqueue(fx.vm, s, q(kPriorityAutonomous, 0), true);
-    // max first, then the user driven ones in order, then autonomous; push head goes first of all.
+    // As cTSPerson::AddAction: a higher priority skips the lower ones waiting
+    // (the autonomous 1 when the user's 3 came, then 0 and 3 when the
+    // maximum 2 came); push head goes first of all.
     std::vector<uint16_t> order;
     for (const auto& x : s.queue)
         order.push_back(x.interaction);
-    check((order == std::vector<uint16_t>{0, 2, 0, 3, 1}), "queue order: priority, then arrival; push head first");
+    check((order == std::vector<uint16_t>{0, 2}), "queue order: a higher priority skips the lower waiting ones; push head first");
+    enqueue(fx.vm, s, q(kPriorityMaximum, 3));
+    enqueue(fx.vm, s, q(kPriorityMaximum, 1));
+    order.clear();
+    for (const auto& x : s.queue)
+        order.push_back(x.interaction);
+    // (the pushed head is autonomous: from it on everything is skipped)
+    check((order == std::vector<uint16_t>{3, 1}), "queue order: the same priority goes last");
     check(s.person->data[persondata::NextInteractionObject] == fx.fridge &&
-              s.person->data[persondata::NextInteractionIndex] == 0,
+              s.person->data[persondata::NextInteractionIndex] == 3,
           "person data 79/45: the next queued interaction");
-    check(cancelInteraction(fx.vm, s, s.queue[1].uid) && s.queue.size() == 4, "cancelling a waiting entry removes it");
+    check(cancelInteraction(fx.vm, s, s.queue[1].uid) && s.queue.size() == 1, "cancelling a waiting entry removes it");
     cancelInteractionsWith(fx.vm, fx.fridge);
     check(s.queue.empty() && s.person->data[persondata::NextInteractionObject] == 0,
           "Generic Sims Call 13 removes waiting interactions of the object");
@@ -279,8 +288,9 @@ static void testPushInteraction() {
     fx.code.add(kObjGroup, 0x1010,
                 tree({expr(Local, 0, Assign, Data, objdata::ObjectId, go(1), E),
                       expr(StackId, 0, Assign, Lit, int16_t(fx.sim), go(2), E),
-                      push(1, 0, 2, 0x02, go(3), E),      // Clean, autonomous, object in local 0
-                      push(0, 0, 1, 0x00, T, E)},         // Have Snack, maximum, object in param 0
+                      push(0, 0, 1, 0x00, go(3), E),      // Have Snack, maximum, object in param 0
+                      push(1, 0, 2, 0x02, T, E)},         // Clean, autonomous, object in local 0 (after: a
+                                                          // higher one would skip it, AddAction)
                      2, 1));
     // The game's errors (Mac binary): no such interaction (0x16), no such object (0x17).
     fx.code.add(kObjGroup, 0x1011,

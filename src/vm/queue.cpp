@@ -278,8 +278,10 @@ Exit pushInteraction(Context& c) {
     q->pushedBy = c.thread.me;
     q->operands = o;
     // A "Run Immediately" entry (TTAB flag 0x04) never waits in the queue:
-    // cTSPerson::AddAction (Mac BV 0xadbbdc) runs it at once (runImmediately).
-    if (!nested && (q->ttabFlags & 0x04)) {
+    // cTSPerson::AddAction (Mac BV 0xadbbdc) runs it at once (runImmediately),
+    // nested or not (AddAction tests the flag before it picks the queue or
+    // the sub-queue).
+    if (q->ttabFlags & 0x04) {
         if (!runImmediately(c.vm, *target, *q))
             return failed(6);
         if (flags & 0x80)
@@ -652,13 +654,24 @@ uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead) {
     if (queue.empty()) {
         at = 0;
     } else if (!pushHead) {
-        // After the last waiting entry of the same or higher priority; else
-        // right after the running one.
-        for (size_t i = queue.size(); i-- > first;)
-            if (q.priority <= queue[i].priority) {
-                at = i + 1;
+        // cTSPerson::AddAction (Mac BV 0xadbbdc): from the first waiting entry
+        // of a lower priority on, the waiting entries are skipped (Action-
+        // Skipped: they leave the queue, their links undone) and the new one
+        // goes last; none lower: it goes last. (A fire's panic clears what
+        // the Sims had queued; a user pick drops the autonomous ones waiting.
+        // The object event ActionSkipped also sends, 4, is not done.)
+        size_t cut = queue.size();
+        for (size_t i = first; i < queue.size(); ++i)
+            if (queue[i].priority < q.priority) {
+                cut = i;
                 break;
             }
+        while (queue.size() > cut) {
+            const QueuedInteraction gone = queue.back();
+            queue.pop_back();
+            unlinkInteraction(vm, sim.id, gone);
+        }
+        at = queue.size();
     }
     queue.insert(queue.begin() + std::ptrdiff_t(std::min(at, queue.size())), std::move(q));
     evaluatePriorities(vm, sim);

@@ -1747,6 +1747,18 @@ byte 2 não tem 0x01; senão **1**. Objeto inexistente: falso.
   Daniel dançando, QA 15). `vm::runImmediately`. O clique do jogador
   passa pelo mesmo `AddAction` (rodada 19, `vm::addAction`): a entrada
   imediata escolhida no pie roda na hora e não aparece na fila.
+  O teste da flag vem antes da escolha entre fila e sub-fila: uma aninhada
+  (0x8000) imediata também roda na hora. Fora isso, o `AddAction` anda pela
+  fila de espera (a interação que roda não está nela: `TryIdleForInput` a
+  tira da frente) e, **a partir da primeira de prioridade menor que a nova,
+  pula todas** (`ActionSkipped` BV `0xaca0cc`: saem da fila, os vínculos
+  desfeitos, e o objeto recebe o evento 4, que não fazemos); a nova vai para
+  o fim. Antes inseríamos depois da última de prioridade maior ou igual e
+  mantínhamos as menores (como a FreeSO): pânico de fogo ou um clique do
+  jogador não limpavam o que estava esperando. "Continue as current" vai para
+  a frente (`push_front`). (Rodada 19; os "*Get Sick" 6–10 e o "*Stop Morning
+  Sickness" do controlador de doenças são imediatos, 0x0C05/0x0414; os
+  "*Get Sick" 1–5 têm 0x08 "Allow Consecutive" e esperam na fila.)
 
 ### O menu de pie (`cEdithObjectTestSim`, rodada 19)
 
