@@ -32,6 +32,8 @@ std::vector<const SimPart*> filter(const std::vector<SimPart>& list, uint32_t ag
     return out;
 }
 
+} // namespace
+
 // The style of a hair part: its name without the colour suffix
 // ("amhairshort_brown" -> "amhairshort").
 std::string hairStyle(const SimPart& p) {
@@ -40,8 +42,6 @@ std::string hairStyle(const SimPart& p) {
         n.resize(u);
     return n;
 }
-
-} // namespace
 
 std::string agePrefix(uint32_t ageBit, uint32_t genderBit, bool unisexYoung) {
     char a = 'a';

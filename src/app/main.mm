@@ -1695,6 +1695,33 @@ void setupWardrobe(os2::ResourceIndex& index) {
             }
             break;
         }
+        case G::VanityHairCustom: {
+            // "Custom" (cTSUICASComponentHair, the filter's custom flag): the
+            // hairs whose tone is not a regular one (IsRegularHairTone:
+            // 00000001..00000005), one per style.
+            const auto& everyday = s.outfits.count(cas::category::Everyday) ? s.outfits.at(cas::category::Everyday)
+                                                                            : std::map<uint32_t, std::string>{};
+            const std::string current = everyday.count(cas::part::Hair) ? lower(everyday.at(cas::part::Hair)) : "";
+            std::vector<std::string> seen;
+            for (const os2::SimPart* h : cat.outfitParts(cas::part::Hair, s.age, s.gender, 0)) {
+                const std::string tone = lower(h->property("hairtone"));
+                bool regular = false;
+                for (int k = 1; k <= 5; ++k)
+                    regular = regular || tone == cas::toneFamily(k);
+                const std::string style = cas::hairStyle(*h);
+                if (regular || std::find(seen.begin(), seen.end(), style) != seen.end())
+                    continue;
+                seen.push_back(style);
+                const std::string name = h->name();
+                items.push_back({c.thumbs->image(cas::entryThumbnailId(*h, s.age, s.gender)), lower(name) == current,
+                                 [name](cas::CharacterSpec& e) {
+                                     for (auto& [category, parts] : e.outfits)
+                                         if (parts.count(cas::part::Hair) || category == cas::category::Everyday)
+                                             parts[cas::part::Hair] = name;
+                                 }});
+            }
+            break;
+        }
         case G::VanityHairColor:
             for (int k = 0; k < 4; ++k)
                 items.push_back({nullptr, s.hairTone == k + 1, [&cat, k](cas::CharacterSpec& e) {

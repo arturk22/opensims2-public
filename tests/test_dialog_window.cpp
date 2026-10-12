@@ -282,10 +282,16 @@ int main() {
         check(vclick(vfind(DialogWindow::Hit::Tab, 6)) && vclick(vfind(DialogWindow::Hit::Next, DialogWindow::VanityBeards)) &&
                   vclick(vfind(DialogWindow::Hit::Row, (DialogWindow::VanityBeards << 16) | 12)),
               "vanity: beards, the second page");
+        check(vfind(DialogWindow::Hit::Choice, 0x301).has_value(), "vanity: the facial hair colour row on the beards tab");
+        check(vclick(vfind(DialogWindow::Hit::Tab, 0)) && vclick(vfind(DialogWindow::Hit::Choice, 0x310)) &&
+                  vclick(vfind(DialogWindow::Hit::Row, (DialogWindow::VanityHairCustom << 16) | 0)),
+              "vanity: Custom shows the custom tones' hairs");
+        check(vclick(vfind(DialogWindow::Hit::Tab, 6)), "vanity: back to the beards");
         check(picks == (std::vector<std::pair<int, int>>{{DialogWindow::VanityHair, 3},
                                                           {DialogWindow::VanityHairColor, 2},
                                                           {DialogWindow::VanityLipstick, 1},
-                                                          {DialogWindow::VanityBeards, 12}}),
+                                                          {DialogWindow::VanityBeards, 12},
+                                                          {DialogWindow::VanityHairCustom, 0}}),
               "vanity: the picks in order");
         check(vclick(vfind(DialogWindow::Hit::Button, 0)) && done && v.answer == 0, "vanity: OK writes the look");
 

@@ -80,7 +80,8 @@ const char* ageName(uint32_t ageBit); // "adult", ...
 
 // An XML entry or a GZPS part (both SimPart: properties + 3IDR).
 std::string entryType(const SimPart& e); // "type" ("skintone", "facemodifier", "skin", ...)
-std::string family(const SimPart& e);    // lowercase GUID text
+std::string family(const SimPart& e);
+std::string hairStyle(const SimPart& p); // the name without the colour suffix    // lowercase GUID text
 float genetic(const SimPart& e);
 bool fits(const SimPart& e, uint32_t ageBit, uint32_t genderBit); // its age and gender bits include them
 float floatProperty(const SimPart& e, const std::string& key, float fallback = 0);

@@ -135,7 +135,9 @@ public:
     // dresses the Sim again (OnOk), cancel drops the edit.
     enum VanityGroup {
         VanityHair, VanityBlush, VanityEyeliner, VanityEyeShadow, VanityLipstick, VanityGlasses, VanityCostume,
-        VanityBrows, VanityStubble, VanityBeards, VanityHairColor, VanityGroups
+        VanityBrows, VanityStubble, VanityBeards, VanityHairColor,
+        VanityHairCustom, // the hairs of the custom tones (the "Custom" button)
+        VanityGroups
     };
     struct VanityItem {
         const RgbaImage* thumb = nullptr;
@@ -189,6 +191,7 @@ private:
     const std::vector<ShopItem>& shopList(const vm::Dialog& d, Shop& s, int tab);
     struct Vanity {
         int tab = 0;
+        bool custom = false; // the hair grid shows the custom tones ("Custom" 0x8804)
         std::map<int, int> first; // group -> first item shown
         std::map<int, std::vector<VanityItem>> items;
     };

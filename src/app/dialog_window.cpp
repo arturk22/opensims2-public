@@ -1661,11 +1661,15 @@ DialogWindow::Layout DialogWindow::vanityDialog(const vm::Dialog& d, int width, 
     for (uint32_t p : {0x2CEDF326u, 0x2CEDF327u, 0x2CEDF328u, 0xAD4F1B1Cu})
         if (UiElement* e = findWin(root, p, 0, 0, nullptr))
             e->set("winflag_visible", p == kVanityPanels[v.tab] ? "yes" : "no");
+    // HandleTabSelect shows the facial hair colour row 0x2D4F258C with the
+    // brows, stubble and beards (FUN_0093fed8(panel, 0x2D4F258C, 1)).
     if (UiElement* e = findWin(root, 0x2D4F258C, 0, 0, nullptr))
-        e->set("winflag_visible", "no");
+        e->set("winflag_visible", v.tab >= 4 ? "yes" : "no");
     std::vector<VanityGrid> grids;
     switch (v.tab) {
-    case 0: grids = {{0x2CED6A8D, VanityHair, 0x8CB8C2B9, 0x8CB8C2C3, 0xACB8C2CF, 0x8C159283, 3, 4}}; break;
+    case 0:
+        grids = {{0x2CED6A8D, v.custom ? VanityHairCustom : VanityHair, 0x8CB8C2B9, 0x8CB8C2C3, 0xACB8C2CF, 0x8C159283, 3, 4}};
+        break;
     case 1:
         grids = {{0x6CA52068, VanityBlush, 0x4011, 0x4008, 0x4009, 0xCB980E93, 4, 1},
                  {0xAD474C78, VanityEyeliner, 0x4011, 0x4008, 0x4009, 0xCB980E93, 4, 1},
@@ -1716,8 +1720,13 @@ DialogWindow::Layout DialogWindow::vanityDialog(const vm::Dialog& d, int width, 
             L.regions.push_back({absOf(q), Hit::Prev, g.group});
         if (findWin(*comp, g.next, cr[0], cr[1], &q))
             L.regions.push_back({absOf(q), Hit::Next, g.group});
-        if (g.group == VanityHair) {
-            // The colour buttons (black, brown, blond, red; grey is hidden).
+        if (g.group == VanityHair || g.group == VanityHairCustom) {
+            // The colour buttons (black, brown, blond, red; grey is hidden)
+            // and "Custom" 0x8804 (cTSUICASComponentHair::HandleTabHairColor:
+            // the custom flag on, the grid's filter to the hairs of the
+            // other tones, nTSCASCore::IsRegularHairTone = 1..5; a colour
+            // turns it off). The colour pressed is the hair's, none in
+            // custom mode.
             auto& tones = vanityList(d, VanityHairColor);
             for (int k = 0; k < 4; ++k)
                 if (findWin(*comp, 0x8800u + uint32_t(k), cr[0], cr[1], &q)) {
@@ -1726,11 +1735,39 @@ DialogWindow::Layout DialogWindow::vanityDialog(const vm::Dialog& d, int width, 
                     if (UiElement* b = findWin(*comp, 0x8800u + uint32_t(k), 0, 0, nullptr)) {
                         const uint32_t id = 0x00F00000u | uint32_t(k);
                         b->set("id", hex(id));
+                        L.states[id] = !v.custom && k < int(tones.size()) && tones[size_t(k)].selected ? 2 : 1;
+                    }
+                }
+            if (findWin(*comp, 0x8804, cr[0], cr[1], &q)) {
+                L.regions.push_back({absOf(q), Hit::Choice, 0x310});
+                if (UiElement* b = findWin(*comp, 0x8804, 0, 0, nullptr)) {
+                    b->set("id", hex(0x00F00010u));
+                    L.states[0x00F00010u] = v.custom ? 2 : 1;
+                }
+            }
+        }
+    }
+    // The facial hair colour row (onBtnClickedID: a button with an id in
+    // 0x8800 of the row 0x2D4F258C sets the GUID of its caption, the hair
+    // tone, with cTSUISimEditor::SetHairColor and refreshes the overlays:
+    // the brows and beards follow the hair's colour, so it recolours the
+    // hair too). Grey 0x8804 is hidden in the script.
+    if (v.tab >= 4)
+        if (UiElement* rowWin = findWin(root, 0x2D4F258C, 0, 0, &r)) {
+            const std::array<float, 4> rowRect = r;
+            auto& tones = vanityList(d, VanityHairColor);
+            for (int k = 0; k < 4; ++k) {
+                std::array<float, 4> q{};
+                if (findWin(*rowWin, 0x8800u + uint32_t(k), rowRect[0], rowRect[1], &q)) {
+                    L.regions.push_back({absOf(q), Hit::Choice, 0x300 | k});
+                    if (UiElement* b = findWin(*rowWin, 0x8800u + uint32_t(k), 0, 0, nullptr)) {
+                        const uint32_t id = 0x00F00020u | uint32_t(k);
+                        b->set("id", hex(id));
                         L.states[id] = k < int(tones.size()) && tones[size_t(k)].selected ? 2 : 1;
                     }
                 }
+            }
         }
-    }
     // The Sim view: the Sim's head (the game renders the Sim with the edit).
     if (thumbnail)
         if (const RgbaImage* head = thumbnail(d.outfitSim, 0); head && head->width && head->height)
@@ -1943,12 +1980,22 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
             case Hit::Tab: v.tab = g.value; break;
             case Hit::Prev:
             case Hit::Next: {
-                const int per = g.value == VanityHair ? 12 : g.value <= VanityLipstick ? 4 : g.value <= VanityCostume ? 15 : 12;
+                const int per = g.value == VanityHair || g.value == VanityHairCustom ? 12
+                                : g.value <= VanityLipstick                          ? 4
+                                : g.value <= VanityCostume                           ? 15
+                                                                                     : 12;
                 v.first[g.value] = std::max(0, v.first[g.value] + (g.kind == Hit::Next ? per : -per));
                 break;
             }
-            case Hit::Row:
-            case Hit::Choice: {
+            case Hit::Choice:
+                if (g.value == 0x310) { // "Custom": the custom tones' hairs
+                    v.custom = true;
+                    v.first.erase(VanityHairCustom);
+                    break;
+                }
+                v.custom = false;
+                [[fallthrough]];
+            case Hit::Row: {
                 const int group = g.kind == Hit::Choice ? int(VanityHairColor) : g.value >> 16;
                 const int index = g.kind == Hit::Choice ? (g.value & 0xFF) : (g.value & 0xFFFF);
                 if (vanityPick)
