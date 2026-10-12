@@ -826,17 +826,15 @@ public:
     static TilePos tileOf(const Object& o) {
         return {int(std::floor(o.position.x)), int(std::floor(o.position.y)), o.position.level};
     }
-    // Whether an object stands in the way of Sims walking: placed in the world
-    // (not in a slot), not a Sim, not a door, window or stair (stairs join
-    // levels, which routing does not do yet), and none of the object data
-    // "flags" that let people through (can be stepped over, allow object and
-    // person intersection, allow person intersection). Inferred from what the
-    // Inits set: flowers, paintings, emitters and doors set them, furniture
-    // does not. Wall-mounted lamps and mirrors set none, so they block the
-    // tile in front of their wall too.
+    // Whether an object goes into the path planner as an obstacle, as
+    // cTSObject::AddThisToPathPlanner decides (routing.cpp; docs/routing-mac.md
+    // §2): in the world and not in a slot, not a Sim, door, window or stair,
+    // not "attached to ceiling", and without "allow (object and) person
+    // intersection". It then blocks by its routing footprint.
     static bool blocksRouting(const Object& o);
     // The rectangles (x0, y0, x1, y1, world tiles) `o` puts in the path
-    // planner: its model's footprint for its tile, or the OBJD box
+    // planner: its model's footprint for its tile, the model's box cut to
+    // the tile when the model has no footprint list, or the OBJD box
     // (routing.cpp, cTSObject::AddThisToPathPlanner).
     std::vector<std::array<float, 4>> routingFootprint(const Object& o);
     // The blocked tiles of a level, leaving out the objects in `ignore` (and

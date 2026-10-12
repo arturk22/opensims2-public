@@ -352,9 +352,18 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     if (const char* want = std::getenv("S2PKG_OBJECTS")) // the objects whose name has the text
         for (const auto& [oid, o] : machine.objects())
             if (objectName(machine, oid).find(want) != std::string::npos)
-                std::printf("  object %d %s at (%.2f, %.2f, %d) dir %d lead %d container %d\n", oid, objectName(machine, oid).c_str(), o.position.x,
-                            o.position.y, o.position.level, o.data[vm::objdata::Direction], o.data[vm::objdata::LeadTileObjectId],
-                            o.data[vm::objdata::ContainerId]);
+                std::printf("  object %d %s at (%.2f, %.2f, %d) dir %d lead %d container %d flags 0x%04x placement 0x%04x heights 0x%04x%s\n", oid,
+                            objectName(machine, oid).c_str(), o.position.x, o.position.y, o.position.level, o.data[vm::objdata::Direction],
+                            o.data[vm::objdata::LeadTileObjectId], o.data[vm::objdata::ContainerId], uint16_t(o.data[vm::objdata::Flags]),
+                            uint16_t(o.data[42]), uint16_t(o.data[4]), vm::VM::blocksRouting(o) ? " blocks" : "");
+    if (const char* want = std::getenv("S2PKG_OBJECTS"); want && std::getenv("S2PKG_FOOTPRINTS")) // and their routing footprints
+        for (const auto& [oid, o] : machine.objects())
+            if (objectName(machine, oid).find(want) != std::string::npos && o.position.inWorld() && !o.person) {
+                std::printf("  footprint %d %s:", oid, objectName(machine, oid).c_str());
+                for (const auto& r : machine.routingFootprint(o))
+                    std::printf(" [%.2f,%.2f-%.2f,%.2f]", r[0], r[1], r[2], r[3]);
+                std::printf("\n");
+            }
     if (std::getenv("S2PKG_DOORS"))
         for (const auto& [oid, o] : machine.objects())
             if (o.definition && o.definition->objectType() == vm::kObjectTypeDoor && o.position.inWorld())

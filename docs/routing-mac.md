@@ -112,6 +112,42 @@ O teste por passo do andar e o `Snap` usam a mesma pegada
 (`TSObjectCanSetPosition`: a caixa da pessoa contra as pegadas dos objetos,
 `VM::pointFree`, `footprintBlocker` em `routing.cpp`).
 
+### Quem entra no planejador (binário, rodada 15)
+
+O começo do `AddThisToPathPlanner` (BV `0xaf68e0`, vtables do `cTSObject`
+resolvidas com `tools/symxfer/vtables.py`) deixa de fora:
+- `IsBeingEdited` (`0x35c`: `+0x78 > 0`), `GetContainer` (`0x118`: objeto
+  num slot), os tipos `0x12`/`0xd` que não são multi-tile e têm o od `0x46`;
+- `FootprintBlocksCeiling` (`0x23c`): **od 42 bit `0x1000`** ("attached to
+  ceiling", as luminárias de teto);
+- portas, janelas e portais de escada modular (tipos 8, 9 e 12) salvo
+  OBJD[`0x4b`] = `0x93`; fora do mundo (`IsInWorld`, `0x2e0`); pegada vazia.
+
+Depois `TSObjectGetPathPlannerCostAndPassibility` (BV `0xaf5270`):
+`CanIntersectPeople` (`0x1d8`) é **od 8 & `0x14`** ("allow object and person
+intersection" / "allow person intersection"). Sem ela (ou janela) o objeto
+**bloqueia**: passagem 11, ou 9 com `IsOKToFlyOver` (od 8 bit 0 "can be
+stepped over", ou od 40 bit `0x1000`); as duas são > 1, então o
+`AddObjectRectangle` (BV `0x4f34b4`) põe também o retângulo inflado 0,12499
+com o custo máximo. Com ela, o objeto só entra se tem penalidade de rota (od
+10 ≥ 1) ou árvore "allow intersection" (`GetTreeID(5)`), com passagem 0 e
+custo `od 10 · escala + 1`.
+
+Não há no binário os filtros que o VM tinha por falta das pegadas: objetos
+"pequenos" (od 4 além do chão: copos, bandejas, mas também estátuas e
+vasos), "soltos do chão" (od 42 `0x80`), pendurados na parede (od 42
+`0x200` com parede: cortinas), od 8 bit 0, as peças de patamar das escadas
+modulares (têm od 8 `0x04`). Tirados na rodada 15: cada um bloqueia pela sua
+pegada. Sem lista "footprint" o VM agora usa a **caixa do modelo** (as
+malhas no plano xy, sem os planos de sombra; inferido) cortada ao tile da
+parte, como o `cObject` (BV `0x658ab8`): cortinas viram faixas de 0,3 tile
+junto da parede, lápides e luminárias de jardim uns 0,2–0,3 tile. Ficam
+diferentes do binário: escadas (tipos 10 e 11) fora do planejador (os
+portais daqui precisam dos tiles), a exceção OBJD[`0x4b`] = `0x93` não
+feita, e a penalidade de rota (od 10) não vira custo. O `EvalTileForGoal`
+(§8.2) também passou a testar a caixa do Sim (0,2) contra as pegadas no
+ponto, não o tile inteiro.
+
 ### Custo do piso (`WorkOutTileCostAndPassability`)
 
 ```

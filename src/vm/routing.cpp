@@ -27,13 +27,20 @@
 namespace os2::vm {
 
 bool VM::blocksRouting(const Object& o) {
+    // What cTSObject::AddThisToPathPlanner (BV 0xaf68e0) leaves out of the
+    // path planner: an object in a slot (GetContainer), one whose footprint
+    // "blocks the ceiling" (FootprintBlocksCeiling: placement flags, od 42,
+    // bit 0x1000 "attached to ceiling": the ceiling lamps), doors and windows
+    // (types 8 and 9, and 12, the modular stairs' portals, unless OBJD field
+    // 0x4b is 0x93: not done), out of the world, and the ones that let people through
+    // (TSObjectGetPathPlannerCostAndPassibility: CanIntersectPeople, object
+    // data 8 & 0x14 "allow object and person intersection" / "allow person
+    // intersection", without a route penalty: here never, the penalty is not
+    // a cost yet). The rest go in by their footprints (routingFootprint):
+    // small things on the floor block only their models' boxes. Not the
+    // binary's: stairs (types 10 and 11) stay out, as the portals here need
+    // their tiles; Sims are blockers of their own (§5).
     if (!o.position.inWorld() || o.person || o.data[objdata::ContainerId] != 0)
-        return false;
-    // The modular stairs' landing pieces ("Stair Modular - Deck - Hi Stub",
-    // "- Hi Cutout": object type 4) share the stairs' semi-global and lie
-    // flat on the landings; Sims walk over them.
-    static const uint32_t stairGlobals = semiGlobalGroup("StairModularGlobals");
-    if (o.semiGroup == stairGlobals)
         return false;
     if (o.definition) {
         switch (o.definition->objectType()) {
@@ -45,24 +52,9 @@ bool VM::blocksRouting(const Object& o) {
         default: break;
         }
     }
-    // Off the floor (placement flags, od 42, STR# 0xCA): "attached to
-    // ceiling" (0x1000: the ceiling lamps), "detached from floor" (0x80), or
-    // hung on a wall in the air (0x200 "allow in air" with a wall required
-    // on a side, od 13 bits 0-3: curtains). Their model footprints, which
-    // the game routes around, are not on the floor (inferred; the VM has no
-    // footprints). A ceiling lamp blocked a tile in the middle of rooms.
-    const int16_t placement = o.data[42];
-    if ((placement & (0x1000 | 0x80)) || ((placement & 0x200) && (o.data[13] & 0x0F)))
+    if (o.data[42] & 0x1000)
         return false;
-    // Small things that go on surfaces too (allowed height flags, od 4,
-    // beyond bit 0 "floor": glasses, trays, bowls, books) left on the floor:
-    // their model footprints are a small part of a tile the game's walkers
-    // step around; here they would close the whole tile, and the glasses and
-    // trays piling up on a kitchen floor shut Sims away from the fridge
-    // (N001_Lot11, N001_Lot36; inferred).
-    if (o.data[4] & ~0x01)
-        return false;
-    return (o.data[objdata::Flags] & (0x01 | 0x04 | 0x10)) == 0;
+    return (o.data[objdata::Flags] & (0x04 | 0x10)) == 0;
 }
 
 BlockedGrid VM::blockedTiles(int level, std::span<const ObjectId> ignore) {
@@ -199,8 +191,8 @@ bool intersectionAllowed(VM& vm, const Object& a, const Object& b) {
 // valid) and, when valid, the penalties added to its cost: +10 for a wall
 // within 0.4 tile, +10 for another room when the slot ignores rooms, +5 for
 // a door on its tile. Occupied, from TSObjectCanSetPositionAndOrientation's
-// errors in the binary: 1 for an object in the way (here: a blocking object
-// on the tile, not a part of the target) and 6 for a person (object type 2;
+// errors in the binary: 1 for an object in the way (a blocking object's
+// footprint under the Sim's box at the point, not a part of the target) and 6 for a person (object type 2;
 // here: another Sim, not the router, whose centre is within half a tile, two
 // bodies' radii: inferred). Not done: the pushable objects (+10 instead of
 // 1: an object of type 8 when the route may push), the water/terrain query
@@ -241,12 +233,24 @@ int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float
         penalty += 10;
     if (!w.walkable(t))
         return 5;
+    // The Sim's footprint box at the point against the objects' footprints
+    // (TSObjectCanSetPositionAndOrientation), not the whole tile: a glass
+    // on the floor takes only its model's box.
     const ObjectId group = multiTileGroup(target);
     const Object* walker = vm.object(router);
-    for (const auto& [id, o] : vm.eachObject())
-        if (o.position.level == level && multiTileGroup(o) != group && VM::blocksRouting(o) && VM::tileOf(o) == t &&
-            !(walker && intersectionAllowed(vm, o, *walker)))
-            return 1;
+    constexpr float kHalf = 0.1f; // TSObjectBaseFootprintWidth of a person / 2
+    for (int dx = -1; dx <= 1; ++dx)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (ObjectId id : vm.objectsOnTile({t.x + dx, t.y + dy, level})) {
+                const Object* o = vm.object(id);
+                if (!o || multiTileGroup(*o) == group || !VM::blocksRouting(*o))
+                    continue;
+                bool overlaps = false;
+                for (const auto& f : vm.routingFootprint(*o))
+                    overlaps |= f[0] < px + kHalf && px - kHalf < f[2] && f[1] < py + kHalf && py - kHalf < f[3];
+                if (overlaps && !(walker && intersectionAllowed(vm, *o, *walker)))
+                    return 1;
+            }
     for (const auto& [id, o] : vm.eachObject())
         if (o.person && id != router && id != target.id && o.position.inWorld() && o.position.level == level &&
             o.data[objdata::ContainerId] == 0 && std::hypot(o.position.x - px, o.position.y - py) < 0.5f)
@@ -3374,6 +3378,9 @@ Footprint doorFootprint(const Object& o, int index) {
 struct ModelFootprints {
     // list name -> tile -> 8 rows of 8 cells
     std::map<std::string, std::map<std::pair<int, int>, std::array<uint8_t, 8>>> lists;
+    // Without a list: the model's box in its xy plane (model space, tiles),
+    // the shadow planes left out; box[0] > box[2] when the model has none.
+    std::array<float, 4> box{1, 1, 0, 0};
 };
 
 } // namespace
@@ -3454,6 +3461,18 @@ const ModelFootprints* modelFootprints(VM& vm, const Object& o) {
                     }
                     break;
                 }
+                // No "footprint" list: the cObject's box of the model (BV
+                // 0x658ab8: the model's bounds, cut to the tile below).
+                if (!fp) {
+                    fp = std::make_shared<ModelFootprints>();
+                    const ObjectModel model = loadObjectModel(*index, cres);
+                    auto& b = fp->box;
+                    b = {1e9f, 1e9f, -1e9f, -1e9f};
+                    for (const ObjectModel::Part& part : model.parts)
+                        if (!part.shadowPlane)
+                            for (const auto& v : part.mesh.positions)
+                                b = {std::min(b[0], v[0]), std::min(b[1], v[1]), std::max(b[2], v[0]), std::max(b[3], v[1])};
+                }
             }
         }
     } catch (const std::exception&) {
@@ -3477,11 +3496,39 @@ const ModelFootprints* modelFootprints(VM& vm, const Object& o) {
 // and the rectangles turn with the lead's facing as the bones do (the
 // binary's FUN_0191fa14 turns by direction & 6). A list without the part's
 // tile gives no rectangle (the bench of a piano has a tile with part of a
-// row). Inferred: a model without a footprint list takes the OBJD box
-// (the binary takes the model's bounding box within the tile).
+// row). A model without a footprint list gives its box (the xy bounds of
+// its meshes, the shadow planes left out: inferred) cut to the part's tile,
+// as the scene graph's cObject does (BV 0x658ab8); without a model, the OBJD
+// box.
 std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
     if (!o.person && !(o.data[objdata::Flags] & 0x80) && o.definition) {
-        if (const ModelFootprints* mf = modelFootprints(*this, o); mf && !mf->lists.empty()) {
+        const ModelFootprints* mf = modelFootprints(*this, o);
+        if (mf && mf->lists.empty() && mf->box[0] <= mf->box[2]) {
+            // The model's box cut to the part's tile of the model (±0.5 about
+            // it), turned with the lead as the masks are.
+            const Object* lead = &o;
+            if (const ObjectId l = multiTileGroup(o); l != o.id)
+                if (const Object* lo = object(l); lo && lo->position.inWorld())
+                    lead = lo;
+            const int dir = ((lead->data[objdata::Direction] % 8) + 8) % 8 & 6;
+            const double yaw = (90.0 - 45.0 * dir) * M_PI / 180.0;
+            const float c = float(std::lround(std::cos(yaw))), s = float(std::lround(std::sin(yaw)));
+            const float wx = o.position.x - lead->position.x, wy = o.position.y - lead->position.y;
+            const int tx = int(std::lround(wx * c + wy * s)), ty = int(std::lround(-wx * s + wy * c));
+            const float mx0 = std::max(mf->box[0], tx - 0.5f), my0 = std::max(mf->box[1], ty - 0.5f);
+            const float mx1 = std::min(mf->box[2], tx + 0.5f), my1 = std::min(mf->box[3], ty + 0.5f);
+            if (!(mx0 < mx1 && my0 < my1))
+                return {};
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (const float mx : {mx0, mx1})
+                for (const float my : {my0, my1}) {
+                    const float px = lead->position.x + mx * c - my * s;
+                    const float py = lead->position.y + mx * s + my * c;
+                    x0 = std::min(x0, px), y0 = std::min(y0, py), x1 = std::max(x1, px), y1 = std::max(y1, py);
+                }
+            return {{x0, y0, x1, y1}};
+        }
+        if (mf && !mf->lists.empty()) {
             const int16_t index = o.data[9];
             const std::map<std::pair<int, int>, std::array<uint8_t, 8>>* tiles = nullptr;
             if (index != 0) {
