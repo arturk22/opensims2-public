@@ -3,6 +3,7 @@
 // an entry is picked.
 
 #include "pie_cmds.hpp"
+#include "budget.hpp"
 
 #include "formats/bhav.hpp"
 #include "formats/binreader.hpp"
@@ -79,7 +80,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile, &index, false);
     vm::VM machine(code);
     machine.initCreatedObjects = true;
-    machine.instructionsPerTurn = 20000;
+    machine.instructionsPerTurn = s2pkgBudget();
     machine.setClockGlobals();
     machine.autoDialogAnswer = dialogAnswer; // headless: every dialog gets this button
     const bool hood = vm::loadLotNeighborhood(machine, lotFile);

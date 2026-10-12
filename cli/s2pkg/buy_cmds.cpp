@@ -1,6 +1,7 @@
 // s2pkg catalog: the Buy-mode catalog (formats/catalog.hpp).
 
 #include "buy_cmds.hpp"
+#include "budget.hpp"
 
 #include "formats/catalog.hpp"
 #include "formats/image.hpp"
@@ -163,7 +164,7 @@ int cmdBuy(const std::vector<std::string>& args) {
     const LotObjects saved = LotObjects::load(pkg);
     vm::VM machine(code);
     machine.initCreatedObjects = true;
-    machine.instructionsPerTurn = 20000;
+    machine.instructionsPerTurn = s2pkgBudget();
     machine.setClockGlobals();
     const bool hood = vm::loadLotNeighborhood(machine, lotFile);
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));

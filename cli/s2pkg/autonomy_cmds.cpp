@@ -3,6 +3,7 @@
 // and how its motives change (src/vm/motives).
 
 #include "autonomy_cmds.hpp"
+#include "budget.hpp"
 
 #include "formats/bhav.hpp"
 #include "formats/binreader.hpp"
@@ -126,12 +127,10 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile, &index, false);
     vm::VM machine(code);
     machine.initCreatedObjects = true;
-    // The binary's limit: cTSTreeSim::DoNodeAction (BV 0xe1b3xx) throws
-    // 0x44D "Too many iterations" past 100000 nodes (DAT_0277ea94; 300000
-    // with a debug flag). The 20000 of the other commands made the N003
+    // The binary's limit (budget.hpp): a lower one made the N003
     // "Controller - Relationship Decay" fail: it normalizes every household
-    // Sim against every neighbor in one tick (S2PKG_BUDGET=n to change).
-    machine.instructionsPerTurn = std::getenv("S2PKG_BUDGET") ? std::strtoul(std::getenv("S2PKG_BUDGET"), nullptr, 10) : 100000;
+    // Sim against every neighbor in one tick.
+    machine.instructionsPerTurn = s2pkgBudget();
     // OS2_SEED=N: another seed for the VM's random numbers (to tell a
     // change's effect from the run's chance in soaks).
     if (const char* seed = std::getenv("OS2_SEED"))

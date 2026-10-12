@@ -4,6 +4,7 @@
 // along by clicking what the step asks for.
 
 #include "tutorial_cmds.hpp"
+#include "budget.hpp"
 
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
@@ -71,7 +72,7 @@ int cmdTutorial(const std::filesystem::path& lotFile, int ticks, bool autoPlay, 
     const LotObjects saved = LotObjects::load(pkg);
     vm::VM m(code);
     m.initCreatedObjects = true;
-    m.instructionsPerTurn = 20000;
+    m.instructionsPerTurn = s2pkgBudget();
     m.setClockGlobals();
     m.autoDialogAnswer = 0;
     const bool hood = vm::loadLotNeighborhood(m, lotFile);

@@ -2,6 +2,7 @@
 // (src/vm/wants, src/formats/wants), optionally after running the lot.
 
 #include "wants_cmds.hpp"
+#include "budget.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
@@ -129,7 +130,7 @@ int cmdWants(const fs::path& lotFile, const std::string& simQuery, long ticks, b
     const LotObjects saved = LotObjects::load(pkg);
     vm::VM machine(code);
     machine.initCreatedObjects = true;
-    machine.instructionsPerTurn = 20000;
+    machine.instructionsPerTurn = s2pkgBudget();
     machine.setClockGlobals();
     const bool hood = vm::loadLotNeighborhood(machine, lotFile);
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));

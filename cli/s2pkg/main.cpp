@@ -1,5 +1,6 @@
 // s2pkg: inspect and extract The Sims 2 .package (DBPF) files.
 #include "anim_cmds.hpp"
+#include "budget.hpp"
 #include "prim_cmds.hpp"
 #include "effects_cmds.hpp"
 #include "simlook_cmds.hpp"
@@ -691,7 +692,7 @@ int cmdBhavSweep(const std::filesystem::path& root) {
         if (group != tgi.group)
             continue;
         vm::Thread t = startStandIn(machine, users, object, group, instance, {}, *tree);
-        machine.run(t, 20000);
+        machine.run(t, s2pkgBudget());
         ++total;
         interactions += t.me != object.id;
         instructions += t.instructions;
@@ -780,7 +781,7 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
         const LotObjects saved = LotObjects::load(pkg);
         vm::VM machine(code);
         machine.initCreatedObjects = true;
-        machine.instructionsPerTurn = 20000; // as bhav-sweep: the endless multi-tile loops end sooner
+        machine.instructionsPerTurn = s2pkgBudget();
         machine.setClockGlobals();
         size_t traced = 0;
         if (traceId)

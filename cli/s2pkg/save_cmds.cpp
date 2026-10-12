@@ -1,6 +1,7 @@
 // s2pkg lot-save: a lot loaded into the VM, run and written back (vm/lot_save.hpp).
 
 #include "save_cmds.hpp"
+#include "budget.hpp"
 
 #include "build_cmds.hpp"
 #include "buy_cmds.hpp"
@@ -103,7 +104,7 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     out.vm = std::make_unique<vm::VM>(code);
     vm::VM& m = *out.vm;
     m.initCreatedObjects = true;
-    m.instructionsPerTurn = 20000;
+    m.instructionsPerTurn = s2pkgBudget();
     m.setClockGlobals();
     if (hood) {
         vm::loadNeighborhood(m, *hood);

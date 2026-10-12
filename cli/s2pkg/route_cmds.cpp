@@ -3,6 +3,7 @@
 // (src/vm/path_planner.hpp) gives it, where it ends up and the route result.
 
 #include "route_cmds.hpp"
+#include "budget.hpp"
 
 #include "formats/bhav.hpp"
 #include "formats/dbpf.hpp"
@@ -83,7 +84,7 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
     const LotObjects saved = LotObjects::load(pkg);
     vm::VM machine(code);
     machine.initCreatedObjects = true;
-    machine.instructionsPerTurn = 20000;
+    machine.instructionsPerTurn = s2pkgBudget();
     machine.setClockGlobals();
     const bool hood = vm::loadLotNeighborhood(machine, lotFile); // as lot-run (socials read neighbors)
     const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
