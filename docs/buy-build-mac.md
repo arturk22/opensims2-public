@@ -1330,6 +1330,55 @@ on non-designable object"). Soltar sobre o mesmo objeto abre o
   (`ResetChanges`). O objeto com o override salva o material escolhido
   (lista de overrides do objeto; ver `docs/save-mac.md`).
 
+### 7.13 Escadas modulares no código (rodada 12, `vm/build_edit` `placeStairs`)
+
+Lido de `UserPlaceModularStairs` (BV `0x9edcf8`), `FindEnd` (`0x9ece38`),
+`CalculatePreviewCost`, `AddObject`, `LinkObjects` e `RemoveFlight`, e
+conferido com os lances salvos (`N001_Lot38`: refazer o lance dá os mesmos
+objetos, níveis, elevações, direções e elos):
+
+- Constantes: degrau = 0,25 de avanço e 0,1875 de altura (`WorldDB→0x158`;
+  inferido dos lotes); tolerâncias `0x274b870` = 0,09375 (último degrau até o
+  chão), `0x274bbb8` = −0,09375 (terreno acima do degrau → cavar),
+  `0x274b474` = 0,001 (regra do deck).
+- n degraus = ceil((d − 0,5) × 4), d = distância do centro do tile de cima ao
+  ponto do arraste (o truque de conversão `+ 1,5·2²³` com o ajuste de inteiro
+  exato do código); a prévia de custo usa round e multiplica pelo preço **por
+  degrau** do produto (STR# 139 3i; o PT-BR deixa vazio o preço de DeFumê e
+  Forja: vale o inglês, 80 e 85).
+- O ponto do arraste é onde fica o **último** degrau. O degrau i fica em
+  borda + u × 0,25 × (i + 1), z = topo − 0,1875 × (i + 1); o de cima está no
+  nível do tile de cima, os outros no nível de baixo; um `placeholder` no
+  degrau de índice 2 de cada tile, em cada nível de baixo+1 até o de cima;
+  patamar no centro do tile de cima (direção da escada) e meio tile depois do
+  último degrau (direção + 4).
+- Cavar: se o terreno a ±0,5 do degrau (de lado) está mais de 0,09375 acima
+  dele, os cantos do tile do degrau descem: os de baixo à altura do último
+  degrau do tile, os de cima (salvo k = 0) à do primeiro. O tile depois do
+  último degrau vai **sempre** à altura dele (também sobe: um arraste curto
+  ergue o chão). Vértice preso → `0x6F`.
+- Elos: `LinkObjects` só liga os degraus (lista `+0x68`): od **80 = próximo,
+  81 = anterior** (−1 nas pontas); patamares e placeholders ficam na lista
+  `+0x74`, sem elos. O degrau de cima é XMTO. Valor (od 41) dos degraus = o
+  preço por degrau (os salvos têm 40 no Madeira); a marreta devolve o od 41.
+  Pela RE do coordenador, `RemoveFlight` soma o preço do corrimão
+  (`0x2C7BF690`): 2× com o modelo de corrimão 4, 1× com 2–3, nada com 0–1;
+  aqui o modelo do corrimão não é guardado (soma 0, falta).
+- Estado salvo: a "elevation" do degrau é a altura sobre o piso do nível de
+  baixo, também a do degrau de cima (inferido: o terreno é 0 sob todos os
+  lances salvos); patamares e placeholders 0.
+- Inferido aqui: os pisos do andar de cima sobre os degraus são tirados (como
+  a escadaria-objeto); a parede no caminho conta só paredes e cercas (as bordas
+  de fundação/deck não); objetos que bloqueiam = camada de piso (od 63 0 ou
+  bit 1; janelas não); a direção sem arraste = o lado do tile mais perto do
+  clique (o quarto do `cFloorTile`); a busca do fim (`FindEnd`) simplificada
+  (anda degrau a degrau até o último tocar um piso abaixo).
+- `FUN_009e9550` (pode o vértice ir a essa altura?) tem uma lista de testes por
+  máscara: limites de altura do terreno `WorldDB→0x150/0x14C` (`0x65`/`0x66`),
+  folga para o andar de baixo/de cima (`0x69`/`0x6A`), objetos que prendem o
+  chão (`0x61`), objetos de teto (`0x60`), praia. Aqui: só "livre de piso,
+  parede e fundação".
+
 ---
 
 ## 8. Base vs BV
