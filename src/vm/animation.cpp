@@ -668,7 +668,15 @@ Exit animateOverlay(Context& c) {
     ov->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
     ov->pending = library(c.vm).treeEvents(ov->name);
     ov->eventTree = le16(&o[4]);
-    ov->me = c.thread.me, ov->codeOwner = c.frame.codeOwner, ov->stackObject = c.frame.stackObject;
+    // Its event tree runs on the animated object (the binary's event handler,
+    // nTSSG::cCustomEventHandler2 BV 0x780ad4, runs it on its cAnimatable's
+    // object, vtable 0x3ac, with the request's stack object; the request
+    // keeps no "me": MovedObjectID is 0 in every saved request), with the
+    // starting tree's code and stack object. The crib's "Animate - Events -
+    // Get" snaps the toddler (the overlay's object) into the carrier's hands
+    // on 9998; run as the carrier it snapped nothing and the toddler stayed
+    // in the crib (N001_Lot36, 16-32 h).
+    ov->me = target.id, ov->codeOwner = c.frame.codeOwner, ov->stackObject = c.frame.stackObject;
     // Its IK object: temp 6 with flag 0x08 of byte 15, else none
     // (try_animate_overlay, Mac BV 0x69ea54, passes it to
     // AddChoreoAnimRequest, whose IK targets of type 2 are its bones).
@@ -713,8 +721,8 @@ Exit animateObject(Context& c) {
     // Its time, for the bones its slots stand at (VM::objectPose).
     started->length = library(c.vm).seconds(started->name).value_or(0) * 1000.0f;
     started->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
-    // Its event tree gets the animation's tree events as it plays, in the
-    // starting thread's context, as Animate Sim's (the vehicles drive on
+    // Its event tree gets the animation's tree events as it plays, on the
+    // animated object (as Animate Overlay's) (the vehicles drive on
     // "Event Tree - Drive": loop again or stop, which ends "Wait for Vehicle
     // Stop"). A new one from the same code replaces the last (inferred).
     if (const uint16_t tree = le16(&o[4])) {
@@ -723,7 +731,7 @@ Exit animateObject(Context& c) {
         std::erase_if(list, [&](const auto& x) { return x.codeOwner == c.frame.codeOwner; });
         AnimationState::OverlayEvents ev;
         ev.name = name;
-        ev.me = c.thread.me, ev.codeOwner = c.frame.codeOwner, ev.stackObject = c.frame.stackObject;
+        ev.me = target.id, ev.codeOwner = c.frame.codeOwner, ev.stackObject = c.frame.stackObject; // as Animate Overlay's
         ev.eventTree = tree;
         ev.pending = library(c.vm).treeEvents(name);
         ev.length = library(c.vm).seconds(name).value_or(0) * 1000.0f;
