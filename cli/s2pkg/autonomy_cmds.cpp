@@ -310,6 +310,45 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         fireTick = std::atol(f);
         fireUnder = vm::ObjectId(std::atoi(std::strchr(f, ':') + 1));
     }
+    // S2PKG_ROOMS=1: each Sim's room and the rooms it can reach (Find Best
+    // Object for Function's GetAccessibleRooms).
+    if (std::getenv("S2PKG_ROOMS"))
+        for (vm::ObjectId id : sims)
+            if (const vm::Object* s = machine.object(id)) {
+                std::printf("  %s in room %d reaches:", simName(*s).c_str(), s->data[vm::objdata::Room]);
+                if (const auto* r = vm::accessibleRooms(machine, s->data[vm::objdata::Room]))
+                    for (int16_t room : *r)
+                        std::printf(" %d", room);
+                std::printf("\n");
+                if (const auto* r = vm::accessibleRooms(machine, s->data[vm::objdata::Room])) {
+                    std::map<int16_t, std::string> out;
+                    for (const auto& [oid, o] : machine.objects())
+                        if (o.position.inWorld() && !std::binary_search(r->begin(), r->end(), o.data[vm::objdata::Room]) &&
+                            out[o.data[vm::objdata::Room]].size() < 160)
+                            out[o.data[vm::objdata::Room]] += " " + objectName(machine, oid) + "@" + std::to_string(int(o.position.x)) + "," +
+                                                               std::to_string(int(o.position.y)) + "," + std::to_string(o.position.level) + ";";
+                    for (const auto& [room, names] : out)
+                        std::printf("    not reached: room %d:%s\n", room, names.c_str());
+                }
+            }
+    if (std::getenv("S2PKG_DOORS"))
+        for (const auto& [oid, o] : machine.objects())
+            if (o.definition && o.definition->objectType() == vm::kObjectTypeDoor && o.position.inWorld())
+                std::printf("  door object %d %s at (%.2f, %.2f, %d) dir %d lead %d\n", oid, objectName(machine, oid).c_str(), o.position.x,
+                            o.position.y, o.position.level, o.data[vm::objdata::Direction], o.data[vm::objdata::LeadTileObjectId]);
+    if (std::getenv("S2PKG_ROOMS") && machine.planner)
+        for (const auto& g : machine.planner->roomGroups()) {
+            std::printf("  walkable group, rooms:");
+            for (int16_t r : g)
+                std::printf(" %d", r);
+            std::printf("\n");
+        }
+    if (std::getenv("S2PKG_ROOMS") && machine.planner)
+        for (const auto& p : machine.planner->portals())
+            std::printf("  portal %s %d: (%.2f, %.2f, %d) [%s] <-> (%.2f, %.2f, %d) [%s]\n", p.stair >= 0 ? "stair" : "door",
+                        p.stair >= 0 ? p.stair : p.door, p.a[0], p.a[1], p.levelA,
+                        machine.planner->free(p.levelA, p.a, vm::PathPlanner::kStatic) ? "free" : "blocked", p.b[0], p.b[1], p.levelB,
+                        machine.planner->free(p.levelB, p.b, vm::PathPlanner::kStatic) ? "free" : "blocked");
     for (long i = 0; i < ticks; ++i) {
         if (i == fireTick && machine.object(fireUnder)) {
             Behavior b;

@@ -11,6 +11,7 @@
 
 #include "animation.hpp"
 #include "errors.hpp"
+#include "kill.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/anim.hpp"
@@ -179,11 +180,18 @@ Exit findBestObjectForFunction(Context& c) {
     std::vector<ObjectId> ids;
     for (const auto& [id, x] : vm.objects())
         ids.push_back(id);
+    // A Sim looks only in the rooms it can reach from its own (binary: the
+    // set from cTSPerson::GetAccessibleRooms; the router fills it, here the
+    // planner's static floor and portals).
+    const std::vector<int16_t>* reachable = c.me().person ? accessibleRooms(vm, c.me().data[objdata::Room]) : nullptr;
+    const std::vector<int16_t> reachableRooms = reachable ? *reachable : std::vector<int16_t>{};
     ObjectId best = 0;
     float bestScore = -std::numeric_limits<float>::max();
     for (ObjectId id : ids) {
         const Object* x = vm.object(id);
-        if (!x || id == meId || x->person || !x->position.inWorld())
+        if (!x || id == meId || x->person || !x->position.inWorld() || dying(vm, id))
+            continue; // ValidateObject: not an object queued to die
+        if (reachable && !std::binary_search(reachableRooms.begin(), reachableRooms.end(), x->data[objdata::Room]))
             continue;
         const int16_t objectFlags = x->data[objdata::Flags];
         const bool lockedOut = !(flags & 0x80) && x->data[kLockoutCount] > 0;

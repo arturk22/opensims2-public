@@ -353,6 +353,10 @@ void BuildEditor::syncWorld() {
         const int dir = o.data[objdata::Direction];
         const auto [dx, dy] = directionStep(dir + 4);
         const TilePos t = VM::tileOf(o);
+        if (w.diagonalWall(t)) { // a diagonal door: one part in the wall across its tile
+            w.openDoor(t, dir);
+            continue;
+        }
         for (const auto& [pid, p] : vm_.objects())
             if (pid != id && p.position.inWorld() && multiTileGroup(p) == multiTileGroup(o) &&
                 VM::tileOf(p) == TilePos{t.x + dx, t.y + dy, t.level}) {

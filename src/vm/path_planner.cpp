@@ -308,6 +308,113 @@ bool PathPlanner::escape(int level, Point2 start, Point2& out) const {
     return false;
 }
 
+void PathPlanner::buildRoomGroups() const {
+    roomGroupsBuilt_ = true;
+    const int levels = world_->levelCount();
+    constexpr uint8_t kBlocks = kWall | kNoFloor | kDiagonal | kDoor;
+    // Label the free cells of each level (4-connected).
+    std::vector<std::vector<int32_t>> label(size_t(std::max(levels, 0)));
+    int32_t groups = 0;
+    std::vector<int32_t> stack;
+    for (int li = 0; li < levels; ++li) {
+        const auto& grid = static_[size_t(li)];
+        auto& lab = label[size_t(li)];
+        lab.assign(grid.size(), -1);
+        for (int cx = 0; cx < cw_; ++cx)
+            for (int cy = 0; cy < ch_; ++cy) {
+                const size_t i0 = cellIndex(cx, cy);
+                if (lab[i0] >= 0 || (grid[i0] & kBlocks))
+                    continue;
+                const int32_t g = groups++;
+                lab[i0] = g;
+                stack.assign(1, int32_t(i0));
+                while (!stack.empty()) {
+                    const int32_t i = stack.back();
+                    stack.pop_back();
+                    const int x = i / ch_, y = i % ch_;
+                    const int nx[4] = {x + 1, x - 1, x, x}, ny[4] = {y, y, y + 1, y - 1};
+                    for (int k = 0; k < 4; ++k) {
+                        if (nx[k] < 0 || ny[k] < 0 || nx[k] >= cw_ || ny[k] >= ch_)
+                            continue;
+                        const size_t j = cellIndex(nx[k], ny[k]);
+                        if (lab[j] < 0 && !(grid[j] & kBlocks)) {
+                            lab[j] = g;
+                            stack.push_back(int32_t(j));
+                        }
+                    }
+                }
+            }
+    }
+    // Join the groups the portals link (union-find).
+    std::vector<int32_t> parent(static_cast<size_t>(groups));
+    for (int32_t g = 0; g < groups; ++g)
+        parent[size_t(g)] = g;
+    auto find = [&](int32_t g) {
+        while (parent[size_t(g)] != g)
+            g = parent[size_t(g)] = parent[size_t(parent[size_t(g)])];
+        return g;
+    };
+    auto groupAt = [&](int level, Point2 p) -> int32_t {
+        if (level < world_->firstLevel() || level >= world_->firstLevel() + levels)
+            return -1;
+        const auto& lab = label[size_t(level - world_->firstLevel())];
+        const int px = int(std::floor(p[0] * K)), py = int(std::floor(p[1] * K));
+        int32_t best = -1;
+        float bestD = kInf;
+        for (int dx = -2; dx <= 2; ++dx)
+            for (int dy = -2; dy <= 2; ++dy) {
+                const int x = px + dx, y = py + dy;
+                if (x < 0 || y < 0 || x >= cw_ || y >= ch_ || lab[cellIndex(x, y)] < 0)
+                    continue;
+                const float d = float(dx * dx + dy * dy);
+                if (d < bestD)
+                    bestD = d, best = lab[cellIndex(x, y)];
+            }
+        return best;
+    };
+    for (const Portal& p : portals_) {
+        const int32_t a = groupAt(p.levelA, p.a), b = groupAt(p.levelB, p.b);
+        if (a >= 0 && b >= 0)
+            parent[size_t(find(a))] = find(b);
+    }
+    // The rooms of each joined group, by tile (the cells of a tile share its room).
+    std::map<int32_t, std::vector<int16_t>> rooms;
+    for (int li = 0; li < levels; ++li) {
+        const int level = world_->firstLevel() + li;
+        const auto& lab = label[size_t(li)];
+        for (int x = 0; x < int(world_->width()); ++x)
+            for (int y = 0; y < int(world_->height()); ++y) {
+                const int16_t room = world_->room({x, y, level});
+                for (int i = 0; i < K; ++i)
+                    for (int j = 0; j < K; ++j)
+                        if (const int32_t g = lab[cellIndex(x * K + i, y * K + j)]; g >= 0) {
+                            rooms[find(g)].push_back(room);
+                            i = j = K; // one free cell is enough for this tile
+                        }
+            }
+    }
+    for (auto& [g, list] : rooms) {
+        std::sort(list.begin(), list.end());
+        list.erase(std::unique(list.begin(), list.end()), list.end());
+        roomGroups_.push_back(std::move(list));
+    }
+}
+
+const std::vector<int16_t>& PathPlanner::accessibleRooms(int16_t room) const {
+    if (!roomGroupsBuilt_)
+        buildRoomGroups();
+    auto it = reach_.find(room);
+    if (it != reach_.end())
+        return it->second;
+    std::vector<int16_t> out;
+    for (const auto& list : roomGroups_)
+        if (std::binary_search(list.begin(), list.end(), room))
+            out.insert(out.end(), list.begin(), list.end());
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return reach_.emplace(room, std::move(out)).first->second;
+}
+
 bool PathPlanner::nearFree(int level, Point2 p, uint8_t mask, Point2& out) const {
     const int px = int(std::floor(p[0] * K)), py = int(std::floor(p[1] * K));
     float best = kInf;

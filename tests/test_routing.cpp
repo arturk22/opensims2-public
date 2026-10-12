@@ -565,6 +565,24 @@ static void testPathPlanner() {
                    std::fabs(p.points[i - 1].x - 4.5f) < 1e-4f && std::fabs(p.points[i - 1].y - 2.5f) < 1e-4f;
     check(through, "planner: in front of the door, then behind it");
 
+    // The rooms a walker reaches (GetAccessibleRooms): a walled-off room
+    // is not reached until a door opens it.
+    World r(10, 6);
+    for (int y = 0; y < 6; ++y)
+        r.addWall(1, 5, y, 5, y + 1);
+    for (int x = 0; x < 10; ++x)
+        for (int y = 0; y < 6; ++y)
+            r.setRoom({x, y, 1}, int16_t(x < 5 ? 1 : 2));
+    {
+        PathPlanner rp(r);
+        check(rp.accessibleRooms(1) == std::vector<int16_t>{1} && rp.accessibleRooms(2) == std::vector<int16_t>{2},
+              "accessible rooms: a wall keeps the other room out");
+    }
+    r.openDoor({4, 2, 1}, 0);
+    PathPlanner rp2(r);
+    check(rp2.accessibleRooms(1) == (std::vector<int16_t>{1, 2}) && rp2.accessibleRooms(7).empty(),
+          "accessible rooms: through a door's portal; an unknown room reaches nothing");
+
     // Floor costs: a costly band is walked round when that is cheaper.
     World c(12, 6);
     for (int y = 0; y < 5; ++y)

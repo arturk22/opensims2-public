@@ -2091,6 +2091,13 @@ Exit snapInto(Context& c) {
 
 } // namespace
 
+const std::vector<int16_t>* accessibleRooms(VM& vm, int16_t room) {
+    if (!vm.world)
+        return nullptr;
+    const auto& rooms = plannerOf(vm).accessibleRooms(room);
+    return rooms.empty() ? nullptr : &rooms;
+}
+
 // The binary keeps the destinations as managed destination objects of the
 // router and flushes them (cTSRoutingObjectAggregate::
 // FlushManagedDestinationObjects, BV 0x4f9eb4: kept while in the person's

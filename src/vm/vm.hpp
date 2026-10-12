@@ -1066,5 +1066,9 @@ void registerMotivePrimitives(VM& vm);
 void registerAutonomyPrimitives(VM& vm);
 // Called when an interaction Gosub Found Action ran returns `result`.
 void foundActionReturned(VM& vm, Thread& t, bool result);
+// The rooms a Sim in `room` can walk to (cTSPerson::GetAccessibleRooms,
+// routing.cpp; PathPlanner::accessibleRooms); null without a world or when
+// the room has no free floor (nothing is filtered then).
+const std::vector<int16_t>* accessibleRooms(VM& vm, int16_t room);
 
 } // namespace os2::vm

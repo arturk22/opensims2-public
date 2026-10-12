@@ -287,6 +287,15 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
         const int dir = o->data[objdata::Direction];
         const auto [dx, dy] = directionStep(dir + 4);
         const TilePos t{int(std::floor(o->position.x)), int(std::floor(o->position.y)), o->position.level};
+        if (vm.world->diagonalWall(t)) {
+            // A diagonal door ("Door - 1 Tile - Diagonal - ...") is one part
+            // standing in the diagonal wall that crosses its tile: nothing is
+            // behind it to pair with (the bedrooms upstairs in N001_Lot68
+            // were shut).
+            vm.world->openDoor(t, dir);
+            ++out.doors;
+            continue;
+        }
         for (const auto& f : out.objects) {
             const Object* p = f.created && f.id != e.id ? vm.object(f.id) : nullptr;
             if (p && multiTileGroup(*p) == multiTileGroup(*o) && p->position.level == t.level &&

@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <vector>
 
 namespace os2::vm {
@@ -155,6 +156,20 @@ public:
     bool plan(Point2 start, int startLevel, int goalLevel, const std::vector<PlanGoal>& goals, PlannedPath& out,
               RouteFail& why);
 
+    // The rooms a walker in `room` can reach (cTSPerson::GetAccessibleRooms:
+    // the router fills the set from the Sim's room), sorted; `room` itself
+    // included. From the static grid (walls, floors, door openings) and the
+    // portals, built once per planner; objects, Sims and portal locks are
+    // not looked at (inferred). Empty when `room` has no free cell (the
+    // caller then filters nothing).
+    const std::vector<int16_t>& accessibleRooms(int16_t room) const;
+    // The rooms of each walkable group (for looking into accessibleRooms).
+    const std::vector<std::vector<int16_t>>& roomGroups() const {
+        if (!roomGroupsBuilt_)
+            buildRoomGroups();
+        return roomGroups_;
+    }
+
 private:
     // plan() on the start's level alone, or on all of them.
     bool plan(Point2 start, int startLevel, int goalLevel, const std::vector<PlanGoal>& goals, PlannedPath& out,
@@ -174,6 +189,12 @@ private:
     std::vector<int32_t> satBlocked_;
     std::vector<double> satCost_;
     std::vector<std::vector<int32_t>> leafPool_;
+    // accessibleRooms(): rooms by connected group of free static cells
+    // (joined through the portals), built on first use.
+    mutable bool roomGroupsBuilt_ = false;
+    mutable std::vector<std::vector<int16_t>> roomGroups_;   // per group: its rooms, sorted
+    mutable std::map<int16_t, std::vector<int16_t>> reach_;  // room -> rooms reachable
+    void buildRoomGroups() const;
 
     size_t cellIndex(int cx, int cy) const { return size_t(cx) * size_t(ch_) + size_t(cy); }
     uint8_t cellAt(int level, int cx, int cy) const;
