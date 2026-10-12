@@ -585,6 +585,65 @@ parada esticada sobre o que falta desliza até ~0,1 m/s. Captura:
     ponto 0,25 (idade 4/8) ou 0,5 (idade 2) à frente do Sim com raio 0,3;
     contra portas (flag 2), um círculo de 0,3.
 
+**Feito na rodada 14, front "walking3"** (o locomotor conforme a leitura
+acima; `locomotion.cpp` `LocoCurve`/`blendGaits`/`strideWeight`,
+`routing.cpp` `locoStep`/`turnClip`/`sideStep`/`stepBlocker`; testes
+`test_routing` `testLocoCurve`/`testLocoStride`/`testSidestep`/`testLocoBlend`):
+
+- **Curva**: a Catmull-Rom saiu; o quadro anda numa B-spline cúbica uniforme
+  com o primeiro e o último ponto três vezes (a matriz de `0x273a740`). O
+  comprimento de cada trecho vem de 16 cordas (inferido: o binário reduz o
+  passo até a corda ficar < 0,005; com a rota cortada a cada 0,2 as cordas
+  aqui ficam < 0,0125) e o quadro anda por comprimento de arco. Um ponto da
+  rota é "passado" quando acaba o trecho que termina perto dele (o último só
+  no fim). No começo o quadro também vira pela tangente da curva (o que
+  sobra do ângulo vai para a curva; inferido: a orientação do quadro é a do
+  caminho); a parada e o passo de lado mantêm a direção em que começaram.
+- **Começo/parada**: `turnAndGo`/`turnAndStop[R]` do passo de 45° mais perto
+  (regra de ±40°), sem misturar ângulos, misturados com o seu `Short` do
+  mesmo ângulo pelo peso da passada (inferido que é o mesmo peso dos
+  ciclos: o doc diz "pela passada").
+- **walk/walkShort pela passada**: o peso do walkShort é o que faz caber um
+  número inteiro de meios ciclos entre o começo e a parada: `h = ⌈(trecho −
+  começo − parada)/(meia passada longa)⌉` e o peso resolvido exatamente
+  (começo e parada também mudam com o peso). Inferido: a "passada" como a
+  distância de um ciclo (velocidade × duração; o `LocoStrideLength` do
+  cabeçalho é ~meio ciclo) e o termo de fase do binário ignorado; o laço de
+  10 tentativas do binário não foi lido inteiro. Replanejado andando,
+  recalcula com só a parada pela frente.
+- **Passo de lado** (`CreateStepCycle`): rota reta (|corda − comprimento| <
+  0,02) para a direção final igual à atual (< 0,01): `step`/`stepShort` dos
+  dois ângulos vizinhos (|sobra|/45°), pela distância dentro de cada ângulo,
+  `stepInPlace` abaixo do curto, falha acima do longo (anda normal);
+  duração = distância / (velocidades pesadas × 1,4 × `@`). A regra antiga
+  "`stepShort` com rota ≤ 0,25" saiu.
+- **5/100 ms**: o começo da rota (trechos somados até passar de 0,75, ou
+  até mudar de andar; a troca de sala não é testada) ≤ 0,25 → 5 ms, senão
+  100 ms; o desenho funde as fases nesse tempo (era 0,1 s fixo). Inferido:
+  só o crossfade; a VM não antecipa o relógio da fase seguinte, e o N = 25
+  do estado 3 não se aplica (as fases encadeiam tick a tick).
+- **Teste por passo**: Sims são pontos, bloqueiam a < 0,283; sem exceção
+  para o alvo; passa se um dos dois tem o dado de objeto 8 com 0x04|0x10,
+  o bit 0x08 do dado de pessoa 68 (inferido, `+0x72a`), ou se a árvore
+  OBJf 5 de qualquer um deixa; o bit 0x02 do dado de pessoa 68 pula o teste.
+  Não feito: `FootprintBlocksCeiling/Floor`, o ponto à frente do flag 4 e o
+  círculo das portas.
+- **Poses `*Blend` (200 + k)**: `gaitOf` sabe achá-las (string 2/5 do
+  conjunto, peso do ciclo), mas ficam desligadas (`OS2_LOCO_POSES=1` liga):
+  o alvo delas é do tipo 6 (o dos ciclos é 5), parece um delta, e tocadas
+  como pose comum abrem os braços dos idosos; falta um blend aditivo no
+  player.
+- Medido: `OS2_DEBUG_LOCO=1` (Don em N001_Lot16, "Vir Aqui" a 14,5,7,5):
+  começo `turnAndGo-alt-135` 0,85 + `Short` 0,14, ciclos alt1/alt0 longos e
+  curtos (0,16 de walkShort; 1,85 m/s), parada `turnAndStop-alt-0` 0,69 +
+  `Short` 0,30; `s2pkg anim-root` do walk-alt1 a 1,854 m/s: 0,30 m/s (0,32 na
+  velocidade própria: a medida já tem esse piso). Soak com `OS2_SEED` 1–2 em
+  N001_Lot68, N002_Lot10, N001_Lot16, N001_Lot11 (129.600 ticks): ciclos
+  312,1 G antes, 306,8 G depois (−1,7%); mortes 9 antes, 3 depois (os
+  incêndios variam com a semente). Captura:
+  `docs/screenshots/r14-locomotor-bspline.jpg` (Isabella, idosa, em
+  N003_Lot46, ciclos walk/walkShort misturados).
+
 ## 7. Códigos de falha (binário + `STR#` 0xF1 "route results")
 
 `DoPostFailedOrSucceeded` grava o código no **dado de pessoa 62

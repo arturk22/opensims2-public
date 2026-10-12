@@ -52,6 +52,17 @@ struct Gait {
     bool run = false;
     std::vector<LocoLayer> cycles;
     float seconds = 0;     // the blended cycle's length
+    // The set's "*Blend" poses over the cycles (loco type 200 + k, header
+    // 30 + k: "walk-alt0-normalBlend", the elders' and the pregnant
+    // posture; cActiveAnimLoco::PushTurnBlendCycles, BV 0xd3107c): for each
+    // weighed cycle altK that has one, the pose at the cycle's weight.
+    std::vector<LocoLayer> poses;
+    // What plays: the cycles, then the poses.
+    std::vector<LocoLayer> layers() const {
+        std::vector<LocoLayer> all = cycles;
+        all.insert(all.end(), poses.begin(), poses.end());
+        return all;
+    }
 };
 Gait gaitOf(VM& vm, const Object& sim, bool shortWay = false);
 

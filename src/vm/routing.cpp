@@ -1825,7 +1825,7 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
         L.animation = g.animation;
         L.mirror = false;
         L.turn = 0;
-        L.layers = g.cycles;
+        L.layers = g.layers();
         L.cycleStart = L.cycle; // the layers start at the portion the walk is at
         ++L.serial;
     };
@@ -1904,10 +1904,10 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
         const BlendedClip stop = final && stretch < 6 ? stopClip(legHeading, true, L.strideWeight) : BlendedClip{};
         gait = walkGait();
         const Gait& g = *gait;
-        if (L.kind == Loco::None || L.animation != g.animation || (rebuilt && L.layers.size() != g.cycles.size())) {
+        if (L.kind == Loco::None || L.animation != g.animation || (rebuilt && L.layers.size() != g.cycles.size() + g.poses.size())) {
             walkOn(g);
         } else if (rebuilt) {
-            L.layers = g.cycles; // the blend's weights for the way planned again
+            L.layers = g.layers(); // the blend's weights for the way planned again
         }
         L.speed = (g.speed > 0 ? g.speed : vm.walkTilesPerTick * tps) / tps;
         // The stop, once what is left is a stop's distance.

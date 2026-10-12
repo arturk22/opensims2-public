@@ -59,7 +59,7 @@ void SimMotion::sample(VM& vm, const Object& o) {
         } else if (L.moving || (!o.route->points.empty() && o.route->points.front().portal)) {
             const Gait g = gaitOf(vm, o); // on its way to a portal, or between clips
             s.walk = g.animation;
-            s.walkLayers = g.cycles;
+            s.walkLayers = g.layers();
         } else {
             s.walking = false; // stopped, or not off yet: standing
         }

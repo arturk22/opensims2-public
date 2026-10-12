@@ -37,14 +37,14 @@ struct Item {
     float speed = 1;
 };
 
-std::vector<Item> setString(VM& vm, const Object& sim, bool run, bool turns) {
+std::vector<Item> setString(VM& vm, const Object& sim, bool run, bool turns, bool blends = false) {
     LocomotionSet set{kGlobalGroup, 0};
     if (!sim.animation.locomotion.empty())
         set = sim.animation.locomotion.back();
     const StringTable* table = vm.code().strings(set.group, animlist::Locomotion);
     if (!table)
         return {};
-    const size_t index = size_t(set.set) * 6 + (run ? 3 : 0) + (turns ? 0 : 1);
+    const size_t index = size_t(set.set) * 6 + (run ? 3 : 0) + (blends ? 2 : turns ? 0 : 1);
     std::vector<Item> out;
     const std::string s = table->get(index, lang::EnglishUS);
     size_t start = 0;
@@ -178,6 +178,24 @@ Gait computeGait(VM& vm, const Object& sim, bool shortWay) {
                 g.cycles.push_back({resource[k], w[k] / total, false, seconds > 0 && secs[k] > 0 ? secs[k] / seconds : 1.0f});
         // The heaviest first (the base layer the others blend over).
         std::stable_sort(g.cycles.begin(), g.cycles.end(), [](const LocoLayer& a, const LocoLayer& b) { return a.weight > b.weight; });
+        // The cycles' poses ("walk-alt<k>-...Blend"), with the long and the
+        // short cycles alike (both are type 100 + k). Off unless
+        // OS2_LOCO_POSES is set: their target is of type 6 (the cycles' are
+        // 5), apparently a delta over the cycle, and played as a plain pose
+        // (averaged with the cycles by weight) they spread the elders' arms
+        // out; the player has no additive blend yet (TODO).
+        if (!shortWay && std::getenv("OS2_LOCO_POSES")) {
+            const std::string posePrefix = kind + "-alt";
+            for (const auto& it : setString(vm, sim, g.run, false, true)) {
+                if (!it.name.starts_with(posePrefix) || !it.name.ends_with("Blend"))
+                    continue;
+                const int k = std::atoi(it.name.c_str() + posePrefix.size());
+                if (k < 0 || k >= 20 || speed[size_t(k)] <= 0 || w[size_t(k)] <= 0)
+                    continue;
+                if (std::string res = resolve(vm, sim, it.name); !res.empty())
+                    g.poses.push_back({res, w[size_t(k)] / total, false, 1});
+            }
+        }
     } else if (!resource[0].empty() && speed[0] > 0) {
         // Every weight zero: alt0's speed (the set's speed falls back to it).
         g.animation = resource[0];
@@ -258,8 +276,11 @@ Gait blendGaits(const Gait& full, const Gait& shortGait, float w) {
     w = std::clamp(w, 0.0f, 1.0f);
     if (shortGait.cycles.empty() || shortGait.seconds <= 0 || w <= 0)
         return full;
-    if (full.cycles.empty() || full.seconds <= 0 || w >= 1)
-        return shortGait;
+    if (full.cycles.empty() || full.seconds <= 0 || w >= 1) {
+        Gait g = shortGait;
+        g.poses = full.poses;
+        return g;
+    }
     Gait g;
     g.run = full.run;
     g.seconds = (1 - w) * full.seconds + w * shortGait.seconds;
@@ -271,6 +292,7 @@ Gait blendGaits(const Gait& full, const Gait& shortGait, float w) {
         g.cycles.push_back({l.animation, l.weight * w, l.mirror, l.rate * shortGait.seconds / g.seconds});
     std::stable_sort(g.cycles.begin(), g.cycles.end(), [](const LocoLayer& a, const LocoLayer& b) { return a.weight > b.weight; });
     g.animation = g.cycles.front().animation;
+    g.poses = full.poses;
     return g;
 }
 
