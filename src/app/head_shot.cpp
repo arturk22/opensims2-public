@@ -187,9 +187,13 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         renderer.setInstanceLightSet(inst, rigSet);
         // The box around the head bone: 0.30 wide and deep, from 0.10 under
         // the bone to 0.20 over it; the camera in front of the Sim (+Y, the
-        // skeleton's forward), aimed at the box's centre, as far as fits the
-        // box in the field of view plus twice its depth (binary); fov 30
-        // degrees (inferred: the camera's own is not read).
+        // skeleton's forward), aimed at the box's centre, at the distance
+        // that fits the box's larger side on screen in the field of view
+        // (at least 0.01) plus twice the box's depth, near and far planes
+        // 0.8 x the first and 1.2 x the whole (SetupScene, BV 0x392a88).
+        // The field of view is the thumbnail renderer's camera's: 20 degrees
+        // (cTSUIThumbnailFactorySceneBased::InitRenderer, BV 0xa819e0:
+        // 20 x pi/180), x 1.0 for humans.
         simd_float3 head = at + simd_make_float3(0, 0, age == 'b' ? 0.2f : age == 'p' ? 0.35f : age == 'c' ? 1.05f : 1.55f);
         if (const int b = actor.skin.skeleton.find("head"); b >= 0 && size_t(b) < actor.bones.size()) {
             const auto& t = actor.bones[size_t(b)].t;
@@ -199,8 +203,9 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
             head = p;
         }
         const simd_float3 target = head + simd_make_float3(0, 0, 0.05f);
-        const float fov = 30.0f * 3.14159265f / 180.0f;
-        const float dist = std::max(0.01f, 0.30f / (2 * std::tan(fov * 0.5f))) + 2 * 0.15f;
+        const float fov = 20.0f * 3.14159265f / 180.0f;
+        const float fit = std::max(0.01f, 0.30f / (2 * std::tan(fov * 0.5f)));
+        const float dist = fit + 2 * 0.30f;
         const simd_float3 e = target + simd_make_float3(0, dist, 0);
         const simd_float3 f = simd_normalize(target - e);
         const simd_float3 sv = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
@@ -209,7 +214,7 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         fv.view = simd_matrix(simd_make_float4(sv.x, u.x, -f.x, 0), simd_make_float4(sv.y, u.y, -f.y, 0),
                               simd_make_float4(sv.z, u.z, -f.z, 0),
                               simd_make_float4(-simd_dot(sv, e), -simd_dot(u, e), simd_dot(f, e), 1));
-        const float n = 0.05f, fa = 50, ys = 1.0f / std::tan(fov * 0.5f), zs = fa / (n - fa);
+        const float n = fit * 0.8f, fa = dist * 1.2f, ys = 1.0f / std::tan(fov * 0.5f), zs = fa / (n - fa);
         fv.projection = simd_matrix(simd_make_float4(ys, 0, 0, 0), simd_make_float4(0, ys, 0, 0),
                                     simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, zs * n, 0));
         // The frame's UI overlay must not be in the shot.

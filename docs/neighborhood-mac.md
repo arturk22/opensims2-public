@@ -1223,9 +1223,8 @@ O que o §15 leu, agora no opensims2, mais o que esta frente leu no binário
   `r13-bairro-ver-amigos-arcos.jpg`.
 - **Cabeças** (§15.5): a pose `<idade>-UIpose-<M|F>NN` (o número fixo por
   arquivo de personagem; o jogo sorteia), a caixa de 0,30 em volta do osso
-  `head`, a câmera de frente à distância que cabe a caixa no fov (30°,
-  **inferido**: o fov da câmera do jogo não foi lido) mais 2 × a
-  profundidade, e a luz "UIUCPHead" do `Lights/LightRig.txt` (recurso
+  `head`, a câmera de frente à distância que cabe a caixa no fov (rodada 14:
+  20°, o da câmera das miniaturas, §17.4) mais 2 × a profundidade, e a luz "UIUCPHead" do `Lights/LightRig.txt` (recurso
   "UIPieMenu": `UIPieMenu_cres` do `Sims3D/LightRigs.package`, cinco luzes
   direcionais key/bottomFill/rightFill/rightRim/leftRim, com as intensidades
   e cores do `Lights/LightRigs/PieMenu.txt`); a direção de cada luz é o +Z
@@ -1343,4 +1342,30 @@ flags de visita começam limpas. `test_hood_moves` (uma lombada numa rua reta
 ao lado do lote baixa e fica nivelada de um lado ao outro);
 `hood-place-lot <cópia de N001> empty:0 82 2 2` alisa 2 trechos e o
 `hood-lot-check` continua passando os 27 lotes.
+
+### 17.4 A foto do rosto: o campo de visão e os óculos/chapéus (binário)
+
+- **Campo de visão**: o da câmera do renderizador de miniaturas,
+  `cTSUIThumbnailFactorySceneBased::InitRenderer` (BV `0xa819e0`): viewer
+  vtable `0x210(20 × π/180)` = **20°** (`FLOAT_0274b6e8` = 20, `DAT_02ca94a4`
+  = π/180, posto no inicializador estático `FUN_022dc76c`). O `SetupScene`
+  multiplica por 1,0 nos humanos (`FLOAT_0274b470`) e por outro valor nos
+  bichos do BV. A distância é d = max(0,01, maior lado da caixa / (2 ·
+  tan(fov/2))) + 2 × a profundidade da caixa (0,30: os lados são as
+  diferenças máx − mín), e os planos (viewer vtable `0x218`) **0,8 × o
+  primeiro termo** (perto) e **1,2 × d** (longe) — os "0,8 e 1,2" que o §15.5
+  lia como luz e cor.
+- **Óculos e chapéus** (`CopyObjectsAtBone("glasses_grip")` com a flag 2,
+  `"hat_grip"` com a flag 1; flags `0x3F` para humanos, `0x3FEA` para o
+  resto): só no modo em que a foto é tirada do **objeto vivo** do Sim no lote
+  (`this+0xa4 == 1`: `CopyPersonSkeleton` do nó de cena da pessoa, e então os
+  objetos presos naqueles ossos); no modo do arquivo de personagem (o do
+  bairro) não há objeto vivo e nada é copiado. Os óculos de rosto do CAS são
+  sobreposições da malha do rosto e já saem na foto.
+
+No código (`app/head_shot.cpp`): 20°, d = 0,30/(2·tan 10°) + 0,60, planos
+0,8 e 1,2 como acima (antes: 30° e + 0,30, inferidos). As fotos do opensims2
+só são feitas do arquivo de personagem (o painel do lote no bairro), então a
+cópia dos objetos dos ossos não se aplica (não há foto do Sim vivo no lote).
+`docs/screenshots/r14-bairro-cabeca-fov20.jpg`.
 
