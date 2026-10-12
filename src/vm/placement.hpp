@@ -75,8 +75,13 @@ std::array<int, 2> partOffset(uint16_t subIndex, int direction);
 namespace placementerror {
 constexpr int OutOfBounds = 2, LevelOutOfBounds = 3, NeedsWall = 7, WallIntersect = 8, Objects = 0x0C,
               NoPlace = 0x0E, Weight = 0x0F, PlaceList = 0x19, NoFloor = 0x8E;
-// The index of a code's text in STR# 0x89.
-inline int textIndex(int code) { return code == 0x19 || (code >= 0x8C && code <= 0x91) ? 90 : code - 2; }
+// cTSSimSystem::PlacementErrorString (Mac BV 0x58a6d4): the code's text,
+// as a 1-based entry of UIText STR# 0x89; a code out of its table is 1
+// "Location out of bounds"; 0 for the codes whose entry is empty in the base
+// game (0x14, 0x1E, 0x46, ...: expansion texts). docs/buy-build-mac.md §7.10.
+int stringNumber(int code);
+// The 0-based index of a code's text in STR# 0x89 (-1: no text).
+inline int textIndex(int code) { return stringNumber(code) - 1; }
 } // namespace placementerror
 
 struct Placement {

@@ -1991,7 +1991,7 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
         return code;
     };
     if (!lot_.hasLevel(0) || lot_.elevations.empty())
-        return fail(0x5B, "no terrain");
+        return fail(0x8A, "no terrain");
     const int W = int(lot_.width), H = int(lot_.height);
     // A corner off the lot refuses the drag (the cursor's square goes red).
     for (int x : {x0, x1})
@@ -2009,18 +2009,21 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
         for (int y = ay; y <= by; ++y) {
             if (poolTile(x, y))
                 continue;
+            // The binary's codes (cTSUserToolDeckFoundation, docs/buy-build-mac.md
+            // §7.18): a corner of the drag locked is 0x02 (MayPlaceQuadrilateral),
+            // a tile inside whose ground cannot be moved 0x81 "Can't level terrain".
             if (!editableTile(x, y))
-                return fail(0x5A, "not editable at " + point(x, y));
+                return fail((x == x0 || x == x1) && (y == y0 || y == y1) ? 0x02 : 0x81, "not editable at " + point(x, y));
             ++fresh;
-            if (foundationTile(x, y))
-                return fail(0x5B, "pools only go in the terrain");
+            if (foundationTile(x, y)) // a deck or foundation there: 0x86 (IsDeckFoundationOfType)
+                return fail(0x86, "pools only go in the terrain");
             for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
                 if (q)
-                    return fail(0x5B, "pools only go in the terrain");
+                    return fail(0x8A, "pools only go in the terrain"); // a floor on the ground (inferred: SelectionIsDegenerate's text)
             for (int cx = x; cx <= x + 1; ++cx)
                 for (int cy = y; cy <= y + 1; ++cy)
                     if (lot_.waterLevel(cx, cy) > lot_.elevation(0, cx, cy))
-                        return fail(0x20, "water at " + point(x, y));
+                        return fail(0x1E, "water at " + point(x, y)); // IsPartWater (no text in the base game)
             for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
                 if (const Object* o = vm_.object(id); o && (o->person || !(o->data[objdata::PlacementFlags] & 0x200)))
                     return fail(0x0C, "something is in the way at " + point(x, y));
@@ -2030,14 +2033,14 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
             continue;
         const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
         if (mx > float(ax) + 0.01f && mx < float(bx + 1) - 0.01f && my > float(ay) + 0.01f && my < float(by + 1) - 0.01f)
-            return fail(0x0C, "a wall is in the way");
+            return fail(0x46, "a wall is in the way"); // FUN_00352750 (no text in the base game)
     }
     // cWorldPool::AreExpansionBoundsLegal (cIWorldPool slot 0x40, BV
     // 0xc22dfc): every pool whose rectangle meets the drag's R (R grown by
     // 0.01: touching counts) must make one rectangle with R (the bounding
     // box's area = R's + the pool's: no overlap, a whole side shared), and R
-    // with those pools may not pass 900 tiles. The refusal code is inferred
-    // ("Can't extend pool": its caller is not found).
+    // with those pools may not pass 900 tiles. The refusal code 0x86 "Can't
+    // extend pool" is inferred (its caller is not found).
     const int rx0 = ax, ry0 = ay, rx1 = bx + 1, ry1 = by + 1;
     {
         const float rArea = float((rx1 - rx0) * (ry1 - ry0));
@@ -2054,10 +2057,10 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
             const float bw = std::max(px1, float(rx1)) - std::min(p.x, float(rx0));
             const float bh = std::max(py1, float(ry1)) - std::min(p.y, float(ry0));
             if (bw * bh != rArea + pArea)
-                return fail(0x4F, "the pool and the drag must make one rectangle");
+                return fail(0x86, "the pool and the drag must make one rectangle");
         }
         if (total > 900.0f)
-            return fail(0x4F, "a pool of more than 900 tiles");
+            return fail(0x86, "a pool of more than 900 tiles");
     }
     if (tiles)
         *tiles = fresh;
@@ -2120,7 +2123,7 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
             lips.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)), int(std::lround(w.b.y))});
     if (!levelPoints(points, height, lips)) {
         restore(before);
-        return fail(0x0D, "the ground cannot be levelled");
+        return fail(0x81, "the ground cannot be levelled");
     }
     addLowerLevel(lot_);
     const size_t plane = size_t(W + 1) * size_t(H + 1);
@@ -2179,9 +2182,9 @@ BuildEditor::Result BuildEditor::erasePool(int x0, int y0, int x1, int y1) {
             continue;
         any = true;
         if (ix1 - ix0 != px1 - px0 && iy1 - iy0 != py1 - py0)
-            return fail(0x60, "the drag must cross the pool through");
+            return fail(0x87, "the drag must cross the pool through");
         if (std::abs(ix0 - px0) == 1 || std::abs(ix1 - px1) == 1 || std::abs(iy0 - py0) == 1 || std::abs(iy1 - py1) == 1)
-            return fail(0x60, "it would leave a strip of the pool one tile wide");
+            return fail(0x87, "it would leave a strip of the pool one tile wide");
     }
     if (!any) {
         r.ok = true;

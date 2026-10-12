@@ -319,7 +319,7 @@ void BuyMode::pointAt(simd_float3 eye, simd_float3 dir) {
 }
 
 std::string BuyMode::errorText(const vm::Placement& p) {
-    if (p.error >= 2)
+    if (p.error >= 2 && vm::placementerror::textIndex(p.error) >= 0)
         if (const StringTable* t = res_->table(kUiTextGroup, kPlacementErrors)) {
             std::string s = t->get(size_t(vm::placementerror::textIndex(p.error)));
             if (!s.empty())

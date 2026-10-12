@@ -373,7 +373,7 @@ bool BuildMode::placeObjectAt(int x, int y, int direction) {
     holdObjectAt(x, y, direction);
     if (!last_.ok) {
         std::string text = last_.reason;
-        if (last_.error >= 2)
+        if (last_.error >= 2 && vm::placementerror::textIndex(last_.error) >= 0)
             if (const StringTable* t = res_->table(0x7FA7DC7C, 0x89))
                 if (std::string g = t->get(size_t(vm::placementerror::textIndex(last_.error))); !g.empty())
                     text = g + " (" + last_.reason + ")";
@@ -590,7 +590,7 @@ void BuildMode::applied(const vm::BuildEditor::Result& r) {
     std::string text = r.message;
     if (!r.ok) {
         text.clear();
-        if (r.error >= 2)
+        if (r.error >= 2 && vm::placementerror::textIndex(r.error) >= 0)
             if (const StringTable* t = res_->table(0x7FA7DC7C, 0x89))
                 text = t->get(size_t(vm::placementerror::textIndex(r.error)));
         if (text.empty())
@@ -2051,8 +2051,18 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
                     sound("ui_build_deck_section");
                 releaseSound(tool, erase, *r);
             }
-            std::printf("opensims2: build: %s %s: %s%s (funds §%d)\n", a.c_str(), v.c_str(), r->ok ? "" : "FAILED: ",
-                        r->message.c_str(), vm::funds(vm_));
+            std::string shown; // the refusal's text as the tooltip shows it (code 0x..: STR# 0x89)
+            if (!r->ok && r->error) {
+                char c[16];
+                std::snprintf(c, sizeof c, "0x%02X", r->error);
+                std::string g;
+                if (vm::placementerror::textIndex(r->error) >= 0)
+                    if (const StringTable* t = res_->table(0x7FA7DC7C, 0x89))
+                        g = t->get(size_t(vm::placementerror::textIndex(r->error)));
+                shown = std::string(" [") + c + " \"" + (g.empty() ? refusalText(*r) : g) + "\"]";
+            }
+            std::printf("opensims2: build: %s %s: %s%s%s (funds §%d)\n", a.c_str(), v.c_str(), r->ok ? "" : "FAILED: ",
+                        r->message.c_str(), shown.c_str(), vm::funds(vm_));
             if (r->ok && r->changed)
                 redraw();
         }

@@ -554,9 +554,9 @@ static void testPool() {
     // it without making one rectangle with it, is refused; one along a
     // whole side extends it (a POOL entry of its own); 900 tiles at most.
     r = ed.drawPool(5, 4, 6, 6);
-    check(!r.ok && r.error == 0x4F, "a drag over a pool's corner is refused (0x4F)");
+    check(!r.ok && r.error == 0x86, "a drag over a pool's corner is refused (0x86)");
     r = ed.drawPool(6, 4, 7, 6);
-    check(!r.ok && r.error == 0x4F, "a drag beside the pool that would make an L is refused (0x4F)");
+    check(!r.ok && r.error == 0x86, "a drag beside the pool that would make an L is refused (0x86)");
     r = ed.drawPool(6, 3, 8, 4);
     check(r.ok && r.changed == 6 && r.cost == 6 * kPoolTilePrice && lot.pools.size() == 2,
           "a drag along the pool's whole side extends it, a POOL entry of its own");
@@ -588,13 +588,23 @@ static void testPool() {
                   std::fabs(lotPickHeight(lot, 1, bx, by) - bz) < 1e-4f,
               "the pool tool's pick and cursor height are the water's");
     }
+    {
+        using namespace placementerror;
+        check(stringNumber(0x02) == 1 && stringNumber(0x86) == 78 && stringNumber(0x8A) == 90 && stringNumber(0x81) == 12 &&
+                  stringNumber(0x87) == 95 && stringNumber(0x2D) == 44 && stringNumber(0x2E) == 45 &&
+                  stringNumber(0x0C) == 11 && stringNumber(0x16) == 21 && stringNumber(0x19) == 91 &&
+                  stringNumber(0x4B) == 75 && stringNumber(0x2F) == 8 && stringNumber(0x13) == 32,
+              "PlacementErrorString's table: code -> STR# 0x89 entry");
+        check(stringNumber(0x1E) == 0 && textIndex(0x1E) == -1 && stringNumber(0xFE) == 1 && textIndex(0x86) == 77,
+              "empty texts and codes out of the table");
+    }
     check(ed.poolDigError(-1, 3, 2, 4) == 0x02 && ed.poolDigError(3, 3, 12, 4) == 0x02, "a pool drag off the lot is refused (0x02)");
-    check(ed.poolDigError(10, 6, 11, 7) == 0 && ed.poolDigError(5, 4, 6, 5) == 0x4F, "the preview's check agrees with drawPool");
+    check(ed.poolDigError(10, 6, 11, 7) == 0 && ed.poolDigError(5, 4, 6, 5) == 0x86, "the preview's check agrees with drawPool");
     // Ctrl-drag: IsQuadLegalForPoolErase / QuadListOnPoolErase.
     r = ed.erasePool(4, 3, 4, 3);
-    check(!r.ok && r.error == 0x60, "an erase must cross a pool through (0x60)");
+    check(!r.ok && r.error == 0x87, "an erase must cross a pool through (0x87)");
     r = ed.erasePool(4, 3, 4, 4);
-    check(!r.ok && r.error == 0x60, "an erase may not leave a strip one tile wide (0x60)");
+    check(!r.ok && r.error == 0x87, "an erase may not leave a strip one tile wide (0x87)");
     r = ed.erasePool(8, 3, 8, 4);
     check(r.ok && r.changed == 2 && !vm.world->pool({8, 4, 1}) && lot.pools.size() == 2, "erasing the pool's end");
     r = ed.deletePool(4, 4);
@@ -633,7 +643,7 @@ static void testPool() {
     r = ed2.drawPool(1, 1, 30, 30);
     check(r.ok, "a pool of 900 tiles");
     r = ed2.drawPool(31, 1, 31, 30);
-    check(!r.ok && r.error == 0x4F, "no pool over 900 tiles (0x4F)");
+    check(!r.ok && r.error == 0x86, "no pool over 900 tiles (0x86)");
 }
 
 // Modular stairs (§7.12): how many steps a flight gets, and the refusals.

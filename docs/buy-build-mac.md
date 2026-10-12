@@ -1738,6 +1738,24 @@ binário (§7.10: `0x86` → #78, `0x8A` → #90, `0x81` → #12, `0x87` → #95
 O "not editable" (borda/faixa) do app é o `0x02` nos cantos e o `0x81` nos
 vértices de dentro.
 
+**Feito (r15-pool-draw):** `vm::placementerror::stringNumber` é a tabela do
+§7.10 (código → entrada 1-based do STR# 0x89; fora dela → 1; os códigos de
+texto vazio no base → 0, sem texto: o app cai no texto genérico) e o
+`textIndex` é `stringNumber − 1`. A piscina usa `0x8A` (sem terreno / piso no
+térreo, este inferido), `0x02` (canto fora ou travado), `0x81` (tile de dentro
+travado, terreno que não aplaina), `0x1E` (água, sem texto), `0x0C`
+(objeto), `0x86` (deck/fundação no tile, junção em retângulo e 900 tiles,
+estes dois inferidos), `0x46` (parede atravessando, sem texto), `0x87`/`0x2D`/`0x2E`
+(apagar). Os outros códigos do app já eram os do binário e agora mostram o
+texto deles: paredes `0x48` "Needs something to support it" (era "Can't
+reach ground"), `0x49` "Can't place on slope", `0x4B` "Wall too close to
+Sim", `0x4C` "Cannot build diagonally.", `0x4F` "Can't remove object on
+fence", `0x31` "Terrain too steep", `0x40`/`0x45` "Location out of bounds";
+terreno `0x65`/`0x8B`, pisos `0x52`/`0x53` e escadas `0x70`–`0x72`/`0x1C`
+ganham os textos que antes saíam vazios. O passo headless imprime o código e
+o texto: `opensims2: build: --pool ...: FAILED: ... [0x86 "Impossível
+estender a piscina"]`.
+
 ### 7.19 Arcos de cerca (rodada 12)
 
 `fencearches.txt` tem um só arco no jogo base (`fenceArch 26`, "Arco de
