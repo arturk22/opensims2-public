@@ -390,8 +390,16 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         // S2PKG_WATCH=id: that object's place and container every 30 ticks.
         if (static const char* w = std::getenv("S2PKG_WATCH"); w && machine.ticks % 30 == 0)
             if (const vm::Object* x = machine.object(vm::ObjectId(std::atoi(w))))
-                std::printf("  tick %6llu watch %d at (%.2f, %.2f, %d) dir %d in %d\n", static_cast<unsigned long long>(machine.ticks), x->id,
+            {
+                std::printf("  tick %6llu watch %d at (%.2f, %.2f, %d) dir %d in %d", static_cast<unsigned long long>(machine.ticks), x->id,
                             x->position.x, x->position.y, x->position.level, x->data[vm::objdata::Direction], x->data[vm::objdata::ContainerId]);
+                if (x->person) { // its priority and queue
+                    std::printf(", priority %d, active %d, queue:", x->person->data[vm::persondata::Priority], x->activeInteraction);
+                    for (const auto& q : x->queue)
+                        std::printf(" [%s %d]", q.name.c_str(), q.priority);
+                }
+                std::printf("\n");
+            }
         // Cinematics the trees ask for (Cinematic 0x7B): the move-in scene, births, ...
         for (const auto& r : vm::cinematicRequests())
             std::printf("  tick %6llu %s cinematic \"%s\" from %d (%zu actors)\n",

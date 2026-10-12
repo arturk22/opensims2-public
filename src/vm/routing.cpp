@@ -1051,7 +1051,7 @@ bool askedToMove(VM& vm, const Object& sim) {
 // tiles either way, that is free, reachable and clear of the asker's way
 // (0.75 tile of its line from it to 2 tiles past the blocker; inferred, the
 // binary leaves that to the slot's costs).
-std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& blocker) {
+std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& blocker, int type) {
     PathPlanner& planner = plannerOf(vm);
     const std::vector<ObjectId> ignore{me.id, blocker.id};
     addObstacles(vm, planner, blocker, ignore);
@@ -1076,7 +1076,7 @@ std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& 
         const float u = len2 > 0 ? std::clamp(((q[0] - a[0]) * vx + (q[1] - a[1]) * vy) / len2, 0.0f, 1.0f) : 0;
         return std::hypot(a[0] + vx * u - q[0], a[1] + vy * u - q[1]) < 0.75f;
     };
-    for (int j = 0; j <= 96; ++j)
+    for (int j = 0; type == 0 && j <= 96; ++j)
         for (const int sign : {1, -1}) {
             if (j == 0 && sign == -1)
                 continue;
@@ -1090,11 +1090,14 @@ std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& 
                              {{q[0], q[1], 0}}, path, why))
                 return q;
         }
-    // None: the wider slot of types 1/2 (§8.3: directions 1, 2, 6 and 7
-    // relative to the blocker's facing, 1 to 6 tiles; who uses those types
-    // is not traced, so this fallback is inferred).
-    const int facing = ((blocker.data[objdata::Direction] % 8) + 8) % 8;
-    for (int dist = 1; dist <= 6; ++dist)
+    // Type 1 (the blocker stands on my goal; §8.3: directions 1, 2, 6 and 7,
+    // 1 to 3 tiles out, a step of 1 tile), and the fallback of type 0 when
+    // its row has no place (inferred, as the wider slot of type 2: up to 6
+    // tiles). The directions are taken relative to the asker's (inferred:
+    // the slot's object is not decoded), so the blocker steps aside off the
+    // asker's way.
+    const int facing = type == 1 ? d : ((blocker.data[objdata::Direction] % 8) + 8) % 8;
+    for (int dist = 1; dist <= (type == 1 ? 3 : 6); ++dist)
         for (const int rel : {2, 6, 1, 7}) {
             const Point2 u = unit(facing + rel);
             const Point2 q{blocker.position.x + u[0] * float(dist), blocker.position.y + u[1] * float(dist)};
@@ -1128,6 +1131,14 @@ void flushMoveOutOfWayDestinations(VM& vm) {
 // must be within 4 tiles and a place to step aside to must exist. Accepted:
 // the move-out-of-way interaction goes on its queue with that priority.
 bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocker) {
+    // DoBlockedGoalStillAvailable asks with type 1 when the route has a
+    // destination object and the blocker is within 1.5 tiles of it (on my
+    // goal: the cook at the stove when the other comes for the oven), else
+    // type 0 (docs/routing-mac.md §8.3).
+    int type = 0;
+    if (const Object* goal = vm.object(r.target); goal && goal->id != me.id &&
+        std::hypot(blocker.position.x - goal->position.x, blocker.position.y - goal->position.y) < 1.5f)
+        type = 1;
     if (!me.person || !blocker.person || askedToMove(vm, blocker))
         return false;
     if (blocker.route && (blocker.route->blocker == me.id || blocker.route->blocker != 0))
@@ -1138,7 +1149,7 @@ bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocke
     if (r.goals.size() < 2 || blocker.position.level != me.position.level ||
         std::hypot(blocker.position.x - me.position.x, blocker.position.y - me.position.y) > 4)
         return false;
-    const auto spot = moveOutOfWayPoint(vm, me, blocker);
+    const auto spot = moveOutOfWayPoint(vm, me, blocker, type);
     if (!spot)
         return false;
     std::vector<ObjectId> existing;
