@@ -1379,8 +1379,8 @@ objetos, níveis, elevações, direções e elos):
   a escadaria-objeto); a parede no caminho conta só paredes e cercas (as bordas
   de fundação/deck não); objetos que bloqueiam = camada de piso (od 63 0 ou
   bit 1; janelas não); a direção sem arraste = o lado do tile mais perto do
-  clique (o quarto do `cFloorTile`); a busca do fim (`FindEnd`) simplificada
-  (anda degrau a degrau até o último tocar um piso abaixo).
+  clique (o quarto do `cFloorTile`); a busca do fim (`FindEnd`): ver
+  §7.13.2 (rodada 14).
 - `FUN_009e9550` (pode o vértice ir a essa altura?) tem uma lista de testes por
   máscara: limites de altura do terreno `WorldDB→0x150/0x14C` (`0x65`/`0x66`;
   rodada 13, `FUN_009e7700`: `MinTerrainElevation` = −150 ×
@@ -1396,6 +1396,52 @@ objetos, níveis, elevações, direções e elos):
   e dá `0x65`/`0x66` quando nenhum se move, as escadas modulares recusam com
   `0x65`/`0x66` em vez de `0x6F`, e o nivelamento das paredes, fundações e
   piscinas não move um ponto além deles.
+
+### 7.13.2 `FindEnd` no binário (rodada 14, BV `0x9ece38`)
+
+Sem arraste, `UserPlaceModularStairs` pede o ponto final ao `FindEnd`
+(argumentos: o tile de cima com o byte de direção — 1 −x, 2 +y, 4 +x, 8 −y —,
+a saída, o undoable e a lista de erros) e conta os degraus dele como de um
+arraste (ceil((d − 0,5) × 4)). Ordem:
+
+1. tile de cima sem piso (`WorldDB 0xb8(tile, 0xF, 1)`) → `0x6C`; água →
+   `0x1D`; não plano → nivela (`FUN_009ec428` modo 0) ou `0x6E`; senão a
+   altura de cima = `SampledFloorElevation` do tile (+0,75 se o tile é de
+   fundação, `IsDeckFoundationOfType 4`; não feito: no opensims2 o piso da
+   fundação já está no nível 1); o objeto de cima não cabe → `0x70`; parede
+   → `0x76`; o tile seguinte fora do lote → `0x74`.
+2. Para cada nível do de cima ao mínimo (`WorldDB 0x140`), z = a altura de
+   cima, tile t = o seguinte; enquanto t está no lote: depois = z − 4 ×
+   `WorldDB 0x158` (0,1875 → 0,75 por tile); água → pendente `0x1D`, piscina
+   → `0x1C`, o degrau não cabe (`FUN_009ebdc8`) → `0x71`, e acaba o nível;
+   com piso no nível: os cantos do tile girados pela direção
+   (`FUN_009ec03c`: perto e longe), altura de cada canto = elevação do
+   vértice (+0,75 se encosta numa fundação, `FUN_00164a7c`); perto = z
+   depois que um tile anterior foi "cavado"; longe = o maior dos dois, salvo
+   se ele pode descer até "depois" (`FUN_009e9550`, que devolve sim logo se
+   o vértice já está nessa altura), então o menor. O piso **encontra** o
+   lance no tile se um canto de perto está abaixo de z + 0,001 e o longe
+   acima de depois − 0,001:
+   - no primeiro tile: os dois cantos de longe podem descer → segue
+     ("cavado"); senão `0x78`;
+   - tile não plano: nivela (modo 1) ou, se os cantos de longe podem descer,
+     segue; senão pendente `0x6F` e acaba o nível;
+   - senão **fim** = centro do tile + 0,5·u − k·0,25·u com k =
+     round((longe − depois) / 0,1875) (truque `+1,5·2²³`), no máximo 4; se o
+     longe está abaixo dos dois de perto (o piso cai dentro do tile), fim =
+     a borda de longe; o tile meio tile depois do fim tem de receber o
+     patamar: fora do lote/nivelar (modo 3)/o objeto de cima não cabe →
+     `0x71`, água `0x1D`, piscina `0x1C`.
+   Sem fim no tile: pendente `0x77` (se não havia outro), z = depois, t
+   avança.
+3. Sem fim em nenhum nível: o primeiro pendente.
+
+No código (`planStairs` sem `end`): isso, com o degrau que não cabe = parede
+no caminho ou objeto na camada de piso (inferido) e os vértices de andares
+de cima nunca "cavados" (inferido); o fim alimenta a mesma conta do
+arraste. `N001_Lot38 --delete-stairs 147 --stairs 0,18,16,2,0 --check` refaz o
+lance salvo (4 degraus); `test_build` (terreno erguido: 8 degraus; chão a
+4 degraus do topo: o primeiro tile segue, 4).
 
 ### 7.13.1 O modelo do corrimão e a ferramenta de corrimão (rodada 13, binário)
 

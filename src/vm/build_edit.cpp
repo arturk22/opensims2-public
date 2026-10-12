@@ -2784,54 +2784,158 @@ int BuildEditor::planStairs(StairsPlan& plan, TilePos top, int direction, std::o
         for (int cy = top.y; cy <= top.y + 1; ++cy)
             if (std::fabs(lot_.elevation(li, cx, cy) - z00) > 0.001f)
                 return 0x6E;
-    // The number of steps.
+    // UserPlaceModularStairsFindEnd (BV 0x9ece38) without a drag: the end
+    // point the flight would be dragged to. For each lot level from the
+    // top's down, from the tile after the top (z = the top's height), a
+    // tile at a time (z falls 4 steps, 0.75, a tile): water 0x1D, a pool
+    // 0x1C, the step not placeable there 0x71 end that level's walk; on a
+    // tile with a floor on that level, with its corner heights (the near and
+    // far side, the far one the higher unless it may be dug to the tile's
+    // bottom height), the floor meets the flight in the tile when a near
+    // corner is under the tile's top height and the far height above its
+    // bottom: on the first tile that is 0x78 (unless the far corners may be
+    // dug, then the walk goes on), else the end is the tile's far edge less
+    // round((far - bottom) / 0.1875) steps (at most 4; the far edge itself
+    // when the floor falls away within the tile) and the tile after it must
+    // take the bottom landing (0x71, 0x1D, 0x1C). A tile that is not flat
+    // whose far corners cannot be dug gives 0x6F. Walking on: 0x77 if
+    // nothing else was met (the first error met is the one reported).
+    std::optional<std::array<float, 2>> found = end;
+    if (!found) {
+        const int ux = int(plan.u[0]), uy = int(plan.u[1]);
+        // The far corners (FUN_009ec03c: the tile's corners turned by the direction).
+        auto farCorners = [&](const TilePos& t) {
+            const int fx = t.x + (ux > 0 ? 1 : 0), fy = t.y + (uy > 0 ? 1 : 0);
+            if (ux)
+                return std::array<std::array<int, 2>, 2>{{{fx, t.y}, {fx, t.y + 1}}};
+            return std::array<std::array<int, 2>, 2>{{{t.x, fy}, {t.x + 1, fy}}};
+        };
+        auto nearCorners = [&](const TilePos& t) {
+            const int nx = t.x + (ux > 0 ? 0 : 1), ny = t.y + (uy > 0 ? 0 : 1);
+            if (ux)
+                return std::array<std::array<int, 2>, 2>{{{nx, t.y}, {nx, t.y + 1}}};
+            return std::array<std::array<int, 2>, 2>{{{t.x, ny}, {t.x + 1, ny}}};
+        };
+        // FUN_009e9550 for a ground grid point going to `h` (upper floors'
+        // points are not dug here: inferred).
+        // (A point already at that height passes after the first tests:
+        // FUN_009e9550 returns before the rest.)
+        auto canMove = [&](int l, const std::array<int, 2>& c, float h) {
+            if (l != 0 || !editablePoint(c[0], c[1]))
+                return false;
+            if (std::fabs(lot_.elevation(0, c[0], c[1]) - h) < 1e-4f)
+                return true;
+            return !terrainLimitError(h) && terrainFree(c[0], c[1]);
+        };
+        auto flat = [&](int l, const TilePos& t) {
+            const float z0 = lot_.elevation(l, t.x, t.y);
+            return std::fabs(lot_.elevation(l, t.x + 1, t.y) - z0) < 0.001f &&
+                   std::fabs(lot_.elevation(l, t.x, t.y + 1) - z0) < 0.001f &&
+                   std::fabs(lot_.elevation(l, t.x + 1, t.y + 1) - z0) < 0.001f;
+        };
+        // FUN_009ebdc8: the step object may stand on the tile (here: no wall
+        // into it, nothing in the way on that level; inferred).
+        auto stepBlocked = [&](const TilePos& prevT, const TilePos& t, int l) {
+            return wallAhead(prevT, l) || objectOn({t.x, t.y, l + 1});
+        };
+        const TilePos first{top.x + ux, top.y + uy, top.level};
+        if (objectOn(top))
+            return 0x70;
+        if (wallAhead(top, li))
+            return 0x76;
+        if (!inLot(first))
+            return 0x74;
+        int pending = 0;
+        for (int l = li; l >= 0 && !found; --l) {
+            float z = plan.topZ;
+            bool dug = false;
+            TilePos prevT = top;
+            for (TilePos t = first; inLot(t); prevT = t, t.x += ux, t.y += uy) {
+                const float after = z - 4 * kStepRise;
+                if (l == 0 && wet(t.x, t.y)) {
+                    pending = pending ? pending : 0x1D;
+                    break;
+                }
+                if (l == 0 && poolTile(t.x, t.y)) {
+                    pending = pending ? pending : 0x1C;
+                    break;
+                }
+                if (stepBlocked(prevT, t, l)) {
+                    pending = pending ? pending : 0x71;
+                    break;
+                }
+                if (hasFloor(l, t.x, t.y)) {
+                    const auto fc = farCorners(t), nc = nearCorners(t);
+                    const float near1 = dug ? z : lot_.elevation(l, nc[0][0], nc[0][1]);
+                    const float near2 = dug ? z : lot_.elevation(l, nc[1][0], nc[1][1]);
+                    const float far1 = lot_.elevation(l, fc[0][0], fc[0][1]), far2 = lot_.elevation(l, fc[1][0], fc[1][1]);
+                    float farH;
+                    if (far2 <= far1)
+                        farH = canMove(l, fc[0], after) ? far2 : far1;
+                    else
+                        farH = canMove(l, fc[1], after) ? far1 : far2;
+                    const bool meets = (near1 < z + 0.001f || near2 < z + 0.001f) && after - 0.001f < farH;
+                    if (meets) {
+                        const bool firstTile = t.x == first.x && t.y == first.y;
+                        bool goOn = false;
+                        if (firstTile) {
+                            if (!(canMove(l, fc[0], after) && canMove(l, fc[1], after)))
+                                return 0x78;
+                            goOn = true;
+                        } else if (!flat(l, t)) {
+                            if (!(canMove(l, fc[0], after) && canMove(l, fc[1], after))) {
+                                pending = pending ? pending : 0x6F;
+                                break;
+                            }
+                            goOn = true;
+                        }
+                        if (goOn) {
+                            dug = true;
+                        } else {
+                            const int k = std::min(4, int(std::lround((farH - after) / kStepRise)));
+                            const float cx = float(t.x) + 0.5f, cy = float(t.y) + 0.5f;
+                            std::array<float, 2> e{cx + plan.u[0] * 0.5f - plan.u[0] * float(k) * kStepRun,
+                                                   cy + plan.u[1] * 0.5f - plan.u[1] * float(k) * kStepRun};
+                            if (farH + 0.001f < std::min(near1, near2))
+                                e = {cx + plan.u[0] * 0.5f, cy + plan.u[1] * 0.5f};
+                            const TilePos b{int(std::floor(e[0] + plan.u[0] * 0.5f)), int(std::floor(e[1] + plan.u[1] * 0.5f)), l + 1};
+                            if (!inLot(b))
+                                return 0x71;
+                            if (l == 0 && wet(b.x, b.y))
+                                return 0x1D;
+                            if (l == 0 && poolTile(b.x, b.y))
+                                return 0x1C;
+                            if (objectOn(b))
+                                return 0x71;
+                            found = e;
+                            break;
+                        }
+                    }
+                }
+                pending = pending ? pending : 0x77;
+                z = after;
+            }
+        }
+        if (!found)
+            return pending ? pending : 0x77;
+    }
+    // The number of steps (UserPlaceModularStairs from the end point).
     int n = 0;
-    if (end) {
-        const TilePos et{int(std::floor((*end)[0])), int(std::floor((*end)[1])), top.level};
+    {
+        const std::array<float, 2> endPoint = *found;
+        const TilePos et{int(std::floor(endPoint[0])), int(std::floor(endPoint[1])), top.level};
         if (et.x == top.x && et.y == top.y)
             return 0x78;
         if (et.x != top.x && et.y != top.y)
             return 0x71;
-        if (directionOf((*end)[0] - center[0], (*end)[1] - center[1]) != direction)
+        if (directionOf(endPoint[0] - center[0], endPoint[1] - center[1]) != direction)
             return 0x71;
-        const float d = std::hypot((*end)[0] - center[0], (*end)[1] - center[1]);
+        const float d = std::hypot(endPoint[0] - center[0], endPoint[1] - center[1]);
         n = int(std::ceil((d - 0.5f) * 4.0f - 1e-4f));
-        if (wholeTiles)
+        if (wholeTiles && end)
             n = (n + 3) / 4 * 4;
         if (n < 1)
             return 0x78;
-    } else {
-        // UserPlaceModularStairsFindEnd: down the flight until the last step
-        // meets a floor (the terrain or a story below), stopping at water
-        // (0x1D), a pool (0x1C), a wall (0x71) or an object (0x74).
-        TilePos prev = top;
-        for (int k = 1; k <= 64 && !n; ++k) {
-            const TilePos t = plan.tile(k - 1, top.level - 1);
-            if (!inLot(t))
-                return 0x71;
-            if (!(t.x == prev.x && t.y == prev.y)) {
-                if (wet(t.x, t.y))
-                    return 0x1D;
-                if (poolTile(t.x, t.y))
-                    return 0x1C;
-                for (int l = 0; l < top.level; ++l)
-                    if (wallAhead(prev, l))
-                        return 0x71;
-                prev = t;
-            }
-            const auto p = plan.step(k - 1);
-            const float z = plan.z(k - 1);
-            for (int l = top.level - 1; l >= 1; --l) {
-                if (!hasFloor(l - 1, t.x, t.y))
-                    continue;
-                const float g = l == 1 ? groundAt(p[0], p[1]) : lot_.elevationAt(l - 1, p[0], p[1]);
-                if (z <= g + kReach)
-                    n = k;
-                break;
-            }
-        }
-        if (!n)
-            return 0x77;
     }
     plan.steps = n;
     const int last = n - 1;

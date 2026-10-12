@@ -627,6 +627,25 @@ static void testStairs() {
     check(error == 0x71, "the end off the line of the flight (0x71)");
     ed.stairsSteps({7, 7, 2}, 4, std::nullopt, false, &error);
     check(error == 0x6C, "no floor on the top tile (0x6C)");
+    // FindEnd (BV 0x9ece38): ground raised to 1.5 from x = 5 on meets the
+    // flight in its second tile; the end is that tile's far edge, 8 steps.
+    {
+        const std::vector<float> keep = lot.elevations;
+        for (int x = 5; x <= 12; ++x)
+            for (int y = 0; y <= 10; ++y)
+                lot.elevations[size_t(x) * 11 + size_t(y)] = 1.5f;
+        check(ed.stairsSteps({4, 2, 2}, 4, std::nullopt, false, &error) == 8 && error == 0,
+              "the end found where the raised ground meets the flight");
+        for (int x = 5; x <= 12; ++x)
+            for (int y = 0; y <= 10; ++y)
+                lot.elevations[size_t(x) * 11 + size_t(y)] = 2.25f;
+        // Ground four steps under the top: the first tile meets it and goes
+        // on (its far corners are there already), the second takes
+        // round((2.25 - 1.5) / 0.1875) = 4 steps off.
+        check(ed.stairsSteps({4, 2, 2}, 4, std::nullopt, false, &error) == 4 && error == 0,
+              "a floor four steps down: the first tile's four steps");
+        lot.elevations = keep;
+    }
     // A hill under the flight: the ground over the steps is lowered.
     for (int x = 6; x <= 7; ++x)
         for (int y = 0; y <= 10; ++y)
