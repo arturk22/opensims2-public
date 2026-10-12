@@ -600,12 +600,17 @@ true no `globalProps.xml`); alvo dentro → o cômodo entra numa memória dos
 últimos `cutawayMemorySize` (3) cômodos e, para cada um,
 `SelectRoomBlockers` corta as paredes desse cômodo viradas para a câmera.
 
-Diferenças do app atual (`formats/lot_model`, rodada 10: "corta as paredes
-com cômodo atrás, vistas da câmera"): no jogo **as paredes internas do
-andar são todas cortadas** no modo 1, as externas só pela face virada para
-a câmera, e as de estilo sem corte nunca; os andares acima do atual são
-escondidos por outro caminho. No modo 3 aparecem os telhados (o app tem o
-telhado como liga/desliga à parte).
+No app (rodada 12, `app/wall_view`, `formats/lot_model`): os quatro modos
+como no jogo (o telhado só no modo 3; o leque acende um dos quatro; Home/End
+andam em ciclo pelos quatro, inferido); no modo 1 as paredes internas do
+andar são todas cortadas, as externas só com a face de fora virada para a
+câmera (pela direção da câmera, que está longe, em vez da posição), as soltas
+no quintal nunca, e só as de estilo `mayCutAway` (paredes normais e de sótão;
+cercas — padrão falso, inferido do `fencearches.txt` —, fundação, piscina e
+saias de deck não); os cômodos das faces vêm do mapa de luz (3ARY `0x0B`),
+em que quintais cercados são fora. Recalcula quando a câmera passa de um
+lado de uma direção de parede, o andar ou o modo mudam, ou as paredes mudam;
+o Sim selecionado não entra (`cutawayForSelectedSim` desligado).
 
 ## 9. O que falta
 

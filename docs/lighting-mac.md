@@ -517,3 +517,8 @@ tipo 3:
   multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
 - O comando `skylight` (se guarda cor × força).
 - O height map de sombra (`UpdateHeightMapShadows`, `AddBlobToHeightMap`).
+
+**Rodada 12 (escolha visual, não do binário):** no app, a luz direta do
+estado sobre o chão (terreno e pisos de fora) é puxada para o cinza quando é
+fria, na proporção (B − R)/B: à noite E ≈ (0,32; 0,32; 0,8) virava calçada
+lavanda forte com o `2·textura·light map`; de dia (luz quente) nada muda.

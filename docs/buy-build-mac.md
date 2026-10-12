@@ -902,7 +902,15 @@ O pré-teste `nTSWorld::ObjectHasWallCutouts` (BV `0x16a064`): a máscara de
 lados (vtable `0x27c`) do objeto ou, se for multi-tile (vtable `0x19c`), de
 alguma parte, > 0. Para cada parte e cada lado da máscara: dx/dy = posição
 da parte menos a do objeto líder, nível = nível da parte + 1, e o nome vai
-para `cWallManager::SetCutoutMaterial`. `SetWallCutout` passa o nome
+para `cWallManager::SetCutoutMaterial`. No app (rodada 12,
+`formats/lot_model`): a base é o nome do modelo (o CRES que o lote guarda);
+para cada trecho reto que a porta/janela atravessa, dx = tiles ao longo do +x
+do objeto, nível = andares acima do objeto, e a textura do TXMT (alfa 0 =
+buraco; as duas faces usam a mesma) vai na face com u = posição ao longo do
++x do objeto a partir do começo do tile e v de 3 tiles acima do piso até ele
+(inferido pelas texturas: as metades de um arco de 2 tiles são "0" e "1e"),
+teste de alfa no shader. Diagonais ficam com o recorte retangular.
+`SetWallCutout` passa o nome
 ao `cWallManager::SetCutoutMaterial` (BV `0x6c5d6c`), que troca o material
 daquela face pelo TXMT da máscara (alfa = buraco). Ao apagar uma parede, os
 objetos presos a ela são vendidos (§7.2), portas e janelas inclusive.
