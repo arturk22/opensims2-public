@@ -193,7 +193,7 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
         if (!(pf & 0x400) && !portal)
             for (int k = 0; k < 4; ++k) {
                 const auto s = directionStep(k * 2);
-                if (tiles.count({t.x + s[0], t.y + s[1], t.level}) && w.wallBetween(t, s[0], s[1]))
+                if (tiles.count({t.x + s[0], t.y + s[1], t.level}) && w.wallBetween(t, s[0], s[1], true))
                     return fail(placementerror::WallIntersect, "a wall cuts the object");
             }
         const int16_t wp = o.data[objdata::WallPlacementFlags];
@@ -203,7 +203,7 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
             // For pool objects (p & 0x800) the pool's edge is a wall (the
             // pool walls stand a level down; "Must be against a pool wall").
             const bool poolEdge = (pf & 0x800) && w.pool(t) != w.pool({t.x + s[0], t.y + s[1], t.level});
-            const bool wall = w.wallBetween(t, s[0], s[1]) || poolEdge;
+            const bool wall = w.wallBetween(t, s[0], s[1], true) || poolEdge;
             if ((wp & (1 << side)) && !wall)
                 return fail(placementerror::NeedsWall, std::string("needs a wall ") + sides[side]);
             if ((wp & (0x100 << side)) && wall)

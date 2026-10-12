@@ -47,6 +47,17 @@ std::string BuildPattern::lotName() const {
     return b;
 }
 
+std::set<uint32_t> walkOverFenceGuids(ResourceIndex& index) {
+    std::set<uint32_t> out;
+    for (const auto& loc : index.ofType(kTypeCatalogFence)) {
+        const auto bytes = index.read(loc);
+        const auto p = parsePropertySet(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        if (number(p, "maywalkover") != 0)
+            out.insert(number(p, "guid"));
+    }
+    return out;
+}
+
 BuildCatalog BuildCatalog::load(ResourceIndex& index) {
     // Kept for the next load of the same index (every Build-mode setup asks).
     static std::mutex mutex;
@@ -106,6 +117,7 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
         f.name = text(p, "name");
         f.description = text(p, "description");
         f.rail = text(p, "rail"), f.diagonalRail = text(p, "diagrail"), f.post = text(p, "post");
+        f.walkOver = number(p, "maywalkover") != 0;
         if (auto s = index.read(Tgi{kTypeStr, number(p, "stringsetgroupid"), number(p, "stringsetid"), 0})) {
             try {
                 const StringTable t = StringTable::parse(*s);

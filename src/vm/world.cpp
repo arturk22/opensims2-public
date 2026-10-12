@@ -89,12 +89,23 @@ World World::fromLot(const Lot& lot) {
     }
     for (const auto& wall : lot.walls) {
         auto snap = [](float v) { return int(std::lround(v)); };
-        w.addWall(wall.a.level + 1, snap(wall.a.x), snap(wall.a.y), snap(wall.b.x), snap(wall.b.y));
+        w.addWall(wall.a.level + 1, snap(wall.a.x), snap(wall.a.y), snap(wall.b.x), snap(wall.b.y),
+                  Lot::isFence(wall.type) && walkOverFences().count(wall.type));
     }
     for (const Stair& s : lotStairs(lot))
         w.addStair(s);
     return w;
 }
+
+namespace {
+std::set<uint32_t>& walkOverSet() {
+    static std::set<uint32_t> s;
+    return s;
+}
+} // namespace
+
+void setWalkOverFences(std::set<uint32_t> guids) { walkOverSet() = std::move(guids); }
+const std::set<uint32_t>& walkOverFences() { return walkOverSet(); }
 
 std::vector<Stair> lotStairs(const Lot& lot) {
     constexpr float kRise = 0.1875f, kRun = 0.25f, kTolerance = 0.03f;
@@ -237,25 +248,29 @@ void World::setRoom(TilePos t, int16_t room) {
         rooms_[cell(t)] = room;
 }
 
-void World::setEdge(int level, int ax, int ay, int bx, int by, bool wall) {
+void World::setEdge(int level, int ax, int ay, int bx, int by, uint8_t wall) {
     ++revision_;
     if (level < firstLevel_ || level >= firstLevel_ + levelCount_)
         return;
     if (ay == by && ax != bx) {
         for (int x = std::min(ax, bx); x < std::max(ax, bx); ++x)
             if (x >= 0 && uint32_t(x) < width_ && ay >= 0 && uint32_t(ay) <= height_)
-                xWalls_[xEdge(level, x, ay)] = wall;
+                if (uint8_t& e = xWalls_[xEdge(level, x, ay)]; wall != 2 || e != 1)
+                    e = wall;
     } else if (ax == bx && ay != by) {
         for (int y = std::min(ay, by); y < std::max(ay, by); ++y)
             if (ax >= 0 && uint32_t(ax) <= width_ && y >= 0 && uint32_t(y) < height_)
-                yWalls_[yEdge(level, ax, y)] = wall;
+                if (uint8_t& e = yWalls_[yEdge(level, ax, y)]; wall != 2 || e != 1)
+                    e = wall;
     }
 }
 
-void World::addWall(int level, int ax, int ay, int bx, int by) {
+void World::addWall(int level, int ax, int ay, int bx, int by, bool walkOver) {
     ++revision_;
     const int dx = bx - ax, dy = by - ay;
     if (dx && std::abs(dx) == std::abs(dy)) {
+        if (walkOver) // a low fence across a tile: nothing for routing (inferred)
+            return;
         const int sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
         if (level >= firstLevel_ && level < firstLevel_ + levelCount_)
             diagonalWalls_.push_back({level, ax, ay, bx, by});
@@ -268,7 +283,7 @@ void World::addWall(int level, int ax, int ay, int bx, int by) {
         }
         return;
     }
-    setEdge(level, ax, ay, bx, by, true);
+    setEdge(level, ax, ay, bx, by, walkOver ? 2 : 1);
 }
 
 void World::openDoor(TilePos t, int dir) {
@@ -285,25 +300,27 @@ void World::openDoor(TilePos t, int dir) {
     if (contains(t))
         doors_.push_back({t, ((dir % 8) + 8) % 8, false});
     if (dx)
-        setEdge(t.level, t.x + (dx > 0 ? 1 : 0), t.y, t.x + (dx > 0 ? 1 : 0), t.y + 1, false);
+        setEdge(t.level, t.x + (dx > 0 ? 1 : 0), t.y, t.x + (dx > 0 ? 1 : 0), t.y + 1, 0);
     else
-        setEdge(t.level, t.x, t.y + (dy > 0 ? 1 : 0), t.x + 1, t.y + (dy > 0 ? 1 : 0), false);
+        setEdge(t.level, t.x, t.y + (dy > 0 ? 1 : 0), t.x + 1, t.y + (dy > 0 ? 1 : 0), 0);
 }
 
-bool World::wallBetween(TilePos t, int dx, int dy) const {
+bool World::wallBetween(TilePos t, int dx, int dy, bool placement) const {
     if (t.level < firstLevel_ || t.level >= firstLevel_ + levelCount_)
         return false;
     if (dx && !dy) {
         const int x = t.x + (dx > 0 ? 1 : 0); // the vertical edge at grid x
         if (x < 0 || uint32_t(x) > width_ || t.y < 0 || uint32_t(t.y) >= height_)
             return false;
-        return yWalls_[yEdge(t.level, x, t.y)];
+        const uint8_t e = yWalls_[yEdge(t.level, x, t.y)];
+        return e == 1 || (placement && e);
     }
     if (dy && !dx) {
         const int y = t.y + (dy > 0 ? 1 : 0);
         if (y < 0 || uint32_t(y) > height_ || t.x < 0 || uint32_t(t.x) >= width_)
             return false;
-        return xWalls_[xEdge(t.level, t.x, y)];
+        const uint8_t e = xWalls_[xEdge(t.level, t.x, y)];
+        return e == 1 || (placement && e);
     }
     return false;
 }

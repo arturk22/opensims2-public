@@ -89,14 +89,17 @@ public:
     // Wall between grid points (ax, ay) and (bx, by) on a VM level: an
     // axis-aligned one is split into tile edges, a diagonal one (|dx| ==
     // |dy|) marks the tiles it crosses; other slopes are ignored.
-    void addWall(int level, int ax, int ay, int bx, int by);
+    // `walkOver`: a low fence Sims step over (cTSFenceEntry::MayWalkOver,
+    // the fence's "maywalkover"): it bounds placement but not routing.
+    void addWall(int level, int ax, int ay, int bx, int by, bool walkOver = false);
     // A door: opens the wall edge behind a door at tile `t` facing `dir` (a
     // door stands in front of the wall it cuts, its back to it); a door in a
     // diagonal wall opens the tile the wall crosses.
     void openDoor(TilePos t, int dir);
     // A wall between `t` and its neighbour (t.x + dx, t.y + dy); only for
     // orthogonal steps (|dx| + |dy| == 1).
-    bool wallBetween(TilePos t, int dx, int dy) const;
+    // `placement` also counts the walk-over fences (they block placement).
+    bool wallBetween(TilePos t, int dx, int dy, bool placement = false) const;
     // A diagonal wall crosses the tile.
     bool diagonalWall(TilePos t) const;
     // No wall crosses the straight line between the two tile centres (same
@@ -158,7 +161,8 @@ private:
     size_t cell(TilePos t) const;
     size_t xEdge(int level, int x, int y) const;
     size_t yEdge(int level, int x, int y) const;
-    void setEdge(int level, int ax, int ay, int bx, int by, bool wall);
+    // 0 none, 1 a wall, 2 a walk-over fence (a wall is kept over a fence).
+    void setEdge(int level, int ax, int ay, int bx, int by, uint8_t wall);
 };
 
 // The stairs of a lot, from the steps' cObjects: each "Stair Modular - ... -
@@ -169,6 +173,12 @@ private:
 // a stair saved twice (the lots keep stale copies) is kept once. VM levels
 // (lot level + 1).
 std::vector<Stair> lotStairs(const Lot& lot);
+
+// The fences (catalog GUIDs, the walls' type) Sims walk over: World::fromLot
+// leaves them out of routing. Set once from the build catalog
+// (formats/build_catalog.hpp walkOverFences).
+void setWalkOverFences(std::set<uint32_t> guids);
+const std::set<uint32_t>& walkOverFences();
 
 // Tiles of one level that something stands in the way on (1 = blocked),
 // indexed by World::index. Routing builds one per route from the objects.

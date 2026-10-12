@@ -10,6 +10,7 @@
 // mode type" (Catalog::load(index, true), catalog.hpp).
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -40,7 +41,14 @@ struct BuildFence {
     std::string name, description;
     std::string rail, diagonalRail, post; // CRES names
     int price = 0;                        // per section
+    bool walkOver = false;                // "maywalkover": Sims step over it
 };
+
+// The GUIDs of every fence whose "maywalkover" is set (cTSFenceEntry::
+// MayWalkOver: 13 of the base game's 23 low fences), shown in the catalog or
+// not; routing leaves them out (inferred: MayWalkOver as the partition's
+// BlocksLocomotion, while it still blocks placement).
+std::set<uint32_t> walkOverFenceGuids(ResourceIndex& index);
 
 // A terrain paint (catalog property sets of type 0x4DCADB7E: "texturetname",
 // "brushwidth", free).

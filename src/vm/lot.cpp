@@ -1,5 +1,7 @@
 #include "lot.hpp"
 
+#include "formats/build_catalog.hpp"
+
 #include "formats/lot_arrivals.hpp"
 
 #include "formats/binreader.hpp"
@@ -237,6 +239,12 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
         Lot current = lot;
         const auto keep = currentCObjects(code, lot, saved);
         std::erase_if(current.objects, [&](const Lot::Object& o) { return !keep.count(o.instance); });
+        // The low fences Sims walk over (once per run).
+        static bool walkOverRead = false;
+        if (!walkOverRead && code.index()) {
+            walkOverRead = true;
+            setWalkOverFences(walkOverFenceGuids(*code.index()));
+        }
         vm.world = World::fromLot(current);
         // The straight (multi-tile) staircases, which lotStairs does not
         // know: their bottom landing is the "Lo ... Pad" part on the lower

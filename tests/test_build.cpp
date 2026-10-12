@@ -402,8 +402,22 @@ static void testDesignCatalog() {
     check(c.subsets("other", {}).empty(), "a model without choices is not designable");
 }
 
+// Low fences (maywalkover) bound placement but Sims walk over them.
+static void testWalkOver() {
+    Lot lot = flatLot();
+    addWall(lot, 0, 2, 2, 3, 2, 0x1234567, {0xFFFF, 0xFFFF}); // a walk-over fence
+    addWall(lot, 0, 5, 2, 6, 2, 0x7654321, {0xFFFF, 0xFFFF}); // a tall one
+    setWalkOverFences({0x1234567});
+    const World w = World::fromLot(lot);
+    check(!w.wallBetween({2, 2, 1}, 0, -1) && w.wallBetween({2, 2, 1}, 0, -1, true),
+          "a walk-over fence does not block routing but blocks placement");
+    check(w.wallBetween({5, 2, 1}, 0, -1), "another fence blocks routing");
+    setWalkOverFences({});
+}
+
 int main() {
     testDesignCatalog();
+    testWalkOver();
     testPool();
     testRoof();
     testTerrain();
