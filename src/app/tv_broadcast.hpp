@@ -17,6 +17,7 @@
 // the one file of a games broadcast, looped. Every TV on a channel shows the same
 // picture, as the binary's channels feed all their receivers.
 
+#include "app/tv_program.hpp"
 #include "formats/audio.hpp"
 #include "formats/image.hpp"
 #include "formats/model.hpp"
@@ -74,13 +75,10 @@ private:
         bool games = false;
     };
     struct Live {
-        std::vector<std::filesystem::path> shows, commercials;
+        TvProgram<std::filesystem::path> program; // shows and commercials, in the binary's order
         std::unique_ptr<Movie> movie;
         std::unique_ptr<MovieDecoder> decoder;
         double started = 0;
-        bool inCommercial = false;
-        size_t nextShow = 0;
-        std::filesystem::path lastShow, lastCommercial;
         RgbaImage picture;
         Sound sound;
     };

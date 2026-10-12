@@ -117,18 +117,9 @@ void TvBroadcast::next(Live& l, const Definition& d, double now) {
     // index wraps), and after each one a commercial drawn at random, not the
     // last one again; CommercialInterval is not read on that path.
     fs::path pick;
-    const bool commercial = !l.commercials.empty() && !l.inCommercial && l.movie;
-    if (commercial) {
-        for (int tries = 0; tries < 4 && (pick.empty() || (pick == l.lastCommercial && l.commercials.size() > 1)); ++tries)
-            pick = l.commercials[std::uniform_int_distribution<size_t>(0, l.commercials.size() - 1)(rng_)];
-        l.lastCommercial = pick;
-    } else if (!l.shows.empty()) {
-        pick = l.shows[l.nextShow++ % l.shows.size()];
-        l.lastShow = pick;
-    }
+    l.program.next(rng_, pick);
     (void)d;
     (void)now;
-    l.inCommercial = commercial;
     l.decoder.reset();
     l.movie.reset();
     if (pick.empty())
@@ -162,10 +153,10 @@ void TvBroadcast::adjust(ObjectModel& model, const std::map<std::string, std::st
             Live& l = it->second;
             if (d->second.games) {
                 if (fs::path f = findPath(movies_, d->second.folder + "/" + d->second.file); !f.empty())
-                    l.shows.push_back(f);
+                    l.program.shows.push_back(f);
             } else {
-                l.shows = moviesIn(findPath(movies_, d->second.folder));
-                l.commercials = moviesIn(findPath(movies_, d->second.commercialFolder));
+                l.program.shows = moviesIn(findPath(movies_, d->second.folder));
+                l.program.commercials = moviesIn(findPath(movies_, d->second.commercialFolder));
             }
             l.picture = RgbaImage{128, 128, std::vector<uint8_t>(128 * 128 * 4, 0)};
             for (size_t k = 3; k < l.picture.pixels.size(); k += 4)

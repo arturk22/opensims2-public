@@ -207,8 +207,14 @@ void GameAudio::setMusic(std::string_view category) {
         return;
     musicLog_.push_back(category.empty() ? "(lot)" : std::string(category));
     if (auto old = players_.find(wanted_); old != players_.end()) {
-        if (lowerAscii(wanted_) == "splash") {
-            old->second->setCategory("", std::nullopt, 6.0); // the opening music fades over 6 s
+        // The opening music fades over 6 s; so does the neighborhood's when a
+        // lot is ready (0x4C8E7905, instance +0x8c) -- it does not come back
+        // paused: the neighborhood starts afresh (main.mm finishScene).
+        // Inferred: any switch from NHood but to CAS (a stopped CAS lot
+        // keeps the hood paused) counts as entering a lot.
+        const std::string was = lowerAscii(wanted_);
+        if (was == "splash" || (was == "nhood" && lowerAscii(category) != "cas")) {
+            old->second->setCategory("", std::nullopt, 6.0);
             players_.erase(old);
         } else {
             old->second->setPaused(true); // its state keeps it for when the game comes back

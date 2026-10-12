@@ -336,3 +336,7 @@ add_test(NAME effects COMMAND test_effects)
 add_executable(test_wants tests/test_wants.cpp)
 target_link_libraries(test_wants PRIVATE os2_vm)
 add_test(NAME wants COMMAND test_wants)
+
+add_executable(test_tv_program tests/test_tv_program.cpp)
+target_include_directories(test_tv_program PRIVATE src)
+add_test(NAME tv_program COMMAND test_tv_program)
