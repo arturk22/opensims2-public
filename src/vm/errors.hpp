@@ -97,6 +97,9 @@ inline std::string errorString(uint16_t code) {
     case 0x59: return "Bad parameter value set in Manage Inventory Primitive.";
     case 0x74: return "Inventory token index out of range.";
     case 0x5A: return "Trying to perform an animation from the Social Interaction list against a non person.";
+    case 0x42: return "3D object is not a person.";
+    case 0x51: return "Turn rate must be positive";
+    case 0x95: return "Attempted too many look_at requests in one simulator turn on this Sim";
     case 0x46: return "Missing Material / Mesh Group Name.";
     case 0x68: return "The relationship matrix requested could not be found.";
     case 0x69: return "Cant run Reach/Drop on non Sim object.";

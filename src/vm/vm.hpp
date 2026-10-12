@@ -676,6 +676,9 @@ struct Object {
         int32_t ticks = 0;
     };
     std::optional<LookAt> lookAt;
+    // Look At requests this tick (the game allows 25 a Sim a simulator turn).
+    uint64_t lookAtTick = 0;
+    int lookAtRequests = 0;
     // Reach/Put in progress (reach.cpp): the instruction running it (stack
     // depth, tree, node), the reach animation and its ticks, the tick of its
     // event 0 (when the object changes hands), what moves where, and the

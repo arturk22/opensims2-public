@@ -900,9 +900,16 @@ Exit runTreeByName(Context& c) {
         return runOneTickTree(c.vm, c.thread.temps, c.thread.me, targetId, targetId, *tree, args) ? Exit::True
                                                                                                  : Exit::False;
     if (mode == 1) {
+        // On the stack object's tree sim: without passed values (flags
+        // 0x10/0x20) the parameters are its temps, as Gosub takes a null
+        // parameter list (TryCallNamedTree BV 0xb06244, Gosub 0xe1a428):
+        // 'Call "Look At" For All' sets the Sim's temps 0-2 (target,
+        // duration, speed) and runs "CT - Look At" on it.
         auto it = c.vm.threads.find(targetId);
         std::array<int16_t, kTempCount> scratch{};
         auto& temps = it != c.vm.threads.end() ? it->second.temps : scratch;
+        if (!(flags & 0x30))
+            std::copy_n(temps.begin(), std::min(args.size(), temps.size()), args.begin());
         return runOneTickTree(c.vm, temps, targetId, targetId, targetId, *tree, args) ? Exit::True : Exit::False;
     }
     std::array<int16_t, 4> first{};

@@ -16,6 +16,7 @@
 // the line test is the walls' (vm::World::lineOfSight).
 
 #include "vm.hpp"
+#include "errors.hpp"
 
 #include "formats/binreader.hpp"
 
@@ -71,42 +72,69 @@ namespace {
 // degrees per second (or in temps 1/2), "STOP", ", ignoring Room" and
 // ", ignoring Frustrum"; the game's errors include "Target object out of
 // world." and "Requesting a look_at operation that is already running".
-// From the uses: the target ID is (owner u8 at 1, data u16 at 2), bytes 4
-// and 5 the turn towards/away speeds (45 or 90 degrees per second in most
-// uses) and bytes 6-7 a duration in milliseconds (1000 in "Idle System -
-// Look At Something"). The rest of the flags (byte 0, 8-15) are not
-// understood. Here the request is only recorded on the Sim (Object::lookAt)
-// for the renderer, and the primitive returns at once: true, or false when
-// the target does not exist or is not in the world (the idle trees go on
-// either way). Inferred.
-//
-// The Mac binary's disassembler (docs/primitives-mac.md §5) names the flags
-// of byte 0 (node version 1, 415 of the 480 uses; the game converts version
-// 0 on load, LookAtParam::UpgradeVersion: bytes 4 and 5 = the old u16 at 4
-// / 2, byte 0 bit 0x08 also sets bit 0x02 of byte 15, byte 0 stays): 0x01 STOP (the Sim stops looking: done here), 0x80 the camera is
-// the target (nothing recorded here), 0x02 no early exit, 0x04 including
-// the spine, 0x08 speed in temp 1, 0x10 the duration is in temp 0 (done; in
-// the same unit as u16 6, inferred), 0x20 ignoring the room, 0x40 ignoring
-// the frustum; the slot byte 8 of type s8 14, an event tree u16 9 with its
-// place s8 11, byte 15 (speeds back in temps 1/2, not hurryable).
+// As nTSSG::cAnimatable::try_look_at (BV 0x6a19f8) does it, on the base
+// game's operands converted as LookAtParam::UpgradeVersion (0xac4990) does
+// for node version 0 (both speeds = the s16 at 4 / 2; byte 0 bit 0x08 also
+// sets byte 15 bit 0x02): not a Sim is error 0x42; more than 25 requests in
+// a simulator turn on one Sim error 0x95; byte 0: 0x80 the camera is the
+// target (nothing recorded here), 0x01 STOP, else the target (owner u8 at 1,
+// data u16 at 2; none is error 0x17). The turn speeds (byte 4 x 2 degrees a
+// second, temp 1 with byte 0 bit 0x08; byte 5 x 2, temp 1 / temp 2 with byte
+// 15 bits 0x02 / 0x01) must be positive (error 0x51), STOP included. STOP
+// ends the looks and is true. A target in another room is false unless byte
+// 0 bit 0x20 ("ignoring Room"; the room is object data "room", inferred the
+// same as the game's); without bit 0x40 the game also refuses a target
+// outside what the Sim's head can turn to (a test on its skeleton, not
+// done here). The duration: s16 at 6, or temp 0 with bit 0x10 (-1: the
+// game's default, a tunable; here until the next request), in ms
+// (inferred). The look runs on its own: the primitive is true at once. Not
+// done: the slots (byte 14: 0 three quarters of the target's height, 1
+// targeting, 2 routing, 3 containment slot byte 8, past the slots error
+// 0x1B), the event tree (u16 9), the spine (0x04), "no early exit" (0x02).
 Exit lookAt(Context& c) {
     const auto& o = c.instruction.operands;
     Object& me = c.me();
+    if (!me.person)
+        throw gameError(0x42, "Look At");
+    if (me.lookAtTick != c.vm.ticks)
+        me.lookAtTick = c.vm.ticks, me.lookAtRequests = 0;
+    if (++me.lookAtRequests > 25)
+        throw gameError(0x95, "Look At");
     const uint8_t flags = o[0];
+    std::optional<ObjectId> target;
+    if (!(flags & 0x81)) {
+        target = c.get(o[1], int16_t(le16(&o[2])));
+        if (!c.vm.object(*target))
+            throw gameError(err::NoObject, "Look At: object " + std::to_string(*target));
+    }
+    int towards = 0, away = 0;
+    uint8_t flags15 = o[15];
+    if (c.instruction.nodeVersion == 0) {
+        towards = away = (int16_t(le16(&o[4])) / 2) & 0xFF;
+        if (flags & 0x08)
+            flags15 |= 0x02;
+    } else {
+        towards = o[4], away = o[5];
+    }
+    towards = flags & 0x08 ? c.thread.temps[1] : towards * 2;
+    away = flags15 & 0x02 ? c.thread.temps[1] : flags15 & 0x01 ? c.thread.temps[2] : away * 2;
+    if (towards <= 0 || away <= 0)
+        throw gameError(0x51, "Look At: " + std::to_string(towards) + ", " + std::to_string(away) + " degrees a second");
     if (flags & 0x01) {
         me.lookAt.reset();
         return Exit::True;
     }
     if (flags & 0x80)
         return Exit::True;
-    const ObjectId target = c.get(o[1], int16_t(le16(&o[2])));
-    const Object* x = c.vm.object(target);
-    if (!x || (!x->position.inWorld() && !x->data[objdata::ContainerId])) {
+    const Object* x = c.vm.object(*target);
+    if (!x->position.inWorld() && !x->data[objdata::ContainerId]) {
         me.lookAt.reset();
-        return Exit::False;
+        return Exit::False; // ours: nowhere to look
     }
-    const int ms = flags & 0x10 ? int(c.thread.temps[0]) : int(le16(&o[6]));
-    me.lookAt = Object::LookAt{target, c.vm.ticks, ms * 30 / 1000};
+    if (!(flags & 0x20) && x->data[objdata::Room] != me.data[objdata::Room])
+        return Exit::False;
+    const int ms = flags & 0x10 ? int(c.thread.temps[0]) : int(int16_t(le16(&o[6])));
+    me.lookAt = Object::LookAt{*target, c.vm.ticks, ms < 0 ? 0 : ms * 30 / 1000};
     return Exit::True;
 }
 

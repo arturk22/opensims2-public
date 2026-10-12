@@ -754,6 +754,46 @@ static void testManageInventory() {
           "Manage Inventory matches the flags, takes the stack object's GUID for 0 and counts counted tokens");
 }
 
+// Look At as try_look_at (BV 0x6a19f8): a Sim; the target must exist (error
+// 0x17); speeds must be positive (error 0x51, STOP too); another room is
+// false without "ignoring Room"; version 0 speeds are the s16 at 4 / 2.
+static void testLookAt() {
+    Fixture fx;
+    fx.code.add(kObjGroup, 0x80, definition(0x11111111, true));
+    fx.code.add(kObjGroup, 0x81, definition(0x22222222));
+    Object& me = fx.vm.instantiate(kObjGroup, 0x80);  // id 1
+    Object& lamp = fx.vm.instantiate(kObjGroup, 0x81); // id 2
+    me.position = {1.5f, 1.5f, 1}, lamp.position = {3.5f, 1.5f, 1};
+    me.data[objdata::Room] = 1, lamp.data[objdata::Room] = 2;
+    auto look = [](uint8_t flags, uint8_t towards, uint8_t away, Target t, Target f) {
+        Behavior::Instruction in = instr(0x6E, t, f, {flags, Lit, 2, 0, towards, away, 0xE8, 0x03, 0, 0, 0, 0, 0, 0, 0, 0});
+        in.nodeVersion = 1;
+        return in;
+    };
+    auto run = [&](Behavior::Instruction in) {
+        fx.code.add(kObjGroup, 0x1000, tree({in}));
+        Thread t = fx.vm.start(1, 0x1000, {});
+        fx.vm.run(t);
+        return t;
+    };
+    Thread t = run(look(0x00, 45, 45, T, F));
+    check(t.status == Thread::Status::Finished && !t.result && !me.lookAt, "Look At a target in another room is false");
+    t = run(look(0x20, 45, 45, T, F));
+    check(t.status == Thread::Status::Finished && t.result && me.lookAt && me.lookAt->target == 2 && me.lookAt->ticks == 30,
+          "Look At ignoring the room records the look (1000 ms)");
+    t = run(look(0x21, 0, 0, T, F));
+    check(t.status == Thread::Status::Failed && t.error.find("Turn rate must be positive") != std::string::npos,
+          "Look At STOP with no turn speed is error 0x51");
+    t = run(instr(0x6E, T, F, {0x20, Lit, 9, 0, 0, 0, 0, 0}));
+    check(t.status == Thread::Status::Failed && t.error.find("Could not find object reference") != std::string::npos,
+          "Look At a target that does not exist is error 0x17");
+    Behavior::Instruction v0 = instr(0x6E, T, F, {0x20, Lit, 2, 0, 1, 0, 0xE8, 0x03});
+    v0.nodeVersion = 0; // speed 1 / 2 = 0
+    t = run(v0);
+    check(t.status == Thread::Status::Failed && t.error.find("Turn rate") != std::string::npos,
+          "Look At version 0 halves its speed (1 -> 0: error)");
+}
+
 // A GUID no OBJD has goes to the code library's fallback once (loadLot: the
 // neighbourhood's character files, so every neighbor has its definition).
 static void testGuidFallback() {
@@ -1831,6 +1871,7 @@ int main() {
     testChangeMaterial();
     testManageInventory();
     testGuidFallback();
+    testLookAt();
     testSetToNextSearches();
     testNeighbors();
     testGenericSimsCall();
