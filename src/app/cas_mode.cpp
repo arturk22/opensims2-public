@@ -458,6 +458,8 @@ void CasMode::changed() {
     ensureArchetypeShots();
 }
 
+constexpr int kThumbnailSkinTone = 2;
+
 void CasMode::ensureArchetypeShots() {
     if (editing_ < 0 || step_ != 1 || !thumbs_ || !catalog_)
         return;
@@ -465,11 +467,14 @@ void CasMode::ensureArchetypeShots() {
         const std::string fam = cas::family(*a);
         if (thumbs_->image(cas::archetypeThumbnailId(edit_.spec.age, edit_.spec.gender, fam, "")))
             continue;
+        // In the shipped thumbnails' skin (they all show one medium tone,
+        // s2 by eye; inferred), so the made one does not stand out of the grid.
         const std::string key = cas::casFileName(edit_.spec.age, edit_.spec.gender) + "|" + fam + "|" +
-                                std::to_string(edit_.spec.skinTone);
+                                std::to_string(kThumbnailSkinTone);
         if (archetypeShots_.count(key))
             continue;
         Member m = edit_;
+        m.spec.skinTone = kThumbnailSkinTone;
         m.spec.face.archetype = fam;
         m.spec.face.structure.reset();
         m.spec.face.regions.clear();
@@ -1962,7 +1967,8 @@ UiScreen CasMode::screen(int width, int height) {
             }
             const RgbaImage* shot = thumb(cas::archetypeThumbnailId(s.age, s.gender, fam, region));
             if (!shot)
-                if (auto it = archetypeShots_.find(cas::casFileName(s.age, s.gender) + "|" + fam + "|" + std::to_string(s.skinTone));
+                if (auto it = archetypeShots_.find(cas::casFileName(s.age, s.gender) + "|" + fam + "|" +
+                                                   std::to_string(kThumbnailSkinTone));
                     it != archetypeShots_.end())
                     shot = it->second.get();
             items.push_back({label(a->name().substr(0, a->name().find('_'))), sel, shot, [this, fam, maskList]() {

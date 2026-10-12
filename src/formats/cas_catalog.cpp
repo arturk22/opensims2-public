@@ -262,8 +262,15 @@ std::string faceSkinTexture(ResourceIndex& index, const std::string& prefix, int
             const auto bytes = index.read(*loc);
             Rcol rc(bytes);
             if (const auto* b = rc.find("cMaterialDefinition"))
-                if (auto tex = MaterialDefinition::parse(b->body).property("stdMatBaseTextureName"); !tex.empty())
-                    return lower(tex);
+                if (auto tex = MaterialDefinition::parse(b->body).property("stdMatBaseTextureName"); !tex.empty()) {
+                    // The material of another tone is a stray copy: CASFace.package's
+                    // afface_s1_txmt names afface-s3 (Sims02.package's names
+                    // afface-s1), and the index finds it first; the adult woman's
+                    // lightest face came out a tone darker than her body.
+                    const std::string t = lower(tex), want = "-s" + n;
+                    if (t.size() >= want.size() && t.compare(t.size() - want.size(), want.size(), want) == 0)
+                        return t;
+                }
         } catch (const std::exception&) {
         }
     }

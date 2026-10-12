@@ -941,3 +941,14 @@ botão sai vazia sem conteúdo baixado (Body Shop/Downloads); não feito.
 - O arquétipo "alien" de adulto aparece sem miniatura (nome em inglês);
   `flags` 9 nos outros alien/eelf, 0 no de adulto: não conferido se o jogo o
   esconde.
+- **Tom do rosto (rodada 16).** O rosto da mulher adulta de pele s1 saía um
+  tom mais escuro que o corpo: há dois `afface_s1_txmt`, o do
+  `Sims02.package` (textura `afface-s1`) e uma cópia solta no
+  `CASFace.package` que aponta `afface-s3`, e o índice achava a cópia
+  primeiro. `cas::faceSkinTexture` só aceita o material cuja textura termina
+  no tom pedido (`-s<n>`; o `tfface_s1_txmt` aponta `afface-s1` e continua
+  valendo), senão usa `<prefixo>face-s<n>`. Conferidos s1–s4, idosa e homem
+  (os outros prefixos e tons apontam o próprio tom). As miniaturas de cabeça
+  que o jogo não traz (feitas no CAS) usam o tom das miniaturas do jogo
+  (s2, a olho; inferido) para não destoar da grade.
+  `docs/screenshots/r16-cas-face-tone.jpg` (antes e depois).
