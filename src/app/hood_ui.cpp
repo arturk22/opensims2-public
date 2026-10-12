@@ -197,6 +197,15 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
     return Action::None;
 }
 
+bool HoodUi::covers(simd_float2 p) {
+    if (laidW_ != canvasW_ || laidH_ != canvasH_ || dirty_ || bins_->dirty())
+        screen(canvasW_, canvasH_);
+    for (const auto& r : solid_)
+        if (inside(r, p))
+            return true;
+    return bins_->hits(p);
+}
+
 void HoodUi::hover(simd_float2 p) {
     mouse_ = p;
 }

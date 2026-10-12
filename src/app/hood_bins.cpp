@@ -545,6 +545,13 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
     dirty_ = false;
 }
 
+bool HoodBins::hits(simd_float2 p) const {
+    for (const auto& t : targets_)
+        if (insideRect(t.rect, p.x, p.y))
+            return true;
+    return false;
+}
+
 HoodBins::Request HoodBins::press(simd_float2 p) {
     for (const auto& t : targets_) {
         if (!insideRect(t.rect, p.x, p.y))

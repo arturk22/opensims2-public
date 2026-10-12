@@ -175,7 +175,7 @@ const HoodLot* HoodMode::lotAt(const LotCamera& camera, simd_float2 p, float w, 
 void HoodMode::mouseMoved(const LotCamera& camera, simd_float2 p, float w, float h) {
     ui_->setCanvas(int(w), int(h));
     ui_->hover(p);
-    const HoodLot* lot = lotAt(camera, p, w, h);
+    const HoodLot* lot = ui_->covers(p) ? nullptr : lotAt(camera, p, w, h);
     ui_->hoverLot(lot, p);
     view_->highlight(lot);
     updatePlacement(camera, p, w, h);

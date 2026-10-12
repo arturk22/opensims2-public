@@ -100,6 +100,8 @@ public:
     void layout(UiScreen& out, const std::array<float, 4>& puckRect, const UiElement& puck,
                 std::map<const UiElement*, std::array<float, 4>>& puckRects, int width, int height);
     Request press(simd_float2 p);
+    // Whether a click at `p` would land on one of the panels' buttons.
+    bool hits(simd_float2 p) const;
     bool dirty() const { return dirty_; }
     void clean() { dirty_ = false; }
 
