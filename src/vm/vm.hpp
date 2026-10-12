@@ -832,6 +832,12 @@ public:
     // blocking object's routing footprint (the stair rule and the floor as
     // tileFree; TSObjectCanSetPosition's object test for a Sim).
     bool pointFree(float x, float y, int level, std::span<const ObjectId> ignore = {});
+    // cTSPerson::OnCleanup's "out of the world and back in a free place
+    // near" (vtable 0x2d8): out of its slot, then where it stands if that is
+    // free, else the nearest free tile's centre, its room first, up to 10
+    // tiles (routing.cpp; inferred: FUN_00af87c8 was not read). False: no
+    // place, left where it was.
+    bool placeNearFree(Object& o);
     // Objects placed on a tile (in the world and not in a slot), by ID.
     std::vector<ObjectId> objectsOnTile(TilePos t) const;
 

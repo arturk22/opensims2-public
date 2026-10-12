@@ -2947,6 +2947,50 @@ bool tryPlace(VM& vm, Object& o, TilePos t, int direction = -1) {
     return true;
 }
 
+} // namespace
+
+bool VM::placeNearFree(Object& o) {
+    if (!world || !o.position.inWorld())
+        return false;
+    const ObjectId self[1] = {o.id};
+    auto free = [&](float x, float y, int level) {
+        if (!pointFree(x, y, level, self))
+            return false;
+        for (const ObjectId id : people())
+            if (const Object* p = object(id); p && id != o.id && p->position.inWorld() && p->position.level == level &&
+                                              p->data[objdata::ContainerId] == 0 &&
+                                              std::hypot(p->position.x - x, p->position.y - y) < 0.5f)
+                return false;
+        return true;
+    };
+    if (o.data[objdata::ContainerId] != 0)
+        leaveSlot(o);
+    if (free(o.position.x, o.position.y, o.position.level)) {
+        moveTo(*this, o, o.position.x, o.position.y, o.position.level);
+        return true;
+    }
+    const TilePos at = tileOf(o);
+    const int16_t room = world->room(at);
+    for (int pass = 0; pass < 2; ++pass)
+        for (int r = 0; r <= 10; ++r)
+            for (int x = at.x - r; x <= at.x + r; ++x)
+                for (int y = at.y - r; y <= at.y + r; ++y) {
+                    if (std::max(std::abs(x - at.x), std::abs(y - at.y)) != r)
+                        continue;
+                    const TilePos t{x, y, at.level};
+                    if (!world->contains(t) || (pass == 0 && world->room(t) != room))
+                        continue;
+                    const float px = float(x) + 0.5f, py = float(y) + 0.5f;
+                    if (free(px, py, at.level)) {
+                        moveTo(*this, o, px, py, at.level);
+                        return true;
+                    }
+                }
+    return false;
+}
+
+namespace {
+
 // Find Location For (0x10): places an object (it does not walk). As the Mac
 // binary has it (TryFindGoodLocation; docs/primitives-mac.md §4): mode u8 at
 // 0 (STR# 0xEF: 0 normal, 1 out of world, 2 normal in the same room, 3 along

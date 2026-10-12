@@ -961,7 +961,8 @@ void VM::resetAfterError(ObjectId id, Thread& t) {
         o->data.fill(0);
         for (int k : {1, 2, 3, 11, 19, 21, 24, 29, 41, 45, 46, 47, 55, 67, 79, 80, 81})
             o->data[size_t(k)] = old[size_t(k)];
-        o->data[7] = old[7];
+        // GetDefaultNicenessMultiplier (vtable 0x578): OBJD field 45.
+        o->data[7] = int16_t(definitionField(*o, 45));
         o->data[71] = 0;
         for (int k : {57, 72, 73, 74, 75})
             o->data[size_t(k)] = 0xFF;
@@ -976,9 +977,15 @@ void VM::resetAfterError(ObjectId id, Thread& t) {
         }
         if (!o->definition->masterId())
             runFunction(id, 0); // Init
-    } else if (functionTree(*o, 3)) {
-        if (o->person)
+    } else if (o->person) {
+        // cTSPerson::OnCleanup: out of the world and back in a free place
+        // near, person data 34 zeroed, the cleanup tree.
+        placeNearFree(*o);
+        if (o->person->data.size() > 34)
             o->person->data[34] = 0;
+        if (functionTree(*o, 3))
+            runFunction(id, 3);
+    } else if (functionTree(*o, 3)) {
         runFunction(id, 3); // the cleanup tree
     }
 }
