@@ -37,6 +37,7 @@
 // inferred: the bin's items fill its rectangle, two per row.
 
 #include "formats/hood_lots.hpp"
+#include <functional>
 #include "formats/image.hpp"
 #include "formats/ui_screen.hpp"
 #include "formats/ui_script.hpp"
@@ -65,11 +66,11 @@ public:
     HoodBins(UiResources& res, FontLibrary& fonts);
     ~HoodBins();
 
-    enum class Panel { None, Families, Lots, Options };
-    enum class Tool { None, MoveIn, Evict, Bulldoze, PlaceEmpty, PlaceBin, MoveLot, ToBin };
+    enum class Panel { None, Families, Lots, Options, Decorations };
+    enum class Tool { None, MoveIn, Evict, Bulldoze, PlaceEmpty, PlaceBin, MoveLot, ToBin, Decorate, DecorHand, DecorPick };
     // What a click asked for: the neighborhood mode carries it out.
     struct Request {
-        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot, DeleteBinLot, MainMenu, Quit, OptionWindow } kind = Kind::None;
+        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot, DeleteBinLot, MainMenu, Quit, OptionWindow, DecorUndo, DecorRedo } kind = Kind::None;
         uint32_t family = 0, lot = 0; // DeleteBinLot: lot = the bin index; OptionWindow: lot = 1 audio, 2 game, 3 graphics, 4 camera, 5 credits
     };
     // The Lots & Houses bin's lots (formats/hood_lots.hpp) and the tools'
@@ -82,6 +83,23 @@ public:
     void pickBinLot(size_t index); // the place-from-bin tool
     void setLotsPanel(int which) { lotsPanel_ = which, dirty_ = true; } // 0 bin, 1 empty lots
 
+    // The Decorations panel (F3, ui.package 0x4D517180): the catalog's
+    // products by sort (the five buttons A100 flora, A200 stone, A300
+    // landmark, A400 effects, A500 misc), the Hand tool (A5: pick a placed
+    // decoration up), the Eyedropper (A4: take a placed decoration's product)
+    // and Undo / Redo (A1, A2), over the same bin as the families' (collapsed
+    // 0x1000, expanded 0x2000). Choosing a product is Tool::Decorate: the
+    // neighborhood mode puts it where the mouse clicks.
+    void setDecorCatalog(std::vector<hood::DecorProduct> products) { decorCatalog_ = std::move(products), dirty_ = true; }
+    const std::vector<hood::DecorProduct>& decorCatalog() const { return decorCatalog_; }
+    uint32_t decorGuid() const { return decorGuid_; }
+    void pickDecoration(uint32_t guid); // Tool::Decorate with this product (0: none)
+    const std::string& decorSort() const { return decorSort_; }
+    void setDecorSort(const std::string& sort) { decorSort_ = sort, decorPage_ = 0, dirty_ = true; }
+    // The products the bin shows now (sort, page and size).
+    std::vector<uint32_t> visibleDecorations() const;
+    // A product's picture (null: none yet): set by the app, which renders them.
+    std::function<const RgbaImage*(uint32_t guid)> decorThumb;
     // Where the Options panel was laid out last (its bottom left, canvas pixels).
     simd_float2 optionsBottomLeft() const { return optionsBL_; }
     Panel panel() const { return panel_; }
@@ -141,7 +159,12 @@ private:
 
     UiResources* res_;
     FontLibrary* fonts_;
-    UiScript families_, lots_, item_, dialogScript_, hover_, options_;
+    UiScript families_, lots_, item_, dialogScript_, hover_, options_, decor_;
+    std::vector<hood::DecorProduct> decorCatalog_;
+    std::string decorSort_ = "flora";
+    uint32_t decorGuid_ = 0;
+    size_t decorPage_ = 0;
+    bool decorExpanded_ = false;
     bool ok_ = false;
     const hood::Neighborhood* hood_ = nullptr;
     std::map<uint32_t, std::unique_ptr<RgbaImage>> snapshots_;
@@ -170,7 +193,7 @@ private:
     enum class Hit { Request, Family, Expand, Prev, Next, Create, Evict, Bulldoze, Accept, Cancel, Solid, LotsPanel,
                      EmptySize, BinItem, BinExpand, BinPrev, BinNext, MoveLotTool, ToBinTool,
                      PlaceResidential, PlaceCommunity, PlaceAccept, PlaceCancel, BinFilter, BinDelete,
-                     OptMainMenu, OptQuit, OptWindow };
+                     OptMainMenu, OptQuit, OptWindow, DecorItem, DecorSort, DecorTool, DecorUndo, DecorRedo, DecorPrev, DecorNext, DecorExpand };
     const RgbaImage* binPicture(size_t index);
     std::vector<hood::BinLot> binLots_;
     std::map<size_t, std::unique_ptr<RgbaImage>> binPictures_;

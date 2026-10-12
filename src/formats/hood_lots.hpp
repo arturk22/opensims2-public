@@ -202,4 +202,39 @@ LotResult moveLotToBin(const std::filesystem::path& folder, uint32_t lot, const 
 std::optional<std::pair<int, Placement>> findFront(const PlacementWorld& world, const LotInfo& base, int x, int y,
                                                     uint32_t self = 0, int preferred = -1);
 
+// Decorations: the neighborhood's own flora, stones, landmarks and effects
+// the puck's "Decorações - F3" panel lists (docs/neighborhood-mac.md 14).
+// Each is a product of the object catalog (catcanhobjects, type 0x6D619378);
+// the panel's five sort buttons are the product's `sort` (flora, landmark,
+// effects, stone, misc). Placing one adds an occupant record to the
+// neighborhood: INFERRED that the "flora" sort goes in the flora list and the
+// rest in the props (what the three base neighborhoods hold: windmills and
+// farm fields also stand in the flora lists, the placed ones may differ).
+struct DecorProduct {
+    uint32_t guid = 0;
+    std::string name, model, sort;      // `model` is the CRES name without "_cres"
+    bool inLot = false, onRoad = false; // allowedinlot, allowedonroad
+    int surface = 0;                    // placementsurface: 0 land, 1 water, 2 either (inferred)
+    uint32_t thumbGroup = 0, thumbInstance = 0; // a UI image (effects only)
+    bool flora() const { return sort == "flora"; }
+};
+// The products shown in the catalog (showincatalog 1, not deprecated), by sort then GUID.
+std::vector<DecorProduct> loadDecorCatalog(ResourceIndex& index);
+// "" when `product` may stand with this footprint, else why not (the terrain's
+// edge, the water or land it needs, a lot or road under it when it may not
+// stand on those).
+std::string decorationBlocked(const PlacementWorld& world, const DecorProduct& product, const OccupantPosition& at);
+struct DecorResult {
+    bool ok = false;
+    std::string error;
+    std::vector<std::string> lines;
+};
+// Adds / removes one occupant in the neighborhood package of `folder` (the
+// user's copy; `forbidden` is the game's data). `index` is into the flora
+// (flora = true) or props.
+DecorResult addDecoration(const std::filesystem::path& folder, const PlacementWorld& world, const DecorProduct& product,
+                          const OccupantPosition& at, float rotation, const std::filesystem::path& forbidden);
+DecorResult removeDecoration(const std::filesystem::path& folder, const PlacementWorld& world, bool flora, size_t index,
+                             const std::filesystem::path& forbidden);
+
 } // namespace os2::hood

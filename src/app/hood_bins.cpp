@@ -17,7 +17,8 @@ namespace os2 {
 namespace {
 
 constexpr uint32_t kFamiliesScript = 0x49001004, kLotsScript = 0x49001003, kItemScript = 0x49001006,
-                   kDialogScript = 0x49001035, kCardScript = 0x49001011, kPlaceLotScript = 0x49001002, kOptionsScript = 0x49001028;
+                   kDialogScript = 0x49001035, kCardScript = 0x49001011, kPlaceLotScript = 0x49001002, kOptionsScript = 0x49001028,
+                   kDecorScript = 0x4D517180;
 constexpr uint32_t kTextGroup = 0x7f3a262a; // Text/Neighborhood.package
 constexpr uint32_t kPuckAnchor = 0xAABBCCDD, kPanelAnchor = 0xAAAA;
 constexpr uint32_t kBin = 0x0B, kCreateFamily = 0x0A, kMoveFamily = 0x6D13DDA1;
@@ -63,6 +64,7 @@ HoodBins::HoodBins(UiResources& res, FontLibrary& fonts) : res_(&res), fonts_(&f
     load(kCardScript, hover_);
     load(kPlaceLotScript, placeScript_);
     load(kOptionsScript, options_);
+    load(kDecorScript, decor_);
     ok_ = a && b && c && d;
 }
 
@@ -91,6 +93,34 @@ void HoodBins::togglePanel(Panel p) {
     dirty_ = true;
 }
 
+void HoodBins::pickDecoration(uint32_t guid) {
+    decorGuid_ = guid;
+    tool_ = guid ? Tool::Decorate : Tool::None;
+    selected_ = 0;
+    dirty_ = true;
+}
+
+namespace {
+// The sort buttons of the Decorations panel.
+constexpr std::array<std::pair<uint32_t, const char*>, 5> kDecorSorts = {{{0xA100, "flora"}, {0xA200, "stone"},
+                                                                          {0xA300, "landmark"}, {0xA400, "effects"},
+                                                                          {0xA500, "misc"}}};
+} // namespace
+
+std::vector<uint32_t> HoodBins::visibleDecorations() const {
+    std::vector<uint32_t> all;
+    for (const auto& p : decorCatalog_)
+        if (p.sort == decorSort_)
+            all.push_back(p.guid);
+    const size_t per = decorExpanded_ ? 4 : 2;
+    const size_t pages = std::max<size_t>(1, (all.size() + per - 1) / per);
+    const size_t page = std::min(decorPage_, pages - 1);
+    std::vector<uint32_t> out;
+    for (size_t k = 0; k < per && page * per + k < all.size(); ++k)
+        out.push_back(all[page * per + k]);
+    return out;
+}
+
 void HoodBins::selectFamily(uint32_t family) {
     selected_ = family;
     tool_ = family ? Tool::MoveIn : Tool::None;
@@ -98,6 +128,7 @@ void HoodBins::selectFamily(uint32_t family) {
 }
 
 void HoodBins::cancelTool() {
+    decorGuid_ = 0;
     tool_ = Tool::None;
     selected_ = 0;
     emptySize_ = binLot_ = -1;
@@ -451,6 +482,82 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
                 layoutUiElement(b, bx, by, *res_, *fonts_, out, bh);
             }
         }
+    } else if (panel_ == Panel::Decorations && !decor_.roots.empty()) {
+        const UiElement& root = decor_.roots.front();
+        const simd_float2 o = anchoredOrigin(root, puckRect, puck);
+        const auto ra = root.area();
+        UiDrawHooks hk;
+        hk.rects = &rects;
+        const UiElement* bin = root.child(0x2D51756D);
+        const UiElement* collapsed = bin ? bin->child(0x1000) : nullptr;
+        const UiElement* expanded = bin ? bin->child(0x2000) : nullptr;
+        if (collapsed && expanded)
+            (decorExpanded_ ? hk.show : hk.hide).insert(expanded), (decorExpanded_ ? hk.hide : hk.show).insert(collapsed);
+        hk.hide.insert(root.child(0xB5)); // the end cap (hidden in the script)
+        for (const auto& [id, sort] : kDecorSorts)
+            if (const UiElement* e = root.child(0xA000) ? root.child(0xA000)->child(id) : nullptr)
+                hk.buttonState[e] = decorSort_ == sort ? 2 : 1;
+        if (const UiElement* e = root.child(0xA5))
+            hk.buttonState[e] = tool_ == Tool::DecorHand ? 2 : 1;
+        if (const UiElement* e = root.child(0xA4))
+            hk.buttonState[e] = tool_ == Tool::DecorPick ? 2 : 1;
+        layoutUiElement(root, o.x - float(ra[0]), o.y - float(ra[1]), *res_, *fonts_, out, hk);
+        for (const auto& [e, r] : rects)
+            if (e->get("clsid") != "GZWinFlatRect")
+                solids.push_back({r, Hit::Solid});
+        for (size_t i = 0; i < kDecorSorts.size(); ++i)
+            target(root.child(0xA000) ? root.child(0xA000)->child(kDecorSorts[i].first) : nullptr, Hit::DecorSort,
+                   uint32_t(i));
+        target(root.child(0xA5), Hit::DecorTool, 1);
+        target(root.child(0xA4), Hit::DecorTool, 2);
+        target(root.child(0xA1), Hit::DecorUndo);
+        target(root.child(0xA2), Hit::DecorRedo);
+        const UiElement* view = decorExpanded_ ? expanded : collapsed;
+        const uint32_t base = decorExpanded_ ? 0x2000 : 0x1000;
+        if (view) {
+            target(view->child(base + 4), Hit::DecorPrev);
+            target(view->child(base + 5), Hit::DecorNext);
+            target(view->child(base + 9), Hit::DecorExpand);
+        }
+        const UiElement* slot = view ? view->child(base + 6) : nullptr;
+        if (auto vr = rectOf(view); vr && slot) {
+            const auto sa = slot->area();
+            const float x0 = (*vr)[0] + float(sa[0]), y0 = (*vr)[1] + float(sa[1]);
+            const float w = float(sa[2] - sa[0]), h = float(sa[3] - sa[1]);
+            const int cols = 2, rows = decorExpanded_ ? 2 : 1;
+            const float s = std::floor(std::min(w / float(cols), h / float(rows)));
+            const auto shown = visibleDecorations();
+            const UiElement& item = item_.roots.front();
+            for (size_t k = 0; k < shown.size(); ++k) {
+                const uint32_t guid = shown[k];
+                const float ix = x0 + float(k % size_t(cols)) * (w / float(cols)) + (w / float(cols) - s) / 2;
+                const float iy = y0 + float(k / size_t(cols)) * (h / float(rows)) + (h / float(rows) - s) / 2;
+                UiElement it = item;
+                const float k94 = s / 94.0f;
+                auto scale = [&](UiElement& e) {
+                    const auto a = e.area();
+                    e.set("area", area(int(std::lround(a[0] * k94)), int(std::lround(a[1] * k94)),
+                                       int(std::lround(a[2] * k94)), int(std::lround(a[3] * k94))));
+                };
+                scale(it);
+                it.set("area", area(0, 0, int(s), int(s)));
+                for (auto& c : it.children)
+                    scale(c);
+                UiDrawHooks ih;
+                std::map<const UiElement*, std::array<float, 4>> irects;
+                ih.rects = &irects;
+                if (UiElement* bg = it.child(1))
+                    if (decorThumb)
+                        if (const RgbaImage* img = decorThumb(guid))
+                            ih.images[bg] = img;
+                if (UiElement* alpha = it.child(2))
+                    ih.hide.insert(alpha);
+                if (UiElement* btn = it.child(3))
+                    ih.buttonState[btn] = guid == decorGuid_ ? 2 : 1;
+                layoutUiElement(it, ix, iy, *res_, *fonts_, out, ih);
+                targets_.push_back({{ix, iy, ix + s, iy + s}, Hit::DecorItem, guid});
+            }
+        }
     } else if (panel_ == Panel::Options && !options_.roots.empty()) {
         // The neighborhood's options panel, hung from the puck like the others.
         const UiElement& root = options_.roots.front();
@@ -797,6 +904,30 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
         case Hit::OptMainMenu: panel_ = Panel::None; return {Request::Kind::MainMenu};
         case Hit::OptQuit: panel_ = Panel::None; return {Request::Kind::Quit};
         case Hit::OptWindow: return {Request::Kind::OptionWindow, 0, t.value};
+        case Hit::DecorItem: pickDecoration(t.value == decorGuid_ ? 0 : t.value); return {Request::Kind::Consumed};
+        case Hit::DecorSort: setDecorSort(kDecorSorts[std::min<size_t>(t.value, 4)].second); return {Request::Kind::Consumed};
+        case Hit::DecorTool: {
+            const Tool want = t.value == 1 ? Tool::DecorHand : Tool::DecorPick;
+            const bool on = tool_ == want;
+            cancelTool();
+            tool_ = on ? Tool::None : want;
+            return {Request::Kind::Consumed};
+        }
+        case Hit::DecorUndo: return {Request::Kind::DecorUndo};
+        case Hit::DecorRedo: return {Request::Kind::DecorRedo};
+        case Hit::DecorPrev:
+            if (decorPage_ > 0)
+                --decorPage_;
+            return {Request::Kind::Consumed};
+        case Hit::DecorNext: {
+            size_t n = 0;
+            for (const auto& p : decorCatalog_)
+                n += p.sort == decorSort_;
+            const size_t per = decorExpanded_ ? 4 : 2;
+            decorPage_ = std::min(decorPage_ + 1, std::max<size_t>(1, (n + per - 1) / per) - 1);
+            return {Request::Kind::Consumed};
+        }
+        case Hit::DecorExpand: decorExpanded_ = !decorExpanded_, decorPage_ = 0; return {Request::Kind::Consumed};
         case Hit::PlaceCancel: placeLot_.reset(); return {Request::Kind::Consumed};
         case Hit::Solid:
         case Hit::Request: return {Request::Kind::Consumed};

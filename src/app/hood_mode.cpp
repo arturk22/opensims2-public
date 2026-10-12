@@ -22,6 +22,7 @@ HoodMode::HoodMode(Renderer& renderer, ResourceIndex& index, const fs::path& gam
     const fs::path res = gameDir / "TSData/Res";
     view_ = std::make_unique<HoodView>(renderer, index, res, gameDir / "TSData/Sys", query);
     ui_ = std::make_unique<HoodUi>(*view_, index, res);
+    ui_->bins().setDecorCatalog(hood::loadDecorCatalog(index));
     loading::phase("hood: ui");
     // The player's Lots & Houses bin (filled from the game's the first time).
     ui_->bins().setLotBin(
@@ -117,14 +118,150 @@ void HoodMode::typeKey(int keyCode, const std::string& typed) {
         carryOut(r);
 }
 
+bool HoodMode::decorating() const { return ui_->bins().tool() == HoodBins::Tool::Decorate; }
+
+const hood::DecorProduct* HoodMode::decorProduct(uint32_t guid) const {
+    for (const auto& p : ui_->bins().decorCatalog())
+        if (p.guid == guid)
+            return &p;
+    return nullptr;
+}
+
+// The tile centre under the mouse: the ghost of the product there, and whether it may stand.
+void HoodMode::updateDecoration(const LotCamera& camera, simd_float2 p, float w, float h) {
+    decorSpot_.reset();
+    const hood::DecorProduct* product = ui_->bins().tool() == HoodBins::Tool::Decorate ? decorProduct(ui_->bins().decorGuid()) : nullptr;
+    if (product)
+        if (auto tile = tileAt(camera, p, w, h))
+            decorSpot_ = simd_make_float2(float(tile->x) * hood::kHoodCellSize + 5, float(tile->y) * hood::kHoodCellSize + 5);
+    if (product && decorSpot_) {
+        const auto at = view_->decorationFootprint(*product, decorSpot_->x, decorSpot_->y, decorRotation_);
+        view_->showDecorationGhost(product, decorSpot_->x, decorSpot_->y, decorRotation_,
+                                   hood::decorationBlocked(view_->placementWorld(), *product, at).empty());
+    } else {
+        view_->showDecorationGhost(nullptr, 0, 0, 0, false);
+    }
+}
+
+bool HoodMode::placeDecoration(const hood::DecorProduct& product, float x, float y, float rotation, bool record) {
+    const auto at = view_->decorationFootprint(product, x, y, rotation);
+    const auto r = hood::addDecoration(view_->folder(), view_->placementWorld(), product, at, rotation, gameDir_);
+    for (const auto& l : r.lines)
+        std::printf("opensims2: %s\n", l.c_str());
+    if (!r.ok) {
+        std::printf("opensims2: decoration not placed: %s\n", r.error.c_str());
+        std::fflush(stdout);
+        return false;
+    }
+    std::fflush(stdout);
+    view_->addDecoration(product, at, rotation);
+    if (record) {
+        decorUndo_.push_back({true, product, at, rotation});
+        decorRedo_.clear();
+    }
+    return true;
+}
+
+// A click with a decoration tool, on the ground at the mouse.
+bool HoodMode::decorClick(const LotCamera& camera, simd_float2 p, float w, float h) {
+    const HoodBins::Tool t = ui_->bins().tool();
+    if (t != HoodBins::Tool::Decorate && t != HoodBins::Tool::DecorHand && t != HoodBins::Tool::DecorPick)
+        return false;
+    if (w <= 0 || h <= 0)
+        return true;
+    if (t == HoodBins::Tool::Decorate) {
+        updateDecoration(camera, p, w, h);
+        if (const hood::DecorProduct* product = decorProduct(ui_->bins().decorGuid()); product && decorSpot_)
+            placeDecoration(*product, decorSpot_->x, decorSpot_->y, decorRotation_);
+        return true;
+    }
+    const simd_float4x4 m = simd_mul(camera.projection(w / h), camera.view());
+    const simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
+    const simd_float3 eye = camera.eye();
+    const auto g = view_->groundAt(eye, simd_normalize(q.xyz / q.w - eye));
+    if (!g)
+        return true;
+    const auto hit = view_->decorationAt(g->x, g->y);
+    if (!hit)
+        return true;
+    const hood::Occupants& o = view_->occupants();
+    const uint32_t guid = hit->first ? o.flora[hit->second].guid : o.props[hit->second].guid;
+    const float rot = hit->first ? o.flora[hit->second].rotation : o.props[hit->second].rotation;
+    const hood::DecorProduct* product = decorProduct(guid);
+    if (!product)
+        return true;
+    if (t == HoodBins::Tool::DecorPick) { // the Eyedropper: that product becomes the tool
+        ui_->bins().setDecorSort(product->sort);
+        ui_->bins().pickDecoration(guid);
+        decorRotation_ = rot;
+        ui_->prefetchDecorations();
+        return true;
+    }
+    // The Hand: picks it up (it leaves the neighborhood) to put it down elsewhere.
+    const hood::OccupantPosition at = hit->first ? o.flora[hit->second].at : o.props[hit->second].at;
+    const auto r = hood::removeDecoration(view_->folder(), view_->placementWorld(), hit->first, hit->second, gameDir_);
+    for (const auto& l : r.lines)
+        std::printf("opensims2: %s\n", l.c_str());
+    if (!r.ok)
+        return true;
+    decorUndo_.push_back({false, *product, at, rot});
+    decorRedo_.clear();
+    decorRotation_ = rot;
+    view_->removeDecoration(hit->first, hit->second);
+    ui_->bins().setDecorSort(product->sort);
+    ui_->bins().pickDecoration(guid); // held: put down with the next click
+    ui_->prefetchDecorations();
+    return true;
+}
+
+void HoodMode::undoDecoration(bool redo) {
+    auto& from = redo ? decorRedo_ : decorUndo_;
+    auto& to = redo ? decorUndo_ : decorRedo_;
+    if (from.empty())
+        return;
+    const DecorOp op = from.back();
+    from.pop_back();
+    // Undoing an add (or redoing a removal) takes the last record of its list away; the other puts it back.
+    const bool remove = redo ? !op.added : op.added;
+    bool ok = false;
+    if (remove) {
+        const hood::Occupants& o = view_->occupants();
+        // The record is the one at the same place (the add put it last; a removal's may be anywhere).
+        const bool flora = op.product.flora();
+        const size_t n = flora ? o.flora.size() : o.props.size();
+        for (size_t i = n; i-- > 0 && !ok;) {
+            const auto& at = flora ? o.flora[i].at : o.props[i].at;
+            const uint32_t guid = flora ? o.flora[i].guid : o.props[i].guid;
+            if (guid == op.product.guid && at.position == op.at.position)
+                if ((ok = hood::removeDecoration(view_->folder(), view_->placementWorld(), flora, i, gameDir_).ok))
+                    view_->removeDecoration(flora, i);
+        }
+    } else {
+        ok = hood::addDecoration(view_->folder(), view_->placementWorld(), op.product, op.at, op.rotation, gameDir_).ok;
+        if (ok)
+            view_->addDecoration(op.product, op.at, op.rotation);
+    }
+    std::printf("opensims2: decoration %s %s\n", redo ? "redo" : "undo", ok ? "done" : "failed");
+    std::fflush(stdout);
+    if (!ok)
+        return;
+    to.push_back(op);
+}
+
 bool HoodMode::placingLot() const {
     const HoodBins::Tool t = ui_->bins().tool();
-    return t == HoodBins::Tool::PlaceEmpty || t == HoodBins::Tool::PlaceBin || (t == HoodBins::Tool::MoveLot && movingLot_);
+    return t == HoodBins::Tool::Decorate || t == HoodBins::Tool::PlaceEmpty || t == HoodBins::Tool::PlaceBin || (t == HoodBins::Tool::MoveLot && movingLot_);
 }
 
 void HoodMode::turnLot(int direction) {
     if (!placingLot())
         return;
+    if (ui_->bins().tool() == HoodBins::Tool::Decorate) { // quarter turns of the decoration
+        decorRotation_ = std::fmod(decorRotation_ + (direction > 0 ? 90.0f : 270.0f), 360.0f);
+        std::printf("opensims2: decoration turned to %.0f\n", decorRotation_);
+        std::fflush(stdout);
+        return;
+    }
     const int from = turn_ >= 0 ? turn_ : pending_.any ? pending_.turn : 0;
     turn_ = (from + (direction > 0 ? 1 : 3)) & 3;
     std::printf("opensims2: lot turned to %d\n", turn_);
@@ -139,6 +276,7 @@ void HoodMode::updatePlacement(const LotCamera& camera, simd_float2 p, float w, 
     const bool placing = t == HoodBins::Tool::PlaceEmpty || t == HoodBins::Tool::PlaceBin ||
                          (t == HoodBins::Tool::MoveLot && movingLot_);
     pending_ = {};
+    updateDecoration(camera, p, w, h);
     if (placing)
         if (auto tile = tileAt(camera, p, w, h)) {
             // The lot's middle under the mouse.
@@ -256,6 +394,8 @@ void HoodMode::mouseDown(LotCamera& camera, simd_float2 p, float w, float h) {
     if (ui_->dialogLot())
         return; // modal: clicks outside the dialog do nothing
     const HoodBins::Tool t = ui_->bins().tool();
+    if (decorClick(camera, p, w, h))
+        return;
     if (t == HoodBins::Tool::PlaceEmpty || t == HoodBins::Tool::PlaceBin || (t == HoodBins::Tool::MoveLot && movingLot_)) {
         updatePlacement(camera, p, w, h);
         place(pending_);
@@ -292,6 +432,10 @@ void HoodMode::carryOut(const HoodBins::Request& r) {
         std::fflush(stdout);
         if (onCreateFamily)
             onCreateFamily(folder);
+        return;
+    }
+    if (r.kind == K::DecorUndo || r.kind == K::DecorRedo) {
+        undoDecoration(r.kind == K::DecorRedo);
         return;
     }
     if (r.kind == K::MainMenu) {
@@ -416,6 +560,11 @@ void HoodMode::showFriends(const HoodLot& from) {
 
 void HoodMode::escape() {
     view_->showFriends({});
+    view_->showDecorationGhost(nullptr, 0, 0, 0, false);
+    if (ui_->storyOpen()) {
+        ui_->showStory(false);
+        return;
+    }
     movingLot_ = 0;
     turn_ = -1;
     view_->showPlacement(nullptr, false, 0);
@@ -455,6 +604,7 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
     if (auto p = value("--hood-panel"))
         ui_->bins().togglePanel(*p == "lots"      ? HoodBins::Panel::Lots
                                 : *p == "options" ? HoodBins::Panel::Options
+                                : *p == "decorations" ? HoodBins::Panel::Decorations
                                                   : HoodBins::Panel::Families);
     // --hood-options-window 1-5: the Options panel opens (it is the panel shown) and that window.
     if (auto wnd = value("--hood-options-window")) {
@@ -465,6 +615,27 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
         ui_->options().toggleWindow(std::stoi(*wnd));
         ui_->refreshLayout();
     }
+    // --hood-panel decorations, --hood-decor-sort <sort>, --hood-decor-place guid,tx,ty[,rotation]
+    // (a placement at that tile's centre, as a click would), --hood-decor-pick guid (the tool).
+    if (auto sort = value("--hood-decor-sort"))
+        ui_->bins().setDecorSort(*sort);
+    if (auto g = value("--hood-decor-pick"))
+        ui_->bins().pickDecoration(uint32_t(std::stoul(*g)));
+    if (auto spec = value("--hood-decor-place")) {
+        std::vector<float> v;
+        for (size_t at = 0; at < spec->size();) {
+            const size_t comma = std::min(spec->find(',', at), spec->size());
+            v.push_back(std::stof(spec->substr(at, comma - at)));
+            at = comma + 1;
+        }
+        if (v.size() >= 3)
+            if (const hood::DecorProduct* product = decorProduct(uint32_t(v[0])))
+                placeDecoration(*product, v[1] * hood::kHoodCellSize + 5, v[2] * hood::kHoodCellSize + 5, v.size() > 3 ? v[3] : 0);
+    }
+    if (value("--hood-story"))
+        ui_->showStory(true);
+    if (ui_->bins().panel() == HoodBins::Panel::Decorations)
+        ui_->prefetchDecorations();
     if (auto f = value("--hood-family"))
         ui_->bins().selectFamily(uint32_t(std::stoul(*f)));
     if (auto t = value("--hood-tool"))
@@ -584,7 +755,7 @@ bool has(const std::vector<std::string>& args, const char* flag) {
 std::vector<std::string> hoodLotArguments(const std::vector<std::string>& args, const std::string& hood, uint32_t lot) {
     auto out = without(args, {"--hood", "--hood-lot", "--hood-hover", "--hood-select", "--screenshot", "--pivot",
                               "--zoom", "--orientation", "--lot", "--hood-panel", "--hood-family", "--hood-tool",
-                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone", "--hood-info", "--hood-options-window", "--hood-package", "--hood-friends"});
+                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone", "--hood-info", "--hood-options-window", "--hood-package", "--hood-friends", "--hood-story", "--hood-decor-sort", "--hood-decor-pick", "--hood-decor-place"});
     out.insert(out.end(), {"--hood", hood, "--hood-lot", std::to_string(lot)});
     if (!has(out, "--vm"))
         out.push_back("--vm");

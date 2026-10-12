@@ -2668,7 +2668,7 @@ enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
     kEscape = 53, kSpace = 49, kHome = 115, kEnd = 119, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
-    kF1 = 122, kF2 = 120, kF5 = 96, kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
+    kF1 = 122, kF2 = 120, kF3 = 99, kF4 = 118, kF5 = 96, kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
 };
 
 // Camera position slot of the keys 4-9 (-1: another key).
@@ -3160,10 +3160,21 @@ void unloadScene() {
         if (e.keyCode == kBackspace || e.keyCode == kForwardDelete) { gBuy->deleteHeld(); return; }
     }
     // The neighborhood puck's accelerators: F1 families, F2 lots, F5 options.
-    if (gHood && (e.keyCode == kF1 || e.keyCode == kF2 || e.keyCode == kF5)) {
+    if (gHood && (e.keyCode == kF1 || e.keyCode == kF2 || e.keyCode == kF3 || e.keyCode == kF5)) {
         gHood->ui().togglePanel(e.keyCode == kF1   ? os2::HoodBins::Panel::Families
                                 : e.keyCode == kF2 ? os2::HoodBins::Panel::Lots
+                                : e.keyCode == kF3 ? os2::HoodBins::Panel::Decorations
                                                    : os2::HoodBins::Panel::Options);
+        return;
+    }
+    if (gHood && e.keyCode == kF4) { // "História da Vizinhança - F4"
+        gHood->ui().toggleStory();
+        return;
+    }
+    // Ctrl-Z / Ctrl-Y (or Command): the Decorations panel's Undo and Redo.
+    if (gHood && gHood->ui().bins().panel() == os2::HoodBins::Panel::Decorations && (e.keyCode == kZ || e.keyCode == kY) &&
+        (e.modifierFlags & (NSEventModifierFlagControl | NSEventModifierFlagCommand))) {
+        gHood->undoDecoration(e.keyCode == kY);
         return;
     }
     // The neighborhood's lot tools: , and . turn the lot being placed.
@@ -4605,6 +4616,13 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
     // Head shots for the characters whose files have none (app/head_shot.hpp).
     gHood->ui().renderHead = [rp = &renderer](const fs::path& file) {
         return os2::renderHeadShot(*rp, *gIndex, simParts(*gIndex), file, 128);
+    };
+    // The Decorations catalog's pictures: effects have UI images, the rest are rendered.
+    gHood->ui().renderDecorThumb = [rp = &renderer](const os2::hood::DecorProduct& p) -> std::optional<os2::RgbaImage> {
+        const int model = gHood->view().decorationModel(p);
+        if (model < 0)
+            return std::nullopt;
+        return os2::renderModelThumbnail(*rp, model, gHood->view().decorationBounds(p), 94);
     };
     gHood->ui().setForceRenderHeads(argument(@"--hood-render-heads").has_value());
     // The Options panel's option windows (audio, game, graphics, camera, credits).

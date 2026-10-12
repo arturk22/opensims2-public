@@ -25,7 +25,9 @@
 
 #include <simd/simd.h>
 
+#include <array>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -96,6 +98,24 @@ public:
     // each lot highlighted in its colour; empty hides them all.
     void showFriends(const std::vector<std::pair<const HoodLot*, int>>& lots);
     void showPlacement(const hood::TileRect* rect, bool ok, float height);
+
+    // Decorations (F3, formats/hood_lots.hpp DecorProduct). The footprint of
+    // a product at (x, y) turned `rotation` degrees (the model's box turned),
+    // on the terrain; the product's model name is its `model` + "_cres".
+    hood::OccupantPosition decorationFootprint(const hood::DecorProduct& product, float x, float y, float rotation);
+    // The decoration standing in the view and in the checks (occupants_), after
+    // addDecoration wrote it; returns its renderer instance.
+    int addDecoration(const hood::DecorProduct& product, const hood::OccupantPosition& at, float rotation);
+    // The view's side of removeDecoration (formats/hood_lots.hpp): the instance and the record go.
+    void removeDecoration(bool flora, size_t index);
+    // The ghost under the mouse while placing (null hides it); green when it may stand, red when not.
+    void showDecorationGhost(const hood::DecorProduct* product, float x, float y, float rotation, bool ok);
+    // The renderer model of a product (-1: none) and its local bounds (min xyz, max xyz), for its thumbnail.
+    int decorationModel(const hood::DecorProduct& product);
+    std::array<float, 6> decorationBounds(const hood::DecorProduct& product);
+    // The occupant nearest to (x, y) within its footprint: {flora?, index}, for the hand and eyedropper.
+    std::optional<std::pair<bool, size_t>> decorationAt(float x, float y) const;
+    const hood::Occupants& occupants() const { return occupants_; }
     std::optional<simd_float2> groundAt(simd_float3 origin, simd_float3 dir) const;
     const hood::Terrain& rawTerrain() const { return rawTerrain_; }
 
@@ -120,6 +140,12 @@ private:
     std::vector<std::unique_ptr<ResourceIndex>> lotIndexes_; // imposter textures load through them
     std::vector<std::string> report_;
     Renderer* renderer_ = nullptr;
+    int modelId(const std::string& cres);
+    ResourceIndex* index_ = nullptr;
+    std::map<std::string, int> modelIds_;
+    std::map<std::string, std::array<float, 6>> modelBox_; // local bounds (min xyz, max xyz) by CRES
+    int ghost_ = -1, ghostModel_ = -1;
+    std::vector<int> floraInst_, propInst_; // each occupant's instance (-1: none)
     int friendModels_[2] = {-1, -1};
     std::vector<int> friendBoxes_;
     int highlight_ = -1; // renderer instance

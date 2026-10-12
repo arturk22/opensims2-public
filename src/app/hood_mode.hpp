@@ -96,6 +96,10 @@ public:
     // rotation or front edge one quarter on (+1) or back (-1). Until a key
     // is pressed the tool takes the first turn that fits (a convenience).
     void turnLot(int direction);
+    // The decorations tools' state for scripted runs: --hood-decor-place guid,tx,ty[,rotation].
+    bool decorating() const;
+    // Ctrl-Z / Ctrl-Y in the Decorations panel (its Undo and Redo buttons).
+    void undoDecoration(bool redo);
     // A key for the place-lot dialog (HoodBins::typeKey); Return places the lot.
     void typeKey(int keyCode, const std::string& typed);
     bool placingLot() const;
@@ -113,6 +117,22 @@ private:
     void carryOut(const HoodBins::Request& r);
     void lotClicked(const HoodLot& lot);
     void showFriends(const HoodLot& from);
+    // Decorations (F3, docs/neighborhood-mac.md 14): the product's tile centre under the
+    // mouse, and what a click does with the Decorate, Hand and Eyedropper tools.
+    struct DecorOp {
+        bool added = true; // false: a removal
+        hood::DecorProduct product;
+        hood::OccupantPosition at;
+        float rotation = 0;
+    };
+    std::vector<DecorOp> decorUndo_, decorRedo_;
+    float decorRotation_ = 0; // degrees, quarter turns (the keys , and .)
+    std::optional<simd_float2> decorSpot_; // tile centre under the mouse
+    const hood::DecorProduct* decorProduct(uint32_t guid) const;
+    void updateDecoration(const LotCamera& camera, simd_float2 p, float w, float h);
+    bool decorClick(const LotCamera& camera, simd_float2 p, float w, float h);
+    bool placeDecoration(const hood::DecorProduct& product, float x, float y, float rotation, bool record = true);
+
 
     std::filesystem::path gameDir_;
     std::string query_;

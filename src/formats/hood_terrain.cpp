@@ -306,6 +306,29 @@ Occupants Occupants::parse(std::span<const uint8_t> data) {
     return o;
 }
 
+std::vector<uint8_t> Occupants::addOccupant(std::span<const uint8_t> data, const Occupants& o, bool flora,
+                                            const OccupantPosition& at, uint32_t guid, float rotation) {
+    std::vector<uint8_t> out(data.begin(), data.end());
+    const size_t countAt = flora ? o.floraCountAt : o.propCountAt;
+    const auto& spans = flora ? o.floraSpans : o.propSpans;
+    const size_t where = spans.empty() ? countAt + 4 : spans.back().second;
+    BinWriter w;
+    w.u8(2); // cTSNHoodOccupant::Read's version
+    for (float v : at.position)
+        w.f32(v);
+    w.f32(at.boundsMin[0]), w.f32(at.boundsMin[1]), w.f32(at.boundsMax[0]), w.f32(at.boundsMax[1]);
+    w.u8(8);
+    if (flora)
+        w.f32(rotation), w.u32(guid);
+    else
+        w.u32(guid), w.f32(rotation);
+    out.insert(out.begin() + std::ptrdiff_t(where), w.bytes().begin(), w.bytes().end());
+    const uint32_t n = uint32_t(spans.size() + 1);
+    for (int k = 0; k < 4; ++k)
+        out[countAt + size_t(k)] = uint8_t(n >> (8 * k));
+    return out;
+}
+
 std::vector<uint8_t> Occupants::removeOccupants(std::span<const uint8_t> data, const Occupants& o,
                                                 const std::vector<size_t>& flora, const std::vector<size_t>& props) {
     std::vector<std::pair<size_t, size_t>> cut;

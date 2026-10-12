@@ -134,7 +134,42 @@ static void lotTools() {
     check(lr.x1 - lr.x0 == 5 && lr.y1 - lr.y0 == 3, "a lot turned a quarter: its size swapped");
 }
 
+// Adding and removing decorations in the occupants resource (Occupants::addOccupant).
+static void decorations() {
+    auto record = [](Writer& w, bool flora, float x, float y, uint32_t guid, float rot) {
+        w.u8(2).f32(x).f32(y).f32(5).f32(x - 3).f32(y - 3).f32(x + 3).f32(y + 3).u8(8);
+        if (flora)
+            w.f32(rot).u32(guid);
+        else
+            w.u32(guid).f32(rot);
+    };
+    Writer w;
+    w.u32(111).u16(8).u32(1);
+    record(w, true, 105, 105, 70, 90);
+    w.u16(3).u32(0).u16(3).u32(0).u16(8).u32(1);
+    record(w, false, 205, 205, 49, 0);
+    const auto base = Occupants::parse(w.b);
+    check(base.flora.size() == 1 && base.props.size() == 1, "occupants: one flora and one prop parse");
+    OccupantPosition at;
+    at.position = {315, 325, 12};
+    at.boundsMin = {312, 322};
+    at.boundsMax = {318, 328};
+    const auto withFlora = Occupants::addOccupant(w.b, base, true, at, 66, 180);
+    const auto parsed1 = Occupants::parse(withFlora);
+    check(parsed1.flora.size() == 2 && parsed1.props.size() == 1, "occupants: a flora added to the flora list");
+    check(parsed1.flora[1].guid == 66 && parsed1.flora[1].rotation == 180 && parsed1.flora[1].at.position[0] == 315,
+          "occupants: the added flora's fields");
+    const auto withProp = Occupants::addOccupant(withFlora, parsed1, false, at, 7, 90);
+    const auto parsed2 = Occupants::parse(withProp);
+    check(parsed2.flora.size() == 2 && parsed2.props.size() == 2 && parsed2.props[1].guid == 7 &&
+              parsed2.props[1].rotation == 90 && parsed2.props[1].at.boundsMax[1] == 328,
+          "occupants: a prop added to the prop list");
+    const auto back = Occupants::removeOccupants(withProp, parsed2, {1}, {1});
+    check(back == w.b, "occupants: removing what was added gives the original bytes");
+}
+
 int main() {
+    decorations();
     evictCleanup();
     lotTools();
     // nTSWorld::LotValue, rounding down as the saved values show.

@@ -72,12 +72,20 @@ public:
     void setForceRenderHeads(bool on) { forceRenderHeads = on; }
     // The dialog's "Informações" panel (headless: --hood-info [member]).
     void showInfo(bool on, size_t member = 0) { advanced_ = on, member_ = member, dirty_ = true; }
+    // The story panel (F4; headless: --hood-story).
+    void showStory(bool on, bool edit = false) { story_ = on, storyEdit_ = edit, dirty_ = true; }
+    bool storyOpen() const { return story_; }
+    // The decorations' pictures for the products the bin shows (call when
+    // the panel opens or its page changes, never while drawing); a
+    // product without a UI image is drawn by `renderDecorThumb`.
+    void prefetchDecorations();
+    std::function<std::optional<RgbaImage>(const hood::DecorProduct&)> renderDecorThumb;
     // The "Transferir Lote" dialog (headless: --hood-package).
     void showPackage(bool on) { packaging_ = on, dirty_ = true; }
     bool packageOpen() const { return packaging_; }
 
     enum class Action { None, Consumed, EnterLot, Close, ZoomIn, ZoomOut, RotateLeft, RotateRight, MainMenu,
-                        Families, Lots, Bins, Options, Info, Member, Friends, Package };
+                        Families, Lots, Bins, Options, Info, Member, Friends, Package, Decorations, Story, StoryClose, StoryEdit };
     // The Families and Lots & Houses panels (app/hood_bins.hpp); after
     // Action::Bins, binRequest() says what they asked for.
     HoodBins& bins() { return *bins_; }
@@ -98,7 +106,12 @@ public:
     void refreshLayout() { dirty_ = true; }
     // The puck's accelerators (their tips: "Famílias - F1", "Lotes & Casas -
     // F2", "Opções - F5"): open or close that panel.
-    void togglePanel(HoodBins::Panel p) { bins_->togglePanel(p), dirty_ = true; }
+    void togglePanel(HoodBins::Panel p) {
+        bins_->togglePanel(p), dirty_ = true;
+        if (p == HoodBins::Panel::Decorations && bins_->panel() == p)
+            prefetchDecorations();
+    }
+    void toggleStory() { story_ = !story_, storyEdit_ = false, dirty_ = true; }
 
     UiScreen screen(int width, int height);
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
@@ -124,7 +137,17 @@ private:
     HoodBins::Request binRequest_;
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;
-    UiScript hud_, hoverScript_, dialogScript_, packageScript_;
+    UiScript hud_, hoverScript_, dialogScript_, packageScript_, storyScript_;
+    // "História da Vizinhança" (F4, 0x49001030): the picture and the description
+    // of the neighborhood (CTSS), or "no story"; Pronto closes it. The
+    // story's own pages (the game's Storytelling folder) are not read.
+    bool story_ = false, storyEdit_ = false;
+    std::unique_ptr<RgbaImage> storyPicture_;
+    bool storyPictureLoaded_ = false;
+    // Decorations' pictures by product: UI images (effects) or renders.
+    std::map<uint32_t, std::unique_ptr<RgbaImage>> decorThumbs_;
+    const RgbaImage* decorThumb(uint32_t guid) const;
+    std::string text(uint32_t table, uint32_t index, const char* fallback) const;
     // "Transferir Lote" (EFFF4500): the dialog the Lot Info Dialog's button opens; the
     // pick (1 TheSims2.com, 2 a file) is only remembered, nothing is exported.
     bool packaging_ = false;

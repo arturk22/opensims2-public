@@ -1001,4 +1001,113 @@ LotResult moveLotToBin(const fs::path& folder, uint32_t lotId, const fs::path& c
     return out;
 }
 
+std::vector<DecorProduct> loadDecorCatalog(ResourceIndex& index) {
+    std::vector<DecorProduct> out;
+    for (const auto& loc : index.ofType(hoodtype::ObjectEntry)) {
+        const auto bytes = index.read(loc);
+        const auto props = parsePropertySet(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        auto get = [&](const char* k) -> std::string {
+            auto it = props.find(k);
+            return it == props.end() ? std::string() : it->second;
+        };
+        auto num = [&](const char* k) -> uint32_t {
+            const std::string v = get(k);
+            return v.empty() ? 0 : uint32_t(std::stoul(v));
+        };
+        if (get("guid").empty() || get("modelname").empty() || get("sort").empty() || num("showincatalog") == 0 ||
+            num("deprecated") != 0)
+            continue;
+        DecorProduct p;
+        p.guid = num("guid"), p.name = get("name"), p.model = get("modelname"), p.sort = get("sort");
+        p.inLot = num("allowedinlot") != 0, p.onRoad = num("allowedonroad") != 0, p.surface = int(num("placementsurface"));
+        p.thumbGroup = num("thumbnailgroupid"), p.thumbInstance = num("thumbnailinstanceid");
+        out.push_back(std::move(p));
+    }
+    std::sort(out.begin(), out.end(), [](const DecorProduct& a, const DecorProduct& b) {
+        return a.sort != b.sort ? a.sort < b.sort : a.guid < b.guid;
+    });
+    return out;
+}
+
+std::string decorationBlocked(const PlacementWorld& world, const DecorProduct& product, const OccupantPosition& at) {
+    const Terrain& t = *world.terrain;
+    const float x = at.position[0], y = at.position[1];
+    if (x < 0 || y < 0 || x > t.worldWidth() || y > t.worldHeight())
+        return "outside the neighborhood";
+    const bool water = t.heightAt(x, y) <= t.seaLevel;
+    if (product.surface == 0 && water)
+        return "needs land";
+    if (product.surface == 1 && !water)
+        return "needs water";
+    const TileRect tiles = occupantTiles(at);
+    if (!product.inLot)
+        if (lotOver(world, tiles))
+            return "may not stand in a lot";
+    if (!product.onRoad && world.occupants && !roadsOver(*world.occupants, tiles).empty())
+        return "may not stand on a road";
+    return "";
+}
+
+DecorResult addDecoration(const fs::path& folder, const PlacementWorld& world, const DecorProduct& product,
+                          const OccupantPosition& at, float rotation, const fs::path& forbidden) {
+    DecorResult out;
+    try {
+        checkFolder(folder, forbidden);
+        if (const std::string why = decorationBlocked(world, product, at); !why.empty()) {
+            out.error = why;
+            return out;
+        }
+        DbpfPackage pkg(world.hood->package);
+        for (const auto& e : pkg.entries())
+            if (e.tgi.type == hoodtype::Occupants) {
+                const auto bytes = pkg.read(e);
+                const Occupants parsed = Occupants::parse(bytes);
+                const std::map<Key, std::vector<uint8_t>> replace{
+                    {{hoodtype::Occupants, e.tgi.instance},
+                     Occupants::addOccupant(bytes, parsed, product.flora(), at, product.guid, rotation)}};
+                pkg.closeFile();
+                rewritePackage(world.hood->package, replace, {});
+                out.lines.push_back(product.name + " (" + std::to_string(product.guid) + ") placed at " +
+                                    std::to_string(int(at.position[0])) + "," + std::to_string(int(at.position[1])));
+                out.ok = true;
+                return out;
+            }
+        out.error = "the neighborhood has no occupants resource";
+    } catch (const std::exception& e) {
+        out.error = e.what();
+    }
+    return out;
+}
+
+DecorResult removeDecoration(const fs::path& folder, const PlacementWorld& world, bool flora, size_t index,
+                             const fs::path& forbidden) {
+    DecorResult out;
+    try {
+        checkFolder(folder, forbidden);
+        DbpfPackage pkg(world.hood->package);
+        for (const auto& e : pkg.entries())
+            if (e.tgi.type == hoodtype::Occupants) {
+                const auto bytes = pkg.read(e);
+                const Occupants parsed = Occupants::parse(bytes);
+                if (index >= (flora ? parsed.flora.size() : parsed.props.size())) {
+                    out.error = "no such decoration";
+                    return out;
+                }
+                const std::map<Key, std::vector<uint8_t>> replace{
+                    {{hoodtype::Occupants, e.tgi.instance},
+                     Occupants::removeOccupants(bytes, parsed, flora ? std::vector<size_t>{index} : std::vector<size_t>{},
+                                                flora ? std::vector<size_t>{} : std::vector<size_t>{index})}};
+                pkg.closeFile();
+                rewritePackage(world.hood->package, replace, {});
+                out.lines.push_back(std::string(flora ? "flora " : "prop ") + std::to_string(index) + " removed");
+                out.ok = true;
+                return out;
+            }
+        out.error = "the neighborhood has no occupants resource";
+    } catch (const std::exception& e) {
+        out.error = e.what();
+    }
+    return out;
+}
+
 } // namespace os2::hood

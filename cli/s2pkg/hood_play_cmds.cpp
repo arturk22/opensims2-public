@@ -133,6 +133,14 @@ std::optional<LotInfo> what(const World& w, const std::string& spec, std::option
     return std::nullopt;
 }
 
+int reportDecor(const DecorResult& r) {
+    for (const auto& l : r.lines)
+        std::printf("%s\n", l.c_str());
+    if (!r.ok)
+        std::fprintf(stderr, "failed: %s\n", r.error.c_str());
+    return r.ok ? 0 : 1;
+}
+
 int cmdLotSpots(const char* path, const std::string& spec) {
     const auto w = loadWorld(path);
     std::optional<BinLot> bin;
@@ -230,7 +238,8 @@ const char* hoodPlayUsage() {
            "       s2pkg hood-lot-spots <neighborhood-dir> empty:<0-9>|bin:<n>|lot:<id>\n"
            "       s2pkg hood-place-lot <neighborhood-dir> empty:<0-9>|bin:<n> <x> <y> [rotation|front]\n"
            "       s2pkg hood-move-lot <neighborhood-dir> <lot> <x> <y> [front]\n"
-           "       s2pkg hood-lot-to-bin <neighborhood-dir> <lot>\n";
+           "       s2pkg hood-lot-to-bin <neighborhood-dir> <lot>\n"
+           "       s2pkg hood-decor <neighborhood-dir> list | add <guid> <x> <y> [rotation] | remove flora|prop <index>   ($OS2_DATA: the catalog)\n";
 }
 
 int hoodPlayCommand(const std::string& cmd, int argc, char** argv) {
@@ -263,6 +272,36 @@ int hoodPlayCommand(const std::string& cmd, int argc, char** argv) {
     }
     if (cmd == "hood-lot-spots" && argc == 4)
         return cmdLotSpots(argv[2], argv[3]);
+    if (cmd == "hood-decor" && argc >= 4) {
+        const auto w = loadWorld(argv[2]);
+        if (w->gameRes.empty())
+            throw std::runtime_error("hood-decor needs $OS2_DATA");
+        ResourceIndex index(w->gameRes);
+        const auto catalog = loadDecorCatalog(index);
+        const std::string sub = argv[3];
+        if (sub == "list") {
+            for (const auto& p : catalog)
+                std::printf("  %-9s %5u  %-40s %-36s lot=%d road=%d surface=%d\n", p.sort.c_str(), p.guid, p.model.c_str(),
+                            p.name.c_str(), p.inLot, p.onRoad, p.surface);
+            std::printf("%zu products\n", catalog.size());
+            return 0;
+        }
+        if (sub == "add" && argc >= 7) {
+            const uint32_t guid = uint32_t(std::stoul(argv[4]));
+            const auto it = std::find_if(catalog.begin(), catalog.end(), [&](const DecorProduct& p) { return p.guid == guid; });
+            if (it == catalog.end())
+                throw std::runtime_error("no such product");
+            OccupantPosition at;
+            const float x = std::stof(argv[5]), y = std::stof(argv[6]);
+            at.position = {x, y, w->terrain.heightAt(x, y)};
+            at.boundsMin = {x - 3.5f, y - 3.5f};
+            at.boundsMax = {x + 3.5f, y + 3.5f};
+            return reportDecor(addDecoration(argv[2], w->place, *it, at, argc > 7 ? std::stof(argv[7]) : 0.0f, forbidden));
+        }
+        if (sub == "remove" && argc == 6)
+            return reportDecor(removeDecoration(argv[2], w->place, std::string(argv[4]) == "flora", std::stoul(argv[5]), forbidden));
+        throw std::runtime_error("usage: s2pkg hood-decor <dir> list | add <guid> <x> <y> [rotation] | remove flora|prop <index>");
+    }
     if (cmd == "hood-place-lot" && argc >= 6)
         return cmdPlaceLot(argc, argv);
     if (cmd == "hood-move-lot" && argc >= 6)

@@ -155,7 +155,7 @@ fs::path neighborhoodFolder(const fs::path& resDir, const std::string& query) {
 
 HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& resDir, const fs::path& sysDir,
                    const std::string& query)
-    : renderer_(&renderer) {
+    : renderer_(&renderer), index_(&index) {
     const auto start = std::chrono::steady_clock::now();
     const fs::path dir = neighborhoodFolder(resDir, query);
     hood_ = hood::Neighborhood::load(dir, true); // with the Sims' names (the family bin lists them)
@@ -303,39 +303,23 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     loading::phase("hood: lots");
     // Trees, props and bridges: one model per CRES.
     const auto objects = hood::loadNeighborhoodObjects(index);
-    std::map<std::string, int> models;
-    auto model = [&](const std::string& cres) {
-        auto it = models.find(cres);
-        if (it != models.end())
-            return it->second;
-        int id = -1;
-        try {
-            const ObjectModel m = loadObjectModel(index, cres);
-            if (!m.parts.empty())
-                id = renderer.addObject(m, index);
-            else
-                report_.push_back(cres + ": no parts");
-        } catch (const std::exception& e) {
-            report_.push_back(cres + ": " + e.what());
-        }
-        return models[cres] = id;
-    };
+    auto model = [&](const std::string& cres) { return modelId(cres); };
     size_t placed = 0, missing = 0;
     auto place = [&](uint32_t guid, const hood::OccupantPosition& at, float rotation) {
         auto it = objects.find(guid);
         const int id = it == objects.end() ? -1 : model(it->second);
         if (id < 0) {
             ++missing;
-            return;
+            return -1;
         }
         const auto& p = at.position;
-        renderer.addInstance(id, simd_mul(translation(simd_make_float3(p[0], p[1], p[2])), rotationZ(rotation)));
         ++placed;
+        return renderer.addInstance(id, simd_mul(translation(simd_make_float3(p[0], p[1], p[2])), rotationZ(rotation)));
     };
     for (const auto& f : occupants_.flora)
-        place(f.guid, f.at, f.rotation);
+        floraInst_.push_back(place(f.guid, f.at, f.rotation));
     for (const auto& p : occupants_.props)
-        place(p.guid, p.at, p.rotation);
+        propInst_.push_back(place(p.guid, p.at, p.rotation));
     for (const auto& b : occupants_.bridges) {
         char name[32];
         std::snprintf(name, sizeof name, "%04x-bridge_cres", b.road.piece >> 16);
@@ -467,6 +451,139 @@ void HoodView::highlight(const HoodLot* lot) {
         m.columns[3] = simd_make_float4(lot->footLo.x, lot->footLo.y, lot->ground + 0.6f, 1);
     }
     renderer_->setInstanceTransform(highlight_, m);
+}
+
+int HoodView::modelId(const std::string& cres) {
+    auto it = modelIds_.find(cres);
+    if (it != modelIds_.end())
+        return it->second;
+    int id = -1;
+    try {
+        const ObjectModel m = loadObjectModel(*index_, cres);
+        if (!m.parts.empty()) {
+            id = renderer_->addObject(m, *index_);
+            std::array<float, 6> box{INFINITY, INFINITY, INFINITY, -INFINITY, -INFINITY, -INFINITY};
+            for (const auto& part : m.parts)
+                for (const auto& v : part.mesh.positions)
+                    box = {std::min(box[0], v[0]), std::min(box[1], v[1]), std::min(box[2], v[2]),
+                           std::max(box[3], v[0]), std::max(box[4], v[1]), std::max(box[5], v[2])};
+            modelBox_[cres] = box;
+        } else {
+            report_.push_back(cres + ": no parts");
+        }
+    } catch (const std::exception& e) {
+        report_.push_back(cres + ": " + e.what());
+    }
+    return modelIds_[cres] = id;
+}
+
+hood::OccupantPosition HoodView::decorationFootprint(const hood::DecorProduct& product, float x, float y, float rotation) {
+    hood::OccupantPosition at;
+    at.position = {x, y, rawTerrain_.heightAt(x, y)};
+    const std::string cres = product.model + "_cres";
+    modelId(cres);
+    std::array<float, 4> box{-3.5f, -3.5f, 3.5f, 3.5f};
+    if (auto it = modelBox_.find(cres); it != modelBox_.end() && std::isfinite(it->second[0]))
+        box = {it->second[0], it->second[1], it->second[3], it->second[4]};
+    const float a = rotation * 3.14159265f / 180.0f, c = std::cos(a), s = std::sin(a);
+    float lo[2] = {INFINITY, INFINITY}, hi[2] = {-INFINITY, -INFINITY};
+    for (float px : {box[0], box[2]})
+        for (float py : {box[1], box[3]}) {
+            const float rx = px * c - py * s, ry = px * s + py * c;
+            lo[0] = std::min(lo[0], rx), hi[0] = std::max(hi[0], rx);
+            lo[1] = std::min(lo[1], ry), hi[1] = std::max(hi[1], ry);
+        }
+    at.boundsMin = {x + lo[0], y + lo[1]};
+    at.boundsMax = {x + hi[0], y + hi[1]};
+    return at;
+}
+
+int HoodView::decorationModel(const hood::DecorProduct& product) { return modelId(product.model + "_cres"); }
+
+std::array<float, 6> HoodView::decorationBounds(const hood::DecorProduct& product) {
+    const std::string cres = product.model + "_cres";
+    modelId(cres);
+    if (auto it = modelBox_.find(cres); it != modelBox_.end() && std::isfinite(it->second[0]))
+        return it->second;
+    return {-3.5f, -3.5f, 0, 3.5f, 3.5f, 5};
+}
+
+int HoodView::addDecoration(const hood::DecorProduct& product, const hood::OccupantPosition& at, float rotation) {
+    if (product.flora()) {
+        hood::Flora f;
+        f.at = at, f.rotation = rotation, f.guid = product.guid;
+        occupants_.flora.push_back(f);
+    } else {
+        hood::Prop p;
+        p.at = at, p.guid = product.guid, p.rotation = rotation;
+        occupants_.props.push_back(p);
+    }
+    const int id = decorationModel(product);
+    int inst = -1;
+    if (id >= 0) {
+        const auto& p = at.position;
+        inst = renderer_->addInstance(id, simd_mul(translation(simd_make_float3(p[0], p[1], p[2])), rotationZ(rotation)));
+    }
+    (product.flora() ? floraInst_ : propInst_).push_back(inst);
+    return inst;
+}
+
+void HoodView::removeDecoration(bool flora, size_t index) {
+    auto& inst = flora ? floraInst_ : propInst_;
+    if (index >= inst.size())
+        return;
+    if (inst[index] >= 0) {
+        simd_float4x4 away = matrix_identity_float4x4;
+        away.columns[0].x = away.columns[1].y = away.columns[2].z = 0;
+        renderer_->setInstanceTransform(inst[index], away); // instances cannot be removed: collapsed
+    }
+    inst.erase(inst.begin() + std::ptrdiff_t(index));
+    if (flora)
+        occupants_.flora.erase(occupants_.flora.begin() + std::ptrdiff_t(index));
+    else
+        occupants_.props.erase(occupants_.props.begin() + std::ptrdiff_t(index));
+}
+
+void HoodView::showDecorationGhost(const hood::DecorProduct* product, float x, float y, float rotation, bool ok) {
+    simd_float4x4 away = matrix_identity_float4x4;
+    away.columns[0].x = away.columns[1].y = away.columns[2].z = 0;
+    if (ghost_ < 0) {
+        if (!product)
+            return;
+        const int id = decorationModel(*product);
+        if (id < 0)
+            return;
+        ghost_ = renderer_->addInstance(id, away);
+        ghostModel_ = id;
+    }
+    if (!product) {
+        renderer_->setInstanceTransform(ghost_, away);
+        return;
+    }
+    const int id = decorationModel(*product);
+    if (id < 0)
+        return;
+    if (id != ghostModel_)
+        renderer_->setInstanceModel(ghost_, id), ghostModel_ = id;
+    (void)ok; // the model is shown as it is; the footprint box carries the colour
+    renderer_->setInstanceTransform(ghost_, simd_mul(translation(simd_make_float3(x, y, rawTerrain_.heightAt(x, y))), rotationZ(rotation)));
+}
+
+std::optional<std::pair<bool, size_t>> HoodView::decorationAt(float x, float y) const {
+    std::optional<std::pair<bool, size_t>> best;
+    float bestD = 1e9f;
+    auto test = [&](const hood::OccupantPosition& at, bool flora, size_t i) {
+        if (x < at.boundsMin[0] || x > at.boundsMax[0] || y < at.boundsMin[1] || y > at.boundsMax[1])
+            return;
+        const float d = std::hypot(x - at.position[0], y - at.position[1]);
+        if (d < bestD)
+            bestD = d, best = std::pair{flora, i};
+    };
+    for (size_t i = 0; i < occupants_.flora.size(); ++i)
+        test(occupants_.flora[i].at, true, i);
+    for (size_t i = 0; i < occupants_.props.size(); ++i)
+        test(occupants_.props[i].at, false, i);
+    return best;
 }
 
 void HoodView::showFriends(const std::vector<std::pair<const HoodLot*, int>>& lots) {

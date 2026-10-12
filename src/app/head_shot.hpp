@@ -10,6 +10,7 @@
 #include "formats/image.hpp"
 #include "formats/sim.hpp"
 
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <vector>
@@ -24,5 +25,10 @@ class ResourceIndex;
 // nullopt when the character cannot be assembled.
 std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index, const std::vector<SimPart>& parts,
                                         const std::filesystem::path& characterFile, uint32_t size = 128);
+
+// A neighborhood object's picture (the Decorations catalog's tiles): the
+// renderer's `model` seen from the south-east and above, framed on its local
+// bounds (min xyz, max xyz), on a transparent background. Inferred framing.
+RgbaImage renderModelThumbnail(Renderer& renderer, int model, const std::array<float, 6>& bounds, uint32_t size = 94);
 
 } // namespace os2

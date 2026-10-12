@@ -90,4 +90,36 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
     }
 }
 
+RgbaImage renderModelThumbnail(Renderer& renderer, int model, const std::array<float, 6>& b, uint32_t size) {
+    const simd_float3 at = simd_make_float3(-5000, -5000, 0);
+    const int inst = renderer.addInstance(model, matrix_identity_float4x4);
+    simd_float4x4 m = matrix_identity_float4x4;
+    m.columns[3] = simd_make_float4(at.x, at.y, at.z, 1);
+    renderer.setInstanceTransform(inst, m);
+    const simd_float3 c = at + simd_make_float3((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
+    const float radius = std::max(0.5f, 0.5f * std::sqrt((b[3] - b[0]) * (b[3] - b[0]) + (b[4] - b[1]) * (b[4] - b[1]) +
+                                                         (b[5] - b[2]) * (b[5] - b[2])));
+    const simd_float3 f = simd_normalize(simd_make_float3(-0.6f, -0.6f, -0.5f)); // looking down from the south-east... (+x, +y side)
+    const float fov = 30.0f * 3.14159265f / 180.0f;
+    const float dist = radius / std::sin(fov / 2) * 1.05f;
+    const simd_float3 e = c - f * dist;
+    const simd_float3 sv = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
+    const simd_float3 u = simd_cross(sv, f);
+    FrameView fv;
+    fv.view = simd_matrix(simd_make_float4(sv.x, u.x, -f.x, 0), simd_make_float4(sv.y, u.y, -f.y, 0),
+                          simd_make_float4(sv.z, u.z, -f.z, 0),
+                          simd_make_float4(-simd_dot(sv, e), -simd_dot(u, e), simd_dot(f, e), 1));
+    const float n = 0.5f, fa = dist * 4 + 100, ys = 1.0f / std::tan(fov / 2), zs = fa / (n - fa);
+    fv.projection = simd_matrix(simd_make_float4(ys, 0, 0, 0), simd_make_float4(0, ys, 0, 0),
+                                simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, zs * n, 0));
+    const Renderer::Overlay overlay = renderer.overlay();
+    renderer.setOverlay({});
+    RgbaImage out = renderer.capture(size, size, fv, simd_make_float4(0, 0, 0, 0));
+    renderer.setOverlay(overlay);
+    simd_float4x4 away = matrix_identity_float4x4;
+    away.columns[0].x = away.columns[1].y = away.columns[2].z = 0;
+    renderer.setInstanceTransform(inst, away); // hidden again (instances cannot be removed)
+    return out;
+}
+
 } // namespace os2

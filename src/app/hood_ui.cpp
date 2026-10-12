@@ -13,6 +13,8 @@
 #include "render/ui_layer.hpp"
 
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 #include <cmath>
 #include <cstdlib>
 
@@ -20,7 +22,8 @@ namespace os2 {
 
 namespace {
 
-constexpr uint32_t kPackageScript = 0xEFFF4500, kHudScript = 0x49000000, kHoverScript = 0x49001011, kDialogScript = 0x49001000;
+constexpr uint32_t kStoryScript = 0x49001030, kDecorationsButton = 0x2D51756D, kStoryButton = 0xACD99323,
+                   kPackageScript = 0xEFFF4500, kHudScript = 0x49000000, kHoverScript = 0x49001011, kDialogScript = 0x49001000;
 constexpr uint32_t kPuck = 0x4BE6ED7D, kChooser = 0x4BE6ED7E, kCityName = 0x3;
 constexpr uint32_t kFamiliesButton = 0x2BE6F563, kLotsButton = 0x4BE6F571, kOptionsButton = 0x2BF08BEC;
 constexpr uint32_t kTypeImg = 0x856DDBAC, kTypeFamilyThumb = 0x8C3CE95A;
@@ -49,6 +52,7 @@ HoodUi::HoodUi(const HoodView& view, ResourceIndex& index, const std::filesystem
     const bool a = load(kHudScript, hud_), b = load(kHoverScript, hoverScript_), c = load(kDialogScript, dialogScript_);
     ok_ = a && b && c;
     load(kPackageScript, packageScript_);
+    load(kStoryScript, storyScript_);
     bins_ = std::make_unique<HoodBins>(*res_, *fonts_);
     bins_->setNeighborhood(&view.neighborhood());
     options_ = std::make_unique<OptionsPanel>(index, resDir, GameSettings{});
@@ -203,6 +207,44 @@ const RgbaImage* HoodUi::memberThumb(const std::filesystem::path& character) {
     return (memberThumbs_[key] = std::move(img)).get();
 }
 
+std::string HoodUi::text(uint32_t table, uint32_t index, const char* fallback) const {
+    try {
+        if (auto t = res_->string(UiStringRef{0x7f3a262a, table, index}); t && !t->empty())
+            return *t;
+    } catch (const std::exception&) {
+    }
+    return fallback;
+}
+
+const RgbaImage* HoodUi::decorThumb(uint32_t guid) const {
+    auto it = decorThumbs_.find(guid);
+    return it == decorThumbs_.end() ? nullptr : it->second.get();
+}
+
+void HoodUi::prefetchDecorations() {
+    bins_->decorThumb = [this](uint32_t guid) { return decorThumb(guid); };
+    for (uint32_t guid : bins_->visibleDecorations()) {
+        if (decorThumbs_.count(guid))
+            continue;
+        const auto& cat = bins_->decorCatalog();
+        const auto it = std::find_if(cat.begin(), cat.end(), [&](const hood::DecorProduct& p) { return p.guid == guid; });
+        if (it == cat.end())
+            continue;
+        std::unique_ptr<RgbaImage> img;
+        try {
+            if (it->thumbGroup == kUiImageGroup && it->thumbInstance)
+                if (const RgbaImage* ui = res_->image(UiResourceRef{kTypeUiImage, it->thumbGroup, it->thumbInstance}))
+                    img = std::make_unique<RgbaImage>(*ui);
+            if (!img && renderDecorThumb)
+                if (auto d = renderDecorThumb(*it))
+                    img = std::make_unique<RgbaImage>(std::move(*d));
+        } catch (const std::exception&) {
+        }
+        decorThumbs_[guid] = std::move(img);
+    }
+    dirty_ = true;
+}
+
 HoodUi::Action HoodUi::press(simd_float2 p) {
     if (laidW_ != canvasW_ || laidH_ != canvasH_ || dirty_ || bins_->dirty())
         screen(canvasW_, canvasH_); // targets for the current canvas
@@ -235,12 +277,22 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
             }
             if (t.action == Action::Member)
                 member_ = size_t(t.value), dirty_ = true;
-            if (t.action == Action::Families || t.action == Action::Lots || t.action == Action::Options) {
+            if (t.action == Action::Families || t.action == Action::Lots || t.action == Action::Options ||
+                t.action == Action::Decorations) {
                 bins_->togglePanel(t.action == Action::Families ? HoodBins::Panel::Families
                                    : t.action == Action::Lots   ? HoodBins::Panel::Lots
+                                   : t.action == Action::Decorations ? HoodBins::Panel::Decorations
                                                                 : HoodBins::Panel::Options);
+                if (t.action == Action::Decorations)
+                    prefetchDecorations();
                 dirty_ = true;
             }
+            if (t.action == Action::Story)
+                story_ = !story_, storyEdit_ = false, dirty_ = true;
+            if (t.action == Action::StoryClose)
+                story_ = false, dirty_ = true;
+            if (t.action == Action::StoryEdit)
+                storyEdit_ = !storyEdit_, dirty_ = true;
             return t.action;
         }
     if (!dialog_)
@@ -252,6 +304,8 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
             }
             binRequest_ = r;
             dirty_ = true;
+            if (bins_->panel() == HoodBins::Panel::Decorations)
+                prefetchDecorations();
             return r.kind == HoodBins::Request::Kind::Consumed ? Action::Consumed : Action::Bins;
         }
     for (const auto& r : solid_)
@@ -315,6 +369,10 @@ UiScreen HoodUi::screen(int width, int height) {
             hk.buttonState[l] = bins_->panel() == HoodBins::Panel::Lots ? 2 : 1;
         if (const UiElement* l = puck->child(kOptionsButton))
             hk.buttonState[l] = bins_->panel() == HoodBins::Panel::Options ? 2 : 1;
+        if (const UiElement* l = puck->child(kDecorationsButton))
+            hk.buttonState[l] = bins_->panel() == HoodBins::Panel::Decorations ? 2 : 1;
+        if (const UiElement* l = puck->child(kStoryButton))
+            hk.buttonState[l] = story_ ? 2 : 1;
         puckQuads.first = out.quads.size();
         place(*puck, 2, float(height - (a[3] - a[1]) - 2), hk);
         puckQuads.second = out.quads.size();
@@ -323,6 +381,8 @@ UiScreen HoodUi::screen(int width, int height) {
         target(puck->child(kFamiliesButton), Action::Families);
         target(puck->child(kLotsButton), Action::Lots);
         target(puck->child(kOptionsButton), Action::Options);
+        target(puck->child(kDecorationsButton), Action::Decorations);
+        target(puck->child(kStoryButton), Action::Story);
         // The camera buttons: "Mais Zoom +", "Menos Zoom -" and the two "Rotacionar".
         target(puck->child(0x2BE6FB48), Action::ZoomIn);
         target(puck->child(0x2BE6FB4E), Action::ZoomOut);
@@ -536,6 +596,57 @@ UiScreen HoodUi::screen(int width, int height) {
         if (pe)
             if (auto r = rects.find(pe); r != rects.end())
                 solid_.push_back(r->second);
+    }
+    // The story panel, centred (F4).
+    if (story_ && !storyScript_.roots.empty()) {
+        if (!storyPictureLoaded_) {
+            storyPictureLoaded_ = true;
+            const hood::Neighborhood& h = view_->neighborhood();
+            std::ifstream in(h.package.parent_path() / (h.prefix + "_Neighborhood.png"), std::ios::binary);
+            if (in) {
+                const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                if (auto img = decodeUiImage(bytes))
+                    storyPicture_ = std::make_unique<RgbaImage>(std::move(*img));
+            }
+        }
+        const hood::Neighborhood& h = view_->neighborhood();
+        const UiElement& root = storyScript_.roots.front();
+        UiDrawHooks hk;
+        hk.rects = &rects;
+        const std::string name = h.name.empty() ? h.prefix : h.name;
+        const bool noStory = h.description.empty();
+        for (const auto& c : root.children) {
+            const uint32_t id = c.id();
+            if (id == 0x2D0A8E57) { // "Bem-vindo a %s!"
+                std::string t = text(0x84, 14, "Welcome to %s!");
+                if (const auto at = t.find("%s"); at != std::string::npos)
+                    t.replace(at, 2, name);
+                hk.captions[&c] = t;
+            }
+            if (id == 0x4D0A8D83 && storyPicture_)
+                hk.images[&c] = storyPicture_.get();
+            if (id == 0x4D7407B2) // "no story"
+                (noStory && !storyEdit_ ? hk.show : hk.hide).insert(&c);
+            if (id == 0xCD0A8EF7) {
+                if (noStory)
+                    (storyEdit_ ? hk.show : hk.hide).insert(&c);
+                else
+                    hk.captions[&c] = h.description;
+            }
+            // One page: the page buttons and counter belong to stories with several.
+            if (id == 0x2D0A8F5A || id == 0x2D0A8F55 || id == 0x2D0E41DC)
+                hk.hide.insert(&c);
+        }
+        const auto a = root.area();
+        solid_.clear();
+        targets_.clear();
+        solid_.push_back({0, 0, float(width), float(height)});
+        const float x = std::round((float(width) - float(a[2] - a[0])) / 2), y = std::round((float(height) - float(a[3] - a[1])) / 2);
+        layoutUiElement(root, x - float(a[0]), y - float(a[1]), *res_, *fonts_, out, hk);
+        for (auto [id, act] : {std::pair{0xCC800571u, Action::StoryClose}, {0x0CB23B3Cu, Action::StoryEdit}})
+            if (const UiElement* b = root.child(id))
+                if (auto r = rects.find(b); r != rects.end())
+                    targets_.push_back({r->second, act, uiButtonSound(*b), 0});
     }
     // The "Transferir Lote" dialog over everything, modal.
     if (packaging_ && !packageScript_.roots.empty()) {

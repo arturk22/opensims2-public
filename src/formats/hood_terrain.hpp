@@ -113,6 +113,12 @@ struct Occupants {
     size_t floraCountAt = 0, propCountAt = 0;
 
     static Occupants parse(std::span<const uint8_t> data);
+    // The resource with one flora (flora = true) or prop record added at the end of its
+    // list (the game's own order is the order they were placed): the header
+    // (object version 2, position, bounds), then the object version 8 and the
+    // rotation and the product's GUID (flora: rotation first; props: GUID first).
+    static std::vector<uint8_t> addOccupant(std::span<const uint8_t> data, const Occupants& parsed, bool flora,
+                                            const OccupantPosition& at, uint32_t guid, float rotation);
     // The resource without the flora and props of the given indices.
     static std::vector<uint8_t> removeOccupants(std::span<const uint8_t> data, const Occupants& parsed,
                                                 const std::vector<size_t>& flora, const std::vector<size_t>& props);
