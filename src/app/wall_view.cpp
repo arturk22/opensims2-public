@@ -7,11 +7,6 @@
 
 namespace os2 {
 
-void WallView::cycle(int step) {
-    const int m = (puckMode() + (step >= 0 ? 1 : 2)) % 3;
-    walls_ = fromPuck(m);
-}
-
 void WallView::study(const Lot& lot) {
     minLevel_ = lot.minLevel;
     topLevel_ = lotTopLevel(lot);
@@ -42,8 +37,8 @@ int WallView::shownLevel(int level) const {
 
 LotViewOptions WallView::options(std::array<float, 2> look, int level) const {
     LotViewOptions v;
-    v.walls = walls_;
-    v.roof = roof_;
+    v.walls = walls();
+    v.roof = roof();
     v.level = level;
     // The yard of a house on foundations, shown with the house's floor: its
     // walls take the mode too.

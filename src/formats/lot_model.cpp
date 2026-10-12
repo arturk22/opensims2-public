@@ -12,6 +12,8 @@
 #include <cctype>
 #include <cmath>
 #include <optional>
+#include <set>
+#include <tuple>
 
 namespace os2 {
 
@@ -302,6 +304,20 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
     for (const auto& [ref, pattern] : lot.wallPatterns)
         materials[ref] = patterns.wallMaterial(pattern);
     size_t unknownFences = 0;
+    // Dormers: N002_Lot10 keeps a dormer's front as a covered wall one level
+    // up from the window's (level 3 over level 2's floor) with an uncovered
+    // partition (type 0) at the window's level, both under the dormer's roof.
+    // Such a wall is drawn on the level below, from its floor up to the roof
+    // over it, as an attic wall's gable (inferred from the lot: the windows
+    // stand on level 2's floor in the uncovered partition).
+    auto key = [](int level, const Lot::Wall& w) {
+        const auto a = std::make_pair(w.a.x, w.a.y), b = std::make_pair(w.b.x, w.b.y);
+        return std::make_tuple(level, std::min(a, b), std::max(a, b));
+    };
+    std::set<decltype(key(0, Lot::Wall{}))> uncovered;
+    for (const auto& w : lot.walls)
+        if (w.type == 0 && w.patterns == std::array<uint16_t, 2>{0xFFFF, 0xFFFF})
+            uncovered.insert(key(w.a.level, w));
     for (const auto& w : lot.walls) {
         // The column deck's skirt (walls.txt "wall 4": notRendered) is not drawn.
         if (w.type == Lot::DeckSkirt)
@@ -318,29 +334,45 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         if (len == 0)
             continue;
         dx /= len, dy /= len;
-        const int level = w.a.level;
+        int level = w.a.level;
+        bool dormer = false;
+        if (w.type == Lot::Normal && uncovered.count(key(level - 1, w)) &&
+            roofs.heightAt((w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2, level, -1e9f) > -1e8f)
+            dormer = true, level -= 1;
         auto& out = level > view.level ? hidden : drawn;
         // The wall mode applies to the view's level (lower levels keep their walls up).
         const bool current = view.level == LotViewOptions::kAllLevels || level == view.level ||
                              (level >= view.lowestCut && level < view.level);
         const bool attic = w.type == Lot::Attic;
         const float nx = dy, ny = -dx; // right of a -> b
-        // Wall modes cut down the walls of the house (not foundations, pool
-        // sides or deck skirts, which stand below the floors).
+        // Wall modes cut down the walls whose partition style allows it
+        // (walls.txt mayCutAway: normal and attic walls; foundations, pool
+        // sides and deck skirts say false, and fences default to false as
+        // fencearches.txt documents; inferred for fences.txt, which has no
+        // key), nTSWorld::PartitionStyleSupportsCutaway.
         bool lowered = false;
-        if (current && view.walls != LotViewOptions::Walls::Up && (w.type == Lot::Normal || attic || fence)) {
+        if (current && view.walls != LotViewOptions::Walls::Up && (w.type == Lot::Normal || attic)) {
             if (view.walls == LotViewOptions::Walls::Down) {
                 lowered = true;
             } else {
-                // The far side from the camera: the one its normal points along the view.
-                const float facing = nx * view.viewDirection[0] + ny * view.viewDirection[1];
-                if (std::abs(facing) > 1e-3f) {
-                    const float s = facing > 0 ? 1.0f : -1.0f;
-                    // Inside = a room of the light map (3ARY 0x0B), the one
-                    // nTSSG::cWallManager follows (docs/buy-build-mac.md §7.3):
-                    // fenced yards are outside there.
-                    lowered =
-                        roomBeside(lot, level, (w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2, nx * s, ny * s, true) != 0;
+                // cWallCutawayManager::KeepOnlyFrontFacingOutsideWalls
+                // (docs/ui-live-mac.md 8c) with the room of each face from
+                // the light's room map (3ARY 0x0B), the one nTSSG::cWallManager
+                // follows (docs/buy-build-mac.md 7.3: fenced yards are outside
+                // there): both faces inside (an inside wall) always cut; one
+                // face outside (an outside wall) cut when that face looks at
+                // the camera; both outside (a wall alone in the yard) never.
+                // The game tests the face against the camera's position; the
+                // camera is far, so its view direction stands in for it.
+                const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
+                const bool right = roomBeside(lot, level, mx, my, nx, ny, true) != 0;
+                const bool left = roomBeside(lot, level, mx, my, -nx, -ny, true) != 0;
+                if (right && left) {
+                    lowered = true;
+                } else if (right != left) {
+                    // The outside face's normal against the view (into the scene): < 0 looks at the camera.
+                    const float s = right ? -1.0f : 1.0f;
+                    lowered = s * (nx * view.viewDirection[0] + ny * view.viewDirection[1]) < -1e-3f;
                 }
             }
         }
@@ -353,6 +385,8 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             float z1 = lot.hasLevel(level + 1) ? lot.elevationAt(level + 1, x, y) : z0 + kStoryHeight;
             if (attic)
                 z1 = std::max(roofs.heightAt(x, y, level, z1, kAtticRoofOffset), z0);
+            else if (dormer)
+                z1 = std::max(roofs.heightAt(x, y, level + 1, z1, kAtticRoofOffset), z1);
             else if (fence)
                 z1 = std::min(z1, z0 + kHalfWallHeight);
             if (lowered && cut)
@@ -362,7 +396,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         const float t = kWallHalfThickness;
         // Attic walls follow the roof through their middle too.
         std::vector<std::array<float, 2>> points{{w.a.x - dx * t, w.a.y - dy * t}};
-        if (attic)
+        if (attic || dormer)
             points.push_back({(w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2});
         points.push_back({w.b.x + dx * t, w.b.y + dy * t});
         auto clampXY = [&](std::array<float, 2> p) {
@@ -426,7 +460,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 // v: 0 at the top of a full wall; attic and half walls keep the
                 // texture's bottom at their base, as OpenTS2 does.
                 auto vv = [&](float z, float base, float top) {
-                    return attic || fence ? 1.0f - (z - base) / kStoryHeight : (top - z) / kStoryHeight;
+                    return attic || fence || dormer ? 1.0f - (z - base) / kStoryHeight : (top - z) / kStoryHeight;
                 };
                 // Pieces between the cut intervals, each split around the holes over it.
                 std::vector<float> breaks{0, segLen};

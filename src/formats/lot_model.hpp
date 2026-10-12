@@ -61,15 +61,19 @@ private:
 // with its own shaders), with each terrain paint blended over the base by its
 // mask. Fences (see lotFencePieces), stairs and objects are not included.
 //
-// Walls are drawn as in the game's wall modes: up, cutaway (walls with a room
-// behind them as seen along `viewDirection`, a horizontal vector from the
-// camera into the scene, are cut down) or down (all walls cut down).
+// Walls are drawn as in the game's wall modes (docs/ui-live-mac.md 8c): up,
+// cutaway (every inside wall of the level cut down, outside walls only when
+// their outside face looks at the camera, seen along `viewDirection`, a
+// horizontal vector from the camera into the scene; walls alone in the yard
+// stay up) or down (all walls cut down). Only partition styles that allow
+// cutaway are cut (normal and attic walls; not fences, foundations, pool
+// sides or deck skirts).
 //
 // `level` is the level the camera shows (the lot's numbering, 0 = the
 // ground): levels above it are not drawn, the walls of lower levels stay up
 // and the wall mode applies to its own walls (kAllLevels: no level hidden,
-// the mode applies to every level). The roof shows with walls up, `roof` on
-// and no level hidden (the levels above `level` have no walls nor floors).
+// the mode applies to every level). The roof shows with walls up and `roof`
+// on (the game's wall mode 3, walls up with the roof) and no level hidden (the levels above `level` have no walls nor floors).
 struct LotViewOptions {
     enum class Walls { Up, Cutaway, Down };
     static constexpr int kAllLevels = std::numeric_limits<int>::max();

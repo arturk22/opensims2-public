@@ -686,7 +686,7 @@ UiScreen LiveUi::screen(int width, int height) {
                 hk.hide.insert(fan);
             for (uint32_t i = 1; i <= 4; ++i)
                 if (const UiElement* b = fan->child(i))
-                    hk.buttonState[b] = (i == 4 ? roof_ : int(i) - 1 == wallMode_) ? 2 : 1;
+                    hk.buttonState[b] = int(i) - 1 == wallMode_ ? 2 : 1;
         }
         place(puck, puckX, puckY, hk);
         if (const UiElement* fan = findIn(puck, 0x4000); fan && wallFan_)
@@ -1250,16 +1250,10 @@ bool LiveUi::press(simd_float2 p, bool right) {
                 continue;
             if (const std::string snd = uiButtonSound(*t.element); !snd.empty())
                 sound(snd);
-            if (t.value == 3) {
-                std::printf("opensims2: live UI: roof %s\n", roof_ ? "hidden" : "shown");
-                if (onRoof)
-                    onRoof();
-            } else {
-                static const char* const kNames[] = {"down", "cutaway", "up"};
-                std::printf("opensims2: live UI: walls %s\n", kNames[t.value]);
-                if (onWallMode)
-                    onWallMode(t.value);
-            }
+            static const char* const kNames[] = {"down", "cutaway", "up", "up with the roof"};
+            std::printf("opensims2: live UI: walls %s\n", kNames[t.value]);
+            if (onWallMode)
+                onWallMode(t.value);
             std::fflush(stdout);
             return true;
         }

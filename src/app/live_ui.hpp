@@ -137,19 +137,20 @@ public:
     // The puck's zoom ("Mais Zoom +" 0x1002 = +1, "Menos Zoom -" 0x1003 = -1)
     // and rotate buttons (0x1001 on the left = -1, 0x1000 = +1, one step).
     std::function<void(int)> onZoom, onRotate;
-    // The puck's wall button (0x1100 walls down, 0x1101 cutaway, 0x1102 up:
-    // the one of the current mode is shown) opens the wall fan (0x4000, over
-    // the camera controls: 1 walls down, 2 cutaway, 3 up, 4 roof shown or
-    // hidden); a choice closes it, as does a click anywhere else. setWallMode
-    // shows the mode (0 down, 1 cutaway, 2 up) and the roof toggle;
-    // onWallMode / onRoof are called when the player picks one.
-    void setWallMode(int mode, bool roof) {
-        if (mode != wallMode_ || roof != roof_)
-            wallMode_ = mode, roof_ = roof, dirty_ = true;
+    // The puck's wall button (0x1100 walls down, 0x1101 cutaway, 0x1102 up,
+    // 0x1103 up with the roof: the one of the current mode is shown) opens
+    // the wall fan (0x4000, over the camera controls: 1 walls down, 2
+    // cutaway, 3 up, 4 up with the roof); a choice closes it, as does a
+    // click anywhere else. The four are exclusive modes, as
+    // cTSWinProcUCP::onWallChanged lights them (docs/ui-live-mac.md 8c).
+    // setWallMode shows the mode (0-3); onWallMode is called with the one
+    // the player picks.
+    void setWallMode(int mode) {
+        if (mode != wallMode_)
+            wallMode_ = mode, dirty_ = true;
     }
     bool wallFanOpen() const { return wallFan_; }
     std::function<void(int)> onWallMode;
-    std::function<void()> onRoof;
 
     // The speed buttons (docs/ui-live-mac.md §1.3): simulator speed 2-4
     // (unpauses), pause toggled.
@@ -216,7 +217,7 @@ private:
     UiScript puck_, live_, motives_, bar_, member_, icon_, options_;
     bool optionsOpen_ = false, canLeave_ = false;
     int wallMode_ = 2;
-    bool roof_ = true, wallFan_ = false;
+    bool wallFan_ = false;
     std::map<std::string, std::string> queueConstants_;
     std::array<UiScript, 8> bars_; // a copy of the motive bar per motive (its caption)
 

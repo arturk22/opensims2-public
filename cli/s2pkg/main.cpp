@@ -402,6 +402,30 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
     return failed ? 1 : 0;
 }
 
+// The walls of a lot inside a rectangle (x0,y0,x1,y1, all if none): ends,
+// level, type, patterns and the floor heights at their ends.
+int cmdLotWalls(const std::filesystem::path& lotPath, const std::string& box) {
+    DbpfPackage pkg(lotPath);
+    const Lot lot = Lot::load(pkg);
+    float b[4] = {-1e9f, -1e9f, 1e9f, 1e9f};
+    if (!box.empty() && std::sscanf(box.c_str(), "%f,%f,%f,%f", &b[0], &b[1], &b[2], &b[3]) != 4)
+        throw std::runtime_error("lot-walls: expected x0,y0,x1,y1");
+    std::printf("levels %d..%d\n", lot.minLevel, lot.minLevel + lot.levelCount - 1);
+    for (const auto& w : lot.walls) {
+        if (std::max(w.a.x, w.b.x) < b[0] || std::min(w.a.x, w.b.x) > b[2] || std::max(w.a.y, w.b.y) < b[1] ||
+            std::min(w.a.y, w.b.y) > b[3])
+            continue;
+        std::printf("wall %u: (%g, %g)-(%g, %g) level %d/%d type 0x%X patterns %04X/%04X z %g..%g\n", w.id, w.a.x,
+                    w.a.y, w.b.x, w.b.y, w.a.level, w.b.level, w.type, w.patterns[0], w.patterns[1],
+                    lot.elevationAt(w.a.level, w.a.x, w.a.y), lot.elevationAt(w.a.level + 1, w.a.x, w.a.y));
+    }
+    for (const auto& o : lot.objects)
+        if (!o.person && o.position[0] >= b[0] && o.position[0] <= b[2] && o.position[1] >= b[1] && o.position[1] <= b[3])
+            std::printf("object %s (%s) at (%g, %g, %g)\n", o.definition.c_str(), o.model.c_str(), o.position[0],
+                        o.position[1], o.position[2]);
+    return 0;
+}
+
 // --- SimAntics VM ------------------------------------------------------------
 
 // What stand-in objects are built from: an object group whose GLOB names each
@@ -949,6 +973,7 @@ int usage() {
                          "       s2pkg find <Res-dir> <name> <type-hex>\n"
                          "       s2pkg object <Res-dir> <cres-name|0xGUID|object-name> <out-dir>\n"
                          "       s2pkg lot <Res-dir> <lot.package>...\n"
+                         "       s2pkg lot-walls <lot.package> [x0,y0,x1,y1]\n"
                          "       s2pkg bhav <Res-dir> <group-hex> <instance-hex> [arg...]\n"
                          "       s2pkg bhav-sweep <Res-dir>\n"
                          "       s2pkg lot-run <lot.package>... [--ticks N] [--list] [--trace object-id] [--init]\n"
@@ -1006,6 +1031,7 @@ int main(int argc, char** argv) {
         if (cmd == "find" && argc == 5) return cmdFind(argv[2], argv[3], argv[4]);
         if (cmd == "object" && argc == 5) return cmdObject(argv[2], argv[3], argv[4]);
         if (cmd == "lot" && argc >= 4) return cmdLot(argv[2], {argv + 3, argv + argc});
+        if (cmd == "lot-walls" && argc >= 3) return cmdLotWalls(argv[2], argc > 3 ? argv[3] : "");
         if (cmd == "bhav-sweep" && argc == 3) return cmdBhavSweep(argv[2]);
         if (cmd == "lot-run") {
             std::vector<std::filesystem::path> lots;

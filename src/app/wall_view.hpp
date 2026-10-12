@@ -3,8 +3,8 @@
 // The lot's wall and roof view (the puck's wall button and fan, Home/End,
 // the floor the camera shows): which walls are cut down and which levels are
 // drawn. The app rebuilds the lot model (buildLotModel with a LotModelCache)
-// only when the view changes what is cut: the wall mode, the roof toggle, the
-// level, or, in cutaway, the camera turning past a wall direction. Plain C++.
+// only when the view changes what is cut: the wall mode (with or without the
+// roof), the level, or, in cutaway, the camera turning past a wall direction. Plain C++.
 
 #include "formats/lot_model.hpp"
 
@@ -19,17 +19,19 @@ class WallView {
 public:
     using Walls = LotViewOptions::Walls;
 
-    // A lot is entered with walls cutaway, as the game does.
-    Walls walls() const { return walls_; }
-    void setWalls(Walls w) { walls_ = w; }
+    // The game's wall modes (cITSMainToolbar::eWallMode, docs/ui-live-mac.md
+    // 8c): 0 walls down, 1 cutaway, 2 up, 3 up with the roof; the roofs show
+    // only in mode 3 (cTSMainToolbar::SetWallMode). A lot is entered in mode
+    // 1, as the game does (InitForNewLot).
+    int mode() const { return mode_; }
+    void setMode(int mode) { mode_ = mode < 0 ? 0 : mode > 3 ? 3 : mode; }
+    Walls walls() const { return walls(mode_); }
+    bool roof() const { return mode_ == 3; }
+    static Walls walls(int mode) { return mode <= 0 ? Walls::Down : mode == 1 ? Walls::Cutaway : Walls::Up; }
     // Home / End ("Paredes ... - Origem/Fim"): one mode up (down, cutaway,
-    // up) for +1 or down for -1, wrapping around.
-    void cycle(int step);
-    bool roof() const { return roof_; }
-    void setRoof(bool on) { roof_ = on; }
-    // The puck's numbering: 0 down, 1 cutaway, 2 up.
-    int puckMode() const { return int(walls_ == Walls::Down ? 0 : walls_ == Walls::Cutaway ? 1 : 2); }
-    static Walls fromPuck(int mode) { return mode <= 0 ? Walls::Down : mode == 1 ? Walls::Cutaway : Walls::Up; }
+    // up, roof) for +1 or down for -1, wrapping around (inferred: the
+    // accelerator's handler was not traced).
+    void cycle(int step) { mode_ = (mode_ + (step >= 0 ? 1 : 3)) % 4; }
 
     // A house on a foundation has its ground floor one level up from the
     // yard (the foundation's top is the next level): a camera on the yard's
@@ -54,8 +56,7 @@ public:
     static bool visible(const Lot& lot, int level, float x, float y, float z);
 
 private:
-    Walls walls_ = Walls::Cutaway;
-    bool roof_ = true;
+    int mode_ = 1;
     int minLevel_ = 0, topLevel_ = 0;
     std::vector<bool> foundationBelow_; // per level from minLevel_: the next level up stands on foundations
 };

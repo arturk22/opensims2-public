@@ -196,7 +196,7 @@ bool gLevelsHidden = false; // levels above the camera's are hidden (in the game
 int viewLevel();                            // below loadLot's helpers
 std::map<int16_t, bool> gWallHung;          // objects that hang on walls (hidden with a wall cut down)
 bool onCutWall(const os2::Xform& at);       // below viewLevel
-void setWallMode(os2::WallView::Walls walls); // likewise
+void setWallMode(int mode); // likewise
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index);
 struct PickBox {
     bool contained = false; // saved in a slot: the box follows where the VM draws it
@@ -1106,12 +1106,8 @@ void setupLiveUi(os2::ResourceIndex& index) {
             gOptions->toggleWindow(window);
     };
     gLive->onFloor = [](int delta) { changeFloor(delta); };
-    gLive->onWallMode = [](int mode) { setWallMode(os2::WallView::fromPuck(mode)); };
-    gLive->onRoof = [] {
-        gWallView.setRoof(!gWallView.roof());
-        gLive->setWallMode(gWallView.puckMode(), gWallView.roof());
-    };
-    gLive->setWallMode(gWallView.puckMode(), gWallView.roof());
+    gLive->onWallMode = [](int mode) { setWallMode(mode); };
+    gLive->setWallMode(gWallView.mode());
     gLive->onZoom = [](int steps) {
         if (gCamera)
             gCamera->zoomBy(steps);
@@ -1485,7 +1481,7 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
                         (built - start) * 1000, (CACurrentMediaTime() - built) * 1000);
     }
     if (gLive)
-        gLive->setWallMode(gWallView.puckMode(), gWallView.roof());
+        gLive->setWallMode(gWallView.mode());
     if (!sims)
         return;
     // Sims above the level shown: out of sight, and not picked.
@@ -1520,10 +1516,10 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
 }
 
 // Home / End and the puck's wall fan.
-void setWallMode(os2::WallView::Walls walls) {
-    gWallView.setWalls(walls);
+void setWallMode(int mode) {
+    gWallView.setMode(mode);
     if (gLive)
-        gLive->setWallMode(gWallView.puckMode(), gWallView.roof());
+        gLive->setWallMode(gWallView.mode());
 }
 
 // Redraws the lot after Build mode changed it: the model (walls cut away
@@ -1730,18 +1726,20 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     offerCommunityLotImage(index, lot);
     // The game enters a lot with walls cutaway and the levels above the
     // camera's hidden (--ui live, --mode); a bare --lot view shows every
-    // level with walls up. --walls up|cutaway|down picks the mode, --roof off hides the roof.
+    // level with walls up and the roof. --walls down|cutaway|up|roof picks
+    // the game's wall mode 0-3 (up shows the roof too unless --roof off;
+    // roof is mode 3, the only one with the roofs).
     gLevelsHidden = liveUiRequested() || argument(@"--mode").has_value();
     const std::string walls = argument(@"--walls").value_or(gLevelsHidden ? "cutaway" : "up");
+    const bool roofOff = argument(@"--roof").value_or("on") == "off";
     if (walls == "cutaway")
-        gWallView.setWalls(os2::LotViewOptions::Walls::Cutaway);
+        gWallView.setMode(1);
     else if (walls == "down")
-        gWallView.setWalls(os2::LotViewOptions::Walls::Down);
-    else if (walls == "up")
-        gWallView.setWalls(os2::LotViewOptions::Walls::Up);
+        gWallView.setMode(0);
+    else if (walls == "up" || walls == "roof")
+        gWallView.setMode(roofOff ? 2 : 3);
     else
-        throw std::runtime_error("--walls: expected up, cutaway or down");
-    gWallView.setRoof(argument(@"--roof").value_or("on") != "off");
+        throw std::runtime_error("--walls: expected down, cutaway, up or roof");
     gWallView.study(lot);
     gLotCache = {};
     const os2::LotViewOptions view = gWallView.options(
@@ -2047,7 +2045,7 @@ constexpr double kCinematicWait = 1.0;    // without "Start Animations Now": the
 struct CinematicForced {
     bool active = false;
     int16_t speed = 0, paused = 0;
-    std::optional<os2::LotViewOptions::Walls> walls; // the mode before, if the walls were not up
+    std::optional<int> walls; // the wall mode before, if the walls were not up
     std::optional<int> level;                       // the camera's floor before
 };
 CinematicForced gCinematicForced;
@@ -2063,8 +2061,8 @@ void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
         }
         // (the wall view: updateLotView rebuilds the lot model for it)
         if (wholeHouse && gWallView.walls() != os2::LotViewOptions::Walls::Up) {
-            gCinematicForced.walls = gWallView.walls();
-            gWallView.setWalls(os2::LotViewOptions::Walls::Up);
+            gCinematicForced.walls = gWallView.mode();
+            gWallView.setMode(3);
         }
         if (wholeHouse && gCameraFollow) {
             gCinematicForced.level = gCameraFollow->level();
@@ -2088,7 +2086,7 @@ void restoreCinematicState(os2::Renderer& renderer) {
         g[os2::vm::global::Paused] = gCinematicForced.paused;
     }
     if (gCinematicForced.walls)
-        gWallView.setWalls(*gCinematicForced.walls);
+        gWallView.setMode(*gCinematicForced.walls);
     (void)renderer;
     if (gCinematicForced.level && gCameraFollow)
         gCameraFollow->setLevel(*gCinematicForced.level);

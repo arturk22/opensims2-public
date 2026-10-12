@@ -525,13 +525,64 @@ static void testLotModel() {
     const LotViewOptions a = wv.options({1, 0.2f}, 0), b = wv.options({1, 0.4f}, 0), c = wv.options({1, -0.2f}, 0);
     check(WallView::sameCut(a, b) && !WallView::sameCut(a, c), "cutaway follows the camera's side of the walls");
     check(!WallView::sameCut(a, wv.options({1, 0.2f}, 1)), "another level rebuilds");
+    check(wv.mode() == 1 && !wv.roof() && !wv.options({1, 0}, 0).roof, "cutaway shows no roof");
     wv.cycle(1);
-    check(wv.walls() == LotViewOptions::Walls::Up, "Home: cutaway to up");
+    check(wv.mode() == 2 && wv.walls() == LotViewOptions::Walls::Up && !wv.roof(), "Home: cutaway to up");
+    wv.cycle(1);
+    check(wv.mode() == 3 && wv.walls() == LotViewOptions::Walls::Up && wv.roof() && wv.options({1, 0}, 0).roof,
+          "Home: up to up with the roof (wall mode 3)");
+    check(!WallView::sameCut(wv.options({1, 0}, 0), [&] {
+              WallView up;
+              up.setMode(2);
+              return up.options({1, 0}, 0);
+          }()),
+          "the roof mode rebuilds");
     wv.cycle(1);
     check(wv.walls() == LotViewOptions::Walls::Down, "Home wraps to walls down");
     wv.cycle(-1);
-    check(wv.walls() == LotViewOptions::Walls::Up && WallView::sameCut(wv.options({1, 0}, 0), wv.options({0, 1}, 0)),
-          "End: down to up; walls up ignore the camera");
+    check(wv.mode() == 3 && WallView::sameCut(wv.options({1, 0}, 0), wv.options({0, 1}, 0)),
+          "End: down to the roof; walls up ignore the camera");
+
+    // Cutaway (cWallCutawayManager, docs/ui-live-mac.md 8c): inside walls
+    // always cut, outside walls only with their outside face to the camera,
+    // walls alone in the yard and fences never.
+    {
+        Lot c;
+        c.width = 4, c.height = 1, c.minLevel = 0, c.levelCount = 1;
+        c.elevations.assign(5 * 2, 0.0f);
+        c.floors.assign(4, {});
+        c.rooms.assign(4, {});
+        c.rooms[0] = {1, 1, 1, 1}; // tile (0, 0): room 1
+        c.rooms[1] = {2, 2, 2, 2}; // tile (1, 0): room 2; tiles 2 and 3 outside
+        c.wallPatterns[1] = "paper";
+        auto add = [&](float x, uint32_t type) {
+            Lot::Wall w;
+            w.a = {x, 0, 0}, w.b = {x, 1, 0};
+            w.type = type;
+            w.patterns = {1, 1};
+            c.walls.push_back(w);
+        };
+        add(1, Lot::Normal);    // between rooms 1 and 2: inside
+        add(2, Lot::Normal);    // room 2 | yard: outside, its outside face +X
+        add(3, Lot::Normal);    // yard | yard: alone
+        add(0, Lot::Foundation); // a style without cutaway
+        auto cutAt = [&](std::array<float, 2> look) {
+            LotViewOptions v;
+            v.walls = LotViewOptions::Walls::Cutaway;
+            v.level = 0;
+            v.viewDirection = look;
+            LotModelCache k;
+            buildLotModel(c, index, patterns, v, nullptr, &k);
+            std::vector<float> xs;
+            for (const auto& w : k.cut)
+                xs.push_back(w[0]);
+            std::sort(xs.begin(), xs.end());
+            return xs;
+        };
+        check(cutAt({-1, 0.2f}) == std::vector<float>{1, 2}, "cutaway from +X: the inside wall and the outside wall facing the camera");
+        check(cutAt({1, 0.2f}) == std::vector<float>{1}, "cutaway from -X: the inside wall only (the outside wall's face looks away)");
+        check(cutAt({0.0f, 1}) == std::vector<float>{1}, "an inside wall is cut even edge-on");
+    }
     check(WallView::visible(lot, 0, 0.5f, 0.5f, 1.0f) && !WallView::visible(lot, 0, 0.5f, 0.5f, 3.0f) &&
               WallView::visible(lot, 1, 0.5f, 0.5f, 3.0f),
           "objects above the shown level are hidden");
