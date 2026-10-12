@@ -936,6 +936,28 @@ static void testGoHere() {
     const auto q = goHerePoint(vm, sim.id, 8.5f, 4.5f, 1);
     check(q && (std::floor(q->x) != 8 || std::floor(q->y) != 4), "go here: out of what blocks");
     check(!goHerePoint(vm, sim.id, 13.0f, 2.0f, 1), "go here: not out of the lot");
+    // Near the lamp's corner: pushed along the shorter way out only
+    // (TSObjectMoveAwayFromOtherObjects: y by -0.5001, x left alone).
+    const auto q2 = goHerePoint(vm, sim.id, 8.8f, 4.1f, 1);
+    check(q2 && std::fabs(q2->x - 8.8f) < 1e-4f && std::fabs(q2->y - 3.5999f) < 1e-3f,
+          "go here: out of a footprint along the shorter axis");
+    // Next to the Sim: 0.4 off its 0.2-wide footprint.
+    const auto q3 = goHerePoint(vm, sim.id, 6.7f, 1.5f, 1);
+    check(q3 && std::fabs(q3->x - 7.0001f) < 1e-3f, "go here: 0.4 off the Sim's footprint");
+    // The diagonal walls as the binary moves off them: along the wall.
+    {
+        World dw(8, 8);
+        dw.addWall(1, 0, 4, 4, 0); // slope -1: fx + fy = 1 in tile (1, 2)
+        dw.addWall(1, 4, 4, 8, 8); // slope +1: fx = fy in tile (5, 5)
+        check(dw.diagonalSides({1, 2, 1}) == 0x10 && dw.diagonalSides({5, 5, 1}) == 0x20 &&
+                  dw.diagonalSides({1, 1, 1}) == 0,
+              "go here: diagonal wall sides");
+        const Point2 a = movePointAwayFromWalls(dw, {1.5f, 2.6f}, 1, 0.45f);
+        check(std::fabs(a[0] - 1.7689f) < 1e-3f && std::fabs(a[1] - 2.3311f) < 1e-3f,
+              "go here: diagonal 0x10 as the binary has it");
+        const Point2 b = movePointAwayFromWalls(dw, {5.5f, 5.6f}, 1, 0.45f);
+        check(std::fabs((b[0] - 5.5f) - (b[1] - 5.6f)) < 1e-4f && b[0] > 5.7f, "go here: diagonal 0x20 along the wall");
+    }
     // Cancelled: the destination goes when the menu closes.
     ObjectId d = createGoHereDestination(vm, sim.id, 9.5f, 6.5f, 1);
     check(d && vm.objects().size() == before + 1, "go here: the destination is made");

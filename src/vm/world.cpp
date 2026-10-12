@@ -280,6 +280,25 @@ void World::setCost(TilePos t, float cost) {
 
 bool World::diagonalWall(TilePos t) const { return contains(t) && diagonals_[cell(t)] != 0; }
 
+int World::diagonalSides(TilePos t) const {
+    int sides = 0;
+    for (const Segment& s : diagonalWalls_) {
+        if (s.level != t.level)
+            continue;
+        // The tiles the segment crosses: x in [min, max), one per step.
+        const int x0 = std::min(s.ax, s.bx), x1 = std::max(s.ax, s.bx);
+        if (t.x < x0 || t.x >= x1)
+            continue;
+        if ((s.bx - s.ax) * (s.by - s.ay) > 0) { // slope +1: y - x constant, fx = fy
+            if (t.y - t.x == s.ay - s.ax)
+                sides |= 0x20;
+        } else if (t.x + t.y + 1 == s.ax + s.ay) { // slope -1: fx + fy = 1
+            sides |= 0x10;
+        }
+    }
+    return sides;
+}
+
 void World::setWalkable(TilePos t, bool walkable) {
     ++revision_;
     if (contains(t))

@@ -112,6 +112,10 @@ public:
     bool wallBetween(TilePos t, int dx, int dy, bool placement = false) const;
     // A diagonal wall crosses the tile.
     bool diagonalWall(TilePos t) const;
+    // Which diagonal walls cross the tile, as the binary's wall sides
+    // (MovePointAwayFromWalls): 0x10 the one along fx + fy = 1 (grid slope
+    // -1), 0x20 the one along fx = fy (slope +1); fx, fy in the tile.
+    int diagonalSides(TilePos t) const;
     // No wall crosses the straight line between the two tile centres (same
     // level); tiles in between with a diagonal wall stop it.
     bool lineOfSight(TilePos a, TilePos b) const;

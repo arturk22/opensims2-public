@@ -2155,6 +2155,234 @@ void flushDestinations(VM& vm) {
         vm.removeObject(id);
 }
 
+namespace {
+
+// A footprint: rectangles x0, y0, x1, y1 in world tiles.
+using Footprint = std::vector<std::array<float, 4>>;
+
+// The OBJD field of an object (file offset), 0 without a definition.
+uint16_t objdField(const Object& o, size_t offset) { return o.definition ? o.definition->field(offset) : 0; }
+constexpr size_t kObjdTileWidth = 0xC6;     // field 0x43 (TSObjectBaseFootprintWidth)
+constexpr size_t kObjdFootprintMask = 0xDA; // field 0x4D
+constexpr int kTypePerson = 2, kTypeDoor = 8;
+
+int objectType(const Object& o) { return o.person ? kTypePerson : int(objdField(o, 0x52)); }
+
+// TSObjectWorldSpaceFootprint's box (BV 0x8aa40c): a square of half side
+// 0.5 * the base width (a person 0.2, else OBJD field 0x43 / 16, 1 when 0)
+// about the object's position, each side moved in by a nibble of OBJD
+// field 0x4D / 16 (out by person data 73 for a person facing an even
+// direction), the nibbles turned with the facing: (8 - direction) / 2
+// picks which nibble each side takes. Inferred: the direction index is
+// object data 1, and the model's aggregate footprint (AggregateFootprint,
+// used before this box when there is one) is not read: the box stands in.
+Footprint footprintOf(const Object& o) {
+    const float half = 0.5f * (o.person ? 0.2f : (objdField(o, kObjdTileWidth) ? float(objdField(o, kObjdTileWidth)) / 16 : 1.0f));
+    std::array<float, 4> c{0, 0, 0, 0};
+    const int dir = ((o.data[objdata::Direction] % 8) + 8) % 8;
+    if (const uint16_t m = objdField(o, kObjdFootprintMask); m && !o.person)
+        for (int k = 0; k < 4; ++k)
+            c[size_t(k)] = float((m >> (4 * k)) & 0xF) / 16;
+    if (o.person && o.person->data.size() > 73 && (dir & 1) == 0)
+        if (const uint16_t m = uint16_t(o.person->data[73]))
+            for (int k = 0; k < 4; ++k)
+                c[size_t(k)] -= float((m >> (4 * k)) & 0xF) / 16;
+    const int u = (8 - dir) / 2;
+    float x0 = o.position.x - half, y0 = o.position.y - half, x1 = o.position.x + half, y1 = o.position.y + half;
+    x0 += c[size_t(u % 4)];
+    y1 -= c[size_t((u + 1) % 4)];
+    x1 -= c[size_t((u + 2) % 4)];
+    y0 += c[size_t((u + 3) % 4)];
+    return {{x0, y0, x1, y1}};
+}
+
+// A door's indexed footprints 0 and 2 (TSObjectIndexedWorldSpaceFootprint;
+// the model's footprint data is not read). Inferred: the leaf's swing, the
+// half tile on each side of the wall the door cuts (0 in front, 2 behind).
+Footprint doorFootprint(const Object& o, int index) {
+    const TilePos t = VM::tileOf(o);
+    const auto [dx, dy] = directionStep(o.data[objdata::Direction] + 4); // towards the wall behind
+    float x0 = float(t.x), y0 = float(t.y), x1 = x0 + 1, y1 = y0 + 1;
+    const float side = index == 0 ? 0.0f : 1.0f; // 0: the door's tile, 2: the one behind
+    if (dx > 0)
+        x0 = float(t.x) + 0.5f + side, x1 = x0 + 0.5f;
+    else if (dx < 0)
+        x1 = float(t.x) + 0.5f - side, x0 = x1 - 0.5f;
+    else if (dy > 0)
+        y0 = float(t.y) + 0.5f + side, y1 = y0 + 0.5f;
+    else if (dy < 0)
+        y1 = float(t.y) + 0.5f - side, y0 = y1 - 0.5f;
+    else
+        return {};
+    return {{x0, y0, x1, y1}};
+}
+
+// FUN_0191f6d0 (docs/routing-mac.md §8.4): `p` out of the footprint
+// inflated by d, along the shorter axis unless both moves are short.
+void pushOutOf(const Footprint& fp, float d, Point2& p) {
+    constexpr float kEps = 0.0001f;
+    float dx = 0, dy = 0;
+    for (const auto& r : fp) {
+        if (!(r[0] - d <= p[0] && p[0] <= d + r[2] && r[1] - d <= p[1] && p[1] <= d + r[3]))
+            continue;
+        if ((r[0] + r[2]) * 0.5f < p[0]) {
+            if (p[0] < d + r[2])
+                dx = std::max(dx, d + r[2] + kEps - p[0]);
+        } else if (const float v = r[0] - d - kEps - p[0]; v < dx) {
+            dx = v;
+        }
+        if ((r[1] + r[3]) * 0.5f < p[1]) {
+            if (p[1] < d + r[3])
+                dy = std::max(dy, d + r[3] + kEps - p[1]);
+        } else if (const float v = r[1] - d - kEps - p[1]; v < dy) {
+            dy = v;
+        }
+    }
+    if (dx == 0 && dy == 0)
+        return;
+    const float far = d + kEps + kEps;
+    if (std::fabs(dy) <= std::fabs(dx)) {
+        if (std::fabs(dx) >= far) {
+            p[1] += dy;
+            return;
+        }
+    } else if (std::fabs(dy) >= far) {
+        p[0] += dx;
+        return;
+    }
+    p[0] += dx, p[1] += dy;
+}
+
+bool canIntersectObjects(const Object& o) { return (o.data[objdata::Flags] & 0x06) != 0; }
+bool canIntersectPeople(const Object& o) { return (o.data[objdata::Flags] & 0x14) != 0; }
+
+// cTSObject::RunTree(5, other, ...): the "allow intersection" tree (OBJf
+// entry 5) of `o` about `other`; false without one. Inferred: the other's
+// ID goes in parameter 0 and as the stack object.
+bool allowsIntersection(VM& vm, const Object& o, ObjectId other) {
+    const uint16_t tree = vm.functionTree(o, 5);
+    if (!tree)
+        return false;
+    const std::array<int16_t, 1> args{int16_t(other)};
+    Thread t = vm.start(o.id, tree, args, other);
+    for (int turn = 0; t.status == Thread::Status::Running && turn < 4; ++turn)
+        vm.run(t, vm.instructionsPerTurn);
+    return t.status == Thread::Status::Finished && t.result;
+}
+
+// IsDiagonalDoor: a door (type 8) whose wall placement flags (object data
+// 13) have 0x50.
+bool isDiagonalDoor(const Object& o) { return objectType(o) == kTypeDoor && (o.data[13] & 0x50) != 0; }
+
+} // namespace
+
+Point2 moveAwayFromOtherObjects(VM& vm, const Object& me, Point2 p, int level, float d, bool skipPeople, bool doors) {
+    if (me.person && me.person->data.size() > 68 && (me.person->data[68] & 0x02))
+        return p; // a ghost that walks through things (person data 68 "ghost flags")
+    if (canIntersectObjects(me))
+        return p;
+    const World& w = *vm.world;
+    const TilePos c{int(std::floor(p[0])), int(std::floor(p[1])), level};
+    const bool mePerson = objectType(me) == kTypePerson;
+    for (int ty = c.y - 1; ty <= c.y + 1; ++ty)
+        for (int tx = c.x - 1; tx <= c.x + 1; ++tx) {
+            const TilePos t{tx, ty, level};
+            if (!w.contains(t))
+                continue;
+            for (const ObjectId id : vm.objectsOnTile(t)) {
+                const Object* o = vm.object(id);
+                if (!o)
+                    continue;
+                if (doors && objectType(*o) == kTypeDoor) {
+                    pushOutOf(doorFootprint(*o, 0), d, p);
+                    pushOutOf(doorFootprint(*o, 2), d, p);
+                }
+                const bool oPerson = objectType(*o) == kTypePerson;
+                if ((mePerson || oPerson) && (canIntersectPeople(*o) || canIntersectPeople(me)))
+                    continue;
+                if (canIntersectObjects(*o) || (skipPeople && oPerson))
+                    continue;
+                if (allowsIntersection(vm, me, o->id) || allowsIntersection(vm, *o, me.id))
+                    continue;
+                pushOutOf(footprintOf(*o), d, p);
+            }
+        }
+    if (doors)
+        for (int ty = c.y - 2; ty <= c.y + 2; ++ty)
+            for (int tx = c.x - 2; tx <= c.x + 2; ++tx) {
+                if (std::abs(tx - c.x) <= 1 && std::abs(ty - c.y) <= 1)
+                    continue;
+                const TilePos t{tx, ty, level};
+                if (!w.contains(t))
+                    continue;
+                for (const ObjectId id : vm.objectsOnTile(t))
+                    if (const Object* o = vm.object(id); o && isDiagonalDoor(*o)) {
+                        pushOutOf(doorFootprint(*o, 0), d, p);
+                        pushOutOf(doorFootprint(*o, 2), d, p);
+                    }
+            }
+    return p;
+}
+
+Point2 movePointAwayFromWalls(const World& w, Point2 at, int level, float d) {
+    constexpr float kEps = 0.001f;
+    const float r2 = std::sqrt(2.0f);
+    const TilePos t{int(std::floor(at[0])), int(std::floor(at[1])), level};
+    const int diag = w.diagonalSides(t);
+    for (int side = 1; side <= 0x20; side <<= 1) {
+        const bool wall = side == 1   ? w.wallBetween(t, 0, -1)
+                          : side == 2 ? w.wallBetween(t, -1, 0)
+                          : side == 4 ? w.wallBetween(t, 0, 1)
+                          : side == 8 ? w.wallBetween(t, 1, 0)
+                                      : (diag & side) != 0;
+        if (!wall)
+            continue;
+        float& x = at[0];
+        float& y = at[1];
+        switch (side) {
+        case 1:
+            if (y - std::floor(y) < d)
+                y += d - (y - std::floor(y)) + kEps;
+            break;
+        case 2:
+            if (x - std::floor(x) < d)
+                x += d - (x - std::floor(x)) + kEps;
+            break;
+        case 4:
+            if (std::ceil(y) - y < d)
+                y -= d - (std::ceil(y) - y) + kEps;
+            break;
+        case 8:
+            if (std::ceil(x) - x < d)
+                x -= d - (std::ceil(x) - x) + kEps;
+            break;
+        case 0x10: { // as the binary has it: measured to fx + fy = 1, moved along it
+            const float s = ((y - std::floor(y)) - (std::ceil(x) - x)) / r2;
+            if (s >= 0 && s < d) {
+                const float v = d - s + kEps;
+                y += v / -r2, x += v / r2;
+            } else if (s < 0 && s > -d) {
+                const float v = d + s + kEps;
+                y += v / r2, x += v / -r2;
+            }
+            break;
+        }
+        case 0x20: { // measured to fx = fy, moved along it
+            const float s = ((y - std::floor(y)) - (x - std::floor(x))) / r2;
+            if (s >= 0 && s < d) {
+                const float v = (d - s + kEps) / r2;
+                y += v, x += v;
+            } else if (s < 0 && s > -d) {
+                const float v = (s + d + kEps) / -r2;
+                y += v, x += v;
+            }
+            break;
+        }
+        }
+    }
+    return at;
+}
+
 std::optional<Position> goHerePoint(VM& vm, ObjectId simId, float x, float y, int level) {
     if (!vm.world)
         return std::nullopt;
@@ -2162,57 +2390,24 @@ std::optional<Position> goHerePoint(VM& vm, ObjectId simId, float x, float y, in
     const TilePos tile{int(std::floor(x)), int(std::floor(y)), level};
     if (!w.contains(tile))
         return std::nullopt;
-    // A pool tile: the swim destination stands in the water (the planner
-    // counts water as nothing to stand on).
-    if (w.pool(tile))
-        return Position{x, y, level};
-    if (!w.walkable(tile))
-        return std::nullopt;
-    PathPlanner& planner = plannerOf(vm);
     const Object* sim = vm.object(simId);
     Object none;
-    addObstacles(vm, planner, sim ? *sim : none, {});
-    // Away from the other objects (TSObjectMoveAwayFromOtherObjects, 0.4
-    // tile): out of what blocks, then 0.4 from the other Sims (inferred:
-    // the nearest such point on a 1/16 tile grid within 1.5 tiles).
-    auto clearOfSims = [&](Point2 p) {
-        for (const auto& [id, o] : vm.objects())
-            if (o.person && id != simId && o.position.inWorld() && o.position.level == level &&
-                std::hypot(o.position.x - p[0], o.position.y - p[1]) < 0.4f)
-                return false;
-        return true;
-    };
-    Point2 at{x, y};
-    if (!planner.free(level, at) || !clearOfSims(at)) {
-        std::optional<Point2> best;
-        float bestD = 1.5f;
-        for (int i = -24; i <= 24; ++i)
-            for (int j = -24; j <= 24; ++j) {
-                const Point2 q{x + float(i) / 16, y + float(j) / 16};
-                const float d = std::hypot(q[0] - x, q[1] - y);
-                if (d < bestD && planner.free(level, q) && clearOfSims(q))
-                    best = q, bestD = d;
-            }
-        if (!best)
-            return std::nullopt;
-        at = *best;
-    }
-    // Away from the walls of its tile (MovePointAwayFromWalls, 0.45 tile +
-    // 0.001): side 1 the low y edge, 2 the low x edge, 4 the high y edge, 8
-    // the high x edge.
-    constexpr float kWallGap = 0.45f, kEps = 0.001f;
+    // GoHere (docs/routing-mac.md §8.4): 0.4 away from the objects around
+    // (the Sim's view of them: TSObjectMoveAwayFromOtherObjects with the
+    // Sims counted and the doors), then 0.45 away from the walls of its tile.
+    Point2 at = moveAwayFromOtherObjects(vm, sim ? *sim : none, {x, y}, level, 0.4f, false, true);
+    at = movePointAwayFromWalls(w, at, level, 0.45f);
+    // TSObjectCanSetPosition, inferred as: in the lot, something to stand
+    // on (a pool tile for the swim destination) and nothing that blocks.
     const TilePos t{int(std::floor(at[0])), int(std::floor(at[1])), level};
-    const float fx = at[0] - float(t.x), fy = at[1] - float(t.y);
-    if (w.wallBetween(t, 0, -1) && fy < kWallGap)
-        at[1] += kWallGap - fy + kEps;
-    if (w.wallBetween(t, -1, 0) && fx < kWallGap)
-        at[0] += kWallGap - fx + kEps;
-    if (w.wallBetween(t, 0, 1) && 1 - fy < kWallGap)
-        at[1] -= kWallGap - (1 - fy) + kEps;
-    if (w.wallBetween(t, 1, 0) && 1 - fx < kWallGap)
-        at[0] -= kWallGap - (1 - fx) + kEps;
-    // Where it can stand (TSObjectCanSetPosition, inferred as: something to
-    // stand on, nothing that blocks).
+    if (!w.contains(t))
+        return std::nullopt;
+    if (w.pool(t))
+        return Position{at[0], at[1], level};
+    if (!w.walkable(t))
+        return std::nullopt;
+    PathPlanner& planner = plannerOf(vm);
+    addObstacles(vm, planner, sim ? *sim : none, {});
     if (!planner.free(level, at))
         return std::nullopt;
     return Position{at[0], at[1], level};
