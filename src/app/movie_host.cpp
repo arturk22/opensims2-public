@@ -92,58 +92,72 @@ struct LoadingClip : Clip {
     Reia reia;
     ReiaDecoder decoder;
     std::function<float()> progress;
-    RgbaImage icon; // already scaled
-    int iconLeft = 0, iconTop = 0;
+    struct Overlay {
+        RgbaImage img; // already scaled
+        int left = 0, top = 0;
+    };
+    Overlay icon, title;
+    float iconX = 0, iconY = 0, iconW = 0, iconH = 0;
+    std::function<std::optional<RgbaImage>()> lateIcon;
     RgbaImage picture_;
     double t = 0, lastWall = 0, tailSpeed = 0;
     bool finishing = false, skipped = false, fresh = true;
     long shownFrame = -1;
 
+    void setIcon(const RgbaImage& src) {
+        icon = {};
+        if (!src.width || !src.height)
+            return;
+        const float scale = std::min({1.0f, iconW / float(src.width), iconH / float(src.height)});
+        RgbaImage& out = icon.img;
+        out.width = std::max(1u, uint32_t(std::lround(float(src.width) * scale)));
+        out.height = std::max(1u, uint32_t(std::lround(float(src.height) * scale)));
+        out.pixels.resize(size_t(out.width) * out.height * 4);
+        // Box filter over the source pixels each target pixel covers.
+        for (uint32_t y = 0; y < out.height; ++y)
+            for (uint32_t x = 0; x < out.width; ++x) {
+                const uint32_t x0 = x * src.width / out.width, x1 = std::max(x0 + 1, (x + 1) * src.width / out.width);
+                const uint32_t y0 = y * src.height / out.height, y1 = std::max(y0 + 1, (y + 1) * src.height / out.height);
+                float acc[4] = {0, 0, 0, 0};
+                for (uint32_t sy = y0; sy < y1; ++sy)
+                    for (uint32_t sx = x0; sx < x1; ++sx) {
+                        const uint8_t* q = &src.pixels[(size_t(sy) * src.width + sx) * 4];
+                        const float a = q[3] / 255.0f;
+                        acc[0] += q[0] * a, acc[1] += q[1] * a, acc[2] += q[2] * a, acc[3] += a;
+                    }
+                uint8_t* d = &out.pixels[(size_t(y) * out.width + x) * 4];
+                const float n = float((x1 - x0) * (y1 - y0));
+                for (int c = 0; c < 3; ++c)
+                    d[c] = acc[3] > 0 ? uint8_t(std::clamp(acc[c] / acc[3], 0.0f, 255.0f)) : 0; // unpremultiplied
+                d[3] = uint8_t(std::clamp(acc[3] / n * 255.0f, 0.0f, 255.0f));
+            }
+        icon.left = int(std::lround(iconX - float(out.width) / 2));
+        icon.top = int(std::lround(iconY - float(out.height) / 2));
+    }
+
     LoadingClip(std::vector<uint8_t> bytes, LoadingScreen screen, std::function<float()> progress)
-        : reia(std::move(bytes)), decoder(reia), progress(std::move(progress)) {
+        : reia(std::move(bytes)), decoder(reia), progress(std::move(progress)), iconX(screen.iconX),
+          iconY(screen.iconY), iconW(screen.iconW), iconH(screen.iconH), lateIcon(std::move(screen.lateIcon)) {
         decoder.seekFrame(0);
-        if (screen.icon && screen.icon->width && screen.icon->height) {
-            const RgbaImage& src = *screen.icon;
-            const float scale = std::min({1.0f, screen.iconW / float(src.width), screen.iconH / float(src.height)});
-            icon.width = std::max(1u, uint32_t(std::lround(float(src.width) * scale)));
-            icon.height = std::max(1u, uint32_t(std::lround(float(src.height) * scale)));
-            icon.pixels.resize(size_t(icon.width) * icon.height * 4);
-            // Box filter over the source pixels each target pixel covers.
-            for (uint32_t y = 0; y < icon.height; ++y)
-                for (uint32_t x = 0; x < icon.width; ++x) {
-                    const uint32_t x0 = x * src.width / icon.width, x1 = std::max(x0 + 1, (x + 1) * src.width / icon.width);
-                    const uint32_t y0 = y * src.height / icon.height, y1 = std::max(y0 + 1, (y + 1) * src.height / icon.height);
-                    float acc[4] = {0, 0, 0, 0};
-                    for (uint32_t sy = y0; sy < y1; ++sy)
-                        for (uint32_t sx = x0; sx < x1; ++sx) {
-                            const uint8_t* q = &src.pixels[(size_t(sy) * src.width + sx) * 4];
-                            const float a = q[3] / 255.0f;
-                            acc[0] += q[0] * a, acc[1] += q[1] * a, acc[2] += q[2] * a, acc[3] += a;
-                        }
-                    uint8_t* d = &icon.pixels[(size_t(y) * icon.width + x) * 4];
-                    const float n = float((x1 - x0) * (y1 - y0));
-                    for (int c = 0; c < 3; ++c)
-                        d[c] = acc[3] > 0 ? uint8_t(std::clamp(acc[c] / acc[3], 0.0f, 255.0f)) : 0; // unpremultiplied
-                    d[3] = uint8_t(std::clamp(acc[3] / n * 255.0f, 0.0f, 255.0f));
-                }
-            iconLeft = int(std::lround(screen.iconX - float(icon.width) / 2));
-            iconTop = int(std::lround(screen.iconY - float(icon.height) / 2));
+        if (screen.icon)
+            setIcon(*screen.icon);
+        if (screen.title && screen.title->width && screen.title->height) {
+            title.img = *screen.title;
+            title.left = int(std::lround(screen.titleX - float(title.img.width) / 2));
+            title.top = int(std::lround(screen.titleY - float(title.img.height) / 2));
         }
         compose();
     }
-    void compose() {
-        picture_ = decoder.picture();
-        if (icon.pixels.empty())
-            return;
-        for (uint32_t y = 0; y < icon.height; ++y) {
-            const int py = iconTop + int(y);
+    void blend(const Overlay& o) {
+        for (uint32_t y = 0; y < o.img.height; ++y) {
+            const int py = o.top + int(y);
             if (py < 0 || py >= int(picture_.height))
                 continue;
-            for (uint32_t x = 0; x < icon.width; ++x) {
-                const int px = iconLeft + int(x);
+            for (uint32_t x = 0; x < o.img.width; ++x) {
+                const int px = o.left + int(x);
                 if (px < 0 || px >= int(picture_.width))
                     continue;
-                const uint8_t* s = &icon.pixels[(size_t(y) * icon.width + x) * 4];
+                const uint8_t* s = &o.img.pixels[(size_t(y) * o.img.width + x) * 4];
                 uint8_t* d = &picture_.pixels[(size_t(py) * picture_.width + size_t(px)) * 4];
                 const int a = s[3];
                 for (int c = 0; c < 3; ++c)
@@ -151,9 +165,19 @@ struct LoadingClip : Clip {
             }
         }
     }
+    void compose() {
+        picture_ = decoder.picture();
+        blend(icon);
+        blend(title);
+    }
     bool update(double wall) override {
         const double dt = std::clamp(wall - lastWall, 0.0, 0.1);
         lastWall = wall;
+        if (lateIcon)
+            if (auto img = lateIcon()) {
+                setIcon(*img);
+                fresh = true;
+            }
         const double end = reia.duration() - reia.frameSeconds() * 0.5;
         // While loading, the clock does not pass the progress (its bar is the
         // load's); it runs at twice the speed while far behind; finishing,
@@ -185,7 +209,7 @@ struct LoadingClip : Clip {
     std::string describe() const override {
         char b[96];
         std::snprintf(b, sizeof b, "Reia %ux%u, %zu frames, %.2f s, loading screen%s", reia.width(), reia.height(),
-                      reia.frameCount(), reia.duration(), icon.pixels.empty() ? "" : " with an icon");
+                      reia.frameCount(), reia.duration(), icon.img.pixels.empty() ? "" : " with an icon");
         return b;
     }
 };

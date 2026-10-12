@@ -1,17 +1,20 @@
 #pragma once
 
-// Which loading screen a scene gets (docs/loading-mac.md): the game's
-// start-up Reia 0x8DA3ADE7 for the main menu, and one of the lot intro
-// Reias 0x8DA3ADE8-ED with an icon IMG (0x8DA3ADF0-F4) in the middle tile
-// for the rest. The game's case -> animation map (cTSWinProcLotIntro::
-// onAttach) was not followed; the choice is by what the animations and
-// icons show (inferred):
+// Which loading screen a scene gets (docs/loading-mac.md, docs/cinematics-
+// mac.md §2.1: cTSWinProcLotIntro::onAttach): the game's start-up Reia
+// 0x8DA3ADE7 for the main menu, and one of the lot intro Reias 0x8DA3ADE8-ED
+// with an icon IMG (0x8DA3ADF0-F4) or a picture in the middle tile and a
+// title under it, by case:
 //
-//   lot of a family        E8 (Sims, social icons)      + F0 (a family)
-//   empty residential lot  E9 (build and garden icons)  + F2 (build tools)
-//   community lot          EA (furniture, plants)       + F1 (the taxi)
-//   neighborhood           ED (houses, plants)          + F3 (houses)
-//   Create-a-Sim           EC (clothes)                 + F0 (a family)
+//   lot of a family        E8   the family's photo         "The <name> Family"
+//   empty residential lot  E9   F2 (build tools)          the lot's name
+//   community lot          EA   the image of an object of  the lot's name
+//                               the lot (found during the load), else F1
+//   neighborhood           EB   F3 (houses)                (the name: not read)
+//   Create-a-Sim           EC   F0 (a family)              "Create A Family"
+//
+// (The base game's neighborhood type only; the Tutorial's ED/F4 and the
+// expansions' icons are not used.)
 //
 // Plain C++.
 
@@ -28,11 +31,19 @@ struct LotEntry {
     bool known = false;
     uint8_t type = 0;    // 0 residential, 1 community
     bool family = false; // a family lives there
+    std::string name;        // the lot's name
+    std::string familyName;  // the family's
+    uint32_t familyId = 0;
+    std::filesystem::path familyThumbs; // <hood>/Thumbnails/<prefix>_FamilyThumbnails.package
 };
 
 // The lot intro's middle tile, in the 820x620 picture (the glowing
 // trapezoid spans x 221-596, y 195-413 in every frame).
 constexpr float kLotIntroTileX = 409, kLotIntroTileY = 300, kLotIntroIconW = 250, kLotIntroIconH = 165;
+
+// The title under the middle tile, centred (the game's text is a window of
+// the intro; its place and font are inferred).
+constexpr float kLotIntroTitleX = 409, kLotIntroTitleY = 470;
 
 LoadingScreen loadingScreenFor(const std::filesystem::path& resDir, const Scene& scene, bool cas, const LotEntry& lot);
 
@@ -40,4 +51,12 @@ LoadingScreen loadingScreenFor(const std::filesystem::path& resDir, const Scene&
 // through a ResourceIndex, which the loading thread owns meanwhile).
 std::optional<RgbaImage> readUiIcon(const std::filesystem::path& resDir, uint32_t instance);
 
+} // namespace os2
+
+namespace os2 {
+// While a community lot's loading screen shows, the load looks for the image
+// of one of the lot's objects (docs/cinematics-mac.md §2.1): the worker asks
+// whether one is wanted and offers it (any thread), the screen takes it.
+bool loadingIconWanted();
+void offerLoadingIcon(RgbaImage image);
 } // namespace os2

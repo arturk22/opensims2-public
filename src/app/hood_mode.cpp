@@ -1,4 +1,5 @@
 #include "hood_mode.hpp"
+#include "app/scene_loader.hpp"
 
 #include "formats/hood_lots.hpp"
 #include "formats/hood_moves.hpp"
@@ -21,9 +22,11 @@ HoodMode::HoodMode(Renderer& renderer, ResourceIndex& index, const fs::path& gam
     const fs::path res = gameDir / "TSData/Res";
     view_ = std::make_unique<HoodView>(renderer, index, res, gameDir / "TSData/Sys", query);
     ui_ = std::make_unique<HoodUi>(*view_, index, res);
+    loading::phase("hood: ui");
     // The player's Lots & Houses bin (filled from the game's the first time).
     ui_->bins().setLotBin(
         hood::loadLotBin(hood::playerLotCatalog(view_->folder(), res / "UserData/LotCatalog")));
+    loading::phase("hood: bins");
 }
 
 std::optional<simd_int2> HoodMode::tileAt(const LotCamera& camera, simd_float2 p, float w, float h) const {

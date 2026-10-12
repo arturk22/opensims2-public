@@ -57,6 +57,7 @@
 
 #include "app/cinematic_player.hpp"
 #include "app/loading_screen.hpp"
+#include "formats/catalog.hpp"
 #include "app/scene_loader.hpp"
 #include "app/tv_broadcast.hpp"
 #include "formats/neighborhood.hpp"
@@ -1363,6 +1364,31 @@ void runBuySteps() {
     gBuy->update();
 }
 
+// A community lot's loading screen shows the catalog image of one of the
+// lot's objects (docs/cinematics-mac.md §2.1: bit 0x20 of OBJD field 0x5E,
+// the function subsort), when the screen asked for it.
+void offerCommunityLotImage(os2::ResourceIndex& index, const os2::Lot& lot) {
+    if (!os2::loadingIconWanted())
+        return;
+    try {
+        os2::Catalog catalog = os2::Catalog::load(index);
+        catalog.setThumbnailPackage(gameDir() / "TSData/Res/UserData/Thumbnails/ObjectThumbnails.package");
+        for (const auto& o : lot.objects) {
+            std::string name = o.definition;
+            if (name.size() > 5 && name.compare(name.size() - 5, 5, "_objt") == 0)
+                name.resize(name.size() - 5);
+            const os2::CatalogEntry* e = catalog.find(name);
+            if (!e || !(e->functionSubSort & 0x20))
+                continue;
+            if (const os2::RgbaImage* img = catalog.thumbnail(*e)) {
+                os2::offerLoadingIcon(*img);
+                return;
+            }
+        }
+    } catch (const std::exception&) {
+    }
+}
+
 // Loads --lot into the renderer in place of the test floor. Returns the middle
 // of the lot at ground level, for the camera.
 // --walls up|cutaway|down picks the wall mode; cutaway uses `viewDirection`.
@@ -1381,6 +1407,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     perfLap("leftover cObjects");
     const os2::PatternCatalog patterns(index, gameDir() / "TSData/Res");
     perfLap("PatternCatalog");
+    offerCommunityLotImage(index, lot);
     // The game enters a lot with walls cutaway and the levels above the
     // camera's hidden (--ui live, --mode); a bare --lot view shows every
     // level with walls up. --walls up|cutaway|down picks the mode, --roof off hides the roof.
@@ -3167,6 +3194,28 @@ void unloadScene() {
 
 // --- Loading behind the loading screen (app/scene_loader.hpp) ---------------
 
+// A lot opened by flags (--hood N --hood-lot id) has no click behind it: its
+// loading screen's case comes from the neighborhood's lot info.
+static void fillLotEntryFromFlags(const os2::Scene& scene) {
+    if (scene.kind != os2::Scene::Kind::Lot || gLotEntry.known || scene.hood.empty())
+        return;
+    try {
+        const fs::path dir = hoodFolder(scene.hood);
+        const os2::hood::Neighborhood hood = os2::hood::Neighborhood::load(dir, false);
+        const os2::hood::Lot* lot = hood.lot(scene.lot);
+        if (!lot)
+            return;
+        gLotEntry = {true, lot->info.type, !lot->families.empty(), lot->name, "", 0,
+                     hood.package.parent_path() / "Thumbnails" / (hood.prefix + "_FamilyThumbnails.package")};
+        if (!lot->families.empty()) {
+            gLotEntry.familyId = lot->families.front();
+            if (const auto* f = hood.family(gLotEntry.familyId))
+                gLotEntry.familyName = f->name;
+        }
+    } catch (const std::exception&) {
+    }
+}
+
 // With a window: starts loading the scene the arguments pick on the worker,
 // and shows its loading screen (after the intro movies, when they play).
 // --loading-hold <seconds>: test aid, the worker waits that long after the
@@ -3179,6 +3228,7 @@ void unloadScene() {
         if (gIntroMovies)
             gIntroMovies();
     }
+    fillLotEntryFromFlags(scene);
     _loadingScreen = os2::loadingScreenFor(gameDir() / "TSData/Res", scene, cas, gLotEntry);
     gLotEntry = {};
     os2::loading::begin();
@@ -3270,6 +3320,7 @@ void unloadScene() {
     const os2::Scene scene = os2::sceneOf(processArguments());
     const bool cas = [sceneArgs() containsObject:@"--cas"];
     os2::loading::begin();
+    fillLotEntryFromFlags(scene);
     os2::playLoadingScreen(os2::loadingScreenFor(gameDir() / "TSData/Res", scene, cas, gLotEntry),
                            [] { return os2::loading::shown(); });
     const float at = std::stof(argument(@"--loading-at").value_or("0.5"));
@@ -3444,6 +3495,7 @@ void unloadScene() {
             dirs.push_back(gUser->neighborhoodForReading(prefix));
     gMenu = std::make_unique<os2::MainMenu>(*gIndex, gameDir() / "TSData/Res", os2::readMainMenuHoods(dirs),
                                             scene.fromNeighborhood);
+    perfLap("menu: scripts");
     _menuDirs = dirs;
 }
 
@@ -3821,7 +3873,9 @@ void unloadScene() {
         std::printf("opensims2: %s\n", line.c_str());
     // Entering a lot and the main menu switch scenes in place (app/game_flow.hpp).
     gHood->onEnterLot = [](const os2::HoodLot& lot) {
-        gLotEntry = {true, lot.type, lot.family != 0}; // its loading screen
+        const auto& hood = gHood->view().neighborhood();
+        gLotEntry = {true, lot.type, lot.family != 0, lot.name, lot.familyName, lot.family,
+                     hood.package.parent_path() / "Thumbnails" / (hood.prefix + "_FamilyThumbnails.package")}; // its loading screen
         os2::Scene next;
         next.kind = os2::Scene::Kind::Lot;
         next.hood = os2::sceneOf(processArguments()).hood;

@@ -1,4 +1,5 @@
 #include "cas_mode.hpp"
+#include "app/scene_loader.hpp"
 
 #include "app/cas_studio.hpp"
 #include "app/ui_panel_util.hpp"
@@ -170,6 +171,7 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
     const fs::path res = gameDir_ / "TSData/Res";
     catalog_ = std::make_unique<cas::CasCatalog>(cas::CasCatalog::load(index_));
     baker_ = std::make_unique<cas::FaceBaker>(index_, *catalog_);
+    loading::phase("cas: catalog");
     res_ = std::make_unique<UiResources>(index_, res);
     fonts_ = std::make_unique<FontLibrary>(res / "UI/Fonts");
     thumbs_ = std::make_unique<cas::CasThumbnails>(res / "UserData/Thumbnails/CASThumbnails.package");
@@ -177,6 +179,7 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
                         kStepScripts[5], kSimBin, kMakeBaby, kFamilyTree, kTieDialog})
         if (auto s = res_->script(id); s && !s->roots.empty())
             scripts_.emplace(id, std::move(*s));
+    loading::phase("cas: ui");
     tempDir_ = fs::temp_directory_path() / ("opensims2-cas-" + std::to_string(getpid()));
     fs::create_directories(tempDir_);
     renderer_.hideTestScene();
@@ -187,6 +190,7 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
         if (!studio_->load(simd_make_float2(0, -1)))
             studio_.reset();
     }
+    loading::phase("cas: studio");
     familyName_ = "";
     newSim();
 }

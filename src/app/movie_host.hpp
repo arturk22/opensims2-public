@@ -49,6 +49,12 @@ struct LoadingScreen {
     uint32_t reia = 0; // instance (type 0, group kReiaGroup)
     std::optional<RgbaImage> icon;
     float iconX = 0, iconY = 0, iconW = 0, iconH = 0;
+    // A title drawn as it is (not scaled), centred at titleX, titleY of the picture.
+    std::optional<RgbaImage> title;
+    float titleX = 0, titleY = 0;
+    // Polled every frame: an icon found while loading (the community lot's
+    // image); it replaces `icon`. Called from the thread that draws.
+    std::function<std::optional<RgbaImage>()> lateIcon;
 };
 bool playLoadingScreen(LoadingScreen screen, std::function<float()> progress, std::function<void()> onDone = {});
 void finishLoadingScreen();

@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -75,6 +77,7 @@ using Clock = std::chrono::steady_clock;
 
 std::atomic<float> gReported{0};
 std::atomic<int64_t> gChanged{0}; // Clock ticks of the last change
+std::atomic<int64_t> gBegan{0};   // ... of begin()
 float gShown = 0;                 // main thread only
 
 int64_t nowTicks() { return Clock::now().time_since_epoch().count(); }
@@ -109,13 +112,25 @@ constexpr Phase kPhases[] = {
     {"  live UI", 0.87f},         {"  Buy mode", 0.92f},
     {"  Build mode", 0.97f},      {"startSimulation", 0.97f},
     {"fences", 0.98f},
+    // The other scenes (after "ResourceIndex" when it is the first):
+    {"hood: terrain", 0.40f},     {"hood: lots", 0.75f},       {"hood: ui", 0.93f},
+    {"hood: bins", 0.98f},
+    {"menu: scripts", 0.80f},
+    {"cas: catalog", 0.42f},      {"cas: ui", 0.44f},          {"cas: studio", 0.72f},
 };
+
+// OS2_PERF=1: when each reported phase came, for tuning kPhases.
+bool traceOn() {
+    static const bool on = std::getenv("OS2_PERF") != nullptr;
+    return on;
+}
 
 } // namespace
 
 void begin() {
     gReported.store(0);
     gChanged.store(nowTicks());
+    gBegan.store(nowTicks());
     gShown = 0;
 }
 
@@ -127,6 +142,9 @@ void phase(std::string_view name) {
     }
     for (const auto& p : kPhases)
         if (name == p.name) {
+            if (traceOn() && gBegan.load())
+                std::printf("opensims2: perf: progress %3.0f%% at %7.1f ms (%s)\n", p.at * 100,
+                            secondsSince(gBegan.load()) * 1000, p.name);
             raise(p.at);
             return;
         }

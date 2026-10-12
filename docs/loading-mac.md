@@ -60,27 +60,53 @@ atrás), e no fim da carga toca o resto depressa (3x ou mais, no máximo
 numa carga típica de lote (`scene_loader.cpp`); entre fases ele avança
 devagar (até 10% a mais, nunca além de 97%).
 
-Escolha da animação e do ícone (inferido: o mapa caso → animação do
-`cTSWinProcLotIntro::onAttach` não foi seguido; escolhido pelo que cada
-animação e ícone mostram):
+Escolha da animação, do ícone e do título (rodada 11, pelo mapa do
+`cTSWinProcLotIntro::onAttach` de `docs/cinematics-mac.md` §2.1; a rodada 9
+tinha escolhido pelo que cada animação mostra):
 
-| cena | Reia | ícone no ladrilho do meio |
-|---|---|---|
-| partida / menu principal | `8DA3ADE7` (800x600) | — |
-| bairro | `8DA3ADED` (casas, plantas) | `8DA3ADF3` (casas) |
-| lote de uma família | `8DA3ADE8` (Sims, ícones sociais) | `8DA3ADF0` (família) |
-| lote residencial vazio | `8DA3ADE9` (construção, jardim) | `8DA3ADF2` (ferramentas) |
-| lote comunitário | `8DA3ADEA` (móveis, plantas) | `8DA3ADF1` (o táxi) |
-| Create-a-Sim | `8DA3ADEC` (roupas) | `8DA3ADF0` (família) |
+| cena | Reia | ícone / imagem no ladrilho do meio | título |
+|---|---|---|---|
+| partida / menu principal | `8DA3ADE7` (800x600) | — | — |
+| bairro (caso 3, o jogo base) | `8DA3ADEB` | `ADF3` (casas) | (o nome do bairro: não lido) |
+| lote com família (caso 0) | `8DA3ADE8` | a foto da família (`<N>_FamilyThumbnails.package`, tipo `0x8C3CE95A`); `ADF0` se faltar | "A Família X" (UIText 7 #4) |
+| lote residencial vazio | `8DA3ADE9` | `ADF2` (ferramentas) | o nome do lote |
+| lote comunitário | `8DA3ADEA` | a miniatura do catálogo de um objeto do lote (descoberta na carga, ver abaixo), senão `ADF1` (o táxi) | o nome do lote |
+| Create-a-Sim (caso 1) | `8DA3ADEC` | `ADF0` (família) | "Criar uma Família" (UIText 7 #3) |
 
-Só `F0`–`F4` existem no `ui.package` da base (`F4` = caixas de mudança, sem
-uso aqui). O ladrilho do meio é o mesmo em todos os quadros das seis
-animações de lote: trapézio de x 221–596, y 195–413 na imagem de 820x620;
-o ícone vai reto, reduzido para caber em 250x165, centrado em (409, 300). O
-tipo do lote vem do `HoodLot` clicado no bairro (`gLotEntry`); um lote
-aberto direto pelas flags usa a de família. Na partida a intro toca antes;
-se a carga ainda não acabou quando ela termina (ou é pulada), entra a tela
-de carregamento.
+Só `F0`–`F4` existem no `ui.package` da base. O ladrilho do meio é o mesmo
+em todos os quadros das seis animações de lote: trapézio de x 221–596, y
+195–413 na imagem de 820x620; o ícone vai reto, reduzido para caber em
+250x165, centrado em (409, 300). O título (fonte `GenBodyMedium`, 30 px,
+branco com sombra) vai centrado em (409, 470): o lugar e a fonte são
+inferidos (a janela de texto do `TSWinProc` não foi seguida). O caso, o nome
+do lote, a família e o pacote das fotos vêm do `HoodLot` clicado no bairro
+(`gLotEntry`); um lote aberto por flags (`--hood N --hood-lot id`) lê o mesmo
+da `Neighborhood` (`fillLotEntryFromFlags`). Ficam de fora: o tipo de bairro
+(Tutorial `ED`/`F4`, os das expansões), o subtítulo `U(0x84, 0x10)`, o lote
+de destino diferente do atual e o caso 6 (voltar ao bairro com família).
 
-Captura: `docs/screenshots/r9-telas-de-carregamento.jpg` (partida, bairro,
-lote no meio da carga; o lote na janela logo depois).
+A imagem do lote comunitário: a miniatura 320x320 do jogo vem da câmera de
+miniaturas; aqui é a imagem de 128x128 do catálogo
+(`ObjectThumbnails.package`, `Catalog::thumbnail`), achada pela carga: depois
+do `Lot::load`, `offerCommunityLotImage` (main.mm) percorre os objetos do
+lote e oferece (`offerLoadingIcon`) o primeiro cujo catálogo tem o bit
+`0x20` do campo `0x5E` do OBJD (= o "function subsort", 0x5E = (0xFC-0x40)/2;
+leitura nossa do "campo 0x5E" do doc). A tela de carregamento troca o ícone
+quando ele chega (`LoadingScreen::lateIcon`). **Não achou nenhum objeto no
+Parque Bosque (N001) nem em outros lotes olhados: a regra não está
+confirmada e na prática o táxi aparece.**
+
+## 2.1 Fases do progresso
+
+O progresso vem das voltas do `OS2_PERF` (`perfLap` chama `loading::phase`)
+e, nas cenas que não são lote, de chamadas `loading::phase` dentro dos
+construtores (`hood: terrain/lots/ui/bins` no `HoodView`/`HoodMode`, `menu:
+scripts`, `cas: catalog/ui/studio` no `CasMode`). A fração de cada fase está
+na tabela de `scene_loader.cpp`, tirada de uma carga típica (com `OS2_PERF=1`
+cada fase mostra em que ms da carga chegou: `progress 40% at 262 ms (hood:
+terrain)`): bairro N001 0,9 s (terreno 0,26 s, lotes 0,58 s, UI 0,79 s,
+bins 0,85 s); CAS 0,9 s (catálogo 0,37 s, studio 0,65 s, o resto é o
+`newSim`); o menu principal leva 0,2 s.
+
+Capturas: `docs/screenshots/r9-telas-de-carregamento.jpg` (rodada 9) e, da
+rodada 11, `r11-carregamento-{familia,vazio,comunitario,bairro,cas}.jpg`.

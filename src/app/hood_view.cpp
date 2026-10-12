@@ -1,4 +1,5 @@
 #include "hood_view.hpp"
+#include "app/scene_loader.hpp"
 
 #include "formats/camera_config.hpp"
 #include "formats/config_text.hpp"
@@ -180,6 +181,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     if (const size_t n = hood::flattenTerrainUnderLots(terrain_, hood_.lots, occupants_))
         report_.push_back(std::to_string(n) + " terrain vertices flattened under the lots");
 
+    loading::phase("hood: terrain");
     // Lighting: the "neighbourhood" state and its light map.
     const LightingConfig lighting = loadLightingConfig(resDir / "Lights/Lighting.txt");
     const LightingState* state = lighting.state("neighbourhood");
@@ -298,6 +300,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
                          matrix_identity_float4x4);
     renderer.addInstance(renderer.addObject(hood::buildHoodWaterModel(terrain_), index), matrix_identity_float4x4);
 
+    loading::phase("hood: lots");
     // Trees, props and bridges: one model per CRES.
     const auto objects = hood::loadNeighborhoodObjects(index);
     std::map<std::string, int> models;
