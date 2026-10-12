@@ -548,31 +548,46 @@ static void testPool() {
         walls += w.type == Lot::Pool && w.a.level == -1;
     check(walls == 10, "pool walls round it");
     check(vm.world->pool({4, 3, 1}) && !vm.world->walkable({4, 3, 1}), "nobody walks over the water");
-    // A drag over the pool's corner is refused (cWorldPool: it must cross
-    // the pool through), one across its end extends it: an L-shaped pool,
-    // only the new tiles paid, the walls round the whole.
+    // cWorldPool::AreExpansionBoundsLegal: a drag over the pool, or beside
+    // it without making one rectangle with it, is refused; one along a
+    // whole side extends it (a POOL entry of its own); 900 tiles at most.
     r = ed.drawPool(5, 4, 6, 6);
     check(!r.ok && r.error == 0x86, "a drag over a pool's corner is refused (0x86)");
-    r = ed.drawPool(5, 3, 6, 6);
-    check(r.ok && r.changed == 6 && r.cost == 6 * kPoolTilePrice, "extending the pool pays the new tiles");
-    walls = 0;
+    r = ed.drawPool(6, 4, 7, 6);
+    check(!r.ok && r.error == 0x86, "a drag beside the pool that would make an L is refused (0x86)");
+    r = ed.drawPool(6, 3, 8, 4);
+    check(r.ok && r.changed == 6 && r.cost == 6 * kPoolTilePrice && lot.pools.size() == 2,
+          "a drag along the pool's whole side extends it, a POOL entry of its own");
+    size_t walls2 = 0;
     for (const auto& w : lot.walls)
-        walls += w.type == Lot::Pool && w.a.level == -1;
-    check(walls == 16 && vm.world->pool({6, 6, 1}) && !vm.world->pool({3, 5, 1}), "pool walls round the L");
-    size_t covered = 0;
-    bool whole = false;
-    for (const auto& p : lot.pools) {
-        covered += p.width * p.height;
-        whole |= p.x == 5 && p.y == 3 && p.width == 2 && p.height == 4;
-    }
-    check(covered == 12 && lot.pools.size() == 2 && whole,
-          "the drag's rectangle is a POOL entry whole and the old pool keeps what is left of it");
-    r = ed.drawPool(4, 5, 7, 5);
-    check(!r.ok && r.error == 0x86, "no strip of a pool one tile wide is left");
+        walls2 += w.type == Lot::Pool && w.a.level == -1;
+    check(walls2 == 16 && vm.world->pool({8, 4, 1}), "pool walls round the whole rectangle");
+    // Ctrl-drag: IsQuadLegalForPoolErase / QuadListOnPoolErase.
+    r = ed.erasePool(4, 3, 4, 3);
+    check(!r.ok && r.error == 0x87, "an erase must cross a pool through (0x87)");
+    r = ed.erasePool(4, 3, 4, 4);
+    check(!r.ok && r.error == 0x87, "an erase may not leave a strip one tile wide (0x87)");
+    r = ed.erasePool(8, 3, 8, 4);
+    check(r.ok && r.changed == 2 && !vm.world->pool({8, 4, 1}) && lot.pools.size() == 2, "erasing the pool's end");
     r = ed.deletePool(4, 4);
-    check(r.ok && lot.pools.empty() && r.cost == -12 * 60, "deleting it takes the whole pool, int(75 x 0.8) a tile");
-    check(ed.undo() && ed.undo() && ed.undo() && lot.minLevel == 0 && lot.levelCount == 1 && funds(vm) == 5000,
+    check(r.ok && lot.pools.empty() && r.cost == -10 * 60, "deleting it takes the whole pool, int(75 x 0.8) a tile");
+    check(ed.undo() && ed.undo() && ed.undo() && ed.undo() && lot.minLevel == 0 && lot.levelCount == 1 && funds(vm) == 5000,
           "undo takes the level away again");
+    Lot big = flatLot();
+    big.width = 40, big.height = 40;
+    big.elevations.assign(41 * 41, 0.0f);
+    big.floors.assign(40 * 40, {});
+    big.rooms.assign(40 * 40, {1, 1, 1, 1});
+    big.roomLayers[0x0A] = big.rooms;
+    big.roomLayers[0x0B] = big.rooms;
+    VM vm2(code);
+    vm2.globals[global::BudgetDiv10000] = 10;
+    vm2.world = World::fromLot(big);
+    BuildEditor ed2(vm2, big);
+    r = ed2.drawPool(1, 1, 30, 30);
+    check(r.ok, "a pool of 900 tiles");
+    r = ed2.drawPool(31, 1, 31, 30);
+    check(!r.ok && r.error == 0x86, "no pool over 900 tiles (0x86)");
 }
 
 // Modular stairs (§7.12): how many steps a flight gets, and the refusals.

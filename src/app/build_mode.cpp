@@ -887,7 +887,7 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
         done(control_ ? editor_->deleteRoof(level_, b.x, b.y) : editor_->drawRoof(level_, x0, y0, x1, y1, roofType_));
     } else if (tool_ == Tool::Pool) {
         const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
-        done(control_ ? editor_->deletePool(x1, y1) : editor_->drawPool(x0, y0, x1, y1));
+        done(control_ ? editor_->erasePool(x0, y0, x1, y1) : editor_->drawPool(x0, y0, x1, y1));
     } else if (tool_ == Tool::Foundation) {
         const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
         done(control_ ? editor_->deleteFoundation(x0, y0, x1, y1)
@@ -1879,6 +1879,8 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             selectPoolTool(), r = ed.drawPool(n(0), n(1), n(2), n(3));
         else if (a == "--delete-pool" && f.size() >= 2)
             r = ed.deletePool(n(0), n(1));
+        else if (a == "--erase-pool" && f.size() >= 4)
+            r = ed.erasePool(n(0), n(1), n(2), n(3));
         else if (a == "--foundation" && f.size() >= 4)
             selectFoundationTool(n(4)), r = ed.drawFoundation(n(0), n(1), n(2), n(3), n(4));
         else if (a == "--delete-foundation" && f.size() >= 4)
@@ -1996,7 +1998,7 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
                 {"--delete-wall", {Tool::Wall, true}},  {"--fence", {Tool::Fence, false}},
                 {"--delete-fence", {Tool::Fence, true}}, {"--roof", {Tool::Roof, false}},
                 {"--delete-roof", {Tool::Roof, true}},  {"--pool", {Tool::Pool, false}},
-                {"--delete-pool", {Tool::Pool, true}},  {"--foundation", {Tool::Foundation, false}},
+                {"--delete-pool", {Tool::Pool, true}}, {"--erase-pool", {Tool::Pool, true}},  {"--foundation", {Tool::Foundation, false}},
                 {"--delete-foundation", {Tool::Foundation, true}}, {"--floor", {Tool::Floor, false}},
                 {"--floor-click", {Tool::Floor, false}}, {"--wallpaper", {Tool::Wallpaper, false}},
                 {"--wallpaper-flood", {Tool::Wallpaper, false}}, {"--wallpaper-room", {Tool::Wallpaper, false}}};

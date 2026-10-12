@@ -551,8 +551,18 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                     key += "#mask" + std::to_string(maskIndex);
                     maskedParts[key] = maskIndex;
                 }
-                MeshBuilder& b = out[key];
                 const float s = side == 0 ? 1.0f : -1.0f;
+                // A pool wall's face toward the earth (no pool floor on that
+                // side) is under the ground: drawn, it showed past the lot's
+                // edge as a cyan box under the pool.
+                if (w.type == Lot::Pool) {
+                    const int tx = int(std::floor((ax + bx) / 2 + nx * s * 0.5f));
+                    const int ty = int(std::floor((ay + by) / 2 + ny * s * 0.5f));
+                    if (tx < 0 || ty < 0 || tx >= int(lot.width) || ty >= int(lot.height) ||
+                        lot.floor(level, uint32_t(tx), uint32_t(ty)) == std::array<uint16_t, 4>{})
+                        continue;
+                }
+                MeshBuilder& b = out[key];
                 const Vec3f n{nx * s, ny * s, 0};
                 const float ox = nx * t * s, oy = ny * t * s;
                 // The face's light-map cell, lit as the room it faces.
@@ -943,6 +953,40 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         base.material = "terrain:" + lot.terrainBase;
         base.mesh = terrainMesh(lot, lm, open);
         model.parts.push_back(std::move(base));
+        // With a level under the ground (a pool's), the lot's edges get
+        // sides of earth down past it: the game's lot sits in the
+        // neighborhood's terrain (cLotSkirt) and the pool's bottom and walls
+        // never show past the lot's edge; here they showed as a cyan box
+        // under the pool (a visual choice, inferred).
+        if (lot.minLevel < 0 && lot.hasLevel(lot.minLevel)) {
+            const int w = int(lot.width), h = int(lot.height);
+            float bottom = 0;
+            for (int x = 0; x <= w; ++x)
+                for (int y = 0; y <= h; ++y)
+                    bottom = std::min(bottom, lot.elevation(lot.minLevel, x, y));
+            bottom -= 0.5f;
+            MeshBuilder sk;
+            auto side = [&](float ax, float ay, float bx, float by, Vec3f n) {
+                const float ta = lot.elevation(0, int(ax), int(ay)), tb = lot.elevation(0, int(bx), int(by));
+                const float u0 = ax + ay, u1 = bx + by;
+                auto v = [&](float x, float y, float z, float u) {
+                    return sk.vertex({x, y, z}, n, u, z, lm.floorTexel(0, std::min(x, float(w) - 0.01f), std::min(y, float(h) - 0.01f)));
+                };
+                sk.quad(v(ax, ay, bottom, u0), v(bx, by, bottom, u1), v(bx, by, tb, u1), v(ax, ay, ta, u0));
+            };
+            for (int x = 0; x < w; ++x) {
+                side(float(x), 0, float(x + 1), 0, {0, -1, 0});
+                side(float(x + 1), float(h), float(x), float(h), {0, 1, 0});
+            }
+            for (int y = 0; y < h; ++y) {
+                side(0, float(y + 1), 0, float(y), {-1, 0, 0});
+                side(float(w), float(y), float(w), float(y + 1), {1, 0, 0});
+            }
+            ObjectModel::Part skirt;
+            skirt.material = "terrain:" + lot.terrainBase;
+            skirt.mesh = std::move(sk.mesh);
+            model.parts.push_back(std::move(skirt));
+        }
     }
     const uint32_t mw = lot.maskWidth, mh = lot.maskHeight;
     const float spacing = lot.width ? float(lot.width) / float(std::max(mw, 2u) - 1) : 1.0f;

@@ -26,6 +26,7 @@ class VM;
 //   --delete-fence x0,y0,x1,y1[,level]
 //   --foundation / --delete-foundation x0,y0,x1,y1  ground tiles (corners inclusive)
 //   --pool x0,y0,x1,y1 / --delete-pool x,y  ground tiles (corners inclusive)
+//   --erase-pool x0,y0,x1,y1   the Ctrl-drag: erase the pool tiles of a rectangle
 //   --roof x0,y0,x1,y1[,type 1-6[,level]]  a roof over the walls of the level
 //   --delete-roof x,y[,level]   --roof-pattern <name|guid>
 //   --terrain raise|lower|flatten|smooth,x,y[,ticks[,size]]  a brush stroke (ticks of 100 ms)

@@ -1589,6 +1589,45 @@ feito: o limite de 900 e a junção do `0x50`. `lot-save N001_Lot38 --pool
 2,2,3,7 --pool 2,2,7,3 --pool 6,2,7,7 --check` volta igual;
 `docs/screenshots/r13-construcao-piscina-em-u.jpg`.
 
+**Rodada 14 (binário + `baserom.sym`): os nomes certos dos slots.** O
+`baserom.sym` dá os nomes: a vtable `0x48` (primária; `0x38` na interface
+`cIWorldPool`, `+8`) é **`IsQuadLegalForPoolErase`** e a `0x4c` (`0x3c`)
+**`QuadListOnPoolErase`**: são da **borracha** (Ctrl-arrastar), não de pôr.
+A `0x50` (`0xc22dfc`, `0x40` na interface) é
+**`cWorldPool::AreExpansionBoundsLegal(v0, v1)`**: R = o retângulo dos dois
+vértices; para cada piscina P cuja caixa cruza R crescido de **0,01**
+(`FLOAT_0274b530`; encostar conta, inclusive pela quina), soma a área de P e
+exige que a caixa de R ∪ P tenha área = área(R) + área(P) (sem sobrepor e
+com um lado inteiro em comum: os dois formam **um retângulo**), senão falso;
+no fim, falso se a soma (R + as tocadas) passa de **900** (`FLOAT_0274bc2c`
+= `0x44610000`). O `cTSUserToolUndoablePool::TryAddPool` (vtable `0x6c`, BV
+`0x309c44`; a piscina vem de `FUN_000c8190()` vtable `0x8c`) só chama o
+`AddPool` (vtable `0x20` da interface) e guarda a troca; o
+`TryRemovePool` (vtable `0x70`, `0x309ac8`) o `RemovePool`. Quem chama o
+`AreExpansionBoundsLegal` não foi achado (chamada virtual pela interface).
+Ou seja, **no jogo uma piscina só cresce em retângulo**: um arraste que
+sobrepõe uma piscina, ou que encosta nela sem formar um retângulo (um L),
+é recusado; o que encosta ao longo de um lado inteiro vira um POOL próprio
+ao lado (os dois juntos são um retângulo); 900 tiles no máximo. A borracha
+corta: atravessando (`IsQuadLegalForPoolErase`) e sem deixar faixa de 1 tile;
+o que sobra de cada piscina são os pedaços de fora (`QuadListOnPoolErase`).
+
+No código (rodada 14): `drawPool` testa o `AreExpansionBoundsLegal` (`0x86`
+"Can't extend pool", código inferido) e põe R como um POOL novo;
+`erasePool` (Ctrl-arrastar no app, headless `--erase-pool x0,y0,x1,y1` no
+app e no `lot-save`) faz a borracha (`0x87` "Can't delete pool", código
+inferido; Sim dentro `0x2D`), devolvendo int(75 × 0,8) por tile;
+`deletePool` (clique, `--delete-pool`) continua tirando a piscina inteira
+(inferido). A piscina em U da rodada 13 não se faz mais (era o corte da
+borracha usado ao pôr). Visual: a parede de piscina não desenha a face
+virada para a terra, e com um nível sob o chão o lote ganha lados de terra
+nas bordas (o fundo da piscina aparecia além da borda do lote como uma
+caixa ciano; inferido, o jogo tem o `cLotSkirt` do bairro em volta).
+`lot-save N001_Lot38 --build-funds 20000 --pool 2,2,3,7 --pool 4,2,5,7
+--erase-pool 2,5,5,5 --check` volta igual (`--pool 4,2,7,3` entre eles é
+recusado); `docs/screenshots/r14-construcao-piscina-borda.jpg` (antes ×
+depois).
+
 ### 7.19 Arcos de cerca (rodada 12)
 
 `fencearches.txt` tem um só arco no jogo base (`fenceArch 26`, "Arco de

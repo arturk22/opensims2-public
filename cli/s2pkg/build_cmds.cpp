@@ -131,7 +131,7 @@ bool isBuildEdit(const std::string& flag) {
     return flag == "--door" || flag == "--wall" || flag == "--fence" || flag == "--delete-fence" ||
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
-           flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
+           flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--erase-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
            flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--fence-arch" || flag == "--delete-fence-arch" || flag == "--delete-stairs" || flag == "--railing" || flag == "--build-undo" || flag == "--build-redo";
 }
 
@@ -280,6 +280,10 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             if (f.size() < 4)
                 throw std::runtime_error("--pool: expected x0,y0,x1,y1");
             r = editor.drawPool(num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0));
+        } else if (flag == "--erase-pool") {
+            if (f.size() < 4)
+                throw std::runtime_error("--erase-pool: expected x0,y0,x1,y1");
+            r = editor.erasePool(num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0));
         } else if (flag == "--delete-pool") {
             if (f.size() < 2)
                 throw std::runtime_error("--delete-pool: expected x,y");

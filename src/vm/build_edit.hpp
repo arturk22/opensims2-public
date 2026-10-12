@@ -107,6 +107,9 @@ public:
     // Ctrl: the pool under a tile goes (int(75 x 0.8) back a tile); not
     // with a Sim in it (0x2D) or a ladder or diving board on it (0x2E).
     Result deletePool(int x, int y);
+    // Ctrl-drag over a pool: erase the tiles of the rectangle (x0, y0)-(x1,
+    // y1) (cWorldPool::IsQuadLegalForPoolErase / QuadListOnPoolErase).
+    Result erasePool(int x0, int y0, int x1, int y1);
     bool poolTile(int x, int y) const;
 
     // Roof tool (cTSUserToolRoof, roofs.txt "roof 0-5" = Lot::RoofType 1-6:

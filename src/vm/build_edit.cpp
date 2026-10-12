@@ -2033,27 +2033,38 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
         if (mx > float(ax) + 0.01f && mx < float(bx + 1) - 0.01f && my > float(ay) + 0.01f && my < float(by + 1) - 0.01f)
             return fail(0x0C, "a wall is in the way");
     }
+    // cWorldPool::AreExpansionBoundsLegal (cIWorldPool slot 0x40, BV
+    // 0xc22dfc): every pool whose rectangle meets the drag's R (R grown by
+    // 0.01: touching counts) must make one rectangle with R (the bounding
+    // box's area = R's + the pool's: no overlap, a whole side shared), and R
+    // with those pools may not pass 900 tiles. The refusal code is inferred
+    // ("Can't extend pool": its caller is not found).
+    const int rx0 = ax, ry0 = ay, rx1 = bx + 1, ry1 = by + 1;
+    {
+        const float rArea = float((rx1 - rx0) * (ry1 - ry0));
+        float total = rArea;
+        for (const auto& p : lot_.pools) {
+            if (p.level != 0)
+                continue;
+            const float px1 = p.x + float(p.width), py1 = p.y + float(p.height);
+            if (p.x > float(rx1) + 0.01f || px1 < float(rx0) - 0.01f || p.y > float(ry1) + 0.01f ||
+                py1 < float(ry0) - 0.01f)
+                continue;
+            const float pArea = float(p.width) * float(p.height);
+            total += pArea;
+            const float bw = std::max(px1, float(rx1)) - std::min(p.x, float(rx0));
+            const float bh = std::max(py1, float(ry1)) - std::min(p.y, float(ry0));
+            if (bw * bh != rArea + pArea)
+                return fail(0x86, "the pool and the drag must make one rectangle");
+        }
+        if (total > 900.0f)
+            return fail(0x86, "a pool of more than 900 tiles");
+    }
     const int tiles = int(fresh.size());
     if (!tiles) {
         r.ok = true;
         r.message = "the pool is there already";
         return r;
-    }
-    // cWorldPool (vtable 0x48, BV 0xc22358): the rectangle may cross a pool
-    // only right through it (the overlap the pool's whole width or whole
-    // height), never leaving a strip of it one tile wide; the game's
-    // refusal code is inferred ("Can't extend pool").
-    const int rx0 = ax, ry0 = ay, rx1 = bx + 1, ry1 = by + 1;
-    for (const auto& p : lot_.pools) {
-        const int px0 = int(std::lround(p.x)), py0 = int(std::lround(p.y));
-        const int px1 = px0 + int(p.width), py1 = py0 + int(p.height);
-        const int ix0 = std::max(px0, rx0), iy0 = std::max(py0, ry0), ix1 = std::min(px1, rx1), iy1 = std::min(py1, ry1);
-        if (p.level != 0 || ix0 >= ix1 || iy0 >= iy1)
-            continue;
-        if (ix1 - ix0 != px1 - px0 && iy1 - iy0 != py1 - py0)
-            return fail(0x86, "the drag must cross the pool through");
-        if (std::abs(ix0 - px0) == 1 || std::abs(ix1 - px1) == 1 || std::abs(iy0 - py0) == 1 || std::abs(iy1 - py1) == 1)
-            return fail(0x86, "it would leave a strip of the pool one tile wide");
     }
     r.cost = tiles * kPoolTilePrice;
     if (r.cost > funds(vm_)) {
@@ -2084,41 +2095,14 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
     for (const auto& [x, y] : fresh)
         for (int q = 0; q < 4; ++q)
             setFloor(lot_, -1, x, y, q, lip), setFloorRotation(lot_, -1, x, y, q, 1);
-    // The POOL entries as cWorldPool keeps them: each pool the rectangle
-    // crosses gives way to what is left of it outside (vtable 0x4C, BV
-    // 0xc22810: one or two rectangles along the axis it is crossed), and the
-    // rectangle is a pool of its own (AddPool, vtable 0x30: one entry per
-    // rectangle; Save, 0xc21154, writes them one by one). An L or a U is
-    // so a few rectangles that touch, none overlapping.
+    // The POOL entries as cWorldPool keeps them: the drag's rectangle is a
+    // pool of its own (cTSUserToolUndoablePool::TryAddPool only calls
+    // AddPool, vtable 0x30: one entry per rectangle; Save, 0xc21154, writes
+    // them one by one), next to the pools it extends.
     uint32_t id = 1;
     for (const auto& p : lot_.pools)
         id = std::max(id, p.id + 1);
-    std::vector<Lot::SwimmingPool> kept;
-    for (const auto& p : lot_.pools) {
-        const int px0 = int(std::lround(p.x)), py0 = int(std::lround(p.y));
-        const int px1 = px0 + int(p.width), py1 = py0 + int(p.height);
-        const int ix0 = std::max(px0, rx0), iy0 = std::max(py0, ry0), ix1 = std::min(px1, rx1), iy1 = std::min(py1, ry1);
-        if (p.level != 0 || ix0 >= ix1 || iy0 >= iy1) {
-            kept.push_back(p);
-            continue;
-        }
-        auto piece = [&](int x0, int y0, int x1, int y1) {
-            if (x1 <= x0 || y1 <= y0)
-                return;
-            Lot::SwimmingPool q = p;
-            q.id = id++;
-            q.x = float(x0), q.y = float(y0);
-            q.width = uint32_t(x1 - x0), q.height = uint32_t(y1 - y0);
-            kept.push_back(q);
-        };
-        if (ix1 - ix0 == px1 - px0) { // crossed along x: what is left above and below
-            piece(px0, py0, px1, iy0);
-            piece(px0, iy1, px1, py1);
-        } else {
-            piece(px0, py0, ix0, py1);
-            piece(ix1, py0, px1, py1);
-        }
-    }
+    std::vector<Lot::SwimmingPool> kept = lot_.pools;
     {
         Lot::SwimmingPool pool;
         pool.id = id++;
@@ -2136,6 +2120,96 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
     commit(std::move(before), r.cost);
     r.ok = true;
     r.message = "a pool of " + std::to_string(tiles) + " tiles for " + money(r.cost);
+    return r;
+}
+
+BuildEditor::Result BuildEditor::erasePool(int x0, int y0, int x1, int y1) {
+    Result r;
+    auto fail = [&](int code, const std::string& why) {
+        r.error = code;
+        r.message = "cannot erase the pool: " + why;
+        return r;
+    };
+    const int rx0 = std::min(x0, x1), ry0 = std::min(y0, y1), rx1 = std::max(x0, x1) + 1, ry1 = std::max(y0, y1) + 1;
+    // cWorldPool::IsQuadLegalForPoolErase (cIWorldPool slot 0x38, BV
+    // 0xc22358): R may cross a pool only right through it (the overlap the
+    // pool's whole width or whole height), never leaving a strip of it one
+    // tile wide. The refusal code is inferred ("Can't delete pool").
+    bool any = false;
+    for (const auto& p : lot_.pools) {
+        const int px0 = int(std::lround(p.x)), py0 = int(std::lround(p.y));
+        const int px1 = px0 + int(p.width), py1 = py0 + int(p.height);
+        const int ix0 = std::max(px0, rx0), iy0 = std::max(py0, ry0), ix1 = std::min(px1, rx1), iy1 = std::min(py1, ry1);
+        if (p.level != 0 || ix0 >= ix1 || iy0 >= iy1)
+            continue;
+        any = true;
+        if (ix1 - ix0 != px1 - px0 && iy1 - iy0 != py1 - py0)
+            return fail(0x87, "the drag must cross the pool through");
+        if (std::abs(ix0 - px0) == 1 || std::abs(ix1 - px1) == 1 || std::abs(iy0 - py0) == 1 || std::abs(iy1 - py1) == 1)
+            return fail(0x87, "it would leave a strip of the pool one tile wide");
+    }
+    if (!any) {
+        r.ok = true;
+        r.message = "no pool there";
+        return r;
+    }
+    for (const auto& [id, o] : vm_.objects()) {
+        if (!o.position.inWorld())
+            continue;
+        const TilePos t = VM::tileOf(o);
+        const bool in = t.x >= rx0 && t.x < rx1 && t.y >= ry0 && t.y < ry1;
+        if (o.person && in && t.level <= 1 && poolTile(t.x, t.y))
+            return fail(0x2D, "a Sim is in it");
+    }
+    Geometry before = capture();
+    // QuadListOnPoolErase (slot 0x3c, BV 0xc22810): each pool R crosses gives
+    // way to what is left of it outside (one or two rectangles along the axis
+    // it is crossed).
+    uint32_t nextId = 1;
+    for (const auto& p : lot_.pools)
+        nextId = std::max(nextId, p.id + 1);
+    std::vector<Lot::SwimmingPool> kept;
+    for (const auto& p : lot_.pools) {
+        const int px0 = int(std::lround(p.x)), py0 = int(std::lround(p.y));
+        const int px1 = px0 + int(p.width), py1 = py0 + int(p.height);
+        const int ix0 = std::max(px0, rx0), iy0 = std::max(py0, ry0), ix1 = std::min(px1, rx1), iy1 = std::min(py1, ry1);
+        if (p.level != 0 || ix0 >= ix1 || iy0 >= iy1) {
+            kept.push_back(p);
+            continue;
+        }
+        auto piece = [&](int qx0, int qy0, int qx1, int qy1) {
+            if (qx1 <= qx0 || qy1 <= qy0)
+                return;
+            Lot::SwimmingPool q = p;
+            q.id = nextId++;
+            q.x = float(qx0), q.y = float(qy0);
+            q.width = uint32_t(qx1 - qx0), q.height = uint32_t(qy1 - qy0);
+            kept.push_back(q);
+        };
+        if (ix1 - ix0 == px1 - px0) { // crossed along x: what is left above and below
+            piece(px0, py0, px1, iy0);
+            piece(px0, iy1, px1, py1);
+        } else {
+            piece(px0, py0, ix0, py1);
+            piece(ix1, py0, px1, py1);
+        }
+    }
+    lot_.pools = std::move(kept);
+    r.changed = 0;
+    for (int tx = rx0; tx < rx1; ++tx)
+        for (int ty = ry0; ty < ry1; ++ty)
+            if (!poolTile(tx, ty) && lot_.hasLevel(-1) && lot_.floor(-1, uint32_t(tx), uint32_t(ty))[0]) {
+                ++r.changed;
+                for (int qq = 0; qq < 4; ++qq)
+                    setFloor(lot_, -1, tx, ty, qq, 0);
+            }
+    poolWalls();
+    r.cost = -r.changed * int(float(kPoolTilePrice) * kBuildRefundRate);
+    addFunds(vm_, -r.cost);
+    changed();
+    commit(std::move(before), r.cost);
+    r.ok = true;
+    r.message = std::to_string(r.changed) + " pool tiles erased for " + money(-r.cost) + " back";
     return r;
 }
 
