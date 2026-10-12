@@ -515,6 +515,39 @@ static void testLayout() {
     fs::remove_all(root);
 }
 
+// A captionres in the game's language over the English caption (the CAS's
+// "Enter First Name" text edit reads "Primeiro Nome": live QA, round 16).
+static void testCaptionRes() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "os2_test_ui_caption";
+    fs::remove_all(root);
+    fs::create_directories(root / "UI");
+    DbpfWriter w;
+    std::vector<uint8_t> str(64, 0);
+    for (uint8_t b : {0xFF, 0xFF, 2, 0})
+        str.push_back(b);
+    for (const char* v : {"Nome da Familia", "Primeiro Nome"}) {
+        str.insert(str.end(), v, v + std::strlen(v));
+        str.push_back(0);
+    }
+    w.add(Tgi{0x53545223, 0x7F549C7F, 0x82, 0}, str);
+    const std::string script =
+        "<LEGACY clsid=GZWinTextEdit id=0x1 area=(0,0,100,20) caption=\"Enter First Name\" "
+        "captionres={7f549c7f,00820002} initvalue=Enter First Name winflag_visible=yes >\r\n"
+        "<LEGACY clsid=GZWinText id=0x2 area=(0,0,100,20) caption=\"Plain\" winflag_visible=yes >\r\n";
+    w.add(Tgi{kTypeUiScript, kUiGroup, 0x1235, 0}, std::vector<uint8_t>(script.begin(), script.end()));
+    w.save(root / "UI/ui.package");
+    ResourceIndex index(root);
+    UiResources res(index, root);
+    auto s = res.script(0x1235);
+    check(s.has_value() && s->roots.size() == 2, "caption script read");
+    if (s && s->roots.size() == 2) {
+        check(uiCaption(s->roots[0], res) == "Primeiro Nome", "captionres wins over the English caption");
+        check(uiCaption(s->roots[1], res) == "Plain", "caption without captionres");
+    }
+    fs::remove_all(root);
+}
+
 // Panel helpers (app/ui_panel_util.hpp).
 static void testPanelUtil() {
     // ObjectThumbnails.package keys: the trash compactor (OBJD group
@@ -561,6 +594,7 @@ int main() {
     testTrueType();
     testFontStyles();
     testLayout();
+    testCaptionRes();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

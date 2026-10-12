@@ -921,3 +921,23 @@ base os 7 `skintone` do `Skins.package` são os 4 normais (flags 0) e
 manequim, Alien e manequim do CAS (flags 1, escondidos), então a lista do
 botão sai vazia sem conteúdo baixado (Body Shop/Downloads); não feito.
 
+
+## Rodada 16: textos do CAS em português
+
+- As caixas de nome (`GZWinTextEdit` "Enter First Name"/"Enter Family Name",
+  `initvalue` igual à `caption` em inglês) têm `captionres={7f549c7f,0082000N}`
+  (STR# 0x82 do `Text/CAS.package`: "Nome da Família", "Primeiro Nome"). Com o
+  nome vazio, a caixa mostra o texto do `captionres` no idioma do jogo
+  (`uiCaption`); o `initvalue` em inglês só fica quando não há `captionres`.
+  Que o jogo usa o `captionres` como texto inicial é inferido (a versão PT-BR
+  mostra "Primeiro Nome").
+- Os sliders de rosto (`facemodifier`) não têm nome no jogo: o `name` do XML
+  ("face gaunt-plump", "Cheek Size") é interno. Cada slider tem `image0id`/
+  `image1id` (`ui.package`, grupo `0x499DB772`, tiras de 4 estados 200x50 com o
+  rosto de cada ponta, ex. magro/gordo); desenhamos as duas pontas (estado
+  normal) com a barra entre elas, e um clique numa ponta anda 0,1 para aquele
+  lado (inferido). O `name` só aparece se faltarem as imagens.
+  `docs/screenshots/r16-cas-ptbr.jpg`.
+- O arquétipo "alien" de adulto aparece sem miniatura (nome em inglês);
+  `flags` 9 nos outros alien/eelf, 0 no de adulto: não conferido se o jogo o
+  esconde.

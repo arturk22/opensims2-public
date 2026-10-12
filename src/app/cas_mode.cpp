@@ -1284,7 +1284,7 @@ UiScreen CasMode::screen(int width, int height) {
     if (chooser)
         fh.hide.insert(chooser);
     if (const UiElement* t = find(frame, kFirstNameText))
-        fh.captions[t] = edit_.spec.firstName.empty() ? t->get("caption") : edit_.spec.firstName;
+        fh.captions[t] = edit_.spec.firstName.empty() ? uiCaption(*t, *res_) : edit_.spec.firstName;
     if (const UiElement* gen = find(frame, kFamilyNameGen))
         if (const UiElement* t = gen->child(1); t && !familyName_.empty())
             fh.captions[t] = familyName_ + (focus_ == Focus::FamilyName ? "|" : "");
@@ -1817,6 +1817,11 @@ UiScreen CasMode::screen(int width, int height) {
         std::function<void()> pick;
         float slider = NAN; // modifiers: the weight
         std::function<void(float)> slide;
+        // Modifiers: the facemodifier's image0id/image1id (ui.package, group
+        // 0x499DB772), 4-state button strips with the face at each end of the
+        // slider (e.g. gaunt/plump). The game shows no text on these sliders;
+        // `text` (the XML's English name) is drawn only when they are missing.
+        const RgbaImage* ends[2] = {nullptr, nullptr};
     };
     struct Grid {
         const UiElement* window;
@@ -1984,6 +1989,9 @@ UiScreen CasMode::screen(int width, int height) {
             Item item;
             item.text = m->name();
             item.slider = it == s.face.modifiers.end() ? 0.0f : it->second;
+            for (int e = 0; e < 2; ++e)
+                if (uint32_t id = uint32_t(m->number(e ? "image1id" : "image0id")))
+                    item.ends[e] = res_->image(UiResourceRef{kTypeUiImage, 0x499DB772, id});
             const float lo = cas::floatProperty(*m, "negativelimit", -1.5f), hi = cas::floatProperty(*m, "positivelimit", 1.5f);
             item.slide = [this, fam, lo, hi](float t) {
                 pushUndo();
@@ -2001,7 +2009,7 @@ UiScreen CasMode::screen(int width, int height) {
     case 0: { // name, gender, age, skin, body
         if (const UiElement* gen = find(panel, 0x8C6B1EB9))
             if (const UiElement* t = gen->child(1))
-                hk.captions[t] = s.firstName.empty() ? t->get("caption") : s.firstName + (focus_ == Focus::FirstName ? "|" : "");
+                hk.captions[t] = s.firstName.empty() ? uiCaption(*t, *res_) : s.firstName + (focus_ == Focus::FirstName ? "|" : "");
         if (const UiElement* bio = find(panel, 0x4CD0FDD9)) {
             (bioOpen_ ? hk.show : hk.hide).insert(bio);
             if (const UiElement* t = bio->child(1); t && (!s.description.empty() || focus_ == Focus::Biography))
@@ -2444,8 +2452,30 @@ UiScreen CasMode::screen(int width, int height) {
             }
             rect(x0, y0, x1, y1, it.selected ? kCellSelected : kCellColor);
             if (!std::isnan(it.slider)) {
-                text(x0 + 4, y0 + 4, x1 - x0 - 8, it.text, kCellText);
-                const float by0 = y1 - 18, by1 = y1 - 10, bx0 = x0 + 8, bx1 = x1 - 8;
+                float bx0 = x0 + 8, bx1 = x1 - 8, by0 = y1 - 18, by1 = y1 - 10;
+                if (it.ends[0] && it.ends[1]) {
+                    // The two end faces (the strip's normal frame, 1 of 4), the
+                    // bar between them, centred on the cell.
+                    const float side = std::min(y1 - y0 - 8, (x1 - x0) / 4);
+                    const float cy = (y0 + y1) / 2;
+                    for (int e = 0; e < 2; ++e) {
+                        UiQuad q;
+                        q.image = it.ends[e];
+                        q.x0 = e ? x1 - 4 - side : x0 + 4;
+                        q.x1 = q.x0 + side;
+                        q.y0 = cy - side / 2, q.y1 = cy + side / 2;
+                        q.u0 = 0.25f, q.u1 = 0.5f;
+                        out.quads.push_back(q);
+                        auto slide = it.slide;
+                        const float v = it.slider, step = e ? 0.1f : -0.1f;
+                        targets_.push_back({{q.x0, q.y0, q.x1, q.y1},
+                                            [slide, v, step](simd_float2) { slide(std::clamp(v + step, 0.0f, 1.0f)); },
+                                            "ui_secondary_button"});
+                    }
+                    bx0 = x0 + 10 + side, bx1 = x1 - 10 - side, by0 = cy - 4, by1 = cy + 4;
+                } else {
+                    text(x0 + 4, y0 + 4, x1 - x0 - 8, it.text, kCellText);
+                }
                 rect(bx0, by0, bx1, by1, {0.25f, 0.30f, 0.60f, 1});
                 const float mid = (bx0 + bx1) / 2, kx = bx0 + (bx1 - bx0) * it.slider;
                 rect(std::min(mid, kx), by0, std::max(mid, kx), by1, {0.45f, 0.85f, 1.0f, 1});

@@ -94,11 +94,7 @@ struct Layout {
         if (hooks)
             if (auto it = hooks->captions.find(&e); it != hooks->captions.end())
                 return it->second;
-        if (const auto* r = e.attr("captionres"))
-            if (auto ref = uiStringRef(*r))
-                if (auto s = res.string(*ref))
-                    return *s;
-        return e.get("caption");
+        return uiCaption(e, res);
     }
 
     const Font* font(const UiElement& e, float& ppem) {
@@ -326,7 +322,12 @@ struct Layout {
             // The text typed so far: a hook's caption (code-driven screens), else the initial value.
             auto it = hooks ? hooks->captions.find(&e) : decltype(hooks->captions)::const_iterator{};
             const bool hooked = hooks && it != hooks->captions.end();
-            text(e, x, y, w, h, hooked ? it->second : e.get("initvalue"), rgba(e, "caretcolor", {0, 0, 0, 1}), true);
+            // The initial value is the English caption's ("Enter Family Name"); a
+            // captionres gives it in the game's language ("Nome da Família").
+            std::string init = e.get("initvalue");
+            if (e.attr("captionres") && init == e.get("caption"))
+                init = uiCaption(e, res);
+            text(e, x, y, w, h, hooked ? it->second : init, rgba(e, "caretcolor", {0, 0, 0, 1}), true);
             drew = true;
         }
         out.drawn += drew;
@@ -390,6 +391,14 @@ RgbaImage composeUi(const UiScreen& screen, std::array<uint8_t, 4> clear) {
             }
     }
     return img;
+}
+
+std::string uiCaption(const UiElement& e, UiResources& res) {
+    if (const auto* r = e.attr("captionres"))
+        if (auto ref = uiStringRef(*r))
+            if (auto s = res.string(*ref))
+                return *s;
+    return e.get("caption");
 }
 
 } // namespace os2

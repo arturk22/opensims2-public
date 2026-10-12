@@ -55,6 +55,10 @@ struct UiDrawHooks {
     std::map<const UiElement*, std::array<float, 4>>* rects = nullptr;
 };
 
+// A window's caption: its captionres in the game's language when there is
+// one, else the caption attribute (the English one in the shipped scripts).
+std::string uiCaption(const UiElement& e, UiResources& res);
+
 // Lays out one window and its children with the window's area relative to
 // (parentX, parentY), appending to `out` (whose canvas size is kept). Classes
 // known only by GUID draw as their interface says (iid=IGZWinBtn: a button,
