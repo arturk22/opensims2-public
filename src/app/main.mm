@@ -3074,6 +3074,12 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
     for (const auto& s : gLotSims) {
         if (s.id != gPie->sim() || gVmPlumbob || cinematicPlaying())
             continue;
+        // Not over a Sim out of the world (at work, at school): it hung in
+        // the sky over where the actor was last (live QA 15).
+        if (gSimulation)
+            if (const auto* o = gSimulation->machine().object(s.id);
+                !o || (!o->position.inWorld() && o->data[os2::vm::objdata::ContainerId] == 0))
+                continue;
         float top = s.actor->position[2];
         for (const auto& p : s.actor->posed.parts)
             for (const auto& v : p.mesh.positions)
