@@ -437,3 +437,29 @@ Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, cap
 - Lote sem família: comprar recusa por falta de fundos (o Comprar abre com §0 no lote novo N001_Lot83). No jogo, construir/mobiliar um lote desocupado não cobra (o custo vai para o valor do lote; lembrança do jogo, não conferido no binário). Repro: bairro N001, Lotes, lote vazio, pôr num gramado, entrar, Comprar, Cadeira de Jantar PatioPlástico, clicar no gramado: "not bought: not enough funds". Conferir no binário o `CanAfford`/`NoCharge` (BV `0x9b38fc`, vtable 200) com a família 0.
 - Preço do lote novo: o "À Venda" mostrou §10.857 e o "Mudar família" logo depois §10.387 para o mesmo lote (depois de salvar na saída). Conferir qual valor o jogo mostra.
 - `--pie <id de Sim>` sem tela termina sem abrir o menu (o `findInteractionObject`/`anchor` não acha o Sim); para testar sociais sem tela só o `s2pkg pie lote sim alvo` lista.
+
+# Rodada 17, QA 15
+
+Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`), binário do ramo `r17-qa15` feito do `main` (refeito depois de entrarem r17-chair, r17-chair2 e r17-emptylot). Janela 1280x752 em 95,49. Velocidade 3 na maior parte; `OS2_LOG_ANIMS=1` para conferir no log o que cada Sim animou. Famílias: Caixão (N001_Lot11, com o Alexandre criança), dos Prazeres (N001_Lot68, gêmeas adolescentes), Silva (N002_Lot10, aniversário do João) e Malpaga (N001_Lot36, o Beau criança pequena). Cerca de 3 dias de jogo somados.
+
+| Passo | Resultado |
+|-------|-----------|
+| Carona do trabalho (Lot11, segunda) | passa: o sedã para no meio-fio às 8:05, a Cassandra entra às 8:36 ("job performance 0 -> 16") e volta às 15:07; o dinheiro sobe §511.632 → §512.151 (14:02) → §512.579 (15:06, salário). No Lot68 o Daniel vai e volta (§2.250 → §2.652) |
+| Motorista da carona e do ônibus | **bug corrigido**: depois que o carro ia embora, o motorista (Sim 222, "School Bus Driver") ficava sentado no ar no meio da rua, e a cada viagem um a mais (`r17-qa15-motorista-sentado-na-rua.jpg`); a empregada do Lot68 ficou um dia ajoelhada junto da poça e a visita (Don) parada na esquina do lote. A VM já tinha tirado esses objetos; o app deixava o ator na última pose (e com o ID reaproveitado ele seguia outro objeto). Agora o ator sai ("Sim 222 leaves the lot (its object is gone)") |
+| Sim no trabalho | **bug corrigido**: o plumbob da Cassandra no trabalho ficava no céu sobre o fim da rua (ela segue no slot do carro que saiu do mundo); agora Sim fora do mundo, ou dentro de algo fora do mundo, não é desenhado nem tem plumbob |
+| Criança para a escola | não passa no Lot11: o Alexandre (escola particular) não vai; conhecido (`docs/primitives-mac.md`, Set to Next 18: só a escola pública é aceita). No Lot68 o ônibus (sem a textura da sombra, só no jogo base) chega às 8:00 de quinta; não vi as gêmeas subirem |
+| Contas | passa em parte: a conta chega às 10:20 (§466 no Lot11; §406 dois dias depois) e a Cassandra pega o correio sozinha às 15:14 (ao vivo e sem tela). Pagar ao vivo não testado: a caixa de correio quase não pega o clique (ver TODO). Cobrador não alcançado |
+| Sociais (N002_Lot10) | passa: o João abraça a Jenny ("Abraçar.../Amigável"), a Jenny beija a filha no rosto, conta piada ao João (gestos, relação ++ e pontos de aspiração) e conversam (balões com ícones; `r17-qa15-piada-abraco.jpg`); no log `a2t-soc-hugFriendly`, `a2t-soc-kissFamily`. Ligação que chega ("Ei 9 de Souza, João pode conversar agora?") aparece e fecha sozinha |
+| Aniversário com bolo (N002_Lot10) | passa: o aviso "João está pronto para se tornar um homem!", "Soprar" no bolo, `a2o-bdayCake-blowOut-table`, "Sim 389 grew into age 0x08" e `t-react-growUp-goodMemory`; o João adulto aparece inteiro (`r17-qa15-aniversario-adulto.jpg`) |
+| Mesa de jantar (pedido do coordenador, r17-chair/chair2) | passa: Daniel e Angela "Sentar" nas cadeiras do deck: chegam, as mãos vão à cadeira e à mesa ao entrar, ficam sentados de frente para a mesa, levantam sem sentar no ar (`r17-qa15-mesa-sentar-bracos.jpg`); a velocidade 3 também |
+| Andar com prato/caneca (Lot68) | **falha**: o Daniel anda inclinado para trás, pés à frente, antes de sentar e depois de levantar carregando (`r17-qa15-andar-inclinado.jpg`); overlays de carregar ficam depois de largar a caneca (ver TODO) |
+| Criança pequena (N001_Lot36) | passa: a Brandi "Aninhar" o Beau, pega no colo (`a2p-soc-pickup-carrier`, `p2a-soc-pickUp-carryee`) e abraça (`r17-qa15-crianca-colo.jpg`) |
+| Salvar → bairro → recarregar (N001_Lot36) | passa: Esc → "Sim" grava o lote (288 objetos) e o bairro; o bairro abre; o lote recarregado volta às 12:08 com os Sims onde estavam (o Beau junto do berço) e os motivos (`r17-qa15-antes-de-salvar.jpg`, `-depois-de-recarregar.jpg`) |
+| Piscina (Lot68) | não passa / não conclusivo: o clique na água abre o "Destination - For Swim Here" só com "Vir Aqui"/"Correr Aqui"; sair pela escada não testado |
+| Telefone, visitas | só sem tela: "Ligar.../Sim" abre o "Phone Book - Invite"; ao vivo não achei o telefone de parede na vista |
+| Gravidez, bebê mamando, morte, fogo | não alcançados (nenhuma grávida ou bebê nos lotes do jogo base; nada pegou fogo nem morreu) |
+| Desejos/medos | passa: rolam e se cumprem ("FULFILS want 4: Brincar Com Vladmir") |
+
+## Bugs achados (não corrigidos)
+
+Ver o item "QA ao vivo (rodada 17, QA 15)" do `TODO.md`: andar inclinado carregando e overlays de carregar que sobram; quatro "*Push Look At" na fila do Daniel; caixa de correio difícil de clicar; água da piscina sem "Nadar Aqui"; Sim no trabalho selecionável; a velocidade volta a 1 na chegada da carona.
