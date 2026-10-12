@@ -5,6 +5,8 @@
 // structs are plain data, held by VM and Object (vm.hpp); the primitives
 // are in dialog.cpp and light.cpp.
 
+#include "formats/dbpf.hpp"
+
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -38,7 +40,11 @@ constexpr int PhoneServices = 5;      // "Phone Book - Services": objects of the
 constexpr int PhoneInvite = 6;        // "Phone Book - Invite": one neighbor of array 0
 constexpr int PhoneParty = 7;         // "Phone Book - Party": the guests among array 0
 constexpr int SpecialPhoneServices = 15;
+constexpr int JewelryPurchase = 12;  // an expansion pack's jewelry rack (no base game object)
+constexpr int ClothingPurchase = 16;  // the clothing rack's "Buy": the cart into the family's clothing bin
 constexpr int ClothingSelection = 17; // the dresser's "Plan Outfit"
+constexpr int ClothingTryOn = 20;     // the rack's "Try On": the try-on outfit
+constexpr int Vanity = 21;            // the mirror's "Change Appearance": hair, makeup, glasses, facial hair
 constexpr int TutorialNext = 22;      // the tutorial's progress window (tutorial.hpp)
 constexpr int BabyName = 23;          // "Baby Name": the newborns (neighbors in temps 0-3) get the typed first names
 constexpr int SetAspiration = 24;
@@ -152,6 +158,22 @@ struct Dialog {
     // casuals 0x002/0x004, 11 underwear 0x040, 13 0x1000).
     int16_t outfitSim = 0;
     uint32_t outfitCategory = 0;
+    // The clothing rack (cTSWinProcClothingPurchaseDialog, 16) and the
+    // try-on (cTSWinProcClothingTryOnDialog, 20) map temp 0 the same way;
+    // for the everyday categories (Change Outfit 0, 9, 10) they offer tops
+    // and bottoms besides whole outfits and open on tops (SetParams' 0x601
+    // test), else whole outfits only. The rack charges temp 1 per item
+    // (cTSShoppingCartBase::SetPricePerItem) and OK puts the cart (the GZPS
+    // keys) in the family's clothing bin (SaveCartStandard ->
+    // cTSShoppingCart::CompletePurchase: cTSFamily::AddClothing for each,
+    // then the total off the family's funds). `fillFunds` holds the funds.
+    bool outfitSeparates = false;
+    int pricePerItem = 0;
+    std::vector<Tgi> cart;
+    // The vanity (cTSWinProcVanityDialog, 21): temp 0 = 1 is the expansion
+    // packs' plastic surgery panel (script 0x8C159286, not in the base
+    // game); the Sim is the stack object.
+    bool vanitySurgery = false;
     // The aspiration dialog (cTSWinProcSetAspirationDialog, type 24): the
     // neighbor (ID in the stack object) and the aspiration picked, as person
     // data 46's bits (1 romance, 2 family, 4 fortune, 0x10 popularity, 0x20

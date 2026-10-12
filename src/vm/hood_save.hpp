@@ -35,6 +35,7 @@ struct HoodSaveResult {
     bool inventories = false;
     size_t wants = 0; // SWAF records written (wants.hpp)
     size_t born = 0;  // Sims born in play written (SDSC, SDNA, FAMI member, family tree)
+    size_t clothing = 0; // family clothing bin entries added (BINX + 3IDR: the clothing rack's purchases)
     std::vector<std::string> warnings;
 };
 

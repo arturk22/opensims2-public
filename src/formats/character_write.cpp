@@ -112,19 +112,6 @@ std::vector<uint8_t> rewriteRcol(std::span<const uint8_t> bytes, const std::vect
     return std::move(w.bytes());
 }
 
-std::vector<uint8_t> writeReferenceList(const std::vector<Tgi>& refs) {
-    BinWriter w;
-    w.u32(0xDEADBEEF);
-    w.u32(2);
-    w.u32(uint32_t(refs.size()));
-    for (const auto& t : refs) {
-        w.u32(t.type);
-        w.u32(t.group);
-        w.u32(t.instance);
-        w.u32(t.instanceHi);
-    }
-    return std::move(w.bytes());
-}
 
 // CTSS / STR# with (language, value, description) entries (format 0xFFFD).
 std::vector<uint8_t> writeStrings(const std::vector<std::string>& values) {
@@ -194,6 +181,20 @@ const SimPart* partByName(const CasCatalog& c, const std::string& name) {
 }
 
 } // namespace
+
+std::vector<uint8_t> writeReferenceList(const std::vector<Tgi>& refs) {
+    BinWriter w;
+    w.u32(0xDEADBEEF);
+    w.u32(2);
+    w.u32(uint32_t(refs.size()));
+    for (const auto& t : refs) {
+        w.u32(t.type);
+        w.u32(t.group);
+        w.u32(t.instance);
+        w.u32(t.instanceHi);
+    }
+    return std::move(w.bytes());
+}
 
 CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatalog& catalog) {
     auto read = [&](uint32_t type, uint32_t instance) -> std::optional<std::vector<uint8_t>> {

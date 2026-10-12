@@ -140,6 +140,8 @@ struct PropertyValue {
     enum Kind { Uint32, String, Float32 } kind = String;
     std::string text;
 };
+// A 3IDR (0xDEADBEEF, version 2, type/group/instance/instanceHi each).
+std::vector<uint8_t> writeReferenceList(const std::vector<Tgi>& refs);
 std::vector<uint8_t> writePropertySetXml(const std::map<std::string, PropertyValue>& properties);
 
 } // namespace cas

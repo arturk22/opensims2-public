@@ -495,6 +495,27 @@ void setupNames(Context& c, Dialog& d) {
         d.female = d.names[0].female, d.text = d.names[0].text;
 }
 
+// A Change Outfit literal (temp 0 of the clothing dialogs) as the bit of
+// the outfit category (the same switch in cTSWinProcClothingDialog,
+// cTSWinProcClothingPurchaseDialog and cTSWinProcClothingTryOnDialog's
+// SetParams): 0 and the others everyday.
+uint32_t outfitCategoryOfTemp(int16_t t) {
+    switch (t) {
+    case 1: return 0x080;
+    case 2: return 0x008;
+    case 3: return 0x200;
+    case 4: return 0x020;
+    case 5: return 0x010;
+    case 6: return 0x400;
+    case 8: return 0x100;
+    case 9: return 0x002;
+    case 10: return 0x004;
+    case 11: return 0x040;
+    case 13: return 0x1000;
+    default: return 0x001;
+    }
+}
+
 // The phone books (cTSWinProcPhoneBookDialog::SetParams, BV 0xa7af30, and
 // the classes' PreShow): title byte 6, message u16 13, buttons bytes 3/4
 // from STR# 0x12D; the rows are the stack object's array 0: objects for
@@ -575,6 +596,23 @@ void acceptDialog(Context& c, Dialog& d) {
         // OnOk: temp 0 = the units bought.
         c.thread.temps[0] = int16_t(d.fillValue - d.fillUnits);
         break;
+    case DialogClass::ClothingPurchase: {
+        // SaveCartStandard -> cTSShoppingCart::CompletePurchase: each item
+        // of the cart into the family's bin (cTSFamily::AddClothing; one
+        // already there is not added again: CanBeAdded), then the total
+        // (items x the price per item) off the family's funds (vtable 0xB0,
+        // expense 6). The family is the Sim's (person data 61).
+        const Object* sim = vm.object(d.outfitSim);
+        const int16_t family = sim && sim->person ? sim->person->data[persondata::FamilyNumber] : 0;
+        auto f = vm.families.find(family);
+        if (f == vm.families.end() || d.cart.empty())
+            break;
+        for (const Tgi& k : d.cart)
+            if (std::find(f->second.wardrobe.begin(), f->second.wardrobe.end(), k) == f->second.wardrobe.end())
+                f->second.wardrobe.push_back(k);
+        setFamilyFunds(vm, family, familyFunds(vm, family) - int32_t(d.cart.size()) * d.pricePerItem);
+        break;
+    }
     case DialogClass::SetAspiration:
         // The button sets the neighbor's person data 46 (vtable 0x44) and
         // OnOk the Sim's on the lot, if it is there.
@@ -784,22 +822,51 @@ Exit dialog(Context& c) {
         // cTSWinProcClothingDialog::SetParams (BV 0x330088).
         d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
         d.outfitSim = stack && stack->person ? stack->id : me.id;
-        switch (c.thread.temps[0]) {
-        case 1: d.outfitCategory = 0x080; break;
-        case 2: d.outfitCategory = 0x008; break;
-        case 3: d.outfitCategory = 0x200; break;
-        case 4: d.outfitCategory = 0x020; break;
-        case 5: d.outfitCategory = 0x010; break;
-        case 6: d.outfitCategory = 0x400; break;
-        case 8: d.outfitCategory = 0x100; break;
-        case 9: d.outfitCategory = 0x002; break;
-        case 10: d.outfitCategory = 0x004; break;
-        case 11: d.outfitCategory = 0x040; break;
-        case 13: d.outfitCategory = 0x1000; break;
-        default: d.outfitCategory = 0x001; break;
+        d.outfitCategory = outfitCategoryOfTemp(c.thread.temps[0]);
+        break;
+    }
+    case DialogClass::ClothingPurchase:
+    case DialogClass::ClothingTryOn: {
+        // SetParams (BV 0x404ac8 / 0x3bed44): the Sim is the stack object
+        // (the trees put the Sim running them there); temp 0 the outfit
+        // type, mapped as the wardrobe's; the everyday ones (0, 9, 10) offer
+        // tops and bottoms and open on tops. The rack: temp 1 the price per
+        // item (byte 9 = '.' is the expansions' owned shop, which reads the
+        // tree's locals instead: not in the base game).
+        d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
+        d.outfitSim = stack && stack->person ? stack->id : me.id;
+        // Both take 6 (try-on) as everyday (0x001), the rack testing it as
+        // 0 (separates) and the try-on as 6 (whole outfits only).
+        int16_t t = c.thread.temps[0];
+        d.outfitCategory = t == 6 ? 0x001 : outfitCategoryOfTemp(t);
+        if (t == 6 && d.cls.cls == DialogClass::ClothingPurchase)
+            t = 0;
+        d.outfitSeparates = t == 0 || t == 9 || t == 10;
+        if (d.cls.cls == DialogClass::ClothingPurchase) {
+            d.pricePerItem = c.thread.temps[1];
+            const Object* sim = vm.object(d.outfitSim);
+            const int16_t family = sim && sim->person ? sim->person->data[persondata::FamilyNumber] : 0;
+            if (vm.families.count(family))
+                d.fillFunds = familyFunds(vm, family);
         }
         break;
     }
+    case DialogClass::Vanity:
+        // SetParams (BV 0x2effa4): the Sim is the stack object; temp 0 = 1
+        // the plastic surgery panel (Initialize: script 0x8C159286 instead
+        // of 0x8C159280).
+        d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
+        d.outfitSim = stack && stack->person ? stack->id : me.id;
+        d.vanitySurgery = c.thread.temps[0] == 1;
+        break;
+    case DialogClass::JewelryPurchase:
+        // cTSWinProcJewelryPurchaseDialog (script 0xACDC3000) is an
+        // expansion pack's: the script is not in the base game's ui.package
+        // and no base game object opens it ("Interaction - Jewelry Rack -
+        // Browse" of the shopping rack globals has no rack). OK or cancel.
+        d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
+        d.outfitSim = stack && stack->person ? stack->id : me.id;
+        break;
     case DialogClass::SelectItems: {
         // SetParams (BV 0x38a69c): temps 0/1 = multiple picks / obey the
         // price (temps 2/3, 100 by default, were not followed).

@@ -14,10 +14,37 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include <variant>
 
 namespace os2::vm {
 
 namespace {
+
+// A binary property set (cGZPropertySet, magic 0xCBE750E0 version 2) as the
+// neighborhood's BINX entries are stored: u32 values and strings in the
+// order given.
+std::vector<uint8_t> binaryPropertySet(const std::vector<std::pair<std::string, std::variant<uint32_t, std::string>>>& props) {
+    BinWriter w;
+    w.u32(0xCBE750E0);
+    w.u16(2);
+    w.u32(uint32_t(props.size()));
+    auto str = [&](const std::string& t) {
+        w.u32(uint32_t(t.size()));
+        w.raw(std::span(reinterpret_cast<const uint8_t*>(t.data()), t.size()));
+    };
+    for (const auto& [name, v] : props) {
+        if (const uint32_t* n = std::get_if<uint32_t>(&v)) {
+            w.u32(0xEB61E4F7);
+            str(name);
+            w.u32(*n);
+        } else {
+            w.u32(0x0B8BEA18);
+            str(name);
+            str(std::get<std::string>(v));
+        }
+    }
+    return std::move(w.bytes());
+}
 
 // The VM's view of a neighborhood inventory, as loadNeighborhood makes it.
 Inventory toVm(const hood::Inventory& in) {
@@ -414,8 +441,60 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
             }
     }
 
+    // The family clothing bins: what the clothing rack added (the VM's
+    // family wardrobe past the hood's). cTSFamily::SaveFamilyClothing
+    // writes each new item as a BINX (0x0C560F39, CPF: binidx 1 and
+    // objectidx 2 into its 3IDR, the rest 0 as in the shipped ones) whose
+    // 3IDR of the same instance lists nothing, the family's bin
+    // (0x6C4F359D, instance = family) and the GZPS. Instances: one past the
+    // package's highest BINX (inferred; the game's own come from its
+    // instance allocator).
+    std::vector<std::pair<uint32_t, Tgi>> newClothing; // family, GZPS
+    for (const auto& f : h.families) {
+        auto vf = vm.families.find(int16_t(f.id));
+        if (vf == vm.families.end())
+            continue;
+        for (const Tgi& k : vf->second.wardrobe)
+            if (std::find(f.wardrobe.begin(), f.wardrobe.end(), k) == f.wardrobe.end())
+                newClothing.push_back({f.id, k});
+    }
+
     // The package: every resource as it is but the replaced ones.
     DbpfPackage pkg(source);
+    uint32_t nextBinx = 0;
+    std::set<uint32_t> bins; // families with a 0x6C4F359D
+    for (const auto& e : pkg.entries()) {
+        if (e.tgi.type == hoodtype::BINX || e.tgi.type == hoodtype::ReferenceList)
+            nextBinx = std::max(nextBinx, e.tgi.instance + 1);
+        if (e.tgi.type == hoodtype::Wardrobe)
+            bins.insert(e.tgi.instance);
+    }
+    for (const auto& [family, gzps] : newClothing) {
+        const uint32_t inst = nextBinx++;
+        added.push_back({Tgi{hoodtype::BINX, 0xFFFFFFFF, inst, 0},
+                         binaryPropertySet({{"binidx", 1u},
+                                            {"creatorid", std::string("00000000-0000-0000-0000-000000000000")},
+                                            {"iconidx", 0u},
+                                            {"objectidx", 2u},
+                                            {"sortindex", 0u},
+                                            {"stringindex", 0u},
+                                            {"stringsetidx", 0u}})});
+        added.push_back({Tgi{hoodtype::ReferenceList, 0xFFFFFFFF, inst, 0},
+                         cas::writeReferenceList({Tgi{}, Tgi{hoodtype::Wardrobe, 0xFFFFFFFF, family, 0}, gzps})});
+        if (!bins.count(family)) {
+            // A family without a bin yet gets one as the shipped ones are.
+            bins.insert(family);
+            added.push_back({Tgi{hoodtype::Wardrobe, 0xFFFFFFFF, family, 0},
+                             binaryPropertySet({{"creatorid", std::string("00000000-0000-0000-0000-000000000000")},
+                                                {"flags", 1u},
+                                                {"iconidx", 0u},
+                                                {"sortindex", 0u},
+                                                {"stringindex", 0u},
+                                                {"stringsetidx", 0u},
+                                                {"type", std::string("clothing")}})});
+        }
+        ++res.clothing;
+    }
     DbpfWriter w;
     for (const auto& e : pkg.entries()) {
         if (e.tgi.type == type::DIR)

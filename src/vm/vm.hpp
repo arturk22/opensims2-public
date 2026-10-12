@@ -1029,11 +1029,17 @@ public:
         int16_t house = 0;
         uint32_t flags = 0; // FAMI flags: bit 0 telephone, bit 3 computer (inferred)
         int16_t friends = 0;
+        // The family's clothing bin (cTSFamily::GetClothingList: the GZPS
+        // keys of its BINX entries, formats/neighborhood.hpp), what Plan
+        // Outfit offers; the clothing rack adds to it (hood_save writes the
+        // new ones).
+        std::vector<Tgi> wardrobe;
     };
     std::map<int16_t, Family> families;
     struct LotRecord {
         int16_t zoning = 0; // 0 residential, 1 community
         float x = 0, y = 0; // neighborhood position
+        std::string name;   // the lot info's name (the phone book's neighbor rows)
     };
     std::map<int16_t, LotRecord> lots;
     std::array<int16_t, 4> neighborhoodData{};

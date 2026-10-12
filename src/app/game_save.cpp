@@ -95,9 +95,10 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
             fs::rename(tmpHood, hoodPackage);
             char buf[512];
             std::snprintf(buf, sizeof buf,
-                          "neighborhood %s: %zu families, %zu Sim descriptions, relationships %zu changed, %zu new%s",
+                          "neighborhood %s: %zu families, %zu Sim descriptions, relationships %zu changed, %zu new%s, "
+                          "%zu clothes bought",
                           hoodPackage.filename().string().c_str(), h.families, h.descriptions, h.relationshipsChanged,
-                          h.relationshipsNew, h.inventories ? ", inventories" : "");
+                          h.relationshipsNew, h.inventories ? ", inventories" : "", h.clothing);
             out.lines.push_back(buf);
             for (const auto& w : h.warnings)
                 out.lines.push_back("warning: " + w);

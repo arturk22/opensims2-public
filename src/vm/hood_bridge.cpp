@@ -75,13 +75,14 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
         vm.families[int16_t(f.id)] = {.funds = f.record.funds,
                                       .house = int16_t(f.record.lot),
                                       .flags = f.record.flags,
-                                      .friends = int16_t(f.record.friends)};
+                                      .friends = int16_t(f.record.friends),
+                                      .wardrobe = f.wardrobe};
         ++out.families;
     }
 
     vm.lots.clear();
     for (const auto& l : h.lots) {
-        vm.lots[int16_t(l.id)] = {.zoning = l.info.type, .x = float(l.info.x), .y = float(l.info.y)};
+        vm.lots[int16_t(l.id)] = {.zoning = l.info.type, .x = float(l.info.x), .y = float(l.info.y), .name = l.name.empty() ? l.info.name : l.name};
         ++out.lots;
     }
 

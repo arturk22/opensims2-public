@@ -1,6 +1,14 @@
 // Dialog (0x24), Change Light (0x6F) and Change Outfit (0x79): src/vm/dialog.*, appearance.cpp.
 
 #include "vm/vm.hpp"
+#include "vm/hood_bridge.hpp"
+#include "vm/hood_save.hpp"
+#include "formats/character_write.hpp"
+#include "formats/dbpf.hpp"
+#include "formats/neighborhood.hpp"
+
+#include <filesystem>
+#include <unistd.h>
 
 #include <cstdio>
 #include <initializer_list>
@@ -270,6 +278,57 @@ static void testSpecialDialogs() {
         check(fd.result && fd.temps[0] == 50, "food: OK -> temp 0 = units bought");
     }
 
+    // Clothing rack (16): the Sim in the stack object, temp 0 = everyday
+    // (separates), temp 1 = price per item; OK puts the cart in the
+    // family's bin (once) and takes the total off its funds.
+    {
+        Object& sim = vm.createObject(kObjGroup);
+        sim.person.emplace();
+        sim.person->data[persondata::FamilyNumber] = 5;
+        vm.families[5].funds = 1000;
+        const Tgi owned{0xEBCF3E27, 0x2C17B74A, 0x111, 0}, other{0xEBCF3E27, 0x2C17B74A, 0x222, 0};
+        vm.families[5].wardrobe = {owned};
+        dlg(0x110C, 16);
+        Thread cp = vm.start(me.id, 0x110C, {}, sim.id);
+        cp.temps[0] = 0;
+        cp.temps[1] = 150;
+        vm.run(cp);
+        Dialog& d = vm.dialogs[me.id];
+        check(d.cls.cls == DialogClass::ClothingPurchase && d.outfitSim == sim.id && d.outfitCategory == 0x001 &&
+                  d.outfitSeparates && d.pricePerItem == 150 && d.fillFunds == 1000,
+              "clothing rack: the Sim, everyday separates, price, funds");
+        d.cart = {owned, other};
+        d.answer = 0;
+        vm.run(cp);
+        check(cp.result && vm.families[5].funds == 700 && vm.families[5].wardrobe.size() == 2,
+              "clothing rack: OK pays 2 x 150, the new item in the bin once");
+        // Formal (4): whole outfits only; cancel pays nothing.
+        Thread c2 = vm.start(me.id, 0x110C, {}, sim.id);
+        c2.temps[0] = 4;
+        vm.run(c2);
+        check(vm.dialogs[me.id].outfitCategory == 0x020 && !vm.dialogs[me.id].outfitSeparates, "clothing rack: formal wear");
+        vm.dialogs[me.id].cart = {other};
+        vm.dialogs[me.id].answer = 1;
+        vm.run(c2);
+        check(!c2.result && vm.families[5].funds == 700, "clothing rack: cancel pays nothing");
+        // Try-on (20): 6 is everyday without separates; vanity (21): the Sim.
+        dlg(0x110D, 20);
+        Thread to = vm.start(me.id, 0x110D, {}, sim.id);
+        to.temps[0] = 6;
+        vm.run(to);
+        check(vm.dialogs[me.id].cls.cls == DialogClass::ClothingTryOn && vm.dialogs[me.id].outfitCategory == 0x001 &&
+                  !vm.dialogs[me.id].outfitSeparates,
+              "try-on: 6 -> everyday, whole outfits");
+        vm.dialogs.erase(me.id);
+        dlg(0x110E, 21);
+        Thread va = vm.start(me.id, 0x110E, {}, sim.id);
+        vm.run(va);
+        check(vm.dialogs[me.id].cls.cls == DialogClass::Vanity && vm.dialogs[me.id].outfitSim == sim.id &&
+                  !vm.dialogs[me.id].vanitySurgery,
+              "vanity: the Sim in the stack object");
+        vm.dialogs.erase(me.id);
+    }
+
     // "Return" (byte 7 bit 0): queued, the tree goes on at once.
     dlg(0x1105, 0, 0x01);
     Thread ret = vm.start(me.id, 0x1105);
@@ -348,8 +407,44 @@ static void testLightAndOutfit() {
           "outfit: source GUID in person data 119/120");
 }
 
+// The family clothing bin: read from the neighborhood's BINX/3IDR, what the
+// clothing rack adds is written back as new BINX/3IDR of the family's bin.
+static void testClothingBin() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / ("os2-clothing-bin-" + std::to_string(::getpid()));
+    fs::create_directories(dir);
+    const Tgi a{0xEBCF3E27, 0x2C17B74A, 0xAAA, 0}, b{0xEBCF3E27, 0x2C17B74A, 0xBBB, 0};
+    {
+        hood::FamilyRecord f;
+        f.version = 0x4E;
+        f.funds = 500;
+        DbpfWriter w;
+        w.add(Tgi{hoodtype::FAMI, 0xFFFFFFFF, 1, 0}, f.write());
+        w.add(Tgi{hoodtype::Wardrobe, 0xFFFFFFFF, 1, 0},
+              cas::writePropertySetXml({{"type", {cas::PropertyValue::String, "clothing"}}}));
+        w.add(Tgi{hoodtype::BINX, 0xFFFFFFFF, 0x40, 0},
+              cas::writePropertySetXml({{"binidx", {cas::PropertyValue::Uint32, "1"}},
+                                        {"objectidx", {cas::PropertyValue::Uint32, "2"}}}));
+        w.add(Tgi{hoodtype::ReferenceList, 0xFFFFFFFF, 0x40, 0},
+              cas::writeReferenceList({Tgi{}, Tgi{hoodtype::Wardrobe, 0xFFFFFFFF, 1, 0}, a}));
+        w.save(dir / "N009_Neighborhood.package");
+    }
+    CodeLibrary code;
+    VM vm{code};
+    const auto h = hood::Neighborhood::load(dir / "N009_Neighborhood.package", false);
+    loadNeighborhood(vm, h);
+    check(vm.families[1].wardrobe == std::vector<Tgi>{a}, "clothing bin: read from BINX/3IDR");
+    vm.families[1].wardrobe.push_back(b);
+    const HoodSaveResult r = saveNeighborhood(vm, h, dir / "N009_Neighborhood.package", dir / "out.package");
+    const auto h2 = hood::Neighborhood::load(dir / "out.package", false);
+    check(r.clothing == 1 && h2.families.size() == 1 && h2.families[0].wardrobe == (std::vector<Tgi>{a, b}),
+          "clothing bin: the bought item written back");
+    fs::remove_all(dir);
+}
+
 int main() {
     lang::setPreferred(lang::EnglishUS);
+    testClothingBin();
     testYesNoCancel();
     testNotification();
     testSpecialDialogs();
