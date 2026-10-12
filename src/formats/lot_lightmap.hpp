@@ -73,6 +73,14 @@ struct LotLightMapLayout {
     };
     std::vector<WallFace> walls;
 
+    // The sun's height map (cHeightMapShadow, docs/lighting-mac.md 5.3):
+    // what stands over the lot at every ground texel (8 per tile, rows of
+    // lotWidth x 8): the walls' tops, the roofs and the upper floors
+    // (-1e9 where nothing; the terrain is added from the elevations).
+    // Filled by buildLotModel (fillSunOccluders); empty: no sun shadows.
+    std::vector<float> occluders;
+    float occluderAt(float x, float y) const;
+
     void init(const Lot& lot);
     // Atlas position in texels of a point on a floor page, `x`, `y` in
     // tiles (divide by width/height once every wall is added).
@@ -108,6 +116,11 @@ struct LightMapGlobals {
     std::array<float, 3> outsideWallAmbient{0.25f, 0.25f, 0.25f}; // ... x outsideWallAmbient
     float terrainStrength = 1;     // the state's direct light on the outdoor floors and terrain
     float floorLightMapScale = 0.5f; // cLightMapManager +0x68: the direct light is stored halved
+    // Height-map sun shadows (Shadows $Medium/$High: heightMapShadows): a
+    // texel d under the shadow's top keeps the sun's weight x max(0, 1 - d
+    // x hmSunLightTransitionZone) (LightTerrainTileWithShadows, Mac BV 0x705068).
+    bool sunShadows = true;
+    float sunTransitionZone = 1;
     float roomSaturation = 0.5f, roomCeilingStrength = 1, roomPortalStrength = 0.75f;
     float brightWallFloor = 1, darkWallFloor = 0.5f; // bright/darkWallFloorContribution
     static LightMapGlobals from(const LightingConfig& config);

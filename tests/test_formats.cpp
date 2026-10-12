@@ -670,6 +670,28 @@ end
     LotLightMap dark = computeLotLightMap(layout, day, {});
     check(std::fabs(texel(dark.image, 28, 28) - 0.5f) < 0.01f, "outdoor floor texel is half the outdoor light");
     check(std::fabs(texel(dark.image, 4, 4) - 0.1f) < 0.01f, "indoor floor texel is the inside ambient");
+    {
+        // The sun's height-map shadow: a 3-high block on tile (3, 1) with
+        // the sun low in +X shades the tile west of it (its top is far over
+        // the ground there: the sun's weight is gone) and not tile (2, 3).
+        LotLightMapLayout shaded = layout;
+        shaded.occluders.assign(size_t(32 * 32), -1e9f);
+        for (int j = 8; j < 16; ++j)
+            for (int i = 24; i < 32; ++i)
+                shaded.occluders[size_t(j * 32 + i)] = 3;
+        const auto sunCfg = parseLightingConfig(R"(
+lightingState day
+   skylight (1,1,1) 0.5
+   light sun (1, 0, 1) (1, 1, 1) 1
+end
+)");
+        const LotLightMap sm = computeLotLightMap(shaded, *sunCfg.state("day"), {});
+        check(texel(sm.image, 20, 12) + 0.1f < texel(sm.image, 20, 28), "sun height-map shadow beside a block");
+        LightMapGlobals off;
+        off.sunShadows = false;
+        const LotLightMap nm = computeLotLightMap(shaded, *sunCfg.state("day"), {}, off);
+        check(std::fabs(texel(nm.image, 20, 12) - texel(nm.image, 20, 28)) < 0.02f, "no sun shadows with the option off");
+    }
     // A lamp in the room: seeded at colour x floor scale, falling by 1 + k per half tile.
     LightMapLight lamp;
     lamp.position = {0.25f, 0.25f, 2};

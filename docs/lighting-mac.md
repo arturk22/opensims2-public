@@ -365,6 +365,29 @@ texel += E(n) · terrainStrength (1) · escala do light map de piso
    amostra do height map de sombra (terreno) ou a altura da sombra acima
    do tile (pisos).
 
+**A sombra do sol** (rodada 15, binário: `LightTerrainTileWithShadows` =
+BV `0x705068`, a versão de piso `0x702fd8`; `FUN_01807114` lê as duas
+grades do `cHeightMapShadow`): para cada texel, `d` = topo da sombra − altura
+da superfície (as duas grades do height map, `+0x18` − `+0xc`; nos pisos,
+a grade `+0x228` menos a altura do tile), em texels de 8 por tile (o mesmo
+índice do light map). `d ≤ 0`: `E(n)` normal. `d > 0`: `E(n)` com o peso
+do `sun` × `max(0, 1 − d·hmSunLightTransitionZone)` (`0x7047e4`; a zona é 1:
+sombra cheia a 1 tile de fundura) e o alfa do texel = `255·√max(0, 1 −
+d·zona)`. Ou seja, **a sombra escurece o RGB** do light map (tira o sol) e
+fica também no alfa (que só as sobreposições usam). Quem monta o height
+map (`FillFromWalls`/`FillFromRooves`/`FillFromAwnings`/`FillFromTerrain`,
+`AddBlobToHeightMap` dos objetos, `FindHeightMapShadows` por linhas ou
+colunas: nomes do `baserom.sym`, `TSSGHeightMapShadow.cpp`) não foi lido no
+BV. **No código** (`fillSunOccluders` em `lot_model.cpp`,
+`computeLotLightMap`): a grade guarda o topo das paredes (altura cheia, com a
+espessura), dos telhados (`LotRoofs::heightAt`) e dos pisos de cima; o topo
+da sombra num texel = o maior `altura − queda do sol` andando para o sol,
+com o terreno; só nos texels de fora; opção `heightMapShadows` (Shadows
+`$Medium`/`$High`). Inferido: essa marcha, e que objetos (árvores) e
+toldos ficam de fora; as paredes de fora não recebem a sombra
+(`LightWallTileWithShadows`, §6.2, não feita). Captura:
+`docs/screenshots/r15-sombra-sol-height-map.jpg`.
+
 A escala do light map de piso (`cLightMapManager` vtable `0x5C`, tipo 1,
 BV `0x6f5350`) é o campo `+0x68`, que o construtor (BV `0x6fa6e0`) põe em
 **0,5** (o de parede, tipo 0, `+0x6C`, também 0,5); `+0x1a8` do gerenciador
@@ -505,7 +528,7 @@ tipo 3:
 
 | tema | jogo | `src/` hoje |
 |---|---|---|
-| terreno e pisos fora | difusão de fora (0,25 + lâmpadas de fora com `outsideObjects` *diffusion*) menos o ambiente de fora, **mais** `E(n)·terrainStrength·0,5` (sun, sky, fill1, fill2), sombra do sol no alfa (§5.3) | igual (direções normalizadas, inferido); `n` = gradiente das elevações no térreo sem piso, (0,0,1) nos pisos; sem a sombra do sol (alfa 255); luz de fora acima de um andar sem piso cai para o de baixo (inferido) |
+| terreno e pisos fora | difusão de fora (0,25 + lâmpadas de fora com `outsideObjects` *diffusion*) menos o ambiente de fora, **mais** `E(n)·terrainStrength·0,5` (sun, sky, fill1, fill2), com o sol tirado na sombra do height map (§5.3) | igual; `n` = gradiente das elevações no térreo sem piso, (0,0,1) nos pisos; a sombra do sol das paredes, telhados e pisos de cima (rodada 15; sem objetos; alfa 255); luz de fora acima de um andar sem piso cai para o de baixo (inferido) |
 | quem é "fora" | sala 0 do mundo (§5.3) | sala 0 ou sala em que metade dos quartos de tile não tem piso (inferido: os pátios do `3ARY`) |
 | portais | por sentido: de fora para um cômodo `sol·max(0, sol·fora) + skylight + L` (+ spill 0,5·L), de um cômodo `L`; modificadores pelo outro lado (§5.4) | igual; a parede do portal é a amostra vizinha mais próxima que a luz não atravessa, `L` = light map do lado de onde vem depois da difusão das lâmpadas; sem a supressão entre janelas nem as práticas das janelas |
 | irradiância do cômodo | piso e paredes × cor do material dessaturada por `roomSaturation` (§4.1) | igual: cor média da textura (`stdMatBaseTextureName`) do piso de cada quarto de tile e do papel de cada face |
@@ -524,8 +547,10 @@ tipo 3:
 - Como as salas de pátio do `3ARY` viram a sala 0 (§5.3).
 - Luzes práticas: confirmar no binário que `modifiers insideObjects`
   multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
-- O height map de sombra (`UpdateHeightMapShadows`, `AddBlobToHeightMap`):
-  a sombra do sol dos objetos de fora (estilo 3 do `cShadow`, §9) nos lotes.
+- O height map de sombra: como o jogo o monta (`FillFrom*`,
+  `FindHeightMapShadows`) e os objetos (`AddBlobToHeightMap`, com
+  `hmBlobWidthModifier`/`hmBlobHeightModifier`; estilo 3 do `cShadow`, §9);
+  o `hmLotShadowStrength` (1,5) e a sombra nas paredes de fora.
 - A direção de sombra do gerenciador de luz (vtable `0x78`, §9) e se a cor
   da vtable `0x7c` é o `+0x28c` de `0x705f70`.
 
