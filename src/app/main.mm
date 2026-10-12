@@ -1489,7 +1489,20 @@ os2::LotViewOptions wantedLotView() {
         const simd_float3 d = gCamera->pivot() - gCamera->eye();
         look = {d.x, d.y};
     }
-    return gWallView.options(look, viewLevel());
+    os2::LotViewOptions v = gWallView.options(look, viewLevel());
+    // cutawayForSelectedSim: the selected Sim on the level shown.
+    if (v.walls == os2::LotViewOptions::Walls::Cutaway && gCamera && gSimulation && gLive &&
+        v.level != os2::LotViewOptions::kAllLevels) {
+        const os2::vm::VM& m = gSimulation->machine();
+        const int16_t id = m.globals[os2::vm::global::SelectedPersonId];
+        if (const auto it = m.objects().find(os2::vm::ObjectId(id)); id > 0 && it != m.objects().end() &&
+                                                                      it->second.position.inWorld() &&
+                                                                      it->second.position.level - 1 == v.level) {
+            const simd_float3 e = gCamera->eye();
+            v.simLine = std::array<float, 4>{e.x, e.y, it->second.position.x, it->second.position.y};
+        }
+    }
+    return v;
 }
 
 // Keeps the lot drawn for the current view (called every frame and before

@@ -94,6 +94,11 @@ struct LotViewOptions {
     // app/wall_view.hpp); kAllLevels: only `level`'s.
     int lowestCut = kAllLevels;
     bool roof = true;
+    // cutawayForSelectedSim (on: its tweak's default is true and
+    // globalProps.xml does not set it; docs/ui-live-mac.md 8c): in cutaway,
+    // with the selected Sim on the level shown, the walls crossing the line
+    // from the camera (x, y) to the Sim (x, y) are cut too.
+    std::optional<std::array<float, 4>> simLine;
 };
 // The highest level with walls (not attic walls: the gables go with the
 // roof over the level below) or floors (lowest level if none).

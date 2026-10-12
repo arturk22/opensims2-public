@@ -587,7 +587,12 @@ quadro:
    - com `usarSim` (opção `cutawayForSelectedSim` ligada, Sim guardado e no
      andar atual) também corta as paredes que **cruzam a linha da câmera
      ao Sim** (consulta de raio do serviço do mundo 3); a opção não está no
-     `globalProps.xml` (padrão do construtor não lido; inferido desligada).
+     `globalProps.xml`, mas é um tweak com **padrão ligado**: `FUN_00c8d74c`
+     (BV, o registro das propriedades do `cWallCutawayManager`) registra
+     `cutawayOutside` (bool, 1, id `0x0BF487B2`), `cutawayMemorySize` (int,
+     3, `0xCBF487C6`) e `cutawayForSelectedSim` (bool, **1**, `0x8D9B7CE1`);
+     `FUN_00c8b290` os lê de volta (rodada 13: a "inferida desligada" estava
+     errada).
 6. `UpdateSceneGraph`: compara o conjunto novo com o anterior e manda ao
    gerenciador de paredes cortar/erguer só as diferenças, as duas faces de
    cada parede (`OppositeWallLocator`), e ajusta os arcos das cercas nos
@@ -610,7 +615,11 @@ cercas — padrão falso, inferido do `fencearches.txt` —, fundação, piscina
 saias de deck não); os cômodos das faces vêm do mapa de luz (3ARY `0x0B`),
 em que quintais cercados são fora. Recalcula quando a câmera passa de um
 lado de uma direção de parede, o andar ou o modo mudam, ou as paredes mudam;
-o Sim selecionado não entra (`cutawayForSelectedSim` desligado).
+o Sim selecionado entra desde a rodada 13 (`LotViewOptions::simLine`): com o
+Sim selecionado no andar mostrado, as paredes elegíveis que cruzam, na planta,
+o segmento da câmera (posição) ao Sim também são cortadas (inferido: o jogo
+usa uma consulta de raio do mundo, aqui a interseção 2D); o modelo é refeito
+quando o Sim ou a câmera muda de tile.
 
 ## 9. O que falta
 

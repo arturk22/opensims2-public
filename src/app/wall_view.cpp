@@ -54,6 +54,13 @@ bool WallView::sameCut(const LotViewOptions& a, const LotViewOptions& b) {
         return false;
     if (a.walls != Walls::Cutaway)
         return true;
+    // The camera-to-Sim line: again when the Sim or the camera changes tile.
+    if (a.simLine.has_value() != b.simLine.has_value())
+        return false;
+    if (a.simLine)
+        for (int k = 0; k < 4; ++k)
+            if (std::floor((*a.simLine)[size_t(k)]) != std::floor((*b.simLine)[size_t(k)]))
+                return false;
     // buildLotModel cuts a wall by the sign of its normal along the view
     // (|dot| > 1e-3): walls run along the axes and the diagonals.
     static const float kNormals[4][2] = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};

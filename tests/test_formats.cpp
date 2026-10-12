@@ -581,11 +581,12 @@ static void testLotModel() {
         add(2, Lot::Normal);    // room 2 | yard: outside, its outside face +X
         add(3, Lot::Normal);    // yard | yard: alone
         add(0, Lot::Foundation); // a style without cutaway
-        auto cutAt = [&](std::array<float, 2> look) {
+        auto cutAt = [&](std::array<float, 2> look, std::optional<std::array<float, 4>> simLine = std::nullopt) {
             LotViewOptions v;
             v.walls = LotViewOptions::Walls::Cutaway;
             v.level = 0;
             v.viewDirection = look;
+            v.simLine = simLine;
             LotModelCache k;
             buildLotModel(c, index, patterns, v, nullptr, &k);
             std::vector<float> xs;
@@ -597,6 +598,11 @@ static void testLotModel() {
         check(cutAt({-1, 0.2f}) == std::vector<float>{1, 2}, "cutaway from +X: the inside wall and the outside wall facing the camera");
         check(cutAt({1, 0.2f}) == std::vector<float>{1}, "cutaway from -X: the inside wall only (the outside wall's face looks away)");
         check(cutAt({0.0f, 1}) == std::vector<float>{1}, "an inside wall is cut even edge-on");
+        // cutawayForSelectedSim: a Sim at x = 3.5 seen from a camera at -X
+        // cuts the walls across the line, the outside wall facing away and
+        // the one alone in the yard too (fences and foundations never).
+        check(cutAt({1, 0.2f}, std::array<float, 4>{-5, 0.4f, 3.5f, 0.5f}) == std::vector<float>{1, 2, 3},
+              "the walls between the camera and the selected Sim are cut");
     }
     check(WallView::visible(lot, 0, 0.5f, 0.5f, 1.0f) && !WallView::visible(lot, 0, 0.5f, 0.5f, 3.0f) &&
               WallView::visible(lot, 1, 0.5f, 0.5f, 3.0f),

@@ -413,6 +413,19 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                     const float s = right ? -1.0f : 1.0f;
                     lowered = s * (nx * view.viewDirection[0] + ny * view.viewDirection[1]) < -1e-3f;
                 }
+                // usarSim: a wall across the camera-to-Sim line (the world's
+                // ray query; here the line in the plan, inferred).
+                if (!lowered && view.simLine) {
+                    const auto& l = *view.simLine;
+                    auto orient = [](float ax, float ay, float bx, float by, float cx, float cy) {
+                        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+                    };
+                    const float d1 = orient(l[0], l[1], l[2], l[3], w.a.x, w.a.y);
+                    const float d2 = orient(l[0], l[1], l[2], l[3], w.b.x, w.b.y);
+                    const float d3 = orient(w.a.x, w.a.y, w.b.x, w.b.y, l[0], l[1]);
+                    const float d4 = orient(w.a.x, w.a.y, w.b.x, w.b.y, l[2], l[3]);
+                    lowered = ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
+                }
             }
         }
         if (lowered && cut && level <= view.level)
