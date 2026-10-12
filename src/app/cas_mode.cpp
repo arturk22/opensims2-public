@@ -936,6 +936,8 @@ void CasMode::mouseDown(simd_float2 p) {
     for (auto it = targets_.rbegin(); it != targets_.rend(); ++it)
         if (inside(it->rect, p)) {
             auto action = it->action; // the action may lay out again
+            if (playSound && !it->sound.empty())
+                playSound(it->sound);
             action(p);
             dirty_ = true;
             return;
@@ -1034,6 +1036,10 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
                 edit_.spec.lastName = familyName_;
             }
             dirty_ = true;
+        } else if (a == "--cas-click") { // x,y: a mouse press (the click sound plays)
+            float x = 0, y = 0;
+            if (std::sscanf(v.c_str(), "%f,%f", &x, &y) == 2)
+                mouseDown({x, y});
         } else if (a == "--cas-step")
             setStep(std::stoi(v) - 1);
         else if (a == "--cas-tab") {
@@ -1164,7 +1170,7 @@ UiScreen CasMode::screen(int width, int height) {
         if (!e)
             return;
         if (auto r = rects.find(e); r != rects.end())
-            targets_.push_back({r->second, std::move(f)});
+            targets_.push_back({r->second, std::move(f), uiButtonSound(*e)});
     };
     auto find = [](const UiElement& root, uint32_t id) { return findWindow(root, id); };
 
@@ -2281,6 +2287,9 @@ UiScreen CasMode::screen(int width, int height) {
                         targets_.push_back({{rr[0] - 8, rr[1] - 2, rr[2] + 4, rr[3] + 2}, [this, k, rr](simd_float2 p) {
                                                 pushUndo();
                                                 const int v = int(std::ceil((p.x - rr[0]) / (rr[2] - rr[0]) * 10.0f));
+                                                static const char* const kPoint[] = {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"};
+                                                if (playSound && v >= 1 && v <= 10) // ui_cas_personality<n> for the point clicked
+                                                    playSound(std::string("ui_cas_personality") + kPoint[v - 1]);
                                                 cas::setTrait(edit_.personality, k, std::clamp(v, 0, 10));
                                                 edit_.zodiacChosen = false;
                                                 edit_.zodiac = cas::zodiacSign(edit_.personality);
@@ -2320,7 +2329,7 @@ UiScreen CasMode::screen(int width, int height) {
                 q.x0 = tx0, q.y0 = ty0, q.x1 = tx0 + side, q.y1 = ty0 + side;
                 out.quads.push_back(q);
                 auto pick = it.pick;
-                targets_.push_back({{x0, y0, x1, y1}, [pick](simd_float2) { pick(); }});
+                targets_.push_back({{x0, y0, x1, y1}, [pick](simd_float2) { pick(); }, "ui_secondary_button"});
                 continue;
             }
             rect(x0, y0, x1, y1, it.selected ? kCellSelected : kCellColor);
@@ -2347,7 +2356,7 @@ UiScreen CasMode::screen(int width, int height) {
                 if (!line2.empty())
                     text(x0 + 3, ty + 14, maxW, line2, kCellText);
                 auto pick = it.pick;
-                targets_.push_back({{x0, y0, x1, y1}, [pick](simd_float2) { pick(); }});
+                targets_.push_back({{x0, y0, x1, y1}, [pick](simd_float2) { pick(); }, "ui_secondary_button"});
             }
         }
         const std::string key = g.key;

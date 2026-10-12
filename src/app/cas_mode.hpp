@@ -107,6 +107,9 @@ public:
     // wrote the family into it (its family number), and by the puck's Exit.
     std::function<void(uint32_t family)> onFamilySaved;
     std::function<void()> onExit;
+    // UI sounds by name: the buttons' own btnclicksnd, ui_secondary_button
+    // for the list cells (the game's lists play it on a row).
+    std::function<void(const std::string&)> playSound;
 
     // Edits a saved Sim: a character file (group 0xFFFFFFFF) or a premade
     // Sim of the bin (its group), through cas::readCharacterSpec; false (and
@@ -247,6 +250,7 @@ private:
     struct Target {
         std::array<float, 4> rect;
         std::function<void(simd_float2)> action;
+        std::string sound; // the button's btnclicksnd (UI sound name), "" none
     };
     std::vector<Target> targets_;
     std::vector<std::array<float, 4>> solid_;

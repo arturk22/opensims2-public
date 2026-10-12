@@ -3928,6 +3928,10 @@ void unloadScene() {
         casArgs.push_back(gUser->neighborhoodsDir().string());
     }
     gCas = std::make_unique<os2::CasMode>(renderer, *gIndex, gameDir(), casArgs);
+    gCas->playSound = [](const std::string& name) { // the buttons' click sounds
+        if (gGameAudio)
+            gGameAudio->playUi(name);
+    };
     // Opened from a neighborhood (Scene::Kind::Cas): Accept saves the family
     // there and goes back with it selected; Exit goes back without one.
     if (const os2::Scene sc = os2::sceneOf(processArguments()); sc.kind == os2::Scene::Kind::Cas && !sc.returnHood.empty()) {
