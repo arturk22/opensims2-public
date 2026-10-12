@@ -217,49 +217,7 @@ std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1) {
 BuildEditor::BuildEditor(VM& vm, Lot& lot, const BuildCatalog* catalog) : vm_(vm), lot_(lot), catalog_(catalog) {
     if (catalog_ && catalog_->railingPrice())
         vm_.railingPrice = catalog_->railingPrice();
-    // The editable area: less the 10-tile road strip on each road edge.
-    {
-        const int W = int(lot_.width), H = int(lot_.height), strip = 10;
-        editable_ = {0, 0, W, H};
-        auto isRoad = [&](int x, int y) {
-            if (!lot_.hasLevel(0))
-                return false;
-            for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
-                if (q)
-                    if (auto it = lot_.floorPatterns.find(q);
-                        it != lot_.floorPatterns.end() && it->second.rfind("road_", 0) == 0)
-                        return true;
-            return false;
-        };
-        // A road edge: a line of its strip that is road along most of the edge.
-        auto roadColumn = [&](int x) {
-            int n = 0;
-            for (int y = 0; y < H; ++y)
-                n += isRoad(x, y);
-            return 2 * n > H;
-        };
-        auto roadRow = [&](int y) {
-            int n = 0;
-            for (int x = 0; x < W; ++x)
-                n += isRoad(x, y);
-            return 2 * n > W;
-        };
-        bool left = false, right = false, top = false, bottom = false;
-        for (int k = 0; k < strip; ++k) {
-            left |= W > 2 * strip && roadColumn(k);
-            right |= W > 2 * strip && roadColumn(W - 1 - k);
-            top |= H > 2 * strip && roadRow(k);
-            bottom |= H > 2 * strip && roadRow(H - 1 - k);
-        }
-        if (left)
-            editable_[0] = strip;
-        if (right)
-            editable_[2] = W - strip;
-        if (top)
-            editable_[1] = strip;
-        if (bottom)
-            editable_[3] = H - strip;
-    }
+    editable_ = lotEditableArea(lot_);
     // The stairs the world was loaded with (the lot's modular stair
     // cObjects), less the staircase objects that are among them.
     if (vm_.world) {

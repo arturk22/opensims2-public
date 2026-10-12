@@ -171,6 +171,10 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
         // world cannot tell floor from terrain: either flag will do).
         if (t.x < 0 || t.y < 0 || !w.contains({t.x, t.y, w.firstLevel()}))
             return fail(placementerror::OutOfBounds, "out of the lot");
+        // The road strip is not the player's (World::editable, inferred as
+        // for the Build tools: the game's IsOnLot bounds take it in).
+        if (!w.editable(t.x, t.y))
+            return fail(placementerror::OutOfBounds, "out of the lot's editable area");
         if (!w.contains(t))
             return fail(placementerror::LevelOutOfBounds, "level out of the lot");
         // (The ground, VM level 1, is terrain even when a pool gives the lot

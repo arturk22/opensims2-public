@@ -38,9 +38,55 @@ World::World(uint32_t width, uint32_t height, int firstLevel, int levelCount)
     yWalls_.assign(levels * (width + 1) * height, 0);
 }
 
+std::array<int, 4> lotEditableArea(const Lot& lot) {
+    std::array<int, 4> area{};
+    const int W = int(lot.width), H = int(lot.height), strip = 10;
+    area = {0, 0, W, H};
+    auto isRoad = [&](int x, int y) {
+        if (!lot.hasLevel(0))
+            return false;
+        for (uint16_t q : lot.floor(0, uint32_t(x), uint32_t(y)))
+            if (q)
+                if (auto it = lot.floorPatterns.find(q);
+                    it != lot.floorPatterns.end() && it->second.rfind("road_", 0) == 0)
+                    return true;
+        return false;
+    };
+    // A road edge: a line of its strip that is road along most of the edge.
+    auto roadColumn = [&](int x) {
+        int n = 0;
+        for (int y = 0; y < H; ++y)
+            n += isRoad(x, y);
+        return 2 * n > H;
+    };
+    auto roadRow = [&](int y) {
+        int n = 0;
+        for (int x = 0; x < W; ++x)
+            n += isRoad(x, y);
+        return 2 * n > W;
+    };
+    bool left = false, right = false, top = false, bottom = false;
+    for (int k = 0; k < strip; ++k) {
+        left |= W > 2 * strip && roadColumn(k);
+        right |= W > 2 * strip && roadColumn(W - 1 - k);
+        top |= H > 2 * strip && roadRow(k);
+        bottom |= H > 2 * strip && roadRow(H - 1 - k);
+    }
+    if (left)
+        area[0] = strip;
+    if (right)
+        area[2] = W - strip;
+    if (top)
+        area[1] = strip;
+    if (bottom)
+        area[3] = H - strip;
+    return area;
+}
+
 World World::fromLot(const Lot& lot) {
     // VM levels count from 1 = the lot's ground level (0).
     World w(lot.width, lot.height, lot.minLevel + 1, lot.levelCount);
+    w.editable_ = lotEditableArea(lot);
     for (int li = 0; li < lot.levelCount; ++li) {
         const int lotLevel = lot.minLevel + li;
         for (uint32_t x = 0; x < lot.width; ++x)

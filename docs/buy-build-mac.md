@@ -1643,6 +1643,11 @@ dentro).
   travados do `cWorldDB` (`IsLocked`/`SetLockedImpl`, BV `0xd2a90`/
   `0xd3424`), ou as bordas com rua do lot info). A regra inferida da
   rodada 12 (10 tiles com piso "road_*") continua inferida.
+- No código (rodada 13): a área editável é `vm::lotEditableArea(lot)`
+  (`World::editable`), a mesma para as ferramentas de construção e para o
+  **modo compra**: `checkPlacement` recusa um tile fora dela com `0x02` "Local
+  fora dos limites" (o código do `IsOnLot` falso no `TestPlacementCommon`;
+  inferido que o jogo recusa a faixa de rua com ele também).
 
 ---
 

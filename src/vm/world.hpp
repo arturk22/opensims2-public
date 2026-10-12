@@ -20,6 +20,12 @@ namespace os2::vm {
 //
 // The tile step (dx, dy) that faces direction `dir` (taken modulo 8).
 std::array<int, 2> directionStep(int dir);
+// The lot's editable area, [x0, x1) x [y0, y1) in tiles: the lot less the
+// 10-tile road strip on each edge whose strip is mostly "road_*" floor
+// (inferred from the data: the bounds the game loads from the lot's
+// cWorldDB resource include the strip, and what keeps building off it is not
+// found; docs/buy-build-mac.md §7.20).
+std::array<int, 4> lotEditableArea(const Lot& lot);
 // The direction (0-7) nearest to the vector (dx, dy); -1 for a zero vector.
 int directionOf(float dx, float dy);
 
@@ -79,6 +85,10 @@ public:
     uint32_t revision() const { return revision_; }
 
     bool contains(TilePos t) const;
+    // The lot's editable area (lotEditableArea), [x0, x1) x [y0, y1) tiles.
+    bool editable(int x, int y) const {
+        return x >= editable_[0] && y >= editable_[1] && x < editable_[2] && y < editable_[3];
+    }
     // A tile has something to stand on.
     bool walkable(TilePos t) const;
     void setWalkable(TilePos t, bool walkable);
@@ -145,6 +155,7 @@ public:
     size_t index(int x, int y) const { return size_t(x) * height_ + size_t(y); }
 
 private:
+    std::array<int, 4> editable_{0, 0, 1 << 20, 1 << 20};
     uint32_t width_ = 0, height_ = 0;
     int firstLevel_ = 1, levelCount_ = 0;
     uint32_t revision_ = 0;
