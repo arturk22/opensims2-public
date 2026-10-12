@@ -176,6 +176,19 @@ Exit pushInteraction(Context& c) {
     if (flags2 & 0x01)
         for (size_t i = 0; i < 4 && i < c.frame.params.size(); ++i)
             q->args[i] = c.frame.params[i];
+    // With 0x02 the entry also takes my last Find Best Interaction's
+    // parameters (TryPushAction: this object's cITSPerson vtable 0x24c into
+    // the interaction's 0x6c, after the 0x01 ones; the icon from 0x248):
+    // a dynamic entry's, as "Interaction - Give Toddler a Bath - TEST" makes
+    // with the toddler in parameter 0. Without them the "Desespero de
+    // Higiene" push of the bath had no toddler and the Main died in "Pickup
+    // - Do Carry Sim" (N001_Lot36 Brandi). Inferred: the name goes along.
+    if (flags2 & 0x02)
+        if (const Object* m = c.vm.object(c.thread.me); m && m->person) {
+            q->args = m->person->foundActionArgs;
+            if (!m->person->foundActionName.empty())
+                q->name = m->person->foundActionName;
+        }
     if (flags & 0x20) {
         const CheckResult r = checkInteraction(c.vm, targetId, *q);
         if (r != CheckResult::NoGuard && r != CheckResult::True)
