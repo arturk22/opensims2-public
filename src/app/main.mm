@@ -539,6 +539,9 @@ struct LotSim {
     std::string idle;
 };
 std::vector<LotSim> gLotSims;
+// Sims drawn in another Sim's slot (a carried baby), and who carries each.
+std::set<const os2::SimActor*> gCarriedSims;
+std::map<const os2::SimActor*, const os2::SimActor*> gCarriers;
 std::unique_ptr<os2::UiResources> gTexts; // Text/*.package's strings (uiText, the VM's textTables)
 // Sims the VM adds while the lot plays (adoptVmSims):
 std::map<int16_t, fs::path> gBornCharacters; // neighbor ID -> character file written in this session
@@ -1538,9 +1541,13 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
         auto it = instances.find(s.actor);
         if (it == instances.end())
             it = instances.emplace(s.actor, renderer.instanceOf(s.actor->model)).first;
-        const os2::Vec3 p = s.actor->transform ? os2::Vec3{s.actor->transform->t[0], s.actor->transform->t[1],
-                                                          s.actor->transform->t[2]}
-                                               : s.actor->position;
+        // A carried Sim is shown where its carrier stands (its belly-high
+        // placement would count as the level above).
+        const auto carrier = gCarriers.find(s.actor);
+        const os2::Vec3 p = carrier != gCarriers.end() ? carrier->second->position
+                            : s.actor->transform ? os2::Vec3{s.actor->transform->t[0], s.actor->transform->t[1],
+                                                             s.actor->transform->t[2]}
+                                                 : s.actor->position;
         const bool shown = os2::WallView::visible(*gLotShape, want.level, p[0], p[1], p[2]);
         if (it->second >= 0)
             renderer.setInstanceTransform(it->second, shown ? matrix_identity_float4x4 : away);
@@ -2498,9 +2505,44 @@ void poseActors(os2::Renderer& renderer, double seconds) {
                 s.actor->bodyMorphs = os2::bodyShapeMorphs(force ? int16_t(std::atoi(force)) : o->person->data[81],
                                                            o->person->data[58]);
             }
+    // A carried baby or toddler (contained in a Sim's slot, "Pickup - Do
+    // Carry Sim") is drawn at the carrier's slot bone, after the carrier is
+    // posed (the VM keeps it where it was picked up).
+    std::map<const os2::SimActor*, std::pair<const os2::SimActor*, std::string>> carried;
+    std::set<const os2::SimActor*>& wasCarried = gCarriedSims;
+    gCarriers.clear();
+    if (gSimulation && gObjectView)
+        for (const auto& s : gLotSims) {
+            const auto* o = gSimulation->machine().object(s.id);
+            const int16_t c = o && o->person ? o->data[os2::vm::objdata::ContainerId] : 0;
+            const auto* co = c ? gSimulation->machine().object(c) : nullptr;
+            const auto carrier = co && co->person ? std::find_if(gLotSims.begin(), gLotSims.end(),
+                                                                  [&](const LotSim& x) { return x.id == c; })
+                                                  : gLotSims.end();
+            if (carrier != gLotSims.end()) {
+                std::string bone = gObjectView->containerSlotBone(c, o->data[os2::vm::objdata::SlotNumber]);
+                if (bone.empty())
+                    bone = "BellyTarget_surface"; // the carry animations' grip (inferred)
+                carried[s.actor] = {carrier->actor, bone};
+                gCarriers[s.actor] = carrier->actor;
+                wasCarried.insert(s.actor);
+            } else if (wasCarried.erase(s.actor)) {
+                s.actor->transform.reset();
+            }
+        }
     for (auto& a : gActors)
-        if (!isObject(a.get()))
+        if (!isObject(a.get()) && !carried.count(a.get()))
             a->update(seconds);
+    // The carry poses snap the carried Sim's root to the carrier's slot
+    // bone ("snapObjectRoot=buSkel:__buSkel__|snapTargetSlot=auSkel:
+    // BellyTarget_surface" in the a2b pick up / put down animations): the
+    // bone's whole transform places it (b2a-carry-belly holds it there).
+    for (auto& [a, by] : carried) {
+        const int b = by.first->skin.skeleton.find(by.second);
+        const_cast<os2::SimActor*>(a)->transform =
+            b >= 0 && size_t(b) < by.first->bones.size() ? by.first->bones[size_t(b)] : by.first->placement();
+        const_cast<os2::SimActor*>(a)->update(seconds);
+    }
     if (gSnaps)
         gSnaps->update(seconds);
     choosePlumbob(renderer);
