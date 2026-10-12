@@ -1753,6 +1753,37 @@ BuildEditor::Result BuildEditor::paintFlood(int level, int ax, int ay, int bx, i
     return cover(std::move(faces), pattern, "round room " + std::to_string(room));
 }
 
+BuildEditor::Result BuildEditor::openStairwell(ObjectId staircase) {
+    Result r;
+    std::vector<TilePos> steps;
+    for (ObjectId part : groupOf(vm_, staircase))
+        if (const Object* o = vm_.object(part); o && o->definition && o->position.inWorld()) {
+            const std::string& n = o->definition->fileName;
+            if (n.rfind("Stairs - ", 0) == 0 && n.find(" - Lo ") != std::string::npos && n.find(" Pad") == std::string::npos)
+                steps.push_back(VM::tileOf(*o));
+        }
+    Geometry before = capture();
+    for (const TilePos& t : steps) {
+        const int above = t.level; // the VM level t.level + 1 is lot level t.level
+        if (!lot_.hasLevel(above))
+            continue;
+        for (int q = 0; q < 4; ++q)
+            if (lot_.floor(above, uint32_t(t.x), uint32_t(t.y))[size_t(q)]) {
+                setFloor(lot_, above, t.x, t.y, q, 0);
+                ++r.changed;
+            }
+    }
+    r.ok = true;
+    if (!r.changed) {
+        r.message = "no floor over the stairs";
+        return r;
+    }
+    changed();
+    commit(std::move(before), 0);
+    r.message = std::to_string(r.changed) + " quarter tiles of floor opened over the stairs";
+    return r;
+}
+
 bool BuildEditor::undo() {
     if (undo_.empty())
         return false;

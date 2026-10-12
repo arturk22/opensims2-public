@@ -171,6 +171,12 @@ public:
     // face's pattern.
     Result paintFlood(int level, int ax, int ay, int bx, int by, int side, const BuildPattern* pattern);
 
+    // A staircase object just put down (its parts' IDs): the floor of the
+    // level above goes from over its steps, free, as one undoable change (the
+    // stairwell; inferred from the modular stairs' placeholders that reserve
+    // the space above the steps, docs/buy-build-mac.md §7.12).
+    Result openStairwell(ObjectId staircase);
+
     bool undo();
     bool redo();
     bool canUndo() const { return !undo_.empty(); }

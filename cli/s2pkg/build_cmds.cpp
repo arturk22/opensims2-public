@@ -168,6 +168,8 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             r.ok = p.ok && vm::buy(vm, id, p, e->price, &why);
             if (!r.ok)
                 vm::deleteGroup(vm, id);
+            else if (e->fileName.rfind("Stairs - ", 0) == 0)
+                editor.openStairwell(id); // the floor above the steps goes
             else
                 editor.syncWorld();
             r.message = r.ok ? e->name + " bought as object " + std::to_string(id) : e->name + ": " + why;

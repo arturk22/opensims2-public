@@ -349,6 +349,11 @@ bool BuildMode::placeObjectAt(int x, int y, int direction) {
         return false;
     }
     sound(objectSound(id));
+    // A staircase opens the floor above its steps (before its own history
+    // entry, so undo takes the stairs away first).
+    if (objectSound(id) == "ui_build_stair_plop")
+        if (const auto opened = editor_->openStairwell(id); opened.changed)
+            say(opened.message);
     syncHistory();
     Entry entry;
     entry.kind = Entry::Kind::Object, entry.id = id, entry.cost = object_->price;
