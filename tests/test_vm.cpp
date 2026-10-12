@@ -1472,6 +1472,30 @@ static void testReaperNeighborAndDyingObjects() {
     flushKillQueue(fx.vm);
 }
 
+// A Main that fails is reset as the game does (cTSObject::HandleError ->
+// Reset): it starts over next tick, and the VM keeps what failed.
+static void testResetAfterError() {
+    Fixture fx;
+    fx.code.add(kObjGroup, 0x80, definition(0x0E0E0E0E));
+    ObjectFunctions f;
+    f.functions = {{0, 0}, {0, 0x1001}};
+    fx.code.add(kObjGroup, 0x80, f);
+    // Main: attr 0 += 1, then the error branch.
+    fx.code.add(kObjGroup, 0x1001, tree({expr(Attr, 0, Add, Lit, 1, E, E)}));
+    Object& o = fx.vm.instantiate(kObjGroup, 0x80);
+    o.attributes.resize(1);
+    check(fx.vm.startMain(o.id), "Main starts");
+    fx.vm.tick();
+    fx.vm.tick();
+    const auto r = fx.vm.errorResets.find(o.id);
+    check(r != fx.vm.errorResets.end() && r->second.count == 2 && o.attributes[0] == 2 &&
+              fx.vm.threads.at(o.id).status == Thread::Status::Running,
+          "a failed Main is reset and runs again next tick");
+    fx.vm.resetOnError = false;
+    fx.vm.tick();
+    check(fx.vm.threads.at(o.id).status == Thread::Status::Failed, "without resets a failed Main stays failed");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCinematicRequest();
@@ -1507,6 +1531,7 @@ int main() {
     testMessage();
     testMakeNewCharacter();
     testReaperNeighborAndDyingObjects();
+    testResetAfterError();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

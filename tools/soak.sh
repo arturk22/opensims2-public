@@ -10,7 +10,7 @@
 # instead (--dialog-answer).
 # and records: crashes (signal exit, with an lldb backtrace), hangs (wall time
 # above SOAK_HANG seconds; a background watchdog kills the job), Mains that
-# died (S2PKG_ERRORS=1), Sims in the same interaction for more than 6 game
+# died (S2PKG_ERRORS=1) or were reset after an error, Sims in the same interaction for more than 6 game
 # hours, motives pinned at -100 for more than 6 game hours, save round trips
 # that differ and the instruction budget being hit. Scratch saves and
 # screenshots are deleted after each check.
@@ -78,6 +78,8 @@ one() { # one <lot> <outdir>
     fi
     # the household's Mains that died ("  Name#id  N searches, M picks; its Main died: ..."; visitors are "also:")
     grep -E "^  [^ ].* searches, .* picks; its Main died: " "$log" | sed -E 's/^ *([^ ]+) .*its Main died: /dead|autonomy|\1: /' >>"$res"
+    # the household's Mains reset after an error (the game resets the object; VM::resetAfterError)
+    grep -E "^  [^ ].* searches, .* picks.*; its Main was reset " "$log" | sed -E 's/^ *([^ ]+) .*its Main was reset ([0-9]+) times? after an error, first: /reset|autonomy|\1: \2 x /' >>"$res"
     grep -c "instruction budget exhausted" "$log" | sed 's/^/budget_autonomy=/' >>"$res"
     # stuck in one interaction, and motives pinned at -100, from the log
     awk -v total="$SOAK_TICKS" -v limit="$STUCK_TICKS" -v every="$EVERY" '
@@ -162,7 +164,7 @@ fi
     echo
     echo "| Category | Lots | Findings |"
     echo "|---|---|---|"
-    for c in crash hang error dead stuck died pinned roundtrip; do
+    for c in crash hang error dead reset stuck died pinned roundtrip; do
         l=$(grep -l "^$c|" "$OUT"/results/*.txt 2>/dev/null | wc -l | tr -d ' ')
         n=$(cat "$OUT"/results/*.txt 2>/dev/null | grep -c "^$c|")
         echo "| $c | $l | $n |"
@@ -177,7 +179,7 @@ fi
     echo "|---|---|---|---|"
     for f in "$OUT"/results/*.txt; do
         n=$(basename "$f" .txt)
-        grep -E '^(crash|hang|error|dead|stuck|died|pinned|roundtrip)\|' "$f" | sort -u | while IFS='|' read -r c w d; do
+        grep -E '^(crash|hang|error|dead|reset|stuck|died|pinned|roundtrip)\|' "$f" | sort -u | while IFS='|' read -r c w d; do
             echo "| $n | $c | $w | ${d//|/\\|} |"
         done
         grep -E '^budget_[a-z]+=[1-9]' "$f" | while IFS='=' read -r k v; do echo "| $n | budget | ${k#budget_} | $v times |"; done

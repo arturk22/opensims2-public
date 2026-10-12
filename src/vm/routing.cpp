@@ -242,6 +242,18 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
             cx = sx / float(n), cy = sy / float(n);
     }
     const int objDir = ((target.data[objdata::Direction] % 8) + 8) % 8;
+    // The model of a multi-tile object is the lead tile's: its bones are
+    // placed from the lead's point and direction, whichever part's slot
+    // names them (the straight staircase's top pad, "Hi 0,0", has the
+    // "route_staircasestraight_*_top" bones 3.7 tiles up from the lead "Lo
+    // 0,4"; from the pad itself they fell 3.7 tiles past the top, the stair
+    // portal's Snap failed and no one reached the upper floors of N001_Lot11;
+    // inferred: the scene graph's model is the lead's).
+    float bcx = cx, bcy = cy;
+    int boneDir = objDir;
+    if (const ObjectId lead = multiTileGroup(target); lead != target.id)
+        if (const Object* l = object(lead); l && l->position.inWorld())
+            bcx = l->position.x, bcy = l->position.y, boneDir = ((l->data[objdata::Direction] % 8) + 8) % 8;
     const uint32_t dirs = slot.flags & 0xFF;
     const bool absolute = slot.flags & 0x200, ignoreRooms = slot.flags & 0x800;
     auto facingAt = [&](float px, float py) {
@@ -289,15 +301,15 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
         if ((slot.unknown10 & 0x20000) && ox == 0 && oy == 0) {
             const std::vector<SlotBone> bones = slotBones(slot, target);
             if (!bones.empty()) {
-                const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
+                const double yaw = (90.0 - 45.0 * boneDir) * M_PI / 180.0;
                 for (const SlotBone& b : bones) {
-                    const float px = cx + float(b.x * std::cos(yaw) - b.y * std::sin(yaw));
-                    const float py = cy + float(b.x * std::sin(yaw) + b.y * std::cos(yaw));
+                    const float px = bcx + float(b.x * std::cos(yaw) - b.y * std::sin(yaw));
+                    const float py = bcy + float(b.x * std::sin(yaw) + b.y * std::cos(yaw));
                     if (out.goals.empty())
                         out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
                     out.goals.push_back({int(std::floor(px)), int(std::floor(py)), 0});
                     out.points.push_back({px, py});
-                    out.facings.push_back((objDir + b.facing) % 8);
+                    out.facings.push_back((boneDir + b.facing) % 8);
                     out.multi.push_back(b.index);
                 }
                 return out;
@@ -350,13 +362,18 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
             out.multi.resize(out.goals.size() - 1, 0);
             out.multi.push_back(multi);
         };
+        const double boneYaw = (90.0 - 45.0 * boneDir) * M_PI / 180.0;
+        auto turnBone = [&](float x, float y) {
+            return std::array<float, 2>{bcx + float(x * std::cos(boneYaw) - y * std::sin(boneYaw)),
+                                        bcy + float(x * std::sin(boneYaw) + y * std::cos(boneYaw))};
+        };
         bool first = true;
         for (const SlotBone& b : bones) {
-            const auto [px, py] = turn(b.x, b.y);
+            const auto [px, py] = turnBone(b.x, b.y);
             if (first)
                 out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
             first = false;
-            addFacing(px, py, 0, (objDir + b.facing) % 8, b.index);
+            addFacing(px, py, 0, (boneDir + b.facing) % 8, b.index);
         }
         // Ours, not the binary's: points half a tile and three quarters out
         // around each bone's point, on the target's side of any wall, each
@@ -366,7 +383,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
         // footprint).
         if (world)
             for (const SlotBone& b : bones) {
-                const auto [px, py] = turn(b.x, b.y);
+                const auto [px, py] = turnBone(b.x, b.y);
                 for (const float r : {0.5f, 0.75f})
                     for (int k = 0; k < 16; ++k) {
                         const double a = k * M_PI / 8;
@@ -374,7 +391,7 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                         const TilePos t{int(std::floor(qx)), int(std::floor(qy)), out.level};
                         if (!world->contains(t) || !world->lineOfSight(centre, t))
                             continue;
-                        addFacing(qx, qy, 1 + r, (objDir + b.facing) % 8, b.index);
+                        addFacing(qx, qy, 1 + r, (boneDir + b.facing) % 8, b.index);
                     }
             }
         return out;

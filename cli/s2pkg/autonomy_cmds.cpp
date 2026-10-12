@@ -122,6 +122,9 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     vm::VM machine(code);
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
+    // S2PKG_NO_RESET=1: a Main that fails stays dead (for looking into the
+    // error) instead of being reset as the game does.
+    machine.resetOnError = std::getenv("S2PKG_NO_RESET") == nullptr;
     machine.autoDialogAnswer = gDialogAnswer;
     machine.dialogTimeouts = !gNoDialogTimeout;
     machine.autonomySkipsFailures = gSkipFailures;
@@ -331,6 +334,12 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                         std::printf("    not reached: room %d:%s\n", room, names.c_str());
                 }
             }
+    if (const char* want = std::getenv("S2PKG_OBJECTS")) // the objects whose name has the text
+        for (const auto& [oid, o] : machine.objects())
+            if (objectName(machine, oid).find(want) != std::string::npos)
+                std::printf("  object %d %s at (%.2f, %.2f, %d) dir %d lead %d container %d\n", oid, objectName(machine, oid).c_str(), o.position.x,
+                            o.position.y, o.position.level, o.data[vm::objdata::Direction], o.data[vm::objdata::LeadTileObjectId],
+                            o.data[vm::objdata::ContainerId]);
     if (std::getenv("S2PKG_DOORS"))
         for (const auto& [oid, o] : machine.objects())
             if (o.definition && o.definition->objectType() == vm::kObjectTypeDoor && o.position.inWorld())
@@ -370,6 +379,13 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         }
         machine.tick();
         printWantEvents();
+        for (const auto& [rid, r] : machine.errorResets)
+            if (r.lastTick == machine.ticks && (r.count <= 20 || r.count % 1000 == 0)) {
+                const vm::Object* x = machine.object(rid);
+                std::printf("  tick %6llu %s %s reset after an error: %s\n", static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
+                            x && x->person ? simName(*x).c_str() : objectName(machine, rid).c_str(),
+                            (verbose ? r.last : r.last.substr(0, r.last.find('\n'))).c_str());
+            }
         // S2PKG_WATCH=id: that object's place and container every 30 ticks.
         if (static const char* w = std::getenv("S2PKG_WATCH"); w && machine.ticks % 30 == 0)
             if (const vm::Object* x = machine.object(vm::ObjectId(std::atoi(w))))
@@ -464,6 +480,13 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     for (vm::ObjectId id : sims)
         if (const vm::Object* s = machine.object(id); s && s->person)
             printMotives(*s);
+    // Mains reset after an error (VM::resetAfterError; tools/soak.sh counts
+    // the household's by "its Main was reset").
+    auto printResets = [&](vm::ObjectId id) {
+        if (auto r = machine.errorResets.find(id); r != machine.errorResets.end())
+            std::printf("; its Main was reset %zu time%s after an error, first: %s", r->second.count, r->second.count == 1 ? "" : "s",
+                        (verbose ? r->second.first : r->second.first.substr(0, r->second.first.find('\n'))).c_str());
+    };
     for (vm::ObjectId id : sims) {
         const vm::Object* s = machine.object(id);
         if (!s || !s->person)
@@ -476,6 +499,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             else if (!t.stack.empty())
                 std::printf("; Main in %s #%u", t.stack.back().behavior->fileName.c_str(), t.stack.back().pc);
         }
+        printResets(id);
         std::printf("\n");
     }
     // People who came in while running (visitors, NPCs): where they are and
@@ -492,6 +516,7 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                 std::printf("; its Main died: %s", (verbose ? t.error : t.error.substr(0, t.error.find('\n'))).c_str());
             else if (!t.stack.empty())
                 std::printf("; Main in %s #%u", t.stack.back().behavior->fileName.c_str(), t.stack.back().pc);
+            printResets(id);
         } else {
             std::printf("; no thread");
         }

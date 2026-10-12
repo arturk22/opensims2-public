@@ -902,11 +902,42 @@ void VM::tick() {
         }
         if (t.status == Thread::Status::Running)
             run(t, instructionsPerTurn);
+        if (t.status == Thread::Status::Failed && resetOnError)
+            resetAfterError(id, t);
     }
     tickOverlayEvents(*this); // animation.hpp
     flushKillQueue(*this); // kill.hpp
     flushDestinations(*this); // go_here.hpp
     followContainers();
+}
+
+// The object's reset after a SimAntics error (cTSObject::HandleError ->
+// Reset, BV 0xb05510/0xb0ab9c, outside the debugger): the tree sim is reset
+// to the Main (cTSTreeSim::Reset), the interactions go (the queue, the sub
+// action, the walk) and the Main starts over from its first node next tick.
+// Inferred and left out: Reset also zeroes most of the object data and keeps
+// a list of fields (direction, room, birth date, links, ...), and the game
+// writes an ObjectError log; here the object data stay.
+void VM::resetAfterError(ObjectId id, Thread& t) {
+    ErrorReset& r = errorResets[id];
+    if (r.count++ == 0)
+        r.first = t.error;
+    r.last = t.error;
+    r.lastTick = ticks;
+    Object* o = object(id);
+    const uint16_t main = o ? functionTree(*o, 1) : 0;
+    if (!o || !main)
+        return;
+    if (o->person) {
+        o->queue.clear();
+        o->activeInteraction = -1;
+        o->subAction.reset();
+        syncQueueData(*o);
+    }
+    o->route.reset();
+    const size_t done = t.instructions;
+    t = start(id, main);
+    t.instructions = done;
 }
 
 void VM::followContainers() {

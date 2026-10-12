@@ -815,6 +815,7 @@ public:
     std::optional<Thread> runFunction(ObjectId id, size_t function, size_t maxTurns = 1000);
     // Starts the object's Main in its thread; false if it has none.
     bool startMain(ObjectId id);
+    void resetAfterError(ObjectId id, Thread& t);
     std::map<ObjectId, Thread> threads; // the Main threads
     // Instructions a thread may run in one turn before it fails as an
     // infinite loop.
@@ -827,6 +828,18 @@ public:
     // planning, the action on arrival; routing.cpp); off: the engine opens
     // the way itself (waits at doors, climbs the stairs with its own phases).
     bool portalTrees = true;
+    // An object whose Main fails is reset, as the binary does outside the
+    // debugger (cTSObject::Error flags it, HandleError resets it: the tree
+    // sim starts its Main again; the game writes an ObjectError log): its
+    // queue goes and its Main starts over. On (the game) unless a test or
+    // tool wants failed Mains kept. What each reset was, for the host:
+    bool resetOnError = true;
+    struct ErrorReset {
+        size_t count = 0;
+        std::string first, last; // the failures' messages with their stacks
+        uint64_t lastTick = 0;
+    };
+    std::map<ObjectId, ErrorReset> errorResets;
     // Init threads of objects created while running (initCreatedObjects), for the host to look at.
     std::vector<Thread> createdInits;
     // Runs the Init of `id` and of the other parts of its multi-tile object
