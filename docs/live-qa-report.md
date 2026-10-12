@@ -347,3 +347,42 @@ Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, cap
 - Piscina cavada por arrasto aparece deslocada para a câmera. Repro: Construir, Diversos, ferramenta de piscina, escolher o 1º item, arrastar ~30 px num gramado livre do N002_Lot10 (a leste da varanda): "a pool of 2 tiles", mas a água aparece 70-100 px abaixo do arrasto; Ctrl-arrastar no lugar do arrasto apaga (o tile está certo), Ctrl-arrastar na água visível diz "no pool there". Suspeita: o desenho do buraco/água da piscina nova (`lot_model.cpp`, `water:pool`) ou a altura -3 do fundo, não o picking.
 - Piscina existente do lote 10: o cursor sobre a água cai ~1 tile abaixo do mouse.
 - Câmera: as setas e a/d giram em vez de mover; não achei pan por teclado.
+
+# Rodada 16, passada 12
+
+Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`, `build/` do `main` em `cc8cfe1`, binário das 08:08, mais novo que o commit). Janela 1280x752 em 95,49 e, para as medidas de enquadramento, 620x760 em 2,40 (redimensionada logo depois de abrir). O diálogo do macOS "opensims2 quit unexpectedly" cobriu o centro nas primeiras capturas e sumiu no meio da passada; todas as capturas foram apagadas (não há screenshot guardado). Notas de ferramenta: um `k` (tecla) segura a tecla tempo demais e desloca a câmera (z/x "zoom" derivava a cena); usei um `kh code ms` com tempo de pressão; o Ctrl-arrastar é o `md` com a flag 0x40000, e depois um toque na tecla Control (`k 59`).
+
+| Passo | Resultado |
+|-------|-----------|
+| Câmera: zoom pela roda em todos os níveis no lote (N002_Lot10, janela estreita e larga) | passa: do zoom padrão (mostra a casa quase toda, com o terreno) até o mais perto sem saltos nem a cena fugindo do centro |
+| Câmera: no zoom mais perto um Sim cabe da cabeça aos pés | passa (adulto e criança inteiros, ~200 px de altura numa janela de 760 px) |
+| Câmera: janela larga mantém a altura 4:3 | passa (1280x752 mostra o lote inteiro no padrão, sem esticar; o redimensionamento ao vivo logo depois de abrir recompõe) |
+| Câmera: bairro, todos os níveis de zoom | passa (a roda leva ao mais perto e volta; a cena fica enquadrada) |
+| Câmera: WASD/setas movem, `,` e `.` giram | passa com uma tecla segurada por ~0,5 s (`d` desloca a cena, `.` e `,` giram em sentidos opostos) |
+| Sombras: Sim no chão dentro de casa | não conclusivo: não vi sombra sob os pés (tapete marrom escuro; a sombra do jogo é fraca, ver `r15-fov-sombras-sims.jpg`) |
+| Sombras: Sim no gramado (varanda/deck) | não conclusivo: sem sombra visível nas capturas de cima |
+| Sombras: casa no gramado, N002_Lot10 (10:16, 10:30, 17:47) e N001_Lot82 (08:00, pátio) | **falha (não vi)**: nenhuma sombra do sol da casa, das paredes ou das árvores no gramado nem no pátio, mesmo com as paredes em "up"; a captura `r15-sombra-sol-height-map.jpg` mostra uma sombra grande (com telhado); aqui os telhados ficam desligados ("roof off") |
+| Cabelo dos Sims | passa (loiro de adulto e maria-chiquinha de criança, sem partes faltando ou pretas) |
+| Dia e noite | passa: tarde clara, noite azulada com janelas acesas e a piscina escura, sem artefatos |
+| Piscina: a piscina cavada bate com o arrasto e com o quadrado do cursor | passa (arrasto 100x70 px = "a pool of 8 tiles for §600" e a água aparece exatamente onde se arrastou) |
+| Piscina: Ctrl-arrastar na água apaga | passa: o Ctrl-arrastar na água acha a piscina (a recusa "no pool there" só saiu fora da água); apagar um pedaço da piscina recusou com "Impossível excluir a piscina" (restaria uma faixa de 1 tile) |
+| Piscina: recusas em PT-BR | passa na tela ("Impossível estender a piscina", "Impossível excluir a piscina"); o detalhe em inglês só vai para o log |
+| Piscina: arrasto começando na varanda/fundação | recusa certa (0x86) |
+| Sims: família do N001_Lot11 a velocidade 3 (cerca de 1 dia de jogo) | passa/sem travar: saem para o trabalho, voltam, trocam de roupa, o Sim sobe a escada; nenhum erro de VM no log |
+| Sims: a velocidade 3 volta sozinha para 1 (depois de "Sim 49 grew into age", N001_Lot11) | visto 2x (também no N002_Lot10, depois do aniversário do Johnny); parece o "Set Simulator Speed" do roteiro (não é bug provável) |
+| Sims: Vir Aqui no chão | passa: agora saem "Vir Aqui" e "Vir Saltitando Aqui" (Sim brincalhão) |
+| Telefone: chamada que chega ("Ei Jill, Jeanie pode conversar agora?", botões Sim/Não) | passa: diálogo PT-BR com o retrato, botões e o jogo continua depois; as listas de ligar/convidar não foram abertas (o telefone de parede do térreo, obj 46/227 em 15,5/23,5, não foi achado na vista) |
+| Dormir (N001_Lot11) | não conclusivo: a cama de solteiro mostra só "Arrumar Cama" e "Relaxar"; `s2pkg pie` mostra "Dormir" (TTA 5) como false para a Cassandra às 16:30 (o teste "Interaction - Sleep - Autonomous - TEST" dá falso); não verifiquei se o jogo esconde com energia cheia |
+| Espelho do Lot82, Reflexo off | não testado: o lote 82 aberto assim não tem família ($0, sem Sims), não há quem clique o espelho |
+| Lote vazio novo no bairro | não testado |
+| Construir: telhado | passa: no Lot82 a ferramenta de telhado tipo 1 arrastada deu "a roof of type 1 over (20,13)-(23,24)" e o telhado aparece |
+| Construir: arco sem cerca | não testado (não achei o item depois da troca para o painel de telhado) |
+| Tutorial passo 32 | não testado |
+
+## Bugs achados (não corrigidos)
+
+- Sem sombra do sol da casa no gramado nem no pátio (ver a linha da tabela). Repro: `--hood N002 --hood-lot 10 --vm --ui live`, paredes "up", olhar o gramado a leste da varanda às 10:00 e às 17:00; ou `--hood N001 --hood-lot 82`, pátio da piscina às 08:00. O tamanho padrão dos shadows ($High) vem ligado.
+- N001_Lot82: o rio/fosso ao lado da casa aparece como um buraco azul-marinho escuro com margem de areia borrada, sem a superfície da água (o lago do `r12-construcao-lago.jpg` era azul claro). Repro: `--hood N001 --hood-lot 82`, olhar o canto nordeste do lote. Pode ser a água escura pela iluminação nova ou profundidade.
+- Bairro N002: uma casa ao sul (perto das duas antenas parabólicas) aparece como polígonos pretos soltos (texturas/modelos faltando). Repro: `--hood N002`, vista padrão, a casa no canto inferior.
+- Log do lote N002_Lot10 e N001_Lot11: "snapped ...: animation not found: o2a-bookcase-get-middle_anim" (tapete/banquinho/dardos), "effect texture clothesChangeSwirl_clotheschangeswirl_shpe / waterStream: not found", "snap model foodTray: CRES not found", "snap model doll: CRES not found" e Sims de vizinhos sem arquivo de personagem ("Sim 224 (neighbor 308), 151 (310), 126 (311), 229 (312), 238 (363): no character file, not drawn"): vizinhos que aparecem como visitantes não são desenhados.
+- Teclas: um toque curto de tecla da ferramenta de teste dispara a câmera por muito tempo; não é do jogo (só do QA).
