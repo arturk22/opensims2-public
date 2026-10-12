@@ -882,9 +882,9 @@ amigo/inimigo e paixão/amor do relacionamento, a coluna de cada um é
 inferida; o painel sem imagem sob a moldura pintado com a sua `fillcolor`,
 inferido). A primeira versão (rodada 13) usava o script `0x6CA51466`, uma
 escolha inferida que o binário desmentiu. Sem cabeça: `--dialog-demo
-0|0i|0c|1|2|3|5|6|7|23|23g|23t|23r[:título[:mensagem]]`, `--dialog-type`,
+0|0i|0c|1|2|3|5|6|7|14|11|16|16f|17|17f|20|21|23|23g|23t|23r|24[:título[:mensagem]]`, `--dialog-type`,
 `--dialog-click`; `s2pkg pie` lista a classe, as linhas e as caixas de nome
-dos diálogos especiais (`r14-telefone-*.jpg`, `r14-dialogo-*.jpg`).
+dos diálogos especiais (`r14-telefone-*.jpg`, `r14-dialogo-*.jpg`; rodada 14 dialogs3: `r14-comprar-roupa.jpg`, `r14-experimentar.jpg`, `r14-mudar-aparencia.jpg`, `r14-espelho-cabelo.jpg`, `r14-telefone-ordem.jpg`, `r14-aspiracao-descricao.jpg`).
 
 **Diálogos especiais (tipo ≥ 5) não têm tempo (rodada 11, binário).** O
 `TryDialog` trata à parte os tipos 8–10/0x1C (notificações), 0x16/0x19
@@ -919,14 +919,14 @@ classe). Tipos do jogo base:
 | 6 | `cTSWinProcPhoneBookNeighbors` (`0x8C16CA13`) | `0x8C159244` | array 0 = [ID do vizinho] |
 | 7, 0x46 | `cTSWinProcPhoneBookParty` (`0xEC16CA68`) | `0x8C159242` | array 0 = convidados |
 | 0x0B, 0x0D, 0x2B, 0x2D | `cTSWinProcSelectItemsDialog` | | array 0 (≠ −1 = escolhido) |
-| 0x0C, 0x2C | `cTSWinProcJewelryPurchaseDialog` | | |
+| 0x0C, 0x2C | `cTSWinProcJewelryPurchaseDialog` | `0xACDC3000` (não está no `ui.package` do jogo base) | |
 | 0x0E, 0x1B, 0x1F, 0x2A | `cTSWinProcFillDialog` | | temp 0 |
-| 0x10, 0x2E | `cTSWinProcClothingPurchaseDialog` | | |
+| 0x10, 0x2E | `cTSWinProcClothingPurchaseDialog` | `0x8C159251` (`0x40489c`) | o carrinho no guarda-roupa da família, o total sai do dinheiro |
 | 0x11, 0x31 | `cTSWinProcClothingDialog` | `0x8C159250` (`Initialize`) | troca a roupa da categoria do temp 0 |
-| 0x14 | `cTSWinProcClothingTryOnDialog` | | |
-| 0x15 | `cTSWinProcVanityDialog` | | |
+| 0x14 | `cTSWinProcClothingTryOnDialog` | `0x8C159255` | a roupa de provar (0x400) gravada |
+| 0x15 | `cTSWinProcVanityDialog` | `0x8C159280` (`0x8C159286` com temp 0 = 1, expansão) | o visual gravado no personagem |
 | 0x17 | `cTSWinProcNameObjectDialog` (`0x2D910709`) | `0x2D91050A` | nomes |
-| 0x18, 0x22 | `cTSWinProcSetAspirationDialog` | | |
+| 0x18, 0x22 | `cTSWinProcSetAspirationDialog` | `0xCC16A49E` / `0xCAFE0045` | dado de pessoa 46 |
 
 Os outros tipos de 0x1A em diante são classes das expansões. O `TryDialog`
 não enfileira o 0x12 ("Tutorial Tasks"): devolve verdadeiro sem janela.
@@ -1008,7 +1008,27 @@ serviços e o convite começam com a linha 0 escolhida; o texto de cima é
 grava o ID escolhido (0 se nenhum); a festa grava os convidados (no máximo
 temp 5, lista da direita, botões `0x2000` incluir e `0x1000` tirar).
 Títulos padrão: STR# 0xAB #9 "Serviços", #10 "Vizinhos". Com o stack object
-sem object array, erro 0x6C antes de abrir.
+sem object array, erro 0x6C antes de abrir. **Rodada 14 (dialogs3):** o livro de vizinhos
+(`cTSWinProcPhoneBookNeighbors`) nasce no modo 5 (construtor): **slides**
+(`0x9000`, as cabeças do script `0x8C159245` em `0x1006`, 7 × 4 de 52 px,
+com as marcas amigo/inimigo e paixão/amor das janelas 3–6 e o overlay
+apertado no escolhido; setas `0x1004`/5) **ordenados por nome**; o
+`PreShow` escolhe o primeiro dessa ordem (`SetSelectedSim(0)`; a VM ordena
+as linhas). `onBtnClickedID`: `0x1000` por nome (modo 2/5), `0x2000` por
+relacionamento (1/4), `0x3000` slides, `0x4000` texto (`0x8000`); `0xB000`
+química é de expansão. A festa ordena a lista da esquerda (`0x3000`/`0x4000`)
+e a de convidados (`0x7000`/`0x8000`) com os predicados de lista
+(`ListBoxSortPredicate_Name`/`_Relationship`). `CompareByName`: sobrenome,
+depois nome (sem caixa, inferido); `CompareByRelationship`: quem tem
+paixão ou amor primeiro, depois a maior diária + vitalícia, depois o nome.
+A ordem inicial da festa não foi vista (fica a do array 0). O nome do lote
+(`SetLotName`) é o do lote onde mora a família do vizinho (`VM::LotRecord::
+name`, do nome do lote do bairro). A miniatura do serviço: o
+`cTSUIThumbnailService` renderiza o objeto ou, sem modelo, uma imagem do
+próprio arquivo (`GetEmbeddedThumbnail`); os "Phone Service - ..." não têm
+modelo e o grupo deles (`0x7FF65712`) tem os IMG 1 (silhueta) e 2
+(ferramentas): o app usa o IMG 1 do grupo do objeto (qual instância o jogo
+lê não foi fechado, inferido).
 
 **Guarda-roupa (tipo 0x11, `cTSWinProcClothingDialog`).** `SetParams`
 (`0x330088`): a pessoa é o stack object (sem ele, o Sim da família
@@ -1021,10 +1041,79 @@ da categoria para a roupa de provar (0x400). Abas parte de cima `0xECC70000`
 conjunto se o Sim veste um, senão em cima. `ApplyClothingChoice`: um
 conjunto tira cima e baixo e vice-versa. `OnOk` copia a roupa de provar de
 volta para a categoria e grava (`SimSystem` vtable 0x3C); devolve
-verdadeiro. No app: as peças do catálogo do CAS da idade/gênero/categoria
-com a miniatura do `CASThumbnails.package` no lugar da vista 3D do Sim
-(inferido), e o OK grava o personagem com a roupa nova (`writeCharacter`,
-como o Sim que cresce) e o veste de novo se ele usa essa categoria.
+verdadeiro. **A lista é o guarda-roupa da família** (rodada 14, dialogs3):
+o `SetParams` percorre os itens BINX do bin da família (`cTSFamily`, dado
+de pessoa 61) e fica com os da idade, gênero e categoria do Sim. No app:
+essas peças (as do catálogo do CAS que estão no bin; uma família sem bin,
+feita no nosso CAS, vê o catálogo inteiro, inferido) com a miniatura do
+`CASThumbnails.package` no lugar da vista 3D do Sim (inferido), e o OK grava
+o personagem com a roupa nova (`writeCharacter`, como o Sim que cresce) e o
+veste de novo se ele usa essa categoria.
+
+**Arara de roupas (tipo 0x10, `cTSWinProcClothingPurchaseDialog`, script
+`0x8C159251`; rodada 14, dialogs3).** `SetParams` (`0x404ac8`): o Sim é o
+stack object (as árvores "Interaction - Buy - Clothing Rack" e "DEBUG -
+Interaction - Buy" do `ShoppingRackGlobals` põem o Sim lá); o temp 0 é o
+tipo de roupa pelo mesmo `switch` do guarda-roupa, mas **6 vira 0x001 e é
+tratado como 0** (separados); só 0, 9 e 10 (teste `0x601`) oferecem partes
+de cima e de baixo (abre em cima), os outros só conjuntos (abre em
+conjuntos); o **temp 1 é o preço por peça** (`cTSShoppingCart` slot 0x20 →
+`+0x28`; o total, slot 0x48, é `quantidade × preço`). O byte 9 = `'.'` é a
+loja própria das expansões (lê locais da árvore; não existe no jogo base).
+A janela: abas cima/baixo/conjunto (`0xECC70000`–2), idade
+(`0x200`–`0x204`) e gênero (`0x400`/`0x401`) que filtram a grade, grade
+`0x1006` (cima 3 × 2 do `0x8C159252`, baixo/conjunto 4 × 2 do
+`0x8C159253`/`54`, as constantes do script) com setas `0x1004`/5, "pôr no
+carrinho" `0xECCDF663`, a aba do carrinho `0x8CCD0001` (grade 3 × 2,
+"tirar" `0x6CCDF7D7`), "%s Itens no Carrinho" (`0xCCCDF42D`) e "Total: %s"
+(`0xACCDF819`); na célula, a janela 7 (tique) marca o que está no carrinho e
+a 8 (armário) o que a família já tem (inferido pelas imagens). `OnOk` →
+`SaveCartStandard`: cada item que muda o número de conjuntos completos da
+família (`GetNumCompleteOutfits` por idade e gênero) é aceito; se nenhum
+completa um conjunto pergunta (UIText STR# 0xCA #7) antes; então
+`cTSShoppingCart::CompletePurchase` (slot 0x6C) põe cada item no bin da
+família (`cTSFamily::AddClothing`) e tira o total do dinheiro (vtable 0xB0,
+despesa 6). Na VM o OK põe as chaves GZPS do carrinho
+(`Dialog::cart`) no `VM::Family::wardrobe` (uma vez) e tira `itens × temp 1`;
+o `hood_save` grava cada item novo como um BINX (`binidx` 1, `objectidx` 2,
+o resto 0, como os do jogo) com o 3IDR da mesma instância (vazio, o bin
+`0x6C4F359D` da família, o GZPS); instância: uma depois do maior BINX/3IDR
+do pacote (inferido). A pergunta do `SaveCartStandard` não foi feita; a
+grade mostra o catálogo do CAS da idade/gênero/categoria (quem enche a
+lista `+0x1a8` da grade não foi achado; inferido); o OK só liga com algo no
+carrinho e dinheiro para pagar (inferido).
+
+**Provar roupa (tipo 0x14, `cTSWinProcClothingTryOnDialog`, script
+`0x8C159255`).** `SetParams` (`0x3bed44`): o Sim é o stack object; o temp 0
+pelo mesmo `switch` (6 → 0x001, mas sem separados); copia as peças da
+categoria para a roupa de provar (0x400). A janela tem as abas e a grade da
+arara (sem carrinho nem idade/gênero; o fundo sem imagem pintado com a
+`fillcolor`, inferido); escolher um conjunto tira cima e baixo e
+vice-versa. `OnOk` grava o personagem (`SimSystem` vtable 0x3C) com a roupa
+de provar; a árvore troca a roupa depois. No app o OK grava a categoria
+0x400 com o escolhido.
+
+**Penteadeira / espelho (tipo 0x15, `cTSWinProcVanityDialog`, script
+`0x8C159280`).** `SetParams` (`0x2effa4`): o Sim é o stack object; temp 0 =
+1 abre a cirurgia plástica (`0x8C159286`, das expansões). As abas
+(`HandleTabSelect`): penteado `0x4CEDF125` → painel `0x2CEDF326` (cores
+`0x8800`–`0x8803`, grade 3 × 4 de `0x8C159283`), maquiagem `0x4CEDF126` →
+`0x2CEDF327` (blush `0x6CA52068`, delineador `0xAD474C78`, sombra
+`0x6CA52069`, batom `0x6CA52067`, 4 × 1 de `0xCB980E93`), óculos
+`0x4CEDF128` e maquiagem personalizada `0x4CEDF127` → `0x2CEDF328` (3 × 5),
+sobrancelhas `0x4CEDF130`, fios de barba `0x4CEDF131` e barbas
+`0x4CEDF129` → `0xAD4F1B1C` (3 × 4; a fileira de cores `0x2D4F258C`
+escondida). `OnOk` (`0x2f2448`): o penteado em todas as categorias (menos
+nu, provar e 0x800), grava o personagem (CAS vtable 0x20) e veste o Sim de
+novo no que ele usa (dados de pessoa 8, 119, 120). No app as escolhas são as
+do nosso CAS (`cas_mode.cpp`: sobreposições por subtipo e bin, óculos e
+barbas de malha), o OK grava o personagem e veste de novo; a vista 3D do Sim
+é a cabeça (inferido); "Personalizado" `0x8804` não faz nada.
+
+**Joias (tipo 0x0C, `cTSWinProcJewelryPurchaseDialog`, script
+`0xACDC3000`).** O script não está no `ui.package` do jogo base e nenhum
+objeto do jogo base abre o tipo 12 (a árvore "Interaction - Jewelry Rack -
+Browse" do `ShoppingRackGlobals` não tem objeto); fica uma caixa OK/Cancelar.
 
 **Aspiração (tipo 0x18, `cTSWinProcSetAspirationDialog`, script
 `0xCC16A49E`; 0x22 usa `0xCAFE0045`).** O vizinho é o ID no stack object;
@@ -1032,7 +1121,14 @@ os botões `0x0CDC000n` valem `1 << (n − 1)` (romance 1, família 2, riqueza
 4, popularidade 0x10, conhecimento 0x20) e gravam o dado de pessoa 46 do
 vizinho; `Validate` exige uma escolhida (≠ 0, 0x40, 0x100) e `OnOk` grava no
 Sim do lote. O texto "%s não é mais criança" é o `0x2D9B8E78` (menina) ou
-`0x2D9B8E7E` (menino).
+`0x2D9B8E7E` (menino). **O slide da descrição** (`RefreshInfoPanel`, `0x3cf954`): escolhida
+uma aspiração, o slide `0x2000` sai para a direita (o `onTick` move o
+`0x0DA39A45` até a largura do pai menos a sua; no app de uma vez,
+inferido) com o nome (`0x4D9B8E8F`) e a descrição (`0xCDA394CA`) do STR#
+0x91 do Live.package (um-baseado: romance 13/6, família 9/1, riqueza 11/3,
+popularidade 10/2, conhecimento 12/4, 0x40 14/7, 0x80 40/42), a descrição
+logo abaixo do nome e do tamanho do texto; o catálogo de desejos "Aspirações
+Altas" (`0xCDA395BB`) ainda não é desenhado.
 
 **Comida (tipo 0x0E, `cTSWinProcFillDialog`, script `0x2CB242F8`).**
 `SetParams` (`0x294ca4`) lê 4 locais a partir do byte 11: unidades que tem,
