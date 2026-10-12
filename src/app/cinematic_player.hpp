@@ -80,6 +80,9 @@ public:
     struct Light {
         Vec3 position{}, color{};
         float falloff = 1, range = 0;
+        bool spot = false; // a spot: cone and penumbra (radians), where it shines
+        float cone = 0, penumbra = 0;
+        Vec3 direction{0, 0, -1};
     };
     // The rig lights an object or Sim gets (its render groups), if it is one of the actors.
     std::vector<Light> lightsFor(int16_t id) const;
@@ -95,6 +98,8 @@ private:
         int bone = -1;    // in rigSkeleton_
         Vec3 color{1, 1, 1};
         float falloff = 0; // FalloffRate (0: no falloff)
+        bool spot = false; // cSpotLight: cone, penumbra (radians)
+        float cone = 0, penumbra = 0;
     };
     void loadRig(const std::string& cres);
 

@@ -53,6 +53,14 @@ static const uint8_t* center(const RgbaImage& img) {
 static bool near(int a, int b) { return std::abs(a - b) <= 2; }
 
 int main() {
+    {
+        // Spot cones (cSpotLight): the portals' 70 + 10 degrees, the cinematic rig's 40 + 10.
+        const float d = 3.14159265f / 180;
+        const simd_float2 p = Renderer::spotCosines(70 * d, 10 * d), r = Renderer::spotCosines(-40 * d, 10 * d);
+        check(std::fabs(p.x - std::cos(40 * d)) < 1e-4f && std::fabs(p.y - std::cos(35 * d)) < 1e-4f, "spot cone cosines");
+        check(std::fabs(r.x - std::cos(25 * d)) < 1e-4f && std::fabs(r.y - std::cos(20 * d)) < 1e-4f, "spot cone, absolute angle");
+        check(Renderer::spotCosines(3, 1).x == std::cos(3.14159265f / 2), "spot cone at most pi");
+    }
     MTL::Device* device = MTL::CreateSystemDefaultDevice();
     if (!device) {
         std::printf("no Metal device, skipping\n");

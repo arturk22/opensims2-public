@@ -109,6 +109,10 @@ void CinematicPlayer::loadRig(const std::string& cresName) {
                         l.color = {sl.values[2], sl.values[3], sl.values[4]};
                         l.falloff = sl.values[5];
                     }
+                    if (blk.className == "cSpotLight" && sl.values.size() >= 8) {
+                        l.spot = true;
+                        l.cone = sl.values[6], l.penumbra = sl.values[7];
+                    }
                     if (debug()) {
                         std::fprintf(stderr, "opensims2: cinematic rig light %s (%s):", l.name.c_str(), blk.className.c_str());
                         for (float v : sl.values)
@@ -259,6 +263,14 @@ void CinematicPlayer::update(double now) {
         if (mirror_)
             p[0] = -p[0];
         out.position = origin.apply(p);
+        if (l.spot) {
+            // Where the spot shines: its bone's -Z (as the models' spots).
+            Vec3 d = world[size_t(l.bone)].rotate({0, 0, -1});
+            if (mirror_)
+                d[0] = -d[0];
+            out.spot = true, out.cone = l.cone, out.penumbra = l.penumbra;
+            out.direction = origin.rotate(d);
+        }
         for (size_t c = 0; c < 3; ++c)
             out.color[c] = lightChannel(anim, l.name, "diffuse", c, ticks, l.color[c]) * scale;
         out.falloff = l.falloff;

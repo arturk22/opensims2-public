@@ -3224,7 +3224,7 @@ void updateCinematic(os2::Renderer& renderer, double now) {
             std::vector<os2::LotLighting::ExtraLight> out;
             if (gCinematic)
                 for (const auto& l : gCinematic->lightsFor(id))
-                    out.push_back({l.position, l.color, l.falloff, l.range});
+                    out.push_back({l.position, l.color, l.falloff, l.range, l.spot, l.cone, l.penumbra, l.direction});
             return out;
         };
     if (gCinematic && !gCinematic->started()) {

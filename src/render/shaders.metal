@@ -61,7 +61,8 @@ constant uint kMaxLights = 16;
 struct Light {
     float4 direction; // xyz: unit vector towards the light, world space (a point light: its position)
     float4 color;     // rgb: colour times intensity, w: relative specular scale
-    float4 params;    // a point light: x: FalloffRate C (I / (1 + C d^2)), y: range, z: 1
+    float4 params;    // a point light: x: FalloffRate C (I / (1 + C d^2)), y: range, z: 1, w: a spot's inner cone cosine
+    float4 spot;      // a spot: xyz where it shines, w the outer cone cosine (< -1: a point light)
 };
 
 // Unit vector towards a light and its attenuation at `world` (directional
@@ -74,6 +75,12 @@ float3 lightVector(constant Light& light, float3 world, thread float& att) {
     const float3 d = light.direction.xyz - world;
     const float dist = max(length(d), 1e-4);
     att = dist < light.params.y ? 1.0 / (1.0 + light.params.x * dist * dist) : 0.0;
+    // A spot's cone (cSpotLight; D3D's spot falloff 1): full inside the
+    // inner cone, nothing outside the outer, linear in the cosine between.
+    if (light.spot.w >= -1.0) {
+        const float rho = dot(-d / dist, light.spot.xyz);
+        att *= saturate((rho - light.spot.w) / max(light.params.w - light.spot.w, 1e-4));
+    }
     return d / dist;
 }
 

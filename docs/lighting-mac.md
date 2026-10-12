@@ -527,6 +527,20 @@ spot: ângulo e penumbra em radianos, valor absoluto, a soma presa num
       máximo; cos externo = cos((ângulo + penumbra)/2), interno = cos(ângulo/2)
 ```
 
+**Rodada 16, no código:** os spots (`cSpotLight`: `ReadFrom` dá cone,
+penumbra e alcance depois da queda) iluminam só dentro do cone:
+`Renderer::spotCosines` (ângulo e penumbra absolutos, soma presa em π;
+cheio dentro de cos(ângulo/2), nada fora de cos((ângulo + penumbra)/2),
+linear no cosseno entre os dois, o falloff 1 do D3D, inferido) e o
+shader (`lightVector`). Para onde o spot aponta: o **−Z** da luz (inferido
+dos modelos: os `lightingCeilingCanister` sem rotação apontam para baixo,
+os `gardenuplight` para cima, os `_n_light`/`_s_light` das portas para
+dentro do seu lado e para baixo, a lâmpada da geladeira para fora). Vale
+para as luzes práticas dos objetos (no jogo base: canister de teto,
+arandela de muro, uplight de jardim, lareira, geladeira) e para os spots do
+rig das cinemáticas (cone 40° + penumbra 10°). Captura:
+`docs/screenshots/r16-spots-noite.jpg` (antes/depois, `N003_Lot192`).
+
 Change Light (`docs/primitives-mac.md`) muda a intensidade em % do nível
 de cada luz do modelo; o renderizador faz o fade em
 `objectLightTransitionTime`.

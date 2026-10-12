@@ -85,6 +85,9 @@ public:
         Vec3 position{};
         Vec3 color{};      // colour x intensity, before the level
         float falloff = 1; // falloffRate
+        bool spot = false; // a spot: cone, penumbra, world direction
+        float cone = 0, penumbra = 0;
+        Vec3 direction{0, 0, -1};
         int level = 0;     // 0-100
         int16_t room = 0;
         int objectLevel = 0; // the object's level, as the lot numbers them (VM level - 1)
@@ -102,6 +105,9 @@ public:
         Vec3 position{};
         Vec3 color{}; // times intensity
         float falloff = 1, range = 0;
+        bool spot = false; // a spot: its cone, penumbra (radians) and direction
+        float cone = 0, penumbra = 0;
+        Vec3 direction{0, 0, -1};
     };
     std::function<std::vector<ExtraLight>(int16_t id)> extraLights;
     const std::string& stateName() const { return current_; }
@@ -112,6 +118,12 @@ private:
         Vec3 position{};  // model space
         Vec3 color{1, 1, 1};
         float intensity = 1, falloff = 1;
+        // A cSpotLight: its cone and penumbra (radians) and where it shines
+        // (the light's -Z, model space; inferred from the models: ceiling
+        // canisters down, garden uplights up, the portals' lights into their room).
+        bool spot = false;
+        float cone = 0, penumbra = 0;
+        Vec3 direction{0, 0, -1};
         Vec3 diffusionColor{-1, -1, -1};
         float diffusionIntensity = -1, diffusionFalloff = 1, floorScale = 0.65f, wallScale = 1;
         bool hasDiffusionColor() const { return diffusionColor[0] >= 0; }

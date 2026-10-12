@@ -83,6 +83,11 @@ const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::
                     m.intensity = l.values[0];
                     m.color = {l.values[2], l.values[3], l.values[4]};
                     m.falloff = l.values[5];
+                    // cSpotLight::ReadFrom (Mac BV 0xca3208): ..., cone, penumbra, range.
+                    if (blk.className == "cSpotLight" && l.values.size() >= 8) {
+                        m.spot = true;
+                        m.cone = l.values[6], m.penumbra = l.values[7];
+                    }
                     const auto& t = node.renderable.transform;
                     Xform at{t.rotation, t.translation};
                     if (auto p = parent.find(uint32_t(i)); p != parent.end())
@@ -90,6 +95,7 @@ const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::
                             if (sk.bones[b].block == p->second)
                                 at = world[b].then(at);
                     m.position = at.t;
+                    m.direction = at.rotate({0, 0, -1});
                     // LotLights.txt's overrides, by light name.
                     m.diffusionIntensity = -1;
                     if (auto o = overrides_.find(m.name); o != overrides_.end()) {
@@ -330,6 +336,8 @@ void LotLighting::update(double seconds) {
             lamp.position = at->apply(l.position);
             lamp.color = {l.color[0] * l.intensity, l.color[1] * l.intensity, l.color[2] * l.intensity};
             lamp.falloff = l.falloff;
+            lamp.spot = l.spot, lamp.cone = l.cone, lamp.penumbra = l.penumbra;
+            lamp.direction = at->rotate(l.direction);
             lamp.level = std::clamp(level, 0, 100);
             lamp.portal = portal;
             lamp.objectLevel = o->position.level - 1; // the VM numbers levels from 1 (lot level + 1)
@@ -380,6 +388,10 @@ void LotLighting::update(double seconds) {
             p.position = f3(l.position);
             p.color = f3(l.color) * k;
             p.falloff = l.falloff * mod.practicalFalloff;
+            if (l.spot) {
+                const simd_float2 c = Renderer::spotCosines(l.cone, l.penumbra);
+                p.spotDirection = f3(l.direction), p.cosOuter = c.x, p.cosInner = c.y;
+            }
             const float I = simd_length(p.color);
             if (cutoff <= 0 || I / cutoff <= 1)
                 continue;
@@ -494,8 +506,14 @@ void LotLighting::update(double seconds) {
         if (extra.empty())
             return set;
         Renderer::LightSet s = sets[size_t(set)];
-        for (const auto& e : extra)
-            s.points.push_back({f3(e.position), f3(e.color), e.falloff, e.range, 1.0f});
+        for (const auto& e : extra) {
+            Renderer::LightSet::Point p{f3(e.position), f3(e.color), e.falloff, e.range, 1.0f};
+            if (e.spot) {
+                const simd_float2 c = Renderer::spotCosines(e.cone, e.penumbra);
+                p.spotDirection = f3(e.direction), p.cosOuter = c.x, p.cosInner = c.y;
+            }
+            s.points.push_back(p);
+        }
         sets.push_back(std::move(s));
         return int(sets.size() - 1);
     };

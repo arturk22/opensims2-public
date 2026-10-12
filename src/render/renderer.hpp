@@ -2,7 +2,9 @@
 
 #include <simd/simd.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -95,12 +97,25 @@ public:
             simd_float3 color;
             float falloff = 1, range = 0;
             float specular = 1;
+            // A spot (cSpotLight): where it shines and its cone's cosines
+            // (spotCosines); cosOuter < -1: a point light.
+            simd_float3 spotDirection{0, 0, -1};
+            float cosOuter = -2, cosInner = -1;
         };
         simd_float3 ambient{0, 0, 0};
         std::vector<Directional> lights;
         std::vector<Point> points; // after the directionals, up to 16 lights in all
     };
     static constexpr size_t kMaxLightSets = 256;
+    // A spot's cone (cSpotLight, Mac BV 0xca0ab8; docs/lighting-mac.md 6):
+    // angle and penumbra in radians, absolute, their sum at most pi; the
+    // light is full inside cos(angle / 2) and gone outside cos((angle +
+    // penumbra) / 2), linear in the cosine between (D3D's falloff 1).
+    static simd_float2 spotCosines(float angle, float penumbra) {
+        angle = std::fabs(angle), penumbra = std::fabs(penumbra);
+        const float outer = std::min(angle + penumbra, 3.14159265f);
+        return simd_make_float2(std::cos(outer / 2), std::cos(std::min(angle, outer) / 2));
+    }
     // Replaces every light set (set 0 included).
     void setLightSets(std::vector<LightSet> sets);
     const std::vector<LightSet>& lightSets() const { return lightSets_; }
