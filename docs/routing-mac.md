@@ -532,8 +532,8 @@ TSObjectCanSetPosition(destino, p, 0, 0, ...)   (orientação atual do destino)
 1. Devolve `loc` sem mexer se `obj` é pessoa (interface `0x5A69D3D5`) com o
    bit `0x02` do dado de pessoa `0x44` (68), ou se `obj->CanIntersectObjects()`
    (vtable `0x238`).
-2. Para cada objeto dos **3×3 tiles** em volta do tile de `loc` (tiles que
-   o mundo tem, vtable `0xf8`):
+2. Para cada objeto dos **3×3 tiles** em volta do tile de `loc` (`IsOnLot(tile)`,
+   vtable `0xf8` da `cIWorldDB`):
    - com `portas` e o objeto de tipo **8** (porta): afasta `p` das pegadas
      indexadas **0 e 2** dele (`TSObjectIndexedWorldSpaceFootprint`);
    - se um dos dois é pessoa (tipo 2), os dois têm de ter

@@ -1374,7 +1374,13 @@ objetos, níveis, elevações, direções e elos):
   clique (o quarto do `cFloorTile`); a busca do fim (`FindEnd`) simplificada
   (anda degrau a degrau até o último tocar um piso abaixo).
 - `FUN_009e9550` (pode o vértice ir a essa altura?) tem uma lista de testes por
-  máscara: limites de altura do terreno `WorldDB→0x150/0x14C` (`0x65`/`0x66`),
+  máscara: limites de altura do terreno `WorldDB→0x150/0x14C` (`0x65`/`0x66`;
+  rodada 13, `FUN_009e7700`: `MinTerrainElevation` = −150 ×
+  `FloorElevationUnit` e `MaxTerrainElevation` = +150 ×
+  `FloorElevationUnit`, com a unidade = **0,1875** (`cWorldDB +0x44`, posta no
+  construtor `FUN_000d4c98`), ou seja **−28,125 / +28,125**; altura <
+  mínimo → `0x65` "Can't lower terrain further", > máximo → `0x66` "Can't
+  raise terrain further"; o mesmo construtor põe `+0x3c` = 4, `+0x40` = 5),
   folga para o andar de baixo/de cima (`0x69`/`0x6A`), objetos que prendem o
   chão (`0x61`), objetos de teto (`0x60`), praia. Aqui: só "livre de piso,
   parede e fundação".
@@ -1507,7 +1513,8 @@ binário; inferido: vêm da ferramenta da interface, por outro caminho).
 Ordem (com lista de erros, segue juntando erros; sem lista, sai no primeiro):
 
 1. os tiles dos dois lados da aresta (`FUN_008b4e9c`/`FUN_008b51d4`):
-   nenhum passa no teste de lote do `WorldDB` (vtable `0x108`) → `0x45`;
+   nenhum passa no `WorldDB` vtable `0x108` (na interface `cIWorldDB`, o
+   nome do symxfer é `IsInBounds(tile)`; `0xf8` é `IsOnLot(tile)`) → `0x45`;
 2. para cada ponta da aresta, um **objeto no moirão** daquele vértice
    (`FUN_00163758`, a mesma busca de `EraseFencePostObject` e
    `TryPlaceOnFencePost`) → `0x4F` "Can't remove object on fence" (um erro
