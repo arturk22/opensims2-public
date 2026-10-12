@@ -1488,13 +1488,55 @@ STR# 143 índice 18: §50). É uma partição de `PartitionType` 2:
 uma cerca sem tirar a cerca; nenhum dos 62 lotes tem uma. Erros: `0x79`/`0x88`
 "Must be placed on a fence.", `0x4D` "Can't place next to arch"
 (`cPartitionManager::FenceArchAdjacent`), `0x4E` "Can't delete arch",
-`0x85` "Can't place gate across arch". O symxfer não acertou o corpo de
-`UserMayPlaceFenceArch` (o endereço "near" é de outra função). Aqui: o arco
+`0x85` "Can't place gate across arch". O corpo de `UserMayPlaceFenceArch` (rodada 13,
+§7.19.1) está em `0x9a92fc`. Aqui: o arco
 vai numa aresta com cerca (`0x79`), não numa aresta que encosta noutro arco
 (`0x4D`), custa o preço do catálogo, Ctrl tira (0,8 de volta) e apagar a
 cerca leva o arco; gravado como linha do grafo 0x13 (lido de volta como o
 estilo 26: inferido). Desenho (inferido pelos nomes): o centro sobre a aresta,
 um poste em cada ponta, a parte oeste no poste do início e a leste no do fim.
+
+#### 7.19.1 `UserMayPlaceFenceArch` no binário (rodada 13)
+
+`UserMayPlacePartition` (BV `0x9a95cc`) manda os estilos de arco para
+`UserMayPlaceFenceArch` (BV **`0x9a92fc`**, o "near" do symxfer em
+`0x2972fc` era outra função), que **não olha se há cerca** (o `0x79`/`0x88`
+"Must be placed on a fence." e o `0x4D` "Can't place next to arch" não
+saem daqui nem de nenhum `li r4, código` antes dos construtores de erro do
+binário; inferido: vêm da ferramenta da interface, por outro caminho).
+Ordem (com lista de erros, segue juntando erros; sem lista, sai no primeiro):
+
+1. os tiles dos dois lados da aresta (`FUN_008b4e9c`/`FUN_008b51d4`):
+   nenhum passa no teste de lote do `WorldDB` (vtable `0x108`) → `0x45`;
+2. para cada ponta da aresta, um **objeto no moirão** daquele vértice
+   (`FUN_00163758`, a mesma busca de `EraseFencePostObject` e
+   `TryPlaceOnFencePost`) → `0x4F` "Can't remove object on fence" (um erro
+   por ponta);
+3. `MayPlaceFenceArchWithRespectToObjects` (BV `0x9a8cb8`) falso → `0x0C`
+   "Can't intersect other objects" e falha.
+
+`MayPlaceFenceArchWithRespectToObjects`:
+
+- falha se o módulo de cercas do grafo de cena (`TSSGSystem` vtable `0x8c`,
+  depois vtable `0x48(vértice)`) diz sim para uma das duas pontas (inferido:
+  já há um arco no vértice, `nTSSG::FenceArchAtVertex`; é aqui que um arco
+  vizinho é recusado, com `0x0C`);
+- três trechos: a própria aresta e um trecho de **1 tile** que a prolonga
+  em cada ponta (pelo eixo dela: se |x0 − x1| < 1, a aresta corre em y);
+  para os dois tiles de cada trecho (um de cada lado), cada objeto, salvo os
+  de od `0x22` ≠ 0 ou com o bit `0x400` da od `0x2a`: se a pegada dele
+  (`GetFootprint` na posição e orientação dele) cruza a caixa de **±0,05**
+  em volta de uma das duas pontas → falha. Ou seja, só os objetos que
+  encostam nos **postes** do arco o impedem; o meio da aresta pode ter
+  objetos.
+
+`TryRemoveFenceArch` (BV `0x30c514`): apaga os objetos do tile da aresta
+presos àquela aresta (vtable `0x26c(aresta)`), salvo os de od `0x3b` =
+`0x7d` com a vtable `0x348` verdadeira. `AddFenceArch` (BV `0xc348cc`): os
+dois tiles têm de existir; `AddWallToGraph`, guarda o estilo do arco num
+mapa (`this+0xa4`, chave = o ID da aresta no grafo `+0x58`) e, com a
+mensagem ligada no `WorldDB`, manda `0x0B4CF313`. `FenceArchAdjacent(vértice)`
+= o grafo `+0x58` tem algo no vértice (vtable `0x24`).
 
 ### 7.20 A área editável do lote (rodada 12)
 
