@@ -1076,3 +1076,33 @@ primeira borda com rua, 0..3) e `h` = a altura da rua dessa borda
 Depois o `PlaceLot` segue com a praia, `SmoothenRoadsConnectedToLot`
 (gerente de ocupantes vtable `0x50`), a suavização sob o lote etc. (§11.4).
 
+### 15.3 "Ver Amigos": `cTSNeighborhood::ShowFamilyRelationshipsWeb` (BV `0x4da814`)
+
+O slot `0x108` da vtable do `cTSNeighborhood` (ao lado do
+`HideFamilyRelationshipsWeb`, `0x10c`; o symxfer não o nomeou):
+
+1. esconde a teia anterior (`Hide`: o desenhador de teia do `TSSGSystem`
+   vtable `0xf0` limpa, e `RemoveAllLotHighlights`); começa a teia nova;
+2. origem = o centro do lote da família (`família→0xa8` = ID do lote; o
+   retângulo em tiles do bairro × **10**; z = vtable `0x28` do terreno −
+   **2,0**);
+3. `GetFamilyFriendsGuids(família, guids, true)` (BV `0x53a480`): para cada
+   vizinho N fora da família e com a vtable `0x40(0x3d)` verdadeira, se
+   algum membro M da família passa no **`TestFriendsAndFamily(N, M)`** (BV
+   `0x537a50`), entra o GUID de N. O teste: os dois se conhecem (tabela de
+   relações, vtable `0x14`) e (os flags de relação dos **dois lados** têm o
+   bit **4 ou 5**, ou um dos lados tem o campo de relação **familiar**
+   (vtable `0x24(guid, 3)`) ≠ 0). (O `TestFriends`, com `false`, exige os
+   bits 4/5 dos dois lados e nenhuma relação familiar.)
+4. para cada GUID, o primeiro lote cuja família o contém (lot info vtable
+   `0x78`) entra num conjunto (um lote só uma vez);
+5. para cada lote do conjunto: um **arco** da origem ao centro dele
+   (desenhador vtable `0x1c(1,0, 45,0, de, para, "RelationshipArchGreen", 8)`)
+   e o realce do lote com o material **"DefaultLotHighlight"**
+   (`AddLotHighlight(lote, nulo)`, BV `0x4da600`).
+
+Ou seja, **amigos e parentes saem iguais**: um arco verde e o realce padrão,
+sem cores diferentes; o inferido da rodada 12 (azul para amigos, violeta
+para parentes, sem arcos) não é o do jogo. Quem chama o slot `0x108` não foi
+procurado (inferido: o botão da janela do lote).
+
