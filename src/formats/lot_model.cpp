@@ -303,6 +303,9 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         materials[ref] = patterns.wallMaterial(pattern);
     size_t unknownFences = 0;
     for (const auto& w : lot.walls) {
+        // The column deck's skirt (walls.txt "wall 4": notRendered) is not drawn.
+        if (w.type == Lot::DeckSkirt)
+            continue;
         const bool fence = Lot::isFence(w.type);
         if (fence) {
             if (!patterns.fence(w.type))

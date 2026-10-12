@@ -229,11 +229,14 @@ void BuildMode::selectFence(const BuildFence& f) {
     say("fence " + f.name + " (" + money(f.price) + " a section)");
 }
 
-void BuildMode::selectFoundationTool() {
+void BuildMode::selectFoundationTool(int product) {
     cancel();
     tool_ = Tool::Foundation;
+    deckProduct_ = product;
     pattern_ = nullptr, object_ = nullptr, fence_ = nullptr;
-    say("foundation tool (" + money(kFoundationTilePrice) + " a tile)");
+    static const int prices[3] = {kFoundationTilePrice, kLatticeDeckTilePrice, kColumnDeckTilePrice};
+    say(std::string(product ? "deck" : "foundation") + " tool (" + money(prices[std::clamp(product, 0, 2)]) +
+        " a tile)");
 }
 
 void BuildMode::selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerrainPaint* paint) {
@@ -777,7 +780,8 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
         done(control_ ? editor_->deletePool(x1, y1) : editor_->drawPool(x0, y0, x1, y1));
     } else if (tool_ == Tool::Foundation) {
         const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
-        done(control_ ? editor_->deleteFoundation(x0, y0, x1, y1) : editor_->drawFoundation(x0, y0, x1, y1));
+        done(control_ ? editor_->deleteFoundation(x0, y0, x1, y1)
+                      : editor_->drawFoundation(x0, y0, x1, y1, deckProduct_));
     } else if (tool_ == Tool::Floor) {
         // A click without a drag floors the quarters under the mouse
         // (FUN_003000cc: the half on its side of a diagonal wall).
@@ -1017,19 +1021,34 @@ std::vector<BuildMode::Item> BuildMode::items() {
     case 2: {
         // B200 foundations: catalog text "build" 138 (deckfoundations.txt
         // "foundation 0": catalogTextIndices 0 1), price 3i, name 3i+1, text 3i+2.
-        Item it;
-        it.tool = Tool::Foundation;
-        it.price = kFoundationTilePrice;
-        it.name = "Foundation";
-        if (const StringTable* t = res_->table(packageGroupHash("Build"), 0x8A)) {
-            if (const int price = std::atoi(t->get(0, lang::EnglishUS).c_str()))
-                it.price = price;
-            if (const std::string n = t->get(1); !n.empty())
-                it.name = n;
-            it.description = t->get(2);
+        // The decks: "deck 1" (catalogTextIndices 2 3, lattice) and "deck 2"
+        // (4 5, columns): strings 3 x index.
+        struct Kind {
+            int text, price;
+            const char* name;
+            uint32_t key;
+            const char* material;
+        };
+        const Kind kinds[3] = {{0, kFoundationTilePrice, "Foundation", 0xF0F0F0F0u, "floor_plywoodFoundation"},
+                               {2, kLatticeDeckTilePrice, "Deck", 0xF0F0F0F1u, "wall_deckRedwoodAlpha_base"},
+                               {4, kColumnDeckTilePrice, "Deck", 0xF0F0F0F2u, "floor_deckDarkRedwood"}};
+        for (int k = 0; k < 3; ++k) {
+            Item it;
+            it.tool = Tool::Foundation;
+            it.product = k;
+            it.price = kinds[k].price;
+            it.name = kinds[k].name;
+            if (const StringTable* t = res_->table(packageGroupHash("Build"), 0x8A)) {
+                const size_t i = size_t(3 * kinds[k].text);
+                if (const int price = std::atoi(t->get(i, lang::EnglishUS).c_str()))
+                    it.price = price;
+                if (const std::string n = t->get(i + 1); !n.empty())
+                    it.name = n;
+                it.description = t->get(i + 2);
+            }
+            it.image = materialThumbnail(kinds[k].key, kinds[k].material);
+            out.push_back(std::move(it));
         }
-        it.image = materialThumbnail(0xF0F0F0F0u, "floor_plywoodFoundation");
-        out.push_back(std::move(it));
         break;
     }
     case 7: {
@@ -1425,7 +1444,7 @@ bool BuildMode::press(simd_float2 p) {
                 else if (it.object)
                     selectObject(*it.object);
                 else if (it.tool == Tool::Foundation)
-                    selectFoundationTool();
+                    selectFoundationTool(it.product);
                 else if (it.tool == Tool::Pool)
                     selectPoolTool();
                 else if (it.roofPattern)
@@ -1516,7 +1535,7 @@ namespace os2 {
 // --wall/--room/--delete-wall x0,y0,x1,y1, --fence x0,y0,x1,y1,<fence>,
 // --delete-fence x0,y0,x1,y1, --roof x0,y0,x1,y1[,type 1-6] (over the
 // walls of the current level), --delete-roof x,y, --roof-pattern <name|guid>,
-// --pool x0,y0,x1,y1 / --delete-pool x,y, --foundation / --delete-foundation x0,y0,x1,y1
+// --pool x0,y0,x1,y1 / --delete-pool x,y, --foundation x0,y0,x1,y1[,product 0-2: foundation, lattice deck, deck on columns] / --delete-foundation x0,y0,x1,y1
 // (tiles, corners inclusive), --terrain raise|lower|flatten|smooth,x,y[,ticks[,size]]
 // and --terrain-paint <paint|erase>,x,y[,ticks[,size]] (a brush stroke of
 // ticks of 100 ms), --floor x0,y0,x1,y1,<pattern|none>[,rotation],
@@ -1586,7 +1605,7 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
         else if (a == "--delete-pool" && f.size() >= 2)
             r = ed.deletePool(n(0), n(1));
         else if (a == "--foundation" && f.size() >= 4)
-            selectFoundationTool(), r = ed.drawFoundation(n(0), n(1), n(2), n(3));
+            selectFoundationTool(n(4)), r = ed.drawFoundation(n(0), n(1), n(2), n(3), n(4));
         else if (a == "--delete-foundation" && f.size() >= 4)
             r = ed.deleteFoundation(n(0), n(1), n(2), n(3));
         else if ((a == "--terrain" || a == "--terrain-paint") && f.size() >= 3) {

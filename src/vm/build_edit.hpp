@@ -72,7 +72,13 @@ public:
     // "foundationbrick") run round its edge. §4 a tile (kFoundationTilePrice).
     // Only on the ground (0x1A), not over water (0x1E), walls, floors or
     // objects that do not allow it (0x0C; od 42 bit 0x200 does).
-    Result drawFoundation(int x0, int y0, int x1, int y1);
+    // `product` is deckfoundations.txt's: 0 the foundation, 1 the deck
+    // with a lattice skirt (wall style 16, "deckRedwood"; §3 a tile), 2 the
+    // deck on columns (style 4, not drawn; its supportObject 0xAA75A097 at
+    // the rectangle's corners, supportLayout -corners; §2 a tile). Decks
+    // have the "deckDarkRedwood" floor. Edges keep the style they had;
+    // new ones take the tool's.
+    Result drawFoundation(int x0, int y0, int x1, int y1, int product = 0);
     // Ctrl: the foundation tiles of the rectangle go (int(4 x 0.8) back a
     // tile); the walls follow the edge of what is left.
     Result deleteFoundation(int x0, int y0, int x1, int y1);
@@ -218,12 +224,13 @@ private:
         Geometry before, after;
         int cost = 0;
         std::vector<Sold> sold;
+        std::vector<Sold> created; // objects the change put down (deck columns)
     };
     Geometry capture() const;
     void restore(const Geometry& g);
     // After a change: rooms, then the VM.
     void changed();
-    void commit(Geometry before, int cost, std::vector<Sold> sold = {});
+    void commit(Geometry before, int cost, std::vector<Sold> sold = {}, std::vector<Sold> created = {});
     // The objects attached to a wall section (lead IDs), and whether one
     // of them is in use.
     std::vector<ObjectId> attachedObjects(int level, int ax, int ay, int bx, int by, bool* inUse) const;
@@ -237,7 +244,9 @@ private:
     std::vector<std::array<int, 4>> atticWalls(int lotLevel) const;
     void syncAtticWalls(int lotLevel, const std::vector<std::array<int, 4>>& before);
     // Foundation walls along the edge between foundation and other tiles.
-    void foundationWalls();
+    // The raised edges round the tiles a foundation/deck change touched
+    // (`laid`: they were laid with product `newStyle`, else taken away).
+    void foundationWalls(int newStyle, const std::set<std::pair<int, int>>* changedTiles, bool laid);
     void poolWalls();
     Result cover(std::vector<std::pair<uint32_t, int>> faces, const BuildPattern* pattern, const std::string& what);
     int priceOf(const std::string& lotName, bool floor) const;

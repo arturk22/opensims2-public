@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <set>
 
@@ -45,6 +47,27 @@ bool sameSection(const std::array<int, 4>& a, const Lot::Wall& w) {
     auto at = [](const Lot::WallVertex& v, int x, int y) { return std::lround(v.x) == x && std::lround(v.y) == y; };
     return (at(w.a, a[0], a[1]) && at(w.b, a[2], a[3])) || (at(w.a, a[2], a[3]) && at(w.b, a[0], a[1]));
 }
+
+// The partitions round the raised tiles: foundation 23, lattice deck 16,
+// column deck skirt 4 (deckfoundations.txt wallStyle).
+bool raisedEdge(uint32_t type) { return type == Lot::Foundation || type == 16 || type == Lot::DeckSkirt; }
+
+// deckfoundations.txt products 0-2: the edge style, its pattern, the floor.
+struct DeckProduct {
+    uint32_t style;
+    const char* wallPattern;
+    const char* floor;
+    int price;
+};
+DeckProduct deckProduct(int product) {
+    switch (product) {
+    case 1: return {16, "deckredwood", "deckDarkRedwood", kLatticeDeckTilePrice};
+    case 2: return {Lot::DeckSkirt, "deckSkirtMinimal", "deckDarkRedwood", kColumnDeckTilePrice};
+    default: return {Lot::Foundation, "foundationbrick", "floor_plywoodFoundation", kFoundationTilePrice};
+    }
+}
+// deck 2's supportObject (the column under a deck on the terrain).
+constexpr uint32_t kDeckColumnGuid = 0xAA75A097;
 
 } // namespace
 
@@ -206,12 +229,13 @@ void BuildEditor::changed() {
     syncWorld();
 }
 
-void BuildEditor::commit(Geometry before, int cost, std::vector<Sold> sold) {
+void BuildEditor::commit(Geometry before, int cost, std::vector<Sold> sold, std::vector<Sold> created) {
     Op op;
     op.before = std::move(before);
     op.after = capture();
     op.cost = cost;
     op.sold = std::move(sold);
+    op.created = std::move(created);
     undo_.push_back(std::move(op));
     redo_.clear();
 }
@@ -636,46 +660,77 @@ bool BuildEditor::foundationTile(int x, int y) const {
         return false;
     for (int cx = x; cx <= x + 1; ++cx)
         for (int cy = y; cy <= y + 1; ++cy)
-            if (lot_.elevation(1, cx, cy) - lot_.elevation(0, cx, cy) > kFoundationHeight + 0.5f)
-                return false;
+            if (const float d = lot_.elevation(1, cx, cy) - lot_.elevation(0, cx, cy);
+                d > kFoundationHeight + 0.5f || d < kFoundationHeight - 0.5f)
+                return false; // (a story over terrain that rose is no foundation either)
     return true;
 }
 
-void BuildEditor::foundationWalls() {
-    const int W = int(lot_.width), H = int(lot_.height);
-    const uint16_t brick = patternRef(lot_.wallPatterns, "foundationbrick", 0);
-    std::vector<std::array<int, 4>> want;
-    for (int x = 0; x < W; ++x)
-        for (int y = 0; y < H; ++y) {
-            if (!foundationTile(x, y))
-                continue;
-            if (!foundationTile(x - 1, y))
-                want.push_back({x, y, x, y + 1});
-            if (!foundationTile(x + 1, y))
-                want.push_back({x + 1, y, x + 1, y + 1});
-            if (!foundationTile(x, y - 1))
-                want.push_back({x, y, x + 1, y});
-            if (!foundationTile(x, y + 1))
-                want.push_back({x, y + 1, x + 1, y + 1});
-        }
+void BuildEditor::foundationWalls(int newStyle, const std::set<std::pair<int, int>>* changedTiles, bool laid) {
+    // Only the edges of the tiles that changed (and their neighbours'):
+    // the lot's other raised edges stay as they are (a house on a taller
+    // foundation keeps its walls).
+    if (!changedTiles || changedTiles->empty())
+        return;
+    std::set<std::pair<int, int>> near;
+    for (const auto& [x, y] : *changedTiles)
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                near.insert({x + dx, y + dy});
+    auto touches = [&](const std::array<int, 4>& s) {
+        // The tiles on both sides of an axis edge.
+        const int x = std::min(s[0], s[2]), y = std::min(s[1], s[3]);
+        if (s[1] == s[3])
+            return changedTiles->count({x, y}) || changedTiles->count({x, y - 1});
+        return changedTiles->count({x, y}) || changedTiles->count({x - 1, y});
+    };
+    struct Want {
+        std::array<int, 4> s;
+        bool fresh; // the edge of a tile just laid
+    };
+    std::vector<Want> want;
+    for (const auto& [x, y] : near) {
+        if (!foundationTile(x, y))
+            continue;
+        const bool fresh = laid && changedTiles->count({x, y});
+        if (!foundationTile(x - 1, y))
+            want.push_back({{x, y, x, y + 1}, fresh});
+        if (!foundationTile(x + 1, y))
+            want.push_back({{x + 1, y, x + 1, y + 1}, fresh});
+        if (!foundationTile(x, y - 1))
+            want.push_back({{x, y, x + 1, y}, fresh});
+        if (!foundationTile(x, y + 1))
+            want.push_back({{x, y + 1, x + 1, y + 1}, fresh});
+    }
+    std::erase_if(want, [&](const Want& w) { return !touches(w.s); });
     std::vector<std::array<int, 4>> gone;
-    for (const auto& w : lot_.walls)
-        if (w.type == Lot::Foundation && w.a.level == 0 &&
-            std::none_of(want.begin(), want.end(), [&](const auto& s) { return sameSection(s, w); }))
-            gone.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
-                            int(std::lround(w.b.y))});
+    for (const auto& w : lot_.walls) {
+        if (!raisedEdge(w.type) || w.a.level != 0)
+            continue;
+        const std::array<int, 4> s{int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
+                                   int(std::lround(w.b.y))};
+        if (touches(s) && std::none_of(want.begin(), want.end(), [&](const Want& x) { return sameSection(x.s, w); }))
+            gone.push_back(s);
+    }
     for (const auto& s : gone)
         removeWall(lot_, 0, s[0], s[1], s[2], s[3], &merges_);
-    for (const auto& s : want)
-        if (!findWall(lot_, 0, s[0], s[1], s[2], s[3]))
-            addWall(lot_, 0, s[0], s[1], s[2], s[3], Lot::Foundation, {brick, brick});
+    // An edge keeps its style; a new one takes the tool's (a foundation's
+    // when its tile was not just laid: the edge a deletion opens).
+    for (const auto& [s, fresh] : want)
+        if (!findWall(lot_, 0, s[0], s[1], s[2], s[3])) {
+            const DeckProduct d = deckProduct(fresh ? newStyle : 0);
+            const uint16_t ref = patternRef(lot_.wallPatterns, d.wallPattern, 0);
+            addWall(lot_, 0, s[0], s[1], s[2], s[3], d.style, {ref, ref});
+        }
 }
 
-BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1) {
+BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, int product) {
     Result r;
+    const DeckProduct deck = deckProduct(product);
+    const char* what = product ? "deck" : "foundation";
     auto fail = [&](int code, const std::string& why) {
         r.error = code;
-        r.message = "cannot lay a foundation: " + why;
+        r.message = std::string("cannot lay a ") + what + ": " + why;
         return r;
     };
     if (!lot_.hasLevel(0) || !lot_.hasLevel(1) || lot_.elevations.empty())
@@ -707,7 +762,7 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1) 
             tiles.push_back({x, y});
         }
     for (const auto& w : lot_.walls) {
-        if (w.a.level != 0 || w.type == Lot::Foundation)
+        if (w.a.level != 0 || raisedEdge(w.type))
             continue;
         const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
         if (mx >= float(ax) && mx <= float(bx + 1) && my >= float(ay) && my <= float(by + 1))
@@ -715,10 +770,10 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1) 
     }
     if (tiles.empty()) {
         r.ok = true;
-        r.message = "the foundation is there already";
+        r.message = std::string("the ") + what + " is there already";
         return r;
     }
-    r.cost = int(tiles.size()) * kFoundationTilePrice;
+    r.cost = int(tiles.size()) * deck.price;
     if (r.cost > funds(vm_)) {
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
@@ -735,7 +790,7 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1) 
                 points.push_back({cx, cy});
     std::vector<std::array<int, 4>> free;
     for (const auto& w : lot_.walls)
-        if (w.type == Lot::Foundation && w.a.level == 0)
+        if (raisedEdge(w.type) && w.a.level == 0)
             free.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
                             int(std::lround(w.b.y))});
     if (!levelPoints(points, height, free)) {
@@ -748,17 +803,44 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1) 
         for (int k = 1; lot_.hasLevel(k); ++k)
             lot_.elevations[size_t(k - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] =
                 height + kFoundationHeight + 3.0f * float(k - 1);
-    const uint16_t plywood = patternRef(lot_.floorPatterns, "floor_plywoodFoundation", 1);
-    for (const auto& [x, y] : tiles)
+    const uint16_t top = patternRef(lot_.floorPatterns, deck.floor, 1);
+    std::set<std::pair<int, int>> laid;
+    for (const auto& [x, y] : tiles) {
+        laid.insert({x, y});
         for (int q = 0; q < 4; ++q)
-            setFloor(lot_, 1, x, y, q, plywood), setFloorRotation(lot_, 1, x, y, q, 1);
-    foundationWalls();
+            setFloor(lot_, 1, x, y, q, top), setFloorRotation(lot_, 1, x, y, q, 1);
+    }
+    foundationWalls(product, &laid, true);
+    // A deck on columns: its support object at each corner of the rectangle
+    // (supportLayout -corners), on the terrain under it (inferred: the
+    // column stands on the corner tile).
+    std::vector<Sold> created;
+    if (product == 2)
+        if (const auto def = vm_.code().definitionByGuid(kDeckColumnGuid))
+            for (const auto& [cx, cy] : std::set<std::pair<int, int>>{{ax, ay}, {bx, ay}, {ax, by}, {bx, by}}) {
+                try {
+                    const ObjectId id = createGhost(vm_, def->first, def->second);
+                    const Placement p = checkPlacement(vm_, id, {cx, cy, 1}, 0);
+                    if (!p.ok) {
+                        deleteGroup(vm_, id);
+                        continue;
+                    }
+                    // Put down as the object tool does (the trees run), part of the deck's price.
+                    if (!buy(vm_, id, p, 0)) {
+                        deleteGroup(vm_, id);
+                        continue;
+                    }
+                    created.push_back({id, p});
+                } catch (const std::exception&) {
+                }
+            }
     r.changed = int(tiles.size());
     addFunds(vm_, -r.cost);
     changed();
-    commit(std::move(before), r.cost);
+    commit(std::move(before), r.cost, {}, std::move(created));
     r.ok = true;
-    r.message = std::to_string(r.changed) + " foundation tiles for " + money(r.cost);
+    r.message = std::to_string(r.changed) + " " + what + " tiles for " + money(r.cost) +
+                (product == 2 ? " (" + std::to_string(undo_.back().created.size()) + " columns)" : "");
     return r;
 }
 
@@ -806,7 +888,22 @@ BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1
         removed.insert({x, y});
     auto stays = [&](int x, int y) { return !removed.count({x, y}) && foundationTile(x, y); };
     std::vector<std::array<int, 2>> corners;
+    // Each tile gives back its product's price: a deck's floor marks a deck
+    // (the lattice one's price; inferred: the game keeps the product per tile).
+    int refund = 0;
+    std::vector<Sold> columns;
     for (const auto& [x, y] : tiles) {
+        bool deck = false;
+        for (uint16_t q : lot_.floor(1, uint32_t(x), uint32_t(y)))
+            if (auto it = lot_.floorPatterns.find(q); it != lot_.floorPatterns.end() && it->second.rfind("deck", 0) == 0)
+                deck = true;
+        refund += int(float(deck ? kLatticeDeckTilePrice : kFoundationTilePrice) * kBuildRefundRate);
+        // The deck's columns on it go with it (back by undo).
+        for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
+            if (const Object* o = vm_.object(id); o && o->guid() == kDeckColumnGuid) {
+                columns.push_back({id, currentPlacement(vm_, id)});
+                pickUp(vm_, id);
+            }
         for (int q = 0; q < 4; ++q)
             setFloor(lot_, 1, x, y, q, 0);
         for (int cx = x; cx <= x + 1; ++cx)
@@ -820,12 +917,12 @@ BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1
             lot_.elevations[size_t(k - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] =
                 ground + 3.0f * float(k);
     }
-    foundationWalls();
+    foundationWalls(0, &removed, false);
     r.changed = int(tiles.size());
-    r.cost = -r.changed * int(float(kFoundationTilePrice) * kBuildRefundRate);
+    r.cost = -refund;
     addFunds(vm_, -r.cost);
     changed();
-    commit(std::move(before), r.cost);
+    commit(std::move(before), r.cost, std::move(columns));
     r.ok = true;
     r.message = std::to_string(r.changed) + " foundation tiles deleted for " + money(-r.cost);
     return r;
@@ -1666,6 +1763,8 @@ bool BuildEditor::undo() {
     // in op.cost).
     for (const Sold& x : op.sold)
         applyPlacement(vm_, x.id, x.where);
+    for (const Sold& x : op.created)
+        pickUp(vm_, x.id);
     addFunds(vm_, op.cost); // the price back, or the refund paid back
     syncWorld();
     redo_.push_back(std::move(op));
@@ -1682,6 +1781,8 @@ bool BuildEditor::redo() {
     restore(op.after);
     for (const Sold& x : op.sold)
         pickUp(vm_, x.id);
+    for (const Sold& x : op.created)
+        applyPlacement(vm_, x.id, x.where);
     addFunds(vm_, -op.cost);
     syncWorld();
     undo_.push_back(std::move(op));
@@ -1689,14 +1790,20 @@ bool BuildEditor::redo() {
 }
 
 void BuildEditor::resetHistory(const std::function<void(ObjectId)>& forget) {
+    auto die = [&](const Sold& x) {
+        if (const Object* o = vm_.object(x.id); o && !o->position.inWorld()) {
+            if (forget)
+                for (ObjectId part : groupOf(vm_, x.id))
+                    forget(part);
+            deleteGroup(vm_, x.id);
+        }
+    };
     for (const Op& op : undo_)
         for (const Sold& x : op.sold)
-            if (const Object* o = vm_.object(x.id); o && !o->position.inWorld()) {
-                if (forget)
-                    for (ObjectId part : groupOf(vm_, x.id))
-                        forget(part);
-                deleteGroup(vm_, x.id);
-            }
+            die(x);
+    for (const Op& op : redo_) // undone decks: their columns
+        for (const Sold& x : op.created)
+            die(x);
     undo_.clear(), redo_.clear();
 }
 

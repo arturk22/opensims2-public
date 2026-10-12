@@ -276,7 +276,7 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
         } else if (flag == "--foundation" || flag == "--delete-foundation") {
             if (f.size() < 4)
                 throw std::runtime_error(flag + ": expected x0,y0,x1,y1");
-            r = flag == "--foundation" ? editor.drawFoundation(num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0))
+            r = flag == "--foundation" ? editor.drawFoundation(num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), num(f, 4, 0))
                                        : editor.deleteFoundation(num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0));
         } else if (flag == "--delete-fence") {
             if (f.size() < 4)

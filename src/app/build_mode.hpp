@@ -91,7 +91,8 @@ public:
     void selectWallTool(bool room);
     void selectPattern(const BuildPattern& p);
     void selectFence(const BuildFence& f);
-    void selectFoundationTool();
+    // deckfoundations.txt product: 0 foundation, 1 lattice deck, 2 deck on columns.
+    void selectFoundationTool(int product = 0);
     void selectPoolTool();
     // Terrain: a sculpt brush (raise, lower, flatten, smooth) or a paint
     // (the paint's texture); `size` 0-2 small/medium/large.
@@ -170,6 +171,7 @@ private:
         const BuildRoofPattern* roofPattern = nullptr;
         int terrainOp = -1;
         uint32_t roofType = 0;
+        int product = 0; // deckfoundations.txt product (foundation tool)
         std::string name, description;
         int price = 0;
         const RgbaImage* image = nullptr;
@@ -226,6 +228,7 @@ private:
     vm::BuildEditor::TerrainOp terrainOp_ = vm::BuildEditor::TerrainOp::Raise;
     int brushSize_ = 1;
     uint32_t roofType_ = 0;
+    int deckProduct_ = 0;
     bool stroking_ = false;
     uint32_t brushLoop_ = 0;
     size_t dragSections_ = 0;   // sections (or tiles) the drag covers, for the section sounds
