@@ -360,4 +360,8 @@ add_test(NAME tv_program COMMAND test_tv_program)
 
 # --help prints the usage and exits without opening a window (r14).
 add_test(NAME cli_help COMMAND opensims2 --help)
+# With the game's data (OS2_DATA): Sims drawn without jumps the VM gave no
+# reason for, seats and slots where their objects are (tests/drawn_places.sh).
+add_test(NAME drawn_places COMMAND sh ${CMAKE_SOURCE_DIR}/tests/drawn_places.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/drawn_places)
+set_tests_properties(drawn_places PROPERTIES PASS_REGULAR_EXPRESSION "drawn places: ok" TIMEOUT 600)
 set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "usage: opensims2")

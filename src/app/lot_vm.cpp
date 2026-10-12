@@ -335,16 +335,10 @@ void LotSimulation::sampleAll(double at) {
         }
         else if (!s.animation.empty()) {
             want = s.animation, loop = false, level = s.animLevel, weight = s.animWeight;
-            // Snapped (moved or turned in place) as it starts: its first
-            // frame is where the last one left the body in the world (a
-            // chair's get-out from the corner the trees snap the Sim to
-            // starts seated in the seat), and blending from the old pose at
-            // the new place showed the Sim seated in the air at the corner,
-            // facing away, for the blend's length (inferred).
-            const auto& p = b.motion.previous();
-            if (s.serial != b.serial && !p.walking &&
-                (std::hypot(s.x - p.x, s.y - p.y) > 0.05f || s.direction != p.direction))
-                fade = 0;
+            // (Snapped as it starts, a chair's get-out from the corner the
+            // trees snap the Sim to: what played before stays where it was in
+            // the world, updateScene's reframe, so the blend starts from the
+            // body as it was; r17 cut the blend instead.)
         }
         // OS2_DEBUG_VM=1: each Sim's state after each tick.
         if (std::getenv("OS2_DEBUG_VM")) {

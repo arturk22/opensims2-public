@@ -88,9 +88,10 @@ public:
     // one at once after a jump (jumped()).
     float x(float t) const;
     float y(float t) const;
-    // The last tick moved it farther than any walk does (kMaxStep tiles) or
-    // to another level: a Snap, a stair's end, a teleport.
-    static constexpr float kMaxStep = 0.5f;
+    // The last tick moved it farther than any walk or run does (kMaxStep
+    // tiles: a running visitor makes 0.7 a tick) or to another level: a
+    // Snap, a stair's end, a teleport.
+    static constexpr float kMaxStep = 1.5f;
     bool jumped() const;
     // Height at `t` on a stair; `floor(level, x, y)` gives it off the stair.
     template <class Floor>

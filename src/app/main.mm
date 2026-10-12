@@ -3762,7 +3762,9 @@ void sampleDrawnPlaces(double scene) {
             const bool moving = o->animation.name.find("getIn") != std::string::npos ||
                                 o->animation.name.find("getOut") != std::string::npos ||
                                 o->animation.name.find("GetIn") != std::string::npos ||
-                                o->animation.name.find("GetOut") != std::string::npos;
+                                o->animation.name.find("GetOut") != std::string::npos ||
+                                o->animation.name.find("-start") != std::string::npos || // (a piano's sit-down)
+                                o->animation.name.find("-stop") != std::string::npos;
             // (Not on a stair's steps or in a car: their own motion.)
             const bool ownMotion = co && co->definition && (co->definition->fileName.find("Stair") != std::string::npos ||
                                                             isVehicle(co));
@@ -6226,6 +6228,16 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     // effects on their bones follow the animations between shots.
                     for (auto& sim : gLotSims)
                         sim.actor->update(scene);
+                    // The objects too, as a live frame does (poseActors): a car
+                    // driving in, a chair pulled out, placed where the VM view
+                    // puts them, so that the seats on them are not left where
+                    // the last shot had them (the maid's seat stayed at the
+                    // road's end while the car came in).
+                    for (auto& [id, a] : gObjectActors)
+                        if (a)
+                            a->update(scene);
+                    if (gObjectView)
+                        gObjectView->update();
                     sampleDrawnPlaces(scene);
                     // OS2_DEBUG_DOORS=1: the doors' leaves (r_door_rot, l_door_rot
                     // about Z, degrees) as they turn by 10 degrees or come back closed.
