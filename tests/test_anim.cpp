@@ -92,8 +92,10 @@ static std::vector<uint8_t> buildAnim() {
     start = w.b.size();
     w.cstr("auskel");
     w.pad(start);
-    // channels: duration 1000, attribute, type, no IK chain (0xF), 3 components
-    auto flags = [](uint32_t attr, uint32_t type) { return 1000u | attr << 17 | type << 22 | 0xFu << 25 | 3u << 29; };
+    // channels: duration 1000, base (bit 15), attribute, type, no IK chain (0xF), 3 components
+    auto flags = [](uint32_t attr, uint32_t type) {
+        return 1000u | 0x8000u | attr << 17 | type << 22 | 0xFu << 25 | 3u << 29;
+    };
     for (uint32_t f : {flags(0, 3), flags(1, 4)}) {
         w.zeros(8);
         w.u32(0x1234);
@@ -362,7 +364,10 @@ static void testSnaps() {
 }
 
 // An animation on one bone: rotation about Z by `degrees`, constant.
-static Animation constantAnim(const char* bone, float degrees, uint8_t priority, float velocity) {
+// One bone held at `degrees` about Z (X with `axis` 0); a delta channel
+// (bit 15 clear) when `delta`.
+static Animation constantAnim(const char* bone, float degrees, uint8_t priority, float velocity, bool delta = false,
+                              int axis = 2) {
     Animation a;
     a.duration = 1000;
     a.priority = priority;
@@ -372,11 +377,11 @@ static Animation constantAnim(const char* bone, float degrees, uint8_t priority,
     t.tag = "auskel";
     Animation::Channel c;
     c.name = bone;
-    c.flags = 1000u | 0u << 17 | 3u << 22 | 0xFu << 25 | 3u << 29;
+    c.flags = 1000u | (delta ? 0u : 0x8000u) | 0u << 17 | 3u << 22 | 0xFu << 25 | 3u << 29;
     c.components.resize(3);
     for (auto& comp : c.components)
         comp.keys.push_back({0, 0, 0, 0});
-    c.components[2].keys[0].value = degrees;
+    c.components[size_t(axis)].keys[0].value = degrees;
     t.channels.push_back(c);
     a.targets.push_back(t);
     return a;
@@ -456,6 +461,71 @@ static void testChannelLevels() {
     }
 }
 
+// Delta (additive) channels: bit 15 of the channel flags clear
+// (IsBaseDataReturned); multiplied onto the base mix by their weight
+// (cChannelUberOutletQ::ChannelData), translations added.
+static void testDeltaChannels() {
+    Skeleton s;
+    s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
+    s.bones.push_back({"pelvis", 0, Xform{}, 1, 1});
+    s.bones.push_back({"spine0", 1, Xform{}, 2, 2});
+    s.bones.push_back({"l_clavicle", 2, Xform{}, 3, 3});
+    auto angle = [](const Quat& q) { return 2 * std::atan2(q.z, q.w) * 180 / 3.14159265f; };
+    const Animation walk = constantAnim("pelvis", 40, 0, 0);
+    Animation hunch = constantAnim("pelvis", 10, 2, 0, true);
+    hunch.flags = 1; // full-body by its flag, as the talking "SWAT" shifts
+    check(hunch.targets[0].channels[0].isDelta() && !walk.targets[0].channels[0].isDelta(), "delta: bit 15 clear");
+    check(hunch.additive() && !walk.additive(), "delta-only target: additive");
+    const auto keyed = keyedBones(hunch.targets[0], s);
+    check(!keyed[1], "delta channels key no bone");
+    {
+        AnimPlayer p(&s);
+        p.play(walk, 0);
+        p.play(hunch, 0, {.fade = 0, .priority = 61, .level = 0});
+        const auto pose = p.pose(0.1);
+        check(near(angle(pose[1].q), 50, 1e-2f), "delta added to the base rotation");
+        check(near(pose[2].q.w, 1) && near(pose[3].q.w, 1), "a full-body delta replaces no other bone");
+        // At half weight: half the angle (q^0.5).
+        AnimPlayer h(&s);
+        h.play(walk, 0);
+        h.play(hunch, 0, {.fade = 0, .priority = 61, .level = 0, .weight = 0.5f});
+        check(near(angle(h.pose(0.1)[1].q), 45, 1e-2f), "delta weighed: q^w");
+        // A lower level does not matter: deltas are not shared out by level.
+        AnimPlayer l(&s);
+        l.play(walk, 0, {.fade = 0, .level = 6});
+        l.play(hunch, 0, {.fade = 0, .priority = 61, .level = 0});
+        check(near(angle(l.pose(0.1)[1].q), 50, 1e-2f), "deltas apply at any level");
+    }
+    {
+        // Base * delta: the delta turns about the bone's own axes. Base 90
+        // degrees about Z, delta 30 about X: base * delta, not delta * base.
+        const Animation base = constantAnim("pelvis", 90, 0, 0);
+        const Animation tilt = constantAnim("pelvis", 30, 2, 0, true, 0);
+        AnimPlayer p(&s);
+        p.play(base, 0);
+        p.play(tilt, 0, {.fade = 0, .priority = 61});
+        const Quat q = p.pose(0.1)[1].q;
+        const float d = 3.14159265f / 180;
+        const Quat want = quatFromEulerXYZ(0, 0, 90 * d) * quatFromEulerXYZ(30 * d, 0, 0);
+        check(near(std::fabs(q.x * want.x + q.y * want.y + q.z * want.z + q.w * want.w), 1, 1e-4f),
+              "delta multiplied after the base (base * delta)");
+    }
+    {
+        // A bone no base layer moves keeps its pose, deltas or not, except
+        // the ones the look-at drives (spine0: SetApplyDeltaDataToIK).
+        Animation clav = constantAnim("l_clavicle", 20, 2, 0, true);
+        Animation spine = constantAnim("spine0", 20, 2, 0, true);
+        AnimPlayer p(&s);
+        p.play(walk, 0);
+        p.play(clav, 0, {.fade = 0, .priority = 61});
+        p.play(spine, 0, {.fade = 0, .priority = 62});
+        const auto pose = p.pose(0.1);
+        check(near(pose[3].q.w, 1), "no delta on a bone without a base channel");
+        check(near(angle(pose[2].q), 20, 1e-2f), "spine0 takes its delta over the rest pose");
+    }
+    check(near(deltaPower(quatFromEulerXYZ(0, 0, 1.0f), 0.25f).z, std::sin(0.125f)), "q^w scales the angle");
+}
+
 // Body shape morphs from person data 81 (body flags) and 58 (age).
 static void testBodyShape() {
     auto m = bodyShapeMorphs(0x10, 19);
@@ -515,6 +585,7 @@ int main() {
     testBodyShape();
     testPlayer();
     testChannelLevels();
+    testDeltaChannels();
     testIk();
     testArmIk();
     testSnaps();

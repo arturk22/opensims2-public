@@ -179,12 +179,11 @@ Gait computeGait(VM& vm, const Object& sim, bool shortWay) {
         // The heaviest first (the base layer the others blend over).
         std::stable_sort(g.cycles.begin(), g.cycles.end(), [](const LocoLayer& a, const LocoLayer& b) { return a.weight > b.weight; });
         // The cycles' poses ("walk-alt<k>-...Blend"), with the long and the
-        // short cycles alike (both are type 100 + k). Off unless
-        // OS2_LOCO_POSES is set: their target is of type 6 (the cycles' are
-        // 5), apparently a delta over the cycle, and played as a plain pose
-        // (averaged with the cycles by weight) they spread the elders' arms
-        // out; the player has no additive blend yet (TODO).
-        if (!shortWay && std::getenv("OS2_LOCO_POSES")) {
+        // short cycles alike (both are type 100 + k): delta channels only
+        // (target type 6), which the player multiplies onto the cycles
+        // (AnimPlayer, docs/primitives-mac.md §4) at the cycle's weight.
+        // OS2_NO_LOCO_POSES=1 leaves them out (to compare).
+        if (!shortWay && !std::getenv("OS2_NO_LOCO_POSES")) {
             const std::string posePrefix = kind + "-alt";
             for (const auto& it : setString(vm, sim, g.run, false, true)) {
                 if (!it.name.starts_with(posePrefix) || !it.name.ends_with("Blend"))

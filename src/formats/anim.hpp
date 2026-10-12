@@ -83,6 +83,12 @@ struct Animation {
         uint8_t type() const { return uint8_t((flags >> 22) & 0x7); }
         int ikChain() const { return ((flags >> 25) & 0xF) == 0xF ? -1 : int((flags >> 25) & 0xF); }
         uint32_t componentCount() const { return (flags >> 29) & 0x7; }
+        // Bit 15 (cSharedChannelCubicKeysConstProxy4::IsBaseDataReturned,
+        // Mac BV 0xee4680): set on a base channel, clear on a delta
+        // (additive) one, which cActiveAnimSkeletal::SetupChannel (BV
+        // 0xd5b8d4) adds to the bone's outlet with AddDeltaChannel instead
+        // of AddBaseChannel: docs/primitives-mac.md §4.
+        bool isDelta() const { return (flags & 0x8000) == 0; }
     };
 
     struct IkTarget {
@@ -109,6 +115,15 @@ struct Animation {
         uint16_t tagLength = 0;
         std::vector<Channel> channels;
         std::vector<IkChain> ikChains;
+
+        // Bone channels (rotation or translation) that replace (base) or add
+        // to (delta) what the other animations put on the bone. In the base
+        // game the delta channels are all in targets of anim type 6, and
+        // those have no base channels (the "*Blend" walk postures, the
+        // talking "SWAT" shifts, the sofa bounces, the haunted chair, the
+        // elders' bent spine: s2pkg anim-sweep).
+        bool hasBaseChannels() const;
+        bool hasDeltaChannels() const;
     };
 
     struct Event {
@@ -136,13 +151,30 @@ struct Animation {
     static Animation parse(std::span<const uint8_t> body);
 
     const Target* findTarget(std::string_view tag) const; // case-insensitive
+    // The skeleton's target only adds to the bones (delta channels and no
+    // base ones): it plays over the body, never instead of it.
+    bool additive() const;
 };
 
 // Local bone transforms of `skeleton` at `ticks` (wrapped to the animation's
 // duration when `loop`): the rest pose with the rotation and translation
 // channels of `target` applied to the bones of the same name. Bones the
 // animation does not key keep their rest transform.
+// Delta channels are left out (sampleDeltas).
 std::vector<Xform> samplePose(const Animation::Target& target, const Skeleton& skeleton, float ticks);
+
+// The target's delta (additive) channels at `ticks`: per bone a rotation
+// (identity where none) and a translation (zero where none), and which
+// bones have one (bit 0 rotation, bit 1 translation). The channel blender
+// multiplies the rotations onto the bone's base mix and adds the
+// translations (cChannelUberOutletQ/XYZ::ChannelData, Mac BV 0xd5e1c4 and
+// 0xd6b0fc; docs/primitives-mac.md §4).
+struct DeltaPose {
+    std::vector<Xform> delta;
+    std::vector<uint8_t> has;
+    bool empty() const;
+};
+DeltaPose sampleDeltas(const Animation::Target& target, const Skeleton& skeleton, float ticks);
 float animationTime(const Animation& a, float seconds, bool loop);
 
 // Two-joint IK for the target's chains (legs: r_thigh -> r_calf -> r_foot

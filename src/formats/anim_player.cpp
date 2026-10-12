@@ -26,13 +26,15 @@ std::vector<float> boneMask(const Skeleton& s, std::string_view root) {
 std::vector<bool> keyedBones(const Animation::Target& target, const Skeleton& s) {
     std::vector<bool> keyed(s.bones.size(), false);
     for (const auto& c : target.channels) {
-        if (c.attribute() != Animation::Rotation && c.attribute() != Animation::Translation)
+        if ((c.attribute() != Animation::Rotation && c.attribute() != Animation::Translation) || c.isDelta())
             continue;
         const int b = s.find(c.name);
         if (b >= 0)
             keyed[size_t(b)] = true;
     }
-    if (!target.ikChains.empty()) {
+    // A delta-only target's chains (the walk postures' legs) solve nothing
+    // of their own: their goals are deltas too.
+    if (!target.ikChains.empty() && target.hasBaseChannels()) {
         std::unordered_map<uint32_t, int> byCrc;
         for (size_t i = 0; i < s.bones.size(); ++i)
             byCrc.emplace(nameInstanceHiHash(s.bones[i].name), int(i));
@@ -96,6 +98,47 @@ std::vector<Xform> mirrorPose(const Skeleton& s, const std::vector<int>& twins, 
     return result;
 }
 
+Quat deltaPower(const Quat& q, float w) {
+    // As ChannelData does: the half angle from acos(w) (none outside
+    // (-1, 1)), scaled by the weight; no flip to the shorter arc.
+    if (q.w <= -1 || q.w >= 1)
+        return Quat{};
+    const float a = std::acos(q.w);
+    const float s = std::sin(a);
+    const float k = s != 0 ? std::sin(a * w) / s : 0.0f;
+    return {q.x * k, q.y * k, q.z * k, std::cos(a * w)};
+}
+
+DeltaPose AnimPlayer::mirrorDeltas(const DeltaPose& d, std::vector<float>& weights) const {
+    // The deltas as a pose over the rest pose, mirrored like a pose, and
+    // taken back off the rest pose; each bone takes its twin's.
+    const size_t n = skeleton_->bones.size();
+    const std::vector<Xform> rest = skeleton_->restPose();
+    std::vector<Xform> p = rest;
+    for (size_t b = 0; b < n; ++b) {
+        if (d.has[b] & 1)
+            p[b].q = rest[b].q * d.delta[b].q;
+        if (d.has[b] & 2)
+            for (int c = 0; c < 3; ++c)
+                p[b].t[size_t(c)] += d.delta[b].t[size_t(c)];
+    }
+    const std::vector<Xform> m = mirrorPose(*skeleton_, twins_, restWorld_, p);
+    DeltaPose out;
+    out.delta.assign(n, Xform{});
+    out.has.assign(n, 0);
+    std::vector<float> w(n, 0.0f);
+    for (size_t b = 0; b < n; ++b) {
+        const size_t t = size_t(twins_[b]);
+        out.has[b] = d.has[t];
+        w[b] = weights[t];
+        out.delta[b].q = normalized(conjugate(rest[b].q) * m[b].q);
+        for (int c = 0; c < 3; ++c)
+            out.delta[b].t[size_t(c)] = m[b].t[size_t(c)] - rest[b].t[size_t(c)];
+    }
+    weights = std::move(w);
+    return out;
+}
+
 void AnimPlayer::prepareMirror() {
     if (!skeleton_ || !twins_.empty())
         return;
@@ -143,10 +186,14 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     if (l.mirror)
         prepareMirror();
     if (skeleton_ && l.target) {
-        if (anim.flags & 1)
+        // Full-body (flag bit 0) keys every bone, but the delta channels
+        // only add to the bones (a delta-only "SWAT" talk shift is
+        // full-body too).
+        if ((anim.flags & 1) && l.target->hasBaseChannels())
             l.keyed.assign(skeleton_->bones.size(), true);
         else
             l.keyed = keyedBones(*l.target, *skeleton_);
+        l.delta = l.target->hasDeltaChannels();
     }
     for (auto& other : layers_)
         if (other.priority == l.priority && other.fadeOutStart < 0) {
@@ -217,6 +264,8 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         std::vector<Xform> pose;
         std::vector<float> w;
         int level = 0;
+        DeltaPose deltas;        // the layer's delta channels (empty: none)
+        std::vector<float> dw;   // their weight per bone (fade x request weight x mask)
     };
     std::vector<Posed> posed;
     posed.reserve(layers_.size());
@@ -233,9 +282,19 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         for (size_t i = 0; i < n; ++i)
             mask[i] = (i < l.keyed.size() && l.keyed[i] ? w : 0.0f) *
                       (l.mask.empty() ? 1.0f : (i < l.mask.size() ? l.mask[i] : 0.0f));
+        DeltaPose deltas;
+        std::vector<float> dw;
+        if (l.delta) {
+            deltas = sampleDeltas(*l.target, *skeleton_, ticks);
+            dw.assign(n, 0.0f);
+            for (size_t i = 0; i < n; ++i)
+                dw[i] = w * (l.mask.empty() ? 1.0f : (i < l.mask.size() ? l.mask[i] : 0.0f));
+            if (l.mirror && twins_.size() == n)
+                deltas = mirrorDeltas(deltas, dw);
+        }
         if (l.mirror && twins_.size() == n) {
             // IK first (the chains name their own side), then the whole pose flipped.
-            if (!l.target->ikChains.empty()) {
+            if (!l.target->ikChains.empty() && l.target->hasBaseChannels()) {
                 const std::vector<Xform> goals = p;
                 applyIk(*l.target, *skeleton_, ticks, p, &goals, frame);
             }
@@ -247,7 +306,19 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         }
         if (p.size() < n)
             continue;
-        posed.push_back({std::move(p), std::move(mask), l.level});
+        posed.push_back({std::move(p), std::move(mask), l.level, std::move(deltas), std::move(dw)});
+    }
+    bool anyDelta = false;
+    for (const auto& x : posed)
+        anyDelta = anyDelta || !x.dw.empty();
+    if (anyDelta && deltaToIk_.size() != n) {
+        // The bones whose deltas apply even with no base channel on them
+        // (SetupChannel, BV 0xd5b8d4, calls SetApplyDeltaDataToIK(true) on
+        // the outlets of head, neck and spine0-2: the look-at drives them).
+        deltaToIk_.assign(n, false);
+        for (const char* name : {"head", "neck", "spine0", "spine1", "spine2"})
+            if (const int b = skeleton_->find(name); b >= 0)
+                deltaToIk_[size_t(b)] = true;
     }
     // Per bone, the channel blender: levels from the highest down (layers_
     // is sorted by level), the remaining weight shared out, then a running
@@ -289,13 +360,39 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         }
         if (cum > 0)
             out[b] = acc;
+        // The delta channels over the base mix (cChannelUberOutletQ::
+        // ChannelData, BV 0xd5e1c4): from the highest priority down, each
+        // rotation raised to its weight (q^w: the angle times w about its
+        // axis) and multiplied on, then base * delta (the outlet's "delta
+        // base order", 1 from its constructor); the translations added
+        // times their weights, over a base mix only (cChannelUberOutletXYZ,
+        // BV 0xd6b0fc).
+        if (anyDelta && (cum > 0 || deltaToIk_[b])) {
+            Quat dq{};
+            Vec3 dt{0, 0, 0};
+            for (size_t k = posed.size(); k-- > 0;) {
+                const Posed& x = posed[k];
+                if (x.dw.empty() || x.dw[b] <= 0 || !x.deltas.has[b])
+                    continue;
+                const float w = x.dw[b];
+                if (x.deltas.has[b] & 1)
+                    dq = dq * deltaPower(x.deltas.delta[b].q, w);
+                if ((x.deltas.has[b] & 2) && cum > 0)
+                    for (int c = 0; c < 3; ++c)
+                        dt[size_t(c)] += x.deltas.delta[b].t[size_t(c)] * w;
+            }
+            out[b].q = normalized(out[b].q * dq);
+            for (int c = 0; c < 3; ++c)
+                out[b].t[size_t(c)] += dt[size_t(c)];
+        }
     }
     // IK over the blend: each layer's chains reach its goals from the
     // blended body (an a2o animation's hands find the object even under a
     // carry pose of higher priority, which the trees leave on while reading
     // the paper).
     for (const auto& l : layers_) {
-        if (!l.target || l.target->ikChains.empty() || l.mirror)
+        // (A delta-only target's chains have delta goals: nothing to reach.)
+        if (!l.target || l.target->ikChains.empty() || l.mirror || !l.target->hasBaseChannels())
             continue;
         const float w = std::min(weight(l, now), 1.0f);
         if (w <= 0)

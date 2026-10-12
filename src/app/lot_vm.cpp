@@ -307,7 +307,9 @@ void LotSimulation::sampleAll(double at) {
             // of replacing it (the Sim in a chair kept its seat; inferred).
             if (b.partial >= 0)
                 b.actor->player.stop(at, fade, b.partial), b.partial = -1;
-            const bool partial = animated && !(anim.flags & 1);
+            // So does one that only adds to the bones (delta channels: the
+            // talking "SWAT" shifts are full-body by their flag).
+            const bool partial = animated && (!(anim.flags & 1) || anim.additive());
             if (partial)
                 b.partial = std::max<int>(1, anim.priority);
             const bool mirror = animated ? s.flipped : !s.climb.empty() ? s.turnMirror : (walkClip && s.walkMirror);

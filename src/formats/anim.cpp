@@ -287,6 +287,8 @@ std::vector<Xform> samplePose(const Animation::Target& target, const Skeleton& s
         float v[3];
         for (int k = 0; k < 3; ++k)
             v[k] = c.components[size_t(k)].sample(ticks, c.duration());
+        if (c.isDelta())
+            continue;
         Xform& x = pose[size_t(bone)];
         if (c.attribute() == Animation::Rotation && c.type() == Animation::EulerRotation)
             x.q = quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
@@ -294,6 +296,39 @@ std::vector<Xform> samplePose(const Animation::Target& target, const Skeleton& s
             x.t = {v[0], v[1], v[2]};
     }
     return pose;
+}
+
+bool DeltaPose::empty() const {
+    for (uint8_t h : has)
+        if (h)
+            return false;
+    return true;
+}
+
+DeltaPose sampleDeltas(const Animation::Target& target, const Skeleton& skeleton, float ticks) {
+    constexpr float kDegrees = 3.14159265358979f / 180.0f;
+    DeltaPose d;
+    d.delta.assign(skeleton.bones.size(), Xform{});
+    d.has.assign(skeleton.bones.size(), 0);
+    for (const auto& c : target.channels) {
+        if (!c.isDelta() || c.components.size() < 3)
+            continue;
+        const int bone = skeleton.find(c.name);
+        if (bone < 0)
+            continue;
+        float v[3];
+        for (int k = 0; k < 3; ++k)
+            v[k] = c.components[size_t(k)].sample(ticks, c.duration());
+        Xform& x = d.delta[size_t(bone)];
+        if (c.attribute() == Animation::Rotation && c.type() == Animation::EulerRotation) {
+            x.q = quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
+            d.has[size_t(bone)] |= 1;
+        } else if (c.attribute() == Animation::Translation && c.type() == Animation::TransformXYZ) {
+            x.t = {v[0], v[1], v[2]};
+            d.has[size_t(bone)] |= 2;
+        }
+    }
+    return d;
 }
 
 namespace {
@@ -544,6 +579,27 @@ std::map<std::string, AnimSnap> snapStateAt(const std::vector<AnimSnap>& snaps, 
         if (float(s.ticks) <= ticks)
             out[s.object] = s;
     return out;
+}
+
+bool Animation::Target::hasBaseChannels() const {
+    for (const auto& c : channels)
+        if (!c.isDelta() && (c.attribute() == Rotation || c.attribute() == Translation))
+            return true;
+    return false;
+}
+
+bool Animation::Target::hasDeltaChannels() const {
+    for (const auto& c : channels)
+        if (c.isDelta() && (c.attribute() == Rotation || c.attribute() == Translation))
+            return true;
+    return false;
+}
+
+bool Animation::additive() const {
+    const Target* t = findTarget(skeletonTag);
+    if (!t && !targets.empty())
+        t = &targets[0];
+    return t && t->hasDeltaChannels() && !t->hasBaseChannels();
 }
 
 const Animation::Target* Animation::findTarget(std::string_view tag) const {

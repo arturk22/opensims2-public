@@ -7,6 +7,7 @@
 #include "formats/sim.hpp"
 #include "formats/skeleton.hpp"
 
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <optional>
@@ -127,8 +128,8 @@ int cmdAnim(const char* res, const std::string& name, bool keys) {
         std::printf("target \"%s\" type=%u channels=%zu ik=%zu\n", t.tag.c_str(), t.animType, t.channels.size(),
                     t.ikChains.size());
         for (const auto& c : t.channels) {
-            std::printf("  %-26s attr=%u type=%u dur=%u ik=%d hash=0x%08X:", c.name.c_str(), c.attribute(), c.type(),
-                        c.duration(), c.ikChain(), c.nameHash);
+            std::printf("  %-26s attr=%u type=%u dur=%u ik=%d%s hash=0x%08X:", c.name.c_str(), c.attribute(), c.type(),
+                        c.duration(), c.ikChain(), c.isDelta() ? " delta" : "", c.nameHash);
             for (const auto& comp : c.components)
                 std::printf(" [%zu %s %s]", comp.keys.size(), curveName(comp.curve), valueName(comp.value));
             std::printf("\n");
@@ -303,19 +304,41 @@ int cmdSimParts(const char* res, const std::string& filter, bool resolve) {
 int cmdAnimSweep(const char* res) {
     ResourceIndex index(res);
     size_t total = 0, ok = 0;
-    std::map<std::string, size_t> errors, curves, values, attributes, tags;
+    std::map<std::string, size_t> errors, curves, values, attributes, tags, animTypes;
+    std::map<std::string, std::string> examples; // target tag and type: the first few animations
+    std::vector<std::string> deltaAnims;         // animations with delta channels
     size_t keys = 0, channels = 0;
     for (const auto& loc : index.ofType(kTypeAnim)) {
         ++total;
         try {
             const Animation a = parseAnim(index.read(loc));
             ++ok;
+            size_t deltas = 0, bases = 0;
+            for (const auto& t : a.targets)
+                for (const auto& c : t.channels)
+                    if (c.attribute() <= Animation::Translation)
+                        ++(c.isDelta() ? deltas : bases);
+            if (deltas)
+                deltaAnims.push_back(a.resource.fileName + " flags=" + std::to_string(a.flags) + " delta=" +
+                                     std::to_string(deltas) + " base=" + std::to_string(bases) +
+                                     " ticks=" + std::to_string(a.duration));
             for (const auto& t : a.targets) {
                 ++tags[t.tag];
+                std::string lower = t.tag;
+                for (char& ch : lower)
+                    ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                const std::string kind = lower + " type " + std::to_string(t.animType);
+                if (++animTypes[kind] <= 3)
+                    examples[kind] += " " + a.resource.fileName;
                 for (const auto& c : t.channels) {
                     ++channels;
                     ++attributes["attr " + std::to_string(c.attribute()) + " type " + std::to_string(c.type()) +
-                                 " x" + std::to_string(c.componentCount())];
+                                 " x" + std::to_string(c.componentCount()) + (c.isDelta() ? " delta" : "")];
+                    if (c.isDelta()) {
+                        const std::string dk = kind + " delta attr " + std::to_string(c.attribute());
+                        if (++animTypes[dk] <= 3)
+                            examples[dk] += " " + a.resource.fileName + ":" + c.name;
+                    }
                     for (const auto& comp : c.components) {
                         ++curves[curveName(comp.curve)];
                         ++values[valueName(comp.value)];
@@ -342,6 +365,15 @@ int cmdAnimSweep(const char* res) {
     dump("values", values, 10);
     dump("channel kinds", attributes, 30);
     dump("target tags", tags, 15);
+    // The targets' animation types (cAnimTarget::SetAnimType; 6 is a delta
+    // over the base channels: docs/primitives-mac.md §4), with examples.
+    std::printf("target types:\n");
+    for (const auto& [k, n] : animTypes)
+        std::printf("  %7zu %-28s%s\n", n, k.c_str(), examples[k].c_str());
+    std::sort(deltaAnims.begin(), deltaAnims.end());
+    std::printf("animations with delta channels (%zu):\n", deltaAnims.size());
+    for (const auto& d : deltaAnims)
+        std::printf("  %s\n", d.c_str());
     return ok == total ? 0 : 1;
 }
 

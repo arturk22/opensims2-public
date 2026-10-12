@@ -23,6 +23,10 @@ std::vector<bool> keyedBones(const Animation::Target& target, const Skeleton& sk
 void blendPose(std::vector<Xform>& from, const std::vector<Xform>& to, float weight,
                const std::vector<float>& mask = {});
 
+// q raised to the power w (the rotation's angle times w about its axis),
+// as the channel blender weighs a delta rotation.
+Quat deltaPower(const Quat& q, float w);
+
 // For each bone, its mirror twin: "l_..." <-> "r_..." (itself otherwise).
 std::vector<int> mirrorBones(const Skeleton& skeleton);
 
@@ -64,6 +68,7 @@ public:
     void setSkeleton(const Skeleton* skeleton) {
         skeleton_ = skeleton;
         twins_.clear();
+        deltaToIk_.clear();
     }
 
     struct Options {
@@ -139,10 +144,14 @@ private:
         int level = 0;
         float scale = 1; // Options::weight
         float rate = 1;  // Options::rate
+        bool delta = false; // has delta (additive) channels
     };
     // The layer's pose at `ticks`, turned by its frame (Options::turn).
     std::vector<Xform> layerPose(const Layer& l, float ticks) const;
     void prepareMirror();
+    // A layer's deltas mirrored left to right (and their per-bone weights with them).
+    DeltaPose mirrorDeltas(const DeltaPose& d, std::vector<float>& weights) const;
+    std::vector<bool> deltaToIk_; // bones whose deltas apply with no base channel
     std::vector<int> twins_;          // mirrorBones of the skeleton (empty until a flipped layer plays)
     std::vector<Xform> restWorld_;
     float weight(const Layer& l, double now) const;
