@@ -373,7 +373,8 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
         const Object* y = b.object(id);
         const std::string at = "object " + std::to_string(id) + ": ";
         if (!y) {
-            diff(at + "missing from the second");
+            diff(at + "missing from the second (" + (x.definition ? x.definition->fileName : std::string("?")) +
+                 (x.position.inWorld() ? "" : ", out of the world") + ")");
             continue;
         }
         const bool mainFailed = [&] {

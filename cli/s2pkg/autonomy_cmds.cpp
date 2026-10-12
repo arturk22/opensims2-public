@@ -464,15 +464,15 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                 if (!now.empty())
                     std::printf("  tick %6llu %s %-10s running \"%s\"\n", static_cast<unsigned long long>(machine.ticks),
                                 clockText(machine).c_str(), simName(*s).c_str(), now.c_str());
+                else
+                    std::printf("  tick %6llu %s %-10s done with \"%s\"\n", static_cast<unsigned long long>(machine.ticks),
+                                clockText(machine).c_str(), simName(*s).c_str(), running[id].c_str());
                 // S2PKG_FIRES=1: where the Sim is and whether it burns (object
                 // data 8 bit 0x200), on a line of its own.
                 if (static const bool fires = std::getenv("S2PKG_FIRES") != nullptr; fires)
                     std::printf("  tick %6llu   %s at (%.2f, %.2f, %d)%s\n", static_cast<unsigned long long>(machine.ticks),
                                 simName(*s).c_str(), s->position.x, s->position.y, s->position.level,
                                 (s->data[vm::objdata::Flags] & 0x200) ? " burning" : "");
-                else
-                    std::printf("  tick %6llu %s %-10s done with \"%s\"\n", static_cast<unsigned long long>(machine.ticks),
-                                clockText(machine).c_str(), simName(*s).c_str(), running[id].c_str());
                 running[id] = now;
             }
         }

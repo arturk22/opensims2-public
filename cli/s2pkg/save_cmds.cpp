@@ -76,6 +76,15 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     if (hood) {
         const LotObjects before = movedIn ? out.saved : LotObjects{};
         arrivals = addArrivingSims(out.saved, lot, source, code.index(), false);
+        // The same for an evicted family's lot: the save clears the lot's
+        // "evicted" flag (vm/hood_save.cpp), so the reload does not clean
+        // up after the eviction again (N001_Lot80: the global sim objects
+        // the first load made were thrown away and made again, without the
+        // objects they had made).
+        if (movedIn && (arrivals.evictedSims || arrivals.evictedObjects) && !arrivals.family) {
+            out.saved = before;
+            arrivals.evictedSims = arrivals.evictedObjects = 0;
+        }
         if (movedIn) {
             out.saved.globals = before.globals;
             out.saved.simulator = before.simulator;
@@ -97,6 +106,12 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
         vm::enterLot(m, vm::lotIdOf(source), hood->info ? int16_t(hood->info->id) : int16_t(0));
     }
     out.load = vm::loadLot(m, lot, out.saved, charactersDir);
+    if (std::getenv("S2PKG_LOAD_ERRORS"))
+        std::printf("  load: %zu states, %zu objects in the VM\n", out.saved.objects.size(), m.objects().size());
+    if (std::getenv("S2PKG_LOAD_ERRORS"))
+        for (const auto& e : out.load.objects)
+            if (!e.error.empty())
+                std::printf("  load: object %d (%s): %s\n", e.id, e.name.c_str(), e.error.c_str());
     if (hood)
         vm::bindLotSims(m);
     out.resumed = vm::startSavedLot(m, out.load, out.saved);

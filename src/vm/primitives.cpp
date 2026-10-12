@@ -617,6 +617,9 @@ Exit createObjectInstance(Context& c) {
         throw gameError(err::TemplateObject, hexString(guid));
     if (def->objectType() == 0x11)
         return Exit::False;
+    if (std::getenv("OS2_LOG_CREATE")) // who makes what, for looking into
+        std::fprintf(stderr, "t%llu %d in \"%s\" #%u creates \"%s\"\n", (unsigned long long)c.vm.ticks, c.me().id,
+                     c.frame.behavior->fileName.c_str(), c.frame.pc, def->fileName.c_str());
     const Object* materialSource = nullptr;
     if (flags2 & 0x02) {
         materialSource = c.vm.object(c.thread.temps[5]);

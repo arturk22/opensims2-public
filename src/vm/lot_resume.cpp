@@ -1,6 +1,9 @@
 // Starting a lot's objects from their saved state (lot_resume.hpp).
 
 #include "lot_resume.hpp"
+
+#include <cstdio>
+#include <cstdlib>
 #include "placement.hpp"
 
 #include "formats/lot_objects.hpp"
@@ -364,8 +367,12 @@ size_t updateSimObjects(VM& vm, bool casLot) {
         // Keep the first (lowest ID, inferred: the binary keeps the first of
         // its object list), kill the rest; all of them in a CAS lot.
         for (size_t i = mustNotExist ? 0 : 1; i < have.size(); ++i)
-            if (vm.object(have[i]))
+            if (vm.object(have[i])) {
+                if (std::getenv("OS2_LOG_CREATE"))
+                    std::fprintf(stderr, "load: global sim object %d (GUID %08X) deleted: %zu of its kind, %d kept\n",
+                                 have[i], g.guid, have.size(), mustNotExist ? -1 : have[0]);
                 deleteGroup(vm, have[i]);
+            }
         if (have.empty() && !mustNotExist) {
             // MakeNewOutOfWorldObject: Init, then the Main like any made object.
             const ObjectId id = createGhost(vm, g.group, g.instance);
