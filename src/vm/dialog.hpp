@@ -82,6 +82,7 @@ struct DialogEntry {
     std::string name;
     std::string detail;   // the neighbor's lot name, when known
     int relationship = 0; // daily + lifetime of the caller to it (CreateNeighborCallList)
+    int flags = 0;        // the caller's relationship flags to it (variable 1: crush, love, ..., friend, enemy)
 };
 
 // A name box of the name dialog (cTSWinProcNameObjectDialog): the neighbor
@@ -130,6 +131,11 @@ struct Dialog {
     std::vector<DialogEntry> entries;
     std::vector<int16_t> selection;
     int maxSelection = 0;
+    // The party's "at most N guests" line (0xC000; PreShow: button 1's
+    // string printed with temp 5; empty: hidden) and window title (button
+    // 2's string; empty: UIText's). The party shows the title and message
+    // over its two lists.
+    std::string caption, caption2;
     // The name dialog's boxes (one per newborn, or the Sim to rename), the
     // panel of the script (0xCDC2CAA4 rename, A5 one baby, A6 twins, A7 a
     // servo) and the box with the caret.

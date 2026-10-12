@@ -527,12 +527,20 @@ void setupPhone(Context& c, Dialog& d, Object* stack) {
             if (auto r = vm.relationships.find(key); r != vm.relationships.end()) {
                 const auto& vars = r->second;
                 e.relationship = (vars.size() > 0 ? vars[0] : 0) + (vars.size() > 2 ? vars[2] : 0);
+                e.flags = vars.size() > 1 ? (vars[1] & 0xFFFF) : 0;
             }
         }
         d.entries.push_back(std::move(e));
     }
     if (d.cls.cls == DialogClass::PhoneParty)
         d.maxSelection = c.thread.temps[5];
+    if (d.cls.cls == DialogClass::PhoneParty && !d.buttons.empty()) {
+        d.caption = d.buttons[0];
+        for (const char* f : {"%d", "%i", "%u"})
+            if (auto p = d.caption.find(f); p != std::string::npos)
+                d.caption.replace(p, 2, std::to_string(d.maxSelection));
+        d.caption2 = d.buttons.size() > 1 ? d.buttons[1] : std::string();
+    }
     else if (!d.entries.empty())
         d.selection = {d.entries[0].id};
 }
@@ -745,8 +753,11 @@ Exit dialog(Context& c) {
     case DialogClass::PhoneServices:
     case DialogClass::PhoneNeighbors:
     case DialogClass::PhoneParty:
-        d.buttons = {button(o[3], 1), button(o[4], 2)};
+        // The buttons are pictures (OK 0xAAAA, cancel 0xBBBB); the party
+        // prints bytes 3/4's strings elsewhere (setupPhone).
+        d.buttons = {expandDialogTokens(c, stringAt(strings, o[3])), expandDialogTokens(c, stringAt(strings, o[4]))};
         setupPhone(c, d, stack);
+        d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
         break;
     default: // the other special dialogs: OK or cancel for now
         d.buttons = {button(o[3], 1), button(o[0], 2)};

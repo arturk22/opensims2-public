@@ -458,6 +458,7 @@ void PieMenuHost::setPortrait(RgbaImage img) {
 PieMenuHost::PieMenuHost(vm::VM& vm, const std::filesystem::path& fontsDir, const std::string& simQuery)
     : vm_(&vm), fonts_(std::make_unique<FontLibrary>(fontsDir)) {
     sim_ = vm::findSim(vm, simQuery);
+    dlg_ = std::make_unique<DialogWindow>(vm, nullptr, fonts_.get());
 }
 
 PieMenuHost::~PieMenuHost() = default;
@@ -759,13 +760,8 @@ bool PieMenuHost::headAt(const Layout& l, simd_float2 p) const {
 
 void PieMenuHost::hover(simd_float2 p) {
     if (const vm::Dialog* d = dialog()) {
-        int h = -1;
-        if (const auto g = gameDialog(*d, canvasW_ ? canvasW_ : 1280, canvasH_ ? canvasH_ : 720))
-            for (size_t i = 0; i < g->buttons.size(); ++i)
-                if (p.x >= g->buttons[i][0] && p.x < g->buttons[i][2] && p.y >= g->buttons[i][1] && p.y < g->buttons[i][3])
-                    h = int(i);
-        if (h != dialogHover_)
-            dialogHover_ = h, dirty_ = true;
+        dlg_->hover(*d, p.x, p.y, canvasW_ ? canvasW_ : 1280, canvasH_ ? canvasH_ : 720);
+        dirty_ = true;
         return;
     }
     if (!open_)
@@ -877,308 +873,37 @@ std::string PieMenuHost::queueText(const vm::QueuedInteraction& q) const {
 }
 
 
-// --- The game's dialog window --------------------------------------------------
-// cTSObjectDialog's window is not a script of its own in ui.package that we
-// found: the Sims 2 yes/no box (0x6CA51466: frame 0xA9500615 drawn as edge,
-// title GenHeader, message GenSubHeader, 108x33 buttons 0xA96D0625) is the
-// look of every plain dialog of the game, and the name boxes (0x2D91050A) the
-// look of the text-entry ones. Which script the binary picks for each
-// type is inferred.
-namespace {
-constexpr uint32_t kYesNoScript = 0x6CA51466, kNameScript = 0x2D91050A, kBabyPanel = 0xCDC2CAA5;
-constexpr uint32_t kBtnYes = 0xA0001, kBtnNo = 0xA0002, kBtnCancel = 0xA0003, kBtnAccept = 0xA000;
-constexpr size_t kBabyNameMax = 18; // maxtext of the script's name boxes
-
-std::vector<std::string> wrapWords(const std::string& text, const std::function<float(const std::string&)>& measure,
-                                   float inner) {
-    std::vector<std::string> lines;
-    std::string para;
-    auto flush = [&] {
-        std::string line;
-        size_t i = 0;
-        while (i <= para.size()) {
-            const size_t sp = std::min(para.find(' ', i), para.size());
-            const std::string word = para.substr(i, sp - i);
-            const std::string next = line.empty() ? word : line + " " + word;
-            if (!line.empty() && measure(next) > inner) {
-                lines.push_back(line);
-                line = word;
-            } else {
-                line = next;
-            }
-            i = sp + 1;
-        }
-        lines.push_back(line);
-        para.clear();
-    };
-    for (char ch : text) {
-        if (ch == '\r')
-            continue;
-        if (ch == '\n')
-            flush();
-        else
-            para += ch;
-    }
-    flush();
-    while (!lines.empty() && lines.back().empty())
-        lines.pop_back();
-    return lines;
-}
-
-bool hasTextBox(const vm::Dialog& d) { return d.type == vm::dialogtype::TextEntry || d.type == vm::dialogtype::BabyName; }
-} // namespace
+// --- The dialog window (app/dialog_window.hpp) -----------------------------------
 
 void PieMenuHost::setResources(ResourceIndex& index, const std::filesystem::path& resDir) {
     dlgRes_ = std::make_unique<UiResources>(index, resDir);
-    auto load = [&](uint32_t id, UiScript& out) {
-        if (auto s = dlgRes_->script(id); s && !s->roots.empty())
-            out = std::move(*s);
-    };
-    load(kYesNoScript, yesNoScript_);
-    load(kNameScript, nameScript_);
+    auto thumbs = dlg_ ? dlg_->thumbnail : nullptr;
+    dlg_ = std::make_unique<DialogWindow>(*vm_, dlgRes_.get(), fonts_.get());
+    dlg_->thumbnail = thumbs;
+    dirty_ = true;
+}
+
+void PieMenuHost::setDialogThumbnails(std::function<const RgbaImage*(int16_t, int16_t)> f) {
+    dlg_->thumbnail = std::move(f);
     dirty_ = true;
 }
 
 bool PieMenuHost::dialogHasTextBox() const {
     const vm::Dialog* d = dialog();
-    return d && hasTextBox(*d);
-}
-
-std::optional<PieMenuHost::GameDialog> PieMenuHost::gameDialog(const vm::Dialog& d, int width, int height) const {
-    if (!dlgRes_ || yesNoScript_.roots.empty() || nameScript_.roots.empty())
-        return std::nullopt;
-    const UiElement& yn = yesNoScript_.roots.front();
-    if (yn.children.size() < 5)
-        return std::nullopt;
-    GameDialog g;
-    UiElement root;
-    root.tag = "LEGACY";
-    root.attrs = {{"clsid", "GZWinGen"}, {"id", "0x0"}, {"winflag_visible", "yes"}};
-    auto place = [](UiElement e, float x0, float y0, float x1, float y1) {
-        e.set("area", uiArea(int(x0), int(y0), int(x1), int(y1)));
-        e.set("winflag_visible", "yes");
-        return e;
-    };
-    auto fontWidth = [&](const char* style) {
-        const FontStyle* st = fonts_->style(style);
-        const Font* f = st ? fonts_->font(*st) : nullptr;
-        const float ppem = st ? float(st->size) : 14.0f;
-        return std::function<float(const std::string&)>([f, ppem](const std::string& s) {
-            return f ? measureText(*f, decodeUtf8(s), ppem).width : 7.0f * float(s.size());
-        });
-    };
-    auto fontHeight = [&](const char* style) {
-        const FontStyle* st = fonts_->style(style);
-        const Font* f = st ? fonts_->font(*st) : nullptr;
-        if (!f)
-            return 18.0f;
-        const TextMetrics m = measureText(*f, U"", float(st->size));
-        return std::ceil(m.ascent + m.descent) + 2;
-    };
-
-    if (d.type == vm::dialogtype::BabyName) {
-        // The "baby" panel of the name script, as it is (330x220, one baby).
-        const UiElement* panel = nameScript_.roots.front().child(kBabyPanel);
-        if (!panel)
-            return std::nullopt;
-        g.baby = true;
-        g.root = place(*panel, 0, 0, 330, 220);
-        for (auto& c : g.root.children)
-            c.set("winflag_visible", "yes");
-        g.textId = 1, g.messageId = 0x8DC2D562, g.buttonIds = {kBtnAccept};
-        g.x0 = std::round((float(width) - 330) / 2), g.y0 = std::round((float(height) - 220) / 2);
-        g.x1 = g.x0 + 330, g.y1 = g.y0 + 220;
-        g.buttons = {{g.x0 + 140, g.y0 + 173, g.x0 + 182, g.y0 + 206}};
-        g.textBox = {g.x0 + 75, g.y0 + 121, g.x0 + 307, g.y0 + 147};
-        return g;
-    }
-
-    const float W = std::min(430.0f, float(width) - 40), areaW = W - 36;
-    const auto msgWidth = fontWidth("GenSubHeader"), titleWidth = fontWidth("GenHeader");
-    const float msgLine = fontHeight("GenSubHeader");
-    g.lines = wrapWords(d.message, msgWidth, areaW - 10);
-    std::vector<UiElement> kids;
-    float y = 13;
-    const UiElement& frame = yn.children[0];
-    const UiElement& title = yn.children[1];
-    UiElement message = yn.children[2];
-    if (!d.title.empty()) {
-        const auto tl = wrapWords(d.title, titleWidth, areaW - 10);
-        const float th = std::max(32.0f, float(tl.size()) * fontHeight("GenHeader") + 10);
-        UiElement t = place(title, 18, y, 18 + areaW, y + th);
-        g.titleId = 0x7117E;
-        t.set("id", "0x7117E");
-        kids.push_back(t);
-        y += th - 1;
-    }
-    const float mh = std::max(1.0f, float(g.lines.size())) * msgLine + 10;
-    g.messageId = 0xA0000;
-    kids.push_back(place(message, 18, y, 18 + areaW, y + mh));
-    y += mh + 8;
-    // The frame's edge image is cut in thirds (62 px at the bottom): not shorter than the script's own.
-    y = std::max(y, 98.0f);
-    const bool text = hasTextBox(d);
-    if (text) {
-        const UiElement* nameRoot = nameScript_.roots.front().child(0xCDC2CAA4);
-        if (!nameRoot || nameRoot->children.size() < 4)
-            return std::nullopt;
-        kids.push_back(place(nameRoot->children[2], 30, y, W - 30, y + 33));
-        UiElement edit = place(nameRoot->children[3], 31, y + 4, W - 31, y + 31);
-        edit.set("id", "0x7117F");
-        g.textId = 0x7117F;
-        g.textBox = {30, y + 4, W - 31, y + 31};
-        kids.push_back(edit);
-        y += 33 + 10;
-    }
-    // Buttons: the type's own (yes, no, cancel; or one OK/accept).
-    const size_t n = d.buttons.size();
-    std::vector<float> bw;
-    float total = 0;
-    const bool check = d.type == vm::dialogtype::TextEntry; // the name boxes' accept button (a tick)
-    for (size_t i = 0; i < n; ++i) {
-        bw.push_back(check ? 42.0f : std::max(108.0f, fontWidth("NeighborhoodSubHeader")(d.buttons[i]) + 30));
-        total += bw.back();
-    }
-    const float gap = n == 2 ? 24.0f : 12.0f;
-    total += gap * float(n ? n - 1 : 0);
-    float x = std::round((W - total) / 2);
-    const UiElement* accept = nameScript_.roots.front().child(0xCDC2CAA4)
-                                  ? nameScript_.roots.front().child(0xCDC2CAA4)->child(kBtnAccept)
-                                  : nullptr;
-    for (size_t i = 0; i < n; ++i) {
-        UiElement b = check && accept ? *accept : yn.children[3];
-        const uint32_t id = check ? kBtnAccept : i == 0 ? kBtnYes : i == 1 ? kBtnNo : kBtnCancel;
-        b.set("id", "0x" + [&] {
-            char buf[16];
-            std::snprintf(buf, sizeof buf, "%X", id);
-            return std::string(buf);
-        }());
-        b.set("showcaption", check ? "no" : "yes");
-        kids.push_back(place(b, x, y, x + bw[i], y + 33));
-        g.buttonIds.push_back(id);
-        g.buttons.push_back({x, y, x + bw[i], y + 33}); // made canvas-relative below
-        x += bw[i] + gap;
-    }
-    y += 33 + 14;
-    const float H = y;
-    UiElement fr = place(frame, 0, 0, W, H);
-    root.children.push_back(fr);
-    for (auto& k : kids)
-        root.children.push_back(std::move(k));
-    root.set("area", uiArea(0, 0, int(W), int(H)));
-    g.root = std::move(root);
-    g.x0 = std::round((float(width) - W) / 2), g.y0 = std::round((float(height) - H) / 2);
-    g.x1 = g.x0 + W, g.y1 = g.y0 + H;
-    for (auto& b : g.buttons)
-        b = {b[0] + g.x0, b[1] + g.y0, b[2] + g.x0, b[3] + g.y0};
-    if (text)
-        g.textBox = {g.textBox[0] + g.x0, g.textBox[1] + g.y0, g.textBox[2] + g.x0, g.textBox[3] + g.y0};
-    return g;
-}
-
-void PieMenuHost::drawGameDialog(UiScreen& out, const vm::Dialog& d, const GameDialog& g) {
-    UiDrawHooks hk;
-    const UiElement& root = g.root;
-    auto find = [&](uint32_t id) -> const UiElement* {
-        if (const UiElement* e = root.child(id))
-            return e;
-        for (const auto& c : root.children)
-            if (const UiElement* e = c.child(id))
-                return e;
-        return nullptr;
-    };
-    for (size_t i = 0; i < g.buttonIds.size(); ++i)
-        if (const UiElement* b = find(g.buttonIds[i])) {
-            hk.buttonState[b] = int(i) == dialogHover_ ? 3 : 1;
-            if (i < d.buttons.size())
-                hk.captions[b] = d.buttons[i];
-        }
-    if (const UiElement* m = find(g.messageId)) {
-        std::string msg = d.message;
-        if (g.baby && msg.empty()) // the script's own text
-            msg = m->get("caption");
-        hk.captions[m] = msg;
-    }
-    if (g.baby) {
-        // The panel's title is the dialog's own if it has one; the gender icon of the baby.
-        for (const auto& c : root.children) {
-            if (c.id() == 0x1A) // girl
-                (d.female ? hk.show : hk.hide).insert(&c);
-            if (c.id() == 0x2A) // boy
-                (d.female ? hk.hide : hk.show).insert(&c);
-            if (c.clsid() == "GZWinText" && c.id() == 0 && !d.title.empty())
-                hk.captions[&c] = d.title;
-        }
-    } else if (const UiElement* t = find(g.titleId); t && g.titleId)
-        hk.captions[t] = d.title;
-    if (const UiElement* e = g.textId ? find(g.textId) : nullptr) {
-        hk.captions[e] = d.text;
-        // The caret, blinking at the script's caretperiod (1000 ms).
-        const FontStyle* st = fonts_->style(e->get("font", "NeighborhoodButton"));
-        const Font* f = st ? fonts_->font(*st) : nullptr;
-        const float ppem = st ? float(st->size) : 14.0f;
-        const bool on = std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(), 1.0) < 0.5;
-        const std::string typed = d.text;
-        hk.after[e] = [f, ppem, typed, on](UiScreen& o, float x, float y, float, float h) {
-            if (!on)
-                return;
-            const float tw = f ? measureText(*f, decodeUtf8(typed), ppem).width : 0.0f;
-            UiQuad q;
-            q.x0 = std::round(x + 5 + tw + 1), q.x1 = q.x0 + 1;
-            q.y0 = y + 4, q.y1 = y + h - 4;
-            q.color = {5 / 255.0f, 6 / 255.0f, 113 / 255.0f, 1};
-            o.quads.push_back(q);
-        };
-    }
-    layoutUiElement(root, g.x0, g.y0, *dlgRes_, *fonts_, out, hk);
+    return d && DialogWindow::hasTextBox(*d);
 }
 
 bool PieMenuHost::dialogKey(int keyCode, const std::string& typed) {
     const vm::Dialog* d = dialog();
     if (!d)
         return false;
-    constexpr int kReturn = 36, kEnter = 76, kEscape = 53, kBackspace = 51;
-    vm::Dialog& open = vm_->dialogs[d->me];
-    auto answer = [&](int index) {
-        if (index < 0 || index >= int(open.buttons.size()))
-            return;
-        open.answer = index;
-        std::printf("opensims2: dialog \"%s\": %s\n", open.title.c_str(), open.buttons[size_t(index)].c_str());
-        std::fflush(stdout);
-    };
     dirty_ = true;
-    if (keyCode == kReturn || keyCode == kEnter) {
-        answer(0);
-        return true;
-    }
-    if (keyCode == kEscape) {
-        // Yes/no and yes/no/cancel: the last button (no / cancel), as the dialog's time limit does.
-        if (open.type == vm::dialogtype::YesNo || open.type == vm::dialogtype::YesNoCancel)
-            answer(int(open.buttons.size()) - 1);
-        return true;
-    }
-    if (!hasTextBox(open))
-        return true;
-    if (editedDialog_ != open.id) // the default name is selected: a key replaces it
-        editedDialog_ = open.id, open.text.clear();
-    if (keyCode == kBackspace) {
-        while (!open.text.empty() && (uint8_t(open.text.back()) & 0xC0) == 0x80)
-            open.text.pop_back();
-        if (!open.text.empty())
-            open.text.pop_back();
-        return true;
-    }
-    for (char c : typed)
-        if (uint8_t(c) >= 0x20 && c != 0x7F && open.text.size() < kBabyNameMax)
-            open.text += c;
-    return true;
+    return dlg_->key(const_cast<vm::Dialog&>(*d), keyCode, typed);
 }
 
 void PieMenuHost::setDialogText(const std::string& text) {
-    if (const vm::Dialog* d = dialog(); d && hasTextBox(*d)) {
-        vm::Dialog& open = vm_->dialogs[d->me];
-        open.text = text.substr(0, kBabyNameMax);
-        editedDialog_ = open.id;
+    if (const vm::Dialog* d = dialog(); d && DialogWindow::hasTextBox(*d)) {
+        DialogWindow::editText(const_cast<vm::Dialog&>(*d)) = text;
         dirty_ = true;
     }
 }
@@ -1257,21 +982,8 @@ bool PieMenuHost::clickDialog(simd_float2 p) {
     if (!d)
         return false;
     const int cw = canvasW_ ? canvasW_ : 1280, ch = canvasH_ ? canvasH_ : 720;
-    const auto game = gameDialog(*d, cw, ch);
-    const DialogLayout l = game ? DialogLayout{game->x0, game->y0, game->x1, game->y1, {}, game->buttons}
-                                : dialogLayout(*d, cw, ch);
-    for (size_t i = 0; i < l.buttons.size(); ++i) {
-        const auto& b = l.buttons[i];
-        if (p.x >= b[0] && p.x < b[2] && p.y >= b[1] && p.y < b[3]) {
-            vm::Dialog& open = vm_->dialogs[d->me];
-            open.answer = int(i);
-            std::printf("opensims2: dialog \"%s\": %s\n", open.title.c_str(), open.buttons[i].c_str());
-            std::fflush(stdout);
-            dirty_ = true;
-            return true;
-        }
-    }
-    return false;
+    dirty_ = true;
+    return dlg_->click(const_cast<vm::Dialog&>(*d), p.x, p.y, cw, ch);
 }
 
 UiScreen PieMenuHost::screen(int width, int height) {
@@ -1327,8 +1039,8 @@ UiScreen PieMenuHost::screen(int width, int height) {
     // The dialog waiting for the player, over everything.
     if (const vm::Dialog* d = dialog()) {
         paint.rect(0, 0, float(width), float(height), kDim);
-        if (const auto game = gameDialog(*d, width, height)) {
-            drawGameDialog(out, *d, *game);
+        if (dlgRes_) {
+            dlg_->draw(out, *d, width, height);
             return out;
         }
         const DialogLayout l = dialogLayout(*d, width, height);
@@ -1378,7 +1090,7 @@ void PieMenuHost::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_
     if (const vm::Dialog* d = dialog()) {
         stamp = (stamp ^ (uint64_t(d->id) << 8)) * 1099511628211ull;
         stamp = (stamp ^ std::hash<std::string>{}(d->text)) * 1099511628211ull;
-        if (hasTextBox(*d)) // the caret blinks
+        if (DialogWindow::hasTextBox(*d)) // the caret blinks
             stamp = (stamp ^ uint64_t(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count() * 2)) *
                     1099511628211ull;
     }

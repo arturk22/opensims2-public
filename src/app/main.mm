@@ -57,6 +57,7 @@
 #include <QuartzCore/QuartzCore.hpp>
 
 #include "app/cinematic_player.hpp"
+#include "app/ui_panel_util.hpp"
 #include "app/loading_screen.hpp"
 #include "formats/catalog.hpp"
 #include "app/scene_loader.hpp"
@@ -598,6 +599,7 @@ bool selectFamilySim(os2::vm::ObjectId id);
 void selectNextFamilySim();
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
+const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor);
 
 // The camera shows the selected Sim's level (cCameraLive::Update).
 void followSelectedSim() {
@@ -1055,33 +1057,81 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
-    // --dialog-demo <type>[:<title>[:<message>]]: test aid, puts a dialog of that Dialog type (0 message,
-    // 1 yes/no, 2 yes/no/cancel, 3 text entry, 23 baby name; "g" after the 23 = a girl) up for the selected Sim,
-    // to see the window (answer it with --dialog-click / --dialog-type, or keys).
+    // --dialog-demo <type>[:<title>[:<message>]]: test aid, puts a dialog of that Dialog type up for the
+    // selected Sim, to see the window (answer it with --dialog-click / --dialog-type, or keys): 0 message,
+    // 1 yes/no, 2 yes/no/cancel, 3 text entry ("0i": a message with the Sim's icon, "0c": with a close box),
+    // 23 baby name ("23g" a girl, "23t" twins, "23r" a rename), 5 services / 6 invite / 7 party phone books
+    // over the lot's objects and neighbors.
     if (auto spec = argument(@"--dialog-demo"); spec && gPie) {
+        os2::vm::VM& m = gSimulation->machine();
         os2::vm::Dialog d;
         d.id = 0x7000;
         d.me = gPie->sim();
         d.type = std::atoi(spec->c_str());
+        d.cls = os2::vm::dialogClass(d.type);
         std::vector<std::string> parts{""};
         for (char ch : *spec)
             if (ch == ':')
                 parts.emplace_back();
             else
                 parts.back().push_back(ch);
+        const std::string kind = parts[0];
         d.title = parts.size() > 1 ? parts[1] : "";
-        d.message = parts.size() > 2 ? parts[2] : "Isto \u00e9 uma mensagem de teste do di\u00e1logo, longa o bastante para quebrar em mais de uma linha na janela.";
-        d.female = parts[0] == "23g";
+        d.message = parts.size() > 2 ? parts[2] : "Isto é uma mensagem de teste do diálogo, longa o bastante para quebrar em mais de uma linha na janela.";
         using namespace os2::vm::dialogtype;
         if (d.type == YesNo)
-            d.buttons = {"Sim", "N\u00e3o"};
+            d.buttons = {"Sim", "Não"};
         else if (d.type == YesNoCancel)
-            d.buttons = {"Sim", "N\u00e3o", "Cancelar"};
-        else
+            d.buttons = {"Sim", "Não", "Cancelar"};
+        else if (d.cls.cls == os2::vm::DialogClass::Object)
             d.buttons = {"OK"};
-        if (d.type == BabyName)
-            d.text = d.female ? "Bebezinha" : "Bebezinho";
-        gSimulation->machine().dialogs[d.me] = std::move(d);
+        else
+            d.buttons = {"OK", "Cancelar"};
+        if (kind == "0i")
+            d.iconObject = gPie->sim();
+        if (kind == "0c")
+            d.continueOthers = true;
+        if (d.type == BabyName) {
+            const bool girl = kind == "23g";
+            d.names.push_back({0, girl ? "Bebezinha" : "Bebezinho", girl});
+            if (kind == "23t")
+                d.names.push_back({0, "Bebezinha", true});
+            d.namePanel = kind == "23r" ? 0xCDC2CAA4 : d.names.size() > 1 ? 0xCDC2CAA6 : 0xCDC2CAA5;
+            d.message.clear();
+        }
+        if (d.cls.cls == os2::vm::DialogClass::PhoneServices) {
+            d.message.clear();
+            for (const auto& [oid, o] : m.objects())
+                if (!o.person && o.definition && d.entries.size() < 8) {
+                    os2::vm::DialogEntry e;
+                    e.id = oid;
+                    e.name = os2::vm::displayName(m, o);
+                    if (!e.name.empty())
+                        d.entries.push_back(std::move(e));
+                }
+            if (!d.entries.empty())
+                d.selection = {d.entries[0].id};
+        }
+        if (d.cls.cls == os2::vm::DialogClass::PhoneNeighbors || d.cls.cls == os2::vm::DialogClass::PhoneParty) {
+            d.message.clear();
+            for (const auto& [id, n] : m.neighbors)
+                if (!n.firstName.empty() && d.entries.size() < 9) {
+                    os2::vm::DialogEntry e;
+                    e.id = id;
+                    e.guid = n.guid;
+                    e.name = n.lastName.empty() ? n.firstName : n.firstName + " " + n.lastName;
+                    e.flags = d.entries.size() % 3 == 0 ? 16 : d.entries.size() % 4 == 1 ? 1 : 0;
+                    d.entries.push_back(std::move(e));
+                }
+            if (d.cls.cls == os2::vm::DialogClass::PhoneParty) {
+                d.maxSelection = 10;
+                if (d.entries.size() > 2)
+                    d.selection = {d.entries[1].id, d.entries[2].id};
+            } else if (!d.entries.empty()) {
+                d.selection = {d.entries[0].id};
+            }
+        }
+        m.dialogs[d.me] = std::move(d);
     }
     try {
         const auto plumbob = os2::loadObjectModel(index, "plumbob");
@@ -1109,6 +1159,7 @@ void setupPieMenu(os2::ResourceIndex& index) {
     if (auto p = simPortrait(gPie->sim()))
         gPie->setPortrait(std::move(*p));
     gPie->setResources(index, gameDir() / "TSData/Res"); // the dialog window's scripts
+    gPie->setDialogThumbnails(dialogThumbnail);
     if (gAudio)
         gPie->setSoundPlayer([](const std::string& name) {
             os2::SoundSystem::PlayOptions o;
@@ -1175,6 +1226,55 @@ std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId) {
     } catch (const std::exception&) {
     }
     return std::nullopt;
+}
+
+// The dialogs' 40x40 pictures (DialogWindow::thumbnail): a Sim's portrait
+// (on the lot, else the neighborhood's character file), an object's
+// catalog thumbnail (ObjectThumbnails.package, keyed as the live UI keys it).
+const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor) {
+    static std::map<std::pair<int16_t, int16_t>, std::unique_ptr<os2::RgbaImage>> cache;
+    static std::unique_ptr<os2::DbpfPackage> thumbs;
+    static std::map<uint32_t, const os2::DbpfEntry*> thumbIndex;
+    if (!gSimulation)
+        return nullptr;
+    const auto key = std::make_pair(object, neighbor);
+    if (auto it = cache.find(key); it != cache.end())
+        return it->second.get();
+    std::optional<os2::RgbaImage> img;
+    os2::vm::VM& m = gSimulation->machine();
+    if (const os2::vm::Object* o = object ? m.object(object) : nullptr) {
+        if (o->person) {
+            img = simPortrait(object);
+            if (!img)
+                img = neighborPortrait(o->person->data[os2::vm::persondata::NeighborId]);
+        } else if (o->definition) {
+            try {
+                if (!thumbs) {
+                    thumbs = std::make_unique<os2::DbpfPackage>(gameDir() / "TSData/Res/UserData/Thumbnails/ObjectThumbnails.package");
+                    for (const auto& e : thumbs->entries())
+                        thumbIndex.emplace(e.tgi.instance, &e);
+                }
+                const os2::vm::Object* lead = m.object(os2::vm::multiTileGroup(*o));
+                const os2::vm::Object& t = lead && lead->definition ? *lead : *o;
+                if (const os2::StringTable* names = m.code().strings(t.group, 0x85)) {
+                    const std::string model = names->get(t.definition->modelIndex(), os2::lang::EnglishUS);
+                    if (auto e = thumbIndex.find(os2::objectThumbnailInstance(t.group, model)); e != thumbIndex.end())
+                        img = os2::decodeUiImage(thumbs->read(*e->second));
+                }
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: dialog thumbnail: %s\n", e.what());
+            }
+        }
+    } else if (neighbor) {
+        if (const os2::vm::Object* sim = m.neighborSim(neighbor))
+            img = simPortrait(sim->id);
+        if (!img)
+            img = neighborPortrait(neighbor);
+    }
+    auto& slot = cache[key];
+    if (img)
+        slot = std::make_unique<os2::RgbaImage>(std::move(*img));
+    return slot.get();
 }
 
 // --ui live: the live-mode panel (app/live_ui.hpp) in place of the pie
