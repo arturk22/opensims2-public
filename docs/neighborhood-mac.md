@@ -1170,3 +1170,92 @@ de família; o `app/head_shot.*` do opensims2 é inferido):
 Para o opensims2: trocar o "0,8 de proximidade" inferido por esta caixa
 de 0,30 em volta do osso `head` e o enquadramento por ajuste do fov.
 
+
+## 16. Rodada 13 (frente do bairro 5): no app
+
+O que o §15 leu, agora no opensims2, mais o que esta frente leu no binário
+(o mesmo Ghidra headless).
+
+- **`FlattenAbuttingRoadsIfPossible`** (`hood::flattenAbuttingRoads`,
+  `formats/hood_lots.*`): o lote vazio novo nivela as ruas das quatro tiras
+  de fora (§15.2) antes de alisar o terreno; as ruas mexidas são deitadas de
+  novo no terreno, cada canto 0,4 acima do seu vértice (**inferido**: o
+  `SmoothenRoadsConnectedToLot` chama a vtable `0x5c(1)` da rua, lida como o
+  `FlattenToTerrain`; o `SmoothenContainingRoadSegment` das ruas de fora do
+  anel não foi reproduzido; pontes ficam de fora). O recurso de ocupantes
+  ganhou `Occupants::setRoadHeights` (só o z dos cantos). Inferido também:
+  a vtable `0x50(ret, 1)` do tool é o `ExpandVertexRect` de 1, e o lote do
+  bairro (vtable `0xec`) o primeiro que cruza o retângulo. Teste em
+  `tests/test_hood_moves.cpp`; em N001, um 4x3 em (80, 8) nivela 2 ruas
+  para 329,625 e o `hood-lot-check` continua passando todos.
+- **`RotateLot`** (`hood::frontFromDrag`, `HoodMode::mouseDragged/mouseUp`):
+  com um lote na mão (vazio, da caixa ou movido) apertar guarda o ponto do
+  chão; arrastar com o botão apertado gira (a frente segue a direção do
+  arrasto, zona morta de 16 unidades), o lote não anda; soltar põe o lote
+  (o lote vazio pede o nome), inválido continua na mão. Os passos `--click`
+  sem tela apertam e soltam no mesmo ponto; `--hood-drag dx,dy` (unidades
+  do mundo) depois de `--hood-place-at` arrasta a partir do meio do lote.
+  `r13-bairro-girar-arrastando.jpg` (frente 0 válida; arrastado para +x,
+  frente 2, sem rua, vermelho).
+- **Decorações** (§15.4; `hood::decorationError`): flora → lista de flora,
+  o resto → enfeites (confirmado: `FUN_00b36510` dá o `ObjectType` pelo sort
+  — flora 0, stone 1, landmark 2, effects 3, misc 4 — e o
+  `InstantiateObjectForCatalogProduct` cria flora para 0, enfeite para
+  1–4). Os erros são os índices do STR# 0x89 do `Text/Neighborhood.package`
+  (1 lote, 2 rua, 3 terra, 4 água; "Não pode ser colocado dentro de
+  lotes.", ...), checados nessa ordem: lote (`removeonlotplop` ou sem
+  `allowedinlot`, retângulo de tiles), cada tile do retângulo todo terra
+  (`IsCompletelyLandTile`, vtable `0x98`: nenhum vértice abaixo do mar) ou
+  toda água (`IsCompletelyWaterTile`, `0x94`: os 4 abaixo), rua pelo volume
+  (inclusivo). Os getters do produto: `0xd0` allowedinlot (`+0xcc`, padrão
+  1), `0xd4` removeonlotplop (`+0xce`), `0xd8` allowedonroad (`+0xcd`),
+  `0xdc` placementsurface (`+0xd0`, padrão 2). O z segue o §15.4. A recusa
+  aparece na tela como a dica do jogo (`ShowErrorTooltip`: a janela de dica
+  do gerente de janelas por 3000 ms no ponto; aqui uma caixa como as dicas
+  do modo vivo, ao lado do ponto clicado; o visual é inferido).
+  `r13-bairro-decoracao-recusada.jpg`.
+- **"Ver Amigos"** (§15.3): amigos e parentes iguais; o lote de cada um
+  ganha o realce "DefaultLotHighlight" (branco a 0,3, como o realce do
+  mouse: inferido) e um arco verde "RelationshipArchGreen" do meio do lote
+  da família (largura 1, 45°, as pontas 2 abaixo do chão; a forma — uma fita
+  z = x(1 − x) do comprimento — é inferida; o material também). Antes:
+  azul e violeta inferidos. Os membros da família são IDs de vizinho; um
+  vizinho conta se tem família (dado 61) e não é da família.
+  `r13-bairro-ver-amigos-arcos.jpg`.
+- **Cabeças** (§15.5): a pose `<idade>-UIpose-<M|F>NN` (o número fixo por
+  arquivo de personagem; o jogo sorteia), a caixa de 0,30 em volta do osso
+  `head`, a câmera de frente à distância que cabe a caixa no fov (30°,
+  **inferido**: o fov da câmera do jogo não foi lido) mais 2 × a
+  profundidade, e a luz "UIUCPHead" do `Lights/LightRig.txt` (recurso
+  "UIPieMenu": `UIPieMenu_cres` do `Sims3D/LightRigs.package`, cinco luzes
+  direcionais key/bottomFill/rightFill/rightRim/leftRim, com as intensidades
+  e cores do `Lights/LightRigs/PieMenu.txt`); a direção de cada luz é o +Z
+  do seu nó (**inferido**; dá a key de frente e de cima, os rims atrás e o
+  bottomFill de baixo, como os nomes dizem). Saiu o clareamento inferido.
+  `r13-bairro-cabecas-rig.jpg`.
+- **Opções** (`app/options_panel.*`, `formats/graphics_options.hpp`): cada
+  grupo de rádio das janelas Gráficos e Câmera é uma opção (`Shadows`,
+  `LightingQuality`, `EffectsQuality`, `ObjectDetail`, `MaterialDetail`,
+  `Reflection`, `UITransparency`, `SquarePixels`, `ObjectHiding`; `LivePIP`,
+  `SpecialEventCamera`, `NeighborhoodCameraDrift`, `SnapshotSize`,
+  `SnapshotQuality`, `VideoSize`, `VideoSound`, `VideoQuality`) gravada no
+  `Options.txt` como `option.<nome> = <n>` (1 = o primeiro botão). O motor
+  honra, como o `Graphics Rules.sgr` define: **Shadows** baixo = sem `guob`
+  (os planos de sombra no chão dos objetos, "groundshadow"/"*wallshadow") e
+  sem `heightMapShadows` (a sombra dos morros no terreno do bairro); médio e
+  alto com os dois (simShadows/objectShadows não existem aqui);
+  **Reflection** = `reflectionWithExtraViewer`/`nhoodWaterReflection` (o
+  espelho da frente r13-objects-render lê `graphicsOptions().
+  reflectionWithExtraViewer`); **LightingQuality** baixo = sem
+  `specHighlights`. Vale para o que carrega depois (o jogo aplica no
+  "Aplicar Mudanças"). A rolagem nas bordas já ia para o `Options.txt`. Não
+  há "distância de visão" nem "velocidade da câmera" no jogo base.
+  `r13-bairro-opcoes-sombras.jpg` (padrão × Sombras Desligado + Iluminação
+  Baixo: a sombra do morro some).
+- **Diálogo "yes-no"** (QA ao vivo): o título vinha do rótulo do editor do
+  tipo (STR# 0xD9) quando o diálogo não tem título; o jogo usa só a string
+  do título (byte 6 ou temp 3 com a flag 0x10) — 172 dos 176 diálogos
+  sim/não dos objetos não têm nenhuma (o "Ei $NeighborLocal:1, ... pode
+  falar agora?" do telefone, `Answer - Call Not for Answering Sim`, título
+  0). Agora, sem título, a caixa não tem barra de título (como o FreeSO).
+  Inferido: a janela do jogo (`cTSObjectDialog`) não foi decodificada.
