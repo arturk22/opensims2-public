@@ -35,6 +35,7 @@ enum : uint {
     kOverlayMore = 1u << 20, // bits 20-24: textures 13-17 over the base by their alpha, after overlay 3
     kTwoSidedLight = 1u << 25, // lit from both sides, wrapped (Sim hair)
     kUnderlayFlat = 1u << 26,  // the underlay's average colour (its smallest mip)
+    kWallMask = 1u << 27,      // walls with a door or window: alpha test against the mask (texture 1)
 };
 
 struct Draw {
@@ -47,6 +48,7 @@ struct Draw {
     float4 uv0;      // base uv: u' = dot(uv0.xyz, (u, v, 1))
     float4 uv1;      //          v' = dot(uv1.xyz, (u, v, 1))
     float4 misc;     // x: cel edge offset, y: bump strength, z: detail uv scale, w: water speed
+    float4 maskV;    // kWallMask: mask u = dot(mask.xyz, p) + mask.w, v = dot(maskV.xyz, p) + maskV.w (model space)
     float alphaRef;
     uint flags;
     uint lightSet;   // index into the light sets (buffer 3)
@@ -93,6 +95,7 @@ struct VertexOut {
     float2 uv;     // as stored
     float2 baseUv; // with the texture coordinate animation
     float2 local;  // model-space xy
+    float3 localPos; // model-space position
     float2 lightUv;
     float4 color;
 };
@@ -111,6 +114,7 @@ vertex VertexOut vertex_main(uint vid [[vertex_id]],
     const float3 uv1 = float3(v.uv, 1.0);
     out.baseUv = float2(dot(draw.uv0.xyz, uv1), dot(draw.uv1.xyz, uv1));
     out.local = float3(v.position).xy;
+    out.localPos = float3(v.position);
     out.lightUv = v.uv2;
     out.color = float4((v.color >> 16) & 0xFF, (v.color >> 8) & 0xFF, v.color & 0xFF, v.color >> 24) / 255.0;
     return out;
@@ -208,6 +212,13 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         tex.a *= mask.sample(maskSmp, in.local * draw.mask.xy + draw.mask.zw).r;
     if ((draw.flags & kAlphaTest) && tex.a < draw.alphaRef)
         discard_fragment();
+    if (draw.flags & kWallMask) {
+        // PS1BasicWallRendering: alpha test > 127 on the wall mask (clamped).
+        const float2 m = saturate(float2(dot(draw.mask.xyz, in.localPos) + draw.mask.w,
+                                         dot(draw.maskV.xyz, in.localPos) + draw.maskV.w));
+        if (mask.sample(maskSmp, m).r < 0.5)
+            discard_fragment();
+    }
     float3 albedo = tex.rgb;
     if (draw.flags & kChecker) {
         int2 tile = int2(floor(in.world.xy));

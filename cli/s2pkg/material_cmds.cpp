@@ -23,7 +23,7 @@ constexpr uint32_t kTypeTxmt = 0x49596978;
 // Every TXMT under `root` (unique TGIs): count per material type, then per
 // type the properties seen with how often they occur and their commonest
 // values. `filter` keeps only the types containing it.
-int cmdMaterialSurvey(const std::string& root, const std::string& filter) {
+int cmdMaterialSurvey(const std::string& root, const std::string& filter, bool list = false) {
     ResourceIndex index(root);
     struct TypeStats {
         size_t count = 0;
@@ -43,6 +43,8 @@ int cmdMaterialSurvey(const std::string& root, const std::string& filter) {
             ++total;
             if (!filter.empty() && m.materialType.find(filter) == std::string::npos)
                 continue;
+            if (list)
+                std::printf("%s %s\n", m.resource.fileName.c_str(), m.property("stdMatBaseTextureName").c_str());
             auto& t = types[m.materialType];
             ++t.count;
             if (t.examples.size() < 3)
@@ -136,6 +138,8 @@ int cmdObjectMaterials(const std::string& root, const std::string& query) {
 int materialCommand(const std::string& cmd, int argc, char** argv) {
     if (cmd == "material-survey" && (argc == 3 || argc == 4))
         return cmdMaterialSurvey(argv[2], argc == 4 ? argv[3] : "");
+    if (cmd == "material-survey" && argc == 5 && std::string(argv[4]) == "--list")
+        return cmdMaterialSurvey(argv[2], argv[3], true);
     if (cmd == "object-materials" && argc == 4)
         return cmdObjectMaterials(argv[2], argv[3]);
     if (cmd == "texture-faces" && argc == 5)
@@ -143,7 +147,7 @@ int materialCommand(const std::string& cmd, int argc, char** argv) {
     return -1;
 }
 
-const char* materialUsage() { return "       s2pkg material-survey <Res-dir> [type-filter]\n"
+const char* materialUsage() { return "       s2pkg material-survey <Res-dir> [type-filter [--list]]\n"
                                     "       s2pkg object-materials <Res-dir> <cres-name|0xGUID|object-name>\n"
                                     "       s2pkg texture-faces <Res-dir> <txtr-name> <out-prefix>\n"; }
 

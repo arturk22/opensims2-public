@@ -101,7 +101,15 @@ int lotTopLevel(const Lot& lot);
 // colours): a rebuild for a new view then only makes the geometry. Call
 // LotModelCache::geometryChanged after the lot itself changed.
 struct LotModelCache {
-    std::optional<std::vector<std::vector<std::array<float, 3>>>> holes; // per door or window: its points
+    // A door or window: its visible points, the name its wall masks start
+    // with (its model name), its position and its +x axis.
+    struct Hole {
+        std::vector<std::array<float, 3>> points;
+        std::string cutout;
+        std::array<float, 3> origin{0, 0, 0}, east{1, 0, 0};
+    };
+    std::optional<std::vector<Hole>> holes; // per door or window
+    std::map<std::string, std::optional<ObjectModel::AlphaMask>> wallMasks; // by wall-mask TXMT name (values only)
     std::map<std::string, MaterialDefinition> materials;                // parsed TXMTs by name
     std::map<std::string, std::optional<std::array<float, 3>>> meanColors; // by material name
     // Out: the walls the last build cut down (x0, y0, x1, y1, level), for

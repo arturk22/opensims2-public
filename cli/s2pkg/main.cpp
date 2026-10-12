@@ -377,7 +377,9 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
                 placed += !o.person && !o.model.empty() && o.model != "nullModel" && o.model != "noModel" &&
                           (o.position[0] != 0 || o.position[1] != 0);
             }
-            std::printf("  %zu objects: %zu with a model in the world, %zu Sims\n", lot.objects.size(), placed, people);
+            std::printf("  %zu objects: %zu with a model in the world, %zu Sims; %zu wall faces with a door or window mask\n",
+                        lot.objects.size(), placed, people,
+                        size_t(std::count_if(model.parts.begin(), model.parts.end(), [](const ObjectModel::Part& p) { return p.mask >= 0; })));
             size_t wet = 0;
             for (uint32_t x = 0; x <= lot.width; ++x)
                 for (uint32_t y = 0; y <= lot.height; ++y)

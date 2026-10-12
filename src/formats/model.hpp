@@ -50,6 +50,12 @@ struct ObjectModel {
         float spacing = 1.0f;
         float originX = 0, originY = 0; // model xy of value (0, 0)
         std::vector<uint8_t> values; // row-major: values[y * width + x]
+        // A wall mask instead (walls with a door or window, docs/shaders-mac.md
+        // 5): the values (0 = hole) span u, v in [0, 1] with u = planeU.xyz . p
+        // + planeU.w and v likewise for a model-space point p, clamped; the
+        // part is alpha tested against them.
+        bool planar = false;
+        std::array<float, 4> planeU{0, 0, 0, 0}, planeV{0, 0, 0, 0};
     };
 
     std::string name; // CRES resource name

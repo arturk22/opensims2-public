@@ -62,6 +62,7 @@ enum : uint32_t {
     kOverlayMore = 1u << 20, // bits 20-24: textures 13-17 drawn over the base by their alpha, after overlay 3
     kTwoSidedLight = 1u << 25, // lit from both sides (Sim hair: the inside of a hairdo's shell)
     kUnderlayFlat = 1u << 26,  // the underlay's smallest mip (its average colour)
+    kWallMask = 1u << 27,      // walls: alpha test against a mask over the face (planes mask / maskV)
 };
 constexpr size_t kMaxOverlays = 8; // a face's composited layers: eyes, brows, makeup, beard...
 
@@ -74,6 +75,7 @@ struct Draw {
     simd_float4 env;
     simd_float4 uv0, uv1;
     simd_float4 misc;
+    simd_float4 maskV;
     float alphaRef;
     uint32_t flags;
     uint32_t lightSet;
@@ -221,6 +223,7 @@ struct Renderer::Material {
     simd_float4 maskTransform{0, 0, 0, 0}; // model xy -> mask uv: xy scale, zw offset
     simd_float4 env{0, 0, 0, 0};           // coefficient rgb, mip bias
     simd_float4 misc{0, 0, 0, 0};          // cel edge offset, bump strength, detail uv scale
+    simd_float4 maskV{0, 0, 0, 0};         // kWallMask: model xyz -> mask v (maskTransform: -> u)
     float alphaRef = 0.5f;
     uint32_t flags = kLighting;
     StandardMaterial::Blend blend = StandardMaterial::Blend::None;
@@ -629,11 +632,17 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
             const auto& m = model.masks[size_t(part.mask)];
             if (m.width && m.height && m.values.size() == size_t(m.width) * m.height) {
                 p.mask = uploadMask(m);
-                mat.flags |= kMasked;
-                // Value i sits at i * spacing: sample texel centres.
-                const float sx = 1.0f / (m.spacing * float(m.width)), sy = 1.0f / (m.spacing * float(m.height));
-                mat.maskTransform = simd_make_float4(sx, sy, 0.5f / float(m.width) - m.originX * sx,
-                                                     0.5f / float(m.height) - m.originY * sy);
+                if (m.planar) {
+                    mat.flags |= kWallMask;
+                    mat.maskTransform = simd_make_float4(m.planeU[0], m.planeU[1], m.planeU[2], m.planeU[3]);
+                    mat.maskV = simd_make_float4(m.planeV[0], m.planeV[1], m.planeV[2], m.planeV[3]);
+                } else {
+                    mat.flags |= kMasked;
+                    // Value i sits at i * spacing: sample texel centres.
+                    const float sx = 1.0f / (m.spacing * float(m.width)), sy = 1.0f / (m.spacing * float(m.height));
+                    mat.maskTransform = simd_make_float4(sx, sy, 0.5f / float(m.width) - m.originX * sx,
+                                                         0.5f / float(m.height) - m.originY * sy);
+                }
             }
         }
         p.vertices = device_->newBuffer(v.data(), v.size() * sizeof(Vertex), MTL::ResourceStorageModeShared);
@@ -913,7 +922,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         uv0 *= m.uvScale, uv1 *= m.uvScale;
         const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
         Draw d{item.inst->transform, m.color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
-               m.alphaRef, m.flags, uint32_t(set)};
+               m.maskV, m.alphaRef, m.flags, uint32_t(set)};
         enc->setVertexBytes(&d, sizeof d, 1);
         enc->setFragmentBytes(&d, sizeof d, 1);
         enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);

@@ -7,6 +7,7 @@
 #include "property_set.hpp"
 #include "rcol.hpp"
 #include "resindex.hpp"
+#include "image.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -234,6 +235,8 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
 struct WallHole {
     std::vector<Vec3f> points;
     Vec3f lo{}, hi{}; // bounds of the points (see bound())
+    std::string cutout;            // its model name: its wall masks' names start with it
+    Vec3f origin{}, east{1, 0, 0}; // the object's position and +x axis
     void bound() {
         lo = {1e9f, 1e9f, 1e9f}, hi = {-1e9f, -1e9f, -1e9f};
         for (const auto& p : points)
@@ -244,6 +247,7 @@ struct WallHole {
 // A cut out of a wall stretch: along it from its start, and heights.
 struct Cut {
     float u0, u1, z0, z1;
+    size_t hole = 0; // index into the holes
 };
 
 // Frames cover this much of the hole's edge (the hole is the object's extent less this).
@@ -283,9 +287,56 @@ std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay
         z0 = z0 < bottom + 0.05f ? bottom : z0 + kHoleInset;
         z1 = std::min(z1 - kHoleInset, top);
         if (u1 - u0 > 0.05f && z1 - z0 > 0.05f)
-            cuts.push_back({u0, u1, z0, z1});
+            cuts.push_back({u0, u1, z0, z1, size_t(&h - holes.data())});
     }
     return cuts;
+}
+
+// The values of a wall mask (docs/buy-build-mac.md 7.6): the TXMT
+// "<cutout>_<dx>_<dy>_<level>_<dir>_wallmask" names the mask texture, whose
+// alpha is 0 in the hole; its other faces' TXMTs (the wall seen from the
+// next tile) use the same texture. nullopt if the object has none there.
+std::optional<ObjectModel::AlphaMask> wallMaskValues(ResourceIndex& index, const std::string& cutout, int dx, int level,
+                                                     LotModelCache* cache) {
+    const std::string dxs = dx == 0 ? "0" : std::to_string(std::abs(dx)) + (dx > 0 ? "e" : "w");
+    const std::string key = cutout + "_" + dxs + "_" + std::to_string(level);
+    if (cache)
+        if (auto it = cache->wallMasks.find(key); it != cache->wallMasks.end())
+            return it->second;
+    std::optional<ObjectModel::AlphaMask> out;
+    for (const char* face : {"0_%d_n", "1s_%d_s", "1n_%d_n", "0_%d_s"}) {
+        char mid[32];
+        std::snprintf(mid, sizeof mid, face, level);
+        // face is "<dy>_<level>_<dir>"
+        auto loc = index.findByName(cutout + "_" + dxs + "_" + mid + "_wallmask_txmt", kTypeTxmt);
+        if (!loc)
+            continue;
+        try {
+            const auto bytes = index.read(*loc);
+            Rcol rc(bytes);
+            const auto* block = rc.find("cMaterialDefinition");
+            if (!block)
+                continue;
+            const std::string tex = MaterialDefinition::parse(block->body).property("stdMatBaseTextureName");
+            auto tloc = tex.empty() ? std::nullopt : index.findByName(tex + "_txtr", kTypeTxtr);
+            if (!tloc)
+                continue;
+            const RgbaImage img = loadTexture(index.read(*tloc), &index);
+            if (!img.width || !img.height)
+                continue;
+            ObjectModel::AlphaMask m;
+            m.width = img.width, m.height = img.height;
+            m.values.resize(size_t(img.width) * img.height);
+            for (size_t i = 0; i < m.values.size(); ++i)
+                m.values[i] = img.pixels[i * 4 + 3];
+            out = std::move(m);
+            break;
+        } catch (const std::exception&) {
+        }
+    }
+    if (cache)
+        cache->wallMasks[key] = out;
+    return out;
 }
 
 // Walls as slabs: one face per side with that side's covering, plus a top.
@@ -295,7 +346,8 @@ std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay
 void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs, const LotViewOptions& view,
               bool roofShown, const std::vector<WallHole>& holes, LotLightMapLayout& lm,
               std::map<std::string, MeshBuilder>& drawn, std::vector<std::string>& warnings,
-              std::vector<std::array<float, 5>>* cut) {
+              std::vector<std::array<float, 5>>* cut, ResourceIndex& index, LotModelCache* cache,
+              std::vector<ObjectModel::AlphaMask>& masks, std::map<std::string, int>& maskedParts) {
     // Walls above the view's level are built into this and dropped: their
     // light-map cells stay, so the atlas is the same for every view.
     std::map<std::string, MeshBuilder> hidden;
@@ -413,12 +465,45 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             std::vector<Cut> cuts;
             if (w.type == Lot::Normal && !fence)
                 cuts = wallCuts(holes, ax, ay, dx, dy, segLen, std::min(za0, zb0), std::max(za1, zb1));
+            // A door or window with a wall mask for this stretch cuts its
+            // own shape: the faces get the mask (alpha tested in the wall
+            // shader) instead of the box cut. The mask spans the tile the
+            // stretch covers, u along the object's +x from the tile's start
+            // and v from a story above the wall's floor down to it (u
+            // direction and the story inferred from the textures: a two-tile
+            // arch's halves are "0" and "1e").
+            int maskIndex = -1;
+            const float base = std::min(za0, zb0);
+            for (auto c = cuts.begin(); c != cuts.end() && maskIndex < 0; ++c) {
+                const WallHole& h = holes[c->hole];
+                if (h.cutout.empty() || std::abs(dx * h.east[0] + dy * h.east[1]) < 0.99f)
+                    continue;
+                const float mx = (w.a.x + w.b.x) / 2 - h.origin[0], my = (w.a.y + w.b.y) / 2 - h.origin[1];
+                const int k = int(std::lround(mx * h.east[0] + my * h.east[1]));
+                const int storey = std::max(0, int(std::lround((base - h.origin[2]) / kStoryHeight)));
+                auto values = wallMaskValues(index, h.cutout, k, storey, cache);
+                if (!values)
+                    continue;
+                values->planar = true;
+                values->planeU = {h.east[0], h.east[1], 0,
+                                  0.5f - float(k) - (h.origin[0] * h.east[0] + h.origin[1] * h.east[1])};
+                values->planeV = {0, 0, -1.0f / kStoryHeight, (base + kStoryHeight) / kStoryHeight};
+                maskIndex = int(masks.size());
+                masks.push_back(std::move(*values));
+                cuts.erase(c);
+                break;
+            }
             auto lerp = [&](float a, float b, float f) { return a + (b - a) * f; };
             for (int side = 0; side < 2; ++side) {
                 auto it = materials.find(w.patterns[size_t(side)]);
                 if (it == materials.end() || it->second.empty())
                     continue;
-                MeshBuilder& b = out["wall:" + it->second];
+                std::string key = "wall:" + it->second;
+                if (maskIndex >= 0) {
+                    key += "#mask" + std::to_string(maskIndex);
+                    maskedParts[key] = maskIndex;
+                }
+                MeshBuilder& b = out[key];
                 const float s = side == 0 ? 1.0f : -1.0f;
                 const Vec3f n{nx * s, ny * s, 0};
                 const float ox = nx * t * s, oy = ny * t * s;
@@ -557,6 +642,20 @@ std::vector<WallHole> findWallHoles(const Lot& lot, ResourceIndex& index, std::v
         // Rotate by the unit quaternion (x, y, z, w), then move.
         const auto& q = o.rotation;
         WallHole h;
+        // The wall masks' base: the object's model name, STR# 0x85 entry
+        // (tag 0xCC + 1), the CRES name the lot keeps (docs/buy-build-mac.md 7.6).
+        h.cutout = lowerAscii(o.model);
+        h.origin = {o.position[0], o.position[1], o.position[2]};
+        {
+            // +x rotated: 1 - 2(y^2 + z^2), 2(xy + wz), 2(xz - wy); snapped to an axis or diagonal.
+            float ex = 1 - 2 * (q[1] * q[1] + q[2] * q[2]), ey = 2 * (q[0] * q[1] + q[3] * q[2]);
+            const float len = std::hypot(ex, ey);
+            if (len > 1e-4f)
+                ex /= len, ey /= len;
+            for (float* c : {&ex, &ey})
+                *c = std::abs(*c) < 0.2f ? 0.0f : std::abs(*c) > 0.9f ? std::copysign(1.0f, *c) : *c;
+            h.east = {ex, ey, 0};
+        }
         h.points.reserve(it->second->size());
         for (const auto& v : *it->second) {
             const float tx = 2 * (q[1] * v[2] - q[2] * v[1]), ty = 2 * (q[2] * v[0] - q[0] * v[2]),
@@ -803,14 +902,17 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     addFloors(lot, patterns, lm, built, model.warnings, view.level);
     std::vector<WallHole> holes;
     if (cache && cache->holes) {
-        for (const auto& points : *cache->holes)
-            holes.push_back({points, {}, {}});
+        for (const auto& c : *cache->holes) {
+            WallHole h;
+            h.points = c.points, h.cutout = c.cutout, h.origin = c.origin, h.east = c.east;
+            holes.push_back(std::move(h));
+        }
     } else {
         holes = findWallHoles(lot, index, model.warnings);
         if (cache) {
             cache->holes.emplace();
             for (const auto& h : holes)
-                cache->holes->push_back(h.points);
+                cache->holes->push_back({h.points, h.cutout, h.origin, h.east});
         }
     }
     for (auto& h : holes)
@@ -819,7 +921,9 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         cache->cut.clear();
     const bool roofShown =
         roofs.count() && view.walls == LotViewOptions::Walls::Up && view.roof && view.level >= lotTopLevel(lot);
-    addWalls(lot, patterns, roofs, view, roofShown, holes, lm, built, model.warnings, cache ? &cache->cut : nullptr);
+    std::map<std::string, int> maskedParts; // "wall:<material>#mask<n>" -> index into model.masks
+    addWalls(lot, patterns, roofs, view, roofShown, holes, lm, built, model.warnings, cache ? &cache->cut : nullptr,
+             index, cache, model.masks, maskedParts);
     addWater(lot, built);
     model.materials["water:terrain"] = terrainWaterMaterial();
     model.materials["water:pool"] = poolWaterMaterial();
@@ -857,6 +961,10 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     for (auto& [key, b] : built) {
         ObjectModel::Part part;
         part.material = key.substr(key.find(':') + 1);
+        if (auto m = maskedParts.find(key); m != maskedParts.end()) {
+            part.material.erase(part.material.rfind("#mask"));
+            part.mask = m->second;
+        }
         part.node = key;
         part.mesh = std::move(b.mesh);
         model.parts.push_back(std::move(part));
