@@ -606,13 +606,32 @@ tipo 3:
 
 ## 8. O que falta
 
-- O `thresholdLightsByArea` (a string existe; o uso não foi achado).
+- ~~O `thresholdLightsByArea` (a string existe; o uso não foi achado).~~
+  Rodada 16: o parser (`FUN_007175b8`) o guarda no `+0x190` do
+  gerenciador; nenhuma função do gerenciador (BV `0x6f0000..0x720000`) nem
+  da difusão (`0xd70000..0xd90000`, `0xee0000..0xef6000`) lê esse campo, e
+  o `Lighting.txt` não o define: sem efeito (inferido: pode ser lido por
+  outro caminho, não achado).
+- Rodada 16, `AddDirectFloorLighting` relido (`0x708ebc`): pede ao mundo
+  (`+0x30`, vtable `0x130`) **os tiles da sala 0** (cada um com nível em
+  `+8` e quadrante em `+0xc`); um tile inteiro (`0x0f`) no nível 0 sem piso
+  (vtable `0xd4` do mundo) usa as normais do terreno interpoladas
+  (`0x704274`); com piso, ou noutro nível, a luz constante de uma normal
+  para cima (`0x700368`); meio tile `0x703de8`. Com sombras, as variantes
+  `0x705068`/`0x702fd8`. Ou seja, os tiles de fora em andares de cima
+  recebem a luz direta do estado com a normal para cima, se o mundo os põe
+  na sala 0. Quem monta a lista da sala 0 (e se os pátios do `3ARY` 0x09
+  com ID próprio entram nela) é o gerenciador de salas, não lido; o app usa
+  a sala 0 do mapa de luz (`3ARY` 0x0B), que já põe pátios e bordas na sala
+  0 nos lotes do jogo.
 - A propagação nas paredes e a escrita dos texels de parede; a cópia
   exata das amostras do piso para os texels (interpolação).
 - Os valores padrão da `cDiffusionLightExtension` (quando o modelo e os
   `lightAttribOverride` não dão um campo) e o leitor dela no CRES.
 - A supressão entre janelas (`FindPortalSuppression`) e a "LM_PortalSpill".
-- Como as salas de pátio do `3ARY` viram a sala 0 (§5.3).
+- Como as salas de pátio do `3ARY` viram a sala 0 (§5.3; rodada 16: a
+  luz direta pede ao mundo a lista de tiles da sala 0, abaixo; o mapa
+  0x0B do `3ARY` já traz os pátios na sala 0).
 - Luzes práticas: confirmar no binário que `modifiers insideObjects`
   multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
 - O height map de sombra (rodada 16: montagem, varredura e paredes de fora
