@@ -62,12 +62,16 @@ public:
     // fences (int(cost x 0.8) back a section; posts left with no fence go).
     Result drawFences(int level, int x0, int y0, int x1, int y1, const BuildFence& fence);
     // Fence arches (fencearches.txt): on the fence of an edge (0x79 "Must be
-    // placed on a fence."), not beside another arch (an arch on an edge that
-    // shares a grid point: 0x4D), its catalog price; Ctrl takes it off
+    // placed on a fence."; where the game raises it is not found), then
+    // fenceArchBlocked (0x45, 0x4F, 0x0C: another arch at an end), its catalog price; Ctrl takes it off
     // (int(price x 0.8) back). Deleting the fence takes its arch with it.
     Result placeFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch& arch);
     Result deleteFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch* arch = nullptr);
     Result deleteFences(int level, int x0, int y0, int x1, int y1);
+    // UserMayPlaceFenceArch (BV 0x9a92fc) on the unit edge (lot level `li`):
+    // 0x45 neither side tile in bounds, 0x4F an object on an end's fence
+    // post, 0x0C an arch at an end or an object meeting a post; 0 if it may go.
+    int fenceArchBlocked(int li, int ax, int ay, int bx, int by) const;
 
     // Foundation tool (cTSUserToolDeckFoundation, deckfoundations.txt
     // "foundation 0"): a rectangle of ground tiles (corners inclusive)

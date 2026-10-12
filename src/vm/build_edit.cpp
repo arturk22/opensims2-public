@@ -766,6 +766,58 @@ BuildEditor::Result BuildEditor::eraseRun(int level, int x0, int y0, int x1, int
     return r;
 }
 
+int BuildEditor::fenceArchBlocked(int li, int ax, int ay, int bx, int by) const {
+    const int W = int(lot_.width), H = int(lot_.height);
+    const int dx = bx - ax, dy = by - ay; // a unit edge along x or y
+    // The tiles on the two sides of an edge (from its lower end).
+    auto sides = [&](int x0, int y0) {
+        const int x = std::min(x0, x0 + dx), y = std::min(y0, y0 + dy);
+        return dx ? std::array<std::array<int, 2>, 2>{{{x, y - 1}, {x, y}}} : std::array<std::array<int, 2>, 2>{{{x - 1, y}, {x, y}}};
+    };
+    // 1. Neither side tile in bounds (cIWorldDB 0x108 IsInBounds: strict,
+    // the outer ring out; and here the editable area, inferred) -> 0x45.
+    bool any = false;
+    for (const auto& t : sides(ax, ay))
+        any |= t[0] > 0 && t[1] > 0 && t[0] < W - 1 && t[1] < H - 1 && editableTile(t[0], t[1]);
+    if (!any)
+        return 0x45;
+    const int level = li + 1; // the VM's
+    // 2. An object on the fence post of either end (FUN_00163758: the one at
+    // the vertex) -> 0x4F.
+    for (const auto& v : {std::array<int, 2>{ax, ay}, std::array<int, 2>{bx, by}})
+        for (const auto& [id, o] : vm_.objects())
+            if (o.position.inWorld() && !o.person && o.position.level == level &&
+                std::fabs(o.position.x - float(v[0])) < 0.05f && std::fabs(o.position.y - float(v[1])) < 0.05f)
+                return 0x4F;
+    // 3. MayPlaceFenceArchWithRespectToObjects -> 0x0C: an arch at either end
+    // (the scene graph's FenceArchAtVertex, inferred), or an object of the
+    // two tiles of the edge and of its 1-tile extensions (not od 0x22, not od
+    // 0x2A bit 0x400) whose footprint meets the +/-0.05 box round a post.
+    // Footprints are whole tiles here (as in the routing), so an object of
+    // one of the four tiles round a post meets it (inferred).
+    for (const auto& f : fenceArches(lot_))
+        if (f.level == li && ((f.ax == ax && f.ay == ay) || (f.ax == bx && f.ay == by) || (f.bx == ax && f.by == ay) ||
+                              (f.bx == bx && f.by == by)))
+            return 0x0C;
+    std::set<std::pair<int, int>> tiles;
+    for (const auto& [sx, sy] : {std::array<int, 2>{ax - dx, ay - dy}, std::array<int, 2>{ax, ay}, std::array<int, 2>{bx, by}})
+        for (const auto& t : sides(sx, sy))
+            tiles.insert({t[0], t[1]});
+    for (const auto& [id, o] : vm_.objects()) {
+        if (!o.position.inWorld() || o.person || !o.definition || o.position.level != level || o.data[0x22] ||
+            (o.data[0x2A] & 0x400))
+            continue;
+        const TilePos t = VM::tileOf(o);
+        if (!tiles.count({t.x, t.y}))
+            continue;
+        for (const auto& v : {std::array<int, 2>{ax, ay}, std::array<int, 2>{bx, by}})
+            if (float(t.x) <= float(v[0]) + 0.05f && float(t.x + 1) >= float(v[0]) - 0.05f &&
+                float(t.y) <= float(v[1]) + 0.05f && float(t.y + 1) >= float(v[1]) - 0.05f)
+                return 0x0C;
+    }
+    return 0;
+}
+
 BuildEditor::Result BuildEditor::placeFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch& arch) {
     Result r;
     const int li = level - 1;
@@ -780,14 +832,14 @@ BuildEditor::Result BuildEditor::placeFenceArch(int level, int ax, int ay, int b
         r.message = "the arch is there already";
         return r;
     }
-    // FenceArchAdjacent: an arch on an edge meeting this one at a grid point.
-    for (const auto& f : fenceArches(lot_))
-        if (f.level == li && ((f.ax == ax && f.ay == ay) || (f.ax == bx && f.ay == by) || (f.bx == ax && f.by == ay) ||
-                              (f.bx == bx && f.by == by))) {
-            r.error = 0x4D;
-            r.message = "cannot place the arch next to another";
-            return r;
-        }
+    // UserMayPlaceFenceArch (BV 0x9a92fc, docs/buy-build-mac.md §7.19.1).
+    if (const int e = fenceArchBlocked(li, ax, ay, bx, by); e) {
+        r.error = e;
+        r.message = e == 0x45   ? "cannot place the arch off the lot"
+                    : e == 0x4F ? "cannot place the arch: an object is on its fence post"
+                                : "cannot place the arch: it would intersect other objects";
+        return r;
+    }
     r.cost = arch.price;
     if (r.cost > funds(vm_)) {
         r.error = 0x16;

@@ -1544,8 +1544,13 @@ uma cerca sem tirar a cerca; nenhum dos 62 lotes tem uma. Erros: `0x79`/`0x88`
 (`cPartitionManager::FenceArchAdjacent`), `0x4E` "Can't delete arch",
 `0x85` "Can't place gate across arch". O corpo de `UserMayPlaceFenceArch` (rodada 13,
 §7.19.1) está em `0x9a92fc`. Aqui: o arco
-vai numa aresta com cerca (`0x79`), não numa aresta que encosta noutro arco
-(`0x4D`), custa o preço do catálogo, Ctrl tira (0,8 de volta) e apagar a
+vai numa aresta com cerca (`0x79`, inferido: o binário não o testa ali), depois
+os testes do `UserMayPlaceFenceArch` (rodada 13, `fenceArchBlocked`: `0x45`
+nenhum dos dois tiles dentro do `IsInBounds` estrito e da área editável;
+`0x4F` objeto no moirão de uma ponta; `0x0C` arco numa ponta ou objeto de um
+dos 6 tiles da aresta e das extensões cuja pegada encosta num poste: as
+pegadas são tiles inteiros aqui, então qualquer objeto dos quatro tiles em
+volta de um poste, inferido), custa o preço do catálogo, Ctrl tira (0,8 de volta) e apagar a
 cerca leva o arco; gravado como linha do grafo 0x13 (lido de volta como o
 estilo 26: inferido). Desenho (inferido pelos nomes): o centro sobre a aresta,
 um poste em cada ponta, a parte oeste no poste do início e a leste no do fim.

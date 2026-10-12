@@ -446,7 +446,9 @@ static void testFenceArch() {
     r = ed.placeFenceArch(1, 3, 2, 4, 2, arch);
     check(r.ok && r.cost == 50 && fenceArches(lot).size() == 1, "an arch on the fence for its price");
     r = ed.placeFenceArch(1, 4, 2, 5, 2, arch);
-    check(!r.ok && r.error == 0x4D, "not next to another arch (0x4D)");
+    check(!r.ok && r.error == 0x0C, "not next to another arch (MayPlaceFenceArchWithRespectToObjects: 0x0C)");
+    check(ed.fenceArchBlocked(0, 0, 3, 0, 4) == 0x45, "an edge on the lot's outer ring is off the lot (0x45)");
+    check(ed.fenceArchBlocked(0, 6, 2, 7, 2) == 0, "an edge clear of arches and objects may take one");
     check(vm.world->wallBetween({3, 1, 1}, 0, 1, true), "the fence still blocks under the arch");
     ed.deleteFences(1, 3, 2, 4, 2);
     check(fenceArches(lot).empty(), "the arch goes with its fence");
