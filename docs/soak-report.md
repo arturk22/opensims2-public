@@ -1,3 +1,16 @@
+# Soak report (round 17, animations and routes resumed)
+
+`tools/soak.sh` (`SOAK_NO_APP=1`, `SOAK_JOBS=2`, `S2PKG_FIRES=1`, 3 game days) on N001_Lot11, N001_Lot36, N002_Lot2, N002_Lot3, N003_Lot52, N001_Lot16, N003_Lot45 and N002_Lot10; **before** is main 76b04555, **after** the r17-saveanim branch (the lots' animation queues read: the overlays and Animate Sims of the game's saves come back at load, so the idle system gets its events). `hood-save N001 --ticks 43200 --check`: 24 of 26 lots the same after (the 2 left are a queue flag and a family number of the neighbourhood, `docs/save-mac.md` §7c), 26 of 26 before (the before build does not compare animations, overlays and routes).
+
+| Category | before | after |
+|---|---|---|
+| crash, hang, error, dead, budget | 0 | 0 |
+| reset | 1 (Juliette: stack object 326 does not exist) | 0 |
+| died | 10 | 3 |
+| stuck (> 6 h in one interaction) | 13 | 9 |
+| pinned (a motive at -100 > 6 h) | 21 | 9 |
+| save round trips that differ | 0 | 0 |
+
 # Soak report (round 17, stuck and save)
 
 `tools/soak.sh` on N001_Lot36, N002_Lot3, N001_Lot11 and N002_Lot2 (3 game days, headless, `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`, babies named), seeds 1 and 2, on the r17-stuck branch (main 8757a0c + the save fixes). The round-14/15 findings checked again:
