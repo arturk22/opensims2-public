@@ -3,6 +3,7 @@
 #include "vm.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -63,6 +64,12 @@ void setLotRooms(VM& vm, const Lot& lot);
 
 // `charactersDir` is where the Sims' character files are (empty: Sims are
 // left out with a reason).
+// Every neighbor has its definition, as in the game: a GUID no loaded OBJD
+// has is looked up (once) among the neighbourhood's character files, whose
+// code is then added (CodeLibrary::setGuidFallback). Returns the lookup
+// (GUID -> character file, empty if none). loadLot calls it.
+std::function<std::filesystem::path(uint32_t)> useCharacterFiles(CodeLibrary& code,
+                                                                  const std::filesystem::path& charactersDir);
 LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::filesystem::path& charactersDir);
 
 // cTSNeighborhood::SetupFamilyFirstDay's last step: cEdithObjectModule::

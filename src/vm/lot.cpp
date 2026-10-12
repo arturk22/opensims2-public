@@ -14,6 +14,7 @@
 #include "interactions.hpp"
 
 #include <cmath>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -144,22 +145,12 @@ void setLotRooms(VM& vm, const Lot& lot) {
     }
 }
 
-LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::filesystem::path& charactersDir) {
-    CodeLibrary& code = vm.code();
-    std::map<uint32_t, const Lot::Object*> cObjects;
-    for (const auto& o : lot.objects)
-        cObjects[o.instance] = &o;
-
-    setLotRooms(vm, lot);
-
-    LotLoad out;
-    // Sims whose cObject does not name their character file are found by
-    // their GUID among the neighbourhood's character files (read once); the
-    // code library finds any neighbor's definition the same way (owner
-    // 0x26, Test Object Type, ...: the game has every neighbor's character).
+std::function<std::filesystem::path(uint32_t)> useCharacterFiles(CodeLibrary& code,
+                                                                  const std::filesystem::path& charactersDir) {
+    // The character files' OBJD GUIDs, read once (when first needed).
     auto characterByGuid = std::make_shared<std::map<uint32_t, std::filesystem::path>>();
     auto characterFileOf = [characterByGuid, charactersDir](uint32_t guid) -> std::filesystem::path {
-        if (characterByGuid->empty() && !charactersDir.empty())
+        if (characterByGuid->empty() && !charactersDir.empty() && std::filesystem::exists(charactersDir))
             for (const auto& f : std::filesystem::directory_iterator(charactersDir)) {
                 if (f.path().extension() != ".package")
                     continue;
@@ -191,6 +182,21 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             }
             return std::nullopt;
         });
+    return characterFileOf;
+}
+
+LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::filesystem::path& charactersDir) {
+    CodeLibrary& code = vm.code();
+    std::map<uint32_t, const Lot::Object*> cObjects;
+    for (const auto& o : lot.objects)
+        cObjects[o.instance] = &o;
+
+    setLotRooms(vm, lot);
+
+    LotLoad out;
+    // Sims whose cObject does not name their character file are found by
+    // their GUID among the neighbourhood's character files.
+    auto characterFileOf = useCharacterFiles(code, charactersDir);
     // Every object of the object module (saved.objects), of the OBJD its
     // save type's GUID names; Sims from their character files.
     for (const auto& s : saved.objects) {

@@ -470,6 +470,9 @@ struct StandIns {
     // second, and the VM is on that family's lot.
     std::optional<hood::Neighborhood> hood;
     int16_t simNeighbor = 1, meNeighbor = 2, lot = 0;
+    // Its character files: the Sims stand in as their own characters (with
+    // the person semi-global's semi-attributes, their attributes and slots).
+    std::filesystem::path charactersDir;
 };
 
 // The neighborhood for bhav/bhav-sweep: OS2_HOOD (a neighborhood folder, or
@@ -482,6 +485,7 @@ void sweepNeighborhood(const std::filesystem::path& root, StandIns& s) {
     if (!std::filesystem::exists(dir))
         return;
     s.hood = hood::Neighborhood::load(dir, true);
+    s.charactersDir = dir / "Characters";
     for (const auto& f : s.hood->families)
         if (f.record.lot && f.members.size() >= 2) {
             auto members = f.members;
@@ -505,6 +509,20 @@ void makeNeighbor(vm::VM& machine, vm::Object& o, int16_t id) {
         o.person->data = n->personData;
     o.person->data[vm::persondata::NeighborId] = id;
     machine.neighbors[id].guid = o.guid();
+}
+
+// The neighbor `id` as its own character (the OBJD of its character file,
+// found through the code library's GUID fallback), null without one.
+vm::Object* characterStandIn(vm::VM& machine, int16_t id) {
+    const vm::Neighbor* n = machine.neighbor(id);
+    const auto def = n && n->guid ? machine.code().definitionByGuid(n->guid) : std::nullopt;
+    if (!def)
+        return nullptr;
+    vm::Object& o = machine.instantiate(def->first, def->second);
+    if (!o.person)
+        o.person.emplace();
+    makeNeighbor(machine, o, id);
+    return &o;
 }
 
 StandIns standIns(ResourceIndex& index) {
@@ -545,10 +563,22 @@ StandIns standIns(ResourceIndex& index) {
     return s;
 }
 
+// The semi-global group of the Sims' characters (PersonGlobals), 0 if unknown.
+uint32_t personSemiGlobal(vm::VM& machine, const StandIns& s) {
+    const vm::Neighbor* n = machine.neighbor(s.meNeighbor);
+    const auto def = n && n->guid ? machine.code().definitionByGuid(n->guid) : std::nullopt;
+    return def ? machine.code().semiGlobalFor(def->first) : 0;
+}
+
 // Stand-in "me" for running a tree of `group`: an instance of the object, or
 // for a semi-global group of one of the objects that use it. Trees of any group
 // may act on a Sim, so the stand-in also carries person data.
 vm::Object& standInObject(vm::VM& machine, uint32_t group, const StandIns& s) {
+    // Global trees and the person semi-global's run on Sims: the "me"
+    // neighbor's character.
+    if (group == vm::kGlobalGroup || group == personSemiGlobal(machine, s))
+        if (vm::Object* me = characterStandIn(machine, s.meNeighbor))
+            return *me;
     auto user = s.semiUsers.find(group);
     const uint32_t objGroup = user != s.semiUsers.end() ? user->second : group;
     auto def = s.definitions.find(objGroup);
@@ -572,6 +602,8 @@ bool isInteraction(const StandIns& s, uint32_t group, uint16_t instance, const B
 // The stand-in Sim is also a neighbor (ID 1), so the neighbor searches and
 // data owners have someone to find.
 vm::Object& standInPerson(vm::VM& machine, const StandIns& s) {
+    if (vm::Object* o = characterStandIn(machine, s.simNeighbor))
+        return *o;
     vm::Object* o = s.person.first ? &machine.instantiate(s.person.first, s.person.second) : nullptr;
     if (!o) {
         o = &machine.createObject(0);
@@ -630,6 +662,7 @@ int cmdBhav(const std::filesystem::path& root, uint32_t group, uint16_t instance
     vm::VM machine(code);
     auto users = standIns(index);
     sweepNeighborhood(root, users);
+    vm::useCharacterFiles(code, users.charactersDir);
     prepareStandInVm(machine, users);
     vm::Object& object = standInObject(machine, group, users);
     machine.trace = [](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
@@ -671,6 +704,7 @@ int cmdBhavSweep(const std::filesystem::path& root) {
     vm::CodeLibrary code(&index);
     auto users = standIns(index);
     sweepNeighborhood(root, users);
+    vm::useCharacterFiles(code, users.charactersDir);
     if (users.hood)
         std::printf("neighborhood %s: Sim = neighbor %d, me = neighbor %d, on lot %d\n", users.hood->prefix.c_str(),
                     users.simNeighbor, users.meNeighbor, users.lot);
