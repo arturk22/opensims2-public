@@ -21,7 +21,7 @@ const std::initializer_list<const char*> kSceneBare = {"--vm", "--menu", "--cas"
 const std::initializer_list<const char*> kContentFlags = {"--object", "--lot", "--sim", "--skinned", "--character",
                                                           "--ui"};
 
-bool isStep(const std::string& a) { return a == "--click" || a == "--right-click" || a == "--wait" || a == "--pie-step"; }
+bool isStep(const std::string& a) { return a == "--click" || a == "--right-click" || a == "--wait" || a == "--pie-step" || a == "--tutorial-auto" || a == "--key"; }
 
 } // namespace
 
@@ -95,6 +95,16 @@ std::vector<FlowStep> flowSteps(const std::vector<std::string>& args) {
             st.kind = args[i] == "--click" ? FlowStep::Kind::Click : FlowStep::Kind::RightClick;
             if (std::sscanf(args[i + 1].c_str(), "%f,%f", &st.x, &st.y) != 2)
                 continue;
+        } else if (args[i] == "--tutorial-auto") {
+            st.kind = FlowStep::Kind::TutorialAuto;
+            try {
+                st.ticks = std::stol(args[i + 1]);
+            } catch (const std::exception&) {
+                continue;
+            }
+        } else if (args[i] == "--key") {
+            st.kind = FlowStep::Kind::Key;
+            st.text = args[i + 1];
         } else {
             continue;
         }

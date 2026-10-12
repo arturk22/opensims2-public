@@ -48,9 +48,13 @@ Scene sceneOf(const std::vector<std::string>& args);
 // One scripted step: a click (left or right) at canvas x,y, a wait of n VM
 // ticks, or (--pie-step <object>:<entry>) the selected Sim's pie menu on an
 // object (as --pie names it) and an entry picked: by its index, or the one
-// whose name holds <entry>.
+// whose name holds <entry>; or (--tutorial-auto <n>) up to n turns of playing
+// along with a tutorial: a click on the control its arrow points at, else on
+// its panel's Next, through the UI as the mouse does, 40 ticks apart (stops
+// when neither is on); or (--key space) a key: the space bar selects the
+// next Sim.
 struct FlowStep {
-    enum class Kind { Click, RightClick, Wait, Pie } kind = Kind::Click;
+    enum class Kind { Click, RightClick, Wait, Pie, TutorialAuto, Key } kind = Kind::Click;
     float x = 0, y = 0;
     long ticks = 0;
     // --pie-step <object>:<entry>: the selected Sim picks that entry of the

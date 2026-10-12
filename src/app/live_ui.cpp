@@ -1039,6 +1039,9 @@ std::optional<std::array<float, 4>> LiveUi::controlRect(uint32_t window, uint32_
         return a[0] <= b[0] + 0.5f && a[1] <= b[1] + 0.5f && a[2] >= b[2] - 0.5f && a[3] >= b[3] - 0.5f;
     };
     std::optional<std::array<float, 4>> anywhere;
+    bool windowDrawn = false; // a window not drawn as one (the aspirations' 0xCD8B8B10) holds any such control
+    for (const auto& [wid, wr] : windows_)
+        windowDrawn |= wid == window;
     for (const auto& [id, r] : windows_) {
         if (id != control)
             continue;
@@ -1052,6 +1055,8 @@ std::optional<std::array<float, 4>> LiveUi::controlRect(uint32_t window, uint32_
                 anywhere = r;
             continue;
         }
+        if (!windowDrawn)
+            return r;
         // Inside the window: one drawn with that id that holds it (the
         // window's children lie in its area).
         for (const auto& [wid, wr] : windows_)
@@ -1276,8 +1281,6 @@ bool LiveUi::press(simd_float2 p, bool right) {
         }
         if (right && t.action != Action::Cancel) // the queue cancels with either button
             return true;
-        if (!right && onPress) // the tutorial's click trees (app/tutorial.hpp)
-            onPress(p);
         switch (t.action) {
         case Action::Speed:
         case Action::Pause:

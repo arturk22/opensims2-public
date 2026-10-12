@@ -1459,8 +1459,6 @@ bool BuildMode::press(simd_float2 p) {
     for (const Target& t : std::vector<Target>(targets_)) {
         if (!inside(t.rect, p))
             continue;
-        if (onPress) // the tutorial's click trees
-            onPress(p);
         switch (t.action) {
         case Action::Category:
             openCategory(t.value, 0);
@@ -1765,6 +1763,18 @@ std::optional<std::array<float, 4>> BuildMode::controlRect(uint32_t window, uint
     if (!active_)
         return std::nullopt;
     layoutIfNeeded();
+    // The game's "Build Dynamic Menu" (0x502BBF02 with the room tool,
+    // 0x502BBF03 with the deck tool: button 3) is made in code; here those
+    // tools are items of the catalog: the room tool, and the foundation tool
+    // standing in for the deck tool (there is no deck tool yet).
+    if ((window == 0x502BBF02 || window == 0x502BBF03) && control == 3) {
+        const Tool want = window == 0x502BBF02 ? Tool::Room : Tool::Foundation;
+        const auto list = items();
+        for (const Target& t : targets_)
+            if (t.action == Action::Item && size_t(t.value) < list.size() && list[size_t(t.value)].tool == want)
+                return t.rect;
+        return std::nullopt;
+    }
     return windows_.find(window, control);
 }
 

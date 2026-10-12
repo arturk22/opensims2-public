@@ -255,6 +255,10 @@ add_executable(test_dialog tests/test_dialog.cpp)
 target_link_libraries(test_dialog PRIVATE os2_vm)
 add_test(NAME dialog COMMAND test_dialog)
 
+add_executable(test_tutorial tests/test_tutorial.cpp)
+target_link_libraries(test_tutorial PRIVATE os2_vm)
+add_test(NAME tutorial COMMAND test_tutorial)
+
 add_executable(test_queue tests/test_queue.cpp)
 target_link_libraries(test_queue PRIVATE os2_vm)
 add_test(NAME queue COMMAND test_queue)

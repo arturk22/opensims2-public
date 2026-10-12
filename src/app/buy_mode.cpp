@@ -958,8 +958,6 @@ bool BuyMode::press(simd_float2 p) {
     for (const Target& t : std::vector<Target>(targets_)) {
         if (!inside(t.rect, p))
             continue;
-        if (onPress) // the tutorial's click trees
-            onPress(p);
         switch (t.action) {
         case Action::DayNight:
             if (onDayNight)

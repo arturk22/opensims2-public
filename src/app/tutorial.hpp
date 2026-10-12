@@ -81,6 +81,10 @@ public:
     // off by the tutorial). clicked: the click trees of the controls at p.
     bool allows(simd_float2 p);
     void clicked(simd_float2 p);
+    // Headless play along (--tutorial-auto): clicks the highlighted control
+    // if a click on it runs a tree (through pressControl, as the mouse),
+    // else the panel's Next if it is on; false if neither.
+    bool autoClick();
     // Whether the progress window is up (and where).
     bool panelVisible() const;
     std::array<float, 4> panelRect() const { return panelRect_; }

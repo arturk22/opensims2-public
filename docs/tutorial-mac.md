@@ -200,3 +200,61 @@ lê), temp 3 ≠ 0 reseta o episódio (rótulos do STR# 0xDC; o caso 0 do
   original segue (inferido que sim).
 - Os modos de UI Effect nos dados que dependem de janelas que ainda não
   existem no nosso app (IDs nas "Button GUIDs").
+
+## 8. No opensims2 (rodada 10, frente do tutorial)
+
+O que está feito e onde (o resto do documento é o binário):
+
+- **VM** (`src/vm/tutorial.*`): o UI Effect resolve as duas strings das
+  "Button GUIDs" e põe um `TutorialUiCommand` na fila `VM::tutorial`; o
+  Dialog 0x16/0x19 (`dialog.cpp` → `tutorialNextDialog`) preenche o
+  `TutorialProgress` (título, texto, imagem pela string do byte 0 | byte
+  2 << 8, passo = temp 1, total = temp 2, modal) e devolve verdadeiro; temp
+  1 = 0 esconde. Modal pausa o jogo (`dialogPausesGame`). `TutorialUi`
+  guarda o realce, os controles desligados (modos 1/2/5) e escondidos
+  (9/10), as árvores dos cliques (4, apagadas pelo 7) e os "aperta" (0);
+  um painel novo apaga o que valia para os botões do painel antigo (o
+  `Show` recria a janela). As árvores de clique rodam até o fim no objeto
+  que as ligou (`runOneTickTree`).
+- **Sleep acordado pelo Notify (0x31)**: o `TryIdle` pergunta ao agendador
+  se o objeto ainda dorme e zera o contador se não; o "Notify the Stack
+  Object out of Idle" das árvores de clique ("Event - Generic Button Press
+  (+1)") acorda o controlador, que dorme 32000 ticks em cada passo. Só em
+  objetos (num Sim o aviso é do Idle for Input).
+- **Controladores**: `Controller - Tutorial - Main` e `- Death Checker`
+  (tipo 7 "sim type") não estão em nenhum save e nada nos dados os cria;
+  `ensureTutorialControllers` cria os que faltam (inferido: o jogo cria os
+  objetos globais que faltam ao carregar). Nos lotes do Tutorial eles
+  rodam o episódio pelo global 10 (lote) com o global 40 (vizinhança) = 0.
+- **Com o jogo pausado** (Compra, Construção, o primeiro passo aperta o
+  modo Compra) o controlador continua: o `Simulate` do jogo dá um tick por
+  quadro pausado (`docs/ui-live-mac.md` §1.2); aqui só os controladores do
+  tutorial rodam nesse tempo (`tickTutorialControllers`, inferido).
+- **App** (`src/app/tutorial.*`): "Aprenda a Jogar" com as listas do
+  `EpisodeDefinitions.txt` (título/descrição do `Text/Tutorial.package`,
+  miniatura, ícone de concluído pelo global 26); Jogar recria a vizinhança
+  do usuário (`ResetTutorialNeighborhood`) e entra no lote; o lote começa
+  despausado (os lotes do tutorial foram salvos pausados; inferido); o
+  painel no canto superior direito (6 px da direita, 8 do topo), com o
+  texto ao lado da imagem e depois embaixo, crescendo com o texto (o jogo
+  rola uma caixa de 77 px; inferido); a seta com as imagens, o canto e o
+  quique do §3; os controles desligados escurecidos e sem efeito; os
+  cliques passam pelas árvores antes do controle agir; "Exit Lot" volta
+  ao menu (salva se temp 2 ≠ 0; os episódios do jogo base não pedem).
+  Os controles são achados pelo id nas janelas desenhadas (`LiveUi`,
+  `BuyMode`, `BuildMode::controlRect`, `DrawnWindows`): a janela "contém"
+  o controle se o retângulo dela contém o dele (sem a árvore de janelas);
+  o "Build Dynamic Menu" (`0x502BBF02/03`, feito em código no jogo) é o
+  item da ferramenta de cômodo / da fundação no catálogo (não há
+  ferramenta de terraço ainda).
+- **Controles do jogo que faltavam** e que o tutorial ensina: clicar no
+  chão abre o "Vir Aqui" do destino `0x7C4` (`src/vm/go_here.*`; também
+  quando o objeto clicado não tem interações, como a copa de uma árvore),
+  clique direito num Sim da família o seleciona, a barra de espaço passa
+  ao próximo; os botões do puck (zoom, girar, andares) respondem sobre os
+  painéis de Compra/Construção.
+- **Sem tela**: `s2pkg tutorial <lote> [--auto]` roda o episódio na VM;
+  no app, `--menu --menu-learn <i>`, `--tutorial-auto <n>` (clica o que a
+  seta aponta ou Avançar, pela UI), `--pie-step <objeto>:<entrada>` e
+  `--key space`. As cinco lições vão do começo ao fim
+  (`docs/screenshots/r10-tutorial-*.jpg`).

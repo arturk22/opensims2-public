@@ -113,10 +113,9 @@ public:
 
     // --- The panel -------------------------------------------------------------
     // The tutorial (app/tutorial.hpp): allowPress before a click on a
-    // control (false: turned off), onPress for a click on one; a control by
-    // the game's window ids, while the panel is up.
+    // control (false: turned off); a control by the game's window ids, while
+    // the panel is up.
     std::function<bool(simd_float2)> allowPress;
-    std::function<void(simd_float2)> onPress;
     std::optional<std::array<float, 4>> controlRect(uint32_t window, uint32_t control);
     bool press(simd_float2 p); // true: the panel took it
     void hover(simd_float2 p);

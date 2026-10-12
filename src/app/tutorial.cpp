@@ -212,12 +212,17 @@ void TutorialOverlay::setCanvas(int width, int height) {
 }
 
 bool TutorialOverlay::press(simd_float2 p) {
-    if (!panelVisible())
-        return false;
-    if (builtW_ != canvasW_ || builtH_ != canvasH_ || builtSerial_ != vm_.tutorial.progress.serial)
+    if (panelVisible() &&
+        (builtW_ != canvasW_ || builtH_ != canvasH_ || builtSerial_ != vm_.tutorial.progress.serial))
         screen(canvasW_, canvasH_);
-    if (!insideRect(panelRect_, p.x, p.y))
+    if (!panelVisible() || !insideRect(panelRect_, p.x, p.y)) {
+        // A control elsewhere: its click tree runs (the listener is on the
+        // control's window, whatever the control does itself), and the
+        // click goes on to the panels.
+        if (allows(p))
+            clicked(p);
         return false;
+    }
     auto button = [&](const std::array<float, 4>& r, uint32_t id, const char* name) {
         if (r[2] <= r[0] || !insideRect(r, p.x, p.y))
             return false;
@@ -229,6 +234,27 @@ bool TutorialOverlay::press(simd_float2 p) {
     if (!button(nextRect_, kNext, "Next"))
         button(backRect_, kBack, "Back");
     return true;
+}
+
+bool TutorialOverlay::autoClick() {
+    ui_.update(vm_);
+    const auto h = ui_.highlight();
+    if (h.second && h.first != vm::kProgressWindow && ui_.hasEventTree(h.first, h.second) && pressControl && locate &&
+        locate(h.first, h.second)) {
+        std::printf("opensims2: tutorial: auto click 0x%08X/0x%08X\n", h.first, h.second);
+        pressControl(h.first, h.second);
+        return true;
+    }
+    const vm::TutorialProgress& pr = vm_.tutorial.progress;
+    if (pr.visible && ui_.enabled(vm::kProgressWindow, kNext) && ui_.hasEventTree(vm::kProgressWindow, kNext)) {
+        screen(canvasW_, canvasH_);
+        const simd_float2 p = simd_make_float2((nextRect_[0] + nextRect_[2]) / 2, (nextRect_[1] + nextRect_[3]) / 2);
+        return press(p);
+    }
+    for (const auto& k : ui_.withTrees())
+        std::printf("opensims2: tutorial: waiting; a click on 0x%08X/0x%08X runs a tree%s\n", k.first, k.second,
+                    locate && locate(k.first, k.second) ? "" : " (not drawn)");
+    return false;
 }
 
 bool TutorialOverlay::allows(simd_float2 p) {

@@ -171,12 +171,10 @@ public:
     void hover(simd_float2 p);
     // The tutorial (app/tutorial.hpp): allowPress is asked before a left
     // click on a control (false: the tutorial turned it off, the click does
-    // nothing); onPress is called for a click on a control, before it acts.
-    // A control by the game's window ids ("Button GUIDs": a window, and a
+    // nothing). A control by the game's window ids ("Button GUIDs": a window, and a
     // button in it; kMainWindow holds them all): its rectangle in the last
     // screen, if drawn.
     std::function<bool(simd_float2)> allowPress;
-    std::function<void(simd_float2)> onPress;
     static constexpr uint32_t kMainWindow = 0x480E8304, kSimChooser = 0x4BDEFFAB, kFirstSimInChooser = 0x2000;
     std::optional<std::array<float, 4>> controlRect(uint32_t window, uint32_t control);
     bool controlAt(simd_float2 p, uint32_t window, uint32_t control);

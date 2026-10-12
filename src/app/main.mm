@@ -548,7 +548,8 @@ void setupLiveUi(os2::ResourceIndex& index);  // below setupPieMenu
 void setupTutorial(os2::ResourceIndex& index);
 void pollTutorial(double seconds);
 void requestScene(const os2::Scene& next); // below
-bool saveGameNow();
+bool selectFamilySim(os2::vm::ObjectId id);
+void selectNextFamilySim();
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
 
@@ -1188,6 +1189,7 @@ void setupTutorial(os2::ResourceIndex& index) {
         if (!r)
             return;
         const simd_float2 p = simd_make_float2(((*r)[0] + (*r)[2]) / 2, ((*r)[1] + (*r)[3]) / 2);
+        gTutorial->clicked(p); // as a click: the control's listeners, then the control
         if (gLive->overModeButton(p) && gLive->press(p))
             return;
         if (gBuy && gBuy->active() && gBuy->press(p))
@@ -1197,16 +1199,40 @@ void setupTutorial(os2::ResourceIndex& index) {
         gLive->press(p);
     };
     gLive->allowPress = [](simd_float2 p) { return gTutorial->allows(p); };
-    gLive->onPress = [](simd_float2 p) { gTutorial->clicked(p); };
     if (gBuy) {
         gBuy->allowPress = [](simd_float2 p) { return gTutorial->allows(p); };
-        gBuy->onPress = [](simd_float2 p) { gTutorial->clicked(p); };
     }
     if (gBuild) {
         gBuild->allowPress = [](simd_float2 p) { return gTutorial->allows(p); };
-        gBuild->onPress = [](simd_float2 p) { gTutorial->clicked(p); };
     }
     std::printf("opensims2: tutorial: %d controller(s) created\n", created);
+}
+
+// Selecting a Sim of the family other than by its thumbnail: a right click
+// on it, or the space bar for the next one (the game's controls, as the
+// tutorial's second lesson teaches them). False if it is not one of them.
+bool selectFamilySim(os2::vm::ObjectId id) {
+    if (!gLive || !id || id == gLive->sim())
+        return false;
+    const auto family = gLive->family();
+    if (std::find(family.begin(), family.end(), id) == family.end())
+        return false;
+    std::printf("opensims2: select Sim %d\n", id);
+    if (gLive->onSelectSim)
+        gLive->onSelectSim(id);
+    gLive->setSim(id);
+    std::fflush(stdout);
+    return true;
+}
+
+void selectNextFamilySim() {
+    if (!gLive)
+        return;
+    const auto family = gLive->family();
+    if (family.size() < 2)
+        return;
+    auto it = std::find(family.begin(), family.end(), gLive->sim());
+    selectFamilySim(it == family.end() || std::next(it) == family.end() ? family.front() : *std::next(it));
 }
 
 // The tutorial each frame: its UI Effects, and the end of an episode
@@ -2636,8 +2662,8 @@ void applyLighting(os2::Renderer& renderer) {
 enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
-    kEscape = 53, kHome = 115, kEnd = 119, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
-    kF1 = 122, kF2 = 120, kF5 = 96, kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
+    kEscape = 53, kSpace = 49, kHome = 115, kEnd = 119, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
+    kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
 };
 
 // Camera position slot of the keys 4-9 (-1: another key).
@@ -3142,6 +3168,7 @@ void unloadScene() {
         return;
     }
     switch (e.keyCode) {
+    case kSpace: selectNextFamilySim(); break;
     case kPageUp: changeFloor(1); break;
     // "Paredes ... - Origem/Fim": Home and End step through the wall modes.
     case kHome: gWallView.cycle(1); break;
@@ -3242,6 +3269,8 @@ void unloadScene() {
     }
     if (gLive && gLive->press([self canvasPoint:e], true))
         return;
+    if (gPie && !(gBuy && gBuy->active()) && !(gBuild && gBuild->active())) // a right click on a Sim of the family selects it
+        selectFamilySim(gPie->pick(_camera->eye(), [self rayAt:[self canvasPoint:e]]));
     _rotating = (e.modifierFlags & NSEventModifierFlagOption) != 0;
     if (_rotating)
         [self holdCursor:YES];
@@ -4168,6 +4197,26 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     pollFlowDialog();
                     continue;
                 }
+                if (st.kind == os2::FlowStep::Kind::Key) { // --key space
+                    if (st.text == "space")
+                        selectNextFamilySim();
+                    continue;
+                }
+                if (st.kind == os2::FlowStep::Kind::TutorialAuto) { // --tutorial-auto <turns>
+                    for (long turn = 0; gTutorial && turn < st.ticks && !gPendingScene; ++turn) {
+                        gTutorial->setCanvas(int(cw), int(ch));
+                        gLive->setCanvas(int(cw), int(ch));
+                        if (gBuy)
+                            gBuy->setCanvas(int(cw), int(ch));
+                        if (gBuild)
+                            gBuild->setCanvas(int(cw), int(ch));
+                        pollTutorial(gHeadlessClock);
+                        if (!gTutorial->autoClick())
+                            break;
+                        runTicksHeadless(40);
+                    }
+                    continue;
+                }
                 if (st.kind == os2::FlowStep::Kind::Pie) { // --pie-step <object>:<entry index or name>
                     const os2::vm::ObjectId id = os2::vm::findInteractionObject(gPie->vm(), st.object);
                     gPie->setCanvas(int(cw), int(ch));
@@ -4224,7 +4273,15 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 }
                 if (gLive) {
                     gLive->setCanvas(int(cw), int(ch));
-                    if (gLive->press(p, right) || right) {
+                    const bool onPanel = gLive->press(p, right);
+                    if (right && !onPanel && gPie) { // a right click on a Sim of the family selects it
+                        const simd_float4x4 m = simd_mul(view.camera->projection(cw / ch), view.camera->view());
+                        const simd_float4 q =
+                            simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / cw - 1, 1 - 2 * p.y / ch, 0.5f, 1));
+                        updateLotView(*_viewDelegate.renderer, true);
+                        selectFamilySim(gPie->pick(view.camera->eye(), simd_normalize(q.xyz / q.w - view.camera->eye())));
+                    }
+                    if (onPanel || right) {
                         gLive->screen(int(cw), int(ch)); // no frame lays it out again before the next step
                         if (gOptions && !gLive->optionsOpen())
                             gOptions->closeWindow();
