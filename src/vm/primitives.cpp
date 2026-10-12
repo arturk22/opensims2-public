@@ -995,52 +995,48 @@ Exit relationship(Context& c) {
     return Exit::True;
 }
 
-// Array Operation (0x76): byte 0 always 0, operation u8, whose u8 (0 me,
-// else the stack object), array u16 at 3, then two operands (owner u8, data u16 at 5 and 8):
-// a value or size in the first and an index (iterator) in the second. The
-// numbering comes from the editor's disassembly strings in Sims2.exe; which
-// operand is which, from how the trees use them:
-//   0 clear                         1 size into the first
-//   2 resize to the first (new elements 0; "Temp Array - Clear" resizes to 0)
-//   3 set every element to the first
-//   4 insert the first at the front, 5 at the end, 6 at index (second); the
-//     index it went to into the second (parallel arrays in "CT - Create STFX"
-//     share that index)
-//   7 remove the first element, 8 the last, into the first (error if empty)
-//   9 remove the element at index (second) into the first
-//  10 find the first from index (second) on and put its index in the second;
-//     false if absent (the only operation whose false branch is used;
-//     "CT - Add Duration Walk" finds a value, then removes that index from
-//     four parallel arrays with 9)
-//  11 swap the elements at the indices in the first and the second
-//  12 sort, largest first
-// 13 is not understood. Arrays are created on demand (the object data
-// "number of object arrays" is not checked).
+// Array Operation (0x76), by the Mac binary (TryArrayOperation, BV
+// 0xe2a158): operation u8 at 1, byte 2 nonzero = the stack object's arrays
+// (else mine; no stack object: error 0x08), array u16 at 3 (past the
+// object's arrays, OBJD field 0x3B: error 0x6C), a value (owner u8 at 5,
+// data u16 at 6) and an index (owner u8 at 8, data u16 at 9):
+//   0 clear                         1 size into the value (error 0x13 if it
+//                                     cannot be written)
+//   2 resize to the value (new elements 0)
+//   3 set every element to the value
+//   4 insert the value at the front, 5 at the end, 6 before the index
+//     (an index outside the elements, error 0x6D; nothing is written back)
+//   7 remove the first element, 8 the last (empty: error 0x6D)
+//   9 remove the element at the index (outside: error 0x6D)
+//  10 find the value from the index on and put where it is in the index;
+//     false if the index is outside or the value absent
+//  11 swap the elements at the value and at the index (outside: 0x6D)
+//  12 sort, largest first; 13 sort, smallest first
+// Another operation is error 0x01. Only 10 can be false.
 Exit arrayOperation(Context& c) {
     const auto& o = c.instruction.operands;
     const uint8_t op = o[1];
-    auto& values = (o[2] == 0 ? c.me() : c.stackObject()).array(le16(&o[3])).values; // array u16 at 3; byte 2: 0 mine, else the stack object's (Mac binary)
+    Object* holder = &c.me();
+    if (o[2] != 0) {
+        holder = c.vm.object(c.frame.stackObject);
+        if (!holder)
+            throw gameError(err::StackNumberOutOfRange, "Array Operation: stack object " + std::to_string(c.frame.stackObject));
+    }
+    auto& values = holder->array(int16_t(le16(&o[3]))).values;
     auto get1 = [&] { return c.get(o[5], int16_t(le16(&o[6]))); };
     auto set1 = [&](int16_t v) { c.set(o[5], int16_t(le16(&o[6])), v); };
     auto get2 = [&] { return c.get(o[8], int16_t(le16(&o[9]))); };
     auto set2 = [&](int16_t v) { c.set(o[8], int16_t(le16(&o[9])), v); };
-    auto index = [&](int16_t i, size_t end, const char* what) {
-        if (i < 0 || size_t(i) >= end)
-            throw VMError(std::string("Array Operation: ") + what + " at " + std::to_string(i) + " out of range (" +
-                          std::to_string(values.size()) + ")");
+    auto index = [&](int16_t i, const char* what) {
+        if (i < 0 || size_t(i) >= values.size())
+            throw gameError(err::NoArrayElement, std::string("Array Operation: ") + what + " at " + std::to_string(i) +
+                                                     " of " + std::to_string(values.size()));
         return size_t(i);
     };
-    auto insert = [&](size_t at) {
+    auto insert = [&](size_t at, int16_t v) {
         if (values.size() >= kMaxArrayLength)
             throw VMError("Array Operation: array full");
-        values.insert(values.begin() + ptrdiff_t(at), get1());
-        set2(int16_t(at));
-        return Exit::True;
-    };
-    auto remove = [&](size_t at) {
-        const int16_t v = values[at];
-        values.erase(values.begin() + ptrdiff_t(at));
-        set1(v);
+        values.insert(values.begin() + ptrdiff_t(at), v);
         return Exit::True;
     };
     switch (op) {
@@ -1054,29 +1050,38 @@ Exit arrayOperation(Context& c) {
         return Exit::True;
     }
     case 3: std::fill(values.begin(), values.end(), get1()); return Exit::True;
-    case 4: return insert(0);
-    case 5: return insert(values.size());
-    case 6: return insert(index(get2(), values.size() + 1, "insert"));
+    case 4: return insert(0, get1());
+    case 5: return insert(values.size(), get1());
+    case 6: {
+        const int16_t v = get1();
+        return insert(index(get2(), "insert"), v);
+    }
     case 7:
     case 8:
         if (values.empty())
-            throw VMError("Array Operation: remove from an empty array");
-        return remove(op == 7 ? 0 : values.size() - 1);
-    case 9: return remove(index(get2(), values.size(), "remove"));
+            throw gameError(err::NoArrayElement, "Array Operation: remove from an empty array");
+        values.erase(op == 7 ? values.begin() : values.end() - 1);
+        return Exit::True;
+    case 9: values.erase(values.begin() + ptrdiff_t(index(get2(), "remove"))); return Exit::True;
     case 10: {
-        const int16_t from = std::max<int16_t>(get2(), 0);
-        if (size_t(from) >= values.size())
+        const int16_t v = get1();
+        const int16_t from = get2();
+        if (from < 0 || size_t(from) >= values.size())
             return Exit::False;
-        auto it = std::find(values.begin() + from, values.end(), get1());
+        auto it = std::find(values.begin() + from, values.end(), v);
         if (it == values.end())
             return Exit::False;
         set2(int16_t(it - values.begin()));
         return Exit::True;
     }
-    case 11: std::swap(values[index(get1(), values.size(), "swap")], values[index(get2(), values.size(), "swap")]);
+    case 11: {
+        const size_t a = index(get1(), "swap"), b = index(get2(), "swap");
+        std::swap(values[a], values[b]);
         return Exit::True;
+    }
     case 12: std::sort(values.begin(), values.end(), std::greater<>()); return Exit::True;
-    default: throw VMError("Array Operation: operation " + std::to_string(op) + " not implemented");
+    case 13: std::sort(values.begin(), values.end()); return Exit::True;
+    default: throw gameError(err::BadOperator, "Array Operation: operation " + std::to_string(op));
     }
 }
 

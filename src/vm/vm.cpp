@@ -1,4 +1,5 @@
 #include "engine.hpp"
+#include "errors.hpp"
 #include "vm.hpp"
 #include "placement.hpp"
 #include "rooms.hpp"
@@ -49,8 +50,33 @@ auto& slot(V& values, int idx, const char* what) {
     return values[size_t(idx)];
 }
 
-// Attributes and semi-attributes: an index past the end grows the array.
-int16_t& growing(std::vector<int16_t>& values, int idx, const char* what) {
+// Temps: 0-7, else error 0x02 (owners 8, 0x0B, 0x0D, 0x1E, 0x1F, 0x30, 0x31).
+static int16_t& temp(std::array<int16_t, kTempCount>& temps, int idx, const char* what) {
+    if (idx < 0 || size_t(idx) >= temps.size())
+        throw gameError(err::TempOutOfRange, std::string(what) + " " + std::to_string(idx));
+    return temps[size_t(idx)];
+}
+
+// Attributes and semi-attributes: an index past the object's count is error
+// 0x06 (InterpValue, BV 0xb15f2c owners 0, 1, 2, 5, 0x16, 0x32).
+int16_t& attribute(std::vector<int16_t>& values, int idx, const char* what) {
+    if (idx < 0 || size_t(idx) >= values.size())
+        throw gameError(err::AttributeOutOfRange,
+                        std::string(what) + " " + std::to_string(idx) + " of " + std::to_string(values.size()));
+    return values[size_t(idx)];
+}
+
+// An object array's element by index: outside the elements, error 0x6D.
+static int16_t& element(std::vector<int16_t>& values, int idx, const char* what) {
+    if (idx < 0 || size_t(idx) >= values.size())
+        throw gameError(err::NoArrayElement, std::string(what) + " " + std::to_string(idx) + " of " + std::to_string(values.size()));
+    return values[size_t(idx)];
+}
+
+// Type attributes (owners 0x24/0x25) still grow when written past their
+// start: the binary's count comes from the type attribute manager (an index
+// past it is error 0x40), whose size we do not know (inferred).
+static int16_t& typeAttribute(std::vector<int16_t>& values, int idx, const char* what) {
     if (idx < 0 || size_t(idx) >= kMaxAttributes)
         throw VMError(std::string(what) + " " + std::to_string(idx) + " out of range");
     if (size_t(idx) >= values.size())
@@ -311,10 +337,8 @@ void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectDefinition d) {
 }
 
 Object::Array& Object::array(int idx) {
-    if (idx < 0 || size_t(idx) >= kMaxObjectArrays)
-        throw VMError("object array " + std::to_string(idx) + " out of range");
-    if (size_t(idx) >= arrays.size())
-        arrays.resize(size_t(idx) + 1);
+    if (idx < 0 || size_t(idx) >= arrays.size())
+        throw gameError(err::BadObjectArray, "array " + std::to_string(idx) + " of " + std::to_string(arrays.size()));
     return arrays[size_t(idx)];
 }
 
@@ -399,66 +423,77 @@ static std::vector<int16_t>& typeAttributesOf(VM& vm, const Object& o) {
 
 constexpr int16_t kObjectDataUseCount = 62;
 
+static int16_t& checkTreeAd(const Context& c, std::array<int16_t, kMotiveCount>& ads, int idx, const char* what) {
+    if (!c.me().person)
+        throw gameError(err::NotAPerson, what);
+    if (idx < 0 || size_t(idx) >= ads.size())
+        throw gameError(err::MotiveOutOfRange, std::string(what) + " " + std::to_string(idx));
+    return ads[size_t(idx)];
+}
+
 // Storage behind a data owner, or null for the computed/read-only ones.
 // Owners whose index comes from another variable read it first.
 static int16_t* storage(const Context& c, uint8_t owner, int16_t data) {
     auto& t = c.thread;
     switch (owner) {
-    case 0x00: return &growing(c.me().attributes, data, "attribute");
-    case 0x01: return &growing(c.stackObject().attributes, data, "stack object attribute");
-    case 0x02: return &growing(c.me().semiAttributes, data, "semi-attribute");
+    case 0x00: return &attribute(c.me().attributes, data, "attribute");
+    case 0x01: return &attribute(c.stackObject().attributes, data, "stack object attribute");
+    case 0x02: return &attribute(c.me().semiAttributes, data, "semi-attribute");
     case 0x03: return &slot(c.me().data, data, "object data");
     case 0x04: return &slot(c.stackObject().data, data, "stack object data");
-    case 0x05: return &growing(c.stackObject().semiAttributes, data, "stack object semi-attribute");
+    case 0x05: return &attribute(c.stackObject().semiAttributes, data, "stack object semi-attribute");
     case 0x06: return &slot(c.vm.globals, data, "global");
-    case 0x08: return &slot(t.temps, data, "temp");
+    case 0x08: return &temp(t.temps, data, "temp");
     case 0x09: return &slot(c.frame.params, data, "param");
-    case 0x0B: return &slot(t.temps, slot(t.temps, data, "temp"), "temp[temp]");
+    case 0x0B: return &temp(t.temps, temp(t.temps, data, "temp"), "temp[temp]");
     case 0x0D: { // stack object's temps: the temps belong to the object in the game (cTSObject +0x8A),
                  // here to its thread: the running one if it is me, else its Main's
         const ObjectId so = c.stackObject().id;
         if (so == t.me)
-            return &slot(t.temps, data, "stack object temp");
+            return &temp(t.temps, data, "stack object temp");
         auto it = c.vm.threads.find(so);
         if (it == c.vm.threads.end())
             throw VMError("stack object " + std::to_string(so) + " has no thread for its temps");
-        return &slot(it->second.temps, data, "stack object temp");
+        return &temp(it->second.temps, data, "stack object temp");
     }
-    case 0x0C: return &slot(t.adRange, data, "check tree ad range");
-    case 0x1C: return &slot(t.adPersonality, data, "check tree ad personality var");
-    case 0x1D: return &slot(t.adMin, data, "check tree ad min");
+    // Check tree ads: only a Sim has them (else error 0x1C), 16 of each (a
+    // motive number past them: error 0x1A; cTSPerson::InterpValue BV 0xad56ec).
+    case 0x0C: return &checkTreeAd(c, t.adRange, data, "check tree ad range");
+    case 0x1C: return &checkTreeAd(c, t.adPersonality, data, "check tree ad personality var");
+    case 0x1D: return &checkTreeAd(c, t.adMin, data, "check tree ad min");
     case 0x0E: return &slot(personOf(c.me()).motives, data, "motive");
     case 0x0F: return &slot(personOf(c.stackObject()).motives, data, "stack object motive");
-    case 0x11: return &slot(personOf(c.stackObject()).motives, slot(t.temps, data, "temp"), "stack object motive[temp]");
+    case 0x11: return &slot(personOf(c.stackObject()).motives, temp(t.temps, data, "temp"), "stack object motive[temp]");
     case 0x12: return &slot(personOf(c.me()).data, data, "person data");
     case 0x13: return &slot(personOf(c.stackObject()).data, data, "stack object person data");
     case 0x16:
-        return &growing(c.stackObject().attributes, slot(c.frame.params, data, "param"), "stack object attribute[param]");
+        return &attribute(c.stackObject().attributes, slot(c.frame.params, data, "param"), "stack object attribute[param]");
     case 0x19: return &slot(c.frame.locals, data, "local");
     case 0x22: return &slot(c.vm.neighborhoodData, data, "neighborhood data");
-    case 0x24: return &growing(typeAttributesOf(c.vm, c.me()), data, "type attribute");
-    case 0x25: return &growing(typeAttributesOf(c.vm, c.stackObject()), data, "stack object type attribute");
+    case 0x24: return &typeAttribute(typeAttributesOf(c.vm, c.me()), data, "type attribute");
+    case 0x25: return &typeAttribute(typeAttributesOf(c.vm, c.stackObject()), data, "stack object type attribute");
     case 0x20: return &slot(neighborPersonData(c), data, "neighbor's person data");
-    case 0x1E: return &slot(personOf(c.me()).data, slot(t.temps, data, "temp"), "person data[temp]");
+    case 0x1E: return &slot(personOf(c.me()).data, temp(t.temps, data, "temp"), "person data[temp]");
     case 0x1F:
-        return &slot(personOf(c.stackObject()).data, slot(t.temps, data, "temp"), "stack object person data[temp]");
+        return &slot(personOf(c.stackObject()).data, temp(t.temps, data, "temp"), "stack object person data[temp]");
     case 0x32:
-        return &growing(c.stackObject().semiAttributes, slot(c.frame.params, data, "param"),
+        return &attribute(c.stackObject().semiAttributes, slot(c.frame.params, data, "param"),
                         "stack object semi-attribute[param]");
-    // Object arrays: `data` is the array; the element is the one at its
-    // iterator index or at temp 0.
+    // Object arrays: `data` is the array (past the object's: error 0x6C); the
+    // element is the one at its iterator index or at temp 0 (outside the
+    // elements: error 0x6D; BV 0xb15f2c).
     case 0x29: return &c.me().array(data).iterator;
     case 0x2A: return &c.stackObject().array(data).iterator;
     case 0x2B: {
         auto& a = c.me().array(data);
-        return &slot(a.values, a.iterator, "my object array element");
+        return &element(a.values, a.iterator, "my object array element");
     }
     case 0x2C: {
         auto& a = c.stackObject().array(data);
-        return &slot(a.values, a.iterator, "stack object's object array element");
+        return &element(a.values, a.iterator, "stack object's object array element");
     }
-    case 0x2D: return &slot(c.me().array(data).values, t.temps[0], "my object array element");
-    case 0x2E: return &slot(c.stackObject().array(data).values, t.temps[0], "stack object's object array element");
+    case 0x2D: return &element(c.me().array(data).values, t.temps[0], "my object array element");
+    case 0x2E: return &element(c.stackObject().array(data).values, t.temps[0], "stack object's object array element");
     default: return nullptr;
     }
 }
@@ -511,10 +546,20 @@ static void setTokenField(TempToken& t, int16_t field, int16_t value) {
     }
 }
 
-static int16_t slotIndex(int16_t slot) {
-    if (slot < 0)
-        throw VMError("slot " + std::to_string(slot) + " out of range");
-    return slot;
+// Container slots: the type 0 entries of the object's SLOT (NumObjectSlots).
+static size_t containmentSlotCount(VM& vm, const Object& o) {
+    size_t n = 0;
+    if (o.definition)
+        if (const Slots* t = vm.code().slots(o.group, o.definition->slotId()))
+            for (const auto& x : t->slots)
+                n += x.type == 0;
+    return n;
+}
+
+static int16_t slotContent(VM& vm, const Object& o, int16_t slot) {
+    if (slot < 0 || size_t(slot) >= containmentSlotCount(vm, o))
+        throw gameError(err::SlotOutOfRange, "slot " + std::to_string(slot) + " of object " + std::to_string(o.id));
+    return vm.containedIn(o.id, slot);
 }
 
 int16_t Context::get(uint8_t owner, int16_t data) const {
@@ -552,13 +597,16 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
         return slot(c.values, thread.temps[size_t(data & 7)], "constant [temp]");
     }
     // Slots: the object in a slot of mine / of the stack object, 0 if the slot
-    // is empty; the slot is `data` or the temp it names. FreeSO reads slots the
-    // same way, and also gives 0 past the object's last slot.
-    case 0x10: return vm.containedIn(stackObject().id, slotIndex(data));
-    case 0x14: return vm.containedIn(me().id, slotIndex(data));
-    case 0x30: return vm.containedIn(me().id, slotIndex(slot(thread.temps, data, "temp")));
-    case 0x31: return vm.containedIn(stackObject().id, slotIndex(slot(thread.temps, data, "temp")));
+    // is empty; the slot is `data` or the temp it names. A slot past the
+    // object's container slots (object data 67, its SLOT's type 0 slots) is
+    // error 0x1B (cTSObject::GetObjectSlot gives none; InterpValue BV 0xb15f2c).
+    case 0x10: return slotContent(vm, stackObject(), data);
+    case 0x14: return slotContent(vm, me(), data);
+    case 0x30: return slotContent(vm, me(), temp(thread.temps, data, "temp"));
+    case 0x31: return slotContent(vm, stackObject(), temp(thread.temps, data, "temp"));
     case 0x18: return neighborField(*this, data);
+    case 0x21: // job data: the game has none (InterpValue, base 1.0 and BV: always error 0x3A)
+        throw gameError(err::JobDataNotFound, "job data " + std::to_string(data));
     case 0x26: {
         auto def = vm.code().definitionByGuid(stackNeighbor(*this).guid);
         const ObjectDefinition* d = def ? vm.code().definition(def->first, def->second) : nullptr;
@@ -589,6 +637,7 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
     case 0x0A: frame.stackObject = value; return;
     case 0x27: setTokenField(me().tempToken, data, value); return;
     case 0x28: setTokenField(stackObject().tempToken, data, value); return;
+    case 0x21: throw gameError(err::JobDataNotFound, "job data " + std::to_string(data));
     case 0x07:
     case 0x10: // slots change by moving objects, not by writing to them
     case 0x14:
@@ -705,7 +754,8 @@ Object& VM::instantiatePart(uint32_t group, uint16_t definitionInstance, ObjectI
     const ObjectDefinition* def = code_.definition(group, definitionInstance);
     if (!def)
         throw VMError("OBJD " + hexString(group) + "/" + hexString(definitionInstance) + " not found");
-    Object& o = createObject(group, std::max<size_t>(def->numAttributes(), code_.attributeLabelCount(group)), id);
+    Object& o = createObject(group, std::max<size_t>(def->numAttributes(), kMinAttributes), id);
+    o.arrays.resize(std::min<size_t>(uint16_t(def->field(0x40 + 2 * 0x3B)), kMaxObjectArrays));
     o.definition = def;
     o.definitionInstance = definitionInstance;
     // Engine-maintained, as the lots' saved states show (600 of the 665 objects

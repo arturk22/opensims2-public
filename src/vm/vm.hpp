@@ -65,14 +65,21 @@ constexpr uint16_t kMaterialStrings = 0x88;
 // SimAntics editor (objects.package, group 0x7FE59FD0: STR# 0x81 global labels,
 // 0x8D object data, 0xC8 person data, 0x86 motives). They match the highest
 // index any BHAV uses.
-constexpr size_t kTempCount = 20;
+// Temps: 8 per object (cTSObject +0x8A; InterpValue's owner 8 takes 0-7 and
+// gives error 0x02 past them, Mac base 1.0 and BV; no BHAV of the game uses
+// temp 8 or above).
+constexpr size_t kTempCount = 8;
 constexpr size_t kObjectDataCount = 88;
 constexpr size_t kGlobalCount = 54;
 constexpr size_t kPersonDataCount = 170;
 constexpr size_t kMotiveCount = 16;
 constexpr size_t kMaxStackDepth = 128;
-// Attributes and semi-attributes grow when written past their initial size;
-// this bounds that growth (the BHAVs use at most 61 and 35).
+// Attributes and semi-attributes have a fixed count (Mac binary, the
+// cTSObject constructor BV 0xb0c7a8): the OBJD's "num attributes" (field
+// 0x3A, byte 0xB4) but at least 8, and the number of the semi-global's
+// attribute labels (STR# 0x100); an index past them is error 0x06. A saved
+// object keeps its saved attribute count (cTSObject::Read).
+constexpr size_t kMinAttributes = 8;
 constexpr size_t kMaxAttributes = 256;
 
 // Object data fields the engine maintains or reads (names as in STR# 0x8D).
@@ -159,9 +166,10 @@ struct SoundRequest {
 };
 constexpr size_t kMaxSoundRequests = 256;
 
-// Object arrays (Array Operation, data owners 0x29-0x2E) are created on
-// demand; this bounds their number and length.
-constexpr size_t kMaxObjectArrays = 32;
+// Object arrays (Array Operation, data owners 0x29-0x2E): as many as the
+// OBJD's field 0x3B (at most 256), made empty with the object (BV 0xb0c7a8);
+// another number is error 0x6C "Bad Object Array". This bounds their length.
+constexpr size_t kMaxObjectArrays = 256;
 constexpr size_t kMaxArrayLength = 4096;
 
 // Relationship variables grow when written past their end; this bounds that
@@ -464,7 +472,7 @@ struct Object {
         int16_t iterator = 0;
     };
     std::vector<Array> arrays;
-    Array& array(int idx); // created on demand; throws VMError past kMaxObjectArrays
+    Array& array(int idx); // error 0x6C past the object's arrays
     // Materials set by Change Material: mesh group name ("" = every group) -> material name.
     std::map<std::string, std::string> materials;
     // The design choice the Design tool gave it (subset -> material, the

@@ -34,10 +34,15 @@ void restoreMotives(Object& o, const LotObjects::State& s) {
         o.person->motives[k] = motiveValue(s.motives[k]);
 }
 
+// As cTSObject::Read (BV 0xb14cb0): the attributes take the saved count,
+// the semi-attributes grow to the saved count (never shrink), and the object
+// keeps its definition's arrays, the saved ones copied into them (more saved
+// arrays than that are read and dropped). The game never makes fewer than 8
+// attributes, so a state without any is one we could not read: the object
+// keeps its own.
 void restoreState(Object& o, const LotObjects::State& s) {
-    if (o.attributes.size() < s.attributes.size())
-        o.attributes.resize(s.attributes.size());
-    std::copy(s.attributes.begin(), s.attributes.end(), o.attributes.begin());
+    if (!s.attributes.empty())
+        o.attributes.assign(s.attributes.begin(), s.attributes.end());
     if (o.semiAttributes.size() < s.semiAttributes.size())
         o.semiAttributes.resize(s.semiAttributes.size());
     std::copy(s.semiAttributes.begin(), s.semiAttributes.end(), o.semiAttributes.begin());
@@ -48,9 +53,10 @@ void restoreState(Object& o, const LotObjects::State& s) {
         for (size_t i = 0; i < s.personData.size() && i < o.person->data.size(); ++i)
             o.person->data[i] = s.personData[i];
     restoreMotives(o, s);
-    o.arrays.clear();
-    for (size_t i = 0; i < s.arrays.size() && i < kMaxObjectArrays; ++i)
-        o.arrays.push_back({s.arrays[i], 0});
+    for (auto& a : o.arrays)
+        a = {};
+    for (size_t i = 0; i < s.arrays.size() && i < o.arrays.size(); ++i)
+        o.arrays[i] = {s.arrays[i], 0};
     // The temporary token: its fields as data owner 0x27 numbers them (kind,
     // inventory ID, counted, index, GUID, flags, count) and the token itself.
     const auto& f = s.tempTokenFields;

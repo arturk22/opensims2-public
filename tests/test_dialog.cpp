@@ -140,6 +140,7 @@ static void testSpecialDialogs() {
     };
     Object& me = vm.createObject(kObjGroup);
     Object& phone = vm.createObject(kObjGroup);
+    phone.arrays.resize(1); // an OBJD with one object array
     Object& service = vm.createObject(kObjGroup);
     for (int16_t n : {11, 12, 13}) {
         vm.neighbors[n].guid = 0x1000u + uint32_t(n);

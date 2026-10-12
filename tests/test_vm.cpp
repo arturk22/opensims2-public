@@ -70,7 +70,13 @@ struct Fixture {
     CodeLibrary code;
     VM vm{code};
     Fixture() { code.setSemiGlobal(kObjGroup, kSemiGroup); }
-    Object& obj() { return vm.object(1) ? *vm.object(1) : vm.createObject(kObjGroup, 8); }
+    Object& obj() {
+        if (Object* o = vm.object(1))
+            return *o;
+        Object& o = vm.createObject(kObjGroup, 8);
+        o.arrays.resize(4); // as an OBJD with 4 object arrays (field 0x3B)
+        return o;
+    }
     Thread run(uint16_t tree, std::initializer_list<int16_t> args = {}) {
         obj();
         Thread t = vm.start(1, tree, std::vector<int16_t>(args));
@@ -189,7 +195,8 @@ static void testObjectModel() {
     def.fields[(0x64 - 0x44) / 2] = 750;
     fx.code.add(kObjGroup, 0x80, def);
     Object& sim = fx.vm.instantiate(kObjGroup, 0x80);
-    check(sim.attributes.size() == 3 && sim.semiAttributes.size() == 5 && sim.person, "instance sized from OBJD and labels");
+    // num attributes 2 -> 8 (the binary's least), whatever the labels say; semi-attributes from the semi-global's labels.
+    check(sim.attributes.size() == 8 && sim.semiAttributes.size() == 5 && sim.person, "instance sized from OBJD and labels");
     check(sim.data[objdata::ObjectId] == sim.id && sim.data[objdata::SemiAttributeCount] == 5,
           "engine-maintained object data");
     Object& chair = fx.vm.createObject(kObjGroup);
@@ -203,7 +210,7 @@ static void testObjectModel() {
                       expr(Temp, 1, Assign, Lit, 169, go(7), E), expr(PersonTemp, 1, Assign, Lit, 3, go(8), E),
                       expr(Temp, 3, Assign, SPerson, 169, go(9), E), expr(Temp, 4, Assign, SDef, 18, go(10), E),
                       expr(Temp, 5, Assign, SDef, 0, go(11), E), expr(Temp, 6, Assign, Data, objdata::ObjectId, go(12), E),
-                      expr(Attr, 10, Assign, Lit, 1, T, E)}));
+                      expr(Attr, 7, Assign, Lit, 1, T, E)}));
     Thread t = fx.vm.start(sim.id, 0x1000);
     fx.vm.run(t);
     if (t.status == Thread::Status::Failed)
@@ -212,7 +219,7 @@ static void testObjectModel() {
     check(t.temps[0] == 9 && t.temps[2] == -50 && t.temps[3] == 3, "semi-attributes, motives and person data");
     check(t.temps[4] == 750 && t.temps[5] == 0x8C, "definition fields in the editor's numbering");
     check(t.temps[6] == sim.id, "object id in object data");
-    check(sim.attributes.size() == 11 && sim.attributes[10] == 1, "attributes grow when written past the end");
+    check(sim.attributes.size() == 8 && sim.attributes[7] == 1, "attributes keep their count");
 
     // Person data of an object that is not a Sim fails.
     fx.code.add(kObjGroup, 0x1001, tree({expr(Temp, 0, Assign, PData, 0, T, E)}));
@@ -294,6 +301,7 @@ static uint8_t lo(uint32_t v, int byte) { return uint8_t(v >> (8 * byte)); }
 static ObjectDefinition definition(uint32_t guid, bool person = false) {
     ObjectDefinition def;
     def.fields.resize(60);
+    def.fields[(0xB6 - 0x44) / 2] = 4; // 4 object arrays
     def.fields[(0x5C - 0x44) / 2] = uint16_t(guid);
     def.fields[(0x5E - 0x44) / 2] = uint16_t(guid >> 16);
     if (person)
@@ -421,6 +429,7 @@ static void testCinematicRequest() {
     Fixture fx;
     Object& me = fx.obj();
     Object& holder = fx.vm.createObject(0x7F000004, 0);
+    holder.arrays.resize(1);
     holder.array(0).values = {1, 7};
     fx.code.add(kObjGroup, 0x97, names({"firstKiss", "firstKissTeen"}));
     fx.code.add(kObjGroup, 0x1000,
@@ -567,29 +576,50 @@ static void testArrays() {
     auto arr = [](uint8_t op, uint8_t array, uint8_t o1, int16_t d1, uint8_t o2, int16_t d2, Target t, Target f) {
         return instr(0x76, t, f, {0, op, 0, array, 0, o1, uint8_t(d1), 0, o2, uint8_t(d2), 0});
     };
+    // By the Mac binary (TryArrayOperation): inserting and removing write nothing back.
     fx.code.add(kObjGroup, 0x1000,
-                tree({arr(5, 2, Lit, 10, Temp, 0, go(1), E),     // [10], temp0 = 0
-                      arr(5, 2, Lit, 20, Temp, 0, go(2), E),     // [10, 20], temp0 = 1
-                      arr(4, 2, Lit, 30, Temp, 0, go(3), E),     // [30, 10, 20], temp0 = 0
+                tree({arr(5, 2, Lit, 10, Temp, 0, go(1), E),     // [10]
+                      arr(5, 2, Lit, 20, Temp, 0, go(2), E),     // [10, 20]
+                      arr(4, 2, Lit, 30, Temp, 0, go(3), E),     // [30, 10, 20]
                       arr(10, 2, Lit, 20, 0x29, 2, go(4), E),    // iterator := 2
                       expr(Temp, 1, Assign, 0x2B, 2, go(5), E),  // temp1 := 20 (element at iterator)
-                      arr(9, 2, Temp, 2, Lit, 0, go(6), E),      // remove [0] -> temp2 = 30
-                      arr(1, 2, Temp, 3, Temp, 3, go(7), E),     // temp3 := 2
-                      arr(10, 2, Lit, 30, Temp, 4, E, go(8)),    // 30 is gone: false
-                      arr(12, 2, Temp, 0, Temp, 0, go(9), E),    // sort: [20, 10]
-                      expr(Temp, 6, Assign, 0x2D, 2, go(10), E), // temp6 := [temp0 = 0] = 20
-                      arr(8, 2, Temp, 7, Temp, 0, go(11), E),    // pop the last: temp7 = 10, [20]
-                      arr(2, 2, Lit, 3, Temp, 0, go(12), E),     // [20, 0, 0]
-                      arr(3, 2, Lit, 7, Temp, 0, go(13), E),     // [7, 7, 7]
-                      arr(1, 2, Temp, 8, Temp, 8, go(14), E),    // temp8 := 3
-                      arr(0, 2, Temp, 0, Temp, 0, go(15), E),    // clear
-                      arr(1, 2, Temp, 5, Temp, 5, go(16), E),    // temp5 := 0
-                      arr(7, 2, Temp, 0, Temp, 0, T, E)}));      // empty: error
+                      arr(6, 2, Lit, 40, Lit, 1, go(6), E),      // [30, 40, 10, 20]
+                      arr(9, 2, Temp, 0, Lit, 0, go(7), E),      // remove [0]: [40, 10, 20]
+                      arr(1, 2, Temp, 3, Temp, 3, go(8), E),     // temp3 := 3
+                      arr(10, 2, Lit, 30, Temp, 4, E, go(9)),    // 30 is gone: false
+                      arr(13, 2, Temp, 0, Temp, 0, go(10), E),   // sort up: [10, 20, 40]
+                      expr(Temp, 6, Assign, 0x2D, 2, go(11), E), // temp6 := [temp0 = 0] = 10
+                      arr(12, 2, Temp, 0, Temp, 0, go(12), E),   // sort down: [40, 20, 10]
+                      arr(8, 2, Temp, 0, Temp, 0, go(13), E),    // pop the last: [40, 20]
+                      arr(11, 2, Lit, 0, Lit, 1, go(14), E),     // swap: [20, 40]
+                      expr(Temp, 7, Assign, 0x2D, 2, go(15), E), // temp7 := 20
+                      arr(2, 2, Lit, 3, Temp, 0, go(16), E),     // [20, 40, 0]
+                      arr(3, 2, Lit, 7, Temp, 0, go(17), E),     // [7, 7, 7]
+                      arr(1, 2, Temp, 2, Temp, 2, go(18), E),    // temp2 := 3
+                      arr(0, 2, Temp, 0, Temp, 0, go(19), E),    // clear
+                      arr(1, 2, Temp, 5, Temp, 5, go(20), E),    // temp5 := 0
+                      arr(7, 2, Temp, 0, Temp, 0, T, E)}));      // empty: error 0x6D
     Thread t = fx.run(0x1000);
-    check(t.status == Thread::Status::Failed && t.error.find("empty") != std::string::npos && t.temps[1] == 20 &&
-              t.temps[2] == 30 && t.temps[3] == 2 && t.temps[6] == 20 && t.temps[7] == 10 && t.temps[8] == 3 &&
-              t.temps[5] == 0,
-          "Array Operation inserts, finds, removes, sorts, resizes and clears");
+    check(t.status == Thread::Status::Failed && t.error.find("iterator that does not exist") != std::string::npos &&
+              t.temps[1] == 20 && t.temps[3] == 3 && t.temps[6] == 10 && t.temps[7] == 20 && t.temps[2] == 3 &&
+              t.temps[5] == 0 && t.temps[0] == 0,
+          "Array Operation inserts, finds, removes, sorts, swaps, resizes and clears");
+    fx.code.add(kObjGroup, 0x1001, tree({arr(0, 4, Temp, 0, Temp, 0, T, E)}));
+    t = fx.run(0x1001);
+    check(t.status == Thread::Status::Failed && t.error.find("Bad Object Array") != std::string::npos,
+          "an array past the object's (OBJD field 0x3B) is error 0x6C");
+    fx.code.add(kObjGroup, 0x1002, tree({arr(14, 0, Temp, 0, Temp, 0, T, E)}));
+    t = fx.run(0x1002);
+    check(t.status == Thread::Status::Failed && t.error.find("Bad operator") != std::string::npos,
+          "Array Operation 14 is error 0x01");
+    fx.code.add(kObjGroup, 0x1003, tree({expr(Temp, 8, Assign, Lit, 1, T, E)}));
+    t = fx.run(0x1003);
+    check(t.status == Thread::Status::Failed && t.error.find("Temporary reference out of range") != std::string::npos,
+          "temp 8 is error 0x02 (8 temps)");
+    fx.code.add(kObjGroup, 0x1004, tree({expr(Attr, 8, Assign, Lit, 1, T, E)}));
+    t = fx.run(0x1004);
+    check(t.status == Thread::Status::Failed && t.error.find("Attribute number out of range") != std::string::npos,
+          "an attribute past the object's count is error 0x06");
 }
 
 static void testChangeMaterial() {
@@ -818,8 +848,9 @@ static void testFamilyTree() {
     fx.obj();
     auto call = [](uint8_t i, Target t) { return instr(0x01, t, E, {i}); };
     auto next = [](uint8_t type, uint8_t temp, Target t, Target f) {
-        return instr(0x1F, t, f, {0, 0, 0, 0, uint8_t(type | 0x80), Temp, 0, temp, 0});
+        return instr(0x1F, t, f, {0, 0, 0, 0, uint8_t(type | 0x80), Attr, 0, uint8_t(temp - 4), 0});
     };
+    // (the results go to attributes 2-7: 8 temps)
     // Children 3 and 4 of parent 1, child 5 of parent 2; 1 and 2 are spouses.
     for (int16_t id : {1, 2, 3, 4, 5})
         fx.vm.neighbors[id] = {};
@@ -851,8 +882,8 @@ static void testFamilyTree() {
     fx.code.add(kObjGroup, 0x1000, tree(std::move(code)));
     Thread t = fx.run(0x1000);
     // The searches that find nothing ("no more", "no other") write 0 (Mac binary).
-    check(t.status == Thread::Status::Finished && t.temps[6] == 0 && t.temps[7] == 1 && t.temps[8] == 2 &&
-              t.temps[9] == 3 && t.temps[10] == 4 && t.temps[11] == 0,
+    const auto& r = fx.obj().attributes;
+    check(t.status == Thread::Status::Finished && r[2] == 0 && r[3] == 1 && r[4] == 2 && r[5] == 3 && r[6] == 4 && r[7] == 0,
           "family tree calls and Set to Next family searches");
 }
 
@@ -1244,7 +1275,7 @@ static void testSlots() {
     fx.code.add(kObjGroup, 0x80, std::move(sl));
     Object& c = fx.vm.instantiate(kObjGroup, 0x80);   // id 1
     Object& plate = fx.vm.createObject(kObjGroup);     // id 2, in slot 1 of 1
-    Object& other = fx.vm.createObject(kObjGroup);     // id 3, holds 1 in its slot 0
+    Object& other = fx.vm.instantiate(kObjGroup, 0x80); // id 3, holds 1 in its slot 0
     check(c.data[objdata::SlotCount] == 2, "slot count from the SLOT's container slots");
     plate.data[objdata::ContainerId] = c.id, plate.data[objdata::SlotNumber] = 1;
     c.data[objdata::ContainerId] = other.id, c.data[objdata::SlotNumber] = 0;
@@ -1265,6 +1296,10 @@ static void testSlots() {
     fx.code.add(kObjGroup, 0x1002, tree({expr(Temp, 0, Assign, MySlot, -1, T, E)}));
     t = fx.run(0x1002);
     check(t.status == Thread::Status::Failed, "negative slot");
+    fx.code.add(kObjGroup, 0x1004, tree({expr(Temp, 0, Assign, MySlot, 2, T, E)}));
+    t = fx.run(0x1004);
+    check(t.status == Thread::Status::Failed && t.error.find("Slot number out of range") != std::string::npos,
+          "a slot past the container slots is error 0x1B (Mac binary)");
 
     // A lot's rooms know only some of their values.
     fx.vm.rooms[4].values = {0, 0, 2, 12, 0, 0};

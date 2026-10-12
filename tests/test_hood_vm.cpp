@@ -261,12 +261,12 @@ static void testPrimitives() {
     // Set to Next 36 (friends of temp 0: variable 1 & temp 1) and 11 (lots).
     t = fx.run(me.id, 0x1007,
                tree({expr(Temp, 0, Assign, Lit, 1, go(1), E), expr(Temp, 1, Assign, Lit, 0x10, go(2), E),
-                     expr(Temp, 8, Assign, Lit, 0, go(3), E),
-                     instr(0x1F, go(4), go(5), {0, 0, 0, 0, 0x80 | 36, Temp, 0, 8, 0}),
-                     expr(Temp, 2, Assign, Temp, 8, go(3), E), // last found
+                     expr(Temp, 6, Assign, Lit, 0, go(3), E),
+                     instr(0x1F, go(4), go(5), {0, 0, 0, 0, 0x80 | 36, Temp, 0, 6, 0}),
+                     expr(Temp, 2, Assign, Temp, 6, go(3), E), // last found
                      expr(Temp, 3, Assign, Lit, 0, go(6), E),
                      instr(0x1F, go(7), go(8), {0, 0, 0, 0, 0x80 | 11, Temp, 0, 3, 0}),
-                     expr(Temp, 4, Assign, Temp, 3, go(6), E), expr(Temp, 9, Assign, Lit, 0, T, E)}));
+                     expr(Temp, 4, Assign, Temp, 3, go(6), E), expr(Temp, 7, Assign, Lit, 0, T, E)}));
     check(ok(t) && t.temps[2] == 15 && t.temps[4] == 47, "Set to Next 36 and 11");
 
     // Neighbor data (0x18) of Bella (15) as the stack object; neighborhood data (0x22).
