@@ -7,12 +7,14 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
 namespace os2 {
 struct Behavior;
+struct StringTable;
 }
 
 namespace os2::vm {
@@ -89,6 +91,15 @@ int autoTimeOutDialogs(VM& vm, double now);
 // `$NameLocal:n`, `$TimeLocal:n`, ...; see dialog.cpp) for the instruction
 // running in `c`.
 std::string expandDialogTokens(Context& c, const std::string& text, int depth = 0);
+
+// The STR# tables of the game's text packages (Text/*.package, stored in the
+// local group and named by the package's group hash, as UiResources reads
+// them), which the host provides: the VM's code library has the objects'
+// tables only. Null (unset or missing) leaves the tokens that need them
+// unexpanded. Live.package (0x7F96C284) has the aspiration level names
+// (0x9A adult, 0x9B child, 0x9C teen, 0x9D elder) and the baby names (0x95).
+std::function<const StringTable*(uint32_t group, uint32_t instance)>& textTables();
+constexpr uint32_t kLiveTextGroup = 0x7F96C284;
 
 // The name a dialog shows for an object: a Sim's first name (the
 // neighborhood's, else the one in its OBJD file name), else the object's

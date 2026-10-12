@@ -262,6 +262,49 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
     `r10-cinematic-espelhada.jpg` (`--cinematic firstKiss:mirror`: antes o
     beijador de costas para a câmera espelhada, depois a imagem espelhada da
     cena normal).
+- Rodada 11 (cinemáticas no jogo de verdade):
+  - **Por que ficava "esperando os atores"**: sem tela, o app só olhava os
+    pedidos da VM (`updateCinematic`) uma vez por captura, depois de rodar
+    todos os ticks até ela: a cena do bolo (tick 1199) era preparada na
+    captura seguinte e nunca começava. Agora `updateCinematic` roda a cada
+    passo da VM entre as capturas, e a cena começa **no momento do tick em
+    que a árvore a pediu** (`LotSimulation::tickTime`), mesmo que o app a
+    veja depois; sem "Start Animations Now" ela começa com a primeira
+    animação de um ator a partir desse tick (o `onSimAnimation` lembra a
+    última de cada Sim, porque a do Sim chega no mesmo tick do pedido) ou um
+    segundo depois. Os pedidos levam um número de série (a lista guarda só
+    os 32 últimos: depois de 32 cenas o app deixava de ver as novas).
+  - **Paredes pela câmera da cena** (`cinematicLotView`): enquanto a cena
+    toca, o corte das paredes é o da direção da câmera da cena, não o da
+    câmera do jogo; "mostrar a casa inteira" continua com o
+    `forceCinematicState` da rodada 10. Durante a cena não há UI (a
+    não ser um diálogo que a VM espera) nem o plumbob do Sim selecionado
+    (inferido: as cenas que mostram um plumbob trazem o seu,
+    `plumbobCinematic`). O som abaixa (efeitos 0,2, vozes 0,3, música 0,1)
+    no começo e volta no fim, como o `PlayCinematicScene`/
+    `UpdateCinematicScene` (`docs/audio.md`).
+  - Cenas alcançáveis na VM: o **aniversário com festa** (`--vm-create
+    0x2C91C16A:2=1 --pie "Birthday Cake"`: `ageTransTeen2AdultMale`, o Johnny
+    toca `t-cinematic-teen-…` e vira adulto na cena) e o **nascimento**
+    pela lápide de teste (`--vm-create 0x0CB53A3A@24,21,2 --vm-queue
+    "Tombstone:CINECAM BABY"`, "Birth Cinecam": a árvore faz o bebê e pede
+    `homebirth`; os plumbobs da cena e o bebê como ator). O `moveIn` pela VM
+    depende do "Controller - Lot Load - Curtain Pull-Down" (GUID
+    `0xED7580EF`, que o "CT - Lot Loaded" procura); nenhuma árvore o cria e a
+    constante não está no código do Mac: falta achar quem o põe no lote. O
+    primeiro beijo não foi tentado (falta um par com o relacionamento certo).
+  - Ajudas de teste: `--frames-from <s>` (as capturas espalhadas a partir
+    desse momento), `--vm-create GUID[:attr=v]@x,y[,andar]` (põe no tile),
+    `--vm-queue <objeto>:<entrada>` (o Sim selecionado enfileira a entrada,
+    também as de depuração, de um objeto achado por ID ou nome, mesmo fora
+    do mundo); `OS2_DEBUG_CINE=1` lista os pedidos.
+  - Capturas: `docs/screenshots/r11-cinematic-aniversario.jpg` (`--lot
+    N002_Lot10 --sim-id Johnny --vm-create 0x2C91C16A:2=1 --pie "Birthday
+    Cake" --pie-select 0 --run-vm 1700 --pivot 19.8,23.2 --zoom 4 --frames 8
+    --frames-from 51`: a cena do tick 1199 até o fim e a volta à câmera do
+    jogo), `r11-cinematic-nascimento.jpg` (`--sim-id Jenny --vm-create
+    0x0CB53A3A@24,21,2 --vm-queue "Tombstone:CINECAM BABY" --run-vm 600
+    --frames 8 --pivot 24,20.5 --zoom 5`).
 
 ## 6. O que o binário faz com a cena (Mac BV)
 

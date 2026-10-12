@@ -157,6 +157,11 @@ std::string stringAt(const StringTable* t, int oneBased) {
 
 } // namespace
 
+std::function<const StringTable*(uint32_t, uint32_t)>& textTables() {
+    static std::function<const StringTable*(uint32_t, uint32_t)> tables;
+    return tables;
+}
+
 int autoTimeOutDialogs(VM& vm, double now) {
     if (!vm.dialogTimeouts)
         return 0;
@@ -290,6 +295,16 @@ std::string expandDialogTokens(Context& c, const std::string& text, int depth) {
             const StringTable* t = job ? vm.code().strings(job->group, kJobStrings) : nullptr;
             value = t ? t->get(size_t(std::max<int>(local(arg(0)), 0))) : std::string();
             known = !value.empty();
+        } else if (name == "aspirationstring" && args.size() >= 2) {
+            // <table local>:<index local>: Live.package's aspiration level
+            // names, as global "Aspiration - Get Level" leaves them in temps
+            // 1 and 2 (the age's table 0x9A-0x9D and 1 + 13 x aspiration + 2
+            // x level + 1 for a female: one-based like the Dialog's own,
+            // "Don Juan" 11, "Femme Fatale" 12; read from the data).
+            const auto& tables = textTables();
+            const StringTable* t = tables ? tables(kLiveTextGroup, uint32_t(uint16_t(local(arg(0))))) : nullptr;
+            value = stringAt(t, local(arg(1)));
+            known = t != nullptr;
         } else if ((name == "privatestring" || name == "semiglobalstring" || name == "globalstring") && args.size() >= 2 &&
                    depth < 4) {
             // <table local>:<index local>, from the code owner's scope; the

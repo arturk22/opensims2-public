@@ -67,6 +67,7 @@
 #include "render/movie_layer.hpp"
 #include "render/screen_fx_layer.hpp"
 #include "vm/engine.hpp"
+#include "vm/dialog.hpp"
 #include "audio/play_sound.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/cas_catalog.hpp"
@@ -129,6 +130,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -212,7 +214,7 @@ std::vector<std::unique_ptr<os2::SimActor>> gActors;
 std::map<int16_t, os2::SimActor*> gObjectActors; // objects the VM has animated (in gActors)
 std::unique_ptr<os2::CinematicPlayer> gCinematic; // the cinematic prepared or playing (see updateCinematic)
 std::unique_ptr<os2::TvBroadcast> gTv;             // TV channels on the lot's screens
-void cinematicActorAnimates(int16_t id);
+void cinematicActorAnimates(int16_t id, double at);
 float gUiScale = 1; // drawable pixels per view point
 // --hood: the neighborhood view (app/hood_mode.hpp) in place of a lot.
 std::unique_ptr<os2::HoodMode> gHood;
@@ -479,6 +481,11 @@ struct LotSim {
     std::string idle;
 };
 std::vector<LotSim> gLotSims;
+std::unique_ptr<os2::UiResources> gTexts; // Text/*.package's strings (uiText, the VM's textTables)
+// Sims the VM adds while the lot plays (adoptVmSims):
+std::map<int16_t, fs::path> gBornCharacters; // neighbor ID -> character file written in this session
+std::set<int16_t> gSimsLookedAt;              // person objects already adopted or given up on
+fs::path gLotCharactersDir;                   // the lot's neighborhood Characters folder
 int gPlumbob = -1; // renderer instance of the plumbob over the selected Sim (placePlumbob)
 float gPlumbobBottom = 0; // lowest point of its mesh (modelled about 1.24 over the origin)
 
@@ -604,7 +611,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     gSimulation->onSimAnimation = [](int16_t id, os2::SimActor& actor, const os2::Animation* anim, double at) {
         gSnaps->simAnimation(id, actor, anim, at);
         if (anim)
-            cinematicActorAnimates(id);
+            cinematicActorAnimates(id, at);
     };
     for (const auto& [id, p] : gPlacedObjects) {
         std::optional<os2::Xform> saved;
@@ -651,11 +658,22 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             std::fprintf(stderr, "opensims2: Sim %d: outfit 0x%03X: %s\n", id, category, e.what());
         }
     };
+    // The dialogs' $AspirationString and the newborns' names read Text/*.package (vm/dialog.hpp).
+    os2::vm::textTables() = [](uint32_t group, uint32_t instance) -> const os2::StringTable* {
+        try {
+            if (!gTexts && gIndex)
+                gTexts = std::make_unique<os2::UiResources>(*gIndex, gameDir() / "TSData/Res");
+            return gTexts ? gTexts->table(group, instance) : nullptr;
+        } catch (const std::exception&) {
+            return nullptr;
+        }
+    };
     // Babies born in play get their character files (vm/baby_character.hpp),
     // kept with the session's until the game is saved.
     if (const auto q = lotQuery())
         try {
-            os2::vm::installBabyCharacterWriter(index, os2::vm::charactersDirOf(lotPath(*q)), os2::sessionCharactersDir());
+            gLotCharactersDir = os2::vm::charactersDirOf(lotPath(*q));
+            os2::vm::installBabyCharacterWriter(index, gLotCharactersDir, os2::sessionCharactersDir(), &gBornCharacters);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: babies' characters: %s\n", e.what());
         }
@@ -808,8 +826,47 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // --vm-create GUID[:attr=value,...]: test aid, an object made out of the
     // world (vm::createTestObject; a party controller 0x2C91C16A:2=1 makes
     // the birthday play its cinematic).
-    if (auto spec = argument(@"--vm-create"))
-        std::printf("opensims2: created object %d\n", os2::vm::createTestObject(gSimulation->machine(), *spec));
+    // "...@x,y[,level]" puts it on that tile (the debug tombstone's "New Baby" places the baby beside it).
+    if (auto spec = argument(@"--vm-create")) {
+        const auto at = spec->find('@');
+        const os2::vm::ObjectId id = os2::vm::createTestObject(gSimulation->machine(), spec->substr(0, at));
+        int x = 0, y = 0, level = 1;
+        std::string where = "out of the world";
+        if (at != std::string::npos && std::sscanf(spec->c_str() + at + 1, "%d,%d,%d", &x, &y, &level) >= 2) {
+            const os2::vm::Placement p = os2::vm::checkPlacement(gSimulation->machine(), id, {x, y, level}, 0);
+            if (p.ok)
+                os2::vm::applyPlacement(gSimulation->machine(), id, p), where = "placed";
+            else
+                where = "not placed: " + p.reason;
+        }
+        std::printf("opensims2: created object %d (%s)\n", id, where.c_str());
+    }
+    // --vm-queue <object>:<entry>: test aid, the selected Sim (--sim-id) queues
+    // the pie entry (English name, debug and cheat entries too) of an object
+    // found by ID or name, also one out of the world (the debug tombstone
+    // --vm-create 0x0CB53A3A: "New Baby", "CINECAM BABY", "Age Transition Cinematic").
+    if (auto spec = argument(@"--vm-queue")) {
+        os2::vm::VM& m = gSimulation->machine();
+        const auto colon = spec->find(':');
+        const std::string what = spec->substr(0, colon), entry = colon == std::string::npos ? "" : spec->substr(colon + 1);
+        os2::vm::ObjectId target = 0;
+        for (const auto& [id, o] : m.objects())
+            if (!o.person && o.definition &&
+                (what == std::to_string(id) || strcasestr(o.definition->fileName.c_str(), what.c_str())))
+                target = target ? target : id;
+        const os2::vm::ObjectId sim = os2::vm::findSim(m, argument(@"--sim-id").value_or(""));
+        os2::vm::PieOptions opt;
+        opt.language = os2::lang::EnglishUS;
+        bool queued = false;
+        if (target && sim)
+            for (const auto& e : os2::vm::pieMenu(m, sim, target, opt))
+                if (!queued && strcasecmp(e.name.c_str(), entry.c_str()) == 0)
+                    if (auto q = os2::vm::interactionFromPie(m, e)) {
+                        os2::vm::enqueue(m, *m.object(sim), *q);
+                        queued = true;
+                    }
+        std::printf("opensims2: --vm-queue %s: %s\n", spec->c_str(), queued ? "queued" : "no such entry");
+    }
     // --motives <n>: test aid, every Sim's motives at n (instead of the saved ones).
     if (auto m = argument(@"--motives"))
         os2::vm::setAllMotives(gSimulation->machine(), int16_t(std::stoi(*m)));
@@ -1175,7 +1232,12 @@ bool onCutWall(const os2::Xform& at) {
     return false;
 }
 
+bool cinematicPlaying();
+os2::LotViewOptions cinematicLotView();
+
 os2::LotViewOptions wantedLotView() {
+    if (cinematicPlaying())
+        return cinematicLotView();
     std::array<float, 2> look{gLotView.viewDirection};
     if (gCamera) {
         const simd_float3 d = gCamera->pivot() - gCamera->eye();
@@ -1544,7 +1606,9 @@ void choosePlumbob(os2::Renderer& renderer) {
         if (o.person || !o.definition || o.definition->fileName != "PlumbBob")
             continue;
         const bool over = gObjectView->hasModel(id) && gObjectView->outermostContainer(id) == gPie->sim();
-        gObjectView->setHidden(id, !over || gVmPlumbob);
+        // No plumbob in a scene: the CINEs that show one make their own
+        // ("plumbobCinematic" actors in homeBirth, playInBed; inferred).
+        gObjectView->setHidden(id, !over || gVmPlumbob || cinematicPlaying());
         if (!over || gVmPlumbob)
             gHiddenPlumbobs.insert(id);
         else
@@ -1676,7 +1740,7 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
     simd_float4x4 at = matrix_identity_float4x4;
     at.columns[3] = simd_make_float4(0, 0, -1000, 1); // hidden
     for (const auto& s : gLotSims) {
-        if (s.id != gPie->sim() || gVmPlumbob)
+        if (s.id != gPie->sim() || gVmPlumbob || cinematicPlaying())
             continue;
         float top = s.actor->position[2];
         for (const auto& p : s.actor->posed.parts)
@@ -1704,10 +1768,12 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
 // Sims for the Sim actors) to try one. Everything runs on the scene clock.
 std::unique_ptr<os2::ScreenFxLayer> gScreenFx;
 os2::ScreenFxLayer::Params gScreenFxParams;
-size_t gCinematicsSeen = 0;
-bool gCinematicForce = false;      // start at the next update (--cinematic)
-double gCinematicPrepared = -1;    // scene clock when it was prepared (waits for an actor's animation)
-double gCinematicLast = 0;         // scene clock of the last update
+uint64_t gCinematicSerialSeen = 0;          // the last VM request taken (CinematicRequest::serial)
+std::optional<double> gCinematicStartAt;    // when the prepared scene starts (scene clock; may be past)
+double gCinematicPrepared = -1;             // scene clock when it was prepared (waits for an actor's animation)
+double gCinematicLast = 0;                  // scene clock of the last update
+bool gCinematicWholeHouse = false;          // the scene shows the whole house (flag 0x08, moveIn)
+std::map<int16_t, double> gSimAnimationAt;  // each Sim's last Animate Sim start (scene clock)
 double gCrossfadeAt = -1e9;        // scene clock of the last snapshot
 double gSceneNow = 0;              // the scene clock of the last poseActors
 std::optional<os2::FrameView> gLastFrameView; // what was drawn last (snapshots)
@@ -1727,7 +1793,6 @@ struct CinematicForced {
     std::optional<int> level;                       // the camera's floor before
 };
 CinematicForced gCinematicForced;
-bool gCinematicWholeHouse = false; // the prepared scene shows the whole house
 
 void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
     if (!gCinematicForced.active) {
@@ -1772,6 +1837,9 @@ void restoreCinematicState(os2::Renderer& renderer) {
     gCinematicForced = {};
 }
 
+// Whether a cinematic's camera is the one drawn now.
+bool cinematicPlaying() { return gCinematic && gCinematic->active(gSceneNow); }
+
 // Where an actor stands: a Sim's or an animated object's placement, else
 // its VM position and direction (object data 1, eighths of a turn).
 std::optional<os2::Xform> cinematicOrigin(int16_t id) {
@@ -1813,8 +1881,23 @@ void cinematicSnapshot(os2::Renderer& renderer, double now) {
     gCrossfadeAt = now;
 }
 
+// The lot as a playing scene's camera sees it: the walls cut away for its
+// view, not the live camera's ("Show Entire House" already put the walls up
+// and the top floor: forceCinematicState). Back to the live view when the
+// scene ends.
+os2::LotViewOptions cinematicLotView() {
+    const auto shot = gCinematic->camera().shot(gSceneNow);
+    std::array<float, 2> look{shot.forward.x, shot.forward.y};
+    if (std::hypot(look[0], look[1]) < 1e-3f) // looking straight down: the camera's up is "into the scene"
+        look = {shot.up.x, shot.up.y};
+    return gWallView.options(look, viewLevel());
+}
+
+// Prepares a scene at `preparedAt` (scene clock: when the VM asked for it,
+// which can be before this frame); with `now` it starts then, else when
+// one of its actors starts an animation from then on, or a second later.
 void startCinematic(os2::Renderer& renderer, const std::string& scene, std::vector<int16_t> actors, int16_t origin,
-                    bool mirror, bool now, bool guessSims = false, bool wholeHouse = false) {
+                    bool mirror, bool now, double preparedAt, bool guessSims = false, bool wholeHouse = false) {
     if (gCinematic) {
         std::printf("opensims2: cinematic %s: another cinematic is playing\n", scene.c_str());
         std::fflush(stdout);
@@ -1835,45 +1918,59 @@ void startCinematic(os2::Renderer& renderer, const std::string& scene, std::vect
             return it == gObjectActors.end() ? nullptr : it->second;
         };
         host.placement = cinematicOrigin;
-        auto player = std::make_unique<os2::CinematicPlayer>(renderer, *gIndex, std::move(host), scene, std::move(actors),
+        auto player = std::make_unique<os2::CinematicPlayer>(renderer, *gIndex, std::move(host), scene, actors,
                                                              origin, mirror);
-        std::printf("opensims2: cinematic %s prepared (%.2f s, camera %s%s%s)\n", player->camera().scene().name.c_str(),
-                    player->camera().duration(), player->camera().scene().cameraAnimation.c_str(),
-                    mirror ? ", mirrored" : "", now ? "" : ", waits for its actors");
+        std::printf("opensims2: cinematic %s prepared at %.2f s (%.2f s, camera %s%s%s%s)\n",
+                    player->camera().scene().name.c_str(), std::isfinite(preparedAt) ? preparedAt : gSceneNow,
+                    player->camera().duration(),
+                    player->camera().scene().cameraAnimation.c_str(), mirror ? ", mirrored" : "",
+                    now ? "" : ", waits for its actors", wholeHouse ? ", whole house" : "");
         player->setGuessSimAnimations(guessSims);
         gCinematic = std::move(player);
-        gCinematicWholeHouse = wholeHouse || strcasecmp(scene.c_str(), "moveIn") == 0;
-        gCinematicPrepared = -1;
-        gCinematicForce = now;
+        gCinematicPrepared = preparedAt;
+        gCinematicWholeHouse = wholeHouse || strcasecmp(scene.c_str(), "moveIn") == 0; // PrepCinematicScene forces moveIn's
+        gCinematicStartAt.reset();
+        if (now)
+            gCinematicStartAt = preparedAt;
+        else // an actor that already started its part (the same tick as the primitive)
+            for (int16_t a : gCinematic->actors())
+                if (auto it = gSimAnimationAt.find(a); a && it != gSimAnimationAt.end() && it->second >= preparedAt - 1e-3)
+                    gCinematicStartAt = std::min(gCinematicStartAt.value_or(it->second), it->second);
     } catch (const std::exception& e) {
         std::printf("opensims2: cinematic %s: %s\n", scene.c_str(), e.what());
     }
     std::fflush(stdout);
 }
 
-// An actor of the prepared scene starts an animation: the scene starts with it.
-void cinematicActorAnimates(int16_t id) {
-    if (!gCinematic || gCinematic->started())
+// A Sim starts an animation at `at`: an actor of the prepared scene starts it.
+void cinematicActorAnimates(int16_t id, double at) {
+    gSimAnimationAt[id] = at;
+    if (!gCinematic || gCinematic->started() || gCinematicStartAt)
         return;
     for (int16_t a : gCinematic->actors())
-        if (a == id) {
-            gCinematicForce = true;
+        if (a == id && at >= gCinematicPrepared - 1e-3) {
+            gCinematicStartAt = at;
             return;
         }
 }
 
-// Starts the cinematics the VM asked for since the last call; runs and ends the one playing.
+// Starts the cinematics the VM asked for since the last call; runs and ends
+// the one playing. Called every frame and, headless, every step of the VM
+// between shots, so a scene starts when the tree asked for it.
 void updateCinematic(os2::Renderer& renderer, double now) {
     gSceneNow = now;
-    auto& requests = os2::vm::cinematicRequests();
-    if (gCinematicsSeen > requests.size())
-        gCinematicsSeen = 0;
-    for (; gCinematicsSeen < requests.size(); ++gCinematicsSeen) {
-        const auto& r = requests[gCinematicsSeen];
+    for (const auto& r : os2::vm::cinematicRequests()) {
+        if (r.serial <= gCinematicSerialSeen)
+            continue;
+        gCinematicSerialSeen = r.serial;
+        if (std::getenv("OS2_DEBUG_CINE"))
+            std::fprintf(stderr, "opensims2: tick %llu: object %d asks for cinematic \"%s\" (flags 0x%02X, %zu actors)\n",
+                         (unsigned long long)r.tick, r.me, r.scene.c_str(), r.flags, r.actors.size());
         if (r.scene.empty())
             continue;
+        const double at = gSimulation ? std::min(now, gSimulation->tickTime(r.tick)) : now;
         std::vector<int16_t> actors(r.actors.begin(), r.actors.end());
-        startCinematic(renderer, r.scene, actors, r.me, r.mirrored(), r.startNow(), false, r.flags & 0x08);
+        startCinematic(renderer, r.scene, actors, r.me, r.mirrored(), r.startNow(), at, false, r.wholeHouse());
     }
     if (gLighting && !gLighting->extraLights)
         gLighting->extraLights = [](int16_t id) {
@@ -1884,12 +1981,13 @@ void updateCinematic(os2::Renderer& renderer, double now) {
             return out;
         };
     if (gCinematic && !gCinematic->started()) {
-        if (gCinematicPrepared < 0)
-            gCinematicPrepared = now;
-        if (gCinematicForce || now - gCinematicPrepared >= kCinematicWait) {
-            gCinematicLast = now - 1e-3;
-            if (gCinematic->start(now)) {
-                std::printf("opensims2: cinematic %s starts at %.2f s%s\n", gCinematic->camera().scene().name.c_str(), now,
+        if (!gCinematicStartAt && now - gCinematicPrepared >= kCinematicWait)
+            gCinematicStartAt = gCinematicPrepared + kCinematicWait;
+        if (gCinematicStartAt) {
+            const double at = std::min(*gCinematicStartAt, now);
+            gCinematicLast = at - 1e-3;
+            if (gCinematic->start(at)) {
+                std::printf("opensims2: cinematic %s starts at %.2f s%s\n", gCinematic->camera().scene().name.c_str(), at,
                             gCinematicWholeHouse ? " (whole house)" : "");
                 forceCinematicState(renderer, gCinematicWholeHouse);
             } else {
@@ -1952,9 +2050,98 @@ void attachLetterbox(os2::Renderer& renderer, MTL::Device* device, uint32_t colo
     renderer.setOverlay([previous](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
         if (gScreenFx) // under the UI
             gScreenFx->encode(enc, w, h, gScreenFxParams);
-        if (previous)
+        // A scene plays without the live UI (inferred), but a dialog it
+        // waits on still shows.
+        if (previous && (!cinematicPlaying() || (gPie && gPie->dialogOpen())))
             previous(enc, w, h);
     });
+}
+
+// Sims the VM makes while the lot plays (a baby born, the debug
+// tombstone's "New Baby"): a person object the lot did not load gets an
+// actor from its character file (a newborn's from the baby character
+// writer, gBornCharacters; anyone else's by its OBJD GUID in the
+// neighborhood's Characters folder or the session's), attached to the VM
+// like the lot's own Sims. Persons without a character file (templates of
+// NPCs not written yet) stay undrawn.
+
+std::optional<fs::path> characterFileOf(uint32_t guid) {
+    static std::map<fs::path, std::map<uint32_t, fs::path>> byDir;
+    for (const fs::path& dir : {os2::sessionCharactersDir(), gLotCharactersDir}) {
+        if (dir.empty())
+            continue;
+        auto& files = byDir[dir];
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(dir, ec)) {
+            if (e.path().extension() != ".package" || std::any_of(files.begin(), files.end(), [&](const auto& f) {
+                    return f.second == e.path();
+                }))
+                continue;
+            try {
+                os2::DbpfPackage pkg(e.path());
+                for (const auto& x : pkg.entries())
+                    if (x.tgi.type == 0x4F424A44) { // OBJD
+                        files[os2::ObjectDefinition::parse(pkg.read(x)).guid()] = e.path();
+                        break;
+                    }
+            } catch (const std::exception&) {
+            }
+        }
+        if (auto it = files.find(guid); it != files.end())
+            return it->second;
+    }
+    return std::nullopt;
+}
+
+void adoptVmSims(os2::Renderer& renderer) {
+    if (!gSimulation || !gIndex || !gObjectView)
+        return;
+    os2::vm::VM& m = gSimulation->machine();
+    std::vector<int16_t> fresh;
+    for (const auto& [id, o] : m.objects())
+        if (o.person && (o.position.inWorld() || o.data[os2::vm::objdata::ContainerId] != 0) && !gSimsLookedAt.count(id))
+            fresh.push_back(id);
+    for (int16_t id : fresh) {
+        gSimsLookedAt.insert(id);
+        if (std::any_of(gLotSims.begin(), gLotSims.end(), [&](const LotSim& s) { return s.id == id; }))
+            continue;
+        const os2::vm::Object& o = *m.object(id);
+        const int16_t neighbor = o.person->data[os2::vm::persondata::NeighborId];
+        std::optional<fs::path> file;
+        if (auto it = gBornCharacters.find(neighbor); it != gBornCharacters.end())
+            file = it->second;
+        else if (const os2::vm::Neighbor* n = m.neighbor(neighbor))
+            file = characterFileOf(n->guid);
+        if (!file) {
+            std::fprintf(stderr, "opensims2: Sim %d (neighbor %d): no character file, not drawn\n", id, neighbor);
+            continue;
+        }
+        try {
+            auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(*gIndex, simParts(*gIndex), *file));
+            actor->position = {o.position.x, o.position.y, gSimulation->floorHeight(o.position.level, o.position.x, o.position.y)};
+            actor->heading = -float(o.data[os2::vm::objdata::Direction]) * float(M_PI) / 4; // as cinematicOrigin (inferred)
+            const char age = char(std::tolower(static_cast<unsigned char>(actor->skin.skeleton.name.empty() ? 'a' : actor->skin.skeleton.name[0])));
+            const std::string idle = age == 'b'   ? "b-floor-idle-loopBreathe"
+                                     : age == 'p' ? "p-idle-neutral-lookAround"
+                                     : age == 'c' ? "c-idle-neutral-armsSide-wtC-breatheLoop50"
+                                                  : "a-idle-neutral-armsSide-wtC-breatheLoop";
+            actor->cue(gSceneNow, actor->animation(*gIndex, idle));
+            actor->model = renderer.addObject(actor->skin.model, *gIndex, true);
+            renderer.addInstance(actor->model, matrix_identity_float4x4);
+            os2::DbpfPackage character(*file);
+            gSimulation->attach(*actor, id, os2::readCharacter(character, *gIndex), idle);
+            gObjectView->addSim(id, actor.get());
+            if (gLighting)
+                gLighting->addSim(id, actor.get());
+            std::printf("opensims2: Sim %d (neighbor %d) joins the lot: %s, skeleton %s, at (%.2f, %.2f)\n", id, neighbor,
+                        file->filename().string().c_str(), actor->skin.skeleton.name.c_str(), o.position.x, o.position.y);
+            std::fflush(stdout);
+            gLotSims.push_back({actor.get(), id, *file, idle});
+            gActors.push_back(std::move(actor));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: Sim %d: %s\n", id, e.what());
+        }
+    }
 }
 
 // Poses every actor at `seconds` and hands the vertices to the renderer.
@@ -1963,8 +2150,9 @@ void attachLetterbox(os2::Renderer& renderer, MTL::Device* device, uint32_t colo
 void poseActors(os2::Renderer& renderer, double seconds) {
     if (gSimulation)
         seconds = gSimulation->update(seconds); // the scene clock (game speed)
+    adoptVmSims(renderer);
+    updateCinematic(renderer, seconds); // first: a playing scene's camera cuts the walls
     updateLotView(renderer, false);
-    updateCinematic(renderer, seconds);
     if (gDoors && gSimulation) {
         std::vector<os2::Vec3> sims;
         for (const auto& s : gLotSims)
@@ -2321,7 +2509,6 @@ bool saveGameNow() {
 constexpr os2::vm::ObjectId kFlowDialog = -2;
 enum class FlowDialog { None, Leave, Quit };
 FlowDialog gFlowDialog = FlowDialog::None;
-std::unique_ptr<os2::UiResources> gTexts;
 
 std::string uiText(uint32_t instance, uint32_t index, const char* fallback) {
     try {
@@ -2492,8 +2679,12 @@ void runTicksHeadless(long ticks) {
 // renderer is replaced by the caller).
 void unloadScene() {
     gFlowDialog = FlowDialog::None;
-    gCinematic.reset(); // (the VM's request list stays counted: gCinematicsSeen)
+    gCinematic.reset(); // (the VM's request list stays counted: gCinematicSerialSeen)
+    gCinematicStartAt.reset();
     gCinematicForced = {};
+    gSimAnimationAt.clear();
+    gBornCharacters.clear();
+    gSimsLookedAt.clear();
     gScreenFxParams = {};
     gCrossfadeAt = -1e9;
     gBuild.reset();
@@ -3768,7 +3959,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 }
             }
             startCinematic(*_viewDelegate.renderer, scene, actors, gLotSims.empty() ? 0 : gLotSims.front().id, mirror, true,
-                           true, house);
+                           std::numeric_limits<double>::infinity(), true, house); // starts at the first update
         }
         if (gPendingScene)
             return; // headless: the steps left the lot (runScenes loads the next scene)
@@ -3791,12 +3982,18 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     dialogClicks.push_back(simd_make_float2(x, y));
             }
             double perfSim = 0, perfCapture = 0, perfWorst = 0;
+            // --frames-from <seconds>: the shots spread from that moment instead of the start
+            // (the VM still runs from the start: a scene late in a long run).
+            const double from = std::clamp(std::stod(argument(@"--frames-from").value_or("0")), 0.0, time);
+            double previous = 0;
             for (int f = 1; f <= frames; ++f) {
                 const CFTimeInterval frameStart = CACurrentMediaTime();
-                const double at = time * f / frames;
+                const double at = frames > 1 && from > 0 ? from + (time - from) * (f - 1) / (frames - 1) : time * f / frames;
                 // The VM in small steps, so that the Sims' turning is followed.
-                for (double t = time * (f - 1) / frames + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30) {
+                for (double t = previous + 1.0 / 30; gSimulation && t < at; t += 1.0 / 30) {
                     const double scene = gSimulation->update(base + t); // the scene clock (game speed)
+                    adoptVmSims(*_viewDelegate.renderer);            // a Sim the VM just made (its actor for the scene)
+                    updateCinematic(*_viewDelegate.renderer, scene); // a scene starts when the tree asks
                     // The lights follow the VM clock as in a live run (the
                     // day/night switch and its crossfade start when the clock gets there).
                     if (gLighting && gSimulation->ticks() % 30 == 0)
@@ -3828,6 +4025,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 view.camera->setViewport(float(shotW), float(shotH));
                 view.camera->snap();
                 poseActors(*_viewDelegate.renderer, base + at);
+                previous = at;
                 _viewDelegate.renderer->setTime(at); // texture animations
                 const uint32_t w = uiCanvas ? uiCanvas->first : 1280, h = uiCanvas ? uiCanvas->second : 720;
                 gLastFrameW = w, gLastFrameH = h;

@@ -442,6 +442,8 @@ static void testCinematicRequest() {
     t = fx.vm.start(me.id, 0x1001, {});
     fx.vm.run(t);
     check(r.size() == 2 && r.back().scene == "firstKiss", "Cinematic scene index from a variable");
+    check(r.size() == 2 && r.back().serial == r.front().serial + 1 && !r.back().wholeHouse(),
+          "Cinematic requests are numbered (the host follows them past the list's 32)");
 }
 
 // The clock keeps Time Of Day (global 4), Days Running and Day Of Week.

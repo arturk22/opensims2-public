@@ -261,7 +261,13 @@ std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
                 (placeholder(e) || !library(c.vm).exists(parseItem(split(e, ',')[0]).name)))
                 table = code.strings(kGlobalGroup, globalListFor(sim, true));
         } else if (globalListFor(sim) != animlist::Adult) {
+            // Past the end of the age's list: its reserve, and the adult list
+            // for a baby, toddler or child (inferred: "Anims - Baby" stops at
+            // 140, inside the blinks "Facial - Background - Start Anim"
+            // picks from 135-165, and its own blinks are the adult ones).
             table = code.strings(kGlobalGroup, globalListFor(sim, true));
+            if (!table || size_t(index) >= table->count(lang::EnglishUS))
+                table = code.strings(kGlobalGroup, animlist::Adult);
         }
     } else {
         // An object's list 0x81 is the Sim's age list too

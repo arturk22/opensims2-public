@@ -61,12 +61,16 @@ struct CinematicRequest {
     int16_t temp0 = 0; // flag 0x02 mirrors the scene when it is not 0
     ObjectId me = 0;
     uint64_t tick = 0;
+    uint64_t serial = 0; // counts every request since the start (the list keeps the latest 32)
     // Flag 0x01, or 0x02 with temp 0 set: the scene's animations flipped
     // horizontally ("Flip Cinematic Anims Horizontally"); 0x04 "Start
     // Animations Now" (TryCinematic passes flags >> 2 & 1 as PrepCinematicScene's
     // start-now argument, Mac binary).
     bool mirrored() const { return (flags & 0x01) || ((flags & 0x02) && temp0 != 0); }
     bool startNow() const { return flags & 0x04; }
+    // 0x08 "Show Entire House" (PrepCinematicScene's +0x164: the top floor,
+    // walls up, no object hiding).
+    bool wholeHouse() const { return flags & 0x08; }
 };
 std::deque<CinematicRequest>& cinematicRequests();
 

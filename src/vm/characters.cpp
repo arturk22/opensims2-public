@@ -56,6 +56,7 @@
 #include "characters.hpp"
 
 #include "baby_character.hpp"
+#include "dialog.hpp"
 
 #include "errors.hpp"
 #include "genetics.hpp"
@@ -141,6 +142,20 @@ int16_t makeCharacter(VM& vm, uint32_t templateGuid, int16_t ageFlag, int16_t ge
     return id;
 }
 
+// A newborn's first name until the player names it, as
+// cTSCASSystem::ProcessCreateBabyRequest sets it (state 4, BV 0x55a8f4):
+// Live.package's STR# by age and gender, one-based: a toddler 0x95 #1 boy /
+// #2 girl ("Baby Boy", "Baby Girl"), child and teen 0xE6 #0x38 / #0x37,
+// adult 0xE6 #0x43 / #0x44, a baby 0xE6 #0. Table 0xE6 is Bon Voyage's
+// (the base game's Live.package has none), so a baby here takes the
+// toddler's names, whose note says they were the Name Baby dialog's
+// (inferred). Empty without the host's text tables (dialog.hpp).
+std::string defaultBabyName(bool female) {
+    const auto& tables = textTables();
+    const StringTable* t = tables ? tables(kLiveTextGroup, 0x95) : nullptr;
+    return t ? t->get(female ? 1 : 0) : std::string();
+}
+
 int16_t parentNeighbor(Context& c, uint8_t owner, int16_t data, bool isNeighbor) {
     const int16_t v = c.get(owner, data);
     if (isNeighbor)
@@ -213,7 +228,7 @@ Exit makeNewCharacter(Context& c) {
         const int16_t id = makeCharacter(vm, templateGuid, 0x20, female ? 2 : 1, skin);
         Neighbor& baby = vm.neighbors[id];
         baby.lastName = lastName;
-        baby.firstName.clear();
+        baby.firstName = defaultBabyName(female);
         baby.dna = dna.toProperties();
         baby.personData[persondata::PersonAge] = 1; // baby (ProcessCreateBabyRequest: data 58 = 1)
         baby.personData[kFatness] = 500;

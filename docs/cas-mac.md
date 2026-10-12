@@ -192,7 +192,7 @@ outros: ordem 50/50
    código não é simétrico.)
 5. roupa: uma roupa de bebê sorteada entre as do bin que não têm a flag 1;
    cabelo do bebê pela cor genética;
-6. nome padrão do STR# `0x7F96C284` (#0x37/0x38 bebê menino/menina, ...) +
+6. nome padrão do Live.package (`0x7F96C284`, STR# 0x95/0xE6 pela idade; §17.4) +
    sobrenome da família; entra no neighbor manager.
 
 ## 6. Personalidade, signo e aspiração
@@ -648,7 +648,7 @@ Complementa o §5 (genética): a máquina de estados avança um estado por tick:
 | 1 | sexo (§5); dado 58 = 1, dado 0xBA = espécie (BV), dado 65 = sexo, 82 = 500, 81 = 0; AGED novo com idade 0x20, sexo, espécie, forma `FLOAT_0274b470`, grupo e chave do personagem novo; registra no sim system |
 | 2 | o editor (`EdithEditor`) carrega o AGED; o gerente de genética (`FUN_000c7fb0()` vtable `0x6c`, slot `0x28`) monta o DNA e o rosto do filho a partir dos dois pais e do ID novo (`"%d"`) — §5 `DetermineGenetics`/`DetermineDescendantFace`, o editor mistura os dois LxNR por região; humanos: cor do cabelo pela genética (`GetBodyPartSystemHairColor(0x20, sexo, cor)`), olhos, e **uma roupa de bebê sorteada** entre os itens do bin (`UIServiceManager` `0x68`, idade 0x20) sem a flag 1; o editor exporta para o personagem (vtable `0x30` com o ID) |
 | 3 | `ClearAllEntries`, `SetupNakedEntries`, `SetValidFlags(0x3DB)`, `Randomize(−1, 8)` |
-| 4 | nome: STR# `0x7F96C284` #0x37/0x38 (bebê menino/menina; criança 2/1 do STR# 0x95, bebê que anda e adolescente 0x37/0x38, adulto 0x44/0x43) + sobrenome do pai do primeiro ID |
+| 4 | nome (rodada 11, BV `0x55b8a0`–`0x55b908`, índices a partir de 1 no grupo `0x7F96C284` do Live.package): pela idade do AGED, bebê que anda (1) STR# 0x95 #1 menino / #2 menina ("Baby Boy"/"Baby Girl"), criança e adolescente (2, 4) STR# 0xE6 #0x38 menino / #0x37 menina, adulto (8) 0xE6 #0x43 / #0x44, outra idade — o bebê, 0x20 — 0xE6 #0; + sobrenome do pai do primeiro ID. A tabela 0xE6 é do BV (o Live.package do jogo base não tem): o opensims2 dá ao bebê os nomes do bebê que anda (0x95, cuja nota diz que eram os do diálogo "Nomear Bebê"; inferido): "Bebezinho"/"Bebezinha" em português |
 | 5 | humanos: o neighbor manager grava o personagem (vtable `0xa0(vizinho, 0, 1)`: o `ProcessSaveSimRequest` do §7, que escreve GZPS/AGED/CRES/GMND/SHPE/TXMT/TXTR/3IDR/IMG e o **LxNR** exportado pelo editor) |
 | 6 | pronto |
 

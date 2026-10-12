@@ -32,6 +32,7 @@ namespace {
 
 std::deque<UiEvent> events;
 std::deque<CinematicRequest> cinematics;
+uint64_t cinematicSerial = 0;
 constexpr uint16_t kCinematicsTable = 0x97;
 
 void record(Context& c) {
@@ -48,6 +49,7 @@ Exit cinematic(Context& c) {
     r.temp0 = c.thread.temps[0];
     r.me = c.thread.me;
     r.tick = c.vm.ticks;
+    r.serial = ++cinematicSerial;
     try {
         const int index = (r.flags & 0x10) ? c.get(o[6], int16_t(le16(&o[7]))) : int(le16(&o[0]));
         // The table the flags name, else the running tree's own (every use in

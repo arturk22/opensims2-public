@@ -83,6 +83,9 @@ public:
     // speed, and stops while paused).
     double update(double seconds);
     uint64_t ticks() const { return vm_->ticks; }
+    // The scene-clock moment of VM tick `tick` (VM::ticks while it runs), as
+    // the actors play what it started.
+    double tickTime(uint64_t tick) const { return double(tick ? tick - 1 : 0) / vm_->clock.ticksPerSecond + slip_; }
     static constexpr double kTicksPerSecond = 1000.0 / 42.0;
     // Scene clock scale of speeds 2, 3 and 4 (TS2Config.txt AnimSpeedMedium, Fast, Ultra).
     std::array<double, 3> speedScales{1.0, 3.0, 21.0};

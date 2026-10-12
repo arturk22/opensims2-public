@@ -10,9 +10,11 @@
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
+#include "formats/ui_resources.hpp"
 #include "vm/hood_bridge.hpp"
 #include "vm/lot_neighborhood.hpp"
 #include "vm/autonomy.hpp"
+#include "vm/dialog.hpp"
 #include "vm/engine.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
@@ -63,6 +65,9 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
            const std::string& birth, const std::string& userDir, const std::string& saveHood) {
     ResourceIndex index(resRoot(lotFile));
     vm::CodeLibrary code(&index);
+    // Text/*.package's tables for the dialogs' $AspirationString and the babies' names.
+    UiResources texts(index, resRoot(lotFile));
+    vm::textTables() = [&texts](uint32_t group, uint32_t instance) { return texts.table(group, instance); };
     DbpfPackage pkg(lotFile);
     const Lot lot = Lot::load(pkg);
     const LotObjects saved = LotObjects::load(pkg);
@@ -120,7 +125,8 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         std::printf("Make New Character (baby of %d and %d): %s;", ma, pa, ok ? "true" : "false");
         for (int16_t id : machine.object(ma)->array(0).values)
             if (const vm::Neighbor* n = machine.neighbor(id))
-                std::printf(" neighbor %d (GUID 0x%08X, person data 58 %d, gender %d, family %d)", id, n->guid,
+                std::printf(" neighbor %d \"%s %s\" (GUID 0x%08X, person data 58 %d, gender %d, family %d)", id,
+                            n->firstName.c_str(), n->lastName.c_str(), n->guid,
                             n->personData[vm::persondata::PersonAge], n->personData[65],
                             n->personData[vm::persondata::FamilyNumber]);
         std::printf("\n");
