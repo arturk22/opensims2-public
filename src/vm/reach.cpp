@@ -71,8 +71,11 @@ bool runCheck(Context& c, ObjectId owner, uint16_t guard, std::array<int16_t, 4>
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < kMaxTurns; ++turn)
         c.vm.run(t, c.vm.instructionsPerTurn);
     c.thread.temps = t.temps;
-    if (t.status == Thread::Status::Failed)
+    if (t.status == Thread::Status::Failed) {
+        if (std::getenv("OS2_CHECK_TREE_ERRORS")) // where in the check tree, for looking into
+            std::fprintf(stderr, "t%llu check tree of %d failed: %s\n", (unsigned long long)c.vm.ticks, owner, t.error.c_str());
         throw VMError("Run Functional Tree: check tree failed: " + t.error.substr(0, t.error.find('\n')));
+    }
     return t.status == Thread::Status::Finished && t.result;
 }
 
