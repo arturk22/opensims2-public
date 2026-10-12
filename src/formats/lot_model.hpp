@@ -76,6 +76,10 @@ struct LotViewOptions {
     Walls walls = Walls::Up;
     std::array<float, 2> viewDirection{1, 0};
     int level = kAllLevels;
+    // The wall mode also cuts the walls of the levels from this one up to
+    // `level` (a yard under a house on foundations is shown with its floor:
+    // app/wall_view.hpp); kAllLevels: only `level`'s.
+    int lowestCut = kAllLevels;
     bool roof = true;
 };
 // The highest level with walls or floors (lowest level if none).

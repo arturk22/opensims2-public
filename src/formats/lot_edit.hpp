@@ -28,8 +28,17 @@ const Lot::Wall* findWall(const Lot& lot, int level, int ax, int ay, int bx, int
 // there is a wall there already or the segment is not one tile long.
 std::optional<uint32_t> addWall(Lot& lot, int level, int ax, int ay, int bx, int by, uint32_t type,
                                 std::array<uint16_t, 2> patterns);
-// Takes the wall there out of Lot::walls and every graph. Returns what it was.
-std::optional<Lot::Wall> removeWall(Lot& lot, int level, int ax, int ay, int bx, int by);
+// Two rooms a removed wall separated, for updateRooms: the rooms on the
+// right and left of the graph's line (seen from its a to its b) in the room
+// array of graph `graph` (5, 6 or 7).
+struct RoomMerge {
+    uint32_t graph = 0;
+    int32_t right = 0, left = 0;
+};
+// Takes the wall there out of Lot::walls and every graph. Returns what it
+// was. `merges` gets the rooms it separated in each room graph.
+std::optional<Lot::Wall> removeWall(Lot& lot, int level, int ax, int ay, int bx, int by,
+                                    std::vector<RoomMerge>* merges = nullptr);
 
 // The reference of a pattern name in a string map, added if missing (new
 // references from `first` up: floors keep 0 for no floor).
@@ -56,11 +65,14 @@ bool addLowerLevel(Lot& lot);
 // had no room and have no floor stay out of every room (the saved lots
 // leave the floorless quarters of the upper levels out). The lines of the
 // graphs get the rooms on their sides and the graphs their room lists.
-void updateRooms(Lot& lot);
+// Rooms joined by removed walls (`merges`, in the order the walls went) keep
+// the right-hand room's ID, or become room 0 if either side was 0
+// (cWallGraph::SetRoomsPreDetach, docs/buy-build-mac.md §7.3).
+void updateRooms(Lot& lot, const std::vector<RoomMerge>& merges = {});
 
-// The room (3ARY 0x09) on one side of a wall: 0 its right (seen from a to
-// b), 1 its left; 0 for none.
-int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side);
+// The room (3ARY 0x09, or the room array `rooms` of 0x0A/0x0B) on one side
+// of a wall: 0 its right (seen from a to b), 1 its left; 0 for none.
+int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side, uint32_t rooms = 0x09);
 
 // Rooms of a graph from scratch, for checking the algorithm against a
 // saved lot: for each quarter its component (an index), same layout as

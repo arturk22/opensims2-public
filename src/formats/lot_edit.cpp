@@ -180,7 +180,8 @@ std::optional<uint32_t> addWall(Lot& lot, int level, int ax, int ay, int bx, int
     return id;
 }
 
-std::optional<Lot::Wall> removeWall(Lot& lot, int level, int ax, int ay, int bx, int by) {
+std::optional<Lot::Wall> removeWall(Lot& lot, int level, int ax, int ay, int bx, int by,
+                                    std::vector<RoomMerge>* merges) {
     auto it = std::find_if(lot.walls.begin(), lot.walls.end(),
                            [&](const Lot::Wall& w) { return sameSegment(w.a, w.b, level, ax, ay, bx, by); });
     if (it == lot.walls.end())
@@ -189,10 +190,30 @@ std::optional<Lot::Wall> removeWall(Lot& lot, int level, int ax, int ay, int bx,
     lot.walls.erase(it);
     for (auto& g : lot.wallGraphs) {
         const size_t before = g.lines.size();
+        const auto* rooms = merges ? roomArray(lot, g.instance) : nullptr;
         std::erase_if(g.lines, [&](const Lot::WallGraph::Line& l) {
             const auto* a = vertexById(g, l.a);
             const auto* b = vertexById(g, l.b);
-            return a && b && sameSegment({a->x, a->y, a->level}, {b->x, b->y, b->level}, level, ax, ay, bx, by);
+            const bool hit =
+                a && b && sameSegment({a->x, a->y, a->level}, {b->x, b->y, b->level}, level, ax, ay, bx, by);
+            if (hit && rooms) {
+                // The rooms on the line's two sides as the room array has them now.
+                float dx = b->x - a->x, dy = b->y - a->y;
+                const float len = std::hypot(dx, dy);
+                if (len > 1e-4f) {
+                    dx /= len, dy /= len;
+                    float rx = dy, ry = -dx;
+                    if (!(std::fabs(dx) > 0.3f && std::fabs(dy) > 0.3f))
+                        rx = std::round(rx), ry = std::round(ry);
+                    RoomMerge m;
+                    m.graph = g.instance;
+                    m.right = roomBesideSegment(lot, *rooms, a->level, a->x, a->y, b->x, b->y, rx, ry);
+                    m.left = roomBesideSegment(lot, *rooms, a->level, a->x, a->y, b->x, b->y, -rx, -ry);
+                    if (m.right != m.left)
+                        merges->push_back(m);
+                }
+            }
+            return hit;
         });
         if (g.lines.size() == before)
             continue;
@@ -275,8 +296,13 @@ uint8_t floorRotation(const Lot& lot, int level, int x, int y, int q) {
     return lot.floorRotations[tileIndex(lot, level - lot.minLevel, x, y)][size_t(q)];
 }
 
-int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side) {
-    if (lot.rooms.empty())
+int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side, uint32_t which) {
+    const std::vector<std::array<uint16_t, 4>>* rooms = &lot.rooms;
+    if (which != 0x09) {
+        auto it = lot.roomLayers.find(which);
+        rooms = it == lot.roomLayers.end() ? nullptr : &it->second;
+    }
+    if (!rooms || rooms->empty())
         return 0;
     float dx = wall.b.x - wall.a.x, dy = wall.b.y - wall.a.y;
     const float len = std::hypot(dx, dy);
@@ -288,7 +314,7 @@ int32_t wallSideRoom(const Lot& lot, const Lot::Wall& wall, int side) {
         rx = std::round(rx), ry = std::round(ry);
     if (side)
         rx = -rx, ry = -ry;
-    return roomBesideSegment(lot, lot.rooms, wall.a.level, wall.a.x, wall.a.y, wall.b.x, wall.b.y, rx, ry);
+    return roomBesideSegment(lot, *rooms, wall.a.level, wall.a.x, wall.a.y, wall.b.x, wall.b.y, rx, ry);
 }
 
 std::vector<std::array<uint32_t, 4>> roomComponents(const Lot& lot, const Lot::WallGraph& graph) {
@@ -358,12 +384,31 @@ std::vector<std::array<uint32_t, 4>> roomComponents(const Lot& lot, const Lot::W
     return out;
 }
 
-void updateRooms(Lot& lot) {
+void updateRooms(Lot& lot, const std::vector<RoomMerge>& merges) {
     const int W = int(lot.width), H = int(lot.height);
     for (auto& g : lot.wallGraphs) {
         auto* rooms = roomArray(lot, g.instance);
         if (!rooms)
             continue;
+        // The rooms the removed walls joined, in order: the right-hand room
+        // survives, room 0 always does.
+        std::map<int32_t, int32_t> merged;
+        auto survivor = [&](int32_t r) {
+            for (auto it = merged.find(r); it != merged.end(); it = merged.find(r))
+                r = it->second;
+            return r;
+        };
+        for (const RoomMerge& m : merges) {
+            if (m.graph != g.instance)
+                continue;
+            const int32_t r = survivor(m.right), l = survivor(m.left);
+            if (r == l)
+                continue;
+            if (r == 0 || l == 0)
+                merged[r ? r : l] = 0;
+            else
+                merged[l] = r;
+        }
         const auto comps = roomComponents(lot, g);
         auto floorAt = [&](size_t i, int q) { return !lot.floors.empty() && lot.floors[i][size_t(q)] != 0; };
         // Per component: its quarters' old rooms, size, and whether it
@@ -372,6 +417,8 @@ void updateRooms(Lot& lot) {
             size_t size = 0;
             std::map<uint16_t, size_t> old;
             bool edge = false, outside = false; // reaches the lot's edge; holds quarters of room 0 with terrain
+            bool zero = false;                  // joined into room 0 by a removed wall
+            bool hasZero = false;               // holds quarters of room 0
             uint16_t id = 0;
         };
         std::map<uint32_t, Comp> cs;
@@ -383,7 +430,7 @@ void updateRooms(Lot& lot) {
                 ++c.size;
                 if (const uint16_t r = (*rooms)[i][size_t(q)])
                     ++c.old[r];
-                else if (li == -lot.minLevel)
+                else if (c.hasZero = true; li == -lot.minLevel)
                     c.outside = true;
                 c.edge |= (x == 0 && q == QWest) || (y == 0 && q == QSouth) || (x == W - 1 && q == QEast) ||
                           (y == H - 1 && q == QNorth);
@@ -399,7 +446,28 @@ void updateRooms(Lot& lot) {
         std::stable_sort(order.begin(), order.end(),
                          [](const auto& a, const auto& b) { return a.second->size > b.second->size; });
         std::set<uint16_t> taken;
+        // A region whose old rooms were all joined into one keeps that one.
         for (auto& [k, c] : order) {
+            if (merged.empty() || c->old.size() + size_t(c->hasZero) < 2 || (c->edge && c->outside))
+                continue;
+            std::set<int32_t> to;
+            for (const auto& [r, n] : c->old)
+                to.insert(survivor(r));
+            if (c->hasZero)
+                to.insert(0);
+            if (to.size() != 1)
+                continue;
+            const int32_t s = *to.begin();
+            if (s == 0) {
+                c->zero = true;
+            } else if (!taken.count(uint16_t(s))) {
+                c->id = uint16_t(s);
+                taken.insert(uint16_t(s));
+            }
+        }
+        for (auto& [k, c] : order) {
+            if (c->id || c->zero)
+                continue;
             if (c->edge && c->outside) {
                 c->old.clear();
                 continue;
@@ -427,7 +495,8 @@ void updateRooms(Lot& lot) {
                 // The ground's terrain counts as a floor (a room drawn on
                 // bare ground is a room).
                 const bool ground = int(i / (size_t(W) * size_t(H))) == -lot.minLevel;
-                const bool keep = (r != 0 || floorAt(i, q) || ground) && !(c.edge && c.old.empty());
+                const bool keep =
+                    (r != 0 || floorAt(i, q) || ground) && !(c.edge && c.old.empty()) && !c.zero;
                 if (!keep) {
                     r = 0;
                     continue;

@@ -130,7 +130,7 @@ bool isBuildEdit(const std::string& flag) {
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
            flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
-           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--build-undo" || flag == "--build-redo";
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--build-undo" || flag == "--build-redo";
 }
 
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
@@ -263,6 +263,11 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             const int side = f[4] == "r" ? 1 : f[4] == "l" ? -1 : 0;
             r = editor.paintWalls(num(f, 6, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0), side,
                                   f[5] == "none" ? nullptr : pattern(f[5], false));
+        } else if (flag == "--wallpaper-flood") {
+            if (f.size() < 6)
+                throw std::runtime_error("--wallpaper-flood: expected x0,y0,x1,y1,r|l,pattern[,level]");
+            r = editor.paintFlood(num(f, 6, 1), num(f, 0, 0), num(f, 1, 0), num(f, 2, 0), num(f, 3, 0),
+                                  f[4] == "l" ? -1 : 1, f[5] == "none" ? nullptr : pattern(f[5], false));
         } else if (flag == "--wallpaper-room") {
             if (f.size() < 3)
                 throw std::runtime_error("--wallpaper-room: expected x,y,pattern[,level]");

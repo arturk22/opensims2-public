@@ -121,6 +121,15 @@ static void testEditor() {
     check(r.ok && r.changed == 14 && r.cost == 42, "the room's 14 wall faces at §3");
     r = ed.paintWalls(1, 2, 2, 6, 2, -1, &paint);
     check(r.ok && r.changed == 0, "the inside faces are painted already");
+    BuildPattern paper, tile;
+    paper.guid = 0xdef, paper.price = 2, paper.name = "paper";
+    tile.guid = 0x987, tile.price = 1, tile.name = "tile";
+    r = ed.paintWalls(1, 2, 2, 6, 2, -1, &paper);
+    check(r.ok && r.changed == 4, "the south wall's inside papered");
+    r = ed.paintFlood(1, 6, 2, 6, 3, -1, &tile);
+    check(r.ok && r.changed == 10 && r.cost == 10, "Shift covers only the connected faces with the clicked pattern");
+    r = ed.paintFlood(1, 3, 2, 2, 2, 1, &paint);
+    check(r.ok && r.changed == 4, "Shift on the papered faces takes those four");
     r = ed.paintWalls(1, 2, 2, 6, 2, 1, &paint);
     check(r.ok && r.changed == 4, "the outside faces of a run");
     r = ed.paintWalls(1, 2, 2, 6, 2, 1, nullptr);
@@ -232,6 +241,31 @@ static void testRoomIds() {
     updateRooms(lot);
     const auto& light = lot.roomLayers[0x0B];
     check(roomAt(lot, 10, 5) == 0 && light[size_t(10) * 10 + 5][0] == 0, "fences cut no room off the lot's edge");
+
+    // Removing the wall between two rooms keeps the right-hand room's ID
+    // (SetRoomsPreDetach), whatever their sizes.
+    Lot two = flatLot();
+    for (auto* m : {&two.rooms, &two.roomLayers[0x0A], &two.roomLayers[0x0B]})
+        m->assign(12 * 10, {0, 0, 0, 0});
+    auto box = [&](int x0, int y0, int x1, int y1) {
+        for (const auto& s : std::array<std::array<int, 4>, 4>{{{x0, y0, x1, y0}, {x1, y0, x1, y1}, {x1, y1, x0, y1}, {x0, y1, x0, y0}}})
+            for (const auto& t : wallSections(s[0], s[1], s[2], s[3]))
+                addWall(two, 0, t[0], t[1], t[2], t[3], 1, {0xFFFF, 0xFFFF});
+        updateRooms(two);
+    };
+    box(1, 1, 3, 4); // room 1, the larger
+    box(3, 1, 5, 3); // room 2, east of it: the wall (3,1)-(3,3) has room 2 on its right
+    check(roomAt(two, 2, 2) == 1 && roomAt(two, 4, 2) == 2, "rooms 1 and 2 side by side");
+    std::vector<RoomMerge> merges;
+    removeWall(two, 0, 3, 1, 3, 2, &merges);
+    removeWall(two, 0, 3, 2, 3, 3, &merges);
+    updateRooms(two, merges);
+    check(roomAt(two, 2, 2) == 2 && roomAt(two, 4, 2) == 2 && roomAt(two, 2, 3) == 2,
+          "the joined room keeps the right-hand side's ID");
+    merges.clear();
+    removeWall(two, 0, 1, 1, 2, 1, &merges);
+    updateRooms(two, merges);
+    check(roomAt(two, 2, 2) == 0 && roomAt(two, 4, 2) == 0, "joined with the outdoors it is room 0");
 }
 
 static void testFoundation() {

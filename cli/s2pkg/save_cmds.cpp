@@ -466,6 +466,7 @@ const char* saveUsage() {
            "              [--wall|--room|--delete-wall x0,y0,x1,y1[,level]] [--floor x0,y0,x1,y1,pattern[,level[,rot]]]\n"
            "              [--fence x0,y0,x1,y1,fence[,level]] [--delete-fence x0,y0,x1,y1[,level]] [--floor-click px,py,pattern[,level]]\n"
            "              [--wallpaper x0,y0,x1,y1,r|l|b,pattern[,level]] [--wallpaper-room x,y,pattern[,level]]\n"
+           "              [--wallpaper-flood x0,y0,x1,y1,r|l,pattern[,level]] (Shift: the connected faces with the clicked one's pattern)\n"
            "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
            "       s2pkg objt-check <lot.package>...\n";
 }

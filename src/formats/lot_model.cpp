@@ -318,7 +318,8 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         const int level = w.a.level;
         auto& out = level > view.level ? hidden : drawn;
         // The wall mode applies to the view's level (lower levels keep their walls up).
-        const bool current = view.level == LotViewOptions::kAllLevels || level == view.level;
+        const bool current = view.level == LotViewOptions::kAllLevels || level == view.level ||
+                             (level >= view.lowestCut && level < view.level);
         const bool attic = w.type == Lot::Attic;
         const float nx = dy, ny = -dx; // right of a -> b
         // Wall modes cut down the walls of the house (not foundations, pool
@@ -332,7 +333,11 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 const float facing = nx * view.viewDirection[0] + ny * view.viewDirection[1];
                 if (std::abs(facing) > 1e-3f) {
                     const float s = facing > 0 ? 1.0f : -1.0f;
-                    lowered = roomBeside(lot, level, (w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2, nx * s, ny * s) != 0;
+                    // Inside = a room of the light map (3ARY 0x0B), the one
+                    // nTSSG::cWallManager follows (docs/buy-build-mac.md §7.3):
+                    // fenced yards are outside there.
+                    lowered =
+                        roomBeside(lot, level, (w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2, nx * s, ny * s, true) != 0;
                 }
             }
         }

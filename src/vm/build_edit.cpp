@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 
 namespace os2::vm {
 
@@ -133,6 +134,7 @@ BuildEditor::Geometry BuildEditor::capture() const {
 }
 
 void BuildEditor::restore(const Geometry& g) {
+    merges_.clear();
     lot_.elevations = g.elevations;
     lot_.floorRotations = g.floorRotations;
     lot_.objects = g.objects;
@@ -199,7 +201,8 @@ void BuildEditor::syncWorld() {
 }
 
 void BuildEditor::changed() {
-    updateRooms(lot_);
+    updateRooms(lot_, merges_);
+    merges_.clear();
     syncWorld();
 }
 
@@ -538,7 +541,7 @@ BuildEditor::Result BuildEditor::eraseRun(int level, int x0, int y0, int x1, int
             ends.push_back({s[0], s[1]}), ends.push_back({s[2], s[3]});
         }
         refund += int(float(price) * kBuildRefundRate);
-        removeWall(lot_, level - 1, s[0], s[1], s[2], s[3]);
+        removeWall(lot_, level - 1, s[0], s[1], s[2], s[3], &merges_);
         ++r.changed;
     }
     // Posts at the ends left with no fence go (inferred from
@@ -662,7 +665,7 @@ void BuildEditor::foundationWalls() {
             gone.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
                             int(std::lround(w.b.y))});
     for (const auto& s : gone)
-        removeWall(lot_, 0, s[0], s[1], s[2], s[3]);
+        removeWall(lot_, 0, s[0], s[1], s[2], s[3], &merges_);
     for (const auto& s : want)
         if (!findWall(lot_, 0, s[0], s[1], s[2], s[3]))
             addWall(lot_, 0, s[0], s[1], s[2], s[3], Lot::Foundation, {brick, brick});
@@ -900,7 +903,7 @@ void BuildEditor::syncAtticWalls(int lotLevel, const std::vector<std::array<int,
     for (const auto& s : before)
         if (!in(after, s))
             if (const Lot::Wall* w = findWall(lot_, lotLevel, s[0], s[1], s[2], s[3]); w && w->type == Lot::Attic)
-                removeWall(lot_, lotLevel, s[0], s[1], s[2], s[3]);
+                removeWall(lot_, lotLevel, s[0], s[1], s[2], s[3], &merges_);
     const uint16_t blank = patternRef(lot_.wallPatterns, kDefaultWallPattern, 0);
     for (const auto& s : after)
         if (!in(before, s) && !findWall(lot_, lotLevel, s[0], s[1], s[2], s[3]))
@@ -1209,7 +1212,7 @@ void BuildEditor::poolWalls() {
             gone.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)),
                             int(std::lround(w.b.y))});
     for (const auto& s : gone)
-        removeWall(lot_, -1, s[0], s[1], s[2], s[3]);
+        removeWall(lot_, -1, s[0], s[1], s[2], s[3], &merges_);
     const uint16_t lip = patternRef(lot_.wallPatterns, "wall_poolroundedlipblue", 0);
     for (const auto& s : want)
         if (!findWall(lot_, -1, s[0], s[1], s[2], s[3]))
@@ -1601,6 +1604,56 @@ BuildEditor::Result BuildEditor::paintRoom(int level, int x, int y, const BuildP
                 faces.push_back({w.id, k});
     }
     return cover(std::move(faces), pattern, "of room " + std::to_string(room));
+}
+
+BuildEditor::Result BuildEditor::paintFlood(int level, int ax, int ay, int bx, int by, int side,
+                                            const BuildPattern* pattern) {
+    Result r;
+    const int li = level - 1;
+    const Lot::Wall* start = findWall(lot_, li, ax, ay, bx, by);
+    if (!start || Lot::isFence(start->type) || start->type == Lot::DeckSkirt) {
+        r.message = "no wall face there";
+        return r;
+    }
+    // The run's right (+1) is the wall's right (patterns[0]) when the wall
+    // runs the same way.
+    const bool same = std::lround(start->a.x) == ax && std::lround(start->a.y) == ay;
+    const int k0 = (side >= 0) == same ? 0 : 1;
+    // UserSetWallPatternFlood: from the clicked face round the ring of faces
+    // of its room both ways, while a face has the pattern the clicked one
+    // had. The ring here: faces of the same room (the light rooms, 0x0B,
+    // which fences do not split) on the level that share an end point.
+    const uint32_t which = lot_.roomLayers.count(0x0B) && !lot_.roomLayers.at(0x0B).empty() ? 0x0B : 0x09;
+    const int32_t room = wallSideRoom(lot_, *start, k0, which);
+    const uint16_t had = start->patterns[size_t(k0)];
+    auto key = [](const Lot::Wall& w) {
+        return std::array<long, 4>{std::lround(w.a.x), std::lround(w.a.y), std::lround(w.b.x), std::lround(w.b.y)};
+    };
+    std::vector<std::pair<uint32_t, int>> faces{{start->id, k0}};
+    std::set<std::pair<uint32_t, int>> seen{{start->id, k0}};
+    std::vector<const Lot::Wall*> stack{start};
+    while (!stack.empty()) {
+        const Lot::Wall* w = stack.back();
+        stack.pop_back();
+        const auto e = key(*w);
+        for (const auto& o : lot_.walls) {
+            if (o.a.level != li || Lot::isFence(o.type) || o.type == Lot::DeckSkirt)
+                continue;
+            const auto f = key(o);
+            const bool touches = (f[0] == e[0] && f[1] == e[1]) || (f[0] == e[2] && f[1] == e[3]) ||
+                                 (f[2] == e[0] && f[3] == e[1]) || (f[2] == e[2] && f[3] == e[3]);
+            if (!touches)
+                continue;
+            for (int k = 0; k < 2; ++k) {
+                if (seen.count({o.id, k}) || o.patterns[size_t(k)] != had || wallSideRoom(lot_, o, k, which) != room)
+                    continue;
+                seen.insert({o.id, k});
+                faces.push_back({o.id, k});
+                stack.push_back(&o);
+            }
+        }
+    }
+    return cover(std::move(faces), pattern, "round room " + std::to_string(room));
 }
 
 bool BuildEditor::undo() {

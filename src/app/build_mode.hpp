@@ -96,7 +96,7 @@ public:
     // --- The lot (mouse rays in world space) ---------------------------------
     void pointAt(simd_float3 eye, simd_float3 dir);
     // Press, drag and release on the lot; `control` deletes / erases,
-    // `shift` draws a room (wall tool) or covers the room (wallpaper).
+    // `shift` draws a room (wall tool) or covers the connected faces with the clicked one's pattern (wallpaper).
     bool mouseDown(simd_float3 eye, simd_float3 dir, bool control, bool shift);
     void mouseDrag(simd_float3 eye, simd_float3 dir);
     bool mouseUp(simd_float3 eye, simd_float3 dir);

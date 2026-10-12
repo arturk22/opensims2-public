@@ -9,6 +9,7 @@
 // VM's (1 = the lot's ground), coordinates the lot's grid (tiles).
 
 #include "formats/build_catalog.hpp"
+#include "formats/lot_edit.hpp"
 #include "formats/lot.hpp"
 #include "placement.hpp"
 #include "vm.hpp"
@@ -156,10 +157,13 @@ public:
     // the pattern's price per side.
     // A null pattern takes the coverings off (Ctrl).
     Result paintWalls(int level, int x0, int y0, int x1, int y1, int side, const BuildPattern* pattern);
-    // Shift: every wall face of the room of a tile (the game floods the
-    // ring of faces that had the clicked face's pattern; here the whole
-    // room: simplified).
+    // Every wall face of the room of a tile (headless `--wallpaper-room`).
     Result paintRoom(int level, int x, int y, const BuildPattern* pattern);
+    // Shift as the game does it (UserSetWallPatternFlood): from the face of
+    // the wall section (ax, ay)-(bx, by) on the run's right (side +1) or
+    // left (-1), the connected faces of that room that have the clicked
+    // face's pattern.
+    Result paintFlood(int level, int ax, int ay, int bx, int by, int side, const BuildPattern* pattern);
 
     bool undo();
     bool redo();
@@ -241,6 +245,7 @@ private:
     Lot& lot_;
     const BuildCatalog* catalog_ = nullptr;
     std::vector<Op> undo_, redo_;
+    std::vector<RoomMerge> merges_; // rooms the walls removed since the last changed() joined
     std::map<std::string, int> prices_; // patterns laid this session, by lot name
     std::vector<Stair> loadedStairs_;   // the world's stairs from the lot's cObjects
     struct Stroke {

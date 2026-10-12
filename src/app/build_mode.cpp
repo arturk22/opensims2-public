@@ -456,13 +456,7 @@ bool BuildMode::mouseDown(simd_float3 eye, simd_float3 dir, bool control, bool s
         if (auto f = faceAt(*p); f && pattern_) {
             const auto& [s, side] = *f;
             if (shift) {
-                // The room on that side: the tile a quarter tile off the wall.
-                const float mx = (float(s[0]) + float(s[2])) / 2, my = (float(s[1]) + float(s[3])) / 2;
-                float nx = float(s[3] - s[1]), ny = -float(s[2] - s[0]);
-                const float len = std::hypot(nx, ny);
-                nx = nx / len * float(side), ny = ny / len * float(side);
-                applied(editor_->paintRoom(level_, int(std::floor(mx + nx * 0.3f)), int(std::floor(my + ny * 0.3f)),
-                                           control ? nullptr : pattern_));
+                applied(editor_->paintFlood(level_, s[0], s[1], s[2], s[3], side, control ? nullptr : pattern_));
             } else {
                 applied(editor_->paintWalls(level_, s[0], s[1], s[2], s[3], side, control ? nullptr : pattern_));
             }
@@ -1263,7 +1257,8 @@ namespace os2 {
 // ticks of 100 ms), --floor x0,y0,x1,y1,<pattern|none>[,rotation],
 // --floor-click px,py,<pattern> (one click: the quarters under the point),
 // --floor-rotation <1|2|4|8>, --wallpaper x0,y0,x1,y1,<r|l|b>,<pattern|none>,
-// --wallpaper-room x,y,<pattern|none>, --door <guid|name>@x,y[,dir] places
+// --wallpaper-room x,y,<pattern|none>, --wallpaper-flood x0,y0,x1,y1,<r|l>,<pattern|none>
+// (Shift on that face), --door <guid|name>@x,y[,dir] places
 // a door, window or gate, --build-undo / --build-redo (with any value).
 void BuildMode::runSteps(const std::vector<std::string>& args) {
     if (!active_)
@@ -1360,6 +1355,11 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
         } else if (a == "--wallpaper" && f.size() >= 6) {
             const BuildPattern* p = pattern(f[5], false);
             r = ed.paintWalls(level_, n(0), n(1), n(2), n(3), f[4] == "r" ? 1 : f[4] == "l" ? -1 : 0, p);
+            if (p)
+                selectPattern(*p);
+        } else if (a == "--wallpaper-flood" && f.size() >= 6) {
+            const BuildPattern* p = pattern(f[5], false);
+            r = ed.paintFlood(level_, n(0), n(1), n(2), n(3), f[4] == "l" ? -1 : 1, p);
             if (p)
                 selectPattern(*p);
         } else if (a == "--wallpaper-room" && f.size() >= 3) {

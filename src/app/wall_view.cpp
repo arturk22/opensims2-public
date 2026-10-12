@@ -45,6 +45,10 @@ LotViewOptions WallView::options(std::array<float, 2> look, int level) const {
     v.walls = walls_;
     v.roof = roof_;
     v.level = level;
+    // The yard of a house on foundations, shown with the house's floor: its
+    // walls take the mode too.
+    if (level != LotViewOptions::kAllLevels && level - 1 >= minLevel_ && shownLevel(level - 1) == level)
+        v.lowestCut = level - 1;
     if (std::hypot(look[0], look[1]) > 1e-3f)
         v.viewDirection = look;
     return v;
