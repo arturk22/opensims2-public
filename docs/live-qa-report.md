@@ -167,3 +167,39 @@ o app por pid o macOS passa a perguntar "Reopen/Ignore" ao abrir de novo: abrir 
 ## Não corrigido
 
 Ver as entradas "QA ao vivo" do `TODO.md` (rodada 12, passada 5).
+
+# Rodada 12, passada 6
+
+Mesmo método (CGEvent, pid próprio, janela conferida em 95,49 antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`).
+Lotes: N001 lote 11 e 68, N002 lote 10 (`--hood ... --vm --ui live`), bairro, CAS, menu. Ambiente: o diálogo do macOS "s2pkg would like to access
+files in your Documents folder" (de outro agente) ficou por cima do centro da janela o tempo todo; não foi clicado. Só uma passada curta, sem fim de lição.
+Obs.: o cabeçalho "r12-ui-polish" já estava no main depois do rebase (ícones da fila e diálogo Design abaixo).
+
+| Passo | Resultado |
+|-------|-----------|
+| Leque de paredes do puck: baixas / cortadas / altas / telhado | passa (os quatro modos mudam a imagem; telhado só no último andar e em "altas + telhado") |
+| Home/End e Page Up/Down | passa |
+| Corte acompanha a rotação (setas ←/→): paredes internas e as externas voltadas para a câmera cortadas | passa em N002 lote 10 (cozinha e Sim visíveis por dentro) |
+| Telhado colocado no Construir aparece de uma vez | não testado ao vivo (coberto pelo teste sem tela do `6f0d6c3`) |
+| Recortes de porta/janela nas paredes, platibandas e varanda do N002_Lot10 | janelas e arcos aparecem recortados na cozinha do lote 10; platibandas não inspecionadas de perto |
+| Caixa amarela com seta vermelha do N001_Lot11 | sumiu |
+| Cor do calçamento à noite | não conferido (a velocidade 3 passou direto; câmera fora de cena) |
+| Ícones da fila sem X vermelho na ação atual | passa (nenhum X depois de pôr o Sim para andar; clicar no ícone marca) |
+| Diálogo Design (Comprar → ferramenta Design na mesa) | abre com fundo e nome em PT-BR; o caso de dois quadros não foi achado |
+| Sentar de frente para a cadeira / sem flutuar | não observado (Sims fora de quadro; ver bugs abaixo) |
+| Tutorial: menu → Aprenda a Jogar → lição 1 → Jogar | carrega o lote; passos 1–5 não refeitos ao vivo nesta passada (tutorial coberto na passada 5) |
+| Bairro: Decorações (F3): pôr flora, desfazer ("decoration undo done") | passa; recusa "may not stand in a lot" só no log |
+| Bairro: história (F4), digitar | passa: o texto digitado aparece no editor; Esc fecha |
+| Bairro: Famílias (barra de famílias) | abre e mostra as famílias |
+| Bairro: "Ver Amigos", puck sobre painéis, pôr lote, lixeira (Delete/filtros) | não testado |
+| CAS: espelho | passa: azul claro liso, não branco, mas ainda sem reflexo |
+| CAS: botão de gênero troca o Sim; janela de biografia abre com cursor | passa |
+| CAS: braços do alienígena | não testado |
+| Vida: bolo de aniversário, contas | não testado |
+
+## Bugs achados (não corrigidos)
+
+- Diálogo de sim/não com o título cru "yes-no" em inglês (visto em N002 lote 10 com velocidade 3, "Ei Jeanie, Jill pode ..."): o título deveria vir
+  do binário/PT-BR; repro: `--hood N002 --hood-lot 10 --vm --ui live`, velocidade 3 por ~1 min de relógio de jogo.
+- Teclas ←/→ giram, mas ↑/↓ andam a câmera: depois de várias o lote some do quadro (esperado), sem atalho para recentrar.
+- Espelho do CAS é um quadro azul liso (sem textura de reflexo).
