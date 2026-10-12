@@ -544,13 +544,28 @@ void LotSimulation::updateScene(double seconds) {
         const float z = b.motion.z(t, [this](int level, float fx, float fy) { return floorHeight(level, fx, fy); });
         b.actor->position = {x, y, z + b.zOffset};
         b.actor->heading = b.motion.turn(dt);
+        bool seated = false;
         if (seat && !b.motion.current().onStep)
             if (const auto at = seat(b.id, seconds)) {
                 const Vec3 f = at->rotate({0, 1, 0});
                 b.actor->position = at->t;
                 b.actor->heading = std::atan2(-f[0], f[1]);
                 b.motion.setHeading(b.actor->heading);
+                seated = true;
             }
+        // Put in a seat or taken out of it, the Sim's drawn place jumps
+        // between where the VM has it (the routing slot it played its
+        // get-in from) and the slot bone: what plays already stays where it
+        // was in the world (its held last frame: a get-in that leaves the
+        // chair out ends seated 0.67 from where it began, and placed again
+        // at the seat it sat beside the chair, between two; user QA,
+        // N001_Lot68), what starts now plays in the new frame (inferred).
+        const Xform placement = b.actor->placement();
+        static const bool noReframe = std::getenv("OS2_NO_SEAT_REFRAME") != nullptr; // the old drawing, to compare
+        if (seated != b.seated && b.lastPlacement && !noReframe)
+            b.actor->player.reframe(placement.inverse().then(*b.lastPlacement));
+        b.seated = seated;
+        b.lastPlacement = placement;
         b.actor->rootMotion = false;
         if (const vm::Object* o = vm_->object(b.id)) {
             const auto target = lookTarget(*o);

@@ -104,6 +104,15 @@ public:
     void play(const Animation& anim, double now) { play(anim, now, Options{}); }
     // Fades out the layers of `priority` (all if -1).
     void stop(double now, float fade = 0.25f, int priority = -1);
+    // The model moved by `delta` (new model space <- old) while the layers
+    // started so far go on where they were in the world: each is moved back
+    // by it (the bones under the top node), and the layers started after
+    // play in the new frame. A Sim placed in a chair's seat as it is
+    // contained: the get-in that brought it there was played from where it
+    // stood (a2o-chairDining-getIn-*-leaveOut-SE ends seated 0.67 from its
+    // start, in the chair pulled out), and its last frame, held under the
+    // chair's idles, went to sit that far beside the seat.
+    void reframe(const Xform& delta);
 
     // Local bone transforms at `now` (drops the layers that have faded out).
     std::vector<Xform> pose(double now);
@@ -145,6 +154,8 @@ private:
         std::vector<bool> keyed;
         bool mirror = false;
         float turn = 0;
+        Xform frame; // reframe()'s, after the turn (and the mirror)
+        bool framed = false;
         int level = 0;
         float scale = 1; // Options::weight
         float rate = 1;  // Options::rate
@@ -153,6 +164,8 @@ private:
     };
     // The layer's pose at `ticks`, turned by its frame (Options::turn).
     std::vector<Xform> layerPose(const Layer& l, float ticks) const;
+    // The bones under the skeleton's top node moved by the layer's frame (reframe()).
+    void applyFrame(const Layer& l, std::vector<Xform>& pose) const;
     void prepareMirror();
     // A layer's deltas mirrored left to right (and their per-bone weights with them).
     DeltaPose mirrorDeltas(const DeltaPose& d, std::vector<float>& weights) const;

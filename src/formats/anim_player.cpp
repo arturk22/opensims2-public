@@ -228,6 +228,23 @@ void AnimPlayer::stop(double now, float fade, int priority) {
         }
 }
 
+void AnimPlayer::reframe(const Xform& delta) {
+    for (auto& l : layers_) {
+        l.frame = delta.then(l.frame);
+        l.framed = true;
+    }
+}
+
+void AnimPlayer::applyFrame(const Layer& l, std::vector<Xform>& p) const {
+    if (!l.framed || !skeleton_)
+        return;
+    for (size_t i = 0; i < p.size() && i < skeleton_->bones.size(); ++i) {
+        const int parent = skeleton_->bones[i].parent;
+        if (parent >= 0 && skeleton_->bones[size_t(parent)].parent < 0)
+            p[i] = l.frame.then(p[i]);
+    }
+}
+
 float AnimPlayer::weight(const Layer& l, double now) const {
     if (now < l.start)
         return 0;
@@ -305,6 +322,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
                 flipped[i] = mask[size_t(twins_[i])];
             mask = std::move(flipped);
         }
+        applyFrame(l, p);
         if (p.size() < n)
             continue;
         posed.push_back({std::move(p), std::move(mask), l.level, std::move(deltas), std::move(dw)});
@@ -409,6 +427,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
             continue;
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
         std::vector<Xform> goals = layerPose(l, ticks);
+        applyFrame(l, goals);
         // The goal and pole nodes with the deltas their outlets took (the
         // sofa bounces' *_handcontrol1 and *_ikctr deltas move the hands and
         // feet the sitting animation's chains hold): the IK reads the
@@ -422,7 +441,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
                         goals[b].t[size_t(c)] += applied[b].t[size_t(c)];
             }
         std::vector<Xform> solved = out;
-        applyIk(*l.target, *skeleton_, ticks, solved, &goals, Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}},
+        applyIk(*l.target, *skeleton_, ticks, solved, &goals, l.frame.then(Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}}),
                 &l.ikObjectBone);
         blendPose(out, solved, w, l.mask);
     }

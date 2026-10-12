@@ -145,6 +145,11 @@ private:
         int16_t age = 0;    // person data 58 the actor was built for
         int partial = -1;   // the priority of a part-body Animate Sim animation playing over the base, -1 none
         float zOffset = 0; // the cObject's height over the floor the VM's level gives
+        // Drawn at a seat (LotSimulation::seat) last frame, and where: the
+        // layers playing go on where they were in the world as the Sim is
+        // put in or taken out of it (AnimPlayer::reframe).
+        bool seated = false;
+        std::optional<Xform> lastPlacement;
         struct PlayingOverlay {
             std::string name;
             int priority = 0; // its layer in the actor's player

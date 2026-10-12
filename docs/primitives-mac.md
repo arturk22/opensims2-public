@@ -1465,6 +1465,38 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   nenhum em contato vale o primeiro (o tipo 2 sem objeto, no espaço do
   modelo, como antes). Os objetos animados pela VM são posados antes dos
   Sims a cada quadro (os ossos da cadeira para o IK do mesmo instante).
+- **Cadeira de jantar deixada para fora ("leaveOut"): o Sim no assento**
+  (rodada 18, ramo `r18-chairs`, QA do usuário "as cadeiras estão
+  estranhas"; o que é do app é inferido). As cadeiras **não** estão tortas
+  ao carregar: as quatro Value1 do `N001_Lot68` (643/645/648/651) e as
+  Colonial do `N002_Lot3` têm `slot_chairdining_trans` 0,373–0,374 para a
+  mesa e rotação zero salvos (`OS2_LOT_OBJECTS=Chair OS2_LOT_NODES=1 s2pkg
+  lot`), e são desenhadas assim. O par "leaveOut"
+  (`o2a-chairDining-getIn-leaveOut-SE` / `getOut-fromOut-SE`, que as árvores
+  escolhem quando o Sim senta com uma caneca, um prato ou o jornal — o caso
+  mais comum na autonomia) move o próprio `slot_chairdining_trans`
+  (−0,087; 0,048, girado −15,64°, espelhado quando "flipped"): a cadeira fica
+  puxada e torta **enquanto o Sim está sentado** (fiel ao jogo) e o
+  `getOut-fromOut` a devolve a 0,375 sem rotação (conferido no ator e no
+  teste). O defeito era do Sim: o `a2o-chairDining-getIn-rightHand-
+  leaveOut-SE` (heading 0 no cabeçalho) é feito a partir de onde o Sim
+  está, o osso de canto `route_chairdining_2_sw` (17,105; 25,0, virado 45°),
+  e acaba sentado 0,67 dali, exatamente no assento puxado; o Sim só entra no
+  slot da cadeira (container) depois, e aí o app o desenha no osso do
+  assento. A última pose do get-in, mantida por baixo das idles da cadeira,
+  ia junto e o Sim aparecia sentado 0,67 ao lado da cadeira, entre duas,
+  com a cadeira dele vazia e torta (`14.png`, `r17-chair2-sentar.jpg`). O
+  `getIn-SE` normal é feito no quadro do assento (começa no canto, termina
+  em (0,006; 0,010)), por isso não mostrava o defeito. Agora, quando o Sim
+  entra ou sai de um assento, o que já toca fica onde estava no mundo
+  (`AnimPlayer::reframe`, chamado por `LotSimulation` na troca entre o
+  lugar da VM e o osso do assento); o que começa depois toca no quadro
+  novo. `OS2_NO_SEAT_REFRAME=1` desenha como antes, para comparar. Teste
+  `testDiningChairCycle` (com `OS2_DATA`): cadeiras do lote carregam
+  empurradas; ciclos getIn/getOut e leaveOut/fromOut terminam empurrados; o
+  get-in leaveOut do canto acaba no assento puxado e fica lá depois do
+  reframe. `r18-chairs-lot68-antes-depois.jpg`,
+  `r18-chairs-lot68-levantar.jpg`, `r18-chairs-n002-lot3-antes-depois.jpg`.
 - **Alvos de IK de tipo 2: o objeto de IK do pedido** (rodada 15, front
   anim3, decifrado). Os alvos de IK (`cIKTarget::TargetType`) têm 3 tipos
   nos dados (`s2pkg anim-sweep`): 0 sem osso de quadro (20.859, o alvo no

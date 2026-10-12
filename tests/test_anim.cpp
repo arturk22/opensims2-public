@@ -1,6 +1,7 @@
 // Skeletons, ANIM decoding and pose sampling on hand-built data.
 #include "formats/anim.hpp"
 #include "formats/anim_player.hpp"
+#include "formats/lot.hpp"
 #include "formats/model.hpp"
 #include "formats/property_set.hpp"
 #include "formats/resindex.hpp"
@@ -502,6 +503,16 @@ static void testPlayer() {
     check(near(angle(both[3].q), 30, 1e-2f) && near(angle(both[1].q), 0, 1e-2f) && p.layerCount() == 2,
           "overlay of a higher priority on its own bones");
 
+    // reframe(): the layers playing are moved back by the model's move (the
+    // bones under the top node), the ones started after are not.
+    AnimPlayer r(&s);
+    r.play(walk, 0, {.fade = 0, .loop = false});
+    r.reframe(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}});
+    const auto moved = r.pose(0.1);
+    check(near(angle(moved[1].q), 130, 1e-2f) && near(moved[1].t[0], 1, 1e-4f), "reframe moves the layers playing");
+    r.play(idle, 0.2, {.fade = 0, .loop = false});
+    check(near(angle(r.pose(0.3)[1].q), 0, 1e-2f), "a layer started after the reframe plays in the new frame");
+
     AnimPlayer m(&s);
     m.play(walk, 0);
     m.advance(0);
@@ -827,7 +838,123 @@ static void testDiningChairSeat() {
           "dining chair: the get-out starts seated in the seat");
 }
 
+// With the game's data (OS2_DATA): a dining chair's whole sit and get-up,
+// as the host plays them (N001_Lot68's chair 643, saved pushed in). The
+// plain get-in/get-out pull the chair out and push it back; the "leaveOut"
+// pair (a Sim with a mug sits in the chair pulled out, 0.33 back and turned
+// 15.6 degrees, and the get-out pushes it in again) ends pushed in too, and
+// left out only while the Sim sits. The Sim's get-in that leaves the chair
+// out is played from where it stood (the corner bone "route_chairdining_2_sw",
+// heading 0 in its header) and ends seated 0.67 from there, in the chair as
+// it is pulled out; once in the seat the Sim is placed at the seat bone, and
+// the held last frame must stay where it was (AnimPlayer::reframe): placed
+// again at the seat, it sat 0.67 beside the chair, between two (user QA).
+static void testDiningChairCycle() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    SimActor anims{SkinnedModel(Skeleton{})};
+    auto load = [&](const std::string& name) -> const Animation* {
+        try {
+            return &anims.animation(index, name);
+        } catch (const std::exception&) {
+            return nullptr;
+        }
+    };
+    const ObjectModel chairModel = loadObjectModel(index, "chairDiningValue1_cres");
+    const int trans = chairModel.skeleton.find("slot_chairdining_trans");
+    check(trans >= 0, "chair cycle: slot_chairdining_trans");
+    if (trans < 0)
+        return;
+    std::vector<Xform> saved = chairModel.skeleton.restPose();
+    saved[size_t(trans)].t[1] = 0.373f; // as N001_Lot68 saved it
+    auto makeChair = [&]() {
+        auto c = std::make_unique<SimActor>(SkinnedModel(chairModel.skeleton));
+        c->player.setBasePose(saved);
+        c->player.setHoldPose(true);
+        c->position = {17.5f, 25.5f, 0.75f};
+        c->heading = float(M_PI / 2);
+        return c;
+    };
+    auto yaw = [](const Xform& x) {
+        const Vec3 f = x.rotate({0, 1, 0});
+        return std::atan2(-f[0], f[1]) * 180 / float(M_PI);
+    };
+    const Animation* getIn = load("o2a-chairDining-getIn-SE");
+    const Animation* getOut = load("o2a-chairDining-getOut-SE");
+    const Animation* inOut = load("o2a-chairDining-getIn-leaveOut-SE");
+    const Animation* outIn = load("o2a-chairDining-getOut-fromOut-SE");
+    const Animation* simIn = load("a2o-chairDining-getIn-rightHand-leaveOut-SE");
+    check(getIn && getOut && inOut && outIn && simIn, "chair cycle: its animations");
+    if (!getIn || !getOut || !inOut || !outIn || !simIn)
+        return;
+    const Vec3 pushedIn{17.5f - 0.373f, 25.5f, 0.75f};
+    // At load: the lot's four Value1 chairs (643, 645, 648, 651) are saved
+    // pushed in and square to the table, and drawn so (savedPose).
+    {
+        DbpfPackage pkg(std::filesystem::path(data) / "TSData/Res/UserData/Neighborhoods/N001/Lots/N001_Lot68.package");
+        const Lot lot = Lot::load(pkg);
+        int square = 0;
+        for (const auto& o : lot.objects) {
+            const uint16_t id = uint16_t(o.instance & 0xFFFF);
+            if (o.definition.find("Value1") == std::string::npos || (id != 643 && id != 645 && id != 648 && id != 651))
+                continue;
+            const auto p = savedPose(chairModel.skeleton, o.nodes);
+            if (!p)
+                continue;
+            const auto w = chairModel.skeleton.world(*p);
+            const int seatBone = chairModel.skeleton.find("slot_chairDining_0");
+            if (seatBone >= 0 && near(w[size_t(seatBone)].t[1], 0.373f, 0.01f) && near(w[size_t(seatBone)].t[0], 0, 0.01f) &&
+                near(std::abs(w[size_t(seatBone)].q.w), 1, 1e-3f))
+                ++square;
+        }
+        check(square == 4, "chair cycle: N001_Lot68's dining chairs load pushed in, square");
+    }
+    // Overlays as main.mm's onObjectOverlay cues them: each its own layer
+    // (level 1 + the overlay's id), flipped, never taken off.
+    {
+        auto chair = makeChair();
+        chair->cue(0, *getIn, {.fade = 0.1f, .loop = false, .priority = 2, .mirror = true, .level = 2});
+        chair->cue(10, *getOut, {.fade = 0.1f, .loop = false, .priority = 3, .mirror = true, .level = 3});
+        const auto seat = chair->bonePlacement("slot_chairDining_0", 20);
+        check(seat && near(seat->t[0], pushedIn[0], 0.01f) && near(seat->t[1], pushedIn[1], 0.01f) && near(yaw(*seat), 90, 0.5f),
+              "chair cycle: get-in, get-out: pushed in again");
+    }
+    auto chair = makeChair();
+    const auto corner = chair->bonePlacement("route_chairdining_2_sw", 0);
+    chair->cue(0, *inOut, {.fade = 0.1f, .loop = false, .priority = 2, .mirror = true, .level = 2});
+    const auto out = chair->bonePlacement("slot_chairDining_0", 5);
+    check(out && std::hypot(out->t[0] - pushedIn[0], out->t[1] - pushedIn[1]) > 0.3f && near(std::abs(yaw(*out) - 90), 15.6f, 0.5f),
+          "chair cycle: leaveOut: the chair stays out, turned, while the Sim sits");
+    chair->cue(10, *outIn, {.fade = 0.1f, .loop = false, .priority = 3, .mirror = true, .level = 3});
+    const auto back = chair->bonePlacement("slot_chairDining_0", 20);
+    check(back && near(back->t[0], pushedIn[0], 0.01f) && near(back->t[1], pushedIn[1], 0.01f) && near(yaw(*back), 90, 0.5f),
+          "chair cycle: get-out from out: pushed in again");
+    // The Sim: from the corner, its get-in ends in the chair pulled out.
+    const ObjectModel adult = loadObjectModel(index, "auskel_cres");
+    check(corner && out && adult.skeleton.find("root_trans") >= 0, "chair cycle: corner bone and adult skeleton");
+    if (!corner || !out || adult.skeleton.find("root_trans") < 0)
+        return;
+    SimActor sim{SkinnedModel(adult.skeleton)};
+    sim.position = corner->t;
+    sim.heading = yaw(*corner) * float(M_PI) / 180;
+    sim.player.play(*simIn, 0, {.fade = 0, .loop = false, .mirror = true, .turn = simIn->headingOffset});
+    const auto seated = sim.bonePlacement("root_trans", 5);
+    check(seated && std::hypot(seated->t[0] - out->t[0], seated->t[1] - out->t[1]) < 0.06f,
+          "chair cycle: the leaveOut get-in ends seated in the pulled-out chair");
+    // Contained: placed at the seat, the held frame reframed, it stays there.
+    const Xform before = sim.placement();
+    sim.position = out->t;
+    sim.heading = yaw(*out) * float(M_PI) / 180;
+    sim.player.reframe(sim.placement().inverse().then(before));
+    const auto still = sim.bonePlacement("root_trans", 6);
+    check(seated && still && std::hypot(still->t[0] - seated->t[0], still->t[1] - seated->t[1]) < 0.01f,
+          "chair cycle: placed at the seat, the held get-in stays seated in the chair");
+}
+
 int main() {
+    testDiningChairCycle();
     testDiningChairSeat();
     testDoorLeaves();
     testSavedPose();
