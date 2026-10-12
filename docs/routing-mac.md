@@ -441,6 +441,72 @@ eram o tipo 2).
   vtable `0x8c` não foi achado (provavelmente uma chamada da VM).
 
 
+## 8.4 O ponto do "Vir Aqui": afastar dos objetos e das paredes (binário, rodada 13)
+
+`cTSUserToolStandardAction::GoHere` (BV `0x358098`): cria o destino
+(`NewDestinationObjectID`: 1 chão, 2 pescável, 4 praia; 0 senão), e o ponto
+é
+
+```
+p = TSObjectMoveAwayFromOtherObjects(sim, clique, 0,4, pularSims=false, portas=true)
+p = MovePointAwayFromWalls(sim, p, 0,45)
+TSObjectCanSetPosition(destino, p, 0, 0, ...)   (orientação atual do destino)
+  falhou → apaga o destino, nada; senão SetPosition(p) e abre o pie
+```
+
+**`TSObjectMoveAwayFromOtherObjects(obj, loc, d, pularSims, portas)`** (BV
+`0x8a9144`; `obj` aqui é o **Sim**, não o destino):
+
+1. Devolve `loc` sem mexer se `obj` é pessoa (interface `0x5A69D3D5`) com o
+   bit `0x02` do dado de pessoa `0x44` (68), ou se `obj->CanIntersectObjects()`
+   (vtable `0x238`).
+2. Para cada objeto dos **3×3 tiles** em volta do tile de `loc` (tiles que
+   o mundo tem, vtable `0xf8`):
+   - com `portas` e o objeto de tipo **8** (porta): afasta `p` das pegadas
+     indexadas **0 e 2** dele (`TSObjectIndexedWorldSpaceFootprint`);
+   - se um dos dois é pessoa (tipo 2), os dois têm de ter
+     `CanIntersectPeople()` falso (vtable `0x1d8`), senão o objeto é
+     ignorado;
+   - se o objeto não tem `CanIntersectObjects()`, e (sem `pularSims` ou
+     ele não é pessoa), e a árvore **"allow intersection"** (OBJf 5,
+     `RunTree(5, id do outro, 0, 1, 0)`) não deixa nem a dele com o `obj`
+     nem a do `obj` com ele: afasta `p` da pegada dele (`GetFootprint`,
+     vtable `0x100`, na posição e orientação dele).
+3. Com `portas`: o anel de **5×5** (tiles a 2 do centro, fora do 3×3):
+   portas diagonais (`IsDiagonalDoor`) → pegadas 0 e 2.
+4. Os empurrões são **em sequência** sobre o mesmo `p` (cada objeto vê o `p`
+   já empurrado pelos anteriores).
+
+**Empurrar `p` para fora de uma pegada a distância `d`** (`FUN_0191f6d0`;
+pegada = lista de retângulos x0, y0, x1, y1; ε = 0,0001): para cada
+retângulo com `p` dentro dele inflado de `d` (inclusivo): em x, se `p.x` >
+centro, `dx = x1 + d + ε − p.x` (fica o maior positivo); senão `dx = x0 − d
+− ε − p.x` (fica o mais negativo); o mesmo em y. Se algum ≠ 0: se |dy| ≤
+|dx| e |dx| ≥ d + 2ε → só `p.y += dy`; se |dy| > |dx| e |dy| ≥ d + 2ε →
+só `p.x += dx`; senão os dois. (Ou seja, empurra pelo eixo mais curto, a não
+ser que os dois sejam curtos.)
+
+**`MovePointAwayFromWalls(sim, loc, d)`** (BV `0x3574f0`; `d` = 0,45, ε =
+0,001): para os lados 1, 2, 4, 8, 0x10, 0x20 do tile de `loc`, em ordem, se
+há parede ali (gerente de partições vtable `0xb0` com o `cWallLocator`
+(tile, lado)):
+
+- 1: `fy = y − ⌊y⌋ < d` → `y += d − fy + ε`; 2: o mesmo em x;
+- 4: `⌈y⌉ − y < d` → `y −= d − (⌈y⌉ − y) + ε`; 8: o mesmo em x;
+- **0x10**: `s = (fy − (⌈x⌉ − x)) / √2` (distância com sinal à diagonal
+  fx + fy = 1); 0 ≤ s < d → `t = d − s + ε`, `x += t/√2`, `y −= t/√2`;
+  −d < s < 0 → `t = d + s + ε`, `x −= t/√2`, `y += t/√2`;
+- **0x20**: `s = (fy − fx) / √2` (distância à diagonal fx = fy);
+  0 ≤ s < d → `t = (d − s + ε)/√2`, `x += t`, `y += t`; −d < s < 0 →
+  `t = (d + s + ε)/√2`, `x −= t`, `y −= t`.
+
+Literal do binário: nos dois casos diagonais o empurrão vai pela normal da
+**outra** diagonal, isto é, **ao longo** da parede (0x10 mede até fx + fy = 1
+e anda em (1, −1); 0x20 mede até fx = fy e anda em (1, 1)), então o ponto não
+se afasta da parede diagonal. Parece um erro do jogo; para ser fiel, copiar
+assim. A geometria de qual diagonal é 0x10/0x20 vem das fórmulas (inferido:
+o `cWallLocator` só guarda tile + lado, `FUN_0156003c`).
+
 ## 9. Comparação com o código atual (main `3b4c4db`: `src/vm/path_planner.*`, `routing.cpp`)
 
 | jogo | código |
