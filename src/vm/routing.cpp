@@ -57,31 +57,6 @@ bool VM::blocksRouting(const Object& o) {
     return (o.data[objdata::Flags] & (0x04 | 0x10)) == 0;
 }
 
-BlockedGrid VM::blockedTiles(int level, std::span<const ObjectId> ignore) {
-    if (!world)
-        throw VMError("no world (positions need a lot)");
-    std::set<ObjectId> skip;
-    for (ObjectId id : ignore)
-        if (const Object* o = object(id))
-            skip.insert(multiTileGroup(*o));
-    BlockedGrid grid(size_t(world->width()) * world->height(), 0);
-    for (const auto& [id, o] : objects_) {
-        if (o.position.level != level || !blocksRouting(o) || skip.count(multiTileGroup(o)))
-            continue;
-        const TilePos t = tileOf(o);
-        if (world->contains(t))
-            grid[world->index(t.x, t.y)] = 1;
-    }
-    // Stair landings stay open: build mode keeps them clear, and what the
-    // lots have there hangs on a wall (lamps, paintings), which blocks here
-    // for want of the models' footprints.
-    for (const Stair& s : world->stairs())
-        for (const TilePos& t : {s.bottom, s.top})
-            if (t.level == level && world->contains(t))
-                grid[world->index(t.x, t.y)] = 0;
-    return grid;
-}
-
 bool VM::tileFree(TilePos t, std::span<const ObjectId> ignore) {
     if (!world)
         throw VMError("no world (positions need a lot)");
@@ -97,7 +72,7 @@ bool VM::tileFree(TilePos t, std::span<const ObjectId> ignore) {
             return true;
     if (!world->walkable(t))
         return false;
-    // As blockedTiles(t.level, ignore)[index], for this one tile only.
+    // A blocking object on the tile (whole tiles: placement, not routing).
     std::set<ObjectId> skip;
     for (ObjectId id : ignore)
         if (const Object* o = object(id))

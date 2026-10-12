@@ -837,9 +837,6 @@ public:
     // the tile when the model has no footprint list, or the OBJD box
     // (routing.cpp, cTSObject::AddThisToPathPlanner).
     std::vector<std::array<float, 4>> routingFootprint(const Object& o);
-    // The blocked tiles of a level, leaving out the objects in `ignore` (and
-    // the other parts of their multi-tile objects). Needs a world.
-    BlockedGrid blockedTiles(int level, std::span<const ObjectId> ignore = {});
     // A tile is in the world, has a floor and nothing that blocks stands on it.
     bool tileFree(TilePos t, std::span<const ObjectId> ignore = {});
     // A person's footprint box (0.2 tile) at (x, y) on `level` meets no
