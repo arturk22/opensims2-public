@@ -72,6 +72,7 @@ public:
 
     // A Sim's actor: lit with the Sims' light sets.
     void addSim(int16_t id, SimActor* actor) { sims_[id] = actor; }
+    void removeSim(int16_t id) { sims_.erase(id); }
     // Forces a state ("day", "night", ...) instead of the clock's.
     void forceState(const std::string& name) { forced_ = name; }
     // Test aid: lamps that Change Light has not touched since the lot

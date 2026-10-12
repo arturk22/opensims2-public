@@ -151,9 +151,24 @@ void LotSimulation::attach(SimActor& actor, int16_t id, const Character& charact
     b.playing = idle;
     b.outfit = o->person ? o->person->data[kCurrentOutfit] : 0;
     b.age = o->person ? o->person->data[vm::persondata::PersonAge] : 0;
+    b.objectSerial = o->serial;
     b.look = std::make_shared<HeadLook>(actor);
     actor.adjust = [look = b.look](std::vector<Xform>& local, double now) { look->apply(local, now); };
     bound_.push_back(std::move(b));
+}
+
+std::vector<int16_t> LotSimulation::goneSims() const {
+    std::vector<int16_t> gone;
+    for (const auto& b : bound_) {
+        const vm::Object* o = vm_->object(b.id);
+        if (!o || !o->person || o->serial != b.objectSerial)
+            gone.push_back(b.id);
+    }
+    return gone;
+}
+
+void LotSimulation::detach(int16_t id) {
+    std::erase_if(bound_, [&](const Bound& b) { return b.id == id; });
 }
 
 void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> animation) {
@@ -273,7 +288,7 @@ void LotSimulation::sampleAll(double at) {
         }
     for (auto& b : bound_) {
         const vm::Object* o = vm_->object(b.id);
-        if (!o)
+        if (!o || o->serial != b.objectSerial) // removed, or its ID went to a new object
             continue;
         b.motion.sample(*vm_, *o);
         playOverlays(b, *o, at);

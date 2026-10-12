@@ -58,6 +58,12 @@ public:
     // age and gender go into the person data the animation names need);
     // `idle` is what it plays standing.
     void attach(SimActor& actor, int16_t id, const Character& character, const std::string& idle);
+    // The attached Sims whose object the VM removed (an NPC gone home, a
+    // carpool driver whose car left), its ID maybe already another
+    // object's (Object::serial differs): the host drops their actors.
+    std::vector<int16_t> goneSims() const;
+    // Stops driving the actor of object `id`.
+    void detach(int16_t id);
     // Makes the Sim walk to an object (vm::startScriptedWalk), then play
     // entry `animation` of the global animation list if given.
     void walk(int16_t sim, int16_t target, std::optional<uint16_t> animation);
@@ -131,6 +137,7 @@ private:
         vm::SimMotion motion;
         std::string playing; // what the actor was last cued to play
         uint32_t serial = 0;
+        uint64_t objectSerial = 0; // the vm::Object::serial attached (IDs are reused)
         uint32_t climbSerial = 0;
         uint32_t walkSerial = 0;
         int walkExtras = 0; // blended locomotion clips over the base one (priorities kWalkBlend + 1...)

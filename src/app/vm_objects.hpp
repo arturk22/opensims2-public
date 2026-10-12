@@ -61,6 +61,7 @@ public:
                    std::vector<Xform> pose = {});
     // A Sim's actor (contained objects follow its bones).
     void addSim(int16_t id, SimActor* actor);
+    void removeSim(int16_t id) { sims_.erase(id); }
     // An object now drawn by a skinned actor (posed by an animation the VM
     // plays on it) instead of its static instance, which is hidden.
     void setActor(int16_t id, SimActor* actor);

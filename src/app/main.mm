@@ -2518,7 +2518,16 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
                             : s.actor->transform ? os2::Vec3{s.actor->transform->t[0], s.actor->transform->t[1],
                                                              s.actor->transform->t[2]}
                                                  : s.actor->position;
-        const bool shown = os2::WallView::visible(*gLotShape, want.level, p[0], p[1], p[2]);
+        bool shown = os2::WallView::visible(*gLotShape, want.level, p[0], p[1], p[2]);
+        // A Sim the VM removed (a carpool or bus driver whose vehicle left)
+        // or sent out of the world (at work, gone home) is not drawn: its
+        // actor kept its last pose where it was (live QA 15: the drivers
+        // stayed sitting in the street after each carpool).
+        if (gSimulation) {
+            const os2::vm::Object* o = gSimulation->machine().object(s.id);
+            if (!o || (!o->position.inWorld() && o->data[os2::vm::objdata::ContainerId] == 0))
+                shown = false;
+        }
         if (it->second >= 0)
             renderer.setInstanceTransform(it->second, shown ? matrix_identity_float4x4 : away);
         if (!gPie)
@@ -3425,6 +3434,33 @@ void adoptVmSims(os2::Renderer& renderer) {
     if (!gSimulation || !gIndex || !gObjectView)
         return;
     os2::vm::VM& m = gSimulation->machine();
+    // Sims whose object the VM removed (an NPC gone home, a carpool or bus
+    // driver whose vehicle left): their actors go, or they stood frozen in
+    // their last pose where they were, following whatever object got the
+    // ID next (live QA 15: the drivers sitting in the street, the maid
+    // kneeling by a puddle for a day). The actor itself stays allocated
+    // (other views may still point at it), moved out of sight.
+    for (int16_t id : gSimulation->goneSims()) {
+        gSimulation->detach(id);
+        for (auto it = gLotSims.begin(); it != gLotSims.end();)
+            if (it->id == id) {
+                simd_float4x4 away = matrix_identity_float4x4;
+                away.columns[3] = simd_make_float4(0, 0, -1000, 1);
+                if (const int instance = renderer.instanceOf(it->actor->model); instance >= 0)
+                    renderer.setInstanceTransform(instance, away);
+                gCarriedSims.erase(it->actor);
+                it = gLotSims.erase(it);
+            } else {
+                ++it;
+            }
+        gObjectView->removeSim(id);
+        if (gLighting)
+            gLighting->removeSim(id);
+        if (gPie)
+            gPie->setMovingBox(os2::vm::ObjectId(id), simd_float3(0), simd_float3(0));
+        gSimsLookedAt.erase(id); // a Sim given the ID later is adopted anew
+        std::printf("opensims2: Sim %d leaves the lot (its object is gone)\n", id);
+    }
     std::vector<int16_t> fresh;
     for (const auto& [id, o] : m.objects())
         if (o.person && (o.position.inWorld() || o.data[os2::vm::objdata::ContainerId] != 0) && !gSimsLookedAt.count(id))
