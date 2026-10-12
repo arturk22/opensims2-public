@@ -200,6 +200,36 @@ SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& p
         if (const std::string n = scenegraphName(index, loc.entry->tgi); !n.empty())
             localMaterials.emplace(bareName(n), n.ends_with("_txmt") ? n.substr(0, n.size() - 5) : n);
 
+    // The face (and a face list entry of the file's own, wherever the list
+    // puts it: Pascal Curioso's names the glasses first, then the face):
+    // its materials are in the character file.
+    auto faceMaterials = [&](ObjectModel& m, const SimPart& part) {
+        std::map<std::string, std::string> overrides;
+        for (const auto& p : m.parts)
+            if (auto it = localMaterials.find(lower(p.material)); it != localMaterials.end())
+                overrides[p.mesh.name] = it->second;
+        if (!overrides.empty()) {
+            const auto cres = part.reference("resourcekeyidx");
+            m = loadObjectModel(index, scenegraphName(index, *cres), overrides);
+        }
+        for (auto& [name, mat] : m.materials) {
+            for (auto& [k, v] : mat.properties)
+                if (k == "stdMatBaseTextureName" || k == "baseTexture0")
+                    v = migrateFaceSkin(index, v);
+            for (auto& v : mat.textureNames)
+                v = migrateFaceSkin(index, v);
+        }
+        for (auto& p : m.parts) {
+            auto it = m.materials.find(p.material);
+            if (it == m.materials.end())
+                continue;
+            const uint32_t layers = uint32_t(std::atoi(it->second.property("numTexturesToComposite").c_str()));
+            for (uint32_t i = 1; i < layers; ++i)
+                if (auto t = it->second.property("baseTexture" + std::to_string(i)); !t.empty())
+                    p.overlays.push_back(t + "_txtr");
+        }
+    };
+
     for (const auto& [bits, tgi] : ch.wear(category)) {
         const SimPart* part = nullptr;
         if (tgi.group == 0xFFFFFFFF) {
@@ -220,31 +250,7 @@ SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& p
         try {
             ObjectModel m = loadSimPartModel(index, *part);
             if (bits == 2) {
-                // The face: its materials are in the character file.
-                std::map<std::string, std::string> overrides;
-                for (const auto& p : m.parts)
-                    if (auto it = localMaterials.find(lower(p.material)); it != localMaterials.end())
-                        overrides[p.mesh.name] = it->second;
-                if (!overrides.empty()) {
-                    const auto cres = part->reference("resourcekeyidx");
-                    m = loadObjectModel(index, scenegraphName(index, *cres), overrides);
-                }
-                for (auto& [name, mat] : m.materials) {
-                    for (auto& [k, v] : mat.properties)
-                        if (k == "stdMatBaseTextureName" || k == "baseTexture0")
-                            v = migrateFaceSkin(index, v);
-                    for (auto& v : mat.textureNames)
-                        v = migrateFaceSkin(index, v);
-                }
-                for (auto& p : m.parts) {
-                    auto it = m.materials.find(p.material);
-                    if (it == m.materials.end())
-                        continue;
-                    const uint32_t layers = uint32_t(std::atoi(it->second.property("numTexturesToComposite").c_str()));
-                    for (uint32_t i = 1; i < layers; ++i)
-                        if (auto t = it->second.property("baseTexture" + std::to_string(i)); !t.empty())
-                            p.overlays.push_back(t + "_txtr");
-                }
+                faceMaterials(m, *part);
             } else {
                 if (bits == 1)
                     markHairPart(m);
@@ -271,7 +277,9 @@ SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& p
         if (t.group != 0xFFFFFFFF || it == local.end())
             continue;
         try {
-            sim.add(loadSimPartModel(index, it->second));
+            ObjectModel m = loadSimPartModel(index, it->second);
+            faceMaterials(m, it->second);
+            sim.add(m);
         } catch (const std::exception& e) {
             sim.model.warnings.push_back("face overlay " + hexString(t.instance) + ": " + e.what());
         }

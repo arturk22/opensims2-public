@@ -112,8 +112,16 @@ void installBabyCharacterWriter(ResourceIndex& index, const fs::path& characters
             return;
         auto specOf = [&](const Neighbor& n) {
             auto it = st->byGuid.find(n.guid);
-            if (it == st->byGuid.end())
-                throw std::runtime_error("no character file for neighbor GUID " + hexString(n.guid));
+            if (it == st->byGuid.end()) {
+                // A unique NPC (the Pollination Technician fathers the
+                // abducted Sim's baby) keeps its character in its object.
+                char stem[32];
+                std::snprintf(stem, sizeof stem, "Unique_%08X.package", n.guid);
+                const fs::path file = st->out / kNpcFolder / stem;
+                if (!fs::exists(file) && !cas::writeEmbeddedCharacter(*st->index, n.guid, file))
+                    throw std::runtime_error("no character file for neighbor GUID " + hexString(n.guid));
+                it = st->byGuid.emplace(n.guid, file).first;
+            }
             DbpfPackage pkg(it->second);
             return cas::readCharacterSpec(pkg, 0xFFFFFFFF, *st->catalog);
         };
