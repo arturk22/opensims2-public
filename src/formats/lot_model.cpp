@@ -24,7 +24,8 @@ namespace {
 constexpr uint32_t kTypeTxmt = 0x49596978, kTypeTxtr = 0x1C4A276C, kTypeCatalogPattern = 0xCCA8E925, kTypeCatalogRoof = 0xACA8EA06,
                    kTypeCatalogFence = 0x2CB230B8;
 
-// Wall slab half thickness, in tiles (inferred from screenshots of the game).
+// Wall slab half thickness, in tiles: the game's walls are 0.15 thick
+// (cWallGeometryNode's default, Mac BV 0x74ab40).
 constexpr float kWallHalfThickness = 0.075f;
 // Ground floors sit on the terrain; lift them so they win the depth test
 // against the terrain paints drawn after them.

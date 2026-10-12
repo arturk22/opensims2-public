@@ -869,6 +869,16 @@ para cada quarto da máscara cujo padrão ou rotação muda:
   `0x3941e0`): por face, `+ preço(novo)`; quando o novo é o padrão em branco,
   `− int(preço(velho) × 0,8)`. Pintar por cima não reembolsa o antigo.
 
+- **Geometria** (rodada 15, binário, `nTSSG::cWallGeometryNode`): a
+  espessura padrão é **0,15** tile (construtor BV `0x74ab40`, campo `+0x1c4`
+  do `SetThickness`; quem chama o setter não foi achado, só a vtable), a
+  altura das paredes baixadas **0,2** (`+0x1c8`, `SetWallDownHeight`) e o
+  deslocamento `−0,01` (`+0x1cc`). No papel de parede
+  (`cWallPiece::ComputeSegmentVertices`, BV `0x744520`) **V = altura / 3**
+  (uma textura cobre os 3 de altura; mais 0,05 num tipo de trecho) e **U vai
+  de 0 a 1 em cada trecho de um tile** (0,5 no meio): uma textura por tile.
+  O `src/formats/lot_model.cpp` já fazia assim (meia espessura 0,075).
+
 ### 7.6 Portas, janelas e arcos
 
 São **objetos** (OBJD tipo 8 porta, 9 janela; arcos são portas sem folha),
