@@ -456,8 +456,9 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
                 std::string s;
                 for (const auto& v : o.animation.overlays) {
                     // Where its event tree runs counts only with one.
+                    // (A pose held until stopped never reaches its events.)
                     s += " " + v.name + "@" + std::to_string(v.played) + "x" + std::to_string(v.loops) + "/" +
-                         std::to_string(v.pending.size()) + (v.blendOutSent ? "b" : "");
+                         std::to_string(v.loops > 0 ? v.pending.size() : 0) + (v.blendOutSent ? "b" : "");
                     if (v.eventTree)
                         s += ":" + std::to_string(v.me) + "," + std::to_string(v.codeOwner) + "," +
                              std::to_string(v.stackObject) + "," + std::to_string(v.eventTree);

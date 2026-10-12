@@ -292,6 +292,7 @@ struct ResumedOverlay {
     int16_t ikObject = 0;
     uint16_t eventTree = 0;
     int16_t me = 0, codeOwner = 0, stackObject = 0;
+    bool treeEvents = true; // Animate Overlay's carry its animation's events (Animate Object's go to overlayEvents)
 };
 void resumeOverlay(VM& vm, Object& target, const ResumedOverlay& r);
 // An Animate Object's event tree, back with the animation's events not

@@ -217,7 +217,7 @@ semi-global `0x7F0B61F3`) volta empurrada: o `slot_chairdining_trans` salvo
 tem y = 0,373 (o último quadro do `o2c-chairDining-pushIn`), e o "Start Live
 Mode" não toca de novo a animação quando o semi-atributo já é 2. O
 `cAnimatable` (envoltório, tag `0x7D4F2BB8`) põe a fila de animações depois
-(não lida). O app desenha o objeto com essa pose (`Lot::Object::nodes`,
+(§7c). O app desenha o objeto com essa pose (`Lot::Object::nodes`,
 `savedPose`/`posedModel` em `formats/skinning`), os slots e o assento do Sim
 seguem os ossos posados (`VmObjectView::localPose`) e o ator de animação do
 objeto começa dela e a mantém quando as animações param
@@ -395,9 +395,8 @@ não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
   rodada 17 (`lot-save --check` de 43.200 ticks e `hood-save N001 --ticks
   43200 --check`: 26 de 26 lotes iguais). O que faltava para o lote
   recarregado *seguir* como o que salvou está na §7b.
-- Animações e rotas em andamento (§7b): o jogo grava as duas; o VM grava a
-  rota parada e não grava a fila de animações, então a instrução de animar
-  ou andar recomeça do início ao recarregar.
+- ~~Animações e rotas em andamento recomeçam ao recarregar~~: §7c (rodada
+  17, frente r17-saveanim).
 
 ## 7b. Rodada 17: o lote recarregado segue como o que salvou
 
@@ -443,3 +442,116 @@ animação + `on_save_choreo_request_anim` `0x68d640`, 2 pedido com olhar +
 (`cIAnimRequest`, classe `0x9D0CE60`, e os `cIChoreoRequestAnim`) e ligar ao
 Animate Sim que retoma (`cAnimatable::OnTryElement`, BV `0x689f34`) fica para
 uma frente própria.
+
+## 7c. Rodada 17 (r17-saveanim): animação e rota em andamento **[binário]**
+
+**A fila de animações** (`formats/scene_anim.*`). No registro `cObject`
+(`0xFA1C39F7`) de um objeto animável, os cabeçalhos vêm de fora para dentro
+(um Sim: `cPerson` v3, `cLocomotable` v4, `cAnimatable` v0x10, `cObject`
+v0x11) e os dados de cada classe depois dos da base: o `cObject`
+(`LoadFromStream` BV `0x65fae8`: modelo, skins, pose, nós, e com v > 0xF
+`u32 n` + n × (string, string, f32) dos morphs do rosto), depois o
+`cAnimatable` (`LoadFromStream` `0x695884`; o `SaveToStream` é o `0x68c868`,
+que o symxfer chama de `DetermineAppropriateSocialAnim`):
+
+```
+f32 estica-esqueleto ; u32 tem-nó [2 × transformação] ;
+[v < 0xF: 2 × (u32 tem [choreo + string + u32]) ; u32 ; u32]
+u32 contador de pedidos (DAT_02779c34) ; [v > 0xB: u32 DAT_02779c30] ;
+[v < 0xA: u32] ; [v > 8: u32 +0x13C] ; [v > 0xA: u32 +0x140] ;
+[v > 0xC: f32 +0x144] ; [v > 0xD: (v = 0x10: u32 +0x148) ; u32 +0x14C] ;
+transformação +0x160 ; u32 n ; n pedidos
+```
+
+(transformação = 3 f32 + quatérnio). Cada pedido (`on_save_anim_request`
+`0x695f34` / `on_load_anim_request` `0x69ab40`): u32 tipo 0 nenhum, 1
+animação, 2 olhar. O tipo 1 é o `cAnimRequest` (tag `0x09D0CE69`, v11;
+`0x6abc9c`/`0x6ab788`; nomes pela ordem dos getters na vtable da classe):
+id, nome, canal ("sil/sim/sih/siu" do Animate Sim, "osl/ovl/ovm/ovh/ovu" do
+Animate Overlay, "obj" do Animate Object), u32 +0x24 (5 no Animate Sim, 4 ou
+6 nos overlays), u32 +0x28 tOEType (2 normal, 4 idle, 7 facial: os números
+do `vm::oetype`), u16 objeto da pilha, u16 árvore de eventos, interrompível,
+f32 pressa, f32 ×2 eventos de ação, transição de entrada/saída, +0x4C,
+TargetID (o objeto de IK), transformação, slot, só-no-cômodo, GUID do
+objeto da árvore, State, MovedObjectID, string, u32 tem-callback (com
+callback o layout não é conhecido: a fila não é lida), +0x94/+0x98, +0x9C;
+depois o `cChoreoRequestAnim` (tag `0xC9DE69B6`, v1 nos lotes do base, v2 no
+BV com um f32 +0xE4; `0xd52b0c`/`0xd52a6c`) com o `cChoreoRequest` (tag
+`0x3AFF30DB`, v7; `0xd9404c`/`0xd94588`): estado, início (relógio do motor,
+ms), fim, porção feita, porção final, regra de expiração (5 com
+blend de saída, 3 sem), prioridade (= nível do canal), peso, a função de
+peso (`cBlendFunction2` `0x8B969D64`: entrada, sustentação, saída), espelho,
+voltas, velocidade, desvio de direção, 3 × (transformação + f32), **agora**
+(+0xA8), +0xAC/+0xAD, +0xB0, +0xB4, externo, e **+0xBC, o quanto já tocou
+(ms de animação)**; por fim o nome do recurso ("…_anim") e o tipo do
+tratador de eventos. O tipo 2 é o `cAnimRequest` + `cChoreoRequestLookAt`
+(tag `0x2A6F2E97`, v5; `0xd68284`): o choreo de animação, string do alvo,
+f32 (×2 com v ≥ 5), 3 u32, [v > 3 u32], o u32 do
+`on_save_choreo_request_look_at` e o ponto, u32, f32.
+
+**Animate Sim retomado.** O `try_animate_sim` (BV `0x69d634`) guarda o ID do
+pedido no estado primitivo do elemento da pilha (`cITSTreeStackElem`
+vtable 0x4C/0x48): `0x40000000 | 1 se espelhado | (++DAT_02779c34 & 0xFF)
+<< 21`; com o estado ≠ 0 ele procura o pedido (`AnimRequestByID`) em vez de
+criar outro. O VM faz o mesmo (`AnimationState::requestId`,
+`Frame::primitiveState`, que agora vai e volta no save), grava o pedido do
+Animate Sim em andamento na fila do Sim e, ao recarregar, o quadro do topo
+parado num Animate Sim cujo estado é o ID de um pedido da fila continua dele
+(`resumeAnimateSim`): mesma animação, o tempo tocado (+0xBC), os eventos
+ainda não alcançados, os ticks que faltam. Nos lotes do jogo há 9 pedidos de
+Animate Sim, um só com o quadro esperando por ele (Tutorial_Lot19, o piano).
+
+**Overlays.** Os pedidos que não são de Animate Sim voltam como overlays
+(os idles e rostos do Animate Overlay, cujas árvores de eventos o sistema de
+idles espera: sem eles o 9999 nunca chegava e os flags "tocando" ficavam
+presos; as poses de carregar; o Animate Object com a sua árvore de
+eventos). A árvore do evento roda como o Sim que começou o overlay: o VM o
+guarda no MovedObjectID (+0x80, 0 em todos os pedidos dos lotes do jogo)
+quando não é o próprio objeto (inferido; um save do jogo: o próprio objeto).
+Objetos cujo `cObject` é nu (sem `cAnimatable`, como os pratos de comida nos
+lotes do jogo) não têm onde guardar as poses: ficam sem elas.
+
+**Rota.** O `cTSRoute::SaveToStream` (BV `0x4731dc`, dentro do registro de
+roteamento) **não grava caminho**: versão 3, os IDs (quem anda, alvo, outro),
+o slot (`WorkOutSlotIndex`) ou, sem slot, os parâmetros do alvo, e alguns
+campos (+0x124, +0xAC/+0xAD, 4 f32, u32, 4 u16); o `LoadFromStream`
+(`0x4736bc`) refaz a lista de objetivos (`CreateBestGoalPointList`): o jogo
+planeja de novo de onde o Sim está. O VM faz isso para um save sem mais nada
+(`resumeRoutes`): a instrução de rota no topo planeja de novo
+(`Frame::routeResume`, sem a árvore pré-rota, que já rodou), e o estado do
+quadro sob uma árvore da rota é refeito pela árvore (pré-rota: o resultado
+dela segue; "CT - Route Failure Feedback": a falha, parâmetro 0, segue para
+a pós-rota; pós-rota: chegada com 0, falha com o resultado; as outras —
+checagem de objetivo, ao longo da rota, portal, rota bloqueada — planejam de
+novo quando voltam). Para o lote recarregado seguir **igual** ao que salvou,
+o VM grava também um registro próprio ao lado dos do jogo (tipo
+`0x4F533256` "OS2V", grupo `0xFFFFFFFF`, instância = ID do objeto;
+`vm/thread_state.*`; o jogo ignora tipos que não conhece): o estado de rota
+dos quadros, a rota com o caminho e a locomoção (a curva pelo que a fez), o
+atrator de olhar, a parte de destino (o slot sintético do "Move Out Of Way",
+"gerenciado"/"seguro" do Go Here), e na instância 0 o ruído do A* do
+planejador e a contagem de ticks do VM. Só vale se a pilha salva for a
+mesma (árvores e nós); senão, o caminho do jogo.
+
+**Conferido** (`lot-save <lote> --ticks 21600 --continue N`): antes o
+primeiro desvio era o Animate Sim que recomeçava (tick 7 no N001_Lot11, 12
+no N003_Lot52) ou a rota (N002_Lot2, tick 1); agora N003_Lot52 segue igual
+por 1657 ticks (até o "Controller - Age"), N001_Lot11 e N002_Lot2 até o
+tick 27, quando o "Script - Pleasantville - …" feito de novo ao recarregar
+(objeto global, `updateSimObjects`) reescreve os motivos: o lote salvo sem o
+bairro (`lot-save`) perde a marca de que o roteiro já rodou; N002_Lot3 até o
+tick 121 (o "Controller - Short Term Memory Effects", que lê as memórias do
+bairro, que o `lot-save` não grava). `OS2_CONTINUE_ALL=1` segue até o fim e
+conta as diferenças por minuto; `OS2_CONTINUE_WATCH=id:motivo` mostra a
+instrução que mudou um motivo; `OS2_DEBUG_ROUTE_DIFF=1` imprime as duas
+rotas quando o estado de rota difere. Os lotes do jogo: `lot-save --check`
+sem ticks deixa iguais todos os `cObject` que não mudaram (a fila só é
+reescrita quando o que toca difere do que ela diz).
+
+Inferido / não feito: o callback de fim (+0x90 do `cAnimRequest`, classe
+`0x6C9EAF21`) e os campos +0x24, +0x4C, +0x94…+0x9C não decifrados; os
+registros de rota do jogo continuam como lidos (o VM não grava a sua rota no
+`cTSRoute`); `cLocomotable`/`cPerson` (8 bytes depois da fila) intocados; os
+flags de empurrar da fila (dado de pessoa 72 "continue as current") ainda
+não vão no save (N001_Lot36: o Beau volta com 72 diferente).
+

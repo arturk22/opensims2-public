@@ -34,6 +34,7 @@ void SimMotion::sample(VM& vm, const Object& o) {
         s.animWeight = o.animation.weight;
         s.animIkObject = o.animation.eventObject;
         s.animHeading = o.animation.headingOffset;
+        s.animPlayed = o.animation.requestId ? o.animation.playedTicks : 0.0f;
     }
     s.serial = o.animation.serial;
     if (s.walking) {

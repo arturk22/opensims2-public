@@ -41,6 +41,7 @@ public:
         uint32_t serial = 0;    // of that animation
         bool flipped = false;   // played mirrored (Animate Sim's flip flags)
         int animLevel = 0;      // its channel level (vm::animlevel::ofSim)
+        float animPlayed = 0;   // how far it has played (animation ms): a resumed one starts there
         float animWeight = 1;   // its request weight
         int16_t animIkObject = 0; // its IK object (Animate Sim's owner byte 9, u16 10)
         float animHeading = 0;    // its request heading offset (radians)

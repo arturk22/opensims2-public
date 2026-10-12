@@ -1087,12 +1087,14 @@ void resumeOverlay(VM& vm, Object& target, const ResumedOverlay& r) {
     o.loops = o.length > 0 && r.loops > 0 ? r.loops : 0;
     o.perTick = float(1000.0 / vm.clock.ticksPerSecond) * (r.speed > 0 ? r.speed : 1.0f);
     o.played = r.played;
+    // The events of the loop it is in not reached yet (tickOverlayEvents;
+    // a pose held until stopped never reaches any).
     if (o.loops > 0) {
-        // The events of the loop it is in not reached yet (tickOverlayEvents).
         const float inPlay = std::fmod(o.played, o.length);
-        for (const auto& e : library(vm).treeEvents(r.name))
-            if (float(e.first) > inPlay)
-                o.pending.push_back(e);
+        if (r.treeEvents)
+            for (const auto& e : library(vm).treeEvents(r.name))
+                if (float(e.first) > inPlay)
+                    o.pending.push_back(e);
         o.blendOutSent = o.played >= o.length * float(o.loops) - kBlendTicks;
     }
     ++target.animation.overlaySerial;

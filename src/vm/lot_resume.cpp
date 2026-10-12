@@ -438,6 +438,7 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
                 r.loops = 0; // played until stopped (animateObject)
                 const uint16_t tree = r.eventTree;
                 r.eventTree = 0;
+                r.treeEvents = false;
                 resumeOverlay(vm, *o, r);
                 if (tree)
                     resumeOverlayEvents(vm, *o, r.name, tree, r.me, r.codeOwner, r.stackObject, q.played, q.speed);

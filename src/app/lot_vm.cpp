@@ -391,7 +391,8 @@ void LotSimulation::sampleAll(double at) {
             } else {
                 b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
                                         .mirror = mirror, .turn = animated ? anim.headingOffset + s.animHeading : 0.0f,
-                                        .phase = walkClip ? double(s.walkPhase) : 0.0, .level = level,
+                                        .phase = walkClip ? double(s.walkPhase) : animated ? double(s.animPlayed) / 1000.0 : 0.0,
+                                        .level = level,
                                         .weight = weight,
                                         .ikObjectBone = animated ? ikObjectBones(*b.actor, s.animIkObject) : IkObjectBone{}});
             }
