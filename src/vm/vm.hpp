@@ -1055,6 +1055,7 @@ public:
     // Starts the object's Main in its thread; false if it has none.
     bool startMain(ObjectId id);
     void resetAfterError(ObjectId id, Thread& t);
+    void resetObject(ObjectId id, Thread& t); // the same reset, not after an error
     std::map<ObjectId, Thread> threads; // the Main threads
     // Instructions a thread may run in one turn before it fails as an
     // infinite loop: the game's "Too many iterations" (0x44D) after 100000

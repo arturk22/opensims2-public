@@ -8,6 +8,7 @@
 #include "vm/lot_resume.hpp"
 #include "vm/lot_save.hpp"
 #include "vm/vm.hpp"
+#include "vm/interactions.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -1948,7 +1949,41 @@ static void testThreadOfReusedId() {
     check(u.status == Thread::Status::Finished && u.temps[0] == 1, "the new object's own thread runs");
 }
 
+// cTSPerson::OnCleanup(object): a person whose thread runs none of the
+// removed object's code but whose current interaction object (person data
+// 80) or route target it was is reset to its Main, not left to error on a
+// stack object that does not exist (N001_Lot16: a Sim routing to react to
+// one who died and was taken away).
+static void testRemovedTargetResetsPerson() {
+    Fixture fx;
+    constexpr uint32_t kSim = 0x55667790, kThing = 0x11223399;
+    fx.code.add(kObjGroup, 0x81, definition(kSim, true));
+    fx.code.add(kObjGroup + 1, 0x80, definition(kThing));
+    ObjectFunctions f;
+    f.functions.resize(2);
+    f.functions[1] = {0, 0x1000};
+    fx.code.add(kObjGroup, 0x81, f);
+    fx.code.add(kObjGroup, 0x1000, tree({expr(Temp, 0, Add, Lit, 1, T, E)}));        // the Main
+    fx.code.add(kObjGroup, 0x1001, tree({instr(0x00, go(0), E, {0, 0})}, 1));         // a loop: Sleep
+    Object& sim = fx.vm.instantiate(kObjGroup, 0x81);
+    Object& other = fx.vm.instantiate(kObjGroup, 0x81);
+    Object& thing = fx.vm.instantiate(kObjGroup + 1, 0x80);
+    const ObjectId simId = sim.id, otherId = other.id, thingId = thing.id;
+    sim.person->data[persondata::CurrentInteractionObject] = thingId;
+    for (ObjectId id : {simId, otherId}) {
+        fx.vm.threads[id] = fx.vm.start(id, 0x1001); // running, not started yet
+    }
+    queueKill(fx.vm, thingId);
+    flushKillQueue(fx.vm);
+    const Thread& a = fx.vm.threads[simId];
+    const Thread& b = fx.vm.threads[otherId];
+    check(!fx.vm.object(thingId) && !a.stack.empty() && a.stack.front().instance == 0x1000 &&
+              !b.stack.empty() && b.stack.front().instance == 0x1001 && fx.vm.errorResets.empty(),
+          "a removed current interaction object resets the person to its Main, not as an error; others go on");
+}
+
 int main() {
+    testRemovedTargetResetsPerson();
     testLoopWithLocalsAndParams();
     testThreadOfReusedId();
     testCinematicRequest();

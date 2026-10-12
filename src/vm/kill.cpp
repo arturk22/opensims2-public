@@ -39,7 +39,9 @@ void collect(VM& vm, ObjectId id, std::vector<ObjectId>& out) {
 
 // cTSObject::Cleanup(object) on one thread: unwind the frames running the
 // object's code.
-void unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone) {
+// True if the thread ran some of it (the tree sim's cleanup, vtable 0xe4,
+// found frames: cTSObject::Cleanup then skips the person's OnCleanup).
+bool unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone) {
     auto isGone = [&](ObjectId id) { return std::find(gone.begin(), gone.end(), id) != gone.end(); };
     size_t first = t.stack.size();
     for (size_t i = 0; i < t.stack.size(); ++i)
@@ -48,7 +50,7 @@ void unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone
             break;
         }
     if (first == t.stack.size())
-        return;
+        return false;
     // The innermost interaction frame at or below the first frame of the object.
     std::optional<size_t> action;
     for (size_t i = 0; i <= first; ++i)
@@ -64,13 +66,13 @@ void unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone
     if (action && *action > 0) {
         t.stack.resize(*action);
         endInteraction(vm, t);
-        return;
+        return true;
     }
     const Object* o = vm.object(owner);
     const uint16_t main = o ? vm.functionTree(*o, 1) : 0;
     if (!main) {
         t.status = Thread::Status::Killed;
-        return;
+        return true;
     }
     const size_t done = t.instructions;
     if (Object* me = vm.object(owner)) { // the queue's running entry is gone with its tree
@@ -81,6 +83,24 @@ void unwind(VM& vm, ObjectId owner, Thread& t, const std::vector<ObjectId>& gone
     }
     t = vm.start(owner, main);
     t.instructions = done;
+    return true;
+}
+
+// cTSPerson::OnCleanup(object) (BV 0xadcbcc), for a person whose thread ran
+// none of the object's code: the object its current interaction is on
+// (person data 80) or its sub-queue object (157) gone resets the person as
+// Cleanup(nobody) does; so does the target of the route it walks
+// (cTSRoutingObjectAggregate::OnCleanup BV 0x5727c8 flags the route,
+// DoObjectDeletedWhileWalking 0x56d880 resets the walker,
+// "Router::DoObjectDeletedWhileWalking"). The objects the person keeps in
+// its object records (+0x60c) are not modelled.
+bool personLosesTarget(VM& vm, const Object& p, const std::vector<ObjectId>& gone) {
+    auto isGone = [&](ObjectId id) { return id > 0 && std::find(gone.begin(), gone.end(), id) != gone.end(); };
+    if (!p.person)
+        return false;
+    if (isGone(p.person->data[persondata::CurrentInteractionObject]) || isGone(p.person->data[persondata::SubQueueObject]))
+        return true;
+    return p.route && isGone(p.route->target);
 }
 
 } // namespace
@@ -128,8 +148,10 @@ void flushKillQueue(VM& vm) {
                 sim.data[objdata::SlotNumber] = -1;
             }
         for (auto& [tid, t] : vm.threads)
-            if (std::find(gone.begin(), gone.end(), tid) == gone.end() && t.status == Thread::Status::Running)
-                unwind(vm, tid, t, gone);
+            if (std::find(gone.begin(), gone.end(), tid) == gone.end() && t.status == Thread::Status::Running &&
+                !unwind(vm, tid, t, gone))
+                if (const Object* p = vm.object(tid); p && personLosesTarget(vm, *p, gone))
+                    vm.resetObject(tid, t);
         for (auto it = vm.relationships.begin(); it != vm.relationships.end();) {
             const auto& [a, b] = it->first;
             const bool drop = (!a.neighbor && std::find(gone.begin(), gone.end(), a.id) != gone.end()) ||

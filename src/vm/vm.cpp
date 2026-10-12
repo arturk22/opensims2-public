@@ -1049,6 +1049,13 @@ void VM::resetAfterError(ObjectId id, Thread& t) {
         r.first = t.error;
     r.last = t.error;
     r.lastTick = ticks;
+    resetObject(id, t);
+}
+
+// Cleanup(nobody) (cTSObject::Cleanup, BV 0xb09838), as above, without the
+// error: also what an object's removal does to a person whose current
+// interaction object or route target it was (kill.cpp).
+void VM::resetObject(ObjectId id, Thread& t) {
     Object* o = object(id);
     const uint16_t main = o ? functionTree(*o, 1) : 0;
     if (!o || !main)
