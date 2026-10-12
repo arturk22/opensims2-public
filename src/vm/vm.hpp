@@ -1151,7 +1151,7 @@ public:
     std::map<int16_t, FamilyTies> familyTree;
 
     // Type attributes (data owners 0x24/0x25): shared by every object of a
-    // type, keyed by the GUID of its (master) definition; they grow on demand.
+    // type, keyed by its definition's proxy GUID or GUID (vm.cpp).
     std::map<uint32_t, std::vector<int16_t>> typeAttributes;
 
     // Rooms of the lot by room ID, with the values labelled in STR# 0xDB

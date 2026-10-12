@@ -914,6 +914,8 @@ static void testDefinitionOwners() {
     }
     master.fields[(0x56 - 0x44) / 2] = 0xFFFF; // sub index -1
     field(master, 90) = 3;                     // num type attributes
+    field(part, 29) = uint16_t(kMaster);       // proxy GUID: the type attributes' key
+    field(part, 30) = uint16_t(kMaster >> 16);
     fx.code.add(kObjGroup, 0x80, std::move(master));
     fx.code.add(kObjGroup, 0x81, std::move(part));
     ObjectFunctions functions;
@@ -942,6 +944,10 @@ static void testDefinitionOwners() {
               t.temps[1] == int16_t(kMaster & 0xFFFF) && t.temps[2] == 0x1002 && t.temps[3] == 2 && t.temps[4] == 48 &&
               t.temps[5] == 1 && fx.vm.typeAttributes[kMaster].size() == 3 && fx.vm.typeAttributes[kMaster][1] == 5,
           "type attributes, master definition, object functions, constants [temp] and rooms");
+    fx.code.add(kObjGroup, 0x1003, tree({expr(MyType, 3, Assign, Lit, 1, T, E)}));
+    t = fx.run(0x1003);
+    check(t.status == Thread::Status::Failed && t.error.find("condition : 64") != std::string::npos,
+          "a type attribute past the count is error 0x40 (no text in the game's table)");
 }
 
 // cTSFamilyRelationshipArray: siblings are ties of their own; a child has at

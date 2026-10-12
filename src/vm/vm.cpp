@@ -73,14 +73,12 @@ static int16_t& element(std::vector<int16_t>& values, int idx, const char* what)
     return values[size_t(idx)];
 }
 
-// Type attributes (owners 0x24/0x25) still grow when written past their
-// start: the binary's count comes from the type attribute manager (an index
-// past it is error 0x40), whose size we do not know (inferred).
+// Type attributes (owners 0x24/0x25): a fixed count, an index past it is
+// error 0x40 (InterpValue BV 0xb15f2c; no base tree uses them).
 static int16_t& typeAttribute(std::vector<int16_t>& values, int idx, const char* what) {
-    if (idx < 0 || size_t(idx) >= kMaxAttributes)
-        throw VMError(std::string(what) + " " + std::to_string(idx) + " out of range");
-    if (size_t(idx) >= values.size())
-        values.resize(size_t(idx) + 1);
+    if (idx < 0 || size_t(idx) >= values.size())
+        throw gameError(err::TypeAttributeOutOfRange,
+                        std::string(what) + " " + std::to_string(idx) + " of " + std::to_string(values.size()));
     return values[size_t(idx)];
 }
 
@@ -421,14 +419,24 @@ static const ObjectDefinition& masterDefinitionOf(VM& vm, const Object& o) {
     return *o.definition;
 }
 
-// Type attributes of an object's type: keyed by its master definition's GUID
-// (inferred; the OBJD's "type attr guid" fields are labelled unused in The
-// Sims 2), starting with "num type attributes" (field 90) entries.
+// Type attributes of an object's type, as the object's selector finds them
+// (cTSObjectSelector::CountTypeAttributes/GetTypeAttributes BV 0x51e5e8/
+// 0x51e6c8): in the type attribute manager under its definition's proxy GUID
+// (field 0xCD = editor field 29), or its GUID (0xCA = 14) without one. The
+// manager has an entry for each catalog object whose "num type attributes"
+// (field 90) is not 0, keyed by its GUID, with that many (cTSObjectFolder::
+// PopulateTypeAttributesFromSelectors BV 0x4e4b0c); none: count 0.
 static std::vector<int16_t>& typeAttributesOf(VM& vm, const Object& o) {
-    const ObjectDefinition& d = masterDefinitionOf(vm, o);
-    auto [it, added] = vm.typeAttributes.try_emplace(d.guid());
-    if (added)
-        it->second.resize(std::min<size_t>(uint16_t(definitionField(d, 90)), kMaxAttributes));
+    if (!o.definition)
+        throw VMError("object " + std::to_string(o.id) + " has no definition");
+    const uint32_t key = o.definition->proxyGuid() ? o.definition->proxyGuid() : o.definition->guid();
+    auto [it, added] = vm.typeAttributes.try_emplace(key);
+    if (added) {
+        const auto def = vm.code().definitionByGuid(key);
+        const ObjectDefinition* d = def ? vm.code().definition(def->first, def->second) : nullptr;
+        if (d)
+            it->second.resize(uint16_t(definitionField(*d, 90)));
+    }
     return it->second;
 }
 
