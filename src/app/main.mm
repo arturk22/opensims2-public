@@ -4023,6 +4023,7 @@ void unloadScene() {
 - (os2::LotCamera*)camera;
 - (void)setCamera:(std::unique_ptr<os2::LotCamera>)camera;
 - (void)applyHeldKeys:(double)dt;
+- (void)holdKey:(unsigned short)key seconds:(double)seconds;
 @end
 
 @implementation OS2View {
@@ -4069,6 +4070,19 @@ void unloadScene() {
     _camera->movePixels(dragX * float(dt) * 20.0f, dragY * float(dt) * 20.0f);
     _camera->zoomHeld(int(_held.count(kEquals)) - int(_held.count(kMinus)), dt);
     _camera->rotateHeld(int(_held.count(kPeriod)) - int(_held.count(kComma)), dt);
+}
+
+// Headless (--key hold-<key>:<seconds>): the key held that long, frame by
+// frame (50 ms) as the draw loop applies held keys, the camera smoothed.
+- (void)holdKey:(unsigned short)key seconds:(double)seconds {
+    _held.insert(key);
+    for (double t = 0; t < seconds; t += 0.05) {
+        [self applyHeldKeys:0.05];
+        _camera->update(0.05);
+    }
+    _held.erase(key);
+    for (int k = 0; k < 40; ++k) // the smoothing settles
+        _camera->update(0.05);
 }
 
 - (void)keyDown:(NSEvent*)e {
@@ -5237,6 +5251,23 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     continue;
                 }
                 if (st.kind == os2::FlowStep::Kind::Key) { // --key space
+                    if (st.text.rfind("hold-", 0) == 0) { // --key hold-<left|right|up|down|a|d|w|s|comma|period>:<seconds>
+                        static const std::map<std::string, unsigned short> kKeys{
+                            {"left", kLeft}, {"right", kRight}, {"up", kUp}, {"down", kDown}, {"a", kA},
+                            {"d", kD},       {"w", kW},         {"s", kS},   {"comma", kComma}, {"period", kPeriod}};
+                        const size_t colon = st.text.find(':');
+                        const std::string name = st.text.substr(5, colon == std::string::npos ? std::string::npos : colon - 5);
+                        const double secs = colon == std::string::npos ? 0.5 : std::atof(st.text.c_str() + colon + 1);
+                        if (auto k = kKeys.find(name); k != kKeys.end()) {
+                            const simd_float3 p0 = view.camera->pivot();
+                            const float y0 = view.camera->yaw();
+                            [view holdKey:k->second seconds:secs];
+                            const simd_float3 p1 = view.camera->pivot();
+                            std::printf("opensims2: key %s held %.2f s: pivot (%.2f, %.2f) -> (%.2f, %.2f), yaw %.1f -> %.1f\n",
+                                        name.c_str(), secs, p0.x, p0.y, p1.x, p1.y, y0, view.camera->yaw());
+                        }
+                        continue;
+                    }
                     if (st.text == "space")
                         selectNextFamilySim();
                     if (st.text == "pageup" || st.text == "pagedown") { // as keyDown: the floor shown

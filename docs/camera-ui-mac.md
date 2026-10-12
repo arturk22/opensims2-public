@@ -89,9 +89,10 @@ Teclas (`ui.package` `0x6A9362F2`, modo vivo):
 | tecla | ação |
 |---|---|
 | ←/→/↑/↓ | mover (início/fim); com Shift, 2× |
+| `a`/`d`/`w`/`s` | mover também (`0x6A9362F3` e `0x6A9362F5`: "Start Move Left/Right/Forward/Back"; `0x6A9362F7` ainda tem `q`/`e` "lower/raise camera height") |
 | `z` / `x`, NumPad+/− | zoom um nível |
 | `=` / `-` | zoom contínuo enquanto segura |
-| `,` / `.` | girar esquerda/direita enquanto segura |
+| `,` / `.` | girar esquerda/direita enquanto segura (nenhuma tabela liga setas ou `a`/`d` a girar) |
 | Ctrl+4..9 / 4..9 / Shift+4..9 | salvar / voltar (suave) / pular para a posição de câmera 0–5 |
 | Tab | trocar de controlador de câmera |
 
@@ -231,3 +232,14 @@ Inferido: o "tipo `0x12`" como piso/chão e o `0x13` como parede (pelos usos).
 - O nome do modificador `0x01000000` dos códigos de botão.
 - A montagem da matriz de projeção (para confirmar FOV vertical).
 - A tabela de offsets do item "mais" e a cor de desabilitado.
+
+### Teclado conferido (rodada 15, r15-pool-draw)
+
+A passada 11 do QA viu as setas e `a`/`d` girarem a câmera. O código segue as
+tabelas acima (setas e WASD → `LotCamera::pan`, `,`/`.` → `rotateHeld`) e o
+passo headless `--key hold-<left|right|up|down|a|d|w|s|comma|period>:<s>`
+(a tecla segurada quadro a quadro de 50 ms, como o laço de desenho) mostra o
+pan sem giro: `key left held 0.50 s: pivot (15.00, 25.00) -> (35.74, 10.48),
+yaw 55.0 -> 55.0`, e só `comma` muda o yaw. Não reproduzido sem janela; o
+pan é rápido (`keyboardtranslationspeed` 50 px por quadro de 50 ms) e com a
+perspectiva pode parecer um giro. Teste: `test_camera` "pan right".

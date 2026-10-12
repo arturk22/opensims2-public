@@ -138,6 +138,17 @@ int main() {
     check(near(p.z, 0) && p.x * std::cos(y) + p.y * std::sin(y) < 0 &&
               near(p.x * std::sin(y) - p.y * std::cos(y), 0, 1e-2f),
           "pan forward");
+    // Sideways (Right / d, "Start Move Right" of the accelerators
+    // 0x6A9362F2/F3): the pivot moves across the view, the heading stays.
+    {
+        const float yaw0 = cam.yaw();
+        cam.setPivot(simd_make_float3(0, 0, 0));
+        cam.pan(1, 0, 0.1);
+        settle(cam);
+        const simd_float3 q = cam.pivot();
+        check(near(cam.yaw(), yaw0) && simd_length(q) > 0.1f && near(q.x * std::cos(y) + q.y * std::sin(y), 0, 1e-2f),
+              "pan right moves across the view without turning");
+    }
     // Farther away, the same pixels move the pivot farther.
     const float near1 = simd_length(p);
     cam.zoomBy(-1);
