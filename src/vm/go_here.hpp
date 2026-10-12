@@ -41,6 +41,12 @@ Point2 moveAwayFromOtherObjects(VM& vm, const Object& me, Point2 p, int level, f
 // MovePointAwayFromWalls: p moved d (+0.001) off the walls of its tile.
 Point2 movePointAwayFromWalls(const World& w, Point2 p, int level, float d);
 
+// Whether `a` and `b` may overlap by their "allow intersection" trees
+// (OBJf entry 5, asked both ways, as TSObjectCanSetPosition and
+// TSObjectMoveAwayFromOtherObjects do): the toilet's privacy marker lets
+// its user through.
+bool objectsMayIntersect(VM& vm, const Object& a, const Object& b);
+
 // Where a destination clicked at (x, y) on `level` goes (the moves above),
 // or nothing when it cannot stand there (out of the lot, no floor, inside
 // an object).

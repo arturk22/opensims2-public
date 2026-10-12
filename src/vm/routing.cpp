@@ -131,6 +131,15 @@ namespace os2::vm {
 
 namespace {
 
+// cTSObject::RunTree(5, ...): whether `o`'s "allow intersection" tree lets
+// `other` overlap it (defined with the Go Here code below).
+bool allowsIntersection(VM& vm, const Object& o, ObjectId other);
+// Either one's tree lets the two overlap (TSObjectCanSetPosition and
+// TSObjectMoveAwayFromOtherObjects ask both ways).
+bool intersectionAllowed(VM& vm, const Object& a, const Object& b) {
+    return allowsIntersection(vm, a, b.id) || allowsIntersection(vm, b, a.id);
+}
+
 // cTSRoute::EvalTileForGoal (docs/routing-mac.md §8.2), for a candidate
 // goal point of a slot around `target` (whose tile is `centre`): the code
 // (0 out of the world, 2 another room, 3 a wall between it and the object,
@@ -181,8 +190,10 @@ int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float
     if (!w.walkable(t))
         return 5;
     const ObjectId group = multiTileGroup(target);
+    const Object* walker = vm.object(router);
     for (const auto& [id, o] : vm.objects())
-        if (o.position.level == level && multiTileGroup(o) != group && VM::blocksRouting(o) && VM::tileOf(o) == t)
+        if (o.position.level == level && multiTileGroup(o) != group && VM::blocksRouting(o) && VM::tileOf(o) == t &&
+            !(walker && intersectionAllowed(vm, o, *walker)))
             return 1;
     for (const auto& [id, o] : vm.objects())
         if (o.person && id != router && id != target.id && o.position.inWorld() && o.position.level == level &&
@@ -618,6 +629,13 @@ void addObstacles(VM& vm, PathPlanner& planner, const Object& me, std::span<cons
             continue;
         }
         if (!VM::blocksRouting(o) || skip.count(multiTileGroup(o)))
+            continue;
+        // An object whose "allow intersection" tree (OBJf 5) lets the walker
+        // through: the toilet's privacy marker ("Social - 1 Tile Marker",
+        // put in front of the toilet for its user) was a wall to the user's
+        // own sitting slot (inferred for the planner; the binary's
+        // TSObjectCanSetPosition asks the tree for the goals).
+        if (me.id && intersectionAllowed(vm, o, me))
             continue;
         const TilePos t = VM::tileOf(o);
         const bool landing = std::any_of(w.stairs().begin(), w.stairs().end(),
@@ -2650,6 +2668,8 @@ ObjectId createGoHereDestination(VM& vm, ObjectId simId, float x, float y, int l
     place(*dest); // its Init may move it
     return id;
 }
+
+bool objectsMayIntersect(VM& vm, const Object& a, const Object& b) { return intersectionAllowed(vm, a, b); }
 
 bool isGoHereRug(VM& vm, ObjectId id) {
     const Object* o = vm.object(id);

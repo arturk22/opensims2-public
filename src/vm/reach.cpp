@@ -8,6 +8,7 @@
 // inferred is said where it is used; TODO.md (M5) keeps the list.
 
 #include "vm.hpp"
+#include "go_here.hpp"
 
 #include "animation.hpp"
 #include "errors.hpp"
@@ -648,6 +649,12 @@ Exit snap(Context& c) {
     // which here falls on the chair's tile or across a wall for want of the
     // model's footprint; inferred).
     std::vector<ObjectId> ignore{me.id, target.id};
+    // Nor what its "allow intersection" tree lets me into (the toilet's
+    // privacy marker in front of it, for its user getting up).
+    for (const auto& g : goals.goals)
+        for (const ObjectId id : c.vm.objectsOnTile({g.x, g.y, goals.level}))
+            if (const Object* o = c.vm.object(id); o && VM::blocksRouting(*o) && objectsMayIntersect(c.vm, *o, me))
+                ignore.push_back(id);
     size_t best = goals.goals.size();
     for (size_t i = 0; i < goals.goals.size(); ++i) {
         const TilePos t{goals.goals[i].x, goals.goals[i].y, goals.level};
