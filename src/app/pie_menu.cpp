@@ -251,6 +251,140 @@ std::optional<float> rayHit(const PickMesh& mesh, simd_float3 origin, simd_float
     return best;
 }
 
+namespace {
+bool shadowPart(const ObjectModel::Part& part) {
+    return part.mesh.name.find("shadow") != std::string::npos || part.material.find("shadow") != std::string::npos;
+}
+simd_float3 vec(const Vec3& v) { return simd_make_float3(v[0], v[1], v[2]); }
+} // namespace
+
+namespace {
+simd_float3 corner(const ObjectModel& model, const PosedPick::Tri& t, int k) {
+    const auto& m = model.parts[t.part].mesh;
+    const uint32_t v = m.triangles[t.index + uint32_t(k)];
+    return v < m.positions.size() ? vec(m.positions[v]) : simd_float3(0);
+}
+} // namespace
+
+uint64_t shapeOf(const ObjectModel& model) {
+    uint64_t h = model.parts.size();
+    for (const auto& part : model.parts)
+        h = h * 1000003u + part.mesh.triangles.size() * 31u + part.mesh.positions.size();
+    return h;
+}
+
+PosedPick makePosedPick(const ObjectModel& model) {
+    PosedPick out;
+    out.shape = shapeOf(model);
+    for (uint32_t pi = 0; pi < model.parts.size(); ++pi) {
+        const auto& part = model.parts[pi];
+        if (shadowPart(part))
+            continue;
+        for (uint32_t k = 0; k + 2 < part.mesh.triangles.size(); k += 3)
+            out.tris.push_back({pi, k});
+    }
+    std::vector<simd_float3> centre(out.tris.size());
+    for (size_t i = 0; i < out.tris.size(); ++i)
+        centre[i] = (corner(model, out.tris[i], 0) + corner(model, out.tris[i], 1) + corner(model, out.tris[i], 2)) / 3;
+    std::vector<uint32_t> order(out.tris.size());
+    for (uint32_t i = 0; i < order.size(); ++i)
+        order[i] = i;
+    // Median split along the widest axis of the centres.
+    auto build = [&](auto&& self, uint32_t first, uint32_t count) -> void {
+        const size_t me = out.nodes.size();
+        out.nodes.push_back({});
+        if (count <= 8) {
+            out.nodes[me].first = first, out.nodes[me].count = count;
+            return;
+        }
+        simd_float3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
+        for (uint32_t i = first; i < first + count; ++i)
+            lo = simd_min(lo, centre[order[i]]), hi = simd_max(hi, centre[order[i]]);
+        const simd_float3 d = hi - lo;
+        const int axis = d.x >= d.y && d.x >= d.z ? 0 : d.y >= d.z ? 1 : 2;
+        const uint32_t half = count / 2;
+        std::nth_element(order.begin() + first, order.begin() + first + half, order.begin() + first + count,
+                         [&](uint32_t a, uint32_t b) { return centre[a][axis] < centre[b][axis]; });
+        self(self, first, half);
+        out.nodes[me].first = uint32_t(out.nodes.size()), out.nodes[me].count = 0;
+        self(self, first + half, count - half);
+    };
+    if (!out.tris.empty())
+        build(build, 0, uint32_t(out.tris.size()));
+    std::vector<PosedPick::Tri> sorted(out.tris.size());
+    for (size_t i = 0; i < order.size(); ++i)
+        sorted[i] = out.tris[order[i]];
+    out.tris = std::move(sorted);
+    out.refit(model);
+    return out;
+}
+
+void PosedPick::refit(const ObjectModel& model) {
+    for (size_t n = nodes.size(); n-- > 0;) {
+        Node& node = nodes[n];
+        if (node.count) {
+            node.lo = simd_float3(std::numeric_limits<float>::max()), node.hi = -node.lo;
+            for (uint32_t i = node.first; i < node.first + node.count; ++i)
+                for (int k = 0; k < 3; ++k) {
+                    const simd_float3 p = corner(model, tris[i], k);
+                    node.lo = simd_min(node.lo, p), node.hi = simd_max(node.hi, p);
+                }
+        } else { // children: n + 1 and first, both refitted already
+            node.lo = simd_min(nodes[n + 1].lo, nodes[node.first].lo);
+            node.hi = simd_max(nodes[n + 1].hi, nodes[node.first].hi);
+        }
+    }
+}
+
+std::optional<float> rayHit(const ObjectModel& model, const PosedPick& tree, simd_float3 origin, simd_float3 dir) {
+    std::optional<float> best;
+    if (tree.nodes.empty())
+        return best;
+    const simd_float3 inv = 1 / dir; // infinities where dir is 0 work in the slab test
+    auto enters = [&](const PosedPick::Node& n) {
+        const simd_float3 a = (n.lo - origin) * inv, b = (n.hi - origin) * inv;
+        const simd_float3 tmin = simd_min(a, b), tmax = simd_max(a, b);
+        const float t0 = std::max({tmin.x, tmin.y, tmin.z, 0.0f}), t1 = std::min({tmax.x, tmax.y, tmax.z});
+        return t0 <= t1 && !(best && t0 >= *best);
+    };
+    uint32_t stack[64];
+    int top = 0;
+    stack[top++] = 0;
+    while (top) {
+        const PosedPick::Node& n = tree.nodes[stack[--top]];
+        if (!enters(n))
+            continue;
+        if (!n.count) {
+            if (top + 2 <= 64) {
+                stack[top++] = n.first;
+                stack[top++] = uint32_t(&n - tree.nodes.data()) + 1;
+            }
+            continue;
+        }
+        for (uint32_t i = n.first; i < n.first + n.count; ++i) {
+            const simd_float3 p0 = corner(model, tree.tris[i], 0);
+            const simd_float3 e1 = corner(model, tree.tris[i], 1) - p0, e2 = corner(model, tree.tris[i], 2) - p0;
+            const simd_float3 p = simd_cross(dir, e2);
+            const float det = simd_dot(e1, p);
+            if (std::abs(det) < 1e-12f)
+                continue;
+            const float id = 1 / det;
+            const simd_float3 sv = origin - p0;
+            const float u = simd_dot(sv, p) * id;
+            if (u < 0 || u > 1)
+                continue;
+            const simd_float3 q = simd_cross(sv, e1);
+            const float v = simd_dot(dir, q) * id;
+            if (v < 0 || u + v > 1)
+                continue;
+            const float d = simd_dot(e2, q) * id;
+            if (d > 0 && (!best || d < *best))
+                best = d;
+        }
+    }
+    return best;
+}
+
 PieMenuStyle PieMenuStyle::fromConstants(const std::map<std::string, std::string>& c) {
     PieMenuStyle st;
     auto number = [&](const char* key, float& out) {
@@ -375,11 +509,14 @@ std::optional<PieMenuHost::PickBox> PieMenuHost::worldBox(const PickBox& b) cons
     return w;
 }
 
-void PieMenuHost::setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi) {
-    if (simd_equal(lo, hi))
+void PieMenuHost::setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi, const ObjectModel* posed) {
+    if (simd_equal(lo, hi)) {
         moving_.erase(id);
-    else
-        moving_[id] = {id, lo, hi};
+        return;
+    }
+    PickBox b{id, lo, hi};
+    b.posed = posed;
+    moving_[id] = std::move(b);
 }
 
 vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
@@ -410,6 +547,23 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
             if (!hit || t0 >= bestT)
                 return;
             static const bool boxesOnly = std::getenv("OS2_PICK_BOXES") != nullptr; // the old picking, to compare
+            if (b.posed && !boxesOnly) { // a Sim: its skinned triangles as drawn
+                // The tree built once per model (same triangles every pose), refitted once a pose.
+                auto tree = posedTrees_.find(b.posed);
+                if (tree == posedTrees_.end() || tree->second.shape != shapeOf(*b.posed)) {
+                    posedTrees_[b.posed] = makePosedPick(*b.posed);
+                    tree = posedTrees_.find(b.posed);
+                    b.fitted = true;
+                }
+                if (!b.fitted) {
+                    tree->second.refit(*b.posed);
+                    b.fitted = true;
+                }
+                const auto t = rayHit(*b.posed, tree->second, origin, dir);
+                if (t && *t < bestT)
+                    bestT = *t, best = b.id;
+                return;
+            }
             if (b.mesh && !boxesOnly) {
                 // The ray in the model's space: t keeps its meaning (an
                 // affine map takes the ray's points to the ray's points).

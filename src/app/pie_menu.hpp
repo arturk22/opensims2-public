@@ -81,6 +81,29 @@ std::shared_ptr<const PickMesh> makePickMesh(const ObjectModel& model, ResourceI
 // The nearest hit of a ray (origin, dir: any length) on the mesh's
 // triangles, both sides, as a multiple of dir; nothing if none.
 std::optional<float> rayHit(const PickMesh& mesh, simd_float3 origin, simd_float3 dir);
+// A bounding volume tree over a posed model's triangles (a Sim's skinned
+// mesh, already in world space, less its shadow parts): built once from one
+// pose (median splits, at most 8 triangles a leaf) and refitted to each new
+// pose, so that a ray tests only the triangles near it.
+struct PosedPick {
+    struct Tri {
+        uint32_t part, index; // index of the triangle's first corner in the part's triangle list
+    };
+    struct Node {
+        simd_float3 lo, hi;
+        uint32_t first, count; // a leaf: tris[first .. first + count); else count 0 and first = right child
+    };
+    std::vector<Tri> tris;
+    std::vector<Node> nodes; // pre-order: a node's left child follows it
+    uint64_t shape = 0;      // the model's parts and triangle counts it was built for (shapeOf)
+    // The bounds to `model` as posed now (same topology as built).
+    void refit(const ObjectModel& model);
+};
+PosedPick makePosedPick(const ObjectModel& model);
+uint64_t shapeOf(const ObjectModel& model);
+// The nearest hit of a ray on those triangles, both sides, as a multiple of
+// dir; nothing if none.
+std::optional<float> rayHit(const ObjectModel& model, const PosedPick& tree, simd_float3 origin, simd_float3 dir);
 
 // The pie menu's constants (ui.package 0x090617B7), with the binary's
 // values as defaults. The disabled colour and the item's background are not
@@ -134,7 +157,10 @@ public:
     }
     // A box that moves (a Sim: the host sets it from the posed skeleton every
     // frame), in world space, in place of the one set before; lo == hi removes it.
-    void setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi);
+    // `posed`: the mesh as drawn now, in world space (a Sim's skinned
+    // model, SimActor::posed; it must outlive the box): a ray that enters
+    // the box picks it only where it hits one of its triangles.
+    void setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi, const ObjectModel* posed = nullptr);
     // Boxes this refuses are not picked (objects on the levels the camera
     // hides, app/wall_view.hpp); null picks all.
     std::function<bool(simd_float3 lo, simd_float3 hi)> pickable;
@@ -226,12 +252,15 @@ private:
         std::shared_ptr<const PickMesh> mesh; // model-space triangles, null: the box
         simd_float4x4 at = matrix_identity_float4x4; // the mesh's placement
         simd_float3 modelLo{0, 0, 0}, modelHi{0, 0, 0}; // lo/hi in model space (static boxes)
+        const ObjectModel* posed = nullptr; // a moving box's world-space mesh (setMovingBox)
+        mutable bool fitted = false; // its tree refitted to this pose (at the first pick)
     };
     std::vector<PickBox> boxes_;
     std::function<std::optional<simd_float4x4>(vm::ObjectId)> placement_;
     // A box in world space (a following box where its object is drawn now).
     std::optional<PickBox> worldBox(const PickBox& b) const;
     std::map<vm::ObjectId, PickBox> moving_;
+    mutable std::map<const ObjectModel*, PosedPick> posedTrees_; // by the actor's posed model
 
     bool open_ = false;
     vm::ObjectId object_ = 0;

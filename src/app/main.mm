@@ -1547,7 +1547,12 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
             continue;
         }
         lo -= simd_make_float3(0.15f, 0.15f, 0.05f), hi += simd_make_float3(0.15f, 0.15f, 0.15f);
-        gPie->setMovingBox(os2::vm::ObjectId(s.id), lo, hi);
+        // Picked by its skinned triangles as drawn (the box is the quick
+        // test); before its first pose (headless clicks) by the box.
+        static const bool boxes = std::getenv("OS2_PICK_BOXES") != nullptr;
+        static const bool simBoxes = std::getenv("OS2_PICK_SIM_BOXES") != nullptr; // only the Sims by box, to compare
+        const bool posed = !s.actor->bones.empty() && !s.actor->posed.parts.empty() && !boxes && !simBoxes;
+        gPie->setMovingBox(os2::vm::ObjectId(s.id), lo, hi, posed ? &s.actor->posed : nullptr);
     }
 }
 
@@ -4385,7 +4390,9 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     gBuy->click(eye, simd_normalize(q.xyz / q.w - eye), p);
                     continue;
                 }
-                // The view as a frame would leave it (what the cut walls hide), the Sims' pick boxes where they stand.
+                // The view as a frame would leave it (what the cut walls hide), the Sims posed where they stand.
+                if (gSimulation)
+                    poseActors(*_viewDelegate.renderer, gHeadlessClock);
                 updateLotView(*_viewDelegate.renderer, false);
                 if (gObjectView)
                     gObjectView->update();
@@ -4406,6 +4413,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             // OS2_PICK_MAP=<png>: what a click would pick at every 4th pixel, an
             // object a colour (a look at the picking against the picture).
             if (const char* mapFile = std::getenv("OS2_PICK_MAP")) {
+                if (gSimulation) // the Sims posed as drawn (their triangles are picked)
+                    poseActors(*_viewDelegate.renderer, gHeadlessClock);
                 updateLotView(*_viewDelegate.renderer, false);
                 if (gObjectView)
                     gObjectView->update();
