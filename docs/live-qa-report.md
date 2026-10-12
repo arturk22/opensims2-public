@@ -526,3 +526,14 @@ Mesmo método (CGEvent, pid próprio, `-ApplePersistenceIgnoreState YES`, captur
 | Telefone do N002_Lot10 (obj 46, "Phone - Handset", 15,57/23,46) | passa: é um aparelho pequeno quase no chão atrás do sofá; com `--orientation 3 --zoom 4` (única vista em que um raio o acerta) o clique nele e a ~16 px ao lado abrem o pie do telefone (Ligar..., Dar Festa..., Convidar Diretor), não o da lareira nem o do abajur; `r19-qa-phone-pie.jpg`. Um clique a ~70 px no chão dá "Vir Aqui" (certo). A lareira (obj 929) continua escolhida no corpo (sem tela, `--click`: "Acender Lareira") |
 | Portas depois da fusão das camadas (N001_Lot11, porta da frente) | **falha, mas não é da fusão**: a porta abre quando a Cassandra entra e depois **fica aberta para sempre** (mais de 1 min real a velocidade 3; nos quadros: fechada, aberta com a Sim no vão, aberta sem ninguém). O mesmo com `OS2_NO_LAYER_MERGE=1` (`r19-qa-door-open-merge.jpg`, `r19-qa-door-open-nomerge.jpg`). Só vi um ciclo de abrir; não vi o fechar |
 | Cadeira de jantar sentar/levantar | não testado (orçamento) |
+
+# Rodada 20, o plumbob fora do lote (r20-strangesim)
+
+Relato do jogador (Estranhópolis): "entrei numa casa e não tinha Sim dentro; afastando, aparece isso" (um plumbob verde flutuando além do canto do lote, sem corpo).
+
+| Item | Resultado |
+|------|-----------|
+| Qual lote | `N002_Lot23` (deserto, fundação de tijolo, saguaro, árvore-de-josué), **desocupado** no bairro do jogador e no do jogo: não ter Sim é o certo |
+| O plumbob | **corrigido**: reproduzido sem tela (`--lot N002_Lot23 --vm --ui live --screenshot`). Os dois `PlumbBob` do lote estão fora do mundo (salvos em (0, 0) sem slot, a vista de objetos não os desenha), mas o Main deles toca `o-plumbob-spin` e o app criava um ator de objeto para ele na posição salva, (0, 0, 0): o canto do lote, sem ninguém para escondê-lo. Agora um objeto que a vista não desenha não ganha ator (`r20-strangesim-antes.jpg`, `-depois.jpg`) |
+| Outros lotes | o mesmo plumbob em 44 lotes desocupados de N001–N003 (86 `PlumbBob`, nenhum outro objeto; os outros 4 sem família não os têm); nos 14 habitados todos os Sims carregam e aparecem (Sims postos pelo app = Sims da VM; capturas de N002 e N003_Lot52 com os Sims e o plumbob na cabeça) |
+| Na janela | não conferido ao vivo (a correção é só do desenho; o caminho sem tela é o mesmo `startSimulation`) |

@@ -27,5 +27,14 @@ y=$(echo "$plate" | sed 's/.*-> ([^ ]* \([^ ]*\) .*/\1/')
 case "$y" in 25.[2-7]*) ;; *) echo "FAIL plate: drawn at y '$y' (${plate:-no plate in the table slot})"; fail=1 ;; esac
 # The child reading in N001_Lot11 (the book's own carry animation sank him to the floor, back and forth).
 run book --lot N001_Lot11 --run-vm 4600
+# An empty lot (N002_Lot23): its PlumbBobs are out of the world (saved at
+# (0, 0) in no slot) and their spin must not give them an actor, which was
+# drawn floating past the lot's corner (live QA, round 20).
+OS2_DEBUG_VM=1 "$app" --data "$OS2_DATA" --vm --ui live --lot N002_Lot23 --screenshot "$out/emptylot.png" \
+    -ApplePersistenceIgnoreState YES > "$out/emptylot.log" 2>&1
+n=$(grep -c "(PlumbBob_objt) out of the world: not animated" "$out/emptylot.log")
+if [ "$n" != 2 ] || grep -q "object [0-9]* plays o-plumbob-spin" "$out/emptylot.log"; then
+    echo "FAIL emptylot: $n out-of-world PlumbBobs left unanimated (want 2)"; fail=1
+fi
 [ $fail = 0 ] && echo "drawn places: ok"
 exit $fail

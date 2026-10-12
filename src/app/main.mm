@@ -845,6 +845,16 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             const auto placed = gPlacedObjects.find(id);
             if (placed == gPlacedObjects.end())
                 return nullptr; // no model in the world
+            // Not drawn by the object view (out of the world: saved at
+            // (0, 0) in no slot, as the PlumbBobs of an empty lot): an actor
+            // would be drawn at the lot's corner, where nobody hides it
+            // (live QA, N002_Lot23: a plumbob floating past the lot's edge).
+            if (!gObjectView || !gObjectView->hasModel(id)) {
+                if (std::getenv("OS2_DEBUG_VM"))
+                    std::fprintf(stderr, "opensims2: object %d (%s) out of the world: not animated\n", id,
+                                 placed->second.definition.c_str());
+                return nullptr;
+            }
             const PlacedObject& p = placed->second;
             try {
                 const os2::ObjectModel model = os2::loadObjectModel(index, p.cres, gObjectView->materialsOf(id));
