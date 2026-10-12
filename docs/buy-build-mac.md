@@ -1692,8 +1692,8 @@ nenhum dos dois tiles dentro do `IsInBounds` estrito e da área editável;
 `0x4F` objeto no moirão de uma ponta; `0x0C` arco numa ponta ou objeto de um
 dos 6 tiles da aresta e das extensões cuja pegada encosta num poste: as
 pegadas são tiles inteiros aqui, então qualquer objeto dos quatro tiles em
-volta de um poste, inferido), custa o preço do catálogo, Ctrl tira (0,8 de volta) e apagar a
-cerca leva o arco; gravado como linha do grafo 0x13 (lido de volta como o
+volta de um poste, inferido), custa o preço do catálogo, Ctrl tira (0,8 de volta) e (até a rodada 13)
+apagar a cerca levava o arco; gravado como linha do grafo 0x13 (lido de volta como o
 estilo 26: inferido). Desenho (inferido pelos nomes): o centro sobre a aresta,
 um poste em cada ponta, a parte oeste no poste do início e a leste no do fim.
 
