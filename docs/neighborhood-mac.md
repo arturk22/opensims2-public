@@ -945,6 +945,27 @@ Tudo daqui vem dos scripts de UI e dos dados; o que o binário faz por trás
   (Desligado/Médio/Alto...) só guardam o clique na memória (nada do motor os
   lê). A janela fica com o canto inferior esquerdo no do painel e **sob** o
   puck e o painel (a aba da arte fica atrás). `r12-bairro-opcoes-*.jpg`.
+  **Rodada 15 (binário):** a janela de gráficos é a
+  `cTSWinProcOptionsPanelPerformance` (o `cTSWinProcGraphicsOptionsDialog`
+  é outra coisa: um diálogo montado das `DialogEntries` de um ini). As listas
+  `0x35`/`0x45` (classe `0xAC17CE2A`, `CreateScreenSizeListBox`/
+  `CreateRefreshRateListBox`) são enchidas pela vtable `0x8C` (BV
+  `0x421958`, `FillScreenSizeListBox`) e `0x98` (BV `0x421f9c`,
+  `FillRefreshRateListBox`): os modos do dispositivo na ordem dele, só os
+  válidos (`IsDisplayModeValid`, BV `0x42173c`: o formato de pixel do
+  painel, 800 ≤ largura ≤ `maxResWidth` e 600 ≤ altura ≤ `maxResHeight` —
+  propriedades do `Graphics Rules.sgr` `ScreenModeResolution`, 1600 × 1200
+  no $High, 1600/1200 também de padrão no código —, altura < largura e
+  frequência 0 ou 45..100), cada tamanho uma vez, texto `"%ux%u"`; nenhuma
+  linha: o primeiro modo assim mesmo; escolhida a do modo atual, senão a
+  linha 0. As frequências: as dos modos válidos do tamanho escolhido, cada
+  uma uma vez, `"%u"` (0 = STR# 0x83 #15 do texto das opções, grupo
+  `0x7F232750`). Depois, **em janela** o `FillScreenSizeListBox` limpa a
+  lista de frequências e desliga o rótulo "Freqüência de Atualização"
+  (`0xAD7FAA35`, bit 2); em tela cheia liga. O app sempre roda em janela:
+  a lista fica vazia e o rótulo na `colorfontdisabled` (a ordem dos modos
+  que o Mac dá ao dispositivo é inferida: a do CoreGraphics).
+  `r15-graficos-modos.jpg`.
 - **Decorações (F3)**: painel `0x4D517180` (botão `0x2D51756D`): cinco
   botões de tipo = o campo `sort` do produto em `catcanhobjects`
   (A100 flora, A200 stone, A300 landmark, A400 effects, A500 misc), o

@@ -717,6 +717,16 @@ de fora. Slots do `cIRoomManager` (vtable `0x281ba30`): `0x24` `AddSeed`
 (`0xc29618`, também mantém a lista de quartos por sala), `0x3c`
 `FloorTilesInRoom`, `0x40` `FloorTileInRoom`, `0x48`
 `InsideRoomIDSetForLevel`, `0x4c` `RandomFloorTileInRoom`.
+**Rodada 15:** o `FloorTileInRoom` (`0xc28ef4`; o do
+`cPartitionManager`, BV `0xc314f8`, escolhe o gerente pela definição de
+sala 0/1/2 em `+0x40`) devolve o **elemento 0** da lista da sala no mapa
+`+0x34` (sala sem lista: um tile inválido). O `BuildRoomTileListMap` (BV
+`0xc29c74`) monta as listas andando os tiles do `WorldDB` nível a nível, x
+por fora e y por dentro (o iterador `FUN_0015b9c8`, dos limites do lote), e
+põe o tile (com a máscara dos quartos daquela sala) na lista de cada sala
+que um quarto dele tem; o `SetRoomIDInFloorTile` depois acrescenta no fim.
+Para um lote carregado, o tile devolvido é o primeiro da sala nessa ordem
+(é o que `vm/lot.cpp setLotRooms` usa para o valor 4, piscina).
 
 **Quem decide os IDs é o grafo, não o flood fill.**
 `cWallGraph::SetRoomsPostAttach` (BV `0xc1f1bc`, depois de cada aresta

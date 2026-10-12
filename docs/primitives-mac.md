@@ -976,7 +976,14 @@ leitores são `GetLastUserTypedName` (`0x60` por referência, `0x64`, BV
 `0x588d70`/`0x588dac`). Nenhuma chamada direta a eles; as virtuais por esses
 slots não puderam ser separadas das de outras classes (busca ambígua), então
 quem lê o nome continua não achado (inferido: o nome de um Sim novo, como o
-"last user typed name" sugere).
+"last user typed name" sugere). **Rodada 15:** o campo é o `+0xC4` do
+`cTSSimSystem`; dos 164 métodos do `cTSSimSystem` só os dois getters, o
+setter e os destrutores o tocam, e uma varredura do binário inteiro pelas
+chamadas `lwz rX,0x48(rObj)` → `lwz rV,0(rX)` → `lwz r,0x60|0x64|0x68(rV)`
+acha o setter só no `TryDialog` (`0xe2c9ac`) e nenhum getter num
+`cTSObject`; os outros 22 casamentos são de classes cujo `+0x48` é outra
+coisa. **Nada no BV lê o texto do tipo 3** (pelo menos não por esse
+caminho): o app o deixa em `VM::enteredText` sem ligar a nada.
 
 **Sim/não/cancelar.** O `TryDialog` grava no temp `(byte 7 >> 4) & 7`
 **0 no "não" (estado 3) e 1 no "cancelar" (estado 4)**; o "sim" não grava
