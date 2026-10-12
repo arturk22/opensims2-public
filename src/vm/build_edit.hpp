@@ -346,6 +346,13 @@ std::vector<Stair> modularStairs(const VM& vm, const Lot& lot);
 // and "Hi ... Pad" parts are the landings).
 std::vector<Stair> objectStairs(const VM& vm, const Lot& lot);
 
+// The auto-roof's rectangles over a grid of marked tiles (W x H, row by
+// row): cAutoRoofData::ComputeRoofRects (runs grow the active rectangles
+// they hold, overlaps start new ones, so rectangles can overlap) and BV
+// 0x9a0a08 (rectangles more elongated than `aspectLimit` to one whose
+// tiles all stay covered by others go). [x0, y0, x1, y1), tiles.
+std::vector<std::array<int, 4>> autoRoofRects(const std::vector<uint8_t>& grid, int W, int H, float aspectLimit = 2.0f);
+
 // Splits a run between two grid points into tile-long sections (along an
 // axis or a 45° diagonal); empty for other slopes.
 std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1);

@@ -384,6 +384,31 @@ static void testRoof() {
     check(ed.undo() && lot.levelCount == 2 && lot.roofs.size() == roofs && funds(vm) == before, "undo takes the dormer back");
 }
 
+// The auto-roof's rectangles (ComputeRoofRects, 0x9a0a08).
+static void testAutoRoofRects() {
+    const int W = 8, H = 6;
+    std::vector<uint8_t> grid(W * H, 0);
+    auto mark = [&](int x0, int y0, int x1, int y1) {
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x)
+                grid[size_t(y * W + x)] = 1;
+    };
+    mark(0, 0, 6, 2); // an L: two rows six wide, then two wide down to row 5
+    mark(0, 2, 2, 5);
+    auto r = autoRoofRects(grid, W, H);
+    check(r.size() == 2, "an L gives two rectangles");
+    bool wide = false, tall = false;
+    for (const auto& q : r) {
+        wide |= q == std::array<int, 4>{0, 0, 6, 2};
+        tall |= q == std::array<int, 4>{0, 0, 2, 5}; // the overlap grows down from the top
+    }
+    check(wide && tall, "the narrower part overlaps the wider one from its top");
+    std::fill(grid.begin(), grid.end(), 0);
+    mark(1, 1, 4, 4);
+    r = autoRoofRects(grid, W, H);
+    check(r.size() == 1 && r[0] == std::array<int, 4>({1, 1, 4, 4}), "a square room is one rectangle");
+}
+
 static void testPool() {
     Lot lot = flatLot();
     CodeLibrary code;
@@ -491,6 +516,7 @@ static void testWalkOver() {
 
 int main() {
     testStairs();
+    testAutoRoofRects();
     testDesignCatalog();
     testWalkOver();
     testPool();

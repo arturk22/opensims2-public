@@ -1408,6 +1408,24 @@ trecho novo custa §70. Inferido: o teste de suporte da parede fica de fora
 (a água-furtada fica sobre o telhado), o topo é o nível 4 do lote, e o canto é
 o ponto de grade sob o mouse (o jogo usa o cursor deslocado).
 
+### 7.15 Retângulos do auto-telhado (rodada 12, `autoRoofRects`)
+
+Lido no código (`ComputeRoofRects` `0x9a0534`, `AddToActiveRects`
+`0x99dd80`, `MoveInactiveRects`, `0x9a0a08`, `FUN_01969950`):
+`cRoofRect` = [x0, x1) × [y0, y1) + a linha em que cresceu por último; os
+ativos num `set` (`cRectLessThan`). Para cada trecho marcado da linha y:
+todo ativo **contido** no trecho cresce uma linha; todo ativo que só
+**cruza ou encosta** (x0 ≤ fim e início ≤ x1) dá um retângulo novo com a
+interseção em x, do topo dele até esta linha (se nenhum que cresceu tem o
+mesmo x0/x1); se sobra célula do trecho em nenhum dos dois, o trecho inteiro
+entra como ativo. Depois da linha, os ativos que não cresceram nela vão para a
+lista final. Ou seja, os retângulos **se sobrepõem** (um L dá o braço largo e
+o estreito do topo até o fim). Depois, com 2,0: a cobertura de cada célula
+é contada sobre todos; a lista é ordenada pela razão de aspecto
+(max(l/a, a/l), lados ≥ 1) decrescente e percorrida da frente: um retângulo
+com razão ≤ 2 fica; um mais alongado tem a cobertura das suas células
+diminuída e só fica se alguma célula chega a < 1.
+
 ---
 
 ## 8. Base vs BV

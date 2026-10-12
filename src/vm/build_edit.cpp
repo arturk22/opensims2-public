@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 
 namespace os2::vm {
 
@@ -109,6 +110,94 @@ std::vector<Stair> objectStairs(const VM& vm, const Lot& lot) {
         st.topZ = lot.elevationAt(st.top.level - 1, float(st.top.x) + 0.5f, float(st.top.y) + 0.5f);
         out.push_back(st);
         (void)group;
+    }
+    return out;
+}
+
+std::vector<std::array<int, 4>> autoRoofRects(const std::vector<uint8_t>& grid, int W, int H, float aspectLimit) {
+    // cRoofRect: [x0, x1) x [y0, y1) and the row it last grew on.
+    struct Rect {
+        int x0, y0, x1, y1, row;
+        bool operator<(const Rect& o) const {
+            return std::tie(x0, y0, x1, y1, row) < std::tie(o.x0, o.y0, o.x1, o.y1, o.row);
+        }
+    };
+    std::set<Rect> active;
+    std::vector<Rect> done;
+    auto marked = [&](int x, int y) { return grid[size_t(y) * size_t(W) + size_t(x)] != 0; };
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W;) {
+            if (!marked(x, y)) {
+                ++x;
+                continue;
+            }
+            int e = x;
+            while (e < W && marked(e, y))
+                ++e;
+            // AddToActiveRects: an active rectangle inside the run grows down
+            // a row; one that overlaps (or touches) it gives a new one, the
+            // overlap from its top down to this row; the run itself starts a
+            // rectangle when some of its cells are in neither.
+            const Rect run{x, y, e, y + 1, y};
+            std::vector<uint8_t> uncovered(size_t(e - x), 1);
+            std::vector<std::pair<Rect, Rect>> grown;
+            std::vector<Rect> split;
+            for (const Rect& a : active) {
+                if (a.x0 >= run.x0 && a.x1 <= run.x1) {
+                    grown.push_back({a, {a.x0, a.y0, a.x1, a.y1 + 1, run.row}});
+                    std::fill(uncovered.begin() + (a.x0 - x), uncovered.begin() + (a.x1 - x), 0);
+                } else if (run.x0 <= a.x1 && a.x0 <= run.x1) {
+                    const int lo = std::max(a.x0, run.x0), hi = std::min(a.x1, run.x1);
+                    split.push_back({lo, a.y0, hi, a.y1 + 1, run.row});
+                    if (hi > lo)
+                        std::fill(uncovered.begin() + (lo - x), uncovered.begin() + (hi - x), 0);
+                }
+            }
+            for (const auto& [from, to] : grown) {
+                active.erase(from);
+                active.insert(to);
+            }
+            for (const Rect& r : split)
+                if (std::none_of(grown.begin(), grown.end(),
+                                 [&](const auto& g) { return g.second.x0 == r.x0 && g.second.x1 == r.x1; }))
+                    active.insert(r);
+            if (std::find(uncovered.begin(), uncovered.end(), 1) != uncovered.end())
+                active.insert(run);
+            x = e;
+        }
+        // MoveInactiveRects: what did not grow on this row is finished.
+        for (auto it = active.begin(); it != active.end();)
+            if (it->row != y)
+                done.push_back(*it), it = active.erase(it);
+            else
+                ++it;
+    }
+    done.insert(done.end(), active.begin(), active.end());
+    // BV 0x9a0a08 (with 2.0): the cells' cover counted over every
+    // rectangle; then, most elongated first (cAspectRatioGreaterThan), one
+    // longer than `aspectLimit` to one goes when every cell of it stays
+    // covered by the others (its cover is taken off either way).
+    std::erase_if(done, [](const Rect& r) { return r.x1 <= r.x0 || r.y1 <= r.y0; });
+    auto aspect = [](const Rect& r) {
+        const float w = float(r.x1 - r.x0), h = float(r.y1 - r.y0);
+        return std::max(w, h) / std::min(w, h);
+    };
+    std::stable_sort(done.begin(), done.end(), [&](const Rect& a, const Rect& b) { return aspect(a) > aspect(b); });
+    std::vector<int> cover(size_t(W) * size_t(H), 0);
+    for (const Rect& r : done)
+        for (int yy = r.y0; yy < r.y1; ++yy)
+            for (int xx = r.x0; xx < r.x1; ++xx)
+                ++cover[size_t(yy) * size_t(W) + size_t(xx)];
+    std::vector<std::array<int, 4>> out;
+    for (const Rect& r : done) {
+        bool needed = !(aspect(r) > aspectLimit);
+        if (!needed)
+            for (int yy = r.y0; yy < r.y1; ++yy)
+                for (int xx = r.x0; xx < r.x1; ++xx)
+                    if (--cover[size_t(yy) * size_t(W) + size_t(xx)] < 1)
+                        needed = true;
+        if (needed)
+            out.push_back({r.x0, r.y0, r.x1, r.y1});
     }
     return out;
 }
@@ -1259,45 +1348,13 @@ BuildEditor::Result BuildEditor::autoRoof(int tool, bool preserve) {
                     }
             continue;
         }
-        // ComputeRoofRects: row by row, a run with the same x span as an
-        // active rectangle extends it down; the others close it and open anew.
-        struct Rect {
-            int x0, x1, y0, y1; // tiles, inclusive
-        };
-        std::vector<Rect> active, done;
-        for (int y = 0; y < H; ++y) {
-            std::vector<std::pair<int, int>> runs;
-            for (int x = 0; x < W;) {
-                if (!grid[size_t(y) * size_t(W) + size_t(x)]) {
-                    ++x;
-                    continue;
-                }
-                int e = x;
-                while (e + 1 < W && grid[size_t(y) * size_t(W) + size_t(e + 1)])
-                    ++e;
-                runs.push_back({x, e});
-                x = e + 1;
-            }
-            std::vector<Rect> next;
-            for (const auto& [a, b] : runs) {
-                auto m = std::find_if(active.begin(), active.end(), [&](const Rect& q) { return q.x0 == a && q.x1 == b; });
-                if (m != active.end()) {
-                    Rect q = *m;
-                    q.y1 = y;
-                    next.push_back(q);
-                    active.erase(m);
-                } else {
-                    next.push_back({a, b, y, y});
-                }
-            }
-            done.insert(done.end(), active.begin(), active.end());
-            active = std::move(next);
-        }
-        done.insert(done.end(), active.begin(), active.end());
+        const auto done = autoRoofRects(grid, W, H);
         const auto attic = atticWalls(above);
         touched.insert(above);
-        for (const Rect& q : done) {
-            const int w = q.x1 - q.x0 + 1, h = q.y1 - q.y0 + 1;
+        for (const auto& q : done) {
+            const int w = q[2] - q[0], h = q[3] - q[1];
+            if (w <= 0 || h <= 0)
+                continue;
             uint32_t type = Lot::Hip;
             switch (tool) {
             case 1: type = Lot::Hip; break;
@@ -1310,7 +1367,7 @@ BuildEditor::Result BuildEditor::autoRoof(int tool, bool preserve) {
             for (const auto& o : lot_.roofs)
                 roof.id = std::max(roof.id, o.id + 1);
             roof.id = std::max(roof.id, 1u);
-            roof.x0 = float(q.x0), roof.y0 = float(q.y0), roof.x1 = float(q.x1 + 1), roof.y1 = float(q.y1 + 1);
+            roof.x0 = float(q[0]), roof.y0 = float(q[1]), roof.x1 = float(q[2]), roof.y1 = float(q[3]);
             roof.level = roof.levelTo = above;
             roof.type = type;
             roof.pattern = lot_.roofs.empty() ? 0 : lot_.roofs.back().pattern;
