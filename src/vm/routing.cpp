@@ -2494,11 +2494,16 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 r.points = std::move(next.points);
                 return Step::Walking;
             };
-            // DoPause: "CT - Route Blocked Animation" (the blocker, the
-            // pauses before), then DoContinueAfterPause plans again.
+            // DoPause: "CT - Route Blocked Animation" (parameter 0 the
+            // pauses before, 1 the blocker: TriggerBlockedAnimation BV
+            // 0x579bc0; the tree verifies parameter 1 as an object and picks
+            // the animation by parameter 0, so swapped it returned at once
+            // and a blocked Sim retried in the same tick: N001_Lot68's trash
+            // "Dispose"/"Route To Can" recursion to a stack overflow), then
+            // DoContinueAfterPause plans again.
             auto pause = [&]() {
                 r.pausing = true;
-                if (runWalkTree(c, "CT - Route Blocked Animation", {b, int16_t(r.pauses++), 0, 0}))
+                if (runWalkTree(c, "CT - Route Blocked Animation", {int16_t(r.pauses++), b, 0, 0}))
                     return Step::Call;
                 r.pausing = false;
                 return replan();
