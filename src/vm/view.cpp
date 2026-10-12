@@ -1,49 +1,64 @@
 // What a Sim can see: Set to Next 24, "Visible object in my view within
 // distance in temp0" (STR# 0xA4), which the idle look-at ("CT - Start Idle
 // Look At", "CT - Start Routing Look At"), "Reaction - Banter" (Sims within
-// 4 tiles) and the goal check of the Sims' wants use.
-//
-// Inferred (no code to read; the five trees only loop over the results):
-// objects placed in the world on my level, other than me, whose distance
-// (between positions, in tiles) is at most temp 0, that are not behind me
-// (within 90 degrees of the way I face, object data "direction") and with
-// in the same room (or, where a tile has no room, with no wall across the
-// line between our tiles: Look At's editor strings have ", ignoring Room"
-// and ", ignoring Frustrum", so the view is a frustum and a room); by ID
-// after the current one, false past the last, as the other iterating
-// searches.
+// 4 tiles) and the goal check of the Sims' wants use. By the Mac binary
+// (cTSPerson::GetNextObjectInView, BV 0xacfa00; TrySetToNext calls it on a
+// Sim, else error 0x1C): the distance, at most 16 tiles, makes a cone of
+// tiles ahead of the Sim: rows 0 to r - 1 ahead (row 0 is the Sim's own
+// tile), each 2 x row + 1 tiles to either side (at most r), inside a circle
+// of radius r + 1 (facing a diagonal the grid turns 45 degrees: r * sqrt(2)
+// + 1 rows of half-diagonal steps, 0.7071 x 0.7071). On those tiles, the
+// objects in the world (not in a slot) other than me and the objects of
+// type 5, in my room, not being deleted and with nothing in the way (the
+// world's line test from my tile to theirs); by ID. The binary keeps the
+// list while it iterates; a current object that is not on it ends the
+// search (0, false). Inferred: where the half-tile steps round to, and that
+// the line test is the walls' (vm::World::lineOfSight).
 
 #include "vm.hpp"
 
 #include "formats/binreader.hpp"
 
 #include <cmath>
+#include <set>
 
 namespace os2::vm {
 
 std::optional<ObjectId> nextVisibleObject(VM& vm, const Object& me, ObjectId current, int16_t distance) {
     if (!me.position.inWorld())
         return std::nullopt;
-    const auto [fx, fy] = directionStep(((me.data[objdata::Direction] % 8) + 8) % 8);
+    const int dir = ((me.data[objdata::Direction] % 8) + 8) % 8;
+    const auto [fx, fy] = directionStep(dir);
+    const int rx = -fy, ry = fx; // across (the cone is symmetric)
+    const bool diagonal = dir & 1;
+    const int r = std::min<int>(distance, 16);
+    const int rows = diagonal ? int(float(r) * 1.4142135f) + 1 : r;
+    const int bound = diagonal ? (2 * r + 2) * (r + 1) : (r + 1) * (r + 1);
+    const float step = diagonal ? 0.5f : 1.0f;
     const TilePos from = VM::tileOf(me);
-    for (auto it = vm.objects().upper_bound(current); it != vm.objects().end(); ++it) {
-        const Object& x = it->second;
-        if (x.id == me.id || !x.position.inWorld() || x.position.level != me.position.level)
-            continue;
-        const float dx = x.position.x - me.position.x, dy = x.position.y - me.position.y;
-        if (std::sqrt(dx * dx + dy * dy) > float(distance))
-            continue;
-        if (dx * float(fx) + dy * float(fy) < 0)
-            continue;
-        if (vm.world) {
-            const TilePos to = VM::tileOf(x);
-            const int16_t a = vm.world->room(from), b = vm.world->room(to);
-            if (a && b ? a != b : !vm.world->lineOfSight(from, to))
+    const int16_t myRoom = vm.world ? vm.world->room(from) : 0;
+    std::set<ObjectId> seen;
+    for (int d = 0; d < rows; ++d)
+        for (int l = std::max(-rows, -(2 * d + 1)); l <= std::min(rows, 2 * d + 1); ++l) {
+            if (l * l + d * d > bound)
                 continue;
+            const TilePos t{int(std::floor(float(from.x) + 0.5f + float(l * rx + d * fx) * step)),
+                            int(std::floor(float(from.y) + 0.5f + float(l * ry + d * fy) * step)), from.level};
+            for (ObjectId id : vm.objectsOnTile(t)) {
+                const Object* x = vm.object(id);
+                if (!x || id == me.id || seen.count(id) || vm.dyingObjects.contains(id))
+                    continue;
+                if (x->definition && x->definition->objectType() == 5)
+                    continue;
+                if (vm.world && (vm.world->room(t) != myRoom || !vm.world->lineOfSight(from, t)))
+                    continue;
+                seen.insert(id);
+            }
         }
-        return x.id;
-    }
-    return std::nullopt;
+    if (current != 0 && !seen.count(current))
+        return std::nullopt;
+    auto next = seen.upper_bound(current);
+    return next == seen.end() ? std::nullopt : std::optional<ObjectId>(*next);
 }
 
 namespace {

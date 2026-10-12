@@ -1087,9 +1087,10 @@ static void testVisibleObjects() {
     const ObjectId far = place(4.5f + 5 * fx0, 4.5f + 5 * fy0);
     const ObjectId ahead2 = place(4.5f + 3 * fx0, 4.5f + 3 * fy0);
     (void)behind, (void)far;
-    // temp 0 := 3; stack object := 0; loop: Set to Next 24, attribute 0 += 1 (count), attribute 1 := stack object.
+    // temp 0 := 4 (rows 0-3 ahead: cTSPerson::GetNextObjectInView); stack object := 0;
+    // loop: Set to Next 24, attribute 0 += 1 (count), attribute 1 := stack object.
     fx.code.add(kObjGroup, 0x1000,
-                tree({expr(Temp, 0, Assign, Lit, 3, go(1), E), expr(StackId, 0, Assign, Lit, 0, go(2), E),
+                tree({expr(Temp, 0, Assign, Lit, 4, go(1), E), expr(StackId, 0, Assign, Lit, 0, go(2), E),
                       instr(0x1F, go(3), T, {0, 0, 0, 0, 24}), expr(Attr, 0, Add, Lit, 1, go(4), E),
                       expr(Attr, 1 + 0, Assign, StackId, 0, go(5), E), expr(Attr, 2, Add, StackId, 0, go(2), E)}));
     check(fx.run(0x1000).status == Thread::Status::Finished, "Set to Next 24 loop ends");
