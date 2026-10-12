@@ -1,3 +1,33 @@
+# Soak report (round 18, visitors' side effects)
+
+Runs of `tools/soak.sh` over the 69 lots (3 game days), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main 3bcfe516 (r17-loops merged: the same numbers as its "after"); **after** is the `r18-visitfx` branch. Counts from the kept autonomy logs; "fire outbreaks" counts fires started while none burned.
+
+| Category | before, seed 1 | after, seed 1 | before, seed 2 | after, seed 2 |
+|---|---|---|---|---|
+| Crashes / hangs | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Load errors | 1 (N002_Lot32) | 1 | 1 | 1 |
+| Resets after an error, outside Tutorial_Lot3 | 1 | 0 | 3 | 0 |
+| Instruction budget hit | 0 | 0 | 0 | 0 |
+| Sims that died ("Falecer") | 23 | 5 | 17 | 20 |
+| Sims stuck > 6 game hours | 15 | 17 | 16 | 24 |
+| of them not sleeping, working or at school | 4 | 2 | 4 | 2 |
+| Motives pinned at -100 > 6 game hours | 47 | 22 | 33 | 25 |
+| Save round trips that differ | 1 | 0 | 1 | 0 |
+| Autonomous interactions ended true / false | 3372 / 372 | 4381 / 311 | 3783 / 297 | 3820 / 298 |
+| Visitors on the lots at the end (all lots) | 86 | 17 | 87 | 12 |
+| "Fogo!" runs | 283 | 33 | 208 | 133 |
+| Fires made / fire outbreaks | 509 / 10 | 134 / 3 | 567 / 10 | 421 / 8 |
+| "Pisar" ended false | 98 | 62 | 84 | 41 |
+| Longest "No Berço" of N001_Lot36's toddler | 32.3 h | 8.9 h (night) | 16.6 h | 8.9 h (night) |
+
+What was found (TODO.md "Rodada 18"; `docs/primitives-mac.md` §4g "Rodada 18"):
+- **Visitors used everything as residents.** The binary leaves out, for a Sim whose person data 32 "Person Type" is not 0, the TTAB entries without flag 0x0001 (`cEdithObjectTestSim::TestInteraction`); the VM had no such test, and every person made in play gets Person Type 1 in the game (the object-made event's handler) while the VM kept the 0 of the neighbor's home lot. Walk-bys came in, cooked TV dinners (N001_Lot49: Dina Caliente's dinner burned the kitchen), took the household's objects and stayed the night (14 h); now they pass in about half an hour, and the visitors left on the lots at the end fell from ~87 to ~15. All the fire outbreaks sampled in the after runs (`S2PKG_FIRES` now names what is near the first fire and who was using it) are residents cooking, the game's; deaths and pinned motives follow the fires and the seeds (seed 2 after: two burning households, N001_Lot68 and N003_Lot52, and ghosts that "die" again, another front).
+- **"stack object N does not exist"** (Sims reacting to one who died and was taken away): the removal now resets a person whose current interaction object, sub-queue object or route target it was (`cTSPerson::OnCleanup`, the router's `DoObjectDeletedWhileWalking`), without the error.
+- **The trash "Dispose" recursion to a stack overflow**: "CT - Route Blocked Animation" got its parameters swapped, returned at once, and a blocked Sim retried in the same tick (`TriggerBlockedAnimation`: pauses in 0, the blocker in 1).
+- **The toddler stuck in the crib**: the crib's "Animate - Events - Get" runs on the overlay's object (the toddler), which it snaps into the carrier's hands on 9998; the VM ran overlay event trees as the Sim that started them. Now the toddler is carried and bathed (and the social worker takes him off the lot when it comes to that).
+- **Round trips that differ**: an overlay's event-tree code compared by GUID, as the save keeps it.
+- **"Pisar" failing in series**: result 7 (destination occupied): another Sim stands on the roaches' tile after stomping them (N002_Lot3, Loki); the game's goal test refuses it the same way. Fewer now with fewer Sims around.
+
 # Soak report (round 17, loops)
 
 Runs of `tools/soak.sh` over the 69 lots (3 game days), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main 9e3b2f43 (with r17-saveanim); **after** is the `r17-loops` branch rebased on it (every neighbor's definition on again, so visitors and walk-bys come). Counts from the kept autonomy logs.
