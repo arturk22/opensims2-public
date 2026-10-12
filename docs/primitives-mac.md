@@ -1423,6 +1423,27 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   45° (horários). Feito: `animlevel::headingOfDirections`,
   `AnimationState::headingOffset`, `Overlay::headingOffset`, somados ao
   `turn` do recurso (também nos overlays).
+- **Cadeira de jantar: assento, levantar e o quadro das animações** (rodada
+  17, ramo `r17-chair`; o que é do app é inferido). O assento
+  `slot_chairDining_0` fica sob o `slot_chairdining_trans`, que a cadeira
+  empurrada deixa 0,373–0,375 para a mesa (pose salva, valor fixo do
+  `o2a-chairDining-getIn-SE`); o "leaveOut" move e gira esse osso
+  (−0,087; 0,048; −15,6°). O Sim sentado é desenhado no osso como o ator da
+  cadeira o posa no instante dos Sims (`SimActor::bonePlacement`,
+  `VmObjectView::seatPlacement(sim, now)`; antes usava os ossos do quadro
+  anterior, ou a pose de repouso enquanto o ator não tinha sido posado). O
+  levantar ("Chair - Animate - Get Out", `0x7F0B61F3 0x2045`) faz Snap ao
+  osso de canto `route_chairdining_2_se` (temp 0) e "Snap - Away" vira o
+  Sim (direção 1 sentado → 7 → 3); o `a2o-chairDining-getOut-SE` tem
+  heading −180° e começa sentado em (−0,362; 0,350) do seu quadro, que é
+  exatamente o assento (1 cm no teste). Dois defeitos do app faziam o Sim
+  aparecer sentado no ar ao lado da cadeira, meio dentro da quina da mesa
+  (playtest, `N001_Lot68`): o corpo girava até a direção nova a 7 rad/s
+  (≈0,34 s, mais com poucos quadros) levando o quadro da animação junto, e
+  a animação começava com fade a partir da pose antiga no lugar novo.
+  Agora uma animação do Animate Sim toma a direção do Sim na hora
+  (`SimMotion::turn`) e, se o Sim acabou de ser movido ou girado por Snap,
+  começa sem fade (`LotSimulation::sampleAll`).
 - **Alvos de IK de tipo 2: o objeto de IK do pedido** (rodada 15, front
   anim3, decifrado). Os alvos de IK (`cIKTarget::TargetType`) têm 3 tipos
   nos dados (`s2pkg anim-sweep`): 0 sem osso de quadro (20.859, o alvo no
