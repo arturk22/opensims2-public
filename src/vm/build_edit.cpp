@@ -217,7 +217,7 @@ std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1) {
 BuildEditor::BuildEditor(VM& vm, Lot& lot, const BuildCatalog* catalog) : vm_(vm), lot_(lot), catalog_(catalog) {
     if (catalog_ && catalog_->railingPrice())
         vm_.railingPrice = catalog_->railingPrice();
-    editable_ = lotEditableArea(lot_);
+    editable_ = inferredRoadStripArea(lot_);
     // The stairs the world was loaded with (the lot's modular stair
     // cObjects), less the staircase objects that are among them.
     if (vm_.world) {
@@ -386,19 +386,13 @@ std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by, 
         tiles.push_back({ax - 1, std::min(ay, by), level});
         tiles.push_back({ax, std::min(ay, by), level});
     }
+    // UserMayPlacePartition's common test (BV 0x9a7384, the symxfer's
+    // "cTSUserToolAutoRoof::RemoveAllRoofs"): off the lot 0x40 (a fence
+    // needs one side on it), next to an arch 0x4D, locked 0x45.
+    if (const int e = partitionCommonError(li, ax, ay, bx, by, fence ? PartitionKind::Fence : PartitionKind::Wall); e)
+        return fail(e, e == 0x40 ? "out of the lot" : e == 0x45 ? "on a locked tile (the road strip)"
+                       : e == 0x4D ? "next to an arch" : "a partition is on that edge");
     std::erase_if(tiles, [&](const TilePos& t) { return t.x < 0 || t.y < 0 || t.x >= W || t.y >= H; });
-    // Outside the editable area (the road strip): 0x45.
-    if (!editablePoint(ax, ay) || !editablePoint(bx, by))
-        return fail(0x45, "not editable");
-    // A wall needs one side in the lot, a fence both (0x40); here the lot
-    // edge counts as out for a fence.
-    if (fence && tiles.size() < (ax != bx && ay != by ? 1u : 2u))
-        return fail(0x40, "out of the lot");
-    for (const TilePos& t : tiles)
-        for (uint16_t q : lot_.floor(li, uint32_t(t.x), uint32_t(t.y)))
-            if (q)
-                if (auto it = lot_.floorPatterns.find(q); it != lot_.floorPatterns.end() && street(it->second))
-                    return fail(0x45, "not on the street");
     const float dz = std::fabs(lot_.elevation(li, ax, ay) - lot_.elevation(li, bx, by));
     if (fence) {
         // UserMayPlaceFence: |dz| / horizontal length above sqrt(3) (60°).
@@ -724,6 +718,77 @@ BuildEditor::Result BuildEditor::eraseRun(int level, int x0, int y0, int x1, int
     return r;
 }
 
+int BuildEditor::partitionCommonError(int li, int ax, int ay, int bx, int by, PartitionKind kind) const {
+    const int W = int(lot_.width), H = int(lot_.height);
+    // The tiles on the two sides (FUN_008b4e9c / FUN_008b51d4); one for a diagonal.
+    TilePos t1{}, t2{};
+    if (ax != bx && ay != by)
+        t1 = t2 = {std::min(ax, bx), std::min(ay, by), li + 1};
+    else if (ay == by)
+        t1 = {std::min(ax, bx), ay - 1, li + 1}, t2 = {std::min(ax, bx), ay, li + 1};
+    else
+        t1 = {ax - 1, std::min(ay, by), li + 1}, t2 = {ax, std::min(ay, by), li + 1};
+    auto onLot = [&](const TilePos& t) { return t.x >= 0 && t.y >= 0 && t.x < W && t.y < H; };
+    const bool fence = kind == PartitionKind::Fence; // PartitionStyleIsFence: types 1 and 3
+    if (!onLot(t1) && !fence)
+        return 0x40;
+    if (!onLot(t2) && (!fence || !onLot(t1)))
+        return 0x40;
+    // FUN_009a6b20: the graphs the style's PartitionsBlocked names (walls
+    // 0xF by the cTSProductPartition default, fences 0xB, arches 5) refuse a
+    // partition of their type on the edge (0x41); the graphs of
+    // AdjacentPartitionsBlocked (walls 4: arches; arches 1: walls) refuse one
+    // ending at either end: a wall next to an arch 0x4D, an arch next to a
+    // wall 0x50. Graph = partition type: 0 walls, 1 fences, 2 arches.
+    const unsigned blocked = kind == PartitionKind::Wall ? 0xFu : kind == PartitionKind::Fence ? 0xBu : 0x5u;
+    const unsigned adjacent = kind == PartitionKind::Wall ? 0x4u : kind == PartitionKind::Fence ? 0x0u : 0x1u;
+    auto touches = [&](float x, float y) {
+        return (std::lround(x) == ax && std::lround(y) == ay) || (std::lround(x) == bx && std::lround(y) == by);
+    };
+    bool same[3] = {}, next[3] = {};
+    for (const auto& w : lot_.walls) {
+        if (w.a.level != li)
+            continue;
+        const int graph = Lot::isFence(w.type) ? 1 : 0;
+        const bool on = (std::lround(w.a.x) == ax && std::lround(w.a.y) == ay && std::lround(w.b.x) == bx &&
+                         std::lround(w.b.y) == by) ||
+                        (std::lround(w.a.x) == bx && std::lround(w.a.y) == by && std::lround(w.b.x) == ax &&
+                         std::lround(w.b.y) == ay);
+        same[graph] |= on;
+        next[graph] |= !on && (touches(w.a.x, w.a.y) || touches(w.b.x, w.b.y));
+    }
+    for (const auto& f : fenceArches(lot_)) {
+        if (f.level != li)
+            continue;
+        const bool on = (f.ax == ax && f.ay == ay && f.bx == bx && f.by == by) ||
+                        (f.ax == bx && f.ay == by && f.bx == ax && f.by == ay);
+        same[2] |= on;
+        next[2] |= !on && (touches(float(f.ax), float(f.ay)) || touches(float(f.bx), float(f.by)));
+    }
+    for (int graph = 0; graph < 3; ++graph) {
+        if ((blocked & (1u << graph)) && same[graph])
+            return 0x41;
+        if ((adjacent & (1u << graph)) && next[graph]) {
+            if (kind == PartitionKind::Wall && graph == 2)
+                return 0x4D;
+            if (kind == PartitionKind::Arch && graph == 0)
+                return 0x50;
+        }
+    }
+    // A side off the lot or locked (cIWorldDB slot 0xc4) -> 0x45: either
+    // side, both for a fence (the toolbar's TilesUnlocked cheat skips it).
+    const bool bad1 = !onLot(t1) || tileLocked(li, t1.x, t1.y), bad2 = !onLot(t2) || tileLocked(li, t2.x, t2.y);
+    if (fence ? bad1 && bad2 : bad1 || bad2)
+        return 0x45;
+    // RequiresFlatBottom (walls and arches; fences say false): the two ends
+    // at different floor heights -> 0x49. The wall tool levels the ground
+    // first, so only the arch asks here.
+    if (kind == PartitionKind::Arch && lot_.hasLevel(li) &&
+        std::fabs(lot_.elevation(li, ax, ay) - lot_.elevation(li, bx, by)) > 0.001f)
+        return 0x49;
+    return 0;
+}
+
 int BuildEditor::fenceArchBlocked(int li, int ax, int ay, int bx, int by) const {
     const int W = int(lot_.width), H = int(lot_.height);
     const int dx = bx - ax, dy = by - ay; // a unit edge along x or y
@@ -779,15 +844,34 @@ int BuildEditor::fenceArchBlocked(int li, int ax, int ay, int bx, int by) const 
 BuildEditor::Result BuildEditor::placeFenceArch(int level, int ax, int ay, int bx, int by, const BuildFenceArch& arch) {
     Result r;
     const int li = level - 1;
-    const Lot::Wall* w = findWall(lot_, li, ax, ay, bx, by);
-    if (std::abs(bx - ax) + std::abs(by - ay) != 1 || !w || !Lot::isFence(w->type)) {
-        r.error = 0x79;
-        r.message = "cannot place the arch: it goes on a fence";
+    if (ax != bx && ay != by) {
+        // cTSProductFenceArch: mayPlaceDiagonally false -> 0x4C.
+        r.error = 0x4C;
+        r.message = "cannot build diagonally";
+        return r;
+    }
+    if (std::abs(bx - ax) + std::abs(by - ay) != 1) {
+        r.message = "an arch spans one tile edge";
         return r;
     }
     if (hasFenceArch(lot_, li, ax, ay, bx, by)) {
         r.ok = true;
         r.message = "the arch is there already";
+        return r;
+    }
+    // UserMayPlacePartition's common test (BV 0x9a7384) for the arch's
+    // partition style (cTSProductFenceArch's constructor, BV 0xf20544:
+    // partition type 2, not a fence, so both sides count; partitions
+    // blocked 5, adjacent partitions blocked 1, requires a flat bottom). The
+    // binary does not ask for a fence under the arch: "Must be placed on a
+    // fence" (0x79, 0x88) is the error of objects that hang on fences.
+    if (const int e = partitionCommonError(li, ax, ay, bx, by, PartitionKind::Arch); e) {
+        r.error = e;
+        r.message = e == 0x40   ? "cannot place the arch off the lot"
+                    : e == 0x45 ? "cannot place the arch on a locked tile (the road strip)"
+                    : e == 0x41 ? "cannot place the arch: a wall or an arch is on that edge"
+                    : e == 0x50 ? "cannot place the arch next to a wall"
+                                : "cannot place the arch: the ground is not flat";
         return r;
     }
     // UserMayPlaceFenceArch (BV 0x9a92fc, docs/buy-build-mac.md §7.19.1).

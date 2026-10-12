@@ -277,20 +277,29 @@ public:
 
     const Lot& lot() const { return lot_; }
 
-    // The lot's editable area, [x0, x1) x [y0, y1) in tiles: the lot less the
-    // road strip on each edge with road (the neighborhood lot is its size
-    // plus a strip of one neighborhood tile, 10 lot tiles, on its road edges,
-    // hood_lots.hpp; cWorldDB::IsOnLot tests the bounds SetLotBounds set).
-    // Found from the lot: an edge whose outer 10 tiles hold road floor tiles
-    // ("road_*") is a road edge (inferred: the lot bounds the game sets are
-    // not read from a file here).
-    const std::array<int, 4>& editableArea() const { return editable_; }
-    bool editableTile(int x, int y) const {
-        return x >= editable_[0] && y >= editable_[1] && x < editable_[2] && y < editable_[3];
+    // Locked tiles (cWorldDB::IsLocked, cIWorldDB slot 0xc4: the lot's 3ARY
+    // 0x03, the road strip the lot template locks; lotTileLocked, with the
+    // inferred road strip only for a lot without the array).
+    bool tileLocked(int li, int x, int y) const { return lotTileLocked(lot_, editable_, li, x, y); }
+    // A tile on the lot and not locked (`li` the lot level).
+    bool editableTile(int x, int y, int li = 0) const {
+        return x >= 0 && y >= 0 && x < int(lot_.width) && y < int(lot_.height) && !tileLocked(li, x, y);
     }
-    bool editablePoint(int x, int y) const {
-        return x >= editable_[0] && y >= editable_[1] && x <= editable_[2] && y <= editable_[3];
+    // FUN_009e8780 (the vertex test's mask bit 0, BV): a grid point on the
+    // world's edge, or with one of its four tiles off the lot or locked, may
+    // not move (0x62).
+    bool editablePoint(int x, int y, int li = 0) const {
+        return editableTile(x - 1, y - 1, li) && editableTile(x, y - 1, li) && editableTile(x - 1, y, li) &&
+               editableTile(x, y, li);
     }
+
+    // UserMayPlacePartition's common test (BV 0x9a7384) and its partition
+    // test FUN_009a6b20, for an edge on lot level `li`: 0x40 off the lot,
+    // 0x41 a partition of a blocked graph on the edge, 0x4D a wall next to an
+    // arch, 0x50 an arch next to a wall, 0x45 locked, 0x49 (arches) not flat;
+    // 0 if none.
+    enum class PartitionKind { Wall, Fence, Arch };
+    int partitionCommonError(int li, int ax, int ay, int bx, int by, PartitionKind kind) const;
 
     // Why a wall section cannot go there ("" if it can).
     // `code` gets the game's error code (UserMayPlacePartition: 0x40 out of
@@ -385,7 +394,7 @@ private:
     // A ground grid point no floor, wall or foundation holds.
     bool terrainFree(int x, int y) const;
     uint32_t revision_ = 0;
-    std::array<int, 4> editable_{0, 0, 0, 0};
+    std::array<int, 4> editable_{0, 0, 0, 0}; // inferredRoadStripArea, for a lot without 3ARY 0x03
 };
 
 // The modular stairs among the VM's objects: each "Stair Modular - ... -

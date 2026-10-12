@@ -38,7 +38,7 @@ World::World(uint32_t width, uint32_t height, int firstLevel, int levelCount)
     yWalls_.assign(levels * (width + 1) * height, 0);
 }
 
-std::array<int, 4> lotEditableArea(const Lot& lot) {
+std::array<int, 4> inferredRoadStripArea(const Lot& lot) {
     std::array<int, 4> area{};
     const int W = int(lot.width), H = int(lot.height), strip = 10;
     area = {0, 0, W, H};
@@ -83,10 +83,24 @@ std::array<int, 4> lotEditableArea(const Lot& lot) {
     return area;
 }
 
+bool lotTileLocked(const Lot& lot, const std::array<int, 4>& area, int level, int x, int y) {
+    if (!lot.locked.empty())
+        return lot.tileLocked(level, x, y);
+    return x < area[0] || y < area[1] || x >= area[2] || y >= area[3];
+}
+
 World World::fromLot(const Lot& lot) {
     // VM levels count from 1 = the lot's ground level (0).
     World w(lot.width, lot.height, lot.minLevel + 1, lot.levelCount);
-    w.editable_ = lotEditableArea(lot);
+    {
+        const auto area = lot.locked.empty() ? inferredRoadStripArea(lot) : std::array<int, 4>{};
+        w.locked_.assign(size_t(std::max(lot.levelCount, 0)) * lot.width * lot.height, 0);
+        for (int li = 0; li < lot.levelCount; ++li)
+            for (uint32_t x = 0; x < lot.width; ++x)
+                for (uint32_t y = 0; y < lot.height; ++y)
+                    w.locked_[(size_t(li) * lot.width + x) * lot.height + y] =
+                        lotTileLocked(lot, area, lot.minLevel + li, int(x), int(y));
+    }
     for (int li = 0; li < lot.levelCount; ++li) {
         const int lotLevel = lot.minLevel + li;
         for (uint32_t x = 0; x < lot.width; ++x)

@@ -1655,6 +1655,47 @@ mapa (`this+0xa4`, chave = o ID da aresta no grafo `+0x58`) e, com a
 mensagem ligada no `WorldDB`, manda `0x0B4CF313`. `FenceArchAdjacent(vértice)`
 = o grafo `+0x58` tem algo no vértice (vtable `0x24`).
 
+#### 7.19.2 De onde vêm `0x79`, `0x88` e `0x4D` (rodada 14, binário)
+
+- **`0x79`** sai só do `TestPlacementCommon` (`li r4,0x79` em `0x8abbc4`): é
+  o objeto que exige moirão de cerca (od 42 bit `0x2000`, §3.2); **`0x88`**
+  sai do `FUN_008a7a60` (chamado por `TestPlacementWithRespectToWalls`): o
+  objeto de parede com a flag `0x1000` sem cerca na aresta. Os dois são de
+  **objetos**, não do arco: o arco **não exige cerca**.
+- **`0x4D`** sai do `FUN_009a6b20`, o teste de partições do teste comum de
+  `UserMayPlacePartition` (BV `0x9a7384`, que o symxfer chama de
+  `cTSUserToolAutoRoof::RemoveAllRoofs`; `UserMayPlacePartition` o roda para
+  todos os estilos e só depois manda os arcos — `PartitionType` 2 — para
+  `UserMayPlaceFenceArch`). Para cada grafo i = 0..5 (o grafo é o
+  `PartitionType`: 0 paredes, 1 cercas, 2 arcos; 3 meia parede, que é
+  parede e cerca): se o bit i de `PartitionsBlocked` (produto `+0xd0`) está
+  ligado e há uma partição do grafo na aresta → **`0x41`**; se o bit i de
+  `AdjacentPartitionsBlocked` (`+0xd4`) está ligado e há uma partição do
+  grafo terminando numa das pontas (`FUN_009a6154`) → uma parede
+  (`PartitionStyleIsWall`, tipos 0 e 3) no grafo 2 dá **`0x4D`** "Can't
+  place next to arch", um arco no grafo 0 dá **`0x50`** "Can't place next
+  to wall", o resto 0. Valores (construtores): `cTSProductPartition` padrão
+  `0xF`/0; `cTSProductWall` (BV `0xf1c9d4`) adjacentes **4**; cerca
+  (`FUN_00e4fc68`) bloqueados **`0xB`**; `cTSProductFenceArch` (BV
+  `0xf20544`) tipo 2, bloqueados **5**, adjacentes **1**, `requiresFlatBottom`
+  1, `mayPlaceDiagonally` 0. Ou seja: parede encostada no poste de um arco
+  → `0x4D`; arco sobre parede ou outro arco → `0x41`; arco encostado numa
+  parede → `0x50`; arco sobre cerca pode (o grafo 1 não está nos 5).
+- O resto do teste comum, na ordem: lado fora do lote (`IsOnLot`, slot
+  `0xf8`) → `0x40` (uma cerca — `PartitionStyleIsFence`, tipos 1 e 3 —
+  precisa de um lado só; parede e arco dos dois); `FUN_009a6b20`; diagonal
+  sem `mayPlaceDiagonally` → `0x4C`; lado fora do lote ou **travado** (slot
+  `0xc4`, §7.20) → `0x45` (os dois lados para a cerca), pulado com a trapaça
+  `TilesUnlocked` da barra (`FUN_000c8028` vtable `0xd4`); fundo não plano →
+  `0x49`; sem suporte → `0x48`; piscina dos dois lados → `0x46`; água sem
+  `submersible` → `0x47`; praia → `0xA3`.
+
+No código (rodada 14, `BuildEditor::partitionCommonError`): `0x40`, `0x41`,
+`0x4D`, `0x50`, `0x4C`, `0x45` e (arco) `0x49` como acima, para paredes,
+cercas e arcos; o arco vai numa aresta sem cerca, e apagar a cerca deixa o
+arco (antes: `0x79` inferido e o arco ia junto com a cerca). Inferido: a
+ordem entre o `0x45` e o `0x41/0x4D/0x50` (o binário junta todos na lista).
+
 ### 7.20 A área editável do lote (rodada 12)
 
 `cWorldDB::IsOnLot(tile/vertex/location)` (BV `0xd1538…`) compara com os
@@ -1695,16 +1736,39 @@ dentro).
   `Max`/`MinTerrainElevation`). O "travados (`WorldDB` vtable `0xc4`)" do
   §7 (paredes) foi lido no vtable primário; nessa interface o slot `0xc4` é o
   `HasFloorTest` (a conferir).
-- O que tira a faixa de rua da construção **não foi achado** (os limites a
-  incluem; candidatos: o `HasFloorTest` com o piso de rua, os tiles
-  travados do `cWorldDB` (`IsLocked`/`SetLockedImpl`, BV `0xd2a90`/
-  `0xd3424`), ou as bordas com rua do lot info). A regra inferida da
-  rodada 12 (10 tiles com piso "road_*") continua inferida.
-- No código (rodada 13): a área editável é `vm::lotEditableArea(lot)`
-  (`World::editable`), a mesma para as ferramentas de construção e para o
-  **modo compra**: `checkPlacement` recusa um tile fora dela com `0x02` "Local
-  fora dos limites" (o código do `IsOnLot` falso no `TestPlacementCommon`;
-  inferido que o jogo recusa a faixa de rua com ele também).
+- **O que tira a faixa de rua (rodada 14, binário + dados): os tiles
+  travados.** O slot `0xc4` da `cIWorldDB` é o thunk `0x1510e54` para
+  `0xd2734` (o "`HasFloorTest`" do symxfer é nome errado): lê o byte do
+  `c3DArray<uchar>` em `cWorldDB +0xa0` no tile (x − x0, y − y0, nível − n0)
+  e diz se ≠ 0 = **`IsLocked(tile)`**. O array é o **3ARY `0x03`** do lote
+  ([nível][x][y], um byte por tile): o `cWorldDB::InitForNewLot` (BV
+  `0xd6a84`) o lê do **modelo de lote** (`LotTemplates/LotTemplate*.package`,
+  `cTSSimSystem` vtable `0x124`, recurso 3) e o gira com a frente do lote; o
+  lote salvo o guarda. Os modelos travam a faixa de rua de 10 tiles; nos 67
+  lotes com o array (todos menos `N002_Lot32`), o travado é exatamente a
+  faixa (colunas ou linhas inteiras), em alguns lotes só nos níveis de
+  baixo (o `AddLevels` enche os níveis novos com 0). Quem o lê:
+  - o teste comum das partições (`0x45`, §7.19.2);
+  - o teste dos vértices `FUN_009e9550` (máscara bit 0 → `FUN_009e8780`):
+    vértice térreo na borda do mundo (x = `MinTileX` ou `MaxTileX` + 1, idem
+    y) ou com um dos 4 tiles em volta fora do lote ou travado → **`0x62`**
+    (sem a trapaça); antes disso `FUN_009e75e0`: fora do lote → `0x59`;
+  - os objetos: `TSObjectIsInLockedArea` (BV `0x8a9d00`, chamado por
+    `TSObjectUserCanSetPosition`, `...CanDrop`, `...CanPlaceInSlot` e o conta-
+    gotas) → `IsOnLockedTile` (BV `0x8a66b0`): no lote e travado → **`0x02`**;
+    od 42 bit `0x40` pula o teste; o objeto com `AllowOnlyOnLockedTile`
+    (`cTSObject +0xea` bit 10) tem de ficar **só** em tiles travados (caixa
+    de correio, lixeira da calçada; não mapeado aqui);
+  - fundações/decks/piscinas (`MayPlaceQuadrilateral`, `0x353c6c`: tile fora
+    do `IsInBounds` ou travado → `0x02`).
+- No código (rodada 14): `Lot::locked` (lido do 3ARY 0x03, níveis novos
+  copiam o vizinho, gravado como estava), `vm::lotTileLocked`,
+  `World::locked` (modo compra: `0x02`, salvo od 42 `0x40`),
+  `BuildEditor::tileLocked`/`editableTile` (tiles do lote e destravados) e
+  `editablePoint` (os 4 tiles em volta destravados: o pincel de terreno
+  não mexe em vértices da borda nem da faixa). Só um lote sem o array usa a
+  regra inferida antiga (`inferredRoadStripArea`, faixa com piso "road_*").
+  Saiu o teste inferido de piso de rua das paredes.
 
 ---
 

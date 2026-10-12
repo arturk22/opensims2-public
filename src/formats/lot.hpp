@@ -40,6 +40,22 @@ struct Lot {
     // data: one byte per quarter, the values of the toolbar's modes.
     std::vector<std::array<uint8_t, 4>> floorRotations;
 
+    // 3ARY 0x03: the locked tiles (cWorldDB +0xa0, a byte per tile,
+    // [level][x][y] over width x height; non-zero = locked), read by
+    // cWorldDB::InitForNewLot from the lot template (turned with the lot)
+    // and kept in the lot file. cIWorldDB slot 0xc4 (IsLocked(tile), the
+    // symxfer's "HasFloorTest") reads it: the build tools refuse a locked
+    // tile (partitions 0x45, vertices 0x62) and Buy mode too
+    // (IsOnLockedTile 0x02), unless the toolbar's TilesUnlocked cheat is on.
+    // The templates lock the 10-tile road strip (docs/buy-build-mac.md
+    // §7.20). Empty when the lot has none.
+    std::vector<uint8_t> locked;
+    bool tileLocked(int level, int x, int y) const {
+        if (locked.empty() || !hasLevel(level) || x < 0 || y < 0 || x >= int(width) || y >= int(height))
+            return false;
+        return locked[(size_t(level - minLevel) * width + size_t(x)) * height + size_t(y)] != 0;
+    }
+
     // Room ID of every quarter tile, laid out as `floors`; 0 is outdoors.
     // The game keeps three room maps (cPartitionManager, docs/buy-build-mac.md
     // §7.3), each flooded from the walls of its own wall graph: 3ARY 0x09

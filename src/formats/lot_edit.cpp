@@ -189,6 +189,11 @@ std::optional<Lot::Wall> removeWall(Lot& lot, int level, int ax, int ay, int bx,
     const Lot::Wall was = *it;
     lot.walls.erase(it);
     for (auto& g : lot.wallGraphs) {
+        // A fence arch (graph 0x13) is a partition of its own on the edge,
+        // which the binary places without a fence (UserMayPlacePartition):
+        // taking the fence away leaves it.
+        if (g.instance == 0x13u)
+            continue;
         const size_t before = g.lines.size();
         const auto* rooms = merges ? roomArray(lot, g.instance) : nullptr;
         std::erase_if(g.lines, [&](const Lot::WallGraph::Line& l) {
@@ -268,6 +273,12 @@ bool addLowerLevel(Lot& lot) {
         lot.floors.insert(lot.floors.begin(), tiles, std::array<uint16_t, 4>{});
     if (!lot.floorRotations.empty())
         lot.floorRotations.insert(lot.floorRotations.begin(), tiles, std::array<uint8_t, 4>{1, 1, 1, 1});
+    // The locked tiles of the new level: the ground's (as lot_write copies
+    // the lowest plane of the arrays it does not read; inferred).
+    if (lot.locked.size() >= tiles) {
+        const std::vector<uint8_t> ground(lot.locked.begin(), lot.locked.begin() + long(tiles));
+        lot.locked.insert(lot.locked.begin(), ground.begin(), ground.end());
+    }
     if (!lot.rooms.empty())
         lot.rooms.insert(lot.rooms.begin(), tiles, std::array<uint16_t, 4>{});
     for (auto& [k, layer] : lot.roomLayers)
@@ -351,6 +362,10 @@ void addUpperLevel(Lot& lot) {
         lot.floors.insert(lot.floors.end(), tiles, std::array<uint16_t, 4>{});
     if (!lot.floorRotations.empty())
         lot.floorRotations.insert(lot.floorRotations.end(), tiles, std::array<uint8_t, 4>{1, 1, 1, 1});
+    if (lot.locked.size() >= tiles) {
+        const std::vector<uint8_t> top(lot.locked.end() - long(tiles), lot.locked.end());
+        lot.locked.insert(lot.locked.end(), top.begin(), top.end());
+    }
     if (!lot.rooms.empty())
         lot.rooms.insert(lot.rooms.end(), tiles, std::array<uint16_t, 4>{});
     for (auto& [k, layer] : lot.roomLayers)

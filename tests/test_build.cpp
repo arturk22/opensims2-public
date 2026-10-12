@@ -93,9 +93,10 @@ static void testRooms() {
 
 static void testEditor() {
     Lot lot = flatLot();
-    // The street along y = 0.
+    // The street along y = 0, locked (3ARY 0x03).
+    lot.locked.assign(12 * 10, 0);
     for (int x = 0; x < 12; ++x)
-        lot.floors[size_t(x) * 10] = {1, 1, 1, 1};
+        lot.floors[size_t(x) * 10] = {1, 1, 1, 1}, lot.locked[size_t(x) * 10] = 1;
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetDiv10000] = 0;
@@ -421,11 +422,49 @@ static void testEditableArea() {
     vm.globals[global::BudgetMod10000] = 5000;
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
-    check(ed.editableArea() == std::array<int, 4>({0, 0, 24, 20}), "the road edge's strip is not editable");
+    check(ed.tileLocked(0, 3, 20) && !ed.tileLocked(0, 3, 19), "without 3ARY 0x03, the road edge's strip is locked (inferred)");
     auto r = ed.drawWalls(1, 2, 22, 5, 22);
     check(!r.ok && r.error == 0x45, "no walls in the road strip (0x45)");
     r = ed.drawWalls(1, 2, 18, 5, 18);
     check(r.ok && r.changed == 3, "walls inside the area");
+}
+
+// The locked tiles (3ARY 0x03, cWorldDB::IsLocked): partitions refuse a
+// locked side (0x45, both sides for a fence), a wall needs both sides on
+// the lot and a fence one (0x40), grid points with a locked tile round them
+// stay (0x62 in the game), and Buy mode refuses a locked tile (0x02).
+static void testLockedTiles() {
+    Lot lot;
+    lot.width = 20, lot.height = 20, lot.levelCount = 1;
+    lot.elevations.assign(21 * 21, 0.0f);
+    lot.floors.assign(20 * 20, {});
+    lot.rooms.assign(20 * 20, {});
+    lot.roomLayers[0x0A] = lot.rooms;
+    lot.roomLayers[0x0B] = lot.rooms;
+    lot.locked.assign(20 * 20, 0);
+    for (int x = 0; x < 20; ++x)
+        for (int y = 15; y < 20; ++y)
+            lot.locked[size_t(x) * 20 + size_t(y)] = 1;
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    check(vm.world->locked({3, 15, 1}) && !vm.world->locked({3, 14, 1}), "the world knows the locked tiles");
+    auto r = ed.drawWalls(1, 2, 16, 5, 16);
+    check(!r.ok && r.error == 0x45, "no walls on locked tiles (0x45)");
+    r = ed.drawWalls(1, 2, 15, 5, 15);
+    check(!r.ok && r.error == 0x45, "a wall with one locked side (0x45)");
+    BuildFence fence;
+    fence.guid = 0x2CB2A001, fence.price = 10;
+    r = ed.drawFences(1, 2, 15, 5, 15, fence);
+    check(r.ok && r.changed == 3, "a fence needs one side free");
+    r = ed.drawWalls(1, 0, 2, 0, 5);
+    check(!r.ok && r.error == 0x40, "a wall on the lot's edge has a side off the lot (0x40)");
+    r = ed.drawFences(1, 0, 2, 0, 5, fence);
+    check(r.ok && r.changed == 3, "a fence on the lot's edge");
+    check(!ed.editablePoint(4, 15) && ed.editablePoint(4, 14) && !ed.editablePoint(0, 4),
+          "grid points next to a locked tile or on the edge do not move");
 }
 
 // Fence arches: on a fence, not beside another, gone with the fence.
@@ -440,19 +479,32 @@ static void testFenceArch() {
     fence.guid = 0x2CB2A001, fence.price = 10, fence.rail = "rail", fence.post = "post";
     BuildFenceArch arch;
     arch.id = 26, arch.price = 50, arch.name = "arch";
-    auto r = ed.placeFenceArch(1, 3, 2, 4, 2, arch);
-    check(!r.ok && r.error == 0x79, "an arch needs a fence (0x79)");
+    // UserMayPlacePartition: no fence needed (0x79 and 0x88 are the errors
+    // of objects that hang on fences).
+    auto r = ed.placeFenceArch(1, 3, 6, 4, 6, arch);
+    check(r.ok && fenceArches(lot).size() == 1, "an arch stands without a fence");
     ed.drawFences(1, 1, 2, 7, 2, fence);
     r = ed.placeFenceArch(1, 3, 2, 4, 2, arch);
-    check(r.ok && r.cost == 50 && fenceArches(lot).size() == 1, "an arch on the fence for its price");
+    check(r.ok && r.cost == 50 && fenceArches(lot).size() == 2, "an arch on the fence for its price");
     r = ed.placeFenceArch(1, 4, 2, 5, 2, arch);
     check(!r.ok && r.error == 0x0C, "not next to another arch (MayPlaceFenceArchWithRespectToObjects: 0x0C)");
     check(ed.fenceArchBlocked(0, 0, 3, 0, 4) == 0x45, "an edge on the lot's outer ring is off the lot (0x45)");
     check(ed.fenceArchBlocked(0, 6, 2, 7, 2) == 0, "an edge clear of arches and objects may take one");
     check(vm.world->wallBetween({3, 1, 1}, 0, 1, true), "the fence still blocks under the arch");
+    // FUN_009a6b20: a wall ending at an arch's post (0x4D), an arch next to
+    // a wall (0x50) or on one (0x41).
+    r = ed.drawWalls(1, 4, 6, 4, 8);
+    check(!r.ok && r.error == 0x4D, "no wall next to an arch (0x4D)");
+    r = ed.drawWalls(1, 8, 4, 8, 8);
+    r = ed.placeFenceArch(1, 8, 5, 8, 6, arch);
+    check(!r.ok && r.error == 0x41, "no arch on a wall (0x41)");
+    r = ed.placeFenceArch(1, 7, 5, 8, 5, arch);
+    check(!r.ok && r.error == 0x50, "no arch next to a wall (0x50)");
+    r = ed.placeFenceArch(1, 3, 4, 4, 5, arch);
+    check(!r.ok && r.error == 0x4C, "no diagonal arch (0x4C)");
     ed.deleteFences(1, 3, 2, 4, 2);
-    check(fenceArches(lot).empty(), "the arch goes with its fence");
-    check(ed.undo() && fenceArches(lot).size() == 1, "undo brings both back");
+    check(fenceArches(lot).size() == 2, "the arch stays when its fence goes");
+    check(ed.undo() && fenceArches(lot).size() == 2, "undo brings the fence back");
 }
 
 // The auto-roof's rectangles (ComputeRoofRects, 0x9a0a08).
@@ -609,6 +661,7 @@ int main() {
     testAutoRoofRects();
     testFenceArch();
     testEditableArea();
+    testLockedTiles();
     testDesignCatalog();
     testWalkOver();
     testPool();

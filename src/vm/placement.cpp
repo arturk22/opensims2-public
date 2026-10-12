@@ -171,10 +171,13 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction) {
         // world cannot tell floor from terrain: either flag will do).
         if (t.x < 0 || t.y < 0 || !w.contains({t.x, t.y, w.firstLevel()}))
             return fail(placementerror::OutOfBounds, "out of the lot");
-        // The road strip is not the player's (World::editable, inferred as
-        // for the Build tools: the game's IsOnLot bounds take it in).
-        if (!w.editable(t.x, t.y))
-            return fail(placementerror::OutOfBounds, "out of the lot's editable area");
+        // TSObjectIsInLockedArea / IsOnLockedTile (BV 0x8a9d00, 0x8a66b0): a
+        // tile on the lot that is locked (the road strip, cIWorldDB slot 0xc4)
+        // -> 0x02, unless the object's placement flags (od 42) have 0x40.
+        // (Objects whose AllowOnlyOnLockedTile bit is set, cTSObject +0xea
+        // bit 10, must stand on locked tiles instead: not mapped here.)
+        if (!(pf & 0x40) && w.locked(t))
+            return fail(placementerror::OutOfBounds, "on a locked tile (the road strip)");
         if (!w.contains(t))
             return fail(placementerror::LevelOutOfBounds, "level out of the lot");
         // (The ground, VM level 1, is terrain even when a pool gives the lot
