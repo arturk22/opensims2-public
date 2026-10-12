@@ -629,10 +629,14 @@ acima; `locomotion.cpp` `LocoCurve`/`blendGaits`/`strideWeight`,
   Não feito: `FootprintBlocksCeiling/Floor`, o ponto à frente do flag 4 e o
   círculo das portas.
 - **Poses `*Blend` (200 + k)**: `gaitOf` sabe achá-las (string 2/5 do
-  conjunto, peso do ciclo), mas ficam desligadas (`OS2_LOCO_POSES=1` liga):
-  o alvo delas é do tipo 6 (o dos ciclos é 5), parece um delta, e tocadas
-  como pose comum abrem os braços dos idosos; falta um blend aditivo no
-  player.
+  conjunto, peso do ciclo). O alvo delas é do tipo 6 e os canais são todos
+  **delta** (bit 15 apagado; `docs/primitives-mac.md` §4 "Canais delta"):
+  desde a rodada 14 (front "anim-additive") o player as multiplica sobre os
+  ciclos e elas vêm ligadas (`OS2_NO_LOCO_POSES=1` tira, para comparar). A
+  idosa Isabella (N003_Lot46) anda curvada, cabeça para a frente e braços
+  junto ao corpo, sem abrir os braços: `docs/screenshots/r14-anim-aditivo.jpg`
+  (sem e com as poses). Soak com `OS2_SEED` 1 e 2 (N003_Lot46, N001_Lot16,
+  20.000 ticks): saída idêntica com e sem as poses (só o desenho muda).
 - Medido: `OS2_DEBUG_LOCO=1` (Don em N001_Lot16, "Vir Aqui" a 14,5,7,5):
   começo `turnAndGo-alt-135` 0,85 + `Short` 0,14, ciclos alt1/alt0 longos e
   curtos (0,16 de walkShort; 1,85 m/s), parada `turnAndStop-alt-0` 0,69 +

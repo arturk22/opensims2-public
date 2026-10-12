@@ -1221,7 +1221,7 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   em fade já tem o osso inteiro); osso sem peso nenhum não é escrito
   (fica como estava). A combinação é uma média corrida por peso (slerp
   com `peso / acumulado`); os canais "delta" (aditivos) entram depois,
-  multiplicando. **O nível de cada pedido** vem da primitiva
+  multiplicando (ver "Canais delta" abaixo). **O nível de cada pedido** vem da primitiva
   (`AddChoreoAnimRequest` dá a ele também o nome de canal para depuração,
   as strings `sil/sim/...`):
   | primitiva | nível | nomes |
@@ -1241,6 +1241,51 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   (`Options::level`, `test_anim` "channel levels"). Inferido: o nível da
   caminhada (usamos 3, `rom`) e o das poses de carregar do Reach/Put
   (usamos 5; elas vêm do `AddToAnimList`, não lido).
+- **Canais delta (aditivos)** (rodada 14, front "anim-additive", decifrado
+  no BV): o que faz um canal ser delta é o **bit 15 das flags do canal**
+  (`cSharedChannelCubicKeysConstProxy4::IsBaseDataReturned`, BV `0xee4680`:
+  `byte[0x12] >> 7` da palavra big-endian; aceso = base, apagado = delta; na
+  mesma palavra a duração são os bits 0–14 e o tipo os bits 22–24). O
+  `cActiveAnimSkeletal::SetupChannel` (BV `0xd5b8d4`) pergunta isso (vtable
+  `0x6c` do canal) e põe o canal no outlet do osso com
+  `AddBaseChannel(canal, prioridade, tipo)` (BV `0xee6ed4`) ou
+  `AddDeltaChannel(canal, prioridade)` (BV `0xee6dc8`: uma segunda lista em
+  `+0xb8`, ordenada da prioridade maior para a menor, sem níveis). Nos dados
+  (`s2pkg anim-sweep`): 1.033 canais de rotação e 689 de translação delta,
+  **todos** em alvos de tipo 6 (`cAnimTarget::AnimType`; os ciclos de andar
+  são 5, quase todo o resto 1), e esses alvos não têm canal base nenhum:
+  106 animações — as posturas `walk/run-altK-*Blend` (idosos, grávida,
+  deprimido, feliz, bravo), as mudanças de pé da conversa
+  `*-soc-talk-shift*-SWAT`, as quicadas no sofá `*-sofa-playful-*bouncee*`,
+  a cadeira assombrada, `e-idle-bentSpine[-FK]` (a coluna curva do idoso),
+  `*-spine-bend-*` das cadeiras, `a2o-book-carry-blend`,
+  `a-react-nod/shake-expBlend`, `p-run-blend`. Muitas têm a flag de corpo
+  inteiro (bit 0) mesmo assim.
+  **A mistura** (`cChannelUberOutletQ::ChannelData`, BV `0xd5e1c4`): depois
+  da média dos canais base, se o peso base total > 0 (ou o outlet tem
+  `ApplyDeltaDataToIK`, abaixo) e há deltas, cada delta com peso `w`
+  (vtable `0x20` do canal no tempo, > ε) vira `q^w` (meio ângulo
+  `a = acos(q.w)`, `(sin(a·w)/sin(a)·xyz, cos(a·w))`; nada com `q.w` fora de
+  (−1, 1); sem trocar de hemisfério) e acumula `acc = acc · q^w` na ordem da
+  lista; no fim **`base · acc`** (produto de Hamilton, `FUN_00dc71f8`), pela
+  "delta base order" do outlet = 1 (o construtor, `FUN_00ee7004`, põe
+  `+0xc4 = 1`; com 0 seria `acc · base`; quem chamaria
+  `SetDeltaBaseOrder(false)` não foi achado). Translação
+  (`cChannelUberOutletXYZ`, BV `0xd6b0fc`): a média base normalizada e, só
+  se houve base, `+ w · t` de cada delta. O `SetupChannel` liga
+  `SetApplyDeltaDataToIK(true)` (`+0xc7`) nos outlets de rotação de `head`,
+  `neck`, `spine0`, `spine1` e `spine2` (hashes `0x42CD1793`, `0x1A9F50FD`,
+  `0xE446CAC7`, `0xE087D770`, `0xEDC4F1A9`): neles o delta vale mesmo sem
+  canal base (o look-at mexe neles). No código: `Animation::Channel::isDelta`,
+  `sampleDeltas`, `deltaPower` e o fim do `AnimPlayer::pose` (depois da
+  mistura por níveis); `samplePose` e `keyedBones` ignoram os deltas (um alvo
+  só de deltas não toma osso nenhum, nem com a flag de corpo inteiro, e as
+  cadeias de IK dele não resolvem nada); o Animate Sim de um clipe só de
+  deltas toca por cima do corpo, como um parcial. Inferido: o peso do delta
+  como fade × peso do pedido (o `0x20` do `cChannelUber` não foi lido) e o
+  espelho de um delta (pelo espelho da pose "repouso + delta"). Não feito:
+  deltas nos nós de IK mexerem nas cadeias. Teste: `test_anim`
+  "testDeltaChannels".
 - **Onde fica o quadro da animação**: na fila de coreografia. A posição e a
   direção "globais" do objeto animado são as do osso raiz da fila
   (`GlobalRootTransPosition`, `GlobalRootRotHeading`: o vetor +Y do osso
