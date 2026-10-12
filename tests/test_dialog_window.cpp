@@ -106,6 +106,19 @@ int main() {
         check(host.hasPickBox(mailbox) && host.hasPickBox(bigObject), "pick: the boxes are known");
         host.removePickBox(bigObject);
         check(host.hasPickBox(mailbox) && !host.hasPickBox(bigObject), "pick: a box is removed alone");
+        // A big neighbour behind (a fireplace) that the exact ray hits must not
+        // beat the small object nearer the eye whose edge is a few pixels off the ray.
+        auto hearth = std::make_shared<PickMesh>();
+        hearth->corners = {simd_make_float3(-3, 2, 0), simd_make_float3(3, 2, 0), simd_make_float3(-3, 2, 4),
+                           simd_make_float3(3, 2, 0), simd_make_float3(3, 2, 4), simd_make_float3(-3, 2, 4)};
+        hearth->triangleMask = {-1, -1};
+        hearth->uvs.assign(6, simd_make_float2(0, 0));
+        hearth->lo = simd_make_float3(-3, 2, 0), hearth->hi = simd_make_float3(3, 2, 4);
+        const ObjectId fireplace = f.vm.createObject(kObjGroup).id;
+        host.addPickBox(fireplace, hearth->lo, hearth->hi, matrix_identity_float4x4, hearth);
+        check(host.pick(eye, ray(0.05f)) == mailbox, "pick: a small object beside the ray beats a big one behind it");
+        check(host.pick(eye, ray(0.6f)) == fireplace, "pick: the big one where the ray misses the small one");
+        host.removePickBox(fireplace);
         // A Sim out of the world (at work) takes no orders: no pie menu opens.
         host.setSim(f.me->id);
         host.simAway = [&](ObjectId s) { return s == f.me->id; };

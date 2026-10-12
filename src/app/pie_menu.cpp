@@ -637,8 +637,14 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin0, simd_float3 dir0) const {
             f(b);
     });
     nearest(objects);
-    if (best || simd_length(dir0) == 0)
+    if (simd_length(dir0) == 0)
         return best;
+    // A big neighbour that the exact ray hit (a fireplace) must not beat a
+    // small object (a wall phone) at the mouse's side that is as near or
+    // nearer: pass 2 also runs then, and wins within `kNearSlack`.
+    const vm::ObjectId exact = best;
+    const float exactT = exact ? bestT : 0.0f;
+    constexpr float kNearSlack = 0.25f; // m; inferred
     // Pass 2: the ring of rays (8 around the mouse's, a pick radius of
     // kPickTolerance pixels at the object's distance), the nearest hit wins.
     tolerant = true;
@@ -655,12 +661,12 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin0, simd_float3 dir0) const {
         // ray's, in the plane across the ray at distance t from the eye.
         dir = simd_normalize(dir0 + (side * std::cos(a) + up * std::sin(a)) * kPickTolerance);
         best = 0;
-        bestT = floorT ? *floorT + 0.05f : std::numeric_limits<float>::max();
+        bestT = exact ? exactT + kNearSlack : floorT ? *floorT + 0.05f : std::numeric_limits<float>::max();
         nearest(objects);
         if (best && bestT < bestAll)
             bestAll = bestT, found = best;
     }
-    return found;
+    return found ? found : exact;
 }
 
 std::optional<simd_float3> PieMenuHost::anchor(vm::ObjectId id) const {
