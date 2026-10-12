@@ -60,6 +60,13 @@ jogo). Corrigido em `LotCamera::projection` e na câmera das cinemáticas
 (`CasMode::makeCamera`) é nossa e fica com o seu FOV vertical
 (`CameraDef::verticalFov`).
 
+**Lateralidade** (rodada 15): o mundo do jogo é destro com Z para cima,
+como o do código. Provas: no esqueleto `auskel` o Sim olha para +Y e os
+ossos `r_` ficam em +X (os `l_` em −X), o que só é a direita de quem olha
+para +Y num sistema destro; a planta dos lotes bate com as miniaturas do
+próprio jogo; o reflexo dos espelhos é montado por
+`RightHandedReflectionTransform` (BV `0xcf9cd4`).
+
 ### 1.2 Suavização (binário, `FUN_008c77d4` escalar, `FUN_008c78a0` ângulo, `FUN_008c7c64` vetor)
 
 Cada valor animado tem (passos N, mínimo m) e a cada atualização com Δt:
