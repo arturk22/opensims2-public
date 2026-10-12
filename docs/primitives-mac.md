@@ -2878,7 +2878,7 @@ N001_Lot68 de 137 para 45).
   arquivos de personagem). O opensims2 só carregava as dos Sims do lote:
   dono 0x26 ("neighbor N has no definition") e Test Object Type falhavam e
   as visitas não vinham. Agora um GUID sem OBJD é procurado uma vez entre
-  os arquivos de personagem do bairro (`vm::useCharacterFiles`).
+  os arquivos de personagem do bairro (`vm::useCharacterFiles`). Só o dono 0x26 e o sweep usam isso (`characterDefinition`): em toda busca por GUID trazia as visitas e expunha um laço no N001_Lot36 (TODO).
 
 ### Motivos do PERS
 
