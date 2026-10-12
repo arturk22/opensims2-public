@@ -136,6 +136,7 @@
 #include <chrono>
 #include <thread>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -337,6 +338,19 @@ bool reflectionsOn() {
 bool perfOn() {
     static const bool on = std::getenv("OS2_PERF") != nullptr;
     return on;
+}
+// OS2_LIVE_SHOT=<file.png>: each SIGUSR1 saves the next frame the window
+// draws (the scene and its UI, at the drawable's size) to that file, for
+// live QA when a screen capture of the window is not possible.
+volatile std::sig_atomic_t gLiveShotWanted = 0;
+const char* liveShotFile() {
+    static const char* file = [] {
+        const char* f = std::getenv("OS2_LIVE_SHOT");
+        if (f && *f)
+            std::signal(SIGUSR1, [](int) { gLiveShotWanted = 1; });
+        return f && *f ? f : nullptr;
+    }();
+    return file;
 }
 void perfLap(const char* what) {
     static CFTimeInterval last = CACurrentMediaTime();
@@ -4758,6 +4772,14 @@ void unloadScene() {
         return;
     _renderer->setReflections(reflectionsOn());
     _renderer->draw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable, frame);
+    if (const char* shot = liveShotFile(); shot && gLiveShotWanted) {
+        gLiveShotWanted = 0;
+        const MTLClearColor c = view.clearColor;
+        os2::writePng(shot, _renderer->capture(uint32_t(gLastFrameW), uint32_t(gLastFrameH), frame,
+                                               simd_make_float4(float(c.red), float(c.green), float(c.blue), 1)));
+        std::printf("opensims2: live shot %s\n", shot);
+        std::fflush(stdout);
+    }
     if (perfOn()) {
         const CFTimeInterval spent = CACurrentMediaTime() - perf.began - perf.waited;
         perf.total += spent, perf.worst = std::max(perf.worst, spent);
@@ -6156,6 +6178,7 @@ static void printUsage() {
 }
 
 int main() {
+    liveShotFile(); // (installs its SIGUSR1 handler before anything can send one)
     @autoreleasepool {
         for (NSString* a in NSProcessInfo.processInfo.arguments)
             if ([a isEqualToString:@"--help"] || [a isEqualToString:@"-h"]) {
