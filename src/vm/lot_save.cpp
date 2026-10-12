@@ -9,6 +9,7 @@
 #include "formats/binreader.hpp"
 #include "interactions.hpp"
 #include "save_types.hpp"
+#include "thread_state.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -62,9 +63,11 @@ void captureFrames(VM& vm, const LotObjects& saved, const Thread& t, LotObjects:
         };
         fit(x.params, f.params, was ? was->params.size() : f.behavior ? f.behavior->argCount : 0);
         fit(x.locals, f.locals, was ? was->locals.size() : f.behavior ? f.behavior->localCount : 0);
+        // The stack element's primitive state (an Animate Sim's request ID,
+        // Generic Sims Call's family, ...): the VM keeps it per frame.
+        x.primitiveState = f.primitiveState;
         if (was) {
             // What the VM does not keep comes from the frame as read.
-            x.primitiveState = was->primitiveState;
             x.behaviorSaveType = was->behaviorSaveType;
             if (!was->runningOn && !was->runningObject)
                 x.runningOn = x.runningObject = 0; // a version without them
@@ -410,6 +413,71 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
                     diff(at + "person data " + std::to_string(i));
             if (x.person->motives != y->person->motives)
                 diff(at + "motives " + join(x.person->motives) + " vs " + join(y->person->motives));
+        }
+        // The VM's own thread state (thread_state.hpp: routing frames, the
+        // route walked).
+        if (bool(x.route) != bool(y->route) || (x.route && x.route->waiting != y->route->waiting))
+            diff(at + "route " + (x.route ? (x.route->waiting ? "waiting" : "walking") : "none") + " vs " +
+                 (y->route ? (y->route->waiting ? "waiting" : "walking") : "none"));
+        if (const auto sx = writeThreadState(a, x), sy = writeThreadState(b, *y); sx != sy) {
+            size_t k = 0;
+            if (sx && sy)
+                while (k < sx->size() && k < sy->size() && (*sx)[k] == (*sy)[k])
+                    ++k;
+            if (std::getenv("OS2_DEBUG_ROUTE_DIFF")) // both routes, for looking into the difference
+                for (const Object* q : {&x, y}) {
+                    std::fprintf(stderr, "route of %d:", q->id);
+                    if (q->route) {
+                        for (const auto& g : q->route->goals)
+                            std::fprintf(stderr, " goal(%.3f,%.3f,%.1f)", g[0], g[1], g[2]);
+                        for (const auto& pt : q->route->points)
+                            std::fprintf(stderr, " (%.3f,%.3f)", pt.x, pt.y);
+                    }
+                    if (q->route) {
+                        const auto& l = q->route->loco;
+                        std::fprintf(stderr, " loco k%d mv%d %s ser%u sw%.6f stw%.6f ov%.6f t%d/%d lead%.6f d%.6f sp%.6f f(%.6f,%.6f) h%.6f tu%.6f et%.6f cy%.6f cs%.6f seg%zu tk%zu arc%.6f layers%zu blocked%d pauses%d check%d last%llu", int(l.kind), l.moving, l.animation.c_str(), l.serial, l.strideWeight, l.stopWeight, l.overlap, l.tick, l.ticks, l.lead, l.distance, l.speed, l.fx, l.fy, l.heading, l.turn, l.endTurn, l.cycle, l.cycleStart, l.segment, l.taken, l.arc, l.layers.size(), q->route->blockedTicks, q->route->pauses, q->route->check, (unsigned long long)q->route->lastCheck);
+                        for (const auto& y : l.layers)
+                            std::fprintf(stderr, " [%s w%.6f r%.6f f%.6f]", y.animation.c_str(), y.weight, y.rate, y.fade);
+                    }
+                    std::fprintf(stderr, " pos (%.4f,%.4f)\n", q->position.x, q->position.y);
+                }
+            diff(at + "routing state (frames or route; " + std::to_string(sx ? sx->size() : 0) + " vs " +
+                 std::to_string(sy ? sy->size() : 0) + " bytes, from byte " + std::to_string(k) + ")");
+        }
+        // The Animate Sim playing (resumed from the Sim's animation queue).
+        if (x.animation.playing() != y->animation.playing() || x.animation.name != y->animation.name ||
+            (x.animation.playing() && x.animation.requestId && (x.animation.ticksLeft != y->animation.ticksLeft ||
+                                       x.animation.playedTicks != y->animation.playedTicks ||
+                                       x.animation.pendingEvents != y->animation.pendingEvents)))
+            diff(at + "animation " + (x.animation.playing() ? x.animation.name + " " + std::to_string(x.animation.ticksLeft) + " " + std::to_string(x.animation.playedTicks) + "/" + std::to_string(x.animation.pendingEvents.size()) : "none") +
+                 " vs " + (y->animation.playing() ? y->animation.name + " " + std::to_string(y->animation.ticksLeft) + " " + std::to_string(y->animation.playedTicks) + "/" + std::to_string(y->animation.pendingEvents.size()) : "none"));
+        {
+            auto overlays = [](const Object& o) {
+                std::string s;
+                for (const auto& v : o.animation.overlays) {
+                    // Where its event tree runs counts only with one.
+                    s += " " + v.name + "@" + std::to_string(v.played) + "x" + std::to_string(v.loops) + "/" +
+                         std::to_string(v.pending.size()) + (v.blendOutSent ? "b" : "");
+                    if (v.eventTree)
+                        s += ":" + std::to_string(v.me) + "," + std::to_string(v.codeOwner) + "," +
+                             std::to_string(v.stackObject) + "," + std::to_string(v.eventTree);
+                }
+                for (const auto& v : o.animation.overlayEvents) {
+                    s += " events " + v.name + "@" + std::to_string(v.played) + "/" + std::to_string(v.pending.size()) +
+                         ":" + std::to_string(v.me) + "," + std::to_string(v.codeOwner) + "," +
+                         std::to_string(v.stackObject) + "," + std::to_string(v.eventTree);
+                }
+                return s;
+            };
+            // Poses an object holds (no loops, no event tree) are lost when
+            // its scene graph record has no animation queue to keep them in
+            // (a bare cObject, as the game's lots have for the food dishes):
+            // those are not compared.
+            const bool posesOnly = !x.person && y->animation.overlays.empty() && x.animation.overlayEvents.empty() &&
+                                   std::all_of(x.animation.overlays.begin(), x.animation.overlays.end(),
+                                               [](const Overlay& v) { return v.loops <= 0 && !v.eventTree; });
+            if (const auto ox = overlays(x), oy = overlays(*y); ox != oy && !posesOnly)
+                diff(at + "overlays" + ox + " vs" + oy);
         }
         if (x.arrays.size() != y->arrays.size())
             diff(at + "array count");

@@ -140,6 +140,7 @@ public:
     std::function<bool(size_t portal, bool forward)> portalLocked;
     // Seeds the A*'s noise (the binary's generator: seed * 0x278DDE6D).
     void seed(uint32_t s) { noise_ = s ? s : 1; }
+    uint32_t noise() const { return noise_; }
 
     // The cells' bits at a point (kNoFloor out of the lot).
     uint8_t at(int level, Point2 p) const;

@@ -764,6 +764,12 @@ struct Frame {
     // A route callback tree (pre/post-route, goal check, along route,
     // portal) the routing pushed: routes inside it are not base routes.
     bool routeCallback = false;
+    // A routing instruction resumed from a save in the middle of its walk
+    // (resumeRoutes): it plans the way again from where the walker stands,
+    // to the same goals, without the pre-route tree (the game's route,
+    // cTSRoute::LoadFromStream BV 0x4736bc, keeps no way either: it makes
+    // its goal list again, CreateBestGoalPointList).
+    bool routeResume = false;
     // The running primitive's own state across ticks (the stack element's
     // primitive state in the game, cITSTreeStackElem vtable 0x48/0x4C);
     // cleared when the frame moves to another node.
@@ -1083,6 +1089,10 @@ public:
     } clock;
     void setClockGlobals(); // also Time Of Day (global 4) from the hour
     uint64_t ticks = 0;
+    // The animation request counter (the game's DAT_02779c34): each Animate
+    // Sim takes the next for its request ID; saved in the Sims' animation
+    // queues.
+    uint32_t animationCounter = 0;
     // One tick: the clock, the objects' timers, then a turn of every Main
     // thread, then contained objects move to their (outermost) container's position.
     void tick();
@@ -1321,6 +1331,23 @@ int16_t timeOfDay(int hour);
 void registerPrimitives(VM& vm);
 // The primitives that place and move objects in the world (routing.cpp).
 void registerRoutingPrimitives(VM& vm);
+// A thread resumed from a save (lot_resume.hpp): the frame state of a
+// routing instruction (Go To Routing Slot, Go To Relative Position) that was
+// walking, or waiting on one of its route trees, is not saved (the game's
+// stack elements keep none): it is made again from the stack. A routing
+// instruction at the top was walking: it plans again from where the walker
+// stands (Frame::routeResume). One under a frame waits on the tree it ran:
+// the pre-route tree (its result then goes on as it would), the failure
+// feedback (the failure, its parameter 0, goes on to the post-route tree),
+// the post-route tree (after an arrival with result 0, else a failure), or
+// a tree of the walk (goal check, along route, portal, route blocked: when
+// it returns, the way is planned again). Returns how many it resumed.
+size_t resumeRoutes(VM& vm, Thread& t);
+// The path planner's A* noise as the next plan starts from it (1 for a
+// planner not built yet), and that state given to the planner of the world
+// as it is now (a lot resumed from the VM's own record, thread_state.hpp).
+uint32_t plannerNoise(VM& vm);
+void restorePlannerNoise(VM& vm, uint32_t noise);
 // The primitives that need the neighborhood (hood_bridge.cpp).
 void registerNeighborhoodPrimitives(VM& vm);
 // Get Distance To and Get Direction To (measure.cpp).

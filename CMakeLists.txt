@@ -23,6 +23,7 @@ target_compile_options(os2_speex PRIVATE -w)
 add_library(os2_formats
   src/formats/anim.cpp
   src/formats/anim_player.cpp
+  src/formats/scene_anim.cpp
   src/formats/audio.cpp
   src/formats/audio_spx.cpp
   src/formats/bhav.cpp
@@ -113,6 +114,7 @@ add_library(os2_vm
   src/vm/lot_neighborhood.cpp
   src/vm/lot_records.cpp
   src/vm/lot_resume.cpp
+  src/vm/thread_state.cpp
   src/vm/lot_save.cpp
   src/vm/measure.cpp
   src/vm/message.cpp

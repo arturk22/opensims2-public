@@ -209,6 +209,14 @@ struct AnimationState {
     int16_t eventObject = 0; // the event tree's parameter 1 (animation.cpp)
     float headingOffset = 0;  // the request's heading offset, radians (byte 8 bit 0x04: temp 4)
     float playedTicks = 0, ticksPerVmTick = 0;
+    float speed = 1; // Animate Sim's speed (byte 3 / 32, or temp 2)
+    // The game's animation request ID (cIAnimRequest +0x08) of the Animate
+    // Sim playing, also its stack frame's primitive state (try_animate_sim,
+    // BV 0x69d634: 0x40000000 | 1 when flipped | the request counter's low
+    // byte << 21); 0 for an animation of another primitive. A save writes
+    // the request into the Sim's animation queue (formats/scene_anim.hpp),
+    // and the reload goes on from it (resumeAnimateSim).
+    uint32_t requestId = 0;
 
     // Animations that play over the object without blocking (Animate
     // Overlay on a Sim or an object, Animate Object), oldest first; Animate
@@ -251,6 +259,45 @@ struct AnimationState {
     // Effects started on the object (Effect Stop/Start), for the renderer.
     std::vector<ActiveEffect> effects;
 };
+
+// An Animate Sim saved while it played (its request in the Sim's animation
+// queue, formats/scene_anim.hpp): the reloaded Sim's resumed stack, whose
+// top frame waits on the Animate Sim with that request ID as its primitive
+// state, goes on from where it was: the same animation, the time played,
+// the events not reached yet, the ticks left. False when it does not fit
+// (the primitive then starts the animation again).
+struct ResumedAnimation {
+    uint32_t id = 0;
+    std::string name; // without "_anim"
+    float played = 0; // animation ms
+    float speed = 1, weight = 1, heading = 0;
+    bool mirrored = false;
+    int level = 0;
+    int16_t target = 0; // the event tree's parameter 1
+};
+class VM;
+struct Thread;
+struct Object;
+bool resumeAnimateSim(VM& vm, Thread& t, const ResumedAnimation& r);
+// An overlay saved while it played (an Animate Overlay's or Animate
+// Object's request in the object's animation queue): back on `target` with
+// the time played, its loops, the events of the loop it is in not reached
+// yet, and its event tree's context.
+struct ResumedOverlay {
+    std::string name;
+    int8_t oeType = oetype::Normal, level = animlevel::Carry;
+    int loops = 0;
+    float played = 0, speed = 1, heading = 0;
+    bool mirrored = false;
+    int16_t ikObject = 0;
+    uint16_t eventTree = 0;
+    int16_t me = 0, codeOwner = 0, stackObject = 0;
+};
+void resumeOverlay(VM& vm, Object& target, const ResumedOverlay& r);
+// An Animate Object's event tree, back with the animation's events not
+// reached yet (AnimationState::overlayEvents).
+void resumeOverlayEvents(VM& vm, Object& target, const std::string& name, uint16_t tree, int16_t me,
+                         int16_t codeOwner, int16_t stackObject, float played, float speed);
 
 // What the locomotion needs of an animation (ANIM header, docs/routing-mac.md
 // §6.1): its length, how far its frame goes over the floor and how fast, how

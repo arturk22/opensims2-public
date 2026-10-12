@@ -533,6 +533,7 @@ Exit animateSim(Context& c) {
         runAnimationEvents(c, a, true);
         a.name.clear();
         a.tree = nullptr;
+        a.requestId = 0;
         return Exit::True;
     }
     const auto& o = c.instruction.operands;
@@ -563,7 +564,13 @@ Exit animateSim(Context& c) {
     } catch (const VMError&) {
     }
     a.playedTicks = 0;
-    a.ticksPerVmTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
+    a.speed = animationSpeed(c);
+    a.ticksPerVmTick = float(1000.0 / c.vm.clock.ticksPerSecond) * a.speed;
+    // The request's ID, kept in the stack frame's primitive state
+    // (try_animate_sim: the counter goes up first; bit 0 when flipped).
+    ++c.vm.animationCounter;
+    a.requestId = (a.flipped ? 0x40000001u : 0x40000000u) | ((c.vm.animationCounter & 0xFFu) << 21);
+    c.frame.primitiveState = int32_t(a.requestId);
     if (a.ticksLeft > 0) {
         runAnimationEvents(c, a, false);
         return Exit::Yield;
@@ -571,6 +578,7 @@ Exit animateSim(Context& c) {
     runAnimationEvents(c, a, true);
     a.name.clear();
     a.tree = nullptr;
+    a.requestId = 0;
     return Exit::True;
 }
 
@@ -1025,6 +1033,84 @@ float walkTilesPerTick(VM& vm, const Object& sim) {
         if (const float v = gaitOf(vm, sim).speed; v > 0)
             return v / float(vm.clock.ticksPerSecond);
     return vm.walkTilesPerTick;
+}
+
+bool resumeAnimateSim(VM& vm, Thread& t, const ResumedAnimation& r) {
+    Object* me = vm.object(t.me);
+    if (!me || t.stack.empty() || r.name.empty())
+        return false;
+    Frame& f = t.stack.back();
+    if (!f.behavior || f.pc >= f.behavior->instructions.size() || f.behavior->instructions[f.pc].opcode != 0x6A ||
+        uint32_t(f.primitiveState) != r.id)
+        return false;
+    const auto seconds = library(vm).seconds(r.name);
+    if (!seconds)
+        return false;
+    AnimationState& a = me->animation;
+    const float speed = r.speed > 0 ? r.speed : 1.0f;
+    a.name = r.name;
+    ++a.serial;
+    a.flipped = r.mirrored;
+    a.level = int8_t(std::clamp(r.level, 0, 8));
+    a.weight = r.weight <= 0 || r.weight > 1 ? 1.0f : r.weight;
+    a.speed = speed;
+    a.ticksPerVmTick = float(1000.0 / vm.clock.ticksPerSecond) * speed;
+    // The VM ticks it had played: its played time in ticks (the float the
+    // ticks added up to, so the ticks left come out as they were).
+    const int played = int(std::lround(r.played / a.ticksPerVmTick));
+    a.ticksLeft = std::max(ticksFor(vm, *seconds / speed) - played, 1);
+    a.depth = t.stack.size(), a.tree = f.behavior, a.node = f.pc;
+    a.pendingEvents.clear();
+    for (const auto& e : library(vm).treeEvents(r.name))
+        if (float(e.first) > r.played)
+            a.pendingEvents.push_back(e);
+    a.eventTree = le16(&f.behavior->instructions[f.pc].operands[4]);
+    a.headingOffset = r.heading;
+    a.eventObject = r.target;
+    a.playedTicks = r.played;
+    a.requestId = r.id;
+    return true;
+}
+
+void resumeOverlay(VM& vm, Object& target, const ResumedOverlay& r) {
+    if (r.name.empty())
+        return;
+    Overlay& o = target.animation.addOverlay(r.name);
+    o.oeType = r.oeType;
+    o.level = r.level;
+    o.flipped = r.mirrored;
+    o.ikObject = r.ikObject;
+    o.headingOffset = r.heading;
+    o.eventTree = r.eventTree;
+    o.me = r.me, o.codeOwner = r.codeOwner, o.stackObject = r.stackObject;
+    o.length = library(vm).seconds(r.name).value_or(0) * 1000.0f;
+    o.loops = o.length > 0 && r.loops > 0 ? r.loops : 0;
+    o.perTick = float(1000.0 / vm.clock.ticksPerSecond) * (r.speed > 0 ? r.speed : 1.0f);
+    o.played = r.played;
+    if (o.loops > 0) {
+        // The events of the loop it is in not reached yet (tickOverlayEvents).
+        const float inPlay = std::fmod(o.played, o.length);
+        for (const auto& e : library(vm).treeEvents(r.name))
+            if (float(e.first) > inPlay)
+                o.pending.push_back(e);
+        o.blendOutSent = o.played >= o.length * float(o.loops) - kBlendTicks;
+    }
+    ++target.animation.overlaySerial;
+}
+
+void resumeOverlayEvents(VM& vm, Object& target, const std::string& name, uint16_t tree, int16_t me,
+                         int16_t codeOwner, int16_t stackObject, float played, float speed) {
+    AnimationState::OverlayEvents ev;
+    ev.name = name;
+    ev.me = me, ev.codeOwner = codeOwner, ev.stackObject = stackObject;
+    ev.eventTree = tree;
+    for (const auto& e : library(vm).treeEvents(name))
+        if (float(e.first) > played)
+            ev.pending.push_back(e);
+    ev.length = library(vm).seconds(name).value_or(0) * 1000.0f;
+    ev.perTick = float(1000.0 / vm.clock.ticksPerSecond) * (speed > 0 ? speed : 1.0f);
+    ev.played = played;
+    target.animation.overlayEvents.push_back(std::move(ev));
 }
 
 void registerAnimationPrimitives(VM& vm) {

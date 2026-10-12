@@ -299,9 +299,35 @@ int cmdLotSave(const std::vector<std::string>& args) {
     size_t continued = 0;
     if (continueTicks > 0) {
         b.vm->random = a.vm->random;
+        // OS2_CONTINUE_WATCH=id:motive: the instruction before each change of
+        // that Sim's motive, in both.
+        if (const char* w = std::getenv("OS2_CONTINUE_WATCH")) {
+            int wid = 0, wm = 0;
+            std::sscanf(w, "%d:%d", &wid, &wm);
+            for (vm::VM* m : {a.vm.get(), b.vm.get()}) {
+                auto last = std::make_shared<std::pair<int16_t, std::string>>(0, "");
+                m->trace = [m, wid, wm, last, first = m == a.vm.get()](const vm::Thread& t, const vm::Frame& f, const auto& in) {
+                    const vm::Object* o = m->object(vm::ObjectId(wid));
+                    if (!o || !o->person)
+                        return;
+                    const int16_t v = o->person->motives[size_t(wm)];
+                    if (v != last->first)
+                        std::printf("    watch %s t%llu: %d -> %d after %s\n", first ? "first" : "second",
+                                    (unsigned long long)m->ticks, last->first, v, last->second.c_str());
+                    last->first = v;
+                    last->second = std::to_string(t.me) + " " + (f.behavior ? f.behavior->fileName : "?") + " #" +
+                                   std::to_string(f.pc) + " op " + std::to_string(in.opcode);
+                };
+            }
+        }
         long at = -1;
         std::vector<std::string> later;
-        for (long i = 1; i <= continueTicks && at < 0; ++i) {
+        // OS2_CONTINUE_ALL=1: run all N ticks (not to the first difference)
+        // and print every game minute how many differences there are, then
+        // the last ones (a resumed walk plans its way again: does it come
+        // back to the same?).
+        const bool all = std::getenv("OS2_CONTINUE_ALL") != nullptr;
+        for (long i = 1; i <= continueTicks && (at < 0 || all); ++i) {
             a.vm->tick();
             b.vm->tick();
             // OS2_CONTINUE_TRACE=id: that object's tree stack in both, each tick.
@@ -319,12 +345,22 @@ int cmdLotSave(const std::vector<std::string>& args) {
                         }
                     std::printf("\n");
                 }
-            if (auto d = vm::compareLotState(*a.vm, *b.vm); !d.empty())
-                    at = i, later = std::move(d);
+            auto d = vm::compareLotState(*a.vm, *b.vm);
+            if (all && i % a.vm->clock.ticksPerMinute == 0)
+                std::printf("    tick %ld: %zu differences\n", i, d.size());
+            if (!d.empty() && at < 0)
+                at = i;
+            if (!d.empty() || !all)
+                later = std::move(d);
+            else if (all)
+                later.clear();
         }
         continued = later.size();
         if (at < 0)
             std::printf("  then %ld ticks more in both: the same\n", continueTicks);
+        else if (all && later.empty())
+            std::printf("  then %ld ticks more in both: differ from tick %ld, the same again at the end\n",
+                        continueTicks, at);
         else
             std::printf("  then %ld ticks more in both: differ from tick %ld:\n", continueTicks, at);
         for (const auto& d : later)

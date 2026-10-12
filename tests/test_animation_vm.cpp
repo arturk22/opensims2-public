@@ -4,6 +4,9 @@
 #include "vm/locomotion.hpp"
 #include "vm/sim_motion.hpp"
 #include "vm/vm.hpp"
+#include "vm/thread_state.hpp"
+#include "formats/binwriter.hpp"
+#include "formats/scene_anim.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -588,6 +591,128 @@ static void testAnimationHeadingSnaps() {
           "standing: it turns towards the direction");
 }
 
+// A save in the middle of an Animate Sim: the request ID it keeps in its
+// stack frame's primitive state (try_animate_sim: 0x40000000 | the
+// counter's low byte << 21), and a reload that goes on from the time played
+// (resumeAnimateSim): the same events at the same ticks, the same end.
+static void testResumeAnimateSim() {
+    auto setup = [](CodeLibrary& code, VM& vm) -> Object& {
+        addGlobals(code, vm);
+        vm.animations.addTreeEvent("a-blockedPath-long", 250, 7);
+        vm.animations.addTreeEvent("a-blockedPath-long", 499, 5);
+        Behavior ev = tree({instr(0x02, T, E, {0, 0, 0, 0, 0, 3, 0x00, 0x09})});
+        ev.argCount = 5;
+        code.add(kGroup, 0x1005, ev);
+        code.add(kGroup, 0x1006, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0x05, 0x10, 0x80})}));
+        Object& s = sim(vm, 1.5f, 1.5f);
+        s.attributes.assign(1, 0);
+        return s;
+    };
+    CodeLibrary codeA, codeB;
+    VM a(codeA), b(codeB);
+    Object& sa = setup(codeA, a);
+    Object& sb = setup(codeB, b);
+    a.animationCounter = 0x4F;
+    Thread ta = a.start(sa.id, 0x1006);
+    for (int i = 0; i < 10; ++i)
+        a.run(ta);
+    const AnimationState& an = sa.animation;
+    check(an.requestId == (0x40000000u | (0x50u << 21)) && uint32_t(ta.stack.back().primitiveState) == an.requestId,
+          "Animate Sim's request ID, in its frame's primitive state");
+    check(sa.attributes[0] == 7 && an.pendingEvents.size() == 1, "saved after its first event");
+    // What the save writes and the reload reads (scene_anim.hpp).
+    AnimSimRequest w;
+    w.id = an.requestId, w.name = an.name, w.level = an.level, w.played = an.playedTicks, w.speed = an.speed;
+    w.length = 500, w.current = 1000, w.eventTree = an.eventTree;
+    BinWriter rec;
+    rec.raw(std::vector<uint8_t>(64, 0));
+    rec.u32(0x7D4F2BB8), rec.u32(0x10), rec.str7("cAnimatable");
+    rec.u32(0xFA1C39F7), rec.u32(0x11), rec.str7("cObject");
+    rec.str7(""), rec.u32(0);                     // no model
+    for (int i = 0; i < 6; ++i) rec.f32(0);
+    rec.f32(1), rec.u32(0), rec.u32(0);           // pose, no nodes, no blends
+    rec.f32(1), rec.u32(0);                       // stretch, no node
+    rec.u32(0x4F), rec.u32(0), rec.u32(0x7FFFFF00), rec.u32(0x7FFFFF00), rec.f32(0.5f), rec.u32(0), rec.u32(0);
+    for (int i = 0; i < 6; ++i) rec.f32(0);
+    rec.f32(1), rec.u32(0);                       // transform, no requests
+    const auto empty = readSceneAnimatable(rec.bytes());
+    check(empty && empty->requests.empty() && empty->counter == 0x4F, "an empty animation queue reads");
+    const auto withOne = withSceneRequests(rec.bytes(), *empty, {writeAnimSimRequest(w)}, a.animationCounter);
+    const auto queue = readSceneAnimatable(withOne);
+    check(queue && queue->requests.size() == 1 && queue->counter == 0x50 && queue->end == withOne.size(),
+          "the request written reads back to the record's end");
+    const SceneAnimRequest& q = queue->requests.at(0);
+    check(q.blocking() && q.id == an.requestId && q.name == "a-blockedPath-long" &&
+              q.animation == "a-blockedPath-long_anim" && q.channel == "sil" && q.played == an.playedTicks &&
+              q.oeType == 2 && q.loops == 1 && q.choreoVersion == 1,
+          "an Animate Sim's request as the base game writes it");
+    // The reload: the same stack, waiting on that Animate Sim.
+    Thread tb = b.start(sb.id, 0x1006);
+    tb.stack.back().primitiveState = int32_t(q.id);
+    sb.attributes[0] = 7;
+    ResumedAnimation r;
+    r.id = q.id, r.name = q.name, r.played = q.played, r.speed = q.speed, r.level = int(q.priority);
+    check(resumeAnimateSim(b, tb, r), "the reload goes on from the request");
+    check(sb.animation.ticksLeft == sa.animation.ticksLeft && sb.animation.pendingEvents == sa.animation.pendingEvents,
+          "the same ticks left and events not reached");
+    int ticks = 0;
+    while (ta.status == Thread::Status::Running && ticks < 50) {
+        a.run(ta), b.run(tb), ++ticks;
+        check(sa.attributes[0] == sb.attributes[0], "the events come at the same ticks");
+    }
+    check(ta.status == Thread::Status::Finished && tb.status == Thread::Status::Finished && sb.attributes[0] == 12,
+          "both end on the same tick, every event run once");
+    r.id ^= 1;
+    Thread tc = b.start(sb.id, 0x1006);
+    tc.stack.back().primitiveState = int32_t(q.id);
+    check(!resumeAnimateSim(b, tc, r), "a request of another ID is not this Animate Sim's");
+}
+
+// The VM's own thread state (thread_state.hpp): a routing frame's state and
+// the route walked come back on the same stack, not on another.
+static void testThreadState() {
+    CodeLibrary code;
+    VM vm(code);
+    addGlobals(code, vm);
+    Object& s = sim(vm, 1.5f, 1.5f);
+    code.add(kGroup, 0x1007, tree({instr(0x2D, T, F, {0, 0, 1, 0, 0}), instr(0x02, T, E, {})}));
+    vm.threads[s.id] = vm.start(s.id, 0x1007);
+    Thread& t = vm.threads[s.id];
+    Frame& f = t.stack.back();
+    f.preRouteRan = true, f.routeSlot = 2, f.pendingRouteResult = 5, f.postRoute = 2;
+    Object::Route r;
+    r.points.push_back({});
+    r.points.back().x = 3.5f, r.points.back().y = 4.25f, r.points.back().animation = "a-stairs-up";
+    r.goals.push_back({3.5f, 4.25f, 1.0f});
+    r.loco.kind = Object::Route::Loco::Walk, r.loco.cycle = 0.375f, r.loco.layers.push_back({"a-walk", 0.5f});
+    r.loco.curve = std::make_shared<const LocoCurve>(1.5f, 1.5f, std::vector<std::array<float, 2>>{{2.5f, 2.5f}, {3.5f, 4.25f}});
+    r.lastCheck = 77, r.depth = 1, r.tree = f.behavior, r.node = f.pc;
+    s.route = r;
+    s.managedDestination = true;
+    const auto bytes = writeThreadState(vm, s);
+    check(bytes.has_value(), "a thread with routing state has a record");
+    // Another VM: the same stack, nothing of it.
+    CodeLibrary code2;
+    VM vm2(code2);
+    addGlobals(code2, vm2);
+    Object& s2 = sim(vm2, 1.5f, 1.5f);
+    code2.add(kGroup, 0x1007, tree({instr(0x2D, T, F, {0, 0, 1, 0, 0}), instr(0x02, T, E, {})}));
+    vm2.threads[s2.id] = vm2.start(s2.id, 0x1007);
+    check(applyThreadState(vm2, s2, *bytes), "it fits the same stack");
+    const Frame& g = vm2.threads[s2.id].stack.back();
+    check(g.preRouteRan && g.routeSlot == 2 && g.pendingRouteResult == 5 && g.postRoute == 2,
+          "the routing frame's state");
+    check(s2.route && s2.route->points.size() == 1 && s2.route->points[0].animation == "a-stairs-up" &&
+              s2.route->loco.cycle == 0.375f && s2.route->loco.curve &&
+              s2.route->loco.curve->total() == r.loco.curve->total() && s2.route->tree == g.behavior &&
+              s2.managedDestination,
+          "the route, its locomotion and curve, the destination flag");
+    check(writeThreadState(vm2, s2) == bytes, "written again: the same bytes");
+    vm2.threads[s2.id].stack.back().pc = 1;
+    s2.route.reset();
+    check(!applyThreadState(vm2, s2, *bytes) && !s2.route, "not on another stack");
+}
+
 int main() {
     testAnimationHeadingSnaps();
     testVehicleDrive();
@@ -599,6 +724,8 @@ int main() {
     testOverlayLevels();
     testScriptedWalk();
     testGait();
+    testResumeAnimateSim();
+    testThreadState();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

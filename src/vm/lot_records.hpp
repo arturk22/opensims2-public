@@ -25,6 +25,8 @@ namespace os2::vm {
 //   × direction), the rest kept; and of each object created during play, a
 //   copy of a cObject of the same definition from another lot
 //   (`templatePackages`), moved there;
+//   A Sim's record also gets the Animate Sim it plays in its animation
+//   queue (formats/scene_anim.hpp), as the game's cAnimatable saves it;
 // - the routing state (0xBC66BAEC, instance = object ID) of each Sim
 //   created during play: an idle one (no route, as the game writes for a
 //   standing Sim);
@@ -42,6 +44,8 @@ struct RecordsResult {
     size_t sceneMoved = 0, sceneNew = 0, routing = 0, relationshipsChanged = 0, relationshipsNew = 0,
            relationshipsGone = 0;
     size_t people = 0; // of sceneNew: cPerson records made for Sims that had none
+    size_t animations = 0; // records whose animation queue was rewritten (what the object plays)
+    size_t threadStates = 0; // the VM's own thread states written (thread_state.hpp)
     std::vector<std::string> warnings;
 };
 RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, const LotObjects& before,

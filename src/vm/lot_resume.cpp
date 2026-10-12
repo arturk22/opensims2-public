@@ -9,6 +9,7 @@
 #include "formats/lot_objects.hpp"
 #include "interactions.hpp"
 #include "vm.hpp"
+#include "thread_state.hpp"
 #include "formats/strings.hpp"
 
 #include <algorithm>
@@ -343,6 +344,9 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
                 fr.params.resize(std::max<size_t>({fr.params.size(), behavior->argCount, 4}), 0);
                 fr.locals = f.locals;
                 fr.locals.resize(std::max<size_t>(fr.locals.size(), behavior->localCount), 0);
+                // The stack element's primitive state (an Animate Sim's
+                // request ID, Generic Sims Call's family, ...).
+                fr.primitiveState = f.primitiveState;
                 t.stack.push_back(std::move(fr));
             }
             if (problem.empty() && t.stack.size() <= kMaxStackDepth) {
@@ -365,6 +369,102 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
                 if (o->person)
                     out.queued += restoreSubQueue(vm, *o, *it->second);
             }
+    // The routing instructions that were walking go on: exactly, from the
+    // VM's own record (thread_state.hpp), else as the game's do, planning
+    // their way again (resumeRoutes).
+    for (ObjectId id : ids) {
+        if (!states.count(id))
+            continue;
+        const auto& extra = states.at(id)->vmThreadState;
+        if (!extra.empty() && applyThreadState(vm, *vm.object(id), extra))
+            ++out.threadStates;
+        else if (auto t = vm.threads.find(id); t != vm.threads.end())
+            out.routes += resumeRoutes(vm, t->second);
+    }
+    if (!saved.vmLotState.empty())
+        applyLotState(vm, saved.vmLotState);
+    // The Animate Sims that were playing go on from their requests in the
+    // Sims' animation queues (formats/scene_anim.hpp), now that the queues
+    // (which name the other Sim of a social animation) are back.
+    vm.animationCounter = std::max(vm.animationCounter, saved.animationCounter);
+    // The overlays (Animate Overlay's: the idles, the faces, the carry
+    // poses, whose event trees the idle system waits on; Animate Object's
+    // on objects, with their event trees).
+    for (ObjectId id : ids) {
+        auto it = states.find(id);
+        Object* o = vm.object(id);
+        if (it == states.end() || !o || it->second->animations.empty())
+            continue;
+        o->animation.overlays.clear();
+        o->animation.overlayEvents.clear();
+        for (const auto& q : it->second->animations) {
+            if (q.blocking())
+                continue;
+            ResumedOverlay r;
+            r.name = q.name;
+            r.oeType = int8_t(q.oeType);
+            r.level = int8_t(std::clamp<uint32_t>(q.priority, 0, 8));
+            r.loops = int(q.loops);
+            r.played = q.played;
+            r.speed = q.speed;
+            r.heading = q.heading;
+            r.mirrored = q.mirrored;
+            r.ikObject = int16_t(q.target);
+            r.eventTree = q.eventTree;
+            // Its event tree runs as the Sim whose tree started it: the VM
+            // keeps it in MovedObjectID when that is not this object
+            // (scene_anim.hpp; a game's save: this object, inferred).
+            r.me = int16_t(id);
+            if (q.movedObject && vm.object(ObjectId(q.movedObject)))
+                r.me = int16_t(q.movedObject);
+            r.stackObject = int16_t(q.stackObject);
+            const bool animateObject = q.channel == "obj";
+            if (animateObject)
+                r.ikObject = 0;
+            // The code whose event tree it runs: the object of the saved
+            // GUID (the stack object's or mine first; inferred: the request
+            // keeps the tree's object only by GUID).
+            r.codeOwner = int16_t(id);
+            if (const Object* so = vm.object(q.stackObject); so && so->guid() == q.objectGuid)
+                r.codeOwner = so->id;
+            else if (o->guid() != q.objectGuid)
+                for (const auto& [oid, x] : vm.objects())
+                    if (x.guid() == q.objectGuid) {
+                        r.codeOwner = oid;
+                        break;
+                    }
+            if (animateObject) {
+                r.level = animlevel::Object;
+                r.loops = 0; // played until stopped (animateObject)
+                const uint16_t tree = r.eventTree;
+                r.eventTree = 0;
+                resumeOverlay(vm, *o, r);
+                if (tree)
+                    resumeOverlayEvents(vm, *o, r.name, tree, r.me, r.codeOwner, r.stackObject, q.played, q.speed);
+            } else {
+                resumeOverlay(vm, *o, r);
+            }
+            ++out.overlays;
+        }
+    }
+    for (ObjectId id : ids)
+        if (auto it = states.find(id); it != states.end() && !it->second->animations.empty())
+            if (auto t = vm.threads.find(id); t != vm.threads.end() && !t->second.stack.empty())
+                for (const auto& q : it->second->animations)
+                    if (uint32_t(t->second.stack.back().primitiveState) == q.id) {
+                        ResumedAnimation r;
+                        r.id = q.id;
+                        r.name = q.name;
+                        r.played = q.played;
+                        r.speed = q.speed;
+                        r.weight = q.weight;
+                        r.heading = q.heading;
+                        r.mirrored = q.mirrored;
+                        r.level = int(q.priority);
+                        r.target = int16_t(q.target);
+                        out.animations += resumeAnimateSim(vm, t->second, r);
+                        break;
+                    }
     // The load entry point runs only when the object's version differs from
     // its definition's (the editor's description of OBJf entry 2).
     for (ObjectId id : ids) {

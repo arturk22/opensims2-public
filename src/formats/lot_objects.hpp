@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "scene_anim.hpp"
+
 namespace os2 {
 
 class DbpfPackage;
@@ -38,6 +40,8 @@ class DbpfPackage;
 //
 // The packages keep the states of objects that are gone (the persist DB does
 // not delete records): those are orphans no pair names, and are not read.
+constexpr uint32_t kVmThreadStateType = 0x4F533256; // "OS2V" (vm/thread_state.hpp)
+
 struct LotObjects {
     // A record of the objt (ObjectSaveTypeTable::Read/WriteSelector,
     // docs/save-mac.md §5): what the game checks a definition against when
@@ -195,6 +199,15 @@ struct LotObjects {
         std::vector<SavedInteraction> list5E0;
         uint32_t personU938 = 0, personU93C = 0;
 
+        // The animation requests (kind 1: a Sim's Animate Sim, the
+        // overlays, Animate Object's) in the object's scene graph record's
+        // animation queue (scene_anim.hpp; not part of this resource).
+        std::vector<SceneAnimRequest> animations;
+        // The VM's own state of the object's thread (vm/thread_state.hpp:
+        // routing frames, the route walked), a record of the VM's
+        // (kVmThreadStateType) beside the game's; empty when there is none.
+        std::vector<uint8_t> vmThreadState;
+
         // Bytes after what was read (none when the state reads through).
         std::vector<uint8_t> rest;
         // When the part after the object data does not read through: all of
@@ -207,6 +220,12 @@ struct LotObjects {
     };
 
     uint32_t version = 0; // of the object module; the states' layout depends on it
+    // The request counter of the Sims' animation queues (the largest; the
+    // game's is one global, DAT_02779c34, each queue saves it).
+    uint32_t animationCounter = 0;
+    // The VM's own lot state (vm/thread_state.hpp, instance 0 of
+    // kVmThreadStateType); empty when the lot has none.
+    std::vector<uint8_t> vmLotState;
     std::array<uint8_t, 64> moduleFileName{};
     uint32_t moduleZero = 0;
     // The ObjM pairs in their order: object ID (the u32 as saved), save type.

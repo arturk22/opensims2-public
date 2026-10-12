@@ -2749,6 +2749,11 @@ Exit walkStep(Context& c, ObjectId target, const std::function<VM::RouteGoals()>
         c.frame.postRoute = 0;
         return Exit::False;
     }
+    if (c.frame.routeResume) { // resumed from a save: plan again from here (resumeRoutes)
+        c.frame.routeResume = false;
+        c.thread.rerunResult.reset();
+        me.route.reset();
+    }
     if (me.route && me.route->depth == depth && me.route->tree == c.frame.behavior && me.route->node == c.frame.pc) {
         RouteFail why = RouteFail::Success;
         const ObjectId blocker = me.route->blocker;
@@ -2842,9 +2847,11 @@ Exit walk(Context& c, ObjectId target, const std::function<VM::RouteGoals()>& pl
         c.frame.preRouteRan = false; // the instruction is done
         c.frame.postRoute = 0;
         c.frame.routeSlot = -1;
+        c.frame.routeResume = false;
     }
     return e;
 }
+
 
 // The routing slots (type 3) of an object's SLOT, in order: the routing slot
 // numbers of the primitives count only these (as FreeSO does).
@@ -3844,6 +3851,65 @@ void releaseDestination(VM& vm, ObjectId id) {
         o->destinationHeld = false;
         flushDestinations(vm);
     }
+}
+
+size_t resumeRoutes(VM& vm, Thread& t) {
+    Object* me = vm.object(t.me);
+    if (!me)
+        return 0;
+    size_t resumed = 0;
+    for (size_t i = 0; i < t.stack.size(); ++i) {
+        Frame& f = t.stack[i];
+        if (!f.behavior || f.pc >= f.behavior->instructions.size())
+            continue;
+        const uint16_t op = f.behavior->instructions[f.pc].opcode;
+        if (op != 0x2D && op != 0x1B)
+            continue;
+        // The routing slot noted as the walk started (noteRouteSlot: person
+        // data 37), not read again from the temps.
+        if (op == 0x2D && me->person)
+            f.routeSlot = me->person->data[37];
+        f.preRouteRan = true;
+        if (i + 1 == t.stack.size()) { // walking
+            f.routeResume = true;
+            ++resumed;
+            continue;
+        }
+        Frame& callee = t.stack[i + 1];
+        callee.rerunCaller = true;
+        callee.routeCallback = true;
+        const std::string name = callee.behavior ? callee.behavior->fileName : std::string();
+        const uint16_t preRoute = me->person ? vm.functionTree(*me, 0x25) : 0;
+        const uint16_t postRoute = me->person ? vm.functionTree(*me, 0x26) : 0;
+        const bool mine = callee.codeOwner == me->id;
+        if (mine && preRoute && callee.instance == preRoute) {
+            // Its result goes on as the pre-route tree's.
+        } else if (name == "CT - Route Failure Feedback") {
+            f.pendingRouteResult = callee.params.empty() ? int16_t(RouteFail::Unknown) : callee.params[0];
+        } else if (mine && postRoute && callee.instance == postRoute) {
+            const int16_t result = callee.params.size() > 1 ? callee.params[1] : int16_t(0);
+            f.postRoute = result == 0 ? 1 : 2;
+            if (result != 0)
+                f.pendingRouteResult = result;
+        } else {
+            // A tree of the walk; "CT - Route Blocked ..." are run as
+            // runWalkTree runs them (not route callbacks).
+            if (name.rfind("CT - Route Blocked", 0) == 0)
+                callee.routeCallback = false;
+            f.routeResume = true;
+        }
+        ++resumed;
+    }
+    return resumed;
+}
+
+uint32_t plannerNoise(VM& vm) {
+    return vm.world && vm.planner && vm.planner->builtFrom(*vm.world) ? vm.planner->noise() : 1;
+}
+
+void restorePlannerNoise(VM& vm, uint32_t noise) {
+    if (vm.world)
+        plannerOf(vm).seed(noise);
 }
 
 void registerRoutingPrimitives(VM& vm) {

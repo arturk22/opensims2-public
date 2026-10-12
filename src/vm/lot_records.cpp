@@ -9,6 +9,8 @@
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "formats/neighborhood.hpp"
+#include "formats/scene_anim.hpp"
+#include "thread_state.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -299,6 +301,111 @@ std::vector<uint8_t> writeRelationship(uint32_t unknown, const std::vector<int32
     return std::move(w.bytes());
 }
 
+// The object's scene graph record with its animation queue saying what
+// the VM plays (scene_anim.hpp), as the game's cAnimatable saves it: the
+// overlays (Animate Overlay's idles, faces, carry poses; Animate Object's)
+// and a Sim's Animate Sim its Main waits on (its request ID is the waiting
+// frame's primitive state).
+// The record's animation requests are replaced (its look-ats stay); with
+// `clear` all of them (a record copied from another Sim). Nothing when the
+// record has no queue that reads, or the queue already says the same.
+std::optional<std::vector<uint8_t>> withAnimation(VM& vm, const Object& o, std::span<const uint8_t> bytes, bool clear) {
+    const auto queue = readSceneAnimatable(bytes);
+    if (!queue)
+        return std::nullopt;
+    const AnimationState& a = o.animation;
+    const float msPerTick = float(1000.0 / vm.clock.ticksPerSecond);
+    const int32_t now = int32_t(double(vm.ticks) * 1000.0 / vm.clock.ticksPerSecond);
+    auto guidOf = [&](ObjectId id) {
+        const Object* x = vm.object(id);
+        return x ? x->guid() : 0u;
+    };
+    std::vector<AnimSimRequest> wanted;
+    for (const Overlay& ov : a.overlays) {
+        AnimSimRequest r;
+        r.id = 0x60000000; // every overlay's in the game's lots
+        r.name = ov.name;
+        r.level = ov.level;
+        r.channel = animChannelName(ov.level, false);
+        r.arType = 4;
+        r.oeType = uint32_t(ov.oeType);
+        r.loops = uint32_t(std::max(ov.loops, 0));
+        r.stackObject = uint16_t(ov.stackObject);
+        r.eventTree = ov.eventTree;
+        r.target = uint32_t(uint16_t(ov.ikObject));
+        r.objectGuid = guidOf(ov.codeOwner);
+        if (ov.eventTree && ov.me != o.id)
+            r.movedObject = uint32_t(uint16_t(ov.me));
+        if (r.channel == "obj") {
+            // Animate Object's: its event tree's context.
+            r.target = 0;
+            for (const auto& ev : a.overlayEvents)
+                if (ev.name == ov.name) {
+                    r.eventTree = ev.eventTree;
+                    r.stackObject = uint16_t(ev.stackObject);
+                    r.objectGuid = guidOf(ev.codeOwner);
+                    r.movedObject = ev.me != o.id ? uint32_t(uint16_t(ev.me)) : 0;
+                }
+        }
+        r.current = now;
+        r.length = ov.length;
+        r.played = ov.played;
+        r.speed = ov.perTick > 0 ? ov.perTick / msPerTick : 1.0f;
+        r.heading = ov.headingOffset;
+        r.mirrored = ov.flipped;
+        wanted.push_back(std::move(r));
+    }
+    if (auto t = vm.threads.find(o.id); a.playing() && a.requestId && t != vm.threads.end() &&
+                                        t->second.status == Thread::Status::Running && !t->second.stack.empty() &&
+                                        a.depth == t->second.stack.size() &&
+                                        uint32_t(t->second.stack.back().primitiveState) == a.requestId) {
+        const Frame& f = t->second.stack.back();
+        const auto& operands = f.behavior->instructions[f.pc].operands;
+        AnimSimRequest r;
+        r.id = a.requestId;
+        r.name = a.name;
+        r.level = a.level;
+        r.stackObject = uint16_t(f.stackObject);
+        r.eventTree = a.eventTree;
+        // Animate Sim's flags (byte 2): 0x08 interruptible, 0x40 no blend
+        // out, 0x80 no blend in.
+        r.interruptible = operands[2] & 0x08;
+        r.blendOut = !(operands[2] & 0x40);
+        r.blendIn = !(operands[2] & 0x80);
+        r.target = uint32_t(uint16_t(a.eventObject));
+        r.objectGuid = guidOf(f.codeOwner);
+        r.current = now;
+        r.length = vm.animations.seconds(a.name).value_or(0.0f) * 1000.0f;
+        r.played = a.playedTicks;
+        r.speed = a.speed;
+        r.weight = a.weight;
+        r.heading = a.headingOffset;
+        r.mirrored = a.flipped;
+        wanted.push_back(std::move(r));
+    }
+    // The same requests as far as they had played (a lot loaded and saved
+    // again): the record stays. Animate Sim requests no frame waits on
+    // (the game keeps finished ones) do not count.
+    if (!clear) {
+        std::vector<std::pair<std::string, float>> have, want;
+        for (const auto& q : queue->requests)
+            if (q.kind == 1 && (!q.blocking() || (a.requestId && q.id == a.requestId)))
+                have.emplace_back(q.name, q.played);
+        for (const auto& r : wanted)
+            want.emplace_back(r.name, r.played);
+        if (have == want)
+            return std::nullopt;
+    }
+    std::vector<std::vector<uint8_t>> requests;
+    if (!clear)
+        for (const auto& q : queue->requests)
+            if (q.kind != 1)
+                requests.emplace_back(bytes.begin() + std::ptrdiff_t(q.begin), bytes.begin() + std::ptrdiff_t(q.end));
+    for (const auto& r : wanted)
+        requests.push_back(writeAnimSimRequest(r));
+    return withSceneRequests(bytes, *queue, requests, std::max(queue->counter, vm.animationCounter));
+}
+
 } // namespace
 
 RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, const LotObjects& before,
@@ -356,8 +463,17 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
         const Object* designed = vm.object(s.id);
         const bool redesigned = designed && designed->design;
         if (known && !(s.person && it == scene.end())) {
-            if ((!moved(s, *was) && !redesigned) || it == scene.end())
+            if (it == scene.end())
                 continue;
+            if (!moved(s, *was) && !redesigned) {
+                // An object that did not move: its animation queue.
+                if (designed)
+                    if (auto b = withAnimation(vm, *designed, source.read(*it->second), false)) {
+                        addRecord(kTypeSceneObject, it->second->tgi.group, instance, std::move(*b));
+                        ++out.animations;
+                    }
+                continue;
+            }
             auto bytes = source.read(*it->second);
             if (redesigned)
                 if (auto d = withDesign(bytes, *designed->design))
@@ -368,6 +484,11 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
             const auto old = readPose(bytes, l->first);
             if (moved(s, *was))
                 writePose(bytes, *l, poseOf(world, s, was, &old));
+            if (designed)
+                if (auto b = withAnimation(vm, *designed, bytes, false)) {
+                    bytes = std::move(*b);
+                    ++out.animations;
+                }
             addRecord(kTypeSceneObject, it->second->tgi.group, instance, std::move(bytes));
             ++out.sceneMoved;
             continue;
@@ -397,6 +518,9 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
             }
             const auto pl = personLayout(pt->second);
             bytes = personFromTemplate(pt->second, *pl, name, poseOf(world, s, nullptr, nullptr));
+            // Not the other Sim's animations: its own, if it plays one.
+            if (auto b = withAnimation(vm, *o, bytes, true))
+                bytes = std::move(*b);
             addRecord(kTypeSceneObject, 0xFFFFFFFF, instance, std::move(bytes));
             ++out.sceneNew;
             ++out.people;
@@ -447,6 +571,9 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
         if (o->design)
             if (auto d = withDesign(bytes, *o->design))
                 bytes = std::move(*d);
+        // Not the copied object's animations: its own.
+        if (auto b = withAnimation(vm, *o, bytes, true))
+            bytes = std::move(*b);
         const auto l = sceneLayout(bytes);
         auto pose = poseOf(world, s, nullptr, nullptr);
         if (o->position.hasHeight()) // Build mode's stair steps: at their own height
@@ -454,6 +581,27 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
         writePose(bytes, *l, pose);
         addRecord(kTypeSceneObject, 0xFFFFFFFF, instance, std::move(bytes));
         ++out.sceneNew;
+    }
+
+    // The VM's own state of the threads (thread_state.hpp): written for the
+    // objects that have some, and the record of an object that no longer has
+    // any left out (it would not fit its next stack anyway).
+    {
+        std::set<uint32_t> had;
+        for (const auto& e : source.entries())
+            if (e.tgi.type == kThreadStateType)
+                had.insert(e.tgi.instance);
+        addRecord(kThreadStateType, 0xFFFFFFFF, 0, writeLotState(vm));
+        for (const auto& s : lot.objects) {
+            const uint32_t instance = uint32_t(uint16_t(s.id));
+            const Object* o = vm.object(s.id);
+            if (auto bytes = o ? writeThreadState(vm, *o) : std::nullopt) {
+                addRecord(kThreadStateType, 0xFFFFFFFF, instance, std::move(*bytes));
+                ++out.threadStates;
+            } else if (had.count(instance)) {
+                lot.deletedRecords.push_back({kThreadStateType, 0xFFFFFFFF, instance, {}});
+            }
+        }
     }
 
     // Routing states of new Sims: idle, as the lot's own idle ones (else the

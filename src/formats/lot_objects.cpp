@@ -14,7 +14,7 @@ namespace {
 constexpr uint32_t kTypeObjectModule = 0x4F626A4D, kTypeSaveTypes = 0x6F626A74, kTypeObjectState = 0x584F424A,
                    kTypeMultiTileState = 0x584D544F, kTypePersonState = 0x50455253;
 constexpr size_t kFileNameSize = 64;
-constexpr uint32_t kTypeSimulator = 0x53494D49;
+constexpr uint32_t kTypeSimulator = 0x53494D49, kTypeSceneObject = 0xFA1C39F7;
 constexpr uint32_t kAnimatorTag = 0xDEADBEEF;
 constexpr int16_t kPersonObjectType = 2;
 
@@ -636,6 +636,26 @@ LotObjects LotObjects::load(DbpfPackage& pkg) {
     for (const auto& [key, _] : byKey)
         if (!used.count(key))
             ++lot.orphans[key.first];
+    // The animation requests of the objects' animation queues (their scene
+    // graph records, scene_anim.hpp): a Sim's resumed Animate Sim goes on
+    // from the one its stack frame's primitive state names, the overlays
+    // from the others.
+    for (const auto& e : pkg.entries())
+        if (e.tgi.type == kTypeSceneObject)
+            if (auto it = states.find(int16_t(e.tgi.instance)); it != states.end())
+                if (auto a = readSceneAnimatable(pkg.read(e))) {
+                    lot.animationCounter = std::max(lot.animationCounter, a->counter);
+                    for (auto& q : a->requests)
+                        if (q.kind == 1)
+                            it->second.animations.push_back(std::move(q));
+                }
+    for (const auto& e : pkg.entries())
+        if (e.tgi.type == kVmThreadStateType) {
+            if (e.tgi.instance == 0)
+                lot.vmLotState = pkg.read(e);
+            else if (auto it = states.find(int16_t(e.tgi.instance)); it != states.end())
+                it->second.vmThreadState = pkg.read(e);
+        }
     for (auto& [_, s] : states)
         lot.objects.push_back(std::move(s));
     for (const auto& e : pkg.entries()) {

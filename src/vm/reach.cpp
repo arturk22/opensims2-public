@@ -577,6 +577,7 @@ Exit reachPut(Context& c) {
     anim.name = r.animation;
     ++anim.serial;
     anim.ticksLeft = r.end;
+    anim.requestId = 0;
     anim.depth = depth, anim.tree = c.frame.behavior, anim.node = c.frame.pc;
     me.reach = std::move(r);
     return Exit::Yield;

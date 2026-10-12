@@ -35,6 +35,10 @@ void applySavedMotives(VM& vm, const LotLoad& load, const LotObjects& saved);
 struct ResumeResult {
     size_t restored = 0, stacks = 0, freshMains = 0, loads = 0;
     size_t queued = 0; // interactions put back in the Sims' queues
+    size_t animations = 0; // Animate Sims that go on from their saved requests
+    size_t overlays = 0;   // overlays back from the objects' animation queues
+    size_t routes = 0;     // routing instructions resumed mid-walk (resumeRoutes)
+    size_t threadStates = 0; // threads given the VM's own saved state (thread_state.hpp)
     size_t globalsMade = 0; // global sim objects updateSimObjects made
     std::map<std::string, size_t> problems; // why a stack was not resumed
     std::vector<Thread> failedLoads;
