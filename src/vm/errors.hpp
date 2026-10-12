@@ -36,6 +36,7 @@ constexpr uint16_t BadSearchType = 0x1E;
 constexpr uint16_t NoTreeTable = 0x1F;
 constexpr uint16_t BadPriority = 0x2D; // no text in the game's table
 constexpr uint16_t InvalidGlobalSimCall = 0x2A;
+constexpr uint16_t InvalidConstant = 0x2E;
 constexpr uint16_t InvalidObjectId = 0x32;
 constexpr uint16_t LocalOutOfRange = 0x33;
 constexpr uint16_t MoreThanOnePassingValue = 0x36;
@@ -82,6 +83,7 @@ inline std::string errorString(uint16_t code) {
     case 0x1F: return "Tree table not found";
     case 0x29: return "Bad room value requested.";
     case 0x2A: return "Invalid global sim call.";
+    case 0x2E: return "Invalid constant.";
     case 0x32: return "Invalid object id.";
     case 0x33: return "Local out of range.";
     case 0x36: return "More than one passing value specified.";

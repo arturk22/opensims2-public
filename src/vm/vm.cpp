@@ -423,6 +423,22 @@ static std::vector<int16_t>& typeAttributesOf(VM& vm, const Object& o) {
 
 constexpr int16_t kObjectDataUseCount = 62;
 
+// A BCON of the code owner's, or error 0x2E ("Invalid constant.") without it.
+static const Constants& constantsOf(VM& vm, const Object& owner, int scope, uint16_t table) {
+    try {
+        return vm.resolveConstants(owner, scope, table);
+    } catch (const VMError& e) {
+        throw gameError(err::InvalidConstant, e.what());
+    }
+}
+
+// An entry of a BCON: outside it (or negative), error 0x2E.
+static int16_t constantEntry(const Constants& c, int idx) {
+    if (idx < 0 || size_t(idx) >= c.values.size())
+        throw gameError(err::InvalidConstant, "entry " + std::to_string(idx) + " of " + std::to_string(c.values.size()));
+    return c.values[size_t(idx)];
+}
+
 static int16_t& checkTreeAd(const Context& c, std::array<int16_t, kMotiveCount>& ads, int idx, const char* what) {
     if (!c.me().person)
         throw gameError(err::NotAPerson, what);
@@ -583,18 +599,19 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
         return f && size_t(data) < f->functions.size() ? int16_t(f->functions[size_t(data)].action) : int16_t(0);
     }
     case 0x2F: {
-        // Constants [temp]: bits 13-14 pick private, semi-global or global
-        // tables (as for 0x1A), bits 3-12 the table and bits 0-2 the temp
-        // holding the entry ("G - Logarithms Table" 0x140/0x141 are 0x4200 and
-        // 0x4208 in "Get in Temp 0 - Logarithmic Modifier").
+        // Constants [temp] (cEdithLanguage BV 0x4b2764): bits 13-15 pick the
+        // private, semi-global or global tables (else error 0x2E), bits
+        // 3-12 the table and bits 0-2 the temp holding the entry ("G -
+        // Logarithms Table" 0x140/0x141 are 0x4200 and 0x4208 in "Get in
+        // Temp 0 - Logarithmic Modifier").
         auto* owner = vm.object(frame.codeOwner);
         if (!owner)
             throw VMError("code owner does not exist");
         const int scope = uint16_t(data) >> 13;
         if (scope > 2)
-            throw VMError("constant [temp] " + hexString(uint16_t(data)) + " out of range");
-        const auto& c = vm.resolveConstants(*owner, scope, uint16_t((data & 0x1FFF) >> 3));
-        return slot(c.values, thread.temps[size_t(data & 7)], "constant [temp]");
+            throw gameError(err::InvalidConstant, "constant [temp] " + hexString(uint16_t(data)));
+        const auto& c = constantsOf(vm, *owner, scope, uint16_t((data >> 3) & 0x3FF));
+        return constantEntry(c, thread.temps[size_t(data & 7)]);
     }
     // Slots: the object in a slot of mine / of the stack object, 0 if the slot
     // is empty; the slot is `data` or the temp it names. A slot past the
@@ -615,12 +632,20 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
         return definitionField(*d, data);
     }
     case 0x1A: {
-        // High bits pick the BCON (private, semi-global or global), low 7 bits the entry.
+        // Constant (cEdithLanguage BV 0x4b2704): bits 13-14 pick the private
+        // (0x1000), semi-global (0x2000) or global (0x100) tables (3: error
+        // 0x2E), bits 7-12 and bit 15 (as 0x40) the table, bits 0-6 the
+        // entry. The tables are the code owner's (the stack element's
+        // cTSBehavior, cTSBehavior::GetConstants BV 0x489ed4), also in
+        // semi-global and global code.
         auto* owner = vm.object(frame.codeOwner);
         if (!owner)
             throw VMError("code owner does not exist");
-        const auto& c = vm.resolveConstants(*owner, uint16_t(data) >> 7);
-        return slot(c.values, data & 0x7F, "constant");
+        const int scope = (uint16_t(data) >> 13) & 3;
+        if (scope == 3)
+            throw gameError(err::InvalidConstant, "constant " + hexString(uint16_t(data)));
+        const uint16_t table = uint16_t(((uint16_t(data) >> 9) & 0x40) | ((uint16_t(data) >> 7) & 0x3F));
+        return constantEntry(constantsOf(vm, *owner, scope, table), data & 0x7F);
     }
     default:
         ++vm.missingOwners[owner];

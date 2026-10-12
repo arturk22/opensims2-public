@@ -84,11 +84,12 @@ Exit expression(Context& c) {
     case 20: return assign(std::abs(rhs));
     case 21: // "Assign 32bit Value": two consecutive variables (low word first),
              // as "CT - Offer Job" copies a job GUID from the stack object's
-             // definition into person data 89/90 (inferred from that use)
+             // definition into person data 89/90 (TryExpression BV 0xe4bb64
+             // copies the element and the next one of both references)
         c.set(lhsOwner, lhsData, int16_t(rhs));
         c.set(lhsOwner, int16_t(lhsData + 1), c.get(rhsOwner, int16_t(rhsData + 1)));
         return Exit::True;
-    default: throw VMError("Expression: operator " + std::to_string(op) + " not implemented");
+    default: throw gameError(err::BadOperator, "Expression: operator " + std::to_string(op)); // > 21 (TryExpression)
     }
 }
 
