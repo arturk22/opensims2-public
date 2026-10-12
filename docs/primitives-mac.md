@@ -1697,6 +1697,98 @@ Então o "Fogo!" de 7–8 h do soak (`N001_Lot49`) é o esperado de um lote
 enquanto houver vizinhos inflamáveis. A conferir no VM: alarme no cômodo,
 `Notify out of Idle` acordando o alarme, e o agendamento do NPC.
 
+### Rodada 14 (front "engine-re"): pânico, fogo do fogão e quem pega fogo
+
+Lido nas árvores (`tools/datahunt/bhavs.py`; nas listagens de assinatura ≥
+0x8007 o alvo `0xFFFD` é verdadeiro e `0xFFFE` falso). Constantes `dono
+0x1A`: dado >> 7 escolhe a tabela (< 64 privada `0x1000 + t`, < 128
+semi-global `0x2000 + t − 64`, senão global `0x100 + t − 128`), os 7 bits de
+baixo a entrada.
+
+**`Interaction - Panic` (`0x1013` do Fire) tira o Sim de perto do fogo.**
+Roda no Sim com o Fire como stack object:
+
+1. Fora do lote (od 29 < 0) devolve verdadeiro. `Memory - Add`, `Want
+   Satisfy - Fire`. **Pegando fogo** (od 8 flag 10) → `Panic - On Fire!`.
+2. **Criança de colo** (`Age - Am I a Toddler?`): só vira para o fogo e
+   toca a reação; não foge.
+3. Os outros: guarda o od 17 (estilo de andar) num local e põe **od 17 := 1
+   (corre)**; com o dado de pessoa 32 igual à constante global `0x104`[0]
+   (0x4200; inferido: morador) faz `Go To Routing Slot` do **slot global 9**
+   (`SLOT` global `0x64`: alvo, 2–5 tiles do fogo, ótimo 2, flags `0x55` =
+   as quatro diagonais/retas pares, resolução 1); senão o **slot 1 do
+   próprio Fire** (3–6 tiles, ótimo 3, flags `0xff`, resolução 0,5). Os dois
+   com a flag 0x08 (permite outra altura).
+4. A rota falhou: `Get Distance To` o fogo; a < 10 tiles ainda vira para ele
+   e entra em pânico ali, a ≥ 10 não vira. Depois devolve o od 17, zera os
+   dados de pessoa 27/28, empurra `Push - Save Baby/Toddler` (bebês e
+   crianças de colo do cômodo) e entra no laço: uma de quatro animações de
+   pânico ao acaso (`Random 8`), `Divide Tick Counts`, o dado de pessoa 28
+   somando o tempo, até passar de **`Tuning - Panic`[0] = 15**; `Wait For
+   Notify` entre as voltas; se pegou fogo no meio → `Panic - On Fire!`.
+5. O Fire empurra o pânico de novo (`Push - Panic - All Sims Not
+   Interacting`, `0x102c`) no começo e **a cada 30 voltas do laço** (`Idle
+   3`), para todos os Sims do lote que não estão numa interação (com os
+   filtros de idade/NPC do `0x102c`); com `Hurry - Start`.
+
+Ou seja: **sim, o pânico afasta o Sim** (correndo, 2–6 tiles) antes de
+entrar em pânico parado. TODO do opensims2: conferir num soak que o `Go To
+Routing Slot` global 9 / slot 1 do Fire leva os Sims para longe (o `SLOT`
+global com flags de direção e resolução) e que o od 17 volta.
+
+**Quem pega fogo** (`Function - Main` `0x1000` do Fire):
+
+- **Sims no tile do Fire** (`Main - Set on Fire - Sims on Tile`, `0x1051`):
+  a cada volta do laço (a cada `Idle 3`), toda pessoa no tile do fogo ganha
+  od 8 flag 10 (pegando fogo), sem sorteio.
+- **Um Sim vizinho** (`Main - Set on Fire - Sim on Adjacent Tile`,
+  `0x1040`): só uma vez, no começo do Fire: `random(100) == 1` (o `Tuning -
+  Burn`[7] = 100), isto é **1%**, um Sim ao acaso da lista de vizinhos.
+- O Fire liga a sua flag 2 e desliga a 5 do od 8: `CanIntersectPeople` falso
+  (o teste por passo não deixa entrar no tile do fogo; §6.1 do
+  `routing-mac.md`).
+- **`Panic - On Fire!`** (`0x102a`): câmera, efeito de fogo no corpo pela
+  idade, motivos (`Tuning - On Fire!`: −200/−90 por motivo), contador local
+  = aleatório entre **5 e 10** (`Tuning - On Fire!`[16..17]) voltas de
+  animação; acabou o contador ainda pegando fogo → zera os motivos 5–9, 14,
+  15 e **`Kill Sim`** (morte por fogo). Alguém apagar o Sim (a flag 10
+  limpa) para o laço. Bebês/crianças de colo têm ramo próprio.
+
+**Fogo do fogão: a chance por cozinhada** (semi-global da comida
+`0x7F3C9675`):
+
+- `Get in Temp 0 - Skill (Hi/Med/Lo)` (`0x2057`): a habilidade de cozinhar
+  do Sim em 0–100 (`Sub - Get Skill Based Value`), **≥ 80 alta, ≥ 40 média,
+  senão baixa** (`SG - Tuning` `0x2008`[6] = 80, [7] = 40).
+- `Test - Food Failure?` (`0x2045`): falha com **5% (alta), 10% (média),
+  30% (baixa)** (`SG - Tuning`[10..12] = 5, 10, 30): `random(100) ≥ 100 −
+  chance`.
+- `Main - Cook - Loop` (`0x2032`): falhou → o ponto de queima é
+  `tempo · (100 − (1 + random(50) + 50))/100` do cozimento (`SG -
+  Tuning`[9] = 50); ao chegar nele, `Sub - Set Burnt` e **`random(100) < 20`
+  (`SG - Tuning`[15] = 20) → `Sub - Set Fire`** (cria um Fire no aparelho).
+  Então por cozinhada: **1% com habilidade alta, 2% média, 6% baixa** (a
+  habilidade 0 de quem nunca cozinhou é a baixa).
+- Comida pronta esquecida (`Function - Main` `0x2000`): sem ninguém
+  interagindo com ela, queima em **10 min** (`Tuning - Cook Failure Time`) e
+  **pega fogo com certeza em 30 min** (`Tuning - Cook Fire Time`), contados
+  de minuto em minuto (`Idle - Minutes 1`).
+- `Function - Cook - TEST` não deixa cozinhar com fogo no cômodo.
+
+**O motor e o fogo** (binário): `cTSObject::IsBurning` (od 8 bit 9, `+0xaa`),
+`CanBurn` (od 40 bit 5, `+0xea`) e `IsFireproof` (od 8 bit 11) só são
+chamados pela vtable (slots `0x214`/`0x218`/`0x21c` do `cTSPerson`/
+`cTSObject`); nenhuma chamada direta. O que se sabe: o FBO tira objetos
+pegando fogo (§4); o teste por passo trata o Fire como objeto que não deixa
+pessoas entrarem. Nada mais no motor reage ao fogo (sem desvio de rota, sem
+alarme, sem bombeiro no código C++): pânico, propagação, mortes, alarme e
+bombeiros são todos árvores. (Busca por chamadas virtuais nesses slots:
+ambígua, outras classes usam os mesmos deslocamentos; não fechada.)
+
+Hipótese para as mortes do soak (a conferir pela causa da morte): um Fire
+dura ~2 h e empurra pânico a cada 30 voltas a todos que não estão em
+interação; Sims em pânico repetido por horas não comem nem dormem.
+
 ## 4g. Rodada 12: Sims vivos e destravados (binário + árvores)
 
 ### Erros reiniciam o objeto (`cTSObject::HandleError`, BV `0xb05510`)
