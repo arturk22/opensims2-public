@@ -156,7 +156,16 @@ public:
     // of the ground (0x8B); points under floors and walls stay.
     // Paint: the paint's mask (4 points a tile) gains the profile, the
     // others lose it (DiminishAllPaints); free.
-    enum class TerrainOp { Raise, Lower, Flatten, Smooth, Paint, Erase };
+    // Water (cTSUserToolWater, the pond tool; catalog text "build" 133, §1
+    // a unit): the brush (spWaterBrushProfile) digs the terrain, height -
+    // profile x 0.00001 rounded down to the step (WaterBrushFn), and after
+    // each application the water levels of the dug grid points and the
+    // water connected to them follow (AdjustWaterElevations ->
+    // cWorldTerrain::UpdateWaterElevations): each connected group of them is
+    // a pond whose water is 0.25 below the lowest ground round it; a point
+    // more than 0.25 over that water stays dry (water 1 under it), a dry one
+    // beside a pond gets the pond's water less 0.1, others 1 under the ground.
+    enum class TerrainOp { Raise, Lower, Flatten, Smooth, Paint, Erase, Water };
     void beginTerrainStroke(TerrainOp op, float x, float y);
     Result applyTerrainBrush(float x, float y, int size, const std::vector<uint8_t>& profile,
                              const std::string& paint = "");
@@ -265,6 +274,7 @@ private:
         std::vector<Lot::TerrainPaint> paints;
         std::vector<Lot::Roof> roofs;
         std::vector<Lot::SwimmingPool> pools;
+        std::vector<float> water;
         int minLevel = 0, levelCount = 0;
         std::vector<Lot::Wall> walls;
         std::vector<Lot::WallGraph> wallGraphs;
@@ -324,7 +334,10 @@ private:
         float moved = 0;    // total |height change|
         int paid = 0;
         int changed = 0;
+        std::set<std::pair<int, int>> dug; // the water tool's grid points
     };
+    // UpdateWaterElevations over the grid points the water tool dug.
+    void adjustWater(const std::set<std::pair<int, int>>& dug);
     std::optional<Stroke> stroke_;
     // The flight a modular stair object belongs to: its objects (steps first,
     // top to bottom).

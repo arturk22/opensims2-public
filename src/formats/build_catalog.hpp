@@ -129,6 +129,8 @@ public:
     // values, empty when missing.
     const std::vector<uint8_t>& raiseProfile() const { return raise_; }
     const std::vector<uint8_t>& lowerProfile() const { return lower_; }
+    // The water tool's (cTSUserToolWater::spWaterBrushProfile, instance 0x8B731811).
+    const std::vector<uint8_t>& waterProfile() const { return water_.empty() ? lower_ : water_; }
     // A fence by GUID ("0x...") or (part of) its name.
     const BuildFence* findFence(const std::string& key) const;
     const BuildFence* fenceByGuid(uint32_t guid) const;
@@ -151,7 +153,7 @@ private:
     std::vector<BuildFence> fences_;
     std::vector<BuildTerrainPaint> paints_;
     std::vector<BuildRoofPattern> roofs_;
-    std::vector<uint8_t> raise_, lower_;
+    std::vector<uint8_t> raise_, lower_, water_;
     std::vector<BuildStairs> stairs_;
     std::vector<BuildRoofProduct> roofProducts_;
 };

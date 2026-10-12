@@ -14,7 +14,7 @@ namespace {
 
 constexpr uint32_t kTypeRoof = 0xAB9406AA, kTypePool = 0x0C900FDB;
 constexpr uint32_t kTypeFencePosts = 0xAB4BA572, kFencePostLayer = 0x11, kTypeLotTexture = 0x4B58975B,
-                   kType2DArray = 0x6B943B43, kPaintMaskFirst = 0x5CBC;
+                   kType2DArray = 0x6B943B43, kPaintMaskFirst = 0x5CBC, kWaterLevels = 0x3B76;
 constexpr uint32_t kType3DArray = 0x2A51171B, kTypeStringMap = 0xCAC4FC40, kTypeWallGraph = 0x0A284D0B,
                    kTypeWallLayer = 0x8A84D7B0;
 constexpr uint32_t kArrayFloors = 0x00, kArrayElevation = 0x01, kArrayRooms = 0x09, kArrayFloorRotations = 0x15, kSmapWalls = 0x0D, kSmapFloors = 0x0E,
@@ -187,6 +187,16 @@ std::vector<LotGeometryRecord> writeLotGeometry(const Lot& lot, DbpfPackage& sou
                 b.u8(v);
             out.push_back({kType2DArray, m.group, instance, std::move(b.bytes())});
         }
+    }
+    // 2ARY 0x3B76: the terrain's water level at every grid point ([y][x]),
+    // when the lot has it (ponds: the water tool sets it).
+    if (lot.water.size() == size_t(lot.width + 1) * size_t(lot.height + 1)) {
+        const Head m = headOf(source, kType2DArray, kWaterLevels, 1);
+        BinWriter b = begin(m, kType2DArray, "c2DArray");
+        b.u32(lot.width + 1), b.u32(lot.height + 1);
+        for (float v : lot.water)
+            b.f32(v);
+        out.push_back({kType2DArray, m.group, kWaterLevels, std::move(b.bytes())});
     }
     {
         // ROOF 0 (OpenTS2's RoofCodec layout, no block name), when the lot

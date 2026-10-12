@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -234,6 +235,7 @@ BuildEditor::Geometry BuildEditor::capture() const {
     g.paints = lot_.paints;
     g.roofs = lot_.roofs;
     g.pools = lot_.pools;
+    g.water = lot_.water;
     g.minLevel = lot_.minLevel, g.levelCount = lot_.levelCount;
     g.walls = lot_.walls;
     g.wallGraphs = lot_.wallGraphs;
@@ -255,6 +257,7 @@ void BuildEditor::restore(const Geometry& g) {
     lot_.paints = g.paints;
     lot_.roofs = g.roofs;
     lot_.pools = g.pools;
+    lot_.water = g.water;
     lot_.minLevel = g.minLevel, lot_.levelCount = g.levelCount;
     lot_.walls = g.walls;
     lot_.wallGraphs = g.wallGraphs;
@@ -1555,6 +1558,10 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
             switch (st.op) {
             case TerrainOp::Raise: n = std::ceil((h + float(p) * 0.0002f) / kStep - 1e-4f) * kStep; break;
             case TerrainOp::Lower: n = std::floor((h - float(p) * 0.00002f) / kStep + 1e-4f) * kStep; break;
+            case TerrainOp::Water: // WaterBrushFn: the context's strength 1e-5, threshold 0
+                n = std::floor((h - float(p) * 0.00001f) / kStep + 1e-4f) * kStep;
+                st.dug.insert({x, y});
+                break;
             case TerrainOp::Flatten: n = st.height; break;
             case TerrainOp::Smooth: {
                 float sum = 0;
@@ -1587,6 +1594,8 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
         for (int k = 1; lot_.hasLevel(k); ++k)
             lot_.elevations[i + size_t(k) * size_t(W + 1) * size_t(H + 1)] += d;
     }
+    if (st.op == TerrainOp::Water)
+        adjustWater(st.dug);
     st.moved += moved;
     st.paid += owed;
     st.changed += int(changes.size());
@@ -1598,6 +1607,78 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
         ++revision_;
     r.message = std::to_string(r.changed) + " terrain points moved" + (owed ? " for " + money(owed) : "");
     return r;
+}
+
+void BuildEditor::adjustWater(const std::set<std::pair<int, int>>& dug) {
+    const int W = int(lot_.width), H = int(lot_.height);
+    const size_t rowW = size_t(W + 1);
+    auto ground = [&](int x, int y) { return lot_.elevation(0, x, y); };
+    if (lot_.water.size() != rowW * size_t(H + 1)) {
+        lot_.water.assign(rowW * size_t(H + 1), 0.0f);
+        for (int y = 0; y <= H; ++y)
+            for (int x = 0; x <= W; ++x)
+                lot_.water[size_t(y) * rowW + size_t(x)] = ground(x, y) - 1.0f;
+    }
+    auto water = [&](int x, int y) -> float& { return lot_.water[size_t(y) * rowW + size_t(x)]; };
+    auto inside = [&](int x, int y) { return x >= 0 && y >= 0 && x <= W && y <= H; };
+    static const int nx[8] = {1, 1, 0, -1, -1, -1, 0, 1}, ny[8] = {0, -1, -1, -1, 0, 1, 1, 1};
+    // The change array: the dug points and the water connected to them
+    // (ExpandWaterHtChangeArrayToIncludeConnectedPreExistingWater).
+    std::set<std::pair<int, int>> change(dug.begin(), dug.end());
+    std::vector<std::pair<int, int>> todo(dug.begin(), dug.end());
+    while (!todo.empty()) {
+        const auto [x, y] = todo.back();
+        todo.pop_back();
+        for (int k = 0; k < 8; ++k) {
+            const int ax = x + nx[k], ay = y + ny[k];
+            if (inside(ax, ay) && !change.count({ax, ay}) && water(ax, ay) > ground(ax, ay))
+                change.insert({ax, ay}), todo.push_back({ax, ay});
+        }
+    }
+    // ChooseWaterElevationsForPondWithVertex: each 8-connected group, its
+    // water 0.25 under the lowest ground round it.
+    std::set<std::pair<int, int>> seen, pond;
+    for (const auto& start : change) {
+        if (seen.count(start))
+            continue;
+        std::vector<std::pair<int, int>> group{start};
+        seen.insert(start);
+        float rim = std::numeric_limits<float>::max();
+        for (size_t i = 0; i < group.size(); ++i)
+            for (int k = 0; k < 8; ++k) {
+                const int ax = group[i].first + nx[k], ay = group[i].second + ny[k];
+                if (!inside(ax, ay))
+                    continue;
+                if (change.count({ax, ay})) {
+                    if (seen.insert({ax, ay}).second)
+                        group.push_back({ax, ay});
+                } else {
+                    rim = std::min(rim, ground(ax, ay));
+                }
+            }
+        if (rim == std::numeric_limits<float>::max())
+            continue;
+        const float level = rim - 0.25f;
+        for (const auto& [x, y] : group) {
+            water(x, y) = ground(x, y) - level > 0.25f ? ground(x, y) - 1.0f : level;
+            if (water(x, y) > ground(x, y))
+                pond.insert({x, y});
+        }
+    }
+    // AdjustWaterElevationsAtNonPondVertices.
+    for (const auto& [x, y] : change) {
+        if (pond.count({x, y}))
+            continue;
+        float w = ground(x, y) - 1.0f;
+        for (int k = 0; k < 8; ++k) {
+            const int ax = x + nx[k], ay = y + ny[k];
+            if (inside(ax, ay) && pond.count({ax, ay})) {
+                w = water(ax, ay) - 0.1f;
+                break;
+            }
+        }
+        water(x, y) = w;
+    }
 }
 
 BuildEditor::Result BuildEditor::terrainStroke(TerrainOp op, float x, float y, int ticks, int size,

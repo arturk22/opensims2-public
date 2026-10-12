@@ -323,6 +323,15 @@ static void testTerrain() {
     check(ed.undo() && lot.elevation(0, 6, 5) == 0.0f && funds(vm) == 5000, "undo flattens it again");
     r = ed.terrainStroke(BuildEditor::TerrainOp::Raise, 1.5f, 0.5f, 3, 1, profile);
     check(!r.ok && r.error == 0x8B, "a floored tile is not exposed terrain");
+    // The water tool digs a pond and fills it 0.25 under its rim.
+    r = ed.terrainStroke(BuildEditor::TerrainOp::Water, 6, 5, 200, 2, profile);
+    size_t wet = 0;
+    for (int x = 0; x <= 12; ++x)
+        for (int y = 0; y <= 10; ++y)
+            wet += lot.waterLevel(x, y) > lot.elevation(0, x, y);
+    check(r.ok && lot.elevation(0, 6, 5) < -0.3f && wet > 0, "a pond: the ground dug and water over it");
+    check(std::fabs(lot.waterLevel(6, 5) - (lot.elevation(0, 0, 0) - 0.25f)) < 1e-4f, "the water 0.25 under the rim");
+    check(ed.undo() && lot.water.empty() && lot.elevation(0, 6, 5) == 0.0f, "undo fills the pond in");
     r = ed.terrainStroke(BuildEditor::TerrainOp::Paint, 6, 5, 4, 1, profile, "terrain-grass-b-paint");
     check(r.ok && lot.paints.size() == 1 && lot.maskWidth == 49, "painting adds a paint and its mask");
 }

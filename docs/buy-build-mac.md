@@ -1439,6 +1439,31 @@ pelo headless (`--roof x0,y0,x1,y1,10..14`: arrastar de um canto do losango
 ao oposto), com a geometria do OpenTS2 que já desenhava os tipos; as paredes
 de sótão diagonais (`CheckWallLegalityDiagonal`) não são feitas.
 
+### 7.17 Lagos: a ferramenta de água (rodada 12)
+
+`cTSUserToolWater` (BV `0x1e600c…`) é um pincel de terreno: só no térreo
+(senão `0x8B`), aplicado a cada 100 ms com o botão apertado
+(`OncePerFrameUpdate` → `ApplyWaterBrush`, temporizador + 100), largura
+`W0 + (10 − W0) × 0,5 × escolha` e cursor 2/5,5/10 (`DAT_02732980`), perfil
+`spWaterBrushProfile` (TGA `0x8B731811`). `WaterBrushFn` (`0x1e61a0`):
+altura nova = floor((h − (perfil − limiar) × força) / passo) × passo, com o
+contexto do `InitBrushContext` (limiar 0, força 1e-5) — **cava**;
+`cTSUserToolUndoableWater::ChangeTerrainHt` testa o vértice
+(`FUN_009e9550`), move o terreno (`ChangeFloorElevationCoupled`) e anota o
+vértice; `UpdateFundsForVertexEdit` cobra pelo preço do catálogo (STR# 133:
+§1). Depois de cada aplicação `AdjustWaterElevations` →
+`cWorldTerrain::UpdateWaterElevations` (`0x8b185c`): os vértices anotados mais
+a água já ligada a eles (8 vizinhos, `DAT_02737e00/20`);
+`ChooseWaterElevationsForPondWithVertex` (`0x8b11ec`) inunda cada grupo e põe a
+água 0,25 (`DAT_0277a578`) abaixo do menor terreno da borda (vizinhos fora
+do grupo); vértice com terreno mais de 0,25 acima dessa água fica seco
+(água = terreno − 1,0, `DAT_0277a57c`); `AdjustWaterElevationsAtNonPondVertices`
+(`0x8afbe4`): o seco ao lado de um lago fica com a água do vizinho − 0,1
+(`0x274b680`), os outros com terreno − 1,0. A água é o 2ARY `0x3B76`
+([y][x], (L+1) × (A+1)), agora gravado (os 62 lotes voltam iguais).
+Inferido: o botão da ferramenta no painel (B740); o que `UpdatePondFlag` faz
+além de marcar o lago.
+
 ---
 
 ## 8. Base vs BV

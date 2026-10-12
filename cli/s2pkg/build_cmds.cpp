@@ -292,7 +292,8 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             Op op = Op::Paint;
             std::string paint;
             if (flag == "--terrain") {
-                op = f[0] == "lower" ? Op::Lower : f[0] == "flatten" ? Op::Flatten : f[0] == "smooth" ? Op::Smooth : Op::Raise;
+                op = f[0] == "lower" ? Op::Lower : f[0] == "flatten" ? Op::Flatten : f[0] == "smooth" ? Op::Smooth
+                     : f[0] == "water" ? Op::Water : Op::Raise;
             } else if (f[0] == "erase") {
                 op = Op::Erase;
             } else {
@@ -302,7 +303,10 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                 paint = t->texture;
             }
             r = editor.terrainStroke(op, std::stof(f[1]), std::stof(f[2]), num(f, 3, 10), num(f, 4, 1),
-                                     op == Op::Lower ? catalog.lowerProfile() : catalog.raiseProfile(), paint);
+                                     op == Op::Lower   ? catalog.lowerProfile()
+                                     : op == Op::Water ? catalog.waterProfile()
+                                                       : catalog.raiseProfile(),
+                                     paint);
         } else if (flag == "--foundation" || flag == "--delete-foundation") {
             if (f.size() < 4)
                 throw std::runtime_error(flag + ": expected x0,y0,x1,y1");
@@ -387,6 +391,8 @@ std::vector<std::string> compareLotGeometry(const Lot& a, const Lot& b, size_t l
         if (a.roofs[i].id != b.roofs[i].id || a.roofs[i].type != b.roofs[i].type || a.roofs[i].x0 != b.roofs[i].x0 ||
             a.roofs[i].y1 != b.roofs[i].y1 || a.roofs[i].level != b.roofs[i].level || a.roofs[i].pattern != b.roofs[i].pattern)
             say("roof " + std::to_string(a.roofs[i].id) + " differs");
+    if (a.water != b.water)
+        say("water levels differ");
     if (a.paints.size() != b.paints.size() || a.terrainBase != b.terrainBase)
         say("terrain paints differ");
     for (size_t i = 0; i < a.paints.size() && i < b.paints.size(); ++i)

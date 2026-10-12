@@ -245,7 +245,7 @@ void BuildMode::selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerr
     terrainOp_ = paint ? vm::BuildEditor::TerrainOp::Paint : op;
     paint_ = paint;
     pattern_ = nullptr, object_ = nullptr, fence_ = nullptr;
-    static const char* const names[] = {"raise", "lower", "flatten", "smooth", "paint", "erase paint"};
+    static const char* const names[] = {"raise", "lower", "flatten", "smooth", "paint", "erase paint", "water"};
     say(std::string("terrain tool: ") + names[int(terrainOp_)] + (paint ? " " + paint->name : std::string()));
 }
 
@@ -770,7 +770,9 @@ void BuildMode::brushTick(bool force) {
     if (!force && now - lastBrush_ < 0.1)
         return;
     lastBrush_ = now;
-    const auto& profile = terrainOp_ == vm::BuildEditor::TerrainOp::Lower ? patterns_.lowerProfile() : patterns_.raiseProfile();
+    const auto& profile = terrainOp_ == vm::BuildEditor::TerrainOp::Lower   ? patterns_.lowerProfile()
+                          : terrainOp_ == vm::BuildEditor::TerrainOp::Water ? patterns_.waterProfile()
+                                                                            : patterns_.raiseProfile();
     const auto r = editor_->applyTerrainBrush(pointer_->x, pointer_->y, brushSize_, profile, paint_ ? paint_->texture : "");
     if (!r.ok && r.error)
         applied(r);
@@ -1184,6 +1186,20 @@ std::vector<BuildMode::Item> BuildMode::items() {
                 it.image = res_->image({kTypeUiImage, kBuildThumbGroup, thumbs[k]});
                 out.push_back(std::move(it));
             }
+        }
+        if (subsort_ == 0 || subsort_ == 4) { // the water tool (ponds; catalog text "build" 133, §1; button inferred)
+            Item it;
+            it.tool = Tool::Terrain;
+            it.terrainOp = int(vm::BuildEditor::TerrainOp::Water);
+            it.price = 1;
+            it.name = "Water";
+            if (const StringTable* t = res_->table(packageGroupHash("Build"), 0x85)) {
+                if (const std::string n = t->get(1); !n.empty())
+                    it.name = n;
+                it.description = t->get(2);
+            }
+            it.image = materialThumbnail(0xF0F0F0F3u, "lotwater");
+            out.push_back(std::move(it));
         }
         if (subsort_ == 0 || subsort_ == 3)
             for (const BuildTerrainPaint& p : patterns_.terrainPaints()) {
@@ -1775,14 +1791,17 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             Op op = Op::Paint;
             const BuildTerrainPaint* paint = nullptr;
             if (a == "--terrain")
-                op = f[0] == "lower" ? Op::Lower : f[0] == "flatten" ? Op::Flatten : f[0] == "smooth" ? Op::Smooth : Op::Raise;
+                op = f[0] == "lower" ? Op::Lower : f[0] == "flatten" ? Op::Flatten : f[0] == "smooth" ? Op::Smooth
+                     : f[0] == "water" ? Op::Water : Op::Raise;
             else if (f[0] == "erase")
                 op = Op::Erase;
             else if (!(paint = patterns_.findTerrainPaint(f[0])))
                 throw std::runtime_error("--terrain-paint: no paint \"" + f[0] + "\"");
             selectTerrainTool(op, paint);
             r = ed.terrainStroke(op, std::stof(f[1]), std::stof(f[2]), f.size() > 3 ? n(3) : 10, f.size() > 4 ? n(4) : 1,
-                                 op == Op::Lower ? patterns_.lowerProfile() : patterns_.raiseProfile(),
+                                 op == Op::Lower   ? patterns_.lowerProfile()
+                                 : op == Op::Water ? patterns_.waterProfile()
+                                                   : patterns_.raiseProfile(),
                                  paint ? paint->texture : "");
             pressSound(Tool::Terrain, op == Op::Erase);
             stopBrushLoop();

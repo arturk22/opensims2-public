@@ -239,7 +239,7 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
     std::sort(c.paints_.begin(), c.paints_.end(),
               [](const BuildTerrainPaint& a, const BuildTerrainPaint& b) { return a.name < b.name; });
     // The brush profiles: uncompressed 8-bit grey TGAs (image type 3).
-    for (auto [instance, out] : {std::pair{0x6B96E0A2u, &c.raise_}, std::pair{0x8B96E0CFu, &c.lower_}})
+    for (auto [instance, out] : {std::pair{0x6B96E0A2u, &c.raise_}, std::pair{0x8B96E0CFu, &c.lower_}, std::pair{0x8B731811u, &c.water_}})
         if (auto b = index.read(Tgi{0x856DDBACu, kGroupTerrain, instance, 0}); b && b->size() >= 18 + 32 * 32) {
             const auto& v = *b;
             const size_t w = size_t(v[12] | v[13] << 8), h = size_t(v[14] | v[15] << 8), at = 18 + v[0];
