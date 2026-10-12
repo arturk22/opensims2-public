@@ -471,9 +471,18 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
   `BlankMirrorMaterial`: uma cor só, `colorScalar (0.5, 0.6, 0.75)`, sem
   luz nem textura; ligado, o `MirrorReflectionMaterial` marca o stencil
   (camada −9998, x de clip negado) e desenha a cena de uma câmera
-  refletida no alvo `ScreenReflection` (camada 6). O binário tem a string
-  `mirrorReflectionsEnabled` (o C++ pode ligá-la pela opção de reflexos;
-  não lido). Rodada 12: desenhamos o `BlankMirrorMaterial` (antes o quad
+  refletida no alvo `ScreenReflection` (camada 6). Quem liga a flag (rodada 13, binário): o
+  `cTSConfigTargets` registra as propriedades de configuração
+  (`FUN_008689d8`) e, quando uma muda (`FUN_008676d4`, BV `0x8676d4`), a
+  propriedade **`reflectionWithExtraViewer`** (ID `0xCDD2E813`) põe a
+  variável de matShad `mirrorReflectionsEnabled` em `"true"`/`"false"`
+  (vtable `0xd8(0, nome, valor)` do sistema de variáveis); nada mais a
+  escreve. No `Graphics Rules.sgr`, a opção **Reflection** `$On` liga
+  `reflectionWithExtraViewer` e `nhoodWaterReflection` (esta, ID
+  `0xED2B6003`, refaz os alvos de render, `FUN_00867120`); as classes de
+  placa alta põem `Reflection $On`, as média/baixa `$Off`. Ou seja, o
+  espelho reflete de verdade quando a opção de reflexos do jogo está
+  ligada. Rodada 12: desenhamos o `BlankMirrorMaterial` (antes o quad
   saía branco, material desconhecido sem textura); o reflexo de verdade
   fica para depois (`r12-cas-espelho-masculino.jpg`).
 
