@@ -978,10 +978,15 @@ está no andar −1 e anda nesse piso. Sai por um **portal de objeto**:
   **par de portal** (`cTSRoutingSlot::IsPortalPair`): o nome do slot (osso,
   `vtable 0x144` índice 0) e o nome da outra ponta (índice 1). Nos dados os
   dois nomes são a entrada do STR# 0x90 ("Model - Bones") do slot,
-  **"meu,outro"**. Inferido: o par é a flag **`0x200000`** do SLOT (os dois
-  objetos do jogo base com slots assim, a escada da piscina e o trampolim,
-  têm `0x200000`; a escada também `0x400000`/`0x800000`, os
-  `DisableLocomotionContinuationAt{Start,End}OfPortalPair`).
+  **"meu,outro"**. Inferido: o par é a flag **`0x200000`** do SLOT. Nos
+  2.991 slots de rota do `objects.package` ela só aparece em 4 grupos: a
+  escada da piscina, o trampolim, o "Route - Step Over" (o portal de passar
+  por cima, `UpdateStepOverPortal`) e dois slots de uma poltrona (nomes sem
+  vírgula: nenhum par); a `0x80000`, que as duas também têm, está em 72
+  grupos. A escada tem ainda `0x400000`/`0x800000` (os
+  `DisableLocomotionContinuationAt{Start,End}OfPortalPair`). No
+  `cTSRoutingSlot` o par é o bit `0x100000` de `+0x30` (vtable `0xa8`, BV
+  `0x4aed08`, e o setter `0xac`); como o SLOT vira esses bits não foi lido.
 - `PortalConnectSlotInformation` (BV `0xe1f878`) liga cada par ao slot cujo
   nome é o "outro"; `PortalAddToPathPlannerImpl` (BV `0xe22a44`) chama o
   `AddPortal` do gerente (`cTSRouteManager::AddPortal` → `cPathPlanner::
