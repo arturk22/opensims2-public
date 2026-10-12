@@ -8,6 +8,7 @@
 
 #include "errors.hpp"
 #include "interactions.hpp"
+#include "locomotion.hpp"
 #include "placement.hpp"
 #include "world.hpp"
 
@@ -90,6 +91,64 @@ float AnimationLibrary::tilesPerSecond(const std::string& name) {
     }
     speeds_[name] = v;
     return v;
+}
+
+const LocoClip* AnimationLibrary::loco(const std::string& name, int ticksPerSecond) {
+    if (auto it = loco_.find(name); it != loco_.end())
+        return it->second ? &*it->second : nullptr;
+    if (!index_)
+        return nullptr; // not cached: the index may come later
+    std::optional<LocoClip> out;
+    try {
+        const Animation a = loadAnimation(*index_, name);
+        LocoClip c;
+        c.ticks = a.duration;
+        c.distance = a.locomotionDistance;
+        c.velocity = a.velocity * Animation::kTicksPerSecond;
+        c.turn = a.turnRotation;
+        c.cycle = a.cyclePortionCompleted;
+        c.type = a.locomotionType;
+        // The root: root_trans' translation channel (the offset from the
+        // frame; the skeletons' root_trans rests at x = y = 0) and its facing,
+        // root_trans' rest rotation (the same in every Sim skeleton) then
+        // root_rot's Euler channel, forward being the root's local +Z.
+        const Animation::Channel *trans = nullptr, *rot = nullptr;
+        for (const auto& t : a.targets)
+            for (const auto& ch : t.channels) {
+                if (ch.components.size() < 3)
+                    continue;
+                if (ch.name == "root_trans" && ch.attribute() == Animation::Translation &&
+                    ch.type() == Animation::TransformXYZ)
+                    trans = &ch;
+                else if (ch.name == "root_rot" && ch.attribute() == Animation::Rotation &&
+                         ch.type() == Animation::EulerRotation)
+                    rot = &ch;
+            }
+        constexpr float kDegrees = 3.14159265358979f / 180.0f;
+        const Xform rest{{0, 0.70710678f, 0.70710678f, 0}, {0, 0, 0}};
+        const float step = Animation::kTicksPerSecond / float(std::max(ticksPerSecond, 1));
+        const int n = int(std::ceil(float(a.duration) / step));
+        for (int k = 0; k <= n; ++k) {
+            const float t = std::min(float(k) * step, float(a.duration));
+            std::array<float, 3> r{0, 0, 0};
+            if (trans)
+                r[0] = trans->components[0].sample(t, trans->duration()),
+                r[1] = trans->components[1].sample(t, trans->duration());
+            Quat q = rest.q;
+            if (rot)
+                q = q * quatFromEulerXYZ(rot->components[0].sample(t, rot->duration()) * kDegrees,
+                                         rot->components[1].sample(t, rot->duration()) * kDegrees,
+                                         rot->components[2].sample(t, rot->duration()) * kDegrees);
+            const Vec3 f = Xform{q, {0, 0, 0}}.rotate({0, 0, 1});
+            r[2] = std::atan2(-f[0], f[1]);
+            c.root.push_back(r);
+        }
+        out = std::move(c);
+    } catch (const std::exception&) {
+    }
+    auto& slot = loco_[name];
+    slot = std::move(out);
+    return slot ? &*slot : nullptr;
 }
 
 std::optional<int> AnimationLibrary::eventTicks(const std::string& name, const std::string& line) {
@@ -927,11 +986,9 @@ std::string locomotionAnimation(VM& vm, const Object& sim, std::string_view role
 }
 
 float walkTilesPerTick(VM& vm, const Object& sim) {
-    if (sim.person) {
-        const std::string walk = locomotionAnimation(vm, sim, "walk");
-        if (const float v = walk.empty() ? 0 : library(vm).tilesPerSecond(walk); v > 0)
+    if (sim.person)
+        if (const float v = gaitOf(vm, sim).speed; v > 0)
             return v / float(vm.clock.ticksPerSecond);
-    }
     return vm.walkTilesPerTick;
 }
 

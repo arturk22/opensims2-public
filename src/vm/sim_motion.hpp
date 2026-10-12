@@ -50,6 +50,17 @@ public:
         // (counter-clockwise positive) and whether it plays mirrored.
         int turnSteps = 0;
         bool turnMirror = false;
+        // The locomotion over the floor (Object::Route::Loco): `walk` is its
+        // clip (the walk cycle, a start, a stop), bumped serial per clip,
+        // played mirrored or not, from `walkPhase` seconds in (the walk
+        // cycle goes on from where the start left it); the frame the clip
+        // moves with (drawn there: the clip's root makes the offset) and
+        // which way it faces; `held`: a start or a stop, whose root turns
+        // the body off the frame; `endTurn`: where such a clip leaves it.
+        uint32_t walkSerial = 0;
+        bool walkMirror = false, walkLoop = true, held = false, framed = false;
+        float walkPhase = 0;
+        float frameHeading = 0, endTurn = 0;
     };
 
     // Records the object's state after a VM tick (call once per tick,

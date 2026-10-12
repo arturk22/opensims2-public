@@ -1,6 +1,7 @@
 #include "sim_motion.hpp"
 
 #include "animation.hpp"
+#include "locomotion.hpp"
 #include "vm.hpp"
 
 #include <algorithm>
@@ -33,8 +34,28 @@ void SimMotion::sample(VM& vm, const Object& o) {
         s.animWeight = o.animation.weight;
     }
     s.serial = o.animation.serial;
-    if (s.walking)
-        s.walk = locomotionAnimation(vm, o, "walk");
+    if (s.walking) {
+        using Loco = Object::Route::Loco;
+        const Loco& L = o.route->loco;
+        if (L.kind != Loco::None && L.moving && !L.animation.empty()) {
+            s.walk = L.animation;
+            s.walkSerial = L.serial;
+            s.walkMirror = L.mirror;
+            s.walkLoop = L.kind == Loco::Walk;
+            s.held = L.kind != Loco::Walk;
+            s.endTurn = L.endTurn;
+            s.framed = true;
+            s.frameHeading = L.heading;
+            s.x = L.fx, s.y = L.fy;
+            if (L.kind == Loco::Walk)
+                if (auto secs = vm.animations.seconds(L.animation))
+                    s.walkPhase = L.cycleStart * *secs;
+        } else if (L.moving || (!o.route->points.empty() && o.route->points.front().portal)) {
+            s.walk = gaitOf(vm, o).animation; // on its way to a portal, or between clips
+        } else {
+            s.walking = false; // stopped, or not off yet: standing
+        }
+    }
     if (o.route && !o.route->climb.animation.empty()) {
         s.climb = o.route->climb.animation;
         s.climbSerial = o.route->climb.serial;
@@ -77,6 +98,9 @@ void SimMotion::sample(VM& vm, const Object& o) {
     if (count_ && previous_.turnSteps != 0 &&
         (current_.turnSteps == 0 || current_.climbSerial != previous_.climbSerial))
         heading_ = std::remainder(heading_ + float(previous_.turnSteps) * float(M_PI / 4), float(2 * M_PI));
+    // A stop or a step ended: its root left the body turned off its frame.
+    if (count_ && previous_.held && (!current_.held || current_.walkSerial != previous_.walkSerial))
+        heading_ = std::remainder(previous_.frameHeading + previous_.endTurn, float(2 * M_PI));
     ++count_;
 }
 
@@ -87,8 +111,12 @@ float SimMotion::turn(float dt, float turnSpeed) {
     const float dx = current_.x - previous_.x, dy = current_.y - previous_.y;
     if (current_.turnSteps != 0) // the turn's animation turns the body
         return heading_;
+    if (current_.held) // a start or a stop: drawn along its frame, the clip's root turning the body
+        return heading_ = current_.frameHeading;
     float target = headingOfDirection(current_.direction);
-    if (current_.walking && std::hypot(dx, dy) > 1e-4f)
+    if (current_.framed)
+        target = current_.frameHeading;
+    else if (current_.walking && std::hypot(dx, dy) > 1e-4f)
         target = headingOfMotion(dx, dy);
     heading_ = turnTowards(heading_, target, turnSpeed * dt);
     return heading_;

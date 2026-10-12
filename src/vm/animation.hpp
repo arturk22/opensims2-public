@@ -6,6 +6,7 @@
 
 #include "formats/bhav.hpp"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -238,6 +239,26 @@ struct AnimationState {
     std::vector<ActiveEffect> effects;
 };
 
+// What the locomotion needs of an animation (ANIM header, docs/routing-mac.md
+// §6.1): its length, how far its frame goes over the floor and how fast, how
+// far it turns the body (negative: clockwise; the turn clips are all made
+// clockwise and played mirrored the other way), the walk cycle portion it
+// starts or ends at (the "R" stops and starts: 0, the others 0.5), its
+// locomotion type (6 turn and go, 7 turn and stop, 8 turn in place, 9 step,
+// 10 step in place, 11-19 the walk cycles alt0-alt8) and the root's offset
+// from the moving frame at each VM tick (x to the side, y forward, the yaw of
+// the body about +Z): a start lags behind the frame and turns the body from
+// where it faced to the way, a stop turns it to the final facing.
+struct LocoClip {
+    int ticks = 0;      // animation ticks (1 ms)
+    float distance = 0; // metres the frame covers
+    float velocity = 0; // metres per second
+    float turn = 0;     // radians
+    float cycle = 0;
+    int type = 0;
+    std::vector<std::array<float, 3>> root; // per VM tick: x, y, yaw
+};
+
 // ANIM resources by name, for their lengths. Reads them on demand from a
 // ResourceIndex and/or takes lengths added directly (tests).
 class AnimationLibrary {
@@ -280,6 +301,13 @@ public:
     // (animation ticks, N), in order.
     const std::vector<std::pair<int, int16_t>>& treeEvents(const std::string& name);
     void addTreeEvent(const std::string& name, int ticks, int16_t event) { treeEvents_[name].push_back({ticks, event}); }
+    // The locomotion header and root track of an animation, sampled every
+    // 1/`ticksPerSecond` s; null if there is no such resource.
+    const LocoClip* loco(const std::string& name, int ticksPerSecond = 30);
+    void addLoco(const std::string& name, LocoClip clip) {
+        loco_[name] = std::move(clip);
+        speeds_[name] = loco_[name]->velocity;
+    }
     // Names the trees asked for that do not exist, with how often.
     std::map<std::string, size_t> missing;
 
@@ -292,6 +320,7 @@ private:
     std::unordered_map<std::string, float> travel_;
     std::unordered_map<std::string, std::optional<int>> events_;
     std::unordered_map<std::string, std::vector<std::pair<int, int16_t>>> treeEvents_;
+    std::unordered_map<std::string, std::optional<LocoClip>> loco_;
 };
 
 class VM;
@@ -320,9 +349,10 @@ std::string resolveListAnimation(VM& vm, const Object& sim, std::string entry);
 // that give no roles at all ("swimSlowShort,swimSlow,swimPose"), where the
 // order is short, normal, pose (inferred).
 std::string locomotionAnimation(VM& vm, const Object& sim, std::string_view role);
-// How far `sim` walks in a VM tick: the speed of its locomotion walk
-// animation (2 m/s for the normal adult walk, 1.37 for elders' and the
-// Grim Reaper's), or VM::walkTilesPerTick when it has none.
+// How far `sim` walks in a VM tick: the speed of its gait (locomotion.hpp:
+// the walk cycles weighed by its person data, 2 m/s for the normal adult
+// walk, 1.37 for elders' and the Grim Reaper's, 8.3 for a run), or
+// VM::walkTilesPerTick when it has none.
 float walkTilesPerTick(VM& vm, const Object& sim);
 
 // Registers Animate Object (0x69), Animate Sim (0x6A), Animate Overlay

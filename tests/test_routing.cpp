@@ -677,6 +677,11 @@ static void testBlockedBySim() {
         if (vm.threads.at(a.id).status != Thread::Status::Running && vm.threads.at(b.id).status != Thread::Status::Running)
             break;
     }
+    if (std::getenv("DEBUG_BLOCK"))
+        std::fprintf(stderr, "pass: a %d/%d at %.2f,%.2f (pd62 %d) b %d/%d at %.2f,%.2f (pd62 %d) closest %.2f\n",
+                     int(vm.threads.at(a.id).status), vm.threads.at(a.id).result, a.position.x, a.position.y,
+                     a.person->data[62], int(vm.threads.at(b.id).status), vm.threads.at(b.id).result, b.position.x,
+                     b.position.y, b.person->data[62], closest);
     check(vm.threads.at(a.id).status == Thread::Status::Finished && vm.threads.at(a.id).result &&
               vm.threads.at(b.id).status == Thread::Status::Finished && vm.threads.at(b.id).result && a.position.x > 9 &&
               b.position.x < 3 && closest > 0.25f,

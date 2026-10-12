@@ -264,8 +264,13 @@ void LotSimulation::sampleAll(double at) {
             // Stair phases chain without blending (each starts where the last ended).
             const bool chained = b.playing.find("stairs-") != std::string::npos;
             want = s.climb, loop = false, fade = chained ? 0.0f : 0.1f, level = vm::animlevel::Walk;
-        } else if (s.walking && !s.walk.empty())
-            want = s.walk, level = vm::animlevel::Walk;
+        } else if (s.walking && !s.walk.empty()) {
+            // The locomotion's clips: a start or a stop once, the walk cycle
+            // looping; each blends from the last over 0.1 s (inferred).
+            want = s.walk, loop = s.walkLoop, level = vm::animlevel::Walk;
+            if (s.framed)
+                fade = 0.1f;
+        }
         else if (!s.animation.empty())
             want = s.animation, loop = false, level = s.animLevel, weight = s.animWeight;
         // OS2_DEBUG_VM=1: each Sim's state after each tick.
@@ -276,9 +281,12 @@ void LotSimulation::sampleAll(double at) {
                          it == vm_->threads.end() ? -1 : int(it->second.status),
                          it == vm_->threads.end() ? "" : it->second.error.substr(0, 200).c_str());
         }
+        const bool walkClip = s.climb.empty() && s.walking && !s.walk.empty();
         const bool restart = (!s.climb.empty() && s.climbSerial != b.climbSerial) ||
-                             (s.climb.empty() && !s.animation.empty() && s.serial != b.serial);
+                             (walkClip && s.framed && s.walkSerial != b.walkSerial) ||
+                             (s.climb.empty() && !walkClip && !s.animation.empty() && s.serial != b.serial);
         b.climbSerial = s.climbSerial;
+        b.walkSerial = s.walkSerial;
         if (want == b.playing && !restart)
             continue;
         // Seated (in a chair's or a bed's slot) with nothing to play: the
@@ -300,10 +308,11 @@ void LotSimulation::sampleAll(double at) {
             const bool partial = animated && !(anim.flags & 1);
             if (partial)
                 b.partial = std::max<int>(1, anim.priority);
-            const bool mirror = animated ? s.flipped : (!s.climb.empty() && s.turnMirror);
+            const bool mirror = animated ? s.flipped : !s.climb.empty() ? s.turnMirror : (walkClip && s.walkMirror);
             b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
                                     .mirror = mirror, .turn = animated ? anim.headingOffset : 0.0f,
-                                    .level = level, .weight = weight});
+                                    .phase = walkClip ? double(s.walkPhase) : 0.0, .level = level,
+                                    .weight = weight});
             if (onSimAnimation)
                 onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
         } catch (const std::exception& e) {

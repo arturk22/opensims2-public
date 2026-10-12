@@ -547,6 +547,32 @@ struct Object {
             bool mirror = false;
         } climb;
         bool endTurned = false; // the turn to the final facing was added
+        // The locomotion along the floor (routing.cpp locoStep, after
+        // cLocomotable::FollowOneStep, docs/routing-mac.md §6.1): a start
+        // ("turnAndGo", or a step on a short way), the walk cycle, a stop
+        // ("turnAndStop") at the end. A frame moves along the route (the
+        // start and the stop over their clip's distance in its length, the
+        // walk at the gait's speed) and the walker stands where the clip's
+        // root is, offset from it.
+        struct Loco {
+            enum Kind : uint8_t { None, Start, Walk, Stop };
+            Kind kind = None;
+            bool moving = false;     // walking on (no start when it goes on)
+            std::string animation;   // the clip playing
+            uint32_t serial = 0;     // bumped as each clip starts
+            bool mirror = false;
+            bool shortWay = false;   // the start was a short one: so is the stop
+            int tick = 0, ticks = 0; // in a start or a stop
+            float distance = 0;      // its way along the route
+            float speed = 0;         // the walk's, tiles per tick
+            float fx = 0, fy = 0;    // the frame
+            float heading = 0;       // which way the frame faces (radians, 0 = +Y)
+            float turn = 0;          // how far the clip turns the body (radians, + counter-clockwise)
+            float endTurn = 0;       // where a stop or a step leaves the body, off the frame's way
+            float cycle = 0;         // walk cycle portion (0-1)
+            float cycleStart = 0;    // the portion the walk clip started at
+            float endX = 0, endY = 0; // a stop's last point
+        } loco;
         // The instruction walking it: its thread's stack depth, tree and node.
         size_t depth = 0;
         const Behavior* tree = nullptr;

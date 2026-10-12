@@ -4,6 +4,7 @@
 #include "errors.hpp"
 #include "go_here.hpp"
 #include "interactions.hpp"
+#include "locomotion.hpp"
 #include "sim_motion.hpp"
 
 #include "formats/binreader.hpp"
@@ -895,21 +896,27 @@ int turnSteps(float from, float to) {
 }
 
 // A turn in place of `steps` 45-degree steps where the walker stands: the
-// locomotion's turn animation ("<age>-TurnInPlace-<45|90|135|180>", the
-// adult one if the age has none), as long as it lasts. Its header turns
-// clockwise (a-TurnInPlace-90: turn -1.5708), so a counter-clockwise turn
-// plays it mirrored (inferred). The walker keeps its direction until it
-// walks on (the animation's root turns the body).
+// set's turn in place clip ("<age>-TurnInPlace-<45|90|135|180>", the adult
+// one if the age has none), as long as it lasts. The clips turn clockwise
+// (a-TurnInPlace-90: header turn -1.5708) and the set plays the one whose
+// turn is the opposite mirrored (cLocoSet vtable 0x30, BV 0xd0c7ec: a
+// counter-clockwise turn). The walker keeps its direction until it walks on
+// (the animation's root turns the body).
 std::optional<Object::Route::Point> turnPoint(VM& vm, const Object& me, int steps) {
     if (steps == 0 || !me.person)
         return std::nullopt;
     if (!vm.animations.index())
         vm.animations.setIndex(vm.code().index());
+    std::vector<std::pair<std::string, float>> candidates; // name, playback speed
+    if (auto pick = locoClip(vm, me, "turnInPlace", steps))
+        candidates.push_back({pick->animation, pick->speed});
     const std::string name = "TurnInPlace-" + std::to_string(45 * std::abs(steps));
-    for (const std::string& candidate : {agePrefix(me) + "-" + name, "a-" + name})
+    candidates.push_back({agePrefix(me) + "-" + name, 1.0f});
+    candidates.push_back({"a-" + name, 1.0f});
+    for (const auto& [candidate, speed] : candidates)
         if (const auto secs = vm.animations.seconds(candidate)) {
             Object::Route::Point p = walkPoint(me.position.x, me.position.y, me.position.level);
-            p.ticks = std::max(1, int(std::ceil(*secs * float(vm.clock.ticksPerSecond))));
+            p.ticks = std::max(1, int(std::ceil(*secs / speed * float(vm.clock.ticksPerSecond))));
             p.animation = candidate;
             p.direction = me.data[objdata::Direction];
             p.turnSteps = steps;
@@ -919,15 +926,53 @@ std::optional<Object::Route::Point> turnPoint(VM& vm, const Object& me, int step
     return std::nullopt;
 }
 
-// What BeginFollow makes of a planned way (BV 0x6b5770, §6.1): each leg on
-// the floor cut every 0.2 tile (floor(length / 0.2) points between its
-// ends); a walker already on the move leads out along where it faces by
-// min(speed * 0.3333, 0.25) instead of turning; one standing turns in place
-// first when the first leg is more than 40 degrees off its facing.
+// Where the walker faces now (radians, 0 = +Y): its frame's way while it
+// walks, else its direction.
+float facingOf(const Object& me) {
+    if (me.route && me.route->loco.kind == Object::Route::Loco::Walk)
+        return me.route->loco.heading;
+    return headingOfDirection(me.data[objdata::Direction]);
+}
+
+// What BeginFollow makes of a planned way (BV 0x6b5770, §6.1): the way out
+// first, a point min(d / 3, 0.25) out from where the walker stands (d the
+// distance to the first point) along where it faces turned by the 45-degree
+// steps ComputeTurn gives the first leg, so that the start clip that turns
+// by those steps leaves straight along it; then each leg on the floor cut
+// every 0.2 tile (floor(length / 0.2) points between its ends). Without
+// start clips (a set that has none) a standing walker more than 40 degrees
+// off its first leg turns in place first.
 void shapeWalk(VM& vm, Object& me, Object::Route& r, bool moving) {
     std::vector<Object::Route::Point> out;
     Point2 at{me.position.x, me.position.y};
     int level = me.position.level;
+    const bool floorFirst = !r.points.empty() && r.points.front().ticks == 0 && !r.points.front().portal &&
+                            !r.points.front().viaPortal && r.points.front().level == level;
+    int steps = 0;
+    if (floorFirst) {
+        const auto& first = r.points.front();
+        const float dx = first.x - at[0], dy = first.y - at[1], d = std::hypot(dx, dy);
+        if (d > 1e-4f) {
+            const float facing = facingOf(me);
+            steps = turnSteps(facing, headingOfMotion(dx, dy));
+            const float lead = std::min(d * 0.3333f, 0.25f), h = facing + float(steps) * float(M_PI / 4);
+            const Point2 q{at[0] - std::sin(h) * lead, at[1] + std::cos(h) * lead};
+            // Inferred: not into another Sim's way (the game's curve keeps
+            // off the Sims its planner went around; a walker planning again
+            // in front of the one that blocked it would walk into it).
+            bool clear = plannerOf(vm).free(level, q);
+            for (const auto& [id, o] : vm.objects())
+                if (clear && id != me.id && o.person && o.position.inWorld() && o.position.level == level &&
+                    o.data[objdata::ContainerId] == 0 &&
+                    std::hypot(o.position.x - q[0], o.position.y - q[1]) <
+                        (smallSim(me) ? 0.1875f : 0.25f) + (smallSim(o) ? 0.1875f : 0.25f) + kStepTiles * kHorizonSteps)
+                    clear = false;
+            if (clear) {
+                out.push_back(walkPoint(q[0], q[1], level));
+                at = q;
+            }
+        }
+    }
     for (const auto& p : r.points) {
         const bool plain = p.ticks == 0 && !p.portal && !p.viaPortal && p.level == level && !p.door;
         if (plain) {
@@ -943,22 +988,9 @@ void shapeWalk(VM& vm, Object& me, Object::Route& r, bool moving) {
         level = p.level;
     }
     r.points = std::move(out);
-    if (r.points.empty() || r.points.front().ticks > 0 || r.points.front().portal)
+    if (!floorFirst || moving || steps == 0 || locoClip(vm, me, "turnAndGo", steps))
         return;
-    const Object::Route::Point& first = r.points.front();
-    const float dx = first.x - me.position.x, dy = first.y - me.position.y;
-    if (std::hypot(dx, dy) < 1e-4f)
-        return;
-    const float facing = headingOfDirection(me.data[objdata::Direction]);
-    if (moving) {
-        const float lead = std::min(walkTilesPerTick(vm, me) * float(vm.clock.ticksPerSecond) * 0.3333f, 0.25f);
-        const Point2 q{me.position.x - std::sin(facing) * lead, me.position.y + std::cos(facing) * lead};
-        PathPlanner& planner = plannerOf(vm);
-        if (planner.free(me.position.level, q))
-            r.points.insert(r.points.begin(), walkPoint(q[0], q[1], me.position.level));
-        return;
-    }
-    if (auto t = turnPoint(vm, me, turnSteps(facing, headingOfMotion(dx, dy))))
+    if (auto t = turnPoint(vm, me, steps))
         r.points.insert(r.points.begin(), *t);
 }
 
@@ -1445,6 +1477,247 @@ bool runWalkTree(Context& c, const std::string& name, std::array<int16_t, 4> arg
 // starts and stays there while it lasts. A Sim in the way blocks the walk:
 // the walker waits, asks it to move (its animation), plans again around
 // it, and after too many tries fails (docs/routing-mac.md §6).
+// A route point the walker walks to over the floor (not a stair or turn
+// phase, not a portal).
+bool floorPoint(const Object::Route::Point& p) { return p.ticks == 0 && !p.portal; }
+
+constexpr float kAnimTicksPerSecond = 1000; // ANIM ticks are milliseconds
+
+// One tick of the locomotion along the floor (cLocomotable::FollowOneStep, BV
+// 0x6b80e8, and the scene graph's loco request; docs/routing-mac.md §6.1):
+// the phases BeginFollow lines up, each a clip of the walker's set, with a
+// frame moving along the route and the walker put where the clip's root is
+// (LocoPlaceFromSceneGraph: its translation, and the facing its rotation's).
+//   start  standing: "turnAndGo" turned by the first leg's 45-degree steps
+//          (the way out already leaves along them), "turnAndGoShort" when
+//          the stretch is shorter than a start and a stop, or "stepShort"
+//          when it is at most 0.25 tile (BeginFollow tests role 9,
+//          stepShort, for such a way): the body keeps facing and steps
+//          that way. Its frame covers the clip's distance (or the
+//          stretch) in the clip's length.
+//   walk   the gait's cycle at its speed (gaitOf), the frame turning with
+//          each leg.
+//   stop   at the end of the route, once what is left is a stop's
+//          distance: "turnAndStop" (or the short one after a short start)
+//          turned from the way the walker comes to its final facing, of the
+//          foot the cycle is on ("R", cycle portion 0, in the first or last
+//          quarter of the cycle; inferred from the clips' cycle portions);
+//          its frame covers what is left in the clip's length.
+// The game's frame follows a curve and the clips are blended by angle
+// (cActiveAnimLoco::CreateStepCycle); here the nearest 45-degree clip plays
+// on the polyline (inferred). A set without these clips (tests, private sets
+// without turns) walks at the gait's speed from the first tick to the last.
+struct LocoStep {
+    Object::Route::Loco loco;
+    size_t consumed = 0; // route points reached
+    float x = 0, y = 0;  // where the walker (the root) stands
+    int level = 0;
+    float facing = 0; // the body's heading
+};
+
+LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r) {
+    using Loco = Object::Route::Loco;
+    LocoStep out;
+    Loco& L = out.loco;
+    L = r.loco;
+    const float tps = float(vm.clock.ticksPerSecond);
+    // The stretch over the floor from here: its points and length.
+    size_t end = 0;
+    while (end < r.points.size() && floorPoint(r.points[end]))
+        ++end;
+    const bool final = end == r.points.size();
+    if (L.kind == Loco::None || !L.moving) {
+        L.fx = me.position.x, L.fy = me.position.y;
+    }
+    auto lengthFrom = [&](float x, float y, size_t from) {
+        float len = 0;
+        for (size_t i = from; i < end; ++i) {
+            len += std::hypot(r.points[i].x - x, r.points[i].y - y);
+            x = r.points[i].x, y = r.points[i].y;
+        }
+        return len;
+    };
+    const float stretch = lengthFrom(L.fx, L.fy, 0);
+    const auto& first = r.points.front();
+    const float legX = first.x - L.fx, legY = first.y - L.fy;
+    const float legHeading = std::hypot(legX, legY) > 1e-5f ? headingOfMotion(legX, legY) : facingOf(me);
+    AnimationLibrary& lib = vm.animations;
+    auto clipTicks = [&](const LocoClip& c, float speed) {
+        return std::max(1, int(std::lround(float(c.ticks) / kAnimTicksPerSecond * tps / speed)));
+    };
+    auto begin = [&](Loco::Kind kind, const LocoPick& pick, const LocoClip& clip, float distance, float heading) {
+        L.kind = kind;
+        L.animation = pick.animation;
+        L.mirror = pick.mirror;
+        L.tick = 0;
+        L.ticks = clipTicks(clip, pick.speed);
+        L.distance = distance;
+        L.heading = heading;
+        L.turn = pick.mirror ? -clip.turn : clip.turn;
+        // A stop or a step leaves the body turned off the frame (a start's
+        // turn ends on the way, the walk going on from its sway).
+        L.endTurn = 0;
+        if (kind == Loco::Stop || pick.animation.find("tep") != std::string::npos)
+            L.endTurn = clip.root.empty() ? L.turn : (pick.mirror ? -clip.root.back()[2] : clip.root.back()[2]);
+        ++L.serial;
+    };
+    // A stop's clip for the way the walker comes and its final facing.
+    auto stopClip = [&](float heading) -> std::optional<std::pair<LocoPick, const LocoClip*>> {
+        const float facing = r.facing >= 0 ? headingOfDirection(r.facing) : heading;
+        const int steps = turnSteps(heading, facing);
+        const bool otherFoot = L.cycle < 0.25f || L.cycle >= 0.75f;
+        const std::string role = std::string(L.shortWay ? "turnAndStopShort" : "turnAndStop") + (otherFoot ? "R" : "");
+        if (auto pick = locoClip(vm, me, role, steps))
+            if (const LocoClip* clip = lib.loco(pick->animation, vm.clock.ticksPerSecond); clip && clip->ticks > 0)
+                return std::make_pair(*pick, clip);
+        return std::nullopt;
+    };
+    if (L.kind == Loco::None || (!L.moving && L.kind != Loco::Start)) {
+        L.kind = Loco::None;
+        if (!L.moving && me.person) {
+            const float facing = headingOfDirection(me.data[objdata::Direction]);
+            const int steps = turnSteps(facing, legHeading);
+            const LocoClip* go = nullptr;
+            std::optional<LocoPick> pick;
+            if (stretch <= 0.25f && final) {
+                pick = locoClip(vm, me, "stepShort", turnSteps(facing, legHeading));
+            } else {
+                pick = locoClip(vm, me, "turnAndGo", steps);
+                const LocoClip* full = pick ? lib.loco(pick->animation, vm.clock.ticksPerSecond) : nullptr;
+                const auto stop = stopClip(legHeading);
+                const float need = (full ? full->distance : 0) + (stop ? stop->second->distance : 0);
+                if (final && stretch < need) {
+                    if (auto shorter = locoClip(vm, me, "turnAndGoShort", steps)) {
+                        pick = shorter;
+                        L.shortWay = true;
+                    }
+                }
+            }
+            go = pick ? lib.loco(pick->animation, vm.clock.ticksPerSecond) : nullptr;
+            if (pick && go && go->ticks > 0) {
+                const bool step = pick->animation.find("tep") != std::string::npos;
+                begin(Loco::Start, *pick, *go, step ? stretch : std::min(go->distance, stretch), legHeading);
+                L.cycleStart = L.cycle = go->cycle;
+            }
+        }
+        L.moving = true;
+    }
+    if (L.kind == Loco::None || L.kind == Loco::Walk) {
+        const Gait g = gaitOf(vm, me);
+        if (L.kind == Loco::None || L.animation != g.animation) {
+            if (L.kind != Loco::Walk)
+                L.cycleStart = L.cycle;
+            L.kind = Loco::Walk;
+            L.animation = g.animation;
+            L.mirror = false;
+            L.turn = 0;
+            ++L.serial;
+        }
+        L.speed = (g.speed > 0 ? g.speed : vm.walkTilesPerTick * tps) / tps;
+        // The stop, once what is left is a stop's distance.
+        if (final) {
+            const float left = stretch;
+            if (auto stop = stopClip(legHeading); stop && left - L.speed <= stop->second->distance) {
+                begin(Loco::Stop, stop->first, *stop->second, left, legHeading);
+                L.endX = r.points[end - 1].x, L.endY = r.points[end - 1].y;
+            }
+        }
+    }
+    if (L.kind == Loco::Stop && final && end > 0 &&
+        (r.points[end - 1].x != L.endX || r.points[end - 1].y != L.endY)) {
+        L.kind = Loco::Walk; // planned again: walk on
+        L.speed = std::max(gaitOf(vm, me).speed, 0.1f) / tps;
+    }
+    // The frame's way this tick.
+    float step = L.kind == Loco::Walk ? L.speed : L.distance / float(std::max(L.ticks, 1));
+    float x = L.fx, y = L.fy;
+    size_t i = 0;
+    float heading = L.heading;
+    while (step > 0 && i < end) {
+        const auto& p = r.points[i];
+        const float dx = p.x - x, dy = p.y - y, d = std::hypot(dx, dy);
+        if (d > 1e-6f)
+            heading = headingOfMotion(dx, dy);
+        if (d <= step) {
+            x = p.x, y = p.y;
+            step -= d;
+            ++i;
+        } else {
+            x += dx / d * step, y += dy / d * step;
+            step = 0;
+        }
+    }
+    if (L.kind == Loco::Walk) {
+        L.heading = heading;
+        // The cycle goes on at the gait's speed (one cycle per clip length).
+        if (const LocoClip* c = lib.loco(L.animation, vm.clock.ticksPerSecond); c && c->ticks > 0)
+            L.cycle = std::fmod(L.cycle + kAnimTicksPerSecond / tps / float(c->ticks), 1.0f);
+    }
+    L.fx = x, L.fy = y;
+    out.consumed = i;
+    out.level = i > 0 ? r.points[i - 1].level : me.position.level;
+    // The root: the clip's offset from the frame at this tick.
+    float rx = 0, ry = 0, yaw = 0;
+    if (L.kind == Loco::Start || L.kind == Loco::Stop) {
+        ++L.tick;
+        if (const LocoClip* c = lib.loco(L.animation, vm.clock.ticksPerSecond); c && !c->root.empty()) {
+            const size_t k = std::min(c->root.size() - 1, size_t(std::lround(float(L.tick) / float(L.ticks) *
+                                                                               float(c->root.size() - 1))));
+            rx = c->root[k][0], ry = c->root[k][1], yaw = c->root[k][2];
+            if (L.mirror)
+                rx = -rx, yaw = -yaw;
+        }
+        if (L.tick >= L.ticks) {
+            if (L.kind == Loco::Stop || L.endTurn != 0) { // the end of the way (a stop, a step): there
+                out.consumed = end;
+                L.fx = end > 0 ? r.points[end - 1].x : x;
+                L.fy = end > 0 ? r.points[end - 1].y : y;
+                out.level = end > 0 ? r.points[end - 1].level : out.level;
+                rx = ry = 0;
+                yaw = L.endTurn;
+                L.kind = Loco::Stop;
+            } else {
+                // The start's turn is behind it: the walk goes on from the
+                // cycle portion the start ends at.
+                L.kind = Loco::Walk;
+                L.cycle = L.cycleStart;
+                L.animation = gaitOf(vm, me).animation;
+                L.mirror = false;
+                L.turn = 0;
+                ++L.serial;
+                rx = ry = 0;
+                yaw = 0;
+            }
+        }
+    }
+    const float h = L.heading;
+    out.x = L.fx + rx * std::cos(h) - ry * std::sin(h);
+    out.y = L.fy + rx * std::sin(h) + ry * std::cos(h);
+    out.facing = h + yaw;
+    return out;
+}
+
+// The other Sim the walker would stand in at `to` (TSObjectCanSetPosition
+// with error 0x0C "intersects object", whose object LocoPlaceFromSceneGraph
+// makes the blocker), or 0. Inferred: the Sims as discs of 0.25 tile (0.1875
+// for a child or a toddler), as the planner sizes them; a walker already
+// standing in the other may walk on (LocoPlace puts it where it is stuck
+// when its own place does not pass either).
+ObjectId stepBlocker(VM& vm, const Object& me, float x, float y, int level) {
+    const float mine = smallSim(me) ? 0.1875f : 0.25f;
+    for (const auto& [id, o] : vm.objects()) {
+        if (id == me.id || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
+            o.position.level != level || allowsIntersection(vm, o, me.id))
+            continue;
+        const float reach = mine + (smallSim(o) ? 0.1875f : 0.25f);
+        const float now = std::hypot(o.position.x - me.position.x, o.position.y - me.position.y);
+        const float then = std::hypot(o.position.x - x, o.position.y - y);
+        if (then < reach && now >= reach)
+            return id;
+    }
+    return 0;
+}
+
 Step advance(Context& c, Object& me, RouteFail& why) {
     VM& vm = c.vm;
     auto& r = *me.route;
@@ -1552,10 +1825,22 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     // whether or not it is still in the way, until it is 1.25 tiles off or
     // the time is up.
     const bool waitingForPerson = r.blockedTicks > 0 && r.blocker && vm.object(r.blocker);
-    if (const ObjectId b = waitingForPerson ? r.blocker : simAhead(vm, me, r)) {
+    // This tick's step over the floor and the Sim it would walk into (the
+    // locomotor's per-step placement test), when the prediction sees none.
+    std::optional<LocoStep> pending;
+    ObjectId b = waitingForPerson ? r.blocker : simAhead(vm, me, r);
+    if (!b && !r.points.empty() && floorPoint(r.points.front()) && me.position.inWorld()) {
+        pending = locoStep(vm, me, r);
+        b = stepBlocker(vm, me, pending->x, pending->y, pending->level);
+    }
+    if (b) {
         const Object& blocker = *vm.object(b);
         const float d = std::hypot(blocker.position.x - me.position.x, blocker.position.y - me.position.y);
         r.waiting = true;
+        // It stops (the game slows down over 5 ticks) and starts again
+        // from standing.
+        r.loco.kind = Object::Route::Loco::None;
+        r.loco.moving = false;
         // DoBlockedGoalStillAvailable's tries start again when the blocker
         // changes or has moved 0.25 tile since the last one.
         // (Not while waiting for it to move: DoWaitingForPersonToMove
@@ -1703,43 +1988,63 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         r.blocker = 0, r.blockedTicks = 0;
     }
     r.waiting = false;
-    float budget = walkTilesPerTick(vm, me);
     const TilePos tileBefore = VM::tileOf(me);
-    while (budget > 0 && !r.points.empty()) {
+    if (!r.points.empty() && floorPoint(r.points.front())) {
+        const LocoStep st = pending ? *pending : locoStep(vm, me, r);
+        // OS2_DEBUG_LOCO=1: each step (the frame's speed against the clip's
+        // own: what the feet slide).
+        if (std::getenv("OS2_DEBUG_LOCO")) {
+            static const char* kinds[] = {"none", "start", "walk", "stop"};
+            const float frame = std::hypot(st.loco.fx - (r.loco.moving ? r.loco.fx : me.position.x),
+                                           st.loco.fy - (r.loco.moving ? r.loco.fy : me.position.y)) *
+                                float(vm.clock.ticksPerSecond);
+            const LocoClip* clip = vm.animations.loco(st.loco.animation, vm.clock.ticksPerSecond);
+            const float own = clip ? (clip->ticks > 0 && st.loco.kind != Object::Route::Loco::Walk
+                                          ? st.loco.distance / (float(st.loco.ticks) / float(vm.clock.ticksPerSecond))
+                                          : clip->velocity)
+                                   : 0;
+            const float natural = clip ? clip->velocity : 0;
+            std::fprintf(stderr,
+                         "loco t%llu %d %-5s %-32s %s tick %d/%d frame (%.3f,%.3f) h %6.1f root (%.3f,%.3f) face %6.1f "
+                         "speed %.3f clip %.3f (own %.3f) slide %.3f\n",
+                         (unsigned long long)vm.ticks, me.id, kinds[st.loco.kind], st.loco.animation.c_str(),
+                         st.loco.mirror ? "M" : "-", st.loco.tick, st.loco.ticks, st.loco.fx, st.loco.fy,
+                         st.loco.heading * 180 / float(M_PI), st.x, st.y, st.facing * 180 / float(M_PI), frame, natural,
+                         own, std::fabs(frame - natural));
+        }
+        r.loco = st.loco;
+        r.points.erase(r.points.begin(), r.points.begin() + std::ptrdiff_t(std::min(st.consumed, r.points.size())));
+        moveTo(vm, me, st.x, st.y, st.level);
+        setDirection(me, directionOf(-std::sin(st.facing), std::cos(st.facing)));
+        if (r.loco.kind == Object::Route::Loco::Stop && r.loco.tick >= r.loco.ticks) {
+            // Stopped, turned to the final facing (BeginCachedEndTurnPath
+            // is not needed).
+            r.endTurned = true;
+            r.loco.kind = Object::Route::Loco::None;
+            r.loco.moving = false;
+        }
+    } else if (!r.points.empty() && r.points.front().ticks > 0) {
         const Object::Route::Point& p = r.points.front();
-        if (p.portal)
-            return Step::Walking; // its tree starts on the next tick
-        if (p.ticks > 0) {
-            if (r.climb.ticksLeft == 0) { // the phase starts
-                moveTo(vm, me, p.x, p.y, p.level);
-                setDirection(me, p.direction);
-                r.climb.animation = p.animation;
-                r.climb.z = p.z;
-                r.climb.ticksLeft = p.ticks;
-                r.climb.turnSteps = p.turnSteps;
-                r.climb.mirror = p.mirror;
-                ++r.climb.serial;
-            }
-            r.waiting = p.animation.empty();
-            if (--r.climb.ticksLeft == 0) {
-                r.points.erase(r.points.begin());
-                if (r.points.empty() || r.points.front().ticks == 0)
-                    r.climb.animation.clear();
-            }
-            return Step::Walking; // the tick is spent
-        }
-        const float dx = p.x - me.position.x, dy = p.y - me.position.y;
-        const float d = std::hypot(dx, dy);
-        if (d > 0)
-            setDirection(me, directionOf(dx, dy));
-        if (d <= budget) {
+        if (r.climb.ticksLeft == 0) { // the phase starts
             moveTo(vm, me, p.x, p.y, p.level);
-            budget -= d;
-            r.points.erase(r.points.begin());
-        } else {
-            moveTo(vm, me, me.position.x + dx / d * budget, me.position.y + dy / d * budget, p.level);
-            budget = 0;
+            setDirection(me, p.direction);
+            r.climb.animation = p.animation;
+            r.climb.z = p.z;
+            r.climb.ticksLeft = p.ticks;
+            r.climb.turnSteps = p.turnSteps;
+            r.climb.mirror = p.mirror;
+            ++r.climb.serial;
         }
+        // A turn in place stands; a stair's climb goes on walking after it.
+        r.loco.kind = Object::Route::Loco::None;
+        r.loco.moving = p.turnSteps == 0 && !p.animation.empty();
+        r.waiting = p.animation.empty();
+        if (--r.climb.ticksLeft == 0) {
+            r.points.erase(r.points.begin());
+            if (r.points.empty() || r.points.front().ticks == 0)
+                r.climb.animation.clear();
+        }
+        return Step::Walking; // the tick is spent
     }
     if (!r.points.empty()) {
         if (!(VM::tileOf(me) == tileBefore)) {
