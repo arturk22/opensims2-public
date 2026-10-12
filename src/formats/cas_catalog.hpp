@@ -129,5 +129,10 @@ int toneNumber(std::string_view family); // 0 if not of that form
 // else its name with '_' after the prefix turned into '-'.
 std::string overlayTexture(ResourceIndex& index, const SimPart& overlay);
 
+// The face skin texture of an age/gender prefix ("tf") and skin tone (1-4):
+// the one the game's "<prefix>face_s<n>_txmt" names, else "<prefix>face-s<n>".
+// Teen girls have no texture of their own: tfface_s4 uses "afface-s4".
+std::string faceSkinTexture(ResourceIndex& index, const std::string& prefix, int skinTone);
+
 } // namespace cas
 } // namespace os2

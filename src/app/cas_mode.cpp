@@ -1061,6 +1061,11 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
                     edit_.spec.face.archetype = cas::family(*ar);
             cas::completeSpec(*catalog_, edit_.spec);
             changed();
+        } else if (a == "--cas-skin") { // skin tone 1-4 (Light .. Dark), as the tone buttons
+            edit_.spec.skinTone = std::clamp(std::stoi(v), 1, 4);
+            edit_.spec.outfits.erase(cas::category::Naked);
+            cas::completeSpec(*catalog_, edit_.spec);
+            changed();
         } else if (a == "--cas-done")
             finishSim();
         else if (a == "--cas-new")
@@ -1719,7 +1724,7 @@ UiScreen CasMode::screen(int width, int height) {
     auto overlayThumb = [&](const SimPart& o) -> const RgbaImage* {
         if (const RgbaImage* t = thumb(cas::entryThumbnailId(o, s.age, s.gender)))
             return t;
-        const std::string face = cas::agePrefix(s.age, s.gender, true) + "face-s" + std::to_string(s.skinTone);
+        const std::string face = cas::faceSkinTexture(index_, cas::agePrefix(s.age, s.gender, true), s.skinTone);
         const std::string tex = cas::overlayTexture(index_, o);
         const std::string key = face + "|" + tex;
         auto it = previews_.find(key);

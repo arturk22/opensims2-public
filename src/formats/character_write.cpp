@@ -614,7 +614,7 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         pkg.add(gmdcT, rewriteRcol(baked.gmdc, {}, names), true);
 
         // The face material.
-        const std::string skinTex = lower(prefix) + "face-s" + std::to_string(spec.skinTone);
+        const std::string skinTex = faceSkinTexture(index, prefix, spec.skinTone);
         MaterialDefinition m;
         uint32_t sgId = 0, sgVersion = 2;
         if (auto tl = index.findByName(lower(prefix) + "face_s" + std::to_string(spec.skinTone) + "_txmt", kTypeTxmt)) {

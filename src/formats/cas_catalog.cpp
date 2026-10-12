@@ -242,6 +242,21 @@ const SimPart* CasCatalog::byName(const std::vector<SimPart>& list, std::string_
 const SimPart* CasCatalog::skinTone(int tone) const { return byFamily(skinTones, toneFamily(tone)); }
 const SimPart* CasCatalog::hairTone(int tone) const { return byFamily(hairTones, toneFamily(tone)); }
 
+std::string faceSkinTexture(ResourceIndex& index, const std::string& prefix, int skinTone) {
+    const std::string p = lower(prefix), n = std::to_string(skinTone);
+    if (auto loc = index.findByName(p + "face_s" + n + "_txmt", kTypeTxmt)) {
+        try {
+            const auto bytes = index.read(*loc);
+            Rcol rc(bytes);
+            if (const auto* b = rc.find("cMaterialDefinition"))
+                if (auto tex = MaterialDefinition::parse(b->body).property("stdMatBaseTextureName"); !tex.empty())
+                    return lower(tex);
+        } catch (const std::exception&) {
+        }
+    }
+    return p + "face-s" + n;
+}
+
 std::string overlayTexture(ResourceIndex& index, const SimPart& o) {
     if (auto t = o.reference("materialkeyidx")) {
         Tgi k = *t;
