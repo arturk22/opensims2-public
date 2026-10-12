@@ -43,6 +43,9 @@ namespace os2::vm {
 namespace {
 
 constexpr uint16_t kDialogStrings = 0x12D;
+// The last object a name token of a dialog string named ($Object,
+// $NameLocal, ...): the automatic icon's object (resolveIcon).
+thread_local int16_t lastTokenObject = 0;
 constexpr uint16_t kJobStrings = 0x93; // a job object's titles and descriptions
 constexpr uint32_t kTypeCtss = 0x43545353;
 constexpr uint32_t kEditorLabelGroup = 0x7FE59FD0;
@@ -159,6 +162,82 @@ std::string stringAt(const StringTable* t, int oneBased) {
 
 } // namespace
 
+DialogClassInfo dialogClass(int type) {
+    // cTSUIDialogManager::GetObjectDialog (BV 0x21c5a8) switches on the type
+    // to a class ID; the class of each ID is the one whose code follows its
+    // GZCOM_<class>CLSID getter (they sit in front of the class's
+    // QueryInterface). The scripts: cTSWinProcPhoneBookServices/Party
+    // constructors (0x8C159243/0x8C159242), Neighbors' (0x8C159244),
+    // cTSWinProcClothingDialog::Initialize (0x8C159250),
+    // cTSWinProcNameObjectDialog (0x2D91050A, panels 0xCDC2CAA4-B0).
+    using C = DialogClass;
+    switch (type) {
+    case 5:
+    case 15: return {C::PhoneServices, "cTSWinProcPhoneBookServices", 0x8C159243};
+    case 6: return {C::PhoneNeighbors, "cTSWinProcPhoneBookNeighbors", 0x8C159244};
+    case 7:
+    case 0x46: return {C::PhoneParty, "cTSWinProcPhoneBookParty", 0x8C159242};
+    case 11:
+    case 13:
+    case 0x2B:
+    case 0x2D: return {C::SelectItems, "cTSWinProcSelectItemsDialog", 0};
+    case 12:
+    case 0x2C: return {C::JewelryPurchase, "cTSWinProcJewelryPurchaseDialog", 0};
+    case 14:
+    case 0x1B:
+    case 0x1F:
+    case 0x2A: return {C::Fill, "cTSWinProcFillDialog", 0};
+    case 16:
+    case 0x2E: return {C::ClothingPurchase, "cTSWinProcClothingPurchaseDialog", 0};
+    case 17:
+    case 0x31: return {C::Clothing, "cTSWinProcClothingDialog", 0x8C159250};
+    case 20: return {C::ClothingTryOn, "cTSWinProcClothingTryOnDialog", 0};
+    case 21: return {C::Vanity, "cTSWinProcVanityDialog", 0};
+    case 23: return {C::NameObject, "cTSWinProcNameObjectDialog", 0x2D91050A};
+    case 24:
+    case 0x22: return {C::SetAspiration, "cTSWinProcSetAspirationDialog", 0};
+    case 0x1A:
+    case 0x1D:
+    case 0x1E:
+    case 0x20:
+    case 0x21:
+    case 0x23:
+    case 0x24:
+    case 0x25:
+    case 0x26:
+    case 0x27:
+    case 0x28:
+    case 0x29:
+    case 0x2F:
+    case 0x30:
+    case 0x32:
+    case 0x33:
+    case 0x34:
+    case 0x35:
+    case 0x36:
+    case 0x37:
+    case 0x38:
+    case 0x3A:
+    case 0x3B:
+    case 0x3C:
+    case 0x3D:
+    case 0x3E:
+    case 0x3F:
+    case 0x40:
+    case 0x41:
+    case 0x42:
+    case 0x43:
+    case 0x44:
+    case 0x45:
+    case 0x47:
+    case 0x48:
+    case 0x49:
+    case 0x4A:
+    case 0x4C: return {C::Expansion, "(expansion pack class)", 0};
+    default: return {};
+    }
+}
+
 std::function<const StringTable*(uint32_t, uint32_t)>& textTables() {
     static std::function<const StringTable*(uint32_t, uint32_t)> tables;
     return tables;
@@ -168,6 +247,8 @@ int autoTimeOutDialogs(VM& vm, double now) {
     if (!vm.dialogTimeouts)
         return 0;
     int answered = 0;
+    // The dialogs nobody waits for ("return" ones) go once answered.
+    std::erase_if(vm.dialogs, [](const auto& kv) { return kv.second.detached && kv.second.answer >= 0; });
     for (auto& [who, d] : vm.dialogs) {
         if (!d.blocking || d.answer >= 0 || d.timeoutMs <= 0 || d.buttons.empty())
             continue;
@@ -267,16 +348,22 @@ std::string expandDialogTokens(Context& c, const std::string& text, int depth) {
         else if (name == "lastname") {
             const Neighbor* n = me ? neighborOf(vm, *me) : nullptr;
             value = n ? n->lastName : "";
-        } else if (name == "object")
+        } else if (name == "object") {
             value = stack ? displayName(vm, *stack) : "";
+            if (stack)
+                lastTokenObject = stack->id;
+        }
         else if (name == "neighbor") // the neighbor whose ID is in the stack object
             value = neighborName(vm, c.frame.stackObject);
         else if (name == "local" && !args.empty())
             value = std::to_string(local(arg(0)));
         else if (name == "attrib" && !args.empty() && stack) // the stack object's attribute (as FreeSO)
             value = std::to_string(size_t(arg(0)) < stack->attributes.size() ? stack->attributes[size_t(arg(0))] : 0);
-        else if (name == "namelocal" && !args.empty())
+        else if (name == "namelocal" && !args.empty()) {
             value = objectName(local(arg(0)));
+            if (vm.object(local(arg(0))))
+                lastTokenObject = local(arg(0));
+        }
         else if (name == "fullnamelocal" && !args.empty()) {
             const Object* o = vm.object(local(arg(0)));
             value = o ? fullName(vm, *o) : "";
@@ -339,6 +426,187 @@ std::string typeLabel(VM& vm, int type) {
     return {};
 }
 
+// UIText (Text/UIText.package, group 0x7FA7DC7C) entry, one-based as the
+// binary asks for it; `fallback` without the table.
+std::string uiText(uint32_t table, int oneBased, const char* fallback) {
+    const auto& tables = textTables();
+    const StringTable* t = tables ? tables(0x7FA7DC7C, table) : nullptr;
+    std::string s = stringAt(t, oneBased);
+    return s.empty() ? std::string(fallback) : s;
+}
+
+std::string trim(const std::string& s) {
+    const size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos)
+        return {};
+    return s.substr(a, s.find_last_not_of(" \t\r\n") - a + 1);
+}
+
+// The neighbor whose person data the dialogs read: the Sim on the lot's
+// own, else the neighborhood's copy.
+const std::array<int16_t, kPersonDataCount>* personDataOf(VM& vm, int16_t neighbor) {
+    if (const Object* sim = vm.neighborSim(neighbor); sim && sim->person)
+        return &sim->person->data;
+    if (const Neighbor* n = vm.neighbor(neighbor))
+        return &n->personData;
+    return nullptr;
+}
+
+std::string neighborFirstName(VM& vm, int16_t id) { return neighborName(vm, id); }
+
+// cTSWinProcNameObjectDialog::SetParams (BV 0x370a50): the neighbors in
+// temps 0-3 (temp 0 needed), each box starting with the Sim's first name;
+// person data 65 = 1 (female) picks the girl icon, and one Sim older than a
+// baby (person data 58 "Person Age" > 1) is a rename; onAttach (0x371cfc)
+// then shows panel 0xCDC2CAA4 (rename), else 0xCDC2CAA5 (one baby) or
+// 0xCDC2CAA6 (twins: temp 1 set); a servo gets 0xCDC2CAA7 (pets, the
+// expansion's panels 0xCDC2CAA8-B0, are not in the base game).
+void setupNames(Context& c, Dialog& d) {
+    VM& vm = c.vm;
+    bool rename = true;
+    for (size_t i = 0; i < 4; ++i) {
+        const int16_t id = c.thread.temps[i];
+        if (!id)
+            continue;
+        const auto* data = personDataOf(vm, id);
+        if (!data)
+            continue;
+        DialogName n;
+        n.neighbor = id;
+        n.text = neighborFirstName(vm, id);
+        n.female = (*data)[65] == 1;
+        if (i == 0)
+            rename = (*data)[persondata::PersonAge] > 1;
+        else
+            rename = false;
+        d.names.push_back(std::move(n));
+    }
+    if (d.names.empty()) // the newborn as the stack object (older trees and tests)
+        if (const Object* baby = vm.object(c.frame.stackObject); baby && baby->person) {
+            DialogName n;
+            n.neighbor = baby->person->data[persondata::NeighborId];
+            n.text = displayName(vm, *baby);
+            n.female = baby->person->data[65] == 1;
+            rename = baby->person->data[persondata::PersonAge] > 1;
+            d.names.push_back(std::move(n));
+        }
+    d.namePanel = rename ? 0xCDC2CAA4 : d.names.size() > 1 ? 0xCDC2CAA6 : 0xCDC2CAA5;
+    if (!d.names.empty())
+        d.female = d.names[0].female, d.text = d.names[0].text;
+}
+
+// The phone books (cTSWinProcPhoneBookDialog::SetParams, BV 0xa7af30, and
+// the classes' PreShow): title byte 6, message u16 13, buttons bytes 3/4
+// from STR# 0x12D; the rows are the stack object's array 0: objects for
+// the services (AddAvailableServices: the catalog name), neighbors for the
+// others (CreateNeighborCallList: name, family lot, daily + lifetime
+// relationship of the caller to them). Services and invite start with the
+// first row chosen (PreShow selects row 0); a party starts with no guests
+// and takes at most temp 5 of them.
+void setupPhone(Context& c, Dialog& d, Object* stack) {
+    VM& vm = c.vm;
+    if (!stack || stack->arrays.empty())
+        return;
+    const auto values = stack->array(0).values;
+    for (int16_t v : values) {
+        DialogEntry e;
+        e.id = v;
+        if (d.cls.cls == DialogClass::PhoneServices) {
+            const Object* o = vm.object(v);
+            if (!o)
+                continue;
+            e.guid = o->guid();
+            e.name = displayName(vm, *o);
+        } else {
+            const Neighbor* n = vm.neighbor(v);
+            if (!n)
+                continue;
+            e.guid = n->guid;
+            e.name = n->lastName.empty() ? neighborName(vm, v) : neighborName(vm, v) + " " + n->lastName;
+            const auto key = std::make_pair(vm.relationshipKey(c.thread.me), VM::RelationshipKey{1, v});
+            if (auto r = vm.relationships.find(key); r != vm.relationships.end()) {
+                const auto& vars = r->second;
+                e.relationship = (vars.size() > 0 ? vars[0] : 0) + (vars.size() > 2 ? vars[2] : 0);
+            }
+        }
+        d.entries.push_back(std::move(e));
+    }
+    if (d.cls.cls == DialogClass::PhoneParty)
+        d.maxSelection = c.thread.temps[5];
+    else if (!d.entries.empty())
+        d.selection = {d.entries[0].id};
+}
+
+// What the dialog's OK does before the tree goes on (the classes' OnOk and
+// TryDialog's state 2).
+void acceptDialog(Context& c, Dialog& d) {
+    VM& vm = c.vm;
+    switch (d.cls.cls) {
+    case DialogClass::Object:
+        if (d.type == dialogtype::TextEntry) // TryDialog: GetEnteredText to the simulator
+            vm.enteredText = d.text;
+        break;
+    case DialogClass::NameObject:
+        // ProceedOkButton: each box's trimmed text is the Sim's first name.
+        for (const auto& n : d.names) {
+            const std::string name = trim(n.text);
+            if (name.empty())
+                continue;
+            if (Neighbor* nb = vm.neighbor(n.neighbor))
+                nb->firstName = name;
+        }
+        break;
+    case DialogClass::PhoneServices:
+    case DialogClass::PhoneNeighbors:
+    case DialogClass::PhoneParty:
+        // OnOk: array 0 of the stack object = the choice (services: the
+        // object ID, invite: the neighbor ID, 0 for none; party: the guests).
+        if (Object* stack = vm.object(d.stackObject); stack && !stack->arrays.empty()) {
+            auto& a = stack->array(0).values;
+            a.clear();
+            if (d.cls.cls == DialogClass::PhoneParty)
+                a = d.selection;
+            else
+                a.push_back(d.selection.empty() ? int16_t(0) : d.selection[0]);
+        }
+        break;
+    default: break;
+    }
+}
+
+// cTSObjectDialog::SetParams' icon (BV 0x1d2b20; byte 7 bits 1-3, STR#
+// 0xF4): 0 automatic, the object a token of the text named (inferred: the
+// token expansion hands one back) else the stack object; 2 the neighbor
+// whose ID is in the stack object (error 0x37 in TryDialog's notifications
+// if none); 3 "indexed", the tree's object (inferred: the binary asks the
+// object definition of the tree's file); 4 "named", a string of STR# 0x12D
+// at byte 1: "gz <instance>"/"gzi <instance>" a UI image, "guid <n>" an
+// object; 1 none.
+void resolveIcon(Context& c, Dialog& d, const StringTable* strings, int16_t tokenObject) {
+    VM& vm = c.vm;
+    const auto& o = c.instruction.operands;
+    switch (d.icon) {
+    case 0: d.iconObject = tokenObject ? tokenObject : c.frame.stackObject; break;
+    case 2:
+        if (vm.neighbor(c.frame.stackObject))
+            d.iconNeighbor = c.frame.stackObject;
+        break;
+    case 3: d.iconObject = c.frame.codeOwner; break;
+    case 4: {
+        const std::string named = stringAt(strings, o[1]);
+        const auto sp = named.find(' ');
+        const std::string head = lower(named.substr(0, sp));
+        const long n = sp == std::string::npos ? 0 : std::strtol(named.c_str() + sp + 1, nullptr, 0);
+        if ((head == "gz" || head == "gzi") && n)
+            d.iconImage = uint32_t(n);
+        break;
+    }
+    default: break;
+    }
+    if (d.iconObject && !vm.object(d.iconObject))
+        d.iconObject = 0;
+}
+
 Exit dialog(Context& c) {
     VM& vm = c.vm;
     const auto& o = c.instruction.operands;
@@ -356,17 +624,13 @@ Exit dialog(Context& c) {
             if (d.answer < 0)
                 return Exit::Yield;
             const int answer = std::max(d.answer, 0);
-            // Baby Name (inferred: the binary's dialog class for type 23 was
-            // not found; "Interaction - Home Birth" puts it up with the baby
-            // as the stack object): OK renames the baby, whose default name
-            // ("Bebezinho"/"Bebezinha", vm/characters.cpp) otherwise stays.
-            if (type == dialogtype::BabyName && answer == 0 && !d.text.empty())
-                if (const Object* baby = vm.object(d.stackObject); baby && baby->person)
-                    if (Neighbor* n = const_cast<Neighbor*>(neighborOf(vm, *baby)))
-                        n->firstName = d.text;
+            if (answer == 0)
+                acceptDialog(c, d);
             vm.dialogs.erase(it);
-            if (type == dialogtype::YesNoCancel)
-                c.thread.temps[size_t(resultTemp)] = int16_t(answer);
+            // TryDialog: state 3 (button 2, "no") writes 0 and state 4
+            // (button 3, "cancel") 1 to the temp; "yes" leaves it (STR# 0xDA).
+            if (type == dialogtype::YesNoCancel && answer > 0)
+                c.thread.temps[size_t(resultTemp)] = int16_t(answer - 1);
             return answer == 0 ? Exit::True : Exit::False;
         }
         vm.dialogs.erase(it); // left behind by a tree that was reset
@@ -394,16 +658,25 @@ Exit dialog(Context& c) {
     d.stackObject = c.frame.stackObject;
     d.type = type;
     d.typeName = typeLabel(vm, type);
+    d.cls = dialogClass(type);
+    lastTokenObject = 0;
     d.message = expandDialogTokens(c, stringAt(strings, messageIndex));
     d.title = expandDialogTokens(c, stringAt(strings, titleIndex));
     d.icon = (o[7] >> 1) & 7;
     d.timeout = o[10];
     d.priority = o[9];
     d.continueOthers = o[7] & 0x80;
+    d.detached = o[7] & 0x01;
     d.depth = depth, d.tree = c.frame.behavior, d.node = c.frame.pc;
-    auto button = [&](int index, const char* fallback) {
+    const int16_t tokenObject = lastTokenObject;
+    // A button's string (STR# 0x12D), else cTSObjectDialog's default from
+    // UIText STR# 0x8E (FUN_001d0a38: 1 OK, 2 Cancel, 3 Yes, 4 No).
+    auto button = [&](int index, int fallback) {
         const std::string s = expandDialogTokens(c, stringAt(strings, index));
-        return s.empty() ? std::string(fallback) : s;
+        if (!s.empty())
+            return s;
+        static const char* pt[] = {"", "OK", "Cancelar", "Sim", "Não"};
+        return uiText(0x8E, fallback, pt[fallback]);
     };
 
     switch (type) {
@@ -420,6 +693,8 @@ Exit dialog(Context& c) {
         if (!owner && !vm.object(c.frame.stackObject))
             throw VMError("Could not find object reference (text notification without an object)");
         d.blocking = false;
+        d.detached = false;
+        resolveIcon(c, d, strings, tokenObject);
         if (type == dialogtype::TextNotification || type == dialogtype::TnsBirthday)
             c.thread.temps[size_t(resultTemp)] = int16_t(d.id & 0x7FFF);
         if (vm.notifications.size() >= kMaxNotifications)
@@ -437,32 +712,61 @@ Exit dialog(Context& c) {
                                                                                   : owner->group;
         return Exit(tutorialNextDialog(c, type, group));
     }
-    case dialogtype::YesNo: d.buttons = {button(o[3], "Sim"), button(o[4], "Não")}; break;
-    case dialogtype::YesNoCancel:
-        d.buttons = {button(o[3], "Sim"), button(o[4], "Não"), button(o[0], "Cancelar")};
+    default: break;
+    }
+
+    // TryDialog: before queueing, the types 5-7, 11-13, 15, 0x21, 0x33,
+    // 0x34 and 0x46 need a stack object that has an object array (error
+    // 0x6C "Bad Object Array"); without a stack object they go on.
+    if (type == 18 && !d.detached) // "Tutorial Tasks": TryDialog goes on without a window in BV
+        return --vm.nextDialogId, Exit::True;
+    if (!d.detached && ((type >= 5 && type <= 7) || (type >= 11 && type <= 13) || type == 15 || type == 0x21 || type == 0x33 ||
+         type == 0x34 || type == 0x46))
+        if (const Object* stack = vm.object(c.frame.stackObject); stack && stack->arrays.empty())
+            throw VMError("Bad Object Array (dialog type " + std::to_string(type) + ")");
+
+    Object* stack = vm.object(c.frame.stackObject);
+    switch (d.cls.cls) {
+    case DialogClass::Object:
+        // cTSObjectDialog::SetParams / SetupDialog (BV 0x1d2b20, 0x1d0da8):
+        // button 1 (or a close box with "continue"), 2 and 3 by the type.
+        switch (type) {
+        case dialogtype::YesNo: d.buttons = {button(o[3], 3), button(o[4], 4)}; break;
+        case dialogtype::YesNoCancel: d.buttons = {button(o[3], 3), button(o[4], 4), button(o[0], 2)}; break;
+        default: d.buttons = {button(o[3], 1)}; break;
+        }
+        resolveIcon(c, d, strings, tokenObject);
         break;
-    case dialogtype::Message:
-    case dialogtype::TextEntry:
-    case dialogtype::Tutorial: d.buttons = {button(o[3], "OK")}; break;
-    case dialogtype::BabyName: // a name box and OK; waits for the player (no time limit, a special dialog)
-        d.buttons = {button(o[3], "OK")};
-        if (const Object* baby = vm.object(c.frame.stackObject))
-            d.text = displayName(vm, *baby);
-        if (const Object* baby = vm.object(c.frame.stackObject))
-            if (const Neighbor* n = neighborOf(vm, *baby))
-                d.female = n->personData[65] == 2; // data 65: 1 male, 2 female (makeCharacter)
+    case DialogClass::NameObject:
+        // OK (0xA000) and, in the panels that have one, cancel (0xA001).
+        d.buttons = {button(o[3], 1), button(o[4], 2)};
+        setupNames(c, d);
         break;
-    default: // the special dialogs (phone book, racks, clothing, ...): OK or cancel
-        d.buttons = {button(o[3], "OK"), button(o[0], "Cancelar")};
+    case DialogClass::PhoneServices:
+    case DialogClass::PhoneNeighbors:
+    case DialogClass::PhoneParty:
+        d.buttons = {button(o[3], 1), button(o[4], 2)};
+        setupPhone(c, d, stack);
+        break;
+    default: // the other special dialogs: OK or cancel for now
+        d.buttons = {button(o[3], 1), button(o[0], 2)};
         break;
     }
     // cTSObjectDialog's time limit (docs/primitives-mac.md, Dialog): not
     // for the tutorial nor the special dialogs (their own classes).
-    if (type >= dialogtype::Message && type <= dialogtype::TextEntry && type != dialogtype::Tutorial) {
+    if (d.cls.cls == DialogClass::Object && type != dialogtype::Tutorial) {
         size_t chars = 0; // the message's length in characters (UTF-8)
         for (unsigned char ch : d.message)
             chars += (ch & 0xC0) != 0x80;
         d.timeoutMs = 4000 + 40 * int(chars);
+    }
+    if (d.detached) {
+        // "return": queued, and the tree goes on at once; kept under a key of
+        // its own (negative, as the host's own dialogs) until answered.
+        d.answer = vm.autoDialogAnswer >= 0 ? 0 : -1;
+        const ObjectId key = ObjectId(-0x1000 - int(d.id & 0x3FFF));
+        vm.dialogs[key] = std::move(d);
+        return Exit::True;
     }
     if (vm.autoDialogAnswer >= 0)
         d.answer = std::min<int>(vm.autoDialogAnswer, int(d.buttons.size()) - 1);

@@ -904,6 +904,103 @@ lidas ali. Os especiais esperam o jogador para sempre; no jogo eles só
 aparecem em interações que o jogador escolheu (inferido). Para o VM sem
 cabeça: responder sozinho é escolha nossa (opção), não do jogo.
 
+**Classe de cada tipo (rodada 14, binário).** O
+`cTSUIDialogManager::GetObjectDialog` (BV `0x21c5a8`) é um `switch` do tipo
+para um ID de classe (CLSID); a classe de cada ID é a que vem logo depois do
+seu `GZCOM_<classe>CLSID` (o getter fica na frente do `QueryInterface` da
+classe). Tipos do jogo base:
+
+| tipo | classe | script (`ui.package`) | devolve |
+|---|---|---|---|
+| 0–4, 0x13 e os não listados | `cTSObjectDialog` (CLSID `0x3798E2DB`) | nenhum: `cTSWinPictureDialog`, montado em código | botão / temp |
+| 5, 0x0F | `cTSWinProcPhoneBookServices` (`0xCC16C63A`) | `0x8C159243` | array 0 = [ID do objeto] |
+| 6 | `cTSWinProcPhoneBookNeighbors` (`0x8C16CA13`) | `0x8C159244` | array 0 = [ID do vizinho] |
+| 7, 0x46 | `cTSWinProcPhoneBookParty` (`0xEC16CA68`) | `0x8C159242` | array 0 = convidados |
+| 0x0B, 0x0D, 0x2B, 0x2D | `cTSWinProcSelectItemsDialog` | | array 0 (≠ −1 = escolhido) |
+| 0x0C, 0x2C | `cTSWinProcJewelryPurchaseDialog` | | |
+| 0x0E, 0x1B, 0x1F, 0x2A | `cTSWinProcFillDialog` | | temp 0 |
+| 0x10, 0x2E | `cTSWinProcClothingPurchaseDialog` | | |
+| 0x11, 0x31 | `cTSWinProcClothingDialog` | `0x8C159250` (`Initialize`) | troca a roupa da categoria do temp 0 |
+| 0x14 | `cTSWinProcClothingTryOnDialog` | | |
+| 0x15 | `cTSWinProcVanityDialog` | | |
+| 0x17 | `cTSWinProcNameObjectDialog` (`0x2D910709`) | `0x2D91050A` | nomes |
+| 0x18, 0x22 | `cTSWinProcSetAspirationDialog` | | |
+
+Os outros tipos de 0x1A em diante são classes das expansões. O `TryDialog`
+não enfileira o 0x12 ("Tutorial Tasks"): devolve verdadeiro sem janela.
+
+**`cTSObjectDialog` (binário).** Não usa script: o `Show` cria um
+`cTSWinObjectDialogWrapper` (um `cTSWinPictureDialog`) e o `SetupDialog`
+(`0x1d0da8`) monta: título (`SetTitle`, fonte GenHeader) se houver;
+imagem (o ícone, `SetImage`); **botão 1** (`AddButton`, id 2) — ou, com o
+bit 7 do byte 7 ("continue"), **uma caixa de fechar** (`AddCloseBox(2)`,
+imagem `0x11110002`) no lugar dele; botão 2 (id 3) nos tipos 1/2; botão 3
+(id 4) no 2; o texto (`AddText`, GenDialogBody); no tipo 3 uma caixa de
+texto vazia (`AddEditBox("", 999)`); o tempo (salvo no tipo 4); e as
+teclas: **Return = botão 1, Esc = o último botão** (o 1 na mensagem e na
+entrada de texto), **espaço = botão 1** salvo no sim/não e no
+sim/não/cancelar. Botões sem string usam o UIText STR# 0x8E (1 OK, 2
+Cancelar, 3 Sim, 4 Não). O `DoLayout` (`0x25b540`): largura mínima 128,
+texto quebrado começando na largura do título ou dos botões e crescendo de
+32 em 32 px (até 700) enquanto passa de 64 px de altura (o limite cresce
+32 por vez até 500); texto em x = 26 (com imagem, à direita dela: x =
+largura da imagem + 34), y = 18 (com título, altura do título + 26);
+caixa de texto entre o texto e os botões (x 26 a largura − 26); botões
+com a largura do texto + 16, no mínimo 82, os que diferem menos de 20 px
+do mais largo igualados a ele, 12 px entre eles, centrados, 34 px de
+altura, a 12 px do texto (no mínimo em y = 118 − altura); altura = y dos
+botões + 34 + 14; a janela centrada na tela. A moldura é a imagem
+`0xA9500615` desenhada em nove partes (cantos = um terço da imagem); a
+imagem do ícone fica em (26, 20) (com título, altura do título + 28).
+
+**Ícone (byte 7 bits 1–3, STR# 0xF4).** 0 automático: o objeto que a
+expansão de tokens devolve, senão o stack object; 1 nenhum; 2 vizinho: o
+vizinho cujo ID está no stack object; 3 indexado: pela definição do objeto
+da árvore (inferido); 4 nomeado: a string do STR# 0x12D no byte 1, "gz
+<id>"/"gzi <id>" uma imagem de UI, "guid <n>" um objeto. A imagem
+(`FUN_001d206c`) é a miniatura 40×40 (objeto: a do catálogo; Sim: a
+cabeça) centrada sobre o fundo `0xE9000005`, com a moldura `0xE9000006` por
+cima e a máscara de alfa `0xE9000007` (grupo `0x499DB772`).
+
+**Entrada de texto (tipo 3).** Com o botão 1 o `BtnPressed` guarda o texto
+da caixa 999 e o `TryDialog` (estado 2, tipo 3) o entrega ao simulador
+(`cTSObject+0x48`, vtable `0x68`). Nenhuma árvore do jogo base usa o tipo 3
+e quem lê esse texto não foi achado (no The Sims 1 era o nome do próximo
+Make New Character; o `TryMakeNewCharacter` do BV não lê). A VM guarda em
+`VM::enteredText`.
+
+**Sim/não/cancelar.** O `TryDialog` grava no temp `(byte 7 >> 4) & 7`
+**0 no "não" (estado 3) e 1 no "cancelar" (estado 4)**; o "sim" não grava
+(STR# 0xDA diz o mesmo). A VM gravava 1/2.
+
+**"Return" (byte 7 bit 0).** Enfileira e devolve verdadeiro na hora; a
+janela fica até o jogador fechá-la (STR# 0xED 1/3: "return and block/continue
+sim"). Sem o bit 7 o jogo continua pausado até ela fechar.
+
+**Nomes (tipo 0x17, `cTSWinProcNameObjectDialog`).** `SetParams`
+(`0x370a50`): os vizinhos nos **temps 0–3** (o 0 obrigatório); cada caixa
+começa com o primeiro nome do Sim (selecionado); dado de pessoa 65 = 1
+(menina) escolhe o ícone `0x1A`/`0x1B` (menino `0x2A`/`0x2B`); um só Sim
+com dado 58 "Person Age" > 1 é um renomear. `onAttach` (`0x371cfc`): painel
+`0xCDC2CAA4` (renomear), `0xCDC2CAA5` (um bebê), `0xCDC2CAA6` (gêmeos:
+temp 1), `0xCDC2CAA7` (servo); `0xCDC2CAA8`–`B0` são de bichos (expansão).
+Caixas `1`–`4`, OK `0xA000`, cancelar `0xA001`. O OK fica desligado com uma
+caixa vazia (`ValidateUIStringRequired` do texto aparado); `OnOk`
+(`ProceedOkButton`) põe o texto aparado de cada caixa como primeiro nome e
+devolve verdadeiro; cancelar, falso.
+
+**Telefone (tipos 5/0x0F, 6, 7).** `SetParams` (`0xa7af30`): título byte 6,
+mensagem u16 13, botões bytes 3/4 (STR# 0x12D); as linhas vêm do **array 0
+do stack object**: objetos nos serviços (`AddAvailableServices`: nome de
+catálogo e miniatura), vizinhos nos outros (`CreateNeighborCallList`: nome,
+lote da família, diária + vitalícia do relacionamento de quem liga). Os
+serviços e o convite começam com a linha 0 escolhida; o texto de cima é
+"Chamar %s" (UIText STR# 0xAB #16, ou a mensagem). `OnOk` limpa o array 0 e
+grava o ID escolhido (0 se nenhum); a festa grava os convidados (no máximo
+temp 5, lista da direita, botões `0x2000` incluir e `0x1000` tirar).
+Títulos padrão: STR# 0xAB #9 "Serviços", #10 "Vizinhos". Com o stack object
+sem object array, erro 0x6C antes de abrir.
+
 **Notificações (tipos 8–10, 0x1C)**: o byte 10 é o tempo de vida
 (`cTSUINotificationService::SetNotificationTimeOut`) e o byte 9 a prioridade
 (`SetNotificationPriority`). A fila (`cTSUINotificationQueue`) conta com um

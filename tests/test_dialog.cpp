@@ -87,7 +87,7 @@ static void testYesNoCancel() {
     vm.dialogs[me.id].answer = 2;
     vm.run(t);
     check(t.status == Thread::Status::Finished && !t.result, "dialog: button 3 -> false");
-    check(t.temps[4] == 2, "dialog: the choice goes to temp (byte 7 >> 4)");
+    check(t.temps[4] == 1, "dialog: cancel writes 1 to the temp (byte 7 >> 4)");
     check(vm.dialogs.empty(), "dialog: closed");
 
     // Headless: answered at once with the first button -> true.
@@ -96,6 +96,13 @@ static void testYesNoCancel() {
     vm.run(t2);
     vm.run(t2);
     check(t2.status == Thread::Status::Finished && t2.result, "dialog: auto answer button 1 -> true");
+    check(t2.temps[4] == 0, "dialog: yes leaves the temp");
+    vm.autoDialogAnswer = 1;
+    Thread t4 = vm.start(me.id, 0x1000);
+    t4.temps[4] = 7;
+    vm.run(t4);
+    vm.run(t4);
+    check(t4.status == Thread::Status::Finished && !t4.result && t4.temps[4] == 0, "dialog: no writes 0 to the temp");
 
     // A yes/no dialog without a title string (byte 6 = 0, as the phone's
     // "is ... available to talk?"): no title, never the type's editor label.
@@ -106,6 +113,129 @@ static void testYesNoCancel() {
     auto y = vm.dialogs.find(me.id);
     check(y != vm.dialogs.end() && y->second.title.empty() && y->second.buttons.size() == 2,
           "dialog: yes/no without a title string has none");
+}
+
+// The classes of the special dialogs and what their OK hands back.
+static void testSpecialDialogs() {
+    check(dialogClass(0).cls == DialogClass::Object && dialogClass(3).cls == DialogClass::Object,
+          "class: plain types are cTSObjectDialog");
+    check(dialogClass(5).script == 0x8C159243 && dialogClass(15).cls == DialogClass::PhoneServices,
+          "class: services phone book");
+    check(dialogClass(6).script == 0x8C159244 && dialogClass(7).script == 0x8C159242, "class: invite and party");
+    check(dialogClass(17).cls == DialogClass::Clothing && dialogClass(23).script == 0x2D91050A,
+          "class: wardrobe and names");
+    CodeLibrary code;
+    VM vm{code};
+    code.add(kObjGroup, 0x12D, strings({"Call", "Who?", "OK", "Cancel"}));
+    auto dlg = [&](uint16_t id, uint8_t type, uint8_t b7 = 0) {
+        code.add(kObjGroup, id, tree({instr(0x24, {0, 0, 0, 3, 4, type, 1, b7, 0x01, 0, 0, 0, 0, 2, 0})}));
+    };
+    Object& me = vm.createObject(kObjGroup);
+    Object& phone = vm.createObject(kObjGroup);
+    Object& service = vm.createObject(kObjGroup);
+    for (int16_t n : {11, 12, 13}) {
+        vm.neighbors[n].guid = 0x1000u + uint32_t(n);
+        vm.neighbors[n].firstName = "N" + std::to_string(n);
+        vm.neighbors[n].personData[persondata::NeighborId] = n;
+    }
+    // Services (5): the objects of the stack object's array 0; OK -> [object].
+    phone.array(0).values = {service.id};
+    dlg(0x1100, 5);
+    Thread s = vm.start(me.id, 0x1100, {}, phone.id);
+    vm.run(s);
+    check(vm.dialogs.count(me.id) && vm.dialogs[me.id].entries.size() == 1 && vm.dialogs[me.id].selection.size() == 1,
+          "services: one row, chosen");
+    vm.dialogs[me.id].answer = 0;
+    vm.run(s);
+    check(s.result && phone.array(0).values == std::vector<int16_t>{service.id}, "services: OK -> array 0 = object");
+    // Invite (6): neighbors; the second one chosen -> [12].
+    phone.array(0).values = {11, 12};
+    dlg(0x1101, 6);
+    Thread i = vm.start(me.id, 0x1101, {}, phone.id);
+    vm.run(i);
+    check(vm.dialogs[me.id].entries.size() == 2 && vm.dialogs[me.id].entries[1].name == "N12", "invite: rows by name");
+    vm.dialogs[me.id].selection = {12};
+    vm.dialogs[me.id].answer = 0;
+    vm.run(i);
+    check(i.result && phone.array(0).values == std::vector<int16_t>{12}, "invite: OK -> array 0 = neighbor");
+    // Party (7): at most temp 5 guests; OK -> the guests.
+    phone.array(0).values = {11, 12, 13};
+    dlg(0x1102, 7);
+    Thread p = vm.start(me.id, 0x1102, {}, phone.id);
+    p.temps[5] = 2;
+    vm.run(p);
+    check(vm.dialogs[me.id].maxSelection == 2 && vm.dialogs[me.id].selection.empty(), "party: no guests at first");
+    vm.dialogs[me.id].selection = {13, 11};
+    vm.dialogs[me.id].answer = 0;
+    vm.run(p);
+    check(p.result && phone.array(0).values == (std::vector<int16_t>{13, 11}), "party: OK -> the guests");
+    // Cancel leaves the array.
+    Thread p2 = vm.start(me.id, 0x1102, {}, phone.id);
+    vm.run(p2);
+    vm.dialogs[me.id].answer = 1;
+    vm.run(p2);
+    check(!p2.result && phone.array(0).values.size() == 2, "party: cancel -> false, array kept");
+    // A phone book on a stack object without arrays: error 0x6C.
+    Object& bare = vm.createObject(kObjGroup);
+    Thread e = vm.start(me.id, 0x1100, {}, bare.id);
+    vm.run(e);
+    check(e.status != Thread::Status::Running && !vm.dialogs.count(me.id), "services: no object array -> error");
+
+    // Names (23): the neighbors in temps 0/1 (twins), each named by its box.
+    vm.neighbors[12].personData[65] = 1; // a girl
+    dlg(0x1103, 23);
+    Thread n = vm.start(me.id, 0x1103);
+    n.temps[0] = 11, n.temps[1] = 12;
+    vm.run(n);
+    Dialog& nd = vm.dialogs[me.id];
+    check(nd.namePanel == 0xCDC2CAA6 && nd.names.size() == 2 && nd.names[0].text == "N11" && nd.names[1].female,
+          "names: twins panel, default names, girl icon");
+    nd.names[0].text = "  Ana ";
+    nd.names[1].text = "Bia";
+    nd.answer = 0;
+    vm.run(n);
+    check(n.result && vm.neighbors[11].firstName == "Ana" && vm.neighbors[12].firstName == "Bia",
+          "names: OK renames each newborn (trimmed)");
+    // One Sim older than a baby: the rename panel.
+    vm.neighbors[13].personData[persondata::PersonAge] = 3;
+    Thread r = vm.start(me.id, 0x1103);
+    r.temps[0] = 13;
+    vm.run(r);
+    check(vm.dialogs[me.id].namePanel == 0xCDC2CAA4, "names: rename panel");
+    vm.dialogs[me.id].answer = 1;
+    vm.run(r);
+    check(!r.result && vm.neighbors[13].firstName == "N13", "names: cancel keeps the name");
+
+    // Text entry (3): OK hands the text to the simulator.
+    dlg(0x1104, 3);
+    Thread te = vm.start(me.id, 0x1104);
+    vm.run(te);
+    vm.dialogs[me.id].text = "Rex";
+    vm.dialogs[me.id].answer = 0;
+    vm.run(te);
+    check(te.result && vm.enteredText == "Rex", "text entry: OK keeps the typed text");
+
+    // "Return" (byte 7 bit 0): queued, the tree goes on at once.
+    dlg(0x1105, 0, 0x01);
+    Thread ret = vm.start(me.id, 0x1105);
+    vm.run(ret);
+    check(ret.status == Thread::Status::Finished && ret.result && vm.dialogs.size() == 1 &&
+              vm.dialogs.begin()->first < 0 && vm.dialogs.begin()->second.detached,
+          "return: true at once, the window stays");
+    vm.dialogs.begin()->second.answer = 0;
+    autoTimeOutDialogs(vm, 0);
+    check(vm.dialogs.empty(), "return: gone once answered");
+    // Icons: automatic = the stack object; neighbor = the ID in the stack object.
+    dlg(0x1106, 0, 0x00);
+    Thread ic = vm.start(me.id, 0x1106, {}, phone.id);
+    vm.run(ic);
+    check(vm.dialogs[me.id].iconObject == phone.id, "icon: automatic -> the stack object");
+    vm.dialogs.erase(me.id);
+    dlg(0x1107, 0, 0x04);
+    Thread in = vm.start(me.id, 0x1107, {}, 12);
+    vm.run(in);
+    check(vm.dialogs[me.id].iconNeighbor == 12 && !vm.dialogs[me.id].iconObject, "icon: neighbor -> its head");
+    vm.dialogs.erase(me.id);
 }
 
 static void testNotification() {
@@ -167,6 +297,7 @@ int main() {
     lang::setPreferred(lang::EnglishUS);
     testYesNoCancel();
     testNotification();
+    testSpecialDialogs();
     testLightAndOutfit();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

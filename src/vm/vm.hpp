@@ -1080,6 +1080,12 @@ public:
     // host; headless hosts set a button).
     std::map<ObjectId, Dialog> dialogs;
     std::deque<Dialog> notifications;
+    // The text of the last text-entry dialog (type 3) answered with OK:
+    // TryDialog hands GetEnteredText to the simulator (cTSObject + 0x48,
+    // vtable 0x68). Nothing in the base game's trees puts a type 3 up, and
+    // what reads it back was not found (The Sims 1 named the next Make New
+    // Character with it; the BV TryMakeNewCharacter does not).
+    std::string enteredText;
     // The tutorial's progress window and UI Effects (tutorial.hpp).
     TutorialState tutorial;
     int autoDialogAnswer = -1;

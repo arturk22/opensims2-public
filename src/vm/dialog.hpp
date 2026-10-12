@@ -34,11 +34,63 @@ constexpr int Tutorial = 4;
 constexpr int TextNotification = 8; // on the side of the screen; does not wait
 constexpr int StopTextNotification = 9;
 constexpr int ModifyTextNotification = 10;
+constexpr int PhoneServices = 5;      // "Phone Book - Services": objects of the stack object's array 0
+constexpr int PhoneInvite = 6;        // "Phone Book - Invite": one neighbor of array 0
+constexpr int PhoneParty = 7;         // "Phone Book - Party": the guests among array 0
+constexpr int SpecialPhoneServices = 15;
+constexpr int ClothingSelection = 17; // the dresser's "Plan Outfit"
 constexpr int TutorialNext = 22;      // the tutorial's progress window (tutorial.hpp)
-constexpr int BabyName = 23;          // "Baby Name": the newborn (stack object) gets the typed first name
+constexpr int BabyName = 23;          // "Baby Name": the newborns (neighbors in temps 0-3) get the typed first names
+constexpr int SetAspiration = 24;
 constexpr int TutorialNextModal = 25; // the same, modal
 constexpr int TnsBirthday = 0x1C;     // a text notification too (docs/primitives-mac.md §4)
 } // namespace dialogtype
+
+// The window class the game's factory makes for a Dialog type
+// (cTSUIDialogManager::GetObjectDialog, BV 0x21c5a8: a switch from the type
+// to a class ID, docs/primitives-mac.md "Dialog"), and the UI script that
+// class loads (its constructor or Initialize; 0 = none: cTSObjectDialog
+// builds its window in code, cTSWinPictureDialog).
+enum class DialogClass {
+    Object,          // cTSObjectDialog (every type the switch does not name)
+    PhoneServices,   // cTSWinProcPhoneBookServices (5, 15)
+    PhoneNeighbors,  // cTSWinProcPhoneBookNeighbors (6)
+    PhoneParty,      // cTSWinProcPhoneBookParty (7, 0x46)
+    SelectItems,     // cTSWinProcSelectItemsDialog (11, 13, 0x2B, 0x2D)
+    JewelryPurchase, // cTSWinProcJewelryPurchaseDialog (12, 0x2C)
+    Fill,            // cTSWinProcFillDialog (14, 0x1B, 0x1F, 0x2A)
+    ClothingPurchase,// cTSWinProcClothingPurchaseDialog (16, 0x2E)
+    Clothing,        // cTSWinProcClothingDialog (17, 0x31)
+    ClothingTryOn,   // cTSWinProcClothingTryOnDialog (20)
+    Vanity,          // cTSWinProcVanityDialog (21)
+    NameObject,      // cTSWinProcNameObjectDialog (23)
+    SetAspiration,   // cTSWinProcSetAspirationDialog (24, 0x22)
+    Expansion,       // the classes of the expansion packs' types (0x1A on)
+};
+struct DialogClassInfo {
+    DialogClass cls = DialogClass::Object;
+    const char* name = "cTSObjectDialog";
+    uint32_t script = 0; // ui.package instance (group 0xA99D8A11)
+};
+DialogClassInfo dialogClass(int type);
+
+// A row of a special dialog's list: a phone book's service (an object) or
+// neighbor, with what the row shows.
+struct DialogEntry {
+    int16_t id = 0;       // object ID (services) or neighbor ID
+    uint32_t guid = 0;    // the object's or the Sim's OBJD GUID (thumbnail)
+    std::string name;
+    std::string detail;   // the neighbor's lot name, when known
+    int relationship = 0; // daily + lifetime of the caller to it (CreateNeighborCallList)
+};
+
+// A name box of the name dialog (cTSWinProcNameObjectDialog): the neighbor
+// in temp 0-3 and its text, the first name it has at first.
+struct DialogName {
+    int16_t neighbor = 0;
+    std::string text;
+    bool female = false;
+};
 
 // A dialog a tree put up. Blocking ones keep the tree's instruction
 // waiting (Yield) until the host answers (`answer` = the button's index,
@@ -56,8 +108,34 @@ struct Dialog {
     bool blocking = true;
     // Operand byte 7 bit 7: "continue" the other Sims while it is up
     // (STR# 0xED "dialog behavior"; inferred); without it the game pauses.
+    // cTSObjectDialog::SetupDialog then gives the window a close box
+    // (cTSWinPictureDialog::AddCloseBox, button 1) instead of button 1.
     bool continueOthers = false;
+    // Operand byte 7 bit 0 ("return"): TryDialog queues the dialog and goes
+    // on at once (true); the window stays until the player closes it, and
+    // nothing waits for its answer.
+    bool detached = false;
     int icon = 0;      // STR# 0xF4: 0 automatic, 1 none, 2 neighbor, 3 indexed, 4 named
+    // What the icon shows (cTSObjectDialog::SetParams): an object (its
+    // catalog thumbnail; a Sim: the head), a neighbor's head, or a UI image
+    // ("gz <instance>" of a named icon); 0 = none.
+    int16_t iconObject = 0;
+    int16_t iconNeighbor = 0;
+    uint32_t iconImage = 0;
+    DialogClassInfo cls;
+    // Special dialogs: the rows of a phone book (the stack object's array 0,
+    // as the class lists it), the rows chosen (a party's guests; services and
+    // invite take selection[0]) and how many guests a party may have (temp
+    // 5; 0 = no limit). OK writes the choice to the stack object's array 0.
+    std::vector<DialogEntry> entries;
+    std::vector<int16_t> selection;
+    int maxSelection = 0;
+    // The name dialog's boxes (one per newborn, or the Sim to rename), the
+    // panel of the script (0xCDC2CAA4 rename, A5 one baby, A6 twins, A7 a
+    // servo) and the box with the caret.
+    std::vector<DialogName> names;
+    uint32_t namePanel = 0;
+    int nameFocus = 0;
     int timeout = 0;   // operand byte 10: a text notification's lifetime in seconds (0: until closed)
     int priority = 0;  // operand byte 9: a text notification's priority
     // A blocking dialog's time limit (ms; 0: none): it then takes its last
@@ -65,10 +143,11 @@ struct Dialog {
     int timeoutMs = 0;
     double opened = -1; // host clock (seconds) when autoTimeOutDialogs first saw it
     int answer = -1;   // set by the host
-    // Text entry (3) and Baby Name (23): what the player typed, set by the
-    // host with the answer (empty: the default stays).
+    // Text entry (3): what the player typed, set by the host with the
+    // answer. (The name dialog keeps its texts in `names`; `text` and
+    // `female` mirror its first box.)
     std::string text;
-    bool female = false; // Baby Name: the newborn is a girl (the name box shows her icon)
+    bool female = false;
     // The instruction waiting for it (the thread's stack depth, tree, node).
     size_t depth = 0;
     const Behavior* tree = nullptr;
