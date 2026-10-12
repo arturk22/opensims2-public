@@ -1711,15 +1711,16 @@ void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
             gCinematicForced.speed = g[os2::vm::global::Speed];
             gCinematicForced.paused = g[os2::vm::global::Paused];
         }
-        if (wholeHouse && gLotView.walls != os2::LotViewOptions::Walls::Up && gIndex) {
-            gCinematicForced.walls = gLotView.walls;
-            gLotView.walls = os2::LotViewOptions::Walls::Up;
-            rebuildLotModel(renderer, *gIndex);
+        // (the wall view: updateLotView rebuilds the lot model for it)
+        if (wholeHouse && gWallView.walls() != os2::LotViewOptions::Walls::Up) {
+            gCinematicForced.walls = gWallView.walls();
+            gWallView.setWalls(os2::LotViewOptions::Walls::Up);
         }
         if (wholeHouse && gCameraFollow) {
             gCinematicForced.level = gCameraFollow->level();
             gCameraFollow->setLevel(gCameraFollow->highestLevel());
         }
+        (void)renderer;
     }
     if (gSimulation) { // held for the whole scene (the speed buttons wait)
         auto& g = gSimulation->machine().globals;
@@ -1736,10 +1737,9 @@ void restoreCinematicState(os2::Renderer& renderer) {
         g[os2::vm::global::Speed] = gCinematicForced.speed;
         g[os2::vm::global::Paused] = gCinematicForced.paused;
     }
-    if (gCinematicForced.walls && gIndex) {
-        gLotView.walls = *gCinematicForced.walls;
-        rebuildLotModel(renderer, *gIndex);
-    }
+    if (gCinematicForced.walls)
+        gWallView.setWalls(*gCinematicForced.walls);
+    (void)renderer;
     if (gCinematicForced.level && gCameraFollow)
         gCameraFollow->setLevel(*gCinematicForced.level);
     gCinematicForced = {};
