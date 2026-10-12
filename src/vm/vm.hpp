@@ -501,6 +501,10 @@ struct Object {
             ObjectId portal = 0, portalOwner = 0;
             std::array<int16_t, 10> portalParams{};
             bool viaPortal = false;
+            // A turn in place (ticks > 0): 45-degree steps, counter-clockwise
+            // positive; the animation played mirrored (routing.cpp turnPoint).
+            int turnSteps = 0;
+            bool mirror = false;
         };
         std::vector<Point> points;
         int level = 0; // of the goal
@@ -538,7 +542,10 @@ struct Object {
             uint32_t serial = 0;   // bumped as each phase starts
             float z = 0;
             int ticksLeft = 0;
+            int turnSteps = 0; // a turn in place (not a stair: on the floor)
+            bool mirror = false;
         } climb;
+        bool endTurned = false; // the turn to the final facing was added
         // The instruction walking it: its thread's stack depth, tree and node.
         size_t depth = 0;
         const Behavior* tree = nullptr;

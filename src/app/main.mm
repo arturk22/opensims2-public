@@ -951,6 +951,28 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                     }
         std::printf("opensims2: --vm-queue %s: %s\n", spec->c_str(), queued ? "queued" : "no such entry");
     }
+    // --vm-go-here x,y[,level]: test aid, a click on the ground there and the
+    // selected Sim's first Go Here entry ("Vir Aqui") queued (vm/go_here.hpp).
+    if (auto spec = argument(@"--vm-go-here")) {
+        os2::vm::VM& m = gSimulation->machine();
+        float x = 0, y = 0;
+        int level = 1;
+        std::sscanf(spec->c_str(), "%f,%f,%d", &x, &y, &level);
+        const os2::vm::ObjectId sim = os2::vm::findSim(m, argument(@"--sim-id").value_or(""));
+        const os2::vm::ObjectId dest = sim ? os2::vm::createGoHereDestination(m, sim, x, y, level) : 0;
+        bool queued = false;
+        if (dest)
+            for (const auto& e : os2::vm::pieMenu(m, sim, dest))
+                if (!queued && e.available() && !e.debug)
+                    if (auto q = os2::vm::interactionFromPie(m, e)) {
+                        q->pushedBy = sim;
+                        os2::vm::enqueue(m, *m.object(sim), *q);
+                        queued = true;
+                    }
+        if (dest)
+            os2::vm::releaseDestination(m, dest);
+        std::printf("opensims2: --vm-go-here %s: %s\n", spec->c_str(), queued ? "queued" : "nothing");
+    }
     // --motives <n>: test aid, every Sim's motives at n (instead of the saved ones).
     if (auto m = argument(@"--motives"))
         os2::vm::setAllMotives(gSimulation->machine(), int16_t(std::stoi(*m)));

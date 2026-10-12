@@ -286,8 +286,9 @@ void LotSimulation::sampleAll(double at) {
             const bool partial = animated && !(anim.flags & 1);
             if (partial)
                 b.partial = std::max<int>(1, anim.priority);
+            const bool mirror = animated ? s.flipped : (!s.climb.empty() && s.turnMirror);
             b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
-                                    .mirror = animated && s.flipped, .turn = animated ? anim.headingOffset : 0.0f});
+                                    .mirror = mirror, .turn = animated ? anim.headingOffset : 0.0f});
             if (onSimAnimation)
                 onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
         } catch (const std::exception& e) {

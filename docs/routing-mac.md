@@ -277,6 +277,23 @@ com a posição e a direção vindas da raiz da animação; virar parado só aci
 de 40° (passos de 45°); a direção final em múltiplos de 45°; bloquear quando
 a posição seguinte não passa no `TSObjectCanSetPosition`.
 
+**Feito na rodada 13** (`routing.cpp` `shapeWalk`/`turnSteps`/`turnPoint`,
+`sim_motion.cpp`, `test_routing` `testTurnInPlace`): o caminho do planner
+(já suavizado pelos filtros do §3) é cortado a cada 0,2 nos trechos do chão;
+quem replaneja andando sai pela frente `min(v·0,3333, 0,25)`; quem está
+parado e tem o primeiro trecho a mais de 40° da direção vira no lugar antes
+de sair, com a animação de virar da locomoção (`<idade>-TurnInPlace-45/90/
+135/180`, tão longa quanto ela: 0,96–1,31 s nos adultos; a raiz da animação
+gira o corpo e a direção do Sim muda no fim), e no fim da rota o mesmo para a
+direção final (`BeginCachedEndTurnPath`). Inferidos: a animação vira no
+sentido horário (cabeçalho `turn = −1,5708` na de 90°) e espelhada no
+anti-horário; os nomes saem do papel "turnInPlace" pelos graus; a velocidade
+continua a da caminhada (não a raiz frame a frame) e sem as fases de começo
+e parada da animação; o bloqueio pelo `TSObjectCanSetPosition` a cada passo
+não foi feito (o bloqueio previsto do §6 continua). Captura:
+`docs/screenshots/r13-virar-no-lugar.jpg` (Don em N001_Lot16 virando 135°
+antes de "Vir Aqui", quadros a cada 8 ticks).
+
 ## 7. Códigos de falha (binário + `STR#` 0xF1 "route results")
 
 `DoPostFailedOrSucceeded` grava o código no **dado de pessoa 62

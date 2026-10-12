@@ -37,7 +37,9 @@ void SimMotion::sample(VM& vm, const Object& o) {
         s.climb = o.route->climb.animation;
         s.climbSerial = o.route->climb.serial;
         s.z = o.route->climb.z;
-        s.onStep = true;
+        s.onStep = o.route->climb.turnSteps == 0; // a turn stands on the floor
+        s.turnSteps = o.route->climb.turnSteps;
+        s.turnMirror = o.route->climb.mirror;
     } else if (const Object* step = vm.object(o.data[objdata::ContainerId]); step && vm.world) {
         // In a stair's step (the stair's portal tree snaps the Sim into each
         // in turn): at the step's height, playing the tree's animation as a
@@ -69,6 +71,10 @@ void SimMotion::sample(VM& vm, const Object& o) {
     current_ = std::move(s);
     if (!count_)
         heading_ = headingOfDirection(current_.direction);
+    // A turn in place ended: its animation turned the body by its steps.
+    if (count_ && previous_.turnSteps != 0 &&
+        (current_.turnSteps == 0 || current_.climbSerial != previous_.climbSerial))
+        heading_ = std::remainder(heading_ + float(previous_.turnSteps) * float(M_PI / 4), float(2 * M_PI));
     ++count_;
 }
 
@@ -77,6 +83,8 @@ float SimMotion::y(float t) const { return previous_.y + (current_.y - previous_
 
 float SimMotion::turn(float dt, float turnSpeed) {
     const float dx = current_.x - previous_.x, dy = current_.y - previous_.y;
+    if (current_.turnSteps != 0) // the turn's animation turns the body
+        return heading_;
     float target = headingOfDirection(current_.direction);
     if (current_.walking && std::hypot(dx, dy) > 1e-4f)
         target = headingOfMotion(dx, dy);

@@ -44,6 +44,10 @@ public:
         uint32_t climbSerial = 0;
         float z = 0;
         bool onStep = false; // at height z (a climb phase, or in a stair's step)
+        // A turn in place (a phase of the route): its 45-degree steps
+        // (counter-clockwise positive) and whether it plays mirrored.
+        int turnSteps = 0;
+        bool turnMirror = false;
     };
 
     // Records the object's state after a VM tick (call once per tick,

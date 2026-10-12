@@ -4,6 +4,7 @@
 #include "errors.hpp"
 #include "go_here.hpp"
 #include "interactions.hpp"
+#include "sim_motion.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/model.hpp"
@@ -860,6 +861,89 @@ int doorWaitTicks(VM& vm) {
 
 // Plans the route's points from where the walker stands to its goals
 // (r.goals on r.level), around the objects and the other Sims.
+// cLocomotable::ComputeTurn (BV 0x6ae2e0, docs/routing-mac.md §6.1): the
+// angle from heading `from` to `to`, in [-pi, pi], as 45-degree steps: while
+// under -40 degrees one step less and 45 more, while over 40 one more and 45
+// less; up to 40 degrees no turn (the walk's curve takes it).
+int turnSteps(float from, float to) {
+    float a = std::remainder(to - from, float(2 * M_PI));
+    int steps = 0;
+    const float limit = float(40 * M_PI / 180), step = float(M_PI / 4);
+    while (a < -limit)
+        --steps, a += step;
+    while (a > limit)
+        ++steps, a -= step;
+    return std::clamp(steps, -4, 4);
+}
+
+// A turn in place of `steps` 45-degree steps where the walker stands: the
+// locomotion's turn animation ("<age>-TurnInPlace-<45|90|135|180>", the
+// adult one if the age has none), as long as it lasts. Its header turns
+// clockwise (a-TurnInPlace-90: turn -1.5708), so a counter-clockwise turn
+// plays it mirrored (inferred). The walker keeps its direction until it
+// walks on (the animation's root turns the body).
+std::optional<Object::Route::Point> turnPoint(VM& vm, const Object& me, int steps) {
+    if (steps == 0 || !me.person)
+        return std::nullopt;
+    if (!vm.animations.index())
+        vm.animations.setIndex(vm.code().index());
+    const std::string name = "TurnInPlace-" + std::to_string(45 * std::abs(steps));
+    for (const std::string& candidate : {agePrefix(me) + "-" + name, "a-" + name})
+        if (const auto secs = vm.animations.seconds(candidate)) {
+            Object::Route::Point p = walkPoint(me.position.x, me.position.y, me.position.level);
+            p.ticks = std::max(1, int(std::ceil(*secs * float(vm.clock.ticksPerSecond))));
+            p.animation = candidate;
+            p.direction = me.data[objdata::Direction];
+            p.turnSteps = steps;
+            p.mirror = steps > 0;
+            return p;
+        }
+    return std::nullopt;
+}
+
+// What BeginFollow makes of a planned way (BV 0x6b5770, §6.1): each leg on
+// the floor cut every 0.2 tile (floor(length / 0.2) points between its
+// ends); a walker already on the move leads out along where it faces by
+// min(speed * 0.3333, 0.25) instead of turning; one standing turns in place
+// first when the first leg is more than 40 degrees off its facing.
+void shapeWalk(VM& vm, Object& me, Object::Route& r, bool moving) {
+    std::vector<Object::Route::Point> out;
+    Point2 at{me.position.x, me.position.y};
+    int level = me.position.level;
+    for (const auto& p : r.points) {
+        const bool plain = p.ticks == 0 && !p.portal && !p.viaPortal && p.level == level && !p.door;
+        if (plain) {
+            const float len = std::hypot(p.x - at[0], p.y - at[1]);
+            const int n = int(std::floor(len / 0.2f));
+            for (int k = 1; k < n; ++k) {
+                const float u = float(k) / float(n);
+                out.push_back(walkPoint(at[0] + (p.x - at[0]) * u, at[1] + (p.y - at[1]) * u, level));
+            }
+        }
+        out.push_back(p);
+        at = {p.x, p.y};
+        level = p.level;
+    }
+    r.points = std::move(out);
+    if (r.points.empty() || r.points.front().ticks > 0 || r.points.front().portal)
+        return;
+    const Object::Route::Point& first = r.points.front();
+    const float dx = first.x - me.position.x, dy = first.y - me.position.y;
+    if (std::hypot(dx, dy) < 1e-4f)
+        return;
+    const float facing = headingOfDirection(me.data[objdata::Direction]);
+    if (moving) {
+        const float lead = std::min(walkTilesPerTick(vm, me) * float(vm.clock.ticksPerSecond) * 0.3333f, 0.25f);
+        const Point2 q{me.position.x - std::sin(facing) * lead, me.position.y + std::cos(facing) * lead};
+        PathPlanner& planner = plannerOf(vm);
+        if (planner.free(me.position.level, q))
+            r.points.insert(r.points.begin(), walkPoint(q[0], q[1], me.position.level));
+        return;
+    }
+    if (auto t = turnPoint(vm, me, turnSteps(facing, headingOfMotion(dx, dy))))
+        r.points.insert(r.points.begin(), *t);
+}
+
 bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     PathPlanner& planner = plannerOf(vm);
     addObstacles(vm, planner, me, r.ignore);
@@ -968,6 +1052,7 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
     // In" reads it as the seat, the dining chairs as the side to sit from).
     if (me.person && path.goal < r.multi.size())
         me.person->data[38] = r.multi[path.goal];
+    shapeWalk(vm, me, r, me.route.has_value() && !me.route->waiting && me.route->climb.ticksLeft == 0);
     return true;
 }
 
@@ -1613,6 +1698,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 r.climb.animation = p.animation;
                 r.climb.z = p.z;
                 r.climb.ticksLeft = p.ticks;
+                r.climb.turnSteps = p.turnSteps;
+                r.climb.mirror = p.mirror;
                 ++r.climb.serial;
             }
             r.waiting = p.animation.empty();
@@ -1643,6 +1730,16 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 return Step::Call;
         }
         return Step::Walking;
+    }
+    // The turn to the final facing (BeginCachedEndTurnPath): in place when
+    // more than 40 degrees off the way the walker came.
+    if (!r.endTurned && !r.aside && r.facing >= 0) {
+        r.endTurned = true;
+        if (auto t = turnPoint(vm, me, turnSteps(headingOfDirection(me.data[objdata::Direction]),
+                                                 headingOfDirection(r.facing)))) {
+            r.points.push_back(*t);
+            return Step::Walking;
+        }
     }
     if (std::exchange(r.aside, false)) { // stepped aside: the route itself again
         Object::Route next = r;

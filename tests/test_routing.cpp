@@ -895,6 +895,62 @@ static void testMoveOutOfWay() {
     }
 }
 
+// BeginFollow's shape of a walk (docs/routing-mac.md §6.1): legs cut every
+// 0.2 tile, and a Sim facing away from its way turns in place first (the
+// TurnInPlace animation of the 45-degree steps, mirrored counter-clockwise);
+// up to 40 degrees off it walks on at once.
+static void testTurnInPlace() {
+    for (const int facing : {0, 4, 2}) {
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World(12, 12);
+        for (const char* n : {"a-TurnInPlace-45", "a-TurnInPlace-90", "a-TurnInPlace-135", "a-TurnInPlace-180"})
+            vm.animations.add(n, 1.0f);
+        code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+        code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+        Object& lamp = vm.instantiate(kGroup, 0x80);
+        lamp.position = {10.5f, 5.5f, 1};
+        Object& sim = vm.instantiate(kGroup, 0x81);
+        sim.position = {2.5f, 5.5f, 1};
+        sim.person->data[58] = 27; // an adult
+        sim.data[objdata::Direction] = int16_t(facing);
+        code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+        Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+        vm.run(t);
+        const bool turning = sim.route && sim.route->climb.turnSteps != 0;
+        const int steps = turning ? sim.route->climb.turnSteps : 0;
+        const std::string anim = turning ? sim.route->climb.animation : "";
+        const float x0 = sim.position.x;
+        // Each walking leg on the floor at most 0.2 tile (+ the remainder).
+        float longest = 0;
+        if (sim.route) {
+            Point2 at{sim.position.x, sim.position.y};
+            for (const auto& p : sim.route->points)
+                if (p.ticks == 0) {
+                    longest = std::max(longest, std::hypot(p.x - at[0], p.y - at[1]));
+                    at = {p.x, p.y};
+                }
+        }
+        for (int i = 0; i < 25 && t.status == Thread::Status::Running; ++i)
+            vm.run(t);
+        const float x25 = sim.position.x;
+        for (int i = 0; i < 2000 && t.status == Thread::Status::Running; ++i)
+            vm.run(t);
+        if (std::getenv("DEBUG_TURN"))
+            std::fprintf(stderr, "facing %d: steps %d %s x0 %.2f x25 %.2f longest %.3f result %d\n", facing, steps,
+                         anim.c_str(), x0, x25, longest, t.result);
+        check(t.status == Thread::Status::Finished && t.result, "turn in place: the walk ends");
+        check(longest < 0.41f, "the legs are cut every 0.2 tile");
+        if (facing == 4) { // direction 4 faces +X, the way: no turn, walking at once
+            check(!turning && x25 > 4, "facing the way: no turn in place");
+        } else {
+            const int want = facing == 2 ? -2 : -4; // +Y to +X: 90 degrees clockwise; -X to +X: 180
+            check(steps == want && anim == "a-TurnInPlace-" + std::to_string(45 * -want) && x0 == 2.5f && x25 == 2.5f,
+                  "facing away: turns in place (TurnInPlace of its steps) before walking");
+        }
+    }
+}
+
 // Two Sims walking at each other down a corridor with a bay block each
 // other: the binary's DoBlockedGoalStillAvailable sees the blocker blocked
 // by the walker and the walker steps aside itself (TryGetSelfOutOfWay), so
@@ -1078,6 +1134,7 @@ int main() {
     testRouteResult();
     testBlockedBySim();
     testMutualBlock();
+    testTurnInPlace();
     testDoorWait();
     testDoorPortalTree();
     testPreRouteTree();
