@@ -463,6 +463,12 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
   (`poolWaterLayer-1`, `swimming_pool_deeplayer` × `poolLayerColour`, alfa
   0,9 × `allTextureLights`) e o gerador de cáusticas só existem fora do
   caminho FF/SWVS, ou seja, **existem no Mac**.
+- **Ordem** (rodada 16): a camada de água (5) é contada em unidades de
+  `stdMatLayer` (no app `(stdMatLayer + 5)·8`): depois do terreno e das
+  suas pinturas misturadas (camada 0 + 7). Antes a água ia na camada 5 da
+  escala ×8, antes das pinturas, sem escrever z, e o fosso de `N001_Lot82`
+  saía coberto pela areia e pelo leito (QA ao vivo da rodada 16;
+  `docs/screenshots/r16-fosso-agua.jpg`).
 - **Água do terreno** (`TerrainWaterShader`): reflexo de
   `reflectionoutdoorwater-envcube` (`fromReflectionVector`,
   `-orientCameraToGlobal`, sem mipmap) × `colorScalar(1,1,1)` ×

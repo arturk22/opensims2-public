@@ -445,8 +445,12 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     if (blended && !simHair && out.blend != StandardMaterial::Blend::Premultiplied)
         out.depthWrite = false;
     out.layer = stdLayer * 8 + (blended ? (simHair ? 3 : 7) : 0);
+    // The water layer (5) in stdMatLayer units, after the layers below it
+    // and their blended parts (the terrain paints, layer 0 + 7): drawn
+    // before them, without writing depth, the water of N001_Lot82's moat
+    // was painted over by the sand and the lake bed (live QA, round 16).
     if (contains(type, "Water"))
-        out.layer = stdLayer + 5;
+        out.layer = (stdLayer + 5) * 8;
     if (type == "CelShadedMaterial")
         out.layer = int(number("csMatLayer", 0)) * 8;
     // WallMask parts are the shapes doors and windows cut out of walls.

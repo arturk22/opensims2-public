@@ -256,10 +256,11 @@ std::vector<float> sunShadowTops(const LotLightMapLayout& layout, std::array<flo
     // The grid: the highest floor over each texel (FillFromTerrain; the
     // terrain at the texel's centre) and the roofs.
     std::vector<float> g(layout.occluders);
+    const int ground = layout.minLevel <= 0 && layout.minLevel + layout.levels > 0 ? 0 : layout.minLevel; // not a foundation's level -1
     for (long j = 0; j < H; ++j)
         for (long i = 0; i < W; ++i) {
             float& v = g[size_t(j * W + i)];
-            v = std::max(v, layout.elevationAt(layout.minLevel, (float(i) + 0.5f) / k, (float(j) + 0.5f) / k));
+            v = std::max(v, layout.elevationAt(ground, (float(i) + 0.5f) / k, (float(j) + 0.5f) / k));
         }
     auto at = [&](long i, long j) -> float* {
         return i >= 0 && j >= 0 && i < W && j < H ? &g[size_t(j * W + i)] : nullptr;
