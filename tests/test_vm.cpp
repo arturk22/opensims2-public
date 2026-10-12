@@ -367,7 +367,15 @@ static void testPrimitives() {
                       instr(0x1F, E, T, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 4, 0})}));
     t = fx.run(0x1001);
     check(t.status == Thread::Status::Finished && t.temps[1] == 2, "Set to Next iterates persons");
-    check(t.temps[2] == chair.id && t.temps[3] == chair2.id, "Set to Next finds objects of a GUID in order");
+    check(t.temps[2] == chair2.id && t.temps[3] == chair.id,
+          "Set to Next finds objects of a GUID in the object list's order (made in play: the newest first)");
+    {
+        // A lot's saved list order (ObjM) is the order walked: chair2 put after chair.
+        fx.vm.setListOrder(chair, 0);
+        fx.vm.setListOrder(chair2, 1);
+        Thread u = fx.run(0x1001);
+        check(u.temps[2] == chair.id && u.temps[3] == chair2.id, "Set to Next walks the list as the lot saved it");
+    }
     check(t.temps[4] == 0, "Set to Next writes 0 when there is no next object (Mac binary)");
 
     // Test Object Type on the stack object; verify sim; Break Point passes through.
@@ -832,6 +840,8 @@ static void testSetToNextSearches() {
     Object& lone = fx.vm.instantiate(kObjGroup, 0x80);     // id 5
     part.data[objdata::LeadTileObjectId] = 3;
     lone.data[objdata::Category] = 7;
+    for (ObjectId id = 1; id <= 5; ++id) // the object list as a lot saved it, in ID order
+        fx.vm.setListOrder(*fx.vm.object(id), id);
     fx.code.add(kObjGroup, 0x1000,
                 tree({expr(Temp, 0, Assign, Lit, 7, go(1), E),
                       next(12, 7, go(2), E),                                // category == temp 0: temp7 = 5

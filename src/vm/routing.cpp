@@ -1102,7 +1102,16 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
         std::fprintf(stderr, "  map of %d at (%.2f, %.2f, %d), goals on level %d:", me.id, me.position.x, me.position.y, lv, r.level);
         for (const auto& g : r.goals)
             std::fprintf(stderr, " (%.2f,%.2f)", g[0], g[1]);
-        std::fprintf(stderr, "\n");
+        std::fprintf(stderr, " (why %d)\n", int(why));
+        for (const auto& [oid, o] : vm.eachObject()) // the objects whose footprint covers a goal
+            if (!o.person && o.position.inWorld() && o.position.level == r.level && o.data[objdata::ContainerId] == 0)
+                for (const auto& f : vm.routingFootprint(o))
+                    for (const auto& g : r.goals)
+                        if (f[0] - 0.15f < g[0] && g[0] < f[2] + 0.15f && f[1] - 0.15f < g[1] && g[1] < f[3] + 0.15f) {
+                            std::fprintf(stderr, "    goal (%.2f,%.2f) near %d %s footprint (%.2f,%.2f)-(%.2f,%.2f) blocks %d\n", g[0], g[1], oid,
+                                         o.definition ? o.definition->fileName.c_str() : "?", f[0], f[1], f[2], f[3], int(VM::blocksRouting(o)));
+                            break;
+                        }
         // OS2_ROUTE_FAILS_MAP=N: N half tiles each way up and down (12), N * 4 / 3 across.
         const int ry = std::max(12, std::atoi(std::getenv("OS2_ROUTE_FAILS_MAP"))), rx = ry * 4 / 3;
         for (int qy = int(me.position.y * 2) + ry; qy >= int(me.position.y * 2) - ry; --qy) {

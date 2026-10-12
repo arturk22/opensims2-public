@@ -530,10 +530,20 @@ Exit setToNext(Context& c) {
             throw VMError("Set to Next: search type " + std::to_string(type) + " not implemented");
         throw gameError(err::BadSearchType, "Set to Next type " + std::to_string(type));
     }
-    const auto& table = c.vm.objectTable(); // by ID; the objects after `current`
-    for (size_t k = current < 0 ? 0 : size_t(current) + 1; k < table.size(); ++k)
-        if (table[k] && matches(*table[k]) && eligible(*table[k]))
-            return found(table[k]->id);
+    // The object module's list (TrySetToNext, BV 0xe47288: the objects
+    // after the current one in that list; a current one not in it, or 0,
+    // starts at the front), not ID order: a lot's list (ObjM) can have a
+    // multi-tile part before its lead, and the ghost's "Function - Goal
+    // Check" steps from the stereo's part to its lead (object data 19) and
+    // on with Set to Next 6: by ID it found the part again and spun out the
+    // instruction budget (N001_Lot68 with visitors).
+    const auto& list = c.vm.objectList();
+    auto it = list.begin();
+    if (const Object* cur = current > 0 ? c.vm.object(current) : nullptr)
+        it = list.upper_bound(cur->listOrder);
+    for (; it != list.end(); ++it)
+        if (const Object* x = c.vm.object(it->second); x && matches(*x) && eligible(*x))
+            return found(x->id);
     return none();
 }
 

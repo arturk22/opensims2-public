@@ -729,6 +729,8 @@ Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
     ++tableGeneration_;
     o.id = id;
     o.serial = ++objectSerial_;
+    o.listOrder = --listFront_;
+    objectList_[o.listOrder] = id;
     o.group = group;
     o.semiGroup = code_.semiGlobalFor(group);
     o.attributes.resize(attributeCount);

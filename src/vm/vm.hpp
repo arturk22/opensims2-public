@@ -484,6 +484,12 @@ struct Object {
     // are reused, and a thread of a removed object must not go on as the
     // next object given its ID.
     uint64_t serial = 0;
+    // Its place in the object module's list (cEdithObjectModule; the order
+    // the lot's ObjM saves): Set to Next walks the objects in this order.
+    // A loaded object takes its place in the saved list; one made in play
+    // goes to the front (VM::createObject; inferred from the saved lists,
+    // which start with the newest IDs).
+    int64_t listOrder = 0;
     uint32_t group = 0;     // private BHAVs/BCONs (the group of the object's OBJD)
     uint32_t semiGroup = 0; // semi-global BHAVs/BCONs, 0 if none
     const ObjectDefinition* definition = nullptr; // shared by every instance; may be null (tests)
@@ -949,6 +955,8 @@ public:
 
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) {
+        if (auto it = objects_.find(id); it != objects_.end())
+            objectList_.erase(it->second.listOrder);
         objects_.erase(id);
         if (size_t(uint16_t(id)) < byId_.size())
             byId_[uint16_t(id)] = nullptr;
@@ -962,6 +970,14 @@ public:
     // null holes: scanning it is cheaper than walking the map. Objects must
     // not be created or removed while a loop over it runs with a reference.
     const std::vector<Object*>& objectTable() const { return byId_; }
+    // The objects in the object module's list order (Object::listOrder).
+    const std::map<int64_t, ObjectId>& objectList() const { return objectList_; }
+    // Puts `o` at `order` in that list (the lot loader: the saved order).
+    void setListOrder(Object& o, int64_t order) {
+        objectList_.erase(o.listOrder);
+        o.listOrder = order;
+        objectList_[order] = o.id;
+    }
     // The IDs of the people (objects with person data), in ID order, as of
     // this tick and the objects there are (the walkers' collision tests
     // look at them every step).
@@ -1315,6 +1331,8 @@ private:
     std::vector<Object*> byId_;
     uint64_t tableGeneration_ = 0;
     uint64_t objectSerial_ = 0;
+    std::map<int64_t, ObjectId> objectList_; // Object::listOrder -> ID
+    int64_t listFront_ = 0;                  // the next made object's listOrder is below this
     mutable std::vector<ObjectId> people_;
     mutable uint64_t peopleTick_ = ~uint64_t(0), peopleGeneration_ = ~uint64_t(0);
     std::unordered_map<uint16_t, Primitive> primitives_;

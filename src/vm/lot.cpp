@@ -273,6 +273,10 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
         }
         out.objects.push_back(std::move(e));
     }
+    // The object module's list as saved (ObjM's pairs): Set to Next walks it.
+    for (size_t i = 0; i < saved.pairs.size(); ++i)
+        if (Object* o = vm.object(ObjectId(saved.pairs[i].first & 0xFFFF)))
+            vm.setListOrder(*o, int64_t(i));
     // The world: walls, floors, rooms and stairs, from the lot's current
     // cObjects only (the packages keep stale copies of the stairs), with the
     // walls opened where the doors (and gates) are: each part of a door

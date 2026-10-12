@@ -319,13 +319,20 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
             ++out.newSaveTypes;
         }
     std::sort(lot.objects.begin(), lot.objects.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
-    // Keep the module's order for the objects that were in it.
-    std::map<uint32_t, size_t> order;
+    // The module's list order: the VM's (Object::listOrder: the loaded
+    // objects at their saved places, the ones made in play in front), the
+    // objects kept as they were at their saved places.
+    std::map<uint32_t, int64_t> order;
     for (size_t i = 0; i < saved.pairs.size(); ++i)
-        order[saved.pairs[i].first & 0xFFFF] = i;
+        order[saved.pairs[i].first & 0xFFFF] = int64_t(i);
+    auto key = [&](uint32_t id) {
+        if (const Object* o = vm.object(ObjectId(id)))
+            return o->listOrder;
+        const auto it = order.find(id);
+        return it == order.end() ? INT64_MAX : it->second;
+    };
     std::stable_sort(lot.pairs.begin(), lot.pairs.end(), [&](const auto& a, const auto& b) {
-        auto ia = order.find(a.first), ib = order.find(b.first);
-        const size_t x = ia == order.end() ? SIZE_MAX : ia->second, y = ib == order.end() ? SIZE_MAX : ib->second;
+        const int64_t x = key(a.first), y = key(b.first);
         return x != y ? x < y : a.first < b.first;
     });
     for (const auto& s : saved.objects) {
