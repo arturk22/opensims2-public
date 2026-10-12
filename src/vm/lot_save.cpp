@@ -216,7 +216,7 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
     std::map<int16_t, const LotObjects::State*> before;
     for (const auto& s : saved.objects)
         before[s.id] = &s;
-    for (const auto& [id, o] : vm.objects()) {
+    for (const auto& [id, o] : vm.eachObject()) {
         auto it = before.find(int16_t(id));
         LotObjects::State s;
         // The same object as the one saved with this ID (an ID freed and

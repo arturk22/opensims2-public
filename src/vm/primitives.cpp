@@ -360,7 +360,7 @@ Exit setToNext(Context& c) {
             return none();
         const TilePos at = VM::tileOf(*anchor);
         std::vector<ObjectId> ids;
-        for (const auto& [id, x] : c.vm.objects()) {
+        for (const auto& [id, x] : c.vm.eachObject()) {
             const TilePos t = VM::tileOf(x);
             if (id != anchor->id && x.position.inWorld() && x.data[objdata::ContainerId] == 0 && t.level == at.level &&
                 std::abs(t.x - at.x) <= 1 && std::abs(t.y - at.y) <= 1)
@@ -409,7 +409,7 @@ Exit setToNext(Context& c) {
         const uint32_t g = uint16_t((*pd)[kJobGuidLow]) | uint32_t(uint16_t((*pd)[kJobGuidHigh])) << 16;
         if (!g || !c.vm.code().definitionByGuid(g))
             return none();
-        for (const auto& [id, x] : c.vm.objects())
+        for (const auto& [id, x] : c.vm.eachObject())
             if (x.guid() == g)
                 return found(id);
         return none();
@@ -463,7 +463,7 @@ Exit setToNext(Context& c) {
         if (!pd)
             return none();
         const uint32_t g = uint16_t((*pd)[89]) | uint32_t(uint16_t((*pd)[90])) << 16;
-        for (const auto& [id, x] : c.vm.objects())
+        for (const auto& [id, x] : c.vm.eachObject())
             if (g && x.guid() == g)
                 return found(id);
         return none();
@@ -695,7 +695,7 @@ Exit createObjectInstance(Context& c) {
     }
 
     std::vector<ObjectId> before;
-    for (const auto& [id, _] : c.vm.objects())
+    for (const auto& [id, _] : c.vm.eachObject())
         before.push_back(id);
     Object* x = &c.vm.instantiate(defAt->first, defAt->second);
     const ObjectId created = x->id;
@@ -703,7 +703,7 @@ Exit createObjectInstance(Context& c) {
         // Nowhere in the world to put it.
         const ObjectId group = multiTileGroup(*x);
         std::vector<ObjectId> parts;
-        for (const auto& [id, y] : c.vm.objects())
+        for (const auto& [id, y] : c.vm.eachObject())
             if (multiTileGroup(y) == group)
                 parts.push_back(id);
         for (ObjectId id : parts)

@@ -25,14 +25,14 @@ void collect(VM& vm, ObjectId id, std::vector<ObjectId>& out) {
         return;
     const ObjectId group = multiTileGroup(*o);
     std::vector<ObjectId> parts;
-    for (const auto& [pid, p] : vm.objects())
+    for (const auto& [pid, p] : vm.eachObject())
         if (pid == id || multiTileGroup(p) == group)
             parts.push_back(pid);
     for (ObjectId pid : parts)
         if (std::find(out.begin(), out.end(), pid) == out.end())
             out.push_back(pid);
     for (ObjectId pid : parts)
-        for (const auto& [cid, c] : vm.objects())
+        for (const auto& [cid, c] : vm.eachObject())
             if (cid != pid && c.data[objdata::ContainerId] == pid && !isPerson(c))
                 collect(vm, cid, out);
 }
@@ -121,7 +121,7 @@ void flushKillQueue(VM& vm) {
             vm.dyingObjects.erase(g);
         }
         // Sims in its slots are dropped where they are.
-        for (const auto& [sid, s] : vm.objects())
+        for (const auto& [sid, s] : vm.eachObject())
             if (s.person && std::find(gone.begin(), gone.end(), s.data[objdata::ContainerId]) != gone.end()) {
                 Object& sim = *vm.object(sid);
                 sim.data[objdata::ContainerId] = 0;

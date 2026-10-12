@@ -84,7 +84,7 @@ std::vector<ObjectId> groupOf(VM& vm, ObjectId id) {
         return {};
     const ObjectId lead = multiTileGroup(*o);
     std::vector<ObjectId> out;
-    for (const auto& [other, x] : vm.objects())
+    for (const auto& [other, x] : vm.eachObject())
         if (other == lead || x.data[objdata::LeadTileObjectId] == lead)
             out.push_back(other);
     if (std::find(out.begin(), out.end(), id) == out.end())
@@ -301,7 +301,7 @@ void pickUp(VM& vm, ObjectId id) {
 
 ObjectId createGhost(VM& vm, uint32_t group, uint16_t definitionInstance) {
     std::vector<ObjectId> before;
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         before.push_back(id);
     Object& lead = vm.instantiate(group, definitionInstance);
     const ObjectId leadId = lead.id;
@@ -347,7 +347,7 @@ void deleteGroup(VM& vm, ObjectId id) {
     for (ObjectId part : groupOf(vm, id)) {
         // What it holds goes with it.
         std::vector<ObjectId> held;
-        for (const auto& [other, x] : vm.objects())
+        for (const auto& [other, x] : vm.eachObject())
             if (x.data[objdata::ContainerId] == part && other != part)
                 held.push_back(other);
         for (ObjectId h : held)
@@ -450,7 +450,7 @@ bool railingSide(VM& vm, ObjectId id, float x, float y) {
 }
 
 void dayPassed(VM& vm) {
-    for (const auto& [id, o] : vm.objects()) {
+    for (const auto& [id, o] : vm.eachObject()) {
         if (!o.definition || o.person || multiTileGroup(o) != id)
             continue;
         const ObjectDefinition& d = *o.definition;
@@ -472,7 +472,7 @@ void dayPassed(VM& vm) {
 void computeLotData(VM& vm) {
     constexpr int16_t kMovementFlags = 43; // bit 0x10: stays after evict (STR# 0xCB #4)
     int32_t family = 0, lot = 0;
-    for (const auto& [id, o] : vm.objects()) {
+    for (const auto& [id, o] : vm.eachObject()) {
         if (!o.definition || o.person || multiTileGroup(o) != id)
             continue;
         // In the world: placed, or in a slot of something in the world.

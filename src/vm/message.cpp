@@ -123,7 +123,7 @@ Exit message(Context& c) {
         room = c.get(o[5], int16_t(le16(&o[6])));
     const uint8_t set = o[3], filter = o[0];
     std::vector<ObjectId> receivers;
-    for (const auto& [id, x] : vm.objects()) {
+    for (const auto& [id, x] : vm.eachObject()) {
         if (set >= 6) {
             if (set == 6 && x.person)
                 continue;

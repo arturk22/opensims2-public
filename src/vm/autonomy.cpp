@@ -268,7 +268,7 @@ Exit findBestInteraction(Context& c) {
     std::vector<Candidate> candidates;
     std::set<ObjectId> seen;
     std::vector<ObjectId> ids;
-    for (const auto& [id, x] : vm.objects())
+    for (const auto& [id, x] : vm.eachObject())
         ids.push_back(id);
     for (ObjectId id : ids) {
         const Object* x = vm.object(id);

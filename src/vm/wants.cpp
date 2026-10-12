@@ -490,7 +490,7 @@ float priority(VM& vm, WantSystem& ws, const Meta& m, const WantInstance& c) {
 // --- the want controller and its trees ---
 
 Object* controller(VM& vm) {
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         if (o.guid() == wants::kControllerGuid)
             return vm.object(id);
     return nullptr;

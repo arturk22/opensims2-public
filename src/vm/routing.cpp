@@ -192,11 +192,11 @@ int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float
         return 5;
     const ObjectId group = multiTileGroup(target);
     const Object* walker = vm.object(router);
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         if (o.position.level == level && multiTileGroup(o) != group && VM::blocksRouting(o) && VM::tileOf(o) == t &&
             !(walker && intersectionAllowed(vm, o, *walker)))
             return 1;
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         if (o.person && id != router && id != target.id && o.position.inWorld() && o.position.level == level &&
             o.data[objdata::ContainerId] == 0 && std::hypot(o.position.x - px, o.position.y - py) < 0.5f)
             return 6;
@@ -621,7 +621,7 @@ void addObstacles(VM& vm, PathPlanner& planner, const Object& me, std::span<cons
         if (const Object* o = vm.object(id))
             skip.insert(multiTileGroup(*o));
     const World& w = planner.world();
-    for (const auto& [id, o] : vm.objects()) {
+    for (const auto& [id, o] : vm.eachObject()) {
         if (id == me.id || !o.position.inWorld() || o.data[objdata::ContainerId] != 0)
             continue;
         if (o.person) {
@@ -708,7 +708,7 @@ void appendClimb(VM& vm, const Object& me, const Stair& st, bool up, std::vector
 // The door object at a door of the world (0 if the VM has none there: the
 // saved door states are not always where their cObjects are).
 ObjectId doorObject(VM& vm, const World::Door& d) {
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         if (o.definition && o.definition->objectType() == kObjectTypeDoor && o.position.inWorld() &&
             VM::tileOf(o) == d.tile)
             return id;
@@ -729,7 +729,7 @@ std::pair<ObjectId, ObjectId> stairSteps(VM& vm, const Stair& st) {
     const auto top = st.at(st.length() - 0.125f);
     ObjectId best = 0;
     float bestD = 0.6f;
-    for (const auto& [id, o] : vm.objects()) {
+    for (const auto& [id, o] : vm.eachObject()) {
         if (o.semiGroup != stairGlobals || !o.position.inWorld() || o.position.level != st.top.level ||
             !vm.functionTree(o, 15))
             continue;
@@ -757,7 +757,7 @@ std::pair<ObjectId, ObjectId> stairSteps(VM& vm, const Stair& st) {
 std::pair<ObjectId, ObjectId> straightStairPads(VM& vm, const Stair& st) {
     static const uint32_t globals = semiGlobalGroup("StairsStraightGlobals");
     ObjectId top = 0, bottom = 0;
-    for (const auto& [id, o] : vm.objects()) {
+    for (const auto& [id, o] : vm.eachObject()) {
         if (o.semiGroup != globals || !o.position.inWorld() || !vm.functionTree(o, 15))
             continue;
         const TilePos t = VM::tileOf(o);
@@ -961,7 +961,7 @@ void shapeWalk(VM& vm, Object& me, Object::Route& r, bool moving) {
             // off the Sims its planner went around; a walker planning again
             // in front of the one that blocked it would walk into it).
             bool clear = plannerOf(vm).free(level, q);
-            for (const auto& [id, o] : vm.objects())
+            for (const auto& [id, o] : vm.eachObject())
                 if (clear && id != me.id && o.person && o.position.inWorld() && o.position.level == level &&
                     o.data[objdata::ContainerId] == 0 &&
                     std::hypot(o.position.x - q[0], o.position.y - q[1]) <
@@ -1133,7 +1133,7 @@ ObjectId simAhead(VM& vm, const Object& me, const Object::Route& r) {
         return 0;
     const float mySpeed = std::max(walkTilesPerTick(vm, me), 1e-4f);
     const float myRadius = smallSim(me) ? 0.1875f : 0.25f;
-    for (const auto& [id, o] : vm.objects()) {
+    for (const auto& [id, o] : vm.eachObject()) {
         if (id == me.id || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
             o.position.level != me.position.level)
             continue;
@@ -1294,7 +1294,7 @@ bool askBlockerToMove(VM& vm, Object& me, const Object::Route& r, Object& blocke
     if (!spot)
         return false;
     std::vector<ObjectId> existing;
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         existing.push_back(id);
     Object* dest = vm.instantiateGuid(kDestinationGuid);
     if (!dest)
@@ -1425,7 +1425,7 @@ ObjectId eyeAttractor(VM& vm, Object& me, const Object::Route& r) {
         if (!def)
             return 0;
         std::vector<ObjectId> before;
-        for (const auto& [id, _] : vm.objects())
+        for (const auto& [id, _] : vm.eachObject())
             before.push_back(id);
         const ObjectId id = vm.instantiate(def->first, def->second).id;
         me.eyeAttractor = id;
@@ -1708,7 +1708,11 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r) {
 // when its own place does not pass either); the Sim walked to is met.
 ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, float y, int level) {
     const float mine = smallSim(me) ? 0.09375f : 0.125f;
-    for (const auto& [id, o] : vm.objects()) {
+    for (const Object* po : vm.objectTable()) { // by ID, as objects() is
+        if (!po)
+            continue;
+        const Object& o = *po;
+        const ObjectId id = o.id;
         if (id == me.id || id == r.target || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
             o.position.level != level || allowsIntersection(vm, o, me.id))
             continue;
@@ -2132,7 +2136,7 @@ Exit failRoute(Context& c, RouteFail why, ObjectId blocker, bool failureTrees, b
                      int(why), c.frame.behavior->fileName.c_str(), c.frame.pc, c.instruction.opcode, c.frame.stackObject, me.position.x,
                      me.position.y, me.position.level);
     if (std::getenv("OS2_ROUTE_FAILS_NEAR")) // and what blocks around the walker
-        for (const auto& [id, x] : c.vm.objects())
+        for (const auto& [id, x] : c.vm.eachObject())
             if (id != me.id && x.position.inWorld() && x.position.level == me.position.level &&
                 std::fabs(x.position.x - me.position.x) < 4.6f && std::fabs(x.position.y - me.position.y) < 2.6f && VM::blocksRouting(x))
                 std::fprintf(stderr, "  near: %d %s at (%.2f, %.2f) flags %X layers %X h %X p %X w %X%s%s\n", id, x.definition ? x.definition->fileName.c_str() : "?",
@@ -2416,7 +2420,7 @@ Exit goToRelativePosition(Context& c) {
 bool tryPlace(VM& vm, Object& o, TilePos t, int direction = -1) {
     std::vector<Object*> parts;
     const ObjectId group = multiTileGroup(o);
-    for (const auto& [id, x] : vm.objects())
+    for (const auto& [id, x] : vm.eachObject())
         if (multiTileGroup(x) == group)
             parts.push_back(vm.object(id));
     const TilePos from = VM::tileOf(o);
@@ -2679,13 +2683,17 @@ const std::vector<int16_t>* accessibleRooms(VM& vm, int16_t room) {
 // it runs is inferred (each routing step, and when a pie menu closes).
 void flushDestinations(VM& vm) {
     std::vector<ObjectId> done;
-    for (const auto& [id, o] : vm.objects()) {
+    for (const Object* po : vm.objectTable()) { // by ID, as objects() is
+        if (!po)
+            continue;
+        const Object& o = *po;
+        const ObjectId id = o.id;
         if (!(o.syntheticSlot || o.managedDestination) || o.destinationHeld)
             continue;
         bool used = false;
-        for (const auto& [sid, sim] : vm.objects())
-            if (sim.person)
-                for (const auto& q : sim.queue)
+        for (const Object* sim : vm.objectTable())
+            if (sim && sim->person)
+                for (const auto& q : sim->queue)
                     used = used || q.object == id;
         if (!used)
             done.push_back(id);
@@ -2959,7 +2967,7 @@ ObjectId createGoHereDestination(VM& vm, ObjectId simId, float x, float y, int l
     const TilePos tile{int(std::floor(p->x)), int(std::floor(p->y)), level};
     const uint32_t guid = vm.world->pool(tile) ? kSwimHereGuid : kGoHereGuid;
     std::vector<ObjectId> existing;
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         existing.push_back(id);
     Object* dest = vm.instantiateGuid(guid);
     if (!dest)

@@ -179,7 +179,7 @@ Exit findBestObjectForFunction(Context& c) {
         return room <= 0 || (it != vm.rooms.end() && (it->second.known & 0x02) && it->second.values[1] != 0);
     };
     std::vector<ObjectId> ids;
-    for (const auto& [id, x] : vm.objects())
+    for (const auto& [id, x] : vm.eachObject())
         ids.push_back(id);
     // A Sim looks only in the rooms it can reach from its own (binary: the
     // set from cTSPerson::GetAccessibleRooms; the router fills it, here the
@@ -664,7 +664,7 @@ Exit snap(Context& c) {
     }
     if (best == goals.goals.size() && std::getenv("OS2_SNAP_FAILS"))
         for (size_t i = 0; i < goals.goals.size(); ++i)
-            for (const auto& [id, x] : c.vm.objects())
+            for (const auto& [id, x] : c.vm.eachObject())
                 if (id != me.id && id != target.id && VM::blocksRouting(x) &&
                     VM::tileOf(x) == TilePos{goals.goals[i].x, goals.goals[i].y, goals.level})
                     std::fprintf(stderr, "  goal (%d, %d, %d) taken by %d %s\n", goals.goals[i].x, goals.goals[i].y, goals.level, id,
@@ -697,7 +697,7 @@ Exit snap(Context& c) {
         const int turn = ((me.data[objdata::Direction] - fromDir) % 8 + 8) % 8;
         const double a = -turn * M_PI / 4; // directions go clockwise
         std::vector<ObjectId> parts;
-        for (const auto& [id, x] : c.vm.objects())
+        for (const auto& [id, x] : c.vm.eachObject())
             if (id != me.id && multiTileGroup(x) == group && x.position.inWorld() && !x.person)
                 parts.push_back(id);
         for (ObjectId id : parts) {

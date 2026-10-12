@@ -16,7 +16,7 @@ constexpr size_t kPersondataInteractionsLinkedDeleted = 110;
 // sub-queue and the running sub-action.
 template <typename F> void forEachInteraction(VM& vm, F&& f) {
     std::vector<ObjectId> ids;
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         if (o.person)
             ids.push_back(id);
     for (ObjectId id : ids) {

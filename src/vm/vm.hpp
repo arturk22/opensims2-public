@@ -852,6 +852,35 @@ public:
     // null holes: scanning it is cheaper than walking the map. Objects must
     // not be created or removed while a loop over it runs with a reference.
     const std::vector<Object*>& objectTable() const { return byId_; }
+    // `for (const auto& [id, o] : vm.eachObject())`: the same walk as over
+    // objects() (ID order, an object made during the loop is met when its ID
+    // is later, one removed is skipped) through the table, which is much
+    // cheaper than the map's nodes; safe against creation and removal.
+    struct EachObject {
+        const VM* vm;
+        struct It {
+            const VM* vm;
+            size_t i;
+            void skip() {
+                while (i < vm->byId_.size() && !vm->byId_[i])
+                    ++i;
+            }
+            std::pair<ObjectId, const Object&> operator*() const { return {vm->byId_[i]->id, *vm->byId_[i]}; }
+            It& operator++() {
+                ++i;
+                skip();
+                return *this;
+            }
+            bool operator!=(const It& o) const { return i != o.i; }
+        };
+        It begin() const {
+            It it{vm, 0};
+            it.skip();
+            return it;
+        }
+        It end() const { return {vm, vm->byId_.size()}; }
+    };
+    EachObject eachObject() const { return {this}; }
 
     // Containment: an object is in slot "slot number" (object data 3) of the
     // object "container id" (object data 2); outside of any slot those are 0

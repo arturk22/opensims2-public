@@ -22,7 +22,7 @@ int16_t roomValue(const VM& vm, int16_t room, int16_t value) {
         throw gameError(0x29, "room value " + std::to_string(value));
     if (value == 5) {
         int16_t n = 0;
-        for (const auto& [id, o] : vm.objects())
+        for (const auto& [id, o] : vm.eachObject())
             if (o.position.inWorld() && o.data[objdata::Room] == room && o.data[objdata::Category] == 0x16)
                 ++n;
         return n;

@@ -47,14 +47,14 @@ constexpr size_t kMaxFailedTimerEvents = 64;
 
 int16_t nextTimerId(VM& vm) {
     int16_t top = 0;
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         for (const ObjectTimer& t : o.timers)
             top = std::max(top, t.id);
     return int16_t(top + 1);
 }
 
 ObjectTimer* timerById(VM& vm, int16_t id, Object** ownerOut) {
-    for (const auto& [oid, o] : vm.objects()) {
+    for (const auto& [oid, o] : vm.eachObject()) {
         Object* x = vm.object(oid);
         for (ObjectTimer& t : x->timers)
             if (t.id == id) {

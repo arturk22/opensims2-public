@@ -168,7 +168,7 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
     };
     for (const auto& n : h.neighbors) {
         const Object* sim = nullptr;
-        for (const auto& [_, o] : vm.objects())
+        for (const auto& [_, o] : vm.eachObject())
             if (o.person && n.description.guid && o.guid() == n.description.guid) {
                 sim = &o;
                 break;
@@ -214,7 +214,7 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         d.neighborId = uint16_t(id);
         d.guid = n.guid;
         const Object* sim = nullptr;
-        for (const auto& [_, o] : vm.objects())
+        for (const auto& [_, o] : vm.eachObject())
             if (o.person && o.guid() == n.guid)
                 sim = &o;
         for (size_t i : persistentPersonData())

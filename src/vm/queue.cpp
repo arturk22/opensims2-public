@@ -534,7 +534,7 @@ ObjectId interactionLeader(VM& vm, ObjectId id) {
     if (g < 1)
         return id;
     const ObjectId lead = multiTileGroup(*o);
-    for (const auto& [oid, x] : vm.objects())
+    for (const auto& [oid, x] : vm.eachObject())
         if (multiTileGroup(x) == lead && interactionGroupOf(x) == -g)
             return oid;
     // The lots' saved multi-tile parts do not say which object they belong
@@ -542,7 +542,7 @@ ObjectId interactionLeader(VM& vm, ObjectId id) {
     // object (OBJD group) within two tiles on the same level (inferred).
     ObjectId best = id;
     float bestD = 2.0f * 2.0f + 0.01f;
-    for (const auto& [oid, x] : vm.objects()) {
+    for (const auto& [oid, x] : vm.eachObject()) {
         if (x.group != o->group || interactionGroupOf(x) != -g || x.position.level != o->position.level)
             continue;
         const float dx = x.position.x - o->position.x, dy = x.position.y - o->position.y;
@@ -630,7 +630,7 @@ bool cancelInteraction(VM& vm, Object& sim, uint16_t uid) {
 
 void cancelInteractionsWith(VM& vm, ObjectId object) {
     std::vector<ObjectId> ids;
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         if (!o.queue.empty() || !o.subQueue.empty())
             ids.push_back(id);
     for (ObjectId id : ids) {
@@ -951,7 +951,7 @@ ObjectId findInteractionObject(VM& vm, const std::string& query) {
     if (isNumber(query))
         return vm.object(ObjectId(std::stoi(query))) ? ObjectId(std::stoi(query)) : 0;
     const std::string q = lower(query);
-    for (const auto& [id, o] : vm.objects()) {
+    for (const auto& [id, o] : vm.eachObject()) {
         if (!o.position.inWorld() || o.person || !o.definition || lower(o.definition->fileName).find(q) == std::string::npos)
             continue;
         const Object* leader = vm.object(interactionLeader(vm, id));
@@ -972,7 +972,7 @@ ObjectId findSim(VM& vm, const std::string& query) {
             return sel->id;
     }
     const std::string q = lower(query);
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         if (o.person && o.position.inWorld() &&
             (q.empty() || (o.definition && lower(o.definition->fileName).find(q) != std::string::npos)))
             return id;
@@ -981,7 +981,7 @@ ObjectId findSim(VM& vm, const std::string& query) {
 
 void setAllMotives(VM& vm, int16_t value) {
     std::vector<ObjectId> sims;
-    for (const auto& [id, o] : vm.objects())
+    for (const auto& [id, o] : vm.eachObject())
         if (o.person)
             sims.push_back(id);
     for (ObjectId id : sims)
