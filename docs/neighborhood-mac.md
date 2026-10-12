@@ -1297,3 +1297,14 @@ sem luz, num quadrado sobre o lote (a textura uma vez no lote: inferido; o
 jogo projeta no terreno). Antes: uma fita z = x(1 − x) e um branco a 0,3
 (inferidos). `test_hood_terrain`; `docs/screenshots/r14-bairro-ver-amigos-tubos.jpg`.
 
+### 17.2 A sombra dos imposters e a opção Sombras
+
+O `ImposterColorScalar` de cada lote é a sombra do terreno sob ele
+(`cTerrainShadeLight`, `hood::terrainShade` sobre o mapa de luz). Desde a
+rodada 13 a opção Sombras refaz o mapa de luz na hora
+(`HoodView::refreshLightMap`), mas os imposters ficavam com a sombra da
+carga. Agora cada lote guarda o imposter lido (antes dos materiais) e o
+modelo no renderer, e o `refreshLightMap` refaz os materiais de cada um com a
+sombra nova (`Renderer::replaceObject`). Conferido só compilando e no
+caminho da carga (o clique na janela de Gráficos sem tela não foi exercitado).
+

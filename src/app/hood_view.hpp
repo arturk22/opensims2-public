@@ -21,6 +21,7 @@
 
 #include "formats/hood_lots.hpp"
 #include "formats/image.hpp"
+#include "formats/model.hpp"
 #include "formats/lighting_config.hpp"
 #include "formats/hood_terrain.hpp"
 #include "formats/neighborhood.hpp"
@@ -57,6 +58,10 @@ struct HoodLot {
     std::vector<simd_float3> triangles; // the imposter's triangles in the world (3 per), for picking
     bool terrainHidden = false;         // its imposter terrain replaces the neighborhood terrain
     int indexSlot = -1;                 // its lot file's resource index (HoodView)
+    // The imposter as read (before its materials take the terrain's shade)
+    // and its renderer model: the Shadows option redoes the shade.
+    std::shared_ptr<const ObjectModel> rawImposter;
+    int imposterModel = -1;
 };
 
 // The imposter's placement for a lot info (SetOrientationAndTranslationFor-

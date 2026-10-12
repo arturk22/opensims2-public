@@ -347,8 +347,10 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
                 report_.push_back("lot " + std::to_string(lot.id) + " in the terrain's shade: " +
                                   std::to_string(shade[0]).substr(0, 4) + " " + std::to_string(shade[1]).substr(0, 4) +
                                   " " + std::to_string(shade[2]).substr(0, 4));
+            lot.rawImposter = std::make_shared<const ObjectModel>(m);
             hood::imposterMaterials(m, hood_.prefix + "_Lot" + std::to_string(lot.id), shade);
             const int id = renderer.addObject(m, *lotIndexes_[size_t(lot.indexSlot)]);
+            lot.imposterModel = id;
             lot.instance = renderer.addInstance(id, p.at);
             const auto [lo, hi] = bounds(m, p.at);
             for (const auto& part : m.parts)
@@ -726,6 +728,17 @@ void HoodView::refreshLightMap() {
                                                    graphicsOptions().heightMapShadows ? kNHoodShadowStrength : 0.0f);
     renderer_->setLightMap(0, lm);
     renderer_->setLightMap(1, lm);
+    // The imposters' ImposterColorScalar is the terrain's shade under the
+    // lot (cTerrainShadeLight): with the hills' shadows on or off it changes.
+    for (const HoodLot& lot : lots_) {
+        if (!lot.rawImposter || lot.imposterModel < 0 || lot.indexSlot < 0)
+            continue;
+        const auto shade = hood::terrainShade(terrain_, lm, lightLookup_, (lot.footLo.x + lot.footHi.x) / 2,
+                                              (lot.footLo.y + lot.footHi.y) / 2);
+        ObjectModel m = *lot.rawImposter;
+        hood::imposterMaterials(m, hood_.prefix + "_Lot" + std::to_string(lot.id), shade);
+        renderer_->replaceObject(lot.imposterModel, m, *lotIndexes_[size_t(lot.indexSlot)]);
+    }
 }
 
 void HoodView::reload() {
