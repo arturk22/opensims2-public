@@ -66,3 +66,41 @@ com 4 Sims, pelo menu) e `--hood N001 --hood-lot 24`.
 
 Ver as entradas "QA ao vivo" do `TODO.md`: ícone da fila em branco, foto da família nova em branco na bandeja,
 falta de corte de paredes/telhado, ferramentas de Comprar sem ação.
+
+# Rodada 11
+
+Mesmo método (CGEvent, pid próprio). Novidade do método: outros agentes abriram janelas do app por cima da minha
+(e o macOS tirou a minha da área visível mais de uma vez), então cada clique agora é precedido de "trazer a janela
+do meu pid para a frente e conferir que ela está em 95,49" e só então vale o clique; captura só da região da janela.
+Lotes: Belavista lote 68 (`--hood N001 --hood-lot 68 --vm --ui live`), bairro (`--hood N001`), `--cas`, menu.
+
+| Passo | Resultado |
+|-------|-----------|
+| Leque de paredes do puck (baixo / cortada / alta / telhado), tooltip "Paredes Cortadas - Origem/Fim" | passa; o telhado só aparece no último andar (como o `WallView::topLevel` diz), no andar 2 "telhado mostrado/escondido" não muda a imagem |
+| Home/End, Page Up/Down (andar 1 ↔ 2, paredes altas/cortadas) | passa |
+| Corte acompanhando a rotação (botão do meio) | passa: o modelo é refeito só quando um lado de parede vira (2,3 ms de construção + 1 ms de envio) |
+| Suavidade ao girar | passa: CPU 3,5 ms em média por quadro (pior 19 ms) com `OS2_PERF=1` |
+| Clicar num Sim dentro de casa (sem telhado) abre o pie menu dele | passa |
+| Comprar: conta-gotas (objeto da casa) | funciona; ver os itens abaixo (pega a árvore na frente; "não está no catálogo" para poltrona/janela) |
+| Comprar: etiqueta (vender) num objeto visível: escada §1.150 → §3.400, a escada some; desfazer volta §2.250 | passa |
+| Bairro: Lotes & Casas abre (casas na lixeira, lotes vazios dos 10 tamanhos), escolher um tamanho, o fantasma verde segue o mouse, vermelho sobre casa, clicar põe o lote (a vista é refeita: "27 lots") | passa |
+| Bairro: Famílias → escolher a família → clicar lote ocupado → "Este lote já está ocupado" | passa |
+| CAS: criancinha (sentada), criança, adulto, idoso em pose natural, rosto com cor | passa |
+| CAS: adolescente | **falhava (rosto branco)**, passa com `d4ddeb1` do main depois do rebase |
+| Menu principal → "Aprenda a Jogar" | abre o painel, mas as listas "O Básico" / "Além do Básico" estão vazias e o rótulo "Tutorials" fica em inglês: a frente do tutorial não está no main |
+| Bebê, aniversário, contas na caixa de correio, TV com som, música por modo, despejar/mudar de família (dia 1 às 7:00), Design | não testado nesta rodada (sem tempo e sem ouvido; ver os testes sem tela das frentes) |
+
+## Corrigido na rodada 11
+
+- Bairro: o cartão do lote (o que abre ao passar o mouse num lote) aparecia por cima do puck e dos painéis de
+  Famílias e Lotes & Casas quando o mouse estava sobre eles, porque o lote atrás deles era pego pelo raio. Agora o
+  mouse sobre o puck, os painéis ou o diálogo não passa o lote atrás (`HoodUi::covers`).
+
+## Não corrigido
+
+- Conta-gotas de Comprar: com o conta-gotas, clicar na mesa de jantar pegou "Tree - Birch" (a caixa da
+  copa da bétula na frente); e clicar no sofá "Sofa - Loveseat - Art Nouveau" deu "is not in the catalog" (a venda do
+  mesmo objeto pela etiqueta funciona, §1.250). Ver o TODO.
+- Depois de pôr um lote vazio no bairro a câmera volta ao ponto de partida (a vista é refeita por troca de cena).
+- No lote ao vivo o quadrado de ícone da fila com um X vermelho (a ação atual do Sim) segue sem miniatura.
+- Quadro branco ao lado do Sim no CAS (o espelho/cavalete sem textura).
