@@ -236,3 +236,27 @@ Obs.: Esc dentro do lote abre "Salvar?" (esperado, `docs/game-flow-mac.md`), ent
 - Opções do lote: o botão de Gráficos (monitor, 530,1030 em 2000 px) não abriu a janela de Gráficos duas vezes no lote 82 (só o painel de Opções abriu); no bairro o mesmo botão abre. Repro: `--hood N001 --hood-lot 82 --vm --ui live`, Opções, Gráficos.
 - Mover/aceitar mudança de família sem dinheiro: o diálogo só diz "Você não pode pagar por este lote." (ok), mas a família do bin fica selecionada e o painel do cartão do lote continua aberto; não é bug do binário, só anotado.
 - Dormir no N001_Lot11 segue lento de conferir: sem uma forma de "pular" (cheat), o Mortimer leva mais de 1 min de relógio de jogo para chegar à escada; recomendo conferir com um `s2pkg` sem tela até a cama.
+
+# Rodada 14, passada 8
+
+Mesmo método (CGEvent, pid próprio, janela conferida em 95,49 antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`, cópia do `.app` do `main` em `20b1297`). Só N002_Lot10 (`--hood N002 --hood-lot 10 --vm --ui live`). Ambiente: os helpers `win2`/`k` das passadas anteriores tinham sido apagados (refeitos num `qa` novo); o diálogo do macOS "s2pkg would like to access files" ficou por cima do centro o tempo todo e, no fim, um aviso "opensims2 quit unexpectedly" de outro agente cobriu o botão Cancelar do diálogo Salvar (não foi clicado). A tela é 1470x956, então a janela de 752 px não sai de trás do diálogo. Tempo curto: só parte da lista.
+Dica: duplo clique na miniatura de um Sim no painel esquerdo centra a câmera nele; o Sim "Pollination Tech#9" (alienígena, 1º do painel) é NPC e só oferece "Entrar" no chão (usar os outros três para Vir Aqui).
+
+| Passo | Resultado |
+|-------|-----------|
+| Andar: Vir Aqui no chão da sala (João), sequência de capturas | passa: o Sim sai de trás da TV andando, pernas alternam, sem deslizar visível; a parada/virada final não foi medida |
+| Andar: Vir Saltitando Aqui, corrida em trajeto longo | não testado: o pie do chão mostrou só "Vir Aqui" (e "Ver Nuvens" no gramado); "Saltitando"/"Correr" não apareceram nas posições tentadas |
+| Mistura de animações: sentar na cadeira da mesa de jantar e levantar (alienígena) | passa: senta de frente para a mesa, sem flutuar, corpo na cadeira; ao cancelar na fila levanta e anda em 12 capturas seguidas sem T-pose nem salto |
+| Diálogo de sim/não da VM (telefone N002_Lot10, velocidade 3) | não testado; o diálogo "Salvar" (Esc no lote) usa o quadro do jogo e botões Sim/Não/Cancelar em PT-BR |
+| Dicas sobre o painel ao vivo no estilo azul claro | passa: "Opções - F5" aparece em azul claro |
+| Opções no lote: Gráficos abre | passa (era falha na passada 7); o painel de Gráficos fica atrás da barra de Opções (sobreposição estranha), com o botão "Aplicar Mudanças" meio coberto |
+| Opções: Sombras Desligado | log `options: Shadows 1`; efeito imediato não conferido a olho (cena escura, sem comparação) |
+| Esc fecha primeiro a janela de Gráficos, depois abre "Salvar" | passa; "Esc fecha o pie primeiro" não conferido (o clique do pie caiu atrás de outro diálogo) |
+| Sentar de frente para a cadeira | passa na cadeira de jantar do lote 10 |
+| Dormir (N001_Lot11), espelho do banheiro (N001_Lot82) e Reflexo, lote vazio novo no bairro, calçamento à noite, telhado no Construir, fim do tutorial (passo 32) | não testados (tempo) |
+| Desempenho: girar com as setas e andar | sem engasgos visíveis; log `OS2_PERF` do próprio app: 2–7 ms de CPU por quadro médio, pior ~60 ms uma vez (ao reconstruir paredes) |
+
+## Bugs achados (não corrigidos)
+
+- Clicar em "Aplicar Mudanças" do Gráficos no lote também cria um ícone na fila ("queue icon added" no log): o clique parece passar para o mundo por baixo da janela/da barra de Opções.
+- A janela de Gráficos aparece parcialmente sob a barra de Opções do lote (ordem de desenho).
