@@ -205,6 +205,49 @@ std::optional<Xform> VmObjectView::placement(int16_t id) {
     return compute(id, 0);
 }
 
+bool VmObjectView::shown(int16_t id) const {
+    const auto it = drawn_.find(id);
+    if (it == drawn_.end())
+        return true;
+    if (it->second.actor)
+        return it->second.actor->transform && it->second.actor->transform->t[2] > -100;
+    return !it->second.hidden;
+}
+
+std::optional<Xform> VmObjectView::seatPlacement(int16_t sim) {
+    vm::VM& m = sim_.machine();
+    const vm::Object* o = m.object(sim);
+    if (!o)
+        return std::nullopt;
+    const int16_t containerId = o->data[vm::objdata::ContainerId];
+    const vm::Object* c = containerId && containerId != sim ? m.object(containerId) : nullptr;
+    if (!c || c->person)
+        return std::nullopt;
+    const auto at = compute(containerId, 1);
+    if (!at)
+        return std::nullopt;
+    const std::string bone = slotBone(containerId, o->data[vm::objdata::SlotNumber]);
+    // A container the VM animates (a chair pulled out or scooted in) moves
+    // its slot with it: the slot bone as posed.
+    if (auto d = drawn_.find(containerId); d != drawn_.end() && d->second.actor && !bone.empty()) {
+        const SimActor& a = *d->second.actor;
+        const int b = a.skin.skeleton.find(bone);
+        if (b >= 0 && size_t(b) < a.bones.size() && a.transform && a.transform->t[2] > -100)
+            return a.bones[size_t(b)];
+    }
+    Xform node;
+    if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(containerId)))
+        if (const int b = cs->find(bone); b >= 0)
+            node = cs->world(cs->restPose())[size_t(b)];
+    if (std::getenv("OS2_DEBUG_SEAT")) {
+        const Xform w = at->then(node);
+        std::fprintf(stderr, "seat: Sim %d in %d slot %d bone %s local t(%.2f %.2f %.2f) q(%.2f %.2f %.2f %.2f) -> t(%.2f %.2f %.2f)\n",
+                     sim, containerId, o->data[vm::objdata::SlotNumber], bone.c_str(), node.t[0], node.t[1], node.t[2],
+                     node.q.x, node.q.y, node.q.z, node.q.w, w.t[0], w.t[1], w.t[2]);
+    }
+    return at->then(node);
+}
+
 std::optional<Xform> VmObjectView::nodePlacement(int16_t id, const std::string& node) {
     if (node.empty())
         return std::nullopt;

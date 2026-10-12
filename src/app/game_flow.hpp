@@ -47,9 +47,13 @@ Scene sceneOf(const std::vector<std::string>& args);
 
 // One scripted step: a click (left or right) at canvas x,y, or a wait of n VM ticks.
 struct FlowStep {
-    enum class Kind { Click, RightClick, Wait } kind = Kind::Click;
+    enum class Kind { Click, RightClick, Wait, Pie } kind = Kind::Click;
     float x = 0, y = 0;
     long ticks = 0;
+    // --pie-step <object>:<entry>: the selected Sim picks that entry of the
+    // object's pie menu (as a click on it and on the entry would).
+    std::string object;
+    int entry = 0;
 };
 // The steps in `args`, in order.
 std::vector<FlowStep> flowSteps(const std::vector<std::string>& args);

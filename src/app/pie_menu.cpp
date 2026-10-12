@@ -1,13 +1,17 @@
 #include "pie_menu.hpp"
 
 #include "formats/font.hpp"
+#include "formats/image.hpp"
 #include "formats/model.hpp"
+#include "formats/resindex.hpp"
 #include "render/ui_layer.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
+#include <map>
 
 namespace os2 {
 
@@ -106,6 +110,147 @@ std::pair<simd_float3, simd_float3> modelBounds(const ObjectModel& model) {
     return {lo, hi};
 }
 
+namespace {
+// The alpha of an alpha-tested material's base texture, at most 64 texels a
+// side (nearest), shared by every model that uses it.
+std::optional<PickMesh::Mask> alphaMask(const ObjectModel& model, const std::string& material, ResourceIndex* index) {
+    if (!index)
+        return std::nullopt;
+    const auto it = model.materials.find(material);
+    if (it == model.materials.end())
+        return std::nullopt;
+    const StandardMaterial sm = standardMaterial(it->second);
+    if (!sm.alphaTest)
+        return std::nullopt;
+    const std::string texture = baseTextureName(it->second);
+    if (texture.empty())
+        return std::nullopt;
+    static std::map<std::string, std::optional<PickMesh::Mask>> cache;
+    const std::string key = texture + "@" + std::to_string(int(sm.alphaRef * 255));
+    if (auto c = cache.find(key); c != cache.end())
+        return c->second;
+    std::optional<PickMesh::Mask> out;
+    try {
+        constexpr uint32_t kTypeTxtr = 0x1C4A276C;
+        if (auto loc = index->findByName(texture, kTypeTxtr)) {
+            const RgbaImage img = loadTexture(index->read(*loc), index);
+            if (img.width && img.height) {
+                PickMesh::Mask m;
+                m.width = std::min<uint32_t>(img.width, 64), m.height = std::min<uint32_t>(img.height, 64);
+                m.ref = uint8_t(std::clamp(sm.alphaRef * 255.0f, 0.0f, 255.0f));
+                m.alpha.resize(size_t(m.width) * m.height);
+                for (uint32_t y = 0; y < m.height; ++y)
+                    for (uint32_t x = 0; x < m.width; ++x) {
+                        // The texel's area at most (a hole is a hole only where all of it is).
+                        uint8_t a = 0;
+                        const uint32_t x0 = x * img.width / m.width, x1 = std::max(x0 + 1, (x + 1) * img.width / m.width);
+                        const uint32_t y0 = y * img.height / m.height, y1 = std::max(y0 + 1, (y + 1) * img.height / m.height);
+                        for (uint32_t yy = y0; yy < y1; ++yy)
+                            for (uint32_t xx = x0; xx < x1; ++xx)
+                                a = std::max(a, img.pixels[(size_t(yy) * img.width + xx) * 4 + 3]);
+                        m.alpha[size_t(y) * m.width + x] = a;
+                    }
+                out = std::move(m);
+            }
+        }
+    } catch (const std::exception&) {
+    }
+    return cache[key] = out;
+}
+} // namespace
+
+std::shared_ptr<const PickMesh> makePickMesh(const ObjectModel& model, ResourceIndex* index) {
+    auto lower = [](std::string x) {
+        std::transform(x.begin(), x.end(), x.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        return x;
+    };
+    struct Part {
+        const ObjectModel::Part* part;
+        float zLo, zHi;
+    };
+    std::vector<Part> parts;
+    for (const auto& part : model.parts) {
+        if (part.mesh.positions.empty() || part.mesh.triangles.size() < 3)
+            continue;
+        if (lower(part.mesh.name).find("shadow") != std::string::npos ||
+            lower(part.material).find("shadow") != std::string::npos)
+            continue;
+        float zLo = std::numeric_limits<float>::max(), zHi = -zLo;
+        for (const auto& p : part.mesh.positions)
+            zLo = std::min(zLo, p[2]), zHi = std::max(zHi, p[2]);
+        parts.push_back({&part, zLo, zHi});
+    }
+    // Flat on the ground (within 2 cm, under 10 cm): left out when the model
+    // stands up otherwise (a rug is all flat and stays).
+    auto flat = [](const Part& p) { return p.zHi - p.zLo < 0.02f && p.zHi < 0.1f; };
+    const bool standing = std::any_of(parts.begin(), parts.end(), [&](const Part& p) { return !flat(p); });
+    auto out = std::make_shared<PickMesh>();
+    simd_float3 lo = simd_float3(std::numeric_limits<float>::max()), hi = -lo;
+    for (const Part& p : parts) {
+        if (standing && flat(p))
+            continue;
+        const auto& m = p.part->mesh;
+        int mask = -1;
+        if (!m.uvs.empty())
+            if (auto am = alphaMask(model, p.part->material, index)) {
+                mask = int(out->masks.size());
+                out->masks.push_back(std::move(*am));
+            }
+        for (size_t i = 0; i + 2 < m.triangles.size(); i += 3) {
+            const uint32_t v[3] = {m.triangles[i], m.triangles[i + 1], m.triangles[i + 2]};
+            if (v[0] >= m.positions.size() || v[1] >= m.positions.size() || v[2] >= m.positions.size())
+                continue;
+            for (uint32_t k : v) {
+                const simd_float3 c = simd_make_float3(m.positions[k][0], m.positions[k][1], m.positions[k][2]);
+                out->corners.push_back(c);
+                lo = simd_min(lo, c), hi = simd_max(hi, c);
+                out->uvs.push_back(mask >= 0 && k < m.uvs.size() ? simd_make_float2(m.uvs[k][0], m.uvs[k][1])
+                                                                 : simd_float2(0));
+            }
+            out->triangleMask.push_back(mask);
+        }
+    }
+    if (out->corners.empty())
+        return nullptr;
+    out->lo = lo, out->hi = hi;
+    return out;
+}
+
+std::optional<float> rayHit(const PickMesh& mesh, simd_float3 origin, simd_float3 dir) {
+    // Moller-Trumbore, both faces.
+    std::optional<float> best;
+    for (size_t i = 0; i + 2 < mesh.corners.size(); i += 3) {
+        const simd_float3 a = mesh.corners[i], e1 = mesh.corners[i + 1] - a, e2 = mesh.corners[i + 2] - a;
+        const simd_float3 p = simd_cross(dir, e2);
+        const float det = simd_dot(e1, p);
+        if (std::abs(det) < 1e-12f)
+            continue;
+        const float inv = 1 / det;
+        const simd_float3 s = origin - a;
+        const float u = simd_dot(s, p) * inv;
+        if (u < 0 || u > 1)
+            continue;
+        const simd_float3 q = simd_cross(s, e1);
+        const float v = simd_dot(dir, q) * inv;
+        if (v < 0 || u + v > 1)
+            continue;
+        const float t = simd_dot(e2, q) * inv;
+        if (t <= 0 || (best && t >= *best))
+            continue;
+        if (const int mi = i / 3 < mesh.triangleMask.size() ? mesh.triangleMask[i / 3] : -1; mi >= 0) {
+            const PickMesh::Mask& m = mesh.masks[size_t(mi)];
+            const simd_float2 uv = mesh.uvs[i] * (1 - u - v) + mesh.uvs[i + 1] * u + mesh.uvs[i + 2] * v;
+            auto wrap = [](float f) { return f - std::floor(f); };
+            const uint32_t x = std::min(m.width - 1, uint32_t(wrap(uv.x) * float(m.width)));
+            const uint32_t y = std::min(m.height - 1, uint32_t(wrap(uv.y) * float(m.height)));
+            if (m.alpha[size_t(y) * m.width + x] < m.ref)
+                continue; // a hole: the ray goes on
+        }
+        best = t;
+    }
+    return best;
+}
+
 PieMenuStyle PieMenuStyle::fromConstants(const std::map<std::string, std::string>& c) {
     PieMenuStyle st;
     auto number = [&](const char* key, float& out) {
@@ -191,29 +336,43 @@ std::pair<simd_float3, simd_float3> transformBox(simd_float3 lo, simd_float3 hi,
 }
 } // namespace
 
-void PieMenuHost::addPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi, const simd_float4x4& at) {
+void PieMenuHost::addPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi, const simd_float4x4& at,
+                             std::shared_ptr<const PickMesh> mesh) {
     const auto id = vm::ObjectId(lotInstance & 0xFFFF);
     if (!vm_->object(id) || simd_equal(lo, hi))
         return;
+    if (mesh) // the triangles' bounds (no shadow planes) are the box
+        lo = mesh->lo, hi = mesh->hi;
     const auto [wlo, whi] = transformBox(lo, hi, at);
-    boxes_.push_back({id, wlo, whi});
+    PickBox b{id, wlo, whi, false, std::move(mesh), at};
+    b.modelLo = lo, b.modelHi = hi;
+    boxes_.push_back(std::move(b));
 }
 
-void PieMenuHost::addFollowingPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi) {
+void PieMenuHost::addFollowingPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi,
+                                      std::shared_ptr<const PickMesh> mesh) {
     const auto id = vm::ObjectId(lotInstance & 0xFFFF);
     if (!vm_->object(id) || simd_equal(lo, hi))
         return;
-    boxes_.push_back({id, lo, hi, true});
+    if (mesh)
+        lo = mesh->lo, hi = mesh->hi;
+    PickBox b{id, lo, hi, true, std::move(mesh)};
+    b.modelLo = lo, b.modelHi = hi;
+    boxes_.push_back(std::move(b));
 }
 
 std::optional<PieMenuHost::PickBox> PieMenuHost::worldBox(const PickBox& b) const {
-    if (!b.follows)
-        return b;
+    // Where the object is drawn now (the VM moves objects; contained ones
+    // follow their container); a static box where it was saved otherwise.
     const auto at = placement_ ? placement_(b.id) : std::nullopt;
+    if (!b.follows && !at)
+        return b;
     if (!at)
         return std::nullopt;
-    const auto [wlo, whi] = transformBox(b.lo, b.hi, *at);
-    return PickBox{b.id, wlo, whi};
+    const auto [wlo, whi] = transformBox(b.modelLo, b.modelHi, *at);
+    PickBox w = b;
+    w.lo = wlo, w.hi = whi, w.at = *at, w.follows = false;
+    return w;
 }
 
 void PieMenuHost::setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi) {
@@ -224,10 +383,10 @@ void PieMenuHost::setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi) 
 }
 
 vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
-    // The nearest box the ray enters; ties (a box inside another) go to the
-    // smaller box. The moving boxes (Sims, tight around the skeleton) come
-    // first: a click on a Sim picks it over the coarse box of a tree or a
-    // table it stands in or behind.
+    // The nearest hit: an object's triangles where it has them (its box
+    // first, as a quick test), else its box. The moving boxes (Sims, tight
+    // around the skeleton) come first: a click on a Sim picks it over a
+    // chair it sits in or a table it stands behind.
     auto nearest = [&](auto&& each) {
         vm::ObjectId best = 0;
         float bestT = std::numeric_limits<float>::max();
@@ -248,7 +407,25 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
                 t0 = std::max(t0, a), t1 = std::min(t1, c);
                 hit = t0 <= t1;
             }
-            if (hit && (t0 < bestT - 1e-4f))
+            if (!hit || t0 >= bestT)
+                return;
+            static const bool boxesOnly = std::getenv("OS2_PICK_BOXES") != nullptr; // the old picking, to compare
+            if (b.mesh && !boxesOnly) {
+                // The ray in the model's space: t keeps its meaning (an
+                // affine map takes the ray's points to the ray's points).
+                const simd_float4x4 inv = simd_inverse(b.at);
+                const simd_float3 o = simd_mul(inv, simd_make_float4(origin, 1)).xyz;
+                const simd_float3 d = simd_mul(inv, simd_make_float4(dir, 0)).xyz;
+                const auto t = rayHit(*b.mesh, o, d);
+                if (std::getenv("OS2_DEBUG_PICK"))
+                    std::fprintf(stderr, "pick: box of %d entered at %.2f, %zu triangles: %s %.2f (at %.2f %.2f %.2f; model ray %.2f %.2f %.2f; mesh %.2f %.2f %.2f - %.2f %.2f %.2f)\n", b.id, t0,
+                                 b.mesh->corners.size() / 3, t ? "hit at" : "missed", t ? *t : 0.0f, b.at.columns[3].x,
+                                 b.at.columns[3].y, b.at.columns[3].z, (o + d * t0).x, (o + d * t0).y, (o + d * t0).z, b.mesh->lo.x, b.mesh->lo.y, b.mesh->lo.z, b.mesh->hi.x, b.mesh->hi.y, b.mesh->hi.z);
+                if (t && *t < bestT)
+                    bestT = *t, best = b.id;
+                return;
+            }
+            if (t0 < bestT - 1e-4f)
                 bestT = t0, best = b.id;
         });
         return best;
@@ -260,7 +437,7 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
         return sim;
     return nearest([&](auto&& f) {
         for (const auto& box : boxes_)
-            if (!moving_.count(box.id))
+            if (!moving_.count(box.id) && (!drawn || drawn(box.id)))
                 if (const auto placed = worldBox(box))
                     f(*placed);
     });

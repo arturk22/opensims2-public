@@ -434,6 +434,15 @@ bool BuyMode::eyedrop(vm::ObjectId id) {
     const CatalogEntry* entry = l ? catalog_.byGuid(l->guid()) : nullptr;
     if (!entry && l)
         entry = catalog_.find(l->definition->fileName);
+    // A multi-tile object is in the catalog by its master OBJD, whose GUID
+    // none of the parts has ("Sofa - Loveseat - Art Nouveau (0,0)"): the
+    // multi-tile entry of the parts' group.
+    if (!entry && l)
+        for (const auto& e : catalog_.entries())
+            if (e.multiTile && e.group == l->group) {
+                entry = &e;
+                break;
+            }
     if (!entry) {
         say(std::string(o->definition->fileName) + " is not in the catalog");
         sound("ui_error");

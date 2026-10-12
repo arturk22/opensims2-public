@@ -4,13 +4,13 @@
 // app/lot_vm.hpp; queue logic in src/vm/interactions.hpp): mouse picking,
 // the menu and the selected Sim's queue drawn with the UI layer.
 //
-// Picking: every lot object the renderer draws gets a world-space box, the
-// bounds of its model's vertices transformed by its placement, tagged with
+// Picking: every lot object the renderer draws is picked by its model's
+// triangles (PickMesh: no shadow planes) where it is drawn now, tagged with
 // the object's ID (the low 16 bits of the cObject instance = the saved
 // object ID the VM keeps). A click casts a ray from the camera through the
-// mouse and takes the nearest box it enters. Boxes are coarse (a chair's box
-// covers the space under the table next to it), but need no extra render
-// pass; a pick ID pass would be exact.
+// mouse and takes the nearest triangle it hits, testing an object's
+// triangles only when the ray enters their box. The Sims are picked by the
+// box around their posed skeleton.
 //
 // Layout and behaviour as the Mac binary's cTSWinPieMenu
 // (docs/camera-ui-mac.md §2), with the constants of ui.package's UI script
@@ -50,11 +50,37 @@ class RenderCommandEncoder;
 namespace os2 {
 
 class FontLibrary;
+class ResourceIndex;
 class UiLayer;
 struct ObjectModel;
 
 // Object-space bounds of a model's vertices.
 std::pair<simd_float3, simd_float3> modelBounds(const ObjectModel& model);
+
+// A model's triangles for picking (object space, three corners each) and
+// their bounds: what is drawn of it, less the shadow planes ("groundshadow",
+// "*wallshadow") and the flat patches on the ground of a model that has
+// more than that (the grass under a tree), which the player does not see as
+// the object. Empty when the model has none.
+// Alpha-tested parts (leaves, fences, lace) keep their texture's alpha:
+// a ray through a hole in the leaves goes on to what is behind.
+struct PickMesh {
+    std::vector<simd_float3> corners;
+    simd_float3 lo{0, 0, 0}, hi{0, 0, 0};
+    struct Mask {
+        uint32_t width = 0, height = 0;
+        std::vector<uint8_t> alpha; // row-major
+        uint8_t ref = 127;          // passes when alpha >= ref
+    };
+    std::vector<Mask> masks;
+    std::vector<int> triangleMask;     // per triangle: index into masks, -1 solid
+    std::vector<simd_float2> uvs;      // per corner, where triangleMask is used
+};
+// `index` (to read the alpha-tested textures; null: every part is solid).
+std::shared_ptr<const PickMesh> makePickMesh(const ObjectModel& model, ResourceIndex* index = nullptr);
+// The nearest hit of a ray (origin, dir: any length) on the mesh's
+// triangles, both sides, as a multiple of dir; nothing if none.
+std::optional<float> rayHit(const PickMesh& mesh, simd_float3 origin, simd_float3 dir);
 
 // The pie menu's constants (ui.package 0x090617B7), with the binary's
 // values as defaults. The disabled colour and the item's background are not
@@ -93,11 +119,16 @@ public:
     void setSoundPlayer(std::function<void(const std::string&)> play) { playSound_ = std::move(play); }
 
     // --- Picking -------------------------------------------------------------
-    void addPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi, const simd_float4x4& at);
+    // An object of the lot at `at`, picked by its model's triangles (`mesh`;
+    // null: by its box). Where `placement` (below) says the object is drawn
+    // now, it is picked there (objects the VM moves).
+    void addPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi, const simd_float4x4& at,
+                    std::shared_ptr<const PickMesh> mesh = nullptr);
     // An object saved in a slot (a cake on a table, a plate on a counter):
     // its model-space box goes where `placement` says the object is drawn
     // now, each time a ray is cast (nothing: not pickable).
-    void addFollowingPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi);
+    void addFollowingPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi,
+                             std::shared_ptr<const PickMesh> mesh = nullptr);
     void setPlacementSource(std::function<std::optional<simd_float4x4>(vm::ObjectId)> placement) {
         placement_ = std::move(placement);
     }
@@ -107,6 +138,9 @@ public:
     // Boxes this refuses are not picked (objects on the levels the camera
     // hides, app/wall_view.hpp); null picks all.
     std::function<bool(simd_float3 lo, simd_float3 hi)> pickable;
+    // Objects this refuses are not picked (not drawn now: the windows and
+    // doors of a wall cut down); null picks all.
+    std::function<bool(vm::ObjectId)> drawn;
     // The nearest object hit by the ray (0: none).
     vm::ObjectId pick(simd_float3 origin, simd_float3 dir) const;
     // Middle of the top of an object's box (where its menu opens).
@@ -189,6 +223,9 @@ private:
         vm::ObjectId id;
         simd_float3 lo, hi;
         bool follows = false; // lo/hi in model space, placed by placement_
+        std::shared_ptr<const PickMesh> mesh; // model-space triangles, null: the box
+        simd_float4x4 at = matrix_identity_float4x4; // the mesh's placement
+        simd_float3 modelLo{0, 0, 0}, modelHi{0, 0, 0}; // lo/hi in model space (static boxes)
     };
     std::vector<PickBox> boxes_;
     std::function<std::optional<simd_float4x4>(vm::ObjectId)> placement_;

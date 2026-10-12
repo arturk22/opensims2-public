@@ -21,7 +21,7 @@ const std::initializer_list<const char*> kSceneBare = {"--vm", "--menu", "--cas"
 const std::initializer_list<const char*> kContentFlags = {"--object", "--lot", "--sim", "--skinned", "--character",
                                                           "--ui"};
 
-bool isStep(const std::string& a) { return a == "--click" || a == "--right-click" || a == "--wait"; }
+bool isStep(const std::string& a) { return a == "--click" || a == "--right-click" || a == "--wait" || a == "--pie-step"; }
 
 } // namespace
 
@@ -77,6 +77,16 @@ std::vector<FlowStep> flowSteps(const std::vector<std::string>& args) {
             st.kind = FlowStep::Kind::Wait;
             try {
                 st.ticks = std::stol(args[i + 1]);
+            } catch (const std::exception&) {
+                continue;
+            }
+        } else if (args[i] == "--pie-step") {
+            st.kind = FlowStep::Kind::Pie;
+            const std::string& v = args[i + 1];
+            const size_t colon = v.rfind(':');
+            st.object = v.substr(0, colon);
+            try {
+                st.entry = colon == std::string::npos ? 0 : std::stoi(v.substr(colon + 1));
             } catch (const std::exception&) {
                 continue;
             }

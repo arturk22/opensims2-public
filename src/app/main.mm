@@ -199,6 +199,7 @@ struct PickBox {
     uint32_t instance;
     simd_float3 lo, hi;
     simd_float4x4 at;
+    std::shared_ptr<const os2::PickMesh> mesh; // its model's triangles (app/pie_menu.hpp)
 };
 std::vector<PickBox> gPickBoxes;
 // The lot's placed objects by object ID (the cObject instance's low 16
@@ -362,6 +363,7 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
                       const std::string& lotName) {
     std::map<std::string, int> models; // CRES + design -> model id, -1 if it failed
     std::map<std::string, std::pair<simd_float3, simd_float3>> bounds; // for picking
+    std::map<std::string, std::shared_ptr<const os2::PickMesh>> meshes;
     // Some models were renamed after the lots were saved (old modular stairs);
     // then the object's OBJD, found by file name, names the current one.
     std::map<std::string, os2::Tgi> definitions; // lowercase OBJD file name -> OBJD
@@ -401,6 +403,7 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
                     std::fprintf(stderr, "opensims2: %s: %s: %s\n", lotName.c_str(), model.name.c_str(), w.c_str());
                 id = renderer.addObject(model, index);
                 bounds[key] = os2::modelBounds(model);
+                meshes[key] = os2::makePickMesh(model, &index);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "opensims2: %s: %s (%s): %s\n", lotName.c_str(), o.model.c_str(),
                              o.definition.c_str(), e.what());
@@ -415,16 +418,19 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
         if (contained)
             at.columns[3] = simd_make_float4(0, 0, -1000, 1); // hidden
         const int instance = renderer.addInstance(it->second, at);
+        if (const char* f = std::getenv("OS2_DEBUG_OBJECTS"); f && o.definition.find(f) != std::string::npos)
+            std::fprintf(stderr, "object %u (%s) at %.2f %.2f %.2f%s\n", o.instance & 0xFFFF, o.definition.c_str(),
+                         o.position[0], o.position[1], o.position[2], contained ? " contained" : "");
         // Stale cObjects share IDs with live ones: the first (or one in the
         // world) keeps the ID; app/vm_objects.cpp checks it against the VM.
         const int16_t id = int16_t(o.instance & 0xFFFF);
         if (!gPlacedObjects.count(id) || (gPlacedObjects[id].contained && !contained))
             gPlacedObjects[id] = {cresOf(o), o.materials, o.position, o.rotation, o.definition, instance, contained};
         if (contained) {
-            gPickBoxes.push_back({true, o.instance, bounds[key].first, bounds[key].second, at});
+            gPickBoxes.push_back({true, o.instance, bounds[key].first, bounds[key].second, at, meshes[key]});
             continue;
         }
-        gPickBoxes.push_back({false, o.instance, bounds[key].first, bounds[key].second, at});
+        gPickBoxes.push_back({false, o.instance, bounds[key].first, bounds[key].second, at, meshes[key]});
         ++placed;
     }
     return placed;
@@ -623,6 +629,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         std::fprintf(stderr, "opensims2: tv: %s\n", e.what());
     }
     gSnaps = std::make_unique<os2::AnimSnapView>(renderer, index, *gObjectView, gSimulation->machine());
+    gSimulation->seat = [](int16_t id) { return gObjectView ? gObjectView->seatPlacement(id) : std::nullopt; };
     gSimulation->onSimAnimation = [](int16_t id, os2::SimActor& actor, const os2::Animation* anim, double at) {
         gSnaps->simAnimation(id, actor, anim, at);
         if (anim)
@@ -758,7 +765,11 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (!it->second)
             return;
         try {
-            it->second->cue(at, it->second->animation(index, name), {.fade = 0.1f, .loop = false});
+            // Mirrored as the VM says (a chair pulled out to the side the Sim gets in from).
+            const os2::vm::Object* vo = gSimulation ? gSimulation->machine().object(id) : nullptr;
+            const bool mirror = vo && !vo->animation.overlays.empty() && vo->animation.overlays.back().name == name &&
+                                vo->animation.overlays.back().flipped;
+            it->second->cue(at, it->second->animation(index, name), {.fade = 0.1f, .loop = false, .mirror = mirror});
             if (std::getenv("OS2_DEBUG_VM"))
                 std::fprintf(stderr, "opensims2: object %d plays %s\n", id, name.c_str());
         } catch (const std::exception& e) {
@@ -892,9 +903,9 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     gPie->onClose = [](os2::vm::ObjectId id) { os2::vm::releaseDestination(gPie->vm(), id); };
     for (const auto& b : gPickBoxes)
         if (b.contained)
-            gPie->addFollowingPickBox(b.instance, b.lo, b.hi);
+            gPie->addFollowingPickBox(b.instance, b.lo, b.hi, b.mesh);
         else
-            gPie->addPickBox(b.instance, b.lo, b.hi, b.at);
+            gPie->addPickBox(b.instance, b.lo, b.hi, b.at, b.mesh);
     // Objects in slots are picked where the VM view draws them.
     gPie->setPlacementSource([](os2::vm::ObjectId id) -> std::optional<simd_float4x4> {
         if (!gObjectView || !gObjectView->hasModel(id))
@@ -906,6 +917,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         m.columns[3] = simd_make_float4(x->t[0], x->t[1], x->t[2], 1);
         return m;
     });
+    // Objects the view hides (windows and doors of walls cut down) are not picked.
+    gPie->drawn = [](os2::vm::ObjectId id) { return !gObjectView || gObjectView->shown(int16_t(id)); };
     // The levels above the camera's are not drawn: their objects are not picked.
     gPie->pickable = [](simd_float3 lo, simd_float3) {
         return !gLotShape || os2::WallView::visible(*gLotShape, viewLevel(), lo.x, lo.y, lo.z);
@@ -4014,6 +4027,13 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     pollFlowDialog();
                     continue;
                 }
+                if (st.kind == os2::FlowStep::Kind::Pie) { // --pie-step object:entry
+                    const os2::vm::ObjectId id = os2::vm::findInteractionObject(gPie->vm(), st.object);
+                    if (!id || !gPie->open(id, simd_make_float2(cw / 2, ch / 2)) || !gPie->select(size_t(st.entry)))
+                        std::printf("opensims2: --pie-step %s:%d: nothing picked\n", st.object.c_str(), st.entry);
+                    gPie->close();
+                    continue;
+                }
                 const float clickX = st.x, clickY = st.y;
                 // --right-click x,y: the right button (the live panel's thumbnails follow a Sim).
                 const bool right = st.kind == os2::FlowStep::Kind::RightClick;
@@ -4063,7 +4083,11 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     gBuy->click(eye, simd_normalize(q.xyz / q.w - eye), p);
                     continue;
                 }
-                updateLotView(*_viewDelegate.renderer, true); // the Sims' pick boxes where they stand
+                // The view as a frame would leave it (what the cut walls hide), the Sims' pick boxes where they stand.
+                updateLotView(*_viewDelegate.renderer, false);
+                if (gObjectView)
+                    gObjectView->update();
+                updateLotView(*_viewDelegate.renderer, true);
                 const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
                 const os2::vm::Object* o = gPie->vm().object(id);
                 std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", clickX, clickY, id,
@@ -4074,6 +4098,38 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p);
                 for (size_t e = 0; e < gPie->entries().size(); ++e)
                     std::printf("opensims2: pie [%zu] %s\n", e, gPie->entries()[e].name.c_str());
+            }
+            // OS2_PICK_MAP=<png>: what a click would pick at every 4th pixel, an
+            // object a colour (a look at the picking against the picture).
+            if (const char* mapFile = std::getenv("OS2_PICK_MAP")) {
+                updateLotView(*_viewDelegate.renderer, false);
+                if (gObjectView)
+                    gObjectView->update();
+                updateLotView(*_viewDelegate.renderer, true);
+                const simd_float4x4 m = simd_mul(view.camera->projection(cw / ch), view.camera->view());
+                const simd_float4x4 inv = simd_inverse(m);
+                const simd_float3 eye = view.camera->eye();
+                os2::RgbaImage img;
+                img.width = uint32_t(cw), img.height = uint32_t(ch);
+                img.pixels.assign(size_t(img.width) * img.height * 4, 0);
+                const CFTimeInterval t0 = CACurrentMediaTime();
+                size_t rays = 0;
+                for (uint32_t y = 0; y < img.height; y += 4)
+                    for (uint32_t x = 0; x < img.width; x += 4) {
+                        const simd_float4 q = simd_mul(inv, simd_make_float4(2 * float(x) / cw - 1, 1 - 2 * float(y) / ch, 0.5f, 1));
+                        const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
+                        ++rays;
+                        if (!id)
+                            continue;
+                        const uint32_t h = uint32_t(id) * 2654435761u;
+                        for (uint32_t dy = 0; dy < 4 && y + dy < img.height; ++dy)
+                            for (uint32_t dx = 0; dx < 4 && x + dx < img.width; ++dx) {
+                                uint8_t* px = &img.pixels[(size_t(y + dy) * img.width + x + dx) * 4];
+                                px[0] = uint8_t(h >> 24), px[1] = uint8_t(h >> 16), px[2] = uint8_t(h >> 8), px[3] = 255;
+                            }
+                    }
+                std::printf("opensims2: pick map: %zu rays, %.3f ms each\n", rays, (CACurrentMediaTime() - t0) * 1000 / double(rays));
+                os2::writePng(mapFile, img);
             }
             // --ui-hover x,y: the mouse over the live panel (a queue icon's name).
             float hx, hy;

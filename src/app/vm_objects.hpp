@@ -61,6 +61,10 @@ public:
     // plays on it) instead of its static instance, which is hidden.
     void setActor(int16_t id, SimActor* actor);
     bool hasModel(int16_t id) const { return drawn_.count(id) != 0; }
+    // Whether the last update() drew the object (not hidden: out of the
+    // world, on a level the camera hides, on a wall cut down); true for an
+    // object not drawn here.
+    bool shown(int16_t id) const;
     // The materials an object is drawn with (its design choice under what
     // Change Material set), subset -> material.
     std::map<std::string, std::string> materialsOf(int16_t id);
@@ -112,6 +116,10 @@ public:
     // the node of the object's model (rest pose) at its placement; nothing
     // if the object or the node is missing (effect slots).
     std::optional<Xform> nodePlacement(int16_t id, const std::string& node);
+    // Where a Sim in a containment slot of an object (not a Sim) sits: the
+    // container's placement with its slot's bone (rest pose), else its
+    // origin; nothing when the Sim is in no such slot.
+    std::optional<Xform> seatPlacement(int16_t sim);
     // The bone of an object's containment slot `slot` (empty if none).
     std::string containerSlotBone(int16_t id, int slot) { return slotBone(id, slot); }
     // The bone of the object's slot `slot` among its SLOT entries of `type`
