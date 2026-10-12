@@ -76,6 +76,14 @@ constexpr size_t kMaxStackDepth = 128;
 constexpr size_t kMaxAttributes = 256;
 
 // Object data fields the engine maintains or reads (names as in STR# 0x8D).
+// An object model's footprint tile (the CRES "footprint" data list's
+// 32-byte 16x16 mask, a u16 a row, bit 0 the low x) halved to 8x8 cells of
+// 1/8 tile (a cell is set when any of its four is; BV 0x6537a4), and each
+// row's run of cells as a rectangle x0, y0, x1, y1 in the model's space,
+// about the tile (tx, ty)'s centre, shrunk by 0.01 (BV 0x656cc0).
+std::array<uint8_t, 8> halveFootprintMask(std::span<const uint8_t> mask);
+std::vector<std::array<float, 4>> footprintMaskRects(const std::array<uint8_t, 8>& rows, int tx, int ty);
+
 namespace objdata {
 constexpr int16_t Direction = 1;
 constexpr int16_t ContainerId = 2;

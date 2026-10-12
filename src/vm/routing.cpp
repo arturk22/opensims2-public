@@ -3323,8 +3323,12 @@ struct ModelFootprints {
     std::map<std::string, std::map<std::pair<int, int>, std::array<uint8_t, 8>>> lists;
 };
 
+} // namespace
+
 std::array<uint8_t, 8> halveFootprintMask(std::span<const uint8_t> m) {
     std::array<uint8_t, 8> out{};
+    if (m.size() < 32)
+        return out;
     auto half = [](uint8_t b) {
         uint8_t h = 0;
         for (int j = 0; j < 4; ++j)
@@ -3336,6 +3340,30 @@ std::array<uint8_t, 8> halveFootprintMask(std::span<const uint8_t> m) {
         out[r] = uint8_t(half(m[4 * r]) | half(m[4 * r + 2]) | ((half(m[4 * r + 1]) | half(m[4 * r + 3])) << 4));
     return out;
 }
+
+std::vector<std::array<float, 4>> footprintMaskRects(const std::array<uint8_t, 8>& rows, int tx, int ty) {
+    std::vector<std::array<float, 4>> out;
+    constexpr float kCell = 0.125f, kShrink = 0.01f;
+    for (int row = 0; row < 8; ++row) {
+        const uint8_t bits = rows[size_t(row)];
+        for (int c0 = 0; c0 < 8;) {
+            if (!(bits & (1u << c0))) {
+                ++c0;
+                continue;
+            }
+            int c1 = c0;
+            while (c1 < 8 && (bits & (1u << c1)))
+                ++c1;
+            out.push_back({float(tx) + float(c0) * kCell - 0.5f + kShrink, float(ty) + float(row) * kCell - 0.5f + kShrink,
+                           float(tx) + float(c1) * kCell - 0.5f - kShrink,
+                           float(ty) + float(row + 1) * kCell - 0.5f - kShrink});
+            c0 = c1;
+        }
+    }
+    return out;
+}
+
+namespace {
 
 // The footprints of the object's model, read once per OBJD; null without a
 // "footprint" data list (or without a model).
@@ -3425,31 +3453,15 @@ std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
             if (t == tiles->end())
                 return {};
             std::vector<std::array<float, 4>> out;
-            constexpr float kCell = 0.125f, kShrink = 0.01f;
-            for (int row = 0; row < 8; ++row) {
-                const uint8_t bits = t->second[size_t(row)];
-                for (int c0 = 0; c0 < 8;) {
-                    if (!(bits & (1u << c0))) {
-                        ++c0;
-                        continue;
+            for (const auto& r : footprintMaskRects(t->second, tx, ty)) {
+                float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+                for (const float mx : {r[0], r[2]})
+                    for (const float my : {r[1], r[3]}) {
+                        const float px = lead->position.x + mx * c - my * s;
+                        const float py = lead->position.y + mx * s + my * c;
+                        x0 = std::min(x0, px), y0 = std::min(y0, py), x1 = std::max(x1, px), y1 = std::max(y1, py);
                     }
-                    int c1 = c0;
-                    while (c1 < 8 && (bits & (1u << c1)))
-                        ++c1;
-                    const float mx0 = float(tx) + float(c0) * kCell - 0.5f + kShrink;
-                    const float mx1 = float(tx) + float(c1) * kCell - 0.5f - kShrink;
-                    const float my0 = float(ty) + float(row) * kCell - 0.5f + kShrink;
-                    const float my1 = float(ty) + float(row + 1) * kCell - 0.5f - kShrink;
-                    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
-                    for (const float mx : {mx0, mx1})
-                        for (const float my : {my0, my1}) {
-                            const float px = lead->position.x + mx * c - my * s;
-                            const float py = lead->position.y + mx * s + my * c;
-                            x0 = std::min(x0, px), y0 = std::min(y0, py), x1 = std::max(x1, px), y1 = std::max(y1, py);
-                        }
-                    out.push_back({x0, y0, x1, y1});
-                    c0 = c1;
-                }
+                out.push_back({x0, y0, x1, y1});
             }
             return out;
         }

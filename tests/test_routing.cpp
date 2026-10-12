@@ -8,6 +8,7 @@
 #include "vm/world.hpp"
 #include "formats/lot.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -69,6 +70,30 @@ static Object& place(VM& vm, int x, int y, int level = 1) {
     Object& o = vm.createObject(kGroup);
     o.position = {float(x) + 0.5f, float(y) + 0.5f, level};
     return o;
+}
+
+// A model footprint tile (the CRES "footprint" mask) as the planner's
+// rectangles: the piano bench's tile (1,1) of pianoUprightSaloon, rows 0-4
+// of 16 with columns 0-6 set ("7f00"), halves to rows 0-2 (any of four
+// subcells) and columns 0-3: three rectangles x 0.51..0.99, y 0.51..0.865.
+static void testFootprintMask() {
+    std::array<uint8_t, 32> mask{};
+    for (int row = 0; row < 5; ++row)
+        mask[size_t(2 * row)] = 0x7F;
+    const auto rows = halveFootprintMask(mask);
+    check(rows[0] == 0x0F && rows[1] == 0x0F && rows[2] == 0x0F && rows[3] == 0, "the bench's mask halves to 3 rows of 4 cells");
+    const auto rects = footprintMaskRects(rows, 1, 1);
+    check(rects.size() == 3, "one rectangle per row's run");
+    if (rects.size() == 3) {
+        check(std::fabs(rects[0][0] - 0.51f) < 1e-4f && std::fabs(rects[0][2] - 0.99f) < 1e-4f, "x from the tile's centre, shrunk 0.01");
+        check(std::fabs(rects[0][1] - 0.51f) < 1e-4f && std::fabs(rects[2][3] - 0.865f) < 1e-4f, "y over rows 0-2 of 8");
+    }
+    // A whole row: one rectangle across the tile.
+    std::array<uint8_t, 32> full{};
+    full[0] = full[1] = 0xFF;
+    const auto one = footprintMaskRects(halveFootprintMask(full), 0, 0);
+    check(one.size() == 1 && std::fabs(one[0][0] + 0.49f) < 1e-4f && std::fabs(one[0][2] - 0.49f) < 1e-4f,
+          "a full row spans the tile less 0.01 a side");
 }
 
 static void testDirections() {
@@ -1552,6 +1577,7 @@ static void testGoHere() {
 int main() {
     testStairs();
     testWalking();
+    testFootprintMask();
     testSnapAndPlace();
     testPathfinder();
     testRoutingGoals();
