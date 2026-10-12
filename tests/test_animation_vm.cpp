@@ -354,7 +354,40 @@ static void testMeasure() {
     check(t.temps[2] == directionOf(3, 4) && t.temps[3] == directionOf(1, 4), "direction to the stack object");
 }
 
+// A vehicle's drive loop (Animate Object with an event tree that starts the
+// loop again on 9999): the same animation replaces itself each time (no
+// "two of a name" limit), and each loop's end moves the object forward
+// (its facing) by the animation's root travel.
+static void testVehicleDrive() {
+    CodeLibrary code;
+    VM vm(code);
+    addGlobals(code, vm);
+    Object& car = vm.createObject(kGroup);
+    car.position = {5.5f, 5.5f, 1};
+    car.data[objdata::Direction] = 4; // +X
+    car.attributes.assign(1, 0);
+    code.add(kGroup, animlist::Object, strings({"o-car-drive"}));
+    vm.animations.add("o-car-drive", 0.3f);
+    vm.animations.addRootTravel("o-car-drive", 2.0f);
+    // 0x1001: Animate Object entry 0 on me, event tree 0x1002; 0x1002: on
+    // 9999 attribute 0 += 1 and play the loop again.
+    code.add(kGroup, 0x1001, tree({instr(0x69, T, E, {0, 0, 0, 0x20, 0x02, 0x10, 0x0A, 0, 0})}));
+    Behavior::Instruction again = instr(0x1001, T, E);
+    again.operands.fill(0xFF);
+    Behavior ev = tree({instr(0x02, go(1), E, {0, 0, 1, 0, 0, 3, 0x00, 0x07}), again});
+    ev.argCount = 5;
+    code.add(kGroup, 0x1002, ev);
+    Thread t = vm.start(car.id, 0x1001, {}, car.id);
+    vm.run(t);
+    for (int i = 0; i < 60; ++i)
+        tickOverlayEvents(vm);
+    check(car.attributes[0] >= 4, "the drive loops again and again");
+    check(car.position.x > 5.5f + 2.0f * 3 && std::fabs(car.position.y - 5.5f) < 1e-4f,
+          "each loop moves the car forward by the root travel");
+}
+
 int main() {
+    testVehicleDrive();
     testMeasure();
     testLocomotionNames();
     testAssignLocomotion();

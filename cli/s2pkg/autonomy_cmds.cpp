@@ -449,6 +449,22 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         }
         std::printf("\n");
     }
+    // S2PKG_VEHICLES=1: the vehicles left (carpools, school buses, NPC cars)
+    // and what their Main does.
+    // S2PKG_VEHICLES=<text>: the objects whose name has that text instead.
+    if (const char* vf = std::getenv("S2PKG_VEHICLES"))
+        for (const auto& [id, o] : machine.objects())
+            if (o.definition && (std::string(vf) != "1" ? o.definition->fileName.find(vf) != std::string::npos
+                                                        : (o.definition->fileName.rfind("Car - ", 0) == 0 ||
+                                                           o.definition->fileName.find("Vehicle") != std::string::npos ||
+                                                           o.definition->fileName.find("Bus") != std::string::npos))) {
+                std::printf("  vehicle %d %s at (%.2f, %.2f, %d)", id, o.definition->fileName.c_str(), o.position.x,
+                            o.position.y, o.position.level);
+                if (auto it = machine.threads.find(id); it != machine.threads.end() && !it->second.stack.empty())
+                    std::printf("; Main in %s #%u", it->second.stack.back().behavior->fileName.c_str(),
+                                it->second.stack.back().pc);
+                std::printf("\n");
+            }
     if (!machine.missingPrimitives.empty()) {
         std::printf("missing primitives:");
         for (const auto& [op, n] : machine.missingPrimitives)

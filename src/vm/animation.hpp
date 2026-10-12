@@ -210,6 +210,11 @@ public:
         auto it = fullBody_.find(name);
         return it != fullBody_.end() && it->second;
     }
+    // How far the animation's root ("root_trans") goes forward (+Y of the
+    // model, tiles) from its first to its last frame: a vehicle's drive loop
+    // moves it that much each time it plays (0 if none).
+    float rootTravel(const std::string& name);
+    void addRootTravel(const std::string& name, float tiles) { travel_[name] = tiles; }
     // Locomotion speed of the animation (ANIM "velocity", distance per
     // animation tick, a tick being 1 ms) in tiles per second (a tile is a
     // metre); 0 if it does not move or does not exist.
@@ -236,6 +241,7 @@ private:
     std::unordered_map<std::string, std::optional<float>> cache_;
     std::unordered_map<std::string, float> speeds_;
     std::unordered_map<std::string, bool> fullBody_;
+    std::unordered_map<std::string, float> travel_;
     std::unordered_map<std::string, std::optional<int>> events_;
     std::unordered_map<std::string, std::vector<std::pair<int, int16_t>>> treeEvents_;
 };

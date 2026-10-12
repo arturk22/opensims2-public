@@ -8,6 +8,8 @@
 
 #include "errors.hpp"
 #include "interactions.hpp"
+#include "placement.hpp"
+#include "world.hpp"
 
 #include "vm.hpp"
 
@@ -38,6 +40,26 @@ std::optional<float> AnimationLibrary::seconds(const std::string& name) {
     }
     cache_[name] = out;
     return out;
+}
+
+float AnimationLibrary::rootTravel(const std::string& name) {
+    if (auto it = travel_.find(name); it != travel_.end())
+        return it->second;
+    float v = 0;
+    if (!index_)
+        return v;
+    try {
+        const Animation a = loadAnimation(*index_, name);
+        for (const auto& t : a.targets)
+            for (const auto& ch : t.channels)
+                if (ch.name == "root_trans" && ch.components.size() >= 2 && !ch.components[1].keys.empty()) {
+                    const auto& c = ch.components[1];
+                    v = c.sample(float(ch.duration()), ch.duration()) - c.sample(0, ch.duration());
+                }
+    } catch (const std::exception&) {
+    }
+    travel_[name] = v;
+    return v;
 }
 
 float AnimationLibrary::tilesPerSecond(const std::string& name) {
@@ -554,6 +576,18 @@ Exit animateObject(Context& c) {
     const std::string entry = listEntry(c, target, animlist::Object, animationIndex(c, 0, o[2] & 0x04));
     if (trim(entry).empty() || trim(entry) == ".")
         return Exit::True; // the lists keep empty slots for objects with nothing to play there (inferred)
+    // A vehicle drives by playing its drive loop again from its event tree
+    // at each loop's end: the same animation started again replaces the one
+    // playing (Animate Object's play until stopped, loops 0). With Animate
+    // Overlay's "two of a name at most" the third loop did not start, its
+    // event tree never got 9999 and "Wait for Vehicle Stop" waited forever:
+    // the maid's van (and the school bus) stayed at the curb all day.
+    {
+        const std::string name = target.person ? std::string() : parseItem(split(entry, ',')[0]).name;
+        auto& ov = target.animation.overlays;
+        if (!name.empty())
+            std::erase_if(ov, [&](const Overlay& x) { return x.loops == 0 && x.name == name; });
+    }
     // Mirrored with the Sim's get-in from the other side (flag 0x01 of
     // byte 10: the flip in temp 3, as Animate Sim's).
     if (!startOverlay(c, target, entry, (o[10] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0))
@@ -980,6 +1014,25 @@ void tickOverlayEvents(VM& vm) {
             // At its end the event tree also gets event 9999 ("Event Tree -
             // Drive" handles the end of each drive loop on 9999: loop
             // again, or stop and set the speed to 0; inferred from it).
+            // The engine moves an animated object by its animation's root
+            // (cAnimatable): a vehicle goes forward by the drive loop's root
+            // travel each time it plays, and "Function - Should Stop?" ends
+            // the drive by the distance left to its stop portal (inferred:
+            // the move is applied at the loop's end, along the object's
+            // facing, to every part of its multi-tile group).
+            if (ended && !po->person && po->position.inWorld())
+                if (const float d = library(vm).rootTravel(it->name); d != 0) {
+                    const auto step = directionStep(po->data[objdata::Direction]);
+                    const float len = std::hypot(float(step[0]), float(step[1]));
+                    const float dx = d * float(step[0]) / len, dy = d * float(step[1]) / len;
+                    for (ObjectId part : groupOf(vm, po->id))
+                        if (Object* x = vm.object(part); x && x->position.inWorld())
+                        {
+                            x->position.x += dx, x->position.y += dy;
+                            if (vm.world)
+                                x->data[objdata::Room] = vm.world->room(VM::tileOf(*x));
+                        }
+                }
             if (ended)
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, 9999});
             it = ended ? list.erase(it) : it + 1;
