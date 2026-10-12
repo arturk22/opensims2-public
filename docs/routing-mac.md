@@ -479,6 +479,112 @@ parada esticada sobre o que falta desliza até ~0,1 m/s. Captura:
   22. O teste por passo
   não as causa; o "1 contra 8" do bisect é a sorte de uma semente.
 
+**Rodada 14, front "engine-re": o binário sobre o que o walking2 inferiu**
+(lido no BV com a vtable do `cActiveAnimLoco`, vptr `0x28318f4`: `0x90`
+`DetermineTurnResources`, `0x94` `ComputeForwardWeightFromTurnDistance`,
+`0x98` `ComputeTurnDistanceFromStride`, `0x9c` `ComputeTurnWeight`, `0xa0`
+`CreateTurnInPlaceCycle`, `0xa4` `CreateStepCycle`, `0xa8` `PushLocoCycle`,
+`0xac` `PushTurnBlendCycles`, `0xb0` `MarkLastLocoCycle`; e a do
+`cIAnimResource` pela secundária do `cAnimResourceConst`: `0xe4`
+`DurationTicks`, `0xe8` `HeadingOffset`, `0xec` `LocoType`, `0xf0`
+`LocoDistance`, `0xf4` `LocoCyclePortionCompleted`, `0xf8` `LocoStrideLength`,
+`0xfc` `LocoStrideVelocityMPT`, `0x100` `LocoFinalCyclePortionCompleted`,
+`0x104` `VelocityMPT`, `0x108` `TurnRotation`):
+
+- **Os tipos de locomoção do conjunto não são os do cabeçalho.**
+  `cAnimResourceConst::ReadFrom` (BV `0xd491a8`) converte os ANIM de versão
+  < 7 (todos os do jogo base são v6): tipo `t` < 11 fica; 11 ≤ `t` < 30 →
+  `t + 89` (**100 + k** = ciclo altK); `t` ≥ 30 → `t + 170` (**200 + k**).
+  Depois o tipo é um campo de 12 bits (`LocoType` = bytes 9–10 >> 4) e a
+  prioridade os 4 bits de baixo. Então: 1 (não achado nos dados), 6
+  turnAndGo, 7 turnAndStop, 8 turnInPlace, 9 step, 10 stepInPlace,
+  **100 + k** os ciclos `walk-altK` **e** `walkShort-altK` (os dois têm o
+  mesmo tipo de cabeçalho 11 + k), **200 + k** as poses `walk-altK-*Blend`
+  (0 ticks, prioridade 2, cabeçalho 30 + k: `normalBlend`, `pregnantBlend`).
+  `AddLocoResource` (BV `0xd0ce78`) guarda os recursos ordenados por tipo e
+  depois por `VelocityMPT`.
+- **`walkShort` (confirmado em parte)**: `LocoResourcesWithClosestVelocity(tipo,
+  v)` (BV `0xd0c1a4`) devolve o par de recursos consecutivos do tipo cujas
+  velocidades cercam `v` (o lento e o rápido: walkShort ~1 m/s e walk ~2 m/s)
+  e o `v` limitado a eles. O `InitChannelNetwork` (BV `0xd2cd68`) faz isso para
+  cada `100 + k` com peso, guarda as distâncias (`LocoDistance` × escala) e as
+  passadas (`LocoStrideLength`) dos dois, e mistura os dois pelas passadas:
+  `ComputeTurnWeight(lento, rápido, s)` = `(s_r − s) / (s_r − s_l)` limitado a
+  [0, 1] (peso do lento); `ComputeTurnDistanceFromStride` e
+  `ComputeForwardWeightFromTurnDistance` (BV `0xd2b958`: com `d` entre as
+  distâncias do lento e do rápido, peso = `(d_r − d)/(d_r − d_l)`) fazem o
+  mesmo pelas distâncias. O número de ciclos do trecho reto é arredondado
+  **para cima em meios ciclos** (`⌈(resto − passada·fase)/(passada·0,5)⌉`) e o
+  que sobra é acertado misturando passada longa e curta (laço de até 10
+  tentativas em passos de 0,1 do peso, ±0,25 ciclo). Ou seja: o jogo não
+  troca para `walkShort` só no fim; **mistura** walk e walkShort em todos os
+  ciclos para que um número inteiro de meios passos caiba exatamente na rota.
+  Os detalhes do laço não foram fechados (o decompilador perdeu os
+  argumentos das chamadas virtuais); a regra do walking2 ("walkShort quando
+  o que sobra é menor que uma passada") é uma aproximação.
+- **As poses 200 + k** (`PushTurnBlendCycles`, BV `0xd3107c`): para cada ciclo
+  altK com peso > 0 e com recurso `200 + k`, um ciclo filho com a pose, o
+  peso do ciclo e o tempo de mistura `+0xec` (0,2, limitado a 0,95 × a
+  distância do clipe de começo e do de parada) vai sobre o ciclo de andar.
+  O opensims2 não toca essas poses (TODO).
+- **A curva é uma B-spline cúbica uniforme, não Catmull-Rom.**
+  `cPathStrategyCubic::UpdatePathData` (BV `0xd56704`): os pontos de
+  controle são o primeiro ponto da rota **três vezes**, todos os pontos e o
+  último três vezes; cada janela de 4 pontos vira um trecho com a matriz
+  `1/6 · [[1,4,1,0],[−3,0,3,0],[3,−6,3,0],[−1,3,−3,1]]` (lida em
+  `0x273a740`, o 1/6 em `0x274bc98`). A curva começa e termina nos extremos
+  mas **não passa** pelos pontos do meio (corta as quinas; com a rota cortada
+  a cada 0,2 o corte é pequeno nas retas e maior nas quinas). O comprimento é
+  medido amostrando cada trecho (passo inicial `1/⌊comprimento/0,03⌋`,
+  metade enquanto a corda passa de 0,005) e o parâmetro de cada ponto da
+  rota é reescalado pelo comprimento da curva. **TODO**: trocar a Catmull-Rom
+  do walking2 por essa B-spline.
+- **`CreateStepCycle` é só do passo (tipo 9), não do começo/parada.** Ele
+  chama `DetermineTurnResources(escala, 9, ângulo, 0, ...)`
+  (`NextLocoResourceByTurnRotation`: o clipe `step-N` mais perto em passos
+  de 45° e um segundo do mesmo ângulo, o `stepShort`), mistura os dois
+  ângulos vizinhos por `|sobra|/(π/4)` e, dentro de cada ângulo, o `step` e o
+  `stepShort` pela distância pedida; distância menor que a do mais curto →
+  mistura com o `stepInPlace` (tipo 10; sem ele, o tipo 1) a distância 0;
+  maior que a do mais longo → falha (anda normal). A velocidade do pedido é
+  `Σ w·VelocityMPT / Σ w × 1,4 × multiplicador do nome (@1.5) × 1000` (o
+  **1,4** é um fator fixo de rapidez dos passos, `0x277d8e8`). Quem chama
+  (`InitChannelNetwork`): só quando a rota é reta (|corda − comprimento| <
+  0,02) e as direções de começo e fim do pedido são iguais (|Δ| < 0,01): o
+  Sim **dá passos sem virar** na direção da corda relativa ao rosto. O começo
+  e a parada (tipos 6/7) usam `DetermineTurnResources` com o clipe de 45°
+  mais perto **sem misturar ângulos** (o resto vai para a curva); o par
+  misturado deles é do mesmo ângulo (o clipe e o seu "Short"/"R", pela
+  passada e pela porção do ciclo). **Corrigir** (TODO): o walking2 mistura os
+  dois ângulos vizinhos no `turnAndGo`/`turnAndStop`; no jogo isso é só do
+  `step`.
+- **Os 5/100 ms**: o `+0x24c` comparado com 0,25 não é a velocidade: é o
+  comprimento do começo da rota medido no `BeginFollow` (soma dos trechos até
+  passar de 0,75, ou até mudar de andar/sala). Ou seja, 5 ms com rota curta
+  (≤ 0,25), 100 ms senão; o mesmo `+0x24c` decide o N = 25 do estado 3.
+- **O teste por passo e os outros Sims** (`LocoPlaceFromSceneGraph` →
+  `TSObjectCanSetPosition` → `TestPlaceInWorld` →
+  `TestPlacementWithRespectToObjects`/`...Object`, BV `0x8ace04`/`0x8ac158`):
+  - o passo passa sem testar objetos se o dado de pessoa **68** tem o bit
+    `0x02`; com o bit `0x20`, objetos com `IsOKToFlyOver` são ignorados;
+  - entre duas pessoas: passa se uma delas tem `CanIntersectPeople` —
+    pessoa: o bit `0x08` do campo `+0x72a` (inferido: o dado de pessoa 68)
+    ou, como objeto, `GetFlags()` (dado de objeto 8) com `0x04 | 0x10`
+    (`HasZeroExtent`, `AllowPersonIntersection` nos nomes do FreeSO); passa
+    se a árvore "allow intersection" (OBJf 5) de uma das duas deixa; passa se
+    não dividem `FootprintBlocksCeiling` nem `FootprintBlocksFloor`;
+  - senão o corpo de um Sim é um **ponto**: bloqueia (erro **0x0C**) se os
+    centros estão a **< 0,283** um do outro (`0x274b968`). O walking2 usa
+    discos de 0,125 (0,25 entre centros): **corrigir para 0,283** (TODO);
+  - o alvo da rota não tem exceção no teste (a exceção do opensims2 é
+    inferida); quem já está dentro: o `LocoPlaceFromSceneGraph` aceita a
+    posição se o Sim "está preso" (vtable `0x2e0`) e a posição atual também
+    falha;
+  - contra objetos, com o flag 4 (dado quando o Sim tem `0xc0`/`0xc4` da
+    interface de pessoa e o pedido é da sequência 1) o teste usa também um
+    ponto 0,25 (idade 4/8) ou 0,5 (idade 2) à frente do Sim com raio 0,3;
+    contra portas (flag 2), um círculo de 0,3.
+
 ## 7. Códigos de falha (binário + `STR#` 0xF1 "route results")
 
 `DoPostFailedOrSucceeded` grava o código no **dado de pessoa 62
