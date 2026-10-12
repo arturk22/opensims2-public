@@ -246,6 +246,23 @@ int main() {
                   yes ? "rack: yes buys the cart" : "rack: no closes with nothing bought");
         }
 
+        {
+            // Party book: a long name ends in "..." before its row's icons,
+            // a short one is whole (without fonts a letter is 7 px wide).
+            Fixture pf(dialogtype::PhoneParty);
+            Dialog& pd = pf.vm.dialogs.at(pf.me->id);
+            pd.entries = {{11, 0, "Drone Colono 1000101 de Souza", "", 0, 0}, {12, 0, "Ana", "", 0, 0}};
+            pd.entries[0].flags = 16; // a friend: the text stops before the friend column
+            DialogWindow pw(pf.vm, &ui, nullptr);
+            pw.log = false;
+            const auto L = pw.layout(pd, 1280, 720);
+            bool cut = false, whole = false;
+            for (const auto& [cid, text] : L.captions) {
+                cut |= text.size() > 3 && text.ends_with("...") && text.starts_with("Drone") && 7.0f * float(text.size()) <= 175 - 48;
+                whole |= text == "Ana";
+            }
+            check(cut && whole, "party: a long name ends in ... before the icons, a short one is whole");
+        }
         Fixture g(dialogtype::ClothingTryOn);
         Dialog& t = g.vm.dialogs.at(g.me->id);
         DialogWindow tw(g.vm, &ui, nullptr);

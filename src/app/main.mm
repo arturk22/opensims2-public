@@ -1178,15 +1178,30 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         }
         if (d.cls.cls == os2::vm::DialogClass::PhoneNeighbors || d.cls.cls == os2::vm::DialogClass::PhoneParty) {
             d.message.clear();
-            for (const auto& [id, n] : m.neighbors)
-                if (!n.firstName.empty() && d.entries.size() < 9) {
-                    os2::vm::DialogEntry e;
-                    e.id = id;
-                    e.guid = n.guid;
-                    e.name = n.lastName.empty() ? n.firstName : n.firstName + " " + n.lastName;
-                    e.flags = d.entries.size() % 3 == 0 ? 16 : d.entries.size() % 4 == 1 ? 1 : 0;
-                    d.entries.push_back(std::move(e));
+            // The neighbors a call list could hold: ones with a family (the
+            // hood's ancestors, family 0, are not callable: N002 has three
+            // "Mãe Rainha" of them), not the caller's own family; the
+            // relationship as setupPhone reads it (the trees fill the real lists).
+            const os2::vm::Object* me = m.object(gPie->sim());
+            const int16_t myFamily = me && me->person ? me->person->data[os2::vm::persondata::FamilyNumber] : 0;
+            for (const auto& [id, n] : m.neighbors) {
+                const int16_t family = n.personData[os2::vm::persondata::FamilyNumber];
+                if (n.firstName.empty() || d.entries.size() >= 9 || !family || family == myFamily ||
+                    !m.families.count(family))
+                    continue;
+                os2::vm::DialogEntry e;
+                e.id = id;
+                e.guid = n.guid;
+                e.first = n.firstName, e.last = n.lastName;
+                e.name = n.lastName.empty() ? n.firstName : n.firstName + " " + n.lastName;
+                const auto key = std::make_pair(m.relationshipKey(d.me), os2::vm::VM::RelationshipKey{1, id});
+                if (auto r = m.relationships.find(key); r != m.relationships.end()) {
+                    const auto& vars = r->second;
+                    e.relationship = (vars.size() > 0 ? vars[0] : 0) + (vars.size() > 2 ? vars[2] : 0);
+                    e.flags = vars.size() > 1 ? (vars[1] & 0xFFFF) : 0;
                 }
+                d.entries.push_back(std::move(e));
+            }
             if (d.cls.cls == os2::vm::DialogClass::PhoneParty) {
                 d.maxSelection = 10;
                 if (d.entries.size() > 2)

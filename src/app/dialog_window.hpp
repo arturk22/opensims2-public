@@ -219,6 +219,7 @@ private:
     const RgbaImage* frame0(uint32_t image); // a four-state strip's first frame
     float textWidth(const std::string& style, const std::string& s) const;
     float lineHeight(const std::string& style) const;
+    std::string fitText(const std::string& style, const std::string& text, float width) const;
     std::vector<std::string> wrap(const std::string& style, const std::string& text, float width) const;
 
     UiResources* res_;

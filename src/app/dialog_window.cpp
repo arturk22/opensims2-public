@@ -124,6 +124,25 @@ float DialogWindow::lineHeight(const std::string& style) const {
     return std::round(m.ascent + m.descent); // as the UI layout draws a line
 }
 
+// `text` cut to `width` with "..." at its end when it is wider.
+std::string DialogWindow::fitText(const std::string& style, const std::string& text, float width) const {
+    if (textWidth(style, text) <= width)
+        return text;
+    std::string u = text;
+    while (!u.empty()) {
+        while (!u.empty() && (uint8_t(u.back()) & 0xC0) == 0x80) // a whole UTF-8 character off
+            u.pop_back();
+        if (!u.empty())
+            u.pop_back();
+        while (!u.empty() && u.back() == ' ')
+            u.pop_back();
+        const std::string cut = u + "...";
+        if (textWidth(style, cut) <= width)
+            return cut;
+    }
+    return "...";
+}
+
 // Greedy word wrap, as the UI layout's text windows do it.
 std::vector<std::string> DialogWindow::wrap(const std::string& style, const std::string& text, float width) const {
     std::vector<std::string> lines;
@@ -848,7 +867,16 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
                 sel.set("fillcolor", c);
                 root.children.push_back(sel);
             }
-            UiElement t = element("GZWinText", "IGZWinText", ox + 4, ry, ox + bw - 44, ry + rowH);
+            // The name runs up to the first icon of its row (the friend/enemy
+            // column at bw - 42, the love/crush one at bw - 20) and, longer,
+            // ends in "..." (the game's list box clips the text; the
+            // ellipsis is inferred: "Drone Colono 1000101" was cut mid-number).
+            constexpr int Crush = 1, Love = 2, Friend = 16, BestFriend = 32, Enemy = 128;
+            const bool marks = d.cls.cls != C::PhoneServices;
+            const float right = marks && (e.flags & (Enemy | Friend | BestFriend)) ? bw - 44
+                                : marks && (e.flags & (Love | Crush))              ? bw - 22
+                                                                                   : bw - 4;
+            UiElement t = element("GZWinText", "IGZWinText", ox + 4, ry, ox + right, ry + rowH);
             const uint32_t id = 0x00F00000u | uint32_t(list.list << 12) | uint32_t(i);
             t.set("id", hex(id));
             t.set("font", listFont);
@@ -858,7 +886,7 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
             std::snprintf(c, sizeof c, "(%d,%d,%d)", int(tc[0] * 255), int(tc[1] * 255), int(tc[2] * 255));
             t.set("forecolor", c);
             root.children.push_back(t);
-            L.captions[id] = e.name;
+            L.captions[id] = fitText(listFont, e.name, right - 4);
             // SetMode: the relationship icons at the row's right (friend or
             // enemy, crush or love; which column is which is inferred).
             auto iconAt = [&](uint32_t image, float x) {
@@ -874,8 +902,7 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
                 root.children.push_back(p);
                 L.images[pid] = im;
             };
-            if (d.cls.cls != C::PhoneServices) {
-                constexpr int Crush = 1, Love = 2, Friend = 16, BestFriend = 32, Enemy = 128;
+            if (marks) {
                 iconAt(e.flags & Enemy ? iconEnemy : e.flags & (Friend | BestFriend) ? iconFriend : 0, ox + bw - 42);
                 iconAt(e.flags & Love ? iconLove : e.flags & Crush ? iconCrush : 0, ox + bw - 20);
             }
