@@ -276,6 +276,21 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         return sky * (1 - w) + e;
     };
     const float directScale = globals.terrainStrength * globals.floorLightMapScale;
+    // The direct light on the ground (terrain and outside floors), with a
+    // cool light's colour pulled towards grey by how much blue it has over
+    // red: at night the state's moon (sun (.45, .45, 1) x 0.6, sky (.25,
+    // .25, 1)) makes E about (0.32, 0.32, 0.8), and 2 x texture x light map
+    // turned light paving bright lavender. A visual choice, not from the
+    // binary (day and warm states are left as they are).
+    auto groundIllum = [&](V3 n) {
+        V3 e = illum(n);
+        if (e[2] > e[0] && e[2] > 0) {
+            const float k = (e[2] - e[0]) / e[2];
+            const float l = luminance(e);
+            e = e * (1 - k) + V3{l, l, l} * k;
+        }
+        return e;
+    };
     const V3 outsideAmbient{globals.outsideAmbient[0], globals.outsideAmbient[1], globals.outsideAmbient[2]};
     const V3 outsideWallAmbient{globals.outsideWallAmbient[0], globals.outsideWallAmbient[1], globals.outsideWallAmbient[2]};
 
@@ -619,7 +634,7 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
                 bool outdoor = false;
                 V3 e = floorValue(li, x, y, &outdoor);
                 if (outdoor)
-                    e = e + illum(normalAt(layout.minLevel + li, x, y)) * directScale;
+                    e = e + groundIllum(normalAt(layout.minLevel + li, x, y)) * directScale;
                 put(i, uint32_t(li) * ph + j, e);
             }
 
