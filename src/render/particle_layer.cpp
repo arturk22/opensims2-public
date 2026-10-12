@@ -1,6 +1,7 @@
 #include "render/particle_layer.hpp"
 
 #include "formats/image.hpp"
+#include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "render/texture.hpp"
 
@@ -8,6 +9,8 @@
 #include <Metal/Metal.hpp>
 
 #include <algorithm>
+#include <cctype>
+#include <string_view>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -193,6 +196,70 @@ MTL::Texture* ParticleLayer::texture(const std::string& name) {
     return tex;
 }
 
+const ParticleLayer::Mesh* ParticleLayer::mesh(const std::string& name) {
+    static constexpr std::string_view kShape = "_shpe";
+    if (name.size() <= kShape.size() || !index_)
+        return nullptr;
+    std::string lower = name;
+    for (char& c : lower)
+        c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (!lower.ends_with(kShape))
+        return nullptr;
+    if (auto it = meshes_.find(name); it != meshes_.end())
+        return it->second.get();
+    std::unique_ptr<Mesh> out;
+    // The CRES is the name up to one of its underscores, the longest that
+    // exists ("neighborhood_plumbobShape_neighborhood_plumbobshape_shpe",
+    // "lightning_root_rot_shpe" -> "lightning").
+    const std::string stem = name.substr(0, name.size() - kShape.size());
+    for (size_t cut = stem.rfind('_'); cut != std::string::npos && cut > 0 && !out; cut = stem.rfind('_', cut - 1)) {
+        try {
+            const ObjectModel om = loadObjectModel(*index_, stem.substr(0, cut));
+            auto m = std::make_unique<Mesh>();
+            bool named = false;
+            for (const auto& p : om.parts) {
+                std::string shape = p.shape;
+                for (char& c : shape)
+                    c = char(std::tolower(static_cast<unsigned char>(c)));
+                named = named || shape == lower;
+            }
+            for (const auto& p : om.parts) {
+                std::string shape = p.shape;
+                for (char& c : shape)
+                    c = char(std::tolower(static_cast<unsigned char>(c)));
+                if (named && shape != lower)
+                    continue;
+                const auto& g = p.mesh;
+                for (uint32_t i : g.triangles) {
+                    if (i >= g.positions.size())
+                        continue;
+                    m->positions.push_back(simd_make_float3(g.positions[i][0], g.positions[i][1], g.positions[i][2]));
+                    m->uvs.push_back(i < g.uvs.size() ? simd_make_float2(g.uvs[i][0], g.uvs[i][1]) : simd_make_float2(0, 0));
+                }
+                if (!m->texture)
+                    if (auto mat = om.materials.find(p.material); mat != om.materials.end()) {
+                        const StandardMaterial sm = standardMaterial(mat->second);
+                        std::string tex = sm.baseTexture;
+                        if (tex.ends_with("_txtr"))
+                            tex.resize(tex.size() - 5);
+                        if (!tex.empty())
+                            m->texture = texture(tex);
+                        else
+                            m->tint = simd_make_float3(sm.diffuse[0], sm.diffuse[1], sm.diffuse[2]);
+                    }
+            }
+            if (!m->texture)
+                m->texture = white_;
+            if (!m->positions.empty())
+                out = std::move(m);
+        } catch (const std::exception&) {
+        }
+    }
+    if (!out)
+        std::fprintf(stderr, "opensims2: effect shape %s: not found\n", name.c_str());
+    return (meshes_[name] = std::move(out)).get();
+}
+
 void ParticleLayer::setImage(const std::string& name, const RgbaImage& image) {
     if (textures_.count(name) || !image.width || !image.height)
         return;
@@ -275,10 +342,25 @@ void ParticleLayer::encode(MTL::RenderCommandEncoder* enc, const simd_float4x4& 
             ax = rx, ay = ry;
         }
         const simd_float3 hx = ax * (q.width * 0.5f), hy = ay * (q.height * 0.5f);
-        MTL::Texture* tex = texture(qp->texture);
+        const Mesh* shape = mesh(qp->texture);
+        MTL::Texture* tex = shape ? shape->texture : texture(qp->texture);
         const int pipe = pipelineFor(q.draw), dep = depthFor(q.draw);
         if (batches.empty() || batches.back().tex != tex || batches.back().pipeline != pipe || batches.back().depth != dep)
             batches.push_back({tex, pipe, dep, uint32_t(verts.size()), 0});
+        if (shape) {
+            // The mesh at the particle: its size as the scale, its rotation
+            // about the vertical (inferred), the model's axes otherwise.
+            const float cs = std::cos(q.rotation), sn = std::sin(q.rotation), k = q.width;
+            const float col[4] = {q.color[0] * shape->tint.x, q.color[1] * shape->tint.y, q.color[2] * shape->tint.z,
+                                  q.color[3]};
+            for (size_t i = 0; i < shape->positions.size(); ++i) {
+                const simd_float3 m = shape->positions[i] * k;
+                const simd_float3 p = c + simd_make_float3(m.x * cs - m.y * sn, m.x * sn + m.y * cs, m.z);
+                verts.push_back({{p.x, p.y, p.z}, {shape->uvs[i].x, shape->uvs[i].y}, {col[0], col[1], col[2], col[3]}});
+            }
+            batches.back().count += uint32_t(shape->positions.size());
+            continue;
+        }
         auto v = [&](simd_float3 p, float u, float t) {
             verts.push_back({{p.x, p.y, p.z}, {u, t}, {q.color[0], q.color[1], q.color[2], q.color[3]}});
         };

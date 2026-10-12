@@ -228,6 +228,39 @@ Captura: `docs/screenshots/r8-effects-balloon.jpg` (`--lot N001_Lot11
 - Capturas: os balões seguem os ossos dos Sims também entre quadros
   (`--frames`: os atores são posados em cada passo da VM).
 
+## 4c. Rodada 16: partículas de malha e texturas que faltam
+
+- **Partícula de malha** **[dados]**: 137 componentes de partículas do
+  base têm como "textura" um SHPE, `<cres>_<forma>_shpe`
+  (`clothesChangeSwirl_clotheschangeswirl_shpe` das 12 trocas de roupa,
+  `effectsSmallSteam_smallsteam_shpe` da fumaça das panelas e cinzas,
+  `effectHeart_effectheart_shpe` dos corações do primeiro beijo, os pássaros,
+  o raio, os ícones de memória `*Gold_*gold_shpe`). Não há TXTR com esses
+  nomes: o SHPE existe (Objects06) e o CRES é o nome até um dos `_` (o mais
+  longo que existe: `neighborhood_plumbobShape_..._shpe` →
+  `neighborhood_plumbobShape`, `lightning_root_rot_shpe` → `lightning`).
+  `ParticleLayer::mesh` desenha a malha da forma (as partes do CRES com
+  esse SHPE) em cada partícula, com a textura base do material dela (sem
+  textura: a cor difusa), escala = o tamanho da partícula, girada em torno
+  do Z pela rotação da partícula, cor/alfa da partícula, a mistura do
+  componente **[inferido: o binário não foi lido; as malhas têm ~1 m e as
+  curvas de tamanho 0,6–1, o que bate]**. Capturas:
+  `docs/screenshots/r16-fx-troca-de-roupa.jpg` (`--lot N001_Lot11 --effect
+  clotheschangeswishadult1@6.5,17.5,0 --pivot 6.5,17.5 --zoom 9
+  --orientation 4 --time 0.3 --frames 3`).
+- **Texturas ausentes do base** (procuradas como TXTR e TXMT em todos os
+  pacotes de `Res`, sem diferença de caixa): `waterStream` (o
+  `shower_spray3` dos chuveiros; só existe `waterfaucet-waterstream`),
+  `waterFaucet_waterStream`, `babyDuck`/`babyduck`, `babyRattle`,
+  `pacifier`, `blueBirdPLAGERIZED`, `brokenLampFlash` (há
+  `brokenlampflash-alpha`), `fireFlies2` (há `fireflies`),
+  `fountain_spoutShader`, `fxViewTarget`, `impact_flash_3b`,
+  `lightningSpark`, `sparks`, `balloon`,
+  `uieffects-headlines-dreamballoon` (e `-leader1/2`),
+  `uieffects-headlines-motives-dream-02`. Ficam brancas (o quadrado do
+  componente com a cor e o alfa dele); trocar por nomes parecidos seria
+  invenção.
+
 ## 5. Uso
 
 - `s2pkg effects <effects.package>`: contagens e todos os nomes;
