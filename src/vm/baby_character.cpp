@@ -5,6 +5,7 @@
 #include "formats/cas_face.hpp"
 #include "formats/character_write.hpp"
 #include "formats/dbpf.hpp"
+#include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
 #include "formats/binreader.hpp"
 
@@ -23,6 +24,53 @@ std::function<void(VM&, const BabyRequest&)>& babyCharacterWriter() {
     static std::function<void(VM&, const BabyRequest&)> writer;
     return writer;
 }
+
+std::function<void(VM&, const NpcRequest&)>& npcCharacterWriter() {
+    static std::function<void(VM&, const NpcRequest&)> writer;
+    return writer;
+}
+
+namespace {
+
+constexpr uint32_t kTypeAged = 0xAC598EAC;
+constexpr const char* kNpcFolder = "NPCs";
+
+// The next character file of the neighborhood (either folder): "<P>_User<NNNNN>".
+std::string nextCharacterStem(const fs::path& a, const fs::path& b, const fs::path& c) {
+    std::string prefix = "N001";
+    int next = 0;
+    std::error_code ec;
+    const std::regex re("([A-Za-z0-9]+)_User([0-9]+)\\.package", std::regex::icase);
+    for (const fs::path& dir : {a, b, c})
+        for (const auto& e : fs::directory_iterator(dir, ec)) {
+            std::smatch m;
+            const std::string name = e.path().filename().string();
+            if (std::regex_match(name, m, re)) {
+                prefix = m[1];
+                next = std::max(next, std::stoi(m[2]) + 1);
+            }
+        }
+    char stem[64];
+    std::snprintf(stem, sizeof stem, "%s_User%05d", prefix.c_str(), next);
+    return stem;
+}
+
+// A random look for a new Sim of the spec's age and gender, as the CAS
+// randomize button draws it (CasMode::randomize): an archetype face, skin
+// and hair tones, eyes (not the alien ones), then hair, brows and clothes
+// (completeSpec with a seed).
+void randomLook(const cas::CasCatalog& catalog, cas::CharacterSpec& s, std::mt19937& rng) {
+    const auto arch = catalog.archetypesFor(s.age, s.gender);
+    if (!arch.empty())
+        s.face.archetype = cas::family(*arch[rng() % arch.size()]);
+    s.hairTone = int(rng() % 4) + 1;
+    const auto eyes = catalog.overlaysFor(cas::overlay::Eyes, s.age, s.gender);
+    if (!eyes.empty())
+        s.eyes = cas::family(*eyes[rng() % std::min<size_t>(eyes.size(), 5)]);
+    cas::completeSpec(catalog, s, uint32_t(rng() | 1));
+}
+
+} // namespace
 
 void installBabyCharacterWriter(ResourceIndex& index, const fs::path& charactersDir, const fs::path& outDir,
                                 std::map<int16_t, fs::path>* written) {
@@ -90,22 +138,8 @@ void installBabyCharacterWriter(ResourceIndex& index, const fs::path& characters
             s.firstName = baby->firstName;
             s.guid = baby->guid;
             cas::completeSpec(*st->catalog, s, uint32_t(r.baby) * 2654435761u | 1); // a baby outfit at random
-            // The next character number of the neighborhood (either folder).
-            std::string prefix = "N001";
-            int next = 0;
-            const std::regex re("([A-Za-z0-9]+)_User([0-9]+)\\.package", std::regex::icase);
-            for (const fs::path& dir : {st->chars, st->out})
-                for (const auto& e : fs::directory_iterator(dir, ec)) {
-                    std::smatch m;
-                    const std::string name = e.path().filename().string();
-                    if (std::regex_match(name, m, re)) {
-                        prefix = m[1];
-                        next = std::max(next, std::stoi(m[2]) + 1);
-                    }
-                }
+            const std::string stem = nextCharacterStem(st->chars, st->out, st->out / kNpcFolder);
             fs::create_directories(st->out);
-            char stem[64];
-            std::snprintf(stem, sizeof stem, "%s_User%05d", prefix.c_str(), next);
             const fs::path file = st->out / (std::string(stem) + ".package");
             cas::writeCharacter(*st->index, *st->catalog, *st->baker, s, stem, file, true);
             st->byGuid[baby->guid] = file;
@@ -117,6 +151,75 @@ void installBabyCharacterWriter(ResourceIndex& index, const fs::path& characters
             std::printf(")\n");
         } catch (const std::exception& e) {
             std::fprintf(stderr, "baby %d: character not written: %s\n", r.baby, e.what());
+        }
+    };
+    npcCharacterWriter() = [st](VM& vm, const NpcRequest& r) {
+        const Neighbor* n = vm.neighbor(r.neighbor);
+        if (!n)
+            return;
+        try {
+            if (!st->catalog) {
+                st->catalog = std::make_unique<cas::CasCatalog>(cas::CasCatalog::load(*st->index));
+                st->baker = std::make_unique<cas::FaceBaker>(*st->index, *st->catalog);
+            }
+            cas::CharacterSpec s;
+            s.age = uint32_t(r.ageFlag);
+            s.gender = r.female ? cas::gender::Female : cas::gender::Male;
+            s.skinTone = std::clamp(int(r.skin) + 1, 1, 4);
+            // Seeded by the neighbor's GUID (itself drawn from the VM's
+            // random numbers), so the VM's own draws stay as they were.
+            std::mt19937 rng(n->guid * 2654435761u + uint32_t(r.neighbor));
+            randomLook(*st->catalog, s, rng);
+            // The outfit object's clothes for this age and gender (one of
+            // its AGEDs at random when several fit).
+            std::string uniform;
+            if (r.outfitGroup) {
+                std::vector<std::pair<DbpfPackage*, uint32_t>> fitting;
+                for (const auto& loc : st->index->ofType(kTypeAged)) {
+                    if (loc.entry->tgi.group != r.outfitGroup)
+                        continue;
+                    try {
+                        const cas::CharacterSpec o =
+                            cas::readCharacterSpec(*loc.package, r.outfitGroup, *st->catalog, loc.entry->tgi.instance);
+                        if ((o.age & s.age) && o.gender == s.gender)
+                            fitting.push_back({loc.package, loc.entry->tgi.instance});
+                    } catch (const std::exception&) {
+                    }
+                }
+                if (!fitting.empty()) {
+                    const auto& [pkg, inst] = fitting[rng() % fitting.size()];
+                    const cas::CharacterSpec o = cas::readCharacterSpec(*pkg, r.outfitGroup, *st->catalog, inst);
+                    for (const auto& [category, parts] : o.outfits) {
+                        auto& mine = s.outfits[category];
+                        // A whole outfit replaces top and bottom, and the other way round.
+                        if (parts.count(cas::part::Body))
+                            mine.erase(cas::part::Top), mine.erase(cas::part::Bottom);
+                        if (parts.count(cas::part::Top) || parts.count(cas::part::Bottom))
+                            mine.erase(cas::part::Body);
+                        for (const auto& [bit, name] : parts)
+                            mine[bit] = name;
+                    }
+                    uniform = hexString(r.outfitGroup) + ":" + std::to_string(inst);
+                }
+            }
+            s.firstName = n->firstName;
+            s.lastName = n->lastName;
+            s.guid = n->guid;
+            s.templateGuid = r.templateGuid;
+            // Kept apart from the files the save copies to the neighborhood:
+            // the neighborhood does not get these neighbors yet.
+            const fs::path dir = st->out / kNpcFolder;
+            const std::string stem = nextCharacterStem(st->chars, st->out, dir);
+            fs::create_directories(dir);
+            const fs::path file = dir / (stem + ".package");
+            cas::writeCharacter(*st->index, *st->catalog, *st->baker, s, stem, file, true);
+            if (st->written)
+                (*st->written)[r.neighbor] = file;
+            std::printf("NPC %d: character %s (template %s, %s %s, outfit %s)\n", r.neighbor, file.filename().string().c_str(),
+                        hexString(r.templateGuid).c_str(), cas::ageName(s.age), r.female ? "female" : "male",
+                        uniform.empty() ? "random" : uniform.c_str());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "NPC %d: character not written: %s\n", r.neighbor, e.what());
         }
     };
 }

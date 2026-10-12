@@ -291,6 +291,43 @@ GLOB/SLOT/BHAV/TREE/TPRP do modelo). O AGED guarda `age`, `gender`,
 overlay de olhos), `skeletonkeyidx`, `listcnt`/`lk<i>`/`le<i>_0`/`ls<i>`
 (roupas, como já descrito no TODO), `validparts`, `stretch`, `activecat`.
 
+### 7.1 Rodada 16: os NPCs feitos em jogo (arquivo de personagem)
+
+Os Sims que o Make New Character faz de um **modelo** (sem a flag 0x01)
+não tinham arquivo de personagem, então o app não os desenhava ("Sim 238
+(neighbor 363): no character file, not drawn": jornaleiro, carteiro,
+empregada, motorista do ônibus, coelho do apoio social). No base todos vêm
+com a flag `0xC8` (modelo nos temps 0/1, roupa nos temps 2/3) de "Generate
+- Make Character" (`7F8CE369`/`0x100E`) e "NPC - Make New Character -
+Specific" (`7FB55274`/`0x1010`). O GUID da roupa é um **objeto de roupa**
+do `objects.package` (**[dados]**): `0x6CC1322B` "Outfit - NPC -
+PaperDelivery" (grupo `7FA8111B`), `0xECD0F3FC` "Outfit_NPC_Mail Outfit -
+Template" (`7F76094A`), `0x6DC38A6C` "Outfit_NPC_Maid_test" (`7FE81E93`),
+`0x8CC13127` "Outfit - NPC - BusDriver" (`7FC4E4A7`), `0xAE028CB9`
+"Outfit_SocialBunny_Yellow" (`7FC16D15`). O grupo de cada um guarda um
+**AGED + 3IDR por idade e sexo** (instâncias 1, 2, ...), no mesmo formato do
+AGED de um personagem: as listas de roupa apontam os GZPS de uniforme do
+`Skins.package` (flag 1, os que o CAS não oferece: `afbodydressmaid`,
+`afhairhatmaid_*`, ...).
+
+O opensims2 (`vm/baby_character.cpp`, `npcCharacterWriter`) escreve o
+arquivo como o `ProcessCreateSimRequest` monta o Sim: idade, sexo e tom de
+pele sorteados pela primitiva; o resto ao acaso como o botão aleatório do
+CAS (arquétipo de rosto, cor do cabelo, olhos, cabelo, sobrancelhas e
+roupas: **[inferido]**, o `RandomizeForHumans` do binário não foi seguido
+passo a passo), semeado pelo GUID do vizinho (os números aleatórios da VM
+ficam como estavam); depois, de um AGED do objeto de roupa que sirva à
+idade e ao sexo (um ao acaso quando vários servem), as partes de cada
+categoria que ele lista substituem as sorteadas (um corpo inteiro tira a
+parte de cima e a de baixo e vice-versa; **[inferido]**). O objeto do Sim
+no arquivo é o do **modelo do NPC** (OBJD com o GUID novo, BHAVs e o resto
+do grupo dele), como o `AddNewCharacter` faz; os do personagem comum
+seguem vindo do TemplatePerson. O arquivo vai para `NPCs/` na pasta de
+personagens da sessão, fora dos que o salvar copia para o bairro, já que o
+bairro ainda não grava esses vizinhos. Captura:
+`docs/screenshots/r16-npc-carteiro.jpg` (`--lot N001_Lot11 --run-vm 31500
+--track-sim-id 151 --zoom 5`: o carteiro de uniforme, boné e bolsa).
+
 ## 8. Base vs BV
 
 Base: todo o fluxo humano, os XMLs do `Skins.package`, signos e as seis

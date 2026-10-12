@@ -1,5 +1,6 @@
 #include "formats/dbpf.hpp"
 #include "formats/lot_objects.hpp"
+#include "vm/baby_character.hpp"
 #include "vm/engine.hpp"
 #include "vm/kill.hpp"
 #include "vm/lot_resume.hpp"
@@ -1492,6 +1493,31 @@ static void testMakeNewCharacter() {
     check(sim && sim->person && sim->person->data[persondata::NeighborId] == 7 && sim->guid() == n->guid &&
               n->guid != kTemplate,
           "the new neighbor's Sim is created from a person copy of the template");
+
+    // An NPC with an outfit (flags 0x40 | 0x80: its GUID in temps 2/3, as
+    // "NPC - Make New Character - Specific" passes "Outfit_NPC_Maid_test"):
+    // the character writer gets the template, age, gender and the outfit
+    // object's group, whose AGEDs hold the uniform.
+    constexpr uint32_t kOutfit = 0x6DC38A6C, kOutfitGroup = 0x7FE81E93;
+    fx.code.add(kOutfitGroup, 0x41A7, definition(kOutfit));
+    std::vector<NpcRequest> npcs;
+    npcCharacterWriter() = [&](VM&, const NpcRequest& r) { npcs.push_back(r); };
+    fx.code.add(kObjGroup, 0x1002,
+                tree({expr(StackId, 0, Assign, Lit, 1, go(1), E),
+                      expr(Temp, 0, Assign, Lit, int16_t(kTemplate & 0xFFFF), go(2), E),
+                      expr(Temp, 1, Assign, Lit, int16_t(kTemplate >> 16), go(3), E),
+                      expr(Temp, 2, Assign, Lit, int16_t(kOutfit & 0xFFFF), go(4), E),
+                      expr(Temp, 3, Assign, Lit, int16_t(kOutfit >> 16), go(5), E),
+                      expr(Local, 0, Assign, Lit, 4, go(6), E), // teen
+                      expr(Local, 2, Assign, Lit, 1, go(7), E), // male
+                      instr(0x13, T, E, {1, 0, 2, 0, 0, 0, 0, 0, 0, 0xC8})},
+                     0, 3));
+    t = fx.run(0x1002);
+    npcCharacterWriter() = nullptr;
+    check(t.status == Thread::Status::Finished && npcs.size() == 1 && npcs[0].templateGuid == kTemplate &&
+              npcs[0].outfitGroup == kOutfitGroup && npcs[0].ageFlag == 4 && !npcs[0].female &&
+              npcs[0].neighbor == fx.vm.object(1)->array(0).values.at(0),
+          "Make New Character 0xC8 asks for the NPC's character file with the outfit object's group");
 
     fx.code.add(kObjGroup, 0x1001,
                 tree({expr(StackId, 0, Assign, Lit, 1, go(1), E),

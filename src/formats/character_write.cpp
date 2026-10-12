@@ -196,19 +196,19 @@ std::vector<uint8_t> writeReferenceList(const std::vector<Tgi>& refs) {
     return std::move(w.bytes());
 }
 
-CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatalog& catalog) {
+CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatalog& catalog, uint32_t agedInstance) {
     auto read = [&](uint32_t type, uint32_t instance) -> std::optional<std::vector<uint8_t>> {
         for (const auto& e : pkg.entries())
             if (e.tgi.type == type && e.tgi.group == group && e.tgi.instance == instance)
                 return pkg.read(e);
         return std::nullopt;
     };
-    const auto agedBytes = read(kTypeAged, 1);
+    const auto agedBytes = read(kTypeAged, agedInstance);
     if (!agedBytes)
         throw FormatError("no AGED");
     const auto aged = readPropertySet(*agedBytes);
     std::vector<Tgi> refs;
-    if (auto idr = read(kTypeIdr, 1))
+    if (auto idr = read(kTypeIdr, agedInstance))
         refs = parseReferenceList(*idr);
     auto num = [&](const std::string& k, uint32_t fallback) -> uint32_t {
         auto it = aged.find(k);
@@ -867,12 +867,13 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
             pkg.add(Tgi{kTypeGzps, kLocal, inst, 0}, writePropertySetXml(props), true);
         }
 
-    // The Sim's object, from the template person.
+    // The Sim's object, from the template person (or the spec's template).
+    const uint32_t templateGuid = spec.templateGuid ? spec.templateGuid : kTemplatePerson;
     std::optional<Tgi> templateObjd;
     for (const auto& loc : index.ofType(kTypeObjd)) {
         try {
             const auto d = ObjectDefinition::parse(index.read(loc));
-            if (d.guid() == kTemplatePerson) {
+            if (d.guid() == templateGuid) {
                 templateObjd = loc.entry->tgi;
                 break;
             }
@@ -883,7 +884,8 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         const auto objdLoc = index.find(*templateObjd);
         DbpfPackage* source = objdLoc->package;
         for (const auto& e : source->entries()) {
-            if (e.tgi.group != templateObjd->group)
+            // Only the template's own OBJD (its group may hold others).
+            if (e.tgi.group != templateObjd->group || (e.tgi.type == kTypeObjd && e.tgi != *templateObjd))
                 continue;
             std::vector<uint8_t> data = source->read(e);
             if (e.tgi.type == kTypeObjd) {
@@ -901,7 +903,7 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
             pkg.add(Tgi{e.tgi.type, kLocal, e.tgi.instance, e.tgi.instanceHi}, std::move(data), true);
         }
     } else {
-        res.warnings.push_back("TemplatePerson (0x7FD96B54) not found: no object written");
+        res.warnings.push_back("template OBJD " + hexString(templateGuid) + " not found: no object written");
     }
     if (faceStructure) {
         const FaceStructure fs = baker.structureOf(spec.face, spec.gender);

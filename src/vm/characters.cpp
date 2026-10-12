@@ -50,8 +50,13 @@
 // Sim. The neighbor ID is the highest known + 1 (inferred; the binary's
 // neighbor manager assigns it). Person data: age (58, as Age writes it),
 // gender (65: 0 male, 1 female), skin color (60), neighbor id (31); the
-// name is the template's title (inferred). Neither the file nor the
-// neighborhood entry is saved yet.
+// name is the template's title (inferred). The host's npcCharacterWriter
+// (baby_character.hpp) writes the character file the app draws the Sim
+// from: a random look and, with 0x40, the outfit object's clothes (the
+// base game's NPCs all pass 0xC8 from "Generate - Make Character" and "NPC
+// - Make New Character - Specific": paper person 0x6CC1322B, mail carrier
+// 0xECD0F3FC, maid 0x6DC38A6C, bus driver 0x8CC13127, social bunny
+// 0xAE028CB9). Neither the file nor the neighborhood entry is saved yet.
 
 #include "characters.hpp"
 
@@ -195,7 +200,21 @@ Exit makeNewCharacter(Context& c) {
         else if (gender != 1)
             gender = 2;
         (void)local(c, o[0]);
-        list.values.push_back(makeCharacter(vm, templateGuid, age, gender, int16_t(rand(4))));
+        uint32_t outfit = 0;
+        if (flags & 0x40)
+            outfit = (flags & 0x80) ? uint32_t(uint16_t(c.thread.temps[2])) | uint32_t(uint16_t(c.thread.temps[3])) << 16
+                                    : le32(&o[10]);
+        const int16_t skin = int16_t(rand(4));
+        const int16_t id = makeCharacter(vm, templateGuid, age, gender, skin);
+        list.values.push_back(id);
+        // Its character file (baby_character.hpp): the look the CAS draws.
+        if (auto& write = npcCharacterWriter()) {
+            NpcRequest r{id, templateGuid, 0, age, gender == 2, skin};
+            if (outfit)
+                if (const auto at = vm.code().definitionByGuid(outfit))
+                    r.outfitGroup = at->first;
+            write(vm, r);
+        }
         return Exit::True;
     }
 

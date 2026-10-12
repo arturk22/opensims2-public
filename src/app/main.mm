@@ -3393,8 +3393,9 @@ void adoptVmSims(os2::Renderer& renderer) {
             gObjectView->addSim(id, actor.get());
             if (gLighting)
                 gLighting->addSim(id, actor.get());
-            std::printf("opensims2: Sim %d (neighbor %d) joins the lot: %s, skeleton %s, at (%.2f, %.2f)\n", id, neighbor,
-                        file->filename().string().c_str(), actor->skin.skeleton.name.c_str(), o.position.x, o.position.y);
+            std::printf("opensims2: Sim %d (neighbor %d) joins the lot at tick %llu: %s, skeleton %s, at (%.2f, %.2f)\n", id,
+                        neighbor, (unsigned long long)m.ticks, file->filename().string().c_str(),
+                        actor->skin.skeleton.name.c_str(), o.position.x, o.position.y);
             std::fflush(stdout);
             gLotSims.push_back({actor.get(), id, *file, idle});
             gActors.push_back(std::move(actor));

@@ -35,7 +35,27 @@ struct BabyRequest {
 // Called by Make New Character for every baby once its genes are drawn.
 std::function<void(VM&, const BabyRequest&)>& babyCharacterWriter();
 
-// Installs a writer that finds the parents' character files in
+// A Sim Make New Character makes from a template (the NPCs: "NPC -
+// Template - Maid", the paper person, the bus driver, the townies), as
+// cTSCASSystem::ProcessCreateSimRequest builds it (docs/cas-mac.md §7):
+// a Sim of the age, gender and skin tone drawn, the rest of the look at
+// random as the CAS's Randomize does it (inferred: the CAS randomize
+// button's draw, app/cas_mode.cpp), and with an outfit GUID (flag 0x40)
+// the clothes of that outfit object ("Outfit_NPC_Maid_test", OBJD
+// 0x6DC38A6C: one AGED + 3IDR per age and gender in its group) that fit
+// the age and gender. The character file's Sim object is the template's
+// (AddNewCharacter: the template's OBJD with a new GUID).
+struct NpcRequest {
+    int16_t neighbor = 0;
+    uint32_t templateGuid = 0;
+    uint32_t outfitGroup = 0; // the outfit object's group, 0 = none
+    int16_t ageFlag = 8;      // TS2 age bit
+    bool female = false;
+    int16_t skin = 0;         // 0..3
+};
+std::function<void(VM&, const NpcRequest&)>& npcCharacterWriter();
+
+// Installs the baby writer (and the NPC writer, with the same folders) that finds the parents' character files in
 // `charactersDir` (by their OBJD GUIDs), and writes the babies' to
 // `outDir` (created), numbered after the highest <P>_User file of either
 // folder. `written` (optional) gets neighbor ID -> file.

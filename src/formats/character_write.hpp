@@ -69,6 +69,10 @@ struct CharacterSpec {
     std::map<uint32_t, std::map<uint32_t, std::string>> outfits;
     std::string firstName, lastName, description;
     uint32_t guid = 0; // the Sim's OBJD GUID; 0 = a new one
+    // The OBJD GUID of the object the file's Sim object is copied from:
+    // 0 = TemplatePerson (0x7FD96B54); an NPC made by Make New Character
+    // from "NPC - Template - Maid" gets that template's OBJD and resources.
+    uint32_t templateGuid = 0;
     // The Sim's head shot as PNG bytes: written as the thumbnails the game keeps in the file (IMG
     // 0x856DDBAC, group 0xFFFFFFFF, instance = the age bit for the small one and the age bit << 8 for the
     // large one: 0x08 and 0x800 for an adult). Empty = none (the family panels then show no portrait).
@@ -111,7 +115,11 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
 // gender, fitness, skin, hair and eye colours, the outfit lists, resolved
 // to catalog part names), the face TXMT's cafOverlay* (the overlays), the
 // LxNR (face.structure) and the CTSS names. Throws without an AGED.
-CharacterSpec readCharacterSpec(class DbpfPackage& package, uint32_t group, const CasCatalog& catalog);
+// `agedInstance`: the AGED (and its 3IDR) of that instance; the outfit
+// objects ("Outfit - NPC - Maid", OBJD group 7FE81E93) keep one AGED per
+// age and gender at instances 1, 2, ...
+CharacterSpec readCharacterSpec(class DbpfPackage& package, uint32_t group, const CasCatalog& catalog,
+                                uint32_t agedInstance = 1);
 
 // A Sim grown into the age `newAge`, as cTSSimOutfitData::MakeNewAge
 // does it for the Age primitive (docs/cas-mac.md §17.2): the same Sim
