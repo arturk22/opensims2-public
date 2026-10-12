@@ -132,7 +132,11 @@ public:
     ~PieMenuHost();
 
     vm::VM& vm() { return *vm_; }
-    vm::ObjectId sim() const { return sim_; }
+    // The selected Sim. One whose object the VM removed (reaped, gone home)
+    // gives way to the VM's selected person (the reaper's "Select A Sim"),
+    // so the ID, given to the next object, never shows another object's
+    // queue ("Fila de Ashes" after Titania died, round 18).
+    vm::ObjectId sim();
     // Another selected Sim (its portrait comes by setPortrait).
     void setSim(vm::ObjectId id) { sim_ = id, dirty_ = true; }
     // The debug queue (a column of labels at the top left); off when the

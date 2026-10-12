@@ -674,9 +674,21 @@ std::optional<simd_float3> PieMenuHost::anchor(vm::ObjectId id) const {
     return std::nullopt;
 }
 
+vm::ObjectId PieMenuHost::sim() {
+    const vm::Object* o = vm_->object(sim_);
+    if (o && o->person)
+        return sim_;
+    const vm::ObjectId selected = vm_->globals[vm::global::SelectedPersonId];
+    const vm::Object* s = vm_->object(selected);
+    const vm::ObjectId next = s && s->person ? selected : 0;
+    if (next != sim_)
+        sim_ = next, dirty_ = true;
+    return sim_;
+}
+
 bool PieMenuHost::open(vm::ObjectId object, simd_float2 at, vm::ObjectId merged) {
     close();
-    if (!sim_ || (simAway && simAway(sim_)))
+    if (!sim() || (simAway && simAway(sim_)))
         return false;
     for (const vm::ObjectId id : {object, merged})
         if (id)
@@ -899,7 +911,7 @@ bool PieMenuHost::select(size_t index) {
 }
 
 void PieMenuHost::queueEntry(size_t index) {
-    vm::Object* sim = vm_->object(sim_);
+    vm::Object* sim = vm_->object(this->sim());
     auto q = vm::interactionFromPie(*vm_, entries_[index]);
     if (!sim || !q)
         return;
@@ -1040,7 +1052,7 @@ UiScreen PieMenuHost::screen(int width, int height) {
     Painter paint{out, st ? fonts_->font(*st) : nullptr, st ? float(st->size) : 14.0f};
 
     // The selected Sim's queue, top left.
-    if (const vm::Object* sim = showQueue_ ? vm_->object(sim_) : nullptr) {
+    if (const vm::Object* sim = showQueue_ ? vm_->object(this->sim()) : nullptr) {
         float y = 12;
         const std::string head = "Fila de " + objectName(sim);
         paint.label(12, y, 12 + paint.width(head) + 2 * kPad, y + kLabelH, head, kTitle, kText);
@@ -1128,7 +1140,7 @@ void PieMenuHost::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_
         canvasW_ = cw, canvasH_ = ch, dirty_ = true;
     // The queue changes as the VM runs.
     uint64_t stamp = 1469598103934665603ull;
-    if (const vm::Object* sim = vm_->object(sim_)) {
+    if (const vm::Object* sim = vm_->object(this->sim())) {
         auto mix = [&](uint64_t v) { stamp = (stamp ^ v) * 1099511628211ull; };
         mix(uint64_t(sim->activeInteraction + 1));
         for (const auto& q : sim->queue)

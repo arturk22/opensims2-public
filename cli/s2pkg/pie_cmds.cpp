@@ -360,6 +360,12 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                     it->second = nameOf(ob);
                     std::printf("  tick %d: object %d \"%s\" made at (%.2f, %.2f)\n", i, oid, it->second.c_str(), ob.position.x, ob.position.y);
                 }
+            // and the family's funds as they change (bills paid, pay).
+            static int32_t lastFunds = vm::familyFunds(machine, machine.globals[vm::global::CurrentFamily]);
+            if (const int32_t f = vm::familyFunds(machine, machine.globals[vm::global::CurrentFamily]); f != lastFunds) {
+                std::printf("  tick %d: family funds %d -> %d (%+d)\n", i, lastFunds, f, f - lastFunds);
+                lastFunds = f;
+            }
             // S2PKG_WATCH=name: where objects of that name move (tile and level).
             static const char* watch = std::getenv("S2PKG_WATCH");
             static std::map<vm::ObjectId, std::string> lastAt;
@@ -367,8 +373,9 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                 for (const auto& [oid, ob] : machine.objects())
                     if (nameOf(ob).find(watch) != std::string::npos) {
                         char buf[96];
-                        std::snprintf(buf, sizeof buf, "(%.2f, %.2f, %d) dir %d", ob.position.x, ob.position.y, int(ob.position.level),
-                                      int(ob.data[vm::objdata::Direction]));
+                        std::snprintf(buf, sizeof buf, "(%.2f, %.2f, %d) dir %d in %d/%d", ob.position.x, ob.position.y, int(ob.position.level),
+                                      int(ob.data[vm::objdata::Direction]), int(ob.data[vm::objdata::ContainerId]),
+                                      int(ob.data[vm::objdata::SlotNumber]));
                         if (lastAt[oid] != buf) {
                             lastAt[oid] = buf;
                             std::printf("  tick %d: %d \"%s\" at %s\n", i, oid, nameOf(ob).c_str(), buf);
