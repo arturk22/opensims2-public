@@ -103,6 +103,11 @@ int main() {
         host.addPickBox(bigObject, wall->lo, wall->hi, matrix_identity_float4x4, wall);
         check(host.pick(eye, simd_normalize(simd_make_float3(5.0f + 0.05f, 0, 1) - eye)) == 0,
               "pick: no tolerance for a big object");
+        // A Sim out of the world (at work) takes no orders: no pie menu opens.
+        host.setSim(f.me->id);
+        host.simAway = [&](ObjectId s) { return s == f.me->id; };
+        check(!host.open(mailbox, simd_make_float2(10, 10)), "pie: no menu for a Sim at work");
+        check(!host.isOpen(), "pie: and none open");
     }
     {
         // Text entry (type 3): typing, Backspace, Return = OK.

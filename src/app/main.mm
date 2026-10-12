@@ -633,6 +633,8 @@ void setupTutorial(os2::ResourceIndex& index);
 void pollTutorial(double seconds);
 void requestScene(const os2::Scene& next); // below
 bool selectFamilySim(os2::vm::ObjectId id);
+bool simInTheWorld(int16_t id); // below updateLotView's comment
+void keepSelectedSimHome();
 void selectNextFamilySim();
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
@@ -1091,6 +1093,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                                               argument(@"--sim-id").value_or(""));
     // A go-here destination goes when its menu closes, unless an interaction on it was queued.
     gPie->onClose = [](os2::vm::ObjectId id) { os2::vm::releaseDestination(gPie->vm(), id); };
+    gPie->simAway = [](os2::vm::ObjectId sim) { return !simInTheWorld(int16_t(sim)); };
     for (const auto& b : gPickBoxes)
         if (b.contained)
             gPie->addFollowingPickBox(b.instance, b.lo, b.hi, b.mesh);
@@ -2032,6 +2035,7 @@ void setupLiveUi(os2::ResourceIndex& index) {
         if (auto p = simPortrait(s.id))
             gLive->setPortrait(s.id, std::move(*p));
     gLive->setSim(gPie->sim());
+    gLive->simAway = [](os2::vm::ObjectId id) { return !simInTheWorld(int16_t(id)); };
     gLive->onSelectSim = [](os2::vm::ObjectId id) {
         gSimulation->machine().globals[os2::vm::global::SelectedPersonId] = id;
         gPie->close();
@@ -2174,6 +2178,8 @@ bool selectFamilySim(os2::vm::ObjectId id) {
     const auto family = gLive->family();
     if (std::find(family.begin(), family.end(), id) == family.end())
         return false;
+    if (!simInTheWorld(int16_t(id))) // at work: its thumbnail is greyed, no orders
+        return false;
     std::printf("opensims2: select Sim %d\n", id);
     if (gLive->onSelectSim)
         gLive->onSelectSim(id);
@@ -2190,6 +2196,18 @@ void selectNextFamilySim() {
         return;
     auto it = std::find(family.begin(), family.end(), gLive->sim());
     selectFamilySim(it == family.end() || std::next(it) == family.end() ? family.front() : *std::next(it));
+}
+
+// A selected Sim that leaves the world (off to work) hands the selection to
+// a family member who is home: its thumbnail is greyed and it takes no
+// orders (live QA 15: the Sim at work could be selected and got "Receber
+// Correio"). All of them away: the selection stays.
+void keepSelectedSimHome() {
+    if (!gLive || !gPie || !gSimulation || !gLive->sim() || simInTheWorld(int16_t(gLive->sim())))
+        return;
+    for (const os2::vm::ObjectId id : gLive->family())
+        if (id != gLive->sim() && selectFamilySim(id))
+            return;
 }
 
 // The tutorial each frame: its UI Effects, and the end of an episode
@@ -3576,6 +3594,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         if (a)
             a->update(seconds);
     adoptVmSims(renderer);
+    keepSelectedSimHome();
     updateCinematic(renderer, seconds); // first: a playing scene's camera cuts the walls
     updateLotView(renderer, false);
     if (gDoors && gSimulation) {

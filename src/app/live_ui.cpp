@@ -346,7 +346,7 @@ uint64_t LiveUi::stamp() const {
     for (const auto& t : trends_)
         mix(uint64_t(t.arrows() + 8));
     for (vm::ObjectId id : family()) {
-        mix(uint64_t(uint16_t(id)));
+        mix(uint64_t(uint16_t(id)) << 1 | uint64_t(simAway && simAway(id)));
         if (const vm::Object* o = vm_->object(id); o && o->person)
             mix(uint64_t(uint16_t(o->person->motives[vm::motive::Mood])));
     }
@@ -730,8 +730,21 @@ UiScreen LiveUi::screen(int width, int height) {
                 UiDrawHooks th;
                 if (const UiElement* grp = m.child(0x1000)) {
                     if (const UiElement* t = grp->child(1)) {
-                        if (auto p = portraits_.find(id); p != portraits_.end())
+                        if (auto p = portraits_.find(id); p != portraits_.end()) {
                             th.images[t] = p->second.get();
+                            // Out of the world (at work): the portrait greyed, and not a target.
+                            if (simAway && simAway(id)) {
+                                auto& g = awayPortraits_[id];
+                                if (!g || g->width != p->second->width || g->height != p->second->height) {
+                                    g = std::make_unique<RgbaImage>(*p->second);
+                                    for (size_t i = 0; i + 3 < g->pixels.size(); i += 4) {
+                                        const unsigned l = (g->pixels[i] * 77u + g->pixels[i + 1] * 150u + g->pixels[i + 2] * 29u) >> 8;
+                                        g->pixels[i] = g->pixels[i + 1] = g->pixels[i + 2] = uint8_t(l * 3 / 5 + 40);
+                                    }
+                                }
+                                th.images[t] = g.get();
+                            }
+                        }
                         else
                             th.hide.insert(t);
                     }
@@ -743,8 +756,10 @@ UiScreen LiveUi::screen(int width, int height) {
                     (id == sim_ ? th.hide : th.show).insert(b);
                 if (const UiElement* b = m.child(0x3000))
                     (id == sim_ ? th.show : th.hide).insert(b);
+                const bool away = simAway && simAway(id);
                 place(m, mx, my, th);
-                targets_.push_back({{mx, my, mx + 40, my + 43}, Action::SelectSim, id});
+                if (!away)
+                    targets_.push_back({{mx, my, mx + 40, my + 43}, Action::SelectSim, id});
                 solid_.push_back({mx, my, mx + 40, my + 43});
                 my += 43;
             }

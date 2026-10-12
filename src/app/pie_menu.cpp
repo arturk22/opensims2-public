@@ -668,7 +668,7 @@ std::optional<simd_float3> PieMenuHost::anchor(vm::ObjectId id) const {
 
 bool PieMenuHost::open(vm::ObjectId object, simd_float2 at, vm::ObjectId merged) {
     close();
-    if (!sim_)
+    if (!sim_ || (simAway && simAway(sim_)))
         return false;
     for (const vm::ObjectId id : {object, merged})
         if (id)

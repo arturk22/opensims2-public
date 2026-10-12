@@ -193,6 +193,9 @@ public:
     // Sim at a canvas point. False if it has no available entries.
     // `merged`: a second object whose entries follow (a rug's go-here
     // destination, vm::objectClick); onClose is called for it too.
+    // A Sim out of the world (at work) takes no orders: `open` refuses while
+    // this says the selected Sim is away (null: never).
+    std::function<bool(vm::ObjectId sim)> simAway;
     bool open(vm::ObjectId object, simd_float2 at, vm::ObjectId merged = 0);
     void close();
     bool isOpen() const { return open_; }

@@ -93,6 +93,9 @@ public:
     // A Sim's portrait (character file IMG 0x10): the panel, the family
     // thumbnails and the queue icons of interactions with that Sim.
     void setPortrait(vm::ObjectId id, RgbaImage portrait);
+    // Family members out of the world (at work) are greyed in the column and
+    // cannot be picked there (null: none are).
+    std::function<bool(vm::ObjectId)> simAway;
     // Called when the player picks another Sim in the family column.
     std::function<void(vm::ObjectId)> onSelectSim;
     // The camera and a Sim (docs/ui-live-mac.md §4.3): a left click on the
@@ -268,6 +271,7 @@ private:
             playSound(name);
     }
     std::map<vm::ObjectId, std::unique_ptr<RgbaImage>> portraits_;
+    std::map<vm::ObjectId, std::unique_ptr<RgbaImage>> awayPortraits_; // greyed copies, Sims out of the world
     std::map<uint32_t, std::unique_ptr<RgbaImage>> objectThumbs_; // by GUID (null: none)
     std::map<uint32_t, const DbpfEntry*> thumbIndex_;             // ObjectThumbnails.package by instance
     std::map<std::tuple<vm::ObjectId, bool, bool>, std::unique_ptr<RgbaImage>> icons_; // masked (grey when waiting), by variant

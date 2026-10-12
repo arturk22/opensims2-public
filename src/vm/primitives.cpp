@@ -1716,6 +1716,9 @@ Exit genericSimsCall(Context& c) {
     case 11: vm.buildBuyEnabled = call == 11; return Exit::True;
     case 14: vm.globals[global::HouseRadioStation] = temps[0]; return Exit::True;
     case 18: // TryGenericSimCall (BV): above 1 the speed as is, 1 unpause, else pause
+        if (std::getenv("OS2_LOG_SPEED")) // test aid: who changes the game speed (docs: the carpool's Wait for Riders)
+            std::fprintf(stderr, "game speed call: %d (stack object %d, was speed %d paused %d)\n", int(temps[0]),
+                         int(c.frame.stackObject), int(vm.globals[global::Speed]), int(vm.globals[global::Paused]));
         if (temps[0] <= 1)
             vm.globals[global::Paused] = temps[0] != 1;
         else
