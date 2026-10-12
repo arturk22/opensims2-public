@@ -368,6 +368,8 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
         return v;
     };
     for (const auto& [id, x] : a.objects()) {
+        if (b.globalsMadeAtLoad.count(id))
+            continue;
         const Object* y = b.object(id);
         const std::string at = "object " + std::to_string(id) + ": ";
         if (!y) {
@@ -475,15 +477,12 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
             }
         }
     }
-    // The global sim objects every lot load makes when the lot has none
-    // (updateSimObjects, as cEdithObjectModule::UpdateSimObjects): the
-    // curtain and the tutorial controllers delete themselves once done, so
-    // the reload makes them again, as the game's does.
-    std::set<uint32_t> globalGuids;
-    for (const auto& g : b.code().globalSimObjects(1))
-        globalGuids.insert(g.guid);
+    // The global sim objects the reload made (updateSimObjects, as
+    // cEdithObjectModule::UpdateSimObjects): the curtain and the tutorial
+    // controllers delete themselves once done, so the reload makes them
+    // again, as the game's does, with their own birth date and Main.
     for (const auto& [id, o] : b.objects())
-        if (!a.object(id) && !(o.definition && globalGuids.count(o.definition->guid())))
+        if (!a.object(id) && !b.globalsMadeAtLoad.count(id))
             diff("object " + std::to_string(id) + (o.definition ? " (" + o.definition->fileName + ")" : std::string()) +
                  ": missing from the first");
     for (size_t i = 0; i < kGlobalCount; ++i)

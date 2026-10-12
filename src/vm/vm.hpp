@@ -932,6 +932,9 @@ public:
         uint64_t lastTick = 0;
     };
     std::map<ObjectId, ErrorReset> errorResets;
+    // The global sim objects the lot load made (vm::updateSimObjects): a
+    // reload makes them again, so lot-save --check does not compare them.
+    std::set<ObjectId> globalsMadeAtLoad;
     // Init threads of objects created while running (initCreatedObjects), for the host to look at.
     std::vector<Thread> createdInits;
     // Runs the Init of `id` and of the other parts of its multi-tile object

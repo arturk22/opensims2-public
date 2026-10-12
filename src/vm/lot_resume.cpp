@@ -369,6 +369,7 @@ size_t updateSimObjects(VM& vm, bool casLot) {
         if (have.empty() && !mustNotExist) {
             // MakeNewOutOfWorldObject: Init, then the Main like any made object.
             const ObjectId id = createGhost(vm, g.group, g.instance);
+            vm.globalsMadeAtLoad.insert(id);
             for (ObjectId part : groupOf(vm, id))
                 vm.startMain(part);
             ++made;
