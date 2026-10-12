@@ -207,20 +207,28 @@ struct Neighbor {
     int16_t parentA = 0, parentB = 0;
 };
 
-// Inventories (Manage Inventory) and their tokens grow on demand; this bounds them.
-constexpr size_t kMaxInventoryTokens = 4096;
+// Inventories (Manage Inventory) and their tokens grow on demand; the game
+// adds no singular token past 0x7FFF (cTSInventory::AddSingularToken, BV
+// 0x496e68); properties are bounded here.
+constexpr size_t kMaxInventoryTokens = 0x7FFF;
 constexpr size_t kMaxTokenProperties = 256;
 
-// An inventory token: memories, skills, wants, food units, ... are singular
-// tokens of an object GUID with flags and a list of properties; counted tokens
-// (gifts, outfits, games) have a category and a count instead.
+// An inventory token as cTSInventoryToken keeps it: an object GUID, flags
+// (eInventoryTokenFlags; bit 0 visible, 1 memory, 2 marked for deletion, 3
+// shopping: cEdithLanguage::CatManageInventoryMatchFlags BV 0x4b2d24) and a
+// list of properties. Singular tokens are memories, skills, wants, food
+// units, ...; a counted token (gifts, outfits, games) keeps its count and
+// category as properties 0 and 1 (cTSInventory::AddCountedToken BV 0x496ac4).
 struct InventoryToken {
     uint32_t guid = 0;
     int16_t flags = 0;
     std::vector<int16_t> properties;
-    int16_t category = 0; // counted
-    int16_t count = 0;    // counted
 };
+namespace tokenflag {
+constexpr int16_t Visible = 0x01, Memory = 0x02, MarkedForDeletion = 0x04, Shopping = 0x08;
+}
+inline int16_t countOf(const InventoryToken& t) { return t.properties.empty() ? int16_t(0) : t.properties[0]; }
+inline int16_t categoryOf(const InventoryToken& t) { return t.properties.size() < 2 ? int16_t(0) : t.properties[1]; }
 
 // Inventories are global, of a lot ("house"), of a family or of a neighbor
 // (the order of "Which Inventory(G = 0, H, F, N)" in the editor's labels,
@@ -234,16 +242,19 @@ struct Inventory {
 
 // The token Manage Inventory reads from an inventory, with where it came from,
 // so its properties can be changed and saved back. Fields as data owners
-// 0x27/0x28 see them, labelled in STR# 0xFC: 0 inventory kind, 1 inventory ID,
-// 2 singular (0) or counted, 3 token index, 4-5 GUID low/high word, 6 flags,
-// 7 property count, 8 property index, 9 property value (at that index).
+// 0x27/0x28 see them (cTSObject +0x1A0.., InterpValue BV 0xb15f2c), labelled
+// in STR# 0xFC: 0 inventory kind, 1 inventory ID, 2 singular (0) or counted,
+// 3 token index (from 0, as the game keeps it: TryInventoryAction BV
+// 0xe26a40), 4-5 GUID low/high word, 6 flags, 7 property count, 8 property
+// index, 9 property value (at that index; ours: in the game 8 and 9 are the
+// pointer to the token object).
 struct TempToken {
     InventoryToken token;
     bool loaded = false;
     InventoryKind kind = InventoryKind::Global;
     int16_t inventoryId = 0;
     bool counted = false;
-    int16_t index = 0; // 1-based, as in the trees
+    int16_t index = 0; // from 0
     int16_t propertyIndex = 0;
 };
 

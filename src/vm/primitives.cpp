@@ -1178,158 +1178,298 @@ Exit changeMaterial(Context& c) {
     return Exit::True;
 }
 
-// Manage Inventory (0x33): u8 at 0 (bits 0-1 the inventory kind, "G = 0, H,
-// F, N" in STR# 0xFC; 0x04 counted instead of singular tokens), inventory ID
-// (owner u8 at 1, data u16; not read for the global inventory), operation u8
-// at 4, GUID u32 at 5, category u8 at 9 (counted tokens), then two operands
-// (owner u8, data u16 at 10 and 13). The operation names come from the
-// editor's disassembly strings in Sims2.exe ("Add token", "Find the token",
-// "Push property on token at index from", "Set To Next token", "Save My Temp
-// Token back to the location it was loaded from", ...); which number is which,
-// and the rest, from how the trees use them:
-//   0 add a token of the GUID (0: the stack object's, as in "CT - Add Memory"
-//     and "CT - Add to Inventory"; the binary also for 2 and 3, and counted
-//     0, 2, 4, 6 and 7, with the match flags: not done, see 2); counted: add
-//     the second operand to its count
-//   1 remove the token at index (first operand)
-//   2 remove every token of the GUID
-//   3 find the next token of the GUID after the index in the first operand
-//     (0: the first), index into the first operand; false if none
-//   4 push the second operand onto the properties of the token at index (first)
-//   5 pop the last property of the token at index (first) into the second; false if none
-//   6 read the token at index (first) into my temporary token (the GUID is
-//     not used: Mac binary); false past the end (loops stop on it)
-//   7 property (first, from 1) of my temporary token into the second; false if out of range
-//   8 set property (first) of my temporary token to the second; false if out of range
-//   9 save my temporary token back where it was read; false if it is gone
-//  10 token count into the second operand
-//  11 add a copy of my temporary token ("Copy Marker (no dupe)", "Transport
-//     Tokens - Copy Global to Local"; "Move Invitees from Local to Global" walks
-//     the source by index while doing it, so the source keeps its token)
-// Token indices start at 1: the loops over an inventory run from 1 to the count,
-// or from the count down to 1. Counted tokens (byte 0 & 0x04) add to the
-// count of their GUID (0); the other operations work on the counted list as
-// on the singular one (inferred: "Sleep - Outfit - Choose by Routine" and
-// "Dance - Get Dance Type" read them with 6, "Interaction - Dump Shopping
-// Stuff" removes them with 2). Byte 0 by the binary (ManageInventoryParam::
-// UpgradeVersion BV 0xac3f00 turns these version-0 operands into its own):
-// bits 0-1 the kind, 0x04 counted, bits 3-5 a number the counted add (0)
-// and 1 pass on (not understood), 0x80 a flag of the find (3); byte 9 the
-// match flags (visible, memory, shopping: CatManageInventoryMatchFlags),
-// which the singular operations get as 0x0C. Not done: the match flags and
-// those bits.
+// Manage Inventory (0x33), as cTSObject::TryInventoryAction (BV 0xe26a40)
+// and cTSInventory do it, on the base game's (version 0) operands, which
+// ManageInventoryParam::UpgradeVersion (BV 0xac3f00) converts:
+//   byte 0: bits 0-1 the inventory kind ("G = 0, H, F, N", STR# 0xFC), 0x04
+//     counted tokens, bits 3-4 the match value of the singular operations
+//     (token flags: 0x01 visible, 0x02 memory) and bits 3-5 the flags a new
+//     counted token gets, 0x80 the find searches backwards (no base tree);
+//   inventory ID (owner u8 at 1, data u16 at 2; not read for the global
+//     inventory), operation u8 at 4, GUID u32 at 5, byte 9 the category of
+//     counted tokens (the singular operations get match mask 0x03: the BV
+//     sets byte 9 to 0x0C, whose bits 2-6 are the mask and 0-1 more value
+//     bits), first operand (owner u8 at 10, data u16 at 11), second (13, 14).
+// A singular token matches a GUID and the flags when its flags & mask equal
+// the value & mask and it is not marked for deletion (flag 0x04;
+// MatchesGuidAndFlags, FindNextSingularTokenOfGUID BV 0x494038). GUID 0 is
+// the stack object's (error 0x15 without one) in the singular 0, 2 and 3 and
+// the counted 0, 2, 4, 6 and 7. Token indices in the operands start at 1.
+// Singular:
+//   0 add a token of the GUID with flags = the match value (false at 0x7FFF)
+//   1 remove the token at the index (first operand); false if none
+//   2 remove every matching token of the GUID; false if none
+//   3 find the next matching token of the GUID after the index in the first
+//     operand (0: from the first), its index into the first; false if none
+//   4 push the second operand onto the properties of the token at the index; false if none
+//   5 pop the last property of the token at the index into the second; false if none or empty
+//   6 read the token at the index into my temporary token; false if none
+//   7 property (first, from 1) of my temporary token into the second; false if none
+//   8 set property (first) of my temporary token to the second; false if none
+//   9 save my temporary token back where it was read; false if it is gone (a
+//     temporary token read from counted tokens runs the counted 9 instead)
+//  10 token count into the second
+//  11 add a copy of my temporary token (the copy keeps its flags)
+// Counted (properties 0 and 1 are the count and the category):
+//   0 add the second operand to the count of the GUID and category (byte 9);
+//     a new token gets flags byte 0 bits 3-5; false if the number is not > 0
+//   1 the same for the token at the index (first operand); false if none
+//   2 subtract the second from the GUID and category (the token goes at 0);
+//     false if none or the number is not > 0
+//   3 the same for the token at the index; false if none
+//   4 remove the token of the GUID and category; false if none
+//   5 remove the token at the index (< 1: error 0x74); false if none
+//   6 find the GUID and category: count into the second, index into the first; false if none
+//   7 read the token of the GUID and category into my temporary token; false if none
+//   8 read the token at the index into my temporary token; false if none
+//   9 find the next token of the category after the index in the first: its
+//     index into the first, its GUID into the second and the one after it
+//  10 token count into the second
+//  11 copy the token at the index to the inventory of kind byte 6 & 7 (ID in
+//     the second operand), adding its count there, if byte 6 & 0x08; false if
+//     not or no token there
+// Operations past these are false.
 Exit manageInventory(Context& c) {
     const auto& o = c.instruction.operands;
-    const auto kind = InventoryKind(o[0] & 0x03);
-    const bool counted = o[0] & 0x04;
-    const int16_t id = kind == InventoryKind::Global ? 0 : c.get(o[1], int16_t(le16(&o[2])));
-    const uint8_t op = o[4];
-    const uint32_t guid = le32(&o[5]);
+    TempToken& temp = c.me().tempToken;
+    uint8_t op = o[4];
+    InventoryKind kind = InventoryKind(o[0] & 0x03);
+    bool counted = o[0] & 0x04;
+    int16_t id = 0;
+    if (!counted && op == 9) { // where the temporary token was read from
+        kind = temp.kind, id = temp.inventoryId, counted = temp.counted;
+    } else if (kind != InventoryKind::Global) {
+        id = c.get(o[1], int16_t(le16(&o[2])));
+    }
+    const int16_t matchValue = int16_t((o[0] >> 3) & 0x03), matchMask = 0x03;
+    const int16_t newCountedFlags = int16_t((o[0] >> 3) & 0x07);
+    const bool backwards = o[0] & 0x80;
+    const int16_t category = o[9];
     auto get1 = [&] { return c.get(o[10], int16_t(le16(&o[11]))); };
     auto set1 = [&](int16_t v) { c.set(o[10], int16_t(le16(&o[11])), v); };
     auto get2 = [&] { return c.get(o[13], int16_t(le16(&o[14]))); };
-    auto set2 = [&](int16_t v) { c.set(o[13], int16_t(le16(&o[14])), v); };
+    auto set2 = [&](int16_t v, int16_t at = 0) { c.set(o[13], int16_t(le16(&o[14]) + at), v); };
+    auto guid = [&] {
+        const uint32_t g = le32(&o[5]);
+        if (g)
+            return g;
+        if (!c.vm.object(c.frame.stackObject))
+            throw gameError(err::NoStackObject, "Manage Inventory");
+        return c.stackObject().guid();
+    };
     Inventory& inventory = c.vm.inventory(kind, id);
     auto& tokens = counted ? inventory.counted : inventory.singular;
-    auto guidOrStackObject = [&] { return guid ? guid : c.stackObject().guid(); };
-    auto checkRoom = [&] {
-        if (tokens.size() >= kMaxInventoryTokens)
-            throw VMError("Manage Inventory: inventory full");
+    auto at = [&](int16_t index) -> InventoryToken* { // index from 1
+        return index >= 1 && size_t(index) <= tokens.size() ? &tokens[size_t(index) - 1] : nullptr;
     };
-    auto at = [&](int16_t index) -> InventoryToken& {
-        if (index < 1 || size_t(index) > tokens.size())
-            throw VMError("Manage Inventory: token index " + std::to_string(index) + " out of range (" +
-                          std::to_string(tokens.size()) + ")");
-        return tokens[size_t(index) - 1];
+    auto load = [&](size_t i) {
+        temp = {.token = tokens[i], .loaded = true, .kind = kind, .inventoryId = id, .counted = counted,
+                .index = int16_t(i)};
     };
-    TempToken& temp = c.me().tempToken;
 
     if (counted) {
+        auto find = [&](uint32_t g, int16_t cat) {
+            return std::find_if(tokens.begin(), tokens.end(),
+                                [&](const auto& t) { return t.guid == g && categoryOf(t) == cat; });
+        };
+        auto add = [&](std::vector<InventoryToken>& list, uint32_t g, int16_t cat, int16_t flags, int16_t n) {
+            if (n <= 0)
+                return false;
+            auto it = std::find_if(list.begin(), list.end(),
+                                   [&](const auto& t) { return t.guid == g && categoryOf(t) == cat; });
+            if (it == list.end())
+                list.push_back({.guid = g, .flags = flags, .properties = {n, cat}});
+            else
+                it->properties[0] = int16_t(std::min<int>(countOf(*it) + n, 0x7FFF));
+            return true;
+        };
+        auto subtract = [&](uint32_t g, int16_t cat, int16_t n) {
+            if (n <= 0)
+                return false;
+            auto it = find(g, cat);
+            if (it == tokens.end())
+                return false;
+            const int16_t left = int16_t(std::max(countOf(*it) - n, 0));
+            if (left == 0)
+                tokens.erase(it);
+            else
+                it->properties[0] = left;
+            return true;
+        };
         switch (op) {
         case 0: {
-            const uint32_t g = guidOrStackObject();
-            const int16_t n = get2();
-            auto it = std::find_if(tokens.begin(), tokens.end(), [&](const auto& t) { return t.guid == g; });
-            if (it == tokens.end()) {
-                checkRoom();
-                tokens.push_back({.guid = g, .category = o[9]});
-                it = tokens.end() - 1;
-            }
-            it->count = int16_t(it->count + n);
+            const uint32_t g = guid();
+            return add(tokens, g, category, newCountedFlags, get2()) ? Exit::True : Exit::False;
+        }
+        case 1: {
+            const InventoryToken* t = at(get1());
+            if (!t)
+                return Exit::False;
+            const uint32_t g = t->guid;
+            const int16_t cat = categoryOf(*t);
+            add(tokens, g, cat, newCountedFlags, get2());
             return Exit::True;
         }
+        case 2: {
+            const uint32_t g = guid();
+            return subtract(g, category, get2()) ? Exit::True : Exit::False;
+        }
+        case 3: {
+            const InventoryToken* t = at(get1());
+            if (!t)
+                return Exit::False;
+            subtract(t->guid, categoryOf(*t), get2());
+            return Exit::True;
+        }
+        case 4: {
+            auto it = find(guid(), category);
+            if (it == tokens.end())
+                return Exit::False;
+            tokens.erase(it);
+            return Exit::True;
+        }
+        case 5: {
+            const int16_t index = get1();
+            if (index < 1)
+                throw gameError(err::TokenIndexOutOfRange, "Manage Inventory");
+            if (!at(index))
+                return Exit::False;
+            tokens.erase(tokens.begin() + (index - 1));
+            return Exit::True;
+        }
+        case 6: {
+            auto it = find(guid(), category);
+            if (it == tokens.end())
+                return Exit::False;
+            set2(countOf(*it));
+            set1(int16_t(it - tokens.begin() + 1));
+            return Exit::True;
+        }
+        case 7: {
+            auto it = find(guid(), category);
+            if (it == tokens.end())
+                return Exit::False;
+            load(size_t(it - tokens.begin()));
+            return Exit::True;
+        }
+        case 8: {
+            const int16_t index = get1();
+            if (!at(index))
+                return Exit::False;
+            load(size_t(index - 1));
+            return Exit::True;
+        }
+        case 9: {
+            // FindNextCountedTokenOfCategory (BV 0x493e98) from the token
+            // after the index (0: the first).
+            const int16_t from = std::max<int16_t>(get1(), 0);
+            for (size_t i = size_t(from); i < tokens.size(); ++i) {
+                if (categoryOf(tokens[i]) != category)
+                    continue;
+                const uint32_t g = tokens[i].guid;
+                set1(int16_t(i + 1));
+                set2(int16_t(g & 0xFFFF));
+                set2(int16_t(g >> 16), 1);
+                return Exit::True;
+            }
+            return Exit::False;
+        }
         case 10: set2(int16_t(tokens.size())); return Exit::True;
-        default:
-            break; // the others work on the counted list as on the singular one (inferred)
+        case 11: {
+            // The target's vtable 0xC4 (BV 0x497eb4): the count is added to
+            // the token of the same GUID and category there.
+            if (!(o[6] & 0x08))
+                return Exit::False;
+            const InventoryKind to = InventoryKind(o[6] & 0x07);
+            if (o[6] & 0x04)
+                throw gameError(err::NoInventory, "Manage Inventory: inventory kind " + std::to_string(o[6] & 0x07));
+            const int16_t toId = to == InventoryKind::Global ? int16_t(0) : get2();
+            const InventoryToken* t = at(get1());
+            if (!t)
+                return Exit::False;
+            const InventoryToken copy = *t;
+            if (countOf(copy) > 0)
+                add(c.vm.inventory(to, toId).counted, copy.guid, categoryOf(copy), copy.flags, countOf(copy));
+            return Exit::True;
+        }
+        default: return Exit::False;
         }
     }
 
+    auto matches = [&](const InventoryToken& t, uint32_t g) {
+        return t.guid == g && !(t.flags & tokenflag::MarkedForDeletion) &&
+               (t.flags & matchMask) == (matchValue & matchMask);
+    };
     switch (op) {
-    case 0:
-        checkRoom();
-        tokens.push_back({.guid = guidOrStackObject()});
+    case 0: {
+        const uint32_t g = guid();
+        if (tokens.size() >= kMaxInventoryTokens)
+            return Exit::False;
+        tokens.push_back({.guid = g, .flags = matchValue});
         return Exit::True;
+    }
     case 1: {
         const int16_t index = get1();
-        at(index);
+        if (!at(index))
+            return Exit::False;
         tokens.erase(tokens.begin() + (index - 1));
         return Exit::True;
     }
     case 2: {
-        // The binary takes the stack object's GUID for 0 here and in 3, but
-        // matches the tokens' flags too (byte 9, byte 0 bits 3-5), which are
-        // not done: without them the stack object's GUID finds tokens it
-        // should not (seeded soak: Sims died), so 0 still matches GUID 0.
-        std::erase_if(tokens, [&](const auto& t) { return t.guid == guid; });
-        return Exit::True;
+        const uint32_t g = guid();
+        return std::erase_if(tokens, [&](const auto& t) { return matches(t, g); }) ? Exit::True : Exit::False;
     }
     case 3: {
-        // From the index in the first operand on (0: the start), as
-        // cTSObject::TryInventoryAction passes it to the find (BV): the
-        // loops of "NPC - Lot Familiar NPC - Get in T[0]" go back to it to
-        // find the next one.
-        const int16_t from = std::clamp<int16_t>(get1(), 0, int16_t(tokens.size()));
-        auto it = std::find_if(tokens.begin() + from, tokens.end(), [&](const auto& t) { return t.guid == guid; });
-        if (it == tokens.end())
-            return Exit::False;
-        set1(int16_t(it - tokens.begin() + 1));
-        return Exit::True;
+        // From the token after the index in the first operand (0: the
+        // first); backwards from the one before it (0: the last).
+        const uint32_t g = guid();
+        const int16_t start = get1();
+        const int n = int(tokens.size());
+        if (!backwards) {
+            for (int i = std::max<int>(start, 0); i < n; ++i)
+                if (matches(tokens[size_t(i)], g))
+                    return set1(int16_t(i + 1)), Exit::True;
+        } else {
+            for (int i = (start - 1 < 0 || start - 1 >= n ? n : start - 1) - 1; i >= 0; --i)
+                if (matches(tokens[size_t(i)], g))
+                    return set1(int16_t(i + 1)), Exit::True;
+        }
+        return Exit::False;
     }
     case 4: {
-        auto& props = at(get1()).properties;
-        if (props.size() >= kMaxTokenProperties)
+        InventoryToken* t = at(get1());
+        if (!t)
+            return Exit::False;
+        if (t->properties.size() >= kMaxTokenProperties)
             throw VMError("Manage Inventory: too many token properties");
-        props.push_back(get2());
+        t->properties.push_back(get2());
         return Exit::True;
     }
     case 5: {
-        auto& props = at(get1()).properties;
-        if (props.empty())
+        InventoryToken* t = at(get1());
+        if (!t || t->properties.empty())
             return Exit::False;
-        const int16_t v = props.back();
-        props.pop_back();
+        const int16_t v = t->properties.back();
+        t->properties.pop_back();
         set2(v);
         return Exit::True;
     }
     case 6: {
-        // The Mac binary (cTSObject::TryInventoryAction, BV) reads the token
-        // at the index and does not look at the GUID: trees leave stale
-        // GUIDs there ("Token - Add Food Cooked" finds a token with one GUID
-        // and reads it with another).
+        // The token at the index; the GUID is not looked at: trees leave
+        // stale GUIDs there ("Token - Add Food Cooked" finds a token with
+        // one GUID and reads it with another).
         const int16_t index = get1();
-        if (index < 1 || size_t(index) > tokens.size())
+        if (!at(index))
             return Exit::False;
-        temp = {.token = tokens[size_t(index) - 1], .loaded = true, .kind = kind, .inventoryId = id, .counted = counted,
-                .index = index};
+        load(size_t(index - 1));
         return Exit::True;
     }
     case 7:
     case 8: {
-        // Property numbers start at 1, as token indices (no tree uses 0 as a
-        // literal; "Food - Update - Food Unit Info Token" pushes three and
-        // sets 2 and 3 after checking the count is at least 3).
+        // Property numbers start at 1, as token indices ("Food - Update -
+        // Food Unit Info Token" pushes three and sets 2 and 3).
         const int16_t p = get1();
-        if (!temp.loaded || p < 1 || size_t(p) > temp.token.properties.size())
+        if (p < 1 || size_t(p) > temp.token.properties.size())
             return Exit::False;
         if (op == 7)
             set2(temp.token.properties[size_t(p) - 1]);
@@ -1338,23 +1478,18 @@ Exit manageInventory(Context& c) {
         return Exit::True;
     }
     case 9: {
-        if (!temp.loaded)
+        if (!temp.loaded || temp.index < 0 || size_t(temp.index) >= tokens.size())
             return Exit::False;
-        auto& source = c.vm.inventory(temp.kind, temp.inventoryId);
-        auto& list = temp.counted ? source.counted : source.singular;
-        if (temp.index < 1 || size_t(temp.index) > list.size())
-            return Exit::False;
-        list[size_t(temp.index) - 1] = temp.token;
+        tokens[size_t(temp.index)] = temp.token;
         return Exit::True;
     }
     case 10: set2(int16_t(tokens.size())); return Exit::True;
     case 11:
-        if (!temp.loaded)
+        if (!temp.loaded || tokens.size() >= kMaxInventoryTokens)
             return Exit::False;
-        checkRoom();
         tokens.push_back(temp.token);
         return Exit::True;
-    default: throw VMError("Manage Inventory: operation " + std::to_string(op) + " not implemented");
+    default: return Exit::False;
     }
 }
 

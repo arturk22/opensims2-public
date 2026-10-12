@@ -56,32 +56,28 @@ Inventory toVm(const hood::Inventory& in) {
     }
     for (const auto& t : in.counted) {
         InventoryToken v{.guid = t.guid, .flags = int16_t(t.flags)};
-        v.count = t.data.size() > 0 ? int16_t(t.data[0]) : int16_t(0);
-        v.category = t.data.size() > 1 ? int16_t(t.data[1]) : int16_t(0);
+        v.properties.assign(t.data.begin(), t.data.end());
         out.counted.push_back(std::move(v));
     }
     return out;
 }
 
 bool same(const Inventory& a, const Inventory& b) {
-    auto eq = [](const std::vector<InventoryToken>& x, const std::vector<InventoryToken>& y, bool counted) {
+    auto eq = [](const std::vector<InventoryToken>& x, const std::vector<InventoryToken>& y) {
         if (x.size() != y.size())
             return false;
         for (size_t i = 0; i < x.size(); ++i) {
-            if (x[i].guid != y[i].guid || x[i].flags != y[i].flags)
-                return false;
-            if (counted ? (x[i].count != y[i].count || x[i].category != y[i].category)
-                        : x[i].properties != y[i].properties)
+            if (x[i].guid != y[i].guid || x[i].flags != y[i].flags || x[i].properties != y[i].properties)
                 return false;
         }
         return true;
     };
-    return eq(a.singular, b.singular, false) && eq(a.counted, b.counted, true);
+    return eq(a.singular, b.singular) && eq(a.counted, b.counted);
 }
 
-// A VM inventory in the package's form; tokens the VM did not change keep
-// their saved values (a counted token's values past the count and category).
-hood::Inventory fromVm(uint32_t id, const Inventory& in, const hood::Inventory* was) {
+// A VM inventory in the package's form (the VM keeps every saved value of a
+// token as its properties, counted tokens too).
+hood::Inventory fromVm(uint32_t id, const Inventory& in, [[maybe_unused]] const hood::Inventory* was) {
     hood::Inventory out;
     out.id = id;
     for (const auto& t : in.singular) {
@@ -91,9 +87,8 @@ hood::Inventory fromVm(uint32_t id, const Inventory& in, const hood::Inventory* 
     }
     for (size_t i = 0; i < in.counted.size(); ++i) {
         const auto& t = in.counted[i];
-        hood::InventoryToken v{t.guid, uint16_t(t.flags), {uint16_t(t.count), uint16_t(t.category)}};
-        if (was && i < was->counted.size() && was->counted[i].guid == t.guid && was->counted[i].data.size() > 2)
-            v.data.insert(v.data.end(), was->counted[i].data.begin() + 2, was->counted[i].data.end());
+        hood::InventoryToken v{t.guid, uint16_t(t.flags), {}};
+        v.data.assign(t.properties.begin(), t.properties.end());
         out.counted.push_back(std::move(v));
     }
     return out;

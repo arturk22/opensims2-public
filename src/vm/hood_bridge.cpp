@@ -40,13 +40,12 @@ Inventory toInventory(const hood::Inventory& in) {
         v.properties.assign(t.data.begin(), t.data.end());
         out.singular.push_back(std::move(v));
     }
-    // Counted tokens hold two values: the count and the category, which is
-    // the category byte the trees add them with (games 3, career rewards 7,
-    // skill and pajama tokens 0; inferred from the data).
+    // Counted tokens hold the count and the category (the byte the trees add
+    // them with: games 3, career rewards 7, skill and pajama tokens 0) as
+    // properties 0 and 1, as cTSInventory::AddCountedToken (BV 0x496ac4).
     for (const auto& t : in.counted) {
         InventoryToken v{.guid = t.guid, .flags = int16_t(t.flags)};
-        v.count = t.data.size() > 0 ? int16_t(t.data[0]) : int16_t(0);
-        v.category = t.data.size() > 1 ? int16_t(t.data[1]) : int16_t(0);
+        v.properties.assign(t.data.begin(), t.data.end());
         out.counted.push_back(std::move(v));
     }
     return out;

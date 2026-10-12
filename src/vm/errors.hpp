@@ -56,6 +56,8 @@ constexpr uint16_t BadLoopCount = 0x70;
 constexpr uint16_t MissingReachAnimation = 0x71;
 constexpr uint16_t BadAnimationType = 0x73;
 constexpr uint16_t TemplateObject = 0x90;
+constexpr uint16_t NoInventory = 0x57;
+constexpr uint16_t TokenIndexOutOfRange = 0x74;
 } // namespace err
 
 inline std::string errorString(uint16_t code) {
@@ -90,6 +92,9 @@ inline std::string errorString(uint16_t code) {
     case 0x37: return "Missing neighbor for data access.";
     case 0x3A: return "Job data not found.";
     case 0x3D: return "Start object required.";
+    case 0x57: return "Inventory doesn't exist for ID passed to Manage Inventory.";
+    case 0x59: return "Bad parameter value set in Manage Inventory Primitive.";
+    case 0x74: return "Inventory token index out of range.";
     case 0x5A: return "Trying to perform an animation from the Social Interaction list against a non person.";
     case 0x46: return "Missing Material / Mesh Group Name.";
     case 0x68: return "The relationship matrix requested could not be found.";

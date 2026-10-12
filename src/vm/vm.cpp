@@ -537,7 +537,7 @@ static int16_t tokenField(TempToken& t, int16_t field) {
     case 4: return int16_t(t.token.guid & 0xFFFF);
     case 5: return int16_t(t.token.guid >> 16);
     case 6: return t.token.flags;
-    case 7: return int16_t(t.counted ? t.token.count : t.token.properties.size());
+    case 7: return int16_t(t.token.properties.size()); // a counted token's are its count and category
     case 8: return t.propertyIndex;
     case 9: return tokenProperty(t);
     default: throw VMError("temporary token field " + std::to_string(field) + " out of range");
@@ -558,9 +558,7 @@ static void setTokenField(TempToken& t, int16_t field, int16_t value) {
     case 5: t.token.guid = (t.token.guid & 0xFFFF) | uint32_t(uint16_t(value)) << 16; return;
     case 6: t.token.flags = value; return;
     case 7:
-        if (t.counted)
-            t.token.count = value;
-        else if (value < 0 || size_t(value) > kMaxTokenProperties)
+        if (value < 0 || size_t(value) > kMaxTokenProperties)
             throw VMError("temporary token: property count " + std::to_string(value) + " out of range");
         else
             t.token.properties.resize(size_t(value));

@@ -689,6 +689,48 @@ static void testManageInventory() {
     check(t.status == Thread::Status::Finished && t.temps[0] == 1 && t.temps[1] == 2 && t.temps[2] == 42 &&
               t.temps[3] == 1 && t.temps[4] == 7 && t.temps[5] == 0,
           "Manage Inventory adds, finds, reads, changes and saves tokens");
+
+    // Match flags (byte 0 bits 3-4: visible, memory) and GUID 0 = the stack
+    // object's in 0, 2 and 3 (TryInventoryAction, BV 0xe26a40); counted
+    // tokens' own operations (count and category as properties 0 and 1).
+    Fixture fy;
+    constexpr uint32_t kMemory = 0x0A0B0C0D;
+    fy.code.add(kObjGroup, 0x80, definition(kMemory));
+    fy.vm.instantiate(kObjGroup, 0x80); // id 1, me and my stack object
+    auto flagged = [](uint8_t b0, uint8_t op, uint32_t guid, uint8_t b9, uint8_t o1, int16_t d1, uint8_t o2,
+                      int16_t d2, Target t, Target f) {
+        return instr(0x33, t, f,
+                     {b0, Lit, 5, 0, op, uint8_t(guid), uint8_t(guid >> 8), uint8_t(guid >> 16), uint8_t(guid >> 24),
+                      b9, o1, uint8_t(d1), 0, o2, uint8_t(d2), 0});
+    };
+    constexpr uint8_t Plain = 0x03, Mem = 0x13, VisMem = 0x1B, Counted = 0x07;
+    fy.code.add(kObjGroup, 0x1001,
+                tree({expr(StackId, 0, Assign, Lit, 1, go(1), E),
+                      flagged(VisMem, 0, 0, 0, Lit, 0, Lit, 0, go(2), E),          // memory of my GUID, flags 3
+                      flagged(Plain, 0, kMemory, 0, Lit, 0, Lit, 0, go(3), E),     // plain token, flags 0
+                      flagged(Plain, 3, 0, 0, Temp, 0, Lit, 0, go(4), E),          // temp0 = 2 (flags 0 only)
+                      flagged(VisMem, 3, 0, 0, Temp, 1, Lit, 0, go(5), E),         // temp1 = 1
+                      flagged(Mem, 3, 0, 0, Lit, 0, Lit, 0, E, go(6)),             // memory, not visible: none
+                      flagged(Mem, 2, 0, 0, Lit, 0, Lit, 0, E, go(7)),             // remove: none, false
+                      flagged(VisMem, 2, 0, 0, Lit, 0, Lit, 0, go(8), E),          // removes the memory
+                      flagged(Plain, 10, 0, 0, Lit, 0, Temp, 2, go(9), E),         // temp2 = 1 left
+                      flagged(Counted, 0, kMemory, 3, Lit, 0, Lit, 5, go(10), E),  // 5 of category 3
+                      flagged(Counted, 0, 0, 3, Lit, 0, Lit, 2, go(11), E),        // GUID 0: the same, 7
+                      flagged(Counted, 0, kMemory, 4, Lit, 0, Lit, 1, go(12), E),  // another category
+                      flagged(Counted, 0, kMemory, 4, Lit, 0, Lit, 0, E, go(13)),  // 0: false
+                      flagged(Counted, 6, 0, 3, Temp, 3, Temp, 4, go(14), E),      // temp3 = 1, temp4 = 7
+                      flagged(Counted, 2, kMemory, 3, Lit, 0, Lit, 3, go(15), E),  // 4 left
+                      flagged(Counted, 9, 0, 4, Temp, 3, Temp, 5, go(16), E),      // category 4 after 1: temp3 = 2, GUID
+                      flagged(Counted, 3, 0, 0, Lit, 2, Lit, 9, go(17), E),        // 1 - 9: gone
+                      flagged(Counted, 10, 0, 0, Lit, 0, Temp, 7, go(18), E),      // temp7 = 1
+                      flagged(Counted, 8, 0, 0, Lit, 1, Lit, 0, go(19), E),        // read it
+                      expr(Temp, 1, Assign, 0x27, 7, go(20), E),                   // temp1 = 2 properties
+                      flagged(Counted, 5, 0, 0, Lit, 0, Lit, 0, E, E)}));           // index 0: error 0x74
+    Thread u = fy.run(0x1001);
+    check(u.status == Thread::Status::Failed && u.error.find("Inventory token index out of range") != std::string::npos &&
+              u.temps[0] == 2 && u.temps[1] == 2 && u.temps[2] == 1 && u.temps[3] == 2 && u.temps[4] == 7 &&
+              u.temps[5] == int16_t(kMemory & 0xFFFF) && u.temps[6] == int16_t(kMemory >> 16) && u.temps[7] == 1,
+          "Manage Inventory matches the flags, takes the stack object's GUID for 0 and counts counted tokens");
 }
 
 // Set to Next (0x80 | type) with the target in a temp.

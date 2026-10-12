@@ -190,7 +190,7 @@ static void testLoad() {
     check(g.singular.size() == 1 && g.singular[0].guid == 0x1234 && g.singular[0].properties.size() == 2,
           "global inventory");
     const auto& f = vm.inventory(InventoryKind::Family, 1);
-    check(f.counted.size() == 1 && f.counted[0].count == 12 && f.counted[0].category == 3 && f.counted[0].flags == 1,
+    check(f.counted.size() == 1 && countOf(f.counted[0]) == 12 && categoryOf(f.counted[0]) == 3 && f.counted[0].flags == 1,
           "counted token: count and category");
     const auto& n = vm.inventory(InventoryKind::Neighbor, 1);
     check(n.singular.size() == 1 && n.singular[0].flags == 3 && n.singular[0].properties[2] == 0x4DAE,
