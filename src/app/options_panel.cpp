@@ -23,6 +23,8 @@ constexpr uint32_t kPuckAnchor = 0x4BDEFFAA, kButtons = 0xA200, kAnchor = 0xAAAA
 constexpr std::array<uint32_t, 4> kSliders = {0xB31, 0xB01, 0xB41, 0xB21};
 constexpr std::array<uint32_t, 4> kMutes = {0x10, 0x11, 0x12, 0x13};
 constexpr uint32_t kEdgeScrolling = 0xA1;
+// The windows' left column, 156 px (the title icon's x in the scripts): only the lower tab is art, over the puck.
+constexpr float kTab = 156;
 
 bool inside(const std::array<float, 4>& r, simd_float2 p) { return insideRect(r, p.x, p.y); }
 
@@ -252,9 +254,11 @@ UiScreen OptionsPanel::screen(int width, int height) {
     if (window_ != 0) {
         const UiElement& wr = windowScript(window_).roots.front();
         const auto wa = wr.area();
-        // Its bottom left on the panel's (inferred from the art: the tab is
-        // as tall as the panel).
-        float wx = std::max(0.0f, x0), wy = std::max(0.0f, y0 + float(ra[3] - ra[1]) - float(wa[3] - wa[1]));
+        // Its bottom left on the panel's top left (inferred: its lower left
+        // tab is as tall as the panel and rises from it; the body, with
+        // Apply Changes at its foot, must not sit under the panel's buttons,
+        // which stay usable, as the window on the panel hid half of Apply).
+        float wx = std::max(0.0f, x0), wy = std::max(0.0f, y0 - float(wa[3] - wa[1]));
         if (anchored_)
             wx = std::max(0.0f, anchorX_), wy = std::max(0.0f, anchorY_ - float(wa[3] - wa[1]));
         UiDrawHooks wh;
@@ -317,8 +321,13 @@ UiScreen OptionsPanel::screen(int width, int height) {
         if (const UiElement* e = wr.child(0x999)) // "WingenPlacement"
             wh.hide.insert(e);
         layoutUiElement(wr, wx - float(wa[0]), wy - float(wa[1]), *res_, *fonts_, out, wh);
-        if (auto r = rects.find(&wr); r != rects.end())
-            hits_.push_back({r->second, Target::Window, 0, nullptr});
+        if (auto r = rects.find(&wr); r != rects.end()) {
+            // The body takes the clicks it covers (not the transparent column
+            // left of it, where the tab's art lets the puck's buttons through).
+            std::array<float, 4> body = r->second;
+            body[0] += kTab;
+            hits_.push_back({body, Target::Window, 0, nullptr});
+        }
         if (window_ == 1) {
             for (size_t g = 0; g < 4; ++g)
                 hit(wr.child(kSliders[g]), Target::Slider, int(g));

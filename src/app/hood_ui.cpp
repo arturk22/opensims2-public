@@ -291,7 +291,7 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
         screen(canvasW_, canvasH_); // targets for the current canvas
     binRequest_ = {};
     options_->setCanvas(canvasW_, canvasH_);
-    if (!bins_->modal() && options_->active() && options_->press(p) != OptionsPanel::Action::None)
+    if (!bins_->modal() && options_->active() && (options_->press(p) != OptionsPanel::Action::None || options_->covers(p)))
         return Action::Consumed;
     if (bins_->modal()) {
         binRequest_ = bins_->press(p);

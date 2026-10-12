@@ -25,9 +25,12 @@
 // What maps to the app: the four group volumes and mutes (the lot audio's
 // mixer groups) and edge scrolling, kept in the user's Options.txt
 // (app/user_data.hpp). The other controls do nothing yet. Inferred: a window
-// opens with its bottom left on the options panel's (found by the panel's
-// "4bdeffaa:bl" anchor over the puck, as live_ui places it): the art's lower
-// left tab is as tall as the panel, which stays drawn over it; the sliders
+// opens with its bottom left on the options panel's top left (found by the panel's
+// "4bdeffaa:bl" anchor over the puck, as live_ui places it; the first version put
+// it on the panel's bottom left, which hid half of Apply Changes): the art's lower
+// left tab is as tall as the panel and rises from it, behind the puck; the window's
+// body takes every click it covers (nothing reaches the panels or the world,
+// main.mm's pressOptions) and the tab column does not; the sliders
 // are drawn as their thumb on a flat track (GZWinScrollbar2 is not drawn by
 // the UI layer yet). Plain C++.
 
@@ -67,7 +70,7 @@ public:
     // (credits); the open one closes.
     void toggleWindow(int window);
     // Neighborhood use: the window's bottom left sits on (x, y) of the canvas
-    // instead of the lot's options panel's corner.
+    // (the options panel's top left) instead of the lot's options panel's.
     void setPanelBottomLeft(float x, float y) {
         if (!anchored_ || x != anchorX_ || y != anchorY_)
             anchored_ = true, anchorX_ = x, anchorY_ = y, dirty_ = true;

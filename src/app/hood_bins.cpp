@@ -587,7 +587,7 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
                 target(box->child(0xA240) ? box->child(0xA240)->child(id) : nullptr, Hit::OptWindow, w);
         }
         if (auto r = rects.find(&root); r != rects.end())
-            optionsBL_ = simd_make_float2(r->second[0], r->second[3]);
+            optionsBL_ = simd_make_float2(r->second[0], r->second[1]); // the panel's top left: the window rises from it
     } else if (panel_ == Panel::Lots) {
         const UiElement& root = lots_.roots.front();
         const simd_float2 o = anchoredOrigin(root, puckRect, puck);

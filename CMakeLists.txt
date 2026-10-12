@@ -345,3 +345,7 @@ add_test(NAME wants COMMAND test_wants)
 add_executable(test_tv_program tests/test_tv_program.cpp)
 target_include_directories(test_tv_program PRIVATE src)
 add_test(NAME tv_program COMMAND test_tv_program)
+
+# --help prints the usage and exits without opening a window (r14).
+add_test(NAME cli_help COMMAND opensims2 --help)
+set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "usage: opensims2")

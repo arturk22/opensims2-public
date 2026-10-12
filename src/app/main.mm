@@ -3129,7 +3129,8 @@ bool pressOptions(simd_float2 p, float w, float h) {
     if (!gOptions->active())
         return false;
     gOptions->setCanvas(int(w), int(h));
-    return gOptions->press(p) != os2::OptionsPanel::Action::None;
+    // Whatever the window covers is its own: no click goes on to the panels or the world.
+    return gOptions->press(p) != os2::OptionsPanel::Action::None || gOptions->covers(p);
 }
 
 // A click on the main menu (canvas pixels).
@@ -3606,6 +3607,8 @@ void unloadScene() {
             return;
     }
     if (gPie->isOpen() && gPie->press(p))
+        return;
+    if (pressOptions(p, float(self.bounds.size.width), float(self.bounds.size.height))) // its body is over all
         return;
     if (gLive && gLive->overModeButton(p) && gLive->press(p)) // the puck's modes win over the panels
         return;
@@ -4430,7 +4433,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     gBuy->encode(enc, w, h, gUiScale);
                 if (gBuild && !optionsOver)
                     gBuild->encode(enc, w, h, gUiScale);
-                if (gOptions) // under the puck, as Buy mode's panel
+                if (gOptions) // under the puck, as Buy mode's panel (its tab rises behind the puck)
                     gOptions->encode(enc, w, h, gUiScale);
                 if (gLive)
                     gLive->encode(enc, w, h, gUiScale);
@@ -4553,6 +4556,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     pollFlowDialog();
                     continue;
                 }
+                if (!right && pressOptions(p, cw, ch)) // the option windows float over everything
+                    continue;
                 if (gLive && !right) {
                     gLive->setCanvas(int(cw), int(ch));
                     if (gLive->overModeButton(p) && gLive->press(p)) {
@@ -5072,8 +5077,37 @@ static void buildMenu() {
     NSApp.mainMenu = bar;
 }
 
+// --help / -h: the command line's options (the file's header comment has the
+// details); prints and exits without opening a window.
+static void printUsage() {
+    std::puts(
+        "usage: opensims2 [options]\n"
+        "\n"
+        "scenes (default: the main menu; the game data is found by --data <dir>, OS2_DATA or a folder asked for):\n"
+        "  --hood <N001>            a neighborhood      --hood-lot <n>   enter one of its lots\n"
+        "  --lot <N001_Lot82|file>  a lot's terrain, walls, objects        --cas    Create-a-Sim\n"
+        "  --sim / --character / --skinned / --anim   a Sim, its animation  --movie <name> / --intro  movies\n"
+        "  --play-sound <name>      play a sound and exit (--sound-index, --sound-wav <out.wav>)\n"
+        "view:\n"
+        "  --ui <instance-hex|live> a UI script (live: the game's panel)   --ui-show <id,...>  --ui-hover x,y\n"
+        "  --vm                     run the lot's objects in the SimAntics VM   --run-vm <ticks>\n"
+        "  --mode <live|buy|build>  --walls <up|cutaway|down>  --lighting <state>  --zoom --pivot --heading\n"
+        "  --no-audio --mute --no-edge-scroll --reflections on|off --camera-scale <s> --user-dir <dir>\n"
+        "headless (no window):\n"
+        "  --screenshot <out.png>   render a frame (--frames <n>, --time <s>) and exit\n"
+        "  --click x,y              click the canvas (repeatable; --right-click, --key <name>, --wait <s>)\n"
+        "  --pie <object> [--pie-select N]   --dialog-answer <n> / --dialog-click x,y|return|escape\n"
+        "  --loading-shot <png> [--loading-at <f>]   a scene's loading screen\n"
+        "  -h, --help               this text\n");
+}
+
 int main() {
     @autoreleasepool {
+        for (NSString* a in NSProcessInfo.processInfo.arguments)
+            if ([a isEqualToString:@"--help"] || [a isEqualToString:@"-h"]) {
+                printUsage();
+                return 0;
+            }
         // --movie <name> --screenshot out.png [--frames n] [--time s] [--sound-wav mix.wav]: headless frames.
         if (auto movie = argument(@"--movie"); movie && argument(@"--screenshot")) {
             try {

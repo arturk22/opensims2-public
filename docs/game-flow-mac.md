@@ -97,6 +97,15 @@ janela de opções aberta, e só então faz a ação do jogo (cancelar ferrament
 (`docs/screenshots/r13-options-shadows-hood.jpg`,
 `docs/screenshots/r13-options-graphics-lot.jpg`).
 
+Rodada 14 (passada 8 da QA): a janela de opções abre com o canto inferior
+esquerdo no canto superior esquerdo do painel de opções (antes no inferior
+esquerdo: a janela cobria o painel e metade do "Aplicar Mudanças"; inferido, o
+script não traz posição), no lote e no bairro, e o corpo dela (não a coluna
+esquerda de 156 px, onde só a aba é arte, atrás do puck) consome todo clique
+que cobre antes do puck, dos painéis e do mundo (o clique em "Aplicar Mudanças"
+enfileirava um ícone). `opensims2 --help` / `-h` imprime o uso e sai.
+`docs/screenshots/r14-options-apply-lot.jpg`, `r14-options-graphics-hood.jpg`.
+
 ## 5. Sem tela
 
 `--click x,y`, `--right-click x,y` e `--wait <ticks>` formam um roteiro que
