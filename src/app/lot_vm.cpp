@@ -243,7 +243,7 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
 
 // After a tick: what each Sim should play, cued at that tick's time.
 void LotSimulation::sampleAll(double at) {
-    if (onObjectAnimation)
+    if (onObjectAnimation || onObjectOverlay)
         for (const auto& [id, o] : vm_->objects()) {
             if (o.person)
                 continue;
@@ -251,8 +251,25 @@ void LotSimulation::sampleAll(double at) {
             if (o.animation.overlaySerial == seen)
                 continue;
             seen = o.animation.overlaySerial;
-            if (!o.animation.overlays.empty())
+            if (onObjectOverlay) {
+                std::set<uint32_t>& cued = objectOverlaysCued_[id];
+                std::set<uint32_t> now;
+                for (const auto& x : o.animation.overlays)
+                    now.insert(x.id);
+                for (auto it = cued.begin(); it != cued.end();)
+                    if (!now.count(*it)) {
+                        if (onObjectOverlayEnd)
+                            onObjectOverlayEnd(id, *it, at);
+                        it = cued.erase(it);
+                    } else {
+                        ++it;
+                    }
+                for (const auto& x : o.animation.overlays)
+                    if (cued.insert(x.id).second)
+                        onObjectOverlay(id, x.name, x.flipped, x.id, at);
+            } else if (!o.animation.overlays.empty()) {
                 onObjectAnimation(id, o.animation.overlays.back().name, at);
+            }
         }
     for (auto& b : bound_) {
         const vm::Object* o = vm_->object(b.id);

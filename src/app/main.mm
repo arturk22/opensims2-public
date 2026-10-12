@@ -820,17 +820,13 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     };
     // Objects the VM animates (doors, fridges, phones, ...) swap their static
     // model for a skinned one of the same CRES, posed by the animation.
-    gSimulation->onObjectAnimation = [&renderer, &index](int16_t id, const std::string& name, double at) {
-        if (gSnaps)
-            gSnaps->objectAnimation(id, name, at);
-        if (std::getenv("OS2_DEBUG_VM"))
-            std::fprintf(stderr, "opensims2: object %d starts %s (%s)\n", id, name.c_str(),
-                         gPlacedObjects.count(id) ? "placed" : "not placed");
+    static std::function<os2::SimActor*(int16_t)> objectActor;
+    objectActor = [&renderer, &index](int16_t id) -> os2::SimActor* {
         auto it = gObjectActors.find(id);
         if (it == gObjectActors.end()) {
             const auto placed = gPlacedObjects.find(id);
             if (placed == gPlacedObjects.end())
-                return; // no model in the world
+                return nullptr; // no model in the world
             const PlacedObject& p = placed->second;
             try {
                 const os2::ObjectModel model = os2::loadObjectModel(index, p.cres, gObjectView->materialsOf(id));
@@ -852,27 +848,69 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "opensims2: object %d: %s\n", id, e.what());
                 gObjectActors.emplace(id, nullptr);
-                return;
+                return nullptr;
             }
         }
-        if (!it->second)
+        return it->second;
+    };
+    // Once per name: the base game's trees ask for some the data lacks (the
+    // double bed's "-", o2a-bookcase-get-middle: only the child's o2c-
+    // exists) and the game shows nothing for them.
+    static auto reportMissing = [](int16_t id, const std::string& name, const std::exception& e) {
+        static std::set<std::string> reported;
+        if (reported.insert(name).second)
+            std::fprintf(stderr, "opensims2: object %d: %s: %s\n", id, name.c_str(), e.what());
+    };
+    gSimulation->onObjectAnimation = [&index](int16_t id, const std::string& name, double at) {
+        if (gSnaps)
+            gSnaps->objectAnimation(id, name, at);
+        if (std::getenv("OS2_DEBUG_VM"))
+            std::fprintf(stderr, "opensims2: object %d starts %s (%s)\n", id, name.c_str(),
+                         gPlacedObjects.count(id) ? "placed" : "not placed");
+        os2::SimActor* actor = objectActor(id);
+        if (!actor)
             return;
         try {
             // Mirrored as the VM says (a chair pulled out to the side the Sim gets in from).
             const os2::vm::Object* vo = gSimulation ? gSimulation->machine().object(id) : nullptr;
             const bool mirror = vo && !vo->animation.overlays.empty() && vo->animation.overlays.back().name == name &&
                                 vo->animation.overlays.back().flipped;
-            it->second->cue(at, it->second->animation(index, name), {.fade = 0.1f, .loop = false, .mirror = mirror});
+            actor->cue(at, actor->animation(index, name), {.fade = 0.1f, .loop = false, .mirror = mirror});
             if (std::getenv("OS2_DEBUG_VM"))
                 std::fprintf(stderr, "opensims2: object %d plays %s\n", id, name.c_str());
         } catch (const std::exception& e) {
-            // Once per name: the base game's trees ask for some the data
-            // lacks (the double bed's "-", o2a-bookcase-get-middle: only the
-            // child's o2c- exists) and the game shows nothing for them.
-            static std::set<std::string> reported;
-            if (reported.insert(name).second)
-                std::fprintf(stderr, "opensims2: object %d: %s: %s\n", id, name.c_str(), e.what());
+            reportMissing(id, name, e);
         }
+    };
+    // What the VM plays on an object, overlay by overlay, as VM::objectPose
+    // poses it: each overlay its own layer (priority and level 1 + its id:
+    // a later one takes the bones it keys whole), mirrored as the VM plays
+    // it, and taken off when the VM takes it off, the object keeping the
+    // pose of that moment (AnimPlayer::setHoldPose). A two-tile door's
+    // leaves are one animation played twice, the second flipped: as one
+    // layer replacing the other, only one leaf opened.
+    gSimulation->onObjectOverlay = [&index](int16_t id, const std::string& name, bool flipped, uint32_t overlay,
+                                            double at) {
+        if (gSnaps)
+            gSnaps->objectAnimation(id, name, at);
+        if (std::getenv("OS2_DEBUG_VM"))
+            std::fprintf(stderr, "opensims2: object %d starts %s%s (overlay %u, %s)\n", id, name.c_str(),
+                         flipped ? " flipped" : "", overlay, gPlacedObjects.count(id) ? "placed" : "not placed");
+        os2::SimActor* actor = objectActor(id);
+        if (!actor)
+            return;
+        try {
+            const int layer = 1 + int(overlay & 0x3FFFFFFF);
+            actor->cue(at, actor->animation(index, name),
+                       {.fade = 0.1f, .loop = false, .priority = layer, .mirror = flipped, .level = layer});
+        } catch (const std::exception& e) {
+            reportMissing(id, name, e);
+        }
+    };
+    gSimulation->onObjectOverlayEnd = [](int16_t id, uint32_t overlay, double at) {
+        const auto it = gObjectActors.find(id);
+        if (it != gObjectActors.end() && it->second)
+            it->second->cueStop(at, 1 + int(overlay & 0x3FFFFFFF), 0);
     };
     // An animated object whose material the VM changes (the plumbob's
     // colour) gets its skinned model again with the new materials.
@@ -5275,10 +5313,16 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         const simd_float3 look = view.camera->pivot() - view.camera->eye();
         simd_float3 pivot = loadLot(*_viewDelegate.renderer, index, simd_make_float2(look.x, look.y))
                                 .value_or(skinned.value_or(objects));
-        // --pivot <x,y>: look at that point instead (tiles, at the same height).
-        float px, py;
-        if (auto p = argument(@"--pivot"); p && std::sscanf(p->c_str(), "%f,%f", &px, &py) == 2)
-            pivot.x = px, pivot.y = py;
+        // --pivot <x,y[,z]>: look at that point instead (tiles; at the same
+        // height, or z: the floor the camera is on follows it).
+        float px, py, pz;
+        if (auto p = argument(@"--pivot")) {
+            const int n = std::sscanf(p->c_str(), "%f,%f,%f", &px, &py, &pz);
+            if (n >= 2)
+                pivot.x = px, pivot.y = py;
+            if (n == 3)
+                pivot.z = pz;
+        }
         view.camera->setPivot(pivot);
         view.camera->snap();
         _uiCanvas = uiCanvas;
@@ -5748,6 +5792,27 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     // effects on their bones follow the animations between shots.
                     for (auto& sim : gLotSims)
                         sim.actor->update(scene);
+                    // OS2_DEBUG_DOORS=1: the doors' leaves (r_door_rot, l_door_rot
+                    // about Z, degrees) as they turn by 10 degrees or come back closed.
+                    if (std::getenv("OS2_DEBUG_DOORS")) {
+                        static std::map<int, std::pair<float, float>> last;
+                        for (auto& [id, actor] : gObjectActors) {
+                            if (!actor)
+                                continue;
+                            const int r = actor->skin.skeleton.find("r_door_rot"), l = actor->skin.skeleton.find("l_door_rot");
+                            if (r < 0)
+                                continue;
+                            actor->startCues(scene);
+                            const auto pose = actor->player.pose(scene);
+                            auto ang = [&](int b) { return b < 0 ? 0.0f : 2 * std::atan2(pose[size_t(b)].q.z, pose[size_t(b)].q.w) * 57.2958f; };
+                            const std::pair<float, float> a{ang(r), ang(l)};
+                            auto& prev = last[id];
+                            if (std::abs(prev.first - a.first) > 10 || std::abs(prev.second - a.second) > 10 || (std::abs(a.first) < 1 && std::abs(prev.first) >= 1)) {
+                                std::fprintf(stderr, "door %d at %.2f: r %.0f l %.0f\n", id, scene, a.first, a.second);
+                                prev = a;
+                            }
+                        }
+                    }
                     updateEffects(*_viewDelegate.renderer, scene); // effects the VM starts and stops between shots
                     // --dialog-click x,y (repeatable): clicks, in turn, each dialog that opens.
                     // --dialog-type <text>: typed, key by key, into the text box of a dialog that opens.

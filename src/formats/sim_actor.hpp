@@ -48,11 +48,15 @@ struct SimActor {
     // Plays `anim` when update() reaches `at` seconds (as if started then).
     struct Cue {
         double at = 0;
-        const Animation* anim = nullptr;
+        const Animation* anim = nullptr; // null: stop the layers of options.priority
         AnimPlayer::Options options;
     };
     std::vector<Cue> cues; // sorted by time, consumed by update()
     void cue(double at, const Animation& anim, AnimPlayer::Options options = {});
+    // Stops the layers of `priority` when update() reaches `at` (AnimPlayer::stop).
+    void cueStop(double at, int priority, float fade = 0.25f);
+    // Starts (or stops) what the cues due by `now` say (update() does it first).
+    void startCues(double now);
 
     // Loads (once) and returns an animation.
     const Animation& animation(ResourceIndex& index, const std::string& name);

@@ -44,11 +44,29 @@ void SimActor::cue(double at, const Animation& anim, AnimPlayer::Options options
     cues.insert(it, Cue{at, &anim, std::move(options)});
 }
 
-void SimActor::update(double now) {
+void SimActor::cueStop(double at, int priority, float fade) {
+    auto it = cues.begin();
+    while (it != cues.end() && it->at <= at)
+        ++it;
+    Cue c{at, nullptr, {}};
+    c.options.priority = priority;
+    c.options.fade = fade;
+    cues.insert(it, std::move(c));
+}
+
+void SimActor::startCues(double now) {
     while (!cues.empty() && cues.front().at <= now) {
-        player.play(*cues.front().anim, cues.front().at, cues.front().options);
+        const Cue& c = cues.front();
+        if (c.anim)
+            player.play(*c.anim, c.at, c.options);
+        else
+            player.stop(c.at, c.options.fade, c.options.priority);
         cues.erase(cues.begin());
     }
+}
+
+void SimActor::update(double now) {
+    startCues(now);
     if (rootMotion) {
         const float d = player.advance(now);
         position[0] += -std::sin(heading) * d;

@@ -513,11 +513,7 @@ void LotAudio::update(vm::VM* machine, double seconds, const Listener& l) {
     // (Cues that are due start here as SimActor::update would start them, so
     // that runs that pose the actors less often than this is called fire them.)
     for (const auto& s : sims_)
-        while (!s.actor->cues.empty() && s.actor->cues.front().at <= seconds) {
-            const auto& c = s.actor->cues.front();
-            s.actor->player.play(*c.anim, c.at, c.options);
-            s.actor->cues.erase(s.actor->cues.begin());
-        }
+        s.actor->startCues(seconds);
     if (started_)
         for (const auto& s : sims_)
             for (const auto& e : s.actor->player.eventsBetween(last_, seconds)) {

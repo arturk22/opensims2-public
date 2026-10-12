@@ -12,8 +12,8 @@
 // Inferred: the distances (opens within 0.9 tile of the door's centre,
 // closes past 1.3, measured in 3D from the bottom of the door's middle),
 // the side rule (from the door's front, +Y of its model: CW; from behind:
-// CCW) and that the close
-// animation has the open one's suffix. Doors the VM animates itself
+// CCW). The close animation turns the other way (closeAnimation: from the
+// game's data). Doors the VM animates itself
 // (Animate Object) are left to it.
 
 #include "formats/xform.hpp"
@@ -49,6 +49,8 @@ public:
 
     // Doors open now (for tests and the log).
     size_t openCount() const;
+    // The animation that closes a door opened by "o-door-open-<suffix>".
+    static std::string closeAnimation(const std::string& openSuffix);
 
 private:
     struct Door {

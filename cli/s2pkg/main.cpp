@@ -388,6 +388,13 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
                         std::printf("    %u %s at (%.4g, %.4g, %.4g) yaw %.0f\n", o.instance, o.definition.c_str(),
                                     o.position[0], o.position[1], o.position[2],
                                     2 * std::atan2(o.rotation[2], o.rotation[3]) * 180 / 3.14159265);
+            // OS2_LOT_NODES=1 with it: the bones the lot saved for each (cObject's transform nodes).
+            if (const char* filter = std::getenv("OS2_LOT_OBJECTS"); filter && std::getenv("OS2_LOT_NODES"))
+                for (const auto& o : lot.objects)
+                    if (o.definition.find(filter) != std::string::npos)
+                        for (const auto& [name, x] : o.nodes)
+                            std::printf("      %u %s t (%.4g, %.4g, %.4g) q (%.4g, %.4g, %.4g, %.4g)\n", o.instance,
+                                        name.c_str(), x.t[0], x.t[1], x.t[2], x.q.x, x.q.y, x.q.z, x.q.w);
             size_t wet = 0;
             for (uint32_t x = 0; x <= lot.width; ++x)
                 for (uint32_t y = 0; y <= lot.height; ++y)

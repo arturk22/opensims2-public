@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <optional>
 #include <string>
@@ -74,6 +75,15 @@ public:
     // it (Animate Object / Animate Overlay: AnimationState::overlays), at
     // `at` seconds in the caller's clock; the host poses the object with it.
     std::function<void(int16_t id, const std::string& animation, double at)> onObjectAnimation;
+    // Instead, when set: each animation the VM plays on an object, one call
+    // per overlay it starts (`overlay` its AnimationState id, `flipped` as
+    // the VM plays it) and one per overlay it takes off (ended or stopped),
+    // so that the host plays them all at once as the VM poses the object
+    // (VM::objectPose): a two-tile door's leaves are two overlays of one
+    // animation, the second flipped ("Set door open", semi-global
+    // 0x7FD0DEBA 0x200D); with only the last one cued, one leaf opened.
+    std::function<void(int16_t id, const std::string& animation, bool flipped, uint32_t overlay, double at)> onObjectOverlay;
+    std::function<void(int16_t id, uint32_t overlay, double at)> onObjectOverlayEnd;
     // Called when a Sim starts an animation the VM's Animate Sim plays (null:
     // it walks, climbs or idles instead), cued at `at` seconds.
     std::function<void(int16_t id, SimActor& actor, const Animation* animation, double at)> onSimAnimation;
@@ -156,6 +166,7 @@ private:
     std::unique_ptr<vm::VM> vm_;
     std::vector<Bound> bound_;
     std::map<int16_t, uint32_t> objectAnimSerials_; // objects' overlaySerial last seen
+    std::map<int16_t, std::set<uint32_t>> objectOverlaysCued_; // onObjectOverlay's, per object
     std::string summary_;
     std::vector<std::pair<int16_t, std::filesystem::path>> arrived_;
     double last_ = 0;

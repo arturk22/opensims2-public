@@ -1106,6 +1106,14 @@ void tickOverlayEvents(VM& vm) {
             if (ended) {
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::ActionEnd});
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::End});
+                // An object keeps the bones where it ends (a door's leaf
+                // open, until its close animation), as for Animate Stop.
+                if (!po->person) {
+                    it->played = std::min(it->played, it->length);
+                    const size_t at = size_t(it - ov.begin());
+                    vm.holdObjectPose(*po);
+                    it = ov.begin() + std::ptrdiff_t(at);
+                }
                 it = ov.erase(it);
                 ++po->animation.overlaySerial;
             } else {

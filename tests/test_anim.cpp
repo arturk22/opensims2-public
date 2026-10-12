@@ -686,7 +686,43 @@ static void testSavedPose() {
     check(near(player.pose(0)[1].t[1], 0.373f), "base pose under no animation");
 }
 
+// A two-tile door's leaves, as the host plays what the VM plays on an object
+// (app/main.mm onObjectOverlay): the open animation on the right leaf and
+// the same one flipped on the left, each its own layer (priority and level
+// 1 + the overlay's id), both open at once; taken off when the VM takes
+// them off, the leaves stay open (held); the close of one leaf closes it
+// and leaves the other open. As one layer replacing the other, the first
+// leaf fell back closed as the second opened.
+static void testDoorLeaves() {
+    Skeleton s;
+    s.bones.push_back({"door", -1, Xform{}, 0, 0});
+    s.bones.push_back({"r_door_rot", 0, Xform{{}, {-0.5f, 0, 0}}, 1, 1});
+    s.bones.push_back({"l_door_rot", 0, Xform{{}, {0.5f, 0, 0}}, 2, 2});
+    auto angle = [](const Quat& q) { return 2 * std::atan2(q.z, q.w) * 180 / 3.14159265f; };
+    Animation open = constantAnim("r_door_rot", 90, 2, 0), close = constantAnim("r_door_rot", 0, 2, 0);
+    open.skeletonTag = close.skeletonTag = "door";
+    open.targets[0].tag = close.targets[0].tag = "door";
+    SimActor actor{SkinnedModel(s)};
+    actor.player.setHoldPose(true);
+    actor.cue(0, open, {.fade = 0, .loop = false, .priority = 2, .mirror = false, .level = 2});
+    actor.cue(0, open, {.fade = 0, .loop = false, .priority = 3, .mirror = true, .level = 3});
+    actor.startCues(0.5);
+    auto p = actor.player.pose(0.5);
+    check(near(angle(p[1].q), 90, 0.5f) && near(angle(p[2].q), -90, 0.5f), "door: both leaves open at once");
+    actor.cueStop(0.6, 2, 0);
+    actor.cueStop(0.6, 3, 0);
+    actor.startCues(0.7);
+    p = actor.player.pose(0.7);
+    check(actor.player.layerCount() == 0 && near(angle(p[1].q), 90, 0.5f) && near(angle(p[2].q), -90, 0.5f),
+          "door: the leaves stay open when their overlays end");
+    actor.cue(1.0, close, {.fade = 0, .loop = false, .priority = 4, .mirror = false, .level = 4});
+    actor.startCues(1.0);
+    p = actor.player.pose(1.2);
+    check(near(angle(p[1].q), 0, 0.5f) && near(angle(p[2].q), -90, 0.5f), "door: closing one leaf leaves the other");
+}
+
 int main() {
+    testDoorLeaves();
     testSavedPose();
     testMirror();
     testBodyShape();

@@ -1,5 +1,6 @@
 #include <cmath>
 #include "formats/bhav.hpp"
+#include "formats/dbpf.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/lighting_config.hpp"
 #include "formats/lot.hpp"
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -753,6 +755,57 @@ end
           "floor colour in the room irradiance");
 }
 
+// With the game's data (OS2_DATA): N001_Lot82's front arch (door 455, "Door -
+// 2 Tile - French Empty Arch" at (30.5, 38.5) facing -y, its +x along -x:
+// tiles x 30..31 ("0") and 29..30 ("1e") of the wall y = 39) is cut open up
+// to the edge the two tiles share and keeps the wall at its outer edges. The
+// wall masks' u ran the other way: open at the outer edges with a strip of
+// wall in the middle, which looked like two leaves swung open.
+static void testTwoTileArchMask() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data)
+        return;
+    const std::filesystem::path lotPath =
+        std::filesystem::path(data) / "TSData/Res/UserData/Neighborhoods/N001/Lots/N001_Lot82.package";
+    if (!std::filesystem::exists(lotPath))
+        return;
+    ResourceIndex index(data);
+    const PatternCatalog patterns(index, data);
+    DbpfPackage pkg(lotPath);
+    const Lot lot = Lot::load(pkg);
+    const ObjectModel m = buildLotModel(lot, index, patterns);
+    // The mask value at a point, from a masked wall part lying on y = 39
+    // within [x0, x1] on level 1 (z 0.75 .. 3.75).
+    auto sample = [&](float x0, float x1, float x, float z) -> int {
+        for (const auto& part : m.parts) {
+            if (part.mask < 0 || size_t(part.mask) >= m.masks.size() || !m.masks[size_t(part.mask)].planar)
+                continue;
+            const auto& p = part.mesh.positions;
+            if (p.empty())
+                continue;
+            bool on = true;
+            for (const auto& v : p)
+                on = on && std::abs(std::abs(v[1] - 39.0f) - 0.0f) < 0.2f && v[0] > x0 - 0.2f && v[0] < x1 + 0.2f &&
+                     v[2] > 0.7f && v[2] < 3.8f;
+            if (!on)
+                continue;
+            const auto& k = m.masks[size_t(part.mask)];
+            const float u = k.planeU[0] * x + k.planeU[1] * 39.0f + k.planeU[2] * z + k.planeU[3];
+            const float v = k.planeV[0] * x + k.planeV[1] * 39.0f + k.planeV[2] * z + k.planeV[3];
+            const uint32_t tx = std::min(k.width - 1, uint32_t(std::clamp(u, 0.0f, 1.0f) * float(k.width)));
+            const uint32_t ty = std::min(k.height - 1, uint32_t(std::clamp(v, 0.0f, 1.0f) * float(k.height)));
+            return k.values[size_t(ty) * k.width + tx];
+        }
+        return -1;
+    };
+    const float z = 0.75f + 1.5f; // half way up the door
+    const int inner0 = sample(30, 31, 30.05f, z), outer0 = sample(30, 31, 30.95f, z);
+    const int inner1 = sample(29, 30, 29.95f, z), outer1 = sample(29, 30, 29.05f, z);
+    check(inner0 >= 0 && inner1 >= 0, "lot 82: the front arch's walls are masked");
+    check(inner0 < 128 && inner1 < 128, "lot 82: the two-tile arch is open where its tiles meet");
+    check(outer0 > 128 && outer1 > 128, "lot 82: the two-tile arch keeps the wall at its outer edges");
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
@@ -769,6 +822,7 @@ int main() {
     testPropertySet();
     testLotModel();
     testLotLightMap();
+    testTwoTileArchMask();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -500,10 +500,13 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             // A door or window with a wall mask for this stretch cuts its
             // own shape: the faces get the mask (alpha tested in the wall
             // shader) instead of the box cut. The mask spans the tile the
-            // stretch covers, u along the object's +x from the tile's start
-            // and v from a story above the wall's floor down to it (u
-            // direction and the story inferred from the textures: a two-tile
-            // arch's halves are "0" and "1e").
+            // stretch covers, u along the object's -x (u = 0 on the tile's
+            // edge toward the object's +x) and v from a story above the
+            // wall's floor down to it (inferred from the textures: a two-tile
+            // arch's halves "0" and "1e", the second one tile along +x, are
+            // open up to their shared edge only with u running along -x; u
+            // along +x opened them at the outer edges and left a strip of
+            // wall in the middle of N001_Lot82's front arches).
             int maskIndex = -1;
             const float base = std::min(za0, zb0);
             for (auto c = cuts.begin(); c != cuts.end() && maskIndex < 0; ++c) {
@@ -534,8 +537,8 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 if (!values)
                     continue;
                 values->planar = true;
-                values->planeU = {axis[0] / span, axis[1] / span, 0,
-                                  0.5f - float(k) - (h.origin[0] * axis[0] + h.origin[1] * axis[1]) / span};
+                values->planeU = {-axis[0] / span, -axis[1] / span, 0,
+                                  0.5f + float(k) + (h.origin[0] * axis[0] + h.origin[1] * axis[1]) / span};
                 values->planeV = {0, 0, -1.0f / kStoryHeight, (base + kStoryHeight) / kStoryHeight};
                 maskIndex = int(masks.size());
                 masks.push_back(std::move(*values));

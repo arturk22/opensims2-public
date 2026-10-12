@@ -12,6 +12,14 @@ namespace {
 constexpr float kOpenDistance = 0.9f, kCloseDistance = 1.3f;
 }
 
+// The leaf turns back the other way: "o-door-open-CCW" ends at -91 degrees,
+// where "o-door-close-CW" starts (the doors' animation list, STR# 0x86 of
+// semi-global 0x7FD0DEBA, pairs them so: 1 open-CCW, 2 close-CW, 3 open-CW,
+// 4 close-CCW). The same suffix snapped the leaf to the other side first.
+std::string DoorPortals::closeAnimation(const std::string& openSuffix) {
+    return std::string("o-door-close-") + (openSuffix == "CW" ? "CCW" : "CW");
+}
+
 size_t DoorPortals::openCount() const {
     size_t n = 0;
     for (const auto& [id, d] : doors_)
@@ -55,7 +63,7 @@ void DoorPortals::update(vm::VM& vm, const std::vector<Vec3>& sims, double secon
                 std::fprintf(stderr, "opensims2: door %d opens (%s)\n", id, d.suffix.c_str());
         } else if (d.open && nearest > kCloseDistance) {
             d.open = false;
-            play_(id, "o-door-close-" + d.suffix, seconds);
+            play_(id, closeAnimation(d.suffix), seconds);
             if (std::getenv("OS2_DEBUG_VM"))
                 std::fprintf(stderr, "opensims2: door %d closes (%s)\n", id, d.suffix.c_str());
         }
