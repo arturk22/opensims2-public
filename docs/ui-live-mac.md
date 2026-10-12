@@ -538,12 +538,74 @@ o único visível no script) e `0x1103` "roof" ("Telhado - Origem/Fim"). Junto, 
 da câmera, com os botões `1` "Sem Paredes", `2` "Paredes Cortadas", `3` "Paredes
 Erguidas" e `4` "Mostrar/Esconder Telhado" (estilo toggle, tiras de 4 quadros) e um
 `GZWinFlatRect 5` escondido que cobre o puck inteiro (inferido: pega o clique fora do
-leque para fechá-lo). No app (inferido, não lido no binário: `cTSMainToolbar::SetWallMode`
-existe mas o Ghidra não estava disponível): o botão do modo atual abre o leque, a escolha
-o fecha, Home/End trocam o modo (as dicas dizem "Origem/Fim"), o botão 4 alterna o
-telhado. O corte do jogo é do `nTSSG::cWallCutawayManager` (`SelectRoomBlockers`,
-`SelectWallsBlockingPoints`, `KeepOnlyFrontFacingOutsideWalls`, `AddTargetLocation`):
-não lido; o app corta as paredes com cômodo atrás, vistas da câmera (`formats/lot_model`).
+leque para fechá-lo).
+
+### 8c. Modos de parede e o corte (binário, rodada 11)
+
+**Modos** (`cITSMainToolbar::eWallMode`, pelo `cTSWinProcUCP::onWallChanged`,
+BV `0x19f740`, que acende o botão do modo atual): **0 = sem paredes**
+(`0x1100`), **1 = cortadas** (`0x1101`), **2 = erguidas** (`0x1102`), **3 =
+erguidas com telhado** (`0x1103`). São quatro escolhas exclusivas, não um
+liga/desliga do telhado: clicar num dos quatro botões só abre o leque
+(`onBtnClickedID`: IDs `0x1100–0x1103` → `this+0x2C→0xC`, depois
+`onWallChanged`). Lote novo começa em 1 (`InitForNewLot`); o modo é salvo
+com a UI do lote (`Write`/`Read`, `ApplySavedUIState`).
+
+`cTSMainToolbar::SetWallMode(modo)` (BV `0x1aec14`): **mostra os telhados só
+no modo 3** (`WorldDB→0x88→0x4C(modo == 3)` e `WorldDB→0x170→0x20(modo ==
+3)`); se a opção "renderizar o andar do Sim selecionado" (`+0xB4`) está
+ligada guarda o modo e chama `RenderSelectedSimLevel(andar, modo == 2, modo
+== 1)`; senão, saindo do modo 1 pede ao sistema de cena o redesenho do andar
+(`TSSGSystem→0x88→0x58(andar)`), posta a mensagem `0xCB46C21D` {andar,
+modo ≠ 0, modo} e guarda o modo; por fim avisa o ouvinte (`0x8953BB69`,
+modo). `nTSSG::cPerson::SetWallMode` posta a mesma mensagem.
+
+**Corte** (`nTSSG::cWallCutawayManager::OncePerFrameUpdate`, slot 0x34 da
+vtable, BV `0xc8e1cc`; o symxfer o chama de
+`cDiffusionWallSegment::CopyToFinalColor`): **só roda no modo 1**. A cada
+quadro:
+
+1. `SetSelectedSimLocation`: se o Sim selecionado está no mundo e **no andar
+   que se vê**, guarda o tile dele; "mudou" (`CutawayLocationChanged`) =
+   fora de casa (cômodo 0) mudou de tile, dentro mudou de cômodo.
+2. `SetCameraTransform`: "mudou" se a matriz da câmera mudou.
+3. Só recalcula se algo mudou: Sim, câmera, paredes (mensagens `0x2B4CF319`
+   / `0x0B4CF313`), `0x2B4D18FB` (zera a memória de cômodos) ou alvos novos.
+4. `CollectWallsEligibleForCutaway(andar atual)`: todas as paredes do andar,
+   menos as do serviço do mundo 9 (inferido: as que não são paredes de
+   verdade), cujo estilo de partição aceita corte
+   (`nTSWorld::PartitionStyleSupportsCutaway`; cercas, por exemplo, não).
+5. `KeepOnlyFrontFacingOutsideWalls(usarSim, posSim, câmera)` (BV
+   `0xc8c868`), para cada elegível, com o cômodo de cada face (≠ 0 =
+   dentro):
+   - **as duas faces dentro (parede interna): sempre corta**;
+   - **uma face fora (parede externa): corta se a face de fora está virada
+     para a câmera** (produto vetorial 2D da direção da parede, orientada
+     a partir da face de dentro, com (início da parede − posição da câmera)
+     < 0);
+   - as duas fora (parede solta no quintal): nunca corta;
+   - com `usarSim` (opção `cutawayForSelectedSim` ligada, Sim guardado e no
+     andar atual) também corta as paredes que **cruzam a linha da câmera
+     ao Sim** (consulta de raio do serviço do mundo 3); a opção não está no
+     `globalProps.xml` (padrão do construtor não lido; inferido desligada).
+6. `UpdateSceneGraph`: compara o conjunto novo com o anterior e manda ao
+   gerenciador de paredes cortar/erguer só as diferenças, as duas faces de
+   cada parede (`OppositeWallLocator`), e ajusta os arcos das cercas nos
+   vértices (`cFenceManager`).
+
+Com câmera de cinemática (`SetCinematicsCutaway`, slot 0x2C) o passo 5 vira
+`Expose(alvos do andar)` (`AddTargetLocation`, slot 0x24): alvo fora de casa
+→ `SelectNearSemicircleBlockers` (raio 2,0) se `cutawayOutside` (padrão
+true no `globalProps.xml`); alvo dentro → o cômodo entra numa memória dos
+últimos `cutawayMemorySize` (3) cômodos e, para cada um,
+`SelectRoomBlockers` corta as paredes desse cômodo viradas para a câmera.
+
+Diferenças do app atual (`formats/lot_model`, rodada 10: "corta as paredes
+com cômodo atrás, vistas da câmera"): no jogo **as paredes internas do
+andar são todas cortadas** no modo 1, as externas só pela face virada para
+a câmera, e as de estilo sem corte nunca; os andares acima do atual são
+escondidos por outro caminho. No modo 3 aparecem os telhados (o app tem o
+telhado como liga/desliga à parte).
 
 ## 9. O que falta
 
