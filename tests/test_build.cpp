@@ -334,6 +334,17 @@ static void testTerrain() {
     check(ed.undo() && lot.water.empty() && lot.elevation(0, 6, 5) == 0.0f, "undo fills the pond in");
     r = ed.terrainStroke(BuildEditor::TerrainOp::Paint, 6, 5, 4, 1, profile, "terrain-grass-b-paint");
     check(r.ok && lot.paints.size() == 1 && lot.maskWidth == 49, "painting adds a paint and its mask");
+    // The height limits (FUN_009e7700): +/-150 x 0.1875.
+    check(terrainLimitError(28.125f) == 0 && terrainLimitError(28.2f) == 0x66 && terrainLimitError(-28.2f) == 0x65,
+          "the terrain's height limits are +/-28.125");
+    for (float& e : lot.elevations)
+        e = 28.125f;
+    r = ed.terrainStroke(BuildEditor::TerrainOp::Raise, 6, 5, 10, 1, profile);
+    check(!r.ok && r.error == 0x66 && r.changed == 0 && lot.elevation(0, 6, 5) == 28.125f, "can't raise terrain further");
+    for (float& e : lot.elevations)
+        e = -28.125f;
+    r = ed.terrainStroke(BuildEditor::TerrainOp::Lower, 6, 5, 10, 1, profile);
+    check(!r.ok && r.error == 0x65 && lot.elevation(0, 6, 5) == -28.125f, "can't lower terrain further");
 }
 
 static void testRoof() {

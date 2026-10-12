@@ -498,6 +498,8 @@ bool BuildEditor::levelPoints(const std::vector<std::array<int, 2>>& points, flo
         const size_t i = base + size_t(x) * size_t(H + 1) + size_t(y);
         if (std::fabs(lot_.elevations[i] - height) < 1e-4f)
             continue;
+        if (terrainLimitError(height))
+            return false;
         // A ground floor on a tile around the point, or a wall (or fence)
         // ending there, holds it (inferred: the binary's leveller,
         // FUN_009a5a68, is not read).
@@ -1568,6 +1570,14 @@ BuildEditor::Result BuildEditor::deleteRoof(int level, float x, float y) {
     return r;
 }
 
+int terrainLimitError(float height) {
+    if (height < kMinTerrainElevation - 1e-4f)
+        return 0x65;
+    if (height > kMaxTerrainElevation + 1e-4f)
+        return 0x66;
+    return 0;
+}
+
 bool BuildEditor::terrainFree(int x, int y) const {
     const int W = int(lot_.width), H = int(lot_.height);
     if (x < 0 || y < 0 || x > W || y > H)
@@ -1690,6 +1700,12 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
             }
             if (std::fabs(n - h) < 1e-6f)
                 continue;
+            // FUN_009e9550 test 1 (FUN_009e7700): not under MinTerrainElevation
+            // (0x65) nor over MaxTerrainElevation (0x66); the point stays.
+            if (const int e = terrainLimitError(n)) {
+                r.error = e;
+                continue;
+            }
             changes.push_back({i, n});
             moved += std::fabs(n - h);
         }
@@ -1713,12 +1729,14 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
     st.paid += owed;
     st.changed += int(changes.size());
     addFunds(vm_, -owed);
-    r.ok = true;
+    r.ok = !changes.empty() || !r.error;
     r.cost = owed;
     r.changed = int(changes.size());
     if (r.changed)
         ++revision_;
     r.message = std::to_string(r.changed) + " terrain points moved" + (owed ? " for " + money(owed) : "");
+    if (r.error && changes.empty())
+        r.message = r.error == 0x65 ? "cannot: can't lower terrain further" : "cannot: can't raise terrain further";
     return r;
 }
 
@@ -2543,12 +2561,15 @@ int BuildEditor::planStairs(StairsPlan& plan, TilePos top, int direction, std::o
         auto g = [&](int gx, int gy) { return plan.ground[size_t(gx) * rowH + size_t(gy)]; };
         return (g(x0, y0) * (1 - fx) + g(x0 + 1, y0) * fx) * (1 - fy) + (g(x0, y0 + 1) * (1 - fx) + g(x0 + 1, y0 + 1) * fx) * fy;
     };
+    int limit = 0; // FUN_009e9550's height limits (0x65/0x66) when a move failed on them
     auto move = [&](int gx, int gy, float h) {
         if (gx < 0 || gy < 0 || gx > W || gy > H || plan.ground.empty())
             return true;
         float& g = plan.ground[size_t(gx) * rowH + size_t(gy)];
         if (std::fabs(g - h) < 1e-4f)
             return true;
+        if ((limit = terrainLimitError(h)) != 0)
+            return false;
         if (!terrainFree(gx, gy))
             return false;
         g = h;
@@ -2678,11 +2699,11 @@ int BuildEditor::planStairs(StairsPlan& plan, TilePos top, int direction, std::o
                 }
                 for (const auto& c : far)
                     if (!move(c[0], c[1], z - kStepRise * float(3 - k)))
-                        return 0x6F;
+                        return limit ? limit : 0x6F;
                 if (k)
                     for (const auto& c : nearSide)
                         if (!move(c[0], c[1], z + kStepRise * float(k)))
-                            return 0x6F;
+                            return limit ? limit : 0x6F;
             }
         }
         if (objectOn({t.x, t.y, B}))
@@ -2700,7 +2721,7 @@ int BuildEditor::planStairs(StairsPlan& plan, TilePos top, int direction, std::o
         for (int cx = bottomTile.x; cx <= bottomTile.x + 1; ++cx)
             for (int cy = bottomTile.y; cy <= bottomTile.y + 1; ++cy)
                 if (!move(cx, cy, zLast))
-                    return 0x6F;
+                    return limit ? limit : 0x6F;
         if (zLast - groundAt(pLast[0], pLast[1]) > kReach)
             return 0x77;
     } else if (std::fabs(lot_.elevationAt(B - 1, pLast[0], pLast[1]) - zLast) > kReach) {

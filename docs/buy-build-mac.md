@@ -1381,8 +1381,12 @@ objetos, níveis, elevações, direções e elos):
   mínimo → `0x65` "Can't lower terrain further", > máximo → `0x66` "Can't
   raise terrain further"; o mesmo construtor põe `+0x3c` = 4, `+0x40` = 5),
   folga para o andar de baixo/de cima (`0x69`/`0x6A`), objetos que prendem o
-  chão (`0x61`), objetos de teto (`0x60`), praia. Aqui: só "livre de piso,
-  parede e fundação".
+  chão (`0x61`), objetos de teto (`0x60`), praia. Aqui: "livre de piso,
+  parede e fundação" e, desde a rodada 13, os limites de altura
+  (`terrainLimitError`): o pincel de terreno e de água deixa o ponto onde está
+  e dá `0x65`/`0x66` quando nenhum se move, as escadas modulares recusam com
+  `0x65`/`0x66` em vez de `0x6F`, e o nivelamento das paredes, fundações e
+  piscinas não move um ponto além deles.
 
 ### 7.13.1 O modelo do corrimão e a ferramenta de corrimão (rodada 13, binário)
 

@@ -400,6 +400,16 @@ std::vector<Stair> objectStairs(const VM& vm, const Lot& lot);
 // tiles all stay covered by others go). [x0, y0, x1, y1), tiles.
 std::vector<std::array<int, 4>> autoRoofRects(const std::vector<uint8_t>& grid, int W, int H, float aspectLimit = 2.0f);
 
+// The terrain's height limits (FUN_009e7700, the first test of
+// FUN_009e9550): cWorldDB's Min/MaxTerrainElevation = -/+150 x
+// FloorElevationUnit (0.1875, cWorldDB +0x44). The game's code for a grid
+// point going to `height`: 0x65 "Can't lower terrain further" under the
+// minimum, 0x66 "Can't raise terrain further" over the maximum, else 0.
+constexpr float kFloorElevationUnit = 0.1875f;
+constexpr float kMinTerrainElevation = -150 * kFloorElevationUnit;
+constexpr float kMaxTerrainElevation = 150 * kFloorElevationUnit;
+int terrainLimitError(float height);
+
 // Splits a run between two grid points into tile-long sections (along an
 // axis or a 45° diagonal); empty for other slopes.
 std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1);
