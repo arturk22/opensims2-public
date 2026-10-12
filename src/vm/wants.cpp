@@ -26,15 +26,26 @@ constexpr int16_t kPdAspirationScore = 160, kPdRewardPoints = 161, kPdAspiration
 constexpr int16_t kPdAspiration = 46, kPdGender = 65;
 constexpr int kMood = 3; // motive index
 
-// The library, read once per resource index (493 definitions, 211 trees).
+// The library, read once per game data set (493 definitions, 211 trees). Held
+// strongly: a run of many lots (lot-run) drops each VM, and with it the
+// library, before the next one asks again (it was reread 69 times, ~55% of
+// the run). The key is a fingerprint of where the definitions, trees and
+// tuning live (package path, offset, size), so another index over other
+// packages never gets a stale library.
 std::shared_ptr<const wants::Library> libraryFor(ResourceIndex* index) {
     static std::mutex m;
-    static std::map<std::pair<ResourceIndex*, size_t>, std::weak_ptr<const wants::Library>> cache;
+    static std::map<size_t, std::shared_ptr<const wants::Library>> cache;
+    std::string fp = std::to_string(index->resourceCount()) + '/' + std::to_string(index->packageCount());
+    for (const uint32_t type : {wants::kTypeWantDefinition, wants::kTypeWantTree})
+        for (const auto& loc : index->ofType(type))
+            fp += loc.package->path().string() + ':' + std::to_string(loc.entry->offset) + ':' +
+                  std::to_string(loc.entry->size) + ';';
+    if (const auto t = index->find(Tgi{0, wants::kTuningGroup, wants::kTuningInstance, 0}))
+        fp += t->package->path().string() + ':' + std::to_string(t->entry->offset) + ':' + std::to_string(t->entry->size);
+    const size_t key = std::hash<std::string>()(fp);
     std::lock_guard lock(m);
-    const auto key = std::make_pair(index, index->resourceCount());
     if (auto it = cache.find(key); it != cache.end())
-        if (auto p = it->second.lock())
-            return p;
+        return it->second;
     auto lib = std::make_shared<const wants::Library>(wants::Library::load(*index));
     cache[key] = lib;
     return lib;
