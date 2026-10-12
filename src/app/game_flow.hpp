@@ -54,8 +54,13 @@ Scene sceneOf(const std::vector<std::string>& args);
 // when neither is on); or (--key space) a key: the space bar selects the
 // next Sim, (--key pageup / pagedown) the level shown, (--key escape) Esc.
 struct FlowStep {
-    enum class Kind { Click, RightClick, Wait, Pie, TutorialAuto, Key } kind = Kind::Click;
+    enum class Kind { Click, RightClick, Wait, Pie, TutorialAuto, Key, Drag, Hover } kind = Kind::Click;
     float x = 0, y = 0;
+    // --drag x0,y0,x1,y1[,ctrl|hold]: Build mode's press at (x, y), drag to
+    // (x1, y1) and release there (Ctrl held: erase; hold: no release, the
+    // drag's squares stay up for the shot). --hover x,y: the mouse over the lot.
+    float x1 = 0, y1 = 0;
+    bool control = false, hold = false;
     long ticks = 0;
     // --pie-step <object>:<entry>: the selected Sim picks that entry of the
     // object's pie menu (as a click on it and on the entry would).

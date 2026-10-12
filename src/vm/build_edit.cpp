@@ -3465,24 +3465,29 @@ int BuildEditor::priceOf(const std::string& lotName, bool floor) const {
 
 namespace os2::vm {
 
+float lotPickHeight(const Lot& lot, int level, float x, float y, bool poolWater) {
+    const float W = float(lot.width), H = float(lot.height);
+    const int l = std::clamp(level - 1, lot.minLevel, lot.minLevel + lot.levelCount - 1);
+    const float cx = std::clamp(x, 0.0f, W), cy = std::clamp(y, 0.0f, H);
+    const float z = lot.elevationAt(l, cx, cy);
+    if (level == 1 && lot.hasLevel(-1)) {
+        const int tx = int(std::floor(x)), ty = int(std::floor(y));
+        for (const auto& p : lot.pools)
+            if (p.level == 0 && tx >= int(std::lround(p.x)) && tx < int(std::lround(p.x)) + int(p.width) &&
+                ty >= int(std::lround(p.y)) && ty < int(std::lround(p.y)) + int(p.height))
+                return poolWater ? z - p.depth : lot.elevationAt(-1, cx, cy);
+    }
+    return z;
+}
+
 std::optional<std::array<float, 2>> pickLotGround(const Lot& lot, int level, std::array<float, 3> eye,
-                                                  std::array<float, 3> dir) {
+                                                  std::array<float, 3> dir, bool poolWater) {
     if (!lot.hasLevel(0) || std::fabs(dir[2]) < 1e-5f)
         return std::nullopt;
     const float W = float(lot.width), H = float(lot.height);
     const int l = std::clamp(level - 1, lot.minLevel, lot.minLevel + lot.levelCount - 1);
     auto terrain = [&](float x, float y) { return lot.elevationAt(l, std::clamp(x, 0.0f, W), std::clamp(y, 0.0f, H)); };
-    auto surface = [&](float x, float y) {
-        float z = terrain(x, y);
-        if (level == 1 && lot.hasLevel(-1)) {
-            const int tx = int(std::floor(x)), ty = int(std::floor(y));
-            for (const auto& p : lot.pools)
-                if (p.level == 0 && tx >= int(std::lround(p.x)) && tx < int(std::lround(p.x)) + int(p.width) &&
-                    ty >= int(std::lround(p.y)) && ty < int(std::lround(p.y)) + int(p.height))
-                    return lot.elevationAt(-1, std::clamp(x, 0.0f, W), std::clamp(y, 0.0f, H));
-        }
-        return z;
-    };
+    auto surface = [&](float x, float y) { return lotPickHeight(lot, level, x, y, poolWater); };
     float zHi = -1e9f, zLo = 1e9f;
     for (float f : lot.elevations)
         zHi = std::max(zHi, f), zLo = std::min(zLo, f);

@@ -141,6 +141,7 @@ public:
     bool undo();
     bool redo();
     const std::string& message() const { return message_; }
+    std::optional<simd_float2> pointer() const { return pointer_; } // the lot point under the mouse
 
     // --- The panel -----------------------------------------------------------
     // The tutorial (app/tutorial.hpp): allowPress before a click on a
@@ -148,6 +149,8 @@ public:
     // the panel is up.
     std::function<bool(simd_float2)> allowPress;
     std::optional<std::array<float, 4>> controlRect(uint32_t window, uint32_t control);
+    int pickLevel() const; // the VM level (1 = ground) the mouse picks on with the current tool
+    float pickHeight(simd_float2 p) const; // the height the pick meets at p (the cursor's)
     bool press(simd_float2 p);
     void hover(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }

@@ -52,6 +52,16 @@ int main() {
         check(st.size() == 3 && st[1].kind == FlowStep::Kind::Wait && st[1].ticks == 30, "a wait");
         check(st.size() == 3 && st[2].kind == FlowStep::Kind::RightClick && st[2].x == 3.5f, "a right click");
     }
+    {
+        const V args{"app", "--drag", "1,2,3,4", "--drag", "5,6,7,8,ctrl", "--drag", "1,1,2,2,hold", "--hover", "9,10"};
+        const auto st = flowSteps(args);
+        check(st.size() == 4 && st[0].kind == FlowStep::Kind::Drag && st[0].x1 == 3 && st[0].y1 == 4 && !st[0].control &&
+                  !st[0].hold,
+              "a drag");
+        check(st.size() == 4 && st[1].control && !st[1].hold && st[2].hold && st[3].kind == FlowStep::Kind::Hover &&
+                  st[3].y == 10,
+              "a Ctrl-drag, a held drag and a hover");
+    }
     // Arguments of the next scene: scene flags replaced, used steps dropped.
     {
         const V args{"app", "--data", "d", "--click", "1,1", "--hood", "N001", "--zoom", "2", "--click", "2,2",

@@ -605,10 +605,22 @@ void BuildMode::applied(const vm::BuildEditor::Result& r) {
 
 // --- The lot -------------------------------------------------------------------
 
+// The level the mouse works on: the tools that edit the ground (pools,
+// terrain, foundations: BuildEditor digs, sculpts and builds them on level
+// 0 whatever floor is shown) pick on the terrain; the others on the floor
+// shown. Picking the floor shown made a pool dug with an upper floor shown
+// land where the ray met that floor's plane, ~3 tiles nearer the camera than
+// the mouse (live QA pass 11).
+int BuildMode::pickLevel() const {
+    return tool_ == Tool::Pool || tool_ == Tool::Terrain || tool_ == Tool::Foundation ? 1 : level_;
+}
+
+float BuildMode::pickHeight(simd_float2 p) const { return vm::lotPickHeight(lot_, pickLevel(), p.x, p.y, tool_ == Tool::Pool); }
+
 std::optional<simd_float2> BuildMode::groundPoint(simd_float3 eye, simd_float3 dir) const {
     if (!vm_.world)
         return std::nullopt;
-    const auto p = vm::pickLotGround(lot_, level_, {eye.x, eye.y, eye.z}, {dir.x, dir.y, dir.z});
+    const auto p = vm::pickLotGround(lot_, pickLevel(), {eye.x, eye.y, eye.z}, {dir.x, dir.y, dir.z}, tool_ == Tool::Pool);
     if (!p)
         return std::nullopt;
     return simd_make_float2((*p)[0], (*p)[1]);
@@ -940,7 +952,7 @@ void BuildMode::update() {
     };
     if (active_ && pointer_) {
         const simd_float2 p = *pointer_;
-        auto z = [&](float x, float y) { return sim_.floorHeight(level_, x, y) + 0.03f; };
+        auto z = [&](float x, float y) { return pickHeight(simd_make_float2(x, y)) + 0.03f; };
         if (tool_ == Tool::Wall || tool_ == Tool::Room || tool_ == Tool::Fence || tool_ == Tool::Roof) {
             std::vector<std::array<int, 4>> runs;
             if (dragFrom_) {
@@ -1842,7 +1854,8 @@ namespace os2 {
 // --floor-rotation <1|2|4|8>, --wallpaper x0,y0,x1,y1,<r|l|b>,<pattern|none>,
 // --wallpaper-room x,y,<pattern|none>, --wallpaper-flood x0,y0,x1,y1,<r|l>,<pattern|none>
 // (Shift on that face), --door <guid|name>@x,y[,dir] places
-// a door, window or gate, --build-undo / --build-redo (with any value).
+// a door, window or gate, --build-undo / --build-redo (with any value),
+// --build-tool pool (the pool tool, for the mouse steps --drag / --hover).
 void BuildMode::runSteps(const std::vector<std::string>& args) {
     if (!active_)
         return;
@@ -1875,6 +1888,8 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             vm::addFunds(vm_, n(0) - vm::funds(vm_));
         else if (a == "--build-level")
             setLevel(n(0));
+        else if (a == "--build-tool" && v == "pool") // the tool alone, for --drag / --hover
+            selectPoolTool();
         else if (a == "--wall" && f.size() >= 4)
             r = ed.drawWalls(level_, n(0), n(1), n(2), n(3)), selectWallTool(false);
         else if (a == "--room" && f.size() >= 4)

@@ -579,6 +579,14 @@ static void testPool() {
         const auto lawn = pickLotGround(lot, 1, {lx - dir[0] * tt, ly - dir[1] * tt, lz - dir[2] * tt}, dir);
         check(lawn && std::fabs((*lawn)[0] - lx) < 0.05f && std::fabs((*lawn)[1] - ly) < 0.05f,
               "off the pool it is the lawn");
+        // The pool tool picks the water (0.25 under the ground), where its
+        // cursor is drawn: under the mouse over the water (QA pass 11).
+        const float wz = -0.25f;
+        const auto water = pickLotGround(lot, 1, {bx - dir[0] * tt, by - dir[1] * tt, wz - dir[2] * tt}, dir, true);
+        check(water && std::fabs((*water)[0] - bx) < 0.05f && std::fabs((*water)[1] - by) < 0.05f &&
+                  std::fabs(lotPickHeight(lot, 1, bx, by, true) - wz) < 1e-4f &&
+                  std::fabs(lotPickHeight(lot, 1, bx, by) - bz) < 1e-4f,
+              "the pool tool's pick and cursor height are the water's");
     }
     check(ed.poolDigError(-1, 3, 2, 4) == 0x02 && ed.poolDigError(3, 3, 12, 4) == 0x02, "a pool drag off the lot is refused (0x02)");
     check(ed.poolDigError(10, 6, 11, 7) == 0 && ed.poolDigError(5, 4, 6, 5) == 0x4F, "the preview's check agrees with drawPool");

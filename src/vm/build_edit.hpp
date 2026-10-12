@@ -29,8 +29,13 @@ namespace os2::vm {
 // the bottom, 3 under it, shows through the water: the plain terrain hit
 // landed about 2 tiles off what is seen). Marched and bisected: the old fixed
 // point iteration on the terrain height oscillated across a dip.
+// `poolWater`: over a pool, the water's surface instead (the pool tool works
+// on the ground's grid: the bottom put its cursor about a tile off the mouse
+// over the water, live QA pass 11).
 std::optional<std::array<float, 2>> pickLotGround(const Lot& lot, int level, std::array<float, 3> eye,
-                                                  std::array<float, 3> dir);
+                                                  std::array<float, 3> dir, bool poolWater = false);
+// The height pickLotGround meets at (x, y): what to draw a cursor on.
+float lotPickHeight(const Lot& lot, int level, float x, float y, bool poolWater = false);
 
 class BuildEditor {
 public:

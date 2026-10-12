@@ -5260,6 +5260,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     }
                     continue;
                 }
+                if (st.kind == os2::FlowStep::Kind::Drag || st.kind == os2::FlowStep::Kind::Hover)
+                    continue; // after the build steps (below)
                 if (st.kind == os2::FlowStep::Kind::TutorialAuto) { // --tutorial-auto <turns>
                     for (long turn = 0; gTutorial && turn < st.ticks && !gPendingScene; ++turn) {
                         gTutorial->setCanvas(int(cw), int(ch));
@@ -5443,6 +5445,52 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             }
             runBuySteps();
             runBuildSteps();
+            // --drag / --hover: Build mode's mouse on the lot, after its tool is chosen.
+            for (const os2::FlowStep& st : os2::flowSteps(processArguments()))
+                [&] {
+                    if (st.kind != os2::FlowStep::Kind::Drag && st.kind != os2::FlowStep::Kind::Hover)
+                        return;
+                    // --drag x0,y0,x1,y1[,ctrl|hold] / --hover x,y: Build mode's mouse on the lot.
+                    if (!gBuild || !gBuild->active())
+                        return;
+                    const simd_float4x4 m = simd_mul(view.camera->projection(cw / ch), view.camera->view());
+                    const simd_float3 eye = view.camera->eye();
+                    auto ray = [&](float x, float y) {
+                        const simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * x / cw - 1, 1 - 2 * y / ch, 0.5f, 1));
+                        return simd_normalize(q.xyz / q.w - eye);
+                    };
+                    auto where = [&](const char* what) {
+                        if (auto p = gBuild->pointer()) {
+                            std::printf("opensims2: build mouse %s at lot (%.2f, %.2f)\n", what, p->x, p->y);
+                            if (std::getenv("OS2_DEBUG_PICK")) {
+                                const simd_float3 e = view.camera->eye();
+                                std::printf("opensims2: eye (%.3f, %.3f, %.3f) pivot (%.3f, %.3f, %.3f)\n", e.x, e.y, e.z,
+                                            view.camera->pivot().x, view.camera->pivot().y, view.camera->pivot().z);
+                                for (simd_float3 w : {simd_make_float3(p->x, p->y, gBuild->pickHeight(*p))}) { // where the cursor is drawn
+                                    const simd_float4 c = simd_mul(m, simd_make_float4(w, 1));
+                                    std::printf("opensims2: world (%.1f, %.1f, %.1f) on screen (%.1f, %.1f)\n", w.x, w.y, w.z,
+                                                (c.x / c.w + 1) / 2 * cw, (1 - c.y / c.w) / 2 * ch);
+                                }
+                            }
+                        }
+                    };
+                    gBuild->setCanvas(int(cw), int(ch));
+                    if (st.kind == os2::FlowStep::Kind::Hover) {
+                        gBuild->pointAt(eye, ray(st.x, st.y));
+                        where("over");
+                    } else {
+                        gBuild->mouseDown(eye, ray(st.x, st.y), st.control, false);
+                        where("down");
+                        gBuild->mouseDrag(eye, ray(st.x1, st.y1));
+                        where("dragged");
+                        if (!st.hold) {
+                            gBuild->mouseUp(eye, ray(st.x1, st.y1));
+                            std::printf("opensims2: build drag: %s\n", gBuild->message().c_str());
+                        }
+                    }
+                    gBuild->update();
+                    return;
+                }();
             if (auto h = argument(@"--ui-hover"); gBuy && h && std::sscanf(h->c_str(), "%f,%f", &hx, &hy) == 2) {
                 gBuy->setCanvas(int(cw), int(ch));
                 gBuy->hover(simd_make_float2(hx, hy));

@@ -21,7 +21,8 @@ const std::initializer_list<const char*> kSceneBare = {"--vm", "--menu", "--cas"
 const std::initializer_list<const char*> kContentFlags = {"--object", "--lot", "--sim", "--skinned", "--character",
                                                           "--ui"};
 
-bool isStep(const std::string& a) { return a == "--click" || a == "--right-click" || a == "--wait" || a == "--pie-step" || a == "--tutorial-auto" || a == "--key"; }
+bool isStep(const std::string& a) { return a == "--click" || a == "--right-click" || a == "--wait" || a == "--pie-step" || a == "--tutorial-auto" || a == "--key" ||
+                                         a == "--drag" || a == "--hover"; }
 
 } // namespace
 
@@ -93,6 +94,17 @@ std::vector<FlowStep> flowSteps(const std::vector<std::string>& args) {
             }
         } else if (args[i] == "--click" || args[i] == "--right-click") {
             st.kind = args[i] == "--click" ? FlowStep::Kind::Click : FlowStep::Kind::RightClick;
+            if (std::sscanf(args[i + 1].c_str(), "%f,%f", &st.x, &st.y) != 2)
+                continue;
+        } else if (args[i] == "--drag") {
+            st.kind = FlowStep::Kind::Drag;
+            char mod[16] = {};
+            if (std::sscanf(args[i + 1].c_str(), "%f,%f,%f,%f,%15s", &st.x, &st.y, &st.x1, &st.y1, mod) < 4)
+                continue;
+            st.control = std::string(mod) == "ctrl";
+            st.hold = std::string(mod) == "hold";
+        } else if (args[i] == "--hover") {
+            st.kind = FlowStep::Kind::Hover;
             if (std::sscanf(args[i + 1].c_str(), "%f,%f", &st.x, &st.y) != 2)
                 continue;
         } else if (args[i] == "--tutorial-auto") {
