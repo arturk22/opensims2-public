@@ -27,11 +27,29 @@ constexpr size_t kLoadFunction = 2;
 
 int16_t motiveValue(float v) { return int16_t(std::lround(std::clamp(v, -100.0f, 100.0f))); }
 
+// The saved floats are the motive engine's (cTSPerson vtable 0x5CC): the
+// trees see them rounded, the engine goes on from the fractions.
 void restoreMotives(Object& o, const LotObjects::State& s) {
     if (!o.person || !s.personRead)
         return;
-    for (size_t k = 0; k < kMotiveCount && k < s.motives.size(); ++k)
-        o.person->motives[k] = motiveValue(s.motives[k]);
+    Person& p = *o.person;
+    for (size_t k = 0; k < kMotiveCount && k < s.motives.size(); ++k) {
+        p.motives[k] = p.writtenMotives[k] = motiveValue(s.motives[k]);
+        p.exactMotives[k] = std::clamp(s.motives[k], -100.0f, 100.0f);
+    }
+    p.exactMotivesValid = true;
+}
+
+// The Set Motive Changes that were running (cTSPerson +0x618,
+// cMotiveInc::Read, Mac BV 0xad2764: motive, change per tick, limit), as
+// cTSPerson::OnSimulatorTick goes on with them.
+void restoreMotiveChanges(Object& o, const LotObjects::State& s) {
+    if (!o.person || !s.personRead)
+        return;
+    o.person->motiveChanges.clear();
+    for (const auto& m : s.motiveIncs)
+        if (m.motive < kMotiveCount)
+            o.person->motiveChanges.push_back({int16_t(m.motive), m.a, m.b});
 }
 
 // As cTSObject::Read (BV 0xb14cb0): the attributes take the saved count,
@@ -53,6 +71,7 @@ void restoreState(Object& o, const LotObjects::State& s) {
         for (size_t i = 0; i < s.personData.size() && i < o.person->data.size(); ++i)
             o.person->data[i] = s.personData[i];
     restoreMotives(o, s);
+    restoreMotiveChanges(o, s);
     for (auto& a : o.arrays)
         a = {};
     for (size_t i = 0; i < s.arrays.size() && i < o.arrays.size(); ++i)

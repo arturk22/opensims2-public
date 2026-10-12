@@ -1296,6 +1296,7 @@ static void testResumeSavedLot() {
     st.personData.assign(170, 0);
     st.personData[31] = 12;
     st.temps[2] = 4;
+    st.motiveIncs.push_back({7, 0.25f, 40.0f}); // a Set Motive Change running: hunger +0.25 a tick up to 40
     LotObjects::State::Frame f;
     f.treeId = 0x1001, f.node = 1, f.runningObject = uint16_t(sim.id), f.runningOn = uint16_t(sim.id);
     f.params = {3};
@@ -1315,6 +1316,11 @@ static void testResumeSavedLot() {
     check(sim.person->motives[3] == 100 && sim.person->motives[7] == 37 && sim.person->motives[15] == -100 &&
               sim.person->data[31] == 12,
           "saved motives (clamped) and person data");
+    check(sim.person->exactMotivesValid && sim.person->exactMotives[7] == 36.6f,
+          "the motive engine goes on from the saved fractions");
+    check(sim.person->motiveChanges.size() == 1 && sim.person->motiveChanges[0].motive == 7 &&
+              sim.person->motiveChanges[0].perTick == 0.25f && sim.person->motiveChanges[0].limit == 40.0f,
+          "the saved Set Motive Changes (cMotiveInc) run on");
     const Thread& t = fx.vm.threads.at(sim.id);
     check(t.stack.size() == 1 && t.stack[0].pc == 1 && t.stack[0].params[0] == 3 && t.temps[2] == 4,
           "saved frame: node, parameters, temps");
@@ -1326,6 +1332,7 @@ static void testResumeSavedLot() {
     saved.pairs.push_back({uint32_t(sim.id), 1});
     saved.saveTypeOf[sim.id] = 1;
     saved.saveTypes[1].guid = sim.guid();
+    sim.person->motiveChanges.clear();
     const auto captured = captureLot(fx.vm, saved);
     check(captured.updated == 1 && captured.lot.objects.size() == 1, "captured the object");
     const auto& cs = captured.lot.objects[0];
@@ -1335,8 +1342,16 @@ static void testResumeSavedLot() {
               cs.stack[0].runningOn == uint16_t(sim.id) && cs.stack[0].params.size() == 1 &&
               cs.stack[0].behaviorSaveType == 0,
           "captured tree stack: tree, node, owner, the saved parameter count and save type");
-    check(cs.motives[7] == 36.6f && cs.motives[3] == float(sim.person->motives[3]) && cs.personData[31] == 12,
-          "motives: unchanged ones keep their saved floats, changed ones the VM's");
+    check(cs.motives[7] == sim.person->exactMotives[7] && cs.motives[7] > 37.0f && cs.motives[7] < 37.2f &&
+              cs.motives[3] == float(sim.person->motives[3]) && cs.personData[31] == 12,
+          "motives: the engine's floats, with their fractions");
+    check(cs.motiveIncs.empty(), "captured Set Motive Changes (none left)");
+    sim.attributes[1] = 0;
+    sim.person->motiveChanges.push_back({8, -0.5f, -20.0f});
+    const auto again = captureLot(fx.vm, saved);
+    check(again.lot.objects[0].attributes.size() == 2 && again.lot.objects[0].motiveIncs.size() == 1 &&
+              again.lot.objects[0].motiveIncs[0].motive == 8 && again.lot.objects[0].motiveIncs[0].a == -0.5f,
+          "every attribute is saved (trailing zeros too), and the Set Motive Changes running");
     check(captured.lot.globals[0] == fx.vm.globals[0], "captured globals");
 }
 

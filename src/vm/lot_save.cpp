@@ -23,12 +23,13 @@ constexpr int16_t kPersonObjectType = 2;
 
 float savedMotive(const Object& o, size_t k, float before, bool known) {
     const Person& p = *o.person;
-    // Still the integer it was read as: keep the float (the VM keeps
-    // integers; the game, floats).
-    if (known && std::lround(std::clamp(before, -100.0f, 100.0f)) == p.motives[k])
-        return before;
+    // The motive engine's float, fractions and all (the game keeps floats;
+    // the trees see integers); else, still the integer it was read as, the
+    // float read.
     if (p.exactMotivesValid && p.writtenMotives[k] == p.motives[k])
         return p.exactMotives[k];
+    if (known && std::lround(std::clamp(before, -100.0f, 100.0f)) == p.motives[k])
+        return before;
     return float(p.motives[k]);
 }
 
@@ -110,6 +111,11 @@ void capturePerson(VM& vm, const Object& o, LotObjects::State& s, bool known) {
         if (std::lround(std::clamp(s.motives2[k], -100.0f, 100.0f)) != std::lround(std::clamp(s.motives[k], -100.0f, 100.0f)))
             s.motives2[k] = std::clamp(s.motives[k], -100.0f, 100.0f);
     }
+    // The Set Motive Changes running (cTSPerson +0x618, cMotiveInc::Write:
+    // u32 motive, f32 change per tick, f32 limit; Mac BV 0xad5c44).
+    s.motiveIncs.clear();
+    for (const MotiveChange& ch : p.motiveChanges)
+        s.motiveIncs.push_back({uint32_t(uint16_t(ch.motive)), ch.perTick, ch.limit});
     if (s.personData.size() < p.data.size())
         s.personData.resize(p.data.size(), 0);
     std::copy(p.data.begin(), p.data.end(), s.personData.begin());
@@ -155,18 +161,14 @@ void captureObject(VM& vm, const LotObjects& saved, const Object& o, LotObjects:
     s.level = o.position.level;
     if (o.position.hasHeight())
         s.elevation = o.position.elevation;
-    // The VM grows attributes on demand: as many as were saved, more only
-    // when the VM wrote past them.
-    auto fit = [known](std::vector<int16_t>& out, const std::vector<int16_t>& vm) {
-        size_t n = known ? out.size() : 0;
-        for (size_t i = n; i < vm.size(); ++i)
-            if (vm[i])
-                n = i + 1;
-        out.assign(n, 0);
-        std::copy_n(vm.begin(), std::min(n, vm.size()), out.begin());
-    };
-    fit(s.attributes, o.attributes);
-    fit(s.semiAttributes, o.semiAttributes);
+    // All of them, as cTSObject::Write writes its counts (the attributes:
+    // the OBJD's count, at least 8, or the count read from the save; the
+    // semi-attributes: the semi-global's label count, grown to the saved
+    // one). Trimming the trailing zeros left a created object with fewer
+    // attributes after the reload, and a tree reading the last one failed
+    // (N001_Lot36's kicked-over trash pile, attribute 7 of 7).
+    s.attributes = o.attributes;
+    s.semiAttributes = o.semiAttributes;
     if (s.data.size() < o.data.size())
         s.data.resize(o.data.size(), 0);
     std::copy(o.data.begin(), o.data.end(), s.data.begin());
@@ -392,9 +394,9 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
             diff(at + "GUID " + hexString(x.guid()) + " vs " + hexString(y->guid()));
         if (x.position.x != y->position.x || x.position.y != y->position.y || x.position.level != y->position.level)
             diff(at + "position");
-        if (trimmed(x.attributes) != trimmed(y->attributes))
+        if (x.attributes != y->attributes)
             diff(at + "attributes " + join(x.attributes) + " vs " + join(y->attributes));
-        if (trimmed(x.semiAttributes) != trimmed(y->semiAttributes))
+        if (x.semiAttributes != y->semiAttributes)
             diff(at + "semi-attributes");
         for (size_t i = 0; i < x.data.size(); ++i)
             if (x.data[i] != y->data[i])

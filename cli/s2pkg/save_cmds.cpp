@@ -139,7 +139,7 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
 
 int cmdLotSave(const std::vector<std::string>& args) {
     std::vector<fs::path> paths;
-    long ticks = 0;
+    long ticks = 0, continueTicks = 0;
     bool check = false;
     std::vector<std::pair<std::string, std::string>> buyEdits; // --buy/--sell/--move (buy_cmds.hpp)
     std::vector<std::pair<std::string, std::string>> buildEdits; // --wall/--floor/... (build_cmds.hpp)
@@ -152,11 +152,13 @@ int cmdLotSave(const std::vector<std::string>& args) {
             ticks = std::stol(args[++i]);
         else if (args[i] == "--check")
             check = true;
+        else if (args[i] == "--continue" && i + 1 < args.size())
+            check = true, continueTicks = std::stol(args[++i]);
         else
             paths.emplace_back(args[i]);
     }
     if (paths.size() != 2)
-        throw std::runtime_error("usage: s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check]");
+        throw std::runtime_error("usage: s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check] [--continue N]");
     const fs::path& src = paths[0];
     const fs::path& dst = paths[1];
     if (fs::exists(dst) && fs::equivalent(src, dst))
@@ -289,7 +291,61 @@ int cmdLotSave(const std::vector<std::string>& args) {
     std::printf("  VM state after load -> save -> load: %s\n", diffs.empty() ? "the same" : "differs:");
     for (const auto& d : diffs)
         std::printf("    %s\n", d.c_str());
-    return diffs.empty() && differ == 0 && geometryDiffers == 0 ? 0 : 1;
+    // --continue N: both VMs (the one that saved, the reloaded one) run on
+    // N ticks with the same random numbers (the VM's generator is not the
+    // game's and is not saved: the reloaded VM takes the first's state), and
+    // are compared every game minute; the first tick they differ tells what
+    // the save did not carry (a route or an animation in progress, ...).
+    size_t continued = 0;
+    if (continueTicks > 0) {
+        b.vm->random = a.vm->random;
+        long at = -1;
+        std::vector<std::string> later;
+        for (long i = 1; i <= continueTicks && at < 0; ++i) {
+            a.vm->tick();
+            b.vm->tick();
+            // OS2_CONTINUE_TRACE=id: that object's tree stack in both, each tick.
+            if (const char* tr = std::getenv("OS2_CONTINUE_TRACE"))
+                for (vm::VM* m : {a.vm.get(), b.vm.get()}) {
+                    std::printf("    %ld %s:", i, m == a.vm.get() ? "first " : "second");
+                    if (auto t = m->threads.find(vm::ObjectId(std::atoi(tr))); t != m->threads.end())
+                        for (const auto& f : t->second.stack) {
+                            std::printf(" %04X@%u", f.instance, f.pc);
+                            if (&f == &t->second.stack.back() && f.behavior && f.pc < f.behavior->instructions.size())
+                                std::printf(" [%s op %X]", f.behavior->fileName.c_str(), f.behavior->instructions[f.pc].opcode);
+                            if (&f == &t->second.stack.back())
+                                for (int16_t l : f.locals)
+                                    std::printf(" l%d", l);
+                        }
+                    std::printf("\n");
+                }
+            if (auto d = vm::compareLotState(*a.vm, *b.vm); !d.empty())
+                    at = i, later = std::move(d);
+        }
+        continued = later.size();
+        if (at < 0)
+            std::printf("  then %ld ticks more in both: the same\n", continueTicks);
+        else
+            std::printf("  then %ld ticks more in both: differ from tick %ld:\n", continueTicks, at);
+        for (const auto& d : later)
+            std::printf("    %s\n", d.c_str());
+        // Errors (the object reset) in one of the two only.
+        for (vm::VM* m : {a.vm.get(), b.vm.get()})
+            for (const auto& [id, r] : m->errorResets) {
+                vm::VM* other = m == a.vm.get() ? b.vm.get() : a.vm.get();
+                auto o = other->errorResets.find(id);
+                if (o == other->errorResets.end() || o->second.count != r.count)
+                    std::printf("    object %d reset after an error in the %s only (tick %llu): %s\n", int(id),
+                                m == a.vm.get() ? "first" : "second", (unsigned long long)r.lastTick,
+                                r.last.substr(0, r.last.find('\n')).c_str());
+            }
+        std::set<int> named;
+        for (const auto& d : later)
+            if (int id = 0; std::sscanf(d.c_str(), "object %d:", &id) == 1 && named.insert(id).second)
+                if (const vm::Object* o = a.vm->object(vm::ObjectId(id)); o && o->definition)
+                    std::printf("    (object %d is %s)\n", id, o->definition->fileName.c_str());
+    }
+    return diffs.empty() && differ == 0 && geometryDiffers == 0 && continued == 0 ? 0 : 1;
 }
 
 // hood-save: every lot of a neighborhood loaded with the neighborhood, run
@@ -717,7 +773,7 @@ int saveCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* saveUsage() {
-    return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
+    return "       s2pkg lot-save <lot.package> <out.package> [--ticks N] [--check] [--continue N] [--buy|--sell|--move ...]\n"
            "              [--wall|--room|--delete-wall x0,y0,x1,y1[,level]] [--floor x0,y0,x1,y1,pattern[,level[,rot]]]\n"
            "              [--fence x0,y0,x1,y1,fence[,level]] [--delete-fence x0,y0,x1,y1[,level]] [--floor-click px,py,pattern[,level]]\n"
            "              [--wallpaper x0,y0,x1,y1,r|l|b,pattern[,level]] [--wallpaper-room x,y,pattern[,level]]\n"
