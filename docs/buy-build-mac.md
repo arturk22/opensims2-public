@@ -1208,9 +1208,18 @@ reserva `0x0C400DDD`.
   `TSObjectUserCanSetPositionAndOrientation`, gira e posiciona) e o
   `LinkObjects` (`0x3ff4a4`) liga cada objeto ao anterior e ao seguinte (os
   IDs vizinhos, −1 nas pontas) — é a cadeia que a VM e o roteamento usam.
-  Apagar (`RemoveFlight`, marreta `DeleteModularStairs`) tira a escada
-  inteira pelo grupo e devolve o preço (2× se o grupo tem 4 partes,
-  inferido do código). O custo mostrado é `CalculatePreviewCost`.
+  Apagar (marreta `DeleteModularStairs` → `UserRemoveModularStairs`, BV
+  `0x9ebd54`: se `TSObjectGroupUserCanDelete(grupo)`, chama
+  `RemoveFlight(grupo)`, BV `0x3fff3c`, vtable `0x70` do undoable) tira a
+  escada inteira pelo grupo: para cada objeto do grupo cria a
+  suboperação de apagar objeto (a devolução normal do objeto) e, se o
+  **modelo do corrimão** do objeto (`ObjectModel`, BV `0x3ff17c`: o dado 0
+  do objeto depois da mensagem `0x30`) é > 1, **soma à devolução o preço do
+  corrimão** (o produto `0x2C7BF690`, vtable `0x5c`): 2× se o modelo é 4
+  (corrimão dos dois lados), 1× nos modelos 2–3, nada nos 0–1 — o mesmo
+  `RailingCost` do lote (`docs/neighborhood-mac.md`). (Corrige o "2× se o
+  grupo tem 4 partes" da rodada 11.) O custo mostrado é
+  `CalculatePreviewCost`.
 
 **Auto-telhado** (`cTSUserToolAutoRoof::CreateAutoRoof(tipo, ...)`, BV
 `0x2560ac` → `CreateAutoRoofs(andar, tipo, ...)` `0x9a0df0` para cada andar
@@ -1231,12 +1240,47 @@ reserva `0x0C400DDD`.
    cujas células todas continuam cobertas por outros.
 4. Para cada retângulo de área > 0, o tipo do ROOF sai de `0x997f8c(tipo
    da ferramenta, retângulo)`: 1 → 5; 2 → 4; 3 → 5 se altura ≤ largura,
-   senão 4; 4 → 3 se altura < largura, senão 4; outro → 0. Cria o telhado
+   senão 4; 4 → 3 se altura < largura, senão 4; outro → 0 (tipos do ROOF:
+   tabela abaixo). Cria o telhado
    (`cTSUserToolUndoableRoof→0x6C(padrão, mín, máx, tipo)`) no andar; os
    tipos 3 e 4 (empenas) ganham as **paredes de sótão** nas pontas
    (`0x9990f4` → `MakeShedWalls`).
 5. Antes, sem a flag "manter", remove os telhados auto anteriores
    (`0x99eafc`); custo total no fim, recusado sem fundos.
+
+**Botões do painel de auto-telhado** (`cTSWinProcBuildPanel::
+onBtnClickedID`, BV `0x287f18`…): cada botão manda à ferramenta o valor
+`2·tipo + (C400 marcado)`, e o `cTSUserToolAutoRoof::Init` (BV `0x2571c4`)
+usa `tipo = valor >> 1`, "manter os telhados" = bit 0 (valor 0 →
+`RemoveAllRoofs`, `0xDEADBEEF` → nada). Conferido no código: **C100 → 1
+(tudo de quatro águas, ROOF 5), C200 → 2 (tudo empena, ROOF 4), C500 → 3
+(quatro águas onde altura ≤ largura, senão empena), C600 → 4 (empena curta
+ROOF 3 onde altura < largura, senão empena longa ROOF 4), C700 → 5 (laje:
+só o piso de telhado), C300 → 0 (remover)**, C400 = a caixa "preservar".
+É o mapeamento que o `build_mode.cpp` já usa.
+
+**Tipos do ROOF** (`nTSSG::cRoofManager::AddRoof(id, mín, máx, tipo)`, BV
+`0x6bf488`; classes conferidas pelo `ComputeGridElevation` que cada
+construtor chama, porque o symxfer troca alguns nomes de construtor):
+
+| tipo | classe | `roofs.txt` / nome no catálogo (STR# 0x8C do `Build.package`) |
+|---|---|---|
+| 1 | `cHalfGableRoofType` | produto 0 `roof-ui-gable-shed`, "Shed Gabled Roof" |
+| 2 | `cHalfHippedRoofType` | produto 1 `roof-ui-hipped-shed`, "Shed Hipped Roof" |
+| 3 | `cTallGableRoofType` | produto 2 `roof-ui-gable-tall`, "Short Gabled Roof" (cumeeira no eixo curto) |
+| 4 | `cGableRoofType` | produto 3 `roof-ui-gable`, "Long Gabled Roof" (cumeeira no eixo longo) |
+| 5 | `cHippedRoofType` | produto 4 `roof-ui-hipped`, "Hipped Roof" |
+| 6 | `cMansardRoofType` | produto 5 `roof-ui-mansard`, "Mansard Roof" (tem `roofFloorPattern`) |
+| 7 / 8 / 9 | cônico / cúpula / octogonal | (não estão no `roofs.txt` do base) |
+| 10–14 | diagonais: empena, empena alta, quatro águas, meia-empena, meia-quatro-águas | `IsDiagonalRoofType` (BV `0x163c6c`): máscara `0x387C00` = 10–14 e 19–21 |
+| 15 | `cGlassGableRoofType` (estufa) | `IsGlassRoofType` (`0x163c5c`) |
+| 16–18 | pagode: quatro águas, empena, meia-empena | |
+| 19–21 | pagode diagonal: quatro águas, empena, meia-empena | |
+| 22 | octogonal (outra variante, mesmo construtor do 9) | |
+
+O produto *k* do `roofs.txt` é o tipo *k* + 1 (inferido da ordem:
+catálogo e `AddRoof` batem um a um, e o produto 5, a mansarda, é o único
+com `roofFloorPattern`). Os lotes do base só usam 1–6.
 
 **Águas-furtadas** (roofs 6–11 do `roofs.txt`: 1, 2 e 3 de largura, com
 empena ou de quatro águas) são produtos de telhado comuns
