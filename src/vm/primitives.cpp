@@ -257,6 +257,23 @@ Exit setToNext(Context& c) {
         auto rel = c.vm.relationships.find({VM::RelationshipKey{true, c.thread.temps[0]}, VM::RelationshipKey{true, to}});
         return rel == c.vm.relationships.end() ? nullptr : &rel->second;
     };
+    // The common filter (SetToNextIsObjectEligible, BV 0x1be54dc): a valid
+    // object, which an object Remove Object Instance queued to die at the
+    // end of the tick is not (ValidateObject: object flag 0x10000 or 0x20000;
+    // the reaper found the Sim it had just turned into an urn and reaped
+    // it again), and with flag 0x02 object data u16 9 equal to u16 11. The
+    // object data 56 bit 0 and 107 tests are Bon Voyage's (§ Set to Next).
+    // Node version 0 had neither the flags nor the filter (SetToNextParam
+    // zeroes them on load): the base game's trees keep other bytes there
+    // (the debug tombstone's "New Baby" filtered every object out, so no
+    // one cared for the baby).
+    const bool where = c.instruction.nodeVersion != 0 && o.size() > 12 && (o[8] & 0x02);
+    const int16_t whereField = where ? int16_t(le16(&o[9])) : 0, whereValue = where ? int16_t(le16(&o[11])) : 0;
+    auto eligible = [&](const Object& x) {
+        if (dying(c.vm, x.id))
+            return false;
+        return !where || (whereField >= 0 && size_t(whereField) < x.data.size() && x.data[size_t(whereField)] == whereValue);
+    };
     switch (type) {
     case 5: return nextNeighbor([](int16_t, const Neighbor&) { return true; });                       // neighbor id
     case 7: return nextNeighbor([guid](int16_t, const Neighbor& n) { return n.guid == guid; });      // neighbor of type
@@ -316,22 +333,36 @@ Exit setToNext(Context& c) {
         auto next = ids.upper_bound(current);
         return next == ids.end() ? none() : found(*next);
     }
-    case 8: { // object on the same tile and level, after the target; after the last one the tile's
-              // list starts again, so with nothing else there the target itself is found (TrySetToNext,
-              // Mac BV: the binary walks the tile's object list round to the target; "Toilet - Standard
-              // Entry" and "MT - Get in Temp 0 & 1 - Max X & Y" stop when they are back at the start).
-              // Target 0, missing, out of the world or not on the tile's list (contained): false, and
-              // the target is left as it is (the binary returns before writing).
+    case 8: { // object on the same tile and level, after the target, as TrySetToNext walks it (Mac BV
+              // 0xe47f..: FUN_00e1e8a8/FUN_00e1e484): the tile's objects (FirstValidObjectOnTile /
+              // NextValidObjectOnTile; here by ID), each followed by what is in its slots, depth first,
+              // so a Sim sitting on a chair and a plate on a counter are found too (the chair's "Shoo
+              // Sims off Tile" skips the sitter, the bunny's "Don't Stand on Sims" finds it). After the
+              // last one the walk starts again, so with nothing else there the target itself is found
+              // ("Toilet - Standard Entry" and "MT - Get in Temp 0 & 1 - Max X & Y" stop when they are
+              // back at the start). Each object found must pass the common filter and stand on the
+              // target's tile and level. Target 0, missing or out of the world: false, and the target is
+              // left as it is (the binary returns before writing).
         if (current == 0)
             return Exit::False;
         const Object* x = c.vm.object(current);
-        if (!x || !x->position.inWorld() || x->data[objdata::ContainerId] != 0)
+        if (!x || !x->position.inWorld() || dying(c.vm, x->id))
             return Exit::False;
-        const auto ids = c.vm.objectsOnTile(VM::tileOf(*x));
-        if (ids.empty())
+        const TilePos at = VM::tileOf(*x);
+        const auto ids = c.vm.objectsOnTileWithContents(at);
+        const auto self = std::find(ids.begin(), ids.end(), current);
+        if (self == ids.end())
             return Exit::False;
-        auto it = std::upper_bound(ids.begin(), ids.end(), current);
-        return found(it == ids.end() ? ids.front() : *it);
+        const size_t from = size_t(self - ids.begin());
+        for (size_t k = 1; k <= ids.size(); ++k) {
+            const ObjectId id = ids[(from + k) % ids.size()];
+            if (id == current)
+                return found(current);
+            const Object* y = c.vm.object(id);
+            if (y && eligible(*y) && VM::tileOf(*y) == at)
+                return found(id);
+        }
+        return found(current);
     }
     case 9: { // adjacent to the object in the local (TrySetToNext, Mac BV 0xe48300..): one object a side,
               // the last one on the tile (nTSWorld::LastValidObjectOnTile), in the anchor's room, the
@@ -504,23 +535,6 @@ Exit setToNext(Context& c) {
             throw VMError("Set to Next: search type " + std::to_string(type) + " not implemented");
         throw gameError(err::BadSearchType, "Set to Next type " + std::to_string(type));
     }
-    // The common filter (SetToNextIsObjectEligible, BV 0x1be54dc): a valid
-    // object, which an object Remove Object Instance queued to die at the
-    // end of the tick is not (ValidateObject: object flag 0x10000 or 0x20000;
-    // the reaper found the Sim it had just turned into an urn and reaped
-    // it again), and with flag 0x02 object data u16 9 equal to u16 11. The
-    // object data 56 bit 0 and 107 tests are Bon Voyage's (§ Set to Next).
-    // Node version 0 had neither the flags nor the filter (SetToNextParam
-    // zeroes them on load): the base game's trees keep other bytes there
-    // (the debug tombstone's "New Baby" filtered every object out, so no
-    // one cared for the baby).
-    const bool where = c.instruction.nodeVersion != 0 && o.size() > 12 && (o[8] & 0x02);
-    const int16_t whereField = where ? int16_t(le16(&o[9])) : 0, whereValue = where ? int16_t(le16(&o[11])) : 0;
-    auto eligible = [&](const Object& x) {
-        if (dying(c.vm, x.id))
-            return false;
-        return !where || (whereField >= 0 && size_t(whereField) < x.data.size() && x.data[size_t(whereField)] == whereValue);
-    };
     const auto& table = c.vm.objectTable(); // by ID; the objects after `current`
     for (size_t k = current < 0 ? 0 : size_t(current) + 1; k < table.size(); ++k)
         if (table[k] && matches(*table[k]) && eligible(*table[k]))

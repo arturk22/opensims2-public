@@ -434,7 +434,16 @@ Execução (binário):
   objeto dele também passa pelo filtro comum.
 - 7 vizinho do tipo: próximos vizinhos cuja definição tem o GUID u32 0.
 - 8 objeto no mesmo tile: precisa de alvo ≠ 0 (senão falso); objetos do tile
-  do alvo, no mesmo nível, depois dele.
+  do alvo, no mesmo nível, depois dele. O iterador do tile (BV `0xe1e8a8`/
+  `0xe1e484`) anda pela lista do tile (`First`/`NextValidObjectOnTile`) e
+  **entra nos slots** de cada objeto (vtable `0x104` número de slots, `0x110`
+  o conteúdo do slot i; ao acabar volta ao contêiner, `0x118`/`0x124`), em
+  profundidade: um Sim sentado numa cadeira e um prato num balcão são
+  achados; no fim recomeça do primeiro e para no próprio alvo. Cada achado
+  passa pelo filtro comum e tem de estar no tile/nível do alvo (rodada 15:
+  antes o VM pulava os contidos, e o "Don't Stand on Sims" do coelho social
+  não via a Ophelia/Olive sentada e ficava no tile da cadeira; a "Chair -
+  Animate - Get Out" falhava por "Sim on Tile" horas a fio, `N002_Lot2`).
 - 9 objeto adjacente ao objeto do local (byte 6; fora do intervalo: erro
   0x08; objeto inexistente: 0x0A): **um objeto por lado**, o último da lista
   do tile (`nTSWorld::LastValidObjectOnTile`, BV `0x16cbd8`: de trás para a

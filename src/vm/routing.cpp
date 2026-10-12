@@ -149,6 +149,26 @@ bool VM::pointFree(float x, float y, int level, std::span<const ObjectId> ignore
     return true;
 }
 
+std::vector<ObjectId> VM::objectsOnTileWithContents(TilePos t) const {
+    std::vector<ObjectId> out;
+    std::set<ObjectId> seen;
+    std::function<void(ObjectId)> add = [&](ObjectId id) {
+        if (!seen.insert(id).second)
+            return;
+        out.push_back(id);
+        std::vector<std::pair<int16_t, ObjectId>> inside;
+        for (const Object* o : byId_)
+            if (o && o->id != id && o->data[objdata::ContainerId] == id && !dyingObjects.contains(o->id))
+                inside.emplace_back(o->data[objdata::SlotNumber], o->id);
+        std::sort(inside.begin(), inside.end());
+        for (const auto& [slot, x] : inside)
+            add(x);
+    };
+    for (ObjectId id : objectsOnTile(t))
+        add(id);
+    return out;
+}
+
 std::vector<ObjectId> VM::objectsOnTile(TilePos t) const {
     std::vector<ObjectId> out;
     for (const Object* o : byId_) // by ID, as objects_ is

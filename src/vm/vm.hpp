@@ -856,6 +856,10 @@ public:
     bool placeNearFree(Object& o);
     // Objects placed on a tile (in the world and not in a slot), by ID.
     std::vector<ObjectId> objectsOnTile(TilePos t) const;
+    // The tile's objects as above, each followed by what is in its slots (by
+    // slot number, depth first): the walk of the binary's tile iterator
+    // (Set to Next 8; FUN_00e1e484 in the Mac BV).
+    std::vector<ObjectId> objectsOnTileWithContents(TilePos t) const;
 
     // Where a walker may stand to use a routing slot of `target`: goal
     // tiles with their costs, the exact point and facing of each (facing -1:

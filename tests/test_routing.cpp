@@ -163,16 +163,18 @@ static void testSetToNextTiles() {
     auto stn = [](uint8_t type, uint8_t local, Target t, Target f) {
         return instr(0x1F, t, f, {0, 0, 0, 0, uint8_t(0x80 | type), StackId, local, 0, 0});
     };
-    // Same tile, from a: b, then a again (it wraps around, as FreeSO's
-    // ObjectOnSameTile: the game's trees loop until they are back at the start).
+    // Same tile, from a: b, what is in b's slot, then a again (the binary's
+    // tile walk goes into the slots, and wraps around: the game's trees loop
+    // until they are back at the start).
     code.add(kGroup, 0x1000,
              tree({expr(StackId, 0, Assign, Lit, a.id, go(1), E), stn(8, 0, go(2), E),
                    expr(Temp, 0, Assign, StackId, 0, go(3), E), stn(8, 0, go(4), E),
-                   expr(Temp, 1, Assign, StackId, 0, T, E)}));
+                   expr(Temp, 1, Assign, StackId, 0, go(5), E), stn(8, 0, go(6), E),
+                   expr(Temp, 2, Assign, StackId, 0, T, E)}));
     Thread t = vm.start(a.id, 0x1000);
     vm.run(t);
-    check(t.status == Thread::Status::Finished && t.temps[0] == b.id && t.temps[1] == a.id,
-          "Set to Next 8 goes through the tile's objects after the target, not the contained one, and wraps");
+    check(t.status == Thread::Status::Finished && t.temps[0] == b.id && t.temps[1] == held.id && t.temps[2] == a.id,
+          "Set to Next 8 goes through the tile's objects after the target, into their slots, and wraps");
     // Adjacent to a (local 0): +X (east) comes before -X (west); then none.
     code.add(kGroup, 0x1001,
              tree({expr(Local, 0, Assign, Lit, a.id, go(1), E), expr(StackId, 0, Assign, Lit, 0, go(2), E),
