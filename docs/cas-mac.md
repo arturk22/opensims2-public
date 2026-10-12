@@ -708,6 +708,11 @@ padrão dela (humano `0x7FD96B54`).
   do motor: tipo 7 → 9997, **6 → 9998**, 3 → 9999, −1 → −1, 1005 → o
   "event=N". Quem emite o tipo 6 não foi achado (as animações não têm essa
   chave); inferido: o fim da ação do overlay, mandado logo antes do 9999.
+  Rodada 15: conferido que **nenhum dos 11.757 ANIM** tem chave de tipo 3, 6
+  ou 7 (só 1014 som, 1005 "event=N" e 8): essas chaves são feitas pelo
+  motor; o `cEventKey::SetType` (BV `0xd0d458`) só é chamado pela vtable e
+  o `HandleEvents` (BV `0x780ad4`) lê o tipo de cada chave (vtable `0x30`)
+  sem saber quem a criou. Continua inferido.
   Sem isso o adulto tentava pôr o bebê no chão para sempre.
 - **Berço.** "Interaction - Put In Crib - Subqueue" empurra as entradas do
   berço a partir da parte 0,0, que não tem TTAB (só o mestre "Crib - Cheap"

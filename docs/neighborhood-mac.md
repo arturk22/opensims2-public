@@ -1179,6 +1179,19 @@ de família; o `app/head_shot.*` do opensims2 é inferido):
   `a-UIpose-M07_anim`) e um número sorteado de 1 a N (N 2–9 conforme a
   idade); com a carta de ódio (tipo 1) usa `a-hateLetterPose-%02d_anim`
   (1–3);
+- **o sorteio da pose (rodada 15):** `FUN_001718c8(estado, 1, N)` é um LCG
+  próprio da fábrica (`+0xa8`: estado = estado · `0x41C64E6D` + `0x3039`) que
+  devolve **1 + ((N − 1) · (16 bits altos do novo estado)) >> 16**, isto é,
+  de 1 a **N − 1** (o topo não entra). A letra vem do tipo de idade/espécie
+  (vtable `0x84` do Sim ou `0x4c` da descrição): 1 → `c`, 2 e 13 → `p`, os
+  bichos do BV (5–12) → `d`/`l`/`f`/`w`/`k`, o resto → `a`. Para humanos N
+  sai de uma palavra de flags (campo `0x54` da descrição; inferido: as
+  flags de idade do CAS): bit 0 → 4, senão bit 2 → 6, senão bit 6 livre →
+  **9** (poses 1–8, as oito `M01`–`M08`/`F01`–`F08` do jogo base), bit 6 →
+  4; com um dos bits 0/2/6 o texto do sexo ganha um sufixo (não lido). Os
+  arquivos do jogo base têm `a`/`c`/`p` × `M`/`F` × 01–08 e `b-UIpose-01…04`
+  (sem sexo). O app escolhe um número fixo por arquivo de personagem (1–8):
+  o mesmo conjunto, sem o sorteio a cada foto (fica assim: o visual basta);
 - **enquadramento** (humano, espécie 1): o osso `head` (posição no mundo
   P); caixa de P + (−0,15, −0,15, −0,10) até P + (0,15, 0,15, 0,20) (0,30 ×
   0,30 × 0,30, de 0,10 abaixo a 0,20 acima do osso); a câmera olha para o

@@ -1684,6 +1684,60 @@ caixa ciano; inferido, o jogo tem o `cLotSkirt` do bairro em volta).
 recusado); `docs/screenshots/r14-construcao-piscina-borda.jpg` (antes ×
 depois).
 
+**Rodada 15 (front "engine-re", binário): os códigos de recusa da piscina.**
+O BV não tem `cTSUserToolPool`: a piscina retangular é o
+`cTSUserToolDeckFoundation` com o byte **`+0xbd` = piscina** (`+0xbe`
+palco, `+0xbc` fundação; `+0x80` = 0 retângulo, 1 losango; `+0x84` 0/2
+pôr, 1/3 apagar). Os cantos (vértices) ficam em `+0xc4` (x, y, nível) e
+`+0xd0`; o ponto onde o arraste começou em `+0x8c`. O `OnDrag` (BV
+`0x355b94`) só arredonda o ponto (`floor(x + 0,5)`, `FUN_0015dc5c`) e o
+`PreviewQuadrilateral` (BV `0x3551b0`) faz o retângulo (mín./máx. com o
+começo) **sem prender nada ao lote**; ele chama o `MayPlaceQuadrilateral`
+(ou, apagando, o `FUN_00351104`) com uma lista de erros, pinta o cursor
+`DeckFoundationPreviewNotPlaceable` e mostra os erros (`ShowErrors`) quando
+falha; o `OnRelease` só cria se o último preview passou (`+0xbb`). Ou seja,
+**um canto fora do lote é recusado, não preso** (o r15-pool-fixes acertou).
+Os códigos, na ordem (texto pelo `PlacementErrorString`, §7.10):
+
+| teste (pôr piscina) | código | texto (STR# 0x89) |
+|---|---|---|
+| `SelectionIsDegenerate` (BV `0x34ed54`): algum canto com nível > 0 | `0x8A` | #90 "Pools only allowed on terrain" |
+| nível fora de [mín., máx.] do lote | — (silencioso) | — |
+| x0 ≥ x1 ou y0 ≥ y1 (seleção vazia) | `0x80` | #73 (texto de escada; na prática não aparece) |
+| `MayPlaceQuadrilateral` (BV `0x352a30`): um canto fora do `IsInBounds(x, y)` do mundo (BV `0xd1944`: Mín + 1 ≤ x ≤ Máx − 1) ou no tile travado (`cIWorldDB` `0xc4`) | `0x02` | #1 "Location out of bounds" |
+| vértice dentro do retângulo com altura ≠ a da piscina que o `FUN_009e9550` não consegue mexer | `0x81` (`0x2F` acima do térreo) | #12 "Can't level terrain" |
+| `FUN_009dae20` num tile (o terreno do tile tem uma forma que não aceita; sem código próprio) | — (silencioso) | — |
+| `CanPlaceTile` (BV `0x34f5a8`), por tile: água (`IsPartWater`) | `0x1E` | vazio no jogo base |
+| … praia (`IsBeachLocation`, só BV) | `0x86` | #78 "Can't extend pool" |
+| … objeto com od `0x22` = 0 e sem od 42 bit `0x200` | `0x0C` | #11 "Can't intersect other objects" |
+| … nos 4 cantos do tile, um item do gerente `0x90` do `cIWorldDB` (thunk `0x150f204` → `0xd1530`, não identificado) de tipo 0/2/4/6 conforme o canto | `0x86` | #78 |
+| o tile onde o arraste começou já tem deck, fundação ou piscina (`IsDeckFoundationOfType` 2, 1, 4) | `0x86` | #78 |
+| cada parede de piscina nova (`UserMayPlacePartition`, com a parede que já existe aceita: `0x41`) recusada: os dois tiles dentro e destravados → | `0x86` | #78 |
+| … senão | `0x02` | #1 |
+| parede que atravessa o retângulo (`FUN_00352750` com o modo da piscina) | `0x46` | vazio no base |
+| parede que não pode sair (`LevelRoomToolMayEraseWallStyle` falso) | `0x84` | #7 "Can't intersect wall" |
+
+Apagar (Ctrl, `FUN_00351104` → `MayEraseStage`, BV `0x350290`): por tile,
+`CanDeletePoolTile` (BV `0x165008`): tile sem piscina (`FUN_001649e4`)
+passa; algo do mesmo gerente `0x90` no canto do tile → **`0x87`** #95
+"Can't delete pool"; objeto do tile de tipo 2 (pessoa) → **`0x2D`** #44
+"Can't delete pool with Sims in it"; parte de multi-tile cujo líder tem o
+campo `0x4a` = `0x40` (inferido: escada/trampolim) → **`0x2E`** #45 "Must
+first delete ladder or diving board". O limite de 900 tiles e a junção em
+retângulo (`AreExpansionBoundsLegal`) não aparecem nesses testes (quem os
+chama continua sem achar).
+
+**Correção para o r15-pool-fixes:** os códigos que ele escolheu pelo texto
+(`0x5B`, `0x5A`, `0x4F`, `0x60`, `0x20`, `0x0D`) só dão o texto certo porque o
+`vm::placementerror::textIndex` do app é `código − 2`, que não é a tabela do
+binário (§7.10: `0x86` → #78, `0x8A` → #90, `0x81` → #12, `0x87` → #95, `0x2F`
+→ #8, `0x13` → #32...). O certo é o `textIndex` seguir a tabela do
+`PlacementErrorString` e a piscina voltar aos códigos do binário: `0x8A`
+(nível), `0x02` (canto fora/travado), `0x81` (terreno), `0x1E` (água),
+`0x0C` (objeto), `0x86` (estender/parede), `0x87`/`0x2D`/`0x2E` (apagar).
+O "not editable" (borda/faixa) do app é o `0x02` nos cantos e o `0x81` nos
+vértices de dentro.
+
 ### 7.19 Arcos de cerca (rodada 12)
 
 `fencearches.txt` tem um só arco no jogo base (`fenceArch 26`, "Arco de
@@ -1852,8 +1906,16 @@ dentro).
     `TSObjectUserCanSetPosition`, `...CanDrop`, `...CanPlaceInSlot` e o conta-
     gotas) → `IsOnLockedTile` (BV `0x8a66b0`): no lote e travado → **`0x02`**;
     od 42 bit `0x40` pula o teste; o objeto com `AllowOnlyOnLockedTile`
-    (`cTSObject +0xea` bit 10) tem de ficar **só** em tiles travados (caixa
-    de correio, lixeira da calçada; não mapeado aqui);
+    (BV `0xaff268`, vtable `0x230`: **od 40 bit 10**, `+0xea`; o rótulo do
+    editor, STR# 0xD6 #10, é "(unused)Generates Light") tem de ficar **só**
+    em tiles travados: fora deles é recusado **sem erro na lista**; nos
+    outros, tile travado → `0x02`. Multi-tile (`0x5A6216F6`): cada parte no
+    seu tile, com o bit da parte; objeto com pegada estendida (vtable
+    `0x1a8`): os 4 cantos de cada retângulo, todos travados para o bit e
+    nenhum para os outros. **Rodada 15: nenhuma árvore do jogo base liga
+    esse bit** (nenhum Expression liga a flag 11 do od 40 em 22.396 BHAVs) e o
+    `Reset` o zera (od 40 não está entre os dados guardados): no base ele
+    nunca vale, e o app está certo em não o ter;
   - fundações/decks/piscinas (`MayPlaceQuadrilateral`, `0x353c6c`: tile fora
     do `IsInBounds` ou travado → `0x02`).
 - No código (rodada 14): `Lot::locked` (lido do 3ARY 0x03, níveis novos

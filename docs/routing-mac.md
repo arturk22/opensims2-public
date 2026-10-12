@@ -80,11 +80,27 @@ subcélulas estiver) e o `FUN_00656cc0` faz de cada trecho de bits seguidos
 de uma linha um retângulo (linhas iguais seguidas se juntam):
 `x = tx + c·0,125 − 0,5 + 0,01 … tx + c'·0,125 − 0,5 − 0,01`, y igual pelas
 linhas — no espaço do modelo, encolhido 0,01. Para uma parte de um
-multi-tile, o tile "(x,y)" é o da parte no modelo (`vtable 0x150`, não
-lido: aqui o deslocamento da parte ao líder girado de volta, inferido) e o
-retângulo é relativo à própria parte; uma lista sem esse tile não dá
-retângulo. Sem lista "footprint", o `cObject` usa a caixa do modelo
-cortada ao tile (±0,5; aqui a caixa do OBJD, inferido).
+multi-tile, o tile "(x,y)" é o da parte no modelo e o retângulo é
+relativo à própria parte; uma lista sem esse tile não dá retângulo.
+**Rodada 15 (binário):** a vtable `0x150` é o
+**`GetLocalOffsetFromLeader`**: 0 para um objeto comum (BV `0xaf80f4`); para
+uma parte (`cEdithMTObject`, BV `0xaf2410`) **(x da parte − x do líder, y do
+líder − y da parte)** dos **`GetNormalizedOffset`** (BV `0xaf0148`: os
+inteiros em `+0x2ec/+0x2f0/+0x2f4` do XMTO, postos só pela vtable; inferido:
+os deslocamentos do multi-tile no OBJD, sem giro), arredondado para o tile.
+Não é a posição no mundo girada de volta (o app; dá o mesmo se o
+deslocamento normalizado é o do mundo com a direção do líder desfeita e o y
+trocado de sinal — conferir num piano girado). O `AggregateFootprint`
+(vtable `0x2c8`, BV `0xaf49a0`) passa o od 9 e o `HasExtendedFootprint`
+(vtable `0x1a8`, BV `0xb012f0`: objeto que **não** é parte de multi-tile e
+porta (tipo 8) com a vtable `0x25c` & `0x50`, ou **OBJD[`0x4e`] ≠ 0**; nenhum
+OBJD do jogo base tem o `0x4e`) ao `cObject` (`FUN_00658ab8`): com pegada
+estendida, **todos** os tiles "(x,y)" da lista juntos; senão só o tile da
+parte. **Sem lista "footprint"** no recurso (com od 9 = 0) a pegada é a
+**caixa do modelo** (`FUN_00a45e54` no nó da cena) menos o tile (x, y) e,
+sem pegada estendida, **cortada a ±0,5** (`FLOAT_0274b5a4` = −0,5,
+`FLOAT_0274b4d4` = 0,5) — confirmado; o app usa a caixa do OBJD (a mudar).
+Com od 9 ≠ 0 e sem a lista "%d", ou com a flag `0x80`, a caixa do OBJD.
 
 Exemplo: o "Piano Upright" (`pianoUprightSaloon`): tiles (0,0)/(1,0) o
 piano (linhas 1–15 de 16 cheias), (0,1)/(1,1) o banco, só as linhas 0–4

@@ -1058,8 +1058,28 @@ de uma família nova é feito como o `cTSFamily::AddMemberClothing` (BV
 roupa menos `0xC86` (0x002, 0x004, nu 0x080, provar 0x400, 0x800), as
 partes 4 (cima), 0x10 (baixo) e 8 (conjunto) da roupa do Sim viram itens
 BINX (`AddClothing` guarda uma de cada; a parte 0x20, acessório, vai pelo
-serviço de bins e fica de fora no app). Quem chama o `AddMemberClothing` não
-foi achado (só pela vtable): o app o faz ao gravar a família do CAS
+serviço de bins e fica de fora no app). **Quem chama o `AddMemberClothing`
+(rodada 15, binário):** o `cTSFamilyManager::AddToFamily(vizinho, família,
+família antiga)` (BV `0x4fddcc`, vtable `0x44` do gerente; único chamador
+achado). Se o vizinho ainda não é da família (`TestMember`, vtable `0x78`):
+`AddMember` (`0x1c`), dado de pessoa **61 := número da família** e **67
+:= 0** (no vizinho e na pessoa do lote, se há), vtable `0x5c(1)` da família,
+`AddMemberClothing(ID)` e, se as duas famílias são reais (0 < número <
+`0x7fda`), **copia do bin da família antiga** (`AddClothing`, vtable `0x28`)
+as peças cujas máscaras batem com as do Sim (três máscaras lidas de um
+recurso `0xAC598EAC` do personagem; inferido: idade, gênero e categoria;
+sem membros na antiga, todas); no fim posta a mensagem `0x94` com o número
+da família. Quem chama o `AddToFamily`: a **Generic Sims Call 4** ("add to
+family", `cTSObject::TryGenericSimCall` BV `0xe36834`: tira da família
+antiga com `RemoveFromFamily`, vtable `0x48`, e põe na nova: nascimento,
+adoção, casamento), a **junção de famílias** do mudar-se no bairro
+(`cTSUserToolNeighborhoodMoveIn::DoMessage` BV `0x3b7940`, caso 2: cada
+membro da família que entra sai dela e vai para a do lote) e o **lote do
+catálogo com família** (`cTSLotCatalog::MoveFamilyDataFromCatalogToPlacedLot`
+BV `0x4a91d0`). O CAS (`ProcessSaveSimRequest`/`ProcessCreateSimRequest`/
+`ProcessCreateBabyRequest`) não chama o `AddToFamily` direto (não achado
+como chega a família do CAS ao bin; inferido: pelo mesmo `AddToFamily` no
+commit da família). O app o faz ao gravar a família do CAS
 (`writeNewFamily`, `NewSim::clothing` = `cas::familyBinClothing`;
 `s2pkg cas-make --hood` também) e, para uma família ainda sem bin no lote,
 com os Sims dela no lote (`familyBin` no app, guardado ao salvar; o momento
@@ -2190,11 +2210,32 @@ mesmo desde a rodada 14 (sobrevivência 4): o dado 7 é o campo 45 do OBJD, e
 a pessoa sai do slot e volta a um lugar livre perto (`VM::placeNearFree`:
 onde está se a caixa dela não toca a pegada de nenhum objeto nem outro Sim
 a menos de 0,5, senão o centro do tile livre mais perto, no mesmo cômodo
-primeiro, até 10 tiles; o `0x2d8`/`FUN_00af87c8` do binário não foi lido:
-inferido), o dado de pessoa 34 zerado e a árvore de cleanup rodada; os
+primeiro, até 10 tiles; inferido até a rodada 15, ver abaixo), o dado de
+pessoa 34 zerado e a árvore de cleanup rodada; os
 dados além do 87 não existem na VM. `S2PKG_NO_RESET=1` mantém o
 Main morto para depurar. O orçamento de instruções (20000 por turno, a "Too
 many iterations" 0x44d do jogo, cujo limite não foi lido) também reinicia.
+
+**O lugar livre do reset (rodada 15, binário).** O `cTSPerson::OnCleanup`
+(BV `0xadcbcc`) pega a posição da pessoa (vtable `0x2dc`); fora do lote
+(`IsOnLot`), o **centro do mundo** (largura/2, altura/2). Chama a vtable
+`0x2d8` = **`FUN_00af87c8`** (busca genérica de lugar para um objeto) com
+os parâmetros: começar nessa posição e nível, **mesmo cômodo** (`+0x14`),
+sem direção preferida (`+0x1a` = −1), sem as outras restrições (`+0x15`
+tiles com objeto que não deixa cruzar, `+0x16` o gerente de rotas, `+0x17`
+tiles travados, `+0x18` tirar o bit `0x100` do od 42, todos 0); sem achar,
+chama de novo **sem o mesmo cômodo**; sem achar de novo, fica onde está.
+A busca: uma **espiral quadrada** a partir do tile da pessoa (preso a [1,
+lado − 2] do mundo), no máximo **8 × o lado maior do mundo** passos; cada
+tile precisa estar no lote (`IsOnLot`), passar o teste de partição do tile
+(`PartitionManager` vtable `0xbc`), estar no cômodo do começo (`0x13c` do
+`PartitionManager`; só na primeira volta) e passar o
+**`TSObjectCanSetPosition`** da pessoa no **centro do tile** (x + 0,5, y +
+0,5). O primeiro que passa vira o lugar (vtable `0x2a4`, sem mudar a
+direção). Diferenças do VM (`VM::placeNearFree`): o jogo vai sempre ao
+**centro** de um tile (o primeiro é o próprio tile, se a pessoa cabe no
+centro dele), não fica no ponto exato; o raio é o da espiral (8 × lado:
+uns 9 tiles num mundo de 40), não 10 tiles; e sem lugar ela fica parada.
 
 ### Set to Next: objetos que vão morrer não contam (`SetToNextIsObjectEligible`)
 
