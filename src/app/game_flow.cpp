@@ -85,10 +85,11 @@ std::vector<FlowStep> flowSteps(const std::vector<std::string>& args) {
             const std::string& v = args[i + 1];
             const size_t colon = v.rfind(':');
             st.object = v.substr(0, colon);
+            st.text = colon == std::string::npos ? std::string() : v.substr(colon + 1);
             try {
-                st.entry = colon == std::string::npos ? 0 : std::stoi(v.substr(colon + 1));
+                st.entry = colon == std::string::npos ? 0 : std::stoi(st.text);
             } catch (const std::exception&) {
-                continue;
+                st.entry = -1; // not a number: the entry whose name holds the text
             }
         } else if (args[i] == "--click" || args[i] == "--right-click") {
             st.kind = args[i] == "--click" ? FlowStep::Kind::Click : FlowStep::Kind::RightClick;

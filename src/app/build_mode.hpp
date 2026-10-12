@@ -13,6 +13,7 @@
 // and light maps when onGeometryChanged is called. What the game does is
 // docs/buy-build-mac.md §7. Build mode pauses the simulation.
 
+#include "app/ui_panel_util.hpp"
 #include "formats/build_catalog.hpp"
 #include "formats/catalog.hpp"
 #include "formats/lot.hpp"
@@ -126,6 +127,12 @@ public:
     const std::string& message() const { return message_; }
 
     // --- The panel -----------------------------------------------------------
+    // The tutorial (app/tutorial.hpp): allowPress before a click on a
+    // control (false: turned off), onPress for a click on one; a control by
+    // the game's window ids, while the panel is up.
+    std::function<bool(simd_float2)> allowPress;
+    std::function<void(simd_float2)> onPress;
+    std::optional<std::array<float, 4>> controlRect(uint32_t window, uint32_t control);
     bool press(simd_float2 p);
     void hover(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
@@ -257,6 +264,7 @@ private:
     std::vector<int> previewInstances_;
 
     std::vector<Target> targets_;
+    DrawnWindows windows_; // the panel's windows in the last screen
     std::vector<std::array<float, 4>> solid_;
     std::optional<simd_float2> mouse_;
     std::array<std::unique_ptr<UiLayer>, 3> layers_;

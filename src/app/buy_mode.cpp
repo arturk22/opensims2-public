@@ -334,7 +334,8 @@ bool BuyMode::placeAt(int x, int y, int direction) {
     holdAt(x, y, direction);
     const vm::Placement p = last_;
     if (!p.ok) {
-        say("cannot place: " + errorText(p));
+        say("cannot place at (" + std::to_string(x) + ", " + std::to_string(y) + ", level " + std::to_string(level_) +
+            "): " + errorText(p));
         sound("ui_error");
         return false;
     }
@@ -932,6 +933,7 @@ UiScreen BuyMode::screen(int width, int height) {
     }
     // The object design dialog over everything.
     design_->layout(out, width, height);
+    windows_.capture(rects); // for the tutorial (controlRect)
     return out;
 }
 
@@ -948,9 +950,16 @@ bool BuyMode::press(simd_float2 p) {
         dirty_ = true;
         return true;
     }
+    // A control the tutorial turned off takes the click and does nothing.
+    if (allowPress && !allowPress(p))
+        for (const Target& t : targets_)
+            if (inside(t.rect, p))
+                return true;
     for (const Target& t : std::vector<Target>(targets_)) {
         if (!inside(t.rect, p))
             continue;
+        if (onPress) // the tutorial's click trees
+            onPress(p);
         switch (t.action) {
         case Action::DayNight:
             if (onDayNight)
@@ -1045,6 +1054,13 @@ void BuyMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t he
         dirty_ = false;
     }
     layers_[layer_]->encode(enc, width, height);
+}
+
+std::optional<std::array<float, 4>> BuyMode::controlRect(uint32_t window, uint32_t control) {
+    if (!active_)
+        return std::nullopt;
+    layoutIfNeeded();
+    return windows_.find(window, control);
 }
 
 } // namespace os2

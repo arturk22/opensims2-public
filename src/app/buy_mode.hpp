@@ -11,6 +11,7 @@
 // the placement rules are vm/placement.hpp. While Buy mode is on the
 // simulation is paused, as in the game.
 
+#include "app/ui_panel_util.hpp"
 #include "formats/catalog.hpp"
 #include "formats/ui_screen.hpp"
 #include "vm/placement.hpp"
@@ -111,6 +112,12 @@ public:
     const std::string& message() const { return message_; }
 
     // --- The panel -------------------------------------------------------------
+    // The tutorial (app/tutorial.hpp): allowPress before a click on a
+    // control (false: turned off), onPress for a click on one; a control by
+    // the game's window ids, while the panel is up.
+    std::function<bool(simd_float2)> allowPress;
+    std::function<void(simd_float2)> onPress;
+    std::optional<std::array<float, 4>> controlRect(uint32_t window, uint32_t control);
     bool press(simd_float2 p); // true: the panel took it
     void hover(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
@@ -189,6 +196,7 @@ private:
     std::vector<int> tileInstances_;
 
     std::vector<Target> targets_;
+    DrawnWindows windows_; // the panel's windows in the last screen
     std::vector<std::array<float, 4>> solid_;
     std::optional<simd_float2> mouse_;
     std::vector<std::unique_ptr<RgbaImage>> frameImages_;

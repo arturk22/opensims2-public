@@ -9,6 +9,8 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -76,5 +78,16 @@ struct QueueMetrics {
     float topWidth = 51, subHeight = 52, subOffset = -4;
 };
 std::vector<QueueSlot> layoutActionQueue(const std::vector<bool>& nested, const QueueMetrics& m);
+
+// The windows a panel's screen drew, by id, to find a control by the game's
+// window ids (the tutorial's "Button GUIDs": a window and a control in it;
+// 0x480E8304, the main window, holds them all). A window holds a control
+// when its rectangle holds the control's (inferred stand-in for the window
+// tree); a window not drawn itself holds any control with the id.
+struct DrawnWindows {
+    std::vector<std::pair<uint32_t, std::array<float, 4>>> list;
+    void capture(const std::map<const UiElement*, std::array<float, 4>>& rects);
+    std::optional<std::array<float, 4>> find(uint32_t window, uint32_t control) const;
+};
 
 } // namespace os2

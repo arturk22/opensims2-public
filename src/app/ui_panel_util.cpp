@@ -132,4 +132,32 @@ std::vector<QueueSlot> layoutActionQueue(const std::vector<bool>& nested, const 
     return out;
 }
 
+void DrawnWindows::capture(const std::map<const UiElement*, std::array<float, 4>>& rects) {
+    list.clear();
+    for (const auto& [e, r] : rects)
+        if (const uint32_t id = e->attr("id") ? e->id() : 0)
+            list.push_back({id, r});
+}
+
+std::optional<std::array<float, 4>> DrawnWindows::find(uint32_t window, uint32_t control) const {
+    auto holds = [](const std::array<float, 4>& a, const std::array<float, 4>& b) {
+        return a[0] <= b[0] + 0.5f && a[1] <= b[1] + 0.5f && a[2] >= b[2] - 0.5f && a[3] >= b[3] - 0.5f;
+    };
+    bool windowDrawn = false;
+    for (const auto& [wid, wr] : list)
+        windowDrawn |= wid == window;
+    for (const auto& [id, r] : list) {
+        if (id != control)
+            continue;
+        // The main window, or one not drawn as a window of its own (a
+        // panel's root laid out child by child): the control alone.
+        if (window == 0x480E8304 || !windowDrawn)
+            return r;
+        for (const auto& [wid, wr] : list)
+            if (wid == window && holds(wr, r))
+                return r;
+    }
+    return std::nullopt;
+}
+
 } // namespace os2

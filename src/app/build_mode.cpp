@@ -1434,6 +1434,7 @@ UiScreen BuildMode::screen(int width, int height) {
         text(shown, q.x0, q.y0 + 3, q.x1 - q.x0, 18, "center");
     }
     design_->layout(out, width, height); // the object design dialog over everything
+    windows_.capture(rects); // for the tutorial (controlRect)
     return out;
 }
 
@@ -1450,9 +1451,16 @@ bool BuildMode::press(simd_float2 p) {
         dirty_ = true;
         return true;
     }
+    // A control the tutorial turned off takes the click and does nothing.
+    if (allowPress && !allowPress(p))
+        for (const Target& t : targets_)
+            if (inside(t.rect, p))
+                return true;
     for (const Target& t : std::vector<Target>(targets_)) {
         if (!inside(t.rect, p))
             continue;
+        if (onPress) // the tutorial's click trees
+            onPress(p);
         switch (t.action) {
         case Action::Category:
             openCategory(t.value, 0);
@@ -1751,6 +1759,13 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
     }
     std::fflush(stdout);
     update();
+}
+
+std::optional<std::array<float, 4>> BuildMode::controlRect(uint32_t window, uint32_t control) {
+    if (!active_)
+        return std::nullopt;
+    layoutIfNeeded();
+    return windows_.find(window, control);
 }
 
 } // namespace os2

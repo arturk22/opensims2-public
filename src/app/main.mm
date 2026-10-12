@@ -548,6 +548,7 @@ void setupLiveUi(os2::ResourceIndex& index);  // below setupPieMenu
 void setupTutorial(os2::ResourceIndex& index);
 void pollTutorial(double seconds);
 void requestScene(const os2::Scene& next); // below
+bool saveGameNow();
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
 
@@ -1171,13 +1172,40 @@ void setupTutorial(os2::ResourceIndex& index) {
     vm.globals[os2::vm::global::Paused] = 0;
     gTutorialRequestsSeen = vm.engineRequests.size();
     gTutorial = std::make_unique<os2::TutorialOverlay>(vm, index, gameDir() / "TSData/Res");
-    gTutorial->locate = [](uint32_t window, uint32_t control) { return gLive->controlRect(window, control); };
+    // The controls: Buy's and Build's panels while they are up, the live
+    // panel and the puck.
+    gTutorial->locate = [](uint32_t window, uint32_t control) -> std::optional<std::array<float, 4>> {
+        if (gBuy && gBuy->active())
+            if (auto r = gBuy->controlRect(window, control))
+                return r;
+        if (gBuild && gBuild->active())
+            if (auto r = gBuild->controlRect(window, control))
+                return r;
+        return gLive->controlRect(window, control);
+    };
     gTutorial->pressControl = [](uint32_t window, uint32_t control) {
-        if (auto r = gLive->controlRect(window, control))
-            gLive->press(simd_make_float2(((*r)[0] + (*r)[2]) / 2, ((*r)[1] + (*r)[3]) / 2));
+        const auto r = gTutorial->locate(window, control);
+        if (!r)
+            return;
+        const simd_float2 p = simd_make_float2(((*r)[0] + (*r)[2]) / 2, ((*r)[1] + (*r)[3]) / 2);
+        if (gLive->overModeButton(p) && gLive->press(p))
+            return;
+        if (gBuy && gBuy->active() && gBuy->press(p))
+            return;
+        if (gBuild && gBuild->active() && gBuild->press(p))
+            return;
+        gLive->press(p);
     };
     gLive->allowPress = [](simd_float2 p) { return gTutorial->allows(p); };
     gLive->onPress = [](simd_float2 p) { gTutorial->clicked(p); };
+    if (gBuy) {
+        gBuy->allowPress = [](simd_float2 p) { return gTutorial->allows(p); };
+        gBuy->onPress = [](simd_float2 p) { gTutorial->clicked(p); };
+    }
+    if (gBuild) {
+        gBuild->allowPress = [](simd_float2 p) { return gTutorial->allows(p); };
+        gBuild->onPress = [](simd_float2 p) { gTutorial->clicked(p); };
+    }
     std::printf("opensims2: tutorial: %d controller(s) created\n", created);
 }
 
@@ -1193,8 +1221,14 @@ void pollTutorial(double seconds) {
         gTutorialRequestsSeen = 0;
     for (; gTutorialRequestsSeen < requests.size(); ++gTutorialRequestsSeen)
         if (requests[gTutorialRequestsSeen].call == 0 && !gPendingScene) {
-            std::printf("opensims2: tutorial: episode over, exit lot\n");
+            const auto& t = requests[gTutorialRequestsSeen].temps;
+            std::printf("opensims2: tutorial: episode over (state %d), exit lot%s\n",
+                        gSimulation->machine().globals[26], t[2] ? ", saving" : "");
             std::fflush(stdout);
+            // Exit Lot's temp 2: save the lot first (its SIMI keeps global 26
+            // "Tutorial State", which the episode list reads).
+            if (t[2])
+                saveGameNow();
             os2::Scene next;
             next.kind = os2::Scene::Kind::MainMenu;
             requestScene(next);
@@ -4134,10 +4168,22 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     pollFlowDialog();
                     continue;
                 }
-                if (st.kind == os2::FlowStep::Kind::Pie) { // --pie-step object:entry
+                if (st.kind == os2::FlowStep::Kind::Pie) { // --pie-step <object>:<entry index or name>
                     const os2::vm::ObjectId id = os2::vm::findInteractionObject(gPie->vm(), st.object);
-                    if (!id || !gPie->open(id, simd_make_float2(cw / 2, ch / 2)) || !gPie->select(size_t(st.entry)))
-                        std::printf("opensims2: --pie-step %s:%d: nothing picked\n", st.object.c_str(), st.entry);
+                    gPie->setCanvas(int(cw), int(ch));
+                    if (!id || !gPie->open(id, simd_make_float2(cw / 2, ch / 2))) {
+                        std::printf("opensims2: pie step: no pie menu on \"%s\"\n", st.object.c_str());
+                        continue;
+                    }
+                    bool picked = false;
+                    for (size_t e = 0; e < gPie->entries().size() && !picked; ++e)
+                        if (st.entry >= 0 ? e == size_t(st.entry) : gPie->entries()[e].name.find(st.text) != std::string::npos) {
+                            std::printf("opensims2: pie step: %s on object %d\n", gPie->entries()[e].name.c_str(), id);
+                            picked = gPie->select(e);
+                        }
+                    if (!picked)
+                        for (size_t e = 0; e < gPie->entries().size(); ++e)
+                            std::printf("opensims2: pie step: [%zu] %s (not \"%s\")\n", e, gPie->entries()[e].name.c_str(), st.text.c_str());
                     gPie->close();
                     continue;
                 }
