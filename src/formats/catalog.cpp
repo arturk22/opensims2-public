@@ -8,8 +8,10 @@
 #include "ui_image.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
+#include <mutex>
 #include <set>
 
 namespace os2 {
@@ -47,9 +49,44 @@ const char* roomSortName(int bit) {
     return bit >= 0 && bit < kRoomSortCount ? names[bit] : "?";
 }
 
+namespace {
+// What Catalog::load read, kept for the next load of the same index (Buy and
+// Build mode both ask, and every scene entry again; each read is ~85 ms).
+struct LoadedCatalog {
+    const ResourceIndex* index = nullptr;
+    size_t objdCount = 0;
+    bool build = false;
+    std::vector<CatalogEntry> entries;
+    std::map<uint32_t, size_t> byGuid;
+};
+std::mutex gCatalogMutex;
+std::vector<LoadedCatalog> gCatalogCache;
+} // namespace
+
 Catalog Catalog::load(ResourceIndex& index, bool build) {
-    Catalog c;
-    std::set<uint32_t> guids;
+    const size_t objdCount = index.ofType(kTypeObjd).size();
+    {
+        std::lock_guard<std::mutex> lock(gCatalogMutex);
+        for (const auto& l : gCatalogCache)
+            if (l.index == &index && l.build == build && l.objdCount == objdCount) {
+                Catalog hit;
+                hit.entries_ = l.entries;
+                hit.byGuid_ = l.byGuid;
+                return hit;
+            }
+    }
+    // One pass over the OBJDs makes both catalogs (Buy and Build mode ask one
+    // after the other), and both are kept.
+    std::array<Catalog, 2> both = loadBoth(index);
+    std::lock_guard<std::mutex> lock(gCatalogMutex);
+    for (int b = 0; b < 2; ++b)
+        gCatalogCache.push_back({&index, objdCount, b == 1, both[b].entries_, both[b].byGuid_});
+    return std::move(both[build ? 1 : 0]);
+}
+
+std::array<Catalog, 2> Catalog::loadBoth(ResourceIndex& index) {
+    std::array<Catalog, 2> out; // [0] Buy mode, [1] Build mode
+    std::array<std::set<uint32_t>, 2> guids;
     for (const auto& loc : index.ofType(kTypeObjd)) {
         const Tgi& tgi = loc.entry->tgi;
         if (tgi.group == 0xFFFFFFFF)
@@ -65,15 +102,20 @@ Catalog Catalog::load(ResourceIndex& index, bool build) {
         // What cTSWinProcCatalog accepts on a residential lot
         // (docs/buy-build-mac.md §1.3): room sort ≠ 0, not a Sim, and not
         // an unlockable reward (field 16; the unlocked lists are not kept).
-        if ((build ? !d.field(objd::BuildModeType) : !room) || d.field(objd::ObjectType) == kObjectTypePerson ||
-            d.field(objd::Unlockable) != 0)
+        if (d.field(objd::ObjectType) == kObjectTypePerson || d.field(objd::Unlockable) != 0)
+            continue;
+        const std::array<bool, 2> wanted = {room != 0, d.field(objd::BuildModeType) != 0};
+        if (!wanted[0] && !wanted[1])
             continue;
         // A multi-tile part (master ID set, sub index other than -1) is
         // bought through its master.
         const bool multi = d.field(objd::MasterId) != 0;
         if (multi && d.field(objd::SubIndex) != 0xFFFF)
             continue;
-        if (!guids.insert(d.guid()).second)
+        std::array<bool, 2> take{};
+        for (int b = 0; b < 2; ++b)
+            take[b] = wanted[b] && guids[b].insert(d.guid()).second;
+        if (!take[0] && !take[1])
             continue;
         CatalogEntry e;
         e.group = tgi.group;
@@ -117,18 +159,23 @@ Catalog Catalog::load(ResourceIndex& index, bool build) {
         }
         if (e.name.empty())
             e.name = d.title.empty() ? d.fileName : d.title;
-        c.entries_.push_back(std::move(e));
+        if (take[0] && take[1])
+            out[0].entries_.push_back(e), out[1].entries_.push_back(std::move(e));
+        else
+            out[take[1] ? 1 : 0].entries_.push_back(std::move(e));
     }
     // By price, as CatalogSortPred (§1.1; the game's std::sort leaves equal
     // prices in no set order: by name here).
-    std::stable_sort(c.entries_.begin(), c.entries_.end(), [](const CatalogEntry& a, const CatalogEntry& b) {
-        if (a.price != b.price)
-            return a.price < b.price;
-        return a.name < b.name;
-    });
-    for (size_t i = 0; i < c.entries_.size(); ++i)
-        c.byGuid_[c.entries_[i].guid] = i;
-    return c;
+    for (Catalog& c : out) {
+        std::stable_sort(c.entries_.begin(), c.entries_.end(), [](const CatalogEntry& a, const CatalogEntry& b) {
+            if (a.price != b.price)
+                return a.price < b.price;
+            return a.name < b.name;
+        });
+        for (size_t i = 0; i < c.entries_.size(); ++i)
+            c.byGuid_[c.entries_[i].guid] = i;
+    }
+    return out;
 }
 
 const CatalogEntry* Catalog::byGuid(uint32_t guid) const {

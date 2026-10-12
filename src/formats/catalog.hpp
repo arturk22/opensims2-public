@@ -119,6 +119,8 @@ public:
     // Sorted by price, as the game sorts its products. With `build`, the
     // Build-mode objects instead: OBJDs with a "build mode type" (field 69:
     // doors, windows, stairs, fireplaces, plants, ...) and its subsort.
+    // The result of a load is kept for the next one on the same index (the
+    // scenes and modes ask again and again); the copy has its own thumbnail cache.
     static Catalog load(ResourceIndex& index, bool build = false);
 
     const std::vector<CatalogEntry>& entries() const { return entries_; }
@@ -140,6 +142,7 @@ public:
     size_t thumbnailCount() const;
 
 private:
+    static std::array<Catalog, 2> loadBoth(ResourceIndex& index);
     std::vector<CatalogEntry> entries_;
     std::map<uint32_t, size_t> byGuid_;
     std::unique_ptr<DbpfPackage> thumbs_;
