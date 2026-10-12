@@ -2803,6 +2803,61 @@ nós por turno do binário (`cli/s2pkg/budget.hpp`; antes 20000 fora do
   inferido) e tira o FAMI de uma família removida (`RemoveFamily`,
   `VM::removedFamilies`).
 
+### Rodada 18 (visitas e efeitos): tipo de pessoa, limpeza, eventos de overlay
+
+- **Visitantes e a TTAB** (`cEdithObjectTestSim::TestInteraction`, BV
+  `0x4c6214`): além do bit de idade, uma entrada só vale para um Sim com
+  `IsVisitor` (`cTSPerson::IsVisitor`, `cITSPerson` vtable 0x78, thunk BV
+  `0x19ace78`: **dado de pessoa 32 "Person Type" ≠ 0**) se tem a flag
+  **0x0001** da TTAB ("allow visitors", `TestFlags(1)` = vtable 0x2c,
+  `(flags & 1) == 1`). Vale no menu e na autonomia
+  (`autonomy.cpp availableForAge`). Na geladeira, "Verificar Mantimentos" e
+  "Fazer Uma Boquinha" não têm a flag; comer e cozinhar têm (as check trees
+  decidem o resto).
+- **Quem é visitante**: o tratador do evento "objeto criado" (BV
+  `0x4700c8`, evento 0x8F) põe **Person Type 1** numa pessoa (OBJD tipo 2)
+  criada com 0; as árvores que fazem um membro da família voltam a 0 ("Make
+  Baby - Common", "Sim - Create New Sim - Generic", "Make New Character",
+  "Make My Family"), as Inits de NPC põem 2 e o
+  `cTSNeighborhood::UpdateInstanceVisitorTypes` (BV `0x4d7e94`) zera os
+  membros da família. O VM faz isso no Create New Object Instance, antes da
+  Init (inferido: o evento vem com a criação). Antes os que passam a pé
+  chegavam com o 0 do próprio lote, eram "moradores": cozinhavam, usavam a
+  geladeira e tudo mais e não iam embora (Dina Caliente 14 h no N001_Lot49,
+  um jantar congelado que pegou fogo); agora passam ~0,5 h e as visitas no
+  fim dos 69 lotes caíram de ~90 para ~10.
+- **Objeto removido** (`cTSObject::Cleanup(objeto)`, BV `0xb09838`, chamado
+  em cada pessoa pelo `cEdithObjectModule::CleanupPeople`): primeiro o tree
+  sim desenrola os quadros do código do objeto (`kill.cpp unwind`); se não
+  achou nenhum, o `cTSPerson::OnCleanup(objeto)` (BV `0xadcbcc`) **reinicia
+  a pessoa** (o mesmo reset de depois de um erro, sem o erro:
+  `VM::resetObject`) quando o objeto é o dela no dado de pessoa 80
+  (interação atual) ou 157 (sub-fila) ou está nos registros de objetos dela
+  (`+0x60c`, não modelados); e o roteador (`cTSRoutingObjectAggregate::
+  OnCleanup` BV `0x5727c8`, `DoObjectDeletedWhileWalking` `0x56d880`)
+  reinicia quem anda até ele. Antes: "stack object N does not exist" em
+  quem reagia a um Sim que morreu e foi levado (N001_Lot16).
+- **"CT - Route Blocked Animation"**: parâmetro 0 = pausas, 1 = bloqueador
+  (`TriggerBlockedAnimation`, BV `0x579bc0`). Trocados, o Verify do
+  parâmetro 1 falhava, a árvore voltava na hora e o Sim bloqueado tentava
+  de novo no mesmo tick: o "Dispose" → "Route To Can" → "Dispose Trash In
+  Hand" do lixo recorria até estourar a pilha (N001_Lot68).
+- **Árvore de eventos de overlay** (Animate Overlay, Animate Object): roda
+  **no objeto animado** (o tratador `nTSSG::cCustomEventHandler2`, BV
+  `0x780ad4`, chama vtable 0x3ac do objeto do `cAnimatable` com o stack
+  object do pedido; o pedido não guarda "eu": MovedObjectID 0 em todos os
+  saves do jogo). O "Animate - Events - Get" do berço põe a criança (o
+  objeto do overlay) nos braços de quem a tira no 9998; rodando como o
+  adulto, nada ia para os braços e a criança ficava no berço ("No Berço" 16
+  a 32 h no N001_Lot36).
+- **Comparação do round trip**: o código da árvore de eventos de um overlay
+  vai pelo GUID (é o que o pedido guarda); dois objetos do mesmo GUID são o
+  mesmo código (N003_Lot192).
+- **Dados do jogo, não bugs**: os incêndios que sobraram são moradores
+  cozinhando (nenhuma visita nas amostras dos soaks); "Pisar" falha com 7
+  (destino ocupado: o `EvalTileForGoal` recusa o tile da barata com outro Sim
+  parado nele, ex. Loki depois de pisar, N002_Lot3).
+
 ## 4h. Rodada 15 (front "vm-confirm"): o que era inferido na VM
 
 Tudo lido no binário (Ghidra headless, um clone com os nomes do

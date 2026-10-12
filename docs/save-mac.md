@@ -505,9 +505,9 @@ Animate Sim, um só com o quadro esperando por ele (Tutorial_Lot19, o piano).
 (os idles e rostos do Animate Overlay, cujas árvores de eventos o sistema de
 idles espera: sem eles o 9999 nunca chegava e os flags "tocando" ficavam
 presos; as poses de carregar; o Animate Object com a sua árvore de
-eventos). A árvore do evento roda como o Sim que começou o overlay: o VM o
-guarda no MovedObjectID (+0x80, 0 em todos os pedidos dos lotes do jogo)
-quando não é o próprio objeto (inferido; um save do jogo: o próprio objeto).
+eventos). A árvore do evento roda no próprio objeto animado (rodada 18:
+`nTSSG::cCustomEventHandler2`, BV `0x780ad4`), então o MovedObjectID (+0x80)
+fica 0, como em todos os pedidos dos lotes do jogo; o código vai pelo GUID.
 Objetos cujo `cObject` é nu (sem `cAnimatable`, como os pratos de comida nos
 lotes do jogo) não têm onde guardar as poses: ficam sem elas.
 

@@ -897,7 +897,10 @@ permite (flag "sem árvores de falha" desligada), o roteador passa por
 `DoNeedFailureFeedback` (0x14): toca **"CT - Route Failure Feedback"**
 (global; o Sim faz o gesto de "não dá") com o sub-motivo em `+0x40`
 (7, 8, 0xC–0x11, conforme o ramo acima). Depois a primitiva volta false.
-As árvores globais `CT - Route Blocked Animation`, `CT - Route Waiting
+Rodada 18: o `TriggerBlockedAnimation` (BV `0x579bc0`) passa as pausas no
+parâmetro 0 e o bloqueador no 1 (a árvore verifica o 1 como objeto e escolhe
+a animação pelo 0); o `TriggerAskToMoveAnimation` (`0x579798`) não passa
+parâmetros. As árvores globais `CT - Route Blocked Animation`, `CT - Route Waiting
 Animation`, `CT - Route Ask To Move Animation`, `CT - Route Blocked` e
 `CT - Route Failure Feedback` são chamadas pelo nome (strings no binário,
 BV `0x0102366c..`).
