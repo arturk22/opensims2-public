@@ -1,3 +1,23 @@
+# Soak report (round 16, vm2)
+
+Runs of `tools/soak.sh` over the 69 lots (3 game days), headless (`SOAK_NO_APP=1`), 2 lots at a time, `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main 8142006 (seeds 1 and 2); **after** is the r16-vm2 branch rebased on it, seed 1 (seed 2 was cut short by the user's scope change: wrap up). An intermediate build that let every GUID lookup reach the neighbourhood's character files had a crash, 43 budget hits and 17 deaths on seed 1 (N001_Lot36's toddler-bath loop with visitors); the final branch keeps that lookup to data owner 0x26 and the sweep.
+
+| Category | before, seed 1 | after, seed 1 | before, seed 2 |
+|---|---|---|---|
+| Crashes / hangs | 0 / 0 | 0 / 0 | 0 / 0 |
+| Load errors | 1 (N002_Lot32) | 1 | 1 |
+| Household Mains reset | 2 | 2 | 3 |
+| Sims that died ("Falecer") | 7 (5 lots) | 7 (3 lots) | 21 (6 lots) |
+| Sims stuck > 6 game hours | 28 | 30 | 25 |
+| of them not sleeping, working or at school | 5 | 6 | 4 |
+| Motives pinned at -100 > 6 game hours | 25 | 25 | 35 |
+| Save round trips that differ | 0 | 0 | 0 |
+| Instruction budget (100000) hit | 0 | 0 | 0 |
+| Autonomous interactions ended true / false | 4040 / 376 | 3733 / 371 | 3466 / 403 |
+
+Seeded autonomy on N001_Lot68, N002_Lot10, N001_Lot16, N001_Lot11 (seeds 1-8, 43200 ticks): main 8142006 true 2713 / false 346, 13 deaths, 2 resets; the branch 2728 / 275, 15 deaths, 1 reset. The Manage Inventory match flags with the GUID-0 rule alone (before the rebase): true 2926 -> 2920, false 676 -> 635, deaths 9 -> 9.
+
+Error resets left in both (not engine bugs as far as read): "Controller - CLP - Community Lot - Populator" and "Controller - NPC Pool" (attribute 9 of 8) and "Controller - NPC" (16 of 16) on Tutorial_Lot3: the lot saved those objects with fewer attributes than their OBJD has now, and cTSObject::Read takes the saved count (BV 0xb14cb0), so the game errors the same way; "Template - Police Officer: Tree table not found" (N003_Lot192): "Party Break-Up - Try Push Turn Off Stereos" pushes onto a multi-tile stereo part without a TTAB, which cTSObjectSelector::GetTreeTable (BV 0x51edf0) also refuses (error 0x1F); which part the game's Set to Next finds was not checked. "Controller - Emit - Timing" did not reset in any of these runs.
 # Soak report (round 16, autonomy and errors)
 
 Runs of `tools/soak.sh` over the 69 lots (3 game days, 129600 ticks), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), babies named, `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main 71cfb0f; **after** is the `r16-autonomy-errors` branch rebased on it. "Resets" counts every "reset after an error" line in the kept autonomy logs (any object), "household Mains" only the household's.
