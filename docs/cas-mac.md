@@ -79,7 +79,7 @@ foi achado nesta função.
   virava `s1807680074`) e a pele por baixo das roupas saía preta/branca nos
   braços do 9 de Souza (Pollination) e do João (Johnny); agora
   `cas::skinToneNumber` dá 1–4 para `0000000N`, 5 para o Alien e 0 para os
-  manequins (`r12-alien-pele-s5.jpg`: antes/depois).
+  manequins (`r12-alien-pele-s5.jpg`: antes/depois; `r12-aniversario-johnny-alien.jpg`: o Johnny adulto na cena do aniversário, repro do `docs/cinematics-mac.md` §5).
 
 ## 3. Rosto: arquétipos, modificadores, regiões
 
