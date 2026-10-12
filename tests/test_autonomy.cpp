@@ -309,11 +309,41 @@ static void testDynamicInteractions() {
           "its parameters are the stack object and temp 0");
 }
 
+// The binary's candidate order (FBA_FindStaticInteractions): motive by
+// motive (lowest bit first), and an object's entries last first
+// (AppendInteractionsForAuto walks them backwards). Two entries with the
+// same ads tie, and the libc qsort keeps a short list's order (insertion
+// sort under 7 items): the later entry wins, as the trash pile's "Limpar"
+// (entry 1) over "Jogar Fora" (entry 0).
+static void testCandidateOrder() {
+    Fixture fx;
+    InteractionTable foodTable;
+    foodTable.version = 0x4E;
+    foodTable.interactions = {adEntry(0x1001, 0, 0, 7, 0, 40, 1), adEntry(0x1001, 0x1002, 1, 7, 0, 40, 1),
+                              adEntry(0x1001, 0, 2, 7, 0, 40, 1)};
+    fx.code.add(kFoodGroup, 1, std::move(foodTable));
+    fx.p().motives[7] = -60;
+    fx.p().motives[9] = -40;
+    fx.code.add(kSimGroup, 0x1100, tree({instr(0x03, T, F, {0, 0, 0, 0})}));
+    AutonomyDecision seen;
+    autonomyObserver() = [&](const AutonomyDecision& d) { seen = d; };
+    Thread t = fx.vm.start(fx.sim, 0x1100);
+    fx.vm.run(t);
+    autonomyObserver() = nullptr;
+    check(seen.considered.size() == 4 && seen.considered[0].object == fx.food && seen.considered[3].object == fx.loo,
+          "candidates motive by motive: hunger (7) before bladder (9)");
+    // considered[0..2]: the food's entries 2, 1, 0
+    check(seen.best.size() >= 3 && seen.best[0].object == fx.loo && seen.best[1].object == fx.food &&
+              seen.best[1].interaction == 2 && seen.best[2].interaction == 0,
+          "an object's entries last first: of two with the same ads the later one ranks first");
+}
+
 int main() {
     testCurves();
     testMotiveChangeAndDecay();
     testMood();
     testFindBestInteraction();
+    testCandidateOrder();
     testDynamicInteractions();
     testFind5Worst();
     if (failures)

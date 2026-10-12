@@ -349,12 +349,34 @@ Exit findBestInteraction(Context& c) {
     const int16_t current = sim.person->data[persondata::CurrentInteractionObject];
     const int16_t autonomyLevel = sim.person->data[persondata::AutonomyLevel];
 
-    // Static scores: the TTABs' own ads.
+    // Static scores: the TTABs' own ads, in the order the binary gathers
+    // them (FBA_FindStaticInteractions, BV 0xad4130): for each motive of the
+    // mask, lowest bit first, the objects of the object module's hash set of
+    // objects advertising that motive for the Sim's age group
+    // (GetObjectsWithAdsForMotiveSet 0x5268c4: 13 groups x 16 motives,
+    // filled by AddOrUpdateObjectInObjectsByMotiveAds 0x531098), and for each
+    // object the entries advertising that motive, last entry first
+    // (cEdithObjectTestSim::AppendInteractionsForAuto 0x4ca54c walks the
+    // entry list backwards). An object and entry already taken under an
+    // earlier motive is not scored again (FBA_ScoreStaticInteractions:
+    // cTSTreeTableEntry::SetLastCheckTreeCheck, per entry and object ID).
+    // The hash set's own order is the object pointer modulo the bucket count
+    // (ObjectAdsRefHash: the key is the cITSObject*), which depends on heap
+    // addresses and cannot be reproduced: here object ID order stands in
+    // for it.
+    struct Source {
+        ObjectId leader;
+        const InteractionTableRef* ref;
+        float distance;
+    };
     std::vector<Candidate> candidates;
+    std::vector<Source> sources;
+    std::vector<InteractionTableRef> refs;
     std::set<ObjectId> seen;
     std::vector<ObjectId> ids;
     for (const auto& [id, x] : vm.eachObject())
         ids.push_back(id);
+    refs.reserve(ids.size());
     for (ObjectId id : ids) {
         const Object* x = vm.object(id);
         if (!x || (!x->position.inWorld() && !(flags & 0x04)))
@@ -371,35 +393,46 @@ Exit findBestInteraction(Context& c) {
             continue;
         if (useCount(vm, *leader) > 0)
             continue;
-        const auto ref = interactionTable(vm, *leader);
+        auto ref = interactionTable(vm, *leader);
         if (!ref)
             continue;
-        const float distance = distanceBetween(*from, *leader);
-        for (const auto& e : ref->table->interactions) {
-            if ((e.flags & 0x80) || int64_t(e.autonomy) > autonomyLevel || !availableForAge(sim, *ref->table, e))
-                continue;
-            // FBA_ScoreStaticInteractions: the Sim's own entries only with
-            // "allow on self" (cTSTreeTableEntry vtable 0x54: bit 20 of the
-            // entry's flags).
-            if (leaderId == simId && !((uint32_t(e.flags) | uint32_t(e.flags2) << 16) & (1u << 20)))
-                continue;
-            if (rememberedFailure(vm, sim, leaderId, uint16_t(e.stringIndex)))
-                continue;
-            const Ads ads = adsOf(sim, e);
-            bool advertises = false;
-            for (size_t m = 0; m < kMotiveCount; ++m)
-                advertises |= (mask & (1u << m)) && (ads.min[m] || ads.range[m]);
-            if (!advertises)
-                continue;
-            Candidate cand;
-            cand.object = leaderId;
-            cand.entry = &e;
-            cand.distance = distance;
-            cand.bias = ownershipFactor(vm, sim, leaderId);
-            cand.staticScore = scoreAds(vm, sim, ads) / (1.0f + attenuationOf(e) * distance) * cand.bias;
-            if (ref->strings)
-                cand.name = ref->strings->get(e.stringIndex, lang::BrazilianPortuguese);
-            candidates.push_back(std::move(cand));
+        refs.push_back(*ref);
+        sources.push_back({leaderId, nullptr, distanceBetween(*from, *leader)});
+    }
+    for (size_t k = 0; k < sources.size(); ++k)
+        sources[k].ref = &refs[k];
+    std::set<std::pair<ObjectId, const InteractionTable::Interaction*>> taken;
+    for (size_t m = 0; m < kMotiveCount; ++m) {
+        if (!(mask & (1u << m)))
+            continue;
+        for (const Source& src : sources) {
+            const auto& entries = src.ref->table->interactions;
+            for (size_t k = entries.size(); k-- > 0;) {
+                const auto& e = entries[k];
+                const Ads ads = adsOf(sim, e);
+                if (!ads.min[m] && !ads.range[m])
+                    continue;
+                if ((e.flags & 0x80) || int64_t(e.autonomy) > autonomyLevel || !availableForAge(sim, *src.ref->table, e))
+                    continue;
+                // FBA_ScoreStaticInteractions: the Sim's own entries only
+                // with "allow on self" (cTSTreeTableEntry vtable 0x54: bit 20
+                // of the entry's flags).
+                if (src.leader == simId && !((uint32_t(e.flags) | uint32_t(e.flags2) << 16) & (1u << 20)))
+                    continue;
+                if (!taken.insert({src.leader, &e}).second)
+                    continue;
+                if (rememberedFailure(vm, sim, src.leader, uint16_t(e.stringIndex)))
+                    continue;
+                Candidate cand;
+                cand.object = src.leader;
+                cand.entry = &e;
+                cand.distance = src.distance;
+                cand.bias = ownershipFactor(vm, sim, src.leader);
+                cand.staticScore = scoreAds(vm, sim, ads) / (1.0f + attenuationOf(e) * src.distance) * cand.bias;
+                if (src.ref->strings)
+                    cand.name = src.ref->strings->get(e.stringIndex, lang::BrazilianPortuguese);
+                candidates.push_back(std::move(cand));
+            }
         }
     }
     decision.candidates = candidates.size();
@@ -418,6 +451,11 @@ Exit findBestInteraction(Context& c) {
         std::array<int16_t, 4> args{};
     };
     std::vector<Ranked> ranked;
+    // The dynamic interactions (made by check trees' action strings) are
+    // scored after all the static ones (FBA_ScoreDynamicInteractions runs
+    // after FBA_ScoreStaticInteractions), so they come later in the vector
+    // qsort gets.
+    std::vector<Ranked> dynamics;
     auto scoreOf = [&](const Object& s, const Ads& ads, const Candidate& cand) {
         return scoreAds(vm, s, ads) / (1.0f + attenuationOf(*cand.entry) * cand.distance) * cand.bias;
     };
@@ -449,7 +487,7 @@ Exit findBestInteraction(Context& c) {
                 const float score = scoreOf(*s, dyn, cand);
                 decision.considered.push_back({cand.object, a.name, cand.staticScore, score, true, true});
                 if (score >= kMinScore)
-                    ranked.push_back({&cand, score, true, decision.considered.size() - 1, a.name, a.params});
+                    dynamics.push_back({&cand, score, true, decision.considered.size() - 1, a.name, a.params});
             }
             if (!ok)
                 continue;
@@ -462,6 +500,7 @@ Exit findBestInteraction(Context& c) {
             ranked.push_back({&cand, cand.staticScore, false, at, {}, {}});
         }
     }
+    ranked.insert(ranked.end(), dynamics.begin(), dynamics.end());
     // FBA_CheckInteractions sorts with the C library's qsort (0x44-byte
     // items) and a comparator that calls scores within 1e-7 equal (BV
     // 0xac8f08: b - a > 1e-7 -> 1, < -1e-7 -> -1, else 0). qsort is not
@@ -470,9 +509,8 @@ Exit findBestInteraction(Context& c) {
     // the TTAB's. Done here with the Mac OS X libc's qsort (the FreeBSD
     // Bentley-McIlroy one: insertion sort under 7 items, median of 3 /
     // ninther, the three-way partition, insertion sort when a pass swaps
-    // nothing). Inferred: the order the candidates come in (the binary's
-    // come from a hash table of objects with ads; here by object ID, then
-    // the TTAB's order).
+    // nothing). The order the candidates come in is the binary's (above),
+    // but for the objects' order inside one motive's hash set.
     bsdQsort(ranked, [](const Ranked& a, const Ranked& b) {
         const float d = b.score - a.score;
         return d > 1e-7f ? 1 : d < -1e-7f ? -1 : 0;
