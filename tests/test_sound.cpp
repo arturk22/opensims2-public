@@ -185,7 +185,78 @@ static void testVoxSuffix() {
 }
 } // namespace vmt
 
+static std::shared_ptr<const Pcm> sine(uint32_t rate, double hz, double seconds) {
+    auto p = std::make_shared<Pcm>();
+    p->sampleRate = rate;
+    p->channels = 1;
+    for (size_t i = 0; i < size_t(rate * seconds); ++i)
+        p->samples.push_back(int16_t(20000 * std::sin(2 * M_PI * hz * double(i) / rate)));
+    return p;
+}
+
+static float rms(AudioMixer& m, size_t frames) {
+    std::vector<float> out(2 * frames);
+    m.renderFloat(out.data(), frames);
+    double sum = 0;
+    for (size_t i = 2 * frames / 2; i < 2 * frames; ++i) // the second half: the filter has settled
+        sum += double(out[i]) * out[i];
+    return float(std::sqrt(sum / (frames)));
+}
+
+static void testFilters() {
+    // The cheap quality's band (high-pass 3500, low-pass 8500) passes 5 kHz and cuts 100 Hz and 18 kHz.
+    float level[3];
+    int k = 0;
+    for (double hz : {100.0, 5000.0, 18000.0}) {
+        AudioMixer m(44100);
+        AudioMixer::Params p;
+        p.lopass = kCheapLowPass, p.hipass = kCheapHighPass;
+        m.play(sine(44100, hz, 0.2), p);
+        level[k++] = rms(m, 8000);
+    }
+    AudioMixer plain(44100);
+    plain.play(sine(44100, 5000, 0.2), {});
+    const float ref = rms(plain, 8000);
+    check(level[1] > 0.7f * ref, "cheap band keeps 5 kHz");
+    check(level[0] < 0.05f * ref, "cheap band cuts 100 Hz");
+    check(level[2] < 0.25f * ref, "cheap band cuts 18 kHz");
+    AudioMixer m(44100);
+    auto id = m.play(sine(44100, 100, 0.2), {});
+    m.setFilter(id, 0, kCheapHighPass);
+    check(rms(m, 8000) < 0.05f * ref, "setFilter on a playing voice");
+    // Ducking is a separate factor on the group.
+    AudioMixer d(44100);
+    AudioMixer::Params mp;
+    mp.group = SoundGroup::Music;
+    d.play(tone(44100, 400, 16384), mp);
+    d.setGroupDuck(SoundGroup::Music, 0.1f);
+    std::vector<float> out(2 * 10);
+    d.renderFloat(out.data(), 10);
+    check(std::fabs(out[0] - 0.05f) < 0.005f, "duck scales the group (0.5 * 0.1)");
+    check(d.groupActive(SoundGroup::Music) && !d.groupActive(SoundGroup::Vox), "groupActive");
+    SoundSystem::Dipping dip; // 0.1, 0.5 s down, 5 s up
+    float duck = 1;
+    for (int i = 0; i < 2; ++i)
+        duck = stepDuck(duck, true, dip, 0.25);
+    check(std::fabs(duck - 0.1f) < 1e-4f, "music dips to musicdippingvolume in dippingstarttime");
+    duck = stepDuck(duck, false, dip, 2.5);
+    check(duck > 0.5f && duck < 0.6f, "and comes back at half speed after 2.5 s of 5");
+    for (int i = 0; i < 4; ++i)
+        duck = stepDuck(duck, false, dip, 1);
+    check(duck == 1, "fully back after dippingstoptime");
+    const auto a = parseStereoEvent("stereo_pop");
+    check(a && a->station == "pop" && !a->wall && a->lopass == 0, "stereo_pop");
+    const auto b = parseStereoEvent("stereo_techno_cheap");
+    check(b && b->station == "techno" && b->lopass == kCheapLowPass && b->hipass == kCheapHighPass, "cheap quality");
+    const auto c = parseStereoEvent("stereo_wall_speaker");
+    check(c && c->wall && c->station.empty(), "wall speaker");
+    const auto e = parseStereoEvent("stereo_salsa_lopass5000_hipass200_volume50");
+    check(e && e->station == "salsa" && e->lopass == 5000 && e->hipass == 200 && e->volume == 0.5f, "commands");
+    check(!parseStereoEvent("sfx_stereo_change_channel"), "not a stereo event");
+}
+
 int main() {
+    testFilters();
     vmt::testVoxSuffix();
     testMixer();
     testPauseAndStartAt();

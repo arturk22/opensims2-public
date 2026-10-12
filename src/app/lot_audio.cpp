@@ -241,6 +241,10 @@ void GameAudio::update(double seconds) {
             st.onLot = true, st.partitions.clear(), st.outsideness = 0, st.paused = true;
         hood_->update(st, dt);
     }
+    // Music dipping: while a voice speaks the music drops to musicdippingvolume
+    // over dippingstarttime and returns over dippingstoptime (5 s) after.
+    duck_ = stepDuck(duck_, mixer_.groupActive(SoundGroup::Vox), sound_->dipping(), dt);
+    mixer_.setGroupDuck(SoundGroup::Music, duck_);
     sound_->update();
 }
 
@@ -376,24 +380,39 @@ void LotAudio::handle(vm::VM& machine, const vm::SoundRequest& r) {
         stereos_.erase(r.source);
         return;
     }
-    const std::string category = r.event.starts_with("stereo_") ? r.event.substr(7) : std::string();
+    const std::optional<StereoEvent> stereo = parseStereoEvent(r.event);
     if (r.kind == Kind::Stop) {
         stopWhere([&](const ObjectVoice& v) { return v.event == r.event; });
-        if (!category.empty())
+        if (stereo)
             stereos_.erase(r.source);
         return;
     }
     ++requests_;
     const SoundPos at = positionOf(machine, r.source);
-    // Radios and stereos: "stereo_<category>" plays the songs of that music
-    // category from the object (inferred; no track has those names).
-    if (!category.empty() && sound_->isMusicCategory(category)) {
-        auto& player = stereos_[r.source];
-        if (!player) {
-            player = std::make_unique<MusicPlayer>(*sound_);
-            player->setBackgroundDecoding(game_.hasDevice());
+    // Radios and stereos: "stereo_<station>" plays the songs of that music
+    // category from the object (inferred; no track has those names), through
+    // the quality's filters and the event's volume/lopass/hipass commands
+    // (cTSAudioMusicManager::_HandleStartStereoEvent); a wall speaker
+    // ("stereo_wall_speaker") plays what the nearest stereo plays.
+    if (stereo && (stereo->wall || sound_->isMusicCategory(stereo->station))) {
+        StereoEvent style = *stereo;
+        if (style.lopass == 0 && style.hipass == 0) { // the object's own quality (soundinfo), if it has one
+            const std::string q = modifiersFor(&machine, r.source, at, {}).quality;
+            if (q == "chp" || q == "cheap")
+                style.lopass = kCheapLowPass, style.hipass = kCheapHighPass;
         }
-        player->setCategory(category, at);
+        auto& st = stereos_[r.source];
+        if (!st.player) {
+            st.player = std::make_unique<MusicPlayer>(*sound_);
+            st.player->setBackgroundDecoding(game_.hasDevice());
+        }
+        st.wall = stereo->wall;
+        st.style = style;
+        st.player->setStyle(style.volume * r.volume, style.lopass, style.hipass);
+        if (!stereo->wall)
+            st.player->setCategory(stereo->station, at);
+        else
+            updateWallSpeakers(machine);
         return;
     }
     const std::string name = sound_->resolveEvent(r.event, modifiersFor(&machine, r.source, at, {}));
@@ -442,6 +461,7 @@ void LotAudio::update(vm::VM* machine, double seconds, const Listener& l) {
             ++it;
         }
         std::erase_if(stereos_, [&](const auto& s) { return !machine->object(s.first); });
+        updateWallSpeakers(*machine);
     }
     // Animation events between the last update and now.
     // (Cues that are due start here as SimActor::update would start them, so
@@ -497,12 +517,42 @@ void LotAudio::update(vm::VM* machine, double seconds, const Listener& l) {
     // The stereos belong to the lot's music state: paused in Buy/Build mode.
     const bool lotState = game_.music() == liveMusic_;
     for (auto& [id, s] : stereos_) {
-        if (s->paused() == lotState)
-            s->setPaused(!lotState);
-        s->update();
+        if (s.player->paused() == lotState)
+            s.player->setPaused(!lotState);
+        s.player->update();
     }
     last_ = seconds;
     started_ = true;
+}
+
+// A wall speaker plays the station of the nearest stereo (same story first;
+// inferred from _FindWallSpeakerSource's name: the binary finds the source
+// stereo of the speaker), in step with it, and goes quiet with it.
+void LotAudio::updateWallSpeakers(vm::VM& machine) {
+    for (auto& [id, w] : stereos_) {
+        if (!w.wall)
+            continue;
+        const SoundPos at = positionOf(machine, id);
+        const Stereo* best = nullptr;
+        float bestD = 1e30f;
+        for (const auto& [sid, src] : stereos_) {
+            if (src.wall || src.player->category().empty())
+                continue;
+            const SoundPos p = positionOf(machine, sid);
+            const float d = std::hypot(p.x - at.x, p.y - at.y) + (std::fabs(p.z - at.z) > 1 ? 1000.0f : 0.0f);
+            if (d < bestD)
+                bestD = d, best = &src;
+        }
+        if (best) {
+            // The quality's filters and volume come from the source; the speaker's event adds its own.
+            const StereoEvent& s = best->style;
+            w.player->setStyle(w.style.volume * s.volume, w.style.lopass ? w.style.lopass : s.lopass,
+                               w.style.hipass ? w.style.hipass : s.hipass);
+            w.player->setCategory(best->player->category(), at);
+        } else {
+            w.player->setCategory("", at);
+        }
+    }
 }
 
 void LotAudio::effectSounds(const std::vector<fx::EffectSound>& due) {

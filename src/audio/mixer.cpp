@@ -16,7 +16,10 @@ const char* soundGroupLabel(SoundGroup g) {
     }
 }
 
-AudioMixer::AudioMixer(uint32_t sampleRate) : rate_(sampleRate ? sampleRate : 44100) { groupVolume_.fill(1); }
+AudioMixer::AudioMixer(uint32_t sampleRate) : rate_(sampleRate ? sampleRate : 44100) {
+    groupVolume_.fill(1);
+    groupDuck_.fill(1);
+}
 
 AudioMixer::Voice* AudioMixer::find(VoiceId id) {
     for (auto& v : voices_)
@@ -30,6 +33,41 @@ const AudioMixer::Voice* AudioMixer::find(VoiceId id) const {
         if (v.id == id)
             return &v;
     return nullptr;
+}
+
+namespace {
+// RBJ biquad, Q = 1/sqrt(2) (Butterworth).
+template <class B> void designBiquad(B& f, bool high, float cutoff, float rate) {
+    f.on = cutoff > 0 && cutoff < rate * 0.5f * 0.999f;
+    if (!f.on)
+        return;
+    const float w = 2 * float(M_PI) * cutoff / rate, c = std::cos(w), alpha = std::sin(w) / (2 * 0.70710678f);
+    const float a0 = 1 + alpha;
+    f.b0 = (high ? (1 + c) / 2 : (1 - c) / 2) / a0;
+    f.b1 = (high ? -(1 + c) : (1 - c)) / a0;
+    f.b2 = f.b0;
+    f.a1 = -2 * c / a0;
+    f.a2 = (1 - alpha) / a0;
+}
+template <class B> float runBiquad(B& f, int ch, float x) {
+    const float y = f.b0 * x + f.z1[ch];
+    f.z1[ch] = f.b1 * x - f.a1 * y + f.z2[ch];
+    f.z2[ch] = f.b2 * x - f.a2 * y;
+    return y;
+}
+} // namespace
+
+void AudioMixer::setupFilters(Voice& v) const {
+    designBiquad(v.lo, false, v.params.lopass, float(rate_));
+    designBiquad(v.hi, true, v.params.hipass, float(rate_));
+}
+
+void AudioMixer::setFilter(VoiceId id, float lopass, float hipass) {
+    std::lock_guard lock(mutex_);
+    if (Voice* v = find(id)) {
+        v->params.lopass = lopass, v->params.hipass = hipass;
+        setupFilters(*v);
+    }
 }
 
 AudioMixer::VoiceId AudioMixer::play(std::shared_ptr<const Pcm> pcm, const Params& params) {
@@ -48,6 +86,7 @@ AudioMixer::VoiceId AudioMixer::play(std::shared_ptr<const Pcm> pcm, const Param
     if (v.position >= double(pcm->frames()))
         return 0;
     v.pcm = std::move(pcm);
+    setupFilters(v);
     voices_.push_back(std::move(v));
     return voices_.back().id;
 }
@@ -108,6 +147,20 @@ size_t AudioMixer::voiceCount() const {
     return voices_.size();
 }
 
+void AudioMixer::setGroupDuck(SoundGroup g, float factor) {
+    std::lock_guard lock(mutex_);
+    if (g < SoundGroup::Count)
+        groupDuck_[size_t(g)] = std::clamp(factor, 0.0f, 1.0f);
+}
+
+bool AudioMixer::groupActive(SoundGroup g) const {
+    std::lock_guard lock(mutex_);
+    for (const auto& v : voices_)
+        if (v.params.group == g && !v.paused && v.delayFrames <= 0)
+            return true;
+    return false;
+}
+
 void AudioMixer::setGroupVolume(SoundGroup g, float volume) {
     std::lock_guard lock(mutex_);
     if (g < SoundGroup::Count)
@@ -147,7 +200,7 @@ void AudioMixer::renderFloat(float* out, size_t frames) {
             continue;
         const Pcm& p = *v.pcm;
         const size_t n = p.frames(), ch = p.channels;
-        const float group = groupVolume_[size_t(v.params.group)];
+        const float group = groupVolume_[size_t(v.params.group)] * groupDuck_[size_t(v.params.group)];
         // Constant-power pan.
         const float angle = (std::clamp(v.params.pan, -1.0f, 1.0f) + 1) * 0.25f * float(M_PI);
         const float panL = std::cos(angle) * float(M_SQRT2), panR = std::sin(angle) * float(M_SQRT2);
@@ -173,6 +226,10 @@ void AudioMixer::renderFloat(float* out, size_t frames) {
                 l = (p.samples[a * ch] + (p.samples[b * ch] - p.samples[a * ch]) * t) / 32768.0f;
                 r = (p.samples[a * ch + 1] + (p.samples[b * ch + 1] - p.samples[a * ch + 1]) * t) / 32768.0f;
             }
+            if (v.lo.on)
+                l = runBiquad(v.lo, 0, l), r = runBiquad(v.lo, 1, r);
+            if (v.hi.on)
+                l = runBiquad(v.hi, 0, l), r = runBiquad(v.hi, 1, r);
             const float g = v.gain * group;
             out[2 * i] += l * g * panL;
             out[2 * i + 1] += r * g * panR;

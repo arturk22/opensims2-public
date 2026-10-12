@@ -82,6 +82,8 @@ public:
     // Unchanged if it is already that one.
     void setMusic(std::string_view category);
     const std::string& music() const { return wanted_; }
+    // The music's current dipping factor (1 = not dipped).
+    float musicDuck() const { return duck_; }
     // Stops every state's music (back in the neighborhood).
     void stopAllMusic();
     std::string nowPlaying() const;
@@ -121,6 +123,7 @@ private:
     std::string wanted_;
     std::vector<std::string> musicLog_;
     bool held_ = false, hoodAmbience_ = false;
+    float duck_ = 1; // the music's dipping factor while voices speak (TrackLogic's musicdippingvolume)
     double last_ = -1;
     std::vector<int16_t> mix_;
     uint64_t mixFrames_ = 0, sceneBase_ = 0, written_ = 0;
@@ -196,7 +199,13 @@ private:
     SoundSystem* sound_;
     std::string liveMusic_;
     std::unique_ptr<AmbiencePlayer> ambience_;
-    std::map<int16_t, std::unique_ptr<MusicPlayer>> stereos_;
+    struct Stereo {
+        std::unique_ptr<MusicPlayer> player;
+        bool wall = false;  // a wall speaker: plays what the nearest stereo plays
+        StereoEvent style;  // volume and filters its event asked for
+    };
+    std::map<int16_t, Stereo> stereos_;
+    void updateWallSpeakers(vm::VM& machine);
     SurfaceMap surfaces_;
     std::vector<SimBinding> sims_;
     std::map<int16_t, std::vector<ObjectVoice>> voices_; // per source object

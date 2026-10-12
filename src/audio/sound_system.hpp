@@ -122,6 +122,7 @@ public:
         float pan = 0; // for non-positional sounds
         std::optional<SoundGroup> group;
         double startAt = 0; // seconds into the sound
+        float lopass = 0, hipass = 0; // filter cutoffs in Hz, 0 = none
     };
     // Plays a track or sample by its final name (see resolveEvent); 0 if
     // there is no such sound.
@@ -158,6 +159,15 @@ public:
     // sound manager's 2dMusicVolumeScalar (0.75; inferred that it means this).
     float music2dVolume() const { return musicVolume_ * music2dScalar_; }
     double musicFadeOut() const { return musicFadeOut_; }
+    // TrackLogic's dipping: while a voice plays the music drops to
+    // `music` of its volume, over `start` s, and comes back over `stop` s
+    // after the voice ends (musicdippingvolume 0.1, dippingstarttime 0.5,
+    // dippingstoptime 5; sfx 0.2 and vox 0.3 are not used here).
+    struct Dipping {
+        float music = 0.1f;
+        double start = 0.5, stop = 5;
+    };
+    const Dipping& dipping() const { return dipping_; }
     // The FSC score of a name ("midday"), parsed once; null if none.
     const FscScore* score(std::string_view name);
     std::shared_ptr<const Pcm> decodeSample(const SoundBank::Location& loc);
@@ -189,6 +199,7 @@ private:
     float musicVolume_ = 0.7f;
     float music2dScalar_ = 0.75f;
     double musicFadeOut_ = 3.0;
+    Dipping dipping_;
     float rolloff_ = 1.2f;
     std::map<std::pair<uint32_t, uint32_t>, std::shared_ptr<const Pcm>> cache_;
     std::map<std::string, std::unique_ptr<FscScore>> scores_;
@@ -196,6 +207,29 @@ private:
     SoundPos listener_;
     float rightX_ = 1, rightY_ = 0;
 };
+
+// One step of the music dipping: `duck` (1 = none) falls to `d.music` over
+// `d.start` s while voices speak and rises back to 1 over `d.stop` s after.
+float stepDuck(float duck, bool speaking, const SoundSystem::Dipping& d, double dt);
+
+// A stereo event name (docs/audio.md "Rodada 11"): "stereo_<station>" and
+// the quality and commands the binary's cTSAudioMusicManager::
+// _HandleStartStereoEvent reads, as "_"-separated tokens after the station:
+// "cheap"/"chp" (band limited: low-pass 8500 Hz, high-pass 3500 Hz, as _Start
+// does) or "expensive"/"exp" (no filter), "wall" (a wall speaker: plays what
+// the stereo in reach plays), "lopass<Hz>", "hipass<Hz>" and "volume<0..100>".
+// The token spelling is inferred; the base game's events only name stations
+// ("stereo_pop") and "stereo_wall_speaker".
+struct StereoEvent {
+    std::string station; // "pop", "techno", ...; "" for a wall speaker alone
+    bool wall = false;
+    float volume = 1;
+    float lopass = 0, hipass = 0;
+};
+// Nullopt if `event` is not a stereo event.
+std::optional<StereoEvent> parseStereoEvent(std::string_view event);
+// The cheap quality's filters: _Start's 0x2134 and 0xDAC.
+constexpr float kCheapLowPass = 8500, kCheapHighPass = 3500;
 
 // Plays the lot's ambience: each enabled layer's loop (faded to its volume)
 // and FSC sequence (notes on a beat clock). The host gives it the state the
@@ -250,6 +284,9 @@ public:
     // `fadeOut` (< 0: the TrackLogic's trackfadeouttime) fades the song
     // playing while the next category starts at once.
     void setCategory(std::string_view category, std::optional<SoundPos> position = std::nullopt, double fadeOut = -1);
+    // Volume (times the usual one) and filters (Hz, 0 none) of the songs,
+    // now and for the next ones.
+    void setStyle(float volume, float lopass, float hipass);
     const std::string& category() const { return category_; }
     void update();
     // The song playing (sample name key), for logs.
@@ -277,6 +314,7 @@ private:
     std::string playing_;
     bool background_ = false;
     bool paused_ = false;
+    float volume_ = 1, lopass_ = 0, hipass_ = 0;
     std::future<Decoded> pending_;
     std::vector<std::future<Decoded>> discarded_;
 };

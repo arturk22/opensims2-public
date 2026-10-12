@@ -196,6 +196,11 @@ SoundSystem::SoundSystem(const std::filesystem::path& resDir, AudioMixer& mixer,
         } else if (props.count("rolloff")) {
             rolloff_ = numberOr(props, "rolloff", 1.2f);
         }
+        if (props.count("musicdippingvolume")) {
+            dipping_.music = numberOr(props, "musicdippingvolume", 0.1f);
+            dipping_.start = numberOr(props, "dippingstarttime", 0.5f);
+            dipping_.stop = numberOr(props, "dippingstoptime", 5);
+        }
         if (props.count("2dMusicVolumeScalar"))
             music2dScalar_ = numberOr(props, "2dMusicVolumeScalar", 0.75f);
     }
@@ -346,6 +351,8 @@ SoundSystem::Handle SoundSystem::playPcm(std::shared_ptr<const Pcm> pcm, const P
     p.volume = o.volume;
     p.pan = o.pan;
     p.startAt = o.startAt;
+    p.lopass = o.lopass;
+    p.hipass = o.hipass;
     float minDistance = 5;
     if (o.position) {
         auto [gain, pan] = spatialize(*o.position, minDistance);
@@ -584,6 +591,50 @@ void AmbiencePlayer::update(const State& s, double dt) {
     }
 }
 
+float stepDuck(float duck, bool speaking, const SoundSystem::Dipping& d, double dt) {
+    const float low = std::clamp(d.music, 0.0f, 1.0f);
+    if (speaking && duck > low)
+        return d.start > 0 ? std::max(low, duck - float(dt / d.start) * (1 - low)) : low;
+    if (!speaking && duck < 1)
+        return d.stop > 0 ? std::min(1.0f, duck + float(dt / d.stop) * (1 - low)) : 1;
+    return duck;
+}
+
+std::optional<StereoEvent> parseStereoEvent(std::string_view event) {
+    const std::string e = lower(std::string(event));
+    if (e.rfind("stereo_", 0) != 0)
+        return std::nullopt;
+    StereoEvent out;
+    size_t at = 7;
+    bool first = true;
+    while (at <= e.size()) {
+        size_t end = e.find('_', at);
+        if (end == std::string::npos)
+            end = e.size();
+        const std::string tok = e.substr(at, end - at);
+        at = end + 1;
+        if (tok.empty())
+            continue;
+        auto number = [&](size_t skip) { return float(std::atof(tok.c_str() + skip)); };
+        if (tok == "cheap" || tok == "chp")
+            out.lopass = kCheapLowPass, out.hipass = kCheapHighPass;
+        else if (tok == "expensive" || tok == "exp")
+            out.lopass = out.hipass = 0;
+        else if (tok == "wall")
+            out.wall = true;
+        else if (tok.rfind("lopass", 0) == 0 && tok.size() > 6)
+            out.lopass = number(6);
+        else if (tok.rfind("hipass", 0) == 0 && tok.size() > 6)
+            out.hipass = number(6);
+        else if (tok.rfind("volume", 0) == 0 && tok.size() > 6)
+            out.volume = std::clamp(number(6) / 100.0f, 0.0f, 1.0f);
+        else if (first && tok != "speaker")
+            out.station = tok;
+        first = false;
+    }
+    return out;
+}
+
 // --- MusicPlayer ---
 
 MusicPlayer::~MusicPlayer() {
@@ -633,6 +684,14 @@ void MusicPlayer::prefetch() {
     pending_ = std::async(background_ ? std::launch::async : std::launch::deferred, job);
 }
 
+void MusicPlayer::setStyle(float volume, float lopass, float hipass) {
+    volume_ = volume, lopass_ = lopass, hipass_ = hipass;
+    if (voice_) {
+        sound_.setVolume(voice_, (position_ ? sound_.defaultMusicVolume() : sound_.music2dVolume()) * volume_);
+        sound_.mixer().setFilter(voice_, lopass_, hipass_);
+    }
+}
+
 void MusicPlayer::setPaused(bool paused) {
     paused_ = paused;
     if (voice_)
@@ -654,8 +713,10 @@ void MusicPlayer::update() {
     if (!d.pcm || d.pcm->frames() == 0)
         return;
     voice_ = sound_.playPcm(d.pcm, {.position = position_,
-                                    .volume = position_ ? sound_.defaultMusicVolume() : sound_.music2dVolume(),
-                                    .group = SoundGroup::Music});
+                                    .volume = (position_ ? sound_.defaultMusicVolume() : sound_.music2dVolume()) * volume_,
+                                    .group = SoundGroup::Music,
+                                    .lopass = lopass_,
+                                    .hipass = hipass_});
     playing_ = d.name;
     if (background_)
         prefetch();

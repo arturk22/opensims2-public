@@ -38,6 +38,8 @@ public:
         float pitch = 1;      // playback rate multiplier
         double startDelay = 0; // seconds of silence before it starts
         double startAt = 0;    // seconds into the sound it starts from (a broadcast joined late)
+        float lopass = 0;      // low-pass cutoff in Hz (0 or >= the Nyquist rate: none)
+        float hipass = 0;      // high-pass cutoff in Hz (0: none)
     };
     // Starts a voice; the PCM is shared, so a cached sound is not copied.
     VoiceId play(std::shared_ptr<const Pcm> pcm, const Params& params);
@@ -49,12 +51,19 @@ public:
     void fade(VoiceId id, float volume, double seconds, bool stopAtEnd = false);
     void setVolume(VoiceId id, float volume) { fade(id, volume, 0); }
     void setPan(VoiceId id, float pan);
+    // Changes a voice's filters (Hz, 0 = off): 12 dB/octave Butterworth.
+    void setFilter(VoiceId id, float lopass, float hipass);
     // A paused voice keeps its place and is silent until resumed (the music
     // states of the game's music manager).
     void setPaused(VoiceId id, bool paused);
     bool playing(VoiceId id) const;
     size_t voiceCount() const;
 
+    // A group's ducking factor (1 = none), on top of its volume (the music
+    // dipping while Sims talk); separate from the option's volume.
+    void setGroupDuck(SoundGroup g, float factor);
+    // Whether any voice of the group is sounding (not paused).
+    bool groupActive(SoundGroup g) const;
     void setGroupVolume(SoundGroup g, float volume);
     float groupVolume(SoundGroup g) const;
     void setMasterVolume(float volume);
@@ -82,11 +91,18 @@ private:
         bool stopAtEnd = false;
         bool paused = false;
         int64_t delayFrames = 0;
+        struct Biquad {
+            float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0; // normalised
+            float z1[2] = {0, 0}, z2[2] = {0, 0};         // per channel
+            bool on = false;
+        } lo, hi;
     };
+    void setupFilters(Voice& v) const;
     uint32_t rate_;
     mutable std::mutex mutex_;
     std::vector<Voice> voices_;
     std::array<float, size_t(SoundGroup::Count)> groupVolume_;
+    std::array<float, size_t(SoundGroup::Count)> groupDuck_;
     float master_ = 1;
     bool muted_ = false;
     VoiceId next_ = 1;
