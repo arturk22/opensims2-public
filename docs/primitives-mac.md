@@ -1610,7 +1610,7 @@ many iterations" 0x44d do jogo, cujo limite não foi lido) também reinicia.
 objetos. Sem isso o "Reaper - Scan Lot For Dead People" achava de novo o Sim
 que tinha virado urna no mesmo tick e o Main do Ceifador morria no "Wants
 Satisfy - Death of Sim". O filtro 0x02 (dado de objeto u16 9 == u16 11) é
-aplicado; o 56 bit 0 e o 107 ficam de fora (só BV).
+aplicado só em nós de versão 1 (rodada 13: na versão 0 o `SetToNextParam` zera esses bytes no load; lidos como filtro, o "New Baby" do túmulo de depuração não achava nada e ninguém cuidava do bebê em `N002_Lot10`); o 56 bit 0 e o 107 ficam de fora (só BV).
 
 **Tipo 3 (parte de multi-tile)**: o binário exige que o alvo seja parte de
 multi-tile (vtable `0x19c`) e anda no grupo (`+0x1c` próxima, `+0x18`

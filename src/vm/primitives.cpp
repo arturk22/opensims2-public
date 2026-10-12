@@ -487,7 +487,11 @@ Exit setToNext(Context& c) {
     // the reaper found the Sim it had just turned into an urn and reaped
     // it again), and with flag 0x02 object data u16 9 equal to u16 11. The
     // object data 56 bit 0 and 107 tests are Bon Voyage's (§ Set to Next).
-    const bool where = o.size() > 12 && (o[8] & 0x02);
+    // Node version 0 had neither the flags nor the filter (SetToNextParam
+    // zeroes them on load): the base game's trees keep other bytes there
+    // (the debug tombstone's "New Baby" filtered every object out, so no
+    // one cared for the baby).
+    const bool where = c.instruction.nodeVersion != 0 && o.size() > 12 && (o[8] & 0x02);
     const int16_t whereField = where ? int16_t(le16(&o[9])) : 0, whereValue = where ? int16_t(le16(&o[11])) : 0;
     auto eligible = [&](const Object& x) {
         if (dying(c.vm, x.id))

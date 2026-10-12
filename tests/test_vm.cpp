@@ -1488,6 +1488,25 @@ static void testReaperNeighborAndDyingObjects() {
     flushKillQueue(fx.vm);
 }
 
+// Set to Next's "where" filter (flag 0x02: object data u16 9 == u16 11) is
+// node version 1's: version 0 nodes (the base game's trees) have other bytes
+// there, which SetToNextParam zeroes on load.
+static void testSetToNextWhereVersion() {
+    Fixture fx;
+    fx.obj();
+    auto next = [](uint8_t version) {
+        auto in = instr(0x1F, T, F, {0, 0, 0, 0, 0x80, Temp, 0, 0, 0x02, 0x0B, 0x00, 0x34, 0x12});
+        in.nodeVersion = version;
+        return in;
+    };
+    fx.code.add(kObjGroup, 0x1000, tree({next(0)}));
+    fx.code.add(kObjGroup, 0x1001, tree({next(1)}));
+    Thread a = fx.run(0x1000);
+    Thread b = fx.run(0x1001);
+    check(a.status == Thread::Status::Finished && a.result && b.status == Thread::Status::Finished && !b.result,
+          "Set to Next filters by object data only from node version 1");
+}
+
 // A Main that fails is reset as the game does (cTSObject::HandleError ->
 // Reset): it starts over next tick, and the VM keeps what failed.
 static void testResetAfterError() {
@@ -1577,6 +1596,7 @@ int main() {
     testMakeNewCharacter();
     testReaperNeighborAndDyingObjects();
     testResetAfterError();
+    testSetToNextWhereVersion();
     testLonePartOfMultiTile();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
