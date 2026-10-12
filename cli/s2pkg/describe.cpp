@@ -297,6 +297,13 @@ std::string describeSimAntics(uint32_t type, std::span<const uint8_t> data) {
                 o.fields.size());
         appendf(out, "  guid=0x%08X proxy=0x%08X original=0x%08X type=%u price=%u\n", o.guid(), o.proxyGuid(),
                 o.originalGuid(), o.objectType(), o.price());
+        // S2PKG_OBJD_FIELDS=1: every field by the editor's index (file offset 0x40 + 2 x index).
+        if (std::getenv("S2PKG_OBJD_FIELDS")) {
+            appendf(out, "  fields:");
+            for (size_t i = 2; i < o.fields.size() + 2; ++i)
+                appendf(out, " %zx=%u", i, o.field(0x40 + 2 * i));
+            appendf(out, "\n");
+        }
         appendf(out, "  baseGraphic=%u numGraphics=%u interactionGroup=%u masterId=0x%X subIndex=0x%X slotId=%u\n",
                 o.baseGraphic(), o.numGraphics(), o.interactionGroup(), o.masterId(), o.subIndex(), o.slotId());
         break;

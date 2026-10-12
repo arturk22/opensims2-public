@@ -32,23 +32,34 @@ bool VM::blocksRouting(const Object& o) {
     // "blocks the ceiling" (FootprintBlocksCeiling: placement flags, od 42,
     // bit 0x1000 "attached to ceiling": the ceiling lamps), doors and windows
     // (types 8 and 9, and 12, the modular stairs' portals, unless OBJD field
-    // 0x4b is 0x93: not done), out of the world, and the ones that let people through
+    // 0x4b is 0x93: no base-game OBJD has it), out of the world, and the ones that let people through
     // (TSObjectGetPathPlannerCostAndPassibility: CanIntersectPeople, object
     // data 8 & 0x14 "allow object and person intersection" / "allow person
-    // intersection", without a route penalty: here never, the penalty is not
-    // a cost yet). The rest go in by their footprints (routingFootprint):
-    // small things on the floor block only their models' boxes. Not the
-    // binary's: stairs (types 10 and 11) stay out, as the portals here need
-    // their tiles; Sims are blockers of their own (§5).
+    // intersection": with a route penalty (od 10 >= 1) or an "allow
+    // intersection" tree they go in as passable with cost od 10 x scale + 1,
+    // but the scale (BV 0x02cc4c04, in __bss) has no writer: 0, so the cost
+    // is 1, the floor's, and leaving them out is the same). The rest go in
+    // by their footprints (routingFootprint), the stairs (types 10 and 11)
+    // too since round 15 (OS2_STAIRS_OUT_OF_PLANNER=1 leaves them out, to
+    // compare); Sims are blockers of their own (§5).
     if (!o.position.inWorld() || o.person || o.data[objdata::ContainerId] != 0)
         return false;
     if (o.definition) {
+        static const bool stairsIn = std::getenv("OS2_STAIRS_OUT_OF_PLANNER") == nullptr;
         switch (o.definition->objectType()) {
         case kObjectTypeDoor:
         case kObjectTypeWindow:
+        case kObjectTypeModularStairsPortal:
+            // ... unless OBJD field 0x4b (file offset 0x40 + 2 x 0x4b) is
+            // 0x93 (AddThisToPathPlanner, BV 0xaf68e0).
+            if (o.definition->field(0x40 + 2 * 0x4b) != 0x93)
+                return false;
+            break;
         case kObjectTypeStairs:
         case kObjectTypeModularStairs:
-        case kObjectTypeModularStairsPortal: return false;
+            if (!stairsIn)
+                return false;
+            break;
         default: break;
         }
     }
