@@ -76,6 +76,17 @@ struct GameSettings {
     // docs/shaders-mac.md 9): mirrors reflect the scene. On by default
     // (inferred: a Mac that runs this is a high-end class). Option "reflection".
     bool reflections = true;
+    // The radio groups of the Graphics and Camera windows by option name
+    // ("Shadows", "Reflection", "LightingQuality", "NeighborhoodCameraDrift",
+    // ...): the setting picked, 1-based in the window's order (Shadows 1 low,
+    // 2 medium, 3 high; Reflection 1 off, 2 on). Absent: the window's default.
+    std::map<std::string, int> picks;
+    int pick(const std::string& option, int fallback) const {
+        auto it = picks.find(option);
+        return it == picks.end() ? fallback : it->second;
+    }
+    // The engine properties of those picks (formats/graphics_options.hpp).
+    void applyGraphics() const;
 
     static GameSettings load(const UserData& user);
     void save(UserData& user) const;

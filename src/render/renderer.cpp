@@ -1,4 +1,5 @@
 #include "renderer.hpp"
+#include "formats/graphics_options.hpp"
 
 #include "shaders_src.hpp"
 #include "texture.hpp"
@@ -506,7 +507,9 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     mat.color = simd_make_float4(diffuse, alpha);
     // The specular pass runs only for a power over 1 and coefficients over
     // 0.3 in all, with Phong's R.L to the power x 0.4 (docs/shaders-mac.md 4.3).
-    const bool specular = sm.specularPower > 1 && sm.specular[0] + sm.specular[1] + sm.specular[2] > 0.3f;
+    // LightingQuality $Low has no specHighlights (Graphics Rules.sgr).
+    const bool specular = graphicsOptions().specHighlights && sm.specularPower > 1 &&
+                          sm.specular[0] + sm.specular[1] + sm.specular[2] > 0.3f;
     mat.specular = simd_make_float4(sm.specular[0], sm.specular[1], sm.specular[2], specular ? sm.specularPower * 0.4f : 0);
     mat.emissive = simd_make_float4(sm.emissive[0], sm.emissive[1], sm.emissive[2], 0);
     if (sm.shading == StandardMaterial::Shading::Sim || sm.shading == StandardMaterial::Shading::Water)

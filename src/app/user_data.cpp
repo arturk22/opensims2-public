@@ -1,5 +1,7 @@
 #include "app/user_data.hpp"
 
+#include "formats/graphics_options.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -157,6 +159,15 @@ void UserData::setOption(const std::string& key, float value) {
 
 void UserData::setOption(const std::string& key, bool value) { setOption(key, std::string(value ? "1" : "0")); }
 
+namespace {
+// The options panel's radio groups kept in Options.txt (app/options_panel.cpp names them).
+const char* const kPickedOptions[] = {"Shadows",        "LightingQuality", "EffectsQuality",  "ObjectDetail",
+                                      "MaterialDetail", "UITransparency",  "SquarePixels",
+                                      "ObjectHiding",   "LivePIP",         "SpecialEventCamera",
+                                      "NeighborhoodCameraDrift", "SnapshotSize", "SnapshotQuality", "VideoSize",
+                                      "VideoSound",     "VideoQuality"};
+} // namespace
+
 const char* GameSettings::groupKey(int g) {
     static const char* const k[] = {"voice", "sfx", "music", "ambience"};
     return k[std::clamp(g, 0, 3)];
@@ -170,7 +181,21 @@ GameSettings GameSettings::load(const UserData& user) {
     }
     s.edgeScrolling = user.optionBool("edgeScrolling", true);
     s.reflections = user.optionBool("reflection", true);
+    for (const char* option : kPickedOptions) {
+        const float v = user.optionFloat(std::string("option.") + option, 0.0f);
+        if (v >= 1)
+            s.picks[option] = int(v);
+    }
+    s.picks["Reflection"] = s.reflections ? 2 : 1; // kept as "reflection"
     return s;
+}
+
+void GameSettings::applyGraphics() const {
+    GraphicsOptions& g = graphicsOptions();
+    const int shadows = pick("Shadows", 3); // Graphics Rules.sgr: $Low, $Medium, $High
+    g.guob = g.heightMapShadows = shadows >= 2;
+    g.reflectionWithExtraViewer = g.nhoodWaterReflection = reflections;
+    g.specHighlights = pick("LightingQuality", 3) >= 2;
 }
 
 void GameSettings::save(UserData& user) const {
@@ -180,6 +205,9 @@ void GameSettings::save(UserData& user) const {
     }
     user.setOption("edgeScrolling", edgeScrolling);
     user.setOption("reflection", reflections);
+    for (const auto& [option, v] : picks)
+        if (option != "Reflection")
+            user.setOption(std::string("option.") + option, float(v));
 }
 
 } // namespace os2

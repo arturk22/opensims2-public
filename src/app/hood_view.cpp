@@ -1,5 +1,6 @@
 #include "hood_view.hpp"
 #include "app/scene_loader.hpp"
+#include "formats/graphics_options.hpp"
 
 #include "formats/camera_config.hpp"
 #include "formats/config_text.hpp"
@@ -195,7 +196,8 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     const RgbaImage gradient = readTexture(index, "neighborhood-underwater-gradient_txtr");
     RgbaImage lightMap; // (the imposters take its shade, below)
     if (state) {
-        const RgbaImage& lm = lightMap = hood::computeHoodLightMap(terrain_, *state, lookup, gradient, kNHoodShadowStrength);
+        const RgbaImage& lm = lightMap = hood::computeHoodLightMap(terrain_, *state, lookup, gradient,
+                                                                      graphicsOptions().heightMapShadows ? kNHoodShadowStrength : 0.0f);
         renderer.setLightMap(0, lm);
         renderer.setLightMap(1, lm);
         if (const char* dump = std::getenv("OS2_HOOD_LIGHTMAP_DUMP"))

@@ -2977,6 +2977,7 @@ void setupOptions(os2::ResourceIndex& index) {
         gSettings = s;
         if (gUser)
             s.save(*gUser);
+        gSettings.applyGraphics(); // for what loads next
         applyAudioSettings();
     };
     if (gAudio)
@@ -3836,6 +3837,7 @@ void unloadScene() {
             user = *u;
         gUser = std::make_unique<os2::UserData>(gameDir(), user);
         gSettings = os2::GameSettings::load(*gUser);
+        gSettings.applyGraphics();
     }
 }
 
@@ -4745,6 +4747,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         gSettings = s;
         if (gUser)
             s.save(*gUser);
+        gSettings.applyGraphics(); // for what loads next
         applyAudioSettings();
     };
     if (gGameAudio)

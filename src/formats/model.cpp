@@ -1,5 +1,7 @@
 #include "model.hpp"
 
+#include "graphics_options.hpp"
+
 #include "resindex.hpp"
 #include "scenegraph.hpp"
 #include "simantics.hpp"
@@ -21,6 +23,17 @@ constexpr uint32_t kTypeCres = 0xE519C933, kTypeShpe = 0xFC6EB1F7, kTypeGmnd = 0
 // Design choice for an object's ground shadow subset: no shadow (there is no
 // such TXMT; inferred from the name and from where it is used).
 constexpr std::string_view kShadowOff = "guoboff";
+
+// A ground shadow plane: the subsets "groundshadow" and "*wallshadow" (as
+// app/pie_menu's picking leaves out), hidden when the Shadows option has no guob.
+bool shadowPlane(const std::string& mesh, const std::string&) {
+    auto low = [](std::string v) {
+        for (auto& c : v)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return v;
+    };
+    return low(mesh).find("shadow") != std::string::npos;
+}
 
 bool endsWith(std::string_view s, std::string_view suffix) {
     return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
@@ -528,6 +541,8 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
                 if (auto it = materials.find(mesh.name); it != materials.end())
                     if (it->second == kShadowOff || index.findByName(withSuffix(it->second, "_txmt"), kTypeTxmt))
                         part.material = it->second;
+                if (!graphicsOptions().guob && shadowPlane(mesh.name, part.material))
+                    part.material = std::string(kShadowOff);
                 if (!mesh.bones.empty())
                     for (const auto& t : geometry.transforms)
                         part.bindPoses.push_back(

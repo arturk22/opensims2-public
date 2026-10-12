@@ -43,6 +43,42 @@ std::vector<std::pair<const UiElement*, std::vector<const UiElement*>>> radioGro
     return out;
 }
 
+// The option a radio group sets (its buttons' ids: group << 4 | setting):
+// Graphics 0x49060F03 and Camera 0x49060F05, named as Graphics Rules.sgr's
+// options where it has them (UI Transparency, Square Pixels and the camera's
+// snapshot and video groups are named here).
+std::string optionName(int window, const std::vector<const UiElement*>& btns) {
+    if (btns.empty())
+        return {};
+    const uint32_t g = btns.front()->id() >> 4;
+    if (window == 3)
+        switch (g) {
+        case 0x9: return "Shadows";
+        case 0x8: return "LightingQuality";
+        case 0x5: return "EffectsQuality";
+        case 0x6: return "ObjectDetail";
+        case 0x4: return "MaterialDetail";
+        case 0x7: return "Reflection";
+        case 0x2: return "UITransparency";
+        case 0x1: return "SquarePixels";
+        case 0xA: return "ObjectHiding";
+        default: return {};
+        }
+    if (window == 4)
+        switch (g) {
+        case 0x0: return "LivePIP";
+        case 0x1: return "SpecialEventCamera";
+        case 0x3: return "NeighborhoodCameraDrift";
+        case 0x7: return "SnapshotSize";
+        case 0x4: return "SnapshotQuality";
+        case 0x8: return "VideoSize";
+        case 0x6: return "VideoSound";
+        case 0x9: return "VideoQuality";
+        default: return {};
+        }
+    return {};
+}
+
 // The default pick of a group: the highest setting the labels name.
 const UiElement* defaultPick(const std::vector<const UiElement*>& btns) {
     for (const char* want : {"High", "On", "Enabled", "Medium", "Large"})
@@ -68,10 +104,22 @@ OptionsPanel::OptionsPanel(ResourceIndex& index, const std::filesystem::path& re
                d = load(kGameScript, game_);
     ok_ = a && b && c && d;
     load(kGraphicsScript, graphics_), load(kCameraScript, camera_), load(kCreditsScript, credits_);
+    syncPicks();
+}
+
+// The radio groups' picks from the settings (Options.txt), else the defaults.
+void OptionsPanel::syncPicks() {
     for (const UiScript* sc : {&graphics_, &camera_})
         if (!sc->roots.empty())
-            for (const auto& [g, btns] : radioGroups(sc->roots.front()))
+            for (const auto& [g, btns] : radioGroups(sc->roots.front())) {
                 picks_[g] = defaultPick(btns);
+                const std::string name = optionName(sc == &graphics_ ? 3 : 4, btns);
+                if (!name.empty())
+                    if (const int v = settings_.pick(name, 0); v >= 1)
+                        for (const UiElement* btn : btns)
+                            if (int(btn->id() & 0xF) == v)
+                                picks_[g] = btn;
+            }
 }
 
 const UiScript& OptionsPanel::windowScript(int window) const {
@@ -152,8 +200,21 @@ OptionsPanel::Action OptionsPanel::press(simd_float2 p) {
         case Target::Radio:
             for (auto& [g, pick] : picks_)
                 for (const auto& b : g->children)
-                    if (&b == it->element)
+                    if (&b == it->element) {
                         pick = it->element;
+                        std::vector<const UiElement*> btns;
+                        for (const auto& c : g->children)
+                            if (c.clsid() == "GZWinBtn" && c.attr("image"))
+                                btns.push_back(&c);
+                        const std::string name = optionName(window_, btns);
+                        if (!name.empty()) {
+                            settings_.picks[name] = int(it->element->id() & 0xF);
+                            if (name == "Reflection") // the renderer's setting (option "reflection")
+                                settings_.reflections = settings_.picks[name] == 2;
+                            std::printf("opensims2: options: %s %d\n", name.c_str(), settings_.picks[name]);
+                            changed();
+                        }
+                    }
             return Action::Consumed;
         }
     }

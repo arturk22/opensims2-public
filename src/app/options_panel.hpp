@@ -13,10 +13,11 @@
 //               bool:0:1", 0xA1: Off 1, On 2)
 //   0x49060F03  "Gráficos/Opções de Desempenho" (window 3), 0x49060F05 "Opções
 //               de Câmera" (4) and 0x49060F08 "Créditos" (5): drawn as the
-//               script has them; their radio groups (the Off/Medium/High
-//               buttons of a rectangle) only remember the pick in memory
-//               (nothing in this engine reads them), as do the other inert
-//               controls. The neighborhood's puck opens the same windows
+//               script has them; each radio group (the Off/Medium/High
+//               buttons of a rectangle) is an option of GameSettings::picks,
+//               kept in Options.txt; Shadows, Reflection and LightingQuality
+//               reach the engine (formats/graphics_options.hpp), the others
+//               are only kept. The lists, slider and text boxes are inert. The neighborhood's puck opens the same windows
 //               (A241 graphics, A242 audio, A243 game, A245 camera, A246
 //               credits; HoodUi owns an OptionsPanel and gives it the
 //               panel's corner with setPanelBottomLeft).
@@ -81,7 +82,7 @@ public:
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
 
     const GameSettings& settings() const { return settings_; }
-    void setSettings(const GameSettings& s) { settings_ = s, dirty_ = true; }
+    void setSettings(const GameSettings& s) { settings_ = s, dirty_ = true, syncPicks(); }
     // Called when an option changes (with the new settings).
     std::function<void(const GameSettings&)> onChanged;
     std::function<void(const std::string&)> playSound;
@@ -102,6 +103,7 @@ private:
         const UiElement* element = nullptr;
     };
     void changed();
+    void syncPicks();
 
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;
