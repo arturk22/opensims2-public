@@ -134,6 +134,14 @@ float SimMotion::turn(float dt, float turnSpeed) {
         target = current_.frameHeading;
     else if (current_.walking && std::hypot(dx, dy) > 1e-4f)
         target = headingOfMotion(dx, dy);
+    // An Animate Sim animation plays in the frame of the Sim's direction:
+    // turning the body there over a few frames turned the animation with it
+    // (a chair's get-out, from the corner the trees snap the Sim to, turned
+    // around, swung the seated body out of the chair for a third of a
+    // second; inferred: the engine places the animation at the Sim's
+    // direction at once).
+    if (!current_.walking && !current_.animation.empty() && current_.climb.empty())
+        return heading_ = target;
     heading_ = turnTowards(heading_, target, turnSpeed * dt);
     return heading_;
 }

@@ -245,8 +245,12 @@ std::optional<Xform> VmObjectView::seatPlacement(int16_t sim, double now) {
         const int b = a.skin.skeleton.find(bone);
         if (b >= 0 && (!a.transform || a.transform->t[2] > -100)) {
             if (now >= 0) {
-                if (const auto seat = a.bonePlacement(bone, now))
+                if (const auto seat = a.bonePlacement(bone, now)) {
+                    if (std::getenv("OS2_DEBUG_SEAT"))
+                        std::fprintf(stderr, "seat: Sim %d in %d bone %s posed at %.2f -> t(%.2f %.2f %.2f)\n", sim, containerId,
+                                     bone.c_str(), now, seat->t[0], seat->t[1], seat->t[2]);
                     return seat;
+                }
             } else if (size_t(b) < a.bones.size()) {
                 return a.bones[size_t(b)];
             }

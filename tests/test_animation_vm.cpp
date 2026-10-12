@@ -560,7 +560,36 @@ static void testGait() {
     check(pick && pick->animation == "a-turnAndGo-alt-0", "a start of the other foot falls back to the plain one");
 }
 
+// An Animate Sim animation plays in the frame of the Sim's direction at
+// once: a chair's get-out is played from the corner bone the trees snap the
+// Sim to, turned around (direction 1 seated, 3 at the corner); turning the
+// body there at 7 rad/s swung the seated start of the get-out around the
+// corner for a third of a second (the Sim sat in the air beside the chair,
+// half in the table). Standing with nothing to play, it still turns.
+static void testAnimationHeadingSnaps() {
+    CodeLibrary code;
+    VM vm(code);
+    Object& s = sim(vm, 17.5f, 25.5f);
+    s.data[objdata::Direction] = 1;
+    SimMotion motion;
+    motion.sample(vm, s);
+    s.position = {17.1f, 26.0f, 1};
+    s.data[objdata::Direction] = 3;
+    s.animation.name = "a2o-chairDining-getOut-SE";
+    motion.sample(vm, s);
+    check(std::fabs(std::remainder(motion.turn(1.0f / 60) - headingOfDirection(3), float(2 * M_PI))) < 1e-5f,
+          "an Animate Sim animation: the heading is the direction's at once");
+    s.animation.name.clear();
+    s.data[objdata::Direction] = 7;
+    motion.sample(vm, s);
+    const float h = motion.turn(1.0f / 60);
+    check(std::fabs(std::remainder(h - headingOfDirection(3), float(2 * M_PI))) <= 7.0f / 60 + 1e-4f &&
+              std::fabs(std::remainder(h - headingOfDirection(3), float(2 * M_PI))) > 1e-3f,
+          "standing: it turns towards the direction");
+}
+
 int main() {
+    testAnimationHeadingSnaps();
     testVehicleDrive();
     testMeasure();
     testLocomotionNames();
