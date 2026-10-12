@@ -203,3 +203,36 @@ Obs.: o cabeçalho "r12-ui-polish" já estava no main depois do rebase (ícones 
   do binário/PT-BR; repro: `--hood N002 --hood-lot 10 --vm --ui live`, velocidade 3 por ~1 min de relógio de jogo.
 - Teclas ←/→ giram, mas ↑/↓ andam a câmera: depois de várias o lote some do quadro (esperado), sem atalho para recentrar.
 - Espelho do CAS é um quadro azul liso (sem textura de reflexo).
+
+# Rodada 13, passada 7
+
+Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`, cópia do `.app` do `main` em `461ec3d`).
+Lotes: N001 lote 68, 11 e 82, bairro N001, CAS. Ambiente: o diálogo do macOS "s2pkg would like to access files in your Documents folder" (e o aviso de reabrir) ficou por cima do centro da janela o tempo todo (não foi clicado; a janela foi movida para ler o que estava atrás); o Dock apareceu em duas capturas movidas, apagadas. Tempo curto: só parte da lista.
+Obs.: Esc dentro do lote abre "Salvar?" (esperado, `docs/game-flow-mac.md`), então não serve para fechar menus de pie; clicar com o botão direito fecha.
+
+| Passo | Resultado |
+|-------|-----------|
+| Sentar: cadeiras de jantar empurradas sob a mesa, Sim puxa a cadeira, senta de frente, levanta ao lado | não conferido ao vivo (a 6 capturas, Sims não chegaram a sentar no lote 68 dentro do tempo; cadeiras da mesa de jantar aparecem encostadas na mesa no corte) |
+| "Dormir de Pijama" no N001_Lot11 (Mortimer, cama de casal) | **não conclusivo**: enfileirou ("Dormir de Pijama", Bed - Double - Expensive), mas em ~1 min de relógio (velocidade 2) ele só chegou ao andar de baixo; sem ver subir/trocar/deitar; o binário usado já tem `37f961f` (slots de multi-tile) |
+| Espelho do CAS | passa: o espelho de pé reflete a Sim e a parede de tijolos (era um quadro azul liso na passada 6) |
+| Espelho de banheiro do N001_Lot82 e Reflexo desligado | não testado (o botão Gráficos do Opções do lote não abriu a janela nas duas tentativas; no bairro abre e funciona) |
+| Clique nos Sims pelo corpo | passa: clique no tronco do Sim abre o pie do Sim (Conversar/Beijar...); clique entre as pernas e ao lado da perna cai no objeto atrás (menu da TV/lâmpada), sem pegar o Sim |
+| Bairro: girar lote ao mover (arrastar com o botão preso) | passa: pegar o lote 57 (mão), arrastar gira o lote ("lot turned to 3 by the drag"), o fantasma segue |
+| Bairro: Ver Amigos | passa: no lote 49 (nas Nuvens) dois arcos verdes saem para os lotes 11 e 68, com os lotes destacados |
+| Bairro: decoração recusada mostra dica em PT-BR | passa: "Não pode ser colocado dentro de lotes." no canto (flora sobre um lote) |
+| Bairro: Sombras Baixo tira as sombras dos morros | passa: com `option.Shadows = 1` a mancha escura grande no canto superior direito some, mas só **depois de reabrir** o bairro (o mapa de luz é feito na carga; ver abaixo) |
+| Bairro: fotos de cabeça no diálogo do lote | passa: o cartão do lote 49 mostra os dois moradores de corpo inteiro até a cabeça (cabeça de Sim do cartão); a barra de famílias mostra miniaturas de cabeça |
+| Bairro: pôr lote vazio (nome, estradas, câmera mantida) | parcial: clicar numa família da bandeja mostra o cartão e o diálogo "Aceitar"; mudar a família para o lote 57 mostra "Você não pode pagar por este lote." (§20.900 contra §28.166), então a cena de mudança não rodou; lote vazio novo não testado |
+| Vida: cena de mudança (8:00, cortina) | não testado (família sem dinheiro para o lote; ver acima) |
+| Vida: ônibus escolar no lote 68 (manhã, velocidade 3) | passa: o ônibus **amarelo** chega à rua na quinta às 08:08, fica parado até ~08:48 (a quarta passou sem aparecer na janela da câmera) e vai embora antes das 09:00 (depois passa uma van branca); buzina não conferida (sem som) (`docs/screenshots/r13-qa7-onibus.jpg`) |
+| Vida: bolo de aniversário | não testado |
+| Cor do calçamento à noite | não conferido (câmera na rua à noite: a rua escura parece uniforme, sem comparação com o dia) |
+| Telhado no Construir | não testado |
+| Tutorial, fim da lição 1 (passo 32) | não testado |
+
+## Bugs achados (não corrigidos)
+
+- Sombras Baixo só vale depois de reabrir o bairro: o `applyGraphics()` troca `heightMapShadows`, mas o mapa de luz do terreno é calculado na carga (`hood_view.cpp`, `computeHoodLightMap`); trocar a opção com o bairro aberto não refaz. Repro: bairro, Opções, Gráficos, Sombras "Desligado" ou "Médio" no 1 (log `options: Shadows 1`), Aplicar Mudanças: nada muda; reabrir mostra sem sombra.
+- Opções do lote: o botão de Gráficos (monitor, 530,1030 em 2000 px) não abriu a janela de Gráficos duas vezes no lote 82 (só o painel de Opções abriu); no bairro o mesmo botão abre. Repro: `--hood N001 --hood-lot 82 --vm --ui live`, Opções, Gráficos.
+- Mover/aceitar mudança de família sem dinheiro: o diálogo só diz "Você não pode pagar por este lote." (ok), mas a família do bin fica selecionada e o painel do cartão do lote continua aberto; não é bug do binário, só anotado.
+- Dormir no N001_Lot11 segue lento de conferir: sem uma forma de "pular" (cheat), o Mortimer leva mais de 1 min de relógio de jogo para chegar à escada; recomendo conferir com um `s2pkg` sem tela até a cama.
