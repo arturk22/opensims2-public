@@ -579,6 +579,27 @@ se afasta da parede diagonal. Parece um erro do jogo; para ser fiel, copiar
 assim. A geometria de qual diagonal é 0x10/0x20 vem das fórmulas (inferido:
 o `cWallLocator` só guarda tile + lado, `FUN_0156003c`).
 
+### Clique num objeto e no tapete (`cTSUserToolStandardAction::MouseEvent`, BV `0x359ef4`)
+
+Clique com um objeto sob o mouse (rodada 13):
+
+- **tapete** = `GetType()` **0x13** e dado do objeto `0x3b` (vtable
+  `0x34(0x3b)`) ≠ **0xA7**; para o tapete o tool acha também o chão sob o
+  mouse (`GroundOrWallButNotPondAtGameWindowPoint`);
+- `ObjectHasInteractions(obj)` (cache por objeto; o sistema de interações
+  vtable `0x48(Sim alvo, obj)`);
+- **não é tapete, com interações** → `PickObject(obj, nenhum)` (o pie dele,
+  mensagem `0xC0` com o ID);
+- **não é tapete, sem interações** → só a dica (`ObjectTooltipString`);
+- **tapete sem interações** → `GoHere(chão)` normal (o pie do "Vir Aqui"),
+  se achou chão;
+- **tapete com interações** → se achou chão e `GoHere(chão, &destino)` deu
+  certo (com o parâmetro de saída o `GoHere` não abre pie), `PickObject(tapete,
+  destino)`: **um pie só com o tapete e o destino** (a mensagem `0xC0` leva
+  os dois IDs), e, se o destino ainda é do mesmo seletor, o Sim alvo o guarda
+  (`AddManagedDestinationObject`); sem chão ou sem destino → o pie só do
+  tapete.
+
 ## 9. Comparação com o código atual (main `3b4c4db`: `src/vm/path_planner.*`, `routing.cpp`)
 
 | jogo | código |
