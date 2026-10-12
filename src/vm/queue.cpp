@@ -456,13 +456,19 @@ Exit changeActionString(Context& c) {
         if (t && index >= 1 && !t->get(size_t(index - 1)).empty())
             strings = t;
     };
+    // The semi-global table is the running code's (a tree of a semi-global
+    // run for an object of another library, as the food semi-global's "CT -
+    // String - Clean Up" for a dish: the dish's semi-global named the
+    // food's Clean Up "Ask For Lessons From ..."), as Run Tree by Name finds
+    // its table (inferred for this primitive).
+    const uint32_t semi = c.frame.group != owner->group && c.frame.group != kGlobalGroup ? c.frame.group : owner->semiGroup;
     if (flags & 0x04)
         tryGroup(kGlobalGroup);
     else if (flags & 0x08)
-        tryGroup(owner->semiGroup);
+        tryGroup(semi);
     else {
         tryGroup(owner->group);
-        tryGroup(owner->semiGroup);
+        tryGroup(semi);
         tryGroup(kGlobalGroup);
     }
     if (!strings || index < 1)

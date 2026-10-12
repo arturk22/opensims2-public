@@ -619,6 +619,14 @@ Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
     o.data[objdata::LeadTileObjectId] = id;
     o.data[objdata::SlotNumber] = -1;
     o.data[objdata::SemiAttributeCount] = int16_t(o.semiAttributes.size());
+    // Object data 45-47, 24 and 21 "birth year/month/day/hour/minute": when
+    // the object came to be (a saved object's own come back with its state).
+    // Inferred from the labels and the food: "Function - Init - Food" copies
+    // them into the meal's age and "Get in Temps - Age of Meal" subtracts
+    // them from the clock; at 0 every new meal was 22,000 hours old, spoiled
+    // at once, and a Sim threw away the frozen dinner baking in the oven.
+    o.data[45] = int16_t(clock.year), o.data[46] = int16_t(clock.month), o.data[47] = int16_t(clock.day);
+    o.data[24] = int16_t(clock.hour), o.data[21] = int16_t(clock.minute);
     return o;
 }
 
