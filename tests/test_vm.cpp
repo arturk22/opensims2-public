@@ -733,6 +733,24 @@ static void testManageInventory() {
           "Manage Inventory matches the flags, takes the stack object's GUID for 0 and counts counted tokens");
 }
 
+// A GUID no OBJD has goes to the code library's fallback once (loadLot: the
+// neighbourhood's character files, so every neighbor has its definition).
+static void testGuidFallback() {
+    CodeLibrary code;
+    int calls = 0;
+    code.setGuidFallback([&](CodeLibrary& lib, uint32_t guid) -> std::optional<std::pair<uint32_t, uint16_t>> {
+        ++calls;
+        if (guid != 0xADAE6F9D)
+            return std::nullopt;
+        lib.add(0xFE000001, 0x80, definition(guid, true));
+        return std::pair{0xFE000001u, uint16_t(0x80)};
+    });
+    const auto a = code.definitionByGuid(0xADAE6F9D);
+    const auto b = code.definitionByGuid(0x12345678);
+    const auto c = code.definitionByGuid(0x12345678);
+    check(a && a->first == 0xFE000001 && !b && !c && calls == 2, "a neighbor's definition comes from the fallback, once a GUID");
+}
+
 // Set to Next (0x80 | type) with the target in a temp.
 static Behavior::Instruction next(uint8_t type, uint8_t temp, Target t, Target f, uint32_t guid = 0) {
     return instr(0x1F, t, f, {lo(guid, 0), lo(guid, 1), lo(guid, 2), lo(guid, 3), uint8_t(0x80 | type), Temp, 0, temp, 0});
@@ -1785,6 +1803,7 @@ int main() {
     testArrays();
     testChangeMaterial();
     testManageInventory();
+    testGuidFallback();
     testSetToNextSearches();
     testNeighbors();
     testGenericSimsCall();

@@ -290,6 +290,8 @@ std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByGuid(uint3
     scanDefinitions();
     if (auto it = byGuid_.find(guid); it != byGuid_.end())
         return it->second;
+    if (guidFallback_ && guid && guidFallbackTried_.insert(guid).second)
+        return guidFallback_(*this, guid);
     return std::nullopt;
 }
 

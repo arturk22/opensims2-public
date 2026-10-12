@@ -280,7 +280,12 @@ public:
     // the name of every BHAV.
     std::optional<uint16_t> behaviorByName(uint32_t group, const std::string& name);
     // OBJD (group, instance) with this GUID; the first scan reads every OBJD.
+    // A GUID none has goes to the fallback once (the neighbourhood's
+    // character files: every neighbor's Sim has its definition in the game,
+    // loaded or not; loadLot sets it).
     std::optional<std::pair<uint32_t, uint16_t>> definitionByGuid(uint32_t guid);
+    using GuidFallback = std::function<std::optional<std::pair<uint32_t, uint16_t>>(CodeLibrary&, uint32_t guid)>;
+    void setGuidFallback(GuidFallback f) { guidFallback_ = std::move(f); }
     // The OBJDs of type 7 with field 42 "is global sim object" & mask set, in
     // the scan's order, with their field 26 "Ignore GlobalSim field in CAS
     // Lot" (cEdithObjectModule::UpdateSimObjects, docs/game-flow-mac.md §7.1).
@@ -338,6 +343,8 @@ private:
     using Cache = std::unordered_map<uint64_t, std::unique_ptr<T>>;
 
     ResourceIndex* index_ = nullptr;
+    GuidFallback guidFallback_;
+    std::set<uint32_t> guidFallbackTried_;
     Cache<Behavior> behaviors_;
     Cache<Constants> constants_;
     Cache<ObjectDefinition> definitions_;
@@ -1011,7 +1018,9 @@ public:
     void resetAfterError(ObjectId id, Thread& t);
     std::map<ObjectId, Thread> threads; // the Main threads
     // Instructions a thread may run in one turn before it fails as an
-    // infinite loop.
+    // infinite loop: the game's "Too many iterations" (0x44D) after 100000
+    // nodes a tick (cTSTreeSim::DoNodeAction BV 0xe1b18c; 300000 when the
+    // tree simulator's flag 0x33 is set, not understood).
     size_t instructionsPerTurn = 100000;
     // Create New Object Instance initializes the new object (runs its Init
     // and, with the scheduler running, starts its Main), as FreeSO does; off

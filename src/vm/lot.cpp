@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <map>
+#include <memory>
 #include <set>
 
 namespace os2::vm {
@@ -153,10 +154,12 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
 
     LotLoad out;
     // Sims whose cObject does not name their character file are found by
-    // their GUID among the neighbourhood's character files (read once).
-    std::map<uint32_t, std::filesystem::path> characterByGuid;
-    auto characterFileOf = [&](uint32_t guid) -> std::filesystem::path {
-        if (characterByGuid.empty() && !charactersDir.empty())
+    // their GUID among the neighbourhood's character files (read once); the
+    // code library finds any neighbor's definition the same way (owner
+    // 0x26, Test Object Type, ...: the game has every neighbor's character).
+    auto characterByGuid = std::make_shared<std::map<uint32_t, std::filesystem::path>>();
+    auto characterFileOf = [characterByGuid, charactersDir](uint32_t guid) -> std::filesystem::path {
+        if (characterByGuid->empty() && !charactersDir.empty())
             for (const auto& f : std::filesystem::directory_iterator(charactersDir)) {
                 if (f.path().extension() != ".package")
                     continue;
@@ -165,14 +168,29 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
                     for (const auto& e : pkg.entries())
                         if (e.tgi.type == kTypeObjd) {
                             const auto bytes = pkg.read(e);
-                            characterByGuid.emplace(ObjectDefinition::parse(bytes).guid(), f.path());
+                            characterByGuid->emplace(ObjectDefinition::parse(bytes).guid(), f.path());
                         }
                 } catch (const std::exception&) {
                 }
             }
-        auto it = characterByGuid.find(guid);
-        return it == characterByGuid.end() ? std::filesystem::path{} : it->second;
+        auto it = characterByGuid->find(guid);
+        return it == characterByGuid->end() ? std::filesystem::path{} : it->second;
     };
+    if (!charactersDir.empty())
+        code.setGuidFallback([characterFileOf](CodeLibrary& lib, uint32_t guid) -> std::optional<std::pair<uint32_t, uint16_t>> {
+            const auto file = characterFileOf(guid);
+            if (file.empty())
+                return std::nullopt;
+            try {
+                DbpfPackage pkg(file);
+                const uint32_t group = characterGroup(file.stem().string());
+                for (uint16_t instance : lib.addPackage(pkg, group))
+                    if (const ObjectDefinition* d = lib.definition(group, instance); d && d->guid() == guid)
+                        return std::pair{group, instance};
+            } catch (const std::exception&) {
+            }
+            return std::nullopt;
+        });
     // Every object of the object module (saved.objects), of the OBJD its
     // save type's GUID names; Sims from their character files.
     for (const auto& s : saved.objects) {
