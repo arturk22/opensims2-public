@@ -856,6 +856,9 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                 if (p.pose.size() == actor->skin.skeleton.bones.size())
                     actor->player.setBasePose(p.pose);
                 actor->player.setHoldPose(true);
+                // OS2_NO_LAYER_MERGE=1: the finished layers kept apart (to compare).
+                if (std::getenv("OS2_NO_LAYER_MERGE"))
+                    actor->player.setCollapseHeld(false);
                 actor->position = {p.position[0], p.position[1], p.position[2]};
                 actor->heading = 2 * std::atan2(p.rotation[2], p.rotation[3]);
                 actor->model = renderer.addObject(actor->skin.model, index, true);

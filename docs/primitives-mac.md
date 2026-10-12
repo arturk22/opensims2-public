@@ -1507,6 +1507,27 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   get-in leaveOut do canto acaba no assento puxado e fica lá depois do
   reframe. `r18-chairs-lot68-antes-depois.jpg`,
   `r18-chairs-lot68-levantar.jpg`, `r18-chairs-n002-lot3-antes-depois.jpg`.
+- **Camadas mantidas de objeto juntadas** (rodada 19, ramo `r19-chairlayers`;
+  regra do app, **inferida**: a VM fica igual). A VM nunca tira os overlays
+  de uma cadeira de jantar: cada sentar e levantar põe duas camadas de uma vez
+  só (nível e prioridade 1 + id do overlay, `main.mm onObjectOverlay`), que
+  ficavam no ator para sempre (N001_Lot11, 3 dias: até 8 camadas numa cadeira,
+  129 nos atores de objeto). Num ator que mantém a pose (`setHoldPose`), quando
+  toda camada já tocou uma vez e está parada no último quadro há 1 s (sem
+  loop, sem fade-out, sem canais delta, IK ou velocidade), o `AnimPlayer` as
+  junta numa camada só: a pose que davam e, por osso, o peso que tomavam
+  (1 − o que sobrou), no nível mais alto delas; o que toca depois por cima
+  mistura com ela como misturava com elas (o blend-in de 0,1 s inclusive). A
+  junção também é feita no `play()`, para objetos que ninguém desenha. Supõe
+  que camadas novas vêm em nível acima (os ids crescem); uma camada mantida
+  coberta não volta mais quando a de cima é tirada (antes voltava). Testes
+  `testHeldLayersCollapse` (200 ciclos, mesma pose que sem juntar) e
+  `testDiningChairLayersBounded` (com `OS2_DATA`: 60 ciclos da Value1, normal e
+  leaveOut, puxada/torta sentada e empurrada depois, ≤ 3 camadas);
+  `OS2_DEBUG_LAYERS=1` conta as camadas a cada hora de jogo nas rodadas sem
+  tela, `OS2_NO_LAYER_MERGE=1` desliga a junção. N001_Lot11 (3 dias, 60
+  overlays de cadeira de jantar): no máximo 1 camada por ator (49 em 64
+  atores) contra até 8 (129) sem juntar; N001_Lot68: 1 contra 6.
 - **Onde o Sim é desenhado: uma regra** (rodada 19, ramo `r19-eat`, playtests
   do usuário 15–19.png; o que é do app é inferido). A raiz do Sim é a posição
   e a direção da VM (interpoladas entre os dois últimos ticks) ou, contido num
