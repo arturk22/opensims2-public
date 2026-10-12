@@ -370,6 +370,11 @@ Exit setToNext(Context& c) {
         return it == ids.end() ? none() : found(*it);
     }
     case 3: { // part of a multi-tile object
+        // TrySetToNext (BV): the target must be a multi-tile object's part;
+        // the next part of its group, round to the first, so a group left
+        // with one part (the others burnt) gives the target itself: "Burn -
+        // Spread - MT" loops on Set to Next until it is back at its start
+        // and spun out the instruction budget when this said false.
         const Object* x = c.vm.object(current);
         if (!x)
             return none();
@@ -379,7 +384,12 @@ Exit setToNext(Context& c) {
         auto it = std::find_if(objects.upper_bound(current), objects.end(), inGroup);
         if (it == objects.end())
             it = std::find_if(objects.begin(), objects.end(), inGroup);
-        return it == objects.end() ? none() : found(it->first);
+        if (it != objects.end())
+            return found(it->first);
+        // Alone: still a part of a multi-tile object when its OBJD says so
+        // (editor field 10 "Multi-Tile master id", which the trees test too).
+        const bool multiTile = x->definition && int16_t(x->definition->field(0x40 + 2 * 10)) > 0;
+        return multiTile ? found(current) : none();
     }
     case 14:   // job object of the Sim in the stack object
     case 15: { // job object of the neighbor in the stack object

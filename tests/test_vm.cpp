@@ -1496,6 +1496,24 @@ static void testResetAfterError() {
     check(fx.vm.threads.at(o.id).status == Thread::Status::Failed, "without resets a failed Main stays failed");
 }
 
+// Set to Next 3 on the last part of a multi-tile object (the others burnt)
+// gives the part itself, as the binary's round over the group does ("Burn -
+// Spread - MT" loops until it is back at its start).
+static void testLonePartOfMultiTile() {
+    Fixture fx;
+    ObjectDefinition d = definition(0x0F0F0F0F);
+    d.fields[(0x40 + 2 * 10 - 0x44) / 2] = 0x4000; // "Multi-Tile master id"
+    fx.code.add(kObjGroup, 0x80, std::move(d));
+    fx.obj();
+    Object& part = fx.vm.instantiate(kObjGroup, 0x80);
+    fx.code.add(kObjGroup, 0x1000, tree({next(3, 0, T, E)}));
+    Thread t = fx.vm.start(1, 0x1000);
+    t.temps[0] = part.id;
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && t.temps[0] == part.id,
+          "Set to Next 3: a lone part of a multi-tile object is its own next part");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCinematicRequest();
@@ -1532,6 +1550,7 @@ int main() {
     testMakeNewCharacter();
     testReaperNeighborAndDyingObjects();
     testResetAfterError();
+    testLonePartOfMultiTile();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

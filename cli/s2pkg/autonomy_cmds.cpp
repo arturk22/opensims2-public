@@ -279,8 +279,9 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                 return;
             seen = {f.behavior, machine.ticks};
             const std::string caller = t.stack.size() > 1 ? t.stack[t.stack.size() - 2].behavior->fileName : "";
-            std::printf("  tick %6llu %s %s (%d) \"%s\" (0x%08X:0x%04X) from \"%s\"\n", static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
-                        objectName(machine, t.me).c_str(), t.me, f.behavior->fileName.c_str(), f.group, f.instance, caller.c_str());
+            std::printf("  tick %6llu %s %s (%d) \"%s\" (0x%08X:0x%04X) from \"%s\", stack object %d %s\n", static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
+                        objectName(machine, t.me).c_str(), t.me, f.behavior->fileName.c_str(), f.group, f.instance, caller.c_str(),
+                        f.stackObject, machine.object(f.stackObject) ? objectName(machine, f.stackObject).c_str() : "-");
         };
 
     // Wants and fears rolled, fulfilled and come true, and the aspiration
