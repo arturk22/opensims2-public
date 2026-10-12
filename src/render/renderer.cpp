@@ -253,6 +253,8 @@ struct Renderer::Part {
     MTL::Buffer* indices = nullptr;
     uint32_t indexCount = 0;
     simd_float3 center{0, 0, 0}; // bounding box centre in model space (blended parts are sorted by it)
+    simd_float3 lo{0, 0, 0}, hi{0, 0, 0}; // bounding box in model space
+    bool cullable = false; // static vertices (lo/hi stay true): left out of a pass whose frustum misses the box
     simd_float3 normal{0, 0, 1}; // a mirror's: its vertices' mean normal, model space
     Material material;
     MTL::Texture* mask = nullptr; // owned, with kMasked
@@ -672,6 +674,8 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
                                        MTL::ResourceStorageModeShared);
         p.indexCount = uint32_t(mesh.triangles.size());
         p.center = (lo + hi) * 0.5f;
+        p.lo = lo, p.hi = hi;
+        p.cullable = !dynamic && !v.empty();
         if (mat.mirror) {
             simd_float3 n = 0;
             for (const auto& vn : mesh.normals)
@@ -837,6 +841,30 @@ void Renderer::retargetInstances(int from, int to) {
             i.model = to;
 }
 
+// Whether a part's model-space box is wholly outside the clip volume of
+// `viewProj * model` (Metal's: -w <= x, y <= w, 0 <= z <= w). The clip volume
+// is an intersection of half-spaces and the map is linear, so when all 8
+// corners are outside the same one, so is every triangle of the part: it
+// would draw nothing. A tiny margin keeps boxes that only graze an edge.
+static bool outsideFrustum(const simd_float4x4& viewProj, const simd_float4x4& model, simd_float3 lo, simd_float3 hi) {
+    const simd_float4x4 m = simd_mul(viewProj, model);
+    int outside[6] = {0, 0, 0, 0, 0, 0};
+    for (int c = 0; c < 8; ++c) {
+        const simd_float4 p = simd_mul(m, simd_make_float4(c & 1 ? hi[0] : lo[0], c & 2 ? hi[1] : lo[1], c & 4 ? hi[2] : lo[2], 1));
+        const float e = 1e-4f * (std::abs(p.w) + 1.0f);
+        outside[0] += p.x + p.w < -e;
+        outside[1] += p.w - p.x < -e;
+        outside[2] += p.y + p.w < -e;
+        outside[3] += p.w - p.y < -e;
+        outside[4] += p.z < -e;
+        outside[5] += p.w - p.z < -e;
+    }
+    for (int k = 0; k < 6; ++k)
+        if (outside[k] == 8)
+            return true;
+    return false;
+}
+
 MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const FrameView& view) {
     dispatch_semaphore_wait(sema(inFlight_), DISPATCH_TIME_FOREVER);
     frame_ = (frame_ + 1) % kFramesInFlight;
@@ -956,7 +984,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
 
     const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
     // `reflected`: the pass into the reflection texture (mirrors left out).
-    auto drawItems = [&](MTL::RenderCommandEncoder* enc, bool reflected) {
+    auto drawItems = [&](MTL::RenderCommandEncoder* enc, bool reflected, const simd_float4x4& passViewProj) {
         enc->setVertexBuffer(frames_[frame_], reflected ? kFrameStride : 0, 2);
         enc->setFragmentBuffer(frames_[frame_], reflected ? kFrameStride : 0, 2);
         enc->setFragmentBuffer(lightBuffers_[size_t(frame_)], 0, 3);
@@ -971,6 +999,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             const Part& part = *item.part;
             const Material& m = part.material;
             if (reflected && m.mirror)
+                continue;
+            if (part.cullable && outsideFrustum(passViewProj, item.inst->transform, part.lo, part.hi))
                 continue;
             enc->setDepthStencilState(m.blend == StandardMaterial::Blend::None || m.depthWrite ? depthWrite_ : depthRead_);
             enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha      ? alphaBlend_
@@ -1048,13 +1078,13 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         rp->depthAttachment()->setClearDepth(1.0);
         MTL::RenderCommandEncoder* renc = cmd->renderCommandEncoder(rp);
         renc->setFrontFacingWinding(MTL::WindingClockwise); // the reflection turns the windings around
-        drawItems(renc, true);
+        drawItems(renc, true, rf->viewProj);
         renc->endEncoding();
     }
 
     MTL::RenderCommandEncoder* enc = cmd->renderCommandEncoder(pass);
     enc->setFrontFacingWinding(MTL::WindingCounterClockwise);
-    drawItems(enc, false);
+    drawItems(enc, false, f->viewProj);
     if (sceneHook_)
         sceneHook_(enc, view.view, f->viewProj);
     if (overlay_ && target)

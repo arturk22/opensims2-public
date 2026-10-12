@@ -84,6 +84,8 @@ struct Xml {
 };
 
 std::string decode(std::string_view s) {
+    if (s.find('&') == std::string_view::npos)
+        return std::string(s); // nothing to decode (nearly always)
     std::string out;
     for (size_t i = 0; i < s.size();) {
         if (s[i] == '&') {
