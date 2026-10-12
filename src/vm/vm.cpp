@@ -709,6 +709,7 @@ Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
     byId_[uint16_t(id)] = &o;
     ++tableGeneration_;
     o.id = id;
+    o.serial = ++objectSerial_;
     o.group = group;
     o.semiGroup = code_.semiGlobalFor(group);
     o.attributes.resize(attributeCount);
@@ -1184,6 +1185,8 @@ Thread VM::start(ObjectId me, uint16_t treeId, std::span<const int16_t> args, Ob
                  ObjectId codeOwner) {
     Thread t;
     t.me = me;
+    if (const Object* o = object(me))
+        t.meSerial = o->serial;
     std::array<int16_t, 4> a{};
     std::copy_n(args.begin(), std::min<size_t>(args.size(), 4), a.begin());
     try {
@@ -1284,7 +1287,11 @@ void VM::run(Thread& t, size_t maxInstructions) {
             fail(t, "instruction budget exhausted (" + std::to_string(maxInstructions) + ")");
             return;
         }
-        if (!object(t.me)) {
+        // A removed object's thread is killed, also when its ID went to a
+        // new object in the meantime (the removal leaves vm.threads alone;
+        // N003_Lot192: a school bus controller's Main went on as the bus
+        // made with its ID, "tree 0x1008 not found" every tick).
+        if (const Object* o = object(t.me); !o || (t.meSerial && o->serial != t.meSerial)) {
             t.status = Thread::Status::Killed;
             return;
         }

@@ -1710,8 +1710,26 @@ static void testLonePartOfMultiTile() {
           "Set to Next 3: a lone part of a multi-tile object is its own next part");
 }
 
+// A removed object's thread does not go on as the next object given its ID
+// (IDs are reused, lowest first).
+static void testThreadOfReusedId() {
+    Fixture fx;
+    fx.code.add(kObjGroup, 0x1000, tree({expr(Temp, 0, Assign, Lit, 1, T, E)}));
+    const ObjectId id = fx.obj().id;
+    Thread t = fx.vm.start(id, 0x1000);
+    fx.vm.removeObject(id);
+    Object& other = fx.vm.createObject(kObjGroup, 8);
+    check(other.id == id, "the ID is reused");
+    fx.vm.run(t);
+    check(t.status == Thread::Status::Killed && t.temps[0] == 0, "the old object's thread is killed");
+    Thread u = fx.vm.start(id, 0x1000);
+    fx.vm.run(u);
+    check(u.status == Thread::Status::Finished && u.temps[0] == 1, "the new object's own thread runs");
+}
+
 int main() {
     testLoopWithLocalsAndParams();
+    testThreadOfReusedId();
     testCinematicRequest();
     testCalls();
     testScopes();

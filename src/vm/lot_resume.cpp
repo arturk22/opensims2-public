@@ -294,6 +294,7 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
         } else {
             Thread t;
             t.me = id;
+            t.meSerial = vm.object(id) ? vm.object(id)->serial : 0;
             std::copy(s->temps.begin(), s->temps.end(), t.temps.begin());
             for (const auto& f : s->stack) {
                 // A frame runs the code of "running on" (0 in the older layout: me).

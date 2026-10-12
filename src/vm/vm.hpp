@@ -460,6 +460,10 @@ constexpr size_t kMaxTimersPerObject = 64;
 
 struct Object {
     ObjectId id = 0;
+    // Which object of that ID this is (VM::createObject counts them): IDs
+    // are reused, and a thread of a removed object must not go on as the
+    // next object given its ID.
+    uint64_t serial = 0;
     uint32_t group = 0;     // private BHAVs/BCONs (the group of the object's OBJD)
     uint32_t semiGroup = 0; // semi-global BHAVs/BCONs, 0 if none
     const ObjectDefinition* definition = nullptr; // shared by every instance; may be null (tests)
@@ -744,6 +748,7 @@ struct Thread {
     enum class Status { Running, Finished, Failed, Killed };
 
     ObjectId me = 0;
+    uint64_t meSerial = 0; // Object::serial of `me` when the thread started (0: not checked)
     std::array<int16_t, kTempCount> temps{};
     std::vector<Frame> stack;
     // What the tree a primitive ran returned, for the primitive running
@@ -1261,6 +1266,7 @@ private:
     // the only places that add or remove entries of objects_.
     std::vector<Object*> byId_;
     uint64_t tableGeneration_ = 0;
+    uint64_t objectSerial_ = 0;
     mutable std::vector<ObjectId> people_;
     mutable uint64_t peopleTick_ = ~uint64_t(0), peopleGeneration_ = ~uint64_t(0);
     std::unordered_map<uint16_t, Primitive> primitives_;
