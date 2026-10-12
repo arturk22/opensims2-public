@@ -147,6 +147,8 @@ std::optional<QueuedInteraction> entryOf(VM& vm, Object& sim, const LotObjects::
     q->args = rec.params;
     q->uid = savedInteractionId(vm, sim, rec);
     q->link = rec.u42;
+    if (rec.u54 & 2) // the continuation (lot_save.cpp toRecord)
+        q->flags |= 0x04;
     return q;
 }
 
@@ -216,6 +218,8 @@ size_t restoreQueue(VM& vm, Object& sim, const LotObjects::State& s) {
         q->args = rec->params;
         q->uid = savedInteractionId(vm, sim, *rec);
         q->link = rec->u42;
+        if (rec->u54 & 2) // the continuation (lot_save.cpp toRecord)
+            q->flags |= 0x04;
         sim.queue.push_back(std::move(*q));
     }
     if (sim.queue.empty())

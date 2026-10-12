@@ -97,6 +97,10 @@ LotObjects::SavedInteraction toRecord(VM& vm, const Object& sim, const QueuedInt
     // come from global 36, saved with the globals).
     r.u40 = q.uid;
     r.u42 = q.link;
+    // Its flags word (+0x54): bit 0x02 is the continuation (cTSInteraction
+    // vtable 0x88/0x84, SetContinuation/GetContinuation, Mac BV 0x4c518c/
+    // 0x4c58c0), Push Interaction's "continue as current" (byte 3 bit 0x04).
+    r.u54 = (r.u54 & ~2u) | (q.flags & 0x04 ? 2u : 0u);
     return r;
 }
 
