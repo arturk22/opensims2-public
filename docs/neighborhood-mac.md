@@ -533,9 +533,14 @@ mensagens **`0x89`** (virada do dia, a mesma do relógio em
 `docs/primitives-mac.md` §4c), **`0x8B`** e **`0xCD94C8EE`**. A `0x8B` também é
 assinada pelo módulo de objetos, telhados, cercas, roteamento, pontuação de
 ambiente e a janela de valor do lote sem Sims (`cTSWinProcSimlessLotValueUI`)
-— é a mensagem de "o lote mudou" (quem a envia não foi achado: não há
-`li r4,0x8b` fora dos assinantes). Ou seja: **todo dia e a cada mudança do
-lote**, não a cada compra pela primitiva.
+— é a mensagem de "o lote mudou". **Quem a envia (rodada 11, binário)**:
+o estado "modo vivo" do `cTSMainToolbar` (`SetMode(1)` cria o objeto de
+estado em BV `0x159f400`, que posta `0x8B` e depois `0xCBCCDECE`): a cada
+**volta ao modo vivo** (saindo de compra, construção, etc.; os modos do
+`SetMode`: 1 vivo, 3 compra, 4 construção). Os outros `li rX,0x8b` do
+binário são o código de erro de colocação `0x8B` ("Only exposed terrain")
+ou assinaturas. Ou seja: **todo dia e ao voltar ao modo vivo**, não a cada
+compra.
 
 `ComputeStats` (por objeto do módulo; pula os com bit `0x10000`/`0x20000` em
 `+0x214`, os com o bit `0x400` da propriedade de catálogo `0x28`, as partes
