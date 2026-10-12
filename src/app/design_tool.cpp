@@ -288,6 +288,10 @@ void DesignTool::layout(UiScreen& out, int width, int height) {
     hk.rects = &rects;
     if (const UiElement* e = root.child(two ? kOneRow : kTwoRows))
         hk.hide.insert(e);
+    // The single-row background is hidden in the script: shown for one row (without
+    // it the name and the cost were drawn straight on the scene).
+    if (bg)
+        hk.show.insert(bg);
     if (!two)
         if (const UiElement* e = root.child(kRow2))
             hk.hide.insert(e);

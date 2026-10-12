@@ -1658,7 +1658,18 @@ void runBuySteps() {
                 f.push_back(v.substr(k, e - k));
             }
             gBuy->setTool(os2::BuyMode::Tool::Design);
-            if (gBuy->design(os2::vm::ObjectId(std::stoi(f[0])), simd_make_float2(560, 420)))
+            // A name instead of an ID: the first object whose file name has it (a part with a model).
+            os2::vm::ObjectId target = 0;
+            if (!f[0].empty() && !std::isdigit(static_cast<unsigned char>(f[0][0]))) {
+                for (const auto& [id, o] : gSimulation->machine().objects())
+                    if (o.definition && std::string(o.definition->fileName).find(f[0]) != std::string::npos && !o.person) {
+                        target = id;
+                        break;
+                    }
+            } else {
+                target = os2::vm::ObjectId(std::stoi(f[0]));
+            }
+            if (gBuy->design(target, simd_make_float2(560, 420)))
                 for (size_t k = 1; k < f.size(); ++k) {
                     int row = 0, option = 0;
                     if (f[k] == "accept")

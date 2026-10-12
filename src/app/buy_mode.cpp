@@ -426,24 +426,32 @@ void BuyMode::setTool(Tool t) {
     dirty_ = true;
 }
 
+// The catalog entry of an object (its group's lead): by GUID, else by file name.
+// A multi-tile object is in the catalog by its master OBJD, whose GUID none of
+// the parts has ("Sofa - Loveseat - Art Nouveau (0,0)"): the multi-tile entry
+// of the parts' group.
+const CatalogEntry* BuyMode::catalogEntryOf(const vm::Object* l) const {
+    if (!l || !l->definition)
+        return nullptr;
+    const CatalogEntry* entry = catalog_.byGuid(l->guid());
+    if (!entry)
+        entry = catalog_.find(l->definition->fileName);
+    if (!entry)
+        for (const auto& e : catalog_.entries())
+            if (e.multiTile && e.group == l->group) {
+                entry = &e;
+                break;
+            }
+    return entry;
+}
+
 bool BuyMode::eyedrop(vm::ObjectId id) {
     const vm::Object* o = vm_.object(id);
     if (!o || o->person || !o->definition)
         return false;
     const vm::ObjectId lead = vm::multiTileGroup(*o);
     const vm::Object* l = vm_.object(lead);
-    const CatalogEntry* entry = l ? catalog_.byGuid(l->guid()) : nullptr;
-    if (!entry && l)
-        entry = catalog_.find(l->definition->fileName);
-    // A multi-tile object is in the catalog by its master OBJD, whose GUID
-    // none of the parts has ("Sofa - Loveseat - Art Nouveau (0,0)"): the
-    // multi-tile entry of the parts' group.
-    if (!entry && l)
-        for (const auto& e : catalog_.entries())
-            if (e.multiTile && e.group == l->group) {
-                entry = &e;
-                break;
-            }
+    const CatalogEntry* entry = catalogEntryOf(l);
     if (!entry) {
         say(std::string(o->definition->fileName) + " is not in the catalog");
         sound("ui_error");
@@ -460,7 +468,7 @@ bool BuyMode::design(vm::ObjectId id, simd_float2 at) {
     if (!o || o->person || !o->definition)
         return false;
     const vm::Object* lead = vm_.object(vm::multiTileGroup(*o));
-    const CatalogEntry* entry = lead ? catalog_.byGuid(lead->guid()) : nullptr;
+    const CatalogEntry* entry = catalogEntryOf(lead);
     const std::string name = entry ? entry->name : o->definition->fileName;
     dirty_ = true;
     return design_->open(id, at, name);

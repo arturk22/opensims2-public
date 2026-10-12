@@ -127,6 +127,7 @@ public:
     void update();
 
 private:
+    const CatalogEntry* catalogEntryOf(const vm::Object* lead) const;
     enum class Sort { Function, Room };
     Tool tool_ = Tool::Hand;
     vm::ObjectId objectAt(simd_float3 eye, simd_float3 dir, const std::optional<vm::TilePos>& tile) const;
