@@ -22,7 +22,9 @@ namespace {
 constexpr uint32_t kLocal = 0xFFFFFFFF;
 constexpr int32_t kDefaultFamilyFunds = 20000; // CB980E50: kDefaultFamilyFunds=20000
 
-std::vector<uint8_t> writeStrings(const std::vector<std::string>& values) {
+} // namespace
+
+std::vector<uint8_t> writeFamilyStrings(const std::vector<std::string>& values) {
     BinWriter w;
     for (int i = 0; i < 64; ++i)
         w.u8(0);
@@ -37,6 +39,10 @@ std::vector<uint8_t> writeStrings(const std::vector<std::string>& values) {
         }
     return std::move(w.bytes());
 }
+
+namespace {
+
+std::vector<uint8_t> writeStrings(const std::vector<std::string>& values) { return writeFamilyStrings(values); }
 
 int16_t lifeStage(uint32_t ageBit) {
     switch (ageBit) {

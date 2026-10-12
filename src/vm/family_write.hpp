@@ -55,6 +55,10 @@ struct NewSim {
     std::function<uint32_t(const std::string& objectName, const std::filesystem::path& out)> writeCharacter;
 };
 
+// A family's STR# (name, description), in US English and Brazilian
+// Portuguese, as the CAS families have it.
+std::vector<uint8_t> writeFamilyStrings(const std::vector<std::string>& values);
+
 struct FamilyWriteResult {
     std::filesystem::path neighborhood; // the folder written
     uint32_t family = 0;

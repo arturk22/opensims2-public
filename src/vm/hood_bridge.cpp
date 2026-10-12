@@ -87,6 +87,7 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
     // for lot types 2 and 3), its lot becomes 0 and the lot is flagged
     // evicted when the neighborhood is saved.
     vm.evictedLots.clear();
+    vm.removedFamilies.clear();
     vm.evictFamily = [&vm, lots = std::make_shared<std::vector<hood::Lot>>(h.lots)](int16_t family) {
         auto f = vm.families.find(family);
         if (f == vm.families.end() || !f->second.house)

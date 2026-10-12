@@ -1598,8 +1598,10 @@ Exit addToFamily(Context& c) {
             if (!anyone || (vm.clothingFits && vm.clothingFits(id, k)))
                 addClothing(k);
     }
-    if (oldIt != vm.families.end() && real(old) && old != family && familyMembers(vm, old) == 0)
+    if (oldIt != vm.families.end() && real(old) && old != family && familyMembers(vm, old) == 0) {
         vm.families.erase(oldIt); // RemoveFamily (its house first set to 0)
+        vm.removedFamilies.insert(old);
+    }
     return Exit::True;
 }
 

@@ -483,6 +483,66 @@ static void testNpcNeighborSaved() {
     fs::remove_all(dir);
 }
 
+// Family membership changed in play (Generic Sims Call 4/6) goes to the
+// FAMIs: the neighbor leaves its old family's members and joins the new
+// one's, a family made in play gets a FAMI, a removed family loses its own.
+static void testFamilyMembershipSaved() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / ("os2-members-save-" + std::to_string(::getpid()));
+    fs::create_directories(dir);
+    const uint32_t g1 = 0x0FD10001, g2 = 0x0FD10002, g3 = 0x0FD10003, g4 = 0x0FD10004;
+    {
+        DbpfWriter w;
+        auto family = [&](uint32_t id, std::vector<uint32_t> members) {
+            hood::FamilyRecord f;
+            f.version = 0x4E;
+            f.funds = 1000 * int32_t(id);
+            f.members = std::move(members);
+            w.add(Tgi{hoodtype::FAMI, 0xFFFFFFFF, id, 0}, f.write());
+        };
+        family(1, {g1, g2});
+        family(2, {g3});
+        family(3, {g4});
+        auto sim = [&](uint16_t id, uint32_t guid, int16_t fam) {
+            hood::SimDescription d;
+            d.unknown0 = 0x70;
+            d.version = 0x20;
+            d.unknown2 = 0x20;
+            d.unknown3 = 3;
+            d.trailer = 1;
+            d.neighborId = id;
+            d.guid = guid;
+            d.personData[persondata::FamilyNumber] = fam;
+            w.add(Tgi{hoodtype::SDSC, 0xFFFFFFFF, id, 0}, d.write());
+        };
+        sim(10, g1, 1);
+        sim(11, g2, 1);
+        sim(12, g3, 2);
+        sim(13, g4, 3);
+        w.save(dir / "N009_Neighborhood.package");
+    }
+    CodeLibrary code;
+    VM vm{code};
+    const auto h = hood::Neighborhood::load(dir / "N009_Neighborhood.package", false);
+    loadNeighborhood(vm, h);
+    vm.neighbors[11].personData[persondata::FamilyNumber] = 2; // joins family 2
+    vm.neighbors[12].personData[persondata::FamilyNumber] = 5; // a new family
+    vm.families[5];
+    vm.neighbors[13].personData[persondata::FamilyNumber] = 1; // family 3 left empty and removed
+    vm.families.erase(3);
+    vm.removedFamilies.insert(3);
+    saveNeighborhood(vm, h, dir / "N009_Neighborhood.package", dir / "out.package");
+    const auto h2 = hood::Neighborhood::load(dir / "out.package", false);
+    const hood::Family *f1 = h2.family(1), *f2 = h2.family(2), *f3 = h2.family(3), *f5 = h2.family(5);
+    check(f1 && f1->record.members == (std::vector<uint32_t>{g1, g4}) && f1->record.funds == 1000,
+          "family members saved: one left, one joined");
+    check(f2 && f2->record.members == std::vector<uint32_t>{g2}, "family members saved: the old member left, the new joined");
+    check(f5 && f5->record.members == std::vector<uint32_t>{g3} && f5->record.version == 0x4E,
+          "family members saved: a family made in play gets its FAMI");
+    check(!f3, "family members saved: a removed family loses its FAMI");
+    fs::remove_all(dir);
+}
+
 // A family's clothing bin entries (familyClothingEntries, as a family made
 // in CAS gets its members' clothes): a BINX and 3IDR per item once each,
 // instances past the package's, and the bin when the family has none.
@@ -512,6 +572,7 @@ int main() {
     testFamilyBinEntries();
     testClothingBin();
     testNpcNeighborSaved();
+    testFamilyMembershipSaved();
     testYesNoCancel();
     testNotification();
     testSpecialDialogs();

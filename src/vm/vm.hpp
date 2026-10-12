@@ -1149,6 +1149,9 @@ public:
     // it the family only loses its house.
     std::function<void(int16_t family)> evictFamily;
     std::set<int16_t> evictedLots;
+    // Families Generic Sims Call 4 removed (RemoveFamily: the last member
+    // left), for the neighborhood save.
+    std::set<int16_t> removedFamilies;
     struct LotRecord {
         int16_t zoning = 0; // 0 residential, 1 community
         float x = 0, y = 0; // neighborhood position

@@ -3,6 +3,7 @@
 #include "hood_save.hpp"
 
 #include "hood_bridge.hpp"
+#include "family_write.hpp"
 #include "wants.hpp"
 
 #include "formats/dbpf.hpp"
@@ -291,6 +292,16 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
     std::set<uint16_t> newIds, bornIds;
     std::map<uint16_t, hood::SimDescription> born; // every new neighbor's SDSC
     std::map<uint32_t, hood::FamilyRecord> famiChanged;
+    // A family's FAMI as this save writes it: what the funds/eviction pass
+    // above made of it, else the package's.
+    auto familyRecord = [&](const hood::Family& f) -> hood::FamilyRecord& {
+        auto it = famiChanged.find(f.id);
+        if (it == famiChanged.end()) {
+            auto r = replaced.find({hoodtype::FAMI, f.id});
+            it = famiChanged.emplace(f.id, r != replaced.end() ? hood::FamilyRecord::parse(r->second) : f.record).first;
+        }
+        return it->second;
+    };
     for (const auto& [id, n] : vm.neighbors) {
         if (id <= 0 || h.neighbor(uint16_t(id)) || !n.guid)
             continue;
@@ -324,17 +335,85 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         const uint32_t family = uint32_t(uint16_t(n.personData[persondata::FamilyNumber]));
         for (const auto& f : h.families)
             if (f.id == family) {
-                auto it = famiChanged.find(family);
-                if (it == famiChanged.end())
-                    it = famiChanged.emplace(family, f.record).first;
-                if (auto r = replaced.find({hoodtype::FAMI, family}); r != replaced.end())
-                    it->second.funds = familyFunds(vm, int16_t(family));
-                if (std::find(it->second.members.begin(), it->second.members.end(), n.guid) == it->second.members.end())
-                    it->second.members.push_back(n.guid);
+                auto& members = familyRecord(f).members;
+                if (std::find(members.begin(), members.end(), n.guid) == members.end())
+                    members.push_back(n.guid);
             }
     }
+    // Family membership the VM changed (Generic Sims Call 4 "add to family"
+    // and 6 "remove from family", cTSFamilyManager::AddToFamily/
+    // RemoveFromFamily, BV 0x4fddcc/0x4fe800): a neighbor of the package
+    // whose family number is now another leaves the old FAMI's members and
+    // joins the new one's; a family the VM made (MakeNewFamily) gets its
+    // FAMI, named after its first member's last name as the binary does
+    // (and its STR#), and a family the VM removed (RemoveFamily, the last
+    // member gone) loses its FAMI.
+    auto currentFamily = [&](const hood::Neighbor& n) -> int64_t { // -1: the VM does not know
+        for (const auto& [_, o] : vm.eachObject())
+            if (o.person && n.description.guid && o.guid() == n.description.guid)
+                return uint16_t(o.person->data[persondata::FamilyNumber]);
+        if (auto it = vm.neighbors.find(int16_t(n.id)); it != vm.neighbors.end())
+            return uint16_t(it->second.personData[persondata::FamilyNumber]);
+        return -1;
+    };
+    std::map<uint32_t, std::vector<uint32_t>> joined; // family -> GUIDs of neighbors of the package now in it
+    std::map<uint32_t, std::string> lastNames;
+    for (const auto& n : h.neighbors) {
+        const int64_t now = currentFamily(n);
+        if (now < 0 || !n.description.guid || uint32_t(now) == n.family)
+            continue;
+        if (n.family)
+            for (const auto& f : h.families)
+                if (f.id == n.family) {
+                    auto& members = familyRecord(f).members;
+                    members.erase(std::remove(members.begin(), members.end(), n.description.guid), members.end());
+                }
+        if (now) {
+            joined[uint32_t(now)].push_back(n.description.guid);
+            lastNames.emplace(uint32_t(now), n.lastName);
+        }
+    }
+    std::set<uint32_t> removedFamilies;
+    for (const auto& f : h.families) {
+        if (vm.removedFamilies.count(int16_t(f.id)) && !vm.families.count(int16_t(f.id))) {
+            removedFamilies.insert(f.id);
+            continue;
+        }
+        if (auto j = joined.find(f.id); j != joined.end()) {
+            auto& members = familyRecord(f).members;
+            for (uint32_t g : j->second)
+                if (std::find(members.begin(), members.end(), g) == members.end())
+                    members.push_back(g);
+        }
+    }
+    for (const auto& [id, vf] : vm.families) {
+        if (id <= 0 || h.family(uint32_t(uint16_t(id))))
+            continue;
+        hood::FamilyRecord r; // as the CAS families' (family_write.cpp)
+        r.version = 0x4E;
+        r.lot = uint32_t(uint16_t(vf.house));
+        r.simGroupId = uint32_t(uint16_t(id));
+        r.funds = familyFunds(vm, id);
+        r.friends = uint32_t(uint16_t(vf.friends));
+        r.flags = vf.flags ? vf.flags : 1;
+        if (auto j = joined.find(uint32_t(uint16_t(id))); j != joined.end())
+            r.members = j->second;
+        for (const auto& [nid, n] : vm.neighbors) // new neighbors (made in play) in it
+            if (nid > 0 && !h.neighbor(uint16_t(nid)) && n.guid &&
+                n.personData[persondata::FamilyNumber] == id &&
+                std::find(r.members.begin(), r.members.end(), n.guid) == r.members.end())
+                r.members.push_back(n.guid);
+        if (r.members.empty())
+            continue;
+        const uint32_t fid = uint32_t(uint16_t(id));
+        added.push_back({Tgi{hoodtype::FAMI, 0xFFFFFFFF, fid, 0}, r.write()});
+        auto ln = lastNames.find(fid);
+        added.push_back({Tgi{kTypeStr, 0xFFFFFFFF, fid, 0}, writeFamilyStrings({ln != lastNames.end() ? ln->second : std::string(), std::string()})});
+        ++res.families;
+    }
     for (auto& [family, r] : famiChanged)
-        replaced[{hoodtype::FAMI, family}] = r.write();
+        if (!removedFamilies.count(family))
+            replaced[{hoodtype::FAMI, family}] = r.write();
     if (!bornIds.empty()) {
         // The family tree (u32 version, u32 count, per Sim u16 neighbor ID,
         // u32 1, u32 n, n x (u32 type, u16 neighbor ID)), the parents gaining
@@ -532,6 +611,8 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         if (e.tgi.type == type::DIR)
             continue;
         const uint32_t instance = e.tgi.type == hoodtype::NGBH ? 0 : e.tgi.instance;
+        if (e.tgi.type == hoodtype::FAMI && removedFamilies.count(e.tgi.instance))
+            continue; // RemoveFamily
         if (auto it = replaced.find({e.tgi.type, instance}); it != replaced.end()) {
             w.add(e.tgi, std::move(it->second), e.compressed());
             replaced.erase(it);
