@@ -2595,6 +2595,51 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
         const bool posed = !s.actor->bones.empty() && !s.actor->posed.parts.empty() && !boxes && !simBoxes;
         gPie->setMovingBox(os2::vm::ObjectId(s.id), lo, hi, posed ? &s.actor->posed : nullptr);
     }
+    // Objects the VM made after the lot loaded (the bills a mailman leaves,
+    // dishes, newspapers, things bought): picked by their model's triangles
+    // where the VM view draws them, as the lot's own objects are (they had no
+    // pick box, so a click on the bills found nothing: live QA 15).
+    if (gPie && gObjectView && gIndex) {
+        static std::map<int16_t, std::string> made;                           // id -> CRES its box was made for
+        static std::map<std::string, std::shared_ptr<const os2::PickMesh>> meshes; // by CRES (null: none)
+        static const os2::PieMenuHost* host = nullptr;
+        if (host != gPie.get())
+            host = gPie.get(), made.clear(); // a new lot: no boxes made yet
+        std::set<int16_t> drawnNow;
+        gObjectView->forEachDrawn([&](int16_t id, int, os2::SimActor*) { drawnNow.insert(id); });
+        for (auto it = made.begin(); it != made.end();) {
+            const bool same = drawnNow.count(it->first) && gObjectView->cresOf(it->first) == it->second;
+            if (same) {
+                ++it;
+                continue;
+            }
+            gPie->removePickBox(os2::vm::ObjectId(it->first));
+            it = made.erase(it);
+        }
+        for (const int16_t id : drawnNow) {
+            if (made.count(id) || gPie->hasPickBox(os2::vm::ObjectId(id)))
+                continue;
+            const std::string cres = gObjectView->cresOf(id);
+            if (cres.empty())
+                continue;
+            auto m = meshes.find(cres);
+            if (m == meshes.end()) {
+                std::shared_ptr<const os2::PickMesh> mesh;
+                try {
+                    mesh = os2::makePickMesh(os2::loadObjectModel(*gIndex, cres, {}), gIndex.get());
+                } catch (const std::exception&) {
+                }
+                m = meshes.emplace(cres, std::move(mesh)).first;
+            }
+            if (!m->second || m->second->corners.empty())
+                continue;
+            gPie->addFollowingPickBox(os2::vm::ObjectId(id), m->second->lo, m->second->hi, m->second);
+            if (std::getenv("OS2_DEBUG_PICK"))
+                std::fprintf(stderr, "pick: box made for object %d (%s): %s\n", id, cres.c_str(), gPie->hasPickBox(os2::vm::ObjectId(id)) ? "yes" : "no");
+            if (gPie->hasPickBox(os2::vm::ObjectId(id)))
+                made[id] = cres;
+        }
+    }
     // Objects the VM animated (a door open, a chair pulled out): picked by
     // their skinned triangles as drawn, not by their static model's rest pose.
     static const bool staticObjects = std::getenv("OS2_PICK_STATIC_OBJECTS") != nullptr; // the old picking, to compare
@@ -5734,6 +5779,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 if (gObjectView)
                     gObjectView->update();
                 updateLotView(*_viewDelegate.renderer, true);
+                keepSelectedSimHome();
                 const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
                 const os2::vm::Object* o = gPie->vm().object(id);
                 std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", clickX, clickY, id,
@@ -5907,6 +5953,20 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         }
         if (gPendingScene)
             return; // headless: the steps left the lot (runScenes loads the next scene)
+        if (const char* want = std::getenv("OS2_LIST_OBJECTS"); want && gSimulation) // test aid: objects by name, where they are
+            for (const auto& [id, o] : gSimulation->machine().objects())
+                if (o.definition && o.definition->fileName.find(want) != std::string::npos)
+                    std::printf("opensims2: object %d (%s) at %.1f %.1f level %d, container %d\n", id,
+                                o.definition->fileName.c_str(), o.position.x, o.position.y, o.position.level,
+                                o.data[os2::vm::objdata::ContainerId]);
+        if (std::getenv("OS2_LIST_QUEUES") && gSimulation) // test aid: each Sim's queue
+            for (const auto& [id, o] : gSimulation->machine().objects())
+                if (o.person) {
+                    std::printf("opensims2: Sim %d queue (active %d):", id, o.activeInteraction);
+                    for (const auto& q : o.queue)
+                        std::printf(" [%s obj %d prio %d%s]", q.name.c_str(), q.object, q.priority, q.cancelled ? " cancelled" : "");
+                    std::printf("\n");
+                }
         // --screenshot <file.png>: render one frame offscreen, save it and quit.
         if (auto shot = argument(@"--screenshot")) {
             const double base = gHeadlessClock; // after the --wait steps

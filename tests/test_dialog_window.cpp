@@ -103,6 +103,9 @@ int main() {
         host.addPickBox(bigObject, wall->lo, wall->hi, matrix_identity_float4x4, wall);
         check(host.pick(eye, simd_normalize(simd_make_float3(5.0f + 0.05f, 0, 1) - eye)) == 0,
               "pick: no tolerance for a big object");
+        check(host.hasPickBox(mailbox) && host.hasPickBox(bigObject), "pick: the boxes are known");
+        host.removePickBox(bigObject);
+        check(host.hasPickBox(mailbox) && !host.hasPickBox(bigObject), "pick: a box is removed alone");
         // A Sim out of the world (at work) takes no orders: no pie menu opens.
         host.setSim(f.me->id);
         host.simAway = [&](ObjectId s) { return s == f.me->id; };

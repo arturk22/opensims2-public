@@ -463,3 +463,7 @@ Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, cap
 ## Bugs achados (não corrigidos)
 
 Ver o item "QA ao vivo (rodada 17, QA 15)" do `TODO.md`: andar inclinado carregando e overlays de carregar que sobram; quatro "*Push Look At" na fila do Daniel; caixa de correio difícil de clicar; água da piscina sem "Nadar Aqui"; Sim no trabalho selecionável; a velocidade volta a 1 na chegada da carona.
+
+## Rodada 18 (`r18-pick`): o que veio da QA 15
+
+Caixa de correio (poste de 2 px, raios de tolerância para objetos pequenos; objetos que a VM cria agora são pegos), contas pagas sem tela, "Entrar" na água da piscina, Sim no trabalho desativado, velocidade que volta a 1 na carona (script do jogo). Detalhes no `TODO.md`.

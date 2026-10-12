@@ -157,6 +157,11 @@ public:
     // now, each time a ray is cast (nothing: not pickable).
     void addFollowingPickBox(uint32_t lotInstance, simd_float3 lo, simd_float3 hi,
                              std::shared_ptr<const PickMesh> mesh = nullptr);
+    // Whether a box (lot, following, or Sim) exists for the object, and
+    // removing the lot's or following box (an object the VM made and then
+    // deleted: its ID goes to another).
+    bool hasPickBox(vm::ObjectId id) const;
+    void removePickBox(vm::ObjectId id);
     void setPlacementSource(std::function<std::optional<simd_float4x4>(vm::ObjectId)> placement) {
         placement_ = std::move(placement);
     }

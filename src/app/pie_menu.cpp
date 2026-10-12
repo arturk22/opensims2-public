@@ -500,6 +500,14 @@ void PieMenuHost::addFollowingPickBox(uint32_t lotInstance, simd_float3 lo, simd
     boxes_.push_back(std::move(b));
 }
 
+bool PieMenuHost::hasPickBox(vm::ObjectId id) const {
+    return std::any_of(boxes_.begin(), boxes_.end(), [&](const PickBox& b) { return b.id == id; });
+}
+
+void PieMenuHost::removePickBox(vm::ObjectId id) {
+    std::erase_if(boxes_, [&](const PickBox& b) { return b.id == id; });
+}
+
 std::optional<PieMenuHost::PickBox> PieMenuHost::worldBox(const PickBox& b) const {
     // Where the object is drawn now (the VM moves objects; contained ones
     // follow their container); a static box where it was saved otherwise.
