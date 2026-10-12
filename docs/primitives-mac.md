@@ -2609,7 +2609,7 @@ da busca (3). Byte 9 = flags de busca (visível, memória, compras:
 `CatManageInventoryMatchFlags`); nos singulares o BV as põe em 0x0C.
 Inventário inexistente → erro 0x57. Índices a partir de 1 (o operando −
 1; confirmado). **GUID 0 = o do stack object** (sem ele: erro 0x15) nas
-singulares **0, 2 e 3** e nas contadas 0, 2, 4, 6 e 7 (antes só na 0).
+singulares **0, 2 e 3** e nas contadas 0, 2, 4, 6 e 7. No opensims2 ainda só na 0: sem as flags de busca, o GUID do stack object nas 2 e 3 acha tokens que não devia (no soak semeado do N001_Lot68 morreram Sims); fica para quando as flags forem feitas.
 A numeração 0–9 das singulares bate com a do opensims2; as contadas têm
 operações próprias (1 adiciona a partir de um índice, 5 com índice < 1 →
 erro 0x74, 11 copia para outro inventário pelo byte 6 …) que o opensims2

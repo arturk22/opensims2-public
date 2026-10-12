@@ -1165,8 +1165,9 @@ Exit changeMaterial(Context& c) {
 // Token back to the location it was loaded from", ...); which number is which,
 // and the rest, from how the trees use them:
 //   0 add a token of the GUID (0: the stack object's, as in "CT - Add Memory"
-//     and "CT - Add to Inventory"; also for 2 and 3, and counted 0, 2, 4, 6
-//     and 7: TryInventoryAction BV 0xe26a40); counted: add the second operand to its count
+//     and "CT - Add to Inventory"; the binary also for 2 and 3, and counted
+//     0, 2, 4, 6 and 7, with the match flags: not done, see 2); counted: add
+//     the second operand to its count
 //   1 remove the token at index (first operand)
 //   2 remove every token of the GUID
 //   3 find the next token of the GUID after the index in the first operand
@@ -1252,8 +1253,11 @@ Exit manageInventory(Context& c) {
         return Exit::True;
     }
     case 2: {
-        const uint32_t g = guidOrStackObject(); // GUID 0: the stack object's (TryInventoryAction, BV)
-        std::erase_if(tokens, [&](const auto& t) { return t.guid == g; });
+        // The binary takes the stack object's GUID for 0 here and in 3, but
+        // matches the tokens' flags too (byte 9, byte 0 bits 3-5), which are
+        // not done: without them the stack object's GUID finds tokens it
+        // should not (seeded soak: Sims died), so 0 still matches GUID 0.
+        std::erase_if(tokens, [&](const auto& t) { return t.guid == guid; });
         return Exit::True;
     }
     case 3: {
@@ -1262,8 +1266,7 @@ Exit manageInventory(Context& c) {
         // loops of "NPC - Lot Familiar NPC - Get in T[0]" go back to it to
         // find the next one.
         const int16_t from = std::clamp<int16_t>(get1(), 0, int16_t(tokens.size()));
-        const uint32_t g = guidOrStackObject(); // GUID 0: the stack object's (TryInventoryAction, BV)
-        auto it = std::find_if(tokens.begin() + from, tokens.end(), [&](const auto& t) { return t.guid == g; });
+        auto it = std::find_if(tokens.begin() + from, tokens.end(), [&](const auto& t) { return t.guid == guid; });
         if (it == tokens.end())
             return Exit::False;
         set1(int16_t(it - tokens.begin() + 1));
