@@ -171,6 +171,13 @@ static void testSimAntics() {
     std::vector<uint8_t> glob(64, 0);
     glob.insert(glob.end(), {4, 'T', 'e', 's', 't', 0xA3, 0xA3});
     check(SemiGlobal::parse(glob).semiGlobalName == "Test", "GLOB");
+
+    // FCNS: 'SNCF', version 0x4B, 0, count, (Pascal name, float, Pascal description).
+    std::vector<uint8_t> fcns(64, 0);
+    fcns.insert(fcns.end(), {'S', 'N', 'C', 'F', 0x4B, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 4, 'h', 'o', 'u', 'r',
+                             0x00, 0x00, 0x00, 0x41, 0});
+    const auto fc = FloatConstants::parse(fcns);
+    check(fc.entries.size() == 1 && fc.value("hour", 7.0f) == 8.0f && fc.value("other", 7.0f) == 7.0f, "FCNS");
 }
 
 static void testInteractionTable() {

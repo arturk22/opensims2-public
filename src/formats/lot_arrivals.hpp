@@ -11,7 +11,7 @@
 // and the next save writes it into the lot file — only for a lot drawn
 // without the VM: with the VM the game's own "reset lot" broadcast makes
 // them ("Sub - Generate Family", vm/lot.hpp runResetLot). A family moving in pays the lot's price and its
-// first day starts at 7:00 (cTSLoadLotController::LoadLot steps 0x1B and
+// first day starts at 8:00, the global FCNS 4 "new family start hour" (cTSLoadLotController::LoadLot steps 0x1B and
 // 0x1F). Plain C++.
 
 #include "lot.hpp"
@@ -40,7 +40,7 @@ struct LotArrivals {
     uint32_t family = 0;
     int64_t charge = 0;
     // The family's first day was set up (SetupFamilyFirstDay): the clock at
-    // the new family start hour (7:00) and the lot running.
+    // the new family start hour (8:00, FCNS) and the lot running.
     bool firstDay = false;
     // The lot's family had been evicted (lot info flag 8): what went
     // (formats/lot_evict.hpp).

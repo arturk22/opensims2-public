@@ -111,6 +111,36 @@ Constants Constants::parse(std::span<const uint8_t> data) {
     return c;
 }
 
+// ---------------------------------------------------------------- FCNS
+
+FloatConstants FloatConstants::parse(std::span<const uint8_t> data) {
+    BinReader r(data);
+    FloatConstants c;
+    c.fileName = r.fixed(kNameSize);
+    r.u32(); // "SNCF"
+    c.version = r.u32();
+    r.u32();
+    const uint32_t count = r.u32();
+    if (count > kMaxCount)
+        throw std::runtime_error("FCNS: bad count");
+    for (uint32_t i = 0; i < count; ++i) {
+        Entry e;
+        e.name = r.str8();
+        e.value = std::bit_cast<float>(r.u32());
+        if (c.version >= 0x4B)
+            e.description = r.str8();
+        c.entries.push_back(std::move(e));
+    }
+    return c;
+}
+
+float FloatConstants::value(const std::string& name, float fallback) const {
+    for (const auto& e : entries)
+        if (e.name == name)
+            return e.value;
+    return fallback;
+}
+
 // ---------------------------------------------------------------- GLOB
 
 SemiGlobal SemiGlobal::parse(std::span<const uint8_t> data) {

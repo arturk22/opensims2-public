@@ -353,10 +353,35 @@ ResumeResult resumeLotObjects(VM& vm, const LotLoad& load, const LotObjects& sav
     return out;
 }
 
+size_t updateSimObjects(VM& vm, bool casLot) {
+    size_t made = 0;
+    for (const auto& g : vm.code().globalSimObjects(1)) {
+        std::vector<ObjectId> have;
+        for (const auto& [id, o] : vm.objects())
+            if (o.definition && o.definition->guid() == g.guid)
+                have.push_back(id);
+        const bool mustNotExist = casLot && g.notInCas;
+        // Keep the first (lowest ID, inferred: the binary keeps the first of
+        // its object list), kill the rest; all of them in a CAS lot.
+        for (size_t i = mustNotExist ? 0 : 1; i < have.size(); ++i)
+            if (vm.object(have[i]))
+                deleteGroup(vm, have[i]);
+        if (have.empty() && !mustNotExist) {
+            // MakeNewOutOfWorldObject: Init, then the Main like any made object.
+            const ObjectId id = createGhost(vm, g.group, g.instance);
+            for (ObjectId part : groupOf(vm, id))
+                vm.startMain(part);
+            ++made;
+        }
+    }
+    return made;
+}
+
 ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved, bool fromInit) {
     applySavedSimulator(vm, saved);
     if (!fromInit) {
         ResumeResult r = resumeLotObjects(vm, load, saved);
+        r.globalsMade = updateSimObjects(vm);
         computeLotData(vm); // the lot loaded (cTSLot, message 0x8B)
         return r;
     }
@@ -367,6 +392,7 @@ ResumeResult startSavedLot(VM& vm, const LotLoad& load, const LotObjects& saved,
     ResumeResult out;
     for (const auto& e : load.objects)
         out.freshMains += e.created && vm.startMain(e.id);
+    out.globalsMade = updateSimObjects(vm);
     computeLotData(vm);
     return out;
 }

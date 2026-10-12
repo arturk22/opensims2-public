@@ -74,6 +74,24 @@ struct Constants {
     static Constants parse(std::span<const uint8_t> data);
 };
 
+// FCNS: named float constants (cTSFloatConstants): 64-byte name, "SNCF",
+// u32 version, u32 0, u32 count, then per entry a Pascal name, a float and
+// (version >= 0x4B, inferred from the data) a Pascal description.
+struct FloatConstants {
+    struct Entry {
+        std::string name;
+        float value = 0;
+        std::string description;
+    };
+    std::string fileName;
+    uint32_t version = 0;
+    std::vector<Entry> entries;
+
+    static FloatConstants parse(std::span<const uint8_t> data);
+    // The value of that name, or `fallback`.
+    float value(const std::string& name, float fallback) const;
+};
+
 // GLOB: name of the semi-global group an object's BHAVs may call into.
 struct SemiGlobal {
     std::string fileName;

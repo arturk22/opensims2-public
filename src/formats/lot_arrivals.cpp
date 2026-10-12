@@ -23,8 +23,20 @@ constexpr uint32_t kTypeObjd = 0x4F424A44;
 constexpr size_t kGlobalHour = 0, kGlobalMinute = 5, kGlobalPaused = 17, kGlobalCurrentFamily = 9, kGlobalBudgetMod = 13,
                  kGlobalBudgetDiv = 14;
 constexpr uint32_t kFamilyNewLot = 0x04; // FAMI flags: cTSFamily::SetNewLot
-// cTSNeighborhoodConstants "new family start hour" (docs/neighborhood-mac.md §6.1).
-constexpr int16_t kNewFamilyStartHour = 7;
+// cTSNeighborhoodConstants "new family start hour" (docs/game-flow-mac.md
+// §7.3): cTSFloatConstants with a default of 7.0, read from the global FCNS
+// (objects.package, group 0x7FD46CD0, instance 4), which says 8.0.
+constexpr uint32_t kTypeFcns = 0x46434E53, kGlobalGroup = 0x7FD46CD0, kNeighborhoodConstants = 4;
+int16_t newFamilyStartHour(ResourceIndex* index) {
+    float hour = 7.0f;
+    if (index)
+        if (auto data = index->read(Tgi{kTypeFcns, kGlobalGroup, kNeighborhoodConstants, 0}))
+            try {
+                hour = FloatConstants::parse(*data).value("new family start hour", hour);
+            } catch (const std::exception&) {
+            }
+    return int16_t(hour);
+}
 
 bool startsWith(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
 } // namespace
@@ -223,7 +235,7 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
     // global 17 "Paused" (the lots for sale keep 1).
     out.firstDay = movingIn || (lot->info.flags & hood::LotInfo::kFlagFirstDay) != 0;
     if (out.firstDay && saved.globals.size() > kGlobalPaused) {
-        saved.globals[kGlobalHour] = kNewFamilyStartHour;
+        saved.globals[kGlobalHour] = newFamilyStartHour(index);
         saved.globals[kGlobalMinute] = 0;
         saved.globals[kGlobalPaused] = 0;
         // ClearHistory: the expense reports start over (inferred: the

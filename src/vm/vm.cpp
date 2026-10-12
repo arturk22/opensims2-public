@@ -155,6 +155,12 @@ void CodeLibrary::indexDefinition(uint32_t group, uint16_t instance, const Objec
     // Keeps the first OBJD of a GUID or name, like the rest of the index.
     byGuid_.emplace(d.guid(), std::pair{group, instance});
     byFileName_.emplace(d.fileName, std::pair{group, instance});
+    // OBJD field i is at file offset 0x40 + 2i: 9 "type" (0x52), 26 "Ignore
+    // GlobalSim field in CAS Lot" (0x74), 42 "is global sim object" (0x94).
+    constexpr uint16_t kTypeGlobalSim = 7;
+    if (d.objectType() == kTypeGlobalSim && d.field(0x94) &&
+        std::none_of(globalSims_.begin(), globalSims_.end(), [&](const auto& g) { return g.first.guid == d.guid(); }))
+        globalSims_.push_back({{group, instance, d.guid(), d.field(0x74) != 0}, d.field(0x94)});
     if (d.masterId() && d.subIndex() == 0xFFFF)
         masters_.emplace(std::pair{group, d.masterId()}, instance);
     else if (d.masterId()) {
@@ -243,6 +249,15 @@ const ObjectFunctions* CodeLibrary::functions(uint32_t group, uint16_t instance)
 
 void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectFunctions f) {
     functions_[key(group, instance)] = std::make_unique<ObjectFunctions>(std::move(f));
+}
+
+std::vector<CodeLibrary::GlobalSimObject> CodeLibrary::globalSimObjects(uint16_t mask) {
+    scanDefinitions();
+    std::vector<GlobalSimObject> out;
+    for (const auto& [g, field42] : globalSims_)
+        if (field42 & mask)
+            out.push_back(g);
+    return out;
 }
 
 std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByGuid(uint32_t guid) {

@@ -248,6 +248,16 @@ public:
     std::optional<uint16_t> behaviorByName(uint32_t group, const std::string& name);
     // OBJD (group, instance) with this GUID; the first scan reads every OBJD.
     std::optional<std::pair<uint32_t, uint16_t>> definitionByGuid(uint32_t guid);
+    // The OBJDs of type 7 with field 42 "is global sim object" & mask set, in
+    // the scan's order, with their field 26 "Ignore GlobalSim field in CAS
+    // Lot" (cEdithObjectModule::UpdateSimObjects, docs/game-flow-mac.md §7.1).
+    struct GlobalSimObject {
+        uint32_t group = 0;
+        uint16_t instance = 0;
+        uint32_t guid = 0;
+        bool notInCas = false;
+    };
+    std::vector<GlobalSimObject> globalSimObjects(uint16_t mask = 1);
     // OBJf with the same (group, instance) as an OBJD: the object's function table.
     const ObjectFunctions* functions(uint32_t group, uint16_t instance);
     // OBJD instance of the master of a multi-tile object of `group` (the OBJD
@@ -299,6 +309,7 @@ private:
     Cache<ObjectFunctions> functions_;
     Cache<InteractionTable> interactions_;
     Cache<StringTable> interactionStrings_;
+    std::vector<std::pair<GlobalSimObject, uint16_t>> globalSims_; // with field 42
     std::map<std::pair<uint32_t, uint16_t>, uint16_t> masters_;
     std::map<std::pair<uint32_t, uint16_t>, std::vector<uint16_t>> parts_;
     std::unordered_map<std::string, std::pair<uint32_t, uint16_t>> byFileName_;
