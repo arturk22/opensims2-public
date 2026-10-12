@@ -255,10 +255,11 @@ cada passo o locomotor pega a **transformação da raiz** da animação
 
 **A curva** (`BeginFollow`): cada trecho da rota é dividido em pedaços de
 **0,2** (`n = ⌊|trecho| / 0,2⌋` pontos intermediários, z de cada um pela
-altura do piso). Se o Sim já está andando com velocidade v (vtable `0x428`),
-o primeiro ponto é avançado na direção em que ele olha de
-`min(v · 0,3333, 0,25)` (a curva sai da direção atual em vez de virar no
-lugar). A direção final é arredondada para **múltiplos de 45°**
+altura do piso). O primeiro ponto é avançado de `min(d · 0,3333, 0,25)` na
+direção em que o Sim olha girada pelos passos de 45° do `ComputeTurn`
+(vtable `0x428`, que devolve `d`, a distância até o primeiro ponto; a
+rodada 13 "walking" corrigiu a leitura antiga, "velocidade v, só andando":
+ver "A saída" abaixo). A direção final é arredondada para **múltiplos de 45°**
 (`⌊h / (π/4) + 0,5⌋ · π/4`, em `+0x1c4`).
 
 **Viradas** (`ComputeTurn`): o ângulo entre a direção atual e a desejada,
@@ -266,9 +267,11 @@ normalizado em [−π, π], vira um número de passos de **45°**: enquanto
 < −40°, −1 e soma 45°; enquanto > 40°, +1 e tira 45°. Ou seja, até ±40° não
 há animação de virar (a curva absorve); acima disso, viradas em passos de
 45°. No começo, com o primeiro trecho curto (≤ 0,25) o `BeginFollow` testa
-o papel **9** do conjunto de locomoção (vtable `0x28(9, −1)`; inferido: o
-"virar no lugar") e os ângulos contra π/2 para decidir se vira parado antes
-de sair (detalhe não fechado).
+o papel **9** do conjunto de locomoção (vtable `0x28(9, −1)`: na string de
+viradas do conjunto global o décimo nome, **`stepShort`**; corrigido na
+rodada 13 "walking", antes lido como o virar no lugar) e os ângulos contra
+π/2 para decidir se dá um passo curto em vez de começar a andar (detalhe
+não fechado).
 
 **Fases** (`tLocoState` em `+0x188`, estado espelhado em `+0x330`): o
 `BeginFollow` monta até três caminhos guardados: o **passo curto/virada de
@@ -289,35 +292,113 @@ direção (`+0x1c0` ← a direção do fim da fase anterior). Ao parar antes do
 fim (bloqueio previsto), a desaceleração é de 5 ticks, ou 100 com
 velocidade > 0,25 (§6).
 
-**Velocidade e estilo de andar** (`BeginFollow`, inferido em parte): os
-pesos dos conjuntos de locomoção ficam em `+0x1dc` (20 floats); o
-dado de pessoa **0x72** (114) escolhe um conjunto (índice 2..19) com o peso
-dado de pessoa **0x73** (115) / 100 (limitado a [0, 1]) e o **0x74** (116)
-outro que recebe o resto; a velocidade (`+0x1d8`) é a do conjunto misturado
-(vtable `0x3c(pesos)`). Os rótulos desses dados não foram conferidos.
+**Velocidade e estilo de andar** (`BeginFollow` e a velocidade do conjunto,
+`cLocoSet` vtable `0x3c` = `FUN_00d0c444`, lidos na rodada 13 do front
+"walking"): os 20 pesos em `+0x1dc` são os dos **ciclos de andar alt0–alt19**
+(no conjunto global: alt0/alt1 normal, alt2 sexy, alt3 grávida, alt4 feliz,
+alt5 deprimido, alt6 bravo, alt7 saltitante, alt8 furtivo). Os rótulos dos
+dados de pessoa (STR# `0xC8`): 112 "LocoWeight 0", 113 "LocoWeight 1", 114
+"LocoPersonalityIndex", 115 "LocoPersonalityWeight", 116 "LocoMoodIndex", 117
+"LocoMoodWeight". `m = clamp(117/100)`; `w0 = clamp(112/100)·(1−m)`,
+`w1 = clamp(113/100)·(1−m)`; se 114 ∈ 2..19, `w[114] = clamp(115/100)·(1−m)`;
+se 116 ∈ 2..19, `w[116] += m`. Exemplos nos dados: "Interaction - Sneak
+Here" põe 116 = 8 e 117 = 80 (o furtivo), "Skip Here" 7 e 75 (o saltitante),
+"Locomotion - Reset Walk to Default" zera 114–117. A velocidade: para cada
+`k` com `k = 0` ou `w[k] > 0,01`, `v[k]` = velocidade (ANIM `velocity` ×
+1000, m/s) do recurso do tipo `100 + k` do conjunto; `v = Σ v[k]·w[k] /
+Σ w[k]` (só os `w[k]` com `v[k] > 0`); sem nenhum, `v[0]` (1,75 se nem isso).
+O jogo **mistura** os ciclos pelos pesos; o opensims2 toca o ciclo de maior
+peso (simplificação visual, inferida) com a velocidade misturada.
 
-O que isso muda no opensims2 (que move em linha reta de centro em centro de
-tile na velocidade da caminhada): andar sobre a rota reamostrada a cada 0,2,
-com a posição e a direção vindas da raiz da animação; virar parado só acima
-de 40° (passos de 45°); a direção final em múltiplos de 45°; bloquear quando
-a posição seguinte não passa no `TSObjectCanSetPosition`.
+**Correr**: o dado de objeto **17** ("walk style" no STR# `0x8D`) = 1 corre:
+`BeginFollow` pega então o conjunto de corrida (as strings 3–5 do bloco, em
+vez das 0–2). Quem põe: "Function - Pre Route - Decide to Run" (chama o
+global "Route - Decide Whether to Run" 0x327, pela distância e constantes de
+tuning), as interações que apressam (bombeiro, "Go Here Frantically",
+"Correr" de brincadeira). O `DoBeginFollow` (BV `0x5745e0`) lê o dado 17
+(vtable `0x34(0x11)`) e passa ao planner e ao `BeginFollow`. A corrida do
+adulto (`a-male-run-alt0-normal`) anda 8,3 m/s pelo cabeçalho (4,36 m em
+0,525 s); o `s2pkg anim-root` mostra o pé de apoio parado nessa velocidade.
+Os clipes de virada da corrida vêm com multiplicador de velocidade na string
+("turnAndGo-alt@2.75": 2,75× mais rápido; parada 1,9×, virar no lugar e
+passo 1,5×).
 
-**Feito na rodada 13** (`routing.cpp` `shapeWalk`/`turnSteps`/`turnPoint`,
-`sim_motion.cpp`, `test_routing` `testTurnInPlace`): o caminho do planner
-(já suavizado pelos filtros do §3) é cortado a cada 0,2 nos trechos do chão;
-quem replaneja andando sai pela frente `min(v·0,3333, 0,25)`; quem está
-parado e tem o primeiro trecho a mais de 40° da direção vira no lugar antes
-de sair, com a animação de virar da locomoção (`<idade>-TurnInPlace-45/90/
-135/180`, tão longa quanto ela: 0,96–1,31 s nos adultos; a raiz da animação
-gira o corpo e a direção do Sim muda no fim), e no fim da rota o mesmo para a
-direção final (`BeginCachedEndTurnPath`). Inferidos: a animação vira no
-sentido horário (cabeçalho `turn = −1,5708` na de 90°) e espelhada no
-anti-horário; os nomes saem do papel "turnInPlace" pelos graus; a velocidade
-continua a da caminhada (não a raiz frame a frame) e sem as fases de começo
-e parada da animação; o bloqueio pelo `TSObjectCanSetPosition` a cada passo
-não foi feito (o bloqueio previsto do §6 continua). Captura:
-`docs/screenshots/r13-virar-no-lugar.jpg` (Don em N001_Lot16 virando 135°
-antes de "Vir Aqui", quadros a cada 8 ticks).
+**Os clipes de começo, parada, passo e virada** (string 0 do bloco, por
+papel): `turnInPlace`, `turnAndGo[Short][R]`, `turnAndStop[Short][R]`,
+`step[Short]`, cada um feito a 0, 45, 90, 135 e 180 graus
+(`a-turnAndGo-alt-90`, `a-TurnInPlace-90`, `a-step-45`; o nome do papel
+"step-alt" vira "step-45"). Os tipos de locomoção do cabeçalho: 6 turn and
+go, 7 turn and stop, 8 turn in place, 9 step, 10 step in place, 11–19 os
+ciclos alt0–alt8. **Todos viram no sentido horário** (cabeçalho `turn` =
+−45°·n). A busca do conjunto (`cLocoSet` vtable `0x30`, BV `0xd0c7ec`,
+nomeada errado pelo symxfer): o ângulo pedido vai a [−π, π] e a passos de
+45° com limiar de **±40°** (como o `ComputeTurn`), e procura o recurso do
+tipo com `|turn − alvo| ≤ 0,01` (não espelhado) **ou `|turn + alvo| ≤ 0,01`
+(espelhado)**; para os tipos 6/7 a porção do ciclo (`cyclePortionCompleted`,
+0,5 nos normais, 0 nos "R" = o outro pé) casa também com ±0,5, isto é,
+qualquer pé serve quando falta o outro. **Isso confirma o espelhamento** que
+a rodada 13 (routing2) tinha inferido para o virar no lugar: uma virada
+anti-horária toca o clipe horário espelhado.
+
+**A raiz dos clipes** (medida com `s2pkg anim-root`): os ciclos de andar são
+no lugar (raiz parada em y; o quadro anda na velocidade do cabeçalho, e é
+nela que o pé de apoio desliza menos: 0,10 m/s contra 0,38 com ±20%). O
+`turnAndGo-N` começa com o corpo virado +N em relação ao quadro e termina no
+quadro (o quadro já sai na direção nova; a raiz atrasa até 0,15 m atrás dele
+e alcança); o `turnAndStop-N` começa no quadro e termina virado −N; o
+`TurnInPlace-N` tem o quadro na direção inicial; o `step-N` mantém o corpo a
++N do quadro o tempo todo (passo de lado/para trás sem virar).
+
+**A saída** (`BeginFollow`, corrigido): o ponto de saída não depende de estar
+andando. O `ComputeTurn` (vtable `0x428`) devolve **a distância até o
+primeiro ponto** e os passos de 45°; com distância > 0 o primeiro ponto da
+curva fica a `min(d·0,3333, 0,25)` na direção em que o Sim olha **girada
+pelos passos·45°** (o decompilador perdeu a variável; a listagem em
+`0x6b63b4` lê os passos da pilha). O mesmo no fim: o último trecho chega pela
+direção final (`+0x1c4`, múltiplo de 45°).
+
+**Feito antes (rodada 13, routing2)** (`routing.cpp` `shapeWalk`/`turnSteps`/
+`turnPoint`): o caminho cortado a cada 0,2 nos trechos do chão; a saída
+pela frente para quem replaneja andando; virar no lugar
+(`<idade>-TurnInPlace-45/90/135/180`) antes de sair quando o primeiro trecho
+passa de 40° e no fim para a direção final. O front "walking" trocou o virar
+no lugar da saída pelo `turnAndGo` (o virar no lugar fica para rotas sem
+clipes de começo e para a virada final quando não houve parada) e a saída
+passou a valer para todos, girada pelos passos. Captura antiga:
+`docs/screenshots/r13-virar-no-lugar.jpg`.
+
+**Feito no opensims2 (rodada 13, front "walking")** (`locomotion.cpp`
+`gaitOf`/`locoClip`, `routing.cpp` `locoStep`/`stepBlocker`, `sim_motion.cpp`,
+`lot_vm.cpp`; testes `test_routing` `testLocoPhases`/`testRunnerStep`,
+`test_animation_vm` `testGait`): um **quadro** anda pela rota e o Sim fica
+onde está a raiz do clipe (posição = quadro + deslocamento da raiz girado
+pela direção do quadro; direção = a do quadro + o yaw da raiz), como o
+`LocoPlaceFromSceneGraph`. As fases: **começo** parado com `turnAndGo` dos
+passos do primeiro trecho (espelhado anti-horário; `turnAndGoShort` quando o
+trecho final é mais curto que começo + parada; `stepShort` quando ≤ 0,25,
+como o `BeginFollow` testa o papel 9), o quadro cobrindo a distância do
+clipe na duração do clipe; **andar** com o ciclo do passo (`gaitOf`) na
+velocidade dele, o quadro virando a cada trecho (o desenho suaviza a 7 rad/s);
+**parada** no fim da rota, quando o que falta é a distância de uma parada:
+`turnAndStop` da direção em que vem para a direção final (ou a curta depois
+de um começo curto), do pé em que o ciclo está ("R" no primeiro e no último
+quarto do ciclo, inferido das porções dos clipes), o quadro cobrindo o que
+falta. O desenho põe o ator no quadro e o clipe põe a raiz. A saída gira
+pelos passos (e não entra no caminho de outro Sim: inferido). **Bloqueio por
+passo**: a posição nova da raiz não pode entrar no corpo de outro Sim
+(`TSObjectCanSetPosition` com o erro 0x0C → bloqueador, que segue a lógica
+do §6); inferidos: os corpos como discos de 0,125 (metade da largura do
+planner, a previsão do `CollisionCheck` já os mantém a 0,5), quem já está
+dentro pode sair, o Sim alvo da rota não bloqueia; objetos não são testados
+por passo. Medido (`OS2_DEBUG_LOCO=1`, `s2pkg pie ... here:x,y`): no começo
+e no andar o quadro anda na velocidade do clipe (desvio 0,001–0,003 m/s); a
+parada esticada sobre o que falta desliza até ~0,1 m/s. Inferidos/simplificados:
+a curva é a poligonal cortada a cada 0,2 (o jogo usa uma curva suave e mistura
+os clipes de 45° pelo ângulo, `cActiveAnimLoco::CreateStepCycle`), o
+`walkShort` não é usado, a desaceleração ao bloquear (5/100 ticks) é uma
+parada seca (o Sim volta a começar com `turnAndGo`). Captura:
+`docs/screenshots/r13-locomotor.jpg` (Don em N001_Lot16 virando 180° no
+`turnAndGo-alt-180` espelhado, andando e parando com `turnAndStop-alt-0`).
 
 ## 7. Códigos de falha (binário + `STR#` 0xF1 "route results")
 
