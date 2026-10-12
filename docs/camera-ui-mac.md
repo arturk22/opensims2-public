@@ -33,10 +33,32 @@ meia-largura = d·0,2. `clip` = perto/longe por nível. O FOV vai para o
 viewer do scene graph (`cViewerRefNode::SetFieldOfView`, BV `0x1b33d94`:
 guarda o ângulo em radianos no volume de visão e marca o volume sujo); o
 `cTSWinSimView::SetFOV` (BV `0x1a590c`) passa `2·f·π/180`, ou seja, recebe
-o **meio ângulo** em graus. A matriz é montada pela camada D3D da Aspyr no
-estilo `PerspectiveFov` do Direct3D, em que o ângulo é o **vertical**
-(inferido: a montagem da matriz não foi achada; nenhum código ajusta o FOV
-pela razão de aspecto).
+o **meio ângulo** em graus (só a janela do Sim do CAS/UI usa esse caminho).
+A câmera do lote passa o valor direto: `cTSCameraSmoothSims1Controller::Update`
+(BV `0x86ffb8`) interpola a tabela `fov` do nível (em radianos; sem tabela,
+`60 · π/180`) e chama `SetFieldOfView` (vtable `0x210` do viewer) e depois o
+perto/longe (`0x218`); `fov` 0 vira ortográfica (`0x220`).
+
+**Rodada 15 — a matriz (binário, BV `0xccd254`, o montador da matriz do
+volume de visão, tipo 0 = perspectiva):**
+
+```
+a  = (largura/altura do viewport) · aspecto do alvo (+0xf4)   (com usePixelAspectRatio: ÷ aspecto do pixel)
+m[0]  = 1 / tan(fov/2)            escala de x
+m[5]  = a / tan(fov/2)            escala de y = escala de x · largura/altura
+m[10] = longe / (longe − perto) ;  m[11] = −perto·longe / (longe − perto) ;  m[14] = 1
+```
+
+Ou seja, **o FOV é o ângulo horizontal inteiro** (não o vertical do
+`PerspectiveFov` do D3D, como se tinha inferido): numa janela mais larga
+se vê menos altura ("Vert-", o que os guias de tela larga dizem do The
+Sims 2). Com o `fov 45` do `LiveCamera.txt`, numa janela 16:9 o ângulo
+vertical é `2·atan(tan(22,5°)·9/16)` ≈ 26,4° (antes saíam 45° na
+vertical, ~73° na horizontal: a vista ficava bem mais aberta que a do
+jogo). Corrigido em `LotCamera::projection` e na câmera das cinemáticas
+(o `fov` do `viewersGroup` vai para o mesmo viewer); a câmera do CAS
+(`CasMode::makeCamera`) é nossa e fica com o seu FOV vertical
+(`CameraDef::verticalFov`).
 
 ### 1.2 Suavização (binário, `FUN_008c77d4` escalar, `FUN_008c78a0` ângulo, `FUN_008c7c64` vetor)
 
@@ -120,7 +142,7 @@ Pedidos internos (`HandleRequest`, binário):
 | distância da zoom table horizontal | distância 3D ao longo da visão |
 | suavização em ticks de 30 Hz | exponencial em quadros de 50 ms com velocidade mínima |
 | pan ∝ zoom | sim, por ser em pixels de tela |
-| FOV vertical | vertical pela convenção D3D (inferido); o viewer recebe o ângulo inteiro |
+| FOV vertical | **horizontal** (binário, BV `0xccd254`; rodada 15: corrigido) |
 | limitar ao lote | lote encolhido de `constraintwidth` (−10 = até 10 tiles para fora) |
 | seguir altura do piso/Sim | sim: andar do Sim e amostra de altura do piso |
 

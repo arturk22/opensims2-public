@@ -46,7 +46,7 @@ public:
 
     struct Shot {
         simd_float3 eye{0, 0, 0}, forward{0, 1, 0}, up{0, 0, 1};
-        float fovY = 1.0f;   // radians
+        float fovY = 1.0f;   // radians: the horizontal angle, despite the name (the viewer's convention)
         float letterbox = 0; // each bar's share of the height
         float grain = 0;
         std::array<float, 3> vignette{0.5f, 0.5f, 0};

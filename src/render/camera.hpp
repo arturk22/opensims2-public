@@ -38,9 +38,9 @@ namespace os2 {
 //   in the middle), at `pivotheightabovefloor` over the floor sampled by the app
 //   (the selected Sim's level), raised if the eye would be under the floor.
 //
-// The lerp's dt is in milliseconds (binary). Inferred: the FOV is the full
-// vertical angle (the binary hands it to a D3D PerspectiveFov-style
-// projection that is not decoded); keyboard
+// The lerp's dt is in milliseconds (binary). The FOV is the full
+// horizontal angle (binary: the view volume's matrix, BV 0xccd254, takes
+// x scale = 1 / tan(fov / 2) and y scale = x scale x aspect). Inferred: keyboard
 // translation speed is pixels per 50 ms frame, keyboard rotation pixels per
 // second; the floor sample (centre and four corners mixed by
 // `cornersampleratio`); the minimum change is per update.

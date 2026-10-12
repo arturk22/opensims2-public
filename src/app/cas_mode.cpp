@@ -206,6 +206,7 @@ std::unique_ptr<LotCamera> CasMode::makeCamera() {
     def.controller = "CreateASim";
     def.distances = {4.8f, 2.6f, 1.45f};
     def.fov = {30.0f};
+    def.verticalFov = true; // our framing of the studio (the game's CAS camera is not decoded)
     def.pitchMin = {6.0f, 4.0f, 2.0f};
     def.pitchMax = {6.0f, 4.0f, 2.0f};
     def.nearClip = {0.1f};

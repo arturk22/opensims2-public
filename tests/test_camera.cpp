@@ -182,6 +182,18 @@ int main() {
           "restore camera position");
     check(!cam.restorePosition(4, true), "empty camera position");
 
+    // The FOV is the horizontal angle (BV 0xccd254): x scale 1 / tan(fov / 2),
+    // y scale that times the aspect; the CAS camera keeps a vertical one.
+    {
+        LotCamera h(liveCamera());
+        const simd_float4x4 p = h.projection(2.0f);
+        const float t = 1.0f / std::tan(45.0f * rad * 0.5f);
+        check(near(p.columns[0][0], t) && near(p.columns[1][1], 2 * t), "horizontal fov");
+        CameraDef v = liveCamera();
+        v.verticalFov = true;
+        const simd_float4x4 q = LotCamera(v).projection(2.0f);
+        check(near(q.columns[1][1], t) && near(q.columns[0][0], t / 2), "vertical fov (CAS)");
+    }
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

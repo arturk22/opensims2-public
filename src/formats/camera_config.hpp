@@ -18,7 +18,8 @@ struct CameraDef {
 
     int defaultZoom = 0;
     std::vector<float> distances; // horizontal distance to the pivot per zoom level
-    std::vector<float> fov;       // degrees
+    std::vector<float> fov;       // degrees: the full horizontal angle (binary, docs/camera-ui-mac.md 1.1)
+    bool verticalFov = false;     // ours: `fov` is the vertical angle instead (the CAS camera's own framing)
     std::vector<float> pitchMin;  // degrees above horizontal
     std::vector<float> pitchMax;
     std::vector<float> nearClip;
