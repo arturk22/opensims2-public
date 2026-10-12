@@ -186,7 +186,7 @@ const RgbaImage* HoodUi::memberThumb(const std::filesystem::path& character) {
         // The character file's head shot: the IMG whose instance is an age
         // bit (8 adult, 0x10 elder, ...; the age bit << 8 is the
         // silhouette, inferred from the files).
-        if (!character.empty() && std::filesystem::exists(character)) {
+        if (!forceRenderHeads && !character.empty() && std::filesystem::exists(character)) {
             DbpfPackage pkg(character);
             for (const auto& e : pkg.entries())
                 if (e.tgi.type == kTypeImg && e.tgi.instance > 0 && e.tgi.instance < 0x100 && !img)

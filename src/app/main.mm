@@ -4606,6 +4606,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
     gHood->ui().renderHead = [rp = &renderer](const fs::path& file) {
         return os2::renderHeadShot(*rp, *gIndex, simParts(*gIndex), file, 128);
     };
+    gHood->ui().setForceRenderHeads(argument(@"--hood-render-heads").has_value());
     // The Options panel's option windows (audio, game, graphics, camera, credits).
     gHood->ui().options().setSettings(gSettings);
     gHood->ui().options().onChanged = [](const os2::GameSettings& s) {

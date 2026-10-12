@@ -4,7 +4,10 @@
 #include "formats/sim_character.hpp"
 #include "render/renderer.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <string>
 
@@ -46,8 +49,9 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         const int model = renderer.addObject(actor.skin.model, index, true);
         const int inst = renderer.addInstance(model, matrix_identity_float4x4);
         renderer.updateObject(model, actor.posed);
+        renderer.setInstanceLightSet(inst, 0);
         const float h = age == 'b' ? 0.25f : age == 'p' ? 0.40f : age == 'c' ? 1.17f : 1.64f;
-        const float closeness = 0.62f;
+        const float closeness = 0.8f; // a little of the shoulders, as the game's own head shots
         const float dist = (age == 'b' || age == 'p' ? 0.8f : 1.0f) * closeness;
         const float aim = h + (1 - closeness) * 0.3f;
         const simd_float3 e = at + simd_make_float3(0, dist, aim + 0.03f), target = at + simd_make_float3(0, 0, aim);
@@ -61,7 +65,23 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         const float n = 0.05f, fa = 50, ys = 1.0f / std::tan(15.0f * 3.14159265f / 180.0f), zs = fa / (n - fa);
         fv.projection = simd_matrix(simd_make_float4(ys, 0, 0, 0), simd_make_float4(0, ys, 0, 0),
                                     simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, zs * n, 0));
+        // The frame's UI overlay must not be in the shot.
+        const Renderer::Overlay overlay = renderer.overlay();
+        renderer.setOverlay({});
         RgbaImage out = renderer.capture(size, size, fv, simd_make_float4(0, 0, 0, 0));
+        renderer.setOverlay(overlay);
+        // The neighborhood's sun leaves a face looking along the view in shade: lift it
+        // (inferred; the game's thumbnail factory has its own lights).
+        for (size_t i = 0; i + 3 < out.pixels.size(); i += 4)
+            for (size_t c = 0; c < 3; ++c)
+                out.pixels[i + c] = uint8_t(std::min(255.0f, 255.0f * std::pow(out.pixels[i + c] / 255.0f, 0.62f) * 1.05f));
+        if (const char* dbg = std::getenv("OS2_HEAD_DEBUG")) { // test aid: where the shot is saved
+            const auto png = encodePng(out);
+            if (FILE* f = std::fopen(dbg, "wb")) {
+                std::fwrite(png.data(), 1, png.size(), f);
+                std::fclose(f);
+            }
+        }
         ObjectModel empty; // the instance stays, showing nothing
         renderer.setInstanceModel(inst, renderer.addObject(empty, index, true));
         return out;

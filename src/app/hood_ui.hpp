@@ -69,6 +69,7 @@ public:
     // Opens the Lot Info Dialog of a lot (null closes it).
     void openLot(const HoodLot* lot);
     const HoodLot* dialogLot() const { return dialog_; }
+    void setForceRenderHeads(bool on) { forceRenderHeads = on; }
     // The dialog's "Informações" panel (headless: --hood-info [member]).
     void showInfo(bool on, size_t member = 0) { advanced_ = on, member_ = member, dirty_ = true; }
     // The "Transferir Lote" dialog (headless: --hood-package).
@@ -148,6 +149,7 @@ private:
     size_t member_ = 0;
     const RgbaImage* memberThumb(const std::filesystem::path& character);
     std::map<std::string, std::unique_ptr<RgbaImage>> memberThumbs_;
+    bool forceRenderHeads = false; // test aid (--hood-render-heads): never read the files' own head shots
     bool renderHeads_ = false; // only while a lot opens, never inside a frame
     std::vector<Target> targets_;
     std::vector<std::array<float, 4>> solid_; // areas that take clicks
