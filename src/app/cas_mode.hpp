@@ -48,6 +48,7 @@
 #include "formats/image.hpp"
 #include "formats/ui_screen.hpp"
 #include "formats/ui_script.hpp"
+#include "render/cas_camera.hpp"
 
 #include <simd/simd.h>
 
@@ -190,6 +191,7 @@ private:
     void changed(); // after an edit: undo state and rebuild
     UiScreen screen(int width, int height);
     void applyCamera(bool smooth);
+    bool applyCasCamera(bool smooth); // the CreateASim camera; false without the studio
     float simHeight() const;
 
     Renderer& renderer_;
@@ -216,6 +218,12 @@ private:
     std::map<std::string, std::unique_ptr<RgbaImage>> previews_; // overlay previews (face|texture)
     std::map<uint32_t, UiScript> scripts_;
     LotCamera* camera_ = nullptr;
+    // The game's CreateASim camera (render/cas_camera.hpp) over the studio's
+    // camera locators, with CASCamera.txt's specs; `casShot_` the spec and
+    // locator it stands at (empty: our orbit, no studio).
+    CasCamera casCam_;
+    std::vector<CameraDef> casSpecs_;
+    std::string casShot_;
 
     // The family and the Sim being edited (-1: none, the family view).
     std::vector<Member> family_;

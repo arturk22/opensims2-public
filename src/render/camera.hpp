@@ -107,6 +107,16 @@ public:
     // Floor height under a point (the visible level's); empty = flat at the pivot's z.
     void setFloorSampler(std::function<float(float x, float y)> f) { floor_ = std::move(f); }
 
+    // A first-person pose that overrides the orbit (the CAS's CreateASim
+    // camera, render/cas_camera.hpp): eye, view direction and up, the
+    // horizontal FOV in degrees and the clip planes. Empty: the orbit.
+    struct FirstPerson {
+        simd_float3 eye{0, 0, 0}, forward{0, 1, 0}, up{0, 0, 1};
+        float fov = 30, nearClip = 0.1f, farClip = 2000;
+    };
+    void setFirstPerson(std::optional<FirstPerson> f) { firstPerson_ = f; }
+    const std::optional<FirstPerson>& firstPerson() const { return firstPerson_; }
+
     void update(double dt); // advance smoothing towards the targets
     void snap();            // jump to the targets (no smoothing)
 
@@ -155,6 +165,7 @@ private:
         float dist, heading, pitchT;
     };
     std::array<std::optional<Saved>, 6> saved_;
+    std::optional<FirstPerson> firstPerson_;
 };
 
 } // namespace os2

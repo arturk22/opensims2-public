@@ -63,7 +63,7 @@ void CasStudio::readMarks(const std::string& cres, const Xform& at) {
         } else if (n.starts_with("slot_casstudio_simmark_")) {
             family[std::atoi(n.c_str() + 23)] = m;
         } else if (n.starts_with("camera_")) {
-            cameras_[n] = p;
+            cameras_[n] = {p, simd_quaternion(float(w.q.x), float(w.q.y), float(w.q.z), float(w.q.w))};
         }
     }
     if (!family.empty()) {
@@ -255,8 +255,13 @@ bool CasStudio::load(simd_float2 viewDirection) {
             for (const auto& m : family_)
                 std::fprintf(stderr, "  family mark (%.2f %.2f) facing (%.2f %.2f)\n", m.position.x, m.position.y,
                              m.facing.x, m.facing.y);
-            for (const auto& [n, c] : cameras_)
-                std::fprintf(stderr, "  camera %s (%.2f %.2f %.2f)\n", n.c_str(), c.x, c.y, c.z);
+            for (const auto& [n, c] : cameras_) {
+                const simd_float3 x = simd_act(c.orientation, simd_make_float3(1, 0, 0)),
+                                  y = simd_act(c.orientation, simd_make_float3(0, 1, 0)),
+                                  z = simd_act(c.orientation, simd_make_float3(0, 0, 1));
+                std::fprintf(stderr, "  camera %s (%.2f %.2f %.2f) x (%.2f %.2f %.2f) y (%.2f %.2f %.2f) z (%.2f %.2f %.2f)\n",
+                             n.c_str(), c.position.x, c.position.y, c.position.z, x.x, x.y, x.z, y.x, y.y, y.z, z.x, z.y, z.z);
+            }
             for (const auto& l : lamps_)
                 std::fprintf(stderr, "  lamp %s at (%.2f %.2f %.2f) colour (%.2f %.2f %.2f) falloff %.2f diffusion %.2f\n",
                              l.name.c_str(), l.position.x, l.position.y, l.position.z, l.color.x, l.color.y, l.color.z,

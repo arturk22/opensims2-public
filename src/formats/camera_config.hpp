@@ -38,9 +38,13 @@ struct CameraDef {
     float param(std::string_view name, float fallback) const;
 };
 
+// The camera scripts' maxVersion() (inferred, see parseCameraConfig).
+constexpr int kCameraScriptMaxVersion = 3;
+
 // Parses one configuration text. `include`/`sinclude` lines are resolved
 // against `dir` (a missing sinclude is ignored, a missing include throws);
-// `if ... endif` blocks (expansion-pack version checks) are skipped.
+// `if (maxVersion() >= N)` blocks are read when N <= kCameraScriptMaxVersion,
+// other `if ... endif` blocks (expansion-pack checks) are skipped.
 std::vector<CameraDef> parseCameraConfig(std::string_view text, const std::filesystem::path& dir = {});
 
 // Reads `path` and everything it includes.

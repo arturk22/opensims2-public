@@ -191,6 +191,11 @@ CasMode::CasMode(Renderer& renderer, ResourceIndex& index, const fs::path& gameD
         if (!studio_->load(simd_make_float2(0, -1)))
             studio_.reset();
     }
+    try {
+        casSpecs_ = loadCameraConfig(res / "UserData/Cameras/CASCamera.txt");
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: CASCamera.txt: %s\n", e.what());
+    }
     loading::phase("cas: studio");
     familyName_ = "";
     newSim();
@@ -207,7 +212,7 @@ std::unique_ptr<LotCamera> CasMode::makeCamera() {
     def.controller = "CreateASim";
     def.distances = {4.8f, 2.6f, 1.45f};
     def.fov = {30.0f};
-    def.verticalFov = true; // our framing of the studio (the game's CAS camera is not decoded)
+    def.verticalFov = true; // our orbit's framing, only without the studio (the CreateASim camera otherwise)
     def.pitchMin = {6.0f, 4.0f, 2.0f};
     def.pitchMax = {6.0f, 4.0f, 2.0f};
     def.nearClip = {0.1f};
@@ -259,7 +264,7 @@ simd_float2 CasMode::facing() const {
         return studio_->podium().facing;
     // The family looks at its camera ("camera_family_0").
     if (auto it = studio_->cameras().find("camera_family_0"); it != studio_->cameras().end()) {
-        const simd_float3 d = it->second - spot();
+        const simd_float3 d = it->second.position - spot();
         if (simd_length(d.xy) > 0.01f)
             return simd_normalize(d.xy);
     }
@@ -276,8 +281,43 @@ float CasMode::simHeight() const {
     }
 }
 
+bool CasMode::applyCasCamera(bool smooth) {
+    // The camera spec and studio locator for the view (inferred pairing by
+    // name, docs/camera-ui-mac.md 1.6): the family view CAS_Family at
+    // camera_family_0; the face steps (hair, face, cosmetics)
+    // CAS_Face<age> at camera_face_<age>; the others CAS_Clothes<age> at
+    // camera_clothes_<age> (babies as toddlers, elders as adults).
+    if (!studio_ || casSpecs_.empty())
+        return false;
+    std::string spec = "CAS_Family", mark = "camera_family_0";
+    if (editing_ >= 0) {
+        const auto a = edit_.spec.age;
+        const char* age = a == cas::age::Baby || a == cas::age::Toddler ? "Toddler"
+                          : a == cas::age::Child                        ? "Child"
+                          : a == cas::age::Teen                         ? "Teen"
+                                                                        : "Adult";
+        const bool face = step_ == 1 || step_ == 2 || step_ == 3;
+        spec = std::string(face ? "CAS_Face" : "CAS_Clothes") + age;
+        mark = std::string(face ? "camera_face_" : "camera_clothes_") + lower(age);
+    }
+    const CameraDef* def = findCamera(casSpecs_, spec);
+    const auto it = studio_->cameras().find(mark);
+    if (!def || it == studio_->cameras().end())
+        return false;
+    const std::string shot = spec + "@" + mark;
+    if (shot != casShot_ || !smooth) {
+        casCam_.setActive(CasCameraSpec::from(*def), it->second.position, it->second.orientation, !smooth);
+        casShot_ = shot;
+    }
+    const CasCamera::Pose p = casCam_.pose();
+    camera_->setFirstPerson(LotCamera::FirstPerson{p.eye, p.forward, p.up, p.fov, p.nearClip, p.farClip});
+    return true;
+}
+
 void CasMode::applyCamera(bool smooth) {
     if (!camera_)
+        return;
+    if (applyCasCamera(smooth))
         return;
     const float h = editing_ >= 0 ? simHeight() : 1.75f;
     const float z = zoom_ == 0 ? h * 0.5f : zoom_ == 1 ? h * 0.78f : h * 0.95f;
@@ -527,6 +567,11 @@ void CasMode::update(double seconds) {
     lastUpdate_ = seconds;
     if (turning_ && editing_ >= 0)
         heading_ += float(turning_) * float(dt) * 2.5f;
+    if (camera_ && casCam_.active() && camera_->firstPerson()) {
+        casCam_.update(dt * 1000.0);
+        const CasCamera::Pose p = casCam_.pose();
+        camera_->setFirstPerson(LotCamera::FirstPerson{p.eye, p.forward, p.up, p.fov, p.nearClip, p.farClip});
+    }
     std::vector<Renderer::ShadowCaster> casters;
     for (auto& s : shown_) {
         if (!s.actor)
@@ -1165,6 +1210,12 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
                 keyDown(0xFFFF, std::string(1, c), false);
         }
     }
+    // Scripted views (screenshots) see where the camera arrives.
+    if (camera_ && casCam_.active() && camera_->firstPerson()) {
+        casCam_.snap();
+        const CasCamera::Pose p = casCam_.pose();
+        camera_->setFirstPerson(LotCamera::FirstPerson{p.eye, p.forward, p.up, p.fov, p.nearClip, p.farClip});
+    }
 }
 
 UiScreen CasMode::screen(int width, int height) {
@@ -1277,12 +1328,23 @@ UiScreen CasMode::screen(int width, int height) {
             status_ = "Sair do CAS";
     });
     target(find(frame, kZoomIn), [this](simd_float2) {
+        if (camera_ && camera_->firstPerson()) {
+            // A click: ten keyboardzoomspeed steps (half a second held; inferred).
+            for (int i = 0; i < 10; ++i)
+                casCam_.zoomStep(1);
+            return;
+        }
         zoom_ = std::min(zoom_ + 1, 2);
         if (camera_)
             camera_->zoomBy(1);
         applyCamera(true);
     });
     target(find(frame, kZoomOut), [this](simd_float2) {
+        if (camera_ && camera_->firstPerson()) {
+            for (int i = 0; i < 10; ++i)
+                casCam_.zoomStep(-1);
+            return;
+        }
         zoom_ = std::max(zoom_ - 1, 0);
         if (camera_)
             camera_->zoomBy(-1);

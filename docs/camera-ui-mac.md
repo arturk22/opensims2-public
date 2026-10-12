@@ -91,9 +91,63 @@ jogo). Corrigido em `LotCamera::projection` e na câmera das cinemáticas
   exatamente o binário (FOV horizontal); mais largo que 4:3, mantém a
   altura do 4:3 e abre os lados ("Hor+", o que as correções de tela larga
   do jogo fazem). Vale para o lote, o bairro (`fov 33`) e as cinemáticas.
-  O CAS segue com a câmera nossa (`fov` 30 vertical; o `CASCamera.txt` tem
-  `fov 54`/`30` por câmera do controlador `CreateASim`, não decodificado).
+  O CAS usa a câmera do jogo (§1.6, rodada 16).
   Captura: `docs/screenshots/r15-camera-fov-4x3.jpg`.
+
+### 1.6 A câmera do CAS: `cCameraCreateASimController` (binário, rodada 16)
+
+`CASCamera.txt` define câmeras `CreateASim` (`CAS`, `CAS_Family`,
+`CAS_Face<idade>`, `CAS_Clothes<idade>`, `CAS_ZoomDisabled`) com `fov`,
+`clip` e, dentro de `if (maxVersion() >= 3)`, os `setparam`. O 1.0 de Mac
+já lê esses parâmetros (as strings estão no binário base), então o jogo
+base entra nesses blocos (inferido: o `maxVersion()` é o `+0x54` do parser,
+`FUN_015305ec`, cujo valor não foi achado; o parser do app aceita
+`maxVersion() >= N` com N ≤ 3 e pula os outros `if`).
+
+- `SetCameraSpec` (BV `0x7a8fb8`): `interpolatespeedto/from` (`+0x2f4/+0x2f8`,
+  0,1 sem o parâmetro), `minzoom`/`maxzoom` (`+0x2dc/+0x2e0`, 0),
+  `keyboardzoomspeed` (`+0x2e8`, 0,05), `zoomheading` em radianos
+  (`+0x350/+0x354`), `zoomelevation` em radianos **negado**
+  (`+0x358/+0x35c`), `mousewheelsensitivity` (`+0x2f0`, 1).
+- É uma câmera de primeira pessoa: fica num lugar e numa rotação de
+  destino (o CAS os dá; no estúdio, os localizadores `camera_face_<idade>`,
+  `camera_clothes_<idade>`, `camera_family_0` do `CASPodiumArea`/
+  `CASFamilyArea`; a frente da câmera é o **+Y local** do localizador, o
+  `DAT_02c2fbf8` = (0, 1, 0), e o +Z o "para cima"; os localizadores do
+  pódio olham para o Sim com o +Y). Quem pareia spec e localizador não está
+  no binário nem nos scripts de UI: o app usa os nomes (família →
+  `CAS_Family` + `camera_family_0`; passos de cabelo, rosto e cosméticos →
+  `CAS_Face<idade>` + `camera_face_<idade>`; os outros → `CAS_Clothes<idade>`
+  + `camera_clothes_<idade>`; bebê como criança pequena, idoso como adulto;
+  inferido).
+- `SetActive` (`0x7a9898`): com outra câmera CreateASim ativa antes, guarda
+  dela o lugar, a rotação, o FOV, o zoom, o heading e a elevação atuais e a
+  sua `interpolatespeedfrom` (`+0x304`), e começa a transição t = 0; sem
+  câmera antes, t = 1 e o zoom = `minzoom`.
+- `Update` (`0x7a9d68`): na transição, mede uma vez o caminho do olho
+  (|olho(t = 0,99) − olho(0)|, mínimo 0,001, senão 1) e avança
+  `t += max(lerp(speedFrom, speedTo, t)/caminho, 0,001)·dt/50`; com uma das
+  velocidades 0, corte (t = 1). Ao chegar, o zoom volta ao alvo da nova
+  câmera (`+0x34c`, 0). Fora da transição o zoom segurado anda
+  `±keyboardzoomspeed` e o valor mostrado segue o alvo por `FUN_008c77d4`
+  (10 passos, sem mínimo).
+- Pose: s = t²(3 − 2t); posição = lerp (`0x7a928c`), rotação interpolada
+  (`0x7a93c8`), FOV = lerp (`FOV`, `0x7a970c`; ângulo horizontal, o mesmo
+  viewer), zoom = lerp(zoom de antes, 0) na transição; **olho = posição +
+  zoom·direção**, direção = `Rz(heading)·Rx(elevação)` aplicados à frente da
+  câmera já no mundo (`0x7aa284`; as rotações em torno dos eixos do mundo:
+  a ordem das multiplicações e a convenção linha/coluna da GZ ficaram como
+  a leitura que leva a câmera das roupas para o tronco e o rosto; inferido).
+  A rotação da câmera não muda com o zoom.
+- `DoMessage` (`0x7aa0f8`): zoom + / − = ±`keyboardzoomspeed`, preso em
+  [`minzoom`, `maxzoom`]; segurar = `+0x2e4` = ±velocidade até soltar.
+
+No código: `CasCamera` (`render/cas_camera.*`) e `LotCamera::FirstPerson`;
+`CasMode::applyCasCamera` escolhe spec e localizador, troca com transição e
+corta nas capturas roteirizadas. Os botões de zoom do CAS dão 10 passos por
+clique (meio segundo segurado; inferido); a roda, entalhes ×
+`mousewheelsensitivity` (inferido). Sem o estúdio (`--cas-no-studio`) fica a
+órbita antiga. Captura: `docs/screenshots/r16-cas-camera.jpg`.
 
 **Lateralidade** (rodada 15): o mundo do jogo é destro com Z para cima,
 como o do código. Provas: no esqueleto `auskel` o Sim olha para +Y e os

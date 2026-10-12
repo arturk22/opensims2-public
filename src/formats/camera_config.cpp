@@ -1,5 +1,7 @@
 #include "camera_config.hpp"
 
+#include <cstdlib>
+
 #include "config_text.hpp"
 
 #include <algorithm>
@@ -46,7 +48,7 @@ void applyDirective(CameraDef& c, const std::string& key, const std::vector<Toke
 }
 
 void parseInto(std::vector<CameraDef>& cams, std::string_view text, const std::filesystem::path& dir) {
-    int skipDepth = 0;
+    int skipDepth = 0, takenDepth = 0;
     forEachConfigLine(text, [&](std::string_view line) {
         std::vector<Token> t = tokenizeConfigLine(line);
         if (t.empty() || t[0].kind != Token::Word)
@@ -54,11 +56,31 @@ void parseInto(std::vector<CameraDef>& cams, std::string_view text, const std::f
         const std::string key = lowerAscii(t[0].word);
 
         if (key == "if") {
-            ++skipDepth;
+            // The parser's maxVersion() (the script version the code
+            // accepts): the base game's own CASCamera.txt keeps the
+            // CreateASim parameters (which the 1.0 binary reads) behind
+            // `if (maxVersion() >= 3)`, so the game takes it as 3 or more
+            // (inferred: the value is not found in the binary). Any other
+            // condition is skipped (expansion-pack checks).
+            bool take = false;
+            if (skipDepth == 0) {
+                const std::string l(line);
+                const size_t at = l.find("maxVersion()");
+                const size_t ge = at == std::string::npos ? at : l.find(">=", at);
+                if (ge != std::string::npos)
+                    take = std::atoi(l.c_str() + ge + 2) <= kCameraScriptMaxVersion;
+            }
+            if (!take)
+                ++skipDepth;
+            else
+                ++takenDepth;
             return;
         }
         if (key == "endif") {
-            skipDepth = std::max(0, skipDepth - 1);
+            if (skipDepth > 0)
+                --skipDepth;
+            else
+                takenDepth = std::max(0, takenDepth - 1);
             return;
         }
         if (skipDepth > 0 || key == "version")

@@ -175,6 +175,7 @@ if(APPLE)
 
   add_library(os2_render
     src/render/camera.cpp
+    src/render/cas_camera.cpp
     src/render/metal_impl.cpp
     src/render/particle_layer.cpp
     src/render/renderer.cpp

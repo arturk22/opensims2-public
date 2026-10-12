@@ -77,7 +77,7 @@ float LotCamera::sample(const std::vector<float>& table, float fallback) const {
     return table[i] + (table[i + 1] - table[i]) * f;
 }
 
-float LotCamera::fov() const { return sample(def_.fov, 60.0f); }
+float LotCamera::fov() const { return firstPerson_ ? firstPerson_->fov : sample(def_.fov, 60.0f); }
 float LotCamera::yaw() const { return degrees(heading_.value); }
 
 float LotCamera::pitch() const {
@@ -331,6 +331,8 @@ void LotCamera::snap() {
 }
 
 simd_float3 LotCamera::eye() const {
+    if (firstPerson_)
+        return firstPerson_->eye;
     const float d = distance(), h = heading_.value, s = std::tan(radians(pitch()));
     const float horiz = d / std::sqrt(1 + s * s);
     return raisedPivot() + simd_make_float3(std::cos(h) * horiz, std::sin(h) * horiz, s * horiz);
@@ -338,10 +340,17 @@ simd_float3 LotCamera::eye() const {
 
 simd_float4x4 LotCamera::view() const {
     simd_float3 e = eye();
-    simd_float3 target = raisedPivot();
-    simd_float3 f = simd_normalize(target - e);
-    simd_float3 s = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
-    simd_float3 u = simd_cross(s, f);
+    simd_float3 f, s, u;
+    if (firstPerson_) {
+        f = simd_normalize(firstPerson_->forward);
+        s = simd_normalize(simd_cross(f, firstPerson_->up));
+        u = simd_cross(s, f);
+    } else {
+        simd_float3 target = raisedPivot();
+        f = simd_normalize(target - e);
+        s = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
+        u = simd_cross(s, f);
+    }
     return simd_matrix(simd_make_float4(s.x, u.x, -f.x, 0), simd_make_float4(s.y, u.y, -f.y, 0),
                        simd_make_float4(s.z, u.z, -f.z, 0),
                        simd_make_float4(-simd_dot(s, e), -simd_dot(u, e), simd_dot(f, e), 1));
@@ -356,6 +365,8 @@ std::optional<simd_float2> LotCamera::project(simd_float3 w) const {
 
 simd_float4x4 LotCamera::projection(float aspect) const {
     float n = sample(def_.nearClip, 0.1f), fa = sample(def_.farClip, 2000.0f);
+    if (firstPerson_)
+        n = firstPerson_->nearClip, fa = firstPerson_->farClip;
     // The viewer's perspective (BV 0xccd254): the FOV is the horizontal
     // angle, at 4:3 and narrower; wider windows keep the 4:3 height (ours).
     const simd_float2 sc = fovScales(radians(fov()), aspect, def_.verticalFov);

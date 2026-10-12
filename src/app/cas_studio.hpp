@@ -61,8 +61,14 @@ public:
     const std::vector<Mark>& familyMarks() const { return family_; }
     const std::vector<Mark>& babyMarks() const { return babies_; }
     // The camera locators by lowercased name ("camera_face_adult",
-    // "camera_clothes_teen", "camera_family_0", ...), lot space.
-    const std::map<std::string, simd_float3>& cameras() const { return cameras_; }
+    // "camera_clothes_teen", "camera_family_0", ...), lot space: where the
+    // CreateASim camera stands and how it is turned (the locator's world
+    // transform; docs/camera-ui-mac.md 1.6).
+    struct CameraMark {
+        simd_float3 position{0, 0, 0};
+        simd_quatf orientation{simd_quaternion(0.0f, 0.0f, 0.0f, 1.0f)};
+    };
+    const std::map<std::string, CameraMark>& cameras() const { return cameras_; }
 
     // Light sets for the scene: set 0 objects, set 1 the Sims at `spot`
     // (the podium's lamps, or the family area's).
@@ -89,7 +95,7 @@ private:
     bool loaded_ = false;
     Mark podium_;
     std::vector<Mark> family_, babies_;
-    std::map<std::string, simd_float3> cameras_;
+    std::map<std::string, CameraMark> cameras_;
     std::vector<Lamp> lamps_;
     LightingConfig config_;
     LightOverrides overrides_;

@@ -244,6 +244,12 @@ setparam KeyboardTranslationSpeed 50
 if (maxVersion() >= 3)
    setparam keyboardtranslationspeed 99
 endif
+if (maxVersion() >= 4)
+   setparam keyboardtranslationspeed 7
+endif
+if (epVersion() >= 2)
+   setparam keyboardtranslationspeed 8
+endif
 camera     "CAS" CreateASim
 clip       0.2 2000
 )";
@@ -256,7 +262,7 @@ clip       0.2 2000
         check(live->pitchMin[2] == 14 && live->pitchMax[2] == 50, "pitch tables");
         check(live->defaultOrientation == 1 && live->yaws.size() == 3 && live->yaws[2] == 100, "orientation");
         check(live->zoomSmoothing == 5 && live->spinSmoothing == 8, "smoothing");
-        check(live->param("keyboardtranslationspeed", 0) == 50, "setparam (if block skipped)");
+        check(live->param("keyboardtranslationspeed", 0) == 99, "setparam in maxVersion() >= 3, later checks skipped");
     }
     const CameraDef* cas = findCamera(cams, "CAS");
     check(cas && cas->nearClip.size() == 1 && cas->nearClip[0] == 0.2f && cas->farClip[0] == 2000, "scalar clip");

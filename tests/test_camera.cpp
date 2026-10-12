@@ -1,5 +1,6 @@
 #include "app/camera_follow.hpp"
 #include "render/camera.hpp"
+#include "render/cas_camera.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -219,6 +220,42 @@ int main() {
         sim.position = {2.5f, 2.5f, 0.75f};
         lot.objects.push_back(sim);
         check(LotCameraFollow::startLevel(lot) == 1, "camera starts on the first Sim's floor");
+    }
+    {
+        // The CreateASim camera (CASCamera.txt's CAS_ClothesAdult): at the
+        // locator at once, zoom 0 .. 2.3 in 0.05 steps, the zoom moving the
+        // eye forward and up (zoomelevation -36), then a glide to another
+        // locator that eases in and ends there with the zoom back to 0.
+        CameraDef d;
+        d.fov = {54};
+        d.nearClip = {0.2f};
+        d.farClip = {2000};
+        d.params = {{"maxzoom", 2.3f}, {"minzoom", 0}, {"zoomheading", 8}, {"zoomelevation", -36},
+                    {"interpolatespeedto", 0.1f}, {"interpolatespeedfrom", 0.1f}, {"keyboardzoomspeed", 0.05f}};
+        const CasCameraSpec spec = CasCameraSpec::from(d);
+        check(near(spec.zoomElevation, 36 * float(M_PI) / 180), "zoomelevation stored negated, radians");
+        CasCamera c;
+        // Facing +Y (the locator's forward); the turns are about the world's Z and X.
+        c.setActive(spec, simd_make_float3(0, -5, 1.4f), simd_quaternion(0.0f, 0.0f, 0.0f, 1.0f));
+        CasCamera::Pose p = c.pose();
+        check(near(p.eye.y, -5) && near(p.forward.y, 1) && near(p.fov, 54), "CAS camera at its locator");
+        for (int i = 0; i < 100; ++i)
+            c.zoomStep(1);
+        check(near(c.zoomTarget(), 2.3f), "zoom kept under maxzoom");
+        for (int i = 0; i < 400; ++i)
+            c.update(50);
+        p = c.pose();
+        check(p.eye.y > -3.5f && p.eye.z > 2.5f && near(p.forward.y, 1), "zoom moves the eye forward and up, the view unturned");
+        c.setActive(spec, simd_make_float3(0, 5, 1), simd_quaternion(float(M_PI) / 2, simd_make_float3(0, 0, 1)));
+        check(c.transition() == 0, "a new camera glides");
+        c.update(50);
+        const float t1 = c.transition();
+        int frames = 1;
+        while (c.transition() < 1 && frames < 10000)
+            c.update(50), ++frames;
+        p = c.pose();
+        check(t1 > 0 && frames > 10 && frames < 10000 && near(p.eye.y, 5) && near(p.eye.z, 1) && near(c.zoom(), 0),
+              "the glide arrives, zoom back to 0");
     }
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
