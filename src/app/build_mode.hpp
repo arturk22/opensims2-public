@@ -80,7 +80,7 @@ public:
     bool design(vm::ObjectId id, simd_float2 at);
     DesignTool& designTool() { return *design_; }
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs, Dormer };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -100,6 +100,9 @@ public:
     // end found by itself) or drag from it to where the last step goes;
     // Ctrl deletes the flight under the mouse.
     void selectStairsTool(const BuildStairs& product);
+    // Dormers (B940, roofs.txt "roof 6-11"): a click on the attic level puts
+    // one with its corner at the grid point under the mouse, turned by `,`/`.`.
+    void selectDormerTool(const BuildRoofProduct& product);
     // Terrain: a sculpt brush (raise, lower, flatten, smooth) or a paint
     // (the paint's texture); `size` 0-2 small/medium/large.
     void selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerrainPaint* paint = nullptr);
@@ -188,6 +191,7 @@ private:
         uint32_t roofType = 0;
         int product = 0; // deckfoundations.txt product (foundation tool)
         const BuildStairs* stairs = nullptr;
+        const BuildRoofProduct* dormer = nullptr;
         std::string name, description;
         int price = 0;
         const RgbaImage* image = nullptr;
@@ -248,6 +252,7 @@ private:
     uint32_t roofType_ = 0;
     int deckProduct_ = 0;
     const BuildStairs* stairs_ = nullptr;
+    const BuildRoofProduct* dormer_ = nullptr;
     // The flight the stairs tool would lay from the drag (or the pointer):
     // top tile, direction and the dragged end (none: found by itself).
     struct StairsDrag {

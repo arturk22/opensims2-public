@@ -111,6 +111,19 @@ public:
     // walls (attic walls go with deleteTool roof).
     Result drawRoof(int level, int x0, int y0, int x1, int y1, uint32_t type);
     Result deleteRoof(int level, float x, float y);
+    // Dormers (roofs.txt "roof 6-11", cTSUserToolRoof MakeDormer, BV
+    // 0x1d5d20): a box of normal walls `width` (1-3: (product - 6) % 3 + 1)
+    // by width + 2 tiles on the VM level `level` (the attic the click is on)
+    // with its corner at grid point (x, y), turned by `direction` (0, 2, 4,
+    // 6: the box runs width x deep for 0 and 4, deep x width for 2 and 6;
+    // 2 starts `deep` tiles to -x, 4 `deep` to -y), and over it a long gable
+    // (products 6-8) or hip roof (9-11) based on the level above, with the
+    // attic walls of the gable ends. Each new wall section costs §70 (the
+    // walls are pre/post operations of the roof's undoable, whose cost
+    // TotalCost adds; 8, 12 and 16 sections give the catalog's 560, 840 and
+    // 1120); the roof is free. Wall vertices on walls refuse (0x08); no level
+    // above refuses (0x06).
+    Result placeDormer(int product, int level, int x, int y, int direction);
     // Auto-roof (cTSUserToolAutoRoof::CreateAutoRoof -> CreateAutoRoofs per
     // level, docs/buy-build-mac.md §7.12): on each level the tiles of the
     // rooms below (the light rooms) whose tile above is no room, has no floor

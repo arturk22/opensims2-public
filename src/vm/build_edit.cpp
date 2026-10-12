@@ -1069,6 +1069,101 @@ BuildEditor::Result BuildEditor::drawRoof(int level, int x0, int y0, int x1, int
     return r;
 }
 
+BuildEditor::Result BuildEditor::placeDormer(int product, int level, int x, int y, int direction) {
+    Result r;
+    if (product < 6 || product > 11) {
+        r.message = "not a dormer";
+        return r;
+    }
+    const int width = (product - 6) % 3 + 1, deep = width + 2;
+    // MakeDormer: the extents in x (iVar8) and y (iVar5) and the corner.
+    int ex = deep, ey = width, x0 = x, y0 = y;
+    switch (direction) {
+    case 2: x0 -= deep; break;
+    case 0: ex = width, ey = deep; break;
+    case 4: ex = width, ey = deep, y0 -= deep; break;
+    default: break;
+    }
+    const int li = level - 1;
+    // The highest level a lot may have (FUN_00163808; lot level 4 = the
+    // fifth story, as the tallest saved lots: inferred).
+    constexpr int kTopLevel = 4;
+    if (!lot_.hasLevel(li) || li + 1 > kTopLevel) {
+        r.error = 0x06;
+        r.message = "cannot place a dormer: no level above";
+        return r;
+    }
+    const int W = int(lot_.width), H = int(lot_.height);
+    if (x0 < 0 || y0 < 0 || x0 + ex > W || y0 + ey > H) {
+        r.error = 0x02;
+        r.message = "cannot place a dormer: out of the lot";
+        return r;
+    }
+    // The four runs (FUN_001d5a5c, AreDormerWallsValid): no wall at their
+    // grid points (0x08), and each section placeable (UserMayPlacePartition;
+    // the support rule left out: a dormer stands on the roof).
+    const std::array<std::array<int, 4>, 4> runs{
+        {{x0, y0, x0, y0 + ey}, {x0 + ex, y0, x0 + ex, y0 + ey}, {x0, y0, x0 + ex, y0}, {x0, y0 + ey, x0 + ex, y0 + ey}}};
+    auto wallAt = [&](int gx, int gy) {
+        for (const auto& w : lot_.walls)
+            if (w.a.level == li && !Lot::isFence(w.type) &&
+                ((std::lround(w.a.x) == gx && std::lround(w.a.y) == gy) || (std::lround(w.b.x) == gx && std::lround(w.b.y) == gy)))
+                return true;
+        return false;
+    };
+    std::vector<std::array<int, 4>> todo;
+    for (const auto& run : runs)
+        for (const auto& s : wallSections(run[0], run[1], run[2], run[3])) {
+            if (wallAt(s[0], s[1]) || wallAt(s[2], s[3])) {
+                r.error = 0x08;
+                r.message = "cannot place a dormer: a wall is in the way at " + point(s[0], s[1]);
+                return r;
+            }
+            int code = 0;
+            if (const std::string why = wallBlocked(level, s[0], s[1], s[2], s[3], &code, false, true);
+                !why.empty() && code != 0x48) {
+                r.error = code;
+                r.message = "cannot place a dormer: " + why;
+                return r;
+            }
+            todo.push_back(s);
+        }
+    r.cost = int(todo.size()) * kWallSectionPrice;
+    if (r.cost > funds(vm_)) {
+        r.error = 0x16;
+        r.message = "not enough money (" + money(r.cost) + ")";
+        r.cost = 0;
+        return r;
+    }
+    Geometry before = capture();
+    if (!lot_.hasLevel(li + 1))
+        addUpperLevel(lot_);
+    const uint16_t blank = patternRef(lot_.wallPatterns, kDefaultWallPattern, 0);
+    for (const auto& s : todo)
+        if (addWall(lot_, li, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
+            ++r.changed;
+    // The roof (UserMayAddRoof type 4 or 5) with the gable ends' attic walls.
+    Lot::Roof roof;
+    for (const auto& o : lot_.roofs)
+        roof.id = std::max(roof.id, o.id + 1);
+    roof.id = std::max(roof.id, 1u);
+    roof.x0 = float(x0), roof.y0 = float(y0), roof.x1 = float(x0 + ex), roof.y1 = float(y0 + ey);
+    roof.level = roof.levelTo = li + 1;
+    roof.type = product < 9 ? Lot::LongGable : Lot::Hip;
+    roof.pattern = lot_.roofs.empty() ? 0 : lot_.roofs.back().pattern;
+    roof.angle = lot_.roofs.empty() ? 0.5f : lot_.roofs.back().angle;
+    const auto attic = atticWalls(li + 1);
+    lot_.roofs.push_back(roof);
+    syncAtticWalls(li + 1, attic);
+    addFunds(vm_, -r.cost);
+    changed();
+    commit(std::move(before), r.cost);
+    r.ok = true;
+    r.message = "a " + std::to_string(width) + "-wide " + (product < 9 ? "gable" : "hip") + " dormer at " +
+                point(x0, y0) + "-" + point(x0 + ex, y0 + ey) + " for " + money(r.cost);
+    return r;
+}
+
 BuildEditor::Result BuildEditor::removeRoofs() {
     Result r;
     if (lot_.roofs.empty()) {

@@ -280,6 +280,28 @@ bool addLowerLevel(Lot& lot) {
     return true;
 }
 
+void addUpperLevel(Lot& lot) {
+    const size_t plane = size_t(lot.width + 1) * size_t(lot.height + 1), tiles = size_t(lot.width) * lot.height;
+    if (lot.elevations.size() >= plane) {
+        std::vector<float> above(lot.elevations.end() - long(plane), lot.elevations.end());
+        for (float& z : above)
+            z += 3.0f;
+        lot.elevations.insert(lot.elevations.end(), above.begin(), above.end());
+    }
+    if (!lot.floors.empty())
+        lot.floors.insert(lot.floors.end(), tiles, std::array<uint16_t, 4>{});
+    if (!lot.floorRotations.empty())
+        lot.floorRotations.insert(lot.floorRotations.end(), tiles, std::array<uint8_t, 4>{1, 1, 1, 1});
+    if (!lot.rooms.empty())
+        lot.rooms.insert(lot.rooms.end(), tiles, std::array<uint16_t, 4>{});
+    for (auto& [k, layer] : lot.roomLayers)
+        if (!layer.empty())
+            layer.insert(layer.end(), tiles, std::array<uint16_t, 4>{});
+    ++lot.levelCount;
+    for (auto& g : lot.wallGraphs)
+        g.header[5] = lot.levelCount;
+}
+
 bool setFloorRotation(Lot& lot, int level, int x, int y, int q, uint8_t rotation) {
     if (!lot.hasLevel(level) || x < 0 || y < 0 || x >= int(lot.width) || y >= int(lot.height) || q < 0 || q > 3)
         return false;

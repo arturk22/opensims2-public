@@ -272,6 +272,14 @@ void BuildMode::selectStairsTool(const BuildStairs& product) {
     say(product.name + " (" + money(product.price) + " a step)");
 }
 
+void BuildMode::selectDormerTool(const BuildRoofProduct& product) {
+    cancel();
+    tool_ = Tool::Dormer;
+    dormer_ = &product;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
+    say(product.name + " (" + money(product.price) + ")");
+}
+
 BuildMode::StairsDrag BuildMode::stairsDrag(simd_float2 from, simd_float2 to) const {
     StairsDrag d;
     d.top = {int(std::floor(from.x)), int(std::floor(from.y)), level_};
@@ -638,6 +646,14 @@ bool BuildMode::mouseDown(simd_float3 eye, simd_float3 dir, bool control, bool s
             design_->cancel(), dirty_ = true;
         else if (const vm::ObjectId id = pickObject ? pickObject(eye, dir) : 0)
             design(id, mouse_.value_or(simd_make_float2(float(canvasW_) / 2, float(canvasH_) / 2)));
+        return true;
+    }
+    if (tool_ == Tool::Dormer && dormer_) {
+        pressSound(Tool::Roof, false);
+        const auto r = editor_->placeDormer(dormer_->id, level_, int(std::lround(p->x)), int(std::lround(p->y)),
+                                            (direction_ / 2) * 2 % 8);
+        releaseSound(Tool::Roof, false, r);
+        applied(r);
         return true;
     }
     if (tool_ == Tool::Wallpaper) {
@@ -1205,6 +1221,15 @@ std::vector<BuildMode::Item> BuildMode::items() {
                 out.push_back(std::move(it));
             }
         }
+        if (subsort_ == 0 || subsort_ == 4) // B940 dormers (roofs.txt "roof 6-11", catalog text "build" 140)
+            for (const BuildRoofProduct& d : patterns_.roofProducts())
+                if (d.id >= 6 && d.id <= 11) {
+                    Item it;
+                    it.tool = Tool::Dormer;
+                    it.dormer = &d;
+                    it.name = d.name, it.description = d.description, it.price = d.price;
+                    out.push_back(std::move(it));
+                }
         if (subsort_ == 0 || subsort_ == 3)
             for (const BuildRoofPattern& p : patterns_.roofPatterns()) {
                 Item it;
@@ -1410,7 +1435,8 @@ UiScreen BuildMode::screen(int width, int height) {
                                    it.terrainOp == int(terrainOp_)) ||
                                   (it.tool == Tool::Roof && !it.roofPattern && tool_ == Tool::Roof && it.roofType == roofType_) ||
                                   (it.stairs && it.stairs == stairs_ && tool_ == Tool::Stairs) ||
-                                  (!it.pattern && !it.object && !it.fence && !it.paint && !it.stairs && it.tool != Tool::Terrain &&
+                                  (it.dormer && it.dormer == dormer_ && tool_ == Tool::Dormer) ||
+                                  (!it.pattern && !it.object && !it.fence && !it.paint && !it.stairs && !it.dormer && it.tool != Tool::Terrain &&
                                    it.tool != Tool::Roof && it.tool == tool_);
             if (selected) {
                 UiQuad q;
@@ -1575,6 +1601,8 @@ bool BuildMode::press(simd_float2 p) {
                     selectPoolTool();
                 else if (it.stairs)
                     selectStairsTool(*it.stairs);
+                else if (it.dormer)
+                    selectDormerTool(*it.dormer);
                 else if (it.roofPattern)
                     applied(editor_->setRoofPattern(it.roofPattern->guid));
                 else if (it.tool == Tool::Roof)
@@ -1818,6 +1846,11 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
                 end = std::array<float, 2>{std::stof(f[5]), std::stof(f[6])};
             r = ed.placeStairs(*b, {n(1), n(2), n(3)}, n(4), end, f.size() > 7 && f[7] == "whole");
             releaseSound(Tool::Stairs, false, *r);
+        } else if (a == "--dormer" && f.size() >= 4) { // product 6-11,x,y,direction[,level]
+            if (const BuildRoofProduct* d = patterns_.roofProduct(n(0)))
+                selectDormerTool(*d);
+            r = ed.placeDormer(n(0), f.size() > 4 ? n(4) : level_, n(1), n(2), n(3));
+            releaseSound(Tool::Roof, false, *r);
         } else if (a == "--delete-stairs" && !f.empty()) {
             r = ed.deleteStairs(vm::ObjectId(n(0)));
             releaseSound(Tool::Stairs, true, *r);

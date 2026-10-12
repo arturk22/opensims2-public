@@ -368,6 +368,20 @@ static void testRoof() {
     check(r.ok && lot.roofs.size() == 1, "preserving: the roofed room gets nothing more");
     r = ed.removeRoofs();
     check(r.ok && lot.roofs.empty(), "C300 removes the roofs");
+
+    // Dormers: walls of the box on the attic level, a roof over them one level up.
+    ed.drawRoof(1, 2, 2, 8, 5, Lot::LongGable);
+    const size_t walls = lot.walls.size(), roofs = lot.roofs.size();
+    const int before = funds(vm);
+    r = ed.placeDormer(7, 2, 4, 2, 0);
+    check(r.ok && r.cost == 12 * kWallSectionPrice && funds(vm) == before - 840, "a 2-wide dormer: 12 sections at §70 (§840)");
+    check(lot.levelCount == 3 && lot.roofs.size() == roofs + 1 && lot.roofs.back().level == 2 &&
+              lot.roofs.back().type == Lot::LongGable && lot.roofs.back().x1 == 6 && lot.roofs.back().y1 == 6,
+          "its gable roof over the box, on a new level");
+    check(lot.walls.size() >= walls + 12, "the box's walls (and the gable ends' attic walls)");
+    r = ed.placeDormer(9, 2, 5, 2, 0);
+    check(!r.ok && r.error == 0x08, "a dormer on another's walls (0x08)");
+    check(ed.undo() && lot.levelCount == 2 && lot.roofs.size() == roofs && funds(vm) == before, "undo takes the dormer back");
 }
 
 static void testPool() {

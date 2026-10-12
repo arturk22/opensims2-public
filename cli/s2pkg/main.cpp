@@ -395,8 +395,8 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
             std::printf("  %zu roofs, %zu fence posts, %zu pools, %zu grid points under water\n", lot.roofs.size(),
                         lot.fencePosts.size(), lot.pools.size(), wet);
             for (const auto& r : lot.roofs)
-                std::printf("    roof %u: type %u (%g, %g)-(%g, %g) level %d, angle %g, pattern 0x%08X\n", r.id, r.type,
-                            r.x0, r.y0, r.x1, r.y1, r.level, r.angle, r.pattern);
+                std::printf("    roof %u: type %u (%g, %g)-(%g, %g) level %d, angle %g, pattern 0x%08X, style %u\n", r.id, r.type,
+                            r.x0, r.y0, r.x1, r.y1, r.level, r.angle, r.pattern, r.style);
             for (const auto& p : lot.pools)
                 std::printf("    pool %u: (%g, %g) %ux%u level %d, depth %g\n", p.id, p.x, p.y, p.width, p.height,
                             p.level, p.depth);

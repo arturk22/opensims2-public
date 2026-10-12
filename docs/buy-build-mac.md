@@ -1379,6 +1379,35 @@ objetos, níveis, elevações, direções e elos):
   chão (`0x61`), objetos de teto (`0x60`), praia. Aqui: só "livre de piso,
   parede e fundação".
 
+### 7.14 Águas-furtadas no código (rodada 12, `placeDormer`)
+
+`cTSUserToolRoof`: o estilo da ferramenta (`+0x88`, o id do produto do
+`roofs.txt`) é água-furtada se `FUN_00995400` (= `IsStyleDormer`) diz que sim
+(6–11). `Init` põe como cursor o modelo do `defaultRoofPattern`
+("dormerpreview-2wide") deslocado de largura × 0,5 e liga as teclas de girar;
+no soltar, `FUN_001d5d20` (= `MakeDormer`):
+
+- largura w = (estilo − 6) % 3 + 1, fundo w + 2; nível = o do local clicado
+  (o sótão); se o de cima não existe é criado (WorldDB `0x1C`), acima do topo
+  → `0x06`;
+- direção (`+0xB4`): 6 (padrão) w × fundo em y × x = fundo × w; 2 igual
+  começando `fundo` tiles a −x; 0 = w em x × fundo em y; 4 igual começando
+  `fundo` a −y;
+- `FUN_001d5a5c` testa as 4 linhas (vértice com parede → `0x08`;
+  `UserMayPlacePartition`), `FUN_00998cd8` põe paredes **estilo 1** nas 4
+  linhas no nível do sótão (dir 0 anda +y, 6 anda +x) e depois as paredes de
+  sótão (estilo 3) nas pontas curtas;
+- `UserMayAddRoof(ângulo, canto, canto oposto, tipo)` no nível de cima: tipo
+  **4** (empena longa) para 6–8, **5** (quatro águas) para 9–11.
+
+Não há "água-furtada" no lote salvo: ela vira paredes e um ROOF comum (nenhum
+dos 62 lotes tem estilo ≠ 0). O preço do catálogo (560/840/1120) é igual a
+8/12/16 trechos × §70: as paredes entram como pré/pós-operações do undoable do
+telhado e o `TotalCost` soma o custo delas (o telhado é de graça); aqui cada
+trecho novo custa §70. Inferido: o teste de suporte da parede fica de fora
+(a água-furtada fica sobre o telhado), o topo é o nível 4 do lote, e o canto é
+o ponto de grade sob o mouse (o jogo usa o cursor deslocado).
+
 ---
 
 ## 8. Base vs BV

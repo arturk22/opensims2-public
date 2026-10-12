@@ -57,6 +57,9 @@ uint8_t floorRotation(const Lot& lot, int level, int x, int y, int q);
 // 3 below the ground, no floors or rooms; the wall graphs' level range
 // follows. False if the lot has one already.
 bool addLowerLevel(Lot& lot);
+// Adds a level on top (a dormer's roof over the attic, MakeDormer: WorldDB
+// vtable 0x1C): its grid points 3 above the highest, no floors or rooms.
+void addUpperLevel(Lot& lot);
 
 // Rooms again from the walls of each room array's wall graph (rooms 5 ->
 // 3ARY 0x09, 6 -> 0x0A, 7 -> 0x0B): quarter tiles no wall separates share
