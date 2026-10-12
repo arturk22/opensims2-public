@@ -372,6 +372,18 @@ que andou ≥ 0,25; "rota de base" = a pilha de rotas tem só esta; `IsRouting`
 - **bloqueador roteando, não por mim**: contador 1 → pausa; 2 e ele saiu do
   tile → re-rota; senão "CT - Route Blocked"/14.
 
+**Rodada 19**: o "bloqueado por mim" do outro é o bloqueador que o
+locomotor dele guardou ao parar (`CollisionCheck` → `InterruptActiveLocoState(2)`,
+lido pelo `DoBlocked`, vtable `0x1A8`), não só o da rota depois do
+`DoBlocked` dele: dois Sims que se encontram de frente param um para o outro
+com um tick de diferença, e o primeiro a chegar ao `DoBlocked` tomava o outro
+por "roteando, bloqueado por outra coisa" e desistia (14) — dois Sims
+mandados juntos para a mesma cama (N002_Lot10). E o `DoContinueAfterPause`
+→ `DoInitial` → `DoFoundPath` são estados próprios: depois da pausa o
+andar continua no tick seguinte (no mesmo tick o mesmo bloqueador contava a
+2ª tentativa na hora e a rota falhava; "Route To Can" com "CT - Route
+Failure Feedback" dava centenas de voltas num tick no N001_Lot68).
+
 `TryGetSelfOutOfWay` (BV `0x57e9ac`): os dois no mundo e a ≤ 4 tiles →
 `CreateMoveOutOfWayDestination(eu, bloqueador, 0)` e uma rota empurrada
 para o destino (GotoRoutingSlot), depois a rota original de novo. Na espera

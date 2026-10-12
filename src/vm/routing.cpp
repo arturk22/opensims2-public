@@ -2377,6 +2377,14 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             return Step::Failed;
         }
         r.points = std::move(next.points);
+        // DoInitial and DoFoundPath are states of their own: the walk goes
+        // on from the next tick, not in the pause's tick (where the same
+        // blocker, not moved yet, counted the second try at once and failed
+        // the route: a tree that routes again on failure, "Route To Can"
+        // with "CT - Route Failure Feedback", went round hundreds of times
+        // in one tick).
+        r.waiting = false;
+        return Step::Walking;
     }
     // Waiting for the Sim asked to move (DoWaitingForPersonToMove) goes on
     // whether or not it is still in the way, until it is 1.25 tiles off or
@@ -2547,7 +2555,16 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                     return Step::Walking;
                 return routeBlocked();
             }
-            if (blocker.route->blocker == me.id) { // it routes and I block it: the two block each other
+            // Its route's blocking object: the one its locomotor stopped for
+            // (CollisionCheck sets it as the stop clip starts, InterruptActive-
+            // LocoState(2); DoBlocked reads it, vtable 0x1A8), not only once
+            // its own DoBlocked has run: two Sims meeting head-on both halt
+            // for each other a tick apart, and the first to reach DoBlocked
+            // took the other for "routing, blocked by something else" and
+            // gave up (Routing - Goto Head of Bed, two Sims sent to one bed).
+            const auto& br = *blocker.route;
+            const ObjectId itsBlocker = br.blocker ? br.blocker : (br.loco.halting || br.loco.haltDone) ? br.loco.halted : 0;
+            if (itsBlocker == me.id) { // it routes and I block it: the two block each other
                 if (!base)
                     return routeBlocked();
                 if (!r.asideTried && counter < 3 && selfOutOfWay())

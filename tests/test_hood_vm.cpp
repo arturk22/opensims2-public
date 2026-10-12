@@ -8,6 +8,8 @@
 #include "formats/resindex.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
+#include "vm/lot_neighborhood.hpp"
+#include "vm/interactions.hpp"
 #include "vm/placement.hpp"
 
 #include <cstdlib>
@@ -320,8 +322,77 @@ static void testLotObjectsValue() {
           "Ranch Retreat: the lot objects' value as the game saved it (doors by their master's build mode type)");
 }
 
+// With the game's data (OS2_DATA): two Sims sent to one double bed at once
+// both get in (N002_Lot10, Jenny 386 and Pollination Tech 160 met head-on
+// on the way and the first to stop gave up, "Routing - Goto Head of Bed"
+// failing 14), and the player's pick on the partner lying in it ("*Object
+// Menu Subqueue" of the person, the bed's "CT - Object Menu Subqueue")
+// offers WooHoo, which pushes the bed's pair onto both.
+static void testBedTogether() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data)
+        return;
+    const std::filesystem::path res = std::filesystem::path(data) / "TSData/Res";
+    const std::filesystem::path lotPath = res / "UserData/Neighborhoods/N002/Lots/N002_Lot10.package";
+    if (!std::filesystem::exists(lotPath))
+        return;
+    ResourceIndex index(res);
+    CodeLibrary code(&index);
+    DbpfPackage pkg(lotPath);
+    const Lot lot = Lot::load(pkg);
+    const LotObjects saved = LotObjects::load(pkg);
+    VM vm(code);
+    vm.initCreatedObjects = true;
+    vm.setClockGlobals();
+    const bool hood = loadLotNeighborhood(vm, lotPath);
+    const LotLoad load = loadLot(vm, lot, saved, charactersDirOf(lotPath));
+    if (hood)
+        bindLotSims(vm);
+    startSavedLot(vm, load, saved, false);
+    runLotLoaded(vm);
+    const ObjectId jenny = 386, tech = 160, bed = 758;
+    auto pick = [&](ObjectId sim, ObjectId object, const std::string& name) {
+        for (const auto& e : pieMenu(vm, sim, object))
+            if (e.available() && !e.debug && e.name == name)
+                if (auto q = interactionFromPie(vm, e)) {
+                    q->pushedBy = sim;
+                    addAction(vm, *vm.object(sim), *q);
+                    return true;
+                }
+        return false;
+    };
+    check(vm.object(jenny) && vm.object(tech) && vm.object(bed), "bed together: N002_Lot10's Jenny, Pollination Tech and bed");
+    if (!vm.object(jenny) || !vm.object(tech) || !vm.object(bed))
+        return;
+    check(pick(jenny, bed, "Relaxar") && pick(tech, bed, "Relaxar"), "bed together: both pick Relaxar");
+    auto inBed = [&](ObjectId sim) {
+        const ObjectId c = vm.object(sim)->data[objdata::ContainerId];
+        return c == bed || c == 763; // the two heads, E and F
+    };
+    for (int i = 0; i < 1300 && !(inBed(jenny) && inBed(tech)); ++i)
+        vm.tick();
+    check(inBed(jenny) && inBed(tech), "bed together: both get in");
+    bool offered = false;
+    for (const auto& e : pieMenu(vm, jenny, tech))
+        offered = offered || (e.available() && !e.debug && e.name == "Oba-Oba");
+    check(offered, "bed together: the partner's menu offers Oba-Oba");
+    check(pick(jenny, tech, "Oba-Oba"), "bed together: Oba-Oba picked");
+    bool pushed = false;
+    for (int i = 0; i < 300 && !pushed; ++i) {
+        vm.tick();
+        for (ObjectId sim : {jenny, tech}) {
+            const Object& o = *vm.object(sim);
+            for (const auto* list : {&o.queue, &o.subQueue})
+                for (const auto& q : *list)
+                    pushed = pushed || ((q.object == bed || q.object == 763) && (q.interaction == 11 || q.interaction == 12));
+        }
+    }
+    check(pushed, "bed together: WooHoo's pair is pushed");
+}
+
 int main() {
     testLotObjectsValue();
+    testBedTogether();
     testLoad();
     testPrimitives();
     if (failures)
