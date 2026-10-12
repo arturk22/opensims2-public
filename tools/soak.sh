@@ -76,7 +76,8 @@ one() { # one <lot> <outdir>
         echo "crash|autonomy|exit $rc: $(tail -n 2 "$log" | tr '\n' ' ')" >>"$res"
         backtrace "$scratch/lldb1.log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"} | sed 's/^/bt|autonomy|/' >>"$res"
     fi
-    grep "Main failed:" "$log" | sed -E 's/^ *([^ ]+) .*Main failed: /dead|autonomy|\1: /' >>"$res"
+    # the household's Mains that died ("  Name#id  N searches, M picks; its Main died: ..."; visitors are "also:")
+    grep -E "^  [^ ].* searches, .* picks; its Main died: " "$log" | sed -E 's/^ *([^ ]+) .*its Main died: /dead|autonomy|\1: /' >>"$res"
     grep -c "instruction budget exhausted" "$log" | sed 's/^/budget_autonomy=/' >>"$res"
     # stuck in one interaction, and motives pinned at -100, from the log
     awk -v total="$SOAK_TICKS" -v limit="$STUCK_TICKS" -v every="$EVERY" '
