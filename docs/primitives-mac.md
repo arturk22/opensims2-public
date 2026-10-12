@@ -1102,13 +1102,27 @@ de provar; a árvore troca a roupa depois. No app o OK grava a categoria
 `0x6CA52069`, batom `0x6CA52067`, 4 × 1 de `0xCB980E93`), óculos
 `0x4CEDF128` e maquiagem personalizada `0x4CEDF127` → `0x2CEDF328` (3 × 5),
 sobrancelhas `0x4CEDF130`, fios de barba `0x4CEDF131` e barbas
-`0x4CEDF129` → `0xAD4F1B1C` (3 × 4; a fileira de cores `0x2D4F258C`
-escondida). `OnOk` (`0x2f2448`): o penteado em todas as categorias (menos
+`0x4CEDF129` → `0xAD4F1B1C` (3 × 4, com a fileira de cores
+`0x2D4F258C`). `OnOk` (`0x2f2448`): o penteado em todas as categorias (menos
 nu, provar e 0x800), grava o personagem (CAS vtable 0x20) e veste o Sim de
 novo no que ele usa (dados de pessoa 8, 119, 120). No app as escolhas são as
 do nosso CAS (`cas_mode.cpp`: sobreposições por subtipo e bin, óculos e
 barbas de malha), o OK grava o personagem e veste de novo; a vista 3D do Sim
-é a cabeça (inferido); "Personalizado" `0x8804` não faz nada.
+é a cabeça (inferido). **Rodada 15:** o `HandleTabSelect` (BV `0x2f50b0`)
+mostra a fileira de cores da barba `0x2D4F258C` (`FUN_0093fed8(painel,
+0x2D4F258C, 1)`) nas abas sobrancelhas, fios de barba e barbas; no
+`onBtnClickedID` (BV `0x2f651c`) um id com `0x8800` dentro dessa fileira lê o
+GUID da legenda do botão (o tom de cabelo "0000000N-…") e chama
+`cTSUISimEditor::SetHairColor` (vtable `0x128` do editor; o único setter de
+`cTSLID` de cor além do tom de pele) e atualiza os overlays: sobrancelhas e
+barbas seguem a cor do cabelo, então a fileira muda a cor do cabelo também
+(no app: a mesma escolha das cores do cabelo). "Personalizado" `0x8804` do
+componente de cabelo (`cTSUICASComponentHair::HandleTabHairColor`, BV
+`0x3e1e54`) liga a flag `+0x268` que o `UpdateFilter` passa ao filtro como
+"custom": a grade mostra os cabelos de tom fora dos regulares
+(`nTSCASCore::IsRegularHairTone`: GUID 1..5; no jogo base, os 81 de tom 6,
+os tingidos); uma cor desliga. `r15-espelho-barba-cor.jpg`,
+`r15-espelho-personalizado.jpg`.
 
 **Joias (tipo 0x0C, `cTSWinProcJewelryPurchaseDialog`, script
 `0xACDC3000`).** O script não está no `ui.package` do jogo base e nenhum
