@@ -50,16 +50,21 @@ uint16_t newInteractionId(VM& vm, Object&) {
 }
 
 void linkInteractions(VM& vm, QueuedInteraction& made, uint16_t other) {
-    made.link = other;
-    // The other one links back when it has no link yet, so that either end
-    // tells the other Sim (inferred: "Social - Push Social - As
-    // Continuation" pushes A with flag 0x80, then B with 0x40 to A, and
-    // both Sims' wait loops leave on person data 110).
+    // TryPushAction's flag 0x40 (BV 0xe33f..): the linked interaction is
+    // looked up by its ID (cTSInteraction::FindInteraction); when found, the
+    // new one takes its link and it links to the new one
+    // (new.SetLinkedGUID(linked.GetLinkedGUID()),
+    // linked.SetLinkedGUID(new.AssignUniqueGUID())): a chain from the linked
+    // one through every interaction linked to it since, newest first. A
+    // three-Sim social ("Social - Baby - Talk To": A, then B and the baby's
+    // holder C, both linked to A) is A -> C -> B, so A ending reaches both;
+    // before, B and A linked to each other and the holder was never told
+    // (N001_Lot36's Brandi held the baby for 11 hours).
     forEachInteraction(vm, [&](Object&, QueuedInteraction& q) {
         if (q.uid != other)
             return false;
-        if (!q.link)
-            q.link = made.uid;
+        made.link = q.link;
+        q.link = made.uid;
         return true;
     });
 }

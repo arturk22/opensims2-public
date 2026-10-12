@@ -504,6 +504,31 @@ static void testNestedInterruption() {
     check(fx.o().attributes[1] == 1 && s.queue.empty(), "then the interrupted one went on to its end");
 }
 
+// Push Interaction's link (flag 0x40) as TryPushAction makes it: the new
+// interaction takes the linked one's link and the linked one links to it,
+// so A with B and then C linked to it is A -> C -> B; when A ends both are
+// told (person data 110 for a running one, a waiting one leaves its queue).
+// The baby's holder of "Social - Baby - Talk To" (C) was never told.
+static void testLinkedInteractions() {
+    Fixture fx;
+    const ObjectId b = fx.vm.instantiate(kSimGroup, 0x80).id, c = fx.vm.instantiate(kSimGroup, 0x80).id;
+    fx.vm.startMain(b);
+    const uint16_t ua = enqueue(fx.vm, fx.s(), fx.make(1));
+    const uint16_t ub = enqueue(fx.vm, *fx.vm.object(b), fx.make(1));
+    const uint16_t uc = enqueue(fx.vm, *fx.vm.object(c), fx.make(1)); // c has no Main: it waits
+    fx.vm.tick();
+    linkInteractions(fx.vm, fx.vm.object(b)->queue[0], ua);
+    linkInteractions(fx.vm, fx.vm.object(c)->queue[0], ua);
+    check(fx.s().queue[0].link == uc && fx.vm.object(c)->queue[0].link == ub && fx.vm.object(b)->queue[0].link == 0,
+          "links: A -> C -> B");
+    const QueuedInteraction a = fx.s().queue[0];
+    unlinkInteraction(fx.vm, fx.sim, a);
+    check(fx.vm.object(c)->queue.empty(), "A ends: C, waiting, leaves its queue");
+    check(fx.vm.object(b)->person->data[110] == 1 && fx.vm.object(b)->queue.size() == 1,
+          "and B, running, gets person data 110");
+    (void)ub;
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -517,6 +542,7 @@ int main() {
     testInteractionGroupLeader();
     testSubQueue();
     testNestedInterruption();
+    testLinkedInteractions();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
