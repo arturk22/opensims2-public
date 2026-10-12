@@ -71,6 +71,27 @@ para o bairro, 5/6 a de sair do jogo, 24–26 os botões dela; Sim/Não/Cancelar
 da 0x8E 2/3/1, inferido); a caixa é a dos diálogos da VM (menu de pie),
 não a do jogo.
 
+**Pasta da sessão** (rodada 16): os arquivos de personagem escritos em
+jogo (Sim que envelheceu, bebê, NPC em `NPCs/`) ficam em
+`$TMPDIR/opensims2-characters-<pid>` até o salvar copiá-los para o bairro.
+A pasta é apagada na saída do app (`atexit`) e, ao abrir, o app apaga as de
+sessões que não estão mais rodando (processo morto ou travado;
+`removeStaleSessionCharacters`): eram ~940 pastas esquecidas no `$TMPDIR`.
+
+O laço inteiro sem tela (N001_Lot11, um dia de jogo, salvar ao voltar ao
+bairro e entrar de novo):
+
+```
+opensims2 --user-dir /tmp/u --no-audio --flow-shots --hood N001 \
+  --hood-lot-click 11 --click 595,592 --wait 43200 --click 139,690 \
+  --click 236,628 --click 528,398 --click 736,562 --click 595,592 \
+  --wait 30 --screenshot out.png
+```
+
+O salvar grava 6 NPCs feitos no dia (motorista, jornaleiro, carteiro, dois
+coelhos do apoio social) com os arquivos; o lote volta com 5 Sims (um
+coelho estava no lote). `docs/screenshots/r16-save-loop-reload.jpg`.
+
 ## 4. Opções (`src/app/live_ui.*`, `options_panel.*`)
 
 Botão Opções do puck (`0x67D97B2F`): o painel `0x49060001` é o do painel

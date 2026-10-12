@@ -356,6 +356,33 @@ iguais às relações da VM e, no bairro, `FAMI`/`SDSC`/`SREL`/`NGBH`. Sem
 Não verificado: se o jogo recusa um pacote sem os registros de partes que
 não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
 
+## 6b. Rodada 16 (f): jogar → salvar → bairro → recarregar
+
+- **Vizinhos feitos em jogo** (bebês, NPCs, moradores): gravados como
+  qualquer vizinho (`cTSNeighborManager::WriteNeighbors`, BV `0x53a76c`):
+  SDSC, SDNA, membro do FAMI e, do bebê, a árvore da família; os arquivos
+  de personagem copiados da sessão para `Characters` com o nome atual
+  (`docs/cas-mac.md` §7.2).
+- **Valores do lote no save** **[binário]**: o passo 7 do `SaveLot` manda a
+  mensagem `0xCD94C8EE`, que o `cTSLot::DoMessage` atende com o
+  `ComputeAndStoreLotData` (`docs/neighborhood-mac.md` §11.1): os globais
+  46–49 e o SIMI +0xA4…+0xB0 são refeitos antes de gravar. O `captureLot`
+  chama `computeLotData` no começo; antes, depois de um dia de jogo, o
+  global 49 (valor dos objetos) do lote salvo diferia do recarregado
+  (`lot-save --check`: "global 49 742 vs 977").
+- **`s2pkg play-loop <bairro> <lote> <saída> [--ticks N] [--birth mãe,pai]
+  [--npc GUID[:roupa]]`**: copia o bairro para `<saída>/<P>`, joga o lote
+  com os escritores de personagem instalados, salva pelo `saveGame` do app,
+  lê o bairro de volta (família do lote e vizinhos novos com arquivo, o que
+  a tela de carregamento e o bairro mostram) e recarrega o lote comparando
+  a VM (`compareLotState` + `compareNeighborhoodState`, que agora confere
+  também nomes e DNA dos vizinhos). N001_Lot11, 43.200 ticks (um dia), um
+  bebê roteirizado: 3 NPCs feitos (jornaleiro, motorista, carteiro, com nomes
+  sorteados), tudo igual depois de recarregar. `hood-save` também instala os
+  escritores e copia os arquivos novos: `hood-save <saída>/N001 --ticks
+  43200 --check` dá 25 de 26 lotes iguais (o N001_Lot36 difere num Sim no
+  meio de uma interação, como já acontecia no `lot-save --check` do main).
+
 ## 7. O que falta
 
 - Os campos do token, da tabela de relacionamentos e dos timers; o
@@ -363,3 +390,7 @@ não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
 - Quem responde à mensagem `0xBC` além do módulo de objetos e do simulador
   (a ordem exata) e o gravador das `SREL` do lote.
 - O campo +0xB0 do `SIMI` e os blocos `0x2A4` da pessoa no SDSC.
+- Depois de um dia, um Sim salvo no meio de uma interação às vezes volta
+  com dados de pessoa diferentes (N001_Lot36 objeto 2, N001_Lot36 objeto
+  270 no `lot-save --check`): rota e sub-ações em andamento não são
+  gravadas como o jogo grava.

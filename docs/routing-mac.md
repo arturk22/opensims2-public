@@ -1012,8 +1012,10 @@ deles portais (`Portal::object`, `oneWay` quando o outro slot não nomeia
 este); a árvore de teste e a de verdade são as da função 15 da parte de
 entrada. `N001_Lot68`: a Mary-Sue mergulha (o trampolim, deque → água),
 nada até a escada e sobe (antes ficava no andar −1 sem rota e morria de
-fome). Falta: comprar/mover a escada no modo compra não refaz os portais (só
-o modo construção e a carga do lote).
+fome). Rodada 16: o modo compra também refaz os portais (pôr, mover, pegar,
+vender ou apagar um objeto: `applyPlacement`, `pickUp`, `deleteGroup` em
+`vm/placement.cpp`); `N001_Lot68`: a escada movida para (3, 12) liga
+(3,5; 13) e (3,5; 11,25), e vendida some o portal dela.
 
 ## 8.1 Pedir para sair: `AskBlockerToMove` / `MoveOutOfWay` (binário)
 

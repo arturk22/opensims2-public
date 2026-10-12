@@ -323,10 +323,52 @@ parte de cima e a de baixo e vice-versa; **[inferido]**). O objeto do Sim
 no arquivo é o do **modelo do NPC** (OBJD com o GUID novo, BHAVs e o resto
 do grupo dele), como o `AddNewCharacter` faz; os do personagem comum
 seguem vindo do TemplatePerson. O arquivo vai para `NPCs/` na pasta de
-personagens da sessão, fora dos que o salvar copia para o bairro, já que o
-bairro ainda não grava esses vizinhos. Captura:
+personagens da sessão; o salvar copia os `<P>_User` de lá para o bairro
+junto com os vizinhos (§7.2). Captura:
 `docs/screenshots/r16-npc-carteiro.jpg` (`--lot N001_Lot11 --run-vm 31500
 --track-sim-id 151 --zoom 5`: o carteiro de uniforme, boné e bolsa).
+
+### 7.2 Rodada 16 (f): nomes dos NPCs e o que o salvar grava
+
+**Nomes** **[binário]** (`cTSCASSystem::PopulateSimNames`, BV `0x559c68`,
+chamado pelo pedido do CAS): escreve os nomes no CTSS do personagem novo
+(instância = campo 0x29 do OBJD). Se o modelo tem o campo **0x30 "No New
+Name from Template"** (rótulo do editor, STR# `0x7FE59FD0`/`0xCC`), só
+esvazia a string 2 (sobrenome) em todas as línguas: o nome é o do CTSS do
+modelo. No base isso vale para o coelho do apoio social ("Social Bunny"),
+o cobrador ("Repo Man") e a assistente social ("Social Worker") **[dados]**
+— o que os bairros do jogo mostram ("Coelho do Apoio Social", "Cobrador",
+"Assistente Social"). Os outros sorteiam um índice (gerador do próprio CAS,
+`this+0x88`, não o do simulador) e escrevem, nas 44 línguas, o nome do STR#
+do `Live.package` (grupo `0x7F96C284`) **0x96** "Random Male Sim Names" ou
+**0x97** "Random Female Sim Names" (pelo dado de pessoa 65) e, com outro
+sorteio, o sobrenome da **0x98** "Random Family Names". O BV tira o
+sobrenome de uma mulher da `0xCC` (línguas com sobrenome feminino), que o
+`Live.package` do base não tem: aqui a 0x98 para os dois **[inferido]**, como
+mostram as mulheres dos bairros do base ("Lúcia Hanbi"). A tabela pt-BR tem
+58 sobrenomes vazios de 201 (e nomes vazios): um NPC pode sair só com o
+nome, como no jogo. O BV também troca as tabelas para os bichos (0xEA–0xED,
+campo 0xCB): fora do base. No opensims2: `nameNewSim` em `vm/characters.cpp`
+(sem as tabelas, nos testes, o título do modelo).
+
+**Salvar** **[binário]**: `cTSNeighborManager::AddNewCharacter` (BV
+`0x5386dc`) cria o arquivo `<P>_User%05d` na hora (o primeiro número livre
+a partir do contador do gerenciador, até 32000) e o vizinho; o
+`cTSNeighborManager::Save`/`WriteNeighbors` (BV `0x53a9e8`/`0x53a76c`) grava
+**todos** os vizinhos (os sujos, ou todos num save completo), novos também.
+No opensims2 (`vm/hood_save.cpp`): todo vizinho que o pacote não tem e que
+tem GUID ganha SDSC (versão 0x20), SDNA (de um NPC: o DNA do visual sorteado,
+`genetics::dnaFromLook`, como o CAS dá a um Sim novo que não é bebê), entra
+nos membros do FAMI da família dele (os NPCs na `0x7FFF`, pelo Generic Sims
+Call 4 das árvores) e, se é bebê, na árvore da família. O arquivo vai da
+pasta `NPCs/` da sessão para `Characters` (`copySessionCharacters`,
+`app/game_save.cpp`), com o nome atual do vizinho no CTSS
+(`cas::setCharacterNames`: o recém-nascido que o jogador nomeou). O OBJD
+que o Make New Character fez em memória passa a ter o nome do arquivo
+("N001_User00171 - Bebezinha", `CodeLibrary::renameDefinition`), porque o
+cPerson do lote salvo guarda esse nome e o recarregar acha o arquivo por
+ele (antes o bebê voltava como a mãe, de quem o OBJD era cópia). Conferido:
+`s2pkg play-loop` (abaixo) e o app sem tela (`docs/game-flow-mac.md` §3).
 
 **Os NPCs únicos** **[dados]**: vizinhos sem arquivo (`s2pkg hood`: "no
 character file") cujo OBJD é um "NPC - Unique" do `objects.package` guardam
