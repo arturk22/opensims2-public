@@ -10,6 +10,8 @@
 #include "formats/lot_write.hpp"
 #include "formats/build_catalog.hpp"
 #include "formats/catalog.hpp"
+#include "formats/design_catalog.hpp"
+#include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "vm/build_edit.hpp"
 #include "vm/placement.hpp"
@@ -130,7 +132,7 @@ bool isBuildEdit(const std::string& flag) {
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
            flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
-           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--build-undo" || flag == "--build-redo";
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--build-undo" || flag == "--build-redo";
 }
 
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
@@ -178,6 +180,42 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                                      std::to_string(part.tile.level) + ")";
             if (r.ok && vm.world)
                 r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
+        } else if (flag == "--design") {
+            // The Design tool (app/design_tool.hpp): id,subset=material,...
+            // for the §15 of the tool; each material must be a choice of the
+            // object's model for that subset.
+            if (f.size() < 2)
+                throw std::runtime_error("--design: expected id,subset=material[,subset=material]");
+            static std::optional<DesignCatalog> designs;
+            if (!designs)
+                designs = DesignCatalog::load(index);
+            const vm::ObjectId id = vm::ObjectId(num(f, 0, 0));
+            vm::Object* o = vm.object(id);
+            const std::string model =
+                o ? objectCresName(index, Tgi{vm::kTypeObjd, o->group, o->definitionInstance, 0}) : std::string();
+            std::map<std::string, std::string> design;
+            r.ok = o && !model.empty();
+            r.message = r.ok ? model : "no object " + std::to_string(id) + " with a model";
+            for (size_t k = 1; r.ok && k < f.size(); ++k) {
+                const auto eq = f[k].find('=');
+                const std::string subset = f[k].substr(0, eq), material = eq == std::string::npos ? "" : f[k].substr(eq + 1);
+                bool known = false;
+                for (const auto* m : designs->options(model, subset))
+                    known |= m->material == material;
+                if (!known) {
+                    r.ok = false;
+                    r.message = material + " is not a design choice of " + model + "'s " + subset;
+                }
+                design[subset] = material;
+            }
+            if (r.ok && vm::funds(vm) < 15)
+                r.ok = false, r.message = "Insufficient Funds!";
+            if (r.ok) {
+                vm::addFunds(vm, -15);
+                o->design = design;
+                r.cost = 15;
+                r.message = model + ": design of object " + std::to_string(id) + " changed for §15";
+            }
         } else if (flag == "--build-undo" || flag == "--build-redo") {
             r.ok = flag == "--build-undo" ? editor.undo() : editor.redo();
             r.message = r.ok ? "done" : "nothing to do";

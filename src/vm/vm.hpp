@@ -437,6 +437,9 @@ struct Object {
     Array& array(int idx); // created on demand; throws VMError past kMaxObjectArrays
     // Materials set by Change Material: mesh group name ("" = every group) -> material name.
     std::map<std::string, std::string> materials;
+    // The design choice the Design tool gave it (subset -> material, the
+    // cObject's list, formats/design_catalog.hpp); none: the saved one.
+    std::optional<std::map<std::string, std::string>> design;
     // Data owners 0x27 (mine) and 0x28 (the stack object's).
     TempToken tempToken;
     // Interactions queued for this object (a Sim, usually), in the order they

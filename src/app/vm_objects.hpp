@@ -70,6 +70,11 @@ public:
     // Called on a model loaded with the VM's materials before it is added
     // (a TV channel's material becomes its picture: app/tv_broadcast.hpp).
     std::function<void(ObjectModel& model, const std::map<std::string, std::string>& materials)> adjustModel;
+    // The Design tool's choice (subset -> material) replaces the cObject's
+    // design choice; the object is drawn again with it.
+    void setDesign(int16_t id, const std::map<std::string, std::string>& design);
+    // The design choice an object is drawn with (the cObject's, or setDesign's).
+    std::map<std::string, std::string> designOf(int16_t id) const;
     // The CRES of an object drawn here, empty if none.
     std::string cresOf(int16_t id) const;
 

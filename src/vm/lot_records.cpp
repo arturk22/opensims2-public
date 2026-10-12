@@ -66,6 +66,56 @@ std::optional<SceneLayout> sceneLayout(std::span<const uint8_t> bytes) {
     }
 }
 
+// A cObject with its model list rewritten for a design choice (the Design
+// tool's, subset -> material): one entry, the model's name, 12 (v0x11), the
+// (material, subset) pairs, as the game writes an object's.
+std::optional<std::vector<uint8_t>> withDesign(std::span<const uint8_t> bytes,
+                                               const std::map<std::string, std::string>& design) {
+    try {
+        BinReader r(bytes);
+        r.skip(kFileNameSize);
+        uint32_t version = 0;
+        for (int depth = 0;; ++depth) {
+            if (depth == 8)
+                return std::nullopt;
+            r.u32();
+            version = r.u32();
+            if (r.str7() == "cObject")
+                break;
+        }
+        const std::string model = r.str7();
+        const size_t from = r.pos();
+        for (uint32_t n = r.u32(); n; --n) {
+            r.str7();
+            if (version >= 0x11)
+                r.u32();
+            for (uint32_t m = r.u32(); m; --m) {
+                r.str7();
+                r.str7();
+            }
+        }
+        const size_t to = r.pos();
+        if (model.empty())
+            return std::nullopt;
+        BinWriter w;
+        w.u32(1);
+        w.str7(model);
+        if (version >= 0x11)
+            w.u32(12);
+        w.u32(uint32_t(design.size()));
+        for (const auto& [subset, material] : design) {
+            w.str7(material);
+            w.str7(subset);
+        }
+        std::vector<uint8_t> out(bytes.begin(), bytes.begin() + std::ptrdiff_t(from));
+        out.insert(out.end(), w.bytes().begin(), w.bytes().end());
+        out.insert(out.end(), bytes.begin() + std::ptrdiff_t(to), bytes.end());
+        return out;
+    } catch (const FormatError&) {
+        return std::nullopt;
+    }
+}
+
 std::array<float, 7> readPose(std::span<const uint8_t> bytes, size_t at) {
     std::array<float, 7> p{};
     std::memcpy(p.data(), &bytes[at], 28);
@@ -303,15 +353,21 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
         auto it = scene.find(instance);
         // A Sim that arrived on this load (formats/lot_arrivals.hpp) is in
         // `before` but has no cPerson yet: it gets one below.
+        const Object* designed = vm.object(s.id);
+        const bool redesigned = designed && designed->design;
         if (known && !(s.person && it == scene.end())) {
-            if (!moved(s, *was) || it == scene.end())
+            if ((!moved(s, *was) && !redesigned) || it == scene.end())
                 continue;
             auto bytes = source.read(*it->second);
+            if (redesigned)
+                if (auto d = withDesign(bytes, *designed->design))
+                    bytes = std::move(*d);
             const auto l = sceneLayout(bytes);
             if (!l)
                 continue;
             const auto old = readPose(bytes, l->first);
-            writePose(bytes, *l, poseOf(world, s, was, &old));
+            if (moved(s, *was))
+                writePose(bytes, *l, poseOf(world, s, was, &old));
             addRecord(kTypeSceneObject, it->second->tgi.group, instance, std::move(bytes));
             ++out.sceneMoved;
             continue;
@@ -382,6 +438,9 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
             out.warnings.push_back("object " + std::to_string(s.id) + ": no cObject of \"" + name +
                                    "\" in the other lots to copy; wrote a bare one");
         }
+        if (o->design)
+            if (auto d = withDesign(bytes, *o->design))
+                bytes = std::move(*d);
         const auto l = sceneLayout(bytes);
         writePose(bytes, *l, poseOf(world, s, nullptr, nullptr));
         addRecord(kTypeSceneObject, 0xFFFFFFFF, instance, std::move(bytes));

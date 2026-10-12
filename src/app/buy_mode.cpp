@@ -1,5 +1,7 @@
 #include "app/buy_mode.hpp"
 
+#include "app/design_tool.hpp"
+
 #include "app/lot_vm.hpp"
 #include "app/vm_objects.hpp"
 #include "formats/font.hpp"
@@ -28,7 +30,8 @@ constexpr uint32_t kBgFunction = 0x4CC48AA1, kBgRoom = 0x4CC48AA2, kBgCollection
 constexpr uint32_t kFunctionSort = 0x0A00, kFunctionButtons = 0xA000, kRoomSort = 0x0C00, kRoomButtons = 0xC000,
                    kRoomFunctions = 0xD000, kRoomBack = 0xDA00, kCollections = 0x0E00;
 constexpr uint32_t kCatalog = 0x898F42CD, kCollapsed = 0x1000, kPrev = 0x1004, kNext = 0x1005;
-constexpr uint32_t kToolHand = 0xCC607031, kToolEyedropper = 0xCC607032, kToolTag = 0xCC607030, kUndo = 0xCC607033, kRedo = 0xCC607034;
+constexpr uint32_t kToolHand = 0xCC607031, kToolEyedropper = 0xCC607032, kToolDesign = 0xCC607030, kUndo = 0xCC607033,
+                   kRedo = 0xCC607034, kDayNight = 0xCC607035;
 // The collapsed grid (window 0x1006 of 0x1000: 176 x 100). The columns,
 // rows and margins are the collections window's constants on the same
 // panel (kCollapsedColumns=3, kCollapsedRows=2, margins 2 and 6;
@@ -135,6 +138,16 @@ BuyMode::BuyMode(LotSimulation& simulation, VmObjectView& view, Renderer& render
         return false;
     };
     ok_ = load(kPanelScript, panel_) && load(kPuckScript, puck_) && load(kDescriptionScript, description_);
+    design_ = std::make_unique<DesignTool>(vm_, view_, index_, *res_, *fonts_);
+    design_->say = [this](const std::string& m) { say(m); };
+    design_->playSound = [this](const std::string& n) { sound(n.c_str()); };
+    design_->onAccepted = [this](const DesignTool::Change& c) {
+        Op op;
+        op.kind = Op::Kind::Design, op.id = c.id, op.cost = c.cost, op.before = c.before, op.after = c.after;
+        undo_.push_back(std::move(op));
+        redo_.clear();
+        dirty_ = true;
+    };
     try {
         tileModels_[0] = renderer_.addObject(tileModel("os2_buy_ok", "0.2,1,0.2"), index_);
         tileModels_[1] = renderer_.addObject(tileModel("os2_buy_no", "1,0.15,0.1"), index_);
@@ -170,6 +183,7 @@ void BuyMode::exit() {
     if (!active_)
         return;
     cancel();
+    design_->cancel();
     tool_ = Tool::Hand;
     // The history is reset: what was sold dies now (ResetSelf).
     for (const Op& op : undo_)
@@ -406,6 +420,7 @@ vm::ObjectId BuyMode::objectAt(simd_float3 eye, simd_float3 dir, const std::opti
 
 void BuyMode::setTool(Tool t) {
     cancel();
+    design_->cancel();
     tool_ = t;
     dirty_ = true;
 }
@@ -430,9 +445,22 @@ bool BuyMode::eyedrop(vm::ObjectId id) {
     return true;
 }
 
-bool BuyMode::click(simd_float3 eye, simd_float3 dir) {
+bool BuyMode::design(vm::ObjectId id, simd_float2 at) {
+    const vm::Object* o = vm_.object(id);
+    if (!o || o->person || !o->definition)
+        return false;
+    const vm::Object* lead = vm_.object(vm::multiTileGroup(*o));
+    const CatalogEntry* entry = lead ? catalog_.byGuid(lead->guid()) : nullptr;
+    const std::string name = entry ? entry->name : o->definition->fileName;
+    dirty_ = true;
+    return design_->open(id, at, name);
+}
+
+bool BuyMode::click(simd_float3 eye, simd_float3 dir, std::optional<simd_float2> at) {
     if (!active_)
         return false;
+    if (design_->isOpen()) // a click off the dialog closes it, as Cancel
+        design_->cancel(), dirty_ = true;
     const auto t = tileUnder(eye, dir);
     if (held_) {
         if (!t)
@@ -444,10 +472,8 @@ bool BuyMode::click(simd_float3 eye, simd_float3 dir) {
         return false;
     switch (tool_) {
     case Tool::Eyedropper: return eyedrop(id);
-    case Tool::Sell:
-        if (!grab(id))
-            return false;
-        return deleteHeld();
+    case Tool::Design:
+        return design(id, at.value_or(mouse_.value_or(simd_make_float2(float(canvasW_) / 2, float(canvasH_) / 2))));
     case Tool::Hand: return grab(id);
     }
     return false;
@@ -536,6 +562,10 @@ bool BuyMode::undo() {
         op.placement = now;
         break;
     }
+    case Op::Kind::Design: // the old design back, the price back
+        DesignTool::apply(vm_, view_, op.id, op.before);
+        vm::addFunds(vm_, op.cost);
+        break;
     }
     redo_.push_back(op);
     sound("ui_undo");
@@ -567,6 +597,12 @@ bool BuyMode::redo() {
         op.placement = now;
         break;
     }
+    case Op::Kind::Design:
+        if (vm::funds(vm_) < op.cost)
+            return redo_.push_back(op), false;
+        DesignTool::apply(vm_, view_, op.id, op.after);
+        vm::addFunds(vm_, -op.cost);
+        break;
     }
     undo_.push_back(op);
     sound("ui_redo");
@@ -694,8 +730,8 @@ UiScreen BuyMode::screen(int width, int height) {
         hk.buttonState[e] = (held_ && !heldNew_) || (tool_ == Tool::Hand && !held_) ? 2 : 1;
     if (const UiElement* e = root.child(kToolEyedropper))
         hk.buttonState[e] = tool_ == Tool::Eyedropper ? 2 : 1;
-    if (const UiElement* e = root.child(kToolTag))
-        hk.buttonState[e] = tool_ == Tool::Sell ? 2 : 1;
+    if (const UiElement* e = root.child(kToolDesign))
+        hk.buttonState[e] = tool_ == Tool::Design ? 2 : 1;
     if (const UiElement* e = root.child(kUndo))
         hk.buttonState[e] = undo_.empty() ? 0 : 1;
     if (const UiElement* e = root.child(kRedo))
@@ -787,7 +823,8 @@ UiScreen BuyMode::screen(int width, int height) {
     target(root.child(kTabRoom), Action::Tab, 1);
     target(root.child(kToolHand), Action::Tool, 0);
     target(root.child(kToolEyedropper), Action::Tool, 1);
-    target(root.child(kToolTag), Action::Tool, 2);
+    target(root.child(kToolDesign), Action::Tool, 2);
+    target(root.child(kDayNight), Action::DayNight, 0);
     target(root.child(kUndo), Action::Undo, 0);
     target(root.child(kRedo), Action::Redo, 0);
     if (collapsed) {
@@ -884,6 +921,8 @@ UiScreen BuyMode::screen(int width, int height) {
         out.quads.push_back(q);
         text(shown, q.x0, q.y0 + 3, q.x1 - q.x0, 18, "center");
     }
+    // The object design dialog over everything.
+    design_->layout(out, width, height);
     return out;
 }
 
@@ -896,10 +935,18 @@ bool BuyMode::press(simd_float2 p) {
     if (!ok_ || !active_)
         return false;
     layoutIfNeeded();
+    if (design_->press(p)) {
+        dirty_ = true;
+        return true;
+    }
     for (const Target& t : std::vector<Target>(targets_)) {
         if (!inside(t.rect, p))
             continue;
         switch (t.action) {
+        case Action::DayNight:
+            if (onDayNight)
+                onDayNight();
+            break;
         case Action::Tab:
             sort_ = t.value == 0 ? Sort::Function : Sort::Room;
             function_ = room_ = -1, subSort_ = roomFunction_ = 0, page_ = 0;

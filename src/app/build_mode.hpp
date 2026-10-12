@@ -15,6 +15,7 @@
 
 #include "formats/build_catalog.hpp"
 #include "formats/catalog.hpp"
+#include "formats/lot.hpp"
 #include "formats/ui_screen.hpp"
 #include "vm/build_edit.hpp"
 #include "vm/placement.hpp"
@@ -37,6 +38,7 @@ class RenderCommandEncoder;
 
 namespace os2 {
 
+class DesignTool;
 class FontLibrary;
 class LotSimulation;
 class Renderer;
@@ -60,8 +62,24 @@ public:
 
     // The lot's walls, floors or doors changed: the host redraws it.
     std::function<void()> onGeometryChanged;
+    // UI sounds by name (the ui_build_* sounds of the executable: the wall
+    // tool's press, sections and release, floors, coverings, decks, pools,
+    // roofs, doors and stairs; ui_error, ui_undo, ui_redo), and the brush's
+    // loops (ui_build_terrain_lp, ui_build_terrain_paint_lp) started and
+    // stopped by handle.
+    std::function<void(const std::string&)> playSound;
+    std::function<uint32_t(const std::string&)> startLoop;
+    std::function<void(uint32_t)> stopLoop;
+    // The object under a mouse ray (the host's picking), for the Design tool.
+    std::function<vm::ObjectId(simd_float3 eye, simd_float3 dir)> pickObject;
+    // "Alternar Dia/Noite" (0xAA): the host flips the lighting.
+    std::function<void()> onDayNight;
+    // The Design tool (0xAB, app/design_tool.hpp) on an object.
+    void selectDesignTool();
+    bool design(vm::ObjectId id, simd_float2 at);
+    DesignTool& designTool() { return *design_; }
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -120,7 +138,23 @@ public:
     void openCategory(int category, int subsort = 0);
 
 private:
-    enum class Action { None, Category, Subsort, Back, Prev, Next, Item, Hand, Undo, Redo };
+    enum class Action { None, Category, Subsort, Back, Prev, Next, Item, Hand, Undo, Redo, Design, DayNight };
+    // One step of Build mode's history (cTSUserToolUndoManager): a change of
+    // the editor's (walls, floors, ...: its own undo), an object the object
+    // tool bought (a door, window or staircase), or a design choice.
+    struct Entry {
+        enum class Kind { Editor, Object, Design } kind = Kind::Editor;
+        vm::ObjectId id = 0;
+        vm::Placement placement;
+        int cost = 0;
+        std::optional<Lot::Object> cobject; // the cut it makes in the walls
+        std::map<std::string, std::string> before, after;
+    };
+    std::vector<Entry> undo_, redo_;
+    size_t editorDepth_ = 0;
+    // The editor's new changes join the history.
+    void syncHistory();
+    std::unique_ptr<DesignTool> design_;
     struct Target {
         std::array<float, 4> rect;
         Action action = Action::None;
@@ -153,6 +187,17 @@ private:
     void brushTick(bool force);
     // The lot changed: the simulation's heights and the host's drawing follow.
     void redraw();
+    void sound(const std::string& name) {
+        if (playSound && !name.empty())
+            playSound(name);
+    }
+    // A tool's sounds: on the press, and on the release with what it did
+    // (ui_error when refused). `tool` with `erase` (Ctrl) picks them.
+    void pressSound(Tool tool, bool erase);
+    void releaseSound(Tool tool, bool erase, const vm::BuildEditor::Result& r);
+    void stopBrushLoop();
+    // The sound of a build object put down (door/window, stairs, plant, the rest).
+    std::string objectSound(vm::ObjectId id) const;
     // The wall face under a point: the wall's ends and the side (+1 right of a -> b).
     std::optional<std::pair<std::array<int, 4>, int>> faceAt(simd_float2 p) const;
 
@@ -182,6 +227,10 @@ private:
     int brushSize_ = 1;
     uint32_t roofType_ = 0;
     bool stroking_ = false;
+    uint32_t brushLoop_ = 0;
+    size_t dragSections_ = 0;   // sections (or tiles) the drag covers, for the section sounds
+    std::array<int, 5> hoverFace_{}; // the face the covering tool last showed
+    bool lastOk_ = false;            // the held object's last verdict (the "green" sound)
     double lastBrush_ = 0, lastRedraw_ = 0;
     int floorRotation_ = 1;
     std::optional<Item> hovered_;

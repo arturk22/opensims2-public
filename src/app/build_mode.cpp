@@ -1,5 +1,7 @@
 #include "app/build_mode.hpp"
 
+#include "app/design_tool.hpp"
+
 #include "app/lot_vm.hpp"
 #include "app/vm_objects.hpp"
 #include "formats/font.hpp"
@@ -28,6 +30,7 @@ constexpr uint32_t kTypeTxmt = 0x49596978, kTypeTxtr = 0x1C4A276C;
 // Build panel windows (0x49060003, docs/buy-build-mac.md §7).
 constexpr uint32_t kSortArea = 0x000000A8, kCategories = 0xA000, kCatalogArea = 0xAD502BBF, kCollapsed = 0x1000,
                    kExpanded = 0x2000, kPrev = 0x1004, kNext = 0x1005, kInfoText = 0x4000;
+constexpr uint32_t kDesignBtn = 0xAB, kDayNightBtn = 0xAA;
 constexpr uint32_t kCategoriesBtn = 0xA6, kHand = 0xA5, kUndo = 0xA1, kRedo = 0xA2, kCollectionsBtn = 0xA7, kCollectionsWin = 0xA9,
                    kAutoRoof = 0xAC, kBgFunctions = 0xB1, kBgNoSubsort = 0xB2, kBgCollections = 0xB3, kBgTile = 0xB4,
                    kBgEndCap = 0xB5;
@@ -126,6 +129,17 @@ BuildMode::BuildMode(LotSimulation& simulation, VmObjectView& view, Renderer& re
       patterns_(BuildCatalog::load(index)), objects_(Catalog::load(index, true)) {
     objects_.setThumbnailPackage(resDir / "UserData/Thumbnails/ObjectThumbnails.package");
     editor_ = std::make_unique<vm::BuildEditor>(vm_, lot_, &patterns_);
+    design_ = std::make_unique<DesignTool>(vm_, view_, index_, *res_, *fonts_);
+    design_->say = [this](const std::string& m) { say(m); };
+    design_->playSound = [this](const std::string& n) { sound(n); };
+    design_->onAccepted = [this](const DesignTool::Change& c) {
+        syncHistory();
+        Entry e;
+        e.kind = Entry::Kind::Design, e.id = c.id, e.cost = c.cost, e.before = c.before, e.after = c.after;
+        undo_.push_back(std::move(e));
+        redo_.clear();
+        dirty_ = true;
+    };
     auto load = [&](uint32_t id, UiScript& into) {
         if (auto s = res_->script(id)) {
             into = std::move(*s);
@@ -178,7 +192,19 @@ void BuildMode::exit() {
     if (!active_)
         return;
     cancel();
+    stopBrushLoop();
+    design_->cancel();
     editor_->resetHistory([this](vm::ObjectId part) { view_.forget(part); });
+    // Objects whose purchase was undone die with the history (ResetSelf).
+    for (const Entry& e : redo_)
+        if (e.kind == Entry::Kind::Object)
+            if (const vm::Object* o = vm_.object(e.id); o && !o->position.inWorld()) {
+                for (vm::ObjectId part : vm::groupOf(vm_, e.id))
+                    view_.forget(part);
+                vm::deleteGroup(vm_, e.id);
+            }
+    undo_.clear(), redo_.clear();
+    editorDepth_ = 0;
     vm_.globals[vm::global::Paused] = savedPaused_;
     active_ = false;
     tool_ = Tool::None;
@@ -268,7 +294,10 @@ void BuildMode::cancel() {
         held_ = 0;
     }
     last_ = {};
+    lastOk_ = false;
     dragFrom_.reset();
+    if (design_)
+        design_->cancel();
     dirty_ = true;
 }
 
@@ -277,6 +306,15 @@ void BuildMode::holdObjectAt(int x, int y, int direction) {
     if (!held_)
         return;
     last_ = vm::checkPlacement(vm_, held_, {x, y, level_}, direction_);
+    // Turning green: ui_build_door_green / ui_build_stair_green.
+    if (last_.ok && !lastOk_) {
+        const std::string plop = objectSound(held_);
+        if (plop == "ui_build_door_plop")
+            sound("ui_build_door_green");
+        else if (plop == "ui_build_stair_plop")
+            sound("ui_build_stair_green");
+    }
+    lastOk_ = last_.ok;
     // Shown where it would go, whether it fits or not (as Buy mode does).
     for (const auto& part : last_.parts)
         if (vm::Object* o = vm_.object(part.id)) {
@@ -297,14 +335,20 @@ bool BuildMode::placeObjectAt(int x, int y, int direction) {
                 if (std::string g = t->get(size_t(vm::placementerror::textIndex(last_.error))); !g.empty())
                     text = g + " (" + last_.reason + ")";
         say("cannot: " + text);
+        sound("ui_error");
         return false;
     }
     const vm::ObjectId id = held_;
     std::string why;
     if (!vm::buy(vm_, id, last_, object_->price, &why)) {
         say("not bought: " + why);
+        sound("ui_error");
         return false;
     }
+    sound(objectSound(id));
+    syncHistory();
+    Entry entry;
+    entry.kind = Entry::Kind::Object, entry.id = id, entry.cost = object_->price;
     held_ = 0;
     // A door or window cuts its hole in the wall it stands in (the lot
     // model finds the holes from the lot's cObjects, lot_model.cpp).
@@ -320,7 +364,10 @@ bool BuildMode::placeObjectAt(int x, int y, int direction) {
         const float yaw = (90.0f - 45.0f * float(o->data[vm::objdata::Direction])) * float(M_PI) / 180.0f;
         c.rotation = {0, 0, std::sin(yaw / 2), std::cos(yaw / 2)};
         lot_.objects.push_back(c);
+        entry.cobject = c;
     }
+    undo_.push_back(std::move(entry));
+    redo_.clear();
     syncAfterObject();
     say("bought " + object_->name + " as object " + std::to_string(id) + " for " + money(object_->price) + "; funds " +
         money(vm::funds(vm_)));
@@ -349,22 +396,114 @@ void BuildMode::rotate(int steps) {
         holdObjectAt(last_.parts.front().tile.x, last_.parts.front().tile.y, direction_);
 }
 
+void BuildMode::syncHistory() {
+    const size_t depth = editor_->undoDepth();
+    if (depth > editorDepth_) {
+        for (size_t k = editorDepth_; k < depth; ++k)
+            undo_.push_back({});
+        redo_.clear();
+    }
+    editorDepth_ = depth;
+}
+
 bool BuildMode::undo() {
     cancel();
-    const bool ok = editor_->undo();
+    design_->cancel();
+    syncHistory();
+    bool ok = false;
+    if (!undo_.empty()) {
+        Entry e = std::move(undo_.back());
+        undo_.pop_back();
+        switch (e.kind) {
+        case Entry::Kind::Editor:
+            ok = editor_->undo();
+            editorDepth_ = editor_->undoDepth();
+            break;
+        case Entry::Kind::Object: // out of the world, the price back (as Buy mode's)
+            if (vm_.object(e.id)) {
+                e.placement = vm::currentPlacement(vm_, e.id);
+                vm::pickUp(vm_, e.id);
+                vm::addFunds(vm_, e.cost);
+                if (e.cobject)
+                    std::erase_if(lot_.objects, [&](const Lot::Object& c) { return c.instance == e.cobject->instance; });
+                syncAfterObject();
+                ok = true;
+            }
+            break;
+        case Entry::Kind::Design:
+            DesignTool::apply(vm_, view_, e.id, e.before);
+            vm::addFunds(vm_, e.cost);
+            ok = true;
+            break;
+        }
+        if (ok)
+            redo_.push_back(std::move(e));
+    }
     if (ok)
         redraw();
+    sound(ok ? "ui_undo" : "ui_error");
     say(ok ? "undone; funds " + money(vm::funds(vm_)) : "nothing to undo");
     return ok;
 }
 
 bool BuildMode::redo() {
     cancel();
-    const bool ok = editor_->redo();
+    design_->cancel();
+    bool ok = false;
+    if (!redo_.empty()) {
+        Entry e = std::move(redo_.back());
+        redo_.pop_back();
+        switch (e.kind) {
+        case Entry::Kind::Editor:
+            ok = editor_->redo();
+            editorDepth_ = editor_->undoDepth();
+            break;
+        case Entry::Kind::Object:
+            if (vm_.object(e.id) && vm::funds(vm_) >= e.cost) {
+                vm::applyPlacement(vm_, e.id, e.placement);
+                vm::addFunds(vm_, -e.cost);
+                if (e.cobject)
+                    lot_.objects.push_back(*e.cobject);
+                syncAfterObject();
+                ok = true;
+            }
+            break;
+        case Entry::Kind::Design:
+            if (vm::funds(vm_) >= e.cost) {
+                DesignTool::apply(vm_, view_, e.id, e.after);
+                vm::addFunds(vm_, -e.cost);
+                ok = true;
+            }
+            break;
+        }
+        if (ok)
+            undo_.push_back(std::move(e));
+        else
+            redo_.push_back(std::move(e));
+    }
     if (ok)
         redraw();
+    sound(ok ? "ui_redo" : "ui_error");
     say(ok ? "redone; funds " + money(vm::funds(vm_)) : "nothing to redo");
     return ok;
+}
+
+void BuildMode::selectDesignTool() {
+    cancel();
+    design_->cancel();
+    tool_ = Tool::Design;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
+    say("design tool");
+}
+
+bool BuildMode::design(vm::ObjectId id, simd_float2 at) {
+    const vm::Object* o = vm_.object(id);
+    if (!o || o->person || !o->definition)
+        return false;
+    const vm::Object* lead = vm_.object(vm::multiTileGroup(*o));
+    const CatalogEntry* entry = lead ? objects_.byGuid(lead->guid()) : nullptr;
+    dirty_ = true;
+    return design_->open(id, at, entry ? entry->name : o->definition->fileName);
 }
 
 void BuildMode::applied(const vm::BuildEditor::Result& r) {
@@ -375,6 +514,7 @@ void BuildMode::applied(const vm::BuildEditor::Result& r) {
             if (std::string g = t->get(size_t(vm::placementerror::textIndex(r.error))); !g.empty())
                 text = g + " (" + r.message + ")";
     say((r.ok ? "" : "cannot: ") + text + "; funds " + money(vm::funds(vm_)));
+    syncHistory();
     if (r.ok && r.changed)
         redraw();
 }
@@ -452,14 +592,20 @@ bool BuildMode::mouseDown(simd_float3 eye, simd_float3 dir, bool control, bool s
             placeObjectAt(int(std::floor(p->x)), int(std::floor(p->y)), direction_);
         return true;
     }
+    if (tool_ == Tool::Design) {
+        if (design_->isOpen()) // a click off the dialog closes it
+            design_->cancel(), dirty_ = true;
+        else if (const vm::ObjectId id = pickObject ? pickObject(eye, dir) : 0)
+            design(id, mouse_.value_or(simd_make_float2(float(canvasW_) / 2, float(canvasH_) / 2)));
+        return true;
+    }
     if (tool_ == Tool::Wallpaper) {
         if (auto f = faceAt(*p); f && pattern_) {
             const auto& [s, side] = *f;
-            if (shift) {
-                applied(editor_->paintFlood(level_, s[0], s[1], s[2], s[3], side, control ? nullptr : pattern_));
-            } else {
-                applied(editor_->paintWalls(level_, s[0], s[1], s[2], s[3], side, control ? nullptr : pattern_));
-            }
+            const auto r = shift ? editor_->paintFlood(level_, s[0], s[1], s[2], s[3], side, control ? nullptr : pattern_)
+                                 : editor_->paintWalls(level_, s[0], s[1], s[2], s[3], side, control ? nullptr : pattern_);
+            releaseSound(tool_, control, r);
+            applied(r);
         }
         return true;
     }
@@ -467,11 +613,88 @@ bool BuildMode::mouseDown(simd_float3 eye, simd_float3 dir, bool control, bool s
         editor_->beginTerrainStroke(control ? vm::BuildEditor::TerrainOp::Erase : terrainOp_, p->x, p->y);
         stroking_ = true;
         lastBrush_ = 0;
+        pressSound(tool_, control);
         brushTick(true);
         return true;
     }
     dragFrom_ = p;
+    dragSections_ = 0;
+    pressSound(tool_, control);
     return true;
+}
+
+void BuildMode::pressSound(Tool tool, bool erase) {
+    switch (tool) {
+    case Tool::Wall:
+    case Tool::Room:
+    case Tool::Fence: sound(erase ? "ui_build_walldelete_mdown" : "ui_build_wall_mdown"); break;
+    case Tool::Foundation: sound("ui_build_deck_mdown"); break;
+    case Tool::Pool: sound("ui_build_pool_mdown"); break;
+    case Tool::Roof: sound("ui_build_roof_mdown"); break;
+    case Tool::Terrain: {
+        // Levelling has its own press; the brush loops while the mouse is down.
+        const bool paint = paint_ != nullptr || erase;
+        if (!paint && terrainOp_ == vm::BuildEditor::TerrainOp::Flatten)
+            sound("ui_build_terrain_level_mdown");
+        stopBrushLoop();
+        if (startLoop)
+            brushLoop_ = startLoop(paint ? "ui_build_terrain_paint_lp" : "ui_build_terrain_lp");
+        break;
+    }
+    default: break;
+    }
+}
+
+void BuildMode::releaseSound(Tool tool, bool erase, const vm::BuildEditor::Result& r) {
+    if (!r.ok) {
+        sound("ui_error");
+        return;
+    }
+    switch (tool) {
+    case Tool::Wall:
+    case Tool::Room:
+    case Tool::Fence:
+        if (!erase)
+            sound("ui_build_wall_mup");
+        break;
+    case Tool::Foundation: sound("ui_build_deck_mup"); break;
+    case Tool::Pool: sound("ui_build_pool_mup"); break;
+    case Tool::Roof: sound("ui_build_roof_mup"); break;
+    case Tool::Floor:
+        if (r.changed)
+            sound("ui_build_flooring_plop");
+        break;
+    case Tool::Wallpaper:
+        if (r.changed)
+            sound("ui_build_wallcovering_plop");
+        break;
+    case Tool::Terrain:
+        if (!erase && !paint_ && terrainOp_ == vm::BuildEditor::TerrainOp::Flatten)
+            sound("ui_build_terrain_level_mup");
+        break;
+    default: break;
+    }
+}
+
+void BuildMode::stopBrushLoop() {
+    if (brushLoop_ && stopLoop)
+        stopLoop(brushLoop_);
+    brushLoop_ = 0;
+}
+
+std::string BuildMode::objectSound(vm::ObjectId id) const {
+    const vm::Object* o = vm_.object(id);
+    if (!o || !o->definition)
+        return "ui_object_plop";
+    const auto& d = *o->definition;
+    const int type = d.field(objd::ObjectType);
+    if (type == 8 || type == 9)
+        return "ui_build_door_plop";
+    if (d.fileName.rfind("Stairs - ", 0) == 0)
+        return "ui_build_stair_plop";
+    if ((d.field(objd::FunctionSort) & 0x20) && (d.field(objd::FunctionSubSort) & 8))
+        return "ui_build_garden_plop";
+    return "ui_object_plop";
 }
 
 // The brush while the mouse is down, every 100 ms (ApplyTerrainSculptBrush);
@@ -507,7 +730,10 @@ void BuildMode::mouseDrag(simd_float3 eye, simd_float3 dir) {
 bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
     if (active_ && stroking_) {
         stroking_ = false;
-        applied(editor_->endTerrainStroke());
+        stopBrushLoop();
+        const auto r = editor_->endTerrainStroke();
+        releaseSound(Tool::Terrain, control_, r);
+        applied(r);
         return true;
     }
     if (!active_ || !dragFrom_)
@@ -516,11 +742,15 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
         pointer_ = p;
     const simd_float2 a = *dragFrom_, b = pointer_.value_or(a);
     dragFrom_.reset();
+    auto done = [&](const vm::BuildEditor::Result& r) {
+        releaseSound(tool_, control_, r);
+        applied(r);
+    };
     if (tool_ == Tool::Fence && fence_) {
         const auto r = snapRun(a, b);
         if (r[0] == r[2] && r[1] == r[3])
             return true;
-        applied(control_ ? editor_->deleteFences(level_, r[0], r[1], r[2], r[3])
+        done(control_ ? editor_->deleteFences(level_, r[0], r[1], r[2], r[3])
                          : editor_->drawFences(level_, r[0], r[1], r[2], r[3], *fence_));
     } else if (tool_ == Tool::Wall || tool_ == Tool::Room) {
         if (tool_ == Tool::Room || shift_) {
@@ -529,31 +759,31 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
             if (control_)
                 for (const auto& s : std::array<std::array<int, 4>, 4>{
                          {{x0, y0, x1, y0}, {x1, y0, x1, y1}, {x1, y1, x0, y1}, {x0, y1, x0, y0}}})
-                    applied(editor_->deleteWalls(level_, s[0], s[1], s[2], s[3]));
+                    done(editor_->deleteWalls(level_, s[0], s[1], s[2], s[3]));
             else
-                applied(editor_->drawRoom(level_, x0, y0, x1, y1));
+                done(editor_->drawRoom(level_, x0, y0, x1, y1));
         } else {
             const auto r = snapRun(a, b);
             if (r[0] == r[2] && r[1] == r[3])
                 return true;
-            applied(control_ ? editor_->deleteWalls(level_, r[0], r[1], r[2], r[3])
+            done(control_ ? editor_->deleteWalls(level_, r[0], r[1], r[2], r[3])
                              : editor_->drawWalls(level_, r[0], r[1], r[2], r[3]));
         }
     } else if (tool_ == Tool::Roof) {
         const int x0 = int(std::lround(a.x)), y0 = int(std::lround(a.y)), x1 = int(std::lround(b.x)), y1 = int(std::lround(b.y));
-        applied(control_ ? editor_->deleteRoof(level_, b.x, b.y) : editor_->drawRoof(level_, x0, y0, x1, y1, roofType_));
+        done(control_ ? editor_->deleteRoof(level_, b.x, b.y) : editor_->drawRoof(level_, x0, y0, x1, y1, roofType_));
     } else if (tool_ == Tool::Pool) {
         const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
-        applied(control_ ? editor_->deletePool(x1, y1) : editor_->drawPool(x0, y0, x1, y1));
+        done(control_ ? editor_->deletePool(x1, y1) : editor_->drawPool(x0, y0, x1, y1));
     } else if (tool_ == Tool::Foundation) {
         const int x0 = int(std::floor(a.x)), y0 = int(std::floor(a.y)), x1 = int(std::floor(b.x)), y1 = int(std::floor(b.y));
-        applied(control_ ? editor_->deleteFoundation(x0, y0, x1, y1) : editor_->drawFoundation(x0, y0, x1, y1));
+        done(control_ ? editor_->deleteFoundation(x0, y0, x1, y1) : editor_->drawFoundation(x0, y0, x1, y1));
     } else if (tool_ == Tool::Floor) {
         // A click without a drag floors the quarters under the mouse
         // (FUN_003000cc: the half on its side of a diagonal wall).
         const bool click = int(std::floor(a.x)) == int(std::floor(b.x)) && int(std::floor(a.y)) == int(std::floor(b.y));
         const int quarters = click ? editor_->clickQuarters(level_, b.x, b.y) : 0xF;
-        applied(editor_->paintFloor(level_, int(std::floor(a.x)), int(std::floor(a.y)), int(std::floor(b.x)),
+        done(editor_->paintFloor(level_, int(std::floor(a.x)), int(std::floor(a.y)), int(std::floor(b.x)),
                                     int(std::floor(b.y)), control_ ? nullptr : pattern_, quarters, floorRotation_));
     }
     return true;
@@ -587,6 +817,15 @@ void BuildMode::update() {
                     runs = {snapRun(a, p)};
                 }
             }
+            // A section more under the drag: its sound (ui_build_wall_section,
+            // or walldelete_ with Ctrl; fences and rooms the same, inferred).
+            size_t sections = 0;
+            for (const auto& run : runs)
+                sections += vm::wallSections(run[0], run[1], run[2], run[3]).size();
+            if (dragFrom_ && tool_ != Tool::Roof && sections > dragSections_)
+                sound(control_ ? "ui_build_walldelete_section" : "ui_build_wall_section");
+            if (dragFrom_)
+                dragSections_ = sections;
             for (const auto& run : runs)
                 for (const auto& s : vm::wallSections(run[0], run[1], run[2], run[3])) {
                     const bool ok = control_ || editor_->wallBlocked(level_, s[0], s[1], s[2], s[3], nullptr,
@@ -602,6 +841,12 @@ void BuildMode::update() {
             const simd_float2 a = dragFrom_.value_or(p);
             const int x0 = int(std::floor(std::min(a.x, p.x))), x1 = int(std::floor(std::max(a.x, p.x)));
             const int y0 = int(std::floor(std::min(a.y, p.y))), y1 = int(std::floor(std::max(a.y, p.y)));
+            // A foundation growing under the drag: ui_build_deck_section.
+            const size_t tiles = size_t(x1 - x0 + 1) * size_t(y1 - y0 + 1);
+            if (dragFrom_ && tool_ == Tool::Foundation && tiles > dragSections_)
+                sound("ui_build_deck_section");
+            if (dragFrom_)
+                dragSections_ = tiles;
             for (int x = x0; x <= x1 && used < 400; ++x)
                 for (int y = y0; y <= y1 && used < 400; ++y)
                     put(!control_, placeQuad(float(x) + 0.04f, float(y) + 0.04f, z(float(x) + 0.5f, float(y) + 0.5f), 0.92f,
@@ -609,6 +854,12 @@ void BuildMode::update() {
         } else if (tool_ == Tool::Wallpaper) {
             if (auto f = faceAt(p)) {
                 const auto& [s, side] = *f;
+                // A new face under the mouse shows the covering on it
+                // (cTSUserToolWallpaper::Update): ui_build_wallcovering_appear.
+                const std::array<int, 5> face{s[0], s[1], s[2], s[3], side};
+                if (face != hoverFace_ && pattern_)
+                    sound("ui_build_wallcovering_appear");
+                hoverFace_ = face;
                 const float ang = std::atan2(float(s[3] - s[1]), float(s[2] - s[0]));
                 const float len = std::hypot(float(s[2] - s[0]), float(s[3] - s[1]));
                 // A strip on the face's side (right of a -> b is -90°).
@@ -997,10 +1248,12 @@ UiScreen BuildMode::screen(int width, int height) {
                     hk.buttonState[&b] = 2;
     if (const UiElement* e = root.child(kHand))
         hk.buttonState[e] = tool_ == Tool::None ? 2 : 1;
+    if (const UiElement* e = root.child(kDesignBtn))
+        hk.buttonState[e] = tool_ == Tool::Design ? 2 : 1;
     if (const UiElement* e = root.child(kUndo))
-        hk.buttonState[e] = editor_->canUndo() ? 1 : 0;
+        hk.buttonState[e] = !undo_.empty() || editor_->undoDepth() > editorDepth_ ? 1 : 0;
     if (const UiElement* e = root.child(kRedo))
-        hk.buttonState[e] = editor_->canRedo() ? 1 : 0;
+        hk.buttonState[e] = !redo_.empty() ? 1 : 0;
     layoutUiElement(root, x0 - float(root.area()[0]), y0 - float(root.area()[1]), *res_, *fonts_, out, hk);
 
     // The grid: thumbnails of the current page with their prices.
@@ -1055,6 +1308,8 @@ UiScreen BuildMode::screen(int width, int height) {
         target(collapsed->child(kNext), Action::Next, 0);
     }
     target(root.child(kHand), Action::Hand, 0);
+    target(root.child(kDesignBtn), Action::Design, 0);
+    target(root.child(kDayNightBtn), Action::DayNight, 0);
     target(root.child(kCategoriesBtn), Action::Back, 0);
     target(root.child(kUndo), Action::Undo, 0);
     target(root.child(kRedo), Action::Redo, 0);
@@ -1129,6 +1384,7 @@ UiScreen BuildMode::screen(int width, int height) {
         out.quads.push_back(q);
         text(shown, q.x0, q.y0 + 3, q.x1 - q.x0, 18, "center");
     }
+    design_->layout(out, width, height); // the object design dialog over everything
     return out;
 }
 
@@ -1141,6 +1397,10 @@ bool BuildMode::press(simd_float2 p) {
     if (!ok_ || !active_)
         return false;
     layoutIfNeeded();
+    if (design_->press(p)) {
+        dirty_ = true;
+        return true;
+    }
     for (const Target& t : std::vector<Target>(targets_)) {
         if (!inside(t.rect, p))
             continue;
@@ -1179,7 +1439,12 @@ bool BuildMode::press(simd_float2 p) {
             }
             break;
         }
-        case Action::Hand: cancel(), tool_ = Tool::None; break;
+        case Action::Hand: cancel(), design_->cancel(), tool_ = Tool::None; break;
+        case Action::Design: selectDesignTool(); break;
+        case Action::DayNight:
+            if (onDayNight)
+                onDayNight();
+            break;
         case Action::Undo: undo(); break;
         case Action::Redo: redo(); break;
         case Action::None: break;
@@ -1338,6 +1603,9 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             r = ed.terrainStroke(op, std::stof(f[1]), std::stof(f[2]), f.size() > 3 ? n(3) : 10, f.size() > 4 ? n(4) : 1,
                                  op == Op::Lower ? patterns_.lowerProfile() : patterns_.raiseProfile(),
                                  paint ? paint->texture : "");
+            pressSound(Tool::Terrain, op == Op::Erase);
+            stopBrushLoop();
+            releaseSound(Tool::Terrain, op == Op::Erase, *r);
         } else if (a == "--floor-rotation")
             floorRotation_ = n(0);
         else if (a == "--floor" && f.size() >= 5) {
@@ -1375,12 +1643,48 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
             selectObject(*e);
             if (at != std::string::npos)
                 placeObjectAt(x, y, dir);
+        } else if (a == "--build-design") { // <id>[,row:option...][,accept|cancel]
+            selectDesignTool();
+            if (design(vm::ObjectId(n(0)), simd_make_float2(560, 420)))
+                for (size_t k = 1; k < f.size(); ++k) {
+                    int row = 0, option = 0;
+                    if (f[k] == "accept")
+                        design_->accept();
+                    else if (f[k] == "cancel")
+                        design_->cancel();
+                    else if (std::sscanf(f[k].c_str(), "%d:%d", &row, &option) == 2)
+                        design_->choose(row, size_t(option));
+                }
+        } else if (a == "--build-day-night") {
+            if (onDayNight)
+                onDayNight();
         } else if (a == "--build-undo") {
             undo();
         } else if (a == "--build-redo") {
             redo();
         }
+        syncHistory();
         if (r) {
+            // The step's sounds, as the mouse would make them.
+            static const std::map<std::string, std::pair<Tool, bool>> kStepTools{
+                {"--wall", {Tool::Wall, false}},        {"--room", {Tool::Room, false}},
+                {"--delete-wall", {Tool::Wall, true}},  {"--fence", {Tool::Fence, false}},
+                {"--delete-fence", {Tool::Fence, true}}, {"--roof", {Tool::Roof, false}},
+                {"--delete-roof", {Tool::Roof, true}},  {"--pool", {Tool::Pool, false}},
+                {"--delete-pool", {Tool::Pool, true}},  {"--foundation", {Tool::Foundation, false}},
+                {"--delete-foundation", {Tool::Foundation, true}}, {"--floor", {Tool::Floor, false}},
+                {"--floor-click", {Tool::Floor, false}}, {"--wallpaper", {Tool::Wallpaper, false}},
+                {"--wallpaper-flood", {Tool::Wallpaper, false}}, {"--wallpaper-room", {Tool::Wallpaper, false}}};
+            if (auto t = kStepTools.find(a); t != kStepTools.end()) {
+                const auto [tool, erase] = t->second;
+                pressSound(tool, erase);
+                if (r->ok && (tool == Tool::Wall || tool == Tool::Room || tool == Tool::Fence))
+                    for (int k = 0; k < std::min(r->changed, 8); ++k)
+                        sound(erase ? "ui_build_walldelete_section" : "ui_build_wall_section");
+                if (r->ok && tool == Tool::Foundation && !erase)
+                    sound("ui_build_deck_section");
+                releaseSound(tool, erase, *r);
+            }
             std::printf("opensims2: build: %s %s: %s%s (funds §%d)\n", a.c_str(), v.c_str(), r->ok ? "" : "FAILED: ",
                         r->message.c_str(), vm::funds(vm_));
             if (r->ok && r->changed)

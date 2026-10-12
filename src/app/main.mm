@@ -96,6 +96,7 @@
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
 #include "app/buy_mode.hpp"
+#include "app/design_tool.hpp"
 #include "app/build_mode.hpp"
 #include "app/data_location.hpp"
 #include "app/game_flow.hpp"
@@ -173,6 +174,8 @@ bool liveUiRequested();
 // Buy mode (app/buy_mode.hpp): the puck's Buy button, or --mode buy.
 std::unique_ptr<os2::BuyMode> gBuy;
 void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index); // below setupLiveUi
+void toggleDayNight();  // Buy/Build's day/night button, below setupBuyMode
+void releaseDayNight(); // leaving Buy/Build mode
 // Build mode (app/build_mode.hpp): the puck's Build button, or --mode build.
 // It changes gLotShape (the lot as drawn); rebuildLotModel redraws it.
 std::unique_ptr<os2::BuildMode> gBuild;
@@ -1148,10 +1151,12 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
                 gLive->setMode(1);
             } else if (mode == 0) {
                 gBuy->exit();
+                releaseDayNight();
                 gLive->setMode(0);
             }
         };
     gBuy->pickObject = [](simd_float3 eye, simd_float3 dir) { return gPie ? gPie->pick(eye, dir) : os2::vm::ObjectId(0); };
+    gBuy->onDayNight = [] { toggleDayNight(); };
     if (gAudio)
         gBuy->playSound = [](const std::string& name) {
             os2::SoundSystem::PlayOptions o;
@@ -1419,6 +1424,22 @@ void rebuildLotModel(os2::Renderer& renderer, os2::ResourceIndex& index) {
     }
 }
 
+// "Alternar Dia/Noite" of Buy and Build mode (0xCC607035 / 0xAA): the lot
+// lit as at night or by day, whatever the clock says, until the mode is left.
+void toggleDayNight() {
+    if (!gLighting)
+        return;
+    const std::string next = gLighting->stateName() == "night" ? "day" : "night";
+    gLighting->forceState(next); // the next update() blends to it
+    std::printf("opensims2: lighting: %s (day/night toggle)\n", next.c_str());
+}
+
+// Leaving Buy or Build mode: the clock's lighting again (or --lighting's).
+void releaseDayNight() {
+    if (gLighting)
+        gLighting->forceState(argument(@"--lighting").value_or(""));
+}
+
 // Build mode over the lot's VM: the puck's Build button (mode 2) or --mode
 // build; headless steps in BuildMode::runSteps (build_mode.cpp).
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
@@ -1427,6 +1448,22 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
     gBuild = std::make_unique<os2::BuildMode>(*gSimulation, *gObjectView, renderer, index, gameDir() / "TSData/Res",
                                               *gLotShape);
     gBuild->onGeometryChanged = [&renderer, &index]() { rebuildLotModel(renderer, index); };
+    gBuild->pickObject = [](simd_float3 eye, simd_float3 dir) { return gPie ? gPie->pick(eye, dir) : os2::vm::ObjectId(0); };
+    gBuild->onDayNight = [] { toggleDayNight(); };
+    if (gAudio) { // the ui_build_* sounds and the terrain brush's loops
+        gBuild->playSound = [](const std::string& name) {
+            os2::SoundSystem::PlayOptions o;
+            o.group = os2::SoundGroup::Ui;
+            gAudio->sound().play(name, o);
+        };
+        gBuild->startLoop = [](const std::string& name) {
+            os2::SoundSystem::PlayOptions o;
+            o.group = os2::SoundGroup::Ui;
+            o.loop = true;
+            return uint32_t(gAudio->sound().play(name, o));
+        };
+        gBuild->stopLoop = [](uint32_t h) { gAudio->sound().stop(os2::SoundSystem::Handle(h)); };
+    }
     if (gLive) {
         auto previous = gLive->onMode;
         gLive->onMode = [previous](int mode) {
@@ -1483,6 +1520,31 @@ void runBuySteps() {
             gBuy->grab(os2::vm::ObjectId(std::stoi(v)));
         } else if (a == "--eyedrop") {
             gBuy->eyedrop(os2::vm::ObjectId(std::stoi(v)));
+        } else if (a == "--design") {
+            // --design <id>[,row:option...][,accept|cancel]: the Design tool
+            // on an object (the dialog by the middle of the screen), swatches
+            // picked, then Accept or Cancel.
+            std::vector<std::string> f;
+            for (size_t k = 0, e; k <= v.size(); k = e + 1) {
+                e = v.find(',', k);
+                if (e == std::string::npos)
+                    e = v.size();
+                f.push_back(v.substr(k, e - k));
+            }
+            gBuy->setTool(os2::BuyMode::Tool::Design);
+            if (gBuy->design(os2::vm::ObjectId(std::stoi(f[0])), simd_make_float2(560, 420)))
+                for (size_t k = 1; k < f.size(); ++k) {
+                    int row = 0, option = 0;
+                    if (f[k] == "accept")
+                        gBuy->designTool().accept();
+                    else if (f[k] == "cancel")
+                        gBuy->designTool().cancel();
+                    else if (std::sscanf(f[k].c_str(), "%d:%d", &row, &option) == 2)
+                        gBuy->designTool().choose(row, size_t(option));
+                }
+        } else if (a == "--day-night") {
+            if (gBuy->onDayNight)
+                gBuy->onDayNight();
         } else if (a == "--sell") {
             gBuy->deleteHeld();
         } else if (a == "--undo") {
@@ -3150,7 +3212,7 @@ void unloadScene() {
     simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
     const simd_float3 eye = _camera->eye();
     if (gBuy && gBuy->active()) { // the object tool, not the pie menu
-        gBuy->click(eye, simd_normalize(q.xyz / q.w - eye));
+        gBuy->click(eye, simd_normalize(q.xyz / q.w - eye), p);
         return;
     }
     if (gBuild && gBuild->active()) { // Build mode's tools
@@ -3998,7 +4060,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / cw - 1, 1 - 2 * p.y / ch, 0.5f, 1));
                 const simd_float3 eye = view.camera->eye();
                 if (gBuy && gBuy->active()) { // the object tools, not the pie menu
-                    gBuy->click(eye, simd_normalize(q.xyz / q.w - eye));
+                    gBuy->click(eye, simd_normalize(q.xyz / q.w - eye), p);
                     continue;
                 }
                 updateLotView(*_viewDelegate.renderer, true); // the Sims' pick boxes where they stand

@@ -1,6 +1,7 @@
 // Build mode on a synthetic lot: walls into the graphs, rooms from the
 // walls, floors, wall coverings, prices, undo and the VM's world.
 #include "formats/build_catalog.hpp"
+#include "formats/design_catalog.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_edit.hpp"
 #include "vm/build_edit.hpp"
@@ -380,7 +381,29 @@ static void testPool() {
           "undo takes the level away again");
 }
 
+// The Design tool's choices (MMAT property sets): the model's first two
+// subsets with choices, clean materials only, the default first.
+static void testDesignCatalog() {
+    DesignCatalog c;
+    auto mmat = [&](const char* subset, const char* name, int def, int state) {
+        c.add({{"type", "modelMaterial"}, {"modelName", "sofaTest_cres"}, {"subsetName", subset}, {"name", name},
+               {"defaultMaterial", std::to_string(def)}, {"materialStateFlags", std::to_string(state)}, {"family", name}});
+    };
+    mmat("wood", "sofatest_wood_dark", 0, 0);
+    mmat("cushion", "sofatest_cushion_red", 1, 0);
+    mmat("cushion", "sofatest_cushion_blue", 0, 0);
+    mmat("cushion", "sofatest_cushion_blue_dirty", 0, 2);
+    mmat("legs", "sofatest_legs_steel", 1, 0);
+    const auto subsets = c.subsets("SofaTest", {"groundshadow", "Cushion", "wood", "legs"});
+    check(subsets.size() == 2 && subsets[0] == "cushion" && subsets[1] == "wood", "the first two subsets with choices, in the model's order");
+    const auto opts = c.options("sofatest_cres", "cushion");
+    check(opts.size() == 2 && opts[0]->material == "sofatest_cushion_red" && opts[1]->material == "sofatest_cushion_blue",
+          "clean choices, the default first");
+    check(c.subsets("other", {}).empty(), "a model without choices is not designable");
+}
+
 int main() {
+    testDesignCatalog();
     testPool();
     testRoof();
     testTerrain();

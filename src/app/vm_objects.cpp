@@ -109,6 +109,29 @@ void VmObjectView::setActor(int16_t id, SimActor* actor) {
         renderer_.setInstanceTransform(it->second.instance, hiddenMatrix());
 }
 
+void VmObjectView::setDesign(int16_t id, const std::map<std::string, std::string>& design) {
+    auto it = drawn_.find(id);
+    if (it == drawn_.end())
+        return;
+    Drawn& d = it->second;
+    d.design = design;
+    if (d.actor) {
+        if (onActorMaterials)
+            onActorMaterials(id);
+        return;
+    }
+    if (d.instance < 0)
+        return;
+    const int m = model(d.cres, materialsOf(id));
+    if (m >= 0)
+        renderer_.setInstanceModel(d.instance, m);
+}
+
+std::map<std::string, std::string> VmObjectView::designOf(int16_t id) const {
+    auto it = drawn_.find(id);
+    return it == drawn_.end() ? std::map<std::string, std::string>{} : it->second.design;
+}
+
 std::string VmObjectView::cresOf(int16_t id) const {
     auto it = drawn_.find(id);
     return it == drawn_.end() ? std::string() : it->second.cres;

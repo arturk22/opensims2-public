@@ -168,6 +168,7 @@ public:
     bool undo();
     bool redo();
     bool canUndo() const { return !undo_.empty(); }
+    size_t undoDepth() const { return undo_.size(); }
     bool canRedo() const { return !redo_.empty(); }
     // Leaving Build mode: the history goes (cTSUserToolUndoManager reset),
     // and what was sold with the walls dies (`forget` is told each part

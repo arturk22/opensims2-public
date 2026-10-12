@@ -20,6 +20,7 @@
 #include <array>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -39,6 +40,8 @@ class ResourceIndex;
 class UiLayer;
 class UiResources;
 class VmObjectView;
+
+class DesignTool;
 
 class BuyMode {
 public:
@@ -69,21 +72,28 @@ public:
     // The object under a mouse ray (the host's picking, as the pie menu does
     // it); without it the tool falls back to the tile under the mouse.
     std::function<vm::ObjectId(simd_float3 eye, simd_float3 dir)> pickObject;
-    // The left column's tools: the hand (move/sell), the eyedropper (picks
-    // the catalog item of the object clicked) and the tag (sells the object
-    // clicked at once, for what a pickup and Delete would give).
-    enum class Tool { Hand, Eyedropper, Sell };
+    // The left column's tools: the hand (move; Delete sells what it holds),
+    // the eyedropper (picks the catalog item of the object clicked) and the
+    // Design tool (0xCC607030 "Ferramenta Design": the object design dialog,
+    // app/design_tool.hpp).
+    enum class Tool { Hand, Eyedropper, Design };
     Tool tool() const { return tool_; }
     void setTool(Tool t);
     // The eyedropper on a placed object: holds a new one of its catalog item.
     bool eyedrop(vm::ObjectId id);
+    // The Design tool on an object (the dialog by `at`, a canvas point).
+    bool design(vm::ObjectId id, simd_float2 at);
+    DesignTool& designTool() { return *design_; }
+    // "Alternar Dia/Noite" (0xCC607035): the host flips the lighting.
+    std::function<void()> onDayNight;
 
     // --- The lot -------------------------------------------------------------
     // The mouse ray over the lot (world space): what is held follows it.
     void pointAt(simd_float3 eye, simd_float3 dir);
     // A click on the lot: places what is held (bought, or moved), or picks
     // up the object under the mouse with the hand. Returns whether it did.
-    bool click(simd_float3 eye, simd_float3 dir);
+    // `at` is the canvas point (where the design dialog opens).
+    bool click(simd_float3 eye, simd_float3 dir, std::optional<simd_float2> at = std::nullopt);
     // Headless: holds at a tile / places there.
     void holdAt(int x, int y, int direction);
     bool placeAt(int x, int y, int direction);
@@ -114,17 +124,18 @@ private:
     enum class Sort { Function, Room };
     Tool tool_ = Tool::Hand;
     vm::ObjectId objectAt(simd_float3 eye, simd_float3 dir, const std::optional<vm::TilePos>& tile) const;
-    enum class Action { None, Tab, Function, SubSort, Room, RoomFunction, Back, Prev, Next, Expand, Item, Tool, Undo, Redo };
+    enum class Action { None, Tab, Function, SubSort, Room, RoomFunction, Back, Prev, Next, Expand, Item, Tool, Undo, Redo, DayNight };
     struct Target {
         std::array<float, 4> rect;
         Action action = Action::None;
         int value = 0;
     };
     struct Op {
-        enum class Kind { Created, Deleted, Moved } kind = Kind::Created;
+        enum class Kind { Created, Deleted, Moved, Design } kind = Kind::Created;
         vm::ObjectId id = 0;
         vm::Placement placement; // Deleted/Moved: where it was; Created: where it went
         int cost = 0;
+        std::map<std::string, std::string> before, after; // Design: the design choices
     };
     std::vector<const CatalogEntry*> items() const;
     std::optional<vm::TilePos> tileUnder(simd_float3 eye, simd_float3 dir) const;
@@ -147,6 +158,7 @@ private:
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;
     Catalog catalog_;
+    std::unique_ptr<DesignTool> design_;
     UiScript panel_, puck_, description_;
     bool ok_ = false, active_ = false;
     int16_t savedPaused_ = 0;
