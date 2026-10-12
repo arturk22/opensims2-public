@@ -167,7 +167,7 @@ o OBJD dele tem o campo 42 = 1.
   `LotTemplate%dx%d`/`CommunityLotTemplate`/`BeachLotTemplate`/
   `BeachCommunityLotTemplate`/`DormTemplate`/`FraternityTemplate`): **os
   globais entram em toda carga**, de lote salvo ou de modelo. O valor do
-  campo 42 é 1 em todos, então todos os 150 OBJDs com o campo ligado e tipo
+  campo 42 é 1 em todos, então todos os 125 OBJDs com o campo ligado e tipo
   7 entram (a máscara 1 é a única usada no base).
 - Os OBJDs com campo 42 = 1 (`objects.package`, tipo 7 salvo indicação):
   todos os "Controller - …" que nenhuma árvore cria (Game Scripting, Light,
@@ -190,11 +190,15 @@ o OBJD dele tem o campo 42 = 1.
   objetos do lote vazio (portais, lixeira, caixa de correio); a tabela
   `objt` deles lista os tipos, inclusive a cortina, mas sem instância.
 - No opensims2 isso **não existe ainda**: o lote só tem os controladores
-  que foram gravados nele (em `N001_Lot11` faltam Game Scripting, Light,
-  Weather?, a cortina, ...). Fazer: ao carregar um lote (salvo ou modelo),
-  depois de ler os objetos, criar fora do mundo uma instância de cada OBJD
-  tipo 7 com campo 42 ≠ 0 que ainda não tem nenhuma, matar as duplicatas e,
-  num lote de CAS, matar as que têm o campo 26.
+  que foram gravados nele. Os lotes salvos confirmam o mecanismo: em
+  `N001_Lot11` estão 119 dos 125 globais tipo 7; faltam só Tutorial - Main,
+  Tutorial - Death Checker, Game Scripting, CLP - Community Lot - Populator,
+  PlumbBob e a cortina (inferido: estes se apagam depois de rodar, ou o
+  jogo não os grava; a cortina e o Game Scripting reaparecem na carga
+  seguinte pelo `UpdateSimObjects`). Fazer: ao carregar um lote (salvo ou
+  modelo), depois de ler os objetos, criar fora do mundo uma instância de
+  cada OBJD tipo 7 com campo 42 ≠ 0 que ainda não tem nenhuma, matar as
+  duplicatas e, num lote de CAS, matar as que têm o campo 26.
 
 O que a cortina faz (grupo `0x7FE50A0E`): Init põe o atributo 0 = 1; Main
 espera (`0x0118` = Sleep) e reage ao "reset lot" (`1003` põe o atributo
