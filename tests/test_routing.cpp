@@ -641,9 +641,16 @@ static void testBlockedBySim() {
         vm.run(t);
         waited += walker.route && walker.route->waiting && walker.route->blocker == other.id;
     }
+    // DoBlockedGoalStillAvailable: it cannot be asked (one goal), so the
+    // walker steps aside itself once (TryGetSelfOutOfWay), is blocked again
+    // and gives up with "blocked by person" (the binary waits only after a
+    // request the other took).
+    if (std::getenv("DEBUG_BLOCK"))
+        std::fprintf(stderr, "corridor: status %d result %d rr %d waited %d ticks %d x %.2f\n", int(t.status), t.result,
+                     walker.person ? walker.person->data[62] : -1, waited, ticks, walker.position.x);
     check(t.status == Thread::Status::Finished && !t.result && walker.person && walker.person->data[62] == 14 &&
-              waited > 300 && walker.position.x < 6,
-          "blocked by a Sim in a corridor: waits, then fails with 14");
+              ticks < 300 && walker.position.x < 6,
+          "blocked by a Sim in a corridor: steps aside once, then fails with 14");
     // The Sim steps aside (out of the corridor): the way is free.
     other.position = {-1, -1, 1};
     t = vm.start(walker.id, 0x1000, {}, lamp.id);
@@ -888,6 +895,54 @@ static void testMoveOutOfWay() {
     }
 }
 
+// Two Sims walking at each other down a corridor with a bay block each
+// other: the binary's DoBlockedGoalStillAvailable sees the blocker blocked
+// by the walker and the walker steps aside itself (TryGetSelfOutOfWay), so
+// both get through at once instead of asking and waiting.
+static void testMutualBlock() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(14, 5);
+    for (int x = 0; x < 14; ++x) {
+        vm.world->addWall(1, x, 1, x + 1, 1);
+        if (x < 6 || x > 8)
+            vm.world->addWall(1, x, 2, x + 1, 2);
+    }
+    vm.world->addWall(1, 6, 2, 6, 4); // a bay three tiles wide, two deep
+    vm.world->addWall(1, 9, 2, 9, 4);
+    vm.world->addWall(1, 6, 4, 9, 4);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& east = vm.instantiate(kGroup, 0x80);
+    east.position = {13.5f, 1.5f, 1};
+    Object& west = vm.instantiate(kGroup, 0x80);
+    west.position = {0.5f, 1.5f, 1};
+    Object& a = vm.instantiate(kGroup, 0x81);
+    a.position = {2.5f, 1.5f, 1};
+    Object& b = vm.instantiate(kGroup, 0x81);
+    b.position = {11.5f, 1.5f, 1};
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+    code.add(kGroup, 0x1001, tree({instr(0x1B, T, F, {0, 0, 4, 0xFE, 0, 0, 0})}));
+    // The pause (DoPause): "CT - Route Blocked Animation", here a 30-tick wait.
+    Behavior pauseTree = tree({expr(0x09, 2, Assign, Lit, 30, go(1), E), instr(0x00, T, E, {2, 0})}, 4);
+    pauseTree.fileName = "CT - Route Blocked Animation";
+    code.add(kGlobalGroup, 0x1BB, pauseTree);
+    vm.threads.insert_or_assign(a.id, vm.start(a.id, 0x1000, {}, east.id));
+    vm.threads.insert_or_assign(b.id, vm.start(b.id, 0x1001, {}, west.id));
+    int ticks = 0;
+    for (; ticks < 1500; ++ticks) {
+        vm.tick();
+        if (vm.threads.at(a.id).status != Thread::Status::Running && vm.threads.at(b.id).status != Thread::Status::Running)
+            break;
+    }
+    if (std::getenv("DEBUG_BLOCK"))
+        std::fprintf(stderr, "mutual: %d ticks, a %d/%d at %.2f,%.2f b %d/%d at %.2f,%.2f\n", ticks,
+                     int(vm.threads.at(a.id).status), vm.threads.at(a.id).result, a.position.x, a.position.y,
+                     int(vm.threads.at(b.id).status), vm.threads.at(b.id).result, b.position.x, b.position.y);
+    check(vm.threads.at(a.id).result && vm.threads.at(b.id).result && a.position.x > 11 && b.position.x < 3 && ticks < 335,
+          "two Sims blocking each other in a corridor: one steps aside, both get through");
+}
+
 // Go Here: a click on the ground makes the destination there, moved 0.45
 // tile off the wall of its tile and out of what blocks; it is kept while
 // the pie menu is open and while its interaction is queued, and goes once
@@ -1022,6 +1077,7 @@ int main() {
     testPathPlanner();
     testRouteResult();
     testBlockedBySim();
+    testMutualBlock();
     testDoorWait();
     testDoorPortalTree();
     testPreRouteTree();

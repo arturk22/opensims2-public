@@ -521,6 +521,12 @@ struct Object {
         bool waiting = false;
         bool failureTrees = true; // "CT - Route Failure Feedback" when it fails
         ObjectId blocker = 0;     // the Sim in the way
+        // DoBlockedGoalStillAvailable (routing.cpp): the walker steps aside
+        // itself on a way of its own (TryGetSelfOutOfWay, once a route), then
+        // plans its route again; a pause ("CT - Route Blocked Animation")
+        // or "CT - Route Blocked" tree runs; the pauses so far.
+        bool aside = false, asideTried = false, pausing = false, blockedTree = false;
+        int pauses = 0;
         bool inPortal = false;    // a portal tree runs (routing.cpp)
         // The goal check / along route trees (routing.cpp): which one runs
         // (1 goal check, 2 along route), the tick of the last check and

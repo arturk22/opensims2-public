@@ -562,7 +562,6 @@ void leaveSlot(Object& o) {
 // each time (re-routing when it gets 1.25 tiles away); a walking one is
 // routed around; after 5 tries the route fails with "blocked by person".
 constexpr int kAskToMoveTries = 3;
-constexpr int kMaxBlockedTries = 5;
 constexpr int kWaitForPersonTicks = 126, kWaitForPersonLongTicks = 420;
 constexpr float kBlockerMovedTries = 0.25f;
 constexpr float kPersonMovedAway = 1.25f;
@@ -1431,47 +1430,140 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         r.waiting = true;
         return Step::Call;
     }
-    if (const ObjectId b = simAhead(vm, me, r)) {
+    if (r.blockedTree) { // back from "CT - Route Blocked"
+        r.blockedTree = false;
+        why = RouteFail::BlockedByPerson;
+        return Step::Failed;
+    }
+    if (std::exchange(r.pausing, false)) { // DoContinueAfterPause: DoInitial
+        treeResult.reset();
+        Object::Route next = r;
+        RouteFail w;
+        if (!planRoute(vm, me, next, w)) {
+            why = w;
+            return Step::Failed;
+        }
+        r.points = std::move(next.points);
+    }
+    // Waiting for the Sim asked to move (DoWaitingForPersonToMove) goes on
+    // whether or not it is still in the way, until it is 1.25 tiles off or
+    // the time is up.
+    const bool waitingForPerson = r.blockedTicks > 0 && r.blocker && vm.object(r.blocker);
+    if (const ObjectId b = waitingForPerson ? r.blocker : simAhead(vm, me, r)) {
         const Object& blocker = *vm.object(b);
-        const bool stationary = !blocker.route || blocker.route->waiting;
         const float d = std::hypot(blocker.position.x - me.position.x, blocker.position.y - me.position.y);
         r.waiting = true;
         // DoBlockedGoalStillAvailable's tries start again when the blocker
         // changes or has moved 0.25 tile since the last one.
+        // (Not while waiting for it to move: DoWaitingForPersonToMove
+        // does not come here.)
         if (b != r.blocker ||
-            std::hypot(blocker.position.x - r.blockerX, blocker.position.y - r.blockerY) >= kBlockerMovedTries) {
+            (r.blockedTicks == 0 &&
+             std::hypot(blocker.position.x - r.blockerX, blocker.position.y - r.blockerY) >= kBlockerMovedTries)) {
             r.blocker = b, r.replans = 0, r.blockedTicks = 0;
             r.blockerX = blocker.position.x, r.blockerY = blocker.position.y;
         }
-        if (r.blockedTicks == 0) { // DoBlocked: one more try
-            if (r.replans >= kMaxBlockedTries) {
-                // Out of tries: "CT - Route Blocked" on the base route, then
-                // "blocked by person" (what the tree's result changes is not
-                // decoded; the game's returns true).
-                if (!treeResult && c.thread.stack.size() == r.depth && runWalkTree(c, "CT - Route Blocked", {b, 0, 0, 0}))
+        if (r.blockedTicks == 0) {
+            // DoBlocked -> DoBlockedGoalStillAvailable (BV 0x57a8d4,
+            // docs/routing-mac.md §6): the try counter (1 for a new blocker
+            // or one that moved 0.25 tile), then by what the blocker does.
+            const int counter = ++r.replans;
+            if (std::getenv("OS2_DEBUG_BLOCK"))
+                std::fprintf(stderr, "t%llu %d blocked by %d (%s, its blocker %d) counter %d at (%.2f,%.2f) it (%.2f,%.2f)\n",
+                             (unsigned long long)vm.ticks, me.id, b, blocker.route ? "routing" : "standing",
+                             blocker.route ? blocker.route->blocker : 0, counter, me.position.x, me.position.y,
+                             blocker.position.x, blocker.position.y);
+            const bool base = c.thread.stack.size() == r.depth; // the route stack holds only this route
+            const TilePos blockerTile = VM::tileOf(blocker);
+            const bool offRecordedTile = int(std::floor(r.blockerX)) != blockerTile.x ||
+                                         int(std::floor(r.blockerY)) != blockerTile.y;
+            // Out of tries: "CT - Route Blocked" on the base route, then
+            // "blocked by person" (what the tree's result changes is not
+            // decoded; the game's returns true).
+            auto routeBlocked = [&]() {
+                if (base && runWalkTree(c, "CT - Route Blocked", {b, 0, 0, 0})) {
+                    r.blockedTree = true;
                     return Step::Call;
+                }
                 why = RouteFail::BlockedByPerson;
                 return Step::Failed;
-            }
-            ++r.replans;
-            if (stationary && r.replans <= kAskToMoveTries) {
-                r.blockedTicks = 1;
-                if (!treeResult)
-                    askBlockerToMove(vm, me, r, *vm.object(b));
-                if (!treeResult && runWalkTree(c, "CT - Route Ask To Move Animation", {b, 0, 0, 0}))
-                    return Step::Call;
+            };
+            // DoInitial again: plan around it and walk on.
+            auto replan = [&]() {
+                Object::Route next = r;
+                RouteFail w;
+                if (!planRoute(vm, me, next, w)) {
+                    why = w;
+                    return Step::Failed;
+                }
+                r.points = std::move(next.points);
                 return Step::Walking;
+            };
+            // DoPause: "CT - Route Blocked Animation" (the blocker, the
+            // pauses before), then DoContinueAfterPause plans again.
+            auto pause = [&]() {
+                r.pausing = true;
+                if (runWalkTree(c, "CT - Route Blocked Animation", {b, int16_t(r.pauses++), 0, 0}))
+                    return Step::Call;
+                r.pausing = false;
+                return replan();
+            };
+            // TryGetSelfOutOfWay (BV 0x57e9ac): both in the world and at most
+            // 4 tiles apart, a move-out-of-way place for me away from the
+            // blocker's way (CreateMoveOutOfWayDestination type 0), walked as
+            // a route of its own before this one goes on.
+            auto selfOutOfWay = [&]() {
+                if (!me.position.inWorld() || !blocker.position.inWorld() || d > 4)
+                    return false;
+                const auto spot = moveOutOfWayPoint(vm, blocker, me);
+                if (!spot)
+                    return false;
+                Object::Route aside = r;
+                aside.goals = {{(*spot)[0], (*spot)[1], 0}};
+                aside.facings.clear();
+                aside.multi.clear();
+                aside.level = me.position.level;
+                RouteFail w;
+                if (!planRoute(vm, me, aside, w))
+                    return false;
+                r.points = std::move(aside.points);
+                r.aside = r.asideTried = true;
+                r.blocker = 0, r.blockedTicks = 0;
+                r.waiting = false;
+                return true;
+            };
+            if (!blocker.route) { // the blocker stands (it is not routing)
+                // Inferred: never asleep here (cTSPerson::IsSleeping: then
+                // plan again once, else "blocked by object").
+                if (counter < 2 && offRecordedTile)
+                    return replan();
+                if (counter <= kAskToMoveTries && askBlockerToMove(vm, me, r, *vm.object(b))) {
+                    r.blockedTicks = 1; // DoWaitingForPersonToMove
+                    if (runWalkTree(c, "CT - Route Ask To Move Animation", {b, 0, 0, 0}))
+                        return Step::Call;
+                    return Step::Walking;
+                }
+                if (!r.asideTried && selfOutOfWay())
+                    return Step::Walking;
+                return routeBlocked();
             }
-            // A walking Sim (or asked enough): plan again around it and walk
-            // on (DoInitial again: blocked at once, it is the next try).
-            Object::Route next = r;
-            RouteFail w;
-            if (!planRoute(vm, me, next, w)) {
-                why = w;
-                return Step::Failed;
+            if (blocker.route->blocker == me.id) { // it routes and I block it: the two block each other
+                if (!base)
+                    return routeBlocked();
+                if (!r.asideTried && counter < 3 && selfOutOfWay())
+                    return Step::Walking;
+                if (counter > 4)
+                    return routeBlocked();
+                if (offRecordedTile)
+                    return replan();
+                return pause();
             }
-            r.points = std::move(next.points);
-            return Step::Walking;
+            // It routes, blocked by something else (or walking).
+            if (counter < 2)
+                return pause();
+            if (counter == 2 && offRecordedTile)
+                return replan();
+            return routeBlocked();
         }
         // DoWaitingForPersonToMove: until it is 1.25 tiles away (then plan
         // again) or 126 ticks have passed since the request (420 when the
@@ -1481,7 +1573,19 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         // and the waiting animation's ticks when it is called.)
         const int limit = blocker.data[8] & 0x40 ? kWaitForPersonLongTicks : kWaitForPersonTicks;
         ++r.blockedTicks;
-        if (r.blockedTicks >= limit || d > kPersonMovedAway) {
+        if (d > kPersonMovedAway) { // it moved off: plan again (DoInitial) and walk on
+            r.blockedTicks = 0;
+            r.blocker = 0;
+            Object::Route next = r;
+            RouteFail w;
+            if (!planRoute(vm, me, next, w)) {
+                why = w;
+                return Step::Failed;
+            }
+            r.points = std::move(next.points);
+            return Step::Walking;
+        }
+        if (r.blockedTicks >= limit) { // DoBlocked again
             r.blockedTicks = 0;
             return Step::Walking;
         }
@@ -1538,6 +1642,16 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             if (startGoalCheck(c, me, r) || startAlongRoute(c, me, r))
                 return Step::Call;
         }
+        return Step::Walking;
+    }
+    if (std::exchange(r.aside, false)) { // stepped aside: the route itself again
+        Object::Route next = r;
+        RouteFail w;
+        if (!planRoute(vm, me, next, w)) {
+            why = w;
+            return Step::Failed;
+        }
+        r.points = std::move(next.points);
         return Step::Walking;
     }
     setDirection(me, r.facing);
