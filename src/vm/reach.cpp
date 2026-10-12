@@ -195,10 +195,17 @@ Exit findBestObjectForFunction(Context& c) {
             continue;
         const int16_t objectFlags = x->data[objdata::Flags];
         const bool lockedOut = !(flags & 0x80) && x->data[kLockoutCount] > 0;
+        static const char* why = std::getenv("OS2_FBOF_WHY"); // OS2_FBOF_WHY=function: each candidate's verdict
+        const bool tell = why && std::atoi(why) == int(function) && functionEntry(vm, *x, function);
         if (awareness ? lockedOut
                       : (objectFlags & kInUse) || lockedOut || x->data[kDisableAllInteractions] > 0 ||
-                            (x->data[kPlacementFlags2] & 0x04) || (objectFlags & kBurning))
+                            (x->data[kPlacementFlags2] & 0x04) || (objectFlags & kBurning)) {
+            if (tell)
+                std::fprintf(stderr, "t%llu FBOF %u: %d skipped (flags %04X lockout %d od87 %d od82 %04X)\n", (unsigned long long)vm.ticks,
+                             function, id, uint16_t(objectFlags), x->data[kLockoutCount], x->data[kDisableAllInteractions],
+                             uint16_t(x->data[kPlacementFlags2]));
             continue;
+        }
         const ObjectFunctions::Entry* e = functionEntry(vm, *x, function);
         if (!e || (!e->action && !e->guard))
             continue;
@@ -209,8 +216,11 @@ Exit findBestObjectForFunction(Context& c) {
         if (e->guard) {
             std::array<int16_t, 4> temps{};
             std::copy_n(c.thread.temps.begin(), std::min<size_t>(4, c.thread.temps.size()), temps.begin());
-            if (!runCheck(c, id, e->guard, temps, refId) || !vm.object(meId) || c.me().data[kFunctionScore] == 0)
+            if (!runCheck(c, id, e->guard, temps, refId) || !vm.object(meId) || c.me().data[kFunctionScore] == 0) {
+                if (tell)
+                    std::fprintf(stderr, "t%llu FBOF %u: %d refused by its check tree\n", (unsigned long long)vm.ticks, function, id);
                 continue;
+            }
             x = vm.object(id);
             if (!x)
                 continue;

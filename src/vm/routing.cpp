@@ -333,7 +333,14 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
         out.facings.push_back((objDir + turnBy) % 8);
         return out;
     }
-    if (dirs == 0 || ox != 0 || oy != 0) {
+    // A slot at the bones of the model (flag 0x20000) stands at its bones
+    // whatever its directions say (GetPossibleSlotsFromModelRoutingSlot: one
+    // goal per bone): the fridge's slot 0 has direction 0 and 2 to 4 tiles,
+    // and its "route_0" bone a tile in front of it; scanning 2 tiles out put
+    // the Sims of N002_Lot22 on the counter across the kitchen and they
+    // starved.
+    const bool atBones = (slot.unknown10 & 0x20000) && ox == 0 && oy == 0 && !slotBones(slot, target).empty();
+    if (dirs == 0 || ox != 0 || oy != 0 || atBones) {
         const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
         auto turn = [&](float x, float y) {
             return std::array<float, 2>{cx + float(x * std::cos(yaw) - y * std::sin(yaw)),
