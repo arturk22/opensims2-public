@@ -463,7 +463,15 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
             diff(at + "animation " + (x.animation.playing() ? x.animation.name + " " + std::to_string(x.animation.ticksLeft) + " " + std::to_string(x.animation.playedTicks) + "/" + std::to_string(x.animation.pendingEvents.size()) : "none") +
                  " vs " + (y->animation.playing() ? y->animation.name + " " + std::to_string(y->animation.ticksLeft) + " " + std::to_string(y->animation.playedTicks) + "/" + std::to_string(y->animation.pendingEvents.size()) : "none"));
         {
-            auto overlays = [](const Object& o) {
+            // The code an overlay's event tree runs from is saved by its
+            // GUID only (cAnimRequest's object GUID; lot_records.cpp), and
+            // the reload takes the first object of that GUID: compared by
+            // GUID (two objects of one GUID run the same trees).
+            auto overlays = [](const Object& o, VM& vm) {
+                auto owner = [&](int16_t id) {
+                    const Object* c = vm.object(id);
+                    return c ? hexString(c->guid()) : std::to_string(id);
+                };
                 std::string s;
                 for (const auto& v : o.animation.overlays) {
                     // Where its event tree runs counts only with one.
@@ -471,12 +479,12 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
                     s += " " + v.name + "@" + std::to_string(v.played) + "x" + std::to_string(v.loops) + "/" +
                          std::to_string(v.loops > 0 ? v.pending.size() : 0) + (v.blendOutSent ? "b" : "");
                     if (v.eventTree)
-                        s += ":" + std::to_string(v.me) + "," + std::to_string(v.codeOwner) + "," +
+                        s += ":" + std::to_string(v.me) + "," + owner(v.codeOwner) + "," +
                              std::to_string(v.stackObject) + "," + std::to_string(v.eventTree);
                 }
                 for (const auto& v : o.animation.overlayEvents) {
                     s += " events " + v.name + "@" + std::to_string(v.played) + "/" + std::to_string(v.pending.size()) +
-                         ":" + std::to_string(v.me) + "," + std::to_string(v.codeOwner) + "," +
+                         ":" + std::to_string(v.me) + "," + owner(v.codeOwner) + "," +
                          std::to_string(v.stackObject) + "," + std::to_string(v.eventTree);
                 }
                 return s;
@@ -488,7 +496,7 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
             const bool posesOnly = !x.person && y->animation.overlays.empty() && x.animation.overlayEvents.empty() &&
                                    std::all_of(x.animation.overlays.begin(), x.animation.overlays.end(),
                                                [](const Overlay& v) { return v.loops <= 0 && !v.eventTree; });
-            if (const auto ox = overlays(x), oy = overlays(*y); ox != oy && !posesOnly)
+            if (const auto ox = overlays(x, a), oy = overlays(*y, b); ox != oy && !posesOnly)
                 diff(at + "overlays" + ox + " vs" + oy);
         }
         if (x.arrays.size() != y->arrays.size())
