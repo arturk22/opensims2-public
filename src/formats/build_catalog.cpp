@@ -4,6 +4,7 @@
 #include "resindex.hpp"
 #include "strings.hpp"
 
+#include <mutex>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -47,6 +48,23 @@ std::string BuildPattern::lotName() const {
 }
 
 BuildCatalog BuildCatalog::load(ResourceIndex& index) {
+    // Kept for the next load of the same index (every Build-mode setup asks).
+    static std::mutex mutex;
+    static std::vector<std::pair<std::pair<const ResourceIndex*, size_t>, BuildCatalog>> cache;
+    const std::pair<const ResourceIndex*, size_t> key{&index, index.ofType(kTypeCatalogPattern).size()};
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (const auto& c : cache)
+            if (c.first == key)
+                return c.second;
+    }
+    BuildCatalog c = loadUncached(index);
+    std::lock_guard<std::mutex> lock(mutex);
+    cache.emplace_back(key, c);
+    return c;
+}
+
+BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
     BuildCatalog c;
     for (const auto& loc : index.ofType(kTypeCatalogPattern)) {
         const auto bytes = index.read(loc);

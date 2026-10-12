@@ -74,6 +74,7 @@ class BuildCatalog {
 public:
     // The patterns shown in the catalog (showincatalog 1, not deprecated),
     // by price then name, as the game sorts its products.
+    // (Kept for the next load on the same index.)
     static BuildCatalog load(ResourceIndex& index);
 
     const std::vector<BuildPattern>& floors() const { return floors_; }
@@ -99,6 +100,7 @@ public:
     std::vector<const BuildPattern*> bySubsort(bool floor, const std::string& subsort) const;
 
 private:
+    static BuildCatalog loadUncached(ResourceIndex& index);
     std::vector<BuildPattern> floors_, walls_;
     std::vector<BuildFence> fences_;
     std::vector<BuildTerrainPaint> paints_;
