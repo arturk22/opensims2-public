@@ -1106,3 +1106,35 @@ sem cores diferentes; o inferido da rodada 12 (azul para amigos, violeta
 para parentes, sem arcos) não é o do jogo. Quem chama o slot `0x108` não foi
 procurado (inferido: o botão da janela do lote).
 
+### 15.4 Decorações: `cTSUserToolPlopNeighborhoodObject` (binário)
+
+- **Tipo do produto** (o carregador do catálogo `catcanhobjects`, BV
+  `0xb34c64`, produto `0x6D619378` → `cTSProductNeighborhoodObject`): o
+  `sort` vira um número (product vtable `200`): `flora` 0, `stone` 1,
+  `landmark` 2, `effects` 3, `misc` 4. Só o tipo 3 (efeitos) recebe o
+  `thumbnailgroupid`/`thumbnailinstanceid`. `placementsurface` 0/1/2 vai
+  para a vtable `0xdc`; três booleanos (`== 1`) para `0xd0`, `0xd4`, `0xd8`,
+  que pela ordem das propriedades são `allowedinlot`, `removeonlotplop` e
+  `allowedonroad` (ordem inferida; `0xd0` = `allowedinlot` bate com a
+  rodada 11).
+- **Flora ou enfeite** (`InstantiateObjectForCatalogProduct`, BV
+  `0x4164d4`): tipo **0 → `CreateFloraOccupant`**, tipos **1–4 →
+  `CreatePropOccupant`** (confirma o inferido da rodada 12: só o `sort`
+  `flora` vai para a lista de flora). Depois põe o ocupante no ponto
+  guardado, a rotação, mostra e cursor `0x1a`.
+- **Pode pôr?** (`IsOKToPlaceObjectAtCurrentLocation`, BV `0x415d34`;
+  retângulo de tiles do ocupante, vtable `0x20`, x0 ≤ x < x1):
+  1. (`removeonlotplop` ou não `allowedinlot`) e há um lote no retângulo
+     (bairro vtable `0xec`) → erro **1**;
+  2. superfície 0: cada tile tem de ser terra (terreno vtable `0x98`),
+     senão erro **3**; superfície 1: cada tile água (vtable `0x94`), senão
+     erro **4**; 2: sem teste;
+  3. sem `allowedonroad`: uma rua do retângulo (`GetOccupants(ret, 2)`) cujo
+     volume (vtable `0x24`) cruza os limites do ocupante (vtable `0x1c`) →
+     erro **2**;
+  4. senão pode. (Os textos dos erros 1–4 saem pelo `FUN_01633638`; não
+     lidos.)
+- **Altura** (`SetOccupantPosition`, BV `0x415b74`): z = altura do terreno
+  no ponto; com superfície 0 ou 1, z = max(terreno, nível da água (terreno
+  vtable `0x3c`)); com 2, só o terreno.
+
