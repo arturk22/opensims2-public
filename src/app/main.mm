@@ -1358,6 +1358,14 @@ void setupWardrobe(os2::ResourceIndex& index) {
         std::unique_ptr<os2::cas::CasCatalog> catalog;
         std::unique_ptr<os2::cas::FaceBaker> baker;
         std::unique_ptr<os2::cas::CasThumbnails> thumbs;
+        std::map<std::pair<uint32_t, uint32_t>, const os2::SimPart*> byKey; // (group, instance) -> GZPS
+        const os2::SimPart* part(const os2::Tgi& k) {
+            if (byKey.empty())
+                for (const auto& p : catalog->parts)
+                    byKey.emplace(std::make_pair(p.tgi.group, p.tgi.instance), &p);
+            auto it = byKey.find({k.group, k.instance});
+            return it == byKey.end() ? nullptr : it->second;
+        }
     };
     static Cas cas;
     auto load = [&index]() -> Cas& {
@@ -1391,10 +1399,23 @@ void setupWardrobe(os2::ResourceIndex& index) {
             // family without a bin (made in this CAS) gets the catalog's.
             const std::vector<os2::Tgi>* bin = familyBin(sim);
             for (int t = 0; t < 3; ++t) {
-                for (const os2::SimPart* p : c.catalog->outfitParts(parts[t], spec.age, spec.gender, category, spec.fitness == 2)) {
+                std::vector<const os2::SimPart*> candidates;
+                if (bin && !bin->empty()) {
+                    // The bin's items as they are (the Body Shop's "CASIE_"
+                    // copies and CAS-hidden ones included) with the age,
+                    // gender, category and part bits, once each.
+                    for (const os2::Tgi& k : *bin) {
+                        const os2::SimPart* p = c.part(k);
+                        if (p && (p->number("age") & spec.age) && (p->number("gender") & spec.gender) &&
+                            (p->number("category") & category) && (p->number("outfit") & parts[t]) &&
+                            std::find(candidates.begin(), candidates.end(), p) == candidates.end())
+                            candidates.push_back(p);
+                    }
+                } else {
+                    candidates = c.catalog->outfitParts(parts[t], spec.age, spec.gender, category, spec.fitness == 2);
+                }
+                for (const os2::SimPart* p : candidates) {
                     const bool worn = wornParts.count(parts[t]) && strcasecmp(wornParts.at(parts[t]).c_str(), p->name().c_str()) == 0;
-                    if (bin && !bin->empty() && !worn && !inBin(*bin, p->tgi))
-                        continue;
                     os2::DialogWindow::OutfitItem item;
                     item.part = p->name();
                     item.thumb = c.thumbs->image(os2::cas::entryThumbnailId(*p, spec.age, spec.gender));
