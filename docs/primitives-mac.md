@@ -990,6 +990,30 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
 
 ## 4b. Pendências do round 5 (binário)
 
+
+**Veículos (rodada 12, VM).** O carro dirige pelo "Event Tree - Drive"
+(CarGlobals `0x7F4EA230`, `0x2008`): no 9999 de cada volta de
+`o-…-drive` decide parar ("Function - Should Stop?" pela distância até o
+portal de parada) ou tocar a volta de novo com Animate Object. No
+opensims2 isso travava de dois jeitos: (1) o limite "duas de um nome" do
+Animate Overlay valia também para o Animate Object, e a terceira volta não
+começava (nunca chegava o 9999, "Wait for Vehicle Stop" esperava para
+sempre: a van da empregada e o ônibus escolar paravam no meio-fio o dia
+todo); agora a mesma animação do Animate Object substitui a que toca. (2)
+o motor move o objeto pela raiz da animação (`cAnimatable`); a VM não
+movia, e a distância nunca diminuía: agora, no fim de cada volta, o objeto
+(todas as partes do grupo) anda para a frente (direção do objeto) o
+quanto o `root_trans` da animação anda (Y do modelo; ~1,95 tile em
+`o-vehicleMinivan-drive`; inferido o momento e a direção). Prova:
+`S2PKG_VEHICLES=1 s2pkg autonomy N001_Lot68 --ticks 24000`: a empregada
+chega às 9:07, desce em (35,5; 16,5), trabalha e a van vai embora antes
+das 10:30; o ônibus escolar chega às 8:00, espera ~25 minutos, buzina e vai
+embora. Os adolescentes não sobem porque "Get My Riders" só chama quem
+tem humor (motivo 3) > 0, e os Sims do lote 68 estão com humor muito
+negativo (fome: frente da comida). A textura
+`vehicleschoolbus-groundshadow-alpha_txtr` que o TXMT da sombra do ônibus
+pede não existe nos dados do jogo base (só o nome no material).
+
 ### Conversão da versão 0 (BHAVs do base) de Look At e Run Tree by Name
 
 O parâmetro guarda os 16 bytes de operando em `+4..+0x13` e a versão em

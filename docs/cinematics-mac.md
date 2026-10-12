@@ -306,6 +306,41 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
     0x0CB53A3A@24,21,2 --vm-queue "Tombstone:CINECAM BABY" --run-vm 600
     --frames 8 --pivot 24,20.5 --zoom 5`).
 
+- Rodada 12 (vida 3; binário + VM):
+  - **Mudança (`moveIn`) pela VM.** O "Controller - Lot Load - Curtain
+    Pull-Down" (`0xED7580EF`) é um "global sim object" (OBJD tipo 7, campo
+    42): o motor faz uma instância fora do mundo de cada um em toda carga
+    (`cEdithObjectModule::UpdateSimObjects(1)`, BV `0x52f040`, passo 6 do
+    `SplitLoad`; agora `vm::updateSimObjects`, chamado no fim do
+    `startSavedLot`). Quem toca a cena é a árvore global **"CT - Lot
+    Loaded"** (`0x36D`): no jogo base (Mac 1.0, `0x864e0c`) o
+    `cTSGameStateController` a roda, pelo nome, no primeiro objeto da lista
+    quando chega a mensagem `0x4C8E7905` ("lote pronto") com o estado do
+    jogo em `0x0BEA28C2` (lote); o BV troca isso por "CT - Move In
+    Cinematic - Prep" no primeiro global sim object. A árvore acha a
+    cortina e, se o "reset lot" da mudança marcou o atributo 1, pede
+    `moveIn` (flags `0x24`, atores caixa de correio + Sims). No opensims2:
+    `vm::runLotLoaded` (um tick, no menor ID: inferido que é a ordem da
+    lista) depois do "reset lot" no app (`LotSimulation`), no `s2pkg
+    autonomy` e no `s2pkg pie`. O "Cinematic - Move In" da cortina é código
+    morto (GSC 37 "lot transition done" e volta). Prova: `s2pkg
+    hood-move-in <cópia>/N001 8 24` e `opensims2 --lot <cópia>/N001/Lots/
+    N001_Lot24.package --vm --run-vm 190 --frames 4`
+    (`docs/screenshots/r12-mudanca-movein.jpg`: táxi, família na calçada,
+    câmera da cena até a porta).
+  - **Primeiro beijo pela VM**: um casal novo do CAS (`s2pkg cas-make ...
+    --member Bruno:adult:m:spouse`, `hood-move-in`) tem "Beijar.../Primeiro
+    Beijo" no menu depois que o Main roda o "Init - Relationships"; `s2pkg
+    pie <lote> Bruno <id> --select 0` com `S2PKG_PIE_ALSO="Bruno,<id>,17,600"`
+    pede `firstKiss` (atores beijador e beijado) e os dois tocam
+    `a2a-cinematic-kisser/kissee-firstKiss` no mesmo tick.
+  - **Nascimento de verdade** (gravidez de 3 dias): `S2PKG_HOLD_MOTIVES=80
+    s2pkg pie N002_Lot10 Jenny Tombstone --create 0x0CB53A3A@24,21,2
+    --select 197 --ticks 200000 --user-dir <pasta>` ("Get Pregnant with
+    Pollination"): meia gravidez no tick ~45000, gravidez cheia ~90000,
+    trabalho de parto ~135000, `homebirth`, diálogo "Baby Name" (tipo 23),
+    o bebê no colo e "Entregar Recém-Nascido a".
+
 ## 6. O que o binário faz com a cena (Mac BV)
 
 - `TryCinematic` (0x00e24960) **não espera**: chama

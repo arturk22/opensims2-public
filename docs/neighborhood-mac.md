@@ -388,7 +388,8 @@ rotação `0x2BE6FB52`/`0x2BE6FB57`.
   "money for new family" = 20000** (`cTSNeighborhoodConstants`, constantes
   float do bairro com padrões no código; a string existe no base 1.0) e
   mensagem `0xA5`. Outras constantes do mesmo bloco (base): "new family
-  start hour" 7, "perfect family friend count" 15, "weight of lot size in
+  start hour" 7 (padrão do código; o FCNS global 4 do `objects.package` diz
+  **8,0**, rodada 12), "perfect family friend count" 15, "weight of lot size in
   overall score" 3, "yard score multiplier" 0,33, "upkeep penalty per dirty
   object" 6 e "... per broken object" 15 (a pontuação do lote; não seguido).
 - **Preço de um lote** (`cTSNeighborhood::GetLotFileInfo`, `0x4d8d8c`, vtable
@@ -483,7 +484,7 @@ As regras estão no §6.1. Acréscimos lidos no binário nesta frente:
   `0x120`; `0x124` o lê), `0x11c` lê o bit `0x02`. `SetLotID` (vtable `0xac`)
   grava `+0x30`.
 - **Primeiro dia** (`SetupFamilyFirstDay`, BV `0x4db0c0`): `SetNewLot(0)`,
-  `SetCurrentTime(hora de início, 0, −1…)` ("new family start hour", 7),
+  `SetCurrentTime(hora de início, 0, −1…)` ("new family start hour": 7 no código, **8** no FCNS global 4),
   `ClearHistory` e `cTSSimulator::Resume(true)` (BV `0x49bd48`), que zera o
   global 17 "Paused" (os lotes à venda guardam 1).
 - **Pertences no despejo**: `cTSObject::IsDeletedByEvict` (BV `0xafeb84`):
@@ -691,12 +692,18 @@ lote nem fica sob uma rua.
 - **Primeiro dia** (`formats/lot_arrivals.*`): a família com a flag `0x04`
   do FAMI ("lote novo", posta pelo `MoveIn`) é a que está se mudando: paga o
   preço na carga (passo `0x1B`) e tem o primeiro dia (passo `0x1F`, também
-  com a flag 4 do lot info): relógio às **7:00** (`SetCurrentTime(7, 0, −1…)`,
+  com a flag 4 do lot info): relógio às **8:00** (rodada 12: `SetCurrentTime(hora, 0, −1…)` com a
+  hora lida do FCNS `0x46434E53` grupo `0x7FD46CD0` instância 4, "new family
+  start hour" = 8,0; antes o opensims2 usava o padrão 7 do código;
   BV `0x49af84`: só hora e minuto), globais 17 "Paused" = 0 e os relatórios
   de despesas zerados (`ClearHistory`; inferido que são esses). O save do
   bairro (`vm/hood_save.*`) tira a flag `0x04` da família do lote e grava o
   lot info do lote salvo com a flag 1 e sem as 4 e 8 (`SaveLot`, BV
-  `0x884ec4`). `r10-bairro-primeiro-dia.jpg`: Subúrbio no lote 24 às 7:02,
+  `0x884ec4`). O `LoadLot` não roda ticks antes de mostrar o lote: um lote
+  salvo abre na hora salva (lote 68 às 07:08) e, na velocidade normal (um
+  tick a cada 42 ms, 1 minuto do jogo = 1,26 s), 25 s depois está por volta
+  das 07:26: não é erro (rodada 12; `s2pkg autonomy` e o app abrem na mesma
+  hora, e 600 ticks levam 25 s no app). `r10-bairro-primeiro-dia.jpg`: Subúrbio no lote 24 às 7:02,
   §4.280 depois de pagar §17.621.
 - **`cPerson` dos Sims que chegam** (`vm/lot_records.cpp`): o save escreve um
   `cPerson` (cPerson 3 < cLocomotable 4 < cAnimatable 0x10 < cObject 0x11)

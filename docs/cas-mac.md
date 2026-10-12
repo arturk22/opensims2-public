@@ -687,6 +687,50 @@ Complementa o §5 (genética): a máquina de estados avança um estado por tick:
 sorteia qual pai dá a espécie (`rand(100) < 51` → o segundo) e usa o modelo
 padrão dela (humano `0x7FD96B54`).
 
+### 17.4b O bebê no lote: colo, mamadeira, berço e nome (rodada 12, binário + VM)
+
+- **Colo.** "Pickup - Do Carry Sim" (global `0x276`) empurra "Interaction -
+  Carry" no adulto e "Be Carried" no bebê; o adulto cria o controlador,
+  empurra no bebê a interação aninhada "Be Picked Up" e espera em
+  "Pickup - Wait For Current Interaction" (`0x23E`, `0x0118` = Idle) até os
+  dados de pessoa **102/103** ("ci: Current Running Interaction Index /
+  Object ID") do bebê serem os dessa sub-ação. No binário
+  (`cTSPerson::SetSubInteractionData`, BV `0xadaa30`) 102/103 são os da
+  sub-ação que roda, senão os da ação (o `SetCurrentAction` copia 21/80
+  neles), e 75/76 (mestre da sub-fila) são sempre os da ação atual; o
+  opensims2 não mantinha o 103 e punha 102 = ação: o adulto esperava para
+  sempre. Agora `syncQueueData` faz como o binário.
+- **Pôr no chão.** "Marker - Snap Into" (o event tree do overlay do bebê no
+  "Drop - Sim - Animate - Drop") só encaixa o bebê no marcador no evento
+  **9998** (BCON global `0x124` "G - Anim Events - Std": 9997, 9998, 9999,
+  −1). O tratador de eventos de animação do binário
+  (`nTSSG::cCustomEventHandler2`, BV `0x780ad4`) mapeia as chaves de evento
+  do motor: tipo 7 → 9997, **6 → 9998**, 3 → 9999, −1 → −1, 1005 → o
+  "event=N". Quem emite o tipo 6 não foi achado (as animações não têm essa
+  chave); inferido: o fim da ação do overlay, mandado logo antes do 9999.
+  Sem isso o adulto tentava pôr o bebê no chão para sempre.
+- **Berço.** "Interaction - Put In Crib - Subqueue" empurra as entradas do
+  berço a partir da parte 0,0, que não tem TTAB (só o mestre "Crib - Cheap"
+  tem, e o grupo de interação é 0): a parte de índice 0 de um multi-tile sem
+  grupos usa a tabela do mestre (inferido; antes o Main do adulto morria
+  com "Tree table not found"). Prova: `s2pkg pie N002_Lot10 Jenny Tombstone
+  --create 0x0CB53A3A@24,21,2 --create 0x7a03bdef@20,24,2 --all --select
+  197 --ticks 6000 --anims`: Johnny pega o bebê, dá mamadeira
+  (`a2b-babybottle-feeder-*`), põe no berço (`a2b-crib-put-putter`), o bebê
+  toca `b2o-crib-idle-*`, tira de novo para ninar e devolve.
+- **Nome.** O "Interaction - Home Birth" abre o diálogo tipo 23 ("Baby
+  Name", STR# `0xD9`) com o bebê no stack object; a classe do binário não
+  foi achada. No opensims2: um botão OK, sem tempo limite (é especial), o
+  `Dialog::text` vem com o nome padrão ("Bebezinho"/"Bebezinha") e, se o
+  anfitrião mudar o texto, o OK renomeia o vizinho do bebê (inferido). Sem
+  cabeça, `--dialog-answer 0` aceita o padrão. Falta a caixa de texto no
+  app (também para o tipo 3).
+- **No app**: um Sim no slot de outro (bebê no colo) é desenhado no osso do
+  slot do carregador (`BellyTarget_surface`, onde as animações de pegar
+  prendem a raiz do bebê, com a rotação do osso), depois do carregador
+  (`docs/screenshots/r12-bebe-colo.jpg`). Falta: na mamadeira o adulto
+  inclina para trás e o bebê some no peito.
+
 ### 17.5 Relacionamentos de uma família nova (dados)
 
 Não há código C++: quando um Sim da família do lote começa o Main ("Function
