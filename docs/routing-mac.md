@@ -196,6 +196,31 @@ desaceleração usa 5 ticks (ou 100 se a velocidade passa de 0,25).
 - esgotou: na rota de base roda a árvore global **"CT - Route Blocked"**
   (estado 6; falha dela → **14**); senão **14**.
 
+**Rodada 13, os ramos exatos do `DoBlockedGoalStillAvailable`** (lidos no
+BV; contador `+0x3c` incrementado a cada entrada, 1 com bloqueador novo ou
+que andou ≥ 0,25; "rota de base" = a pilha de rotas tem só esta; `IsRouting`
+= o bloqueador tem rota corrente, mesmo esperando):
+
+- **bloqueador sem rota** (parado): dormindo (`cTSPerson::IsSleeping`) →
+  re-rota com contador < 2, senão falha 15; acordado: contador < 2 e ele
+  saiu do tile anotado (`route 0x1d4/0x1d8`, mapa ID → tile) → re-rota;
+  contador ≤ 3 → `AskBlockerToMove` (aceito → 0x11, espera); senão
+  `TryGetSelfOutOfWay` (uma vez por rota: contador da rota `0xd8/0xdc`) →
+  re-rota; senão "CT - Route Blocked" (rota de base) ou falha 14;
+- **bloqueador roteando e bloqueado por mim** (os dois se bloqueiam): fora
+  da rota de base → 14; `TryGetSelfOutOfWay` com contador < 3 → re-rota;
+  senão, contador > 4 → "CT - Route Blocked"/14; ele saiu do tile → re-rota;
+  senão `DoPause` (0x1C: "CT - Route Blocked Animation" com o bloqueador e o
+  número de pausas; `DoContinueAfterPause` → `DoInitial`);
+- **bloqueador roteando, não por mim**: contador 1 → pausa; 2 e ele saiu do
+  tile → re-rota; senão "CT - Route Blocked"/14.
+
+`TryGetSelfOutOfWay` (BV `0x57e9ac`): os dois no mundo e a ≤ 4 tiles →
+`CreateMoveOutOfWayDestination(eu, bloqueador, 0)` e uma rota empurrada
+para o destino (GotoRoutingSlot), depois a rota original de novo. Na espera
+(0x11) o bloqueador não é reavaliado: só sai com ele a > 1,25 tile
+(re-rota) ou com o tempo (`DoBlocked`).
+
 **Esperando o outro sair** (`DoWaitingForPersonToMove`, BV `0x579ffc`):
 se o bloqueador está a mais de 1,25 tile → re-rota (1). Perto: na primeira
 vez toca **"CT - Route Ask To Move Animation"** e manda o pedido; depois
