@@ -137,9 +137,11 @@ constexpr int16_t LotZoning = 41;
 constexpr int16_t InteractionGuid = 36; // "Current Interaction GUID": the next interaction ID (links.cpp)
 } // namespace global
 
-// Families hold at most 8 Sims (the game's limit; Generic Sims Call "add to
-// family" fails past it).
-constexpr size_t kMaxFamilySize = 8;
+// Families of 0x7FD9 and above are the reserved ones ("G - Reserved Family
+// IDs": NPCs, townies); a family between 1 and 0x7FD9 is a real one
+// (cTSFamilyManager: MakeNewFamily gives a number below it the lowest free
+// number from 1; AddToFamily copies clothes only between real families).
+constexpr int16_t kReservedFamilies = 0x7FD9;
 
 // A Generic Sims Call (or other primitive) that asks the engine for something
 // outside the simulation: camera, UI, loading, lot transitions, ... It is
@@ -1072,6 +1074,15 @@ public:
         std::vector<Tgi> wardrobe;
     };
     std::map<int16_t, Family> families;
+    // What cTSFamily::AddMemberClothing puts in a family's bin for a Sim
+    // joining it (the GZPS of its outfits' tops, bottoms and whole outfits,
+    // cas::familyBinClothing), and whether an item of another family's bin
+    // fits the Sim (the binary compares three masks of the Sim's 0xAC598EAC
+    // resource with the item's: inferred age, gender and category). The
+    // host sets them (it has the CAS catalog); without them the bins are
+    // left as they are.
+    std::function<std::vector<Tgi>(int16_t neighbor)> memberClothing;
+    std::function<bool(int16_t neighbor, const Tgi& item)> clothingFits;
     struct LotRecord {
         int16_t zoning = 0; // 0 residential, 1 community
         float x = 0, y = 0; // neighborhood position

@@ -1330,15 +1330,95 @@ Exit manageInventory(Context& c) {
     }
 }
 
+// cTSFamilyManager::RemoveFromFamily (BV 0x4fe800): family number 0 on the
+// neighbor and its Sim on the lot.
+static void removeFromFamily(VM& vm, int16_t id, Neighbor& n) {
+    n.personData[persondata::FamilyNumber] = 0;
+    neighborData(vm, id, n)[persondata::FamilyNumber] = 0;
+}
+
+static size_t familyMembers(VM& vm, int16_t family) {
+    size_t members = 0;
+    for (auto& [id, other] : vm.neighbors)
+        members += neighborData(vm, id, other)[persondata::FamilyNumber] == family;
+    return members;
+}
+
+// Generic Sims Call 4 "add to family", by TryGenericSimCall (BV 0xe36834)
+// and cTSFamilyManager::AddToFamily (BV 0x4fddcc): the neighbor in the stack
+// object (none: error 0x37) joins the family in temp 0: 0 = the lot's
+// family, one the neighborhood does not have is made (MakeNewFamily, BV
+// 0x4ffd28: below 0x7FD9 it takes the lowest free number from 1, above it
+// that number). Temp 0 becomes 0, or the old family's funds when the Sim
+// was the last member of a family with a house (the binary first has the
+// family moved out of its lot and waits for it: not done here). The Sim
+// leaves its old family (false when the neighborhood does not have it),
+// gets person data 61 := the family and 67 := 0, brings its clothes to the
+// family's bin (AddMemberClothing) and, between two real families, the
+// pieces of the old bin that fit it (with no one left in the old family,
+// all of them); an old family left empty (and real) is removed. There is no
+// limit on the members (none in the binary). Temp 1 nonzero marks a family
+// made here (family vtable 0xE8, not understood) and the binary names it
+// after the Sim's last name: not kept.
+Exit addToFamily(Context& c) {
+    VM& vm = c.vm;
+    auto& temps = c.thread.temps;
+    const int16_t id = c.frame.stackObject;
+    Neighbor* n = vm.neighbor(id);
+    if (!n)
+        throw gameError(err::MissingNeighbor, "Generic Sims Call 4: neighbor " + std::to_string(id));
+    int16_t family = temps[0] ? temps[0] : vm.globals[global::CurrentFamily];
+    if (!vm.families.count(family)) {
+        if (family < kReservedFamilies) {
+            family = 1;
+            while (vm.families.count(family))
+                ++family;
+        }
+        vm.families[family];
+    }
+    auto& data = neighborData(vm, id, *n);
+    const int16_t old = data[persondata::FamilyNumber];
+    auto oldIt = old ? vm.families.find(old) : vm.families.end();
+    temps[0] = 0;
+    if (oldIt != vm.families.end() && familyMembers(vm, old) <= 1 && oldIt->second.house != 0)
+        temps[0] = int16_t(oldIt->second.funds); // after the move out (inferred: not waited for)
+    if (old != 0) {
+        if (oldIt == vm.families.end())
+            return Exit::False; // RemoveFromFamily fails
+        removeFromFamily(vm, id, *n);
+    }
+    n->personData[persondata::FamilyNumber] = family;
+    data[persondata::FamilyNumber] = family;
+    n->personData[67] = 0;
+    data[67] = 0;
+    auto& bin = vm.families[family].wardrobe;
+    auto addClothing = [&](const Tgi& k) { // cTSFamily::AddClothing keeps one of each
+        if (std::find(bin.begin(), bin.end(), k) == bin.end())
+            bin.push_back(k);
+    };
+    if (vm.memberClothing)
+        for (const Tgi& k : vm.memberClothing(id))
+            addClothing(k);
+    auto real = [](int16_t f) { return f > 0 && f < 0x7FDA; };
+    oldIt = old ? vm.families.find(old) : vm.families.end();
+    if (oldIt != vm.families.end() && real(family) && real(old) && old != family) {
+        const bool anyone = familyMembers(vm, old) > 0;
+        for (const Tgi& k : std::vector<Tgi>(oldIt->second.wardrobe))
+            if (!anyone || (vm.clothingFits && vm.clothingFits(id, k)))
+                addClothing(k);
+    }
+    if (oldIt != vm.families.end() && real(old) && old != family && familyMembers(vm, old) == 0)
+        vm.families.erase(oldIt); // RemoveFamily (its house first set to 0)
+    return Exit::True;
+}
+
 // Generic Sims Call (0x01): call index u8 at 0 (the other bytes are 0); the
 // arguments and results are in the temps, as the editor's labels describe each
 // call (STR# 0xDC, 54 calls). Calls that only ask the engine for something
 // outside the simulation (camera, UI, preloading, lot loading and transitions,
 // tutorial state, the Sim's 3D look, the wants recalculation) are recorded in
 // VM::engineRequests and return true. Implemented in the VM: 4 add to family
-// (neighbor in the stack object; family in temp 0, 0 = the current family,
-// negative = a new one; false without the neighbor or when the family has 8
-// Sims), 6 remove from family, 10/11 build and buy off/on, 13 abort the
+// (addToFamily), 6 remove from family, 10/11 build and buy off/on, 13 abort the
 // interactions whose object is the stack object from every queue, 14 house radio station, 18
 // simulator speed (0 pause, 1 unpause, 2-4 into the Speed global as is), 25
 // selected Sim, 21-23 the family tree (child of, spouse of, remove the ties
@@ -1392,33 +1472,16 @@ Exit genericSimsCall(Context& c) {
         return request();
     case 39: // force recalc of wants (wants.cpp)
         return wantsGenericCall(c);
-    case 4: { // add to family
+    case 4: // add to family (TryGenericSimCall BV 0xe36834)
+        return addToFamily(c);
+    case 6: { // remove from family (BV 0xe36834): false unless in a family the neighborhood has
         Neighbor* n = vm.neighbor(c.frame.stackObject);
         if (!n)
             return Exit::False;
-        int16_t family = temps[0] ? temps[0] : vm.globals[global::CurrentFamily];
-        if (family <= 0) {
-            family = std::max<int16_t>(vm.globals[global::CurrentFamily], 0);
-            for (auto& [id, other] : vm.neighbors)
-                family = std::max(family, neighborData(vm, id, other)[persondata::FamilyNumber]);
-            ++family;
-        }
-        size_t members = 0;
-        for (auto& [id, other] : vm.neighbors)
-            members += id != c.frame.stackObject && neighborData(vm, id, other)[persondata::FamilyNumber] == family;
-        // The reserved families (BCON "G - Reserved Family IDs": 32765-32767,
-        // where the NPCs and townies go) hold any number (inferred: "NPC -
-        // Make New Character - Specific" adds every new NPC to 32767).
-        if (members >= kMaxFamilySize && family < 32765)
+        const int16_t old = neighborData(vm, c.frame.stackObject, *n)[persondata::FamilyNumber];
+        if (old == 0 || !vm.families.count(old))
             return Exit::False;
-        neighborData(vm, c.frame.stackObject, *n)[persondata::FamilyNumber] = family;
-        return Exit::True;
-    }
-    case 6: { // remove from family
-        Neighbor* n = vm.neighbor(c.frame.stackObject);
-        if (!n)
-            return Exit::False;
-        neighborData(vm, c.frame.stackObject, *n)[persondata::FamilyNumber] = 0;
+        removeFromFamily(vm, c.frame.stackObject, *n);
         return Exit::True;
     }
     case 7: throw VMError("Generic Sims Call: 7 (make new neighbor) is deprecated");

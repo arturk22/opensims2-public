@@ -618,6 +618,7 @@ std::optional<os2::RgbaImage> simPortrait(int16_t id);
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
 const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor);
 void setupWardrobe(os2::ResourceIndex& index);
+std::optional<fs::path> characterFileOf(uint32_t guid);
 void setupAspirationWants(os2::ResourceIndex& index);
 
 // The camera shows the selected Sim's level (cCameraLive::Update).
@@ -1900,6 +1901,47 @@ void setupWardrobe(os2::ResourceIndex& index) {
         edits.erase(it);
     };
 
+
+    // Generic Sims Call 4 (add to family) fills the family's bin as
+    // cTSFamily::AddMemberClothing does and copies what fits from the old
+    // family's (vm::addToFamily); the clothes come from the Sim's character
+    // file: a lot Sim's, a newborn's or a neighbor's by its OBJD GUID.
+    if (!gSimulation)
+        return;
+    os2::vm::VM& machine = gSimulation->machine();
+    auto characterOf = [&machine](int16_t neighbor) -> std::optional<fs::path> {
+        if (auto it = gBornCharacters.find(neighbor); it != gBornCharacters.end())
+            return it->second;
+        if (const os2::vm::Object* sim = machine.neighborSim(neighbor))
+            for (const auto& ls : gLotSims)
+                if (ls.id == sim->id)
+                    return ls.character;
+        if (const os2::vm::Neighbor* n = machine.neighbor(neighbor))
+            return characterFileOf(n->guid);
+        return std::nullopt;
+    };
+    auto specOf = [load, characterOf](int16_t neighbor) -> std::optional<os2::cas::CharacterSpec> {
+        const auto file = characterOf(neighbor);
+        if (!file)
+            return std::nullopt;
+        try {
+            os2::DbpfPackage pkg(*file);
+            return os2::cas::readCharacterSpec(pkg, 0xFFFFFFFF, *load().catalog);
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    };
+    machine.memberClothing = [load, specOf](int16_t neighbor) {
+        const auto spec = specOf(neighbor);
+        return spec ? os2::cas::familyBinClothing(*load().catalog, *spec) : std::vector<os2::Tgi>{};
+    };
+    // The item's age and gender bits include the Sim's (the third mask, the
+    // category, is taken to pass; inferred).
+    machine.clothingFits = [load, specOf](int16_t neighbor, const os2::Tgi& k) {
+        const auto spec = specOf(neighbor);
+        const os2::SimPart* part = load().part(k);
+        return spec && part && os2::cas::fits(*part, spec->age, spec->gender);
+    };
 }
 
 // --ui live: the live-mode panel (app/live_ui.hpp) in place of the pie

@@ -774,6 +774,11 @@ static void testGenericSimsCall() {
     fx.vm.neighbors[6] = {};
     fx.vm.neighbors[6].personData[persondata::FamilyNumber] = 3;
     fx.vm.globals[global::CurrentFamily] = 3;
+    fx.vm.families[3] = {};
+    fx.vm.families[3].wardrobe = {Tgi{0xEBCF3E27, 1, 1, 0}, Tgi{0xEBCF3E27, 1, 2, 0}};
+    // The clothes a Sim brings (cTSFamily::AddMemberClothing) and what of another bin fits it.
+    fx.vm.memberClothing = [](int16_t neighbor) { return std::vector<Tgi>{Tgi{0xEBCF3E27, 1, uint32_t(100 + neighbor), 0}}; };
+    fx.vm.clothingFits = [](int16_t, const Tgi& k) { return k.instance == 2; };
     auto call = [](uint8_t i, Target t, Target f = E) { return instr(0x01, t, f, {i}); };
     fx.code.add(kObjGroup, 0x1000,
                 tree({call(38, go(1)),                                    // unlink character: recorded (39, wants, is test_wants')
@@ -782,7 +787,7 @@ static void testGenericSimsCall() {
                       call(4, go(4)),                                     // neighbor 5 joins family 3
                       expr(Temp, 0, Assign, Lit, -1, go(5), E),
                       expr(StackId, 0, Assign, Lit, 6, go(6), E),
-                      call(4, go(7)),                                     // neighbor 6 gets a new family: 4
+                      call(4, go(7)),                                     // neighbor 6 gets a new family: 1 (the lowest free)
                       expr(StackId, 0, Assign, Lit, 9, go(8), E),
                       call(6, E, go(9)),                                  // no neighbor 9
                       call(10, go(10)),
@@ -796,10 +801,21 @@ static void testGenericSimsCall() {
     Thread t = fx.run(0x1000);
     check(t.status == Thread::Status::Failed && t.error.find("Invalid global sim call.") != std::string::npos &&
               fx.vm.engineRequests.size() == 1 && fx.vm.engineRequests[0].call == 38 &&
-              sim.person->data[persondata::FamilyNumber] == 3 && fx.vm.neighbors[5].personData[persondata::FamilyNumber] == 0 &&
-              fx.vm.neighbors[6].personData[persondata::FamilyNumber] == 4 && !fx.vm.buildBuyEnabled &&
+              sim.person->data[persondata::FamilyNumber] == 3 && fx.vm.neighbors[5].personData[persondata::FamilyNumber] == 3 &&
+              fx.vm.neighbors[6].personData[persondata::FamilyNumber] == 1 && !fx.vm.buildBuyEnabled &&
               fx.vm.globals[global::Paused] == 1 && fx.vm.globals[global::SelectedPersonId] == 2,
           "Generic Sims Call");
+    // Family 3's bin got neighbor 5's clothes; family 1 got neighbor 6's and the piece of 3's bin that fits.
+    auto has = [&](int16_t f, uint32_t inst) {
+        const auto& b = fx.vm.families[f].wardrobe;
+        return std::any_of(b.begin(), b.end(), [&](const Tgi& k) { return k.instance == inst; });
+    };
+    check(has(3, 105) && !has(3, 106) && has(1, 106) && has(1, 2) && !has(1, 1) && !has(1, 105),
+          "Generic Sims Call 4 fills the family's clothing bin (AddMemberClothing) and copies what fits from the old one");
+    fx.code.add(kObjGroup, 0x1001, tree({expr(StackId, 0, Assign, Lit, 9, go(1), E), call(4, T)}));
+    t = fx.run(0x1001);
+    check(t.status == Thread::Status::Failed && t.error.find("Missing neighbor") != std::string::npos,
+          "Generic Sims Call 4 without the neighbor is error 0x37");
 }
 
 static void testDefinitionOwners() {
