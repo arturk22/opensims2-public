@@ -1138,3 +1138,28 @@ procurado (inferido: o botão da janela do lote).
   no ponto; com superfície 0 ou 1, z = max(terreno, nível da água (terreno
   vtable `0x3c`)); com 2, só o terreno.
 
+### 15.5 A foto do rosto: `cTSUIThumbnailFactorySimHead::SetupScene` (BV `0x392a88`)
+
+O que o jogo faz quando renderiza a cabeça de um Sim (a "foto" das janelas
+de família; o `app/head_shot.*` do opensims2 é inferido):
+
+- cena "UIUCPHead"; o esqueleto do Sim copiado (`CopyPersonSkeleton`), os
+  objetos dos ossos `glasses_grip` e `hat_grip` copiados junto;
+- **pose**: `"%c-UIPose-%s%02d_anim"` (ou `"%c-UIPose-pose%d_anim"` sem o
+  texto), com a letra da idade (`a` padrão, `c`, `p`; as outras letras são
+  dos bichos do BV), o texto do sexo ("M"/"F", como nos recursos
+  `a-UIpose-M07_anim`) e um número sorteado de 1 a N (N 2–9 conforme a
+  idade); com a carta de ódio (tipo 1) usa `a-hateLetterPose-%02d_anim`
+  (1–3);
+- **enquadramento** (humano, espécie 1): o osso `head` (posição no mundo
+  P); caixa de P + (−0,15, −0,15, −0,10) até P + (0,15, 0,15, 0,20) (0,30 ×
+  0,30 × 0,30, de 0,10 abaixo a 0,20 acima do osso); a câmera olha para o
+  **centro** da caixa, de frente para o Sim (rotação de π), e a distância é
+  a que faz a caixa caber no campo de visão: d = (lado maior da caixa
+  na tela) / (2 · tan(fov · 0,5)) (mín. 0,01) + 2 × a profundidade; o
+  multiplicador do fov é 1,0 para humanos; luz e cor (`0,8`, `1,2`) no
+  fim. (Bichos do BV usam outras caixas.)
+
+Para o opensims2: trocar o "0,8 de proximidade" inferido por esta caixa
+de 0,30 em volta do osso `head` e o enquadramento por ajuste do fov.
+
