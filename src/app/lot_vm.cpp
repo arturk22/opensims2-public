@@ -61,6 +61,10 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
         for (const auto& e : rl.errors)
             std::fprintf(stderr, "opensims2: reset lot: %s\n", e.c_str());
     }
+    // The lot is ready (cTSGameStateController, message 0x4C8E7905): "CT -
+    // Lot Loaded" plays the move-in scene when a family has just moved in.
+    if (std::string err; !vm::runLotLoaded(m, &err) && !err.empty())
+        std::fprintf(stderr, "opensims2: CT - Lot Loaded: %s\n", err.c_str());
     char buf[256];
     if (fromInit)
         std::snprintf(buf, sizeof buf, "%zu of %zu saved objects in the VM, from their Inits, %zu Mains", load.created,

@@ -83,6 +83,18 @@ struct ResetLotResult {
 };
 ResetLotResult runResetLot(VM& vm, const std::vector<std::filesystem::path>& characters);
 
+// The lot is ready (message 0x4C8E7905, after the loading screen) while the
+// game is in the lot state (0x0BEA28C2): the base game's
+// cTSGameStateController runs the global tree "CT - Lot Loaded" on the first
+// object of the objects list (Mac 1.0 0x864e0c; BV runs "CT - Move In
+// Cinematic - Prep" on the first global sim object instead). The tree finds
+// the "Controller - Lot Load - Curtain Pull-Down" (updateSimObjects makes
+// it) and, when its "reset lot" marked a family moving in (attribute 1),
+// plays the moveIn cinematic and runs the curtain's move-in trees. Run here
+// as a one-tick tree on the lowest object ID (inferred: the list's order).
+// False when the tree or an object is missing, or the tree failed (`error`).
+bool runLotLoaded(VM& vm, std::string* error = nullptr);
+
 // The neighbourhood's character directory of a lot package
 // (N001/Lots/N001_Lot11.package -> N001/Characters), empty if there is none.
 std::filesystem::path charactersDirOf(const std::filesystem::path& lotPackage);

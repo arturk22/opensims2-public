@@ -19,6 +19,7 @@
 #include "vm/lot_neighborhood.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/motives.hpp"
+#include "vm/engine.hpp"
 #include "vm/wants.hpp"
 #include "wants_cmds.hpp"
 
@@ -137,6 +138,9 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         for (const auto& e : r.errors)
             std::printf("  reset lot: %s\n", e.c_str());
     }
+    // The lot is ready: "CT - Lot Loaded" (the move-in scene after a move).
+    if (std::string err; !vm::runLotLoaded(machine, &err) && !err.empty())
+        std::printf("CT - Lot Loaded: %s\n", err.c_str());
     if (motives)
         vm::setAllMotives(machine, int16_t(*motives));
     vm::gMotiveDecay = !noDecay;
@@ -323,6 +327,12 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             if (const vm::Object* x = machine.object(vm::ObjectId(std::atoi(w))))
                 std::printf("  tick %6llu watch %d at (%.2f, %.2f, %d) dir %d in %d\n", static_cast<unsigned long long>(machine.ticks), x->id,
                             x->position.x, x->position.y, x->position.level, x->data[vm::objdata::Direction], x->data[vm::objdata::ContainerId]);
+        // Cinematics the trees ask for (Cinematic 0x7B): the move-in scene, births, ...
+        for (const auto& r : vm::cinematicRequests())
+            std::printf("  tick %6llu %s cinematic \"%s\" from %d (%zu actors)\n",
+                        static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(), r.scene.c_str(),
+                        r.me, r.actors.size());
+        vm::cinematicRequests().clear();
         for (vm::ObjectId id : sims) {
             const vm::Object* s = machine.object(id);
             if (!s || !s->person)

@@ -389,4 +389,21 @@ ResetLotResult runResetLot(VM& vm, const std::vector<std::filesystem::path>& cha
     return out;
 }
 
+bool runLotLoaded(VM& vm, std::string* error) {
+    constexpr uint32_t kGlobalGroup = 0x7FD46CD0;
+    const auto tree = vm.code().behaviorByName(kGlobalGroup, "CT - Lot Loaded");
+    if (!tree || vm.objects().empty())
+        return false;
+    const ObjectId first = vm.objects().begin()->first;
+    std::array<int16_t, kTempCount> temps{};
+    const std::array<int16_t, 4> params{};
+    try {
+        return runOneTickTree(vm, temps, first, first, 0, *tree, params);
+    } catch (const std::exception& e) {
+        if (error)
+            *error = e.what();
+        return false;
+    }
+}
+
 } // namespace os2::vm
