@@ -127,3 +127,129 @@ mostra a pegada (verde/vermelha) com o canto no tile (x, y) e
 `--hood-place-click x,y` põe o lote; a vista é refeita por uma troca de cena
 (`HoodMode::onReload`). `--hood-tool move|tobin` dão as ferramentas de mover e
 de mandar para a caixa.
+
+## 7. Carregar um lote no binário (rodada 12, Mac BV)
+
+### 7.1 Os objetos globais ("is global sim object") e a cortina
+
+**Quem cria o "Controller - Lot Load - Curtain Pull-Down" (`0xED7580EF`):
+o motor, ao ler os objetos de qualquer lote, por um campo do OBJD.** Nenhuma
+árvore o cria (as 9 BHAVs que têm a constante só o procuram com "Set to
+Next" por GUID, opcode `0x1F` flags `0x84 0x0A`: "CT - Lot Loaded",
+"Curtain - Hold/Ready/Up?", "Lot - Load Complete?", os Mains do
+tutorial e do Game Scripting, "Main - Display TNS Messages", "Event - Pause
+Game") e o código não tem a constante (nem literal, nem `lis`/`addi`), mas
+o OBJD dele tem o campo 42 = 1.
+
+- Campos do OBJD (rótulos do STR# 0xCC do grupo `0x7FE59FD0`; campo *i* no
+  offset `0x40 + 2i`): **42 "is global sim object"**, **26 "Ignore
+  GlobalSim field in CAS Lot"**, 9 "type". Na memória
+  (`cEdithObjectDefinition`, BV `0x58d0c0` `GetFieldAddress`) o campo *t*
+  fica em `this + 4 + 2t` e `GetFieldByTag(t)` usa o mesmo índice.
+- `cEdithObjectModule::UpdateSimObjects(mask)` (BV `0x52f040`, vtable `0x20`
+  do módulo de objetos):
+  1. junta os objetos existentes cujo OBJD tem `campo42 & mask`;
+  2. percorre todos os seletores (OBJDs) do `cTSObjectFolder`; para cada um
+     com **tipo (campo 9) = 7** e `campo42 & mask`:
+     - "não deve existir" = estamos num lote de CAS (um booleano global,
+       inferido como "lote do CAS") **e** campo 26 ≠ 0;
+     - mantém a **primeira** instância existente desse seletor e mata as
+       outras (`KillObject`, vtable `0x44`); se "não deve existir", mata
+       todas;
+     - se não sobrou nenhuma e deve existir: **cria uma fora do mundo**,
+       `MakeNewOutOfWorldObject(seletor, false, 0, false)` (vtable `0x40`;
+       roda o Init e o Main como qualquer objeto criado).
+- Quem chama: `cEdithObjectModule::SplitLoad` (BV `0x52bc4c`, a leitura
+  dos objetos do lote em passos), **passo 6: `UpdateSimObjects(1)`**, depois
+  de ler e retomar os objetos (passos 1–5) e antes do passo 7 (o `ObjM`
+  `0x4F626A4D`). `cTSLoadLotController::LoadLot` chama o `SplitLoad` nos
+  passos 8 (lote salvo) e 0x10 (lote novo, depois do modelo
+  `LotTemplate%dx%d`/`CommunityLotTemplate`/`BeachLotTemplate`/
+  `BeachCommunityLotTemplate`/`DormTemplate`/`FraternityTemplate`): **os
+  globais entram em toda carga**, de lote salvo ou de modelo. O valor do
+  campo 42 é 1 em todos, então todos os 150 OBJDs com o campo ligado e tipo
+  7 entram (a máscara 1 é a única usada no base).
+- Os OBJDs com campo 42 = 1 (`objects.package`, tipo 7 salvo indicação):
+  todos os "Controller - …" que nenhuma árvore cria (Game Scripting, Light,
+  Locomotion, Maintenance, Weather, Move In Cinematic, Emit - Timing,
+  Short Term Memory Effects, Aspiration Score Decay, Relationship Decay,
+  NPC Social Worker, PlumbBob, Tutorial - Main, Tutorial - Death Checker,
+  **Lot Load - Curtain Pull-Down**), mais os que também têm árvores
+  (Scenarios, Lot Transitions, Inheritance, Disease, NPC Pool, Chat, Age,
+  Motive/NPC Handler, CLP - Community Lot - Populator, NPC, Visitor),
+  Wants - Controller e Wants - Check Trees, Fitness - Controller, Zits
+  Controller, Pool - Controller, Global Sim - Temp Array, Visit Generator,
+  Job Finder, os 31 "JobData - …", os 10 "Personality - …", os 5 canais de
+  TV, os menus de comida ("Food - … - Menu", 26), os serviços e chamadas de
+  telefone (Phone Service/Emergency/Call/Delivery/Transport/Party/Work,
+  ~25), Accessory - Glass - Water - MENU, e alguns de **outro tipo, que o
+  `UpdateSimObjects` ignora** (tipo 4: Motive - Helper - Bladder/Energy/
+  Hunger/Hygiene, Overhead Meter, Routing - Idle, _TEST FAMILY INVENTORY;
+  tipo 11: Scheduler 2; tipo 0: os objetos de revista e de CD das
+  prateleiras). Os modelos de lote (`LotTemplates/*.package`) têm só os 8
+  objetos do lote vazio (portais, lixeira, caixa de correio); a tabela
+  `objt` deles lista os tipos, inclusive a cortina, mas sem instância.
+- No opensims2 isso **não existe ainda**: o lote só tem os controladores
+  que foram gravados nele (em `N001_Lot11` faltam Game Scripting, Light,
+  Weather?, a cortina, ...). Fazer: ao carregar um lote (salvo ou modelo),
+  depois de ler os objetos, criar fora do mundo uma instância de cada OBJD
+  tipo 7 com campo 42 ≠ 0 que ainda não tem nenhuma, matar as duplicatas e,
+  num lote de CAS, matar as que têm o campo 26.
+
+O que a cortina faz (grupo `0x7FE50A0E`): Init põe o atributo 0 = 1; Main
+espera (`0x0118` = Sleep) e reage ao "reset lot" (`1003` põe o atributo
+0x1A), "CT - Curtain Hold/Ready" (atributo 0 = 3/4), "Ready to Raise
+Curtain?", "Add Sims To UI", "Move In", "Cinematic - Move In" (`moveIn`),
+"Memory - Move In" e "Generate Family". Nunca se apaga: é recriada (ou
+mantida) a cada carga.
+
+### 7.2 Os passos do `cTSLoadLotController::LoadLot` (BV `0x8804ec`)
+
+Uma máquina de estados (`this + 0x24`), um passo por chamada, com o
+simulador (`+0x7c`, interface `cITSSimulator`: `SetGlobal` vtable `0x40`,
+`Notify` `0x34`, `Pause/Resume` `0x60/0x64`, `SetCurrentTime` `0xa4`,
+`SetTimeOfDay` `0xc4`, "período do dia pela hora" `0xc8`) e o módulo de
+objetos (`+0x80`, primário: `SplitLoad` `0x1c`, `UpdateSimObjects` `0x20`,
+`InitForNewLot` `0x24`, `PostLoad` `0x28`, `KillObject` `0x44`,
+`FlushKillQueue` `0x54`, `BroadcastMessage(tipo)` `0xd8`). Resumo:
+
+| passo | o que faz |
+|---|---|
+| 0 | mudando (`+0x34`): família já no lote? → `+0x35`; senão liga família e lote |
+| 1 | mensagem `0xB2`; `TS::SetCheckpoint(lote, bairro)` |
+| 2 | abre o pacote do lote; lote salvo → 3, novo → 0xB |
+| 3–7 | lote salvo: lê o mundo, `SetCommonSimulatorGlobals` (globais 20, 10 = lote, 41 = tipo do lote, 40/54 do bairro, 43), terreno, `SetGlobal(9, 0)`, mensagem `0xBB` |
+| 8 | `SplitLoad` até terminar (inclui `UpdateSimObjects(1)`) |
+| 9–10 | recursos `0x45585069` e materiais (TXMT) do lote |
+| 0xB–0x11 | lote novo: `InitForNewLot`, globais, abre o modelo `"%s%dx%d"` pelo tamanho/tipo (girado conforme a orientação), terreno, `SetGlobal(9, 0)`, mensagem `0xBD`, `SplitLoad` do modelo, posiciona os objetos do modelo girados |
+| 0x13–0x16 | mensagens `0xAD` e `0x94`; `Notify(0)`; **`SetTimeOfDay(período(hora))`** |
+| 0x17–0x1a | câmera/vista; `SetGlobal(0x2C, …)`; mensagem `0xB3`; lista as pessoas e as famílias |
+| 0x1b | mudando para um lote que não era da família: **fundos −= preço do lote**; `SetGlobal(9, família)` (§ `docs/neighborhood-mac.md`) |
+| 0x1c | `CleanupThingsRelatedToEvictedFamily` |
+| 0x1e | `PostLoad(0xCE)` |
+| 0x1d | se o lote tinha o recurso do passo 9: `BroadcastMessage(0, …)` e o mesmo para os inventários pessoais |
+| 0x1f–0x20 | primeiro dia da família (`+0x78` vtable `0x44`, o `SetupFamilyFirstDay` abaixo) quando é mudança ou o lote tem a flag 4 |
+| 0x21 | mata as pessoas que não pertencem mais ao lote; `FlushKillQueue` |
+| 0x22 | mensagem `0x9A`; câmera inicial; mensagem `0xCBCCDECE`; `dormSpecificToolsDisabled` |
+
+**Não há simulação adiantada**: nenhum passo roda ticks; o relógio é o
+dos globais salvos do lote (`cTSSimulator::Read`, BV `0x499c20`: globais 0
+hora, 1 dia, 4 período, 5 minuto, 7 mês, 8 ano; versões antigas caem em
+5:55) e o passo 0x16 só recalcula o período do dia (6h → 3, 7–17h → 0,
+18h → 1, senão 2; `0x4984d4`), que manda a mensagem `0x8D` (luz).
+
+### 7.3 A hora da mudança: 8:00
+
+`cTSNeighborhood::SetupFamilyFirstDay(família, simulador, objetos)` (BV
+`0x4db0c0`): família vtable `0x120(0)`; **`SetCurrentTime(hora = "new family
+start hour", minuto = 0, resto −1 = sem mudar)`**; `ClearHistory` (as
+despesas); `Resume(1)`; `BroadcastMessage("reset lot", 0, 0, 0, 0)`.
+"new family start hour" vem das constantes do bairro
+(`cTSNeighborhoodConstants::UpdateConstants`, BV `0x4d6250`,
+`cTSFloatConstants` com padrão 7,0) e o recurso **FCNS `0x46434E53`, grupo
+`0x7FD46CD0`, instância 4** do `objects.package` diz **8,0** (o mesmo
+recurso tem "money for new family" = 20000, "architecture value
+multiplier" = 0,7, "perfect family friend count" = 15, "yard score
+multiplier" ≈ 0,33, ...). Então a família que se muda começa às **8:00**,
+no dia/mês/ano que o lote já tinha, e o "reset lot" que o opensims2 já
+manda (rodada 11) vem logo depois de pôr o relógio.
