@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <map>
+#include <optional>
 #include <cstdio>
 #include <algorithm>
 #include <string>
@@ -120,8 +121,8 @@ int cmdAnim(const char* res, const std::string& name, bool keys) {
     std::printf("%s: v%u duration=%u ticks (%.2f s) flags=0x%02X priority=%u locomotion=%u skeleton=\"%s\" data=\"%s\"\n",
                 a.resource.fileName.c_str(), a.version, a.duration, a.duration / Animation::kTicksPerSecond, a.flags,
                 a.priority, a.locomotionType, a.skeletonTag.c_str(), a.dataString.c_str());
-    std::printf("heading=%g distance=%g velocity=%g turn=%g stride=%g\n", a.headingOffset, a.locomotionDistance,
-                a.velocity, a.turnRotation, a.strideLength);
+    std::printf("heading=%g distance=%g velocity=%g turn=%g stride=%g cycle=%g\n", a.headingOffset,
+                a.locomotionDistance, a.velocity, a.turnRotation, a.strideLength, a.cyclePortionCompleted);
     for (const auto& t : a.targets) {
         std::printf("target \"%s\" type=%u channels=%zu ik=%zu\n", t.tag.c_str(), t.animType, t.channels.size(),
                     t.ikChains.size());
@@ -170,6 +171,70 @@ int cmdAnim(const char* res, const std::string& name, bool keys) {
     }
     for (const auto& e : a.events)
         std::printf("event t=%u type=%d \"%s\"\n", e.ticks, e.type, e.data.c_str());
+    return 0;
+}
+
+// The root and the feet of an animation on the adult skeleton (IK applied),
+// every 1/30 s: where the root is and faces (the yaw of its forward, +Y, axis,
+// about +Z, degrees) and both feet. With a speed (m/s, default the header's
+// velocity), the animation's frame moves forward at it, as the locomotion
+// moves a walker; a planted foot (the lower one, within 0.006 of its lowest)
+// should then stand still: the summary gives how far the planted feet slide
+// per second of contact (foot slide; 0 is a walk that fits its speed).
+int cmdAnimRoot(const char* res, const std::string& name, std::optional<float> speed, const std::string& cres) {
+    ResourceIndex index(res);
+    auto loc = index.findByName(name, kTypeAnim);
+    if (!loc)
+        throw FormatError("ANIM not found: " + name);
+    const Animation a = parseAnim(index.read(*loc));
+    const ObjectModel model = loadObjectModel(index, withSuffix(cres, "_cres"));
+    const Skeleton& sk = model.skeleton;
+    const Animation::Target* target = a.targets.empty() ? nullptr : &a.targets.front();
+    if (!target)
+        throw FormatError("ANIM has no target");
+    const float v = speed.value_or(a.velocity * Animation::kTicksPerSecond);
+    const int root = sk.find("root_rot"), lf = sk.find("l_foot"), rf = sk.find("r_foot");
+    if (root < 0 || lf < 0 || rf < 0)
+        throw FormatError("skeleton without root_rot/l_foot/r_foot");
+    std::printf("%s: %u ticks, frame speed %.4f m/s (header %.4f), turn %.1f deg\n", a.resource.fileName.c_str(),
+                a.duration, v, a.velocity * Animation::kTicksPerSecond, a.turnRotation * 180 / 3.14159265f);
+    struct Sample { float t; Vec3 l, r; };
+    std::vector<Sample> samples;
+    const float step = Animation::kTicksPerSecond / 30.0f;
+    for (float ticks = 0; ticks <= float(a.duration) + 0.01f; ticks += step) {
+        std::vector<Xform> pose = samplePose(*target, sk, ticks);
+        applyIk(*target, sk, ticks, pose);
+        const auto w = sk.world(pose);
+        const float off = v * ticks / Animation::kTicksPerSecond;
+        const Vec3 fwd = Xform{w[size_t(root)].q, {0, 0, 0}}.rotate(Vec3{0, 0, 1});
+        // The root's facing: its local +Z (the skeleton's forward through
+        // root_trans' rest rotation) on the ground.
+        const float yaw = std::atan2(-fwd[0], fwd[1]) * 180 / 3.14159265f;
+        Vec3 l = w[size_t(lf)].t, r = w[size_t(rf)].t;
+        l[1] += off, r[1] += off;
+        samples.push_back({ticks, l, r});
+        std::printf("t=%5.0f root=(%.3f %.3f %.3f) yaw=%7.1f  l=(%.3f %.3f %.3f) r=(%.3f %.3f %.3f)\n", ticks,
+                    w[size_t(root)].t[0], w[size_t(root)].t[1] + off, w[size_t(root)].t[2], yaw, l[0], l[1], l[2], r[0],
+                    r[1], r[2]);
+    }
+    float lowL = 1e9f, lowR = 1e9f;
+    for (const auto& s : samples)
+        lowL = std::min(lowL, s.l[2]), lowR = std::min(lowR, s.r[2]);
+    float slide = 0, contact = 0;
+    for (size_t i = 1; i < samples.size(); ++i) {
+        const auto &p = samples[i - 1], &q = samples[i];
+        // The supporting foot: the lower one (relative to its own lowest),
+        // when it is down on both samples.
+        const bool left = (q.l[2] - lowL) <= (q.r[2] - lowR);
+        const Vec3 &a0 = left ? p.l : p.r, &a1 = left ? q.l : q.r;
+        const float low = left ? lowL : lowR;
+        if (a0[2] - low > 0.006f || a1[2] - low > 0.006f)
+            continue;
+        slide += std::hypot(a1[0] - a0[0], a1[1] - a0[1]);
+        contact += (q.t - p.t) / Animation::kTicksPerSecond;
+    }
+    std::printf("foot slide: %.4f m over %.2f s of contact (%.4f m/s)\n", slide, contact,
+                contact > 0 ? slide / contact : 0.0f);
     return 0;
 }
 
@@ -287,6 +352,10 @@ int animCommand(const std::string& cmd, int argc, char** argv) {
         return cmdSkeleton(argv[2], withSuffix(argv[3], "_cres"));
     if (cmd == "anim" && (argc == 4 || argc == 5))
         return cmdAnim(argv[2], withSuffix(argv[3], "_anim"), argc == 5 && std::string(argv[4]) == "--keys");
+    if (cmd == "anim-root" && argc >= 4 && argc <= 6)
+        return cmdAnimRoot(argv[2], withSuffix(argv[3], "_anim"),
+                           argc >= 5 && std::string(argv[4]) != "-" ? std::optional<float>(std::stof(argv[4])) : std::nullopt,
+                           argc == 6 ? argv[5] : "auskel");
     if (cmd == "anim-list" && (argc == 3 || argc == 4))
         return cmdAnimList(argv[2], argc == 4 ? argv[3] : "");
     if (cmd == "sim-parts" && argc >= 3 && argc <= 5)
@@ -303,6 +372,7 @@ const char* animUsage() {
     return "       s2pkg skeleton <Res-dir> <cres-name>\n"
            "       s2pkg anim <Res-dir> <anim-name> [--keys]\n"
            "       s2pkg anim-list <Res-dir> [name-filter]\n"
+           "       s2pkg anim-root <Res-dir> <anim-name> [speed-m/s|-] [skeleton-cres]  (root, feet, foot slide)\n"
            "       s2pkg anim-sweep <Res-dir>\n"
            "       s2pkg anim-events <Res-dir> [name-filter]\n"
            "       s2pkg sim-parts <Res-dir> [name-filter [--resolve]]\n";
