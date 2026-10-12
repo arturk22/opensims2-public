@@ -26,6 +26,10 @@
 #include <utility>
 #include <vector>
 
+namespace os2 {
+class ResourceIndex;
+}
+
 namespace os2::vm {
 
 class VM;
@@ -103,6 +107,37 @@ void tickTutorialControllers(VM& vm);
 // (cTSEdithWinEventListener, inferred to run the tree to its end); false if
 // it failed or the object is gone.
 bool runTutorialEventTree(VM& vm, ObjectId object, uint16_t tree);
+
+// Test aids (s2pkg tutorial --auto, the app's --tutorial-auto): what a step
+// that waits on the Sim waits for, and doing it. Some steps show no
+// highlight and no Next: the controller sleeps until the selected Sim's
+// interaction object (person data 0x50) is of a type, tested by a Test
+// Object Type whose false branch is the sleep it is in (Go Here's
+// destination 0x7C4 for "now you'll control João", a fridge, ...).
+// tutorialAwaitedGuid gives that GUID (0: none); tutorialAct makes the
+// selected Sim do it: a Go Here a few tiles away, or the first available
+// entry of the menu of an object of that type. Returns what it queued ("":
+// nothing).
+uint32_t tutorialAwaitedGuid(VM& vm);
+// A step that waits for an object of a category (object data 59) on the lot
+// (Set to Next type 12 with the category in temp 0, "buy a ... in the Comfort
+// group"): that category, else -1.
+int tutorialAwaitedCategory(VM& vm);
+// A step that waits on a person data of the Sim (an Expression on the stack
+// object's person data with a branch to the sleep: 89, the job, for "find a
+// job"): its index, else -1.
+int tutorialAwaitedPersonData(VM& vm);
+// The selected Sim does the first available menu entry, on any object in
+// the world, whose name contains `part` ("Emprego"). Returns its name.
+std::string tutorialActNamed(VM& vm, const std::string& part);
+// For a step waiting for a category: the cheapest catalog object whose
+// ghost gets it (object data 59), bought on a free tile near the selected
+// Sim (free on a lot with no family). Returns its name.
+std::string tutorialBuyCategory(VM& vm, ResourceIndex& index, int category);
+// Whichever of the above the step waits for, said in a line ("": nothing
+// to do). `index` (null: no buying) is the catalog's.
+std::string tutorialAutoAct(VM& vm, ResourceIndex* index);
+std::string tutorialAct(VM& vm, uint32_t guid);
 
 // The progress window's script and buttons (ui.package 0x2CDB7CBD).
 constexpr uint32_t kProgressWindow = 0x4D2B68A1;

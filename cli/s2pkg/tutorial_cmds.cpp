@@ -128,6 +128,14 @@ int cmdTutorial(const std::filesystem::path& lotFile, int ticks, bool autoPlay, 
             std::printf("  [%6d] click Next\n", t);
             ui.click(m, vm::kProgressWindow, vm::kProgressNext);
             idle = 0;
+        } else if (idle % (10 * wait) == wait) {
+            // A step that waits on the Sim (no highlight, no Next): do it.
+            if (const std::string done = vm::tutorialAutoAct(m, &index); !done.empty())
+                std::printf("  [%6d] %s\n", t, done.c_str());
+            else if (idle == wait)
+                for (const auto& k : ui.withTrees())
+                    std::printf("  [%6d] waiting; a click on 0x%08X/0x%08X runs a tree%s\n", t, k.first, k.second,
+                                ui.enabled(k.first, k.second) ? "" : " (disabled)");
         }
     }
     std::printf("controller: episode %d section %d of %d; furthest step shown %d\n",

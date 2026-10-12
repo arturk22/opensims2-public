@@ -3,15 +3,21 @@
 #include "tutorial.hpp"
 
 #include "engine.hpp"
+#include "go_here.hpp"
+#include "interactions.hpp"
 #include "errors.hpp"
 #include "kill.hpp"
 #include "placement.hpp"
 #include "vm.hpp"
 
 #include "formats/binreader.hpp"
+#include "formats/catalog.hpp"
+#include "formats/resindex.hpp"
 #include "formats/strings.hpp"
 
+#include <algorithm>
 #include <cstdlib>
+#include <memory>
 #include <exception>
 
 namespace os2::vm {
@@ -308,4 +314,190 @@ bool TutorialUi::click(VM& vm, uint32_t window, uint32_t control) {
     return true;
 }
 
+// The controller's frame that called the sleep it is in (null if none).
+static const Frame* tutorialWaitFrame(VM& vm, const Thread** thread = nullptr) {
+    for (const Object* o : vm.objectTable()) {
+        if (!o || o->guid() != kTutorialControllerGuid)
+            continue;
+        auto it = vm.threads.find(o->id);
+        if (it == vm.threads.end() || it->second.stack.size() < 2)
+            continue;
+        if (thread)
+            *thread = &it->second;
+        const Frame& f = it->second.stack[it->second.stack.size() - 2];
+        return f.behavior ? &f : nullptr;
+    }
+    return nullptr;
+}
+
+int tutorialAwaitedCategory(VM& vm) {
+    const Thread* t = nullptr;
+    const Frame* f = tutorialWaitFrame(vm, &t);
+    if (!f)
+        return -1;
+    for (const auto& in : f->behavior->instructions)
+        if (in.opcode == 0x1F && (in.operands[4] & 0x7F) == 12 && in.onFalse.kind == Behavior::TargetKind::Instruction &&
+            in.onFalse.index == f->pc)
+            return t->temps[0];
+    return -1;
+}
+
+int tutorialAwaitedPersonData(VM& vm) {
+    const Frame* f = tutorialWaitFrame(vm);
+    if (!f)
+        return -1;
+    auto toPc = [&](const Behavior::Target& t) { return t.kind == Behavior::TargetKind::Instruction && t.index == f->pc; };
+    for (const auto& in : f->behavior->instructions)
+        if (in.opcode == 0x02 && in.operands[6] == 0x13 && (toPc(in.onTrue) || toPc(in.onFalse)))
+            return in.operands[0] | in.operands[1] << 8;
+    return -1;
+}
+
+std::string tutorialActNamed(VM& vm, const std::string& part) {
+    const ObjectId sim = findSim(vm);
+    if (!sim || part.empty())
+        return {};
+    for (const Object* o : vm.objectTable()) {
+        if (!o || o->person || !o->position.inWorld() || !o->definition || interactionLeader(vm, o->id) != o->id)
+            continue;
+        for (const auto& e : pieMenu(vm, sim, o->id))
+            if (e.available() && !e.debug && e.name.find(part) != std::string::npos)
+                if (auto q = interactionFromPie(vm, e)) {
+                    q->pushedBy = sim;
+                    enqueue(vm, *vm.object(sim), *q);
+                    return q->name;
+                }
+    }
+    return {};
+}
+
+uint32_t tutorialAwaitedGuid(VM& vm) {
+    for (const Object* o : vm.objectTable()) {
+        if (!o || o->guid() != kTutorialControllerGuid)
+            continue;
+        auto it = vm.threads.find(o->id);
+        if (it == vm.threads.end() || it->second.stack.size() < 2)
+            continue;
+        // The frame that called the sleep: a Test Object Type there whose
+        // false branch is the call.
+        const Frame& f = it->second.stack[it->second.stack.size() - 2];
+        if (!f.behavior)
+            continue;
+        for (const auto& in : f.behavior->instructions)
+            if (in.opcode == 0x20 && in.onFalse.kind == Behavior::TargetKind::Instruction && in.onFalse.index == f.pc &&
+                in.operands[6] == 0x13 && (in.operands[4] | in.operands[5] << 8) == 0x50)
+                return uint32_t(in.operands[0]) | uint32_t(in.operands[1]) << 8 | uint32_t(in.operands[2]) << 16 |
+                       uint32_t(in.operands[3]) << 24;
+    }
+    return 0;
+}
+
+std::string tutorialAct(VM& vm, uint32_t guid) {
+    const ObjectId sim = findSim(vm);
+    const Object* me = sim ? vm.object(sim) : nullptr;
+    if (!me || !guid)
+        return {};
+    auto queueFirst = [&](ObjectId object) -> std::string {
+        for (const auto& e : pieMenu(vm, sim, object))
+            if (e.available() && !e.debug)
+                if (auto q = interactionFromPie(vm, e)) {
+                    q->pushedBy = sim;
+                    enqueue(vm, *vm.object(sim), *q);
+                    return q->name;
+                }
+        return {};
+    };
+    if (guid == kGoHereGuid) {
+        // A Go Here a few tiles from where the Sim stands, the first spot a
+        // destination can stand on.
+        const float dx[] = {3, -3, 0, 0, 2, -2, 4, -4}, dy[] = {0, 0, 3, -3, 2, -2, 1, -1};
+        for (size_t k = 0; k < std::size(dx); ++k) {
+            const ObjectId d = createGoHereDestination(vm, sim, me->position.x + dx[k], me->position.y + dy[k],
+                                                       me->position.level);
+            if (!d)
+                continue;
+            std::string name = queueFirst(d);
+            releaseDestination(vm, d);
+            if (!name.empty())
+                return name;
+        }
+        return {};
+    }
+    for (const Object* o : vm.objectTable()) {
+        if (!o || o->person || !o->position.inWorld() || !o->definition)
+            continue;
+        bool match = o->guid() == guid;
+        if (!match && o->definition->masterId())
+            if (auto m = vm.code().masterDefinition(o->group, o->definition->masterId()))
+                if (const ObjectDefinition* md = vm.code().definition(o->group, *m))
+                    match = md->guid() == guid;
+        if (match)
+            if (std::string name = queueFirst(interactionLeader(vm, o->id)); !name.empty())
+                return name;
+    }
+    return {};
+}
+
+std::string tutorialBuyCategory(VM& m, ResourceIndex& index, int category) {
+    static std::unique_ptr<Catalog> catalog;
+    if (!catalog)
+        catalog = std::make_unique<Catalog>(Catalog::load(index));
+    std::vector<const CatalogEntry*> byPrice;
+    for (const auto& e : catalog->entries())
+        byPrice.push_back(&e);
+    std::stable_sort(byPrice.begin(), byPrice.end(), [](auto* a, auto* b) { return a->price < b->price; });
+    const ObjectId sim = findSim(m);
+    const Object* me = sim ? m.object(sim) : nullptr;
+    if (!me)
+        return {};
+    const int sx = int(me->position.x), sy = int(me->position.y), level = me->position.level;
+    for (const CatalogEntry* e : byPrice) {
+        ObjectId ghost = 0;
+        try {
+            ghost = createGhost(m, e->group, e->instance);
+        } catch (const std::exception&) {
+            continue;
+        }
+        const Object* g = m.object(ghost);
+        if (!g || g->data[objdata::Category] != category) {
+            deleteGroup(m, ghost);
+            continue;
+        }
+        for (int r = 1; r <= 8; ++r)
+            for (int dx = -r; dx <= r; ++dx)
+                for (int dy = -r; dy <= r; ++dy) {
+                    if (std::max(std::abs(dx), std::abs(dy)) != r)
+                        continue;
+                    for (int dir = 0; dir < 8; dir += 2) {
+                        const Placement p = checkPlacement(m, ghost, {sx + dx, sy + dy, level}, dir);
+                        if (p.ok && buy(m, ghost, p, e->price))
+                            return e->name + " at (" + std::to_string(sx + dx) + ", " + std::to_string(sy + dy) + ")";
+                    }
+                }
+        deleteGroup(m, ghost);
+        return {};
+    }
+    return {};
+}
+
+std::string tutorialAutoAct(VM& vm, ResourceIndex* index) {
+    auto said = [](const std::string& what, const std::string& done, const char* verb) {
+        return "the step waits for " + what + ": " + (done.empty() ? std::string("nothing to do") : verb + (" \"" + done + "\""));
+    };
+    if (const int category = tutorialAwaitedCategory(vm); category >= 0)
+        return said("an object of category " + std::to_string(category),
+                    index ? tutorialBuyCategory(vm, *index, category) : std::string(), "bought");
+    if (const uint32_t guid = tutorialAwaitedGuid(vm)) {
+        char hex[16];
+        std::snprintf(hex, sizeof hex, "0x%08X", guid);
+        return said(std::string("an interaction with ") + hex, tutorialAct(vm, guid), "queued");
+    }
+    // Person data 89: the job's GUID ("find a job"); others come by
+    // themselves (a skill point while exercising).
+    if (const int pd = tutorialAwaitedPersonData(vm); pd == 89)
+        return said("a job (person data 89)", tutorialActNamed(vm, "Emprego"), "queued");
+    return {};
+}
+
 } // namespace os2::vm
+

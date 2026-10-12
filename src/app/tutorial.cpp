@@ -251,9 +251,12 @@ bool TutorialOverlay::autoClick() {
         const simd_float2 p = simd_make_float2((nextRect_[0] + nextRect_[2]) / 2, (nextRect_[1] + nextRect_[3]) / 2);
         return press(p);
     }
-    for (const auto& k : ui_.withTrees())
-        std::printf("opensims2: tutorial: waiting; a click on 0x%08X/0x%08X runs a tree%s\n", k.first, k.second,
-                    locate && locate(k.first, k.second) ? "" : " (not drawn)");
+    if (pr.serial != waitingSaid_) { // once a step
+        waitingSaid_ = pr.serial;
+        for (const auto& k : ui_.withTrees())
+            std::printf("opensims2: tutorial: waiting; a click on 0x%08X/0x%08X runs a tree%s\n", k.first, k.second,
+                        locate && locate(k.first, k.second) ? "" : " (not drawn)");
+    }
     return false;
 }
 

@@ -66,6 +66,7 @@
 #include "app/tv_broadcast.hpp"
 #include "formats/neighborhood.hpp"
 #include "formats/ui_script.hpp"
+#include "vm/tutorial.hpp"
 #include "vm/wants.hpp"
 #include "app/movie_host.hpp"
 #include "render/movie_layer.hpp"
@@ -5505,7 +5506,21 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 if (st.kind == os2::FlowStep::Kind::Drag || st.kind == os2::FlowStep::Kind::Hover)
                     continue; // after the build steps (below)
                 if (st.kind == os2::FlowStep::Kind::TutorialAuto) { // --tutorial-auto <turns>
-                    for (long turn = 0; gTutorial && turn < st.ticks && !gPendingScene; ++turn) {
+                    // Each turn: a click on what the arrow points at or Next;
+                    // else what a step waiting on the Sim waits for (a Go
+                    // Here, an object bought, a job: vm::tutorialAutoAct);
+                    // else time passes (the first step shows after some
+                    // ticks, a skill grows). Stops after ~3000 idle ticks.
+                    int idle = 0;
+                    // The trees' own dialogs (the job offers) get their first
+                    // button, as s2pkg tutorial --auto, unless --dialog-answer says.
+                    int& autoAnswer = gPie->vm().autoDialogAnswer;
+                    const int answerBefore = autoAnswer;
+                    if (autoAnswer < 0)
+                        autoAnswer = 0;
+                    for (long turn = 0; gTutorial && turn < st.ticks && !gPendingScene && idle < 50; ++turn) {
+                        if (st.entry > 0 && gPie->vm().tutorial.progress.visible && gPie->vm().tutorial.progress.step >= st.entry)
+                            break; // --tutorial-auto <turns>:<step>
                         gTutorial->setCanvas(int(cw), int(ch));
                         gLive->setCanvas(int(cw), int(ch));
                         if (gBuy)
@@ -5513,10 +5528,18 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                         if (gBuild)
                             gBuild->setCanvas(int(cw), int(ch));
                         pollTutorial(gHeadlessClock);
-                        if (!gTutorial->autoClick())
-                            break;
-                        runTicksHeadless(40);
+                        if (gTutorial->autoClick()) {
+                            idle = 0;
+                            runTicksHeadless(40);
+                            continue;
+                        }
+                        if (idle % 10 == 1)
+                            if (const std::string done = os2::vm::tutorialAutoAct(gPie->vm(), gIndex.get()); !done.empty())
+                                std::printf("opensims2: tutorial: %s\n", done.c_str());
+                        ++idle;
+                        runTicksHeadless(60);
                     }
+                    autoAnswer = answerBefore;
                     continue;
                 }
                 if (st.kind == os2::FlowStep::Kind::Pie) { // --pie-step <object>:<entry index or name>

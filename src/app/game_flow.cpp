@@ -111,6 +111,9 @@ std::vector<FlowStep> flowSteps(const std::vector<std::string>& args) {
             st.kind = FlowStep::Kind::TutorialAuto;
             try {
                 st.ticks = std::stol(args[i + 1]);
+                // <turns>:<step>: stop once that step is shown (a shot of it).
+                if (const auto colon = args[i + 1].find(':'); colon != std::string::npos)
+                    st.entry = std::stoi(args[i + 1].substr(colon + 1));
             } catch (const std::exception&) {
                 continue;
             }

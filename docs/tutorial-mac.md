@@ -257,3 +257,19 @@ O que está feito e onde (o resto do documento é o binário):
   seta aponta ou Avançar, pela UI), `--pie-step <objeto>:<entrada>` e
   `--key space`. As cinco lições vão do começo ao fim
   (`docs/screenshots/r10-tutorial-*.jpg`).
+- **Passos que esperam pelo Sim** (rodada 17): alguns passos não têm seta
+  nem Avançar; o controlador dorme até o Sim fazer algo, testado por um
+  Test Object Type sobre o dado de pessoa `0x50` (objeto da interação) cujo
+  ramo falso é o sono (Vir Aqui `0x7C4`, a ducha `0x4BD90A8A`, o aparelho
+  de ginástica `0x2DFD8625`), um Set to Next tipo 12 (objeto da categoria
+  no temp 0: a cadeira, categoria 13) ou uma Expression sobre o dado de
+  pessoa 89 (o emprego). `vm::tutorialAutoAct` acha o que o passo espera e
+  faz (Vir Aqui a uns tiles do Sim, a primeira entrada do menu de um objeto
+  do tipo, a cadeira mais barata da categoria, "Procurar Emprego"); o
+  `s2pkg tutorial --auto` e o `--tutorial-auto <voltas>[:<passo>]` do app
+  (que agora espera o tutorial em vez de parar na primeira volta sem
+  clique, e responde os diálogos das árvores com o botão 0) levam "O
+  Básico - Parte Um" até o passo 32 e de volta ao menu
+  (`docs/screenshots/r17-emptylot-tutorial-step32.jpg`; teste
+  `tutorial_auto` com `OS2_DATA`). Só ferramenta de teste: o jogo espera o
+  jogador.

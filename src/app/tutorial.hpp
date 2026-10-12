@@ -97,6 +97,7 @@ public:
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 
 private:
+    uint32_t waitingSaid_ = 0; // the step autoClick last said it waits on
     void buildPanel(UiScreen& out, int width, int height);
     void buildArrow(UiScreen& out);
 
