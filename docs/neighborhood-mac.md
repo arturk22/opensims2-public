@@ -657,8 +657,8 @@ ficar nas mesmas bordas, giradas); depois
 bairro nas alturas dos vértices do lote (giradas, + a altura da rua da
 borda da frente): um vértice fora da faixa da rua cuja altura muda mais de
 **0,01** não pode ser de outro lote nem estar sob uma rua que não acompanha;
-senão falha. O giro do mover (`RotateLot`, BV `0x222b2c`) segue a borda
-mais próxima do cursor, muda o cursor (0x1C/0x1E/0x1F/0x1D para frente
+senão falha. O giro do mover (`RotateLot`, BV `0x222b2c`) segue a direção
+do arrasto a partir do ponto do clique (§15.1), muda o cursor (0x1C/0x1E/0x1F/0x1D para frente
 0/1/2/3), reavalia e gira o imposter (`RotateLotImposter`).
 
 **Lote vazio** (`cTSUserToolPlaceNewLot::PlaceLot`, BV `0x2c7344`): marca as
@@ -837,7 +837,7 @@ lote nem fica sob uma rua.
   (`,`/`.`) soma +1 ou −1 ao giro (lote vazio, `SetRotation`), à frente
   (caixa, `SetCurrentFrontEdge`) ou à frente do lote movido
   (`RotateLotImposter` + `EvaluatePlacementValidity`); `0x8CA297E2` cancela.
-  O mover também segue a borda mais perto do mouse (`RotateLot`).
+  O mover gira pela direção do arrasto com o botão apertado (`RotateLot`, §15.1).
 - **Praia** (flag `0x80` do lot info): sem o teste de água e com
   `IsOKToPlaceBeachLot` (BV `0xa2687c`): a última borda com rua a no máximo
   10 acima do mar, a 1,0 da altura de rua do lote base, e um vértice no mar
@@ -974,5 +974,105 @@ Tudo daqui vem dos scripts de UI e dos dados; o que o binário faz por trás
   imagem de rosto; para os que não tiverem, `app/head_shot.*` renderiza a
   cabeça com a câmera do CAS e luz levantada (inferido; `--hood-render-heads`
   força para teste). `r12-bairro-cabecas-renderizadas.jpg`.
-- Faltam (sem Ghidra): `FlattenAbuttingRoadsIfPossible` e o `RotateLot` do
-  mover seguindo a borda mais perto do cursor.
+- `FlattenAbuttingRoadsIfPossible` e o `RotateLot` do mover: lidos na
+  rodada 13, §15.
+
+## 15. Rodada 13 (RE): o mover de lotes e o nivelamento das ruas (binário)
+
+Lido no BV 1.10 (Ghidra headless, nomes do `symxfer` conferidos pelos
+chamadores e pelas vtables).
+
+### 15.1 O mover (`cTSUserToolMoveLot`)
+
+`MouseEvent` (BV `0x223584`): 3 = mover, 4 = apertar, 5 = soltar. Estado do
+tool: `+0xd1` lote na mão, `+0xd2` botão apertado com o lote na mão, `+0xd3`
+há um lote sob o cursor, `+0xd4` o lugar é válido, `+0xe4` ID do lote,
+`+0xe8` lot info, `+0xec/+0xf0` tile do bairro, `+0xf4` frente (borda 0–3),
+`+0xf8/+0xfc` ponto do clique.
+
+- **Mover sem lote** (`FUN_00222ec8`): `PickLot` (vtable `0x60`) e
+  `FUN_002223b4` (o lote pode ser movido); sim → cursor `0x19` e `+0xd3`,
+  e já guarda o lot info, a frente (lot info vtable `0x54`) e o tile; não →
+  cursor 0.
+- **Soltar sem lote** (`FUN_002230d8`): com `+0xd3`, pega o lote (`+0xd1`,
+  liga as teclas de manipulação).
+- **Mover com o lote, botão solto**: `GroundAtGameWindowPoint` (vtable
+  `0x74`, unidades do mundo do bairro, 10 por tile) → tile
+  (`ConvertToTileCoordinates`, vtable `0x54`), `MoveLotImposter`,
+  `EvaluatePlacementValidity`.
+- **Apertar com o lote** (`DoMouseDown`, BV `0x222e20`): guarda o ponto do
+  chão em `+0xf8` e liga `+0xd2`. Sem lote na mão, com um lote sob o cursor,
+  só troca o cursor para `0x1a`.
+- **Arrastar com o botão apertado = girar** (`RotateLot`, BV `0x222b2c`):
+  o lote **não** anda; a frente segue a **direção do arrasto a partir do
+  ponto do clique** (não a borda mais perto do cursor, como o doc dizia):
+  `FUN_00a27080(clique, agora)`: se |dx| + |dy| < **16,0** unidades (1,6
+  tile do bairro), nada; senão θ = atan2(dy, dx) e
+  `frente = ⌊2,5 − 2θ/π⌋ mod 4` (θ = 0, +x → **2**; +y → **1**; −x → **0**;
+  −y → **3**: quadrantes de 90° centrados nos eixos, o mesmo número de borda
+  do `FlattenAbuttingRoadsIfPossible` abaixo). O cursor 2D é posto
+  (`Set2DCursor`); se a frente mudou: grava `+0xf4`,
+  `EvaluatePlacementValidity`, cursor `0x1C`/`0x1E`/`0x1F`/`0x1D` para a
+  frente 0/1/2/3 e `RotateLotImposter(lote, frente, false)` (mensagem
+  `0x4C4CCCEC` com o lote, a frente e o bool).
+- **Soltar com o lote**: apaga `+0xd2`; se `IsOKToPlaceLot` (BV `0x222768`:
+  `IsOKToPlaceLotCommon` com a flag de praia `0x80`, as bordas com rua do
+  lote giradas iguais às do lugar, e `TryModifyingTerrainToConformToLot`
+  em ensaio) → põe: cursor 0, mensagem `0xB1` com o lote, tira o realce,
+  `FUN_00a284cc(ret)`, vtable `0x9c(ret, 0)`,
+  `SmoothenRoadsConnectedToLot`, posição (lot info `0x24`), frente (`0x50`),
+  altura da rua da frente (`this+0x6c[frente]` se a borda tem rua, senão 0;
+  lot info `0x3c`), `TryModifyingTerrainToConformToLot` **para valer**,
+  praia → `FUN_00a2afec`, flag `0x100`, `MoveLotImposter(..., true)`,
+  `SetLotSkirtPaint`, lot info `0x5c(1)`, solta o lote. Inválido: o lote
+  continua na mão. **O mover não chama `FlattenAbuttingRoadsIfPossible`**
+  (só o lote vazio novo).
+- **Teclas** (`KeyCommand`, BV `0x222c90`): `0x8CA297E2` cancela
+  (`RestoreImposterToOriginalState`, solta tudo); `0xACB3A629` gira: valor
+  da tecla > 0 → frente + 1, senão + 3 (−1), mod 4; `RotateLotImposter` e
+  `EvaluatePlacementValidity`.
+- **Realce** (`EvaluatePlacementValidity`, BV `0x2229d8`): o retângulo do
+  lote, válido ou não, e para o `AddLotPlopHighlight` as bordas com rua do
+  lote giradas: `rua[(i + frente − frente_do_lote + 4) mod 4] = borda(i)`.
+- Da caixa (`cTSUserToolPlaceLotFromInventory::SetCurrentFrontEdge`, BV
+  `0x3fd6d8`): fora do modo `+0x100`, frente nova → `RotateLotImposter` e
+  `UpdatePlacementValidity`.
+
+### 15.2 `FlattenAbuttingRoadsIfPossible` (BV `0xa2a598`)
+
+Chamado só por `cTSUserToolPlaceNewLot::PlaceLot` (BV `0x2c7344`) com o
+retângulo do lote em tiles do bairro (x0, y0, x1, y1), a **frente** (a
+primeira borda com rua, 0..3) e `h` = a altura da rua dessa borda
+(`FUN_00a265cc`: `this+0x6c[frente]`, 0 sem rua). Bordas: 0 = x baixo,
+1 = y alto, 2 = x alto, 3 = y baixo.
+
+1. A **faixa da frente**: 0 → x ∈ [x0, x0+1], y ∈ [y0, y1]; 1 → y ∈
+   [y1−1, y1]; 2 → x ∈ [x1−1, x1]; 3 → y ∈ [y0, y0+1] (a outra coordenada
+   inteira).
+2. Quatro tiras de fora, uma por borda, em ordem 0..3:
+   [x0−1, x0]×[y0−1, y1+1], [x0−1, x1+1]×[y1, y1+1],
+   [x1, x1+1]×[y0−1, y1+1], [x0−1, x1+1]×[y0−1, y0]; pula a que sai do
+   bairro (< 0 ou > tamanho `this+0x88/+0x8c`).
+3. Ruas da tira (`GetOccupants(tira, 2)` do gerente de ocupantes,
+   `this+0xc4` vtable `0x28`); nenhuma → próxima tira.
+4. Se a tira cruza a faixa da frente (teste inclusivo), a altura é **fixa**
+   em `h`; senão é livre.
+5. `DetermineFlattenHeightForRoadOccs(ruas, &altura, fixa)` (BV `0xa27714`,
+   vtable `0xa8`): faixa [lo, hi] = [h, h] se fixa, senão [−FLT_MAX,
+   FLT_MAX]. Para cada rua, o retângulo dela (vtable `0x20`), passado pela
+   vtable `0x50(ret, 1)` do tool; se há um **lote** nesse retângulo
+   (bairro `this+0x60` vtable `0xec`) e os retângulos se cruzam, cada
+   vértice da interseção (terreno `this+0x64` vtable `0x28(x, y)` = altura)
+   tem de estar a **0,01** de lo e de hi (senão **falha**), e lo = hi = essa
+   altura (os vértices já presos a um lote mandam). No fim: lo == hi → essa
+   altura; livre e sem lote → a altura do vértice (x0, y0) da primeira rua
+   (dentro de [lo, hi]).
+6. Deu certo: altura arredondada para o múltiplo de **0,1875** mais perto
+   (`round(a / 0,1875) · 0,1875`) e `FlattenRoadsAndTerrain(ruas, altura)`
+   (BV `0xa27a30`, vtable `0xac`): **todos os vértices** do retângulo de
+   cada rua (x0..x1, y0..y1, inclusivo) recebem a altura (terreno vtable
+   `0x20(altura, x, y, ?, 1)`). Falhou: a tira fica como está.
+
+Depois o `PlaceLot` segue com a praia, `SmoothenRoadsConnectedToLot`
+(gerente de ocupantes vtable `0x50`), a suavização sob o lote etc. (§11.4).
+
