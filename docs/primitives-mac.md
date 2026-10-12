@@ -2249,10 +2249,9 @@ tile precisa estar no lote (`IsOnLot`), passar o teste de partição do tile
 `PartitionManager`; só na primeira volta) e passar o
 **`TSObjectCanSetPosition`** da pessoa no **centro do tile** (x + 0,5, y +
 0,5). O primeiro que passa vira o lugar (vtable `0x2a4`, sem mudar a
-direção). Diferenças do VM (`VM::placeNearFree`): o jogo vai sempre ao
-**centro** de um tile (o primeiro é o próprio tile, se a pessoa cabe no
-centro dele), não fica no ponto exato; o raio é o da espiral (8 × lado:
-uns 9 tiles num mundo de 40), não 10 tiles; e sem lugar ela fica parada.
+direção). O `VM::placeNearFree` faz assim desde a rodada 15 (sobrevivência
+5); inferidos: a ordem da espiral (+X, +Y, −X, −Y, os lados crescendo a
+cada duas voltas) e o teste de partição como "tem chão".
 
 ### Set to Next: objetos que vão morrer não contam (`SetToNextIsObjectEligible`)
 

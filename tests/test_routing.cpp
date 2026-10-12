@@ -1621,6 +1621,22 @@ static void testGoHere() {
           "go here: the Sim walks there, then the destination goes");
 }
 
+// The reset's free place (FUN_00af87c8): the centre of the first tile of a
+// square spiral from the object's tile where it fits: its own tile's centre
+// when free (not the point it stood on), else the next of the spiral (+X
+// first).
+static void testPlaceNearFree() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(8, 8);
+    Object& me = place(vm, 3, 3);
+    me.position.x = 3.2f, me.position.y = 3.7f;
+    me.data[objdata::Flags] = 0x10; // lets others through, so it is no obstacle itself
+    check(vm.placeNearFree(me) && me.position.x == 3.5f && me.position.y == 3.5f, "free spot: the own tile's centre");
+    place(vm, 3, 3); // something on that tile
+    check(vm.placeNearFree(me) && me.position.x == 4.5f && me.position.y == 3.5f, "free spot: the spiral's next tile, +X");
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -1632,6 +1648,7 @@ int main() {
     testWorldWalls();
     testDiagonalWalls();
     testSetToNextTiles();
+    testPlaceNearFree();
     testPathPlanner();
     testRouteResult();
     testBlockedBySim();

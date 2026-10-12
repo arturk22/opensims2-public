@@ -2997,27 +2997,38 @@ bool VM::placeNearFree(Object& o) {
     };
     if (o.data[objdata::ContainerId] != 0)
         leaveSlot(o);
-    if (free(o.position.x, o.position.y, o.position.level)) {
-        moveTo(*this, o, o.position.x, o.position.y, o.position.level);
-        return true;
-    }
-    const TilePos at = tileOf(o);
+    // FUN_00af87c8 (docs/primitives-mac.md §4g, "O lugar livre do reset"): a
+    // square spiral from the person's tile (the world's centre when off the
+    // lot), kept within [1, side - 2], at most 8 x the longer side steps;
+    // each tile on the lot, with a floor (the partition test; inferred), in
+    // the start's room on the first pass, and the person fitting at the
+    // tile's centre (TSObjectCanSetPosition). The first that passes; a
+    // second pass without the room; none: it stays where it is.
+    const int w = world->width(), h = world->height();
+    TilePos at = tileOf(o);
+    if (!world->contains(at))
+        at = {w / 2, h / 2, at.level};
+    at.x = std::clamp(at.x, 1, std::max(1, w - 2)), at.y = std::clamp(at.y, 1, std::max(1, h - 2));
     const int16_t room = world->room(at);
-    for (int pass = 0; pass < 2; ++pass)
-        for (int r = 0; r <= 10; ++r)
-            for (int x = at.x - r; x <= at.x + r; ++x)
-                for (int y = at.y - r; y <= at.y + r; ++y) {
-                    if (std::max(std::abs(x - at.x), std::abs(y - at.y)) != r)
-                        continue;
-                    const TilePos t{x, y, at.level};
-                    if (!world->contains(t) || (pass == 0 && world->room(t) != room))
-                        continue;
-                    const float px = float(x) + 0.5f, py = float(y) + 0.5f;
-                    if (free(px, py, at.level)) {
-                        moveTo(*this, o, px, py, at.level);
-                        return true;
-                    }
-                }
+    const int steps = 8 * std::max(w, h);
+    for (int pass = 0; pass < 2; ++pass) {
+        int x = at.x, y = at.y, dx = 1, dy = 0, run = 1;
+        for (int step = 0, done = 0, turns = 0; step < steps; ++step) {
+            const TilePos t{x, y, at.level};
+            if (world->contains(t) && world->walkable(t) && (pass == 1 || world->room(t) == room) &&
+                free(float(x) + 0.5f, float(y) + 0.5f, at.level)) {
+                moveTo(*this, o, float(x) + 0.5f, float(y) + 0.5f, at.level);
+                return true;
+            }
+            x += dx, y += dy;
+            if (++done == run) { // turn; the run grows every second turn (inferred order)
+                done = 0;
+                std::swap(dx, dy), dx = -dx;
+                if (++turns % 2 == 0)
+                    ++run;
+            }
+        }
+    }
     return false;
 }
 
