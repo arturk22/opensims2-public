@@ -217,6 +217,16 @@ The Sims 1; Snap Into tem um u16 nos bytes 7–8; Reach/Put tem u16 em 1–2 e
 
 ### 0x74 Reach/Put (`try_new_reach`, `NewReachParam`)
 
+**Pôr tira as poses de carregar que a entrada "grasp" do próprio pôr nomeia**
+(rodada 18, inferido: o `try_new_reach` passa os nomes da entrada ao
+`AddToAnimList`, cuja operação remove ao pôr): além das que o pegar pôs,
+todo overlay com esses nomes sai. A caneca servida na cafeteira vai para a
+mão pelas árvores e o "a2o-coffeeMug-carry" vem do "Interaction - Walk and
+Sip" (Animate Overlay, entrada sem "(carry)", tipo normal); o "CT - Reach -
+Drop" põe com "a2o-coffeeMug-grasp,a2o-coffeeMug-carry" e nada mais parava
+a pose: o braço segurava a caneca que estava na mesa até a carona (QA 15).
+Teste em `test_reach`.
+
 Operandos (disassembler `CatNewReachParam` + `SwizzleParams`; binário):
 
 | bytes | campo |
@@ -1552,6 +1562,15 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   dos tipos 7 e 9 e os já expirados nunca param. Modos 4–11 comparam o
   `tOEType` (4→3 carregar … 8→2 normal, 9→7, 10→8, 11→9), como o código já
   fazia. Feito em `animateStop`.
+- **Modo 0 para todos os pedidos do nome** (rodada 18): o `try_animate_stop`
+  junta numa lista todo pedido de overlay cujo nome bate (ID `0x6000000x`
+  com o bit de espelho, não expirado, tipo ≠ 7/9) e aborta todos, não só o
+  primeiro. Como o Animate Overlay aceita dois do mesmo nome
+  (`AnimRequestByNameAndID` duas vezes, só pedidos ativos: tocando, sem
+  parar, em loop ou antes do fim), a get-in com caneca começa dois
+  "a2o-coffee-DN-carry"; parar só o primeiro deixava um depois de levantar
+  (o braço preso na coxa sentada enquanto o Sim andava; QA 15). Teste em
+  `test_animation_vm`.
 - **O evento −1 no Animate Stop**: o `try_animate_stop` não chama árvore
   de evento nenhuma; o pedido parado na hora é abortado com status 3
   (`tCRStatus`) e quem avisa é o tratador de eventos do pedido

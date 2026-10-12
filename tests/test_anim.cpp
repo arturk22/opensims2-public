@@ -953,7 +953,52 @@ static void testDiningChairCycle() {
           "chair cycle: placed at the seat, the held get-in stays seated in the chair");
 }
 
+// With the game's data (OS2_DATA): the carry poses a Sim walks with (and
+// those that stayed on after the get-out in live QA 15: two of the seated
+// "a2o-coffee-DN-carry", the delta "a-coffeeshake-blend", the plate's grasp
+// with its half-turn heading) move the arm only, as the game's channel
+// blender mixes them by level: the walk's pelvis, head and feet stay where
+// the walk alone puts them (the leaning walk the QA saw was not theirs).
+static void testCarryOverlaysKeepWalkUpright() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    const ObjectModel adult = loadObjectModel(index, "auskel_cres");
+    if (adult.skeleton.find("pelvis") < 0)
+        return;
+    auto pose = [&](const std::vector<std::pair<std::string, int>>& overlays, double t) {
+        SimActor sim{SkinnedModel(adult.skeleton)};
+        const Animation& walk = sim.animation(index, "a-male-walk-alt0-normal");
+        sim.player.play(walk, 0, {.fade = 0, .loop = true});
+        int k = 0;
+        for (const auto& [name, level] : overlays) {
+            const Animation& a = sim.animation(index, name);
+            sim.player.play(a, 0, {.fade = 0.233f, .loop = name.find("grasp") == std::string::npos, .priority = 100 + k++,
+                                   .turn = a.headingOffset, .level = level});
+        }
+        sim.update(t);
+        return sim.bones;
+    };
+    const std::vector<std::pair<std::string, int>> carry = {
+        {"a2o-coffeeMug-carry", 5}, {"a2o-coffee-DN-carry", 5}, {"a2o-coffee-DN-carry", 5}, {"a-coffeeshake-blend", 3},
+        {"a2o-ingredients-carry", 5}, {"a2o-plateDessert-grasp", 3}, {"a2o-plateDessert-carry", 5}, {"a2o-dishware-DN-carry", 5}};
+    float worst = 0;
+    for (double t : {0.6, 0.8, 1.0, 1.2}) {
+        const auto alone = pose({}, t), carried = pose(carry, t);
+        for (const char* b : {"pelvis", "spine2", "head", "l_foot", "r_foot"}) {
+            const int i = adult.skeleton.find(b);
+            if (i < 0)
+                continue;
+            for (int c = 0; c < 3; ++c)
+                worst = std::max(worst, std::abs(alone[size_t(i)].t[size_t(c)] - carried[size_t(i)].t[size_t(c)]));
+        }
+    }
+    check(worst < 0.01f, "carry overlays leave the walking body upright (pelvis, spine, head and feet as the walk's)");
+}
+
 int main() {
+    testCarryOverlaysKeepWalkUpright();
     testDiningChairCycle();
     testDiningChairSeat();
     testDoorLeaves();
