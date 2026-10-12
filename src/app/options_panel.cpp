@@ -7,6 +7,8 @@
 #include "formats/ui_resources.hpp"
 #include "render/ui_layer.hpp"
 
+#include <CoreGraphics/CoreGraphics.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -23,6 +25,9 @@ constexpr uint32_t kPuckAnchor = 0x4BDEFFAA, kButtons = 0xA200, kAnchor = 0xAAAA
 constexpr std::array<uint32_t, 4> kSliders = {0xB31, 0xB01, 0xB41, 0xB21};
 constexpr std::array<uint32_t, 4> kMutes = {0x10, 0x11, 0x12, 0x13};
 constexpr uint32_t kEdgeScrolling = 0xA1;
+// The Graphics window's list boxes (class 0xAC17CE2A): screen sizes, refresh rates.
+constexpr std::array<uint32_t, 2> kLists = {0x35, 0x45};
+constexpr float kListRowH = 17; // rows of the list font (inferred: the game's list boxes use their own constants)
 // The windows' left column, 156 px (the title icon's x in the scripts): only the lower tab is art, over the puck.
 constexpr float kTab = 156;
 
@@ -90,6 +95,40 @@ const UiElement* defaultPick(const std::vector<const UiElement*>& btns) {
     return btns.front();
 }
 
+// The main display's modes (sizes in points, as the window is laid out)
+// and the one in use, for the Graphics window's lists.
+std::vector<OptionsPanel::DisplayMode> mainDisplayModes(OptionsPanel::DisplayMode& current) {
+    std::vector<OptionsPanel::DisplayMode> out;
+    const CGDirectDisplayID display = CGMainDisplayID();
+    if (CGDisplayModeRef m = CGDisplayCopyDisplayMode(display)) {
+        current = {int(CGDisplayModeGetWidth(m)), int(CGDisplayModeGetHeight(m)), int(std::lround(CGDisplayModeGetRefreshRate(m)))};
+        CGDisplayModeRelease(m);
+    }
+    // The scaled modes too (a Retina display's "looks like" sizes).
+    const void* keys[] = {kCGDisplayShowDuplicateLowResolutionModes};
+    const void* values[] = {kCFBooleanTrue};
+    CFDictionaryRef options =
+        CFDictionaryCreate(nullptr, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFArrayRef all = CGDisplayCopyAllDisplayModes(display, options);
+    if (options)
+        CFRelease(options);
+    if (all) {
+        for (CFIndex i = 0; i < CFArrayGetCount(all); ++i) {
+            auto m = (CGDisplayModeRef)CFArrayGetValueAtIndex(all, i);
+            // From 800 x 600 up (the game's smallest mode; inferred for the Mac).
+            const int w = int(CGDisplayModeGetWidth(m)), h = int(CGDisplayModeGetHeight(m));
+            if (w >= 800 && h >= 600 && CGDisplayModeIsUsableForDesktopGUI(m))
+                out.push_back({w, h, int(std::lround(CGDisplayModeGetRefreshRate(m)))});
+        }
+        CFRelease(all);
+    }
+    if (current.width > 0 && std::none_of(out.begin(), out.end(), [&](const OptionsPanel::DisplayMode& m) {
+            return m.width == current.width && m.height == current.height && m.refresh == current.refresh;
+        }))
+        out.push_back(current);
+    return out;
+}
+
 } // namespace
 
 OptionsPanel::OptionsPanel(ResourceIndex& index, const std::filesystem::path& resDir, GameSettings settings)
@@ -107,6 +146,9 @@ OptionsPanel::OptionsPanel(ResourceIndex& index, const std::filesystem::path& re
     ok_ = a && b && c && d;
     load(kGraphicsScript, graphics_), load(kCameraScript, camera_), load(kCreditsScript, credits_);
     syncPicks();
+    DisplayMode current;
+    modes_ = mainDisplayModes(current);
+    currentMode_ = current;
 }
 
 // The radio groups' picks from the settings (Options.txt), else the defaults.
@@ -122,6 +164,70 @@ void OptionsPanel::syncPicks() {
                             if (int(btn->id() & 0xF) == v)
                                 picks_[g] = btn;
             }
+}
+
+void OptionsPanel::setDisplayModes(std::vector<DisplayMode> modes, DisplayMode current) {
+    modes_ = std::move(modes);
+    currentMode_ = current;
+    listTop_ = {0, 0}, scrolled_ = {false, false};
+    dirty_ = true;
+}
+
+std::vector<std::pair<int, int>> OptionsPanel::sizes() const {
+    std::vector<std::pair<int, int>> out;
+    for (const auto& m : modes_)
+        if (m.width > 0 && m.height > 0)
+            out.push_back({m.width, m.height});
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::pair<int, int> OptionsPanel::pickedSize() const {
+    if (settings_.screenWidth > 0 && settings_.screenHeight > 0)
+        return {settings_.screenWidth, settings_.screenHeight};
+    return {currentMode_.width, currentMode_.height};
+}
+
+std::vector<int> OptionsPanel::rates() const {
+    const auto size = pickedSize();
+    std::vector<int> out;
+    for (const auto& m : modes_)
+        if (m.width == size.first && m.height == size.second)
+            out.push_back(m.refresh);
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+int OptionsPanel::pickedRate() const {
+    const auto r = rates();
+    if (settings_.refreshRate > 0 && std::find(r.begin(), r.end(), settings_.refreshRate) != r.end())
+        return settings_.refreshRate;
+    if (std::find(r.begin(), r.end(), currentMode_.refresh) != r.end())
+        return currentMode_.refresh;
+    return r.empty() ? 0 : r.back();
+}
+
+std::vector<std::string> OptionsPanel::screenSizeRows() const {
+    std::vector<std::string> out;
+    char buf[32];
+    for (const auto& [w, h] : sizes()) {
+        std::snprintf(buf, sizeof buf, "%u x %u", unsigned(w), unsigned(h)); // the binary's "%u x %u"
+        out.push_back(buf);
+    }
+    return out;
+}
+
+std::vector<std::string> OptionsPanel::refreshRateRows() const {
+    std::vector<std::string> out;
+    char buf[32];
+    for (int r : rates()) {
+        // A display that gives no rate (most built-in panels) runs at 60 Hz (inferred).
+        std::snprintf(buf, sizeof buf, "%u Hz", unsigned(r > 0 ? r : 60));
+        out.push_back(buf);
+    }
+    return out;
 }
 
 const UiScript& OptionsPanel::windowScript(int window) const {
@@ -199,6 +305,39 @@ OptionsPanel::Action OptionsPanel::press(simd_float2 p) {
             changed();
             return Action::Consumed;
         case Target::Window: return Action::Consumed;
+        case Target::ListRow: {
+            const int list = it->value >> 16, row = it->value & 0xFFFF;
+            if (list == 0) {
+                const auto all = sizes();
+                if (size_t(row) < all.size()) {
+                    settings_.screenWidth = all[size_t(row)].first, settings_.screenHeight = all[size_t(row)].second;
+                    settings_.refreshRate = pickedRate(); // a rate the new size has
+                    listTop_[1] = 0, scrolled_[1] = false;
+                    std::printf("opensims2: options: screen size %d x %d\n", settings_.screenWidth, settings_.screenHeight);
+                    changed();
+                }
+            } else {
+                const auto all = rates();
+                if (size_t(row) < all.size()) {
+                    if (settings_.screenWidth <= 0)
+                        settings_.screenWidth = pickedSize().first, settings_.screenHeight = pickedSize().second;
+                    settings_.refreshRate = all[size_t(row)] > 0 ? all[size_t(row)] : 60;
+                    std::printf("opensims2: options: refresh rate %d Hz\n", settings_.refreshRate);
+                    changed();
+                }
+            }
+            return Action::Consumed;
+        }
+        case Target::ListScroll: {
+            // The scroll bar: a click above the middle goes up a page, below it down.
+            const int list = it->value >> 16, rows = it->value & 0xFFFF;
+            const int page = std::max(1, int((it->rect[3] - it->rect[1]) / kListRowH));
+            const int count = int(list == 0 ? sizes().size() : rates().size());
+            const bool up = p.y < (it->rect[1] + it->rect[3]) / 2;
+            listTop_[size_t(list)] = std::clamp(listTop_[size_t(list)] + (up ? -page : page), 0, std::max(0, count - rows));
+            scrolled_[size_t(list)] = true; // the player's scroll stays (the pick may be out of view)
+            return Action::Consumed;
+        }
         case Target::Radio:
             for (auto& [g, pick] : picks_)
                 for (const auto& b : g->children)
@@ -263,6 +402,82 @@ UiScreen OptionsPanel::screen(int width, int height) {
             wx = std::max(0.0f, anchorX_), wy = std::max(0.0f, anchorY_ - float(wa[3] - wa[1]));
         UiDrawHooks wh;
         wh.rects = &rects;
+        // The Graphics window's two lists: rows of the display's modes, the
+        // picked one highlighted (the main menu's list box colours), and the
+        // script's hidden scroll bar shown when the rows overflow.
+        std::vector<Hit> listHits;
+        auto listHooks = [&](const UiElement& wroot, UiDrawHooks& hooks) {
+            for (size_t li = 0; li < kLists.size(); ++li) {
+                const UiElement* box = nullptr;
+                const UiElement* bar = nullptr;
+                for (const auto& c : wroot.children)
+                    for (const auto& b : c.children)
+                        if (b.id() == kLists[li]) {
+                            box = &b;
+                            for (const auto& o : c.children)
+                                if (o.clsid() == "GZWinScrollbar2")
+                                    bar = &o;
+                        }
+                if (!box)
+                    continue;
+                const std::vector<std::string> rows = li == 0 ? screenSizeRows() : refreshRateRows();
+                int picked = -1;
+                if (li == 0) {
+                    const auto all = sizes();
+                    picked = int(std::find(all.begin(), all.end(), pickedSize()) - all.begin());
+                } else {
+                    const auto all = rates();
+                    picked = int(std::find(all.begin(), all.end(), pickedRate()) - all.begin());
+                }
+                const int fit = std::max(1, int(float(box->area()[3] - box->area()[1]) / kListRowH));
+                int& top = listTop_[li];
+                top = std::clamp(top, 0, std::max(0, int(rows.size()) - fit));
+                if (picked >= 0 && picked < int(rows.size()) && (picked < top || picked >= top + fit) && !scrolled_[li])
+                    top = std::clamp(picked - fit / 2, 0, std::max(0, int(rows.size()) - fit));
+                hooks.after[box] = [this, rows, picked, top, fit, li, &listHits](UiScreen& sc, float x, float y, float w, float) {
+                    for (int r = top; r < int(rows.size()) && r < top + fit; ++r) {
+                        const float ry = y + float(r - top) * kListRowH;
+                        const bool on = r == picked;
+                        if (on) {
+                            UiQuad q;
+                            q.x0 = x, q.y0 = ry, q.x1 = x + w, q.y1 = ry + kListRowH;
+                            q.color = {0.31f, 0.48f, 0.56f, 1};
+                            sc.quads.push_back(q);
+                        }
+                        UiElement t;
+                        t.tag = "LEGACY";
+                        t.set("clsid", "GZWinText");
+                        t.set("iid", "IGZWinText");
+                        t.set("area", uiArea(0, 0, int(w) - 6, int(kListRowH)));
+                        t.set("font", "0x6c17c8fd");
+                        t.set("align", "leftcenter");
+                        t.set("winflag_visible", "yes");
+                        t.set("forecolor", on ? "(0,255,0)" : "(5,5,112)");
+                        UiDrawHooks th;
+                        th.captions[&t] = rows[size_t(r)];
+                        layoutUiElement(t, x + 4, ry, *res_, *fonts_, sc, th);
+                        listHits.push_back({{x, ry, x + w, ry + kListRowH}, Target::ListRow, int(li << 16 | unsigned(r)), nullptr});
+                    }
+                };
+                if (bar && int(rows.size()) > fit) {
+                    hooks.show.insert(bar);
+                    const int count = int(rows.size());
+                    hooks.after[bar] = [top, fit, count, li, &listHits](UiScreen& sc, float x, float y, float w, float h) {
+                        UiQuad t;
+                        t.x0 = x, t.y0 = y, t.x1 = x + w, t.y1 = y + h;
+                        t.color = {0.3f, 0.35f, 0.6f, 1};
+                        sc.quads.push_back(t);
+                        UiQuad q;
+                        const float th = std::max(8.0f, h * float(fit) / float(count));
+                        const float ty = y + (h - th) * float(top) / float(std::max(1, count - fit));
+                        q.x0 = x, q.y0 = ty, q.x1 = x + w, q.y1 = ty + th;
+                        q.color = {0.9f, 0.9f, 1, 1};
+                        sc.quads.push_back(q);
+                        listHits.push_back({{x, y, x + w, y + h}, Target::ListScroll, int(li << 16 | unsigned(fit)), nullptr});
+                    };
+                }
+            }
+        };
         if (window_ == 1) {
             // The mute boxes: pressed = muted.
             for (const auto& c : wr.children)
@@ -310,6 +525,8 @@ UiScreen OptionsPanel::screen(int width, int height) {
                         wh.buttonState[b] = picks_[g] == b ? 2 : 1;
             if (window_ == 5)
                 wh.hide.insert(wr.child(0xA0));
+            if (window_ == 3)
+                listHooks(wr, wh);
         } else {
             if (const UiElement* r = wr.child(kEdgeScrolling)) {
                 if (const UiElement* off = r->child(1))
@@ -341,6 +558,8 @@ UiScreen OptionsPanel::screen(int width, int height) {
                 for (const auto& [g, btns] : radioGroups(wr))
                     for (const UiElement* b : btns)
                         hit(b, Target::Radio);
+            for (const auto& h : listHits)
+                hits_.push_back(h);
         } else if (const UiElement* r = wr.child(kEdgeScrolling)) {
             hit(r->child(1), Target::EdgeOff);
             hit(r->child(2), Target::EdgeOn);

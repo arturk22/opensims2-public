@@ -187,6 +187,9 @@ GameSettings GameSettings::load(const UserData& user) {
             s.picks[option] = int(v);
     }
     s.picks["Reflection"] = s.reflections ? 2 : 1; // kept as "reflection"
+    s.screenWidth = std::max(0, int(user.optionFloat("screenWidth", 0)));
+    s.screenHeight = std::max(0, int(user.optionFloat("screenHeight", 0)));
+    s.refreshRate = std::max(0, int(user.optionFloat("refreshRate", 0)));
     return s;
 }
 
@@ -208,6 +211,12 @@ void GameSettings::save(UserData& user) const {
     for (const auto& [option, v] : picks)
         if (option != "Reflection")
             user.setOption(std::string("option.") + option, float(v));
+    if (screenWidth > 0 && screenHeight > 0) {
+        user.setOption("screenWidth", float(screenWidth));
+        user.setOption("screenHeight", float(screenHeight));
+    }
+    if (refreshRate > 0)
+        user.setOption("refreshRate", float(refreshRate));
 }
 
 } // namespace os2

@@ -17,7 +17,12 @@
 //               buttons of a rectangle) is an option of GameSettings::picks,
 //               kept in Options.txt; Shadows, Reflection and LightingQuality
 //               reach the engine (formats/graphics_options.hpp), the others
-//               are only kept. The lists, slider and text boxes are inert. The neighborhood's puck opens the same windows
+//               are only kept. The two list boxes (0x35 "ScreenSizeListBox",
+//               0x45 "refreshlistbox") list the display's modes
+//               (setDisplayModes: "%u x %u" as the binary's string, rates
+//               of the picked size as "%u Hz", inferred) and a click picks a
+//               row; the pick is kept (GameSettings::screenWidth...), the
+//               window is not resized. The slider and text boxes are inert. The neighborhood's puck opens the same windows
 //               (A241 graphics, A242 audio, A243 game, A245 camera, A246
 //               credits; HoodUi owns an OptionsPanel and gives it the
 //               panel's corner with setPanelBottomLeft).
@@ -84,6 +89,17 @@ public:
     Action press(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
 
+    // The display's modes for the Graphics window's lists (the main
+    // display's, from CoreGraphics in main.mm) and the one in use (shown
+    // picked while the settings name none).
+    struct DisplayMode {
+        int width = 0, height = 0, refresh = 0; // refresh 0: the display gives none
+    };
+    void setDisplayModes(std::vector<DisplayMode> modes, DisplayMode current);
+    // The lists' rows as drawn: "1280 x 800", ...; "60 Hz", ... (for the picked size).
+    std::vector<std::string> screenSizeRows() const;
+    std::vector<std::string> refreshRateRows() const;
+
     const GameSettings& settings() const { return settings_; }
     void setSettings(const GameSettings& s) { settings_ = s, dirty_ = true, syncPicks(); }
     // Called when an option changes (with the new settings).
@@ -98,7 +114,7 @@ public:
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 
 private:
-    enum class Target { Slider, Mute, EdgeOff, EdgeOn, Window, Radio };
+    enum class Target { Slider, Mute, EdgeOff, EdgeOn, Window, Radio, ListRow, ListScroll };
     struct Hit {
         std::array<float, 4> rect;
         Target target;
@@ -107,6 +123,15 @@ private:
     };
     void changed();
     void syncPicks();
+    // The distinct sizes (ascending) and the rates of the picked size.
+    std::vector<std::pair<int, int>> sizes() const;
+    std::vector<int> rates() const;
+    std::pair<int, int> pickedSize() const;
+    int pickedRate() const;
+    std::vector<DisplayMode> modes_;
+    DisplayMode currentMode_;
+    std::array<int, 2> listTop_{0, 0}; // first row shown of each list
+    std::array<bool, 2> scrolled_{false, false}; // scrolled by the player: the pick is not brought back into view
 
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;

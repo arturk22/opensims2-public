@@ -81,6 +81,11 @@ struct GameSettings {
     // ...): the setting picked, 1-based in the window's order (Shadows 1 low,
     // 2 medium, 3 high; Reflection 1 off, 2 on). Absent: the window's default.
     std::map<std::string, int> picks;
+    // The Graphics window's "Tamanho da Tela" and "Freqüência de Atualização"
+    // picks (0: the display's current mode). Kept in Options.txt
+    // (screenWidth, screenHeight, refreshRate); the app runs in a window, so
+    // they do not change the display (inferred: the game sets the mode on Apply).
+    int screenWidth = 0, screenHeight = 0, refreshRate = 0;
     int pick(const std::string& option, int fallback) const {
         auto it = picks.find(option);
         return it == picks.end() ? fallback : it->second;
