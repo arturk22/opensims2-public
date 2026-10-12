@@ -2470,6 +2470,26 @@ os2::LotViewOptions wantedLotView() {
 // boxes where they stand.
 // The model part runs before the objects are placed (what hangs on cut
 // walls hides), the Sims part (`sims`) after they are posed.
+// Whether the Sim of object `id` is in the lot's world: it, or what holds
+// it (a carried baby, a passenger in a car), stands in it. A Sim at work
+// rode off in its carpool, which the car then took out of the world with
+// the Sim still in its slot (live QA 15: the plumbob hung at the road's end).
+bool simInTheWorld(int16_t id) {
+    if (!gSimulation)
+        return true;
+    os2::vm::VM& m = gSimulation->machine();
+    const os2::vm::Object* o = m.object(id);
+    for (int depth = 0; o && depth < 8; ++depth) {
+        if (o->position.inWorld())
+            return true;
+        const int16_t c = o->data[os2::vm::objdata::ContainerId];
+        if (!c || c == o->id)
+            return false;
+        o = m.object(c);
+    }
+    return false;
+}
+
 void updateLotView(os2::Renderer& renderer, bool sims) {
     if (!gLotShape || gLotInstance < 0 || gLotModel < 0 || !gLotPatterns || !gIndex)
         return;
@@ -2523,11 +2543,8 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
         // or sent out of the world (at work, gone home) is not drawn: its
         // actor kept its last pose where it was (live QA 15: the drivers
         // stayed sitting in the street after each carpool).
-        if (gSimulation) {
-            const os2::vm::Object* o = gSimulation->machine().object(s.id);
-            if (!o || (!o->position.inWorld() && o->data[os2::vm::objdata::ContainerId] == 0))
-                shown = false;
-        }
+        if (!simInTheWorld(s.id))
+            shown = false;
         if (it->second >= 0)
             renderer.setInstanceTransform(it->second, shown ? matrix_identity_float4x4 : away);
         if (!gPie)
@@ -3076,10 +3093,8 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
             continue;
         // Not over a Sim out of the world (at work, at school): it hung in
         // the sky over where the actor was last (live QA 15).
-        if (gSimulation)
-            if (const auto* o = gSimulation->machine().object(s.id);
-                !o || (!o->position.inWorld() && o->data[os2::vm::objdata::ContainerId] == 0))
-                continue;
+        if (!simInTheWorld(s.id))
+            continue;
         float top = s.actor->position[2];
         for (const auto& p : s.actor->posed.parts)
             for (const auto& v : p.mesh.positions)
