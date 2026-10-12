@@ -89,6 +89,22 @@ Left: `loadLotObjects` (0.25-0.5 s: about 40% model parsing, 55% texture decodin
 `Renderer::addObject`), the Sims' textures (70-100 ms each), Buy and Build mode setup
 (85 ms each, both reading the catalog), `LotSimulation` (0.19 s).
 
+## Round 11: loading
+
+| What | before | after |
+| --- | --- | --- |
+| `Catalog::load` (Buy) + (Build), cold | 2 x 80 ms (two passes over the OBJDs) | 92 ms for both in one pass |
+| Same, next scene or mode on the same index | 2 x 80 ms | 0.6 ms (the entries are kept; each caller gets a copy with its own thumbnail cache) |
+| `BuildCatalog::load` (patterns, fences, paints, roofs) | 35 ms | 35 ms cold, 0.3 ms after |
+| "Buy mode" + "Build mode" laps of N001 lot 11, first load | 77-80 + 85-87 ms | 78-92 + 42-53 ms |
+
+The caches key on the index (address and the count of the resources of the type), so a
+different `ResourceIndex` reads again. The first lot of a run still pays the cold read;
+every later scene (lot entries after returning to the neighborhood) skips the 160 ms.
+The screenshot of the lot run (`--hood N001 --hood-lot 11 --vm --ui live --run-vm 600`)
+has the same pixels as before up to the run-to-run noise it already had (1 to 8 bytes
+of 3.7 MB differ between two runs of the same build, before and after).
+
 ## What is left (not done)
 
 - The scans of all objects per tick (`followContainers`, `tickOverlayEvents`,
@@ -97,5 +113,5 @@ Left: `loadLotObjects` (0.25-0.5 s: about 40% model parsing, 55% texture decodin
 - The quadtree of the planner is still rebuilt on every plan (summed-area tables of
   512x512 cells for a 64-tile lot); caching it needs a cheap way to know the obstacles
   did not change.
-- Load: the Sims' textures take 45 ms each to upload; `Catalog::load` reads 47 resources again after the lot's.
+- Load: the Sims' textures take 45 ms each to upload; `Catalog::load` reads 47 resources again after the lot's (round 11: kept between scenes, see above).
   8% of the resource bytes read at load are the same resource read twice (4.9 of 64 MB).
