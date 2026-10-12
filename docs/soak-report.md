@@ -1,3 +1,38 @@
+# Soak report (round 16, autonomy and errors)
+
+Runs of `tools/soak.sh` over the 69 lots (3 game days, 129600 ticks), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), babies named, `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main 71cfb0f; **after** is the `r16-autonomy-errors` branch rebased on it. "Resets" counts every "reset after an error" line in the kept autonomy logs (any object), "household Mains" only the household's.
+
+| Category | before, seed 1 | after, seed 1 | before, seed 2 | after, seed 2 |
+|---|---|---|---|---|
+| Crashes / hangs | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Load errors | 1 (N002_Lot32) | 1 | 1 | 1 |
+| Household Mains reset | 2 | 0 | 3 | 2 |
+| All resets after an error | 117 | 94 | 105 | 96 |
+| of them outside Tutorial_Lot3 | 23 | 0 | 11 | 2 |
+| Sims that died ("Falecer") | 7 (5 lots) | 11 (6 lots) | 21 (6 lots) | 21 (11 lots) |
+| Sims stuck > 6 game hours | 28 | 25 | 25 | 27 |
+| Motives pinned at -100 > 6 game hours | 25 | 24 | 35 | 29 |
+| Save round trips that differ | 0 | 0 | 0 | 0 |
+| Instruction budget hit | 0 | 0 | 0 | 1 (N001_Lot36) |
+| Failed autonomous interactions | 376 | 415 | 403 | 447 |
+| Lookups of "~" label rows as animations | 29 | 0 | 35 | 0 |
+| "Fogo!" runs | 32 | 74 | 125 | 165 |
+
+Every reset and VM error in the logs, and what it is:
+- **"Animation name is empty string"** with babies (before: N001_Lot36, N002_Lot4, both seeds): an engine bug, two of them. Animate Overlay from the global list read the list of the target's age; the binary uses the age of the Sim running it (`try_animate_overlay` calls `FindGlobalName` on its own animatable): "CT - Route Failure Feedback - Animation" plays the adult list's entry 90 "b2a-routeFail-carry-baby" on the baby in arms, and the baby's list has "." there. And "." was taken as an empty name: the binary only errors (0x43) on an empty one; "." is an animation that does not exist, nothing plays and the primitive returns true (a baby put down on the floor and asked to move played the baby list's "." at 84). Fixed; 0 after.
+- **"Tree table not found (object 204)"** (N002_Lot4) and **(object 324)** (N003_Lot192, the police officer's "Party Break-Up - Try Push Turn Off Stereos", 20/8 resets): an engine bug. A multi-tile part whose tree table ID is -1 uses its master's (`GetEffectiveTreeTableID`), whatever its interaction group; the VM gave it only to group leaders and 0,0 parts without groups, and the changing table's "Change - Common - Subqueue" pushes the baby's entry from the 0,0 part (the lead tile, interaction group 1). Fixed; 0 after.
+- **"tree 0x1008 not found"** (seen while testing, N003_Lot192, 21 a run): an engine bug. A removed object's thread went on as the new object given its ID (the school bus controller's Main as the bus). Fixed (object serials).
+- **Lookups of "~Spine Overlays", "~Get Out", "~Snooze Animations"**: an engine bug. The binary does not skip "~" rows; it reads the list of the object whose behavior holds the running tree, not the stack object's (a drink's sit-carry event on a bar stool read the stool's " ~Get Out"). Fixed; 0 after.
+- **Tutorial_Lot3: "Attribute number out of range"** (Community Lot Populator "9 of 8", NPC Pool "9 of 8", Controller - NPC "16 of 16"; 94 a run, both before and after): **the game's own data**. The tutorial lot was saved with older controllers (8, 8 and 16 attributes) than the shipped OBJDs (16, 16 and 20); `cTSObject::Read` (BV `0xb14cb0`) takes the saved count and `Reset` does not resize it (the "needs reset" of `ObjectSaveTypeTable::Read` only resets the object), so the game hits the same errors.
+- **N001_Lot36 seed 2, after: "instruction budget exhausted"** (Dustin, "Interaction - Give Toddler a Bath"): the tub's tree loops between "Pickup - Get Sim Push Interaction" (its push with "force check tree" fails: the toddler is in Brandi's arms) and "Pickup - Drop Off" within one tick, making a carry object each turn; the binary's 100000-node limit would end it the same way: **the game's data** (inferred; the state that leads there is the seed's).
+- **N001_Lot36 seed 2, after: "stack object 270 does not exist"** (Brandi, "Read - Loop Reading"): the book's attribute 4 keeps the listener (Beau) after the social worker took him; the binary does not clear other objects' attributes on removal either: **the game's data** (inferred).
+- N002_Lot32 does not load ("no elevation array"): the package, as before.
+
+What changed (TODO.md, "Rodada 16 (g)"; `docs/primitives-mac.md` §4g "Rodada 16 (autonomia e erros)"):
+- **Candidate order of Find Best Interaction** as `FBA_FindStaticInteractions` builds it: motive by motive of the mask, each object's entries last first, dynamic interactions after all the static ones. Two entries with the same ads now break the qsort tie as the game does: the later entry first (the trash pile's "Limpar" before "Jogar Fora": its failures are 6 → 10 on seed 1, all in N001_Lot36, where the pile now waits for its other Sim). The objects' order within one motive is the hash table's (object pointer modulo the bucket count) and cannot be reproduced; object ID order stands in.
+- **s2pkg budget**: every command uses the binary's 100000 nodes a turn.
+- More failed interactions after: each sofa seat and crib part now offers its interactions (as in the game), and the teddy bear's dynamic "Fazer de conta que o bichinho fala com..." fails in a loop on N003_Lot192 seed 1 (8 → 113; the bear stays in the chooser's hand and the "Verify - Person ID" of its object data 2 fails; a pre-existing VM problem, TODO). Deaths are fires, as in round 15; the seeds move them.
+
 # Soak report (round 15, planner)
 
 Runs of `tools/soak.sh` over the 69 lots (3 game days, 129600 ticks), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), babies named, `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main cc8cfe1 (with r15-vm-confirm; the s2pkg autonomy budget 20000); **after** is the r15-planner branch rebased on it (the binary's budget, 100000). The "failed interactions", "Dispose on a pile" and "Fogo!" rows are counted in the kept autonomy logs.
