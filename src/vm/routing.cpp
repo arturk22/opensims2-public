@@ -2440,6 +2440,20 @@ ObjectId createGoHereDestination(VM& vm, ObjectId simId, float x, float y, int l
     return id;
 }
 
+bool isGoHereRug(VM& vm, ObjectId id) {
+    const Object* o = vm.object(id);
+    return o && !o->person && objdField(*o, 0x52) == 0x13 && o->data[objdata::Category] != 0xA7;
+}
+
+ClickedMenu objectClick(VM& vm, ObjectId sim, ObjectId object, std::optional<Position> ground, bool hasInteractions) {
+    if (!isGoHereRug(vm, object))
+        return {hasInteractions ? object : ObjectId(0), 0};
+    const ObjectId dest = ground ? createGoHereDestination(vm, sim, ground->x, ground->y, ground->level) : 0;
+    if (hasInteractions)
+        return {object, dest};
+    return {dest, 0};
+}
+
 void releaseDestination(VM& vm, ObjectId id) {
     if (Object* o = vm.object(id); o && o->managedDestination) {
         o->destinationHeld = false;

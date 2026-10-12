@@ -175,7 +175,9 @@ public:
     // --- Menu ------------------------------------------------------------------
     // Opens the menu of `object` (its interaction leader's) for the selected
     // Sim at a canvas point. False if it has no available entries.
-    bool open(vm::ObjectId object, simd_float2 at);
+    // `merged`: a second object whose entries follow (a rug's go-here
+    // destination, vm::objectClick); onClose is called for it too.
+    bool open(vm::ObjectId object, simd_float2 at, vm::ObjectId merged = 0);
     void close();
     bool isOpen() const { return open_; }
     // Called with the menu's object when an open menu closes (picked or
@@ -264,6 +266,7 @@ private:
 
     bool open_ = false;
     vm::ObjectId object_ = 0;
+    vm::ObjectId merged_ = 0;
     std::string title_;
     simd_float2 at_{0, 0};
     std::vector<vm::PieEntry> entries_;

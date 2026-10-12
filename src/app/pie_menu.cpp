@@ -608,16 +608,19 @@ std::optional<simd_float3> PieMenuHost::anchor(vm::ObjectId id) const {
     return std::nullopt;
 }
 
-bool PieMenuHost::open(vm::ObjectId object, simd_float2 at) {
+bool PieMenuHost::open(vm::ObjectId object, simd_float2 at, vm::ObjectId merged) {
     close();
     if (!sim_)
         return false;
-    for (auto& e : vm::pieMenu(*vm_, sim_, object))
-        if (e.available() && !e.debug)
-            entries_.push_back(std::move(e));
+    for (const vm::ObjectId id : {object, merged})
+        if (id)
+            for (auto& e : vm::pieMenu(*vm_, sim_, id))
+                if (e.available() && !e.debug)
+                    entries_.push_back(std::move(e));
     if (entries_.empty())
         return false;
     object_ = object;
+    merged_ = merged;
     title_ = objectName(vm_->object(entries_.front().object));
     at_ = at;
     open_ = true;
@@ -629,8 +632,12 @@ bool PieMenuHost::open(vm::ObjectId object, simd_float2 at) {
 void PieMenuHost::close() {
     const bool was = open_;
     open_ = false;
-    if (was && onClose)
+    if (was && onClose) {
         onClose(object_);
+        if (merged_)
+            onClose(merged_);
+    }
+    merged_ = 0;
     entries_.clear();
     submenu_.clear();
     gesture_ = false;

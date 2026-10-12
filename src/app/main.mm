@@ -1452,6 +1452,35 @@ bool openGoHere(simd_float3 eye, simd_float3 dir, simd_float2 at) {
     return true;
 }
 
+// A click that picked object `id` (cTSUserToolStandardAction::MouseEvent):
+// its menu; a rug's merges a go-here destination at the floor under the
+// mouse (vm::objectClick); with nothing to do with it (a tree's canopy over
+// the floor), the ground below (the app's fallback).
+void openClicked(os2::vm::ObjectId id, simd_float3 eye, simd_float3 dir, simd_float2 at) {
+    if (!gPie || !gPie->sim())
+        return;
+    os2::vm::VM& m = gPie->vm();
+    if (os2::vm::isGoHereRug(m, id)) {
+        std::optional<os2::vm::Position> ground;
+        if (const auto g = groundUnderRay(eye, dir))
+            ground = os2::vm::Position{g->first.x, g->first.y, g->second};
+        bool has = false;
+        for (const auto& e : os2::vm::pieMenu(m, gPie->sim(), id))
+            has = has || (e.available() && !e.debug);
+        const auto menu = os2::vm::objectClick(m, gPie->sim(), id, ground, has);
+        if (menu.object && gPie->open(menu.object, at, menu.destination)) {
+            std::printf("opensims2: rug %d%s\n", id, menu.destination ? " with a go-here destination" : "");
+            return;
+        }
+        for (const os2::vm::ObjectId d : {menu.object, menu.destination})
+            if (d && d != id)
+                os2::vm::releaseDestination(m, d);
+        return;
+    }
+    if (!gPie->open(id, at) && !openGoHere(eye, dir, at))
+        std::printf("opensims2: object %d: no interactions available\n", id);
+}
+
 // Whether an object hangs on a wall the lot model cut down: a cut wall of
 // its level within 0.6 tiles, across its front (perpendicular to its +Y).
 bool onCutWall(const os2::Xform& at) {
@@ -3514,11 +3543,8 @@ void unloadScene() {
         return;
     }
     const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
-    if (id && !gPie->open(id, p)) {
-        // Nothing to do with it (a tree's canopy over the floor): the ground below.
-        if (!openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p))
-            std::printf("opensims2: object %d: no interactions available\n", id);
-    }
+    if (id)
+        openClicked(id, eye, simd_normalize(q.xyz / q.w - eye), p);
     if (!id) // the ground: Go Here
         openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p);
     std::fflush(stdout);
@@ -4478,10 +4504,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 const os2::vm::Object* o = gPie->vm().object(id);
                 std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", clickX, clickY, id,
                             o && o->definition ? o->definition->fileName.c_str() : "nothing");
-                if (id && !gPie->open(id, p)) {
-                    if (!openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p))
-                        std::printf("opensims2: object %d: no interactions available\n", id);
-                }
+                if (id)
+                    openClicked(id, eye, simd_normalize(q.xyz / q.w - eye), p);
                 if (!id) // the ground: Go Here
                     openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p);
                 for (size_t e = 0; e < gPie->entries().size(); ++e)

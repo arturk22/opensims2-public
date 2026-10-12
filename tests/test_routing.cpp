@@ -958,6 +958,34 @@ static void testGoHere() {
         const Point2 b = movePointAwayFromWalls(dw, {5.5f, 5.6f}, 1, 0.45f);
         check(std::fabs((b[0] - 5.5f) - (b[1] - 5.6f)) < 1e-4f && b[0] > 5.7f, "go here: diagonal 0x20 along the wall");
     }
+    // A rug (type 0x13): its menu merges a destination at the floor under
+    // the mouse; without interactions the destination's alone; another
+    // object only its own.
+    {
+        ObjectDefinition rugDef = definition(0xAAAA0003, 0);
+        rugDef.fields[(0x52 - 0x44) / 2] = 0x13;
+        code.add(kGroup, 0x82, rugDef);
+        Object& rug = vm.instantiate(kGroup, 0x82);
+        rug.position = {10.5f, 2.5f, 1};
+        const ObjectId rugId = rug.id;
+        const Position floor{10.2f, 2.7f, 1};
+        check(isGoHereRug(vm, rugId) && !isGoHereRug(vm, lamp.id), "rug: type 0x13");
+        auto m = objectClick(vm, sim.id, rugId, floor, true);
+        check(m.object == rugId && m.destination && vm.object(m.destination)->guid() == kGoHereGuid,
+              "rug: its menu with a go-here destination");
+        releaseDestination(vm, m.destination);
+        check(!vm.object(m.destination), "rug: the destination goes with the menu");
+        m = objectClick(vm, sim.id, rugId, floor, false);
+        check(m.object && m.object != rugId && !m.destination, "rug without interactions: the destination's menu");
+        releaseDestination(vm, m.object);
+        m = objectClick(vm, sim.id, rugId, std::nullopt, true);
+        check(m.object == rugId && !m.destination, "rug off the floor: its menu alone");
+        vm.object(rugId)->data[objdata::Category] = 0xA7;
+        check(!isGoHereRug(vm, rugId), "rug: not with category 0xA7");
+        m = objectClick(vm, sim.id, lamp.id, floor, true);
+        check(m.object == lamp.id && !m.destination, "another object: its menu");
+        vm.removeObject(rugId);
+    }
     // Cancelled: the destination goes when the menu closes.
     ObjectId d = createGoHereDestination(vm, sim.id, 9.5f, 6.5f, 1);
     check(d && vm.objects().size() == before + 1, "go here: the destination is made");

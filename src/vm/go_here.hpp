@@ -52,6 +52,21 @@ std::optional<Position> goHerePoint(VM& vm, ObjectId sim, float x, float y, int 
 // opened on it.
 ObjectId createGoHereDestination(VM& vm, ObjectId sim, float x, float y, int level);
 
+// A click on an object (cTSUserToolStandardAction::MouseEvent): a rug
+// (OBJD type 0x13, object data 59 not 0xA7) also puts a go-here
+// destination at the ground point under the mouse, and the pie menu shows
+// the rug's interactions with the destination's (PickObject(rug,
+// destination)); a rug without interactions opens the destination's alone.
+// Other objects open their own menu. `ground`: the floor point under the
+// mouse (GroundOrWallButNotPondAtGameWindowPoint), if any; `hasInteractions`:
+// whether the object's menu has entries (ObjectHasInteractions).
+bool isGoHereRug(VM& vm, ObjectId object);
+struct ClickedMenu {
+    ObjectId object = 0;      // whose menu opens (0: none)
+    ObjectId destination = 0; // a destination merged into it (held, see below)
+};
+ClickedMenu objectClick(VM& vm, ObjectId sim, ObjectId object, std::optional<Position> ground, bool hasInteractions);
+
 // The pie menu on a destination closed: it is flushed now unless a Sim has
 // queued one of its interactions (then once none has it any more).
 void releaseDestination(VM& vm, ObjectId destination);

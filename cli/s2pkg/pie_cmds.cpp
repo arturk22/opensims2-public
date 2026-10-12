@@ -191,7 +191,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
 
     // here:x,y[,level]: a click on the ground there (vm/go_here.hpp): the
     // destination object the game puts under the mouse.
-    vm::ObjectId object = 0;
+    vm::ObjectId object = 0, merged = 0;
     if (objectQuery.rfind("here:", 0) == 0) {
         float hx = 0, hy = 0;
         int hl = 1;
@@ -203,6 +203,31 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         const vm::Object& d = *machine.object(object);
         std::printf("go here: destination %d at (%.3f, %.3f, %d)\n", object, d.position.x, d.position.y,
                     d.position.level);
+    } else if (const size_t at = objectQuery.find('@'); at != std::string::npos) {
+        // object@x,y[,level]: a click on that object with the floor at
+        // (x, y) under the mouse (a rug merges a go-here destination there).
+        float hx = 0, hy = 0;
+        int hl = 1;
+        if (std::sscanf(objectQuery.c_str() + at + 1, "%f,%f,%d", &hx, &hy, &hl) < 2)
+            throw std::runtime_error("object@x,y[,level] expected");
+        const std::string name = objectQuery.substr(0, at);
+        vm::ObjectId clicked = 0;
+        if (!name.empty() && name.find_first_not_of("0123456789") == std::string::npos)
+            clicked = vm::ObjectId(std::stoi(name));
+        else
+            clicked = vm::findInteractionObject(machine, name);
+        if (!clicked || !machine.object(clicked))
+            throw std::runtime_error("no object \"" + name + "\"");
+        bool has = false;
+        for (const auto& e : vm::pieMenu(machine, sim, clicked))
+            has = has || (e.available() && !e.debug);
+        const auto menu = vm::objectClick(machine, sim, clicked, vm::Position{hx, hy, hl}, has);
+        object = menu.object, merged = menu.destination;
+        std::printf("click on %d%s: menu of %d", clicked, vm::isGoHereRug(machine, clicked) ? " (a rug)" : "", object);
+        if (merged)
+            std::printf(" with go-here destination %d at (%.3f, %.3f, %d)", merged, machine.object(merged)->position.x,
+                        machine.object(merged)->position.y, machine.object(merged)->position.level);
+        std::printf("\n");
     } else {
         object = vm::findInteractionObject(machine, objectQuery);
     }
@@ -224,7 +249,10 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             std::printf("    %*s%08X %04X #%-3u %-28s %s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
                         op.c_str(), f.behavior->fileName.c_str(), vm::describeOperands(machine, t, f, in).c_str());
         };
-    const auto pie = vm::pieMenu(machine, sim, object);
+    auto pie = vm::pieMenu(machine, sim, object);
+    if (merged) // a rug's menu with its destination's entries after (PickObject(rug, destination))
+        for (auto& e : vm::pieMenu(machine, sim, merged))
+            pie.push_back(std::move(e));
     machine.trace = nullptr;
     int n = 0;
     std::vector<const vm::PieEntry*> shown;
@@ -250,6 +278,8 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     vm::Object& s = *machine.object(sim);
     vm::enqueue(machine, s, *q);
     vm::releaseDestination(machine, object); // the pie menu closes (a go-here destination stays while queued)
+    if (merged)
+        vm::releaseDestination(machine, merged);
     std::printf("queued \"%s\" (TTA %u, action %04X) on %s; %d ticks:\n", q->name.c_str(), q->interaction, q->action,
                 nameOf(s).c_str(), ticks);
     // --trace N: the first N instructions the Sim's thread runs from here on.
@@ -475,7 +505,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init] [--create GUID[:attr=value,...]] (object here:x,y[,level] = a click on the ground) [--birth mother,father] [--user-dir dir] [--save-hood out.package]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init] [--create GUID[:attr=value,...]] (object here:x,y[,level] = a click on the ground; object@x,y[,level] = a click on it over that floor point) [--birth mother,father] [--user-dir dir] [--save-hood out.package]\n";
 }
 
 } // namespace os2
