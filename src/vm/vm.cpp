@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <limits>
 
 namespace os2::vm {
 
@@ -288,15 +289,13 @@ std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByGuid(uint3
     scanDefinitions();
     if (auto it = byGuid_.find(guid); it != byGuid_.end())
         return it->second;
+    if (guidFallback_ && guid && guidFallbackTried_.insert(guid).second)
+        return guidFallback_(*this, guid);
     return std::nullopt;
 }
 
 std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::characterDefinition(uint32_t guid) {
-    if (auto d = definitionByGuid(guid))
-        return d;
-    if (guidFallback_ && guid && guidFallbackTried_.insert(guid).second)
-        return guidFallback_(*this, guid);
-    return std::nullopt;
+    return definitionByGuid(guid);
 }
 
 size_t CodeLibrary::attributeLabelCount(uint32_t group) {
@@ -712,8 +711,14 @@ VM::VM(CodeLibrary& code) : code_(code) { registerPrimitives(*this); }
 Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
     if (id <= 0) {
         id = 1;
-        while (objects_.count(id))
+        while (objects_.count(id)) {
+            // Object IDs are positive 16-bit numbers: with all of them in use
+            // a new object is an error (the thread is reset) rather than a
+            // wrapped-around ID.
+            if (id == std::numeric_limits<ObjectId>::max())
+                throw VMError("no free object ID (32767 objects)");
             ++id;
+        }
     } else if (objects_.count(id)) {
         throw VMError("object " + std::to_string(id) + " already exists");
     }
