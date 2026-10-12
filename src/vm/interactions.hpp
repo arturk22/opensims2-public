@@ -115,6 +115,14 @@ std::optional<QueuedInteraction> makeInteraction(VM& vm, ObjectId object, uint16
 // Throws VMError when the queue is full.
 uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead = false);
 
+// What the player's pick does (cTSPerson::AddAction, Mac BV 0xadbbdc): a
+// "Run Immediately" entry (TTAB flag 0x04) runs at once and never waits in
+// the queue (as Push Interaction has it: the person's "*Object Menu
+// Subqueue" picks, Cuddle ... Try For Baby on the Sim in the bed, push the
+// bed's pair onto both Sims); anything else is queued. Returns the queued
+// entry's uid, 0 when it ran at once or was refused.
+uint16_t addAction(VM& vm, Object& sim, QueuedInteraction q);
+
 // Cancels an entry of the queue or the sub-queue: a waiting one is removed,
 // the running one (or the running sub-action) is told to stop (Idle for
 // Input in its tree returns at once). False if there is none.

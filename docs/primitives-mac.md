@@ -1744,7 +1744,46 @@ byte 2 não tem 0x01; senão **1**. Objeto inexistente: falso.
   ou outra rodando: AddAction devolve 0 e o Push Interaction dá falso com
   resultado 6. Inferido: temps novos na árvore; um erro nela conta como
   recusa (rodada 18; antes as "*Push Look At" se empilhavam na fila do
-  Daniel dançando, QA 15). `vm::runImmediately`.
+  Daniel dançando, QA 15). `vm::runImmediately`. O clique do jogador
+  passa pelo mesmo `AddAction` (rodada 19, `vm::addAction`): a entrada
+  imediata escolhida no pie roda na hora e não aparece na fila.
+
+### O menu de pie (`cEdithObjectTestSim`, rodada 19)
+
+`cEdithObjectTestSim::Init(pessoa, objeto, autônomo, todos os menus)` (BV
+`0x4c5cd0`): o byte `+0x10` é "autônomo" e escolhe entre
+`AppendInteractionsForMenu` (`0x4c9764`) e `AppendInteractionsForAuto`
+(`0x4ca54c`); `+0x11` vem de `cTSSimSystem::GetAllMenusOn` (cheat: tudo
+passa e nada se esconde). `TestInteraction` (`0x4c6214`) zera os dados
+0x32 ("hide"), 6, 0x65 e 0x68 **do Sim**, roda a check tree com os
+parâmetros 0 = autônomo, 1 = interação de "join" (`Init(pessoa, pessoa)`
+`0x4c815c`, índice de join da entrada que o outro roda), 2 = o Sim clicado
+(join), e depois copia o 0x32 para "escondida". `RunMenuCheckTree`
+(`0x4c93e4`) põe a interação no menu só se a árvore **não** acrescentou
+textos, passou e não está escondida; cada texto do Add/Change the Action
+String entra no menu na hora (`sMakeNewMenuItem` `0x4c8f28`, lista global
+`DAT_027797ec`), com resultado 1 e não escondido, **seja qual for o fim da
+árvore**, e também quando vem de uma árvore rodada por nome dentro dela.
+Clicando num Sim, `AppendInteractionsForMenu` também oferece o join da
+interação atual de cada um (o "Relaxar" da cama tem join 4: "Juntar-se a"/
+"Pedir para Juntar-se").
+
+**Socials da cama** (rodada 19): as entradas 5–17 da cama de casal
+(Acariciar, Beijar, Oba-Oba, Tentar Fazer um Bebê, A e B) devolvem falso
+para a autonomia e verdadeiro **escondido** (global 0x109 "Hide Menu")
+para o jogador: nunca aparecem sozinhas. O jogador as escolhe **clicando no
+parceiro deitado**: a entrada 183 da pessoa, "*Object Menu Subqueue"
+(flags 0x8E04, imediata; só para o jogador, parâmetro 0 = 0), pega o objeto
+que o Sim clicado usa (dado de pessoa 59) e roda nele por nome "CT - Object
+Menu Subqueue" (STR# 0x12F #59 da pessoa), que acrescenta Acariciar /
+Beijar / Dar um Amasso / Oba-Oba / Primeiro Beijo / Tentar Fazer um Bebê
+conforme o relacionamento, com a opção no parâmetro 0; escolhida, a ação
+roda "CT - Object Menu Subqueue Command", que empurra o par A/B nos dois
+Sims. A autonomia usa o "*Autonomous subqueue" da cama (só com parâmetro
+0 = 1), que chama a mesma árvore. Nosso pie não rodava check trees de nome
+com '*' (só a flag 0x80 é de depuração no jogo: o '*' sem a flag não
+aparece sozinho, mas os textos que a árvore acrescenta sim) e perdia os
+textos de árvores rodadas por nome (thread separada).
 
 ### `SetReachObjectID` (`cTSPerson +0x8EA`) e `+0x8EC`
 

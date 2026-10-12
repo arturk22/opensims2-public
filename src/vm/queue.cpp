@@ -628,6 +628,14 @@ std::optional<QueuedInteraction> makeInteraction(VM& vm, ObjectId object, uint16
     return std::nullopt;
 }
 
+uint16_t addAction(VM& vm, Object& sim, QueuedInteraction q) {
+    if (q.ttabFlags & 0x04) {
+        runImmediately(vm, sim, q);
+        return 0;
+    }
+    return enqueue(vm, sim, std::move(q));
+}
+
 uint16_t enqueue(VM& vm, Object& sim, QueuedInteraction q, bool pushHead) {
     // A nested interaction picked while the running one allows nesting goes
     // to the sub-queue (as Push Interaction puts it; inferred for the menu).
@@ -950,14 +958,20 @@ std::vector<PieEntry> pieMenu(VM& vm, ObjectId sim, ObjectId object, const PieOp
         const std::string english = ref->strings ? ref->strings->get(e.stringIndex, lang::EnglishUS) : "";
         // As autonomy sees it, only the flag counts (the "*Autonomous
         // subqueue" of the beds is an autonomous entry, not a cheat).
-        p.debug = (e.flags & 0x80) ||
+        const bool flagDebug = e.flags & 0x80;
+        p.debug = flagDebug ||
                   (!opt.autonomous && ((!english.empty() && english[0] == '*') || (!p.name.empty() && p.name[0] == '*')));
-        // Debug interactions are only offered with the testing cheats; their
-        // check trees are not run (as FreeSO does for its debug flag).
+        // Debug interactions (the flag) are only offered with the testing
+        // cheats; their check trees are not run (as FreeSO does for its debug
+        // flag). A '*' name without the flag is not shown itself, but its
+        // check tree runs: the strings it adds are the menu's entries (the
+        // person's "*Object Menu Subqueue" runs the bed's "CT - Object Menu
+        // Subqueue" on the Sim lying in it: Cuddle, Kiss, WooHoo, Try For
+        // Baby, ...).
         std::vector<ActionString> strings;
         if (const Object* s = vm.object(sim))
             p.wrongAge = !availableToAge(*s, *ref->table, e);
-        if (!p.debug && !p.wrongAge) {
+        if (!flagDebug && !p.wrongAge) {
             if (Object* s = vm.object(sim))
                 s->data[objdata::HideInteraction] = 0;
             p.check = checkInteraction(vm, sim, q, &p.error, opt.autonomous, opt.maxTurns, &strings);
@@ -966,12 +980,23 @@ std::vector<PieEntry> pieMenu(VM& vm, ObjectId sim, ObjectId object, const PieOp
                 s->data[objdata::HideInteraction] = 0;
             }
         }
-        if (!p.available() || strings.empty()) {
+        // The strings the check tree added are menu entries of their own
+        // whatever the tree then returns or hides: cEdithObjectTestSim::
+        // sMakeNewMenuItem (Mac BV 0x4c8f28) puts each in the menu as Add/
+        // Change the Action String runs, with check result 1 and not hidden,
+        // and RunMenuCheckTree (0x4c93e4) adds the interaction itself only
+        // when the tree added none and it passed unhidden. (The bed's "CT -
+        // Object Menu Subqueue" adds its socials and returns false.)
+        const bool finished = p.check == CheckResult::True || p.check == CheckResult::False;
+        if (strings.empty() || !finished) {
             out.push_back(std::move(p));
             continue;
         }
         for (const auto& s : strings) {
             PieEntry d = p;
+            d.debug = false;
+            d.hidden = false;
+            d.check = CheckResult::True;
             d.dynamic = true;
             d.name = s.name;
             d.path = splitPiePath(s.name);

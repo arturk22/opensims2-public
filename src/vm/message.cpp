@@ -141,11 +141,13 @@ Exit message(Context& c) {
 } // namespace
 
 bool runOneTickTree(VM& vm, std::array<int16_t, kTempCount>& temps, ObjectId me, ObjectId codeOwner,
-                    ObjectId stackObject, uint16_t tree, std::span<const int16_t> params) {
+                    ObjectId stackObject, uint16_t tree, std::span<const int16_t> params,
+                    std::vector<ActionString>* actionStrings) {
     if (messageDepth >= kMaxMessageDepth)
         throw gameError(0x452 /* Max stack depth exceeded. */, "one-tick trees");
     Thread t = vm.start(me, tree, params.first(std::min<size_t>(params.size(), 4)), stackObject, codeOwner);
     t.temps = temps;
+    t.actionStrings = actionStrings;
     if (t.status == Thread::Status::Running) {
         auto& p = t.stack.back().params;
         for (size_t i = 4; i < params.size() && i < p.size(); ++i)

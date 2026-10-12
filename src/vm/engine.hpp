@@ -27,8 +27,13 @@ void registerPersonPrimitives(VM& vm);
 // thread for `me` with that stack object, the temps given (and written
 // back), up to 8 parameters. A tree that would wait is the game's error
 // 0x451; one that fails fails the caller. Returns what the tree returned.
+// `actionStrings`: where Add/Change the Action String puts its strings
+// while a menu's check tree runs (the menu's list is a global in the game,
+// cEdithObjectTestSim::sMakeNewMenuItem, so a tree run by name from a check
+// tree adds to it too).
 bool runOneTickTree(VM& vm, std::array<int16_t, kTempCount>& temps, ObjectId me, ObjectId codeOwner,
-                    ObjectId stackObject, uint16_t tree, std::span<const int16_t> params);
+                    ObjectId stackObject, uint16_t tree, std::span<const int16_t> params,
+                    std::vector<ActionString>* actionStrings = nullptr);
 
 // Object data 62 "use count", which the engine computes when it is read
 // (as FreeSO's VMEntity::GetUsers/IsInUse; not checked in the binary): the

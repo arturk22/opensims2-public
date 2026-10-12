@@ -952,8 +952,9 @@ Exit runTreeByName(Context& c) {
         std::copy_n(c.thread.temps.begin(), args.size(), args.begin());
     const ObjectId targetId = target.id;
     if (mode == 0)
-        return runOneTickTree(c.vm, c.thread.temps, c.thread.me, targetId, targetId, *tree, args) ? Exit::True
-                                                                                                 : Exit::False;
+        return runOneTickTree(c.vm, c.thread.temps, c.thread.me, targetId, targetId, *tree, args, c.thread.actionStrings)
+                   ? Exit::True
+                   : Exit::False;
     if (mode == 1) {
         // On the stack object's tree sim: without passed values (flags
         // 0x10/0x20) the parameters are its temps, as Gosub takes a null
@@ -965,7 +966,8 @@ Exit runTreeByName(Context& c) {
         auto& temps = it != c.vm.threads.end() ? it->second.temps : scratch;
         if (!(flags & 0x30))
             std::copy_n(temps.begin(), std::min(args.size(), temps.size()), args.begin());
-        return runOneTickTree(c.vm, temps, targetId, targetId, targetId, *tree, args) ? Exit::True : Exit::False;
+        return runOneTickTree(c.vm, temps, targetId, targetId, targetId, *tree, args, c.thread.actionStrings) ? Exit::True
+                                                                                                               : Exit::False;
     }
     std::array<int16_t, 4> first{};
     std::copy_n(args.begin(), 4, first.begin());

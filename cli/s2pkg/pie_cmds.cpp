@@ -288,7 +288,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     auto q = vm::interactionFromPie(machine, e); // keeps a dynamic entry's name and parameter 0
     q->pushedBy = sim;
     vm::Object& s = *machine.object(sim);
-    vm::enqueue(machine, s, *q);
+    vm::addAction(machine, s, *q);
     vm::releaseDestination(machine, object); // the pie menu closes (a go-here destination stays while queued)
     if (merged)
         vm::releaseDestination(machine, merged);
@@ -430,7 +430,20 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                     f[2] = f[2].substr(1);
                 vm::PieOptions po;
                 po.autonomous = asAutonomy;
+                // S2PKG_ALSO_TRACE=text: the check trees whose entry tree's name has it, traced.
+                static const char* alsoTrace = std::getenv("S2PKG_ALSO_TRACE");
+                std::string tracing;
+                if (alsoTrace)
+                    machine.trace = [&](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction& in) {
+                        if (t.stack.empty() || (t.stack.front().behavior->fileName.find(alsoTrace) == std::string::npos && f.behavior->fileName.find(alsoTrace) == std::string::npos))
+                            return;
+                        const std::string op = in.opcode < 0x100 ? primitiveName(in.opcode) : "call " + hexString(in.opcode);
+                        std::printf("    %*s%08X %04X #%-3u %-28s %s %s\n", int(t.stack.size() - 1) * 2, "", f.group, f.instance, f.pc,
+                                    op.c_str(), f.behavior->fileName.c_str(), vm::describeOperands(machine, t, f, in).c_str());
+                    };
                 std::vector<vm::PieEntry> menu = other && obj ? vm::pieMenu(machine, other, obj, po) : std::vector<vm::PieEntry>{};
+                if (alsoTrace)
+                    machine.trace = nullptr;
                 // "!name": also entries the check tree hid from the menu (Hide
                 // Menu) but passed, e.g. the bed's "Tentar Fazer um Bebê".
                 const bool withHidden = !f[2].empty() && f[2][0] == '!';
@@ -469,7 +482,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                 if (size_t k = pick; k < ok.size()) {
                     auto q2 = vm::interactionFromPie(machine, *ok[k]);
                     q2->pushedBy = other;
-                    vm::enqueue(machine, *machine.object(other), *q2);
+                    vm::addAction(machine, *machine.object(other), *q2);
                     std::printf("  tick %d: %d also queued \"%s\"\n", i, other, q2->name.c_str());
                 }
             }

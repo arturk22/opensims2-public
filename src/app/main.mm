@@ -1059,7 +1059,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             for (const auto& e : os2::vm::pieMenu(m, sim, target, opt))
                 if (!queued && strcasecmp(e.name.c_str(), entry.c_str()) == 0)
                     if (auto q = os2::vm::interactionFromPie(m, e)) {
-                        os2::vm::enqueue(m, *m.object(sim), *q);
+                        os2::vm::addAction(m, *m.object(sim), *q);
                         queued = true;
                     }
         std::printf("opensims2: --vm-queue %s: %s\n", spec->c_str(), queued ? "queued" : "no such entry");
@@ -5915,6 +5915,28 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     gPie->setCanvas(int(cw), int(ch));
                     if (!id || !gPie->open(id, simd_make_float2(cw / 2, ch / 2))) {
                         std::printf("opensims2: pie step: no pie menu on \"%s\"\n", st.object.c_str());
+                        continue;
+                    }
+                    if (st.text == "open") { // --pie-step <object>:open leaves the menu open for the shot
+                        auto at = gPie->anchor(id);
+                        if (!at) // a Sim: where it is drawn, chest high (as --pie)
+                            for (const auto& s : gLotSims)
+                                if (os2::vm::ObjectId(s.id) == id && s.actor) {
+                                    const os2::Vec3 sp = s.actor->transform ? os2::Vec3{s.actor->transform->t[0], s.actor->transform->t[1],
+                                                                                        s.actor->transform->t[2]}
+                                                                            : s.actor->position;
+                                    at = simd_make_float3(sp[0], sp[1], sp[2] + 0.6f);
+                                }
+                        if (at) { // over the object, the camera on it (as --pie)
+                            view.camera->setPivot(simd_make_float3(at->x, at->y, view.camera->pivot().z));
+                            view.camera->snap();
+                            const simd_float4 c = simd_mul(simd_mul(view.camera->projection(cw / ch), view.camera->view()),
+                                                           simd_make_float4(at->x, at->y, at->z, 1));
+                            gPie->close();
+                            gPie->open(id, simd_make_float2((c.x / c.w + 1) / 2 * cw, (1 - c.y / c.w) / 2 * ch));
+                        }
+                        for (size_t e = 0; e < gPie->entries().size(); ++e)
+                            std::printf("opensims2: pie step: [%zu] %s\n", e, gPie->entries()[e].name.c_str());
                         continue;
                     }
                     bool picked = false;

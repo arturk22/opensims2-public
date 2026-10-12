@@ -63,7 +63,8 @@ struct FlowStep {
     bool control = false, hold = false;
     long ticks = 0;
     // --pie-step <object>:<entry>: the selected Sim picks that entry of the
-    // object's pie menu (as a click on it and on the entry would).
+    // object's pie menu (as a click on it and on the entry would); the entry
+    // "open" leaves the menu open, nothing picked (for a screenshot).
     std::string object;
     int entry = 0;      // -1: the entry whose name holds `text`
     std::string text;   // what follows the colon

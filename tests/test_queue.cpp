@@ -591,6 +591,43 @@ static void testRunImmediately() {
           "run immediately: the action tree ran once per push");
 }
 
+// The person's "*Object Menu Subqueue" (TTAB 7F01EC29, entry 183): a '*'
+// entry whose check tree runs the bed's "CT - Object Menu Subqueue" by name;
+// that tree adds the socials' strings and hides itself. The
+// strings are the menu (sMakeNewMenuItem adds them as they are made), and a
+// pick of the Run Immediately entry runs it at once (addAction).
+static void testStarEntryStringsFromNamedTree() {
+    Fixture fx;
+    fx.code.add(kBedGroup, 0x80, definition(4, 0, 0x0B1E0003));
+    fx.code.add(kBedGroup, 0x12E, ttas({"WooHoo"}, {"Oba-Oba"}));
+    Behavior menu = tree({expr(StackId, 0, Assign, Lit, 9, go(1), E), instr(0x32, go(2), E, {0, 0, 0, 0, 1}),
+                          expr(Data, objdata::HideInteraction, Assign, Lit, 1, T, E)});
+    menu.fileName = "CT - Menu";
+    fx.code.add(kBedGroup, 0x1100, std::move(menu));
+    const ObjectId bed = fx.vm.instantiate(kBedGroup, 0x80).id;
+    StringTable named;
+    named.format = 0xFFFD;
+    named.entries.push_back({lang::EnglishUS, "CT - Menu", "", 0});
+    fx.code.add(kObjGroup, 0x12F, std::move(named));
+    fx.code.add(kObjGroup, 0x1007, tree({expr(StackId, 0, Assign, Lit, int16_t(bed), go(1), E),
+                                         instr(0x1C, T, F, {0x2F, 0x01, 0, 0, 1, 0})}, 1));
+    InteractionTable t;
+    t.version = 0x4D;
+    auto star = entry(0x1001, 0x1007, 0);
+    star.flags = 0x04;
+    t.interactions = {star};
+    fx.code.add(kObjGroup, 1, std::move(t));
+    fx.code.addInteractionStrings(kObjGroup, 1, ttas({"*Object Menu"}, {"*Object Menu"}));
+    auto pie = pieMenu(fx.vm, fx.sim, fx.fridge);
+    check(pie.size() == 1 && pie[0].dynamic && !pie[0].debug && pie[0].available() && pie[0].name == "Oba-Oba" &&
+              pie[0].args[0] == 9,
+          "a '*' entry's check tree adds menu entries through a tree run by name, whatever it then hides");
+    auto q = interactionFromPie(fx.vm, pie[0]);
+    check(q && addAction(fx.vm, fx.s(), *q) == 0 && fx.s().queue.empty() && fx.o().attributes.size() > 0 &&
+              fx.o().attributes[0] == 7,
+          "a picked Run Immediately entry runs at once, not queued");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -607,6 +644,7 @@ int main() {
     testNestedInterruption();
     testLinkedInteractions();
     testRunImmediately();
+    testStarEntryStringsFromNamedTree();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

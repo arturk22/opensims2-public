@@ -917,7 +917,7 @@ void PieMenuHost::queueEntry(size_t index) {
         return;
     q->pushedBy = sim_;
     try {
-        vm::enqueue(*vm_, *sim, *q);
+        vm::addAction(*vm_, *sim, *q);
         std::printf("opensims2: queued \"%s\" (%s, TTA %u) for %s\n", q->name.c_str(), title_.c_str(), q->interaction,
                     objectName(sim).c_str());
     } catch (const std::exception& e) {
