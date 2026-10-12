@@ -77,6 +77,9 @@ constexpr int16_t kObjdataPrimitiveResult = 52;
 // data 20 "tree table entry" (STR# 0xC8, 0x8D): what the last Find Best
 // Interaction picked, for Push Interaction's byte 14 bit 1.
 constexpr int16_t kPersondataFindBestObject = 53;
+// Person data 32 "Person Type" (STR# 0xC8): not 0 is a visitor
+// (cTSPerson::IsVisitor).
+constexpr int16_t kPersondataPersonType = 32;
 constexpr int16_t kObjdataTreeTableEntry = 20;
 
 // Object flags (object data 8, STR# 0x8E; bit = label index).

@@ -149,7 +149,15 @@ int simAge(const Object& sim) {
 // inverted (cTSTreeTableEntry::Read flips them), so in the base game's
 // tables a set bit 4/6 means "not for children/adults" (the teen runaway
 // entry, 0x850, is for teens only).
+//
+// cEdithObjectTestSim::TestInteraction (BV 0x4c6214) also leaves out, for a
+// visitor, the entries without "allow visitors" (TTAB flag 0x0001, the
+// entry's TestFlags(1), vtable 0x2c): cTSPerson::IsVisitor (cITSPerson
+// vtable 0x78, thunk BV 0x19ace78) is person data 32 "Person Type" != 0.
+// The fridge's "Verificar Mantimentos" and "Fazer Uma Boquinha" lack it.
 bool availableForAge(const Object& sim, const InteractionTable& table, const InteractionTable::Interaction& e) {
+    if (sim.person && sim.person->data[kPersondataPersonType] != 0 && !(e.flags & 0x0001))
+        return false;
     if (!sim.person || sim.person->data[persondata::PersonAge] == 0)
         return true; // not a Sim, or an age nobody set (stand-ins, tests)
     static constexpr uint32_t kBits[6] = {0x40, 0x10, 0x200, 0x800, 0x400, 0x1000};

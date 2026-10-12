@@ -823,6 +823,16 @@ Exit createObjectInstance(Context& c) {
         // virtual calls not followed).
         x->person->data[persondata::NeighborId] = c.vm.neighborForGuid(x->guid());
     }
+    // A person made in play is a visitor: the engine's handler of the
+    // object-made event (BV 0x4700c8, event 0x8F: a person, OBJD type 2,
+    // whose person data 32 "Person Type" is 0 gets 1). The trees that make
+    // a member of the family set it back to 0 ("Make Baby - Common", "Sim -
+    // Create New Sim - Generic", "Make New Character"), NPC Inits to 2, and
+    // cTSNeighborhood::UpdateInstanceVisitorTypes (BV 0x4d7e94) clears it
+    // for the family's members. Done here, before the new object's Init
+    // (inferred: the event comes with the creation).
+    if (x->person && x->person->data[kPersondataPersonType] == 0)
+        x->person->data[kPersondataPersonType] = 1;
     const ObjectId stackObject = c.frame.stackObject, meId = me.id;
     const int16_t temp0 = c.thread.temps[0];
     if (c.vm.initCreatedObjects) {

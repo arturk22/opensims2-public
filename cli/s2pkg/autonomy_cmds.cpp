@@ -209,9 +209,14 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
         printMotives(*machine.object(id));
     printRelationships(machine, sims, "at the start");
 
+    // S2PKG_VISITORS=1: the people who come in while running (visitors,
+    // NPCs) are followed too: what they run and choose, from when they come
+    // (not in the motive tables or the summary, which stay the household's).
+    static const bool followVisitors = std::getenv("S2PKG_VISITORS") != nullptr;
+    std::vector<vm::ObjectId> tracked = sims;
     std::map<vm::ObjectId, size_t> choices, searches;
     vm::autonomyObserver() = [&](const vm::AutonomyDecision& d) {
-        if (std::find(sims.begin(), sims.end(), d.sim) == sims.end())
+        if (std::find(tracked.begin(), tracked.end(), d.sim) == tracked.end())
             return;
         ++searches[d.sim];
         if (!d.found && !verbose)
@@ -497,7 +502,20 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                         static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(), r.scene.c_str(),
                         r.me, r.actors.size());
         vm::cinematicRequests().clear();
-        for (vm::ObjectId id : sims) {
+        if (followVisitors)
+            for (vm::ObjectId id : machine.people())
+                if (const vm::Object* s = machine.object(id); s && s->position.inWorld() && simGuid[id] != s->guid() &&
+                                                             std::find(sims.begin(), sims.end(), id) == sims.end()) {
+                    if (std::find(tracked.begin(), tracked.end(), id) == tracked.end())
+                        tracked.push_back(id);
+                    simGuid[id] = s->guid(), simLabel[id] = simName(*s), job[id] = jobOf(*s), onLot[id] = true;
+                    running[id].clear();
+                    std::printf("  tick %6llu %s %-10s comes in (visitor) at (%.2f, %.2f, %d), person type %d\n",
+                                static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
+                                simName(*s).c_str(), s->position.x, s->position.y, s->position.level,
+                                s->person->data[32]);
+                }
+        for (vm::ObjectId id : tracked) {
             const vm::Object* s = machine.object(id);
             if (!s || !s->person || s->guid() != simGuid[id]) {
                 // Gone: an urn took the dead, the social worker's car took
@@ -512,6 +530,15 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                 continue;
             }
             simLabel[id] = simName(*s);
+            if (followVisitors) { // person data 32 "Person Type" (not 0: a visitor)
+                static std::map<vm::ObjectId, int16_t> type;
+                const int16_t t = s->person->data[32];
+                if (auto [it, fresh] = type.try_emplace(id, t); !fresh && it->second != t) {
+                    std::printf("  tick %6llu %s %-10s person type %d -> %d\n", static_cast<unsigned long long>(machine.ticks),
+                                clockText(machine).c_str(), simName(*s).c_str(), it->second, t);
+                    it->second = t;
+                }
+            }
             if (const bool in = s->position.inWorld(); in != onLot[id]) {
                 onLot[id] = in;
                 std::printf("  tick %6llu %s %-10s %s\n", static_cast<unsigned long long>(machine.ticks),
@@ -574,6 +601,31 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                                     static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(), oid, where,
                                     uint16_t(ob.data[vm::objdata::Flags]), vm::VM::blocksRouting(ob) ? "blocks" : "does not block",
                                     fp.size());
+                        // The first fire of an outbreak: what is near it and
+                        // who was using it (whose active interaction is on an
+                        // object within 2 tiles), to tell how it started.
+                        if (seenFires.size() == 1) {
+                            auto near = [&](const vm::Object& x) {
+                                return x.position.level == ob.position.level && std::abs(x.position.x - ob.position.x) < 2 &&
+                                       std::abs(x.position.y - ob.position.y) < 2;
+                            };
+                            std::printf("  tick %6llu   outbreak near:", static_cast<unsigned long long>(machine.ticks));
+                            for (const auto& [nid, n] : machine.objects())
+                                if (nid != oid && !n.person && n.position.inWorld() && near(n) && n.definition &&
+                                    n.definition->fileName != "Fire")
+                                    std::printf(" %d %s;", nid, n.definition->fileName.c_str());
+                            std::printf("\n");
+                            for (const auto& [pid, p] : machine.objects())
+                                if (p.person && p.activeInteraction >= 0 && size_t(p.activeInteraction) < p.queue.size()) {
+                                    const auto& q = p.queue[size_t(p.activeInteraction)];
+                                    const vm::Object* t = machine.object(q.object);
+                                    if ((t && near(*t)) || near(p))
+                                        std::printf("  tick %6llu   outbreak: %s#%d%s running \"%s\" on %d %s\n",
+                                                    static_cast<unsigned long long>(machine.ticks), simName(p).c_str(), pid,
+                                                    std::find(sims.begin(), sims.end(), pid) == sims.end() ? " (visitor)" : "",
+                                                    q.name.c_str(), q.object, t && t->definition ? t->definition->fileName.c_str() : "?");
+                                }
+                        }
                     }
                 }
             for (auto it = seenFires.begin(); it != seenFires.end();)

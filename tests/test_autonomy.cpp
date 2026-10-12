@@ -338,7 +338,26 @@ static void testCandidateOrder() {
           "an object's entries last first: of two with the same ads the later one ranks first");
 }
 
+// A visitor (person data 32 "Person Type" != 0) gets only the entries with
+// "allow visitors" (TTAB flag 0x0001; cEdithObjectTestSim::TestInteraction).
+static void testVisitorEntries() {
+    Fixture fx;
+    InteractionTable table;
+    table.version = 0x4E;
+    InteractionTable::Interaction open = adEntry(0x1001, 0, 0, 7, 0, 40, 1), closed = open;
+    open.flags = 0x0C01;   // visitors allowed (bit 0x40 clear: adults, inverted before version 0x52)
+    closed.flags = 0x0C00; // residents only
+    check(availableToAge(*fx.vm.object(fx.sim), table, open) && availableToAge(*fx.vm.object(fx.sim), table, closed),
+          "a resident (person type 0) gets both entries");
+    fx.p().data[kPersondataPersonType] = 1;
+    check(availableToAge(*fx.vm.object(fx.sim), table, open), "a visitor gets an entry with flag 0x0001");
+    check(!availableToAge(*fx.vm.object(fx.sim), table, closed), "a visitor does not get an entry without flag 0x0001");
+    fx.p().data[kPersondataPersonType] = 2;
+    check(!availableToAge(*fx.vm.object(fx.sim), table, closed), "an NPC (person type 2) neither");
+}
+
 int main() {
+    testVisitorEntries();
     testCurves();
     testMotiveChangeAndDecay();
     testMood();

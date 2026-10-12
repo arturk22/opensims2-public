@@ -270,6 +270,12 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                     e.name.c_str());
         if (!e.error.empty())
             std::printf("  -- %s", e.error.substr(0, e.error.find('\n')).c_str());
+        if (all && ref->table) // the TTAB entry's flags and trees
+            for (const auto& x : ref->table->interactions)
+                if (x.stringIndex == e.interaction) {
+                    std::printf("  (flags %04X/%04X, action %04X, check %04X)", x.flags, x.flags2, x.action, x.guard);
+                    break;
+                }
         std::printf("\n");
     }
     std::printf("%zu of %zu entries shown%s\n", shown.size(), pie.size(),
