@@ -862,7 +862,11 @@ UiScreen LiveUi::screen(int width, int height) {
             // Child 7 shows only behind an embedded thumbnail (Refresh).
             if (const UiElement* c = win.child(7))
                 hk.hide.insert(c);
-            const bool cancelled = q.cancelled || cancelled_.count({sim_, q.uid});
+            // The red X is the icon's own mark, set by a click on it (CancelAction: "if the
+            // Sim accepted, the icon is marked cancelled", docs/ui-live-mac.md §6.3), not the
+            // VM's cancelled flag, which the VM also raises by itself (a priority dropped to
+            // 0, an object gone) and which put an X on the Sim's current action.
+            const bool cancelled = cancelled_.count({sim_, q.uid}) > 0;
             if (const UiElement* c = win.child(4))
                 (cancelled ? hk.show : hk.hide).insert(c);
             // The "active" frame on the running ones, unless highlighted.
@@ -874,6 +878,11 @@ UiScreen LiveUi::screen(int width, int height) {
             targets_.push_back({r, Action::Cancel, q.uid});
             solid_.push_back(r);
         }
+        // The marks of interactions that are gone (uids are not reused for a long time, but
+        // the set would grow for ever).
+        std::erase_if(cancelled_, [&](const std::pair<vm::ObjectId, uint16_t>& k) {
+            return k.first == sim_ && std::none_of(order.begin(), order.end(), [&](const auto& e) { return e.q->uid == k.second; });
+        });
         // The interaction's name under the hovered icon (the game opens a
         // cTSWinCalloutBox; its look is inferred).
         if (!hoverName.empty()) {
