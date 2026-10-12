@@ -649,7 +649,7 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
     }
     default:
         ++vm.missingOwners[owner];
-        throw VMError("data owner " + hexString(owner) + " not implemented");
+        throw gameError(err::IllegalOwner, "data owner " + hexString(owner)); // past 0x33 (InterpValue)
     }
 }
 
@@ -678,7 +678,7 @@ void Context::set(uint8_t owner, int16_t data, int16_t value) const {
     case 0x33: throw VMError("data owner " + hexString(owner) + " is read-only");
     default:
         ++vm.missingOwners[owner];
-        throw VMError("data owner " + hexString(owner) + " not implemented");
+        throw gameError(err::IllegalOwner, "data owner " + hexString(owner)); // past 0x33 (InterpValue)
     }
 }
 
