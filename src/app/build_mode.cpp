@@ -1765,14 +1765,17 @@ std::optional<std::array<float, 4>> BuildMode::controlRect(uint32_t window, uint
     layoutIfNeeded();
     // The game's "Build Dynamic Menu" (0x502BBF02 with the room tool,
     // 0x502BBF03 with the deck tool: button 3) is made in code; here those
-    // tools are items of the catalog: the room tool, and the foundation tool
-    // standing in for the deck tool (there is no deck tool yet).
+    // tools are items of the catalog: the room tool, and the first deck
+    // (the lattice one, deckfoundations.txt "deck 1"; inferred).
     if ((window == 0x502BBF02 || window == 0x502BBF03) && control == 3) {
-        const Tool want = window == 0x502BBF02 ? Tool::Room : Tool::Foundation;
+        const bool deck = window == 0x502BBF03;
         const auto list = items();
         for (const Target& t : targets_)
-            if (t.action == Action::Item && size_t(t.value) < list.size() && list[size_t(t.value)].tool == want)
-                return t.rect;
+            if (t.action == Action::Item && size_t(t.value) < list.size()) {
+                const Item& it = list[size_t(t.value)];
+                if (deck ? it.tool == Tool::Foundation && it.product == 1 : it.tool == Tool::Room)
+                    return t.rect;
+            }
         return std::nullopt;
     }
     return windows_.find(window, control);

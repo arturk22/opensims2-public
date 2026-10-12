@@ -83,7 +83,7 @@ std::vector<QueueSlot> layoutActionQueue(const std::vector<bool>& nested, const 
 // window ids (the tutorial's "Button GUIDs": a window and a control in it;
 // 0x480E8304, the main window, holds them all). A window holds a control
 // when its rectangle holds the control's (inferred stand-in for the window
-// tree); a window not drawn itself holds any control with the id.
+// tree); without one that holds it, any control with the id.
 struct DrawnWindows {
     std::vector<std::pair<uint32_t, std::array<float, 4>>> list;
     void capture(const std::map<const UiElement*, std::array<float, 4>>& rects);

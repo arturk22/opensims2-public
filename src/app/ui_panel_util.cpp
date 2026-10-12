@@ -143,21 +143,22 @@ std::optional<std::array<float, 4>> DrawnWindows::find(uint32_t window, uint32_t
     auto holds = [](const std::array<float, 4>& a, const std::array<float, 4>& b) {
         return a[0] <= b[0] + 0.5f && a[1] <= b[1] + 0.5f && a[2] >= b[2] - 0.5f && a[3] >= b[3] - 0.5f;
     };
-    bool windowDrawn = false;
-    for (const auto& [wid, wr] : list)
-        windowDrawn |= wid == window;
+    // The control in the window's rectangle first; else the control alone
+    // (the main window, a panel's root laid out child by child, a child
+    // drawn past its parent's area).
+    std::optional<std::array<float, 4>> any;
     for (const auto& [id, r] : list) {
         if (id != control)
             continue;
-        // The main window, or one not drawn as a window of its own (a
-        // panel's root laid out child by child): the control alone.
-        if (window == 0x480E8304 || !windowDrawn)
+        if (window == 0x480E8304)
             return r;
         for (const auto& [wid, wr] : list)
             if (wid == window && holds(wr, r))
                 return r;
+        if (!any)
+            any = r;
     }
-    return std::nullopt;
+    return any;
 }
 
 } // namespace os2

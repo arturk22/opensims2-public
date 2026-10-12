@@ -245,12 +245,10 @@ O que está feito e onde (o resto do documento é o binário):
   `BuyMode`, `BuildMode::controlRect`, `DrawnWindows`): a janela "contém"
   o controle se o retângulo dela contém o dele (sem a árvore de janelas);
   o "Build Dynamic Menu" (`0x502BBF02/03`, feito em código no jogo) é o
-  item da ferramenta de cômodo / da fundação no catálogo (não há
-  ferramenta de terraço ainda).
-- **Controles do jogo que faltavam** e que o tutorial ensina: clicar no
-  chão abre o "Vir Aqui" do destino `0x7C4` (`src/vm/go_here.*`; também
-  quando o objeto clicado não tem interações, como a copa de uma árvore),
-  clique direito num Sim da família o seleciona, a barra de espaço passa
+  item da ferramenta de cômodo / do terraço de treliça no catálogo.
+- **Controles do jogo que faltavam** e que o tutorial ensina: o "Vir
+  Aqui" do chão (`src/vm/go_here.hpp`) também quando o objeto clicado não
+  tem interações (a copa de uma árvore na frente do chão), clique direito num Sim da família o seleciona, a barra de espaço passa
   ao próximo; os botões do puck (zoom, girar, andares) respondem sobre os
   painéis de Compra/Construção.
 - **Sem tela**: `s2pkg tutorial <lote> [--auto]` roda o episódio na VM;

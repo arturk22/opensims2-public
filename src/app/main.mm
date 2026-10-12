@@ -1176,6 +1176,10 @@ void setupTutorial(os2::ResourceIndex& index) {
     // The controls: Buy's and Build's panels while they are up, the live
     // panel and the puck.
     gTutorial->locate = [](uint32_t window, uint32_t control) -> std::optional<std::array<float, 4>> {
+        // The main window's controls are the puck's (the panels reuse small ids).
+        if (window == os2::LiveUi::kMainWindow)
+            if (auto r = gLive->controlRect(window, control))
+                return r;
         if (gBuy && gBuy->active())
             if (auto r = gBuy->controlRect(window, control))
                 return r;
@@ -2663,7 +2667,7 @@ enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
     kEscape = 53, kSpace = 49, kHome = 115, kEnd = 119, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
-    kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
+    kF1 = 122, kF2 = 120, kF5 = 96, kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
 };
 
 // Camera position slot of the keys 4-9 (-1: another key).
@@ -4243,6 +4247,11 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 gPie->setCanvas(int(cw), int(ch));
                 if (gTutorial && !right) { // the tutorial's window (top right) first
                     gTutorial->setCanvas(int(cw), int(ch));
+                    gLive->setCanvas(int(cw), int(ch)); // (its click trees find the controls laid out)
+                    if (gBuy)
+                        gBuy->setCanvas(int(cw), int(ch));
+                    if (gBuild)
+                        gBuild->setCanvas(int(cw), int(ch));
                     if (gTutorial->press(p))
                         continue;
                 }
