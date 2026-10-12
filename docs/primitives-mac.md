@@ -726,14 +726,82 @@ clean (39 "dirty level", 0x1C), 12 garden (64, 0x10), 13 wash hands (65,
 0x11), 14 repair (15 "Repair Level", 0x1D), 15 dry clothes (sem valor: 50,
 0x1F), 23 awareness (sem valor, 0x2A), 25 lookatTarget (sem valor, 0x2C), 27
 Global Awareness (0x35, só BV); **as outras funções (4 eat, 5 pick up, 9
-stand, 16–22, 24, 26) dão falso direto**. Percorre os objetos que anunciam
-essa entrada; pula desligados (object data 56 bit 0; só BV) e com object data
-107 ≠ 0; com 0x80 ignora o "lockout"; as flags do byte 2 (fora/dentro/
-cômodo/linha de visão/relativo ao objeto) filtram; a check tree da entrada
-tem de passar. Pontuação = valor (gravado no meu object data 66 "function
-score") × 1 / (1 + distância / k) × (1 + fator do Sim) × multiplicador de
-autonomia; o melhor vira o **stack object** e devolve verdadeiro; nenhum →
-falso. Binário (k e os fatores do Sim não foram conferidos).
+stand, 16–22, 24, 26) dão falso direto**.
+
+**O laço inteiro (rodada 11, BV `0xe35a94`, binário).** Antes do laço:
+
+- referência = eu, ou com a flag 0x08 o objeto (dono byte 3, dado u16 4)
+  (inexistente: erro 0x17); o cômodo da referência só é lido com 0x04/0x20;
+- com 0x10, o serviço de linha de visão do mundo (`WorldDB→0x94→0xA0(5)`) e
+  a posição da referência;
+- se eu sou um Sim (interface `cITSPerson`, IID `0x5a69d3d5`): o conjunto
+  dos **cômodos acessíveis** (`cTSPerson::GetAccessibleRooms(conjunto, meu
+  cômodo)`, BV `0xacd218`: o roteador preenche, a partir do meu cômodo) —
+  não na Global Awareness — e `UpdateAutonomyBiasCaching(0)`;
+- a lista: **os objetos que anunciam a entrada da OBJf** (o módulo de
+  objetos guarda uma lista por entrada, `+0x80(entrada)`), não todos.
+
+Para cada objeto da lista, na ordem (um teste que falha pula o objeto):
+
+1. `ValidateObject`; object data 56 bit 0 desligado e object data 107 = 0
+   (ou, na dry clothes, o byte alto do 107 = 2) — os dois só existem no BV
+   (no base o 56 é "dry clothes value");
+2. com o conjunto de cômodos acessíveis: **o cômodo do objeto tem de estar
+   nele**;
+3. awareness/lookatTarget: só o lockout (object data 25 ≥ 1 pula, salvo com
+   0x80). As outras: **`IsOccupied`** (object data 8 bit 5, 0x20 — a flag 6
+   das expressões) pula; `AreInteractionsDisabled(!0x80)` pula: lockout
+   (od 25) ≥ 1 sem a flag 0x80, **od 87 "Disable All Interactions" ≥ 1** ou
+   **od 82 "Placement Flags 2" bit 2 (0x04)** — esses dois mesmo com 0x80;
+   **`IsBurning`** (od 8 bit 9, 0x200) pula;
+4. a entrada da OBJf do objeto (`GetFnTable→0x2C(entrada)`) tem de ter
+   árvore de ação ou de teste;
+5. meu od 66 "function score" := od do valor do objeto (ou 50 sem valor);
+   **0 pula** (só quando há valor);
+6. se a entrada tem check tree: `RunOneTickTree(comportamento do objeto,
+   rodando = a referência, rodando-sobre = o objeto, árvore = check tree,
+   tipo 4, parâmetros = nulos)` (BV `0xafe424` → `cTSTreeSim`
+   `0xe1ab54`): a árvore roda até o fim num tick, com **o stack object = o
+   objeto testado**, "eu" = a referência (eu, ou o objeto da flag 0x08) e
+   **os parâmetros = os meus temps** (`cTSTreeSim::OnInit` guarda o
+   ponteiro dos temps como parâmetros padrão; o `Gosub` copia os 4
+   primeiros); falso → pula. Na awareness/Global Awareness de um Sim, meu
+   od 66 := od 112 do objeto (só BV). **De novo: od 66 = 0 pula** (a árvore
+   pode zerar ou mudar o valor);
+7. filtro de lugar — **só a primeira flag ligada conta**, nesta ordem:
+   0x01 só fora (o mundo diz que o tile não é "dentro"), 0x02 só dentro,
+   0x04 mesmo cômodo da referência, 0x20 cômodo diferente do da referência,
+   **0x40 cômodo = o meu temp 0** (`vtable +0x4C(0)` é o temp 0, BV
+   `0xaff7e8`; não é "o meu cômodo");
+8. pontuação = od 66 × 1 / (1 + d / 5) com **d = `CalcShortDistance`(ref,
+   objeto, 10) = √(distância² no plano + (10 × diferença de andares)²)**
+   (constantes 10,0 em `0x277a900` e 5,0 em `0x277a904`); num Sim, × (1 +
+   `GetOwnerShipBias`) × `GetAutonomyBias(objeto, nenhuma interação)`;
+9. melhor que o melhor até agora (começa em −FLT_MAX) e, com 0x10, a linha
+   de visão da referência até o objeto livre → vira o melhor.
+
+O melhor vira o stack object e a primitiva devolve verdadeiro; nenhum →
+falso (o stack object não muda).
+
+Os vieses (binário, BV `0xace2dc`/`0xac9ca8`): `GetOwnerShipBias` = 0 salvo
+se o objeto tem dono (bit da flag 0x19 do seu "lot object") e conta > 1 para
+a minha família: 0,1 × contagem. `GetAutonomyBias` = 1 salvo se o objeto
+está no mundo e a opção global bit 2 de `0x277a90c` está ligada (padrão 1:
+desligada): então v = Σ peso × queda das entradas da tabela de viés do Sim
+(`UpdateCachedAutonomyBiasTable`, tirada do inventário; cada entrada:
+ponto, andar, cômodo, peso, raio interno, raio externo, máscara; queda 1
+dentro do raio interno, linear até 0 no externo) e o viés é (v + 1)^4 para
+v ≥ 0, (1 / (1 − v))^4 para v < 0 (constantes 4 e 2 em `0x277a994…9ac`).
+Com a tabela vazia dá 1: o VM pode usar 1 e 0.
+
+Diferenças do VM atual (`src/vm/reach.cpp`, `findBestObjectForFunction`):
+olha todos os objetos (o binário só os que anunciam a entrada — dá no
+mesmo); **não testa ocupado (od 8 0x20), pegando fogo (od 8 0x200), od 87,
+od 82 0x04 nem os cômodos acessíveis**; roda o check tree com "eu" = eu
+mesmo com a flag 0x08; aplica os filtros de lugar todos juntos (o binário
+só o primeiro); trata 0x40 como "meu cômodo" (é o temp 0); a distância é
+a soma em vez da hipotenusa; o filtro de lugar vem depois do check tree nos
+dois (igual).
 
 ### 0x21 Find 5 Worst Motives (`TryFind5WorstMotives`)
 
@@ -798,8 +866,27 @@ jogo pausado) e, ao estourar, o diálogo recebe o clique nesse botão
 (`static_dialog_timeout_callback`, comando `0x287259F6`); a primitiva vê a
 resposta como se o jogador tivesse clicado. Ex.: uma mensagem de 120
 caracteres some em 8,8 s; um sim/não de 200 caracteres responde "não" em
-12 s. Os diálogos especiais (telefone, revistas, roupas, ... outras classes
-`cTSWinProc*Dialog`) não passam por aqui (não conferido se têm tempo).
+12 s.
+
+**Diálogos especiais (tipo ≥ 5) não têm tempo (rodada 11, binário).** O
+`TryDialog` trata à parte os tipos 8–10/0x1C (notificações), 0x16/0x19
+(tutorial, ver `docs/tutorial-mac.md`) e 0x39 (recurso pelo u16 13). Todos
+os outros, inclusive 0–4 e os especiais, vão pela fila
+(`EnqueueObjectDialog`: a fábrica de janelas cria a classe pelo número do
+tipo, IID `0x0797ea13`) e a primitiva devolve 2 (espera) até o diálogo
+mudar de estado (0/1 espera, 2 = botão 1 → verdadeiro, 3/4 = botões 2/3 →
+falso, no tipo 2 grava 0/1 no temp). Com o byte 7 bit 0 vai para a fila e
+devolve verdadeiro na hora. Antes de enfileirar, os tipos 5–7, 0x0B–0x0D,
+0x0F, 0x21, 0x33, 0x34 e 0x46 exigem que o stack object, se houver, tenha
+pelo menos um object array (`vtable +0x418` = tamanho da lista em `+0x188`;
+senão erro 0x6C "Bad Object Array"). **Só o `cTSObjectDialog`
+(`SetupDialog`) chama `cTSWinPictureDialog::SetTimeout`**: nenhuma das 37
+classes `cTSWinProc*Dialog` com `SetParams` (`cTSWinProcBaseObjectDialog` e
+derivadas: telefone, agenda, roupas, aspiração, oferta de emprego, nome do
+objeto, preço, ...) arma timer, e as strings "dialog TimeOut ..." só são
+lidas ali. Os especiais esperam o jogador para sempre; no jogo eles só
+aparecem em interações que o jogador escolheu (inferido). Para o VM sem
+cabeça: responder sozinho é escolha nossa (opção), não do jogo.
 
 **Notificações (tipos 8–10, 0x1C)**: o byte 10 é o tempo de vida
 (`cTSUINotificationService::SetNotificationTimeOut`) e o byte 9 a prioridade
@@ -1219,6 +1306,111 @@ recálculo dos desejos (`Wants - Refresh - Recalc`, global `0x03A5`).
   = 4 (prazo em dias, inferido) e as cores (`CT - Set Bill Colour`)
   seguem o atraso.
 
+## 4f. Rodada 11: comida e fogo (árvores dos dados + binário)
+
+Donos como em §4e; flags das expressões contam de 1 (flag 6 = bit 5 =
+0x20). "stk.slot[n]" é o dono 0x10 (objeto no slot de contenção n do stack
+object); "stk.semi" o dono 5 (semi-atributos do stack object, `+0x84` do
+objeto no binário).
+
+### A cadeia da refeição e os balões de falha
+
+`Food - Eat - _Core` (`0x2009` do semi-global da comida, grupo
+`0x7F3C9675`): `Food - Eat - Prepare` (`0x2008`) falso → **`Food Chain -
+Failure - Prepare`** (`0x205B`); verdadeiro → `Wait For Notify` → `Food -
+Eat - Cook` (`0x200C`) falso → **`Food Chain - Failure - Cook`** (`0x205C`).
+Então **"Failure - Cook" é a falha do passo de cozinhar** (fogão, micro-
+ondas, forno elétrico), não do de preparar; os dois só mostram balões
+(`Food Chain - Failure Balloon` `0x2059`, pelo tipo da comida nos semi-
+atributos 5 e os BCONs `0x2181…0x218A`).
+
+Os dois passos fazem o mesmo antes do Find Best Object (stack object := 0):
+**temp 0 := tipo da comida** (preparo: semi-atributo 4 da comida; cozinha:
+semi-atributo 0x22 & temp 2 dos tipos do `Function Test - Cook - Fridge`)
+e **temp 1 := ID da comida** (a bandeja), depois FBO função 0 (preparo) ou
+1 (cozinha) sem flags e `Run Functional Tree` da mesma função no achado. Se
+a comida já tem um objeto preferido (semi 15 no preparo; semi 0x1E com
+`Validate Preferred Cook Obj` na cozinha), vai direto nele. Como o check
+tree recebe **os meus temps como parâmetros** (§4 FBO), param 0 = tipo,
+param 1 = ID da comida.
+
+**`Function - Prep - TEST`** (`0x200D` do semi-global dos balcões,
+`0x7F12A804`; o processador de alimentos tem o seu) devolve verdadeiro só
+com: atributo 0 do balcão ≠ BCON `0x2202` e não é peça de canto (`Test -
+Is Corner?`: od 0 "graphic" ≠ `0x2382`); param 1 > 0 (param 1 < 0 ou = 0:
+modo consulta — grava os tipos que sabe preparar no temp 2 com o operador
+0x12 e devolve **falso**, por isso o `Function Test - Prep` vê falso de um
+balcão livre); `In Use?` falso (semi-atributo 3 ≠ 1); param 0 igual a um
+dos 10 tipos (BCONs `0x2081…0x208C`); sem eletrodoméstico embutido (`Slot
+Test - In Counter?`: atributo 0 = `0x2200` e algo no slot 4); e os slots
+livres pelo `Slot Test - Standard?` (slot 0 e 1, e 2–4 se o atributo 0 =
+`0x2201`): **qualquer objeto nos slots de cima do balcão o descarta**, a
+menos que seja a própria comida no slot 1 ou uma bandeja de ingredientes
+(`Get in Temp 0 - Ingredients Tray`, que aceita a bandeja da comida). Daí o
+laço do soak: cada falha deixa a bandeja num balcão, e esse balcão sai das
+próximas buscas (além de bloquear o chão, quando cai lá).
+
+**`Function - Cook - TEST`** (`0x2001` do semi-global dos fogões
+`0x7F033984`) devolve falso se `Is Power On?` falha (**global 37 "Utility
+Available Flags" flag 2** = luz cortada, posta por `Utility - Turn Off
+Power` e `Power Failure` das contas), em modo consulta (param 1 ≤ 0),
+`In Use?` (semi-atributo 3 do fogão = 1) ou com fogo no cômodo (`Test -
+Fire in Room?`: algum Fire no mesmo od 29); senão confere o tipo (param 0)
+contra os bits de cozimento (BCONs `0x2082…0x2088`) e o tipo do aparelho
+(semi-atributo 1 = `0x2100…0x2102`), e exige, conforme o tipo, o slot 0
+do aparelho livre e, se há algo no slot 1 ou 2 (panela, assadeira), que o
+slot 0 **desse** objeto seja a própria comida (param 1); verdadeiro devolve
+os tipos no temp 2. **Uma panela ou bandeja esquecida no fogão com outra coisa dentro
+descarta o fogão.**
+
+Para depurar no VM: além dessas árvores, o binário tira do FBO (§4) objetos
+ocupados (od 8 bit 5), pegando fogo (od 8 bit 9), com od 87 ou od 82 bit
+2, e fora dos cômodos acessíveis do Sim; o VM ainda não faz esses.
+
+### Fogo (`Fire`, grupo `0x7FD0A790`; só SimAntics)
+
+O motor só guarda flags: **pegando fogo** = od 8 bit 9 (0x200, flag 10;
+`cTSObject::IsBurning`), **à prova de fogo** = od 8 bit 11 (0x800,
+`IsFireproof`), **pode queimar** = od 40 bit 5 (`CanBurn`, flag 6 do od 40
+nas árvores). Tudo o mais é árvore:
+
+- **Início** (`Main - Setup` `0x1004`): o Fire nasce no tile do objeto (od
+  11), acorda o cômodo, soma a inflamabilidade (od 84 dos objetos em volta)
+  no atributo 3 → atributo 1 = 0–3 (< 40, < 70, …); chama =
+  BCON `0x1003`[1] (80) + (200 − 80) / 4 × atributo 1 + aleatório 0–7 − 7
+  (73–170); marca o objeto (od 8 flag 10) e desliga as interações dele;
+  `CT - Fire - Start` no objeto (`stk.od[19]`) e, se ainda não havia fogo no
+  cômodo, no `Controller - NPC` (só grava o dia: `stk.attr[12] := global 1`);
+  câmera; empurra **Pânico** em todos os Sims que não estão ocupados;
+  `Notify - Fire Alarm` acorda (Notify out of Idle) os **alarmes de fumaça
+  do mesmo cômodo** (od 29).
+- **Laço** (`Function - Main` `0x1000`): a cada `Idle(3)` o atributo 4 +=
+  3; `Burn - _Simulate` a cada 20 acumulados: idade (atributo 0) += 1,
+  contador de propagação (atributo 5) −= 1 e **chama (atributo 2) −= 1**
+  (`Burn - Decrease Flame`; ≤ 0 apaga; com a flag 0x502 apaga já em ≤ 35):
+  ~1 ponto a cada 20 ticks, **uma chama de 170 dura ~3.400 ticks ≈ 1,9 h
+  de jogo**. Com chama > 10, atributo 5 < 0 e idade > 45: 1 chance em 8
+  (`Random` com o BCON 0x1003[6] = 8) de **propagar** (`Burn - Spread`:
+  novo Fire num vizinho inflamável), atributo 5 := 10. Idade > 75 sem a
+  flag 0x505 → `Burn - Destroy` (o objeto queima: troca por cinzas, mata o
+  conteúdo dos slots que pode). A cada 30 voltas empurra Pânico de novo e
+  seca poças.
+- **Apagar** (`Interaction - Extinguish - TEST` `0x1012`): nunca criança;
+  bombeiro (dado de pessoa 155 = o tipo NPC do BCON `0x5910`) sempre;
+  outros: falso para visitantes (dado de pessoa 32 ≠ `0x4200`) e **falso
+  quando param 0 = 1 (autônomo, inferido)**; com a flag 0x502 do fogo
+  também falso. Ou seja, **os Sims da casa só apagam por ordem do
+  jogador**; sozinhos só entram em pânico.
+- **Bombeiros**: o `Alarm - Smoke` (`0x7F97EA32`), acordado pelo fogo do
+  seu cômodo, roda `Sub - Call Fire Fighter` (agenda o NPC 0x5910 se não há
+  um no lote); fora isso, o telefone. Sem alarme no cômodo do fogo, nenhum
+  bombeiro vem.
+
+Então o "Fogo!" de 7–8 h do soak (`N001_Lot49`) é o esperado de um lote
+**sem alarme no cômodo** e sem jogador: cada Fire dura ~2 h e se propaga
+enquanto houver vizinhos inflamáveis. A conferir no VM: alarme no cômodo,
+`Notify out of Idle` acordando o alarme, e o agendamento do NPC.
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
@@ -1239,9 +1431,10 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
 - **0x0C Get Direction To**: destino (dado u16 0, dono u16 2); flags byte 8:
   0x02 em graus.
 - **0x0E Find Best Object for Function**: função u16 0 (STR# 0xC9); flags
-  byte 2: 0x01 só fora, 0x02 só dentro, 0x04 só no cômodo, 0x08 relativo ao
-  objeto (dono 3, dado u16 4), 0x10 com linha de visão, 0x80 ignorando
-  "lockout".
+  byte 2: 0x01 só fora, 0x02 só dentro, 0x04 só no cômodo da referência,
+  0x20 fora do cômodo da referência, 0x40 no cômodo do temp 0 (só a primeira
+  dessas cinco conta), 0x08 relativo ao objeto (dono 3, dado u16 4), 0x10
+  com linha de visão, 0x80 ignorando "lockout" (§4).
 - **0x0F Break Point**: (dado u16 0, dono u16 2) "if != 0"; byte 4 bit 0 =
   ignorar no jogo final.
 - **0x12 Remove Object Instance**: alvo u16 0 (STR# 0x9C: 0 eu, 1 stack
