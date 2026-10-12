@@ -370,6 +370,15 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             zt.push_back(top(q[0], q[1]));
             full.push_back(top(q[0], q[1], false));
         }
+        // A partition with no covering on either side (type 0: 213 on
+        // N002_Lot10, round the deck and the yard) has nothing to draw: its
+        // top alone floated as dark strips over the lawn.
+        bool covered = false;
+        for (uint16_t ref : w.patterns)
+            if (auto it = materials.find(ref); it != materials.end() && !it->second.empty())
+                covered = true;
+        if (!covered)
+            continue;
 
         for (size_t seg = 0; seg + 1 < points.size(); ++seg) {
             const float ax = points[seg][0], ay = points[seg][1], bx = points[seg + 1][0], by = points[seg + 1][1];
