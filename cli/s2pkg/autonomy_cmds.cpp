@@ -434,10 +434,17 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                     s += "] carry {";
                     for (const auto& c : ob.carryOverlays)
                         s += c + " ";
+                    s += "} loco {";
+                    for (const auto& l : ob.animation.locomotion) {
+                        char b[32];
+                        std::snprintf(b, sizeof b, "%X:%d ", l.group, l.set);
+                        s += b;
+                    }
                     s += "} in " + std::to_string(ob.data[vm::objdata::ContainerId]);
                     if (s != lastA[oid])
-                        std::printf("  tick %6llu Sim %d anim: %s\n", static_cast<unsigned long long>(machine.ticks), oid,
-                                    s.c_str()),
+                        std::printf("  tick %6llu Sim %d anim: %s at (%.1f, %.1f, %d)\n",
+                                    static_cast<unsigned long long>(machine.ticks), oid, s.c_str(), ob.position.x,
+                                    ob.position.y, int(ob.position.level)),
                             lastA[oid] = s;
                 }
             }
