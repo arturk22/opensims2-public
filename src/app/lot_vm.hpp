@@ -49,6 +49,9 @@ public:
     vm::VM& machine() { return *vm_; }
     // What loading said (objects created, Inits that failed, ...).
     std::string summary() const { return summary_; }
+    // The Sims the first day's "reset lot" broadcast made (vm/lot.hpp
+    // runResetLot) and their character files: the host gives them actors.
+    const std::vector<std::pair<int16_t, std::filesystem::path>>& arrivedSims() const { return arrived_; }
 
     // Lets the VM drive `actor`, the Sim of object `id` (its character's
     // age and gender go into the person data the animation names need);
@@ -130,6 +133,7 @@ private:
     std::vector<Bound> bound_;
     std::map<int16_t, uint32_t> objectAnimSerials_; // objects' overlaySerial last seen
     std::string summary_;
+    std::vector<std::pair<int16_t, std::filesystem::path>> arrived_;
     double last_ = 0;
     double scene_ = 0, caller_ = 0; // scene clock, caller's clock at the last update
     double slip_ = 0; // seconds the VM has fallen behind the caller's clock

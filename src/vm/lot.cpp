@@ -8,6 +8,8 @@
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
+#include "engine.hpp"
+#include "interactions.hpp"
 
 #include <cmath>
 #include <map>
@@ -318,6 +320,64 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             values.resize(kMaxRelationshipVars);
         ++out.relationships;
     }
+    return out;
+}
+
+ResetLotResult runResetLot(VM& vm, const std::vector<std::filesystem::path>& characters) {
+    ResetLotResult out;
+    CodeLibrary& code = vm.code();
+    for (const auto& file : characters) {
+        try {
+            DbpfPackage pkg(file);
+            code.addPackage(pkg, characterGroup(file.stem().string()));
+        } catch (const std::exception& e) {
+            out.errors.push_back(file.filename().string() + ": " + e.what());
+        }
+    }
+    std::set<ObjectId> before;
+    std::vector<ObjectId> ids;
+    for (const auto& [id, o] : vm.objects()) {
+        before.insert(id);
+        ids.push_back(id);
+    }
+    static const std::string kName = "reset lot";
+    for (ObjectId id : ids) {
+        const Object* o = vm.object(id);
+        if (!o)
+            continue;
+        std::optional<uint16_t> tree;
+        for (uint32_t group : {o->group, o->semiGroup}) {
+            if (!group)
+                continue;
+            tree = code.behaviorByName(group, kName);
+            if (tree && vm.resolveTree(*o, *tree).first == group)
+                break;
+            tree.reset();
+        }
+        if (!tree)
+            continue;
+        ++out.trees;
+        std::array<int16_t, kTempCount> temps{};
+        const std::array<int16_t, 4> params{};
+        try {
+            runOneTickTree(vm, temps, id, id, id, *tree, params);
+        } catch (const std::exception& e) {
+            out.errors.push_back("object " + std::to_string(id) + ": " + e.what());
+        }
+    }
+    for (auto& [id, o] : vm.objects())
+        if (o.person && !before.count(id)) {
+            // The queue's person data (109 "Current Interaction GUID" and
+            // the rest) as the queue has it: the neighbor's copy holds the
+            // last ID it ran with (as a load resumes them, lot_resume.cpp).
+            syncQueueData(*vm.object(id));
+            out.sims.push_back(id);
+            std::filesystem::path file;
+            for (const auto& c : characters)
+                if (o.group == characterGroup(c.stem().string()))
+                    file = c;
+            out.simFiles.push_back(file);
+        }
     return out;
 }
 

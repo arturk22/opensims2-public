@@ -112,10 +112,10 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     DbpfPackage pkg(lotFile);
     const Lot lot = Lot::load(pkg);
     LotObjects saved = LotObjects::load(pkg);
-    // A family that just moved in: its Sims join the lot, as the app's
-    // LotSimulation does (formats/lot_arrivals.hpp; the charge is left out).
-    if (const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile); !arrivals.characters.empty())
-        std::printf("%zu Sims of family %u arrive\n", arrivals.characters.size(), arrivals.family);
+    // A family that just moved in: its first day, as the app's
+    // LotSimulation (formats/lot_arrivals.hpp; the charge is left out): the
+    // "reset lot" broadcast below brings its Sims.
+    const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile, &index, false);
     vm::VM machine(code);
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
@@ -128,6 +128,13 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     if (hood)
         vm::bindLotSims(machine);
     vm::startSavedLot(machine, load, saved, fromInit);
+    if (hood && arrivals.firstDay) {
+        const vm::ResetLotResult r = vm::runResetLot(machine, arrivals.arriving);
+        std::printf("first day: %zu \"reset lot\" trees, %zu Sims of family %u arrive\n", r.trees, r.sims.size(),
+                    arrivals.family);
+        for (const auto& e : r.errors)
+            std::printf("  reset lot: %s\n", e.c_str());
+    }
     if (motives)
         vm::setAllMotives(machine, int16_t(*motives));
     vm::gMotiveDecay = !noDecay;

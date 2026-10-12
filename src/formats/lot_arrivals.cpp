@@ -29,7 +29,8 @@ constexpr int16_t kNewFamilyStartHour = 7;
 bool startsWith(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
 } // namespace
 
-LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path& lotFile, ResourceIndex* index) {
+LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path& lotFile, ResourceIndex* index,
+                            bool placeSims) {
     LotArrivals out;
     std::error_code ec;
     const fs::path lots = fs::absolute(lotFile).parent_path();
@@ -140,6 +141,9 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
         if (!n || !n->description.guid || present.count(n->description.guid) || n->character < 0)
             continue;
         const hood::Character& c = h.characters[size_t(n->character)];
+        out.arriving.push_back(c.path);
+        if (!placeSims)
+            continue;
         // A save type for the character's GUID (only for loading: the save
         // writes the objt record from the definition).
         int16_t type = 0;

@@ -36,7 +36,7 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     m.setClockGlobals();
     LotObjects saved = LotObjects::load(lotPackage);
     // A family that just moved in: its Sims join the lot (formats/lot_arrivals.hpp).
-    const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile, &index_);
+    const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile, &index_, false);
     // The neighborhood first, as lot-run (lot_neighborhood.hpp).
     const bool hood = vm::loadLotNeighborhood(m, lotFile);
     if (hood && arrivals.family && arrivals.charge) {
@@ -49,6 +49,18 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
     if (hood)
         vm::bindLotSims(m);
     const vm::ResumeResult r = vm::startSavedLot(m, load, saved, fromInit);
+    // The family's first day (SetupFamilyFirstDay): the "reset lot"
+    // broadcast, whose "Sub - Generate Family" brings the family's Sims.
+    if (hood && arrivals.firstDay) {
+        const vm::ResetLotResult rl = vm::runResetLot(m, arrivals.arriving);
+        for (size_t i = 0; i < rl.sims.size(); ++i)
+            if (!rl.simFiles[i].empty())
+                arrived_.emplace_back(rl.sims[i], rl.simFiles[i]);
+        std::fprintf(stderr, "opensims2: first day: %zu \"reset lot\" trees, %zu Sims arrived\n", rl.trees,
+                     rl.sims.size());
+        for (const auto& e : rl.errors)
+            std::fprintf(stderr, "opensims2: reset lot: %s\n", e.c_str());
+    }
     char buf[256];
     if (fromInit)
         std::snprintf(buf, sizeof buf, "%zu of %zu saved objects in the VM, from their Inits, %zu Mains", load.created,

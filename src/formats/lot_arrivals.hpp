@@ -8,8 +8,9 @@
 // gets a fresh object state (a PERS of the module's version, a new object ID,
 // a save type for its character's GUID), standing by the lot's mailbox (else
 // at the middle of the lot's front), so the VM creates it like any saved Sim
-// and the next save writes it into the lot file. Where the game puts the
-// arriving Sims is inferred. A family moving in pays the lot's price and its
+// and the next save writes it into the lot file — only for a lot drawn
+// without the VM: with the VM the game's own "reset lot" broadcast makes
+// them ("Sub - Generate Family", vm/lot.hpp runResetLot). A family moving in pays the lot's price and its
 // first day starts at 7:00 (cTSLoadLotController::LoadLot steps 0x1B and
 // 0x1F). Plain C++.
 
@@ -30,6 +31,9 @@ struct LotArrivals {
     // the floor's.
     std::vector<Lot::Object> sims;
     std::vector<std::filesystem::path> characters; // their character files
+    // The character files of the family's members who arrive (not on the
+    // lot yet), whether or not this placed them.
+    std::vector<std::filesystem::path> arriving;
     // The move-in charge (cTSLoadLotController::LoadLot step 0x1B: the lot's
     // price, GetLotFileInfo, unless the lot is of type 2), due when the
     // family's Sims arrive: the caller takes it from `family`'s funds.
@@ -47,7 +51,10 @@ struct LotArrivals {
 // from it.
 // `index` (the game's resources) is for the eviction cleanup and the Sims'
 // cPerson records; without it they are skipped.
+// `placeSims` false: the arriving Sims are not added (a VM run makes them
+// with the game's "reset lot" broadcast, vm/lot.hpp runResetLot); the rest
+// (charge, first day, eviction) is the same.
 LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const std::filesystem::path& lotFile,
-                            ResourceIndex* index = nullptr);
+                            ResourceIndex* index = nullptr, bool placeSims = true);
 
 } // namespace os2

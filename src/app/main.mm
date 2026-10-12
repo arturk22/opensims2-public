@@ -447,6 +447,8 @@ fs::path characterPath(const std::string& query) {
 // playing an idle animation (--sim-anim <name> picks another).
 size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
                    const fs::path& lotFile);
+bool spawnSimActor(os2::Renderer& renderer, os2::ResourceIndex& index, const fs::path& file, int16_t id,
+                   simd_float3 position, float heading, double phase, const std::string& label);
 
 // The game's resources. The VM, the pie menus and the sound keep references to
 // it, so it lives as long as the app (not just while the window is set up).
@@ -593,6 +595,14 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     CFTimeInterval start = CACurrentMediaTime();
     gSimulation = std::make_unique<os2::LotSimulation>(index, lot, pkg, lotFile,
                                                       [sceneArgs() containsObject:@"--init"]);
+    // The Sims the first day's "reset lot" made (a family moving in).
+    for (const auto& [id, file] : gSimulation->arrivedSims())
+        if (const os2::vm::Object* o = gSimulation->machine().object(id))
+            spawnSimActor(renderer, index, file, id,
+                          simd_make_float3(o->position.x, o->position.y,
+                                           gSimulation->floorHeight(o->position.level, o->position.x, o->position.y)),
+                          float(o->data[os2::vm::objdata::Direction]) * float(M_PI) / 4, 0.37 * double(gLotSims.size()),
+                          "arrived");
     for (const auto& s : gLotSims) {
         os2::DbpfPackage character(s.character);
         gSimulation->attach(*s.actor, s.id, os2::readCharacter(character, index), s.idle);
@@ -2257,17 +2267,64 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     updateAudio(seconds);
 }
 
+// A Sim's actor from its character file, standing at `position` facing
+// `heading`, its idle started `phase` seconds early; added to gLotSims.
+bool spawnSimActor(os2::Renderer& renderer, os2::ResourceIndex& index, const fs::path& file, int16_t id,
+                   simd_float3 position, float heading, double phase, const std::string& label) {
+    const std::string idle = argument(@"--sim-anim").value_or("a-idle-neutral-armsSide-wtC-breatheLoop");
+    const std::string stem = file.stem().string();
+    try {
+        perfLap("  loadSimParts");
+        auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(index, simParts(index), file));
+        perfLap("  loadCharacterSim");
+        for (const auto& w : actor->skin.model.warnings)
+            std::fprintf(stderr, "opensims2: %s: %s\n", stem.c_str(), w.c_str());
+        actor->position = {position.x, position.y, position.z};
+        actor->heading = heading;
+        // Start the idles at different moments so the Sims do not breathe in step.
+        // Children and toddlers have their own skeletons and idles.
+        std::string anim = idle;
+        if (!argument(@"--sim-anim")) {
+            const std::string sk = actor->skin.skeleton.name;
+            if (sk.size() > 2 && std::tolower(static_cast<unsigned char>(sk[0])) == 'c')
+                anim = "c-idle-neutral-armsSide-wtC-breatheLoop50";
+            else if (sk.size() > 2 && std::tolower(static_cast<unsigned char>(sk[0])) == 'p')
+                anim = "p-idle-neutral-lookAround";
+        }
+        actor->cue(-phase, actor->animation(index, anim));
+        perfLap("  Sim animation");
+        actor->model = renderer.addObject(actor->skin.model, index, true);
+        renderer.addInstance(actor->model, matrix_identity_float4x4);
+        perfLap("  Sim to the GPU");
+        std::printf("opensims2: Sim %s (%s) at (%.2f, %.2f, %.2f), %zu parts\n", stem.c_str(), label.c_str(), position.x,
+                    position.y, position.z, actor->skin.model.parts.size());
+        gLotSims.push_back({actor.get(), id, file, anim});
+        gActors.push_back(std::move(actor));
+        return true;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "opensims2: Sim %s: %s\n", label.c_str(), e.what());
+        return false;
+    }
+}
+
+// The VM runs the lot (--vm, --pie, --click, the live UI): the arriving
+// Sims of a family moving in come from its "reset lot" broadcast
+// (LotSimulation), not from formats/lot_arrivals.
+bool lotVmWillRun() {
+    return argument(@"--run-vm") || argument(@"--pie") || argument(@"--click") ||
+           [sceneArgs() containsObject:@"--vm"] || liveUiRequested();
+}
+
 size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
                    const fs::path& lotFile) {
     os2::LotObjects saved = os2::LotObjects::load(pkg);
-    // A family that just moved in: its Sims arrive (formats/lot_arrivals.hpp).
-    const os2::LotArrivals arrivals = os2::addArrivingSims(saved, lot, lotFile, &index);
+    // A family that just moved in: its Sims arrive (formats/lot_arrivals.hpp)
+    // when no VM runs; with the VM the game's tree brings them.
+    const os2::LotArrivals arrivals = os2::addArrivingSims(saved, lot, lotFile, &index, !lotVmWillRun());
     std::set<uint32_t> inWorld; // object IDs of the Sims standing on the lot
     for (const auto& st : saved.objects)
         if (st.person && st.x >= 0)
             inWorld.insert(uint32_t(uint16_t(st.id)));
-    const std::vector<os2::SimPart>* parts = nullptr;
-    const std::string idle = argument(@"--sim-anim").value_or("a-idle-neutral-armsSide-wtC-breatheLoop");
     size_t placed = 0;
     std::vector<os2::Lot::Object> people = lot.objects;
     people.insert(people.end(), arrivals.sims.begin(), arrivals.sims.end());
@@ -2275,41 +2332,11 @@ size_t loadLotSims(os2::Renderer& renderer, os2::ResourceIndex& index, const os2
         if (!o.person || !inWorld.count(o.instance & 0xFFFF))
             continue;
         const std::string stem = o.definition.substr(0, o.definition.find(" - "));
-        try {
-            const fs::path file = lotFile.parent_path().parent_path() / "Characters" / (stem + ".package");
-            if (!parts)
-                parts = &simParts(index);
-            perfLap("  loadSimParts");
-            auto actor = std::make_unique<os2::SimActor>(os2::loadCharacterSim(index, *parts, file));
-            perfLap("  loadCharacterSim");
-            for (const auto& w : actor->skin.model.warnings)
-                std::fprintf(stderr, "opensims2: %s: %s\n", stem.c_str(), w.c_str());
-            actor->position = {o.position[0], o.position[1], o.position[2]};
-            actor->heading = 2 * std::atan2(o.rotation[2], o.rotation[3]);
-            // Start the idles at different moments so the Sims do not breathe in step.
-            // Children and toddlers have their own skeletons and idles.
-            std::string anim = idle;
-            if (!argument(@"--sim-anim")) {
-                const std::string sk = actor->skin.skeleton.name;
-                if (sk.size() > 2 && std::tolower(static_cast<unsigned char>(sk[0])) == 'c')
-                    anim = "c-idle-neutral-armsSide-wtC-breatheLoop50";
-                else if (sk.size() > 2 && std::tolower(static_cast<unsigned char>(sk[0])) == 'p')
-                    anim = "p-idle-neutral-lookAround";
-            }
-            actor->cue(-0.37 * double(placed), actor->animation(index, anim));
-            perfLap("  Sim animation");
-            actor->model = renderer.addObject(actor->skin.model, index, true);
-            renderer.addInstance(actor->model, matrix_identity_float4x4);
-            perfLap("  Sim to the GPU");
-            std::printf("opensims2: Sim %s (%s) at (%.2f, %.2f, %.2f), %zu parts\n", stem.c_str(),
-                        o.definition.c_str(), o.position[0], o.position[1], o.position[2],
-                        actor->skin.model.parts.size());
-            gLotSims.push_back({actor.get(), int16_t(o.instance & 0xFFFF), file, anim});
-            gActors.push_back(std::move(actor));
+        const fs::path file = lotFile.parent_path().parent_path() / "Characters" / (stem + ".package");
+        if (spawnSimActor(renderer, index, file, int16_t(o.instance & 0xFFFF),
+                          simd_make_float3(o.position[0], o.position[1], o.position[2]),
+                          2 * std::atan2(o.rotation[2], o.rotation[3]), 0.37 * double(placed), o.definition))
             ++placed;
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "opensims2: Sim %s: %s\n", o.definition.c_str(), e.what());
-        }
     }
     return placed;
 }

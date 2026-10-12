@@ -65,6 +65,24 @@ void setLotRooms(VM& vm, const Lot& lot);
 // left out with a reason).
 LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::filesystem::path& charactersDir);
 
+// cTSNeighborhood::SetupFamilyFirstDay's last step: cEdithObjectModule::
+// BroadcastMessage("reset lot") (BV 0x525b2c) runs the tree of that name of
+// every object that has one (here at once, as a one-tick tree, with the
+// object as its stack object and four zero parameters). The Controller -
+// Age's "reset lot" -> "Sub - Set Age - All" -> "Sub - Generate Family"
+// makes the arriving family's Sims with Create New Object Instance (the
+// neighbor in the stack object) by the mailbox or the outside trash can
+// (docs/neighborhood-mac.md §11.3). `characters` are the arriving Sims'
+// character files: their OBJDs join the code first so that their GUIDs
+// resolve. Returns the Sims it made.
+struct ResetLotResult {
+    size_t trees = 0;                // objects that ran a "reset lot"
+    std::vector<ObjectId> sims;      // Sims that did not exist before
+    std::vector<std::filesystem::path> simFiles; // each one's character file (empty: not one of `characters`)
+    std::vector<std::string> errors; // trees that failed
+};
+ResetLotResult runResetLot(VM& vm, const std::vector<std::filesystem::path>& characters);
+
 // The neighbourhood's character directory of a lot package
 // (N001/Lots/N001_Lot11.package -> N001/Characters), empty if there is none.
 std::filesystem::path charactersDirOf(const std::filesystem::path& lotPackage);

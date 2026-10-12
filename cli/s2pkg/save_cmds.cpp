@@ -70,7 +70,7 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     // (formats/lot_arrivals.hpp).
     LotArrivals arrivals;
     if (hood)
-        arrivals = addArrivingSims(out.saved, lot, source, code.index());
+        arrivals = addArrivingSims(out.saved, lot, source, code.index(), false);
     out.vm = std::make_unique<vm::VM>(code);
     vm::VM& m = *out.vm;
     m.initCreatedObjects = true;
@@ -88,6 +88,14 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     if (hood)
         vm::bindLotSims(m);
     out.resumed = vm::startSavedLot(m, out.load, out.saved);
+    // The first day: the game's "reset lot" broadcast brings the family's
+    // Sims (vm/lot.hpp runResetLot).
+    if (hood && arrivals.firstDay) {
+        const vm::ResetLotResult r = vm::runResetLot(m, arrivals.arriving);
+        std::printf("  first day: %zu \"reset lot\" trees, %zu Sims arrived\n", r.trees, r.sims.size());
+        for (const auto& e : r.errors)
+            std::printf("  warning: reset lot: %s\n", e.c_str());
+    }
     return out;
 }
 

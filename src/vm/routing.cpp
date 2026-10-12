@@ -1864,9 +1864,9 @@ bool tryPlace(VM& vm, Object& o, TilePos t, int direction = -1) {
 // error 0x08 for the parameter/local, 0x1B for a slot that does not exist);
 // where the slot does not fix the facing, the eight directions are tried
 // from a random one, skipping the forbidden ones. Found: placed, true; else
-// false. Not done: flags 0x02, 0x04, 0x10, 0x20 and 0x80 (what "prefer
-// empty" weighs, editable tiles, level ground and borders need the terrain
-// and the build mode's data).
+// false. Without flag 0x02 empty tiles are tried first (inferred weight).
+// Not done: flags 0x04, 0x10, 0x20 and 0x80 (editable tiles, level ground
+// and borders need the terrain and the build mode's data).
 int allowedFacing(uint8_t forbidden, int dir) {
     const uint8_t mask = uint8_t(~forbidden);
     dir = ((dir % 8) + 8) % 8;
@@ -1920,6 +1920,20 @@ Exit findLocationFor(Context& c) {
     if (!ref || !ref->position.inWorld())
         return Exit::False;
     TilePos at = VM::tileOf(*ref);
+    // Without flag 0x02 empty tiles are preferred (modes 0-4): first only
+    // tiles with nothing else on them (Sims included), then any. Inferred:
+    // what "prefer empty" weighs is not read; three arriving Sims ("Sub -
+    // Generate Family", mode 4 by the mailbox) otherwise share one tile.
+    const bool preferEmpty = !(flags & 0x02);
+    const ObjectId group = multiTileGroup(*obj);
+    auto empty = [&](const TilePos& t) {
+        for (ObjectId other : c.vm.objectsOnTile(t)) {
+            const Object* x = c.vm.object(other);
+            if (x && multiTileGroup(*x) != group)
+                return false;
+        }
+        return true;
+    };
     if (mode >= 5) {
         const uint16_t data = le16(&o[10]);
         int index = int(data);
@@ -1967,12 +1981,13 @@ Exit findLocationFor(Context& c) {
         // Not on the reference's own tile: a new puddle placed on its
         // parent's tile kept "Puddle - New Puddle - Add" turning and
         // placing it again (N002_Lot22, round 8).
-        for (int i = 2; i < 34; ++i) {
-            const int k = i / 2, sign = i % 2 ? -1 : 1;
-            if (tryPlace(c.vm, *obj, {at.x + sign * sx * k, at.y + sign * sy * k, at.level},
-                         (dir + allowedFacing(forbidden, 0)) % 8))
-                return Exit::True;
-        }
+        for (int pass = preferEmpty ? 0 : 1; pass < 2; ++pass)
+            for (int i = 2; i < 34; ++i) {
+                const int k = i / 2, sign = i % 2 ? -1 : 1;
+                const TilePos t{at.x + sign * sx * k, at.y + sign * sy * k, at.level};
+                if ((pass == 1 || empty(t)) && tryPlace(c.vm, *obj, t, (dir + allowedFacing(forbidden, 0)) % 8))
+                    return Exit::True;
+            }
         return Exit::False;
     }
     // 0, 2: rings around the reference (in its room; mode 0 then anywhere).
@@ -1982,18 +1997,19 @@ Exit findLocationFor(Context& c) {
         at.x += dx, at.y += dy;
     }
     const int facing = forbidden && uint8_t(~forbidden) ? allowedFacing(forbidden, obj->data[objdata::Direction]) : -1;
-    for (int pass = 0; pass < (mode == 0 ? 2 : 1); ++pass)
-        for (int r = 0; r <= 10; ++r)
-            for (int x = at.x - r; x <= at.x + r; ++x)
-                for (int y = at.y - r; y <= at.y + r; ++y) {
-                    if (std::max(std::abs(x - at.x), std::abs(y - at.y)) != r)
-                        continue;
-                    const TilePos t{x, y, at.level};
-                    if (pass == 0 && world.room(t) != room)
-                        continue;
-                    if (tryPlace(c.vm, *obj, t, facing))
-                        return Exit::True;
-                }
+    for (int emptyPass = preferEmpty ? 0 : 1; emptyPass < 2; ++emptyPass)
+        for (int pass = 0; pass < (mode == 0 ? 2 : 1); ++pass)
+            for (int r = 0; r <= 10; ++r)
+                for (int x = at.x - r; x <= at.x + r; ++x)
+                    for (int y = at.y - r; y <= at.y + r; ++y) {
+                        if (std::max(std::abs(x - at.x), std::abs(y - at.y)) != r)
+                            continue;
+                        const TilePos t{x, y, at.level};
+                        if (pass == 0 && world.room(t) != room)
+                            continue;
+                        if ((emptyPass == 1 || empty(t)) && tryPlace(c.vm, *obj, t, facing))
+                            return Exit::True;
+                    }
     return Exit::False;
 }
 

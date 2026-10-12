@@ -876,3 +876,20 @@ lote nem fica sob uma rua.
   `0xC400` Ocupado, `0xC500` Desocupado e `0xC600` Todos são o
   `LoadLots(1|2|0)` (BV `0x457738`: com família ou não). No app:
   `r11-bairro-excluir-da-caixa.jpg`.
+- **Os Sims que chegam pela árvore** (rodada 11): com a VM (app, `hood-save`,
+  `autonomy`) o `addArrivingSims` não cria mais os Sims; no primeiro dia
+  (`SetupFamilyFirstDay`) o `vm::runResetLot` faz o
+  `cEdithObjectModule::BroadcastMessage("reset lot")` (BV `0x525b2c`: a
+  árvore desse nome de cada objeto que a tem, empurrada com 4 parâmetros
+  zero; aqui rodada na hora como árvore de um tick, o objeto como objeto da
+  pilha), com os OBJD dos personagens da família somados ao código antes.
+  Em N001 lote 24 (família 8): 7 objetos têm "reset lot"; o "Sub - Generate
+  Family" do Controller - Age cria os 3 Sims pelo Create New Object
+  Instance (flag 0x04) e o Find Location For modo 4 os põe ao lado da caixa
+  de correio. O Find Location For agora **prefere tiles vazios** sem a flag
+  0x02 (inferido: primeiro só tiles sem outro objeto, Sims inclusive;
+  antes os três ficavam no mesmo tile). O dado de pessoa 109 do Sim novo
+  (cópia do vizinho, o último ID de interação dele) é refeito pela fila
+  (`syncQueueData`, como a retomada faz). O app dá atores aos Sims que a
+  árvore criou (`LotSimulation::arrivedSims`). `hood-save --check`: 26 de
+  26 iguais, e a segunda passada também. `r11-bairro-familia-chega-pela-arvore.jpg`.
