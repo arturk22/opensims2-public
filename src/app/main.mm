@@ -6272,6 +6272,26 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     for (auto& [id, a] : gObjectActors)
                         if (a)
                             a->update(scene);
+                    // OS2_DEBUG_LAYERS=1: each game hour, the object actor with
+                    // the most animation layers (the held ones merge: AnimPlayer).
+                    if (std::getenv("OS2_DEBUG_LAYERS") && gSimulation && gSimulation->ticks() % 1800 == 0) {
+                        static uint64_t lastHour = ~0ull;
+                        if (gSimulation->ticks() != lastHour) {
+                            lastHour = gSimulation->ticks();
+                            int most = -1;
+                            size_t count = 0, total = 0;
+                            for (const auto& [id, a] : gObjectActors)
+                                if (a) {
+                                    total += a->player.layerCount();
+                                    if (a->player.layerCount() > count || most < 0) {
+                                        count = a->player.layerCount();
+                                        most = id;
+                                    }
+                                }
+                            std::printf("opensims2: layers: tick %llu most %zu (object %d), %zu in %zu object actors\n",
+                                        (unsigned long long)lastHour, count, most, total, gObjectActors.size());
+                        }
+                    }
                     if (gObjectView)
                         gObjectView->update();
                     sampleDrawnPlaces(scene);

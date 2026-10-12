@@ -975,6 +975,117 @@ static void testDiningChairCycle() {
           "chair cycle: placed at the seat, the held get-in stays seated in the chair");
 }
 
+// An object's overlays the VM never takes off (a dining chair: each sit and
+// get-up adds a play-once layer at level 1 + its id, held on its last
+// frame): with the hold pose the finished ones merge into one held layer,
+// so the list stays bounded, and the pose is the one they gave, during the
+// next layer's blend-in too.
+static void testHeldLayersCollapse() {
+    Skeleton s;
+    s.name = "chairdining";
+    s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
+    s.bones.push_back({"pelvis", 0, Xform{}, 1, 1});
+    s.bones.push_back({"spine0", 1, Xform{}, 2, 2});
+    const Animation pull = constantAnim("pelvis", 30, 0, 0), push = constantAnim("pelvis", 0, 0, 0),
+                    tilt = constantAnim("spine0", 15, 0, 0);
+    AnimPlayer merged(&s), piled(&s);
+    piled.setCollapseHeld(false);
+    size_t most = 0;
+    float worst = 0;
+    int id = 0;
+    auto compare = [&](double at) {
+        for (size_t bone : {size_t(1), size_t(2)}) {
+            const Quat x = merged.pose(at)[bone].q, y = piled.pose(at)[bone].q;
+            worst = std::max(worst, 1 - std::abs(x.x * y.x + x.y * y.y + x.z * y.z + x.w * y.w));
+        }
+        most = std::max(most, merged.layerCount());
+    };
+    for (AnimPlayer* p : {&merged, &piled})
+        p->setHoldPose(true);
+    for (int cycle = 0; cycle < 200; ++cycle) {
+        const double t = cycle * 10.0;
+        const int a = 1 + id, b = 2 + id;
+        id += 2;
+        // As the actor's cues start them: in time order.
+        for (AnimPlayer* p : {&merged, &piled}) {
+            p->play(pull, t, {.fade = 0.1f, .loop = false, .priority = a, .mirror = cycle % 2 == 1, .level = a});
+            if (cycle == 3) // a bone only one layer ever keys
+                p->play(tilt, t, {.fade = 0.1f, .loop = false, .priority = 1000, .level = a});
+        }
+        compare(t + 0.05);
+        compare(t + 2.0);
+        for (AnimPlayer* p : {&merged, &piled})
+            p->play(push, t + 5, {.fade = 0.1f, .loop = false, .priority = b, .level = b});
+        compare(t + 5.05);
+        compare(t + 8.0);
+    }
+    check(most <= 3, "held layers: the list stays bounded over 200 sit/stand cycles");
+    check(piled.layerCount() > 300, "held layers: without the merge they pile up");
+    check(worst < 1e-6f, "held layers: the merged pose is the piled one (blend-ins too)");
+}
+
+// With the game's data (OS2_DATA): N001_Lot68's dining chair through 60
+// sits and get-ups as main.mm cues them (level and priority 1 + the overlay
+// id, flipped, never taken off), plain and "leaveOut" in turn: the merged
+// layers stay few and the chair is posed as with all of them piled up
+// (pulled out and turned while seated, pushed in after).
+static void testDiningChairLayersBounded() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    SimActor anims{SkinnedModel(Skeleton{})};
+    auto load = [&](const std::string& name) -> const Animation* {
+        try {
+            return &anims.animation(index, name);
+        } catch (const std::exception&) {
+            return nullptr;
+        }
+    };
+    const ObjectModel chairModel = loadObjectModel(index, "chairDiningValue1_cres");
+    const int trans = chairModel.skeleton.find("slot_chairdining_trans");
+    const Animation* getIn = load("o2a-chairDining-getIn-SE");
+    const Animation* getOut = load("o2a-chairDining-getOut-SE");
+    const Animation* inOut = load("o2a-chairDining-getIn-leaveOut-SE");
+    const Animation* outIn = load("o2a-chairDining-getOut-fromOut-SE");
+    check(trans >= 0 && getIn && getOut && inOut && outIn, "chair layers: the chair and its animations");
+    if (trans < 0 || !getIn || !getOut || !inOut || !outIn)
+        return;
+    std::vector<Xform> saved = chairModel.skeleton.restPose();
+    saved[size_t(trans)].t[1] = 0.373f;
+    SimActor merged{SkinnedModel(chairModel.skeleton)}, piled{SkinnedModel(chairModel.skeleton)};
+    for (SimActor* c : {&merged, &piled}) {
+        c->player.setBasePose(saved);
+        c->player.setHoldPose(true);
+        c->position = {17.5f, 25.5f, 0.75f};
+        c->heading = float(M_PI / 2);
+    }
+    piled.player.setCollapseHeld(false);
+    size_t most = 0;
+    float worst = 0;
+    uint32_t id = 40;
+    for (int cycle = 0; cycle < 60; ++cycle) {
+        const double t = cycle * 20.0;
+        const bool out = cycle % 2 == 1;
+        for (SimActor* c : {&merged, &piled}) {
+            const int a = 1 + int(id), b = 2 + int(id);
+            c->cue(t, out ? *inOut : *getIn, {.fade = 0.1f, .loop = false, .priority = a, .mirror = true, .level = a});
+            c->cue(t + 10, out ? *outIn : *getOut, {.fade = 0.1f, .loop = false, .priority = b, .mirror = true, .level = b});
+        }
+        id += 2;
+        for (double at : {t + 0.05, t + 1.0, t + 9.0, t + 10.05, t + 11.0, t + 19.0}) {
+            const auto x = merged.bonePlacement("slot_chairDining_0", at), y = piled.bonePlacement("slot_chairDining_0", at);
+            if (x && y)
+                worst = std::max(worst, std::hypot(x->t[0] - y->t[0], x->t[1] - y->t[1]) +
+                                            (1 - std::abs(x->q.x * y->q.x + x->q.y * y->q.y + x->q.z * y->q.z + x->q.w * y->q.w)));
+            most = std::max(most, merged.player.layerCount());
+        }
+    }
+    check(most <= 3, "chair layers: bounded over 60 sit/stand cycles");
+    check(piled.player.layerCount() >= 100, "chair layers: piled up without the merge");
+    check(worst < 1e-4f, "chair layers: the chair is posed as with every layer kept");
+}
+
 // With the game's data (OS2_DATA): the carry poses a Sim walks with (and
 // those that stayed on after the get-out in live QA 15: two of the seated
 // "a2o-coffee-DN-carry", the delta "a-coffeeshake-blend", the plate's grasp
@@ -1022,6 +1133,8 @@ static void testCarryOverlaysKeepWalkUpright() {
 int main() {
     testCarryOverlaysKeepWalkUpright();
     testDiningChairCycle();
+    testHeldLayersCollapse();
+    testDiningChairLayersBounded();
     testDiningChairSeat();
     testDoorLeaves();
     testSavedPose();

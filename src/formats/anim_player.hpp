@@ -65,6 +65,11 @@ public:
     // them so: a chair pushed in stays in): stop() then freezes the pose
     // of the moment as the base pose instead of fading back to it.
     void setHoldPose(bool hold) { hold_ = hold; }
+    // With the hold pose, layers that have all finished (played once, held
+    // on their last frame, nothing fading) are merged into one held layer
+    // that mixes as they did (the game's VM never takes a dining chair's
+    // overlays off: each sit and get-up adds two). Off: they pile up (tests).
+    void setCollapseHeld(bool collapse) { collapse_ = collapse; }
     void setSkeleton(const Skeleton* skeleton) {
         skeleton_ = skeleton;
         twins_.clear();
@@ -162,7 +167,12 @@ private:
         float rate = 1;  // Options::rate
         bool delta = false; // has delta (additive) channels
         IkObjectBone ikObjectBone; // Options::ikObjectBone
+        // A merged held layer (collapse_): its pose and per-bone weight, no animation.
+        std::vector<Xform> held;
+        std::vector<float> heldWeight;
     };
+    // Every layer finished and constant at `now` (collapse_).
+    bool allHeld(double now) const;
     // The layer's pose at `ticks`, turned by its frame (Options::turn).
     std::vector<Xform> layerPose(const Layer& l, float ticks) const;
     // The bones under the skeleton's top node moved by the layer's frame (reframe()).
@@ -180,6 +190,7 @@ private:
     std::vector<Layer> layers_;
     std::vector<Xform> base_; // setBasePose's, empty: the skeleton's rest pose
     bool hold_ = false;
+    bool collapse_ = true;
     double lastAdvance_ = 0;
 };
 

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <unordered_map>
 
 namespace os2 {
@@ -163,6 +164,10 @@ void blendPose(std::vector<Xform>& from, const std::vector<Xform>& to, float wei
 }
 
 void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
+    // The held layers merged before a new one (pose() merges them), so that
+    // they do not pile up on an object nobody draws.
+    if (hold_ && collapse_ && skeleton_ && layers_.size() > 1 && allHeld(now))
+        pose(now);
     Layer l;
     l.anim = &anim;
     l.target = skeleton_ && !skeleton_->bones.empty() ? anim.findTarget(anim.skeletonTag) : nullptr;
@@ -303,7 +308,14 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     };
     std::vector<Posed> posed;
     posed.reserve(layers_.size());
+    // Every layer done and constant: merged below into one held layer.
+    const bool collapse = hold_ && collapse_ && layers_.size() > 1 && allHeld(now);
     for (const auto& l : layers_) {
+        if (!l.held.empty()) {
+            if (l.held.size() == n && l.heldWeight.size() == n)
+                posed.push_back({l.held, l.heldWeight, l.level, {}, {}});
+            continue;
+        }
         if (!l.target)
             continue;
         const float w = weight(l, now);
@@ -362,6 +374,9 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     // The deltas each bone took (for the IK goals below).
     std::vector<Xform> applied;
     std::vector<uint8_t> appliedHas;
+    std::vector<float> heldWeight;
+    if (collapse)
+        heldWeight.assign(n, 0.0f);
     if (anyDelta) {
         applied.assign(n, Xform{});
         appliedHas.assign(n, 0);
@@ -402,6 +417,8 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         }
         if (cum > 0)
             out[b] = acc;
+        if (collapse && cum > 0)
+            heldWeight[b] = 1 - remaining;
         // The delta channels over the base mix (cChannelUberOutletQ::
         // ChannelData, BV 0xd5e1c4): from the highest priority down, each
         // rotation raised to its weight (q^w: the angle times w about its
@@ -461,7 +478,38 @@ std::vector<Xform> AnimPlayer::pose(double now) {
                 &l.ikObjectBone);
         blendPose(out, solved, w, l.mask);
     }
+    if (collapse) {
+        // One layer at the top level, weighing on each bone what the layers
+        // took of it: what plays over it later mixes as it did with them.
+        Layer merged;
+        merged.loop = false;
+        merged.priority = std::numeric_limits<int>::min();
+        merged.level = layers_.back().level;
+        merged.held = out;
+        merged.heldWeight = std::move(heldWeight);
+        layers_.clear();
+        layers_.push_back(std::move(merged));
+    }
     return out;
+}
+
+bool AnimPlayer::allHeld(double now) const {
+    // A second past the end, so that no event of theirs is still to fire.
+    constexpr double kSettle = 1.0;
+    for (const auto& l : layers_) {
+        if (!l.held.empty())
+            continue;
+        if (l.loop || l.fadeOutStart >= 0 || l.delta)
+            return false;
+        if (l.target && !l.target->ikChains.empty())
+            return false;
+        if (l.anim && l.anim->velocity > 0)
+            return false;
+        const double length = l.anim ? l.anim->duration / 1000.0 / l.rate : 0;
+        if (now < l.start + std::max<double>(l.fadeIn, length) + kSettle)
+            return false;
+    }
+    return true;
 }
 
 std::map<std::string, float> AnimPlayer::morphs(double now) const {
@@ -515,7 +563,7 @@ std::vector<AnimPlayer::FiredEvent> AnimPlayer::eventsBetween(double from, doubl
     if (to <= from)
         return out;
     for (const auto& l : layers_) {
-        if (l.fadeOutStart >= 0 && l.fadeOutStart <= from)
+        if (!l.anim || (l.fadeOutStart >= 0 && l.fadeOutStart <= from))
             continue;
         const double duration = l.anim->duration / 1000.0 / l.rate; // 1 tick = 1 ms
         for (const auto& e : l.anim->events) {
