@@ -6,8 +6,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <map>
 #include <optional>
 #include <string>
@@ -244,6 +242,108 @@ LightMapGlobals LightMapGlobals::from(const LightingConfig& config) {
     one("hmSunLightTransitionZone", g.sunTransitionZone);
     g.sunShadows = graphicsOptions().heightMapShadows;
     return g;
+}
+
+// The height map's shadow tops for a sun direction `L` (towards the sun),
+// as cHeightMapShadow builds them (Mac BV: FillFromWalls 0xd76f40,
+// FindHeightMapShadows 0xd76e68 with its column and row passes 0xd76254,
+// 0xd76b74; docs/lighting-mac.md 5.3).
+std::vector<float> sunShadowTops(const LotLightMapLayout& layout, std::array<float, 3> L) {
+    constexpr int k = LotLightMapLayout::kTexelsPerTile;
+    const long W = long(layout.lotWidth) * k, H = long(layout.lotHeight) * k;
+    if (W <= 0 || H <= 0 || layout.occluders.size() != size_t(W * H))
+        return {};
+    // The grid: the highest floor over each texel (FillFromTerrain; the
+    // terrain at the texel's centre) and the roofs.
+    std::vector<float> g(layout.occluders);
+    for (long j = 0; j < H; ++j)
+        for (long i = 0; i < W; ++i) {
+            float& v = g[size_t(j * W + i)];
+            v = std::max(v, layout.elevationAt(layout.minLevel, (float(i) + 0.5f) / k, (float(j) + 0.5f) / k));
+        }
+    auto at = [&](long i, long j) -> float* {
+        return i >= 0 && j >= 0 && i < W && j < H ? &g[size_t(j * W + i)] : nullptr;
+    };
+    // FillFromWalls: each wall's top written (not raised) along its texels,
+    // from its top at one end to the other's: on the side away from the sun
+    // for a wall along a grid line, for a diagonal one its texels and their
+    // neighbours away from the sun.
+    for (const auto& w : layout.sunWalls) {
+        const long x0 = std::lround(w.a[0] * k), y0 = std::lround(w.a[1] * k);
+        const long x1 = std::lround(w.b[0] * k), y1 = std::lround(w.b[1] * k);
+        auto put = [&](long i, long j, float t) {
+            if (float* p = at(i, j))
+                *p = w.topA + (w.topB - w.topA) * t;
+        };
+        if (x0 == x1 || y0 == y1) {
+            const bool vertical = x0 == x1; // along Y
+            const long a = vertical ? y0 : x0, b = vertical ? y1 : x1;
+            const long lo = std::min(a, b), hi = std::max(a, b);
+            const float across = vertical ? L[0] : L[1];
+            for (long q = lo; q < hi; ++q) {
+                const float t = (float(q - a) + 0.5f) / float(b - a == 0 ? 1 : b - a);
+                const float tt = std::clamp(a < b ? t : -t, 0.0f, 1.0f);
+                if (across <= 0) // the +side's texels (column x0 or row y0)
+                    vertical ? put(x0, q, tt) : put(q, y0, tt);
+                if (across >= 0) // the -side's
+                    vertical ? put(x0 - 1, q, tt) : put(q, y0 - 1, tt);
+            }
+        } else {
+            const long n = std::abs(x1 - x0);
+            const long sx = x1 > x0 ? 1 : -1, sy = y1 > y0 ? 1 : -1;
+            // The texel of each step: the cell between (x, y) and (x + sx, y + sy).
+            for (long q = 0; q < n; ++q) {
+                const float t = (float(q) + 0.5f) / float(n);
+                const long i = x0 + q * sx + (sx < 0 ? -1 : 0), j = y0 + q * sy + (sy < 0 ? -1 : 0);
+                put(i, j, t);
+                // The neighbours on the side away from the sun (inferred
+                // from the binary's end texels: it fills the stair-step).
+                const long ni = i - (L[0] > 0 ? 1 : L[0] < 0 ? -1 : 0);
+                const long nj = j - (L[1] > 0 ? 1 : L[1] < 0 ? -1 : 0);
+                if (ni != i)
+                    put(ni, j, t);
+                if (nj != j)
+                    put(i, nj, t);
+            }
+        }
+    }
+    // FindHeightMapShadows: no sun, or the sun straight overhead, no shadow
+    // (the tops at -1000); else a front of heights swept from the sun's
+    // side, one column (or row) of texels at a time: each texel's top is
+    // the front there after taking the grid's height, the front drops by
+    // the sun's slope over a texel and moves sideways by the sun's
+    // direction (a linear blend with the next texel).
+    std::vector<float> top(size_t(W * H), -1000.0f);
+    if (L[2] <= 0 || (std::fabs(L[0]) < 1e-4f && std::fabs(L[1]) < 1e-4f))
+        return top;
+    const float cell = 1.0f / float(k);
+    const bool columns = std::fabs(L[0]) >= std::fabs(L[1]);
+    const float la = columns ? L[0] : L[1], lb = columns ? L[1] : L[0];
+    const long nA = columns ? W : H, nB = columns ? H : W;
+    float dz = cell * L[2] / la, side = -lb / la;
+    long a0 = 0, aEnd = nA, step = 1;
+    if (dz >= 0) {
+        dz = -dz, side = -side;
+        a0 = nA - 1, aEnd = -1, step = -1;
+    }
+    std::vector<float> front(size_t(nB), -1000.0f);
+    for (long a = a0; a != aEnd; a += step) {
+        for (long b = 0; b < nB; ++b) {
+            const size_t idx = columns ? size_t(b * W + a) : size_t(a * W + b);
+            float& f = front[size_t(b)];
+            f = std::max(f, g[idx]);
+            top[idx] = f;
+            f += dz;
+        }
+        if (side > 0) {
+            for (long b = 0; b + 1 < nB; ++b)
+                front[size_t(b)] += side * (front[size_t(b + 1)] - front[size_t(b)]);
+        } else {
+            for (long b = nB - 1; b > 0; --b)
+                front[size_t(b)] += -side * (front[size_t(b - 1)] - front[size_t(b)]);
+        }
+    }
+    return top;
 }
 
 LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingState& state,
@@ -643,42 +743,28 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         return n * (1 / std::sqrt(dot(n, n)));
     };
     // The sun's height-map shadow (cHeightMapShadow; LightTerrainTileWithShadows,
-    // Mac BV 0x705068, and its floor twin 0x702fd8): d = how far the
-    // shadow's top is over the texel; a shadowed texel keeps
-    // max(0, 1 - d x hmSunLightTransitionZone) of the sun's weight. The
-    // shadow's top here: the highest of the occluders (walls, roofs, upper
-    // floors) and the terrain met going towards the sun, less the sun's
-    // drop over the way (FindHeightMapShadows is not decoded: inferred).
-    const bool sunShadows = globals.sunShadows && sun && sun->d[2] > 0.05f && !layout.occluders.empty();
-    float topOfAll = -1e9f;
-    if (sunShadows) {
-        for (float v : layout.occluders)
-            topOfAll = std::max(topOfAll, v);
-        for (float v : layout.elevations)
-            topOfAll = std::max(topOfAll, v);
-    }
-    auto sunKeptAt = [&](int level, float x, float y, float z) {
-        if (!sunShadows)
-            return 1.0f;
-        const float hx = sun->d[0], hy = sun->d[1];
-        const float hl = std::sqrt(hx * hx + hy * hy);
-        if (hl < 1e-4f)
-            return 1.0f;
-        const float step = 1.0f / float(k8);
-        const float ux = hx / hl * step, uy = hy / hl * step, drop = sun->d[2] / hl * step; // per step: along, up
-        float top = -1e9f;
-        float px = x, py = y, rise = 0;
-        for (int k = 1; k < 4096; ++k) {
-            px += ux, py += uy, rise += drop;
-            if (px < 0 || py < 0 || px >= float(layout.lotWidth) || py >= float(layout.lotHeight) || z + rise > topOfAll)
-                break;
-            float h = layout.occluderAt(px, py);
-            h = std::max(h, layout.elevationAt(layout.minLevel, px, py));
-            top = std::max(top, h - rise);
-        }
-        (void)level;
-        const float d = top - z;
+    // Mac BV 0x705068, its floor twin 0x702fd8): d = how far the shadow's
+    // top is over the texel; a shadowed texel keeps max(0, 1 - d x
+    // hmSunLightTransitionZone) of the sun's weight.
+    const bool sunShadows = globals.sunShadows && sun && sun->d[2] > 0 && !layout.occluders.empty() &&
+                            size_t(pw) * ph == layout.occluders.size();
+    std::vector<float> shadowTop;
+    if (sunShadows)
+        shadowTop = sunShadowTops(layout, {sun->d[0], sun->d[1], sun->d[2]});
+    auto shadowDepth = [&](float x, float y, float z) {
+        if (shadowTop.empty())
+            return 0.0f;
+        const long i = long(std::floor(x * float(k8))), j = long(std::floor(y * float(k8)));
+        if (i < 0 || j < 0 || i >= long(pw) || j >= long(ph))
+            return 0.0f;
+        return shadowTop[size_t(j) * pw + size_t(i)] - z;
+    };
+    auto sunKept = [&](float d) {
         return d <= 0 ? 1.0f : std::max(0.0f, 1.0f - d * globals.sunTransitionZone);
+    };
+    auto sunKeptAt = [&](int level, float x, float y, float z) {
+        (void)level;
+        return sunKept(shadowDepth(x, y, z));
     };
     for (int li = 0; li < levels; ++li)
         for (uint32_t j = 0; j < ph; ++j)
@@ -753,6 +839,11 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
             if (auto it = brighten.find({f.level, f.room}); it != brighten.end())
                 extra = it->second;
         const V3 sunlit = out_ ? illum(n) * directScale : V3{0, 0, 0};
+        // A face towards the sun takes the height map's shadow texel by
+        // texel (AddDirectWallLighting -> LightWallTileWithShadows, Mac BV
+        // 0x708590, 0x704d54: the point a little off the face, d = the
+        // shadow's top there less its height).
+        const bool wallShadows = out_ && !shadowTop.empty() && dot(n, sun->d) > 0;
         V3 sum{0, 0, 0};
         size_t count = 0;
         for (uint32_t j = 0; j < f.h; ++j)
@@ -762,7 +853,10 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
                 const float x = f.origin[0] + f.along[0] * s, y = f.origin[1] + f.along[1] * s;
                 V3 e = lightAt(V3{x, y, z});
                 if (out_) {
-                    e = vmax(e - ambient, {0, 0, 0}) + sunlit;
+                    const float off = 0.5f / float(k8);
+                    const V3 lit = wallShadows ? illum(n, sunKept(shadowDepth(x + n[0] * off, y + n[1] * off, z))) * directScale
+                                               : sunlit;
+                    e = vmax(e - ambient, {0, 0, 0}) + lit;
                 } else {
                     const V3 floor = floorValue(li, x + n[0] * 0.25f, y + n[1] * 0.25f) * contribution;
                     e = vmax(e, floor * (1 / std::pow(1 + wallThreshold, 2 * (z - f.base))));

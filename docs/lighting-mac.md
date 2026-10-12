@@ -374,19 +374,73 @@ a grade `+0x228` menos a altura do tile), em texels de 8 por tile (o mesmo
 do `sun` × `max(0, 1 − d·hmSunLightTransitionZone)` (`0x7047e4`; a zona é 1:
 sombra cheia a 1 tile de fundura) e o alfa do texel = `255·√max(0, 1 −
 d·zona)`. Ou seja, **a sombra escurece o RGB** do light map (tira o sol) e
-fica também no alfa (que só as sobreposições usam). Quem monta o height
-map (`FillFromWalls`/`FillFromRooves`/`FillFromAwnings`/`FillFromTerrain`,
-`AddBlobToHeightMap` dos objetos, `FindHeightMapShadows` por linhas ou
-colunas: nomes do `baserom.sym`, `TSSGHeightMapShadow.cpp`) não foi lido no
-BV. **No código** (`fillSunOccluders` em `lot_model.cpp`,
-`computeLotLightMap`): a grade guarda o topo das paredes (altura cheia, com a
-espessura), dos telhados (`LotRoofs::heightAt`) e dos pisos de cima; o topo
-da sombra num texel = o maior `altura − queda do sol` andando para o sol,
-com o terreno; só nos texels de fora; opção `heightMapShadows` (Shadows
-`$Medium`/`$High`). Inferido: essa marcha, e que objetos (árvores) e
-toldos ficam de fora; as paredes de fora não recebem a sombra
-(`LightWallTileWithShadows`, §6.2, não feita). Captura:
-`docs/screenshots/r15-sombra-sol-height-map.jpg`.
+fica também no alfa (que só as sobreposições usam).
+
+**Como o height map é montado** (rodada 16, binário; nomes do `baserom.sym`
+casados pelo tamanho e pela ordem, `TSSGHeightMapShadow.cpp`):
+`UpdateHeightMapShadows` (BV `0x6fea68`, chamado nas atualizações do
+gerenciador `0x7167d0`/`0x715fe0`) põe `hmLotShadowStrength` (1,5) no
+`cHeightMapShadow` (`+0x210` do gerenciador) e chama, com 8 texels por tile:
+
+1. `FillFromTerrain` (`0xd7661c`): para cada quarto de tile (os 4
+   triângulos do tile cortado nas diagonais) desce do andar de cima ao de
+   baixo até achar um piso ali; a grade 0 (o "topo") recebe a altura desse
+   piso (`SampledFloorElevation` no centro do texel) e a grade `+0xc` (a
+   "superfície") a do térreo.
+2. `FillFromWalls` (`0xd76f40`, recebe a direção do sol): cada segmento de
+   parede com nível ≥ 0 tem um topo em cada ponta: no andar de cima de
+   tudo, a altura da parede sobre o piso; abaixo dele, o telhado sobre a
+   ponta menos um deslocamento, ou (meia parede, palco) a altura da meia
+   parede, ou o piso do andar de cima; cerca: a altura do estilo (0 com
+   `FenceStyleHasNoShadow`). O topo é **escrito** (não somado) nos texels ao
+   longo da parede, interpolado de uma ponta à outra: numa parede ao longo
+   de uma linha da grade, só no lado **oposto ao sol** (coluna `x−1` com
+   sol·x ≥ 0, coluna `x` com sol·x ≤ 0); numa diagonal, os texels da
+   diagonal e os vizinhos que completam a escada.
+3. `FillFromRooves` (`0xd77b54`): cada telhado que não é de vidro
+   (`IsGlassRoofType`) escreve a altura do telhado (vtable `0x78` do
+   gerenciador de telhados) em todos os texels do seu retângulo (diagonais
+   por `GetMinMaxForDiagonals`, os tipos `0x13..0x15` meio tile maiores).
+4. `FillFromAwnings` (`0xd75acc`): os tiles de piso com toldo (vtable `0xcc`
+   do mundo ≠ −1) escrevem altura + 1 na caixa dos cantos projetados ao
+   longo do sol. Nenhum lote do jogo base tem toldo.
+5. `FindHeightMapShadows` (`0xd76e68`): sem sol (z ≤ 0) ou com o sol a
+   pino, a grade de sombra (`+0x18`) fica em −1000; senão uma varredura
+   por **colunas** (`0xd76254`, |sol.x| ≥ |sol.y|) ou por **linhas**
+   (`0xd76b74`) a partir do lado do sol: uma frente de alturas (−1000 no
+   início) toma em cada texel `max(frente, topo)`, grava isso como topo da
+   sombra do texel, cai `célula·sol.z/|sol.x|` por coluna e anda de lado
+   pela mistura linear com o vizinho (`frente[r] += (−sol.y/sol.x)·(frente[r±1]
+   − frente[r])`).
+
+`AddBlobToHeightMap` (o `+0x278` do gerenciador, retângulo inteiro +
+altura) **não** entra nessa grade do lote: só `FUN_00706920` lê a lista,
+para a textura por vértice do height map que a luz "LM_sunHM"
+(`cHeightMapShadowLight`) usa nos objetos, com a caixa aumentada por
+`hmBlobWidthModifier` e a altura × `hmBlobHeightModifier`, em unidades de
+um décimo (`+0x1b8` = 0,1). Objetos e árvores do lote não fazem sombra no
+chão pelo height map: a sombra deles é a GUOB (estilos 2 e 3 do `cShadow`,
+§9). Quem chama o `AddBlobToHeightMap` no BV não foi achado (no
+`baserom.sym` ele tem 0x64 bytes; no BV não aparece com o nome).
+
+**Paredes de fora** (`AddDirectWallLighting` `0x708590` →
+`LightWallTileWithShadows` `0x704d54`): com sombras e o lado virado para o
+sol, cada texel da parede pega o ponto no quad do lado um pouco afastado
+pela normal e `d` = topo da sombra ali − altura do ponto (`0x1807ad4`); com
+`d > 0` a luz é a de sombra (`0x7047e4`).
+
+**No código** (rodada 16; `fillSunOccluders` em `lot_model.cpp`,
+`sunShadowTops` e `computeLotLightMap` em `lot_lightmap.cpp`): a grade
+estática guarda pisos de cima e telhados (máximo, sem pular os de vidro:
+nenhum nos lotes), o terreno entra no centro de cada texel, as paredes
+ficam como segmentos com o topo nas pontas e são desenhadas na grade para o
+sol de cada estado, e a varredura é a do binário (colunas ou linhas, queda
+e deslocamento lateral). As paredes de fora viradas para o sol pegam a
+sombra texel a texel (ponto a meio texel da face). Inferido: a altura das
+cercas (a da meia parede), o deslocamento do telhado sobre a parede (o do
+sótão), os vizinhos da diagonal; sem toldos. Capturas:
+`docs/screenshots/r15-sombra-sol-height-map.jpg`,
+`docs/screenshots/r16-sombra-sol-paredes.jpg`.
 
 A escala do light map de piso (`cLightMapManager` vtable `0x5C`, tipo 1,
 BV `0x6f5350`) é o campo `+0x68`, que o construtor (BV `0x6fa6e0`) põe em
@@ -547,10 +601,11 @@ tipo 3:
 - Como as salas de pátio do `3ARY` viram a sala 0 (§5.3).
 - Luzes práticas: confirmar no binário que `modifiers insideObjects`
   multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
-- O height map de sombra: como o jogo o monta (`FillFrom*`,
-  `FindHeightMapShadows`) e os objetos (`AddBlobToHeightMap`, com
-  `hmBlobWidthModifier`/`hmBlobHeightModifier`; estilo 3 do `cShadow`, §9);
-  o `hmLotShadowStrength` (1,5) e a sombra nas paredes de fora.
+- O height map de sombra (rodada 16: montagem, varredura e paredes de fora
+  lidas e feitas, §5.3): falta onde o `hmLotShadowStrength` (1,5, no
+  `+0x4c` do `cHeightMapShadow`) entra, a textura por vértice da
+  "LM_sunHM" nos objetos (`FUN_00706920`) e quem chama o
+  `AddBlobToHeightMap`.
 - A direção de sombra do gerenciador de luz (vtable `0x78`, §9) e se a cor
   da vtable `0x7c` é o `+0x28c` de `0x705f70`.
 

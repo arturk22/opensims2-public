@@ -928,16 +928,22 @@ int lotTopLevel(const Lot& lot) {
     return top;
 }
 
-// The sun's height map for the light maps (cHeightMapShadow's
-// FillFromWalls / FillFromRooves / FillFromTerrain, docs/lighting-mac.md
-// 5.3): at each ground texel the top of the walls standing there (full
-// height, whatever the view), the roofs and the upper levels' floors.
-// Inferred: which parts count (awnings and objects, AddBlobToHeightMap,
-// are left out) and the walls' footprint (their thickness).
+// The sun's height map for the light maps (cHeightMapShadow,
+// docs/lighting-mac.md 5.3; Mac BV: FillFromTerrain 0xd7661c, FillFromWalls
+// 0xd76f40, FillFromRooves 0xd77b54). FillFromTerrain puts the highest floor
+// over each texel in the grid (here: the upper levels' floors; the terrain
+// is added when the light maps are made); FillFromRooves the roofs' height
+// over their rectangles; FillFromWalls each wall's top at its two ends,
+// drawn along the wall for the sun's direction (computeLotLightMap). A
+// wall's top: on the top level the wall's height over the floor, below it
+// the next level's floor (attic walls: the roof less its offset, half walls
+// and fences their own height; the binary's fence heights per style are
+// inferred as the half wall's; rails cast none, FenceStyleHasNoShadow).
 void fillSunOccluders(const Lot& lot, const LotRoofs& roofs, LotLightMapLayout& lm) {
     constexpr int k = LotLightMapLayout::kTexelsPerTile;
     const long w = long(lot.width) * k, h = long(lot.height) * k;
     lm.occluders.assign(size_t(w * h), -1e9f);
+    lm.sunWalls.clear();
     auto raise = [&](long i, long j, float z) {
         if (i >= 0 && j >= 0 && i < w && j < h)
             lm.occluders[size_t(j * w + i)] = std::max(lm.occluders[size_t(j * w + i)], z);
@@ -949,27 +955,23 @@ void fillSunOccluders(const Lot& lot, const LotRoofs& roofs, LotLightMapLayout& 
         if (fence && wl.patterns == std::array<uint16_t, 2>{0xFFFF, 0xFFFF})
             continue; // rails
         const int level = wl.a.level;
-        const float dx = wl.b.x - wl.a.x, dy = wl.b.y - wl.a.y;
-        const float len = std::sqrt(dx * dx + dy * dy);
-        if (len == 0)
+        if (wl.a.x == wl.b.x && wl.a.y == wl.b.y)
             continue;
-        const int n = int(std::ceil(len * k * 2));
-        for (int q = 0; q <= n; ++q) {
-            const float t = float(q) / float(n);
-            const float x = wl.a.x + dx * t, y = wl.a.y + dy * t;
+        auto topAt = [&](float x, float y) {
             const float z0 = lot.elevationAt(level, x, y);
             float z1 = lot.hasLevel(level + 1) ? lot.elevationAt(level + 1, x, y) : z0 + kStoryHeight;
             if (wl.type == Lot::Attic)
                 z1 = std::max(roofs.heightAt(x, y, level, z1, kAtticRoofOffset), z0);
             else if (fence)
                 z1 = std::min(z1, z0 + kHalfWallHeight);
-            // The texels the slab (kWallHalfThickness each side) covers.
-            const long i0 = long(std::floor((x - kWallHalfThickness) * k)), i1 = long(std::floor((x + kWallHalfThickness) * k));
-            const long j0 = long(std::floor((y - kWallHalfThickness) * k)), j1 = long(std::floor((y + kWallHalfThickness) * k));
-            for (long j = j0; j <= j1; ++j)
-                for (long i = i0; i <= i1; ++i)
-                    raise(i, j, z1);
-        }
+            return z1;
+        };
+        LotLightMapLayout::SunWall sw;
+        sw.a = {wl.a.x, wl.a.y};
+        sw.b = {wl.b.x, wl.b.y};
+        sw.topA = topAt(wl.a.x, wl.a.y);
+        sw.topB = topAt(wl.b.x, wl.b.y);
+        lm.sunWalls.push_back(sw);
     }
     const int top = lot.minLevel + int(lot.levelCount);
     for (long j = 0; j < h; ++j)

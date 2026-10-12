@@ -75,11 +75,19 @@ struct LotLightMapLayout {
 
     // The sun's height map (cHeightMapShadow, docs/lighting-mac.md 5.3):
     // what stands over the lot at every ground texel (8 per tile, rows of
-    // lotWidth x 8): the walls' tops, the roofs and the upper floors
-    // (-1e9 where nothing; the terrain is added from the elevations).
-    // Filled by buildLotModel (fillSunOccluders); empty: no sun shadows.
+    // lotWidth x 8): the roofs and the upper floors (FillFromRooves,
+    // FillFromTerrain; -1e9 where nothing; the terrain is added from the
+    // elevations), and the walls as segments with their tops at both ends
+    // (FillFromWalls), drawn into the grid for the sun's direction when the
+    // light maps are made. Filled by buildLotModel (fillSunOccluders);
+    // both empty: no sun shadows.
     std::vector<float> occluders;
     float occluderAt(float x, float y) const;
+    struct SunWall {
+        std::array<float, 2> a{}, b{}; // ends, tiles (grid points)
+        float topA = 0, topB = 0;       // the wall's top over each end
+    };
+    std::vector<SunWall> sunWalls;
 
     void init(const Lot& lot);
     // Atlas position in texels of a point on a floor page, `x`, `y` in
@@ -144,6 +152,12 @@ struct LotLightMap {
     // floor, walls and portals; by (level, room).
     std::map<std::pair<int, uint16_t>, std::array<std::array<float, 3>, 6>> rooms;
 };
+
+// The sun's height-map shadow tops over the lot's ground texels (rows of
+// lotWidth x 8) for a sun direction `L` towards the sun, as the game's
+// FindHeightMapShadows sweeps them (docs/lighting-mac.md 5.3); -1000 where
+// there is no shadow (no sun, sun overhead), empty without a height map.
+std::vector<float> sunShadowTops(const LotLightMapLayout& layout, std::array<float, 3> L);
 
 // The light maps for a lighting state (docs/lighting-mac.md 4.1, 5, 5.3,
 // 5.4). From the binary: the inside ambient (insideAmbientColor x

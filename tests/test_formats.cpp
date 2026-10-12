@@ -691,6 +691,30 @@ end
         off.sunShadows = false;
         const LotLightMap nm = computeLotLightMap(shaded, *sunCfg.state("day"), {}, off);
         check(std::fabs(texel(nm.image, 20, 12) - texel(nm.image, 20, 28)) < 0.02f, "no sun shadows with the option off");
+        // FindHeightMapShadows: a wall along x = 2, 3 high, with the sun in
+        // +X is drawn on its west side (column 15), the front dropping by
+        // the sun's slope (1 per tile) away from it; nothing on the sun side.
+        LotLightMapLayout walled = layout;
+        walled.occluders.assign(size_t(32 * 32), -1e9f);
+        walled.sunWalls.push_back({{2, 0}, {2, 4}, 3, 3});
+        const auto tops = sunShadowTops(walled, {1, 0, 1});
+        check(tops.size() == 32 * 32 && std::fabs(tops[10 * 32 + 15] - 3) < 1e-3f && std::fabs(tops[10 * 32 + 7] - 2) < 1e-3f &&
+                  std::fabs(tops[10 * 32 + 16]) < 1e-3f,
+              "height-map shadow tops behind a wall");
+        check(sunShadowTops(walled, {0, 0, 1})[10 * 32 + 7] == -1000.0f, "no height-map shadow with the sun overhead");
+        // An outdoor wall face towards the sun (+X, at x = 1) with a 3-high
+        // block a tile east of it: its foot is in the block's shadow, its top not.
+        LotLightMapLayout faced = shaded;
+        LotLightMapLayout::WallFace out;
+        out.origin = {1, 0}, out.along = {0, 1}, out.normal = {1, 0}, out.length = 2, out.base = 0, out.top = 3;
+        out.room = 0;
+        const size_t oc = faced.addWall(out);
+        for (int j = 0; j < 16; ++j)
+            for (int i = 16; i < 24; ++i)
+                faced.occluders[size_t(j * 32 + i)] = 3;
+        const LotLightMap fm = computeLotLightMap(faced, *sunCfg.state("day"), {});
+        const auto& fc = faced.walls[oc];
+        check(texel(fm.image, fc.x + 8, fc.y + fc.h - 2) + 0.1f < texel(fm.image, fc.x + 8, fc.y + 1), "outdoor wall in the sun's height-map shadow");
     }
     // A lamp in the room: seeded at colour x floor scale, falling by 1 + k per half tile.
     LightMapLight lamp;
