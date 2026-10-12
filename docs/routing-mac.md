@@ -941,7 +941,7 @@ No A* (`cAStarPortalNode::CalculateTransitionCost`, BV `0xba271c`): livre
 portal (`IsNextPathNodeAStairStart`/`GetPortalInfo`), o roteador vai para o
 estado 0x1F e `TriggerPortalTree` (BV `0x575248`) roda a **mesma entrada
 15 de verdade** (não teste) na pilha do Sim, com os parâmetros: os dois
-slots do portal, os andares (inferido) e o nível; o Sim fica em `DoWaitingForPortal`
+slots do portal, os andares e o nível; o Sim fica em `DoWaitingForPortal`
 (estado 2) até a árvore voltar (ela anima a porta abrindo, ou sobe os
 degraus com Snap Into) e o roteador segue no fim do portal
 (`DoLocomotionContinuationAtPortalEnd`). Se outro Sim ocupa o portal (dado
@@ -953,9 +953,9 @@ bit 0x40 do dado 0x44 do Sim.
 `TSObjectPortalLockedCB` (BV `0xe208c8`) monta os parâmetros da árvore de
 teste assim: 0/1 = `vtable 0x380` (o slot de contenção de cada ponta), **2/3
 = o andar (`vtable 0x90`) do objeto de entrada e do de saída**, 4/5 os IDs,
-6/7 os slots de rota de cada ponta. O `TriggerPortalTree` monta os mesmos
-(2/3 de `cTSRoutePortalInfo +8`/`+0x1c`; inferido que também sejam os
-andares). O VM passava as **salas** (desde a rodada 6); a escada da piscina
+6/7 os slots de rota de cada ponta. O `TriggerPortalTree` monta os mesmos:
+2/3 de `cTSRoutePortalInfo +8`/`+0x1c`, que `GetPortalInfoFromPathNode` (BV
+`0x472514`) enche com o **andar do nó do caminho + 1** de cada ponta. O VM passava as **salas** (desde a rodada 6); a escada da piscina
 e o trampolim decidem por eles: `param 2 > param 3` = descer (entrar na
 água), e o TEST do trampolim só deixa descer.
 
