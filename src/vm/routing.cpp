@@ -2524,6 +2524,9 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 if (!me.position.inWorld() || !blocker.position.inWorld() || d > 4)
                     return false;
                 const auto spot = moveOutOfWayPoint(vm, blocker, me, 0);
+                if (std::getenv("OS2_DEBUG_BLOCK"))
+                    std::fprintf(stderr, "t%llu %d gets out of %d's way: %s\n", (unsigned long long)vm.ticks, me.id, blocker.id,
+                                 spot ? "a place" : "no place");
                 if (!spot)
                     return false;
                 Object::Route aside = r;
@@ -2563,7 +2566,11 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             // took the other for "routing, blocked by something else" and
             // gave up (Routing - Goto Head of Bed, two Sims sent to one bed).
             const auto& br = *blocker.route;
-            const ObjectId itsBlocker = br.blocker ? br.blocker : (br.loco.halting || br.loco.haltDone) ? br.loco.halted : 0;
+            // (Not once it walks out of the way: that is a route of its own,
+            // pushed on top, with no blocker, TryGetSelfOutOfWay.)
+            const ObjectId itsBlocker = br.blocker                                         ? br.blocker
+                                        : !br.aside && (br.loco.halting || br.loco.haltDone) ? br.loco.halted
+                                                                                             : 0;
             if (itsBlocker == me.id) { // it routes and I block it: the two block each other
                 if (!base)
                     return routeBlocked();
