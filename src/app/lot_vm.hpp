@@ -110,7 +110,11 @@ private:
         int16_t outfit = 0; // person data 8 the actor is dressed for
         int16_t age = 0;    // person data 58 the actor was built for
         float zOffset = 0; // the cObject's height over the floor the VM's level gives
-        std::vector<std::string> overlays; // playing over the base animation
+        struct PlayingOverlay {
+            std::string name;
+            int priority = 0; // its layer in the actor's player
+        };
+        std::map<uint32_t, PlayingOverlay> overlays; // by vm::Overlay::id, over the base animation
         std::shared_ptr<HeadLook> look;    // the head turning towards Object::lookAt
     };
     // Where a Sim's Look At points its head now (world space), if anywhere.

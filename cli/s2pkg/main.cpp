@@ -926,7 +926,7 @@ int cmdLotRun(const std::vector<std::filesystem::path>& lots, long ticks, bool l
                 if (auto it = machine.threads.find(id); it != machine.threads.end())
                     std::printf("; main %s", statusName(it->second));
                 for (const auto& a : o.animation.overlays)
-                    std::printf("; overlay %s", a.c_str());
+                    std::printf("; overlay %s", a.name.c_str());
                 for (const auto& e : o.animation.overlayEvents)
                     std::printf("; events of %s: %zu left, %.0f of %.0f", e.name.c_str(), e.pending.size(), e.played,
                                 e.length);

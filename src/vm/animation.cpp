@@ -16,6 +16,8 @@
 #include "formats/sim_actor.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 
 namespace os2::vm {
@@ -401,6 +403,21 @@ void runAnimationEvents(Context& c, AnimationState& a, bool all) {
     }
 }
 
+// Runs an overlay's event tree for `event`, in the context of the thread
+// that started it, as a one-tick tree with the event as parameter 0
+// (inferred: the binary calls it from the animation's event callback). A
+// tree that fails does not stop the caller (inferred).
+void runOverlayEvent(VM& vm, const Overlay& o, int16_t event) {
+    if (!o.eventTree || !vm.object(o.me) || !vm.object(o.codeOwner))
+        return;
+    std::array<int16_t, kTempCount> temps{};
+    const int16_t params[5] = {event, 0, 0, 0, 0};
+    try {
+        runOneTickTree(vm, temps, o.me, o.codeOwner, o.stackObject, o.eventTree, params);
+    } catch (const VMError&) {
+    }
+}
+
 Exit animateSim(Context& c) {
     Object& me = c.me();
     AnimationState& a = me.animation;
@@ -450,19 +467,25 @@ Exit animateSim(Context& c) {
 // Adds an overlay animation to an object (Animate Overlay, Animate Object):
 // they do not block the thread (inferred: "Anim - Sim & Object by Index"
 // starts the object's animation, plays the Sim's and then stops the
-// object's).
-Exit startOverlay(Context& c, Object& target, const std::string& entry) {
+// object's). Its kind comes from the entry's role (oeTypeOfRole). Null when
+// two of that name already play: try_animate_overlay looks the name up
+// twice (AnimRequestByNameAndID) and starts nothing more then, so an idle
+// started again while the last one blends out does not pile up.
+Overlay* startOverlay(Context& c, Object& target, const std::string& entry) {
     std::string name = target.person ? resolveListAnimation(c.vm, target, entry) : parseItem(split(entry, ',')[0]).name;
     if (name.empty() || name == ".")
         throw VMError("Animation name is empty string.");
     if (!library(c.vm).exists(name))
         ++c.vm.animations.missing[name];
     auto& ov = target.animation.overlays;
-    ov.push_back(name);
+    if (std::count(ov.begin(), ov.end(), name) >= 2)
+        return nullptr;
+    Overlay& o = target.animation.addOverlay(name);
+    o.oeType = oeTypeOfRole(parseItem(split(entry, ',')[0]).role);
     if (ov.size() > 8)
         ov.erase(ov.begin());
     ++target.animation.overlaySerial;
-    return Exit::True;
+    return &ov.back();
 }
 
 // The loop count of Animate Object/Overlay with flag 0x20 of byte 2 is in
@@ -484,7 +507,20 @@ Exit animateOverlay(Context& c) {
     checkLoops(c);
     Object& target = objectAt(c, 6);
     const std::string entry = listEntry(c, target, o[9], animationIndex(c, 0, o[2] & 0x04));
-    return startOverlay(c, target, entry);
+    Overlay* ov = startOverlay(c, target, entry);
+    if (!ov)
+        return Exit::True;
+    // It plays once, or temp 1 times with flag 0x20 (-1: until stopped); an
+    // animation without length is a pose that holds (the carry poses).
+    const float length = library(c.vm).seconds(ov->name).value_or(0) * 1000.0f;
+    const int loops = o[2] & 0x20 ? c.thread.temps[1] : 1;
+    ov->loops = length > 0 && loops > 0 ? loops : 0;
+    ov->length = length;
+    ov->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
+    ov->pending = library(c.vm).treeEvents(ov->name);
+    ov->eventTree = le16(&o[4]);
+    ov->me = c.thread.me, ov->codeOwner = c.frame.codeOwner, ov->stackObject = c.frame.stackObject;
+    return Exit::True;
 }
 
 // Animate Object (0x69): animation index u16 at 0, flags u8 at 2 (as
@@ -500,13 +536,14 @@ Exit animateObject(Context& c) {
     const std::string entry = listEntry(c, target, animlist::Object, animationIndex(c, 0, o[2] & 0x04));
     if (trim(entry).empty() || trim(entry) == ".")
         return Exit::True; // the lists keep empty slots for objects with nothing to play there (inferred)
-    const Exit e = startOverlay(c, target, entry);
+    if (!startOverlay(c, target, entry))
+        return Exit::True;
     // Its event tree gets the animation's tree events as it plays, in the
     // starting thread's context, as Animate Sim's (the vehicles drive on
     // "Event Tree - Drive": loop again or stop, which ends "Wait for Vehicle
     // Stop"). A new one from the same code replaces the last (inferred).
     if (const uint16_t tree = le16(&o[4])) {
-        const std::string name = target.animation.overlays.back();
+        const std::string name = target.animation.overlays.back().name;
         auto& list = target.animation.overlayEvents;
         std::erase_if(list, [&](const auto& x) { return x.codeOwner == c.frame.codeOwner; });
         AnimationState::OverlayEvents ev;
@@ -518,48 +555,70 @@ Exit animateObject(Context& c) {
         ev.perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
         list.push_back(std::move(ev));
     }
-    return e;
+    return Exit::True;
 }
 
 
 // Animate Stop (0x6C), by the Mac binary's disassembler
-// (docs/primitives-mac.md §5): the object (owner u8 at 3, data u16), mode s8
-// at 7: 0 one animation (u16 at 0 of the list byte 6), 1 the overlays, 2 the
-// full-body animations, 3 all, 4 the carry poses, 5 idle, 6 gestures, 7
-// reactions, 8 normals, 9 facials, 10 idle facials, 11 receptivity; flags
-// byte 2 (0x01 flipped, 0x02 blended, 0x20 short blend, 0x08 flip flag in
-// temp 3, 0x40 normal and flipped), priority s8 at 8. Here: 0 takes that
-// animation off the object's overlays, 1 and 3 take every overlay off, 4 the
-// grasp/carry overlays of what a Sim holds; the full-body animation is left
-// to the Animate Sim waiting for it, and the overlay kinds of 5-11 are not
-// told apart (nothing stops).
+// (docs/primitives-mac.md §5) and try_animate_stop: the object (owner u8 at
+// 3, data u16), mode s8 at 7: 0 one animation (u16 at 0 of the list byte
+// 6), 1 the overlays, 2 the full-body animations, 3 all, 4-11 the overlays
+// of one kind (Overlay::oeType: 4 carry, 5 idle, 6 gesture, 7 reaction, 8
+// normal, 9 facial, 10 idle facial, 11 receptivity); flags byte 2 (0x01
+// flipped, 0x02 blended, 0x20 short blend, 0x08 flip flag in temp 3, 0x40
+// normal and flipped), priority s8 at 8. Mode 4 also takes off the carry
+// poses of what a Sim holds (Object::carryOverlays). The full-body
+// animation is left to the Animate Sim waiting for it. The event trees of
+// the overlays stopped get animevent::Stopped (inferred from the idle
+// trees, which clear their "playing" flag on it).
 Exit animateStop(Context& c) {
     const auto& o = c.instruction.operands;
     Object& target = objectAt(c, 3);
     auto& a = target.animation;
-    const size_t before = a.overlays.size();
-    switch (int8_t(o[7])) {
-    case 0: {
+    const int mode = int8_t(o[7]);
+    std::string byName;
+    if (mode == 0) {
         const std::string entry = listEntry(c, target, o[6], int16_t(le16(&o[0])));
         const std::string first = trim(split(entry, ',')[0]);
         if (first.empty() || first == ".")
-            break;
-        const std::string name = target.person ? resolveListAnimation(c.vm, target, entry) : parseItem(first).name;
-        if (auto it = std::find(a.overlays.begin(), a.overlays.end(), name); it != a.overlays.end())
-            a.overlays.erase(it);
-        break;
+            return Exit::True;
+        byName = target.person ? resolveListAnimation(c.vm, target, entry) : parseItem(first).name;
     }
-    case 1:
-    case 3: a.overlays.clear(); break;
-    case 4:
-        for (const auto& name : target.carryOverlays)
-            if (auto it = std::find(a.overlays.begin(), a.overlays.end(), name); it != a.overlays.end())
-                a.overlays.erase(it);
-        break;
-    default: break;
+    auto isCarry = [&](const Overlay& x) {
+        return std::find(target.carryOverlays.begin(), target.carryOverlays.end(), x.name) != target.carryOverlays.end();
+    };
+    auto stops = [&](const Overlay& x) {
+        switch (mode) {
+        case 0: return x.name == byName;
+        case 1:
+        case 3: return true;
+        case 4: return x.oeType == oetype::Carry || isCarry(x);
+        case 5: return x.oeType == oetype::Idle;
+        case 6: return x.oeType == oetype::Gesture;
+        case 7: return x.oeType == oetype::Reaction;
+        case 8: return x.oeType == oetype::Normal && !isCarry(x);
+        case 9: return x.oeType == oetype::Facial;
+        case 10: return x.oeType == oetype::FacialIdle;
+        case 11: return x.oeType == oetype::Receptivity;
+        default: return false;
+        }
+    };
+    std::vector<Overlay> stopped;
+    for (auto it = a.overlays.begin(); it != a.overlays.end();) {
+        if (stops(*it)) {
+            stopped.push_back(std::move(*it));
+            it = a.overlays.erase(it);
+            if (mode == 0)
+                break;
+        } else {
+            ++it;
+        }
     }
-    if (a.overlays.size() != before)
-        ++a.overlaySerial;
+    if (stopped.empty())
+        return Exit::True;
+    ++a.overlaySerial;
+    for (const Overlay& x : stopped)
+        runOverlayEvent(c.vm, x, animevent::Stopped);
     return Exit::True;
 }
 
@@ -823,6 +882,31 @@ void startScriptedWalk(VM& vm, int16_t simId, int16_t target, std::optional<uint
     vm.threads.insert_or_assign(simId, vm.start(simId, kTree, {}, target));
 }
 
+int8_t oeTypeOfRole(const std::string& role) {
+    std::string r = trim(role.substr(0, role.find(',')));
+    std::transform(r.begin(), r.end(), r.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+    if (r == "carry")
+        return oetype::Carry;
+    if (r == "idle")
+        return oetype::Idle;
+    if (r == "gesture")
+        return oetype::Gesture;
+    if (r == "reaction")
+        return oetype::Reaction;
+    if (r == "facial")
+        return oetype::Facial;
+    if (r == "facialidle" || r == "facial idle")
+        return oetype::FacialIdle;
+    if (r == "receptivity")
+        return oetype::Receptivity;
+    return oetype::Normal;
+}
+
+// How long before its end an overlay starts to blend out (and its event
+// tree gets animevent::BlendOut), animation ticks (inferred: the binary's
+// blend time is a global set at run time; the host fades overlays in 0.2 s).
+constexpr float kOverlayBlendOutTicks = 200;
+
 void tickOverlayEvents(VM& vm) {
     struct Fire {
         int16_t me, codeOwner, stackObject;
@@ -833,6 +917,37 @@ void tickOverlayEvents(VM& vm) {
     for (Object* po : vm.objectTable()) {
         if (!po)
             continue;
+        // Animate Overlay's: tree events as they are reached, 9997 as the
+        // last play starts blending out, 9999 and off the object at its end.
+        auto& ov = po->animation.overlays;
+        for (auto it = ov.begin(); it != ov.end();) {
+            if (it->loops <= 0 || it->length <= 0) {
+                ++it;
+                continue;
+            }
+            it->played += it->perTick;
+            const float total = it->length * float(it->loops);
+            const bool ended = it->played >= total;
+            const float inPlay = std::fmod(it->played, it->length);
+            while (!it->pending.empty() && (ended || it->pending.front().first <= inPlay)) {
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, it->pending.front().second});
+                it->pending.erase(it->pending.begin());
+            }
+            // A loop that wraps gets its events again.
+            if (!ended && it->pending.empty() && it->loops > 1 && inPlay < it->perTick)
+                it->pending = library(vm).treeEvents(it->name);
+            if (!it->blendOutSent && it->played >= total - kOverlayBlendOutTicks) {
+                it->blendOutSent = true;
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::BlendOut});
+            }
+            if (ended) {
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::End});
+                it = ov.erase(it);
+                ++po->animation.overlaySerial;
+            } else {
+                ++it;
+            }
+        }
         auto& list = po->animation.overlayEvents;
         for (auto it = list.begin(); it != list.end();) {
             it->played += it->perTick;
@@ -850,7 +965,7 @@ void tickOverlayEvents(VM& vm) {
         }
     }
     for (const Fire& f : fires) {
-        if (!vm.object(f.me) || !vm.object(f.codeOwner))
+        if (!f.tree || !vm.object(f.me) || !vm.object(f.codeOwner))
             continue;
         std::array<int16_t, kTempCount> temps{};
         const int16_t params[5] = {f.event, 0, 0, 0, 0};

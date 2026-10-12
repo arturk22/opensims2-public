@@ -84,6 +84,49 @@ struct ActiveEffect {
     int8_t state = 0;       // modes 10-13: the effect's state 0-3 (float parameter 0xF)
 };
 
+// The kind of an animation (the binary's tOEType), from the role of its
+// animation-list entry: "a-idle-neutral-...(idle)", "(gesture)", "(facial)",
+// ...; an entry without one is a normal animation. Animate Stop's modes 4-11
+// stop the overlays of one kind (try_animate_stop: mode 4 carry, 5 idle, 6
+// gesture, 7 reaction, 8 normal, 9 facial, 10 idle facial, 11 receptivity).
+namespace oetype {
+constexpr int8_t Normal = 2, Carry = 3, Idle = 4, Gesture = 5, Reaction = 6, Facial = 7, FacialIdle = 8,
+                 Receptivity = 9;
+}
+// The kind named by an entry's role ("idle", "normal, reclined", ...).
+int8_t oeTypeOfRole(const std::string& role);
+
+// The standard events an animation's event tree gets besides its own
+// "event=N" (global BCON 0x124 "G - Anim Events - Std"): 9997 when it starts
+// to blend out ("Event - Animation Blending Out" of the idle system starts
+// the next idle on it), 9999 at its end ("Event - Animation - End of
+// Anim"), -1 when it is stopped before (both idle trees clear their
+// "playing" flag on it). 9998 is not used by the base game's idle trees.
+namespace animevent {
+constexpr int16_t BlendOut = 9997, End = 9999, Stopped = -1;
+}
+
+// An animation playing over an object (Animate Overlay, Animate Object, the
+// carry poses of what a Sim holds).
+struct Overlay {
+    std::string name;
+    uint32_t id = 0;               // unique per start (the host restarts on a new one)
+    int8_t oeType = oetype::Normal;
+    // How many times it plays before it ends (Animate Overlay: once, or temp
+    // 1 with flag 0x20); 0 = it holds or loops until stopped (carry poses,
+    // Animate Object, temp 1 = -1, animations without length).
+    int loops = 0;
+    float played = 0, perTick = 0, length = 0; // animation ticks (ms at speed 1)
+    bool blendOutSent = false;
+    // Its event tree (Animate Overlay's u16 at 4) and where it runs: the
+    // thread that started it.
+    uint16_t eventTree = 0;
+    int16_t me = 0, codeOwner = 0, stackObject = 0;
+    std::vector<std::pair<int, int16_t>> pending; // tree events not reached yet
+    bool operator==(const std::string& n) const { return name == n; }
+    bool operator==(const char* n) const { return name == n; }
+};
+
 struct AnimationState {
     // The full-body animation Animate Sim plays (resource name without
     // "_anim", resolved for the Sim's age and gender), while it plays.
@@ -107,9 +150,24 @@ struct AnimationState {
 
     // Animations that play over the object without blocking (Animate
     // Overlay on a Sim or an object, Animate Object), oldest first; Animate
-    // Stop clears them.
-    std::vector<std::string> overlays;
+    // Stop clears them, and Animate Overlay's end when they have played.
+    std::vector<Overlay> overlays;
     uint32_t overlaySerial = 0;
+    uint32_t nextOverlayId = 1;
+    // Adds an overlay that holds until stopped and returns it.
+    Overlay& addOverlay(const std::string& name) {
+        Overlay o;
+        o.name = name;
+        o.id = nextOverlayId++;
+        overlays.push_back(std::move(o));
+        return overlays.back();
+    }
+    std::vector<std::string> overlayNames() const {
+        std::vector<std::string> out;
+        for (const auto& o : overlays)
+            out.push_back(o.name);
+        return out;
+    }
     // The tree events of the Animate Object animations playing on the object
     // with an event tree (tickOverlayEvents runs them as the animation plays).
     struct OverlayEvents {

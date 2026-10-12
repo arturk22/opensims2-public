@@ -125,43 +125,60 @@ void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> an
 }
 
 // Overlays the VM plays on a Sim (Animate Overlay, Reach/Put's grasp and
-// carry animations: "a2o-newspaper-carry" holds the arm up), each over the
-// bones it keys, above the base animation, in the VM's order. The carry
-// poses last as long as the Sim holds the object (Object::carryOverlays;
-// the trees' Animate Stop after the grab clears the overlays), also while
-// Animate Sim plays: the trees stop them themselves before an animation
-// that needs the arm (Animate Stop mode 4, 237 uses: "Eat - Anim - Bite",
-// "Interaction - Drink", "Sub - Put Cup Down", ...), and the newspaper's
-// "Read" never does: its animations reach the paper by the arms' IK, which
-// AnimPlayer solves over the carry pose.
+// carry animations: "a2o-newspaper-carry" holds the arm up; the idle
+// system's idles: breathing, finger twitches, stretches, looking around),
+// each over the bones it keys, above the base animation. Each start of one
+// (vm::Overlay::id) is a layer of its own: it is cued when the VM starts it,
+// plays once unless the VM loops or holds it, and fades out when the VM
+// takes it off (its end, or Animate Stop: the idle trees stop the idles
+// before an interaction's animation, the carry poses go with what was
+// held). Layers are ordered by the animation's header priority (carry poses
+// 5 over idles and gestures 2-3), then by start, as AnimPlayer orders
+// masked overlays. The carry poses also play while Animate Sim plays: the
+// trees stop them themselves before an animation that needs the arm
+// (Animate Stop mode 4, 237 uses: "Eat - Anim - Bite", "Interaction -
+// Drink", "Sub - Put Cup Down", ...), and the newspaper's "Read" never
+// does: its animations reach the paper by the arms' IK, which AnimPlayer
+// solves over the carry pose.
 void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
     constexpr int kOverlayPriority = 100;
-    std::vector<std::string> want;
-    auto isCarry = [&](const std::string& name) {
-        return std::find(o.carryOverlays.begin(), o.carryOverlays.end(), name) != o.carryOverlays.end();
-    };
-    for (const auto& name : o.animation.overlays)
-        if (!isCarry(name))
-            want.push_back(name);
-    want.insert(want.end(), o.carryOverlays.begin(), o.carryOverlays.end());
-    if (want == b.overlays)
-        return;
-    if (std::getenv("OS2_DEBUG_VM"))
-        std::fprintf(stderr, "tick %llu sim %d overlays: %zu -> %zu%s\n", (unsigned long long)vm_->ticks, b.id,
-                     b.overlays.size(), want.size(), want.empty() ? "" : (" " + want.back()).c_str());
-    for (size_t i = 0; i < b.overlays.size(); ++i)
-        b.actor->player.stop(at, 0.2f, kOverlayPriority + int(i));
-    b.overlays.clear();
-    for (size_t i = 0; i < want.size(); ++i) {
+    constexpr float kFade = 0.2f;
+    // Gone from the VM: fade out.
+    for (auto it = b.overlays.begin(); it != b.overlays.end();) {
+        const bool kept = std::any_of(o.animation.overlays.begin(), o.animation.overlays.end(),
+                                      [&](const vm::Overlay& x) { return x.id == it->first; });
+        if (kept) {
+            ++it;
+            continue;
+        }
+        if (std::getenv("OS2_DEBUG_VM"))
+            std::fprintf(stderr, "tick %llu sim %d overlay off: %s\n", (unsigned long long)vm_->ticks, b.id,
+                         it->second.name.c_str());
+        b.actor->player.stop(at, kFade, it->second.priority);
+        it = b.overlays.erase(it);
+    }
+    // New ones: cue.
+    for (const auto& x : o.animation.overlays) {
+        if (b.overlays.count(x.id))
+            continue;
+        Bound::PlayingOverlay p;
+        p.name = x.name;
         try {
-            const Animation& anim = b.actor->animation(index_, want[i]);
-            // Grasps play once (into the carry); carries hold their pose.
-            const bool loop = want[i].find("grasp") == std::string::npos;
-            b.actor->cue(at, anim, {.fade = 0.2f, .loop = loop, .priority = kOverlayPriority + int(i)});
+            const Animation& anim = b.actor->animation(index_, x.name);
+            const bool carry = std::find(o.carryOverlays.begin(), o.carryOverlays.end(), x.name) != o.carryOverlays.end();
+            const int header = carry ? std::max<int>(anim.priority, 5) : anim.priority;
+            p.priority = kOverlayPriority + header * 1000000 + int(x.id % 1000000);
+            // Grasps play once (into the carry); what the VM ends or holds
+            // loops until it is taken off.
+            const bool loop = x.name.find("grasp") == std::string::npos && x.loops != 1;
+            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority});
+            if (std::getenv("OS2_DEBUG_VM"))
+                std::fprintf(stderr, "tick %llu sim %d overlay on: %s (kind %d, loops %d)\n",
+                             (unsigned long long)vm_->ticks, b.id, x.name.c_str(), x.oeType, x.loops);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: Sim %d: overlay %s\n", b.id, e.what());
         }
-        b.overlays.push_back(want[i]);
+        b.overlays.emplace(x.id, std::move(p));
     }
 }
 
@@ -176,7 +193,7 @@ void LotSimulation::sampleAll(double at) {
                 continue;
             seen = o.animation.overlaySerial;
             if (!o.animation.overlays.empty())
-                onObjectAnimation(id, o.animation.overlays.back(), at);
+                onObjectAnimation(id, o.animation.overlays.back().name, at);
         }
     for (auto& b : bound_) {
         const vm::Object* o = vm_->object(b.id);

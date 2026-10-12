@@ -415,7 +415,7 @@ Exit reachPut(Context& c) {
                     putInSlot(*x, me, r.hand);
                     me.carryOverlays = r.overlays;
                     for (const auto& name : r.overlays)
-                        anim.overlays.push_back(name);
+                        anim.addOverlay(name).oeType = oetype::Carry;
                     ++anim.overlaySerial;
                 }
             } else if (x) {

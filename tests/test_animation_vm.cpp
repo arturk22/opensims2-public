@@ -215,6 +215,57 @@ static void testAnimateSim() {
     check(t.status == Thread::Status::Finished && thing.animation.overlays.empty(), "Animate Stop clears it");
 }
 
+// Animate Overlay: an overlay plays once (its kind from the entry's role),
+// its event tree gets 9997 as it starts blending out and 9999 at its end,
+// two of a name at most; Animate Stop mode 5 stops the idles only, and
+// their event trees get -1.
+static void testOverlayLifetime() {
+    CodeLibrary code;
+    VM vm(code);
+    addGlobals(code, vm);
+    code.add(kGlobalGroup, animlist::Adult,
+             strings({"a-noExpression", ".", "a-blockedPath-long", "a-idle-test(idle)", "a-gesture-test(gesture)"}));
+    vm.animations.add("a-idle-test", 1.0f);
+    vm.animations.add("a-gesture-test", 1.0f);
+    Object& s = sim(vm, 1.5f, 1.5f);
+    s.attributes.assign(1, 0);
+    // The event tree: attribute 0 := parameter 0.
+    Behavior ev = tree({instr(0x02, T, E, {0, 0, 0, 0, 0, 5, 0x00, 0x09})});
+    ev.argCount = 5;
+    code.add(kGroup, 0x1005, ev);
+    // Animate Overlay entry 3 (or 4) of the global list on the stack object, event tree 0x1005.
+    code.add(kGroup, 0x1007, tree({instr(0x6B, T, E, {3, 0, 0, 0x20, 0x05, 0x10, 0x0A, 0, 0, 0x80})}));
+    code.add(kGroup, 0x1008, tree({instr(0x6B, T, E, {4, 0, 0, 0x20, 0x05, 0x10, 0x0A, 0, 0, 0x80})}));
+    Thread t = vm.start(s.id, 0x1007, {}, s.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && s.animation.overlays.size() == 1, "Animate Overlay adds an overlay");
+    check(s.animation.overlays[0].oeType == oetype::Idle && s.animation.overlays[0].loops == 1,
+          "an idle, played once");
+    const int ticks = int(std::ceil(vm.clock.ticksPerSecond)); // the animation's length
+    bool blendOut = false;
+    for (int i = 0; i < ticks - 1; ++i) {
+        tickOverlayEvents(vm);
+        blendOut = blendOut || s.attributes[0] == animevent::BlendOut;
+    }
+    check(blendOut && s.animation.overlays.size() == 1, "9997 before its end");
+    for (int i = 0; i < 3; ++i)
+        tickOverlayEvents(vm);
+    check(s.animation.overlays.empty() && s.attributes[0] == animevent::End, "it ends after its length, with 9999");
+    for (int i = 0; i < 3; ++i) {
+        t = vm.start(s.id, 0x1007, {}, s.id);
+        vm.run(t);
+    }
+    check(s.animation.overlays.size() == 2, "two of a name at most");
+    t = vm.start(s.id, 0x1008, {}, s.id);
+    vm.run(t);
+    code.add(kGroup, 0x1009, tree({instr(0x6C, T, E, {0, 0, 0, 0x0A, 0, 0, 0, 5})}));
+    t = vm.start(s.id, 0x1009, {}, s.id);
+    vm.run(t);
+    check(s.animation.overlays.size() == 1 && s.animation.overlays[0].oeType == oetype::Gesture,
+          "Animate Stop mode 5 stops the idles");
+    check(s.attributes[0] == animevent::Stopped, "their event trees get -1");
+}
+
 // A Sim walks a synthetic route (scripted Go To Relative Position, then an
 // Animate Sim); SimMotion follows it between ticks.
 static void testScriptedWalk() {
@@ -305,6 +356,7 @@ int main() {
     testLocomotionNames();
     testAssignLocomotion();
     testAnimateSim();
+    testOverlayLifetime();
     testScriptedWalk();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

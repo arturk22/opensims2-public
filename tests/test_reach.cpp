@@ -187,7 +187,7 @@ static void testReachPut() {
     Object& paper = *fx.vm.object(fx.paper);
     check(paper.data[objdata::ContainerId] == fx.sim && paper.data[objdata::SlotNumber] == 0,
           "the object is in the Sim's hand (slot 0)");
-    check((sim.animation.overlays == std::vector<std::string>{"a2o-paper-grasp", "a2o-paper-carry"}),
+    check((sim.animation.overlayNames() == std::vector<std::string>{"a2o-paper-grasp", "a2o-paper-carry"}),
           "grasp and carry overlays");
     sim.position = {4.5f, 4.5f, 1};
     fx.vm.followContainers();
