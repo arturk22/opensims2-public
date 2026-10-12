@@ -436,8 +436,16 @@ Execução (binário):
 - 8 objeto no mesmo tile: precisa de alvo ≠ 0 (senão falso); objetos do tile
   do alvo, no mesmo nível, depois dele.
 - 9 objeto adjacente ao objeto do local (byte 6; fora do intervalo: erro
-  0x08; objeto inexistente: 0x0A): o último objeto válido dos tiles +X, −X,
-  +Y, −Y que esteja no mesmo cômodo.
+  0x08; objeto inexistente: 0x0A): **um objeto por lado**, o último da lista
+  do tile (`nTSWorld::LastValidObjectOnTile`, BV `0x16cbd8`: de trás para a
+  frente, o primeiro sem o teste `0x10000`), no mesmo cômodo do âncora, os
+  lados na ordem **+X, +Y, −X, −Y**; a busca segue do lado do tile do alvo
+  em relação ao âncora (dx ≥ 1 → +Y; dx < 0 → −Y; dx = 0 e dy ≥ 1 → −X;
+  senão falso), então um alvo que não está num lado (no tile do âncora)
+  termina a busca (rodada 15; antes o VM percorria todos os objetos dos
+  quatro tiles por ID, e o "Set to Next - Good Dining Chair", que anda pelo
+  tile com o tipo 8 entre um e outro, voltava a uma cadeira já vista e
+  estourava o orçamento de instruções: `N002_Lot22`).
 - 10 carreira: sempre falso. 11 Lot ID: o próximo lote.
 - 13 pessoa mais perto da pessoa do temp 0: grava a distância e a direção
   relativa no objeto (lidas pelos temps 4 e 5, pelo rótulo).

@@ -21,6 +21,7 @@
 # env:   S2PKG  (build/s2pkg)            APP (build/opensims2.app/Contents/MacOS/opensims2)
 #        DATA   (data/game)               SOAK_TICKS (129600)
 #        SOAK_JOBS (4)                    SOAK_HANG (seconds per command, default 900; app 300)
+#        SOAK_KEEP_LOGS=1 keeps the autonomy logs in OUT/logs/<lot>.log.
 #        SOAK_NO_APP=1 skips the app run. SOAK_NO_LLDB=1 skips the backtrace.
 #        SOAK_DIALOG (-1): the button every dialog gets at once; -1 lets them time out.
 # The report is a markdown table (docs/soak-report.md by default); the raw
@@ -104,7 +105,7 @@ one() { # one <lot> <outdir>
                   if (what[n] == "Leave") continue
                   printf "%s|autonomy|%s in \"%s\" since tick %d (%.1f game hours at the end)\n", (what[n] == "Falecer" ? "died" : "stuck"), n, what[n], start[n], (total-start[n])/1800 } }
     ' "$log" >>"$res"
-    rm -f "$log"
+    if [ -n "${SOAK_KEEP_LOGS:-}" ]; then mkdir -p "$out/logs"; mv "$log" "$out/logs/$name.log"; else rm -f "$log"; fi
 
     # 2. lot-save round trip
     log="$scratch/save.log"; t0=$(date +%s)
@@ -153,8 +154,8 @@ if [ ${#LOTS[@]} -eq 0 ]; then
     done
 fi
 if [ -z "$REPORT_ONLY" ]; then
-    rm -rf "$OUT/results" "$OUT/scratch"; mkdir -p "$OUT/results"
-    export S2PKG APP DATA SOAK_TICKS SOAK_HANG SOAK_NO_APP SOAK_NO_LLDB SOAK_STUCK_TICKS SOAK_DIALOG
+    rm -rf "$OUT/results" "$OUT/scratch" "$OUT/logs"; mkdir -p "$OUT/results"
+    export SOAK_KEEP_LOGS S2PKG APP DATA SOAK_TICKS SOAK_HANG SOAK_NO_APP SOAK_NO_LLDB SOAK_STUCK_TICKS SOAK_DIALOG
     printf '%s\n' "${LOTS[@]}" | xargs -P "$SOAK_JOBS" -I{} "$0" --one {} "$OUT"
 fi
 

@@ -145,7 +145,8 @@ static void testDiagonalWalls() {
 }
 
 // Set to Next 8 (same tile, after the target), 9 (adjacent to the object in
-// a local: +X, -X, +Y, -Y) and 34 (within one tile).
+// a local: the last object of each side, +X, +Y, -X, -Y) and 34 (within one
+// tile).
 static void testSetToNextTiles() {
     CodeLibrary code;
     VM vm(code);
@@ -181,7 +182,7 @@ static void testSetToNextTiles() {
     t = vm.start(a.id, 0x1001);
     vm.run(t);
     check(t.status == Thread::Status::Finished && t.temps[0] == east.id && t.temps[1] == west.id,
-          "Set to Next 9: +X, -X, +Y, -Y");
+          "Set to Next 9: +X, +Y, -X, -Y");
     // Within one tile of a: b, east, west, diag (by ID), not a itself nor the far one.
     code.add(kGroup, 0x1002,
              tree({expr(Local, 0, Assign, Lit, a.id, go(1), E), expr(StackId, 0, Assign, Lit, 0, go(2), E),
@@ -190,6 +191,19 @@ static void testSetToNextTiles() {
     t = vm.start(a.id, 0x1002);
     vm.run(t);
     check(t.status == Thread::Status::Finished && t.temps[0] == 4, "Set to Next 34 within one tile");
+    // One object a side, the tile's last (TrySetToNext: LastValidObjectOnTile),
+    // and on from the side of the target: from b, on a's own tile, none.
+    Object& east2 = place(vm, 4, 3);
+    code.add(kGroup, 0x1003,
+             tree({expr(Local, 0, Assign, Lit, a.id, go(1), E), expr(StackId, 0, Assign, Lit, 0, go(2), E),
+                   stn(9, 0, go(3), E), expr(Temp, 0, Assign, StackId, 0, go(4), E), stn(9, 0, go(5), E),
+                   expr(Temp, 1, Assign, StackId, 0, go(6), E), expr(StackId, 0, Assign, Lit, b.id, go(7), E),
+                   stn(9, 0, E, T)},
+                  0, 1));
+    t = vm.start(a.id, 0x1003);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && t.temps[0] == east2.id && t.temps[1] == west.id,
+          "Set to Next 9: the last object of a side; a target on the anchor's tile ends it");
 
     check(VM::blocksRouting(a) && !VM::blocksRouting(held), "objects in slots do not block");
     a.data[objdata::Flags] = 0x10;

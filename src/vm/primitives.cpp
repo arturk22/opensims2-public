@@ -333,7 +333,13 @@ Exit setToNext(Context& c) {
         auto it = std::upper_bound(ids.begin(), ids.end(), current);
         return found(it == ids.end() ? ids.front() : *it);
     }
-    case 9: { // adjacent to the object in the local: tiles +X, -X, +Y, -Y, in its room
+    case 9: { // adjacent to the object in the local (TrySetToNext, Mac BV 0xe48300..): one object a side,
+              // the last one on the tile (nTSWorld::LastValidObjectOnTile), in the anchor's room, the
+              // sides in the order +X, +Y, -X, -Y; the search goes on from the side of the target's
+              // tile (relative to the anchor), so a target on no side ends it. Walking every object of
+              // the four tiles (by ID) instead, "Set to Next - Good Dining Chair", which goes round a
+              // tile's objects with type 8 between, came back to a chair it had left and spun out the
+              // instruction budget (N002_Lot22).
         const int16_t anchorId = c.get(0x19, o[6]);
         const Object* anchor = c.vm.object(anchorId);
         if (!anchor)
@@ -342,17 +348,34 @@ Exit setToNext(Context& c) {
             return none();
         const TilePos at = VM::tileOf(*anchor);
         const int16_t room = c.vm.world ? c.vm.world->room(at) : 0;
-        std::vector<ObjectId> ids;
-        for (const auto [dx, dy] : {std::pair{1, 0}, std::pair{-1, 0}, std::pair{0, 1}, std::pair{0, -1}}) {
-            const TilePos t{at.x + dx, at.y + dy, at.level};
-            if (c.vm.world && (!c.vm.world->contains(t) || c.vm.world->room(t) != room))
-                continue;
-            for (ObjectId id : c.vm.objectsOnTile(t))
-                ids.push_back(id);
+        int dx = 1, dy = 0;
+        auto advance = [&] { // the next side; false after -Y
+            if (dx >= 1)
+                dx = 0, dy = 1;
+            else if (dx < 0)
+                dx = 0, dy = -1;
+            else if (dy < 1)
+                return false;
+            else
+                dx = -1, dy = 0;
+            return true;
+        };
+        if (const Object* x = current ? c.vm.object(current) : nullptr) {
+            const TilePos t = VM::tileOf(*x);
+            dx = std::clamp(t.x - at.x, -1, 1), dy = std::clamp(t.y - at.y, -1, 1);
+            if (!advance())
+                return none();
         }
-        auto it = std::find(ids.begin(), ids.end(), current);
-        it = it == ids.end() ? ids.begin() : it + 1;
-        return it == ids.end() ? none() : found(*it);
+        for (;;) {
+            const TilePos t{at.x + dx, at.y + dy, at.level};
+            if (!c.vm.world || c.vm.world->contains(t)) {
+                const auto ids = c.vm.objectsOnTile(t);
+                if (!ids.empty() && (!c.vm.world || c.vm.world->room(t) == room))
+                    return found(ids.back());
+            }
+            if (!advance())
+                return none();
+        }
     }
     case 34: { // within one tile of the object in the local (the anchor's tile and the eight around it), by ID
         const Object* anchor = c.vm.object(c.get(0x19, o[6]));
