@@ -1068,9 +1068,18 @@ carrinho" `0xECCDF663`, a aba do carrinho `0x8CCD0001` (grade 3 × 2,
 "tirar" `0x6CCDF7D7`), "%s Itens no Carrinho" (`0xCCCDF42D`) e "Total: %s"
 (`0xACCDF819`); na célula, a janela 7 (tique) marca o que está no carrinho e
 a 8 (armário) o que a família já tem (inferido pelas imagens). `OnOk` →
-`SaveCartStandard`: cada item que muda o número de conjuntos completos da
-família (`GetNumCompleteOutfits` por idade e gênero) é aceito; se nenhum
-completa um conjunto pergunta (UIText STR# 0xCA #7) antes; então
+`SaveCartStandard` (BV `0x406bfc`; **lido na rodada 15**): as partes de
+cima e de baixo do carrinho (os conjuntos inteiros, `outfit` & 8, ficam de
+fora) dão as idades pedidas por gênero (1 mulher, 2 homem); para cada um dos
+7 bits de idade, o `cTSFamily::GetNumCompleteOutfits` (BV `0x47f258`: os
+itens da idade, gênero, espécie 1 e categoria — ou sem categoria —, sem os
+de conteúdo próprio com `allowCustomContent` falso; cima × baixo +
+conjuntos) do bin com essas peças tem de passar o do bin sozinho em cada
+gênero pedido; se alguma falha pergunta (sim/não do gerente de diálogos,
+vtable `0x130` estilo 3, UIText STR# 0xCA #7; `0x5301814C` = sim): sim
+compra, não fecha a arara sem comprar (o `OnOk` devolve verdadeiro dos dois
+jeitos). O UIText do jogo base não tem o STR# 0xCA (é de expansão): o app
+usa um texto seu (inferido). `r15-arara-pergunta.jpg`. Então
 `cTSShoppingCart::CompletePurchase` (slot 0x6C) põe cada item no bin da
 família (`cTSFamily::AddClothing`) e tira o total do dinheiro (vtable 0xB0,
 despesa 6). Na VM o OK põe as chaves GZPS do carrinho
@@ -1078,8 +1087,7 @@ despesa 6). Na VM o OK põe as chaves GZPS do carrinho
 o `hood_save` grava cada item novo como um BINX (`binidx` 1, `objectidx` 2,
 o resto 0, como os do jogo) com o 3IDR da mesma instância (vazio, o bin
 `0x6C4F359D` da família, o GZPS); instância: uma depois do maior BINX/3IDR
-do pacote (inferido). A pergunta do `SaveCartStandard` não foi feita; a
-grade mostra o catálogo do CAS da idade/gênero/categoria (quem enche a
+do pacote (inferido). A grade mostra o catálogo do CAS da idade/gênero/categoria (quem enche a
 lista `+0x1a8` da grade não foi achado; inferido); o OK só liga com algo no
 carrinho e dinheiro para pagar (inferido).
 

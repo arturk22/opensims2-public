@@ -221,11 +221,63 @@ void DialogWindow::answer(vm::Dialog& d, int index) {
         else
             applyOutfit(d.outfitSim, 0x400, s.chosen[0], s.chosen[1], {});
     }
+    if (index == 0 && d.cls.cls == vm::DialogClass::ClothingPurchase && cartCompletesOutfits) {
+        // SaveCartStandard: a cart whose tops and bottoms add no complete
+        // outfit for an age and gender they are for asks first (UIText
+        // STR# 0xCA #7); the answer comes back through confirmCart.
+        Shop& s = shop(d);
+        if (!s.confirmed && !cartCompletesOutfits(d.outfitSim, d.outfitCategory, d.cart)) {
+            s.asking = true;
+            return;
+        }
+    }
     if (d.cls.cls == vm::DialogClass::Vanity && vanityDone)
         vanityDone(d.outfitSim, index == 0);
     d.answer = index;
     if (log) {
         std::printf("opensims2: dialog \"%s\": %s\n", d.title.c_str(), d.buttons[size_t(index)].c_str());
+        std::fflush(stdout);
+    }
+}
+
+// The rack's question (SaveCartStandard): a yes/no cTSObjectDialog with
+// UIText STR# 0xCA #7 (the dialog manager's vtable 0x130 with style 3; the
+// answer 0x5301814C is "yes"). The base game's UIText has no STR# 0xCA (an
+// expansion's): then a text of ours (inferred).
+vm::Dialog DialogWindow::cartQuestion(const vm::Dialog& d) {
+    vm::Dialog q;
+    q.id = d.id ^ 0x40000000u;
+    q.type = vm::dialogtype::YesNo;
+    std::optional<std::string> text;
+    if (res_)
+        text = res_->string(UiStringRef{0x7FA7DC7C, 0xCA, 6});
+    q.message = text.value_or("Estas roupas n\xC3\xA3o completam nenhum conjunto. Comprar assim mesmo?");
+    auto button = [&](uint32_t i, const char* fallback) {
+        std::optional<std::string> t;
+        if (res_)
+            t = res_->string(UiStringRef{0x7FA7DC7C, 0x8E, i}); // STR# 0x8E: 1 OK, 2 Cancel, 3 Yes, 4 No
+        return t.value_or(fallback);
+    };
+    q.buttons = {button(2, "Sim"), button(3, "N\xC3\xA3o")};
+    return q;
+}
+
+// The question answered: yes completes the purchase (CompletePurchase),
+// no closes the rack all the same with nothing bought (OnOk returns true
+// either way).
+void DialogWindow::confirmCart(vm::Dialog& d, bool yes) {
+    Shop& s = shop(d);
+    s.asking = false;
+    s.confirmed = true;
+    if (yes) {
+        answer(d, 0);
+        return;
+    }
+    d.cart.clear();
+    s.cart.clear();
+    d.answer = 0; // OK with an empty cart (past okEnabled: nothing to pay)
+    if (log) {
+        std::printf("opensims2: dialog \"%s\": nothing bought\n", d.title.c_str());
         std::fflush(stdout);
     }
 }
@@ -1896,6 +1948,8 @@ void DialogWindow::draw(UiScreen& out, const vm::Dialog& d, int width, int heigh
         return;
     }
     layoutUiElement(L.root, L.x0, L.y0, *res_, *fonts_, out, hk);
+    if (d.cls.cls == vm::DialogClass::ClothingPurchase && shop(d).asking)
+        draw(out, cartQuestion(d), width, height);
 }
 
 void DialogWindow::hover(const vm::Dialog& d, float x, float y, int width, int height) {
@@ -1908,6 +1962,13 @@ void DialogWindow::hover(const vm::Dialog& d, float x, float y, int width, int h
 }
 
 bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height) {
+    if (d.cls.cls == vm::DialogClass::ClothingPurchase && shop(d).asking) {
+        const vm::Dialog q = cartQuestion(d);
+        for (const Region& g : layout(q, width, height).regions)
+            if (g.kind == Hit::Button && insideRect(g.rect, x, y))
+                confirmCart(d, g.value == 0);
+        return true;
+    }
     const Layout L = layout(d, width, height);
     for (const Region& g : L.regions) {
         if (!insideRect(g.rect, x, y))
@@ -2132,6 +2193,12 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
 }
 
 bool DialogWindow::key(vm::Dialog& d, int keyCode, const std::string& typed) {
+    if (d.cls.cls == vm::DialogClass::ClothingPurchase && shop(d).asking) {
+        // The yes/no's keys: Return yes, Esc no (cTSObjectDialog::SetupDialog).
+        if (keyCode == kReturn || keyCode == kEnter || keyCode == kEscape)
+            confirmCart(d, keyCode != kEscape);
+        return true;
+    }
     const bool yesNo = d.cls.cls == vm::DialogClass::Object &&
                        (d.type == vm::dialogtype::YesNo || d.type == vm::dialogtype::YesNoCancel);
     if (keyCode == kReturn || keyCode == kEnter) {

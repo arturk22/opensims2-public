@@ -224,6 +224,28 @@ int main() {
         check(d.cart.size() == 2 && DialogWindow::okEnabled(d), "rack: OK on");
         check(clickAt(find(DialogWindow::Hit::Button, 0)) && d.answer == 0, "rack: OK");
 
+        // SaveCartStandard's question: a cart that completes no outfit asks
+        // (yes buys; no closes the rack with nothing bought).
+        for (const bool yes : {true, false}) {
+            Fixture q(dialogtype::ClothingPurchase);
+            Dialog& qd = q.vm.dialogs.at(q.me->id);
+            qd.pricePerItem = 10, qd.fillFunds = 1000;
+            qd.cart = {Tgi{0xEBCF3E27, 1, 404, 0}};
+            DialogWindow qw(q.vm, &ui, nullptr);
+            qw.log = false;
+            qw.shopItems = w.shopItems;
+            qw.cartCompletesOutfits = [](int16_t, uint32_t, const std::vector<Tgi>&) { return false; };
+            for (const auto& r : qw.layout(qd, 1280, 720).regions)
+                if (r.kind == DialogWindow::Hit::Button && r.value == 0) {
+                    qw.click(qd, (r.rect[0] + r.rect[2]) / 2, (r.rect[1] + r.rect[3]) / 2, 1280, 720);
+                    break;
+                }
+            check(qw.askingCart(qd) && qd.answer < 0, "rack: OK asks when nothing completes an outfit");
+            qw.key(qd, yes ? 36 : 53, {});
+            check(!qw.askingCart(qd) && qd.answer == 0 && qd.cart.size() == (yes ? 1u : 0u),
+                  yes ? "rack: yes buys the cart" : "rack: no closes with nothing bought");
+        }
+
         Fixture g(dialogtype::ClothingTryOn);
         Dialog& t = g.vm.dialogs.at(g.me->id);
         DialogWindow tw(g.vm, &ui, nullptr);

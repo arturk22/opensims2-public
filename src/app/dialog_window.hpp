@@ -129,6 +129,14 @@ public:
     std::function<std::vector<ShopItem>(int16_t sim, uint32_t category, uint32_t partBit, uint32_t age, uint32_t gender)>
         shopItems;
     std::function<std::pair<uint32_t, uint32_t>(int16_t sim)> simAgeGender;
+    // The rack's OK (SaveCartStandard): whether the cart adds a complete
+    // outfit for every age and gender its tops and bottoms are for
+    // (cTSFamily::GetNumCompleteOutfits of the family bin with the cart's
+    // tops and bottoms against without); false asks first. Null: no
+    // question.
+    std::function<bool(int16_t sim, uint32_t category, const std::vector<Tgi>& cart)> cartCompletesOutfits;
+    // The rack's question is up (headless runs and tests).
+    bool askingCart(const vm::Dialog& d) { return shop(d).asking; }
     // The vanity (21): the host keeps the look being edited. Items of a
     // group (VanityGroup; a "none" first where the group may be empty, its
     // thumb null), a pick, and the end: OK writes the character file and
@@ -186,7 +194,10 @@ private:
         std::vector<ShopItem> cart;
         std::map<std::tuple<int, uint32_t, uint32_t>, std::vector<ShopItem>> lists;
         std::array<std::string, 3> chosen; // try-on: top, bottom, whole outfit
+        bool asking = false, confirmed = false; // the SaveCartStandard question up / answered
     };
+    vm::Dialog cartQuestion(const vm::Dialog& d);
+    void confirmCart(vm::Dialog& d, bool yes);
     Shop& shop(const vm::Dialog& d);
     const std::vector<ShopItem>& shopList(const vm::Dialog& d, Shop& s, int tab);
     struct Vanity {

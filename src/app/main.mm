@@ -1587,6 +1587,61 @@ void setupWardrobe(os2::ResourceIndex& index) {
         return out;
     };
 
+    // The rack's OK (cTSWinProcClothingPurchaseDialog::SaveCartStandard, BV
+    // 0x406bfc): the cart's tops and bottoms (whole outfits left out) give
+    // the ages wanted per gender (gender 1 female, 2 male); for each age bit
+    // of the seven, cTSFamily::GetNumCompleteOutfits (BV 0x47f258) of the
+    // family bin with those items must be above the bin's alone, for each
+    // gender wanted, or the rack asks. GetNumCompleteOutfits counts the
+    // items of the age, gender, species 1 and the category (or none) with
+    // the outfit bits 4 (tops), 0x10 (bottoms), 8 (whole): tops x bottoms +
+    // whole outfits.
+    w.cartCompletesOutfits = [load](int16_t sim, uint32_t category, const std::vector<os2::Tgi>& cart) {
+        Cas& c = load();
+        std::vector<const os2::SimPart*> bin, added;
+        if (const std::vector<os2::Tgi>* b = familyBin(sim))
+            for (const os2::Tgi& k : *b)
+                if (const os2::SimPart* p = c.part(k))
+                    bin.push_back(p);
+        uint32_t female = 0, male = 0;
+        for (const os2::Tgi& k : cart)
+            if (const os2::SimPart* p = c.part(k); p && !(p->number("outfit") & 8)) {
+                if (p->number("gender") & 1)
+                    female |= p->number("age");
+                if (p->number("gender") & 2)
+                    male |= p->number("age");
+                added.push_back(p);
+            }
+        auto count = [category](const std::vector<const os2::SimPart*>& a, const std::vector<const os2::SimPart*>& b,
+                                uint32_t age, uint32_t gender) {
+            int tops = 0, bottoms = 0, whole = 0;
+            for (const auto* list : {&a, &b})
+                for (const os2::SimPart* p : *list) {
+                    const uint32_t cat = p->number("category"), species = p->property("species").empty() ? 1 : p->number("species");
+                    if (!(p->number("age") & age) || !(p->number("gender") & gender) || !(species & 1) ||
+                        (cat && !(cat & category)))
+                        continue;
+                    const uint32_t o = p->number("outfit");
+                    if (o & 4)
+                        ++tops;
+                    else if (o & 0x10)
+                        ++bottoms;
+                    else if (o & 8)
+                        ++whole;
+                }
+            return tops * bottoms + whole;
+        };
+        for (uint32_t age = 1; age <= 0x40; age <<= 1) {
+            bool more = true;
+            if (female & age)
+                more = count(bin, {}, age, 1) < count(bin, added, age, 1);
+            if (male & age)
+                more = more && count(bin, {}, age, 2) < count(bin, added, age, 2);
+            if (!more)
+                return false;
+        }
+        return true;
+    };
     // The vanity (cTSWinProcVanityDialog): the look being edited per Sim,
     // the choices of each group as CAS offers them (cas_mode.cpp), OK
     // writing the character file and dressing the Sim again in what it
