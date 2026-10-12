@@ -1292,7 +1292,11 @@ preço (§7.9).
 sobre um objeto: se ele **não tem partes recoloríveis** → erro (STR# 0x8D
 #16 do grupo `0x7FA7DC7C`); se não há dinheiro para o **preço da
 ferramenta** (o produto do catálogo da ferramenta, `+0x4C`, lido no
-`Init`) → erro #15. Soltar sobre o mesmo objeto abre o
+`Init`) → erro #15. Textos (rodada 12, `Text/UIText.package`, STR# 0x8D, grupo local
+= `0x7FA7DC7C`; os números são 1-based como os do código, entradas 14 e 15
+do dump): #15 "Insufficient Funds!", #16 "This object is not designable."
+(o comentário da EA: "message appears when trying to use design mode tool
+on non-designable object"). Soltar sobre o mesmo objeto abre o
 `cTSWinProcObjectDesignDialog::Show(objeto, preço, x, y)` (BV `0xa16e64`).
 
 - "Recolorível" (`nTSSG::GetDesignModeInfo`, BV `0x9e2904`): percorre os
