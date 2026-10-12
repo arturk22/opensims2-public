@@ -474,8 +474,9 @@ ordem**: `ConvertFacialDataToPositionsUVs` (BV `0x804f98`), o caminho dos
 dados com (delta, UV), percorre os vértices do `cMeshEntry` e, para cada
 um, procura nos pares o primeiro com o mesmo UV (|Δu| e |Δv| < 0,0001,
 comparando também o sinal de cada coordenada com 0) e soma o delta à
-posição; com o modo 3 (idoso, homem, nível `0xF`) ou modo 4 (bebê) não
-soma nada. Só o `ConvertFacialDataToPositions` (BV `0x805498`, formato sem
+posição; não soma nada no modo 3 para o bebê e para (idade 4, sexo 1, nível
+`0xF`), nem no modo 4 para o bebê (índices de idade do editor, sexo 1
+inferido como homem). Só o `ConvertFacialDataToPositions` (BV `0x805498`, formato sem
 UV) casa por índice. O que o opensims2 faz (casar por UV ao ler, gravar na
 ordem das faces do GMDC) é o mesmo que o jogo aceita.
 
