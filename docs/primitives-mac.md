@@ -2233,8 +2233,8 @@ a menos de 0,5, senão o centro do tile livre mais perto, no mesmo cômodo
 primeiro, até 10 tiles; inferido até a rodada 15, ver abaixo), o dado de
 pessoa 34 zerado e a árvore de cleanup rodada; os
 dados além do 87 não existem na VM. `S2PKG_NO_RESET=1` mantém o
-Main morto para depurar. O orçamento de instruções (20000 por turno, a "Too
-many iterations" 0x44d do jogo, cujo limite não foi lido) também reinicia.
+Main morto para depurar. O orçamento de instruções (a "Too many
+iterations" 0x44d do jogo: 100000 nós por tick, rodada 16) também reinicia.
 
 **O lugar livre do reset (rodada 15, binário).** O `cTSPerson::OnCleanup`
 (BV `0xadcbcc`) pega a posição da pessoa (vtable `0x2dc`); fora do lote
@@ -2714,7 +2714,7 @@ volta** (o opensims2 escrevia o índice no 2º operando e o valor tirado no
   `AddMember`). No opensims2: `vm::addToFamily`, com o bin pelos ganchos
   `VM::memberClothing`/`clothingFits` que o app liga ao catálogo do CAS
   (idade e gênero como as máscaras, a terceira inferida "passa"); a espera
-  pela mudança não é feita (os fundos vêm na hora).
+  pela mudança feita na rodada 16 (abaixo).
 - 6 "remove from family": sem família (61 = 0) ou família que o bairro não
   tem → falso; senão `RemoveFromFamily` e verdadeiro.
 - 13 aborta as interações associadas ao stack object no gerenciador de
@@ -2756,17 +2756,129 @@ volta** (o opensims2 escrevia o índice no 2º operando e o valor tirado no
 O BV converte os operandos da versão 0 do base
 (`ManageInventoryParam::UpgradeVersion`, `0xac3f00`): byte 0 bits 0–1 =
 tipo (global, lote, família, vizinho; o BV tem um 5º, 4), **0x04 =
-contados** (vira 0x08), bits 3–5 = um número de 3 bits (vira bits 4–6;
-passado à adição contada e à operação 1: não entendido), 0x80 = uma flag
-da busca (3). Byte 9 = flags de busca (visível, memória, compras:
-`CatManageInventoryMatchFlags`); nos singulares o BV as põe em 0x0C.
-Inventário inexistente → erro 0x57. Índices a partir de 1 (o operando −
-1; confirmado). **GUID 0 = o do stack object** (sem ele: erro 0x15) nas
-singulares **0, 2 e 3** e nas contadas 0, 2, 4, 6 e 7. No opensims2 ainda só na 0: sem as flags de busca, o GUID do stack object nas 2 e 3 acha tokens que não devia (no soak semeado do N001_Lot68 morreram Sims); fica para quando as flags forem feitas.
-A numeração 0–9 das singulares bate com a do opensims2; as contadas têm
-operações próprias (1 adiciona a partir de um índice, 5 com índice < 1 →
-erro 0x74, 11 copia para outro inventário pelo byte 6 …) que o opensims2
-ainda trata como as singulares.
+contados** (vira 0x08), bits 3–5 (viram 4–6), 0x80 = busca de trás para
+frente (nenhum BHAV do base). Byte 9: nos singulares o BV o põe em **0x0C**;
+nos contados é a **categoria**. Inventário inexistente → erro 0x57. Índices
+a partir de 1 (o operando − 1).
+
+**Flags de busca (rodada 16)**: `FUN_01676420` dá o valor = bits 4–5 do
+byte 0 convertido (= **bits 3–4 do byte 0 do base**) | (byte 9 & 3) << 3;
+`FUN_016764b4` dá a máscara = (byte 9 >> 2) & 0x1F. Com o 0x0C dos
+singulares: máscara 0x03, valor = bits 3–4 do base. As flags do token
+(`cTSInventoryToken +0xC`, `CatManageInventoryMatchFlags`): 0x01 visível,
+0x02 memória, **0x04 marcado para apagar**, 0x08 compras. Um token casa
+(`MatchesGuidAndFlags` `0x16644d0`, `FindNextSingularTokenOfGUID`
+`0x494038`) quando o GUID é o pedido, não tem 0x04, `flags & máscara ==
+valor & máscara` e o "instance ID" (`+0x1C`, dados de instância do BV) é 0.
+No base: 0x03 (vizinho, valor 0: tokens sem visível e sem memória), 0x1B
+(visível + memória, as memórias), 0x13 (só memória, os marcadores).
+
+**GUID 0 = o do stack object** (sem ele: erro 0x15) nas singulares 0, 2 e 3
+e nas contadas 0, 2, 4, 6 e 7 — agora feito, junto com as flags.
+
+Singulares (`cTSInventory`, vtable no `0x27c0f98`):
+- 0 `AddSingularToken(guid, valor, 0)`: o token novo recebe o **valor como
+  flags**; falso a partir de 0x7FFF tokens.
+- 1 `RemoveSingularTokenAtIndex`: falso fora do intervalo.
+- 2 `RemoveAllSingularTokenOfGUID(guid, valor, máscara, 0)`: **falso se
+  nada saiu**.
+- 3 `FindNextSingularTokenOfGUID(guid, início, valor, máscara, de trás)`: o
+  início é o operando 1 (o índice achado antes; 0 = do começo); de trás:
+  a partir do anterior a ele (0 = do fim); índice achado (+1) no operando 1
+  (que não se escreve: erro 0x13); falso se nenhum.
+- 4/5 empilha/desempilha propriedade do token no índice (falso fora; 5 vazio
+  falso).
+- 6 lê o token no índice para o token temporário (índice **a partir de 0**
+  no campo 3, como o jogo guarda em `+0x1A6` e o save grava).
+- 7/8 propriedade (a partir de 1) do token temporário; falso fora.
+- 9 grava o token temporário onde foi lido; com o temporário lido de
+  contados, roda a **9 contada** (o tipo vem do temporário).
+- 10 contagem; 11 cópia do temporário (com as flags dele); 12–19 só BV (a 12
+  busca qualquer GUID, a 13 conta com flags, 14/15 propriedades por índice,
+  16–19 objetos de tokens). Outras: falso.
+
+Contados (o token guarda **contagem e categoria nas propriedades 0 e 1**,
+`AddCountedToken(guid, categoria, flags, n)` `0x496ac4`; o opensims2 agora
+também):
+- 0 soma n à contagem do GUID+categoria (novo: flags = bits 3–5 do byte 0 do
+  base, propriedades [n, categoria]; máximo 0x7FFF); falso se n ≤ 0.
+- 1 o mesmo para o token no índice (verdadeiro se existe).
+- 2 `SubtractCountedToken(guid, categoria, n)`: some com 0; falso se não há
+  ou n ≤ 0. 3 o mesmo pelo índice.
+- 4 `RemoveCountedToken(guid, categoria)`; 5 tira no índice (índice < 1:
+  **erro 0x74**).
+- 6 procura GUID+categoria: contagem no operando 2, índice no 1.
+- 7 lê GUID+categoria para o temporário; 8 lê no índice.
+- 9 `FindNextCountedTokenOfCategory(categoria, operando 1 − 1)`: índice no
+  operando 1, GUID nos operandos 2 e 2+1 (sem os dois: 0x78).
+- 10 contagem; 11 copia o token no índice para o inventário do tipo byte 6 &
+  7 (ID no operando 2) somando a contagem lá, se byte 6 & 0x08 (vtable 0xC4,
+  `0x497eb4`). Outras: falso.
+
+Soak semeado (N001_Lot68, N002_Lot10, N001_Lot16, N001_Lot11, sementes 1–8,
+43200 ticks) com só esta mudança: interações verdadeiras 2926 → 2920,
+falsas 676 → 635, mortes 9 → 9 (antes, o GUID 0 sem as flags derrubava o
+N001_Lot68 de 137 para 45).
+
+### Rodada 16: chamadas, limites, atributos de tipo, Look At e Generic Sims Call 4
+
+- **Argumentos de chamada** (`cTSTreeSim::DoNodeAction` `0xe1b18c`, `Gosub`
+  `0xe1a428`, `cTSTreeStackElem::SetParams` `0xe1759c`): a árvore chamada
+  recebe tantos argumentos quanto declara, **até 8**: literais = os u16 nos
+  bytes 0, 2, …, 14 (os operandos são o próprio vetor: o 5º ao 8º vêm dos
+  bytes 8–15); bytes 0–7 todos 0xFF = os temps (lista nula: o Gosub usa os
+  temps do tree sim); byte 12 bit 0 = pares (dono, dado) em 0, 3, 6, 9, só
+  para árvores de 1–8 argumentos (de 4 a 8 recebem 4; o resto 0;
+  `DAT_0273b4f8` = zeros); byte 12 bit 1 ("meus parâmetros") não existe na
+  versão 0. Árvore que não existe: erro 0x11; árvore sem nós: o Gosub
+  recusa e o `DoNodeAction` lança **1000 "Stack overflow"** (era nosso
+  "tree has no instructions"); pilha de no máximo **1000** quadros
+  (`DAT_0277ea90`, 0x452), não 128; **100000 nós por tick** por tree sim
+  (`DAT_0277ea94`; 300000 com uma flag 0x33 do simulador, não entendida;
+  erro 0x44D).
+- **Run Tree by Name** (`TryCallNamedTree` `0xb06244`): sem 0x10/0x20 os
+  parâmetros são uma lista nula, ou seja, **os temps do tree sim onde a
+  árvore roda**: no modo 1 (no stack object), os temps dele. 'Call "Look
+  At" For All' do controle de conversa põe temps 0–2 do Sim (alvo, duração,
+  velocidade) e roda "CT - Look At" nele; com os temps de quem chamava a
+  velocidade era 0. 0x20 copia até 4 parâmetros meus; 0x10 três pares (o 4º
+  = 0).
+- **Atributos de tipo** (donos 0x24/0x25): `cTSObject::GetSelector` →
+  `cTSObjectSelector::CountTypeAttributes`/`GetTypeAttributes`
+  (`0x51e5e8`/`0x51e6c8`): no gerenciador de atributos de tipo pela chave =
+  campo 0xCD (= campo 29 do editor, o **proxy GUID**) ou, sem ele, 0xCA (14,
+  o GUID); o gerenciador tem uma entrada para cada objeto de catálogo com o
+  campo 90 ≠ 0, com tantos atributos (`PopulateTypeAttributesFromSelectors`
+  `0x4e4b0c`). Os campos ≥ 0xC9 são os 10 campos de 32 bits do OBJD
+  (`cEdithObjectDefinition::GetFieldAddress` `0x58d0c0`: 0xC9 versão, 0xCA
+  GUID, 0xCD proxy GUID, …). Índice fora: erro 0x40 (sem texto na tabela do
+  jogo). Nenhuma Expression do base usa 0x24/0x25.
+- **Look At** (`nTSSG::cAnimatable::try_look_at` `0x6a19f8`): só Sim (0x42),
+  no máximo 25 pedidos por Sim por turno (0x95); 0x80 câmera, 0x01 STOP,
+  senão o alvo (inexistente: **erro 0x17**; sem modelo: 0x4B); velocidades
+  byte 4 × 2 (temp 1 com 0x08) e byte 5 × 2 (temp 1/2 com bits 0x02/0x01 do
+  byte 15) em °/s precisam ser **> 0** (erro 0x51, também no STOP; o valor
+  do temp vai como inteiro sem sinal, então só 0 falha); STOP para os
+  olhares e é verdadeiro; sem 0x20 um alvo em **outro cômodo** é falso; sem
+  0x40 o jogo testa se a cabeça alcança o ponto (um teste no esqueleto, por
+  espécie; não feito); slot byte 8 do tipo byte 14 (0 = 3/4 da altura do
+  alvo, 1 alvo, 2 rota, 3 contenção; fora: 0x1B); duração s16 6 ou temp 0
+  (0x10), −1 = um valor padrão (tunable); a árvore de evento é o u16 9. O
+  pedido roda sozinho: a primitiva é verdadeira na hora.
+- **Generic Sims Call 4**: o jogo de fato espera (`TryGenericSimCall`
+  `0xe36834`): na 1ª passada guarda a família no estado da primitiva
+  (`cITSTreeStackElem` vtable 0x4C); se o Sim é o último membro de uma
+  família com casa e o lote existe, manda `0xEC1AAC03` (o
+  `cTSGameStateController::EvictFamily`: devolve o preço do lote, salvo tipos
+  2/3; lote da família 0; flag 8 no lote) e devolve 2; nas passadas
+  seguintes espera a família ficar sem casa e então temp 0 := os fundos.
+  Feito (`VM::evictFamily`, ligado pelo `hood_bridge`; o `hood-save` grava o
+  lote 0 da família e a flag 8 do lote).
+- **Vizinhos sem definição**: o jogo tem a definição de todo vizinho (os
+  arquivos de personagem). O opensims2 só carregava as dos Sims do lote:
+  dono 0x26 ("neighbor N has no definition") e Test Object Type falhavam e
+  as visitas não vinham. Agora um GUID sem OBJD é procurado uma vez entre
+  os arquivos de personagem do bairro (`vm::useCharacterFiles`).
 
 ### Motivos do PERS
 
