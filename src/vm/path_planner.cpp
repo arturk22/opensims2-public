@@ -126,6 +126,21 @@ PathPlanner::PathPlanner(const World& world) : world_(&world), signature_(signat
         p.stair = int(i);
         portals_.push_back(p);
     }
+    // Objects' portals (the pool ladder): between their two slots' points.
+    const auto& objectPortals = world.objectPortals();
+    for (size_t i = 0; i < objectPortals.size(); ++i) {
+        const World::ObjectPortal& o = objectPortals[i];
+        if (o.levelA < world.firstLevel() || o.levelA >= world.firstLevel() + levels ||
+            o.levelB < world.firstLevel() || o.levelB >= world.firstLevel() + levels)
+            continue;
+        Portal p;
+        p.levelA = o.levelA, p.levelB = o.levelB;
+        p.a = o.a, p.b = o.b;
+        p.cost = kPortalCost;
+        p.object = int(i);
+        p.oneWay = o.oneWay;
+        portals_.push_back(p);
+    }
     cells_ = static_;
     costs_ = staticCosts_;
 }
@@ -748,7 +763,7 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
                 const float extra = o.goal >= 0 ? usable[size_t(o.goal)].cost : 0;
                 relax(node, nq + size_t(sp), dist(s.p, o.p) * q.cost + extra);
             }
-            if (s.other >= 0 && !locked(size_t(s.portal), s.atA))
+            if (s.other >= 0 && (s.atA || !portals_[size_t(s.portal)].oneWay) && !locked(size_t(s.portal), s.atA))
                 relax(node, nq + size_t(s.other), portals_[size_t(s.portal)].cost);
         }
     }

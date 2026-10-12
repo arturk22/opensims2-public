@@ -326,6 +326,8 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             }
         }
     }
+    // The objects' own portals (the pool ladder).
+    vm.refreshObjectPortals();
 
     // The lot's relationships, by object ID (docs/data-findings.md §7). Two
     // values: ownership, from an object to a neighbor ID (Relationship's flag

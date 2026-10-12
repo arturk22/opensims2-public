@@ -8,6 +8,7 @@
 #include "vm/world.hpp"
 #include "formats/lot.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -1648,6 +1649,40 @@ static void testEscapeDiagonal() {
     check(planner.plan({3.4f, 3.5f}, 1, 1, {{6.5f, 1.5f, 0}}, p, why) && p.escaped, "planner: out of a diagonal wall's cells");
 }
 
+// Objects' portals (World::objectPortals, the pool ladder): a pool a level
+// down (VM level 0, its bottom a floor) and the deck; a swimmer leaves by
+// the portal, and a one-way portal (a slot whose partner does not name it
+// back) is not crossed backwards.
+static void testObjectPortals() {
+    World w(10, 10, 0, 2);
+    for (int x = 0; x < 10; ++x)
+        for (int y = 0; y < 10; ++y)
+            w.setWalkable({x, y, 0}, x >= 2 && x < 6 && y >= 2 && y < 8); // the pool's bottom
+    World::ObjectPortal ladder;
+    ladder.levelA = 0, ladder.levelB = 1;
+    ladder.a = {5.25f, 3.5f}, ladder.b = {7.0f, 3.5f};
+    w.setObjectPortals({ladder});
+    {
+        PathPlanner planner(w);
+        PlannedPath p;
+        RouteFail why;
+        check(planner.portals().size() == 1 && planner.portals()[0].object == 0, "object portal: in the planner");
+        check(planner.plan({3.0f, 6.0f}, 0, 1, {{8.5f, 8.5f, 0}}, p, why) && p.points.size() >= 2 &&
+                  std::any_of(p.points.begin(), p.points.end(), [](const auto& q) { return q.portal == 0; }),
+              "object portal: out of the pool by the ladder");
+        check(planner.plan({8.5f, 8.5f}, 1, 0, {{3.0f, 6.0f, 0}}, p, why), "object portal: into the pool by the ladder");
+    }
+    ladder.oneWay = true; // the diving board, were its pool slot not to name the deck's
+    w.setObjectPortals({ladder});
+    {
+        PathPlanner planner(w);
+        PlannedPath p;
+        RouteFail why;
+        check(planner.plan({3.0f, 6.0f}, 0, 1, {{8.5f, 8.5f, 0}}, p, why), "object portal: one way, a to b");
+        check(!planner.plan({8.5f, 8.5f}, 1, 0, {{3.0f, 6.0f, 0}}, p, why), "object portal: one way, not b to a");
+    }
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -1662,6 +1697,7 @@ int main() {
     testPlaceNearFree();
     testPathPlanner();
     testEscapeDiagonal();
+    testObjectPortals();
     testRouteResult();
     testBlockedBySim();
     testMutualBlock();

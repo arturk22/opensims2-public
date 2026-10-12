@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdlib>
+
 #include "formats/bhav.hpp"
 #include "formats/simantics.hpp"
 #include "formats/strings.hpp"
@@ -858,6 +860,10 @@ public:
     // tile centre of a square spiral where it fits, its room first
     // (routing.cpp). False: no place, left where it was.
     bool placeNearFree(Object& o);
+    // The portals objects make of their portal-pair routing slots (the pool
+    // ladder), into World::objectPortals (routing.cpp). Called when the lot
+    // loads and when build or buy mode changes it.
+    void refreshObjectPortals();
     // Objects placed on a tile (in the world and not in a slot), by ID.
     std::vector<ObjectId> objectsOnTile(TilePos t) const;
     // The tile's objects as above, each followed by what is in its slots (by
@@ -991,6 +997,10 @@ public:
     // and, with the scheduler running, starts its Main), as FreeSO does; off
     // for single trees (bhav-sweep), where nothing else would run.
     bool initCreatedObjects = false;
+    // Create New Object Instance tests the new object's place in the world
+    // (TSObjectCanSetPosition); OS2_NO_CREATE_PLACEMENT=1 turns it off to
+    // compare.
+    bool checkCreatedPlacement = std::getenv("OS2_NO_CREATE_PLACEMENT") == nullptr;
     // Doors and stairs run their portal trees (OBJf entry 15: TEST while
     // planning, the action on arrival; routing.cpp); off: the engine opens
     // the way itself (waits at doors, climbs the stairs with its own phases).

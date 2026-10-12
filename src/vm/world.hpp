@@ -132,6 +132,24 @@ public:
     void addStair(const Stair& s);
     const std::vector<Stair>& stairs() const { return stairs_; }
 
+    // A portal an object's model makes (cTSObject::PortalAddToPathPlannerImpl,
+    // BV 0xe22a44: a pair of its portal routing slots, docs/routing-mac.md
+    // §8): the pool ladder's, from the pool's bottom (a level down) to the
+    // deck. `a`/`b` are the two slots' points on their parts' levels; the
+    // parts and their routing slots go to the portal tree (OBJf entry 15).
+    struct ObjectPortal {
+        int levelA = 0, levelB = 0;
+        std::array<float, 2> a{}, b{};
+        int16_t partA = 0, partB = 0; // object IDs
+        int16_t slotA = 0, slotB = 0; // routing slot numbers in each part's SLOT
+        bool oneWay = false;          // from a to b only (the slot at b does not name a's)
+    };
+    void setObjectPortals(std::vector<ObjectPortal> p) {
+        ++revision_;
+        objectPortals_ = std::move(p);
+    }
+    const std::vector<ObjectPortal>& objectPortals() const { return objectPortals_; }
+
     // The doors openDoor opened, in order: the tile, the facing and whether
     // the door stands in a diagonal wall (the path planner makes each a
     // portal, path_planner.hpp).
@@ -172,6 +190,7 @@ private:
     uint32_t revision_ = 0;
     std::vector<uint8_t> walkable_;   // [level][x][y]
     std::set<size_t> pools_;          // cells over pools
+    std::vector<ObjectPortal> objectPortals_;
     std::vector<int16_t> rooms_;      // [level][x][y]
     std::vector<uint8_t> xWalls_;     // [level][x][y]: wall (x, y)-(x + 1, y), x < width, y <= height
     std::vector<uint8_t> yWalls_;     // [level][x][y]: wall (x, y)-(x, y + 1), x <= width, y < height

@@ -817,7 +817,11 @@ std::pair<ObjectId, ObjectId> straightStairPads(VM& vm, const Stair& st) {
 // (the entry's if it has one, else the exit's) and its guard (the TEST
 // tree) and action, and the parameters: 0/1 the containment slots of the
 // two portal slots (0 here: not decoded, no portal tree reads them), 2/3
-// the rooms of the two objects, 4/5 their IDs, 6/7 the routing slots of
+// the levels of the two objects (TSObjectPortalLockedCB, BV 0xe208c8: each
+// object's vtable 0x90, the level; read in round 15 — before, the rooms:
+// the pool ladder's and the diving board's trees go into the pool when
+// parameter 2 > parameter 3, and the board's TEST locks the way up), 4/5
+// their IDs, 6/7 the routing slots of
 // the two ends (the door's "Function - Portal" picks its side and the
 // opening animation from parameter 6), 8 the gait (1 walking, 2 running)
 // and 9 a constant of the binary (0 here). The stack object is the entry
@@ -862,6 +866,15 @@ std::optional<PortalUse> portalUse(VM& vm, const PathPlanner& planner, size_t in
         if (!top || !bottom)
             return std::nullopt;
         u.entry = bottom, u.exit = top; // end a is the bottom landing
+    } else if (p.object >= 0) {
+        // An object's portal: the parts whose slots make its two ends, and
+        // those slots (PortalAddToPathPlannerImpl passes each end's object
+        // and slot).
+        const World::ObjectPortal& op = planner.world().objectPortals()[size_t(p.object)];
+        if (!vm.object(op.partA) || !vm.object(op.partB))
+            return std::nullopt;
+        u.entry = op.partA, u.exit = op.partB;
+        slotA = op.slotA, slotB = op.slotB;
     } else {
         return std::nullopt;
     }
@@ -882,7 +895,7 @@ std::optional<PortalUse> portalUse(VM& vm, const PathPlanner& planner, size_t in
     if (!u.owner)
         return std::nullopt;
     const Object &a = *vm.object(u.entry), &b = *vm.object(u.exit);
-    u.params = {0, 0, a.data[objdata::Room], b.data[objdata::Room], int16_t(u.entry), int16_t(u.exit),
+    u.params = {0, 0, int16_t(a.position.level), int16_t(b.position.level), int16_t(u.entry), int16_t(u.exit),
                 int16_t(slotA), int16_t(slotB), 1, 0};
     return u;
 }
@@ -1072,7 +1085,7 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
             for (const bool forward : {true, false})
                 if (planner.portalLocked(i, forward))
                     std::fprintf(stderr, "  portal %zu (%s) locked %s for %d\n", i,
-                                 planner.portals()[i].door >= 0 ? "door" : "stair", forward ? "a->b" : "b->a", me.id);
+                                 planner.portals()[i].door >= 0 ? "door" : planner.portals()[i].object >= 0 ? "object" : "stair", forward ? "a->b" : "b->a", me.id);
     if (!planned && std::getenv("OS2_ROUTE_FAILS_MAP")) { // the planner's cells around the walker, half a tile each
         const int lv = me.position.level;
         std::fprintf(stderr, "  map of %d at (%.2f, %.2f, %d), goals on level %d:", me.id, me.position.x, me.position.y, lv, r.level);
@@ -2837,6 +2850,7 @@ const Slots* slotTable(VM& vm, const Object& o) {
     return o.definition ? vm.code().slots(o.group, o.definition->slotId()) : nullptr;
 }
 
+
 // Routing slot `index` of `target` (or of the global SLOT); the game's error
 // when there is none.
 const Slots::Slot& routingSlot(VM& vm, const Object& target, bool global, int index) {
@@ -3826,6 +3840,99 @@ void registerRoutingPrimitives(VM& vm) {
     vm.setPrimitive(0x1B, goToRelativePosition);
     vm.setPrimitive(0x2D, goToRoutingSlot);
     vm.setPrimitive(0x71, snapInto);
+}
+
+// The portals objects make of their routing slots, as the binary gathers
+// them (docs/routing-mac.md §8, "Portais de objeto"): cTSObject::
+// PortalFillInSlotInfoList walks the parts of a multi-tile object and
+// PortalGatherSlotInformation takes, of an object that is not a door or a
+// stair, each routing slot marked as a portal pair (cTSRoutingSlot::
+// IsPortalPair: SLOT flag 0x200000, inferred from the pool ladder, the only
+// base-game object whose slots carry 0xE00000 = the pair and the two
+// "disable locomotion continuation" bits) with its two bone names (the
+// slot's STR# 0x90 entry "own,other"); PortalConnectSlotInformation joins
+// each such slot to the slot whose own name is its other name, and
+// PortalAddToPathPlannerImpl (on the lead) adds a portal between the two
+// slots' points, each on its part's level. The pool ladder: from
+// "route_poolladder_0_n" on the bottom part (in the pool, a level down) to
+// "route_poolladder_0_s" on the deck part beside it. Each connection is a
+// one-way portal (MakeNodesForPortal links the far end back only when the
+// portal is not one-way; inferred: each connection adds a one-way one);
+// both slots of the ladder and of the diving board name each other, so
+// here one portal crossed both ways.
+void VM::refreshObjectPortals() {
+    if (!world)
+        return;
+    constexpr uint32_t kPortalPair = 0x200000;
+    constexpr uint16_t kModelBoneNames = 0x90;
+    struct Info {
+        ObjectId group, part;
+        int16_t slot;
+        int level;
+        std::array<float, 2> at;
+        std::string own, other;
+    };
+    std::vector<Info> infos;
+    for (const auto& [id, o] : objects_) {
+        if (o.person || !o.definition || !o.position.inWorld() || o.data[objdata::ContainerId] != 0)
+            continue;
+        switch (o.definition->objectType()) {
+        case kObjectTypeDoor:
+        case kObjectTypeStairs:
+        case kObjectTypeModularStairs:
+        case kObjectTypeModularStairsPortal: continue; // their own portals (World::doors, World::stairs)
+        default: break;
+        }
+        const auto slots = routingSlots(slotTable(*this, o));
+        for (size_t k = 0; k < slots.size(); ++k) {
+            const Slots::Slot& slot = *slots[k];
+            if (!(slot.flags & kPortalPair))
+                continue;
+            const StringTable* names = code().strings(o.group, kModelBoneNames);
+            if (!names || slot.ts2Extra[0] >= names->count(lang::EnglishUS))
+                continue;
+            std::vector<std::string> list;
+            const std::string text = names->get(slot.ts2Extra[0], lang::EnglishUS);
+            for (size_t start = 0; start <= text.size();) {
+                size_t end = text.find(',', start);
+                if (end == std::string::npos)
+                    end = text.size();
+                std::string b = text.substr(start, end - start);
+                while (!b.empty() && b.front() == ' ')
+                    b.erase(b.begin());
+                while (!b.empty() && b.back() == ' ')
+                    b.pop_back();
+                for (char& c : b)
+                    c = char(std::tolower(static_cast<unsigned char>(c)));
+                list.push_back(b);
+                start = end + 1;
+            }
+            const RouteGoals g = routingGoals(slot, o);
+            if (list.empty() || list[0].empty() || g.points.empty())
+                continue;
+            infos.push_back({multiTileGroup(o), id, int16_t(k), o.position.level, g.points[0], list[0],
+                             list.size() > 1 ? list[1] : std::string()});
+        }
+    }
+    std::vector<World::ObjectPortal> out;
+    std::set<std::pair<size_t, size_t>> seen;
+    for (size_t i = 0; i < infos.size(); ++i) {
+        if (infos[i].other.empty())
+            continue;
+        for (size_t j = 0; j < infos.size(); ++j) {
+            if (j == i || infos[j].group != infos[i].group || infos[j].own != infos[i].other)
+                continue;
+            if (!seen.insert({std::min(i, j), std::max(i, j)}).second)
+                break;
+            const Info &ia = infos[i], &ib = infos[j];
+            out.push_back({ia.level, ib.level, ia.at, ib.at, ia.part, ib.part, ia.slot, ib.slot, ib.other != ia.own});
+            if (std::getenv("OS2_OBJECT_PORTALS"))
+                std::fprintf(stderr, "object portal %d slot %d (%.2f, %.2f, %d) <-> %d slot %d (%.2f, %.2f, %d)\n", ia.part,
+                             ia.slot, ia.at[0], ia.at[1], ia.level, ib.part, ib.slot, ib.at[0], ib.at[1], ib.level);
+            break;
+        }
+    }
+    world->setObjectPortals(std::move(out));
 }
 
 } // namespace os2::vm

@@ -106,6 +106,8 @@ public:
         float cost = 0;
         int stair = -1; // index into World::stairs()
         int door = -1;  // index into World::doors()
+        int object = -1; // index into World::objectPortals()
+        bool oneWay = false; // from a to b only (cPortal::IsOneWay)
     };
 
     explicit PathPlanner(const World& world);

@@ -336,6 +336,7 @@ void BuildEditor::syncWorld() {
         }
     vm_.world = std::move(w);
     vm_.planner.reset();
+    vm_.refreshObjectPortals();
     setLotRooms(vm_, lot_);
     for (const auto& [id, room] : moved)
         if (Object* o = vm_.object(id))
