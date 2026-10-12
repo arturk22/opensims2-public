@@ -3486,10 +3486,28 @@ const ModelFootprints* modelFootprints(VM& vm, const Object& o) {
 // its meshes, the shadow planes left out: inferred) cut to the part's tile,
 // as the scene graph's cObject does (BV 0x658ab8); without a model, the OBJD
 // box.
+namespace {
+
+// The part's tile in the model: cEdithMTObject::GetLocalOffsetFromLeader
+// (vtable 0x150, BV 0xaf2410), (part x - leader x, leader y - part y) of the
+// parts' normalized offsets (GetNormalizedOffset), here the OBJD's
+// multi-tile sub index (field 0x56: x in the high byte, y in the low one;
+// inferred, and checked against the world offset turned back on the beds
+// and pianos of the lots); without definitions, the world offset turned back.
+std::pair<int, int> partTileInModel(const Object& part, const Object& lead, float turnedX, float turnedY) {
+    if (&part != &lead && part.definition && lead.definition) {
+        const uint16_t p = part.definition->field(0x56), l = lead.definition->field(0x56);
+        return {int(int8_t(p >> 8)) - int(int8_t(l >> 8)), int(int8_t(l & 0xFF)) - int(int8_t(p & 0xFF))};
+    }
+    return {int(std::lround(turnedX)), int(std::lround(turnedY))};
+}
+
+} // namespace
+
 std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
     if (!o.person && !(o.data[objdata::Flags] & 0x80) && o.definition) {
         const ModelFootprints* mf = modelFootprints(*this, o);
-        if (mf && mf->lists.empty() && mf->box[0] <= mf->box[2]) {
+        if (mf && mf->lists.empty() && o.data[9] == 0 && mf->box[0] <= mf->box[2]) {
             // The model's box cut to the part's tile of the model (±0.5 about
             // it), turned with the lead as the masks are.
             const Object* lead = &o;
@@ -3500,7 +3518,7 @@ std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
             const double yaw = (90.0 - 45.0 * dir) * M_PI / 180.0;
             const float c = float(std::lround(std::cos(yaw))), s = float(std::lround(std::sin(yaw)));
             const float wx = o.position.x - lead->position.x, wy = o.position.y - lead->position.y;
-            const int tx = int(std::lround(wx * c + wy * s)), ty = int(std::lround(-wx * s + wy * c));
+            const auto [tx, ty] = partTileInModel(o, *lead, wx * c + wy * s, -wx * s + wy * c);
             const float mx0 = std::max(mf->box[0], tx - 0.5f), my0 = std::max(mf->box[1], ty - 0.5f);
             const float mx1 = std::min(mf->box[2], tx + 0.5f), my1 = std::min(mf->box[3], ty + 0.5f);
             if (!(mx0 < mx1 && my0 < my1))
@@ -3523,8 +3541,8 @@ std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
             } else {
                 tiles = &mf->lists.begin()->second; // the smallest name (the binary keeps the least by strcmp)
             }
-            if (!tiles)
-                return {};
+            if (!tiles) // no list "%d" for the footprint index: the OBJD box
+                return footprintOf(o);
             const Object* lead = &o;
             if (const ObjectId l = multiTileGroup(o); l != o.id)
                 if (const Object* lo = object(l); lo && lo->position.inWorld())
@@ -3534,7 +3552,7 @@ std::vector<std::array<float, 4>> VM::routingFootprint(const Object& o) {
             const float c = float(std::lround(std::cos(yaw))), s = float(std::lround(std::sin(yaw)));
             // The part's tile in the model: its offset from the lead turned back.
             const float wx = o.position.x - lead->position.x, wy = o.position.y - lead->position.y;
-            const int tx = int(std::lround(wx * c + wy * s)), ty = int(std::lround(-wx * s + wy * c));
+            const auto [tx, ty] = partTileInModel(o, *lead, wx * c + wy * s, -wx * s + wy * c);
             const auto t = tiles->find({tx, ty});
             if (t == tiles->end())
                 return {};
