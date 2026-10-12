@@ -268,7 +268,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             return;
         lastDialog = d.id;
         std::printf("  tick %d: dialog %d \"%s\" from %d (%s): \"%s\"\n      \"%s\"\n", tick, d.type,
-                    d.typeName.c_str(), d.me, nameOf(*machine.object(d.me)).c_str(), d.title.c_str(), d.message.c_str());
+                    d.typeName.c_str(), d.me, machine.object(d.me) ? nameOf(*machine.object(d.me)).c_str() : "gone", d.title.c_str(), d.message.c_str());
         for (size_t b = 0; b < d.buttons.size(); ++b)
             std::printf("      [%zu] %s%s\n", b, d.buttons[b].c_str(), int(b) == d.answer ? "  <- answered" : "");
     };
@@ -319,6 +319,11 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             }
         }
         const bool before = s.activeInteraction >= 0;
+        // S2PKG_HOLD_MOTIVES=n: test aid, every Sim's motives back at n each
+        // game hour (a pregnancy runs its three days without anyone starving).
+        static const char* hold = std::getenv("S2PKG_HOLD_MOTIVES");
+        if (hold && i % 1800 == 0)
+            vm::setAllMotives(machine, int16_t(std::atoi(hold)));
         machine.tick();
         for (const auto& [who, d] : machine.dialogs)
             showDialog(d, i + 1);
@@ -398,6 +403,11 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     for (size_t i = 0; i < s.queue.size(); ++i)
         std::printf(" [%s%s]", s.queue[i].name.c_str(), int(i) == s.activeInteraction ? ", running" : "");
     std::printf("%s\n", s.queue.empty() ? " empty" : "");
+    // Sims whose Main died (an error the trees hit), with where.
+    for (const auto& [id, o] : machine.objects())
+        if (o.person)
+            if (auto it = machine.threads.find(id); it != machine.threads.end() && it->second.status == vm::Thread::Status::Failed)
+                std::printf("Main of %d %s died: %s\n", id, nameOf(o).c_str(), it->second.error.c_str());
     return 0;
 }
 

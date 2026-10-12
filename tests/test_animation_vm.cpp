@@ -228,9 +228,10 @@ static void testOverlayLifetime() {
     vm.animations.add("a-idle-test", 1.0f);
     vm.animations.add("a-gesture-test", 1.0f);
     Object& s = sim(vm, 1.5f, 1.5f);
-    s.attributes.assign(1, 0);
-    // The event tree: attribute 0 := parameter 0.
-    Behavior ev = tree({instr(0x02, T, E, {0, 0, 0, 0, 0, 5, 0x00, 0x09})});
+    s.attributes.assign(2, 0);
+    // The event tree: attribute 0 := parameter 0, attribute 1 += parameter 0.
+    Behavior ev = tree({instr(0x02, Target{Kind::Instruction, 1}, E, {0, 0, 0, 0, 0, 5, 0x00, 0x09}),
+                        instr(0x02, T, E, {1, 0, 0, 0, 0, 3, 0x00, 0x09})});
     ev.argCount = 5;
     code.add(kGroup, 0x1005, ev);
     // Animate Overlay entry 3 (or 4) of the global list on the stack object, event tree 0x1005.
@@ -251,6 +252,8 @@ static void testOverlayLifetime() {
     for (int i = 0; i < 3; ++i)
         tickOverlayEvents(vm);
     check(s.animation.overlays.empty() && s.attributes[0] == animevent::End, "it ends after its length, with 9999");
+    check(s.attributes[1] == int16_t(animevent::BlendOut + animevent::ActionEnd + animevent::End),
+          "9997, then 9998 and 9999 at its end (cCustomEventHandler2: key types 7, 6, 3)");
     for (int i = 0; i < 3; ++i) {
         t = vm.start(s.id, 0x1007, {}, s.id);
         vm.run(t);

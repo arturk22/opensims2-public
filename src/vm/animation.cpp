@@ -961,6 +961,7 @@ void tickOverlayEvents(VM& vm) {
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::BlendOut});
             }
             if (ended) {
+                fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::ActionEnd});
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::End});
                 it = ov.erase(it);
                 ++po->animation.overlaySerial;

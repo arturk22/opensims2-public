@@ -35,6 +35,7 @@ constexpr int TextNotification = 8; // on the side of the screen; does not wait
 constexpr int StopTextNotification = 9;
 constexpr int ModifyTextNotification = 10;
 constexpr int TutorialNext = 22;      // the tutorial's progress window (tutorial.hpp)
+constexpr int BabyName = 23;          // "Baby Name": the newborn (stack object) gets the typed first name
 constexpr int TutorialNextModal = 25; // the same, modal
 constexpr int TnsBirthday = 0x1C;     // a text notification too (docs/primitives-mac.md §4)
 } // namespace dialogtype
@@ -64,6 +65,9 @@ struct Dialog {
     int timeoutMs = 0;
     double opened = -1; // host clock (seconds) when autoTimeOutDialogs first saw it
     int answer = -1;   // set by the host
+    // Text entry (3) and Baby Name (23): what the player typed, set by the
+    // host with the answer (empty: the default stays).
+    std::string text;
     // The instruction waiting for it (the thread's stack depth, tree, node).
     size_t depth = 0;
     const Behavior* tree = nullptr;

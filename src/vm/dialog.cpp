@@ -356,6 +356,14 @@ Exit dialog(Context& c) {
             if (d.answer < 0)
                 return Exit::Yield;
             const int answer = std::max(d.answer, 0);
+            // Baby Name (inferred: the binary's dialog class for type 23 was
+            // not found; "Interaction - Home Birth" puts it up with the baby
+            // as the stack object): OK renames the baby, whose default name
+            // ("Bebezinho"/"Bebezinha", vm/characters.cpp) otherwise stays.
+            if (type == dialogtype::BabyName && answer == 0 && !d.text.empty())
+                if (const Object* baby = vm.object(d.stackObject); baby && baby->person)
+                    if (Neighbor* n = const_cast<Neighbor*>(neighborOf(vm, *baby)))
+                        n->firstName = d.text;
             vm.dialogs.erase(it);
             if (type == dialogtype::YesNoCancel)
                 c.thread.temps[size_t(resultTemp)] = int16_t(answer);
@@ -430,6 +438,11 @@ Exit dialog(Context& c) {
     case dialogtype::Message:
     case dialogtype::TextEntry:
     case dialogtype::Tutorial: d.buttons = {button(o[3], "OK")}; break;
+    case dialogtype::BabyName: // a name box and OK; waits for the player (no time limit, a special dialog)
+        d.buttons = {button(o[3], "OK")};
+        if (const Object* baby = vm.object(c.frame.stackObject))
+            d.text = displayName(vm, *baby);
+        break;
     default: // the special dialogs (phone book, racks, clothing, ...): OK or cancel
         d.buttons = {button(o[3], "OK"), button(o[0], "Cancelar")};
         break;

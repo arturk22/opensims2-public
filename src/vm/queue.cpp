@@ -498,8 +498,13 @@ std::optional<InteractionTableRef> interactionTable(VM& vm, const Object& o) {
     // A multi-tile part that leads its interaction group (OBJD interaction
     // group < 0) without a table of its own uses its master's (the vehicles'
     // 0,5 part; the master "Car - Career - Sedan" has the rides the riders
-    // push; inferred).
-    if (tt == 0xFFFF && int16_t(o.definition->interactionGroup()) < 0)
+    // push; inferred). Without interaction groups (0) the 0,0 part (sub
+    // index 0) stands for the object: the crib's parts have no table and
+    // "Interaction - Put In Crib - Subqueue" pushes the master's entries from
+    // the 0,0 part (inferred; the 1,0 part stays without one, so the ads are
+    // not counted twice).
+    const int16_t igroup = int16_t(o.definition->interactionGroup());
+    if (tt == 0xFFFF && (igroup < 0 || (igroup == 0 && o.definition->subIndex() == 0)))
         if (const uint16_t m = o.definition->masterId())
             if (auto mi = vm.code().masterDefinition(o.group, m))
                 if (const ObjectDefinition* md = vm.code().definition(o.group, *mi))

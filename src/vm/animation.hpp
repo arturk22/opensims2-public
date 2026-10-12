@@ -101,9 +101,15 @@ int8_t oeTypeOfRole(const std::string& role);
 // to blend out ("Event - Animation Blending Out" of the idle system starts
 // the next idle on it), 9999 at its end ("Event - Animation - End of
 // Anim"), -1 when it is stopped before (both idle trees clear their
-// "playing" flag on it). 9998 is not used by the base game's idle trees.
+// "playing" flag on it). The binary's animation event handler
+// (nTSSG::cCustomEventHandler2, Mac BV 0x780ad4) maps the engine's event key
+// types onto them: 7 -> 9997, 6 -> 9998, 3 -> 9999, -1 -> -1, 1005 -> the
+// key's "event=N". 9998 ("Marker - Snap Into" drops a carried baby into its
+// marker on it, "Stance - Event - Stop", "Death By Satellite") is taken here
+// as the overlay's action ending, sent just before 9999 (inferred: what
+// emits key type 6 was not found; the animations carry no such key).
 namespace animevent {
-constexpr int16_t BlendOut = 9997, End = 9999, Stopped = -1;
+constexpr int16_t BlendOut = 9997, ActionEnd = 9998, End = 9999, Stopped = -1;
 }
 
 // An animation playing over an object (Animate Overlay, Animate Object, the
