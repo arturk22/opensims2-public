@@ -1464,6 +1464,20 @@ do grupo); vértice com terreno mais de 0,25 acima dessa água fica seco
 Inferido: o botão da ferramenta no painel (B740); o que `UpdatePondFlag` faz
 além de marcar o lago.
 
+### 7.18 Piscinas que não são retângulos (rodada 12)
+
+No jogo base a piscina é um tipo do `cTSUserToolDeckFoundation` (tile a
+tile, `CanPlaceTile`, o estilo por tile no `WorldDB::DeckFoundationStyle`);
+as piscinas curvas (`cTSUserToolCurvedPool`) são só BV. Os 7 POOL dos lotes
+salvos são todos retângulos. Aqui: um retângulo arrastado sobre ou junto de
+uma piscina a **estende** (os tiles que já são piscina ficam e não se pagam;
+o chão vai à altura da piscina), as paredes de piscina seguem a borda da união
+e os tiles novos viram retângulos POOL sem sobreposição (linhas de mesmo
+trecho juntadas), para a água cobrir só os tiles; Ctrl apaga a piscina inteira
+(os POOL ligados por uma aresta). Inferido: o POOL de uma piscina em L no jogo
+(nenhum lote salvo tem); a recusa `0x86` só vale para deck/fundação junto de
+piscina (não feita).
+
 ---
 
 ## 8. Base vs BV

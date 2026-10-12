@@ -434,11 +434,21 @@ static void testPool() {
         walls += w.type == Lot::Pool && w.a.level == -1;
     check(walls == 10, "pool walls round it");
     check(vm.world->pool({4, 3, 1}) && !vm.world->walkable({4, 3, 1}), "nobody walks over the water");
+    // A drag over the pool's corner extends it: an L-shaped pool, only the
+    // new tiles paid, the walls round the whole.
     r = ed.drawPool(5, 4, 6, 6);
-    check(!r.ok && r.error == 0x86, "no pool into a pool");
+    check(r.ok && r.changed == 5 && r.cost == 5 * kPoolTilePrice, "extending the pool pays the new tiles");
+    walls = 0;
+    for (const auto& w : lot.walls)
+        walls += w.type == Lot::Pool && w.a.level == -1;
+    check(walls == 16 && vm.world->pool({6, 6, 1}) && !vm.world->pool({3, 5, 1}), "pool walls round the L");
+    size_t covered = 0;
+    for (const auto& p : lot.pools)
+        covered += p.width * p.height;
+    check(covered == 11, "the POOL rectangles cover the 11 tiles once");
     r = ed.deletePool(4, 4);
-    check(r.ok && lot.pools.empty() && r.cost == -6 * 60, "deleting it gives back int(75 x 0.8) a tile");
-    check(ed.undo() && ed.undo() && lot.minLevel == 0 && lot.levelCount == 1 && funds(vm) == 5000,
+    check(r.ok && lot.pools.empty() && r.cost == -11 * 60, "deleting it takes the whole pool, int(75 x 0.8) a tile");
+    check(ed.undo() && ed.undo() && ed.undo() && lot.minLevel == 0 && lot.levelCount == 1 && funds(vm) == 5000,
           "undo takes the level away again");
 }
 

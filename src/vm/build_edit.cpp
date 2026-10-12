@@ -1771,10 +1771,21 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
     const int W = int(lot_.width), H = int(lot_.height);
     const int ax = std::max(0, std::min(x0, x1)), bx = std::min(W - 1, std::max(x0, x1));
     const int ay = std::max(0, std::min(y0, y1)), by = std::min(H - 1, std::max(y0, y1));
+    // Tiles of a pool already there are skipped: a rectangle over or next to
+    // a pool extends it (the deck tool's CanPlaceTile lets a pool tile go
+    // beside a pool), which gives pools that are not rectangles; the pool
+    // keeps the ground height it has (inferred).
+    std::optional<float> poolHeight;
+    for (int x = ax - 1; x <= bx + 1 && !poolHeight; ++x)
+        for (int y = ay - 1; y <= by + 1 && !poolHeight; ++y)
+            if (poolTile(x, y))
+                poolHeight = lot_.elevation(0, x, y);
+    std::vector<std::array<int, 2>> fresh;
     for (int x = ax; x <= bx; ++x)
         for (int y = ay; y <= by; ++y) {
             if (poolTile(x, y))
-                return fail(0x86, "a pool is there at " + point(x, y));
+                continue;
+            fresh.push_back({x, y});
             if (foundationTile(x, y))
                 return fail(0x8A, "pools only go in the terrain");
             for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
@@ -1795,7 +1806,12 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
         if (mx > float(ax) + 0.01f && mx < float(bx + 1) - 0.01f && my > float(ay) + 0.01f && my < float(by + 1) - 0.01f)
             return fail(0x0C, "a wall is in the way");
     }
-    const int tiles = (bx - ax + 1) * (by - ay + 1);
+    const int tiles = int(fresh.size());
+    if (!tiles) {
+        r.ok = true;
+        r.message = "the pool is there already";
+        return r;
+    }
     r.cost = tiles * kPoolTilePrice;
     if (r.cost > funds(vm_)) {
         r.message = "not enough money (" + money(r.cost) + ")";
@@ -1803,12 +1819,17 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
         return r;
     }
     Geometry before = capture();
-    const float height = lot_.elevation(0, std::clamp(x0, 0, W), std::clamp(y0, 0, H));
+    const float height = poolHeight.value_or(lot_.elevation(0, std::clamp(x0, 0, W), std::clamp(y0, 0, H)));
     std::vector<std::array<int, 2>> points;
-    for (int x = ax; x <= bx + 1; ++x)
-        for (int y = ay; y <= by + 1; ++y)
-            points.push_back({x, y});
-    if (!levelPoints(points, height)) {
+    for (const auto& [x, y] : fresh)
+        for (int cx = x; cx <= x + 1; ++cx)
+            for (int cy = y; cy <= y + 1; ++cy)
+                points.push_back({cx, cy});
+    std::vector<std::array<int, 4>> lips; // the pool's own edge walls do not hold the ground
+    for (const auto& w : lot_.walls)
+        if (w.type == Lot::Pool)
+            lips.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)), int(std::lround(w.b.y))});
+    if (!levelPoints(points, height, lips)) {
         restore(before);
         return fail(0x81, "the ground cannot be levelled");
     }
@@ -1817,19 +1838,51 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
     for (const auto& [cx, cy] : points)
         lot_.elevations[size_t(-1 - lot_.minLevel) * plane + size_t(cx) * size_t(H + 1) + size_t(cy)] = height - 3.0f;
     const uint16_t lip = patternRef(lot_.floorPatterns, "floor_poolroundedlipblue", 1);
-    for (int x = ax; x <= bx; ++x)
-        for (int y = ay; y <= by; ++y)
-            for (int q = 0; q < 4; ++q)
-                setFloor(lot_, -1, x, y, q, lip), setFloorRotation(lot_, -1, x, y, q, 1);
-    Lot::SwimmingPool pool;
+    for (const auto& [x, y] : fresh)
+        for (int q = 0; q < 4; ++q)
+            setFloor(lot_, -1, x, y, q, lip), setFloorRotation(lot_, -1, x, y, q, 1);
+    // The new tiles as POOL rectangles (rows of the same span merged), so
+    // the water of a pool that is not a rectangle covers just its tiles.
+    std::vector<uint8_t> grid(size_t(W) * size_t(H), 0);
+    for (const auto& [x, y] : fresh)
+        grid[size_t(y) * size_t(W) + size_t(x)] = 1;
+    uint32_t id = 1;
     for (const auto& p : lot_.pools)
-        pool.id = std::max(pool.id, p.id + 1);
-    pool.id = std::max(pool.id, 1u);
-    pool.x = float(ax), pool.y = float(ay);
-    pool.level = 0;
-    pool.width = uint32_t(bx - ax + 1), pool.height = uint32_t(by - ay + 1);
-    pool.depth = 0.25f;
-    lot_.pools.push_back(pool);
+        id = std::max(id, p.id + 1);
+    // Rows of runs; a run with the span of a rectangle open on the row
+    // above extends it (no overlaps, unlike the auto-roof's).
+    std::vector<std::array<int, 4>> rects, open;
+    for (int y = 0; y <= H; ++y) {
+        std::vector<std::array<int, 4>> next;
+        for (int x = 0; y < H && x < W;) {
+            if (!grid[size_t(y) * size_t(W) + size_t(x)]) {
+                ++x;
+                continue;
+            }
+            int e = x;
+            while (e < W && grid[size_t(y) * size_t(W) + size_t(e)])
+                ++e;
+            auto m = std::find_if(open.begin(), open.end(), [&](const auto& o) { return o[0] == x && o[2] == e; });
+            if (m != open.end()) {
+                next.push_back({x, (*m)[1], e, y + 1});
+                open.erase(m);
+            } else {
+                next.push_back({x, y, e, y + 1});
+            }
+            x = e;
+        }
+        rects.insert(rects.end(), open.begin(), open.end());
+        open = std::move(next);
+    }
+    for (const auto& q : rects) {
+        Lot::SwimmingPool pool;
+        pool.id = id++;
+        pool.x = float(q[0]), pool.y = float(q[1]);
+        pool.level = 0;
+        pool.width = uint32_t(q[2] - q[0]), pool.height = uint32_t(q[3] - q[1]);
+        pool.depth = 0.25f;
+        lot_.pools.push_back(pool);
+    }
     poolWalls();
     r.changed = tiles;
     addFunds(vm_, -r.cost);
@@ -1866,14 +1919,45 @@ BuildEditor::Result BuildEditor::deletePool(int x, int y) {
             }
         }
         Geometry before = capture();
-        lot_.pools.erase(lot_.pools.begin() + long(i));
-        for (int tx = px; tx < px + pw; ++tx)
-            for (int ty = py; ty < py + ph; ++ty)
-                if (!poolTile(tx, ty))
-                    for (int q = 0; q < 4; ++q)
-                        setFloor(lot_, -1, tx, ty, q, 0);
+        // The whole pool: every POOL rectangle joined to this one by an edge
+        // (a pool laid in several drags).
+        std::set<size_t> pool{i};
+        for (bool grew = true; grew;) {
+            grew = false;
+            for (size_t j = 0; j < lot_.pools.size(); ++j) {
+                const auto& b = lot_.pools[j];
+                if (pool.count(j) || b.level != 0)
+                    continue;
+                for (size_t k : pool) {
+                    const auto& a = lot_.pools[k];
+                    const bool xs = a.x <= b.x + float(b.width) && b.x <= a.x + float(a.width);
+                    const bool ys = a.y <= b.y + float(b.height) && b.y <= a.y + float(a.height);
+                    const bool xo = a.x < b.x + float(b.width) && b.x < a.x + float(a.width);
+                    const bool yo = a.y < b.y + float(b.height) && b.y < a.y + float(a.height);
+                    if ((xs && yo) || (ys && xo)) {
+                        pool.insert(j), grew = true;
+                        break;
+                    }
+                }
+            }
+        }
+        std::vector<Lot::SwimmingPool> removed;
+        for (auto k = pool.rbegin(); k != pool.rend(); ++k) {
+            removed.push_back(lot_.pools[*k]);
+            lot_.pools.erase(lot_.pools.begin() + long(*k));
+        }
+        r.changed = 0;
+        for (const auto& q : removed) {
+            const int qx = int(std::lround(q.x)), qy = int(std::lround(q.y));
+            for (int tx = qx; tx < qx + int(q.width); ++tx)
+                for (int ty = qy; ty < qy + int(q.height); ++ty)
+                    if (!poolTile(tx, ty)) {
+                        ++r.changed;
+                        for (int qq = 0; qq < 4; ++qq)
+                            setFloor(lot_, -1, tx, ty, qq, 0);
+                    }
+        }
         poolWalls();
-        r.changed = pw * ph;
         r.cost = -r.changed * int(float(kPoolTilePrice) * kBuildRefundRate);
         addFunds(vm_, -r.cost);
         changed();
