@@ -395,6 +395,41 @@ static void testArmIk() {
     applyIk(t, s, 0, local, nullptr, Xform{}, &twin, true);
     const auto w3 = s.world(local);
     check(near(w3[6].t[0], 0.35f, 1e-3f) && near(w3[6].t[2], 1.6f, 1e-3f), "arm IK: flipped, the twin's frame reflected");
+
+    // Several targets, each weighed by its contact channel (attribute 3, the
+    // target's last name), as a2o-chairDining-getOut-SE's hands go from
+    // their own goal ("r_handcontrol0_a") to the chair's seat grab ("_b",
+    // the IK object's bone) and back. Only the first target was used: the
+    // hand reached its own goal's stale key while the animation meant the
+    // chair (an arm hanging long and straight, or stretched back).
+    t.ikChains[0].targets[0].crcs[1] = 0;
+    Animation::IkTarget own = t.ikChains[0].targets[0];
+    own.type = 1;
+    own.crcs[5] = nameInstanceHiHash("handcontrol_a");
+    Animation::IkTarget chair = t.ikChains[0].targets[0];
+    chair.type = 2;
+    chair.crcs[5] = nameInstanceHiHash("handcontrol_b");
+    t.ikChains[0].targets = {own, chair};
+    auto contact = [](const char* name, float a, float b) {
+        Animation::Channel c;
+        c.name = name;
+        c.nameHash = nameInstanceHiHash(name);
+        c.flags = 1000u | 0x8000u | uint32_t(Animation::ContactIk) << 17 | 0u << 22 | 0xFu << 25 | 1u << 29;
+        c.components.resize(1);
+        c.components[0].keys.push_back({0, a, 0, 0});
+        c.components[0].keys.push_back({1000, b, 0, 0});
+        return c;
+    };
+    t.channels = {contact("handcontrol_a", 1, 0), contact("handcontrol_b", 0, 1)};
+    auto handAt = [&](float ticks) {
+        auto l = s.restPose();
+        l[7].t = {0.3f, 0, 0.6f};
+        applyIk(t, s, ticks, l, nullptr, Xform{}, &other);
+        return s.world(l)[6].t;
+    };
+    const Vec3 h0 = handAt(0), h1 = handAt(1000), hHalf = handAt(500);
+    check(near(h0[1], 0, 1e-3f) && near(h1[1], 0.1f, 1e-3f), "arm IK: the target in contact (own goal, then the IK object's)");
+    check(near(hHalf[1], 0.05f, 2e-3f), "arm IK: halfway, between the two targets");
 }
 
 static void testSnaps() {

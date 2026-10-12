@@ -1444,6 +1444,22 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   Agora uma animação do Animate Sim toma a direção do Sim na hora
   (`SimMotion::turn`) e, se o Sim acabou de ser movido ou girado por Snap,
   começa sem fade (`LotSimulation::sampleAll`).
+- **Vários alvos de IK por cadeia, pesados pelo canal de contato** (rodada
+  17, ramo `r17-chair2`; a mistura é inferida). Uma cadeia de IK do ANIM
+  lista vários alvos (`IkTarget`), cada um com o nome de um canal de
+  contato (atributo 3, o 6º CRC: `r_handcontrol0_a` para o alvo próprio
+  no espaço do modelo, `r_handcontrol1_a` para o da coxa, tipo 1,
+  `r_handcontrol1_b`/`_c` para ossos do objeto de IK, tipo 2). O
+  `a2o-chairDining-getOut-SE` passa a mão do alvo próprio para o
+  `*_seatgrab`/`*_pulltarget` da cadeira e volta, pelos canais 0→1→0. O
+  opensims2 usava só o primeiro alvo: a mão ia para a chave parada do
+  alvo próprio enquanto a animação queria a cadeira (braço comprido e
+  reto, ou esticado para trás na mesa/cadeira; QA do usuário). Agora
+  `applyIk` mistura os alvos pelo peso do contato (posição linear, rotação
+  da mão por nlerp); um alvo tipo 2 sem objeto de IK fica de fora, e sem
+  nenhum em contato vale o primeiro (o tipo 2 sem objeto, no espaço do
+  modelo, como antes). Os objetos animados pela VM são posados antes dos
+  Sims a cada quadro (os ossos da cadeira para o IK do mesmo instante).
 - **Alvos de IK de tipo 2: o objeto de IK do pedido** (rodada 15, front
   anim3, decifrado). Os alvos de IK (`cIKTarget::TargetType`) têm 3 tipos
   nos dados (`s2pkg anim-sweep`): 0 sem osso de quadro (20.859, o alvo no

@@ -3497,6 +3497,17 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     pollTutorial(seconds); // (the real clock)
     if (gSimulation)
         seconds = gSimulation->update(seconds); // the scene clock (game speed)
+    // The objects the VM animates, posed at this time before the Sims: the
+    // Sims' IK goals on their bones (type 2: a chair's pull and seat-grab
+    // targets for its get-in and get-out) are read from them as the Sims
+    // are posed. Posed only after the Sims, a chair's bones were a frame old,
+    // or as old as the last shot without a window: the hands reached where
+    // the chair had been (an arm hanging long and straight, or stretched
+    // back to the table). They are posed again below, at the places the
+    // Sims' hands give the objects they hold.
+    for (auto& [id, a] : gObjectActors)
+        if (a)
+            a->update(seconds);
     adoptVmSims(renderer);
     updateCinematic(renderer, seconds); // first: a playing scene's camera cuts the walls
     updateLotView(renderer, false);

@@ -458,24 +458,8 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         }
         if (!linked || b1 < 0)
             continue;
-        const auto& goal = chain.targets[0];
-        const std::optional<Xform> goalNode = nodeLocal(goal.crcs[4]);
-        const std::optional<Xform> goalRotation = nodeLocal(goal.crcs[2]), goalRotation2 = nodeLocal(goal.crcs[3]);
         const std::optional<Xform> pole = nodeLocal(chain.crcs[4]);
-        // Type 0: no frame bone; 1: the skeleton's own; 2: the IK object's.
-        const int frame = goal.type == 1 ? bone(goal.crcs[0]) : -1, poleFrame = bone(chain.crcs[5]);
-        objectFrame.reset();
-        if (goal.type == 2 && ikObjectBone && *ikObjectBone) {
-            objectFrame = (*ikObjectBone)(mirrored && goal.crcs[1] ? goal.crcs[1] : goal.crcs[0]);
-            if (objectFrame && mirrored) {
-                Xform r;
-                r.q = {objectFrame->q.x, -objectFrame->q.y, -objectFrame->q.z, objectFrame->q.w};
-                r.t = {-objectFrame->t[0], objectFrame->t[1], objectFrame->t[2]};
-                objectFrame = r;
-            }
-        }
-        if (!goalNode)
-            continue;
+        const int poleFrame = bone(chain.crcs[5]);
         float weight = 1;
         if (chain.crcs[7]) {
             weight = 0;
@@ -487,8 +471,93 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
             continue;
 
         auto world = s.world(local);
+        // A target's goal point and end rotation in model space.
+        struct Goal {
+            Vec3 t;
+            std::optional<Quat> q;
+        };
+        auto targetGoal = [&](const Animation::IkTarget& goal, bool modelFallback) -> std::optional<Goal> {
+            const std::optional<Xform> goalNode = nodeLocal(goal.crcs[4]);
+            if (!goalNode)
+                return std::nullopt;
+            const std::optional<Xform> goalRotation = nodeLocal(goal.crcs[2]), goalRotation2 = nodeLocal(goal.crcs[3]);
+            // Type 0: no frame bone; 1: the skeleton's own; 2: the IK object's.
+            const int frame = goal.type == 1 ? bone(goal.crcs[0]) : -1;
+            if (goal.type == 1 && frame < 0)
+                return std::nullopt;
+            objectFrame.reset();
+            if (goal.type == 2) {
+                if (ikObjectBone && *ikObjectBone)
+                    objectFrame = (*ikObjectBone)(mirrored && goal.crcs[1] ? goal.crcs[1] : goal.crcs[0]);
+                // No IK object (or not its bone): nothing to reach, or (the
+                // only choice left) the goal in model space (inferred).
+                if (!objectFrame && !modelFallback)
+                    return std::nullopt;
+                if (objectFrame && mirrored) {
+                    Xform r;
+                    r.q = {objectFrame->q.x, -objectFrame->q.y, -objectFrame->q.z, objectFrame->q.w};
+                    r.t = {-objectFrame->t[0], objectFrame->t[1], objectFrame->t[2]};
+                    objectFrame = r;
+                }
+            }
+            Goal g{inFrame(world, frame, *goalNode).t, std::nullopt};
+            // The goal's rotation for the end bone: through the second rotation
+            // node when there is one (the hands' *_handcontrol0rot, which the
+            // hand follows as it is), else the rotation node with the rest-pose
+            // offset between it and the end bone (the feet).
+            if (goalRotation && goalRotation2) {
+                g.q = inFrame(world, frame, *goalRotation).then(*goalRotation2).q;
+            } else if (goalRotation) {
+                // The rest rotation of the node: the skeleton's, else the adult
+                // skeleton's foot control (auskel *_foot_ikctr; the child and
+                // toddler feet rest the same way).
+                const int r = bone(goal.crcs[2]);
+                const Quat rest = r >= 0 ? restWorld[size_t(r)].q : Quat{0, 0.9703f, -0.2419f, 0};
+                g.q = inFrame(world, frame, *goalRotation).q * (conjugate(rest) * restWorld[size_t(b2)].q);
+            }
+            return g;
+        };
+        // The chain's targets, each weighed by its contact channel (the
+        // target's last name: "r_handcontrol0_a" for the hand's own goal in
+        // model space, "_b"/"_c" for the IK object's bones, a "_a" of a
+        // *handcontrol1 for the thigh's): a hand goes from its goal to the
+        // chair's seat grab and back as the get-out keys them. With only the
+        // first target, the hand went to its own goal's channel while the
+        // animation meant the chair (held at a stale key: the arm hung long
+        // and straight, or stretched back to the table). A target without a
+        // contact channel weighs 1; with none reachable or none in contact,
+        // the first one.
+        Vec3 T{0, 0, 0};
+        std::optional<Quat> endRotation;
+        float total = 0;
+        for (const auto& goal : chain.targets) {
+            float w = 1;
+            if (goal.crcs[5] && chain.targets.size() > 1) {
+                w = 0;
+                for (const auto& c : target.channels)
+                    if (c.nameHash == goal.crcs[5] && c.attribute() == Animation::ContactIk && !c.components.empty())
+                        w = std::clamp(c.components[0].sample(ticks, c.duration()), 0.0f, 1.0f);
+            }
+            if (w <= 0)
+                continue;
+            const auto g = targetGoal(goal, false);
+            if (!g)
+                continue;
+            total += w;
+            const float k = w / total;
+            for (int c = 0; c < 3; ++c)
+                T[size_t(c)] += (g->t[size_t(c)] - T[size_t(c)]) * k;
+            if (g->q)
+                endRotation = endRotation ? nlerp(*endRotation, *g->q, k) : *g->q;
+        }
+        if (total <= 0) {
+            const auto g = targetGoal(chain.targets[0], true);
+            if (!g)
+                continue;
+            T = g->t, endRotation = g->q;
+        }
+        objectFrame.reset();
         const Vec3 A = world[size_t(b0)].t, B = world[size_t(b1)].t, C = world[size_t(b2)].t;
-        const Vec3 T = inFrame(world, frame, *goalNode).t;
         const float a = length(sub(B, A)), b = length(sub(C, B));
         Vec3 toT = sub(T, A);
         float d = length(toT);
@@ -504,22 +573,7 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         v = scale(v, 1 / length(v));
         const float cosA = std::clamp((a * a + d * d - b * b) / (2 * a * d), -1.0f, 1.0f);
         const Vec3 K = add(A, add(scale(u, a * cosA), scale(v, a * std::sqrt(1 - cosA * cosA))));
-
-        // The goal's rotation for the end bone: through the second rotation
-        // node when there is one (the hands' *_handcontrol0rot, which the
-        // hand follows as it is), else the rotation node with the rest-pose
-        // offset between it and the end bone (the feet).
-        std::optional<Quat> endRotation;
-        if (goalRotation && goalRotation2) {
-            endRotation = inFrame(world, frame, *goalRotation).then(*goalRotation2).q;
-        } else if (goalRotation) {
-            // The rest rotation of the node: the skeleton's, else the adult
-            // skeleton's foot control (auskel *_foot_ikctr; the child and
-            // toddler feet rest the same way).
-            const int r = bone(goal.crcs[2]);
-            const Quat rest = r >= 0 ? restWorld[size_t(r)].q : Quat{0, 0.9703f, -0.2419f, 0};
-            endRotation = inFrame(world, frame, *goalRotation).q * (conjugate(rest) * restWorld[size_t(b2)].q);
-        }
+        (void)C;
 
         const Quat q0 = local[size_t(b0)].q, q1 = local[size_t(b1)].q, q2 = local[size_t(b2)].q;
         // Root bone: the joint onto K.
