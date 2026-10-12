@@ -42,6 +42,20 @@ std::optional<float> AnimationLibrary::seconds(const std::string& name) {
     return out;
 }
 
+std::shared_ptr<const Animation> AnimationLibrary::animation(const std::string& name) {
+    if (auto it = anims_.find(name); it != anims_.end())
+        return it->second;
+    if (!index_)
+        return nullptr;
+    std::shared_ptr<const Animation> a;
+    try {
+        a = std::make_shared<const Animation>(loadAnimation(*index_, name));
+    } catch (const std::exception&) {
+    }
+    anims_[name] = a;
+    return a;
+}
+
 float AnimationLibrary::rootTravel(const std::string& name) {
     if (auto it = travel_.find(name); it != travel_.end())
         return it->second;
@@ -578,6 +592,8 @@ Exit animateObject(Context& c) {
     {
         const std::string name = target.person ? std::string() : parseItem(split(entry, ',')[0]).name;
         auto& ov = target.animation.overlays;
+        if (!target.person)
+            c.vm.holdObjectPose(target); // where the animation playing left the bones
         if (!name.empty())
             std::erase_if(ov, [&](const Overlay& x) { return x.loops == 0 && x.name == name; });
     }
@@ -587,6 +603,9 @@ Exit animateObject(Context& c) {
     if (!started)
         return Exit::True;
     started->level = animlevel::Object;
+    // Its time, for the bones its slots stand at (VM::objectPose).
+    started->length = library(c.vm).seconds(started->name).value_or(0) * 1000.0f;
+    started->perTick = float(1000.0 / c.vm.clock.ticksPerSecond) * animationSpeed(c);
     // Its event tree gets the animation's tree events as it plays, in the
     // starting thread's context, as Animate Sim's (the vehicles drive on
     // "Event Tree - Drive": loop again or stop, which ends "Wait for Vehicle
@@ -664,6 +683,8 @@ Exit animateStop(Context& c) {
     // temp 3 != 0 with 0x08), both ways with 0x40 (try_animate_stop).
     const bool flip = (o[2] & 0x08) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0;
     auto ofFlip = [&](const Overlay& x) { return (o[2] & 0x40) || x.flipped == flip; };
+    if (!target.person)
+        c.vm.holdObjectPose(target); // an object stays where its animation left it
     std::vector<Overlay> stopped;
     for (auto it = a.overlays.begin(); it != a.overlays.end();) {
         if (stops(*it) && ofPriority(*it) && ofFlip(*it)) {
@@ -983,6 +1004,9 @@ void tickOverlayEvents(VM& vm) {
         auto& ov = po->animation.overlays;
         for (auto it = ov.begin(); it != ov.end();) {
             if (it->loops <= 0 || it->length <= 0) {
+                // Animate Object's: played until stopped, holding its last frame.
+                if (!po->person && it->perTick > 0)
+                    it->played = std::min(it->played + it->perTick, it->length);
                 ++it;
                 continue;
             }

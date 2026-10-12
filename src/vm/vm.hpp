@@ -3,6 +3,7 @@
 #include "formats/bhav.hpp"
 #include "formats/simantics.hpp"
 #include "formats/strings.hpp"
+#include "formats/xform.hpp"
 #include "animation.hpp"
 #include "dialog.hpp"
 #include "path_planner.hpp"
@@ -591,6 +592,11 @@ struct Object {
     std::optional<Reach> reach;
     // The grasp/carry overlays of what a Sim holds, taken off when it puts it down.
     std::vector<std::string> carryOverlays;
+    // The model's bones as last posed (bone name, local transform): the
+    // transform nodes the lot saved for it (nTSSG::cObject), then where each
+    // Animate Object animation left them (VM::holdObjectPose). Its bone
+    // slots are found in this pose, under what plays on it now.
+    std::vector<std::pair<std::string, Xform>> pose;
     // Lights as Change Light set them (dialog.hpp).
     ObjectLights lights;
 
@@ -790,6 +796,14 @@ public:
     };
     std::vector<SlotBone> slotBones(const Slots::Slot& slot, const Object& target);
     std::optional<std::array<float, 3>> slotBone(const Slots::Slot& slot, const Object& target);
+    // The object's model as posed now (local transforms of its skeleton's
+    // bones; empty without one): the rest pose with Object::pose, under the
+    // Animate Object animations playing on it at their time (held at their
+    // last frame). holdObjectPose keeps that pose in Object::pose, for an
+    // animation about to be stopped or replaced (the game's objects stay
+    // where the last frame left them).
+    std::vector<Xform> objectPose(const Object& target);
+    void holdObjectPose(Object& target);
 
     // Threads of a removed object are killed the next time they run.
     void removeObject(ObjectId id) {

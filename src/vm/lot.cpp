@@ -215,6 +215,9 @@ LotLoad loadLot(VM& vm, const Lot& lot, const LotObjects& saved, const std::file
             }
             Object& o = vm.instantiatePart(def->first, def->second, s.id);
             o.position = {s.x, s.y, s.level};
+            // Its model's bones as the lot saved them (a dining chair pushed in).
+            if (c != cObjects.end() && !s.person)
+                o.pose = c->second->nodes;
             for (int16_t field : {objdata::Direction, objdata::ContainerId, objdata::SlotNumber, objdata::Room})
                 if (size_t(field) < s.data.size())
                     o.data[size_t(field)] = s.data[size_t(field)];

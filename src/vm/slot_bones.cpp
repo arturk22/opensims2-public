@@ -2,10 +2,13 @@
 // GetPossibleSlotsFromModelRoutingSlot in the Mac binary, BV 0x475b98).
 #include "vm.hpp"
 
+#include "formats/anim.hpp"
+#include "formats/anim_player.hpp"
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "formats/skeleton.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -39,6 +42,66 @@ const Skeleton* skeletonOf(CodeLibrary& code, const Object& target) {
 
 } // namespace
 
+// The binary takes a bone slot's point from the object's scene graph as it
+// is posed now (the object's vtable 0x148, cObject::SlotBone): a bone under
+// an animated one moves with the animation, and an object keeps the pose
+// its last animation left (the lot saves it: nTSSG::cObject's transform
+// nodes). Here: the rest pose, the saved or held bones over it, and the
+// last Animate Object animation playing on the object at its time (the one
+// the app draws), mirrored if it plays flipped.
+std::vector<Xform> VM::objectPose(const Object& target) {
+    if (!target.definition || !code().index() || target.person)
+        return {};
+    const Skeleton* sk = skeletonOf(code(), target);
+    if (!sk)
+        return {};
+    std::vector<Xform> pose = sk->restPose();
+    for (const auto& [name, x] : target.pose)
+        if (const int b = sk->find(name); b >= 0 && size_t(b) < pose.size())
+            pose[size_t(b)] = x;
+    const auto& ov = target.animation.overlays;
+    if (ov.empty())
+        return pose;
+    const Overlay& o = ov.back();
+    const auto anim = animations.animation(o.name);
+    if (!anim)
+        return pose;
+    const Animation::Target* t = anim->findTarget(anim->skeletonTag);
+    if (!t && !anim->targets.empty())
+        t = &anim->targets[0];
+    if (!t)
+        return pose;
+    const float ticks = std::clamp(o.played, 0.0f, float(anim->duration));
+    std::vector<Xform> p = samplePose(*t, *sk, ticks);
+    std::vector<bool> keyed = keyedBones(*t, *sk);
+    if (o.flipped) {
+        const std::vector<int> twins = mirrorBones(*sk);
+        p = mirrorPose(*sk, twins, sk->world(sk->restPose()), p);
+        std::vector<bool> k(keyed.size());
+        for (size_t i = 0; i < k.size() && i < twins.size(); ++i)
+            k[i] = keyed[size_t(twins[i])];
+        keyed = std::move(k);
+    }
+    for (size_t i = 0; i < pose.size() && i < p.size() && i < keyed.size(); ++i)
+        if (keyed[i])
+            pose[i] = p[i];
+    return pose;
+}
+
+void VM::holdObjectPose(Object& target) {
+    if (target.animation.overlays.empty())
+        return;
+    const Skeleton* sk = target.definition && code().index() && !target.person ? skeletonOf(code(), target) : nullptr;
+    if (!sk)
+        return;
+    const std::vector<Xform> pose = objectPose(target);
+    if (pose.size() != sk->bones.size())
+        return;
+    target.pose.clear();
+    for (size_t i = 0; i < pose.size(); ++i)
+        target.pose.emplace_back(sk->bones[i].name, pose[i]);
+}
+
 // The bones a routing slot names, in the object's model space (tiles; +Y the
 // model's forward axis, Z up), with each bone's facing. The Sims 2's SLOT
 // entries name the bones by index into the object's STR# 0x90 ("Model -
@@ -69,7 +132,7 @@ std::vector<VM::SlotBone> VM::slotBones(const Slots::Slot& slot, const Object& t
     if (!sk)
         return out;
     const std::string list = names->get(slot.ts2Extra[0], lang::EnglishUS);
-    const std::vector<Xform> world = sk->world(sk->restPose());
+    const std::vector<Xform> world = sk->world(objectPose(target));
     size_t start = 0;
     for (int16_t index = 0; start <= list.size(); ++index) {
         size_t end = list.find(',', start);

@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -16,6 +17,7 @@
 
 namespace os2 {
 class ResourceIndex;
+struct Animation;
 }
 
 namespace os2::vm {
@@ -258,6 +260,8 @@ public:
     // moves it that much each time it plays (0 if none).
     float rootTravel(const std::string& name);
     void addRootTravel(const std::string& name, float tiles) { travel_[name] = tiles; }
+    // The animation itself (null if there is no such resource or no index).
+    std::shared_ptr<const Animation> animation(const std::string& name);
     // Locomotion speed of the animation (ANIM "velocity", distance per
     // animation tick, a tick being 1 ms) in tiles per second (a tile is a
     // metre); 0 if it does not move or does not exist.
@@ -282,6 +286,7 @@ public:
 private:
     ResourceIndex* index_ = nullptr;
     std::unordered_map<std::string, std::optional<float>> cache_;
+    std::unordered_map<std::string, std::shared_ptr<const Animation>> anims_;
     std::unordered_map<std::string, float> speeds_;
     std::unordered_map<std::string, bool> fullBody_;
     std::unordered_map<std::string, float> travel_;
