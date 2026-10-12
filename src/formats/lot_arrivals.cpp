@@ -170,6 +170,18 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
         s.y = std::clamp(y, 0.5f, float(world.height) - 0.5f);
         s.level = 1;
         s.data.assign(lotObjectDataCount(saved.version), 0);
+        // As a new object starts (cTSObject's constructor; vm::VM::
+        // createObject): object data 11 "object id" and 19 "lead tile object
+        // ID" are its own ID, 3 "slot number" -1. With 19 at 0, "CT - Start
+        // Routing Look At" made object 0 the stack object of "Look At -
+        // Allowed Object?" when it met an arriving Sim, and the Main of the
+        // Sim that walked past died ("stack object 0 does not exist").
+        constexpr size_t kSlotNumber = 3, kObjectId = 11, kLeadTileObjectId = 19;
+        if (s.data.size() > kLeadTileObjectId) {
+            s.data[kSlotNumber] = -1;
+            s.data[kObjectId] = s.id;
+            s.data[kLeadTileObjectId] = s.id;
+        }
         saved.saveTypeOf[s.id] = type;
         saved.pairs.emplace_back(uint32_t(uint16_t(s.id)), type);
         Lot::Object o;

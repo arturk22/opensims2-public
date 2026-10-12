@@ -344,6 +344,7 @@ CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_
 std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
     std::vector<std::string> out;
     size_t more = 0, failed = 0;
+    std::string failedWhy;
     // Person data the queue keeps (interactions.hpp: persondata).
     auto queueData = [](size_t i) { return i == 21 || i == 33 || i == 45 || i == 71 || i == 79 || i == 80 || i == 102 || i == 166; };
     auto diff = [&](const std::string& s) {
@@ -428,6 +429,7 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
         const bool hy = ty != b.threads.end() && ty->second.status == Thread::Status::Running;
         if (tx != a.threads.end() && !hx) {
             ++failed; // a failed Main is not saved (the game has none): its thread and queue are not compared
+            failedWhy += " " + std::to_string(id) + ": " + (std::getenv("S2PKG_ERRORS") ? tx->second.error : tx->second.error.substr(0, tx->second.error.find('\n'))) + ";";
         } else if (hx != hy) {
             diff(at + "Main thread running in " + (hx ? "the first" : "the second") + " only" +
                  (hx ? (ty == b.threads.end() ? "" : " (" + ty->second.error.substr(0, ty->second.error.find('\n')) + ")")
@@ -507,7 +509,7 @@ std::vector<std::string> compareLotState(VM& a, VM& b, size_t limit) {
     if (more)
         out.push_back("... and " + std::to_string(more) + " more");
     if (failed && !out.empty())
-        out.push_back("(" + std::to_string(failed) + " Mains had failed before the save: their threads and queues were not compared)");
+        out.push_back("(" + std::to_string(failed) + " Mains had failed before the save: their threads and queues were not compared:" + failedWhy + ")");
     return out;
 }
 

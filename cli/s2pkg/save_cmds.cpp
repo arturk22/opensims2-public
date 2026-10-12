@@ -60,7 +60,7 @@ struct LoadedLot {
 // As lot-run: the lot's neighbourhood (`source` names it), entered, and the
 // Sims bound to their neighbors.
 LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::path& source,
-                   const hood::Neighborhood* hood, const fs::path& charactersDir) {
+                   const hood::Neighborhood* hood, const fs::path& charactersDir, bool movedIn = false) {
     LoadedLot out;
     DbpfPackage pkg(package);
     const Lot lot = Lot::load(pkg);
@@ -68,9 +68,21 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
     // As the app's lot load (app/lot_vm.cpp): a family that just moved in
     // arrives and pays the lot's price, and its first day starts
     // (formats/lot_arrivals.hpp).
+    // movedIn: the lot was saved after the family's first day started, but
+    // the neighborhood was not (lot-save --check): the game's save drops the
+    // family's "new lot" flag with it (vm/hood_save.hpp), so the move-in
+    // charge and the first day's clock are not applied again.
     LotArrivals arrivals;
-    if (hood)
+    if (hood) {
+        const LotObjects before = movedIn ? out.saved : LotObjects{};
         arrivals = addArrivingSims(out.saved, lot, source, code.index(), false);
+        if (movedIn) {
+            out.saved.globals = before.globals;
+            out.saved.simulator = before.simulator;
+            arrivals.charge = 0;
+            arrivals.firstDay = false;
+        }
+    }
     out.vm = std::make_unique<vm::VM>(code);
     vm::VM& m = *out.vm;
     m.initCreatedObjects = true;
@@ -246,7 +258,7 @@ int cmdLotSave(const std::vector<std::string>& args) {
         for (const auto& d : diffs)
             std::printf("    %s\n", d.c_str());
     }
-    LoadedLot b = loadInto(code, dst, src, h, characters);
+    LoadedLot b = loadInto(code, dst, src, h, characters, true);
     const auto diffs = vm::compareLotState(*a.vm, *b.vm);
     std::printf("  VM state after load -> save -> load: %s\n", diffs.empty() ? "the same" : "differs:");
     for (const auto& d : diffs)
