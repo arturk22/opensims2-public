@@ -390,7 +390,56 @@ não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
 - Quem responde à mensagem `0xBC` além do módulo de objetos e do simulador
   (a ordem exata) e o gravador das `SREL` do lote.
 - O campo +0xB0 do `SIMI` e os blocos `0x2A4` da pessoa no SDSC.
-- Depois de um dia, um Sim salvo no meio de uma interação às vezes volta
-  com dados de pessoa diferentes (N001_Lot36 objeto 2, N001_Lot36 objeto
-  270 no `lot-save --check`): rota e sub-ações em andamento não são
-  gravadas como o jogo grava.
+- ~~Depois de um dia, um Sim salvo no meio de uma interação às vezes volta
+  com dados de pessoa diferentes (N001_Lot36)~~: não se repete no main da
+  rodada 17 (`lot-save --check` de 43.200 ticks e `hood-save N001 --ticks
+  43200 --check`: 26 de 26 lotes iguais). O que faltava para o lote
+  recarregado *seguir* como o que salvou está na §7b.
+- Animações e rotas em andamento (§7b): o jogo grava as duas; o VM grava a
+  rota parada e não grava a fila de animações, então a instrução de animar
+  ou andar recomeça do início ao recarregar.
+
+## 7b. Rodada 17: o lote recarregado segue como o que salvou
+
+`s2pkg lot-save <lote> <saída> --ticks N --continue M`: depois do `--check`,
+as duas VMs (a que salvou e a recarregada) rodam mais M ticks com os mesmos
+números aleatórios (o gerador do VM não é o do jogo e não é gravado: a
+recarregada recebe o estado do primeiro) e são comparadas a cada tick; a
+saída dá o primeiro tick que difere, os objetos e o erro de quem foi
+reiniciado só numa delas (`OS2_CONTINUE_TRACE=id` imprime a pilha desse
+objeto a cada tick). Corrigido com isso **[binário]**:
+
+- **Frações dos motivos**: os 16 f32 do PERS (vtable 0x5CC) são os do motor
+  de motivos; o VM arredondava ao carregar e o decaimento seguia do inteiro
+  (a fome do N001_Lot36 já diferia em 30 ticks). Agora o VM recarrega o
+  float e grava o float do motor.
+- **Set Motive Change em andamento** (`cTSPerson +0x618`): `cMotiveInc::Write`
+  (BV `0xad5c44`) e `Read` (`0xad2764`) gravam `u32 motivo ; f32 variação por
+  tick ; f32 limite` (o `TrySetMotiveDelta`, BV `0xad24e8`, faz variação =
+  valor por hora / 60 / 30, como o VM; o `OnSimulatorTick`, `0xad1040`, soma
+  até o limite). Eram descartadas: um Sim comendo ou dormindo durante o save
+  parava de ganhar depois de recarregar.
+- **Todos os atributos**: o `cTSObject::Write` grava a contagem do objeto (a
+  do OBJD, no mínimo 8, ou a lida do save). O VM cortava os zeros do fim: o
+  monte de lixo da lata chutada feito em jogo voltava com 7 de 8 atributos
+  e a árvore de um tick dava erro ("attribute 7 of 7") e o reiniciava. Os
+  semi-atributos também vão todos.
+
+O que sobra (`--continue` em N001_Lot11, N001_Lot36, N002_Lot2, N002_Lot3,
+N003_Lot52 depois de meio dia ou um dia): **a animação recomeça** (o primeiro
+desvio em quatro dos cinco lotes é um Animate Sim, 0x6A, que volta ao
+início do clipe) e **a rota recomeça** (N003_Lot52: o Romeo andando).
+O jogo grava as duas: a fila de animações no fim do `cObject` de quem anima
+(`nTSSG::cAnimatable::SaveToStream`, BV `0x68c868`: tag `0x7D4F2BB8`, versão
+0x10, "cAnimatable", o `cObject`, um f32 do nó de animação (velocidade?),
+u32 tem-nó + dois valores dele (vtables 0x17C/0x180, não decifrados), dois
+u32 globais, u32 +0x13C, u32 +0x140, f32 +0x144, u32
++0x148, u32 +0x14C, uma string + +0x16C, u32 n e n pedidos pela vtable
+0x36C → `on_save_anim_request` (BV `0x695f34`: u32 0 nenhum, 1 pedido de
+animação + `on_save_choreo_request_anim` `0x68d640`, 2 pedido com olhar +
+`on_save_choreo_request_look_at` e o alvo); o leitor é o `LoadFromStream`
+`0x695884` com os ramos por versão 8..0x10) e a rota pelo
+`cTSRoute::SaveToStream` dentro do registro `0xBC66BAEC`. Ler os pedidos
+(`cIAnimRequest`, classe `0x9D0CE60`, e os `cIChoreoRequestAnim`) e ligar ao
+Animate Sim que retoma (`cAnimatable::OnTryElement`, BV `0x689f34`) fica para
+uma frente própria.

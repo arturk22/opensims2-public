@@ -1,3 +1,17 @@
+# Soak report (round 17, stuck and save)
+
+`tools/soak.sh` on N001_Lot36, N002_Lot3, N001_Lot11 and N002_Lot2 (3 game days, headless, `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`, babies named), seeds 1 and 2, on the r17-stuck branch (main 8757a0c + the save fixes). The round-14/15 findings checked again:
+
+| Finding | seed 1 | seed 2 |
+|---|---|---|
+| Brandi in "Segurar Bebê" (N001_Lot36) | gone | gone |
+| "Jogar Fora" on the trash pile failing | 2, then "Limpar" | 0 |
+| Instruction budget (100000), also in check trees (`OS2_CHECK_TREE_ERRORS=1`, N002_Lot3) | 0 | 0 |
+| Social bunny / Ophelia "Sim on Tile" (N002_Lot2) | 0 | 0 |
+| Save round trips that differ | 0 | 0 |
+| Long skill loops (> 6 h) | Alexander, Cassandra "Tocar" (N001_Lot11) | Mortimer "Praticar", "Tocar" |
+
+The skill loops are the trees' (`Exit Object - Motive Failing?`, `docs/primitives-mac.md` "Rodada 15 (sobrevivência 5)"). The one reset left is the bottle's "Animation name is empty string" (another front). `hood-save N001 --ticks 43200 --check`: 26 of 26 lots the same. The new `lot-save --continue N` runs the saving and the reloaded VM on together; what it found (motive fractions, running Set Motive Changes, trailing attributes) is fixed, and what is left (animations and routes restart at the reload) is in `docs/save-mac.md` §7b.
 # Soak report (round 16, vm2)
 
 Runs of `tools/soak.sh` over the 69 lots (3 game days), headless (`SOAK_NO_APP=1`), 2 lots at a time, `S2PKG_FIRES=1`, `SOAK_KEEP_LOGS=1`. **Before** is main 8142006 (seeds 1 and 2); **after** is the r16-vm2 branch rebased on it, seed 1 (seed 2 was cut short by the user's scope change: wrap up). An intermediate build that let every GUID lookup reach the neighbourhood's character files had a crash, 43 budget hits and 17 deaths on seed 1 (N001_Lot36's toddler-bath loop with visitors); the final branch keeps that lookup to data owner 0x26 and the sweep.
