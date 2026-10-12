@@ -518,7 +518,8 @@ void leaveSlot(Object& o) {
 // routed around; after 5 tries the route fails with "blocked by person".
 constexpr int kAskToMoveTries = 3;
 constexpr int kMaxBlockedTries = 5;
-constexpr int kWaitForPersonTicks = 126;
+constexpr int kWaitForPersonTicks = 126, kWaitForPersonLongTicks = 420;
+constexpr float kBlockerMovedTries = 0.25f;
 constexpr float kPersonMovedAway = 1.25f;
 // The locomotor's predicted blocking (cLocomotable::CollisionCheck, BV
 // 0x6b49e8; docs/routing-mac.md §6): it looks 10.02 steps of 50 ms each
@@ -1378,8 +1379,12 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         const bool stationary = !blocker.route || blocker.route->waiting;
         const float d = std::hypot(blocker.position.x - me.position.x, blocker.position.y - me.position.y);
         r.waiting = true;
-        if (b != r.blocker) {
+        // DoBlockedGoalStillAvailable's tries start again when the blocker
+        // changes or has moved 0.25 tile since the last one.
+        if (b != r.blocker ||
+            std::hypot(blocker.position.x - r.blockerX, blocker.position.y - r.blockerY) >= kBlockerMovedTries) {
             r.blocker = b, r.replans = 0, r.blockedTicks = 0;
+            r.blockerX = blocker.position.x, r.blockerY = blocker.position.y;
         }
         if (r.blockedTicks == 0) { // DoBlocked: one more try
             if (r.replans >= kMaxBlockedTries) {
@@ -1400,7 +1405,8 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                     return Step::Call;
                 return Step::Walking;
             }
-            // A walking Sim (or asked enough): plan again around it.
+            // A walking Sim (or asked enough): plan again around it and walk
+            // on (DoInitial again: blocked at once, it is the next try).
             Object::Route next = r;
             RouteFail w;
             if (!planRoute(vm, me, next, w)) {
@@ -1408,12 +1414,25 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                 return Step::Failed;
             }
             r.points = std::move(next.points);
-            r.blockedTicks = 1;
             return Step::Walking;
         }
-        // DoWaitingForPersonToMove: until it is 1.25 tiles away or the wait is over.
-        if (++r.blockedTicks >= kWaitForPersonTicks || d > kPersonMovedAway)
+        // DoWaitingForPersonToMove: until it is 1.25 tiles away (then plan
+        // again) or 126 ticks have passed since the request (420 when the
+        // blocker's object data 8 has 0x40), "CT - Route Waiting Animation"
+        // for (1.25 - distance) * 24 ticks at a time (at least 1).
+        // (blockedTicks counts the ticks since the request: each tick here,
+        // and the waiting animation's ticks when it is called.)
+        const int limit = blocker.data[8] & 0x40 ? kWaitForPersonLongTicks : kWaitForPersonTicks;
+        ++r.blockedTicks;
+        if (r.blockedTicks >= limit || d > kPersonMovedAway) {
             r.blockedTicks = 0;
+            return Step::Walking;
+        }
+        const int wait = std::max(1, int((kPersonMovedAway - d) * 24));
+        if (!treeResult && runWalkTree(c, "CT - Route Waiting Animation", {b, int16_t(wait), 0, 0})) {
+            r.blockedTicks += wait;
+            return Step::Call;
+        }
         return Step::Walking;
     }
     if (r.blocker) { // the way is free again

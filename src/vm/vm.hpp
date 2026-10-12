@@ -493,6 +493,8 @@ struct Object {
         std::vector<int16_t> multi; // the goals' multi slot indices (person data 38), when any
         std::vector<ObjectId> ignore;
         int blockedTicks = 0, replans = 0;
+        // Where the Sim in the way stood at the last try (routing.cpp).
+        float blockerX = 0, blockerY = 0;
         bool waiting = false;
         bool failureTrees = true; // "CT - Route Failure Feedback" when it fails
         ObjectId blocker = 0;     // the Sim in the way
