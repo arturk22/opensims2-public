@@ -75,7 +75,7 @@ constexpr size_t kObjectDataCount = 88;
 constexpr size_t kGlobalCount = 54;
 constexpr size_t kPersonDataCount = 170;
 constexpr size_t kMotiveCount = 16;
-constexpr size_t kMaxStackDepth = 128;
+constexpr size_t kMaxStackDepth = 1000; // frames past it: "Max stack depth exceeded" (cTSTreeSim::Gosub BV 0xe1a428)
 // Attributes and semi-attributes have a fixed count (Mac binary, the
 // cTSObject constructor BV 0xb0c7a8): the OBJD's "num attributes" (field
 // 0x3A, byte 0xB4) but at least 8, and the number of the semi-global's
@@ -1292,7 +1292,7 @@ private:
     std::unordered_map<uint16_t, Primitive> primitives_;
 
     int initDepth_ = 0;
-    void push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t, 4> args);
+    void push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::span<const int16_t> args);
     // Follows a branch; returns false when the thread finished or failed.
     bool branch(Thread& t, Behavior::Target target);
     void fail(Thread& t, const std::string& message);

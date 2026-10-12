@@ -78,6 +78,7 @@ inline std::string errorString(uint16_t code) {
     case 0x15: return "No stack object present when required.";
     case 0x16: return "Reference to tree table entry that does not exist.";
     case 0x17: return "Could not find object reference.";
+    case 0x11: return "Bad gosub tree number.";
     case 0x1A: return "Motive number out of range or not an acceptable value.";
     case 0x1B: return "Slot number out of range.";
     case 0x1C: return "Object referred to must be a person.";
@@ -110,6 +111,7 @@ inline std::string errorString(uint16_t code) {
     case 0x76: return "Request for babies count out of range.";
     case 0x94: return "Attempting to create object type that's been unlinked (ie is dead, and has had data removed from it's .package file).";
     case 0x90: return "Trying to create instance of Template Object";
+    case 0x3E8: return "Stack overflow.";
     default: return "Unrecognized error condition : " + std::to_string(code);
     }
 }

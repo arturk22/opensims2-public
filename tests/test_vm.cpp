@@ -137,6 +137,27 @@ static void testCalls() {
                      0, 1));
     t = fx.run(0x1003);
     check(t.status == Thread::Status::Finished && t.result && t.temps[0] == 16, "call with owner/data arguments");
+
+    // A callee of 6 arguments (DoNodeAction BV 0xe1b18c): literals give the
+    // 5th and 6th from bytes 8-11, pairs give them 0, the temps mode temps 4-5.
+    fx.code.add(kObjGroup, 0x1004, tree({expr(Temp, 6, Assign, Param, 4, go(1), E),
+                                          expr(Temp, 7, Assign, Param, 5, T, E)}, 6));
+    fx.code.add(kObjGroup, 0x1005, tree({instr(0x1004, T, E, {1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 0})}));
+    t = fx.run(0x1005);
+    check(t.status == Thread::Status::Finished && t.temps[6] == 5 && t.temps[7] == 6, "literal arguments past the 4th");
+    fx.code.add(kObjGroup, 0x1006, tree({expr(Temp, 4, Assign, Lit, 44, go(1), E), expr(Temp, 5, Assign, Lit, 55, go(2), E),
+                                          instr(0x1004, T, E, {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})}));
+    t = fx.run(0x1006);
+    check(t.status == Thread::Status::Finished && t.temps[6] == 44 && t.temps[7] == 55, "temps as arguments past the 4th");
+    fx.code.add(kObjGroup, 0x1007, tree({expr(Temp, 6, Assign, Lit, 9, go(1), E),
+                                          instr(0x1004, T, E, {Lit, 1, 0, Lit, 2, 0, Lit, 3, 0, Lit, 4, 0, 1, 0, 0, 0})}));
+    t = fx.run(0x1007);
+    check(t.status == Thread::Status::Finished && t.temps[6] == 0 && t.temps[7] == 0, "owner/data arguments past the 4th are 0");
+    fx.code.add(kObjGroup, 0x1008, tree({}));
+    fx.code.add(kObjGroup, 0x1009, tree({instr(0x1008, T, F)}));
+    t = fx.run(0x1009);
+    check(t.status == Thread::Status::Failed && t.error.find("Stack overflow") != std::string::npos,
+          "a call to an empty tree is the game's error 1000");
 }
 
 static void testScopes() {

@@ -1187,10 +1187,8 @@ Thread VM::start(ObjectId me, uint16_t treeId, std::span<const int16_t> args, Ob
     t.me = me;
     if (const Object* o = object(me))
         t.meSerial = o->serial;
-    std::array<int16_t, 4> a{};
-    std::copy_n(args.begin(), std::min<size_t>(args.size(), 4), a.begin());
     try {
-        push(t, codeOwner ? codeOwner : me, treeId, a);
+        push(t, codeOwner ? codeOwner : me, treeId, args);
         t.stack.back().stackObject = stackObject;
     } catch (const std::exception& e) {
         fail(t, e.what());
@@ -1198,15 +1196,18 @@ Thread VM::start(ObjectId me, uint16_t treeId, std::span<const int16_t> args, Ob
     return t;
 }
 
-void VM::push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t, 4> args) {
+void VM::push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::span<const int16_t> args) {
     const Object* owner = object(codeOwner);
     if (!owner)
         throw VMError("code owner " + std::to_string(codeOwner) + " does not exist");
     auto [group, behavior] = resolveTree(*owner, treeId);
     if (!behavior)
-        throw VMError("tree " + hexString(treeId) + " not found");
-    if (t.stack.size() >= kMaxStackDepth)
-        throw VMError("stack overflow");
+        throw gameError(0x11, "tree " + hexString(treeId) + " not found");
+    // cTSTreeSim::Gosub (BV 0xe1a428) refuses past 1000 frames (0x452) and a
+    // tree without nodes; DoNodeAction then throws "Stack overflow" (1000)
+    // for a tree that exists.
+    if (t.stack.size() > kMaxStackDepth)
+        throw gameError(0x3E8, "stack overflow: max stack depth exceeded");
     Frame f;
     f.behavior = behavior;
     f.group = group;
@@ -1214,11 +1215,11 @@ void VM::push(Thread& t, ObjectId codeOwner, uint16_t treeId, std::array<int16_t
     f.codeOwner = codeOwner;
     if (!t.stack.empty())
         f.stackObject = t.stack.back().stackObject;
-    f.params.assign(std::max<size_t>(behavior->argCount, args.size()), 0);
+    f.params.assign(std::max<size_t>({behavior->argCount, args.size(), 4}), 0);
     std::copy(args.begin(), args.end(), f.params.begin());
     f.locals.assign(behavior->localCount, 0);
     if (behavior->instructions.empty())
-        throw VMError("tree " + hexString(treeId) + " has no instructions");
+        throw gameError(0x3E8, "tree " + hexString(treeId) + " has no instructions");
     t.stack.push_back(std::move(f));
 }
 
@@ -1303,26 +1304,34 @@ void VM::run(Thread& t, size_t maxInstructions) {
         try {
             Context ctx{*this, t, frame, in};
             if (in.opcode >= 0x100) {
-                // Call: four arguments, either literals, the temps 0-3 (all
-                // literals 0xFFFF) or, with bit 0 of byte 12, (owner u8, data
-                // u16) pairs. Node version 0 keeps only that bit of byte 12
-                // (RunPrivateTreeParam::Read in the Mac binary; the rest is
-                // stale: "Run Accepter Anim" has 0x69 there).
+                // Call (cTSTreeSim::DoNodeAction BV 0xe1b18c, Gosub
+                // 0xe1a428): as many arguments as the callee takes, at most
+                // 8: with bit 0 of byte 12, (owner u8, data u16) pairs at
+                // 0, 3, 6, 9 (a callee of 1-3 arguments gets that many,
+                // of 4-8 four, the rest 0; of more, all 0); with all
+                // of bytes 0-7 0xFF the temps; else the literals, u16 at
+                // 2 x i (the 5th to 8th from bytes 8-15: the operands are
+                // the argument array). Node version 0 keeps only bit 0 of
+                // byte 12 (RunPrivateTreeParam::Read; the rest is stale:
+                // "Run Accepter Anim" has 0x69 there), so the BV's "my
+                // parameters" bit 1 does not come up.
                 const auto& o = in.operands;
-                std::array<int16_t, 4> args{};
+                const Object* owner = object(frame.codeOwner);
+                const Behavior* callee = owner ? resolveTree(*owner, in.opcode).second : nullptr;
+                const size_t count = callee ? callee->argCount : 0;
+                std::array<int16_t, 8> args{};
                 if (o[12] & 1) {
-                    const Object* owner = object(frame.codeOwner);
-                    const Behavior* callee = owner ? resolveTree(*owner, in.opcode).second : nullptr;
-                    const size_t n = callee ? std::min<size_t>(callee->argCount, 4) : 0;
+                    const size_t n = count >= 1 && count <= 8 ? std::min<size_t>(count, 4) : 0;
                     for (size_t k = 0; k < n; ++k)
                         args[k] = ctx.get(o[k * 3], int16_t(le16(&o[k * 3 + 1])));
                 } else if (std::all_of(o.begin(), o.begin() + 8, [](uint8_t b) { return b == 0xFF; })) {
-                    std::copy_n(t.temps.begin(), 4, args.begin());
+                    std::copy_n(t.temps.begin(), std::min(args.size(), t.temps.size()), args.begin());
                 } else {
-                    for (size_t k = 0; k < 4; ++k)
+                    for (size_t k = 0; k < args.size(); ++k)
                         args[k] = int16_t(le16(&o[k * 2]));
                 }
-                push(t, frame.codeOwner, in.opcode, args);
+                const std::span<const int16_t> passed(args.data(), std::clamp<size_t>(count, 4, args.size()));
+                push(t, frame.codeOwner, in.opcode, passed);
                 continue;
             }
             auto it = primitives_.find(in.opcode);
