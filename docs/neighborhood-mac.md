@@ -1244,9 +1244,9 @@ O que o §15 leu, agora no opensims2, mais o que esta frente leu no binário
   (os planos de sombra no chão dos objetos, "groundshadow"/"*wallshadow") e
   sem `heightMapShadows` (a sombra dos morros no terreno do bairro); médio e
   alto com os dois (simShadows/objectShadows não existem aqui);
-  **Reflection** = `reflectionWithExtraViewer`/`nhoodWaterReflection` (o
-  espelho da frente r13-objects-render lê `graphicsOptions().
-  reflectionWithExtraViewer`); **LightingQuality** baixo = sem
+  **Reflection** = `GameSettings::reflections` (opção `reflection` do
+  `Options.txt`, que o espelho da frente r13-objects-render lê a cada
+  quadro) e `reflectionWithExtraViewer`/`nhoodWaterReflection`; **LightingQuality** baixo = sem
   `specHighlights`. Vale para o que carrega depois (o jogo aplica no
   "Aplicar Mudanças"). A rolagem nas bordas já ia para o `Options.txt`. Não
   há "distância de visão" nem "velocidade da câmera" no jogo base.
