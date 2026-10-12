@@ -70,6 +70,15 @@ void randomLook(const cas::CasCatalog& catalog, cas::CharacterSpec& s, std::mt19
     cas::completeSpec(catalog, s, uint32_t(rng() | 1));
 }
 
+// The in-memory OBJD Make New Character made for the neighbor takes the
+// name of the character file written for it ("<stem> - <first name>", as
+// writeCharacter names the file's OBJD), so the lot's cPerson names that
+// file (lot_records.cpp) and the reload finds it (lot.cpp).
+void nameDefinition(VM& vm, uint32_t guid, const std::string& stem, const std::string& firstName) {
+    if (const auto at = vm.code().definitionByGuid(guid))
+        vm.code().renameDefinition(at->first, at->second, stem + " - " + firstName);
+}
+
 } // namespace
 
 void installBabyCharacterWriter(ResourceIndex& index, const fs::path& charactersDir, const fs::path& outDir,
@@ -151,6 +160,7 @@ void installBabyCharacterWriter(ResourceIndex& index, const fs::path& characters
             const fs::path file = st->out / (std::string(stem) + ".package");
             cas::writeCharacter(*st->index, *st->catalog, *st->baker, s, stem, file, true);
             st->byGuid[baby->guid] = file;
+            nameDefinition(vm, baby->guid, stem, s.firstName);
             if (st->written)
                 (*st->written)[r.baby] = file;
             std::printf("baby %d: character %s (face: parents' LxNR by region", r.baby, file.filename().string().c_str());
@@ -178,6 +188,12 @@ void installBabyCharacterWriter(ResourceIndex& index, const fs::path& characters
             // random numbers), so the VM's own draws stay as they were.
             std::mt19937 rng(n->guid * 2654435761u + uint32_t(r.neighbor));
             randomLook(*st->catalog, s, rng);
+            // Its DNA from that look, as the CAS gives a new (non-baby)
+            // Sim (SetFromOutfitData; the neighborhood keeps it in SDNA).
+            vm.neighbors[r.neighbor].dna =
+                os2::genetics::dnaFromLook(cas::toneFamily(s.hairTone), cas::toneFamily(s.skinTone), s.eyes, r.female,
+                                           [&](uint32_t k) { return k ? uint32_t(rng() % k) : 0u; })
+                    .toProperties();
             // The outfit object's clothes for this age and gender (one of
             // its AGEDs at random when several fit).
             std::string uniform;
@@ -214,13 +230,15 @@ void installBabyCharacterWriter(ResourceIndex& index, const fs::path& characters
             s.lastName = n->lastName;
             s.guid = n->guid;
             s.templateGuid = r.templateGuid;
-            // Kept apart from the files the save copies to the neighborhood:
-            // the neighborhood does not get these neighbors yet.
+            // In the session's NPCs folder: the save copies the <P>_User
+            // files from there to the neighborhood's Characters with the
+            // neighbors (app/game_save.cpp).
             const fs::path dir = st->out / kNpcFolder;
             const std::string stem = nextCharacterStem(st->chars, st->out, dir);
             fs::create_directories(dir);
             const fs::path file = dir / (stem + ".package");
             cas::writeCharacter(*st->index, *st->catalog, *st->baker, s, stem, file, true);
+            nameDefinition(vm, n->guid, stem, s.firstName);
             if (st->written)
                 (*st->written)[r.neighbor] = file;
             std::printf("NPC %d: character %s (template %s, %s %s, outfit %s)\n", r.neighbor, file.filename().string().c_str(),

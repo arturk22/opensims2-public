@@ -336,6 +336,15 @@ void CodeLibrary::add(uint32_t group, uint16_t instance, ObjectDefinition d) {
     definitions_[key(group, instance)] = std::make_unique<ObjectDefinition>(std::move(d));
 }
 
+bool CodeLibrary::renameDefinition(uint32_t group, uint16_t instance, const std::string& fileName) {
+    auto it = definitions_.find(key(group, instance));
+    if (it == definitions_.end() || !it->second)
+        return false;
+    it->second->fileName = fileName; // in place: the objects keep pointing at it
+    byFileName_.emplace(fileName, std::pair{group, instance});
+    return true;
+}
+
 Object::Array& Object::array(int idx) {
     if (idx < 0 || size_t(idx) >= arrays.size())
         throw gameError(err::BadObjectArray, "array " + std::to_string(idx) + " of " + std::to_string(arrays.size()));

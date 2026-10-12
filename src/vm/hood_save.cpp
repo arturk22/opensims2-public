@@ -271,19 +271,27 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         }
     }
 
-    // Sims born in play (Make New Character, characters.cpp): an SDSC as the
-    // game writes a new neighbor's (version 0x20, header words as the CAS
+    // Neighbors made in play (Make New Character, characters.cpp: the
+    // babies born, the NPCs and townies made from a template; or a Sim the
+    // VM made the neighbor of): cTSNeighborManager::WriteNeighbors (BV
+    // 0x53a76c) writes every neighbor, new ones too. An SDSC as the game
+    // writes a new neighbor's (version 0x20, header words as the CAS
     // families', family_write.hpp), its SDNA, its GUID among its family's
-    // members (FAMI) and its parents in the family tree. Their character
-    // files are written beside (vm/baby_character.hpp; the app's save copies
-    // them into Characters).
-    std::set<uint16_t> bornIds;
-    std::map<uint16_t, hood::SimDescription> born;
+    // members (FAMI: the NPCs' 0x7FFF, by Generic Sims Call 4) and, for a
+    // baby, its parents in the family tree. Their character files are
+    // written beside (vm/baby_character.hpp; the app's save copies them
+    // into Characters).
+    std::set<uint16_t> newIds, bornIds;
+    std::map<uint16_t, hood::SimDescription> born; // every new neighbor's SDSC
     std::map<uint32_t, hood::FamilyRecord> famiChanged;
     for (const auto& [id, n] : vm.neighbors) {
-        if (id <= 0 || h.neighbor(uint16_t(id)) || !n.guid || !n.parentA)
+        if (id <= 0 || h.neighbor(uint16_t(id)) || !n.guid)
             continue;
-        bornIds.insert(uint16_t(id));
+        newIds.insert(uint16_t(id));
+        if (n.parentA)
+            bornIds.insert(uint16_t(id));
+        else
+            ++res.npcs;
         hood::SimDescription d;
         d.unknown0 = 0x70;
         d.version = 0x20;
@@ -398,8 +406,8 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
         if (trimmed(values).empty())
             continue;
         const hood::Neighbor* a = h.neighbor(from);
-        if (bornIds.count(from) || bornIds.count(to)) {
-            if ((a || bornIds.count(from)) && (h.neighbor(to) || bornIds.count(to))) {
+        if (newIds.count(from) || newIds.count(to)) {
+            if ((a || newIds.count(from)) && (h.neighbor(to) || newIds.count(to))) {
                 hood::Relationship r;
                 r.from = from;
                 r.to = to;
@@ -592,6 +600,11 @@ std::vector<std::string> compareNeighborhoodState(VM& a, VM& b, size_t limit) {
             diff("neighbor " + std::to_string(id) + " missing from the second");
             continue;
         }
+        if (n.firstName != it->second.firstName || n.lastName != it->second.lastName)
+            diff("neighbor " + std::to_string(id) + " name \"" + n.firstName + " " + n.lastName + "\" vs \"" +
+                 it->second.firstName + " " + it->second.lastName + "\"");
+        if (n.dna != it->second.dna)
+            diff("neighbor " + std::to_string(id) + " DNA");
         const auto& x = data(a, n);
         const auto& y = data(b, it->second);
         for (size_t i : persistentPersonData())

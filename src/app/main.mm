@@ -3871,7 +3871,7 @@ bool saveGameNow() {
         return false;
     }
     const CFTimeInterval start = CACurrentMediaTime();
-    const os2::GameSaveResult r = os2::saveGame(gSimulation->machine(), gLotFile, gameDir());
+    const os2::GameSaveResult r = os2::saveGame(gSimulation->machine(), gLotFile, gameDir(), os2::sessionCharactersDir());
     for (const auto& l : r.lines)
         std::printf("opensims2: save: %s\n", l.c_str());
     if (r.ok)
@@ -6093,6 +6093,14 @@ int main() {
                 printUsage();
                 return 0;
             }
+        // The character folders of earlier sessions that did not exit
+        // (crashed or killed) go (app/game_save.hpp); this one's is removed
+        // at exit.
+        {
+            std::error_code ec;
+            if (const size_t n = os2::removeStaleSessionCharacters(std::filesystem::temp_directory_path(ec)))
+                std::printf("opensims2: removed %zu character folders of earlier sessions\n", n);
+        }
         // --movie <name> --screenshot out.png [--frames n] [--time s] [--sound-wav mix.wav]: headless frames.
         if (auto movie = argument(@"--movie"); movie && argument(@"--screenshot")) {
             try {

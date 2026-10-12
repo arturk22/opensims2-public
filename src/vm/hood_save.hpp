@@ -14,8 +14,8 @@
 //   differ from the package's;
 // - SWAF: the wants, fears and achievement history of the Sims whose want
 //   state changed (wants.hpp);
-// - Sims born in play (Make New Character): SDSC, SDNA, FAMI member, family
-//   tree.
+// - neighbors made in play (Make New Character: babies, NPCs, townies):
+//   SDSC, SDNA, FAMI member, and a baby's family tree.
 // Everything else of the package is copied as it is.
 
 #include "vm.hpp"
@@ -38,6 +38,7 @@ struct HoodSaveResult {
     bool inventories = false;
     size_t wants = 0; // SWAF records written (wants.hpp)
     size_t born = 0;  // Sims born in play written (SDSC, SDNA, FAMI member, family tree)
+    size_t npcs = 0;  // other neighbors made in play written (NPCs, townies: SDSC, SDNA, FAMI member)
     size_t clothing = 0; // family clothing bin entries added (BINX + 3IDR: the clothing rack's purchases)
     std::vector<std::string> warnings;
 };

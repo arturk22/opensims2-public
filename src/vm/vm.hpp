@@ -316,6 +316,10 @@ public:
     // apart, since every such package uses the same group. Its OBJDs take
     // over their GUIDs. Returns the OBJD instances it added.
     std::vector<uint16_t> addPackage(DbpfPackage& package, uint32_t group);
+    // Gives an OBJD added here another file name, in place (a character made
+    // in memory takes the name of the file written for it: "N001_User00171 -
+    // Bebê", which the lot's cPerson names). False when there is none.
+    bool renameDefinition(uint32_t group, uint16_t instance, const std::string& fileName);
 
 private:
     // A null entry records a resource known to be missing.

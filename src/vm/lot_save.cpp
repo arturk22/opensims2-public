@@ -3,6 +3,8 @@
 #include <set>
 #include "lot_save.hpp"
 
+#include "placement.hpp"
+
 #include "formats/lot_objects.hpp"
 #include "formats/binreader.hpp"
 #include "interactions.hpp"
@@ -205,6 +207,11 @@ void captureObject(VM& vm, const LotObjects& saved, const Object& o, LotObjects:
 } // namespace
 
 CaptureResult captureLot(VM& vm, const LotObjects& saved, const std::map<uint32_t, LotObjects::SaveType>* moreSaveTypes) {
+    // The save's "about to save" message (0xCD94C8EE, cTSSaveLotController::
+    // SaveLot step 7): cTSLot::ComputeAndStoreLotData refreshes the lot's
+    // values (globals 46-49) before the simulator writes them
+    // (docs/neighborhood-mac.md §11.1).
+    computeLotData(vm);
     CaptureResult out;
     LotObjects& lot = out.lot;
     lot = saved;

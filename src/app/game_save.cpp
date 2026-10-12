@@ -1,6 +1,8 @@
 #include "app/game_save.hpp"
 
+#include "formats/character_write.hpp"
 #include "formats/dbpf.hpp"
+#include "formats/simantics.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/neighborhood.hpp"
@@ -12,6 +14,9 @@
 #include <algorithm>
 #include <string>
 #include <unistd.h>
+#include <cerrno>
+#include <csignal>
+#include <cstdlib>
 #include <cstdio>
 #include <map>
 
@@ -29,7 +34,55 @@ bool under(const fs::path& path, const fs::path& dir) {
 
 } // namespace
 
-GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gameDir) {
+std::vector<std::string> copySessionCharacters(vm::VM& vm, const fs::path& sessionDir, const fs::path& chars,
+                                               const std::string& prefix) {
+    // Character files written in play (a Sim grown up, a baby born, an
+    // NPC made from a template: the session's NPCs folder) go to the
+    // neighborhood's, with the neighbors saveNeighborhood writes (the
+    // game makes each new character's file in Characters at once,
+    // cTSNeighborManager::AddNewCharacter, and writes the neighbors on
+    // save). The unique NPCs' files drawn from their objects
+    // ("Unique_<GUID>") stay out: the game keeps those characters in
+    // the objects.
+    std::vector<std::string> lines;
+    const std::string userPrefix = prefix + "_User";
+    for (const fs::path& dir : {sessionDir, sessionDir / "NPCs"}) {
+        std::error_code ec;
+        for (const auto& f : fs::directory_iterator(dir, ec)) {
+            const std::string name = f.path().filename().string();
+            if (f.path().extension() != ".package" ||
+                !(name.rfind(userPrefix, 0) == 0 || (dir == sessionDir && fs::exists(chars / name))))
+                continue;
+            // The name the neighbor has now (a newborn named by the player).
+            try {
+                uint32_t guid = 0;
+                {
+                    DbpfPackage pkg(f.path());
+                    for (const auto& x : pkg.entries())
+                        if (x.tgi.type == 0x4F424A44) { // OBJD
+                            guid = ObjectDefinition::parse(pkg.read(x)).guid();
+                            break;
+                        }
+                }
+                for (const auto& [id, n] : vm.neighbors)
+                    if (guid && n.guid == guid && !n.firstName.empty()) {
+                        if (cas::setCharacterNames(f.path(), n.firstName, n.lastName))
+                            lines.push_back("character " + name + " named " + n.firstName);
+                        break;
+                    }
+            } catch (const std::exception& e) {
+                lines.push_back("warning: " + name + ": " + e.what());
+            }
+            const fs::path tmp = chars / (name + ".saving");
+            fs::copy_file(f.path(), tmp, fs::copy_options::overwrite_existing);
+            fs::rename(tmp, chars / name);
+            lines.push_back("character " + name + (dir == sessionDir ? " (grown up or born)" : " (NPC)"));
+        }
+    }
+    return lines;
+}
+
+GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gameDir, const fs::path& sessionDir) {
     GameSaveResult out;
     try {
         if (under(lotFile, gameDir))
@@ -75,19 +128,9 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
                 out.lines.push_back("warning: " + w);
         }
         fs::rename(tmpLot, lotFile);
-        // Character files written in play (a Sim grown up, a baby born) go to the neighborhood's.
-        if (const fs::path chars = lotFile.parent_path().parent_path() / "Characters"; fs::is_directory(chars)) {
-            std::error_code ec;
-            for (const auto& f : fs::directory_iterator(sessionCharactersDir(), ec))
-                if (f.path().extension() == ".package" &&
-                    (fs::exists(chars / f.path().filename()) ||
-                     f.path().filename().string().rfind(lotFile.filename().string().substr(0, 4) + "_User", 0) == 0)) {
-                    const fs::path tmp = chars / (f.path().filename().string() + ".saving");
-                    fs::copy_file(f.path(), tmp, fs::copy_options::overwrite_existing);
-                    fs::rename(tmp, chars / f.path().filename());
-                    out.lines.push_back("character " + f.path().filename().string() + " (grown up or born)");
-                }
-        }
+        if (const fs::path chars = lotFile.parent_path().parent_path() / "Characters"; fs::is_directory(chars))
+            for (auto& l : copySessionCharacters(vm, sessionDir, chars, lotFile.filename().string().substr(0, 4)))
+                out.lines.push_back(std::move(l));
         if (const fs::path hoodPackage = vm::neighborhoodPackageOf(lotFile); !hoodPackage.empty()) {
             const fs::path tmpHood = hoodPackage.parent_path() / (hoodPackage.filename().string() + ".saving");
             const hood::Neighborhood hood = hood::Neighborhood::load(hoodPackage, true);
@@ -96,9 +139,9 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
             char buf[512];
             std::snprintf(buf, sizeof buf,
                           "neighborhood %s: %zu families, %zu Sim descriptions, relationships %zu changed, %zu new%s, "
-                          "%zu clothes bought",
+                          "%zu clothes bought, %zu born, %zu NPCs made",
                           hoodPackage.filename().string().c_str(), h.families, h.descriptions, h.relationshipsChanged,
-                          h.relationshipsNew, h.inventories ? ", inventories" : "", h.clothing);
+                          h.relationshipsNew, h.inventories ? ", inventories" : "", h.clothing, h.born, h.npcs);
             out.lines.push_back(buf);
             for (const auto& w : h.warnings)
                 out.lines.push_back("warning: " + w);
@@ -110,14 +153,51 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
     return out;
 }
 
+namespace {
+
+const char* const kSessionPrefix = "opensims2-characters-";
+
+void removeSessionCharacters() {
+    std::error_code ec;
+    fs::remove_all(fs::temp_directory_path(ec) / (kSessionPrefix + std::to_string(::getpid())), ec);
+}
+
+} // namespace
+
 fs::path sessionCharactersDir() {
     static const fs::path dir = [] {
-        fs::path d = fs::temp_directory_path() / ("opensims2-characters-" + std::to_string(::getpid()));
+        removeStaleSessionCharacters(fs::temp_directory_path());
+        fs::path d = fs::temp_directory_path() / (kSessionPrefix + std::to_string(::getpid()));
         std::error_code ec;
         fs::create_directories(d, ec);
+        std::atexit(removeSessionCharacters); // what was not saved goes with the session
         return d;
     }();
     return dir;
+}
+
+size_t removeStaleSessionCharacters(const fs::path& tempDir) {
+    size_t removed = 0;
+    std::error_code ec;
+    const std::string prefix = kSessionPrefix;
+    std::vector<fs::path> stale;
+    for (const auto& e : fs::directory_iterator(tempDir, ec)) {
+        const std::string name = e.path().filename().string();
+        if (name.rfind(prefix, 0) != 0 || !e.is_directory(ec))
+            continue;
+        const std::string digits = name.substr(prefix.size());
+        if (digits.empty() || digits.find_first_not_of("0123456789") != std::string::npos)
+            continue;
+        const long pid = std::stol(digits);
+        // A session still running keeps its folder (kill 0: the process
+        // exists; EPERM: it exists under another user).
+        if (pid > 0 && (::kill(pid_t(pid), 0) == 0 || errno == EPERM))
+            continue;
+        stale.push_back(e.path());
+    }
+    for (const auto& p : stale)
+        removed += fs::remove_all(p, ec) > 0;
+    return removed;
 }
 
 } // namespace os2

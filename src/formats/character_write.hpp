@@ -147,6 +147,12 @@ CharacterWriteResult writeAgedCharacter(ResourceIndex& index, const CasCatalog& 
 // when the OBJD is not found or its group has no AGED.
 bool writeEmbeddedCharacter(ResourceIndex& index, uint32_t objdGuid, const std::filesystem::path& out);
 
+// A character file's names (its CTSS: string 0 the first name, 2 the
+// family name; the description kept) set to these, as the game's character
+// takes the name the player gives (the newborn's name dialog). The file is
+// rewritten in place; false when it has no CTSS or already had them.
+bool setCharacterNames(const std::filesystem::path& file, const std::string& firstName, const std::string& lastName);
+
 // The next life stage's age bit (baby -> toddler -> child -> teen -> adult
 // -> elder), 0 for elders.
 uint32_t nextAge(uint32_t ageBit);

@@ -379,6 +379,43 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
     return spec;
 }
 
+bool setCharacterNames(const std::filesystem::path& file, const std::string& firstName, const std::string& lastName) {
+    std::vector<uint8_t> replaced;
+    Tgi at{};
+    {
+        DbpfPackage pkg(file);
+        for (const auto& e : pkg.entries())
+            if (e.tgi.type == kTypeCtss) {
+                const StringTable st = StringTable::parse(pkg.read(e));
+                if (st.get(0) == firstName && st.get(2) == lastName)
+                    return false;
+                // In US English, which every language falls back to (writeStrings).
+                std::vector<std::string> values{firstName, st.get(1), lastName};
+                for (size_t i = 3; i < st.count(lang::EnglishUS); ++i)
+                    values.push_back(st.get(i));
+                replaced = writeStrings(values);
+                at = e.tgi;
+                break;
+            }
+        if (replaced.empty())
+            return false;
+        DbpfWriter w;
+        for (const auto& e : pkg.entries()) {
+            if (e.tgi.type == ::os2::type::DIR)
+                continue;
+            if (e.tgi == at)
+                w.add(e.tgi, std::move(replaced), e.compressed());
+            else
+                w.addStored(e.tgi, pkg.readRaw(e), e.rawSize);
+        }
+        pkg.closeFile();
+        const std::filesystem::path tmp = file.string() + ".names";
+        w.save(tmp);
+        std::filesystem::rename(tmp, file);
+    }
+    return true;
+}
+
 bool writeEmbeddedCharacter(ResourceIndex& index, uint32_t objdGuid, const std::filesystem::path& out) {
     std::optional<ResourceIndex::Location> objd;
     for (const auto& loc : index.ofType(kTypeObjd))

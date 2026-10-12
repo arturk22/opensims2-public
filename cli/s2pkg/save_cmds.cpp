@@ -20,6 +20,14 @@
 #include "vm/save_types.hpp"
 #include "vm/lot_records.hpp"
 #include "vm/hood_save.hpp"
+#include "vm/baby_character.hpp"
+#include "vm/dialog.hpp"
+#include "vm/engine.hpp"
+#include "vm/interactions.hpp"
+#include "formats/ui_resources.hpp"
+#include "formats/bhav.hpp"
+#include "app/game_save.hpp"
+#include <set>
 
 #include <algorithm>
 #include <cstdio>
@@ -337,7 +345,16 @@ int cmdHoodSave(const std::vector<std::string>& args) {
     const fs::path tmpHood = outDir / (prefix + "_Neighborhood.package.tmp");
     fs::copy_file(hoodPackage, outHood, fs::copy_options::overwrite_existing);
     ResourceIndex index(res);
-    const fs::path characters = hoodDir / "Characters";
+    // The copy's characters: the lots' Sims, and those made in play (babies,
+    // NPCs: written to a session folder by the character writers and copied
+    // in with each save, as the app's save does, app/game_save.hpp).
+    const fs::path characters = outDir / "Characters";
+    fs::create_directories(characters);
+    const fs::path session = outDir / ".session";
+    fs::remove_all(session);
+    UiResources texts(index, res);
+    vm::textTables() = [&texts](uint32_t group, uint32_t instance) { return texts.table(group, instance); };
+    vm::installBabyCharacterWriter(index, characters, session);
     std::vector<fs::path> templates;
     for (const auto& d : fs::directory_iterator(res / "UserData" / "Neighborhoods"))
         if (fs::is_directory(d.path() / "Lots"))
@@ -379,15 +396,18 @@ int cmdHoodSave(const std::vector<std::string>& args) {
             records = vm::captureLotRecords(*a->vm, world, pkg, a->saved, captured.lot, others);
             captured.lot.save(pkg, dst);
         }
+        for (const auto& l : copySessionCharacters(*a->vm, session, characters, prefix))
+            std::printf("  %s\n", l.c_str());
         const vm::HoodSaveResult h = vm::saveNeighborhood(*a->vm, hood, outHood, tmpHood);
         fs::rename(tmpHood, outHood);
         std::printf("%s: %zu objects (%zu added, %zu gone, %zu new objt records); cObjects %zu moved, %zu new; %zu "
                     "routing states; lot relationships %zu changed, %zu new, %zu gone; neighborhood: %zu families, %zu "
-                    "Sim descriptions, relationships %zu changed, %zu new%s\n",
+                    "Sim descriptions, relationships %zu changed, %zu new%s; %zu born, %zu NPCs made\n",
                     src.filename().string().c_str(), captured.lot.objects.size(), captured.added, captured.removed,
                     captured.newSaveTypes, records.sceneMoved, records.sceneNew, records.routing,
                     records.relationshipsChanged, records.relationshipsNew, records.relationshipsGone, h.families,
-                    h.descriptions, h.relationshipsChanged, h.relationshipsNew, h.inventories ? ", inventories" : "");
+                    h.descriptions, h.relationshipsChanged, h.relationshipsNew, h.inventories ? ", inventories" : "",
+                    h.born, h.npcs);
         for (const auto& w : captured.warnings)
             std::printf("  warning: %s\n", w.c_str());
         for (const auto& w : records.warnings)
@@ -411,12 +431,215 @@ int cmdHoodSave(const std::vector<std::string>& args) {
                 std::printf("    %s\n", d.c_str());
         }
     }
+    fs::remove_all(session);
+    vm::babyCharacterWriter() = nullptr;
+    vm::npcCharacterWriter() = nullptr;
+    vm::textTables() = nullptr;
     std::printf("%s: %zu lots saved to %s after %ld ticks", prefix.c_str(), lots.size() - skipped, outDir.string().c_str(),
                 ticks);
     if (check)
         std::printf("; the same VM after load -> save -> load in %zu, different in %zu", same, differ);
     std::printf("\n");
     return differ ? 1 : 0;
+}
+
+// play-loop: the whole play -> save -> neighborhood -> reload loop on a
+// copy of a neighborhood, through the app's own save (app/game_save.hpp):
+// the lot played for N ticks with the character writers installed (the
+// babies' and the NPCs' files go to a session folder, as the app's), an
+// optional scripted birth (--birth mother,father, as pie's) and NPC made
+// from a template (--npc GUID[:outfit GUID], as "NPC - Make New Character -
+// Specific" runs Make New Character 0xC8), the newborns named after a game
+// minute (as autonomy --name-babies); saveGame writes the lot, the
+// neighborhood and the character files; the neighborhood is read back (its
+// families and new neighbors with their character files, as the loading
+// screen and the neighborhood view show them); the lot is loaded again
+// with it and compared with the VM that saved it.
+int cmdPlayLoop(const std::vector<std::string>& args) {
+    std::vector<std::string> paths;
+    long ticks = 0;
+    std::string birth;
+    std::vector<std::string> npcs;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--ticks" && i + 1 < args.size())
+            ticks = std::stol(args[++i]);
+        else if (args[i] == "--birth" && i + 1 < args.size())
+            birth = args[++i];
+        else if (args[i] == "--npc" && i + 1 < args.size())
+            npcs.push_back(args[++i]);
+        else
+            paths.push_back(args[i]);
+    }
+    if (paths.size() != 3)
+        throw std::runtime_error("usage: s2pkg play-loop <neighborhood dir> <lot id> <out dir> [--ticks N] "
+                                 "[--birth mother,father] [--npc GUID[:outfit GUID]]");
+    const fs::path hoodDir = fs::canonical(paths[0]);
+    const fs::path outDir = fs::weakly_canonical(fs::absolute(paths[2]));
+    const std::string prefix = hoodDir.filename().string();
+    if (fs::exists(outDir) && !fs::is_empty(outDir))
+        throw std::runtime_error(outDir.string() + " is not empty");
+    // A Neighborhoods folder with the copy in it, as the player's.
+    const fs::path hoodOut = outDir / prefix;
+    const fs::path lotFile = hoodOut / "Lots" / (prefix + "_Lot" + paths[1] + ".package");
+    if (!fs::exists(hoodDir / "Lots" / lotFile.filename()))
+        throw std::runtime_error("no " + lotFile.filename().string() + " in " + hoodDir.string());
+    fs::create_directories(hoodOut);
+    fs::copy(hoodDir, hoodOut, fs::copy_options::recursive);
+    const fs::path res = resRootOfLot(lotFile);
+    const fs::path game = fs::weakly_canonical(res.parent_path().parent_path());
+    if (outDir.string().starts_with(game.string()))
+        throw std::runtime_error("refusing to write into the game's data: pick an output outside " + game.string());
+    const fs::path characters = hoodOut / "Characters";
+    const fs::path session = outDir / "session"; // the app's sessionCharactersDir()
+    fs::remove_all(session);
+    fs::create_directories(session);
+
+    ResourceIndex index(res);
+    UiResources texts(index, res);
+    vm::textTables() = [&texts](uint32_t group, uint32_t instance) { return texts.table(group, instance); };
+    std::map<int16_t, fs::path> written;
+    vm::installBabyCharacterWriter(index, characters, session, &written);
+    vm::CodeLibrary code(&index);
+    const hood::Neighborhood hood = hood::Neighborhood::load(hoodOut, true);
+    LoadedLot a = loadInto(code, lotFile, lotFile, &hood, characters);
+    vm::VM& m = *a.vm;
+    m.instructionsPerTurn = 100000; // as autonomy (the binary's limit)
+    m.dialogTimeouts = true;
+    if (std::string err; !vm::runLotLoaded(m, &err) && !err.empty())
+        std::printf("CT - Lot Loaded: %s\n", err.c_str());
+    std::set<int16_t> before;
+    for (const auto& [id, n] : m.neighbors)
+        before.insert(id);
+
+    // A tree of one Make New Character instruction run on `me` (pie --birth).
+    auto makeCharacter = [&](vm::ObjectId me, std::array<uint8_t, 16> operands, std::array<int16_t, vm::kTempCount> temps,
+                             std::vector<int16_t> params, uint16_t instance) {
+        Behavior b;
+        b.fileName = "Test - Make New Character";
+        b.signature = 0x8009;
+        b.argCount = uint16_t(params.size());
+        b.localCount = 4;
+        Behavior::Instruction in;
+        in.opcode = 0x13;
+        in.onTrue = {Behavior::TargetKind::True, 0};
+        in.onFalse = {Behavior::TargetKind::False, 0};
+        in.operands = operands;
+        b.instructions.push_back(in);
+        const vm::Object& o = *m.object(me);
+        code.add(o.group, instance, std::move(b));
+        return vm::runOneTickTree(m, temps, me, me, me, instance, params);
+    };
+    if (!birth.empty()) {
+        const auto comma = birth.find(',');
+        const vm::ObjectId ma = vm::findSim(m, birth.substr(0, comma));
+        const vm::ObjectId pa = comma == std::string::npos ? 0 : vm::findSim(m, birth.substr(comma + 1));
+        if (!ma || !pa)
+            throw std::runtime_error("--birth: no Sim " + birth);
+        std::array<int16_t, vm::kTempCount> temps{};
+        temps[0] = 1;
+        const bool ok = makeCharacter(ma, {0, 0, 0, 0x09, 1, 0, 0x09, 0, 0, 0x01}, temps, {ma, pa}, 0x1FF0);
+        std::printf("birth (Make New Character, baby of %d and %d): %s\n", ma, pa, ok ? "true" : "false");
+    }
+    for (const std::string& spec : npcs) {
+        // Make New Character 0xC8 as the NPC trees run it: the template GUID
+        // in temps 0/1, the outfit's in temps 2/3, age and gender drawn.
+        const auto colon = spec.find(':');
+        const uint32_t guid = uint32_t(std::stoul(spec.substr(0, colon), nullptr, 0));
+        const uint32_t outfit = colon == std::string::npos ? 0 : uint32_t(std::stoul(spec.substr(colon + 1), nullptr, 0));
+        const vm::ObjectId me = vm::findSim(m, "");
+        std::array<int16_t, vm::kTempCount> temps{};
+        temps[0] = int16_t(guid & 0xFFFF), temps[1] = int16_t(guid >> 16);
+        temps[2] = int16_t(outfit & 0xFFFF), temps[3] = int16_t(outfit >> 16);
+        const uint8_t flags = outfit ? 0xC8 : 0x08;
+        // Locals 0-2 are 0: age and gender drawn.
+        const bool ok = makeCharacter(me, {0, 1, 2, 0, 0, 0, 0, 0, 0, flags}, temps, {}, 0x1FF1);
+        int16_t id = 0;
+        if (vm::Object* o = m.object(me); o && !o->arrays.empty() && !o->array(0).values.empty())
+            id = o->array(0).values.back();
+        // "Generic Sims Call 4" puts the NPCs in the service family (the
+        // trees pass 0x7FFF; inferred from the shipped neighborhoods).
+        if (vm::Neighbor* n = m.neighbor(id))
+            n->personData[vm::persondata::FamilyNumber] = 0x7FFF;
+        std::printf("NPC from template %s: %s, neighbor %d\n", hexString(guid).c_str(), ok ? "true" : "false", id);
+    }
+    for (long i = 0; i < ticks; ++i) {
+        m.tick();
+        for (auto& [who, d] : m.dialogs) { // the newborns' names, after a game minute (autonomy --name-babies)
+            static std::map<uint32_t, uint64_t> seen;
+            if (d.type != vm::dialogtype::BabyName || d.answer >= 0)
+                continue;
+            const uint64_t first = seen.emplace(d.id, m.ticks).first->second;
+            if (m.ticks - first < 30)
+                continue;
+            for (size_t k = 0; k < d.names.size(); ++k)
+                if (d.names[k].text.empty())
+                    d.names[k].text = k ? "Bebê " + std::to_string(k + 1) : std::string("Bebê");
+            if (!d.names.empty())
+                d.text = d.names[0].text;
+            d.answer = 0;
+        }
+    }
+    std::printf("%s: played %ld ticks\n", lotFile.filename().string().c_str(), ticks);
+    std::vector<int16_t> made;
+    for (const auto& [id, n] : m.neighbors)
+        if (!before.count(id)) {
+            made.push_back(id);
+            const auto f = written.find(id);
+            std::printf("  new neighbor %d \"%s %s\" GUID %s family %d age %d%s%s\n", id, n.firstName.c_str(),
+                        n.lastName.c_str(), hexString(n.guid).c_str(), n.personData[vm::persondata::FamilyNumber],
+                        n.personData[vm::persondata::PersonAge], f == written.end() ? "" : ", character ",
+                        f == written.end() ? "" : f->second.filename().string().c_str());
+        }
+
+    // Save, as the app's Options -> Save.
+    const GameSaveResult saved = saveGame(m, lotFile, game, session);
+    for (const auto& l : saved.lines)
+        std::printf("  save: %s\n", l.c_str());
+    if (!saved.ok)
+        throw std::runtime_error("save failed: " + saved.error);
+
+    // Back to the neighborhood: what it reads of the families and Sims.
+    size_t problems = 0;
+    const hood::Neighborhood back = hood::Neighborhood::load(hoodOut, true);
+    const int16_t family = m.globals[vm::global::CurrentFamily];
+    if (const hood::Family* f = back.family(uint32_t(family))) {
+        std::printf("  neighborhood: family %d \"%s\", funds %d:", family, f->name.c_str(), f->record.funds);
+        for (uint16_t id : f->members) {
+            const hood::Neighbor* n = back.neighbor(id);
+            std::printf(" %s%s", n ? n->name().c_str() : "?", n && n->character >= 0 ? "" : " (no character file)");
+            problems += !n || n->character < 0;
+        }
+        std::printf("\n");
+    }
+    for (int16_t id : made) {
+        const hood::Neighbor* n = back.neighbor(uint16_t(id));
+        const bool ok = n && n->character >= 0;
+        std::printf("  neighborhood: new neighbor %d %s\n", id,
+                    !n ? "missing" : (n->name() + (ok ? ", character file" : ", no character file")).c_str());
+        problems += !ok;
+    }
+    for (const auto& e : back.errors)
+        std::printf("  neighborhood: %s\n", e.c_str());
+
+    // The lot again, with the saved neighborhood.
+    vm::CodeLibrary code2(&index);
+    LoadedLot b = loadInto(code2, lotFile, lotFile, &back, characters);
+    for (const auto& e : b.load.objects)
+        if (!e.error.empty()) {
+            std::printf("  reload: object %d (%s): %s\n", e.id, e.name.c_str(), e.error.c_str());
+            ++problems;
+        }
+    auto diffs = vm::compareLotState(m, *b.vm);
+    for (auto& d : vm::compareNeighborhoodState(m, *b.vm))
+        diffs.push_back("neighborhood: " + d);
+    std::printf("  play -> save -> neighborhood -> reload: %s\n", diffs.empty() ? "the same" : "differs:");
+    for (const auto& d : diffs)
+        std::printf("    %s\n", d.c_str());
+    fs::remove_all(session);
+    vm::babyCharacterWriter() = nullptr;
+    vm::npcCharacterWriter() = nullptr;
+    vm::textTables() = nullptr;
+    return diffs.empty() && problems == 0 ? 0 : 1;
 }
 
 // objt-check: each record of the lots' save type tables against the one
@@ -485,6 +708,8 @@ int saveCommand(const std::string& cmd, int argc, char** argv) {
         return cmdLotSave({argv + 2, argv + argc});
     if (cmd == "hood-save" && argc >= 4)
         return cmdHoodSave({argv + 2, argv + argc});
+    if (cmd == "play-loop" && argc >= 5)
+        return cmdPlayLoop({argv + 2, argv + argc});
     if (cmd == "objt-check" && argc >= 3)
         return cmdObjtCheck({argv + 2, argv + argc});
     return -1;
@@ -503,6 +728,8 @@ const char* saveUsage() {
            "              [--dormer product 6-11,x,y,dir[,level]] (dormers)\n"
            "              [--fence-arch|--delete-fence-arch x0,y0,x1,y1[,level]] [--build-funds n]\n"
            "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
+           "       s2pkg play-loop <neighborhood dir> <lot id> <out dir> [--ticks N] [--birth mother,father] [--npc GUID[:outfit GUID]]\n"
+           "              (out dir/<P>: play, save as the app does, read the neighborhood back, reload the lot and compare)\n"
            "       s2pkg objt-check <lot.package>...\n";
 }
 

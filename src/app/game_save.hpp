@@ -30,11 +30,27 @@ struct GameSaveResult {
 // `lotFile` is the package the VM's lot was loaded from (<hood>/Lots/...);
 // `gameDir` is data/game (refused as a destination; its shipped lots give
 // the cObjects of objects created during play).
-GameSaveResult saveGame(vm::VM& vm, const std::filesystem::path& lotFile, const std::filesystem::path& gameDir);
+// `sessionDir` holds the character files written in play (sessionCharactersDir()).
+GameSaveResult saveGame(vm::VM& vm, const std::filesystem::path& lotFile, const std::filesystem::path& gameDir,
+                        const std::filesystem::path& sessionDir);
+
+// Copies the character files of `sessionDir` (and its NPCs folder) that
+// belong in the neighborhood `charactersDir` (<prefix>_User files, and
+// rewritten ones it has) there, each with its neighbor's current names;
+// the lines say what was copied.
+std::vector<std::string> copySessionCharacters(vm::VM& vm, const std::filesystem::path& sessionDir,
+                                               const std::filesystem::path& charactersDir, const std::string& prefix);
 
 // Where this session keeps the character files it rewrote (a Sim grown up:
-// the game saves the character on aging, docs/cas-mac.md §17.1); saveGame
-// copies each over the neighborhood's file of the same name.
+// the game saves the character on aging, docs/cas-mac.md §17.1) or made (a
+// baby; an NPC, in its NPCs folder); saveGame copies them to the
+// neighborhood's Characters. A folder of the user's temporary directory
+// named after the process; removed when the process exits, and the first
+// call removes those of sessions no longer running (crashed ones).
 std::filesystem::path sessionCharactersDir();
+
+// Removes the session folders in `tempDir` whose process is not running;
+// returns how many.
+size_t removeStaleSessionCharacters(const std::filesystem::path& tempDir);
 
 } // namespace os2

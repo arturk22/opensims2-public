@@ -443,6 +443,46 @@ static void testClothingBin() {
     fs::remove_all(dir);
 }
 
+// A neighbor made in play from an NPC template (no parents) is written to
+// the neighborhood like any other (cTSNeighborManager::WriteNeighbors): its
+// SDSC, its SDNA and its GUID among the service family's members.
+static void testNpcNeighborSaved() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / ("os2-npc-save-" + std::to_string(::getpid()));
+    fs::create_directories(dir);
+    {
+        hood::FamilyRecord f;
+        f.version = 0x4E;
+        f.funds = 20000;
+        DbpfWriter w;
+        w.add(Tgi{hoodtype::FAMI, 0xFFFFFFFF, 0x7FFF, 0}, f.write());
+        w.save(dir / "N009_Neighborhood.package");
+    }
+    CodeLibrary code;
+    VM vm{code};
+    const auto h = hood::Neighborhood::load(dir / "N009_Neighborhood.package", false);
+    loadNeighborhood(vm, h);
+    Neighbor& n = vm.neighbors[50];
+    n.guid = 0x0FD12345;
+    n.firstName = "Allyn";
+    n.lastName = "Smith";
+    n.personData[persondata::NeighborId] = 50;
+    n.personData[persondata::FamilyNumber] = 0x7FFF;
+    n.personData[persondata::PersonAge] = 0x13;
+    n.dna = {{"1", "00000001-0000-0000-0000-000000000000"}};
+    const HoodSaveResult r = saveNeighborhood(vm, h, dir / "N009_Neighborhood.package", dir / "out.package");
+    const auto h2 = hood::Neighborhood::load(dir / "out.package", false);
+    const hood::Neighbor* saved = h2.neighbor(50);
+    const hood::Family* service = h2.family(0x7FFF);
+    check(r.npcs == 1 && r.born == 0 && saved && saved->description.guid == 0x0FD12345 &&
+              saved->description.personData[persondata::PersonAge] == 0x13,
+          "NPC made in play: its SDSC is written");
+    check(saved && saved->dna == n.dna, "NPC made in play: its SDNA is written");
+    check(service && service->record.members.size() == 1 && service->record.members[0] == 0x0FD12345,
+          "NPC made in play: a member of the service family (FAMI 0x7FFF)");
+    fs::remove_all(dir);
+}
+
 // A family's clothing bin entries (familyClothingEntries, as a family made
 // in CAS gets its members' clothes): a BINX and 3IDR per item once each,
 // instances past the package's, and the bin when the family has none.
@@ -471,6 +511,7 @@ int main() {
     lang::setPreferred(lang::EnglishUS);
     testFamilyBinEntries();
     testClothingBin();
+    testNpcNeighborSaved();
     testYesNoCancel();
     testNotification();
     testSpecialDialogs();
