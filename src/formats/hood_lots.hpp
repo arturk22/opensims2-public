@@ -231,30 +231,41 @@ std::optional<std::pair<int, Placement>> findFront(const PlacementWorld& world, 
                                                     uint32_t self = 0, int preferred = -1);
 
 // Decorations: the neighborhood's own flora, stones, landmarks and effects
-// the puck's "Decorações - F3" panel lists (docs/neighborhood-mac.md 14).
+// the puck's "Decorações - F3" panel lists (docs/neighborhood-mac.md 14, 15.4).
 // Each is a product of the object catalog (catcanhobjects, type 0x6D619378);
-// the panel's five sort buttons are the product's `sort` (flora, landmark,
-// effects, stone, misc). Placing one adds an occupant record to the
-// neighborhood: INFERRED that the "flora" sort goes in the flora list and the
-// rest in the props (what the three base neighborhoods hold: windmills and
-// farm fields also stand in the flora lists, the placed ones may differ).
+// the panel's five sort buttons are the product's `sort`. The catalog loader
+// (FUN_00b36510) turns the sort into cTSProductNeighborhoodObject::ObjectType
+// (flora 0, stone 1, landmark 2, effects 3, misc 4) and
+// cTSUserToolPlopNeighborhoodObject::InstantiateObjectForCatalogProduct
+// makes type 0 a flora occupant (the manager's CreateFloraOccupant) and the
+// others props (CreatePropOccupant).
 struct DecorProduct {
     uint32_t guid = 0;
     std::string name, model, sort;      // `model` is the CRES name without "_cres"
     bool inLot = false, onRoad = false; // allowedinlot, allowedonroad
-    int surface = 0;                    // placementsurface: 0 land, 1 water, 2 either (inferred)
+    bool removeOnLotPlop = false;       // removeonlotplop
+    int surface = 0;                    // placementsurface: 0 land, 1 water, 2 either
     uint32_t thumbGroup = 0, thumbInstance = 0; // a UI image (effects only)
     bool flora() const { return sort == "flora"; }
 };
 // The products shown in the catalog (showincatalog 1, not deprecated), by sort then GUID.
 std::vector<DecorProduct> loadDecorCatalog(ResourceIndex& index);
-// "" when `product` may stand with this footprint, else why not (the terrain's
-// edge, the water or land it needs, a lot or road under it when it may not
-// stand on those).
+// cTSUserToolPlopNeighborhoodObject::IsOKToPlaceObjectAtCurrentLocation (BV
+// 0x415d34): 0 when `product` may stand with this footprint, else the error,
+// the entry of the neighborhood's STR# 0x89 its tooltip shows (1-based):
+// 1 a lot under the footprint's tiles when the product may not be in a lot
+// or is removed when a lot is placed; 3 a tile not all land (surface 0) or
+// 4 not all water (surface 1); 2 a road whose bounds touch the footprint's
+// when it may not be on a road. 5: off the terrain (not the game's; the tool
+// keeps the object on it).
+enum DecorError { DecorOk = 0, DecorInLot = 1, DecorOnRoad = 2, DecorNeedsLand = 3, DecorNeedsWater = 4, DecorOffTerrain = 5 };
+int decorationError(const PlacementWorld& world, const DecorProduct& product, const OccupantPosition& at);
+// "" or the error in words.
 std::string decorationBlocked(const PlacementWorld& world, const DecorProduct& product, const OccupantPosition& at);
 struct DecorResult {
     bool ok = false;
     std::string error;
+    int code = 0; // the DecorError when placing failed on a rule
     std::vector<std::string> lines;
 };
 // Adds / removes one occupant in the neighborhood package of `folder` (the

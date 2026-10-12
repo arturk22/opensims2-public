@@ -13,6 +13,7 @@
 #include "render/ui_layer.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <cmath>
@@ -712,6 +713,31 @@ UiScreen HoodUi::screen(int width, int height) {
                 if (auto r = rects.find(b); r != rects.end())
                     targets_.push_back({r->second, Action::Package, uiButtonSound(*b), v});
     }
+    // A tool's error tooltip, over everything (a box as the game's tooltips).
+    if (!errorTip_.empty()) {
+        const FontStyle* st = fonts_->style("LiveModePanelPuck");
+        const Font* f = st ? fonts_->font(*st) : nullptr;
+        const float ppem = st ? float(st->size) : 12;
+        const float tw = f ? measureText(*f, decodeUtf8(errorTip_), ppem).width : float(errorTip_.size()) * 6;
+        const float lineH = std::ceil(ppem * 1.4f), bw = std::ceil(tw) + 12, bh = lineH + 6;
+        const float x = std::clamp(errorTipAt_.x + 12, 0.0f, std::max(0.0f, float(width) - bw));
+        float y = errorTipAt_.y + 18;
+        if (y + bh > float(height))
+            y = std::max(0.0f, errorTipAt_.y - bh - 4);
+        UiElement box;
+        box.tag = "LEGACY";
+        box.attrs = {{"clsid", "GZWinFlatRect"}, {"fillcolor", "(178,193,255)"}, {"winflag_visible", "yes"},
+                     {"area", uiArea(0, 0, int(bw), int(bh))}};
+        UiDrawHooks bh0;
+        layoutUiElement(box, x, y, *res_, *fonts_, out, bh0);
+        UiElement e;
+        e.tag = "LEGACY";
+        e.attrs = {{"clsid", "GZWinText"}, {"caption", errorTip_}, {"font", "LiveModePanelPuck"},
+                   {"forecolor", "(5,6,113)"}, {"align", "lefttop"}, {"winflag_visible", "yes"},
+                   {"area", uiArea(0, 0, int(bw), int(lineH))}};
+        UiDrawHooks th;
+        layoutUiElement(e, x + 6, y + 3, *res_, *fonts_, out, th);
+    }
     dirty_ = false;
     return out;
 }
@@ -722,9 +748,26 @@ void HoodUi::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFor
     options_->attach(device, colorFormat, depthFormat);
 }
 
+namespace {
+double steadySeconds() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+} // namespace
+
+void HoodUi::showErrorTooltip(uint32_t index, simd_float2 at) {
+    static const char* const kFallback[] = {"Cannot be placed within lots.", "Cannot be placed on roads.",
+                                            "Can be placed only over land.", "Can be placed only over water."};
+    errorTip_ = text(0x89, index - 1, index >= 1 && index <= 4 ? kFallback[index - 1] : "");
+    errorTipAt_ = at;
+    errorTipUntil_ = steadySeconds() + 3.0;
+    dirty_ = true;
+}
+
 void HoodUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
     if (!layers_[0] || width == 0 || height == 0 || !ok_)
         return;
+    if (!errorTip_.empty() && steadySeconds() > errorTipUntil_)
+        errorTip_.clear(), dirty_ = true;
     const int cw = int(std::lround(float(width) / std::max(scale, 0.01f)));
     const int ch = int(std::lround(float(height) / std::max(scale, 0.01f)));
     if (cw != canvasW_ || ch != canvasH_)

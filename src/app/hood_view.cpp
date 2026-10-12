@@ -479,7 +479,10 @@ int HoodView::modelId(const std::string& cres) {
 
 hood::OccupantPosition HoodView::decorationFootprint(const hood::DecorProduct& product, float x, float y, float rotation) {
     hood::OccupantPosition at;
-    at.position = {x, y, rawTerrain_.heightAt(x, y)};
+    // The occupant's height (docs/neighborhood-mac.md 15.4): the terrain, or
+    // the water's surface over it for the land-only and water-only products.
+    const float ground = rawTerrain_.heightAt(x, y);
+    at.position = {x, y, product.surface == 2 ? ground : std::max(ground, rawTerrain_.seaLevel)};
     const std::string cres = product.model + "_cres";
     modelId(cres);
     std::array<float, 4> box{-3.5f, -3.5f, 3.5f, 3.5f};

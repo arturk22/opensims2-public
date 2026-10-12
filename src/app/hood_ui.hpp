@@ -120,11 +120,20 @@ public:
     }
     void toggleStory() { showStory(!story_); }
 
+    // cTSNHoodUserToolBase::ShowErrorTooltip (BV 0xa24800): a tool's refusal,
+    // entry `index` (1-based) of the neighborhood's STR# 0x89, shown by the
+    // point `at` (canvas pixels) for 3 s (the window manager's tooltip, 3000 ms).
+    void showErrorTooltip(uint32_t index, simd_float2 at);
+    const std::string& errorTooltip() const { return errorTip_; }
+
     UiScreen screen(int width, int height);
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 
 private:
+    std::string errorTip_;
+    simd_float2 errorTipAt_{0, 0};
+    double errorTipUntil_ = 0; // steady clock seconds
     const RgbaImage* familySnapshot(uint32_t family);
     const RgbaImage* lotPicture(const HoodLot& lot);
     // The values in a lot's SIMI (docs/save-mac.md §5): the lot, the

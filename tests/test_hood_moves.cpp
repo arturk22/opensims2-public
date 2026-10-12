@@ -219,8 +219,48 @@ static void flattenRoads() {
           "flatten: the levelled roads are laid 0.4 over the new terrain");
 }
 
+// IsOKToPlaceObjectAtCurrentLocation's errors (docs/neighborhood-mac.md 15.4).
+static void decorationRules() {
+    Terrain t;
+    t.width = t.height = 10, t.gridWidth = t.gridHeight = 11, t.seaLevel = 5;
+    t.heights.assign(11 * 11, 10.0f);
+    for (int y = 0; y <= 11 - 1; ++y)
+        for (int x = 7; x <= 10; ++x)
+            t.heights[size_t(y) * 11 + size_t(x)] = 0; // a sea from x = 7
+    Occupants o;
+    Road r;
+    r.at.boundsMin = {20, 50}, r.at.boundsMax = {30, 60};
+    o.roads.push_back(r);
+    Neighborhood hood;
+    Lot lot;
+    lot.id = 1, lot.info.x = 0, lot.info.y = 0, lot.info.width = 3, lot.info.depth = 3;
+    hood.lots.push_back(lot);
+    PlacementWorld world;
+    world.hood = &hood, world.terrain = &t, world.occupants = &o;
+    auto at = [](int tx, int ty) {
+        OccupantPosition p;
+        p.position = {float(tx) * 10 + 5, float(ty) * 10 + 5, 0};
+        p.boundsMin = {float(tx) * 10 + 2, float(ty) * 10 + 2};
+        p.boundsMax = {float(tx) * 10 + 8, float(ty) * 10 + 8};
+        return p;
+    };
+    DecorProduct land;
+    land.surface = 0, land.inLot = true;
+    check(decorationError(world, land, at(4, 4)) == DecorOk, "decor: land product on land");
+    check(decorationError(world, land, at(1, 1)) == DecorOk, "decor: allowed in a lot");
+    check(decorationError(world, land, at(6, 4)) == DecorNeedsLand, "decor: a tile touching the sea is not all land");
+    check(decorationError(world, land, at(2, 5)) == DecorOnRoad, "decor: on a road");
+    land.removeOnLotPlop = true;
+    check(decorationError(world, land, at(1, 1)) == DecorInLot, "decor: removed by a lot placement, so not in one");
+    DecorProduct boat;
+    boat.surface = 1;
+    check(decorationError(world, boat, at(8, 4)) == DecorOk, "decor: water product on the sea");
+    check(decorationError(world, boat, at(4, 4)) == DecorNeedsWater, "decor: water product on land");
+}
+
 int main() {
     flattenRoads();
+    decorationRules();
     decorations();
     evictCleanup();
     lotTools();

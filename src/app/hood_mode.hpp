@@ -142,7 +142,9 @@ private:
     const hood::DecorProduct* decorProduct(uint32_t guid) const;
     void updateDecoration(const LotCamera& camera, simd_float2 p, float w, float h);
     bool decorClick(const LotCamera& camera, simd_float2 p, float w, float h);
-    bool placeDecoration(const hood::DecorProduct& product, float x, float y, float rotation, bool record = true);
+    // `screen`: where a refusal's tooltip goes (canvas pixels; none: no tooltip).
+    bool placeDecoration(const hood::DecorProduct& product, float x, float y, float rotation, bool record = true,
+                         std::optional<simd_float2> screen = std::nullopt);
 
 
     std::filesystem::path gameDir_;

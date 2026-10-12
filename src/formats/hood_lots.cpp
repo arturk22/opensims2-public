@@ -1144,6 +1144,7 @@ std::vector<DecorProduct> loadDecorCatalog(ResourceIndex& index) {
         DecorProduct p;
         p.guid = num("guid"), p.name = get("name"), p.model = get("modelname"), p.sort = get("sort");
         p.inLot = num("allowedinlot") != 0, p.onRoad = num("allowedonroad") != 0, p.surface = int(num("placementsurface"));
+        p.removeOnLotPlop = num("removeonlotplop") != 0;
         p.thumbGroup = num("thumbnailgroupid"), p.thumbInstance = num("thumbnailinstanceid");
         out.push_back(std::move(p));
     }
@@ -1153,23 +1154,45 @@ std::vector<DecorProduct> loadDecorCatalog(ResourceIndex& index) {
     return out;
 }
 
-std::string decorationBlocked(const PlacementWorld& world, const DecorProduct& product, const OccupantPosition& at) {
+int decorationError(const PlacementWorld& world, const DecorProduct& product, const OccupantPosition& at) {
     const Terrain& t = *world.terrain;
     const float x = at.position[0], y = at.position[1];
     if (x < 0 || y < 0 || x > t.worldWidth() || y > t.worldHeight())
-        return "outside the neighborhood";
-    const bool water = t.heightAt(x, y) <= t.seaLevel;
-    if (product.surface == 0 && water)
-        return "needs land";
-    if (product.surface == 1 && !water)
-        return "needs water";
-    const TileRect tiles = occupantTiles(at);
-    if (!product.inLot)
-        if (lotOver(world, tiles))
-            return "may not stand in a lot";
-    if (!product.onRoad && world.occupants && !roadsOver(*world.occupants, tiles).empty())
-        return "may not stand on a road";
-    return "";
+        return DecorOffTerrain;
+    const TileRect tiles = occupantTiles(at); // the occupant's vtable 0x20
+    // A lot (cTSNeighborhood vtable 0xec) when the product may not stand in one.
+    if ((product.removeOnLotPlop || !product.inLot) && world.hood && lotOver(world, tiles))
+        return DecorInLot;
+    // cTSNHoodTerrain::IsCompletelyLandTile / IsCompletelyWaterTile over the tiles: a
+    // vertex is water when it is under the sea level.
+    auto water = [&](int i, int j) { return t.vertex(i, j) < t.seaLevel; };
+    for (int j = tiles.y0; j < tiles.y1; ++j)
+        for (int i = tiles.x0; i < tiles.x1; ++i) {
+            const int wet = water(i, j) + water(i, j + 1) + water(i + 1, j + 1) + water(i + 1, j);
+            const bool inside = i >= 0 && j >= 0 && i < int(t.width) && j < int(t.height);
+            if (product.surface == 0 && (!inside || wet != 0))
+                return DecorNeedsLand;
+            if (product.surface == 1 && (!inside || wet != 4))
+                return DecorNeedsWater;
+        }
+    // The roads GetOccupants(tiles, 2) gives whose bounds touch the object's (vtable 0x24, inclusive).
+    if (!product.onRoad && world.occupants)
+        for (const Road* r : roadsOver(*world.occupants, tiles))
+            if (r->at.boundsMin[0] <= at.boundsMax[0] && at.boundsMin[0] <= r->at.boundsMax[0] &&
+                r->at.boundsMin[1] <= at.boundsMax[1] && at.boundsMin[1] <= r->at.boundsMax[1])
+                return DecorOnRoad;
+    return DecorOk;
+}
+
+std::string decorationBlocked(const PlacementWorld& world, const DecorProduct& product, const OccupantPosition& at) {
+    switch (decorationError(world, product, at)) {
+    case DecorInLot: return "may not stand in a lot";
+    case DecorOnRoad: return "may not stand on a road";
+    case DecorNeedsLand: return "needs land";
+    case DecorNeedsWater: return "needs water";
+    case DecorOffTerrain: return "outside the neighborhood";
+    default: return "";
+    }
 }
 
 DecorResult addDecoration(const fs::path& folder, const PlacementWorld& world, const DecorProduct& product,
@@ -1177,8 +1200,9 @@ DecorResult addDecoration(const fs::path& folder, const PlacementWorld& world, c
     DecorResult out;
     try {
         checkFolder(folder, forbidden);
-        if (const std::string why = decorationBlocked(world, product, at); !why.empty()) {
-            out.error = why;
+        if (const int code = decorationError(world, product, at); code != DecorOk) {
+            out.code = code;
+            out.error = decorationBlocked(world, product, at);
             return out;
         }
         DbpfPackage pkg(world.hood->package);

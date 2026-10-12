@@ -159,13 +159,18 @@ void HoodMode::updateDecoration(const LotCamera& camera, simd_float2 p, float w,
     }
 }
 
-bool HoodMode::placeDecoration(const hood::DecorProduct& product, float x, float y, float rotation, bool record) {
+bool HoodMode::placeDecoration(const hood::DecorProduct& product, float x, float y, float rotation, bool record,
+                               std::optional<simd_float2> screen) {
     const auto at = view_->decorationFootprint(product, x, y, rotation);
     const auto r = hood::addDecoration(view_->folder(), view_->placementWorld(), product, at, rotation, gameDir_);
     for (const auto& l : r.lines)
         std::printf("opensims2: %s\n", l.c_str());
     if (!r.ok) {
-        std::printf("opensims2: decoration not placed: %s\n", r.error.c_str());
+        // ShowErrorTooltips: the refusal on screen (STR# 0x89), as the game does.
+        if (r.code >= hood::DecorInLot && r.code <= hood::DecorNeedsWater && screen)
+            ui_->showErrorTooltip(uint32_t(r.code), *screen);
+        std::printf("opensims2: decoration not placed: %s%s%s\n", r.error.c_str(),
+                    ui_->errorTooltip().empty() ? "" : " - tooltip: ", ui_->errorTooltip().c_str());
         std::fflush(stdout);
         return false;
     }
@@ -188,7 +193,7 @@ bool HoodMode::decorClick(const LotCamera& camera, simd_float2 p, float w, float
     if (t == HoodBins::Tool::Decorate) {
         updateDecoration(camera, p, w, h);
         if (const hood::DecorProduct* product = decorProduct(ui_->bins().decorGuid()); product && decorSpot_)
-            placeDecoration(*product, decorSpot_->x, decorSpot_->y, decorRotation_);
+            placeDecoration(*product, decorSpot_->x, decorSpot_->y, decorRotation_, true, p);
         return true;
     }
     const simd_float4x4 m = simd_mul(camera.projection(w / h), camera.view());
@@ -700,8 +705,15 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
             at = comma + 1;
         }
         if (v.size() >= 3)
-            if (const hood::DecorProduct* product = decorProduct(uint32_t(v[0])))
-                placeDecoration(*product, v[1] * hood::kHoodCellSize + 5, v[2] * hood::kHoodCellSize + 5, v.size() > 3 ? v[3] : 0);
+            if (const hood::DecorProduct* product = decorProduct(uint32_t(v[0]))) {
+                const float wx = v[1] * hood::kHoodCellSize + 5, wy = v[2] * hood::kHoodCellSize + 5;
+                camera.setPivot(simd_make_float3(wx, wy, view_->rawTerrain().heightAt(wx, wy)));
+                camera.snap();
+                const simd_float4 q = simd_mul(simd_mul(camera.projection(w / h), camera.view()),
+                                               simd_make_float4(wx, wy, view_->rawTerrain().heightAt(wx, wy), 1));
+                const simd_float2 at = simd_make_float2((q.x / q.w + 1) / 2 * w, (1 - q.y / q.w) / 2 * h);
+                placeDecoration(*product, wx, wy, v.size() > 3 ? v[3] : 0, true, at);
+            }
     }
     if (value("--hood-story"))
         ui_->showStory(true);
