@@ -410,14 +410,21 @@ int cmdLotWalls(const std::filesystem::path& lotPath, const std::string& box) {
     float b[4] = {-1e9f, -1e9f, 1e9f, 1e9f};
     if (!box.empty() && std::sscanf(box.c_str(), "%f,%f,%f,%f", &b[0], &b[1], &b[2], &b[3]) != 4)
         throw std::runtime_error("lot-walls: expected x0,y0,x1,y1");
-    std::printf("levels %d..%d\n", lot.minLevel, lot.minLevel + lot.levelCount - 1);
+    std::printf("levels %d..%d, %zu walls (%zu without a layer entry), %zu stale layer entries, graphs:",
+                lot.minLevel, lot.minLevel + lot.levelCount - 1, lot.walls.size(),
+                size_t(std::count_if(lot.walls.begin(), lot.walls.end(), [](const Lot::Wall& w) { return !w.layered; })),
+                lot.staleWallLayer.size());
+    for (const auto& g : lot.wallGraphs)
+        std::printf(" 0x%X (%zu lines)", g.instance, g.lines.size());
+    std::printf("\n");
     for (const auto& w : lot.walls) {
         if (std::max(w.a.x, w.b.x) < b[0] || std::min(w.a.x, w.b.x) > b[2] || std::max(w.a.y, w.b.y) < b[1] ||
             std::min(w.a.y, w.b.y) > b[3])
             continue;
-        std::printf("wall %u: (%g, %g)-(%g, %g) level %d/%d type 0x%X patterns %04X/%04X z %g..%g\n", w.id, w.a.x,
+        std::printf("wall %u: (%g, %g)-(%g, %g) level %d/%d type 0x%X patterns %04X/%04X z %g..%g%s\n", w.id, w.a.x,
                     w.a.y, w.b.x, w.b.y, w.a.level, w.b.level, w.type, w.patterns[0], w.patterns[1],
-                    lot.elevationAt(w.a.level, w.a.x, w.a.y), lot.elevationAt(w.a.level + 1, w.a.x, w.a.y));
+                    lot.elevationAt(w.a.level, w.a.x, w.a.y), lot.elevationAt(w.a.level + 1, w.a.x, w.a.y),
+                    w.layered ? "" : " (no layer entry)");
     }
     for (const auto& o : lot.objects)
         if (!o.person && o.position[0] >= b[0] && o.position[0] <= b[2] && o.position[1] >= b[1] && o.position[1] <= b[3])

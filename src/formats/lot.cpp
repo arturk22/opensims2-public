@@ -153,7 +153,7 @@ Lot Lot::load(DbpfPackage& pkg) {
         std::map<uint32_t, WallVertex> vertices;
         std::vector<std::array<uint32_t, 3>> walls; // id, vertex a, vertex b
     };
-    std::optional<Graph> graph;
+    std::vector<Graph> graphs;
     for (const auto& e : pkg.entries()) {
         if (e.tgi.type != kTypeWallGraph)
             continue;
@@ -184,8 +184,7 @@ Lot Lot::load(DbpfPackage& pkg) {
             }
             lot.minLevel = minLevel;
             lot.wallGraphs.push_back(std::move(wg));
-            if (!graph || g.walls.size() > graph->walls.size())
-                graph = std::move(g);
+            graphs.push_back(std::move(g));
         } catch (const std::exception& ex) {
             lot.warnings.push_back("wall graph " + hexString(e.tgi.instance) + ": " + ex.what());
         }
@@ -263,7 +262,7 @@ Lot Lot::load(DbpfPackage& pkg) {
             *out = readStringMap(r);
         }
 
-    if (graph) {
+    if (!graphs.empty()) {
         std::map<uint32_t, std::pair<uint32_t, std::array<uint16_t, 2>>> layer; // id -> type, coverings
         if (auto bytes = readResource(pkg, kTypeWallLayer, kWallLayerPartitions)) {
             BinReader r = blockReader(*bytes, kTypeWallLayer);
@@ -274,6 +273,21 @@ Lot Lot::load(DbpfPackage& pkg) {
                 layer[id] = {type, {right, left}};
             }
         }
+        // The graph of every partition: of the instances with the most
+        // lines (0x05 and 0x18 both list all of them), the one whose line IDs
+        // the wall layer names. On some lots (N002_Lot10, N001_Lot32) 0x05
+        // keeps older IDs for some lines and only 0x18 matches the layer:
+        // taking 0x05 left 213 of N002_Lot10's walls without type or
+        // coverings (drawn as nothing) and their coverings on stale entries.
+        auto matches = [&](const Graph& g) {
+            return size_t(std::count_if(g.walls.begin(), g.walls.end(),
+                                        [&](const std::array<uint32_t, 3>& w) { return layer.count(w[0]) != 0; }));
+        };
+        const Graph* graph = &graphs.front();
+        for (const auto& g : graphs)
+            if (g.walls.size() > graph->walls.size() ||
+                (g.walls.size() == graph->walls.size() && matches(g) > matches(*graph)))
+                graph = &g;
         size_t missing = 0;
         for (const auto& [id, a, b] : graph->walls) {
             auto va = graph->vertices.find(a), vb = graph->vertices.find(b);

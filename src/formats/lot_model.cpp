@@ -12,8 +12,6 @@
 #include <cctype>
 #include <cmath>
 #include <optional>
-#include <set>
-#include <tuple>
 
 namespace os2 {
 
@@ -304,20 +302,6 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
     for (const auto& [ref, pattern] : lot.wallPatterns)
         materials[ref] = patterns.wallMaterial(pattern);
     size_t unknownFences = 0;
-    // Dormers: N002_Lot10 keeps a dormer's front as a covered wall one level
-    // up from the window's (level 3 over level 2's floor) with an uncovered
-    // partition (type 0) at the window's level, both under the dormer's roof.
-    // Such a wall is drawn on the level below, from its floor up to the roof
-    // over it, as an attic wall's gable (inferred from the lot: the windows
-    // stand on level 2's floor in the uncovered partition).
-    auto key = [](int level, const Lot::Wall& w) {
-        const auto a = std::make_pair(w.a.x, w.a.y), b = std::make_pair(w.b.x, w.b.y);
-        return std::make_tuple(level, std::min(a, b), std::max(a, b));
-    };
-    std::set<decltype(key(0, Lot::Wall{}))> uncovered;
-    for (const auto& w : lot.walls)
-        if (w.type == 0 && w.patterns == std::array<uint16_t, 2>{0xFFFF, 0xFFFF})
-            uncovered.insert(key(w.a.level, w));
     for (const auto& w : lot.walls) {
         // The column deck's skirt (walls.txt "wall 4": notRendered) is not drawn.
         if (w.type == Lot::DeckSkirt)
@@ -334,11 +318,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         if (len == 0)
             continue;
         dx /= len, dy /= len;
-        int level = w.a.level;
-        bool dormer = false;
-        if (w.type == Lot::Normal && uncovered.count(key(level - 1, w)) &&
-            roofs.heightAt((w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2, level, -1e9f) > -1e8f)
-            dormer = true, level -= 1;
+        const int level = w.a.level;
         auto& out = level > view.level ? hidden : drawn;
         // The wall mode applies to the view's level (lower levels keep their walls up).
         const bool current = view.level == LotViewOptions::kAllLevels || level == view.level ||
@@ -385,8 +365,6 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             float z1 = lot.hasLevel(level + 1) ? lot.elevationAt(level + 1, x, y) : z0 + kStoryHeight;
             if (attic)
                 z1 = std::max(roofs.heightAt(x, y, level, z1, kAtticRoofOffset), z0);
-            else if (dormer)
-                z1 = std::max(roofs.heightAt(x, y, level + 1, z1, kAtticRoofOffset), z1);
             else if (fence)
                 z1 = std::min(z1, z0 + kHalfWallHeight);
             if (lowered && cut)
@@ -396,7 +374,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         const float t = kWallHalfThickness;
         // Attic walls follow the roof through their middle too.
         std::vector<std::array<float, 2>> points{{w.a.x - dx * t, w.a.y - dy * t}};
-        if (attic || dormer)
+        if (attic)
             points.push_back({(w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2});
         points.push_back({w.b.x + dx * t, w.b.y + dy * t});
         auto clampXY = [&](std::array<float, 2> p) {
@@ -412,9 +390,9 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             zt.push_back(top(q[0], q[1]));
             full.push_back(top(q[0], q[1], false));
         }
-        // A partition with no covering on either side (type 0: 213 on
-        // N002_Lot10, round the deck and the yard) has nothing to draw: its
-        // top alone floated as dark strips over the lawn.
+        // A partition with no covering on either side has nothing to draw
+        // (its top alone floated as dark strips over the lawn; on N002_Lot10
+        // those were walls read from the wrong wall graph, fixed in Lot::load).
         bool covered = false;
         for (uint16_t ref : w.patterns)
             if (auto it = materials.find(ref); it != materials.end() && !it->second.empty())
@@ -460,7 +438,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 // v: 0 at the top of a full wall; attic and half walls keep the
                 // texture's bottom at their base, as OpenTS2 does.
                 auto vv = [&](float z, float base, float top) {
-                    return attic || fence || dormer ? 1.0f - (z - base) / kStoryHeight : (top - z) / kStoryHeight;
+                    return attic || fence ? 1.0f - (z - base) / kStoryHeight : (top - z) / kStoryHeight;
                 };
                 // Pieces between the cut intervals, each split around the holes over it.
                 std::vector<float> breaks{0, segLen};
