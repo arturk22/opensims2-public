@@ -812,7 +812,10 @@ public:
     // Runs an OBJf function of `id` to completion in a thread of its own and
     // returns that thread (Finished, Failed, Killed; Running if it was still
     // going after `maxTurns` yields), or nothing if the object has no such function.
-    std::optional<Thread> runFunction(ObjectId id, size_t function, size_t maxTurns = 1000);
+    // `args` are its parameters (the engine's RunTree passes some: the
+    // stairs' "Set Model by Type", entry 47, takes the railing model).
+    std::optional<Thread> runFunction(ObjectId id, size_t function, size_t maxTurns = 1000,
+                                      std::span<const int16_t> args = {});
     // Starts the object's Main in its thread; false if it has none.
     bool startMain(ObjectId id);
     void resetAfterError(ObjectId id, Thread& t);
@@ -1000,6 +1003,10 @@ public:
         int32_t lot = 0, lotObjects = 0, familyObjects = 0;
         bool known = false;
     } lotValues;
+    // The Railing Tool's price (BuildCatalog::railingPrice, product
+    // 0x2C7BF690), what each side of a staircase's railing is worth
+    // (placement.hpp railingCost); 0 until a catalog sets it.
+    int railingPrice = 0;
     // Ours, not the binary's: Find Best Interaction leaves out what the Sim
     // ran autonomously and failed in the last 9999 ticks (autonomy.cpp). Off
     // by default: the binary's autonomy memory changes nothing in the base game.

@@ -411,6 +411,12 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
             std::string model;
             if (ResourceIndex* index = vm.code().index())
                 model = objectCresName(*index, Tgi{kTypeObjd, o->group, o->definitionInstance, 0});
+            // A graphic the VM set (data 0: "change graphic") names the model
+            // in the object's STR# 0x85 (the stairs' railings).
+            if (o->data[0] > 0)
+                if (const StringTable* names = vm.code().strings(o->group, 0x85))
+                    if (std::string g = names->get(size_t(o->data[0]), lang::EnglishUS); !g.empty())
+                        model = g;
             if (model.size() > 5 && model.compare(model.size() - 5, 5, "_cres") == 0)
                 model.resize(model.size() - 5);
             BinWriter w;

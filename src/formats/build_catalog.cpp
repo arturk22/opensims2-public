@@ -115,6 +115,27 @@ std::set<uint32_t> walkOverFenceGuids(ResourceIndex& index) {
     return out;
 }
 
+int railingToolPrice(ResourceIndex& index) {
+    // userToolProxies.txt "userToolProxy 0x2c7bf690"
+    // (kGZCLSID_cTSUserToolModularStairsRailing): catalog text "build" 139
+    // at its catalogTextIndex.
+    const auto res = resFolder(index);
+    if (res.empty())
+        return 0;
+    for (const auto& block : scriptBlocks(res / "Catalog" / "Scripts" / "userToolProxies.txt", "userToolProxy")) {
+        if (block.empty() || block[0].size() < 2 || std::strtoul(block[0][1].c_str(), nullptr, 16) != kRailingToolProduct)
+            continue;
+        for (const auto& w : block)
+            if (lower(w[0]) == "catalogtextindex" && w.size() > 1)
+                if (const auto text = buildText(index, 139)) {
+                    const size_t i = 3 * size_t(std::atoi(w[1].c_str()));
+                    const int p = priceText(text->get(i));
+                    return p ? p : priceText(text->get(i, lang::EnglishUS));
+                }
+    }
+    return 0;
+}
+
 BuildCatalog BuildCatalog::load(ResourceIndex& index) {
     // Kept for the next load of the same index (every Build-mode setup asks).
     static std::mutex mutex;
@@ -279,6 +300,7 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
             }
             c.stairs_.push_back(std::move(b));
         }
+        c.railingPrice_ = railingToolPrice(index);
         const auto archText = buildText(index, 143);
         for (const auto& block : scriptBlocks(scripts / "fencearches.txt", "fenceArch")) {
             BuildFenceArch a;

@@ -215,6 +215,8 @@ std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1) {
 }
 
 BuildEditor::BuildEditor(VM& vm, Lot& lot, const BuildCatalog* catalog) : vm_(vm), lot_(lot), catalog_(catalog) {
+    if (catalog_ && catalog_->railingPrice())
+        vm_.railingPrice = catalog_->railingPrice();
     // The editable area: less the 10-tile road strip on each road edge.
     {
         const int W = int(lot_.width), H = int(lot_.height), strip = 10;
@@ -2921,7 +2923,13 @@ BuildEditor::Result BuildEditor::deleteStairs(ObjectId part) {
         for (auto& p : s.where.parts)
             if (const Object* q = vm_.object(p.id))
                 p.at = q->position;
-        r.cost -= sell(vm_, id);
+        // RemoveFlight: each part's delete gives back its value plus its
+        // railing (RailingCost: 2x the Railing Tool's price for model 4,
+        // 1x for 2-3), read before the part leaves the world.
+        const int railing = railingCost(vm_, id);
+        if (railing)
+            addFunds(vm_, railing);
+        r.cost -= sell(vm_, id) + railing;
         sold.push_back(std::move(s));
     }
     r.changed = int(flight.size());
@@ -2929,6 +2937,79 @@ BuildEditor::Result BuildEditor::deleteStairs(ObjectId part) {
     commit(std::move(before), r.cost, std::move(sold));
     r.ok = true;
     r.message = "a flight of " + std::to_string(flight.size()) + " objects sold for " + money(-r.cost);
+    return r;
+}
+
+BuildEditor::Result BuildEditor::changeRailing(ObjectId part, bool side, bool remove) {
+    Result r;
+    const Object* o = vm_.object(part);
+    if (!o || !o->definition || !o->position.inWorld()) {
+        r.message = "no staircase there";
+        return r;
+    }
+    std::vector<ObjectId> parts;
+    if (auto flight = flightOf(part); !flight.empty()) {
+        for (ObjectId id : flight)
+            if (const Object* x = vm_.object(id); x && x->definition && x->definition->objectType() - 0xBu < 2)
+                parts.push_back(id);
+    } else if (o->definition->objectType() - 10u < 3) {
+        parts.push_back(part);
+    }
+    if (parts.empty()) {
+        r.message = "no staircase there";
+        return r;
+    }
+    const int price = vm_.railingPrice;
+    std::vector<std::array<int, 3>> swaps;
+    for (ObjectId id : parts) {
+        const Object* x = vm_.object(id);
+        int m = 0;
+        try {
+            if (auto t = vm_.runFunction(id, 48))
+                m = t->temps[0]; // ObjectModel: temp 0 whatever the tree returned
+        } catch (const VMError&) {
+        }
+        if (m == 0)
+            m = x->definition->objectType() == 10 ? 4 : 1;
+        int to = 0;
+        if (!remove) {
+            if (m == 1)
+                to = side ? 3 : 2;
+            else if (m != (side ? 3 : 2) && m != 4)
+                to = 4;
+        } else {
+            if (m == 4)
+                to = side ? 2 : 3;
+            else if (m == (side ? 3 : 2))
+                to = 1;
+        }
+        if (to)
+            swaps.push_back({int(id), m, to});
+    }
+    if (swaps.empty()) {
+        r.ok = true;
+        r.message = remove ? "no railing on that side" : "the railing is there already";
+        return r;
+    }
+    const int cost = (remove ? -price : price) * int(swaps.size());
+    if (cost > 0 && cost > funds(vm_)) {
+        r.error = 0x16;
+        r.message = "not enough money (" + money(cost) + ")";
+        return r;
+    }
+    Geometry before = capture();
+    for (const auto& s : swaps)
+        setRailingModel(vm_, ObjectId(s[0]), s[2]);
+    addFunds(vm_, -cost);
+    computeLotData(vm_);
+    r.cost = cost;
+    r.changed = int(swaps.size());
+    changed();
+    commit(std::move(before), cost);
+    undo_.back().models = swaps;
+    r.ok = true;
+    r.message = std::string(remove ? "railing taken off " : "railing put on ") + std::to_string(swaps.size()) +
+                " steps for " + money(cost < 0 ? -cost : cost);
     return r;
 }
 
@@ -2975,6 +3056,8 @@ bool BuildEditor::undo() {
         applyPlacement(vm_, x.id, x.where);
     for (const Sold& x : op.created)
         pickUp(vm_, x.id);
+    for (const auto& m : op.models)
+        setRailingModel(vm_, ObjectId(m[0]), m[1]);
     addFunds(vm_, op.cost); // the price back, or the refund paid back
     syncWorld();
     redo_.push_back(std::move(op));
@@ -2993,6 +3076,8 @@ bool BuildEditor::redo() {
         pickUp(vm_, x.id);
     for (const Sold& x : op.created)
         applyPlacement(vm_, x.id, x.where);
+    for (const auto& m : op.models)
+        setRailingModel(vm_, ObjectId(m[0]), m[2]);
     addFunds(vm_, -op.cost);
     syncWorld();
     undo_.push_back(std::move(op));

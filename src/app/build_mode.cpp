@@ -272,6 +272,13 @@ void BuildMode::selectStairsTool(const BuildStairs& product) {
     say(product.name + " (" + money(product.price) + " a step)");
 }
 
+void BuildMode::selectRailingTool() {
+    cancel();
+    tool_ = Tool::Railing;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
+    say("railing tool (" + money(vm_.railingPrice ? vm_.railingPrice : patterns_.railingPrice()) + " a step)");
+}
+
 void BuildMode::selectDormerTool(const BuildRoofProduct& product) {
     cancel();
     tool_ = Tool::Dormer;
@@ -848,6 +855,18 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
             e = {gx, gy + 1, gx + 1, gy + 1};
         done(control_ ? editor_->deleteFenceArch(level_, e[0], e[1], e[2], e[3], arch_)
                       : editor_->placeFenceArch(level_, e[0], e[1], e[2], e[3], *arch_));
+    } else if (tool_ == Tool::Railing) {
+        // The staircase part under the mouse (types 10-12), the side by
+        // where the click is (cTSUserToolStairsRailing::OnAnyMouseEvent).
+        vm::ObjectId best = 0;
+        float bestD = 0.75f;
+        for (const auto& [id, o] : vm_.objects())
+            if (o.position.inWorld() && o.definition && o.definition->objectType() - 10u < 3 &&
+                (o.position.level == level_ || o.position.level == level_ - 1))
+                if (const float d = std::hypot(o.position.x - b.x, o.position.y - b.y); d < bestD)
+                    bestD = d, best = id;
+        done(best ? editor_->changeRailing(best, vm::railingSide(vm_, best, b.x, b.y), control_)
+                  : vm::BuildEditor::Result{false, 0, 0, 0, "no stairs there"});
     } else if (tool_ == Tool::Stairs && stairs_) {
         if (control_) {
             // The sledgehammer: the modular stair part nearest the mouse.
@@ -1622,7 +1641,11 @@ bool BuildMode::press(simd_float2 p) {
             if (t.value == 1)
                 selectWallTool(false);
             break;
-        case Action::Subsort: subsort_ = t.value, page_ = 0; break;
+        case Action::Subsort:
+            subsort_ = t.value, page_ = 0;
+            if (category_ == 6 && t.value == 2) // B620: the Railing Tool (tool 0xF)
+                selectRailingTool();
+            break;
         case Action::Back: openCategory(0, 0); break;
         case Action::Prev: page_ = page_ ? page_ - 1 : 0; break;
         case Action::Next: ++page_; break;
@@ -1905,6 +1928,9 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
                 selectDormerTool(*d);
             r = ed.placeDormer(n(0), f.size() > 4 ? n(4) : level_, n(1), n(2), n(3));
             releaseSound(Tool::Roof, false, *r);
+        } else if (a == "--railing" && f.size() >= 2) { // part id,side 0|1[,delete]
+            selectRailingTool();
+            r = ed.changeRailing(vm::ObjectId(n(0)), n(1) != 0, f.size() > 2 && f[2] == "delete");
         } else if (a == "--delete-stairs" && !f.empty()) {
             r = ed.deleteStairs(vm::ObjectId(n(0)));
             releaseSound(Tool::Stairs, true, *r);

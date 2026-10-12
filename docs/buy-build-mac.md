@@ -1361,9 +1361,8 @@ objetos, níveis, elevações, direções e elos):
   81 = anterior** (−1 nas pontas); patamares e placeholders ficam na lista
   `+0x74`, sem elos. O degrau de cima é XMTO. Valor (od 41) dos degraus = o
   preço por degrau (os salvos têm 40 no Madeira); a marreta devolve o od 41.
-  Pela RE do coordenador, `RemoveFlight` soma o preço do corrimão
-  (`0x2C7BF690`): 2× com o modelo de corrimão 4, 1× com 2–3, nada com 0–1;
-  aqui o modelo do corrimão não é guardado (soma 0, falta).
+  `RemoveFlight` soma o preço do corrimão (`0x2C7BF690`): 2× com o modelo de
+  corrimão 4, 1× com 2–3, nada com 0–1 (rodada 13: feito, ver §7.13.1).
 - Estado salvo: a "elevation" do degrau é a altura sobre o piso do nível de
   baixo, também a do degrau de cima (inferido: o terreno é 0 sob todos os
   lances salvos); patamares e placeholders 0.
@@ -1384,6 +1383,51 @@ objetos, níveis, elevações, direções e elos):
   folga para o andar de baixo/de cima (`0x69`/`0x6A`), objetos que prendem o
   chão (`0x61`), objetos de teto (`0x60`), praia. Aqui: só "livre de piso,
   parede e fundação".
+
+### 7.13.1 O modelo do corrimão e a ferramenta de corrimão (rodada 13, binário)
+
+O "modelo do corrimão" não é um campo do objeto: `RailingObjectModel` (BV
+`0x523d10`, igual ao `0x3ff17c` do undoable das escadas) roda a **entrada 48
+do OBJf** (`cTSObject::RunTree(0x30, …)`, vtable `0x3b4`) e, se ela devolve
+verdadeiro, lê o **temp 0** do objeto (vtable `0x4c` = `GetTemp`, os 8 temps
+em `+0x8a`; o vizinho `0x60` é `SetTemp`); senão 1. Nas escadas modulares a
+entrada 48 é o semiglobal `0x2018` "Function - Get Model Type" do
+`StairModularGlobals`: gráfico (od 0) = 0 → 1, senão (gráfico − campo `0x48`
+do OBJD) / 3 + 1. A entrada 47 (`0x2001` "Function - Set Model by Type",
+parâmetro 0 = modelo 1–4) põe gráfico = campo `0x48` + 3·(modelo − 1): o
+gráfico é o índice no STR# `0x85` (1–3 sem corrimão, 4–6 "Left Railing",
+7–9 "Right Railing", 10–12 "Both Railing"; meio, base e topo). Mudar o od 0 é
+o "change graphic" do motor (erro `0x48` da VM): o modelo 3D passa a ser o
+dessa entrada. `RailingCost` (BV `0x523da4`): 0/1 → 0, 2–3 → 1×, 4 → 2× o
+preço do produto `0x2C7BF690` = a "Railing Tool" do `userToolProxies.txt`
+(STR# 139 entrada 0: §3). `ComputeStats` o soma ao valor das escadas (tipos
+0xB/0xC) e `RemoveFlight` à devolução de cada parte.
+
+**Ferramenta de corrimão** (`cTSUserToolStairsRailing`, botão B620, ferramenta
+`0xF`; `Init` lê o preço do produto `0x2C7BF690`, cursor `0x3A`):
+`OnAnyMouseEvent` acha o objeto sob o mouse; tipos 10–12 (escadaria-objeto,
+degrau modular, portal) e o lado = `PointIsOnLeftSideOfObject` (para o tipo 10,
+o contrário). `ChangeRailings`: se o objeto tem grupo (lance), todos os do grupo
+de tipo 0xB–0xC; senão só ele. `ChangeOneRailing`: modelo atual m
+(`ObjectModel`: o temp 0 qualquer que seja o retorno; 0 → 4 no tipo 10, senão 1);
+pôr (sem Ctrl): m = 1 → 2 (lado falso) ou 3 (verdadeiro); m = o outro lado → 4;
+já tem → nada; tirar (Ctrl, preço negativo): m = 4 → 3 (lado falso) ou 2
+(verdadeiro); m = o do lado → 1. Cada troca é um `TrySwapModel` (roda a
+entrada 47 com o modelo novo e soma o preço ao custo do undoable). Os lances
+dos lotes salvos têm gráfico 0 com modelos de corrimão no cObject (feitos antes
+desse mecanismo): para o jogo são modelo 1 (sem devolução de corrimão).
+
+No código (`vm/placement` `railingObjectModel`/`railingCost`/`setRailingModel`,
+`BuildEditor::changeRailing`, `VM::railingPrice`): a marreta devolve o
+corrimão, o valor do lote o conta, a ferramenta de corrimão (B620 no app,
+headless `--railing id,lado[,delete]` no app e no `lot-save`) põe e tira com
+desfazer; o app troca o modelo quando o od 0 muda durante a sessão
+(`VmObjectView::updateGraphic`) e o `lot-save` grava o modelo do gráfico num
+cObject novo. Inferido: o lado é o do eixo da direção do objeto (o binário
+compara x ou y conforme a direção, nos eixos dele), e o cObject já salvo de um
+degrau não troca o nome do modelo (o od 0 vai no estado).
+`docs/screenshots/r13-construcao-corrimao.jpg` (antes/depois: corrimão dos
+dois lados).
 
 ### 7.14 Águas-furtadas no código (rodada 12, `placeDormer`)
 

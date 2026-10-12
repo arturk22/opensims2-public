@@ -237,6 +237,17 @@ public:
     // RemoveFlight): every object of the flight that `part` belongs to is
     // sold (each part's current value back) as one undoable change.
     Result deleteStairs(ObjectId part);
+    // The Railing Tool (B620, cTSUserToolStairsRailing::ChangeRailings and
+    // ChangeOneRailing): on a staircase part, every type 11/12 object of its
+    // flight (or the object alone outside a flight) gets a railing on `side`
+    // (railingSide: true = left of the steps' facing) for the tool's price
+    // (VM::railingPrice) each, or with `remove` (Ctrl) loses it for the
+    // price back. Models (railingObjectModel): 1 none, 2 / 3 one side, 4 both;
+    // adding to 1 gives 2 (side false) or 3 (true), adding the other side
+    // to 2 / 3 gives 4; removing from 4 leaves the other side, from the
+    // side's own model leaves 1; an object that already is as asked is
+    // skipped. Undoable (the model swap runs entry 47 again).
+    Result changeRailing(ObjectId part, bool side, bool remove);
 
     // A staircase object just put down (its parts' IDs): the floor of the
     // level above goes from over its steps, free, as one undoable change (the
@@ -314,6 +325,7 @@ private:
         int cost = 0;
         std::vector<Sold> sold;
         std::vector<Sold> created; // objects the change put down (deck columns)
+        std::vector<std::array<int, 3>> models; // railing swaps: object, model before, after
     };
     Geometry capture() const;
     void restore(const Geometry& g);

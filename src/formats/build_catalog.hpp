@@ -118,6 +118,11 @@ constexpr int kPoolTilePrice = 75;
 // the terrain + 0.75 over foundations).
 constexpr float kFoundationHeight = 0.75f;
 constexpr float kBuildRefundRate = 0.8f;
+// cTSUserToolStairsRailing's class ID, its catalog product's ID.
+constexpr uint32_t kRailingToolProduct = 0x2C7BF690;
+
+// The Railing Tool's price alone (what BuildCatalog::railingPrice holds).
+int railingToolPrice(ResourceIndex& index);
 
 class BuildCatalog {
 public:
@@ -151,6 +156,9 @@ public:
     const std::vector<BuildRoofProduct>& roofProducts() const { return roofProducts_; }
     const BuildRoofProduct* roofProduct(int id) const;
     const std::vector<BuildFenceArch>& fenceArches() const { return arches_; }
+    // The Railing Tool's price (product 0x2C7BF690, catalog text "build" 139
+    // entry 0: 3), 0 when the script is missing.
+    int railingPrice() const { return railingPrice_; }
     // A pattern by GUID ("0x...") or (part of) its name or material.
     const BuildPattern* find(const std::string& key, bool floor) const;
     const BuildPattern* byGuid(uint32_t guid) const;
@@ -167,6 +175,7 @@ private:
     std::vector<BuildStairs> stairs_;
     std::vector<BuildRoofProduct> roofProducts_;
     std::vector<BuildFenceArch> arches_;
+    int railingPrice_ = 0;
 };
 
 } // namespace os2

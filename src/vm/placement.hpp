@@ -152,6 +152,29 @@ int saleValue(VM& vm, ObjectId id);
 // session ends (deleteGroup). Returns the refund.
 int sell(VM& vm, ObjectId id);
 
+// A staircase step's railing model (RailingObjectModel, BV 0x523d10; the
+// same code in the modular stairs' undoable, 0x3ff17c): the object's OBJf
+// entry 48 (the stairs' "Function - Get Model Type") run as a check tree
+// (cTSObject::RunTree 0x30), its temp 0 when it returns true, else 1.
+// 1 = no railing, 2 / 3 = a railing on one side (cTSUserToolStairsRailing:
+// left or right), 4 = both sides.
+int railingObjectModel(VM& vm, ObjectId id);
+// RailingCost (BV 0x523da4): the railing's price (VM::railingPrice) once for
+// models 2 and 3, twice for 4, nothing for 0 and 1. ComputeStats adds it to
+// a staircase's value (types 0xB / 0xC) and RemoveFlight to every part's
+// refund.
+int railingCost(VM& vm, ObjectId id);
+// cTSUserToolUndoableObjectModelSwap: the object's OBJf entry 47 (the
+// stairs' "Function - Set Model by Type": graphic = OBJD field 0x48 +
+// 3 x (model - 1), which picks the model of STR# 0x85) with the model as
+// its parameter 0.
+void setRailingModel(VM& vm, ObjectId id, int model);
+// The Railing Tool's side (cTSUserToolStairsRailing::OnAnyMouseEvent): for
+// modular stairs (types 11, 12) PointIsOnLeftSideOfObject at the point under
+// the mouse, for a staircase object (type 10) its negation (left of the
+// object's facing).
+bool railingSide(VM& vm, ObjectId id, float x, float y);
+
 // A day passed (cTSObject::DayPassed, docs/buy-build-mac.md §2): every
 // object not "self depreciating" (OBJD field 37) loses its "initial
 // depreciation" (field 35) when it has one, else its "daily depreciation"
@@ -166,7 +189,7 @@ void dayPassed(VM& vm);
 // cTSObject::IsDeletedByEvict (a Buy mode object, OBJD field 0x45 "build
 // mode type" 0, without "stays after evict", od 43 bit 0x10), else to the
 // lot's objects when it is a Build mode object or of type 0xB/0xC (then
-// plus its railing, RailingCost: not modelled, 0); the decompiled
+// plus its railing, railingCost); the decompiled
 // ComputeStats adds a Build mode object to the lot and a Buy mode one only
 // for those two types (the round-10 RE note's table reads it the other
 // way). Then the simulator's

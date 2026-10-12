@@ -132,7 +132,7 @@ bool isBuildEdit(const std::string& flag) {
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
            flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
-           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--fence-arch" || flag == "--delete-fence-arch" || flag == "--delete-stairs" || flag == "--build-undo" || flag == "--build-redo";
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--fence-arch" || flag == "--delete-fence-arch" || flag == "--delete-stairs" || flag == "--railing" || flag == "--build-undo" || flag == "--build-redo";
 }
 
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
@@ -218,6 +218,8 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             r = editor.deleteStairs(vm::ObjectId(num(f, 0, 0)));
             if (r.ok && vm.world)
                 r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
+        } else if (flag == "--railing") { // part id,side 0|1 (1: left of the steps' facing)[,delete]
+            r = editor.changeRailing(vm::ObjectId(num(f, 0, 0)), num(f, 1, 0) != 0, f.size() > 2 && f[2] == "delete");
         } else if (flag == "--auto-roof") { // tool 1-5 (0: remove the roofs)[,keep]
             const int tool = num(f, 0, 1);
             r = tool == 0 ? editor.removeRoofs() : editor.autoRoof(tool, f.size() > 1 && f[1] == "keep");

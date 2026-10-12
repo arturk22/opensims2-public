@@ -80,7 +80,7 @@ public:
     bool design(vm::ObjectId id, simd_float2 at);
     DesignTool& designTool() { return *design_; }
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs, Dormer, FenceArch };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs, Dormer, FenceArch, Railing };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -100,6 +100,9 @@ public:
     // end found by itself) or drag from it to where the last step goes;
     // Ctrl deletes the flight under the mouse.
     void selectStairsTool(const BuildStairs& product);
+    // The Railing Tool (B620): a click on a staircase's side puts a railing
+    // on that side of its flight; Ctrl takes it off.
+    void selectRailingTool();
     // Dormers (B940, roofs.txt "roof 6-11"): a click on the attic level puts
     // one with its corner at the grid point under the mouse, turned by `,`/`.`.
     void selectDormerTool(const BuildRoofProduct& product);

@@ -3,6 +3,8 @@
 #include "placement.hpp"
 
 #include "hood_bridge.hpp"
+#include "formats/build_catalog.hpp"
+#include "formats/resindex.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -403,6 +405,46 @@ int sell(VM& vm, ObjectId id) {
     return value;
 }
 
+int railingObjectModel(VM& vm, ObjectId id) {
+    try {
+        if (auto t = vm.runFunction(id, 48); t && t->status == Thread::Status::Finished && t->result)
+            return t->temps[0];
+    } catch (const VMError&) {
+    }
+    return 1;
+}
+
+int railingCost(VM& vm, ObjectId id) {
+    if (!vm.railingPrice)
+        if (ResourceIndex* index = vm.code().index())
+            vm.railingPrice = railingToolPrice(*index);
+    const int model = railingObjectModel(vm, id);
+    if (model == 4)
+        return 2 * vm.railingPrice;
+    return model > 1 && model < 4 ? vm.railingPrice : 0;
+}
+
+void setRailingModel(VM& vm, ObjectId id, int model) {
+    const int16_t args[1] = {int16_t(model)};
+    try {
+        vm.runFunction(id, 47, 1000, args);
+    } catch (const VMError&) {
+    }
+}
+
+bool railingSide(VM& vm, ObjectId id, float x, float y) {
+    const Object* o = vm.object(id);
+    if (!o || !o->definition)
+        return false;
+    // The binary compares one coordinate by the facing (0: x, 2: y, 4: x,
+    // 6: y, its own axes); here the side of the facing's line the point is
+    // on, left = counter-clockwise of the facing (inferred mapping of the
+    // axes).
+    const auto [fx, fy] = directionStep(o->data[objdata::Direction]);
+    const bool left = -float(fy) * (x - o->position.x) + float(fx) * (y - o->position.y) > 0;
+    return o->definition->objectType() == 10 ? !left : left;
+}
+
 void dayPassed(VM& vm) {
     for (const auto& [id, o] : vm.objects()) {
         if (!o.definition || o.person || multiTileGroup(o) != id)
@@ -444,7 +486,7 @@ void computeLotData(VM& vm) {
         if (buyMode && !(o.data[kMovementFlags] & 0x10))
             family += value; // IsDeletedByEvict
         else if (!buyMode || type == 0xB || type == 0xC)
-            lot += value;    // Build mode objects; stairs and railings (+ RailingCost, not modelled)
+            lot += value + (type == 0xB || type == 0xC ? railingCost(vm, id) : 0); // stairs: + RailingCost
     }
     auto& v = vm.lotValues;
     if (!v.known)

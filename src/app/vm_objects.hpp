@@ -144,6 +144,7 @@ private:
         std::map<std::string, std::string> design;
         std::vector<Xform> pose; // saved local pose, empty: rest
         std::map<std::string, std::string> vmMaterials; // Object::materials drawn
+        std::optional<int16_t> graphic;                 // object data 0 when first drawn, then as changed
         Baseline base;
         bool hidden = false;
         bool debugMoved = false; // OS2_DEBUG_PLACE
@@ -157,6 +158,13 @@ private:
     void addCreated(int16_t id);
     // Redraws an object with the materials the VM set on it (Change Material).
     void updateMaterials(int16_t id, Drawn& d);
+    // The VM's "change graphic" (object data 0 written: the error string 0x48
+    // "Change graphic expression called on non 3D object"): the model becomes
+    // the object's STR# 0x85 entry of that number (the modular stairs'
+    // railings, "Set Model by Type"). Only a change made while the lot is
+    // up: the saved lots keep their models in the cObjects (their stairs
+    // have data 0 = 0 with railing models).
+    void updateGraphic(int16_t id, Drawn& d);
     int model(const std::string& cres, const std::map<std::string, std::string>& materials,
               const std::vector<Xform>& pose = {});
     // The local pose an object's model is drawn in when no animation poses

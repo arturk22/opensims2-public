@@ -76,6 +76,7 @@ bool VmObjectView::addPlaced(int16_t id, const std::string& definition, const st
     d.saved = saved;
     d.design = design;
     d.pose = std::move(pose);
+    d.graphic = o->data[0];
     d.base = {o->position.x, o->position.y, o->position.level, o->data[vm::objdata::Direction],
               o->data[vm::objdata::ContainerId], o->data[vm::objdata::SlotNumber]};
     drawn_[id] = std::move(d);
@@ -464,6 +465,29 @@ void VmObjectView::updateMaterials(int16_t id, Drawn& d) {
         renderer_.setInstanceModel(d.instance, m);
 }
 
+void VmObjectView::updateGraphic(int16_t id, Drawn& d) {
+    vm::VM& m = sim_.machine();
+    const vm::Object* o = m.object(id);
+    if (!o || o->person)
+        return;
+    const int16_t g = o->data[0];
+    if (!d.graphic || *d.graphic == g) {
+        d.graphic = g;
+        return;
+    }
+    d.graphic = g;
+    const StringTable* names = g > 0 ? m.code().strings(o->group, 0x85) : nullptr;
+    const std::string cres = names ? names->get(size_t(g), lang::EnglishUS) : std::string();
+    if (cres.empty() || cres == d.cres || d.actor || d.instance < 0)
+        return;
+    const int model = this->model(cres, materialsOf(id)); // its rest pose: the saved one was the old model's
+    if (model < 0)
+        return;
+    d.cres = cres;
+    d.pose.clear();
+    renderer_.setInstanceModel(d.instance, model);
+}
+
 // An object the VM created (or one the lot did not draw) that has a model:
 // a static instance of it, placed from now on.
 void VmObjectView::addCreated(int16_t id) {
@@ -482,6 +506,8 @@ void VmObjectView::addCreated(int16_t id) {
     d.instance = renderer_.addInstance(m, hiddenMatrix());
     d.hidden = true;
     d.base.x = -2; // never at a saved place
+    if (const vm::Object* o = sim_.machine().object(id))
+        d.graphic = o->data[0];
     drawn_[id] = std::move(d);
     if (std::getenv("OS2_DEBUG_VM"))
         std::fprintf(stderr, "opensims2: drawing created object %d (%s)\n", id, cres.c_str());
@@ -537,6 +563,7 @@ void VmObjectView::update() {
                              at ? at->t[0] : 0, at ? at->t[1] : 0, at ? at->t[2] : 0);
             d.debugMoved = moved;
         }
+        updateGraphic(id, d);
         updateMaterials(id, d);
         place(d, suppressed_.count(id) || (at && visible && !visible(id, *at)) ? std::nullopt : at);
     }
