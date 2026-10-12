@@ -218,7 +218,7 @@ bool VmObjectView::shown(int16_t id) const {
     return !it->second.hidden;
 }
 
-std::optional<Xform> VmObjectView::seatPlacement(int16_t sim) {
+std::optional<Xform> VmObjectView::seatPlacement(int16_t sim, double now) {
     vm::VM& m = sim_.machine();
     const vm::Object* o = m.object(sim);
     if (!o)
@@ -232,12 +232,25 @@ std::optional<Xform> VmObjectView::seatPlacement(int16_t sim) {
         return std::nullopt;
     const std::string bone = slotBone(containerId, o->data[vm::objdata::SlotNumber]);
     // A container the VM animates (a chair pulled out or scooted in) moves
-    // its slot with it: the slot bone as posed.
+    // its slot with it: the slot bone as posed now, at the actor's
+    // placement. The dining chairs' seat "slot_chairDining_0" hangs under
+    // "slot_chairdining_trans", which a pushed-in chair keeps 0.373 toward
+    // the table (the pose the lot saves, the pushIn's last frame): the Sim
+    // sat at the chair's origin, 0.37 behind its seat, and its get-out, which
+    // starts from the corner bone the trees snap it to, sat it in the air
+    // beside the chair (the actor's bones were never used: they are posed
+    // after the Sims, and its transform is only set when the chair moves).
     if (auto d = drawn_.find(containerId); d != drawn_.end() && d->second.actor && !bone.empty()) {
-        const SimActor& a = *d->second.actor;
+        SimActor& a = *d->second.actor;
         const int b = a.skin.skeleton.find(bone);
-        if (b >= 0 && size_t(b) < a.bones.size() && a.transform && a.transform->t[2] > -100)
-            return a.bones[size_t(b)];
+        if (b >= 0 && (!a.transform || a.transform->t[2] > -100)) {
+            if (now >= 0) {
+                if (const auto seat = a.bonePlacement(bone, now))
+                    return seat;
+            } else if (size_t(b) < a.bones.size()) {
+                return a.bones[size_t(b)];
+            }
+        }
     }
     Xform node;
     if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(containerId)))

@@ -93,7 +93,7 @@ public:
     // it is in none; the host's. Such a Sim is drawn there, facing the
     // slot's way: its animations (the chair's get-in, which starts from the
     // routing slot beside it) are made in the slot's frame.
-    std::function<std::optional<Xform>(int16_t id)> seat;
+    std::function<std::optional<Xform>(int16_t id, double now)> seat;
     // The actor drawing a VM object other than a bound Sim (an object the VM
     // animates), for the IK targets on its bones; null: none.
     std::function<const SimActor*(int16_t id)> actorOf;

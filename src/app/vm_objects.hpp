@@ -121,9 +121,10 @@ public:
     // if the object or the node is missing (effect slots).
     std::optional<Xform> nodePlacement(int16_t id, const std::string& node);
     // Where a Sim in a containment slot of an object (not a Sim) sits: the
-    // container's placement with its slot's bone (rest pose), else its
-    // origin; nothing when the Sim is in no such slot.
-    std::optional<Xform> seatPlacement(int16_t sim);
+    // container's placement with its slot's bone (as its actor poses it at
+    // `now`, if the VM animates it and now >= 0; else the rest pose), else
+    // its origin; nothing when the Sim is in no such slot.
+    std::optional<Xform> seatPlacement(int16_t sim, double now = -1);
     // The bone of an object's containment slot `slot` (empty if none).
     std::string containerSlotBone(int16_t id, int slot) { return slotBone(id, slot); }
     // The bone of the object's slot `slot` among its SLOT entries of `type`

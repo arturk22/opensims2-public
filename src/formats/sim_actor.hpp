@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -64,6 +65,11 @@ struct SimActor {
     void update(double now);
     // The placement as a transform (rotation about Z, then translation).
     Xform placement() const;
+    // Where bone `name` is at `now` (world: the cues due started, posed at
+    // `now`, at the placement), without update()'s skinning; nothing if the
+    // skeleton lacks it. A chair's seat for the Sim in it, posed before the
+    // objects' actors are (they are posed after the Sims).
+    std::optional<Xform> bonePlacement(std::string_view name, double now);
 };
 
 // The body-shape morphs of a Sim, as the game sets them on its outfit

@@ -340,7 +340,7 @@ void LotSimulation::sampleAll(double at) {
         // body holds the last pose (the get-in's end, under the chair's
         // idles) instead of standing up in the standing idle between two of
         // them, or while the trees stop the idles before the get-out.
-        if (want == b.idle && seat && seat(b.id))
+        if (want == b.idle && seat && seat(b.id, -1))
             continue;
         try {
             const Animation& anim = b.actor->animation(index_, want);
@@ -518,7 +518,7 @@ void LotSimulation::updateScene(double seconds) {
         b.actor->position = {x, y, z + b.zOffset};
         b.actor->heading = b.motion.turn(dt);
         if (seat && !b.motion.current().onStep)
-            if (const auto at = seat(b.id)) {
+            if (const auto at = seat(b.id, seconds)) {
                 const Vec3 f = at->rotate({0, 1, 0});
                 b.actor->position = at->t;
                 b.actor->heading = std::atan2(-f[0], f[1]);

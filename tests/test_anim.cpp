@@ -1,6 +1,7 @@
 // Skeletons, ANIM decoding and pose sampling on hand-built data.
 #include "formats/anim.hpp"
 #include "formats/anim_player.hpp"
+#include "formats/model.hpp"
 #include "formats/property_set.hpp"
 #include "formats/resindex.hpp"
 #include "formats/sim.hpp"
@@ -11,7 +12,9 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -721,7 +724,76 @@ static void testDoorLeaves() {
     check(near(angle(p[1].q), 0, 0.5f) && near(angle(p[2].q), -90, 0.5f), "door: closing one leaf leaves the other");
 }
 
+// With the game's data (OS2_DATA): a Sim in a dining chair sits where the
+// chair's seat is, and its get-out starts there. N001_Lot68's chair 643
+// ("Chair - Dining - Value1" at (17.5, 25.5), direction 0: its +y toward the
+// table at -x) is saved pushed in: "slot_chairdining_trans" 0.373 forward,
+// the seat "slot_chairDining_0" under it (the getIn's baked 0.375 too). The
+// host drew the seated Sim at the chair's origin (the chair actor's bones
+// were never used), 0.37 behind the seat; the get-out, which the trees play
+// from the corner bone "route_chairdining_2_se" (Snap, then "Snap - Away"
+// turns the Sim around) with its header heading of -180 degrees, starts
+// seated at the true seat: the Sim jumped to sit in the air at the table's
+// corner beside the chair, the chair pulling out behind it (user playtest).
+static void testDiningChairSeat() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    SimActor anims{SkinnedModel(Skeleton{})}; // owns the loaded animations
+    auto load = [&](const std::string& name) -> const Animation* {
+        try {
+            return &anims.animation(index, name);
+        } catch (const std::exception&) {
+            return nullptr;
+        }
+    };
+    const ObjectModel chairModel = loadObjectModel(index, "chairDiningValue1_cres");
+    SimActor chair{SkinnedModel(chairModel.skeleton)};
+    std::vector<Xform> saved = chairModel.skeleton.restPose();
+    const int trans = chairModel.skeleton.find("slot_chairdining_trans");
+    check(trans >= 0, "dining chair: slot_chairdining_trans");
+    if (trans < 0)
+        return;
+    saved[size_t(trans)].t[1] = 0.373f;
+    chair.player.setBasePose(saved);
+    chair.player.setHoldPose(true);
+    chair.position = {17.5f, 25.5f, 0.75f};
+    chair.heading = float(M_PI / 2); // direction 0 (vm::headingOfDirection)
+    const Animation* getIn = load("o2a-chairDining-getIn-SE");
+    const Animation* getOut = load("a2o-chairDining-getOut-SE");
+    check(getIn && getOut, "dining chair: its animations");
+    if (!getIn || !getOut)
+        return;
+    // As the host cues the VM's overlay on the chair (main.mm onObjectOverlay).
+    chair.cue(0, *getIn, {.fade = 0.1f, .loop = false, .priority = 2, .mirror = true, .level = 2});
+    const auto seat = chair.bonePlacement("slot_chairDining_0", 5.0);
+    check(seat.has_value(), "dining chair: seat bone");
+    if (!seat)
+        return;
+    check(near(seat->t[0], 17.5f - 0.375f, 0.02f) && near(seat->t[1], 25.5f, 0.02f),
+          "dining chair: the seat is the pushed-in chair's, 0.375 toward the table");
+    // Mid pull-out, the seat stays (only chairdining_trans moves).
+    const auto pulled = chair.bonePlacement("slot_chairDining_0", 1.5);
+    check(pulled && near(pulled->t[0], seat->t[0], 0.02f), "dining chair: the seat does not move with the pull");
+    // The get-out from the corner bone, turned around, with its header heading.
+    const auto corner = chair.bonePlacement("route_chairdining_2_se", 5.0);
+    const ObjectModel adult = loadObjectModel(index, "auskel_cres");
+    check(corner && adult.skeleton.find("root_rot") >= 0, "dining chair: corner bone and adult skeleton");
+    if (!corner || adult.skeleton.find("root_rot") < 0)
+        return;
+    const Vec3 f = corner->rotate({0, 1, 0});
+    SimActor sim{SkinnedModel(adult.skeleton)};
+    sim.position = corner->t;
+    sim.heading = std::atan2(-f[0], f[1]) + float(M_PI);
+    sim.player.play(*getOut, 0, {.fade = 0, .loop = false, .turn = getOut->headingOffset});
+    const auto root = sim.bonePlacement("root_rot", 0.0);
+    check(root && std::hypot(root->t[0] - seat->t[0], root->t[1] - seat->t[1]) < 0.1f,
+          "dining chair: the get-out starts seated in the seat");
+}
+
 int main() {
+    testDiningChairSeat();
     testDoorLeaves();
     testSavedPose();
     testMirror();

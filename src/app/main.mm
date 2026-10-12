@@ -724,7 +724,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         std::fprintf(stderr, "opensims2: tv: %s\n", e.what());
     }
     gSnaps = std::make_unique<os2::AnimSnapView>(renderer, index, *gObjectView, gSimulation->machine());
-    gSimulation->seat = [](int16_t id) { return gObjectView ? gObjectView->seatPlacement(id) : std::nullopt; };
+    gSimulation->seat = [](int16_t id, double now) { return gObjectView ? gObjectView->seatPlacement(id, now) : std::nullopt; };
     gSimulation->actorOf = [](int16_t id) -> const os2::SimActor* {
         const auto it = gObjectActors.find(id);
         return it != gObjectActors.end() ? it->second : nullptr;
@@ -908,8 +908,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (gSnaps)
             gSnaps->objectAnimation(id, name, at);
         if (std::getenv("OS2_DEBUG_VM"))
-            std::fprintf(stderr, "opensims2: object %d starts %s%s (overlay %u, %s)\n", id, name.c_str(),
-                         flipped ? " flipped" : "", overlay, gPlacedObjects.count(id) ? "placed" : "not placed");
+            std::fprintf(stderr, "opensims2: object %d starts %s%s (overlay %u, %s) at %.2f\n", id, name.c_str(),
+                         flipped ? " flipped" : "", overlay, gPlacedObjects.count(id) ? "placed" : "not placed", at);
         os2::SimActor* actor = objectActor(id);
         if (!actor)
             return;
@@ -922,6 +922,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         }
     };
     gSimulation->onObjectOverlayEnd = [](int16_t id, uint32_t overlay, double at) {
+        if (std::getenv("OS2_DEBUG_VM"))
+            std::fprintf(stderr, "opensims2: object %d ends overlay %u at %.2f\n", id, overlay, at);
         const auto it = gObjectActors.find(id);
         if (it != gObjectActors.end() && it->second)
             it->second->cueStop(at, 1 + int(overlay & 0x3FFFFFFF), 0);

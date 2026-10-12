@@ -85,6 +85,17 @@ void SimActor::update(double now) {
     skin.pose(bones, posed, morphs);
 }
 
+std::optional<Xform> SimActor::bonePlacement(std::string_view name, double now) {
+    const int b = skin.skeleton.find(name);
+    if (b < 0)
+        return std::nullopt;
+    startCues(now);
+    const std::vector<Xform> world = skin.skeleton.world(player.pose(now));
+    if (size_t(b) >= world.size())
+        return std::nullopt;
+    return placement().then(world[size_t(b)]);
+}
+
 std::map<std::string, float> bodyShapeMorphs(int16_t bodyFlags, int16_t age) {
     std::map<std::string, float> m;
     if (age <= 2)
