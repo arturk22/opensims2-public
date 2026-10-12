@@ -996,7 +996,9 @@ void BuildMode::update() {
             if (dragFrom_)
                 dragSections_ = tiles;
             // The pool tool paints the squares red where the dig would be refused.
-            const bool digOk = tool_ != Tool::Pool || control_ || editor_->poolDigError(x0, y0, x1, y1) == 0;
+            const bool digOk = tool_ != Tool::Pool || control_ ||
+                               editor_->poolDigError(int(std::floor(a.x)), int(std::floor(a.y)), int(std::floor(p.x)),
+                                                     int(std::floor(p.y))) == 0; // from the drag's start
             for (int x = x0; x <= x1 && used < 400; ++x)
                 for (int y = y0; y <= y1 && used < 400; ++y)
                     put(!control_ && digOk, placeQuad(float(x) + 0.04f, float(y) + 0.04f, z(float(x) + 0.5f, float(y) + 0.5f), 0.92f,

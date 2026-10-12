@@ -1746,7 +1746,7 @@ térreo, este inferido), `0x02` (canto fora ou travado), `0x81` (tile de dentro
 travado, terreno que não aplaina), `0x1E` (água, sem texto), `0x0C`
 (objeto), `0x86` (deck/fundação no tile, junção em retângulo e 900 tiles,
 estes dois inferidos), `0x46` (parede atravessando, sem texto), `0x87`/`0x2D`/`0x2E`
-(apagar). Os outros códigos do app já eram os do binário e agora mostram o
+(apagar); um arraste que começa num tile com piscina ou fundação é `0x86`, e o cursor vermelho testa a partir desse começo. Os outros códigos do app já eram os do binário e agora mostram o
 texto deles: paredes `0x48` "Needs something to support it" (era "Can't
 reach ground"), `0x49` "Can't place on slope", `0x4B` "Wall too close to
 Sim", `0x4C` "Cannot build diagonally.", `0x4F` "Can't remove object on

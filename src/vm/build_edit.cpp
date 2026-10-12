@@ -1998,6 +1998,10 @@ int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, 
         for (int y : {y0, y1})
             if (x < 0 || y < 0 || x >= W || y >= H)
                 return fail(0x02, "out of the lot");
+    // The tile where the drag started already has a deck, foundation or
+    // pool (IsDeckFoundationOfType 2, 1, 4): 0x86 (§7.18).
+    if (poolTile(x0, y0) || foundationTile(x0, y0))
+        return fail(0x86, "the drag starts on a pool or a foundation");
     const int ax = std::max(0, std::min(x0, x1)), bx = std::min(W - 1, std::max(x0, x1));
     const int ay = std::max(0, std::min(y0, y1)), by = std::min(H - 1, std::max(y0, y1));
     // Tiles of a pool already there are skipped: a rectangle over or next to
