@@ -215,6 +215,14 @@ ObjectModel loadSimPartModel(ResourceIndex& index, const SimPart& part) {
     return loadObjectModel(index, cresName, materials);
 }
 
+void markHairPart(ObjectModel& model) {
+    for (auto& [name, mat] : model.materials) {
+        if (mat.materialType == "SimStandardMaterial")
+            mat.materialType = "SimHair";
+        mat.properties.emplace_back("os2HairPart", "1");
+    }
+}
+
 SkinnedModel loadSim(ResourceIndex& index, const std::vector<SimPart>& parts, const SimLook& look) {
     constexpr uint32_t kTypeCres = 0xE519C933;
     auto cresLoc = index.findByName("auskel_cres", kTypeCres);
@@ -254,6 +262,7 @@ SkinnedModel loadSim(ResourceIndex& index, const std::vector<SimPart>& parts, co
     if (!look.hair.empty()) {
         if (const SimPart* hair = findSimPart(parts, look.hair)) {
             ObjectModel m = loadSimPartModel(index, *hair);
+            markHairPart(m);
             // The scalp showing through the hair's skin layer: the skin's colour.
             for (auto& part : m.parts) {
                 auto it = m.materials.find(part.material);

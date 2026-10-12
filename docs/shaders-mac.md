@@ -428,7 +428,16 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
   dif·(ambiente + Σ luzes)))`.
 - `SimHair` com `blend`: `srcAlpha/invSrcAlpha`, **escreve z**, alpha test
   `> 60`; com `additive`: `srcAlpha/one`. Camada `stdMatLayer·8 + 3` (cabelo)
-  ou `+7` (outros com blend).
+  ou `+7` (outros com blend). **Quem é `SimHair`** (binário, rodada 15,
+  `cTSSimOutfitData`, BV `0x82bb70`, ao montar a roupa): nenhum TXMT diz
+  `SimHair`; para uma parte do tipo 1 (cabelo, chapéus inclusive, o
+  `outfit=1` do GZPS) o código troca a definição de cada material
+  `SimStandardMaterial` para `"SimHair"` (vtable `0x2c` do material); na
+  camada composta, um material já `SimHair` volta a ser `SimHair`. Numa
+  roupa do tipo `0x20` (com `param_5 & 3`) os `StandardMaterial` viram
+  `SimStandardMaterial`. No código: `markHairPart` (`formats/sim.cpp`), no
+  lugar do "hair no nome da textura" inferido antes (as capturas do CAS
+  saem idênticas).
 - Env cube (`stdMatEnvCubeMode reflection`, sem blend): passe extra
   `srcAlpha/one` com `cube(R)·stdMatEnvCubeCoef`.
 - Reserva (2º shader): só a cor `2·dif·0,4·luz` sem textura.

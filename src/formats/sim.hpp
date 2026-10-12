@@ -48,6 +48,11 @@ std::string scenegraphName(ResourceIndex& index, const Tgi& tgi);
 // The meshes of `part` (its CRES, with the TXMT overrides per subset) as a
 // model ready for SkinnedModel::add.
 ObjectModel loadSimPartModel(ResourceIndex& index, const SimPart& part);
+// A hair part's materials as cTSSimOutfitData builds them (Mac BV 0x82bb70):
+// each SimStandardMaterial of a part of type 1 (hair, hats too) becomes a
+// "SimHair" material; the part's other materials (the SimSkin scalp) are
+// marked as hair for our drawing ("os2HairPart").
+void markHairPart(ObjectModel& model);
 
 // What a Sim wears and looks like. Names are catalog part names (GZPS
 // "name"); the face, eyes and brows are fixed textures until the face

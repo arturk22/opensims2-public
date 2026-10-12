@@ -148,7 +148,7 @@ struct StandardMaterial {
     // number, drawn in increasing order after the opaque hair (inferred);
     // 0 for every other material.
     int alphaOrder = 0;
-    bool hair = false; // a Sim's hair (SimSkin or SimStandardMaterial with "hair" in the base texture's name)
+    bool hair = false; // a material of a Sim's hair part (SimHair, or its SimSkin scalp)
     bool visible = true; // false for "Null" and "WallMask" materials (parts the game does not draw)
     // SimpleMirrorReflection: a mirror's quad, drawn as the blank mirror
     // colour unless the renderer's reflections are on (Renderer::setReflections).

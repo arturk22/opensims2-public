@@ -309,14 +309,15 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     }
 
     bool simHair = false;
-    if (type == "SimStandardMaterial" || type == "SimSkin") {
+    if (type == "SimStandardMaterial" || type == "SimSkin" || type == "SimHair") {
         // sims.matShad / DX9SimMaterials.matShad.
         out.shading = StandardMaterial::Shading::Sim;
         out.specularPower = 0; // "no sim material can have specular"
-        // Hair is drawn with SimHair(), which the TXMT does not name: inferred
-        // from the base texture ("ufhairlong-red", "uuhairhatcap-...").
-        out.hair = contains(m.property("stdMatBaseTextureName"), "hair");
-        simHair = type == "SimStandardMaterial" && out.hair;
+        // Hair is drawn with SimHair(), which no TXMT names: the outfit
+        // builder (Mac BV 0x82bb70) renames the SimStandardMaterials of a
+        // hair part (GZPS type 1) to it (markHairPart).
+        simHair = type == "SimHair";
+        out.hair = simHair || m.property("os2HairPart") == "1";
         if (simHair && out.blend == StandardMaterial::Blend::Alpha) {
             // SimHairAlphaState: blended, but writes depth and drops alpha <= 60.
             out.depthWrite = true;

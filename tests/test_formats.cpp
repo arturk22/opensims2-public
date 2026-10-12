@@ -7,6 +7,7 @@
 #include "app/wall_view.hpp"
 #include "formats/image.hpp"
 #include "formats/model.hpp"
+#include "formats/sim.hpp"
 #include "formats/property_set.hpp"
 #include "formats/resindex.hpp"
 #include "formats/simantics.hpp"
@@ -419,15 +420,28 @@ static void testStandardMaterial() {
               pm.alphaMultiplier == 0.5f && pm.envCube.empty(),
           "deprecated additive type");
 
-    // Sim hair: blended, but alpha tested at 60 and writing depth, 3 layers up.
+    // Sim hair: blended, but alpha tested at 60 and writing depth, 3 layers
+    // up; SimHair is what the outfit builder makes of a hair part's
+    // SimStandardMaterials (markHairPart), not the texture's name.
     MaterialDefinition hair;
     hair.materialType = "SimStandardMaterial";
     hair.properties = {{"stdMatBaseTextureEnabled", "true"}, {"stdMatBaseTextureName", "ufhairlong-red"},
                        {"stdMatAlphaBlendMode", "blend"}, {"stdMatSpecPower", "2"}};
-    auto hm = standardMaterial(hair);
+    auto plainHair = standardMaterial(hair);
+    check(!plainHair.hair && plainHair.layer == 7 && !plainHair.depthWrite, "SimStandardMaterial outside a hair part");
+    ObjectModel hairPart;
+    hairPart.materials["hair"] = hair;
+    MaterialDefinition scalp;
+    scalp.materialType = "SimSkin";
+    hairPart.materials["scalp"] = scalp;
+    markHairPart(hairPart);
+    check(hairPart.materials["hair"].materialType == "SimHair" && hairPart.materials["scalp"].materialType == "SimSkin",
+          "hair part: SimStandardMaterial -> SimHair");
+    auto hm = standardMaterial(hairPart.materials["hair"]);
     check(hm.shading == StandardMaterial::Shading::Sim && hm.layer == 3 && hm.depthWrite && hm.alphaTest &&
-              hm.alphaRef == 61.0f / 255.0f && hm.specularPower == 0,
+              hm.alphaRef == 61.0f / 255.0f && hm.specularPower == 0 && hm.hair,
           "sim hair");
+    check(standardMaterial(hairPart.materials["scalp"]).hair, "hair part's scalp drawn as hair");
 }
 
 static void testPropertySet() {
