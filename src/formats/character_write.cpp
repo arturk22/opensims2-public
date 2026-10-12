@@ -986,4 +986,18 @@ CharacterWriteResult writeAgedCharacter(ResourceIndex& index, const CasCatalog& 
     return writeCharacter(index, catalog, baker, spec, file.stem().string(), out, true);
 }
 
+std::vector<Tgi> familyBinClothing(const CasCatalog& catalog, const CharacterSpec& spec) {
+    std::vector<Tgi> out;
+    for (const auto& [category, parts] : spec.outfits) {
+        if (category & 0xC86)
+            continue;
+        for (const auto& [bit, name] : parts)
+            if (bit == part::Top || bit == part::Bottom || bit == part::Body)
+                if (const SimPart* gz = catalog.byName(catalog.parts, name))
+                    if (std::find(out.begin(), out.end(), gz->tgi) == out.end())
+                        out.push_back(gz->tgi);
+    }
+    return out;
+}
+
 } // namespace os2::cas

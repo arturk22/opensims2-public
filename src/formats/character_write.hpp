@@ -144,5 +144,13 @@ struct PropertyValue {
 std::vector<uint8_t> writeReferenceList(const std::vector<Tgi>& refs);
 std::vector<uint8_t> writePropertySetXml(const std::map<std::string, PropertyValue>& properties);
 
+// The clothes a Sim brings to its family's clothing bin
+// (cTSFamily::AddMemberClothing -> AddClothingFromOutfitData, BV
+// 0x47ec68/0x47e5ac): the GZPS of the tops (4), bottoms (0x10) and whole
+// outfits (8) of every outfit category but 0x002, 0x004, 0x080 (naked),
+// 0x400 (try-on) and 0x800 (mask 0xC86), once each. (The binary takes the
+// accessories, part 0x20, through the bin service; not here.)
+std::vector<Tgi> familyBinClothing(const CasCatalog& catalog, const CharacterSpec& spec);
+
 } // namespace cas
 } // namespace os2

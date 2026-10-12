@@ -1350,15 +1350,38 @@ const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor) {
 
 // The clothing bin of a Sim's family (the VM's, from the neighborhood's
 // BINX items plus what the clothing rack added); null without a family.
-const std::vector<os2::Tgi>* familyBin(int16_t sim) {
+// A family with no bin at all (made by an older build of our CAS, which
+// wrote none) gets its members' clothes on the lot as
+// cTSFamily::AddMemberClothing gives them (cas::familyBinClothing), kept
+// in the VM so that saving writes the bin (the moment is inferred: the
+// game makes the bin with the family, family_write.hpp).
+const std::vector<os2::Tgi>* familyBin(int16_t sim, const os2::cas::CasCatalog* catalog = nullptr) {
     if (!gSimulation)
         return nullptr;
     os2::vm::VM& m = gSimulation->machine();
     const os2::vm::Object* o = m.object(sim);
     if (!o || !o->person)
         return nullptr;
-    auto f = m.families.find(o->person->data[os2::vm::persondata::FamilyNumber]);
-    return f == m.families.end() ? nullptr : &f->second.wardrobe;
+    const int16_t family = o->person->data[os2::vm::persondata::FamilyNumber];
+    auto f = m.families.find(family);
+    if (f == m.families.end())
+        return nullptr;
+    static std::set<int16_t> filled;
+    if (f->second.wardrobe.empty() && catalog && filled.insert(family).second)
+        for (const auto& ls : gLotSims) {
+            const os2::vm::Object* member = m.object(ls.id);
+            if (!member || !member->person || member->person->data[os2::vm::persondata::FamilyNumber] != family)
+                continue;
+            try {
+                os2::DbpfPackage pkg(ls.character);
+                const auto spec = os2::cas::readCharacterSpec(pkg, 0xFFFFFFFF, *catalog);
+                for (const os2::Tgi& k : os2::cas::familyBinClothing(*catalog, spec))
+                    if (std::find(f->second.wardrobe.begin(), f->second.wardrobe.end(), k) == f->second.wardrobe.end())
+                        f->second.wardrobe.push_back(k);
+            } catch (const std::exception&) {
+            }
+        }
+    return &f->second.wardrobe;
 }
 bool inBin(const std::vector<os2::Tgi>& bin, const os2::Tgi& k) {
     return std::any_of(bin.begin(), bin.end(), [&](const os2::Tgi& b) {
@@ -1455,9 +1478,10 @@ void setupWardrobe(os2::ResourceIndex& index) {
             const uint32_t parts[3] = {os2::cas::part::Top, os2::cas::part::Bottom, os2::cas::part::Body};
             const auto wornParts = spec.outfits.count(category) ? spec.outfits.at(category) : std::map<uint32_t, std::string>{};
             // cTSWinProcClothingDialog::SetParams lists the family's clothing
-            // bin (its BINX items) of the Sim's age, gender and category; a
-            // family without a bin (made in this CAS) gets the catalog's.
-            const std::vector<os2::Tgi>* bin = familyBin(sim);
+            // bin (its BINX items) of the Sim's age, gender and category
+            // (familyBin fills a family's missing bin from its members); an
+            // empty one still shows the catalog's (inferred).
+            const std::vector<os2::Tgi>* bin = familyBin(sim, c.catalog.get());
             for (int t = 0; t < 3; ++t) {
                 std::vector<const os2::SimPart*> candidates;
                 if (bin && !bin->empty()) {
@@ -1571,7 +1595,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
             std::string worn;
             if (self && spec->outfits.count(category) && spec->outfits.at(category).count(partBit))
                 worn = spec->outfits.at(category).at(partBit);
-            const std::vector<os2::Tgi>* bin = familyBin(sim);
+            const std::vector<os2::Tgi>* bin = familyBin(sim, c.catalog.get());
             for (const os2::SimPart* p : c.catalog->outfitParts(partBit, age, gender, category, self && spec->fitness == 2)) {
                 os2::DialogWindow::ShopItem i;
                 i.part = p->name();
@@ -1599,7 +1623,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
     w.cartCompletesOutfits = [load](int16_t sim, uint32_t category, const std::vector<os2::Tgi>& cart) {
         Cas& c = load();
         std::vector<const os2::SimPart*> bin, added;
-        if (const std::vector<os2::Tgi>* b = familyBin(sim))
+        if (const std::vector<os2::Tgi>* b = familyBin(sim, c.catalog.get()))
             for (const os2::Tgi& k : *b)
                 if (const os2::SimPart* p = c.part(k))
                     bin.push_back(p);

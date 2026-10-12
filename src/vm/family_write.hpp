@@ -20,6 +20,7 @@
 // interests 124-140 drawn 0..1000 (inferred: the shipped values look random).
 
 #include "formats/cas_personality.hpp"
+#include "formats/dbpf.hpp"
 
 #include <array>
 #include <cstdint>
@@ -44,6 +45,11 @@ struct NewSim {
     // is, 2 I'm married to, 3 my sibling is, 4 my child is). Written into
     // the neighborhood's family ties (0x8C870743).
     std::vector<std::pair<size_t, uint32_t>> ties;
+    // The Sim's clothes for the family's clothing bin (GZPS keys), as
+    // cTSFamily::AddClothingFromOutfitData takes them from the Sim's outfits:
+    // the tops (4), bottoms (0x10) and whole outfits (8) of every category
+    // but 0x002, 0x004, 0x080 (naked), 0x400 (try-on) and 0x800.
+    std::vector<Tgi> clothing;
     // Writes the Sim's character file to `out` with the object name given
     // ("N001_User00012"); returns the OBJD GUID.
     std::function<uint32_t(const std::string& objectName, const std::filesystem::path& out)> writeCharacter;

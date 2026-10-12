@@ -1,4 +1,5 @@
 #include "family_write.hpp"
+#include "hood_save.hpp"
 
 #include "formats/binwriter.hpp"
 #include "formats/character_write.hpp"
@@ -18,7 +19,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr uint32_t kTypeStr = 0x53545223;
 constexpr uint32_t kLocal = 0xFFFFFFFF;
 constexpr int32_t kDefaultFamilyFunds = 20000; // CB980E50: kDefaultFamilyFunds=20000
 
@@ -196,6 +196,14 @@ FamilyWriteResult writeNewFamily(const fs::path& source, const fs::path& target,
 
     // The NGBH with the new (empty) inventories.
     DbpfPackage pkg(pkgPath);
+    // The family's clothing bin: each member's clothes (cTSFamily::
+    // AddMemberClothing -> AddClothingFromOutfitData, BV 0x47ec68/0x47e5ac:
+    // the parts of the Sim's outfits), as SaveFamilyClothing writes them.
+    std::vector<Tgi> clothing;
+    for (const auto& sim : sims)
+        clothing.insert(clothing.end(), sim.clothing.begin(), sim.clothing.end());
+    for (auto& [tgi, bytes] : familyClothingEntries(pkg, family, clothing))
+        added[tgi] = std::move(bytes);
     // The family tree: the new Sims' ties, added to the neighborhood's
     // (u32 version, u32 count, per Sim u16 neighbor ID, u32 1, u32 n,
     // n x (u32 type, u16 neighbor ID)).

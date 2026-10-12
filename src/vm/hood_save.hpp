@@ -24,6 +24,9 @@
 #include <string>
 #include <vector>
 
+namespace os2 {
+class DbpfPackage;
+}
 namespace os2::hood {
 struct Neighborhood;
 }
@@ -38,6 +41,15 @@ struct HoodSaveResult {
     size_t clothing = 0; // family clothing bin entries added (BINX + 3IDR: the clothing rack's purchases)
     std::vector<std::string> warnings;
 };
+
+// The entries that put clothing (GZPS keys) into a family's clothing bin
+// in the neighborhood package `pkg`, as cTSFamily::SaveFamilyClothing
+// writes new items: a BINX and its 3IDR per item (once each), and the bin
+// (0x6C4F359D, instance = family) when the package has none yet; the
+// instances follow the package's and `pending`'s highest.
+std::vector<std::pair<Tgi, std::vector<uint8_t>>>
+familyClothingEntries(const DbpfPackage& pkg, uint32_t family, const std::vector<Tgi>& gzps,
+                      const std::vector<std::pair<Tgi, std::vector<uint8_t>>>& pending = {});
 
 // The SDSC person data the game keeps for a neighbor (base game).
 const std::vector<size_t>& persistentPersonData();

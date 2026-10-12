@@ -442,8 +442,33 @@ static void testClothingBin() {
     fs::remove_all(dir);
 }
 
+// A family's clothing bin entries (familyClothingEntries, as a family made
+// in CAS gets its members' clothes): a BINX and 3IDR per item once each,
+// instances past the package's, and the bin when the family has none.
+static void testFamilyBinEntries() {
+    namespace fs = std::filesystem;
+    const fs::path file = fs::temp_directory_path() / ("os2_bin_" + std::to_string(getpid()) + ".package");
+    DbpfWriter w;
+    w.add(Tgi{hoodtype::BINX, 0xFFFFFFFF, 5, 0}, {1, 2, 3});
+    w.add(Tgi{hoodtype::Wardrobe, 0xFFFFFFFF, 1, 0}, {1});
+    w.save(file);
+    {
+        DbpfPackage pkg(file);
+        const Tgi a{0xEBCF3E27, 0x1, 10, 0}, b{0xEBCF3E27, 0x1, 11, 0};
+        const auto e = familyClothingEntries(pkg, 9, {a, a, b});
+        check(e.size() == 5, "family bin: two items (BINX + 3IDR) and the bin");
+        check(e.size() == 5 && e[0].first.type == hoodtype::BINX && e[0].first.instance == 6 &&
+                  e[2].first.instance == 7 && e[4].first.type == hoodtype::Wardrobe && e[4].first.instance == 9,
+              "family bin: instances past the package's, the bin of the family");
+        const auto f = familyClothingEntries(pkg, 1, {a});
+        check(f.size() == 2, "family bin: a family with a bin gets no second one");
+    }
+    fs::remove(file);
+}
+
 int main() {
     lang::setPreferred(lang::EnglishUS);
+    testFamilyBinEntries();
     testClothingBin();
     testYesNoCancel();
     testNotification();

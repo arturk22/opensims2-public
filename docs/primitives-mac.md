@@ -1044,8 +1044,20 @@ volta para a categoria e grava (`SimSystem` vtable 0x3C); devolve
 verdadeiro. **A lista é o guarda-roupa da família** (rodada 14, dialogs3):
 o `SetParams` percorre os itens BINX do bin da família (`cTSFamily`, dado
 de pessoa 61) e fica com os da idade, gênero e categoria do Sim. No app:
-essas peças (as do catálogo do CAS que estão no bin; uma família sem bin,
-feita no nosso CAS, vê o catálogo inteiro, inferido) com a miniatura do
+essas peças (as do catálogo do CAS que estão no bin). **Rodada 15:** o bin
+de uma família nova é feito como o `cTSFamily::AddMemberClothing` (BV
+`0x47ec68`, vtable `0x24` da família: o AGED do personagem →
+`AddClothingFromOutfitData`, BV `0x47e5ac`) o enche: para cada categoria de
+roupa menos `0xC86` (0x002, 0x004, nu 0x080, provar 0x400, 0x800), as
+partes 4 (cima), 0x10 (baixo) e 8 (conjunto) da roupa do Sim viram itens
+BINX (`AddClothing` guarda uma de cada; a parte 0x20, acessório, vai pelo
+serviço de bins e fica de fora no app). Quem chama o `AddMemberClothing` não
+foi achado (só pela vtable): o app o faz ao gravar a família do CAS
+(`writeNewFamily`, `NewSim::clothing` = `cas::familyBinClothing`;
+`s2pkg cas-make --hood` também) e, para uma família ainda sem bin no lote,
+com os Sims dela no lote (`familyBin` no app, guardado ao salvar; o momento
+é inferido); um bin vazio ainda mostra o catálogo (inferido).
+`r15-planejar-roupa-familia-nova.jpg` com a miniatura do
 `CASThumbnails.package` no lugar da vista 3D do Sim (inferido), e o OK grava
 o personagem com a roupa nova (`writeCharacter`, como o Sim que cresce) e o
 veste de novo se ele usa essa categoria.

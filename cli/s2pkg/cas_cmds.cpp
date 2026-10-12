@@ -256,6 +256,7 @@ int cmdCasMake(int argc, char** argv) {
                                             sp.gender == cas::gender::Female,
                                             [&s](uint32_t n) { s = s * 1103515245u + 12345u; return n ? (s >> 8) % n : 0u; })
                           .toProperties();
+            sim.clothing = cas::familyBinClothing(catalog, sp); // the family's clothing bin
             sim.writeCharacter = [&index, &catalog, &baker, &specs, k](const std::string& name, const std::filesystem::path& file) {
                 return cas::writeCharacter(index, catalog, baker, specs[k], name, file).guid;
             };

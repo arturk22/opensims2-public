@@ -855,6 +855,7 @@ void CasMode::acceptFamily() {
                     for (size_t k = 0; k < family_.size(); ++k)
                         if (family_[k].id == otherId)
                             s.ties.push_back({k, tie});
+                s.clothing = cas::familyBinClothing(*catalog_, m.spec); // the family's clothing bin
                 cas::CharacterSpec spec = m.spec;
                 spec.lastName = s.lastName;
                 // The head shot the family panels and the lot's Sim picker show.
