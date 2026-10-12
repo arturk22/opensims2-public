@@ -206,6 +206,17 @@ private:
     std::map<uint32_t, std::optional<Outfits>> wardrobes_; // dialog id -> the wardrobe's lists and choices
     std::map<uint32_t, int> pages_; // dialog id -> the racks' first item shown
     std::map<uint32_t, Shop> shops_;
+    // The phone books' view: the neighbors' mode (SetMode: 1 text by
+    // relationship, 2 text by name, 4 slides by relationship, 5 slides by
+    // name, the constructor's), the party lists' sorts (0 as given, 1 name,
+    // 2 relationship) and the slides' first item.
+    struct Phone {
+        int mode = 5, leftSort = 0, rightSort = 0, first = 0;
+    };
+    std::map<uint32_t, Phone> phones_;
+    // A list's rows in the order shown (party: kRowsList the neighbors not
+    // invited, kRowsInvite the guests; the others: every entry).
+    std::vector<const vm::DialogEntry*> phoneRows(const vm::Dialog& d, int list);
     std::map<uint32_t, Vanity> vanities_;
 };
 

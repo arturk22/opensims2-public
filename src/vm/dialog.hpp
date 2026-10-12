@@ -86,10 +86,11 @@ struct DialogEntry {
     int16_t id = 0;       // object ID (services) or neighbor ID
     uint32_t guid = 0;    // the object's or the Sim's OBJD GUID (thumbnail)
     std::string name;
-    std::string detail;   // the neighbor's lot name, when known
+    std::string detail;   // the neighbor's lot name (CreateNeighborCallList: the lot its family lives on)
     int relationship = 0; // daily + lifetime of the caller to it (CreateNeighborCallList)
     int flags = 0;        // the caller's relationship flags to it (variable 1: crush, love, ..., friend, enemy)
     int price = 0;        // a rack's item: the object's catalog price (OBJD)
+    std::string first, last; // a neighbor's names (CompareByName: last, then first)
 };
 
 // A name box of the name dialog (cTSWinProcNameObjectDialog): the neighbor

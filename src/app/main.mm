@@ -1304,6 +1304,15 @@ const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor) {
                     if (auto e = thumbIndex.find(os2::objectThumbnailInstance(t.group, model)); e != thumbIndex.end())
                         img = os2::decodeUiImage(thumbs->read(*e->second));
                 }
+                // An object without a model in the thumbnails (the phone's
+                // services, "Phone Service - Maid" and the others, run from
+                // the lot's object list): cTSUIThumbnailService falls back to
+                // a picture the object's file carries (GetEmbeddedThumbnail);
+                // the services' group has IMG 1, a service worker's silhouette
+                // (inferred: which instance the service reads was not settled).
+                if (!img && gIndex)
+                    if (auto data = gIndex->read(os2::Tgi{0x856DDBAC, t.group, 1, 0}))
+                        img = os2::decodeUiImage(*data);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "opensims2: dialog thumbnail: %s\n", e.what());
             }

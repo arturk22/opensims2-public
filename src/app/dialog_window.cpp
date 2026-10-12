@@ -71,6 +71,22 @@ std::string trim(const std::string& s) {
 
 bool contains(const std::vector<int16_t>& v, int16_t x) { return std::find(v.begin(), v.end(), x) != v.end(); }
 
+// A window anywhere under `e` by id, and its canvas rectangle given e's
+// top-left corner.
+UiElement* findWin(UiElement& e, uint32_t id, float ox, float oy, std::array<float, 4>* rect) {
+    for (auto& c : e.children) {
+        const auto a = c.area();
+        if (c.id() == id) {
+            if (rect)
+                *rect = {ox + float(a[0]), oy + float(a[1]), ox + float(a[2]), oy + float(a[3])};
+            return &c;
+        }
+        if (UiElement* f = findWin(c, id, ox + float(a[0]), oy + float(a[1]), rect))
+            return f;
+    }
+    return nullptr;
+}
+
 } // namespace
 
 DialogWindow::DialogWindow(vm::VM&, UiResources* res, FontLibrary* fonts) : res_(res), fonts_(fonts) {}
@@ -492,6 +508,66 @@ DialogWindow::Layout DialogWindow::nameDialog(const vm::Dialog& d, int width, in
 
 // --- cTSWinProcPhoneBook* -----------------------------------------------------
 
+namespace {
+// cTSUIPhoneBookEntryNeighbor::CompareByName: the last names, then the
+// first names (case-insensitive; inferred from FUN_0003d7dc's use).
+int compareText(const std::string& a, const std::string& b) {
+    const size_t n = std::min(a.size(), b.size());
+    for (size_t i = 0; i < n; ++i) {
+        const int x = std::tolower(static_cast<unsigned char>(a[i])), y = std::tolower(static_cast<unsigned char>(b[i]));
+        if (x != y)
+            return x < y ? -1 : 1;
+    }
+    return a.size() == b.size() ? 0 : a.size() < b.size() ? -1 : 1;
+}
+bool byName(const vm::DialogEntry* a, const vm::DialogEntry* b) {
+    if (int c = compareText(a->last, b->last))
+        return c < 0;
+    return compareText(a->first.empty() ? a->name : a->first, b->first.empty() ? b->name : b->first) < 0;
+}
+// CompareByRelationship: the ones with a crush or love first, then the
+// higher daily + lifetime score, then by name.
+bool byRelationship(const vm::DialogEntry* a, const vm::DialogEntry* b) {
+    constexpr int Crush = 1, Love = 2;
+    const bool fa = a->flags & (Crush | Love), fb = b->flags & (Crush | Love);
+    if (fa != fb)
+        return fa;
+    if (a->relationship != b->relationship)
+        return a->relationship > b->relationship;
+    return byName(a, b);
+}
+} // namespace
+
+std::vector<const vm::DialogEntry*> DialogWindow::phoneRows(const vm::Dialog& d, int list) {
+    std::vector<const vm::DialogEntry*> rows;
+    const Phone& p = phones_[d.id];
+    int sort = 0;
+    if (d.cls.cls == vm::DialogClass::PhoneParty) {
+        if (list == kRowsList) {
+            for (const auto& e : d.entries)
+                if (!contains(d.selection, e.id))
+                    rows.push_back(&e);
+        } else {
+            for (int16_t id : d.selection)
+                for (const auto& e : d.entries)
+                    if (e.id == id)
+                        rows.push_back(&e);
+        }
+        sort = list == kRowsList ? p.leftSort : p.rightSort;
+    } else {
+        for (const auto& e : d.entries)
+            rows.push_back(&e);
+        if (d.cls.cls == vm::DialogClass::PhoneNeighbors)
+            sort = p.mode == 2 || p.mode == 5 ? 1 : 2;
+    }
+    if (sort == 1)
+        std::stable_sort(rows.begin(), rows.end(), byName);
+    else if (sort == 2)
+        std::stable_sort(rows.begin(), rows.end(), byRelationship);
+    return rows;
+}
+
+
 DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, int height) {
     const UiScript* s = script(d.cls.script);
     if (!s)
@@ -586,15 +662,10 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
     if (d.cls.cls == C::PhoneParty && !partyFocus_.count(d.id))
         partyFocus_[d.id] = kRowsList << 16;
     const int focus = partyFocus_[d.id];
+    const Phone& view = phones_[d.id];
+    const bool slides = d.cls.cls == C::PhoneNeighbors && view.mode > 3;
     if (d.cls.cls == C::PhoneParty) {
-        ListRows left{0x5000, kRowsList, {}, 0}, right{0x6000, kRowsInvite, {}, 0};
-        for (const auto& e : d.entries)
-            if (!contains(d.selection, e.id))
-                left.rows.push_back(&e);
-        for (int16_t id : d.selection)
-            for (const auto& e : d.entries)
-                if (e.id == id)
-                    right.rows.push_back(&e);
+        ListRows left{0x5000, kRowsList, phoneRows(d, kRowsList), 0}, right{0x6000, kRowsInvite, phoneRows(d, kRowsInvite), 0};
         if (focus >= 0) {
             ListRows& l = (focus >> 16) == kRowsInvite ? right : left;
             const size_t row = size_t(focus & 0xFFFF);
@@ -603,10 +674,83 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
         }
         lists = {left, right};
     } else {
-        ListRows l{d.cls.cls == C::PhoneServices ? 0x4000u : 0x8001u, kRowsList, {}, chosenId};
-        for (const auto& e : d.entries)
-            l.rows.push_back(&e);
-        lists = {l};
+        ListRows l{d.cls.cls == C::PhoneServices ? 0x4000u : 0x8001u, kRowsList, phoneRows(d, kRowsList), chosenId};
+        if (!slides)
+            lists = {l};
+    }
+    // The neighbors' view (SetMode): the text list 0x8000 or the slides 0x9000
+    // (the heads of script 0x8C159245 in 0x1006: 7 x 4 of 52 x 52, the
+    // overlay pressed for the chosen one, the friend / enemy and love / crush
+    // marks), and the sort and view buttons pressed as the mode is.
+    if (d.cls.cls == C::PhoneNeighbors) {
+        const bool byNameNow = view.mode == 2 || view.mode == 5;
+        L.states[0x1000] = byNameNow ? 2 : 1;
+        L.states[0x2000] = byNameNow ? 1 : 2;
+        L.states[0x3000] = slides ? 2 : 1;
+        L.states[0x4000] = slides ? 1 : 2;
+        if (UiElement* e = findWindow(root, 0x8000))
+            e->set("winflag_visible", slides ? "no" : "yes");
+        if (UiElement* e = findWindow(root, 0x9000))
+            e->set("winflag_visible", slides ? "yes" : "no");
+        std::array<float, 4> gr{};
+        UiElement* panel = findWin(root, 0x9000, 0, 0, &gr);
+        std::array<float, 4> cr{};
+        UiElement* grid = panel ? findWin(*panel, 0x1006, gr[0], gr[1], &cr) : nullptr;
+        if (slides && grid) {
+            const auto rows = phoneRows(d, kRowsList);
+            constexpr int cols = 7, rowsN = 4, per = cols * rowsN;
+            Phone& pv = phones_[d.id];
+            pv.first = std::clamp(pv.first, 0, std::max(0, (int(rows.size()) - 1) / per * per));
+            grid->set("winflag_visible", "yes");
+            grid->set("style", "nofill"); // a container (hidden in the script, black if filled)
+            uint32_t serial = 0;
+            for (int k = 0; k < per && pv.first + k < int(rows.size()); ++k) {
+                const vm::DialogEntry& e = *rows[size_t(pv.first + k)];
+                const RgbaImage* head = thumbnail ? thumbnail(0, e.id) : nullptr;
+                const float x = float(k % cols) * 52, y = float(k / cols) * 52;
+                const UiScript* cs = script(0x8C159245);
+                if (!cs || cs->roots.empty())
+                    break;
+                UiElement cell = cs->roots.front();
+                cell.set("area", uiArea(int(x), int(y), int(x) + 52, int(y) + 52));
+                const uint32_t base = 0x00C00000u | (serial++ << 8);
+                constexpr int Crush = 1, Love = 2, Friend = 16, BestFriend = 32, Enemy = 128;
+                for (auto& c : cell.children) {
+                    const uint32_t id = c.id();
+                    if (id == 1 && head) {
+                        c.set("image", "");
+                        L.images[base | 1] = head;
+                    }
+                    if (id == 0 && head)
+                        c.set("winflag_visible", "no");
+                    if (id == 2)
+                        L.states[base | 2] = e.id == chosenId ? 2 : 1;
+                    if (id == 3)
+                        c.set("winflag_visible", (e.flags & (Friend | BestFriend)) ? "yes" : "no");
+                    if (id == 4)
+                        c.set("winflag_visible", (e.flags & Enemy) && !(e.flags & (Friend | BestFriend)) ? "yes" : "no");
+                    if (id == 5)
+                        c.set("winflag_visible", (e.flags & Love) ? "yes" : "no");
+                    if (id == 6)
+                        c.set("winflag_visible", (e.flags & Crush) && !(e.flags & Love) ? "yes" : "no");
+                    c.set("id", hex(base | id));
+                }
+                grid->children.push_back(std::move(cell));
+                L.regions.push_back({{L.x0 + cr[0] + x, L.y0 + cr[1] + y, L.x0 + cr[0] + x + 52, L.y0 + cr[1] + y + 52},
+                                     Hit::Row, pv.first + k});
+            }
+            std::array<float, 4> q{};
+            if (findWin(*panel, 0x1004, gr[0], gr[1], &q))
+                L.regions.push_back({{L.x0 + q[0], L.y0 + q[1], L.x0 + q[2], L.y0 + q[3]}, Hit::Prev, 0});
+            if (findWin(*panel, 0x1005, gr[0], gr[1], &q))
+                L.regions.push_back({{L.x0 + q[0], L.y0 + q[1], L.x0 + q[2], L.y0 + q[3]}, Hit::Next, 0});
+        }
+    }
+    if (d.cls.cls == C::PhoneParty) {
+        L.states[0x3000] = view.leftSort == 1 ? 2 : 1;
+        L.states[0x4000] = view.leftSort == 2 ? 2 : 1;
+        L.states[0x7000] = view.rightSort == 1 ? 2 : 1;
+        L.states[0x8000] = view.rightSort == 2 ? 2 : 1;
     }
     // The chosen row's thumbnail (services 0x3001, neighbors 0x5002, party 0x9002).
     const uint32_t thumbId = d.cls.cls == C::PhoneServices ? 0x3001 : d.cls.cls == C::PhoneNeighbors ? 0x5002 : 0x9002;
@@ -713,7 +857,12 @@ DialogWindow::Layout DialogWindow::phoneDialog(const vm::Dialog& d, int width, i
     if (d.cls.cls == C::PhoneParty) {
         region(0x2000, Hit::Add, 0);
         region(0x1000, Hit::Remove, 0);
+        for (uint32_t id : {0x3000u, 0x4000u, 0x7000u, 0x8000u})
+            region(id, Hit::Sort, int(id));
     }
+    if (d.cls.cls == C::PhoneNeighbors)
+        for (uint32_t id : {0x1000u, 0x2000u, 0x3000u, 0x4000u})
+            region(id, Hit::Sort, int(id));
     L.root = std::move(root);
     return L;
 }
@@ -1034,21 +1183,6 @@ constexpr int kShopCols[3] = {3, 4, 4}, kShopRows[3] = {2, 2, 2};
 // 0x400 (female) / 0x401 (male).
 constexpr uint32_t kShopAge[5] = {0x01, 0x02, 0x04, 0x08, 0x10};
 
-// A window anywhere under `e` by id, and its canvas rectangle given e's
-// top-left corner.
-UiElement* findWin(UiElement& e, uint32_t id, float ox, float oy, std::array<float, 4>* rect) {
-    for (auto& c : e.children) {
-        const auto a = c.area();
-        if (c.id() == id) {
-            if (rect)
-                *rect = {ox + float(a[0]), oy + float(a[1]), ox + float(a[2]), oy + float(a[3])};
-            return &c;
-        }
-        if (UiElement* f = findWin(c, id, ox + float(a[0]), oy + float(a[1]), rect))
-            return f;
-    }
-    return nullptr;
-}
 
 std::string captionOf(UiResources* res, const UiElement& e) {
     std::string text = e.get("caption");
@@ -1688,9 +1822,11 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
                 }
             } else if (d.cls.cls == vm::DialogClass::PhoneParty) {
                 partyFocus_[d.id] = g.value;
-            } else if (row < int(d.entries.size())) {
+            } else {
                 (void)list;
-                d.selection = {d.entries[size_t(row)].id};
+                const auto rows = phoneRows(d, kRowsList);
+                if (row < int(rows.size()))
+                    d.selection = {rows[size_t(row)]->id};
             }
             break;
         }
@@ -1704,9 +1840,8 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
                 break;
             const int list = it->second >> 16, row = it->second & 0xFFFF;
             std::vector<int16_t> left;
-            for (const auto& e : d.entries)
-                if (!contains(d.selection, e.id))
-                    left.push_back(e.id);
+            for (const vm::DialogEntry* e : phoneRows(d, kRowsList))
+                left.push_back(e->id);
             if (g.kind == Hit::Add && list == kRowsList && row < int(left.size()) &&
                 (d.maxSelection <= 0 || int(d.selection.size()) < d.maxSelection)) {
                 d.selection.push_back(left[size_t(row)]);
@@ -1716,7 +1851,8 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
                 else
                     it->second = (kRowsList << 16) | std::min(row, int(left.size()) - 1);
             } else if (g.kind == Hit::Remove && list == kRowsInvite && row < int(d.selection.size())) {
-                d.selection.erase(d.selection.begin() + row);
+                const auto guests = phoneRows(d, kRowsInvite);
+                d.selection.erase(std::find(d.selection.begin(), d.selection.end(), guests[size_t(row)]->id));
                 if (d.selection.empty())
                     partyFocus_.erase(it);
                 else
@@ -1724,7 +1860,27 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
             }
             break;
         }
-        case Hit::Sort: break;
+        case Hit::Sort: {
+            // onBtnClickedID: the neighbors' 0x1000 by name, 0x2000 by
+            // relationship, 0x3000 slides, 0x4000 text (SetMode); the party's
+            // 0x3000 / 0x4000 sort the neighbors, 0x7000 / 0x8000 the guests.
+            Phone& p = phones_[d.id];
+            if (d.cls.cls == vm::DialogClass::PhoneNeighbors) {
+                const bool slidesNow = p.mode > 3;
+                if (g.value == 0x1000)
+                    p.mode = slidesNow ? 5 : 2;
+                else if (g.value == 0x2000)
+                    p.mode = slidesNow ? 4 : 1;
+                else if (g.value == 0x3000 && !slidesNow)
+                    p.mode += 3;
+                else if (g.value == 0x4000 && slidesNow)
+                    p.mode -= 3;
+            } else if (g.value == 0x3000 || g.value == 0x4000)
+                p.leftSort = g.value == 0x3000 ? 1 : 2;
+            else
+                p.rightSort = g.value == 0x7000 ? 1 : 2;
+            break;
+        }
         case Hit::Choice: d.aspiration = int16_t(g.value); break;
         case Hit::Bar: {
             // A click on the bar sets the units by its height (inferred).
@@ -1739,6 +1895,11 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
         case Hit::Next:
             if (d.cls.cls == vm::DialogClass::SelectItems) {
                 pages_[d.id] += g.kind == Hit::Next ? 1 : -1; // clamped by the layout
+                break;
+            }
+            if (d.cls.cls == vm::DialogClass::PhoneNeighbors) {
+                int& first = phones_[d.id].first;
+                first = std::max(0, first + (g.kind == Hit::Next ? 28 : -28)); // a page of slides
                 break;
             }
             if (d.cls.cls == vm::DialogClass::Fill) {

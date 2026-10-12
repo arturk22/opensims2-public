@@ -546,7 +546,17 @@ void setupPhone(Context& c, Dialog& d, Object* stack) {
             if (!n)
                 continue;
             e.guid = n->guid;
-            e.name = n->lastName.empty() ? neighborName(vm, v) : neighborName(vm, v) + " " + n->lastName;
+            e.first = neighborName(vm, v);
+            e.last = n->lastName;
+            e.name = n->lastName.empty() ? e.first : e.first + " " + n->lastName;
+            // CreateNeighborCallList: the name of the lot whose residents are
+            // the neighbor's family (SetLotName).
+            if (auto f = vm.families.find(n->personData[persondata::FamilyNumber]); f != vm.families.end() && f->second.house)
+                if (auto l = vm.lots.find(f->second.house); l != vm.lots.end())
+                    e.detail = l->second.name;
+            if (e.detail.empty() && n->house)
+                if (auto l = vm.lots.find(n->house); l != vm.lots.end())
+                    e.detail = l->second.name;
             const auto key = std::make_pair(vm.relationshipKey(c.thread.me), VM::RelationshipKey{1, v});
             if (auto r = vm.relationships.find(key); r != vm.relationships.end()) {
                 const auto& vars = r->second;
@@ -555,6 +565,20 @@ void setupPhone(Context& c, Dialog& d, Object* stack) {
             }
         }
         d.entries.push_back(std::move(e));
+    }
+    // The neighbors' book opens in mode 5 (its constructor: slides sorted
+    // by name, SortNeighborCallListByName: last names, then first names) and
+    // PreShow's SetSelectedSim(0) picks the first of that order.
+    if (d.cls.cls == DialogClass::PhoneNeighbors) {
+        auto key = [](const std::string& t) {
+            std::string k = t;
+            for (char& ch : k)
+                ch = char(std::tolower(static_cast<unsigned char>(ch)));
+            return k;
+        };
+        std::stable_sort(d.entries.begin(), d.entries.end(), [&](const DialogEntry& a, const DialogEntry& b) {
+            return std::make_pair(key(a.last), key(a.first)) < std::make_pair(key(b.last), key(b.first));
+        });
     }
     if (d.cls.cls == DialogClass::PhoneParty)
         d.maxSelection = c.thread.temps[5];
