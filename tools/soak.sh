@@ -176,7 +176,7 @@ fi
     done
     b=$(cat "$OUT"/results/*.txt | grep -E '^budget_' | awk -F= '{s+=$2} END{print s+0}')
     bl=$(grep -lE '^budget_[a-z]+=[1-9]' "$OUT"/results/*.txt 2>/dev/null | wc -l | tr -d ' ')
-    echo "| instruction budget (20000) hit | $bl | $b |"
+    echo "| instruction budget (100000) hit | $bl | $b |"
     echo
     echo "## Findings per lot"
     echo
