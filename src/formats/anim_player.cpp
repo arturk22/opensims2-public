@@ -125,7 +125,8 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.target = skeleton_ && !skeleton_->bones.empty() ? anim.findTarget(anim.skeletonTag) : nullptr;
     if (!l.target && !anim.targets.empty())
         l.target = &anim.targets[0];
-    l.start = now - std::max(o.phase, 0.0);
+    l.rate = o.rate > 0 ? o.rate : 1.0f;
+    l.start = now - std::max(o.phase, 0.0) / l.rate;
     l.fadeIn = std::max(o.fade, 0.0f);
     l.loop = o.loop;
     // Without a bone mask the animation is the Sim's main one: it takes the
@@ -225,7 +226,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         const float w = weight(l, now);
         if (w <= 0)
             continue;
-        const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
+        const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
         std::vector<Xform> p = layerPose(l, ticks);
         const Xform frame{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}};
         std::vector<float> mask(n, 0.0f);
@@ -299,7 +300,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         const float w = std::min(weight(l, now), 1.0f);
         if (w <= 0)
             continue;
-        const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
+        const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
         const std::vector<Xform> goals = layerPose(l, ticks);
         std::vector<Xform> solved = out;
         applyIk(*l.target, *skeleton_, ticks, solved, &goals, Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}});
@@ -316,7 +317,7 @@ std::map<std::string, float> AnimPlayer::morphs(double now) const {
         const float w = l.replaced ? (weight(l, now) > 0 ? 1.0f : 0.0f) : weight(l, now);
         if (w <= 0)
             continue;
-        const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
+        const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
         for (const auto& t : l.anim->targets)
             for (const auto& c : t.channels) {
                 if (c.attribute() != Animation::MorphWeight || c.components.empty())
@@ -333,7 +334,7 @@ float AnimPlayer::velocity(double now) const {
     float v = 0;
     for (const auto& l : layers_)
         if (l.anim && l.anim->velocity > 0 && l.mask.empty())
-            v += weight(l, now) * l.anim->velocity * Animation::kTicksPerSecond;
+            v += weight(l, now) * l.anim->velocity * Animation::kTicksPerSecond * l.rate;
     return v;
 }
 
@@ -361,9 +362,9 @@ std::vector<AnimPlayer::FiredEvent> AnimPlayer::eventsBetween(double from, doubl
     for (const auto& l : layers_) {
         if (l.fadeOutStart >= 0 && l.fadeOutStart <= from)
             continue;
-        const double duration = l.anim->duration / 1000.0; // 1 tick = 1 ms
+        const double duration = l.anim->duration / 1000.0 / l.rate; // 1 tick = 1 ms
         for (const auto& e : l.anim->events) {
-            const double t = e.ticks / 1000.0;
+            const double t = e.ticks / 1000.0 / l.rate;
             if (!l.loop || duration <= 0) {
                 const double at = l.start + t;
                 if (at > from && at <= to && (l.fadeOutStart < 0 || at < l.fadeOutStart))

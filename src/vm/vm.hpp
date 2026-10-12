@@ -573,6 +573,24 @@ struct Object {
             float cycle = 0;         // walk cycle portion (0-1)
             float cycleStart = 0;    // the portion the walk clip started at
             float endX = 0, endY = 0; // a stop's last point
+            // What plays, blended by weight (the first is `animation`): the
+            // two 45-degree clips around a start's or a stop's angle, or the
+            // weighed walk cycles (docs/routing-mac.md §6.1).
+            std::vector<LocoLayer> layers;
+            // The second start or stop clip and its weight (0: none).
+            std::string other;
+            bool otherMirror = false;
+            float otherWeight = 0;
+            // The frame on the route's curve: the segment it is on runs from
+            // (sx, sy) (the point passed last, (px, py) the one before) to the
+            // next route point (nx, ny), at parameter u.
+            float sx = 0, sy = 0, px = 0, py = 0, nx = 0, ny = 0, u = 0;
+            bool onCurve = false;
+            // Stopping where it is because the way is blocked (the walk
+            // interrupted: cActiveAnimLoco::StopLocomotion), by `halted`.
+            bool halting = false, haltDone = false;
+            ObjectId halted = 0;
+            bool shortCycle = false; // walking the "walkShort" cycles
         } loco;
         // The instruction walking it: its thread's stack depth, tree and node.
         size_t depth = 0;
@@ -843,6 +861,7 @@ public:
         objects_.erase(id);
         if (size_t(uint16_t(id)) < byId_.size())
             byId_[uint16_t(id)] = nullptr;
+        ++tableGeneration_;
     }
     // Remove Object Instance queues objects to die at the end of the tick (kill.hpp).
     std::vector<ObjectId> killQueue;
@@ -852,6 +871,19 @@ public:
     // null holes: scanning it is cheaper than walking the map. Objects must
     // not be created or removed while a loop over it runs with a reference.
     const std::vector<Object*>& objectTable() const { return byId_; }
+    // The IDs of the people (objects with person data), in ID order, as of
+    // this tick and the objects there are (the walkers' collision tests
+    // look at them every step).
+    const std::vector<ObjectId>& people() const {
+        if (peopleTick_ != ticks || peopleGeneration_ != tableGeneration_) {
+            people_.clear();
+            for (const Object* o : byId_)
+                if (o && o->person)
+                    people_.push_back(o->id);
+            peopleTick_ = ticks, peopleGeneration_ = tableGeneration_;
+        }
+        return people_;
+    }
     // `for (const auto& [id, o] : vm.eachObject())`: the same walk as over
     // objects() (ID order, an object made during the loop is met when its ID
     // is later, one removed is skipped) through the table, which is much
@@ -1148,6 +1180,9 @@ private:
     // id -> object (map nodes never move); kept by createObject/removeObject,
     // the only places that add or remove entries of objects_.
     std::vector<Object*> byId_;
+    uint64_t tableGeneration_ = 0;
+    mutable std::vector<ObjectId> people_;
+    mutable uint64_t peopleTick_ = ~uint64_t(0), peopleGeneration_ = ~uint64_t(0);
     std::unordered_map<uint16_t, Primitive> primitives_;
 
     int initDepth_ = 0;

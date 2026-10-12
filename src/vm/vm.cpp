@@ -624,6 +624,7 @@ Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
     if (size_t(uint16_t(id)) >= byId_.size())
         byId_.resize(size_t(uint16_t(id)) + 1 + 64, nullptr);
     byId_[uint16_t(id)] = &o;
+    ++tableGeneration_;
     o.id = id;
     o.group = group;
     o.semiGroup = code_.semiGlobalFor(group);

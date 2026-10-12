@@ -85,6 +85,9 @@ public:
         int level = -1;
         // The request weight its fade is multiplied by (Animate Sim's byte 13 / 100).
         float weight = 1;
+        // Playback speed (the locomotion plays blended clips at one length:
+        // each runs at its own length over the blend's; docs/routing-mac.md §6.1).
+        float rate = 1;
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.
@@ -135,6 +138,7 @@ private:
         float turn = 0;
         int level = 0;
         float scale = 1; // Options::weight
+        float rate = 1;  // Options::rate
     };
     // The layer's pose at `ticks`, turned by its frame (Options::turn).
     std::vector<Xform> layerPose(const Layer& l, float ticks) const;

@@ -12,6 +12,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace os2::vm {
 
@@ -29,14 +30,28 @@ struct Object;
 // that weigh more than 0.01 (alt0 always counts), or alt0's when none does.
 // Object data 17 ("walk style", 1 = run: "Go Here Frantically" and the
 // trees that hurry) takes the run string instead of the walk one.
-// The game blends the weighed cycles; here the one that weighs the most
-// plays (inferred: a visual simplification).
+// The game blends the weighed cycles (cLocoCycle, one cycle of them at a
+// time): `cycles` are those with their weights (adding up to 1), each played
+// at its length over the blend's (`seconds`, the cycles' lengths weighed),
+// so that their feet stay in step; `animation` is the one that weighs the
+// most. With `shortWay` the "walkShort"/"runShort" cycles (half the stride)
+// are taken instead.
+// A clip of the locomotion with its blend weight, mirrored or not, and its
+// playback rate (its length over the blend's).
+struct LocoLayer {
+    std::string animation;
+    float weight = 1;
+    bool mirror = false;
+    float rate = 1;
+};
 struct Gait {
     std::string animation; // resolved resource name, empty if none
     float speed = 0;       // metres per second
     bool run = false;
+    std::vector<LocoLayer> cycles;
+    float seconds = 0;     // the blended cycle's length
 };
-Gait gaitOf(VM& vm, const Object& sim);
+Gait gaitOf(VM& vm, const Object& sim, bool shortWay = false);
 
 // A start, stop, step or turn clip of the walker's set for `role`
 // ("turnAndGo", "turnAndGoR", "turnAndGoShort", "turnAndStop",

@@ -1081,6 +1081,122 @@ static void testLocoPhases() {
     }
 }
 
+// The start and stop clips blend the two 45-degree clips around the angle
+// (CreateStepCycle), the walk follows a curve (its heading changes little
+// from tick to tick), and the stop leaves the Sim at the final facing.
+static void testLocoBlend() {
+    using Loco = Object::Route::Loco;
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(14, 12);
+    addLocoSet(code, vm);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {11.5f, 8.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {2.5f, 5.5f, 1};
+    sim.person->data[58] = 27;
+    sim.data[objdata::Direction] = 4;
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    bool blended = false, weights = true;
+    float maxTurn = 0, lastHeading = 0;
+    bool walking = false;
+    for (int i = 0; i < 1000 && t.status == Thread::Status::Running; ++i) {
+        vm.run(t);
+        if (!sim.route)
+            continue;
+        const Loco& L = sim.route->loco;
+        if ((L.kind == Loco::Start || L.kind == Loco::Stop) && L.layers.size() == 2) {
+            blended = true;
+            weights = weights && std::fabs(L.layers[0].weight + L.layers[1].weight - 1) < 1e-3f &&
+                      L.layers[0].weight >= L.layers[1].weight;
+        }
+        if (L.kind == Loco::Walk) {
+            if (walking)
+                maxTurn = std::max(maxTurn, std::fabs(std::remainder(L.heading - lastHeading, float(2 * M_PI))));
+            walking = true;
+            lastHeading = L.heading;
+        } else {
+            walking = false;
+        }
+    }
+    if (std::getenv("DEBUG_LOCO"))
+        std::fprintf(stderr, "blend: blended %d max turn %.3f at %.2f,%.2f dir %d\n", blended, maxTurn, sim.position.x,
+                     sim.position.y, sim.data[objdata::Direction]);
+    check(t.status == Thread::Status::Finished && t.result, "loco blend: the walk ends there");
+    check(blended && weights, "loco blend: a start or stop off the 45-degree steps blends two clips, the heavier first");
+    check(maxTurn < 0.5f, "loco blend: the walk's frame follows a curve (no turn of 30 degrees in a tick)");
+}
+
+// A walker that comes on a Sim standing in its way slows to a stop with a
+// stop clip (StopLocomotion) before the blocked handling starts; an object
+// put in its way (the per-step test against objects) fails the route with
+// "blocked by object" (15).
+static void testLocoHalt() {
+    using Loco = Object::Route::Loco;
+    for (const bool object : {false, true}) {
+        CodeLibrary code;
+        VM vm(code);
+        vm.world = World(16, 5);
+        for (int x = 0; x < 16; ++x) {
+            vm.world->addWall(1, x, 1, x + 1, 1);
+            vm.world->addWall(1, x, 2, x + 1, 2);
+        }
+        addLocoSet(code, vm);
+        code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+        code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+        Object& lamp = vm.instantiate(kGroup, 0x80);
+        lamp.position = {15.5f, 1.5f, 1};
+        Object& walker = vm.instantiate(kGroup, 0x81);
+        walker.position = {1.5f, 1.5f, 1};
+        walker.person->data[58] = 27;
+        walker.data[objdata::Direction] = 4;
+        if (!object) {
+            Object& other = vm.instantiate(kGroup, 0x81);
+            other.position = {8.5f, 1.5f, 1};
+            other.person->data[58] = 27;
+        }
+        code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+        Thread t = vm.start(walker.id, 0x1000, {}, lamp.id);
+        int haltTicks = 0, halts = 0, firstHalt = 0;
+        bool wasHalting = false;
+        float closest = 99;
+        for (int i = 0; i < 600 && t.status == Thread::Status::Running; ++i) {
+            if (object && i == 40) { // a box dropped two tiles ahead
+                Object& box = vm.instantiate(kGroup, 0x80);
+                box.position = {std::floor(walker.position.x) + 2.5f, 1.5f, 1};
+            }
+            vm.run(t);
+            if (!walker.route)
+                continue;
+            const bool halting = walker.route->loco.halting && walker.route->loco.kind == Loco::Stop;
+            if (halting) {
+                ++haltTicks;
+                if (!wasHalting)
+                    ++halts;
+                if (halts == 1)
+                    ++firstHalt;
+            }
+            wasHalting = halting;
+            if (!object && vm.object(3))
+                closest = std::min(closest, std::hypot(walker.position.x - vm.object(3)->position.x,
+                                                       walker.position.y - vm.object(3)->position.y));
+        }
+        if (std::getenv("DEBUG_LOCO"))
+            std::fprintf(stderr, "halt (%s): %d halts, first %d ticks (%d in all), closest %.3f, result %d route result %d at %.2f\n",
+                         object ? "object" : "Sim", halts, firstHalt, haltTicks, closest, t.result, walker.person->data[62],
+                         walker.position.x);
+        check(halts >= 1 && firstHalt >= 14 && firstHalt <= 16, "loco halt: a blocked walker plays a stop clip first (0.5 s)");
+        if (object)
+            check(t.status == Thread::Status::Finished && !t.result && walker.person->data[62] == 15,
+                  "loco halt: an object put in the way fails the route (blocked by object)");
+        else
+            check(closest >= 0.4f, "loco halt: the stop keeps it out of the other Sim's way");
+    }
+}
+
 // A runner (steps longer than the predicted blocking looks ahead) does not
 // step into a Sim standing in its way: the locomotor's placement test refuses
 // the step and the Sim becomes the blocker.
@@ -1305,6 +1421,8 @@ int main() {
     testTurnInPlace();
     testLocoPhases();
     testRunnerStep();
+    testLocoBlend();
+    testLocoHalt();
     testDoorWait();
     testDoorPortalTree();
     testPreRouteTree();

@@ -105,11 +105,11 @@ std::string cacheKey(const Object& sim) {
 }
 } // namespace
 
-Gait computeGait(VM& vm, const Object& sim);
+Gait computeGait(VM& vm, const Object& sim, bool shortWay);
 std::optional<LocoPick> computeClip(VM& vm, const Object& sim, const std::string& role, int steps);
 
-Gait gaitOf(VM& vm, const Object& sim) {
-    std::string key = cacheKey(sim);
+Gait gaitOf(VM& vm, const Object& sim, bool shortWay) {
+    std::string key = cacheKey(sim) + (shortWay ? ":s" : ":w");
     for (int f = 112; f <= 117; ++f)
         key += ':' + std::to_string(sim.person && size_t(f) < sim.person->data.size() ? sim.person->data[size_t(f)] : 0);
     auto& cache = vm.locoCache.gaits;
@@ -117,21 +117,21 @@ Gait gaitOf(VM& vm, const Object& sim) {
         return it->second;
     if (cache.size() > 4096)
         cache.clear();
-    Gait g = computeGait(vm, sim);
+    Gait g = computeGait(vm, sim, shortWay);
     if (vm.animations.index() || !g.animation.empty())
         cache.emplace(std::move(key), g);
     return g;
 }
 
-Gait computeGait(VM& vm, const Object& sim) {
+Gait computeGait(VM& vm, const Object& sim, bool shortWay) {
     Gait g;
     g.run = sim.data[17] == 1;
     const std::vector<Item> items = setString(vm, sim, g.run, false);
     const std::string kind = g.run ? "run" : "walk";
-    // The cycles "<walk|run>-alt<k>-..." (not the short ones).
+    // The cycles "<walk|run>[Short]-alt<k>-..." (not the blends).
     std::array<std::string, 20> cycle;
+    const std::string prefix = kind + (shortWay ? "Short" : "") + "-alt";
     for (const auto& it : items) {
-        const std::string prefix = kind + "-alt";
         if (!it.name.starts_with(prefix) || it.name.find("Blend") != std::string::npos)
             continue;
         const int k = std::atoi(it.name.c_str() + prefix.size());
@@ -148,7 +148,7 @@ Gait computeGait(VM& vm, const Object& sim) {
     const int16_t moodIndex = sim.person ? sim.person->data[116] : 0;
     if (moodIndex >= 2 && moodIndex < 20)
         w[size_t(moodIndex)] += mood;
-    std::array<float, 20> speed{};
+    std::array<float, 20> speed{}, secs{};
     std::array<std::string, 20> resource;
     float total = 0;
     for (size_t k = 0; k < 20; ++k) {
@@ -156,23 +156,47 @@ Gait computeGait(VM& vm, const Object& sim) {
             continue;
         resource[k] = resolve(vm, sim, cycle[k]);
         speed[k] = resource[k].empty() ? 0 : clips(vm).tilesPerSecond(resource[k]);
-        if (speed[k] > 0)
+        secs[k] = resource[k].empty() ? 0 : clips(vm).seconds(resource[k]).value_or(0);
+        if (speed[k] > 0 && w[k] > 0)
             total += w[k];
     }
     if (total > 0) {
         size_t best = 0;
+        float seconds = 0;
         for (size_t k = 0; k < 20; ++k) {
+            if (speed[k] <= 0 || w[k] <= 0)
+                continue;
             g.speed += speed[k] * w[k] / total;
-            if (speed[k] > 0 && w[k] > w[best] && !resource[k].empty())
+            seconds += secs[k] * w[k] / total;
+            if (w[k] > w[best] || speed[best] <= 0)
                 best = k;
         }
-        g.animation = !resource[best].empty() ? resource[best] : resource[0];
+        g.animation = resource[best];
+        g.seconds = seconds;
+        for (size_t k = 0; k < 20; ++k)
+            if (speed[k] > 0 && w[k] > 0)
+                g.cycles.push_back({resource[k], w[k] / total, false, seconds > 0 && secs[k] > 0 ? secs[k] / seconds : 1.0f});
+        // The heaviest first (the base layer the others blend over).
+        std::stable_sort(g.cycles.begin(), g.cycles.end(), [](const LocoLayer& a, const LocoLayer& b) { return a.weight > b.weight; });
+    } else if (!resource[0].empty() && speed[0] > 0) {
+        // Every weight zero: alt0's speed (the set's speed falls back to it).
+        g.animation = resource[0];
+        g.speed = speed[0];
+        g.seconds = secs[0];
+        g.cycles.push_back({resource[0], 1, false, 1});
     }
     if (g.animation.empty() || g.speed <= 0) {
+        if (shortWay)
+            return Gait{};
         // No weighed cycle (a set without alternates, the swimming or the
         // ghosts' private one): the role's walk or run.
+        g = Gait{};
+        g.run = sim.data[17] == 1;
         g.animation = locomotionAnimation(vm, sim, kind);
         g.speed = g.animation.empty() ? 0 : clips(vm).tilesPerSecond(g.animation);
+        g.seconds = g.animation.empty() ? 0 : clips(vm).seconds(g.animation).value_or(0);
+        if (!g.animation.empty())
+            g.cycles.push_back({g.animation, 1, false, 1});
     }
     return g;
 }

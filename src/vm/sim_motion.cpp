@@ -46,12 +46,19 @@ void SimMotion::sample(VM& vm, const Object& o) {
             s.endTurn = L.endTurn;
             s.framed = true;
             s.frameHeading = L.heading;
+            s.walkLayers = L.layers;
             s.x = L.fx, s.y = L.fy;
             if (L.kind == Loco::Walk)
                 if (auto secs = vm.animations.seconds(L.animation))
                     s.walkPhase = L.cycleStart * *secs;
+            if (L.kind == Loco::Walk)
+                s.walkPortion = L.cycleStart;
+            if (s.walkLayers.empty())
+                s.walkLayers.push_back({L.animation, 1, L.mirror, 1});
         } else if (L.moving || (!o.route->points.empty() && o.route->points.front().portal)) {
-            s.walk = gaitOf(vm, o).animation; // on its way to a portal, or between clips
+            const Gait g = gaitOf(vm, o); // on its way to a portal, or between clips
+            s.walk = g.animation;
+            s.walkLayers = g.cycles;
         } else {
             s.walking = false; // stopped, or not off yet: standing
         }

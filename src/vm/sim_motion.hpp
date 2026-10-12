@@ -11,6 +11,9 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
+
+#include "locomotion.hpp"
 
 namespace os2::vm {
 
@@ -61,6 +64,11 @@ public:
         bool walkMirror = false, walkLoop = true, held = false, framed = false;
         float walkPhase = 0;
         float frameHeading = 0, endTurn = 0;
+        // The clips blended with their weights and rates (the first is
+        // `walk`): two start or stop clips 45 degrees apart, or the weighed
+        // walk cycles.
+        std::vector<LocoLayer> walkLayers;
+        float walkPortion = 0; // the walk cycle portion its layers start at
     };
 
     // Records the object's state after a VM tick (call once per tick,

@@ -118,6 +118,7 @@ private:
         uint32_t serial = 0;
         uint32_t climbSerial = 0;
         uint32_t walkSerial = 0;
+        int walkExtras = 0; // blended locomotion clips over the base one (priorities kWalkBlend + 1...)
         int16_t outfit = 0; // person data 8 the actor is dressed for
         int16_t age = 0;    // person data 58 the actor was built for
         int partial = -1;   // the priority of a part-body Animate Sim animation playing over the base, -1 none

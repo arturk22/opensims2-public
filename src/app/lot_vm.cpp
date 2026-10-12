@@ -309,10 +309,34 @@ void LotSimulation::sampleAll(double at) {
             if (partial)
                 b.partial = std::max<int>(1, anim.priority);
             const bool mirror = animated ? s.flipped : !s.climb.empty() ? s.turnMirror : (walkClip && s.walkMirror);
-            b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
-                                    .mirror = mirror, .turn = animated ? anim.headingOffset : 0.0f,
-                                    .phase = walkClip ? double(s.walkPhase) : 0.0, .level = level,
-                                    .weight = weight});
+            // The locomotion's clips blended by weight (two start or stop
+            // clips 45 degrees apart, the weighed walk cycles), each at its
+            // rate over the blend's length, from the cycle portion the walk
+            // is at; the extra ones as layers of their own at the same level.
+            constexpr int kWalkBlend = 60;
+            int extras = 0;
+            if (walkClip && !s.walkLayers.empty() && s.walkLayers.front().animation == want) {
+                const auto& base = s.walkLayers.front();
+                b.actor->cue(at, anim, {.fade = fade, .loop = loop, .mirror = base.mirror,
+                                        .phase = double(s.walkPortion) * anim.duration / 1000.0, .level = level,
+                                        .weight = base.weight, .rate = base.rate});
+                for (size_t i = 1; i < s.walkLayers.size() && i < 4; ++i) {
+                    const auto& l = s.walkLayers[i];
+                    const Animation& more = b.actor->animation(index_, l.animation);
+                    b.actor->cue(at, more, {.fade = fade, .loop = loop, .priority = kWalkBlend + int(i), .mirror = l.mirror,
+                                            .phase = double(s.walkPortion) * more.duration / 1000.0, .level = level,
+                                            .weight = l.weight, .rate = l.rate});
+                    extras = int(i);
+                }
+            } else {
+                b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
+                                        .mirror = mirror, .turn = animated ? anim.headingOffset : 0.0f,
+                                        .phase = walkClip ? double(s.walkPhase) : 0.0, .level = level,
+                                        .weight = weight});
+            }
+            for (int j = extras + 1; j <= b.walkExtras; ++j)
+                b.actor->player.stop(at, fade, kWalkBlend + j);
+            b.walkExtras = extras;
             if (onSimAnimation)
                 onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
         } catch (const std::exception& e) {
