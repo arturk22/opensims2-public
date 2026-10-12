@@ -88,6 +88,14 @@ std::vector<Xform> VM::objectPose(const Object& target) {
     return pose;
 }
 
+float VM::rootRestY(const Object& target) {
+    if (!target.definition || !code().index() || target.person)
+        return 0;
+    const Skeleton* sk = skeletonOf(code(), target);
+    const int root = sk ? sk->find("root_trans") : -1;
+    return root < 0 ? 0.0f : sk->restPose()[size_t(root)].t[1];
+}
+
 void VM::holdObjectPose(Object& target) {
     if (target.animation.overlays.empty())
         return;

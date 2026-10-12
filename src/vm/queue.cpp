@@ -948,7 +948,10 @@ std::vector<PieEntry> pieMenu(VM& vm, ObjectId sim, ObjectId object, const PieOp
         // "DEBUG - ...", "CHEAT - ..." names have it) or a US English name
         // starting with '*' (the translations sometimes drop the star).
         const std::string english = ref->strings ? ref->strings->get(e.stringIndex, lang::EnglishUS) : "";
-        p.debug = (e.flags & 0x80) || (!english.empty() && english[0] == '*') || (!p.name.empty() && p.name[0] == '*');
+        // As autonomy sees it, only the flag counts (the "*Autonomous
+        // subqueue" of the beds is an autonomous entry, not a cheat).
+        p.debug = (e.flags & 0x80) ||
+                  (!opt.autonomous && ((!english.empty() && english[0] == '*') || (!p.name.empty() && p.name[0] == '*')));
         // Debug interactions are only offered with the testing cheats; their
         // check trees are not run (as FreeSO does for its debug flag).
         std::vector<ActionString> strings;

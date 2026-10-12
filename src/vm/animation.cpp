@@ -57,24 +57,27 @@ std::shared_ptr<const Animation> AnimationLibrary::animation(const std::string& 
     return a;
 }
 
-float AnimationLibrary::rootTravel(const std::string& name) {
+float AnimationLibrary::rootTravel(const std::string& name, float restY) {
     if (auto it = travel_.find(name); it != travel_.end())
         return it->second;
-    float v = 0;
-    if (!index_)
-        return v;
-    try {
-        const Animation a = loadAnimation(*index_, name);
-        for (const auto& t : a.targets)
-            for (const auto& ch : t.channels)
-                if (ch.name == "root_trans" && ch.components.size() >= 2 && !ch.components[1].keys.empty()) {
-                    const auto& c = ch.components[1];
-                    v = c.sample(float(ch.duration()), ch.duration()) - c.sample(0, ch.duration());
-                }
-    } catch (const std::exception&) {
+    auto it = rootEnd_.find(name);
+    if (it == rootEnd_.end()) {
+        std::optional<float> end;
+        if (index_)
+            try {
+                const Animation a = loadAnimation(*index_, name);
+                for (const auto& t : a.targets)
+                    for (const auto& ch : t.channels)
+                        if (ch.name == "root_trans" && ch.components.size() >= 2 && !ch.components[1].keys.empty())
+                            end = ch.components[1].sample(float(ch.duration()), ch.duration());
+            } catch (const std::exception&) {
+            }
+        it = rootEnd_.emplace(name, end).first;
     }
-    travel_[name] = v;
-    return v;
+    if (!it->second)
+        return 0;
+    const float d = *it->second - restY;
+    return std::fabs(d) < 0.5f ? 0.0f : d; // the loops' ends sit within a few hundredths of the rest place
 }
 
 float AnimationLibrary::tilesPerSecond(const std::string& name) {
@@ -1245,13 +1248,17 @@ void tickOverlayEvents(VM& vm) {
             // Drive" handles the end of each drive loop on 9999: loop
             // again, or stop and set the speed to 0; inferred from it).
             // The engine moves an animated object by its animation's root
-            // (cAnimatable): a vehicle goes forward by the drive loop's root
-            // travel each time it plays, and "Function - Should Stop?" ends
-            // the drive by the distance left to its stop portal (inferred:
-            // the move is applied at the loop's end, along the object's
-            // facing, to every part of its multi-tile group).
+            // (cAnimatable): where the root ends, from its rest place, along
+            // the object's facing, to every part of its multi-tile group, at
+            // the animation's end (inferred). The vehicles' drive, start and
+            // stop loops end at the rest place (the vehicle snaps ahead to
+            // its "slot_travel_drive" bone and the loop brings the root up
+            // from behind): no move; a drive-off ends ahead. With the travel
+            // from the first frame (r12) the fire truck stopped 9 tiles past
+            // its "Service Stop" portal, its door off N001_Lot11, and the
+            // firefighter never got out (round 18).
             if (ended && !po->person && po->position.inWorld())
-                if (const float d = library(vm).rootTravel(it->name); d != 0) {
+                if (const float d = library(vm).rootTravel(it->name, vm.rootRestY(*po)); d != 0) {
                     const auto step = directionStep(po->data[objdata::Direction]);
                     const float len = std::hypot(float(step[0]), float(step[1]));
                     const float dx = d * float(step[0]) / len, dy = d * float(step[1]) / len;

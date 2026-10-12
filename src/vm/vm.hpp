@@ -955,6 +955,9 @@ public:
     // animation about to be stopped or replaced (the game's objects stay
     // where the last frame left them).
     std::vector<Xform> objectPose(const Object& target);
+    // Where the object's skeleton rests its root ("root_trans", +Y of the
+    // model, tiles); 0 without a skeleton.
+    float rootRestY(const Object& target);
     void holdObjectPose(Object& target);
 
     // Threads of a removed object are killed the next time they run.

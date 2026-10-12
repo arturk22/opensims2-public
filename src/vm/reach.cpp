@@ -691,6 +691,11 @@ Exit snap(Context& c) {
     }
     if (best == goals.goals.size() && std::getenv("OS2_SNAP_FAILS"))
         for (size_t i = 0; i < goals.goals.size(); ++i)
+            std::fprintf(stderr, "  goal %zu at (%.2f, %.2f, %d) %s, target dir %d\n", i, goals.points[i][0], goals.points[i][1], goals.level,
+                         c.vm.world && c.vm.world->contains(TilePos{goals.goals[i].x, goals.goals[i].y, goals.level}) ? "on the lot" : "off the lot",
+                         target.data[objdata::Direction]);
+    if (best == goals.goals.size() && std::getenv("OS2_SNAP_FAILS"))
+        for (size_t i = 0; i < goals.goals.size(); ++i)
             for (const auto& [id, x] : c.vm.eachObject())
                 if (id != me.id && id != target.id && VM::blocksRouting(x) &&
                     VM::tileOf(x) == TilePos{goals.goals[i].x, goals.goals[i].y, goals.level})

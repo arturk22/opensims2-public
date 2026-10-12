@@ -119,6 +119,11 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             else
                 where = " (not placed: " + p.reason + ")";
         }
+        // "...!" at the end: its Main starts once it is placed, as an object a
+        // tree makes (a Fire set on the stove's tile burns, wakes the room's
+        // smoke alarm and the Sims panic).
+        if (!spec.empty() && spec.back() == '!' && machine.startMain(id))
+            where += ", Main started";
         std::printf("created %d: %s%s\n", id, nameOf(*machine.object(id)).c_str(), where.c_str());
     }
     // Babies' character files (Make New Character, vm/baby_character.hpp)
@@ -331,13 +336,51 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     };
     std::map<vm::ObjectId, std::string> lastAnim, lastOverlays;
     std::map<vm::ObjectId, int16_t> lastAge;
-    // S2PKG_PIE_ALSO="sim,object,entry,tick": at that tick another Sim also
-    // picks that entry (the available ones, numbered as listed) - for
-    // socials towards a busy Sim.
+    // S2PKG_PIE_ALSO="sim,object,entry,tick[;sim,object,entry,tick...]": at
+    // that tick another Sim also picks that entry (the available ones,
+    // numbered as listed; a negative entry lists them) - for socials towards
+    // a busy Sim, or both partners in a bed.
     std::string also = std::getenv("S2PKG_PIE_ALSO") ? std::getenv("S2PKG_PIE_ALSO") : "";
     std::map<vm::ObjectId, std::string> lastQueue; // with S2PKG_PIE_ALSO: every Sim's queue as it changes
-    const bool showQueues = !also.empty();
+    const bool showQueues = !also.empty() || std::getenv("S2PKG_SHOW_QUEUES");
+    // OS2_SEED=N: another seed for the VM's random numbers (a try for baby
+    // that conceives, ...), as s2pkg autonomy has it.
+    if (const char* seed = std::getenv("OS2_SEED"))
+        machine.random.seed(uint32_t(std::strtoul(seed, nullptr, 10)));
+    // Objects made during the run and gone during it, by name (S2PKG_SHOW_CREATED=1).
+    static const bool showCreated = std::getenv("S2PKG_SHOW_CREATED") != nullptr;
+    std::map<vm::ObjectId, std::string> known;
+    if (showCreated)
+        for (const auto& [oid, ob] : machine.objects())
+            known[oid] = nameOf(ob);
     for (int i = 0; i < ticks; ++i) {
+        if (showCreated) {
+            for (const auto& [oid, ob] : machine.objects())
+                if (auto [it, fresh] = known.emplace(oid, nameOf(ob)); fresh || it->second != nameOf(ob)) {
+                    it->second = nameOf(ob);
+                    std::printf("  tick %d: object %d \"%s\" made at (%.2f, %.2f)\n", i, oid, it->second.c_str(), ob.position.x, ob.position.y);
+                }
+            // S2PKG_WATCH=name: where objects of that name move (tile and level).
+            static const char* watch = std::getenv("S2PKG_WATCH");
+            static std::map<vm::ObjectId, std::string> lastAt;
+            if (watch)
+                for (const auto& [oid, ob] : machine.objects())
+                    if (nameOf(ob).find(watch) != std::string::npos) {
+                        char buf[96];
+                        std::snprintf(buf, sizeof buf, "(%.2f, %.2f, %d) dir %d", ob.position.x, ob.position.y, int(ob.position.level),
+                                      int(ob.data[vm::objdata::Direction]));
+                        if (lastAt[oid] != buf) {
+                            lastAt[oid] = buf;
+                            std::printf("  tick %d: %d \"%s\" at %s\n", i, oid, nameOf(ob).c_str(), buf);
+                        }
+                    }
+            for (auto it = known.begin(); it != known.end();)
+                if (!machine.object(it->first)) {
+                    std::printf("  tick %d: object %d \"%s\" gone\n", i, it->first, it->second.c_str());
+                    it = known.erase(it);
+                } else
+                    ++it;
+        }
         if (showQueues)
             for (const auto& [oid, ob] : machine.objects()) {
                 if (!ob.person)
@@ -350,33 +393,74 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                     std::printf("  tick %d: queue of %d:%s\n", i, oid, text.empty() ? " empty" : text.c_str());
                 }
             }
-        if (!also.empty()) {
+        // Several picks: "sim,object,entry,tick;sim,object,entry,tick;..." in tick order.
+        while (!also.empty()) {
+            const size_t semi = also.find(';');
+            const std::string one = also.substr(0, semi);
             std::vector<std::string> f;
-            for (size_t a = 0, b; a <= also.size(); a = b + 1) {
-                b = also.find(',', a);
+            for (size_t a = 0, b; a <= one.size(); a = b + 1) {
+                b = one.find(',', a);
                 if (b == std::string::npos)
-                    b = also.size();
-                f.push_back(also.substr(a, b - a));
+                    b = one.size();
+                f.push_back(one.substr(a, b - a));
             }
+            if (f.size() == 4 && std::stoi(f[3]) > i)
+                break;
             if (f.size() == 4 && std::stoi(f[3]) == i) {
                 const vm::ObjectId other = vm::findSim(machine, f[0]);
                 const vm::ObjectId obj = vm::findInteractionObject(machine, f[1]);
-                std::vector<vm::PieEntry> menu = other && obj ? vm::pieMenu(machine, other, obj, vm::PieOptions{}) : std::vector<vm::PieEntry>{};
+                // "@name": the menu as autonomy sees it (check trees with
+                // parameter 0 = 1, the '*' entries too), e.g. the bed's
+                // "*Autonomous subqueue" with its "Try For Baby" string.
+                const bool asAutonomy = !f[2].empty() && f[2][0] == '@';
+                if (asAutonomy)
+                    f[2] = f[2].substr(1);
+                vm::PieOptions po;
+                po.autonomous = asAutonomy;
+                std::vector<vm::PieEntry> menu = other && obj ? vm::pieMenu(machine, other, obj, po) : std::vector<vm::PieEntry>{};
+                // "!name": also entries the check tree hid from the menu (Hide
+                // Menu) but passed, e.g. the bed's "Tentar Fazer um Bebê".
+                const bool withHidden = !f[2].empty() && f[2][0] == '!';
+                if (withHidden)
+                    f[2] = f[2].substr(1);
                 std::vector<const vm::PieEntry*> ok;
                 for (const auto& e2 : menu)
-                    if (!e2.debug && e2.available())
+                    if (!e2.debug && (e2.available() || (withHidden && e2.hidden && !e2.wrongAge &&
+                                                         (e2.check == vm::CheckResult::NoGuard || e2.check == vm::CheckResult::True))))
                         ok.push_back(&e2);
-                if (std::stoi(f[2]) < 0) // a negative entry lists the menu at that tick
+                // The entry: its number, or a part of its name ("Relaxar").
+                const bool numeric = !f[2].empty() && (std::isdigit(static_cast<unsigned char>(f[2][0])) || f[2][0] == '-');
+                size_t pick = ok.size();
+                if (numeric && std::stoi(f[2]) >= 0)
+                    pick = size_t(std::stoi(f[2]));
+                // "name#2": the second entry with that name (the B side of a pair).
+                std::string want = f[2];
+                int nth = 1;
+                if (const size_t hash = want.rfind('#'); !numeric && hash != std::string::npos && hash + 1 < want.size()) {
+                    nth = std::max(1, std::atoi(want.c_str() + hash + 1));
+                    want = want.substr(0, hash);
+                }
+                for (size_t k = 0; !numeric && k < ok.size() && pick == ok.size(); ++k)
+                    if (ok[k]->name.find(want) != std::string::npos && --nth == 0)
+                        pick = k;
+                if ((numeric && std::stoi(f[2]) < 0) || (!numeric && pick == ok.size())) { // lists the menu at that tick
                     for (size_t k = 0; k < ok.size(); ++k)
                         std::printf("  tick %d: %d's menu [%zu] %s\n", i, other, k, ok[k]->name.c_str());
-                if (size_t k = size_t(std::stoi(f[2])); k < ok.size()) {
+                    for (const auto& e2 : menu) // and what is not offered, and why
+                        if (!e2.available())
+                            std::printf("  tick %d: %d's menu (not offered: %s%s%s) %s %s\n", i, other,
+                                        e2.hidden ? "hidden" : e2.wrongAge ? "age" : "guard",
+                                        e2.debug ? ", debug" : "", e2.error.empty() ? "" : (", " + e2.error).c_str(),
+                                        e2.name.c_str(), "");
+                }
+                if (size_t k = pick; k < ok.size()) {
                     auto q2 = vm::interactionFromPie(machine, *ok[k]);
                     q2->pushedBy = other;
                     vm::enqueue(machine, *machine.object(other), *q2);
                     std::printf("  tick %d: %d also queued \"%s\"\n", i, other, q2->name.c_str());
                 }
-                also.clear();
             }
+            also = semi == std::string::npos ? std::string() : also.substr(semi + 1);
         }
         const bool before = s.activeInteraction >= 0;
         // S2PKG_HOLD_MOTIVES=n: test aid, every Sim's motives back at n each

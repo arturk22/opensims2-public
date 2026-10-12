@@ -337,10 +337,13 @@ public:
         auto it = fullBody_.find(name);
         return it != fullBody_.end() && it->second;
     }
-    // How far the animation's root ("root_trans") goes forward (+Y of the
-    // model, tiles) from its first to its last frame: a vehicle's drive loop
-    // moves it that much each time it plays (0 if none).
-    float rootTravel(const std::string& name);
+    // How far an object playing the animation is moved forward (+Y of the
+    // model, tiles) when it ends: where its root ("root_trans") ends, from
+    // the root's rest place in the object's skeleton (`restY`). The vehicles'
+    // drive, start and stop loops end at the rest place (they are played
+    // after the vehicle snapped ahead, the root coming from behind): 0; a
+    // drive-off ends ahead (the fire truck's 21.9 tiles). 0 without a root.
+    float rootTravel(const std::string& name, float restY = 0);
     void addRootTravel(const std::string& name, float tiles) { travel_[name] = tiles; }
     // The animation itself (null if there is no such resource or no index).
     std::shared_ptr<const Animation> animation(const std::string& name);
@@ -379,6 +382,7 @@ private:
     std::unordered_map<std::string, float> speeds_;
     std::unordered_map<std::string, bool> fullBody_;
     std::unordered_map<std::string, float> travel_;
+    std::unordered_map<std::string, std::optional<float>> rootEnd_;
     std::unordered_map<std::string, std::optional<int>> events_;
     std::unordered_map<std::string, std::vector<std::pair<int, int16_t>>> treeEvents_;
     std::unordered_map<std::string, std::optional<LocoClip>> loco_;

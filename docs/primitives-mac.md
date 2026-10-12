@@ -1605,6 +1605,30 @@ negativo (fome: frente da comida). A textura
 `vehicleschoolbus-groundshadow-alpha_txtr` que o TXMT da sombra do ônibus
 pede não existe nos dados do jogo base (só o nome no material).
 
+**Rodada 18 (r18-life): quanto o veículo anda.** Os `root_trans` das
+animações de veículo não começam em 0: `o-vehicleFire-stop` vai de −8,99 a
+0, `-start` de −9 a 0, `-drive` de −3 a −0,18, e só o `-driveOff` termina à
+frente (+21,9); a van (`o-vehicleMinivan-*`) termina em 1,95, que é onde o
+esqueleto dela descansa a raiz (`vehicleminivan`: `root_trans` em
+(1; 1,9474)). Ou seja: as voltas de dirigir, partir e parar trazem a raiz de
+trás até o lugar de repouso (o veículo já fez o Snap para o osso
+`slot_travel_drive` à frente) e não devem mover o objeto; mover pelo
+percurso da volta (fim − começo, rodada 12) fazia o caminhão de bombeiros
+parar 9 tiles depois do portal "Car - Service Stop": no `N001_Lot11` a porta
+(osso `route_vehiclefire_3_w`, 6,8 à frente da origem) caía fora do lote, o
+Snap do "Interaction - Get Out" falhava (2, fora do lote) a cada 200 ticks
+e o bombeiro nunca descia; o segundo saía mas não voltava ao caminhão
+("Get In": sem metas). Agora o objeto anda **onde a raiz termina menos onde
+o esqueleto a descansa** (`AnimationLibrary::rootTravel(nome, VM::rootRestY)`;
+menos de meio tile conta como 0). Inferido dos dados, não lido no
+`cAnimatable`. Com isso, no `N001_Lot11` com fogo no fogão (`s2pkg pie
+N001_Lot11 Mortimer 118 --create "0x24C95F99@17,20,2!"`; o `!` final
+inicia o Main do Fire depois de posto): pânico, o fogo se espalha, o
+alarme de fumaça chama o bombeiro, o caminhão para no portal, o bombeiro
+desce, apaga os três Fires, se despede ("Tenho que ir..."), sobe e vai
+embora. A van da empregada (Lot68), a carona e o ônibus escolar (Lot11)
+continuam chegando e indo embora.
+
 ### Conversão da versão 0 do Animate Overlay (rodada 13)
 
 `AnimateOverlayParam::UpgradeVersion` (BV `0xac4af8`): na versão 0 (os

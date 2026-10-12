@@ -1010,7 +1010,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // world (vm::createTestObject; a party controller 0x2C91C16A:2=1 makes
     // the birthday play its cinematic).
     // "...@x,y[,level]" puts it on that tile (the debug tombstone's "New Baby" places the baby beside it).
-    // Repeatable (a baby's tombstone and a crib).
+    // Repeatable (a baby's tombstone and a crib). A final "!" starts its
+    // Main (a Fire 0x24C95F99@x,y,level! burns, wakes the room's smoke alarm).
     std::vector<std::string> creates;
     {
         NSArray<NSString*>* a = sceneArgs();
@@ -1031,6 +1032,9 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             else
                 where = "not placed: " + p.reason;
         }
+        // "...!" at the end: its Main starts once placed (a Fire that burns).
+        if (!spec->empty() && spec->back() == '!' && gSimulation->machine().startMain(id))
+            where += ", Main started";
         std::printf("opensims2: created object %d (%s)\n", id, where.c_str());
     }
     // --vm-queue <object>:<entry>: test aid, the selected Sim (--sim-id) queues
