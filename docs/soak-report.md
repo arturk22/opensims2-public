@@ -1,3 +1,29 @@
+# Soak report (round 15, survival 5)
+
+Runs of `tools/soak.sh` over the 69 lots (3 game days, 129600 ticks), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`), babies named (`--name-babies`). **Before** is main c3911d1 (the round's branch point); **after** is the r15-survival5 branch rebased on main 1782c4d, run with `S2PKG_FIRES=1` and `SOAK_KEEP_LOGS=1` (new: keeps the autonomy logs).
+
+| Category | before, seed 1 | after, seed 1 | before, seed 2 | after, seed 2 |
+|---|---|---|---|---|
+| Crashes / hangs | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Load errors | 1 (N002_Lot32) | 1 | 1 | 1 |
+| Household Mains reset | 2 | 2 | 0 | 1 |
+| Sims that died ("Falecer") | 9 (5 lots) | 12 (6 lots) | 22 (8 lots) | 20 (8 lots) |
+| Sims stuck > 6 game hours | 35 | 35 | 23 | 24 |
+| of them not sleeping, working or at school | 5 | 3 | 4 | 4 |
+| Motives pinned at -100 > 6 game hours | 21 | 15 | 29 | 22 |
+| Save round trips that differ | 0 | 0 | 0 | 0 |
+| Instruction budget (20000) hit | 5 (2 lots) | 0 | 0 | 1 (N003_Lot192, "Controller - Relationship Decay") |
+
+What changed (TODO.md, "Rodada 15, sobrevivência 5"; `docs/primitives-mac.md` Set to Next and "Rodada 15 (sobrevivência 5)", `docs/routing-mac.md` §2):
+- **Three-Sim socials**: Push Interaction's link (flag 0x40) is a chain as `TryPushAction` makes it (the new one takes the linked one's link, the linked one points to the new one). "Social - Baby - Talk To" is A → C → B, so A ending tells the baby's holder: Brandi no longer holds the baby for 11 h.
+- **Set to Next 9** is one object a side (the tile's last), +X, +Y, −X, −Y, going on from the target's side; **Set to Next 8** walks into the slots (a Sim on a chair, a plate on a counter), as the binary's tile iterator. "Set to Next - Good Dining Chair" no longer spins (N002_Lot22: 4 resets of the cooks a seeded game → 0; the budget hits of seed 1, 5 → 0), and the social bunny's "Don't Stand on Sims" sees the Sim on the chair and moves away (Olive/Ophelia's "Chair - Route Fail - Sim on Tile" for hours: gone).
+- **Path planner admission** as `AddThisToPathPlanner`: only the ceiling filter (FootprintBlocksCeiling) is the binary's; the others (small things on surfaces, detached, wall-hung, "can be stepped over", landing pieces) are gone, each object blocks by its footprint; models without a footprint list by their meshes' box cut to the tile; the part's tile by GetLocalOffsetFromLeader (OBJD sub index; same tile as before on every bed and piano of the lots); EvalTileForGoal by footprints, not tiles. Half-soak A/B of this step alone: failed interactions 192/159 → 141/244 (seed 2: N001_Lot68's diving board is now reached and the divers cannot leave the pool; trash piles), resets 20/46 → 7/6.
+- **Reset's free place** as FUN_00af87c8 (square spiral of tile centres, room first). A walker standing in a diagonal wall's cells escapes through them (N002_Lot4: Vidcund failed every route from a diagonal doorway and starved with Pascal in a seed-1 run).
+- **Long loops are the trees'**: piano, easel, darts and the newspaper exit only on failing motives (hunger ≤ −50, energy ≤ −80, ...; the newspaper at fun ≥ 60); Alexander's 7.7 h "Tocar" ends at hunger −51. Not a bug.
+- **Fires** checked against the engine-re reading: first spread try ≥ 900 ticks (seen ≥ 1117), tries ≥ 200 apart (≥ 219), ≤ 8 per Fire (≤ 5 seen), never a second Fire on a tile; lifetimes 37–4281 ticks with the trees' flame 73–176 and the 20 × Idle 30 wait. The deaths are still mostly fires (seed 1: 9 of 12; seed 2: all but Olive's old age), so the counts follow where the seed starts a fire.
+- Left (TODO): the pool exit (N001_Lot68's Mary-Sue starves in the pool, seed 1), "Jogar Fora" on kicked-over trash piles failing over and over, stairs and route penalties still outside the planner.
+- The remaining non-sleep/work stuck: piano/painting/darts loops (the trees' rules). Beau's social worker car (seed 2) and Lilith's "Desaparecido" (seed 1) did not recur.
+
 # Soak report (round 14, survival 4)
 
 Runs of `tools/soak.sh` over the 69 lots (3 game days, 129600 ticks), headless (`SOAK_NO_APP=1`), 2 lots at a time, seeded (`OS2_SEED=1` and `2`). **Before** is main b14e777 with its own `tools/soak.sh`; **after** is the r14-survival4 branch rebased on it, with its `tools/soak.sh` (which names the babies: `autonomy --name-babies`).
@@ -107,7 +133,7 @@ Run of `tools/soak.sh` over the 69 lots of N001, N002, N003 and Tutorial (3 game
 Deaths: before, 10 Sims were frozen in a phone dialog and could not run "Falecer" even with every motive at -100; now they live on, and the deaths left are starvation. Engine bugs behind deaths fixed this round: every modular deck stair locked (N003_Lot192: the Sims in the pit could not reach the fridge), the "Desespero" pushes failing (Push Interaction read the found entry from the wrong object; the Main died), glasses and trays dropped on the floor closing kitchen tiles, "Align Trashcan To Sim" and "Chess - Reset Sim" spinning out the budget. Still open (TODO.md): cooking fails in a loop ("Food Chain - Failure - Cook", no prep surface found) and each failure leaves a tray; "Fogo!" (N001_Lot49 Darren, 7-8 hours); special dialogs (type >= 5) have no time limit.
 
 
-# Generated tables (after)
+# Generated tables (after, seed 1)
 
 Generated by `tools/soak.sh` on 2026-10-12: 69 lots, autonomy for 129600 ticks (72 game hours, 1800 ticks each), lot-save of 300 ticks with --check, app run of 600 VM ticks. Hang limit 900s (app 300s).
 
@@ -120,156 +146,153 @@ Generated by `tools/soak.sh` on 2026-10-12: 69 lots, autonomy for 129600 ticks (
 | error | 1 | 2 |
 | dead | 0 | 0 |
 | reset | 1 | 2 |
-| stuck | 10 | 33 |
-| died | 5 | 9 |
-| pinned | 9 | 21 |
+| stuck | 11 | 35 |
+| died | 6 | 12 |
+| pinned | 6 | 15 |
 | roundtrip | 0 | 0 |
-| instruction budget (20000) hit | 2 | 5 |
+| instruction budget (20000) hit | 0 | 0 |
 
 ## Findings per lot
 
 | Lot | Category | Where | Detail |
 |---|---|---|---|
-| N001_Lot11 | stuck | autonomy | Alexander#142 in "Dormir" for 8.7 game hours |
-| N001_Lot11 | stuck | autonomy | Cassandra#179 in "Praticar Pintura" for 7.6 game hours |
-| N001_Lot11 | stuck | autonomy | Cassandra#179 in "Tocar" for 6.2 game hours |
-| N001_Lot11 | stuck | autonomy | Cassandra#179 in "Trabalhando" for 6.3 game hours |
+| N001_Lot11 | stuck | autonomy | Alexander#142 in "Dormir" for 6.8 game hours |
+| N001_Lot11 | stuck | autonomy | Alexander#142 in "Dormir" for 9.3 game hours |
+| N001_Lot11 | stuck | autonomy | Alexander#142 in "Tocar" for 8.1 game hours |
+| N001_Lot11 | stuck | autonomy | Alexander#142 in "Tocar" since tick 118115 (6.4 game hours at the end) |
+| N001_Lot11 | stuck | autonomy | Cassandra#179 in "Trabalhando" for 6.6 game hours |
 | N001_Lot16 | pinned | autonomy | Don#197 comfort at -100 for more than 6 game hours |
-| N001_Lot16 | pinned | autonomy | Don#197 fun at -100 for more than 6 game hours |
+| N001_Lot16 | pinned | autonomy | Don#197 energy at -100 for more than 6 game hours |
 | N001_Lot16 | pinned | autonomy | Don#197 hygiene at -100 for more than 6 game hours |
+| N001_Lot18 | pinned | autonomy | Dina#271 hygiene at -100 for more than 6 game hours |
 | N001_Lot18 | pinned | autonomy | Dina#271 social at -100 for more than 6 game hours |
 | N001_Lot18 | pinned | autonomy | Nina#210 social at -100 for more than 6 game hours |
 | N001_Lot36 | pinned | autonomy | Beau#270 hygiene at -100 for more than 6 game hours |
-| N001_Lot36 | pinned | autonomy | Brandi#2 hygiene at -100 for more than 6 game hours |
-| N001_Lot36 | pinned | autonomy | Dustin#248 social at -100 for more than 6 game hours |
-| N001_Lot36 | stuck | autonomy | Brandi#2 in "Dormir" for 12.3 game hours |
-| N001_Lot36 | stuck | autonomy | Brandi#2 in "Segurar Bebê" since tick 109599 (11.1 game hours at the end) |
-| N001_Lot36 | stuck | autonomy | Dustin#248 in "Dormir" for 6.4 game hours |
-| N001_Lot36 | stuck | autonomy | Dustin#248 in "Dormir" for 6.6 game hours |
+| N001_Lot36 | stuck | autonomy | Dustin#248 in "Dormir" for 6.3 game hours |
 | N001_Lot49 | stuck | autonomy | Darren#347 in "Cochilar" for 7.4 game hours |
-| N001_Lot49 | stuck | autonomy | Darren#347 in "Dormir" for 7.5 game hours |
-| N001_Lot49 | stuck | autonomy | Darren#347 in "Pintar" for 6.3 game hours |
-| N001_Lot49 | stuck | autonomy | Dirk#367 in "Dormir" for 7.2 game hours |
-| N001_Lot68 | died | autonomy | Angela#11 in "Falecer" since tick 49567 (44.5 game hours at the end) |
-| N001_Lot68 | pinned | autonomy | Angela#11 hygiene at -100 for more than 6 game hours |
-| N001_Lot68 | pinned | autonomy | Lilith#114 bladder at -100 for more than 6 game hours |
-| N001_Lot68 | pinned | autonomy | Lilith#114 comfort at -100 for more than 6 game hours |
-| N001_Lot68 | stuck | autonomy | Lilith#114 in "Desaparecido" since tick 99856 (16.5 game hours at the end) |
-| N001_Lot68 | stuck | autonomy | Mary-Sue#37 in "Cochilar" for 7.6 game hours |
-| N001_Lot68 | stuck | autonomy | Mary-Sue#37 in "Trabalhando" for 6.9 game hours |
-| N002_Lot10 | stuck | autonomy | Jenny#386 in "Trabalhando" for 7.6 game hours |
-| N002_Lot10 | stuck | autonomy | Johnny#389 in "Dormir" for 7.0 game hours |
-| N002_Lot10 | stuck | autonomy | Johnny#389 in "Dormir" for 7.4 game hours |
-| N002_Lot2 | died | autonomy | Olive#119 in "Falecer" since tick 85594 (24.4 game hours at the end) |
-| N002_Lot2 | pinned | autonomy | Ophelia#230 fun at -100 for more than 6 game hours |
-| N002_Lot22 | died | autonomy | Buck#151 in "Falecer" since tick 44957 (47.0 game hours at the end) |
-| N002_Lot22 | died | autonomy | General in "Falecer" since tick 39621 (50.0 game hours at the end) |
-| N002_Lot22 | died | autonomy | Ripp#149 in "Falecer" since tick 46706 (46.1 game hours at the end) |
-| N002_Lot22 | died | autonomy | Tank#144 in "Falecer" since tick 46363 (46.2 game hours at the end) |
-| N002_Lot22 | budget | autonomy | 4 times |
-| N002_Lot3 | pinned | autonomy | Circe#147 hygiene at -100 for more than 6 game hours |
-| N002_Lot3 | pinned | autonomy | Loki#130 comfort at -100 for more than 6 game hours |
-| N002_Lot3 | pinned | autonomy | Loki#130 fun at -100 for more than 6 game hours |
-| N002_Lot3 | pinned | autonomy | Loki#130 social at -100 for more than 6 game hours |
-| N002_Lot3 | pinned | autonomy | Nervous#182 fun at -100 for more than 6 game hours |
+| N001_Lot49 | stuck | autonomy | Darren#347 in "Dormir" for 7.1 game hours |
+| N001_Lot68 | died | autonomy | Mary-Sue#37 in "Falecer" since tick 51470 (43.4 game hours at the end) |
+| N001_Lot68 | stuck | autonomy | Daniel#116 in "Dormir" for 6.3 game hours |
+| N002_Lot10 | died | autonomy | Jenny#386 in "Falecer" since tick 51852 (43.2 game hours at the end) |
+| N002_Lot10 | died | autonomy | Johnny#389 in "Falecer" since tick 51059 (43.6 game hours at the end) |
+| N002_Lot10 | stuck | autonomy | Jenny#386 in "Cochilar" for 6.3 game hours |
+| N002_Lot10 | stuck | autonomy | Jill#454 in "Jogar" for 9.6 game hours |
+| N002_Lot10 | stuck | autonomy | Johnny#389 in "Dormir" for 7.6 game hours |
+| N002_Lot2 | died | autonomy | Olive#119 in "Falecer" since tick 95059 (19.2 game hours at the end) |
+| N002_Lot2 | stuck | autonomy | Ophelia#230 in "Cochilar" for 7.1 game hours |
+| N002_Lot2 | stuck | autonomy | Ophelia#230 in "Dormir" for 9.2 game hours |
+| N002_Lot22 | died | autonomy | Buck#151 in "Falecer" since tick 15325 (63.5 game hours at the end) |
+| N002_Lot22 | died | autonomy | General in "Falecer" since tick 15980 (63.1 game hours at the end) |
+| N002_Lot22 | died | autonomy | Ripp#149 in "Falecer" since tick 67564 (34.5 game hours at the end) |
+| N002_Lot22 | died | autonomy | Tank#144 in "Falecer" since tick 68211 (34.1 game hours at the end) |
+| N002_Lot22 | pinned | autonomy | Ripp#149 hygiene at -100 for more than 6 game hours |
+| N002_Lot22 | pinned | autonomy | Ripp#149 social at -100 for more than 6 game hours |
+| N002_Lot22 | pinned | autonomy | Tank#144 comfort at -100 for more than 6 game hours |
+| N002_Lot22 | pinned | autonomy | Tank#144 fun at -100 for more than 6 game hours |
+| N002_Lot3 | pinned | autonomy | Circe#147 social at -100 for more than 6 game hours |
 | N002_Lot3 | pinned | autonomy | Nervous#182 hygiene at -100 for more than 6 game hours |
-| N002_Lot3 | stuck | autonomy | Circe#147 in "Dormir" for 7.5 game hours |
-| N002_Lot3 | stuck | autonomy | Circe#147 in "Trabalhando" for 9.5 game hours |
+| N002_Lot3 | stuck | autonomy | Circe#147 in "Trabalhando" for 9.6 game hours |
 | N002_Lot32 | error | autonomy | exit 1: error: no elevation array (3ARY 0x01): not a lot package? |
 | N002_Lot32 | error | lot-save | exit 1: error: no elevation array (3ARY 0x01): not a lot package? |
-| N002_Lot4 | pinned | autonomy | Pascal#142 hygiene at -100 for more than 6 game hours |
-| N002_Lot4 | reset | autonomy | Pascal#142: 2 x Animation name is empty string. |
-| N002_Lot4 | reset | autonomy | Vidcund#152: 1 x Animation name is empty string. |
-| N002_Lot4 | stuck | autonomy | Lazlo#137 in "Dormir" since tick 117054 (7.0 game hours at the end) |
+| N002_Lot4 | reset | autonomy | Pascal#142: 2 x Tree table not found (object 204) |
+| N002_Lot4 | reset | autonomy | Vidcund#152: 2 x Animation name is empty string. |
+| N002_Lot4 | stuck | autonomy | Lazlo#137 in "Dormir" for 9.5 game hours |
 | N002_Lot4 | stuck | autonomy | Lazlo#137 in "Trabalhando" for 6.7 game hours |
-| N002_Lot4 | stuck | autonomy | Vidcund#152 in "Trabalhando" for 6.8 game hours |
-| N003_Lot192 | stuck | autonomy | Bottom#1 in "Dormir" for 11.7 game hours |
-| N003_Lot192 | stuck | autonomy | Bottom#1 in "Dormir" for 8.0 game hours |
-| N003_Lot192 | stuck | autonomy | Bottom#1 in "Na Escola" for 6.5 game hours |
-| N003_Lot192 | stuck | autonomy | Bottom#1 in "Na Escola" for 6.8 game hours |
-| N003_Lot192 | stuck | autonomy | Oberon#39 in "Trabalhando" for 6.4 game hours |
-| N003_Lot192 | stuck | autonomy | Titania#12 in "Cochilar" for 7.9 game hours |
-| N003_Lot192 | budget | autonomy | 1 times |
-| N003_Lot46 | died | autonomy | Patrizio#135 in "Falecer" since tick 83912 (25.4 game hours at the end) |
-| N003_Lot46 | pinned | autonomy | Romeo#402 fun at -100 for more than 6 game hours |
-| N003_Lot46 | stuck | autonomy | Romeo#402 in "Dormir" for 6.2 game hours |
-| N003_Lot52 | died | autonomy | Juliette#140 in "Falecer" since tick 86371 (24.0 game hours at the end) |
-| N003_Lot52 | died | autonomy | Tybalt#198 in "Falecer" since tick 81586 (26.7 game hours at the end) |
-| N003_Lot52 | pinned | autonomy | Hermia#158 social at -100 for more than 6 game hours |
-| N003_Lot52 | stuck | autonomy | Tybalt#198 in "Cochilar" for 8.0 game hours |
-| N003_Lot52 | stuck | autonomy | Tybalt#198 in "Dormir" for 8.4 game hours |
+| N002_Lot4 | stuck | autonomy | Lazlo#137 in "Trabalhando" for 6.8 game hours |
+| N002_Lot4 | stuck | autonomy | Pascal#142 in "Trabalhando" for 6.6 game hours |
+| N002_Lot4 | stuck | autonomy | Vidcund#152 in "Trabalhando" for 6.9 game hours |
+| N003_Lot192 | died | autonomy | Oberon#39 in "Falecer" since tick 81367 (26.8 game hours at the end) |
+| N003_Lot192 | died | autonomy | Puck#49 in "Falecer" since tick 80438 (27.3 game hours at the end) |
+| N003_Lot192 | died | autonomy | Titania#12 in "Falecer" since tick 79685 (27.7 game hours at the end) |
+| N003_Lot192 | stuck | autonomy | Bottom#1 in "Dormir" for 7.9 game hours |
+| N003_Lot192 | stuck | autonomy | Bottom#1 in "Na Escola" for 6.6 game hours |
+| N003_Lot192 | stuck | autonomy | Bottom#1 in "Na Escola" for 6.7 game hours |
+| N003_Lot192 | stuck | autonomy | Oberon#39 in "Dormir" for 6.2 game hours |
+| N003_Lot192 | stuck | autonomy | Oberon#39 in "Dormir" for 6.3 game hours |
+| N003_Lot192 | stuck | autonomy | Titania#12 in "Dormir" for 6.6 game hours |
+| N003_Lot46 | died | autonomy | Patrizio#135 in "Falecer" since tick 83913 (25.4 game hours at the end) |
+| N003_Lot46 | stuck | autonomy | Isabella#137 in "Dormir" for 6.0 game hours |
+| N003_Lot46 | stuck | autonomy | Mercutio#381 in "Dormir" for 6.8 game hours |
+| N003_Lot46 | stuck | autonomy | Mercutio#381 in "Dormir" for 7.6 game hours |
+| N003_Lot46 | stuck | autonomy | Patrizio#135 in "Cochilar" for 6.3 game hours |
+| N003_Lot46 | stuck | autonomy | Romeo#402 in "Cochilar" for 6.3 game hours |
+| N003_Lot46 | stuck | autonomy | Romeo#402 in "Dormir" for 6.1 game hours |
+| N003_Lot52 | pinned | autonomy | Juliette#140 fun at -100 for more than 6 game hours |
+| N003_Lot52 | pinned | autonomy | Tybalt#198 fun at -100 for more than 6 game hours |
+| N003_Lot52 | stuck | autonomy | Consort#136 in "Trabalhando" for 7.3 game hours |
+| N003_Lot52 | stuck | autonomy | Juliette#140 in "Cochilar" for 6.2 game hours |
 
 ## Stacks of crashes
 
 
 ## Timing (seconds, per lot: autonomy / lot-save / app)
 
-- N001_Lot11: 15 / 1 / 
-- N001_Lot16: 7 / 1 / 
-- N001_Lot18: 10 / 1 / 
-- N001_Lot22: 4 / 1 / 
-- N001_Lot24: 4 / 0 / 
-- N001_Lot32: 4 / 1 / 
-- N001_Lot36: 7 / 1 / 
-- N001_Lot38: 3 / 1 / 
-- N001_Lot40: 3 / 1 / 
-- N001_Lot47: 6 / 0 / 
+- N001_Lot11: 13 / 0 / 
+- N001_Lot16: 6 / 0 / 
+- N001_Lot18: 8 / 0 / 
+- N001_Lot22: 3 / 1 / 
+- N001_Lot24: 2 / 1 / 
+- N001_Lot32: 3 / 1 / 
+- N001_Lot36: 5 / 0 / 
+- N001_Lot38: 2 / 1 / 
+- N001_Lot40: 3 / 0 / 
+- N001_Lot47: 4 / 1 / 
 - N001_Lot49: 9 / 1 / 
-- N001_Lot51: 4 / 1 / 
-- N001_Lot53: 4 / 0 / 
-- N001_Lot55: 5 / 1 / 
-- N001_Lot57: 5 / 1 / 
-- N001_Lot59: 8 / 1 / 
-- N001_Lot64: 4 / 0 / 
-- N001_Lot66: 6 / 1 / 
-- N001_Lot68: 14 / 1 / 
-- N001_Lot70: 4 / 0 / 
-- N001_Lot73: 12 / 1 / 
-- N001_Lot75: 8 / 0 / 
-- N001_Lot77: 11 / 1 / 
-- N001_Lot79: 10 / 1 / 
-- N001_Lot80: 1 / 0 / 
-- N001_Lot82: 21 / 1 / 
-- N002_Lot10: 17 / 1 / 
-- N002_Lot2: 9 / 1 / 
-- N002_Lot22: 14 / 1 / 
+- N001_Lot51: 3 / 1 / 
+- N001_Lot53: 3 / 0 / 
+- N001_Lot55: 4 / 0 / 
+- N001_Lot57: 4 / 0 / 
+- N001_Lot59: 6 / 1 / 
+- N001_Lot64: 3 / 1 / 
+- N001_Lot66: 4 / 1 / 
+- N001_Lot68: 12 / 1 / 
+- N001_Lot70: 2 / 1 / 
+- N001_Lot73: 8 / 1 / 
+- N001_Lot75: 5 / 1 / 
+- N001_Lot77: 8 / 1 / 
+- N001_Lot79: 7 / 1 / 
+- N001_Lot80: 1 / 1 / 
+- N001_Lot82: 16 / 1 / 
+- N002_Lot10: 12 / 0 / 
+- N002_Lot2: 10 / 0 / 
+- N002_Lot22: 16 / 1 / 
 - N002_Lot23: 4 / 1 / 
-- N002_Lot25: 5 / 1 / 
-- N002_Lot27: 3 / 1 / 
-- N002_Lot29: 17 / 0 / 
-- N002_Lot3: 17 / 1 / 
-- N002_Lot31: 11 / 1 / 
+- N002_Lot25: 6 / 0 / 
+- N002_Lot27: 2 / 1 / 
+- N002_Lot29: 13 / 0 / 
+- N002_Lot3: 16 / 1 / 
+- N002_Lot31: 11 / 0 / 
 - N002_Lot32: 0 / 0 / 
-- N002_Lot4: 12 / 0 / 
-- N003_Lot126: 4 / 0 / 
-- N003_Lot128: 6 / 1 / 
-- N003_Lot133: 5 / 1 / 
-- N003_Lot135: 3 / 1 / 
-- N003_Lot144: 3 / 0 / 
+- N002_Lot4: 14 / 0 / 
+- N003_Lot126: 6 / 0 / 
+- N003_Lot128: 7 / 0 / 
+- N003_Lot133: 6 / 0 / 
+- N003_Lot135: 4 / 0 / 
+- N003_Lot144: 4 / 0 / 
 - N003_Lot149: 3 / 0 / 
-- N003_Lot153: 4 / 0 / 
-- N003_Lot157: 3 / 1 / 
+- N003_Lot153: 4 / 1 / 
+- N003_Lot157: 4 / 0 / 
 - N003_Lot159: 3 / 1 / 
-- N003_Lot164: 2 / 1 / 
+- N003_Lot164: 3 / 0 / 
 - N003_Lot166: 3 / 1 / 
-- N003_Lot168: 4 / 0 / 
+- N003_Lot168: 5 / 0 / 
 - N003_Lot171: 2 / 1 / 
 - N003_Lot175: 2 / 1 / 
-- N003_Lot179: 5 / 1 / 
-- N003_Lot181: 2 / 1 / 
-- N003_Lot183: 4 / 1 / 
+- N003_Lot179: 6 / 1 / 
+- N003_Lot181: 3 / 0 / 
+- N003_Lot183: 5 / 0 / 
 - N003_Lot187: 1 / 1 / 
-- N003_Lot192: 26 / 1 / 
+- N003_Lot192: 30 / 1 / 
 - N003_Lot195: 5 / 1 / 
 - N003_Lot45: 3 / 1 / 
-- N003_Lot46: 14 / 1 / 
+- N003_Lot46: 14 / 0 / 
 - N003_Lot47: 4 / 1 / 
-- N003_Lot48: 5 / 0 / 
-- N003_Lot50: 3 / 1 / 
-- N003_Lot52: 23 / 1 / 
-- Tutorial_Lot1: 2 / 0 / 
-- Tutorial_Lot14: 6 / 1 / 
-- Tutorial_Lot18: 8 / 0 / 
-- Tutorial_Lot19: 8 / 1 / 
-- Tutorial_Lot3: 6 / 1 / 
-- Tutorial_Lot4: 3 / 1 / 
+- N003_Lot48: 4 / 1 / 
+- N003_Lot50: 2 / 1 / 
+- N003_Lot52: 18 / 1 / 
+- Tutorial_Lot1: 1 / 1 / 
+- Tutorial_Lot14: 3 / 0 / 
+- Tutorial_Lot18: 7 / 0 / 
+- Tutorial_Lot19: 7 / 0 / 
+- Tutorial_Lot3: 6 / 0 / 
+- Tutorial_Lot4: 2 / 1 / 
