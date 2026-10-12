@@ -10,7 +10,8 @@ namespace os2::vm {
 //   1 and 7 outside: the room manager's lookup (nTSWorld, misnamed
 //     cRoomManager::cRoomManager) returns -1 for room -1 or a room the world
 //     does not have, and -1 reads as "not outside" (0),
-//   2 level, 3 area (quarter tiles / 4), 4 pool,
+//   2 level, 3 area (quarter tiles / 4), 4 pool (one tile of the room,
+//     FloorTileInRoom, tested with nTSWorld::IsPool: vm/lot.cpp setLotRooms),
 //   5 number of windows: objects whose room it is with category 0x16,
 //   6 greenhouse (more than half its fences are greenhouse fences; none in
 //     the base game's lots, 0),

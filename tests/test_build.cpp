@@ -5,6 +5,8 @@
 #include "formats/lot.hpp"
 #include "formats/lot_edit.hpp"
 #include "vm/build_edit.hpp"
+#include "vm/lot.hpp"
+#include "vm/rooms.hpp"
 #include "vm/placement.hpp"
 #include "vm/vm.hpp"
 
@@ -571,6 +573,24 @@ static void testPool() {
     check(r.ok && r.changed == 2 && !vm.world->pool({8, 4, 1}) && lot.pools.size() == 2, "erasing the pool's end");
     r = ed.deletePool(4, 4);
     check(r.ok && lot.pools.empty() && r.cost == -10 * 60, "deleting it takes the whole pool, int(75 x 0.8) a tile");
+    {
+        // Room value 4 (pool): the room's one tile from FloorTileInRoom is
+        // tested, not every tile. A pool in the yard (the yard's room, as the
+        // saved room arrays have it) leaves the yard no pool; a room that
+        // starts on a pool tile is one.
+        Lot yard = flatLot();
+        Lot::SwimmingPool p;
+        p.x = 3, p.y = 3, p.width = 3, p.height = 2, p.level = 0;
+        yard.pools.push_back(p);
+        VM v(code);
+        setLotRooms(v, yard);
+        check(roomValue(v, 1, 4) == 0, "a pool in the yard: the yard's room is no pool");
+        for (uint32_t x = 3; x < 6; ++x)
+            for (uint32_t y = 3; y < 5; ++y)
+                yard.rooms[size_t(x) * yard.height + y] = {2, 2, 2, 2};
+        setLotRooms(v, yard);
+        check(roomValue(v, 2, 4) == 1 && roomValue(v, 1, 4) == 0, "a room of the pool's tiles is a pool");
+    }
     check(ed.undo() && ed.undo() && ed.undo() && ed.undo() && lot.minLevel == 0 && lot.levelCount == 1 && funds(vm) == 5000,
           "undo takes the level away again");
     Lot big = flatLot();

@@ -97,10 +97,19 @@ void setLotRooms(VM& vm, const Lot& lot) {
                             r.first = li + 1;
                             ++r.second;
                         }
-        // Outside and pool (inferred): a room is a pool when one of its tiles
-        // is in a POOL's rectangle on its level, and outside when it is a pool
-        // or reaches the edge of the lot on the ground (the terrain's room).
-        std::set<int16_t> outside, pool;
+        // Pool: cTSObject::InterpValue (owner 0x17, value 4) asks the room
+        // manager for one floor tile of the room (FloorTileInRoom, room
+        // definition 2) and tests that tile alone (nTSWorld::IsPool: a deck
+        // foundation of type 3 or 5). Pools share the yard's room (the saved
+        // room arrays give the pool's tiles the terrain's room), so the yard
+        // is not a pool unless the tile the manager returns is one: taken
+        // here as the room's first tile in the arrays' order (inferred; the
+        // manager's tile lists were not read). Marking the whole yard a pool
+        // made "Swim Here?" true on every lawn of a lot with a pool, and the
+        // Go Here pie showed the swim names ("Entrar") in place of Vir Aqui.
+        // Outside (inferred): a pool, or a room that reaches the edge of the
+        // lot on the ground (the terrain's room).
+        std::set<int16_t> outside, pool, seen;
         for (int li = 0; li < lot.levelCount; ++li)
             for (uint32_t x = 0; x < lot.width; ++x)
                 for (uint32_t y = 0; y < lot.height; ++y)
@@ -110,6 +119,8 @@ void setLotRooms(VM& vm, const Lot& lot) {
                         const int level = li + lot.minLevel;
                         if (level == 0 && (x == 0 || y == 0 || x + 1 == lot.width || y + 1 == lot.height))
                             outside.insert(int16_t(room));
+                        if (!seen.insert(int16_t(room)).second)
+                            continue; // the room's first tile decides
                         for (const auto& p : lot.pools)
                             if (p.level == level && float(x) >= p.x && float(x) < p.x + float(p.width) &&
                                 float(y) >= p.y && float(y) < p.y + float(p.height))
