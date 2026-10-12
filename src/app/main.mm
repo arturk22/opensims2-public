@@ -59,6 +59,7 @@
 #include "app/cinematic_player.hpp"
 #include "app/ui_panel_util.hpp"
 #include "app/loading_screen.hpp"
+#include "app/jump_detector.hpp"
 #include "formats/catalog.hpp"
 #include "formats/config_text.hpp"
 #include "formats/graphics_options.hpp"
@@ -3627,6 +3628,72 @@ void adoptVmSims(os2::Renderer& renderer) {
 // Poses every actor at `seconds` and hands the vertices to the renderer.
 // The Sims first: objects in their hands follow their bones (gObjectView),
 // then the objects' actors at the places that gives.
+// OS2_DEBUG_JUMPS=1 (test aid): each Sim's drawn pelvis checked frame to
+// frame (app/jump_detector.hpp); jumps over a tile the VM gave no reason
+// for, back-and-forth jumps and repeated VM snaps are printed as they
+// happen and summed up at exit. OS2_WATCH_OBJECT=<id|name>: where the VM
+// has those objects and where they are drawn, as that changes.
+void sampleDrawnPlaces(double scene) {
+    if (!gSimulation)
+        return;
+    static const bool jumps = std::getenv("OS2_DEBUG_JUMPS") != nullptr;
+    static const char* watch = std::getenv("OS2_WATCH_OBJECT");
+    os2::vm::VM& m = gSimulation->machine();
+    if (jumps) {
+        static os2::JumpDetector detector;
+        static bool registered = false;
+        if (!registered) {
+            registered = true;
+            std::atexit([] {
+                std::printf("opensims2: jumps: %d drawn jumps without a VM reason (%d back and forth), %d Sims snapped over and over\n",
+                            detector.drawnJumps(), detector.backAndForth(), detector.repeatedSnaps());
+                std::fflush(stdout);
+            });
+        }
+        for (const auto& s : gLotSims) {
+            const os2::vm::Object* o = m.object(s.id);
+            if (!o || !o->person)
+                continue;
+            os2::JumpDetector::Sample x;
+            x.id = s.id, x.time = scene, x.tick = m.ticks;
+            const os2::SimActor& a = *s.actor;
+            int b = a.skin.skeleton.find("pelvis");
+            if (b < 0)
+                b = a.skin.skeleton.find("root_trans");
+            const os2::Vec3 p = b >= 0 && size_t(b) < a.bones.size() ? a.bones[size_t(b)].t : a.placement().t;
+            x.drawn[0] = p[0], x.drawn[1] = p[1], x.drawn[2] = p[2];
+            x.vm[0] = o->position.x, x.vm[1] = o->position.y, x.level = o->position.level;
+            x.walking = o->route.has_value();
+            const int16_t c = o->data[os2::vm::objdata::ContainerId];
+            x.container = c == s.id ? 0 : c;
+            x.inWorld = simInTheWorld(s.id) && !gCarriedSims.count(s.actor);
+            x.animation = o->animation.name;
+            for (const auto& e : detector.add(x))
+                std::printf("opensims2: %s\n", os2::JumpDetector::describe(e).c_str());
+        }
+    }
+    if (watch && gObjectView) {
+        static std::map<int, std::string> last;
+        for (const auto& [id, o] : m.objects()) {
+            if (o.person || !o.definition ||
+                (std::to_string(id) != watch && o.definition->fileName.find(watch) == std::string::npos))
+                continue;
+            const auto at = gObjectView->placement(int16_t(id));
+            char buf[400];
+            std::snprintf(buf, sizeof buf, "container %d slot %d at %.1f %.1f level %d; drawn %s (%.2f %.2f %.2f)",
+                          o.data[os2::vm::objdata::ContainerId], o.data[os2::vm::objdata::SlotNumber], o.position.x,
+                          o.position.y, o.position.level, at ? "at" : "nowhere", at ? at->t[0] : 0, at ? at->t[1] : 0,
+                          at ? at->t[2] : 0);
+            std::string s = buf;
+            const bool moved = last[id].substr(0, last[id].find(';')) != s.substr(0, s.find(';'));
+            if (moved)
+                std::printf("opensims2: tick %llu: object %d (%s) %s\n", (unsigned long long)m.ticks, id,
+                            o.definition->fileName.c_str(), s.c_str());
+            last[id] = s;
+        }
+    }
+}
+
 void poseActors(os2::Renderer& renderer, double seconds) {
     pollTutorial(seconds); // (the real clock)
     if (gSimulation)
@@ -3758,6 +3825,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         renderer.updateObject(a->model, a->posed);
     }
     placePlumbob(renderer, seconds);
+    sampleDrawnPlaces(seconds);
     updateLotView(renderer, true);
     if (gTv)
         gTv->update(seconds);
@@ -6020,6 +6088,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     // effects on their bones follow the animations between shots.
                     for (auto& sim : gLotSims)
                         sim.actor->update(scene);
+                    sampleDrawnPlaces(scene);
                     // OS2_DEBUG_DOORS=1: the doors' leaves (r_door_rot, l_door_rot
                     // about Z, degrees) as they turn by 10 degrees or come back closed.
                     if (std::getenv("OS2_DEBUG_DOORS")) {

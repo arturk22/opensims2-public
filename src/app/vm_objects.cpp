@@ -203,6 +203,16 @@ std::string VmObjectView::slotBone(int16_t container, int slot, int type) {
     return bone;
 }
 
+int16_t VmObjectView::modelFrame(int16_t id) const {
+    if (drawn_.count(id))
+        return id;
+    const vm::Object* o = sim_.machine().object(id);
+    if (!o || o->person)
+        return id;
+    const vm::ObjectId lead = vm::multiTileGroup(*o);
+    return lead != id && sim_.machine().object(lead) ? int16_t(lead) : id;
+}
+
 std::optional<Xform> VmObjectView::placement(int16_t id) {
     if (auto it = frame_.find(id); it != frame_.end())
         return it->second;
@@ -227,7 +237,10 @@ std::optional<Xform> VmObjectView::seatPlacement(int16_t sim, double now) {
     const vm::Object* c = containerId && containerId != sim ? m.object(containerId) : nullptr;
     if (!c || c->person)
         return std::nullopt;
-    const auto at = compute(containerId, 1);
+    // The slot's bone is in the model's frame, the lead tile's (a sofa's
+    // second seat, a dining table's far end).
+    const int16_t frameId = modelFrame(containerId);
+    const auto at = compute(frameId, 1);
     if (!at)
         return std::nullopt;
     const std::string bone = slotBone(containerId, o->data[vm::objdata::SlotNumber]);
@@ -240,7 +253,7 @@ std::optional<Xform> VmObjectView::seatPlacement(int16_t sim, double now) {
     // starts from the corner bone the trees snap it to, sat it in the air
     // beside the chair (the actor's bones were never used: they are posed
     // after the Sims, and its transform is only set when the chair moves).
-    if (auto d = drawn_.find(containerId); d != drawn_.end() && d->second.actor && !bone.empty()) {
+    if (auto d = drawn_.find(frameId); d != drawn_.end() && d->second.actor && !bone.empty()) {
         SimActor& a = *d->second.actor;
         const int b = a.skin.skeleton.find(bone);
         if (b >= 0 && (!a.transform || a.transform->t[2] > -100)) {
@@ -257,9 +270,9 @@ std::optional<Xform> VmObjectView::seatPlacement(int16_t sim, double now) {
         }
     }
     Xform node;
-    if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(containerId)))
+    if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(frameId)))
         if (const int b = cs->find(bone); b >= 0)
-            node = cs->world(localPose(containerId, *cs))[size_t(b)];
+            node = cs->world(localPose(frameId, *cs))[size_t(b)];
     if (std::getenv("OS2_DEBUG_SEAT")) {
         const Xform w = at->then(node);
         std::fprintf(stderr, "seat: Sim %d in %d slot %d bone %s local t(%.2f %.2f %.2f) q(%.2f %.2f %.2f %.2f) -> t(%.2f %.2f %.2f)\n",
@@ -352,14 +365,22 @@ std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
                              containerId, bone.c_str(), w.q.x, w.q.y, w.q.z, w.q.w, w.t[0], w.t[1], w.t[2]);
             }
         } else {
-            const auto at = compute(containerId, depth + 1);
+            // The bone is in the model's frame: a multi-tile object's lead
+            // (a plate put at a dining table's far end, slot 1 of its
+            // "1,0" part, was drawn a tile off the table, in the air).
+            const int16_t frameId = modelFrame(containerId);
+            const auto at = compute(frameId, depth + 1);
             if (!at)
                 return frame_[id] = out;
             Xform node;
-            if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(containerId)))
+            if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(frameId)))
                 if (const int b = cs->find(bone); b >= 0)
-                    node = cs->world(localPose(containerId, *cs))[size_t(b)];
+                    node = cs->world(localPose(frameId, *cs))[size_t(b)];
             out = at->then(node).then(attach.inverse());
+            if (std::getenv("OS2_DEBUG_SLOT"))
+                std::fprintf(stderr, "slot: object %d in %d slot %d bone '%s' container at (%.2f %.2f %.2f) node (%.2f %.2f %.2f) attach (%.2f %.2f %.2f) -> (%.2f %.2f %.2f)\n",
+                             id, containerId, slot, bone.c_str(), at->t[0], at->t[1], at->t[2], node.t[0], node.t[1], node.t[2],
+                             attach.t[0], attach.t[1], attach.t[2], out->t[0], out->t[1], out->t[2]);
         }
         return frame_[id] = out;
     }

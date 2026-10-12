@@ -156,6 +156,10 @@ private:
     std::string cresFor(int16_t id); // drawn, else from the object's OBJD
     std::string slotBone(int16_t container, int slot, int type = 0);
     std::optional<Xform> compute(int16_t id, int depth);
+    // The object whose model frame holds `id`'s slot bones: the lead tile of
+    // a multi-tile object whose part is not drawn itself (its model is the
+    // lead's), else `id`.
+    int16_t modelFrame(int16_t id) const;
     void place(Drawn& d, const std::optional<Xform>& at);
     void addCreated(int16_t id);
     // Redraws an object with the materials the VM set on it (Change Material).
