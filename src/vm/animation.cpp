@@ -548,7 +548,16 @@ void checkLoops(Context& c) {
 // 0 not hurryable, flags byte 15 (Mac binary, docs/primitives-mac.md §5).
 // It does not block (the binary returns 1 once it has started it).
 Exit animateOverlay(Context& c) {
-    const auto& o = c.instruction.operands;
+    // The base game's trees are version 0 (AnimateOverlayParam::
+    // UpgradeVersion, Mac BV 0xac4af8): byte 10 keeps the low byte of the
+    // old u16 at 10, the priority (byte 11) is the low byte of the old u16
+    // at 12, and bytes 12-13 become 0 ("CT - Set Carry"'s carry poses are
+    // priority 2 there, not the -1 byte 11 holds).
+    std::array<uint8_t, 16> o = c.instruction.operands;
+    if (c.instruction.nodeVersion == 0) {
+        o[11] = o[12];
+        o[12] = o[13] = 0;
+    }
     checkLoops(c);
     Object& target = objectAt(c, 6);
     const std::string entry = listEntry(c, target, o[9], animationIndex(c, 0, o[2] & 0x04));

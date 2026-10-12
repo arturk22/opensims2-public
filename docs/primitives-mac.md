@@ -1078,6 +1078,16 @@ negativo (fome: frente da comida). A textura
 `vehicleschoolbus-groundshadow-alpha_txtr` que o TXMT da sombra do ônibus
 pede não existe nos dados do jogo base (só o nome no material).
 
+### Conversão da versão 0 do Animate Overlay (rodada 13)
+
+`AnimateOverlayParam::UpgradeVersion` (BV `0xac4af8`): na versão 0 (os
+BHAVs do jogo base, 1/3 dos Animate Overlay, entre eles "CT - Set Carry" e
+"Pickup - Poses") os bytes 10–11 e 12–13 são dois u16; a conversão põe no
+byte 10 o byte baixo do primeiro, no **byte 11 (a prioridade) o byte baixo
+do segundo** e zera 12–13. Sem isso a pose de carregar o bebê (versão 0,
+`FF FF 02 00` em 10–13) ficava com prioridade −1 (nível 1) em vez de 2
+(nível 5). Feito em `animateOverlay`.
+
 ### Conversão da versão 0 (BHAVs do base) de Look At e Run Tree by Name
 
 O parâmetro guarda os 16 bytes de operando em `+4..+0x13` e a versão em

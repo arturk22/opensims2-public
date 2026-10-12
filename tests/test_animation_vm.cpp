@@ -282,15 +282,17 @@ static void testOverlayLevels() {
     vm.animations.add("a-idle-test", 1.0f);
     vm.animations.add("a-blockedPath-long", 0.5f);
     Object& s = sim(vm, 1.5f, 1.5f);
-    // Animate Overlay entry 3, priority byte 11 = 2 (level 5), then -1 (level 1).
-    code.add(kGroup, 0x1007, tree({instr(0x6B, T, E, {3, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x80, 0, 2})}));
-    code.add(kGroup, 0x1008, tree({instr(0x6B, T, E, {3, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x80, 0, 0xFF})}));
+    // Animate Overlay entry 3 as the base game writes it (node version 0:
+    // the priority in the u16 at 12, UpgradeVersion moves it to byte 11):
+    // priority 2 (level 5), then -1 (level 1).
+    code.add(kGroup, 0x1007, tree({instr(0x6B, T, E, {3, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x80, 0xFF, 0xFF, 2, 0})}));
+    code.add(kGroup, 0x1008, tree({instr(0x6B, T, E, {3, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x80, 0xFF, 2, 0xFF, 0xFF})}));
     for (uint16_t t : {0x1007, 0x1008}) {
         Thread th = vm.start(s.id, t, {}, s.id);
         vm.run(th);
     }
     check(s.animation.overlays.size() == 2 && s.animation.overlays[0].level == 5 && s.animation.overlays[1].level == 1,
-          "Animate Overlay's level: 2 x priority + 1, -1 -> 1");
+          "Animate Overlay's level: 2 x priority + 1, -1 -> 1 (version 0: the priority at 12)");
     check(animlevel::ofOverlay(4) == 0 && animlevel::ofSim(1) == 2 && animlevel::ofSim(7) == 6 && animlevel::ofSim(-1) == 0,
           "levels of the other priorities");
     // Animate Stop mode 1 (the overlays), priority 3 (levels 4-5), blended (0x02).

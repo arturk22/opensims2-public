@@ -912,7 +912,16 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // world (vm::createTestObject; a party controller 0x2C91C16A:2=1 makes
     // the birthday play its cinematic).
     // "...@x,y[,level]" puts it on that tile (the debug tombstone's "New Baby" places the baby beside it).
-    if (auto spec = argument(@"--vm-create")) {
+    // Repeatable (a baby's tombstone and a crib).
+    std::vector<std::string> creates;
+    {
+        NSArray<NSString*>* a = sceneArgs();
+        for (NSUInteger i = 1; i + 1 < a.count; ++i)
+            if ([a[i] isEqualToString:@"--vm-create"])
+                creates.push_back(a[i + 1].UTF8String);
+    }
+    for (const std::string& specText : creates) {
+        const std::string* spec = &specText;
         const auto at = spec->find('@');
         const os2::vm::ObjectId id = os2::vm::createTestObject(gSimulation->machine(), spec->substr(0, at));
         int x = 0, y = 0, level = 1;
