@@ -104,3 +104,28 @@ Lotes: Belavista lote 68 (`--hood N001 --hood-lot 68 --vm --ui live`), bairro (`
 - Depois de pôr um lote vazio no bairro a câmera volta ao ponto de partida (a vista é refeita por troca de cena).
 - No lote ao vivo o quadrado de ícone da fila com um X vermelho (a ação atual do Sim) segue sem miniatura.
 - Quadro branco ao lado do Sim no CAS (o espelho/cavalete sem textura).
+
+# Rodada 11, passada 4
+
+Mesmo método (CGEvent, pid próprio, janela trazida para a frente e posição conferida antes de cada clique, captura só da região da janela).
+Lote: Belavista lote 68 (`--hood N001 --hood-lot 68 --vm --ui live`) e bairro (`--hood N001`), pastas de usuário descartáveis. Sem
+ouvido: o som foi conferido pelo log de saída (`OS2_SOUND_LOG=1`, `--sound-mix`, `--music`). Problema de ambiente: o disco ficou cheio
+(1,7 GB livres) e o primeiro `git worktree add` falhou no meio; foi refeito com `GIT_LFS_SKIP_SMUDGE=1` e o app usa `--data` do repo principal.
+
+| Passo | Resultado |
+|-------|-----------|
+| Velocidade 3 pelo botão, relógio passa de quarta 07:26 para quinta 10:21 em ~1 min, escuridão à noite | passa |
+| Caixa de correio: pie menu "Receber Correio", Sim vai buscar | passa (enfileirou); nenhuma conta chegou no dia 1 (o binário só traz contas nos dias 1 e 3 às 9:51; `§2.670` não mudou) — não conclusivo |
+| Casa começa às 7:00 | **falha**: o lote salvo (lote 68) abre às 07:08 e ao entrar já passaram ~18 minutos (07:26 após 25 s); a regra de 7:00 é só da mudança de família, não testada ao vivo |
+| Ônibus escolar | **falha**: o veículo branco (`vehicleschoolbus`) chega às ~9:36 e continua parado na rua às 19:47 e às 10:21 do dia seguinte (nunca vai embora); textura `vehicleschoolbus-groundshadow-alpha_txtr` não achada |
+| Incêndio | às quinta 10:21 a casa está pegando fogo, com todos os Sims na vermelha (sem ninguém agindo): é da frente de fogo, só anotado |
+| Música: `--music pop` no lote | toca `26B3DB7C-FFC55552`; sem `--music` nada ("music: none") no lote sem som ligado; TV: "0 TV shows heard" em 840 s sem ninguém ver TV (não exercitado) |
+| Som: rodada de 840 s sem tela | 16 sons da VM, 2121 eventos de animação, 2418 vozes, 280 notas de ambiência; passos/arrastar/tapa (`slap_hand_back` ×220) tocam |
+| Construir: Design (0xCC607030), dia/noite (0xCC607035), etiqueta | **falha**: clicar nos ícones de baixo (etiqueta, "%" e seta) não faz nada e não loga; imagem idêntica antes/depois |
+| Bairro: Lotes & Casas abre, bandeja com miniaturas de lote | passa |
+| Bairro: mover lote (mão): pegar o lote 57 destaca a base e o fantasma segue o mouse; vermelho em lugar inválido | passa (não achei um lugar válido para soltar; fica sem teste de soltar) |
+| Bairro: girar lote com família: diálogo "a família será movida com o lote e perderá os relacionamentos" | passa o diálogo; **depois de aceitar o lote não muda visualmente** e nada é logado (diferença de imagem vazia) |
+| Bairro: demolir (escavadeira) o lote 57 vazio: diálogo "Tem certeza de que quer demolir o lote", Sim remove o `N001_Lot57.package` e a casa some | passa |
+| Bairro: enviar casa para a lixeira e recolocar | não achado (o botão de seta em 900,1130 da bandeja não responde; clicar numa casa abre o cartão com a família, sem a opção) |
+| Bolo, bebê, despejar, foto da família na lixeira, mudança às 7:00 | não testado ao vivo (sem tempo; `3a1656e`, `c716aec` trazem testes sem tela) |
+| Menu "Aprenda a Jogar" | não refeito (a frente do tutorial só tem a documentação em `f91bebb`) |
