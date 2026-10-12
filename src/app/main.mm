@@ -868,6 +868,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         }
         return it->second;
     };
+    if (const char* f = std::getenv("OS2_FORCE_OBJECT_ACTOR")) // test aid: this object animated from the start
+        objectActor(int16_t(std::atoi(f)));
     // Once per name: the base game's trees ask for some the data lacks (the
     // double bed's "-", o2a-bookcase-get-middle: only the child's o2c-
     // exists) and the game shows nothing for them.

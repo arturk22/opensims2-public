@@ -7,6 +7,7 @@
 #include "formats/ui_resources.hpp"
 
 #include <cstdlib>
+#include <memory>
 #include <filesystem>
 #include <optional>
 
@@ -75,6 +76,34 @@ struct Fixture {
 };
 
 int main() {
+    {
+        // Picking: a small object with a thin post (a mailbox) is picked by a
+        // click a few pixels beside it; a big object is not, nor is a click far
+        // from the small one.
+        Fixture f(dialogtype::Message);
+        PieMenuHost host(f.vm, "no-fonts");
+        auto post = std::make_shared<PickMesh>();
+        post->corners = {simd_make_float3(0, 0, 0), simd_make_float3(0.02f, 0, 0), simd_make_float3(0, 0, 1.7f)};
+        post->triangleMask = {-1};
+        post->uvs.assign(3, simd_make_float2(0, 0));
+        post->lo = simd_make_float3(0, 0, 0), post->hi = simd_make_float3(0.02f, 0, 1.7f);
+        const ObjectId mailbox = f.vm.createObject(kObjGroup).id;
+        host.addPickBox(mailbox, post->lo, post->hi, matrix_identity_float4x4, post);
+        const simd_float3 eye = simd_make_float3(0.003f, -10, 1);
+        auto ray = [&](float x) { return simd_normalize(simd_make_float3(x, 0, 1) - eye); };
+        check(host.pick(eye, ray(0.003f)) == mailbox, "pick: a click on the post");
+        check(host.pick(eye, ray(0.05f)) == mailbox, "pick: a click a few pixels beside a small object");
+        check(host.pick(eye, ray(0.6f)) == 0, "pick: a click far from it");
+        auto wall = std::make_shared<PickMesh>();
+        wall->corners = {simd_make_float3(5, 0, 0), simd_make_float3(5.02f, 0, 0), simd_make_float3(5, 0, 4)};
+        wall->triangleMask = {-1};
+        wall->uvs.assign(3, simd_make_float2(0, 0));
+        wall->lo = simd_make_float3(5, 0, 0), wall->hi = simd_make_float3(5.02f, 0, 4);
+        const ObjectId bigObject = f.vm.createObject(kObjGroup).id;
+        host.addPickBox(bigObject, wall->lo, wall->hi, matrix_identity_float4x4, wall);
+        check(host.pick(eye, simd_normalize(simd_make_float3(5.0f + 0.05f, 0, 1) - eye)) == 0,
+              "pick: no tolerance for a big object");
+    }
     {
         // Text entry (type 3): typing, Backspace, Return = OK.
         Fixture f(dialogtype::TextEntry);

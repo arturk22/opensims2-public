@@ -534,7 +534,19 @@ void PieMenuHost::setPosedObject(vm::ObjectId id, simd_float3 lo, simd_float3 hi
     posedObjects_[id] = std::move(b);
 }
 
-vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
+namespace {
+constexpr float kSmallObject = 2.0f;      // an object whose box is at most this long (m) is picked with a tolerance
+constexpr float kPickTolerance = 0.0045f; // rad: about 5 px at the default view (the ray's angle off the mouse's)
+} // namespace
+
+vm::ObjectId PieMenuHost::pick(simd_float3 origin0, simd_float3 dir0) const {
+    // Pass 1 is the exact one: the ray as is. Pass 2, only if pass 1 found
+    // nothing, picks small objects (a mailbox, a lamp, a phone) by rays a
+    // few pixels around the mouse (`kPickTolerance`): their thin parts are a
+    // couple of pixels wide and a click on the mailbox gave Go Here (live QA
+    // 15). Inferred: the game's own tolerance is not known.
+    simd_float3 origin = origin0, dir = dir0;
+    bool tolerant = false; // pass 2: only small objects
     // The nearest hit: an object's triangles where it has them (its box
     // first, as a quick test), else its box; a Sim's skinned triangles. The
     // binary takes the scene graph's nearest node, Sim or object, and stops
@@ -546,6 +558,8 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
     auto nearest = [&](auto&& each) {
         each([&](const PickBox& b) {
             if (pickable && !pickable(b.lo, b.hi))
+                return;
+            if (tolerant && simd_reduce_max(b.hi - b.lo) > kSmallObject)
                 return;
             // Slab test.
             float t0 = 0, t1 = std::numeric_limits<float>::max();
@@ -600,11 +614,7 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
                 bestT = t0, best = b.id;
         });
     };
-    nearest([&](auto&& f) {
-        for (const auto& [id, b] : moving_)
-            f(b);
-    });
-    nearest([&](auto&& f) {
+    auto objects = [&](auto&& f) {
         for (const auto& box : boxes_)
             if (!moving_.count(box.id) && !posedObjects_.count(box.id) && (!drawn || drawn(box.id)))
                 if (const auto placed = worldBox(box))
@@ -613,8 +623,36 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
         for (const auto& [id, b] : posedObjects_)
             if (!moving_.count(id) && (!drawn || drawn(id)))
                 f(b);
+    };
+    nearest([&](auto&& f) {
+        for (const auto& [id, b] : moving_)
+            f(b);
     });
-    return best;
+    nearest(objects);
+    if (best || simd_length(dir0) == 0)
+        return best;
+    // Pass 2: the ring of rays (8 around the mouse's, a pick radius of
+    // kPickTolerance pixels at the object's distance), the nearest hit wins.
+    tolerant = true;
+    simd_float3 side = simd_cross(dir0, simd_make_float3(0, 0, 1));
+    if (simd_length(side) < 1e-4f)
+        side = simd_make_float3(1, 0, 0);
+    side = simd_normalize(side);
+    const simd_float3 up = simd_normalize(simd_cross(side, dir0));
+    float bestAll = std::numeric_limits<float>::max();
+    vm::ObjectId found = 0;
+    for (int ring = 0; ring < 8; ++ring) {
+        const float a = float(ring) * 3.14159265f / 4;
+        // `nearest` reads origin and dir by reference; the angle is the
+        // ray's, in the plane across the ray at distance t from the eye.
+        dir = simd_normalize(dir0 + (side * std::cos(a) + up * std::sin(a)) * kPickTolerance);
+        best = 0;
+        bestT = floorT ? *floorT + 0.05f : std::numeric_limits<float>::max();
+        nearest(objects);
+        if (best && bestT < bestAll)
+            bestAll = bestT, found = best;
+    }
+    return found;
 }
 
 std::optional<simd_float3> PieMenuHost::anchor(vm::ObjectId id) const {
