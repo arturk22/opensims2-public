@@ -1038,6 +1038,8 @@ UiScreen LiveUi::screen(int width, int height) {
                 best = a, tip_ = int(i);
         }
     }
+    if (tip_ != tipHovered_) // the panel changed under a still mouse: count again
+        tipHovered_ = tip_, tipSince_ = now_;
     if (tip_ >= 0 && tipVisible())
         drawTooltip(out, tips_[size_t(tip_)].second, *mouse_);
     // The windows drawn, by id, for the tutorial (controlRect, controlAt).

@@ -235,10 +235,12 @@ private:
     std::vector<std::pair<std::array<float, 4>, std::string>> tips_; // tooltips of the current screen
     int tip_ = -1;                                          // the one under the mouse
     // Tooltip timing (cGZWinToolTipMgr, docs/ui-live-mac.md §7.6): shown
-    // 0.75 s after the mouse came over the control, hidden at 2.25 s.
+    // 0.75 s after the mouse came over the control. The binary hides it at
+    // 2.25 s; we keep it up while the mouse stays over the control (user: it
+    // vanished before it could be read).
     double now_ = 0, tipSince_ = 0;
     int tipHovered_ = -1;
-    bool tipVisible() const { return now_ - tipSince_ >= 0.75 && now_ - tipSince_ < 2.25; }
+    bool tipVisible() const { return now_ - tipSince_ >= 0.75; }
     UiScript pause_;                                        // 0x8C364B93, the pause indicator
     // The queue's icons slide to their slots (kAnimationSteps steps) and a
     // new one plays ui_queue (docs/ui-live-mac.md §6.4).
