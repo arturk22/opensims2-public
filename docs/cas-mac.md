@@ -719,8 +719,13 @@ padrão dela (humano `0x7FD96B54`).
   (`a2b-babybottle-feeder-*`), põe no berço (`a2b-crib-put-putter`), o bebê
   toca `b2o-crib-idle-*`, tira de novo para ninar e devolve.
 - **Nome.** O "Interaction - Home Birth" abre o diálogo tipo 23 ("Baby
-  Name", STR# `0xD9`) com o bebê no stack object; a classe do binário não
-  foi achada. No opensims2: um botão OK, sem tempo limite (é especial), o
+  Name", STR# `0xD9`) com os vizinhos dos bebês nos **temps 0 e 1** (a
+  árvore põe o dado de pessoa 31 dos bebês dos locais 2 e 1; o "Rename Sim"
+  põe o do próprio Sim no temp 0). A classe é o
+  `cTSWinProcNameObjectDialog` (rodada 14, `docs/primitives-mac.md`
+  "Nomes"): um painel por caso (um bebê, gêmeos `0xCDC2CAA6` com duas
+  caixas, renomear), e o OK dá a cada Sim o nome aparado da sua caixa. Até a
+  rodada 13 (inferido): um botão OK, sem tempo limite (é especial), o
   `Dialog::text` vem com o nome padrão ("Bebezinho"/"Bebezinha") e, se o
   anfitrião mudar o texto, o OK renomeia o vizinho do bebê (inferido). Sem
   cabeça, `--dialog-answer 0` aceita o padrão. **Caixa de texto no app

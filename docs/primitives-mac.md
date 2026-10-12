@@ -869,20 +869,22 @@ resposta como se o jogador tivesse clicado. Ex.: uma mensagem de 120
 caracteres some em 8,8 s; um sim/não de 200 caracteres responde "não" em
 12 s.
 
-**A janela no app (rodada 13).** A classe `cTSObjectDialog` não tem script
-próprio achado em `ui.package`; a janela do app usa o visual do jogo para
-caixas simples, o script `0x6CA51466` ("The Sims 2": moldura `0xA9500615`
-desenhada em nove partes, título `GenHeader` só quando o diálogo tem título,
-texto `GenSubHeader` quebrado, botões 108x33 `0xA96D0625` com 24 px entre
-dois e 12 entre três, altura 170 no original e mínima aqui por causa das
-bordas da moldura) e, para o tipo 3 (entrada de texto) e o 23 (nome do
-bebê), as caixas de nome do `0x2D91050A` (campo `0x14500157`, Aceitar de
-tique). Qual script o binário escolhe para cada tipo é **inferido**.
-Teclas (inferido, o binário não foi lido nisto): Return/Enter = botão 1,
-Esc = último botão no sim/não e no sim/não/cancelar (como o tempo esgotado),
-nada na mensagem e nas caixas de texto; máximo 18 caracteres (o `maxtext` do
-script). Os botões usam as strings do próprio diálogo (STR# 0x12D) e, sem
-elas, "Sim"/"Não"/"OK"/"Cancelar" do UIText.
+**A janela no app (rodada 13; refeita na rodada 14).** `app/dialog_window.*`
+desenha cada tipo pela classe do binário (tabela abaixo): o `cTSObjectDialog`
+como o `cTSWinPictureDialog::DoLayout` (medidas, moldura `0xA9500615`,
+botões sobre `0xA9500630`, fontes GenHeader/GenDialogBody/GenButton, o
+ícone composto em `0xE9000005`–`7`; a caixa de fechar usa a imagem do X dos
+telefones `0xAC76E000`, porque `0x11110002` não está no `ui.package`,
+inferido), o nome pelos painéis do `0x2D91050A` e os telefones pelos scripts
+`0x8C159243`/`44`/`42` com as listas pelas constantes `0xCCCC` (fonte
+PhoneBooksListBox, linha 20–21 px, texto escolhido verde; ícones de
+amigo/inimigo e paixão/amor do relacionamento, a coluna de cada um é
+inferida; o painel sem imagem sob a moldura pintado com a sua `fillcolor`,
+inferido). A primeira versão (rodada 13) usava o script `0x6CA51466`, uma
+escolha inferida que o binário desmentiu. Sem cabeça: `--dialog-demo
+0|0i|0c|1|2|3|5|6|7|23|23g|23t|23r[:título[:mensagem]]`, `--dialog-type`,
+`--dialog-click`; `s2pkg pie` lista a classe, as linhas e as caixas de nome
+dos diálogos especiais (`r14-telefone-*.jpg`, `r14-dialogo-*.jpg`).
 
 **Diálogos especiais (tipo ≥ 5) não têm tempo (rodada 11, binário).** O
 `TryDialog` trata à parte os tipos 8–10/0x1C (notificações), 0x16/0x19

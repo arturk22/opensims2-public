@@ -310,6 +310,14 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                     d.typeName.c_str(), d.me, machine.object(d.me) ? nameOf(*machine.object(d.me)).c_str() : "gone", d.title.c_str(), d.message.c_str());
         for (size_t b = 0; b < d.buttons.size(); ++b)
             std::printf("      [%zu] %s%s\n", b, d.buttons[b].c_str(), int(b) == d.answer ? "  <- answered" : "");
+        // The special dialogs' class, rows and names (vm/dialog.hpp).
+        if (d.cls.cls != vm::DialogClass::Object)
+            std::printf("      class %s (script 0x%08X)\n", d.cls.name, d.cls.script);
+        for (const auto& e : d.entries)
+            std::printf("      row %d %s%s%s\n", e.id, e.name.c_str(), e.detail.empty() ? "" : (" / " + e.detail).c_str(),
+                        std::find(d.selection.begin(), d.selection.end(), e.id) != d.selection.end() ? "  <- chosen" : "");
+        for (const auto& n : d.names)
+            std::printf("      name box: neighbor %d \"%s\"%s\n", n.neighbor, n.text.c_str(), n.female ? " (girl)" : "");
     };
     std::map<vm::ObjectId, std::string> lastAnim;
     std::map<vm::ObjectId, int16_t> lastAge;
