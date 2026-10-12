@@ -234,15 +234,17 @@ static void testFilters() {
     d.renderFloat(out.data(), 10);
     check(std::fabs(out[0] - 0.05f) < 0.005f, "duck scales the group (0.5 * 0.1)");
     check(d.groupActive(SoundGroup::Music) && !d.groupActive(SoundGroup::Vox), "groupActive");
-    SoundSystem::Dipping dip; // 0.1, 0.5 s down, 5 s up
+    SoundSystem::Dipping dip; // sfx 0.2, vox 0.3, music 0.1, 0.5 s down, 5 s up
     float duck = 1;
     for (int i = 0; i < 2; ++i)
-        duck = stepDuck(duck, true, dip, 0.25);
+        duck = stepDuck(duck, true, dip.music, dip, 0.25);
     check(std::fabs(duck - 0.1f) < 1e-4f, "music dips to musicdippingvolume in dippingstarttime");
-    duck = stepDuck(duck, false, dip, 2.5);
+    duck = stepDuck(duck, false, dip.music, dip, 2.5);
     check(duck > 0.5f && duck < 0.6f, "and comes back at half speed after 2.5 s of 5");
     for (int i = 0; i < 4; ++i)
-        duck = stepDuck(duck, false, dip, 1);
+        duck = stepDuck(duck, false, dip.music, dip, 1);
+    check(std::fabs(stepDuck(1, true, dip.vox, dip, 1) - 0.3f) < 1e-4f && dip.sfx == 0.2f,
+          "voices dip to voxdippingvolume, effects to sfxdippingvolume");
     check(duck == 1, "fully back after dippingstoptime");
     const auto a = parseStereoEvent("stereo_pop");
     check(a && a->station == "pop" && !a->wall && a->lopass == 0, "stereo_pop");

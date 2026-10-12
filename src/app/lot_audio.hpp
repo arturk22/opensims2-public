@@ -89,8 +89,11 @@ public:
     // Unchanged if it is already that one.
     void setMusic(std::string_view category);
     const std::string& music() const { return wanted_; }
+    // A cinematic plays (on at its start, off at its end): the effects,
+    // voices and music dip (SoundSystem::Dipping).
+    void setDipping(bool on) { dipped_ = on; }
     // The music's current dipping factor (1 = not dipped).
-    float musicDuck() const { return duck_; }
+    float musicDuck() const { return duck_[2]; }
     // Stops every state's music (back in the neighborhood).
     void stopAllMusic();
     std::string nowPlaying() const;
@@ -130,7 +133,8 @@ private:
     std::string wanted_;
     std::vector<std::string> musicLog_;
     bool held_ = false, hoodAmbience_ = false;
-    float duck_ = 1; // the music's dipping factor while voices speak (TrackLogic's musicdippingvolume)
+    bool dipped_ = false;
+    std::array<float, 3> duck_{1, 1, 1}; // the dipping factors of the effects, voices and music
     double last_ = -1;
     std::vector<int16_t> mix_;
     uint64_t mixFrames_ = 0, sceneBase_ = 0, written_ = 0;

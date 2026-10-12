@@ -1990,6 +1990,8 @@ void updateCinematic(os2::Renderer& renderer, double now) {
                 std::printf("opensims2: cinematic %s starts at %.2f s%s\n", gCinematic->camera().scene().name.c_str(), at,
                             gCinematicWholeHouse ? " (whole house)" : "");
                 forceCinematicState(renderer, gCinematicWholeHouse);
+                if (gGameAudio) // PlayCinematicScene's sound dipping (docs/audio.md)
+                    gGameAudio->setDipping(true);
             } else {
                 std::printf("opensims2: cinematic %s: its origin actor is not in the world\n",
                             gCinematic->camera().scene().name.c_str());
@@ -2006,6 +2008,8 @@ void updateCinematic(os2::Renderer& renderer, double now) {
             gCinematic->finish();
             gCinematic.reset();
             restoreCinematicState(renderer);
+            if (gGameAudio) // UpdateCinematicScene ends the dipping with the scene
+                gGameAudio->setDipping(false);
         } else {
             forceCinematicState(renderer, gCinematicWholeHouse);
             gCinematic->update(now);
@@ -2682,6 +2686,8 @@ void unloadScene() {
     gCinematic.reset(); // (the VM's request list stays counted: gCinematicSerialSeen)
     gCinematicStartAt.reset();
     gCinematicForced = {};
+    if (gGameAudio)
+        gGameAudio->setDipping(false);
     gSimAnimationAt.clear();
     gBornCharacters.clear();
     gSimsLookedAt.clear();

@@ -159,12 +159,15 @@ public:
     // sound manager's 2dMusicVolumeScalar (0.75; inferred that it means this).
     float music2dVolume() const { return musicVolume_ * music2dScalar_; }
     double musicFadeOut() const { return musicFadeOut_; }
-    // TrackLogic's dipping: while a voice plays the music drops to
-    // `music` of its volume, over `start` s, and comes back over `stop` s
-    // after the voice ends (musicdippingvolume 0.1, dippingstarttime 0.5,
-    // dippingstoptime 5; sfx 0.2 and vox 0.3 are not used here).
+    // TrackLogic's dipping (cTSAudioEventHandler::ReadTuningValues): while
+    // a cinematic plays (cTSSGSystem::PlayCinematicScene turns it on,
+    // UpdateCinematicScene off at the scene's end; docs/audio.md) the
+    // effects drop to `sfx`, the voices to `vox` and the music to `music` of
+    // their volume over `start` s, and come back over `stop` s
+    // (sfxdippingvolume 0.2, voxdippingvolume 0.3, musicdippingvolume 0.1,
+    // dippingstarttime 0.5, dippingstoptime 5).
     struct Dipping {
-        float music = 0.1f;
+        float sfx = 0.2f, vox = 0.3f, music = 0.1f;
         double start = 0.5, stop = 5;
     };
     const Dipping& dipping() const { return dipping_; }
@@ -208,9 +211,9 @@ private:
     float rightX_ = 1, rightY_ = 0;
 };
 
-// One step of the music dipping: `duck` (1 = none) falls to `d.music` over
-// `d.start` s while voices speak and rises back to 1 over `d.stop` s after.
-float stepDuck(float duck, bool speaking, const SoundSystem::Dipping& d, double dt);
+// One step of a group's dipping: `duck` (1 = none) falls to `low` over
+// `d.start` s while dipped and rises back to 1 over `d.stop` s after.
+float stepDuck(float duck, bool dipped, float low, const SoundSystem::Dipping& d, double dt);
 
 // A stereo event name (docs/audio.md "Rodada 11"): "stereo_<station>" and
 // the quality and commands the binary's cTSAudioMusicManager::

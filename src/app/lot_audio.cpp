@@ -273,10 +273,18 @@ void GameAudio::update(double seconds) {
             st.onLot = true, st.partitions.clear(), st.outsideness = 0, st.paused = true;
         hood_->update(st, dt);
     }
-    // Music dipping: while a voice speaks the music drops to musicdippingvolume
-    // over dippingstarttime and returns over dippingstoptime (5 s) after.
-    duck_ = stepDuck(duck_, mixer_.groupActive(SoundGroup::Vox), sound_->dipping(), dt);
-    mixer_.setGroupDuck(SoundGroup::Music, duck_);
+    // Dipping while a cinematic plays: effects, voices and music drop to
+    // their dipping volumes over dippingstarttime and come back over
+    // dippingstoptime (5 s) after the scene. The binary dips buses 0, 1 and
+    // 3/4 (the groups each bus is are inferred from the volumes); the
+    // ambience is left as it is (inferred).
+    const auto& dip = sound_->dipping();
+    const std::array<std::pair<SoundGroup, float>, 3> groups{
+        {{SoundGroup::Sfx, dip.sfx}, {SoundGroup::Vox, dip.vox}, {SoundGroup::Music, dip.music}}};
+    for (size_t i = 0; i < groups.size(); ++i) {
+        duck_[i] = stepDuck(duck_[i], dipped_, groups[i].second, dip, dt);
+        mixer_.setGroupDuck(groups[i].first, duck_[i]);
+    }
     sound_->update();
 }
 

@@ -198,6 +198,8 @@ SoundSystem::SoundSystem(const std::filesystem::path& resDir, AudioMixer& mixer,
         }
         if (props.count("musicdippingvolume")) {
             dipping_.music = numberOr(props, "musicdippingvolume", 0.1f);
+            dipping_.sfx = numberOr(props, "sfxdippingvolume", 0.2f);
+            dipping_.vox = numberOr(props, "voxdippingvolume", 0.3f);
             dipping_.start = numberOr(props, "dippingstarttime", 0.5f);
             dipping_.stop = numberOr(props, "dippingstoptime", 5);
         }
@@ -591,11 +593,11 @@ void AmbiencePlayer::update(const State& s, double dt) {
     }
 }
 
-float stepDuck(float duck, bool speaking, const SoundSystem::Dipping& d, double dt) {
-    const float low = std::clamp(d.music, 0.0f, 1.0f);
-    if (speaking && duck > low)
+float stepDuck(float duck, bool dipped, float low, const SoundSystem::Dipping& d, double dt) {
+    low = std::clamp(low, 0.0f, 1.0f);
+    if (dipped && duck > low)
         return d.start > 0 ? std::max(low, duck - float(dt / d.start) * (1 - low)) : low;
-    if (!speaking && duck < 1)
+    if (!dipped && duck < 1)
         return d.stop > 0 ? std::min(1.0f, duck + float(dt / d.stop) * (1 - low)) : 1;
     return duck;
 }
