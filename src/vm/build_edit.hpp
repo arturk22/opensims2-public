@@ -23,6 +23,15 @@
 
 namespace os2::vm {
 
+// The point of the lot's ground under a ray (the mouse): the first crossing
+// with the terrain of `level` (the VM's, 1 = the ground), or, at the ground,
+// with the bottom of a dug pool (the terrain is cut out over pool tiles and
+// the bottom, 3 under it, shows through the water: the plain terrain hit
+// landed about 2 tiles off what is seen). Marched and bisected: the old fixed
+// point iteration on the terrain height oscillated across a dip.
+std::optional<std::array<float, 2>> pickLotGround(const Lot& lot, int level, std::array<float, 3> eye,
+                                                  std::array<float, 3> dir);
+
 class BuildEditor {
 public:
     // `catalog` prices the patterns that floors give back when erased.
@@ -98,12 +107,16 @@ public:
     // Pool tool (deckfoundations.txt "pool 3"): a rectangle of ground tiles
     // (corners inclusive) dug into a pool: the lot gets its underground
     // level if it has none, the terrain round it levelled to the first
-    // corner (0x81), the pool's floor ("floor_poolRoundedLipBlue") one
+    // corner (0x0D), the pool's floor ("floor_poolRoundedLipBlue") one
     // story down, pool walls (style 29) round the edge there and a POOL
     // entry (the water 0.25 under the ground). §75 a tile. Only on exposed
-    // terrain of the ground (0x8A), not into another pool (0x86), water
-    // (0x1E) or objects (0x0C). Sims do not walk over it.
+    // terrain of the ground (0x5B), not into another pool (0x4F), water
+    // (0x20) or objects (0x0C). Sims do not walk over it.
     Result drawPool(int x0, int y0, int x1, int y1);
+    // The refusal code drawPool would give for the drag (0: it would dig),
+    // with the reason and the number of new pool tiles; no money check. Used
+    // by the cursor's preview (red where the drag would be refused).
+    int poolDigError(int x0, int y0, int x1, int y1, std::string* why = nullptr, int* tiles = nullptr) const;
     // Ctrl: the pool under a tile goes (int(75 x 0.8) back a tile); not
     // with a Sim in it (0x2D) or a ladder or diving board on it (0x2E).
     Result deletePool(int x, int y);

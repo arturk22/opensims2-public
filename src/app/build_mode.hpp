@@ -218,6 +218,7 @@ private:
     // A dormer's tile (cTSUIThumbnailFactoryDormer): the product's model,
     // its defaultRoofPattern ("dormerpreview-2wide").
     const RgbaImage* dormerThumbnail(const BuildRoofProduct& d);
+    std::string refusalText(const vm::BuildEditor::Result& r) const;
     std::optional<simd_float2> groundPoint(simd_float3 eye, simd_float3 dir) const;
     void applied(const vm::BuildEditor::Result& r);
     void say(const std::string& m);

@@ -1984,47 +1984,46 @@ void BuildEditor::poolWalls() {
             addWall(lot_, -1, s[0], s[1], s[2], s[3], Lot::Pool, {lip, lip});
 }
 
-BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
-    Result r;
-    auto fail = [&](int code, const std::string& why) {
-        r.error = code;
-        r.message = "cannot dig a pool: " + why;
-        return r;
+int BuildEditor::poolDigError(int x0, int y0, int x1, int y1, std::string* why, int* tiles) const {
+    auto fail = [&](int code, const std::string& text) {
+        if (why)
+            *why = text;
+        return code;
     };
     if (!lot_.hasLevel(0) || lot_.elevations.empty())
-        return fail(0x8A, "no terrain");
+        return fail(0x5B, "no terrain");
     const int W = int(lot_.width), H = int(lot_.height);
+    // A corner off the lot refuses the drag (the cursor's square goes red).
+    for (int x : {x0, x1})
+        for (int y : {y0, y1})
+            if (x < 0 || y < 0 || x >= W || y >= H)
+                return fail(0x02, "out of the lot");
     const int ax = std::max(0, std::min(x0, x1)), bx = std::min(W - 1, std::max(x0, x1));
     const int ay = std::max(0, std::min(y0, y1)), by = std::min(H - 1, std::max(y0, y1));
     // Tiles of a pool already there are skipped: a rectangle over or next to
     // a pool extends it (the deck tool's CanPlaceTile lets a pool tile go
     // beside a pool), which gives pools that are not rectangles; the pool
     // keeps the ground height it has (inferred).
-    std::optional<float> poolHeight;
-    for (int x = ax - 1; x <= bx + 1 && !poolHeight; ++x)
-        for (int y = ay - 1; y <= by + 1 && !poolHeight; ++y)
-            if (poolTile(x, y))
-                poolHeight = lot_.elevation(0, x, y);
-    std::vector<std::array<int, 2>> fresh;
+    int fresh = 0;
     for (int x = ax; x <= bx; ++x)
         for (int y = ay; y <= by; ++y) {
             if (poolTile(x, y))
                 continue;
             if (!editableTile(x, y))
-                return fail(0x45, "not editable at " + point(x, y));
-            fresh.push_back({x, y});
+                return fail(0x5A, "not editable at " + point(x, y));
+            ++fresh;
             if (foundationTile(x, y))
-                return fail(0x8A, "pools only go in the terrain");
+                return fail(0x5B, "pools only go in the terrain");
             for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
                 if (q)
-                    return fail(0x8A, "pools only go in the terrain");
+                    return fail(0x5B, "pools only go in the terrain");
             for (int cx = x; cx <= x + 1; ++cx)
                 for (int cy = y; cy <= y + 1; ++cy)
                     if (lot_.waterLevel(cx, cy) > lot_.elevation(0, cx, cy))
-                        return fail(0x1E, "water at " + point(x, y));
+                        return fail(0x20, "water at " + point(x, y));
             for (ObjectId id : vm_.objectsOnTile({x, y, 1}))
                 if (const Object* o = vm_.object(id); o && (o->person || !(o->data[objdata::PlacementFlags] & 0x200)))
-                    return fail(o->person ? 0x4B : 0x0C, "something is in the way at " + point(x, y));
+                    return fail(0x0C, "something is in the way at " + point(x, y));
         }
     for (const auto& w : lot_.walls) {
         if (w.a.level != 0)
@@ -2055,11 +2054,47 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
             const float bw = std::max(px1, float(rx1)) - std::min(p.x, float(rx0));
             const float bh = std::max(py1, float(ry1)) - std::min(p.y, float(ry0));
             if (bw * bh != rArea + pArea)
-                return fail(0x86, "the pool and the drag must make one rectangle");
+                return fail(0x4F, "the pool and the drag must make one rectangle");
         }
         if (total > 900.0f)
-            return fail(0x86, "a pool of more than 900 tiles");
+            return fail(0x4F, "a pool of more than 900 tiles");
     }
+    if (tiles)
+        *tiles = fresh;
+    return 0;
+}
+
+BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
+    Result r;
+    auto fail = [&](int code, const std::string& why) {
+        r.error = code;
+        r.message = "cannot dig a pool: " + why;
+        return r;
+    };
+    {
+        std::string why;
+        int n = 0;
+        if (const int e = poolDigError(x0, y0, x1, y1, &why, &n))
+            return fail(e, why);
+        if (n == 0) {
+            r.ok = true;
+            r.message = "the pool is there already";
+            return r;
+        }
+    }
+    const int W = int(lot_.width), H = int(lot_.height);
+    const int ax = std::min(x0, x1), bx = std::max(x0, x1), ay = std::min(y0, y1), by = std::max(y0, y1);
+    const int rx0 = ax, ry0 = ay, rx1 = bx + 1, ry1 = by + 1;
+    std::optional<float> poolHeight;
+    for (int x = ax - 1; x <= bx + 1 && !poolHeight; ++x)
+        for (int y = ay - 1; y <= by + 1 && !poolHeight; ++y)
+            if (poolTile(x, y))
+                poolHeight = lot_.elevation(0, x, y);
+    std::vector<std::array<int, 2>> fresh;
+    for (int x = ax; x <= bx; ++x)
+        for (int y = ay; y <= by; ++y)
+            if (!poolTile(x, y))
+                fresh.push_back({x, y});
     const int tiles = int(fresh.size());
     if (!tiles) {
         r.ok = true;
@@ -2085,7 +2120,7 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
             lips.push_back({int(std::lround(w.a.x)), int(std::lround(w.a.y)), int(std::lround(w.b.x)), int(std::lround(w.b.y))});
     if (!levelPoints(points, height, lips)) {
         restore(before);
-        return fail(0x81, "the ground cannot be levelled");
+        return fail(0x0D, "the ground cannot be levelled");
     }
     addLowerLevel(lot_);
     const size_t plane = size_t(W + 1) * size_t(H + 1);
@@ -2144,9 +2179,9 @@ BuildEditor::Result BuildEditor::erasePool(int x0, int y0, int x1, int y1) {
             continue;
         any = true;
         if (ix1 - ix0 != px1 - px0 && iy1 - iy0 != py1 - py0)
-            return fail(0x87, "the drag must cross the pool through");
+            return fail(0x60, "the drag must cross the pool through");
         if (std::abs(ix0 - px0) == 1 || std::abs(ix1 - px1) == 1 || std::abs(iy0 - py0) == 1 || std::abs(iy1 - py1) == 1)
-            return fail(0x87, "it would leave a strip of the pool one tile wide");
+            return fail(0x60, "it would leave a strip of the pool one tile wide");
     }
     if (!any) {
         r.ok = true;
@@ -3424,6 +3459,60 @@ int BuildEditor::priceOf(const std::string& lotName, bool floor) const {
         } catch (const std::exception&) {
         }
     return 0;
+}
+
+} // namespace os2::vm
+
+namespace os2::vm {
+
+std::optional<std::array<float, 2>> pickLotGround(const Lot& lot, int level, std::array<float, 3> eye,
+                                                  std::array<float, 3> dir) {
+    if (!lot.hasLevel(0) || std::fabs(dir[2]) < 1e-5f)
+        return std::nullopt;
+    const float W = float(lot.width), H = float(lot.height);
+    const int l = std::clamp(level - 1, lot.minLevel, lot.minLevel + lot.levelCount - 1);
+    auto terrain = [&](float x, float y) { return lot.elevationAt(l, std::clamp(x, 0.0f, W), std::clamp(y, 0.0f, H)); };
+    auto surface = [&](float x, float y) {
+        float z = terrain(x, y);
+        if (level == 1 && lot.hasLevel(-1)) {
+            const int tx = int(std::floor(x)), ty = int(std::floor(y));
+            for (const auto& p : lot.pools)
+                if (p.level == 0 && tx >= int(std::lround(p.x)) && tx < int(std::lround(p.x)) + int(p.width) &&
+                    ty >= int(std::lround(p.y)) && ty < int(std::lround(p.y)) + int(p.height))
+                    return lot.elevationAt(-1, std::clamp(x, 0.0f, W), std::clamp(y, 0.0f, H));
+        }
+        return z;
+    };
+    float zHi = -1e9f, zLo = 1e9f;
+    for (float f : lot.elevations)
+        zHi = std::max(zHi, f), zLo = std::min(zLo, f);
+    if (zHi < zLo)
+        zHi = zLo = 0;
+    const float tA = std::max(0.0f, (zHi + 0.5f - eye[2]) / dir[2]), tB = (zLo - 0.5f - eye[2]) / dir[2];
+    if (tB <= 0 || !(tB > tA)) {
+        // Level ground, or a ray that never goes down: the plain plane hit.
+        const float t = (terrain(W / 2, H / 2) - eye[2]) / dir[2];
+        if (t <= 0)
+            return std::nullopt;
+        return std::array<float, 2>{eye[0] + dir[0] * t, eye[1] + dir[1] * t};
+    }
+    auto above = [&](float t) { return eye[2] + dir[2] * t > surface(eye[0] + dir[0] * t, eye[1] + dir[1] * t); };
+    constexpr int kSteps = 1024;
+    float lo = tA;
+    for (int i = 1; i <= kSteps; ++i) {
+        const float t = tA + (tB - tA) * float(i) / kSteps;
+        if (above(t)) {
+            lo = t;
+            continue;
+        }
+        float hi = t;
+        for (int k = 0; k < 24; ++k) {
+            const float m = (lo + hi) / 2;
+            (above(m) ? lo : hi) = m;
+        }
+        return std::array<float, 2>{eye[0] + dir[0] * hi, eye[1] + dir[1] * hi};
+    }
+    return std::nullopt;
 }
 
 } // namespace os2::vm

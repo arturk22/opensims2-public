@@ -562,13 +562,41 @@ bool BuildMode::design(vm::ObjectId id, simd_float2 at) {
     return design_->open(id, at, entry ? entry->name : o->definition->fileName);
 }
 
+// The on-screen text of a refusal that has no text of its own in the game's
+// table (the editor's English reasons stay in the log): the game's strings
+// where one fits (UIText STR# 0x89), else a short PT-BR phrase (inferred).
+std::string BuildMode::refusalText(const vm::BuildEditor::Result& r) const {
+    const StringTable* t = res_->table(0x7FA7DC7C, 0x89);
+    auto game = [&](size_t i) { return t ? t->get(i) : std::string(); };
+    auto has = [&](const char* s) { return r.message.find(s) != std::string::npos; };
+    std::string g;
+    if (has("not enough money"))
+        g = game(20); // "Dinheiro Insuficiente"
+    else if (has("lower terrain further"))
+        g = game(56);
+    else if (has("raise terrain further"))
+        g = game(57);
+    else if (has("diagonal") || has("45 degrees"))
+        g = game(46);
+    else if (has("only exposed terrain"))
+        g = game(88);
+    else if (has("a Sim is in") || has("Sim is in"))
+        g = game(43);
+    return g.empty() ? "Não é possível fazer isso aqui" : g;
+}
+
 void BuildMode::applied(const vm::BuildEditor::Result& r) {
     // A refusal shows the game's text for its code (UIText STR# 0x89).
     std::string text = r.message;
-    if (!r.ok && r.error >= 2)
-        if (const StringTable* t = res_->table(0x7FA7DC7C, 0x89))
-            if (std::string g = t->get(size_t(vm::placementerror::textIndex(r.error))); !g.empty())
-                text = g + " (" + r.message + ")";
+    if (!r.ok) {
+        text.clear();
+        if (r.error >= 2)
+            if (const StringTable* t = res_->table(0x7FA7DC7C, 0x89))
+                text = t->get(size_t(vm::placementerror::textIndex(r.error)));
+        if (text.empty())
+            text = refusalText(r);
+        text += " (" + r.message + ")"; // the reason, for the log (the tooltip cuts it)
+    }
     say((r.ok ? "" : "cannot: ") + text + "; funds " + money(vm::funds(vm_)));
     syncHistory();
     if (r.ok && r.changed)
@@ -578,18 +606,12 @@ void BuildMode::applied(const vm::BuildEditor::Result& r) {
 // --- The lot -------------------------------------------------------------------
 
 std::optional<simd_float2> BuildMode::groundPoint(simd_float3 eye, simd_float3 dir) const {
-    if (!vm_.world || std::fabs(dir.z) < 1e-5f)
+    if (!vm_.world)
         return std::nullopt;
-    float z = sim_.floorHeight(level_, float(vm_.world->width()) / 2, float(vm_.world->height()) / 2);
-    simd_float3 hit{};
-    for (int i = 0; i < 3; ++i) {
-        const float t = (z - eye.z) / dir.z;
-        if (t <= 0)
-            return std::nullopt;
-        hit = eye + dir * t;
-        z = sim_.floorHeight(level_, hit.x, hit.y);
-    }
-    return simd_make_float2(hit.x, hit.y);
+    const auto p = vm::pickLotGround(lot_, level_, {eye.x, eye.y, eye.z}, {dir.x, dir.y, dir.z});
+    if (!p)
+        return std::nullopt;
+    return simd_make_float2((*p)[0], (*p)[1]);
 }
 
 std::optional<std::pair<std::array<int, 4>, int>> BuildMode::faceAt(simd_float2 p) const {
@@ -961,9 +983,11 @@ void BuildMode::update() {
                 sound("ui_build_deck_section");
             if (dragFrom_)
                 dragSections_ = tiles;
+            // The pool tool paints the squares red where the dig would be refused.
+            const bool digOk = tool_ != Tool::Pool || control_ || editor_->poolDigError(x0, y0, x1, y1) == 0;
             for (int x = x0; x <= x1 && used < 400; ++x)
                 for (int y = y0; y <= y1 && used < 400; ++y)
-                    put(!control_, placeQuad(float(x) + 0.04f, float(y) + 0.04f, z(float(x) + 0.5f, float(y) + 0.5f), 0.92f,
+                    put(!control_ && digOk, placeQuad(float(x) + 0.04f, float(y) + 0.04f, z(float(x) + 0.5f, float(y) + 0.5f), 0.92f,
                                              0.92f, 0, false));
         } else if (tool_ == Tool::Wallpaper) {
             if (auto f = faceAt(p)) {

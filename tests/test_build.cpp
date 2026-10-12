@@ -554,9 +554,9 @@ static void testPool() {
     // it without making one rectangle with it, is refused; one along a
     // whole side extends it (a POOL entry of its own); 900 tiles at most.
     r = ed.drawPool(5, 4, 6, 6);
-    check(!r.ok && r.error == 0x86, "a drag over a pool's corner is refused (0x86)");
+    check(!r.ok && r.error == 0x4F, "a drag over a pool's corner is refused (0x4F)");
     r = ed.drawPool(6, 4, 7, 6);
-    check(!r.ok && r.error == 0x86, "a drag beside the pool that would make an L is refused (0x86)");
+    check(!r.ok && r.error == 0x4F, "a drag beside the pool that would make an L is refused (0x4F)");
     r = ed.drawPool(6, 3, 8, 4);
     check(r.ok && r.changed == 6 && r.cost == 6 * kPoolTilePrice && lot.pools.size() == 2,
           "a drag along the pool's whole side extends it, a POOL entry of its own");
@@ -564,11 +564,29 @@ static void testPool() {
     for (const auto& w : lot.walls)
         walls2 += w.type == Lot::Pool && w.a.level == -1;
     check(walls2 == 16 && vm.world->pool({8, 4, 1}), "pool walls round the whole rectangle");
+    // The cursor on a dug pool: the ray lands on the bottom the player sees
+    // (3 under the lawn), not the lawn tile 2 tiles behind; off the pool it
+    // is the plain ground. A pool drag off the lot, over the road or onto an
+    // object is refused with the game's code, which the preview paints red.
+    {
+        const std::array<float, 3> dir{0.5f, 0.0f, -0.866f}; // 60 degrees down, along x
+        const float bx = 6.5f, by = 3.5f, bz = -3.0f;          // a point of the pool's bottom
+        const float tt = 20.0f;
+        const auto hit = pickLotGround(lot, 1, {bx - dir[0] * tt, by - dir[1] * tt, bz - dir[2] * tt}, dir);
+        check(hit && std::fabs((*hit)[0] - bx) < 0.05f && std::fabs((*hit)[1] - by) < 0.05f,
+              "a click inside a dug pool picks the tile on its bottom");
+        const float lz = 0.0f, lx = 10.5f, ly = 8.5f;
+        const auto lawn = pickLotGround(lot, 1, {lx - dir[0] * tt, ly - dir[1] * tt, lz - dir[2] * tt}, dir);
+        check(lawn && std::fabs((*lawn)[0] - lx) < 0.05f && std::fabs((*lawn)[1] - ly) < 0.05f,
+              "off the pool it is the lawn");
+    }
+    check(ed.poolDigError(-1, 3, 2, 4) == 0x02 && ed.poolDigError(3, 3, 12, 4) == 0x02, "a pool drag off the lot is refused (0x02)");
+    check(ed.poolDigError(10, 6, 11, 7) == 0 && ed.poolDigError(5, 4, 6, 5) == 0x4F, "the preview's check agrees with drawPool");
     // Ctrl-drag: IsQuadLegalForPoolErase / QuadListOnPoolErase.
     r = ed.erasePool(4, 3, 4, 3);
-    check(!r.ok && r.error == 0x87, "an erase must cross a pool through (0x87)");
+    check(!r.ok && r.error == 0x60, "an erase must cross a pool through (0x60)");
     r = ed.erasePool(4, 3, 4, 4);
-    check(!r.ok && r.error == 0x87, "an erase may not leave a strip one tile wide (0x87)");
+    check(!r.ok && r.error == 0x60, "an erase may not leave a strip one tile wide (0x60)");
     r = ed.erasePool(8, 3, 8, 4);
     check(r.ok && r.changed == 2 && !vm.world->pool({8, 4, 1}) && lot.pools.size() == 2, "erasing the pool's end");
     r = ed.deletePool(4, 4);
@@ -607,7 +625,7 @@ static void testPool() {
     r = ed2.drawPool(1, 1, 30, 30);
     check(r.ok, "a pool of 900 tiles");
     r = ed2.drawPool(31, 1, 31, 30);
-    check(!r.ok && r.error == 0x86, "no pool over 900 tiles (0x86)");
+    check(!r.ok && r.error == 0x4F, "no pool over 900 tiles (0x4F)");
 }
 
 // Modular stairs (§7.12): how many steps a flight gets, and the refusals.
