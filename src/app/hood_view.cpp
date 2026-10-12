@@ -397,39 +397,30 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         away.columns[0].x = away.columns[1].y = 0;
         return renderer.addInstance(squareModel(material, colour, alpha), away);
     };
-    // "Ver Amigos": the lots' DefaultLotHighlight (as the hover highlight;
-    // the material's look is inferred) and the unit RelationshipArchGreen:
-    // a flat ribbon of width 1 over x in [0, 1], z = x (1 - x) (45 degrees at
-    // the ends), placed between two lots by its transform (inferred shape).
-    friendModels_[0] = squareModel("DefaultLotHighlight", "1,1,1,1", "0.3");
+    // "Ver Amigos": the lots' DefaultLotHighlight (Materials.package's
+    // neighborhood script: NHoodTerrainHighlightMaterial, the texture
+    // "lotselection-good" times (1, 1, 1, 0.25), unlit, blended; laid flat
+    // over the lot here, its texture once across the lot: inferred). The
+    // arches are built per lot pair in showFriends.
     {
         ObjectModel m;
-        m.name = "RelationshipArchGreen";
+        m.name = "DefaultLotHighlight";
         ObjectModel::Part part;
-        part.node = part.shape = "arch";
-        part.material = "RelationshipArchGreen";
-        constexpr int kSegments = 24;
-        for (int i = 0; i <= kSegments; ++i) {
-            const float x = float(i) / kSegments, z = x * (1 - x);
-            part.mesh.positions.push_back({x, -0.5f, z});
-            part.mesh.positions.push_back({x, 0.5f, z});
-            part.mesh.normals.push_back({0, 0, 1});
-            part.mesh.normals.push_back({0, 0, 1});
-            part.mesh.uvs.push_back({x, 0});
-            part.mesh.uvs.push_back({x, 1});
-            if (i < kSegments) {
-                const uint32_t a = uint32_t(2 * i);
-                part.mesh.triangles.insert(part.mesh.triangles.end(), {a, a + 1, a + 3, a, a + 3, a + 2});
-            }
-        }
+        part.node = part.shape = "highlight";
+        part.material = "DefaultLotHighlight";
+        part.mesh.positions = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
+        part.mesh.normals.assign(4, {0, 0, 1});
+        part.mesh.uvs = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        part.mesh.triangles = {0, 1, 2, 0, 2, 3};
         m.parts.push_back(part);
         MaterialDefinition mat;
         mat.materialType = "StandardMaterial";
-        mat.properties = {{"stdMatDiffCoef", "0.25,0.95,0.3,1"}, {"stdMatUntexturedDiffAlpha", "0.85"},
-                          {"stdMatAlphaBlendMode", "blend"},    {"stdMatLightingEnabled", "false"},
-                          {"stdMatCullMode", "none"}};
+        mat.properties = {{"stdMatBaseTextureEnabled", "true"}, {"stdMatBaseTextureName", "lotselection-good"},
+                          {"stdMatDiffCoef", "1,1,1,1"},          {"stdMatAlphaMultiplier", "0.25"},
+                          {"stdMatAlphaBlendMode", "blend"},      {"stdMatLightingEnabled", "false"},
+                          {"stdMatCullMode", "none"},             {"stdMatLayer", "-1"}};
         m.materials[part.material] = mat;
-        friendModels_[1] = renderer.addObject(m, index);
+        friendModels_[0] = renderer.addObject(m, index);
     }
     plopOk_ = square("nhood-lot-plop-ok", "0.35,1,0.35,1", "0.45");
     plopBad_ = square("nhood-lot-plop-bad", "1,0.3,0.25,1", "0.45");
@@ -633,7 +624,7 @@ void HoodView::showFriends(const HoodLot* from, const std::vector<const HoodLot*
     while (friendBoxes_.size() < lots.size())
         friendBoxes_.push_back(renderer_->addInstance(friendModels_[0], away));
     while (friendArches_.size() < lots.size())
-        friendArches_.push_back(renderer_->addInstance(friendModels_[1], away));
+        friendArches_.push_back(renderer_->addInstance(friendModels_[0], away)); // its arch model comes below
     // A lot's middle: its rectangle's (cTSLotInfo vtable 0x30), the terrain
     // there less 2 (FLOAT_0274b484).
     auto middle = [&](const HoodLot& l) {
@@ -655,19 +646,32 @@ void HoodView::showFriends(const HoodLot* from, const std::vector<const HoodLot*
         if (!from)
             continue;
         const simd_float3 a = middle(*from), b = middle(lot);
-        const simd_float3 d = b - a;
         std::printf("opensims2: relationship arch from lot %u (%.0f, %.0f, %.1f) to lot %u (%.0f, %.0f, %.1f)\n", from->id,
                     a.x, a.y, a.z, lot.id, b.x, b.y, b.z);
-        const float run = simd_length(simd_make_float2(d.x, d.y));
-        if (run < 1)
-            continue;
-        const simd_float3 side = simd_make_float3(-d.y / run, d.x / run, 0); // width 1
-        simd_float4x4 t;
-        t.columns[0] = simd_make_float4(d, 0);                 // along, with the climb
-        t.columns[1] = simd_make_float4(side, 0);
-        t.columns[2] = simd_make_float4(0, 0, run, 0);         // z = x (1 - x) of the run: 45 degrees
-        t.columns[3] = simd_make_float4(a, 1);
-        renderer_->setInstanceTransform(friendArches_[i], t);
+        // c3DUIManager::AddArch(from, to, "RelationshipArchGreen", 1.0, 8,
+        // 32, 45 degrees): a tube round a Bezier (hood::relationshipArchMesh)
+        // in the material of the neighborhood script: StandardMaterial,
+        // diffuse (0.3, 1, 0.3), specular (1, 1, 1) at power 20, alpha 0.6.
+        ObjectModel arch;
+        arch.name = "RelationshipArchGreen";
+        ObjectModel::Part part;
+        part.node = part.shape = "arch";
+        part.material = "RelationshipArchGreen";
+        part.mesh = hood::relationshipArchMesh({a.x, a.y, a.z}, {b.x, b.y, b.z});
+        arch.parts.push_back(part);
+        MaterialDefinition mat;
+        mat.materialType = "StandardMaterial";
+        mat.properties = {{"stdMatDiffCoef", "0.3,1,0.3"},     {"stdMatSpecCoef", "1,1,1"},
+                          {"stdMatSpecPower", "20"},           {"stdMatAlphaMultiplier", "0.6"},
+                          {"stdMatAlphaBlendMode", "blend"}};
+        arch.materials[part.material] = mat;
+        if (i < friendArchModels_.size()) {
+            renderer_->replaceObject(friendArchModels_[i], arch, *index_);
+        } else {
+            friendArchModels_.push_back(renderer_->addObject(arch, *index_));
+            renderer_->setInstanceModel(friendArches_[i], friendArchModels_[i]);
+        }
+        renderer_->setInstanceTransform(friendArches_[i], matrix_identity_float4x4);
     }
 }
 

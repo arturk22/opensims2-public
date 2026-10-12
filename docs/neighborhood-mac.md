@@ -1259,3 +1259,41 @@ O que o §15 leu, agora no opensims2, mais o que esta frente leu no binário
   falar agora?" do telefone, `Answer - Call Not for Answering Sim`, título
   0). Agora, sem título, a caixa não tem barra de título (como o FreeSO).
   Inferido: a janela do jogo (`cTSObjectDialog`) não foi decodificada.
+
+
+## 17. Rodada 14 (construção 6): o arco e o realce de "Ver Amigos", a sombra dos imposters, as ruas, as cabeças
+
+### 17.1 O arco e o realce (dados + binário)
+
+Os dois materiais estão no script de material do bairro
+(`Materials.package`, `0xCD7FE87A-1C0532FA-26B3DB7C-FF3A262A`):
+
+- `RelationshipArchGreen`: `StandardMaterial`, `stdMatDiffCoef (0.3, 1, 0.3)`,
+  `stdMatSpecCoef (1, 1, 1)`, `stdMatSpecPower 20`, `stdMatAlphaMultiplier 0.6`,
+  `stdMatAlphaBlendMode blend` (iluminado, sem textura);
+- `DefaultLotHighlight`: `NHoodTerrainHighlightMaterial` com
+  `highlightTexture "lotselection-good"` e `highlightAlpha 0.25` (a textura
+  vezes `colorScalar (1, 1, 1, alpha)`, sem luz, misturada, endereçamento
+  `tile`).
+
+A forma vem do binário: o desenhador é o `nTSSG::c3DUIManager` e o slot
+`0x1c` é **`AddArch(de, para, material, float, ulong, ulong, float)`** (BV
+`0x6a9818`; o `baserom.sym` dá o nome), chamado com `1.0`, `8`, `32` e
+`45.0`. Ele guarda um `cGeneralizedCylinderData` (0x30 bytes: de, para,
+material, raio `+0x20` = 1,0, as duas contagens, ângulo `+0x2c` = 45); o
+`End` (BV `0x6aa1f8`) monta para cada um os pontos de controle
+(`FUN_006a8284`: P1 = de + 0,25·d e P2 = de + 0,75·d na horizontal, os dois
+a z = max(z de, z para) + tan(ângulo) × 0,25 × |d|) e o `FUN_006a9970` faz
+um **tubo** de raio 1 em volta da curva de Bézier cúbica (coeficientes 3, 6,
+−3): anéis ao longo da curva, cada um com `n` vértices em volta (ângulo
+2π/(n − 1)), o referencial do anel pelos produtos vetoriais da tangente;
+cada material num subconjunto "subset%d". Qual contagem é ao longo e qual é
+em volta: inferido (32 ao longo, 8 em volta).
+
+No código (`hood::relationshipArchMesh`, `HoodView::showFriends`): o tubo
+entre os meios dos lotes (2 abaixo do chão, §15.3) num modelo por arco com o
+material do script; o realce com a textura `lotselection-good` vezes 0,25,
+sem luz, num quadrado sobre o lote (a textura uma vez no lote: inferido; o
+jogo projeta no terreno). Antes: uma fita z = x(1 − x) e um branco a 0,3
+(inferidos). `test_hood_terrain`; `docs/screenshots/r14-bairro-ver-amigos-tubos.jpg`.
+

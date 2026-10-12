@@ -115,6 +115,16 @@ void imposterMaterials(ObjectModel& model, const std::string& scope, std::array<
 // ground (the light map's (0, 0, 1) normal, unshadowed), per channel and at
 // most 1: a lot in a hill's height-map shadow comes out darker, like the
 // ground around it (inferred: the light's colour is not decoded).
+// The "Ver Amigos" arch (nTSSG::c3DUIManager::AddArch, BV 0x6a9818, built
+// by End's FUN_006a9970 and the control points of FUN_006a8284): a tube of
+// `radius` round a cubic Bezier from `from` to `to`, the inner control
+// points a quarter and three quarters of the way along (horizontally), both
+// at max(from z, to z) + tan(angle) x 0.25 x the horizontal distance;
+// `along` rings of `around` vertices (the last coinciding with the first).
+// ShowFamilyRelationshipsWeb asks for radius 1.0, 45 degrees, 8 and 32
+// (which count is which is inferred).
+MeshGroup relationshipArchMesh(std::array<float, 3> from, std::array<float, 3> to, float radius = 1.0f,
+                               float angleDegrees = 45.0f, int along = 32, int around = 8);
 std::array<float, 3> terrainShade(const Terrain& t, const RgbaImage& lightMap, const RgbaImage& lookup, float x, float y);
 
 } // namespace hood

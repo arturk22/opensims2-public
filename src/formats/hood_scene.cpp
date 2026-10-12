@@ -614,4 +614,58 @@ void imposterMaterials(ObjectModel& model, const std::string& scope, std::array<
         }
 }
 
+MeshGroup relationshipArchMesh(std::array<float, 3> from, std::array<float, 3> to, float radius, float angleDegrees,
+                               int along, int around) {
+    MeshGroup m;
+    m.name = "arch";
+    along = std::max(along, 2), around = std::max(around, 3);
+    const float dx = to[0] - from[0], dy = to[1] - from[1];
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    const float top = std::max(from[2], to[2]) + std::tan(angleDegrees * float(M_PI) / 180.0f) * dist * 0.25f;
+    const std::array<std::array<float, 3>, 4> p{{from,
+                                                 {from[0] + dx * 0.25f, from[1] + dy * 0.25f, top},
+                                                 {from[0] + dx * 0.75f, from[1] + dy * 0.75f, top},
+                                                 to}};
+    auto bez = [&](float t, size_t k) {
+        const float u = 1 - t;
+        return u * u * u * p[0][k] + 3 * u * u * t * p[1][k] + 3 * u * t * t * p[2][k] + t * t * t * p[3][k];
+    };
+    auto tangent = [&](float t, size_t k) {
+        const float u = 1 - t;
+        return 3 * u * u * (p[1][k] - p[0][k]) + 6 * u * t * (p[2][k] - p[1][k]) + 3 * t * t * (p[3][k] - p[2][k]);
+    };
+    auto norm = [](std::array<float, 3> v) {
+        const float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        return l > 1e-6f ? std::array<float, 3>{v[0] / l, v[1] / l, v[2] / l} : std::array<float, 3>{0, 0, 1};
+    };
+    auto cross = [](std::array<float, 3> a, std::array<float, 3> b) {
+        return std::array<float, 3>{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    };
+    for (int i = 0; i < along; ++i) {
+        const float t = float(i) / float(along - 1);
+        const std::array<float, 3> c{bez(t, 0), bez(t, 1), bez(t, 2)};
+        const auto dir = norm({tangent(t, 0), tangent(t, 1), tangent(t, 2)});
+        // The ring's frame: across the arch (horizontal) and the tangent's
+        // normal in the arch's plane.
+        const auto side = norm(cross(dir, {0, 0, 1}));
+        const auto up = norm(cross(side, dir));
+        for (int j = 0; j < around; ++j) {
+            const float a = 2.0f * float(M_PI) * float(j) / float(around - 1);
+            const std::array<float, 3> n{std::cos(a) * side[0] + std::sin(a) * up[0],
+                                         std::cos(a) * side[1] + std::sin(a) * up[1],
+                                         std::cos(a) * side[2] + std::sin(a) * up[2]};
+            m.positions.push_back({c[0] + n[0] * radius, c[1] + n[1] * radius, c[2] + n[2] * radius});
+            m.normals.push_back(n);
+            m.uvs.push_back({t, float(j) / float(around - 1)});
+        }
+    }
+    for (int i = 0; i + 1 < along; ++i)
+        for (int j = 0; j + 1 < around; ++j) {
+            const uint32_t a = uint32_t(i * around + j), b = a + 1;
+            const uint32_t c = a + uint32_t(around), d = b + uint32_t(around);
+            m.triangles.insert(m.triangles.end(), {a, c, d, a, d, b});
+        }
+    return m;
+}
+
 } // namespace os2::hood

@@ -98,8 +98,9 @@ public:
     const hood::PlacementWorld& placementWorld() const { return place_; }
     // "Ver Amigos" (cTSNeighborhood::ShowFamilyRelationshipsWeb, BV 0x4da814):
     // each lot gets the "DefaultLotHighlight" and a green arch
-    // ("RelationshipArchGreen": width 1, 45 degrees, its ends 2 under the
-    // ground at the lots' middles) from the family's lot `from`; none hides them.
+    // ("RelationshipArchGreen": a tube of radius 1 round a Bezier that
+    // rises at 45 degrees, its ends 2 under the ground at the lots'
+    // middles) from the family's lot `from`; none hides them.
     void showFriends(const HoodLot* from, const std::vector<const HoodLot*>& lots);
     void showPlacement(const hood::TileRect* rect, bool ok, float height);
 
@@ -160,6 +161,7 @@ private:
     std::vector<int> floraInst_, propInst_; // each occupant's instance (-1: none)
     int friendModels_[2] = {-1, -1}; // the lot highlight, the unit arch
     std::vector<int> friendBoxes_, friendArches_;
+    std::vector<int> friendArchModels_; // one model per arch shown (built for its two lots)
     int highlight_ = -1; // renderer instance
     const HoodLot* highlighted_ = nullptr;
 };

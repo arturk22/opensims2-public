@@ -4,6 +4,7 @@
 #include "formats/hood_terrain.hpp"
 
 #include <cmath>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -109,7 +110,24 @@ static void testSettings() {
     check(std::abs(pw.weights[0][4] - 1) < 1e-5f, "normalised weight");
 }
 
+// The "Ver Amigos" arch: a tube round a Bezier from one lot to the other,
+// rising at 45 degrees (c3DUIManager::AddArch).
+static void testRelationshipArch() {
+    const auto m = os2::hood::relationshipArchMesh({0, 0, 10}, {100, 0, 10});
+    check(m.positions.size() == 32 * 8 && m.triangles.size() == 31 * 7 * 6, "32 rings of 8, closed round");
+    float top = -1e9f, first = 0, last = 0;
+    for (size_t i = 0; i < 8; ++i)
+        first += m.positions[i][0] / 8, last += m.positions[m.positions.size() - 1 - i][0] / 8;
+    for (const auto& p : m.positions)
+        top = std::max(top, p[2]);
+    // Control points at 10 + tan(45) x 0.25 x 100 = 35: the curve's middle at
+    // 10 + 0.75 x 25 = 28.75, the tube's top one radius above.
+    check(std::fabs(top - 29.75f) < 0.1f, "the arch's top: 3/4 of the control height, plus the radius");
+    check(std::fabs(first) < 0.2f && std::fabs(last - 100) < 0.2f, "it runs from one end to the other");
+}
+
 int main() {
+    testRelationshipArch();
     testTerrain();
     testOccupants();
     testSettings();
