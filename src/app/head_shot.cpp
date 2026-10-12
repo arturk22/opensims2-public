@@ -1,5 +1,6 @@
 #include "app/head_shot.hpp"
 
+#include "formats/model.hpp"
 #include "formats/sim_actor.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lighting_config.hpp"
@@ -263,6 +264,47 @@ RgbaImage renderModelThumbnail(Renderer& renderer, int model, const std::array<f
     away.columns[0].x = away.columns[1].y = away.columns[2].z = 0;
     renderer.setInstanceTransform(inst, away); // hidden again (instances cannot be removed)
     return out;
+}
+
+std::optional<RgbaImage> renderPartsThumbnail(Renderer& renderer, ResourceIndex& index,
+                                              const std::vector<ThumbnailPart>& parts, uint32_t size) {
+    ObjectModel all;
+    std::array<float, 6> box{INFINITY, INFINITY, INFINITY, -INFINITY, -INFINITY, -INFINITY};
+    for (const ThumbnailPart& tp : parts) {
+        ObjectModel m;
+        try {
+            m = loadObjectModel(index, tp.cres);
+        } catch (const std::exception&) {
+            continue;
+        }
+        const int maskBase = int(all.masks.size());
+        all.masks.insert(all.masks.end(), m.masks.begin(), m.masks.end());
+        all.materials.insert(m.materials.begin(), m.materials.end());
+        for (ObjectModel::Part part : m.parts) {
+            if (!part.mesh.bones.empty())
+                continue; // rigid models only
+            for (auto& v : part.mesh.positions) {
+                for (int k = 0; k < 3; ++k)
+                    v[size_t(k)] += tp.offset[size_t(k)];
+                box = {std::min(box[0], v[0]), std::min(box[1], v[1]), std::min(box[2], v[2]),
+                       std::max(box[3], v[0]), std::max(box[4], v[1]), std::max(box[5], v[2])};
+            }
+            part.bone = -1;
+            if (part.mask >= 0)
+                part.mask += maskBase;
+            all.parts.push_back(std::move(part));
+        }
+    }
+    if (all.parts.empty() || !std::isfinite(box[0]))
+        return std::nullopt;
+    // Framed on the top of a tall model (the modular steps hang a story of
+    // stringer under them): no more than 1.2 times its width high (inferred;
+    // the factories use a fixed camera, not read).
+    const float wide = std::max(box[3] - box[0], box[4] - box[1]);
+    box[2] = std::max(box[2], box[5] - 1.2f * wide);
+    all.name = parts.front().cres + "_thumbnail";
+    const int model = renderer.addObject(all, index);
+    return renderModelThumbnail(renderer, model, box, size);
 }
 
 } // namespace os2

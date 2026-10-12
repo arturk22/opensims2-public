@@ -1647,6 +1647,9 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
     gBuild->onGeometryChanged = [&renderer, &index]() { rebuildLotModel(renderer, index); };
     gBuild->pickObject = [](simd_float3 eye, simd_float3 dir) { return gPie ? gPie->pick(eye, dir) : os2::vm::ObjectId(0); };
     gBuild->onDayNight = [] { toggleDayNight(); };
+    gBuild->renderThumb = [&renderer, &index](const std::vector<os2::ThumbnailPart>& parts) {
+        return os2::renderPartsThumbnail(renderer, index, parts, 94);
+    };
     if (gAudio) { // the ui_build_* sounds and the terrain brush's loops
         gBuild->playSound = [](const std::string& name) {
             os2::SoundSystem::PlayOptions o;

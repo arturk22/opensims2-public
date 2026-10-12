@@ -1103,20 +1103,62 @@ const RgbaImage* BuildMode::textureThumbnail(uint32_t key, const std::string& te
 }
 
 const RgbaImage* BuildMode::stairsThumbnail(const BuildStairs& b) {
-    for (const uint32_t guid : {b.objects[2], b.objects[3]}) {
-        const auto def = vm_.code().definitionByGuid(guid);
+    const uint32_t key = 0x5157A125u ^ uint32_t(b.id);
+    if (auto it = thumbs_.find(key); it != thumbs_.end())
+        return it->second.get();
+    std::shared_ptr<RgbaImage> img;
+    auto cresOf = [&](uint32_t guid) -> std::string {
+        const auto def = guid ? vm_.code().definitionByGuid(guid) : std::nullopt;
         if (!def)
-            continue;
-        CatalogEntry e;
-        e.guid = guid;
-        e.group = def->first;
-        e.model = objectCresName(index_, Tgi{vm::kTypeObjd, def->first, def->second, 0});
-        if (e.model.ends_with("_cres"))
-            e.model.resize(e.model.size() - 5);
-        if (const RgbaImage* img = objects_.thumbnail(e))
-            return img;
+            return {};
+        try {
+            return objectCresName(index_, Tgi{vm::kTypeObjd, def->first, def->second, 0});
+        } catch (const std::exception&) {
+            return {};
+        }
+    };
+    if (renderThumb) {
+        const std::string step = cresOf(b.objects[2]), top = cresOf(b.objects[3]);
+        std::string bottom = cresOf(b.objects[4]);
+        if (bottom.empty())
+            bottom = step;
+        std::vector<ThumbnailPart> parts;
+        const std::string order[3] = {top, step, bottom};
+        for (int i = 0; i < 3; ++i)
+            if (!order[i].empty())
+                parts.push_back({order[i], {0, 0.25f * float(i), -0.1875f * float(i)}});
+        if (!parts.empty())
+            if (auto r = renderThumb(parts))
+                img = std::make_shared<RgbaImage>(std::move(*r));
     }
-    return nullptr;
+    if (!img) // no renderer (headless lists): the step's cached thumbnail, if any
+        for (const uint32_t guid : {b.objects[2], b.objects[3]}) {
+            const auto def = vm_.code().definitionByGuid(guid);
+            if (!def)
+                continue;
+            CatalogEntry e;
+            e.guid = guid;
+            e.group = def->first;
+            e.model = cresOf(guid);
+            if (e.model.ends_with("_cres"))
+                e.model.resize(e.model.size() - 5);
+            if (const RgbaImage* cached = objects_.thumbnail(e))
+                return cached;
+        }
+    thumbs_[key] = img;
+    return img.get();
+}
+
+const RgbaImage* BuildMode::dormerThumbnail(const BuildRoofProduct& d) {
+    const uint32_t key = 0xD0E3E700u ^ uint32_t(d.id);
+    if (auto it = thumbs_.find(key); it != thumbs_.end())
+        return it->second.get();
+    std::shared_ptr<RgbaImage> img;
+    if (renderThumb && !d.defaultPattern.empty())
+        if (auto r = renderThumb({{d.defaultPattern, {0, 0, 0}}}))
+            img = std::make_shared<RgbaImage>(std::move(*r));
+    thumbs_[key] = img;
+    return img.get();
 }
 
 std::vector<BuildMode::Item> BuildMode::items() {
@@ -1279,6 +1321,7 @@ std::vector<BuildMode::Item> BuildMode::items() {
                     it.tool = Tool::Dormer;
                     it.dormer = &d;
                     it.name = d.name, it.description = d.description, it.price = d.price;
+                    it.image = dormerThumbnail(d);
                     out.push_back(std::move(it));
                 }
         if (subsort_ == 0 || subsort_ == 3)

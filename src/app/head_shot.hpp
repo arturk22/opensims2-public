@@ -13,6 +13,7 @@
 #include <array>
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace os2 {
@@ -31,5 +32,16 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
 // renderer's `model` seen from the south-east and above, framed on its local
 // bounds (min xyz, max xyz), on a transparent background. Inferred framing.
 RgbaImage renderModelThumbnail(Renderer& renderer, int model, const std::array<float, 6>& bounds, uint32_t size = 94);
+
+// A Build catalog product the game renders for its tile (cTSUIThumbnailFactory
+// ModularStairs / Dormer): the CRES models of `parts`, each moved by its
+// offset (model space), drawn together as renderModelThumbnail draws one.
+// nullopt when no part loads.
+struct ThumbnailPart {
+    std::string cres;
+    std::array<float, 3> offset{0, 0, 0};
+};
+std::optional<RgbaImage> renderPartsThumbnail(Renderer& renderer, ResourceIndex& index,
+                                              const std::vector<ThumbnailPart>& parts, uint32_t size = 94);
 
 } // namespace os2

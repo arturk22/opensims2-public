@@ -1462,6 +1462,24 @@ trecho novo custa §70. Inferido: o teste de suporte da parede fica de fora
 (a água-furtada fica sobre o telhado), o topo é o nível 4 do lote, e o canto é
 o ponto de grade sob o mouse (o jogo usa o cursor deslocado).
 
+### 7.14.1 Miniaturas das escadas modulares e das águas-furtadas (rodada 13, binário)
+
+O cache de miniaturas não as tem: o jogo as renderiza. `cTSUIThumbnailFactory
+ModularStairs::SetupScene` (BV `0x426014`, vtable `0x50`; cache
+"UIModularStairThumbnails") carrega três modelos, o do `topStep`, o do `step` e
+o do `bottomStep` (o do `step` quando vazio), cada um num nó de transformação
+com a translação (0, 0,25·i, −0,1875·i) (`0x274b54c` = 0,25, `0x274b7a8` =
+0,1875): três degraus descendo. A câmera é fixa (rotação 2,199 rad e escala
+1,25, não decodificadas). `cTSUIThumbnailFactoryDormer::SetupScene` (BV
+`0x3773ec`, "UIDormerThumbnails") carrega o modelo do produto (o
+`defaultRoofPattern`: "dormerpreview-2wide", "dormerhippreview-1wide", …) com
+a câmera a 115° (90° em outro caso, `FUN_009d385c`). No app
+(`BuildMode::stairsThumbnail`/`dormerThumbnail`, `renderPartsThumbnail`): os
+mesmos modelos e translações, desenhados como as miniaturas da decoração do
+bairro (de sudeste e de cima); o enquadramento corta a perna de um andar dos
+degraus (no máximo 1,2 × a largura de altura, inferido).
+`docs/screenshots/r13-construcao-miniaturas-escadas-aguas-furtadas.jpg`.
+
 ### 7.15 Retângulos do auto-telhado (rodada 12, `autoRoofRects`)
 
 Lido no código (`ComputeRoofRects` `0x9a0534`, `AddToActiveRects`

@@ -13,6 +13,7 @@
 // and light maps when onGeometryChanged is called. What the game does is
 // docs/buy-build-mac.md §7. Build mode pauses the simulation.
 
+#include "app/head_shot.hpp"
 #include "app/ui_panel_util.hpp"
 #include "formats/build_catalog.hpp"
 #include "formats/catalog.hpp"
@@ -75,6 +76,10 @@ public:
     std::function<vm::ObjectId(simd_float3 eye, simd_float3 dir)> pickObject;
     // "Alternar Dia/Noite" (0xAA): the host flips the lighting.
     std::function<void()> onDayNight;
+    // Renders models for a catalog tile (the host's renderer:
+    // renderPartsThumbnail); the modular stairs and dormers have no cached
+    // thumbnail, the game renders theirs.
+    std::function<std::optional<RgbaImage>(const std::vector<ThumbnailPart>&)> renderThumb;
     // The Design tool (0xAB, app/design_tool.hpp) on an object.
     void selectDesignTool();
     bool design(vm::ObjectId id, simd_float2 at);
@@ -205,8 +210,14 @@ private:
     const RgbaImage* fenceThumbnail(const BuildFence& f);
     const RgbaImage* materialThumbnail(uint32_t key, const std::string& material);
     const RgbaImage* textureThumbnail(uint32_t key, const std::string& texture);
-    // A modular staircase's swatch: its step's thumbnail in the game's cache (when there is one).
+    // A modular staircase's tile (cTSUIThumbnailFactoryModularStairs::
+    // SetupScene): its top step, a step and its bottom step (the step when
+    // it has none), each 0.25 further along y and 0.1875 lower (the
+    // translation (0, 0.25 i, -0.1875 i) the factory gives the i-th).
     const RgbaImage* stairsThumbnail(const BuildStairs& b);
+    // A dormer's tile (cTSUIThumbnailFactoryDormer): the product's model,
+    // its defaultRoofPattern ("dormerpreview-2wide").
+    const RgbaImage* dormerThumbnail(const BuildRoofProduct& d);
     std::optional<simd_float2> groundPoint(simd_float3 eye, simd_float3 dir) const;
     void applied(const vm::BuildEditor::Result& r);
     void say(const std::string& m);
