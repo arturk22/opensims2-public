@@ -393,6 +393,30 @@ static void testRoof() {
     check(ed.undo() && lot.levelCount == 2 && lot.roofs.size() == roofs && funds(vm) == before, "undo takes the dormer back");
 }
 
+// The editable area: a road along an edge takes its 10-tile strip out.
+static void testEditableArea() {
+    Lot lot;
+    lot.width = 24, lot.height = 30, lot.levelCount = 1;
+    lot.elevations.assign(25 * 31, 0.0f);
+    lot.floors.assign(24 * 30, {});
+    lot.rooms.assign(24 * 30, {1, 1, 1, 1});
+    lot.roomLayers[0x0A] = lot.rooms;
+    lot.roomLayers[0x0B] = lot.rooms;
+    lot.floorPatterns[1] = "road_center";
+    for (int x = 0; x < 24; ++x)
+        lot.floors[size_t(x) * 30 + 25] = {1, 1, 1, 1};
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    check(ed.editableArea() == std::array<int, 4>({0, 0, 24, 20}), "the road edge's strip is not editable");
+    auto r = ed.drawWalls(1, 2, 22, 5, 22);
+    check(!r.ok && r.error == 0x45, "no walls in the road strip (0x45)");
+    r = ed.drawWalls(1, 2, 18, 5, 18);
+    check(r.ok && r.changed == 3, "walls inside the area");
+}
+
 // Fence arches: on a fence, not beside another, gone with the fence.
 static void testFenceArch() {
     Lot lot = flatLot();
@@ -562,6 +586,7 @@ int main() {
     testStairs();
     testAutoRoofRects();
     testFenceArch();
+    testEditableArea();
     testDesignCatalog();
     testWalkOver();
     testPool();
