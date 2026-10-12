@@ -9,6 +9,7 @@
 #include "strings.hpp"
 
 #include <algorithm>
+#include <cfloat>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -682,6 +683,7 @@ std::pair<std::vector<size_t>, std::vector<size_t>> occupantsOnLot(const Placeme
 struct TerrainChange {
     const std::map<std::pair<int, int>, float>* heights = nullptr; // TryModifyingTerrainToConformToLot
     std::optional<TileRect> smooth;                                // Smoothen under a new lot
+    const std::map<size_t, std::array<float, 4>>* roadHeights = nullptr; // roads laid again on the terrain
 };
 
 // The lot info, the occupants without what the lot removes and the terrain.
@@ -695,11 +697,17 @@ void writeLot(const Neighborhood& hood, const PlacementWorld& world, const LotIn
     {
         DbpfPackage pkg(hood.package);
         for (const auto& e : pkg.entries()) {
-            if (e.tgi.type == hoodtype::Occupants && (!flora.empty() || !props.empty())) {
-                const auto bytes = pkg.read(e);
+            if (e.tgi.type == hoodtype::Occupants &&
+                (!flora.empty() || !props.empty() || (terrain.roadHeights && !terrain.roadHeights->empty()))) {
+                auto bytes = pkg.read(e);
+                if (terrain.roadHeights && !terrain.roadHeights->empty()) { // before the cut moves the roads
+                    bytes = Occupants::setRoadHeights(bytes, Occupants::parse(bytes), *terrain.roadHeights);
+                    lines.push_back(std::to_string(terrain.roadHeights->size()) + " roads laid on the flattened terrain");
+                }
                 const Occupants parsed = Occupants::parse(bytes);
                 replace[{hoodtype::Occupants, e.tgi.instance}] = Occupants::removeOccupants(bytes, parsed, flora, props);
-                lines.push_back(std::to_string(flora.size() + props.size()) + " trees and props removed from the lot");
+                if (!flora.empty() || !props.empty())
+                    lines.push_back(std::to_string(flora.size() + props.size()) + " trees and props removed from the lot");
             } else if (e.tgi.type == hoodtype::Terrain && (terrain.heights || terrain.smooth)) {
                 ground = Terrain::parse(pkg.read(e));
                 terrainInstance = e.tgi.instance;
@@ -720,7 +728,8 @@ void writeLot(const Neighborhood& hood, const PlacementWorld& world, const LotIn
                     g = h;
                 }
         if (terrain.heights)
-            lines.push_back(std::to_string(changed) + " terrain vertices conformed to the lot");
+            lines.push_back(std::to_string(changed) + " terrain vertices " +
+                            (terrain.smooth ? "flattened under the abutting roads" : "conformed to the lot"));
         if (terrain.smooth) {
             PlacementWorld w = world;
             w.occupants = &left;
@@ -786,6 +795,102 @@ std::string restoreBinFamily(const Neighborhood& hood, const BinLot& bin, uint32
 
 } // namespace
 
+RoadFlatten flattenAbuttingRoads(const PlacementWorld& world, const TileRect& R, int front, float height) {
+    RoadFlatten out;
+    if (!world.terrain || !world.occupants || !world.hood)
+        return out;
+    const Terrain& t = *world.terrain;
+    const int tilesX = int(t.gridWidth) - 1, tilesY = int(t.gridHeight) - 1; // this+0x88 / +0x8c
+    // The front road strip (vertices, inclusive).
+    TileRect fs = R;
+    switch (front & 3) {
+    case 0: fs.x1 = R.x0 + 1; break;
+    case 1: fs.y0 = R.y1 - 1; break;
+    case 2: fs.x0 = R.x1 - 1; break;
+    default: fs.y1 = R.y0 + 1; break;
+    }
+    const std::array<TileRect, 4> strips = {TileRect{R.x0 - 1, R.y0 - 1, R.x0, R.y1 + 1},
+                                            TileRect{R.x0 - 1, R.y1, R.x1 + 1, R.y1 + 1},
+                                            TileRect{R.x1, R.y0 - 1, R.x1 + 1, R.y1 + 1},
+                                            TileRect{R.x0 - 1, R.y0 - 1, R.x1 + 1, R.y0}};
+    auto vertex = [&](int x, int y) {
+        if (auto it = out.heights.find({x, y}); it != out.heights.end())
+            return it->second; // an earlier strip set it
+        return t.vertex(x, y);
+    };
+    for (int i = 0; i < 4; ++i) {
+        const TileRect& s = strips[size_t(i)];
+        if (s.x0 < 0 || s.y0 < 0 || s.x1 > tilesX || s.y1 > tilesY)
+            continue;
+        // GetOccupants(strip, 2): the plain roads (inferred: not the bridges).
+        std::vector<size_t> roads;
+        for (size_t k = 0; k < world.occupants->roads.size(); ++k)
+            if (overlaps(s, occupantTiles(world.occupants->roads[k].at)))
+                roads.push_back(k);
+        if (roads.empty())
+            continue;
+        const bool fixed = s.x1 >= fs.x0 && s.x0 <= fs.x1 && s.y1 >= fs.y0 && s.y0 <= fs.y1;
+        // DetermineFlattenHeightForRoadOccs (BV 0xa27714).
+        float lo = fixed ? height : -FLT_MAX, hi = fixed ? height : FLT_MAX;
+        bool ok = true;
+        for (size_t k : roads) {
+            const TileRect r = occupantTiles(world.occupants->roads[k].at);
+            // The tool's vtable 0x50(rect, 1): inferred ExpandVertexRect by one; the
+            // first lot over it (cTSLotManager vtable 0xec).
+            const TileRect grown{r.x0 - 1, r.y0 - 1, r.x1 + 1, r.y1 + 1};
+            const Lot* lot = lotOver(world, grown);
+            if (!lot)
+                continue;
+            const TileRect l = lotRect(lot->info);
+            if (l.x0 > r.x1 || r.x0 > l.x1 || l.y0 > r.y1 || r.y0 > l.y1)
+                continue;
+            for (int y = std::max(l.y0, r.y0); y <= std::min(l.y1, r.y1) && ok; ++y)
+                for (int x = std::max(l.x0, r.x0); x <= std::min(l.x1, r.x1) && ok; ++x) {
+                    const float h = vertex(x, y);
+                    if (lo - h > 0.01f || h - hi > 0.01f)
+                        ok = false;
+                    lo = hi = h;
+                }
+        }
+        float level = 0;
+        if (!ok || lo > hi) {
+            ok = false;
+        } else if (lo == hi) {
+            level = lo;
+        } else { // free and no lot: the first road's (x0, y0) vertex
+            const TileRect r = occupantTiles(world.occupants->roads[roads.front()].at);
+            level = vertex(r.x0, r.y0);
+        }
+        if (!ok) {
+            out.lines.push_back("abutting roads on edge " + std::to_string(i) + " left as they are");
+            continue;
+        }
+        level = std::nearbyint(level / 0.1875f) * 0.1875f;
+        // FlattenRoadsAndTerrain (BV 0xa27a30): every vertex of each road's rectangle.
+        for (size_t k : roads) {
+            const TileRect r = occupantTiles(world.occupants->roads[k].at);
+            for (int y = r.y0; y <= r.y1; ++y)
+                for (int x = r.x0; x <= r.x1; ++x)
+                    out.heights[{x, y}] = level;
+            out.roads.insert(k);
+        }
+        out.lines.push_back(std::to_string(roads.size()) + " abutting roads on edge " + std::to_string(i) +
+                            " flattened to " + std::to_string(level));
+    }
+    // SmoothenRoadsConnectedToLot then lays the roads on the terrain again
+    // (road vtable 0x5c(1); inferred: each corner 0.4 over its vertex, as
+    // FlattenToTerrain; SmoothenContainingRoadSegment is not reproduced).
+    for (size_t k : out.roads) {
+        const Road& road = world.occupants->roads[k];
+        std::array<float, 4> z{};
+        for (size_t c = 0; c < 4; ++c)
+            z[c] = vertex(int(std::lround(road.corners[c][0] / kHoodCellSize)),
+                          int(std::lround(road.corners[c][1] / kHoodCellSize))) + kRoadOverTerrain;
+        out.roadHeights[k] = z;
+    }
+    return out;
+}
+
 LotResult placeEmptyLot(const fs::path& folder, const PlacementWorld& world, EmptyLotSize size, int x, int y,
                         int rotation, const fs::path& forbidden, const std::string& name, uint8_t zone) {
     LotResult out;
@@ -814,6 +919,14 @@ LotResult placeEmptyLot(const fs::path& folder, const PlacementWorld& world, Emp
         // (Smoothen with [SmoothingUnderNewLot], then rounded to 0.1875).
         TerrainChange change;
         change.smooth = R;
+        // FlattenAbuttingRoadsIfPossible with the front and its road height.
+        const RoadFlatten flat = flattenAbuttingRoads(world, R, p.front, p.heightAt(p.front));
+        for (const auto& l : flat.lines)
+            out.lines.push_back(l);
+        if (!flat.heights.empty())
+            change.heights = &flat.heights;
+        if (!flat.roadHeights.empty())
+            change.roadHeights = &flat.roadHeights;
         writeLot(hood, world, info, out.lot, out.lines, true, change);
         out.lines.push_back("empty lot " + std::to_string(out.lot) + " (" + std::to_string(R.width()) + "x" +
                             std::to_string(R.depth()) + " with the road) placed at (" + std::to_string(R.x0) + ", " +

@@ -77,6 +77,7 @@ struct Road {
     std::array<std::array<float, 2>, 4> uvs{};
     uint32_t piece = 0, underTexture = 0;
     uint8_t flags = 0, connections = 0;
+    size_t cornersAt = 0; // where the first corner sits in the resource (4 x (xyz, uv) floats)
     struct Addon {
         uint32_t id = 0;
         std::array<float, 3> a{};
@@ -122,6 +123,10 @@ struct Occupants {
     // The resource without the flora and props of the given indices.
     static std::vector<uint8_t> removeOccupants(std::span<const uint8_t> data, const Occupants& parsed,
                                                 const std::vector<size_t>& flora, const std::vector<size_t>& props);
+    // The resource with the corner heights (z) of the given roads (index into
+    // `roads`) replaced.
+    static std::vector<uint8_t> setRoadHeights(std::span<const uint8_t> data, const Occupants& parsed,
+                                               const std::map<size_t, std::array<float, 4>>& heights);
 };
 
 // Neighborhood objects (catalog 0x6D619378): GUID -> CRES name ("..._cres").

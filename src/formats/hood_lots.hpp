@@ -26,8 +26,11 @@
 //   (TryModifyingTerrainToConformToLot); a new empty lot smooths the
 //   terrain under it (cTSNHoodTerrain::Smoothen) (docs/neighborhood-mac.md §13).
 //
-// Not done: FlattenAbuttingRoadsIfPossible and the beach shaping of a new
-// beach lot (FUN_00a2afec; the base game has no beach empty lots). Plain C++.
+// - A new empty lot flattens the roads along its edges first
+//   (FlattenAbuttingRoadsIfPossible, docs/neighborhood-mac.md §15.2).
+//
+// Not done: the beach shaping of a new beach lot (FUN_00a2afec; the base
+// game has no beach empty lots). Plain C++.
 
 #include "hood_terrain.hpp"
 #include "neighborhood.hpp"
@@ -37,6 +40,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -127,6 +131,22 @@ TerrainEdit conformTerrainToLot(const PlacementWorld& world, const LotInfo& base
 // every vertex of the rectangle to a multiple of 0.1875. Returns the
 // vertices that changed.
 size_t smoothTerrainUnderLot(Terrain& terrain, const PlacementWorld& world, const TileRect& rect, uint32_t self = 0);
+
+// cTSUserToolPlaceLotBase::FlattenAbuttingRoadsIfPossible (BV 0xa2a598),
+// for a new empty lot of rectangle `rect` with `front` (its first road edge)
+// and that edge's road height: the roads in each of the four tile strips
+// just outside the lot are levelled, all their rectangles' vertices, to one
+// height (rounded to 0.1875): `height` when the strip touches the front road
+// strip, else the height of the vertices another lot shares with them, else
+// the first road's (x0, y0) vertex. A strip whose roads touch lot vertices of
+// different heights (by more than 0.01) is left alone.
+struct RoadFlatten {
+    std::map<std::pair<int, int>, float> heights;          // (x, y) -> height
+    std::set<size_t> roads;                                // the roads levelled (index into `roads`)
+    std::map<size_t, std::array<float, 4>> roadHeights;    // their corners laid on the new terrain
+    std::vector<std::string> lines;
+};
+RoadFlatten flattenAbuttingRoads(const PlacementWorld& world, const TileRect& rect, int front, float height);
 
 // IsOKToPlaceLotCommon for `rect`, leaving out lot `self` (being moved; 0: none).
 // `beach`: the base lot info of a beach lot (flag 0x80): water is allowed

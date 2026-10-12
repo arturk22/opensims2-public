@@ -1,5 +1,7 @@
 #include "hood_terrain.hpp"
 
+#include <cstring>
+
 #include "binreader.hpp"
 #include "binwriter.hpp"
 #include "config_text.hpp"
@@ -49,6 +51,7 @@ Road road(BinReader& r) {
     const uint8_t v = r.u8();
     if (v < 3)
         throw FormatError("road: unsupported version " + std::to_string(v));
+    road.cornersAt = r.pos();
     for (size_t k = 0; k < 4; ++k) {
         road.corners[k] = vec3(r);
         road.uvs[k] = vec2(r);
@@ -326,6 +329,25 @@ std::vector<uint8_t> Occupants::addOccupant(std::span<const uint8_t> data, const
     const uint32_t n = uint32_t(spans.size() + 1);
     for (int k = 0; k < 4; ++k)
         out[countAt + size_t(k)] = uint8_t(n >> (8 * k));
+    return out;
+}
+
+std::vector<uint8_t> Occupants::setRoadHeights(std::span<const uint8_t> data, const Occupants& o,
+                                               const std::map<size_t, std::array<float, 4>>& heights) {
+    std::vector<uint8_t> out(data.begin(), data.end());
+    for (const auto& [index, z] : heights) {
+        if (index >= o.roads.size())
+            continue;
+        for (size_t k = 0; k < 4; ++k) {
+            const size_t at = o.roads[index].cornersAt + k * 20 + 8; // x, y, z, u, v
+            if (at + 4 > out.size())
+                throw FormatError("roads: corner out of the resource");
+            uint32_t bits;
+            std::memcpy(&bits, &z[k], 4);
+            for (int b = 0; b < 4; ++b)
+                out[at + size_t(b)] = uint8_t(bits >> (8 * b));
+        }
+    }
     return out;
 }
 
