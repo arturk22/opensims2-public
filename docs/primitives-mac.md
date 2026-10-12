@@ -976,8 +976,9 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   blended Out"; `FLOAT_0274b670` = 0,3), onde T é um global float do
   `__bss` (`0x2c0ddd0`) escrito em tempo de execução (nenhuma escrita
   estática achada; não lido). O mesmo T é o blend de entrada/saída do
-  `CreateTransitionBlend` e o que o Animate Sim passa quando a flag 0x80
-  ("sem blend de entrada") não está ligada. Com T > 0 cada pedido sai pelo
+  `CreateTransitionBlend` e o que o Animate Sim usa para tirar o próprio
+  pedido quando a instrução volta com ele já pedido e a fila o
+  interrompeu (vtable 0x3b4 com T). Com T > 0 cada pedido sai pelo
   `AbortAnimRequest` (≤ 0: corte na hora). O código usa 0,2 s para os
   overlays (`kOverlayBlendOutTicks`, `lot_vm.cpp`): o valor continua
   inferido, mas agora se sabe que o "curto" é 30% dele e que sem flag é
