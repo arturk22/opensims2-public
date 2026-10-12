@@ -453,8 +453,9 @@ void addFunds(VM& vm, int32_t amount) {
 }
 
 bool noCharge(VM& vm) {
-    const int16_t family = vm.globals[global::CurrentFamily];
-    if (family && vm.families.count(family))
+    // Global 9 names the lot's family (LoadLot); a lot run without its
+    // neighborhood still has one when it names one.
+    if (vm.globals[global::CurrentFamily] != 0)
         return false;
     const int16_t selected = vm.globals[global::SelectedPersonId];
     return !(selected > 0 && vm.object(ObjectId(selected)));
