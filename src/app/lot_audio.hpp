@@ -39,12 +39,19 @@ public:
     // (x, y) that are outdoors (no room).
     float outsideness(float x, float y, float radius) const;
     bool indoors(int lotLevel, float x, float y) const;
+    // Whether any tile within `radius` tiles of (x, y) holds water: a pool
+    // (Lot::pools) or terrain under the water level (a pond). The ambience's
+    // "iswater" partition, an area around the camera.
+    bool waterNear(float x, float y, float radius) const;
+    bool hasWater() const { return waterTiles_ != 0; }
 
 private:
     Lot lot_;
     std::map<uint16_t, std::string> surfaces_; // floor pattern reference -> surface
     std::string terrain_ = "grass";
     uint16_t room(int lotLevel, int x, int y, int quarter) const;
+    std::vector<uint8_t> water_; // per tile, width * height
+    size_t waterTiles_ = 0;
 };
 
 // The shoe type name ("leath", ...) of a character's everyday outfit: the
@@ -207,6 +214,9 @@ private:
     std::map<int16_t, Stereo> stereos_;
     void updateWallSpeakers(vm::VM& machine);
     SurfaceMap surfaces_;
+    std::vector<std::pair<float, float>> tombstones_; // tiles of the objects in the "object:tombstone" partition
+    std::map<uint32_t, bool> tombstoneGroups_;        // object group -> its soundinfo partition is a tombstone
+    double tombstonesAt_ = -10;
     std::vector<SimBinding> sims_;
     std::map<int16_t, std::vector<ObjectVoice>> voices_; // per source object
     struct EffectVoice {

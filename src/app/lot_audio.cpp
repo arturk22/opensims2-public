@@ -68,6 +68,38 @@ SurfaceMap::SurfaceMap(const Lot& lot, ResourceIndex& index, const std::filesyst
             if (auto g = byGuid.find(*guid); g != byGuid.end())
                 surfaces_[ref] = g->second;
     }
+    // Water: pools, and terrain a pond covers (the water level above the ground at a corner of the tile).
+    water_.assign(size_t(lot.width) * lot.height, 0);
+    for (const auto& pool : lot.pools)
+        for (uint32_t dy = 0; dy < pool.height; ++dy)
+            for (uint32_t dx = 0; dx < pool.width; ++dx) {
+                const int tx = int(pool.x) + int(dx), ty = int(pool.y) + int(dy);
+                if (tx >= 0 && ty >= 0 && uint32_t(tx) < lot.width && uint32_t(ty) < lot.height)
+                    water_[size_t(ty) * lot.width + size_t(tx)] = 1;
+            }
+    for (uint32_t y = 0; y < lot.height; ++y)
+        for (uint32_t x = 0; x < lot.width; ++x)
+            for (int c = 0; c < 4 && !water_[size_t(y) * lot.width + x]; ++c) {
+                const int gx = int(x) + (c & 1), gy = int(y) + (c >> 1);
+                if (lot.waterLevel(gx, gy) > lot.elevation(0, gx, gy) + 0.01f)
+                    water_[size_t(y) * lot.width + x] = 1;
+            }
+    for (uint8_t w : water_)
+        waterTiles_ += w;
+}
+
+bool SurfaceMap::waterNear(float x, float y, float radius) const {
+    if (!waterTiles_)
+        return false;
+    const int r = int(std::ceil(radius));
+    for (int dy = -r; dy <= r; ++dy)
+        for (int dx = -r; dx <= r; ++dx) {
+            const int tx = int(std::floor(x)) + dx, ty = int(std::floor(y)) + dy;
+            if (float(dx * dx + dy * dy) <= radius * radius && tx >= 0 && ty >= 0 && uint32_t(tx) < lot_.width &&
+                uint32_t(ty) < lot_.height && water_[size_t(ty) * lot_.width + size_t(tx)])
+                return true;
+        }
+    return false;
 }
 
 uint16_t SurfaceMap::room(int lotLevel, int x, int y, int quarter) const {
@@ -509,7 +541,28 @@ void LotAudio::update(vm::VM* machine, double seconds, const Listener& l) {
     if (const char* h = std::getenv("OS2_SOUND_HOUR")) // test aid: the ambience at that hour
         st.timeOfDay = float(std::atof(h)) / 24.0f;
     st.zoom = l.zoom;
-    st.outsideness = surfaces_.outsideness(l.x, l.y, sound_->lotAmbienceRadius(l.zoom));
+    // Partitions are areas in the game (LotPartitionSize 3 tiles): iswater and
+    // istombstone hold when such a place is within the radius heard around the
+    // camera; isflora stays lot-wide (the trees' partition is not tracked).
+    const float heard = sound_->lotAmbienceRadius(l.zoom);
+    if (machine && seconds - tombstonesAt_ >= 1.0) {
+        tombstonesAt_ = seconds;
+        tombstones_.clear();
+        for (const auto& [id, o] : machine->objects()) {
+            if (!o.position.inWorld())
+                continue;
+            auto g = tombstoneGroups_.find(o.group);
+            if (g == tombstoneGroups_.end())
+                g = tombstoneGroups_.emplace(o.group, vm::soundInfo(*machine, o)[3] == "object:tombstone").first;
+            if (g->second)
+                tombstones_.push_back({o.position.x, o.position.y});
+        }
+    }
+    bool tomb = false;
+    for (const auto& [tx, ty] : tombstones_)
+        tomb = tomb || std::hypot(tx - l.x, ty - l.y) <= heard;
+    st.partitions = {{"isflora", true}, {"iswater", surfaces_.waterNear(l.x, l.y, heard)}, {"istombstone", tomb}};
+    st.outsideness = surfaces_.outsideness(l.x, l.y, heard);
     st.inside = surfaces_.indoors(int(std::floor(l.z / kStoryHeight + 0.01f)), l.x, l.y);
     ambience_->update(st, dt);
     lastTimeOfDay_ = st.timeOfDay;
