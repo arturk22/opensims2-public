@@ -222,12 +222,12 @@ objetos (`+0x80`, primário: `SplitLoad` `0x1c`, `UpdateSimObjects` `0x20`,
 | 0 | mudando (`+0x34`): família já no lote? → `+0x35`; senão liga família e lote |
 | 1 | mensagem `0xB2`; `TS::SetCheckpoint(lote, bairro)` |
 | 2 | abre o pacote do lote; lote salvo → 3, novo → 0xB |
-| 3–7 | lote salvo: lê o mundo, `SetCommonSimulatorGlobals` (globais 20, 10 = lote, 41 = tipo do lote, 40/54 do bairro, 43), terreno, `SetGlobal(9, 0)`, mensagem `0xBB` |
+| 3–7 | lote salvo: lê o mundo, `SetCommonSimulatorGlobals` (globais 20 Game Edition, 10 Current House = lote, 41 Lot Zoning = tipo do lote, 40 Current Neighborhood ID e 54 do bairro, 43 Last Neighborhood ID), terreno, `SetGlobal(9, 0)`, mensagem `0xBB` |
 | 8 | `SplitLoad` até terminar (inclui `UpdateSimObjects(1)`) |
 | 9–10 | recursos `0x45585069` e materiais (TXMT) do lote |
 | 0xB–0x11 | lote novo: `InitForNewLot`, globais, abre o modelo `"%s%dx%d"` pelo tamanho/tipo (girado conforme a orientação), terreno, `SetGlobal(9, 0)`, mensagem `0xBD`, `SplitLoad` do modelo, posiciona os objetos do modelo girados |
 | 0x13–0x16 | mensagens `0xAD` e `0x94`; `Notify(0)`; **`SetTimeOfDay(período(hora))`** |
-| 0x17–0x1a | câmera/vista; `SetGlobal(0x2C, …)`; mensagem `0xB3`; lista as pessoas e as famílias |
+| 0x17–0x1a | câmera/vista; `SetGlobal(44 Lot Entry Method, …)`; mensagem `0xB3`; lista as pessoas e as famílias |
 | 0x1b | mudando para um lote que não era da família: **fundos −= preço do lote**; `SetGlobal(9, família)` (§ `docs/neighborhood-mac.md`) |
 | 0x1c | `CleanupThingsRelatedToEvictedFamily` |
 | 0x1e | `PostLoad(0xCE)` |
@@ -257,3 +257,16 @@ multiplier" = 0,7, "perfect family friend count" = 15, "yard score
 multiplier" ≈ 0,33, ...). Então a família que se muda começa às **8:00**,
 no dia/mês/ano que o lote já tinha, e o "reset lot" que o opensims2 já
 manda (rodada 11) vem logo depois de pôr o relógio.
+
+### 7.4 O relógio (`cTSSimulator::SimulateOneTick`, BV `0x49a814`)
+
+Os globais do simulador são shorts em `this + 0x24 + 2i` (rótulos do STR#
+0x81 do grupo `0x7FE59FD0`). Com o relógio ligado (flag `+0xde` bit 2), a
+cada tick: global 6 "Second" += 2; passando de 59 volta (−60) e global 5
+"Minute" +1 (mensagem `0x88`); minuto > 59 → global 0 "Hour" +1 (mensagem
+`0xD08962D0`); hora 24 → global 28 "Days Running" +1, global 1 "Day of
+Month" +1, global 34 "Day Of Week" = dias % 7 (mensagem `0x89`); dia > 30
+→ dia 1 e global 7 "Month" +1 (> 12 → 1 e global 8 "Year" +1); global 29
+"Maximum Day Number" fica em 30. **Confirma o inferido: 30 ticks por
+minuto, meses de 30 dias, 12 meses.** O período do dia (global 4) é
+recalculado pela hora (`SetTimeOfDay`, §7.2).
