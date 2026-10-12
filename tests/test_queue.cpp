@@ -478,6 +478,32 @@ static void testSubQueue() {
           "(cTSPerson::SetSubInteractionData)");
 }
 
+// Inside an interaction, an Idle for Input with "allow push" runs a waiting
+// entry of higher priority on top of it (cTSPerson::TryIdleForInput); the
+// interrupted one goes on when it returns.
+static void testNestedInterruption() {
+    Fixture fx;
+    // Clean: wait 1000 ticks in an Idle for Input that allows pushes, then attr 1 := 1.
+    fx.code.add(kObjGroup, 0x1002, tree({expr(Param, 0, Assign, Lit, 1000, go(1), E), idle(0, true, go(2)),
+                                         expr(SAttr, 1, Assign, Lit, 1, T, E)},
+                                        4));
+    // Snack: attr 2 := attr 1 (0 while Clean has not finished), attr 0 := 7.
+    fx.code.add(kObjGroup, 0x1001, tree({expr(SAttr, 2, Assign, SAttr, 1, go(1), E), expr(SAttr, 0, Assign, Lit, 7, T, E)}));
+    Object& s = fx.s();
+    auto clean = fx.make(1);
+    clean.priority = kPriorityAutonomous;
+    enqueue(fx.vm, s, clean);
+    fx.vm.tick();
+    check(s.activeInteraction == 0, "the long interaction runs");
+    auto snack = fx.make(0);
+    snack.priority = 50;
+    enqueue(fx.vm, s, snack);
+    fx.vm.tick();
+    check(fx.o().attributes.size() > 2 && fx.o().attributes[0] == 7 && fx.o().attributes[2] == 0,
+          "the higher priority entry ran on top of the running one, before it finished");
+    check(fx.o().attributes[1] == 1 && s.queue.empty(), "then the interrupted one went on to its end");
+}
+
 int main() {
     testTableAndNames();
     testPieMenu();
@@ -490,6 +516,7 @@ int main() {
     testTurnBodyTowards();
     testInteractionGroupLeader();
     testSubQueue();
+    testNestedInterruption();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
