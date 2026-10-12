@@ -56,6 +56,7 @@ constexpr int16_t NonInterruptible = 71;
 constexpr int16_t NextInteractionObject = 79;
 constexpr int16_t CurrentInteractionObject = 80;
 constexpr int16_t CurrentRunningInteractionIndex = 102;
+constexpr int16_t CurrentRunningObject = 103;
 constexpr int16_t InteractionAutonomous = 166;
 // The sub-queue (STR# 0xC8 labels).
 constexpr int16_t SubQueueCount = 26;

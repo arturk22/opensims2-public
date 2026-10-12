@@ -456,8 +456,10 @@ static void testSubQueue() {
           "cancelling a waiting sub-action takes it out of the sub-queue");
     clearSubActions(s);
     check(s.subQueue.empty() && !s.subAction && s.person->data[persondata::SubQueueCount] == 0 &&
-              s.person->data[persondata::SubQueueMasterObject] == 0,
-          "clearing the sub-actions resets person data 26 and 75");
+              s.person->data[persondata::SubQueueMasterObject] == tv &&
+              s.person->data[persondata::CurrentRunningObject] == tv,
+          "clearing the sub-actions resets person data 26; 75 and 103 stay the running action's "
+          "(cTSPerson::SetSubInteractionData)");
 }
 
 int main() {

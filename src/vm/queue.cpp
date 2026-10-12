@@ -805,7 +805,6 @@ void syncQueueData(Object& sim) {
     const bool running = sim.activeInteraction >= 0 && size_t(sim.activeInteraction) < q.size();
     const QueuedInteraction* a = running ? &q[size_t(sim.activeInteraction)] : nullptr;
     d[persondata::CurrentInteractionIndex] = a ? int16_t(a->interaction) : 0;
-    d[persondata::CurrentRunningInteractionIndex] = a ? int16_t(a->interaction) : 0;
     d[persondata::CurrentInteractionObject] = a ? a->object : 0;
     d[persondata::InteractionAutonomous] = a && a->priority == kPriorityAutonomous;
     // 109 "ci: Current Interaction GUID": the running interaction's ID, which
@@ -826,11 +825,20 @@ void syncQueueData(Object& sim) {
     // STR# 0xC8; filled in as the queue's are, inferred).
     const auto& sq = sim.subQueue;
     d[persondata::SubQueueCount] = int16_t(sq.size());
-    d[persondata::SubQueueMasterObject] = a && (!sq.empty() || sim.subAction) ? a->object : 0;
-    d[persondata::SubQueueMasterIndex] = a && (!sq.empty() || sim.subAction) ? int16_t(a->interaction) : 0;
+    // cTSPerson::SetSubInteractionData (Mac BV 0xadaa30): the master is the
+    // current action whether or not anything is nested in it, and 102/103
+    // "ci: Current Running Interaction Index/Object ID" are the running
+    // sub-action's, else the action's, else 0 (SetCurrentAction copies 21
+    // and 80 into them first). "Pickup - Wait For Current Interaction" waits
+    // on the carried baby's 102/103 for its "Be Picked Up" sub-action.
+    d[persondata::SubQueueMasterObject] = a ? a->object : 0;
+    d[persondata::SubQueueMasterIndex] = a ? int16_t(a->interaction) : 0;
     d[persondata::NextSubQueueIndex] = sq.empty() ? 0 : int16_t(sq.front().interaction);
     d[persondata::NextSubQueueObject] = sq.empty() ? 0 : sq.front().object;
     d[persondata::SubQueueObject] = sim.subAction ? sim.subAction->object : 0;
+    const QueuedInteraction* current = sim.subAction ? &*sim.subAction : a;
+    d[persondata::CurrentRunningInteractionIndex] = current ? int16_t(current->interaction) : 0;
+    d[persondata::CurrentRunningObject] = current ? current->object : 0;
 }
 
 std::vector<std::string> splitPiePath(const std::string& name) {

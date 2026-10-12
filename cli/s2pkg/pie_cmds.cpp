@@ -21,6 +21,7 @@
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/placement.hpp"
+#include "vm/motives.hpp"
 #include "vm/baby_character.hpp"
 #include "vm/hood_save.hpp"
 #include "formats/neighborhood.hpp"
@@ -85,14 +86,30 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     vm::startSavedLot(machine, load, saved, fromInit);
     if (motives)
         vm::setAllMotives(machine, int16_t(*motives));
+    // S2PKG_NO_DECAY=1: test aid, the motives do not decay (a pregnancy runs
+    // its three days without the mother starving), as autonomy --no-decay.
+    if (std::getenv("S2PKG_NO_DECAY"))
+        vm::gMotiveDecay = false;
 
     // --create GUID[:attr=value,...]: test aid, an object made out of the
     // world as Buy mode makes one (Init only, no Main), with those
     // attributes (e.g. a party controller for the birthday cinematic:
     // --create 0x2C91C16A:2=1).
+    // "...@x,y[,level]" puts it on that tile, as the app's --vm-create (the
+    // debug tombstone's "New Baby" places the baby beside it).
     for (const std::string& spec : creates) {
-        const vm::ObjectId id = vm::createTestObject(machine, spec);
-        std::printf("created %d: %s\n", id, nameOf(*machine.object(id)).c_str());
+        const auto at = spec.find('@');
+        const vm::ObjectId id = vm::createTestObject(machine, spec.substr(0, at));
+        std::string where;
+        int x = 0, y = 0, level = 1;
+        if (at != std::string::npos && std::sscanf(spec.c_str() + at + 1, "%d,%d,%d", &x, &y, &level) >= 2) {
+            const vm::Placement p = vm::checkPlacement(machine, id, {x, y, level}, 0);
+            if (p.ok)
+                vm::applyPlacement(machine, id, p), where = " (placed)";
+            else
+                where = " (not placed: " + p.reason + ")";
+        }
+        std::printf("created %d: %s%s\n", id, nameOf(*machine.object(id)).c_str(), where.c_str());
     }
     // Babies' character files (Make New Character, vm/baby_character.hpp)
     // go to <--user-dir>/Characters, never into the game's data.
