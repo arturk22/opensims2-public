@@ -490,6 +490,10 @@ struct Object {
     // goes to the front (VM::createObject; inferred from the saved lists,
     // which start with the newest IDs).
     int64_t listOrder = 0;
+    // Its place in the vectors of people and of each definition's instances
+    // (Set to Next 1 and 4/18 walk those): a loaded object at its place in
+    // the saved list, one made in play after all (appended; inferred).
+    int64_t appendOrder = 0;
     uint32_t group = 0;     // private BHAVs/BCONs (the group of the object's OBJD)
     uint32_t semiGroup = 0; // semi-global BHAVs/BCONs, 0 if none
     const ObjectDefinition* definition = nullptr; // shared by every instance; may be null (tests)
@@ -976,6 +980,7 @@ public:
     void setListOrder(Object& o, int64_t order) {
         objectList_.erase(o.listOrder);
         o.listOrder = order;
+        o.appendOrder = order;
         objectList_[order] = o.id;
     }
     // The IDs of the people (objects with person data), in ID order, as of

@@ -367,14 +367,14 @@ static void testPrimitives() {
                       instr(0x1F, E, T, {lo(kChair, 0), lo(kChair, 1), lo(kChair, 2), lo(kChair, 3), 0x84, Temp, 0, 4, 0})}));
     t = fx.run(0x1001);
     check(t.status == Thread::Status::Finished && t.temps[1] == 2, "Set to Next iterates persons");
-    check(t.temps[2] == chair2.id && t.temps[3] == chair.id,
-          "Set to Next finds objects of a GUID in the object list's order (made in play: the newest first)");
+    check(t.temps[2] == chair.id && t.temps[3] == chair2.id,
+          "Set to Next finds objects of a GUID in their instances' order (made in play: appended)");
     {
-        // A lot's saved list order (ObjM) is the order walked: chair2 put after chair.
-        fx.vm.setListOrder(chair, 0);
-        fx.vm.setListOrder(chair2, 1);
+        // A lot's saved list order (ObjM) is the order walked: chair2 put before chair.
+        fx.vm.setListOrder(chair2, 0);
+        fx.vm.setListOrder(chair, 1);
         Thread u = fx.run(0x1001);
-        check(u.temps[2] == chair.id && u.temps[3] == chair2.id, "Set to Next walks the list as the lot saved it");
+        check(u.temps[2] == chair2.id && u.temps[3] == chair.id, "Set to Next walks the instances as the lot saved them");
     }
     check(t.temps[4] == 0, "Set to Next writes 0 when there is no next object (Mac binary)");
 
@@ -860,6 +860,10 @@ static void testSetToNextSearches() {
     check(t.status == Thread::Status::Finished && t.temps[7] == 5 && t.temps[2] == 2 && t.temps[3] == 3 &&
               t.temps[4] == 3 && t.temps[6] == 5,
           "Set to Next by category, vehicle, GUID in temps and multi-tile part");
+    // People: a current object that is not a person ends the search (GetNextPerson).
+    fx.code.add(kObjGroup, 0x1001, tree({expr(Temp, 0, Assign, Lit, 2, go(1), E), next(1, 0, T, F)}, 1));
+    Thread p = fx.run(0x1001, {0});
+    check(p.status == Thread::Status::Finished && !p.result, "Set to Next 1 from an object that is not a person: false");
 }
 
 static void testNeighbors() {

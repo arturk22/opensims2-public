@@ -571,7 +571,12 @@ Execução (binário):
   mas eu não tenho prioridade (dado de pessoa 33 = 0), 2 a check tree
   recusou, 3 fila do alvo cheia (mais de 6 entradas e não deu para trocar),
   4 sub-fila cheia (interação aninhada, mais de 4), 6 o alvo recusou a
-  entrada.
+  entrada. **Os limites 3 e 4 só valem sem "continue as current"** (byte 3
+  bit 0x04): o binário põe a continuação na interação nova (vtable 0x88,
+  `SetContinuation`) e só testa os tamanhos quando ela lê falso (0x84)
+  (rodada 17). Com a continuação a entrada entra mesmo numa fila cheia.
+  O "trocar" (vtable 0x1FC da pessoa, com a prioridade) não foi lido; o
+  VM não troca.
 - O alvo (stack object) tem de existir (erro 0x15) e ser um Sim (erro 0x1C).
 - Objeto: parâmetro do byte 1 (fora do intervalo: 0x08) ou local (0x02;
   0x33); com o byte 14 bit 1 (último Find Best Interaction) o objeto é o dado
@@ -2643,6 +2648,57 @@ guarda o de quem a começou (do VM, não do binário, que não reusa IDs assim).
 nós por turno do binário (`cli/s2pkg/budget.hpp`; antes 20000 fora do
 `autonomy`).
 
+### Rodada 17 (laços): fila cheia, a lista de objetos e as visitas
+
+- **Push Interaction numa fila cheia** (`TryPushAction`, BV `0xe33530`): os
+  limites da fila (mais de 6 → resultado 3) e da sub-fila (mais de 4 → 4)
+  só valem quando a interação nova **não** é "continue as current" (byte 3
+  bit 0x04; vtable 0x88/0x84 da interação, `SetContinuation`/
+  `GetContinuation`). O "Pickup - Do Carry Sim" empurra o carregar para
+  quem carrega (flags 0xA7) e para quem é carregado (0x67) assim. Com o
+  limite para todos, a fila da criança cheia (no berço, com seis "*Push
+  Look At" esperando atrás do "No Berço") fazia o push falhar; o "Do Carry
+  Sim" volta falso depois de criar o objeto de carregar e de empurrar a
+  entrada para o adulto, e o "Interaction - Give Toddler a Bath" volta ao
+  "Get Sim Push Interaction" sem esperar (nós 1 → 5 → 4 → 3 → 6 → 7 → 2 →
+  1): um objeto "Social - Baby/Toddler - Carry" por volta, a fila do adulto
+  cheia depois de 6 voltas, o limite de nós e, com IDs passando de 32767,
+  o crash do soak (N001_Lot36, sementes 3 e da rodada 16). Um objeto novo
+  sem ID livre agora é erro do VM (a thread é reiniciada), não um ID que
+  dá a volta.
+- **A lista de objetos do Set to Next** (`TrySetToNext`, BV `0xe47288`): os
+  tipos que andam pelos objetos (0 objeto, 1 pessoa, 2 não pessoa, 4/18
+  GUID, 6/12 categoria, 16 veículo, 25 sala, 27, 37) usam a lista do
+  `cEdithObjectModule` (vtable 0x7C do módulo): o objeto depois do atual
+  nessa lista; um atual que não está nela (ou 0) começa da frente. **Não é
+  a ordem dos IDs**: o ObjM do lote grava a lista (`write_pre_object`, os
+  pares ID/save type nessa ordem) e no N001_Lot68 a parte (1,0) do som (42)
+  vem antes do líder (14). O VM guarda a ordem (`Object::listOrder`,
+  `VM::objectList`): o carregador põe cada objeto no lugar do ObjM, o
+  `lot-save` grava nessa ordem, e um objeto feito em jogo vai para a
+  **frente** (inferido: as listas salvas começam pelos IDs mais novos,
+  260, 254, 250, 206...). O "Function - Goal Check" do fantasma
+  (`0x7F38B8A7:0x205D`, nós 28 → 34 → 35 → 24 → 26 → 28) vai da parte ao
+  líder (object data 19) e segue com Set to Next 6 (categoria 10): por ID
+  achava a parte de novo e estourava o limite de nós.
+- **Definições de todos os vizinhos** de novo em toda busca por GUID
+  (`CodeLibrary::definitionByGuid` cai nos arquivos de personagem do
+  bairro uma vez por GUID): Create/Test Object Type acham as visitas e os
+  que passam a pé vêm aos lotes.
+- **Bebidas do bar** ("Tomar um Drinque", `0x7F711E0D`): o "Interaction -
+  Have a Drink" acha o copo da bandeja pelos slots ("Have a Drink - Pick
+  Glass on Tray": 1, 0, 2, 3) e, se não é o copo que o Find Best
+  Interaction escolheu, empurra "Have a Drink" para esse copo (Push
+  Interaction 0x0F) e volta falso ("Find Tumbler to Pick Up"). Cada falha
+  contada é seguida do drinque de verdade: os dados do jogo. Os copos da
+  mesma bandeja empatam nos anúncios e a ordem do empate é a da tabela
+  hash do jogo (não reproduzível; ver rodada 16).
+- **`hood-save` e as famílias**: grava os membros mudados pela Generic
+  Sims Call 4/6 (sai do FAMI antigo, entra no novo), o FAMI e o STR# de uma
+  família feita em jogo (`MakeNewFamily`; o nome é o sobrenome do membro,
+  inferido) e tira o FAMI de uma família removida (`RemoveFamily`,
+  `VM::removedFamilies`).
+
 ## 4h. Rodada 15 (front "vm-confirm"): o que era inferido na VM
 
 Tudo lido no binário (Ghidra headless, um clone com os nomes do
@@ -2917,7 +2973,7 @@ N001_Lot68 de 137 para 45).
   arquivos de personagem). O opensims2 só carregava as dos Sims do lote:
   dono 0x26 ("neighbor N has no definition") e Test Object Type falhavam e
   as visitas não vinham. Agora um GUID sem OBJD é procurado uma vez entre
-  os arquivos de personagem do bairro (`vm::useCharacterFiles`). Só o dono 0x26 e o sweep usam isso (`characterDefinition`): em toda busca por GUID trazia as visitas e expunha um laço no N001_Lot36 (TODO).
+  os arquivos de personagem do bairro (`vm::useCharacterFiles`). Rodada 17: de novo em toda busca por GUID (o laço do banho no N001_Lot36 era a fila cheia do Push Interaction; ver §4g "Rodada 17").
 
 ### Motivos do PERS
 

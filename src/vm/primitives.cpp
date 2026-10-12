@@ -530,6 +530,30 @@ Exit setToNext(Context& c) {
             throw VMError("Set to Next: search type " + std::to_string(type) + " not implemented");
         throw gameError(err::BadSearchType, "Set to Next type " + std::to_string(type));
     }
+    // People (1) and a definition's instances (4, 18) are their own
+    // vectors in TrySetToNext (GetNextPerson BV 0xe2521c; the selector's
+    // instances): the one after the current one, which must be in it (a
+    // current object that is not, as "Dartboard - Shoo Sims" leaves the
+    // dartboard there between people, ends the search: false); 0 starts
+    // at the first. Their order: Object::appendOrder.
+    if (type == 1 || type == 4 || type == 18) {
+        std::vector<const Object*> v;
+        for (const Object* x : c.vm.objectTable())
+            if (x && matches(*x))
+                v.push_back(x);
+        std::sort(v.begin(), v.end(), [](const Object* a, const Object* b) { return a->appendOrder < b->appendOrder; });
+        size_t k = 0;
+        if (current != 0) {
+            const auto at = std::find_if(v.begin(), v.end(), [&](const Object* x) { return x->id == current; });
+            if (at == v.end())
+                return none();
+            k = size_t(at - v.begin()) + 1;
+        }
+        for (; k < v.size(); ++k)
+            if (eligible(*v[k]))
+                return found(v[k]->id);
+        return none();
+    }
     // The object module's list (TrySetToNext, BV 0xe47288: the objects
     // after the current one in that list; a current one not in it, or 0,
     // starts at the front), not ID order: a lot's list (ObjM) can have a

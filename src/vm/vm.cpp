@@ -730,6 +730,7 @@ Object& VM::createObject(uint32_t group, size_t attributeCount, ObjectId id) {
     o.id = id;
     o.serial = ++objectSerial_;
     o.listOrder = --listFront_;
+    o.appendOrder = (int64_t(1) << 40) + int64_t(o.serial);
     objectList_[o.listOrder] = id;
     o.group = group;
     o.semiGroup = code_.semiGlobalFor(group);
