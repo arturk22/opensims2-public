@@ -1036,18 +1036,25 @@ Exit arrayOperation(Context& c) {
     }
 }
 
-// Change Material (0x6D), by the Mac binary's disassembler and
-// SwizzleParams (docs/primitives-mac.md §5): material u16 at 0 (an index into
-// STR# 0x88 "Material Names"), flags u8 at 2, mesh group u16 at 3 (into STR#
-// 0x87 "Mesh Groups"; 0xFFFF / negative = the whole model), the object it
-// affects (owner u8 at 5, data u16), an object (owner u8 at 8, data u16 at
-// 9) whose tables are used with flags 0x08 (material names) and 0x01 (mesh
-// group names) instead of the running code's, flags u8 at 13. Flags: 0x10
-// the material index is in temp 0, 0x20 the mesh group index in temp 1;
-// 0x02/0x04 and 0x40/0x80 pick other name tables (which ones is not known:
-// STR# 0x87/0x88 are used), byte 13 0x01 a "Moving Texture" index and 0x02
-// the snapshot material (not done). The change is recorded on the target
-// for the renderer.
+// Change Material (0x6D), by the Mac binary (TryChangeMaterial, BV
+// 0xe2f128) and SwizzleParams (docs/primitives-mac.md §5): material u16 at 0
+// (an index into STR# 0x88 "Material Names"), flags u8 at 2, mesh group u16
+// at 3 (into STR# 0x87 "Mesh Groups"; 0xFFFF / negative = the whole model),
+// the object it affects (owner u8 at 5, data u16), an object (owner u8 at 8,
+// data u16 at 9) whose tables are used with flags 0x08 (material names) and
+// 0x01 (mesh group names) instead of the running code's, flags u8 at 13.
+// Flags: 0x10 the material index is in temp 0, 0x20 the mesh group index in
+// temp 1; the material names come from the global group's STR# 0x88 with
+// 0x02, the semi-global's with 0x04 (none: no name), else the object's own;
+// the mesh group names likewise with 0x40 and 0x80. Byte 13 0x02/0x04/0x20
+// (the snapshot and "Moving Texture" materials) skip the material name (not
+// done here: nothing changes). A material without a name is error 0x46
+// ("Missing Material / Mesh Group Name"); a mesh group without one is not:
+// the binary looks the name up and never reads it (the shrubs' "Function -
+// Main" names mesh group 0 of a table their group does not have, and the
+// game goes on). The change is recorded on the target for the renderer: a
+// named mesh group gets the material, an unnamed one the whole model
+// (inferred).
 Exit changeMaterial(Context& c) {
     const auto& o = c.instruction.operands;
     const uint8_t flags = o[2];
@@ -1061,31 +1068,44 @@ Exit changeMaterial(Context& c) {
         if (!other)
             throw gameError(err::NoObject, "Change Material: object " + std::to_string(id));
     }
+    const ObjectId target = c.get(o[5], int16_t(le16(&o[6])));
+    Object* x = c.vm.object(target);
+    if (!x)
+        throw gameError(err::NoObject, "Change Material: object " + std::to_string(target));
     // The names come from the running tree's group (TryChangeMaterial looks
     // the table up in the group of the code the stack element runs, BV): the
     // semi-global "Events - Use Remote" of the TVs names the screens in its
     // own STR# 0x88; the code owner's group when that has none.
-    auto name = [&](const Object& from, uint16_t table, int index) {
+    // `where`: 0 the object's own, 1 the global group, 2 its semi-global.
+    auto name = [&](const Object& from, uint16_t table, int index, int where) -> std::string {
         const StringTable* t = nullptr;
-        if (&from == owner && c.frame.group)
-            if (const StringTable* f = c.vm.code().strings(c.frame.group, table);
-                f && index >= 0 && size_t(index) < f->count(lang::EnglishUS))
-                t = f;
-        if (!t)
-            t = c.vm.code().strings(from.group, table);
-        if (!t || index < 0 || size_t(index) >= t->count(lang::EnglishUS))
-            throw VMError("Change Material: no entry " + std::to_string(index) + " in STR# " + hexString(table) +
-                          " of " + hexString(from.group));
-        return t->get(size_t(index), lang::EnglishUS);
+        auto has = [&](const StringTable* f) { return f && index >= 0 && size_t(index) < f->count(lang::EnglishUS); };
+        if (where == 1)
+            t = c.vm.code().strings(kGlobalGroup, table);
+        else if (where == 2) {
+            if (const uint32_t semi = c.vm.code().semiGlobalFor(from.group))
+                t = c.vm.code().strings(semi, table);
+        } else {
+            if (&from == owner && c.frame.group)
+                if (const StringTable* f = c.vm.code().strings(c.frame.group, table); has(f))
+                    t = f;
+            if (!t)
+                t = c.vm.code().strings(from.group, table);
+        }
+        return has(t) ? t->get(size_t(index), lang::EnglishUS) : std::string();
     };
+    if (o[13] & 0x26)
+        return Exit::True; // the snapshot / moving texture materials (not done)
     const int materialIndex = flags & 0x10 ? c.thread.temps[0] : int(le16(&o[0]));
     const int group = flags & 0x20 ? c.thread.temps[1] : int(int16_t(le16(&o[3])));
-    const std::string material = name(flags & 0x08 ? *other : *owner, kMaterialStrings, materialIndex);
-    const std::string meshGroup = group < 0 ? "" : name(flags & 0x01 ? *other : *owner, kMeshGroupStrings, group);
-    const ObjectId target = c.get(o[5], int16_t(le16(&o[6])));
-    Object* x = c.vm.object(target);
-    if (!x)
-        throw VMError("Change Material: object " + std::to_string(target) + " does not exist");
+    const std::string material = name(flags & 0x08 ? *other : *owner, kMaterialStrings, materialIndex,
+                                      flags & 0x02 ? 1 : flags & 0x04 ? 2 : 0);
+    if (material.empty())
+        throw gameError(err::MissingMaterialName, "Change Material: no material " + std::to_string(materialIndex) + " in STR# " +
+                                  hexString(kMaterialStrings) + " of " +
+                                  hexString((flags & 0x08 ? *other : *owner).group));
+    const std::string meshGroup = group < 0 ? "" : name(flags & 0x01 ? *other : *owner, kMeshGroupStrings, group,
+                                                       flags & 0x40 ? 1 : flags & 0x80 ? 2 : 0);
     if (meshGroup.empty())
         x->materials.clear();
     x->materials[meshGroup] = material;

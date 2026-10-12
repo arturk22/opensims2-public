@@ -605,6 +605,22 @@ static void testChangeMaterial() {
     check(t.status == Thread::Status::Finished && m.size() == 2 && m.at("bulb") == "lamp_on" &&
               m.at("shade") == "lamp_off",
           "Change Material records mesh group materials");
+
+    // The shrubs' "Function - Main": mesh group 0 of a table the group does
+    // not have is not an error (the binary never reads the name): the whole
+    // model gets the material. A material without a name is error 0x46.
+    Fixture fy;
+    fy.obj();
+    fy.code.add(kObjGroup, kMaterialStrings, names({"shrub_wilted"}));
+    fy.code.add(kObjGroup, 0x1000, tree({instr(0x6D, T, E, {0, 0, 0, 0, 0, Data, 0x0B, 0})}));
+    fy.code.add(kObjGroup, 0x1001, tree({instr(0x6D, T, E, {5, 0, 0, 0xFF, 0xFF, Data, 0x0B, 0})}));
+    Thread u = fy.run(0x1000);
+    const auto& n = fy.obj().materials;
+    check(u.status == Thread::Status::Finished && n.size() == 1 && n.count("") && n.at("") == "shrub_wilted",
+          "Change Material with an unnamed mesh group changes the whole model");
+    Thread v = fy.run(0x1001);
+    check(v.status == Thread::Status::Failed && v.error.find("Missing Material") != std::string::npos,
+          "Change Material without a material name fails with 0x46");
 }
 
 static void testManageInventory() {

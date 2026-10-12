@@ -36,6 +36,7 @@ constexpr uint16_t LocalOutOfRange = 0x33;
 constexpr uint16_t MoreThanOnePassingValue = 0x36;
 constexpr uint16_t MissingNeighbor = 0x37;
 constexpr uint16_t StartObjectRequired = 0x3D;
+constexpr uint16_t MissingMaterialName = 0x46;
 constexpr uint16_t RelationshipNotFound = 0x68;
 constexpr uint16_t ReachOnNonSim = 0x69;
 constexpr uint16_t NoReachObject = 0x6A;
@@ -73,6 +74,7 @@ inline std::string errorString(uint16_t code) {
     case 0x37: return "Missing neighbor for data access.";
     case 0x3D: return "Start object required.";
     case 0x5A: return "Trying to perform an animation from the Social Interaction list against a non person.";
+    case 0x46: return "Missing Material / Mesh Group Name.";
     case 0x68: return "The relationship matrix requested could not be found.";
     case 0x69: return "Cant run Reach/Drop on non Sim object.";
     case 0x6A: return "No Object for Reach to work on.";
