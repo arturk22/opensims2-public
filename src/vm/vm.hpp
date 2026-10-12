@@ -1098,9 +1098,17 @@ public:
     // The family tree by neighbor ID ("Family Relationship Array"), built by
     // Generic Sims Call 21-23 and searched by Set to Next 21-23 and 31. The
     // neighborhood's family ties (loadNeighborhood) fill it in first.
+    // As cTSFamilyRelationshipArray keeps them (BV 0x5442e8): siblings are
+    // ties of their own (type 3), made when a child joins a parent with
+    // other children, not worked out from the parents.
     struct FamilyTies {
-        std::set<int16_t> parents, children, spouses;
+        std::set<int16_t> parents, children, spouses, siblings;
     };
+    // cTSFamilyRelationshipArray::AddRelationship / RemoveRelationship
+    // (Generic Sims Call 21-23; vm/primitives.cpp).
+    bool addChildTie(int16_t child, int16_t parent);
+    void addSpouseTie(int16_t a, int16_t b);
+    void removeTies(int16_t a, int16_t b);
     std::map<int16_t, FamilyTies> familyTree;
 
     // Type attributes (data owners 0x24/0x25): shared by every object of a

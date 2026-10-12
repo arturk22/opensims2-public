@@ -124,7 +124,7 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
         case hood::TieType::OtherParent: vm.familyTree[from].parents.insert(to); break;
         case hood::TieType::Child: vm.familyTree[from].children.insert(to); break;
         case hood::TieType::Spouse: vm.familyTree[from].spouses.insert(to); break;
-        case hood::TieType::Sibling: break; // siblings are found through their parents (Set to Next 22)
+        case hood::TieType::Sibling: vm.familyTree[from].siblings.insert(to); break;
         }
         ++out.familyTies;
     }

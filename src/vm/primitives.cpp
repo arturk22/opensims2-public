@@ -220,7 +220,7 @@ std::array<int16_t, kPersonDataCount>& neighborData(VM& vm, int16_t id, Neighbor
 //   whose ID is in the stack object (missing: error 0x37);
 //   5 neighbor ID, 7 neighbor of the GUID's type, 17 neighbor of the family
 //   in temp 0, 21/22/23/31 parent/sibling/child/spouse of the neighbor in
-//   temp 0 (VM::familyTree; siblings share a parent, inferred), 28/35/36
+//   temp 0 (VM::familyTree; siblings are ties of their own), 28/35/36
 //   neighbors whose relationship from the neighbor in temp 0 has variable 3
 //   non-zero / variable 0 > temp 1 / variable 1 & temp 1 non-zero, 11 lot
 //   ID; 24 visible object within temp 0 tiles (view.cpp); 10 career: false.
@@ -322,14 +322,7 @@ Exit setToNext(Context& c) {
         std::set<int16_t> ids;
         if (auto it = c.vm.familyTree.find(of); it != c.vm.familyTree.end()) {
             const auto& ties = it->second;
-            if (type == 22) {
-                for (int16_t parent : ties.parents)
-                    if (auto p = c.vm.familyTree.find(parent); p != c.vm.familyTree.end())
-                        ids.insert(p->second.children.begin(), p->second.children.end());
-                ids.erase(of);
-            } else {
-                ids = type == 21 ? ties.parents : type == 23 ? ties.children : ties.spouses;
-            }
+            ids = type == 21 ? ties.parents : type == 22 ? ties.siblings : type == 23 ? ties.children : ties.spouses;
         }
         auto next = ids.upper_bound(current);
         return next == ids.end() ? none() : found(*next);
@@ -1488,27 +1481,25 @@ Exit genericSimsCall(Context& c) {
     case 10:
     case 11: vm.buildBuyEnabled = call == 11; return Exit::True;
     case 14: vm.globals[global::HouseRadioStation] = temps[0]; return Exit::True;
-    case 18:
-        if (temps[0] < 0 || temps[0] > 4)
-            throw VMError("Generic Sims Call: simulator speed " + std::to_string(temps[0]) + " out of range");
+    case 18: // TryGenericSimCall (BV): above 1 the speed as is, 1 unpause, else pause
         if (temps[0] <= 1)
-            vm.globals[global::Paused] = temps[0] == 0;
+            vm.globals[global::Paused] = temps[0] != 1;
         else
             vm.globals[global::Speed] = temps[0], vm.globals[global::Paused] = 0;
         return Exit::True;
-    case 21: // add child (temp 0) of parent (temp 1) to the family tree
-        vm.familyTree[temps[0]].parents.insert(temps[1]);
-        vm.familyTree[temps[1]].children.insert(temps[0]);
-        return Exit::True;
+    // The family tree (cTSFamilyRelationshipArray, BV 0x5442e8/0x544028),
+    // both neighbors needed (else error 0x37); always true.
+    case 21: // add child (temp 0) of parent (temp 1)
     case 22: // add spouse (temp 0) of the initial spouse (temp 1)
-        vm.familyTree[temps[0]].spouses.insert(temps[1]);
-        vm.familyTree[temps[1]].spouses.insert(temps[0]);
-        return Exit::True;
     case 23: // remove the ties between temp 0 and its relative in temp 1
-        for (auto [a, b] : {std::pair{temps[0], temps[1]}, std::pair{temps[1], temps[0]}}) {
-            auto& t = vm.familyTree[a];
-            t.parents.erase(b), t.children.erase(b), t.spouses.erase(b);
-        }
+        if (!vm.neighbor(temps[0]) || !vm.neighbor(temps[1]))
+            throw gameError(err::MissingNeighbor, "Generic Sims Call " + std::to_string(call));
+        if (call == 21)
+            vm.addChildTie(temps[0], temps[1]);
+        else if (call == 22)
+            vm.addSpouseTie(temps[0], temps[1]);
+        else
+            vm.removeTies(temps[0], temps[1]);
         return Exit::True;
     case 25: vm.globals[global::SelectedPersonId] = temps[0]; return Exit::True;
     case 40: vm.gameStateTransitionsEnabled = temps[0] != 0; return Exit::True;

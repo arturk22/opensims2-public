@@ -859,6 +859,27 @@ static void testDefinitionOwners() {
           "type attributes, master definition, object functions, constants [temp] and rooms");
 }
 
+// cTSFamilyRelationshipArray: siblings are ties of their own; a child has at
+// most two parents; a new spouse ends the old marriage.
+static void testFamilyTies() {
+    Fixture fx;
+    VM& vm = fx.vm;
+    vm.familyTree[7].siblings.insert(8); // from the neighborhood, no parents known
+    vm.familyTree[8].siblings.insert(7);
+    check(vm.addChildTie(3, 1) && vm.addChildTie(4, 1) && vm.familyTree[3].siblings.count(4) &&
+              vm.familyTree[4].siblings.count(3),
+          "a second child of a parent becomes the first's sibling");
+    check(vm.addChildTie(3, 2) && !vm.addChildTie(3, 9) && vm.familyTree[3].parents.size() == 2,
+          "a third parent is refused");
+    vm.addSpouseTie(1, 2);
+    vm.addSpouseTie(1, 5);
+    check(vm.familyTree[1].spouses == std::set<int16_t>{5} && vm.familyTree[2].spouses.empty() &&
+              vm.familyTree[7].siblings.count(8),
+          "a new spouse ends the old marriage; siblings without parents stay");
+    vm.removeTies(3, 4);
+    check(!vm.familyTree[3].siblings.count(4) && vm.familyTree[3].parents.count(1), "removing the ties between two");
+}
+
 static void testFamilyTree() {
     Fixture fx;
     fx.obj();
@@ -1633,6 +1654,7 @@ int main() {
     testRemoveAndRandom();
     testAgeRayTraceOwners();
     testFamilyTree();
+    testFamilyTies();
     testMultiTileAndIds();
     testAddPackage();
     testSavedObjectState();

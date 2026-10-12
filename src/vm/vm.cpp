@@ -1089,6 +1089,46 @@ void VM::followContainers() {
     }
 }
 
+// The family tree (cTSFamilyRelationshipArray, BV 0x544028/0x5442e8).
+void VM::removeTies(int16_t a, int16_t b) {
+    for (auto [x, y] : {std::pair{a, b}, std::pair{b, a}}) {
+        auto& t = familyTree[x];
+        t.parents.erase(y), t.children.erase(y), t.spouses.erase(y), t.siblings.erase(y);
+    }
+}
+
+// AddRelationship(child, parent, 4): the parent becomes parent 0 or 1 of the
+// child (none if it has two: false), after the ties between the two are
+// cleared, and the child a sibling of the parent's other children.
+bool VM::addChildTie(int16_t child, int16_t parent) {
+    if (child == parent)
+        return false;
+    if (familyTree[child].parents.size() >= 2 && !familyTree[child].parents.count(parent))
+        return false;
+    removeTies(child, parent);
+    for (int16_t other : std::set<int16_t>(familyTree[parent].children))
+        if (other != child) {
+            removeTies(child, other);
+            familyTree[child].siblings.insert(other);
+            familyTree[other].siblings.insert(child);
+        }
+    familyTree[parent].children.insert(child);
+    familyTree[child].parents.insert(parent);
+    return true;
+}
+
+// AddRelationship(a, b, 2): each leaves its former spouse first.
+void VM::addSpouseTie(int16_t a, int16_t b) {
+    if (a == b)
+        return;
+    removeTies(a, b);
+    for (int16_t x : {a, b})
+        for (int16_t old : std::set<int16_t>(familyTree[x].spouses))
+            removeTies(x, old);
+    familyTree[a].spouses.insert(b);
+    familyTree[b].spouses.insert(a);
+}
+
 Object* VM::object(ObjectId id) {
     const size_t k = uint16_t(id);
     return k < byId_.size() ? byId_[k] : nullptr;
