@@ -8,6 +8,7 @@
 #include "resindex.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <set>
@@ -86,6 +87,24 @@ std::vector<RoadTile> roadTiles(const Occupants& o) {
     return out;
 }
 
+// cTSNHoodOccupant's tile rectangle (vtable 0x20, BV 0xb1ae28): its bounds
+// over 10, the low corner floored unless less than 0.07 of a tile is left
+// in the first tile, the high one ceiled likewise (FLOAT_0274bbf4 = 0.93).
+TileRect occupantTiles(const OccupantPosition& at) {
+    auto lo = [](float v) {
+        int n = int(std::floor(v));
+        return v - float(n) > 0.93f ? n + 1 : n;
+    };
+    auto hi = [](float v) {
+        int n = int(std::ceil(v));
+        return float(n) - v > 0.93f ? n - 1 : n;
+    };
+    return {lo(at.boundsMin[0] / kHoodCellSize), lo(at.boundsMin[1] / kHoodCellSize),
+            hi(at.boundsMax[0] / kHoodCellSize), hi(at.boundsMax[1] / kHoodCellSize)};
+}
+
+constexpr float kRoadOverTerrain = 0.4f; // cTSNHoodRoadOccupant::FlattenToTerrain
+
 bool overlaps(const TileRect& a, const TileRect& b) {
     return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 }
@@ -113,7 +132,7 @@ TileRect emptyLotRect(EmptyLotSize size, int x, int y, int rotation) {
     return r;
 }
 
-Placement checkPlacement(const PlacementWorld& world, const TileRect& R, uint32_t self) {
+Placement checkPlacement(const PlacementWorld& world, const TileRect& R, uint32_t self, const LotInfo* beach) {
     Placement out;
     const Terrain& t = *world.terrain;
     auto fail = [&](const char* why) {
@@ -141,32 +160,51 @@ Placement checkPlacement(const PlacementWorld& world, const TileRect& R, uint32_
                 if (!roadSet.count({x, y}))
                     return fail("another lot");
     }
-    // 3. Flora and props in the way that may not be in a lot nor be removed.
+    // 3. AreBlockingObjectsPresent (BV 0xa271cc): the occupants
+    // GetOccupants returns (their tile rectangle overlaps the lot's,
+    // strictly) whose bounds touch the lot's world rectangle (vtable 0x24,
+    // inclusive) and that may not be in a lot (vtable 0x34 IsAllowedInLot:
+    // the product's allowedinlot).
     const float wx0 = float(R.x0) * kHoodCellSize, wy0 = float(R.y0) * kHoodCellSize;
     const float wx1 = float(R.x1) * kHoodCellSize, wy1 = float(R.y1) * kHoodCellSize;
     auto blocks = [&](const OccupantPosition& at, uint32_t guid) {
-        if (at.boundsMax[0] <= wx0 || at.boundsMin[0] >= wx1 || at.boundsMax[1] <= wy0 || at.boundsMin[1] >= wy1)
+        if (!overlaps(R, occupantTiles(at)))
+            return false;
+        if (at.boundsMax[0] < wx0 || at.boundsMin[0] > wx1 || at.boundsMax[1] < wy0 || at.boundsMin[1] > wy1)
             return false;
         auto it = world.objects.find(guid);
-        const bool b = it == world.objects.end() || !(it->second.allowedInLot || it->second.removeOnLotPlop);
-        return b;
+        return it == world.objects.end() || !it->second.allowedInLot;
+    };
+    auto culprit = [&](const OccupantPosition& at, uint32_t guid, const char* what) {
+        char buf[200];
+        std::snprintf(buf, sizeof buf,
+                      "objects in the way (%s 0x%08x at (%.1f, %.1f), bounds (%.1f, %.1f)-(%.1f, %.1f), lot (%.0f, "
+                      "%.0f)-(%.0f, %.0f))",
+                      what, guid, at.position[0], at.position[1], at.boundsMin[0], at.boundsMin[1], at.boundsMax[0],
+                      at.boundsMax[1], wx0, wy0, wx1, wy1);
+        out.why = buf;
+        return out;
     };
     for (const auto& f : world.occupants->flora)
         if (blocks(f.at, f.guid))
-            return fail("objects in the way");
+            return culprit(f.at, f.guid, "flora");
     for (const auto& p : world.occupants->props)
         if (blocks(p.at, p.guid))
-            return fail("objects in the way");
+            return culprit(p.at, p.guid, "prop");
     // 4. Water (not a beach lot).
-    for (int y = R.y0; y <= R.y1; ++y)
+    for (int y = R.y0; y <= R.y1 && !beach; ++y)
         for (int x = R.x0; x <= R.x1; ++x)
             if (t.vertex(x, y) < t.seaLevel)
                 return fail("water");
-    // 5. A road there, and not too steep.
-    bool anyRoad = false;
-    for (const auto& r : roads)
-        anyRoad = anyRoad || (r.x >= R.x0 && r.x < R.x1 && r.y >= R.y0 && r.y < R.y1);
-    if (!anyRoad)
+    // 5. A road there (GetOccupants of type 2), and not too steep.
+    std::vector<const Road*> roadOccs;
+    for (const auto& r : world.occupants->roads)
+        if (overlaps(R, occupantTiles(r.at)))
+            roadOccs.push_back(&r);
+    for (const auto& br : world.occupants->bridges)
+        if (overlaps(R, occupantTiles(br.road.at)))
+            roadOccs.push_back(&br.road);
+    if (roadOccs.empty())
         return fail("no road");
     {
         float lo = INFINITY, hi = -INFINITY;
@@ -183,35 +221,36 @@ Placement checkPlacement(const PlacementWorld& world, const TileRect& R, uint32_
         if ((dx || dy) && (hi - lo) / (std::sqrt(float(dx * dx + dy * dy)) * 10.0f) > world.maxSlope)
             return fail("too steep");
     }
-    // 6. The roads in the rectangle: only along its edges; those with two
-    // connections or more mark the edge tiles they cover.
+    // 6. The roads, clipped to the rectangle: each must touch its ring of
+    // edge tiles and have two connections at least (the road's connection
+    // bits, vtable 0x88: byte +0x86), else the lot may not go; each marks
+    // the edge tiles it covers.
     std::array<std::vector<bool>, 4> edge;
     edge[0].assign(size_t(R.depth()), false), edge[2].assign(size_t(R.depth()), false);
     edge[1].assign(size_t(R.width()), false), edge[3].assign(size_t(R.width()), false);
-    std::vector<std::pair<int, int>> heights; // road tiles on each edge, for the height
-    for (const auto& r : roads) {
-        if (r.x < R.x0 || r.x >= R.x1 || r.y < R.y0 || r.y >= R.y1)
+    for (const Road* road : roadOccs) {
+        const TileRect o = occupantTiles(road->at);
+        const TileRect c{std::max(o.x0, R.x0), std::max(o.y0, R.y0), std::min(o.x1, R.x1), std::min(o.y1, R.y1)};
+        if (c.width() <= 0 || c.depth() <= 0)
             continue;
-        const bool ring = r.x + 1 >= R.x1 || r.x <= R.x0 || r.y + 1 >= R.y1 || r.y <= R.y0;
+        const bool ring = c.x0 >= R.x1 - 1 || c.x1 <= R.x0 + 1 || c.y0 >= R.y1 - 1 || c.y1 <= R.y0 + 1;
         if (!ring)
             return fail("a road through the lot");
-        int connections = 0;
-        for (auto [dx, dy] : {std::pair{1, 0}, {-1, 0}, {0, 1}, {0, -1}})
-            connections += roadSet.count({r.x + dx, r.y + dy}) ? 1 : 0;
-        if (connections < 2)
-            continue;
-        if (r.x == R.x0)
-            edge[0][size_t(r.y - R.y0)] = true;
-        if (r.y + 1 == R.y1)
-            edge[1][size_t(r.x - R.x0)] = true;
-        if (r.x + 1 == R.x1)
-            edge[2][size_t(R.y1 - r.y - 1)] = true;
-        if (r.y == R.y0)
-            edge[3][size_t(R.x1 - r.x - 1)] = true;
+        if (std::popcount(unsigned(road->connections & 0xF)) < 2)
+            return fail("a road end on the lot");
+        if (c.x0 == R.x0)
+            for (int k = c.y0 - R.y0; k < c.y1 - R.y0; ++k)
+                edge[0][size_t(k)] = true;
+        if (c.y1 == R.y1)
+            for (int k = c.x0 - R.x0; k < c.x1 - R.x0; ++k)
+                edge[1][size_t(k)] = true;
+        if (c.x1 == R.x1)
+            for (int k = R.y1 - c.y1; k < R.y1 - c.y0; ++k)
+                edge[2][size_t(k)] = true;
+        if (c.y0 == R.y0)
+            for (int k = R.x1 - c.x1; k < R.x1 - c.x0; ++k)
+                edge[3][size_t(k)] = true;
     }
-    // FUN_00a27460: an edge fully lined with road is a road edge; on the
-    // others only the end tiles may be road, next to a road edge; one road
-    // edge at least.
     bool anyFull = false;
     std::array<size_t, 4> count{};
     for (int i = 0; i < 4; ++i) {
@@ -237,29 +276,223 @@ Placement checkPlacement(const PlacementWorld& world, const TileRect& R, uint32_
             out.front = i;
             break;
         }
-    // The front road's height (DetermineFlattenHeightForRoadOccs: here the
-    // mean height of its road tiles' corners).
-    float sum = 0;
-    int n = 0;
-    auto edgeTile = [&](const Road& r) {
-        float x = INFINITY, y = INFINITY;
-        for (const auto& c : r.corners)
-            x = std::min(x, c[0]), y = std::min(y, c[1]);
-        const int tx = int(std::floor(x / kHoodCellSize + 0.01f)), ty = int(std::floor(y / kHoodCellSize + 0.01f));
-        switch (out.front) {
-        case 0: return tx == R.x0 && ty >= R.y0 && ty < R.y1;
-        case 1: return ty + 1 == R.y1 && tx >= R.x0 && tx < R.x1;
-        case 2: return tx + 1 == R.x1 && ty >= R.y0 && ty < R.y1;
-        default: return ty == R.y0 && tx >= R.x0 && tx < R.x1;
+    // Each road edge's height (this+0x6c, DetermineFlattenHeightForRoadOccs):
+    // here the terrain under its road tiles, their corners' mean height less
+    // the 0.4 roads float over the terrain (FlattenToTerrain,
+    // FLOAT_0274b4b0); the shipped lots' elevations are exactly that.
+    for (int e = 0; e < 4; ++e) {
+        if (!out.roads[size_t(e)])
+            continue;
+        float sum = 0;
+        int n = 0;
+        for (const Road* r : roadOccs) {
+            const TileRect o = occupantTiles(r->at);
+            bool on = false;
+            switch (e) {
+            case 0: on = o.x0 == R.x0 && o.y0 >= R.y0 && o.y1 <= R.y1; break;
+            case 1: on = o.y1 == R.y1 && o.x0 >= R.x0 && o.x1 <= R.x1; break;
+            case 2: on = o.x1 == R.x1 && o.y0 >= R.y0 && o.y1 <= R.y1; break;
+            default: on = o.y0 == R.y0 && o.x0 >= R.x0 && o.x1 <= R.x1; break;
+            }
+            if (on)
+                for (const auto& c : r->corners)
+                    sum += c[2], ++n;
         }
-    };
-    for (const auto& r : world.occupants->roads)
-        if (edgeTile(r))
-            for (const auto& c : r.corners)
-                sum += c[2], ++n;
-    out.roadHeight = n ? sum / float(n) : t.heightAt((wx0 + wx1) / 2, (wy0 + wy1) / 2);
+        out.edgeHeight[size_t(e)] = n ? sum / float(n) - kRoadOverTerrain : t.heightAt((wx0 + wx1) / 2, (wy0 + wy1) / 2);
+    }
+    out.roadHeight = out.edgeHeight[size_t(out.front)];
+    // 7. IsOKToPlaceBeachLot (BV 0xa2687c): the last road edge's height at
+    // most 10 over the sea, within 1.0 of the base lot's road height, and a
+    // vertex at or under the sea on the edge across from that road.
+    if (beach) {
+        int e = -1;
+        for (int i = 0; i < 4; ++i)
+            if (out.roads[size_t(i)])
+                e = i;
+        const float h = out.edgeHeight[size_t(e)];
+        if (h - t.seaLevel > 10.0f || std::fabs(h - beach->roadHeight) > 1.0f)
+            return fail("not a beach");
+        bool wet = false;
+        for (int k = (e == 1 || e == 3) ? R.x0 : R.y0; k <= ((e == 1 || e == 3) ? R.x1 : R.y1) && !wet; ++k) {
+            const float v = e == 1 ? t.vertex(k, R.y0) : e == 3 ? t.vertex(k, R.y1) : e == 0 ? t.vertex(R.x1, k)
+                                                                                              : t.vertex(R.x0, k);
+            wet = v <= t.seaLevel;
+        }
+        if (!wet)
+            return fail("not a beach");
+    }
     out.ok = true;
     return out;
+}
+
+void applyTunables(PlacementWorld& world, const TerrainSettings& settings) {
+    world.maxSlope = std::tan(settings.maxLotSlope * 3.14f / 180.0f);
+    world.talusAngle = settings.smoothingTalusAngle;
+    world.smoothingPasses = settings.smoothingPasses;
+}
+
+namespace {
+
+// The first lot over `r` (cTSLotManager vtable 0xec; inferred: sharing a tile).
+const Lot* lotOver(const PlacementWorld& world, const TileRect& r, uint32_t skip = 0) {
+    for (const auto& l : world.hood->lots)
+        if (l.id != skip && overlaps(lotRect(l.info), r))
+            return &l;
+    return nullptr;
+}
+
+std::vector<const Road*> roadsOver(const Occupants& o, const TileRect& r) {
+    std::vector<const Road*> out;
+    for (const auto& road : o.roads)
+        if (overlaps(r, occupantTiles(road.at)))
+            out.push_back(&road);
+    for (const auto& b : o.bridges)
+        if (overlaps(r, occupantTiles(b.road.at)))
+            out.push_back(&b.road);
+    return out;
+}
+
+// cTSNHoodRoadOccupant::GetSameHeightVertices (BV 0xb1ac10): of the road's
+// corners (x0,y0), (x0,y1), (x1,y1), (x1,y0), the ones `v` must stay level
+// with: the other three on an intersection or bend (connections on both
+// axes), the one across the road on a straight piece.
+std::vector<std::pair<int, int>> sameHeightVertices(const Road& road, std::pair<int, int> v) {
+    const TileRect t = occupantTiles(road.at);
+    const std::array<std::pair<int, int>, 4> c{{{t.x0, t.y0}, {t.x0, t.y1}, {t.x1, t.y1}, {t.x1, t.y0}}};
+    int i = 0;
+    while (i < 4 && c[size_t(i)] != v)
+        ++i;
+    if (i == 4)
+        return {};
+    const bool along02 = road.connections & 0x5, along13 = road.connections & 0xA;
+    std::vector<std::pair<int, int>> out;
+    if (along02 && along13) {
+        for (int k = 0; k < 4; ++k)
+            if (k != i)
+                out.push_back(c[size_t(k)]);
+    } else if (along02) {
+        constexpr int kAcross[4] = {1, 0, 3, 2}; // DAT_02738d90
+        out.push_back(c[size_t(kAcross[i])]);
+    } else if (along13) {
+        constexpr int kAcross[4] = {3, 2, 1, 0}; // DAT_02738d80
+        out.push_back(c[size_t(kAcross[i])]);
+    }
+    return out;
+}
+
+} // namespace
+
+TerrainEdit conformTerrainToLot(const PlacementWorld& world, const LotInfo& base, uint32_t self, int x, int y,
+                                int front, const Placement& placement) {
+    TerrainEdit out;
+    const Terrain& t = *world.terrain;
+    const int W = int(base.width), D = int(base.depth);
+    if (base.heights.size() != size_t(W + 1) * size_t(D + 1)) {
+        out.why = "the lot has no height per vertex";
+        return out;
+    }
+    // The road strip along the creation front edge (base vertices).
+    int su0 = 0, su1 = W, sv0 = 0, sv1 = D;
+    switch (base.creationFrontEdge & 3) {
+    case 0: su1 = 1; break;
+    case 1: sv0 = D - 1; break;
+    case 2: su0 = W - 1; break;
+    default: sv1 = 1; break;
+    }
+    const float offset = placement.heightAt(front);
+    const int turn = (front - int(base.creationFrontEdge) + 4) & 3;
+    auto put = [&](std::pair<int, int> v, float h) {
+        auto [it, fresh] = out.heights.emplace(v, h);
+        return fresh || it->second == h;
+    };
+    for (int v = 0; v <= D; ++v)
+        for (int u = 0; u <= W; ++u) {
+            const float h = offset + base.heights[size_t(v) * size_t(W + 1) + size_t(u)];
+            int X = u, Y = v;
+            switch (turn) {
+            case 1: X = v, Y = W - u; break;
+            case 2: X = W - u, Y = D - v; break;
+            case 3: X = D - v, Y = u; break;
+            default: break;
+            }
+            X += x, Y += y;
+            if (!put({X, Y}, h)) {
+                out.why = "the roads cannot follow the lot's ground";
+                return out;
+            }
+            const bool strip = u >= su0 && u <= su1 && v >= sv0 && v <= sv1;
+            if (strip || std::fabs(t.vertex(X, Y) - h) <= 0.01f)
+                continue;
+            const TileRect around{X - 1, Y - 1, X + 1, Y + 1};
+            if (const Lot* other = lotOver(world, around); other && other->id != self) {
+                out.why = "the ground would change under another lot";
+                return out;
+            }
+            for (const Road* road : roadsOver(*world.occupants, around))
+                for (auto sv : sameHeightVertices(*road, {X, Y}))
+                    if (!put(sv, h)) {
+                        out.why = "the roads cannot follow the lot's ground";
+                        return out;
+                    }
+        }
+    out.ok = true;
+    return out;
+}
+
+size_t smoothTerrainUnderLot(Terrain& terrain, const PlacementWorld& world, const TileRect& R, uint32_t self) {
+    const int gw = int(terrain.gridWidth), gh = int(terrain.gridHeight);
+    if (gw <= 0 || gh <= 0 || terrain.heights.size() != size_t(gw) * size_t(gh))
+        return 0;
+    const std::vector<float> before = terrain.heights;
+    auto at = [&](int x, int y) -> float& { return terrain.heights[size_t(y) * size_t(gw) + size_t(x)]; };
+    auto inside = [&](int x, int y) { return x >= R.x0 && x <= R.x1 && y >= R.y0 && y <= R.y1 && x >= 0 && y >= 0 && x < gw && y < gh; };
+    // FUN_004d359c: the locked vertices (the 3x3 vertex rectangle clamped to the tiles).
+    const int w = R.x1 - R.x0 + 1;
+    std::vector<bool> locked(size_t(w) * size_t(R.y1 - R.y0 + 1), false);
+    const int tw = int(terrain.width), th = int(terrain.height);
+    auto clampT = [](int v, int n) { return std::clamp(v, 0, n - 1); };
+    for (int y = R.y0; y <= R.y1; ++y)
+        for (int x = R.x0; x <= R.x1; ++x) {
+            const TileRect around{clampT(x - 1, tw), clampT(y - 1, th), clampT(x + 1, tw), clampT(y + 1, th)};
+            bool lock = lotOver(world, around, self) != nullptr || !roadsOver(*world.occupants, around).empty();
+            for (const auto& f : world.occupants->flora)
+                lock = lock || overlaps(around, occupantTiles(f.at));
+            for (const auto& p : world.occupants->props)
+                lock = lock || overlaps(around, occupantTiles(p.at));
+            locked[size_t(y - R.y0) * size_t(w) + size_t(x - R.x0)] = lock;
+        }
+    auto isLocked = [&](int x, int y) { return locked[size_t(y - R.y0) * size_t(w) + size_t(x - R.x0)]; };
+    const float straight = std::tan(world.talusAngle * 3.14f / 180.0f) * 10.0f, diagonal = straight * 1.414f;
+    constexpr int kDx[8] = {1, 1, 0, -1, -1, -1, 0, 1}, kDy[8] = {0, -1, -1, -1, 0, 1, 1, 1};
+    for (int pass = 0; pass < world.smoothingPasses; ++pass)
+        for (int y = R.y0; y <= R.y1; ++y)
+            for (int x = R.x0; x <= R.x1; ++x) {
+                if (!inside(x, y))
+                    continue;
+                float h = at(x, y);
+                for (int k = 0; k < 8; ++k) {
+                    const int nx = x + kDx[k], ny = y + kDy[k];
+                    if (!inside(nx, ny))
+                        continue;
+                    const float excess = h - at(nx, ny) - ((k & 1) ? diagonal : straight);
+                    if (excess > 0) {
+                        const float d = excess * 0.2f;
+                        if (!isLocked(x, y))
+                            h -= d, at(x, y) = h;
+                        if (!isLocked(nx, ny))
+                            at(nx, ny) += d;
+                    }
+                }
+            }
+    // FUN_00a28af0: multiples of 0.1875.
+    for (int y = R.y0; y <= R.y1; ++y)
+        for (int x = R.x0; x <= R.x1; ++x)
+            if (inside(x, y))
+                at(x, y) = std::nearbyint(at(x, y) / 0.1875f) * 0.1875f;
+    size_t changed = 0;
+    for (size_t i = 0; i < before.size(); ++i)
+        changed += before[i] != terrain.heights[i];
+    return changed;
 }
 
 bool roadsMatch(const LotInfo& base, int front, const std::array<bool, 4>& place) {
@@ -284,11 +517,28 @@ std::optional<std::pair<int, Placement>> findFront(const PlacementWorld& world, 
         turned.frontEdge = uint8_t(front), turned.x = uint32_t(std::max(0, x)), turned.y = uint32_t(std::max(0, y));
         if (x < 0 || y < 0)
             continue;
-        const Placement p = checkPlacement(world, lotRect(turned), self);
-        if (p.ok && roadsMatch(base, front, p.roads))
+        const Placement p = checkLot(world, base, self, x, y, front);
+        if (p.ok)
             return std::pair{front, p};
     }
     return std::nullopt;
+}
+
+Placement checkLot(const PlacementWorld& world, const LotInfo& base, uint32_t self, int x, int y, int front) {
+    LotInfo turned = base;
+    turned.frontEdge = uint8_t(front & 3), turned.x = uint32_t(std::max(0, x)), turned.y = uint32_t(std::max(0, y));
+    Placement p = checkPlacement(world, lotRect(turned), self, (base.flags & LotInfo::kFlagBeach) ? &base : nullptr);
+    if (!p.ok)
+        return p;
+    if (x < 0 || y < 0 || !roadsMatch(base, front, p.roads)) {
+        p.ok = false, p.why = "its roads are not on its road edges";
+        return p;
+    }
+    // cTSUserToolMoveLot / PlaceLotFromInventory::IsOKToPlaceLot: the
+    // terrain must be able to take the lot's ground (a dry run).
+    if (const TerrainEdit e = conformTerrainToLot(world, base, self, x, y, front, p); !e.ok)
+        p.ok = false, p.why = e.why;
+    return p;
 }
 
 std::map<uint32_t, OccupantFlags> loadOccupantFlags(ResourceIndex& index) {
@@ -388,9 +638,8 @@ LotInfo newLotInfo(const LotInfo& base, uint32_t id, int x, int y, int front, fl
 }
 
 // FUN_00a284cc (cTSUserToolPlaceLotBase): the flora and props over the lot
-// whose product says removeonlotplop go; the occupants resource rewritten.
-std::pair<std::vector<uint8_t>, size_t> removeOccupantsOnLot(const fs::path& hoodPackage, const PlacementWorld& world,
-                                                             const TileRect& R) {
+// whose product says removeonlotplop (indices into the occupants).
+std::pair<std::vector<size_t>, std::vector<size_t>> occupantsOnLot(const PlacementWorld& world, const TileRect& R) {
     const float x0 = float(R.x0) * kHoodCellSize, y0 = float(R.y0) * kHoodCellSize;
     const float x1 = float(R.x1) * kHoodCellSize, y1 = float(R.y1) * kHoodCellSize;
     auto over = [&](const OccupantPosition& at, uint32_t guid) {
@@ -405,26 +654,59 @@ std::pair<std::vector<uint8_t>, size_t> removeOccupantsOnLot(const fs::path& hoo
     for (size_t i = 0; i < world.occupants->props.size(); ++i)
         if (over(world.occupants->props[i].at, world.occupants->props[i].guid))
             props.push_back(i);
-    if (flora.empty() && props.empty())
-        return {{}, 0};
-    DbpfPackage pkg(hoodPackage);
-    for (const auto& e : pkg.entries())
-        if (e.tgi.type == hoodtype::Occupants) {
-            const auto bytes = pkg.read(e);
-            const Occupants parsed = Occupants::parse(bytes);
-            return {Occupants::removeOccupants(bytes, parsed, flora, props), flora.size() + props.size()};
-        }
-    return {{}, 0};
+    return {flora, props};
 }
 
-// The lot info and the occupants without what the lot removes.
+// What placing a lot does to the terrain.
+struct TerrainChange {
+    const std::map<std::pair<int, int>, float>* heights = nullptr; // TryModifyingTerrainToConformToLot
+    std::optional<TileRect> smooth;                                // Smoothen under a new lot
+};
+
+// The lot info, the occupants without what the lot removes and the terrain.
 void writeLot(const Neighborhood& hood, const PlacementWorld& world, const LotInfo& info, uint32_t id,
-              std::vector<std::string>& lines, bool dropName) {
+              std::vector<std::string>& lines, bool dropName, const TerrainChange& terrain = {}) {
     std::map<Key, std::vector<uint8_t>> replace{{{hoodtype::LotInfo, id}, info.write()}};
-    auto [occupants, removed] = removeOccupantsOnLot(hood.package, world, lotRect(info));
-    if (removed) {
-        replace[{hoodtype::Occupants, 0}] = std::move(occupants);
-        lines.push_back(std::to_string(removed) + " trees and props removed from the lot");
+    const auto [flora, props] = occupantsOnLot(world, lotRect(info));
+    Occupants left = *world.occupants;
+    uint32_t terrainInstance = 0;
+    std::optional<Terrain> ground;
+    {
+        DbpfPackage pkg(hood.package);
+        for (const auto& e : pkg.entries()) {
+            if (e.tgi.type == hoodtype::Occupants && (!flora.empty() || !props.empty())) {
+                const auto bytes = pkg.read(e);
+                const Occupants parsed = Occupants::parse(bytes);
+                replace[{hoodtype::Occupants, e.tgi.instance}] = Occupants::removeOccupants(bytes, parsed, flora, props);
+                lines.push_back(std::to_string(flora.size() + props.size()) + " trees and props removed from the lot");
+            } else if (e.tgi.type == hoodtype::Terrain && (terrain.heights || terrain.smooth)) {
+                ground = Terrain::parse(pkg.read(e));
+                terrainInstance = e.tgi.instance;
+            }
+        }
+    }
+    for (auto it = flora.rbegin(); it != flora.rend(); ++it)
+        left.flora.erase(left.flora.begin() + std::ptrdiff_t(*it));
+    for (auto it = props.rbegin(); it != props.rend(); ++it)
+        left.props.erase(left.props.begin() + std::ptrdiff_t(*it));
+    if (ground) {
+        size_t changed = 0;
+        if (terrain.heights)
+            for (const auto& [v, h] : *terrain.heights)
+                if (v.first >= 0 && v.second >= 0 && v.first < int(ground->gridWidth) && v.second < int(ground->gridHeight)) {
+                    float& g = ground->heights[size_t(v.second) * ground->gridWidth + size_t(v.first)];
+                    changed += g != h;
+                    g = h;
+                }
+        if (terrain.heights)
+            lines.push_back(std::to_string(changed) + " terrain vertices conformed to the lot");
+        if (terrain.smooth) {
+            PlacementWorld w = world;
+            w.occupants = &left;
+            lines.push_back(std::to_string(smoothTerrainUnderLot(*ground, w, *terrain.smooth)) +
+                            " terrain vertices smoothed under the lot");
+        }
+        replace[{hoodtype::Terrain, terrainInstance}] = ground->write();
     }
     std::set<Key> drop;
     if (dropName)
@@ -435,7 +717,7 @@ void writeLot(const Neighborhood& hood, const PlacementWorld& world, const LotIn
 } // namespace
 
 LotResult placeEmptyLot(const fs::path& folder, const PlacementWorld& world, EmptyLotSize size, int x, int y,
-                        int rotation, const fs::path& forbidden) {
+                        int rotation, const fs::path& forbidden, const std::string& name, uint8_t zone) {
     LotResult out;
     try {
         checkFolder(folder, forbidden);
@@ -447,7 +729,8 @@ LotResult placeEmptyLot(const fs::path& folder, const PlacementWorld& world, Emp
         LotInfo base;
         base.baseVersion = 6;
         base.width = uint32_t(R.width()), base.depth = uint32_t(R.depth());
-        base.type = 0; // residential (the name dialog's zone is not done)
+        base.type = zone; // cTSWinProcPlaceLotDialog::GetLotZoneType: 0 residential, 1 community
+        base.name = name;
         for (int i = 0; i < 4; ++i)
             if (p.roads[size_t(i)])
                 base.roads |= uint8_t(1 << i);
@@ -456,8 +739,12 @@ LotResult placeEmptyLot(const fs::path& folder, const PlacementWorld& world, Emp
         base.heights.assign(size_t(R.width() + 1) * size_t(R.depth() + 1), 0.0f);
         out.lot = nextLotId(hood);
         const LotInfo info = newLotInfo(base, out.lot, R.x0, R.y0, p.front, p.roadHeight);
-        // A name string left by an older lot of this ID goes: the lot info's name is the lot's.
-        writeLot(hood, world, info, out.lot, out.lines, true);
+        // A name string left by an older lot of this ID goes: the lot info's
+        // name is the lot's. The terrain under the lot is smoothed
+        // (Smoothen with [SmoothingUnderNewLot], then rounded to 0.1875).
+        TerrainChange change;
+        change.smooth = R;
+        writeLot(hood, world, info, out.lot, out.lines, true, change);
         out.lines.push_back("empty lot " + std::to_string(out.lot) + " (" + std::to_string(R.width()) + "x" +
                             std::to_string(R.depth()) + " with the road) placed at (" + std::to_string(R.x0) + ", " +
                             std::to_string(R.y0) + "), front " + std::to_string(p.front));
@@ -473,21 +760,20 @@ LotResult placeBinLot(const fs::path& folder, const PlacementWorld& world, const
     LotResult out;
     try {
         checkFolder(folder, forbidden);
-        LotInfo turned = bin.base;
-        turned.frontEdge = uint8_t(front & 3), turned.x = uint32_t(x), turned.y = uint32_t(y);
-        const Placement p = checkPlacement(world, lotRect(turned));
+        const Placement p = checkLot(world, bin.base, 0, x, y, front);
         if (!p.ok)
             throw std::runtime_error("cannot place the lot here: " + p.why);
-        if (!roadsMatch(bin.base, front, p.roads))
-            throw std::runtime_error("cannot place the lot here: its roads are not on its road edges");
         const Neighborhood& hood = *world.hood;
         out.lot = nextLotId(hood);
+        const TerrainEdit ground = conformTerrainToLot(world, bin.base, out.lot, x, y, front, p);
         const fs::path file = folder / "Lots" / (hood.prefix + "_Lot" + std::to_string(out.lot) + ".package");
         fs::create_directories(file.parent_path());
         fs::copy_file(bin.file, file.string() + ".saving", fs::copy_options::overwrite_existing);
         fs::rename(file.string() + ".saving", file);
-        const LotInfo info = newLotInfo(bin.base, out.lot, x, y, front, p.roadHeight);
-        writeLot(hood, world, info, out.lot, out.lines, true);
+        const LotInfo info = newLotInfo(bin.base, out.lot, x, y, front, p.heightAt(front));
+        TerrainChange change;
+        change.heights = &ground.heights;
+        writeLot(hood, world, info, out.lot, out.lines, true, change);
         out.lines.push_back("lot " + std::to_string(out.lot) + " \"" + bin.base.name + "\" from the bin (" +
                             bin.file.filename().string() + ") placed at (" + std::to_string(x) + ", " +
                             std::to_string(y) + "), front " + std::to_string(front));
@@ -508,13 +794,14 @@ LotResult moveLot(const fs::path& folder, const PlacementWorld& world, uint32_t 
             throw std::runtime_error("no lot " + std::to_string(lotId));
         LotInfo info = lot->info;
         info.frontEdge = uint8_t(front & 3), info.x = uint32_t(x), info.y = uint32_t(y);
-        const Placement p = checkPlacement(world, lotRect(info), lotId);
+        const Placement p = checkLot(world, lot->info, lotId, x, y, front);
         if (!p.ok)
             throw std::runtime_error("cannot move the lot here: " + p.why);
-        if (!roadsMatch(lot->info, front, p.roads))
-            throw std::runtime_error("cannot move the lot here: its roads are not on its road edges");
-        info.heightOffset = p.roadHeight;
-        writeLot(*world.hood, world, info, lotId, out.lines, false);
+        info.heightOffset = p.heightAt(front);
+        const TerrainEdit ground = conformTerrainToLot(world, lot->info, lotId, x, y, front, p);
+        TerrainChange change;
+        change.heights = &ground.heights;
+        writeLot(*world.hood, world, info, lotId, out.lines, false, change);
         out.lot = lotId;
         out.lines.push_back("lot " + std::to_string(lotId) + " moved to (" + std::to_string(x) + ", " +
                             std::to_string(y) + "), front " + std::to_string(front));

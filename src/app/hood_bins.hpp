@@ -97,8 +97,11 @@ public:
 
     // Lays the panels out (the puck at `puck`, its canvas rectangle), adds
     // their click targets; then `press` answers a click.
+    // `panelsEnd` (optional) gets where the panels' quads end in `out`, before
+    // the question box: the puck is drawn between them.
     void layout(UiScreen& out, const std::array<float, 4>& puckRect, const UiElement& puck,
-                std::map<const UiElement*, std::array<float, 4>>& puckRects, int width, int height);
+                std::map<const UiElement*, std::array<float, 4>>& puckRects, int width, int height,
+                size_t* panelsEnd = nullptr);
     Request press(simd_float2 p);
     // Whether a click at `p` would land on one of the panels' buttons.
     bool hits(simd_float2 p) const;

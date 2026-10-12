@@ -382,6 +382,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     place_.terrain = &rawTerrain_;
     place_.occupants = &occupants_;
     place_.objects = hood::loadOccupantFlags(index);
+    hood::applyTunables(place_, settings);
     // The lot highlight: a unit square, scaled onto the lot when shown.
     // AddLotPlopHighlight's footprint: the same square, green where the lot
     // may go and red where not (inferred colours).

@@ -47,6 +47,8 @@ struct Terrain {
     std::vector<uint8_t> vertexBytes;       // version 4: one byte per vertex (unknown; zero in the base game)
 
     static Terrain parse(std::span<const uint8_t> data);
+    // parse's inverse (cTSNHoodTerrain::Write: version 4, both layers).
+    std::vector<uint8_t> write() const;
 
     float vertex(int i, int j) const; // clamped to the grid
     // Height at a world point as GetTerrainHeight: 0 outside the terrain, else
@@ -158,6 +160,11 @@ struct TerrainSettings {
     float textureVariantGridSize = 13;
     // Neighborhood.ini
     float imposterZOffset = 0.5f;
+    // [LotPlopTunables] and [SmoothingUnderNewLot] (the lot tools; the
+    // binary's defaults without the ini): degrees, world units, degrees, passes.
+    float maxLotSlope = 30, highlightOffset = 3;
+    float smoothingTalusAngle = 2;
+    int smoothingPasses = 8;
     // Terrain.ini [WaterRenderParameters]
     std::vector<std::array<float, 2>> waterAlphaVsDepth; // (depth, alpha 0-255)
 

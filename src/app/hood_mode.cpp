@@ -60,6 +60,12 @@ HoodMode::LotPlacement HoodMode::placementAt(int x, int y) const {
         // game turns it with the keys).
         const hood::EmptyLotSize size = hood::emptyLotSize(bins.emptySize());
         hood::Placement last;
+        if (turn_ >= 0) {
+            out.rect = hood::emptyLotRect(size, x, y, turn_);
+            out.turn = turn_;
+            finish(hood::checkPlacement(world, out.rect));
+            return out;
+        }
         for (int k = 0; k < 4; ++k) {
             const hood::TileRect r = hood::emptyLotRect(size, x, y, k);
             const hood::Placement p = hood::checkPlacement(world, r);
@@ -80,6 +86,14 @@ HoodMode::LotPlacement HoodMode::placementAt(int x, int y) const {
             base = &l->info, self = l->id;
     if (!base)
         return out;
+    if (turn_ >= 0) {
+        hood::LotInfo turned = *base;
+        turned.frontEdge = uint8_t(turn_), turned.x = uint32_t(std::max(0, x)), turned.y = uint32_t(std::max(0, y));
+        out.rect = hood::lotRect(turned);
+        out.turn = turn_;
+        finish(hood::checkLot(world, *base, self, x, y, turn_));
+        return out;
+    }
     if (auto f = hood::findFront(world, *base, x, y, self, self ? int(base->frontEdge) : -1)) {
         hood::LotInfo turned = *base;
         turned.frontEdge = uint8_t(f->first), turned.x = uint32_t(x), turned.y = uint32_t(y);
@@ -92,11 +106,25 @@ HoodMode::LotPlacement HoodMode::placementAt(int x, int y) const {
     turned.x = uint32_t(std::max(0, x)), turned.y = uint32_t(std::max(0, y));
     out.rect = hood::lotRect(turned);
     out.turn = turned.frontEdge;
-    hood::Placement p = hood::checkPlacement(world, out.rect, self);
-    if (p.ok)
-        p.ok = false, p.why = "its roads are not on its road edges";
-    finish(p);
+    finish(hood::checkLot(world, *base, self, x, y, turned.frontEdge));
     return out;
+}
+
+bool HoodMode::placingLot() const {
+    const HoodBins::Tool t = ui_->bins().tool();
+    return t == HoodBins::Tool::PlaceEmpty || t == HoodBins::Tool::PlaceBin || (t == HoodBins::Tool::MoveLot && movingLot_);
+}
+
+void HoodMode::turnLot(int direction) {
+    if (!placingLot())
+        return;
+    const int from = turn_ >= 0 ? turn_ : pending_.any ? pending_.turn : 0;
+    turn_ = (from + (direction > 0 ? 1 : 3)) & 3;
+    std::printf("opensims2: lot turned to %d\n", turn_);
+    std::fflush(stdout);
+    if (lastTile_)
+        pending_ = placementAt(lastTile_->x, lastTile_->y);
+    view_->showPlacement(pending_.any ? &pending_.rect : nullptr, pending_.ok, pending_.height);
 }
 
 void HoodMode::updatePlacement(const LotCamera& camera, simd_float2 p, float w, float h) {
@@ -117,7 +145,8 @@ void HoodMode::updatePlacement(const LotCamera& camera, simd_float2 p, float w, 
             } else if (const hood::Lot* l = view_->neighborhood().lot(movingLot_)) {
                 cw = int(l->info.currentWidth()), cd = int(l->info.currentDepth());
             }
-            pending_ = placementAt(tile->x - cw / 2, tile->y - cd / 2);
+            lastTile_ = simd_make_int2(tile->x - cw / 2, tile->y - cd / 2);
+            pending_ = placementAt(lastTile_->x, lastTile_->y);
         }
     view_->showPlacement(pending_.any ? &pending_.rect : nullptr, pending_.ok, pending_.height);
 }
@@ -147,6 +176,7 @@ bool HoodMode::place(const LotPlacement& p) {
     }
     std::fflush(stdout);
     movingLot_ = 0;
+    turn_ = -1;
     ui_->bins().cancelTool();
     lotsChanged();
     return true;
@@ -297,6 +327,7 @@ void HoodMode::familyCreated(uint32_t family) {
 
 void HoodMode::escape() {
     movingLot_ = 0;
+    turn_ = -1;
     view_->showPlacement(nullptr, false, 0);
     if (ui_->bins().tool() != HoodBins::Tool::None)
         ui_->bins().cancelTool();
@@ -361,6 +392,9 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
             movingLot_ = uint32_t(n);
         }
     }
+    // --hood-turn <0-3>: the turn the , and . keys would have chosen.
+    if (auto t = value("--hood-turn"))
+        turn_ = std::stoi(*t) & 3;
     for (const char* flag : {"--hood-place-at", "--hood-place-click"})
         if (auto at = value(flag)) {
             const auto comma = at->find(',');
@@ -432,7 +466,7 @@ bool has(const std::vector<std::string>& args, const char* flag) {
 std::vector<std::string> hoodLotArguments(const std::vector<std::string>& args, const std::string& hood, uint32_t lot) {
     auto out = without(args, {"--hood", "--hood-lot", "--hood-hover", "--hood-select", "--screenshot", "--pivot",
                               "--zoom", "--orientation", "--lot", "--hood-panel", "--hood-family", "--hood-tool",
-                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click"});
+                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn"});
     out.insert(out.end(), {"--hood", hood, "--hood-lot", std::to_string(lot)});
     if (!has(out, "--vm"))
         out.push_back("--vm");

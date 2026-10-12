@@ -219,6 +219,7 @@ void cinematicActorAnimates(int16_t id, double at);
 float gUiScale = 1; // drawable pixels per view point
 // --hood: the neighborhood view (app/hood_mode.hpp) in place of a lot.
 std::unique_ptr<os2::HoodMode> gHood;
+std::optional<os2::LotCamera::Pose> gHoodReloadPose; // the camera across a neighborhood reload
 std::unique_ptr<os2::CasMode> gCas; // --cas: Create-a-Sim (app/cas_mode.hpp)
 // --hood <N> --hood-lot <id>: that lot's package, shown as --lot is.
 std::optional<std::string> gHoodLot;
@@ -2909,6 +2910,12 @@ void unloadScene() {
         }
         if (e.keyCode == kBackspace || e.keyCode == kForwardDelete) { gBuy->deleteHeld(); return; }
     }
+    // The neighborhood's lot tools: , and . turn the lot being placed.
+    if (gHood && gHood->placingLot() && (e.keyCode == kComma || e.keyCode == kPeriod)) {
+        gHood->turnLot(e.keyCode == kPeriod ? 1 : -1);
+        _held.erase(e.keyCode);
+        return;
+    }
     switch (e.keyCode) {
     case kPageUp: changeFloor(1); break;
     // "Paredes ... - Origem/Fim": Home and End step through the wall modes.
@@ -4154,8 +4161,11 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         next.returnHood = os2::sceneOf(processArguments()).hood;
         requestScene(next);
     };
-    // A lot placed, moved or binned: the neighborhood view built again.
+    // A lot placed, moved or binned: the neighborhood view built again,
+    // seen from where the camera was.
     gHood->onReload = [] {
+        if (gCamera)
+            gHoodReloadPose = gCamera->pose();
         os2::Scene next;
         next.kind = os2::Scene::Kind::Neighborhood;
         next.hood = os2::sceneOf(processArguments()).hood;
@@ -4175,6 +4185,10 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
     if (auto o = argument(@"--orientation"))
         view.camera->rotateBy(std::stoi(*o));
     view.camera->snap();
+    if (gHoodReloadPose) {
+        view.camera->setPose(*gHoodReloadPose);
+        gHoodReloadPose.reset();
+    }
 }
 
 - (void)finishHood:(OS2View*)view {

@@ -22,12 +22,12 @@
 // - Writes go to the neighborhood folder (the player's copy), each file to a
 //   temporary name renamed over the old one, as formats/hood_moves.hpp.
 //
-// Not done (inferred or skipped): TryModifyingTerrainToConformToLot and the
-// smoothing under a new lot (the view flattens the terrain under every lot
-// when it loads, formats/hood_lot_terrain.hpp), the lot name dialog (cTSWinProcPlaceLotDialog:
-// new lots are residential and keep their base name), beach lots (flag
-// 0x80), and moving an occupied lot to the bin (its family goes with it in
-// the game). Plain C++.
+// - A lot from the bin or moved conforms the terrain to its own ground
+//   (TryModifyingTerrainToConformToLot); a new empty lot smooths the
+//   terrain under it (cTSNHoodTerrain::Smoothen) (docs/neighborhood-mac.md §13).
+//
+// Not done: FlattenAbuttingRoadsIfPossible and the beach shaping of a new
+// beach lot (FUN_00a2afec; the base game has no beach empty lots). Plain C++.
 
 #include "hood_terrain.hpp"
 #include "neighborhood.hpp"
@@ -75,6 +75,10 @@ struct Placement {
     std::array<bool, 4> roads{};        // edges lined with road (this+0x68)
     int front = -1;                     // a new lot's front: its first road edge
     float roadHeight = 0;               // the front road's height (the lot's elevation)
+    std::array<float, 4> edgeHeight{};  // each road edge's height (this+0x6c)
+    // The road height at edge `front` (0 when that edge has none, as
+    // FUN_00a265cc).
+    float heightAt(int front) const { return roads[size_t(front & 3)] ? edgeHeight[size_t(front & 3)] : 0.0f; }
 };
 
 // Neighborhood object catalog flags (catcanhobjects): may stay in a lot, is
@@ -89,11 +93,49 @@ struct PlacementWorld {
     const Terrain* terrain = nullptr;
     const Occupants* occupants = nullptr;
     std::map<uint32_t, OccupantFlags> objects; // by GUID
-    float maxSlope = 0.5f;                     // DAT_0277a89c
+    float maxSlope = 0.5f;                     // DAT_0277a89c: tan(MaxLotSlope)
+    float talusAngle = 2.0f;                   // DAT_0277955c (degrees)
+    int smoothingPasses = 8;                   // DAT_02779558
 };
 
+// The lot tools' tunables from Neighborhood.ini (TerrainSettings): the
+// slope limit is tan(MaxLotSlope x 3.14 / 180) as FUN_00a286f8 has it.
+void applyTunables(PlacementWorld& world, const TerrainSettings& settings);
+
+// cTSUserToolPlaceLotBase::TryModifyingTerrainToConformToLot (BV 0xa2a918):
+// the neighborhood vertices a lot of base info `base` at (x, y) with `front`
+// sets to its own vertex heights (turned by front - creation front) plus
+// the road height of edge `front`. A vertex off the road strip whose height
+// would change by more than 0.01 may not belong to another lot (one that
+// overlaps the 3x3 vertex rectangle, other than `self`), and the roads
+// around it carry the change to the vertices they keep level
+// (GetSameHeightVertices); two heights for one vertex fail it. Fails when
+// the base heights are not one per vertex.
+struct TerrainEdit {
+    bool ok = false;
+    std::string why;
+    std::map<std::pair<int, int>, float> heights; // (x, y) -> height
+};
+TerrainEdit conformTerrainToLot(const PlacementWorld& world, const LotInfo& base, uint32_t self, int x, int y,
+                                int front, const Placement& placement);
+// cTSNHoodTerrain::Smoothen (BV 0x1689538, the interface's vtable 0x88):
+// `passes` passes over the rectangle's vertices; between a vertex and each
+// of its 8 neighbors in the rectangle whose drop passes tan(talus) x 10
+// (x 1.414 diagonally), each side unless locked moves 0.2 of the excess
+// towards the other. Locked (FUN_004d359c): a vertex with an occupant (any
+// type) or another lot in its 3x3 vertex rectangle. Then FUN_00a28af0 rounds
+// every vertex of the rectangle to a multiple of 0.1875. Returns the
+// vertices that changed.
+size_t smoothTerrainUnderLot(Terrain& terrain, const PlacementWorld& world, const TileRect& rect, uint32_t self = 0);
+
 // IsOKToPlaceLotCommon for `rect`, leaving out lot `self` (being moved; 0: none).
-Placement checkPlacement(const PlacementWorld& world, const TileRect& rect, uint32_t self = 0);
+// `beach`: the base lot info of a beach lot (flag 0x80): water is allowed
+// and IsOKToPlaceBeachLot is checked.
+Placement checkPlacement(const PlacementWorld& world, const TileRect& rect, uint32_t self = 0,
+                         const LotInfo* beach = nullptr);
+// A bin lot or a moved lot (base info `base`) at (x, y) with `front`: the
+// placement, the road match and the terrain conforming as a dry run.
+Placement checkLot(const PlacementWorld& world, const LotInfo& base, uint32_t self, int x, int y, int front);
 // cTSUserToolMoveLot/PlaceLotFromInventory::IsOKToPlaceLot's road match:
 // the base lot info's road edge i must be where the place has a road edge
 // (i + front - creation front) mod 4.
@@ -129,8 +171,11 @@ struct LotResult {
 
 // cTSUserToolPlaceNewLot::PlaceLot: a new residential lot info (no lot file
 // yet: its price is the world value). `forbidden` is the game's data.
+// `name` and `zone` come from the place-lot dialog (cTSWinProcPlaceLotDialog:
+// 0 residential, 1 community).
 LotResult placeEmptyLot(const std::filesystem::path& folder, const PlacementWorld& world, EmptyLotSize size, int x,
-                        int y, int rotation, const std::filesystem::path& forbidden = {});
+                        int y, int rotation, const std::filesystem::path& forbidden = {}, const std::string& name = {},
+                        uint8_t zone = 0);
 // PlaceLotFromInventory: the bin's lot file copied as the new lot's and its
 // lot info made from the base, at (x, y) with `front`.
 LotResult placeBinLot(const std::filesystem::path& folder, const PlacementWorld& world, const BinLot& bin, int x, int y,

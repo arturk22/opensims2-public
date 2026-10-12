@@ -241,6 +241,7 @@ UiScreen HoodUi::screen(int width, int height) {
         target(chooser->child(0x2), Action::MainMenu); // "Menu Principal"
     }
     std::optional<std::array<float, 4>> puckRect;
+    std::pair<size_t, size_t> puckQuads{0, 0};
     const UiElement* puckElement = hudRoot.child(kPuck);
     if (const UiElement* puck = puckElement) {
         const auto a = puck->area();
@@ -249,7 +250,9 @@ UiScreen HoodUi::screen(int width, int height) {
             hk.buttonState[f] = bins_->panel() == HoodBins::Panel::Families ? 2 : 1;
         if (const UiElement* l = puck->child(kLotsButton))
             hk.buttonState[l] = bins_->panel() == HoodBins::Panel::Lots ? 2 : 1;
+        puckQuads.first = out.quads.size();
         place(*puck, 2, float(height - (a[3] - a[1]) - 2), hk);
+        puckQuads.second = out.quads.size();
         if (auto r = rects.find(puck); r != rects.end())
             puckRect = r->second;
         target(puck->child(kFamiliesButton), Action::Families);
@@ -321,11 +324,17 @@ UiScreen HoodUi::screen(int width, int height) {
         solid_.resize(solidBefore); // the popup does not take clicks
     }
 
-    // The Families / Lots & Houses panels over the puck (their question box on top).
+    // The Families / Lots & Houses panels hang from the puck's right edge,
+    // under it: their art reaches left under the puck, which is drawn over
+    // them as in the game (the puck's quads moved after the panels'), and
+    // the question box over both.
     if (puckRect && puckElement) {
-        const size_t before = targets_.size();
-        bins_->layout(out, *puckRect, *puckElement, rects, width, height);
-        (void)before;
+        size_t panelsEnd = out.quads.size();
+        bins_->layout(out, *puckRect, *puckElement, rects, width, height, &panelsEnd);
+        if (puckQuads.second > puckQuads.first && panelsEnd > puckQuads.second && panelsEnd <= out.quads.size())
+            std::rotate(out.quads.begin() + std::ptrdiff_t(puckQuads.first),
+                        out.quads.begin() + std::ptrdiff_t(puckQuads.second),
+                        out.quads.begin() + std::ptrdiff_t(panelsEnd));
     }
 
     // The Lot Info Dialog, centred.

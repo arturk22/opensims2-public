@@ -238,6 +238,8 @@ struct LotInfo {
     // 4 set up the family's first day on the next load (SaveLot clears it),
     // 8 its family was evicted (EvictFamily sets it, SaveLot clears it).
     static constexpr uint32_t kFlagSaved = 1, kFlagFirstDay = 4, kFlagEvicted = 8;
+    // 0x80 a beach lot (cTSUserToolPlaceNewLot::PlaceLot sets it; no water check, IsOKToPlaceBeachLot).
+    static constexpr uint32_t kFlagBeach = 0x80;
 
     static LotInfo parse(std::span<const uint8_t> data);
     // A base lot info alone (cTSBaseLotInfo: the 0x6C589723 record of a lot

@@ -782,3 +782,72 @@ lote nem fica sob uma rua.
   giro que cabe: conveniência), a caixa de nome/zona do lote novo (fica
   residencial com o nome da base), lotes de praia e mandar lote ocupado com a
   família para a caixa.
+
+## 13. Rodada 11: conformar, alisar, girar e a conferência dos 63 lotes (binário)
+
+- **Ocupantes no caminho** (`AreBlockingObjectsPresent`): o
+  `cTSNHoodOccupantManager::GetOccupants(rect, tipos)` (BV `0x554794`) só
+  devolve o ocupante cujo **retângulo de tiles** (vtable `0x20`, BV
+  `0xb1ae28`) cruza o do lote estritamente; esse retângulo é o das bordas
+  ÷ 10 com folga: o canto baixo é ⌊v⌋ salvo se sobra mais de 0,93 do tile
+  (`FLOAT_0274bbf4`), o alto ⌈v⌉ salvo se falta mais de 0,93. Depois o teste
+  de volume (vtable `0x24`, BV `0xb1a11c`) é **inclusivo** e o bloqueio é
+  `IsAllowedInLot` (vtable `0x34`: o `allowedinlot` do produto; o
+  `removeonlotplop` não entra; inferido que o getter `0xd0` do produto é
+  esse campo). O opensims2 olhava só o volume: os lotes 32 de N001, 50 e 192
+  de N003 falhavam por galhos de 0,4–2 unidades dentro.
+- **Ruas do lote**: cada rua que `GetOccupants(rect, 2)` devolve, recortada
+  ao lote, tem de tocar o anel de tiles da borda e ter **duas conexões ou
+  mais** nos seus bits de conexão (vtable `0x88` = bit i do byte `+0x86`,
+  o segundo `u8` do registro), senão o lote **não pode** ficar ali (o
+  opensims2 contava ruas vizinhas e pulava a rua). Bordas marcadas como
+  antes.
+- **Altura da rua por borda** (`this+0x6c`): o chão sob a rua da borda; as
+  ruas ficam 0,4 acima do terreno (`FlattenToTerrain`, `FLOAT_0274b4b0`), e
+  as elevações dos 63 lotes são a média dos cantos − 0,4 (múltiplos de
+  0,1875; o lote 22 de N002 difere 0,09).
+- **Conferência** (`s2pkg hood-lot-check`, agora com a conformação de
+  terreno em ensaio): **61 de 63** passam onde estão. Os 2 que falham
+  falham também pelas regras do binário (dados da Maxis, não nossa): o lote
+  3 de N002 tem a torre de rádio (`allowedinlot=0`) 2 unidades dentro e o
+  lote 4 de N002 tem um fim de rua (peça `0x300`, 1 conexão) na borda.
+- **Conformar** (`TryModifyingTerrainToConformToLot`, BV `0xa2a918`, chamado
+  em ensaio pelo `IsOKToPlaceLot` do mover e da caixa e para valer ao pôr):
+  a faixa de rua do lote é a dos vértices u ∈ [0,1] (frente de criação 0),
+  v ∈ [P−1,P] (1), u ∈ [L−1,L] (2) ou v ∈ [0,1] (3); giro g = (frente −
+  frente de criação) mod 4 leva (u, v) a (u, v), (v, L−u), (L−u, P−v) ou
+  (P−v, u); altura = altura do vértice do lote + altura da rua da borda da
+  frente (0 sem rua). Cada vértice entra num `hash_map` (`FUN_0197c6b4`: um
+  segundo valor diferente falha). Fora da faixa, se muda mais de **0,01**:
+  falha se um lote cruza o retângulo 3×3 do vértice e não é o próprio; as
+  ruas em volta põem os vértices que mantêm nivelados
+  (`GetSameHeightVertices`, BV `0xb1ac10`: cantos (x0,y0), (x0,y1), (x1,y1),
+  (x1,y0); cruzamento ou curva — conexões nos dois eixos — os outros 3;
+  reta só nos bits 0/2 o canto `{1,0,3,2}[i]`, só 1/3 o `{3,2,1,0}[i]`) na
+  mesma altura. Falha também se as alturas do lote não são uma por vértice.
+- **Alisar** (`cTSNHoodTerrain::Smoothen`, BV `0x1689538`, vtable `0x88` da
+  interface do terreno): para cada passada, cada vértice do retângulo e cada
+  um dos 8 vizinhos dentro dele (dx `{1,1,0,−1,−1,−1,0,1}`, dy
+  `{0,−1,−1,−1,0,1,1,1}`), excesso = h − hv − tan(talude) × 10 (× 1,414 nos
+  diagonais); se > 0, cada lado não travado anda 0,2 × excesso para o outro.
+  Travado (`FUN_004d359c`): ocupante de qualquer tipo ou lote no retângulo
+  3×3 do vértice. Depois `FUN_00a28af0` arredonda cada vértice do retângulo
+  para múltiplo de **0,1875**.
+- **Girar** (`KeyCommand` das três ferramentas): a mensagem `0xACB3A629`
+  (`,`/`.`) soma +1 ou −1 ao giro (lote vazio, `SetRotation`), à frente
+  (caixa, `SetCurrentFrontEdge`) ou à frente do lote movido
+  (`RotateLotImposter` + `EvaluatePlacementValidity`); `0x8CA297E2` cancela.
+  O mover também segue a borda mais perto do mouse (`RotateLot`).
+- **Praia** (flag `0x80` do lot info): sem o teste de água e com
+  `IsOKToPlaceBeachLot` (BV `0xa2687c`): a última borda com rua a no máximo
+  10 acima do mar, a 1,0 da altura de rua do lote base, e um vértice no mar
+  ou abaixo na borda oposta. O `FlattenTerrainUnderLot` não mexe em lote de
+  praia. No jogo base não há botão de lote vazio de praia (o `this+0x116`
+  vem dos tamanhos 10–19 das expansões).
+- **No app**: os lotes da caixa e os movidos gravam o terreno conformado; o
+  lote vazio, o alisado (`formats/hood_lots.*`, `Terrain::write`); `,`/`.`
+  giram o lote (`--hood-turn` sem tela); o puck desenha **por cima** dos
+  painéis Famílias e Lotes & Casas (a arte do painel começa sob o puck,
+  x = −28/−98), e a câmera fica onde estava quando a vista é refeita depois
+  de pôr um lote (`LotCamera::pose`). `r11-bairro-puck-sobre-painel.jpg`,
+  `r11-bairro-lote-conformado.jpg`.

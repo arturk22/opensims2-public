@@ -30,8 +30,8 @@ size_t flattenTerrainUnderLots(Terrain& terrain, const std::vector<Lot>& lots, c
     for (const auto& l : lots) {
         const int x0 = int(l.info.x), y0 = int(l.info.y);
         const int x1 = x0 + int(l.info.width), y1 = y0 + int(l.info.depth);
-        if (x0 < 0 || y0 < 0 || x1 >= gw || y1 >= gh)
-            continue;
+        if (x0 < 0 || y0 < 0 || x1 >= gw || y1 >= gh || (l.info.flags & LotInfo::kFlagBeach))
+            continue; // beach lots keep their ground
         for (int y = y0; y <= y1; ++y)
             for (int x = x0; x <= x1; ++x) {
                 // Only this lot within one tile of the vertex.

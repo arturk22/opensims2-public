@@ -67,6 +67,13 @@ public:
     // Shift 4-9 jumps).
     void savePosition(int slot);
     bool restorePosition(int slot, bool smooth);
+    // The whole pose (the targets), to carry a view across a scene reload.
+    struct Pose {
+        simd_float3 pivot;
+        float dist, heading, pitchT;
+    };
+    Pose pose() const { return {pivotTarget_, dist_.target, heading_.target, pitchT_.target}; }
+    void setPose(const Pose& p); // immediate
 
     // --- Environment -------------------------------------------------------
     void setViewport(float width, float height) { viewW_ = width, viewH_ = height; }

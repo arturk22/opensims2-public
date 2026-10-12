@@ -1,6 +1,7 @@
 #include "hood_terrain.hpp"
 
 #include "binreader.hpp"
+#include "binwriter.hpp"
 #include "config_text.hpp"
 #include "property_set.hpp"
 #include "resindex.hpp"
@@ -195,6 +196,32 @@ Terrain Terrain::parse(std::span<const uint8_t> data) {
     }
     r.expectEnd("neighborhood terrain");
     return t;
+}
+
+std::vector<uint8_t> Terrain::write() const {
+    BinWriter w;
+    auto str = [&](const std::string& s) {
+        w.u32(uint32_t(s.size()));
+        w.raw(std::span(reinterpret_cast<const uint8_t*>(s.data()), s.size()));
+    };
+    w.u32(hoodtype::Terrain);
+    w.u32(version);
+    w.u32(width);
+    w.u32(height);
+    w.f32(seaLevel);
+    str(type);
+    w.u32(0x6B943B43), w.u32(1), str("c2DArray");
+    w.u32(gridWidth), w.u32(gridHeight);
+    for (float h : heights)
+        w.f32(h);
+    if (version >= 4 || !vertexBytes.empty()) {
+        w.u32(0x6B943B43), w.u32(1), str("c2DArray");
+        w.u32(gridWidth), w.u32(gridHeight);
+        std::vector<uint8_t> b = vertexBytes;
+        b.resize(size_t(gridWidth) * gridHeight, 0);
+        w.raw(b);
+    }
+    return std::move(w.bytes());
 }
 
 float Terrain::vertex(int i, int j) const {
@@ -402,8 +429,19 @@ TerrainSettings TerrainSettings::parse(const std::string& terrainIni, const std:
     setNumber(ini, t, "WaterDepthThresholdForPaint", s.waterDepthThresholdForPaint);
     setNumber(ini, t, "MaxRoadProximityValue", s.maxRoadProximity);
     setNumber(ini, "NHoodTerrainRenderTunables", "TextureVariantGridSize", s.textureVariantGridSize);
-    if (!neighborhoodIni.empty())
-        setNumber(parseIni(neighborhoodIni), "ImposterDisplayTunables", "ImposterZOffset", s.imposterZOffset);
+    if (!neighborhoodIni.empty()) {
+        const Ini n = parseIni(neighborhoodIni);
+        setNumber(n, "ImposterDisplayTunables", "ImposterZOffset", s.imposterZOffset);
+        // FUN_00a286f8 (cTSUserToolPlaceLotBase) and cTSUserToolPlaceNewLot::
+        // ReadTunableParameters: 30 degrees, 3.0, 2.0 degrees and 8 passes
+        // without the ini.
+        setNumber(n, "LotPlopTunables", "MaxLotSlope", s.maxLotSlope);
+        setNumber(n, "LotPlopTunables", "HighlightOffsetAboveTerrain", s.highlightOffset);
+        setNumber(n, "SmoothingUnderNewLot", "SmoothingTalusAngle", s.smoothingTalusAngle);
+        float passes = float(s.smoothingPasses);
+        setNumber(n, "SmoothingUnderNewLot", "NumberOfSmoothingPasses", passes);
+        s.smoothingPasses = int(passes);
+    }
     if (!lotTerrainIni.empty()) {
         const Ini lot = parseIni(lotTerrainIni);
         if (const auto* v = iniValue(lot, "WaterRenderParameters", "AlphaVsDepthCurve")) {

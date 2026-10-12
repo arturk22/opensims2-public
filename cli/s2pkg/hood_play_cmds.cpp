@@ -83,6 +83,7 @@ std::unique_ptr<World> loadWorld(const char* path) {
         w->gameRes = std::filesystem::path(data) / "TSData/Res";
         ResourceIndex index(w->gameRes);
         w->place.objects = loadOccupantFlags(index);
+        applyTunables(w->place, TerrainSettings::load(std::filesystem::path(data) / "TSData/Sys"));
     }
     w->place.hood = &w->hood;
     w->place.terrain = &w->terrain;
@@ -249,11 +250,12 @@ int hoodPlayCommand(const std::string& cmd, int argc, char** argv) {
         const auto w = loadWorld(argv[2]);
         size_t ok = 0;
         for (const auto& l : w->hood.lots) {
-            const Placement p = checkPlacement(w->place, lotRect(l.info), l.id);
-            const bool match = p.ok && roadsMatch(l.info, l.info.frontEdge, p.roads);
-            ok += match;
-            std::printf("  lot %u: %s%s\n", l.id, p.ok ? "ok" : p.why.c_str(),
-                        p.ok && !match ? " (roads not on its road edges)" : "");
+            const Placement p = checkLot(w->place, l.info, l.id, int(l.info.x), int(l.info.y), l.info.frontEdge);
+            ok += p.ok;
+            std::printf("  lot %u: %s", l.id, p.ok ? "ok" : p.why.c_str());
+            if (p.ok)
+                std::printf(" (road height %.3f, lot elevation %.3f)", p.heightAt(l.info.frontEdge), l.info.heightOffset);
+            std::printf("\n");
         }
         std::printf("%zu of %zu lots pass where they stand\n", ok, w->hood.lots.size());
         return 0;

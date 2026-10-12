@@ -281,6 +281,14 @@ bool LotCamera::restorePosition(int slot, bool smooth) {
     return true;
 }
 
+void LotCamera::setPose(const Pose& p) {
+    pivotTarget_ = constrain(p.pivot);
+    dist_.set(p.dist, def_.zoomSmoothing, minChange_);
+    heading_.set(p.heading, def_.spinSmoothing, minChange_);
+    pitchT_.set(p.pitchT, def_.zoomSmoothing, minChange_);
+    snap();
+}
+
 simd_float3 LotCamera::raisedPivot() const { return pivot_ + simd_make_float3(0, 0, pivotHeight_ + lift_); }
 
 void LotCamera::update(double dt) {

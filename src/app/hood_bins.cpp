@@ -253,8 +253,11 @@ const RgbaImage* HoodBins::familySnapshot(uint32_t family) {
 }
 
 void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const UiElement& puck,
-                      std::map<const UiElement*, std::array<float, 4>>& puckRects, int width, int height) {
+                      std::map<const UiElement*, std::array<float, 4>>& puckRects, int width, int height,
+                      size_t* panelsEnd) {
     targets_.clear();
+    if (panelsEnd)
+        *panelsEnd = out.quads.size();
     if (!ok_)
         return;
     std::map<const UiElement*, std::array<float, 4>> rects;
@@ -485,6 +488,8 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
         }
     }
     targets_.insert(targets_.end(), solids.begin(), solids.end());
+    if (panelsEnd)
+        *panelsEnd = out.quads.size();
 
     // The question / message, centred, over everything.
     if (dialog_) {
