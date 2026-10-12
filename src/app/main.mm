@@ -409,8 +409,9 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
     };
     size_t placed = 0;
     for (const auto& o : lot.objects) {
-        if (o.model.empty() || o.model == "nullModel" || o.model == "noModel" || o.model == "placeholder" || o.person)
-            continue; // ("placeholder": the controllers' marker box, app/vm_objects.cpp)
+        if (o.model.empty() || o.model == "nullModel" || o.model == "noModel" || o.model == "null" ||
+            o.model == "placeholder" || o.person)
+            continue; // ("placeholder": the controllers' marker box, app/vm_objects.cpp; "null": "Routing - Look At")
         // Objects in a slot are saved at (0, 0): drawn only where the VM's
         // containment puts them (app/vm_objects.hpp).
         const bool contained = o.position[0] == 0 && o.position[1] == 0;
@@ -798,7 +799,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                 catalog = std::make_unique<os2::cas::CasCatalog>(os2::cas::CasCatalog::load(index));
                 baker = std::make_unique<os2::cas::FaceBaker>(index, *catalog);
             }
-            const fs::path dir = os2::sessionCharactersDir(); // the save copies it to the neighborhood
+            // The save copies it to the neighborhood; an NPC made in play
+            // stays in the session's NPCs folder (vm/baby_character.hpp).
+            const fs::path session = os2::sessionCharactersDir();
+            const fs::path dir = it->character.parent_path() == session / "NPCs" ? session / "NPCs" : session;
             const fs::path out = dir / (it->character.stem().string() + ".package");
             const fs::path tmp = dir / (it->character.stem().string() + ".new.package");
             os2::cas::writeAgedCharacter(index, *catalog, *baker, it->character, ageBit, tmp, uint32_t(id) * 7919u + ageBit);
@@ -862,7 +866,12 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             if (std::getenv("OS2_DEBUG_VM"))
                 std::fprintf(stderr, "opensims2: object %d plays %s\n", id, name.c_str());
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "opensims2: object %d: %s: %s\n", id, name.c_str(), e.what());
+            // Once per name: the base game's trees ask for some the data
+            // lacks (the double bed's "-", o2a-bookcase-get-middle: only the
+            // child's o2c- exists) and the game shows nothing for them.
+            static std::set<std::string> reported;
+            if (reported.insert(name).second)
+                std::fprintf(stderr, "opensims2: object %d: %s: %s\n", id, name.c_str(), e.what());
         }
     };
     // An animated object whose material the VM changes (the plumbob's
@@ -3372,6 +3381,23 @@ void adoptVmSims(os2::Renderer& renderer) {
             file = it->second;
         else if (const os2::vm::Neighbor* n = m.neighbor(neighbor))
             file = characterFileOf(n->guid);
+        // The game's unique NPCs (the Grim Reaper, the Pollination
+        // Technician) keep their character in their object's group.
+        if (const os2::vm::Neighbor* n = m.neighbor(neighbor); !file && n && n->guid) {
+            static std::map<uint32_t, std::optional<fs::path>> embedded;
+            auto [it, fresh] = embedded.try_emplace(n->guid);
+            if (fresh)
+                try {
+                    char stem[32];
+                    std::snprintf(stem, sizeof stem, "Unique_%08X.package", n->guid);
+                    const fs::path out = os2::sessionCharactersDir() / "NPCs" / stem;
+                    if (os2::cas::writeEmbeddedCharacter(*gIndex, n->guid, out))
+                        it->second = out;
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "opensims2: Sim %d (neighbor %d): %s\n", id, neighbor, e.what());
+                }
+            file = it->second;
+        }
         if (!file) {
             std::fprintf(stderr, "opensims2: Sim %d (neighbor %d): no character file, not drawn\n", id, neighbor);
             continue;

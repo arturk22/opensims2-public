@@ -111,6 +111,32 @@ std::string objectCresName(ResourceIndex& index, const Tgi& objd) {
     return StringTable::parse(*names).get(def.modelIndex(), lang::EnglishUS);
 }
 
+std::string cresByRootNode(ResourceIndex& index, std::string_view node) {
+    static std::map<const ResourceIndex*, std::map<std::string, std::string>> cache;
+    auto lower = [](std::string v) {
+        for (char& c : v)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return v;
+    };
+    auto [it, fresh] = cache.try_emplace(&index);
+    if (fresh)
+        for (const auto& loc : index.ofType(0xE519C933)) {
+            try {
+                const auto bytes = index.read(loc);
+                const Skeleton sk = Skeleton::fromCres(Rcol(bytes));
+                if (sk.bones.empty() || sk.name.empty())
+                    continue;
+                std::string name = sk.name;
+                if (lower(name).ends_with("_cres"))
+                    name.resize(name.size() - 5);
+                it->second.try_emplace(lower(sk.bones[0].name), name);
+            } catch (const std::exception&) {
+            }
+        }
+    const auto f = it->second.find(lower(std::string(node)));
+    return f == it->second.end() ? std::string() : f->second;
+}
+
 std::string baseTextureName(const MaterialDefinition& m) {
     auto tex = m.property("stdMatBaseTextureName");
     if (tex.empty())

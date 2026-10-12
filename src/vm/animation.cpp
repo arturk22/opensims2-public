@@ -575,8 +575,13 @@ Exit animateSim(Context& c) {
 // two of that name already play: try_animate_overlay looks the name up
 // twice (AnimRequestByNameAndID) and starts nothing more then, so an idle
 // started again while the last one blends out does not pile up.
-Overlay* startOverlay(Context& c, Object& target, const std::string& entry, bool flipped = false) {
-    std::string name = target.person ? resolveListAnimation(c.vm, target, entry) : parseItem(split(entry, ',')[0]).name;
+Overlay* startOverlay(Context& c, Object& target, const std::string& entry, bool flipped = false, bool social = false) {
+    // A Sim-to-Sim list's entry takes the ages' prefix as Animate Sim's
+    // ("soc-playRedHands-playee-loopOw" -> "a2a-soc-..."; the social
+    // overlays of the play-fight and gross-out interactions).
+    std::string name = target.person && social && !placeholder(entry) ? socialName(c, target, entry)
+                       : target.person                                 ? resolveListAnimation(c.vm, target, entry)
+                                                                       : parseItem(split(entry, ',')[0]).name;
     if (name.empty() || name == ".")
         throw VMError("Animation name is empty string.");
     if (!library(c.vm).exists(name))
@@ -622,7 +627,8 @@ Exit animateOverlay(Context& c) {
     Object& target = objectAt(c, 6);
     const std::string entry = listEntry(c, target, o[9], animationIndex(c, 0, o[2] & 0x04));
     // Flipped as Animate Sim's: flag 0x01 of byte 15 takes temp 3 (inferred as there).
-    Overlay* ov = startOverlay(c, target, entry, (o[15] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0);
+    Overlay* ov = startOverlay(c, target, entry, (o[15] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0,
+                               o[9] == animlist::Social);
     if (!ov)
         return Exit::True;
     ov->level = animlevel::ofOverlay(int8_t(o[11]));

@@ -71,7 +71,26 @@ AnimSnapView::Model& AnimSnapView::model(SimSnaps& s, const AnimSnap& snap) {
         return m;
     m.skeleton = "?"; // tried
     try {
-        const ObjectModel om = loadObjectModel(index_, snap.model);
+        // The snap's model is a CRES name, or a root node's
+        // ("__foodPizzaSlice__8": foodPizzaSlice_8; "foodTray":
+        // templateFoodTray; "doll": dollFemale01).
+        auto load = [&]() -> ObjectModel {
+            try {
+                return loadObjectModel(index_, snap.model);
+            } catch (const std::exception&) {
+                const size_t cut = snap.model.find("__");
+                if (cut != std::string::npos)
+                    try {
+                        return loadObjectModel(index_, snap.model.substr(0, cut) + "_" + snap.model.substr(cut + 2));
+                    } catch (const std::exception&) {
+                    }
+                const std::string byRoot = cresByRootNode(index_, snap.model.substr(0, cut));
+                if (byRoot.empty())
+                    throw;
+                return loadObjectModel(index_, byRoot);
+            }
+        };
+        const ObjectModel om = load();
         SkinnedModel skin(om.skeleton);
         skin.add(om);
         auto actor = std::make_unique<SimActor>(std::move(skin));
@@ -153,7 +172,9 @@ void AnimSnapView::update(double now) {
                     if (std::getenv("OS2_DEBUG_VM"))
                         std::fprintf(stderr, "opensims2: snapped %s plays %s\n", key.c_str(), m.playing.c_str());
                 } catch (const std::exception& e) {
-                    std::fprintf(stderr, "opensims2: snapped %s: %s\n", key.c_str(), e.what());
+                    static std::set<std::string> reported; // once per animation (as the objects' own)
+                    if (reported.insert(anim->second.first).second)
+                        std::fprintf(stderr, "opensims2: snapped %s: %s\n", key.c_str(), e.what());
                     m.playing = anim->second.first; // do not retry
                 }
             }

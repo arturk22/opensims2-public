@@ -136,6 +136,17 @@ CharacterWriteResult writeAgedCharacter(ResourceIndex& index, const CasCatalog& 
                                         const std::filesystem::path& file, uint32_t newAge,
                                         const std::filesystem::path& out, uint32_t seed = 1);
 
+// A Sim whose character the game keeps in its object's group instead of a
+// character file: the "NPC - Unique" objects of objects.package (the Grim
+// Reaper, OBJD 0x84EC24A8, group 7F404283: AGED + 3IDR over catalog parts;
+// the Pollination Technician 0x2E17B9FC: a whole character, its face
+// GZPS/CRES/SHPE/GMND/GMDC, TXMT and LxNR) are neighbors with no file
+// (`s2pkg hood`: "no character file"). Writes that group as a character
+// file (group 0xFFFFFFFF, the 3IDRs' references to the group made local;
+// the scenegraph links keep the group, found in the game's data). False
+// when the OBJD is not found or its group has no AGED.
+bool writeEmbeddedCharacter(ResourceIndex& index, uint32_t objdGuid, const std::filesystem::path& out);
+
 // The next life stage's age bit (baby -> toddler -> child -> teen -> adult
 // -> elder), 0 for elders.
 uint32_t nextAge(uint32_t ageBit);

@@ -116,6 +116,7 @@ public:
     void addStored(const Tgi& tgi, std::vector<uint8_t> stored, std::optional<uint32_t> rawSize = {});
 
     size_t size() const { return resources_.size(); }
+    bool contains(const Tgi& tgi) const;
 
     // Whole package as bytes.
     std::vector<uint8_t> build() const;

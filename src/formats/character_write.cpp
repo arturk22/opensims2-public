@@ -24,7 +24,7 @@ namespace {
 
 constexpr uint32_t kTypeAged = 0xAC598EAC, kTypeIdr = 0xAC506764, kTypeGzps = 0xEBCF3E27, kTypeCres = 0xE519C933,
                    kTypeShpe = 0xFC6EB1F7, kTypeGmnd = 0x7BA3838C, kTypeGmdc = 0xAC4F8687, kTypeTxmt = 0x49596978,
-                   kTypeObjd = 0x4F424A44, kTypeCtss = 0x43545353, kTypeVersion = 0xEBFEE342;
+                   kTypeObjd = 0x4F424A44, kTypeCtss = 0x43545353, kTypeVersion = 0xEBFEE342, kTypeImg = 0x856DDBAC;
 constexpr uint32_t kTemplatePerson = 0x7FD96B54;
 constexpr uint32_t kLocal = 0xFFFFFFFF;
 constexpr const char* kPrefix = "#0x7fe09489!";
@@ -377,6 +377,44 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
         }
     }
     return spec;
+}
+
+bool writeEmbeddedCharacter(ResourceIndex& index, uint32_t objdGuid, const std::filesystem::path& out) {
+    std::optional<ResourceIndex::Location> objd;
+    for (const auto& loc : index.ofType(kTypeObjd))
+        try {
+            if (ObjectDefinition::parse(index.read(loc)).guid() == objdGuid) {
+                objd = loc;
+                break;
+            }
+        } catch (const std::exception&) {
+        }
+    if (!objd)
+        return false;
+    const uint32_t group = objd->entry->tgi.group;
+    DbpfPackage& source = *objd->package;
+    bool aged = false;
+    DbpfWriter pkg;
+    for (const auto& e : source.entries()) {
+        if (e.tgi.group != group || (e.tgi.type == kTypeObjd && e.tgi != objd->entry->tgi))
+            continue;
+        std::vector<uint8_t> data = source.read(e);
+        if (e.tgi.type == kTypeAged)
+            aged = true;
+        if (e.tgi.type == kTypeIdr) {
+            std::vector<Tgi> refs = parseReferenceList(data);
+            for (auto& r : refs)
+                if (r.group == group)
+                    r.group = kLocal;
+            data = writeReferenceList(refs);
+        }
+        pkg.add(Tgi{e.tgi.type, kLocal, e.tgi.instance, e.tgi.instanceHi}, std::move(data), true);
+    }
+    if (!aged)
+        return false;
+    std::filesystem::create_directories(out.parent_path());
+    pkg.save(out);
+    return true;
 }
 
 uint32_t nextAge(uint32_t a) {
@@ -884,8 +922,14 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
         const auto objdLoc = index.find(*templateObjd);
         DbpfPackage* source = objdLoc->package;
         for (const auto& e : source->entries()) {
-            // Only the template's own OBJD (its group may hold others).
+            // Only the template's own OBJD (its group may hold others), and
+            // nothing of what the character itself is made of (the social
+            // bunny's template has a GZPS 1 and a CTSS 0x7D0 of its own).
             if (e.tgi.group != templateObjd->group || (e.tgi.type == kTypeObjd && e.tgi != *templateObjd))
+                continue;
+            if (e.tgi.type == kTypeGzps || e.tgi.type == kTypeAged || e.tgi.type == kTypeIdr || e.tgi.type == kTypeCtss ||
+                e.tgi.type == kTypeImg || e.tgi.type == kTypeLxnr || e.tgi.type == kTypeVersion ||
+                pkg.contains(Tgi{e.tgi.type, kLocal, e.tgi.instance, e.tgi.instanceHi}))
                 continue;
             std::vector<uint8_t> data = source->read(e);
             if (e.tgi.type == kTypeObjd) {
@@ -911,7 +955,6 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
             pkg.add(Tgi{kTypeLxnr, kLocal, 1, 0}, fs.write(), true);
     }
     if (!spec.portraitPng.empty()) {
-        constexpr uint32_t kTypeImg = 0x856DDBAC;
         pkg.add(Tgi{kTypeImg, kLocal, spec.age, 0}, spec.portraitPng, true);
         pkg.add(Tgi{kTypeImg, kLocal, spec.age << 8, 0}, spec.portraitPng, true);
     }

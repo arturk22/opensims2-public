@@ -84,6 +84,13 @@ std::string objectCresName(ResourceIndex& index, const Tgi& objd);
 // nothing matches.
 std::string resolveObjectCres(ResourceIndex& index, std::string_view query, std::string* match = nullptr);
 
+// The CRES (name without "_cres") whose scenegraph root node is `node`
+// (case-insensitive), the first in the index's order; empty if none. The
+// animations' snap events name a model by its root node ("tray:__foodTray__"
+// is templateFoodTray, "doll1:__doll__" the dollhouse's dolls
+// dollFemale01...), not always by its CRES. The first call reads every CRES.
+std::string cresByRootNode(ResourceIndex& index, std::string_view node);
+
 // TXTR name of a material's base texture ("..._txtr"), or empty.
 std::string baseTextureName(const MaterialDefinition& m);
 

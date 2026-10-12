@@ -328,6 +328,18 @@ bairro ainda não grava esses vizinhos. Captura:
 `docs/screenshots/r16-npc-carteiro.jpg` (`--lot N001_Lot11 --run-vm 31500
 --track-sim-id 151 --zoom 5`: o carteiro de uniforme, boné e bolsa).
 
+**Os NPCs únicos** **[dados]**: vizinhos sem arquivo (`s2pkg hood`: "no
+character file") cujo OBJD é um "NPC - Unique" do `objects.package` guardam
+o personagem **no grupo do objeto**: o Ceifador (`0x84EC24A8`, grupo
+`7F404283`: AGED binário + 3IDR sobre partes do catálogo, o corpo de todo
+dia é `aubodyreaper`, com o colar havaiano; `aubodyreaper_nolei` é o de
+outras categorias), o Técnico de Polinização (`0x2E17B9FC`, `7F45284D`: um
+personagem inteiro, rosto GZPS/CRES/SHPE/GMND/GMDC, TXMT e LxNR). O app
+(`cas::writeEmbeddedCharacter`) copia o grupo para um arquivo de personagem
+(grupo `0xFFFFFFFF`, as referências dos 3IDR ao grupo feitas locais) em
+`NPCs/Unique_<GUID>.package` e desenha o Sim dele. Captura:
+`docs/screenshots/r16-npc-ceifador.jpg` (`--character` com esse arquivo).
+
 ## 8. Base vs BV
 
 Base: todo o fluxo humano, os XMLs do `Skins.package`, signos e as seis

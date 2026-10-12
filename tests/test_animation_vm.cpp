@@ -268,6 +268,17 @@ static void testOverlayLifetime() {
     check(s.animation.overlays.size() == 1 && s.animation.overlays[0].oeType == oetype::Gesture,
           "Animate Stop mode 5 stops the idles");
     check(s.attributes[0] == animevent::Stopped, "their event trees get -1");
+
+    // An overlay from the Sim-to-Sim list takes the ages' prefix, as Animate
+    // Sim's ("soc-playRedHands-playee-loopOw" is "a2a-soc-..." in the data).
+    code.add(kGlobalGroup, animlist::Social, strings({"soc-test-loopOw"}));
+    vm.animations.add("a2a-soc-test-loopOw", 1.0f);
+    code.add(kGroup, 0x100A, tree({instr(0x6B, T, E, {0, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x83})}));
+    t = vm.start(s.id, 0x100A, {}, s.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && !s.animation.overlays.empty() &&
+              s.animation.overlays.back().name == "a2a-soc-test-loopOw",
+          "Animate Overlay from the social list plays a2a-soc-test-loopOw");
 }
 
 // The channel levels the binary gives (animlevel): Animate Overlay's

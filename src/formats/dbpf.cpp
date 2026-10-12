@@ -201,6 +201,13 @@ void setLe32(std::vector<uint8_t>& out, size_t at, uint32_t v) {
 
 } // namespace
 
+bool DbpfWriter::contains(const Tgi& tgi) const {
+    for (const auto& r : resources_)
+        if (r.tgi == tgi)
+            return true;
+    return false;
+}
+
 void DbpfWriter::add(const Tgi& tgi, std::vector<uint8_t> data, bool compress) {
     if (compress && !data.empty() && data.size() <= 0xFFFFFF) {
         auto packed = qfsCompress(data);
