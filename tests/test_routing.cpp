@@ -1621,6 +1621,32 @@ static void testGoHere() {
         vm.tick();
     check(!vm.object(d) && std::hypot(sim.position.x - 9.5f, sim.position.y - 6.5f) < 1.5f,
           "go here: the Sim walks there, then the destination goes");
+    // A click on a pool's water: the swim destination goes on the pool's
+    // floor (a level down, where swimmers are), not on the water's level,
+    // whose route failed with "altitudes don't match" (live QA 16).
+    {
+        CodeLibrary pc;
+        VM pv(pc);
+        pv.world = World(8, 8, 0, 2);
+        for (int x = 2; x < 6; ++x)
+            for (int y = 2; y < 6; ++y)
+                pv.world->setPool({x, y, 1}), pv.world->setPool({x, y, 0});
+        pc.add(kGroup, 0x81, simDef);
+        ObjectDefinition swimDef = definition(kSwimHereGuid, 0);
+        pc.add(kDestGroup, 0x80, swimDef);
+        ObjectDefinition walkDef = definition(kGoHereGuid, 0);
+        pc.add(kDestGroup, 0x81, walkDef);
+        Object& swimmer = pv.instantiate(kGroup, 0x81);
+        swimmer.position = {6.5f, 6.5f, 1};
+        const ObjectId sd = createGoHereDestination(pv, swimmer.id, 3.5f, 3.5f, 1);
+        check(sd && pv.object(sd)->guid() == kSwimHereGuid && pv.object(sd)->position.level == 0,
+              "go here: a swim destination on the pool's floor");
+        const ObjectId fd = createGoHereDestination(pv, swimmer.id, 3.5f, 3.5f, 0);
+        check(fd && pv.object(fd)->position.level == 0, "go here: clicked on the floor, it stays there");
+        const ObjectId ld = createGoHereDestination(pv, swimmer.id, 7.2f, 7.2f, 1);
+        check(ld && pv.object(ld)->guid() == kGoHereGuid && pv.object(ld)->position.level == 1,
+              "go here: the lawn keeps its level");
+    }
 }
 
 // The reset's free place (FUN_00af87c8): the centre of the first tile of a

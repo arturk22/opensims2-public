@@ -3822,7 +3822,17 @@ ObjectId createGoHereDestination(VM& vm, ObjectId simId, float x, float y, int l
     if (!p)
         return 0;
     const TilePos tile{int(std::floor(p->x)), int(std::floor(p->y)), level};
-    const uint32_t guid = vm.world->pool(tile) ? kSwimHereGuid : kGoHereGuid;
+    const bool swim = vm.world->pool(tile);
+    const uint32_t guid = swim ? kSwimHereGuid : kGoHereGuid;
+    // A swim destination goes on the pool's floor, the level below the
+    // water, where swimmers walk (the pool is a level of its own, §8.5):
+    // on the water's level "Entrar" failed at once with "altitudes don't
+    // match" (route result 10) and the Sim never went to the ladder (live QA
+    // 16, N001_Lot68). Inferred: the game's ground point under the mouse
+    // meets the pool's floor, the water has none.
+    const TilePos below{tile.x, tile.y, level - 1};
+    if (swim && vm.world->pool(below)) // the water's level (the bottom is a pool tile too)
+        level -= 1;
     std::vector<ObjectId> existing;
     for (const auto& [id, o] : vm.eachObject())
         existing.push_back(id);
