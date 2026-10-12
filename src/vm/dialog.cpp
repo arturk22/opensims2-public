@@ -411,8 +411,14 @@ Exit dialog(Context& c) {
     case dialogtype::StopTextNotification:
     case dialogtype::ModifyTextNotification:
     case dialogtype::TnsBirthday:
-        if (!vm.object(c.frame.stackObject))
-            throw VMError("Could not find object reference (text notification without a stack object)");
+        // TryDialog takes the text's object from the stack element's
+        // tree-owning object (vtable 0x0C: TryKillObject's log calls it "the
+        // tree owning object"), the stack object only when that is gone;
+        // error 0x17 only without both. The stack object just gives the icon,
+        // so a notification about an object that has left (Circe's phone
+        // call, N002_Lot3) shows without one instead of killing the Main.
+        if (!owner && !vm.object(c.frame.stackObject))
+            throw VMError("Could not find object reference (text notification without an object)");
         d.blocking = false;
         if (type == dialogtype::TextNotification || type == dialogtype::TnsBirthday)
             c.thread.temps[size_t(resultTemp)] = int16_t(d.id & 0x7FFF);

@@ -471,9 +471,22 @@ Exit setToNext(Context& c) {
             throw VMError("Set to Next: search type " + std::to_string(type) + " not implemented");
         throw gameError(err::BadSearchType, "Set to Next type " + std::to_string(type));
     }
+    // The common filter (SetToNextIsObjectEligible, BV 0x1be54dc): a valid
+    // object, which an object Remove Object Instance queued to die at the
+    // end of the tick is not (ValidateObject: object flag 0x10000 or 0x20000;
+    // the reaper found the Sim it had just turned into an urn and reaped
+    // it again), and with flag 0x02 object data u16 9 equal to u16 11. The
+    // object data 56 bit 0 and 107 tests are Bon Voyage's (§ Set to Next).
+    const bool where = o.size() > 12 && (o[8] & 0x02);
+    const int16_t whereField = where ? int16_t(le16(&o[9])) : 0, whereValue = where ? int16_t(le16(&o[11])) : 0;
+    auto eligible = [&](const Object& x) {
+        if (dying(c.vm, x.id))
+            return false;
+        return !where || (whereField >= 0 && size_t(whereField) < x.data.size() && x.data[size_t(whereField)] == whereValue);
+    };
     const auto& table = c.vm.objectTable(); // by ID; the objects after `current`
     for (size_t k = current < 0 ? 0 : size_t(current) + 1; k < table.size(); ++k)
-        if (table[k] && matches(*table[k]))
+        if (table[k] && matches(*table[k]) && eligible(*table[k]))
             return found(table[k]->id);
     return none();
 }
@@ -705,6 +718,16 @@ Exit createObjectInstance(Context& c) {
     if (neighbor && x->person) {
         x->person->data = neighbor->personData;
         x->person->data[persondata::NeighborId] = c.frame.stackObject;
+    } else if (x->person && !x->person->data[persondata::NeighborId]) {
+        // A Sim made from its definition (a unique NPC: the Grim Reaper, the
+        // therapist, ...) is that GUID's neighbor: the neighborhood keeps one
+        // without a character file for each (N002's #35 is the reaper,
+        // GUID 0x84EC24A8), and a new one gets the next ID. Without it the
+        // reaper's "Wants - Refresh All - Verify" asked Force Recalc of Wants
+        // of neighbor 0 and its Main died, so no one dead was ever reaped
+        // (inferred: the binary's person creation links the neighbor behind
+        // virtual calls not followed).
+        x->person->data[persondata::NeighborId] = c.vm.neighborForGuid(x->guid());
     }
     const ObjectId stackObject = c.frame.stackObject, meId = me.id;
     const int16_t temp0 = c.thread.temps[0];

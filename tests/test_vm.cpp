@@ -1432,6 +1432,46 @@ static void testMakeNewCharacter() {
     check(genes, "the babies' genes come from the parents' DNA by PickGene (dominant = lower genetic value)");
 }
 
+// The Grim Reaper's two dead Mains (N002_Lot2, round 12): a Sim made by
+// Create New Object Instance from its definition is the neighbor with its
+// GUID (or a new one), and Set to Next skips an object queued to die.
+static void testReaperNeighborAndDyingObjects() {
+    Fixture fx;
+    constexpr uint32_t kReaper = 0x84EC24A8, kNew = 0x0A0B0C0D;
+    fx.code.add(kObjGroup, 0x81, definition(kReaper, true));
+    fx.code.add(kObjGroup, 0x82, definition(kNew, true));
+    fx.obj();                                              // id 1: me
+    fx.vm.neighbors[35] = {kReaper, 0, {}};
+    fx.vm.neighbors[40] = {0x12345678, 0, {}};
+    fx.code.add(kObjGroup, 0x1000,
+                tree({instr(0x2A, go(1), E, {lo(kReaper, 0), lo(kReaper, 1), lo(kReaper, 2), lo(kReaper, 3), 6}),
+                      expr(Temp, 0, Assign, StackId, 0, go(2), E),
+                      instr(0x2A, go(3), E, {lo(kNew, 0), lo(kNew, 1), lo(kNew, 2), lo(kNew, 3), 6}),
+                      expr(Temp, 1, Assign, StackId, 0, T, E)}));
+    Thread t = fx.run(0x1000);
+    const Object* reaper = fx.vm.object(t.temps[0]);
+    const Object* fresh = fx.vm.object(t.temps[1]);
+    check(t.status == Thread::Status::Finished && reaper && fresh &&
+              reaper->person->data[persondata::NeighborId] == 35 && fresh->person->data[persondata::NeighborId] == 41 &&
+              fx.vm.neighbor(41) && fx.vm.neighbor(41)->guid == kNew,
+          "a Sim made from its definition is its GUID's neighbor, or a new one");
+
+    // Remove the reaper, then look for persons: only the other one is found.
+    fx.code.add(kObjGroup, 0x1001,
+                tree({expr(StackId, 0, Assign, Temp, 0, go(1), E),
+                      instr(0x12, go(2), E, {1, 0}),
+                      expr(StackId, 0, Assign, Lit, 0, go(3), E),
+                      instr(0x1F, go(4), E, {0, 0, 0, 0, 0x01}),
+                      expr(Temp, 2, Assign, StackId, 0, go(5), E),
+                      instr(0x1F, E, T, {0, 0, 0, 0, 0x01})}));
+    Thread u = fx.vm.start(1, 0x1001);
+    u.temps[0] = t.temps[0];
+    fx.vm.run(u);
+    check(u.status == Thread::Status::Finished && u.result && u.temps[2] == t.temps[1] && fx.vm.object(t.temps[0]),
+          "Set to Next skips an object waiting on the kill queue (ValidateObject)");
+    flushKillQueue(fx.vm);
+}
+
 int main() {
     testLoopWithLocalsAndParams();
     testCinematicRequest();
@@ -1466,6 +1506,7 @@ int main() {
     testClockGlobals();
     testMessage();
     testMakeNewCharacter();
+    testReaperNeighborAndDyingObjects();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

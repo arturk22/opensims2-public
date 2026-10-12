@@ -745,6 +745,19 @@ Object* VM::neighborSim(int16_t id) {
     return nullptr;
 }
 
+int16_t VM::neighborForGuid(uint32_t guid) {
+    if (neighbors.empty() || guid == 0)
+        return 0;
+    for (const auto& [id, n] : neighbors)
+        if (n.guid == guid)
+            return id;
+    const int16_t id = int16_t(neighbors.rbegin()->first + 1);
+    Neighbor& n = neighbors[id];
+    n.guid = guid;
+    n.personData[persondata::NeighborId] = id;
+    return id;
+}
+
 ObjectId VM::containedIn(ObjectId container, int16_t slot) const {
     if (container == 0 || slot < 0)
         return 0;

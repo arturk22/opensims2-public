@@ -926,6 +926,10 @@ public:
     }
     // The Sim on the lot with this neighbor ID, or null.
     Object* neighborSim(int16_t id);
+    // The neighbor of a Sim made from its definition: the one with this
+    // OBJD GUID, or a new one (the next ID) when the neighborhood has none;
+    // 0 without a neighborhood (inferred, Create New Object Instance).
+    int16_t neighborForGuid(uint32_t guid);
 
     // Inventories by kind and ID (0 for the global one): the neighborhood's
     // (loadNeighborhood), and others created on demand.

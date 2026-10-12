@@ -254,11 +254,20 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                         vm::describeOperands(machine, t, f, in).c_str());
         };
 
-    // S2PKG_LOG_TREES=text: every start of a tree whose name has the text,
-    // with the tick, who runs it and the tree below it on the stack.
+    // S2PKG_LOG_TREES=text[|text...]: every start of a tree whose name has
+    // one of the texts, with the tick, who runs it and the tree below it on
+    // the stack.
     if (const char* logTrees = std::getenv("S2PKG_LOG_TREES"); logTrees && !traceId)
         machine.trace = [&machine, want = std::string(logTrees)](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction&) {
-            if (f.pc != 0 || &f != &t.stack.back() || f.behavior->fileName.find(want) == std::string::npos)
+            if (f.pc != 0 || &f != &t.stack.back())
+                return;
+            bool match = false;
+            for (size_t at = 0; !match && at <= want.size();) {
+                const size_t bar = std::min(want.find('|', at), want.size());
+                match = f.behavior->fileName.find(want.substr(at, bar - at)) != std::string::npos;
+                at = bar + 1;
+            }
+            if (!match)
                 return;
             // One line per call, not per loop back to the start or re-run in the same tick.
             static std::map<std::pair<const vm::Thread*, size_t>, std::pair<const Behavior*, uint64_t>> last;

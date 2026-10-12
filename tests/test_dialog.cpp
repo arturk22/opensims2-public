@@ -112,13 +112,19 @@ static void testNotification() {
     CodeLibrary code;
     VM vm{code};
     code.add(kObjGroup, 0x12D, strings({"Hello $Object"}));
-    // Text notification: does not wait; needs a stack object.
+    // Text notification: does not wait.
     code.add(kObjGroup, 0x1000, tree({instr(0x24, {0, 0, 0, 0, 0, 8, 0, 0x81, 0x01, 0, 0x14, 0, 1, 1, 0})}));
     Object& me = vm.createObject(kObjGroup);
     Thread t = vm.start(me.id, 0x1000, {}, me.id);
     vm.run(t);
     check(t.status == Thread::Status::Finished && t.result, "notification: returns at once");
     check(vm.notifications.size() == 1 && vm.dialogs.empty(), "notification: shown, not waiting");
+    // Without a stack object (it left the lot) the tree-owning object gives
+    // the text, as TryDialog does; the Main no longer dies (N002_Lot3 Circe).
+    Thread u = vm.start(me.id, 0x1000, {}, 0);
+    vm.run(u);
+    check(u.status == Thread::Status::Finished && u.result && vm.notifications.size() == 2,
+          "notification: shown without a stack object");
 }
 
 static void testLightAndOutfit() {
