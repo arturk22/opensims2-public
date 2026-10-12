@@ -618,12 +618,16 @@ bairro). O **estilo 1** (`cShadow::CreateShadow` `0x677390`,
   0,83): sombras claras. Inferido: que é essa a cor que a vtable `0x7c`
   entrega às sobreposições.
 
-**No código** (`Renderer::ShadowCaster`, `LotLighting::update`): cada Sim
+**No código** (`Renderer::ShadowCaster`, `LotLighting::update`, e no
+estúdio do CAS `CasMode::update`, uma sala): cada Sim
 na VM com a opção ligada (`GraphicsOptions::simShadows`, Shadows `$High`)
 desenha a silhueta num atlas de 8 × 8 texturas de 128, como acima, e os
 pisos e o terreno (as superfícies com light map voltadas para cima) a
 uma altura entre 0,6 abaixo e 0,3 acima dos pés multiplicam a cor pela
-silhueta borrada (dentro) ou pela cor de sombra onde ela cobre (fora).
+silhueta borrada (dentro) ou pela cor de sombra onde ela cobre (fora);
+dentro, como o quad do jogo cobre o que não passa da altura dos pés, as
+faces de cima dos objetos opacos até 0,03 acima dos pés (tapetes, o
+pódio do CAS) também (`docs/screenshots/r15-cas-sombra-sim.jpg`).
 A cor de fora como acima (`LotLighting::update`). Inferido: a direção de
 fora = a do `sun` do estado; o borrão como uma
 caixa de 5 × 5 amostras bilineares; projetar nas superfícies em vez de

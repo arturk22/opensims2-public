@@ -170,11 +170,15 @@ struct Shadow {
 // multiplies (ShadowShader), outside the whole shadow takes the shadow
 // colour where the blurred silhouette passes the overlay's alpha test
 // (OverlayShadowMaterial: > 100 of 255; its edge softened a little here).
-float3 simShadows(float3 world, uint count, constant Shadow* shadows, texture2d<float> atlas, sampler smp) {
+// `objects`: an object's upward face (a rug): only the inside shadows, the
+// game's quad a hair over the floor covering what is no higher.
+float3 simShadows(float3 world, uint count, constant Shadow* shadows, texture2d<float> atlas, sampler smp, bool objects) {
     float3 k = 1.0;
     for (uint i = 0; i < count; ++i) {
         constant Shadow& s = shadows[i];
-        if (world.z < s.misc.z - 0.6 || world.z > s.misc.z + 0.3)
+        if (objects && s.misc.y > 0.5)
+            continue;
+        if (world.z < s.misc.z - 0.6 || world.z > s.misc.z + (objects ? 0.03 : 0.3))
             continue;
         const float2 uv = float2(dot(s.u.xyz, world) + s.u.w, dot(s.v.xyz, world) + s.v.w);
         if (any(uv < s.rect.xy) || any(uv > s.rect.zw))
@@ -312,7 +316,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         color.rgb = saturate(2.0 * albedo * lm * draw.color.rgb);
         // The Sims' shadows fall on floors and terrain (not on walls).
         if (frame.params.z > 0.5 && n.z > 0.7)
-            color.rgb *= simShadows(in.world, uint(frame.params.z), shadows, shadowAtlas, maskSmp);
+            color.rgb *= simShadows(in.world, uint(frame.params.z), shadows, shadowAtlas, maskSmp, false);
     } else if ((draw.flags & kLighting) && (draw.flags & kWater)) {
         // Fixed-function light, ambient = diffuse = stdMatDiffCoef, x1.
         constant LightSet& set = lightSets[draw.lightSet];
@@ -356,6 +360,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         const float3 emissive = set.ambient.w > 0.0 ? draw.emissive.rgb : float3(0.0);
         color.rgb = saturate(2.0 * albedo * saturate(0.5 * (emissive + draw.color.rgb * diffuse)));
         color.rgb = saturate(color.rgb + saturate(draw.specular.rgb * spec));
+        if (frame.params.z > 0.5 && n.z > 0.7 && color.a > 0.99)
+            color.rgb *= simShadows(in.world, uint(frame.params.z), shadows, shadowAtlas, maskSmp, true);
         if (draw.flags & kEnvCube) {
             if (draw.flags & kEnvLocked)
                 r = (frame.view * float4(r, 0)).xyz;

@@ -12,6 +12,7 @@
 #include "formats/sim_character.hpp"
 #include "formats/ui_resources.hpp"
 #include "render/camera.hpp"
+#include "formats/graphics_options.hpp"
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
 #include "vm/family_write.hpp"
@@ -526,6 +527,7 @@ void CasMode::update(double seconds) {
     lastUpdate_ = seconds;
     if (turning_ && editing_ >= 0)
         heading_ += float(turning_) * float(dt) * 2.5f;
+    std::vector<Renderer::ShadowCaster> casters;
     for (auto& s : shown_) {
         if (!s.actor)
             continue;
@@ -533,7 +535,19 @@ void CasMode::update(double seconds) {
             s.actor->heading = baseHeading() + heading_;
         s.actor->update(seconds);
         renderer_.updateObject(s.actor->model, s.actor->posed);
+        // The Sims' shadows in the studio (a room: straight down, the
+        // floor under the feet multiplied; docs/lighting-mac.md 9).
+        if (studio_ && s.instance >= 0 && graphicsOptions().simShadows) {
+            const Xform at = s.actor->placement();
+            const Vec3 feet = at.apply({0, 0, 0}), side = at.apply({1, 0, 0});
+            Renderer::ShadowCaster c;
+            c.instance = s.instance;
+            c.feet = simd_make_float3(feet[0], feet[1], feet[2]);
+            c.heading = std::atan2(side[1] - feet[1], side[0] - feet[0]);
+            casters.push_back(c);
+        }
     }
+    renderer_.setShadowCasters(std::move(casters));
 }
 
 void CasMode::setStep(int step) {
