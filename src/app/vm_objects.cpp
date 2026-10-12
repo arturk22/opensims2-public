@@ -449,7 +449,10 @@ void VmObjectView::updateMaterials(int16_t id, Drawn& d) {
 void VmObjectView::addCreated(int16_t id) {
     triedCreate_[id] = true;
     const std::string cres = cresFor(id);
-    if (cres.empty() || cres == "nullModel" || cres == "noModel")
+    // "placeholder" (a yellow box with a red "+Y" arrow) is the model of
+    // controllers (Controller - Look At, Wants - Controller): never seen in
+    // the game (inferred; the VM moves the Look At controller onto the lot).
+    if (cres.empty() || cres == "nullModel" || cres == "noModel" || cres == "placeholder")
         return;
     const int m = model(cres, {});
     if (m < 0)

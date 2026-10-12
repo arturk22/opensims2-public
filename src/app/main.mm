@@ -390,8 +390,8 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
     };
     size_t placed = 0;
     for (const auto& o : lot.objects) {
-        if (o.model.empty() || o.model == "nullModel" || o.model == "noModel" || o.person)
-            continue;
+        if (o.model.empty() || o.model == "nullModel" || o.model == "noModel" || o.model == "placeholder" || o.person)
+            continue; // ("placeholder": the controllers' marker box, app/vm_objects.cpp)
         // Objects in a slot are saved at (0, 0): drawn only where the VM's
         // containment puts them (app/vm_objects.hpp).
         const bool contained = o.position[0] == 0 && o.position[1] == 0;
