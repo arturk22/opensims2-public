@@ -68,6 +68,7 @@
 #include "render/screen_fx_layer.hpp"
 #include "vm/engine.hpp"
 #include "vm/dialog.hpp"
+#include "vm/go_here.hpp"
 #include "audio/play_sound.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/cas_catalog.hpp"
@@ -873,6 +874,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // Pie menus over the same VM.
     gPie = std::make_unique<os2::PieMenuHost>(gSimulation->machine(), gameDir() / "TSData/Res/UI/Fonts",
                                               argument(@"--sim-id").value_or(""));
+    // A go-here destination goes when its menu closes, unless an interaction on it was queued.
+    gPie->onClose = [](os2::vm::ObjectId id) { os2::vm::releaseDestination(gPie->vm(), id); };
     for (const auto& b : gPickBoxes)
         if (b.contained)
             gPie->addFollowingPickBox(b.instance, b.lo, b.hi);
@@ -1204,6 +1207,58 @@ int viewLevel() {
     if (gBuy && gBuy->active())
         return gWallView.shownLevel(gBuy->level() - 1);
     return gCameraFollow ? gWallView.shownLevel(gCameraFollow->level()) : os2::LotViewOptions::kAllLevels;
+}
+
+// The ground or floor under the mouse ray, as Go Here takes it
+// (cTSUserToolStandardAction::GroundOrWallButNotPondAtGameWindowPoint): the
+// first level, from the one the camera shows down, whose floor the ray
+// meets where that level has something to stand on (or a pool); the point
+// and its VM level.
+std::optional<std::pair<simd_float2, int>> groundUnderRay(simd_float3 eye, simd_float3 dir) {
+    if (!gSimulation || !gLotShape || std::fabs(dir.z) < 1e-5f || !gSimulation->machine().world)
+        return std::nullopt;
+    const os2::vm::World& w = *gSimulation->machine().world;
+    int top = viewLevel();
+    if (top == os2::LotViewOptions::kAllLevels)
+        top = gLotShape->minLevel + gLotShape->levelCount - 1;
+    for (int lotLevel = top; lotLevel >= gLotShape->minLevel; --lotLevel) {
+        const int level = lotLevel + 1;
+        float z = gSimulation->floorHeight(level, float(w.width()) / 2, float(w.height()) / 2);
+        simd_float3 hit{};
+        bool ok = true;
+        for (int i = 0; i < 3 && ok; ++i) {
+            const float t = (z - eye.z) / dir.z;
+            ok = t > 0;
+            hit = eye + dir * t;
+            z = gSimulation->floorHeight(level, hit.x, hit.y);
+        }
+        const os2::vm::TilePos tile{int(std::floor(hit.x)), int(std::floor(hit.y)), level};
+        if (ok && w.contains(tile) && (w.walkable(tile) || w.pool(tile)))
+            return std::make_pair(simd_make_float2(hit.x, hit.y), level);
+    }
+    return std::nullopt;
+}
+
+// A click on the ground: the selected Sim's pie menu on a go-here
+// destination there (vm/go_here.hpp). False when nothing opened.
+bool openGoHere(simd_float3 eye, simd_float3 dir, simd_float2 at) {
+    if (!gPie || !gPie->sim())
+        return false;
+    const auto g = groundUnderRay(eye, dir);
+    if (!g)
+        return false;
+    os2::vm::VM& m = gPie->vm();
+    const os2::vm::ObjectId dest = os2::vm::createGoHereDestination(m, gPie->sim(), g->first.x, g->first.y, g->second);
+    if (!dest)
+        return false;
+    if (!gPie->open(dest, at)) {
+        os2::vm::releaseDestination(m, dest);
+        return false;
+    }
+    if (const os2::vm::Object* d = m.object(dest))
+        std::printf("opensims2: go here: destination %d at (%.2f, %.2f, %d)\n", dest, d->position.x, d->position.y,
+                    d->position.level);
+    return true;
 }
 
 // Whether an object hangs on a wall the lot model cut down: a cut wall of
@@ -3059,6 +3114,8 @@ void unloadScene() {
     const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
     if (id && !gPie->open(id, p))
         std::printf("opensims2: object %d: no interactions available\n", id);
+    if (!id) // the ground: Go Here
+        openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p);
     std::fflush(stdout);
 }
 
@@ -3904,6 +3961,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                             o && o->definition ? o->definition->fileName.c_str() : "nothing");
                 if (id && !gPie->open(id, p))
                     std::printf("opensims2: object %d: no interactions available\n", id);
+                if (!id) // the ground: Go Here
+                    openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p);
                 for (size_t e = 0; e < gPie->entries().size(); ++e)
                     std::printf("opensims2: pie [%zu] %s\n", e, gPie->entries()[e].name.c_str());
             }

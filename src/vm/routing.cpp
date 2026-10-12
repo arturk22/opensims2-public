@@ -2,6 +2,7 @@
 #include "vm.hpp"
 
 #include "errors.hpp"
+#include "go_here.hpp"
 #include "interactions.hpp"
 
 #include "formats/binreader.hpp"
@@ -1069,31 +1070,16 @@ std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& 
     return std::nullopt;
 }
 
-// The destinations the engine made for "move out of the way" go once no
-// Sim has their interaction queued or running any more (the binary keeps
-// them as managed destination objects of the router and flushes them,
-// cTSRoutingObjectAggregate::FlushManagedDestinationObjects BV 0x4f9eb4;
-// when exactly is inferred). Once a tick.
+// The destinations the engine made ("move out of the way", "go here") go
+// once no Sim has their interaction queued or running any more
+// (flushDestinations, go_here.hpp). Once a tick.
 void flushMoveOutOfWayDestinations(VM& vm) {
     static std::map<const VM*, uint64_t> lastTick;
     auto& last = lastTick[&vm];
     if (last == vm.ticks + 1)
         return;
     last = vm.ticks + 1;
-    std::vector<ObjectId> done;
-    for (const auto& [id, o] : vm.objects()) {
-        if (!o.syntheticSlot || !o.definition || o.definition->guid() != kDestinationGuid)
-            continue;
-        bool used = false;
-        for (const auto& [sid, sim] : vm.objects())
-            if (sim.person)
-                for (const auto& q : sim.queue)
-                    used = used || q.object == id;
-        if (!used)
-            done.push_back(id);
-    }
-    for (const ObjectId id : done)
-        vm.removeObject(id);
+    flushDestinations(vm);
 }
 
 // AskBlockerToMove → the blocker's MoveOutOfWay (docs/routing-mac.md §8.1):
@@ -2041,6 +2027,125 @@ Exit snapInto(Context& c) {
 }
 
 } // namespace
+
+// The binary keeps the destinations as managed destination objects of the
+// router and flushes them (cTSRoutingObjectAggregate::
+// FlushManagedDestinationObjects, BV 0x4f9eb4: kept while in the person's
+// queue, current or sub-queue interaction, or in its routing state); when
+// it runs is inferred (each routing step, and when a pie menu closes).
+void flushDestinations(VM& vm) {
+    std::vector<ObjectId> done;
+    for (const auto& [id, o] : vm.objects()) {
+        if (!(o.syntheticSlot || o.managedDestination) || o.destinationHeld)
+            continue;
+        bool used = false;
+        for (const auto& [sid, sim] : vm.objects())
+            if (sim.person)
+                for (const auto& q : sim.queue)
+                    used = used || q.object == id;
+        if (!used)
+            done.push_back(id);
+    }
+    for (const ObjectId id : done)
+        vm.removeObject(id);
+}
+
+std::optional<Position> goHerePoint(VM& vm, ObjectId simId, float x, float y, int level) {
+    if (!vm.world)
+        return std::nullopt;
+    const World& w = *vm.world;
+    const TilePos tile{int(std::floor(x)), int(std::floor(y)), level};
+    if (!w.contains(tile))
+        return std::nullopt;
+    // A pool tile: the swim destination stands in the water (the planner
+    // counts water as nothing to stand on).
+    if (w.pool(tile))
+        return Position{x, y, level};
+    if (!w.walkable(tile))
+        return std::nullopt;
+    PathPlanner& planner = plannerOf(vm);
+    const Object* sim = vm.object(simId);
+    Object none;
+    addObstacles(vm, planner, sim ? *sim : none, {});
+    // Away from the other objects (TSObjectMoveAwayFromOtherObjects, 0.4
+    // tile): out of what blocks, then 0.4 from the other Sims (inferred:
+    // the nearest such point on a 1/16 tile grid within 1.5 tiles).
+    auto clearOfSims = [&](Point2 p) {
+        for (const auto& [id, o] : vm.objects())
+            if (o.person && id != simId && o.position.inWorld() && o.position.level == level &&
+                std::hypot(o.position.x - p[0], o.position.y - p[1]) < 0.4f)
+                return false;
+        return true;
+    };
+    Point2 at{x, y};
+    if (!planner.free(level, at) || !clearOfSims(at)) {
+        std::optional<Point2> best;
+        float bestD = 1.5f;
+        for (int i = -24; i <= 24; ++i)
+            for (int j = -24; j <= 24; ++j) {
+                const Point2 q{x + float(i) / 16, y + float(j) / 16};
+                const float d = std::hypot(q[0] - x, q[1] - y);
+                if (d < bestD && planner.free(level, q) && clearOfSims(q))
+                    best = q, bestD = d;
+            }
+        if (!best)
+            return std::nullopt;
+        at = *best;
+    }
+    // Away from the walls of its tile (MovePointAwayFromWalls, 0.45 tile +
+    // 0.001): side 1 the low y edge, 2 the low x edge, 4 the high y edge, 8
+    // the high x edge.
+    constexpr float kWallGap = 0.45f, kEps = 0.001f;
+    const TilePos t{int(std::floor(at[0])), int(std::floor(at[1])), level};
+    const float fx = at[0] - float(t.x), fy = at[1] - float(t.y);
+    if (w.wallBetween(t, 0, -1) && fy < kWallGap)
+        at[1] += kWallGap - fy + kEps;
+    if (w.wallBetween(t, -1, 0) && fx < kWallGap)
+        at[0] += kWallGap - fx + kEps;
+    if (w.wallBetween(t, 0, 1) && 1 - fy < kWallGap)
+        at[1] -= kWallGap - (1 - fy) + kEps;
+    if (w.wallBetween(t, 1, 0) && 1 - fx < kWallGap)
+        at[0] -= kWallGap - (1 - fx) + kEps;
+    // Where it can stand (TSObjectCanSetPosition, inferred as: something to
+    // stand on, nothing that blocks).
+    if (!planner.free(level, at))
+        return std::nullopt;
+    return Position{at[0], at[1], level};
+}
+
+ObjectId createGoHereDestination(VM& vm, ObjectId simId, float x, float y, int level) {
+    const auto p = goHerePoint(vm, simId, x, y, level);
+    if (!p)
+        return 0;
+    const TilePos tile{int(std::floor(p->x)), int(std::floor(p->y)), level};
+    const uint32_t guid = vm.world->pool(tile) ? kSwimHereGuid : kGoHereGuid;
+    std::vector<ObjectId> existing;
+    for (const auto& [id, o] : vm.objects())
+        existing.push_back(id);
+    Object* dest = vm.instantiateGuid(guid);
+    if (!dest)
+        return 0;
+    const ObjectId id = dest->id;
+    auto place = [&](Object& d) {
+        moveTo(vm, d, p->x, p->y, level);
+        d.managedDestination = true;
+        d.destinationHeld = true;
+    };
+    place(*dest);
+    vm.initialize(id, existing);
+    dest = vm.object(id);
+    if (!dest)
+        return 0;
+    place(*dest); // its Init may move it
+    return id;
+}
+
+void releaseDestination(VM& vm, ObjectId id) {
+    if (Object* o = vm.object(id); o && o->managedDestination) {
+        o->destinationHeld = false;
+        flushDestinations(vm);
+    }
+}
 
 void registerRoutingPrimitives(VM& vm) {
     vm.setPrimitive(0x10, findLocationFor);

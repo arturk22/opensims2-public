@@ -296,7 +296,10 @@ bool PieMenuHost::open(vm::ObjectId object, simd_float2 at) {
 }
 
 void PieMenuHost::close() {
+    const bool was = open_;
     open_ = false;
+    if (was && onClose)
+        onClose(object_);
     entries_.clear();
     submenu_.clear();
     gesture_ = false;

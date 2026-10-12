@@ -16,6 +16,7 @@
 #include "vm/autonomy.hpp"
 #include "vm/dialog.hpp"
 #include "vm/engine.hpp"
+#include "vm/go_here.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_resume.hpp"
@@ -162,7 +163,23 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         return 0;
     }
 
-    const vm::ObjectId object = vm::findInteractionObject(machine, objectQuery);
+    // here:x,y[,level]: a click on the ground there (vm/go_here.hpp): the
+    // destination object the game puts under the mouse.
+    vm::ObjectId object = 0;
+    if (objectQuery.rfind("here:", 0) == 0) {
+        float hx = 0, hy = 0;
+        int hl = 1;
+        if (std::sscanf(objectQuery.c_str() + 5, "%f,%f,%d", &hx, &hy, &hl) < 2)
+            throw std::runtime_error("here:x,y[,level] expected");
+        object = vm::createGoHereDestination(machine, sim, hx, hy, hl);
+        if (!object)
+            throw std::runtime_error("no destination can stand at " + objectQuery.substr(5));
+        const vm::Object& d = *machine.object(object);
+        std::printf("go here: destination %d at (%.3f, %.3f, %d)\n", object, d.position.x, d.position.y,
+                    d.position.level);
+    } else {
+        object = vm::findInteractionObject(machine, objectQuery);
+    }
     if (!object)
         throw std::runtime_error("no object \"" + objectQuery + "\" with interactions in the lot's world");
     const vm::ObjectId leader = vm::interactionLeader(machine, object);
@@ -206,6 +223,7 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     q->pushedBy = sim;
     vm::Object& s = *machine.object(sim);
     vm::enqueue(machine, s, *q);
+    vm::releaseDestination(machine, object); // the pie menu closes (a go-here destination stays while queued)
     std::printf("queued \"%s\" (TTA %u, action %04X) on %s; %d ticks:\n", q->name.c_str(), q->interaction, q->action,
                 nameOf(s).c_str(), ticks);
     // --trace N: the first N instructions the Sim's thread runs from here on.
@@ -416,7 +434,7 @@ int pieCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* pieUsage() {
-    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init] [--create GUID[:attr=value,...]] [--birth mother,father] [--user-dir dir] [--save-hood out.package]\n";
+    return "       s2pkg pie <lot.package> [sim [object]] [--all] [--select N [--ticks N] [--trace N] [--dialog-answer N] [--anims]] [--trace-checks N] [--motives N] [--init] [--create GUID[:attr=value,...]] (object here:x,y[,level] = a click on the ground) [--birth mother,father] [--user-dir dir] [--save-hood out.package]\n";
 }
 
 } // namespace os2

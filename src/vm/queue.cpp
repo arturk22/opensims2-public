@@ -420,8 +420,17 @@ std::string expandActionString(Context& c, std::string s) {
 // at 4 (1-based). In a check tree run for the pie menu or autonomy it adds
 // an entry with parameters {stack object, temp 0} (sMakeNewMenuItem); in an
 // interaction it renames it.
+//
+// Mode s8 at 9 (docs/primitives-mac.md §5): not 0 sets the entry's icon
+// (an object's thumbnail: GUID u32 at 5, index byte 10) instead of adding
+// or renaming one: "Interaction - Watch Clouds/Stars - TEST" of the go-here
+// destination sets the cloud icon and then adds "Ver Nuvens" (string 2);
+// read as text, the icon operand added a second entry "Nadar Aqui" (string
+// 4). The pie menu shows no icons: nothing is kept.
 Exit changeActionString(Context& c) {
     const auto& o = c.instruction.operands;
+    if (int8_t(o[9]) != 0)
+        return Exit::True;
     uint16_t table = le16(&o[0]);
     if (table == 0)
         table = 0x12E;

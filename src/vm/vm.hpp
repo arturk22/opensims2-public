@@ -520,6 +520,9 @@ struct Object {
     // A routing slot 0 the engine gave the object (the synthetic slot of a
     // move-out-of-way destination, routing.cpp), instead of its SLOT's.
     std::optional<Slots::Slot> syntheticSlot;
+    // A destination the engine made for a Sim (go_here.hpp): flushed once no
+    // Sim has it queued, unless held (a pie menu is open on it).
+    bool managedDestination = false, destinationHeld = false;
     // What the animation primitives play on it (animation.hpp).
     AnimationState animation;
     // Where the head looks (Look At, view.cpp): the target object, from which

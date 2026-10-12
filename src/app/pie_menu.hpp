@@ -118,6 +118,9 @@ public:
     bool open(vm::ObjectId object, simd_float2 at);
     void close();
     bool isOpen() const { return open_; }
+    // Called with the menu's object when an open menu closes (picked or
+    // cancelled): the host lets a go-here destination go (vm/go_here.hpp).
+    std::function<void(vm::ObjectId)> onClose;
     const std::vector<vm::PieEntry>& entries() const { return entries_; } // available, not debug
     // Mouse in canvas pixels. press/release: the left button while the menu
     // is open (the press that opened it counts as the gesture's start):

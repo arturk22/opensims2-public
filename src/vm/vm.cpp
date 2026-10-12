@@ -5,6 +5,7 @@
 
 #include "hood_bridge.hpp"
 #include "interactions.hpp"
+#include "go_here.hpp"
 #include "kill.hpp"
 
 #include "formats/binreader.hpp"
@@ -868,6 +869,7 @@ void VM::tick() {
     }
     tickOverlayEvents(*this); // animation.hpp
     flushKillQueue(*this); // kill.hpp
+    flushDestinations(*this); // go_here.hpp
     followContainers();
 }
 

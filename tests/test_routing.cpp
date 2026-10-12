@@ -1,4 +1,6 @@
 // World occupancy, pathfinding and the routing primitives on synthetic lots.
+#include "vm/go_here.hpp"
+#include "vm/interactions.hpp"
 #include "vm/path_planner.hpp"
 #include "vm/vm.hpp"
 #include "vm/world.hpp"
@@ -868,6 +870,77 @@ static void testMoveOutOfWay() {
     }
 }
 
+// Go Here: a click on the ground makes the destination there, moved 0.45
+// tile off the wall of its tile and out of what blocks; it is kept while
+// the pie menu is open and while its interaction is queued, and goes once
+// the Sim has walked there.
+static void testGoHere() {
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(12, 8);
+    vm.world->addWall(1, 3, 0, 3, 8); // between x = 2 and x = 3
+    constexpr uint32_t kDestGroup = 0x7F000003;
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    ObjectDefinition simDef = definition(0xAAAA0002, 0, true);
+    code.add(kGroup, 0x81, simDef);
+    ObjectFunctions mainOnly;
+    mainOnly.functions.resize(2);
+    mainOnly.functions[1].action = 0x1002;
+    code.add(kGroup, 0x81, mainOnly);
+    code.add(kGroup, 0x1002, tree({expr(0x09, 0, Assign, Lit, 1, go(1), E), instr(0x11, go(0), E, {0, 0, 1, 0})}, 1));
+    ObjectDefinition destDef = definition(kGoHereGuid, 0);
+    destDef.fields[(0x4E - 0x44) / 2] = 1; // its TTAB
+    code.add(kDestGroup, 0x80, destDef);
+    InteractionTable ttab;
+    ttab.version = 0x4D;
+    InteractionTable::Interaction e;
+    e.action = 0x1000;
+    ttab.interactions = {e};
+    code.add(kDestGroup, 1, ttab);
+    // "Go Here": to the destination's spot (Go To Relative Position, on it).
+    code.add(kDestGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0xFF, 0xFE, 0, 0, 0x02})}));
+    ObjectFunctions destInit;
+    destInit.functions.resize(1);
+    destInit.functions[0].action = 0x1001;
+    code.add(kDestGroup, 0x80, destInit);
+    code.add(kDestGroup, 0x1001, tree({expr(Data, 8, 9, Lit, 5, T, E)}));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {8.5f, 4.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {6.5f, 1.5f, 1};
+    sim.person->data[33] = 0;
+    vm.startMain(sim.id);
+    const size_t before = vm.objects().size();
+    // Next to the wall: 0.45 off it.
+    const auto p = goHerePoint(vm, sim.id, 3.1f, 2.5f, 1);
+    check(p && std::fabs(p->x - 3.451f) < 1e-3f && std::fabs(p->y - 2.5f) < 1e-4f, "go here: 0.45 tile off the wall");
+    // On the lamp: out of its tile.
+    const auto q = goHerePoint(vm, sim.id, 8.5f, 4.5f, 1);
+    check(q && (std::floor(q->x) != 8 || std::floor(q->y) != 4), "go here: out of what blocks");
+    check(!goHerePoint(vm, sim.id, 13.0f, 2.0f, 1), "go here: not out of the lot");
+    // Cancelled: the destination goes when the menu closes.
+    ObjectId d = createGoHereDestination(vm, sim.id, 9.5f, 6.5f, 1);
+    check(d && vm.objects().size() == before + 1, "go here: the destination is made");
+    vm.tick();
+    check(vm.object(d) != nullptr, "go here: kept while the pie menu is open");
+    releaseDestination(vm, d);
+    check(!vm.object(d), "go here: gone when the menu closes without a pick");
+    // Picked: the Sim walks there and the destination goes after.
+    d = createGoHereDestination(vm, sim.id, 9.5f, 6.5f, 1);
+    auto in = makeInteraction(vm, d, 0);
+    check(d && in.has_value(), "go here: its interaction");
+    if (in) {
+        in->priority = 50;
+        enqueue(vm, sim, *in);
+    }
+    releaseDestination(vm, d);
+    check(vm.object(d) != nullptr, "go here: kept while queued");
+    for (int i = 0; i < 600 && vm.object(d); ++i)
+        vm.tick();
+    check(!vm.object(d) && std::hypot(sim.position.x - 9.5f, sim.position.y - 6.5f) < 1.5f,
+          "go here: the Sim walks there, then the destination goes");
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -885,6 +958,7 @@ int main() {
     testDoorPortalTree();
     testPreRouteTree();
     testMoveOutOfWay();
+    testGoHere();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
