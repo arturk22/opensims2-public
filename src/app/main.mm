@@ -3633,6 +3633,14 @@ void adoptVmSims(os2::Renderer& renderer) {
 // for, back-and-forth jumps and repeated VM snaps are printed as they
 // happen and summed up at exit. OS2_WATCH_OBJECT=<id|name>: where the VM
 // has those objects and where they are drawn, as that changes.
+// A car, bus or truck: its passengers move with its own animation (test aids below).
+bool isVehicle(const os2::vm::Object* o) {
+    if (!o || !o->definition)
+        return false;
+    const std::string& n = o->definition->fileName;
+    return n.starts_with("Car ") || n.find("Vehicle") != std::string::npos || n.find("Bus") != std::string::npos;
+}
+
 void sampleDrawnPlaces(double scene) {
     if (!gSimulation)
         return;
@@ -3672,7 +3680,7 @@ void sampleDrawnPlaces(double scene) {
             if (x.container && gObjectView)
                 if (const auto at = gObjectView->seatPlacement(s.id, scene))
                     x.seat[0] = at->t[0], x.seat[1] = at->t[1];
-            x.inWorld = simInTheWorld(s.id) && !gCarriedSims.count(s.actor);
+            x.inWorld = simInTheWorld(s.id) && !gCarriedSims.count(s.actor) && !isVehicle(m.object(x.container));
             x.animation = o->animation.name;
             // OS2_TRACE_DRAWN=<Sim id>: that Sim's drawn pelvis and VM place each frame.
             static const int traced = std::getenv("OS2_TRACE_DRAWN") ? std::atoi(std::getenv("OS2_TRACE_DRAWN")) : 0;
@@ -3739,9 +3747,13 @@ void sampleDrawnPlaces(double scene) {
             auto flag = [&](const char* kind, bool on, double value) {
                 bool& f = flagged[{s.id, kind}];
                 if (on && !f)
-                    std::printf("opensims2: pose: tick %llu Sim %d %s %.2f in '%s' at (%.2f %.2f) container %d\n",
+                {
+                    const os2::vm::Object* in = m.object(o->data[os2::vm::objdata::ContainerId]);
+                    std::printf("opensims2: pose: tick %llu Sim %d %s %.2f in '%s' at (%.2f %.2f) container %d %s\n",
                                 (unsigned long long)m.ticks, s.id, kind, value, what.c_str(), (*pelvis)[0], (*pelvis)[1],
-                                o->data[os2::vm::objdata::ContainerId]);
+                                o->data[os2::vm::objdata::ContainerId],
+                                in && in != o && in->definition ? in->definition->fileName.c_str() : "");
+                }
                 f = on;
             };
             // Seated: pelvis over the seat (out of the get-ins and get-outs).
@@ -3751,13 +3763,39 @@ void sampleDrawnPlaces(double scene) {
                                 o->animation.name.find("getOut") != std::string::npos ||
                                 o->animation.name.find("GetIn") != std::string::npos ||
                                 o->animation.name.find("GetOut") != std::string::npos;
-            if (co && !co->person && !moving)
+            // (Not on a stair's steps or in a car: their own motion.)
+            const bool ownMotion = co && co->definition && (co->definition->fileName.find("Stair") != std::string::npos ||
+                                                            isVehicle(co));
+            if (co && !co->person && !moving && !ownMotion)
                 if (const auto seatAt = gObjectView->seatPlacement(s.id, scene)) {
                     const double d = std::hypot((*pelvis)[0] - seatAt->t[0], (*pelvis)[1] - seatAt->t[1]);
                     c.seatMax = std::max(c.seatMax, d);
                     c.seat += d > 0.35;
                     flag("pelvis off the seat", d > 0.35, d);
+                    // And the seat itself near its object (a bone in the wrong frame).
+                    if (co->position.inWorld()) {
+                        const double far = std::hypot((*pelvis)[0] - co->position.x, (*pelvis)[1] - co->position.y);
+                        c.seat += far > 1.2;
+                        flag("pelvis far from its seat's object", far > 1.2, far);
+                    }
                 }
+            // A carry pose (an overlay or Animate Sim "...-carry"/"grasp") with
+            // nothing in the hands (no object in the Sim's slots).
+            {
+                std::string carry;
+                for (const auto& ov : o->animation.overlays)
+                    if (ov.name.find("carry") != std::string::npos || ov.name.find("grasp") != std::string::npos)
+                        carry = ov.name;
+                bool holds = false;
+                if (!carry.empty())
+                    for (const auto& [oid, ob] : m.objects())
+                        if (oid != s.id && ob.data[os2::vm::objdata::ContainerId] == s.id)
+                            holds = true;
+                const bool bad = !carry.empty() && !holds;
+                if (bad)
+                    ++counts["carry " + carry].seat;
+                flag("carry pose with empty hands", bad, 0);
+            }
             // A hand behind the shoulders' plane (the body's forward from the hips).
             const double lx = (*lt)[0] - (*rt)[0], ly = (*lt)[1] - (*rt)[1];
             const double ln = std::hypot(lx, ly);
@@ -3766,8 +3804,9 @@ void sampleDrawnPlaces(double scene) {
                 auto behind = [&](const os2::Vec3& h, const os2::Vec3& sh) { return -((h[0] - sh[0]) * fx + (h[1] - sh[1]) * fy); };
                 const double b = std::max(behind(*rh, *rc), behind(*lh, *lc));
                 c.behindMax = std::max(c.behindMax, b);
-                c.behind += b > 0.22;
-                flag("hand behind the back", b > 0.22, b);
+                const bool bad = b > 0.3 && !o->route; // (a walk swings the arms back 0.25)
+                c.behind += bad;
+                flag("hand behind the back", bad, b);
             }
         }
     }

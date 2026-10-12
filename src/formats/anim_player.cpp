@@ -168,6 +168,20 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.target = skeleton_ && !skeleton_->bones.empty() ? anim.findTarget(anim.skeletonTag) : nullptr;
     if (!l.target && !anim.targets.empty())
         l.target = &anim.targets[0];
+    // An object's animation (its skeleton "book", "chairdining") on a Sim's
+    // skeleton ("auSkel", "cuSkel", ...) binds no bone of it: the game binds a
+    // target to the skeleton it is named for. The VM puts the book's
+    // "o2a-book-carry" on the reader as an overlay (it keys root_trans and
+    // root_rot): played on the child, its body sank to the floor a tile off
+    // and jumped back and forth as it walked (N001_Lot11, OS2_DEBUG_JUMPS).
+    auto simSkeleton = [](std::string_view n) { // "auSkel_cres", "cuskel"
+        std::string low;
+        for (char c : n)
+            low += char(std::tolower(static_cast<unsigned char>(c)));
+        return low.find("skel") != std::string::npos;
+    };
+    if (skeleton_ && simSkeleton(skeleton_->name) && l.target && !simSkeleton(l.target->tag))
+        l.target = nullptr;
     l.rate = o.rate > 0 ? o.rate : 1.0f;
     l.start = now - std::max(o.phase, 0.0) / l.rate;
     l.fadeIn = std::max(o.fade, 0.0f);

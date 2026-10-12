@@ -513,6 +513,28 @@ static void testPlayer() {
     r.play(idle, 0.2, {.fade = 0, .loop = false});
     check(near(angle(r.pose(0.3)[1].q), 0, 1e-2f), "a layer started after the reframe plays in the new frame");
 
+    // reframe(onlyOnce): a looping layer goes on in the new frame.
+    AnimPlayer once(&s);
+    once.play(walk, 0, {.fade = 0, .loop = true});
+    once.reframe(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}}, true);
+    check(near(angle(once.pose(0.1)[1].q), 40, 1e-2f), "reframe(onlyOnce) leaves a looping layer");
+
+    // An object's animation (target "book") binds nothing on a Sim's skeleton.
+    {
+        Skeleton sim = s;
+        sim.name = "auSkel_cres";
+        Animation book = constantAnim("pelvis", 40, 2, 0);
+        book.skeletonTag = "book";
+        book.targets[0].tag = "book";
+        AnimPlayer b(&sim);
+        b.play(idle, 0, {.fade = 0});
+        b.play(book, 0, {.fade = 0, .mask = boneMask(sim, "root_trans"), .level = 2});
+        check(near(angle(b.pose(0.1)[1].q), 0, 1e-2f), "an object's animation leaves a Sim's bones alone");
+        AnimPlayer onBook(&s); // (an object's own skeleton: plays)
+        onBook.play(book, 0, {.fade = 0});
+        check(near(angle(onBook.pose(0.1)[1].q), 40, 1e-2f), "an object's animation plays on the object");
+    }
+
     AnimPlayer m(&s);
     m.play(walk, 0);
     m.advance(0);
