@@ -125,7 +125,7 @@ bool DesignTool::open(vm::ObjectId id, simd_float2 at, const std::string& name) 
             playSound("ui_error");
         return false;
     }
-    if (vm::funds(vm_) < price()) {
+    if (!vm::canAfford(vm_, price())) {
         message(0x8D, 15, "Insufficient Funds!");
         if (playSound)
             playSound("ui_error");
@@ -196,7 +196,7 @@ bool DesignTool::accept() {
         return false;
     }
     const int cost = price();
-    if (vm::funds(vm_) < cost) {
+    if (!vm::canAfford(vm_, cost)) {
         message(0x8D, 15, "Insufficient Funds!");
         if (playSound)
             playSound("ui_error");
@@ -204,7 +204,7 @@ bool DesignTool::accept() {
     }
     Change c;
     c.id = open_->id, c.before = open_->before, c.after = designFor(*open_), c.cost = cost;
-    vm::addFunds(vm_, -cost);
+    vm::chargeFunds(vm_, -cost);
     apply(vm_, view_, c.id, c.after);
     if (playSound)
         playSound("ui_object_buy");

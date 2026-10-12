@@ -103,6 +103,7 @@ static void testEditor() {
     VM vm(code);
     vm.globals[global::BudgetDiv10000] = 0;
     vm.globals[global::BudgetMod10000] = 2000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     auto r = ed.drawWalls(1, 2, 0, 2, 3);
@@ -161,6 +162,7 @@ static void testRound9() {
     VM vm(code);
     vm.globals[global::BudgetDiv10000] = 0;
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     auto r = ed.drawWalls(1, 2, 3, 6, 3);
@@ -209,6 +211,7 @@ static void testRound9() {
             two.floors[size_t(x) * 10 + size_t(y)] = {1, 1, 1, 1};
     VM vm2(code);
     vm2.globals[global::BudgetMod10000] = 5000;
+    vm2.families[1], vm2.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm2.world = World::fromLot(two);
     BuildEditor ed2(vm2, two);
     check(ed2.floorable(2, 3, 3), "a tile over a floor is floorable");
@@ -285,6 +288,7 @@ static void testFoundation() {
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     auto r = ed.drawFoundation(2, 2, 4, 3);
@@ -314,6 +318,7 @@ static void testTerrain() {
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     std::vector<uint8_t> profile(32 * 32, 255);
@@ -361,6 +366,7 @@ static void testRoof() {
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     ed.drawRoom(1, 2, 2, 8, 5);
@@ -422,6 +428,7 @@ static void testEditableArea() {
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     check(ed.tileLocked(0, 3, 20) && !ed.tileLocked(0, 3, 19), "without 3ARY 0x03, the road edge's strip is locked (inferred)");
@@ -450,6 +457,7 @@ static void testLockedTiles() {
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     check(vm.world->locked({3, 15, 1}) && !vm.world->locked({3, 14, 1}), "the world knows the locked tiles");
@@ -475,6 +483,7 @@ static void testFenceArch() {
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     BuildFence fence;
@@ -539,6 +548,7 @@ static void testPool() {
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     auto r = ed.drawPool(3, 3, 5, 4);
@@ -666,6 +676,7 @@ static void testStairs() {
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
+    vm.families[1], vm.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm.world = World::fromLot(lot);
     BuildEditor ed(vm, lot);
     int error = 0;
@@ -746,7 +757,36 @@ static void testWalkOver() {
     setWalkOverFences({});
 }
 
+// A lot with no family (an empty lot or a house for sale entered from the
+// neighborhood): building costs nothing and gives nothing back (the
+// undoables' "no charge", Mac BV 0x9b47a4; TotalCost 0); a selected Sim on
+// the lot charges again.
+static void testNoCharge() {
+    Lot lot = flatLot();
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World::fromLot(lot);
+    check(noCharge(vm) && canAfford(vm, 1000000) && funds(vm) == 0, "no family: no charge");
+    BuildEditor ed(vm, lot);
+    auto r = ed.drawRoom(1, 2, 2, 6, 5);
+    check(r.ok && r.changed == 14 && funds(vm) == 0, "a room with §0 on a lot with no family, funds unchanged");
+    BuildPattern carpet;
+    carpet.guid = 0x1234, carpet.floor = true, carpet.price = 8, carpet.name = "carpet";
+    r = ed.paintFloor(1, 2, 2, 3, 2, &carpet);
+    check(r.ok && r.changed == 8 && funds(vm) == 0, "floors too");
+    r = ed.deleteWalls(1, 2, 2, 6, 2);
+    check(r.ok && r.changed == 4 && funds(vm) == 0, "deleting walls gives nothing back");
+    std::vector<uint8_t> profile(32 * 32, 255);
+    r = ed.terrainStroke(BuildEditor::TerrainOp::Raise, 8, 8, 10, 1, profile);
+    check(r.ok && r.changed > 0 && funds(vm) == 0, "terrain too");
+    check(ed.undo() && ed.undo() && funds(vm) == 0, "undo pays nothing back");
+    vm.families[3];
+    vm.globals[global::CurrentFamily] = 3;
+    check(!noCharge(vm) && !canAfford(vm, 1) && canAfford(vm, 0), "a family's lot charges (CanAfford: cost <= 0 or <= the funds)");
+}
+
 int main() {
+    testNoCharge();
     testStairs();
     testAutoRoofRects();
     testFenceArch();

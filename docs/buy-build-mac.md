@@ -184,6 +184,18 @@ de 3/4 e uma luz) e guardar em cache. Não é preciso ler o pacote do usuário.
   (`cTSUserToolUndoable::TotalCost`, BV `0x9b5568`, soma o custo próprio e o das
   pré/pós-operações). `CanAfford(c)` (BV `0x9b38fc`) = c ≤ 0 ou c ≤ fundos
   da família.
+- **Lote sem família não cobra** (rodada 17): o `Init` de toda operação
+  desfazível (BV `0x9b47a4`) e o da ferramenta (`cTSUserToolBuyBuild`, BV
+  `0x9b36e0`, nomeado errado como destrutor) põem "sem custo" (+0x30 / +0x49)
+  quando `cTSGameStateController::CurrentFamily()` (vtable `0x38`) é nulo, a
+  não ser que a ponte da UI tenha um Sim selecionado
+  (`cTSUIBridge::GetSelectedPerson`, vtable `0x24`; aqui: global 3 com um
+  Sim no lote, mapeamento inferido). Com isso `TotalCost` dá 0 (nada é
+  cobrado nem devolvido, vender também não dá dinheiro) e o
+  `cTSUserToolObject::TryDrop` (BV `0x2111b4`) larga o objeto sem olhar os
+  fundos. Os fundos do simulador (`cTSSimulator::GetFunds`, BV `0x498a24`:
+  +0x98 + +0x9c) ficam como estão (§0 num lote novo). No opensims2:
+  `vm::noCharge`, `vm::canAfford`, `vm::chargeFunds` (`placement.hpp`).
 - **Vender** (o handler de remoção do undoable, BV `0x35f030`, nomeado errado
   `cTSUserToolFloorLevel::CalculateCost`): um objeto que já existia no lote
   (tipo 3 = movido) passa a custar **−GetCurrentValue()**, ou seja, o reembolso é o

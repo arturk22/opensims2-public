@@ -536,7 +536,7 @@ bool BuyMode::deleteHeld() {
     auto created = std::find_if(undo_.begin(), undo_.end(),
                                 [&](const Op& op) { return op.kind == Op::Kind::Created && op.id == id; });
     if (created != undo_.end()) {
-        vm::addFunds(vm_, created->cost);
+        vm::chargeFunds(vm_, created->cost);
         undo_.erase(std::remove_if(undo_.begin(), undo_.end(), [&](const Op& op) { return op.id == id; }),
                     undo_.end());
         for (vm::ObjectId part : vm::groupOf(vm_, id))
@@ -568,11 +568,11 @@ bool BuyMode::undo() {
     case Op::Kind::Created: // out of the world, the price back
         op.placement = current(op.id);
         vm::pickUp(vm_, op.id);
-        vm::addFunds(vm_, op.cost);
+        vm::chargeFunds(vm_, op.cost);
         break;
     case Op::Kind::Deleted: // back where it was, the refund paid back
         vm::applyPlacement(vm_, op.id, op.placement);
-        vm::addFunds(vm_, op.cost);
+        vm::chargeFunds(vm_, op.cost);
         break;
     case Op::Kind::Moved: {
         const vm::Placement now = current(op.id);
@@ -582,7 +582,7 @@ bool BuyMode::undo() {
     }
     case Op::Kind::Design: // the old design back, the price back
         DesignTool::apply(vm_, view_, op.id, op.before);
-        vm::addFunds(vm_, op.cost);
+        vm::chargeFunds(vm_, op.cost);
         break;
     }
     redo_.push_back(op);
@@ -599,15 +599,15 @@ bool BuyMode::redo() {
     redo_.pop_back();
     switch (op.kind) {
     case Op::Kind::Created:
-        if (vm::funds(vm_) < op.cost)
+        if (!vm::canAfford(vm_, op.cost))
             return redo_.push_back(op), false;
         vm::applyPlacement(vm_, op.id, op.placement);
-        vm::addFunds(vm_, -op.cost);
+        vm::chargeFunds(vm_, -op.cost);
         break;
     case Op::Kind::Deleted:
         op.placement = current(op.id);
         vm::pickUp(vm_, op.id);
-        vm::addFunds(vm_, -op.cost);
+        vm::chargeFunds(vm_, -op.cost);
         break;
     case Op::Kind::Moved: {
         const vm::Placement now = current(op.id);
@@ -616,10 +616,10 @@ bool BuyMode::redo() {
         break;
     }
     case Op::Kind::Design:
-        if (vm::funds(vm_) < op.cost)
+        if (!vm::canAfford(vm_, op.cost))
             return redo_.push_back(op), false;
         DesignTool::apply(vm_, view_, op.id, op.after);
-        vm::addFunds(vm_, -op.cost);
+        vm::chargeFunds(vm_, -op.cost);
         break;
     }
     undo_.push_back(op);
@@ -794,7 +794,7 @@ UiScreen BuyMode::screen(int width, int height) {
     const size_t perPage = size_t(kColumns * rows);
     const size_t pages = std::max<size_t>(1, (list.size() + perPage - 1) / perPage);
     page_ = std::min(page_, pages - 1);
-    const int32_t funds = vm::funds(vm_);
+    const int64_t funds = vm::noCharge(vm_) ? INT64_MAX : vm::funds(vm_); // no charge: nothing is too dear
     std::vector<std::pair<std::array<float, 4>, const CatalogEntry*>> cells;
     const UiElement* catalog = root.child(kCatalog);
     const UiElement* collapsed = catalog ? catalog->child(expanded_ ? kExpanded : kCollapsed) : nullptr;

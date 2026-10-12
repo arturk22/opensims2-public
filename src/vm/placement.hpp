@@ -216,4 +216,20 @@ void computeLotData(VM& vm);
 int32_t funds(VM& vm);
 void addFunds(VM& vm, int32_t amount);
 
+// Buy and build cost nothing on a lot with no family: every buy/build
+// undoable's Init (Mac BV 0x9b47a4) and cTSUserToolBuyBuild's (0x9b36e0) set
+// "no charge" when cTSGameStateController::CurrentFamily() (vtable 0x38) is
+// null, unless the UI bridge has a selected person (cTSUIBridge::
+// GetSelectedPerson, vtable 0x24; here global 3 naming a Sim on the lot,
+// inferred mapping). Then cTSUserToolUndoable::TotalCost (0x9b5568) is 0, so
+// nothing is charged or refunded (selling gives nothing back either), and
+// cTSUserToolObject::TryDrop (0x2111b4) skips the funds check.
+bool noCharge(VM& vm);
+// cTSUserToolBuyBuild::CanAfford (0x9b38fc): cost <= 0 or <= the funds;
+// with no charge the cost is 0.
+bool canAfford(VM& vm, int64_t cost);
+// Funds += amount unless there is no charge (the buy/build tools' charges,
+// refunds and their undo/redo; cheats that set the funds use addFunds).
+void chargeFunds(VM& vm, int32_t amount);
+
 } // namespace os2::vm

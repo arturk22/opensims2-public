@@ -452,6 +452,23 @@ void addFunds(VM& vm, int32_t amount) {
     vm.globals[global::BudgetMod10000] = int16_t(now % 10000);
 }
 
+bool noCharge(VM& vm) {
+    const int16_t family = vm.globals[global::CurrentFamily];
+    if (family && vm.families.count(family))
+        return false;
+    const int16_t selected = vm.globals[global::SelectedPersonId];
+    return !(selected > 0 && vm.object(ObjectId(selected)));
+}
+
+bool canAfford(VM& vm, int64_t cost) {
+    return cost <= 0 || noCharge(vm) || cost <= funds(vm);
+}
+
+void chargeFunds(VM& vm, int32_t amount) {
+    if (amount && !noCharge(vm))
+        addFunds(vm, amount);
+}
+
 bool buy(VM& vm, ObjectId ghost, const Placement& p, int price, std::string* why) {
     auto refuse = [&](const std::string& r) {
         if (why)
@@ -460,11 +477,11 @@ bool buy(VM& vm, ObjectId ghost, const Placement& p, int price, std::string* why
     };
     if (!p.ok)
         return refuse(p.reason.empty() ? "does not fit" : p.reason);
-    if (funds(vm) < price)
+    if (!canAfford(vm, price))
         return refuse("not enough funds");
     applyPlacement(vm, ghost, p);
     runUserPlacement(vm, ghost);
-    addFunds(vm, -price);
+    chargeFunds(vm, -price);
     for (const auto& part : p.parts)
         vm.startMain(part.id);
     computeLotData(vm);
@@ -477,6 +494,8 @@ int sell(VM& vm, ObjectId id) {
     if (group.size() == 1)
         runEntry(vm, id, entry::UserDelete);
     pickUp(vm, id);
+    if (noCharge(vm))
+        return computeLotData(vm), 0; // TotalCost is 0: nothing back
     addFunds(vm, value);
     computeLotData(vm);
     return value;

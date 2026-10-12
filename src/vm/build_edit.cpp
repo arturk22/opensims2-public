@@ -503,7 +503,7 @@ BuildEditor::Result BuildEditor::drawWalls(int level, int x0, int y0, int x1, in
         todo.push_back(s);
     }
     r.cost = int(todo.size()) * kWallSectionPrice;
-    if (todo.empty() || r.cost > funds(vm_)) {
+    if (todo.empty() || !canAfford(vm_, r.cost)) {
         restore(before);
         if (!todo.empty())
             r.message = "not enough money (" + money(r.cost) + ")";
@@ -516,7 +516,7 @@ BuildEditor::Result BuildEditor::drawWalls(int level, int x0, int y0, int x1, in
     for (const auto& s : todo)
         if (addWall(lot_, level - 1, s[0], s[1], s[2], s[3], kWallType, {blank, blank}))
             ++r.changed;
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
@@ -550,7 +550,7 @@ BuildEditor::Result BuildEditor::drawRoom(int level, int x0, int y0, int x1, int
             }
             todo.push_back(s);
         }
-    if (int(todo.size()) * kWallSectionPrice > funds(vm_)) {
+    if (!canAfford(vm_, int(todo.size()) * kWallSectionPrice)) {
         restore(before);
         r.message = "not enough money (" + money(int(todo.size()) * kWallSectionPrice) + ")";
         return r;
@@ -565,7 +565,7 @@ BuildEditor::Result BuildEditor::drawRoom(int level, int x0, int y0, int x1, int
         restore(before);
         return r.message = "the walls are there already", r;
     }
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.message = "a room of " + std::to_string(r.changed) + " wall sections for " + money(r.cost);
@@ -709,7 +709,7 @@ BuildEditor::Result BuildEditor::eraseRun(int level, int x0, int y0, int x1, int
     }
     r.ok = true;
     r.cost = -(refund + objectRefund);
-    addFunds(vm_, refund);
+    chargeFunds(vm_, refund);
     changed();
     r.message = std::to_string(r.changed) + (fences ? " fence" : " wall") + " sections deleted for " + money(refund) +
                 (sold.empty() ? "" : ", " + std::to_string(sold.size()) + " attached objects sold for " +
@@ -884,7 +884,7 @@ BuildEditor::Result BuildEditor::placeFenceArch(int level, int ax, int ay, int b
         return r;
     }
     r.cost = arch.price;
-    if (r.cost > funds(vm_)) {
+    if (!canAfford(vm_, r.cost)) {
         r.error = 0x16;
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
@@ -892,7 +892,7 @@ BuildEditor::Result BuildEditor::placeFenceArch(int level, int ax, int ay, int b
     }
     Geometry before = capture();
     addFenceArch(lot_, li, ax, ay, bx, by);
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     r.changed = 1;
     changed();
     commit(std::move(before), r.cost);
@@ -911,7 +911,7 @@ BuildEditor::Result BuildEditor::deleteFenceArch(int level, int ax, int ay, int 
     Geometry before = capture();
     removeFenceArch(lot_, level - 1, ax, ay, bx, by);
     r.cost = -int(float(arch ? arch->price : 0) * kBuildRefundRate);
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     r.changed = 1;
     changed();
     commit(std::move(before), r.cost);
@@ -938,7 +938,7 @@ BuildEditor::Result BuildEditor::drawFences(int level, int x0, int y0, int x1, i
         todo.push_back(s);
     }
     r.cost = int(todo.size()) * fence.price;
-    if (todo.empty() || r.cost > funds(vm_)) {
+    if (todo.empty() || !canAfford(vm_, r.cost)) {
         if (!todo.empty())
             r.message = "not enough money (" + money(r.cost) + ")";
         else if (r.message.empty())
@@ -967,7 +967,7 @@ BuildEditor::Result BuildEditor::drawFences(int level, int x0, int y0, int x1, i
         if (!has && fenced)
             lot_.fencePosts.push_back({level - 1, float(x), float(y), fence.guid});
     }
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
@@ -1097,7 +1097,7 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
         return r;
     }
     r.cost = int(tiles.size()) * deck.price;
-    if (r.cost > funds(vm_)) {
+    if (!canAfford(vm_, r.cost)) {
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
         return r;
@@ -1158,7 +1158,7 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
                 }
             }
     r.changed = int(tiles.size());
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost, {}, std::move(created));
     r.ok = true;
@@ -1243,7 +1243,7 @@ BuildEditor::Result BuildEditor::deleteFoundation(int x0, int y0, int x1, int y1
     foundationWalls(0, &removed, false);
     r.changed = int(tiles.size());
     r.cost = -refund;
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost, std::move(columns));
     r.ok = true;
@@ -1448,7 +1448,7 @@ BuildEditor::Result BuildEditor::placeDormer(int product, int level, int x, int 
             todo.push_back(s);
         }
     r.cost = int(todo.size()) * kWallSectionPrice;
-    if (r.cost > funds(vm_)) {
+    if (!canAfford(vm_, r.cost)) {
         r.error = 0x16;
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
@@ -1474,7 +1474,7 @@ BuildEditor::Result BuildEditor::placeDormer(int product, int level, int x, int 
     const auto attic = atticWalls(li + 1);
     lot_.roofs.push_back(roof);
     syncAtticWalls(li + 1, attic);
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
@@ -1807,7 +1807,7 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
     // UpdateFundsForHeightChange: the stroke's total change, rounded, x §1;
     // what it adds is paid now, refused when the funds are short.
     const int owed = int(std::lround((st.moved + moved) * 1.0f)) - st.paid;
-    if (owed > funds(vm_)) {
+    if (!canAfford(vm_, owed)) {
         r.message = "not enough money (" + money(owed) + ")";
         return r;
     }
@@ -1823,7 +1823,7 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
     st.moved += moved;
     st.paid += owed;
     st.changed += int(changes.size());
-    addFunds(vm_, -owed);
+    chargeFunds(vm_, -owed);
     r.ok = !changes.empty() || !r.error;
     r.cost = owed;
     r.changed = int(changes.size());
@@ -2110,7 +2110,7 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
         return r;
     }
     r.cost = tiles * kPoolTilePrice;
-    if (r.cost > funds(vm_)) {
+    if (!canAfford(vm_, r.cost)) {
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
         return r;
@@ -2158,7 +2158,7 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
     lot_.pools = std::move(kept);
     poolWalls();
     r.changed = tiles;
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
@@ -2248,7 +2248,7 @@ BuildEditor::Result BuildEditor::erasePool(int x0, int y0, int x1, int y1) {
             }
     poolWalls();
     r.cost = -r.changed * int(float(kPoolTilePrice) * kBuildRefundRate);
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
@@ -2322,7 +2322,7 @@ BuildEditor::Result BuildEditor::deletePool(int x, int y) {
         }
         poolWalls();
         r.cost = -r.changed * int(float(kPoolTilePrice) * kBuildRefundRate);
-        addFunds(vm_, -r.cost);
+        chargeFunds(vm_, -r.cost);
         changed();
         commit(std::move(before), r.cost);
         r.ok = true;
@@ -2478,7 +2478,7 @@ BuildEditor::Result BuildEditor::paintFloor(int level, int x0, int y0, int x1, i
         return r;
     }
     r.cost = int(std::lround(cost));
-    if (r.cost > funds(vm_)) {
+    if (!canAfford(vm_, r.cost)) {
         restore(before);
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
@@ -2492,7 +2492,7 @@ BuildEditor::Result BuildEditor::paintFloor(int level, int x0, int y0, int x1, i
         setFloorRotation(lot_, li, t[0], t[1], t[2], uint8_t(v ? rotation : 1));
     }
     r.changed = int(changes.size());
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
@@ -2531,7 +2531,7 @@ BuildEditor::Result BuildEditor::cover(std::vector<std::pair<uint32_t, int>> fac
         return r;
     }
     r.cost = int(std::lround(cost));
-    if (r.cost > funds(vm_)) {
+    if (!canAfford(vm_, r.cost)) {
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
         return r;
@@ -2544,7 +2544,7 @@ BuildEditor::Result BuildEditor::cover(std::vector<std::pair<uint32_t, int>> fac
             if (w.id == id)
                 w.patterns[size_t(k)] = ref, w.layered = true;
     r.changed = int(faces.size());
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     changed();
     commit(std::move(before), r.cost);
     r.ok = true;
@@ -3092,7 +3092,7 @@ BuildEditor::Result BuildEditor::placeStairs(const BuildStairs& product, TilePos
     }
     const int n = plan.steps, B = plan.bottom, L = plan.top;
     r.cost = n * product.price;
-    if (r.cost > funds(vm_)) {
+    if (!canAfford(vm_, r.cost)) {
         r.error = 0x16;
         r.message = "not enough money (" + money(r.cost) + ")";
         r.cost = 0;
@@ -3192,7 +3192,7 @@ BuildEditor::Result BuildEditor::placeStairs(const BuildStairs& product, TilePos
             o->data[kNextLink] = int16_t(i + 1 < steps.size() ? steps[i + 1] : -1);
             o->data[kPrevLink] = int16_t(i > 0 ? steps[i - 1] : -1);
         }
-    addFunds(vm_, -r.cost);
+    chargeFunds(vm_, -r.cost);
     computeLotData(vm_);
     r.changed = n;
     changed();
@@ -3283,7 +3283,7 @@ BuildEditor::Result BuildEditor::deleteStairs(ObjectId part) {
         // 1x for 2-3), read before the part leaves the world.
         const int railing = railingCost(vm_, id);
         if (railing)
-            addFunds(vm_, railing);
+            chargeFunds(vm_, railing);
         r.cost -= sell(vm_, id) + railing;
         sold.push_back(std::move(s));
     }
@@ -3347,7 +3347,7 @@ BuildEditor::Result BuildEditor::changeRailing(ObjectId part, bool side, bool re
         return r;
     }
     const int cost = (remove ? -price : price) * int(swaps.size());
-    if (cost > 0 && cost > funds(vm_)) {
+    if (!canAfford(vm_, cost)) {
         r.error = 0x16;
         r.message = "not enough money (" + money(cost) + ")";
         return r;
@@ -3355,7 +3355,7 @@ BuildEditor::Result BuildEditor::changeRailing(ObjectId part, bool side, bool re
     Geometry before = capture();
     for (const auto& s : swaps)
         setRailingModel(vm_, ObjectId(s[0]), s[2]);
-    addFunds(vm_, -cost);
+    chargeFunds(vm_, -cost);
     computeLotData(vm_);
     r.cost = cost;
     r.changed = int(swaps.size());
@@ -3413,7 +3413,7 @@ bool BuildEditor::undo() {
         pickUp(vm_, x.id);
     for (const auto& m : op.models)
         setRailingModel(vm_, ObjectId(m[0]), m[1]);
-    addFunds(vm_, op.cost); // the price back, or the refund paid back
+    chargeFunds(vm_, op.cost); // the price back, or the refund paid back
     syncWorld();
     redo_.push_back(std::move(op));
     return true;
@@ -3423,7 +3423,7 @@ bool BuildEditor::redo() {
     if (redo_.empty())
         return false;
     Op op = std::move(redo_.back());
-    if (op.cost > funds(vm_))
+    if (!canAfford(vm_, op.cost))
         return false;
     redo_.pop_back();
     restore(op.after);
@@ -3433,7 +3433,7 @@ bool BuildEditor::redo() {
         applyPlacement(vm_, x.id, x.where);
     for (const auto& m : op.models)
         setRailingModel(vm_, ObjectId(m[0]), m[2]);
-    addFunds(vm_, -op.cost);
+    chargeFunds(vm_, -op.cost);
     syncWorld();
     undo_.push_back(std::move(op));
     return true;

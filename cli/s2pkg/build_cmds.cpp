@@ -251,10 +251,10 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                 }
                 design[subset] = material;
             }
-            if (r.ok && vm::funds(vm) < 15)
+            if (r.ok && !vm::canAfford(vm, 15))
                 r.ok = false, r.message = "Insufficient Funds!";
             if (r.ok) {
-                vm::addFunds(vm, -15);
+                vm::chargeFunds(vm, -15);
                 o->design = design;
                 r.cost = 15;
                 r.message = model + ": design of object " + std::to_string(id) + " changed for §15";

@@ -471,7 +471,7 @@ bool BuildMode::undo() {
             if (vm_.object(e.id)) {
                 e.placement = vm::currentPlacement(vm_, e.id);
                 vm::pickUp(vm_, e.id);
-                vm::addFunds(vm_, e.cost);
+                vm::chargeFunds(vm_, e.cost);
                 if (e.cobject)
                     std::erase_if(lot_.objects, [&](const Lot::Object& c) { return c.instance == e.cobject->instance; });
                 syncAfterObject();
@@ -480,7 +480,7 @@ bool BuildMode::undo() {
             break;
         case Entry::Kind::Design:
             DesignTool::apply(vm_, view_, e.id, e.before);
-            vm::addFunds(vm_, e.cost);
+            vm::chargeFunds(vm_, e.cost);
             ok = true;
             break;
         }
@@ -507,9 +507,9 @@ bool BuildMode::redo() {
             editorDepth_ = editor_->undoDepth();
             break;
         case Entry::Kind::Object:
-            if (vm_.object(e.id) && vm::funds(vm_) >= e.cost) {
+            if (vm_.object(e.id) && vm::canAfford(vm_, e.cost)) {
                 vm::applyPlacement(vm_, e.id, e.placement);
-                vm::addFunds(vm_, -e.cost);
+                vm::chargeFunds(vm_, -e.cost);
                 if (e.cobject)
                     lot_.objects.push_back(*e.cobject);
                 syncAfterObject();
@@ -517,9 +517,9 @@ bool BuildMode::redo() {
             }
             break;
         case Entry::Kind::Design:
-            if (vm::funds(vm_) >= e.cost) {
+            if (vm::canAfford(vm_, e.cost)) {
                 DesignTool::apply(vm_, view_, e.id, e.after);
-                vm::addFunds(vm_, -e.cost);
+                vm::chargeFunds(vm_, -e.cost);
                 ok = true;
             }
             break;
@@ -1557,7 +1557,7 @@ UiScreen BuildMode::screen(int width, int height) {
     const size_t perPage = size_t(kColumns * kRows);
     const size_t pages = std::max<size_t>(1, (list.size() + perPage - 1) / perPage);
     page_ = std::min(page_, pages - 1);
-    const int32_t funds = vm::funds(vm_);
+    const int64_t funds = vm::noCharge(vm_) ? INT64_MAX : vm::funds(vm_); // no charge: nothing is too dear
     const UiElement* catalog = root.child(kCatalogArea);
     const UiElement* collapsed = catalog ? catalog->child(kCollapsed) : nullptr;
     if (auto r = rectOf(collapsed); r && showCatalog) {
