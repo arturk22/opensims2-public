@@ -96,7 +96,7 @@ struct Frame {
     float4 params;      // x: mix of light map 1 over light map 0, y: time in seconds
     float4 environment; // rgb: the environment light, scaling env cube reflections
     float4 clip;        // a plane (xyz normal, w offset): what is behind it is clipped when viewport.z is 1
-    float4 viewport;    // xy: the target's size in pixels, z: clip on
+    float4 viewport;    // xy: the target's size in pixels, z: clip on, w: ground clip height (world z)
 };
 
 #define VERTEX_OUT_FIELDS \
@@ -115,10 +115,11 @@ struct VertexOut {
     VERTEX_OUT_FIELDS
 };
 // What the vertices give: the same and the clip distance of the reflection
-// pass (only what is in front of the mirror is drawn into the reflection).
+// pass (only what is in front of the mirror is drawn into the reflection)
+// and the ground clip (nothing below the lot's earth skirt).
 struct VertexOutClip {
     VERTEX_OUT_FIELDS
-    float clipDistance [[clip_distance]] [1];
+    float clipDistance [[clip_distance]] [2];
 };
 
 vertex VertexOutClip vertex_main(uint vid [[vertex_id]],
@@ -130,6 +131,7 @@ vertex VertexOutClip vertex_main(uint vid [[vertex_id]],
     VertexOutClip out;
     out.position = frame.viewProj * world;
     out.clipDistance[0] = frame.viewport.z > 0.5 ? dot(float4(world.xyz, 1.0), frame.clip) : 1.0;
+    out.clipDistance[1] = world.z - frame.viewport.w;
     out.world = world.xyz;
     out.normal = (draw.model * float4(float3(v.normal), 0.0)).xyz;
     out.uv = v.uv;

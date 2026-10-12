@@ -989,6 +989,21 @@ void fillSunOccluders(const Lot& lot, const LotRoofs& roofs, LotLightMapLayout& 
         }
 }
 
+float lotSkirtBottom(const Lot& lot) {
+    const int w = int(lot.width), h = int(lot.height);
+    float terrain = 0, under = 0;
+    bool any = false;
+    for (int x = 0; x <= w; ++x)
+        for (int y = 0; y <= h; ++y) {
+            const float e = lot.hasLevel(0) ? lot.elevation(0, x, y) : 0.0f;
+            terrain = any ? std::min(terrain, e) : e;
+            any = true;
+            if (lot.minLevel < 0 && lot.hasLevel(lot.minLevel))
+                under = std::min(under, lot.elevation(lot.minLevel, x, y));
+        }
+    return std::min(terrain - kSkirtDepth, under - 0.5f);
+}
+
 ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns,
                           const LotViewOptions& view, LotLightMapLayout* lightMap, LotModelCache* cache) {
     ObjectModel model;
@@ -1015,18 +1030,15 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         base.material = "terrain:" + lot.terrainBase;
         base.mesh = terrainMesh(lot, lm, open);
         model.parts.push_back(std::move(base));
-        // With a level under the ground (a pool's), the lot's edges get
-        // sides of earth down past it: the game's lot sits in the
-        // neighborhood's terrain (cLotSkirt) and the pool's bottom and walls
-        // never show past the lot's edge; here they showed as a cyan box
-        // under the pool (a visual choice, inferred).
-        if (lot.minLevel < 0 && lot.hasLevel(lot.minLevel)) {
+        // The lot's edges get sides of earth down to lotSkirtBottom: the
+        // game's lot sits in the neighborhood's terrain (cLotSkirt), so
+        // nothing under the ground ever shows past the lot's edge (a pool's
+        // bottom and walls, the deck supports' 22-tile shafts, stairs Maxis
+        // buried); the host clips what goes deeper (Renderer::setGroundClip).
+        // A visual choice, inferred.
+        if (lot.width && lot.height) {
             const int w = int(lot.width), h = int(lot.height);
-            float bottom = 0;
-            for (int x = 0; x <= w; ++x)
-                for (int y = 0; y <= h; ++y)
-                    bottom = std::min(bottom, lot.elevation(lot.minLevel, x, y));
-            bottom -= 0.5f;
+            const float bottom = lotSkirtBottom(lot);
             MeshBuilder sk;
             auto side = [&](float ax, float ay, float bx, float by, Vec3f n) {
                 const float ta = lot.elevation(0, int(ax), int(ay)), tb = lot.elevation(0, int(bx), int(by));

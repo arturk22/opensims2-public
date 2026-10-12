@@ -2697,6 +2697,7 @@ void rebuildLotModel(os2::Renderer& renderer, os2::ResourceIndex& index) {
     const os2::ObjectModel model =
         os2::buildLotModel(*gLotShape, index, *gLotPatterns, view, &*gLightMapLayout, &gLotCache);
     renderer.replaceObject(gLotModel, model, index);
+    renderer.setGroundClip(os2::lotSkirtBottom(*gLotShape)); // the terrain may have been lowered
     gLotView = view;
     placeFencePieces(renderer, index, *gLotShape, *gLotPatterns, nullptr, view.level);
     if (gLighting) {
@@ -2929,6 +2930,8 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     gLotModel = renderer.addObject(model, index);
     gLotInstance = renderer.addInstance(gLotModel, matrix_identity_float4x4);
     gLotShape = std::make_unique<os2::Lot>(lot);
+    // Nothing under the lot's earth skirt is drawn (lot_model.hpp).
+    renderer.setGroundClip(os2::lotSkirtBottom(lot));
     gLotPatterns = std::make_unique<os2::PatternCatalog>(patterns);
     gLotView = view;
     perfLap("lot model to the GPU");
@@ -5724,6 +5727,10 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             view.camera->zoomBy(std::stoi(*z));
         if (auto o = argument(@"--orientation"))
             view.camera->rotateBy(std::stoi(*o));
+        // --tilt <degrees>: the pitch moved by that much, inside the zoom
+        // level's range (negative: lower, toward a side view).
+        if (auto t = argument(@"--tilt"))
+            view.camera->tilt(std::stof(*t));
         view.camera->snap();
         // The lot's cutaway walls follow the starting view direction.
         const simd_float3 look = view.camera->pivot() - view.camera->eye();

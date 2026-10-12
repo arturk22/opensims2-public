@@ -523,6 +523,30 @@ static void testLotModel() {
     check(wall && wall->mesh.uvs2.size() == wall->mesh.positions.size(), "walls get light-map coordinates");
     check(floor && floor->mesh.uvs2.size() == floor->mesh.positions.size(), "floors get light-map coordinates");
 
+    // Every lot (not only one with a pool) gets earth sides down to
+    // lotSkirtBottom, 1.5 under its lowest terrain point, so what lies under
+    // the ground (deck supports, buried stairs) never shows past its edges.
+    {
+        Lot hill = lot;
+        hill.terrainBase = "lttest";
+        hill.elevations[0] = -0.25f; // grid point (0, 0) of level 0
+        check(lotSkirtBottom(hill) == -0.25f - kSkirtDepth, "skirt bottom under the lowest terrain point");
+        const ObjectModel hm = buildLotModel(hill, index, patterns);
+        float sideBottom = 1e9f;
+        size_t sideTris = 0;
+        for (const auto& part : hm.parts)
+            if (part.material == "terrain:lttest")
+                for (size_t t = 0; t < part.mesh.triangles.size(); t += 3) {
+                    const auto& n = part.mesh.normals[part.mesh.triangles[t]];
+                    if (std::abs(n[2]) > 0.01f)
+                        continue;
+                    ++sideTris;
+                    for (int k = 0; k < 3; ++k)
+                        sideBottom = std::min(sideBottom, part.mesh.positions[part.mesh.triangles[t + k]][2]);
+                }
+        check(sideTris == 2 * 2 * (2 + 1) && sideBottom == lotSkirtBottom(hill), "a lot without a pool gets its skirt");
+    }
+
     // Wall views: walls down cut the wall to its stub, a level below the
     // wall's hides it, and the light-map atlas is the same for every view.
     auto wallTop = [&](const ObjectModel& model) {

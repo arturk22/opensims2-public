@@ -128,7 +128,7 @@ struct Frame {
     simd_float4 params;      // x: mix of light map slot 1 over slot 0, y: time (s)
     simd_float4 environment; // rgb: the environment light (env cubes)
     simd_float4 clip;        // a plane (xyz normal, w offset) that keeps what is on its positive side, when viewport.z is 1
-    simd_float4 viewport;    // xy: the target's size in pixels, z: clip on
+    simd_float4 viewport;    // xy: the target's size in pixels, z: clip on, w: ground clip height
 };
 constexpr size_t kFrameStride = 256; // the frame buffer holds the frame, then the reflected one at this offset
 
@@ -988,7 +988,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
 
     MTL::Texture* target = pass->colorAttachments()->object(0)->texture();
     const uint32_t targetW = target ? uint32_t(target->width()) : 1, targetH = target ? uint32_t(target->height()) : 1;
-    f->viewport = simd_make_float4(float(targetW), float(targetH), 0, 0);
+    const float ground = std::isfinite(groundClip_) ? groundClip_ : -1e30f;
+    f->viewport = simd_make_float4(float(targetW), float(targetH), 0, ground);
     f->clip = simd_make_float4(0, 0, 1, 0);
 
     // The mirror that reflects this frame: the nearest one in view, its
@@ -1098,7 +1099,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             senc->setViewport(vpt);
             Frame sf = *f;
             sf.viewProj = vp;
-            sf.viewport = simd_make_float4(kShadowResolution, kShadowResolution, 0, 0);
+            sf.viewport = simd_make_float4(kShadowResolution, kShadowResolution, 0, f->viewport.w);
             senc->setVertexBytes(&sf, sizeof sf, 2);
             senc->setFragmentBytes(&sf, sizeof sf, 2);
             for (const auto& part : models_[size_t(inst.model)]->parts) {

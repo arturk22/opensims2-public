@@ -1709,6 +1709,17 @@ borracha usado ao pôr). Visual: a parede de piscina não desenha a face
 virada para a terra, e com um nível sob o chão o lote ganha lados de terra
 nas bordas (o fundo da piscina aparecia além da borda do lote como uma
 caixa ciano; inferido, o jogo tem o `cLotSkirt` do bairro em volta).
+Rodada 20 (`r20-underground`): os lados de terra valem para todo lote
+(`lotSkirtBottom`: 1,5 tile sob o ponto mais baixo do terreno, ou 0,5 sob o
+piso da piscina se for mais fundo) e o renderizador corta tudo abaixo disso
+(`Renderer::setGroundClip`, segundo `clip_distance` do `vertex_main`). O
+jogo deixa coisa sob o chão que o terreno do bairro esconde: o
+`deckSupport` (objeto "Column - Square Brick") desce 22,5 tiles por
+desenho, para sempre alcançar o terreno, e o `N002_Lot23` tem uma escada
+modular verde enterrada até z −2,6 (já no lote de fábrica); de lado, sem o
+bairro em volta, apareciam como postes compridos e triângulos escuros sob o
+lote. Visual, inferido. `--tilt <graus>` abaixa a câmera nas capturas sem
+tela; `docs/screenshots/r20-underground-*.jpg` (antes × depois).
 `lot-save N001_Lot38 --build-funds 20000 --pool 2,2,3,7 --pool 4,2,5,7
 --erase-pool 2,5,5,5 --check` volta igual (`--pool 4,2,7,3` entre eles é
 recusado); `docs/screenshots/r14-construcao-piscina-borda.jpg` (antes ×

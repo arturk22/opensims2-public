@@ -151,6 +151,11 @@ public:
     // (its stencil); off, they keep the blank mirror colour. One mirror a
     // frame reflects (the nearest in view; the others stay blank).
     void setReflections(bool on) { reflections_ = on; }
+    // Everything below this height (world z) is clipped: the lot's earth
+    // skirt ends there, so what the game leaves under the ground (deck
+    // supports 22 tiles long, buried stairs) never shows under the lot.
+    // -INFINITY (the default): nothing clipped.
+    void setGroundClip(float z) { groundClip_ = z; }
     bool reflections() const { return reflections_; }
 
     // Sims' shadows (nTSSG::cShadow style 1, docs/lighting-mac.md 9): each
@@ -260,6 +265,7 @@ private:
     Overlay overlay_;
     SceneHook sceneHook_;
     bool reflections_ = false;
+    float groundClip_ = -INFINITY;
     std::vector<ShadowCaster> casters_;
     MTL::Texture* shadowAtlas_ = nullptr; // owned: 8 x 8 tiles of 128 x 128 silhouettes
     MTL::Texture* shadowDepth_ = nullptr;

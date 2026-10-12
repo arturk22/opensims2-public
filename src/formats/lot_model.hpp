@@ -131,6 +131,13 @@ struct LotModelCache {
     std::vector<std::array<float, 5>> cut;
     void geometryChanged() { holes.reset(); }
 };
+// Where the earth sides along the lot's edges end (world z, tiles): a tile
+// and a half under the lowest terrain point, or half a tile under a pool's
+// floor if that is lower. Hosts clip everything below it (it is all under
+// the ground). A visual choice, inferred.
+constexpr float kSkirtDepth = 1.5f;
+float lotSkirtBottom(const Lot& lot);
+
 ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCatalog& patterns,
                           const LotViewOptions& view = {}, LotLightMapLayout* lightMap = nullptr,
                           LotModelCache* cache = nullptr);
