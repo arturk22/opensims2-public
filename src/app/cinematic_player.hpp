@@ -94,7 +94,7 @@ private:
         int group = 0;    // 1..3
         int bone = -1;    // in rigSkeleton_
         Vec3 color{1, 1, 1};
-        float intensity = 1, falloff = 1, range = 6;
+        float falloff = 0; // FalloffRate (0: no falloff)
     };
     void loadRig(const std::string& cres);
 

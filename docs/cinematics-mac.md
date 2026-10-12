@@ -217,7 +217,14 @@ cinemática ativa, `0x99` câmera sem fila de coreografia.
   desenhado: as luzes `point/spot{1,2,3}{a,b}` dele, posição pelos ossos +
   canais de mesmo nome, cor = `diffuse` × `diffuseScale`, entram como luzes
   pontuais dos atores cujos grupos de render têm o bit 1/2/4; spots como
-  pontos, inferido), as câmeras em sequência (`-1_anim`, `-2_anim`), os
+  pontos, inferido; rodada 15, binário: as luzes do rig no CRES são
+  `DiffuseScale 0, RelSpecularScale 1, cor (1,1,1), FalloffRate 0` +
+  alcance 20 (pontos) ou cone 0,698 rad (40°), penumbra 0,1745 (10°),
+  alcance 0 (spots) — a ordem de `cStandardLightBase::ReadFrom`, BV
+  `0xca2fb4`/`0xca3358`/`0xca3208`; o alcance do arquivo é refeito pela
+  intensidade, e sem queda é 10000: as luzes do rig não caem com a
+  distância. Antes se lia o 2º valor como intensidade e o alcance 20),
+  as câmeras em sequência (`-1_anim`, `-2_anim`), os
   cortes (chaves na mesma hora), o espelhamento (flag 0x01, ou 0x02 com o
   temp 0 ≠ 0: a câmera, o rig e, desde a rodada 10, os ossos dos atores),
   pós-processamento (letterbox, vinheta, granulado e um "bloom" barato:

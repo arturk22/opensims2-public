@@ -100,15 +100,14 @@ void CinematicPlayer::loadRig(const std::string& cresName) {
                     if (blk.className != "cPointLight" && blk.className != "cSpotLight")
                         continue;
                     const StandardLight sl = StandardLight::parse(blk.className, blk.body);
-                    // The rig's lights read "0 1 | 1 1 1 | 0 20" (points; spots add
-                    // their cone): taken as (?, intensity, RGB, falloff, range),
-                    // inferred; the animation sets colour and scale anyway.
-                    if (sl.values.size() >= 7) {
-                        l.intensity = sl.values[1] > 0 ? sl.values[1] : 1.0f;
+                    // DiffuseScale, RelSpecularScale, RGB, FalloffRate, ...
+                    // (cStandardLightBase::ReadFrom, Mac BV 0xca2fb4): the
+                    // rig's read "0 1 | 1 1 1 | 0 ...": DiffuseScale 0 (the
+                    // animation's diffuseScale channel lights them) and no
+                    // falloff, so their range is unlimited (docs/lighting-mac.md 6).
+                    if (sl.values.size() >= 6) {
                         l.color = {sl.values[2], sl.values[3], sl.values[4]};
                         l.falloff = sl.values[5];
-                        if (blk.className == "cPointLight" && sl.values[6] > 0)
-                            l.range = sl.values[6];
                     }
                     if (debug()) {
                         std::fprintf(stderr, "opensims2: cinematic rig light %s (%s):", l.name.c_str(), blk.className.c_str());
@@ -261,9 +260,14 @@ void CinematicPlayer::update(double now) {
             p[0] = -p[0];
         out.position = origin.apply(p);
         for (size_t c = 0; c < 3; ++c)
-            out.color[c] = lightChannel(anim, l.name, "diffuse", c, ticks, l.color[c]) * scale * l.intensity;
+            out.color[c] = lightChannel(anim, l.name, "diffuse", c, ticks, l.color[c]) * scale;
         out.falloff = l.falloff;
-        out.range = l.range;
+        // cPointLight::OnLightRadiantPropertiesChanged (BV 0xca0e48): the
+        // range where I / (1 + C d^2) reaches lightRangeCutoff (0.275), I the
+        // length of DiffuseScale x colour; no falloff: 10000.
+        const float I = std::sqrt(out.color[0] * out.color[0] + out.color[1] * out.color[1] + out.color[2] * out.color[2]);
+        constexpr float kCutoff = 0.275f; // Lighting.txt lightRangeCutoff
+        out.range = I / kCutoff <= 1 ? 0.0f : out.falloff <= 0 ? 10000.0f : std::sqrt((I / kCutoff - 1) / out.falloff);
         rigOut_[size_t(l.group)].push_back(out);
     }
 }

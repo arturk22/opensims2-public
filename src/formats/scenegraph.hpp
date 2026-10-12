@@ -186,7 +186,11 @@ struct StandardLight {
     SgResource lightTResource;
     ReferentNode referent;
     std::string name; // light node name, e.g. "gardenuplight_tree"
-    // Ambient/directional: 2 values + RGB; point: + 2 (falloff); spot: + 4 (falloff, cone).
+    // cStandardLightBase::ReadFrom (Mac BV 0xca2fb4): DiffuseScale,
+    // RelSpecularScale, colour RGB; then a point (0xca3358): FalloffRate,
+    // range; a spot (0xca3208): FalloffRate, cone angle, cone penumbra,
+    // range. The range read is recomputed from the intensity at once
+    // (OnLightRadiantPropertiesChanged, docs/lighting-mac.md 6).
     std::vector<float> values;
 
     static StandardLight read(std::string_view className, BinReader& r);
