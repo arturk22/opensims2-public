@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 // How a Sim's walk looks and how fast it goes: the locomotion set's clips
 // (STR# 0x84 of the top of the locomotion stack, docs/routing-mac.md §6.1)
 // as nTSSG::cLocomotable and the scene graph's cLocoSet pick them.
@@ -45,7 +47,25 @@ struct LocoLayer {
     float weight = 1;
     bool mirror = false;
     float rate = 1;
+    // Seconds it blends in over, < 0: the phases' overlap (the "*Blend"
+    // poses' own blend: locoPoseBlend).
+    float fade = -1;
 };
+
+// The "*Blend" poses' blend over the walk cycle (cActiveAnimLoco::
+// InitChannelNetwork, BV 0xd2cd68, sets +0xec, which PushTurnBlendCycles
+// gives each pose cycle): 0.2 (0x274b644), at most 0.95 (0x274bc94) of the
+// start clip's distance when there is one and of the stop clip's. Taken as
+// a distance along the way (the loco cycles run by distance; inferred) and
+// returned in seconds at `speed` (tiles per second).
+inline float locoPoseBlend(float startDistance, float stopDistance, float speed) {
+    float d = 0.2f;
+    if (startDistance > 0)
+        d = std::min(d, 0.95f * startDistance);
+    if (stopDistance > 0)
+        d = std::min(d, 0.95f * stopDistance);
+    return speed > 0 ? d / speed : 0.2f;
+}
 struct Gait {
     std::string animation; // resolved resource name, empty if none
     float speed = 0;       // metres per second

@@ -1872,11 +1872,17 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     };
     auto walkGait = [&] { return blendGaits(gaitOf(vm, me), gaitOf(vm, me, true), L.strideWeight); };
     auto walkOn = [&](const Gait& g) {
+        // The poses blend in over locoPoseBlend: the start just played and the stop ahead.
+        const float startDistance = L.kind == Loco::Start ? L.distance : 0;
+        const BlendedClip stopAhead = final ? stopClip(lastHeading(), true, L.strideWeight) : BlendedClip{};
+        const float poseFade = locoPoseBlend(startDistance, stopAhead ? stopAhead.distance() : 0, g.speed);
         L.kind = Loco::Walk;
         L.animation = g.animation;
         L.mirror = false;
         L.turn = 0;
         L.layers = g.layers();
+        for (size_t k = g.cycles.size(); k < L.layers.size(); ++k)
+            L.layers[k].fade = poseFade;
         L.cycleStart = L.cycle; // the layers start at the portion the walk is at
         ++L.serial;
     };

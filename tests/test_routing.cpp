@@ -1202,6 +1202,14 @@ static void testLocoCurve() {
 // walk and walkShort blend by stride (InitChannelNetwork): the walk between
 // the start and the stop is a whole number of half cycles, the start and the
 // stop blended with their short clips by the same weight.
+// The "*Blend" poses' blend (InitChannelNetwork's +0xec): 0.2, at most
+// 0.95 of the start's and the stop's distances, in seconds at the speed.
+static void testLocoPoseBlend() {
+    check(std::fabs(locoPoseBlend(0, 0, 2) - 0.1f) < 1e-5f, "pose blend: 0.2 at 2 per second");
+    check(std::fabs(locoPoseBlend(0.1f, 0, 1) - 0.095f) < 1e-5f, "pose blend: 0.95 of a short start");
+    check(std::fabs(locoPoseBlend(1, 0.15f, 1) - 0.1425f) < 1e-5f, "pose blend: 0.95 of a short stop");
+}
+
 static void testLocoStride() {
     using Loco = Object::Route::Loco;
     CodeLibrary code;
@@ -1595,6 +1603,7 @@ int main() {
     testLocoBlend();
     testLocoCurve();
     testLocoStride();
+    testLocoPoseBlend();
     testSidestep();
     testLocoHalt();
     testDoorWait();

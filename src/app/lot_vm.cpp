@@ -331,7 +331,7 @@ void LotSimulation::sampleAll(double at) {
                 for (size_t i = 1; i < s.walkLayers.size() && i < 8; ++i) {
                     const auto& l = s.walkLayers[i];
                     const Animation& more = b.actor->animation(index_, l.animation);
-                    b.actor->cue(at, more, {.fade = fade, .loop = loop, .priority = kWalkBlend + int(i), .mirror = l.mirror,
+                    b.actor->cue(at, more, {.fade = l.fade >= 0 ? l.fade : fade, .loop = loop, .priority = kWalkBlend + int(i), .mirror = l.mirror,
                                             .phase = double(s.walkPortion) * more.duration / 1000.0, .level = level,
                                             .weight = l.weight, .rate = l.rate});
                     extras = int(i);
