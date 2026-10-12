@@ -163,11 +163,23 @@ public:
     // button down; returns whether the press was the panel's (then the
     // world below is not picked).
     bool press(simd_float2 p, bool right = false);
-    // Whether p is on one of the puck's mode buttons (Live, Buy, Build, ...).
+    // Whether p is on one of the puck's buttons (the modes Live, Buy, Build,
+    // ..., the walls, zoom, rotate and floors).
     // They stay clickable over Buy and Build mode's panels, whose backdrops
     // would otherwise take the click.
     bool overModeButton(simd_float2 p);
     void hover(simd_float2 p);
+    // The tutorial (app/tutorial.hpp): allowPress is asked before a left
+    // click on a control (false: the tutorial turned it off, the click does
+    // nothing); onPress is called for a click on a control, before it acts.
+    // A control by the game's window ids ("Button GUIDs": a window, and a
+    // button in it; kMainWindow holds them all): its rectangle in the last
+    // screen, if drawn.
+    std::function<bool(simd_float2)> allowPress;
+    std::function<void(simd_float2)> onPress;
+    static constexpr uint32_t kMainWindow = 0x480E8304, kSimChooser = 0x4BDEFFAB, kFirstSimInChooser = 0x2000;
+    std::optional<std::array<float, 4>> controlRect(uint32_t window, uint32_t control);
+    bool controlAt(simd_float2 p, uint32_t window, uint32_t control);
     // The canvas size clicks are laid out against before the first frame (headless).
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
 
@@ -261,6 +273,9 @@ private:
     std::array<MotiveTrend, 8> trends_;
     double lastSample_ = -1;
     std::vector<Target> targets_;
+    std::vector<std::pair<uint32_t, std::array<float, 4>>> windows_; // drawn windows by id (last screen)
+    static constexpr uint32_t kChooserThumbnail = 0xFFFF2000; // windows_ key of the first family thumbnail
+    static constexpr uint32_t kPuckRoot = 0xFFFF0001;         // ... and of the puck's root
     std::vector<std::array<float, 4>> solid_; // panel areas that take clicks
     int hoverIcon_ = -1;                      // queue icon under the mouse
     std::optional<simd_float2> mouse_;

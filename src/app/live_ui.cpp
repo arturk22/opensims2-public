@@ -1016,7 +1016,54 @@ UiScreen LiveUi::screen(int width, int height) {
     }
     if (tip_ >= 0 && tipVisible())
         drawTooltip(out, tips_[size_t(tip_)].second, *mouse_);
+    // The windows drawn, by id, for the tutorial (controlRect, controlAt).
+    windows_.clear();
+    for (const auto& [e, r] : rects)
+        if (const uint32_t id = e->attr("id") ? e->id() : 0)
+            windows_.push_back({id, r});
+    if (auto it = rects.find(&puck_.roots.front()); it != rects.end())
+        windows_.push_back({kPuckRoot, it->second});
+    for (const Target& t : targets_)
+        if (t.action == Action::SelectSim) { // the first family thumbnail ("B - First Sim in Chooser")
+            windows_.push_back({kChooserThumbnail, t.rect});
+            break;
+        }
     return out;
+}
+
+std::optional<std::array<float, 4>> LiveUi::controlRect(uint32_t window, uint32_t control) {
+    layoutIfNeeded();
+    if (window == kSimChooser && control == kFirstSimInChooser)
+        control = kChooserThumbnail, window = kMainWindow;
+    auto contains = [](const std::array<float, 4>& a, const std::array<float, 4>& b) {
+        return a[0] <= b[0] + 0.5f && a[1] <= b[1] + 0.5f && a[2] >= b[2] - 0.5f && a[3] >= b[3] - 0.5f;
+    };
+    std::optional<std::array<float, 4>> anywhere;
+    for (const auto& [id, r] : windows_) {
+        if (id != control)
+            continue;
+        if (window == kMainWindow) {
+            // The main window's buttons are the puck's (other scripts reuse
+            // the same small ids: a family thumbnail has a 0x1000).
+            for (const auto& [pid, pr] : windows_)
+                if (pid == kPuckRoot && contains(pr, r))
+                    return r;
+            if (!anywhere)
+                anywhere = r;
+            continue;
+        }
+        // Inside the window: one drawn with that id that holds it (the
+        // window's children lie in its area).
+        for (const auto& [wid, wr] : windows_)
+            if (wid == window && contains(wr, r))
+                return r;
+    }
+    return anywhere;
+}
+
+bool LiveUi::controlAt(simd_float2 p, uint32_t window, uint32_t control) {
+    const auto r = controlRect(window, control);
+    return r && inside(*r, p);
 }
 
 // A tooltip (inferred look: the game's cTSWinCalloutBox): "Title|Body|||..."
@@ -1154,7 +1201,9 @@ bool LiveUi::overModeButton(simd_float2 p) {
         return false;
     layoutIfNeeded();
     for (const Target& t : targets_)
-        if ((t.action == Action::Mode || t.action == Action::WallFan || t.action == Action::Walls) && inside(t.rect, p))
+        if ((t.action == Action::Mode || t.action == Action::WallFan || t.action == Action::Walls ||
+             t.action == Action::Zoom || t.action == Action::Rotate || t.action == Action::Floor) &&
+            inside(t.rect, p))
             return true;
     return false;
 }
@@ -1163,6 +1212,12 @@ bool LiveUi::press(simd_float2 p, bool right) {
     if (!ok_)
         return false;
     layoutIfNeeded();
+    // A control the tutorial turned off takes the click and does nothing.
+    if (!right && allowPress && !allowPress(p)) {
+        for (const Target& t : targets_)
+            if (inside(t.rect, p))
+                return true;
+    }
     // An open popup closes on any click; a click on the popup itself does nothing else.
     closedPopupKind_ = 0;
     if (popup_.script) {
@@ -1221,6 +1276,8 @@ bool LiveUi::press(simd_float2 p, bool right) {
         }
         if (right && t.action != Action::Cancel) // the queue cancels with either button
             return true;
+        if (!right && onPress) // the tutorial's click trees (app/tutorial.hpp)
+            onPress(p);
         switch (t.action) {
         case Action::Speed:
         case Action::Pause:

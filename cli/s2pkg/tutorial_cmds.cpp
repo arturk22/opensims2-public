@@ -80,8 +80,9 @@ int cmdTutorial(const std::filesystem::path& lotFile, int ticks, bool autoPlay, 
         vm::bindLotSims(m);
     vm::startSavedLot(m, load, saved, false);
     const int created = vm::ensureTutorialControllers(m);
-    std::printf("%s: lot %d, neighborhood %d; %d tutorial controller(s) created\n", lotFile.filename().c_str(),
-                m.globals[vm::global::CurrentHouse], m.globals[vm::global::CurrentNeighborhoodId], created);
+    std::printf("%s: lot %d, neighborhood %d, speed %d%s; %d tutorial controller(s) created\n", lotFile.filename().c_str(),
+                m.globals[vm::global::CurrentHouse], m.globals[vm::global::CurrentNeighborhoodId],
+                m.globals[vm::global::Speed], m.globals[vm::global::Paused] ? " (paused)" : "", created);
     vm::TutorialUi ui;
     uint32_t seen = 0;
     vm::TutorialUi::Key lastHighlight{0, 0};

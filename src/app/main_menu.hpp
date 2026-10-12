@@ -16,14 +16,19 @@
 //               picture 0x2001 (its <P>_Neighborhood.png), description
 //               0x2002, Play 0xB2, Close 0xB3 (Delete 0xB1 is hidden: the
 //               shipped neighborhoods are not deleted here)
-//   0x49001022  "Learn to play" (0xA002): Play Tutorial 0xC2, Close 0xC3
-//               (the tutorial lists are not filled yet)
+//   0x49001022  "Learn to play" (0xA002, cTSWinProcNeighborhoodLearn): the
+//               episodes in two list boxes, "O Básico" 0x4000 (group 1) and
+//               "Além do Básico" 0x5000 (group 2), the selected one's
+//               thumbnail 0x3001 and description 0x3002, Play Tutorial 0xC2
+//               (on only with an episode selected; the first is selected
+//               when it opens), Close 0xC3 (app/tutorial.hpp)
 //
 // Inferred (the window procedure, cTSWinProcNeighborhoodMainMenu, is not
 // decoded): three thumbnails per page in the strip, each the picture over the
 // neighborhood's name; the dialogs over the menu at the root's origin; the
 // background scaled to cover the canvas. Plain C++ over the formats layer.
 
+#include "app/tutorial.hpp"
 #include "formats/image.hpp"
 #include "formats/ui_screen.hpp"
 #include "formats/ui_script.hpp"
@@ -71,6 +76,14 @@ public:
     Action press(simd_float2 p);
     void hover(simd_float2 p);
     const std::string& chosen() const { return chosen_; }
+    // The tutorial episodes of "Aprenda a Jogar"; after Tutorial,
+    // chosenEpisode() is the one to play.
+    void setEpisodes(std::vector<TutorialEpisode> episodes);
+    const TutorialEpisode* chosenEpisode() const;
+    // Opens "Aprenda a Jogar" (as its button does) and selects episode `i`.
+    void openLearn(int episode = 0);
+    // An episode's row in its list (after a layout), for scripts.
+    std::array<float, 4> episodeRect(int i);
     // Opens the preview of hood `i` (as clicking its thumbnail; -1 closes).
     void preview(int i);
     int previewed() const { return preview_; }
@@ -89,7 +102,7 @@ public:
 
 private:
     enum class Target { Prev, Next, Thumb, LearnToPlay, Quit, Close, PreviewPlay, PreviewClose, TutorialPlay,
-                        TutorialClose };
+                        TutorialClose, Episode };
     struct Hit {
         std::array<float, 4> rect;
         Target target;
@@ -106,6 +119,9 @@ private:
     std::vector<std::unique_ptr<RgbaImage>> scaled_; // thumbnails made for the current screen
     int page_ = 0, preview_ = -1;
     bool learnOpen_ = false;
+    std::vector<TutorialEpisode> episodes_;
+    int episode_ = -1;                               // selected
+    std::vector<std::array<float, 4>> episodeRects_; // by episode (empty: not shown)
     std::string chosen_;
     std::vector<Hit> hits_;
     std::vector<std::array<float, 4>> thumbs_; // by hood index (empty rect: not on the page)

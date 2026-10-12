@@ -92,6 +92,13 @@ int tutorialNextDialog(Context& c, int type, uint32_t stringsGroup);
 // many were created.
 int ensureTutorialControllers(VM& vm);
 
+// One turn of the tutorial controllers' Main threads alone, for the host to
+// call at the tick rate while the game is paused (Buy and Build mode pause
+// it, and the tutorial's first step presses Buy mode): the episode goes on
+// with time stopped (inferred: the steps of Buy and Build mode advance in
+// the game, so the controller cannot stop with the clock).
+void tickTutorialControllers(VM& vm);
+
 // A click on a control with an event tree: runs it on `object` at once
 // (cTSEdithWinEventListener, inferred to run the tree to its end); false if
 // it failed or the object is gone.
@@ -118,6 +125,9 @@ public:
     bool enabled(uint32_t window, uint32_t control) const;
     bool visible(uint32_t window, uint32_t control) const;
     bool hasEventTree(uint32_t window, uint32_t control) const;
+    // The controls turned off (disabled or hidden) and those with a click tree.
+    std::vector<Key> blocked() const;
+    std::vector<Key> withTrees() const;
     // The highlighted control (0, 0: none).
     Key highlight() const { return highlight_; }
     // Presses (UI Effect mode 0) the host has not acted on yet.

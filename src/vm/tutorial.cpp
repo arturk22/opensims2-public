@@ -4,6 +4,7 @@
 
 #include "engine.hpp"
 #include "errors.hpp"
+#include "kill.hpp"
 #include "placement.hpp"
 #include "vm.hpp"
 
@@ -179,6 +180,31 @@ int ensureTutorialControllers(VM& vm) {
     return created;
 }
 
+void tickTutorialControllers(VM& vm) {
+    std::vector<ObjectId> ids;
+    for (const Object* o : vm.objectTable())
+        if (o && (o->guid() == kTutorialControllerGuid || o->guid() == kTutorialDeathCheckerGuid))
+            ids.push_back(o->id);
+    for (ObjectId id : ids) {
+        auto it = vm.threads.find(id);
+        if (it == vm.threads.end())
+            continue;
+        Thread& t = it->second;
+        if (t.status == Thread::Status::Finished) {
+            const Object* o = vm.object(id);
+            const uint16_t tree = o ? vm.functionTree(*o, 1) : 0;
+            if (!tree)
+                continue;
+            const size_t done = t.instructions;
+            t = vm.start(id, tree);
+            t.instructions = done;
+        }
+        if (t.status == Thread::Status::Running)
+            vm.run(t, vm.instructionsPerTurn);
+    }
+    flushKillQueue(vm);
+}
+
 bool runTutorialEventTree(VM& vm, ObjectId object, uint16_t tree) {
     if (!vm.object(object) || !tree)
         return false;
@@ -244,6 +270,21 @@ bool TutorialUi::enabled(uint32_t window, uint32_t control) const {
 
 bool TutorialUi::visible(uint32_t window, uint32_t control) const {
     return !hidden_.count({window, control});
+}
+
+std::vector<TutorialUi::Key> TutorialUi::blocked() const {
+    std::vector<Key> out(hidden_.begin(), hidden_.end());
+    for (const auto& [k, on] : enabled_)
+        if (!on)
+            out.push_back(k);
+    return out;
+}
+
+std::vector<TutorialUi::Key> TutorialUi::withTrees() const {
+    std::vector<Key> out;
+    for (const auto& [k, cb] : callbacks_)
+        out.push_back(k);
+    return out;
 }
 
 bool TutorialUi::hasEventTree(uint32_t window, uint32_t control) const {

@@ -109,6 +109,7 @@
 #include "app/lot_effects.hpp"
 #include "app/cas_mode.hpp"
 #include "app/live_ui.hpp"
+#include "app/tutorial.hpp"
 #include "app/pie_menu.hpp"
 #include "lot_audio.hpp"
 #include "anim_snaps.hpp"
@@ -170,6 +171,8 @@ constexpr uint32_t kTypeCres = 0xE519C933, kTypeObjd = 0x4F424A44;
 std::unique_ptr<os2::PieMenuHost> gPie;
 // --ui live: the game's live-mode panel over the same VM (app/live_ui.hpp).
 std::unique_ptr<os2::LiveUi> gLive;
+std::unique_ptr<os2::TutorialOverlay> gTutorial; // over a lot of the Tutorial neighborhood (app/tutorial.hpp)
+size_t gTutorialRequestsSeen = 0;
 bool liveUiRequested();
 // Buy mode (app/buy_mode.hpp): the puck's Buy button, or --mode buy.
 std::unique_ptr<os2::BuyMode> gBuy;
@@ -542,6 +545,9 @@ void leaveLot();                               // game flow, below
 void quitFromLot();                            // game flow, below
 bool saveGameNow();                            // game flow, below
 void setupLiveUi(os2::ResourceIndex& index);  // below setupPieMenu
+void setupTutorial(os2::ResourceIndex& index);
+void pollTutorial(double seconds);
+void requestScene(const os2::Scene& next); // below
 std::optional<os2::RgbaImage> simPortrait(int16_t id);
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
 
@@ -960,6 +966,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     }
     if (liveUiRequested())
         setupOptions(index); // below: the puck's Options mode
+    if (liveUiRequested())
+        setupTutorial(index); // below: a lot of the Tutorial neighborhood
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
@@ -1147,6 +1155,50 @@ void setupLiveUi(os2::ResourceIndex& index) {
         gPie->setShowQueue(false);
     std::printf("opensims2: live UI: %s, %zu family members\n", gLive->ok() ? "loaded" : "missing scripts",
                 gLive->family().size());
+}
+
+// A lot of the Tutorial neighborhood: its tutorial controllers (created if
+// the lot has none, vm::ensureTutorialControllers) and the tutorial
+// manager's UI over the live panel (app/tutorial.hpp).
+void setupTutorial(os2::ResourceIndex& index) {
+    if (!gSimulation || !gLive || gLotFile.parent_path().parent_path().filename() != "Tutorial")
+        return;
+    os2::vm::VM& vm = gSimulation->machine();
+    const int created = os2::vm::ensureTutorialControllers(vm);
+    // The tutorial lots are saved paused; the episode plays in time (step 10:
+    // "this is the only mode in which time passes"), so it starts unpaused
+    // (inferred) and the controller's first press of Buy mode pauses it.
+    vm.globals[os2::vm::global::Paused] = 0;
+    gTutorialRequestsSeen = vm.engineRequests.size();
+    gTutorial = std::make_unique<os2::TutorialOverlay>(vm, index, gameDir() / "TSData/Res");
+    gTutorial->locate = [](uint32_t window, uint32_t control) { return gLive->controlRect(window, control); };
+    gTutorial->pressControl = [](uint32_t window, uint32_t control) {
+        if (auto r = gLive->controlRect(window, control))
+            gLive->press(simd_make_float2(((*r)[0] + (*r)[2]) / 2, ((*r)[1] + (*r)[3]) / 2));
+    };
+    gLive->allowPress = [](simd_float2 p) { return gTutorial->allows(p); };
+    gLive->onPress = [](simd_float2 p) { gTutorial->clicked(p); };
+    std::printf("opensims2: tutorial: %d controller(s) created\n", created);
+}
+
+// The tutorial each frame: its UI Effects, and the end of an episode
+// (Generic Sims Call 0 "Exit Lot", from "Simulation - Exit Tutorial"): back
+// to the main menu it was played from.
+void pollTutorial(double seconds) {
+    if (!gTutorial || !gSimulation)
+        return;
+    gTutorial->update(seconds);
+    auto& requests = gSimulation->machine().engineRequests;
+    if (gTutorialRequestsSeen > requests.size())
+        gTutorialRequestsSeen = 0;
+    for (; gTutorialRequestsSeen < requests.size(); ++gTutorialRequestsSeen)
+        if (requests[gTutorialRequestsSeen].call == 0 && !gPendingScene) {
+            std::printf("opensims2: tutorial: episode over, exit lot\n");
+            std::fflush(stdout);
+            os2::Scene next;
+            next.kind = os2::Scene::Kind::MainMenu;
+            requestScene(next);
+        }
 }
 
 // Buy mode over the lot's VM: the puck's mode buttons switch it (the live
@@ -2293,6 +2345,7 @@ void adoptVmSims(os2::Renderer& renderer) {
 // The Sims first: objects in their hands follow their bones (gObjectView),
 // then the objects' actors at the places that gives.
 void poseActors(os2::Renderer& renderer, double seconds) {
+    pollTutorial(seconds); // (the real clock)
     if (gSimulation)
         seconds = gSimulation->update(seconds); // the scene clock (game speed)
     adoptVmSims(renderer);
@@ -2795,8 +2848,25 @@ void pressMainMenu(simd_float2 p, float w, float h) {
     const os2::Scene here = os2::sceneOf(processArguments());
     os2::Scene next;
     switch (gMenu->press(p)) {
-    case os2::MainMenu::Action::Play:
     case os2::MainMenu::Action::Tutorial:
+        // PlayEpisode: a fresh Tutorial neighborhood (ResetTutorialNeighborhood)
+        // and straight into the episode's lot.
+        if (const os2::TutorialEpisode* ep = gMenu->chosenEpisode(); ep && gUser) {
+            std::printf("opensims2: main menu: tutorial %d \"%s\": %s lot %u\n", ep->number, ep->title.c_str(),
+                        ep->neighborhood.c_str(), ep->lot);
+            try {
+                os2::resetTutorialNeighborhood(gUser->shippedNeighborhoodsDir() / ep->neighborhood,
+                                               gUser->neighborhoodsDir() / ep->neighborhood);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: tutorial: %s\n", e.what());
+            }
+            next.kind = os2::Scene::Kind::Lot;
+            next.hood = ep->neighborhood;
+            next.lot = ep->lot;
+            requestScene(next);
+        }
+        break;
+    case os2::MainMenu::Action::Play:
         std::printf("opensims2: main menu: play %s\n", gMenu->chosen().c_str());
         next.kind = os2::Scene::Kind::Neighborhood;
         next.hood = gMenu->chosen();
@@ -2821,13 +2891,18 @@ void runTicksHeadless(long ticks) {
     if (!gSimulation || ticks <= 0)
         return;
     const uint64_t target = gSimulation->ticks() + uint64_t(ticks);
-    for (long guard = 0; gSimulation->ticks() < target && guard < ticks * 40 + 100; ++guard) {
+    // Paused with a tutorial running: its controller goes on (pollTutorial),
+    // so a wait is that many ticks of real time.
+    const bool pausedTutorial = gTutorial && gSimulation->machine().globals[os2::vm::global::Paused];
+    for (long guard = 0; gSimulation->ticks() < target && guard < (pausedTutorial ? ticks * 30 / 23 + 1 : ticks * 40 + 100);
+         ++guard) {
         gHeadlessClock += 1.0 / 30;
         const double scene = gSimulation->update(gHeadlessClock);
         if (gLighting && gSimulation->ticks() % 30 == 0)
             gLighting->update(scene);
         if (gLive)
             gLive->tick(gHeadlessClock);
+        pollTutorial(gHeadlessClock);
         if (gAudio) {
             updateAudio(gHeadlessClock);
             gAudio->renderOffline(gHeadlessClock);
@@ -2853,6 +2928,7 @@ void unloadScene() {
     gCrossfadeAt = -1e9;
     gBuild.reset();
     gBuy.reset();
+    gTutorial.reset();
     gLive.reset();
     gPie.reset();
     gOptions.reset();
@@ -3203,6 +3279,11 @@ void unloadScene() {
         pollFlowDialog();
         return;
     }
+    if (gTutorial) { // the tutorial's window (top right)
+        gTutorial->setCanvas(int(self.bounds.size.width), int(self.bounds.size.height));
+        if (gTutorial->press(p))
+            return;
+    }
     if (gPie->isOpen() && gPie->press(p))
         return;
     if (gLive && gLive->overModeButton(p) && gLive->press(p)) // the puck's modes win over the panels
@@ -3234,8 +3315,11 @@ void unloadScene() {
         return;
     }
     const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
-    if (id && !gPie->open(id, p))
-        std::printf("opensims2: object %d: no interactions available\n", id);
+    if (id && !gPie->open(id, p)) {
+        // Nothing to do with it (a tree's canopy over the floor): the ground below.
+        if (!openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p))
+            std::printf("opensims2: object %d: no interactions available\n", id);
+    }
     if (!id) // the ground: Go Here
         openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p);
     std::fflush(stdout);
@@ -3872,6 +3956,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
     gMenu = std::make_unique<os2::MainMenu>(*gIndex, gameDir() / "TSData/Res", os2::readMainMenuHoods(dirs),
                                             scene.fromNeighborhood);
     perfLap("menu: scripts");
+    gMenu->setEpisodes(os2::loadTutorialEpisodes(
+        gameDir() / "TSData/Res", gUser && gUser->hasCopy("Tutorial") ? gUser->neighborhoodsDir() / "Tutorial" : fs::path()));
     _menuDirs = dirs;
 }
 
@@ -3901,6 +3987,17 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         return;
     if (auto sel = argument(@"--menu-select"))
         gMenu->preview(std::stoi(*sel));
+    // --menu-learn <i>: "Aprenda a Jogar" open with episode i selected.
+    if (auto ep = argument(@"--menu-learn")) {
+        gMenu->openLearn(std::stoi(*ep));
+        for (int i = 0;; ++i) {
+            const auto r = gMenu->episodeRect(i);
+            if (r[2] <= r[0] && i > 8)
+                break;
+            if (r[2] > r[0])
+                std::printf("opensims2: main menu: episode %d at (%.0f, %.0f)-(%.0f, %.0f)\n", i, r[0], r[1], r[2], r[3]);
+        }
+    }
     const auto steps = os2::flowSteps(processArguments());
     for (size_t k = 0; k < steps.size() && !gPendingScene && !gQuitRequested; ++k) {
         gStepsUsed = k + 1;
@@ -3976,6 +4073,9 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             if (gOptions)
                 gOptions->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                                  uint32_t(view.depthStencilPixelFormat));
+            if (gTutorial)
+                gTutorial->attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
+                                  uint32_t(view.depthStencilPixelFormat));
             _viewDelegate.renderer->setOverlay([](MTL::RenderCommandEncoder* enc, uint32_t w, uint32_t h) {
                 if (gUi)
                     gUi->encode(enc, w, h);
@@ -3988,11 +4088,18 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     gOptions->encode(enc, w, h, gUiScale);
                 if (gLive)
                     gLive->encode(enc, w, h, gUiScale);
+                if (gTutorial) // the tutorial's window and arrow over the panels
+                    gTutorial->encode(enc, w, h, gUiScale);
                 gPie->encode(enc, w, h, gUiScale);
             });
             const bool headless = argument(@"--screenshot").has_value();
             const float cw = headless ? float(shotW) : float(view.bounds.size.width);
             const float ch = headless ? float(shotH) : float(view.bounds.size.height);
+            if (gTutorial && headless) { // the tutorial presses and points at controls laid out at the shot's size
+                gLive->setCanvas(int(cw), int(ch));
+                gTutorial->setCanvas(int(cw), int(ch));
+                pollTutorial(gHeadlessClock);
+            }
             if (auto q = argument(@"--pie")) {
                 const os2::vm::ObjectId id = os2::vm::findInteractionObject(gPie->vm(), *q);
                 const auto at = id ? gPie->anchor(id) : std::nullopt;
@@ -4039,6 +4146,11 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 const bool right = st.kind == os2::FlowStep::Kind::RightClick;
                 const simd_float2 p = simd_make_float2(clickX, clickY);
                 gPie->setCanvas(int(cw), int(ch));
+                if (gTutorial && !right) { // the tutorial's window (top right) first
+                    gTutorial->setCanvas(int(cw), int(ch));
+                    if (gTutorial->press(p))
+                        continue;
+                }
                 if ((gPie->isOpen() || gPie->dialogOpen()) && gPie->click(p)) {
                     pollFlowDialog();
                     continue;
@@ -4092,8 +4204,10 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 const os2::vm::Object* o = gPie->vm().object(id);
                 std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", clickX, clickY, id,
                             o && o->definition ? o->definition->fileName.c_str() : "nothing");
-                if (id && !gPie->open(id, p))
-                    std::printf("opensims2: object %d: no interactions available\n", id);
+                if (id && !gPie->open(id, p)) {
+                    if (!openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p))
+                        std::printf("opensims2: object %d: no interactions available\n", id);
+                }
                 if (!id) // the ground: Go Here
                     openGoHere(eye, simd_normalize(q.xyz / q.w - eye), p);
                 for (size_t e = 0; e < gPie->entries().size(); ++e)

@@ -30,6 +30,9 @@ constexpr uint32_t kBackground = 0x0DA36C7D, kThumbs = 0x1006, kPrev = 0x1004, k
 // NH Preview / Learn to play.
 constexpr uint32_t kPreviewPicture = 0x2001, kPreviewDescription = 0x2002, kPreviewName = 0x2003, kDelete = 0xB1,
                    kPlay = 0xB2, kPreviewClose = 0xB3, kTutorialPlay = 0xC2, kTutorialClose = 0xC3;
+// Learn to play: the list boxes (groups 1, 2), the thumbnail, the description.
+constexpr uint32_t kListBasics = 0x4000, kListBeyond = 0x5000, kEpisodeThumb = 0x3001, kEpisodeText = 0x3002,
+                   kConstants = 0xCCCC;
 
 bool inside(const std::array<float, 4>& r, simd_float2 p) { return insideRect(r, p.x, p.y); }
 
@@ -110,13 +113,18 @@ MainMenu::Action MainMenu::press(simd_float2 p) {
         case Target::Prev: page_ = (page_ + pages - 1) % pages; return Action::Consumed;
         case Target::Next: page_ = (page_ + 1) % pages; return Action::Consumed;
         case Target::Thumb: preview(it->value); return Action::Consumed;
-        case Target::LearnToPlay: learnOpen_ = true, preview_ = -1; return Action::Consumed;
+        case Target::LearnToPlay: openLearn(episode_ >= 0 ? episode_ : 0); return Action::Consumed;
+        case Target::Episode: episode_ = it->value; return Action::Consumed;
         case Target::PreviewClose: preview_ = -1; return Action::Consumed;
         case Target::TutorialClose: learnOpen_ = false; return Action::Consumed;
         case Target::PreviewPlay:
             chosen_ = hoods_[size_t(preview_)].prefix;
             return Action::Play;
-        case Target::TutorialPlay: chosen_ = "Tutorial"; return Action::Tutorial;
+        case Target::TutorialPlay:
+            if (!chosenEpisode())
+                return Action::Consumed; // off without a selection
+            chosen_ = chosenEpisode()->neighborhood;
+            return Action::Tutorial;
         case Target::Quit: return Action::Quit;
         case Target::Close: return Action::Close;
         }
@@ -125,6 +133,30 @@ MainMenu::Action MainMenu::press(simd_float2 p) {
 }
 
 void MainMenu::hover(simd_float2) {}
+
+void MainMenu::setEpisodes(std::vector<TutorialEpisode> episodes) {
+    episodes_ = std::move(episodes);
+    episode_ = episodes_.empty() ? -1 : std::clamp(episode_, -1, int(episodes_.size()) - 1);
+    dirty_ = true;
+}
+
+const TutorialEpisode* MainMenu::chosenEpisode() const {
+    return episode_ >= 0 && episode_ < int(episodes_.size()) ? &episodes_[size_t(episode_)] : nullptr;
+}
+
+void MainMenu::openLearn(int episode) {
+    learnOpen_ = true, preview_ = -1;
+    // LoadTutorialsAndFillListBoxes selects the first row of the first list.
+    episode_ = episode >= 0 && episode < int(episodes_.size()) ? episode : -1;
+    dirty_ = true;
+}
+
+std::array<float, 4> MainMenu::episodeRect(int i) {
+    layoutIfNeeded();
+    if (i < 0 || i >= int(episodeRects_.size()))
+        return {0, 0, 0, 0};
+    return episodeRects_[size_t(i)];
+}
 
 UiScreen MainMenu::screen(int width, int height) {
     UiScreen out;
@@ -267,10 +299,101 @@ UiScreen MainMenu::screen(int width, int height) {
         hit(pr.child(kPlay), Target::PreviewPlay);
         hit(pr.child(kPreviewClose), Target::PreviewClose);
     } else if (learnOpen_) {
-        const UiElement& lr = learn_.roots.front();
+        UiElement& lr = learn_.roots.front();
         UiDrawHooks lh;
         lh.rects = &rects;
+        // cTSWinProcNeighborhoodLearn: the list boxes' look from the
+        // constants table 0xCCCC.
+        std::map<std::string, std::string> k;
+        if (const UiElement* table = lr.child(kConstants))
+            for (const auto& c : table->children) {
+                const std::string cap = c.get("caption");
+                if (auto eq = cap.find('='); eq != std::string::npos)
+                    k[cap.substr(0, eq)] = cap.substr(eq + 1);
+            }
+        auto color = [&](const char* name, std::array<float, 4> fallback) {
+            int r, g, b;
+            if (auto it = k.find(name); it != k.end() && std::sscanf(it->second.c_str(), "%d,%d,%d", &r, &g, &b) == 3)
+                return std::array<float, 4>{float(r) / 255, float(g) / 255, float(b) / 255, 1};
+            return fallback;
+        };
+        auto number = [&](const char* name, uint32_t fallback) {
+            auto it = k.find(name);
+            return it == k.end() ? fallback : uint32_t(std::stoul(it->second, nullptr, 0));
+        };
+        const float rowH = float(number("kListBoxRowHeight", 24));
+        const auto textNormal = color("kListBoxTextColorNormal", {0.02f, 0.02f, 0.44f, 1});
+        const auto textSelected = color("kListBoxTextColorSelected", {0, 1, 0, 1});
+        const auto rowSelected = color("kListBoxSelectedRowColor", {0.31f, 0.48f, 0.56f, 1});
+        const RgbaImage* completed =
+            res_->image(UiResourceRef{kTypeUiImage, 0x499DB772, number("kListBoxCompletedIcon", 0xCCC30035)});
+        char font[16];
+        std::snprintf(font, sizeof font, "0x%08x", number("kListBoxFont", 0x6C17C8FD));
+        episodeRects_.assign(episodes_.size(), {0, 0, 0, 0});
+        const TutorialEpisode* sel = chosenEpisode();
+        if (UiElement* e = lr.child(kEpisodeText))
+            e->set("initvalue", sel ? sel->description : "");
+        if (const UiElement* e = lr.child(kEpisodeThumb)) {
+            if (const RgbaImage* img = sel ? res_->image(sel->thumbnail) : nullptr)
+                lh.images[e] = img;
+            else
+                lh.hide.insert(e);
+        }
+        if (const UiElement* play = lr.child(kTutorialPlay))
+            lh.buttonState[play] = sel ? 1 : 0;
+        std::vector<std::pair<int, std::array<float, 4>>> rows;
+        for (uint32_t listId : {kListBasics, kListBeyond}) {
+            const UiElement* list = lr.child(listId);
+            if (!list)
+                continue;
+            const int group = listId == kListBasics ? 1 : 2;
+            lh.after[list] = [&, group](UiScreen& sc, float x, float y, float w, float h) {
+                float ry = y;
+                for (size_t i = 0; i < episodes_.size(); ++i) {
+                    const TutorialEpisode& ep = episodes_[i];
+                    if (ep.group != group || ry + rowH > y + h + 0.5f)
+                        continue;
+                    const bool on = int(i) == episode_;
+                    if (on) {
+                        UiQuad q;
+                        q.x0 = x, q.y0 = ry, q.x1 = x + w, q.y1 = ry + rowH;
+                        q.color = rowSelected;
+                        sc.quads.push_back(q);
+                    }
+                    float tx = x + 4;
+                    if (ep.state == 2 && completed && completed->width) {
+                        UiQuad q;
+                        q.image = completed;
+                        q.x0 = tx, q.y0 = std::round(ry + (rowH - float(completed->height)) / 2);
+                        q.x1 = q.x0 + float(completed->width), q.y1 = q.y0 + float(completed->height);
+                        sc.quads.push_back(q);
+                        tx += float(completed->width) + 4;
+                    }
+                    UiElement t;
+                    t.tag = "LEGACY";
+                    t.set("clsid", "GZWinText");
+                    t.set("iid", "IGZWinText");
+                    t.set("area", uiArea(0, 0, int(x + w - tx), int(rowH)));
+                    t.set("font", font);
+                    t.set("align", "leftcenter");
+                    t.set("winflag_visible", "yes");
+                    const auto c = on ? textSelected : textNormal;
+                    char fc[48];
+                    std::snprintf(fc, sizeof fc, "(%d,%d,%d)", int(c[0] * 255), int(c[1] * 255), int(c[2] * 255));
+                    t.set("forecolor", fc);
+                    UiDrawHooks th;
+                    th.captions[&t] = ep.title;
+                    layoutUiElement(t, tx, ry, *res_, *fonts_, sc, th);
+                    rows.push_back({int(i), {x, ry, x + w, ry + rowH}});
+                    ry += rowH;
+                }
+            };
+        }
         layoutUiElement(lr, ox - float(lr.area()[0]), oy - float(lr.area()[1]), *res_, *fonts_, out, lh);
+        for (const auto& [i, r] : rows) {
+            episodeRects_[size_t(i)] = r;
+            hits_.push_back({r, Target::Episode, i, nullptr});
+        }
         hit(lr.child(kTutorialPlay), Target::TutorialPlay);
         hit(lr.child(kTutorialClose), Target::TutorialClose);
     }
