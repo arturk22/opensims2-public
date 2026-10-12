@@ -348,6 +348,9 @@ void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
             o->data[objdata::SlotNumber] = -1;
         }
     }
+    // The pool ladder's and diving board's portals follow it (build mode
+    // does the same, build_edit.cpp).
+    vm.refreshObjectPortals();
     vm.planner.reset();
     for (const auto& part : p.parts)
         runEntry(vm, part.id, entry::Placement);
@@ -364,6 +367,7 @@ void pickUp(VM& vm, ObjectId id) {
         o->data[objdata::SlotNumber] = -1;
         runEntry(vm, part, entry::Pickup);
     }
+    vm.refreshObjectPortals();
     vm.planner.reset();
 }
 
@@ -425,6 +429,7 @@ void deleteGroup(VM& vm, ObjectId id) {
         vm.threads.erase(part);
         vm.removeObject(part);
     }
+    vm.refreshObjectPortals();
     vm.planner.reset();
     computeLotData(vm);
 }
