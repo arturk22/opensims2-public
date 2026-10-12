@@ -121,15 +121,18 @@ A troca é interpolada (`cLerpLightSet::UpdateLights(t)`, tempos de
 - Com sombras de height map ligadas (dia), o `sun` ganha uma luz extra
   "LM_sunHM" (sombra do terreno); fora isso "LM_OutdoorShade".
 
-Não conferido: se o valor de `skylight` é guardado já × força (inferido:
-`(1,1,1) 0.5` → 0,5; senão a subtração daria cores negativas no `day`).
+O valor de `skylight` é guardado já × força (`(1,1,1) 0.5` → 0,5; abaixo).
 Rodada 15: `TSCreateLightsFromLightingStateWithAmbient` (BV `0xd741dc`) e
 `FindIllumFromLightingState` (`0x702ae0`) usam a cor de `+0x154` e as
 direções `+0x20 + i·0x1C` como estão (escala 1 no ambiente, nenhuma
-normalização); o que o comando do parser guarda (força multiplicada?
-direção normalizada?) depende do tratador de `skylight`/`light`, que não
-foi achado (o registro dos comandos fica em `0x1ba4e80…`; o de `modifiers`
-é `0x1ba4da4`).
+normalização); quem faz as duas coisas é o parser (rodada 15, binário:
+os comandos são classes `cTSDiffusionParams::c…Command`, achadas pelo
+typeinfo, com a execução no slot `0x10` da vtable): **`light`**
+(`cLightCommand`, BV `0x1ba7f68`) **normaliza a direção**
+(`nGZNumerics::Normalize`) e guarda cor e intensidade (1 sem o 4º
+argumento); **`skylight`** (`cSkylightShadeCommand`, `0x1ba82c4`) guarda
+**cor × força**; `projectiveShadowStrength` (`0x1ba4f80`) guarda o número
+no `+0x184` do estado. Confirmado o que o código faz.
 
 ## 4. Luzes das salas (binário)
 
@@ -381,8 +384,8 @@ vale o ambiente de fora ou de dentro). É o que o comentário do
 `Lighting.txt` diz ("If auto-lighting is active, this has no absolute
 effect, but it does factor into how quickly lights fall off"): o 0,25 só
 molda a queda das poças. Inferido: a flag `+0x40` ligada no térreo (não se
-achou quem a escreve). Não foi conferido se o parser normaliza a direção das
-`light` (com `sun (1,5, 1,2, 2)` sem normalizar, Σw passaria de 1 de dia).
+achou quem a escreve). O parser normaliza a direção das `light` (§3,
+`0x1ba7f68`).
 
 **Quem é "fora"**: no binário, os tiles da sala 0 (`AddDirectFloorLighting`
 pede os tiles do cômodo 0; o render group de sala < 0 vira 0x8000). Os
@@ -518,11 +521,9 @@ tipo 3:
 - Os valores padrão da `cDiffusionLightExtension` (quando o modelo e os
   `lightAttribOverride` não dão um campo) e o leitor dela no CRES.
 - A supressão entre janelas (`FindPortalSuppression`) e a "LM_PortalSpill".
-- Como as salas de pátio do `3ARY` viram a sala 0 (§5.3); se o parser
-  normaliza a direção das `light`.
+- Como as salas de pátio do `3ARY` viram a sala 0 (§5.3).
 - Luzes práticas: confirmar no binário que `modifiers insideObjects`
   multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
-- O comando `skylight` (se guarda cor × força).
 - O height map de sombra (`UpdateHeightMapShadows`, `AddBlobToHeightMap`):
   a sombra do sol dos objetos de fora (estilo 3 do `cShadow`, §9) nos lotes.
 - Quem lê o `projectiveShadowStrength` e a cor/direção de sombra do
