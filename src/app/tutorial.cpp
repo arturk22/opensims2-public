@@ -515,8 +515,8 @@ void TutorialOverlay::buildArrow(UiScreen& out) {
     const RgbaImage* img = res_->image({kTypeUiImage, kUiImageGroup, image});
     if (!img || !img->width)
         return;
-    const float cornerX = dx > 0 ? (*r)[2] : (*r)[0];
-    const float cornerY = dy > 0 ? (*r)[3] : (*r)[1];
+    const float cornerX = dx > 0 ? (*r)[0] : (*r)[2]; // the corner opposite the direction (docs/tutorial-mac.md §3)
+    const float cornerY = dy > 0 ? (*r)[1] : (*r)[3];
     const float base = std::min((*r)[2] - (*r)[0], (*r)[3] - (*r)[1]) / 2 + 18;
     const double t = std::fmod((now_ - arrowSince_) * 1000.0, 1300.0);
     const float f = float(2 * t / 1300 - 1);
