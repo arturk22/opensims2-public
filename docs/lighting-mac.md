@@ -526,8 +526,8 @@ tipo 3:
   multiplica a intensidade e o `FalloffRate` (`UpdateObjectLighting`).
 - O height map de sombra (`UpdateHeightMapShadows`, `AddBlobToHeightMap`):
   a sombra do sol dos objetos de fora (estilo 3 do `cShadow`, §9) nos lotes.
-- Quem lê o `projectiveShadowStrength` e a cor/direção de sombra do
-  gerenciador de luz (vtable `0x78`/`0x7c`, §9).
+- A direção de sombra do gerenciador de luz (vtable `0x78`, §9) e se a cor
+  da vtable `0x7c` é o `+0x28c` de `0x705f70`.
 
 **Rodada 12 (escolha visual, não do binário):** no app, a luz direta do
 estado sobre o chão (terreno e pisos de fora) é puxada para o cinza quando é
@@ -582,8 +582,16 @@ bairro). O **estilo 1** (`cShadow::CreateShadow` `0x677390`,
   `OverlayShadowMaterial`: a sombra inteira na cor de sombra onde o alfa
   da textura passa de 100/255, a cor vem da vtable `0x7c` do gerenciador),
   e o quad de dentro fica escondido.
-- `projectiveShadowStrength` (0,73 de dia, 0,4 à noite) é guardado pelo
-  `cTSDiffusionParams`; quem o lê não foi achado.
+- **A cor de sombra de fora** (`cLightingManager`, BV `0x705f70`, a cada
+  troca de estado): `s = shadowStrengthLimit (padrão 1, construtor
+  0x7127d8) · projectiveShadowStrength` (0,73 de dia, 0,4 à noite; o
+  comando guarda em `+0x184` do estado, `0x1ba4f80`); a luz do estado num
+  piso para cima (`FindIllumFromLightingState`) com o peso do `sun` ×
+  `max(0, 1 − s·hmSunLightTransitionZone)` (`0x7047e4`) dividida, canal a
+  canal e com as duas presas em [0, 1], pela mesma luz sem sombra (`+0x28c`;
+  zona 0 → branco). De dia dá (0,80, 0,78, 0,75), à noite ≈ (0,86, 0,86,
+  0,83): sombras claras. Inferido: que é essa a cor que a vtable `0x7c`
+  entrega às sobreposições.
 
 **No código** (`Renderer::ShadowCaster`, `LotLighting::update`): cada Sim
 na VM com a opção ligada (`GraphicsOptions::simShadows`, Shadows `$High`)
@@ -591,9 +599,8 @@ desenha a silhueta num atlas de 8 × 8 texturas de 128, como acima, e os
 pisos e o terreno (as superfícies com light map voltadas para cima) a
 uma altura entre 0,6 abaixo e 0,3 acima dos pés multiplicam a cor pela
 silhueta borrada (dentro) ou pela cor de sombra onde ela cobre (fora).
-Inferido: a cor de fora, `1 − força·(1 − (0,33, 0,33, 0,39))` com a força
-= `projectiveShadowStrength` e a cor escura que o `sims.matShad` deixa
-comentada; a direção de fora = a do `sun` do estado; o borrão como uma
+A cor de fora como acima (`LotLighting::update`). Inferido: a direção de
+fora = a do `sun` do estado; o borrão como uma
 caixa de 5 × 5 amostras bilineares; projetar nas superfícies em vez de
 num quad plano (o quad do jogo flutua sobre um chão mais baixo, ex. o Sim
 na escada); os estilos 3 e 4 nos lotes ainda faltam. Captura:
