@@ -1,4 +1,5 @@
 #include "sim_character.hpp"
+#include "cas_catalog.hpp"
 
 #include "dbpf.hpp"
 #include "property_set.hpp"
@@ -47,6 +48,28 @@ std::string bareName(std::string name) {
     if (name.ends_with("_txmt"))
         name.resize(name.size() - 5);
     return lower(name);
+}
+
+constexpr uint32_t kTypeTxtr = 0x1C4A276C;
+
+// Characters saved by our Create-a-Sim before the face-material fix name the
+// face skin "<prefix>face-s<n>" (e.g. "tfface-s2"), a texture the game does
+// not have for every age and gender (teen girls use "afface-s<n>", the one
+// their "tfface_s<n>_txmt" names). Such a name is read through the game's
+// face material of that prefix and tone, as a freshly saved face would be.
+std::string migrateFaceSkin(ResourceIndex& index, const std::string& texture) {
+    const std::string t = lower(texture);
+    if (t.size() < 9 || t.compare(2, 6, "face-s") != 0 || index.findByName(t + "_txtr", kTypeTxtr))
+        return texture;
+    int tone = 0;
+    try {
+        tone = std::stoi(t.substr(8));
+    } catch (const std::logic_error&) {
+        return texture;
+    }
+    if (std::to_string(tone) != t.substr(8))
+        return texture;
+    return cas::faceSkinTexture(index, t.substr(0, 2), tone);
 }
 
 bool sameKey(const Tgi& a, const Tgi& b) { return a.type == b.type && a.group == b.group && a.instance == b.instance; }
@@ -112,7 +135,8 @@ Character readCharacter(DbpfPackage& pkg, ResourceIndex& index) {
     c.age = number(p, "age", 8);
     c.gender = number(p, "gender", 2);
     if (auto it = p.find("skincolor"); it != p.end() && !it->second.empty())
-        c.skinTone = int(std::stoul(it->second.substr(0, 8), nullptr, 16));
+        if (int t = cas::skinToneNumber(it->second))
+            c.skinTone = t;
     if (p.count("skeletonkeyidx")) {
         const uint32_t i = number(p, "skeletonkeyidx");
         if (i < c.references.size()) {
@@ -204,6 +228,13 @@ SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& p
                 if (!overrides.empty()) {
                     const auto cres = part->reference("resourcekeyidx");
                     m = loadObjectModel(index, scenegraphName(index, *cres), overrides);
+                }
+                for (auto& [name, mat] : m.materials) {
+                    for (auto& [k, v] : mat.properties)
+                        if (k == "stdMatBaseTextureName" || k == "baseTexture0")
+                            v = migrateFaceSkin(index, v);
+                    for (auto& v : mat.textureNames)
+                        v = migrateFaceSkin(index, v);
                 }
                 for (auto& p : m.parts) {
                     auto it = m.materials.find(p.material);

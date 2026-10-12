@@ -124,6 +124,12 @@ struct CasCatalog {
 // "0000000N-0000-0000-0000-000000000000"
 std::string toneFamily(int n);
 int toneNumber(std::string_view family); // 0 if not of that form
+// The "s<N>" of a skin tone family's textures: 1-4 for 0000000N, 5 for the
+// Alien family (6baf064a-...: its GZPS amtopnaked_alien and the other
+// "*_alien" skin parts use the *_nude_s5 materials); 0 for others (the
+// mannequins).
+constexpr std::string_view kAlienSkinFamily = "6baf064a-85ad-4e37-8d81-a987e9f8da46";
+int skinToneNumber(std::string_view family);
 
 // The texture an overlay entry draws: its TXMT's stdMatBaseTextureName,
 // else its name with '_' after the prefix turned into '-'.

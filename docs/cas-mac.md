@@ -71,7 +71,15 @@ foi achado nesta função.
 - **Tom de pele**: `skintone` do GZPS/`skincolor` do AGED = família do
   catálogo de pele, `00000001-…` Light, `…02` Medium, `…03` Medium-Dark,
   `…04` Dark (os IDs `sN` de 1 a 4; ver §5). Criação aleatória: 1–4 do
-  pedido ou um sorteio.
+  pedido ou um sorteio. A família **Alien** (`6baf064a-85ad-4e37-8d81-a987e9f8da46`,
+  genetic 0) usa as texturas `s5` (visto nos dados: os GZPS `*_alien` do
+  `Skins`, como `amtopnaked_alien`, apontam para `amtopnaked_nude_s5_txmt`;
+  existem `<p>bodynaked-nude-s5`, `amface_s5_txmt` etc.). Rodada 12: o
+  `readCharacter` lia o `skincolor` como número hexadecimal (o alienígena
+  virava `s1807680074`) e a pele por baixo das roupas saía preta/branca nos
+  braços do 9 de Souza (Pollination) e do João (Johnny); agora
+  `cas::skinToneNumber` dá 1–4 para `0000000N`, 5 para o Alien e 0 para os
+  manequins (`r12-alien-pele-s5.jpg`: antes/depois).
 
 ## 3. Rosto: arquétipos, modificadores, regiões
 
@@ -687,3 +695,22 @@ compara as diárias com o BCON global `0x102`[0] e as vitalícias com
 `0x102`[15] e liga as flags 5/6 do BCON `0x11C` ("G - Relationship - UI
 Flags": amigo / melhor amigo) na var 1 dos dois lados. Um bebê novo passa
 pelo mesmo Main, então ganha esses valores com pais e irmãos.
+
+## Rodada 12: personagens salvos antes da correção do rosto
+
+Os personagens gravados pelo nosso CAS antes da rodada 11 têm no TXMT do
+rosto `stdMatBaseTextureName`/`baseTexture0` = `<p>face-s<n>` (ex.
+`tfface-s2`), textura que o jogo não tem para toda idade/sexo (as
+adolescentes usam `afface-s<n>`, a que o `tfface_s<n>_txmt` do jogo nomeia).
+O `loadCharacterSim` agora, quando essa textura não existe no índice, lê o
+nome pelo material de rosto do jogo do mesmo prefixo e tom
+(`cas::faceSkinTexture`), como um rosto salvo hoje; o arquivo não é
+regravado (abrir o Sim no CAS e salvar regrava com o nome novo). Inferido:
+o jogo não teria esses arquivos, então não há comportamento original a
+copiar; é uma migração nossa (`r12-rosto-antigo-migrado.jpg`).
+
+`--cas-gender` aceita `m`/`male` e `f`/`female` e passa pelo mesmo
+`CasMode::setGender` dos botões 0x401/0x400 (cabeça base do sexo novo,
+roupas, overlays, modificadores e regiões limpos); antes `male` caía em
+mulher e o script não limpava os modificadores.
+

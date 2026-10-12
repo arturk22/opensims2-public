@@ -107,6 +107,19 @@ int toneNumber(std::string_view f) {
     }
 }
 
+int skinToneNumber(std::string_view f) {
+    if (int t = toneNumber(f))
+        return t;
+    if (f.size() == kAlienSkinFamily.size()) {
+        bool same = true;
+        for (size_t i = 0; i < f.size(); ++i)
+            same = same && std::tolower(static_cast<unsigned char>(f[i])) == kAlienSkinFamily[i];
+        if (same)
+            return 5;
+    }
+    return 0;
+}
+
 CasCatalog CasCatalog::load(ResourceIndex& index) {
     CasCatalog c;
     std::unordered_map<Tgi, std::vector<Tgi>, TgiHash> lists; // by (type 0, group, instance)

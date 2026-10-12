@@ -285,7 +285,7 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
         // Another family: the alien skin's textures are "s5" (tmface-s5 in the
         // Smiths' files; inferred for others).
         spec.skinFamily = str("skincolor");
-        if (const SimPart* t = catalog.byFamily(catalog.skinTones, spec.skinFamily); t && lower(t->name()).find("alien") != std::string::npos)
+        if (skinToneNumber(spec.skinFamily) == 5)
             spec.skinTone = 5;
     }
     if (int t = toneNumber(str("haircolor")))

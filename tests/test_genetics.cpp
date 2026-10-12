@@ -64,6 +64,12 @@ int main() {
           "DNA: SDNA keys t and 0x10000000 + t");
     check(babyIsFemale(true, true, scripted({1})) && !babyIsFemale(true, false, scripted({0})),
           "a lone parent's baby has its gender");
+    // Skin tone families -> the textures' s<N> (the Alien family is s5).
+    check(os2::cas::skinToneNumber("00000003-0000-0000-0000-000000000000") == 3 &&
+              os2::cas::skinToneNumber("6baf064a-85ad-4e37-8d81-a987e9f8da46") == 5 &&
+              os2::cas::skinToneNumber("6BAF064A-85AD-4E37-8D81-A987E9F8DA46") == 5 &&
+              os2::cas::skinToneNumber("b9a94827-7544-450c-a8f4-6f643ae89a71") == 0,
+          "skin tone families: 0000000N is sN, Alien is s5, mannequin none");
     // Zodiac (docs/cas-mac.md §6): a sign's own points give it back; 5 everywhere is Cancer.
     bool signs = true;
     for (int z = 1; z <= 12; ++z)

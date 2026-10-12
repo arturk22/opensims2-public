@@ -1026,6 +1026,23 @@ std::vector<std::string> CasMode::report() const {
     return out;
 }
 
+void CasMode::setGender(uint32_t g, bool undo) {
+    if (edit_.spec.gender == g)
+        return;
+    if (undo)
+        pushUndo();
+    edit_.spec.gender = g;
+    edit_.spec.outfits.clear();
+    edit_.spec.overlays.clear();
+    edit_.spec.face.modifiers.clear();
+    edit_.spec.face.regions.clear();
+    for (const SimPart* a : catalog_->archetypesFor(edit_.spec.age, g))
+        if (lower(a->name()).find("archbase") != std::string::npos)
+            edit_.spec.face.archetype = cas::family(*a);
+    cas::completeSpec(*catalog_, edit_.spec);
+    changed();
+}
+
 void CasMode::runScripted(const std::vector<std::string>& args) {
     for (size_t i = 1; i + 1 < args.size(); ++i) {
         const std::string& a = args[i];
@@ -1058,12 +1075,12 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
         } else if (a == "--cas-part") {
             clothesPart_ = std::clamp(std::stoi(v), 0, 2);
             dirty_ = true;
-        } else if (a == "--cas-age" || a == "--cas-gender") {
-            if (a == "--cas-age")
-                edit_.spec.age = v == "toddler" ? cas::age::Toddler : v == "child" ? cas::age::Child : v == "teen" ? cas::age::Teen
-                                 : v == "elder" ? cas::age::Elder : v == "baby" ? cas::age::Baby : cas::age::Adult;
-            else
-                edit_.spec.gender = v == "m" ? cas::gender::Male : cas::gender::Female;
+        } else if (a == "--cas-gender") { // m/male or f/female, as the gender buttons
+            const bool male = v == "m" || v == "male" || v == "M" || v == "Male";
+            setGender(male ? cas::gender::Male : cas::gender::Female, false);
+        } else if (a == "--cas-age") {
+            edit_.spec.age = v == "toddler" ? cas::age::Toddler : v == "child" ? cas::age::Child : v == "teen" ? cas::age::Teen
+                             : v == "elder" ? cas::age::Elder : v == "baby" ? cas::age::Baby : cas::age::Adult;
             edit_.spec.outfits.clear();
             edit_.spec.overlays.clear();
             for (const SimPart* ar : catalog_->archetypesFor(edit_.spec.age, edit_.spec.gender))
@@ -2167,23 +2184,8 @@ UiScreen CasMode::screen(int width, int height) {
     // Targets of the panel's controls.
     switch (step_) {
     case 0: {
-        auto setGender = [this](uint32_t g) {
-            if (edit_.spec.gender == g)
-                return;
-            pushUndo();
-            edit_.spec.gender = g;
-            edit_.spec.outfits.clear();
-            edit_.spec.overlays.clear();
-            edit_.spec.face.modifiers.clear();
-            edit_.spec.face.regions.clear();
-            for (const SimPart* a : catalog_->archetypesFor(edit_.spec.age, g))
-                if (lower(a->name()).find("archbase") != std::string::npos)
-                    edit_.spec.face.archetype = cas::family(*a);
-            cas::completeSpec(*catalog_, edit_.spec);
-            changed();
-        };
-        target(find(panel, 0x401), [setGender](simd_float2) { setGender(cas::gender::Female); });
-        target(find(panel, 0x400), [setGender](simd_float2) { setGender(cas::gender::Male); });
+        target(find(panel, 0x401), [this](simd_float2) { setGender(cas::gender::Female, true); });
+        target(find(panel, 0x400), [this](simd_float2) { setGender(cas::gender::Male, true); });
         const uint32_t ages[5] = {cas::age::Toddler, cas::age::Child, cas::age::Teen, cas::age::Adult, cas::age::Elder};
         for (int k = 0; k < 5; ++k) {
             const uint32_t a = ages[k];

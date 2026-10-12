@@ -337,6 +337,19 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
             out.detailScale = number("osDetailTextureScale", 1);
             out.maskAlphaOnly = flag("osMaskAlphaOnly", false);
         }
+    } else if (type == "SimpleMirrorReflection") {
+        // mirrors.matShad: with $mirrorReflectionsEnabled false (config.matShad's
+        // setting; the Mac binary has the name but we have not seen it turned
+        // on) the mirror quad is BlankMirrorMaterial: one flat colour,
+        // colorScalar (0.5, 0.6, 0.75), no light, no texture.
+        out.lighting = false;
+        diffuse = {0.5f, 0.6f, 0.75f, 1};
+        out.specular = {0, 0, 0};
+        out.emissive = {0, 0, 0};
+        out.specularPower = 0;
+        baseEnabled = false;
+        normalEnabled = false;
+        envReflection = false;
     } else if (type == "TextureAlpha") {
         out.lighting = false;
         out.blend = StandardMaterial::Blend::Alpha;

@@ -464,6 +464,18 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
 - **Overlay de sombra** (`OverlayShadowMaterial`, camada 2): no DX8 sem
   `lmIntegratedShadows`, a sombra é misturada com o light map de piso
   (`lerpTextureAlpha(outRegister diffuse)` com `floorLightMap_0`).
+- **Espelho** (`SimpleMirrorReflection`, `mirrors.matShad`; o espelho de pé
+  do CAS, quad `caspodiumarea_simple_mirror_reflection` do
+  `CASPodiumArea`): com `$mirrorReflectionsEnabled` falso (o
+  `config.matShad` faz `setb mirrorReflectionsEnabled false`) o quad é o
+  `BlankMirrorMaterial`: uma cor só, `colorScalar (0.5, 0.6, 0.75)`, sem
+  luz nem textura; ligado, o `MirrorReflectionMaterial` marca o stencil
+  (camada −9998, x de clip negado) e desenha a cena de uma câmera
+  refletida no alvo `ScreenReflection` (camada 6). O binário tem a string
+  `mirrorReflectionsEnabled` (o C++ pode ligá-la pela opção de reflexos;
+  não lido). Rodada 12: desenhamos o `BlankMirrorMaterial` (antes o quad
+  saía branco, material desconhecido sem textura); o reflexo de verdade
+  fica para depois (`r12-cas-espelho-masculino.jpg`).
 
 ---
 
