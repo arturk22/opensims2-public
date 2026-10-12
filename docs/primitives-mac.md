@@ -2451,6 +2451,182 @@ e o 9 (um objeto por lado) da lista de vizinhos agora são os do binário.
 Não conferido: o `TSObjectCanSetPosition` do Fire novo (o VM não o faz no
 Create New Object Instance).
 
+## 4h. Rodada 15 (front "vm-confirm"): o que era inferido na VM
+
+Tudo lido no binário (Ghidra headless, um clone com os nomes do
+`symxfer`); BV salvo indicação, e o base 1.0 conferido onde dito.
+
+### Donos de dados (`cTSObject::InterpValue`, BV `0xb15f2c`; base 1.0 `0xb2d890`)
+
+Um `switch` só, dono -1..0x33 (fora disso: **erro 0x09**). A referência
+devolvida (`cTSSint16Ref`: ponteiro, contagem, índice, mín./máx.) serve
+para ler e escrever; o `cTSPerson::InterpValue` (BV `0xad56ec`) trata
+antes os donos 0x0C, 0x12, 0x1C, 0x1D e 0x1E.
+
+- **Temps: 8 por objeto** (`cTSObject +0x8A`, 8 × i16, zerados no `Reset`
+  e no construtor). Dono 8 com índice ≥ 8 → **erro 0x02** ("Temporary
+  reference out of range"); 0x0B, 0x0D, 0x1E, 0x1F, 0x30, 0x31 também
+  leem só os temps 0–7. Base e BV iguais. Nenhum BHAV do jogo usa temp ≥ 8
+  (`objects.package`, todas as Expressions). O opensims2 tinha 20.
+- **Atributos**: `+0x7C`/`+0x80` (contagem). O construtor (`0xb0c7a8`) usa
+  o campo **0x3A** do OBJD ("num attributes", byte 0xB4) **mas no mínimo
+  8**; índice fora → **erro 0x06**. Não crescem sob demanda. O
+  `cTSObject::Read` (`0xb14cb0`) troca a contagem pela salva.
+- **Semi-atributos**: `+0x84`/`+0x88`, contagem = nº de entradas do STR#
+  0x100 do semi-global (ao ler um estado salvo, cresce até a contagem
+  salva, nunca diminui; o object data 79 "SemiAttribute Count" é ela).
+  Fora → erro 0x06.
+- **Arrays de objeto**: tantos quanto o campo **0x3B** do OBJD (no máximo
+  256), vazios; o número do array fora → **erro 0x6C** ("Bad Object
+  Array"); elemento fora (iterador ou temp 0, donos 0x2B–0x2E) → **erro
+  0x6D**. O `Read` mantém a contagem da definição (arrays salvos a mais
+  são lidos e descartados).
+- Object data: 0x71 (113) no BV, **0x58 (88) no base** (= o opensims2);
+  globais 0x3A no BV, **0x36 (54) no base**; dados de pessoa 0xCC no BV,
+  **0xAA (170) no base**. Fora: erros 0x07 / 0x3F / 0x21.
+- **Job data (0x21)**: sempre **erro 0x3A** ("Job data not found"), base e
+  BV: o jogo não tem esse dono.
+- **Check tree ad (0x0C, 0x1C, 0x1D)**: só pessoa (senão erro 0x1C),
+  índice < 16 (senão 0x1A); os valores vêm da tabela de anúncios do
+  objeto da pessoa para a idade dela (`+0x48` → vtable 0xFC, 0xD4/0xD8/
+  0xDC com `GetProxySimAge`); a personalidade (0x1C) é limitada a 0..22
+  (escrever fora: erro 0x14).
+- **Temps do stack object (0x0D)**: os do objeto (`+0x8A` do stack
+  object), 0–7. Confirmado o que o TODO dizia.
+- **Slots (0x10, 0x14, 0x30, 0x31)**: `GetObjectSlot(i)` (vtable 0x10C,
+  `0xb02204`) dá o slot se 0 ≤ i < `NumObjectSlots` (os slots de contenção
+  do SLOT, que o object data 67 guarda: `InitSlotsFromDefinition`
+  `0xb05a28` grava `NumObjectSlots` no `+0x120` = object data 67 e
+  `NumObjectTargetSlots` no `+0x108` = object data 55), senão **erro 0x1B**
+  ("Slot number out of range"); slot vazio = 0 (o slot existe e não tem
+  objeto). Antes (FreeSO) passar do último dava 0.
+- **Constantes (0x1A)**: `cEdithLanguage` vtable 0x2C (`0x4b2704`): bits
+  13–14 = escopo (0 privado 0x1000, 1 semi-global 0x2000, 2 global 0x100,
+  3 → erro 0x2E), tabela = bits 7–12 | (bit 15 → 0x40), entrada = bits
+  0–6. **Constante [temp] (0x2F)**: vtable 0x34 (`0x4b2764`): escopo nos
+  bits 13–15, tabela = bits 3–12, **temp = bits 0–2** (confirmado). A
+  tabela é procurada pelo `cTSBehavior` do elemento da pilha
+  (`GetConstants`, `0x489ed4`: grupo pela faixa da instância), o do **dono
+  do código**, também em código semi-global/global (confirmado). Tabela ou
+  entrada que falta → erro 0x2E ("Invalid constant."). Nenhuma Expression
+  do base usa o bit 15 ou o escopo 3.
+- **Função do stack object (0x23)**: a tabela de funções do objeto
+  (`GetFnTable`, vtable 0x168) → vtable 0x20 (entrada): sem stack object,
+  erro 0x0A.
+- Sala [temp 0] (0x17), valor 3 = `nTSWorld::RoomArea` (`0x1671bc`):
+  quartos de tile (máscara 0xF = 4, senão os bits) / 4 — confirmado.
+
+### Expression (`TryExpression`, BV `0xe4bb64`)
+
+Operador = byte 5 (> 21 → erro 0x01); o byte 4 **não é lido**
+(confirmado). O 21 ("Assign 32bit Value") copia o elemento e o seguinte das
+duas referências (sem o seguinte: erro 0x78) — o opensims2 já fazia.
+
+### Array Operation (`TryArrayOperation`, BV `0xe2a158`)
+
+Operação u8 no byte 1; byte 2 ≠ 0 = arrays do stack object (sem ele: erro
+0x08); array u16 no byte 3 (fora: 0x6C); valor (dono byte 5, u16 6) e
+índice (dono byte 8, u16 9). 0 limpa; 1 tamanho no valor (referência que
+não se escreve: 0x13; fora do mín./máx.: 0x14); 2 redimensiona (novos = 0);
+3 preenche; 4/5 insere o valor no começo/fim; 6 insere **antes do índice**
+(índice fora dos elementos: 0x6D); 7/8 tira o primeiro/último (vazio:
+0x6D); 9 tira no índice (fora: 0x6D); 10 procura o valor a partir do índice
+(índice fora ou ausente: **falso**; achado: posição no índice); 11 troca os
+elementos no valor e no índice (fora: 0x6D); 12 ordena decrescente; **13
+ordena crescente**; outra: 0x01. **Inserir e tirar não escrevem nada de
+volta** (o opensims2 escrevia o índice no 2º operando e o valor tirado no
+1º, o que estragava temps das árvores).
+
+### Generic Sims Call (`TryGenericSimCall`, BV `0xe36834`)
+
+- Chamada sem vizinho que precisa dele (4, 6, 21–23, …): **erro 0x37**
+  (o fim do `switch`).
+- **4 "add to family"**: vizinho no stack object; família = temp 0 (0 = a
+  do lote). Família que o bairro não tem é feita por
+  `cTSFamilyManager::MakeNewFamily` (`0x4ffd28`): abaixo de 0x7FD9 com o
+  **menor número livre a partir de 1** (não "maior + 1"), a partir de
+  0x7FD9 com o número dado. Temp 1 ≠ 0 marca a família nova (vtable 0xE8,
+  não entendido) e ela recebe o sobrenome do Sim. Na primeira passada o
+  estado da primitiva guarda a família; se o Sim era o último membro de
+  uma família com casa, o jogo manda a mensagem `0xec1aac03` (mudar a
+  família do lote) e espera (devolve 2) até a casa sair; temp 0 := os
+  fundos da família antiga nesse caso, senão 0. Depois:
+  `RemoveFromFamily` (`0x4fe800`; vizinho que a família não lista →
+  falso) e `AddToFamily` (`0x4fddcc`): `AddMember`, dado de pessoa 61 :=
+  família e 67 := 0 no vizinho e na pessoa do lote, `AddMemberClothing`,
+  e entre duas famílias reais (0 < n < 0x7FDA) as peças do bin antigo que
+  servem (três máscaras do recurso 0xAC598EAC do personagem contra as da
+  peça; sem ninguém na antiga, todas); a família antiga vazia e real é
+  apagada (`RemoveFamily`). **Não há limite de 8 Sims** (nem no
+  `AddMember`). No opensims2: `vm::addToFamily`, com o bin pelos ganchos
+  `VM::memberClothing`/`clothingFits` que o app liga ao catálogo do CAS
+  (idade e gênero como as máscaras, a terceira inferida "passa"); a espera
+  pela mudança não é feita (os fundos vêm na hora).
+- 6 "remove from family": sem família (61 = 0) ou família que o bairro não
+  tem → falso; senão `RemoveFromFamily` e verdadeiro.
+- 13 aborta as interações associadas ao stack object no gerenciador de
+  objetos (todas as filas; confirmado); 18 velocidade: > 1 passa o número
+  como está, 1 despausa, ≤ 0 pausa (sem erro de faixa; espera se o estado
+  do jogo é 10).
+- 21/22/23 (árvore genealógica): `cTSFamilyRelationshipArray`
+  `AddRelationship(temp 0, temp 1, 4)` / `(…, 2)` /
+  `RemoveRelationship(temp 0, temp 1)` (`0x5442e8`, `0x544028`). Adicionar
+  **limpa antes os laços entre os dois**; tipo 4 (filho): o pai vira pai 0
+  ou 1 do filho (com dois, nada) e o filho vira **irmão** (tipo 3) dos
+  outros filhos desse pai; tipo 2 (cônjuge): cada um perde o cônjuge
+  anterior. Remover tira todos os laços entre os dois (confirmado). **Os
+  irmãos são laços próprios** (tipo 3, também lidos do bairro), não "um
+  pai em comum".
+
+### Set to Next (`TrySetToNext`, BV `0xe47288`)
+
+- 21 pai: os pais 0 e 1 do vizinho do temp 0 (sem ele: erro 0x77); 22
+  irmão e 23 filho: as listas de tipo 3 e de filhos, na ordem da lista
+  (aqui por ID: inferido igual); o atual fora da lista recomeça; sem
+  achar, alvo 0.
+- 28 (relação 3 ≠ 0) e 35: a tabela de relacionamentos **do vizinho do
+  temp 0** com cada vizinho (direção temp 0 → vizinho; o opensims2 já lia
+  assim, o TODO dizia o contrário).
+- **24 (objeto visível)**: `cTSPerson::GetNextObjectInView` (`0xacfa00`;
+  não Sim: erro 0x1C). Distância r = temp 0, no máximo 16. Um cone de
+  tiles à frente: linhas 0 a r − 1 (a 0 é o tile do Sim), cada uma com
+  2·linha + 1 tiles para cada lado (no máximo r), dentro de um círculo de
+  raio r + 1; virado para uma diagonal, a grade gira 45° (r·√2 + 1 linhas
+  em passos de meio tile diagonal, 0,7071 × 0,7071). Nesses tiles: objetos
+  no mundo (fora de slots), não eu, não do tipo 5, **na minha sala**, sem a
+  flag 0x10000 e com o teste de linha do mundo livre (vtable 0x4C da
+  `WorldDB`). Lista por ID, guardada enquanto se itera; um atual que não
+  está nela termina a busca (0, falso). Era o "cone de 90°" inferido.
+
+### Manage Inventory (`TryInventoryAction`, BV `0xe26a40`)
+
+O BV converte os operandos da versão 0 do base
+(`ManageInventoryParam::UpgradeVersion`, `0xac3f00`): byte 0 bits 0–1 =
+tipo (global, lote, família, vizinho; o BV tem um 5º, 4), **0x04 =
+contados** (vira 0x08), bits 3–5 = um número de 3 bits (vira bits 4–6;
+passado à adição contada e à operação 1: não entendido), 0x80 = uma flag
+da busca (3). Byte 9 = flags de busca (visível, memória, compras:
+`CatManageInventoryMatchFlags`); nos singulares o BV as põe em 0x0C.
+Inventário inexistente → erro 0x57. Índices a partir de 1 (o operando −
+1; confirmado). **GUID 0 = o do stack object** (sem ele: erro 0x15) nas
+singulares **0, 2 e 3** e nas contadas 0, 2, 4, 6 e 7 (antes só na 0).
+A numeração 0–9 das singulares bate com a do opensims2; as contadas têm
+operações próprias (1 adiciona a partir de um índice, 5 com índice < 1 →
+erro 0x74, 11 copia para outro inventário pelo byte 6 …) que o opensims2
+ainda trata como as singulares.
+
+### Motivos do PERS
+
+Os dois conjuntos de 16 f32 são `GetMotiveRef` (vtable 0x5CC, os
+**atuais**, que o motor simula) e `GetOldMotiveRef` (0x5D0, os do passo
+anterior) do motor de motivos da pessoa (`+0x83C`). O opensims2 usa o
+primeiro: confirmado.
+
+### Primitivas
+
+Todas as primitivas com handler no base (§2) estão registradas na VM;
+o `bhav-sweep` não acha nenhuma faltando.
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
