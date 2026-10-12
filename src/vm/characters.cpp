@@ -50,13 +50,15 @@
 // Sim. The neighbor ID is the highest known + 1 (inferred; the binary's
 // neighbor manager assigns it). Person data: age (58, as Age writes it),
 // gender (65: 0 male, 1 female), skin color (60), neighbor id (31); the
-// name is the template's title (inferred). The host's npcCharacterWriter
+// names as PopulateSimNames gives them (nameNewSim). The host's npcCharacterWriter
 // (baby_character.hpp) writes the character file the app draws the Sim
 // from: a random look and, with 0x40, the outfit object's clothes (the
 // base game's NPCs all pass 0xC8 from "Generate - Make Character" and "NPC
 // - Make New Character - Specific": paper person 0x6CC1322B, mail carrier
 // 0xECD0F3FC, maid 0x6DC38A6C, bus driver 0x8CC13127, social bunny
-// 0xAE028CB9). Neither the file nor the neighborhood entry is saved yet.
+// 0xAE028CB9). The save writes both to the neighborhood (hood_save.cpp,
+// app/game_save.cpp), as cTSNeighborManager::WriteNeighbors writes every
+// neighbor, new ones too.
 
 #include "characters.hpp"
 
@@ -66,6 +68,11 @@
 #include "errors.hpp"
 #include "genetics.hpp"
 #include "formats/binreader.hpp"
+#include "formats/resindex.hpp"
+#include "formats/strings.hpp"
+
+#include <memory>
+#include <random>
 
 namespace os2::vm {
 
@@ -94,6 +101,62 @@ int16_t local(Context& c, uint8_t index) {
 }
 
 uint16_t nextCharacterInstance = 0x7000;
+
+constexpr uint32_t kTypeCtss = 0x43545353;
+constexpr size_t kObjdCatalogStrings = 0x92; // OBJD field 0x29
+constexpr size_t kObjdNoNewName = 0xA0;      // OBJD field 0x30, "No New Name from Template"
+constexpr uint16_t kMaleFirstNames = 0x96, kFemaleFirstNames = 0x97, kFamilyNames = 0x98;
+
+// A new Sim's names, as cTSCASSystem::PopulateSimNames (BV 0x559c68) writes
+// them into the new character's CTSS: a template with "No New Name from
+// Template" (OBJD field 0x30: the social bunny, the repo man, the social
+// worker) keeps its own names (CTSS string 0, the family name, string 2,
+// emptied); any other gets a first name drawn from Live.package's "Random
+// Male/Female Sim Names" (STR# 0x96 / 0x97, by person data 65) and a family
+// name from "Random Family Names" (0x98). The BV takes a woman's family
+// name from 0xCC, a table the base game does not ship: here 0x98 for both,
+// as the base game's townies show (inferred). The draws are the CAS's own
+// random numbers (cTSCASSystem +0x88), not the simulator's: here a
+// generator seeded by the neighbor's GUID, so the VM's draws stay as they
+// are. Without the text tables (tests), the template's title.
+void nameNewSim(VM& vm, const ObjectDefinition& t, uint32_t group, Neighbor& n) {
+    const StringTable* own = nullptr;
+    std::unique_ptr<StringTable> parsed;
+    if (ResourceIndex* index = vm.code().index())
+        if (const uint16_t ctss = t.field(kObjdCatalogStrings))
+            try {
+                if (auto data = index->read(Tgi{kTypeCtss, group, ctss, 0})) {
+                    parsed = std::make_unique<StringTable>(StringTable::parse(*data));
+                    own = parsed.get();
+                }
+            } catch (const std::exception&) {
+            }
+    std::string fallback = t.title.empty() ? t.fileName : t.title;
+    if (const auto dash = fallback.rfind(" - "); t.title.empty() && dash != std::string::npos)
+        fallback = fallback.substr(dash + 3);
+    if (t.field(kObjdNoNewName)) {
+        n.firstName = own && !own->get(0).empty() ? own->get(0) : fallback;
+        n.lastName.clear();
+        return;
+    }
+    const auto& tables = textTables();
+    const bool female = n.personData[kGender] == 1;
+    const StringTable* first = tables ? tables(kLiveTextGroup, female ? kFemaleFirstNames : kMaleFirstNames) : nullptr;
+    const StringTable* family = tables ? tables(kLiveTextGroup, kFamilyNames) : nullptr;
+    std::mt19937 rng(n.guid ^ 0x9E3779B9u);
+    auto draw = [&](const StringTable* table) -> std::string {
+        size_t count = table ? table->count(lang::preferred()) : 0;
+        if (table && !count)
+            count = table->count(lang::EnglishUS);
+        return count ? table->get(rng() % count) : std::string();
+    };
+    n.firstName = draw(first);
+    n.lastName = draw(family);
+    if (n.firstName.empty()) {
+        n.firstName = own && !own->get(0).empty() ? own->get(0) : fallback;
+        n.lastName = own ? own->get(2) : std::string();
+    }
+}
 
 // A neighbor with an in-memory character made from the template OBJD.
 int16_t makeCharacter(VM& vm, uint32_t templateGuid, int16_t ageFlag, int16_t gender, int16_t skin) {
@@ -140,10 +203,7 @@ int16_t makeCharacter(VM& vm, uint32_t templateGuid, int16_t ageFlag, int16_t ge
     n.personData[persondata::PersonAge] = ageData(ageFlag);
     n.personData[kGender] = gender == 1 ? 0 : 1;
     n.personData[kSkinColor] = skin;
-    std::string name = t->title.empty() ? t->fileName : t->title;
-    if (const auto dash = name.rfind(" - "); t->title.empty() && dash != std::string::npos)
-        name = name.substr(dash + 3);
-    n.firstName = name;
+    nameNewSim(vm, *t, at->first, n);
     return id;
 }
 

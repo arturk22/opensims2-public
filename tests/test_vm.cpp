@@ -1,6 +1,8 @@
 #include "formats/dbpf.hpp"
 #include "formats/lot_objects.hpp"
+#include "formats/strings.hpp"
 #include "vm/baby_character.hpp"
+#include "vm/dialog.hpp"
 #include "vm/engine.hpp"
 #include "vm/kill.hpp"
 #include "vm/lot_resume.hpp"
@@ -11,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <initializer_list>
+#include <map>
 
 using namespace os2;
 using namespace os2::vm;
@@ -1493,6 +1496,54 @@ static void testMakeNewCharacter() {
     check(sim && sim->person && sim->person->data[persondata::NeighborId] == 7 && sim->guid() == n->guid &&
               n->guid != kTemplate,
           "the new neighbor's Sim is created from a person copy of the template");
+
+    // Names as PopulateSimNames gives them: a first name from Live's "Random
+    // Male/Female Sim Names" (0x96/0x97) and a family name from "Random
+    // Family Names" (0x98); a template with "No New Name from Template"
+    // (OBJD field 0x30) keeps its own name and no family name.
+    {
+        std::map<uint16_t, StringTable> live;
+        auto table = [](std::initializer_list<const char*> v) {
+            StringTable t;
+            for (const char* x : v)
+                t.entries.push_back({lang::EnglishUS, x, ""});
+            return t;
+        };
+        live[0x96] = table({"Abhijeet"});
+        live[0x97] = table({"Allyn"});
+        live[0x98] = table({"Smith"});
+        textTables() = [&](uint32_t group, uint32_t instance) -> const StringTable* {
+            auto it = live.find(uint16_t(instance));
+            return group == kLiveTextGroup && it != live.end() ? &it->second : nullptr;
+        };
+        ObjectDefinition worker = definition(0x13572469);
+        worker.fields[(0x52 - 0x44) / 2] = 0x10;
+        worker.fields.resize((0xA0 - 0x44) / 2 + 1);
+        worker.fields[(0xA0 - 0x44) / 2] = 1; // No New Name from Template
+        worker.fileName = "NPC - Template - Social Worker";
+        fx.code.add(kObjGroup, 0x82, std::move(worker));
+        fx.code.add(kObjGroup, 0x1003,
+                    tree({expr(StackId, 0, Assign, Lit, 1, go(1), E),
+                          expr(Temp, 0, Assign, Lit, int16_t(kTemplate & 0xFFFF), go(2), E),
+                          expr(Temp, 1, Assign, Lit, int16_t(kTemplate >> 16), go(3), E),
+                          expr(Local, 0, Assign, Lit, 8, go(4), E),
+                          expr(Local, 2, Assign, Lit, 2, go(5), E), // female
+                          instr(0x13, go(6), E, {1, 0, 2, 0, 0, 0, 0, 0, 0, 0x08}),
+                          expr(Temp, 2, Assign, 0x2C, 0, go(7), E),
+                          expr(Temp, 0, Assign, Lit, int16_t(0x13572469 & 0xFFFF), go(8), E),
+                          expr(Temp, 1, Assign, Lit, int16_t(0x13572469 >> 16), go(9), E),
+                          instr(0x13, go(10), E, {1, 0, 2, 0, 0, 0, 0, 0, 0, 0x08}),
+                          expr(Temp, 3, Assign, 0x2C, 0, T, E)},
+                         0, 3));
+        t = fx.run(0x1003);
+        textTables() = nullptr;
+        const Neighbor* maid = fx.vm.neighbor(t.temps[2]);
+        const Neighbor* social = fx.vm.neighbor(t.temps[3]);
+        check(maid && maid->firstName == "Allyn" && maid->lastName == "Smith",
+              "an NPC from a template gets a random female first name (0x97) and family name (0x98)");
+        check(social && social->firstName == "Social Worker" && social->lastName.empty(),
+              "a template with No New Name from Template keeps its name");
+    }
 
     // An NPC with an outfit (flags 0x40 | 0x80: its GUID in temps 2/3, as
     // "NPC - Make New Character - Specific" passes "Outfit_NPC_Maid_test"):
