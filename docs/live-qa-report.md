@@ -292,3 +292,35 @@ Ambiente: os diálogos do macOS ("opensims2 quit unexpectedly" e "s2pkg would li
 - Um objeto pequeno parado no gramado (ao lado da árvore a leste, objeto 173) pega os cliques ("no interactions available (its tooltip)") e atrapalha o Vir Aqui perto dele; não vi o que é (possível destino que sobrou).
 - Duas Esc seguidas com a barra de Opções aberta não fecharam a barra; só a terceira abriu "Salvar".
 - Listas "Tamanho da Tela"/"Freqüência de Atualização" vazias na janela de Gráficos do lote.
+
+# Rodada 15, passada 10
+
+Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`, `build/` do `main` em `c8b1755`, binário das 05:26, mais novo que o commit). N002_Lot10 (`--vm --ui live`, `OS2_DEBUG_PICK=1` para ver o objeto pego).
+Ambiente: o diálogo do macOS "opensims2 quit unexpectedly" (e o do `s2pkg`) continua no centro da tela. Dois jeitos de trabalhar: janela de 600x860 em x=2 (o diálogo fica à direita, mas a barra é cortada) ou a janela cheia (1280x720 em 95,49), onde a barra de Construir/Comprar fica inteira e só o centro-alto da cena é coberto (Construir foi testado assim). Notas de ferramenta: `qa drag` não leva modificador; foi feito um `md` (CGEvent com Ctrl) e depois um toque na tecla Control (`k 59`) solta o Ctrl que ficava "preso" no jogo (provavelmente do próprio `md`). As capturas todas mostravam o diálogo do macOS e foram apagadas (não há screenshot nesta passada). Só parte da lista coube.
+
+| Passo | Resultado |
+|-------|-----------|
+| Cliques (r14-click-fix): Page Up, armário do andar de cima (obj 519) | passa: pie próprio com "Trocar para..." e o submenu (Roupa Formal / de Ginástica / Pijama / de Banho / Roupas Íntimas), o `s2pkg pie` bate; "Planejar Roupa" não aparece (nem no `--all`) neste armário |
+| Cliques: outros objetos de cima | passa: caixa de som (obj 136) abre "Ligar", cama e mesa de cabeceira são pegos como eles mesmos |
+| Cliques: telefone do andar de cima (obj 145/253 em 10,5 30,5) e do térreo (46/227) | **não achado**: ficam atrás de paredes do corte e vários cliques caíram em lâmpada/armário/mesa; os diálogos do telefone não foram testados |
+| Cliques: chão do andar de cima | passa: "Vir Aqui" (log `go here: destination 171 at (12.40, 25.81, 3)`), nunca o pie do Sim |
+| Cliques: gramado | passa: "Vir Aqui", não "Entrar" |
+| Andar: Vir Aqui da cozinha até a sala (câmera perto, 8 capturas a 0,1 s) | passa: o Sim vira de costas para a frente, braços balançam, sem T-pose, salto ou deslize visível; de longe vi o Sim descer a escada sem problema |
+| Andar: idoso corcunda (Isabella N003_Lot46), Sim Playful saltitando, partida/parada por ângulo | não testado (só N002_Lot10; o Johnny não tem "Vir Saltitando" no pie) |
+| Opções: listas "Tamanho da Tela" e "Freqüência de Atualização" | passa: 1280x832, 1470x918, 1470x956 (marcado), 1710x1068, 1710x1112... e "60 Hz" |
+| Opções: Esc fecha a barra na primeira vez | passa: um Esc fechou a janela de Gráficos e a barra juntas |
+| Construir: piscina só em retângulos | passa: arrasto 3x3 = "a pool of 9 tiles for §675"; um segundo arrasto que daria um L foi recusado ("the pool and the drag must make one rectangle") |
+| Construir: Ctrl-arrastar apaga | passa: arrasto grande sobre a piscina = "9 pool tiles erased for §540 back" e a piscina sumiu (ver bug do clique pequeno abaixo) |
+| Construir: caixa ciano na borda do lote | passa: nenhuma caixa ciano nas três posições na borda leste e na calçada (só o quadrado verde/vermelho do cursor) |
+| Construir: tiles da pista | passa: arrasto de piscina na faixa da calçada/rua = recusado (0x45, "not editable at (13,44)") |
+| Construir: arco sem a cerca | não testado |
+| Diálogos: Planejar Roupa, espelho/toucador, cabide da loja comunitária, painel de aspiração | não testado (o armário daqui não oferece Planejar Roupa; o painel de aspiração não foi achado: o ícone do lápis ao lado de "Forma Física" abre "Biografia do Sim") |
+| Dormir (N001_Lot11), espelho do Lot82 e Reflexo off, lote vazio novo, telhado no Construir, passo 32 do tutorial | não testados (tempo) |
+| Desempenho | `OS2_PERF` do app: 4 ms de CPU por quadro em média, pior 28 ms |
+
+## Bugs achados (não corrigidos)
+
+- Ctrl-arrastar (ou Ctrl-clicar) com a ferramenta de piscina sobre a piscina já cavada diz "no pool there" mesmo com o cursor visivelmente dentro dela: o ponto do chão é pego na profundidade do fundo e o quadrado vermelho cai no fundo, mas o tile não bate com o visível (a piscina aparece uns 2 tiles abaixo de onde se arrastou). Um arrasto grande que cobre a piscina inteira apaga. Repro: Construir, Diversos, ferramenta de piscina, arrastar 3x3 no gramado, Ctrl-arrastar 2 tiles dentro da água. Não investigado (`BuildMode::groundPoint` itera `floorHeight` 3 vezes; talvez oscile entre o gramado e o fundo).
+- Mensagens da piscina em inglês na dica ("cannot dig a pool: ...", "9 pool tiles erased ...") em vez de PT-BR; só a recusa 0x45 vem do texto do jogo ("Impossível reservar espaço acima das escadas", que é o texto do binário para esse código).
+- O telefone e várias coisas no andar de cima ficam escondidos pelas paredes do corte (`walls cutaway`) em `Page Up`: sem girar a câmera não se acha o telefone para clicar; vale uma passada com o telefone achado pelo `s2pkg route`.
+- Quadrado do cursor da ferramenta de piscina fica verde sobre a pista e fora do lote (a recusa só vem no arrasto).
