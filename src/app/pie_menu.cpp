@@ -523,6 +523,16 @@ void PieMenuHost::setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi, 
     moving_[id] = std::move(b);
 }
 
+void PieMenuHost::setPosedObject(vm::ObjectId id, simd_float3 lo, simd_float3 hi, const ObjectModel* posed) {
+    if (simd_equal(lo, hi) || !posed) {
+        posedObjects_.erase(id);
+        return;
+    }
+    PickBox b{id, lo, hi};
+    b.posed = posed;
+    posedObjects_[id] = std::move(b);
+}
+
 vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
     // The nearest hit: an object's triangles where it has them (its box
     // first, as a quick test), else its box. The moving boxes (Sims, tight
@@ -595,9 +605,13 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
         return sim;
     return nearest([&](auto&& f) {
         for (const auto& box : boxes_)
-            if (!moving_.count(box.id) && (!drawn || drawn(box.id)))
+            if (!moving_.count(box.id) && !posedObjects_.count(box.id) && (!drawn || drawn(box.id)))
                 if (const auto placed = worldBox(box))
                     f(*placed);
+        // Animated objects by their triangles as posed now.
+        for (const auto& [id, b] : posedObjects_)
+            if (!moving_.count(id) && (!drawn || drawn(id)))
+                f(b);
     });
 }
 

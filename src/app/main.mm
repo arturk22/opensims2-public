@@ -1665,6 +1665,23 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
         const bool posed = !s.actor->bones.empty() && !s.actor->posed.parts.empty() && !boxes && !simBoxes;
         gPie->setMovingBox(os2::vm::ObjectId(s.id), lo, hi, posed ? &s.actor->posed : nullptr);
     }
+    // Objects the VM animated (a door open, a chair pulled out): picked by
+    // their skinned triangles as drawn, not by their static model's rest pose.
+    static const bool staticObjects = std::getenv("OS2_PICK_STATIC_OBJECTS") != nullptr; // the old picking, to compare
+    if (gPie && !staticObjects)
+        for (const auto& [id, actor] : gObjectActors) {
+            if (!actor || actor->posed.parts.empty() || (gObjectView && !gObjectView->shown(id))) {
+                gPie->setPosedObject(os2::vm::ObjectId(id), simd_float3(0), simd_float3(0), nullptr);
+                continue;
+            }
+            simd_float3 lo = simd_float3(1e9f), hi = simd_float3(-1e9f);
+            for (const auto& part : actor->posed.parts)
+                for (const auto& v : part.mesh.positions)
+                    lo = simd_min(lo, simd_make_float3(v[0], v[1], v[2])), hi = simd_max(hi, simd_make_float3(v[0], v[1], v[2]));
+            if (lo.x > hi.x)
+                continue;
+            gPie->setPosedObject(os2::vm::ObjectId(id), lo - 0.01f, hi + 0.01f, &actor->posed);
+        }
 }
 
 // Home / End and the puck's wall fan.

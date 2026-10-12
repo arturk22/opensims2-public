@@ -163,6 +163,11 @@ public:
     // model, SimActor::posed; it must outlive the box): a ray that enters
     // the box picks it only where it hits one of its triangles.
     void setMovingBox(vm::ObjectId id, simd_float3 lo, simd_float3 hi, const ObjectModel* posed = nullptr);
+    // An object drawn by an animated actor (a door swung open, a chair
+    // pulled out: its skinned model as posed now, world space; it must
+    // outlive the box), picked by those triangles in place of its static
+    // box, among the other objects (after the Sims); lo == hi removes it.
+    void setPosedObject(vm::ObjectId id, simd_float3 lo, simd_float3 hi, const ObjectModel* posed);
     // Boxes this refuses are not picked (objects on the levels the camera
     // hides, app/wall_view.hpp); null picks all.
     std::function<bool(simd_float3 lo, simd_float3 hi)> pickable;
@@ -293,6 +298,7 @@ private:
     // A box in world space (a following box where its object is drawn now).
     std::optional<PickBox> worldBox(const PickBox& b) const;
     std::map<vm::ObjectId, PickBox> moving_;
+    std::map<vm::ObjectId, PickBox> posedObjects_; // setPosedObject's
     mutable std::map<const ObjectModel*, PosedPick> posedTrees_; // by the actor's posed model
 
     bool open_ = false;
