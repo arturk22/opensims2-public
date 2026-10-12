@@ -262,6 +262,21 @@ public:
 
     const Lot& lot() const { return lot_; }
 
+    // The lot's editable area, [x0, x1) x [y0, y1) in tiles: the lot less the
+    // road strip on each edge with road (the neighborhood lot is its size
+    // plus a strip of one neighborhood tile, 10 lot tiles, on its road edges,
+    // hood_lots.hpp; cWorldDB::IsOnLot tests the bounds SetLotBounds set).
+    // Found from the lot: an edge whose outer 10 tiles hold road floor tiles
+    // ("road_*") is a road edge (inferred: the lot bounds the game sets are
+    // not read from a file here).
+    const std::array<int, 4>& editableArea() const { return editable_; }
+    bool editableTile(int x, int y) const {
+        return x >= editable_[0] && y >= editable_[1] && x < editable_[2] && y < editable_[3];
+    }
+    bool editablePoint(int x, int y) const {
+        return x >= editable_[0] && y >= editable_[1] && x <= editable_[2] && y <= editable_[3];
+    }
+
     // Why a wall section cannot go there ("" if it can).
     // `code` gets the game's error code (UserMayPlacePartition: 0x40 out of
     // the lot, 0x45 not editable, 0x48 no support, 0x49 slope, 0x4B Sim,
@@ -354,6 +369,7 @@ private:
     // A ground grid point no floor, wall or foundation holds.
     bool terrainFree(int x, int y) const;
     uint32_t revision_ = 0;
+    std::array<int, 4> editable_{0, 0, 0, 0};
 };
 
 // The modular stairs among the VM's objects: each "Stair Modular - ... -

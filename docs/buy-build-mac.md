@@ -1496,6 +1496,19 @@ cerca leva o arco; gravado como linha do grafo 0x13 (lido de volta como o
 estilo 26: inferido). Desenho (inferido pelos nomes): o centro sobre a aresta,
 um poste em cada ponta, a parte oeste no poste do início e a leste no do fim.
 
+### 7.20 A área editável do lote (rodada 12)
+
+`cWorldDB::IsOnLot(tile/vertex/location)` (BV `0xd1538…`) compara com os
+limites que `SetLotBounds(x0, y0, x1, y1)` guarda (`+0x24…+0x34`, mais os
+níveis); quem chama `SetLotBounds` vai pela vtable (não achado). O lote do
+bairro é o tamanho mais uma faixa de rua de um tile do bairro (10 tiles do
+lote) em cada borda com rua (`emptyLotRect`, `docs/neighborhood-mac.md`); nos
+lotes salvos essa faixa é calçada + rua + calçada (ex.: `N001_Lot38`, linhas
+20–29). Aqui: uma borda cujos 10 tiles de fora têm piso "road_*" sai da área
+editável (inferido dos dados), e paredes/cercas (`0x45`), pisos, fundações,
+piscinas, terreno e escadas ficam dentro dela. Os objetos (modo compra) não
+foram mudados.
+
 ---
 
 ## 8. Base vs BV

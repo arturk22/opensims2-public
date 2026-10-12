@@ -215,6 +215,49 @@ std::vector<std::array<int, 4>> wallSections(int x0, int y0, int x1, int y1) {
 }
 
 BuildEditor::BuildEditor(VM& vm, Lot& lot, const BuildCatalog* catalog) : vm_(vm), lot_(lot), catalog_(catalog) {
+    // The editable area: less the 10-tile road strip on each road edge.
+    {
+        const int W = int(lot_.width), H = int(lot_.height), strip = 10;
+        editable_ = {0, 0, W, H};
+        auto isRoad = [&](int x, int y) {
+            if (!lot_.hasLevel(0))
+                return false;
+            for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
+                if (q)
+                    if (auto it = lot_.floorPatterns.find(q);
+                        it != lot_.floorPatterns.end() && it->second.rfind("road_", 0) == 0)
+                        return true;
+            return false;
+        };
+        // A road edge: a line of its strip that is road along most of the edge.
+        auto roadColumn = [&](int x) {
+            int n = 0;
+            for (int y = 0; y < H; ++y)
+                n += isRoad(x, y);
+            return 2 * n > H;
+        };
+        auto roadRow = [&](int y) {
+            int n = 0;
+            for (int x = 0; x < W; ++x)
+                n += isRoad(x, y);
+            return 2 * n > W;
+        };
+        bool left = false, right = false, top = false, bottom = false;
+        for (int k = 0; k < strip; ++k) {
+            left |= W > 2 * strip && roadColumn(k);
+            right |= W > 2 * strip && roadColumn(W - 1 - k);
+            top |= H > 2 * strip && roadRow(k);
+            bottom |= H > 2 * strip && roadRow(H - 1 - k);
+        }
+        if (left)
+            editable_[0] = strip;
+        if (right)
+            editable_[2] = W - strip;
+        if (top)
+            editable_[1] = strip;
+        if (bottom)
+            editable_[3] = H - strip;
+    }
     // The stairs the world was loaded with (the lot's modular stair
     // cObjects), less the staircase objects that are among them.
     if (vm_.world) {
@@ -380,6 +423,9 @@ std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by, 
         tiles.push_back({ax, std::min(ay, by), level});
     }
     std::erase_if(tiles, [&](const TilePos& t) { return t.x < 0 || t.y < 0 || t.x >= W || t.y >= H; });
+    // Outside the editable area (the road strip): 0x45.
+    if (!editablePoint(ax, ay) || !editablePoint(bx, by))
+        return fail(0x45, "not editable");
     // A wall needs one side in the lot, a fence both (0x40); here the lot
     // edge counts as out for a fence.
     if (fence && tiles.size() < (ax != bx && ay != by ? 1u : 2u))
@@ -916,6 +962,8 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
     std::vector<std::array<int, 2>> tiles;
     for (int x = ax; x <= bx; ++x)
         for (int y = ay; y <= by; ++y) {
+            if (!editableTile(x, y))
+                return fail(0x45, "not editable at " + point(x, y));
             if (foundationTile(x, y))
                 continue;
             for (uint16_t q : lot_.floor(0, uint32_t(x), uint32_t(y)))
@@ -1555,7 +1603,7 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
     }
     // Only exposed terrain of the ground (0x8B).
     const int tx = int(std::floor(cx)), ty = int(std::floor(cy));
-    if (tx < 0 || ty < 0 || tx >= W || ty >= H || !terrainFree(tx, ty) || !terrainFree(tx + 1, ty + 1)) {
+    if (tx < 0 || ty < 0 || tx >= W || ty >= H || !editableTile(tx, ty) || !terrainFree(tx, ty) || !terrainFree(tx + 1, ty + 1)) {
         r.error = 0x8B;
         r.message = "only exposed terrain can be edited";
         return r;
@@ -1609,7 +1657,7 @@ BuildEditor::Result BuildEditor::applyTerrainBrush(float cx, float cy, int size,
     for (int x = 0; x <= W; ++x)
         for (int y = 0; y <= H; ++y) {
             const int p = strength(float(x), float(y));
-            if (!p || !terrainFree(x, y))
+            if (!p || !editablePoint(x, y) || !terrainFree(x, y))
                 continue;
             const size_t i = base + size_t(x) * size_t(H + 1) + size_t(y);
             const float h = lot_.elevations[i];
@@ -1844,6 +1892,8 @@ BuildEditor::Result BuildEditor::drawPool(int x0, int y0, int x1, int y1) {
         for (int y = ay; y <= by; ++y) {
             if (poolTile(x, y))
                 continue;
+            if (!editableTile(x, y))
+                return fail(0x45, "not editable at " + point(x, y));
             fresh.push_back({x, y});
             if (foundationTile(x, y))
                 return fail(0x8A, "pools only go in the terrain");
@@ -2129,6 +2179,10 @@ BuildEditor::Result BuildEditor::paintFloor(int level, int x0, int y0, int x1, i
     int refused = 0;
     for (int x = ax; x <= bx; ++x)
         for (int y = ay; y <= by; ++y) {
+            if (!editableTile(x, y)) {
+                refused = 0x45;
+                continue;
+            }
             // UserMayPlaceFloorPattern: terrain not flat on the ground
             // (0x53), a tile above it that is not floorable (0x52).
             if (pattern && li == 0 &&
@@ -2423,7 +2477,7 @@ struct BuildEditor::StairsPlan {
 int BuildEditor::planStairs(StairsPlan& plan, TilePos top, int direction, std::optional<std::array<float, 2>> end,
                             bool wholeTiles) const {
     const int W = int(lot_.width), H = int(lot_.height);
-    auto inLot = [&](const TilePos& t) { return t.x >= 0 && t.y >= 0 && t.x < W && t.y < H; };
+    auto inLot = [&](const TilePos& t) { return t.x >= 0 && t.y >= 0 && t.x < W && t.y < H && editableTile(t.x, t.y); };
     auto hasFloor = [&](int li, int x, int y) {
         if (li == 0)
             return !poolTile(x, y);
