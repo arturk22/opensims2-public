@@ -31,7 +31,7 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
       vm_(std::make_unique<vm::VM>(*code_)) {
     vm::VM& m = *vm_;
     m.initCreatedObjects = true;
-    m.instructionsPerTurn = 20000; // as lot-run
+    m.instructionsPerTurn = 100000; // the binary's limit (cTSTreeSim::DoNodeAction: 0x44D past 100000 nodes)
     // The game's tick: 42 ms of its (speed-scaled) clock (docs/ui-live-mac.md §1.2).
     m.clock.ticksPerSecond = kTicksPerSecond;
     m.walkTilesPerTick = float(2.0 / kTicksPerSecond);
