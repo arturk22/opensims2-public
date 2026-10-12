@@ -137,6 +137,8 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.mask = o.mask;
     l.mirror = o.mirror;
     l.turn = o.turn;
+    l.level = o.level >= 0 ? o.level : l.priority;
+    l.scale = std::clamp(o.weight, 0.0f, 1.0f);
     if (l.mirror)
         prepareMirror();
     if (skeleton_ && l.target) {
@@ -159,8 +161,9 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     if (alone && l.priority == 0)
         l.fadeIn = 0;
     layers_.push_back(std::move(l));
-    std::stable_sort(layers_.begin(), layers_.end(),
-                     [](const Layer& a, const Layer& b) { return a.priority < b.priority; });
+    std::stable_sort(layers_.begin(), layers_.end(), [](const Layer& a, const Layer& b) {
+        return a.level != b.level ? a.level < b.level : a.priority < b.priority;
+    });
 }
 
 void AnimPlayer::stop(double now, float fade, int priority) {
@@ -185,7 +188,7 @@ float AnimPlayer::weight(const Layer& l, double now) const {
     if (l.fadeOutStart >= 0)
         w *= l.fadeOut > 0 ? std::clamp(1.0f - float((now - l.fadeOutStart) / l.fadeOut), 0.0f, 1.0f)
                            : (now >= l.fadeOutStart ? 0.0f : 1.0f);
-    return w;
+    return w * l.scale;
 }
 
 std::vector<Xform> AnimPlayer::layerPose(const Layer& l, float ticks) const {
@@ -207,33 +210,84 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         return {};
     std::vector<Xform> out = base_.size() == skeleton_->bones.size() ? base_ : skeleton_->restPose();
     std::erase_if(layers_, [&](const Layer& l) { return l.fadeOutStart >= 0 && weight(l, now) <= 0; });
+    const size_t n = skeleton_->bones.size();
+    // Each layer's pose and per-bone weight (fade x request weight x keyed x mask).
+    struct Posed {
+        std::vector<Xform> pose;
+        std::vector<float> w;
+        int level = 0;
+    };
+    std::vector<Posed> posed;
+    posed.reserve(layers_.size());
     for (const auto& l : layers_) {
         if (!l.target)
             continue;
-        // A replaced layer stays whole under the one fading in over it.
-        const float w = l.replaced ? (weight(l, now) > 0 ? 1.0f : 0.0f) : weight(l, now);
+        const float w = weight(l, now);
         if (w <= 0)
             continue;
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
         std::vector<Xform> p = layerPose(l, ticks);
         const Xform frame{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}};
-        std::vector<float> mask(skeleton_->bones.size(), 0.0f);
-        for (size_t i = 0; i < mask.size(); ++i)
-            mask[i] = (i < l.keyed.size() && l.keyed[i] ? 1.0f : 0.0f) *
+        std::vector<float> mask(n, 0.0f);
+        for (size_t i = 0; i < n; ++i)
+            mask[i] = (i < l.keyed.size() && l.keyed[i] ? w : 0.0f) *
                       (l.mask.empty() ? 1.0f : (i < l.mask.size() ? l.mask[i] : 0.0f));
-        if (l.mirror && twins_.size() == mask.size()) {
+        if (l.mirror && twins_.size() == n) {
             // IK first (the chains name their own side), then the whole pose flipped.
             if (!l.target->ikChains.empty()) {
                 const std::vector<Xform> goals = p;
                 applyIk(*l.target, *skeleton_, ticks, p, &goals, frame);
             }
             p = mirrorPose(*skeleton_, twins_, restWorld_, p);
-            std::vector<float> flipped(mask.size());
-            for (size_t i = 0; i < mask.size(); ++i)
+            std::vector<float> flipped(n);
+            for (size_t i = 0; i < n; ++i)
                 flipped[i] = mask[size_t(twins_[i])];
             mask = std::move(flipped);
         }
-        blendPose(out, p, w, mask);
+        if (p.size() < n)
+            continue;
+        posed.push_back({std::move(p), std::move(mask), l.level});
+    }
+    // Per bone, the channel blender: levels from the highest down (layers_
+    // is sorted by level), the remaining weight shared out, then a running
+    // weighted average of the poses in that order, normalized.
+    std::vector<float> share(posed.size());
+    for (size_t b = 0; b < n; ++b) {
+        float remaining = 1;
+        for (size_t k = posed.size(); k-- > 0 && remaining > 0;) {
+            // The level's total on this bone.
+            size_t first = k;
+            while (first > 0 && posed[first - 1].level == posed[k].level)
+                --first;
+            float sum = 0;
+            for (size_t j = first; j <= k; ++j)
+                sum += posed[j].w[b];
+            const float scale = sum >= 1 ? remaining / sum : remaining;
+            for (size_t j = first; j <= k; ++j)
+                share[j] = posed[j].w[b] * scale;
+            remaining = sum >= 1 ? 0 : remaining * (1 - sum);
+            k = first;
+        }
+        float cum = 0;
+        Xform acc = out[b];
+        for (size_t k = posed.size(); k-- > 0;) {
+            const float a = share[k];
+            share[k] = 0;
+            if (a <= 0)
+                continue;
+            const Xform& x = posed[k].pose[b];
+            cum += a;
+            if (cum == a) {
+                acc = x;
+                continue;
+            }
+            const float t = a / cum;
+            acc.q = nlerp(acc.q, x.q, t);
+            for (int c = 0; c < 3; ++c)
+                acc.t[size_t(c)] += (x.t[size_t(c)] - acc.t[size_t(c)]) * t;
+        }
+        if (cum > 0)
+            out[b] = acc;
     }
     // IK over the blend: each layer's chains reach its goals from the
     // blended body (an a2o animation's hands find the object even under a
@@ -242,7 +296,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     for (const auto& l : layers_) {
         if (!l.target || l.target->ikChains.empty() || l.mirror)
             continue;
-        const float w = l.replaced ? (weight(l, now) > 0 ? 1.0f : 0.0f) : weight(l, now);
+        const float w = std::min(weight(l, now), 1.0f);
         if (w <= 0)
             continue;
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);

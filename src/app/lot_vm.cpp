@@ -142,36 +142,46 @@ void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> an
 
 // Overlays the VM plays on a Sim (Animate Overlay, Reach/Put's grasp and
 // carry animations: "a2o-newspaper-carry" holds the arm up; the idle
-// system's idles: breathing, finger twitches, stretches, looking around),
-// each over the bones it keys, above the base animation. Each start of one
-// (vm::Overlay::id) is a layer of its own: it is cued when the VM starts it,
-// plays once unless the VM loops or holds it, and fades out when the VM
-// takes it off (its end, or Animate Stop: the idle trees stop the idles
-// before an interaction's animation, the carry poses go with what was
-// held). Layers are ordered by the animation's header priority (carry poses
-// 5 over idles and gestures 2-3), then by start, as AnimPlayer orders
-// masked overlays. The carry poses also play while Animate Sim plays: the
-// trees stop them themselves before an animation that needs the arm
-// (Animate Stop mode 4, 237 uses: "Eat - Anim - Bite", "Interaction -
-// Drink", "Sub - Put Cup Down", ...), and the newspaper's "Read" never
-// does: its animations reach the paper by the arms' IK, which AnimPlayer
-// solves over the carry pose.
+// system's idles: breathing, finger twitches, stretches, looking around).
+// Each start of one (vm::Overlay::id) is a layer of its own, at the level
+// the VM gave it (vm::animlevel: Animate Overlay 2 x priority + 1, a carry
+// pose 5), mixed with the base animation (walk, Animate Sim) bone by bone
+// by level as the game's channel blender does (AnimPlayer): an idle (level
+// 1) gives way to an Animate Sim (level 2) on the bones both key, a baby's
+// carry pose (priority 2-3, level 5-7) stays over it. A layer blends in
+// over the engine's blend time (vm::kBlendTicks), starts to blend out that
+// long before the end of its last play (when the VM sends 9997), and goes
+// as Animate Stop says (blended, short-blended or cut: Animate Stop's
+// stoppedFades) when the VM takes it off. The carry poses also play while
+// Animate Sim plays: the trees stop them themselves before an animation
+// that needs the arm (Animate Stop mode 4, 237 uses: "Eat - Anim - Bite",
+// "Interaction - Drink", "Sub - Put Cup Down", ...), and the newspaper's
+// "Read" never does: its animations reach the paper by the arms' IK, which
+// AnimPlayer solves over the carry pose.
 void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
     constexpr int kOverlayPriority = 100;
-    constexpr float kFade = 0.2f;
+    constexpr float kFade = vm::kBlendTicks / 1000.0f;
     constexpr double kRestartGap = 0.25; // seconds
-    // Gone from the VM: fade out.
+    // Gone from the VM: blend out (or cut) as Animate Stop said.
     for (auto it = b.overlays.begin(); it != b.overlays.end();) {
-        const bool kept = std::any_of(o.animation.overlays.begin(), o.animation.overlays.end(),
-                                      [&](const vm::Overlay& x) { return x.id == it->first; });
-        if (kept) {
+        const auto x = std::find_if(o.animation.overlays.begin(), o.animation.overlays.end(),
+                                    [&](const vm::Overlay& x) { return x.id == it->first; });
+        if (x != o.animation.overlays.end()) {
+            if (x->blendOutSent && !it->second.blendingOut) {
+                it->second.blendingOut = true;
+                b.actor->player.stop(at, kFade, it->second.priority);
+            }
             ++it;
             continue;
         }
+        float fade = kFade;
+        for (const auto& [id, seconds] : o.animation.stoppedFades)
+            if (id == it->first)
+                fade = seconds;
         if (std::getenv("OS2_DEBUG_VM"))
-            std::fprintf(stderr, "tick %llu sim %d overlay off: %s\n", (unsigned long long)vm_->ticks, b.id,
-                         it->second.name.c_str());
-        b.actor->player.stop(at, kFade, it->second.priority);
+            std::fprintf(stderr, "tick %llu sim %d overlay off: %s (fade %.3f)\n", (unsigned long long)vm_->ticks, b.id,
+                         it->second.name.c_str(), fade);
+        b.actor->player.stop(at, fade, it->second.priority);
         b.stoppedOverlays[it->second.name] = {at, it->second.start};
         it = b.overlays.erase(it);
     }
@@ -183,9 +193,7 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
         p.name = x.name;
         try {
             const Animation& anim = b.actor->animation(index_, x.name);
-            const bool carry = std::find(o.carryOverlays.begin(), o.carryOverlays.end(), x.name) != o.carryOverlays.end();
-            const int header = carry ? std::max<int>(anim.priority, 5) : anim.priority;
-            p.priority = kOverlayPriority + header * 1000000 + int(x.id % 1000000);
+            p.priority = kOverlayPriority + int(x.id % 1000000);
             // Grasps play once (into the carry); what the VM ends or holds
             // loops until it is taken off.
             const bool loop = x.name.find("grasp") == std::string::npos && x.loops != 1;
@@ -199,10 +207,10 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
                 loop && st != b.stoppedOverlays.end() && at - st->second.first <= kRestartGap)
                 phase = at - st->second.second;
             p.start = at - phase;
-            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority, .phase = phase});
+            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority, .phase = phase, .level = x.level});
             if (std::getenv("OS2_DEBUG_VM"))
-                std::fprintf(stderr, "tick %llu sim %d overlay on: %s (kind %d, loops %d)\n",
-                             (unsigned long long)vm_->ticks, b.id, x.name.c_str(), x.oeType, x.loops);
+                std::fprintf(stderr, "tick %llu sim %d overlay on: %s (kind %d, level %d, loops %d)\n",
+                             (unsigned long long)vm_->ticks, b.id, x.name.c_str(), x.oeType, x.level, x.loops);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: Sim %d: overlay %s\n", b.id, e.what());
         }
@@ -245,15 +253,21 @@ void LotSimulation::sampleAll(double at) {
         }
         std::string want = b.idle;
         bool loop = true;
-        float fade = 0.2f;
+        float fade = vm::kBlendTicks / 1000.0f;
+        // The base layer's channel level: the standing idle under
+        // everything, a walk or a stair phase at a route's 3 ("rom": the
+        // binary's routes use 2, 3 or 5; which one a walk takes is
+        // inferred), Animate Sim's its own.
+        int level = 0;
+        float weight = 1;
         if (!s.climb.empty()) {
             // Stair phases chain without blending (each starts where the last ended).
             const bool chained = b.playing.find("stairs-") != std::string::npos;
-            want = s.climb, loop = false, fade = chained ? 0.0f : 0.1f;
+            want = s.climb, loop = false, fade = chained ? 0.0f : 0.1f, level = vm::animlevel::Walk;
         } else if (s.walking && !s.walk.empty())
-            want = s.walk;
+            want = s.walk, level = vm::animlevel::Walk;
         else if (!s.animation.empty())
-            want = s.animation, loop = false;
+            want = s.animation, loop = false, level = s.animLevel, weight = s.animWeight;
         // OS2_DEBUG_VM=1: each Sim's state after each tick.
         if (std::getenv("OS2_DEBUG_VM")) {
             auto it = vm_->threads.find(b.id);
@@ -288,7 +302,8 @@ void LotSimulation::sampleAll(double at) {
                 b.partial = std::max<int>(1, anim.priority);
             const bool mirror = animated ? s.flipped : (!s.climb.empty() && s.turnMirror);
             b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
-                                    .mirror = mirror, .turn = animated ? anim.headingOffset : 0.0f});
+                                    .mirror = mirror, .turn = animated ? anim.headingOffset : 0.0f,
+                                    .level = level, .weight = weight});
             if (onSimAnimation)
                 onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
         } catch (const std::exception& e) {

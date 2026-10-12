@@ -959,21 +959,49 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
 `AbortAnimRequest` `0x68bac0`, `GlobalRootRotHeading` `0x68c320`,
 `cObject::ApplyAnimationRotation`/`ApplyAnimationOffsets` `0x656b10`/`0x654b28`):
 
-- **"Corpo inteiro substitui overlay de corpo inteiro": não está no
-  `cAnimatable`.** O Animate Sim cria um pedido de tipo 2 (`tARType`: 1
-  objeto, 2 Sim, 3 overlay, 5 pose de objeto) e o põe na fila de
-  coreografia num **canal** escolhido pelo tipo e pela prioridade (strings
-  do binário: Sim `sil`/`sim`/`sih`/`siu`, overlay `osl`/`ovl`/`ovm`/`ovh`/
-  `ovu`, objeto `obj`, rotas `rom`/`roh`/`rsm`); nada em `try_animate_sim`
-  nem em `AddChoreoAnimRequest` apaga overlays. A única troca explícita é a
-  do `CreateTransitionBlend`: um pedido novo do **tipo 5** (pose de objeto,
-  `PlayObjectPose`) faz o anterior do tipo 5 sair por blend no tempo
-  global (abaixo), a menos que ele acabe antes. Quem decide o que aparece
-  quando um Sim de corpo inteiro e um overlay de corpo inteiro tocam juntos
-  é a mistura dos canais da fila (`nGZSceneDBAnim::cChoreoQueue`, não
-  decifrada). Logo a regra do código (`animateSim` em `vm/animation.cpp`)
-  **continua inferida**: ela reproduz o efeito visto no jogo (o Sim não
-  "flutua" sentado ao levantar), não um passo do binário.
+- **"Corpo inteiro substitui overlay de corpo inteiro": não existe no
+  jogo** (rodada 13, anim-choreo, decifrado). O Animate Sim cria um pedido de
+  tipo 2 (`tARType`: 1 objeto, 2 Sim, 3 overlay, 5 rota) e nada em
+  `try_animate_sim` nem em `AddChoreoAnimRequest` mexe nos outros pedidos.
+  A troca explícita é só a do `CreateTransitionBlend` (um pedido novo de
+  tipo 5 faz o anterior de tipo 5 sair por blend). O que aparece é decidido
+  **osso a osso** pela mistura dos canais (abaixo). A regra inferida da
+  rodada 11 saiu do `animateSim`.
+- **Mistura dos canais** (`nGZSceneDBAnim`): cada pedido é um conjunto de
+  canais, um por osso que a animação mexe, e cada osso tem um
+  `cChannelUberOutlet` que junta os canais "base" que o alimentam
+  (`AddBaseChannel(canal, prioridade, tipo)`, BV `0xee6ed4`: a lista fica
+  ordenada da prioridade maior para a menor). O misturador
+  (`PrepareForBaseChannelBlender`, BV `0xee659c`, e o `ChannelData` do
+  quatérnio, BV `0xd5e1c4`) faz, por osso: dos **níveis 8 a 0**, soma os
+  pesos dos canais do nível (peso = função de blend do pedido × peso do
+  pedido); se a soma ≥ 1, o nível leva o que sobrou inteiro (cada canal
+  `peso × resto / soma`) e os níveis de baixo ficam com 0; se < 1, cada
+  canal leva `peso × resto` e o resto vira `resto × (1 − soma)`. No fim, se
+  o total ficou entre 0 e 1, tudo é normalizado (um canal sozinho entrando
+  em fade já tem o osso inteiro); osso sem peso nenhum não é escrito
+  (fica como estava). A combinação é uma média corrida por peso (slerp
+  com `peso / acumulado`); os canais "delta" (aditivos) entram depois,
+  multiplicando. **O nível de cada pedido** vem da primitiva
+  (`AddChoreoAnimRequest` dá a ele também o nome de canal para depuração,
+  as strings `sil/sim/...`):
+  | primitiva | nível | nomes |
+  |---|---|---|
+  | Animate Sim (byte 12 = p) | `2p` (p < 0 → 0, p > 3 → 6) | `sil` 0–1, `sim` 2–3, `sih` 4–5, `siu` 6+ |
+  | Animate Overlay (byte 11 = p) | `2p + 1` (p < 0 → 1; p ≥ 4 → 0) | `osl` 0, `ovl` 1–2, `ovm` 3–4, `ovh` 5–6, `ovu` 7+ |
+  | Animate Object | 2 | `obj` |
+  | rota (locomoção) | 2, 3 ou 5 | `rsm`, `rom`, `roh` |
+  Nos dados: o Animate Sim usa p = 1 em 2.984 de 4.010 (nível 2), 2 em 392,
+  0 em 329, 3 em 304; os idles do idle system e da cadeira usam overlay de
+  prioridade 0 ou −1 (nível 1), e as poses de carregar bebê ("Pickup -
+  Poses", "CT - Set Carry", "Feed - Baby - Loop") prioridade 2–3 (níveis
+  5–7). Logo o get-out da cadeira (nível 2) passa por cima do idle sentado
+  (nível 1) sem regra nenhuma, e a pose de carregar o bebê fica por cima
+  do Animate Sim. No código: `vm::animlevel`, `Overlay::level`,
+  `AnimationState::level/weight`, e o `AnimPlayer` mistura assim
+  (`Options::level`, `test_anim` "channel levels"). Inferido: o nível da
+  caminhada (usamos 3, `rom`) e o das poses de carregar do Reach/Put
+  (usamos 5; elas vêm do `AddToAnimList`, não lido).
 - **Onde fica o quadro da animação**: na fila de coreografia. A posição e a
   direção "globais" do objeto animado são as do osso raiz da fila
   (`GlobalRootTransPosition`, `GlobalRootRotHeading`: o vetor +Y do osso
@@ -981,27 +1009,48 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   deixar o objeto onde a animação o largou. Os objetos ainda têm um
   deslocamento e uma rotação de animação nos **dados de objeto 108–110**
   (x, y, z × uma constante) e **111** (ângulo × outra constante), aplicados
-  por `cObject::ApplyAnimationOffsets`/`ApplyAnimationRotation` sobre a
-  posição e a orientação. O giro pelo `heading` do cabeçalho do ANIM que o
-  código faz (`AnimPlayer::Options::turn`) não aparece nesses caminhos:
-  continua inferido (bate com o resultado visto, a2o de canto de cadeira).
-- **Tempo de blend de saída**: o Animate Stop usa **0** sem flag (os pedidos
-  são tirados na hora: vtable 0x228 da fila, depois que a fila é avisada),
-  **T** com a flag 0x02 ("blended Out") e **0,3 × T** com 0x20 ("short
-  blended Out"; `FLOAT_0274b670` = 0,3), onde T é um global float do
-  `__bss` (`0x2c0ddd0`) escrito em tempo de execução (nenhuma escrita
-  estática achada; não lido). O mesmo T é o blend de entrada/saída do
-  `CreateTransitionBlend` e o que o Animate Sim usa para tirar o próprio
-  pedido quando a instrução volta com ele já pedido e a fila o
-  interrompeu (vtable 0x3b4 com T). Com T > 0 cada pedido sai pelo
-  `AbortAnimRequest` (≤ 0: corte na hora). O código usa 0,2 s para os
-  overlays (`kOverlayBlendOutTicks`, `lot_vm.cpp`): o valor continua
-  inferido, mas agora se sabe que o "curto" é 30% dele e que sem flag é
-  imediato.
+  por `cObject::ApplyAnimationOffsets`/`ApplyAnimationRotation`.
+- **O giro pelo `heading` do cabeçalho do ANIM: o jogo aplica** (rodada 13,
+  decifrado). `cActiveAnimSkeletal::SetupChannel` (BV `0xd5b8d4`) soma o
+  `HeadingOffset` do pedido (`cChoreoRequest` vtable 0xd4) e o do recurso
+  (`cAnimResource::HeadingOffset`, o campo do cabeçalho) e gira por esse
+  ângulo o canal de rotação do osso marcado com um eixo de heading
+  (`cBoneDataExtension::HeadingOffsetAxis`: X, Y ou Z). É o que o
+  `AnimPlayer::Options::turn` faz (os filhos do osso do topo girados em Z).
+  O heading **do pedido** vem do Animate Sim: com o bit 0x04 do byte 8 (sem
+  texto no editor; 7 usos nos dados) é `−temp 4 × k` (`FUN_008b6860`; k é
+  um global do `__bss`, não lido), senão 0: não feito.
+- **Tempo de blend: T = 233,333 ms** (decifrado). O global `0x2c0ddd0` é
+  escrito uma vez, pelo inicializador estático do `TSSGAnimatable.cpp`
+  (BV `0x20b4ef0`, no `__StaticInit`; o mesmo valor vai para `0x2c0de34`),
+  com o literal `233.33333` (7 quadros a 30/s). Unidade: ticks de
+  animação (ms), como as durações com que o `CreateTransitionBlend` o
+  compara. O Animate Stop usa **0** sem flag (os pedidos saem na hora,
+  `cChoreoRequest::Abort` com status 3, vtable 0x228 da fila), **T** com a
+  flag 0x02 ("blended Out") e **0,3 × T** com 0x20 ("short blended Out";
+  `FLOAT_0274b670` = 0,3), pelo `AbortAnimRequest` (`FUN_00a47bf0`: o
+  pedido ganha uma função de blend que desce a 0 nesse tempo e a regra de
+  expiração 4). O mesmo T é o blend de entrada/saída do
+  `CreateTransitionBlend` (com as flags "No Blend in/out" desligadas) e o
+  que o Animate Sim usa para tirar o próprio pedido interrompido. No
+  código: `vm::kBlendTicks`; o overlay começa a sair (evento 9997) T antes
+  do fim, entra em T, e o Animate Stop passa ao app o fade de cada overlay
+  tirado (`AnimationState::stoppedFades`).
+- **Outros detalhes do Animate Stop** (`try_animate_stop`, BV `0x6a0554`):
+  a prioridade do byte 8, se > 0, só para os pedidos cujo nível com o bit
+  0 apagado é `2p − 2` (o Animate Sim de prioridade p − 1 e o overlay de
+  mesma prioridade); só para os pedidos tocados espelhados como o operando
+  diz (bit 0 do byte 2, ou o temp 3 com 0x08), os dois com 0x40; pedidos
+  dos tipos 7 e 9 e os já expirados nunca param. Modos 4–11 comparam o
+  `tOEType` (4→3 carregar … 8→2 normal, 9→7, 10→8, 11→9), como o código já
+  fazia. Feito em `animateStop`.
 - **O evento −1 no Animate Stop**: o `try_animate_stop` não chama árvore
-  de evento nenhuma; quem avisa é o fim do pedido na fila (o tratador de
-  eventos do pedido, `cAnimEventCB`). O `animevent::Stopped` (−1) do código
-  continua inferido das árvores de idle.
+  de evento nenhuma; o pedido parado na hora é abortado com status 3
+  (`tCRStatus`) e quem avisa é o tratador de eventos do pedido
+  (`cAnimEventCB` → `cCustomEventHandler2`, chave −1 → −1). Que o status 3
+  vire a chave −1 continua inferido (bate com as árvores de idle); o
+  pedido que sai por blend mantém o status e o evento dele no fim do blend
+  não foi lido.
 
 ## 4b. Pendências do round 5 (binário)
 

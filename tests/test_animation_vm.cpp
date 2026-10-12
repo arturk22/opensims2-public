@@ -269,6 +269,52 @@ static void testOverlayLifetime() {
     check(s.attributes[0] == animevent::Stopped, "their event trees get -1");
 }
 
+// The channel levels the binary gives (animlevel): Animate Overlay's
+// priority byte 11 -> 2p + 1 (< 0: 1), Animate Sim's byte 12 -> 2p; Animate
+// Stop's priority byte 8 stops levels 2p - 2 and 2p - 1 only, and its blend
+// flags set how the overlays go (0x02: the blend time, 0x20: 0.3 of it,
+// none: a cut).
+static void testOverlayLevels() {
+    CodeLibrary code;
+    VM vm(code);
+    addGlobals(code, vm);
+    code.add(kGlobalGroup, animlist::Adult, strings({"a-noExpression", ".", "a-blockedPath-long", "a-idle-test(idle)"}));
+    vm.animations.add("a-idle-test", 1.0f);
+    vm.animations.add("a-blockedPath-long", 0.5f);
+    Object& s = sim(vm, 1.5f, 1.5f);
+    // Animate Overlay entry 3, priority byte 11 = 2 (level 5), then -1 (level 1).
+    code.add(kGroup, 0x1007, tree({instr(0x6B, T, E, {3, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x80, 0, 2})}));
+    code.add(kGroup, 0x1008, tree({instr(0x6B, T, E, {3, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x80, 0, 0xFF})}));
+    for (uint16_t t : {0x1007, 0x1008}) {
+        Thread th = vm.start(s.id, t, {}, s.id);
+        vm.run(th);
+    }
+    check(s.animation.overlays.size() == 2 && s.animation.overlays[0].level == 5 && s.animation.overlays[1].level == 1,
+          "Animate Overlay's level: 2 x priority + 1, -1 -> 1");
+    check(animlevel::ofOverlay(4) == 0 && animlevel::ofSim(1) == 2 && animlevel::ofSim(7) == 6 && animlevel::ofSim(-1) == 0,
+          "levels of the other priorities");
+    // Animate Stop mode 1 (the overlays), priority 3 (levels 4-5), blended (0x02).
+    code.add(kGroup, 0x1009, tree({instr(0x6C, T, E, {0, 0, 0x02, 0x0A, 0, 0, 0, 1, 3})}));
+    Thread th = vm.start(s.id, 0x1009, {}, s.id);
+    vm.run(th);
+    check(s.animation.overlays.size() == 1 && s.animation.overlays[0].level == 1, "a priority stops its levels only");
+    check(!s.animation.stoppedFades.empty() && std::fabs(s.animation.stoppedFades.back().second - kBlendTicks / 1000) < 1e-4f &&
+              std::fabs(kBlendTicks - 233.333f) < 1e-2f,
+          "blended Out: the engine's blend time, 233.3 ms");
+    // Short blended (0x20), any priority.
+    code.add(kGroup, 0x100A, tree({instr(0x6C, T, E, {0, 0, 0x20, 0x0A, 0, 0, 0, 1, 0})}));
+    th = vm.start(s.id, 0x100A, {}, s.id);
+    vm.run(th);
+    check(s.animation.overlays.empty() && std::fabs(s.animation.stoppedFades.back().second - 0.07f) < 1e-4f,
+          "short blended Out: 0.3 of it");
+    // Animate Sim: the level and the request weight (byte 13 / 100; -1 -> 1).
+    code.add(kGroup, 0x100B, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0, 0, 0x80, 0, 0, 0x0A, 0, 0, 3, 50})}));
+    th = vm.start(s.id, 0x100B, {}, s.id);
+    vm.run(th);
+    check(s.animation.playing() && s.animation.level == 6 && std::fabs(s.animation.weight - 0.5f) < 1e-4f,
+          "Animate Sim's level 2 x priority and its request weight");
+}
+
 // A Sim walks a synthetic route (scripted Go To Relative Position, then an
 // Animate Sim); SimMotion follows it between ticks.
 static void testScriptedWalk() {
@@ -393,6 +439,7 @@ int main() {
     testAssignLocomotion();
     testAnimateSim();
     testOverlayLifetime();
+    testOverlayLevels();
     testScriptedWalk();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

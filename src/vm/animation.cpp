@@ -463,24 +463,16 @@ Exit animateSim(Context& c) {
     const auto seconds = library(c.vm).seconds(name);
     if (!seconds)
         ++c.vm.animations.missing[name];
-    // A full-body animation takes the place of the full-body overlays (the
-    // chair's sitting idle, an Animate Overlay of the same priority 2):
-    // the chair's get-out plays standing the Sim up, and the Sim does not
-    // keep the sitting pose when it walks away (inferred: the trees never
-    // stop the sitting idle; the game's layers replace one of the same
-    // priority).
-    if (library(c.vm).fullBody(name)) {
-        const size_t before = a.overlays.size();
-        std::erase_if(a.overlays, [&](const Overlay& ov) {
-            return library(c.vm).fullBody(ov.name) &&
-                   std::find(me.carryOverlays.begin(), me.carryOverlays.end(), ov.name) == me.carryOverlays.end();
-        });
-        if (a.overlays.size() != before)
-            ++a.overlaySerial;
-    }
+    // A full-body animation does not take the overlays off: the engine
+    // mixes them with it bone by bone by their levels (animlevel; Mac BV:
+    // nothing in try_animate_sim or AddChoreoAnimRequest touches the other
+    // requests).
     a.name = name;
     ++a.serial;
     a.flipped = (o[8] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0; // the flag in temp 3 replaces the literal one (inferred)
+    a.level = animlevel::ofSim(int8_t(o[12]));
+    const float weight = float(int8_t(o[13])) / 100.0f;
+    a.weight = weight <= 0 || weight > 1 ? 1.0f : weight;
     a.ticksLeft = seconds ? ticksFor(c.vm, *seconds / animationSpeed(c)) : 0;
     a.depth = depth, a.tree = c.frame.behavior, a.node = c.frame.pc;
     a.pendingEvents = library(c.vm).treeEvents(name);
@@ -550,6 +542,7 @@ Exit animateOverlay(Context& c) {
     Overlay* ov = startOverlay(c, target, entry, (o[15] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0);
     if (!ov)
         return Exit::True;
+    ov->level = animlevel::ofOverlay(int8_t(o[11]));
     // It plays once, or temp 1 times with flag 0x20 (-1: until stopped); an
     // animation without length is a pose that holds (the carry poses).
     const float length = library(c.vm).seconds(ov->name).value_or(0) * 1000.0f;
@@ -590,8 +583,10 @@ Exit animateObject(Context& c) {
     }
     // Mirrored with the Sim's get-in from the other side (flag 0x01 of
     // byte 10: the flip in temp 3, as Animate Sim's).
-    if (!startOverlay(c, target, entry, (o[10] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0))
+    Overlay* started = startOverlay(c, target, entry, (o[10] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0);
+    if (!started)
         return Exit::True;
+    started->level = animlevel::Object;
     // Its event tree gets the animation's tree events as it plays, in the
     // starting thread's context, as Animate Sim's (the vehicles drive on
     // "Event Tree - Drive": loop again or stop, which ends "Wait for Vehicle
@@ -622,9 +617,15 @@ Exit animateObject(Context& c) {
 // flipped, 0x02 blended, 0x20 short blend, 0x08 flip flag in temp 3, 0x40
 // normal and flipped), priority s8 at 8. Mode 4 also takes off the carry
 // poses of what a Sim holds (Object::carryOverlays). The full-body
-// animation is left to the Animate Sim waiting for it. The event trees of
+// animation is left to the Animate Sim waiting for it. A priority byte 8
+// p > 0 stops only the requests of levels 2p - 2 and 2p - 1 (the request's
+// level with its low bit cleared, try_animate_stop: Animate Sim's p - 1 and
+// Animate Overlay's). How they go (AbortAnimRequest): with 0x02 they
+// blend out over kBlendTicks, with 0x20 over 0.3 of it, else at once
+// (AnimationState::stoppedFades tells the renderer). The event trees of
 // the overlays stopped get animevent::Stopped (inferred from the idle
-// trees, which clear their "playing" flag on it).
+// trees, which clear their "playing" flag on it; the binary aborts the
+// request with status 3 and its event handler sends the event).
 Exit animateStop(Context& c) {
     const auto& o = c.instruction.operands;
     Object& target = objectAt(c, 3);
@@ -657,9 +658,15 @@ Exit animateStop(Context& c) {
         default: return false;
         }
     };
+    const int priority = int8_t(o[8]);
+    auto ofPriority = [&](const Overlay& x) { return priority <= 0 || (x.level & ~1) == 2 * priority - 2; };
+    // Only those played as flipped as the operand says (byte 2 bit 0, or
+    // temp 3 != 0 with 0x08), both ways with 0x40 (try_animate_stop).
+    const bool flip = (o[2] & 0x08) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0;
+    auto ofFlip = [&](const Overlay& x) { return (o[2] & 0x40) || x.flipped == flip; };
     std::vector<Overlay> stopped;
     for (auto it = a.overlays.begin(); it != a.overlays.end();) {
-        if (stops(*it)) {
+        if (stops(*it) && ofPriority(*it) && ofFlip(*it)) {
             stopped.push_back(std::move(*it));
             it = a.overlays.erase(it);
             if (mode == 0)
@@ -671,6 +678,11 @@ Exit animateStop(Context& c) {
     if (stopped.empty())
         return Exit::True;
     ++a.overlaySerial;
+    const float fade = (o[2] & 0x20) ? kBlendTicks * 0.3f / 1000.0f : (o[2] & 0x02) ? kBlendTicks / 1000.0f : 0.0f;
+    for (const Overlay& x : stopped)
+        a.stoppedFades.emplace_back(x.id, fade);
+    if (a.stoppedFades.size() > 32)
+        a.stoppedFades.erase(a.stoppedFades.begin(), a.stoppedFades.end() - 32);
     for (const Overlay& x : stopped)
         runOverlayEvent(c.vm, x, animevent::Stopped);
     return Exit::True;
@@ -956,11 +968,6 @@ int8_t oeTypeOfRole(const std::string& role) {
     return oetype::Normal;
 }
 
-// How long before its end an overlay starts to blend out (and its event
-// tree gets animevent::BlendOut), animation ticks (inferred: the binary's
-// blend time is a global set at run time; the host fades overlays in 0.2 s).
-constexpr float kOverlayBlendOutTicks = 200;
-
 void tickOverlayEvents(VM& vm) {
     struct Fire {
         int16_t me, codeOwner, stackObject;
@@ -990,7 +997,7 @@ void tickOverlayEvents(VM& vm) {
             // A loop that wraps gets its events again.
             if (!ended && it->pending.empty() && it->loops > 1 && inPlay < it->perTick)
                 it->pending = library(vm).treeEvents(it->name);
-            if (!it->blendOutSent && it->played >= total - kOverlayBlendOutTicks) {
+            if (!it->blendOutSent && it->played >= total - kBlendTicks) {
                 it->blendOutSent = true;
                 fires.push_back({it->me, it->codeOwner, it->stackObject, it->eventTree, animevent::BlendOut});
             }

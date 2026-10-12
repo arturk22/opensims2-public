@@ -125,6 +125,7 @@ private:
             std::string name;
             int priority = 0; // its layer in the actor's player
             double start = 0; // when its animation's frame 0 was (seconds)
+            bool blendingOut = false; // its last play's blend-out started (event 9997)
         };
         std::map<uint32_t, PlayingOverlay> overlays; // by vm::Overlay::id, over the base animation
         // Looping overlays taken off: when, and their frame 0 (a restart of

@@ -36,14 +36,19 @@ std::vector<int> mirrorBones(const Skeleton& skeleton);
 std::vector<Xform> mirrorPose(const Skeleton& skeleton, const std::vector<int>& twins,
                               const std::vector<Xform>& restWorld, const std::vector<Xform>& local);
 
-// Plays animations on one skeleton as layers. Layers are applied over the rest
-// pose in order of the animation's priority, then of start time; each one
-// moves only the bones it keys (all of them for full-body animations, flag
-// bit 0), scaled by its fade weight and bone mask. play() replaces the
-// layers of the same priority with a crossfade, so a base layer (walk, idle)
-// and an overlay of higher priority (an upper-body gesture) mix as in the game
-// (inferred: the game's blending is not decoded; priorities from the ANIM
-// header).
+// Plays animations on one skeleton as layers. Each layer moves only the
+// bones it keys (all of them for full-body animations, flag bit 0), with
+// its fade weight and bone mask, and each bone mixes the layers that move
+// it as the game's channel blender does (cChannelUberOutlet, Mac BV 0xee659c;
+// docs/primitives-mac.md §4): by level, from the highest down, a level
+// whose weights add up to 1 takes the bone whole and a lighter one takes
+// its share of what is left; the layers of one level are averaged by
+// weight (nlerp), and the weights are normalized, so a single layer fading
+// in over nothing already has the whole bone, and a bone no layer moves
+// keeps the base pose. play() replaces the layers of the same priority
+// with a crossfade (the old one blends out as the new one blends in), so
+// a base layer (walk, idle, Animate Sim) and the overlays mix by their
+// levels (Options::level).
 class AnimPlayer {
 public:
     explicit AnimPlayer(const Skeleton* skeleton = nullptr) : skeleton_(skeleton) {}
@@ -75,6 +80,11 @@ public:
         float turn = 0;
         // Seconds into the animation it starts at (its frame 0 at now - phase).
         double phase = 0;
+        // The channel level it mixes at (the game's request priority,
+        // vm::animlevel); -1: its priority.
+        int level = -1;
+        // The request weight its fade is multiplied by (Animate Sim's byte 13 / 100).
+        float weight = 1;
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.
@@ -123,6 +133,8 @@ private:
         std::vector<bool> keyed;
         bool mirror = false;
         float turn = 0;
+        int level = 0;
+        float scale = 1; // Options::weight
     };
     // The layer's pose at `ticks`, turned by its frame (Options::turn).
     std::vector<Xform> layerPose(const Layer& l, float ticks) const;

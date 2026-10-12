@@ -413,6 +413,49 @@ static void testPlayer() {
     check(near(m.advance(2.0), 4.0f, 1e-3f), "root motion: velocity per tick over two seconds");
 }
 
+// The game's channel blender (cChannelUberOutlet): per bone, the highest
+// level whose weights reach 1 takes it, lighter levels share, one level's
+// layers are averaged, and the weights are normalized.
+static void testChannelLevels() {
+    Skeleton s;
+    s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
+    s.bones.push_back({"pelvis", 0, Xform{}, 1, 1});
+    auto angle = [](const Quat& q) { return 2 * std::atan2(q.z, q.w) * 180 / 3.14159265f; };
+    const Animation sit = constantAnim("pelvis", 40, 0, 0), idle = constantAnim("pelvis", 0, 0, 0),
+                    carry = constantAnim("pelvis", 80, 0, 0);
+    {
+        // An idle overlay (level 1) under an Animate Sim (level 2): the Sim's wins.
+        AnimPlayer p(&s);
+        p.play(sit, 0, {.fade = 0, .level = 2});
+        p.play(idle, 0, {.fade = 0, .priority = 101, .level = 1});
+        check(near(angle(p.pose(0.1)[1].q), 40, 1e-2f), "a lower level gives way on shared bones");
+        // A carry pose (level 5) over it wins.
+        p.play(carry, 0.2, {.fade = 0, .priority = 102, .level = 5});
+        check(near(angle(p.pose(0.3)[1].q), 80, 1e-2f), "a higher level takes the bone");
+    }
+    {
+        // Two layers of one level at full weight: averaged.
+        AnimPlayer p(&s);
+        p.play(sit, 0, {.fade = 0, .priority = 101, .level = 3});
+        p.play(idle, 0, {.fade = 0, .priority = 102, .level = 3});
+        check(near(angle(p.pose(0.1)[1].q), 20, 0.1f), "one level's layers are averaged");
+    }
+    {
+        // A lone layer half faded in already has the whole bone (normalized).
+        AnimPlayer p(&s);
+        p.play(sit, 0, {.fade = 1.0f, .priority = 101, .level = 4});
+        check(near(angle(p.pose(0.5)[1].q), 40, 1e-2f), "a lone layer fading in is normalized");
+        // Under a level-6 layer at half weight: half each (0.5 / (0.5 + 0.5)).
+        p.play(carry, 1.0, {.fade = 1.0f, .priority = 102, .level = 6});
+        check(near(angle(p.pose(1.5)[1].q), 60, 0.5f), "a lighter level shares with the ones under it");
+        // The request weight scales the fade.
+        AnimPlayer w(&s);
+        w.play(sit, 0, {.fade = 0, .priority = 101, .level = 2});
+        w.play(carry, 0, {.fade = 0, .priority = 102, .level = 3, .weight = 0.25f});
+        check(near(angle(w.pose(0.1)[1].q), 50, 0.5f), "request weight: 0.25 of the bone over the rest");
+    }
+}
+
 // Body shape morphs from person data 81 (body flags) and 58 (age).
 static void testBodyShape() {
     auto m = bodyShapeMorphs(0x10, 19);
@@ -471,6 +514,7 @@ int main() {
     testMirror();
     testBodyShape();
     testPlayer();
+    testChannelLevels();
     testIk();
     testArmIk();
     testSnaps();

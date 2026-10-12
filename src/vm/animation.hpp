@@ -112,12 +112,49 @@ namespace animevent {
 constexpr int16_t BlendOut = 9997, ActionEnd = 9998, End = 9999, Stopped = -1;
 }
 
+// How the engine mixes what plays on an object (Mac BV, docs/primitives-mac.md
+// §4 "Mistura dos canais"): every animation request is a set of channels,
+// one per bone it keys, and each bone mixes the channels feeding it by
+// their request's priority level, 0-8 (cChannelUberOutlet's base channel
+// blender): from the highest level down, a level whose channels' weights
+// (fade x request weight) add up to 1 takes the bone whole, a lighter one
+// takes its share and leaves the rest to the levels under it, channels of
+// one level are averaged by weight, and the result is normalized. The
+// levels the primitives give (AddChoreoAnimRequest's debug channel names in
+// brackets): Animate Sim 2 x priority byte 12 (0 "sil", 2 "sim", 4 "sih",
+// 6 "siu"; < 0 is 0, > 3 is 6), Animate Overlay 2 x priority byte 11 + 1
+// (1 "ovl", 3 "ovm", 5 "ovh", 7 "ovu"; < 0 is 1, 4 or more is 0 "osl"),
+// Animate Object 2 ("obj"), a route's locomotion 2, 3 or 5 ("rsm", "rom",
+// "roh"). So a Sim's full-body animation does not take the place of the
+// overlays: an overlay of a higher level (a carry pose, priority 2-3) stays
+// over it on the bones both key, and one of a lower level (the idles,
+// priority 0 or -1: level 1) gives way to it.
+namespace animlevel {
+constexpr int8_t SimLow = 0, Object = 2, Walk = 3, Carry = 5;
+// Animate Sim's priority byte (try_animate_sim, BV 0x69dd18).
+inline int8_t ofSim(int priority) { return priority < 0 ? 0 : priority > 3 ? 6 : int8_t(2 * priority); }
+// Animate Overlay's priority byte (try_animate_overlay, BV 0x69f584).
+inline int8_t ofOverlay(int priority) {
+    const int p = priority < 0 ? 0 : priority > 4 ? 4 : priority;
+    return p == 4 ? 0 : int8_t(2 * p + 1);
+}
+} // namespace animlevel
+
+// The engine's blend time (BV __bss 0x2c0ddd0, set to 233.333 animation
+// ticks (ms) by TSSGAnimatable.cpp's static initializer, BV 0x20b4ef0): how
+// long a request blends in and out (CreateTransitionBlend), Animate Stop's
+// "blended Out" (0x02; 0.3 of it with "short blended Out", 0x20; without
+// either a stop is a cut), and how long before its end an overlay starts
+// to blend out (event 9997).
+constexpr float kBlendTicks = 233.33333f;
+
 // An animation playing over an object (Animate Overlay, Animate Object, the
 // carry poses of what a Sim holds).
 struct Overlay {
     std::string name;
     uint32_t id = 0;               // unique per start (the host restarts on a new one)
     int8_t oeType = oetype::Normal;
+    int8_t level = animlevel::Carry; // channel priority (animlevel); carry poses: inferred
     // How many times it plays before it ends (Animate Overlay: once, or temp
     // 1 with flag 0x20); 0 = it holds or loops until stopped (carry poses,
     // Animate Object, temp 1 = -1, animations without length).
@@ -141,6 +178,8 @@ struct AnimationState {
     uint32_t serial = 0;    // bumped each time one starts, so the host restarts it
     // Flipped horizontally: byte 2 flag 0x01, or with byte 8 flag 0x01 temp 3 != 0.
     bool flipped = false;
+    int8_t level = animlevel::SimLow; // its channels' priority (animlevel::ofSim)
+    float weight = 1;                 // the request weight: byte 13 / 100 (0 or outside 0-1: 1)
     int ticksLeft = 0;      // VM ticks until it ends
     bool playing() const { return !name.empty(); }
     // The instruction waiting for it: its thread's stack depth, tree and node.
@@ -160,6 +199,10 @@ struct AnimationState {
     // Stop clears them, and Animate Overlay's end when they have played.
     std::vector<Overlay> overlays;
     uint32_t overlaySerial = 0;
+    // Overlays Animate Stop took off and how long they blend out (seconds:
+    // kBlendTicks with "blended Out", 0.3 of it "short", 0 a cut), for the
+    // renderer; the last few.
+    std::vector<std::pair<uint32_t, float>> stoppedFades;
     uint32_t nextOverlayId = 1;
     // Adds an overlay that holds until stopped and returns it.
     Overlay& addOverlay(const std::string& name) {

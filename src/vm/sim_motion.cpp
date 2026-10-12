@@ -29,6 +29,8 @@ void SimMotion::sample(VM& vm, const Object& o) {
     if (o.animation.playing()) {
         s.animation = o.animation.name;
         s.flipped = o.animation.flipped;
+        s.animLevel = o.animation.level;
+        s.animWeight = o.animation.weight;
     }
     s.serial = o.animation.serial;
     if (s.walking)
