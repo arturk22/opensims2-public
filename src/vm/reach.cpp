@@ -59,11 +59,11 @@ const ObjectFunctions::Entry* functionEntry(VM& vm, const Object& o, uint16_t fu
 // returns false for a free counter in autonomy and leaves the kinds of food
 // it can prepare in temp 2, which "Function Test - Prep" hands to the
 // fridge's meal check trees.
-bool runCheck(Context& c, ObjectId owner, uint16_t guard, std::array<int16_t, 4> args) {
+bool runCheck(Context& c, ObjectId owner, uint16_t guard, std::array<int16_t, 4> args, ObjectId runner = 0) {
     const Object* o = c.vm.object(owner);
     if (!o || !c.vm.resolveTree(*o, guard).second)
         return true;
-    Thread t = c.vm.start(c.thread.me, guard, args, owner, owner);
+    Thread t = c.vm.start(runner ? runner : c.thread.me, guard, args, owner, owner);
     t.temps = c.thread.temps;
     constexpr size_t kMaxTurns = 1000; // sleeps in a check tree count down without waiting
     for (size_t turn = 0; t.status == Thread::Status::Running && turn < kMaxTurns; ++turn)
@@ -121,25 +121,32 @@ Exit runFunctionalTree(Context& c) {
 }
 
 // Find Best Object for Function (0x0E), as the Mac binary's
-// cTSObject::TryFindFunctionalObject (docs/primitives-mac.md §4): function
-// u16 at 0 (STR# 0xC9) -> the object data with the object's value for it
-// and its OBJf entry: prep 31, cook 32, flat surface 33, dispose 36, wash
-// dish 37, eating surface 38, sit 26 ("Sitting Value"), serving surface 61,
-// clean 39 ("dirty level"), garden 64, wash hands 65, repair 15 ("Repair
-// Level"); dry clothes, awareness and lookatTarget have no value (50); the
-// other functions are false at once. Flags u8 at 2: 0x01 only objects
-// outside, 0x02 only inside, 0x04 only in the reference object's room, 0x20
-// only outside it, 0x40 only in my room, 0x08 the reference object is
-// (owner u8 at 3, data u16 at 4) instead of me (missing: error 0x17), 0x10
-// only in its line of sight, 0x80 also objects locked out (object data 25
-// "lockout count"). For every other object with that OBJf entry: my object
-// data 66 "function score" := its value (0: skipped); the entry's check
-// tree, if any, runs and may change it (false or 0: skipped); score = that
-// x 1 / (1 + distance / 5) ("functional half value distance"; distance in
-// tiles plus 10 per level, from the reference object). The best becomes the
-// stack object (true); none: false. Inferred: the Sim's per-object biases
-// (`local_124` 0x134/0x138 in the binary) are 1; "outside" = the room's
-// "outside" value (or no room); objects in use are not told apart.
+// cTSObject::TryFindFunctionalObject (BV 0xe35a94; docs/primitives-mac.md
+// §4): function u16 at 0 (STR# 0xC9) -> the object data with the object's
+// value for it and its OBJf entry: prep 31, cook 32, flat surface 33,
+// dispose 36, wash dish 37, eating surface 38, sit 26 ("Sitting Value"),
+// serving surface 61, clean 39 ("dirty level"), garden 64, wash hands 65,
+// repair 15 ("Repair Level"); dry clothes, awareness and lookatTarget have
+// no value (50); the other functions are false at once. Flags u8 at 2: 0x08
+// the reference is (owner u8 at 3, data u16 at 4) instead of me (missing:
+// error 0x17), 0x10 only in its line of sight, 0x80 also objects locked out
+// (object data 25 "lockout count"); the place filter is the first of 0x01
+// only outside, 0x02 only inside, 0x04 only in the reference's room, 0x20
+// only outside it, 0x40 only in the room in my temp 0. For every other
+// object with that OBJf entry, in order: awareness and lookatTarget skip
+// only locked-out objects; the others skip objects in use (object data 8
+// bit 0x20), locked out, with object data 87 "Disable All Interactions" or
+// object data 82 bit 0x04 (even with 0x80) and burning (object data 8 bit
+// 0x200); my object data 66 "function score" := the object's value (0:
+// skipped); the entry's check tree, if any, runs with the reference as
+// "me", the object as stack object and my temps as parameters, and may
+// change the score (false or 0: skipped); then the place filter; score =
+// that x 1 / (1 + d / 5), d = sqrt(distance^2 + (10 x levels apart)^2) from
+// the reference ("functional half value distance"). The best becomes the
+// stack object (true); none: false. Not done (inferred as no-ops): the
+// rooms the Sim can reach (cTSPerson::GetAccessibleRooms; the router fills
+// it), object data 56 bit 0 and 107 (Bon Voyage only), the Sim's ownership
+// and autonomy biases (0 and 1 with an empty bias table).
 Exit findBestObjectForFunction(Context& c) {
     const auto& o = c.instruction.operands;
     const uint16_t function = le16(&o[0]);
@@ -152,7 +159,8 @@ Exit findBestObjectForFunction(Context& c) {
         return Exit::False;
     const int16_t valueField = kValue[function];
     const bool awareness = function == 23 || function == 25;
-    constexpr int16_t kLockoutCount = 25, kFunctionScore = 66;
+    constexpr int16_t kLockoutCount = 25, kFunctionScore = 66, kPlacementFlags2 = 82, kDisableAllInteractions = 87;
+    constexpr int16_t kInUse = 0x20, kBurning = 0x200;
     constexpr float kHalfValueDistance = 5.0f, kFloorToFloor = 10.0f;
     VM& vm = c.vm;
     const ObjectId meId = c.thread.me;
@@ -177,7 +185,11 @@ Exit findBestObjectForFunction(Context& c) {
         const Object* x = vm.object(id);
         if (!x || id == meId || x->person || !x->position.inWorld())
             continue;
-        if (!(flags & 0x80) && x->data[kLockoutCount] > 0)
+        const int16_t objectFlags = x->data[objdata::Flags];
+        const bool lockedOut = !(flags & 0x80) && x->data[kLockoutCount] > 0;
+        if (awareness ? lockedOut
+                      : (objectFlags & kInUse) || lockedOut || x->data[kDisableAllInteractions] > 0 ||
+                            (x->data[kPlacementFlags2] & 0x04) || (objectFlags & kBurning))
             continue;
         const ObjectFunctions::Entry* e = functionEntry(vm, *x, function);
         if (!e || (!e->action && !e->guard))
@@ -189,7 +201,7 @@ Exit findBestObjectForFunction(Context& c) {
         if (e->guard) {
             std::array<int16_t, 4> temps{};
             std::copy_n(c.thread.temps.begin(), std::min<size_t>(4, c.thread.temps.size()), temps.begin());
-            if (!runCheck(c, id, e->guard, temps) || !vm.object(meId) || c.me().data[kFunctionScore] == 0)
+            if (!runCheck(c, id, e->guard, temps, refId) || !vm.object(meId) || c.me().data[kFunctionScore] == 0)
                 continue;
             x = vm.object(id);
             if (!x)
@@ -198,18 +210,26 @@ Exit findBestObjectForFunction(Context& c) {
         const Object* ref = vm.object(refId);
         if (!ref)
             ref = &c.me();
-        if ((flags & 0x01) && !outside(*x))
-            continue;
-        if ((flags & 0x02) && outside(*x))
-            continue;
-        if ((flags & 0x04) && roomOf(*x) != roomOf(*ref))
-            continue;
-        if ((flags & 0x20) && roomOf(*x) == roomOf(*ref))
-            continue;
-        if ((flags & 0x40) && roomOf(*x) != roomOf(c.me()))
-            continue;
+        // Only the first place flag counts.
+        if (flags & 0x01) {
+            if (!outside(*x))
+                continue;
+        } else if (flags & 0x02) {
+            if (outside(*x))
+                continue;
+        } else if (flags & 0x04) {
+            if (roomOf(*x) != roomOf(*ref))
+                continue;
+        } else if (flags & 0x20) {
+            if (roomOf(*x) == roomOf(*ref))
+                continue;
+        } else if (flags & 0x40) {
+            if (roomOf(*x) != c.thread.temps[0])
+                continue;
+        }
         const float dx = x->position.x - ref->position.x, dy = x->position.y - ref->position.y;
-        const float distance = std::sqrt(dx * dx + dy * dy) + kFloorToFloor * float(std::abs(x->position.level - ref->position.level));
+        const float dz = kFloorToFloor * float(x->position.level - ref->position.level);
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
         const float score = float(c.me().data[kFunctionScore]) / (distance / kHalfValueDistance + 1.0f);
         if (score <= bestScore)
             continue;

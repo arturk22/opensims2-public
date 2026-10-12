@@ -12,6 +12,7 @@
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
 #include "vm/autonomy.hpp"
+#include "vm/engine.hpp"
 #include "vm/interactions.hpp"
 #include "vm/lot.hpp"
 #include "vm/hood_bridge.hpp"
@@ -23,6 +24,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <array>
 #include <filesystem>
 #include <map>
@@ -285,9 +287,42 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
     };
     std::map<vm::ObjectId, std::string> running;
     std::map<vm::ObjectId, std::pair<uint64_t, size_t>> lastMemory; // newest remembered tick, count
+    // S2PKG_FIRE=tick:object: test aid, a Fire set under that object at
+    // that tick, as the food's "Sub - Set Fire" makes one (Create New Object
+    // Instance of the Fire, GUID 0x24C95F99, below the object; here the object
+    // comes in parameter 0).
+    long fireTick = -1;
+    vm::ObjectId fireUnder = 0;
+    if (const char* f = std::getenv("S2PKG_FIRE"); f && std::strchr(f, ':')) {
+        fireTick = std::atol(f);
+        fireUnder = vm::ObjectId(std::atoi(std::strchr(f, ':') + 1));
+    }
     for (long i = 0; i < ticks; ++i) {
+        if (i == fireTick && machine.object(fireUnder)) {
+            Behavior b;
+            b.fileName = "Test - Set Fire";
+            b.signature = 0x8009;
+            b.argCount = 1;
+            Behavior::Instruction in;
+            in.opcode = 0x2A;
+            in.onTrue = {Behavior::TargetKind::True, 0};
+            in.onFalse = {Behavior::TargetKind::False, 0};
+            in.operands = {0x99, 0x5F, 0xC9, 0x24, 0x07, 0x01, 0, 0};
+            b.instructions.push_back(in);
+            const vm::Object& under = *machine.object(fireUnder);
+            code.add(under.group, 0x1FF1, std::move(b));
+            std::array<int16_t, vm::kTempCount> temps{};
+            const std::array<int16_t, 1> params{int16_t(fireUnder)};
+            const bool ok = vm::runOneTickTree(machine, temps, fireUnder, fireUnder, fireUnder, 0x1FF1, params);
+            std::printf("  tick %6ld fire set under %d: %s\n", i, fireUnder, ok ? "true" : "false");
+        }
         machine.tick();
         printWantEvents();
+        // S2PKG_WATCH=id: that object's place and container every 30 ticks.
+        if (static const char* w = std::getenv("S2PKG_WATCH"); w && machine.ticks % 30 == 0)
+            if (const vm::Object* x = machine.object(vm::ObjectId(std::atoi(w))))
+                std::printf("  tick %6llu watch %d at (%.2f, %.2f, %d) dir %d in %d\n", static_cast<unsigned long long>(machine.ticks), x->id,
+                            x->position.x, x->position.y, x->position.level, x->data[vm::objdata::Direction], x->data[vm::objdata::ContainerId]);
         for (vm::ObjectId id : sims) {
             const vm::Object* s = machine.object(id);
             if (!s || !s->person)

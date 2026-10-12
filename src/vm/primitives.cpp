@@ -726,7 +726,10 @@ Exit createObjectInstance(Context& c) {
 // Run Tree by Name (0x1C), as the Mac binary's cTSObject::TryCallNamedTree:
 // name index u8 at 4 (1-based) in STR# 0x12F of the global group (flags u16
 // at 2 & 0x01), of the running code's semi-global (0x02) or of its own
-// group (neither; u16 0 = 0x012F also means the global one); when that
+// group (neither: only the flags choose, as TryCallNamedTree does; u16 0 is
+// 0x012F in 168 instructions, among them the firefighter's "Fire -
+// Extinguishable?", which names its own table's "Interaction - Extinguish -
+// TEST" and got the global table's "CT - Update Dirty State"); when that
 // table is missing or shorter, the others are tried (inferred from the
 // data: the memory objects ask for entry 85 of the global table, "CT - Add
 // Memory", and have none). An empty name is false. The tree is looked up by
@@ -756,7 +759,7 @@ Exit runTreeByName(Context& c) {
     const size_t index = size_t(o[4]) - 1;
     const uint32_t semi = c.frame.group == owner->group ? owner->semiGroup : (c.frame.group == kGlobalGroup ? 0 : c.frame.group);
     std::vector<uint32_t> tables;
-    if ((flags & 0x01) || le16(&o[0]) == kNamedTreeStrings)
+    if (flags & 0x01)
         tables = {kGlobalGroup, c.frame.group, semi};
     else if (flags & 0x02)
         tables = {semi, c.frame.group, kGlobalGroup};
