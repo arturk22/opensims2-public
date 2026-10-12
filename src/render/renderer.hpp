@@ -127,6 +127,16 @@ public:
     // reflections are multiplied by it (allTextureLights), dimming them at night.
     void setEnvironmentLight(simd_float3 rgb) { environment_ = rgb; }
 
+    // The Reflection graphics option (Graphics Rules.sgr "Reflection $On":
+    // reflectionWithExtraViewer -> mirrorReflectionsEnabled): mirrors
+    // (StandardMaterial::mirror) show the scene from a camera reflected in
+    // their plane, rendered first into a screen-sized texture (the game's
+    // ScreenReflection target) and seen through the mirror's own pixels
+    // (its stencil); off, they keep the blank mirror colour. One mirror a
+    // frame reflects (the nearest in view; the others stay blank).
+    void setReflections(bool on) { reflections_ = on; }
+    bool reflections() const { return reflections_; }
+
     // Clock for texture coordinate animations, in seconds; until it is set
     // (or after setting it negative) the renderer uses its own running time.
     void setTime(double seconds) { time_ = seconds; }
@@ -210,6 +220,9 @@ private:
     std::chrono::steady_clock::time_point start_ = std::chrono::steady_clock::now();
     Overlay overlay_;
     SceneHook sceneHook_;
+    bool reflections_ = false;
+    MTL::Texture* reflectionColor_ = nullptr; // owned, the size of the last target
+    MTL::Texture* reflectionDepth_ = nullptr;
 };
 
 } // namespace os2

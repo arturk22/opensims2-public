@@ -36,6 +36,7 @@ enum : uint {
     kTwoSidedLight = 1u << 25, // lit from both sides, wrapped (Sim hair)
     kUnderlayFlat = 1u << 26,  // the underlay's average colour (its smallest mip)
     kWallMask = 1u << 27,      // walls with a door or window: alpha test against the mask (texture 1)
+    kMirror = 1u << 28,        // the reflecting mirror: the reflection texture (18) at this pixel
 };
 
 struct Draw {
@@ -86,28 +87,41 @@ struct Frame {
     float4 eye;      // xyz: camera position
     float4 params;      // x: mix of light map 1 over light map 0, y: time in seconds
     float4 environment; // rgb: the environment light, scaling env cube reflections
+    float4 clip;        // a plane (xyz normal, w offset): what is behind it is clipped when viewport.z is 1
+    float4 viewport;    // xy: the target's size in pixels, z: clip on
 };
 
-struct VertexOut {
-    float4 position [[position]];
-    float3 world;
-    float3 normal;
-    float2 uv;     // as stored
-    float2 baseUv; // with the texture coordinate animation
-    float2 local;  // model-space xy
-    float3 localPos; // model-space position
-    float2 lightUv;
+#define VERTEX_OUT_FIELDS \
+    float4 position [[position]]; \
+    float3 world; \
+    float3 normal; \
+    float2 uv;     /* as stored */ \
+    float2 baseUv; /* with the texture coordinate animation */ \
+    float2 local;  /* model-space xy */ \
+    float3 localPos; /* model-space position */ \
+    float2 lightUv; \
     float4 color;
+
+// What the fragments get.
+struct VertexOut {
+    VERTEX_OUT_FIELDS
+};
+// What the vertices give: the same and the clip distance of the reflection
+// pass (only what is in front of the mirror is drawn into the reflection).
+struct VertexOutClip {
+    VERTEX_OUT_FIELDS
+    float clipDistance [[clip_distance]] [1];
 };
 
-vertex VertexOut vertex_main(uint vid [[vertex_id]],
+vertex VertexOutClip vertex_main(uint vid [[vertex_id]],
                              const device Vertex* vertices [[buffer(0)]],
                              constant Draw& draw [[buffer(1)]],
                              constant Frame& frame [[buffer(2)]]) {
     const Vertex v = vertices[vid];
     float4 world = draw.model * float4(float3(v.position), 1.0);
-    VertexOut out;
+    VertexOutClip out;
     out.position = frame.viewProj * world;
+    out.clipDistance[0] = frame.viewport.z > 0.5 ? dot(float4(world.xyz, 1.0), frame.clip) : 1.0;
     out.world = world.xyz;
     out.normal = (draw.model * float4(float3(v.normal), 0.0)).xyz;
     out.uv = v.uv;
@@ -159,10 +173,13 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               texture2d<float> lightMap1 [[texture(11)]],
                               texture2d<float> detail [[texture(12)]],
                               array<texture2d<float>, 5> moreOverlays [[texture(13)]],
+                              texture2d<float> reflection [[texture(18)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
                               sampler pointSmp [[sampler(3)]]) {
+    if (draw.flags & kMirror) // MirrorReflectionMaterial: the reflected scene seen through the mirror's pixels
+        return float4(reflection.sample(maskSmp, in.position.xy / frame.viewport.xy).rgb, 1.0);
     float4 tex = base.sample(smp, in.baseUv);
     if (draw.flags & kWater) {
         // SinglePassWater: the texture scaled 1 -> 2 (sawtooth) at phases 0

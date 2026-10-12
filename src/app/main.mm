@@ -239,6 +239,7 @@ std::unique_ptr<os2::UserData> gUser;
 std::unique_ptr<os2::MainMenu> gMenu;
 std::unique_ptr<os2::OptionsPanel> gOptions;
 os2::GameSettings gSettings;
+
 std::optional<os2::Scene> gPendingScene;
 // A family Create-a-Sim just wrote into the neighborhood: selected in the
 // family bin once the neighborhood is back (HoodMode::familyCreated).
@@ -313,6 +314,15 @@ std::optional<std::string> argument(NSString* name) {
         if ([args[i] isEqualToString:name])
             return std::string(args[i + 1].UTF8String);
     return std::nullopt;
+}
+
+// Whether mirrors reflect: the Reflection graphics option (gSettings), or
+// --reflections on|off for this run.
+bool reflectionsOn() {
+    static const std::optional<std::string> forced = argument(@"--reflections");
+    if (forced)
+        return *forced != "off" && *forced != "0";
+    return gSettings.reflections;
 }
 
 // OS2_PERF=1: timings of the load phases and of the frames on stdout
@@ -2183,6 +2193,7 @@ void cinematicSnapshot(os2::Renderer& renderer, double now) {
     os2::ScreenFxLayer::Params keep = gScreenFxParams;
     gScreenFxParams.snapshotAlpha = 0; // the frame as it was, without an older snapshot
     gScreenFxParams.flash[3] = 0;
+    renderer.setReflections(reflectionsOn());
     const os2::RgbaImage img = renderer.capture(gLastFrameW, gLastFrameH, *gLastFrameView, simd_make_float4(0, 0, 0, 1));
     gScreenFxParams = keep;
     gScreenFx->setSnapshot(img);
@@ -3632,6 +3643,7 @@ void unloadScene() {
     // A fullscreen movie (app/movie_host.hpp) in place of the scene.
     if (os2::movieHostDraw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable))
         return;
+    _renderer->setReflections(reflectionsOn());
     _renderer->draw((__bridge MTL::RenderPassDescriptor*)pass, (__bridge CA::MetalDrawable*)drawable, frame);
     if (perfOn()) {
         const CFTimeInterval spent = CACurrentMediaTime() - perf.began - perf.waited;
@@ -4085,6 +4097,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         updateLotView(*_viewDelegate.renderer, false);
     const os2::FrameView fv{_view.camera->view(), _view.camera->projection(float(w) / float(h))};
     const MTLClearColor c = _view.clearColor;
+    _viewDelegate.renderer->setReflections(reflectionsOn());
     const auto img = _viewDelegate.renderer->capture(w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), 1));
     os2::writePng(file, img);
     std::printf("opensims2: wrote %s\n", file.c_str());
@@ -4575,6 +4588,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 const os2::FrameView fv = cinematicView({view.camera->view(), view.camera->projection(float(w) / float(h))}, at,
                                                         float(w) / float(h));
                 MTLClearColor c = view.clearColor;
+                _viewDelegate.renderer->setReflections(reflectionsOn());
                 auto img = _viewDelegate.renderer->capture(
                     w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), float(c.alpha)));
                 std::string file = *shot;
@@ -4804,6 +4818,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         const os2::FrameView fv{view.camera->view(), view.camera->projection(float(w) / float(h))};
         MTLClearColor c = view.clearColor;
         gUiScale = 1;
+        renderer.setReflections(reflectionsOn());
         const auto img = renderer.capture(w, h, fv, simd_make_float4(float(c.red), float(c.green), float(c.blue), 1));
         os2::writePng(*shot, img);
         std::printf("opensims2: wrote %s\n", shot->c_str());

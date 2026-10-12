@@ -338,10 +338,12 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
             out.maskAlphaOnly = flag("osMaskAlphaOnly", false);
         }
     } else if (type == "SimpleMirrorReflection") {
-        // mirrors.matShad: with $mirrorReflectionsEnabled false (config.matShad's
-        // setting; the Mac binary has the name but we have not seen it turned
-        // on) the mirror quad is BlankMirrorMaterial: one flat colour,
-        // colorScalar (0.5, 0.6, 0.75), no light, no texture.
+        // mirrors.matShad: with $mirrorReflectionsEnabled false (the Reflection
+        // graphics option off: docs/shaders-mac.md 9) the mirror quad is
+        // BlankMirrorMaterial: one flat colour, colorScalar (0.5, 0.6, 0.75),
+        // no light, no texture. With it on (MirrorReflectionMaterial) the
+        // renderer shows the scene reflected in it (StandardMaterial::mirror).
+        out.mirror = true;
         out.lighting = false;
         diffuse = {0.5f, 0.6f, 0.75f, 1};
         out.specular = {0, 0, 0};

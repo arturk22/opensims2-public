@@ -483,8 +483,22 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
   placa alta põem `Reflection $On`, as média/baixa `$Off`. Ou seja, o
   espelho reflete de verdade quando a opção de reflexos do jogo está
   ligada. Rodada 12: desenhamos o `BlankMirrorMaterial` (antes o quad
-  saía branco, material desconhecido sem textura); o reflexo de verdade
-  fica para depois (`r12-cas-espelho-masculino.jpg`).
+  saía branco, material desconhecido sem textura; `r12-cas-espelho-masculino.jpg`).
+  Rodada 13: com a opção **Reflection** ligada (`GameSettings::reflections`,
+  opção `reflection` do usuário, ligada por padrão — inferido: um Mac de
+  hoje é placa de classe alta; `--reflections on|off` força numa execução)
+  o renderizador faz o reflexo: escolhe o espelho mais perto da câmera que
+  está em vista, desenha antes a cena numa textura do tamanho da tela (o
+  alvo `ScreenReflection`) com a câmera refletida no plano do quad
+  (`view · R`, R = I − 2nnᵀ com a translação −2dn; enrolamento invertido;
+  `clip_distance` corta o que está atrás do espelho; os espelhos ficam de
+  fora) e no passo normal o quad do espelho mostra essa textura no próprio
+  pixel (o stencil do jogo vira "só os pixels do quad"). Só um espelho
+  reflete por quadro; os outros ficam com a cor do `BlankMirrorMaterial`
+  (simplificação nossa). Partículas e o overlay não entram no reflexo.
+  `r13-espelho-cas-reflexo.jpg` (CAS desligado/ligado),
+  `r13-espelho-lote-reflexo.jpg` (`N001_Lot82`, a porta vermelha no
+  espelho do banheiro).
 
 ---
 

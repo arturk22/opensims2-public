@@ -169,6 +169,7 @@ GameSettings GameSettings::load(const UserData& user) {
         s.muted[size_t(g)] = user.optionBool(std::string("mute.") + groupKey(g), false);
     }
     s.edgeScrolling = user.optionBool("edgeScrolling", true);
+    s.reflections = user.optionBool("reflection", true);
     return s;
 }
 
@@ -178,6 +179,7 @@ void GameSettings::save(UserData& user) const {
         user.setOption(std::string("mute.") + groupKey(g), muted[size_t(g)]);
     }
     user.setOption("edgeScrolling", edgeScrolling);
+    user.setOption("reflection", reflections);
 }
 
 } // namespace os2

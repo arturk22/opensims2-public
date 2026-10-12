@@ -149,6 +149,9 @@ struct StandardMaterial {
     int alphaOrder = 0;
     bool hair = false; // a Sim's hair (SimSkin or SimStandardMaterial with "hair" in the base texture's name)
     bool visible = true; // false for "Null" and "WallMask" materials (parts the game does not draw)
+    // SimpleMirrorReflection: a mirror's quad, drawn as the blank mirror
+    // colour unless the renderer's reflections are on (Renderer::setReflections).
+    bool mirror = false;
     bool alphaReplicate = false; // stdMatBaseTextureAlphaReplicate: colour = texture alpha
     bool textureColor = true;    // false: the base texture only gives alpha (TextureAlpha)
     bool clampU = false, clampV = false; // stdMatBaseTextureAddressingU/V = clamp

@@ -71,6 +71,11 @@ struct GameSettings {
     std::array<float, 4> volume{1, 1, 1, 1};
     std::array<bool, 4> muted{false, false, false, false};
     bool edgeScrolling = true;
+    // The Graphics options' Reflection (Graphics Rules.sgr "Reflection": on
+    // for the high-end card classes, off for the middle and low ones;
+    // docs/shaders-mac.md 9): mirrors reflect the scene. On by default
+    // (inferred: a Mac that runs this is a high-end class). Option "reflection".
+    bool reflections = true;
 
     static GameSettings load(const UserData& user);
     void save(UserData& user) const;

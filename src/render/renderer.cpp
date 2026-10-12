@@ -63,6 +63,7 @@ enum : uint32_t {
     kTwoSidedLight = 1u << 25, // lit from both sides (Sim hair: the inside of a hairdo's shell)
     kUnderlayFlat = 1u << 26,  // the underlay's smallest mip (its average colour)
     kWallMask = 1u << 27,      // walls: alpha test against a mask over the face (planes mask / maskV)
+    kMirror = 1u << 28,        // the mirror reflecting this frame: the reflection texture (18) at the pixel
 };
 constexpr size_t kMaxOverlays = 8; // a face's composited layers: eyes, brows, makeup, beard...
 
@@ -104,7 +105,10 @@ struct Frame {
     simd_float4 eye;
     simd_float4 params;      // x: mix of light map slot 1 over slot 0, y: time (s)
     simd_float4 environment; // rgb: the environment light (env cubes)
+    simd_float4 clip;        // a plane (xyz normal, w offset) that keeps what is on its positive side, when viewport.z is 1
+    simd_float4 viewport;    // xy: the target's size in pixels, z: clip on
 };
+constexpr size_t kFrameStride = 256; // the frame buffer holds the frame, then the reflected one at this offset
 
 simd_float4x4 identity() { return matrix_identity_float4x4; }
 
@@ -231,6 +235,7 @@ struct Renderer::Material {
     bool clamp = false; // base texture clamped instead of tiled
     int layer = 0;
     int alphaOrder = 0; // Sim hair layers (StandardMaterial::alphaOrder)
+    bool mirror = false; // StandardMaterial::mirror
     MTL::CullMode cull = MTL::CullModeBack;
     StandardMaterial anim; // texture coordinate animation (texAnim and its parameters)
 };
@@ -246,6 +251,7 @@ struct Renderer::Part {
     MTL::Buffer* indices = nullptr;
     uint32_t indexCount = 0;
     simd_float3 center{0, 0, 0}; // bounding box centre in model space (blended parts are sorted by it)
+    simd_float3 normal{0, 0, 1}; // a mirror's: its vertices' mean normal, model space
     Material material;
     MTL::Texture* mask = nullptr; // owned, with kMasked
 };
@@ -367,7 +373,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     whiteCube_ = whiteCubeTexture(device_);
     grey_ = rgbaTexture(RgbaImage{1, 1, {128, 128, 128, 255}});
     for (auto& f : frames_)
-        f = device_->newBuffer(sizeof(Frame), MTL::ResourceStorageModeShared);
+        f = device_->newBuffer(2 * kFrameStride, MTL::ResourceStorageModeShared);
     for (auto& b : lightBuffers_)
         b = device_->newBuffer(sizeof(GpuLightSet) * kMaxLightSets, MTL::ResourceStorageModeShared);
 
@@ -393,6 +399,10 @@ Renderer::~Renderer() {
     for (int i = 0; i < kFramesInFlight; ++i)
         dispatch_semaphore_signal(sema(inFlight_));
     models_.clear();
+    if (reflectionColor_)
+        reflectionColor_->release();
+    if (reflectionDepth_)
+        reflectionDepth_->release();
     for (auto& [name, tex] : textures_)
         if (tex)
             tex->release();
@@ -504,6 +514,7 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     mat.blend = sm.blend;
     mat.depthWrite = sm.depthWrite;
     mat.layer = sm.layer;
+    mat.mirror = sm.mirror;
     mat.alphaOrder = sm.alphaOrder;
     mat.clamp = sm.clampU || sm.clampV;
     mat.alphaRef = sm.alphaRef;
@@ -656,6 +667,19 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
                                        MTL::ResourceStorageModeShared);
         p.indexCount = uint32_t(mesh.triangles.size());
         p.center = (lo + hi) * 0.5f;
+        if (mat.mirror) {
+            simd_float3 n = 0;
+            for (const auto& vn : mesh.normals)
+                n += simd_make_float3(vn[0], vn[1], vn[2]);
+            if (simd_length(n) < 1e-6f && mesh.triangles.size() >= 3) { // no normals: the first triangle's
+                const auto& a = mesh.positions[mesh.triangles[0]];
+                const auto& b = mesh.positions[mesh.triangles[1]];
+                const auto& c = mesh.positions[mesh.triangles[2]];
+                n = simd_cross(simd_make_float3(b[0] - a[0], b[1] - a[1], b[2] - a[2]),
+                               simd_make_float3(c[0] - a[0], c[1] - a[1], c[2] - a[2]));
+            }
+            p.normal = simd_length(n) > 1e-6f ? simd_normalize(n) : simd_make_float3(0, 0, 1);
+        }
         p.material = mat;
         out->parts.push_back(p);
     }
@@ -857,18 +881,6 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     dispatch_semaphore_t sem = sema(inFlight_);
     cmd->addCompletedHandler([sem](MTL::CommandBuffer*) { dispatch_semaphore_signal(sem); });
 
-    MTL::RenderCommandEncoder* enc = cmd->renderCommandEncoder(pass);
-    enc->setFrontFacingWinding(MTL::WindingCounterClockwise);
-    enc->setVertexBuffer(frames_[frame_], 0, 2);
-    enc->setFragmentBuffer(frames_[frame_], 0, 2);
-    enc->setFragmentBuffer(lightBuffers_[size_t(frame_)], 0, 3);
-    enc->setFragmentSamplerState(sampler_, 0);
-    enc->setFragmentSamplerState(maskSampler_, 1);
-    enc->setFragmentSamplerState(cubeSampler_, 2);
-    enc->setFragmentSamplerState(pointSampler_, 3);
-    enc->setFragmentTexture(lightMap0, 10);
-    enc->setFragmentTexture(lightMap1, 11);
-
     // Draw order: by material layer (stdMatLayer x 8, +7 for blended
     // parts), opaque parts in submission order, blended ones back to front
     // by the distance of their bounding box centre from the eye.
@@ -906,44 +918,140 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         return a.blended && a.alphaOrder < b.alphaOrder;
     });
 
-    const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
-    for (const auto& item : items) {
-        const Part& part = *item.part;
-        const Material& m = part.material;
-        enc->setDepthStencilState(m.blend == StandardMaterial::Blend::None || m.depthWrite ? depthWrite_ : depthRead_);
-        enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha      ? alphaBlend_
-                                    : m.blend == StandardMaterial::Blend::Additive ? additive_
-                                    : m.blend == StandardMaterial::Blend::AddNoSrcAlpha ? addOne_
-                                    : m.blend == StandardMaterial::Blend::Premultiplied ? premultiplied_
-                                    : m.blend == StandardMaterial::Blend::Multiply ? multiply_
-                                                                                   : opaque_);
-        enc->setCullMode(m.cull);
-        auto [uv0, uv1] = uvTransform(m.anim, t);
-        uv0 *= m.uvScale, uv1 *= m.uvScale;
-        const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
-        Draw d{item.inst->transform, m.color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
-               m.maskV, m.alphaRef, m.flags, uint32_t(set)};
-        enc->setVertexBytes(&d, sizeof d, 1);
-        enc->setFragmentBytes(&d, sizeof d, 1);
-        enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
-        enc->setFragmentSamplerState(m.clamp ? clampSampler_ : sampler_, 0);
-        enc->setFragmentTexture(m.texture, 0);
-        enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
-        for (size_t l = 0; l < m.layers.size(); ++l) // textures 2-4, overlay 3 at 9, overlays 4-8 at 13-17
-            enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(l < 3 ? 2 + l : l == 3 ? 9 : 9 + l));
-        enc->setFragmentTexture(m.height ? m.height : white_, 5);
-        enc->setFragmentTexture(m.envCube ? m.envCube : whiteCube_, 6);
-        enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);
-        enc->setFragmentTexture(m.edgeRamp ? m.edgeRamp : white_, 8);
-        enc->setFragmentTexture(m.detail ? m.detail : white_, 12);
-        enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
-                                   part.indices, NS::UInteger(0));
+    MTL::Texture* target = pass->colorAttachments()->object(0)->texture();
+    const uint32_t targetW = target ? uint32_t(target->width()) : 1, targetH = target ? uint32_t(target->height()) : 1;
+    f->viewport = simd_make_float4(float(targetW), float(targetH), 0, 0);
+    f->clip = simd_make_float4(0, 0, 1, 0);
+
+    // The mirror that reflects this frame: the nearest one in view, its
+    // plane turned towards the eye (MirrorReflectionMaterial's camera is
+    // reflected in it and clipped to its front).
+    const Item* mirror = nullptr;
+    simd_float4 plane{0, 0, 1, 0};
+    if (reflections_ && target) {
+        float best = INFINITY;
+        for (const auto& item : items) {
+            if (!item.part->material.mirror)
+                continue;
+            const simd_float4x4& m = item.inst->transform;
+            const simd_float3 c = simd_make_float3(simd_mul(m, simd_make_float4(item.part->center, 1)));
+            const simd_float4 clipC = simd_mul(f->viewProj, simd_make_float4(c, 1));
+            if (clipC.w <= 0 || std::abs(clipC.x) > clipC.w * 1.3f || std::abs(clipC.y) > clipC.w * 1.3f)
+                continue;
+            simd_float3 n = simd_normalize(simd_make_float3(simd_mul(m, simd_make_float4(item.part->normal, 0))));
+            if (simd_dot(n, eye - c) < 0)
+                n = -n;
+            const float d2 = simd_length_squared(c - eye);
+            if (d2 < best)
+                best = d2, mirror = &item, plane = simd_make_float4(n, -simd_dot(n, c));
+        }
     }
+
+    const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+    // `reflected`: the pass into the reflection texture (mirrors left out).
+    auto drawItems = [&](MTL::RenderCommandEncoder* enc, bool reflected) {
+        enc->setVertexBuffer(frames_[frame_], reflected ? kFrameStride : 0, 2);
+        enc->setFragmentBuffer(frames_[frame_], reflected ? kFrameStride : 0, 2);
+        enc->setFragmentBuffer(lightBuffers_[size_t(frame_)], 0, 3);
+        enc->setFragmentSamplerState(sampler_, 0);
+        enc->setFragmentSamplerState(maskSampler_, 1);
+        enc->setFragmentSamplerState(cubeSampler_, 2);
+        enc->setFragmentSamplerState(pointSampler_, 3);
+        enc->setFragmentTexture(lightMap0, 10);
+        enc->setFragmentTexture(lightMap1, 11);
+        enc->setFragmentTexture(mirror && !reflected ? reflectionColor_ : white_, 18);
+        for (const auto& item : items) {
+            const Part& part = *item.part;
+            const Material& m = part.material;
+            if (reflected && m.mirror)
+                continue;
+            enc->setDepthStencilState(m.blend == StandardMaterial::Blend::None || m.depthWrite ? depthWrite_ : depthRead_);
+            enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha      ? alphaBlend_
+                                        : m.blend == StandardMaterial::Blend::Additive ? additive_
+                                        : m.blend == StandardMaterial::Blend::AddNoSrcAlpha ? addOne_
+                                        : m.blend == StandardMaterial::Blend::Premultiplied ? premultiplied_
+                                        : m.blend == StandardMaterial::Blend::Multiply ? multiply_
+                                                                                       : opaque_);
+            enc->setCullMode(m.cull);
+            auto [uv0, uv1] = uvTransform(m.anim, t);
+            uv0 *= m.uvScale, uv1 *= m.uvScale;
+            const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
+            const uint32_t flags = m.flags | (!reflected && &item == mirror ? uint32_t(kMirror) : 0u);
+            Draw d{item.inst->transform, m.color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
+                   m.maskV, m.alphaRef, flags, uint32_t(set)};
+            enc->setVertexBytes(&d, sizeof d, 1);
+            enc->setFragmentBytes(&d, sizeof d, 1);
+            enc->setVertexBuffer(part.slots[0] ? part.slots[size_t(frame_)] : part.vertices, 0, 0);
+            enc->setFragmentSamplerState(m.clamp ? clampSampler_ : sampler_, 0);
+            enc->setFragmentTexture(m.texture, 0);
+            enc->setFragmentTexture(part.mask ? part.mask : white_, 1);
+            for (size_t l = 0; l < m.layers.size(); ++l) // textures 2-4, overlay 3 at 9, overlays 4-8 at 13-17
+                enc->setFragmentTexture(m.layers[l] ? m.layers[l] : white_, NS::UInteger(l < 3 ? 2 + l : l == 3 ? 9 : 9 + l));
+            enc->setFragmentTexture(m.height ? m.height : white_, 5);
+            enc->setFragmentTexture(m.envCube ? m.envCube : whiteCube_, 6);
+            enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);
+            enc->setFragmentTexture(m.edgeRamp ? m.edgeRamp : white_, 8);
+            enc->setFragmentTexture(m.detail ? m.detail : white_, 12);
+            enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
+                                       part.indices, NS::UInteger(0));
+        }
+    };
+
+    if (mirror) {
+        // The reflected frame: world -> mirrored world -> the camera.
+        const simd_float3 n = simd_make_float3(plane);
+        const float dd = plane.w;
+        simd_float4x4 r = matrix_identity_float4x4;
+        for (int c = 0; c < 3; ++c)
+            for (int k = 0; k < 3; ++k)
+                r.columns[c][k] -= 2 * n[k] * n[c];
+        r.columns[3] = simd_make_float4(-2 * dd * n, 1);
+        auto* rf = reinterpret_cast<Frame*>(static_cast<char*>(frames_[frame_]->contents()) + kFrameStride);
+        *rf = *f;
+        rf->view = simd_mul(view.view, r);
+        rf->viewProj = simd_mul(view.projection, rf->view);
+        rf->eye = simd_mul(r, f->eye);
+        rf->clip = plane;
+        rf->viewport.z = 1;
+        if (!reflectionColor_ || reflectionColor_->width() != targetW || reflectionColor_->height() != targetH) {
+            if (reflectionColor_)
+                retired_.push_back({reflectionColor_, kFramesInFlight + 1});
+            if (reflectionDepth_)
+                retired_.push_back({reflectionDepth_, kFramesInFlight + 1});
+            MTL::TextureDescriptor* cd =
+                MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormat(colorFormat_), targetW, targetH, false);
+            cd->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+            cd->setStorageMode(MTL::StorageModePrivate);
+            reflectionColor_ = device_->newTexture(cd);
+            MTL::TextureDescriptor* dd2 =
+                MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormat(depthFormat_), targetW, targetH, false);
+            dd2->setUsage(MTL::TextureUsageRenderTarget);
+            dd2->setStorageMode(MTL::StorageModePrivate);
+            reflectionDepth_ = device_->newTexture(dd2);
+        }
+        MTL::RenderPassDescriptor* rp = MTL::RenderPassDescriptor::renderPassDescriptor();
+        auto* ca = rp->colorAttachments()->object(0);
+        ca->setTexture(reflectionColor_);
+        ca->setLoadAction(MTL::LoadActionClear);
+        ca->setStoreAction(MTL::StoreActionStore);
+        ca->setClearColor(pass->colorAttachments()->object(0)->clearColor());
+        rp->depthAttachment()->setTexture(reflectionDepth_);
+        rp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+        rp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+        rp->depthAttachment()->setClearDepth(1.0);
+        MTL::RenderCommandEncoder* renc = cmd->renderCommandEncoder(rp);
+        renc->setFrontFacingWinding(MTL::WindingClockwise); // the reflection turns the windings around
+        drawItems(renc, true);
+        renc->endEncoding();
+    }
+
+    MTL::RenderCommandEncoder* enc = cmd->renderCommandEncoder(pass);
+    enc->setFrontFacingWinding(MTL::WindingCounterClockwise);
+    drawItems(enc, false);
     if (sceneHook_)
         sceneHook_(enc, view.view, f->viewProj);
-    if (overlay_)
-        if (MTL::Texture* target = pass->colorAttachments()->object(0)->texture())
-            overlay_(enc, uint32_t(target->width()), uint32_t(target->height()));
+    if (overlay_ && target)
+        overlay_(enc, targetW, targetH);
     enc->endEncoding();
     return cmd;
 }
