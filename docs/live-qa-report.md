@@ -260,3 +260,35 @@ Dica: duplo clique na miniatura de um Sim no painel esquerdo centra a câmera ne
 
 - Clicar em "Aplicar Mudanças" do Gráficos no lote também cria um ícone na fila ("queue icon added" no log): o clique parece passar para o mundo por baixo da janela/da barra de Opções.
 - A janela de Gráficos aparece parcialmente sob a barra de Opções do lote (ordem de desenho).
+
+# Rodada 14, passada 9
+
+Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`, `build/` do `main` em `80a5f38`, mais novo que o commit). N002_Lot10 (`--vm --ui live`), bairro N002, e a noite (`--lighting night`).
+Ambiente: os diálogos do macOS ("opensims2 quit unexpectedly" e "s2pkg would like to access files") cobriram o centro da tela o tempo todo (não clicados). Truque que funcionou: redimensionar a janela por System Events para 600x640 em x=2 (o diálogo fica à direita), mas a interface do jogo não escala e a metade direita dos painéis é cortada (a barra de Construir e a janela de Gráficos ficam cortadas); capturar com x negativo dá imagem errada (não usar). O Dock aparece na captura se a janela passa de y≈100 com 752 de altura. O `qa` não tem tecla, foi feito um `k` (CGEventPost) novo. Só parte da lista cabia.
+
+| Passo | Resultado |
+|-------|-----------|
+| Andar: Vir Aqui no gramado | passa: o Sim sai da casa e chega ao ponto; em trajeto longo anda muito mais rápido que andando (corrida, ~25 tiles em ~3 s) |
+| Andar: cantos suaves, partida/parada por ângulo, mistura de ciclos, parada ao ser bloqueado | não conclusivo: com capturas soltas (≥0,15 s) e o Sim atrás do diálogo não dá para julgar mistura; nenhum T-pose, salto ou deslize visível em ~25 quadros |
+| Andar: "Vir Saltitando Aqui" / "Correr Aqui" | falha/não oferecido: o pie do chão só mostra "Vir Aqui" (e "Entrar", ver abaixo) |
+| Diálogos: janela simples feita em código (Salvar? ao apertar Esc no lote) | passa: moldura, título "Salvar", texto, três botões Sim/Não/Cancelar; Esc fecha (Cancelar, log `dialog "Salvar": Cancelar`); Return/espaço não testados (sairiam do lote) |
+| Diálogos: telefone (listas de ligar/convidar/festa), guarda-roupa pelo armário, ícone do diálogo | não testados: o telefone e os armários estão no andar de cima (nível 2/3 do N002_Lot10) e o clique neles abriu o pie "Trocar para..." (ver bugs) |
+| Opções: janela de Gráficos abre acima da barra, "Aplicar Mudanças" visível | passa (`docs/screenshots` não guardada, janela de 600 px corta a direita) |
+| Opções: clique em Aplicar não chega ao mundo | passa: nenhum "queue icon added"/"go here" novo no log |
+| Opções: Esc fecha primeiro o pie | passa (Esc fechou o pie de Vir Aqui e o do bar, sem abrir "Salvar") |
+| Opções: Esc fecha a janela de Gráficos primeiro, depois "Salvar" | passa (Esc, Esc... a barra de Opções ainda ficou aberta depois de duas Esc; só a terceira abriu "Salvar") |
+| Opções: listas "Tamanho da Tela" e "Freqüência de Atualização" | vazias (caixas sem itens) |
+| Construir: piscina só em retângulos, Ctrl-arrastar apaga, caixa ciano, arco sem cerca, tiles da pista | não testado: não achei a ferramenta de piscina (a gota d'água do terreno não criou nada com arrastar) e o painel fica cortado em janela pequena |
+| Bairro: Ver Amigos (arcos/tubos verdes) | passa: dois arcos verdes do lote Silva para os outros lotes, com os lotes destacados (`docs/screenshots/r14-qa9-ver-amigos.jpg`) |
+| Bairro: cartão do lote com a família | passa: a família de corpo inteiro (Johnny, Silva etc.) sem cortes; as miniaturas do painel esquerdo no lote mostram só a cabeça, bem enquadradas |
+| Bairro: barra de famílias | mostra a família de corpo inteiro (como no jogo) |
+| Calçamento à noite | passa: a calçada fica cinza escura, no mesmo tom do gramado/paredes (não branca) |
+| Dormir no N001_Lot11, espelho do N001_Lot82 e Reflexo off, lote vazio novo, telhado no Construir, passo 32 do tutorial | não testados (tempo; o espelho do lote 82 está no andar de cima, (28.5, 29.5, nível 2)) |
+
+## Bugs achados (não corrigidos)
+
+- Clicar em objetos do andar de cima (armário, telefone) com o andar 2 visível (Page Up) abre o pie "Trocar para..." (o do Sim) em vez do objeto. Repro: `--hood N002 --hood-lot 10 --vm --ui live`, Page Up, clique no armário escuro do quarto (nível 3 pelo `s2pkg lot-run --list`). Pode ser um Sim de baixo pego pelo raio ou o objeto de cima não pego; não investigado.
+- O texto da entrada do pie do chão varia: "Vir Aqui" ou "Entrar" na mesma TTA 2 do "Destination - For Go Here & Shoo" (log `queued "Entrar" (... TTA 2)`), mesmo com o Sim dentro do lote; "Vir Saltitando"/"Correr" nunca saem. Repro: selecionar o Johnny, clicar no gramado a leste da varanda.
+- Um objeto pequeno parado no gramado (ao lado da árvore a leste, objeto 173) pega os cliques ("no interactions available (its tooltip)") e atrapalha o Vir Aqui perto dele; não vi o que é (possível destino que sobrou).
+- Duas Esc seguidas com a barra de Opções aberta não fecharam a barra; só a terceira abriu "Salvar".
+- Listas "Tamanho da Tela"/"Freqüência de Atualização" vazias na janela de Gráficos do lote.
