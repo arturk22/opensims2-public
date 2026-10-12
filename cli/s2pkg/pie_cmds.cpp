@@ -9,6 +9,7 @@
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
+#include "formats/lot_arrivals.hpp"
 #include "formats/resindex.hpp"
 #include "formats/ui_resources.hpp"
 #include "vm/hood_bridge.hpp"
@@ -72,7 +73,10 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
     vm::textTables() = [&texts](uint32_t group, uint32_t instance) { return texts.table(group, instance); };
     DbpfPackage pkg(lotFile);
     const Lot lot = Lot::load(pkg);
-    const LotObjects saved = LotObjects::load(pkg);
+    LotObjects saved = LotObjects::load(pkg);
+    // A family that just moved in comes by its first day's "reset lot", as
+    // in the app and s2pkg autonomy (formats/lot_arrivals.hpp).
+    const LotArrivals arrivals = addArrivingSims(saved, lot, lotFile, &index, false);
     vm::VM machine(code);
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = 20000;
@@ -84,6 +88,11 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
         vm::bindLotSims(machine);
     // The saved state (motives, tree stacks, clock), or every Init with --init.
     vm::startSavedLot(machine, load, saved, fromInit);
+    if (hood && arrivals.firstDay) {
+        const vm::ResetLotResult r = vm::runResetLot(machine, arrivals.arriving);
+        std::printf("first day: %zu \"reset lot\" trees, %zu Sims arrive\n", r.trees, r.sims.size());
+    }
+    vm::runLotLoaded(machine); // the lot is ready: "CT - Lot Loaded" (the move-in scene)
     if (motives)
         vm::setAllMotives(machine, int16_t(*motives));
     // S2PKG_NO_DECAY=1: test aid, the motives do not decay (a pregnancy runs
@@ -309,6 +318,9 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                 for (const auto& e2 : menu)
                     if (!e2.debug && e2.available())
                         ok.push_back(&e2);
+                if (std::stoi(f[2]) < 0) // a negative entry lists the menu at that tick
+                    for (size_t k = 0; k < ok.size(); ++k)
+                        std::printf("  tick %d: %d's menu [%zu] %s\n", i, other, k, ok[k]->name.c_str());
                 if (size_t k = size_t(std::stoi(f[2])); k < ok.size()) {
                     auto q2 = vm::interactionFromPie(machine, *ok[k]);
                     q2->pushedBy = other;
