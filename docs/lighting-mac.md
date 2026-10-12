@@ -123,6 +123,13 @@ A troca é interpolada (`cLerpLightSet::UpdateLights(t)`, tempos de
 
 Não conferido: se o valor de `skylight` é guardado já × força (inferido:
 `(1,1,1) 0.5` → 0,5; senão a subtração daria cores negativas no `day`).
+Rodada 15: `TSCreateLightsFromLightingStateWithAmbient` (BV `0xd741dc`) e
+`FindIllumFromLightingState` (`0x702ae0`) usam a cor de `+0x154` e as
+direções `+0x20 + i·0x1C` como estão (escala 1 no ambiente, nenhuma
+normalização); o que o comando do parser guarda (força multiplicada?
+direção normalizada?) depende do tratador de `skylight`/`light`, que não
+foi achado (o registro dos comandos fica em `0x1ba4e80…`; o de `modifiers`
+é `0x1ba4da4`).
 
 ## 4. Luzes das salas (binário)
 
