@@ -869,3 +869,10 @@ lote nem fica sob uma rua.
   o Sim manda a mensagem `0xEC1AAC03` com o lote (o controle de estado salva
   lote e família no catálogo); flag `0x40` do lote e família fora (BV,
   STR# 0xD2) são de expansão.
+- **Caixa de Lotes & Casas** (`cTSWinProcLotCatalog`): o botão `0xC` sob a
+  seta da bandeja ("Excluir", BV `0x454bec`) apaga o lote escolhido depois
+  de perguntar STR# 0x83 #15 ("Tem certeza de que quer remover este lote?",
+  #24 "Excluir a família %s e o lote dela?" com família); os filtros
+  `0xC400` Ocupado, `0xC500` Desocupado e `0xC600` Todos são o
+  `LoadLots(1|2|0)` (BV `0x457738`: com família ou não). No app:
+  `r11-bairro-excluir-da-caixa.jpg`.

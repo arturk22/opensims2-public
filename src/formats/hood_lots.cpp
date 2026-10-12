@@ -611,6 +611,13 @@ std::vector<BinLot> loadLotBin(const fs::path& catalogDir) {
     return out;
 }
 
+bool deleteBinLot(const BinLot& lot, const fs::path& forbidden) {
+    if (under(lot.file, forbidden))
+        return false;
+    std::error_code ec;
+    return fs::remove(lot.file, ec);
+}
+
 uint32_t nextLotId(const Neighborhood& hood) {
     uint32_t id = 1;
     for (const auto& l : hood.lots)

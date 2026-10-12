@@ -291,6 +291,17 @@ void HoodMode::carryOut(const HoodBins::Request& r) {
             onCreateFamily(folder);
         return;
     }
+    if (r.kind == K::DeleteBinLot) {
+        const auto& bin = ui_->bins().lotBin();
+        if (r.lot < bin.size()) {
+            const bool ok = hood::deleteBinLot(bin[r.lot], gameDir_);
+            std::printf("opensims2: %s %s from the Lots & Houses bin\n", ok ? "deleted" : "could not delete",
+                        bin[r.lot].file.filename().string().c_str());
+            std::fflush(stdout);
+            ui_->bins().setLotBin(hood::loadLotBin(hood::playerLotCatalog(folder, gameDir_ / "TSData/Res/UserData/LotCatalog")));
+        }
+        return;
+    }
     if (r.kind == K::PlaceLot) {
         placeNamed(armed_, ui_->bins().placeLotName(), ui_->bins().placeLotZone());
         return;

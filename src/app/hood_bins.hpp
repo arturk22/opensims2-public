@@ -66,8 +66,8 @@ public:
     enum class Tool { None, MoveIn, Evict, Bulldoze, PlaceEmpty, PlaceBin, MoveLot, ToBin };
     // What a click asked for: the neighborhood mode carries it out.
     struct Request {
-        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot } kind = Kind::None;
-        uint32_t family = 0, lot = 0;
+        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot, DeleteBinLot } kind = Kind::None;
+        uint32_t family = 0, lot = 0; // DeleteBinLot: lot = the bin index
     };
     // The Lots & Houses bin's lots (formats/hood_lots.hpp) and the tools'
     // picks: the empty lot size (0-9, buttons 0xD001-0xD00A), the bin lot.
@@ -164,11 +164,11 @@ private:
 
     enum class Hit { Request, Family, Expand, Prev, Next, Create, Evict, Bulldoze, Accept, Cancel, Solid, LotsPanel,
                      EmptySize, BinItem, BinExpand, BinPrev, BinNext, MoveLotTool, ToBinTool,
-                     PlaceResidential, PlaceCommunity, PlaceAccept, PlaceCancel };
+                     PlaceResidential, PlaceCommunity, PlaceAccept, PlaceCancel, BinFilter, BinDelete };
     const RgbaImage* binPicture(size_t index);
     std::vector<hood::BinLot> binLots_;
     std::map<size_t, std::unique_ptr<RgbaImage>> binPictures_;
-    int lotsPanel_ = 0, emptySize_ = -1, binLot_ = -1;
+    int lotsPanel_ = 0, emptySize_ = -1, binLot_ = -1, binFilter_ = 0;
     size_t binPage_ = 0;
     bool binExpanded_ = false;
     struct Target {

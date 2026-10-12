@@ -150,7 +150,11 @@ struct BinLot {
     uint32_t catalogId = 0; // cx_<id>
     LotInfo base;           // width/depth/roads/creation front/name
     int64_t price = 0;      // GetLotFileInfo of the lot file
+    std::string familyName; // the family that moved to the bin with the lot (empty: none)
 };
+// cTSLotCatalog's remove (cTSWinProcLotCatalog::onBtnClickedID 0xC): the lot
+// file leaves the bin.
+bool deleteBinLot(const BinLot& lot, const std::filesystem::path& forbidden = {});
 // The player's bin folder for a neighborhood folder (<user>/Neighborhoods/<P>
 // -> <user>/LotCatalog; empty if the folder is not in Neighborhoods), filled
 // from `gameCatalog` the first time.

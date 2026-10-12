@@ -461,6 +461,10 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
                 (show ? hk.show : hk.hide).insert(e);
         if (const UiElement* e = root.child(0xC100))
             hk.buttonState[e] = lotsPanel_ == 0 ? 2 : 1;
+        if (binPanel)
+            for (auto [id, f] : {std::pair{0xC400u, 1}, {0xC500u, 2}, {0xC600u, 0}})
+                if (const UiElement* e = binPanel->child(id))
+                    hk.buttonState[e] = binFilter_ == f ? 2 : 1;
         if (const UiElement* e = root.child(0xD100))
             hk.buttonState[e] = lotsPanel_ == 1 ? 2 : 1;
         if (const UiElement* e = root.child(0xA000))
@@ -495,8 +499,15 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
         if (lotsPanel_ == 1 && emptyPanel)
             for (uint32_t k = 0; k < uint32_t(hood::kEmptyLotSizes); ++k)
                 target(emptyPanel->child(0xD001 + k), Hit::EmptySize, k);
+        if (lotsPanel_ == 0 && binPanel) {
+            target(binPanel->child(0xC400), Hit::BinFilter, 1);
+            target(binPanel->child(0xC500), Hit::BinFilter, 2);
+            target(binPanel->child(0xC600), Hit::BinFilter, 0);
+        }
         if (lotsPanel_ == 0 && binView) {
             const uint32_t base = binExpanded_ ? 0x2000 : 0x1000;
+            if (const UiElement* holder = binView->child(base + 0xA))
+                target(holder->child(0xC), Hit::BinDelete);
             target(binView->child(base + 4), Hit::BinPrev);
             target(binView->child(base + 5), Hit::BinNext);
             target(binView->child(base + 9), Hit::BinExpand);
@@ -511,10 +522,15 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
                 const float cw = w / float(cols), ch = h / float(rows);
                 const float iw = std::floor(std::min(cw - 4, (ch - 4) * 4 / 3)), ih = std::floor(iw * 3 / 4);
                 const size_t per = size_t(cols * rows);
-                const size_t pages = std::max<size_t>(1, (binLots_.size() + per - 1) / per);
+                // LoadLots(filter): 0 all, 1 occupied, 2 unoccupied.
+                std::vector<size_t> shown;
+                for (size_t i = 0; i < binLots_.size(); ++i)
+                    if (binFilter_ == 0 || (binFilter_ == 1) == !binLots_[i].familyName.empty())
+                        shown.push_back(i);
+                const size_t pages = std::max<size_t>(1, (shown.size() + per - 1) / per);
                 binPage_ = std::min(binPage_, pages - 1);
-                for (size_t k = 0; k < per && binPage_ * per + k < binLots_.size(); ++k) {
-                    const size_t idx = binPage_ * per + k;
+                for (size_t k = 0; k < per && binPage_ * per + k < shown.size(); ++k) {
+                    const size_t idx = shown[binPage_ * per + k];
                     const float ix = x0 + float(k % cols) * cw + (cw - iw) / 2;
                     const float iy = y0 + float(k / cols) * ch + (ch - ih) / 2;
                     UiElement pic;
@@ -667,7 +683,8 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
             const Request r = dialog_ ? dialog_->onAccept : Request{};
             dialog_.reset();
             if (r.kind == Request::Kind::MoveIn || r.kind == Request::Kind::MoveOut ||
-                r.kind == Request::Kind::Bulldoze || r.kind == Request::Kind::ToBin)
+                r.kind == Request::Kind::Bulldoze || r.kind == Request::Kind::ToBin ||
+                r.kind == Request::Kind::DeleteBinLot)
                 tool_ = Tool::None, selected_ = 0;
             return r.kind == Request::Kind::None ? Request{Request::Kind::Consumed} : r;
         }
@@ -701,6 +718,23 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
                 pickBinLot(t.value);
             return {Request::Kind::Consumed};
         case Hit::BinExpand: binExpanded_ = !binExpanded_; return {Request::Kind::Consumed};
+        case Hit::BinFilter:
+            binFilter_ = int(t.value), binPage_ = 0;
+            return {Request::Kind::Consumed};
+        case Hit::BinDelete: {
+            // cTSWinProcLotCatalog::onBtnClickedID 0xC: the picked lot,
+            // asked with STR# 0x83 #15 (#24 with its family).
+            if (binLot_ < 0 || binLot_ >= int(binLots_.size()))
+                return {Request::Kind::Consumed};
+            const hood::BinLot& b = binLots_[size_t(binLot_)];
+            const std::string q = b.familyName.empty()
+                                      ? text(0x83, 14, "Are you sure you want to delete this lot?")
+                                      : fill(text(0x83, 23, "Delete the %s family and its lot?"), b.familyName);
+            Request r{Request::Kind::DeleteBinLot};
+            r.lot = uint32_t(binLot_);
+            openQuestion(q, r);
+            return {Request::Kind::Consumed};
+        }
         case Hit::BinPrev:
             if (binPage_ > 0)
                 --binPage_;
