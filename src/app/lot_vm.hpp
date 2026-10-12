@@ -78,6 +78,13 @@ public:
     // it walks, climbs or idles instead), cued at `at` seconds.
     std::function<void(int16_t id, SimActor& actor, const Animation* animation, double at)> onSimAnimation;
 
+    // Where a Sim in another object's containment slot sits (a chair's,
+    // a bed's: the container's slot bone, app/vm_objects.hpp), nothing when
+    // it is in none; the host's. Such a Sim is drawn there, facing the
+    // slot's way: its animations (the chair's get-in, which starts from the
+    // routing slot beside it) are made in the slot's frame.
+    std::function<std::optional<Xform>(int16_t id)> seat;
+
     // Runs the VM up to `seconds` (whole ticks) and places and animates the
     // attached actors for that moment (one tick behind the VM, so that
     // there is a tick to interpolate towards).

@@ -253,8 +253,11 @@ void LotSimulation::sampleAll(double at) {
             continue;
         try {
             const Animation& anim = b.actor->animation(index_, want);
-            const bool flipped = s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() && s.flipped;
-            b.actor->cue(at, anim, {.fade = fade, .loop = loop, .mirror = flipped});
+            const bool animated = s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty();
+            // Animate Sim's animations play in their own frame: turned by
+            // their header heading (a chair's get-in from its corner).
+            b.actor->cue(at, anim, {.fade = fade, .loop = loop, .mirror = animated && s.flipped,
+                                    .turn = animated ? anim.headingOffset : 0.0f});
             if (onSimAnimation)
                 onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
         } catch (const std::exception& e) {
@@ -341,6 +344,13 @@ void LotSimulation::updateScene(double seconds) {
         const float z = b.motion.z(t, [this](int level, float fx, float fy) { return floorHeight(level, fx, fy); });
         b.actor->position = {x, y, z + b.zOffset};
         b.actor->heading = b.motion.turn(dt);
+        if (seat && !b.motion.current().onStep)
+            if (const auto at = seat(b.id)) {
+                const Vec3 f = at->rotate({0, 1, 0});
+                b.actor->position = at->t;
+                b.actor->heading = std::atan2(-f[0], f[1]);
+                b.motion.setHeading(b.actor->heading);
+            }
         b.actor->rootMotion = false;
         if (const vm::Object* o = vm_->object(b.id)) {
             const auto target = lookTarget(*o);

@@ -282,6 +282,27 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     // tile off without turning it (N001_Lot36). As FreeSO's VMSlotParser
     // (inferred for the Sims 2).
     if (slot.flags & 0x1000) {
+        // At the bones of the model (flag 0x20000): each bone's point with
+        // its facing, as the slots that stand there (the chairs' get-out
+        // snaps the Sim to the corner bone it gets up at: snapping it to the
+        // chair's own point left it standing inside the chair).
+        if ((slot.unknown10 & 0x20000) && ox == 0 && oy == 0) {
+            const std::vector<SlotBone> bones = slotBones(slot, target);
+            if (!bones.empty()) {
+                const double yaw = (90.0 - 45.0 * objDir) * M_PI / 180.0;
+                for (const SlotBone& b : bones) {
+                    const float px = cx + float(b.x * std::cos(yaw) - b.y * std::sin(yaw));
+                    const float py = cy + float(b.x * std::sin(yaw) + b.y * std::cos(yaw));
+                    if (out.goals.empty())
+                        out.onTarget = int(std::floor(px)) == centre.x && int(std::floor(py)) == centre.y;
+                    out.goals.push_back({int(std::floor(px)), int(std::floor(py)), 0});
+                    out.points.push_back({px, py});
+                    out.facings.push_back((objDir + b.facing) % 8);
+                    out.multi.push_back(b.index);
+                }
+                return out;
+            }
+        }
         int turnBy = 0;
         if (slot.facing >= 0)
             turnBy = slot.facing % 8;
@@ -1755,12 +1776,18 @@ Exit goToRoutingSlot(Context& c) {
     int index = scope == 0 ? c.get(kOwnerParam, int16_t(data))
               : scope == 1 && (flags & 0x02) ? c.thread.temps[0]
                                               : int(data);
-    if (c.frame.routeSlot >= 0) // mid-instruction: as read before the route's trees (they change the temps)
+    const bool starting = c.frame.routeSlot < 0;
+    if (!starting) // mid-instruction: as read before the route's trees (they change the temps)
         index = c.frame.routeSlot;
     c.frame.routeSlot = int16_t(index);
     const Slots::Slot& slot = routingSlot(c.vm, *target, scope == 2, index);
     const ObjectId id = target->id;
-    noteRouteSlot(c.me(), index, id);
+    // Once, as the walk starts: each tick of the walk runs the instruction
+    // again, and resetting person data 38 then lost the side of the chair
+    // the planned way had chosen (the Sims sat sideways on the chairs they
+    // reached from their south-west bone).
+    if (starting)
+        noteRouteSlot(c.me(), index, id);
     const bool ignoreFootprint = flags & 0x04;
     return walk(
         c, id,

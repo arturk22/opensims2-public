@@ -118,6 +118,7 @@ struct Overlay {
     int loops = 0;
     float played = 0, perTick = 0, length = 0; // animation ticks (ms at speed 1)
     bool blendOutSent = false;
+    bool flipped = false; // played mirrored (Animate Object/Overlay's flip: a chair pulled out to the Sim's side)
     // Its event tree (Animate Overlay's u16 at 4) and where it runs: the
     // thread that started it.
     uint16_t eventTree = 0;
@@ -196,6 +197,13 @@ public:
     // "_anim") lasts, or nothing if there is no such resource.
     std::optional<float> seconds(const std::string& name);
     bool exists(const std::string& name) { return seconds(name).has_value(); }
+    // Whether the animation moves the whole body (ANIM flags bit 0: the
+    // chairs' sitting idles, the get-ins; not the carry poses nor the faces).
+    bool fullBody(const std::string& name) {
+        seconds(name);
+        auto it = fullBody_.find(name);
+        return it != fullBody_.end() && it->second;
+    }
     // Locomotion speed of the animation (ANIM "velocity", distance per
     // animation tick, a tick being 1 ms) in tiles per second (a tile is a
     // metre); 0 if it does not move or does not exist.
@@ -221,6 +229,7 @@ private:
     ResourceIndex* index_ = nullptr;
     std::unordered_map<std::string, std::optional<float>> cache_;
     std::unordered_map<std::string, float> speeds_;
+    std::unordered_map<std::string, bool> fullBody_;
     std::unordered_map<std::string, std::optional<int>> events_;
     std::unordered_map<std::string, std::vector<std::pair<int, int16_t>>> treeEvents_;
 };

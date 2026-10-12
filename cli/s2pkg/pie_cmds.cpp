@@ -333,8 +333,10 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             for (const auto& [oid, ob] : machine.objects())
                 if (ob.person && ob.animation.name != lastAnim[oid]) {
                     lastAnim[oid] = ob.animation.name;
-                    std::printf("  tick %d: %d %s plays \"%s\" at (%.2f, %.2f) dir %d\n", i + 1, oid, nameOf(ob).c_str(),
-                                ob.animation.name.c_str(), ob.position.x, ob.position.y, ob.data[vm::objdata::Direction]);
+                    std::printf("  tick %d: %d %s plays \"%s\"%s at (%.2f, %.2f) dir %d in %d/%d\n", i + 1, oid,
+                                nameOf(ob).c_str(), ob.animation.name.c_str(),
+                                ob.animation.flipped && ob.animation.playing() ? " flipped" : "", ob.position.x, ob.position.y, ob.data[vm::objdata::Direction],
+                                ob.data[vm::objdata::ContainerId], ob.data[vm::objdata::SlotNumber]);
                 }
         if (!before && now->activeInteraction >= 0)
             std::printf("  tick %d: running \"%s\"\n", i + 1, now->queue[size_t(now->activeInteraction)].name.c_str());

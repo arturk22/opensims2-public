@@ -7,6 +7,8 @@
 #include "formats/skeleton.hpp"
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <memory>
 
@@ -90,6 +92,9 @@ std::vector<VM::SlotBone> VM::slotBones(const Slots::Slot& slot, const Object& t
         if (std::hypot(fwd[0], fwd[1]) > 1e-3f)
             turn = int(std::lround(std::atan2(-fwd[0], fwd[1]) / (M_PI / 4)));
         out.push_back({x.t[0], x.t[1], x.t[2], (((8 - turn) % 8) + 8) % 8, index});
+        if (std::getenv("OS2_DEBUG_SLOTBONES"))
+            std::fprintf(stderr, "slot bone %s #%d at (%.2f, %.2f, %.2f) fwd (%.2f, %.2f) facing +%d\n", bone.c_str(), index,
+                         x.t[0], x.t[1], x.t[2], fwd[0], fwd[1], out.back().facing);
     }
     return out;
 }

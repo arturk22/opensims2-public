@@ -68,6 +68,9 @@ public:
     // second towards the motion's direction (walking) or the VM's direction.
     float turn(float dt, float turnSpeed = 7.0f);
     float heading() const { return heading_; }
+    // Where the Sim faces now when the host placed it some other way (in a
+    // chair's slot), so that it turns on from there.
+    void setHeading(float h) { heading_ = h; }
 
 private:
     State previous_, current_;

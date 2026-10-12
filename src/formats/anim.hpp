@@ -160,8 +160,10 @@ float animationTime(const Animation& a, float seconds, bool loop);
 // blended by its value at `ticks`. Updates `local` in place. `goals`: the
 // local transforms the goal and pole nodes are read from (the animation's
 // own pose when `local` is a blend of several layers); default `local`.
+// `modelFrame`: the frame of the goals keyed in model space (an animation
+// played turned by its header heading: AnimPlayer::Options::turn).
 void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ticks, std::vector<Xform>& local,
-             const std::vector<Xform>* goals = nullptr);
+             const std::vector<Xform>* goals = nullptr, const Xform& modelFrame = Xform{});
 
 // Snap events (ANIM event type 1005): "snapObjectRoot=<object>:__<model>__"
 // and "snapTargetSlot=<skeleton>:__<bone>__" or "Oblivion". They move a

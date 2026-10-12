@@ -333,7 +333,7 @@ Xform parentWorld(const Skeleton& s, const std::vector<Xform>& world, int bone) 
 } // namespace
 
 void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, std::vector<Xform>& local,
-             const std::vector<Xform>* goals) {
+             const std::vector<Xform>* goals, const Xform& modelFrame) {
     if (target.ikChains.empty())
         return;
     std::unordered_map<uint32_t, int> byCrc;
@@ -385,7 +385,11 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
         return virtualNode(crc);
     };
     auto inFrame = [&](const std::vector<Xform>& world, int frame, const Xform& node) {
-        return (frame >= 0 ? world[size_t(frame)] : Xform{}).then(node);
+        // The model root (or the skeleton's top node, auskel) is the
+        // animation's frame: turned with it.
+        if (frame < 0 || s.bones[size_t(frame)].parent < 0)
+            return modelFrame.then(frame >= 0 ? world[size_t(frame)] : Xform{}).then(node);
+        return world[size_t(frame)].then(node);
     };
 
     for (const auto& chain : target.ikChains) {

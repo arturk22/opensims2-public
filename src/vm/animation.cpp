@@ -32,6 +32,7 @@ std::optional<float> AnimationLibrary::seconds(const std::string& name) {
         try {
             const Animation a = loadAnimation(*index_, name);
             out = float(a.duration) / Animation::kTicksPerSecond;
+            fullBody_[name] = a.flags & 1;
         } catch (const std::exception&) {
         }
     }
@@ -440,6 +441,21 @@ Exit animateSim(Context& c) {
     const auto seconds = library(c.vm).seconds(name);
     if (!seconds)
         ++c.vm.animations.missing[name];
+    // A full-body animation takes the place of the full-body overlays (the
+    // chair's sitting idle, an Animate Overlay of the same priority 2):
+    // the chair's get-out plays standing the Sim up, and the Sim does not
+    // keep the sitting pose when it walks away (inferred: the trees never
+    // stop the sitting idle; the game's layers replace one of the same
+    // priority).
+    if (library(c.vm).fullBody(name)) {
+        const size_t before = a.overlays.size();
+        std::erase_if(a.overlays, [&](const Overlay& ov) {
+            return library(c.vm).fullBody(ov.name) &&
+                   std::find(me.carryOverlays.begin(), me.carryOverlays.end(), ov.name) == me.carryOverlays.end();
+        });
+        if (a.overlays.size() != before)
+            ++a.overlaySerial;
+    }
     a.name = name;
     ++a.serial;
     a.flipped = (o[8] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0; // the flag in temp 3 replaces the literal one (inferred)
@@ -471,7 +487,7 @@ Exit animateSim(Context& c) {
 // two of that name already play: try_animate_overlay looks the name up
 // twice (AnimRequestByNameAndID) and starts nothing more then, so an idle
 // started again while the last one blends out does not pile up.
-Overlay* startOverlay(Context& c, Object& target, const std::string& entry) {
+Overlay* startOverlay(Context& c, Object& target, const std::string& entry, bool flipped = false) {
     std::string name = target.person ? resolveListAnimation(c.vm, target, entry) : parseItem(split(entry, ',')[0]).name;
     if (name.empty() || name == ".")
         throw VMError("Animation name is empty string.");
@@ -482,6 +498,7 @@ Overlay* startOverlay(Context& c, Object& target, const std::string& entry) {
         return nullptr;
     Overlay& o = target.animation.addOverlay(name);
     o.oeType = oeTypeOfRole(parseItem(split(entry, ',')[0]).role);
+    o.flipped = flipped;
     if (ov.size() > 8)
         ov.erase(ov.begin());
     ++target.animation.overlaySerial;
@@ -507,7 +524,8 @@ Exit animateOverlay(Context& c) {
     checkLoops(c);
     Object& target = objectAt(c, 6);
     const std::string entry = listEntry(c, target, o[9], animationIndex(c, 0, o[2] & 0x04));
-    Overlay* ov = startOverlay(c, target, entry);
+    // Flipped as Animate Sim's: flag 0x01 of byte 15 takes temp 3 (inferred as there).
+    Overlay* ov = startOverlay(c, target, entry, (o[15] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0);
     if (!ov)
         return Exit::True;
     // It plays once, or temp 1 times with flag 0x20 (-1: until stopped); an
@@ -536,7 +554,9 @@ Exit animateObject(Context& c) {
     const std::string entry = listEntry(c, target, animlist::Object, animationIndex(c, 0, o[2] & 0x04));
     if (trim(entry).empty() || trim(entry) == ".")
         return Exit::True; // the lists keep empty slots for objects with nothing to play there (inferred)
-    if (!startOverlay(c, target, entry))
+    // Mirrored with the Sim's get-in from the other side (flag 0x01 of
+    // byte 10: the flip in temp 3, as Animate Sim's).
+    if (!startOverlay(c, target, entry, (o[10] & 0x01) ? c.thread.temps[3] != 0 : (o[2] & 0x01) != 0))
         return Exit::True;
     // Its event tree gets the animation's tree events as it plays, in the
     // starting thread's context, as Animate Sim's (the vehicles drive on

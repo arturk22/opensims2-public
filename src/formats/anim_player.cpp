@@ -136,6 +136,7 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.priority = o.priority >= 0 ? o.priority : (o.mask.empty() ? 0 : int(anim.priority));
     l.mask = o.mask;
     l.mirror = o.mirror;
+    l.turn = o.turn;
     if (l.mirror)
         prepareMirror();
     if (skeleton_ && l.target) {
@@ -182,6 +183,20 @@ float AnimPlayer::weight(const Layer& l, double now) const {
     return w;
 }
 
+std::vector<Xform> AnimPlayer::layerPose(const Layer& l, float ticks) const {
+    std::vector<Xform> p = samplePose(*l.target, *skeleton_, ticks);
+    if (l.turn != 0) {
+        // The bones under the skeleton's top node (auskel's root_trans).
+        const Xform turn{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}};
+        for (size_t i = 0; i < p.size() && i < skeleton_->bones.size(); ++i) {
+            const int parent = skeleton_->bones[i].parent;
+            if (parent >= 0 && skeleton_->bones[size_t(parent)].parent < 0)
+                p[i] = turn.then(p[i]);
+        }
+    }
+    return p;
+}
+
 std::vector<Xform> AnimPlayer::pose(double now) {
     if (!skeleton_)
         return {};
@@ -195,7 +210,8 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         if (w <= 0)
             continue;
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
-        std::vector<Xform> p = samplePose(*l.target, *skeleton_, ticks);
+        std::vector<Xform> p = layerPose(l, ticks);
+        const Xform frame{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}};
         std::vector<float> mask(skeleton_->bones.size(), 0.0f);
         for (size_t i = 0; i < mask.size(); ++i)
             mask[i] = (i < l.keyed.size() && l.keyed[i] ? 1.0f : 0.0f) *
@@ -204,7 +220,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
             // IK first (the chains name their own side), then the whole pose flipped.
             if (!l.target->ikChains.empty()) {
                 const std::vector<Xform> goals = p;
-                applyIk(*l.target, *skeleton_, ticks, p, &goals);
+                applyIk(*l.target, *skeleton_, ticks, p, &goals, frame);
             }
             p = mirrorPose(*skeleton_, twins_, restWorld_, p);
             std::vector<float> flipped(mask.size());
@@ -225,9 +241,9 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         if (w <= 0)
             continue;
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0)), l.loop);
-        const std::vector<Xform> goals = samplePose(*l.target, *skeleton_, ticks);
+        const std::vector<Xform> goals = layerPose(l, ticks);
         std::vector<Xform> solved = out;
-        applyIk(*l.target, *skeleton_, ticks, solved, &goals);
+        applyIk(*l.target, *skeleton_, ticks, solved, &goals, Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}});
         blendPose(out, solved, w, l.mask);
     }
     return out;

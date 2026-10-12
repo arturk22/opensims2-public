@@ -58,6 +58,12 @@ public:
         std::vector<float> mask; // per bone, empty = every bone it keys
         int priority = -1;       // -1: base layer 0 without a mask, else the animation's own
         bool mirror = false;     // flipped horizontally (left and right swapped)
+        // Radians about +Z the animation's frame is turned from the model's:
+        // an a2o animation is made facing its header heading (Animation::
+        // headingOffset: 45 degrees for a chair's "getIn-SE", which starts
+        // from the routing slot at the chair's front corner, facing that
+        // way, and ends turned back by -45 degrees, seated facing the chair).
+        float turn = 0;
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.
@@ -105,7 +111,10 @@ private:
         std::vector<float> mask;
         std::vector<bool> keyed;
         bool mirror = false;
+        float turn = 0;
     };
+    // The layer's pose at `ticks`, turned by its frame (Options::turn).
+    std::vector<Xform> layerPose(const Layer& l, float ticks) const;
     void prepareMirror();
     std::vector<int> twins_;          // mirrorBones of the skeleton (empty until a flipped layer plays)
     std::vector<Xform> restWorld_;

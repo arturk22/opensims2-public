@@ -636,6 +636,10 @@ Exit snap(Context& c) {
     me.position = {goals.points[best][0], goals.points[best][1], goals.level};
     if (goals.facings[best] >= 0)
         me.data[objdata::Direction] = int16_t(goals.facings[best]);
+    if (std::getenv("OS2_DEBUG_SNAP"))
+        std::fprintf(stderr, "t%llu snap of %d to %d (mode %u slot %u flags %X): goal %zu of %zu at (%.2f, %.2f) dir %d -> %d\n",
+                     (unsigned long long)c.vm.ticks, me.id, target.id, where, index, flags, best, goals.goals.size(),
+                     me.position.x, me.position.y, fromDir, me.data[objdata::Direction]);
     // A multi-tile object moves whole: its other parts keep their places
     // around me, turned with me (the carpool's car snapping down the street
     // to its "slot_travel_drive" bone; inferred, as placement moves groups).
