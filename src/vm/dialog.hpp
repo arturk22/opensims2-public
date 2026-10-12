@@ -151,6 +151,12 @@ struct Dialog {
     // casuals 0x002/0x004, 11 underwear 0x040, 13 0x1000).
     int16_t outfitSim = 0;
     uint32_t outfitCategory = 0;
+    // The aspiration dialog (cTSWinProcSetAspirationDialog, type 24): the
+    // neighbor (ID in the stack object) and the aspiration picked, as person
+    // data 46's bits (1 romance, 2 family, 4 fortune, 0x10 popularity, 0x20
+    // knowledge; 0 none yet: OK is off, Validate).
+    int16_t aspirationNeighbor = 0;
+    int16_t aspiration = 0;
     int timeout = 0;   // operand byte 10: a text notification's lifetime in seconds (0: until closed)
     int priority = 0;  // operand byte 9: a text notification's priority
     // A blocking dialog's time limit (ms; 0: none): it then takes its last

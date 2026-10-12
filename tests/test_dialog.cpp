@@ -215,6 +215,24 @@ static void testSpecialDialogs() {
     vm.run(te);
     check(te.result && vm.enteredText == "Rex", "text entry: OK keeps the typed text");
 
+    // Aspiration (24): the neighbor in the stack object; OK sets person data 46.
+    dlg(0x1108, 24);
+    Thread as = vm.start(me.id, 0x1108, {}, 12);
+    vm.run(as);
+    check(vm.dialogs[me.id].aspirationNeighbor == 12 && vm.dialogs[me.id].text == "Bia" && vm.dialogs[me.id].female,
+          "aspiration: the neighbor, its name and gender");
+    vm.dialogs[me.id].aspiration = 0x10;
+    vm.dialogs[me.id].answer = 0;
+    vm.run(as);
+    check(as.result && vm.neighbors[12].personData[46] == 0x10, "aspiration: OK sets person data 46");
+    // Wardrobe (17): temp 0 = 4 (formal) -> outfit category 0x020, the Sim running it.
+    dlg(0x1109, 17);
+    Thread wd = vm.start(me.id, 0x1109);
+    wd.temps[0] = 4;
+    vm.run(wd);
+    check(vm.dialogs[me.id].outfitCategory == 0x020 && vm.dialogs[me.id].outfitSim == me.id, "wardrobe: formal wear");
+    vm.dialogs.erase(me.id);
+
     // "Return" (byte 7 bit 0): queued, the tree goes on at once.
     dlg(0x1105, 0, 0x01);
     Thread ret = vm.start(me.id, 0x1105);

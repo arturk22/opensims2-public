@@ -564,6 +564,16 @@ void acceptDialog(Context& c, Dialog& d) {
                 nb->firstName = name;
         }
         break;
+    case DialogClass::SetAspiration:
+        // The button sets the neighbor's person data 46 (vtable 0x44) and
+        // OnOk the Sim's on the lot, if it is there.
+        if (d.aspiration) {
+            if (Neighbor* n = vm.neighbor(d.aspirationNeighbor))
+                n->personData[46] = d.aspiration;
+            if (Object* sim = vm.neighborSim(d.aspirationNeighbor); sim && sim->person)
+                sim->person->data[46] = d.aspiration;
+        }
+        break;
     case DialogClass::PhoneServices:
     case DialogClass::PhoneNeighbors:
     case DialogClass::PhoneParty:
@@ -779,6 +789,15 @@ Exit dialog(Context& c) {
         }
         break;
     }
+    case DialogClass::SetAspiration:
+        // SetParams (BV 0x3cdb08): the neighbor whose ID is the stack object;
+        // no aspiration picked yet.
+        d.buttons = {uiText(0x8E, 1, "OK")};
+        d.aspirationNeighbor = c.frame.stackObject;
+        d.text = neighborName(vm, d.aspirationNeighbor); // the "%s" of the question
+        if (const auto* data = personDataOf(vm, d.aspirationNeighbor))
+            d.female = (*data)[65] == 1;
+        break;
     default: // the other special dialogs: OK or cancel for now
         d.buttons = {button(o[3], 1), button(o[0], 2)};
         break;

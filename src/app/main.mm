@@ -1094,6 +1094,13 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             d.iconObject = gPie->sim();
         if (kind == "0c")
             d.continueOthers = true;
+        if (d.cls.cls == os2::vm::DialogClass::SetAspiration) { // 24: the selected Sim's aspiration
+            if (const os2::vm::Object* o = m.object(gPie->sim()); o && o->person) {
+                d.aspirationNeighbor = o->person->data[os2::vm::persondata::NeighborId];
+                d.female = o->person->data[65] == 1;
+                d.text = os2::vm::displayName(m, *o);
+            }
+        }
         if (d.cls.cls == os2::vm::DialogClass::Clothing) { // 17: the wardrobe, everyday clothes ("17f": formal)
             d.outfitSim = gPie->sim();
             d.outfitCategory = kind == "17f" ? 0x020 : 0x001;

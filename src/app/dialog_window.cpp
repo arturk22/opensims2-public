@@ -156,6 +156,9 @@ std::string& DialogWindow::editText(vm::Dialog& d) {
 }
 
 bool DialogWindow::okEnabled(const vm::Dialog& d) {
+    // cTSWinProcSetAspirationDialog::Validate: an aspiration picked.
+    if (d.cls.cls == vm::DialogClass::SetAspiration)
+        return d.aspiration != 0 && d.aspiration != 0x40 && d.aspiration != 0x100;
     if (d.cls.cls == vm::DialogClass::NameObject)
         for (const auto& n : d.names)
             if (trim(n.text).empty())
@@ -764,6 +767,78 @@ DialogWindow::Layout DialogWindow::wardrobeDialog(const vm::Dialog& d, int width
     return L;
 }
 
+// --- cTSWinProcSetAspirationDialog ------------------------------------------
+
+// Script 0xCC16A49E: "%s is no longer a child..." (0x2D9B8E78 for a girl,
+// 0x2D9B8E7E for a boy), the Sim's head (0x2D9C8C9E), the five
+// aspirations (0x0CDC000n = bit 1 << (n - 1)) and Accept 0xA000. The
+// slide with the aspiration's description (0x2000) is not shown yet.
+DialogWindow::Layout DialogWindow::aspirationDialog(const vm::Dialog& d, int width, int height) {
+    const UiScript* s = script(d.type == 0x22 ? 0xCAFE0045 : 0xCC16A49E);
+    if (!s)
+        return plainDialog(d, width, height);
+    Layout L;
+    const UiElement& top = s->roots.front();
+    const auto a = top.area();
+    const float w = float(a[2] - a[0]), h = float(a[3] - a[1]);
+    L.x0 = std::round((float(width) - w) / 2), L.y0 = std::round((float(height) - h) / 2);
+    L.x1 = L.x0 + w, L.y1 = L.y0 + h;
+    UiElement root = top;
+    root.set("area", uiArea(0, 0, int(w), int(h)));
+    for (auto& c : root.children) {
+        const uint32_t id = c.id();
+        if (id == 0x2000)
+            c.set("winflag_visible", "no");
+        if (id == 0x2D9B8E78 || id == 0x2D9B8E7E) {
+            const bool mine = (id == 0x2D9B8E78) == d.female;
+            c.set("winflag_visible", mine ? "yes" : "no");
+            if (mine) {
+                std::string text = c.get("caption");
+                if (res_)
+                    if (auto ref = uiStringRef(c.get("captionres")))
+                        if (auto t = res_->string(*ref))
+                            text = *t;
+                if (auto p = text.find("%s"); p != std::string::npos)
+                    text.replace(p, 2, d.text); // the Sim's first name
+                L.captions[id] = text;
+            }
+        }
+        if ((id & 0xFFFF0000u) == 0x0CDC0000u) {
+            const auto r = c.area();
+            L.regions.push_back({{L.x0 + float(r[0]), L.y0 + float(r[1]), L.x0 + float(r[2]), L.y0 + float(r[3])}, Hit::Choice,
+                                 1 << ((id & 0xFFFF) - 1)});
+        }
+        if (id == 0x2D9C8C9E && thumbnail)
+            if (const RgbaImage* head = thumbnail(0, d.aspirationNeighbor))
+                if (UiElement* t = c.child(1)) {
+                    // The head inside the round frame (the window's image's alpha).
+                    const auto ref = uiResourceRef(t->get("image"));
+                    const RgbaImage* mask = ref && res_ ? res_->image(*ref) : nullptr;
+                    auto& slot = icons_[d.id ^ 0x80000000u];
+                    if (!slot && mask && mask->width) {
+                        slot = std::make_unique<RgbaImage>(*mask);
+                        for (uint32_t y = 0; y < slot->height; ++y)
+                            for (uint32_t x = 0; x < slot->width; ++x) {
+                                const uint32_t sx = x * head->width / slot->width, sy = y * head->height / slot->height;
+                                const uint8_t* src = &head->pixels[(size_t(sy) * head->width + sx) * 4];
+                                uint8_t* p = &slot->pixels[(size_t(y) * slot->width + x) * 4];
+                                p[0] = src[0], p[1] = src[1], p[2] = src[2];
+                                p[3] = uint8_t(int(p[3]) * int(src[3]) / 255);
+                            }
+                    }
+                    t->set("id", hex(0x2D9C8C01));
+                    L.images[0x2D9C8C01] = slot ? slot.get() : head;
+                }
+        if (id == 0xA000) {
+            const auto r = c.area();
+            L.regions.push_back({{L.x0 + float(r[0]), L.y0 + float(r[1]), L.x0 + float(r[2]), L.y0 + float(r[3])}, Hit::Button, 0});
+            L.buttonIds.push_back(0xA000);
+        }
+    }
+    L.root = std::move(root);
+    return L;
+}
+
 // --- the other special dialogs: an OK/cancel box (not done yet) -----------
 
 DialogWindow::Layout DialogWindow::plainDialog(const vm::Dialog& d, int width, int height) {
@@ -785,6 +860,7 @@ DialogWindow::Layout DialogWindow::layout(const vm::Dialog& d, int width, int he
     case vm::DialogClass::PhoneNeighbors:
     case vm::DialogClass::PhoneParty: return phoneDialog(d, width, height);
     case vm::DialogClass::Clothing: return wardrobeDialog(d, width, height);
+    case vm::DialogClass::SetAspiration: return aspirationDialog(d, width, height);
     default: return plainDialog(d, width, height);
     }
 }
@@ -826,6 +902,11 @@ void DialogWindow::draw(UiScreen& out, const vm::Dialog& d, int width, int heigh
             state = 0;
         hk.buttonState[it->second] = state;
     }
+    // The aspiration picked looks pressed.
+    if (d.cls.cls == vm::DialogClass::SetAspiration)
+        for (const auto& [id, e] : byId)
+            if ((id & 0xFFFF0000u) == 0x0CDC0000u)
+                hk.buttonState[e] = (1 << ((id & 0xFFFF) - 1)) == d.aspiration ? 2 : 1;
     // The wardrobe's tab in use looks pressed.
     if (d.cls.cls == vm::DialogClass::Clothing)
         if (const Outfits* o = wardrobe(d))
@@ -911,6 +992,7 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
             break;
         }
         case Hit::Sort: break;
+        case Hit::Choice: d.aspiration = int16_t(g.value); break;
         case Hit::Tab:
         case Hit::Prev:
         case Hit::Next:
