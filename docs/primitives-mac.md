@@ -1127,8 +1127,23 @@ uma aspiração, o slide `0x2000` sai para a direita (o `onTick` move o
 inferido) com o nome (`0x4D9B8E8F`) e a descrição (`0xCDA394CA`) do STR#
 0x91 do Live.package (um-baseado: romance 13/6, família 9/1, riqueza 11/3,
 popularidade 10/2, conhecimento 12/4, 0x40 14/7, 0x80 40/42), a descrição
-logo abaixo do nome e do tamanho do texto; o catálogo de desejos "Aspirações
-Altas" (`0xCDA395BB`) ainda não é desenhado.
+logo abaixo do nome e do tamanho do texto. **Rodada 15:** o catálogo
+"Aspirações Altas" (`0xCDA395BB`) é um `cTSWinProcWantsCatalog` (criado no
+`onAttach`, BV `0x3d14f8`); o `RefreshInfoPanel` o põe logo abaixo da
+descrição, chama `SetAspiration` → `LoadPowerWantsByAspiration` (BV
+`0xaa5b2c`: o simulador de desejos, vtable `0x64` = `GetLifetimeGoals`,
+mapa da aspiração preenchido por `AddLifetimeGoal` com o `<lifetimeGoals>`
+do `WantTuning.package`) e estica o slide até o fim do catálogo mais a
+margem que ele tinha no script (`+0x48`, 18 px). A grade `0x1006` tem 5 × 2
+células do script `0x49065095` (`CreateThumbnail`; `onAttach` do catálogo:
+10 itens), e o `SetWant` (BV `0xaa6748`) liga a janela 1 (fundo de desejo)
+ou 2 (de medo), a 3 (estouro de desejo "Power") pelo nível, a 4 com o ícone
+primário sob a máscara de alfa da própria imagem (`ApplyAlphaMask`) e a 5
+com o ícone secundário. No app: `DialogWindow::lifetimeWants` (os nomes do
+XML viram bits como os botões do diálogo — Romance 1, Family 2, Wealth 4,
+Reputation 0x10, Knowledge 0x20, Grow Up 0x40 —, inferido) e
+`r15-aspiracao-desejos.jpg`; o espaçamento das células (margens 1 e 3 do
+script) é inferido.
 
 **Comida (tipo 0x0E, `cTSWinProcFillDialog`, script `0x2CB242F8`).**
 `SetParams` (`0x294ca4`) lê 4 locais a partir do byte 11: unidades que tem,

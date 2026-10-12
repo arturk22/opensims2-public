@@ -967,8 +967,11 @@ DialogWindow::Layout DialogWindow::aspirationDialog(const vm::Dialog& d, int wid
             // width less its own; here at once, inferred) with the
             // aspiration's name (0x4D9B8E8F) and description (0xCDA394CA)
             // from Live.package's STR# 0x91 (romance 13 / 6, family 9 / 1,
-            // fortune 11 / 3, popularity 10 / 2, knowledge 12 / 4). The
-            // "Big Life Moments" wants catalog (0xCDA395BB) is not drawn yet.
+            // fortune 11 / 3, popularity 10 / 2, knowledge 12 / 4); under
+            // the description the "Big Life Moments" wants catalog
+            // (0xCDA395BB, cTSWinProcWantsCatalog: SetAspiration ->
+            // LoadPowerWantsByAspiration, the want simulator's lifetime
+            // goals of the aspiration).
             int title = 0, text = 0;
             switch (d.aspiration) {
             case 0x01: title = 13, text = 6; break;
@@ -987,7 +990,7 @@ DialogWindow::Layout DialogWindow::aspirationDialog(const vm::Dialog& d, int wid
                 const int dx = (pa[2] - pa[0]) - (sa[2] - sa[0]);
                 slide->set("area", uiArea(dx, sa[1], dx + sa[2] - sa[0], sa[3]));
                 for (auto& k : slide->children)
-                    if (k.id() == 0xCDA395BB || k.id() == 0x300A)
+                    if (k.id() == 0x300A || (k.id() == 0xCDA395BB && (!title || !lifetimeWants)))
                         k.set("winflag_visible", "no");
             }
             auto live = [&](int n) {
@@ -1010,6 +1013,9 @@ DialogWindow::Layout DialogWindow::aspirationDialog(const vm::Dialog& d, int wid
                         const int h = int(std::ceil(float(lines.size()) * lineHeight(desc->get("font")))) + 4;
                         desc->set("area", uiArea(da[0], top, da[2], std::max(da[3], top + h)));
                     }
+                    if (lifetimeWants)
+                        wantsCatalog(L, *slide, {L.x0 + float(pa[0]) + float(slide->area()[0]), L.y0 + float(pa[1])},
+                                     lifetimeWants(d.aspiration));
                 }
             }
         }
@@ -1061,6 +1067,107 @@ DialogWindow::Layout DialogWindow::aspirationDialog(const vm::Dialog& d, int wid
     }
     L.root = std::move(root);
     return L;
+}
+
+// cTSWinProcWantsCatalog under the aspiration's description
+// (RefreshInfoPanel, BV 0x3cf954): the catalog moved to the description's
+// bottom, the slide as tall as the catalog's bottom plus the margin it had
+// in the script (onAttach: slide height - catalog bottom) and its picture
+// with it. The grid 0x1006 holds the wants in kCollapsedColumns 5 x
+// kCollapsedRows 2 cells of script 0x49065095 (CreateThumbnail) with the
+// script's margins (1, 3; inferred spacing); SetWant (BV 0xaa6748): window 1
+// the want background or 2 the fear one, 3 the power want burst for a Power
+// want, 4 the primary icon under the window's own image as alpha mask
+// (nTSUI::ApplyAlphaMask), 5 the modifier icon (the secondary).
+void DialogWindow::wantsCatalog(Layout& L, UiElement& slide, std::array<float, 2> slideAbs,
+                                const std::vector<LifetimeWant>& wants) {
+    UiElement* cat = slide.child(0xCDA395BB);
+    const UiElement* desc = slide.child(0xCDA394CA);
+    if (!cat || !desc)
+        return;
+    const auto sa = slide.area(), ca = cat->area();
+    const int margin = (sa[3] - sa[1]) - ca[3];
+    const int top = desc->area()[3];
+    cat->set("area", uiArea(ca[0], top, ca[2], top + (ca[3] - ca[1])));
+    const int bottom = top + (ca[3] - ca[1]) + margin;
+    slide.set("area", uiArea(sa[0], sa[1], sa[2], sa[1] + std::max(bottom, sa[3] - sa[1])));
+    if (UiElement* bg = slide.child(1)) {
+        const auto ba = bg->area();
+        bg->set("area", uiArea(ba[0], ba[1], ba[2], ba[1] + std::max(bottom, sa[3] - sa[1])));
+    }
+    UiElement* grid = cat->child(0x1006);
+    if (!grid)
+        return;
+    const UiScript* cs = script(0x49065095);
+    if (!cs || cs->roots.empty())
+        return;
+    const auto ga = grid->area();
+    (void)slideAbs;
+    constexpr int kCols = 5, kRows = 2, kMarginX = 1, kMarginY = 3;
+    const auto ra = cs->roots.front().area();
+    const int cw = ra[2] - ra[0], ch = ra[3] - ra[1];
+    for (size_t k = 0; k < wants.size() && k < size_t(kCols * kRows); ++k) {
+        const LifetimeWant& w = wants[k];
+        UiElement cell = cs->roots.front();
+        const int x = kMarginX + int(k % kCols) * (cw + kMarginX), y = kMarginY + int(k / kCols) * (ch + kMarginY);
+        cell.set("area", uiArea(x, y, x + cw, y + ch));
+        const uint32_t base = 0x00D00000u | (uint32_t(k) << 8);
+        cell.set("id", hex(base));
+        for (auto& c : cell.children) {
+            const uint32_t id = c.id();
+            if (id == 1)
+                c.set("winflag_visible", w.fear ? "no" : "yes");
+            if (id == 2)
+                c.set("winflag_visible", w.fear ? "yes" : "no");
+            if (id == 3)
+                c.set("winflag_visible", w.power ? "yes" : "no");
+            if (id == 4) {
+                const auto ref = uiResourceRef(c.get("image"));
+                if (const RgbaImage* icon = maskedIcon(w.icon, ref ? ref->instance : 0))
+                    L.images[base | 4] = icon;
+                else
+                    c.set("winflag_visible", "no");
+            }
+            if (id == 5) {
+                const RgbaImage* m = w.modifier && res_ ? res_->image(UiResourceRef{kTypeUiImage, kImageGroup, w.modifier}) : nullptr;
+                if (m)
+                    L.images[base | 5] = m;
+                else
+                    c.set("winflag_visible", "no");
+            }
+            if (id == 6)
+                c.set("winflag_visible", "no"); // the click strip (the catalog only shows them)
+            c.set("id", hex(base | id));
+        }
+        grid->children.push_back(std::move(cell));
+    }
+    (void)ga;
+}
+
+// A want's icon scaled to its mask's size with the mask's alpha.
+const RgbaImage* DialogWindow::maskedIcon(uint32_t icon, uint32_t mask) {
+    if (!icon || !res_)
+        return nullptr;
+    const uint64_t key = (uint64_t(icon) << 32) | mask;
+    if (auto it = masked_.find(key); it != masked_.end())
+        return it->second.get();
+    std::unique_ptr<RgbaImage> out;
+    const RgbaImage* src = res_->image(UiResourceRef{kTypeUiImage, kImageGroup, icon});
+    const RgbaImage* m = mask ? res_->image(UiResourceRef{kTypeUiImage, kImageGroup, mask}) : nullptr;
+    if (src && src->width && src->height) {
+        out = std::make_unique<RgbaImage>();
+        const uint32_t w = m && m->width ? m->width : src->width, h = m && m->height ? m->height : src->height;
+        out->width = w, out->height = h;
+        out->pixels.resize(size_t(w) * h * 4);
+        for (uint32_t y = 0; y < h; ++y)
+            for (uint32_t x = 0; x < w; ++x) {
+                const uint8_t* sp = &src->pixels[(size_t(y * src->height / h) * src->width + x * src->width / w) * 4];
+                uint8_t* p = &out->pixels[(size_t(y) * w + x) * 4];
+                p[0] = sp[0], p[1] = sp[1], p[2] = sp[2];
+                p[3] = m && m->width ? uint8_t(int(sp[3]) * int(m->pixels[(size_t(y) * w + x) * 4 + 3]) / 255) : sp[3];
+            }
+    }
+    return (masked_[key] = std::move(out)).get();
 }
 
 // --- cTSWinProcFillDialog ----------------------------------------------------

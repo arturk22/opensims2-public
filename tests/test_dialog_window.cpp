@@ -288,6 +288,26 @@ int main() {
                                                           {DialogWindow::VanityBeards, 12}}),
               "vanity: the picks in order");
         check(vclick(vfind(DialogWindow::Hit::Button, 0)) && done && v.answer == 0, "vanity: OK writes the look");
+
+        // The aspiration dialog's "Big Life Moments": the catalog under the
+        // description with a cell per lifetime want (window 4 the icon).
+        Fixture a(dialogtype::SetAspiration);
+        Dialog& ad = a.vm.dialogs.at(a.me->id);
+        DialogWindow aw(a.vm, &ui, nullptr);
+        aw.log = false;
+        aw.lifetimeWants = [](uint32_t asp) {
+            std::vector<DialogWindow::LifetimeWant> l;
+            for (int k = 0; k < (asp == 2 ? 8 : 5); ++k)
+                l.push_back({0x000b2011, 0, false, true, "want"});
+            return l;
+        };
+        ad.aspiration = 2;
+        const auto AL = aw.layout(ad, 1280, 720);
+        int cells = 0;
+        for (const auto& [id, img] : AL.images)
+            if ((id & 0xFFF000FFu) == 0x00D00004u && img)
+                ++cells;
+        check(cells == 8, "aspiration: a catalog cell per Family lifetime want");
     }
     {
         // Picking (cTSWinSceneGraph::ObjectAtGameWindowPoint): the nearest hit,

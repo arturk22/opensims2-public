@@ -144,6 +144,16 @@ public:
     std::function<std::vector<VanityItem>(int16_t sim, int group)> vanityItems;
     std::function<void(int16_t sim, int group, int index)> vanityPick;
     std::function<void(int16_t sim, bool ok)> vanityDone;
+    // The aspiration dialog's "Big Life Moments" catalog: the lifetime goals
+    // of an aspiration bit (WantTuning's <lifetimeGoals>, as the want
+    // simulator's GetLifetimeGoals gives them), each want's icons (UI image
+    // instances), fear and Power level.
+    struct LifetimeWant {
+        uint32_t icon = 0, modifier = 0;
+        bool fear = false, power = false;
+        std::string name;
+    };
+    std::function<std::vector<LifetimeWant>(uint32_t aspiration)> lifetimeWants;
     // Answers go to stdout (the headless runs read them).
     bool log = true;
 
@@ -156,6 +166,9 @@ private:
     Layout wardrobeDialog(const vm::Dialog& d, int width, int height);
     Layout aspirationDialog(const vm::Dialog& d, int width, int height);
     Layout fillDialog(const vm::Dialog& d, int width, int height);
+    void wantsCatalog(Layout& L, UiElement& slide, std::array<float, 2> slideAbs, const std::vector<LifetimeWant>& wants);
+    const RgbaImage* maskedIcon(uint32_t icon, uint32_t mask);
+    std::map<uint64_t, std::unique_ptr<RgbaImage>> masked_;
     Layout selectItemsDialog(const vm::Dialog& d, int width, int height);
     Layout shopDialog(const vm::Dialog& d, int width, int height); // 16 and 20
     Layout vanityDialog(const vm::Dialog& d, int width, int height);

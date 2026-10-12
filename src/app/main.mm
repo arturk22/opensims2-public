@@ -618,6 +618,7 @@ std::optional<os2::RgbaImage> simPortrait(int16_t id);
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId);
 const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor);
 void setupWardrobe(os2::ResourceIndex& index);
+void setupAspirationWants(os2::ResourceIndex& index);
 
 // The camera shows the selected Sim's level (cCameraLive::Update).
 void followSelectedSim() {
@@ -1220,6 +1221,7 @@ void setupPieMenu(os2::ResourceIndex& index) {
     gPie->setResources(index, gameDir() / "TSData/Res"); // the dialog window's scripts
     gPie->setDialogThumbnails(dialogThumbnail);
     setupWardrobe(index);
+    setupAspirationWants(index);
     if (gAudio)
         gPie->setSoundPlayer([](const std::string& name) {
             os2::SoundSystem::PlayOptions o;
@@ -1362,6 +1364,47 @@ bool inBin(const std::vector<os2::Tgi>& bin, const os2::Tgi& k) {
     return std::any_of(bin.begin(), bin.end(), [&](const os2::Tgi& b) {
         return b.type == k.type && b.group == k.group && b.instance == k.instance;
     });
+}
+
+// The aspiration dialog's "Big Life Moments" (cTSWinProcWantsCatalog::
+// LoadPowerWantsByAspiration): the want simulator's lifetime goals of the
+// aspiration (GetLifetimeGoals, filled by AddLifetimeGoal from WantTuning's
+// <lifetimeGoals>; the names to bits as the dialog's buttons number them:
+// Romance 1, Family 2, Wealth 4, Reputation 0x10, Knowledge 0x20, Grow Up
+// 0x40, inferred from the names) with each definition's icons.
+void setupAspirationWants(os2::ResourceIndex& index) {
+    gPie->dialogWindow().lifetimeWants = [&index](uint32_t aspiration) {
+        std::vector<os2::DialogWindow::LifetimeWant> out;
+        static std::shared_ptr<const os2::wants::Library> own;
+        std::shared_ptr<const os2::wants::Library> lib;
+        if (gSimulation)
+            if (os2::vm::WantSystem* ws = os2::vm::wantSystem(gSimulation->machine()))
+                lib = ws->library;
+        if (!lib) {
+            if (!own)
+                own = std::make_shared<const os2::wants::Library>(os2::wants::Library::load(index));
+            lib = own;
+        }
+        static const std::map<std::string, uint32_t> kBits = {{"Romance", 0x01},    {"Family", 0x02},
+                                                              {"Wealth", 0x04},     {"Reputation", 0x10},
+                                                              {"Knowledge", 0x20},  {"Grow Up", 0x40}};
+        for (const auto& [name, goals] : lib->tuning.lifetimeGoals) {
+            auto b = kBits.find(name);
+            if (b == kBits.end() || b->second != aspiration)
+                continue;
+            for (uint32_t guid : goals)
+                if (const os2::wants::Definition* def = lib->definition(guid)) {
+                    os2::DialogWindow::LifetimeWant w;
+                    w.icon = def->primaryIcon ? def->primaryIcon : def->secondaryIcon;
+                    w.modifier = def->primaryIcon ? def->secondaryIcon : 0;
+                    w.fear = def->isFear();
+                    w.power = def->level == os2::wants::Level::Power;
+                    w.name = lib->text(*def);
+                    out.push_back(std::move(w));
+                }
+        }
+        return out;
+    };
 }
 
 // The wardrobe dialog (cTSWinProcClothingDialog, app/dialog_window.hpp):
