@@ -1568,15 +1568,39 @@ enquanto houver vizinhos inflamáveis. A conferir no VM: alarme no cômodo,
 Fora do depurador, um erro de SimAntics não deixa o Main morto: o
 `cTSObject::Error` liga a flag `0x100` de `+0x214` e o `HandleError`, sem
 depurador (`+0x44` = 0 e o módulo sem modo debug), chama a vtable `0x534`
-(reset) e o `cTSObject::Reset` (BV `0xb0ab9c`) reinicia a árvore no Main
-(`cTSTreeSim::Reset`), limpa as interações e zera quase todos os dados de
-objeto, guardando uma lista (direção, cômodo, data de nascimento, ligações
-79–81, 105–107, ...). O jogo grava o `ObjectError` e segue. A VM
-(`VM::resetAfterError`) recomeça o Main no tick seguinte, sem fila, sem
-sub-ação e sem rota; **não** zera os dados de objeto (inferido como seguro).
-`VM::resetOnError` liga isso; `S2PKG_NO_RESET=1` mantém o Main morto para
-depurar. O orçamento de instruções (20000 por turno, a "Too many iterations"
-0x44d do jogo, cujo limite não foi lido) também reinicia.
+(`UnLinkAllInteractions`), avisa o gerente de objetos (`+0x1b4`, vtable
+200) e chama a vtable `0x320` com (nenhum, falso): o **`Cleanup(cITSObject*,
+bool)`** (BV `0xb09838`; o nome do `symxfer` confere com a descrição do
+editor da entrada 3: "chamada quando o objeto vai ser apagado ou quando a
+interação de uma pessoa com ele foi abortada"). Com "nenhum" ele limpa o
+próprio objeto (rodada 13):
+- **pessoa** (`cTSPerson::OnCleanup`, BV `0xadcbcc`, vtable `0x530`, que
+  devolve verdadeiro e encerra): limpa a pilha e as interações, tira do
+  mundo e põe de volta num lugar livre perto (`0x2d8`), zera o dado de
+  pessoa 34, reinicia a árvore no Main e roda a **árvore de cleanup** (OBJf
+  entrada 3);
+- **objeto com árvore de cleanup** (vtable `0x170` com 3 ≠ 0): roda-a
+  (`RunTree(3)`, vtable `0x3b4`) e reinicia a árvore no Main; os dados ficam;
+- **objeto sem ela**: tira do mundo, `cTSObject::Reset(1, verdadeiro, falso,
+  falso)` (BV `0xb0ab9c`) e volta ao lugar (ou ao slot do contêiner).
+  O `Reset` copia os 113 dados de objeto (`+0x9a`), zera todos e devolve
+  só 1 direção, 2/3 contêiner e slot (do lugar lido antes), 11 ID, 19 líder,
+  21/24/45/46/47 data de nascimento, 29 cômodo, 41 valor atual, 55, 67
+  contagem de slots, 79 semi-atributos, 80/81 e 105–107 ligações; põe 71
+  (render flags) = 0, 57 e 72–75 (alfa e RGB) = 255, 23 (rotation notches)
+  = 2, 58 (versão) e 78 (look at score) = rótulos 49 e 13 do OBJD, e com
+  "Use Default Placement flags" (rótulo 12) 4/5/13/42 = rótulos 6/3/5/4
+  (alturas, paredes vizinhas, colocação na parede, colocação); 7 vem de uma
+  virtual não seguida (`0x578`). Os atributos só são zerados com o
+  terceiro argumento (aqui falso); os 8 temps do objeto (`+0x8a`) e
+  `+0x1a0` são zerados. Para um objeto que não é parte de multi-tile
+  (vtable `0x19c`) roda o **Init** (`RunTree(0)`), depois a árvore volta ao
+  Main.
+O jogo grava o `ObjectError` e segue. A VM (`VM::resetAfterError`) faz o
+mesmo, menos o lugar livre da pessoa e a virtual do dado 7 (fica como
+estava); os dados além do 87 não existem na VM. `S2PKG_NO_RESET=1` mantém o
+Main morto para depurar. O orçamento de instruções (20000 por turno, a "Too
+many iterations" 0x44d do jogo, cujo limite não foi lido) também reinicia.
 
 ### Set to Next: objetos que vão morrer não contam (`SetToNextIsObjectEligible`)
 
@@ -1696,6 +1720,46 @@ que fica pronta. Ele só vem se a interação dele tem prioridade menor que 50
 atrasava além disso, salvo os dois bugs de rota acima (escada e slot do
 forno ocupado).
 
+### Change Material sem grupo de malha (`TryChangeMaterial`, BV `0xe2f128`; rodada 13)
+
+O material (STR# 0x88) e o grupo de malha (STR# 0x87) são procurados como
+strings preguiçosas (grupo, tabela << 16 | índice + 1, língua): o material
+vem do grupo global (`0x7FD46CD0`) com a flag `0x02`, do semi-global do
+objeto com `0x04` (sem semi-global: sem nome), senão da tabela do próprio
+objeto e depois da do grupo do código; o grupo de malha igual com `0x40`
+(global) e `0x80` (semi-global). Material vazio é o erro **0x46**
+("Missing Material / Mesh Group Name"); o nome do grupo de malha é
+procurado e **nunca lido** (o registrador só volta ao destrutor): faltar a
+entrada não é erro. Os arbustos ("Shrub - Creeping Phlox", "Hydrangea")
+pedem o grupo 0 de um STR# 0x87 que o grupo deles não tem a cada hora no
+"Function - Main" do semi-global `0x7F1A9ECC`; a VM dava erro e os
+reiniciava. Agora o material vale para o modelo todo quando o grupo não tem
+nome (inferido; no BV o nome nunca é usado). O byte 13 com `0x02`, `0x04`
+ou `0x20` pula o material (snapshot, "Moving Texture"; não feito).
+
+### Quem chama os bombeiros (rodada 13)
+
+Ninguém da casa liga sozinho. O "Ligar..." do telefone (`7FB208FA`, TTAB 2,
+entrada 0, ação `0x2030`) não tem **nenhum anúncio de motivo** (ads = 0),
+então o Find Best Interaction nunca o escolhe; o "Emergency - Fire" do
+objeto de chamada `7F0884BA` só roda pelo menu. O "Interaction - Panic" do
+fogo (`0x1013`) só anima, empurra "Salvar Bebê" e grava a memória; não chama
+ninguém. O motor não tem código de bombeiro (nenhum símbolo no BV). O
+único caminho autônomo é o alarme de fumaça **no cômodo do fogo** (`Alarm -
+Smoke` → `Sub - Call Fire Fighter`, §4f). Sem alarme no cômodo, o fogo só
+termina sozinho (a chama de cada Fire dura ~2 h) ou pelo jogador.
+
+### O carro da assistente social (rodada 13)
+
+O carro (`7FA5FB07`, semi-global `CarGlobals` `7F4EA230`) anda e vai embora
+desde a rodada 12 (laço do Animate Object). A criança levada fica em "Sub -
+Create Orphan( Kill Kid )" (um Sleep de 250 ticks que volta a si mesmo) até
+o "Sub - Remove Vehicle" do carro chamar o "Sub - Send Passengers Out of
+World": para esse tipo de veículo (semi-atributo 5 igual a uma constante do BCON, não conferida) os
+passageiros são **removidos** com ele. A VM já fazia isso; o "parado em
+Levando a criança" do soak era o soak, que não via um Sim sumir (agora o
+`s2pkg autonomy` imprime "is gone (removed from the lot)").
+
 ## 5. Outras primitivas: operandos pelo disassembler
 
 Resumo do que o disassembler do editor (`cEdithLanguage::Cat*`, mesmo texto
@@ -1795,9 +1859,11 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
   alta).
 - **0x6D Change Material**: material u16 0; byte 2: 0x08 o material é
   procurado no objeto (dono 8, dado u16 9) em vez de em mim, 0x10 índice do
-  material no temp 0, 0x02/0x04 qual tabela de nomes; 0x01 o grupo de malha é
+  material no temp 0, 0x02 tabela do grupo global, 0x04 do semi-global
+  (rodada 13); 0x01 o grupo de malha é
   procurado no objeto (dono 8, dado u16 9), 0x20 índice do grupo no temp 1,
-  0x40/0x80 qual tabela de nomes do grupo; grupo de malha s16 6 (< 0 = o
+  0x40/0x80 tabela global/semi-global do grupo (o nome do grupo não é
+  usado no BV, §4g); grupo de malha s16 6 (< 0 = o
   modelo todo); afeta (dono 5, dado u16 6); byte 13: 0x01 índice de "Moving
   Texture" em vez de material, 0x02 usa o material gerado por snapshot.
 - **0x6E Look At**: flags byte 0 (0x01 parar, 0x80 câmera, 0x02 sem saída
