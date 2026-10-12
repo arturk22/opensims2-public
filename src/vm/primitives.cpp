@@ -1165,7 +1165,8 @@ Exit changeMaterial(Context& c) {
 // Token back to the location it was loaded from", ...); which number is which,
 // and the rest, from how the trees use them:
 //   0 add a token of the GUID (0: the stack object's, as in "CT - Add Memory"
-//     and "CT - Add to Inventory"); counted: add the second operand to its count
+//     and "CT - Add to Inventory"; also for 2 and 3, and counted 0, 2, 4, 6
+//     and 7: TryInventoryAction BV 0xe26a40); counted: add the second operand to its count
 //   1 remove the token at index (first operand)
 //   2 remove every token of the GUID
 //   3 find the next token of the GUID after the index in the first operand
@@ -1186,8 +1187,13 @@ Exit changeMaterial(Context& c) {
 // count of their GUID (0); the other operations work on the counted list as
 // on the singular one (inferred: "Sleep - Outfit - Choose by Routine" and
 // "Dance - Get Dance Type" read them with 6, "Interaction - Dump Shopping
-// Stuff" removes them with 2). Not understood: bits 0x08 and 0x10 of byte 0 (0x08 with counted
-// adds, 0x18 on memory and aspiration finds).
+// Stuff" removes them with 2). Byte 0 by the binary (ManageInventoryParam::
+// UpgradeVersion BV 0xac3f00 turns these version-0 operands into its own):
+// bits 0-1 the kind, 0x04 counted, bits 3-5 a number the counted add (0)
+// and 1 pass on (not understood), 0x80 a flag of the find (3); byte 9 the
+// match flags (visible, memory, shopping: CatManageInventoryMatchFlags),
+// which the singular operations get as 0x0C. Not done: the match flags and
+// those bits.
 Exit manageInventory(Context& c) {
     const auto& o = c.instruction.operands;
     const auto kind = InventoryKind(o[0] & 0x03);
@@ -1245,16 +1251,19 @@ Exit manageInventory(Context& c) {
         tokens.erase(tokens.begin() + (index - 1));
         return Exit::True;
     }
-    case 2:
-        std::erase_if(tokens, [&](const auto& t) { return t.guid == guid; });
+    case 2: {
+        const uint32_t g = guidOrStackObject(); // GUID 0: the stack object's (TryInventoryAction, BV)
+        std::erase_if(tokens, [&](const auto& t) { return t.guid == g; });
         return Exit::True;
+    }
     case 3: {
         // From the index in the first operand on (0: the start), as
         // cTSObject::TryInventoryAction passes it to the find (BV): the
         // loops of "NPC - Lot Familiar NPC - Get in T[0]" go back to it to
         // find the next one.
         const int16_t from = std::clamp<int16_t>(get1(), 0, int16_t(tokens.size()));
-        auto it = std::find_if(tokens.begin() + from, tokens.end(), [&](const auto& t) { return t.guid == guid; });
+        const uint32_t g = guidOrStackObject(); // GUID 0: the stack object's (TryInventoryAction, BV)
+        auto it = std::find_if(tokens.begin() + from, tokens.end(), [&](const auto& t) { return t.guid == g; });
         if (it == tokens.end())
             return Exit::False;
         set1(int16_t(it - tokens.begin() + 1));
