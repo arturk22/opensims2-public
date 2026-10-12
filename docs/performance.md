@@ -105,6 +105,56 @@ The screenshot of the lot run (`--hood N001 --hood-lot 11 --vm --ui live --run-v
 has the same pixels as before up to the run-to-run noise it already had (1 to 8 bytes
 of 3.7 MB differ between two runs of the same build, before and after).
 
+## Round 14
+
+Baseline = main after the walking merge (locomotion, per-step Sim test), both binaries
+built from the same tree one after the other. `lot-run` over the 69 lots (1800 ticks) and
+`autonomy` of N001_Lot11 and N002_Lot3 (43200 ticks) give byte-identical output (`cmp`).
+
+| What | before | after |
+| --- | --- | --- |
+| `lot-run` 69 lots, cycles / instructions / wall | 75.4 G / 233 G / 30.4 s | 27.5 G / 83 G / 9.3 s |
+| `autonomy N001_Lot11 --ticks 43200`, cycles / instructions / wall | 21.8 G / 49.9 G / 8.5 s | 15.8 G / 43.5 G / 5.4 s |
+| `autonomy N002_Lot3 --ticks 43200`, cycles | 21.4 G | 15.9 G |
+| Headless capture per frame (`--run-vm 1430 --frames 12`, includes the offscreen render) | 15.0 ms | 12.8-13.8 ms (noisy) |
+
+What was done, each a commit:
+
+- **Wants library kept between VMs.** `libraryFor` held its cache with `weak_ptr`, so in
+  `lot-run` each lot's VM dropped the library and the next lot reread and parsed its 493
+  definitions and 211 trees: 55% of the whole run. It is held strongly now, keyed by where the
+  definitions/trees/tuning live (package path, offset, size), not by the index's address. A
+  faster `decode` (no entities, no copying char by char) cut the cold parse ~5%.
+- **Quadtree cache of the path planner.** The planner records the obstacle/cost calls since
+  `clearObstacles()`; the quadtrees (squares and leaf maps) are kept in a 4-entry LRU keyed by
+  that exact call list (compared, not hashed) and the levels searched. In a 12-hour N001_Lot11
+  run 449 of 684 plans hit. The A* and its noise generator are untouched.
+- **Object loops through the ID table.** `VM::eachObject()` walks `byId_` in ID order with
+  the map's semantics (an object made during the loop is met if its ID is later, a removed one
+  is skipped) and replaces the walks over the map's 1.8 KB nodes in 45 loops (`flushDestinations`
+  at every tick, `stepBlocker` at every walking step, `queue`, `timer`, `routing`, `reach`,
+  `placement`, ...). This was the biggest part of the autonomy gain (21.8 G to 15.8 G).
+- **Frustum culling in the renderer.** Static parts (not the skinned Sims) carry their
+  model-space box; a part whose 8 corners are all outside one clip half-space of the pass is not
+  drawn. The clip volume is convex and the map linear, so such a part draws no pixel. It applies
+  to the mirror's reflected pass with its own matrix, which therefore draws less than before.
+  The reflection pass was already skipped when no mirror is in view. Resolution was left alone.
+
+Screenshots (`--lot N001_Lot11 --vm --ui live --run-vm 600`, `--lot N002_Lot3 --vm --run-vm 900`,
+and 12 frames up to tick 1430): decoded pixels equal to the base build up to the run-to-run noise
+the app already has (base vs base differs by 37-217 bytes of 3.7 MB; new vs base by 1-217); 22 of
+24 frames of the 1-minute run are identical, the other two differ by 8 and 12 bytes.
+
+`loadSimParts` was already done in round 9 (64 ms cold, 0 afterwards; see above). A lot load is
+2.2-2.5 s: `loadLotObjects` 0.68 s (the four Sims' GPU upload 75-110 ms each), `LotSimulation`
+0.62 s, Buy/Build mode setup 165 + 125 ms, resource index 80 ms (file reads).
+
+Not done: an index for `containedIn`/`followContainers`. Fields are written directly
+(`o.data[objdata::ContainerId] = ...`, `Context::set` by field number, saves) at dozens of
+places, so a derived index cannot be kept exact without a setter everywhere; they now cost about
+5% of an autonomy run each. The quadtree still misses when a walking Sim's cost rectangle moves
+(the summed-area tables are rebuilt, ~6% of the run).
+
 ## What is left (not done)
 
 - The scans of all objects per tick (`followContainers`, `tickOverlayEvents`,
