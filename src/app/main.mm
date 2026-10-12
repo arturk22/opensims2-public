@@ -1454,8 +1454,8 @@ bool openGoHere(simd_float3 eye, simd_float3 dir, simd_float2 at) {
 
 // A click that picked object `id` (cTSUserToolStandardAction::MouseEvent):
 // its menu; a rug's merges a go-here destination at the floor under the
-// mouse (vm::objectClick); with nothing to do with it (a tree's canopy over
-// the floor), the ground below (the app's fallback).
+// mouse (vm::objectClick). Any other object without interactions only
+// shows its tooltip, as the binary does (no Go Here under a tree's canopy).
 void openClicked(os2::vm::ObjectId id, simd_float3 eye, simd_float3 dir, simd_float2 at) {
     if (!gPie || !gPie->sim())
         return;
@@ -1477,8 +1477,8 @@ void openClicked(os2::vm::ObjectId id, simd_float3 eye, simd_float3 dir, simd_fl
                 os2::vm::releaseDestination(m, d);
         return;
     }
-    if (!gPie->open(id, at) && !openGoHere(eye, dir, at))
-        std::printf("opensims2: object %d: no interactions available\n", id);
+    if (!gPie->open(id, at))
+        std::printf("opensims2: object %d: no interactions available (its tooltip)\n", id);
 }
 
 // Whether an object hangs on a wall the lot model cut down: a cut wall of

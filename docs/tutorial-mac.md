@@ -247,8 +247,9 @@ O que está feito e onde (o resto do documento é o binário):
   o "Build Dynamic Menu" (`0x502BBF02/03`, feito em código no jogo) é o
   item da ferramenta de cômodo / do terraço de treliça no catálogo.
 - **Controles do jogo que faltavam** e que o tutorial ensina: o "Vir
-  Aqui" do chão (`src/vm/go_here.hpp`) também quando o objeto clicado não
-  tem interações (a copa de uma árvore na frente do chão), clique direito num Sim da família o seleciona, a barra de espaço passa
+  Aqui" do chão (`src/vm/go_here.hpp`; rodada 13: como o binário, um
+  objeto sem interações só mostra a dica, sem "Vir Aqui" no chão atrás dele,
+  a não ser o tapete, `docs/routing-mac.md` §8.4), clique direito num Sim da família o seleciona, a barra de espaço passa
   ao próximo; os botões do puck (zoom, girar, andares) respondem sobre os
   painéis de Compra/Construção.
 - **Sem tela**: `s2pkg tutorial <lote> [--auto]` roda o episódio na VM;
