@@ -1082,6 +1082,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // --motives <n>: test aid, every Sim's motives at n (instead of the saved ones).
     if (auto m = argument(@"--motives"))
         os2::vm::setAllMotives(gSimulation->machine(), int16_t(std::stoi(*m)));
+    if (std::getenv("OS2_TRACE_VM")) // test aid: every instruction run (group:tree#pc opcode, stack object)
+        gSimulation->machine().trace = [](const os2::vm::Thread&, const os2::vm::Frame& f, const os2::Behavior::Instruction& in) {
+            std::fprintf(stderr, "trace: %08X:%04X #%u op 0x%X (stack object %d)\n", f.group, f.instance, f.pc, in.opcode, f.stackObject);
+        };
     // Pie menus over the same VM.
     gPie = std::make_unique<os2::PieMenuHost>(gSimulation->machine(), gameDir() / "TSData/Res/UI/Fonts",
                                               argument(@"--sim-id").value_or(""));
@@ -2380,7 +2384,8 @@ bool openGoHere(simd_float3 eye, simd_float3 dir, simd_float2 at) {
         return false;
     }
     if (const os2::vm::Object* d = m.object(dest))
-        std::printf("opensims2: go here: destination %d at (%.2f, %.2f, %d)\n", dest, d->position.x, d->position.y,
+        std::printf("opensims2: go here: destination %d (0x%08X%s) at (%.2f, %.2f, %d)\n", dest,
+                    d->definition ? d->definition->guid() : 0u, d->definition && d->definition->fileName.find("Swim") != std::string::npos ? ", swim here" : "", d->position.x, d->position.y,
                     d->position.level);
     return true;
 }

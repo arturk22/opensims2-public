@@ -115,6 +115,12 @@ void setLotRooms(VM& vm, const Lot& lot) {
         // the arrays' order below, as read. Marking the whole yard a pool
         // made "Swim Here?" true on every lawn of a lot with a pool, and the
         // Go Here pie showed the swim names ("Entrar") in place of Vir Aqui.
+        // A pool's floor is a room of its own on the level below the pool's
+        // (the saved room arrays of N001_Lot68: a pool at level 0 has its 40
+        // floor tiles in room 1 at level -1; the surface tiles have no room),
+        // so the pool record matches the room's level or the one above it
+        // (without that "Swim Here?" was false over every pool: the click on
+        // the water gave Vir Aqui, live QA 15).
         // Outside (inferred): a pool, or a room that reaches the edge of the
         // lot on the ground (the terrain's room).
         std::set<int16_t> outside, pool, seen;
@@ -130,7 +136,7 @@ void setLotRooms(VM& vm, const Lot& lot) {
                         if (!seen.insert(int16_t(room)).second)
                             continue; // the room's first tile decides
                         for (const auto& p : lot.pools)
-                            if (p.level == level && float(x) >= p.x && float(x) < p.x + float(p.width) &&
+                            if ((p.level == level || p.level == level + 1) && float(x) >= p.x && float(x) < p.x + float(p.width) &&
                                 float(y) >= p.y && float(y) < p.y + float(p.height))
                                 pool.insert(int16_t(room)), outside.insert(int16_t(room));
                     }

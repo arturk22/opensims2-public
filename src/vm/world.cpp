@@ -139,12 +139,24 @@ World World::fromLot(const Lot& lot) {
                     else if (rise > 0.5f)
                         w.setCost(t, std::max(1.0f, (rise - 0.5f) * 20.0f));
                 }
-                if (!lot.rooms.empty())
+                if (!lot.rooms.empty()) {
                     for (uint16_t r : lot.rooms[i])
                         if (r) {
                             w.setRoom(t, int16_t(r));
                             break;
                         }
+                    // The water over a pool has no room in the saved arrays:
+                    // the pool's floor (the level below) has it. A go-here
+                    // destination on the water takes that room, and its
+                    // "Swim Here?" asks that room whether it is a pool
+                    // (inferred: the room manager answers the swimmer's room).
+                    if (!w.room(t) && w.pool(t) && li > 0)
+                        for (uint16_t r : lot.rooms[i - size_t(lot.width) * lot.height])
+                            if (r) {
+                                w.setRoom(t, int16_t(r));
+                                break;
+                            }
+                }
             }
     }
     for (const auto& wall : lot.walls) {

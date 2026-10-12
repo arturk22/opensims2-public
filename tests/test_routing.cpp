@@ -3,6 +3,7 @@
 #include "vm/go_here.hpp"
 #include "vm/interactions.hpp"
 #include "vm/locomotion.hpp"
+#include "vm/lot.hpp"
 #include "vm/path_planner.hpp"
 #include "vm/vm.hpp"
 #include "vm/world.hpp"
@@ -1683,6 +1684,38 @@ static void testObjectPortals() {
     }
 }
 
+// A pool's rooms: the floor (the level below the pool's) is a room of its own
+// and is a pool ("Swim Here?" of the go-here destination); the water over it
+// takes the same room; a lawn is not a pool.
+static void testPoolRoom() {
+    Lot lot;
+    lot.width = lot.height = 8;
+    lot.minLevel = -1;
+    lot.levelCount = 2;
+    lot.rooms.assign(size_t(lot.levelCount) * 64, {0, 0, 0, 0});
+    lot.elevations.assign(size_t(lot.levelCount) * 81, 0.0f);
+    lot.pools.push_back({});
+    lot.pools[0].level = 0, lot.pools[0].x = 2, lot.pools[0].y = 2, lot.pools[0].width = 4, lot.pools[0].height = 4;
+    for (uint32_t x = 2; x < 6; ++x)
+        for (uint32_t y = 2; y < 6; ++y)
+            lot.rooms[x * 8 + y] = {1, 1, 1, 1}; // level -1: the pool's floor
+    for (uint32_t x = 0; x < 8; ++x)
+        for (uint32_t y = 0; y < 8; ++y)
+            lot.rooms[64 + x * 8 + y] = {2, 2, 2, 2}; // level 0: the yard (the terrain's room)
+    CodeLibrary code;
+    VM vm(code);
+    setLotRooms(vm, lot);
+    check(vm.rooms.count(1) && vm.rooms[1].values[4] == 1, "pool: the floor's room is a pool");
+    check(vm.rooms.count(2) && vm.rooms[2].values[4] == 0, "pool: the yard is not");
+    World w = World::fromLot(lot);
+    check(w.pool({3, 3, 1}), "pool: the water over the floor is a pool tile");
+    // (the yard room covers the surface tiles in this fixture, so the water keeps it)
+    lot.rooms[64 + 3 * 8 + 3] = {0, 0, 0, 0};
+    World w2 = World::fromLot(lot);
+    check(w2.room({3, 3, 1}) == 1, "pool: the water without a room takes the floor's");
+    check(w2.room({0, 0, 1}) == 2, "pool: the lawn keeps its own");
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -1716,6 +1749,7 @@ int main() {
     testPreRouteTree();
     testMoveOutOfWay();
     testGoHere();
+    testPoolRoom();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else
