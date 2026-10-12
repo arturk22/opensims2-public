@@ -214,6 +214,34 @@ static void testAnimateSim() {
     vm.run(t);
     vm.trace = nullptr;
     check(t.status == Thread::Status::Finished && thing.animation.overlays.empty(), "Animate Stop clears it");
+
+    // An object's list (0x81) is the running tree's object's, then its
+    // semi-global's where the entry is empty; not the stack object's
+    // (try_animate_sim: the selector of the tree's behavior). A "~" label
+    // row is indexed like any other.
+    constexpr uint32_t kDrink = 0x7F000010, kStool = 0x7F000011;
+    Object& drink = vm.createObject(kDrink);
+    drink.semiGroup = kSemi;
+    Object& stool = vm.createObject(kStool);
+    s.person->data[58] = 0;
+    code.add(kDrink, animlist::Adult, strings({"a2o-drink-sip", ""}));
+    code.add(kSemi, animlist::Adult, strings({"a2o-semi-zero", "a2o-semi-one"}));
+    code.add(kStool, animlist::Adult, strings({"~Get Out", "a2o-stool-one"}));
+    vm.animations.add("a2o-drink-sip", 1.0f);
+    vm.animations.add("a2o-semi-one", 1.0f);
+    code.add(kDrink, 0x1010, tree({instr(0x6A, T, E, {0, 0, 0, 0x20, 0, 0, 0x81})}));
+    code.add(kDrink, 0x1011, tree({instr(0x6A, T, E, {1, 0, 0, 0x20, 0, 0, 0x81})}));
+    t = vm.start(s.id, 0x1010, {}, stool.id, drink.id);
+    vm.run(t);
+    check(s.animation.name == "a2o-drink-sip", "the running tree's object's list, not the stack object's");
+    t = vm.start(s.id, 0x1011, {}, stool.id, drink.id);
+    vm.run(t);
+    check(s.animation.name == "a2o-semi-one", "an empty entry falls back to its semi-global's");
+    code.add(kStool, 0x1012, tree({instr(0x6A, T, E, {0, 0, 0, 0x20, 0, 0, 0x81})}));
+    t = vm.start(s.id, 0x1012, {}, stool.id, stool.id);
+    vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result && vm.animations.missing.count("~Get Out") == 1,
+          "a label row is an animation that does not exist: true at once");
 }
 
 // Animate Overlay: an overlay plays once (its kind from the entry's role),
@@ -271,7 +299,7 @@ static void testOverlayLifetime() {
 
     // An overlay from the Sim-to-Sim list takes the ages' prefix, as Animate
     // Sim's ("soc-playRedHands-playee-loopOw" is "a2a-soc-..." in the data).
-    code.add(kGlobalGroup, animlist::Social, strings({"soc-test-loopOw"}));
+    code.add(kSemi, animlist::Social, strings({"soc-test-loopOw"})); // the person semi-global's, as 0x7F7BAB85's
     vm.animations.add("a2a-soc-test-loopOw", 1.0f);
     code.add(kGroup, 0x100A, tree({instr(0x6B, T, E, {0, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x83})}));
     t = vm.start(s.id, 0x100A, {}, s.id);

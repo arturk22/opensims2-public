@@ -310,27 +310,37 @@ bool placeholder(const std::string& e) {
     return t.empty() || t == ".";
 }
 
-// STR# `list` of the stack object's object, else of its semi-global, the
-// running code's group, the code owner's groups and the global group: the
-// first that has a non-placeholder entry `index` (or the first that has the
-// entry at all); null if none has it.
+// STR# `list` of the object whose behavior holds the running tree, and its
+// semi-global's where that entry is empty (the Mac binary: try_animate_sim
+// 0x69d634 and try_animate_overlay 0x69ea54 take the selector from the
+// stack element's tree, cTSTreeStackElem +0x20 (vtable 0x50) -> the tree's
+// cITSBehavior (vtable 0x94) -> cTSObjectFolder::GetSelectorByBehavior
+// 0x4e56b8; FindSpecificName 0x690700 reads that selector's list and, for
+// an empty entry, its semi-global's). Each object type's cTSBehavior holds
+// its private, semi-global and global trees, so this is the code owner's
+// type, or the group of a private tree run for another object (an
+// animation's event tree). Not the stack object's: "Event - Sit Carry -
+// Trans Stand - Start" of a drink, sitting on a bar stool, reads the
+// drink's entry 9 "a2o-trans-drinkCarry-SlotIKpose", not the stool's
+// " ~Get Out" label. The lists' "~" rows are labels the binary indexes
+// like any other (cTSAnimTable::GetEntry 0x594c6c: entry index + 1). Null
+// if neither has the entry.
 const StringTable* objectList(Context& c, uint16_t list, int index) {
     CodeLibrary& code = c.vm.code();
-    std::vector<uint32_t> groups;
-    if (const Object* so = c.vm.object(c.frame.stackObject))
-        groups.push_back(so->group), groups.push_back(so->semiGroup);
-    groups.push_back(c.frame.group);
-    if (const Object* owner = c.vm.object(c.frame.codeOwner))
-        groups.push_back(owner->group), groups.push_back(owner->semiGroup);
-    groups.push_back(kGlobalGroup);
+    uint32_t group = 0, semi = 0;
+    const Object* owner = c.vm.object(c.frame.codeOwner);
+    if (owner && (c.frame.group == owner->group || c.frame.group == owner->semiGroup || c.frame.group == kGlobalGroup))
+        group = owner->group, semi = owner->semiGroup;
+    else
+        group = c.frame.group, semi = code.semiGlobalFor(group);
     const StringTable* first = nullptr;
-    for (uint32_t g : groups) {
+    for (uint32_t g : {group, semi}) {
         const StringTable* t = g ? code.strings(g, list) : nullptr;
         if (!t || index < 0 || size_t(index) >= t->count(lang::EnglishUS))
             continue;
         if (!first)
             first = t;
-        if (!placeholder(t->get(size_t(index), lang::EnglishUS)))
+        if (!t->get(size_t(index), lang::EnglishUS).empty())
             return t;
     }
     return first;
@@ -340,14 +350,10 @@ const StringTable* objectList(Context& c, uint16_t list, int index) {
 // Mac binary's try_animate_sim finds it: 0x80 = the global group's list for
 // the Sim's age (FindGlobalName; an elder/teen entry whose animation does
 // not exist retries in the adult list); any other list is STR# `list` of
-// the stack object's object and, where its entry is blank, of that object's
-// semi-global (FindSpecificName). When the stack object has none, the
-// running code's group, the code owner's private and semi-global groups and
-// the global group are tried (inferred: the reaction semi-global's trees,
-// "Interaction - Standard Reaction - SG", read the reaction object's list
-// with the Sim as stack object). Blank and "." entries are placeholders
-// (the chair semi-global's 0x81 is all blank; the reaction semi-global's
-// lists are "." up to 19).
+// the running tree's object and, where its entry is empty, of that object's
+// semi-global (objectList, FindSpecificName). Blank and "." entries are
+// placeholders for the age retries (the chair semi-global's 0x81 is all
+// blank; the reaction semi-global's lists are "." up to 19).
 std::string listEntry(Context& c, const Object& sim, uint16_t list, int index) {
     CodeLibrary& code = c.vm.code();
     const StringTable* table = nullptr;
