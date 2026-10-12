@@ -1558,6 +1558,39 @@ editável (inferido dos dados), e paredes/cercas (`0x45`), pisos, fundações,
 piscinas, terreno e escadas ficam dentro dela. Os objetos (modo compra) não
 foram mudados.
 
+**Rodada 13 (binário + dados).** Os limites vêm do **save**: o
+`cWorldDB::Load` (BV `0xd7758`) lê o recurso `0x49FF7D76` (o "cWorldDB" do
+lote, que o opensims2 listava como sem uso) e chama `SetLotBounds` (vtable
+`0x4c`, BV `0xd65e4`) com os valores lidos. Formato (`cWorldDB::Write`, BV
+`0xd91c8`; o base grava a versão 3, o BV a 5): 64 bytes zerados, u32 TGI
+tipo (`0x49FF7D76`), u32 versão, string (u8 tamanho + "cWorldDB"), depois
+s32 x0, s32 y0, s32 nível mínimo, s32 x1, s32 y1, s32 nível máximo, u8
+flag (≠ 0 → segue uma string, só no BV). Exemplos de N001: lote 38 →
+(0, 0, 0)–(29, 29, 2); lote 11 → (0, 0, 0)–(39, 29, 4); lote 16 → (0, 0,
+0)–(29, 19, 3). Ou seja, **os limites são o mundo inteiro do lote,
+inclusive a faixa de rua** (no lote 38 as linhas 20–29 são a rua e estão
+dentro).
+
+- `IsOnLot(tile)` (BV `0xd1604`): x0 ≤ x ≤ x1, y0 ≤ y ≤ y1, nível no
+  intervalo (inclusivo).
+- `IsInBounds(tile)` (BV `0xd1a28`, vtable `0x108` da `cIWorldDB`, a
+  interface que `nTSWorld::WorldDB()` devolve): **estrito** em x e y (x0 <
+  x < x1, y0 < y < y1), inclusivo no nível: tira o anel de tiles da borda
+  do mundo. É esse o teste do `0x45` de paredes, cercas e arcos.
+- **Atenção às vtables:** `WorldDB()` devolve o subobjeto `cIWorldDB` (o de
+  deslocamento −28 da `cWorldDB`, vptr `0x27a3420`), não o primário; os
+  slots desta seção e do §7.19.1 são dessa interface (`0x94`
+  `PartitionManager`, `0xc4` `HasFloorTest(tile, nível, bool, bool)`, `0xe4`
+  `NumObjectsOnTile`, `0xf8` `IsOnLot`, `0x108` `IsInBounds`, `0x14c`/`0x150`
+  `Max`/`MinTerrainElevation`). O "travados (`WorldDB` vtable `0xc4`)" do
+  §7 (paredes) foi lido no vtable primário; nessa interface o slot `0xc4` é o
+  `HasFloorTest` (a conferir).
+- O que tira a faixa de rua da construção **não foi achado** (os limites a
+  incluem; candidatos: o `HasFloorTest` com o piso de rua, os tiles
+  travados do `cWorldDB` (`IsLocked`/`SetLockedImpl`, BV `0xd2a90`/
+  `0xd3424`), ou as bordas com rua do lot info). A regra inferida da
+  rodada 12 (10 tiles com piso "road_*") continua inferida.
+
 ---
 
 ## 8. Base vs BV
