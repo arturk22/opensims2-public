@@ -516,3 +516,13 @@ O que a rodada 18 deixou na cama e nas filas, sem tela (`s2pkg pie` com `S2PKG_P
 | Adolescentes do Lot68 e o ônibus | **do jogo**: o "Get My Riders" do carro/ônibus (`7F4EA230/0x203C`) só leva quem tem humor > 0 (nó 8, motivo 3 do stack object); Angela (−50) e Lilith (−3) ficam, a visitante Meadow (humor positivo) recebe "Ir para a Escola" |
 | Nome dos gêmeos | **corrigido**: um nome por bebê (o temp 2 repetia o segundo) |
 | Pie: entradas novas | com a regra do '*' corrigida aparecem "Mudar para..." no som, "Entrar" na escada da piscina, "Encorajar..." nos adolescentes (conferir na janela) |
+
+# Rodada 19 QA
+
+Mesmo método (CGEvent, pid próprio, `-ApplePersistenceIgnoreState YES`, captura só da região da janela), binário do ramo `r19-qa` = `main` em `62c23d39`. O `--pivot` é ignorado ao vivo (a câmera segue o Sim); para enquadrar, `OS2_PICK_MAP=<png> OS2_PICK_MAP_STEP=2 OS2_PICK_FIND=46` sem tela diz onde o objeto aparece e se algum raio o acerta, e `--orientation 3 --zoom 4` ao vivo mostra o telefone.
+
+| Passo | Resultado |
+|-------|-----------|
+| Telefone do N002_Lot10 (obj 46, "Phone - Handset", 15,57/23,46) | passa: é um aparelho pequeno quase no chão atrás do sofá; com `--orientation 3 --zoom 4` (única vista em que um raio o acerta) o clique nele e a ~16 px ao lado abrem o pie do telefone (Ligar..., Dar Festa..., Convidar Diretor), não o da lareira nem o do abajur; `r19-qa-phone-pie.jpg`. Um clique a ~70 px no chão dá "Vir Aqui" (certo). A lareira (obj 929) continua escolhida no corpo (sem tela, `--click`: "Acender Lareira") |
+| Portas depois da fusão das camadas (N001_Lot11, porta da frente) | **falha, mas não é da fusão**: a porta abre quando a Cassandra entra e depois **fica aberta para sempre** (mais de 1 min real, com o lote a velocidade 3; passou entre fechar e reabrir no mesmo quadro?: nos quadros a porta aparece fechada, aberta com a Sim no vão, e depois aberta sem ninguém). O mesmo com `OS2_NO_LAYER_MERGE=1` (`r19-qa-door-open-merge.jpg`, `r19-qa-door-open-nomerge.jpg`). Só vi um ciclo de abrir; não vi o fechar |
+| Cadeira de jantar sentar/levantar | não testado (orçamento) |
