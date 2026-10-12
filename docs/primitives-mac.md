@@ -838,7 +838,8 @@ Na primeira execução marca o frame (estado 1) e abre o diálogo; **devolve 2
 verdadeiro (entrada de texto: guarda o texto); botão 2 → falso; três
 escolhas: grava 0/1/2 no temp `(byte 7 >> 4) & 7` (> 7: erro). Os tipos 8–10
 e 0x1C (notificações TNS) não bloqueiam e usam o objeto do stack object
-(ausente: erro 0x17); 0x16/0x19 (tutorial) só bloqueiam com o temp 1 ≠ 0.
+(ausente: erro 0x17); 0x16/0x19 (painel do tutorial) **não bloqueiam**: temp 1 = 0
+esconde o painel, senão o mostra e devolve verdadeiro (`docs/tutorial-mac.md` §5).
 Textos: STR# 0x12D da tabela escolhida pelas flags do byte 8 (0x01 privada,
 0x40 global, senão semi-global), índice u16 13 (ou temp 0 com 0x02), título
 pelo byte 6 (ou temp 3 com 0x10). Binário, com os detalhes de botão
@@ -1455,7 +1456,7 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
 - **0x1E Gosub Found Action**: u16 0 (STR# 0x1FE).
 - **0x21 Find 5 Worst Motives**: u16 4 (STR# 0x99) e u16 6 (STR# 0xA5),
   resultado nos temps 0–4.
-- **0x22 UI Effect**: modo s8 0 (0 aperta controle, 1 desliga, 2 liga, 3
+- **0x22 UI Effect** (o que cada modo faz: `docs/tutorial-mac.md` §2): modo s8 0 (0 aperta controle, 1 desliga, 2 liga, 3
   efeito, 4 árvore de evento, 5 reseta todos, 6 desliga todos, 7 reseta
   árvores, 8 árvore de evento em nó TNS, 9 mostra, 10 esconde), controle u16
   3, janela u16 1, flags byte 5, efeito u16 6, árvore u16 8 com o lugar s8 10
