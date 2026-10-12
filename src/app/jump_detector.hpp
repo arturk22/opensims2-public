@@ -27,6 +27,8 @@ public:
         int level = 0;
         bool walking = false;      // the VM walks it (its route moves it a step a tick)
         int container = 0;         // the object whose slot holds it (0 none)
+        float holder[2] = {0, 0};  // that object's VM position (a car drives its passengers)
+        float seat[2] = {0, 0};    // where its slot is drawn (the passengers go with it)
         bool inWorld = true;       // drawn at all (not at work, not carried away)
         std::string animation;     // what Animate Sim plays (for the report)
     };

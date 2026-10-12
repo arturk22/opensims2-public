@@ -84,14 +84,21 @@ public:
     const State& previous() const { return previous_; }
     const State& current() const { return current_; }
 
-    // Position at `t` (0 = the previous tick, 1 = the last one).
+    // Position at `t` (0 = the previous tick, 1 = the last one); the last
+    // one at once after a jump (jumped()).
     float x(float t) const;
     float y(float t) const;
+    // The last tick moved it farther than any walk does (kMaxStep tiles) or
+    // to another level: a Snap, a stair's end, a teleport.
+    static constexpr float kMaxStep = 0.5f;
+    bool jumped() const;
     // Height at `t` on a stair; `floor(level, x, y)` gives it off the stair.
     template <class Floor>
     float z(float t, Floor floor) const {
-        const float a = !previous_.onStep ? floor(previous_.level, previous_.x, previous_.y) : previous_.z;
         const float b = !current_.onStep ? floor(current_.level, x(t), y(t)) : current_.z;
+        if (jumped())
+            return b;
+        const float a = !previous_.onStep ? floor(previous_.level, previous_.x, previous_.y) : previous_.z;
         return a + (b - a) * t;
     }
 

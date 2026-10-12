@@ -112,7 +112,8 @@ public:
     // stood (a2o-chairDining-getIn-*-leaveOut-SE ends seated 0.67 from its
     // start, in the chair pulled out), and its last frame, held under the
     // chair's idles, went to sit that far beside the seat.
-    void reframe(const Xform& delta);
+    // With `onlyOnce`, only the layers that play once (a held last frame).
+    void reframe(const Xform& delta, bool onlyOnce = false);
 
     // Local bone transforms at `now` (drops the layers that have faded out).
     std::vector<Xform> pose(double now);

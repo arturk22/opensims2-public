@@ -75,6 +75,17 @@ int main() {
         d.add(at(2, 30, 30, 30, 30));
         check(d.events().empty(), "back in the world is not a jump");
     }
+    {
+        // A passenger moves with the car the VM drives.
+        JumpDetector d;
+        for (int i = 0; i < 5; ++i) {
+            auto x = at(i / 30.0, 36, 7 + 2.1f * i, 10, 10, false, 153);
+            x.holder[0] = 36, x.holder[1] = 7 + 2.1f * i;
+            x.seat[0] = 36, x.seat[1] = 7 + 2.1f * i;
+            d.add(x);
+        }
+        check(d.drawnJumps() == 0, "a passenger goes with the car");
+    }
     if (failures)
         return EXIT_FAILURE;
     std::printf("jump detector: ok\n");

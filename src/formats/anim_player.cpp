@@ -228,8 +228,10 @@ void AnimPlayer::stop(double now, float fade, int priority) {
         }
 }
 
-void AnimPlayer::reframe(const Xform& delta) {
+void AnimPlayer::reframe(const Xform& delta, bool onlyOnce) {
     for (auto& l : layers_) {
+        if (onlyOnce && l.loop)
+            continue;
         l.frame = delta.then(l.frame);
         l.framed = true;
     }

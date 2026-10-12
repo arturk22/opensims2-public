@@ -3666,10 +3666,109 @@ void sampleDrawnPlaces(double scene) {
             x.walking = o->route.has_value();
             const int16_t c = o->data[os2::vm::objdata::ContainerId];
             x.container = c == s.id ? 0 : c;
+            if (const os2::vm::Object* h = x.container ? m.object(x.container) : nullptr)
+                x.holder[0] = h->position.x, x.holder[1] = h->position.y;
+            x.seat[0] = x.holder[0], x.seat[1] = x.holder[1];
+            if (x.container && gObjectView)
+                if (const auto at = gObjectView->seatPlacement(s.id, scene))
+                    x.seat[0] = at->t[0], x.seat[1] = at->t[1];
             x.inWorld = simInTheWorld(s.id) && !gCarriedSims.count(s.actor);
             x.animation = o->animation.name;
+            // OS2_TRACE_DRAWN=<Sim id>: that Sim's drawn pelvis and VM place each frame.
+            static const int traced = std::getenv("OS2_TRACE_DRAWN") ? std::atoi(std::getenv("OS2_TRACE_DRAWN")) : 0;
+            if (traced == s.id)
+                std::printf("opensims2: drawn: tick %llu %.3f s Sim %d pelvis (%.2f %.2f %.2f) placement (%.2f %.2f %.2f) vm (%.2f %.2f L%d dir %d)%s in %d '%s'\n",
+                            (unsigned long long)m.ticks, scene, s.id, p[0], p[1], p[2], a.position[0], a.position[1], a.position[2],
+                            o->position.x, o->position.y, int(o->position.level), o->data[os2::vm::objdata::Direction],
+                            o->route ? " walking" : "", x.container, x.animation.c_str());
             for (const auto& e : detector.add(x))
                 std::printf("opensims2: %s\n", os2::JumpDetector::describe(e).c_str());
+        }
+    }
+    // OS2_DEBUG_POSES=1 (test aid): poses that look broken, as they start
+    // and with a count at exit: a seated Sim's pelvis far from its seat
+    // bone (out of a get-in or get-out), a hand far behind the shoulders.
+    static const bool poses = std::getenv("OS2_DEBUG_POSES") != nullptr;
+    if (poses && gObjectView) {
+        struct Count {
+            int seat = 0, behind = 0, frames = 0;
+            double seatMax = 0, behindMax = 0;
+        };
+        static std::map<std::string, Count> counts;
+        static std::map<std::pair<int, std::string>, bool> flagged; // (Sim, kind) currently flagged
+        static bool registered = false;
+        if (!registered) {
+            registered = true;
+            std::atexit([] {
+                int seat = 0, behind = 0;
+                for (const auto& [k, c] : counts)
+                    seat += c.seat, behind += c.behind;
+                std::printf("opensims2: poses: %d seated frames off the seat, %d frames with a hand behind the back\n", seat, behind);
+                for (const auto& [k, c] : counts)
+                    if (c.seat || c.behind)
+                        std::printf("opensims2: poses:   %-50s seat %d (max %.2f) behind %d (max %.2f) of %d frames\n", k.c_str(),
+                                    c.seat, c.seatMax, c.behind, c.behindMax, c.frames);
+                std::fflush(stdout);
+            });
+        }
+        for (const auto& s : gLotSims) {
+            const os2::vm::Object* o = m.object(s.id);
+            if (!o || !o->person || !simInTheWorld(s.id) || gCarriedSims.count(s.actor))
+                continue;
+            const os2::SimActor& a = *s.actor;
+            auto bone = [&](const char* n) -> std::optional<os2::Vec3> {
+                const int b = a.skin.skeleton.find(n);
+                if (b < 0 || size_t(b) >= a.bones.size())
+                    return std::nullopt;
+                return a.bones[size_t(b)].t;
+            };
+            const auto pelvis = bone("pelvis"), rt = bone("r_thigh"), lt = bone("l_thigh");
+            const auto rc = bone("r_clavicle"), lc = bone("l_clavicle"), rh = bone("r_hand"), lh = bone("l_hand");
+            if (!pelvis || !rt || !lt || !rc || !lc || !rh || !lh)
+                continue;
+            // What it does, for the counts: Animate Sim's, else the carry/overlays.
+            std::string what = o->animation.name;
+            if (what.empty())
+                for (const auto& ov : o->animation.overlays)
+                    if (ov.name.find("blink") == std::string::npos && ov.name.find("idle") == std::string::npos)
+                        what = ov.name;
+            if (what.empty())
+                what = o->route ? "(walking)" : "(idle)";
+            Count& c = counts[what];
+            ++c.frames;
+            auto flag = [&](const char* kind, bool on, double value) {
+                bool& f = flagged[{s.id, kind}];
+                if (on && !f)
+                    std::printf("opensims2: pose: tick %llu Sim %d %s %.2f in '%s' at (%.2f %.2f) container %d\n",
+                                (unsigned long long)m.ticks, s.id, kind, value, what.c_str(), (*pelvis)[0], (*pelvis)[1],
+                                o->data[os2::vm::objdata::ContainerId]);
+                f = on;
+            };
+            // Seated: pelvis over the seat (out of the get-ins and get-outs).
+            const int16_t c0 = o->data[os2::vm::objdata::ContainerId];
+            const os2::vm::Object* co = c0 && c0 != s.id ? m.object(c0) : nullptr;
+            const bool moving = o->animation.name.find("getIn") != std::string::npos ||
+                                o->animation.name.find("getOut") != std::string::npos ||
+                                o->animation.name.find("GetIn") != std::string::npos ||
+                                o->animation.name.find("GetOut") != std::string::npos;
+            if (co && !co->person && !moving)
+                if (const auto seatAt = gObjectView->seatPlacement(s.id, scene)) {
+                    const double d = std::hypot((*pelvis)[0] - seatAt->t[0], (*pelvis)[1] - seatAt->t[1]);
+                    c.seatMax = std::max(c.seatMax, d);
+                    c.seat += d > 0.35;
+                    flag("pelvis off the seat", d > 0.35, d);
+                }
+            // A hand behind the shoulders' plane (the body's forward from the hips).
+            const double lx = (*lt)[0] - (*rt)[0], ly = (*lt)[1] - (*rt)[1];
+            const double ln = std::hypot(lx, ly);
+            if (ln > 1e-3) {
+                const double fx = ly / ln, fy = -lx / ln; // up x left: forward (the sink's scrub has the hands ahead)
+                auto behind = [&](const os2::Vec3& h, const os2::Vec3& sh) { return -((h[0] - sh[0]) * fx + (h[1] - sh[1]) * fy); };
+                const double b = std::max(behind(*rh, *rc), behind(*lh, *lc));
+                c.behindMax = std::max(c.behindMax, b);
+                c.behind += b > 0.22;
+                flag("hand behind the back", b > 0.22, b);
+            }
         }
     }
     if (watch && gObjectView) {

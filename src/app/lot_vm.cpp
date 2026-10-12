@@ -561,10 +561,25 @@ void LotSimulation::updateScene(double seconds) {
         // chair out ends seated 0.67 from where it began, and placed again
         // at the seat it sat beside the chair, between two; user QA,
         // N001_Lot68), what starts now plays in the new frame (inferred).
+        // The same whenever the drawn place jumps, farther than any walk
+        // moves it in a frame or turned more than any turn does (a Snap, a
+        // stair's end putting the climber at the top): the layers playing
+        // stay where they were, the next one blends from there (the stair's
+        // last frame, its root 4.4 tiles up the steps, was drawn from the top
+        // for the walk's blend, the Sim flashing a tile and a half off;
+        // OS2_DEBUG_JUMPS, N001_Lot68).
         const Xform placement = b.actor->placement();
         static const bool noReframe = std::getenv("OS2_NO_SEAT_REFRAME") != nullptr; // the old drawing, to compare
-        if (seated != b.seated && b.lastPlacement && !noReframe)
-            b.actor->player.reframe(placement.inverse().then(*b.lastPlacement));
+        bool jumped = false;
+        if (b.lastPlacement) {
+            const Xform d = b.lastPlacement->inverse().then(placement);
+            const float moved = std::hypot(d.t[0], d.t[1], d.t[2]);
+            const float turned = 2 * std::acos(std::min(1.0f, std::fabs(d.q.w)));
+            jumped = moved > vm::SimMotion::kMaxStep || turned > 1.0f;
+        }
+        // (On a jump only what plays once: a looping idle goes on in the new place.)
+        if ((seated != b.seated || jumped) && b.lastPlacement && !noReframe)
+            b.actor->player.reframe(placement.inverse().then(*b.lastPlacement), seated == b.seated);
         b.seated = seated;
         b.lastPlacement = placement;
         b.actor->rootMotion = false;

@@ -121,8 +121,19 @@ void SimMotion::sample(VM& vm, const Object& o) {
     ++count_;
 }
 
-float SimMotion::x(float t) const { return previous_.x + (current_.x - previous_.x) * t; }
-float SimMotion::y(float t) const { return previous_.y + (current_.y - previous_.y) * t; }
+bool SimMotion::jumped() const {
+    return previous_.level != current_.level ||
+           std::hypot(current_.x - previous_.x, current_.y - previous_.y) > kMaxStep;
+}
+
+// A move farther than a step in a tick (a Snap, a stair's end putting the
+// climber at the top, a teleport) is not walked between the two places: the
+// body is drawn at the new one at once. Drawn halfway, with the stair's last
+// frame (its root 4.4 tiles up the steps) over it, the climber flashed a
+// tile and a half off the stair's top for a frame or two (OS2_DEBUG_JUMPS,
+// N001_Lot68's straight stairs).
+float SimMotion::x(float t) const { return jumped() ? current_.x : previous_.x + (current_.x - previous_.x) * t; }
+float SimMotion::y(float t) const { return jumped() ? current_.y : previous_.y + (current_.y - previous_.y) * t; }
 
 float SimMotion::turn(float dt, float turnSpeed) {
     const float dx = current_.x - previous_.x, dy = current_.y - previous_.y;
@@ -133,7 +144,7 @@ float SimMotion::turn(float dt, float turnSpeed) {
     float target = headingOfDirection(current_.direction);
     if (current_.framed)
         target = current_.frameHeading;
-    else if (current_.walking && std::hypot(dx, dy) > 1e-4f)
+    else if (current_.walking && std::hypot(dx, dy) > 1e-4f && !jumped())
         target = headingOfMotion(dx, dy);
     // An Animate Sim animation plays in the frame of the Sim's direction:
     // turning the body there over a few frames turned the animation with it

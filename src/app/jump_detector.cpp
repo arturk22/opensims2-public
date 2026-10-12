@@ -19,7 +19,12 @@ std::vector<JumpDetector::Event> JumpDetector::add(const Sample& s) {
         return out;
     }
     const Sample& p = t.last;
-    const float vmMove = dist2(p.vm, s.vm);
+    float vmMove = dist2(p.vm, s.vm);
+    if (s.container && p.container == s.container) {
+        const float a[2] = {p.vm[0] - p.holder[0], p.vm[1] - p.holder[1]};
+        const float b[2] = {s.vm[0] - s.holder[0], s.vm[1] - s.holder[1]};
+        vmMove = dist2(a, b);
+    }
     const bool levelChange = p.level != s.level;
     const bool vmSnap = (vmMove > vmStep && !(p.walking && s.walking && vmMove < 2 * vmStep)) || levelChange;
     const bool seatChange = p.container != s.container;
@@ -38,7 +43,12 @@ std::vector<JumpDetector::Event> JumpDetector::add(const Sample& s) {
     } else if (t.snaps.empty() || t.snaps.back() < s.time - snapWindow) {
         t.snapFlagged = false;
     }
-    const float d = dist2(p.drawn, s.drawn);
+    float d = dist2(p.drawn, s.drawn);
+    if (s.container && p.container == s.container) { // moved with its container (a car): relative to it
+        const float a[2] = {p.drawn[0] - p.seat[0], p.drawn[1] - p.seat[1]};
+        const float b[2] = {s.drawn[0] - s.seat[0], s.drawn[1] - s.seat[1]};
+        d = dist2(a, b);
+    }
     if (d > maxStep && !vmSnap && !seatChange) {
         Event e;
         e.id = s.id, e.time = s.time, e.tick = s.tick, e.distance = d, e.kind = "drawn";
