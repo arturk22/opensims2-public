@@ -637,6 +637,30 @@ acima; `locomotion.cpp` `LocoCurve`/`blendGaits`/`strideWeight`,
   junto ao corpo, sem abrir os braços: `docs/screenshots/r14-anim-aditivo.jpg`
   (sem e com as poses). Soak com `OS2_SEED` 1 e 2 (N003_Lot46, N001_Lot16,
   20.000 ticks): saída idêntica com e sem as poses (só o desenho muda).
+- **O ajuste da passada no binário** (rodada 14, front "anim-additive",
+  lido em parte no `cActiveAnimLoco::InitChannelNetwork`, BV `0xd2cd68`;
+  **não implementado**: os papéis de algumas variáveis não fecharam, e
+  trocar a regra mudaria o tempo das rotas na VM). Com `d` o comprimento
+  da rota, `s_c`/`s_p` começo e parada e `L` a passada longa (a soma pesada
+  dos ciclos), o resto `r = d − s_c − s_p` vira um número de **meios
+  ciclos** `n = ⌈(r − L·(f₀ + f₁)) / (0,5·L)⌉` (≥ 0), onde `f₀` é a fase
+  do fim do começo (`1 − porção`, menos 0,5 se ≥ 0,5) e `f₁` a porção do
+  ciclo atual (vtable `0x188` do locomotor, reduzida a < 0,5; 0 parado); o
+  total de ciclos é `c = f₁ + 0,5·n + f₀`. Com clipe de parada, até 2
+  tentativas: a cada `n` ímpar troca o pé da parada (`|porção − 0,5|`,
+  `DetermineTurnResources` de novo, vtable `0x90`) e, se `L·c + s_c + s_p`
+  ainda não cobre `d`, soma meio ciclo. Depois, com `T_l = L·c + s_c + s_p`
+  e `T_s` o mesmo com a passada, o começo e a parada curtos: o peso do curto
+  é `w = (T_l − d)/(T_l − T_s)` em começo, ciclos e parada; **se `w > 0,3`**
+  (`0x274b670`) e `c ≥ 0,5`, tira meio ciclo e resolve de novo com um termo
+  de ±0,25 ciclo (`0x274b54c`/`0x274b7b4`) e a parada misturada a
+  `1 − k/10` (`0x274b6e0` = −10), `k` = 0..10 até o peso dar ≥ 0 (o "laço
+  de 10 tentativas"). O que sobra (`d` − começo − `c`·passada − parada, ≥ 0)
+  vai para `+0xf8`. Rotas curtas (sem espaço para ciclos, o ramo com
+  `0,9·(s_c + s_p) ≥ d`, `0x274b6d0`) misturam começo e parada pelo
+  comprimento, com `(d − 0,9·s)/(4 − 0,9·s)` (`0x274b488` = 4). O walking3
+  resolve `w` exato num número inteiro de meios ciclos sem o termo de fase
+  nem a troca para `−½` ciclo acima de 0,3.
 - Medido: `OS2_DEBUG_LOCO=1` (Don em N001_Lot16, "Vir Aqui" a 14,5,7,5):
   começo `turnAndGo-alt-135` 0,85 + `Short` 0,14, ciclos alt1/alt0 longos e
   curtos (0,16 de walkShort; 1,85 m/s), parada `turnAndStop-alt-0` 0,69 +
