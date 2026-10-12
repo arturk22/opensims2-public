@@ -888,7 +888,9 @@ PieMenuHost::DialogLayout PieMenuHost::dialogLayout(const vm::Dialog& d, int wid
     flush();
     while (!l.lines.empty() && l.lines.back().empty())
         l.lines.pop_back();
-    const float h = kLabelH + 12 + float(l.lines.size()) * kLineH + 16 + kLabelH + kDialogPad;
+    // The title bar only when the dialog has a title (most yes/no dialogs have none).
+    const float h = (d.title.empty() ? kDialogPad - 12 : kLabelH) + 12 + float(l.lines.size()) * kLineH + 16 + kLabelH +
+                    kDialogPad;
     l.x0 = std::round((float(width) - w) / 2), l.x1 = l.x0 + w;
     l.y0 = std::round((float(height) - h) / 2), l.y1 = l.y0 + h;
     // Buttons in a row, centred at the bottom.
@@ -982,8 +984,14 @@ UiScreen PieMenuHost::screen(int width, int height) {
         const DialogLayout l = dialogLayout(*d, width, height);
         paint.rect(0, 0, float(width), float(height), kDim);
         paint.rect(l.x0, l.y0, l.x1, l.y1, kLabel);
-        paint.label(l.x0, l.y0, l.x1, l.y0 + kLabelH, d->title.empty() ? d->typeName : d->title, kTitle, kText);
-        float y = l.y0 + kLabelH + 12;
+        // The dialog's own title string (byte 6, or temp 3), never the
+        // editor's label of its type ("yes-no"): without one there is no
+        // title bar, as 172 of the 176 yes/no dialogs of objects.package.
+        float y = l.y0 + kDialogPad;
+        if (!d->title.empty()) {
+            paint.label(l.x0, l.y0, l.x1, l.y0 + kLabelH, d->title, kTitle, kText);
+            y = l.y0 + kLabelH + 12;
+        }
         for (const auto& line : l.lines) {
             paint.text(l.x0 + kDialogPad, y, line, kText);
             y += kLineH;

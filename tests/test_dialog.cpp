@@ -96,6 +96,16 @@ static void testYesNoCancel() {
     vm.run(t2);
     vm.run(t2);
     check(t2.status == Thread::Status::Finished && t2.result, "dialog: auto answer button 1 -> true");
+
+    // A yes/no dialog without a title string (byte 6 = 0, as the phone's
+    // "is ... available to talk?"): no title, never the type's editor label.
+    vm.autoDialogAnswer = -1;
+    code.add(kObjGroup, 0x1001, tree({instr(0x24, {0, 0, 0, 3, 4, 1, 0, 0, 0x01, 0, 0, 0, 0, 2, 0})}));
+    Thread t3 = vm.start(me.id, 0x1001);
+    vm.run(t3);
+    auto y = vm.dialogs.find(me.id);
+    check(y != vm.dialogs.end() && y->second.title.empty() && y->second.buttons.size() == 2,
+          "dialog: yes/no without a title string has none");
 }
 
 static void testNotification() {
