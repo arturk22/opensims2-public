@@ -564,6 +564,10 @@ void acceptDialog(Context& c, Dialog& d) {
                 nb->firstName = name;
         }
         break;
+    case DialogClass::Fill:
+        // OnOk: temp 0 = the units bought.
+        c.thread.temps[0] = int16_t(d.fillValue - d.fillUnits);
+        break;
     case DialogClass::SetAspiration:
         // The button sets the neighbor's person data 46 (vtable 0x44) and
         // OnOk the Sim's on the lot, if it is there.
@@ -787,6 +791,23 @@ Exit dialog(Context& c) {
         case 13: d.outfitCategory = 0x1000; break;
         default: d.outfitCategory = 0x001; break;
         }
+        break;
+    }
+    case DialogClass::Fill: {
+        // SetParams (BV 0x294ca4): locals i..i+3 (i = byte 11); 50 units per
+        // cost step (type 14). The binary throws 0x7C when vtable 0x6C (a
+        // count the frame gives) is under i + 4; "Sub - Food Dialog" asks
+        // for locals 4-7 of a tree with 6, so what that count is was not
+        // settled: missing locals read 0 here (inferred).
+        d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
+        const size_t i = o[11];
+        auto local = [&](size_t k) { return k < c.frame.locals.size() ? int(c.frame.locals[k]) : 0; };
+        d.fillUnits = local(i), d.fillCost = local(i + 1);
+        d.fillDelivery = local(i + 2), d.fillMax = local(i + 3);
+        d.fillValue = d.fillUnits;
+        const int16_t family = me.person ? me.person->data[persondata::FamilyNumber] : 0;
+        if (auto f = vm.families.find(family); f != vm.families.end())
+            d.fillFunds = f->second.funds;
         break;
     }
     case DialogClass::SetAspiration:

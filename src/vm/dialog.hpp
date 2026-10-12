@@ -157,6 +157,12 @@ struct Dialog {
     // knowledge; 0 none yet: OK is off, Validate).
     int16_t aspirationNeighbor = 0;
     int16_t aspiration = 0;
+    // The food dialog (cTSWinProcFillDialog, type 14): from the tree's
+    // locals at operand byte 11 (SetParams), the units it has, the cost of
+    // 50 units, the delivery cost and the most units it takes; the fill
+    // bar's value (units after buying) and the family's funds (the bar
+    // stops where the total passes them). OK puts value - units in temp 0.
+    int fillUnits = 0, fillCost = 0, fillDelivery = 0, fillMax = 0, fillValue = 0, fillFunds = 0x7FFFFFFF;
     int timeout = 0;   // operand byte 10: a text notification's lifetime in seconds (0: until closed)
     int priority = 0;  // operand byte 9: a text notification's priority
     // A blocking dialog's time limit (ms; 0: none): it then takes its last

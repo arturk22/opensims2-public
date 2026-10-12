@@ -155,7 +155,17 @@ std::string& DialogWindow::editText(vm::Dialog& d) {
     return d.text;
 }
 
+namespace {
+// cTSWinProcFillDialog::CalculateCostOfUnits: 50 units a cost step,
+// rounded up, plus the delivery.
+int fillCost(const vm::Dialog& d, int units) { return (units * d.fillCost + 49) / 50 + d.fillDelivery; }
+std::string simoleons(int v) { return "\xC2\xA7" + std::to_string(v); }
+} // namespace
+
 bool DialogWindow::okEnabled(const vm::Dialog& d) {
+    // UpdateAmounts: OK only once something is bought.
+    if (d.cls.cls == vm::DialogClass::Fill)
+        return d.fillValue > d.fillUnits;
     // cTSWinProcSetAspirationDialog::Validate: an aspiration picked.
     if (d.cls.cls == vm::DialogClass::SetAspiration)
         return d.aspiration != 0 && d.aspiration != 0x40 && d.aspiration != 0x100;
@@ -839,6 +849,72 @@ DialogWindow::Layout DialogWindow::aspirationDialog(const vm::Dialog& d, int wid
     return L;
 }
 
+// --- cTSWinProcFillDialog ----------------------------------------------------
+
+// Script 0x2CB242F8 ("Comprar Comida"): the fill bar (0xCCB5FD79: up 2,
+// down 1, the bar 3) from the units the Sim has to the most it takes, the
+// food cost (0x4DADF755), the delivery (0x4CB613E7) and the total
+// (0x4CB613F8), OK 0xACB50208 and cancel 0xACB50200. The bar's step per
+// click (10 units) and dragging on it are inferred.
+DialogWindow::Layout DialogWindow::fillDialog(const vm::Dialog& d, int width, int height) {
+    const UiScript* s = script(0x2CB242F8);
+    if (!s || d.type != 14)
+        return plainDialog(d, width, height);
+    Layout L;
+    const UiElement& top = s->roots.front();
+    const auto a = top.area();
+    const float w = float(a[2] - a[0]), h = float(a[3] - a[1]);
+    L.x0 = std::round((float(width) - w) / 2), L.y0 = std::round((float(height) - h) / 2);
+    L.x1 = L.x0 + w, L.y1 = L.y0 + h;
+    UiElement root = top;
+    root.set("area", uiArea(0, 0, int(w), int(h)));
+    const int added = std::max(0, d.fillValue - d.fillUnits);
+    const int total = fillCost(d, added);
+    L.captions[0x4DADF755] = simoleons(total - d.fillDelivery);
+    L.captions[0x4CB613E7] = simoleons(d.fillDelivery);
+    L.captions[0x4CB613F8] = simoleons(total);
+    L.captions[0x0CB613B4] = std::to_string(added);
+    std::array<float, 4> fillRect{0, 0, 0, 0};
+    for (auto& c : root.children) {
+        const auto r = c.area();
+        const std::array<float, 4> rr{L.x0 + float(r[0]), L.y0 + float(r[1]), L.x0 + float(r[2]), L.y0 + float(r[3])};
+        if (c.id() == 0xCCB5FD79) {
+            for (auto& k : c.children) {
+                const auto q = k.area();
+                const std::array<float, 4> kr{rr[0] + float(q[0]), rr[1] + float(q[1]), rr[0] + float(q[2]), rr[1] + float(q[3])};
+                if (k.id() == 2)
+                    L.regions.push_back({kr, Hit::Next, 0});
+                if (k.id() == 1)
+                    L.regions.push_back({kr, Hit::Prev, 0});
+                if (k.id() == 3) {
+                    // The bar filled from the bottom to the value, in the
+                    // dark blue of the "gradient" strip 0x8E900055 (how the
+                    // control cuts that strip is not known: a flat fill).
+                    const float full = float(q[3] - q[1]);
+                    const float f = d.fillMax > 0 ? std::clamp(float(d.fillValue) / float(d.fillMax), 0.0f, 1.0f) : 0;
+                    fillRect = {float(q[0]) + 3, float(q[3]) - std::round(full * f), float(q[2]) - 3, float(q[3])};
+                    L.regions.push_back({kr, Hit::Bar, 0});
+                }
+            }
+        }
+        if (c.id() == 0xCCB5FD79 && fillRect[3] > fillRect[1]) {
+            UiElement bar = element("GZWinFlatRect", "IGZWinFlatRect", fillRect[0], fillRect[1], fillRect[2], fillRect[3]);
+            bar.set("fillcolor", "(5,6,113)");
+            c.children.push_back(bar);
+        }
+        if (c.id() == 0xACB50208) {
+            L.regions.push_back({rr, Hit::Button, 0});
+            L.buttonIds.push_back(0xACB50208);
+        }
+        if (c.id() == 0xACB50200) {
+            L.regions.push_back({rr, Hit::Button, 1});
+            L.buttonIds.push_back(0xACB50200);
+        }
+    }
+    L.root = std::move(root);
+    return L;
+}
+
 // --- the other special dialogs: an OK/cancel box (not done yet) -----------
 
 DialogWindow::Layout DialogWindow::plainDialog(const vm::Dialog& d, int width, int height) {
@@ -861,6 +937,7 @@ DialogWindow::Layout DialogWindow::layout(const vm::Dialog& d, int width, int he
     case vm::DialogClass::PhoneParty: return phoneDialog(d, width, height);
     case vm::DialogClass::Clothing: return wardrobeDialog(d, width, height);
     case vm::DialogClass::SetAspiration: return aspirationDialog(d, width, height);
+    case vm::DialogClass::Fill: return fillDialog(d, width, height);
     default: return plainDialog(d, width, height);
     }
 }
@@ -993,9 +1070,24 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
         }
         case Hit::Sort: break;
         case Hit::Choice: d.aspiration = int16_t(g.value); break;
+        case Hit::Bar: {
+            // A click on the bar sets the units by its height (inferred).
+            const float f = std::clamp((g.rect[3] - y) / std::max(1.0f, g.rect[3] - g.rect[1]), 0.0f, 1.0f);
+            d.fillValue = std::max(d.fillUnits, int(std::round(f * float(d.fillMax))));
+            while (d.fillValue > d.fillUnits && fillCost(d, d.fillValue - d.fillUnits) > d.fillFunds)
+                --d.fillValue; // onCommand: not past the family's funds
+            break;
+        }
         case Hit::Tab:
         case Hit::Prev:
         case Hit::Next:
+            if (d.cls.cls == vm::DialogClass::Fill) {
+                d.fillValue = std::clamp(d.fillValue + (g.kind == Hit::Next ? 10 : -10), d.fillUnits,
+                                         std::max(d.fillUnits, d.fillMax));
+                while (d.fillValue > d.fillUnits && fillCost(d, d.fillValue - d.fillUnits) > d.fillFunds)
+                    --d.fillValue; // onCommand: not past the family's funds
+                break;
+            }
             // onBtnClickedID: a tab shows its list; the arrows step through it.
             if (Outfits* o = wardrobe(d)) {
                 if (g.kind == Hit::Tab)

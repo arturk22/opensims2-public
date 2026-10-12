@@ -233,6 +233,27 @@ static void testSpecialDialogs() {
     check(vm.dialogs[me.id].outfitCategory == 0x020 && vm.dialogs[me.id].outfitSim == me.id, "wardrobe: formal wear");
     vm.dialogs.erase(me.id);
 
+    // Food (14): locals 0-3 = units, cost per 50, delivery, most; OK -> temp 0 = units bought.
+    {
+        auto assign = [](uint8_t local, uint8_t value) { return instr(0x02, {local, 0, value, 0, 0, 5, 0x19, 0x07}); };
+        auto b = tree({assign(0, 40), assign(1, 20), assign(2, 50), assign(3, 200),
+                       instr(0x24, {0, 0, 0, 0, 0, 14, 0, 0, 0x01, 0, 0x14, 0, 0, 0, 0})},
+                      4);
+        for (int k = 0; k < 4; ++k)
+            b.instructions[size_t(k)].onTrue = {Kind::Instruction, uint16_t(k + 1)};
+        code.add(kObjGroup, 0x110A, std::move(b));
+        Thread fd = vm.start(me.id, 0x110A);
+        vm.run(fd);
+        Dialog& f = vm.dialogs[me.id];
+        check(f.cls.cls == DialogClass::Fill && f.fillUnits == 40 && f.fillCost == 20 && f.fillDelivery == 50 &&
+                  f.fillMax == 200 && f.fillValue == 40,
+              "food: the locals");
+        f.fillValue = 90;
+        f.answer = 0;
+        vm.run(fd);
+        check(fd.result && fd.temps[0] == 50, "food: OK -> temp 0 = units bought");
+    }
+
     // "Return" (byte 7 bit 0): queued, the tree goes on at once.
     dlg(0x1105, 0, 0x01);
     Thread ret = vm.start(me.id, 0x1105);

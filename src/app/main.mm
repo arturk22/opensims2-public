@@ -1094,6 +1094,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             d.iconObject = gPie->sim();
         if (kind == "0c")
             d.continueOthers = true;
+        if (d.cls.cls == os2::vm::DialogClass::Fill) { // 14: buying food (40 of 200 units, §20 per 50, §50 delivery)
+            d.fillUnits = d.fillValue = 40, d.fillCost = 20, d.fillDelivery = 50, d.fillMax = 200;
+            d.fillFunds = 1000;
+        }
         if (d.cls.cls == os2::vm::DialogClass::SetAspiration) { // 24: the selected Sim's aspiration
             if (const os2::vm::Object* o = m.object(gPie->sim()); o && o->person) {
                 d.aspirationNeighbor = o->person->data[os2::vm::persondata::NeighborId];

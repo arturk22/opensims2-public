@@ -46,7 +46,7 @@ public:
     ~DialogWindow();
 
     // A region of the window and what a click there does.
-    enum class Hit { Button, Row, Add, Remove, NameBox, Sort, Close, Tab, Prev, Next, Choice };
+    enum class Hit { Button, Row, Add, Remove, NameBox, Sort, Close, Tab, Prev, Next, Choice, Bar };
     struct Region {
         std::array<float, 4> rect{0, 0, 0, 0}; // canvas x0, y0, x1, y1
         Hit kind = Hit::Button;
@@ -118,6 +118,7 @@ private:
     Layout plainDialog(const vm::Dialog& d, int width, int height);
     Layout wardrobeDialog(const vm::Dialog& d, int width, int height);
     Layout aspirationDialog(const vm::Dialog& d, int width, int height);
+    Layout fillDialog(const vm::Dialog& d, int width, int height);
     Outfits* wardrobe(const vm::Dialog& d);
     const UiScript* script(uint32_t id);
     const RgbaImage* icon(const vm::Dialog& d);
