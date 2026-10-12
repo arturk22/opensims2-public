@@ -7,7 +7,9 @@
 # Nobody plays during a soak: the dialogs the trees put up time out as the
 # game's (their last button after 4000 + 40 x length ms, on game time
 # headless; vm::autoTimeOutDialogs). SOAK_DIALOG=N answers button N at once
-# instead (--dialog-answer).
+# instead (--dialog-answer). The newborn's name dialog (type 23) waits for
+# the player in the game too: the soak names the babies after a game minute
+# (autonomy --name-babies), as a player would.
 # and records: crashes (signal exit, with an lldb backtrace), hangs (wall time
 # above SOAK_HANG seconds; a background watchdog kills the job), Mains that
 # died (S2PKG_ERRORS=1) or were reset after an error, Sims in the same interaction for more than 6 game
@@ -67,14 +69,14 @@ one() { # one <lot> <outdir>
 
     # 1. autonomy
     log="$scratch/auto.log"; t0=$(date +%s)
-    S2PKG_ERRORS=1 run_limited "$SOAK_HANG" "$log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"}; rc=$?
+    S2PKG_ERRORS=1 run_limited "$SOAK_HANG" "$log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" --name-babies ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"}; rc=$?
     t1=$(date +%s); echo "auto_secs=$((t1-t0))" >>"$res"
     if [ $rc -eq 999 ]; then echo "hang|autonomy|killed after ${SOAK_HANG}s; last: $(tail -c 300 "$log" | tr '\n' ' ')" >>"$res"
     elif [ $rc -ne 0 ] && [ $rc -lt 128 ] && ! grep -q "^after " "$log"; then
         echo "error|autonomy|exit $rc: $(grep -m1 -E '^error' "$log")" >>"$res"
     elif [ $rc -ge 128 ]; then
         echo "crash|autonomy|exit $rc: $(tail -n 2 "$log" | tr '\n' ' ')" >>"$res"
-        backtrace "$scratch/lldb1.log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"} | sed 's/^/bt|autonomy|/' >>"$res"
+        backtrace "$scratch/lldb1.log" "$S2PKG" autonomy "$lot" --ticks "$SOAK_TICKS" --every "$EVERY" --name-babies ${DIALOG_ARGS[@]+"${DIALOG_ARGS[@]}"} | sed 's/^/bt|autonomy|/' >>"$res"
     fi
     # the household's Mains that died ("  Name#id  N searches, M picks; its Main died: ..."; visitors are "also:")
     grep -E "^  [^ ].* searches, .* picks; its Main died: " "$log" | sed -E 's/^ *([^ ]+) .*its Main died: /dead|autonomy|\1: /' >>"$res"

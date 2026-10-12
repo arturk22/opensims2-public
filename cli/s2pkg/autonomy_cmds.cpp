@@ -45,6 +45,11 @@ int gDialogAnswer = -1;
 // --no-dialog-timeout: dialogs wait for an answer forever (by default
 // they time out as the game's, on game time: vm::autoTimeOutDialogs).
 bool gNoDialogTimeout = false;
+// --name-babies: the soak's stand-in for a player at the newborn's name
+// dialog (type 23, which waits for the player in the game too: no time
+// limit): after a game minute it is given "Bebê", "Bebê 2" ... and OK.
+// Ours, not the game's.
+bool gNameBabies = false;
 bool gSkipFailures = false; // --skip-failures: VM::autonomySkipsFailures (ours, not the binary's)
 
 std::filesystem::path resRoot(const std::filesystem::path& pkg) {
@@ -388,6 +393,23 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             std::printf("  tick %6ld fire set under %d: %s\n", i, fireUnder, ok ? "true" : "false");
         }
         machine.tick();
+        if (gNameBabies)
+            for (auto& [who, d] : machine.dialogs) {
+                static std::map<uint32_t, uint64_t> seen;
+                if (d.type != vm::dialogtype::BabyName || d.answer >= 0)
+                    continue;
+                const uint64_t first = seen.emplace(d.id, machine.ticks).first->second;
+                if (machine.ticks - first < 30)
+                    continue;
+                for (size_t k = 0; k < d.names.size(); ++k)
+                    if (d.names[k].text.empty())
+                        d.names[k].text = k ? "Bebê " + std::to_string(k + 1) : std::string("Bebê");
+                if (!d.names.empty())
+                    d.text = d.names[0].text;
+                d.answer = 0;
+                std::printf("  tick %6llu %s %d's name dialog answered: \"%s\"%s\n", static_cast<unsigned long long>(machine.ticks),
+                            clockText(machine).c_str(), who, d.text.c_str(), d.names.size() > 1 ? " (and more)" : "");
+            }
         printWantEvents();
         for (const auto& [rid, r] : machine.errorResets)
             if (r.lastTick == machine.ticks && (r.count <= 20 || r.count % 1000 == 0)) {
@@ -659,6 +681,8 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
             gSkipFailures = true;
         else if (a == "--dialog-answer" && i + 1 < argc)
             gDialogAnswer = std::stoi(argv[++i]);
+        else if (a == "--name-babies")
+            gNameBabies = true;
         else if (a == "--no-dialog-timeout")
             gNoDialogTimeout = true;
         else if (lotPath.empty())
@@ -672,7 +696,7 @@ int autonomyCommand(const std::string& cmd, int argc, char** argv) {
 }
 
 const char* autonomyUsage() {
-    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N] [--no-dialog-timeout] [--skip-failures]\n";
+    return "       s2pkg autonomy <lot.package> [--ticks N] [--every N] [--sim name] [--motives N] [--verbose] [--no-decay] [--trace sim-id [--trace-depth N]] [--fba N [--fba-sim id] [--fba-match text]] [--init] [--dialog-answer N] [--no-dialog-timeout] [--skip-failures] [--name-babies]\n";
 }
 
 } // namespace os2
