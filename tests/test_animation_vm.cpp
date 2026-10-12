@@ -316,6 +316,24 @@ static void testOverlayLevels() {
     vm.run(th);
     check(s.animation.playing() && s.animation.level == 6 && std::fabs(s.animation.weight - 0.5f) < 1e-4f,
           "Animate Sim's level 2 x priority and its request weight");
+    // The IK object and the request heading (try_animate_overlay/_sim): the
+    // overlay's byte 15 flag 0x08 takes temp 6 as its IK object, 0x02 temp 4
+    // as -45 degree steps; Animate Sim's byte 8 flag 0x04 temp 4, its IK
+    // object the owner byte 9 / u16 10 (temp 6).
+    Object& s2 = sim(vm, 3.5f, 1.5f);
+    code.add(kGroup, 0x100C, tree({instr(0x6B, T, E, {3, 0, 0, 0x20, 0, 0, 0x0A, 0, 0, 0x80, 0xFF, 0xFF, 2, 0, 0, 0x0A})}));
+    code.add(kGroup, 0x100D, tree({instr(0x6A, T, E, {2, 0, 0, 0x20, 0, 0, 0x80, 0, 0x04, 0x08, 6, 0, 1, 0})}));
+    for (uint16_t t : {0x100C, 0x100D}) {
+        th = vm.start(s2.id, t, {}, s2.id);
+        th.temps[4] = 2;
+        th.temps[6] = s.id;
+        vm.run(th);
+    }
+    check(s2.animation.overlays.size() == 1 && s2.animation.overlays[0].ikObject == s.id &&
+              std::fabs(s2.animation.overlays[0].headingOffset + 1.5707963f) < 1e-4f,
+          "Animate Overlay's IK object in temp 6 and heading from temp 4");
+    check(s2.animation.eventObject == s.id && std::fabs(s2.animation.headingOffset + 1.5707963f) < 1e-4f,
+          "Animate Sim's IK object and heading from temp 4");
 }
 
 // A Sim walks a synthetic route (scripted Go To Relative Position, then an

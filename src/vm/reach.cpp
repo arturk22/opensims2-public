@@ -461,8 +461,12 @@ Exit reachPut(Context& c) {
                 if (x && x->data[objdata::ContainerId] != me.id) {
                     putInSlot(*x, me, r.hand);
                     me.carryOverlays = r.overlays;
-                    for (const auto& name : r.overlays)
-                        anim.addOverlay(name).oeType = oetype::Carry;
+                    // The grasp at level 3, the carry pose at 5 (try_new_reach).
+                    for (size_t k = 0; k < r.overlays.size(); ++k) {
+                        Overlay& ov = anim.addOverlay(r.overlays[k]);
+                        ov.oeType = oetype::Carry;
+                        ov.level = k == 0 && r.overlays.size() > 1 ? animlevel::Grasp : animlevel::Carry;
+                    }
                     ++anim.overlaySerial;
                 }
             } else if (x) {

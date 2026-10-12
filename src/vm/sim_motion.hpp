@@ -43,6 +43,7 @@ public:
         int animLevel = 0;      // its channel level (vm::animlevel::ofSim)
         float animWeight = 1;   // its request weight
         int16_t animIkObject = 0; // its IK object (Animate Sim's owner byte 9, u16 10)
+        float animHeading = 0;    // its request heading offset (radians)
         std::string walk;       // the locomotion walk animation while walking
         // On a stair (Object::Route::climb): the phase's animation, bumped
         // serial per phase, and the height of the walker's anchor.

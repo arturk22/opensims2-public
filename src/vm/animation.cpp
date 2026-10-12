@@ -550,6 +550,7 @@ Exit animateSim(Context& c) {
     a.depth = depth, a.tree = c.frame.behavior, a.node = c.frame.pc;
     a.pendingEvents = library(c.vm).treeEvents(name);
     a.eventTree = le16(&o[4]);
+    a.headingOffset = (o[8] & 0x04) ? animlevel::headingOfDirections(c.thread.temps[4]) : 0.0f;
     a.eventObject = 0;
     try {
         a.eventObject = c.get(o[9], int16_t(le16(&o[10])));
@@ -639,6 +640,7 @@ Exit animateOverlay(Context& c) {
     // (try_animate_overlay, Mac BV 0x69ea54, passes it to
     // AddChoreoAnimRequest, whose IK targets of type 2 are its bones).
     ov->ikObject = (o[15] & 0x08) ? c.thread.temps[6] : int16_t(0);
+    ov->headingOffset = (o[15] & 0x02) ? animlevel::headingOfDirections(c.thread.temps[4]) : 0.0f;
     return Exit::True;
 }
 

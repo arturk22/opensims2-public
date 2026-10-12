@@ -133,7 +133,17 @@ constexpr int16_t BlendOut = 9997, ActionEnd = 9998, End = 9999, Stopped = -1;
 // over it on the bones both key, and one of a lower level (the idles,
 // priority 0 or -1: level 1) gives way to it.
 namespace animlevel {
-constexpr int8_t SimLow = 0, Object = 2, Walk = 3, Carry = 5;
+// The locomotion's requests are priority 0 (CreateLocoRequest, BV 0x6b2158,
+// passes r29 = 0 to CreateChoreoLocoRequest's SetPriority argument); Reach/
+// Put's grasp phases are 3 and its carry pose 5 (try_new_reach, BV
+// 0x69111c: the phases' levels 3, 2, 3, 3, 5, the last the carry name's,
+// with the debug names "rom", "rsm", "roh" the doc once took for a route's).
+constexpr int8_t SimLow = 0, Object = 2, Walk = 0, Grasp = 3, Carry = 5;
+// Request heading offsets in SimAntics directions (Animate Sim byte 8 bit
+// 0x04, Animate Overlay byte 15 bit 0x02: temp 4): -temp 4 x pi/4
+// (FUN_008b6860; its constant is the one FUN_008b61fc turns the 8
+// directions into radians with, (2 - d) x k, and FUN_008b68a4 back modulo 8).
+inline float headingOfDirections(int16_t steps) { return -float(steps) * 0.78539816f; }
 // Animate Sim's priority byte (try_animate_sim, BV 0x69dd18).
 inline int8_t ofSim(int priority) { return priority < 0 ? 0 : priority > 3 ? 6 : int8_t(2 * priority); }
 // Animate Overlay's priority byte (try_animate_overlay, BV 0x69f584).
@@ -166,6 +176,7 @@ struct Overlay {
     bool blendOutSent = false;
     bool flipped = false; // played mirrored (Animate Object/Overlay's flip: a chair pulled out to the Sim's side)
     int16_t ikObject = 0; // the object its IK targets of type 2 name bones of (0: none)
+    float headingOffset = 0; // the request's heading offset, radians (headingOfDirections)
     // Its event tree (Animate Overlay's u16 at 4) and where it runs: the
     // thread that started it.
     uint16_t eventTree = 0;
@@ -196,6 +207,7 @@ struct AnimationState {
     std::vector<std::pair<int, int16_t>> pendingEvents;
     uint16_t eventTree = 0;
     int16_t eventObject = 0; // the event tree's parameter 1 (animation.cpp)
+    float headingOffset = 0;  // the request's heading offset, radians (byte 8 bit 0x04: temp 4)
     float playedTicks = 0, ticksPerVmTick = 0;
 
     // Animations that play over the object without blocking (Animate

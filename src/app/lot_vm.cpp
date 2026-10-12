@@ -209,8 +209,10 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
                 loop && st != b.stoppedOverlays.end() && at - st->second.first <= kRestartGap)
                 phase = at - st->second.second;
             p.start = at - phase;
-            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority, .phase = phase, .level = x.level,
-                                    .ikObjectBone = ikObjectBones(*b.actor, x.ikObject)});
+            // Turned by the resource's and the request's heading offsets, as
+            // SetupChannel does for every request.
+            b.actor->cue(at, anim, {.fade = kFade, .loop = loop, .priority = p.priority, .turn = anim.headingOffset + x.headingOffset,
+                                    .phase = phase, .level = x.level, .ikObjectBone = ikObjectBones(*b.actor, x.ikObject)});
             if (std::getenv("OS2_DEBUG_VM"))
                 std::fprintf(stderr, "tick %llu sim %d overlay on: %s (kind %d, level %d, loops %d)\n",
                              (unsigned long long)vm_->ticks, b.id, x.name.c_str(), x.oeType, x.level, x.loops);
@@ -258,9 +260,8 @@ void LotSimulation::sampleAll(double at) {
         bool loop = true;
         float fade = vm::kBlendTicks / 1000.0f;
         // The base layer's channel level: the standing idle under
-        // everything, a walk or a stair phase at a route's 3 ("rom": the
-        // binary's routes use 2, 3 or 5; which one a walk takes is
-        // inferred), Animate Sim's its own.
+        // everything, a walk or a stair phase at the locomotion's 0
+        // (CreateLocoRequest's priority), Animate Sim's its own.
         int level = 0;
         float weight = 1;
         if (!s.climb.empty()) {
@@ -337,7 +338,7 @@ void LotSimulation::sampleAll(double at) {
                 }
             } else {
                 b.actor->cue(at, anim, {.fade = fade, .loop = loop, .priority = partial ? b.partial : -1,
-                                        .mirror = mirror, .turn = animated ? anim.headingOffset : 0.0f,
+                                        .mirror = mirror, .turn = animated ? anim.headingOffset + s.animHeading : 0.0f,
                                         .phase = walkClip ? double(s.walkPhase) : 0.0, .level = level,
                                         .weight = weight,
                                         .ikObjectBone = animated ? ikObjectBones(*b.actor, s.animIkObject) : IkObjectBone{}});
