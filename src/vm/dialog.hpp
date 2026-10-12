@@ -68,6 +68,7 @@ struct Dialog {
     // Text entry (3) and Baby Name (23): what the player typed, set by the
     // host with the answer (empty: the default stays).
     std::string text;
+    bool female = false; // Baby Name: the newborn is a girl (the name box shows her icon)
     // The instruction waiting for it (the thread's stack depth, tree, node).
     size_t depth = 0;
     const Behavior* tree = nullptr;

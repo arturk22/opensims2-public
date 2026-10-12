@@ -39,7 +39,8 @@
 // spread over them (out-1.png ... out-n.png). A dialog the trees put up is
 // shown over the scene and pauses the game until a button is clicked;
 // headless: --dialog-answer <n> answers every one with button n, and
-// --dialog-click x,y (repeatable) clicks each dialog in turn.
+// --dialog-click x,y|return|escape (repeatable) clicks (or presses a key for) each dialog in turn,
+// --dialog-type <text> types into the text box of a dialog, --dialog-demo <type>[:title[:message]] puts one up.
 // --movie <name> plays a .movie fullscreen and quits (headless with --screenshot:
 // frames and A/V timestamps, app/movie_host.hpp); --intro plays the start-up
 // movies before the scene. With a window, scenes load on a worker thread
@@ -1045,6 +1046,34 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);
+    // --dialog-demo <type>[:<title>[:<message>]]: test aid, puts a dialog of that Dialog type (0 message,
+    // 1 yes/no, 2 yes/no/cancel, 3 text entry, 23 baby name; "g" after the 23 = a girl) up for the selected Sim,
+    // to see the window (answer it with --dialog-click / --dialog-type, or keys).
+    if (auto spec = argument(@"--dialog-demo"); spec && gPie) {
+        os2::vm::Dialog d;
+        d.id = 0x7000;
+        d.me = gPie->sim();
+        d.type = std::atoi(spec->c_str());
+        std::vector<std::string> parts{""};
+        for (char ch : *spec)
+            if (ch == ':')
+                parts.emplace_back();
+            else
+                parts.back().push_back(ch);
+        d.title = parts.size() > 1 ? parts[1] : "";
+        d.message = parts.size() > 2 ? parts[2] : "Isto \u00e9 uma mensagem de teste do di\u00e1logo, longa o bastante para quebrar em mais de uma linha na janela.";
+        d.female = parts[0] == "23g";
+        using namespace os2::vm::dialogtype;
+        if (d.type == YesNo)
+            d.buttons = {"Sim", "N\u00e3o"};
+        else if (d.type == YesNoCancel)
+            d.buttons = {"Sim", "N\u00e3o", "Cancelar"};
+        else
+            d.buttons = {"OK"};
+        if (d.type == BabyName)
+            d.text = d.female ? "Bebezinha" : "Bebezinho";
+        gSimulation->machine().dialogs[d.me] = std::move(d);
+    }
     try {
         const auto plumbob = os2::loadObjectModel(index, "plumbob");
         gPlumbob = renderer.addInstance(renderer.addObject(plumbob, index), matrix_identity_float4x4);
@@ -1070,6 +1099,7 @@ void setupPieMenu(os2::ResourceIndex& index) {
         gPie->setStyle(os2::PieMenuStyle::fromConstants(os2::uiConstants(*script)));
     if (auto p = simPortrait(gPie->sim()))
         gPie->setPortrait(std::move(*p));
+    gPie->setResources(index, gameDir() / "TSData/Res"); // the dialog window's scripts
     if (gAudio)
         gPie->setSoundPlayer([](const std::string& name) {
             os2::SoundSystem::PlayOptions o;
@@ -3289,6 +3319,12 @@ void unloadScene() {
         }
         return;
     }
+    // A dialog the trees put up takes the keys (text, Return, Esc).
+    if (gPie && gPie->dialogOpen()) {
+        const std::string typed = e.characters ? std::string(e.characters.UTF8String) : std::string();
+        gPie->dialogKey(e.keyCode, typed);
+        return;
+    }
     // The neighborhood's place-lot dialog takes the keys (the lot's name).
     if (gHood && (gHood->ui().bins().textEntry() || gHood->ui().storyEditing())) {
         const std::string typed = e.characters ? std::string(e.characters.UTF8String) : std::string();
@@ -4641,12 +4677,20 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             poseActors(*_viewDelegate.renderer, base);
             std::vector<simd_float2> dialogClicks;
             size_t dialogClick = 0;
+            std::string dialogTyped;
             NSArray<NSString*>* shotArgs = sceneArgs();
             for (NSUInteger i = 1; i + 1 < shotArgs.count; ++i) {
                 float x, y;
                 if ([shotArgs[i] isEqualToString:@"--dialog-click"] && std::sscanf(shotArgs[i + 1].UTF8String, "%f,%f", &x, &y) == 2)
                     dialogClicks.push_back(simd_make_float2(x, y));
+                else if ([shotArgs[i] isEqualToString:@"--dialog-click"] && [shotArgs[i + 1] isEqualToString:@"return"])
+                    dialogClicks.push_back(simd_make_float2(-1, -1)); // the Return key
+                else if ([shotArgs[i] isEqualToString:@"--dialog-click"] && [shotArgs[i + 1] isEqualToString:@"escape"])
+                    dialogClicks.push_back(simd_make_float2(-2, -2)); // the Esc key
+                if ([shotArgs[i] isEqualToString:@"--dialog-type"])
+                    dialogTyped = shotArgs[i + 1].UTF8String;
             }
+            uint32_t dialogTypedFor = 0;
             double perfSim = 0, perfCapture = 0, perfWorst = 0;
             // --frames-from <seconds>: the shots spread from that moment instead of the start
             // (the VM still runs from the start: a scene late in a long run).
@@ -4672,9 +4716,27 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                         sim.actor->update(scene);
                     updateEffects(*_viewDelegate.renderer, scene); // effects the VM starts and stops between shots
                     // --dialog-click x,y (repeatable): clicks, in turn, each dialog that opens.
+                    // --dialog-type <text>: typed, key by key, into the text box of a dialog that opens.
+                    if (gPie && gPie->dialogOpen() && gPie->dialogHasTextBox() && !dialogTyped.empty() &&
+                        dialogTypedFor != gPie->dialog()->id) {
+                        dialogTypedFor = gPie->dialog()->id;
+                        for (size_t k = 0; k < dialogTyped.size();) {
+                            size_t n = 1;
+                            while (k + n < dialogTyped.size() && (uint8_t(dialogTyped[k + n]) & 0xC0) == 0x80)
+                                ++n;
+                            gPie->dialogKey(0, dialogTyped.substr(k, n));
+                            k += n;
+                        }
+                    }
                     if (gPie && gPie->dialogOpen() && dialogClick < dialogClicks.size()) {
                         gPie->setCanvas(int(shotW), int(shotH));
-                        gPie->click(dialogClicks[dialogClick++]);
+                        const simd_float2 c = dialogClicks[dialogClick++];
+                        if (c.x == -1)
+                            gPie->dialogKey(36, {});
+                        else if (c.x == -2)
+                            gPie->dialogKey(53, {});
+                        else
+                            gPie->click(c);
                     }
                     if (gAudio) {
                         updateAudio(base + t);

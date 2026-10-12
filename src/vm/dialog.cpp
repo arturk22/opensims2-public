@@ -448,6 +448,9 @@ Exit dialog(Context& c) {
         d.buttons = {button(o[3], "OK")};
         if (const Object* baby = vm.object(c.frame.stackObject))
             d.text = displayName(vm, *baby);
+        if (const Object* baby = vm.object(c.frame.stackObject))
+            if (const Neighbor* n = neighborOf(vm, *baby))
+                d.female = n->personData[65] == 2; // data 65: 1 male, 2 female (makeCharacter)
         break;
     default: // the special dialogs (phone book, racks, clothing, ...): OK or cancel
         d.buttons = {button(o[3], "OK"), button(o[0], "Cancelar")};

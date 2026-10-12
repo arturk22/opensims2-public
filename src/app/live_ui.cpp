@@ -1091,60 +1091,7 @@ void LiveUi::drawTooltip(UiScreen& out, const std::string& text, simd_float2 at)
     std::string title = t, body;
     if (auto bar = t.find('|'); bar != std::string::npos)
         title = t.substr(0, bar), body = t.substr(bar + 1);
-    const FontStyle* st = fonts_->style("LiveModePanelPuck");
-    const Font* f = st ? fonts_->font(*st) : nullptr;
-    const float ppem = st ? float(st->size) : 12;
-    auto width = [&](const std::string& s) { return f ? measureText(*f, decodeUtf8(s), ppem).width : float(s.size()) * 6; };
-    std::vector<std::string> lines;
-    float w = width(title);
-    lines.push_back(title);
-    std::string line;
-    auto flush = [&] {
-        if (!line.empty())
-            w = std::max(w, width(line)), lines.push_back(line), line.clear();
-    };
-    std::string word;
-    auto addWord = [&] {
-        if (word.empty())
-            return;
-        const std::string tryLine = line.empty() ? word : line + " " + word;
-        if (!line.empty() && width(tryLine) > 260)
-            flush(), line = word;
-        else
-            line = tryLine;
-        word.clear();
-    };
-    for (char ch : body) {
-        if (ch == ' ')
-            addWord();
-        else if (ch == '\n' || ch == '\r') {
-            addWord();
-            flush();
-        } else
-            word += ch;
-    }
-    addWord();
-    flush();
-    const float lineH = std::ceil(ppem * 1.4f), bw = std::ceil(w) + 12, bh = lineH * float(lines.size()) + 6;
-    float x = at.x + 12, y = at.y + 18;
-    x = std::clamp(x, 0.0f, std::max(0.0f, float(out.width) - bw));
-    if (y + bh > float(out.height))
-        y = std::max(0.0f, at.y - bh - 4);
-    UiElement box;
-    box.tag = "LEGACY";
-    box.attrs = {{"clsid", "GZWinFlatRect"}, {"fillcolor", "(178,193,255)"}, {"winflag_visible", "yes"},
-                 {"area", area(0, 0, int(bw), int(bh))}};
-    UiDrawHooks bh0;
-    layoutUiElement(box, x, y, *res_, *fonts_, out, bh0);
-    for (size_t i = 0; i < lines.size(); ++i) {
-        UiElement e;
-        e.tag = "LEGACY";
-        e.attrs = {{"clsid", "GZWinText"}, {"caption", lines[i]}, {"font", "LiveModePanelPuck"},
-                   {"forecolor", "(5,6,113)"}, {"align", "lefttop"}, {"winflag_visible", "yes"},
-                   {"area", area(0, 0, int(bw), int(lineH))}};
-        UiDrawHooks th;
-        layoutUiElement(e, x + 6, y + 3 + float(i) * lineH, *res_, *fonts_, out, th);
-    }
+    drawGameTooltip(out, *res_, *fonts_, title, body, at.x, at.y);
 }
 
 void LiveUi::openPopup(uint32_t script, std::array<float, 4> anchor,

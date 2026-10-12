@@ -288,6 +288,10 @@ if(APPLE)
   target_link_libraries(test_camera PRIVATE os2_render)
   add_test(NAME camera COMMAND test_camera)
 
+  add_executable(test_dialog_window tests/test_dialog_window.cpp src/app/pie_menu.cpp src/app/ui_panel_util.cpp)
+  target_link_libraries(test_dialog_window PRIVATE os2_render os2_vm)
+  add_test(NAME dialog_window COMMAND test_dialog_window)
+
   add_executable(test_render tests/test_render.cpp)
   target_link_libraries(test_render PRIVATE os2_render)
   add_test(NAME render COMMAND test_render)

@@ -723,8 +723,16 @@ padrão dela (humano `0x7FD96B54`).
   foi achada. No opensims2: um botão OK, sem tempo limite (é especial), o
   `Dialog::text` vem com o nome padrão ("Bebezinho"/"Bebezinha") e, se o
   anfitrião mudar o texto, o OK renomeia o vizinho do bebê (inferido). Sem
-  cabeça, `--dialog-answer 0` aceita o padrão. Falta a caixa de texto no
-  app (também para o tipo 3).
+  cabeça, `--dialog-answer 0` aceita o padrão. **Caixa de texto no app
+  (rodada 13)**: o tipo 23 usa o painel "baby" do script `0x2D91050A`
+  (`ui.package`, 330x220: "Nomear Recém-Nascido", o texto "O recém-nascido
+  chegou e precisa de um nome!" se o diálogo não traz o seu, o ícone de
+  menina/menino `0xA1230060`/`0xA1230055`, a caixa `0x14500157` com o
+  `GZWinTextEdit` de `maxtext=18`, e o botão Aceitar de tique). Digitar
+  substitui o nome padrão (vem selecionado), Backspace apaga, Return
+  aceita; o cursor pisca a cada 0,5 s (`caretperiod=1000`). Sem cabeça:
+  `--dialog-demo 23[g]` (põe o diálogo), `--dialog-type "Ana"`,
+  `--dialog-click return|escape|x,y`.
 - **No app**: um Sim no slot de outro (bebê no colo) é desenhado no osso do
   slot do carregador (`BellyTarget_surface`, onde as animações de pegar
   prendem a raiz do bebê, com a rotação do osso), depois do carregador

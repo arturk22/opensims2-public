@@ -29,6 +29,7 @@
 // column of labels at the top left, the running interaction first.
 
 #include "formats/ui_screen.hpp"
+#include "formats/ui_script.hpp"
 #include "vm/interactions.hpp"
 
 #include <simd/simd.h>
@@ -52,6 +53,7 @@ namespace os2 {
 class FontLibrary;
 class ResourceIndex;
 class UiLayer;
+class UiResources;
 struct ObjectModel;
 
 // Object-space bounds of a model's vertices.
@@ -205,6 +207,18 @@ public:
     // ignores the click).
     const vm::Dialog* dialog() const;
     bool dialogOpen() const { return dialog() != nullptr; }
+    // The game's dialog scripts (the Sims 2 yes/no box 0x6CA51466 and the
+    // baby-name box 0x2D91050A, from ui.package) draw the dialog; without
+    // them it is drawn with plain boxes.
+    void setResources(ResourceIndex& index, const std::filesystem::path& resDir);
+    // A key for the open dialog (Mac key code and the characters typed): the
+    // text of a text-entry dialog, Return = its first button, Esc = its last
+    // (yes/no, yes/no/cancel; inferred). False if no dialog is open.
+    bool dialogKey(int keyCode, const std::string& typed);
+    // Test aid: sets the text of the open text-entry dialog as if typed.
+    void setDialogText(const std::string& text);
+    // The open dialog has a text box.
+    bool dialogHasTextBox() const;
     // Answers the open dialog with the button at `p`; false if no button is there.
     bool clickDialog(simd_float2 p);
     // The canvas size clicks are laid out against before the first frame (headless).
@@ -241,6 +255,23 @@ private:
         std::vector<std::array<float, 4>> buttons; // x0, y0, x1, y1
     };
     DialogLayout dialogLayout(const vm::Dialog& d, int width, int height) const;
+    // The dialog as the game's UI scripts draw it (null without them).
+    struct GameDialog {
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        std::vector<std::string> lines;
+        UiElement root; // laid out at (x0, y0)
+        std::vector<uint32_t> buttonIds; // answer order
+        std::vector<std::array<float, 4>> buttons; // canvas rectangles
+        std::array<float, 4> textBox{0, 0, 0, 0};
+        uint32_t textId = 0, titleId = 0, messageId = 0;
+        bool baby = false;
+    };
+    std::optional<GameDialog> gameDialog(const vm::Dialog& d, int width, int height) const;
+    void drawGameDialog(UiScreen& out, const vm::Dialog& d, const GameDialog& g);
+    std::unique_ptr<UiResources> dlgRes_;
+    UiScript yesNoScript_, nameScript_;
+    int dialogHover_ = -1;
+    uint32_t editedDialog_ = 0; // the dialog whose default text was replaced by typing
     void queueEntry(size_t index);
 
     vm::VM* vm_;

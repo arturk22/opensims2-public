@@ -715,28 +715,7 @@ UiScreen HoodUi::screen(int width, int height) {
     }
     // A tool's error tooltip, over everything (a box as the game's tooltips).
     if (!errorTip_.empty()) {
-        const FontStyle* st = fonts_->style("LiveModePanelPuck");
-        const Font* f = st ? fonts_->font(*st) : nullptr;
-        const float ppem = st ? float(st->size) : 12;
-        const float tw = f ? measureText(*f, decodeUtf8(errorTip_), ppem).width : float(errorTip_.size()) * 6;
-        const float lineH = std::ceil(ppem * 1.4f), bw = std::ceil(tw) + 12, bh = lineH + 6;
-        const float x = std::clamp(errorTipAt_.x + 12, 0.0f, std::max(0.0f, float(width) - bw));
-        float y = errorTipAt_.y + 18;
-        if (y + bh > float(height))
-            y = std::max(0.0f, errorTipAt_.y - bh - 4);
-        UiElement box;
-        box.tag = "LEGACY";
-        box.attrs = {{"clsid", "GZWinFlatRect"}, {"fillcolor", "(178,193,255)"}, {"winflag_visible", "yes"},
-                     {"area", uiArea(0, 0, int(bw), int(bh))}};
-        UiDrawHooks bh0;
-        layoutUiElement(box, x, y, *res_, *fonts_, out, bh0);
-        UiElement e;
-        e.tag = "LEGACY";
-        e.attrs = {{"clsid", "GZWinText"}, {"caption", errorTip_}, {"font", "LiveModePanelPuck"},
-                   {"forecolor", "(5,6,113)"}, {"align", "lefttop"}, {"winflag_visible", "yes"},
-                   {"area", uiArea(0, 0, int(bw), int(lineH))}};
-        UiDrawHooks th;
-        layoutUiElement(e, x + 6, y + 3, *res_, *fonts_, out, th);
+        drawGameTooltip(out, *res_, *fonts_, {}, errorTip_, errorTipAt_.x, errorTipAt_.y);
     }
     dirty_ = false;
     return out;

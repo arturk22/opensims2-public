@@ -1,6 +1,8 @@
 #include "app/ui_panel_util.hpp"
 
+#include "formats/font.hpp"
 #include "formats/resindex.hpp"
+#include "formats/ui_resources.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -20,6 +22,88 @@ const UiElement* findWindow(const UiElement& e, uint32_t id) {
 
 UiElement* findWindow(UiElement& e, uint32_t id) {
     return const_cast<UiElement*>(findWindow(std::as_const(e), id));
+}
+
+std::array<float, 4> drawGameTooltip(UiScreen& out, UiResources& res, FontLibrary& fonts, const std::string& title,
+                                     const std::string& body, float x, float y) {
+    auto fontOf = [&](const char* name, const char* fallback) {
+        const FontStyle* st = fonts.style(name);
+        if (!st)
+            st = fonts.style(fallback);
+        return st;
+    };
+    const FontStyle* tst = fontOf("HoverTipTitle", "LiveModePanelPuck");
+    const FontStyle* bst = fontOf("TooltipText", "LiveModePanelPuck");
+    const Font* tf = tst ? fonts.font(*tst) : nullptr;
+    const Font* bf = bst ? fonts.font(*bst) : nullptr;
+    const float tp = tst ? float(tst->size) : 12, bp = bst ? float(bst->size) : 10;
+    auto width = [](const Font* f, float ppem, const std::string& s) {
+        return f ? measureText(*f, decodeUtf8(s), ppem).width : float(s.size()) * 6;
+    };
+    struct Line {
+        std::string text;
+        bool head;
+    };
+    std::vector<Line> lines;
+    float w = 0;
+    if (!title.empty())
+        lines.push_back({title, true}), w = width(tf, tp, title);
+    std::string line, word;
+    auto flush = [&] {
+        if (!line.empty())
+            w = std::max(w, width(bf, bp, line)), lines.push_back({line, false}), line.clear();
+    };
+    auto addWord = [&] {
+        if (word.empty())
+            return;
+        const std::string t = line.empty() ? word : line + " " + word;
+        if (!line.empty() && width(bf, bp, t) > 260)
+            flush(), line = word;
+        else
+            line = t;
+        word.clear();
+    };
+    for (char ch : body) {
+        if (ch == ' ')
+            addWord();
+        else if (ch == '\n' || ch == '\r') {
+            addWord();
+            flush();
+        } else
+            word += ch;
+    }
+    addWord();
+    flush();
+    const float titleH = std::ceil(tp * 1.35f), bodyH = std::ceil(bp * 1.4f);
+    float h = 8;
+    for (const auto& l : lines)
+        h += l.head ? titleH : bodyH;
+    const float bw = std::ceil(w) + 14;
+    float x0 = x + 12, y0 = y + 18;
+    x0 = std::clamp(x0, 0.0f, std::max(0.0f, float(out.width) - bw));
+    if (y0 + h > float(out.height))
+        y0 = std::max(0.0f, y - h - 4);
+    // The edge, then the fill.
+    UiElement box;
+    box.tag = "LEGACY";
+    box.attrs = {{"clsid", "GZWinFlatRect"}, {"fillcolor", "(178,193,255)"}, {"winflag_visible", "yes"},
+                 {"outline", "yes"}, {"colorleft", "(5,6,113)"}, {"colortop", "(5,6,113)"},
+                 {"colorright", "(5,6,113)"}, {"colorbottom", "(5,6,113)"},
+                 {"area", uiArea(0, 0, int(bw), int(h))}};
+    layoutUiElement(box, x0, y0, res, fonts, out, {});
+    float ty = y0 + 4;
+    for (const auto& l : lines) {
+        UiElement e;
+        e.tag = "LEGACY";
+        e.attrs = {{"clsid", "GZWinText"}, {"caption", l.text}, {"font", l.head ? "HoverTipTitle" : "TooltipText"},
+                   {"forecolor", "(5,6,113)"}, {"align", "lefttop"}, {"winflag_visible", "yes"},
+                   {"gutters", "(0,0)"}, {"area", uiArea(0, 0, int(bw), int(l.head ? titleH : bodyH))}};
+        if (!fonts.style(l.head ? "HoverTipTitle" : "TooltipText"))
+            e.set("font", "LiveModePanelPuck");
+        layoutUiElement(e, x0 + 7, ty, res, fonts, out, {});
+        ty += l.head ? titleH : bodyH;
+    }
+    return {x0, y0, x0 + bw, y0 + h};
 }
 
 std::string uiArea(int x0, int y0, int x1, int y1) {

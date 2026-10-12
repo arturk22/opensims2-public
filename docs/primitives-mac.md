@@ -869,6 +869,21 @@ resposta como se o jogador tivesse clicado. Ex.: uma mensagem de 120
 caracteres some em 8,8 s; um sim/não de 200 caracteres responde "não" em
 12 s.
 
+**A janela no app (rodada 13).** A classe `cTSObjectDialog` não tem script
+próprio achado em `ui.package`; a janela do app usa o visual do jogo para
+caixas simples, o script `0x6CA51466` ("The Sims 2": moldura `0xA9500615`
+desenhada em nove partes, título `GenHeader` só quando o diálogo tem título,
+texto `GenSubHeader` quebrado, botões 108x33 `0xA96D0625` com 24 px entre
+dois e 12 entre três, altura 170 no original e mínima aqui por causa das
+bordas da moldura) e, para o tipo 3 (entrada de texto) e o 23 (nome do
+bebê), as caixas de nome do `0x2D91050A` (campo `0x14500157`, Aceitar de
+tique). Qual script o binário escolhe para cada tipo é **inferido**.
+Teclas (inferido, o binário não foi lido nisto): Return/Enter = botão 1,
+Esc = último botão no sim/não e no sim/não/cancelar (como o tempo esgotado),
+nada na mensagem e nas caixas de texto; máximo 18 caracteres (o `maxtext` do
+script). Os botões usam as strings do próprio diálogo (STR# 0x12D) e, sem
+elas, "Sim"/"Não"/"OK"/"Cancelar" do UIText.
+
 **Diálogos especiais (tipo ≥ 5) não têm tempo (rodada 11, binário).** O
 `TryDialog` trata à parte os tipos 8–10/0x1C (notificações), 0x16/0x19
 (tutorial, ver `docs/tutorial-mac.md`) e 0x39 (recurso pelo u16 13). Todos

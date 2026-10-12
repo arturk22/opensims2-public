@@ -388,6 +388,14 @@ a contagem zera: aparece no **1º tique (0,75 s)** e some no **3º (2,25 s)**.
 Com a flag 1 do controle aparece na hora, e com a flag 2 não some pelo tempo.
 Mensagens `0x22C010D3` (mostrou) e `0x22C010D4` (escondeu).
 
+**Visual (rodada 13, inferido).** A janela da dica não é um script: o jogo a
+desenha em código, com as fontes `HoverTipTitle` (12, título) e `TooltipText`
+(10, corpo) do `FontStyle.ini`. `drawGameTooltip` (`app/ui_panel_util.cpp`)
+faz uma caixa azul-clara com borda e texto azul-escuros, o título acima do
+corpo (quebrado em 260 px), a 12 px à direita e 18 px abaixo do mouse; é a
+mesma das dicas do modo vivo, do bairro (a recusa de decoração) e dos
+painéis. `r13-tooltip-jogo.jpg`.
+
 ### 7.7 Sons dos botões (dados + binário)
 
 Cada botão do script tem **`btnclicksnd={0,0xFFxxxxxx}`** (e às vezes

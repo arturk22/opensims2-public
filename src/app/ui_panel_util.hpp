@@ -5,6 +5,7 @@
 // C++ over the formats layer, so the tests link them.
 
 #include "formats/image.hpp"
+#include "formats/ui_screen.hpp"
 #include "formats/ui_script.hpp"
 
 #include <array>
@@ -23,6 +24,14 @@ UiElement* findWindow(UiElement& e, uint32_t id);
 
 // "(x0,y0,x1,y1)", the value of an area attribute.
 std::string uiArea(int x0, int y0, int x1, int y1);
+
+// The game's tooltip window (cGZWinToolTipMgr's; fonts TooltipText / HoverTipTitle of
+// FontStyle.ini, a light blue box with a dark blue edge and text, as every UI
+// tip of the game; the colours and padding are inferred): `title` in bold above `body`
+// (wrapped at 260 px; empty: none), its corner 12 px right and 18 px below
+// (x, y), kept on the canvas. Returns the box (x0, y0, x1, y1).
+std::array<float, 4> drawGameTooltip(UiScreen& out, UiResources& res, FontLibrary& fonts, const std::string& title,
+                                     const std::string& body, float x, float y);
 
 // Canvas rectangle (x0, y0, x1, y1) test.
 inline bool insideRect(const std::array<float, 4>& r, float x, float y) {
