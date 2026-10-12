@@ -247,6 +247,8 @@ void HoodMode::mouseDown(LotCamera& camera, simd_float2 p, float w, float h) {
         camera.rotateBy(1);
     if (a == HoodUi::Action::MainMenu && onMainMenu)
         onMainMenu();
+    if (a == HoodUi::Action::Friends && ui_->dialogLot())
+        showFriends(*ui_->dialogLot());
     if (a == HoodUi::Action::Bins)
         carryOut(ui_->binRequest());
     if (a != HoodUi::Action::None)
@@ -264,6 +266,7 @@ void HoodMode::mouseDown(LotCamera& camera, simd_float2 p, float w, float h) {
 }
 
 void HoodMode::lotClicked(const HoodLot& lot) {
+    view_->showFriends({});
     std::printf("opensims2: lot %u \"%s\" (%s)\n", lot.id, lot.name.c_str(),
                 lot.familyName.empty() ? "no family" : lot.familyName.c_str());
     std::fflush(stdout);
@@ -368,7 +371,51 @@ void HoodMode::familyCreated(uint32_t family) {
     }
 }
 
+// "Ver Amigos da Família e Parentes" (the Lot Info Dialog's A003/B003/C003):
+// the dialog closes and the lots where the family's friends and relatives live
+// are highlighted (blue friends, violet relatives, a lot with both is a
+// relative's). INFERRED: the binary's window procedure was not read; friends
+// are the SRELs of the family's Sims with the friend or best-friend flag
+// (bits 4, 5 of the flags value) and relatives those with the family flag
+// (bit 14) or a familial relation.
+void HoodMode::showFriends(const HoodLot& from) {
+    std::vector<std::pair<const HoodLot*, int>> out;
+    const hood::Neighborhood& h = view_->neighborhood();
+    const hood::Family* fam = h.family(from.family);
+    std::map<uint32_t, int> kindOfLot;
+    if (fam) {
+        for (const auto& r : h.relationships) {
+            if (std::find(fam->members.begin(), fam->members.end(), r.from) == fam->members.end())
+                continue;
+            const hood::Neighbor* other = h.neighbor(r.to);
+            if (!other || other->family == 0 || other->family == from.family)
+                continue;
+            const int32_t flags = r.value(hood::relvar::Flags);
+            int kind = 0;
+            if (flags & ((1 << 4) | (1 << 5)))
+                kind = 1;
+            if ((flags & (1 << 14)) || r.value(hood::relvar::Familial) != 0)
+                kind = 2;
+            if (!kind)
+                continue;
+            for (const auto& l : h.lots)
+                if (std::find(l.families.begin(), l.families.end(), other->family) != l.families.end()) {
+                    int& k = kindOfLot[l.id];
+                    k = std::max(k, kind);
+                }
+        }
+        for (const auto& l : view_->lots())
+            if (auto it = kindOfLot.find(l.id); it != kindOfLot.end() && l.id != from.id)
+                out.push_back({&l, it->second});
+    }
+    std::printf("opensims2: friends and relatives of the %s family: %zu lots\n", from.familyName.c_str(), out.size());
+    std::fflush(stdout);
+    ui_->openLot(nullptr);
+    view_->showFriends(out);
+}
+
 void HoodMode::escape() {
+    view_->showFriends({});
     movingLot_ = 0;
     turn_ = -1;
     view_->showPlacement(nullptr, false, 0);
@@ -409,6 +456,15 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
         ui_->bins().togglePanel(*p == "lots"      ? HoodBins::Panel::Lots
                                 : *p == "options" ? HoodBins::Panel::Options
                                                   : HoodBins::Panel::Families);
+    // --hood-options-window 1-5: the Options panel opens (it is the panel shown) and that window.
+    if (auto wnd = value("--hood-options-window")) {
+        if (ui_->bins().panel() != HoodBins::Panel::Options)
+            ui_->bins().togglePanel(HoodBins::Panel::Options);
+        ui_->refreshLayout();
+        ui_->screen(int(w), int(h)); // lays the panel out: the window's corner
+        ui_->options().toggleWindow(std::stoi(*wnd));
+        ui_->refreshLayout();
+    }
     if (auto f = value("--hood-family"))
         ui_->bins().selectFamily(uint32_t(std::stoul(*f)));
     if (auto t = value("--hood-tool"))
@@ -490,6 +546,10 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
         ui_->openLot(select);
         if (auto i = value("--hood-info"))
             ui_->showInfo(true, size_t(std::stoul(*i)));
+        if (value("--hood-package"))
+            ui_->showPackage(true);
+        if (value("--hood-friends"))
+            showFriends(*select);
     }
 }
 
@@ -524,7 +584,7 @@ bool has(const std::vector<std::string>& args, const char* flag) {
 std::vector<std::string> hoodLotArguments(const std::vector<std::string>& args, const std::string& hood, uint32_t lot) {
     auto out = without(args, {"--hood", "--hood-lot", "--hood-hover", "--hood-select", "--screenshot", "--pivot",
                               "--zoom", "--orientation", "--lot", "--hood-panel", "--hood-family", "--hood-tool",
-                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone", "--hood-info"});
+                              "--hood-lot-click", "--hood-place", "--hood-place-at", "--hood-place-click", "--hood-turn", "--hood-lot-name", "--hood-lot-zone", "--hood-info", "--hood-options-window", "--hood-package", "--hood-friends"});
     out.insert(out.end(), {"--hood", hood, "--hood-lot", std::to_string(lot)});
     if (!has(out, "--vm"))
         out.push_back("--vm");

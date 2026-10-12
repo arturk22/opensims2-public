@@ -18,8 +18,9 @@
 //               lots (0xD000: sizes 0xD001-0xD00A = cTSUserToolPlaceNewLot
 //               sizes 0-9, cTSWinProcNeighborhoodUCPSubPanelTools::
 //               onBtnClickedID)
-//   0x49001028  "Opções" (0x2BF08BEC, F5): Main Menu 0xA221 and Quit 0xA220
-//               (the option windows 0xA241-0xA246 are not wired here)
+//   0x49001028  "Opções" (0x2BF08BEC, F5): Main Menu 0xA221 and Quit 0xA220;
+//               the option windows 0xA241-0xA246 are Request::OptionWindow
+//               (app/options_panel.hpp draws them)
 //   0x49001035  the small "Rename this lot?" dialog, reused for the
 //               questions and errors (its text, Accept 0xA000, Cancel 0xA001)
 //
@@ -68,8 +69,8 @@ public:
     enum class Tool { None, MoveIn, Evict, Bulldoze, PlaceEmpty, PlaceBin, MoveLot, ToBin };
     // What a click asked for: the neighborhood mode carries it out.
     struct Request {
-        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot, DeleteBinLot, MainMenu, Quit } kind = Kind::None;
-        uint32_t family = 0, lot = 0; // DeleteBinLot: lot = the bin index
+        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot, DeleteBinLot, MainMenu, Quit, OptionWindow } kind = Kind::None;
+        uint32_t family = 0, lot = 0; // DeleteBinLot: lot = the bin index; OptionWindow: lot = 1 audio, 2 game, 3 graphics, 4 camera, 5 credits
     };
     // The Lots & Houses bin's lots (formats/hood_lots.hpp) and the tools'
     // picks: the empty lot size (0-9, buttons 0xD001-0xD00A), the bin lot.
@@ -81,6 +82,8 @@ public:
     void pickBinLot(size_t index); // the place-from-bin tool
     void setLotsPanel(int which) { lotsPanel_ = which, dirty_ = true; } // 0 bin, 1 empty lots
 
+    // Where the Options panel was laid out last (its bottom left, canvas pixels).
+    simd_float2 optionsBottomLeft() const { return optionsBL_; }
     Panel panel() const { return panel_; }
     Tool tool() const { return tool_; }
     uint32_t selectedFamily() const { return selected_; }
@@ -167,7 +170,7 @@ private:
     enum class Hit { Request, Family, Expand, Prev, Next, Create, Evict, Bulldoze, Accept, Cancel, Solid, LotsPanel,
                      EmptySize, BinItem, BinExpand, BinPrev, BinNext, MoveLotTool, ToBinTool,
                      PlaceResidential, PlaceCommunity, PlaceAccept, PlaceCancel, BinFilter, BinDelete,
-                     OptMainMenu, OptQuit };
+                     OptMainMenu, OptQuit, OptWindow };
     const RgbaImage* binPicture(size_t index);
     std::vector<hood::BinLot> binLots_;
     std::map<size_t, std::unique_ptr<RgbaImage>> binPictures_;
@@ -180,6 +183,7 @@ private:
         uint32_t value = 0;
     };
     std::vector<Target> targets_;
+    simd_float2 optionsBL_{0, 0};
     bool dirty_ = true;
 };
 

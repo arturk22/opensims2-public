@@ -21,9 +21,10 @@ bool gWanted = false;
 std::optional<RgbaImage> gOffered;
 
 // String `number` (1-based, as the game's T(instance, number)) of the UIText STR# `instance`.
-std::string uiText(const std::filesystem::path& resDir, uint32_t instance, uint32_t number, const char* fallback) {
+std::string uiText(const std::filesystem::path& resDir, uint32_t instance, uint32_t number, const char* fallback,
+                   const char* package = "Text/UIText.package") {
     try {
-        DbpfPackage pkg(resDir / "Text/UIText.package");
+        DbpfPackage pkg(resDir / package);
         if (const DbpfEntry* e = pkg.find(Tgi{kTypeStr, 0xFFFFFFFF, instance, 0}))
             if (std::string t = StringTable::parse(pkg.read(*e)).get(number - 1); !t.empty())
                 return t;
@@ -33,7 +34,10 @@ std::string uiText(const std::filesystem::path& resDir, uint32_t instance, uint3
 }
 
 // The title as a transparent picture: white text with a soft shadow.
-std::optional<RgbaImage> renderTitle(const std::filesystem::path& resDir, const std::string& text) {
+// `subtitle` (optional) goes under it in a smaller size; the picture is symmetric
+// around the title line, so its centre stays where the title's is.
+std::optional<RgbaImage> renderTitle(const std::filesystem::path& resDir, const std::string& text,
+                                     const std::string& subtitle = {}) {
     if (text.empty())
         return std::nullopt;
     try {
@@ -45,15 +49,24 @@ std::optional<RgbaImage> renderTitle(const std::filesystem::path& resDir, const 
         if (!font)
             return std::nullopt;
         const float px = 30;
-        const std::u32string u = decodeUtf8(text);
+        const float spx = 18;
+        const std::u32string u = decodeUtf8(text), us = decodeUtf8(subtitle);
         const TextMetrics m = measureText(*font, u, px);
+        const TextMetrics ms = subtitle.empty() ? TextMetrics{} : measureText(*font, us, spx);
         RgbaImage img;
-        img.width = std::min(800u, uint32_t(m.width) + 12), img.height = uint32_t(m.ascent + m.descent) + 12;
+        const float lineH = m.ascent + m.descent, subH = subtitle.empty() ? 0 : ms.ascent + ms.descent + 4;
+        img.width = std::min(800u, uint32_t(std::max(m.width, ms.width)) + 12);
+        img.height = uint32_t(lineH + 2 * subH) + 12;
         img.pixels.assign(size_t(img.width) * img.height * 4, 0);
-        const float x = (float(img.width) - m.width) / 2, base = 6 + m.ascent;
+        const float x = (float(img.width) - m.width) / 2, top = subH + 6, base = top + m.ascent;
         const uint8_t shadow[4] = {0, 20, 40, 170}, white[4] = {255, 255, 255, 255};
         drawText(img, *font, u, x + 2, base + 2, px, shadow);
         drawText(img, *font, u, x, base, px, white);
+        if (!subtitle.empty()) {
+            const float sx = (float(img.width) - ms.width) / 2, sb = top + lineH + 4 + ms.ascent;
+            drawText(img, *font, us, sx + 1, sb + 1, spx, shadow);
+            drawText(img, *font, us, sx, sb, spx, white);
+        }
         return img;
     } catch (const std::exception&) {
         return std::nullopt;
@@ -110,7 +123,7 @@ std::optional<RgbaImage> readUiIcon(const std::filesystem::path& resDir, uint32_
 LoadingScreen loadingScreenFor(const std::filesystem::path& resDir, const Scene& scene, bool cas, const LotEntry& lot) {
     LoadingScreen s;
     uint32_t icon = 0;
-    std::string title;
+    std::string title, subtitle;
     bool community = false;
     std::optional<RgbaImage> photo;
     {
@@ -122,8 +135,22 @@ LoadingScreen loadingScreenFor(const std::filesystem::path& resDir, const Scene&
         title = uiText(resDir, 7, 3, "Create A Family");
     } else if (scene.kind == Scene::Kind::MainMenu) {
         s.reia = kReiaGameLoad; // full screen, no icon
+    } else if (scene.kind == Scene::Kind::Neighborhood && lot.tutorial) {
+        s.reia = 0x8DA3ADED, icon = 0x8DA3ADF4; // case 7, the tutorial (inferred)
+        title = uiText(resDir, 0x84, 0x2C, "", "Text/Neighborhood.package");
+        subtitle = uiText(resDir, 0x84, 0x10, "", "Text/Neighborhood.package");
+    } else if (scene.kind == Scene::Kind::Neighborhood && lot.withFamily) {
+        s.reia = 0x8DA3ADEB; // case 6 with a family: its photo
+        photo = readFamilyPhoto(lot);
+        if (!photo)
+            icon = 0x8DA3ADF0;
+        char b[160];
+        std::snprintf(b, sizeof b, uiText(resDir, 7, 4, "The %s Family").c_str(), lot.familyName.c_str());
+        title = b;
     } else if (scene.kind == Scene::Kind::Neighborhood) {
         s.reia = 0x8DA3ADEB, icon = 0x8DA3ADF3; // case 3, the base game's neighborhood
+        title = lot.hoodName;
+        subtitle = uiText(resDir, 0x84, 0x10, "", "Text/Neighborhood.package");
     } else if (lot.known && lot.family) {
         s.reia = 0x8DA3ADE8; // case 0 with a family: its photo
         photo = readFamilyPhoto(lot);
@@ -132,6 +159,7 @@ LoadingScreen loadingScreenFor(const std::filesystem::path& resDir, const Scene&
         char b[160];
         std::snprintf(b, sizeof b, uiText(resDir, 7, 4, "The %s Family").c_str(), lot.familyName.c_str());
         title = b;
+        subtitle = uiText(resDir, 0x84, 0x10, "", "Text/Neighborhood.package"); // case 0 with a family
     } else if (lot.known && lot.type == 1) {
         s.reia = 0x8DA3ADEA, icon = 0x8DA3ADF1; // community lot: the taxi until an object's image is found
         community = true;
@@ -149,7 +177,7 @@ LoadingScreen loadingScreenFor(const std::filesystem::path& resDir, const Scene&
     s.iconX = kLotIntroTileX, s.iconY = kLotIntroTileY;
     s.iconW = kLotIntroIconW, s.iconH = kLotIntroIconH;
     if (!title.empty()) {
-        s.title = renderTitle(resDir, title);
+        s.title = renderTitle(resDir, title, subtitle);
         s.titleX = kLotIntroTitleX, s.titleY = kLotIntroTitleY;
     }
     if (community) {

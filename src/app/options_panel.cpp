@@ -16,7 +16,8 @@ namespace os2 {
 namespace {
 
 constexpr uint32_t kPuckScript = 0x4905F85B, kPanelScript = 0x49060001, kAudioScript = 0x49060F01,
-                   kGameScript = 0x49060F02;
+                   kGameScript = 0x49060F02, kGraphicsScript = 0x49060F03, kCameraScript = 0x49060F05,
+                   kCreditsScript = 0x49060F08;
 constexpr uint32_t kPuckAnchor = 0x4BDEFFAA, kButtons = 0xA200, kAnchor = 0xAAAA;
 // Audio options: sliders and mute boxes by group (voice, sfx, music, ambience).
 constexpr std::array<uint32_t, 4> kSliders = {0xB31, 0xB01, 0xB41, 0xB21};
@@ -24,6 +25,32 @@ constexpr std::array<uint32_t, 4> kMutes = {0x10, 0x11, 0x12, 0x13};
 constexpr uint32_t kEdgeScrolling = 0xA1;
 
 bool inside(const std::array<float, 4>& r, simd_float2 p) { return insideRect(r, p.x, p.y); }
+
+// The buttons of a window's radio groups: a rectangle with two or more image
+// buttons (Off / Medium / High...).
+std::vector<std::pair<const UiElement*, std::vector<const UiElement*>>> radioGroups(const UiElement& root) {
+    std::vector<std::pair<const UiElement*, std::vector<const UiElement*>>> out;
+    for (const auto& c : root.children) {
+        if (c.clsid() != "GZWinFlatRect")
+            continue;
+        std::vector<const UiElement*> btns;
+        for (const auto& b : c.children)
+            if (b.clsid() == "GZWinBtn" && b.attr("image"))
+                btns.push_back(&b);
+        if (btns.size() >= 2)
+            out.push_back({&c, btns});
+    }
+    return out;
+}
+
+// The default pick of a group: the highest setting the labels name.
+const UiElement* defaultPick(const std::vector<const UiElement*>& btns) {
+    for (const char* want : {"High", "On", "Enabled", "Medium", "Large"})
+        for (const UiElement* b : btns)
+            if (b->get("caption") == want)
+                return b;
+    return btns.front();
+}
 
 } // namespace
 
@@ -40,11 +67,28 @@ OptionsPanel::OptionsPanel(ResourceIndex& index, const std::filesystem::path& re
     const bool a = load(kPuckScript, puck_), b = load(kPanelScript, panel_), c = load(kAudioScript, audio_),
                d = load(kGameScript, game_);
     ok_ = a && b && c && d;
+    load(kGraphicsScript, graphics_), load(kCameraScript, camera_), load(kCreditsScript, credits_);
+    for (const UiScript* sc : {&graphics_, &camera_})
+        if (!sc->roots.empty())
+            for (const auto& [g, btns] : radioGroups(sc->roots.front()))
+                picks_[g] = defaultPick(btns);
+}
+
+const UiScript& OptionsPanel::windowScript(int window) const {
+    switch (window) {
+    case 1: return audio_;
+    case 3: return graphics_;
+    case 4: return camera_;
+    case 5: return credits_;
+    default: return game_;
+    }
 }
 
 OptionsPanel::~OptionsPanel() = default;
 
 void OptionsPanel::toggleWindow(int window) {
+    if (window < 1 || window > 5 || windowScript(window).roots.empty())
+        window = 0;
     window_ = window_ == window ? 0 : window;
     dirty_ = true;
 }
@@ -57,6 +101,17 @@ void OptionsPanel::closeWindow() {
 void OptionsPanel::changed() {
     if (onChanged)
         onChanged(settings_);
+}
+
+bool OptionsPanel::covers(simd_float2 p) {
+    if (window_ == 0 || !ok_)
+        return false;
+    if (dirty_ || laidW_ != canvasW_ || laidH_ != canvasH_)
+        screen(canvasW_, canvasH_);
+    for (const auto& h : hits_)
+        if (h.target == Target::Window && inside(h.rect, p))
+            return true;
+    return false;
 }
 
 OptionsPanel::Action OptionsPanel::press(simd_float2 p) {
@@ -94,6 +149,12 @@ OptionsPanel::Action OptionsPanel::press(simd_float2 p) {
             changed();
             return Action::Consumed;
         case Target::Window: return Action::Consumed;
+        case Target::Radio:
+            for (auto& [g, pick] : picks_)
+                for (const auto& b : g->children)
+                    if (&b == it->element)
+                        pick = it->element;
+            return Action::Consumed;
         }
     }
     return Action::None;
@@ -128,11 +189,13 @@ UiScreen OptionsPanel::screen(int width, int height) {
         }
     // The option window over the panel (inferred).
     if (window_ != 0) {
-        const UiElement& wr = (window_ == 1 ? audio_ : game_).roots.front();
+        const UiElement& wr = windowScript(window_).roots.front();
         const auto wa = wr.area();
         // Its bottom left on the panel's (inferred from the art: the tab is
         // as tall as the panel).
-        const float wx = std::max(0.0f, x0), wy = std::max(0.0f, y0 + float(ra[3] - ra[1]) - float(wa[3] - wa[1]));
+        float wx = std::max(0.0f, x0), wy = std::max(0.0f, y0 + float(ra[3] - ra[1]) - float(wa[3] - wa[1]));
+        if (anchored_)
+            wx = std::max(0.0f, anchorX_), wy = std::max(0.0f, anchorY_ - float(wa[3] - wa[1]));
         UiDrawHooks wh;
         wh.rects = &rects;
         if (window_ == 1) {
@@ -175,6 +238,13 @@ UiScreen OptionsPanel::screen(int width, int height) {
                         o.quads.push_back(q);
                     };
                 }
+        } else if (window_ >= 3) {
+            if (window_ != 5)
+                for (const auto& [g, btns] : radioGroups(wr))
+                    for (const UiElement* b : btns)
+                        wh.buttonState[b] = picks_[g] == b ? 2 : 1;
+            if (window_ == 5)
+                wh.hide.insert(wr.child(0xA0));
         } else {
             if (const UiElement* r = wr.child(kEdgeScrolling)) {
                 if (const UiElement* off = r->child(1))
@@ -196,6 +266,11 @@ UiScreen OptionsPanel::screen(int width, int height) {
                     for (size_t g = 0; g < 4; ++g)
                         if (b.id() == kMutes[g] && b.clsid() == "GZWinBtn")
                             hit(&b, Target::Mute, int(g));
+        } else if (window_ >= 3) {
+            if (window_ != 5)
+                for (const auto& [g, btns] : radioGroups(wr))
+                    for (const UiElement* b : btns)
+                        hit(b, Target::Radio);
         } else if (const UiElement* r = wr.child(kEdgeScrolling)) {
             hit(r->child(1), Target::EdgeOff);
             hit(r->child(2), Target::EdgeOn);

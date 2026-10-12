@@ -20,7 +20,7 @@ namespace os2 {
 
 namespace {
 
-constexpr uint32_t kHudScript = 0x49000000, kHoverScript = 0x49001011, kDialogScript = 0x49001000;
+constexpr uint32_t kPackageScript = 0xEFFF4500, kHudScript = 0x49000000, kHoverScript = 0x49001011, kDialogScript = 0x49001000;
 constexpr uint32_t kPuck = 0x4BE6ED7D, kChooser = 0x4BE6ED7E, kCityName = 0x3;
 constexpr uint32_t kFamiliesButton = 0x2BE6F563, kLotsButton = 0x4BE6F571, kOptionsButton = 0x2BF08BEC;
 constexpr uint32_t kTypeImg = 0x856DDBAC, kTypeFamilyThumb = 0x8C3CE95A;
@@ -48,8 +48,10 @@ HoodUi::HoodUi(const HoodView& view, ResourceIndex& index, const std::filesystem
     };
     const bool a = load(kHudScript, hud_), b = load(kHoverScript, hoverScript_), c = load(kDialogScript, dialogScript_);
     ok_ = a && b && c;
+    load(kPackageScript, packageScript_);
     bins_ = std::make_unique<HoodBins>(*res_, *fonts_);
     bins_->setNeighborhood(&view.neighborhood());
+    options_ = std::make_unique<OptionsPanel>(index, resDir, GameSettings{});
     const auto& h = view.neighborhood();
     familyThumbs_ = h.package.parent_path() / "Thumbnails" / (h.prefix + "_FamilyThumbnails.package");
 }
@@ -164,6 +166,15 @@ void HoodUi::openLot(const HoodLot* lot) {
         advanced_ = false, member_ = 0;
     dialog_ = lot;
     dirty_ = true;
+    if (lot && lot->family && renderHead) { // the members' head shots, rendered where the files have none
+        const hood::Neighborhood& h = view_->neighborhood();
+        renderHeads_ = true;
+        if (const hood::Family* f = h.family(lot->family))
+            for (uint16_t m : f->members)
+                if (const hood::Neighbor* n = h.neighbor(m); n && n->character >= 0)
+                    memberThumb(h.characters[size_t(n->character)].path);
+        renderHeads_ = false;
+    }
 }
 
 const RgbaImage* HoodUi::memberThumb(const std::filesystem::path& character) {
@@ -182,8 +193,13 @@ const RgbaImage* HoodUi::memberThumb(const std::filesystem::path& character) {
                     if (auto d = decodeUiImage(pkg.read(e)))
                         img = std::make_unique<RgbaImage>(std::move(*d));
         }
+        if (!img && renderHeads_ && renderHead && !character.empty())
+            if (auto d = renderHead(character))
+                img = std::make_unique<RgbaImage>(std::move(*d));
     } catch (const std::exception&) {
     }
+    if (!img && !renderHeads_ && renderHead)
+        return nullptr; // not rendered yet: do not cache the miss
     return (memberThumbs_[key] = std::move(img)).get();
 }
 
@@ -191,6 +207,9 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
     if (laidW_ != canvasW_ || laidH_ != canvasH_ || dirty_ || bins_->dirty())
         screen(canvasW_, canvasH_); // targets for the current canvas
     binRequest_ = {};
+    options_->setCanvas(canvasW_, canvasH_);
+    if (!bins_->modal() && options_->active() && options_->press(p) != OptionsPanel::Action::None)
+        return Action::Consumed;
     if (bins_->modal()) {
         binRequest_ = bins_->press(p);
         dirty_ = true;
@@ -204,6 +223,16 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
                 openLot(nullptr);
             if (t.action == Action::Info)
                 advanced_ = !advanced_, dirty_ = true;
+            if (t.action == Action::Package) { // value 0 opens, -1 closes (Aceitar, Cancelar), 1 and 2 pick
+                if (t.value == 0)
+                    packaging_ = true;
+                else if (t.value < 0)
+                    packaging_ = false;
+                else
+                    packagePick_ = t.value;
+                dirty_ = true;
+                return Action::Consumed;
+            }
             if (t.action == Action::Member)
                 member_ = size_t(t.value), dirty_ = true;
             if (t.action == Action::Families || t.action == Action::Lots || t.action == Action::Options) {
@@ -216,6 +245,11 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
         }
     if (!dialog_)
         if (auto r = bins_->press(p); r.kind != HoodBins::Request::Kind::None) {
+            if (r.kind == HoodBins::Request::Kind::OptionWindow) {
+                options_->toggleWindow(int(r.lot));
+                dirty_ = true;
+                return Action::Consumed;
+            }
             binRequest_ = r;
             dirty_ = true;
             return r.kind == HoodBins::Request::Kind::Consumed ? Action::Consumed : Action::Bins;
@@ -232,7 +266,7 @@ bool HoodUi::covers(simd_float2 p) {
     for (const auto& r : solid_)
         if (inside(r, p))
             return true;
-    return bins_->hits(p);
+    return bins_->hits(p) || options_->covers(p);
 }
 
 void HoodUi::hover(simd_float2 p) {
@@ -363,6 +397,12 @@ UiScreen HoodUi::screen(int width, int height) {
     if (puckRect && puckElement) {
         size_t panelsEnd = out.quads.size();
         bins_->layout(out, *puckRect, *puckElement, rects, width, height, &panelsEnd);
+        if (bins_->panel() == HoodBins::Panel::Options) {
+            const simd_float2 bl = bins_->optionsBottomLeft();
+            options_->setPanelBottomLeft(bl.x, bl.y);
+        } else if (options_->active()) {
+            options_->closeWindow();
+        }
         if (puckQuads.second > puckQuads.first && panelsEnd > puckQuads.second && panelsEnd <= out.quads.size())
             std::rotate(out.quads.begin() + std::ptrdiff_t(puckQuads.first),
                         out.quads.begin() + std::ptrdiff_t(puckQuads.second),
@@ -476,6 +516,16 @@ UiScreen HoodUi::screen(int width, int height) {
         target(child(close), Action::Close);
         if (panel == 0xB000 || panel == 0xC000)
             target(child(panel + 4), Action::Info);
+        if (panel == 0xB000 || panel == 0xC000) // "Ver Amigos da Família e Parentes"
+            target(child(panel + 3), Action::Friends);
+        {
+            // "Transferir Lote": C00B, D006, E006.
+            const uint32_t pk = panel == 0xC000 ? 0xC00B : panel == 0xD000 ? 0xD006 : panel == 0xE000 ? 0xE006 : 0;
+            if (pk)
+                if (const UiElement* b = child(pk))
+                    if (auto r = rects.find(b); r != rects.end())
+                        targets_.push_back({r->second, Action::Package, uiButtonSound(*b), 0});
+        }
         if (panel == 0xC000)
             for (size_t k = 0; k < 8; ++k)
                 if (const UiElement* b = pe ? findWindow(*pe, 0xC101 + uint32_t(k)) : nullptr)
@@ -487,6 +537,24 @@ UiScreen HoodUi::screen(int width, int height) {
             if (auto r = rects.find(pe); r != rects.end())
                 solid_.push_back(r->second);
     }
+    // The "Transferir Lote" dialog over everything, modal.
+    if (packaging_ && !packageScript_.roots.empty()) {
+        targets_.clear();
+        solid_.clear();
+        solid_.push_back({0, 0, float(width), float(height)});
+        const UiElement& root = packageScript_.roots.front();
+        UiDrawHooks hk;
+        for (uint32_t id : {1u, 2u})
+            if (const UiElement* b = root.child(id))
+                hk.buttonState[b] = packagePick_ == int(id) ? 2 : 1;
+        const auto a = root.area();
+        place(root, std::round((float(width) - float(a[2] - a[0])) / 2), std::round((float(height) - float(a[3] - a[1])) / 2), hk);
+        solid_.erase(solid_.end() - 1); // place() added the dialog's own rectangle
+        for (auto [id, v] : {std::pair{1u, 1}, {2u, 2}, {0xA000u, -1}, {0xA001u, -1}})
+            if (const UiElement* b = root.child(id))
+                if (auto r = rects.find(b); r != rects.end())
+                    targets_.push_back({r->second, Action::Package, uiButtonSound(*b), v});
+    }
     dirty_ = false;
     return out;
 }
@@ -494,6 +562,7 @@ UiScreen HoodUi::screen(int width, int height) {
 void HoodUi::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
+    options_->attach(device, colorFormat, depthFormat);
 }
 
 void HoodUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale) {
@@ -508,6 +577,7 @@ void HoodUi::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t hei
         const UiScreen sc = screen(cw, ch);
         layers_[layer_]->setScreen(sc);
     }
+    options_->encode(enc, width, height, scale); // under the puck and its panel, which stay drawn over its tab
     layers_[layer_]->encode(enc, width, height);
 }
 

@@ -100,6 +100,7 @@
 #include "app/build_mode.hpp"
 #include "app/data_location.hpp"
 #include "app/game_flow.hpp"
+#include "app/head_shot.hpp"
 #include "app/game_save.hpp"
 #include "app/hood_mode.hpp"
 #include "formats/lot_arrivals.hpp"
@@ -3724,6 +3725,27 @@ void unloadScene() {
 // A lot opened by flags (--hood N --hood-lot id) has no click behind it: its
 // loading screen's case comes from the neighborhood's lot info.
 static void fillLotEntryFromFlags(const os2::Scene& scene) {
+    if (scene.kind == os2::Scene::Kind::Neighborhood && !scene.hood.empty()) {
+        // The neighborhood's own loading screen: its name, the Tutorial's, or
+        // (back from Create-a-Sim) the new family (docs/loading-mac.md).
+        try {
+            const os2::hood::Neighborhood hood = os2::hood::Neighborhood::load(hoodFolder(scene.hood), false);
+            gLotEntry = {};
+            gLotEntry.hoodName = hood.name;
+            gLotEntry.tutorial = hood.prefix == "Tutorial";
+            std::optional<uint32_t> created = gCreatedFamily; // --loading-family N: test aid (case 6)
+            if (auto a = argument(@"--loading-family"))
+                created = uint32_t(std::stoul(*a));
+            if (created)
+                if (const auto* f = hood.family(*created)) {
+                    gLotEntry.withFamily = true, gLotEntry.familyId = f->id, gLotEntry.familyName = f->name;
+                    gLotEntry.familyThumbs =
+                        hood.package.parent_path() / "Thumbnails" / (hood.prefix + "_FamilyThumbnails.package");
+                }
+        } catch (const std::exception&) {
+        }
+        return;
+    }
     if (scene.kind != os2::Scene::Kind::Lot || gLotEntry.known || scene.hood.empty())
         return;
     try {
@@ -4580,6 +4602,20 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
     os2::Renderer& renderer = *_viewDelegate.renderer;
     if (gGameAudio) // the buttons' click sounds
         gHood->ui().playSound = [](const std::string& name) { gGameAudio->playUi(name); };
+    // Head shots for the characters whose files have none (app/head_shot.hpp).
+    gHood->ui().renderHead = [rp = &renderer](const fs::path& file) {
+        return os2::renderHeadShot(*rp, *gIndex, simParts(*gIndex), file, 128);
+    };
+    // The Options panel's option windows (audio, game, graphics, camera, credits).
+    gHood->ui().options().setSettings(gSettings);
+    gHood->ui().options().onChanged = [](const os2::GameSettings& s) {
+        gSettings = s;
+        if (gUser)
+            s.save(*gUser);
+        applyAudioSettings();
+    };
+    if (gGameAudio)
+        gHood->ui().options().playSound = [](const std::string& name) { gGameAudio->playUi(name); };
     view.clearColor = MTLClearColorMake(0.42, 0.55, 0.72, 1.0);
     gHood->ui().attach((__bridge MTL::Device*)view.device, uint32_t(view.colorPixelFormat),
                        uint32_t(view.depthStencilPixelFormat));

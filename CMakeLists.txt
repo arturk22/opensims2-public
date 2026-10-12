@@ -192,7 +192,7 @@ if(APPLE)
   # The game flow: main menu, user folder, in-game save, options (app/game_flow.hpp).
   target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/tutorial.cpp src/app/options_panel.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp)
   # Scenes loaded off the main thread behind the loading screens (docs/loading-mac.md).
-  target_sources(opensims2 PRIVATE src/app/scene_loader.cpp src/app/loading_screen.cpp)
+  target_sources(opensims2 PRIVATE src/app/scene_loader.cpp src/app/loading_screen.cpp src/app/head_shot.cpp)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2

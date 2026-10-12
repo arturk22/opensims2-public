@@ -386,7 +386,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     // The lot highlight: a unit square, scaled onto the lot when shown.
     // AddLotPlopHighlight's footprint: the same square, green where the lot
     // may go and red where not (inferred colours).
-    auto square = [&](const char* material, const char* colour, const char* alpha) {
+    auto squareModel = [&](const char* material, const char* colour, const char* alpha) {
         ObjectModel m;
         m.name = material;
         ObjectModel::Part part;
@@ -403,10 +403,16 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
                           {"stdMatAlphaBlendMode", "blend"}, {"stdMatLightingEnabled", "false"},
                           {"stdMatCullMode", "none"},        {"stdMatLayer", "-1"}};
         m.materials[part.material] = mat;
+        return renderer.addObject(m, index);
+    };
+    auto square = [&](const char* material, const char* colour, const char* alpha) {
         simd_float4x4 away = matrix_identity_float4x4;
         away.columns[0].x = away.columns[1].y = 0;
-        return renderer.addInstance(renderer.addObject(m, index), away);
+        return renderer.addInstance(squareModel(material, colour, alpha), away);
     };
+    // "Ver Amigos": the family's friends' and relatives' lots (inferred look: blue, violet).
+    friendModels_[0] = squareModel("nhood-lot-friend", "0.3,0.7,1,1", "0.5");
+    friendModels_[1] = squareModel("nhood-lot-relative", "0.85,0.45,1,1", "0.5");
     plopOk_ = square("nhood-lot-plop-ok", "0.35,1,0.35,1", "0.45");
     plopBad_ = square("nhood-lot-plop-bad", "1,0.3,0.25,1", "0.45");
     {
@@ -461,6 +467,24 @@ void HoodView::highlight(const HoodLot* lot) {
         m.columns[3] = simd_make_float4(lot->footLo.x, lot->footLo.y, lot->ground + 0.6f, 1);
     }
     renderer_->setInstanceTransform(highlight_, m);
+}
+
+void HoodView::showFriends(const std::vector<std::pair<const HoodLot*, int>>& lots) {
+    simd_float4x4 away = matrix_identity_float4x4;
+    away.columns[0].x = away.columns[1].y = 0;
+    for (int inst : friendBoxes_)
+        renderer_->setInstanceTransform(inst, away);
+    while (friendBoxes_.size() < lots.size())
+        friendBoxes_.push_back(renderer_->addInstance(friendModels_[0], away));
+    for (size_t i = 0; i < lots.size(); ++i) {
+        const HoodLot& lot = *lots[i].first;
+        renderer_->setInstanceModel(friendBoxes_[i], friendModels_[lots[i].second == 2 ? 1 : 0]);
+        simd_float4x4 m = matrix_identity_float4x4;
+        m.columns[0].x = lot.footHi.x - lot.footLo.x;
+        m.columns[1].y = lot.footHi.y - lot.footLo.y;
+        m.columns[3] = simd_make_float4(lot.footLo.x, lot.footLo.y, lot.ground + 0.7f, 1);
+        renderer_->setInstanceTransform(friendBoxes_[i], m);
+    }
 }
 
 void HoodView::showPlacement(const hood::TileRect* rect, bool ok, float height) {

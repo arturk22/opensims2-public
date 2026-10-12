@@ -11,6 +11,15 @@
 //               ambience; the script's "EnableVoice"... buttons, tip "Mudo")
 //   0x49060F02  "Opções de Jogo": Edge Scrolling ("radio:edgeScrolling:
 //               bool:0:1", 0xA1: Off 1, On 2)
+//   0x49060F03  "Gráficos/Opções de Desempenho" (window 3), 0x49060F05 "Opções
+//               de Câmera" (4) and 0x49060F08 "Créditos" (5): drawn as the
+//               script has them; their radio groups (the Off/Medium/High
+//               buttons of a rectangle) only remember the pick in memory
+//               (nothing in this engine reads them), as do the other inert
+//               controls. The neighborhood's puck opens the same windows
+//               (A241 graphics, A242 audio, A243 game, A245 camera, A246
+//               credits; HoodUi owns an OptionsPanel and gives it the
+//               panel's corner with setPanelBottomLeft).
 //
 // What maps to the app: the four group volumes and mutes (the lot audio's
 // mixer groups) and edge scrolling, kept in the user's Options.txt
@@ -53,8 +62,17 @@ public:
     ~OptionsPanel();
     bool ok() const { return ok_; }
 
-    // Opens window 1 (audio) or 2 (game options); the open one closes.
+    // Opens window 1 (audio), 2 (game options), 3 (graphics), 4 (camera) or 5
+    // (credits); the open one closes.
     void toggleWindow(int window);
+    // Neighborhood use: the window's bottom left sits on (x, y) of the canvas
+    // instead of the lot's options panel's corner.
+    void setPanelBottomLeft(float x, float y) {
+        if (!anchored_ || x != anchorX_ || y != anchorY_)
+            anchored_ = true, anchorX_ = x, anchorY_ = y, dirty_ = true;
+    }
+    // Whether the open window is under `p` (canvas pixels).
+    bool covers(simd_float2 p);
     bool active() const { return window_ != 0; }
 
     enum class Action { None, Consumed };
@@ -63,10 +81,11 @@ public:
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
 
     const GameSettings& settings() const { return settings_; }
+    void setSettings(const GameSettings& s) { settings_ = s, dirty_ = true; }
     // Called when an option changes (with the new settings).
     std::function<void(const GameSettings&)> onChanged;
     std::function<void(const std::string&)> playSound;
-    // 0 none, 1 audio, 2 game options.
+    // 0 none, 1 audio, 2 game options, 3 graphics, 4 camera, 5 credits.
     int window() const { return window_; }
     void closeWindow(); // also when the options panel closes
 
@@ -75,7 +94,7 @@ public:
     void encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t height, float scale);
 
 private:
-    enum class Target { Slider, Mute, EdgeOff, EdgeOn, Window };
+    enum class Target { Slider, Mute, EdgeOff, EdgeOn, Window, Radio };
     struct Hit {
         std::array<float, 4> rect;
         Target target;
@@ -86,7 +105,12 @@ private:
 
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;
-    UiScript puck_, panel_, audio_, game_;
+    UiScript puck_, panel_, audio_, game_, graphics_, camera_, credits_;
+    const UiScript& windowScript(int window) const;
+    // Inert radio groups: the picked button of a group (its rectangle's element) by group.
+    std::map<const UiElement*, const UiElement*> picks_;
+    bool anchored_ = false;
+    float anchorX_ = 0, anchorY_ = 0;
     bool ok_ = false;
     GameSettings settings_;
     int window_ = 0;

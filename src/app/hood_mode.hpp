@@ -112,6 +112,7 @@ private:
     const HoodLot* lotAt(const LotCamera& camera, simd_float2 p, float w, float h) const;
     void carryOut(const HoodBins::Request& r);
     void lotClicked(const HoodLot& lot);
+    void showFriends(const HoodLot& from);
 
     std::filesystem::path gameDir_;
     std::string query_;

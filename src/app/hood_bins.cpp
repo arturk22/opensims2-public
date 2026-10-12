@@ -474,7 +474,13 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
         if (box) {
             target(box->child(0xA221), Hit::OptMainMenu);
             target(box->child(0xA220), Hit::OptQuit);
+            // The option windows: A241 graphics, A242 audio, A243 game,
+            // A244 house (hidden), A245 camera, A246 credits.
+            for (auto [id, w] : {std::pair{0xA241u, 3u}, {0xA242u, 1u}, {0xA243u, 2u}, {0xA245u, 4u}, {0xA246u, 5u}})
+                target(box->child(0xA240) ? box->child(0xA240)->child(id) : nullptr, Hit::OptWindow, w);
         }
+        if (auto r = rects.find(&root); r != rects.end())
+            optionsBL_ = simd_make_float2(r->second[0], r->second[3]);
     } else if (panel_ == Panel::Lots) {
         const UiElement& root = lots_.roots.front();
         const simd_float2 o = anchoredOrigin(root, puckRect, puck);
@@ -790,6 +796,7 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
         case Hit::PlaceAccept: return acceptPlaceLot();
         case Hit::OptMainMenu: panel_ = Panel::None; return {Request::Kind::MainMenu};
         case Hit::OptQuit: panel_ = Panel::None; return {Request::Kind::Quit};
+        case Hit::OptWindow: return {Request::Kind::OptionWindow, 0, t.value};
         case Hit::PlaceCancel: placeLot_.reset(); return {Request::Kind::Consumed};
         case Hit::Solid:
         case Hit::Request: return {Request::Kind::Consumed};

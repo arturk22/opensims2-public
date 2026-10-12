@@ -26,6 +26,7 @@
 // popup) and the family's net worth (dialog) come from the lot file's SIMI.
 
 #include "app/hood_bins.hpp"
+#include "app/options_panel.hpp"
 #include "formats/image.hpp"
 #include "formats/ui_screen.hpp"
 #include "formats/ui_script.hpp"
@@ -70,15 +71,23 @@ public:
     const HoodLot* dialogLot() const { return dialog_; }
     // The dialog's "Informações" panel (headless: --hood-info [member]).
     void showInfo(bool on, size_t member = 0) { advanced_ = on, member_ = member, dirty_ = true; }
+    // The "Transferir Lote" dialog (headless: --hood-package).
+    void showPackage(bool on) { packaging_ = on, dirty_ = true; }
+    bool packageOpen() const { return packaging_; }
 
     enum class Action { None, Consumed, EnterLot, Close, ZoomIn, ZoomOut, RotateLeft, RotateRight, MainMenu,
-                        Families, Lots, Bins, Options, Info, Member };
+                        Families, Lots, Bins, Options, Info, Member, Friends, Package };
     // The Families and Lots & Houses panels (app/hood_bins.hpp); after
     // Action::Bins, binRequest() says what they asked for.
     HoodBins& bins() { return *bins_; }
+    // The option windows the Options panel opens (app/options_panel.hpp).
+    OptionsPanel& options() { return *options_; }
     const HoodBins::Request& binRequest() const { return binRequest_; }
     // A left click (canvas pixels): on the dialog or the HUD it is the UI's.
     Action press(simd_float2 p);
+    // Renders a head shot for a character file without one (set by the app:
+    // app/head_shot.hpp); called when a lot's dialog opens, not while drawing.
+    std::function<std::optional<RgbaImage>(const std::filesystem::path&)> renderHead;
     // UI sounds by name (the buttons' own: their "clicksound" attribute).
     std::function<void(const std::string&)> playSound;
     void hover(simd_float2 p);
@@ -110,10 +119,15 @@ private:
 
     const HoodView* view_;
     std::unique_ptr<HoodBins> bins_;
+    std::unique_ptr<OptionsPanel> options_;
     HoodBins::Request binRequest_;
     std::unique_ptr<UiResources> res_;
     std::unique_ptr<FontLibrary> fonts_;
-    UiScript hud_, hoverScript_, dialogScript_;
+    UiScript hud_, hoverScript_, dialogScript_, packageScript_;
+    // "Transferir Lote" (EFFF4500): the dialog the Lot Info Dialog's button opens; the
+    // pick (1 TheSims2.com, 2 a file) is only remembered, nothing is exported.
+    bool packaging_ = false;
+    int packagePick_ = 2;
     bool ok_ = false;
     std::filesystem::path familyThumbs_;
     std::map<uint32_t, std::unique_ptr<RgbaImage>> snapshots_; // by family (null: none)
@@ -134,6 +148,7 @@ private:
     size_t member_ = 0;
     const RgbaImage* memberThumb(const std::filesystem::path& character);
     std::map<std::string, std::unique_ptr<RgbaImage>> memberThumbs_;
+    bool renderHeads_ = false; // only while a lot opens, never inside a frame
     std::vector<Target> targets_;
     std::vector<std::array<float, 4>> solid_; // areas that take clicks
     int canvasW_ = 1024, canvasH_ = 768, laidW_ = 0, laidH_ = 0;

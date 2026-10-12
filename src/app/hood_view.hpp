@@ -92,6 +92,9 @@ public:
     // The lot tools (formats/hood_lots.hpp): what they check against, the
     // footprint highlight (null hides it) and the ground under a ray.
     const hood::PlacementWorld& placementWorld() const { return place_; }
+    // "Ver Amigos": the lots of a family's friends (kind 1) and relatives (2),
+    // each lot highlighted in its colour; empty hides them all.
+    void showFriends(const std::vector<std::pair<const HoodLot*, int>>& lots);
     void showPlacement(const hood::TileRect* rect, bool ok, float height);
     std::optional<simd_float2> groundAt(simd_float3 origin, simd_float3 dir) const;
     const hood::Terrain& rawTerrain() const { return rawTerrain_; }
@@ -117,6 +120,8 @@ private:
     std::vector<std::unique_ptr<ResourceIndex>> lotIndexes_; // imposter textures load through them
     std::vector<std::string> report_;
     Renderer* renderer_ = nullptr;
+    int friendModels_[2] = {-1, -1};
+    std::vector<int> friendBoxes_;
     int highlight_ = -1; // renderer instance
     const HoodLot* highlighted_ = nullptr;
 };

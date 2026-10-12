@@ -10,11 +10,15 @@
 //   empty residential lot  E9   F2 (build tools)          the lot's name
 //   community lot          EA   the image of an object of  the lot's name
 //                               the lot (found during the load), else F1
-//   neighborhood           EB   F3 (houses)                (the name: not read)
+//   neighborhood           EB   F3 (houses)                the neighborhood's name
+//                                                          + U(0x84, 0x10) under it
+//   back to the hood with  EB   the family's photo         "The <name> Family" (case 6)
+//   a family (from CAS)
+//   Tutorial               ED   F4                         U(0x84, 0x2C) + U(0x84, 0x10)
+//                                                          (inferred: case 7 is the tutorial)
 //   Create-a-Sim           EC   F0 (a family)              "Create A Family"
 //
-// (The base game's neighborhood type only; the Tutorial's ED/F4 and the
-// expansions' icons are not used.)
+// (The base game's neighborhood type only; the expansions' icons are not used.)
 //
 // Plain C++.
 
@@ -35,6 +39,10 @@ struct LotEntry {
     std::string familyName;  // the family's
     uint32_t familyId = 0;
     std::filesystem::path familyThumbs; // <hood>/Thumbnails/<prefix>_FamilyThumbnails.package
+    // The neighborhood being entered (Scene::Kind::Neighborhood).
+    std::string hoodName;   // CTSS 1 (empty: the Tutorial)
+    bool tutorial = false;  // the Tutorial neighborhood
+    bool withFamily = false; // case 6: back to the neighborhood with this family (familyId, familyName)
 };
 
 // The lot intro's middle tile, in the 820x620 picture (the glowing

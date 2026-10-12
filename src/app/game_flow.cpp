@@ -13,7 +13,7 @@ const std::initializer_list<const char*> kSceneFlags = {"--hood",  "--hood-lot",
                                                         "--lot",   "--ui",       "--pivot",      "--zoom",
                                                         "--orientation", "--pie", "--pie-select", "--mode",
                                                         "--menu-return", "--menu-select", "--ui-show",
-                                                        "--hood-panel", "--hood-family", "--hood-tool", "--hood-lot-click",
+                                                        "--hood-panel", "--hood-family", "--hood-tool", "--hood-lot-click", "--hood-options-window", "--hood-package", "--hood-friends",
                                                         "--hood-place", "--hood-place-at", "--hood-place-click",
                                                         "--cas-hood", "--cas-return"};
 const std::initializer_list<const char*> kSceneBare = {"--vm", "--menu", "--cas"};
