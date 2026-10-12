@@ -108,6 +108,17 @@ Exit countDownParam(Context& c) {
     const auto param = int16_t(le16(&c.instruction.operands[0]));
     if (param < 0 || size_t(param) >= c.frame.params.size())
         throw gameError(err::StackNumberOutOfRange, "Sleep parameter " + std::to_string(param));
+    // A long sleep is in the scheduler's list; an object Notify (0x31) took
+    // out of it wakes with the counter at 0 (TryIdle asks the scheduler
+    // whether it still sleeps: vtable 0x124, 0x11c). Objects only: a Sim's
+    // notification is for its Idle for Input (queue.cpp). The tutorial's
+    // controller sleeps until a button's event tree notifies it.
+    Object& me = c.me();
+    if (me.idleInterrupt && !me.person) {
+        me.idleInterrupt = false;
+        c.set(kOwnerParam, param, 0);
+        return Exit::True;
+    }
     const int16_t ticks = c.get(kOwnerParam, param);
     if (ticks <= 0)
         return Exit::True;
@@ -1399,6 +1410,7 @@ void registerPrimitives(VM& vm) {
     registerAutonomyPrimitives(vm);    // Find Best Interaction, Gosub Found Action (autonomy.cpp)
     registerMessagePrimitives(vm);     // Message (message.cpp)
     registerEnginePrimitives(vm);      // Refresh, Debug, UI/camera, Test Sim Interacting With (engine_prims.cpp)
+    registerTutorialPrimitives(vm);    // UI Effect with its strings looked up (tutorial.cpp)
     registerPersonPrimitives(vm);      // Age, RayTrace (person_prims.cpp)
     registerCharacterPrimitives(vm);   // Make New Character (characters.cpp)
 }

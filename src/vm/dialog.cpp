@@ -19,12 +19,14 @@
 // while it is open; button 1 -> true, button 2 -> false; with three
 // choices the button's index (0/1/2) goes to the temp of byte 7. Types
 // 8-10 and 0x1C (text notifications) do not wait and need a stack object
-// (error 0x17); 22/25 (tutorial "next") wait only with temp 1 != 0.
+// (error 0x17); 22/25 ("TutorialNext") are the tutorial's progress window
+// (tutorial.hpp): they never wait.
 
 #include "dialog.hpp"
 
 #include "vm.hpp"
 #include "hood_bridge.hpp"
+#include "tutorial.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/dbpf.hpp"
@@ -188,6 +190,10 @@ int autoTimeOutDialogs(VM& vm, double now) {
 }
 
 bool dialogPausesGame(const VM& vm) {
+    // The tutorial's modal progress window (type 25) pauses the game until
+    // its button is pressed (cTSWinProcTutorialProgressDialog::Show).
+    if (vm.tutorial.progress.visible && vm.tutorial.progress.modal)
+        return true;
     for (const auto& [who, d] : vm.dialogs)
         if (d.blocking && d.answer < 0 && !d.continueOthers)
             return true;
@@ -407,16 +413,16 @@ Exit dialog(Context& c) {
         vm.notifications.push_back(std::move(d));
         return Exit::True;
     case dialogtype::TutorialNext:
-    case dialogtype::TutorialNextModal:
-        if (!c.thread.temps[1]) {
-            d.blocking = false;
-            if (vm.notifications.size() >= kMaxNotifications)
-                vm.notifications.pop_front();
-            vm.notifications.push_back(std::move(d));
-            return Exit::True;
-        }
-        d.buttons = {button(o[3], "OK")};
-        break;
+    case dialogtype::TutorialNextModal: {
+        // Not a dialog that waits: the tutorial's progress window
+        // (tutorial.hpp), shown or hidden at once.
+        --vm.nextDialogId;
+        // The group scopeStrings took the STR# 0x12D from.
+        const uint32_t group = scope == 2                                           ? kGlobalGroup
+                               : vm.code().strings(c.frame.group, kDialogStrings) ? c.frame.group
+                                                                                  : owner->group;
+        return Exit(tutorialNextDialog(c, type, group));
+    }
     case dialogtype::YesNo: d.buttons = {button(o[3], "Sim"), button(o[4], "Não")}; break;
     case dialogtype::YesNoCancel:
         d.buttons = {button(o[3], "Sim"), button(o[4], "Não"), button(o[0], "Cancelar")};

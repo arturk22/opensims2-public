@@ -6,6 +6,7 @@
 #include "animation.hpp"
 #include "dialog.hpp"
 #include "path_planner.hpp"
+#include "tutorial.hpp"
 #include "world.hpp"
 
 #include <array>
@@ -948,6 +949,8 @@ public:
     // host; headless hosts set a button).
     std::map<ObjectId, Dialog> dialogs;
     std::deque<Dialog> notifications;
+    // The tutorial's progress window and UI Effects (tutorial.hpp).
+    TutorialState tutorial;
     int autoDialogAnswer = -1;
     // Dialogs time out as the game's (autoTimeOutDialogs in dialog.hpp); on
     // game time in VM::tick when `dialogClockIsTicks` (headless), else the

@@ -34,8 +34,8 @@ constexpr int Tutorial = 4;
 constexpr int TextNotification = 8; // on the side of the screen; does not wait
 constexpr int StopTextNotification = 9;
 constexpr int ModifyTextNotification = 10;
-constexpr int TutorialNext = 22;      // waits only with temp 1 != 0
-constexpr int TutorialNextModal = 25; // ditto
+constexpr int TutorialNext = 22;      // the tutorial's progress window (tutorial.hpp)
+constexpr int TutorialNextModal = 25; // the same, modal
 constexpr int TnsBirthday = 0x1C;     // a text notification too (docs/primitives-mac.md §4)
 } // namespace dialogtype
 
