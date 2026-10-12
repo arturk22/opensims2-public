@@ -175,8 +175,16 @@ static void testAnimateSim() {
     code.add(kGroup, 0x1002, tree({instr(0x6A, T, E, {1, 0, 0, 0x20, 0, 0, 0x80})}));
     t = vm.start(s.id, 0x1002);
     vm.run(t);
+    check(t.status == Thread::Status::Finished && t.result,
+          "a \".\" entry is a name with no animation: true at once");
+    code.add(kGlobalGroup, animlist::Adult, strings({"a-noExpression", "", "a-blockedPath-long"}));
+    code.add(kGroup, 0x100F, tree({instr(0x6A, T, E, {1, 0, 0, 0x20, 0, 0, 0x80})}));
+    s.person->data[58] = 0;
+    t = vm.start(s.id, 0x100F);
+    vm.run(t);
     check(t.status == Thread::Status::Failed && t.error.find("Animation name is empty string.") == 0,
-          "an empty entry is the game's error");
+          "an empty entry is the game's error 0x43");
+    code.add(kGlobalGroup, animlist::Adult, strings({"a-noExpression", ".", "a-blockedPath-long"}));
 
     // Tree events: the event tree gets each "event=N" when the animation
     // reaches it, with N in parameter 0 (here: attribute 0 += parameter 0,

@@ -540,7 +540,7 @@ Exit animateSim(Context& c) {
     const std::string name = o[6] == animlist::Social && !placeholder(entry) ? socialName(c, me, entry)
                                                                              : resolveListAnimation(c.vm, me, entry);
     const auto seconds = library(c.vm).seconds(name);
-    if (!seconds)
+    if (!seconds && name != ".")
         ++c.vm.animations.missing[name];
     // A full-body animation does not take the overlays off: the engine
     // mixes them with it bone by bone by their levels (animlevel; Mac BV:
@@ -589,9 +589,9 @@ Overlay* startOverlay(Context& c, Object& target, const std::string& entry, bool
     std::string name = target.person && social && !placeholder(entry) ? socialName(c, target, entry)
                        : target.person ? resolveListAnimation(c.vm, ageOf ? *ageOf : target, entry)
                                                                        : parseItem(split(entry, ',')[0]).name;
-    if (name.empty() || name == ".")
+    if (trim(name).empty())
         throw VMError("Animation name is empty string.");
-    if (!library(c.vm).exists(name))
+    if (name != "." && !library(c.vm).exists(name))
         ++c.vm.animations.missing[name];
     auto& ov = target.animation.overlays;
     if (std::count(ov.begin(), ov.end(), name) >= 2)
@@ -954,8 +954,15 @@ Exit effectStopStart(Context& c) {
 } // namespace
 
 std::string resolveListAnimation(VM& vm, const Object& sim, std::string entry) {
+    // Only an empty name is error 0x43 (try_animate_sim 0x69d634 and
+    // try_animate_overlay 0x69ea54 test the length after the type parse,
+    // vtable 0x380 = 0x68d934, which takes a name without "(role)" as type 1
+    // and trims it). A "." placeholder is a name like any other: no such
+    // animation, so nothing plays and the primitive returns true ("missing
+    // animation tree"). The baby list's "." at 84 ("CT - Route Blocked
+    // Animation" on a baby on the floor) reset the baby's Main here.
     std::string name = parseItem(split(entry, ',')[0]).name;
-    if (name.empty() || name == ".")
+    if (trim(name).empty())
         throw VMError("Animation name is empty string.");
     const std::string p = agePrefix(sim);
     if ((p == "t" || p == "e") && name.size() > 1 && name[0] == 'a' && (name[1] == '-' || name[1] == '2')) {
