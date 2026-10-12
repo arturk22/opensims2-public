@@ -733,8 +733,12 @@ Exit animateObject(Context& c) {
 
 // Animate Stop (0x6C), by the Mac binary's disassembler
 // (docs/primitives-mac.md §5) and try_animate_stop: the object (owner u8 at
-// 3, data u16), mode s8 at 7: 0 one animation (u16 at 0 of the list byte
-// 6), 1 the overlays, 2 the full-body animations, 3 all, 4-11 the overlays
+// 3, data u16), mode s8 at 7: 0 the animation named by u16 at 0 of the list
+// byte 6, every request of that name (try_animate_stop collects all the
+// overlay requests whose name matches, as many as Animate Overlay's "two
+// of a name" left: stopping only the first left one of the two
+// "a2o-coffee-DN-carry" the get-in starts on, the arm held at the seated
+// thigh while the Sim walked off; live QA 15), 1 the overlays, 2 the full-body animations, 3 all, 4-11 the overlays
 // of one kind (Overlay::oeType: 4 carry, 5 idle, 6 gesture, 7 reaction, 8
 // normal, 9 facial, 10 idle facial, 11 receptivity); flags byte 2 (0x01
 // flipped, 0x02 blended, 0x20 short blend, 0x08 flip flag in temp 3, 0x40
@@ -794,8 +798,6 @@ Exit animateStop(Context& c) {
         if (stops(*it) && ofPriority(*it) && ofFlip(*it)) {
             stopped.push_back(std::move(*it));
             it = a.overlays.erase(it);
-            if (mode == 0)
-                break;
         } else {
             ++it;
         }

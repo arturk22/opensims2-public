@@ -299,6 +299,16 @@ static void testOverlayLifetime() {
         vm.run(t);
     }
     check(s.animation.overlays.size() == 2, "two of a name at most");
+    // Animate Stop mode 0 by name stops both (try_animate_stop collects every
+    // request of the name): stopping one left a carry pose on (live QA 15).
+    code.add(kGroup, 0x100B, tree({instr(0x6C, T, E, {3, 0, 0, 0x0A, 0, 0, 0x80, 0})}));
+    t = vm.start(s.id, 0x100B, {}, s.id);
+    vm.run(t);
+    check(s.animation.overlays.empty(), "Animate Stop mode 0 stops every overlay of the name");
+    for (int i = 0; i < 2; ++i) {
+        t = vm.start(s.id, 0x1007, {}, s.id);
+        vm.run(t);
+    }
     t = vm.start(s.id, 0x1008, {}, s.id);
     vm.run(t);
     code.add(kGroup, 0x1009, tree({instr(0x6C, T, E, {0, 0, 0, 0x0A, 0, 0, 0, 5})}));

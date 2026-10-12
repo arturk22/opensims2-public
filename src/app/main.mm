@@ -1148,6 +1148,9 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         setupOptions(index); // below: the puck's Options mode
     if (liveUiRequested())
         setupTutorial(index); // below: a lot of the Tutorial neighborhood
+    // --game-speed <2|3|4>: the game speed global (2 normal, 3 fast, 4 fastest), as the live UI's speed buttons.
+    if (auto sp = argument(@"--game-speed"))
+        gSimulation->machine().globals[os2::vm::global::Speed] = int16_t(std::clamp(std::stoi(*sp), 2, 4));
     // --dialog-answer <n>: every dialog the trees put up gets button n at once.
     if (auto a = argument(@"--dialog-answer"))
         gSimulation->machine().autoDialogAnswer = std::stoi(*a);

@@ -531,7 +531,8 @@ void LotSimulation::updateScene(double seconds) {
                         s += o.name + "@" + std::to_string(o.level) + (o.ikObject ? " ik " + std::to_string(o.ikObject) : "") + " ";
                     s += "] ik " + std::to_string(ob.animation.eventObject) + " in " + std::to_string(ob.data[vm::objdata::ContainerId]);
                     if (s != last[oid])
-                        std::printf("opensims2: tick %llu: Sim %d %s\n", (unsigned long long)vm_->ticks, oid, s.c_str()),
+                        std::printf("opensims2: tick %llu: Sim %d %s at (%.1f, %.1f, %d)\n", (unsigned long long)vm_->ticks,
+                                    oid, s.c_str(), ob.position.x, ob.position.y, int(ob.position.level)),
                             last[oid] = s;
                 }
         }
