@@ -2583,6 +2583,16 @@ cada assento de sofá e cada parte do berço oferece as interações (o jogo
 também abre o menu em qualquer assento); na autonomia cada objeto entra uma
 vez pelo líder de interação.
 
+**Entrada "." não é erro**: depois de achar o nome, `try_animate_sim` e
+`try_animate_overlay` passam-no pelo vtable `0x380` (`0x68d934`: separa o
+"(papel)", tipo 1 sem ele, e apara) e só então testam o comprimento: **só o
+nome vazio é o 0x43**. Um "." é um nome sem animação: nada toca e a
+primitiva volta verdadeiro ("missing animation tree"). O VM dava 0x43 também
+para ".": o bebê no chão (o "Interaction - Drop - Sim" do carregar põe o bebê
+no chão; há "a2b-soc-baby-putDown-onFloor-N") a quem pediam para sair do
+caminho tocava a entrada 84 da lista do bebê, ".", e tinha o Main
+reiniciado.
+
 **Threads de objetos removidos**: o VM matava a thread de um objeto
 removido "na próxima vez que rodasse", mas se o ID já tinha ido para um
 objeto novo ela seguia como ele (o controlador do ônibus escolar do
