@@ -543,7 +543,18 @@ Exit setToNext(Context& c) {
                 v.push_back(x);
         std::sort(v.begin(), v.end(), [](const Object* a, const Object* b) { return a->appendOrder < b->appendOrder; });
         size_t k = 0;
-        if (current != 0) {
+        // Type 18 from a Sim (base game 1.0, cTSObject_TrySetToNext
+        // 0xb577b0, walks the lot's list from the current object): the
+        // school trees start from the student ("Sub - Is Stack Obj my
+        // Student?", "Sub - Set to Sim's School", "Sub - Send to School"),
+        // who is not in the JobData's instances, and the game finds the
+        // JobData; so a Sim before every object of the GUID is read as the
+        // start (inferred: the Sims come first in that list; with the BV's
+        // "not in it: false" Alexander, N001_Lot11, never went to his
+        // private school; live QA 15, round 18).
+        const Object* from = type == 18 && current > 0 ? c.vm.object(current) : nullptr;
+        if (from && from->person && !matches(*from)) {
+        } else if (current != 0) {
             const auto at = std::find_if(v.begin(), v.end(), [&](const Object* x) { return x->id == current; });
             if (at == v.end())
                 return none();

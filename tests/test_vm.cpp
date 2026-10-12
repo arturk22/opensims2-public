@@ -866,6 +866,37 @@ static void testSetToNextSearches() {
     check(p.status == Thread::Status::Finished && !p.result, "Set to Next 1 from an object that is not a person: false");
 }
 
+// Type 18 from a Sim: the Sims come first in the lot's list, so a lower-ID
+// object of the GUID is found after them (the private school's "Sub - Is
+// Stack Obj my Student?" starts from the student).
+static void testSetToNextGuidFromSim() {
+    Fixture fx;
+    constexpr uint32_t kSchool = 0x11223344, kSim = 0x55667788;
+    fx.code.add(kObjGroup, 0x80, definition(kSchool));
+    fx.code.add(kObjGroup, 0x81, definition(kSim, true));
+    fx.vm.instantiate(kObjGroup, 0x81);                    // id 1: me
+    fx.vm.instantiate(kObjGroup, 0x80);                    // id 2: the school
+    fx.vm.instantiate(kObjGroup, 0x81);                    // id 3: the student
+    fx.code.add(kObjGroup, 0x1000,
+                tree({expr(Temp, 0, Assign, Lit, int16_t(kSchool & 0xFFFF), go(1), E),
+                      expr(Temp, 1, Assign, Lit, int16_t(kSchool >> 16), go(2), E),
+                      expr(Temp, 3, Assign, Lit, 3, go(3), E),
+                      next(18, 3, go(4), E),                                // from the student: temp3 = 2
+                      next(18, 3, E, T)},                                   // from the school: none
+                     1));
+    Thread t = fx.run(0x1000, {0});
+    check(t.status == Thread::Status::Finished && t.temps[3] == 0, "Set to Next 18 from an object goes on after it");
+    fx.code.add(kObjGroup, 0x1001,
+                tree({expr(Temp, 0, Assign, Lit, int16_t(kSchool & 0xFFFF), go(1), E),
+                      expr(Temp, 1, Assign, Lit, int16_t(kSchool >> 16), go(2), E),
+                      expr(Temp, 3, Assign, Lit, 3, go(3), E),
+                      next(18, 3, T, E)},
+                     1));
+    t = fx.run(0x1001, {0});
+    check(t.status == Thread::Status::Finished && t.temps[3] == 2,
+          "Set to Next 18 from a Sim finds a lower-ID object of the GUID (Sims first in the lot's list)");
+}
+
 static void testNeighbors() {
     Fixture fx;
     constexpr uint32_t kSim = 0x55667788, kOther = 0x01020304;
@@ -1936,6 +1967,7 @@ int main() {
     testGuidFallback();
     testLookAt();
     testSetToNextSearches();
+    testSetToNextGuidFromSim();
     testNeighbors();
     testGenericSimsCall();
     testDefinitionOwners();

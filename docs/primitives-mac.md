@@ -1904,9 +1904,24 @@ de pessoa 107/108). No BV não acha nunca; no 1.0 só acharia se o JobData
 viesse depois do aluno na lista do lote, e os lotes salvos estão em ordem de
 ID (o JobData particular do N001_Lot11 é o 70, o Alexander o 142). Depois
 disso a árvore só aceita a escola pública (Test Object Type `0xB58867D0`)
-para quem tem 107/108 = 0. Então, com esse estado, o jogo também não manda o
-Alexander (escola particular) para a escola: não é um erro nosso. A VM segue
-o BV.
+para quem tem 107/108 = 0.
+
+**Rodada 18 (r18-life): corrigido.** A conclusão acima ("o jogo também não
+manda o Alexander") estava errada: no jogo os alunos de escola particular
+vão. Lido de novo no 1.0 (`0xb577b0`): o tipo 0x12 acha o objeto atual na
+lista do lote (lista ligada, o objeto no `+8` de cada nó: ordem de inserção,
+não de ID), segue do próximo e não dá a volta. Várias árvores da Maxis
+começam essa busca **a partir do Sim** ("Sub - Is Stack Obj my Student?",
+"Sub - Set to Sim's School", "Sub - Send to School", "Work - Do I Have a
+Job?", "Neighbor - Is home?"), procurando o JobData, que tem ID menor: só
+funciona se os Sims vêm antes dos outros objetos nessa lista. **Inferido**:
+a VM anda o tipo 18 com os Sims primeiro (de um Sim: os Sims depois dele e
+depois todos os outros objetos por ID; de um objeto: os não-Sims depois
+dele). Com isso o Alexander (`N001_Lot11`) põe o uniforme, anda até o
+ônibus às 08:07, "Na Escola" das 08:26 às 15:02, nota 12 → 13, nos dois
+dias de `s2pkg autonomy --ticks 86400`; a Jill (`N002_Lot10`), que também
+não ia, agora vai. Captura `docs/screenshots/r18-life-escola-particular.jpg`.
+Os outros tipos da lista (0, 2, 6, 12, 25, 27, 37) seguem por ID.
 
 ### O dia de trabalho (só SimAntics)
 
