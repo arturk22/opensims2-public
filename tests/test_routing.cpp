@@ -1637,6 +1637,17 @@ static void testPlaceNearFree() {
     check(vm.placeNearFree(me) && me.position.x == 4.5f && me.position.y == 3.5f, "free spot: the spiral's next tile, +X");
 }
 
+// A walker standing in a diagonal wall's cells (stopped in a diagonal
+// doorway) steps out of them before planning.
+static void testEscapeDiagonal() {
+    World w(8, 8);
+    w.addWall(1, 1, 1, 5, 5); // "/" through tiles (1, 1) .. (4, 4)
+    PathPlanner planner(w);
+    PlannedPath p;
+    RouteFail why{};
+    check(planner.plan({3.4f, 3.5f}, 1, 1, {{6.5f, 1.5f, 0}}, p, why) && p.escaped, "planner: out of a diagonal wall's cells");
+}
+
 int main() {
     testStairs();
     testWalking();
@@ -1650,6 +1661,7 @@ int main() {
     testSetToNextTiles();
     testPlaceNearFree();
     testPathPlanner();
+    testEscapeDiagonal();
     testRouteResult();
     testBlockedBySim();
     testMutualBlock();

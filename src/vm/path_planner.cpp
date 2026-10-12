@@ -285,6 +285,10 @@ bool PathPlanner::escape(int level, Point2 start, Point2& out) const {
     // A walker left where there is no floor (on a stair's steps, after its
     // climb was cut short) steps off over the floorless cells too.
     const bool stranded = cellAt(level, sx, sy) & kNoFloor;
+    // One standing in a diagonal wall's cells (stopped in a diagonal doorway:
+    // N002_Lot4's Vidcund, every route failed until he starved) steps out
+    // through them too (inferred, as the rest of the escape).
+    const bool inDiagonal = cellAt(level, sx, sy) & kDiagonal;
     while (!open.empty()) {
         const auto [cx, cy] = open.front();
         open.pop_front();
@@ -299,7 +303,7 @@ bool PathPlanner::escape(int level, Point2 start, Point2& out) const {
             if (std::abs(nx - sx) > r || std::abs(ny - sy) > r)
                 continue;
             uint8_t& s = seen[size_t(nx - sx + r) * side + size_t(ny - sy + r)];
-            if (s || (cellAt(level, nx, ny) & (stranded ? kDiagonal : kNoFloor | kDiagonal)))
+            if (s || (cellAt(level, nx, ny) & ((stranded ? 0 : kNoFloor) | (inDiagonal ? 0 : kDiagonal))))
                 continue;
             // Crossing a tile edge: not through a wall (a door's edge is open).
             const int tx = (d[0] > 0 ? cx : nx), ty = (d[1] > 0 ? cy : ny);
