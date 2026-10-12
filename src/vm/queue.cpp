@@ -295,7 +295,8 @@ Exit handleSubQueue(Context& c) {
 // exactly N ticks. With something to do it sets that flag; with "allow push"
 // outside an interaction the next queued interaction that may run (its
 // priority beats the running one and its check tree passes: attemptPush)
-// is started: its action tree is pushed on top of this tree and the counter
+// is started, and inside one the front entry when its priority is higher
+// (it nests over the running one): its action tree is pushed on top of this tree and the counter
 // goes to 0; when it returns, this instruction runs again at once (see
 // below). Otherwise true. In the sub-queue mode the binary runs the queued
 // sub-actions; nested interactions are not pushed here, so there are none
@@ -350,10 +351,17 @@ Exit idleForInput(Context& c) {
     }
     me.data[objdata::Flags] = int16_t(me.data[objdata::Flags] | kFlagNotifiedByIdleForInput);
     me.idleInterrupt = false;
-    if (allowPush && !inAction && waiting) {
+    // Inside an interaction the front entry only runs when it may interrupt
+    // the running one (a higher priority: cTSPerson::TryIdleForInput, "the
+    // frame says 1"); it runs on top of it as the current action, and the
+    // interrupted one goes on when it returns (endInteraction steps back to
+    // it). The social worker's "Entrar" (100) reaches the child waiting in
+    // "Chorar por Filho Perdido" (50) this way.
+    const bool mayInterrupt = !inAction || (me.person && !interactionCancelled(me) && shouldInterrupt(me));
+    if (allowPush && waiting && mayInterrupt) {
         c.set(kOwnerParam, param, 0); // before the push, which may move this frame
         const size_t depth = t.stack.size();
-        if (attemptPush(c.vm, t))
+        if (attemptPush(c.vm, t, inAction))
             return Exit::Call;
         if (t.stack.size() == depth) // nothing could run: the counter is left as it was
             t.stack.back().params[size_t(param)] = ticks;
@@ -688,12 +696,12 @@ CheckResult checkInteraction(VM& vm, ObjectId sim, const QueuedInteraction& q, s
     }
 }
 
-bool attemptPush(VM& vm, Thread& t) {
+bool attemptPush(VM& vm, Thread& t, bool nested) {
     Object* sim = vm.object(t.me);
     if (!sim)
         return false;
     int compare = currentPriority(*sim);
-    if (compare <= kPriorityAutonomous)
+    if (compare <= kPriorityAutonomous && !nested)
         compare -= 1; // autonomous interactions fall through to other ones
     for (;;) {
         const size_t next = size_t(sim->activeInteraction + 1);

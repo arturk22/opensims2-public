@@ -149,7 +149,7 @@ CheckResult checkInteraction(VM& vm, ObjectId sim, const QueuedInteraction& q, s
 // through to each other) and whose guard passes, dropping the ones whose
 // guard fails or whose object is gone. Its action tree is pushed onto the
 // thread as an interaction root. False if nothing was started.
-bool attemptPush(VM& vm, Thread& t);
+bool attemptPush(VM& vm, Thread& t, bool nested = false);
 
 // Called by the VM when an interaction root returns: removes the entry
 // (unless Generic Sims Call 13 already did), resets the priority and
