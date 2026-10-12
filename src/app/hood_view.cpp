@@ -805,6 +805,12 @@ std::unique_ptr<LotCamera> HoodView::makeCamera(const fs::path& camerasTxt) cons
         cam->zoomBy(level - def->defaultZoom);
         cam->freeRotate(saved_->heading * 180.0f / float(M_PI) - cam->yaw());
     }
+    // OS2_HOOD_PIVOT=x,y: headless shots of one place (neighborhood units).
+    if (const char* p = std::getenv("OS2_HOOD_PIVOT")) {
+        float x = pivot.x, y = pivot.y;
+        if (std::sscanf(p, "%f,%f", &x, &y) == 2)
+            pivot.x = x, pivot.y = y;
+    }
     pivot.z = std::max(terrain_.heightAt(pivot.x, pivot.y), terrain_.seaLevel);
     cam->setPivot(pivot);
     cam->snap();
