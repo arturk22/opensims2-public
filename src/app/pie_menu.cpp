@@ -536,12 +536,14 @@ void PieMenuHost::setPosedObject(vm::ObjectId id, simd_float3 lo, simd_float3 hi
 
 vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
     // The nearest hit: an object's triangles where it has them (its box
-    // first, as a quick test), else its box. The moving boxes (Sims, tight
-    // around the skeleton) come first: a click on a Sim picks it over a
-    // chair it sits in or a table it stands behind.
+    // first, as a quick test), else its box; a Sim's skinned triangles. The
+    // binary takes the scene graph's nearest node, Sim or object, and stops
+    // at a floor (ObjectAtGameWindowPoint): nothing past the floor counts
+    // (a little slack for what lies flat on it).
+    std::optional<float> floorT = floorHit ? floorHit(origin, dir) : std::nullopt;
+    vm::ObjectId best = 0;
+    float bestT = floorT ? *floorT + 0.05f : std::numeric_limits<float>::max();
     auto nearest = [&](auto&& each) {
-        vm::ObjectId best = 0;
-        float bestT = std::numeric_limits<float>::max();
         each([&](const PickBox& b) {
             if (pickable && !pickable(b.lo, b.hi))
                 return;
@@ -597,14 +599,12 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
             if (t0 < bestT - 1e-4f)
                 bestT = t0, best = b.id;
         });
-        return best;
     };
-    if (const vm::ObjectId sim = nearest([&](auto&& f) {
-            for (const auto& [id, b] : moving_)
-                f(b);
-        }))
-        return sim;
-    return nearest([&](auto&& f) {
+    nearest([&](auto&& f) {
+        for (const auto& [id, b] : moving_)
+            f(b);
+    });
+    nearest([&](auto&& f) {
         for (const auto& box : boxes_)
             if (!moving_.count(box.id) && !posedObjects_.count(box.id) && (!drawn || drawn(box.id)))
                 if (const auto placed = worldBox(box))
@@ -614,6 +614,7 @@ vm::ObjectId PieMenuHost::pick(simd_float3 origin, simd_float3 dir) const {
             if (!moving_.count(id) && (!drawn || drawn(id)))
                 f(b);
     });
+    return best;
 }
 
 std::optional<simd_float3> PieMenuHost::anchor(vm::ObjectId id) const {

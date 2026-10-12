@@ -289,6 +289,32 @@ int main() {
               "vanity: the picks in order");
         check(vclick(vfind(DialogWindow::Hit::Button, 0)) && done && v.answer == 0, "vanity: OK writes the look");
     }
+    {
+        // Picking (cTSWinSceneGraph::ObjectAtGameWindowPoint): the nearest hit,
+        // Sim or object, and a floor stops the ray.
+        CodeLibrary code;
+        code.add(kObjGroup, 0x1000, tree({instr(0x02, {0, 0, 0, 0, 0, 0, 0, 0})}));
+        VM vm{code};
+        const ObjectId wardrobe = vm.createObject(kObjGroup).id, chair = vm.createObject(kObjGroup).id;
+        PieMenuHost host(vm, "no-fonts");
+        const simd_float4x4 at = matrix_identity_float4x4;
+        host.addPickBox(wardrobe, simd_make_float3(4, 4, 3), simd_make_float3(5, 5, 5), at, nullptr); // upstairs
+        host.setMovingBox(7, simd_make_float3(4.2f, 4.2f, 0), simd_make_float3(4.8f, 4.8f, 1.7f)); // a Sim under it
+        const simd_float3 eye = simd_make_float3(4.5f, 4.5f, 20), down = simd_make_float3(0, 0, -1);
+        check(host.pick(eye, down) == wardrobe, "pick: the object above wins over a Sim farther down the ray");
+        host.addPickBox(chair, simd_make_float3(6, 6, 0), simd_make_float3(7, 7, 1), at, nullptr); // downstairs
+        host.setMovingBox(11, simd_make_float3(6.2f, 6.2f, 0), simd_make_float3(6.8f, 6.8f, 1.7f)); // a Sim on it
+        check(host.pick(simd_make_float3(6.5f, 6.5f, 20), down) == 11, "pick: a Sim in front of an object");
+        // The upper floor at z = 3 stops the ray: the Sim below is not picked.
+        host.floorHit = [](simd_float3 o, simd_float3 d) -> std::optional<float> {
+            if (d.z >= 0 || o.z < 3)
+                return std::nullopt;
+            return (3 - o.z) / d.z;
+        };
+        check(host.pick(simd_make_float3(6.5f, 6.5f, 20), down) == 0, "pick: nothing behind a floor");
+        check(host.pick(eye, down) == wardrobe, "pick: what stands on the floor still is");
+        check(host.pick(simd_make_float3(6.5f, 6.5f, 2.5f), down) == 11, "pick: under the floor, the Sim");
+    }
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

@@ -9,8 +9,10 @@
 // the object's ID (the low 16 bits of the cObject instance = the saved
 // object ID the VM keeps). A click casts a ray from the camera through the
 // mouse and takes the nearest triangle it hits, testing an object's
-// triangles only when the ray enters their box. The Sims are picked by the
-// box around their posed skeleton.
+// triangles only when the ray enters their box. The Sims are picked by
+// their skinned triangles as posed (the box around the skeleton first). The
+// nearest hit wins, Sim or object, and a floor of a level shown stops the
+// ray (cTSWinSceneGraph::ObjectAtGameWindowPoint, docs/camera-ui-mac.md).
 //
 // Layout and behaviour as the Mac binary's cTSWinPieMenu
 // (docs/camera-ui-mac.md §2), with the constants of ui.package's UI script
@@ -175,7 +177,13 @@ public:
     // Objects this refuses are not picked (not drawn now: the windows and
     // doors of a wall cut down); null picks all.
     std::function<bool(vm::ObjectId)> drawn;
-    // The nearest object hit by the ray (0: none).
+    // Where the ray meets a floor that stops it (ray parameter; null or
+    // nothing: never): cTSWinSceneGraph::ObjectAtGameWindowPoint stops at
+    // the first floor or ground node with a floor tile under it, so what is
+    // behind a floor (a Sim on the level below) is not picked.
+    std::function<std::optional<float>(simd_float3 origin, simd_float3 dir)> floorHit;
+    // The nearest object or Sim hit by the ray before a floor (0: none), as
+    // the scene graph's nearest node.
     vm::ObjectId pick(simd_float3 origin, simd_float3 dir) const;
     // Middle of the top of an object's box (where its menu opens).
     std::optional<simd_float3> anchor(vm::ObjectId id) const;

@@ -201,6 +201,31 @@ O modificador 1 não foi identificado (o mais provável é Shift ou a tecla
 de opção do Mac, para o botão direito virar giro num mouse de dois
 botões). Num mouse de um botão o Mac manda Ctrl-clique como botão direito.
 
+## 2.6 O que o clique pega (binário, `cTSWinSceneGraph::ObjectAtGameWindowPoint`, BV `0x1f876c`; rodada 14)
+
+`cTSUserToolBase::ObjectAtGameWindowPoint` chama o da janela da cena
+(vtable `0x5c`). Ela faz o raio pela janela (vtable `0x2d0`) e pede ao grafo
+de cena o **nó mais perto** (vtable `0x16c`, devolve o nó e o parâmetro `t`),
+em laço:
+
+- o nó é de um objeto (QueryInterface `0xFA1C39ED` subindo pelos pais) → é
+  esse (Sim ou objeto: nenhum tem preferência; o mais perto ganha);
+- tipo `0x12` (piso/chão): acha o local do ponto; se lá há piso
+  (`FUN_0016b59c`: tile de piso, ou "floorable" com o parâmetro, e plano
+  quando acima do chão) **para sem nada**; sem piso (abertura de escada) e
+  com um objeto no local (`ObjectAtLocation`, flag `0x62` bit 0) → esse;
+  senão segue o raio um pouco além e repete;
+- tipo `0x13` (parede?): segue, mas o próximo nó que não for objeto para;
+- tipo `0x19`: para.
+
+No app (`PieMenuHost::pick`): o mais perto entre os Sims (triângulos
+posados) e os objetos (triângulos do modelo, com a máscara de alfa), e
+`floorHit` (`main.mm` `floorUnderRay`: o primeiro piso dos andares
+mostrados, de cima para baixo, onde o tile tem piso) corta o raio (5 cm de
+folga para o que está deitado no piso). Antes os Sims vinham antes de tudo
+e o raio atravessava o piso: clicar no piso de cima pegava o Sim de baixo.
+Inferido: o "tipo `0x12`" como piso/chão e o `0x13` como parede (pelos usos).
+
 ## 3. O que falta
 
 - O nome do modificador `0x01000000` dos códigos de botão.

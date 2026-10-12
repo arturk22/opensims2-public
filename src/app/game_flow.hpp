@@ -52,7 +52,7 @@ Scene sceneOf(const std::vector<std::string>& args);
 // along with a tutorial: a click on the control its arrow points at, else on
 // its panel's Next, through the UI as the mouse does, 40 ticks apart (stops
 // when neither is on); or (--key space) a key: the space bar selects the
-// next Sim.
+// next Sim, (--key pageup / pagedown) the level shown, (--key escape) Esc.
 struct FlowStep {
     enum class Kind { Click, RightClick, Wait, Pie, TutorialAuto, Key } kind = Kind::Click;
     float x = 0, y = 0;

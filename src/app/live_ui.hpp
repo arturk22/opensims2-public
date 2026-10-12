@@ -130,6 +130,11 @@ public:
     std::function<void(int)> onOptionWindow;
     void setCanLeave(bool can) { canLeave_ = can, dirty_ = true; }
     bool optionsOpen() const { return optionsOpen_; }
+    // Esc: the options panel closes (as its puck button would).
+    void closeOptions() {
+        if (optionsOpen_)
+            optionsOpen_ = false, dirty_ = true;
+    }
     // The puck's floor buttons ("Subir um Andar (Page Up)" 0x2001, "Descer
     // um Andar (Page Down)" 0x2000): +1 / -1.
     std::function<void(int)> onFloor;

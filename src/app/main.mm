@@ -198,6 +198,7 @@ os2::WallView gWallView;
 os2::LotModelCache gLotCache;
 bool gLevelsHidden = false; // levels above the camera's are hidden (in the game: --ui live, --mode)
 int viewLevel();                            // below loadLot's helpers
+std::optional<float> floorUnderRay(simd_float3 eye, simd_float3 dir); // below viewLevel
 std::map<int16_t, bool> gWallHung;          // objects that hang on walls (hidden with a wall cut down)
 bool onCutWall(const os2::Xform& at);       // below viewLevel
 void setWallMode(int mode); // likewise
@@ -585,6 +586,20 @@ void changeFloor(int delta) {
             --to;
         gCameraFollow->setLevel(to);
     }
+}
+
+// Esc on the lot with the options panel (or one of its windows: Graphics,
+// Audio...) open closes it, window and panel together, before Esc can leave
+// the lot. True if it closed something.
+bool escapeOptions() {
+    const bool panel = gLive && gLive->optionsOpen(), window = gOptions && gOptions->active();
+    if (window)
+        gOptions->closeWindow();
+    if (panel)
+        gLive->closeOptions();
+    if (panel || window)
+        std::printf("opensims2: escape: options %s%s closed\n", panel ? "panel" : "", window ? (panel ? " and window" : "window") : "");
+    return panel || window;
 }
 
 void setupPieMenu(os2::ResourceIndex& index); // below loadLot
@@ -1014,6 +1029,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     });
     // Objects the view hides (windows and doors of walls cut down) are not picked.
     gPie->drawn = [](os2::vm::ObjectId id) { return !gObjectView || gObjectView->shown(int16_t(id)); };
+    // A floor shown stops the ray (a Sim under the floor shown is not picked).
+    gPie->floorHit = [](simd_float3 eye, simd_float3 dir) { return floorUnderRay(eye, dir); };
     // The levels above the camera's are not drawn: their objects are not picked.
     gPie->pickable = [](simd_float3 lo, simd_float3) {
         return !gLotShape || os2::WallView::visible(*gLotShape, viewLevel(), lo.x, lo.y, lo.z);
@@ -2027,6 +2044,36 @@ std::optional<std::pair<simd_float2, int>> groundUnderRay(simd_float3 eye, simd_
         const os2::vm::TilePos tile{int(std::floor(hit.x)), int(std::floor(hit.y)), level};
         if (ok && w.contains(tile) && (w.walkable(tile) || w.pool(tile)))
             return std::make_pair(simd_make_float2(hit.x, hit.y), level);
+    }
+    return std::nullopt;
+}
+
+// Where the mouse ray first meets a floor of the levels shown (the ray's
+// parameter), from the one the camera shows down: a level's floor where
+// the tile has one (the ground's terrain everywhere; not the openings over
+// stairs). ObjectAtGameWindowPoint stops there: nothing behind it is picked.
+std::optional<float> floorUnderRay(simd_float3 eye, simd_float3 dir) {
+    if (!gSimulation || !gLotShape || std::fabs(dir.z) < 1e-5f || !gSimulation->machine().world)
+        return std::nullopt;
+    const os2::vm::World& w = *gSimulation->machine().world;
+    int top = viewLevel();
+    if (top == os2::LotViewOptions::kAllLevels)
+        top = gLotShape->minLevel + gLotShape->levelCount - 1;
+    for (int lotLevel = top; lotLevel >= gLotShape->minLevel; --lotLevel) {
+        const int level = lotLevel + 1;
+        float z = gSimulation->floorHeight(level, float(w.width()) / 2, float(w.height()) / 2);
+        simd_float3 hit{};
+        float t = 0;
+        bool ok = true;
+        for (int i = 0; i < 3 && ok; ++i) {
+            t = (z - eye.z) / dir.z;
+            ok = t > 0;
+            hit = eye + dir * t;
+            z = gSimulation->floorHeight(level, hit.x, hit.y);
+        }
+        const os2::vm::TilePos tile{int(std::floor(hit.x)), int(std::floor(hit.y)), level};
+        if (ok && w.contains(tile) && w.hasFloor(tile))
+            return t;
     }
     return std::nullopt;
 }
@@ -3907,11 +3954,9 @@ void unloadScene() {
         gPie->close();
     if (e.keyCode == kEscape && pieWasOpen)
         return;
-    // Esc closes an open option window (Graphics, Audio...) before leaving the lot.
-    if (e.keyCode == kEscape && !gHood && gOptions && gOptions->active()) {
-        gOptions->closeWindow();
+    // Esc closes the options panel (and its window) before leaving the lot.
+    if (e.keyCode == kEscape && !gHood && escapeOptions())
         return;
-    }
     if (const int slot = cameraSlot(e.keyCode); slot >= 0) {
         if (e.modifierFlags & NSEventModifierFlagControl)
             _camera->savePosition(slot);
@@ -5015,6 +5060,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             // a step that leaves the lot leaves the rest to the next scene.
             const auto steps = os2::flowSteps(processArguments());
             followSelectedSim(); // the camera on the Sim's floor first, as the first frame does (a floor button then holds)
+            if (!steps.empty()) // and there already, as the frames before a click leave it (the clicks pick what the shot shows)
+                view.camera->snap();
             for (size_t k = 0; k < steps.size() && !gPendingScene && !gQuitRequested; ++k) {
                 gStepsUsed = k + 1;
                 const os2::FlowStep& st = steps[k];
@@ -5026,6 +5073,12 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 if (st.kind == os2::FlowStep::Kind::Key) { // --key space
                     if (st.text == "space")
                         selectNextFamilySim();
+                    if (st.text == "pageup" || st.text == "pagedown") { // as keyDown: the floor shown
+                        changeFloor(st.text == "pageup" ? 1 : -1);
+                        if (gCamera) // the camera on that floor now, as the frames before a click would leave it
+                            gCamera->snap();
+                        std::printf("opensims2: key %s: level shown %d\n", st.text.c_str(), viewLevel());
+                    }
                     if (st.text == "escape") { // as keyDown: a pie menu or an option window first, else leave the lot
                         const bool pieWasOpen = gPie && gPie->isOpen();
                         if (pieWasOpen)
@@ -5034,10 +5087,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                                     gOptions ? gOptions->window() : 0);
                         if (pieWasOpen)
                             continue;
-                        if (gOptions && gOptions->active()) {
-                            gOptions->closeWindow();
+                        if (escapeOptions())
                             continue;
-                        }
                         if (gHoodLot && !(gPie && gPie->dialogOpen()))
                             leaveLot();
                     }
@@ -5157,6 +5208,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 const os2::vm::Object* o = gPie->vm().object(id);
                 std::printf("opensims2: click (%g, %g) picked object %d (%s)\n", clickX, clickY, id,
                             o && o->definition ? o->definition->fileName.c_str() : "nothing");
+                if (std::getenv("OS2_DEBUG_PICK"))
+                    std::printf("opensims2: click eye (%.3f, %.3f, %.3f) canvas %gx%g\n", eye.x, eye.y, eye.z, cw, ch);
                 if (id)
                     openClicked(id, eye, simd_normalize(q.xyz / q.w - eye), p);
                 if (!id) // the ground: Go Here
@@ -5164,7 +5217,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 for (size_t e = 0; e < gPie->entries().size(); ++e)
                     std::printf("opensims2: pie [%zu] %s\n", e, gPie->entries()[e].name.c_str());
             }
-            // OS2_PICK_MAP=<png>: what a click would pick at every 4th pixel, an
+            // OS2_PICK_MAP=<png>: what a click would pick at every 4th pixel (OS2_PICK_MAP_STEP), an
             // object a colour (a look at the picking against the picture).
             if (const char* mapFile = std::getenv("OS2_PICK_MAP")) {
                 if (gSimulation) // the Sims posed as drawn (their triangles are picked)
@@ -5181,20 +5234,38 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 img.pixels.assign(size_t(img.width) * img.height * 4, 0);
                 const CFTimeInterval t0 = CACurrentMediaTime();
                 size_t rays = 0;
-                for (uint32_t y = 0; y < img.height; y += 4)
-                    for (uint32_t x = 0; x < img.width; x += 4) {
+                std::map<int, int> findIds;
+                if (const char* f = std::getenv("OS2_PICK_FIND"))
+                    for (std::string_view v{f}; !v.empty();) {
+                        const size_t c = v.find(',');
+                        findIds[std::atoi(std::string(v.substr(0, c)).c_str())] = 0;
+                        v = c == std::string_view::npos ? std::string_view{} : v.substr(c + 1);
+                    }
+                const uint32_t step = std::getenv("OS2_PICK_MAP_STEP") ? uint32_t(std::max(1, std::atoi(std::getenv("OS2_PICK_MAP_STEP")))) : 4;
+                for (uint32_t y = 0; y < img.height; y += step)
+                    for (uint32_t x = 0; x < img.width; x += step) {
                         const simd_float4 q = simd_mul(inv, simd_make_float4(2 * float(x) / cw - 1, 1 - 2 * float(y) / ch, 0.5f, 1));
                         const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
                         ++rays;
                         if (!id)
                             continue;
+                        if (findIds.count(int(id)) && findIds[int(id)]++ == 0) // OS2_PICK_FIND=id,id: where each is picked first
+                            std::printf("opensims2: pick map: object %d at (%u, %u)\n", id, x, y);
                         const uint32_t h = uint32_t(id) * 2654435761u;
-                        for (uint32_t dy = 0; dy < 4 && y + dy < img.height; ++dy)
-                            for (uint32_t dx = 0; dx < 4 && x + dx < img.width; ++dx) {
+                        for (uint32_t dy = 0; dy < step && y + dy < img.height; ++dy)
+                            for (uint32_t dx = 0; dx < step && x + dx < img.width; ++dx) {
                                 uint8_t* px = &img.pixels[(size_t(y + dy) * img.width + x + dx) * 4];
                                 px[0] = uint8_t(h >> 24), px[1] = uint8_t(h >> 16), px[2] = uint8_t(h >> 8), px[3] = 255;
                             }
                     }
+                std::printf("opensims2: pick map: eye (%.3f, %.3f, %.3f) canvas %gx%g\n", eye.x, eye.y, eye.z, cw, ch);
+                for (const auto& [fid, n] : findIds) // where each one's origin projects
+                    if (gObjectView)
+                        if (const auto at = gObjectView->placement(int16_t(fid))) {
+                            const simd_float4 c = simd_mul(m, simd_make_float4(at->t[0], at->t[1], at->t[2], 1));
+                            std::printf("opensims2: pick map: object %d origin (%.2f, %.2f, %.2f) on screen (%.1f, %.1f)\n", fid, at->t[0], at->t[1], at->t[2],
+                                        (c.x / c.w + 1) / 2 * cw, (1 - c.y / c.w) / 2 * ch);
+                        }
                 std::printf("opensims2: pick map: %zu rays, %.3f ms each\n", rays, (CACurrentMediaTime() - t0) * 1000 / double(rays));
                 os2::writePng(mapFile, img);
             }
