@@ -543,3 +543,32 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
   especial `#<`/`#>` = comentário é inferido.
 - Os passes de reflexo (`reflection.matShad`, espelhos), imposters,
   pós-processamento e efeitos não foram descritos.
+
+## 12. Rodada 16: normal map, env cube e luz do CelShaded
+
+- **Força do normal map.** Cada sub-imagem de um `cImageData` (TXTR,
+  versão ≥ 8) traz um float depois do `creator`: é o **bump scale**
+  (`cImageData::SetBumpScale`/`BumpScale`, BV `0xc976a4`/`0xc97768`, no
+  `+0x38` da sub-imagem; o OpenTS2 o lê com 10 de padrão). Nos pacotes
+  `Sims3D/*.package` do jogo base ele vale **10 em todas** as 8.244
+  texturas (512 de bump). Quem o usa é a conversão de altura para normal
+  ao carregar (`nGZGraphic4::ConvertHeightMapToNormalMapFast(src, dst,
+  escala)` → `GenerateBumpMap_L8_to_A8R8G8B8(..., escala, tabela)`, nomes do
+  `baserom.sym`); o corpo dessas funções não foi achado no BV (o arquivo
+  de manipulação de imagem do Win32 parece não estar lá). O app segue com
+  a força 2 por texel nas derivadas de tela (`kBumpStrength`, inferido);
+  falta a fórmula com a escala 10.
+- **Env cube.** As faces dos cubos do jogo vêm na ordem do D3D (+X, −X,
+  +Y, −Y, +Z, −Z): no `outdoordaytime-envcube` e no
+  `reflectionoutdoorwater-envcube` o céu (azul claro, a face mais clara) é a
+  **face 4 (+Z)** e o chão a 5 (−Z). Com o mundo Z para cima, amostrar
+  com o vetor de reflexão do mundo como está (o que o app faz) põe o céu
+  em cima: conferido nos dados. O reflexo × a luz `environment` do estado
+  (1 de dia, 0,8 à noite) já estava feito.
+- **Luz do CelShaded.** O `celshading.matShad` faz `dp3` da normal em
+  espaço de câmera (`geomToCamera`) com `csCameraLightDir` (1, 0, 0,5)
+  sem normalizar. O espaço de câmera do jogo é o do D3D, de mão esquerda
+  com a câmera olhando para +z: a matriz do volume de visão (BV
+  `0xccd254`, §1 de `camera-ui-mac.md`) tem `m[14] = 1`, ou seja w = +z da
+  câmera. No espaço de visão do app (mão direita, olhando para −z) a luz
+  é (1, 0, −0,5), o que o shader já usa: conferido.
