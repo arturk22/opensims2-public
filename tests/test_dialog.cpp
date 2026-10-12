@@ -233,6 +233,22 @@ static void testSpecialDialogs() {
     check(vm.dialogs[me.id].outfitCategory == 0x020 && vm.dialogs[me.id].outfitSim == me.id, "wardrobe: formal wear");
     vm.dialogs.erase(me.id);
 
+    // Racks (11): array 0 objects; OK writes -1 over those not picked.
+    {
+        Object& mag1 = vm.createObject(kObjGroup);
+        Object& mag2 = vm.createObject(kObjGroup);
+        phone.array(0).values = {mag1.id, mag2.id};
+        dlg(0x110B, 11);
+        Thread rk = vm.start(me.id, 0x110B, {}, phone.id);
+        rk.temps[0] = 1;
+        vm.run(rk);
+        Dialog& r = vm.dialogs[me.id];
+        check(r.cls.cls == DialogClass::SelectItems && r.entries.size() == 2 && r.multiSelect, "rack: items, several picks");
+        r.selection = {mag2.id};
+        r.answer = 0;
+        vm.run(rk);
+        check(rk.result && phone.array(0).values == (std::vector<int16_t>{-1, mag2.id}), "rack: OK -> -1 for the others");
+    }
     // Food (14): locals 0-3 = units, cost per 50, delivery, most; OK -> temp 0 = units bought.
     {
         auto assign = [](uint8_t local, uint8_t value) { return instr(0x02, {local, 0, value, 0, 0, 5, 0x19, 0x07}); };

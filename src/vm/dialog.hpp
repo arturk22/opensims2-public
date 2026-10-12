@@ -83,6 +83,7 @@ struct DialogEntry {
     std::string detail;   // the neighbor's lot name, when known
     int relationship = 0; // daily + lifetime of the caller to it (CreateNeighborCallList)
     int flags = 0;        // the caller's relationship flags to it (variable 1: crush, love, ..., friend, enemy)
+    int price = 0;        // a rack's item: the object's catalog price (OBJD)
 };
 
 // A name box of the name dialog (cTSWinProcNameObjectDialog): the neighbor
@@ -163,6 +164,11 @@ struct Dialog {
     // bar's value (units after buying) and the family's funds (the bar
     // stops where the total passes them). OK puts value - units in temp 0.
     int fillUnits = 0, fillCost = 0, fillDelivery = 0, fillMax = 0, fillValue = 0, fillFunds = 0x7FFFFFFF;
+    // The racks (cTSWinProcSelectItemsDialog, types 11-13): several items
+    // may be picked (temp 0 = 1) and only what the family can pay (temp 1
+    // = 1; funds in fillFunds). The items are `entries`, the picks
+    // `selection`; OK writes -1 over the items of array 0 not picked.
+    bool multiSelect = false, obeyPrice = false;
     int timeout = 0;   // operand byte 10: a text notification's lifetime in seconds (0: until closed)
     int priority = 0;  // operand byte 9: a text notification's priority
     // A blocking dialog's time limit (ms; 0: none): it then takes its last

@@ -1094,6 +1094,16 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             d.iconObject = gPie->sim();
         if (kind == "0c")
             d.continueOthers = true;
+        if (d.cls.cls == os2::vm::DialogClass::SelectItems) { // 11/13: a rack of the lot's first objects, several picks
+            d.multiSelect = d.obeyPrice = true;
+            d.fillFunds = 300;
+            for (const auto& [oid, o] : m.objects())
+                if (!o.person && o.definition && o.definition->price() > 0 && d.entries.size() < 7) {
+                    os2::vm::DialogEntry e;
+                    e.id = oid, e.guid = o.guid(), e.name = os2::vm::displayName(m, o), e.price = o.definition->price();
+                    d.entries.push_back(std::move(e));
+                }
+        }
         if (d.cls.cls == os2::vm::DialogClass::Fill) { // 14: buying food (40 of 200 units, §20 per 50, §50 delivery)
             d.fillUnits = d.fillValue = 40, d.fillCost = 20, d.fillDelivery = 50, d.fillMax = 200;
             d.fillFunds = 1000;

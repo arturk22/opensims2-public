@@ -377,6 +377,7 @@ DialogWindow::Layout DialogWindow::pictureDialog(const vm::Dialog& d, int width,
     if (edit) {
         UiElement box = element("GZWinFlatRect", "IGZWinFlatRect", editRect[0], editRect[1], editRect[2], editRect[3]);
         box.set("fillcolor", "(204,214,255)");
+        box.set("outline", "yes");
         for (const char* side : {"colorleft", "colortop", "colorright", "colorbottom"})
             box.set(side, "(5,6,113)");
         root.children.push_back(box);
@@ -915,6 +916,95 @@ DialogWindow::Layout DialogWindow::fillDialog(const vm::Dialog& d, int width, in
     return L;
 }
 
+// --- cTSWinProcSelectItemsDialog ---------------------------------------------
+
+namespace {
+// What the racks' picks cost.
+int pickedCost(const vm::Dialog& d) {
+    int sum = 0;
+    for (const auto& e : d.entries)
+        if (contains(d.selection, e.id))
+            sum += e.price;
+    return sum;
+}
+constexpr float kItem = 64, kItemMargin = 5; // the grid's item (inferred size; margins from the script)
+} // namespace
+
+// Script 0x2CB242F6 ("Fazer Seleção"): one row of the items' thumbnails in
+// 0x1006 (kRowCount=1, kItemMarginX/Y=5), previous / next (0x1004/5), OK
+// 0xA000, cancel 0xA001. An item the family cannot pay is greyed out when
+// picking several (UpdateFunds).
+DialogWindow::Layout DialogWindow::selectItemsDialog(const vm::Dialog& d, int width, int height) {
+    const UiScript* s = script(0x2CB242F6);
+    if (!s)
+        return plainDialog(d, width, height);
+    Layout L;
+    const UiElement& top = s->roots.front();
+    const auto a = top.area();
+    const float w = float(a[2] - a[0]), h = float(a[3] - a[1]);
+    L.x0 = std::round((float(width) - w) / 2), L.y0 = std::round((float(height) - h) / 2);
+    L.x1 = L.x0 + w, L.y1 = L.y0 + h;
+    UiElement root = top;
+    root.set("area", uiArea(0, 0, int(w), int(h)));
+    int& first = pages_[d.id];
+    const int spent = pickedCost(d);
+    std::vector<UiElement> extra;
+    for (auto& c : root.children) {
+        const auto r = c.area();
+        const std::array<float, 4> rr{L.x0 + float(r[0]), L.y0 + float(r[1]), L.x0 + float(r[2]), L.y0 + float(r[3])};
+        const uint32_t id = c.id();
+        if (id == 0x1006) {
+            const float gw = float(r[2] - r[0]), gh = float(r[3] - r[1]);
+            const int per = std::max(1, int((gw + kItemMargin) / (kItem + kItemMargin)));
+            first = std::clamp(first, 0, std::max(0, int(d.entries.size()) - per));
+            const float used = float(per) * kItem + float(per - 1) * kItemMargin;
+            for (int i = 0; i < per && first + i < int(d.entries.size()); ++i) {
+                const vm::DialogEntry& e = d.entries[size_t(first + i)];
+                const float x = float(r[0]) + std::round((gw - used) / 2) + float(i) * (kItem + kItemMargin);
+                const float y = float(r[1]) + std::round((gh - kItem) / 2);
+                const bool picked = contains(d.selection, e.id);
+                const bool affordable = !d.multiSelect || picked ||
+                                        e.price <= (d.obeyPrice ? d.fillFunds - spent : d.fillFunds);
+                if (picked) {
+                    // A green frame (the lists' selected colour; inferred look).
+                    for (int k = 0; k < 2; ++k) {
+                        UiElement sel = element("GZWinFlatRect", "IGZWinFlatRect", x - 2 + float(k), y - 2 + float(k),
+                                                x + kItem + 2 - float(k), y + kItem + 2 - float(k));
+                        sel.set("style", "nofill");
+                        sel.set("outline", "yes");
+                        for (const char* side : {"colorleft", "colortop", "colorright", "colorbottom"})
+                            sel.set(side, "(0,255,0)");
+                        extra.push_back(sel);
+                    }
+                }
+                UiElement p = element("GZWinBMP", "IGZWinBMP", x, y, x + kItem, y + kItem);
+                const uint32_t pid = 0x00D00000u | uint32_t(i);
+                p.set("id", hex(pid));
+                extra.push_back(p);
+                if (thumbnail)
+                    if (const RgbaImage* t = thumbnail(e.id, 0))
+                        L.images[pid] = t;
+                if (!affordable)
+                    L.colors[pid] = {1, 1, 1, 0.35f};
+                if (affordable)
+                    L.regions.push_back({{L.x0 + x, L.y0 + y, L.x0 + x + kItem, L.y0 + y + kItem}, Hit::Row, first + i});
+            }
+        }
+        if (id == 0x1004)
+            L.regions.push_back({rr, Hit::Prev, 0});
+        if (id == 0x1005)
+            L.regions.push_back({rr, Hit::Next, 0});
+        if (id == 0xA000 || id == 0xA001) {
+            L.regions.push_back({rr, Hit::Button, id == 0xA000 ? 0 : 1});
+            L.buttonIds.push_back(id);
+        }
+    }
+    // The items go over the grid window, under the frame (index 5 is the frame's image).
+    root.children.insert(root.children.begin() + std::min<size_t>(5, root.children.size()), extra.begin(), extra.end());
+    L.root = std::move(root);
+    return L;
+}
+
 // --- the other special dialogs: an OK/cancel box (not done yet) -----------
 
 DialogWindow::Layout DialogWindow::plainDialog(const vm::Dialog& d, int width, int height) {
@@ -938,6 +1028,7 @@ DialogWindow::Layout DialogWindow::layout(const vm::Dialog& d, int width, int he
     case vm::DialogClass::Clothing: return wardrobeDialog(d, width, height);
     case vm::DialogClass::SetAspiration: return aspirationDialog(d, width, height);
     case vm::DialogClass::Fill: return fillDialog(d, width, height);
+    case vm::DialogClass::SelectItems: return selectItemsDialog(d, width, height);
     default: return plainDialog(d, width, height);
     }
 }
@@ -958,6 +1049,9 @@ void DialogWindow::draw(UiScreen& out, const vm::Dialog& d, int width, int heigh
     for (const auto& [id, text] : L.captions)
         if (auto it = byId.find(id); it != byId.end())
             hk.captions[it->second] = text;
+    for (const auto& [id, c] : L.colors)
+        if (auto it = byId.find(id); it != byId.end())
+            hk.colors[it->second] = c;
     for (const auto& [id, img] : L.images)
         if (auto it = byId.find(id); it != byId.end()) {
             hk.images[it->second] = img;
@@ -1030,7 +1124,18 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
         case Hit::NameBox: d.nameFocus = g.value; break;
         case Hit::Row: {
             const int list = g.value >> 16, row = g.value & 0xFFFF;
-            if (d.cls.cls == vm::DialogClass::PhoneParty) {
+            if (d.cls.cls == vm::DialogClass::SelectItems) {
+                // A pick toggles; one at a time unless several are allowed.
+                if (row < int(d.entries.size())) {
+                    const int16_t id = d.entries[size_t(row)].id;
+                    if (contains(d.selection, id))
+                        d.selection.erase(std::find(d.selection.begin(), d.selection.end(), id));
+                    else if (d.multiSelect)
+                        d.selection.push_back(id);
+                    else
+                        d.selection = {id};
+                }
+            } else if (d.cls.cls == vm::DialogClass::PhoneParty) {
                 partyFocus_[d.id] = g.value;
             } else if (row < int(d.entries.size())) {
                 (void)list;
@@ -1081,6 +1186,10 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
         case Hit::Tab:
         case Hit::Prev:
         case Hit::Next:
+            if (d.cls.cls == vm::DialogClass::SelectItems) {
+                pages_[d.id] += g.kind == Hit::Next ? 1 : -1; // clamped by the layout
+                break;
+            }
             if (d.cls.cls == vm::DialogClass::Fill) {
                 d.fillValue = std::clamp(d.fillValue + (g.kind == Hit::Next ? 10 : -10), d.fillUnits,
                                          std::max(d.fillUnits, d.fillMax));

@@ -564,6 +564,13 @@ void acceptDialog(Context& c, Dialog& d) {
                 nb->firstName = name;
         }
         break;
+    case DialogClass::SelectItems:
+        // OnOk: -1 over every item of array 0 that is not picked.
+        if (Object* stack = vm.object(d.stackObject); stack && !stack->arrays.empty())
+            for (int16_t& v : stack->array(0).values)
+                if (std::find(d.selection.begin(), d.selection.end(), v) == d.selection.end())
+                    v = -1;
+        break;
     case DialogClass::Fill:
         // OnOk: temp 0 = the units bought.
         c.thread.temps[0] = int16_t(d.fillValue - d.fillUnits);
@@ -791,6 +798,25 @@ Exit dialog(Context& c) {
         case 13: d.outfitCategory = 0x1000; break;
         default: d.outfitCategory = 0x001; break;
         }
+        break;
+    }
+    case DialogClass::SelectItems: {
+        // SetParams (BV 0x38a69c): temps 0/1 = multiple picks / obey the
+        // price (temps 2/3, 100 by default, were not followed).
+        d.buttons = {uiText(0x8E, 1, "OK"), uiText(0x8E, 2, "Cancelar")};
+        d.multiSelect = c.thread.temps[0] == 1;
+        d.obeyPrice = c.thread.temps[1] == 1;
+        const int16_t family = me.person ? me.person->data[persondata::FamilyNumber] : 0;
+        if (auto f = vm.families.find(family); f != vm.families.end())
+            d.fillFunds = f->second.funds;
+        if (stack && !stack->arrays.empty())
+            for (int16_t v : stack->array(0).values)
+                if (const Object* item = vm.object(v)) {
+                    DialogEntry e;
+                    e.id = v, e.guid = item->guid(), e.name = displayName(vm, *item);
+                    e.price = item->definition ? item->definition->price() : 0;
+                    d.entries.push_back(std::move(e));
+                }
         break;
     }
     case DialogClass::Fill: {

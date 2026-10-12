@@ -58,6 +58,7 @@ public:
         UiElement root; // drawn at (x0, y0); empty tag: drawn with plain boxes
         std::map<uint32_t, std::string> captions;     // window id -> text
         std::map<uint32_t, const RgbaImage*> images;   // window id -> image
+        std::map<uint32_t, std::array<float, 4>> colors; // window id -> tint (greyed-out items)
         std::vector<uint32_t> buttonIds;              // answer order (hover state)
         std::array<float, 4> textBox{0, 0, 0, 0};     // the caret's box (canvas), if any
         std::string caretText;                        // the text before the caret
@@ -119,6 +120,7 @@ private:
     Layout wardrobeDialog(const vm::Dialog& d, int width, int height);
     Layout aspirationDialog(const vm::Dialog& d, int width, int height);
     Layout fillDialog(const vm::Dialog& d, int width, int height);
+    Layout selectItemsDialog(const vm::Dialog& d, int width, int height);
     Outfits* wardrobe(const vm::Dialog& d);
     const UiScript* script(uint32_t id);
     const RgbaImage* icon(const vm::Dialog& d);
@@ -137,6 +139,7 @@ private:
     int editedBox_ = -1;
     std::map<uint32_t, int> partyFocus_; // dialog id -> focused list row (list << 16 | row)
     std::map<uint32_t, std::optional<Outfits>> wardrobes_; // dialog id -> the wardrobe's lists and choices
+    std::map<uint32_t, int> pages_; // dialog id -> the racks' first item shown
 };
 
 } // namespace os2
