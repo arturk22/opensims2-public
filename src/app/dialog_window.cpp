@@ -169,6 +169,10 @@ bool DialogWindow::okEnabled(const vm::Dialog& d) {
     // cTSWinProcSetAspirationDialog::Validate: an aspiration picked.
     if (d.cls.cls == vm::DialogClass::SetAspiration)
         return d.aspiration != 0 && d.aspiration != 0x40 && d.aspiration != 0x100;
+    // The rack: something in the cart that the family can pay (inferred:
+    // SyncUI's EnableOkButton).
+    if (d.cls.cls == vm::DialogClass::ClothingPurchase)
+        return !d.cart.empty() && int(d.cart.size()) * d.pricePerItem <= d.fillFunds;
     if (d.cls.cls == vm::DialogClass::NameObject)
         for (const auto& n : d.names)
             if (trim(n.text).empty())
@@ -193,6 +197,16 @@ void DialogWindow::answer(vm::Dialog& d, int index) {
             else
                 applyOutfit(d.outfitSim, d.outfitCategory, pick(0), pick(1), {});
         }
+    if (index == 0 && d.cls.cls == vm::DialogClass::ClothingTryOn && applyOutfit) {
+        // OnOk: the try-on outfit (0x400) as chosen saved in the character file.
+        const Shop& s = shop(d);
+        if (!s.chosen[2].empty())
+            applyOutfit(d.outfitSim, 0x400, {}, {}, s.chosen[2]);
+        else
+            applyOutfit(d.outfitSim, 0x400, s.chosen[0], s.chosen[1], {});
+    }
+    if (d.cls.cls == vm::DialogClass::Vanity && vanityDone)
+        vanityDone(d.outfitSim, index == 0);
     d.answer = index;
     if (log) {
         std::printf("opensims2: dialog \"%s\": %s\n", d.title.c_str(), d.buttons[size_t(index)].c_str());
@@ -1005,6 +1019,452 @@ DialogWindow::Layout DialogWindow::selectItemsDialog(const vm::Dialog& d, int wi
     return L;
 }
 
+// --- cTSWinProcClothingPurchaseDialog / ClothingTryOnDialog / VanityDialog ---
+
+namespace {
+// Tabs' part bits (0xECC70000-2: tops, bottoms, whole outfits).
+constexpr uint32_t kShopPart[3] = {0x04, 0x10, 0x08};
+// The thumbnail scripts and grids of the clothing bin (the scripts'
+// constants: kClothingBinTopsThumbnail 0x8C159252 3 x 2, bottoms 0x8C159253
+// and whole outfits 0x8C159254 4 x 2; the cart kShoppingCartThumbnail
+// 0x8C159252 3 x 2).
+constexpr uint32_t kShopCell[3] = {0x8C159252, 0x8C159253, 0x8C159254};
+constexpr int kShopCols[3] = {3, 4, 4}, kShopRows[3] = {2, 2, 2};
+// The rack's age buttons 0x200-0x204 (toddler .. elder) and gender buttons
+// 0x400 (female) / 0x401 (male).
+constexpr uint32_t kShopAge[5] = {0x01, 0x02, 0x04, 0x08, 0x10};
+
+// A window anywhere under `e` by id, and its canvas rectangle given e's
+// top-left corner.
+UiElement* findWin(UiElement& e, uint32_t id, float ox, float oy, std::array<float, 4>* rect) {
+    for (auto& c : e.children) {
+        const auto a = c.area();
+        if (c.id() == id) {
+            if (rect)
+                *rect = {ox + float(a[0]), oy + float(a[1]), ox + float(a[2]), oy + float(a[3])};
+            return &c;
+        }
+        if (UiElement* f = findWin(c, id, ox + float(a[0]), oy + float(a[1]), rect))
+            return f;
+    }
+    return nullptr;
+}
+
+std::string captionOf(UiResources* res, const UiElement& e) {
+    std::string text = e.get("caption");
+    if (res)
+        if (auto ref = uiStringRef(e.get("captionres")))
+            if (auto t = res->string(*ref))
+                text = *t;
+    return text;
+}
+
+std::string printS(std::string fmt, const std::string& value) {
+    if (auto p = fmt.find("%s"); p != std::string::npos)
+        fmt.replace(p, 2, value);
+    return fmt;
+}
+
+// Vanity tabs (the buttons of script 0x8C159280 in their order there) and
+// what each shows (HandleTabSelect: hair 0x2CEDF326, makeup 0x2CEDF327,
+// costume makeup and glasses 0x2CEDF328, eyebrows / stubble / beards the
+// facial hair panel 0xAD4F1B1C with its colour row 0x2D4F258C hidden).
+constexpr uint32_t kVanityTabs[7] = {0x4CEDF125, 0x4CEDF126, 0x4CEDF128, 0x4CEDF127, 0x4CEDF130, 0x4CEDF131, 0x4CEDF129};
+constexpr uint32_t kVanityPanels[7] = {0x2CEDF326, 0x2CEDF327, 0x2CEDF328, 0x2CEDF328, 0xAD4F1B1C, 0xAD4F1B1C, 0xAD4F1B1C};
+struct VanityGrid {
+    uint32_t component; // the CAS component window holding the grid
+    int group;
+    uint32_t grid, prev, next, cell;
+    int cols, rows;
+};
+} // namespace
+
+std::array<float, 4> DialogWindow::addCell(Layout& L, UiElement& parent, std::array<float, 2> parentAbs, uint32_t cellScript,
+                                           uint32_t serial, float x, float y, const RgbaImage* thumb, int state, bool mark7,
+                                           bool mark8) {
+    const UiScript* s = script(cellScript);
+    UiElement cell;
+    float w = 50, h = 50;
+    if (s && !s->roots.empty()) {
+        cell = s->roots.front();
+        const auto a = cell.area();
+        w = float(a[2] - a[0]), h = float(a[3] - a[1]);
+    } else {
+        cell = element("GZWinFlatRect", "IGZWinFlatRect", 0, 0, w, h);
+    }
+    cell.set("area", uiArea(int(x), int(y), int(x + w), int(y + h)));
+    cell.set("id", hex(0x00E00000u | (serial << 8)));
+    const uint32_t base = 0x00E00000u | (serial << 8);
+    UiElement* pic = nullptr;
+    for (auto& c : cell.children) {
+        const uint32_t id = c.id();
+        if (id == 7)
+            c.set("winflag_visible", mark7 ? "yes" : "no");
+        if (id == 8)
+            c.set("winflag_visible", mark8 ? "yes" : "no");
+        if (id == 3) // "backup image": a cell without a picture (the "none" ones)
+            c.set("winflag_visible", thumb ? "no" : "yes");
+        if (id == 6)
+            pic = &c;
+        if (id == 5)
+            L.states[base | 5] = state;
+        c.set("id", hex(base | id));
+    }
+    if (pic && thumb && thumb->width && thumb->height) {
+        // The picture fitted into window 6 (the game draws the part's own
+        // rendered thumbnail there; the CASThumbnails ones keep their shape).
+        const auto a = pic->area();
+        const float pw = float(a[2] - a[0]), ph = float(a[3] - a[1]);
+        const float k = std::min(pw / float(thumb->width), ph / float(thumb->height));
+        const float tw = std::round(float(thumb->width) * k), th = std::round(float(thumb->height) * k);
+        const float px = float(a[0]) + std::round((pw - tw) / 2), py = float(a[1]) + std::round((ph - th) / 2);
+        pic->set("area", uiArea(int(px), int(py), int(px + tw), int(py + th)));
+        pic->set("image", "");
+        L.images[base | 6] = thumb;
+    } else if (pic) {
+        pic->set("winflag_visible", "no");
+    }
+    parent.children.push_back(std::move(cell));
+    return {parentAbs[0] + x, parentAbs[1] + y, parentAbs[0] + x + w, parentAbs[1] + y + h};
+}
+
+DialogWindow::Shop& DialogWindow::shop(const vm::Dialog& d) {
+    Shop& s = shops_[d.id];
+    if (!s.ready) {
+        s.ready = true;
+        // The everyday categories open on tops, the others on whole outfits
+        // (SetParams' 0x601 test).
+        s.tab = d.outfitSeparates ? 0 : 2;
+        if (simAgeGender)
+            std::tie(s.age, s.gender) = simAgeGender(d.outfitSim);
+        if (!s.age)
+            s.age = 0x08;
+        if (!s.gender)
+            s.gender = 0x01;
+        // The try-on starts from what the Sim wears in the category (its
+        // SetParams copies those parts into the try-on outfit).
+        if (d.cls.cls == vm::DialogClass::ClothingTryOn)
+            for (int t = 0; t < 3; ++t)
+                for (const ShopItem& i : shopList(d, s, t))
+                    if (i.worn)
+                        s.chosen[size_t(t)] = i.part;
+    }
+    return s;
+}
+
+const std::vector<DialogWindow::ShopItem>& DialogWindow::shopList(const vm::Dialog& d, Shop& s, int tab) {
+    const auto key = std::make_tuple(tab, s.age, s.gender);
+    auto it = s.lists.find(key);
+    if (it == s.lists.end()) {
+        std::vector<ShopItem> l;
+        if (shopItems)
+            l = shopItems(d.outfitSim, d.outfitCategory, kShopPart[tab], s.age, s.gender);
+        it = s.lists.emplace(key, std::move(l)).first;
+    }
+    return it->second;
+}
+
+// Scripts 0x8C159251 ("Comprar Roupa") and 0x8C159255 ("Experimentar"):
+// the rack window 0xECCDF759 with the tabs (0xECC70000-2), the grid
+// 0x1006 and its arrows 0x1004/5; the rack also has the age (0x200-0x204)
+// and gender (0x400/1) buttons, "add to cart" 0xECCDF663, the cart window
+// 0x2CCDF792 (grid 0x1006, "remove" 0x6CCDF7D7) behind the rack / cart tabs
+// 0x8CCD0000/1, the count (0xCCCDF42D) and total (0xACCDF819) and the Sim
+// view 0x2CC7315A (here the picked part's picture, else the Sim's head:
+// the game renders the Sim wearing it). OK 0x6CC7318B, cancel 0x6CC73195.
+DialogWindow::Layout DialogWindow::shopDialog(const vm::Dialog& d, int width, int height) {
+    const bool rack = d.cls.cls == vm::DialogClass::ClothingPurchase;
+    const UiScript* sc = script(rack ? 0x8C159251 : 0x8C159255);
+    if (!sc)
+        return plainDialog(d, width, height);
+    Layout L;
+    const UiElement& top = sc->roots.front();
+    const auto a = top.area();
+    const float w = float(a[2] - a[0]), h = float(a[3] - a[1]);
+    L.x0 = std::round((float(width) - w) / 2), L.y0 = std::round((float(height) - h) / 2);
+    L.x1 = L.x0 + w, L.y1 = L.y0 + h;
+    UiElement root = top;
+    root.set("area", uiArea(0, 0, int(w), int(h)));
+    // A picture window without a picture and not transparent (the try-on's
+    // backdrop) is painted in its fill colour (inferred from its attributes).
+    for (auto& c : root.children)
+        if (c.clsid() == "GZWinBMP" && !c.attr("image") && c.get("transparentbkg") == "no") {
+            c.set("clsid", "GZWinFlatRect");
+            c.set("iid", "IGZWinFlatRect");
+        }
+    Shop& s = shop(d);
+    const bool cartView = rack && s.view == 1;
+    std::array<float, 4> r{};
+    auto absOf = [&](const std::array<float, 4>& q) { return std::array<float, 4>{L.x0 + q[0], L.y0 + q[1], L.x0 + q[2], L.y0 + q[3]}; };
+    auto region = [&](UiElement& under, uint32_t id, Hit kind, int value) {
+        std::array<float, 4> q{};
+        if (findWin(under, id, 0, 0, &q))
+            L.regions.push_back({absOf(q), kind, value});
+    };
+    UiElement* rackWin = findWin(root, 0xECCDF759, 0, 0, &r);
+    const std::array<float, 4> rackRect = r;
+    UiElement* cartWin = rack ? findWin(root, 0x2CCDF792, 0, 0, &r) : nullptr;
+    const std::array<float, 4> cartRect = r;
+    if (rackWin)
+        rackWin->set("winflag_visible", cartView ? "no" : "yes");
+    if (cartWin)
+        cartWin->set("winflag_visible", cartView ? "yes" : "no");
+    const auto& list = shopList(d, s, s.tab);
+    auto inCart = [&](const ShopItem& i) {
+        return std::any_of(s.cart.begin(), s.cart.end(), [&](const ShopItem& c) { return c.key == i.key; });
+    };
+    uint32_t serial = 0;
+    // The grid of the rack (or of the try-on).
+    if (rackWin && !cartView) {
+        std::array<float, 4> g{};
+        if (UiElement* grid = findWin(*rackWin, 0x1006, 0, 0, &g)) {
+            const int cols = kShopCols[s.tab], rows = kShopRows[s.tab], per = cols * rows;
+            int& first = s.first[size_t(s.tab)];
+            first = std::clamp(first, 0, std::max(0, (int(list.size()) - 1) / per * per));
+            const UiScript* cs = script(kShopCell[s.tab]);
+            float cw = 76, ch = 111;
+            if (cs && !cs->roots.empty()) {
+                const auto ca = cs->roots.front().area();
+                cw = float(ca[2] - ca[0]), ch = float(ca[3] - ca[1]);
+            }
+            const float gw = g[2] - g[0], gh = g[3] - g[1];
+            const float ox = std::round((gw - cw * float(cols)) / 2), oy = std::round((gh - ch * float(rows)) / 2);
+            for (int k = 0; k < per && first + k < int(list.size()); ++k) {
+                const ShopItem& item = list[size_t(first + k)];
+                const bool picked = rack ? s.pick == first + k : s.chosen[size_t(s.tab)] == item.part;
+                const auto cell = addCell(L, *grid, {L.x0 + rackRect[0] + g[0], L.y0 + rackRect[1] + g[1]}, kShopCell[s.tab], serial++,
+                                          ox + float(k % cols) * cw, oy + float(k / cols) * ch, item.thumb, picked ? 2 : 1,
+                                          rack && inCart(item), item.owned);
+                L.regions.push_back({cell, Hit::Row, first + k});
+            }
+        }
+        std::array<float, 4> q{};
+        for (uint32_t id : {0x1004u, 0x1005u})
+            if (findWin(*rackWin, id, rackRect[0], rackRect[1], &q))
+                L.regions.push_back({absOf(q), id == 0x1004 ? Hit::Prev : Hit::Next, 0});
+        for (int t = 0; t < 3; ++t)
+            if (findWin(*rackWin, 0xECC70000u + uint32_t(t), rackRect[0], rackRect[1], &q)) {
+                // SetOutfitTabButtonStates: tops and bottoms only for the everyday categories.
+                const bool on = t == 2 || d.outfitSeparates;
+                L.states[0xECC70000u + uint32_t(t)] = !on ? 0 : t == s.tab ? 2 : 1;
+                if (on)
+                    L.regions.push_back({absOf(q), Hit::Tab, t});
+            }
+        if (rack) {
+            for (int k = 0; k < 5; ++k)
+                if (findWin(*rackWin, 0x200u + uint32_t(k), rackRect[0], rackRect[1], &q)) {
+                    L.states[0x200u + uint32_t(k)] = s.age == kShopAge[k] ? 2 : 1;
+                    L.regions.push_back({absOf(q), Hit::Choice, 0x100 | int(kShopAge[k])});
+                }
+            for (int k = 0; k < 2; ++k)
+                if (findWin(*rackWin, 0x400u + uint32_t(k), rackRect[0], rackRect[1], &q)) {
+                    L.states[0x400u + uint32_t(k)] = s.gender == uint32_t(k + 1) ? 2 : 1;
+                    L.regions.push_back({absOf(q), Hit::Choice, 0x200 | (k + 1)});
+                }
+            if (findWin(*rackWin, 0xECCDF663, rackRect[0], rackRect[1], &q)) {
+                const bool can = s.pick >= 0 && s.pick < int(list.size()) && !inCart(list[size_t(s.pick)]);
+                L.states[0xECCDF663] = can ? 1 : 0;
+                if (can)
+                    L.regions.push_back({absOf(q), Hit::Add, 0});
+            }
+        }
+    }
+    // The cart.
+    if (cartWin && cartView) {
+        std::array<float, 4> g{};
+        if (UiElement* grid = findWin(*cartWin, 0x1006, 0, 0, &g)) {
+            const int cols = 3, rows = 2, per = cols * rows; // kShoppingCartNumColumns / NumRows
+            s.cartFirst = std::clamp(s.cartFirst, 0, std::max(0, (int(s.cart.size()) - 1) / per * per));
+            for (int k = 0; k < per && s.cartFirst + k < int(s.cart.size()); ++k) {
+                const ShopItem& item = s.cart[size_t(s.cartFirst + k)];
+                const auto cell = addCell(L, *grid, {L.x0 + cartRect[0] + g[0], L.y0 + cartRect[1] + g[1]}, 0x8C159252, serial++,
+                                          float(k % cols) * 101, float(k / cols) * 110, item.thumb,
+                                          s.cartPick == s.cartFirst + k ? 2 : 1, false, item.owned);
+                L.regions.push_back({cell, Hit::Row, 0x10000 | (s.cartFirst + k)});
+            }
+        }
+        std::array<float, 4> q{};
+        for (uint32_t id : {0x1004u, 0x1005u})
+            if (findWin(*cartWin, id, cartRect[0], cartRect[1], &q))
+                L.regions.push_back({absOf(q), id == 0x1004 ? Hit::Prev : Hit::Next, 1});
+        if (findWin(*cartWin, 0x6CCDF7D7, cartRect[0], cartRect[1], &q)) {
+            const bool can = s.cartPick >= 0 && s.cartPick < int(s.cart.size());
+            L.states[0x6CCDF7D7] = can ? 1 : 0;
+            if (can)
+                L.regions.push_back({absOf(q), Hit::Remove, 0});
+        }
+    }
+    if (rack) {
+        for (int v = 0; v < 2; ++v) {
+            region(root, 0x8CCD0000u + uint32_t(v), Hit::Choice, 0x400 | v);
+            L.states[0x8CCD0000u + uint32_t(v)] = s.view == v ? 2 : 1;
+        }
+        if (UiElement* e = findWin(root, 0xCCCDF42D, 0, 0, nullptr))
+            L.captions[0xCCCDF42D] = printS(captionOf(res_, *e), std::to_string(s.cart.size()));
+        if (UiElement* e = findWin(root, 0xACCDF819, 0, 0, nullptr))
+            L.captions[0xACCDF819] =
+                printS(captionOf(res_, *e), simoleons(int(s.cart.size()) * d.pricePerItem));
+        // The Sim view: the part picked (rack or cart), else the Sim.
+        const RgbaImage* view = nullptr;
+        if (cartView && s.cartPick >= 0 && s.cartPick < int(s.cart.size()))
+            view = s.cart[size_t(s.cartPick)].thumb;
+        else if (!cartView && s.pick >= 0 && s.pick < int(list.size()))
+            view = list[size_t(s.pick)].thumb;
+        if (!view && thumbnail)
+            view = thumbnail(d.outfitSim, 0);
+        if (view && view->width && view->height)
+            if (UiElement* v = findWin(root, 0x2CC7315A, 0, 0, &r)) {
+                const float vw = r[2] - r[0], vh = r[3] - r[1];
+                const float k = std::min(vw / float(view->width), vh / float(view->height));
+                const float tw = std::round(float(view->width) * k), th = std::round(float(view->height) * k);
+                UiElement p = element("GZWinBMP", "IGZWinBMP", std::round((vw - tw) / 2), std::round((vh - th) / 2),
+                                      std::round((vw - tw) / 2) + tw, std::round((vh - th) / 2) + th);
+                p.set("id", hex(0x2CC7315B));
+                v->children.push_back(p);
+                L.images[0x2CC7315B] = view;
+            }
+    }
+    region(root, 0x6CC7318B, Hit::Button, 0);
+    L.buttonIds.push_back(0x6CC7318B);
+    region(root, 0x6CC73195, Hit::Button, 1);
+    L.buttonIds.push_back(0x6CC73195);
+    L.root = std::move(root);
+    return L;
+}
+
+std::vector<DialogWindow::VanityItem>& DialogWindow::vanityList(const vm::Dialog& d, int group) {
+    Vanity& v = vanities_[d.id];
+    auto it = v.items.find(group);
+    if (it == v.items.end())
+        it = v.items.emplace(group, vanityItems ? vanityItems(d.outfitSim, group) : std::vector<VanityItem>{}).first;
+    return it->second;
+}
+
+// Script 0x8C159280 ("Mudar Aparência"): the tabs (hair, makeup, glasses,
+// costume makeup, eyebrows, stubble, beards), each showing its panel and
+// CAS components' grids (the components' constants: hair 3 x 4 of
+// 0x8C159283 with the colour buttons 0x8800-0x8803, the four makeup rows
+// 4 x 1 of 0xCB980E93, the overlays 3 x 5 and the facial hair 3 x 4 of
+// 0x8C159283), the Sim view 0xACB91188 (here the Sim's head), OK 0xA000
+// and cancel 0xA001.
+DialogWindow::Layout DialogWindow::vanityDialog(const vm::Dialog& d, int width, int height) {
+    const UiScript* sc = script(0x8C159280);
+    if (!sc)
+        return plainDialog(d, width, height);
+    Layout L;
+    const UiElement& top = sc->roots.front();
+    const auto a = top.area();
+    const float w = float(a[2] - a[0]), h = float(a[3] - a[1]);
+    L.x0 = std::round((float(width) - w) / 2), L.y0 = std::round((float(height) - h) / 2);
+    L.x1 = L.x0 + w, L.y1 = L.y0 + h;
+    UiElement root = top;
+    root.set("area", uiArea(0, 0, int(w), int(h)));
+    Vanity& v = vanities_[d.id];
+    auto absOf = [&](const std::array<float, 4>& q) { return std::array<float, 4>{L.x0 + q[0], L.y0 + q[1], L.x0 + q[2], L.y0 + q[3]}; };
+    std::array<float, 4> r{};
+    for (int t = 0; t < 7; ++t) {
+        if (findWin(root, kVanityTabs[t], 0, 0, &r))
+            L.regions.push_back({absOf(r), Hit::Tab, t});
+        L.states[kVanityTabs[t]] = t == v.tab ? 2 : 1;
+    }
+    for (uint32_t p : {0x2CEDF326u, 0x2CEDF327u, 0x2CEDF328u, 0xAD4F1B1Cu})
+        if (UiElement* e = findWin(root, p, 0, 0, nullptr))
+            e->set("winflag_visible", p == kVanityPanels[v.tab] ? "yes" : "no");
+    if (UiElement* e = findWin(root, 0x2D4F258C, 0, 0, nullptr))
+        e->set("winflag_visible", "no");
+    std::vector<VanityGrid> grids;
+    switch (v.tab) {
+    case 0: grids = {{0x2CED6A8D, VanityHair, 0x8CB8C2B9, 0x8CB8C2C3, 0xACB8C2CF, 0x8C159283, 3, 4}}; break;
+    case 1:
+        grids = {{0x6CA52068, VanityBlush, 0x4011, 0x4008, 0x4009, 0xCB980E93, 4, 1},
+                 {0xAD474C78, VanityEyeliner, 0x4011, 0x4008, 0x4009, 0xCB980E93, 4, 1},
+                 {0x6CA52069, VanityEyeShadow, 0x4011, 0x4008, 0x4009, 0xCB980E93, 4, 1},
+                 {0x6CA52067, VanityLipstick, 0x4011, 0x4008, 0x4009, 0xCB980E93, 4, 1}};
+        break;
+    case 2: grids = {{0x6CA52066, VanityGlasses, 0x4011, 0x4008, 0x4009, 0x8C159283, 3, 5}}; break;
+    case 3: grids = {{0x6CA52066, VanityCostume, 0x4011, 0x4008, 0x4009, 0x8C159283, 3, 5}}; break;
+    case 4: grids = {{0x8D4F1FEB, VanityBrows, 0x4011, 0x4008, 0x4009, 0x8C159283, 3, 4}}; break;
+    case 5: grids = {{0x8D4F1FEB, VanityStubble, 0x4011, 0x4008, 0x4009, 0x8C159283, 3, 4}}; break;
+    case 6: grids = {{0x8D4F1FEB, VanityBeards, 0x4011, 0x4008, 0x4009, 0x8C159283, 3, 4}}; break;
+    default: break;
+    }
+    UiElement* panel = findWin(root, kVanityPanels[v.tab], 0, 0, &r);
+    const std::array<float, 4> panelRect = r;
+    uint32_t serial = 0;
+    for (const VanityGrid& g : grids) {
+        if (!panel)
+            break;
+        std::array<float, 4> cr{};
+        UiElement* comp = findWin(*panel, g.component, panelRect[0], panelRect[1], &cr);
+        if (!comp)
+            continue;
+        std::array<float, 4> gr{};
+        UiElement* grid = findWin(*comp, g.grid, cr[0], cr[1], &gr);
+        auto& items = vanityList(d, g.group);
+        const int per = g.cols * g.rows;
+        int& first = v.first[g.group];
+        first = std::clamp(first, 0, std::max(0, (int(items.size()) - 1) / per * per));
+        if (grid) {
+            const UiScript* cs = script(g.cell);
+            float cw = 50, ch = 50;
+            if (cs && !cs->roots.empty()) {
+                const auto ca = cs->roots.front().area();
+                cw = float(ca[2] - ca[0]), ch = float(ca[3] - ca[1]);
+            }
+            const float gw = gr[2] - gr[0], gh = gr[3] - gr[1];
+            const float ox = std::round((gw - cw * float(g.cols)) / 2), oy = std::round((gh - ch * float(g.rows)) / 2);
+            for (int k = 0; k < per && first + k < int(items.size()); ++k) {
+                const VanityItem& it = items[size_t(first + k)];
+                const auto cell = addCell(L, *grid, {L.x0 + gr[0], L.y0 + gr[1]}, g.cell, serial++, ox + float(k % g.cols) * cw,
+                                          oy + float(k / g.cols) * ch, it.thumb, it.selected ? 2 : 1, false, false);
+                L.regions.push_back({cell, Hit::Row, (g.group << 16) | (first + k)});
+            }
+        }
+        std::array<float, 4> q{};
+        if (findWin(*comp, g.prev, cr[0], cr[1], &q))
+            L.regions.push_back({absOf(q), Hit::Prev, g.group});
+        if (findWin(*comp, g.next, cr[0], cr[1], &q))
+            L.regions.push_back({absOf(q), Hit::Next, g.group});
+        if (g.group == VanityHair) {
+            // The colour buttons (black, brown, blond, red; grey is hidden).
+            auto& tones = vanityList(d, VanityHairColor);
+            for (int k = 0; k < 4; ++k)
+                if (findWin(*comp, 0x8800u + uint32_t(k), cr[0], cr[1], &q)) {
+                    L.regions.push_back({absOf(q), Hit::Choice, 0x300 | k});
+                    // Several windows share these ids: the state goes by the one found.
+                    if (UiElement* b = findWin(*comp, 0x8800u + uint32_t(k), 0, 0, nullptr)) {
+                        const uint32_t id = 0x00F00000u | uint32_t(k);
+                        b->set("id", hex(id));
+                        L.states[id] = k < int(tones.size()) && tones[size_t(k)].selected ? 2 : 1;
+                    }
+                }
+        }
+    }
+    // The Sim view: the Sim's head (the game renders the Sim with the edit).
+    if (thumbnail)
+        if (const RgbaImage* head = thumbnail(d.outfitSim, 0); head && head->width && head->height)
+            if (UiElement* view = findWin(root, 0xACB91188, 0, 0, &r)) {
+                const float vw = r[2] - r[0], vh = r[3] - r[1];
+                const float k = std::min(vw / float(head->width), vh / float(head->height));
+                const float tw = std::round(float(head->width) * k), th = std::round(float(head->height) * k);
+                UiElement p = element("GZWinBMP", "IGZWinBMP", std::round((vw - tw) / 2), std::round((vh - th) / 2),
+                                      std::round((vw - tw) / 2) + tw, std::round((vh - th) / 2) + th);
+                p.set("id", hex(0xACB91189));
+                view->children.push_back(p);
+                L.images[0xACB91189] = head;
+            }
+    if (findWin(root, 0xA000, 0, 0, &r)) {
+        L.regions.push_back({absOf(r), Hit::Button, 0});
+        L.buttonIds.push_back(0xA000);
+    }
+    if (findWin(root, 0xA001, 0, 0, &r)) {
+        L.regions.push_back({absOf(r), Hit::Button, 1});
+        L.buttonIds.push_back(0xA001);
+    }
+    L.root = std::move(root);
+    return L;
+}
+
 // --- the other special dialogs: an OK/cancel box (not done yet) -----------
 
 DialogWindow::Layout DialogWindow::plainDialog(const vm::Dialog& d, int width, int height) {
@@ -1029,6 +1489,9 @@ DialogWindow::Layout DialogWindow::layout(const vm::Dialog& d, int width, int he
     case vm::DialogClass::SetAspiration: return aspirationDialog(d, width, height);
     case vm::DialogClass::Fill: return fillDialog(d, width, height);
     case vm::DialogClass::SelectItems: return selectItemsDialog(d, width, height);
+    case vm::DialogClass::ClothingPurchase:
+    case vm::DialogClass::ClothingTryOn: return shopDialog(d, width, height);
+    case vm::DialogClass::Vanity: return vanityDialog(d, width, height);
     default: return plainDialog(d, width, height);
     }
 }
@@ -1073,6 +1536,9 @@ void DialogWindow::draw(UiScreen& out, const vm::Dialog& d, int width, int heigh
             state = 0;
         hk.buttonState[it->second] = state;
     }
+    for (const auto& [id, st] : L.states)
+        if (auto it = byId.find(id); it != byId.end())
+            hk.buttonState[it->second] = st;
     // The aspiration picked looks pressed.
     if (d.cls.cls == vm::DialogClass::SetAspiration)
         for (const auto& [id, e] : byId)
@@ -1118,6 +1584,91 @@ bool DialogWindow::click(vm::Dialog& d, float x, float y, int width, int height)
     for (const Region& g : L.regions) {
         if (!insideRect(g.rect, x, y))
             continue;
+        if ((d.cls.cls == vm::DialogClass::ClothingPurchase || d.cls.cls == vm::DialogClass::ClothingTryOn) &&
+            g.kind != Hit::Button) {
+            Shop& s = shop(d);
+            const auto& list = shopList(d, s, s.tab);
+            switch (g.kind) {
+            case Hit::Tab: s.tab = g.value, s.pick = -1; break;
+            case Hit::Prev:
+            case Hit::Next: {
+                // A page of the grid at a time (clamped by the layout).
+                const int per = g.value ? 6 : kShopCols[s.tab] * kShopRows[s.tab];
+                int& first = g.value ? s.cartFirst : s.first[size_t(s.tab)];
+                first = std::max(0, first + (g.kind == Hit::Next ? per : -per));
+                break;
+            }
+            case Hit::Row:
+                if (g.value >> 16)
+                    s.cartPick = g.value & 0xFFFF;
+                else if (d.cls.cls == vm::DialogClass::ClothingPurchase)
+                    s.pick = g.value;
+                else if (g.value < int(list.size())) {
+                    // ApplyClothingChoice: a whole outfit takes off the top
+                    // and bottom, and either of those the whole outfit.
+                    s.chosen[size_t(s.tab)] = list[size_t(g.value)].part;
+                    if (s.tab == 2)
+                        s.chosen[0].clear(), s.chosen[1].clear();
+                    else if (!s.chosen[2].empty()) {
+                        s.chosen[2].clear();
+                        for (int t = 0; t < 2; ++t)
+                            if (s.chosen[size_t(t)].empty())
+                                for (const ShopItem& i : shopList(d, s, t))
+                                    if (i.worn || s.chosen[size_t(t)].empty())
+                                        s.chosen[size_t(t)] = i.part;
+                    }
+                }
+                break;
+            case Hit::Add: // OnAddToCart
+                if (s.pick >= 0 && s.pick < int(list.size())) {
+                    s.cart.push_back(list[size_t(s.pick)]);
+                    d.cart.push_back(list[size_t(s.pick)].key);
+                }
+                break;
+            case Hit::Remove: // OnRemoveFromCart
+                if (s.cartPick >= 0 && s.cartPick < int(s.cart.size())) {
+                    const Tgi key = s.cart[size_t(s.cartPick)].key;
+                    s.cart.erase(s.cart.begin() + s.cartPick);
+                    if (auto it = std::find(d.cart.begin(), d.cart.end(), key); it != d.cart.end())
+                        d.cart.erase(it);
+                    s.cartPick = -1;
+                }
+                break;
+            case Hit::Choice: // OnSpeciesAgeGender, the rack / cart tabs
+                if ((g.value & 0xF00) == 0x100)
+                    s.age = uint32_t(g.value & 0xFF), s.pick = -1;
+                else if ((g.value & 0xF00) == 0x200)
+                    s.gender = uint32_t(g.value & 0xFF), s.pick = -1;
+                else if ((g.value & 0xF00) == 0x400)
+                    s.view = g.value & 1;
+                break;
+            default: break;
+            }
+            return true;
+        }
+        if (d.cls.cls == vm::DialogClass::Vanity && g.kind != Hit::Button) {
+            Vanity& v = vanities_[d.id];
+            switch (g.kind) {
+            case Hit::Tab: v.tab = g.value; break;
+            case Hit::Prev:
+            case Hit::Next: {
+                const int per = g.value == VanityHair ? 12 : g.value <= VanityLipstick ? 4 : g.value <= VanityCostume ? 15 : 12;
+                v.first[g.value] = std::max(0, v.first[g.value] + (g.kind == Hit::Next ? per : -per));
+                break;
+            }
+            case Hit::Row:
+            case Hit::Choice: {
+                const int group = g.kind == Hit::Choice ? int(VanityHairColor) : g.value >> 16;
+                const int index = g.kind == Hit::Choice ? (g.value & 0xFF) : (g.value & 0xFFFF);
+                if (vanityPick)
+                    vanityPick(d.outfitSim, group, index);
+                v.items.clear(); // a pick can change other groups (the hair colour, beards)
+                break;
+            }
+            default: break;
+            }
+            return true;
+        }
         switch (g.kind) {
         case Hit::Button:
         case Hit::Close: answer(d, g.value); break;

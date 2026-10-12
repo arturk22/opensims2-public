@@ -12,6 +12,10 @@
 //   cTSWinProcPhoneBookServices/Neighbors/Party (5/15, 6, 7): scripts
 //     0x8C159243, 0x8C159244 and 0x8C159242 with their list boxes.
 //
+//   cTSWinProcClothingPurchaseDialog (16), cTSWinProcClothingTryOnDialog
+//     (20) and cTSWinProcVanityDialog (21): scripts 0x8C159251, 0x8C159255
+//     and 0x8C159280 with their grids of CAS parts (the host's).
+//
 // The other special dialogs still show as an OK/cancel box.
 //
 // Plain C++ over the formats layer (the tests link it); the pie menu host
@@ -28,6 +32,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace os2 {
@@ -64,6 +69,7 @@ public:
         std::string caretText;                        // the text before the caret
         std::string caretFont;
         std::vector<std::string> lines;               // plain-box text
+        std::map<uint32_t, int> states;               // window id -> button strip frame (0 off, 1, 2 pressed, 3)
     };
     Layout layout(const vm::Dialog& d, int width, int height);
     void draw(UiScreen& out, const vm::Dialog& d, int width, int height);
@@ -108,6 +114,36 @@ public:
     std::function<void(int16_t sim, uint32_t category, const std::string& top, const std::string& bottom,
                        const std::string& body)>
         applyOutfit;
+    // The clothing rack (16) and try-on (20): the CAS clothing (GZPS) with
+    // `partBit` (0x04 tops, 0x10 bottoms, 0x08 whole outfits) of an age and
+    // gender in the outfit category, `owned` when it is in the Sim's
+    // family's clothing bin and `worn` when the Sim wears it in that
+    // category; and the Sim's age and gender bits (the rack's buttons start
+    // on them).
+    struct ShopItem {
+        std::string part; // catalog name (GZPS)
+        Tgi key;          // the GZPS (what the family bin keeps)
+        const RgbaImage* thumb = nullptr;
+        bool owned = false, worn = false;
+    };
+    std::function<std::vector<ShopItem>(int16_t sim, uint32_t category, uint32_t partBit, uint32_t age, uint32_t gender)>
+        shopItems;
+    std::function<std::pair<uint32_t, uint32_t>(int16_t sim)> simAgeGender;
+    // The vanity (21): the host keeps the look being edited. Items of a
+    // group (VanityGroup; a "none" first where the group may be empty, its
+    // thumb null), a pick, and the end: OK writes the character file and
+    // dresses the Sim again (OnOk), cancel drops the edit.
+    enum VanityGroup {
+        VanityHair, VanityBlush, VanityEyeliner, VanityEyeShadow, VanityLipstick, VanityGlasses, VanityCostume,
+        VanityBrows, VanityStubble, VanityBeards, VanityHairColor, VanityGroups
+    };
+    struct VanityItem {
+        const RgbaImage* thumb = nullptr;
+        bool selected = false;
+    };
+    std::function<std::vector<VanityItem>(int16_t sim, int group)> vanityItems;
+    std::function<void(int16_t sim, int group, int index)> vanityPick;
+    std::function<void(int16_t sim, bool ok)> vanityDone;
     // Answers go to stdout (the headless runs read them).
     bool log = true;
 
@@ -121,6 +157,35 @@ private:
     Layout aspirationDialog(const vm::Dialog& d, int width, int height);
     Layout fillDialog(const vm::Dialog& d, int width, int height);
     Layout selectItemsDialog(const vm::Dialog& d, int width, int height);
+    Layout shopDialog(const vm::Dialog& d, int width, int height); // 16 and 20
+    Layout vanityDialog(const vm::Dialog& d, int width, int height);
+    // The rack's / try-on's state: the tab (0 tops, 1 bottoms, 2 whole
+    // outfits), the age and gender shown, the view (0 rack, 1 cart), the
+    // first item of each tab's page, the item picked, the cart's page and
+    // pick, the lists by (tab, age, gender) and the try-on's choice per tab.
+    struct Shop {
+        bool ready = false;
+        int tab = 0, view = 0, pick = -1, cartFirst = 0, cartPick = -1;
+        uint32_t age = 0, gender = 0;
+        std::array<int, 3> first{0, 0, 0};
+        std::vector<ShopItem> cart;
+        std::map<std::tuple<int, uint32_t, uint32_t>, std::vector<ShopItem>> lists;
+        std::array<std::string, 3> chosen; // try-on: top, bottom, whole outfit
+    };
+    Shop& shop(const vm::Dialog& d);
+    const std::vector<ShopItem>& shopList(const vm::Dialog& d, Shop& s, int tab);
+    struct Vanity {
+        int tab = 0;
+        std::map<int, int> first; // group -> first item shown
+        std::map<int, std::vector<VanityItem>> items;
+    };
+    std::vector<VanityItem>& vanityList(const vm::Dialog& d, int group);
+    // A grid cell from a thumbnail script (its bg, the picture in window 6,
+    // the strip button 5; 7 and 8 the in-cart and owned marks) at (x, y) of
+    // `parent`, its ids renumbered; returns the cell's canvas rectangle.
+    std::array<float, 4> addCell(Layout& L, UiElement& parent, std::array<float, 2> parentAbs, uint32_t cellScript,
+                                 uint32_t serial, float x, float y, const RgbaImage* thumb, int state, bool mark7,
+                                 bool mark8);
     Outfits* wardrobe(const vm::Dialog& d);
     const UiScript* script(uint32_t id);
     const RgbaImage* icon(const vm::Dialog& d);
@@ -140,6 +205,8 @@ private:
     std::map<uint32_t, int> partyFocus_; // dialog id -> focused list row (list << 16 | row)
     std::map<uint32_t, std::optional<Outfits>> wardrobes_; // dialog id -> the wardrobe's lists and choices
     std::map<uint32_t, int> pages_; // dialog id -> the racks' first item shown
+    std::map<uint32_t, Shop> shops_;
+    std::map<uint32_t, Vanity> vanities_;
 };
 
 } // namespace os2

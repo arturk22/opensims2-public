@@ -168,7 +168,10 @@ DialogClassInfo dialogClass(int type) {
     // GZCOM_<class>CLSID getter (they sit in front of the class's
     // QueryInterface). The scripts: cTSWinProcPhoneBookServices/Party
     // constructors (0x8C159243/0x8C159242), Neighbors' (0x8C159244),
-    // cTSWinProcClothingDialog::Initialize (0x8C159250),
+    // cTSWinProcClothingDialog::Initialize (0x8C159250), the clothing
+    // rack's Initialize (0x8C159251, BV 0x40489c), the try-on's (0x8C159255),
+    // the vanity's (0x8C159280; 0x8C159286 for plastic surgery), the
+    // jewelry rack's (0xACDC3000, not in the base game's ui.package),
     // cTSWinProcNameObjectDialog (0x2D91050A, panels 0xCDC2CAA4-B0).
     using C = DialogClass;
     switch (type) {
@@ -182,17 +185,17 @@ DialogClassInfo dialogClass(int type) {
     case 0x2B:
     case 0x2D: return {C::SelectItems, "cTSWinProcSelectItemsDialog", 0};
     case 12:
-    case 0x2C: return {C::JewelryPurchase, "cTSWinProcJewelryPurchaseDialog", 0};
+    case 0x2C: return {C::JewelryPurchase, "cTSWinProcJewelryPurchaseDialog", 0xACDC3000};
     case 14:
     case 0x1B:
     case 0x1F:
     case 0x2A: return {C::Fill, "cTSWinProcFillDialog", 0};
     case 16:
-    case 0x2E: return {C::ClothingPurchase, "cTSWinProcClothingPurchaseDialog", 0};
+    case 0x2E: return {C::ClothingPurchase, "cTSWinProcClothingPurchaseDialog", 0x8C159251};
     case 17:
     case 0x31: return {C::Clothing, "cTSWinProcClothingDialog", 0x8C159250};
-    case 20: return {C::ClothingTryOn, "cTSWinProcClothingTryOnDialog", 0};
-    case 21: return {C::Vanity, "cTSWinProcVanityDialog", 0};
+    case 20: return {C::ClothingTryOn, "cTSWinProcClothingTryOnDialog", 0x8C159255};
+    case 21: return {C::Vanity, "cTSWinProcVanityDialog", 0x8C159280};
     case 23: return {C::NameObject, "cTSWinProcNameObjectDialog", 0x2D91050A};
     case 24:
     case 0x22: return {C::SetAspiration, "cTSWinProcSetAspirationDialog", 0};

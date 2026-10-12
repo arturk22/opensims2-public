@@ -3,6 +3,12 @@
 
 #include "app/pie_menu.hpp"
 #include "vm/vm.hpp"
+#include "formats/resindex.hpp"
+#include "formats/ui_resources.hpp"
+
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
 
 #include <cstdio>
 #include <cmath>
@@ -173,6 +179,115 @@ int main() {
         host.dialogKey(53, {});
         check(d.answer == 1, "party: Esc cancels");
         (void)w;
+    }
+    // With the game's data (OS2_DATA): the clothing rack's script, a pick,
+    // "add to cart", the cart, OK; the try-on's choice; the vanity's tabs.
+    if (const char* data = std::getenv("OS2_DATA")) {
+        const std::filesystem::path res = std::filesystem::path(data) / "TSData/Res";
+        ResourceIndex index(res);
+        UiResources ui(index, res);
+        Fixture f(dialogtype::ClothingPurchase);
+        Dialog& d = f.vm.dialogs.at(f.me->id);
+        d.outfitSeparates = true, d.pricePerItem = 100, d.fillFunds = 250;
+        DialogWindow w(f.vm, &ui, nullptr);
+        w.log = false;
+        w.shopItems = [](int16_t, uint32_t, uint32_t part, uint32_t, uint32_t) {
+            std::vector<DialogWindow::ShopItem> l;
+            for (uint32_t k = 0; k < 9; ++k)
+                l.push_back({"part" + std::to_string(part) + "_" + std::to_string(k), Tgi{0xEBCF3E27, 1, part * 100 + k, 0}});
+            return l;
+        };
+        auto centre = [](const std::array<float, 4>& r) { return std::array<float, 2>{(r[0] + r[2]) / 2, (r[1] + r[3]) / 2}; };
+        auto find = [&](DialogWindow::Hit kind, int value) -> std::optional<std::array<float, 2>> {
+            for (const auto& r : w.layout(d, 1280, 720).regions)
+                if (r.kind == kind && r.value == value)
+                    return centre(r.rect);
+            return std::nullopt;
+        };
+        auto clickAt = [&](std::optional<std::array<float, 2>> p) {
+            if (p)
+                w.click(d, (*p)[0], (*p)[1], 1280, 720);
+            return p.has_value();
+        };
+        check(clickAt(find(DialogWindow::Hit::Row, 4)), "rack: a grid of items");
+        check(clickAt(find(DialogWindow::Hit::Add, 0)), "rack: add to cart once an item is picked");
+        check(d.cart.size() == 1 && d.cart[0].instance == 4 * 100 + 4, "rack: the cart has the top picked");
+        check(!find(DialogWindow::Hit::Add, 0), "rack: the same item not twice");
+        check(clickAt(find(DialogWindow::Hit::Tab, 1)) && clickAt(find(DialogWindow::Hit::Row, 0)) &&
+                  clickAt(find(DialogWindow::Hit::Add, 0)) && clickAt(find(DialogWindow::Hit::Tab, 2)) &&
+                  clickAt(find(DialogWindow::Hit::Row, 1)) && clickAt(find(DialogWindow::Hit::Add, 0)),
+              "rack: bottoms and whole outfits");
+        check(d.cart.size() == 3 && !DialogWindow::okEnabled(d), "rack: OK off past the family's funds");
+        check(clickAt(find(DialogWindow::Hit::Choice, 0x401)) && clickAt(find(DialogWindow::Hit::Row, 0x10000)) &&
+                  clickAt(find(DialogWindow::Hit::Remove, 0)),
+              "rack: the cart, an item taken out");
+        check(d.cart.size() == 2 && DialogWindow::okEnabled(d), "rack: OK on");
+        check(clickAt(find(DialogWindow::Hit::Button, 0)) && d.answer == 0, "rack: OK");
+
+        Fixture g(dialogtype::ClothingTryOn);
+        Dialog& t = g.vm.dialogs.at(g.me->id);
+        DialogWindow tw(g.vm, &ui, nullptr);
+        tw.log = false;
+        tw.shopItems = w.shopItems;
+        std::array<std::string, 3> applied;
+        tw.applyOutfit = [&](int16_t, uint32_t cat, const std::string& top, const std::string& bottom, const std::string& body) {
+            check(cat == 0x400, "try-on: OK writes the try-on outfit");
+            applied = {top, bottom, body};
+        };
+        for (const auto& r : tw.layout(t, 1280, 720).regions)
+            if (r.kind == DialogWindow::Hit::Tab && r.value == 2) {
+                tw.click(t, (r.rect[0] + r.rect[2]) / 2, (r.rect[1] + r.rect[3]) / 2, 1280, 720);
+                break;
+            }
+        for (const auto& r : tw.layout(t, 1280, 720).regions)
+            if (r.kind == DialogWindow::Hit::Row && r.value == 2) {
+                tw.click(t, (r.rect[0] + r.rect[2]) / 2, (r.rect[1] + r.rect[3]) / 2, 1280, 720);
+                break;
+            }
+        for (const auto& r : tw.layout(t, 1280, 720).regions)
+            if (r.kind == DialogWindow::Hit::Button && r.value == 0) {
+                tw.click(t, (r.rect[0] + r.rect[2]) / 2, (r.rect[1] + r.rect[3]) / 2, 1280, 720);
+                break;
+            }
+        check(t.answer == 0 && applied[2] == "part8_2", "try-on: the whole outfit picked");
+
+        Fixture h(dialogtype::Vanity);
+        Dialog& v = h.vm.dialogs.at(h.me->id);
+        DialogWindow vw(h.vm, &ui, nullptr);
+        vw.log = false;
+        std::vector<std::pair<int, int>> picks;
+        bool done = false;
+        vw.vanityItems = [](int16_t, int group) {
+            return std::vector<DialogWindow::VanityItem>(size_t(group == DialogWindow::VanityHairColor ? 4 : 20));
+        };
+        vw.vanityPick = [&](int16_t, int group, int i) { picks.push_back({group, i}); };
+        vw.vanityDone = [&](int16_t, bool ok) { done = ok; };
+        auto vfind = [&](DialogWindow::Hit kind, int value) -> std::optional<std::array<float, 2>> {
+            for (const auto& r : vw.layout(v, 1280, 720).regions)
+                if (r.kind == kind && r.value == value)
+                    return centre(r.rect);
+            return std::nullopt;
+        };
+        auto vclick = [&](std::optional<std::array<float, 2>> p) {
+            if (p)
+                vw.click(v, (*p)[0], (*p)[1], 1280, 720);
+            return p.has_value();
+        };
+        check(vclick(vfind(DialogWindow::Hit::Row, (DialogWindow::VanityHair << 16) | 3)) &&
+                  vclick(vfind(DialogWindow::Hit::Choice, 0x302)),
+              "vanity: a hair style and the blond colour");
+        check(vclick(vfind(DialogWindow::Hit::Tab, 1)) &&
+                  vclick(vfind(DialogWindow::Hit::Row, (DialogWindow::VanityLipstick << 16) | 1)),
+              "vanity: makeup, a lipstick");
+        check(vclick(vfind(DialogWindow::Hit::Tab, 6)) && vclick(vfind(DialogWindow::Hit::Next, DialogWindow::VanityBeards)) &&
+                  vclick(vfind(DialogWindow::Hit::Row, (DialogWindow::VanityBeards << 16) | 12)),
+              "vanity: beards, the second page");
+        check(picks == (std::vector<std::pair<int, int>>{{DialogWindow::VanityHair, 3},
+                                                          {DialogWindow::VanityHairColor, 2},
+                                                          {DialogWindow::VanityLipstick, 1},
+                                                          {DialogWindow::VanityBeards, 12}}),
+              "vanity: the picks in order");
+        check(vclick(vfind(DialogWindow::Hit::Button, 0)) && done && v.answer == 0, "vanity: OK writes the look");
     }
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

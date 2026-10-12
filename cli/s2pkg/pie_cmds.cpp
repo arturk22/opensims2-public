@@ -318,6 +318,15 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
                         std::find(d.selection.begin(), d.selection.end(), e.id) != d.selection.end() ? "  <- chosen" : "");
         for (const auto& n : d.names)
             std::printf("      name box: neighbor %d \"%s\"%s\n", n.neighbor, n.text.c_str(), n.female ? " (girl)" : "");
+        if (d.cls.cls == vm::DialogClass::ClothingPurchase || d.cls.cls == vm::DialogClass::ClothingTryOn ||
+            d.cls.cls == vm::DialogClass::Clothing || d.cls.cls == vm::DialogClass::Vanity)
+            std::printf("      Sim %d, outfit category 0x%03X%s", d.outfitSim, d.outfitCategory,
+                        d.outfitSeparates ? " (tops, bottoms and whole outfits)" : "");
+        if (d.cls.cls == vm::DialogClass::ClothingPurchase)
+            std::printf(", %d per item, funds %d", d.pricePerItem, d.fillFunds);
+        if (d.cls.cls == vm::DialogClass::ClothingPurchase || d.cls.cls == vm::DialogClass::ClothingTryOn ||
+            d.cls.cls == vm::DialogClass::Clothing || d.cls.cls == vm::DialogClass::Vanity)
+            std::printf("\n");
     };
     std::map<vm::ObjectId, std::string> lastAnim;
     std::map<vm::ObjectId, int16_t> lastAge;
