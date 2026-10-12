@@ -487,8 +487,11 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                         char where[64];
                         std::snprintf(where, sizeof where, "(%.2f, %.2f, %d)", ob.position.x, ob.position.y, ob.position.level);
                         seenFires[oid] = where;
-                        std::printf("  tick %6llu %s fire %d at %s\n", static_cast<unsigned long long>(machine.ticks),
-                                    clockText(machine).c_str(), oid, where);
+                        const auto fp = machine.routingFootprint(ob);
+                        std::printf("  tick %6llu %s fire %d at %s, flags 0x%X, %s, %zu footprint rectangles\n",
+                                    static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(), oid, where,
+                                    uint16_t(ob.data[vm::objdata::Flags]), vm::VM::blocksRouting(ob) ? "blocks" : "does not block",
+                                    fp.size());
                     }
                 }
             for (auto it = seenFires.begin(); it != seenFires.end();)

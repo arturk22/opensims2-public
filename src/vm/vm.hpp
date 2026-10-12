@@ -828,6 +828,10 @@ public:
     BlockedGrid blockedTiles(int level, std::span<const ObjectId> ignore = {});
     // A tile is in the world, has a floor and nothing that blocks stands on it.
     bool tileFree(TilePos t, std::span<const ObjectId> ignore = {});
+    // A person's footprint box (0.2 tile) at (x, y) on `level` meets no
+    // blocking object's routing footprint (the stair rule and the floor as
+    // tileFree; TSObjectCanSetPosition's object test for a Sim).
+    bool pointFree(float x, float y, int level, std::span<const ObjectId> ignore = {});
     // Objects placed on a tile (in the world and not in a slot), by ID.
     std::vector<ObjectId> objectsOnTile(TilePos t) const;
 

@@ -120,6 +120,35 @@ bool VM::tileFree(TilePos t, std::span<const ObjectId> ignore) {
     return true;
 }
 
+bool VM::pointFree(float x, float y, int level, std::span<const ObjectId> ignore) {
+    if (!world)
+        throw VMError("no world (positions need a lot)");
+    const TilePos t{int(std::floor(x)), int(std::floor(y)), level};
+    for (const Stair& s : world->stairs())
+        if ((t.level == s.bottom.level || t.level == s.top.level) && world->contains(t) &&
+            t.x >= std::min(s.bottom.x, s.top.x) && t.x <= std::max(s.bottom.x, s.top.x) &&
+            t.y >= std::min(s.bottom.y, s.top.y) && t.y <= std::max(s.bottom.y, s.top.y))
+            return true;
+    if (!world->walkable(t))
+        return false;
+    std::set<ObjectId> skip;
+    for (ObjectId id : ignore)
+        if (const Object* o = object(id))
+            skip.insert(multiTileGroup(*o));
+    constexpr float kHalf = 0.1f; // TSObjectBaseFootprintWidth of a person / 2
+    for (int dx = -1; dx <= 1; ++dx)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (ObjectId id : objectsOnTile({t.x + dx, t.y + dy, level})) {
+                const Object* o = object(id);
+                if (!o || !blocksRouting(*o) || skip.count(multiTileGroup(*o)))
+                    continue;
+                for (const auto& f : routingFootprint(*o))
+                    if (f[0] < x + kHalf && x - kHalf < f[2] && f[1] < y + kHalf && y - kHalf < f[3])
+                        return false;
+            }
+    return true;
+}
+
 std::vector<ObjectId> VM::objectsOnTile(TilePos t) const {
     std::vector<ObjectId> out;
     for (const Object* o : byId_) // by ID, as objects_ is
@@ -1051,9 +1080,11 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
         for (const auto& g : r.goals)
             std::fprintf(stderr, " (%.2f,%.2f)", g[0], g[1]);
         std::fprintf(stderr, "\n");
-        for (int qy = int(me.position.y * 2) + 12; qy >= int(me.position.y * 2) - 12; --qy) {
+        // OS2_ROUTE_FAILS_MAP=N: N half tiles each way up and down (12), N * 4 / 3 across.
+        const int ry = std::max(12, std::atoi(std::getenv("OS2_ROUTE_FAILS_MAP"))), rx = ry * 4 / 3;
+        for (int qy = int(me.position.y * 2) + ry; qy >= int(me.position.y * 2) - ry; --qy) {
             std::fprintf(stderr, "  %5.1f ", qy / 2.0);
-            for (int qx = int(me.position.x * 2) - 16; qx <= int(me.position.x * 2) + 16; ++qx) {
+            for (int qx = int(me.position.x * 2) - rx; qx <= int(me.position.x * 2) + rx; ++qx) {
                 const Point2 q{(qx + 0.5f) / 2, (qy + 0.5f) / 2};
                 const uint8_t b = planner.at(lv, q);
                 char ch = b & PathPlanner::kWall ? '#' : b & PathPlanner::kDoor ? 'D' : b & PathPlanner::kNoFloor ? ' ' : b & PathPlanner::kObject ? 'o' : b ? '?' : planner.costAt(lv, q) > 1.5f ? '+' : '.';
@@ -1108,6 +1139,13 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why) {
         r.points.push_back(p);
         level = wp.level;
         prev = {wp.x, wp.y};
+    }
+    if (const char* d = std::getenv("OS2_PLAN_DEBUG"); d && std::atoi(d) >= 3) { // the way planned
+        std::fprintf(stderr, "t%llu way of %d from (%.2f, %.2f, %d):", (unsigned long long)vm.ticks, me.id, me.position.x,
+                     me.position.y, me.position.level);
+        for (const auto& wp : path.points)
+            std::fprintf(stderr, " (%.2f, %.2f, %d%s)", wp.x, wp.y, wp.level, wp.portal >= 0 ? " portal" : "");
+        std::fprintf(stderr, "\n");
     }
     r.facing = r.facings.empty() ? -1 : r.facings[path.goal];
     // Person data 38 "route multi slot index": which of a bone slot's places
@@ -2028,40 +2066,58 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     return out;
 }
 
-// The object a blocking tile of `t` holds for the walker, as the planner
-// sees it (addObstacles: not a Sim, not in a slot, blocking routing, not
-// one of the route's own, nor one that lets the walker through, nor on a
-// stair landing), or 0.
-ObjectId tileBlocker(VM& vm, const Object& me, const Object::Route& r, TilePos t) {
+// The object whose footprint the walker's body would stand in at (x, y),
+// as the planner sees the objects (addObstacles: not a Sim, not in a slot,
+// blocking routing, not one of the route's own, nor one that lets the
+// walker through, nor on a stair landing), or 0. The body is a person's
+// footprint box (TSObjectBaseFootprintWidth: 0.2 tile), the objects' are
+// their routing footprints (the model's, or the OBJD box), on the 3x3 tiles
+// around (no footprint reaches further). OS2_TILE_FOOTPRINTS=1: the whole
+// tile the walker steps onto, as before.
+ObjectId footprintBlocker(VM& vm, const Object& me, const Object::Route& r, float x, float y, int level) {
     std::set<ObjectId> skip;
     for (ObjectId id : r.ignore)
         if (const Object* o = vm.object(id))
             skip.insert(multiTileGroup(*o));
     if (const Object* target = vm.object(r.target))
         skip.insert(multiTileGroup(*target));
-    for (ObjectId id : vm.objectsOnTile(t)) {
-        const Object* o = vm.object(id);
-        if (!o || id == me.id || o->person || !VM::blocksRouting(*o) || skip.count(multiTileGroup(*o)) ||
-            intersectionAllowed(vm, *o, me))
-            continue;
-        if (vm.world && std::any_of(vm.world->stairs().begin(), vm.world->stairs().end(),
-                                    [&](const Stair& s) { return s.bottom == t || s.top == t; }))
-            continue;
-        return id;
-    }
+    static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
+    const TilePos at{int(std::floor(x)), int(std::floor(y)), level};
+    constexpr float kHalf = 0.1f;
+    for (int dx = -1; dx <= 1; ++dx)
+        for (int dy = -1; dy <= 1; ++dy) {
+            if (wholeTiles && (dx || dy))
+                continue;
+            const TilePos t{at.x + dx, at.y + dy, level};
+            for (ObjectId id : vm.objectsOnTile(t)) {
+                const Object* o = vm.object(id);
+                if (!o || id == me.id || o->person || !VM::blocksRouting(*o) || skip.count(multiTileGroup(*o)) ||
+                    intersectionAllowed(vm, *o, me))
+                    continue;
+                if (vm.world && std::any_of(vm.world->stairs().begin(), vm.world->stairs().end(),
+                                            [&](const Stair& s) { return s.bottom == t || s.top == t; }))
+                    continue;
+                if (wholeTiles)
+                    return id;
+                for (const auto& f : vm.routingFootprint(*o))
+                    if (f[0] < x + kHalf && x - kHalf < f[2] && f[1] < y + kHalf && y - kHalf < f[3])
+                        return id;
+            }
+        }
     return 0;
 }
 
 // What the walker would stand in at `to` (TSObjectCanSetPosition with error
 // 0x0C "intersects object", whose object LocoPlaceFromSceneGraph makes the
-// blocker), or 0: another Sim, or an object on the tile it steps onto.
+// blocker), or 0: another Sim, or an object whose footprint it steps into.
 // Between two Sims (TestPlacementWithRespectToObject, BV 0x8ac158) a body is
 // a point: the step is refused when the two centres come within 0.283
 // (0x274b968), whatever their ages; the Sim walked to has no exception.
-// Person data 68 ("Ghost Flags") with bit 0x02 skips the test. Inferred:
-// the objects as the tiles the planner keeps off; a walker already standing
-// in the other (or in a blocking tile) may walk on (LocoPlace puts it where
-// it is stuck when its own place does not pass either).
+// Person data 68 ("Ghost Flags") with bit 0x02 skips the test. The objects:
+// the person's footprint box against their routing footprints
+// (footprintBlocker). Inferred: a walker already standing in the other (or
+// in an object's footprint) may walk on (LocoPlace puts it where it is stuck
+// when its own place does not pass either).
 constexpr float kPeopleApart = 0.283f;
 ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, float y, int level) {
     if (me.person && me.person->data.size() > 68 && (me.person->data[68] & 0x02))
@@ -2090,10 +2146,12 @@ ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, 
             continue;
         return id;
     }
+    static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
     const TilePos to{int(std::floor(x)), int(std::floor(y)), level};
     const TilePos from = VM::tileOf(me);
-    if (!(to == from) && me.position.inWorld())
-        if (const ObjectId id = tileBlocker(vm, me, r, to); id && !tileBlocker(vm, me, r, from))
+    if (me.position.inWorld() && (!wholeTiles || !(to == from)))
+        if (const ObjectId id = footprintBlocker(vm, me, r, x, y, level);
+            id && !footprintBlocker(vm, me, r, me.position.x, me.position.y, me.position.level))
             return id;
     return 0;
 }

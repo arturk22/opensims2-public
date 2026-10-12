@@ -1,5 +1,8 @@
 #include "path_planner.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+
 #include <algorithm>
 #include <cmath>
 #include <deque>
@@ -537,6 +540,8 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
     Point2 from = start;
     if (!free(startLevel, start)) {
         if (!escape(startLevel, start, from)) {
+            if (std::getenv("OS2_PLAN_DEBUG"))
+                std::fprintf(stderr, "plan: start (%.2f, %.2f, %d) bits %02X, no escape\n", start[0], start[1], startLevel, at(startLevel, start));
             why = RouteFail::PathNotFound;
             return false;
         }
@@ -618,6 +623,8 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
         specials.push_back({p.b, p.levelB, lb, -1, int(i), ia, false});
     }
     if (specials[0].leaf < 0) {
+        if (std::getenv("OS2_PLAN_DEBUG"))
+            std::fprintf(stderr, "plan: start (%.2f, %.2f, %d) in no square\n", from[0], from[1], startLevel);
         why = RouteFail::PathNotFound;
         return false;
     }
@@ -742,6 +749,19 @@ bool PathPlanner::plan(Point2 start, int startLevel, int goalLevel, const std::v
         }
     }
     if (found < 0) {
+        if (std::getenv("OS2_PLAN_DEBUG"))
+            std::fprintf(stderr, "plan: from (%.2f, %.2f, %d) bits %02X to %zu goals on %d (first (%.2f, %.2f)): searched, none reached%s\n",
+                         from[0], from[1], startLevel, at(startLevel, start), usable.size(), goalLevel, usable[0].p[0], usable[0].p[1],
+                         allLevels ? " (all levels)" : "");
+        if (const char* d = std::getenv("OS2_PLAN_DEBUG"); d && std::atoi(d) >= 2) // the cells, 1/8 tile each, 4 tiles round
+            for (int cy = int(from[1] * K) + 32; cy >= int(from[1] * K) - 32; --cy) {
+                std::fprintf(stderr, "  %6.3f ", float(cy) / K);
+                for (int cx = int(from[0] * K) - 32; cx <= int(from[0] * K) + 32; ++cx) {
+                    const uint8_t b = at(startLevel, {(float(cx) + 0.5f) / K, (float(cy) + 0.5f) / K});
+                    std::fputc(cx == int(from[0] * K) && cy == int(from[1] * K) ? 'S' : b & kWall ? '#' : b & kDoor ? 'D' : b & kNoFloor ? ' ' : b & kObjectCore ? 'O' : b & kObject ? 'o' : b ? '?' : '.', stderr);
+                }
+                std::fputc('\n', stderr);
+            }
         why = RouteFail::PathNotFound;
         return false;
     }

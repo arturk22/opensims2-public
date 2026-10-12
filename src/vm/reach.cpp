@@ -658,7 +658,11 @@ Exit snap(Context& c) {
     size_t best = goals.goals.size();
     for (size_t i = 0; i < goals.goals.size(); ++i) {
         const TilePos t{goals.goals[i].x, goals.goals[i].y, goals.level};
-        const bool free = !c.vm.world || c.vm.tileFree(t, ignore);
+        // The Sim's footprint at the goal against the objects' (TrySnap's
+        // TSObjectCanSetPosition); OS2_TILE_FOOTPRINTS=1: the goal's tile.
+        static const bool wholeTiles = std::getenv("OS2_TILE_FOOTPRINTS") != nullptr;
+        const bool free = !c.vm.world || (wholeTiles ? c.vm.tileFree(t, ignore)
+                                                     : c.vm.pointFree(goals.points[i][0], goals.points[i][1], goals.level, ignore));
         if (free && (best == goals.goals.size() || goals.goals[i].cost < goals.goals[best].cost))
             best = i;
     }
@@ -681,6 +685,11 @@ Exit snap(Context& c) {
     me.data[objdata::SlotNumber] = -1;
     if (!(me.route && me.route->inPortal)) // a portal tree moves the walker
         me.route.reset();
+    else // and the walk goes on from where it puts it: the locomotor's frame
+         // stayed where the walker went into the portal (a modular stair's
+         // tree snaps it to the bottom; the walk cycle carried it back to the
+         // top's point on the lower level, N002_Lot2's Olive, walled in)
+        me.route->loco = Object::Route::Loco{};
     const Position from = me.position;
     const int fromDir = me.data[objdata::Direction];
     me.position = {goals.points[best][0], goals.points[best][1], goals.level};
