@@ -410,7 +410,8 @@ static void testInteractionGroupLeader() {
     check(pie.size() == 1 && pie[0].name == "Dormir" && pie[0].object == h.id, "the part's pie menu is the leader's");
 
     // A two-part crib without interaction groups: the master has the TTAB,
-    // the 0,0 part (sub index 0) stands for it, the 1,0 part has none.
+    // and every part whose tree table ID is -1 uses it
+    // (cTSObjectSelector::GetEffectiveTreeTableID).
     constexpr uint32_t kCribGroup = 0x7F000041;
     code.add(kCribGroup, 0x10, definition(4, 0x80, 0xC0B00000, 0, 1, 0xFFFF));
     code.add(kCribGroup, 0x11, definition(4, 0xFFFF, 0xC0B00001, 0, 1, 0));
@@ -422,8 +423,9 @@ static void testInteractionGroupLeader() {
     code.addInteractionStrings(kCribGroup, 0x80, ttas({"Put In Crib"}, {"Colocar no Berço"}));
     Object& c00 = vm.instantiatePart(kCribGroup, 0x11);
     Object& c10 = vm.instantiatePart(kCribGroup, 0x12);
-    check(interactionTable(vm, c00) && interactionTable(vm, c00)->instance == 0x80 && !interactionTable(vm, c10),
-          "a crib's 0,0 part has its master's interactions, the 1,0 part none");
+    check(interactionTable(vm, c00) && interactionTable(vm, c00)->instance == 0x80 && interactionTable(vm, c10) &&
+              interactionTable(vm, c10)->instance == 0x80,
+          "a crib's parts (tree table -1) have their master's interactions");
 }
 
 // Nested interactions: a "TV" whose interaction allows nesting (TTAB flag

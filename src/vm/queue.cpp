@@ -503,16 +503,16 @@ std::optional<InteractionTableRef> interactionTable(VM& vm, const Object& o) {
     if (!o.definition)
         return std::nullopt;
     uint16_t tt = o.definition->field(kObjdTreeTableId);
-    // A multi-tile part that leads its interaction group (OBJD interaction
-    // group < 0) without a table of its own uses its master's (the vehicles'
-    // 0,5 part; the master "Car - Career - Sedan" has the rides the riders
-    // push; inferred). Without interaction groups (0) the 0,0 part (sub
-    // index 0) stands for the object: the crib's parts have no table and
-    // "Interaction - Put In Crib - Subqueue" pushes the master's entries from
-    // the 0,0 part (inferred; the 1,0 part stays without one, so the ads are
-    // not counted twice).
-    const int16_t igroup = int16_t(o.definition->interactionGroup());
-    if (tt == 0xFFFF && (igroup < 0 || (igroup == 0 && o.definition->subIndex() == 0)))
+    // A tree table ID of -1 is the master's, for every part
+    // (cTSObjectSelector::GetEffectiveTreeTableID, BV 0x51d0e4, through
+    // GetMasterSelector; cTSObject::GetTreeTab 0xb017b4 -> the selector's
+    // GetTreeTable 0x51edf0): the vehicles' 0,5 part, the crib's parts, and
+    // the changing table's 0,0 part, whose lead "Change - Common -
+    // Subqueue" pushes the baby's entry 4 from ("Tree table not found
+    // (object 204)" on N002_Lot4 when only interaction-group leaders and 0,0
+    // parts without groups had it). Autonomy still takes each object once,
+    // through its interaction leader (CanChooseAutonomously 0xafea58).
+    if (tt == 0xFFFF)
         if (const uint16_t m = o.definition->masterId())
             if (auto mi = vm.code().masterDefinition(o.group, m))
                 if (const ObjectDefinition* md = vm.code().definition(o.group, *mi))
