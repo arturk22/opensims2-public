@@ -85,6 +85,18 @@ do painel (a aba da arte, da altura do painel, fica sob ele; o painel
 continua desenhado por cima) e fecha com o mesmo botão ou quando o painel
 fecha.
 
+Rodada 13 (passada 7 da QA): o painel do lote também abre Gráficos `0xA241`,
+Câmera `0xA245` e Créditos `0xA246` (antes só áudio e jogo). Sombras, Reflexos
+e Iluminação valem na hora: o mapa de luz do terreno do bairro é refeito ao
+mudar a opção (`HoodView::refreshLightMap`) e os planos de sombra dos objetos
+(`ObjectModel::Part::shadowPlane`) são pulados ao desenhar enquanto `guob` está
+desligado (reflexo e `specHighlights` já eram lidos a cada quadro). Esc no lote:
+fecha o menu de pie aberto (o Esc que o fechou não faz mais nada), depois a
+janela de opções aberta, e só então faz a ação do jogo (cancelar ferramenta,
+"Salvar?" ao voltar ao bairro). Sem tela: `--key escape`
+(`docs/screenshots/r13-options-shadows-hood.jpg`,
+`docs/screenshots/r13-options-graphics-lot.jpg`).
+
 ## 5. Sem tela
 
 `--click x,y`, `--right-click x,y` e `--wait <ticks>` formam um roteiro que

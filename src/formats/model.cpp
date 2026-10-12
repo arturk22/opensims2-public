@@ -541,8 +541,9 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
                 if (auto it = materials.find(mesh.name); it != materials.end())
                     if (it->second == kShadowOff || index.findByName(withSuffix(it->second, "_txmt"), kTypeTxmt))
                         part.material = it->second;
-                if (!graphicsOptions().guob && shadowPlane(mesh.name, part.material))
-                    part.material = std::string(kShadowOff);
+                // Kept whatever the Shadows option: the renderer skips these parts
+                // while the option has no guob, so changing it needs no reload.
+                part.shadowPlane = shadowPlane(mesh.name, part.material);
                 if (!mesh.bones.empty())
                     for (const auto& t : geometry.transforms)
                         part.bindPoses.push_back(

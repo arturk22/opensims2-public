@@ -20,6 +20,8 @@
 // fractions of the terrain (section 5).
 
 #include "formats/hood_lots.hpp"
+#include "formats/image.hpp"
+#include "formats/lighting_config.hpp"
 #include "formats/hood_terrain.hpp"
 #include "formats/neighborhood.hpp"
 
@@ -127,6 +129,10 @@ public:
     void reload();
     // The neighborhood's story after it was written (formats/hood_moves.hpp setDescription).
     void setDescription(const std::string& text) { hood_.description = text; }
+    // Rebuilds the terrain's light map after the Shadows option changed
+    // (graphicsOptions().heightMapShadows); the terrain shade the imposters
+    // took at load stays.
+    void refreshLightMap();
     // The neighborhood folder (the user's copy).
     std::filesystem::path folder() const { return hood_.package.parent_path(); }
 
@@ -136,6 +142,8 @@ public:
 private:
     hood::Neighborhood hood_;
     hood::Terrain terrain_, rawTerrain_;
+    std::optional<LightingState> lightState_;     // for refreshLightMap
+    RgbaImage lightLookup_, lightGradient_;
     hood::PlacementWorld place_;
     int plopOk_ = -1, plopBad_ = -1;
     hood::Occupants occupants_;

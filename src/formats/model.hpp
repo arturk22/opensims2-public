@@ -41,6 +41,7 @@ struct ObjectModel {
         std::string underlay;
         bool underlayFlat = false; // the underlay's average colour instead (a hairdo's scalp shows skin)
         std::vector<std::string> overlays;
+        bool shadowPlane = false; // a ground/wall shadow plane: drawn only while graphicsOptions().guob
     };
 
     // Alpha mask laid over the model's XY plane: value (x, y) sits at

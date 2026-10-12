@@ -639,7 +639,7 @@ UiScreen LiveUi::screen(int width, int height) {
             if (onSave)
                 onSave();
         });
-        for (const auto& [id, window] : {std::pair{0xA242u, 1}, std::pair{0xA243u, 2}}) // audio, game options
+        for (const auto& [id, window] : {std::pair{0xA241u, 3}, {0xA242u, 1}, {0xA243u, 2}, {0xA245u, 4}, {0xA246u, 5}}) // graphics, audio, game, camera, credits
             button(id, [this, window = window] {
                 if (onOptionWindow)
                     onOptionWindow(window);

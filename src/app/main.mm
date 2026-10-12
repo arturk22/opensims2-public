@@ -3334,8 +3334,17 @@ void unloadScene() {
     _held.insert(e.keyCode);
     if (e.isARepeat)
         return;
-    if (gPie && gPie->isOpen()) // any key (Shift sends no keyDown) cancels the pie menu
+    // Any key (Shift sends no keyDown) cancels the pie menu; Esc that did so does nothing more.
+    const bool pieWasOpen = gPie && gPie->isOpen();
+    if (pieWasOpen)
         gPie->close();
+    if (e.keyCode == kEscape && pieWasOpen)
+        return;
+    // Esc closes an open option window (Graphics, Audio...) before leaving the lot.
+    if (e.keyCode == kEscape && !gHood && gOptions && gOptions->active()) {
+        gOptions->closeWindow();
+        return;
+    }
     if (const int slot = cameraSlot(e.keyCode); slot >= 0) {
         if (e.modifierFlags & NSEventModifierFlagControl)
             _camera->savePosition(slot);
@@ -4448,6 +4457,21 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 if (st.kind == os2::FlowStep::Kind::Key) { // --key space
                     if (st.text == "space")
                         selectNextFamilySim();
+                    if (st.text == "escape") { // as keyDown: a pie menu or an option window first, else leave the lot
+                        const bool pieWasOpen = gPie && gPie->isOpen();
+                        if (pieWasOpen)
+                            gPie->close();
+                        std::printf("opensims2: key escape (pie %s, option window %d)\n", pieWasOpen ? "closed" : "was not open",
+                                    gOptions ? gOptions->window() : 0);
+                        if (pieWasOpen)
+                            continue;
+                        if (gOptions && gOptions->active()) {
+                            gOptions->closeWindow();
+                            continue;
+                        }
+                        if (gHoodLot && !(gPie && gPie->dialogOpen()))
+                            leaveLot();
+                    }
                     continue;
                 }
                 if (st.kind == os2::FlowStep::Kind::TutorialAuto) { // --tutorial-auto <turns>
@@ -4873,6 +4897,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             s.save(*gUser);
         gSettings.applyGraphics(); // for what loads next
         applyAudioSettings();
+        if (gHood) // Shadows: the terrain's light map is rebuilt now (the object shadow planes follow the option when drawn)
+            gHood->view().refreshLightMap();
     };
     if (gGameAudio)
         gHood->ui().options().playSound = [](const std::string& name) { gGameAudio->playUi(name); };

@@ -124,9 +124,8 @@ public:
     // cTSWinProcPanelOptions): "Vizinhança" leaves the lot for the
     // neighborhood (only shown when setCanLeave(true): the lot came from
     // one), "Sair" quits, "Salvar" saves (onSave), the audio and game
-    // options buttons open their windows (onOptionWindow: 1 audio, 2 game;
-    // app/options_panel.hpp). The graphics and camera options and the
-    // credits are not wired.
+    // options buttons open their windows (onOptionWindow: 1 audio, 2 game, 3 graphics, 4 camera, 5 credits;
+    // app/options_panel.hpp).
     std::function<void()> onNeighborhood, onQuit, onSave;
     std::function<void(int)> onOptionWindow;
     void setCanLeave(bool can) { canLeave_ = can, dirty_ = true; }

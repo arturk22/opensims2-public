@@ -247,6 +247,7 @@ struct Renderer::Part {
     // part of the source model, and vertices waiting to be copied in.
     std::array<MTL::Buffer*, kFramesInFlight> slots{};
     size_t source = 0;
+    bool shadowPlane = false; // skipped while graphicsOptions().guob is off
     std::vector<Vertex> pending;
     std::array<bool, kFramesInFlight> stale{};
     MTL::Buffer* indices = nullptr;
@@ -661,6 +662,7 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
         }
         p.vertices = device_->newBuffer(v.data(), v.size() * sizeof(Vertex), MTL::ResourceStorageModeShared);
         p.source = source;
+        p.shadowPlane = part.shadowPlane;
         if (dynamic) {
             p.slots[0] = p.vertices;
             for (size_t i = 1; i < p.slots.size(); ++i)
@@ -899,6 +901,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     const simd_float3 eye = simd_make_float3(f->eye);
     for (const auto& inst : instances_)
         for (const auto& part : models_[size_t(inst.model)]->parts) {
+            if (part.shadowPlane && !graphicsOptions().guob)
+                continue;
             const Material& m = part.material;
             const bool blended = m.blend != StandardMaterial::Blend::None;
             float distance = 0;

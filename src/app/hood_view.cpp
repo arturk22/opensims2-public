@@ -196,6 +196,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     const RgbaImage gradient = readTexture(index, "neighborhood-underwater-gradient_txtr");
     RgbaImage lightMap; // (the imposters take its shade, below)
     if (state) {
+        lightState_ = *state, lightLookup_ = lookup, lightGradient_ = gradient;
         const RgbaImage& lm = lightMap = hood::computeHoodLightMap(terrain_, *state, lookup, gradient,
                                                                       graphicsOptions().heightMapShadows ? kNHoodShadowStrength : 0.0f);
         renderer.setLightMap(0, lm);
@@ -712,6 +713,15 @@ std::optional<simd_float2> HoodView::groundAt(simd_float3 origin, simd_float3 di
         prev = t;
     }
     return std::nullopt;
+}
+
+void HoodView::refreshLightMap() {
+    if (!lightState_ || !renderer_)
+        return;
+    const RgbaImage lm = hood::computeHoodLightMap(terrain_, *lightState_, lightLookup_, lightGradient_,
+                                                   graphicsOptions().heightMapShadows ? kNHoodShadowStrength : 0.0f);
+    renderer_->setLightMap(0, lm);
+    renderer_->setLightMap(1, lm);
 }
 
 void HoodView::reload() {
