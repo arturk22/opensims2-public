@@ -880,12 +880,29 @@ objeto e cada trecho, `nTSSG::cObject::ComputeWallCutoutLocators` (BV
 
 ```
 <base>_<dx>_<dy>_<nível>_<dir>_wallMask
-   base = nome "objectCutout" da extensão de dados do CRES do objeto
+   base = STR# 0x85 (nomes de modelo) do objeto, entrada (tag 0xCC + 1)
    dx = "%dE"/"%dW"/"0", dy = "%dN"/"%dS"/"0" (deslocamento do trecho em relação ao objeto)
    dir ∈ S W N E NW SE SW NE   (o lado/diagonal do trecho)
 ```
 Ex. nos dados: `windowdesigner_1e_0_1_n_wallmask_txmt`,
-`doorclub2diagonal_1e_1n_0_nw_wallmask_txmt`. `SetWallCutout` passa o nome
+`doorclub2diagonal_1e_1n_0_nw_wallmask_txmt`.
+
+**Correção (rodada 12):** a `base` **não** é o "objectCutout" do CRES (só as
+5 pias de bancada têm essa propriedade, para o recorte do tampo).
+`ComputeWallCutoutLocators` (BV `0x6612d8`) monta um texto de recurso
+(`0xda590`: STR# `0x85`, índice = `GetFieldByTag(0xCC)` do objeto + 1,
+língua 1) e usa esse texto; se for vazio, não há recorte. Nos dados o STR#
+0x85 de portas e janelas é `["", "<nome do modelo sem _cres>"]` (ex.
+`windowQuaint`, `windowQuaintDiagonal`), então a base é a entrada 1 (tag
+0xCC = 0, inferido: o índice do modelo atual). Com essa base, **os 100
+grupos de OBJD "Window…"/"Door…" do `objects.package` têm os TXMTs
+`…_wallmask`** (453 nomes de máscara nos dados; 91 conferidos pelo nome
+exato, os outros 9 também existem com o prefixo de tamanho na varredura).
+O pré-teste `nTSWorld::ObjectHasWallCutouts` (BV `0x16a064`): a máscara de
+lados (vtable `0x27c`) do objeto ou, se for multi-tile (vtable `0x19c`), de
+alguma parte, > 0. Para cada parte e cada lado da máscara: dx/dy = posição
+da parte menos a do objeto líder, nível = nível da parte + 1, e o nome vai
+para `cWallManager::SetCutoutMaterial`. `SetWallCutout` passa o nome
 ao `cWallManager::SetCutoutMaterial` (BV `0x6c5d6c`), que troca o material
 daquela face pelo TXMT da máscara (alfa = buraco). Ao apagar uma parede, os
 objetos presos a ela são vendidos (§7.2), portas e janelas inclusive.
