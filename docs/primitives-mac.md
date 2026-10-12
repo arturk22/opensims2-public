@@ -1594,9 +1594,11 @@ o bit 0x04 do byte 2); a **tabela = byte 6**:
   da idade (abaixo), entrada = índice; se a animação não existe, tenta de
   novo com a tabela "de reserva" (`retry`).
 - outro valor: a tabela é o **STR# com esse número**, procurado
-  (`FindSpecificName`, BV `0x690700`) **no objeto do stack object** (ou, com
-  o bit 0x10 do byte 8, no objeto que o Sim está usando) e, se a entrada
-  estiver vazia, **no semi-global desse objeto**; o nome final é o
+  (`FindSpecificName`, BV `0x690700`) **no objeto da árvore que roda**
+  (correção da rodada 16: o seletor vem da árvore do frame, não do stack
+  object; §4g "Rodada 16 (autonomia e erros)") (ou, com o bit 0x10 do byte 8, no objeto que o
+  Sim está usando) e, se a entrada estiver vazia, **no semi-global desse
+  objeto**; o nome final é o
   **prefixo + a entrada**, e só vale se a animação existe. Se falhar, tenta
   com a tabela de reserva, e por fim `FUN_0068bcb0` troca a letra da idade
   do prefixo pelas alternativas (`d`, `f`, `w`, `l`, `k`).
@@ -2493,9 +2495,8 @@ monte na mão (`Interaction - Dispose - NEW` → `Object in Hand - Get ID` falso
 `0xae24e4`, recusa só pelo dado de objeto 6 que a check tree deixa, bit
 `0x200` da interação; o dado 50 só esconde do menu). Com a ordem estável o
 Dustin (`N001_Lot36`, semente 1) escolheu o Dispose 20 vezes seguidas; com o
-`qsort` do Mac, 2 vezes e depois "Limpar". Inferido: a ordem em que os
-candidatos entram (no binário vêm de uma tabela hash de objetos com anúncios;
-aqui por ID do objeto e ordem do TTAB). A memória de falhas da autonomia
+`qsort` do Mac, 2 vezes e depois "Limpar". A ordem em que os
+candidatos entram foi lida na rodada 16 (§4g "Rodada 16 (autonomia e erros)"). A memória de falhas da autonomia
 (`GetAutonomyBias`) continua desligada como no binário.
 
 **Limite de nós por turno** (`cTSTreeSim::DoNodeAction`, BV `0xe1b3xx`): o
@@ -2506,6 +2507,92 @@ autonomy` usava 20000: o "Controller - Relationship Decay" do `N003_Lot192`
 normaliza todo Sim da casa contra todo vizinho num tick (22.798 nós no tick
 77371, semente 2) e era reiniciado. O `s2pkg autonomy` usa agora 100000
 (`S2PKG_BUDGET=n` muda).
+
+### Rodada 16 (autonomia e erros): a ordem dos candidatos, as listas de animação e as tabelas de árvores
+
+**A ordem dos candidatos do Find Best Interaction** (`FBA_FindStaticInteractions`,
+BV `0xad4130`). O módulo de objetos guarda **13 × 16 tabelas hash** de objetos
+com anúncios (`GetObjectsWithAdsForMotiveSet`, `0x5268c4`: `this + 8 + grupo ×
+0x140 + motivo × 0x14`; o grupo é a idade/espécie da pessoa, vtable `0x5b4`),
+preenchidas por `AddOrUpdateObjectInObjectsByMotiveAds` (`0x531098`): para
+cada entrada do TTAB que anuncia o motivo para o grupo (vtable `0xe0` da
+entrada), o índice da entrada vai para a lista do objeto naquela tabela,
+em ordem crescente. O objeto só entra se `CanChooseAutonomously` (`0xafea58`:
+tipo ≠ 7, é o próprio líder de interação, `GetInteractionLeader`, e tem
+alguma entrada). Na busca: **motivo a motivo da máscara, do bit 0 ao 15**;
+dentro do motivo, os objetos na ordem da tabela hash; e para cada objeto
+`cEdithObjectTestSim::AppendInteractionsForAuto` (`0x4ca54c`) **anda na lista
+de entradas de trás para frente** (a última primeiro). Um par entrada/objeto
+já pontuado não é pontuado de novo (`SetLastCheckTreeCheck`, `0x49f9a4`: por
+entrada, um vetor indexado pelo ID do objeto com o "tick" e o ID de quem
+procura). Os candidatos dinâmicos (strings de ação das check trees) são
+pontuados em `FBA_ScoreDynamicInteractions`, **depois de todos os
+estáticos**, e entram depois deles no vetor do `qsort`.
+
+A tabela hash (`hashtable<tobjectWithAdsInfo, ObjectAdsRefHash>` do SGI STL)
+tem como chave o **ponteiro do `cITSObject`**: o balde é o ponteiro módulo o
+número de baldes (primos 53, 97, 193…; `insert_unique_noresize` `0x16d6948`
+põe na frente do balde; `resize` `0x16d6264`). Essa ordem depende dos
+endereços do heap e não dá para reproduzir; **o VM usa a ordem dos IDs**
+dentro de cada motivo (inferido como substituto). O resto é o do binário:
+motivo a motivo, entradas de trás para frente, dinâmicos depois. Efeito: com
+o `qsort` (inserção abaixo de 7 itens) duas entradas de anúncios iguais do
+mesmo objeto empatam e **a de índice maior ganha** ("Limpar", entrada 1, antes
+de "Jogar Fora", entrada 0, no monte de lixo).
+
+**Listas de animação: de que objeto** (`try_animate_sim` `0x69d634`,
+`try_animate_overlay` `0x69ea54`). Para uma lista ≠ 0x80, o seletor vem do
+elemento da pilha: `cTSTreeStackElem` vtable `0x50` devolve o campo `+0x20`,
+que é **a árvore** (o `Write` `0xe185dc` grava o `+0x0A` = ID do stack object,
+o `+0x0C` = nó, `+0x18/+0x1A` = rodando como/sobre, e o `+0x20` pelo
+`cITSBehaviorFinder`); a árvore → o seu `cITSBehavior` (vtable `0x94`) →
+`cTSObjectFolder::GetSelectorByBehavior` (`0x4e56b8`). Cada tipo de objeto tem
+o seu `cTSBehavior` (com os arquivos privado, semi-global e global), então é o
+**tipo do dono do código** (ou o grupo de uma árvore privada rodada para outro
+objeto, como uma árvore de evento). O `FindSpecificName` lê a entrada da
+lista desse seletor e, **só se ela for vazia**, a do semi-global. O VM lia
+primeiro a lista do stack object: o "Event - Sit Carry - Trans Stand - Start"
+de um copo (grupo `0x7F31DF4D`), com o Sim num banco de bar, pegava a entrada
+9 do banco, o rótulo " ~Get Out", em vez de "a2o-trans-drinkCarry-SlotIKpose".
+**As linhas "~" não são puladas**: `cTSAnimTable::GetEntry` (`0x594c6c`) é o
+índice + 1 na tabela de strings, sem filtro; `MakeLower` também não as trata.
+As buscas por "~Spine Overlays", "~Snooze Animations" e "~Get Out" vinham
+todas da lista errada e sumiram (8 lotes semeados), junto com os
+"a-spine-bend-chair*" e "a-deadPose" que faltavam.
+
+**Overlay da lista global** (0x80): `try_animate_overlay` chama o
+`FindGlobalName` (vtable `0x3c8`) **no seu próprio `cAnimatable`**, então a
+tabela é a da idade de quem roda a primitiva; as outras listas vão pelo
+`DetermineAppropriateAnimTable` com a pessoa alvo. O "CT - Route Failure
+Feedback - Animation" (global `0x3A8`, nó 56) toca a entrada 90 no bebê no
+colo (temp 0x0E): a lista adulta tem "b2a-routeFail-carry-baby" ali; a do
+bebê (0x91) tem ".". O VM usava a idade do bebê e cada falha de rota com o
+bebê no colo reiniciava o Main do adulto ("Animation name is empty string";
+`N002_Lot4`, `N001_Lot36`).
+
+**Tabela de árvores de partes de multi-tile**: `cTSObject::GetTreeTab`
+(`0xb017b4`) → `cTSObjectSelector::GetTreeTable` (`0x51edf0`) com o ID de
+`GetEffectiveTreeTableID` (`0x51d0e4`): **campo 7 = −1 → o do seletor mestre**
+(`GetMasterSelector`), para qualquer parte, com ou sem grupo de interação. O
+VM só dava a tabela do mestre a líderes de grupo e às partes 0,0 sem grupo: o
+"Change - Common - Subqueue" do trocador põe o stack object no tile líder (a
+parte 0,0, grupo de interação 1) e empurra dele a entrada 4 para o bebê
+("Tree table not found (object 204)", `N002_Lot4`); o "Party Break-Up - Try
+Push Turn Off Stereos" do policial falhava igual (`N003_Lot192`). Com isso
+cada assento de sofá e cada parte do berço oferece as interações (o jogo
+também abre o menu em qualquer assento); na autonomia cada objeto entra uma
+vez pelo líder de interação.
+
+**Threads de objetos removidos**: o VM matava a thread de um objeto
+removido "na próxima vez que rodasse", mas se o ID já tinha ido para um
+objeto novo ela seguia como ele (o controlador do ônibus escolar do
+`N003_Lot192` seguia no ônibus criado com o mesmo ID: "tree 0x1008 not
+found" a cada tick). Agora cada objeto tem um número de série e a thread
+guarda o de quem a começou (do VM, não do binário, que não reusa IDs assim).
+
+**Limite de nós**: todos os comandos do `s2pkg` que rodam o VM usam os 100000
+nós por turno do binário (`cli/s2pkg/budget.hpp`; antes 20000 fora do
+`autonomy`).
 
 ## 4h. Rodada 15 (front "vm-confirm"): o que era inferido na VM
 
