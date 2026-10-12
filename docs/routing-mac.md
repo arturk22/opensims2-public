@@ -168,8 +168,26 @@ achou e está a menos de 2 passos (ou no fim do caminho): estado
 ```
 
 Ou seja, o "bloqueado" do locomotor é **previsto** (até ~10 passos à
-frente), não um contato: o Sim para antes de encostar. Ao parar, a
-desaceleração usa 5 ticks (ou 100 se a velocidade passa de 0,25).
+frente), não um contato: o Sim para antes de encostar. **Corrigido na rodada
+14** (front "walking2", vtable do `cLocomotable` lida: `0x41c`
+`LocoPlaceFromSceneGraph`, `0x428` `ComputeTurn`, `0x42c` `CreateLocoRequest`,
+`0x430` `FollowOneStep`, `0x434` `EndFollow`, `0x438`
+`InterruptActiveLocoState`, `0x43c` `CopyActiveLocoStateToEndingLocoState`,
+`0x440` `MarkActiveLocoStateAsCompleted`, `0x44c`–`0x454` `Begin*Path`,
+`0x478` `EstimateWhenPathWillBeBlocked`, `0x47c` `EstimateDistanceToBlocker`):
+o "bloqueado" do `CollisionCheck` é `InterruptActiveLocoState(2)` (BV
+`0x6b4fa0`): com velocidade > 0 ele chama `cActiveAnimLoco::StopLocomotion`
+(BV `0xd2f9b4`, "parada forte"), que acha o clipe de parada do pé em que o
+ciclo está (porção 0 ou 0,5) e o toca de onde o Sim está, com a velocidade
+caindo numa função de mistura sobre a distância da parada; o estado vai a 6
+e só passa a 7 ("bloqueado", `FollowOneStep` devolve 0 → `DoBlocked`) quando
+esse pedido termina. **A desaceleração é esse clipe de parada.** Os 5/100 do
+`FollowOneStep` não são desaceleração: quando a fase ativa entrega para a
+seguinte (`CopyActiveLocoStateToEndingLocoState`, a fase velha acaba de
+tocar como "ending"), a próxima `Begin*Path` começa em agora − 5 ms (ou
+− 100 ms com velocidade > 0,25), para as duas se sobreporem; isso só
+acontece se `EstimateWhenPathWillBeBlocked` não vê bloqueio (e não com
+caminho ≤ 0,5 e ≥ 40 ms de clipe ainda).
 
 **Bloqueado** (`DoBlocked`, BV `0x5762a4`): pergunta à rota quem bloqueia
 (vtable `0x1A8`, ID do objeto):
@@ -289,8 +307,8 @@ fim** (`+0x1a0`, para olhar na direção final). `FollowOneStep` (chamado no
 
 Cada fase zera a velocidade/ciclo (`+0x1b4`/`+0x1b8` = −1) e passa a
 direção (`+0x1c0` ← a direção do fim da fase anterior). Ao parar antes do
-fim (bloqueio previsto), a desaceleração é de 5 ticks, ou 100 com
-velocidade > 0,25 (§6).
+fim (bloqueio previsto) o passo toca um clipe de parada (§6, rodada 14: os
+5/100 ms são o começo antecipado da fase seguinte, não uma desaceleração).
 
 **Velocidade e estilo de andar** (`BeginFollow` e a velocidade do conjunto,
 `cLocoSet` vtable `0x3c` = `FUN_00d0c444`, lidos na rodada 13 do front
@@ -307,8 +325,8 @@ Here" põe 116 = 8 e 117 = 80 (o furtivo), "Skip Here" 7 e 75 (o saltitante),
 `k` com `k = 0` ou `w[k] > 0,01`, `v[k]` = velocidade (ANIM `velocity` ×
 1000, m/s) do recurso do tipo `100 + k` do conjunto; `v = Σ v[k]·w[k] /
 Σ w[k]` (só os `w[k]` com `v[k] > 0`); sem nenhum, `v[0]` (1,75 se nem isso).
-O jogo **mistura** os ciclos pelos pesos; o opensims2 toca o ciclo de maior
-peso (simplificação visual, inferida) com a velocidade misturada.
+O jogo **mistura** os ciclos pelos pesos (`cLocoCycle`); desde a rodada 14 o
+opensims2 também (ver "Feito na rodada 14").
 
 **Correr**: o dado de objeto **17** ("walk style" no STR# `0x8D`) = 1 corre:
 `BeginFollow` pega então o conjunto de corrida (as strings 3–5 do bloco, em
@@ -342,7 +360,20 @@ anti-horária toca o clipe horário espelhado.
 
 **A raiz dos clipes** (medida com `s2pkg anim-root`): os ciclos de andar são
 no lugar (raiz parada em y; o quadro anda na velocidade do cabeçalho, e é
-nela que o pé de apoio desliza menos: 0,10 m/s contra 0,38 com ±20%). O
+nela que o pé de apoio desliza menos: 0,10 m/s contra 0,38 com ±20%).
+
+**As unidades da corrida (rodada 14, verificado):** a velocidade do conjunto
+(`FUN_00d0c444`) é o `velocity` do ANIM × 1000: o cabeçalho dá metros por
+tick de animação (1 ms), então m/s; a curva (`cPath`) e a raiz andam em
+unidades do mundo, e 1 tile = 1 m (a pelve do esqueleto em repouso a 1,0, o
+passo do andar 1,39 m por ciclo de 0,69 s). O `s2pkg anim-root` mostra o pé
+de apoio parado (0,04 m) na velocidade do cabeçalho da corrida, 8,31 m/s
+(4,36 m em 0,525 s; criança 5,8; `runShort` 4,0), e o andar a 2,02 m/s. Ou
+seja, 8,3 tiles/s é a corrida do jogo (4× o andar), não um erro de unidade;
+o opensims2 já usa tiles por segundo sobre os ticks por segundo da VM, e
+nada mudou. (O `CreateStepCycle` multiplica a velocidade dos clipes
+misturados por 1,4 antes do × 1000 ao montar o pedido; para que serve esse
+1,4 não foi lido.) O
 `turnAndGo-N` começa com o corpo virado +N em relação ao quadro e termina no
 quadro (o quadro já sai na direção nova; a raiz atrasa até 0,15 m atrás dele
 e alcança); o `turnAndStop-N` começa no quadro e termina virado −N; o
@@ -392,13 +423,61 @@ planner, a previsão do `CollisionCheck` já os mantém a 0,5), quem já está
 dentro pode sair, o Sim alvo da rota não bloqueia; objetos não são testados
 por passo. Medido (`OS2_DEBUG_LOCO=1`, `s2pkg pie ... here:x,y`): no começo
 e no andar o quadro anda na velocidade do clipe (desvio 0,001–0,003 m/s); a
-parada esticada sobre o que falta desliza até ~0,1 m/s. Inferidos/simplificados:
-a curva é a poligonal cortada a cada 0,2 (o jogo usa uma curva suave e mistura
-os clipes de 45° pelo ângulo, `cActiveAnimLoco::CreateStepCycle`), o
-`walkShort` não é usado, a desaceleração ao bloquear (5/100 ticks) é uma
-parada seca (o Sim volta a começar com `turnAndGo`). Captura:
+parada esticada sobre o que falta desliza até ~0,1 m/s. Captura:
 `docs/screenshots/r13-locomotor.jpg` (Don em N001_Lot16 virando 180° no
 `turnAndGo-alt-180` espelhado, andando e parando com `turnAndStop-alt-0`).
+
+**Feito na rodada 14 (front "walking2")** (`routing.cpp` `locoStep`/
+`blendedClip`/`stepBlocker`/`tileBlocker`, `locomotion.cpp` `gaitOf`,
+`sim_motion.cpp`, `lot_vm.cpp`, `anim_player` `Options::rate`; testes
+`test_routing` `testLocoBlend`/`testLocoHalt`):
+
+- **Mistura por ângulo** (`cActiveAnimLoco::CreateStepCycle`, BV `0xd2bf28`,
+  lido): o ângulo pedido vai ao clipe do conjunto em passos de 45° (a regra
+  de ±40°); se sobra mais de 0,01 rad, o clipe 45° adiante na direção da
+  sobra entra com peso |sobra|/(π/4) e o primeiro com 1 − isso. Feito para
+  o começo (`turnAndGo[Short]`, `stepShort`) e a parada (`turnAndStop[Short]`):
+  duração, distância, raiz e virada são as dos dois pesadas; o desenho toca
+  os dois como camadas do mesmo nível com os pesos, cada um na sua
+  velocidade sobre a duração da mistura (e o `@1.5`/`@2.75` da corrida, que
+  antes o desenho ignorava).
+- **Ciclos de andar misturados** pelos pesos dos dados 112–117 (normalizados),
+  cada um tocado na sua duração sobre a duração pesada (os pés em passo); a
+  velocidade como antes. Inferido: o mais pesado é a camada de base.
+- **`walkShort`/`runShort`** (meio passo, ~1 m/s): usados quando o que sobra
+  da rota depois do começo, menos a parada, é menor que uma passada do ciclo
+  normal (inferido; o binário compara distâncias de passada em
+  `ComputeForwardWeightFromTurnDistance`/`ComputeTurnDistanceFromStride`,
+  não decodificados por inteiro).
+- **Curva**: o quadro anda numa Catmull-Rom pelos pontos da rota (cortados a
+  cada 0,2), por comprimento de arco; a direção é a tangente. Inferido: o
+  `cPath` do jogo usa uma estratégia cúbica (`cPathStrategyCubic`) cujos
+  coeficientes não foram lidos.
+- **Parada ao bloquear** (`StopLocomotion`): o passo bloqueado (previsto ou
+  pelo teste por passo) toca `turnAndStop` de 0° do pé em que o ciclo está,
+  de onde o corpo está, o quadro andando no máximo 2 passos (previsto) ou
+  nada (o próximo passo já entraria), e parado onde o lugar seguinte está
+  tomado; acabado o clipe, a rota segue para o `DoBlocked` com aquele
+  bloqueador (sumido: segue andando).
+- **Teste por passo contra objetos**: o tile para onde a raiz entra não pode
+  ter objeto que o planner evita (os mesmos critérios do `addObstacles`: não
+  os da rota, nem o alvo, nem quem deixa passar, nem os de patamar); quem já
+  está num tile assim pode sair. Um objeto bloqueador falha a rota com **15**
+  (`blocked by object`, o ramo "não é pessoa" do
+  `DoBlockedGoalStillAvailable`). Inferido: o corpo do objeto como o tile.
+- Medido (`OS2_DEBUG_LOCO=1`, que agora mostra as camadas e a parada): no
+  andar o quadro anda na velocidade da mistura (desvio 0,003 m/s); as
+  esquinas viram em ~4 ticks em vez de num tick; a parada misturada desliza
+  ~0,02–0,06 m/s. Captura: `docs/screenshots/r14-locomotor-mistura.jpg` (Don
+  em N001_Lot16: começo, ciclos `walkShort` alt1/alt0 a 0,75/0,25, parada
+  `turnAndStop` 0°/45° a 0,82/0,17).
+- **As mortes do merge do andar** (bisect da rodada 13 em 9d7607c): são
+  incêndios do fogão sem detector de fumaça ("Fogo!" por horas, depois
+  "Falecer"), e variam só com a semente: com `OS2_SEED` 1–6 em N001_Lot68 +
+  N002_Lot10, antes do andar (98c5c85) 31 mortes, com o andar (main 67de446)
+  18, sem o teste por passo 16, com o teste do caf8207 21, com esta rodada
+  22. O teste por passo
+  não as causa; o "1 contra 8" do bisect é a sorte de uma semente.
 
 ## 7. Códigos de falha (binário + `STR#` 0xF1 "route results")
 
