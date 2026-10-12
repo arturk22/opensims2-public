@@ -111,6 +111,18 @@ public:
     // walls (attic walls go with deleteTool roof).
     Result drawRoof(int level, int x0, int y0, int x1, int y1, uint32_t type);
     Result deleteRoof(int level, float x, float y);
+    // Auto-roof (cTSUserToolAutoRoof::CreateAutoRoof -> CreateAutoRoofs per
+    // level, docs/buy-build-mac.md §7.12): on each level the tiles of the
+    // rooms below (the light rooms) whose tile above is no room, has no floor
+    // and no roof yet, cut into rectangles row by row (ComputeRoofRects), each
+    // a roof of a type chosen by the tool and the rectangle's shape (tool 1:
+    // hip; 2: long gable; 3: hip if not deeper than wide, else long gable;
+    // 4: short gable if shallower than wide, else long gable); tool 5 (the
+    // tiled slab) lays the roof floor pattern ("CCC26098") there instead.
+    // Unless `preserve`, the roofs the tool made before go first. Free.
+    Result autoRoof(int tool, bool preserve);
+    // Every roof goes (C300 "Remover Telhado"; with their attic walls).
+    Result removeRoofs();
     // Roof patterns (cTSUserToolUndoableRoofPattern::SetRoofPatternProduct):
     // every roof of the lot takes the pattern (catalog GUID). Free.
     Result setRoofPattern(uint32_t guid);
@@ -261,6 +273,7 @@ private:
     Lot& lot_;
     const BuildCatalog* catalog_ = nullptr;
     std::vector<Op> undo_, redo_;
+    std::set<uint32_t> autoRoofs_;  // roof IDs the auto-roof tool made
     std::vector<RoomMerge> merges_; // rooms the walls removed since the last changed() joined
     std::map<std::string, int> prices_; // patterns laid this session, by lot name
     std::vector<Stair> loadedStairs_;   // the world's stairs from the lot's cObjects

@@ -135,11 +135,15 @@ public:
     // Called every frame: the previews follow the tool.
     void update();
 
+    // The auto-roof panel (0xAC, B950): tool 1-5 (C100 hip, C200 gable,
+    // C500/C600 the mixes, C700 the tiled slab), 0 removes every roof (C300).
+    vm::BuildEditor::Result autoRoof(int tool);
     // The category (0xA?00 button, 1-10) and subsort button shown; for tests.
     void openCategory(int category, int subsort = 0);
 
 private:
-    enum class Action { None, Category, Subsort, Back, Prev, Next, Item, Hand, Undo, Redo, Design, DayNight };
+    enum class Action { None, Category, Subsort, Back, Prev, Next, Item, Hand, Undo, Redo, Design, DayNight, AutoRoof };
+    bool preserveRoofs_ = false; // C400 "Preservar Telhados Existentes"
     // One step of Build mode's history (cTSUserToolUndoManager): a change of
     // the editor's (walls, floors, ...: its own undo), an object the object
     // tool bought (a door, window or staircase), or a design choice.

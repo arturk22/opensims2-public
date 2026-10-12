@@ -332,9 +332,9 @@ static void testRoof() {
     lot.levelCount = 2;
     lot.elevations.resize(13 * 11 * 2, 3.0f);
     lot.floors.resize(12 * 10 * 2);
-    lot.rooms.resize(12 * 10 * 2);
+    lot.rooms.assign(12 * 10 * 2, {0, 0, 0, 0}); // outdoors (auto-roof reads the rooms)
     for (auto& [k, l] : lot.roomLayers)
-        l.resize(12 * 10 * 2);
+        l = lot.rooms;
     CodeLibrary code;
     VM vm(code);
     vm.globals[global::BudgetMod10000] = 5000;
@@ -355,6 +355,19 @@ static void testRoof() {
     for (const auto& w : lot.walls)
         attic += w.type == Lot::Attic;
     check(r.ok && lot.roofs.empty() && attic == 0, "the attic walls go with the roof");
+
+    // Auto-roof: the room (6 x 3 tiles, wider than deep) gets one rectangle.
+    r = ed.autoRoof(3, false);
+    check(r.ok && lot.roofs.size() == 1 && lot.roofs[0].type == Lot::Hip && lot.roofs[0].x0 == 2 &&
+              lot.roofs[0].x1 == 8 && lot.roofs[0].y0 == 2 && lot.roofs[0].y1 == 5,
+          "tool 3 puts a hip roof over a room no deeper than wide");
+    r = ed.autoRoof(4, false);
+    check(r.ok && lot.roofs.size() == 1 && lot.roofs[0].type == Lot::ShortGable,
+          "the tool's earlier roofs go; tool 4 makes a short gable over a wide room");
+    r = ed.autoRoof(1, true);
+    check(r.ok && lot.roofs.size() == 1, "preserving: the roofed room gets nothing more");
+    r = ed.removeRoofs();
+    check(r.ok && lot.roofs.empty(), "C300 removes the roofs");
 }
 
 static void testPool() {

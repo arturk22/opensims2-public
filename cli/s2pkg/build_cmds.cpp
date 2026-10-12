@@ -132,7 +132,7 @@ bool isBuildEdit(const std::string& flag) {
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
            flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
-           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--build-undo" || flag == "--build-redo";
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--build-undo" || flag == "--build-redo";
 }
 
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
@@ -182,6 +182,9 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                                      std::to_string(part.tile.level) + ")";
             if (r.ok && vm.world)
                 r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
+        } else if (flag == "--auto-roof") { // tool 1-5 (0: remove the roofs)[,keep]
+            const int tool = num(f, 0, 1);
+            r = tool == 0 ? editor.removeRoofs() : editor.autoRoof(tool, f.size() > 1 && f[1] == "keep");
         } else if (flag == "--design") {
             // The Design tool (app/design_tool.hpp): id,subset=material,...
             // for the §15 of the tool; each material must be a choice of the

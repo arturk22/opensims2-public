@@ -496,6 +496,14 @@ bool BuildMode::redo() {
     return ok;
 }
 
+vm::BuildEditor::Result BuildMode::autoRoof(int tool) {
+    pressSound(Tool::Roof, false);
+    const auto r = tool == 0 ? editor_->removeRoofs() : editor_->autoRoof(tool, preserveRoofs_);
+    releaseSound(Tool::Roof, false, r);
+    applied(r);
+    return r;
+}
+
 void BuildMode::selectDesignTool() {
     cancel();
     design_->cancel();
@@ -1207,12 +1215,18 @@ UiScreen BuildMode::screen(int width, int height) {
     const uint32_t openId = category_ == 0 ? kCategories : uint32_t(0xB000 + category_ * 0x100);
     const UiElement* open = sortArea ? sortArea->child(openId) : nullptr;
     const auto list = items();
-    const bool showCatalog = category_ != 0;
+    // B950 opens the auto-roof panel (0xAC) where the catalog goes.
+    const bool autoRoofPanel = category_ == 9 && subsort_ == 5;
+    const bool showCatalog = category_ != 0 && !autoRoofPanel;
     // The catalog follows the open sort panel (as in Buy mode; the
     // script's place for it, x 484, is where the category buttons end).
     if (sortArea && open) {
         const int right = sortArea->area()[0] + open->area()[2] - 1;
         if (UiElement* c = root.child(kCatalogArea)) {
+            const auto a = c->area();
+            c->set("area", area(right, a[1], right + (a[2] - a[0]), a[3]));
+        }
+        if (UiElement* c = root.child(kAutoRoof)) {
             const auto a = c->area();
             c->set("area", area(right, a[1], right + (a[2] - a[0]), a[3]));
         }
@@ -1237,9 +1251,14 @@ UiScreen BuildMode::screen(int width, int height) {
 
     UiDrawHooks hk;
     hk.rects = &rects;
-    for (uint32_t id : {kBgNoSubsort, kBgCollections, kCollectionsBtn, kCollectionsWin, kAutoRoof})
+    for (uint32_t id : {kBgNoSubsort, kBgCollections, kCollectionsBtn, kCollectionsWin})
         if (const UiElement* e = root.child(id))
             hk.hide.insert(e);
+    if (const UiElement* e = root.child(kAutoRoof)) {
+        (autoRoofPanel ? hk.show : hk.hide).insert(e);
+        if (const UiElement* b = e->child(0xC400))
+            hk.buttonState[b] = preserveRoofs_ ? 2 : 1;
+    }
     if (const UiElement* e = root.child(kBgFunctions))
         hk.show.insert(e);
     if (const UiElement* e = root.child(kBgEndCap))
@@ -1332,6 +1351,12 @@ UiScreen BuildMode::screen(int width, int height) {
         target(collapsed->child(kNext), Action::Next, 0);
     }
     target(root.child(kHand), Action::Hand, 0);
+    if (const UiElement* e = root.child(kAutoRoof); e && autoRoofPanel) {
+        static const std::pair<uint32_t, int> buttons[] = {{0xC100, 1}, {0xC200, 2}, {0xC500, 3}, {0xC600, 4},
+                                                           {0xC700, 5}, {0xC300, 0}, {0xC400, -1}};
+        for (const auto& [id, tool] : buttons)
+            target(e->child(id), Action::AutoRoof, tool);
+    }
     target(root.child(kDesignBtn), Action::Design, 0);
     target(root.child(kDayNightBtn), Action::DayNight, 0);
     target(root.child(kCategoriesBtn), Action::Back, 0);
@@ -1465,6 +1490,12 @@ bool BuildMode::press(simd_float2 p) {
         }
         case Action::Hand: cancel(), design_->cancel(), tool_ = Tool::None; break;
         case Action::Design: selectDesignTool(); break;
+        case Action::AutoRoof:
+            if (t.value < 0)
+                preserveRoofs_ = !preserveRoofs_, say(preserveRoofs_ ? "auto roof: preserve existing roofs" : "auto roof: replace its roofs");
+            else
+                autoRoof(t.value);
+            break;
         case Action::DayNight:
             if (onDayNight)
                 onDayNight();
@@ -1679,6 +1710,9 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
                     else if (std::sscanf(f[k].c_str(), "%d:%d", &row, &option) == 2)
                         design_->choose(row, size_t(option));
                 }
+        } else if (a == "--auto-roof") { // tool 1-5, 0 removes the roofs; ",keep" preserves
+            preserveRoofs_ = f.size() > 1 && f[1] == "keep";
+            autoRoof(n(0));
         } else if (a == "--build-day-night") {
             if (onDayNight)
                 onDayNight();

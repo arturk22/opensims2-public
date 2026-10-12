@@ -1048,6 +1048,178 @@ BuildEditor::Result BuildEditor::drawRoof(int level, int x0, int y0, int x1, int
     return r;
 }
 
+BuildEditor::Result BuildEditor::removeRoofs() {
+    Result r;
+    if (lot_.roofs.empty()) {
+        r.ok = true;
+        r.message = "no roofs";
+        return r;
+    }
+    Geometry before = capture();
+    std::set<int> levels;
+    for (const auto& f : lot_.roofs)
+        levels.insert(f.level);
+    std::map<int, std::vector<std::array<int, 4>>> attic;
+    for (int l : levels)
+        attic[l] = atticWalls(l);
+    r.changed = int(lot_.roofs.size());
+    lot_.roofs.clear();
+    autoRoofs_.clear();
+    for (int l : levels)
+        syncAtticWalls(l, attic[l]);
+    changed();
+    commit(std::move(before), 0);
+    r.ok = true;
+    r.message = std::to_string(r.changed) + " roofs removed";
+    return r;
+}
+
+BuildEditor::Result BuildEditor::autoRoof(int tool, bool preserve) {
+    Result r;
+    const int W = int(lot_.width), H = int(lot_.height);
+    auto it0 = lot_.roomLayers.find(0x0B);
+    const auto& rooms = it0 != lot_.roomLayers.end() && it0->second.size() == lot_.rooms.size() ? it0->second : lot_.rooms;
+    if (rooms.empty()) {
+        r.message = "no rooms";
+        return r;
+    }
+    Geometry before = capture();
+    // The roofs the tool made before go (not with "preserve").
+    std::set<int> touched;
+    if (!preserve && !autoRoofs_.empty()) {
+        std::map<int, std::vector<std::array<int, 4>>> attic;
+        for (const auto& f : lot_.roofs)
+            if (autoRoofs_.count(f.id) && !attic.count(f.level))
+                attic[f.level] = atticWalls(f.level);
+        std::erase_if(lot_.roofs, [&](const Lot::Roof& f) { return autoRoofs_.count(f.id) != 0; });
+        for (auto& [l, a] : attic)
+            syncAtticWalls(l, a);
+        autoRoofs_.clear();
+    }
+    auto inside = [&](int lotLevel, int x, int y) {
+        if (!lot_.hasLevel(lotLevel))
+            return false;
+        for (uint16_t q : rooms[(size_t(lotLevel - lot_.minLevel) * lot_.width + size_t(x)) * lot_.height + size_t(y)])
+            if (q && q != 0xFFFF)
+                return true;
+        return false;
+    };
+    auto roofed = [&](int lotLevel, int x, int y) {
+        const float cx = float(x) + 0.5f, cy = float(y) + 0.5f;
+        for (const auto& f : lot_.roofs)
+            if (f.level == lotLevel && cx > std::min(f.x0, f.x1) && cx < std::max(f.x0, f.x1) &&
+                cy > std::min(f.y0, f.y1) && cy < std::max(f.y0, f.y1))
+                return true;
+        return false;
+    };
+    int roofsMade = 0, slabTiles = 0;
+    const uint16_t slab = tool == 5 ? patternRef(lot_.floorPatterns, "ccc26098", 1) : 0;
+    for (int below = std::max(0, lot_.minLevel); lot_.hasLevel(below + 1); ++below) {
+        const int above = below + 1;
+        // AppendRoomTilesIfValid: inside below, not inside above, no floor above, no roof.
+        std::vector<uint8_t> grid(size_t(W) * size_t(H));
+        bool any = false;
+        for (int x = 0; x < W; ++x)
+            for (int y = 0; y < H; ++y) {
+                if (!inside(below, x, y) || inside(above, x, y) || roofed(above, x, y))
+                    continue;
+                bool floor = false;
+                for (uint16_t q : lot_.floor(above, uint32_t(x), uint32_t(y)))
+                    floor |= q != 0;
+                if (floor)
+                    continue;
+                grid[size_t(y) * size_t(W) + size_t(x)] = 1, any = true;
+            }
+        if (!any)
+            continue;
+        if (tool == 5) {
+            // The tiled slab: the roof floor pattern on the marked tiles.
+            for (int x = 0; x < W; ++x)
+                for (int y = 0; y < H; ++y)
+                    if (grid[size_t(y) * size_t(W) + size_t(x)]) {
+                        for (int q = 0; q < 4; ++q)
+                            setFloor(lot_, above, x, y, q, slab);
+                        ++slabTiles;
+                    }
+            continue;
+        }
+        // ComputeRoofRects: row by row, a run with the same x span as an
+        // active rectangle extends it down; the others close it and open anew.
+        struct Rect {
+            int x0, x1, y0, y1; // tiles, inclusive
+        };
+        std::vector<Rect> active, done;
+        for (int y = 0; y < H; ++y) {
+            std::vector<std::pair<int, int>> runs;
+            for (int x = 0; x < W;) {
+                if (!grid[size_t(y) * size_t(W) + size_t(x)]) {
+                    ++x;
+                    continue;
+                }
+                int e = x;
+                while (e + 1 < W && grid[size_t(y) * size_t(W) + size_t(e + 1)])
+                    ++e;
+                runs.push_back({x, e});
+                x = e + 1;
+            }
+            std::vector<Rect> next;
+            for (const auto& [a, b] : runs) {
+                auto m = std::find_if(active.begin(), active.end(), [&](const Rect& q) { return q.x0 == a && q.x1 == b; });
+                if (m != active.end()) {
+                    Rect q = *m;
+                    q.y1 = y;
+                    next.push_back(q);
+                    active.erase(m);
+                } else {
+                    next.push_back({a, b, y, y});
+                }
+            }
+            done.insert(done.end(), active.begin(), active.end());
+            active = std::move(next);
+        }
+        done.insert(done.end(), active.begin(), active.end());
+        const auto attic = atticWalls(above);
+        touched.insert(above);
+        for (const Rect& q : done) {
+            const int w = q.x1 - q.x0 + 1, h = q.y1 - q.y0 + 1;
+            uint32_t type = Lot::Hip;
+            switch (tool) {
+            case 1: type = Lot::Hip; break;
+            case 2: type = Lot::LongGable; break;
+            case 3: type = h <= w ? Lot::Hip : Lot::LongGable; break;
+            case 4: type = h < w ? Lot::ShortGable : Lot::LongGable; break;
+            default: break;
+            }
+            Lot::Roof roof;
+            for (const auto& o : lot_.roofs)
+                roof.id = std::max(roof.id, o.id + 1);
+            roof.id = std::max(roof.id, 1u);
+            roof.x0 = float(q.x0), roof.y0 = float(q.y0), roof.x1 = float(q.x1 + 1), roof.y1 = float(q.y1 + 1);
+            roof.level = roof.levelTo = above;
+            roof.type = type;
+            roof.pattern = lot_.roofs.empty() ? 0 : lot_.roofs.back().pattern;
+            roof.angle = 0.5f;
+            lot_.roofs.push_back(roof);
+            autoRoofs_.insert(roof.id);
+            ++roofsMade;
+        }
+        syncAtticWalls(above, attic);
+    }
+    r.changed = roofsMade + slabTiles;
+    if (!r.changed && preserve) {
+        restore(before);
+        r.ok = true;
+        r.message = "nothing to roof";
+        return r;
+    }
+    changed();
+    commit(std::move(before), 0);
+    r.ok = true;
+    r.message = tool == 5 ? std::to_string(slabTiles) + " tiles of roof slab"
+                          : std::to_string(roofsMade) + " auto roofs of tool " + std::to_string(tool);
+    return r;
+}
+
 BuildEditor::Result BuildEditor::setRoofPattern(uint32_t guid) {
     Result r;
     Geometry before = capture();
