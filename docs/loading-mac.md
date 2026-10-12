@@ -67,7 +67,7 @@ tinha escolhido pelo que cada animação mostra):
 | cena | Reia | ícone / imagem no ladrilho do meio | título |
 |---|---|---|---|
 | partida / menu principal | `8DA3ADE7` (800x600) | — | — |
-| bairro (caso 3, o jogo base) | `8DA3ADEB` | `ADF3` (casas) | (o nome do bairro: não lido) |
+| bairro (caso 3, o jogo base) | `8DA3ADEB` | `ADF3` (casas) | o nome do bairro (CTSS) + `U(0x84, 0x10)` ("Carregando") embaixo |
 | lote com família (caso 0) | `8DA3ADE8` | a foto da família (`<N>_FamilyThumbnails.package`, tipo `0x8C3CE95A`); `ADF0` se faltar | "A Família X" (UIText 7 #4) |
 | lote residencial vazio | `8DA3ADE9` | `ADF2` (ferramentas) | o nome do lote |
 | lote comunitário | `8DA3ADEA` | a miniatura do catálogo de um objeto do lote (descoberta na carga, ver abaixo), senão `ADF1` (o táxi) | o nome do lote |
@@ -81,9 +81,11 @@ branco com sombra) vai centrado em (409, 470): o lugar e a fonte são
 inferidos (a janela de texto do `TSWinProc` não foi seguida). O caso, o nome
 do lote, a família e o pacote das fotos vêm do `HoodLot` clicado no bairro
 (`gLotEntry`); um lote aberto por flags (`--hood N --hood-lot id`) lê o mesmo
-da `Neighborhood` (`fillLotEntryFromFlags`). Ficam de fora: o tipo de bairro
-(Tutorial `ED`/`F4`, os das expansões), o subtítulo `U(0x84, 0x10)`, o lote
-de destino diferente do atual e o caso 6 (voltar ao bairro com família).
+da `Neighborhood` (`fillLotEntryFromFlags`). Rodada 12: o bairro Tutorial usa `ED`/`F4` com `U(0x84, 0x2C)` e o
+subtítulo (inferido: caso 7 = tutorial); o subtítulo vai também no lote com
+família; o caso 6 (voltar do Create-a-Sim com a família nova) usa `EB`, a
+foto e "A Família X". Ficam de fora: o tipo de bairro das expansões e o lote
+de destino diferente do atual. Capturas `r12-carregamento-*.jpg`.
 
 A imagem do lote comunitário: a miniatura 320x320 do jogo vem da câmera de
 miniaturas; aqui é a imagem de 128x128 do catálogo

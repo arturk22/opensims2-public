@@ -923,3 +923,56 @@ lote nem fica sob uma rua.
   relações), de volta no lote 83, os 4 Sims e §511.632 voltam;
   `hood-save --check` 26 de 26. `r11-bairro-lote-com-familia-para-caixa.jpg`,
   `r11-bairro-familia-volta-com-o-lote.jpg`.
+
+## 14. Rodada 12 (frente do bairro 4): opções, decorações, história, amigos, cabeças
+
+Tudo daqui vem dos scripts de UI e dos dados; o que o binário faz por trás
+**não foi lido** (sem Ghidra nesta rodada) e está marcado como inferido.
+
+- **Janelas de opções do puck** (`0x49001028`, botões `0xA241` gráficos,
+  `0xA242` áudio, `0xA243` jogo, `0xA245` câmera, `0xA246` créditos; `0xA244`
+  casa fica escondido): as mesmas janelas do painel de opções do lote
+  (`app/options_panel.*`): áudio `0x49060F01` e jogo `0x49060F02` mexem no
+  `Options.txt`; gráficos `0x49060F03`, câmera `0x49060F05` e créditos
+  `0x49060F08` são desenhadas como o script as tem e os grupos de rádio
+  (Desligado/Médio/Alto...) só guardam o clique na memória (nada do motor os
+  lê). A janela fica com o canto inferior esquerdo no do painel e **sob** o
+  puck e o painel (a aba da arte fica atrás). `r12-bairro-opcoes-*.jpg`.
+- **Decorações (F3)**: painel `0x4D517180` (botão `0x2D51756D`): cinco
+  botões de tipo = o campo `sort` do produto em `catcanhobjects`
+  (A100 flora, A200 stone, A300 landmark, A400 effects, A500 misc), o
+  caixote de itens do painel das famílias (0x1000/0x2000, itens `0x49001006`),
+  Mão `0xA5`, Conta-Gotas `0xA4`, Desfazer `0xA1`, Refazer `0xA2`. 72 produtos
+  têm `showincatalog=1`. Só os efeitos têm imagem de UI (`thumbnailgroupid`
+  0x499DB772); as outras miniaturas são renderizadas do modelo
+  (`renderModelThumbnail`). Colocar: um clique no tile (centro do tile, como
+  os 72 enfeites de N001: x e y múltiplos de 10 + 5) com `,` `.` girando 90°;
+  o registro entra no recurso `0xABD0DC63` (38 bytes: versão 2, posição,
+  retângulo, versão 8, depois, **flora: rotação e GUID; enfeite: GUID e
+  rotação**) no fim da lista. **Inferido**: sort `flora` vai na lista de flora e
+  o resto na de enfeites (N001–N003 têm moinhos e campos de cultivo na lista de
+  flora, então o jogo pode decidir de outro jeito); `placementsurface` 0 só
+  terra, 1 só água, 2 ambos; `allowedinlot`/`allowedonroad` = 0 proíbem lote e
+  rua sob a pegada. A Mão tira o decorativo clicado e o segura para pôr em
+  outro lugar; o Conta-Gotas pega o produto. Os nomes dos produtos
+  (`stringsetid` 123) são todos "Rocha": as dicas não mostram nome. Testes:
+  `tests/test_hood_moves.cpp` (adicionar/remover o registro),
+  `s2pkg hood-decor`. `r12-bairro-decoracoes-*.jpg`.
+- **História (F4)**: painel `0x49001030` ("Bem-vindo a %s!"): a imagem
+  `<N>_Neighborhood.png` (400x300) e a descrição do bairro (CTSS) na caixa
+  de texto, ou "Não há história" (`0x4D7407B2`); Pronto fecha. O editor
+  (botão `0x0CB23B3C`) só mostra a caixa vazia, sem digitar nem gravar; as
+  páginas da pasta Storytelling do jogo (`AppendStorytellingDirName`) não
+  são lidas.
+- **Lot Info**: "Transferir Lote" (`0xC00B`, `0xD006`, `0xE006`) abre
+  `0xEFFF4500` (dois botões de opção, Aceitar/Cancelar), sem exportar nada.
+  "Ver Amigos da Família e Parentes" (`0xA003`/`0xB003`/`0xC003`) fecha o
+  diálogo e realça os lotes de amigos (azul) e parentes (violeta): **inferido**,
+  pelas SREL dos membros (bits 4/5 dos flags = amigo, bit 14 ou relação
+  familiar != 0 = parente). `r12-bairro-ver-amigos.jpg`.
+- **Cabeças**: todos os arquivos de personagem dos 4 bairros base têm a
+  imagem de rosto; para os que não tiverem, `app/head_shot.*` renderiza a
+  cabeça com a câmera do CAS e luz levantada (inferido; `--hood-render-heads`
+  força para teste). `r12-bairro-cabecas-renderizadas.jpg`.
+- Faltam (sem Ghidra): `FlattenAbuttingRoadsIfPossible` e o `RotateLot` do
+  mover seguindo a borda mais perto do cursor.
