@@ -573,12 +573,20 @@ struct Object {
             // walkShort's weight in the walk, the start and the stop (the
             // stride blend, blendGaits/strideWeight).
             float strideWeight = 0;
+            // The planned stop's short weight (fitStride's v; the binary's
+            // fit can give the stop its own weight).
+            float stopWeight = 0;
             // How early the next phase starts, overlapping the one ending
             // (FollowOneStep: 5 ms when the way's beginning, measured up to
             // 0.75, is at most 0.25 long, else 100 ms).
             float overlap = 0.1f;
             bool sidestep = false;   // stepping without turning (CreateStepCycle)
             int tick = 0, ticks = 0; // in a start or a stop
+            // VM ticks the phase began before its first tick: the first
+            // phase of a walk is started 5 or 100 ms back (FollowOneStep,
+            // BV 0x6b80e8: the new request's start ticks are now less 5,
+            // or 100 when the way's beginning is over 0.25).
+            float lead = 0;
             float distance = 0;      // its way along the route
             float speed = 0;         // the walk's, tiles per tick
             float fx = 0, fy = 0;    // the frame

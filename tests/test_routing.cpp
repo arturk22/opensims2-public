@@ -1117,7 +1117,8 @@ static void testLocoPhases() {
         const std::string want = facing == 4 ? "a-turnAndGo-alt-0" : "a-turnAndGo-alt-90";
         check(t.status == Thread::Status::Finished && t.result, "loco: the walk ends there");
         check(firstClip == want && firstMirror == (facing == 6), "loco: the start turns by the first leg's steps, mirrored counter-clockwise");
-        check(startTicks >= 22 && startTicks <= 24, "loco: the start lasts its clip (0.75 s)");
+        // (Started 100 ms back, FollowOneStep's head start of the first phase.)
+        check(startTicks >= 19 && startTicks <= 21, "loco: the start lasts its clip (0.75 s) less the 100 ms head start");
         check(std::fabs(lagMid - 0.05f) < 0.02f, "loco: in the start the Sim stands at the clip's root, behind its frame");
         check(std::fabs(startStep - 0.85f / 23) < 0.01f || facing != 4, "loco: the start's frame covers its distance in its length");
         check(std::fabs(walkStep - 2.0f / 30) < 0.002f, "loco: the walk cycle at the gait's speed");
@@ -1208,6 +1209,28 @@ static void testLocoPoseBlend() {
     check(std::fabs(locoPoseBlend(0, 0, 2) - 0.1f) < 1e-5f, "pose blend: 0.2 at 2 per second");
     check(std::fabs(locoPoseBlend(0.1f, 0, 1) - 0.095f) < 1e-5f, "pose blend: 0.95 of a short start");
     check(std::fabs(locoPoseBlend(1, 0.15f, 1) - 0.1425f) < 1e-5f, "pose blend: 0.95 of a short stop");
+}
+
+// fitStride as InitChannelNetwork fits a way (walk 1.393 / walkShort 0.683
+// a cycle, turnAndGo 0.853 / Short 0.347, turnAndStop 0.337 / 0.16).
+static void testFitStride() {
+    std::function<std::pair<float, float>(bool)> stop = [](bool) { return std::pair<float, float>{0.337f, 0.16f}; };
+    // 5 tiles: 3.81 left, 6 half cycles, w = (5.369 - 5) / (5.369 - 2.556).
+    StrideFit f = fitStride(5, 1.393f, 0.683f, 0.853f, 0.347f, &stop, false, 0, 0);
+    check(std::fabs(f.cycles - 3) < 1e-4f && std::fabs(f.weight - 0.369f / 2.813f) < 2e-3f &&
+              std::fabs(f.stopWeight - f.weight) < 1e-5f,
+          "fit stride: whole half cycles, one short weight for start, cycles and stop");
+    // 1.2 tiles: one half cycle would want w = 0.66 > 0.3: half a cycle less,
+    // the last quarter and the stop at v = 1, w from the rest.
+    f = fitStride(1.2f, 1.393f, 0.683f, 0.853f, 0.347f, &stop, false, 0, 0);
+    check(std::fabs(f.cycles) < 1e-4f && std::fabs(f.stopWeight - 1) < 1e-5f && std::fabs(f.weight - 0.4857f) < 2e-3f,
+          "fit stride: over 0.3, half a cycle less and the stop short");
+    const float startD = f.weight * 0.347f + (1 - f.weight) * 0.853f;
+    const float stride = f.weight * 0.683f + (1 - f.weight) * 1.393f;
+    check(std::fabs(startD + 0.25f * stride + 0.25f * 0.683f + 0.16f - 1.2f) < 2e-3f, "fit stride: the rest covers the way");
+    // Walking on (no start): what is left of the half cycle counts first.
+    f = fitStride(3, 1.393f, 0.683f, 0, 0, &stop, false, 0.3f, 0);
+    check(std::fabs(f.cycles - (0.3f + 0.5f * 4)) < 1e-4f, "fit stride: f0 + half cycles");
 }
 
 static void testLocoStride() {
@@ -1304,7 +1327,7 @@ static void testSidestep() {
           "sidestep: the walk ends there");
     // 0.5 between stepShort (0.3) and step (0.6): 1/3 short, 2/3 long, at
     // (0.6/1.2 * 2/3 + 0.3/0.6 * 1/3) * 1.4 = 0.7 m/s: 0.71 s.
-    check(sidestep && kept && !walked && ticks >= 20 && ticks <= 23 && clips.find("a-step-90") != std::string::npos,
+    check(sidestep && kept && !walked && ticks >= 17 && ticks <= 23 && clips.find("a-step-90") != std::string::npos,
           "sidestep: steps sideways without turning (step/stepShort by distance, 1.4 times as fast)");
 }
 
@@ -1603,6 +1626,7 @@ int main() {
     testLocoBlend();
     testLocoCurve();
     testLocoStride();
+    testFitStride();
     testLocoPoseBlend();
     testSidestep();
     testLocoHalt();

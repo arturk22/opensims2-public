@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 
 // How a Sim's walk looks and how fast it goes: the locomotion set's clips
 // (STR# 0x84 of the top of the locomotion stack, docs/routing-mac.md §6.1)
@@ -104,6 +105,40 @@ Gait blendGaits(const Gait& full, const Gait& shortGait, float shortWeight);
 // fitting loop, ten tries in steps of 0.1 of the weight, was not read in
 // full; this solves the same fit exactly). 0 without a short gait.
 float strideWeight(const Gait& full, const Gait& shortGait, float stretch, float clipsLong, float clipsShort);
+
+// The stride fit as cActiveAnimLoco::InitChannelNetwork (BV 0xd2cd68) does
+// it (docs/routing-mac.md §6.1, "O ajuste da passada no binário"), with `d`
+// the way's length, `L`/`Ls` the long and short cycles' distances (walk
+// and walkShort, LocoDistance), the start clip's long and short distances
+// (0: none), the stop's by its foot (`stop(otherFoot)`: long, short; null:
+// none), `f0` what is left of the current half cycle when there is no start
+// ((1 - portion) mod 0.5) and `f1` the end portion mod 0.5 when there is no
+// stop (0 here: the end portion of a walk into a portal is not kept):
+//   r = d - start - stop (long); n = ceil((r - L (f0 + f1)) / (L/2)) >= 0
+//   half cycles, c = f1 + n/2 + f0 cycles; with a stop, up to twice: the
+//   foot the stop is on by n's parity, and half a cycle more while
+//   L c + start + stop < d (the foot turned over after each);
+//   T_l = L c + start_l + stop_l, T_s = Ls c + start_s + stop_s, the short
+//   weight w = (T_l - d) / (T_l - T_s) for the start, the cycles and the
+//   stop; above 0.3 (0x274b670) with c >= 1/2, half a cycle less, the last
+//   quarter cycle and the stop at a weight v from 1 down by 0.1 (ten tries,
+//   0x274b6e0 = -10) until the rest gives w >= 0:
+//   start(w) + (c' + 1/4) stride(w) + stride(v)/4 + stop(v) = d.
+// What is left (d - start - c stride - stop, >= 0) goes to +0xf8.
+// Inferred: the stop's foot from the cycle portion the walk ends at (the
+// binary's first foot comes from a portion getter not identified), v
+// clamped to [0, 1] (the binary lets it run past when w is out of [0, 1]),
+// the short ways (0.9 (start + stop) >= d) as before: strideWeight.
+struct StrideFit {
+    float weight = 0;     // the start's and the cycles' short weight (w)
+    float stopWeight = 0; // the stop's (v)
+    float cycles = 0;     // c
+    float leftover = 0;
+    bool stopOtherFoot = false;
+};
+StrideFit fitStride(float d, float L, float Ls, float startLong, float startShort,
+                    const std::function<std::pair<float, float>(bool otherFoot)>* stop, bool firstOtherFoot, float f0,
+                    float f1);
 
 // The frame's way: a uniform cubic B-spline (cPathStrategyCubic::UpdatePathData,
 // BV 0xd56704) whose control points are the first point three times, the

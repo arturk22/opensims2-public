@@ -309,6 +309,74 @@ float strideWeight(const Gait& full, const Gait& shortGait, float stretch, float
     return std::clamp((halves * 0.5f * sLong - avail) / denominator, 0.0f, 1.0f);
 }
 
+StrideFit fitStride(float d, float L, float Ls, float startLong, float startShort,
+                    const std::function<std::pair<float, float>(bool otherFoot)>* stop, bool firstOtherFoot, float f0,
+                    float f1) {
+    StrideFit out;
+    if (L <= 0)
+        return out;
+    const bool hasStop = stop && *stop;
+    bool foot = firstOtherFoot;
+    std::pair<float, float> sp = hasStop ? (*stop)(foot) : std::pair<float, float>{0, 0};
+    const float r = d - startLong - sp.first;
+    if (r <= 0) { // no room for the cycles: all short
+        out.weight = out.stopWeight = 1;
+        out.stopOtherFoot = foot;
+        return out;
+    }
+    const float fn = (r - L * (f0 + f1)) / (0.5f * L);
+    int n = fn <= 0 ? 0 : int(fn);
+    if (fn > 0 && fn - float(n) != 0)
+        ++n;
+    float c = f1 + 0.5f * float(n) + f0;
+    if (hasStop) {
+        for (int k = 0; k < 2; ++k) {
+            if (n & 1)
+                foot = !foot;
+            sp = (*stop)(foot);
+            if (d <= L * c + startLong + sp.first)
+                break;
+            ++n;
+            c += 0.5f;
+            foot = !foot;
+        }
+    }
+    out.stopOtherFoot = foot;
+    const float Tl = L * c + startLong + sp.first, Ts = Ls * c + startShort + sp.second;
+    float w = 1, v = 1;
+    if (Ts < Tl) {
+        w = (Tl - d) / (Tl - Ts);
+        v = w;
+        if (w > 0.3f && c >= 0.5f) {
+            const float cc = c - 0.5f;
+            const float den = (cc + 0.25f) * (Ls - L) + (startShort - startLong);
+            auto weightFor = [&](float vv) {
+                const float stopD = sp.second * vv + sp.first * (1 - vv), strideV = Ls * vv + L * (1 - vv);
+                const float num = d - stopD - startLong - L * (cc + 0.25f) - 0.25f * strideV;
+                return den != 0 ? num / den : -1.0f;
+            };
+            v = 1;
+            w = weightFor(v);
+            for (int k = 1; w < 0; ++k) {
+                if (k > 10) {
+                    w = 0;
+                    break;
+                }
+                v = 1 - float(k) / 10;
+                w = weightFor(v);
+            }
+            c = cc;
+        }
+        w = std::clamp(w, 0.0f, 1.0f);
+        v = std::clamp(v, 0.0f, 1.0f);
+    }
+    out.weight = w, out.stopWeight = v, out.cycles = c;
+    const float startD = w * startShort + (1 - w) * startLong, stride = w * Ls + (1 - w) * L;
+    const float stopD = v * sp.second + (1 - v) * sp.first;
+    out.leftover = std::max(0.0f, d - startD - c * stride - stopD);
+    return out;
+}
+
 namespace {
 // The uniform cubic B-spline's basis and its derivative at u.
 std::array<float, 4> basis(float u) {
