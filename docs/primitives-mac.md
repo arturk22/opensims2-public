@@ -938,6 +938,55 @@ blend (0 ou fora de 0–1 = 1,0). Animate Object/Overlay devolvem 1 logo depois
 de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → erro
 0x70). Sem animador: 0x41; sem pessoa (Sim): 0x42.
 
+**Rodada 13: as regras de postura inferidas na rodada 11, conferidas** (BV:
+`try_animate_sim` `0x69d634`, `try_animate_stop` `0x6a0554`,
+`AddChoreoAnimRequest` `0x696644`, `CreateTransitionBlend` `0x68b4c4`,
+`AbortAnimRequest` `0x68bac0`, `GlobalRootRotHeading` `0x68c320`,
+`cObject::ApplyAnimationRotation`/`ApplyAnimationOffsets` `0x656b10`/`0x654b28`):
+
+- **"Corpo inteiro substitui overlay de corpo inteiro": não está no
+  `cAnimatable`.** O Animate Sim cria um pedido de tipo 2 (`tARType`: 1
+  objeto, 2 Sim, 3 overlay, 5 pose de objeto) e o põe na fila de
+  coreografia num **canal** escolhido pelo tipo e pela prioridade (strings
+  do binário: Sim `sil`/`sim`/`sih`/`siu`, overlay `osl`/`ovl`/`ovm`/`ovh`/
+  `ovu`, objeto `obj`, rotas `rom`/`roh`/`rsm`); nada em `try_animate_sim`
+  nem em `AddChoreoAnimRequest` apaga overlays. A única troca explícita é a
+  do `CreateTransitionBlend`: um pedido novo do **tipo 5** (pose de objeto,
+  `PlayObjectPose`) faz o anterior do tipo 5 sair por blend no tempo
+  global (abaixo), a menos que ele acabe antes. Quem decide o que aparece
+  quando um Sim de corpo inteiro e um overlay de corpo inteiro tocam juntos
+  é a mistura dos canais da fila (`nGZSceneDBAnim::cChoreoQueue`, não
+  decifrada). Logo a regra do código (`animateSim` em `vm/animation.cpp`)
+  **continua inferida**: ela reproduz o efeito visto no jogo (o Sim não
+  "flutua" sentado ao levantar), não um passo do binário.
+- **Onde fica o quadro da animação**: na fila de coreografia. A posição e a
+  direção "globais" do objeto animado são as do osso raiz da fila
+  (`GlobalRootTransPosition`, `GlobalRootRotHeading`: o vetor +Y do osso
+  raiz girado, `atan2`), lidas no `snap_to_current_location`/`PostSnap` para
+  deixar o objeto onde a animação o largou. Os objetos ainda têm um
+  deslocamento e uma rotação de animação nos **dados de objeto 108–110**
+  (x, y, z × uma constante) e **111** (ângulo × outra constante), aplicados
+  por `cObject::ApplyAnimationOffsets`/`ApplyAnimationRotation` sobre a
+  posição e a orientação. O giro pelo `heading` do cabeçalho do ANIM que o
+  código faz (`AnimPlayer::Options::turn`) não aparece nesses caminhos:
+  continua inferido (bate com o resultado visto, a2o de canto de cadeira).
+- **Tempo de blend de saída**: o Animate Stop usa **0** sem flag (os pedidos
+  são tirados na hora: vtable 0x228 da fila, depois que a fila é avisada),
+  **T** com a flag 0x02 ("blended Out") e **0,3 × T** com 0x20 ("short
+  blended Out"; `FLOAT_0274b670` = 0,3), onde T é um global float do
+  `__bss` (`0x2c0ddd0`) escrito em tempo de execução (nenhuma escrita
+  estática achada; não lido). O mesmo T é o blend de entrada/saída do
+  `CreateTransitionBlend` e o que o Animate Sim passa quando a flag 0x80
+  ("sem blend de entrada") não está ligada. Com T > 0 cada pedido sai pelo
+  `AbortAnimRequest` (≤ 0: corte na hora). O código usa 0,2 s para os
+  overlays (`kOverlayBlendOutTicks`, `lot_vm.cpp`): o valor continua
+  inferido, mas agora se sabe que o "curto" é 30% dele e que sem flag é
+  imediato.
+- **O evento −1 no Animate Stop**: o `try_animate_stop` não chama árvore
+  de evento nenhuma; quem avisa é o fim do pedido na fila (o tratador de
+  eventos do pedido, `cAnimEventCB`). O `animevent::Stopped` (−1) do código
+  continua inferido das árvores de idle.
+
 ## 4b. Pendências do round 5 (binário)
 
 ### Conversão da versão 0 (BHAVs do base) de Look At e Run Tree by Name
