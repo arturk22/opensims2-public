@@ -1440,7 +1440,8 @@ descarta o fogão.**
 
 Para depurar no VM: além dessas árvores, o binário tira do FBO (§4) objetos
 ocupados (od 8 bit 5), pegando fogo (od 8 bit 9), com od 87 ou od 82 bit
-2, e fora dos cômodos acessíveis do Sim; o VM ainda não faz esses.
+2, e fora dos cômodos acessíveis do Sim; o VM faz todos desde as rodadas 11
+e 12 (§4g).
 
 ### Fogo (`Fire`, grupo `0x7FD0A790`; só SimAntics)
 
@@ -1485,6 +1486,141 @@ Então o "Fogo!" de 7–8 h do soak (`N001_Lot49`) é o esperado de um lote
 **sem alarme no cômodo** e sem jogador: cada Fire dura ~2 h e se propaga
 enquanto houver vizinhos inflamáveis. A conferir no VM: alarme no cômodo,
 `Notify out of Idle` acordando o alarme, e o agendamento do NPC.
+
+## 4g. Rodada 12: Sims vivos e destravados (binário + árvores)
+
+### Erros reiniciam o objeto (`cTSObject::HandleError`, BV `0xb05510`)
+
+Fora do depurador, um erro de SimAntics não deixa o Main morto: o
+`cTSObject::Error` liga a flag `0x100` de `+0x214` e o `HandleError`, sem
+depurador (`+0x44` = 0 e o módulo sem modo debug), chama a vtable `0x534`
+(reset) e o `cTSObject::Reset` (BV `0xb0ab9c`) reinicia a árvore no Main
+(`cTSTreeSim::Reset`), limpa as interações e zera quase todos os dados de
+objeto, guardando uma lista (direção, cômodo, data de nascimento, ligações
+79–81, 105–107, ...). O jogo grava o `ObjectError` e segue. A VM
+(`VM::resetAfterError`) recomeça o Main no tick seguinte, sem fila, sem
+sub-ação e sem rota; **não** zera os dados de objeto (inferido como seguro).
+`VM::resetOnError` liga isso; `S2PKG_NO_RESET=1` mantém o Main morto para
+depurar. O orçamento de instruções (20000 por turno, a "Too many iterations"
+0x44d do jogo, cujo limite não foi lido) também reinicia.
+
+### Set to Next: objetos que vão morrer não contam (`SetToNextIsObjectEligible`)
+
+`ValidateObject` (BV `0x1be5460`) recusa objetos com a flag interna
+`0x10000` (posta por `AddToKillQueue`/`ProcessObjectForKillQueue`) ou
+`0x20000`; o Set to Next e o Find Best Object for Function pulam esses
+objetos. Sem isso o "Reaper - Scan Lot For Dead People" achava de novo o Sim
+que tinha virado urna no mesmo tick e o Main do Ceifador morria no "Wants
+Satisfy - Death of Sim". O filtro 0x02 (dado de objeto u16 9 == u16 11) é
+aplicado; o 56 bit 0 e o 107 ficam de fora (só BV).
+
+**Tipo 3 (parte de multi-tile)**: o binário exige que o alvo seja parte de
+multi-tile (vtable `0x19c`) e anda no grupo (`+0x1c` próxima, `+0x18`
+primeira): um grupo que ficou com uma só parte devolve o próprio alvo. O
+"Burn - Spread - MT" laça no Set to Next 3 até voltar ao início (falso volta
+ao mesmo nó): com o "não há outra parte" a VM estourava o orçamento num
+objeto meio queimado (`N001_Lot36`, 51 vezes em 3 dias). A VM toma "é
+multi-tile" pelo campo 10 da definição ("Multi-Tile master id"), o mesmo que
+a árvore testa.
+
+### Notificação de texto sem stack object (`TryDialog`)
+
+Nos tipos de notificação, o objeto do texto é o objeto **dono da árvore**
+do frame (vtable `0x0C` do `cITSTreeStackElem`; o log do `TryKillObject`
+chama-o "the tree owning object"), o stack object só se ele não existir; o
+erro 0x17 só sem os dois. O stack object só dá o ícone. (A Circe de
+`N002_Lot3` morria numa ligação cujo interlocutor já tinha saído.)
+
+### Force Recalc of Wants do Ceifador (neighbor 0)
+
+O "Wants - Refresh All - Verify" chama a Generic Sims Call 39 (op 14) com o
+dado de pessoa 31 de cada Sim do lote; o binário dá erro 0x37 se o vizinho
+não existe. O Ceifador é criado por Create New Object Instance (sem a flag
+0x04) e ficava com o vizinho 0. O bairro tem um vizinho sem arquivo de
+personagem para cada NPC único (N002: #1 terapeuta, #34 carrinho, #35
+**Ceifador** GUID `0x84EC24A8`, #225 dançarina, #361 polinizador). A VM
+liga o Sim criado ao vizinho de mesmo GUID, ou cria um com o próximo ID
+(`VM::neighborForGuid`; **inferido**: no binário isso fica atrás de
+chamadas virtuais não seguidas). Com isso e o filtro acima, o Ceifador
+recolhe os mortos.
+
+### Find Best Object for Function: cômodos acessíveis
+
+`cTSPerson::GetAccessibleRooms` (BV `0xacd218`) pede o conjunto ao roteador
+(`this+0xf8 → 0xd4`, functor com a pessoa e o cômodo); a versão antiga
+(`GetAccessibleRoomsOld`, `0xad4abc`) é uma busca em largura pelos cômodos
+ligados por portais (portas, escadas; com a flag 0x04 do dado 22 testa se a
+pessoa pode passar). A VM monta, uma vez por planejador, os grupos de células
+livres do mapa estático (paredes, chão, aberturas de portas) ligados pelos
+portais, e o conjunto é o dos cômodos do grupo do Sim
+(`PathPlanner::accessibleRooms`; **inferido**: objetos, Sims e travas de
+portal ficam de fora). Um Sim só olha objetos desses cômodos. Achado com
+isso: **portas diagonais** ("Door - 1 Tile - Diagonal") são uma parte só,
+na parede diagonal do tile, e o carregador só abria portas com outra parte
+atrás: os quartos de cima de `N001_Lot68` e o quarto/banheiro de
+`N003_Lot52` estavam fechados.
+
+### Slots de osso de objetos de várias partes
+
+O modelo de um objeto multi-tile é o da parte líder: os ossos dos slots de
+rota ficam a partir do ponto e da direção do líder, qualquer que seja a
+parte do slot (**inferido**). A escada reta (`Stairs - Straight`) tem os
+ossos "route_staircasestraight_*_top" no "Hi 0,0 Pad", 3,7 tiles acima do
+líder "Lo 0,4": tomados do próprio pad caíam 3,7 tiles além do topo, o Snap
+do "Portal - Do" falhava e ninguém subia (`N001_Lot11`: o "Dormir" falhava
+sempre e os Sims dormiam no chão).
+
+### Pedir para sair do objetivo: tipo 1
+
+O `DoBlockedGoalStillAvailable` pede com **tipo 1** (1 a 3 tiles, direções
+±45°/±90°) quando a rota tem objeto de destino e o bloqueador está a menos
+de 1,5 tile dele (`docs/routing-mac.md` §8.3); a VM só usava o tipo 0 (0,3
+tile). O cozinheiro no cooktop saía 0,3 tile e ficava no slot do forno do
+mesmo fogão; a outra Sim desistia de tirar a comida do forno (`N002_Lot3`)
+e ela pegava fogo 40 minutos depois. Direções tomadas em relação à de quem
+pede (inferido).
+
+### Idle for Input dentro de uma interação
+
+Com "allow push", dentro de uma interação a entrada da frente roda **por
+cima** da atual quando pode interrompê-la (prioridade maior); quando volta,
+a interrompida continua (`TryIdleForInput`, §4). A VM só empurrava fora de
+interações. A criança que a assistente social leva fica em "Chorar por Filho
+Perdido" (`Interaction - Cancel` do carro, prioridade 50, um Wait For Notify
+sem fim com allow push) e só sai pelo "Entrar" (100) da assistente.
+
+### Comida no forno: o que a protege de "Limpar"
+
+Ninguém marca a comida assando como em uso (nem od 8 flag 6 nem o semi 3,
+que é "refeição em grupo"). A proteção é a árvore do prato (`Interaction -
+Clean Up - TEST` do semi-global `0x7F8834C8`): autônomo, uma refeição
+individual intacta (semi 2 == semi 1 da comida) só pode ser limpa se o "CT -
+Stats" (nome 42 da tabela global de árvores nomeadas) disser que está
+estragada (semi 17 flag 2). Com as datas de nascimento da rodada 11, a
+comida nova não está estragada e ninguém mais tira a comida do forno: não
+se repetiu nesta rodada.
+
+### Cozinheiros que saem do forno
+
+Com o "Free Will" (global 30, `cTSSimSystem::SetFreeWill`: o booleano das
+opções, ligado por padrão) o "Cook - _Type - Bake" põe a comida e sai. A
+comida tem dois relógios (BCONs do semi-global `0x7F3C9675`):
+- **queima durante o cozimento** (`Main - Cook - Loop`): o "Test - Food
+  Failure?" sorteia a falha pela habilidade do cozinheiro (semi 23 = dado de
+  pessoa 10 no início, pelo "Sub - Get Skill Based Value"; abaixo de 40 é
+  "baixa", 30% de falha; as faixas média/alta usam as constantes seguintes,
+  não lidas)
+  e, falhando, num ponto do cozimento a comida queima e **20% das vezes pega
+  fogo** — esteja o cozinheiro lá ou não;
+- **esquecida depois de pronta** (`Function - Main`): "Tuning - Cook Failure
+  Time" (0x2011, 10 min) até queimar e "Tuning - Cook Fire Time" (0x2012, 30
+  min) até pegar fogo, se ninguém interage com ela.
+O "Push - Get Food" chama o cozinheiro com prioridade de usuário (50) assim
+que fica pronta. Ele só vem se a interação dele tem prioridade menor que 50
+(`ShouldInterrupt`); comendo outra coisa empurrada a 50 ele termina primeiro
+(25+ min num pedaço de pizza, 30% de mordida a cada volta). Nada no motor
+atrasava além disso, salvo os dois bugs de rota acima (escada e slot do
+forno ocupado).
 
 ## 5. Outras primitivas: operandos pelo disassembler
 

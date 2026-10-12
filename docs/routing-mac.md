@@ -608,6 +608,8 @@ Clique com um objeto sob o mouse (rodada 13):
 | custo do portal = 1 + OBJD[0x35]·escala; trava = árvore de portal (entrada 15) em modo teste | custo aproximado; portas sempre abertas para o A* |
 | ao chegar no portal roda a entrada 15 de verdade e espera; portal ocupado → espera 24 ticks, até 126 | a VM segura o Sim no portal e o app abre a porta (aproximação) |
 | `MoveOutOfWay`: interação "sair do caminho" (tipo 3) na fila do bloqueador, com a prioridade de quem pede, só se a dele é menor (ou dado 159 bit 0x02), a ≤ 4 tiles | pede até 3 vezes e espera, sem pôr nada na fila do bloqueador |
+| tipo 1 (1–3 tiles) quando o bloqueador está a < 1,5 tile do objeto de destino, senão tipo 0 (0,3 tile) | igual desde a rodada 12 (direções do tipo 1 relativas a quem pede, inferido) |
+| slots de osso de um objeto multi-tile: o modelo é o do líder | ossos a partir do líder desde a rodada 12 (inferido; a escada reta só funciona assim) |
 | objetivos avaliados por `EvalTileForGoal` (códigos e penalidades +10/+5, §8.2) | aproximação da busca de objetivos (`routing.cpp`) |
 | quadtree, inflação 1/8, filtros, A* com ruído, Sims como retângulos de custo, códigos de falha, "CT - Route Blocked" | seguem o doc |
 
