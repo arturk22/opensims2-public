@@ -961,8 +961,58 @@ DialogWindow::Layout DialogWindow::aspirationDialog(const vm::Dialog& d, int wid
     root.set("area", uiArea(0, 0, int(w), int(h)));
     for (auto& c : root.children) {
         const uint32_t id = c.id();
-        if (id == 0x2000)
-            c.set("winflag_visible", "no");
+        if (id == 0x2000) {
+            // RefreshInfoPanel: once an aspiration is picked the slide comes
+            // out to the right (onTick moves its 0x0DA39A45 to the parent's
+            // width less its own; here at once, inferred) with the
+            // aspiration's name (0x4D9B8E8F) and description (0xCDA394CA)
+            // from Live.package's STR# 0x91 (romance 13 / 6, family 9 / 1,
+            // fortune 11 / 3, popularity 10 / 2, knowledge 12 / 4). The
+            // "Big Life Moments" wants catalog (0xCDA395BB) is not drawn yet.
+            int title = 0, text = 0;
+            switch (d.aspiration) {
+            case 0x01: title = 13, text = 6; break;
+            case 0x02: title = 9, text = 1; break;
+            case 0x04: title = 11, text = 3; break;
+            case 0x10: title = 10, text = 2; break;
+            case 0x20: title = 12, text = 4; break;
+            case 0x40: title = 14, text = 7; break;
+            case 0x80: title = 40, text = 42; break;
+            default: break;
+            }
+            c.set("winflag_visible", title ? "yes" : "no");
+            const auto pa = c.area();
+            if (UiElement* slide = c.child(0x0DA39A45)) {
+                const auto sa = slide->area();
+                const int dx = (pa[2] - pa[0]) - (sa[2] - sa[0]);
+                slide->set("area", uiArea(dx, sa[1], dx + sa[2] - sa[0], sa[3]));
+                for (auto& k : slide->children)
+                    if (k.id() == 0xCDA395BB || k.id() == 0x300A)
+                        k.set("winflag_visible", "no");
+            }
+            auto live = [&](int n) {
+                std::optional<std::string> t;
+                if (res_ && n)
+                    t = res_->string(UiStringRef{0x7F96C284, 0x91, uint32_t(n - 1)}); // one-based in the binary
+                return t.value_or(std::string());
+            };
+            if (title) {
+                L.captions[0x4D9B8E8F] = live(title);
+                L.captions[0xCDA394CA] = live(text);
+                // The description under the name, as tall as its text
+                // (RefreshInfoPanel sizes and stacks them).
+                if (UiElement* slide = c.child(0x0DA39A45)) {
+                    const UiElement* head = slide->child(0x4D9B8E8F);
+                    if (UiElement* desc = slide->child(0xCDA394CA); desc && head) {
+                        const auto da = desc->area();
+                        const int top = head->area()[3];
+                        const auto lines = wrap(desc->get("font"), L.captions[0xCDA394CA], float(da[2] - da[0]));
+                        const int h = int(std::ceil(float(lines.size()) * lineHeight(desc->get("font")))) + 4;
+                        desc->set("area", uiArea(da[0], top, da[2], std::max(da[3], top + h)));
+                    }
+                }
+            }
+        }
         if (id == 0x2D9B8E78 || id == 0x2D9B8E7E) {
             const bool mine = (id == 0x2D9B8E78) == d.female;
             c.set("winflag_visible", mine ? "yes" : "no");
