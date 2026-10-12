@@ -261,19 +261,24 @@ void HoodBins::lotClicked(uint32_t lotId) {
     case Tool::ToBin: {
         // cTSUserToolMoveLotToCatalog: a lot without a house cannot go
         // (STR# 0x83 #26); a lot with one asks #28.
-        if (const uint32_t f = hood::familyOnLot(*hood_, lotId)) {
-            // The game moves the family with the lot (#31): not done.
-            showMessage(fill(text(0x83, 30, "The %s family living in the lot will be moved with the lot."),
-                             hood_->family(f)->name));
-            return;
-        }
         if (!hood::lotFileInfo(*lot).hasHouse) {
             showMessage(text(0x83, 25, "Cannot move empty lots to the Lots & Houses Bin."));
             return;
         }
-        openQuestion(fill(text(0x83, 27, "Are you sure you want to move the lot %s to the Lots & Houses Bin?"),
-                          lotName),
-                     {Request::Kind::ToBin, 0, lotId});
+        // #28, and with a family living there #31 after it: the family goes
+        // with the lot (BV 0x37f554).
+        std::string q = fill(text(0x83, 27, "Are you sure you want to move the lot %s to the Lots & Houses Bin?"),
+                             lotName);
+        if (const uint32_t f = hood::familyOnLot(*hood_, lotId)) {
+            std::string more = fill(text(0x83, 30,
+                                         "The %s family living in the lot will be moved with the lot, and will lose "
+                                         "all of their relationships with their neighbors."),
+                                    hood_->family(f)->name);
+            while (!more.empty() && (more.front() == '\n' || more.front() == ' '))
+                more.erase(more.begin());
+            q += " " + more;
+        }
+        openQuestion(q, {Request::Kind::ToBin, 0, lotId});
         return;
     }
     case Tool::Bulldoze: {

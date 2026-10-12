@@ -909,3 +909,17 @@ lote nem fica sob uma rua.
   `cTSWinProcLotInfo` faz exatamente não foi lido. Sem tela: `--hood-select
   <lote> --hood-info <membro>`, `r11-bairro-info-do-lote.jpg`. "Transferir
   Lote" (empacotar em `.Sims2Pack`) e "Ver Amigos" ainda não.
+- **Lote ocupado para a caixa** (no app; o formato do catálogo com família
+  é **inferido**): a pergunta é a #28 + #31; Sim copia o pacote do lote como
+  `cx_<n>` com o lot info base e, dentro dele, o FAMI da família, as strings
+  do nome (STR# da família), o guarda-roupa (`0x6C4F359D`) e a foto
+  (`0x8C3CE95A`); o bairro perde o FAMI, as strings, o guarda-roupa, a foto,
+  as relações (SREL) entre a família e os outros Sims e as entradas deles
+  nas listas de relações dos SDSC ("perderá todos os seus relacionamentos").
+  Os personagens e os SDSC ficam. A caixa mostra o lote no filtro Ocupado;
+  pôr de volta grava o FAMI morando no lote novo (com o número antigo, ou o
+  próximo livre e o dado 61 dos Sims refeito) e tira o lote da caixa (não
+  dá para pôr a família duas vezes). N001: Caixão para a caixa (84
+  relações), de volta no lote 83, os 4 Sims e §511.632 voltam;
+  `hood-save --check` 26 de 26. `r11-bairro-lote-com-familia-para-caixa.jpg`,
+  `r11-bairro-familia-volta-com-o-lote.jpg`.

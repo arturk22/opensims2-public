@@ -6,6 +6,7 @@
 #include "hood_moves.hpp"
 #include "property_set.hpp"
 #include "resindex.hpp"
+#include "strings.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -595,6 +596,19 @@ std::vector<BinLot> loadLotBin(const fs::path& catalogDir) {
                     b.file = e.path();
                     b.catalogId = uint32_t(std::stoul(name.substr(3, 8)));
                     b.base = LotInfo::parseBase(pkg.read(entry));
+                    for (const auto& f : pkg.entries())
+                        if (f.tgi.type == hoodtype::FAMI)
+                            b.familyId = uint32_t(f.tgi.instance);
+                    if (b.familyId)
+                        for (const auto& f : pkg.entries())
+                            if (f.tgi.type == kTypeStr && f.tgi.instance == b.familyId) {
+                                const StringTable t = StringTable::parse(pkg.read(f));
+                                b.familyName = t.get(0);
+                                if (b.familyName.empty())
+                                    b.familyName = "?";
+                            }
+                    if (b.familyId && b.familyName.empty())
+                        b.familyName = "?";
                     pkg.closeFile();
                     Lot l;
                     l.info = b.base;
@@ -723,6 +737,55 @@ void writeLot(const Neighborhood& hood, const PlacementWorld& world, const LotIn
 
 } // namespace
 
+namespace {
+
+// The family that went to the bin with a lot comes back with it: its FAMI
+// (living on the new lot), name strings, wardrobe and photo, under its old
+// family number unless another family took it (then the next free one, and
+// its Sims' person data 61 follow).
+std::string restoreBinFamily(const Neighborhood& hood, const BinLot& bin, uint32_t lot) {
+    std::map<Key, std::vector<uint8_t>> res;
+    {
+        DbpfPackage pkg(bin.file);
+        for (const auto& e : pkg.entries())
+            if (e.tgi.instance == bin.familyId &&
+                (e.tgi.type == hoodtype::FAMI || e.tgi.type == kTypeStr || e.tgi.type == hoodtype::Wardrobe ||
+                 e.tgi.type == 0x8C3CE95A))
+                res[{e.tgi.type, e.tgi.instance}] = pkg.read(e);
+    }
+    auto fami = res.find({hoodtype::FAMI, bin.familyId});
+    if (fami == res.end())
+        return "the bin lot's family record is missing";
+    uint32_t id = bin.familyId;
+    if (hood.family(id)) {
+        id = 1;
+        for (const auto& f : hood.families)
+            id = std::max(id, f.id + 1);
+    }
+    FamilyRecord r = FamilyRecord::parse(fami->second);
+    r.lot = lot;
+    std::map<Key, std::vector<uint8_t>> hoodAdds{{{hoodtype::FAMI, id}, r.write()}};
+    for (auto [type, keep] : {std::pair{kTypeStr, true}, {hoodtype::Wardrobe, true}})
+        if (auto it = res.find({type, bin.familyId}); it != res.end() && keep)
+            hoodAdds[{type, id}] = it->second;
+    if (id != bin.familyId)
+        for (uint32_t guid : r.members)
+            if (const Neighbor* n = hood.neighborByGuid(guid)) {
+                SimDescription d = n->description;
+                d.personData[sdsc::FamilyNumber] = int16_t(id);
+                hoodAdds[{hoodtype::SDSC, n->id}] = d.write();
+            }
+    rewritePackage(hood.package, hoodAdds, {});
+    if (auto it = res.find({0x8C3CE95A, bin.familyId}); it != res.end()) {
+        const fs::path thumbs = hood.package.parent_path() / "Thumbnails" / (hood.prefix + "_FamilyThumbnails.package");
+        if (fs::exists(thumbs))
+            rewritePackage(thumbs, {{{0x8C3CE95A, id}, it->second}}, {}, 0x7FE65A3D);
+    }
+    return "family " + std::to_string(id) + " \"" + bin.familyName + "\" came back with the lot";
+}
+
+} // namespace
+
 LotResult placeEmptyLot(const fs::path& folder, const PlacementWorld& world, EmptyLotSize size, int x, int y,
                         int rotation, const fs::path& forbidden, const std::string& name, uint8_t zone) {
     LotResult out;
@@ -776,11 +839,24 @@ LotResult placeBinLot(const fs::path& folder, const PlacementWorld& world, const
         const fs::path file = folder / "Lots" / (hood.prefix + "_Lot" + std::to_string(out.lot) + ".package");
         fs::create_directories(file.parent_path());
         fs::copy_file(bin.file, file.string() + ".saving", fs::copy_options::overwrite_existing);
+        if (bin.familyId) // the family's records go back to the neighborhood, not the lot file
+            rewritePackage(file.string() + ".saving", {},
+                           {{hoodtype::FAMI, bin.familyId}, {kTypeStr, bin.familyId}, {hoodtype::Wardrobe, bin.familyId},
+                            {0x8C3CE95A, bin.familyId}});
         fs::rename(file.string() + ".saving", file);
         const LotInfo info = newLotInfo(bin.base, out.lot, x, y, front, p.heightAt(front));
         TerrainChange change;
         change.heights = &ground.heights;
         writeLot(hood, world, info, out.lot, out.lines, true, change);
+        if (bin.familyId) {
+            out.lines.push_back(restoreBinFamily(hood, bin, out.lot));
+            // A family's lot leaves the bin with it (inferred: the family
+            // cannot be placed twice).
+            if (!under(bin.file, forbidden)) {
+                std::error_code ec;
+                fs::remove(bin.file, ec);
+            }
+        }
         out.lines.push_back("lot " + std::to_string(out.lot) + " \"" + bin.base.name + "\" from the bin (" +
                             bin.file.filename().string() + ") placed at (" + std::to_string(x) + ", " +
                             std::to_string(y) + "), front " + std::to_string(front));
@@ -819,6 +895,28 @@ LotResult moveLot(const fs::path& folder, const PlacementWorld& world, uint32_t 
     return out;
 }
 
+namespace {
+
+constexpr uint32_t kTypeFamilyThumb = 0x8C3CE95A;
+
+fs::path familyThumbnails(const Neighborhood& hood) {
+    return hood.package.parent_path() / "Thumbnails" / (hood.prefix + "_FamilyThumbnails.package");
+}
+
+// The resources of `pkg` of these (type, instance) keys, raw.
+std::map<Key, std::vector<uint8_t>> readResources(const fs::path& file, const std::set<Key>& keys) {
+    std::map<Key, std::vector<uint8_t>> out;
+    if (file.empty() || !fs::exists(file))
+        return out;
+    DbpfPackage pkg(file);
+    for (const auto& e : pkg.entries())
+        if (keys.count({e.tgi.type, e.tgi.instance}))
+            out[{e.tgi.type, e.tgi.instance}] = pkg.read(e);
+    return out;
+}
+
+} // namespace
+
 LotResult moveLotToBin(const fs::path& folder, uint32_t lotId, const fs::path& catalogDir, const fs::path& forbidden) {
     LotResult out;
     try {
@@ -830,10 +928,10 @@ LotResult moveLotToBin(const fs::path& folder, uint32_t lotId, const fs::path& c
         const Lot* lot = hood.lot(lotId);
         if (!lot)
             throw std::runtime_error("no lot " + std::to_string(lotId));
-        if (familyOnLot(hood, lotId))
-            throw std::runtime_error("moving an occupied lot with its family to the bin is not done");
         if (lot->package.empty() || !fs::exists(lot->package) || !lotFileInfo(*lot).hasHouse)
             throw std::runtime_error("empty lot");
+        const uint32_t famId = familyOnLot(hood, lotId);
+        const Family* fam = famId ? hood.family(famId) : nullptr;
         uint32_t id = 1;
         for (const auto& b : loadLotBin(catalogDir))
             id = std::max(id, b.catalogId + 1);
@@ -846,9 +944,53 @@ LotResult moveLotToBin(const fs::path& folder, uint32_t lotId, const fs::path& c
         std::vector<uint8_t> base(64, 0);
         const auto b = lot->info.writeBase(true);
         base.insert(base.end(), b.begin(), b.end());
-        rewritePackage(to.string() + ".saving", {{{kTypeBaseLotInfo, 0}, base}}, {});
+        std::map<Key, std::vector<uint8_t>> binAdds{{{kTypeBaseLotInfo, 0}, base}};
+        std::set<Key> hoodDrops{{hoodtype::LotInfo, lotId}, {kTypeStr, 0x8000 | lotId}};
+        std::map<Key, std::vector<uint8_t>> hoodAdds;
+        if (fam) {
+            // The family goes with the lot (cTSUserToolMoveLotToCatalog: STR#
+            // 0x83 #31): its record, name strings and clothing bin travel in
+            // the bin's lot file, its photo too; it leaves the neighborhood
+            // and loses its relationships with the Sims outside it. Which
+            // resources the game writes into the catalog file is inferred.
+            auto fromHood = readResources(hood.package, {{hoodtype::FAMI, famId}, {kTypeStr, famId},
+                                                         {hoodtype::Wardrobe, famId}});
+            for (auto& [k, bytes] : fromHood) {
+                binAdds[k] = std::move(bytes);
+                hoodDrops.insert(k);
+            }
+            auto photo = readResources(familyThumbnails(hood), {{kTypeFamilyThumb, famId}});
+            for (auto& [k, bytes] : photo)
+                binAdds[k] = std::move(bytes);
+            const std::set<uint16_t> members(fam->members.begin(), fam->members.end());
+            size_t dropped = 0;
+            {
+                DbpfPackage pkg(hood.package);
+                for (const auto& e : pkg.entries())
+                    if (e.tgi.type == hoodtype::SREL) {
+                        const bool a = members.count(uint16_t(e.tgi.instance >> 16)) != 0;
+                        const bool c = members.count(uint16_t(e.tgi.instance)) != 0;
+                        if (a != c)
+                            hoodDrops.insert({e.tgi.type, e.tgi.instance}), ++dropped;
+                    }
+            }
+            // Each Sim's list of the Sims it has a relationship with (SDSC):
+            // the family's keep each other, the others drop them.
+            for (const auto& n : hood.neighbors) {
+                SimDescription d = n.description;
+                const bool in = members.count(n.id) != 0;
+                std::erase_if(d.relations, [&](uint32_t r) { return (members.count(uint16_t(r)) != 0) != in; });
+                if (d.relations.size() != n.description.relations.size())
+                    hoodAdds[{hoodtype::SDSC, n.id}] = d.write();
+            }
+            out.lines.push_back("family " + std::to_string(famId) + " \"" + fam->name + "\" goes with the lot (" +
+                                std::to_string(dropped) + " relationships with other Sims dropped)");
+        }
+        rewritePackage(to.string() + ".saving", binAdds, {});
         fs::rename(to.string() + ".saving", to);
-        rewritePackage(hood.package, {}, {{hoodtype::LotInfo, lotId}, {kTypeStr, 0x8000 | lotId}});
+        rewritePackage(hood.package, hoodAdds, hoodDrops);
+        if (fam && fs::exists(familyThumbnails(hood)))
+            rewritePackage(familyThumbnails(hood), {}, {{kTypeFamilyThumb, famId}});
         fs::remove(lot->package);
         out.lot = lotId;
         out.lines.push_back("lot " + std::to_string(lotId) + " moved to the bin as " + to.filename().string());

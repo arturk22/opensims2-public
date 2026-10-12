@@ -211,9 +211,10 @@ int cmdLotBin(const char* path) {
     const auto lots = loadLotBin(dir);
     std::printf("%s: %zu lots\n", dir.string().c_str(), lots.size());
     for (size_t i = 0; i < lots.size(); ++i)
-        std::printf("  %zu cx_%08u %ux%u roads %u front %u  %lld  %s\n", i, lots[i].catalogId, lots[i].base.width,
+        std::printf("  %zu cx_%08u %ux%u roads %u front %u  %lld  %s%s%s\n", i, lots[i].catalogId, lots[i].base.width,
                     lots[i].base.depth, lots[i].base.roads, lots[i].base.creationFrontEdge,
-                    (long long)lots[i].price, lots[i].base.name.c_str());
+                    (long long)lots[i].price, lots[i].base.name.c_str(), lots[i].familyId ? "  family: " : "",
+                    lots[i].familyName.c_str());
     return 0;
 }
 

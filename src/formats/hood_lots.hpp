@@ -151,6 +151,7 @@ struct BinLot {
     LotInfo base;           // width/depth/roads/creation front/name
     int64_t price = 0;      // GetLotFileInfo of the lot file
     std::string familyName; // the family that moved to the bin with the lot (empty: none)
+    uint32_t familyId = 0;  // its family number (its FAMI in the lot file)
 };
 // cTSLotCatalog's remove (cTSWinProcLotCatalog::onBtnClickedID 0xC): the lot
 // file leaves the bin.
@@ -188,8 +189,10 @@ LotResult placeBinLot(const std::filesystem::path& folder, const PlacementWorld&
 LotResult moveLot(const std::filesystem::path& folder, const PlacementWorld& world, uint32_t lot, int x, int y,
                   int front, const std::filesystem::path& forbidden = {});
 // cTSGameStateController::SaveNeighborhoodLotToCatalog + RemoveNeighborhoodLot:
-// an unoccupied lot with a house goes to the bin (as cx_<next id>) and leaves
-// the neighborhood.
+// a lot with a house goes to the bin (as cx_<next id>) and leaves the
+// neighborhood; a family living there goes with it (its FAMI, name and
+// wardrobe in the lot file, its photo; its relationships with other Sims
+// dropped) and comes back when the lot is placed again (placeBinLot).
 LotResult moveLotToBin(const std::filesystem::path& folder, uint32_t lot, const std::filesystem::path& catalogDir,
                        const std::filesystem::path& forbidden = {});
 
