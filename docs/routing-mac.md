@@ -719,6 +719,53 @@ acima; `locomotion.cpp` `LocoCurve`/`blendGaits`/`strideWeight`,
   comprimento, com `(d − 0,9·s)/(4 − 0,9·s)` (`0x274b488` = 4). O walking3
   resolve `w` exato num número inteiro de meios ciclos sem o termo de fase
   nem a troca para `−½` ciclo acima de 0,3.
+- **Rodada 15 (front "anim3"): o ajuste lido até o fim e feito**
+  (`fitStride` em `locomotion.cpp`; `routing.cpp` `fit`). Os papéis que
+  faltavam: `L`/`Ls` são as `LocoDistance` (× escala) do ciclo longo e do
+  curto (walk 1,393, walkShort 0,683 por ciclo: a mesma "passada" que o
+  walking3 usava); `0x178`/`0x188` do pedido de locomoção são as porções
+  de começo e de fim (`PortionCompleted`/`EndPortionCompleted`), e os
+  termos de fase só existem **sem** clipe de começo (`f₀ = (1 − porção)
+  mod 0,5`, o resto do meio ciclo em que o Sim já anda) e **sem** clipe de
+  parada (`f₁` = porção de fim mod 0,5); com começo e parada os dois são 0.
+  Constantes lidas no binário: 0,3 (`0x274b670`), ±0,25 (`0x274b54c`,
+  `0x274b7b4`), −10 (`0x274b6e0`), 0,9 (`0x274b6d0`), 4 (`0x274b488`).
+  O laço acima de 0,3: `c' = c − ½`, `v` (peso curto da parada) de 1 para
+  baixo em 0,1, `w = num(v)/den` com `num = d − parada(v) − começo_l −
+  L(c' + ¼) − ¼·passada(v)` e `den = (c' + ¼)(Ls − L) + (começo_s −
+  começo_l)`, até `w ≥ 0` (dez tentativas; senão `w = 0`): ou seja,
+  `começo(w) + (c' + ¼)·passada(w) + ¼·passada(v) + parada(v) = d`. A
+  parada planejada leva o seu peso (`Loco::stopWeight`). Inferidos: o pé
+  da parada pela porção em que o andar termina (o primeiro pé do binário
+  vem do getter `0x178` e vira a cada `n` ímpar, até duas vezes, como
+  aqui), `v` limitado a [0, 1] e o ramo das rotas curtas (`0,9·(começo +
+  parada) ≥ d`, com `(d − 0,9·s)/(4 − 0,9·s)`) como antes. Teste:
+  `test_routing` "fit stride".
+- **Os 5/100 ms, lidos de novo** (`FollowOneStep`, BV `0x6b80e8`): não são
+  um adiantamento de cada fase. Quando o `BeginFollow` (vtable `0x41c`)
+  monta o caminho, a **primeira** fase é criada com o início em
+  `agora − 5` (ou `− 100` com `+0x24c > 0,25`, em ticks de animação = ms):
+  ela já começa 5/100 ms adiantada. As seguintes (estado 3) começam no
+  **fim exato da anterior** (`+0x1ac`) se ele foi há menos de N ms (N =
+  25 com `+0x24c ≤ 0,25`; senão `DAT_02c11c04 × 0,5`, um global sem
+  escrita achada), senão agora. Feito: a primeira fase (começo ou passo de
+  lado) com `Loco::lead` = 5/100 ms em ticks da VM (o quadro já anda isso,
+  o clipe é tocado desde lá); o encadeamento exato em ms das fases
+  seguintes não (falta o N do caso longo; as fases seguem encadeando tick
+  a tick). O desenho continua fundindo as fases nesse tempo.
+- **O tempo de mistura das poses `*Blend`** (`PushTurnBlendCycles`, BV
+  `0xd3107c`, e o `+0xec` do `InitChannelNetwork`): 0,2 (`0x274b644`),
+  limitado a 0,95 (`0x274bc94`) da distância do clipe de começo (com ele)
+  e da do clipe de parada (com ele). Feito (`locoPoseBlend`, as camadas
+  de pose com o seu `fade`); inferido: a unidade como distância ao longo
+  do caminho (os ciclos de locomoção andam por distância), convertida em
+  segundos pela velocidade do andar.
+- Soak com `OS2_SEED` 1–4 em N001_Lot68, N002_Lot10, N001_Lot16 e
+  N001_Lot11 (43.200 ticks cada), antes → depois do ajuste e do
+  adiantamento: interações terminadas com verdadeiro 1.338 → 1.473, com
+  falso 591 → 619, buscas 1.926 → 2.066, humor médio final 7,8 → 10,4,
+  nenhuma morte (as execuções divergem cedo; a soma de quatro sementes não
+  mostra perda).
 - Medido: `OS2_DEBUG_LOCO=1` (Don em N001_Lot16, "Vir Aqui" a 14,5,7,5):
   começo `turnAndGo-alt-135` 0,85 + `Short` 0,14, ciclos alt1/alt0 longos e
   curtos (0,16 de walkShort; 1,85 m/s), parada `turnAndStop-alt-0` 0,69 +

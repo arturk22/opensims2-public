@@ -741,8 +741,24 @@ padrão dela (humano `0x7FD96B54`).
 - **No app**: um Sim no slot de outro (bebê no colo) é desenhado no osso do
   slot do carregador (`BellyTarget_surface`, onde as animações de pegar
   prendem a raiz do bebê, com a rotação do osso), depois do carregador
-  (`docs/screenshots/r12-bebe-colo.jpg`). Falta: na mamadeira o adulto
-  inclina para trás e o bebê some no peito.
+  (`docs/screenshots/r12-bebe-colo.jpg`). **Mamadeira (rodada 15)**: o
+  "adulto inclina e o bebê some no peito" eram as mãos: as cadeias de IK
+  da `a2b-babybottle-feeder-*` e da `a2b-carry-belly` miram ossos **do
+  bebê** (alvos de IK de tipo 2: `head_grip` para a mão da garrafa,
+  `bottomtarget_surface` para a mão de baixo), que o objeto de IK do
+  pedido dá (Animate Sim: dono do byte 9; Animate Overlay: temp 6 com o
+  bit 0x08 do byte 15; `docs/primitives-mac.md` §4); o opensims2 lia esses
+  nomes no próprio esqueleto do adulto e levava a garrafa ao rosto dele.
+  Agora o adulto segura o bebê no braço e leva a garrafa à boca dele. A
+  garrafa na mão toma a pose do `snapObjectPose` do snap
+  (`o2a-fridge-babyBottle-get-babyBottlePose`), e o mesmo modelo
+  encaixado de novo com outro nome (`babyBottle` → `o2a`) não aparece
+  duas vezes. Repro sem cabeça: `opensims2 --lot N002_Lot10 --sim-id Jenny
+  --vm-create 0x0CB53A3A@24,21,2 --vm-create 0x7a03bdef@20,24,2
+  --vm-queue "Tombstone:New Baby" --track-sim-id 160 --orientation 2
+  --zoom 6 --run-vm 740 --frames 6 --frames-from 21` (quem dá a mamadeira
+  no app é o alienígena, 160; `OS2_LOG_ANIMS=1` lista os pedidos e os
+  objetos de IK). Captura: `docs/screenshots/r15-mamadeira-ik.jpg`.
 
 ### 17.5 Relacionamentos de uma família nova (dados)
 

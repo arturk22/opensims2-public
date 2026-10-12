@@ -1285,7 +1285,9 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   | Animate Sim (byte 12 = p) | `2p` (p < 0 → 0, p > 3 → 6) | `sil` 0–1, `sim` 2–3, `sih` 4–5, `siu` 6+ |
   | Animate Overlay (byte 11 = p) | `2p + 1` (p < 0 → 1; p ≥ 4 → 0) | `osl` 0, `ovl` 1–2, `ovm` 3–4, `ovh` 5–6, `ovu` 7+ |
   | Animate Object | 2 | `obj` |
-  | rota (locomoção) | 2, 3 ou 5 | `rsm`, `rom`, `roh` |
+  | `AddChoreoAnimRequest` tipo 5 | 2, 3 ou 5 | `rsm`, `rom`, `roh` |
+  | locomoção (andar, começo, parada) | 0 | — |
+  | Reach/Put: o grasp / a pose de carregar | 3 / 5 | `rom` / `roh` |
   Nos dados: o Animate Sim usa p = 1 em 2.984 de 4.010 (nível 2), 2 em 392,
   0 em 329, 3 em 304; os idles do idle system e da cadeira usam overlay de
   prioridade 0 ou −1 (nível 1), e as poses de carregar bebê ("Pickup -
@@ -1294,9 +1296,19 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   (nível 1) sem regra nenhuma, e a pose de carregar o bebê fica por cima
   do Animate Sim. No código: `vm::animlevel`, `Overlay::level`,
   `AnimationState::level/weight`, e o `AnimPlayer` mistura assim
-  (`Options::level`, `test_anim` "channel levels"). Inferido: o nível da
-  caminhada (usamos 3, `rom`) e o das poses de carregar do Reach/Put
-  (usamos 5; elas vêm do `AddToAnimList`, não lido).
+  (`Options::level`, `test_anim` "channel levels"). **Rodada 15
+  (anim3), conferido**: a locomoção não passa pelo `AddChoreoAnimRequest`;
+  o `cLocomotable::CreateLocoRequest` (BV `0x6b2158`) chama o
+  `CreateChoreoLocoRequest` (BV `0x9492b0`) com a prioridade (o 18º
+  argumento, `0x5c(r1)`, que vai ao `SetPriority`, vtable `0x44` do
+  `cChoreoRequest` pela base virtual) = `r29` = **0**: o andar é nível 0
+  (era 3 inferido). Os nomes `rsm`/`rom`/`roh` são do
+  `try_new_reach` (BV `0x69111c`), que monta até cinco pedidos com os
+  níveis 3, 2, 3, 3 e **5**, o último só quando há o nome da pose de
+  carregar (a segunda entrada da lista, `a2o-newspaper-carry`): o grasp
+  fica no 3 e a pose de carregar no 5 (era 5 inferido para os dois; o
+  mapa das fases 0–3 para os nomes não fechou por inteiro). No código:
+  `animlevel::Walk = 0`, `Grasp = 3`, `Carry = 5`.
 - **Canais delta (aditivos)** (rodada 14, front "anim-additive", decifrado
   no BV): o que faz um canal ser delta é o **bit 15 das flags do canal**
   (`cSharedChannelCubicKeysConstProxy4::IsBaseDataReturned`, BV `0xee4680`:
@@ -1339,9 +1351,13 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   cadeias de IK dele não resolvem nada); o Animate Sim de um clipe só de
   deltas toca por cima do corpo, como um parcial. Inferido: o peso do delta
   como fade × peso do pedido (o `0x20` do `cChannelUber` não foi lido) e o
-  espelho de um delta (pelo espelho da pose "repouso + delta"). Não feito:
-  deltas nos nós de IK mexerem nas cadeias. Teste: `test_anim`
-  "testDeltaChannels".
+  espelho de um delta (pelo espelho da pose "repouso + delta"). **Deltas
+  nos nós de IK (rodada 15)**: o `cActiveAnimIK` lê o alvo e o polo pelos
+  outlets dos nós (`SetTranslationChannelOutlet`/`SetRotationChannelOutlet`),
+  que já levam base × delta; no `AnimPlayer` os nós de alvo e polo que uma
+  camada lê para o IK recebem os deltas que o outlet tomou (as quicadas no
+  sofá, `*_handcontrol1`/`*_ikctr` delta, mexem nas mãos e pés do sentado).
+  Testes: `test_anim` "testDeltaChannels", "testDeltaIk".
 - **Onde fica o quadro da animação**: na fila de coreografia. A posição e a
   direção "globais" do objeto animado são as do osso raiz da fila
   (`GlobalRootTransPosition`, `GlobalRootRotHeading`: o vetor +Y do osso
@@ -1358,8 +1374,46 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   (`cBoneDataExtension::HeadingOffsetAxis`: X, Y ou Z). É o que o
   `AnimPlayer::Options::turn` faz (os filhos do osso do topo girados em Z).
   O heading **do pedido** vem do Animate Sim: com o bit 0x04 do byte 8 (sem
-  texto no editor; 7 usos nos dados) é `−temp 4 × k` (`FUN_008b6860`; k é
-  um global do `__bss`, não lido), senão 0: não feito.
+  texto no editor; 7 usos nos dados) é `−temp 4 × k` (`FUN_008b6860`),
+  senão 0; o Animate Overlay faz o mesmo com o bit 0x02 do byte 15
+  (`try_animate_overlay`, BV `0x69ea54`). **k = π/4** (rodada 15): o
+  global `0x2c4f038` não tem escrita achada, mas as funções vizinhas que o
+  usam convertem as 8 direções do SimAntics: `FUN_008b61fc(d) = (2 − d)·k`
+  e `FUN_008b68a4` volta de radianos `mod 8`; o temp 4 conta passos de
+  45° (horários). Feito: `animlevel::headingOfDirections`,
+  `AnimationState::headingOffset`, `Overlay::headingOffset`, somados ao
+  `turn` do recurso (também nos overlays).
+- **Alvos de IK de tipo 2: o objeto de IK do pedido** (rodada 15, front
+  anim3, decifrado). Os alvos de IK (`cIKTarget::TargetType`) têm 3 tipos
+  nos dados (`s2pkg anim-sweep`): 0 sem osso de quadro (20.859, o alvo no
+  espaço do modelo), 1 um osso do próprio esqueleto (4.742) e **2 um osso
+  de outro objeto** (2.118: `a2b-babybottle-feeder-*` com a mão direita no
+  `head_grip` do bebê e a esquerda no `bottomtarget_surface` dele, as
+  poses de carregar `a2b-carry-belly`, os abraços do sofá/banheira nos
+  ombros do outro, a barra do supino). O `AddChoreoAnimRequest` (BV
+  `0x696644`) recebe o ID do **objeto de IK** (o `short*` do 6º
+  argumento): se o recurso pede alvo (vtable `0x140(2)`), acha o objeto,
+  pega o nó de cena dele e passa ao `ValidateIKTargetBones` e ao
+  `CreateChoreoAnimRequest` (erros 0x62 sem ID, 0x17/99 sem objeto/nó,
+  100/101 ossos que faltam); o `InitIKAndLookAtTargetsInChoreoRequests`
+  (BV `0x699100`) refaz isso para os pedidos vivos. Quem dá o ID: o
+  Animate Sim, o dono do byte 9 / u16 10 (o mesmo "IK object" que já ia
+  como parâmetro 1 da árvore de eventos); o Animate Overlay, o **temp 6**
+  com o bit 0x08 do byte 15 (`try_animate_overlay`), senão nenhum. O
+  opensims2 resolvia o osso de tipo 2 no próprio esqueleto: o adulto que
+  dava mamadeira levava a garrafa ao **próprio** `head_grip` (o rosto) e
+  a mão esquerda ia ao espaço do modelo, deixando o bebê baixo — era a
+  causa do "inclina e o bebê some no peito" da rodada 12. No código:
+  `applyIk(..., IkObjectBone)`, `AnimPlayer::Options::ikObjectBone`,
+  `LotSimulation::ikObjectBones` (o ator do objeto de IK, Sim ou objeto
+  animado, no espaço do modelo de quem anima; o carregador é posado de
+  novo depois que o carregado é posto no osso, para as mãos alcançarem o
+  bebê da mesma imagem), `Overlay::ikObject`. Sem objeto (ou sem o osso)
+  o alvo fica no espaço do modelo (inferido); camada espelhada usa o osso
+  gêmeo refletido. Testes: `test_anim` "arm IK: a type-2 goal",
+  `test_animation_vm` "IK object in temp 6". Captura:
+  `docs/screenshots/r15-mamadeira-ik.jpg` (o alienígena de N002_Lot10 dá
+  mamadeira: antes sem objeto de IK, depois com).
 - **Tempo de blend: T = 233,333 ms** (decifrado). O global `0x2c0ddd0` é
   escrito uma vez, pelo inicializador estático do `TSSGAnimatable.cpp`
   (BV `0x20b4ef0`, no `__StaticInit`; o mesmo valor vai para `0x2c0de34`),
