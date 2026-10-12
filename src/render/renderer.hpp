@@ -103,6 +103,7 @@ public:
     static constexpr size_t kMaxLightSets = 256;
     // Replaces every light set (set 0 included).
     void setLightSets(std::vector<LightSet> sets);
+    const std::vector<LightSet>& lightSets() const { return lightSets_; }
     void setInstanceLightSet(int instance, int set);
     // The first instance of a model, or -1 (a Sim's actor has one).
     int instanceOf(int model) const;

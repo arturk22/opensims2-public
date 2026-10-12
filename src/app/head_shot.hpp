@@ -24,7 +24,8 @@ class ResourceIndex;
 // else is in view), on a transparent background; `size` pixels square.
 // nullopt when the character cannot be assembled.
 std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index, const std::vector<SimPart>& parts,
-                                        const std::filesystem::path& characterFile, uint32_t size = 128);
+                                        const std::filesystem::path& characterFile, uint32_t size = 128,
+                                        const std::filesystem::path& resDir = {});
 
 // A neighborhood object's picture (the Decorations catalog's tiles): the
 // renderer's `model` seen from the south-east and above, framed on its local

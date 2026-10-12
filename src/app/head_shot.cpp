@@ -1,6 +1,11 @@
 #include "app/head_shot.hpp"
 
 #include "formats/sim_actor.hpp"
+#include "formats/dbpf.hpp"
+#include "formats/lighting_config.hpp"
+#include "formats/resindex.hpp"
+#include "formats/scenegraph.hpp"
+#include "formats/xform.hpp"
 #include "formats/sim_character.hpp"
 #include "render/renderer.hpp"
 
@@ -15,16 +20,110 @@ namespace os2 {
 
 namespace {
 
-// The loop of the age's skeleton the Sim stands in (CAS's pose first).
-const Animation* idleOf(SimActor& actor, ResourceIndex& index, char age) {
-    std::vector<const char*> names;
-    switch (age) {
-    case 'c': names = {"c-UIpose-M0", "c-idle-neutral-armsSide-wtC-breatheLoop50"}; break;
-    case 'p': names = {"p-UIpose-m0", "p-idle-neutral-breatheLoop-CAS", "p-idle-neutral-lookAround"}; break;
-    case 'b': names = {"b-floor-idle-loopBreathe"}; break;
-    default: names = {"a-UIpose-M0", "a-idle-neutral-armsSide-wtC-breatheLoop"}; break;
+// The light rig "UIUCPHead" (Lights/LightRig.txt: resource and root
+// "UIPieMenu"): the directional lights of UIPieMenu_cres (Sims3D/LightRigs.package),
+// each turned by its node and the nodes above it, with Lights/LightRigs/PieMenu.txt's
+// intensity and colour overrides. In the rig's own space.
+struct RigLight {
+    std::string name;
+    Vec3 direction{0, 0, 1}; // the node's +Z (inferred: towards the light)
+    simd_float3 color{1, 1, 1};
+};
+std::vector<RigLight> headLightRig(ResourceIndex& index, const LightOverrides& overrides) {
+    std::vector<RigLight> out;
+    auto loc = index.findByName("UIPieMenu_cres", 0xE519C933);
+    if (!loc)
+        return out;
+    const auto bytes = index.read(*loc);
+    const Rcol rc(bytes);
+    std::map<uint32_t, size_t> parent;
+    std::vector<Xform> local(rc.blocks.size());
+    for (size_t i = 0; i < rc.blocks.size(); ++i) {
+        const auto& b = rc.blocks[i];
+        try {
+            if (b.className == "cTransformNode") {
+                const TransformNode t = TransformNode::parse(b.body);
+                local[i] = {t.rotation, t.translation};
+                for (const auto& c : t.children)
+                    parent[c.index] = i;
+            } else if (b.className == "cLightRefNode") {
+                const LightRefNode l = LightRefNode::parse(b.body);
+                local[i] = {l.renderable.transform.rotation, l.renderable.transform.translation};
+                for (const auto& c : l.renderable.transform.children)
+                    parent[c.index] = i;
+            }
+        } catch (const std::exception&) {
+        }
     }
-    for (const char* n : names)
+    for (size_t i = 0; i < rc.blocks.size(); ++i) {
+        if (rc.blocks[i].className != "cLightRefNode")
+            continue;
+        LightRefNode node;
+        try {
+            node = LightRefNode::parse(rc.blocks[i].body);
+        } catch (const std::exception&) {
+            continue;
+        }
+        if (node.lightLink < 0 || size_t(node.lightLink) >= rc.links.size())
+            continue;
+        const auto lb = index.read(rc.links[size_t(node.lightLink)]);
+        if (!lb)
+            continue;
+        const Rcol lr(*lb);
+        for (const auto& blk : lr.blocks) {
+            if (blk.className != "cDirectionalLight")
+                continue;
+            const StandardLight l = StandardLight::parse(blk.className, blk.body);
+            if (l.values.size() < 5)
+                continue;
+            RigLight r;
+            r.name = node.renderable.transform.name();
+            for (auto& ch : r.name)
+                ch = char(std::tolower(static_cast<unsigned char>(ch)));
+            float intensity = l.values[0];
+            simd_float3 color = simd_make_float3(l.values[2], l.values[3], l.values[4]);
+            if (auto ov = overrides.find(r.name); ov != overrides.end()) {
+                if (auto f = ov->second.find("intensity"); f != ov->second.end() && !f->second.empty())
+                    intensity = f->second[0];
+                if (auto f = ov->second.find("color"); f != ov->second.end() && f->second.size() >= 3)
+                    color = simd_make_float3(f->second[0], f->second[1], f->second[2]);
+            }
+            r.color = color * intensity;
+            Xform w = local[i];
+            for (size_t at = i; parent.count(uint32_t(at));) {
+                at = parent[uint32_t(at)];
+                w = local[at].then(w);
+            }
+            r.direction = w.rotate(Vec3{0, 0, 1});
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
+// cTSUIThumbnailFactorySimHead::SetupScene's pose (docs/neighborhood-mac.md
+// 15.5): "<age>-UIpose-<M|F>NN" with a number drawn from 1 to N (here from
+// the character file's name, so a Sim keeps its pose; the game draws it
+// each time); the baby's are "b-UIpose-NN". The idle loop if none loads.
+const Animation* poseOf(SimActor& actor, ResourceIndex& index, char age, bool female, const std::string& seed) {
+    uint32_t h = 2166136261u;
+    for (char ch : seed)
+        h = (h ^ uint8_t(ch)) * 16777619u;
+    std::vector<std::string> names;
+    char buf[64];
+    for (int k = 0; k < 9; ++k) {
+        const int n = int((h + uint32_t(k)) % 8) + 1;
+        if (age == 'b')
+            std::snprintf(buf, sizeof buf, "b-UIpose-%02d", (n - 1) % 4 + 1);
+        else
+            std::snprintf(buf, sizeof buf, "%c-UIpose-%c%02d", age, female ? 'F' : (age == 'p' ? 'm' : 'M'), n);
+        names.push_back(buf);
+    }
+    names.push_back(age == 'c' ? "c-idle-neutral-armsSide-wtC-breatheLoop50"
+                    : age == 'p' ? "p-idle-neutral-breatheLoop-CAS"
+                    : age == 'b' ? "b-floor-idle-loopBreathe"
+                                 : "a-idle-neutral-armsSide-wtC-breatheLoop");
+    for (const auto& n : names)
         try {
             return &actor.animation(index, n);
         } catch (const std::exception&) {
@@ -35,13 +134,31 @@ const Animation* idleOf(SimActor& actor, ResourceIndex& index, char age) {
 } // namespace
 
 std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index, const std::vector<SimPart>& parts,
-                                        const std::filesystem::path& characterFile, uint32_t size) {
+                                        const std::filesystem::path& characterFile, uint32_t size,
+                                        const std::filesystem::path& resDir) {
     try {
+        static const std::vector<RigLight> rig = [&] {
+            LightOverrides ov;
+            if (!resDir.empty())
+                ov = loadLightOverrides(resDir / "Lights/LightRigs/PieMenu.txt");
+            auto r = headLightRig(index, ov);
+            if (std::getenv("OS2_HEAD_DEBUG"))
+                for (const auto& l : r)
+                    std::fprintf(stderr, "head rig light %s dir (%.2f %.2f %.2f) colour (%.2f %.2f %.2f)\n", l.name.c_str(),
+                                 l.direction[0], l.direction[1], l.direction[2], l.color.x, l.color.y, l.color.z);
+            return r;
+        }();
         SimActor actor(loadCharacterSim(index, parts, characterFile, 1));
+        bool female = false;
+        try {
+            DbpfPackage pkg(characterFile);
+            female = readCharacter(pkg, index).gender == 1;
+        } catch (const std::exception&) {
+        }
         const char age = char(std::tolower(static_cast<unsigned char>(
             actor.skin.skeleton.name.empty() ? 'a' : actor.skin.skeleton.name[0])));
-        if (const Animation* idle = idleOf(actor, index, age))
-            actor.cue(0, *idle);
+        if (const Animation* pose = poseOf(actor, index, age, female, characterFile.filename().string()))
+            actor.cue(0, *pose);
         const simd_float3 at = simd_make_float3(-5000, -5000, 0); // outside the terrain
         actor.position = {at.x, at.y, at.z};
         actor.heading = 0;
@@ -49,12 +166,41 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         const int model = renderer.addObject(actor.skin.model, index, true);
         const int inst = renderer.addInstance(model, matrix_identity_float4x4);
         renderer.updateObject(model, actor.posed);
-        renderer.setInstanceLightSet(inst, 0);
-        const float h = age == 'b' ? 0.25f : age == 'p' ? 0.40f : age == 'c' ? 1.17f : 1.64f;
-        const float closeness = 0.8f; // a little of the shoulders, as the game's own head shots
-        const float dist = (age == 'b' || age == 'p' ? 0.8f : 1.0f) * closeness;
-        const float aim = h + (1 - closeness) * 0.3f;
-        const simd_float3 e = at + simd_make_float3(0, dist, aim + 0.03f), target = at + simd_make_float3(0, 0, aim);
+        // The rig's lights in a light set of their own for the shot (the rig
+        // space is the Sim's: +Y towards the camera, as the lights' names say).
+        const std::vector<Renderer::LightSet> sceneSets = renderer.lightSets();
+        int rigSet = 0;
+        if (!rig.empty() && sceneSets.size() < Renderer::kMaxLightSets) {
+            Renderer::LightSet set;
+            set.ambient = simd_make_float3(0.08f, 0.08f, 0.08f); // inferred: the rig has no ambient light
+            for (const auto& l : rig)
+                set.lights.push_back({simd_normalize(simd_make_float3(l.direction[0], l.direction[1], l.direction[2])),
+                                      l.color, 1});
+            std::vector<Renderer::LightSet> sets = sceneSets;
+            if (sets.empty())
+                sets.push_back({});
+            rigSet = int(sets.size());
+            sets.push_back(set);
+            renderer.setLightSets(std::move(sets));
+        }
+        renderer.setInstanceLightSet(inst, rigSet);
+        // The box around the head bone: 0.30 wide and deep, from 0.10 under
+        // the bone to 0.20 over it; the camera in front of the Sim (+Y, the
+        // skeleton's forward), aimed at the box's centre, as far as fits the
+        // box in the field of view plus twice its depth (binary); fov 30
+        // degrees (inferred: the camera's own is not read).
+        simd_float3 head = at + simd_make_float3(0, 0, age == 'b' ? 0.2f : age == 'p' ? 0.35f : age == 'c' ? 1.05f : 1.55f);
+        if (const int b = actor.skin.skeleton.find("head"); b >= 0 && size_t(b) < actor.bones.size()) {
+            const auto& t = actor.bones[size_t(b)].t;
+            simd_float3 p = simd_make_float3(t[0], t[1], t[2]);
+            if (simd_length(p.xy - at.xy) > 50) // bones in the Sim's own space
+                p += at;
+            head = p;
+        }
+        const simd_float3 target = head + simd_make_float3(0, 0, 0.05f);
+        const float fov = 30.0f * 3.14159265f / 180.0f;
+        const float dist = std::max(0.01f, 0.30f / (2 * std::tan(fov * 0.5f))) + 2 * 0.15f;
+        const simd_float3 e = target + simd_make_float3(0, dist, 0);
         const simd_float3 f = simd_normalize(target - e);
         const simd_float3 sv = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
         const simd_float3 u = simd_cross(sv, f);
@@ -62,7 +208,7 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         fv.view = simd_matrix(simd_make_float4(sv.x, u.x, -f.x, 0), simd_make_float4(sv.y, u.y, -f.y, 0),
                               simd_make_float4(sv.z, u.z, -f.z, 0),
                               simd_make_float4(-simd_dot(sv, e), -simd_dot(u, e), simd_dot(f, e), 1));
-        const float n = 0.05f, fa = 50, ys = 1.0f / std::tan(15.0f * 3.14159265f / 180.0f), zs = fa / (n - fa);
+        const float n = 0.05f, fa = 50, ys = 1.0f / std::tan(fov * 0.5f), zs = fa / (n - fa);
         fv.projection = simd_matrix(simd_make_float4(ys, 0, 0, 0), simd_make_float4(0, ys, 0, 0),
                                     simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, zs * n, 0));
         // The frame's UI overlay must not be in the shot.
@@ -70,11 +216,8 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         renderer.setOverlay({});
         RgbaImage out = renderer.capture(size, size, fv, simd_make_float4(0, 0, 0, 0));
         renderer.setOverlay(overlay);
-        // The neighborhood's sun leaves a face looking along the view in shade: lift it
-        // (inferred; the game's thumbnail factory has its own lights).
-        for (size_t i = 0; i + 3 < out.pixels.size(); i += 4)
-            for (size_t c = 0; c < 3; ++c)
-                out.pixels[i + c] = uint8_t(std::min(255.0f, 255.0f * std::pow(out.pixels[i + c] / 255.0f, 0.62f) * 1.05f));
+        if (rigSet)
+            renderer.setLightSets(sceneSets);
         if (const char* dbg = std::getenv("OS2_HEAD_DEBUG")) { // test aid: where the shot is saved
             const auto png = encodePng(out);
             if (FILE* f = std::fopen(dbg, "wb")) {

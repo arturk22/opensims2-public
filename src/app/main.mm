@@ -4729,7 +4729,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         gHood->ui().playSound = [](const std::string& name) { gGameAudio->playUi(name); };
     // Head shots for the characters whose files have none (app/head_shot.hpp).
     gHood->ui().renderHead = [rp = &renderer](const fs::path& file) {
-        return os2::renderHeadShot(*rp, *gIndex, simParts(*gIndex), file, 128);
+        return os2::renderHeadShot(*rp, *gIndex, simParts(*gIndex), file, 128, gameDir() / "TSData/Res");
     };
     // The Decorations catalog's pictures: effects have UI images, the rest are rendered.
     gHood->ui().renderDecorThumb = [rp = &renderer](const os2::hood::DecorProduct& p) -> std::optional<os2::RgbaImage> {
