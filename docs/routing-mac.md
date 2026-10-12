@@ -90,7 +90,7 @@ inteiros em `+0x2ec/+0x2f0/+0x2f4` do XMTO, postos só pela vtable; inferido:
 os deslocamentos do multi-tile no OBJD, sem giro), arredondado para o tile.
 Não é a posição no mundo girada de volta (o app; dá o mesmo se o
 deslocamento normalizado é o do mundo com a direção do líder desfeita e o y
-trocado de sinal — conferir num piano girado). O `AggregateFootprint`
+trocado de sinal — conferido na rodada 15 em todas as camas (direções 0, 2, 6) e pianos (direção 2) dos lotes: o índice "sub" do OBJD (campo `0x56`: x no byte alto, y no baixo) dá o mesmo tile; o VM usa agora a fórmula do binário com ele). O `AggregateFootprint`
 (vtable `0x2c8`, BV `0xaf49a0`) passa o od 9 e o `HasExtendedFootprint`
 (vtable `0x1a8`, BV `0xb012f0`: objeto que **não** é parte de multi-tile e
 porta (tipo 8) com a vtable `0x25c` & `0x50`, ou **OBJD[`0x4e`] ≠ 0**; nenhum
@@ -99,7 +99,7 @@ estendida, **todos** os tiles "(x,y)" da lista juntos; senão só o tile da
 parte. **Sem lista "footprint"** no recurso (com od 9 = 0) a pegada é a
 **caixa do modelo** (`FUN_00a45e54` no nó da cena) menos o tile (x, y) e,
 sem pegada estendida, **cortada a ±0,5** (`FLOAT_0274b5a4` = −0,5,
-`FLOAT_0274b4d4` = 0,5) — confirmado; o app usa a caixa do OBJD (a mudar).
+`FLOAT_0274b4d4` = 0,5) — confirmado; o VM faz assim desde a rodada 15 (sobrevivência 5; a caixa das malhas sem os planos de sombra, inferido).
 Com od 9 ≠ 0 e sem a lista "%d", ou com a flag `0x80`, a caixa do OBJD.
 
 Exemplo: o "Piano Upright" (`pianoUprightSaloon`): tiles (0,0)/(1,0) o
