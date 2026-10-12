@@ -1600,7 +1600,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             auto selfOutOfWay = [&]() {
                 if (!me.position.inWorld() || !blocker.position.inWorld() || d > 4)
                     return false;
-                const auto spot = moveOutOfWayPoint(vm, blocker, me);
+                const auto spot = moveOutOfWayPoint(vm, blocker, me, 0);
                 if (!spot)
                     return false;
                 Object::Route aside = r;
