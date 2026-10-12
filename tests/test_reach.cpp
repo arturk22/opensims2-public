@@ -211,6 +211,19 @@ static void testReachPut() {
     t = fx.run(0x1003, 0);
     check(t.result && paper.data[objdata::ContainerId] == 0 && paper.position.x == 4.5f && paper.position.y == 4.5f,
           "drop onto the floor: on the Sim's tile without a world");
+    // An object the trees put in the hand, its carry pose started by Animate
+    // Overlay (twice: two of a name): putting it down takes off every overlay
+    // the put's grasp entry names (a coffee mug from the machine; live QA 15).
+    paper.data[objdata::ContainerId] = fx.sim;
+    paper.data[objdata::SlotNumber] = 0;
+    sim.carryOverlays.clear();
+    sim.animation.addOverlay("a2o-paper-carry");
+    sim.animation.addOverlay("a2o-paper-carry");
+    sim.animation.addOverlay("a-idle-other");
+    t = fx.run(0x1003, 0);
+    check(t.result && !fx.vm.containedIn(fx.sim, 0) &&
+              (sim.animation.overlayNames() == std::vector<std::string>{"a-idle-other"}),
+          "putting down takes off the carry poses the put's grasp entry names");
     fx.code.add(kGroup, 0x1004, tree({reach(Lit, 0, 0, 0, 0, T, F)}));
     t = fx.run(0x1004, 0);
     check(t.status == Thread::Status::Finished && !t.result, "picking up nothing: false (Mac binary)");

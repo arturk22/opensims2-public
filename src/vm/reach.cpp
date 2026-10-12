@@ -470,9 +470,21 @@ Exit reachPut(Context& c) {
                     ++anim.overlaySerial;
                 }
             } else if (x) {
-                for (const auto& name : me.carryOverlays)
-                    if (auto it = std::find(anim.overlays.begin(), anim.overlays.end(), name); it != anim.overlays.end())
-                        anim.overlays.erase(it);
+                // The carry poses go: those the pick-up added, and those the
+                // put's own grasp entry names, every overlay of each name
+                // (a mug poured at the coffee machine is put in the hand by
+                // the trees, its "a2o-coffeeMug-carry" started by "Interaction
+                // - Walk and Sip" with Animate Overlay; "CT - Reach - Drop"
+                // puts it down with "a2o-coffeeMug-grasp,a2o-coffeeMug-carry"
+                // and nothing else stopped it: the arm held the mug that was
+                // on the table until the carpool came; live QA 15. Inferred:
+                // try_new_reach hands the entry's names to AddToAnimList,
+                // whose operation removes them when putting).
+                std::vector<std::string> names = me.carryOverlays;
+                names.insert(names.end(), r.overlays.begin(), r.overlays.end());
+                std::erase_if(anim.overlays, [&](const Overlay& ov) {
+                    return std::find(names.begin(), names.end(), ov.name) != names.end();
+                });
                 me.carryOverlays.clear();
                 ++anim.overlaySerial;
                 if (r.mode == 1 && to) {
@@ -540,6 +552,9 @@ Exit reachPut(Context& c) {
         if (!x)
             return Exit::False;
         r.object = x;
+        if (const uint16_t grasp = le16(&o[11]); grasp != 0xFFFF)
+            if (const std::string entry = adultListEntry(c, grasp); !entry.empty())
+                r.overlays = carryOverlays(c.vm, me, entry);
         if (mode == 1) {
             const Object* to = c.vm.object(c.get(o[3], int16_t(le16(&o[4]))));
             if (!to)
