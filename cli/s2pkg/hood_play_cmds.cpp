@@ -22,6 +22,19 @@ namespace {
 
 using namespace hood;
 
+// A lot file's price as the neighborhood reads it (GetLotFileInfo).
+int cmdLotValue(int argc, char** argv) {
+    for (int k = 2; k < argc; ++k) {
+        Lot l;
+        l.package = argv[k];
+        const LotFileInfo i = lotFileInfo(l);
+        std::printf("%s: price %lld = lot %lld + lot objects %lld + family objects %lld + architecture %lld x 0.8%s\n",
+                    argv[k], (long long)i.price, (long long)i.lotValue, (long long)i.lotObjects, (long long)i.familyObjects,
+                    (long long)i.architecture, i.fromFile ? "" : " (no SIMI)");
+    }
+    return 0;
+}
+
 int cmdLots(const char* path) {
     const Neighborhood h = Neighborhood::load(path, false);
     std::printf("%s: %zu lots, %zu families\n", h.prefix.c_str(), h.lots.size(), h.families.size());
@@ -230,6 +243,7 @@ int cmdLotBin(const char* path) {
 
 const char* hoodPlayUsage() {
     return "       s2pkg hood-lots <neighborhood-dir>  (prices, family bin)\n"
+           "       s2pkg lot-value <lot.package>...  (the price the neighborhood shows, from the SIMI)\n"
            "       s2pkg hood-move-in <neighborhood-dir> <family> <lot>   (writes the folder: use the user's copy)\n"
            "       s2pkg hood-move-out <neighborhood-dir> <lot>\n"
            "       s2pkg hood-bulldoze <neighborhood-dir> <lot>\n"
@@ -245,6 +259,8 @@ const char* hoodPlayUsage() {
 int hoodPlayCommand(const std::string& cmd, int argc, char** argv) {
     const char* game = std::getenv("OS2_GAME_DIR"); // refused as a destination when set
     const std::filesystem::path forbidden = game ? game : "";
+    if (cmd == "lot-value" && argc >= 3)
+        return cmdLotValue(argc, argv);
     if (cmd == "hood-lots" && argc == 3)
         return cmdLots(argv[2]);
     if (cmd == "hood-move-in" && argc == 5)

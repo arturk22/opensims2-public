@@ -2,6 +2,16 @@
 // hood::Neighborhood and the primitives and data owners that read it.
 #include "formats/neighborhood.hpp"
 #include "vm/hood_bridge.hpp"
+#include "formats/dbpf.hpp"
+#include "formats/lot.hpp"
+#include "formats/lot_objects.hpp"
+#include "formats/resindex.hpp"
+#include "vm/lot.hpp"
+#include "vm/lot_resume.hpp"
+#include "vm/placement.hpp"
+
+#include <cstdlib>
+#include <filesystem>
 
 #include <cstdio>
 #include <initializer_list>
@@ -282,7 +292,36 @@ static void testPrimitives() {
           "neighbor data: belongs in house, friends, telephone, baby, family friends, computer; neighborhood data");
 }
 
+// With the game's data (OS2_DATA): the lot objects' value of the Lots &
+// Houses bin's "Ranch Retreat" (cx_00000001) as the game saved it, §1090:
+// its five doors (§80) count as Build mode objects through their master's
+// build mode type (field 0x45 = 8; the parts have 0), with the windows'
+// §690. The value missed the doors (§690), so the lot's price dropped after
+// a save (live QA 14: §10.857 for sale, §10.387 after the save).
+static void testLotObjectsValue() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data)
+        return;
+    const std::filesystem::path res = std::filesystem::path(data) / "TSData/Res";
+    const std::filesystem::path lotPath = res / "UserData/LotCatalog/cx_00000001.package";
+    if (!std::filesystem::exists(lotPath))
+        return;
+    ResourceIndex index(res);
+    CodeLibrary code(&index);
+    DbpfPackage pkg(lotPath);
+    const Lot lot = Lot::load(pkg);
+    const LotObjects saved = LotObjects::load(pkg);
+    VM vm(code);
+    vm.initCreatedObjects = true;
+    const LotLoad load = loadLot(vm, lot, saved, charactersDirOf(lotPath));
+    startSavedLot(vm, load, saved, false);
+    computeLotData(vm);
+    check(vm.lotValues.lotObjects == int32_t(saved.simulator.fA8) && saved.simulator.fA8 == 1090,
+          "Ranch Retreat: the lot objects' value as the game saved it (doors by their master's build mode type)");
+}
+
 int main() {
+    testLotObjectsValue();
     testLoad();
     testPrimitives();
     if (failures)

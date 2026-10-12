@@ -578,7 +578,14 @@ void computeLotData(VM& vm) {
         if (type == 7 || (d.field(0x90) & 0x400))
             continue;
         const int value = o.data[objdata::CurrentValue];
-        const bool buyMode = d.field(0xCA) == 0;
+        // GetBuildModeType: field 0x45 of the catalog definition, a
+        // multi-tile part's master's (a door's parts have 0, the master 8).
+        const ObjectDefinition* catalog = &d;
+        if (const uint16_t master = d.masterId())
+            if (auto instance = vm.code().masterDefinition(o.group, master))
+                if (const ObjectDefinition* md = vm.code().definition(o.group, *instance))
+                    catalog = md;
+        const bool buyMode = catalog->field(0xCA) == 0;
         if (buyMode && !(o.data[kMovementFlags] & 0x10))
             family += value; // IsDeletedByEvict
         else if (!buyMode || type == 0xB || type == 0xC)

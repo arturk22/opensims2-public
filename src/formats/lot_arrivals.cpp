@@ -12,6 +12,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace os2 {
 
@@ -69,14 +70,28 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
     // A lot whose family was evicted: its things go first
     // (CleanupThingsRelatedToEvictedFamily, formats/lot_evict.hpp).
     if ((lot->info.flags & hood::LotInfo::kFlagEvicted) && index) {
+        // cTSObject::GetBuildModeType reads field 0x45 of the object's
+        // catalog definition: a multi-tile part's is its master's (a door's
+        // parts have 0, its master "Door - ..." 8).
         std::map<uint32_t, EvictObjd> objds;
+        std::map<std::pair<uint32_t, uint16_t>, uint16_t> masterBuildType; // (group, master ID) -> field 0x45
+        std::vector<std::tuple<uint32_t, uint16_t, uint32_t>> parts;      // (group, master ID, GUID)
         for (const auto& loc : index->ofType(kTypeObjd)) {
             try {
                 const ObjectDefinition d = ObjectDefinition::parse(index->read(loc));
                 objds.emplace(d.guid(), EvictObjd{d.field(0x52), d.field(0xCA), d.field(0x94)});
+                const uint32_t group = loc.entry->tgi.group;
+                if (d.masterId() && d.subIndex() == 0xFFFF)
+                    masterBuildType.emplace(std::pair{group, d.masterId()}, d.field(0xCA));
+                else if (d.masterId())
+                    parts.emplace_back(group, d.masterId(), d.guid());
             } catch (const std::exception&) {
             }
         }
+        for (const auto& [group, master, guid] : parts)
+            if (auto m = masterBuildType.find({group, master}); m != masterBuildType.end())
+                if (auto o = objds.find(guid); o != objds.end())
+                    o->second.buildModeType = m->second;
         const EvictCleanup c = cleanupEvictedFamily(
             saved,
             [&](uint32_t guid) -> std::optional<EvictObjd> {

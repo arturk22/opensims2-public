@@ -199,7 +199,9 @@ void dayPassed(VM& vm);
 // value (od 41) of every lead object in the world, not of type 7 nor with
 // catalog field 40 bit 0x400, goes to the family's objects when
 // cTSObject::IsDeletedByEvict (a Buy mode object, OBJD field 0x45 "build
-// mode type" 0, without "stays after evict", od 43 bit 0x10), else to the
+// mode type" 0 -- of the catalog definition, a multi-tile part's master's:
+// a door's parts have 0, its master 8 -- without "stays after evict", od 43
+// bit 0x10), else to the
 // lot's objects when it is a Build mode object or of type 0xB/0xC (then
 // plus its railing, railingCost); the decompiled
 // ComputeStats adds a Build mode object to the lot and a Buy mode one only

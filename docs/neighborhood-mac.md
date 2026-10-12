@@ -554,7 +554,19 @@ não-líderes de multi-tile, tipo 7 e os fora do mundo):
 | senão, tipo (OBJD campo 9) 0xB ou 0xC | lote, com o preço do corrimão (`RailingCost`: 0, 1 ou 2 × o preço do objeto `0x2C7BF690` conforme o modelo do corrimão) |
 | outros objetos do modo construção | nada (entram na arquitetura) |
 
-O valor é `GetCurrentValue` (dado 41). Pessoas: só ligam um dos booleanos
+O valor é `GetCurrentValue` (dado 41). **`GetBuildModeType`** (BV `0xb00c60`)
+lê o campo `0x45` da definição de catálogo do objeto, que num objeto
+multi-tile é a do **mestre** (rodada 17): as partes de uma porta têm 0 e o
+mestre "Door - 1 Tile - Value" tem 8, então as portas (com "stays after
+evict") vão para o lote. Lendo a definição da parte, as portas ficavam de
+fora e o preço do lote caía depois de salvar (§10.857 → §10.387 no "Ranch
+Retreat"); com o mestre os objetos do lote saem iguais aos salvos pelo jogo
+nos 12 lotes do catálogo. Sobra uma diferença de §150 nos objetos da família
+em todos os lotes do jogo conferidos: os três CDs de videogame (`VideoGame -
+CD - ...`, §50 cada, fora do mundo em (-1, -1), sem contêiner) entram no
+valor que o jogo salvou e não no nosso; o `IsInWorld` (BV `0xaf627c`: flag
++0x7a e `cWorldDB` vtable `0xf8` da posição) não explica isso (não
+conferido). Pessoas: só ligam um dos booleanos
 (dado de pessoa `0x4c` = 0xD). `temCasa` liga para um objeto de catálogo no
 mundo sobre algo construído (vtable `0xc4` do mundo). O opensims2 lê os
 globais salvos e não os refaz.
