@@ -1532,6 +1532,36 @@ trecho juntadas), para a água cobrir só os tiles; Ctrl apaga a piscina inteira
 (nenhum lote salvo tem); a recusa `0x86` só vale para deck/fundação junto de
 piscina (não feita).
 
+**Rodada 13 (binário): como o jogo guarda os POOL.** O `nTSWorld::cWorldPool`
+(vtable `0x281b788`) guarda as piscinas num hash de `tPoolObject` (id, x, y
+como float em `+0xc/+0x10`, nível, largura e altura inteiras em `+0x18/+0x1c`,
+mais dois floats); o `Save` (BV `0xc21154`, vtable `0x58`) escreve versão,
+1, o próximo id e **uma entrada por `tPoolObject`** (id, x, y, nível,
+largura, altura, `+0x20`, `+0x24`, `+0x28`): o formato que o opensims2 lê. O
+`AddPool` (vtable `0x30`, BV `0xc21984`) recebe dois cantos e cria **um**
+retângulo (e o `cTSUserToolUndoablePool::TryAddPool` só o chama). Os testes do
+gerente ao pôr um retângulo R:
+- vtable `0x44` (`0xc22068`): as piscinas que R cruza; `0x40` (`0xc21d24`):
+  as que só encostam (caixa ±0,01);
+- vtable `0x48` (`0xc22358`): falso se R cruza uma piscina P **sem a
+  atravessar** (a interseção não tem nem a largura nem a altura de P) ou se
+  a interseção fica a exatamente **1 tile** de uma borda de P (sobraria uma
+  faixa de 1 tile);
+- vtable `0x4c` (`0xc22810`): para cada P cruzada, os pedaços de P fora de R
+  (um ou dois retângulos no eixo em que R a atravessa);
+- vtable `0x50` (`0xc22dfc`): falso se a área de R mais a das piscinas que ele
+  toca passa de **900** ou se R com uma delas não forma um retângulo (uso
+  não achado: talvez a junção em um só retângulo).
+Ou seja, uma piscina em L ou U são **vários POOL que se tocam, sem
+sobreposição**: o retângulo novo inteiro e o que sobra dos antigos. No código
+(`drawPool`, rodada 13): R cruzando uma piscina sem atravessá-la ou deixando
+uma faixa de 1 tile → `0x86` "Can't extend pool" (o código é inferido: quem
+chama o `0x48` não foi achado); senão as piscinas cruzadas viram os pedaços
+de fora e R entra inteiro (antes eram linhas juntadas dos tiles novos). Não
+feito: o limite de 900 e a junção do `0x50`. `lot-save N001_Lot38 --pool
+2,2,3,7 --pool 2,2,7,3 --pool 6,2,7,7 --check` volta igual;
+`docs/screenshots/r13-construcao-piscina-em-u.jpg`.
+
 ### 7.19 Arcos de cerca (rodada 12)
 
 `fencearches.txt` tem um só arco no jogo base (`fenceArch 26`, "Arco de
