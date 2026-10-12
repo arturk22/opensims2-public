@@ -10,6 +10,7 @@
 #include "motives.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -42,6 +43,90 @@ bool rememberedFailure(const VM& vm, const Object& sim, ObjectId object, uint16_
 }
 
 constexpr int16_t kObjectDataTreeTableEntry = 20;
+
+// The Mac OS X (FreeBSD) libc qsort, element by element (its swaps and
+// comparisons in the same order), for orders that must match the binary's
+// when the comparator calls two items equal.
+template <class T, class Cmp>
+void bsdQsort(std::vector<T>& v, Cmp cmp) {
+    std::function<void(size_t, size_t)> sort = [&](size_t a, size_t n) {
+        auto c = [&](size_t i, size_t j) { return cmp(v[i], v[j]); };
+        auto swap = [&](size_t i, size_t j) { std::swap(v[i], v[j]); };
+        auto med3 = [&](size_t x, size_t y, size_t z) {
+            return c(x, y) < 0 ? (c(y, z) < 0 ? y : (c(x, z) < 0 ? z : x)) : (c(y, z) > 0 ? y : (c(x, z) < 0 ? x : z));
+        };
+        for (;;) {
+            bool swapped = false;
+            if (n < 7) {
+                for (size_t pm = a + 1; pm < a + n; ++pm)
+                    for (size_t pl = pm; pl > a && c(pl - 1, pl) > 0; --pl)
+                        swap(pl, pl - 1);
+                return;
+            }
+            size_t pm = a + n / 2;
+            if (n > 7) {
+                size_t pl = a, pn = a + n - 1;
+                if (n > 40) {
+                    const size_t d = n / 8;
+                    pl = med3(pl, pl + d, pl + 2 * d);
+                    pm = med3(pm - d, pm, pm + d);
+                    pn = med3(pn - 2 * d, pn - d, pn);
+                }
+                pm = med3(pl, pm, pn);
+            }
+            swap(a, pm);
+            size_t pa = a + 1, pb = a + 1, pc = a + n - 1, pd = a + n - 1;
+            for (;;) {
+                int r;
+                while (pb <= pc && (r = c(pb, a)) <= 0) {
+                    if (r == 0) {
+                        swapped = true;
+                        swap(pa, pb);
+                        ++pa;
+                    }
+                    ++pb;
+                }
+                while (pb <= pc && (r = c(pc, a)) >= 0) {
+                    if (r == 0) {
+                        swapped = true;
+                        swap(pc, pd);
+                        --pd;
+                    }
+                    --pc;
+                }
+                if (pb > pc)
+                    break;
+                swap(pb, pc);
+                swapped = true;
+                ++pb;
+                --pc;
+            }
+            if (!swapped) { // switch to insertion sort
+                for (size_t q = a + 1; q < a + n; ++q)
+                    for (size_t pl = q; pl > a && c(pl - 1, pl) > 0; --pl)
+                        swap(pl, pl - 1);
+                return;
+            }
+            const size_t pn = a + n;
+            size_t r = std::min(pa - a, pb - pa);
+            for (size_t k = 0; k < r; ++k)
+                swap(a + k, pb - r + k);
+            r = std::min(pd - pc, pn - pd - 1);
+            for (size_t k = 0; k < r; ++k)
+                swap(pb + k, pn - r + k);
+            if ((r = pb - pa) > 1)
+                sort(a, r);
+            if ((r = pd - pc) > 1) {
+                a = pn - r;
+                n = r;
+                continue;
+            }
+            return;
+        }
+    };
+    if (v.size() > 1)
+        sort(0, v.size());
+}
 
 // The Sim's age as the engine numbers it (cITSPerson::eSimAge, from the
 // Mac binary's cTSPerson::GetAvailabilityBitset and the TTAB data): 0
@@ -377,7 +462,21 @@ Exit findBestInteraction(Context& c) {
             ranked.push_back({&cand, cand.staticScore, false, at, {}, {}});
         }
     }
-    std::stable_sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) { return a.score > b.score; });
+    // FBA_CheckInteractions sorts with the C library's qsort (0x44-byte
+    // items) and a comparator that calls scores within 1e-7 equal (BV
+    // 0xac8f08: b - a > 1e-7 -> 1, < -1e-7 -> -1, else 0). qsort is not
+    // stable: equal scores (the trash pile's "Jogar Fora" and "Limpar", the
+    // same ads) come out in the order its partitioning leaves them, not in
+    // the TTAB's. Done here with the Mac OS X libc's qsort (the FreeBSD
+    // Bentley-McIlroy one: insertion sort under 7 items, median of 3 /
+    // ninther, the three-way partition, insertion sort when a pass swaps
+    // nothing). Inferred: the order the candidates come in (the binary's
+    // come from a hash table of objects with ads; here by object ID, then
+    // the TTAB's order).
+    bsdQsort(ranked, [](const Ranked& a, const Ranked& b) {
+        const float d = b.score - a.score;
+        return d > 1e-7f ? 1 : d < -1e-7f ? -1 : 0;
+    });
 
     // cTSPerson::FBA_CheckInteractions: best first, the first whose check
     // tree passes wins ("random selection count" 1 in FCNS 2: a random one of

@@ -10,6 +10,7 @@
 #include "formats/strings.hpp"
 #include "formats/txmt.hpp"
 
+#include <cstdlib>
 #include <cstdarg>
 #include <cstdio>
 #include <stdexcept>
@@ -355,6 +356,13 @@ std::string describeSimAntics(uint32_t type, std::span<const uint8_t> data) {
                     ads += a.minimum || a.delta;
             appendf(out, "  action=0x%04X guard=0x%04X string=%u flags=0x%04X/0x%04X autonomy=%u ads=%zu\n", it.action,
                     it.guard, it.stringIndex, it.flags, it.flags2, it.autonomy, ads);
+            // S2PKG_TTAB_ADS=1: each non-zero ad (age table, motive: minimum, delta, personality).
+            if (std::getenv("S2PKG_TTAB_ADS"))
+                for (size_t age = 0; age < it.motives.size(); ++age)
+                    for (size_t m = 0; m < it.motives[age].size(); ++m)
+                        if (const auto& a = it.motives[age][m]; a.minimum || a.delta)
+                            appendf(out, "    age table %zu motive %zu: %d +%d (personality %u)\n", age, m, a.minimum,
+                                    a.delta, a.personality);
         }
         break;
     }
