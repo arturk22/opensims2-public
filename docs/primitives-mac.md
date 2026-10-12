@@ -1003,6 +1003,43 @@ temp 5, lista da direita, botões `0x2000` incluir e `0x1000` tirar).
 Títulos padrão: STR# 0xAB #9 "Serviços", #10 "Vizinhos". Com o stack object
 sem object array, erro 0x6C antes de abrir.
 
+**Guarda-roupa (tipo 0x11, `cTSWinProcClothingDialog`).** `SetParams`
+(`0x330088`): a pessoa é o stack object (sem ele, o Sim da família
+selecionado); o temp 0 é um literal do Change Outfit traduzido para o bit
+da categoria (0 → 0x001, 1 nu → 0x080, 2 banho → 0x008, 3 ginástica →
+0x200, 4 formal → 0x020, 5 pijama → 0x010, 6 provar → 0x400, 8 gestante →
+0x100, 9/10 → 0x002/0x004, 11 íntima → 0x040, 13 → 0x1000); copia as peças
+da categoria para a roupa de provar (0x400). Abas parte de cima `0xECC70000`
+(peça 4), de baixo `0xECC70001` (0x10), conjunto `0xECC70002` (8); começa no
+conjunto se o Sim veste um, senão em cima. `ApplyClothingChoice`: um
+conjunto tira cima e baixo e vice-versa. `OnOk` copia a roupa de provar de
+volta para a categoria e grava (`SimSystem` vtable 0x3C); devolve
+verdadeiro. No app: as peças do catálogo do CAS da idade/gênero/categoria
+com a miniatura do `CASThumbnails.package` no lugar da vista 3D do Sim
+(inferido), e o OK grava o personagem com a roupa nova (`writeCharacter`,
+como o Sim que cresce) e o veste de novo se ele usa essa categoria.
+
+**Aspiração (tipo 0x18, `cTSWinProcSetAspirationDialog`, script
+`0xCC16A49E`; 0x22 usa `0xCAFE0045`).** O vizinho é o ID no stack object;
+os botões `0x0CDC000n` valem `1 << (n − 1)` (romance 1, família 2, riqueza
+4, popularidade 0x10, conhecimento 0x20) e gravam o dado de pessoa 46 do
+vizinho; `Validate` exige uma escolhida (≠ 0, 0x40, 0x100) e `OnOk` grava no
+Sim do lote. O texto "%s não é mais criança" é o `0x2D9B8E78` (menina) ou
+`0x2D9B8E7E` (menino).
+
+**Comida (tipo 0x0E, `cTSWinProcFillDialog`, script `0x2CB242F8`).**
+`SetParams` (`0x294ca4`) lê 4 locais a partir do byte 11: unidades que tem,
+custo de 50 unidades, entrega, máximo (os tipos 0x1B/0x1F/0x2A são de
+expansões). `CalculateCostOfUnits(n) = (n × custo + 49) / 50 + entrega`; a
+barra não passa do dinheiro da família; OK só com algo comprado e grava
+`valor − unidades` no temp 0.
+
+**Prateleiras (tipos 0x0B/0x0D, `cTSWinProcSelectItemsDialog`, script
+`0x2CB242F6`).** Os objetos do array 0 do stack object em uma fileira de
+miniaturas; temp 0 = 1 deixa escolher vários, temp 1 = 1 só o que a família
+pode pagar (`UpdateFunds`; temps 2/3, 100 por padrão, não seguidos); `OnOk`
+grava −1 nos itens não escolhidos.
+
 **Notificações (tipos 8–10, 0x1C)**: o byte 10 é o tempo de vida
 (`cTSUINotificationService::SetNotificationTimeOut`) e o byte 9 a prioridade
 (`SetNotificationPriority`). A fila (`cTSUINotificationQueue`) conta com um
