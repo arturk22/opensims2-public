@@ -216,6 +216,21 @@ std::optional<LocoPick> locoClip(VM& vm, const Object& sim, const std::string& r
 
 std::optional<LocoPick> computeClip(VM& vm, const Object& sim, const std::string& role, int steps) {
     const bool run = sim.data[17] == 1;
+    if (role == "stepInPlace") {
+        // In the walks' string, of no angle ("stepInPlace-alt" names
+        // "a-stepInPlace").
+        for (const auto& it : setString(vm, sim, run, false)) {
+            if (it.role != role)
+                continue;
+            std::vector<std::string> names{it.name};
+            if (it.name.ends_with("-alt"))
+                names.push_back(it.name.substr(0, it.name.size() - 4));
+            for (const auto& n : names)
+                if (std::string res = resolve(vm, sim, n); !res.empty())
+                    return LocoPick{res, false, it.speed};
+        }
+        return std::nullopt;
+    }
     const std::vector<Item> items = setString(vm, sim, run, true);
     const std::string degrees = std::to_string(45 * std::min(std::abs(steps), 4));
     for (const std::string& r : {role, role.ends_with("R") ? role.substr(0, role.size() - 1) : std::string()}) {
@@ -237,6 +252,128 @@ std::optional<LocoPick> computeClip(VM& vm, const Object& sim, const std::string
         }
     }
     return std::nullopt;
+}
+
+Gait blendGaits(const Gait& full, const Gait& shortGait, float w) {
+    w = std::clamp(w, 0.0f, 1.0f);
+    if (shortGait.cycles.empty() || shortGait.seconds <= 0 || w <= 0)
+        return full;
+    if (full.cycles.empty() || full.seconds <= 0 || w >= 1)
+        return shortGait;
+    Gait g;
+    g.run = full.run;
+    g.seconds = (1 - w) * full.seconds + w * shortGait.seconds;
+    const float stride = (1 - w) * full.speed * full.seconds + w * shortGait.speed * shortGait.seconds;
+    g.speed = stride / g.seconds;
+    for (const LocoLayer& l : full.cycles)
+        g.cycles.push_back({l.animation, l.weight * (1 - w), l.mirror, l.rate * full.seconds / g.seconds});
+    for (const LocoLayer& l : shortGait.cycles)
+        g.cycles.push_back({l.animation, l.weight * w, l.mirror, l.rate * shortGait.seconds / g.seconds});
+    std::stable_sort(g.cycles.begin(), g.cycles.end(), [](const LocoLayer& a, const LocoLayer& b) { return a.weight > b.weight; });
+    g.animation = g.cycles.front().animation;
+    return g;
+}
+
+float strideWeight(const Gait& full, const Gait& shortGait, float stretch, float clipsLong, float clipsShort) {
+    if (shortGait.cycles.empty() || full.seconds <= 0 || shortGait.seconds <= 0)
+        return 0;
+    const float sLong = full.speed * full.seconds, sShort = shortGait.speed * shortGait.seconds;
+    if (sLong - sShort <= 1e-4f)
+        return 0;
+    const float avail = stretch - clipsLong;
+    const float halves = avail <= 0 ? 0 : std::ceil(avail / (0.5f * sLong) - 1e-4f);
+    const float denominator = (clipsLong - clipsShort) + halves * 0.5f * (sLong - sShort);
+    if (denominator <= 1e-5f)
+        return avail < 0 ? 1.0f : 0.0f;
+    return std::clamp((halves * 0.5f * sLong - avail) / denominator, 0.0f, 1.0f);
+}
+
+namespace {
+// The uniform cubic B-spline's basis and its derivative at u.
+std::array<float, 4> basis(float u) {
+    const float v = 1 - u, u2 = u * u, u3 = u2 * u;
+    return {v * v * v / 6, (3 * u3 - 6 * u2 + 4) / 6, (-3 * u3 + 3 * u2 + 3 * u + 1) / 6, u3 / 6};
+}
+std::array<float, 4> basisSlope(float u) {
+    const float v = 1 - u;
+    return {-0.5f * v * v, 1.5f * u * u - 2 * u, -1.5f * u * u + u + 0.5f, 0.5f * u * u};
+}
+} // namespace
+
+LocoCurve::LocoCurve(float x, float y, const std::vector<std::array<float, 2>>& through) {
+    points = through.size();
+    if (through.empty())
+        return;
+    control.reserve(points + 5);
+    control.assign(3, {x, y});
+    control.insert(control.end(), through.begin(), through.end());
+    control.push_back(through.back());
+    control.push_back(through.back());
+    const size_t n = control.size() - 3;
+    length.resize(n);
+    after.assign(n, 0);
+    table.resize(n * (kSamples + 1));
+    for (size_t j = 0; j < n; ++j) {
+        std::array<float, 2> prev = at(j, 0);
+        float sum = 0;
+        table[j * (kSamples + 1)] = 0;
+        for (int k = 1; k <= kSamples; ++k) {
+            const std::array<float, 2> p = at(j, float(k) / kSamples);
+            sum += std::hypot(p[0] - prev[0], p[1] - prev[1]);
+            table[j * (kSamples + 1) + size_t(k)] = sum;
+            prev = p;
+        }
+        length[j] = sum;
+    }
+    for (size_t j = n - 1; j > 0; --j)
+        after[j - 1] = after[j] + length[j];
+}
+
+std::array<float, 2> LocoCurve::at(size_t j, float u) const {
+    const auto b = basis(u);
+    std::array<float, 2> p{0, 0};
+    for (size_t k = 0; k < 4; ++k)
+        p[0] += b[k] * control[j + k][0], p[1] += b[k] * control[j + k][1];
+    return p;
+}
+
+std::array<float, 2> LocoCurve::slope(size_t j, float u) const {
+    const auto b = basisSlope(u);
+    std::array<float, 2> p{0, 0};
+    for (size_t k = 0; k < 4; ++k)
+        p[0] += b[k] * control[j + k][0], p[1] += b[k] * control[j + k][1];
+    return p;
+}
+
+float LocoCurve::parameterAt(size_t j, float arc) const {
+    const float* t = &table[j * (kSamples + 1)];
+    if (arc <= 0)
+        return 0;
+    if (arc >= t[kSamples])
+        return 1;
+    int k = 1;
+    while (k < kSamples && t[k] < arc)
+        ++k;
+    const float span = t[k] - t[k - 1];
+    const float f = span > 1e-7f ? (arc - t[k - 1]) / span : 0;
+    return (float(k - 1) + f) / kSamples;
+}
+
+size_t LocoCurve::passedAfter(size_t j) const {
+    // Segment j runs from near control point j + 1 to near j + 2, and
+    // control point 3 + k is route point k.
+    const size_t m = points;
+    if (j + 1 >= segments())
+        return m; // the last one ends on the last point
+    if (j < 1)
+        return 0;
+    return std::min(j, m > 0 ? m - 1 : 0);
+}
+
+float LocoCurve::remaining(size_t j, float arc) const {
+    if (j >= segments())
+        return 0;
+    return std::max(0.0f, length[j] - arc) + after[j];
 }
 
 } // namespace os2::vm

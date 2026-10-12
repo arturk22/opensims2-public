@@ -562,7 +562,14 @@ struct Object {
             std::string animation;   // the clip playing
             uint32_t serial = 0;     // bumped as each clip starts
             bool mirror = false;
-            bool shortWay = false;   // the start was a short one: so is the stop
+            // walkShort's weight in the walk, the start and the stop (the
+            // stride blend, blendGaits/strideWeight).
+            float strideWeight = 0;
+            // How early the next phase starts, overlapping the one ending
+            // (FollowOneStep: 5 ms when the way's beginning, measured up to
+            // 0.75, is at most 0.25 long, else 100 ms).
+            float overlap = 0.1f;
+            bool sidestep = false;   // stepping without turning (CreateStepCycle)
             int tick = 0, ticks = 0; // in a start or a stop
             float distance = 0;      // its way along the route
             float speed = 0;         // the walk's, tiles per tick
@@ -573,24 +580,22 @@ struct Object {
             float cycle = 0;         // walk cycle portion (0-1)
             float cycleStart = 0;    // the portion the walk clip started at
             float endX = 0, endY = 0; // a stop's last point
-            // What plays, blended by weight (the first is `animation`): the
-            // two 45-degree clips around a start's or a stop's angle, or the
-            // weighed walk cycles (docs/routing-mac.md §6.1).
+            // What plays, blended by weight (the first is `animation`): a
+            // start's or a stop's clip and its short one blended by stride,
+            // a sidestep's clips, or the weighed walk cycles
+            // (docs/routing-mac.md §6.1).
             std::vector<LocoLayer> layers;
-            // The second start or stop clip and its weight (0: none).
-            std::string other;
-            bool otherMirror = false;
-            float otherWeight = 0;
-            // The frame on the route's curve: the segment it is on runs from
-            // (sx, sy) (the point passed last, (px, py) the one before) to the
-            // next route point (nx, ny), at parameter u.
-            float sx = 0, sy = 0, px = 0, py = 0, nx = 0, ny = 0, u = 0;
+            // The frame on the route's curve: `segment` of it, `arc` along
+            // that segment, `taken` of the route points it was built
+            // through passed.
+            std::shared_ptr<const LocoCurve> curve;
+            size_t segment = 0, taken = 0;
+            float arc = 0;
             bool onCurve = false;
             // Stopping where it is because the way is blocked (the walk
             // interrupted: cActiveAnimLoco::StopLocomotion), by `halted`.
             bool halting = false, haltDone = false;
             ObjectId halted = 0;
-            bool shortCycle = false; // walking the "walkShort" cycles
         } loco;
         // The instruction walking it: its thread's stack depth, tree and node.
         size_t depth = 0;

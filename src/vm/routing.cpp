@@ -1499,24 +1499,36 @@ struct LocoStep {
     float facing = 0; // the body's heading
 };
 
-// A start or stop clip blended by angle (cActiveAnimLoco::CreateStepCycle,
-// BV 0xd2bf28): the set's clip for the angle in 45-degree steps (the ±40
-// degree rule of cLocoSet), and when the angle is more than 0.01 off it the
-// next one 45 degrees on towards the angle, weighed |off| / 45 degrees
-// against 1 - that; the blend lasts and travels the two weighed.
+// A blend of locomotion clips with their weights: a start's or a stop's
+// clip and its short one (blended by stride), or a sidestep's clips
+// (blended by angle and distance, CreateStepCycle).
 struct BlendedClip {
-    LocoPick a;
-    const LocoClip* ca = nullptr;
-    LocoPick b;
-    const LocoClip* cb = nullptr;
-    float w = 0; // b's weight
-    explicit operator bool() const { return ca != nullptr; }
+    struct Part {
+        LocoPick pick;
+        const LocoClip* clip = nullptr;
+        float w = 1;
+    };
+    std::vector<Part> parts;
+    float duration = 0; // seconds, when the blend sets its own (a sidestep's speed)
+    explicit operator bool() const { return !parts.empty(); }
     // Seconds of a clip played at its set's speed.
     static float secondsOf(const LocoClip& c, const LocoPick& p) {
         return float(c.ticks) / kAnimTicksPerSecond / std::max(p.speed, 0.01f);
     }
-    float seconds() const { return cb ? (1 - w) * secondsOf(*ca, a) + w * secondsOf(*cb, b) : secondsOf(*ca, a); }
-    float distance() const { return cb ? (1 - w) * ca->distance + w * cb->distance : ca->distance; }
+    float seconds() const {
+        if (duration > 0)
+            return duration;
+        float s = 0;
+        for (const Part& p : parts)
+            s += p.w * secondsOf(*p.clip, p.pick);
+        return s;
+    }
+    float distance() const {
+        float d = 0;
+        for (const Part& p : parts)
+            d += p.w * p.clip->distance;
+        return d;
+    }
     static std::array<float, 3> rootOf(const LocoClip& c, bool mirror, float t) {
         if (c.root.empty())
             return {0, 0, mirror ? -c.turn * t : c.turn * t};
@@ -1528,42 +1540,141 @@ struct BlendedClip {
     }
     // The root's offset from the frame (side, forward, yaw) at `t` (0-1).
     std::array<float, 3> root(float t) const {
-        std::array<float, 3> r = rootOf(*ca, a.mirror, t);
-        if (cb) {
-            const std::array<float, 3> s = rootOf(*cb, b.mirror, t);
+        std::array<float, 3> r{0, 0, 0};
+        for (const Part& p : parts) {
+            const std::array<float, 3> s = rootOf(*p.clip, p.pick.mirror, t);
             for (size_t i = 0; i < 3; ++i)
-                r[i] = (1 - w) * r[i] + w * s[i];
+                r[i] += p.w * s[i];
         }
         return r;
     }
     float turn() const {
-        const float ta = a.mirror ? -ca->turn : ca->turn;
-        if (!cb)
-            return ta;
-        return (1 - w) * ta + w * (b.mirror ? -cb->turn : cb->turn);
+        float t = 0;
+        for (const Part& p : parts)
+            t += p.w * (p.pick.mirror ? -p.clip->turn : p.clip->turn);
+        return t;
+    }
+    const Part& heaviest() const {
+        return *std::max_element(parts.begin(), parts.end(), [](const Part& a, const Part& b) { return a.w < b.w; });
     }
 };
 
-BlendedClip blendedClip(VM& vm, const Object& me, const std::string& role, float angle, int tps) {
+bool loadLocoClip(VM& vm, const Object& me, const std::string& role, int steps, int tps, BlendedClip::Part& out) {
+    if (auto p = locoClip(vm, me, role, steps))
+        if (const LocoClip* c = vm.animations.loco(p->animation, tps); c && c->ticks > 0) {
+            out.pick = *p;
+            out.clip = c;
+            return true;
+        }
+    return false;
+}
+
+// A start or a stop ("turnAndGo", "turnAndStop[R]"; cActiveAnimLoco::
+// DetermineTurnResources, docs/routing-mac.md §6.1): the set's clip of the
+// 45-degree steps nearest the angle (the ±40 degree rule of cLocoSet), no
+// blend of angles (what is left over goes to the curve), blended with its
+// short one of the same angle ("turnAndGoShort", "turnAndStopShortR") by
+// the stride weight `shortWeight`.
+BlendedClip turnClip(VM& vm, const Object& me, const std::string& role, float angle, int tps, float shortWeight) {
     BlendedClip out;
     const int steps = turnSteps(0, angle);
-    auto load = [&](const std::string& r, int s, LocoPick& pick, const LocoClip*& clip) {
-        if (auto p = locoClip(vm, me, r, s))
-            if (const LocoClip* c = vm.animations.loco(p->animation, tps); c && c->ticks > 0) {
-                pick = *p;
-                clip = c;
-                return true;
-            }
-        return false;
-    };
-    if (!load(role, steps, out.a, out.ca))
+    const bool other = role.ends_with("R");
+    const std::string plain = other ? role.substr(0, role.size() - 1) : role;
+    const std::string shortRole = plain + "Short" + (other ? "R" : "");
+    BlendedClip::Part a, b;
+    const bool hasLong = loadLocoClip(vm, me, role, steps, tps, a);
+    const bool hasShort = shortWeight > 0.001f && loadLocoClip(vm, me, shortRole, steps, tps, b);
+    if (!hasLong && !hasShort) {
+        if (loadLocoClip(vm, me, shortRole, steps, tps, b))
+            out.parts.push_back(b);
         return out;
-    const float off = std::remainder(angle - float(steps) * float(M_PI / 4), float(2 * M_PI));
-    const int next = steps + (off > 0 ? 1 : -1);
-    if (std::fabs(off) > 0.01f && std::abs(next) <= 4 && load(role, next, out.b, out.cb))
-        out.w = std::clamp(std::fabs(off) / float(M_PI / 4), 0.0f, 1.0f);
-    else
-        out.cb = nullptr;
+    }
+    if (!hasShort || shortWeight <= 0.001f) {
+        out.parts.push_back(a);
+    } else if (!hasLong || shortWeight >= 0.999f) {
+        out.parts.push_back(b);
+    } else {
+        a.w = 1 - shortWeight;
+        b.w = shortWeight;
+        out.parts.push_back(a);
+        out.parts.push_back(b);
+    }
+    return out;
+}
+
+// A sidestep (cActiveAnimLoco::CreateStepCycle, BV 0xd2bf28): stepping
+// `distance` at `angle` off where the walker faces without turning. The
+// two 45-degree "step" angles around it blended by |off| / 45 degrees
+// (NextLocoResourceByTurnRotation: the nearest, and the next one towards
+// the angle when it is more than 0.01 off); within each angle "step" and
+// "stepShort" blended by the distance, under the short one's distance
+// "stepShort" with "stepInPlace" at distance 0; over the long one's the
+// sidestep fails (the walker walks). Its speed is the clips' velocities
+// weighed, times 1.4 (a fixed factor, 0x277d8e8) and the set's
+// multiplier ("@1.5"); it lasts the distance over that speed.
+BlendedClip sideStep(VM& vm, const Object& me, float angle, float distance, int tps) {
+    BlendedClip out;
+    const float q = float(M_PI / 4);
+    const int steps = std::clamp(int(std::lround(angle / q)), -4, 4);
+    const float off = std::remainder(angle - float(steps) * q, float(2 * M_PI));
+    int next = steps + (off > 0 ? 1 : -1);
+    if (next > 4)
+        next -= 8;
+    if (next < -4)
+        next += 8;
+    const float wNext = std::fabs(off) > 0.01f ? std::clamp(std::fabs(off) / q, 0.0f, 1.0f) : 0.0f;
+    for (const auto& [s, wa] : {std::pair{steps, 1 - wNext}, std::pair{next, wNext}}) {
+        if (wa <= 0)
+            continue;
+        BlendedClip::Part lng, shrt;
+        const bool hasLong = loadLocoClip(vm, me, "step", s, tps, lng);
+        const bool hasShort = loadLocoClip(vm, me, "stepShort", s, tps, shrt);
+        if (!hasLong && !hasShort)
+            return {};
+        if (!hasLong)
+            lng = shrt;
+        if (!hasShort)
+            shrt = lng;
+        if (shrt.clip->distance > lng.clip->distance)
+            std::swap(shrt, lng);
+        if (distance > lng.clip->distance + 1e-3f)
+            return {}; // longer than a step: walks
+        if (distance >= shrt.clip->distance) {
+            const float span = lng.clip->distance - shrt.clip->distance;
+            const float wl = span > 1e-4f ? (distance - shrt.clip->distance) / span : 1.0f;
+            lng.w = wa * wl, shrt.w = wa * (1 - wl);
+            for (const auto* p : {&lng, &shrt})
+                if (p->w > 0.001f)
+                    out.parts.push_back(*p);
+        } else {
+            BlendedClip::Part still;
+            const float ws = shrt.clip->distance > 1e-4f ? distance / shrt.clip->distance : 1.0f;
+            if (ws < 0.999f && loadLocoClip(vm, me, "stepInPlace", 0, tps, still)) {
+                shrt.w = wa * ws, still.w = wa * (1 - ws);
+                out.parts.push_back(shrt);
+                if (still.w > 0.001f)
+                    out.parts.push_back(still);
+            } else {
+                shrt.w = wa;
+                out.parts.push_back(shrt);
+            }
+        }
+    }
+    float sum = 0, velocity = 0, multiplier = 0;
+    for (const auto& p : out.parts)
+        sum += p.w, velocity += p.w * p.clip->velocity, multiplier += p.w * p.pick.speed;
+    if (sum <= 0)
+        return {};
+    for (auto& p : out.parts)
+        p.w /= sum;
+    const float speed = velocity / sum * 1.4f * (multiplier / sum);
+    out.duration = speed > 1e-4f && distance > 1e-4f ? distance / speed : 0;
+    if (out.duration <= 0) {
+        float s = 0;
+        for (const auto& p : out.parts)
+            s += p.w * BlendedClip::secondsOf(*p.clip, p.pick);
+        out.duration = s / 1.4f;
+    }
     return out;
 }
 
@@ -1573,34 +1684,33 @@ BlendedClip blendedClip(VM& vm, const Object& me, const std::string& role, float
 // frame moving along the route's curve and the walker put where the clip's
 // root is (LocoPlaceFromSceneGraph: its translation, and the facing its
 // rotation's).
-//   start  standing: "turnAndGo" for the angle to the first leg (the two
-//          45-degree clips around it blended, CreateStepCycle; the way out
-//          already leaves along the 45-degree steps), "turnAndGoShort" when
-//          the stretch is shorter than a start and a stop, or "stepShort"
-//          when it is at most 0.25 tile (BeginFollow tests role 9,
-//          stepShort, for such a way): the body keeps facing and steps
-//          that way. Its frame covers the clip's distance (or the
-//          stretch) in the clip's length.
-//   walk   the gait's cycles blended by their weights at the blend's speed
-//          (gaitOf); the "walkShort" cycles when what is left before the
-//          stop is shorter than one stride of the walk (inferred).
+//   start  standing: "turnAndGo" of the 45-degree steps nearest the angle
+//          to the first leg (the way out already leaves along them),
+//          blended with "turnAndGoShort" by the stride weight. Its frame
+//          covers the clip's distance (or the stretch) in the clip's length.
+//          A straight way (|chord - length| < 0.02) to a final facing the
+//          walker already has (within 0.01) is a sidestep instead
+//          (CreateStepCycle: "step"/"stepShort"/"stepInPlace" blended by
+//          angle and distance), the body keeping its facing, if one reaches.
+//   walk   the gait's cycles blended by their weights, walk and walkShort
+//          blended by the stride weight: the fewest half cycles the long
+//          stride reaches over what is left between the start and the stop,
+//          the strides blended down to fit them (strideWeight).
 //   stop   at the end of the route, once what is left is a stop's
-//          distance: "turnAndStop" (or the short one after a short start)
-//          from the way the walker comes to its final facing, blended by
-//          angle, of the foot the cycle is on ("R", cycle portion 0, in the
-//          first or last quarter of the cycle; inferred from the clips'
-//          cycle portions); its frame covers what is left in the clip's
-//          length.
+//          distance: "turnAndStop" (and its short one by the stride weight)
+//          from the way the walker comes to its final facing, of the foot
+//          the cycle is on ("R", cycle portion 0, in the first or last
+//          quarter of the cycle; inferred from the clips' cycle portions);
+//          its frame covers what is left in the clip's length.
 //   halt   the way is blocked (InterruptActiveLocoState(2) ->
 //          cActiveAnimLoco::StopLocomotion, BV 0xd2f9b4): a "turnAndStop"
 //          of no turn from the foot the cycle is on, where it is, its frame
 //          going on only as far as the way is free; the walk reports
 //          blocked once it has played (FollowOneStep state 6 -> 7).
-// The frame follows a Catmull-Rom curve through the route's points (cut
-// every 0.2 tile by shapeWalk; inferred: the game's cPath takes the
-// waypoints with a cubic strategy, cPathStrategyCubic, whose coefficients
-// were not read). A set without these clips (tests, private sets without
-// turns) walks at the gait's speed from the first tick to the last.
+// The frame follows the route's B-spline (LocoCurve: cut every 0.2 tile by
+// shapeWalk, the ends tripled). A set without these clips (tests, private
+// sets without turns) walks at the gait's speed from the first tick to the
+// last.
 // `haltFor`: the blocker the walk stops for (0: none); `haltRoom`: how far
 // its frame may go on (tiles).
 LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId haltFor = 0, float haltRoom = 0) {
@@ -1610,7 +1720,7 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     L = r.loco;
     const float tps = float(vm.clock.ticksPerSecond);
     const int itps = int(vm.clock.ticksPerSecond);
-    // The stretch over the floor from here: its points and length.
+    // The stretch over the floor from here: its points.
     size_t end = 0;
     while (end < r.points.size() && floorPoint(r.points[end]))
         ++end;
@@ -1619,143 +1729,185 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
         L.fx = me.position.x, L.fy = me.position.y;
         L.onCurve = false;
     }
-    auto lengthFrom = [&](float x, float y, size_t from) {
-        float len = 0;
-        for (size_t i = from; i < end; ++i) {
-            len += std::hypot(r.points[i].x - x, r.points[i].y - y);
-            x = r.points[i].x, y = r.points[i].y;
+    // The curve from the frame through the stretch's points, kept while the
+    // route is the one it was made through (planned again: a new one from
+    // the frame).
+    bool rebuilt = false;
+    auto ensureCurve = [&] {
+        if (end == 0) {
+            L.curve.reset();
+            L.onCurve = false;
+            return;
         }
-        return len;
+        if (const LocoCurve* c = L.curve.get(); L.onCurve && c && L.taken < c->points && c->points - L.taken == end) {
+            const auto& p = c->point(L.taken);
+            const auto& q = c->control.back();
+            if (p[0] == r.points[0].x && p[1] == r.points[0].y && q[0] == r.points[end - 1].x && q[1] == r.points[end - 1].y)
+                return;
+        }
+        std::vector<std::array<float, 2>> through;
+        through.reserve(end);
+        for (size_t k = 0; k < end; ++k)
+            through.push_back({r.points[k].x, r.points[k].y});
+        L.curve = std::make_shared<const LocoCurve>(L.fx, L.fy, through);
+        L.segment = 0, L.taken = 0, L.arc = 0;
+        L.onCurve = true;
+        rebuilt = true;
+        // The overlap of the phases (FollowOneStep): by the way's beginning
+        // as BeginFollow measures it, the legs summed until past 0.75 (or
+        // until it changes level; the room change it also stops at is not
+        // checked here): 5 ms when that is at most 0.25, else 100 ms.
+        float begun = 0, x = L.fx, y = L.fy;
+        for (size_t k = 0; k < end && begun <= 0.75f; ++k) {
+            if (r.points[k].level != me.position.level)
+                break;
+            begun += std::hypot(r.points[k].x - x, r.points[k].y - y);
+            x = r.points[k].x, y = r.points[k].y;
+        }
+        L.overlap = begun <= 0.25f ? 0.005f : 0.1f;
     };
-    const float stretch = lengthFrom(L.fx, L.fy, 0);
+    ensureCurve();
+    auto curveLeft = [&] { return L.curve && L.onCurve ? L.curve->remaining(L.segment, L.arc) : 0.0f; };
+    const float stretch = curveLeft();
     const auto& first = r.points.front();
     const float legX = first.x - L.fx, legY = first.y - L.fy;
     const float legHeading = std::hypot(legX, legY) > 1e-5f ? headingOfMotion(legX, legY) : facingOf(me);
+    // The way the walker comes to the end: the last leg's.
+    auto lastHeading = [&] {
+        if (end == 0)
+            return legHeading;
+        const float px = end >= 2 ? r.points[end - 2].x : L.fx, py = end >= 2 ? r.points[end - 2].y : L.fy;
+        const float dx = r.points[end - 1].x - px, dy = r.points[end - 1].y - py;
+        return std::hypot(dx, dy) > 1e-5f ? headingOfMotion(dx, dy) : legHeading;
+    };
     auto setLayers = [&](const BlendedClip& c) {
         const float secs = c.seconds();
         L.layers.clear();
-        L.layers.push_back({c.a.animation, 1 - c.w, c.a.mirror,
-                            secs > 0 ? BlendedClip::secondsOf(*c.ca, c.a) / secs * c.a.speed : c.a.speed});
-        if (c.cb && c.w > 0)
-            L.layers.push_back({c.b.animation, c.w, c.b.mirror,
-                                secs > 0 ? BlendedClip::secondsOf(*c.cb, c.b) / secs * c.b.speed : c.b.speed});
+        for (const auto& p : c.parts)
+            L.layers.push_back({p.pick.animation, p.w, p.pick.mirror,
+                                secs > 0 ? BlendedClip::secondsOf(*p.clip, p.pick) / secs * p.pick.speed : p.pick.speed});
         // The heaviest first.
-        if (L.layers.size() == 2 && L.layers[1].weight > L.layers[0].weight)
-            std::swap(L.layers[0], L.layers[1]);
+        std::stable_sort(L.layers.begin(), L.layers.end(), [](const LocoLayer& a, const LocoLayer& b) { return a.weight > b.weight; });
     };
     auto begin = [&](Loco::Kind kind, const BlendedClip& c, float distance, float heading) {
         L.kind = kind;
-        L.animation = c.a.animation;
-        L.mirror = c.a.mirror;
-        L.other = c.cb ? c.b.animation : std::string();
-        L.otherMirror = c.cb && c.b.mirror;
-        L.otherWeight = c.cb ? c.w : 0;
+        L.animation = c.heaviest().pick.animation;
+        L.mirror = c.heaviest().pick.mirror;
         L.tick = 0;
         L.ticks = std::max(1, int(std::lround(c.seconds() * tps)));
         L.distance = distance;
         L.heading = heading;
         L.turn = c.turn();
-        // A stop or a step leaves the body turned off the frame (a start's
-        // turn ends on the way, the walk going on from its sway).
-        L.endTurn = 0;
-        if (kind == Loco::Stop || c.a.animation.find("tep") != std::string::npos)
-            L.endTurn = c.root(1)[2];
+        // A stop or a sidestep leaves the body turned off the frame (a
+        // start's turn ends on the way, the walk going on from its sway).
+        L.endTurn = kind == Loco::Stop || L.sidestep ? c.root(1)[2] : 0;
         setLayers(c);
-        if (c.cb && c.w > 0.5f) { // the heavier clip is the base one
-            L.animation = c.b.animation, L.mirror = c.b.mirror;
-            L.other = c.a.animation, L.otherMirror = c.a.mirror, L.otherWeight = 1 - c.w;
-        }
         ++L.serial;
     };
-    // The clip now playing (a start or a stop), as begun.
+    // The clip now playing (a start or a stop), as begun: its layers.
     auto current = [&]() {
         BlendedClip c;
-        c.a.animation = L.animation, c.a.mirror = L.mirror;
-        c.ca = vm.animations.loco(L.animation, itps);
-        if (!L.other.empty() && L.otherWeight > 0) {
-            c.b.animation = L.other, c.b.mirror = L.otherMirror;
-            c.cb = vm.animations.loco(L.other, itps);
-            c.w = c.cb ? L.otherWeight : 0;
-        }
+        for (const LocoLayer& l : L.layers)
+            if (const LocoClip* clip = vm.animations.loco(l.animation, itps); clip && l.weight > 0)
+                c.parts.push_back({LocoPick{l.animation, l.mirror, 1}, clip, l.weight});
         return c;
     };
     // A stop's clip for the way the walker comes and its final facing.
-    auto stopClip = [&](float heading, bool turnToFacing) {
+    auto stopClip = [&](float heading, bool turnToFacing, float shortWeight) {
         const float facing = turnToFacing && r.facing >= 0 ? headingOfDirection(r.facing) : heading;
         const bool otherFoot = L.cycle < 0.25f || L.cycle >= 0.75f;
-        const std::string role = std::string(L.shortWay && turnToFacing ? "turnAndStopShort" : "turnAndStop") +
-                                 (otherFoot ? "R" : "");
-        return blendedClip(vm, me, role, std::remainder(facing - heading, float(2 * M_PI)), itps);
+        return turnClip(vm, me, otherFoot ? "turnAndStopR" : "turnAndStop", std::remainder(facing - heading, float(2 * M_PI)),
+                        itps, shortWeight);
     };
+    auto walkGait = [&] { return blendGaits(gaitOf(vm, me), gaitOf(vm, me, true), L.strideWeight); };
     auto walkOn = [&](const Gait& g) {
         L.kind = Loco::Walk;
         L.animation = g.animation;
         L.mirror = false;
-        L.other.clear();
-        L.otherWeight = 0;
         L.turn = 0;
         L.layers = g.cycles;
+        L.cycleStart = L.cycle; // the layers start at the portion the walk is at
         ++L.serial;
     };
+    // The stride weight for what is left from here (a walk planned again):
+    // the stop alone between.
+    auto refitStride = [&] {
+        const BlendedClip sl = final ? stopClip(lastHeading(), true, 0) : BlendedClip{};
+        const BlendedClip ss = final ? stopClip(lastHeading(), true, 1) : BlendedClip{};
+        L.strideWeight = strideWeight(gaitOf(vm, me), gaitOf(vm, me, true), stretch, sl ? sl.distance() : 0,
+                                      ss ? ss.distance() : 0);
+    };
     if (L.kind == Loco::None || (!L.moving && L.kind != Loco::Start)) {
+        const bool wasMoving = L.moving;
         L.kind = Loco::None;
         L.halting = false, L.halted = 0;
-        L.shortCycle = false;
+        L.sidestep = false;
         if (!L.moving && me.person) {
             const float facing = headingOfDirection(me.data[objdata::Direction]);
             const float angle = std::remainder(legHeading - facing, float(2 * M_PI));
-            BlendedClip go;
-            if (stretch <= 0.25f && final) {
-                go = blendedClip(vm, me, "stepShort", angle, itps);
-            } else {
-                go = blendedClip(vm, me, "turnAndGo", angle, itps);
-                const BlendedClip stop = stopClip(legHeading, true);
-                const float need = (go ? go.distance() : 0) + (stop ? stop.distance() : 0);
-                if (final && stretch < need) {
-                    if (BlendedClip shorter = blendedClip(vm, me, "turnAndGoShort", angle, itps)) {
-                        go = shorter;
-                        L.shortWay = true;
+            // A straight way to a final facing the walker already has.
+            if (final && end > 0 && r.facing >= 0 &&
+                std::fabs(std::remainder(headingOfDirection(r.facing) - facing, float(2 * M_PI))) < 0.01f) {
+                const float dx = r.points[end - 1].x - L.fx, dy = r.points[end - 1].y - L.fy;
+                const float chord = std::hypot(dx, dy);
+                float length = 0, x = L.fx, y = L.fy;
+                for (size_t k = 0; k < end; ++k) {
+                    length += std::hypot(r.points[k].x - x, r.points[k].y - y);
+                    x = r.points[k].x, y = r.points[k].y;
+                }
+                if (chord > 1e-3f && std::fabs(chord - length) < 0.02f) {
+                    const float way = headingOfMotion(dx, dy);
+                    if (const BlendedClip step = sideStep(vm, me, std::remainder(way - facing, float(2 * M_PI)), chord, itps)) {
+                        L.sidestep = true;
+                        begin(Loco::Start, step, stretch, way);
+                        L.cycleStart = L.cycle = 0;
                     }
                 }
             }
-            if (go) {
-                const bool step = go.a.animation.find("tep") != std::string::npos;
-                begin(Loco::Start, go, step ? stretch : std::min(go.distance(), stretch), legHeading);
-                L.cycleStart = L.cycle = go.ca->cycle;
+            if (!L.sidestep) {
+                const Gait full = gaitOf(vm, me), shortGait = gaitOf(vm, me, true);
+                const BlendedClip goLong = turnClip(vm, me, "turnAndGo", angle, itps, 0);
+                const BlendedClip goShort = turnClip(vm, me, "turnAndGo", angle, itps, 1);
+                const BlendedClip stopLong = final ? stopClip(lastHeading(), true, 0) : BlendedClip{};
+                const BlendedClip stopShort = final ? stopClip(lastHeading(), true, 1) : BlendedClip{};
+                L.strideWeight = strideWeight(full, shortGait, stretch,
+                                              (goLong ? goLong.distance() : 0) + (stopLong ? stopLong.distance() : 0),
+                                              (goShort ? goShort.distance() : 0) + (stopShort ? stopShort.distance() : 0));
+                if (const BlendedClip go = turnClip(vm, me, "turnAndGo", angle, itps, L.strideWeight)) {
+                    begin(Loco::Start, go, std::min(go.distance(), stretch), legHeading);
+                    L.cycleStart = L.cycle = go.heaviest().clip->cycle;
+                }
             }
+        } else if (!wasMoving || rebuilt) {
+            refitStride();
         }
         L.moving = true;
     }
     if (haltFor && !L.halting && (L.kind == Loco::Walk || L.kind == Loco::Start || L.kind == Loco::None)) {
         // The way is blocked: stop where it is, from the foot the cycle is on.
-        if (const BlendedClip halt = stopClip(L.heading, false); halt && me.person) {
+        if (const BlendedClip halt = stopClip(L.heading, false, L.strideWeight); halt && me.person) {
             // The stop's frame starts where the body is (a start's root lags
             // behind its frame), the curve going on from there.
             L.fx = me.position.x, L.fy = me.position.y;
             L.onCurve = false;
+            L.sidestep = false;
             begin(Loco::Stop, halt, std::max(0.0f, std::min(haltRoom, halt.distance())), L.heading);
             L.halting = true;
             L.halted = haltFor;
         }
     }
-    std::optional<Gait> walkGait;
+    std::optional<Gait> gait;
     if (L.kind == Loco::None || L.kind == Loco::Walk) {
-        // The walk cycles; the short ones when what is left before the stop
-        // is less than a stride of the walk (inferred).
+        if (rebuilt && L.kind == Loco::Walk)
+            refitStride();
         // (A stop covers less than a tile, a stride at most a run's 4.4 m.)
-        const BlendedClip stop = final && stretch < 6 ? stopClip(legHeading, true) : BlendedClip{};
-        if (L.kind == Loco::None) {
-            const Gait full = gaitOf(vm, me);
-            const float left = stretch - (stop ? stop.distance() : 0);
-            L.shortCycle = final && full.seconds > 0 && left < full.speed * full.seconds &&
-                           !gaitOf(vm, me, true).animation.empty();
-        }
-        walkGait = L.shortCycle ? gaitOf(vm, me, true) : gaitOf(vm, me);
-        const Gait& g = *walkGait;
-        if (L.kind == Loco::None || L.animation != g.animation) {
-            if (L.kind != Loco::Walk)
-                L.cycleStart = L.cycle;
+        const BlendedClip stop = final && stretch < 6 ? stopClip(legHeading, true, L.strideWeight) : BlendedClip{};
+        gait = walkGait();
+        const Gait& g = *gait;
+        if (L.kind == Loco::None || L.animation != g.animation || (rebuilt && L.layers.size() != g.cycles.size())) {
             walkOn(g);
+        } else if (rebuilt) {
+            L.layers = g.cycles; // the blend's weights for the way planned again
         }
         L.speed = (g.speed > 0 ? g.speed : vm.walkTilesPerTick * tps) / tps;
         // The stop, once what is left is a stop's distance.
@@ -1767,72 +1919,55 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
     if (L.kind == Loco::Stop && !L.halting && final && end > 0 &&
         (r.points[end - 1].x != L.endX || r.points[end - 1].y != L.endY)) {
         // Planned again: walk on.
-        walkOn(gaitOf(vm, me));
-        L.speed = std::max(gaitOf(vm, me).speed, 0.1f) / tps;
+        L.sidestep = false;
+        refitStride();
+        const Gait g = walkGait();
+        walkOn(g);
+        L.speed = std::max(g.speed, 0.1f) / tps;
     }
-    // The frame's way this tick, along the curve through the route's points.
+    // The frame's way this tick, along the curve.
+    ensureCurve();
     float step = L.kind == Loco::Walk ? L.speed : L.distance / float(std::max(L.ticks, 1));
-    if (end > 0 && (!L.onCurve || L.nx != r.points[0].x || L.ny != r.points[0].y)) {
-        // A new way (or planned again): the curve starts at the frame, its
-        // tangent the way the frame faces.
-        L.onCurve = true;
-        L.sx = L.fx, L.sy = L.fy;
-        L.nx = r.points[0].x, L.ny = r.points[0].y;
-        const float d = std::hypot(L.nx - L.sx, L.ny - L.sy);
-        if (L.moving && L.kind == Loco::Walk) {
-            L.px = L.sx + std::sin(L.heading) * d, L.py = L.sy - std::cos(L.heading) * d;
-        } else {
-            L.px = 2 * L.sx - L.nx, L.py = 2 * L.sy - L.ny;
-        }
-        L.u = 0;
-    }
     float x = L.fx, y = L.fy;
-    size_t i = 0;
     float heading = L.heading;
-    // Catmull-Rom between p1 and p2 (p0 before, p3 after), at t.
-    auto curve = [](float p0, float p1, float p2, float p3, float t) {
-        return 0.5f * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
-    };
-    auto slope = [](float p0, float p1, float p2, float p3, float t) {
-        return 0.5f * ((-p0 + p2) + 2 * (2 * p0 - 5 * p1 + 4 * p2 - p3) * t + 3 * (-p0 + 3 * p1 - 3 * p2 + p3) * t * t);
-    };
-    int guard = 0;
-    while (step > 1e-7f && i < end && ++guard < 1000) {
-        const auto& p2 = r.points[i];
-        const float p3x = i + 1 < end ? r.points[i + 1].x : 2 * p2.x - L.sx;
-        const float p3y = i + 1 < end ? r.points[i + 1].y : 2 * p2.y - L.sy;
-        const float dx = slope(L.px, L.sx, p2.x, p3x, L.u), dy = slope(L.py, L.sy, p2.y, p3y, L.u);
-        const float speed = std::max(std::hypot(dx, dy), 1e-4f);
-        if (std::hypot(dx, dy) > 1e-5f)
-            heading = headingOfMotion(dx, dy);
-        const float ds = std::min(step, 0.02f);
-        // The parameter for ds of arc: the speed halfway (midpoint rule).
-        const float half = std::min(1.0f, L.u + 0.5f * ds / speed);
-        float du = ds / std::max(std::hypot(slope(L.px, L.sx, p2.x, p3x, half), slope(L.py, L.sy, p2.y, p3y, half)), 1e-4f);
-        if (L.u + du >= 1) {
-            du = 1 - L.u;
-            const float mid = L.u + 0.5f * du;
-            step -= std::min(step, du * std::hypot(slope(L.px, L.sx, p2.x, p3x, mid), slope(L.py, L.sy, p2.y, p3y, mid)));
-            x = p2.x, y = p2.y;
-            L.px = L.sx, L.py = L.sy;
-            L.sx = p2.x, L.sy = p2.y;
-            L.u = 0;
-            ++i;
-            if (i < end) {
-                L.nx = r.points[i].x, L.ny = r.points[i].y;
-            }
+    size_t passed = L.taken;
+    if (L.curve && L.onCurve && step > 1e-7f) {
+        const LocoCurve& c = *L.curve;
+        L.arc += step;
+        while (L.segment < c.segments() && L.arc >= c.length[L.segment]) {
+            L.arc -= c.length[L.segment];
+            passed = std::max(passed, c.passedAfter(L.segment));
+            ++L.segment;
+        }
+        if (L.segment >= c.segments()) {
+            x = c.control.back()[0], y = c.control.back()[1];
+            L.arc = 0;
+            passed = c.points;
         } else {
-            L.u += du;
-            step -= ds;
-            x = curve(L.px, L.sx, p2.x, p3x, L.u), y = curve(L.py, L.sy, p2.y, p3y, L.u);
+            const float u = c.parameterAt(L.segment, L.arc);
+            const auto p = c.at(L.segment, u);
+            x = p[0], y = p[1];
+            auto d = c.slope(L.segment, u);
+            if (std::hypot(d[0], d[1]) < 1e-4f) { // a tripled end: the way it leaves
+                const auto q = u < 0.95f ? c.at(L.segment, u + 0.05f)
+                                         : L.segment + 1 < c.segments() ? c.at(L.segment + 1, 0.05f) : p;
+                d = {q[0] - p[0], q[1] - p[1]};
+            }
+            if (std::hypot(d[0], d[1]) > 1e-6f)
+                heading = headingOfMotion(d[0], d[1]);
         }
     }
-    if (L.kind == Loco::Walk) {
+    // The frame faces along the curve while walking and while starting (the
+    // start's turn is the clip's, what is left over the curve's: inferred,
+    // the frame's orientation is the path's); a stop or a sidestep keeps
+    // the way it began with (it ends on the final facing).
+    if (L.kind == Loco::Walk || (L.kind == Loco::Start && !L.sidestep))
         L.heading = heading;
+    if (L.kind == Loco::Walk) {
         // The cycle goes on at the blend's speed (one cycle per its length).
-        if (!walkGait)
-            walkGait = L.shortCycle ? gaitOf(vm, me, true) : gaitOf(vm, me);
-        float secs = walkGait->seconds;
+        if (!gait)
+            gait = walkGait();
+        float secs = gait->seconds;
         if (secs <= 0)
             if (const LocoClip* c = vm.animations.loco(L.animation, itps); c && c->ticks > 0)
                 secs = float(c->ticks) / kAnimTicksPerSecond;
@@ -1840,8 +1975,9 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
             L.cycle = std::fmod(L.cycle + 1 / tps / secs, 1.0f);
     }
     L.fx = x, L.fy = y;
-    out.consumed = i;
-    out.level = i > 0 ? r.points[i - 1].level : me.position.level;
+    out.consumed = passed - L.taken;
+    L.taken = passed;
+    out.level = out.consumed > 0 ? r.points[out.consumed - 1].level : me.position.level;
     // The root: the clip's offset from the frame at this tick.
     float rx = 0, ry = 0, yaw = 0;
     if (L.kind == Loco::Start || L.kind == Loco::Stop) {
@@ -1854,7 +1990,7 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
             if (L.halting) { // stopped where it is
                 rx = ry = 0;
                 yaw = L.endTurn;
-            } else if (L.kind == Loco::Stop || L.endTurn != 0) { // the end of the way (a stop, a step): there
+            } else if (L.kind == Loco::Stop || L.sidestep) { // the end of the way (a stop, a sidestep): there
                 out.consumed = end;
                 L.fx = end > 0 ? r.points[end - 1].x : x;
                 L.fy = end > 0 ? r.points[end - 1].y : y;
@@ -1866,12 +2002,7 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
                 // The start's turn is behind it: the walk goes on from the
                 // cycle portion the start ends at.
                 L.cycle = L.cycleStart;
-                const Gait full = gaitOf(vm, me);
-                const BlendedClip stop = final ? stopClip(legHeading, true) : BlendedClip{};
-                const float left = lengthFrom(L.fx, L.fy, i) - (stop ? stop.distance() : 0);
-                L.shortCycle = final && full.seconds > 0 && left < full.speed * full.seconds &&
-                               !gaitOf(vm, me, true).animation.empty();
-                walkOn(L.shortCycle ? gaitOf(vm, me, true) : full);
+                walkOn(walkGait());
                 rx = ry = 0;
                 yaw = 0;
             }
@@ -1911,29 +2042,40 @@ ObjectId tileBlocker(VM& vm, const Object& me, const Object::Route& r, TilePos t
 // What the walker would stand in at `to` (TSObjectCanSetPosition with error
 // 0x0C "intersects object", whose object LocoPlaceFromSceneGraph makes the
 // blocker), or 0: another Sim, or an object on the tile it steps onto.
-// Inferred: the Sims' bodies as discs half as wide as the planner's (0.125
-// tile, 0.09375 for a child or a toddler; the predicted blocking keeps them
-// the planner's width apart, this is the backstop for a step that would go
-// into the other's body, a runner's steps being longer than the
-// prediction's reach), the objects as the tiles the planner keeps off; a
-// walker already standing in the other (or in a blocking tile) may walk on
-// (LocoPlace puts it where it is stuck when its own place does not pass
-// either); the Sim or object walked to is met.
+// Between two Sims (TestPlacementWithRespectToObject, BV 0x8ac158) a body is
+// a point: the step is refused when the two centres come within 0.283
+// (0x274b968), whatever their ages; the Sim walked to has no exception.
+// Person data 68 ("Ghost Flags") with bit 0x02 skips the test. Inferred:
+// the objects as the tiles the planner keeps off; a walker already standing
+// in the other (or in a blocking tile) may walk on (LocoPlace puts it where
+// it is stuck when its own place does not pass either).
+constexpr float kPeopleApart = 0.283f;
 ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, float y, int level) {
-    const float mine = smallSim(me) ? 0.09375f : 0.125f;
+    if (me.person && me.person->data.size() > 68 && (me.person->data[68] & 0x02))
+        return 0;
     for (const ObjectId id : vm.people()) { // by ID, as objects() is
         const Object* po = vm.object(id);
         if (!po)
             continue;
         const Object& o = *po;
-        if (id == me.id || id == r.target || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
-            o.position.level != level || allowsIntersection(vm, o, me.id))
+        if (id == me.id || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
+            o.position.level != level)
             continue;
-        const float reach = mine + (smallSim(o) ? 0.09375f : 0.125f);
+        const float reach = kPeopleApart;
         const float now = std::hypot(o.position.x - me.position.x, o.position.y - me.position.y);
         const float then = std::hypot(o.position.x - x, o.position.y - y);
-        if (then < reach && now >= reach)
-            return id;
+        if (!(then < reach && now >= reach))
+            continue;
+        // Either one may intersect people (object data 8 "flags" 0x04 |
+        // 0x10: zero extent, allow person intersection), or either one's
+        // "allow intersection" tree (OBJf 5) lets the two overlap.
+        // A person's CanIntersectPeople is also bit 0x08 of its +0x72a field
+        // (inferred: person data 68, as bit 0x02 there).
+        auto ghostly = [](const Object& p) { return p.person && p.person->data.size() > 68 && (p.person->data[68] & 0x08); };
+        if ((me.data[objdata::Flags] & 0x14) || (o.data[objdata::Flags] & 0x14) || ghostly(me) || ghostly(o) ||
+            intersectionAllowed(vm, o, me))
+            continue;
+        return id;
     }
     const TilePos to{int(std::floor(x)), int(std::floor(y)), level};
     const TilePos from = VM::tileOf(me);

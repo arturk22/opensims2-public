@@ -10,6 +10,8 @@
 // the run set plays them 1.5 times as fast), each made at 0, 45, 90, 135 and
 // 180 degrees ("a-turnAndGo-alt-90", "a-TurnInPlace-90", "a-step-45").
 
+#include <array>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -52,6 +54,55 @@ struct Gait {
     float seconds = 0;     // the blended cycle's length
 };
 Gait gaitOf(VM& vm, const Object& sim, bool shortWay = false);
+
+// The walk and walkShort cycles blended by stride (cAnimResourceConst::ReadFrom
+// gives both the same loco type 100 + k; InitChannelNetwork, BV 0xd2cd68,
+// blends the pair LocoResourcesWithClosestVelocity finds): `shortWeight` is
+// walkShort's weight (ComputeTurnWeight: (s_long - s) / (s_long - s_short)).
+// Each gait's cycles keep their weights within it, times 1 - w or w; the
+// blend lasts the two lengths weighed, covers the two strides weighed, and
+// each cycle plays at its length over the blend's.
+Gait blendGaits(const Gait& full, const Gait& shortGait, float shortWeight);
+
+// The walk's walkShort weight for a way: the forward walk covers `stretch`
+// less the start's and the stop's distances (`clipsLong` with the long
+// clips, `clipsShort` with the short ones, which go with the same weight),
+// in a whole number of half cycles: the fewest that the long stride
+// reaches (rounded up, as InitChannelNetwork rounds the cycles up in half
+// cycles), the strides blended down to fit (inferred: the binary's
+// fitting loop, ten tries in steps of 0.1 of the weight, was not read in
+// full; this solves the same fit exactly). 0 without a short gait.
+float strideWeight(const Gait& full, const Gait& shortGait, float stretch, float clipsLong, float clipsShort);
+
+// The frame's way: a uniform cubic B-spline (cPathStrategyCubic::UpdatePathData,
+// BV 0xd56704) whose control points are the first point three times, the
+// route's points and the last one three times; each window of four is a
+// segment with the matrix 1/6 [[1,4,1,0],[-3,0,3,0],[3,-6,3,0],[-1,3,-3,1]].
+// The curve starts and ends at the ends and cuts the corners in between.
+// Arc lengths are measured per segment from kSamples chords (the binary
+// halves its step while a chord is over 0.005; with the route cut every 0.2
+// the chords here are at most 0.0125, inferred close enough).
+struct LocoCurve {
+    static constexpr int kSamples = 16;
+    std::vector<std::array<float, 2>> control;
+    size_t points = 0;         // the route points it goes through (without the start)
+    std::vector<float> length; // per segment
+    std::vector<float> after;  // the length of the segments after each
+    std::vector<float> table;  // per segment, kSamples + 1 arc lengths
+    LocoCurve(float x, float y, const std::vector<std::array<float, 2>>& through);
+    size_t segments() const { return length.size(); }
+    std::array<float, 2> at(size_t segment, float u) const;
+    std::array<float, 2> slope(size_t segment, float u) const;
+    // The parameter `arc` along a segment.
+    float parameterAt(size_t segment, float arc) const;
+    // The route points passed once `segment` is done (a middle point when
+    // the segment that ends nearest it is done, the last at the very end).
+    size_t passedAfter(size_t segment) const;
+    float remaining(size_t segment, float arc) const;
+    float total() const { return length.empty() ? 0 : length.front() + after.front(); }
+    // The first route point not yet passed, given `taken` passed.
+    const std::array<float, 2>& point(size_t index) const { return control[3 + index]; }
+};
 
 // A start, stop, step or turn clip of the walker's set for `role`
 // ("turnAndGo", "turnAndGoR", "turnAndGoShort", "turnAndStop",

@@ -69,6 +69,9 @@ public:
         // walk cycles.
         std::vector<LocoLayer> walkLayers;
         float walkPortion = 0; // the walk cycle portion its layers start at
+        // How long a phase of the walk blends into the next (the next one
+        // starting that early: 5 or 100 ms by the way's beginning).
+        float walkFade = 0.1f;
     };
 
     // Records the object's state after a VM tick (call once per tick,

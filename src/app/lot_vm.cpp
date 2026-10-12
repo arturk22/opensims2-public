@@ -266,10 +266,12 @@ void LotSimulation::sampleAll(double at) {
             want = s.climb, loop = false, fade = chained ? 0.0f : 0.1f, level = vm::animlevel::Walk;
         } else if (s.walking && !s.walk.empty()) {
             // The locomotion's clips: a start or a stop once, the walk cycle
-            // looping; each blends from the last over 0.1 s (inferred).
+            // looping; each blends from the last over the phases' overlap
+            // (FollowOneStep: the next phase starts 5 ms early on a way
+            // that begins short, else 100 ms, the last one ending meanwhile).
             want = s.walk, loop = s.walkLoop, level = vm::animlevel::Walk;
             if (s.framed)
-                fade = 0.1f;
+                fade = s.walkFade;
         }
         else if (!s.animation.empty())
             want = s.animation, loop = false, level = s.animLevel, weight = s.animWeight;

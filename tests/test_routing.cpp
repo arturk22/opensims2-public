@@ -2,6 +2,7 @@
 #include "vm/animation.hpp"
 #include "vm/go_here.hpp"
 #include "vm/interactions.hpp"
+#include "vm/locomotion.hpp"
 #include "vm/path_planner.hpp"
 #include "vm/vm.hpp"
 #include "vm/world.hpp"
@@ -970,11 +971,18 @@ static StringTable strings(std::initializer_list<const char*> values) {
     return t;
 }
 
-static void addLocoSet(CodeLibrary& code, VM& vm) {
+// `extra`: also the walkShort cycle (half the walk's speed and stride) and
+// the long "step" clips (0.6 over 1.2 s).
+static void addLocoSet(CodeLibrary& code, VM& vm, bool extra = false) {
     code.add(kGlobalGroup, 0x84,
-             strings({"turnInPlace-alt(turnInPlace),turnAndGoShort-alt(turnAndGoShort),turnAndGo-alt(turnAndGo),"
-                      "turnAndStopShort-alt(turnAndStopShort),turnAndStop-alt(turnAndStop),stepShort-alt(stepShort)",
-                      "stepInPlace-alt(stepInPlace),walk-alt0-normal(walk)", "",
+             strings({extra ? "turnInPlace-alt(turnInPlace),turnAndGoShort-alt(turnAndGoShort),turnAndGo-alt(turnAndGo),"
+                              "turnAndStopShort-alt(turnAndStopShort),turnAndStop-alt(turnAndStop),stepShort-alt(stepShort),"
+                              "step-alt(step)"
+                            : "turnInPlace-alt(turnInPlace),turnAndGoShort-alt(turnAndGoShort),turnAndGo-alt(turnAndGo),"
+                              "turnAndStopShort-alt(turnAndStopShort),turnAndStop-alt(turnAndStop),stepShort-alt(stepShort)",
+                      extra ? "stepInPlace-alt(stepInPlace),walkShort-alt0-normal(walkShort),walk-alt0-normal(walk)"
+                            : "stepInPlace-alt(stepInPlace),walk-alt0-normal(walk)",
+                      "",
                       "turnAndGo-alt@2(turnAndGo@2),turnAndStop-alt@2(turnAndStop@2)", "run-alt0-normal(run)", ""}));
     // Clips at 0-180 degrees: a start 0.75 s over 0.85 tile whose root lags
     // 0.1 behind its frame and turns from where the Sim faced to the way;
@@ -999,6 +1007,20 @@ static void addLocoSet(CodeLibrary& code, VM& vm) {
         clip("a-turnAndStop-alt-" + deg, 500, 0.34f, 0, turn, 0);
         clip("a-turnAndStopShort-alt-" + deg, 500, 0.16f, 0, turn, 0);
         clip("a-stepShort-" + deg, 600, 0.3f, -turn, -turn, 0);
+        if (extra)
+            clip("a-step-" + deg, 1200, 0.6f, -turn, -turn, 0);
+    }
+    if (extra) {
+        LocoClip still;
+        still.ticks = 600, still.type = 10;
+        still.root.assign(19, {0, 0, 0});
+        vm.animations.add("a-stepInPlace", 0.6f, 0);
+        vm.animations.addLoco("a-stepInPlace", still);
+        LocoClip shorter;
+        shorter.ticks = 690, shorter.distance = 0.69f, shorter.velocity = 1.0f, shorter.type = 11;
+        shorter.root.assign(22, {0, 0, 0});
+        vm.animations.add("a-male-walkShort-alt0-normal", 0.69f, 1.0f);
+        vm.animations.addLoco("a-male-walkShort-alt0-normal", shorter);
     }
     LocoClip walk;
     walk.ticks = 690, walk.distance = 1.38f, walk.velocity = 2.0f, walk.type = 11;
@@ -1081,9 +1103,10 @@ static void testLocoPhases() {
     }
 }
 
-// The start and stop clips blend the two 45-degree clips around the angle
-// (CreateStepCycle), the walk follows a curve (its heading changes little
-// from tick to tick), and the stop leaves the Sim at the final facing.
+// The start and stop clips take the 45-degree clip nearest the angle (no
+// blend of two angles: that is CreateStepCycle's, for sidesteps), the walk
+// follows the route's B-spline (its heading changes little from tick to
+// tick), and the stop leaves the Sim at the final facing.
 static void testLocoBlend() {
     using Loco = Object::Route::Loco;
     CodeLibrary code;
@@ -1100,7 +1123,7 @@ static void testLocoBlend() {
     sim.data[objdata::Direction] = 4;
     code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
     Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
-    bool blended = false, weights = true;
+    bool oneAngle = true, sawStart = false, sawStop = false;
     float maxTurn = 0, lastHeading = 0;
     bool walking = false;
     for (int i = 0; i < 1000 && t.status == Thread::Status::Running; ++i) {
@@ -1108,10 +1131,11 @@ static void testLocoBlend() {
         if (!sim.route)
             continue;
         const Loco& L = sim.route->loco;
-        if ((L.kind == Loco::Start || L.kind == Loco::Stop) && L.layers.size() == 2) {
-            blended = true;
-            weights = weights && std::fabs(L.layers[0].weight + L.layers[1].weight - 1) < 1e-3f &&
-                      L.layers[0].weight >= L.layers[1].weight;
+        if (L.kind == Loco::Start || L.kind == Loco::Stop) {
+            (L.kind == Loco::Start ? sawStart : sawStop) = true;
+            for (const auto& l : L.layers)
+                oneAngle = oneAngle && l.animation.substr(l.animation.rfind('-')) ==
+                                           L.layers.front().animation.substr(L.layers.front().animation.rfind('-'));
         }
         if (L.kind == Loco::Walk) {
             if (walking)
@@ -1123,11 +1147,132 @@ static void testLocoBlend() {
         }
     }
     if (std::getenv("DEBUG_LOCO"))
-        std::fprintf(stderr, "blend: blended %d max turn %.3f at %.2f,%.2f dir %d\n", blended, maxTurn, sim.position.x,
+        std::fprintf(stderr, "blend: one angle %d max turn %.3f at %.2f,%.2f dir %d\n", oneAngle, maxTurn, sim.position.x,
                      sim.position.y, sim.data[objdata::Direction]);
     check(t.status == Thread::Status::Finished && t.result, "loco blend: the walk ends there");
-    check(blended && weights, "loco blend: a start or stop off the 45-degree steps blends two clips, the heavier first");
+    check(sawStart && sawStop && oneAngle, "loco: a start or a stop takes the 45-degree clip nearest the angle, no angle blend");
     check(maxTurn < 0.5f, "loco blend: the walk's frame follows a curve (no turn of 30 degrees in a tick)");
+}
+
+// The frame's curve: a uniform cubic B-spline with the ends tripled
+// (cPathStrategyCubic::UpdatePathData): it starts and ends at the ends, cuts
+// a corner, and each segment is the matrix's blend of four control points.
+static void testLocoCurve() {
+    const LocoCurve c(0, 0, {{1, 0}, {1, 1}});
+    const auto a = c.at(0, 0), z = c.at(c.segments() - 1, 1), s1 = c.at(1, 0);
+    float nearest = 9;
+    for (size_t j = 0; j < c.segments(); ++j)
+        for (int k = 0; k <= 20; ++k) {
+            const auto p = c.at(j, float(k) / 20);
+            nearest = std::min(nearest, std::hypot(p[0] - 1, p[1]));
+        }
+    check(c.segments() == 4 && std::hypot(a[0], a[1]) < 1e-6f && std::hypot(z[0] - 1, z[1] - 1) < 1e-6f,
+          "loco curve: starts and ends at the route's ends (tripled)");
+    check(std::hypot(s1[0] - 1.0f / 6, s1[1]) < 1e-6f, "loco curve: a segment is 1/6 (P0 + 4 P1 + P2) at its start");
+    check(nearest > 0.1f && c.total() > std::sqrt(2.0f) && c.total() < 2, "loco curve: it cuts the corner");
+    check(c.passedAfter(0) == 0 && c.passedAfter(1) == 1 && c.passedAfter(2) == 1 && c.passedAfter(3) == 2,
+          "loco curve: the route's points are passed as the segments ending near them are done");
+}
+
+// walk and walkShort blend by stride (InitChannelNetwork): the walk between
+// the start and the stop is a whole number of half cycles, the start and the
+// stop blended with their short clips by the same weight.
+static void testLocoStride() {
+    using Loco = Object::Route::Loco;
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(14, 12);
+    addLocoSet(code, vm, true);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {6.5f, 5.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {2.5f, 5.5f, 1};
+    sim.person->data[58] = 27;
+    sim.data[objdata::Direction] = 4;
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    float startShort = -1, walkShort = -1, weight = -1;
+    int walkTicks = 0;
+    float walked = 0;
+    for (int i = 0; i < 1000 && t.status == Thread::Status::Running; ++i) {
+        const float fx = sim.route ? sim.route->loco.fx : sim.position.x;
+        vm.run(t);
+        if (!sim.route)
+            continue;
+        const Loco& L = sim.route->loco;
+        weight = L.strideWeight;
+        for (const auto& l : L.layers) {
+            if (L.kind == Loco::Start && l.animation.find("turnAndGoShort") != std::string::npos)
+                startShort = l.weight;
+            if (L.kind == Loco::Walk && l.animation.find("walkShort") != std::string::npos)
+                walkShort = l.weight;
+        }
+        if (L.kind == Loco::Walk) {
+            ++walkTicks;
+            walked += L.fx - fx;
+        }
+    }
+    // 3 tiles: start 0.85 + stop 0.34 long, 0.35 + 0.16 short; strides 1.38
+    // and 0.69: 1.81 left, 3 half cycles, w = 0.26 / 1.715.
+    const float want = 0.26f / 1.715f;
+    const float halfCycles = walked / (0.5f * ((1 - weight) * 1.38f + weight * 0.69f));
+    if (std::getenv("DEBUG_LOCO"))
+        std::fprintf(stderr, "stride: weight %.3f start short %.3f walk short %.3f walk %d ticks %.3f tiles = %.2f half cycles at %.2f\n",
+                     weight, startShort, walkShort, walkTicks, walked, halfCycles, sim.position.x);
+    check(t.status == Thread::Status::Finished && t.result, "loco stride: the walk ends there");
+    check(std::fabs(weight - want) < 0.02f && std::fabs(startShort - weight) < 1e-3f && std::fabs(walkShort - weight) < 1e-3f,
+          "loco stride: walk and walkShort, turnAndGo and turnAndGoShort blend by the same stride weight");
+    check(std::fabs(halfCycles - 3) < 0.25f, "loco stride: the walk covers a whole number of half cycles");
+}
+
+// A straight way to the facing the Sim already has is a sidestep
+// (CreateStepCycle): the "step" clips blended by distance, played 1.4 times
+// as fast, the body keeping its facing.
+static void testSidestep() {
+    using Loco = Object::Route::Loco;
+    CodeLibrary code;
+    VM vm(code);
+    vm.world = World(14, 12);
+    addLocoSet(code, vm, true);
+    code.add(kGroup, 0x80, definition(0xAAAA0001, 0));
+    code.add(kGroup, 0x81, definition(0xAAAA0002, 0, true));
+    Object& lamp = vm.instantiate(kGroup, 0x80);
+    lamp.position = {3.5f, 3.5f, 1};
+    Object& sim = vm.instantiate(kGroup, 0x81);
+    sim.position = {2.5f, 4.0f, 1};
+    sim.person->data[58] = 27;
+    sim.data[objdata::Direction] = 4; // facing +X, the lamp's west side's facing
+    code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
+    Thread t = vm.start(sim.id, 0x1000, {}, lamp.id);
+    bool sidestep = false, kept = true, walked = false;
+    int ticks = 0;
+    std::string clips;
+    for (int i = 0; i < 400 && t.status == Thread::Status::Running; ++i) {
+        vm.run(t);
+        if (!sim.route)
+            continue;
+        const Loco& L = sim.route->loco;
+        if (L.sidestep && L.kind == Loco::Start) {
+            sidestep = true;
+            ++ticks;
+            kept = kept && sim.data[objdata::Direction] == 4;
+            if (clips.empty())
+                for (const auto& l : L.layers)
+                    clips += l.animation + "*" + std::to_string(l.weight).substr(0, 4) + " ";
+        }
+        walked = walked || L.kind == Loco::Walk;
+    }
+    if (std::getenv("DEBUG_LOCO"))
+        std::fprintf(stderr, "sidestep: %d (%d ticks, %s) kept %d walked %d at %.2f,%.2f dir %d result %d\n", sidestep, ticks,
+                     clips.c_str(), kept, walked, sim.position.x, sim.position.y, sim.data[objdata::Direction], t.result);
+    check(t.status == Thread::Status::Finished && t.result && std::fabs(sim.position.y - 3.5f) < 0.05f,
+          "sidestep: the walk ends there");
+    // 0.5 between stepShort (0.3) and step (0.6): 1/3 short, 2/3 long, at
+    // (0.6/1.2 * 2/3 + 0.3/0.6 * 1/3) * 1.4 = 0.7 m/s: 0.71 s.
+    check(sidestep && kept && !walked && ticks >= 20 && ticks <= 23 && clips.find("a-step-90") != std::string::npos,
+          "sidestep: steps sideways without turning (step/stepShort by distance, 1.4 times as fast)");
 }
 
 // A walker that comes on a Sim standing in its way slows to a stop with a
@@ -1231,7 +1376,7 @@ static void testRunnerStep() {
     if (std::getenv("DEBUG_LOCO"))
         std::fprintf(stderr, "runner: closest %.3f blocked %d result %d at %.2f\n", closest, blocked, t.result, runner.position.x);
     (void)blocked;
-    check(t.status == Thread::Status::Finished && !t.result && runner.person->data[62] == 14 && closest >= 0.25f,
+    check(t.status == Thread::Status::Finished && !t.result && runner.person->data[62] == 14 && closest >= 0.283f,
           "a runner is blocked (blocked by person) before it steps into a Sim in its way");
 }
 
@@ -1422,6 +1567,9 @@ int main() {
     testLocoPhases();
     testRunnerStep();
     testLocoBlend();
+    testLocoCurve();
+    testLocoStride();
+    testSidestep();
     testLocoHalt();
     testDoorWait();
     testDoorPortalTree();

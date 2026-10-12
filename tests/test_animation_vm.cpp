@@ -362,6 +362,8 @@ static void testScriptedWalk() {
             break;
     }
     const Thread& t = vm.threads.at(s.id);
+    if (std::getenv("DEBUG_WALK"))
+        std::fprintf(stderr, "scripted walk: saw %d monotonic %d smooth %d\n", sawWalk, monotonic, smooth);
     check(sawWalk && monotonic && smooth, "walks towards the target, smoothly, with the walk animation");
     check(sawAnim && t.status == Thread::Status::Finished && t.result, "then plays the animation and ends");
     const float d = std::hypot(8.5f - s.position.x, 6.5f - s.position.y);
