@@ -194,11 +194,11 @@ static void testSpecialDialogs() {
     vm.neighbors[12].personData[65] = 1; // a girl
     dlg(0x1103, 23);
     Thread n = vm.start(me.id, 0x1103);
-    n.temps[0] = 11, n.temps[1] = 12;
+    n.temps[0] = 11, n.temps[1] = 12, n.temps[2] = 12; // the birth tree leaves the second baby in temp 2 too
     vm.run(n);
     Dialog& nd = vm.dialogs[me.id];
     check(nd.namePanel == 0xCDC2CAA6 && nd.names.size() == 2 && nd.names[0].text == "N11" && nd.names[1].female,
-          "names: twins panel, default names, girl icon");
+          "names: twins panel, default names, girl icon, one box per baby");
     nd.names[0].text = "  Ana ";
     nd.names[1].text = "Bia";
     nd.answer = 0;

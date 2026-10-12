@@ -471,6 +471,12 @@ void setupNames(Context& c, Dialog& d) {
         const int16_t id = c.thread.temps[i];
         if (!id)
             continue;
+        // The base game's panels have two boxes at most (0xCDC2CAA6, twins);
+        // the birth tree leaves the second baby in temp 2 too, which showed
+        // it twice in the list (round 18). One box per Sim (inferred: the
+        // panel shows no third box for what SetParams reads there).
+        if (std::any_of(d.names.begin(), d.names.end(), [&](const DialogName& x) { return x.neighbor == id; }))
+            continue;
         const auto* data = personDataOf(vm, id);
         if (!data)
             continue;

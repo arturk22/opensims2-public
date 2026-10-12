@@ -277,6 +277,11 @@ Exit pushInteraction(Context& c) {
     q->flags = flags;
     q->pushedBy = c.thread.me;
     q->operands = o;
+    static const bool logPush = std::getenv("OS2_LOG_PUSH") != nullptr; // test aid: who pushes what
+    if (logPush)
+        std::fprintf(stderr, "t%llu push \"%s\" (TTA %u of %d) onto %d by %d in \"%s\" prio %d flags %02X\n",
+                     (unsigned long long)c.vm.ticks, q->name.c_str(), q->interaction, q->object, targetId, c.thread.me,
+                     c.frame.behavior->fileName.c_str(), q->priority, flags);
     // A "Run Immediately" entry (TTAB flag 0x04) never waits in the queue:
     // cTSPerson::AddAction (Mac BV 0xadbbdc) runs it at once (runImmediately),
     // nested or not (AddAction tests the flag before it picks the queue or
