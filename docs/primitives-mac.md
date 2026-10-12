@@ -2072,6 +2072,81 @@ interrompida por reações empurradas, "Cheira Mal", "Ficar com Nojo", baratas
 "Pisar"), e eram muitas mais com a pegada nova antes de o teste por passo e
 o Snap usarem a pegada também (`docs/routing-mac.md` §2).
 
+### Rodada 15 (front "engine-re"): como o fogo se espalha e quando apaga
+
+Lido nas árvores do Fire (`0x7FD0A790`) com os BCONs resolvidos (dono
+`0x1A`: `Tuning - Burn` = BCON `0x1003`, `State Flags` = `0x100a`,
+`Tuning - Extinguish` = `0x1001`); operadores do Expression como na FreeSO
+(8 testa flag, 9 liga, 10 desliga, 11 `++<`, 12 `%=`, 14 `>=`).
+
+**O relógio do Fire.** `Function - Main` (`0x1000`) roda `Main - Setup` e
+entra no laço: `Idle 3`, atributo 4 += 3, chama (atributo 2) = 0 → fim;
+senão `Main - Set on Fire - Sims on Tile` e `Burn - _Simulate`; a cada 30
+voltas `Push - Panic - All Sims Not Interacting` e `Main - Evaporate
+Puddle`. `Burn - _Simulate` (`0x1002`) converte o atributo 4 em unidades de
+**20 ticks** (temp 0 = atr 4 / 20, atr 4 %= 20; 0 unidades → só o efeito)
+e, por unidade: idade (atr 0) += n, contador de propagação (atr 5) −= n,
+`Burn - Decrease Flame(n)` (chama −= n). Depois, **com chama > 10, atr 5
+< 0 e idade > 45** (`0x1003`[3]): `random(8)` (`0x1003`[6]) = 0 →
+`Burn - Spread`; tentou ou não, **atr 5 := 10** (`0x1003`[5]): no máximo
+uma tentativa a cada 10 unidades (200 ticks), cada uma com 1/8. Idade > 75
+(`0x1003`[4]) sem a flag de estado 5 → `Burn - Destroy`.
+
+**Chama inicial** (`Main - Setup`, `0x1004`): soma o od 84 dos objetos do
+tile (Set to Next 8) no atr 3 → atr 1 = 0 (soma 0), 1 (< 40), 2 (< 70) ou 3;
+chama = 80 + (200 − 80) / 4 · atr 1 + `random(7 · 2)` − 7, isto é
+**80 + 30 · atr 1 + random(14) − 7 = 73 a 176** (o "aleatório 0–7" e o
+máximo 170 do §4f estavam errados: o `Random Number` usa o temp 0 = 14
+como faixa). Em lote **não
+residencial** (`Lot - Is Residential?` falso) o Fire se apaga sozinho na
+hora (`Remove Object Instance` de si mesmo). O Setup também chama a
+**Generic Sims Call 10** (Comprar/Construir desligados) e o fim do fogo a
+**11** (religados).
+
+**Para onde se espalha** (`Burn - Spread`, `0x1003`, uma direção por
+tentativa): o atr 6 do Fire guarda, em bits, as direções já tentadas (flag
+d + 1); −1 = esgotado, nunca mais se espalha. Escolhe a direção 0–7 cujo
+vizinho tem a maior inflamabilidade (`adjObjList - Get Flammability -
+Highest`); se nenhuma > 0, uma reta ao acaso (`random(4) · 2`). Se essa
+direção já foi tentada, anda +2 (mod 8) até 4 vezes; sem nenhuma livre,
+atr 6 := −1. `Burn - Spread - Skip?` (`0x1049`) pula a direção com
+**parede** (`Test - Wall in Direction?`), com um Sim mais novo que o
+parâmetro de idade, com objeto de categoria 69 ou 80 (`G - Category`) ou
+com entradas da lista de vizinhos sem nenhuma das flags 1/2/4/5 (`adjObjList
+- Flags`); pulada ou não, a direção fica marcada. Não pulada → `Burn -
+Spread - Create Fire` (`0x1001`): vira o Fire para a direção, **Create New
+Object Instance** do Fire (`0x24C95F99`) "in front of stack object" com a
+flag **0x01 (não cria se já há um Fire no tile)**; o motor ainda testa o
+lugar (`TSObjectCanSetPosition`); o novo Fire ganha a flag de estado 4 e
+atr 8 = a direção de onde veio; objetos do tile com od 40 flag 6 ("Burns")
+passam o fogo às partes do multi-tile (`Burn - Spread - MT`). Ou seja,
+**cada Fire acende no máximo os 8 vizinhos, um por tentativa**, e o
+incêndio cresce como uma mancha enquanto houver tiles sem Fire; **não há
+limite de número de Fires** nas árvores, e no binário não achei nenhum
+limite de objetos (nenhuma string "too many objects"; o `TryCreateObject`
+só falha por lugar/tile ocupado, §0x2A).
+
+**Quando apaga.** A chama só desce: −1 por unidade de 20 ticks sozinha
+(~3.400 ticks para 170). Com a flag de estado 2 (alguém apagando) e chama ≤
+35, apaga de vez (`Burn - Decrease Flame`, `0x100e`). Chama < 1 → 0, para
+efeitos e sons, `Sub - Extinguish` (limpa a flag 10 "pegando fogo" dos
+objetos do tile e zera a chama dos outros Fires no mesmo tile), `Sub - Pass
+Control to Another Fire`, religa as interações; o Fire espera até 20 ×
+`Idle 30` enquanto houver fogo no cômodo e se remove.
+**Apagando** (`Extinguish - Simulate`, `0x100d`, a cada volta da
+animação): `Divide Tick Counts(30)` → n; chama −= **4 · n** (`0x1001`[4])
+para um Sim e **200 · n** (`0x1001`[5] · 2) para o bombeiro (NPC tipo 12):
+um Sim leva ~18–43 unidades de 30 ticks por Fire (com o corte em 35, a
+metade disso), o bombeiro apaga na primeira volta. `Extinguish - _Core`
+segue para o próximo Fire (`Extinguish - Next Fire`) até não sobrar.
+
+**O motor no fogo** (o que o VM precisa ter certo): Create New Object
+Instance com a flag 0x01 e a posição 3 (§0x2A), `TSObjectCanSetPosition` do
+Fire no tile novo, Generic Sims Call 10/11, `Divide Tick Counts`, a
+contagem de paredes do `Test - Wall in Direction?` e o Set to Next 8
+(objetos do tile). Nada mais: sem limite de objetos, sem código C++ de
+propagação.
+
 ## 4g. Rodada 12: Sims vivos e destravados (binário + árvores)
 
 ### Erros reiniciam o objeto (`cTSObject::HandleError`, BV `0xb05510`)
