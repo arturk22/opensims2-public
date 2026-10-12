@@ -325,6 +325,13 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     // is sorted by level), the remaining weight shared out, then a running
     // weighted average of the poses in that order, normalized.
     std::vector<float> share(posed.size());
+    // The deltas each bone took (for the IK goals below).
+    std::vector<Xform> applied;
+    std::vector<uint8_t> appliedHas;
+    if (anyDelta) {
+        applied.assign(n, Xform{});
+        appliedHas.assign(n, 0);
+    }
     for (size_t b = 0; b < n; ++b) {
         float remaining = 1;
         for (size_t k = posed.size(); k-- > 0 && remaining > 0;) {
@@ -385,6 +392,8 @@ std::vector<Xform> AnimPlayer::pose(double now) {
             out[b].q = normalized(out[b].q * dq);
             for (int c = 0; c < 3; ++c)
                 out[b].t[size_t(c)] += dt[size_t(c)];
+            applied[b] = {dq, dt};
+            appliedHas[b] = 1 | (cum > 0 ? 2 : 0);
         }
     }
     // IK over the blend: each layer's chains reach its goals from the
@@ -399,7 +408,19 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         if (w <= 0)
             continue;
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
-        const std::vector<Xform> goals = layerPose(l, ticks);
+        std::vector<Xform> goals = layerPose(l, ticks);
+        // The goal and pole nodes with the deltas their outlets took (the
+        // sofa bounces' *_handcontrol1 and *_ikctr deltas move the hands and
+        // feet the sitting animation's chains hold): the IK reads the
+        // node's channel outlet, base * delta (cActiveAnimIK's
+        // Translation/RotationChannelOutlet).
+        for (size_t b = 0; b < appliedHas.size(); ++b)
+            if (appliedHas[b]) {
+                goals[b].q = normalized(goals[b].q * applied[b].q);
+                if (appliedHas[b] & 2)
+                    for (int c = 0; c < 3; ++c)
+                        goals[b].t[size_t(c)] += applied[b].t[size_t(c)];
+            }
         std::vector<Xform> solved = out;
         applyIk(*l.target, *skeleton_, ticks, solved, &goals, Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}},
                 &l.ikObjectBone);

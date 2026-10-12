@@ -558,6 +558,61 @@ static void testDeltaChannels() {
     check(near(deltaPower(quatFromEulerXYZ(0, 0, 1.0f), 0.25f).z, std::sin(0.125f)), "q^w scales the angle");
 }
 
+// A delta on an IK goal node moves the chain that reaches it (the sofa
+// bounces' *_handcontrol1 deltas over the sitting animation's arm chains).
+static void testDeltaIk() {
+    Skeleton s;
+    s.bones.push_back({"root", -1, Xform{}, -1, 0});
+    s.bones.push_back({"thigh", 0, Xform{{}, {0, 0, 1}}, 0, 1});
+    s.bones.push_back({"calf", 1, Xform{{}, {0, 0, -0.5f}}, 1, 2});
+    s.bones.push_back({"foot", 2, Xform{{}, {0, 0, -0.5f}}, 2, 3});
+    s.bones.push_back({"goal", 0, Xform{{}, {0, 0, 0}}, -1, 4});
+    s.bones.push_back({"pole", 0, Xform{{}, {0, 1, 0.5f}}, -1, 5});
+    auto translation = [](const char* bone, float x, float y, float z, bool delta) {
+        Animation::Channel c;
+        c.name = bone;
+        c.nameHash = nameInstanceHiHash(bone);
+        c.flags = 1000u | (delta ? 0u : 0x8000u) | (uint32_t(Animation::Translation) << 17) |
+                  (uint32_t(Animation::TransformXYZ) << 22) | 0xFu << 25 | 3u << 29;
+        for (float v : {x, y, z}) {
+            Animation::Component k;
+            k.keys.push_back({0, v, 0, 0});
+            c.components.push_back(k);
+        }
+        return c;
+    };
+    Animation base;
+    base.duration = 1000;
+    base.skeletonTag = "skel";
+    base.targets.resize(1);
+    base.targets[0].tag = "skel";
+    base.targets[0].channels.push_back(translation("goal", 0, 0, 0.3f, false));
+    Animation::IkChain chain;
+    chain.strategy = 0x48EE7A41;
+    chain.crcs[0] = nameInstanceHiHash("thigh");
+    chain.crcs[2] = nameInstanceHiHash("foot");
+    chain.crcs[4] = nameInstanceHiHash("pole");
+    Animation::IkTarget goal;
+    goal.crcs[2] = goal.crcs[4] = nameInstanceHiHash("goal");
+    chain.targets.push_back(goal);
+    base.targets[0].ikChains.push_back(chain);
+    Animation bounce;
+    bounce.duration = 1000;
+    bounce.skeletonTag = "skel";
+    bounce.targets.resize(1);
+    bounce.targets[0].tag = "skel";
+    bounce.targets[0].channels.push_back(translation("goal", 0, 0, 0.1f, true));
+    AnimPlayer p(&s);
+    p.play(base, 0, {.fade = 0});
+    auto foot = s.world(p.pose(0.1))[3].t;
+    check(near(foot[2], 0.3f, 1e-3f), "delta IK: the base goal");
+    AnimPlayer q(&s);
+    q.play(base, 0, {.fade = 0});
+    q.play(bounce, 0, {.fade = 0, .priority = 61});
+    foot = s.world(q.pose(0.1))[3].t;
+    check(near(foot[2], 0.4f, 1e-3f), "delta IK: the goal node's delta moves the foot");
+}
+
 // Body shape morphs from person data 81 (body flags) and 58 (age).
 static void testBodyShape() {
     auto m = bodyShapeMorphs(0x10, 19);
@@ -618,6 +673,7 @@ int main() {
     testPlayer();
     testChannelLevels();
     testDeltaChannels();
+    testDeltaIk();
     testIk();
     testArmIk();
     testSnaps();
