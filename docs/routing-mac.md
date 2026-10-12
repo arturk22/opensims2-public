@@ -141,12 +141,41 @@ modulares (têm od 8 `0x04`). Tirados na rodada 15: cada um bloqueia pela sua
 pegada. Sem lista "footprint" o VM agora usa a **caixa do modelo** (as
 malhas no plano xy, sem os planos de sombra; inferido) cortada ao tile da
 parte, como o `cObject` (BV `0x658ab8`): cortinas viram faixas de 0,3 tile
-junto da parede, lápides e luminárias de jardim uns 0,2–0,3 tile. Ficam
-diferentes do binário: escadas (tipos 10 e 11) fora do planejador (os
-portais daqui precisam dos tiles), a exceção OBJD[`0x4b`] = `0x93` não
-feita, e a penalidade de rota (od 10) não vira custo. O `EvalTileForGoal`
-(§8.2) também passou a testar a caixa do Sim (0,2) contra as pegadas no
-ponto, não o tile inteiro.
+junto da parede, lápides e luminárias de jardim uns 0,2–0,3 tile. O
+`EvalTileForGoal` (§8.2) também passou a testar a caixa do Sim (0,2) contra
+as pegadas no ponto, não o tile inteiro.
+
+**Rodada 15 (planejador), o resto do `AddThisToPathPlanner`** (binário):
+- **Escadas** (tipos 10 e 11) entram pelas pegadas como qualquer objeto; só
+  portas, janelas e portais de escada modular (8, 9, 12) ficam de fora. O VM
+  faz assim agora (`OS2_STAIRS_OUT_OF_PLANNER=1` volta ao antigo para
+  comparar; `N003_Lot192`, 1 dia, semente 1: 66 interações falhas → 26).
+- **A exceção `0x93`** é o campo de **índice** `0x4b` do OBJD (deslocamento
+  `0x40 + 2·0x4b` = `0xD6`; a mesma conta dos campos `0x43`/`0x4d` da
+  pegada): nenhum OBJD do jogo base tem `0x93` ali (3.262 têm 0; os outros
+  1–11). Feito, sem efeito no base.
+- **A penalidade de rota não pesa**: o custo é `od 10 · DAT_02cc4c04 + 1` e
+  esse float fica no `__bss` sem nenhum gravador (só três leituras:
+  `AddThisToPathPlanner`, `TSObjectGetPathPlannerCostAndPassibility`,
+  `TSObjectPathPlannerCostAndPassibilityCB`; nenhuma instrução `st*` com o
+  par `lis 0x2cc`/`0x4c04`), como a escala dos portais (`DAT_02d86430`, §8).
+  Vale 0, o custo é **1** (o do piso), e os objetos que deixam pessoas
+  passar (od 8 & `0x14`) com penalidade entram como passáveis de custo 1:
+  deixá-los fora (o VM) dá o mesmo.
+- Com a árvore "allow intersection" (`GetTreeID(5)`) o retângulo que
+  bloquearia (9/11) entra com passagem 3 (pode pular por cima) ou 5 e o
+  callback `TSObjectPathPlannerCostAndPassibilityCB` (BV `0xaf854c`), que
+  roda a árvore 5 com o Sim do contexto (o contexto do plano é só o ID do
+  Sim, `FindPathWithPlanner` BV `0x4767f0`): passa → passagem 0, custo 1. O
+  VM tira o objeto do plano quando a árvore deixa (`intersectionAllowed`):
+  o mesmo. Qualquer passagem > 1 numa célula a bloqueia
+  (`cQuadTreeCell::UpdateTraversalCostAndPassability`, BV `0xba802c`: a
+  célula fica com o maior estado dos seus retângulos; > 1 → custo `FLT_MAX`).
+- Não identificado: com o bit 0 de `+0x15e` do objeto o tile inteiro (o
+  tile da posição, x..x+1, y..y+1) entra também, com o custo da penalidade.
+- Água: `WorkOutTileCostAndPassability` só olha água (7 parcial, 15 toda)
+  nos tiles do **nível 0** (`cFloorTile +8` = 0: o terreno). A piscina não é
+  água para o planejador: é o **andar −1** (§8.5).
 
 ### Custo do piso (`WorkOutTileCostAndPassability`)
 
@@ -897,7 +926,7 @@ haver gravador; confirmar se um dia aparecer um caminho indireto.
 BV `0xe208c8`): na primeira vez que o A* de um Sim cruza o portal naquela
 busca, roda a árvore da entrada 15 do objeto do portal (ou do líder do
 multi-tile) **como teste** sobre o Sim, com os parâmetros: slots de
-entrada/saída (`vtable 0x380`), as salas dos dois lados e os pares de
+entrada/saída (`vtable 0x380`), os andares dos dois lados (rodada 15: não as salas) e os pares de
 coordenadas; `trancado = !resultado`; o custo é recalculado como acima.
 É o "Function - Portal - TEST" das árvores (porta trancada, só família,
 portinha de animal). O resultado fica guardado por sentido até a busca
@@ -912,13 +941,74 @@ No A* (`cAStarPortalNode::CalculateTransitionCost`, BV `0xba271c`): livre
 portal (`IsNextPathNodeAStairStart`/`GetPortalInfo`), o roteador vai para o
 estado 0x1F e `TriggerPortalTree` (BV `0x575248`) roda a **mesma entrada
 15 de verdade** (não teste) na pilha do Sim, com os parâmetros: os dois
-slots do portal, as salas e o nível; o Sim fica em `DoWaitingForPortal`
+slots do portal, os andares (inferido) e o nível; o Sim fica em `DoWaitingForPortal`
 (estado 2) até a árvore voltar (ela anima a porta abrindo, ou sobe os
 degraus com Snap Into) e o roteador segue no fim do portal
 (`DoLocomotionContinuationAtPortalEnd`). Se outro Sim ocupa o portal (dado
 de objeto 0x3E do portal ≠ 0), espera em `DoWaitingForPortalToBecomeFree`
 (animação de espera de 24 ticks, até 126 ticks). Antes de rodar, tira o
 bit 0x40 do dado 0x44 do Sim.
+
+**Os parâmetros 2 e 3 são os andares** (rodada 15): o
+`TSObjectPortalLockedCB` (BV `0xe208c8`) monta os parâmetros da árvore de
+teste assim: 0/1 = `vtable 0x380` (o slot de contenção de cada ponta), **2/3
+= o andar (`vtable 0x90`) do objeto de entrada e do de saída**, 4/5 os IDs,
+6/7 os slots de rota de cada ponta. O `TriggerPortalTree` monta os mesmos
+(2/3 de `cTSRoutePortalInfo +8`/`+0x1c`; inferido que também sejam os
+andares). O VM passava as **salas** (desde a rodada 6); a escada da piscina
+e o trampolim decidem por eles: `param 2 > param 3` = descer (entrar na
+água), e o TEST do trampolim só deixa descer.
+
+### 8.5 Portais de objeto e a piscina (rodada 15, binário)
+
+**A piscina é um andar**: o lote com piscina tem o andar −1 (VM 0), o fundo
+da piscina é piso dele ("floor_poolroundedlipblue") e as paredes de piscina
+(tipo 29) o fecham. O planejador não trata água de piscina: um Sim nadando
+está no andar −1 e anda nesse piso. Sai por um **portal de objeto**:
+
+- `cTSObject::AddThisToPathPlanner` chama `PortalAddToPathPlanner` (vtable
+  `0x588`) de todo objeto que `IsPortal` (vtable `0x374`: tem pares de slots
+  de portal); num multi-tile só o líder (`cEdithMTObject::
+  PortalAddToPathPlanner`, BV `0xaf1884`).
+- `PortalUpdateSlotInfoList` → `PortalFillInSlotInfoList` (vtable `0x564`, BV
+  `0xe21a18`; o multi-tile percorre as partes) → `PortalGatherSlotInformation`
+  (vtable `0x568`, BV `0xe1ff3c`): para cada slot de rota do objeto, os de
+  porta/escada (8, 10, 11, 12) pelos nomes gerados
+  (`TSObjectAutoPortalConnectionNameGenerator`); os outros só se o slot é
+  **par de portal** (`cTSRoutingSlot::IsPortalPair`): o nome do slot (osso,
+  `vtable 0x144` índice 0) e o nome da outra ponta (índice 1). Nos dados os
+  dois nomes são a entrada do STR# 0x90 ("Model - Bones") do slot,
+  **"meu,outro"**. Inferido: o par é a flag **`0x200000`** do SLOT (os dois
+  objetos do jogo base com slots assim, a escada da piscina e o trampolim,
+  têm `0x200000`; a escada também `0x400000`/`0x800000`, os
+  `DisableLocomotionContinuationAt{Start,End}OfPortalPair`).
+- `PortalConnectSlotInformation` (BV `0xe1f878`) liga cada par ao slot cujo
+  nome é o "outro"; `PortalAddToPathPlannerImpl` (BV `0xe22a44`) chama o
+  `AddPortal` do gerente (`cTSRouteManager::AddPortal` → `cPathPlanner::
+  AddPortal`, BV `0x6064b4`) entre os pontos dos dois slots
+  (`PortalGetLocationOfSlot`: o osso no mundo, andar da parte − 1), custo 1,
+  trava = a árvore 15. O `cPortal` tem um bool de mão única
+  (`cPortal::IsOneWay`): `MakeNodesForPortal` (BV `0x604584`) liga a ponta A à
+  B e só liga B à A quando não é de mão única. Inferido: cada ligação é um
+  portal A → B; como os dois slots da escada (e do trampolim) se nomeiam um
+  ao outro, dá ida e volta.
+- **Escada da piscina** ("Pool Ladder", grupo `0x7F585FFD`): a parte "0,0,0"
+  no andar −1 (slot "route_poolladder_0_n,route_poolladder_0_s") e a "1,0,1"
+  no deque ("route_poolladder_0_s,route_poolladder_0_n"); a função 15 das
+  duas é "Function - Portal" (`0x1006`): `param 2 > param 3` → "Sub - Get In"
+  (`0x1008`), senão "Sub - Get Out" (`0x1009`, "a2o-poolLadder-climbOut").
+- **Trampolim** ("Pool Diving Board", `0x7F5BA5F7`): "route_pooldivingboard_0_s"
+  no deque e "slot_divingboard_0" na água; o TEST (`0x1005`) só passa com
+  `param 2 > param 3`: não se sobe pelo trampolim.
+
+No VM: `VM::refreshObjectPortals` (ao carregar o lote e ao mudar o mundo no
+modo construção) junta os pares em `World::objectPortals` e o planejador faz
+deles portais (`Portal::object`, `oneWay` quando o outro slot não nomeia
+este); a árvore de teste e a de verdade são as da função 15 da parte de
+entrada. `N001_Lot68`: a Mary-Sue mergulha (o trampolim, deque → água),
+nada até a escada e sobe (antes ficava no andar −1 sem rota e morria de
+fome). Falta: comprar/mover a escada no modo compra não refaz os portais (só
+o modo construção e a carga do lote).
 
 ## 8.1 Pedir para sair: `AskBlockerToMove` / `MoveOutOfWay` (binário)
 
@@ -1165,6 +1255,8 @@ Clique com um objeto sob o mouse (rodada 13):
 | objetivos avaliados por `EvalTileForGoal` (códigos e penalidades +10/+5, §8.2) | aproximação da busca de objetivos (`routing.cpp`) |
 | pegada do objeto: a do modelo (CRES "footprint", máscara 16×16 reduzida a 1/8 tile) ou a caixa do OBJD (flag 0x80 do od 8) | igual desde a rodada 14 (`VM::routingFootprint`); o tile da parte no modelo e a caixa do modelo sem lista são inferidos; `OS2_TILE_FOOTPRINTS=1` volta ao tile inteiro para comparar |
 | quadtree, inflação 1/8, filtros, A* com ruído, Sims como retângulos de custo, códigos de falha, "CT - Route Blocked" | seguem o doc |
+| portais de objeto (pares de slots, a escada da piscina e o trampolim), parâmetros 2/3 das árvores de portal = andares (§8, §8.5) | desde a rodada 15 (a flag `0x200000` do par e o portal de mão única por ligação são inferidos) |
+| escadas (tipos 10, 11) no planejador pelas pegadas; exceção do campo `0x4b` = `0x93`; penalidade de rota com escala 0 (custo 1) | desde a rodada 15 (§2) |
 
 ## 10. O que falta
 

@@ -345,7 +345,8 @@ mim); 10 "in user defined slot of object in temp 0" (slot do byte 9).
 
 Falso (sem erro): GUID sem definição; definição "morta" (tipo 0x11); posição
 inválida ou tile ocupado (flags acima); a criação falha; o objeto não cabe
-(`TSObjectCanSetPosition`/`CanPlaceInSlot`: o objeto criado é apagado).
+(`TSObjectCanSetPosition`/`CanPlaceInSlot`: o objeto criado é apagado; no VM
+desde a rodada 15, §4g "Rodada 15 (planejador)").
 Definição de template (tipo 0x10) → erro 0x90. No fim, **o stack object
 passa a ser o objeto novo** e devolve verdadeiro.
 
@@ -2448,8 +2449,63 @@ de cada Fire depois de ≥ 1.117 ticks (≥ 900 pedidos), intervalo mínimo de
 nenhum Fire num tile que já tem um (flag 0x01 do Create New Object
 Instance). O Set to Next 8 (os objetos do tile, com o conteúdo dos slots)
 e o 9 (um objeto por lado) da lista de vizinhos agora são os do binário.
-Não conferido: o `TSObjectCanSetPosition` do Fire novo (o VM não o faz no
-Create New Object Instance).
+O `TSObjectCanSetPosition` do Fire novo: feito na rodada 15 (§4g "Rodada 15
+(planejador)").
+
+### Rodada 15 (planejador): criar objeto, a escolha do Find Best Interaction e o limite de nós
+
+**Create New Object Instance testa o lugar** (`TryCreateObject`, BV
+`0xe34b2c`): cria o objeto (o Init roda aí, e é ele que liga as flags do od
+8 que deixam pessoas/objetos atravessar), e para uma posição no mundo chama
+`TSObjectCanSetPosition(obj, lugar, 0, 0, …)` (BV `0x8ae264` →
+`TSObjectCanSetPositionAndOrientation` → `TSObjectCanSetPositionImpl` (deck e
+porta, toldo) → **`TestPlaceInWorld`** (BV `0x8ad754`): `TestPlacementCommon`,
+`TestPlacementWithRespectToWalls` (não para pessoa), 
+`TestPlacementWithRespectToObjects` e o teste de altura do od 4 (erro 0x19));
+num slot, `TSObjectCanPlaceInSlot`. Não cabe → o objeto é apagado (vtable
+`0x44` do gerente) e o resultado é **falso**. `TestPlacementWithRespectToObject`
+(BV `0x8ac158`), por par de pegadas que se cruzam (o objeto e cada um nos
+tiles em volta): pessoa no caminho, salvo `CanIntersectPeople` do objeto (od
+8 & `0x14`); objeto no caminho salvo `CanIntersectObjects` de um dos dois (od
+8 & `0x06`), camadas diferentes (`FootprintBlocksCeiling` = od 42 bit
+`0x1000`, `FootprintBlocksFloor` = o bit apagado) ou a árvore "allow
+intersection" (entrada 5) de um dos dois; portas têm testes de círculo e de
+pegada próprios. **No VM** (rodada 15): o teste roda depois do Init (o VM põe o
+lugar antes do Init; o binário depois), com as pegadas de `routingFootprint` e
+sem a árvore 5 nem os testes de porta (`checkPlacement(…, footprints)`).
+Efeito: Fires que se espalham para tiles sem piso, cinzas em cima de portas,
+`_Coordinate`/emissores em cima de cadeiras deixam de ser criados. Os fogos
+mudam de tamanho de semente para semente (N002_Lot22, 3 sementes: 125/0/0
+Fires contra 71/162/73 sem o teste); `OS2_NO_CREATE_PLACEMENT=1` desliga.
+
+**A escolha do Find Best Interaction** (`FBA_CheckInteractions`, BV
+`0xae2978`) ordena com o **`qsort` da libc** (itens de 0x44 bytes) e o
+comparador `0xac8f08`: `b − a > 1e−7 → 1`, `< −1e−7 → −1`, senão 0. O `qsort`
+do Mac OS X (o do FreeBSD, Bentley–McIlroy) **não é estável**: empates saem na
+ordem que a partição deixa. O VM ordenava com `stable_sort` (ordem do TTAB).
+O monte de lixo da lata chutada (`Trash - Trash Pile`, grupo `0x7FD0658A`)
+tem "Jogar Fora" (entrada 0: ação `0x2007` "Interaction - Dispose" das
+`TrashGlobals`, guarda o global `0x109` **"Hide Menu"**, que só põe o dado
+de objeto 50 = 1 e devolve verdadeiro) e "Limpar" (entrada 1) com **os mesmos
+anúncios** (motivo 13 +40, motivo 15 +10, personalidade 11). O Dispose quer o
+monte na mão (`Interaction - Dispose - NEW` → `Object in Hand - Get ID` falso
+→ falso), e o FBA do binário não olha o "esconder" (o `FBA_RunCheckTree`, BV
+`0xae24e4`, recusa só pelo dado de objeto 6 que a check tree deixa, bit
+`0x200` da interação; o dado 50 só esconde do menu). Com a ordem estável o
+Dustin (`N001_Lot36`, semente 1) escolheu o Dispose 20 vezes seguidas; com o
+`qsort` do Mac, 2 vezes e depois "Limpar". Inferido: a ordem em que os
+candidatos entram (no binário vêm de uma tabela hash de objetos com anúncios;
+aqui por ID do objeto e ordem do TTAB). A memória de falhas da autonomia
+(`GetAutonomyBias`) continua desligada como no binário.
+
+**Limite de nós por turno** (`cTSTreeSim::DoNodeAction`, BV `0xe1b3xx`): o
+contador `+0xc` sobe a cada nó; passou de `DAT_0277ea94` = **100000** (300000
+com uma flag de depuração, bit 0 do valor `0x33` do objeto) → erro `0x44D`
+"Too many iterations". O VM já tinha 100000 como padrão, mas o `s2pkg
+autonomy` usava 20000: o "Controller - Relationship Decay" do `N003_Lot192`
+normaliza todo Sim da casa contra todo vizinho num tick (22.798 nós no tick
+77371, semente 2) e era reiniciado. O `s2pkg autonomy` usa agora 100000
+(`S2PKG_BUDGET=n` muda).
 
 ## 4h. Rodada 15 (front "vm-confirm"): o que era inferido na VM
 
