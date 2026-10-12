@@ -128,6 +128,10 @@ void clearSubActions(Object& sim);
 // that wait, like animations).
 bool interactionCancelled(const Object& sim);
 
+// cTSPerson::ShouldInterrupt: cancelled, or a waiting entry of a priority
+// above the Sim's (person data 33), unless person data 71 says no.
+bool shouldInterrupt(const Object& sim);
+
 // Runs an entry's guard (check) tree for `sim` to completion, as a check
 // tree: in a thread of its own, with the Sim's temps, the object as stack
 // object and code owner, parameter 0 = 1 when autonomous (FreeSO). True if

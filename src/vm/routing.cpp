@@ -1311,9 +1311,10 @@ bool runWalkTree(Context& c, const std::string& name, std::array<int16_t, 4> arg
 Step advance(Context& c, Object& me, RouteFail& why) {
     VM& vm = c.vm;
     auto& r = *me.route;
-    // The interaction was cancelled: "interrupted".
-    if (me.activeInteraction >= 0 && size_t(me.activeInteraction) < me.queue.size() &&
-        me.queue[size_t(me.activeInteraction)].cancelled) {
+    // The interaction was cancelled, or something more important waits
+    // (cTSPerson::ShouldInterrupt): "interrupted". Inferred: only inside an
+    // interaction, as before (a walk of the Main itself goes on).
+    if (me.activeInteraction >= 0 && size_t(me.activeInteraction) < me.queue.size() && shouldInterrupt(me)) {
         why = RouteFail::Interrupted;
         return Step::Failed;
     }

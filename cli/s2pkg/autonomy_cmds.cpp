@@ -159,6 +159,12 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             seenBills.insert(oid); // already in the lot
     std::array<int16_t, 4> values{-1, -1, -1, -1};
     std::printf("  family %d funds %d\n", family, funds);
+    if (std::getenv("S2PKG_GLOBALS")) { // the simulator's globals (STR# 0x81) after loading
+        std::printf("  globals:");
+        for (size_t g = 0; g < 54; ++g)
+            std::printf(" %zu=%d", g, machine.globals[g]);
+        std::printf("\n");
+    }
     std::map<vm::ObjectId, std::array<int16_t, 3>> job;
     std::map<vm::ObjectId, bool> onLot;
     auto jobOf = [](const vm::Object& s) {
@@ -240,6 +246,23 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
             std::printf("    t%-6llu %*s%04X #%-3u %-30s %s %s\n", static_cast<unsigned long long>(machine.ticks),
                         int(t.stack.size() - 1) * 2, "", f.instance, f.pc, op.c_str(), f.behavior->fileName.c_str(),
                         vm::describeOperands(machine, t, f, in).c_str());
+        };
+
+    // S2PKG_LOG_TREES=text: every start of a tree whose name has the text,
+    // with the tick, who runs it and the tree below it on the stack.
+    if (const char* logTrees = std::getenv("S2PKG_LOG_TREES"); logTrees && !traceId)
+        machine.trace = [&machine, want = std::string(logTrees)](const vm::Thread& t, const vm::Frame& f, const Behavior::Instruction&) {
+            if (f.pc != 0 || &f != &t.stack.back() || f.behavior->fileName.find(want) == std::string::npos)
+                return;
+            // One line per call, not per loop back to the start or re-run in the same tick.
+            static std::map<std::pair<const vm::Thread*, size_t>, std::pair<const Behavior*, uint64_t>> last;
+            auto& seen = last[{&t, t.stack.size()}];
+            if (seen == std::pair<const Behavior*, uint64_t>{f.behavior, machine.ticks})
+                return;
+            seen = {f.behavior, machine.ticks};
+            const std::string caller = t.stack.size() > 1 ? t.stack[t.stack.size() - 2].behavior->fileName : "";
+            std::printf("  tick %6llu %s %s (%d) \"%s\" (0x%08X:0x%04X) from \"%s\"\n", static_cast<unsigned long long>(machine.ticks), clockText(machine).c_str(),
+                        objectName(machine, t.me).c_str(), t.me, f.behavior->fileName.c_str(), f.group, f.instance, caller.c_str());
         };
 
     // Wants and fears rolled, fulfilled and come true, and the aspiration

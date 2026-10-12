@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 
 namespace os2::vm {
@@ -215,6 +217,9 @@ Exit findBestObjectForFunction(Context& c) {
             continue;
         best = id, bestScore = score;
     }
+    if (std::getenv("OS2_FBOF_FAILS") && !best) // what Find Best Object for Function found nothing for, for looking into
+        std::fprintf(stderr, "t%llu FBOF %u flags %02X of %d in \"%s\" #%u found nothing\n", (unsigned long long)vm.ticks, function, flags, meId,
+                     c.frame.behavior->fileName.c_str(), c.frame.pc);
     if (!best)
         return Exit::False;
     c.frame.stackObject = best;

@@ -240,9 +240,20 @@ static void testCancelRunning() {
     for (int i = 0; i < 5; ++i)
         fx.vm.tick();
     check(s.activeInteraction == 0 && !interactionCancelled(s), "it keeps running");
-    // Something more important cancels it (the user picks another interaction).
+    // Another autonomous entry does not interrupt it (cTSPerson::ShouldInterrupt:
+    // only a priority above the person's; FreeSO lets one autonomous entry
+    // interrupt another, the TS2 binary does not).
+    auto other = fx.make(0);
+    other.priority = kPriorityAutonomous;
+    const uint16_t otherUid = enqueue(fx.vm, s, other);
+    check(!shouldInterrupt(s) && !interactionCancelled(s), "an autonomous entry waits behind an autonomous one");
+    for (int i = 0; i < 3; ++i)
+        fx.vm.tick();
+    check(s.activeInteraction == 0 && s.queue.size() == 2, "and the running one goes on");
+    check(cancelInteraction(fx.vm, s, otherUid) && s.queue.size() == 1, "(the waiting one is dropped)");
+    // Something more important interrupts it (the user picks another interaction).
     enqueue(fx.vm, s, fx.make(0));
-    check(interactionCancelled(s), "a user driven interaction cancels an autonomous one");
+    check(shouldInterrupt(s) && !interactionCancelled(s), "a user driven interaction interrupts an autonomous one");
     fx.vm.tick(); // Idle for Input in the interaction returns: it ends
     check(fx.o().attributes.size() > 1 && fx.o().attributes[1] == 1, "the cancelled interaction finished its tree");
     check(s.queue.empty() && s.activeInteraction == -1, "and left the queue");

@@ -38,10 +38,17 @@ void setPriority(Object& sim, int16_t p) {
         sim.person->data[persondata::Priority] = p;
 }
 
-// FreeSO's EvaluateQueuePriorities: drops waiting entries whose object is
-// gone, and tells the running interaction to stop when something more
-// important waits behind it, or when its priority was dropped to 0 (how
-// The Sims 1 cancels an interaction from its own tree).
+// Drops waiting entries whose object is gone (FreeSO's
+// EvaluateQueuePriorities), and tells the running interaction to stop when
+// its priority was dropped to 0 (how The Sims 1 cancels an interaction from
+// its own tree; kept from FreeSO). Something more important waiting behind
+// it does not cancel it: the binary asks cTSPerson::ShouldInterrupt each
+// time instead (shouldInterrupt below), and only a priority strictly above
+// the person's interrupts. FreeSO lets another autonomous entry interrupt
+// an autonomous one ("allow other auto actions to interrupt us"); the TS2
+// binary does not, and with that rule every "*Push Look At" or social
+// reaction another Sim pushed cancelled cooking half-way (the route to the
+// stove failed "interrupted", "Food Chain - Failure - Cook" dropped the tray).
 void evaluatePriorities(VM& vm, Object& sim) {
     auto& q = sim.queue;
     const int active = sim.activeInteraction;
@@ -52,15 +59,9 @@ void evaluatePriorities(VM& vm, Object& sim) {
             ++i;
     if (active < 0 || size_t(active) >= q.size())
         return;
-    int current = currentPriority(sim);
-    if (current == kPriorityAutonomous)
-        current -= 1; // other autonomous interactions may interrupt it
     auto& running = q[size_t(active)];
-    if (running.priority != kPriorityIdle && current == kPriorityIdle)
+    if (running.priority != kPriorityIdle && currentPriority(sim) == kPriorityIdle)
         running.cancelled = true;
-    for (size_t i = size_t(active + 1); i < q.size(); ++i)
-        if (q[i].priority > current)
-            running.cancelled = true;
 }
 
 QueuedInteraction entryFor(ObjectId object, const InteractionTableRef& ref, const InteractionTable::Interaction& e,
@@ -324,12 +325,7 @@ Exit idleForInput(Context& c) {
     // above the person's (data 33). A waiting entry of no higher priority
     // left Mains spinning here without yielding (the social bunny's
     // "Function - Main - Check Queue" ran out of its instruction budget).
-    const bool shouldInterrupt =
-        me.person ? me.person->data[71] == 0 &&
-                        (interactionCancelled(me) ||
-                         (waiting && me.queue[next].priority > me.person->data[persondata::Priority]))
-                  : (inAction ? interactionCancelled(me) : waiting);
-    const bool pending = me.idleInterrupt || shouldInterrupt;
+    const bool pending = me.idleInterrupt || (me.person ? shouldInterrupt(me) : inAction ? interactionCancelled(me) : waiting);
     const int16_t ticks = c.get(kOwnerParam, param);
     if (!pending) {
         if (ticks > 0) {
@@ -619,6 +615,22 @@ void cancelInteractionsWith(VM& vm, ObjectId object) {
         std::erase_if(sim.subQueue, [&](const QueuedInteraction& x) { return x.object == object; });
         syncQueueData(sim);
     }
+}
+
+// cTSPerson::ShouldInterrupt (BV 0xad6388): person data 71
+// "non-interruptible" says no; the current action or sub-action cancelled
+// says yes; else only a first waiting entry whose priority is above the
+// person's (data 33). A waiting entry of no higher priority left Mains
+// spinning in Idle for Input without yielding (the social bunny's "Function
+// - Main - Check Queue" ran out of its instruction budget).
+bool shouldInterrupt(const Object& sim) {
+    if (!sim.person)
+        return interactionCancelled(sim);
+    if (sim.person->data[persondata::NonInterruptible] != 0)
+        return false;
+    const size_t next = size_t(sim.activeInteraction + 1);
+    return interactionCancelled(sim) ||
+           (next < sim.queue.size() && sim.queue[next].priority > sim.person->data[persondata::Priority]);
 }
 
 bool interactionCancelled(const Object& sim) {
