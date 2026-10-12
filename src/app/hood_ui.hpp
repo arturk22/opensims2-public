@@ -70,7 +70,7 @@ public:
     const HoodLot* dialogLot() const { return dialog_; }
 
     enum class Action { None, Consumed, EnterLot, Close, ZoomIn, ZoomOut, RotateLeft, RotateRight, MainMenu,
-                        Families, Lots, Bins };
+                        Families, Lots, Bins, Options };
     // The Families and Lots & Houses panels (app/hood_bins.hpp); after
     // Action::Bins, binRequest() says what they asked for.
     HoodBins& bins() { return *bins_; }
@@ -84,6 +84,9 @@ public:
     bool covers(simd_float2 p);
     void setCanvas(int width, int height) { canvasW_ = width, canvasH_ = height, dirty_ = true; }
     void refreshLayout() { dirty_ = true; }
+    // The puck's accelerators (their tips: "Famílias - F1", "Lotes & Casas -
+    // F2", "Opções - F5"): open or close that panel.
+    void togglePanel(HoodBins::Panel p) { bins_->togglePanel(p), dirty_ = true; }
 
     UiScreen screen(int width, int height);
     void attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat);

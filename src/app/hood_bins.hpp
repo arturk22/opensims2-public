@@ -18,6 +18,8 @@
 //               lots (0xD000: sizes 0xD001-0xD00A = cTSUserToolPlaceNewLot
 //               sizes 0-9, cTSWinProcNeighborhoodUCPSubPanelTools::
 //               onBtnClickedID)
+//   0x49001028  "Opções" (0x2BF08BEC, F5): Main Menu 0xA221 and Quit 0xA220
+//               (the option windows 0xA241-0xA246 are not wired here)
 //   0x49001035  the small "Rename this lot?" dialog, reused for the
 //               questions and errors (its text, Accept 0xA000, Cancel 0xA001)
 //
@@ -62,11 +64,11 @@ public:
     HoodBins(UiResources& res, FontLibrary& fonts);
     ~HoodBins();
 
-    enum class Panel { None, Families, Lots };
+    enum class Panel { None, Families, Lots, Options };
     enum class Tool { None, MoveIn, Evict, Bulldoze, PlaceEmpty, PlaceBin, MoveLot, ToBin };
     // What a click asked for: the neighborhood mode carries it out.
     struct Request {
-        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot, DeleteBinLot } kind = Kind::None;
+        enum class Kind { None, Consumed, CreateFamily, MoveIn, MoveOut, Bulldoze, ToBin, PlaceLot, DeleteBinLot, MainMenu, Quit } kind = Kind::None;
         uint32_t family = 0, lot = 0; // DeleteBinLot: lot = the bin index
     };
     // The Lots & Houses bin's lots (formats/hood_lots.hpp) and the tools'
@@ -136,7 +138,7 @@ private:
 
     UiResources* res_;
     FontLibrary* fonts_;
-    UiScript families_, lots_, item_, dialogScript_, hover_;
+    UiScript families_, lots_, item_, dialogScript_, hover_, options_;
     bool ok_ = false;
     const hood::Neighborhood* hood_ = nullptr;
     std::map<uint32_t, std::unique_ptr<RgbaImage>> snapshots_;
@@ -164,7 +166,8 @@ private:
 
     enum class Hit { Request, Family, Expand, Prev, Next, Create, Evict, Bulldoze, Accept, Cancel, Solid, LotsPanel,
                      EmptySize, BinItem, BinExpand, BinPrev, BinNext, MoveLotTool, ToBinTool,
-                     PlaceResidential, PlaceCommunity, PlaceAccept, PlaceCancel, BinFilter, BinDelete };
+                     PlaceResidential, PlaceCommunity, PlaceAccept, PlaceCancel, BinFilter, BinDelete,
+                     OptMainMenu, OptQuit };
     const RgbaImage* binPicture(size_t index);
     std::vector<hood::BinLot> binLots_;
     std::map<size_t, std::unique_ptr<RgbaImage>> binPictures_;

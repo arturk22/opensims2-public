@@ -17,7 +17,7 @@ namespace os2 {
 namespace {
 
 constexpr uint32_t kFamiliesScript = 0x49001004, kLotsScript = 0x49001003, kItemScript = 0x49001006,
-                   kDialogScript = 0x49001035, kCardScript = 0x49001011, kPlaceLotScript = 0x49001002;
+                   kDialogScript = 0x49001035, kCardScript = 0x49001011, kPlaceLotScript = 0x49001002, kOptionsScript = 0x49001028;
 constexpr uint32_t kTextGroup = 0x7f3a262a; // Text/Neighborhood.package
 constexpr uint32_t kPuckAnchor = 0xAABBCCDD, kPanelAnchor = 0xAAAA;
 constexpr uint32_t kBin = 0x0B, kCreateFamily = 0x0A, kMoveFamily = 0x6D13DDA1;
@@ -62,6 +62,7 @@ HoodBins::HoodBins(UiResources& res, FontLibrary& fonts) : res_(&res), fonts_(&f
                d = load(kDialogScript, dialogScript_);
     load(kCardScript, hover_);
     load(kPlaceLotScript, placeScript_);
+    load(kOptionsScript, options_);
     ok_ = a && b && c && d;
 }
 
@@ -445,6 +446,30 @@ void HoodBins::layout(UiScreen& out, const std::array<float, 4>& puckRect, const
                 layoutUiElement(b, bx, by, *res_, *fonts_, out, bh);
             }
         }
+    } else if (panel_ == Panel::Options && !options_.roots.empty()) {
+        // The neighborhood's options panel, hung from the puck like the others.
+        const UiElement& root = options_.roots.front();
+        const UiElement* box = root.child(0xA200);
+        const UiElement* anchor = box ? box->child(kPanelAnchor) : nullptr;
+        simd_float2 o = simd_make_float2(puckRect[0], puckRect[1]);
+        if (const UiElement* a = findWindow(puck, kPuckAnchor))
+            o += simd_make_float2(float(a->area()[0]), float(a->area()[1]));
+        if (box && anchor)
+            o -= simd_make_float2(float(box->area()[0] + anchor->area()[0]), float(box->area()[1] + anchor->area()[1]));
+        const auto ra = root.area();
+        UiDrawHooks hk;
+        hk.rects = &rects;
+        if (box)
+            if (const UiElement* back = box->child(0xA250))
+                hk.hide.insert(back);
+        layoutUiElement(root, o.x - float(ra[0]), o.y - float(ra[1]), *res_, *fonts_, out, hk);
+        for (const auto& [e, r] : rects)
+            if (e->get("clsid") != "GZWinFlatRect")
+                solids.push_back({r, Hit::Solid});
+        if (box) {
+            target(box->child(0xA221), Hit::OptMainMenu);
+            target(box->child(0xA220), Hit::OptQuit);
+        }
     } else if (panel_ == Panel::Lots) {
         const UiElement& root = lots_.roots.front();
         const simd_float2 o = anchoredOrigin(root, puckRect, puck);
@@ -758,6 +783,8 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
                 placeLot_->community = t.hit == Hit::PlaceCommunity;
             return {Request::Kind::Consumed};
         case Hit::PlaceAccept: return acceptPlaceLot();
+        case Hit::OptMainMenu: panel_ = Panel::None; return {Request::Kind::MainMenu};
+        case Hit::OptQuit: panel_ = Panel::None; return {Request::Kind::Quit};
         case Hit::PlaceCancel: placeLot_.reset(); return {Request::Kind::Consumed};
         case Hit::Solid:
         case Hit::Request: return {Request::Kind::Consumed};

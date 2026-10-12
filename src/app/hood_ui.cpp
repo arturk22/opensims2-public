@@ -22,7 +22,7 @@ namespace {
 
 constexpr uint32_t kHudScript = 0x49000000, kHoverScript = 0x49001011, kDialogScript = 0x49001000;
 constexpr uint32_t kPuck = 0x4BE6ED7D, kChooser = 0x4BE6ED7E, kCityName = 0x3;
-constexpr uint32_t kFamiliesButton = 0x2BE6F563, kLotsButton = 0x4BE6F571;
+constexpr uint32_t kFamiliesButton = 0x2BE6F563, kLotsButton = 0x4BE6F571, kOptionsButton = 0x2BF08BEC;
 constexpr uint32_t kTypeImg = 0x856DDBAC, kTypeFamilyThumb = 0x8C3CE95A;
 constexpr uint32_t kLotPicture = 0x35CA0000; // the lot package's first snapshot (300x300 JPEG)
 
@@ -179,8 +179,10 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
                 playSound(t.sound);
             if (t.action == Action::Close)
                 openLot(nullptr);
-            if (t.action == Action::Families || t.action == Action::Lots) {
-                bins_->togglePanel(t.action == Action::Families ? HoodBins::Panel::Families : HoodBins::Panel::Lots);
+            if (t.action == Action::Families || t.action == Action::Lots || t.action == Action::Options) {
+                bins_->togglePanel(t.action == Action::Families ? HoodBins::Panel::Families
+                                   : t.action == Action::Lots   ? HoodBins::Panel::Lots
+                                                                : HoodBins::Panel::Options);
                 dirty_ = true;
             }
             return t.action;
@@ -250,6 +252,8 @@ UiScreen HoodUi::screen(int width, int height) {
             hk.buttonState[f] = bins_->panel() == HoodBins::Panel::Families ? 2 : 1;
         if (const UiElement* l = puck->child(kLotsButton))
             hk.buttonState[l] = bins_->panel() == HoodBins::Panel::Lots ? 2 : 1;
+        if (const UiElement* l = puck->child(kOptionsButton))
+            hk.buttonState[l] = bins_->panel() == HoodBins::Panel::Options ? 2 : 1;
         puckQuads.first = out.quads.size();
         place(*puck, 2, float(height - (a[3] - a[1]) - 2), hk);
         puckQuads.second = out.quads.size();
@@ -257,6 +261,7 @@ UiScreen HoodUi::screen(int width, int height) {
             puckRect = r->second;
         target(puck->child(kFamiliesButton), Action::Families);
         target(puck->child(kLotsButton), Action::Lots);
+        target(puck->child(kOptionsButton), Action::Options);
         // The camera buttons: "Mais Zoom +", "Menos Zoom -" and the two "Rotacionar".
         target(puck->child(0x2BE6FB48), Action::ZoomIn);
         target(puck->child(0x2BE6FB4E), Action::ZoomOut);

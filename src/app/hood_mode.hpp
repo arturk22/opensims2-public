@@ -58,6 +58,7 @@ public:
     void enterLot(const HoodLot& lot);
     std::function<void(const HoodLot&)> onEnterLot;
     std::function<void()> onMainMenu;
+    std::function<void()> onQuit; // the options panel's Quit
     // "Create New Family" in the Families panel: Create-a-Sim for a new
     // family of this neighborhood (its folder, the user's copy). When CAS has
     // written the family into the neighborhood package, familyCreated(id)

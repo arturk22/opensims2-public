@@ -893,3 +893,9 @@ lote nem fica sob uma rua.
   (`syncQueueData`, como a retomada faz). O app dá atores aos Sims que a
   árvore criou (`LotSimulation::arrivedSims`). `hood-save --check`: 26 de
   26 iguais, e a segunda passada também. `r11-bairro-familia-chega-pela-arvore.jpg`.
+- **Opções do bairro** (puck `0x2BF08BEC`, "Opções - F5"): o painel
+  `0x49001028` preso ao puck pelo `aabbccdd:tl` do `0xA200`, com "Menu
+  Principal" `0xA221` (volta ao menu) e "Sair" `0xA220` (sai do jogo); as
+  janelas de opções `0xA241`–`0xA246` ainda não respondem aqui. Teclas F1,
+  F2 e F5 abrem/fecham Famílias, Lotes & Casas e Opções (as dicas dos
+  botões). `r11-bairro-opcoes.jpg`.

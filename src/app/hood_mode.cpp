@@ -291,6 +291,16 @@ void HoodMode::carryOut(const HoodBins::Request& r) {
             onCreateFamily(folder);
         return;
     }
+    if (r.kind == K::MainMenu) {
+        if (onMainMenu)
+            onMainMenu();
+        return;
+    }
+    if (r.kind == K::Quit) {
+        if (onQuit)
+            onQuit();
+        return;
+    }
     if (r.kind == K::DeleteBinLot) {
         const auto& bin = ui_->bins().lotBin();
         if (r.lot < bin.size()) {
@@ -396,7 +406,9 @@ void HoodMode::scriptedView(LotCamera& camera, float w, float h) {
         return std::nullopt;
     };
     if (auto p = value("--hood-panel"))
-        ui_->bins().togglePanel(*p == "lots" ? HoodBins::Panel::Lots : HoodBins::Panel::Families);
+        ui_->bins().togglePanel(*p == "lots"      ? HoodBins::Panel::Lots
+                                : *p == "options" ? HoodBins::Panel::Options
+                                                  : HoodBins::Panel::Families);
     if (auto f = value("--hood-family"))
         ui_->bins().selectFamily(uint32_t(std::stoul(*f)));
     if (auto t = value("--hood-tool"))

@@ -2475,7 +2475,7 @@ enum Key : unsigned short {
     kA = 0, kS = 1, kD = 2, kF = 3, kZ = 6, kX = 7, kQ = 12, kW = 13, kE = 14, kR = 15,
     kEquals = 24, kMinus = 27, kComma = 43, kPeriod = 47, kPadPlus = 69, kPadMinus = 78,
     kEscape = 53, kHome = 115, kEnd = 119, kPageUp = 116, kPageDown = 121, kLeft = 123, kRight = 124, kDown = 125, kUp = 126,
-    kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
+    kF1 = 122, kF2 = 120, kF5 = 96, kReturn = 36, kEnter = 76, kP = 35, k1 = 18, k2 = 19, k3 = 20, kY = 16, kBackspace = 51, kForwardDelete = 117,
 };
 
 // Camera position slot of the keys 4-9 (-1: another key).
@@ -2942,6 +2942,13 @@ void unloadScene() {
             return;
         }
         if (e.keyCode == kBackspace || e.keyCode == kForwardDelete) { gBuy->deleteHeld(); return; }
+    }
+    // The neighborhood puck's accelerators: F1 families, F2 lots, F5 options.
+    if (gHood && (e.keyCode == kF1 || e.keyCode == kF2 || e.keyCode == kF5)) {
+        gHood->ui().togglePanel(e.keyCode == kF1   ? os2::HoodBins::Panel::Families
+                                : e.keyCode == kF2 ? os2::HoodBins::Panel::Lots
+                                                   : os2::HoodBins::Panel::Options);
+        return;
     }
     // The neighborhood's lot tools: , and . turn the lot being placed.
     if (gHood && gHood->placingLot() && (e.keyCode == kComma || e.keyCode == kPeriod)) {
@@ -4204,6 +4211,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
         next.hood = os2::sceneOf(processArguments()).hood;
         requestScene(next);
     };
+    gHood->onQuit = [] { requestQuit(); };
     gHood->onMainMenu = [] {
         os2::Scene next;
         next.kind = os2::Scene::Kind::MainMenu;
