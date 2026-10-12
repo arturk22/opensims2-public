@@ -806,10 +806,11 @@ static void testGuidFallback() {
         lib.add(0xFE000001, 0x80, definition(guid, true));
         return std::pair{0xFE000001u, uint16_t(0x80)};
     });
-    const auto a = code.definitionByGuid(0xADAE6F9D);
-    const auto b = code.definitionByGuid(0x12345678);
-    const auto c = code.definitionByGuid(0x12345678);
-    check(a && a->first == 0xFE000001 && !b && !c && calls == 2, "a neighbor's definition comes from the fallback, once a GUID");
+    const auto a = code.characterDefinition(0xADAE6F9D);
+    const auto b = code.characterDefinition(0x12345678);
+    const auto c = code.characterDefinition(0x12345678);
+    check(a && a->first == 0xFE000001 && !b && !c && calls == 2 && !code.definitionByGuid(0x12345678),
+          "a neighbor's definition comes from the fallback, once a GUID");
 }
 
 // Set to Next (0x80 | type) with the target in a temp.

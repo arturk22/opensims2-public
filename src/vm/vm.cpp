@@ -288,6 +288,12 @@ std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::definitionByGuid(uint3
     scanDefinitions();
     if (auto it = byGuid_.find(guid); it != byGuid_.end())
         return it->second;
+    return std::nullopt;
+}
+
+std::optional<std::pair<uint32_t, uint16_t>> CodeLibrary::characterDefinition(uint32_t guid) {
+    if (auto d = definitionByGuid(guid))
+        return d;
     if (guidFallback_ && guid && guidFallbackTried_.insert(guid).second)
         return guidFallback_(*this, guid);
     return std::nullopt;
@@ -642,10 +648,10 @@ int16_t Context::get(uint8_t owner, int16_t data) const {
     case 0x21: // job data: the game has none (InterpValue, base 1.0 and BV: always error 0x3A)
         throw gameError(err::JobDataNotFound, "job data " + std::to_string(data));
     case 0x26: {
-        auto def = vm.code().definitionByGuid(stackNeighbor(*this).guid);
+        auto def = vm.code().characterDefinition(stackNeighbor(*this).guid);
         const ObjectDefinition* d = def ? vm.code().definition(def->first, def->second) : nullptr;
-        if (!d)
-            throw VMError("neighbor " + std::to_string(frame.stackObject) + " has no definition");
+        if (!d) // the game's error 0x23 (InterpValue BV 0xb15f2c)
+            throw gameError(0x23, "neighbor " + std::to_string(frame.stackObject) + " has no definition");
         return definitionField(*d, data);
     }
     case 0x1A: {

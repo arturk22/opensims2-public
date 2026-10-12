@@ -515,7 +515,7 @@ void makeNeighbor(vm::VM& machine, vm::Object& o, int16_t id) {
 // found through the code library's GUID fallback), null without one.
 vm::Object* characterStandIn(vm::VM& machine, int16_t id) {
     const vm::Neighbor* n = machine.neighbor(id);
-    const auto def = n && n->guid ? machine.code().definitionByGuid(n->guid) : std::nullopt;
+    const auto def = n && n->guid ? machine.code().characterDefinition(n->guid) : std::nullopt;
     if (!def)
         return nullptr;
     vm::Object& o = machine.instantiate(def->first, def->second);
@@ -566,7 +566,7 @@ StandIns standIns(ResourceIndex& index) {
 // The semi-global group of the Sims' characters (PersonGlobals), 0 if unknown.
 uint32_t personSemiGlobal(vm::VM& machine, const StandIns& s) {
     const vm::Neighbor* n = machine.neighbor(s.meNeighbor);
-    const auto def = n && n->guid ? machine.code().definitionByGuid(n->guid) : std::nullopt;
+    const auto def = n && n->guid ? machine.code().characterDefinition(n->guid) : std::nullopt;
     return def ? machine.code().semiGlobalFor(def->first) : 0;
 }
 

@@ -84,6 +84,7 @@ inline std::string errorString(uint16_t code) {
     case 0x1C: return "Object referred to must be a person.";
     case 0x1E: return "Search type is invalid. Types are 0: all motive, 1:mental motives, 2:physical motives.";
     case 0x1F: return "Tree table not found";
+    case 0x23: return "Index into object definition out of range.";
     case 0x29: return "Bad room value requested.";
     case 0x2A: return "Invalid global sim call.";
     case 0x2E: return "Invalid constant.";
