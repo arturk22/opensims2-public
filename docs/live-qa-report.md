@@ -324,3 +324,26 @@ Ambiente: o diálogo do macOS "opensims2 quit unexpectedly" (e o do `s2pkg`) con
 - Mensagens da piscina em inglês na dica ("cannot dig a pool: ...", "9 pool tiles erased ...") em vez de PT-BR; só a recusa 0x45 vem do texto do jogo ("Impossível reservar espaço acima das escadas", que é o texto do binário para esse código).
 - O telefone e várias coisas no andar de cima ficam escondidos pelas paredes do corte (`walls cutaway`) em `Page Up`: sem girar a câmera não se acha o telefone para clicar; vale uma passada com o telefone achado pelo `s2pkg route`.
 - Quadrado do cursor da ferramenta de piscina fica verde sobre a pista e fora do lote (a recusa só vem no arrasto).
+
+# Rodada 15, passada 11
+
+Mesmo método (CGEvent, pid próprio, janela conferida antes de cada clique, captura só da região da janela, `-ApplePersistenceIgnoreState YES`, `build/` do `main` em `97b9447`, binário das 06:16, mais novo que o commit). N002_Lot10 (`--vm --ui live`). Os diálogos do macOS ("opensims2 quit unexpectedly" e o do `s2pkg`) seguem no centro da tela; para ver os diálogos do jogo usei a janela de 620x760 em 2,40 (os diálogos do jogo ficam inteiros, a barra e os painéis laterais ficam cortados) e o `--dialog-demo` (5 serviços, 6 vizinhos, 7 festa, 21 espelho, 17 Planejar Roupa) em vez de achar o telefone. Navegar a câmera com as setas/a/d só gira (não faz pan) e foi lento; o telefone do térreo (obj 46, 15,5/23,5 nível 2) e o de cima (145, 10,5/30,5 nível 3) não foram clicados. Sem screenshots guardados (todos mostravam o diálogo do macOS).
+
+| Passo | Resultado |
+|-------|-----------|
+| Piscina: cursor vermelho sobre a pista e fora do lote | passa (quadrado vermelho na rua e no vazio; verde no gramado) |
+| Piscina: recusas em PT-BR | passa: "Não é possível cruzar objetos", "Local fora dos limites", "Piscinas somente são permitidas sobre o terreno", "Somente terreno exposto pode ser editado" |
+| Piscina: Ctrl-arrastar 2 tiles apaga | passa só se o arrasto é no tile onde a piscina foi cavada: ver o bug de posição abaixo; sobre a piscina visível dava "no pool there" |
+| Piscina: cavar por arrasto | **falha visual**: a piscina de 2 tiles aparece ~3 tiles mais perto da câmera (70-100 px a 2000 px) do que o quadrado do cursor/arrasto |
+| Espelho (`--dialog-demo 21`): fileira de cor da barba | passa: 4 cores aparecem na aba das barbas (a 5ª, "Personalizado", fica fora da janela estreita; não conferida) |
+| Telefone: listas de serviços (5), vizinhos (6, grade e lista) e festa (7) | abrem bonitas, botões de ordenar A-Z/humor e lista ordenada por nome; na festa a lista de convidados mostra "Mãe Rainha" duas vezes (do demo) e os nomes longos ficam cortados ("Drone Colono 1000"); os serviços do demo listam objetos do lote, então imagens/nomes de lotes não foram vistos |
+| Planejar Roupa (`--dialog-demo 17`) | abre com a roupa do Sim, setas e as 3 abas; não testado no armário real |
+| Painel de aspiração "Big Life Moments" | não testado (não achei onde abre) |
+| Andar: idosa corcunda, Vir Saltitando, partida/parada | não testado |
+| Dormir (N001_Lot11), espelho do Lot82, lote vazio novo, telhado, arco sem cerca, passo 32 do tutorial | não testados (tempo) |
+
+## Bugs achados (não corrigidos)
+
+- Piscina cavada por arrasto aparece deslocada para a câmera. Repro: Construir, Diversos, ferramenta de piscina, escolher o 1º item, arrastar ~30 px num gramado livre do N002_Lot10 (a leste da varanda): "a pool of 2 tiles", mas a água aparece 70-100 px abaixo do arrasto; Ctrl-arrastar no lugar do arrasto apaga (o tile está certo), Ctrl-arrastar na água visível diz "no pool there". Suspeita: o desenho do buraco/água da piscina nova (`lot_model.cpp`, `water:pool`) ou a altura -3 do fundo, não o picking.
+- Piscina existente do lote 10: o cursor sobre a água cai ~1 tile abaixo do mouse.
+- Câmera: as setas e a/d giram em vez de mover; não achei pan por teclado.
