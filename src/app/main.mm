@@ -3926,6 +3926,14 @@ bool saveGameNow() {
         std::printf("opensims2: save: no lot to save\n");
         return false;
     }
+    // What the buy or build tool holds is not on the lot: a new object never
+    // bought goes, a picked-up one goes back where it was (else the ghost
+    // was saved as a placed object: a chair refused for "not enough funds"
+    // came back on the lawn of N001_Lot83 after Salvar -> Vizinhança; QA 14).
+    if (gBuy && gBuy->held())
+        gBuy->cancel();
+    if (gBuild && gBuild->active())
+        gBuild->cancel();
     const CFTimeInterval start = CACurrentMediaTime();
     const os2::GameSaveResult r = os2::saveGame(gSimulation->machine(), gLotFile, gameDir(), os2::sessionCharactersDir());
     for (const auto& l : r.lines)
