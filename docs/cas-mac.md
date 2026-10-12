@@ -353,8 +353,8 @@ achado (a fábrica usa uma vtable importada).
 
 ## 10. Aberto
 
-- A mistura exata de arquétipos e modificadores (`BlendDeltas`); a ordem
-  dos cantos de triângulo do LxNR no nível alto (§13).
+- A mistura exata de arquétipos e modificadores (`BlendDeltas`). (A ordem
+  dos cantos do LxNR no nível alto foi resolvida na rodada 12, §13.)
 - As chaves das miniaturas de tons de pele/olhos e de roupas salvas (§9b;
   olhos e maquiagem o jogo renderiza na hora, §12).
 - Como o tom de pele "do meio" (tipo 6) vira o tom expressado; o uso da
@@ -456,6 +456,28 @@ faces do GMDC (igual nos dados); no nível alto os triângulos do jogo vêm em
 outra ordem (blocos permutados; há duas ordens diferentes entre os
 personagens de N001), então aqui a leitura casa pelos UVs e a gravação usa
 a ordem das faces do GMDC.
+
+**A ordem no binário (rodada 12).** `ConvertFacialDataToDeltas` (BV
+`0x805854`) grava, para cada chave, os pares na ordem do `cMeshEntry` de
+`GetMesh(idade, sexo, parte, nível)`: um `vector` de grupos (passo de 3
+palavras: início, fim, capacidade), cada um um `vector` de registros de
+vértice de `0x68` bytes (posição em `+0x10`, UV em `+0x40`), já
+desindexados (um registro por canto de triângulo). O `cMeshEntry` é montado
+por `BuildBaseMesh` (BV `0x801c00`) a partir do **rosto neutro**
+(`GetNeutralShapeEntry(idade, sexo, parte)` → `+0xc` → vtable `0xb8(nível)`
+→ vtable `0x98`, que achata a geometria em cantos; o resto da função o
+Ghidra joga fora como inalcançável, por isso não decompilava). Então a
+ordem dos blocos no nível alto é a ordem dos grupos/faces da malha neutra
+que o jogo tinha carregada quando gravou (inferido: por isso dois
+personagens de N001 têm ordens diferentes). **A leitura não depende da
+ordem**: `ConvertFacialDataToPositionsUVs` (BV `0x804f98`), o caminho dos
+dados com (delta, UV), percorre os vértices do `cMeshEntry` e, para cada
+um, procura nos pares o primeiro com o mesmo UV (|Δu| e |Δv| < 0,0001,
+comparando também o sinal de cada coordenada com 0) e soma o delta à
+posição; com o modo 3 (idoso, homem, nível `0xF`) ou modo 4 (bebê) não
+soma nada. Só o `ConvertFacialDataToPositions` (BV `0x805498`, formato sem
+UV) casa por índice. O que o opensims2 faz (casar por UV ao ler, gravar na
+ordem das faces do GMDC) é o mesmo que o jogo aceita.
 
 Conferido (`s2pkg cas-lxnr <Res> <personagem>`): regravar o LxNR de
 `N001_User00001` dá os mesmos 184.846 bytes; o rosto refeito do neutro +
