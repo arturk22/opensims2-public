@@ -293,8 +293,9 @@ std::vector<Cut> wallCuts(const std::vector<WallHole>& holes, float ax, float ay
 // texture coordinates follow world position, so overlaps line up. Attic walls
 // (gables) rise to the roof above them, half walls under a fence to 1 tile.
 void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& roofs, const LotViewOptions& view,
-              const std::vector<WallHole>& holes, LotLightMapLayout& lm, std::map<std::string, MeshBuilder>& drawn,
-              std::vector<std::string>& warnings, std::vector<std::array<float, 5>>* cut) {
+              bool roofShown, const std::vector<WallHole>& holes, LotLightMapLayout& lm,
+              std::map<std::string, MeshBuilder>& drawn, std::vector<std::string>& warnings,
+              std::vector<std::array<float, 5>>* cut) {
     // Walls above the view's level are built into this and dropped: their
     // light-map cells stay, so the atlas is the same for every view.
     std::map<std::string, MeshBuilder> hidden;
@@ -319,11 +320,14 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             continue;
         dx /= len, dy /= len;
         const int level = w.a.level;
-        auto& out = level > view.level ? hidden : drawn;
+        const bool attic = w.type == Lot::Attic;
+        // Attic walls (the gables) stand on the level over the roof's walls
+        // and show with the roof, from the top floor.
+        const bool shown = level <= view.level || (attic && roofShown && level == view.level + 1);
+        auto& out = shown ? drawn : hidden;
         // The wall mode applies to the view's level (lower levels keep their walls up).
         const bool current = view.level == LotViewOptions::kAllLevels || level == view.level ||
                              (level >= view.lowestCut && level < view.level);
-        const bool attic = w.type == Lot::Attic;
         const float nx = dy, ny = -dx; // right of a -> b
         // Wall modes cut down the walls whose partition style allows it
         // (walls.txt mayCutAway: normal and attic walls; foundations, pool
@@ -725,8 +729,13 @@ std::string PatternCatalog::material(const std::map<std::string, std::string>& s
 
 int lotTopLevel(const Lot& lot) {
     int top = lot.minLevel;
+    // Not the attic walls: the gables belong to the roof over the level
+    // below (a roof drawn in Build mode on a one-storey house puts its
+    // gables on level 1, which hid that roof until the lot was reopened
+    // with every level shown).
     for (const auto& w : lot.walls)
-        top = std::max(top, w.a.level);
+        if (w.type != Lot::Attic)
+            top = std::max(top, w.a.level);
     for (int level = top + 1; level < lot.minLevel + lot.levelCount; ++level)
         for (uint32_t x = 0; x < lot.width; ++x)
             for (uint32_t y = 0; y < lot.height; ++y)
@@ -808,7 +817,9 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         h.bound();
     if (cache)
         cache->cut.clear();
-    addWalls(lot, patterns, roofs, view, holes, lm, built, model.warnings, cache ? &cache->cut : nullptr);
+    const bool roofShown =
+        roofs.count() && view.walls == LotViewOptions::Walls::Up && view.roof && view.level >= lotTopLevel(lot);
+    addWalls(lot, patterns, roofs, view, roofShown, holes, lm, built, model.warnings, cache ? &cache->cut : nullptr);
     addWater(lot, built);
     model.materials["water:terrain"] = terrainWaterMaterial();
     model.materials["water:pool"] = poolWaterMaterial();
@@ -821,7 +832,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
         }
     std::erase_if(built, [](const auto& kv) { return kv.first.rfind("water:", 0) == 0; });
 
-    if (roofs.count() && view.walls == LotViewOptions::Walls::Up && view.roof && view.level >= lotTopLevel(lot)) {
+    if (roofShown) {
         const PatternCatalog::Roof* pattern = patterns.roof(roofs.pattern());
         if (!pattern) {
             model.warnings.push_back("roof pattern " + hexString(roofs.pattern()) + " not in the catalog");

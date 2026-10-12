@@ -518,6 +518,14 @@ static void testLotModel() {
               upLayout.walls[0].top == hiddenLayout.walls[0].top && upLayout.height == downLayout.height,
           "the light-map atlas does not depend on the view");
     check(lotTopLevel(lot) == 0, "top level: the highest with walls or floors");
+    {
+        Lot gabled = lot;
+        Lot::Wall g = gabled.walls[0];
+        g.a.level = g.b.level = 1;
+        g.type = Lot::Attic;
+        gabled.walls.push_back(g);
+        check(lotTopLevel(gabled) == 0, "top level: not the gables (attic walls) over the roof's floor");
+    }
 
     // WallView: cutaway rebuilds only when the camera passes a wall direction.
     WallView wv;

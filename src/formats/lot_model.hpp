@@ -86,7 +86,8 @@ struct LotViewOptions {
     int lowestCut = kAllLevels;
     bool roof = true;
 };
-// The highest level with walls or floors (lowest level if none).
+// The highest level with walls (not attic walls: the gables go with the
+// roof over the level below) or floors (lowest level if none).
 int lotTopLevel(const Lot& lot);
 //
 // Walls, floors, wall tops and the terrain get light-map coordinates
