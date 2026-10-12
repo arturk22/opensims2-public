@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "xform.hpp"
+
 namespace os2 {
 
 class DbpfPackage;
@@ -191,6 +193,10 @@ struct Lot {
         std::array<float, 3> position{0, 0, 0};
         std::array<float, 4> rotation{0, 0, 0, 1};
         bool person = false; // a Sim (cPerson): models are body parts
+        // The model's bones as the object was last posed (name, local
+        // transform; nTSSG::cObject's saved transform nodes): what the game
+        // draws it with until it plays another animation.
+        std::vector<std::pair<std::string, Xform>> nodes;
     };
     std::vector<Object> objects;
 

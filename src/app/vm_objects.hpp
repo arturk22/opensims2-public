@@ -52,9 +52,13 @@ public:
     // ID has that OBJD follows the VM; the others stay where they were saved.
     // Returns whether it follows the VM.
     // `design` is the cObject's design choice (subset -> material), kept
-    // under the materials the VM's Change Material sets.
+    // under the materials the VM's Change Material sets. `pose`: the local
+    // pose of its model as the lot saved it (formats/skinning.hpp savedPose;
+    // empty: the rest pose), which its slots' bones follow and which its
+    // static model is drawn in when the view redraws it.
     bool addPlaced(int16_t id, const std::string& definition, const std::string& cres, int instance,
-                   std::optional<Xform> saved, const std::map<std::string, std::string>& design = {});
+                   std::optional<Xform> saved, const std::map<std::string, std::string>& design = {},
+                   std::vector<Xform> pose = {});
     // A Sim's actor (contained objects follow its bones).
     void addSim(int16_t id, SimActor* actor);
     // An object now drawn by a skinned actor (posed by an animation the VM
@@ -138,6 +142,7 @@ private:
         SimActor* actor = nullptr;
         std::optional<Xform> saved;
         std::map<std::string, std::string> design;
+        std::vector<Xform> pose; // saved local pose, empty: rest
         std::map<std::string, std::string> vmMaterials; // Object::materials drawn
         Baseline base;
         bool hidden = false;
@@ -152,7 +157,11 @@ private:
     void addCreated(int16_t id);
     // Redraws an object with the materials the VM set on it (Change Material).
     void updateMaterials(int16_t id, Drawn& d);
-    int model(const std::string& cres, const std::map<std::string, std::string>& materials);
+    int model(const std::string& cres, const std::map<std::string, std::string>& materials,
+              const std::vector<Xform>& pose = {});
+    // The local pose an object's model is drawn in when no animation poses
+    // it: the lot's saved pose, else the skeleton's rest pose.
+    std::vector<Xform> localPose(int16_t id, const Skeleton& s) const;
 
     Renderer& renderer_;
     ResourceIndex& index_;

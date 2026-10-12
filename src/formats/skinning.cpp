@@ -1,6 +1,8 @@
 #include "skinning.hpp"
 
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 
 namespace os2 {
 
@@ -105,6 +107,55 @@ void SkinnedModel::pose(const std::vector<Xform>& world, ObjectModel& out,
             }
         }
     }
+}
+
+std::optional<std::vector<Xform>> savedPose(const Skeleton& skeleton,
+                                            const std::vector<std::pair<std::string, Xform>>& nodes) {
+    std::vector<Xform> pose = skeleton.restPose();
+    bool moved = false;
+    for (const auto& [name, x] : nodes) {
+        const int b = skeleton.find(name);
+        if (b < 0 || size_t(b) >= pose.size())
+            continue;
+        const Xform& r = pose[size_t(b)];
+        const float dq = std::abs(std::abs(r.q.x * x.q.x + r.q.y * x.q.y + r.q.z * x.q.z + r.q.w * x.q.w) - 1);
+        const float dt = std::abs(r.t[0] - x.t[0]) + std::abs(r.t[1] - x.t[1]) + std::abs(r.t[2] - x.t[2]);
+        if (dt > 1e-3f || dq > 1e-3f)
+            moved = true;
+        pose[size_t(b)] = x;
+    }
+    if (!moved)
+        return std::nullopt;
+    return pose;
+}
+
+ObjectModel posedModel(const ObjectModel& model, const std::vector<Xform>& local) {
+    SkinnedModel skin(model.skeleton);
+    skin.add(model);
+    ObjectModel out;
+    skin.pose(skin.skeleton.world(local), out);
+    ObjectModel result = model;
+    for (size_t i = 0; i < result.parts.size() && i < out.parts.size(); ++i) {
+        result.parts[i].mesh.positions = std::move(out.parts[i].mesh.positions);
+        result.parts[i].mesh.normals = std::move(out.parts[i].mesh.normals);
+    }
+    return result;
+}
+
+std::string poseKey(const std::vector<Xform>& local) {
+    uint64_t h = 1469598103934665603ull; // FNV-1a over the values to a tenth of a millimetre
+    auto mix = [&](float v) {
+        const int64_t q = std::llround(double(v) * 10000);
+        for (int k = 0; k < 8; ++k)
+            h = (h ^ uint64_t((q >> (8 * k)) & 0xFF)) * 1099511628211ull;
+    };
+    for (const auto& x : local) {
+        mix(x.q.x), mix(x.q.y), mix(x.q.z), mix(x.q.w);
+        mix(x.t[0]), mix(x.t[1]), mix(x.t[2]);
+    }
+    char buf[20];
+    std::snprintf(buf, sizeof buf, "%016llx", (unsigned long long)h);
+    return buf;
 }
 
 } // namespace os2

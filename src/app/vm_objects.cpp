@@ -7,6 +7,7 @@
 #include "formats/resindex.hpp"
 #include "formats/sim_actor.hpp"
 #include "formats/skeleton.hpp"
+#include "formats/skinning.hpp"
 #include "render/renderer.hpp"
 #include "vm/sim_motion.hpp"
 #include "vm/vm.hpp"
@@ -53,7 +54,8 @@ VmObjectView::VmObjectView(Renderer& renderer, ResourceIndex& index, LotSimulati
 VmObjectView::~VmObjectView() = default;
 
 bool VmObjectView::addPlaced(int16_t id, const std::string& definition, const std::string& cres, int instance,
-                             std::optional<Xform> saved, const std::map<std::string, std::string>& design) {
+                             std::optional<Xform> saved, const std::map<std::string, std::string>& design,
+                             std::vector<Xform> pose) {
     const vm::Object* o = sim_.machine().object(id);
     std::string name = definition;
     if (name.ends_with("_objt"))
@@ -73,6 +75,7 @@ bool VmObjectView::addPlaced(int16_t id, const std::string& definition, const st
     d.instance = instance;
     d.saved = saved;
     d.design = design;
+    d.pose = std::move(pose);
     d.base = {o->position.x, o->position.y, o->position.level, o->data[vm::objdata::Direction],
               o->data[vm::objdata::ContainerId], o->data[vm::objdata::SlotNumber]};
     drawn_[id] = std::move(d);
@@ -122,7 +125,7 @@ void VmObjectView::setDesign(int16_t id, const std::map<std::string, std::string
     }
     if (d.instance < 0)
         return;
-    const int m = model(d.cres, materialsOf(id));
+    const int m = model(d.cres, materialsOf(id), d.pose);
     if (m >= 0)
         renderer_.setInstanceModel(d.instance, m);
 }
@@ -238,7 +241,7 @@ std::optional<Xform> VmObjectView::seatPlacement(int16_t sim) {
     Xform node;
     if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(containerId)))
         if (const int b = cs->find(bone); b >= 0)
-            node = cs->world(cs->restPose())[size_t(b)];
+            node = cs->world(localPose(containerId, *cs))[size_t(b)];
     if (std::getenv("OS2_DEBUG_SEAT")) {
         const Xform w = at->then(node);
         std::fprintf(stderr, "seat: Sim %d in %d slot %d bone %s local t(%.2f %.2f %.2f) q(%.2f %.2f %.2f %.2f) -> t(%.2f %.2f %.2f)\n",
@@ -263,7 +266,12 @@ std::optional<Xform> VmObjectView::nodePlacement(int16_t id, const std::string& 
     const int b = s ? s->find(node) : -1;
     if (b < 0)
         return std::nullopt;
-    return at->then(s->world(s->restPose())[size_t(b)]);
+    if (auto d = drawn_.find(id); d != drawn_.end() && d->second.actor) {
+        const SimActor& a = *d->second.actor;
+        if (size_t(b) < a.bones.size() && a.transform && a.transform->t[2] > -100)
+            return a.bones[size_t(b)];
+    }
+    return at->then(s->world(localPose(id, *s))[size_t(b)]);
 }
 
 std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
@@ -308,7 +316,7 @@ std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
         if (own && !bone.empty()) {
             const int b = own->find(bone);
             if (b >= 0)
-                attach = own->world(own->restPose())[size_t(b)];
+                attach = own->world(localPose(id, *own))[size_t(b)];
         }
         if (c->person) {
             auto it = sims_.find(containerId);
@@ -332,7 +340,7 @@ std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
             Xform node;
             if (const Skeleton* cs = bone.empty() ? nullptr : skeleton(cresFor(containerId)))
                 if (const int b = cs->find(bone); b >= 0)
-                    node = cs->world(cs->restPose())[size_t(b)];
+                    node = cs->world(localPose(containerId, *cs))[size_t(b)];
             out = at->then(node).then(attach.inverse());
         }
         return frame_[id] = out;
@@ -381,16 +389,27 @@ void VmObjectView::place(Drawn& d, const std::optional<Xform>& at) {
     d.hidden = false;
 }
 
-int VmObjectView::model(const std::string& cres, const std::map<std::string, std::string>& materials) {
+std::vector<Xform> VmObjectView::localPose(int16_t id, const Skeleton& s) const {
+    if (auto d = drawn_.find(id); d != drawn_.end() && d->second.pose.size() == s.bones.size())
+        return d->second.pose;
+    return s.restPose();
+}
+
+int VmObjectView::model(const std::string& cres, const std::map<std::string, std::string>& materials,
+                        const std::vector<Xform>& pose) {
     std::string key = cres;
     for (const auto& [subset, material] : materials)
         key += "|" + subset + "=" + material;
+    if (!pose.empty())
+        key += "@" + poseKey(pose);
     auto it = models_.find(key);
     if (it != models_.end())
         return it->second;
     int id = -1;
     try {
         ObjectModel m = loadObjectModel(index_, cres, materials);
+        if (pose.size() == m.skeleton.bones.size())
+            m = posedModel(m, pose);
         if (adjustModel)
             adjustModel(m, materials);
         auto& names = subsets_[cres];
@@ -440,7 +459,7 @@ void VmObjectView::updateMaterials(int16_t id, Drawn& d) {
     }
     if (d.instance < 0)
         return;
-    const int m = model(d.cres, materialsOf(id));
+    const int m = model(d.cres, materialsOf(id), d.pose);
     if (m >= 0)
         renderer_.setInstanceModel(d.instance, m);
 }

@@ -47,6 +47,15 @@ std::vector<Xform> mirrorPose(const Skeleton& skeleton, const std::vector<int>& 
 class AnimPlayer {
 public:
     explicit AnimPlayer(const Skeleton* skeleton = nullptr) : skeleton_(skeleton) {}
+    // The pose under every layer (the bones an animation does not key, and
+    // the whole pose when nothing plays): an object's pose as the lot saved
+    // it (a chair pushed in) instead of the skeleton's rest pose.
+    void setBasePose(std::vector<Xform> local) { base_ = std::move(local); }
+    // An object holds its pose when its animations are stopped (the game's
+    // objects keep their bones where the last frame left them, and save
+    // them so: a chair pushed in stays in): stop() then freezes the pose
+    // of the moment as the base pose instead of fading back to it.
+    void setHoldPose(bool hold) { hold_ = hold; }
     void setSkeleton(const Skeleton* skeleton) {
         skeleton_ = skeleton;
         twins_.clear();
@@ -123,6 +132,8 @@ private:
 
     const Skeleton* skeleton_;
     std::vector<Layer> layers_;
+    std::vector<Xform> base_; // setBasePose's, empty: the skeleton's rest pose
+    bool hold_ = false;
     double lastAdvance_ = 0;
 };
 

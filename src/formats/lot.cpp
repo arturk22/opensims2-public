@@ -106,9 +106,27 @@ Lot::Object readObject(const std::vector<uint8_t>& bytes) {
         v = r.f32();
     for (auto& v : o.rotation)
         v = r.f32();
-    r.u32();
-    o.definition = r.str7();
-    // Then the position and rotation again, and the subclass data.
+    // The scene graph's transform nodes as saved (nTSSG::cObject::
+    // LoadFromStream, BV 0x65fae8, sets each node found by name): first the
+    // object's own node, named after its OBJD ("Chair - Dining - Club_objt",
+    // at the object's position again), then its model's bones as last posed
+    // (a dining chair pushed in under the table keeps the "slot_chairdining_
+    // trans" of its push-in animation's last frame). Versions before 0x0F
+    // add an f32 to each. Then the subclass data (cAnimatable's queue).
+    const uint32_t nodes = r.u32();
+    for (uint32_t i = 0; i < nodes; ++i) {
+        std::string name = r.str7();
+        Xform x;
+        for (auto& v : x.t)
+            v = r.f32();
+        x.q.x = r.f32(), x.q.y = r.f32(), x.q.z = r.f32(), x.q.w = r.f32();
+        if (version < 0x0F)
+            r.f32();
+        if (i == 0)
+            o.definition = std::move(name);
+        else
+            o.nodes.emplace_back(std::move(name), x);
+    }
     return o;
 }
 

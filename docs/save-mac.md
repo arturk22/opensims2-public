@@ -204,6 +204,25 @@ acima; o registro `0x3053CF74` (`cTSDataTables`, instância = ID) se o
 objeto tem tabelas de dados, e **apaga** esse registro se não tem; e a parte
 do grafo de cena (`cObject`, tipo `0xFA1C39F7`, que o código já lê).
 
+**`cObject` e a pose salva** (rodada 13; `nTSSG::cObject::LoadFromStream`,
+BV `0x65fae8`): depois dos skins/materiais (v > 0xE) vem posição (3 f32) e
+orientação (quatérnio x, y, z, w), e então `u32 n` nós de transformação,
+cada um `string nome ; 3 f32 translação ; 4 f32 quatérnio` (+ um f32 se
+v < 0xF), que o jogo aplica ao nó de mesmo nome (vtable 0xf8). O primeiro é o
+nó do próprio objeto (nome = arquivo do OBJD + `_objt`, na posição do
+objeto: o que o código chamava de "definição"); os outros são **os ossos do
+modelo como estavam posados ao salvar**. Por isso uma cadeira de jantar
+empurrada para baixo da mesa (semi-atributo 11 = 2, "Chair - Push In" do
+semi-global `0x7F0B61F3`) volta empurrada: o `slot_chairdining_trans` salvo
+tem y = 0,373 (o último quadro do `o2c-chairDining-pushIn`), e o "Start Live
+Mode" não toca de novo a animação quando o semi-atributo já é 2. O
+`cAnimatable` (envoltório, tag `0x7D4F2BB8`) põe a fila de animações depois
+(não lida). O app desenha o objeto com essa pose (`Lot::Object::nodes`,
+`savedPose`/`posedModel` em `formats/skinning`), os slots e o assento do Sim
+seguem os ossos posados (`VmObjectView::localPose`) e o ator de animação do
+objeto começa dela e a mantém quando as animações param
+(`AnimPlayer::setBasePose`/`setHoldPose`).
+
 **Estado de rota** (`0xBC66BAEC`, instância = ID do Sim;
 `cTSRoutingObjectAggregate::SaveToStream`, BV `0x56eff0`):
 

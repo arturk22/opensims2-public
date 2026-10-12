@@ -164,6 +164,11 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
 }
 
 void AnimPlayer::stop(double now, float fade, int priority) {
+    if (hold_ && skeleton_) {
+        base_ = pose(now);
+        std::erase_if(layers_, [&](const Layer& l) { return priority < 0 || l.priority == priority; });
+        return;
+    }
     for (auto& l : layers_)
         if ((priority < 0 || l.priority == priority) && l.fadeOutStart < 0) {
             l.fadeOutStart = now;
@@ -200,7 +205,7 @@ std::vector<Xform> AnimPlayer::layerPose(const Layer& l, float ticks) const {
 std::vector<Xform> AnimPlayer::pose(double now) {
     if (!skeleton_)
         return {};
-    std::vector<Xform> out = skeleton_->restPose();
+    std::vector<Xform> out = base_.size() == skeleton_->bones.size() ? base_ : skeleton_->restPose();
     std::erase_if(layers_, [&](const Layer& l) { return l.fadeOutStart >= 0 && weight(l, now) <= 0; });
     for (const auto& l : layers_) {
         if (!l.target)

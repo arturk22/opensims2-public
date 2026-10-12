@@ -4,6 +4,7 @@
 #include "skeleton.hpp"
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,5 +37,17 @@ struct SkinnedModel {
     void pose(const std::vector<Xform>& world, ObjectModel& out,
               const std::map<std::string, float>& morphs = {}) const;
 };
+
+// The local pose of `skeleton` with the transform nodes a lot saved for
+// the object (bone name, local transform: Lot::Object::nodes) in place of
+// the rest pose's; nothing when that is the rest pose (within a millimetre
+// and a thousandth of the quaternion): the object is drawn as modelled.
+std::optional<std::vector<Xform>> savedPose(const Skeleton& skeleton,
+                                            const std::vector<std::pair<std::string, Xform>>& nodes);
+// `model` (rest pose) posed by `local` (a local pose of its skeleton): its
+// skinned and rigid parts moved, everything else as it was.
+ObjectModel posedModel(const ObjectModel& model, const std::vector<Xform>& local);
+// A short text naming a pose (models posed alike share a renderer model).
+std::string poseKey(const std::vector<Xform>& local);
 
 } // namespace os2

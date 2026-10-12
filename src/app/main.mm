@@ -216,6 +216,7 @@ struct PlacedObject {
     std::string definition; // the cObject's OBJD file name ("Newspaper_objt")
     int instance = -1; // renderer instance of its static model
     bool contained = false; // saved in a slot (at (0, 0)): hidden until the VM places it
+    std::vector<os2::Xform> pose; // its model's local pose as saved (a chair pushed in), empty: the rest pose
 };
 std::map<int16_t, PlacedObject> gPlacedObjects;
 // Skinned models posed every frame by their animation players.
@@ -368,6 +369,7 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
     std::map<std::string, int> models; // CRES + design -> model id, -1 if it failed
     std::map<std::string, std::pair<simd_float3, simd_float3>> bounds; // for picking
     std::map<std::string, std::shared_ptr<const os2::PickMesh>> meshes;
+    std::map<std::string, os2::Skeleton> skeletons; // CRES + design -> the model's skeleton
     // Some models were renamed after the lots were saved (old modular stairs);
     // then the object's OBJD, found by file name, names the current one.
     std::map<std::string, os2::Tgi> definitions; // lowercase OBJD file name -> OBJD
@@ -408,6 +410,7 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
                 id = renderer.addObject(model, index);
                 bounds[key] = os2::modelBounds(model);
                 meshes[key] = os2::makePickMesh(model, &index);
+                skeletons[key] = model.skeleton;
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "opensims2: %s: %s (%s): %s\n", lotName.c_str(), o.model.c_str(),
                              o.definition.c_str(), e.what());
@@ -416,6 +419,34 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
         }
         if (it->second < 0)
             continue;
+        // Drawn as the lot saved its bones (nTSSG::cObject's transform
+        // nodes): a dining chair pushed in under its table (its push-in's
+        // last frame) rather than its model's rest pose, pulled out.
+        std::vector<os2::Xform> pose;
+        if (!o.nodes.empty())
+            if (auto p = os2::savedPose(skeletons[key], o.nodes)) {
+                pose = std::move(*p);
+                const std::string posedKey = key + "@" + os2::poseKey(pose);
+                auto pit = models.find(posedKey);
+                if (pit == models.end()) {
+                    int id = -1;
+                    try {
+                        const auto model = os2::posedModel(os2::loadObjectModel(index, cresOf(o), o.materials), pose);
+                        id = renderer.addObject(model, index);
+                        bounds[posedKey] = os2::modelBounds(model);
+                        meshes[posedKey] = os2::makePickMesh(model, &index);
+                    } catch (const std::exception& e) {
+                        std::fprintf(stderr, "opensims2: %s: %s posed: %s\n", lotName.c_str(), o.model.c_str(), e.what());
+                    }
+                    pit = models.emplace(posedKey, id).first;
+                }
+                if (pit->second >= 0) {
+                    it = pit;
+                    key = posedKey;
+                } else {
+                    pose.clear();
+                }
+            }
         const auto& q = o.rotation;
         simd_float4x4 at = simd_matrix4x4(simd_quaternion(q[0], q[1], q[2], q[3]));
         at.columns[3] = simd_make_float4(o.position[0], o.position[1], o.position[2], 1);
@@ -429,7 +460,7 @@ size_t loadLotObjects(os2::Renderer& renderer, os2::ResourceIndex& index, const 
         // world) keeps the ID; app/vm_objects.cpp checks it against the VM.
         const int16_t id = int16_t(o.instance & 0xFFFF);
         if (!gPlacedObjects.count(id) || (gPlacedObjects[id].contained && !contained))
-            gPlacedObjects[id] = {cresOf(o), o.materials, o.position, o.rotation, o.definition, instance, contained};
+            gPlacedObjects[id] = {cresOf(o), o.materials, o.position, o.rotation, o.definition, instance, contained, pose};
         if (contained) {
             gPickBoxes.push_back({true, o.instance, bounds[key].first, bounds[key].second, at, meshes[key]});
             continue;
@@ -649,7 +680,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (!p.contained)
             saved = os2::Xform{os2::Quat{p.rotation[0], p.rotation[1], p.rotation[2], p.rotation[3]},
                                {p.position[0], p.position[1], p.position[2]}};
-        gObjectView->addPlaced(id, p.definition, p.cres, p.instance, saved, p.materials);
+        gObjectView->addPlaced(id, p.definition, p.cres, p.instance, saved, p.materials, p.pose);
     }
     for (const auto& s : gLotSims)
         gObjectView->addSim(s.id, s.actor);
@@ -758,6 +789,11 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                 os2::SkinnedModel skin(model.skeleton);
                 skin.add(model);
                 auto actor = std::make_unique<os2::SimActor>(std::move(skin));
+                // From the pose the lot saved (a chair pushed in), and kept
+                // where its animations leave it.
+                if (p.pose.size() == actor->skin.skeleton.bones.size())
+                    actor->player.setBasePose(p.pose);
+                actor->player.setHoldPose(true);
                 actor->position = {p.position[0], p.position[1], p.position[2]};
                 actor->heading = 2 * std::atan2(p.rotation[2], p.rotation[3]);
                 actor->model = renderer.addObject(actor->skin.model, index, true);

@@ -451,7 +451,23 @@ static void testMirror() {
     check(near(s.world(twice)[3].t[1], w[3].t[1], 1e-4f), "mirroring twice gives the pose back");
 }
 
+// A lot's saved transform nodes pose the object's skeleton (a chair pushed
+// in); the rest pose saved gives nothing; a held player keeps its pose.
+static void testSavedPose() {
+    Skeleton s;
+    s.bones.push_back({"chairdining", -1, Xform{}, 0, 0});
+    s.bones.push_back({"slot_chairdining_trans", 0, Xform{}, 1, 1});
+    check(!savedPose(s, {{"chairdining", Xform{}}, {"slot_chairdining_trans", Xform{}}}), "rest pose saved: no pose");
+    const auto p = savedPose(s, {{"slot_chairdining_trans", Xform{{}, {0, 0.373f, 0}}}, {"unknown_bone", Xform{}}});
+    check(p && p->size() == 2 && near((*p)[1].t[1], 0.373f) && near((*p)[0].t[1], 0), "saved node replaces the rest");
+    check(poseKey(*p) != poseKey(s.restPose()) && poseKey(*p) == poseKey(*p), "pose key");
+    AnimPlayer player(&s);
+    player.setBasePose(*p);
+    check(near(player.pose(0)[1].t[1], 0.373f), "base pose under no animation");
+}
+
 int main() {
+    testSavedPose();
     testMirror();
     testBodyShape();
     testPlayer();

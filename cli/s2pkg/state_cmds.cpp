@@ -160,6 +160,10 @@ int cmdLotState(const std::vector<std::string>& args) {
                 ++withTail;
             if ((lots.size() == 1 && !only) || s.id == only)
                 printState(s, hex);
+            if (only && s.id == only) { // one object: its attributes and semi-attributes too
+                printShorts("attributes", s.attributes);
+                printShorts("semi-attributes", s.semiAttributes);
+            }
         }
     }
     std::printf("%zu objects in the object modules, %zu states read (%zu XOBJ, %zu XMTO, %zu PERS), %zu read through "
