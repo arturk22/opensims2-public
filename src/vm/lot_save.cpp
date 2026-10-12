@@ -150,6 +150,8 @@ void captureObject(VM& vm, const LotObjects& saved, const Object& o, LotObjects:
     s.x = o.position.x;
     s.y = o.position.y;
     s.level = o.position.level;
+    if (o.position.hasHeight())
+        s.elevation = o.position.elevation;
     // The VM grows attributes on demand: as many as were saved, more only
     // when the VM wrote past them.
     auto fit = [known](std::vector<int16_t>& out, const std::vector<int16_t>& vm) {

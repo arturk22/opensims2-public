@@ -9,6 +9,10 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <sstream>
 
 namespace os2 {
 
@@ -37,6 +41,59 @@ uint32_t number(const std::map<std::string, std::string>& p, const char* key, ui
 std::string text(const std::map<std::string, std::string>& p, const char* key) {
     auto it = p.find(key);
     return it == p.end() ? std::string() : it->second;
+}
+
+// The game's Res folder: the one above the package of a catalog text.
+// The catalog texts of Text/Build.package (group 0xFFFFFFFF: the package's own).
+bool buildTextPackage(const ResourceIndex::Location& loc) {
+    return loc.package->path().filename() == "Build.package" && loc.package->path().parent_path().filename() == "Text";
+}
+
+std::filesystem::path resFolder(ResourceIndex& index) {
+    for (const auto& loc : index.ofType(kTypeStr)) {
+        if (!buildTextPackage(loc))
+            continue;
+        for (auto p = loc.package->path().parent_path(); p.has_relative_path(); p = p.parent_path())
+            if (p.filename() == "Res")
+                return p;
+    }
+    return {};
+}
+
+std::optional<StringTable> buildText(ResourceIndex& index, uint32_t instance) {
+    // The player's language first (Locale packages come first in the index).
+    for (const auto& loc : index.ofType(kTypeStr))
+        if (loc.entry->tgi.instance == instance && buildTextPackage(loc))
+            try {
+                return StringTable::parse(index.read(loc));
+            } catch (const std::exception&) {
+            }
+    return std::nullopt;
+}
+
+// The leading number of a catalog price string ("70 -- Price - DO NOT TRANSLATE").
+int priceText(const std::string& s) { return std::atoi(s.c_str()); }
+
+// The blocks of a catalog script (Catalog/Scripts/*.txt): each starts at a
+// line whose first word is `head`; the lines of a block as words.
+std::vector<std::vector<std::vector<std::string>>> scriptBlocks(const std::filesystem::path& file, const std::string& head) {
+    std::vector<std::vector<std::vector<std::string>>> out;
+    std::ifstream in(file);
+    for (std::string line; std::getline(in, line);) {
+        if (auto h = line.find('#'); h != std::string::npos)
+            line.resize(h);
+        std::istringstream ss(line);
+        std::vector<std::string> words;
+        for (std::string w; ss >> w;)
+            words.push_back(w);
+        if (words.empty())
+            continue;
+        if (lower(words[0]) == lower(head))
+            out.emplace_back();
+        if (!out.empty())
+            out.back().push_back(std::move(words));
+    }
+    return out;
 }
 
 } // namespace
@@ -183,12 +240,71 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
               [](const BuildTerrainPaint& a, const BuildTerrainPaint& b) { return a.name < b.name; });
     // The brush profiles: uncompressed 8-bit grey TGAs (image type 3).
     for (auto [instance, out] : {std::pair{0x6B96E0A2u, &c.raise_}, std::pair{0x8B96E0CFu, &c.lower_}})
-        if (auto b = index.read(Tgi{kTypeUiImage, kGroupTerrain, instance, 0}); b && b->size() >= 18 + 32 * 32) {
+        if (auto b = index.read(Tgi{0x856DDBACu, kGroupTerrain, instance, 0}); b && b->size() >= 18 + 32 * 32) {
             const auto& v = *b;
             const size_t w = size_t(v[12] | v[13] << 8), h = size_t(v[14] | v[15] << 8), at = 18 + v[0];
             if (v[2] == 3 && v[16] == 8 && w == 32 && h == 32 && v.size() >= at + w * h)
                 out->assign(v.begin() + long(at), v.begin() + long(at + w * h));
         }
+    // modularstairs.txt (catalog text "build" 139) and roofs.txt (140).
+    if (const auto res = resFolder(index); !res.empty()) {
+        const auto scripts = res / "Catalog" / "Scripts";
+        const auto stairText = buildText(index, 139);
+        for (const auto& block : scriptBlocks(scripts / "modularstairs.txt", "modularStairs")) {
+            BuildStairs b;
+            int text = -1;
+            for (const auto& w : block) {
+                const std::string k = lower(w[0]);
+                if (k == "modularstairs" && w.size() > 1)
+                    b.id = std::atoi(w[1].c_str());
+                else if (k == "catalogtextindex" && w.size() > 1)
+                    text = std::atoi(w[1].c_str());
+                else if (k == "objectid" && w.size() > 2) {
+                    static const char* const slots[5] = {"landing", "placeholder", "step", "topstep", "bottomstep"};
+                    for (int i = 0; i < 5; ++i)
+                        if (lower(w[1]) == slots[i])
+                            b.objects[size_t(i)] = uint32_t(std::strtoul(w[2].c_str(), nullptr, 16));
+                }
+            }
+            if (text < 0) // notInCatalog
+                continue;
+            if (stairText) {
+                // The price strings are "DO NOT TRANSLATE": US English when a
+                // translation leaves one out (Portuguese: Holy Smoke, WroughtWright).
+                b.price = priceText(stairText->get(size_t(3 * text)));
+                if (!b.price)
+                    b.price = priceText(stairText->get(size_t(3 * text), lang::EnglishUS));
+                b.name = stairText->get(size_t(3 * text + 1));
+                b.description = stairText->get(size_t(3 * text + 2));
+            }
+            c.stairs_.push_back(std::move(b));
+        }
+        const auto roofText = buildText(index, 140);
+        for (const auto& block : scriptBlocks(scripts / "roofs.txt", "roof")) {
+            BuildRoofProduct r;
+            int text = -1;
+            for (const auto& w : block) {
+                const std::string k = lower(w[0]);
+                if (k == "roof" && w.size() > 1)
+                    r.id = std::atoi(w[1].c_str());
+                else if (k == "catalogtextindex" && w.size() > 1)
+                    text = std::atoi(w[1].c_str());
+                else if (k == "defaultroofpattern" && w.size() > 1) {
+                    r.defaultPattern = w[1];
+                    std::erase(r.defaultPattern, '"');
+                } else if (k == "thumbnailresource" && w.size() > 2)
+                    r.thumbnail = uint32_t(std::strtoul(w[2].c_str(), nullptr, 16));
+            }
+            if (roofText && text >= 0) {
+                r.price = priceText(roofText->get(size_t(3 * text)));
+                if (!r.price)
+                    r.price = priceText(roofText->get(size_t(3 * text), lang::EnglishUS));
+                r.name = roofText->get(size_t(3 * text + 1));
+                r.description = roofText->get(size_t(3 * text + 2));
+            }
+            c.roofProducts_.push_back(std::move(r));
+        }
+    }
     std::stable_sort(c.fences_.begin(), c.fences_.end(), [](const BuildFence& a, const BuildFence& b) {
         return a.price != b.price ? a.price < b.price : a.name < b.name;
     });
@@ -197,6 +313,20 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
             return a.price != b.price ? a.price < b.price : a.name < b.name;
         });
     return c;
+}
+
+const BuildStairs* BuildCatalog::stairsById(int id) const {
+    for (const auto& b : stairs_)
+        if (b.id == id)
+            return &b;
+    return nullptr;
+}
+
+const BuildRoofProduct* BuildCatalog::roofProduct(int id) const {
+    for (const auto& r : roofProducts_)
+        if (r.id == id)
+            return &r;
+    return nullptr;
 }
 
 const BuildPattern* BuildCatalog::byGuid(uint32_t guid) const {

@@ -264,6 +264,31 @@ void BuildMode::selectPoolTool() {
     say("pool tool (" + money(kPoolTilePrice) + " a tile)");
 }
 
+void BuildMode::selectStairsTool(const BuildStairs& product) {
+    cancel();
+    tool_ = Tool::Stairs;
+    stairs_ = &product;
+    pattern_ = nullptr, object_ = nullptr, fence_ = nullptr, paint_ = nullptr;
+    say(product.name + " (" + money(product.price) + " a step)");
+}
+
+BuildMode::StairsDrag BuildMode::stairsDrag(simd_float2 from, simd_float2 to) const {
+    StairsDrag d;
+    d.top = {int(std::floor(from.x)), int(std::floor(from.y)), level_};
+    const float cx = float(d.top.x) + 0.5f, cy = float(d.top.y) + 0.5f;
+    const bool dragged = int(std::floor(to.x)) != d.top.x || int(std::floor(to.y)) != d.top.y;
+    // Off the side of the tile the mouse is on (the floor tile's quarter,
+    // cFloorTile +0xC: 1 -> -x, 2 -> +y, 4 -> +x, 8 -> -y), or the way of the drag.
+    const float dx = (dragged ? to.x : from.x) - cx, dy = (dragged ? to.y : from.y) - cy;
+    if (std::fabs(dx) >= std::fabs(dy))
+        d.direction = dx < 0 ? 0 : 4;
+    else
+        d.direction = dy > 0 ? 2 : 6;
+    if (dragged)
+        d.end = std::array<float, 2>{to.x, to.y};
+    return d;
+}
+
 void BuildMode::selectPattern(const BuildPattern& p) {
     cancel();
     tool_ = p.floor ? Tool::Floor : Tool::Wallpaper;
@@ -676,6 +701,10 @@ void BuildMode::releaseSound(Tool tool, bool erase, const vm::BuildEditor::Resul
     case Tool::Foundation: sound("ui_build_deck_mup"); break;
     case Tool::Pool: sound("ui_build_pool_mup"); break;
     case Tool::Roof: sound("ui_build_roof_mup"); break;
+    case Tool::Stairs:
+        if (!erase)
+            sound("ui_build_stair_plop");
+        break;
     case Tool::Floor:
         if (r.changed)
             sound("ui_build_flooring_plop");
@@ -785,6 +814,21 @@ bool BuildMode::mouseUp(simd_float3 eye, simd_float3 dir) {
             done(control_ ? editor_->deleteWalls(level_, r[0], r[1], r[2], r[3])
                              : editor_->drawWalls(level_, r[0], r[1], r[2], r[3]));
         }
+    } else if (tool_ == Tool::Stairs && stairs_) {
+        if (control_) {
+            // The sledgehammer: the modular stair part nearest the mouse.
+            vm::ObjectId best = 0;
+            float bestD = 0.75f;
+            for (const auto& [id, o] : vm_.objects())
+                if (o.position.inWorld() && o.definition && o.definition->fileName.rfind("Stair Modular - ", 0) == 0 &&
+                    (o.position.level == level_ || o.position.level == level_ - 1))
+                    if (const float d = std::hypot(o.position.x - b.x, o.position.y - b.y); d < bestD)
+                        bestD = d, best = id;
+            done(best ? editor_->deleteStairs(best) : vm::BuildEditor::Result{false, 0, 0, 0, "no stairs there"});
+        } else {
+            const StairsDrag d = stairsDrag(a, b);
+            done(editor_->placeStairs(*stairs_, d.top, d.direction, d.end));
+        }
     } else if (tool_ == Tool::Roof) {
         const int x0 = int(std::lround(a.x)), y0 = int(std::lround(a.y)), x1 = int(std::lround(b.x)), y1 = int(std::lround(b.y));
         done(control_ ? editor_->deleteRoof(level_, b.x, b.y) : editor_->drawRoof(level_, x0, y0, x1, y1, roofType_));
@@ -889,6 +933,25 @@ void BuildMode::update() {
             // The brush's square (the profile is round inside it).
             const float w = 2.0f + 4.0f * float(std::clamp(brushSize_, 0, 2));
             put(true, placeQuad(p.x - w / 2, p.y - w / 2, z(p.x, p.y), w, w, 0, false));
+        } else if (tool_ == Tool::Stairs && stairs_ && !control_) {
+            // The top tile and the steps the flight would have (green, or
+            // red when refused), with its cost (CalculatePreviewCost).
+            const StairsDrag d = stairsDrag(dragFrom_.value_or(p), p);
+            int error = 0;
+            const int n = editor_->stairsSteps(d.top, d.direction, d.end, false, &error);
+            put(n > 0, placeQuad(float(d.top.x) + 0.04f, float(d.top.y) + 0.04f,
+                                 z(float(d.top.x) + 0.5f, float(d.top.y) + 0.5f), 0.92f, 0.92f, 0, false));
+            const auto [sx, sy] = vm::directionStep(d.direction);
+            const float ex = float(d.top.x) + 0.5f + float(sx) * 0.5f, ey = float(d.top.y) + 0.5f + float(sy) * 0.5f;
+            const float topZ = sim_.floorHeight(level_, ex, ey);
+            for (int i = 0; i < std::max(n, 1) && used < 400; ++i) {
+                const float px = ex + float(sx) * 0.25f * float(i) + (sx < 0 ? -0.25f : 0.0f) + (sx == 0 ? -0.46f : 0.0f);
+                const float py = ey + float(sy) * 0.25f * float(i) + (sy < 0 ? -0.25f : 0.0f) + (sy == 0 ? -0.46f : 0.0f);
+                put(n > 0, placeQuad(px, py, topZ - 0.1875f * float(i + 1) + 0.03f, sx ? 0.25f : 0.92f, sy ? 0.25f : 0.92f, 0,
+                                     false));
+            }
+            if (n > 0 && dragFrom_ && stairs_)
+                message_ = std::to_string(n) + " steps: " + money(n * stairs_->price);
         } else if (tool_ == Tool::Object && held_) {
             for (const auto& part : last_.parts)
                 put(last_.ok, placeQuad(float(part.tile.x) + 0.04f, float(part.tile.y) + 0.04f,
@@ -984,6 +1047,23 @@ const RgbaImage* BuildMode::textureThumbnail(uint32_t key, const std::string& te
     }
     thumbs_[key] = std::move(img);
     return thumbs_[key].get();
+}
+
+const RgbaImage* BuildMode::stairsThumbnail(const BuildStairs& b) {
+    for (const uint32_t guid : {b.objects[2], b.objects[3]}) {
+        const auto def = vm_.code().definitionByGuid(guid);
+        if (!def)
+            continue;
+        CatalogEntry e;
+        e.guid = guid;
+        e.group = def->first;
+        e.model = objectCresName(index_, Tgi{vm::kTypeObjd, def->first, def->second, 0});
+        if (e.model.ends_with("_cres"))
+            e.model.resize(e.model.size() - 5);
+        if (const RgbaImage* img = objects_.thumbnail(e))
+            return img;
+    }
+    return nullptr;
 }
 
 std::vector<BuildMode::Item> BuildMode::items() {
@@ -1140,6 +1220,15 @@ std::vector<BuildMode::Item> BuildMode::items() {
     case 6: // B630 staircases (build type 1, subsort 0x20; placed with the object tool)
         if (subsort_ == 0 || subsort_ == 3)
             objectItems(1, 0x20);
+        if (subsort_ == 0 || subsort_ == 4) // B640 modular stairs (modularstairs.txt, price a step)
+            for (const BuildStairs& b : patterns_.stairs()) {
+                Item it;
+                it.tool = Tool::Stairs;
+                it.stairs = &b;
+                it.name = b.name, it.description = b.description, it.price = b.price;
+                it.image = stairsThumbnail(b);
+                out.push_back(std::move(it));
+            }
         break;
     case 4: patternItems(true, kFloorSubsorts, std::size(kFloorSubsorts)); break;
     case 5: patternItems(false, kWallSubsorts, std::size(kWallSubsorts)); break;
@@ -1320,7 +1409,8 @@ UiScreen BuildMode::screen(int width, int height) {
                                   (it.tool == Tool::Terrain && !it.paint && tool_ == Tool::Terrain && !paint_ &&
                                    it.terrainOp == int(terrainOp_)) ||
                                   (it.tool == Tool::Roof && !it.roofPattern && tool_ == Tool::Roof && it.roofType == roofType_) ||
-                                  (!it.pattern && !it.object && !it.fence && !it.paint && it.tool != Tool::Terrain &&
+                                  (it.stairs && it.stairs == stairs_ && tool_ == Tool::Stairs) ||
+                                  (!it.pattern && !it.object && !it.fence && !it.paint && !it.stairs && it.tool != Tool::Terrain &&
                                    it.tool != Tool::Roof && it.tool == tool_);
             if (selected) {
                 UiQuad q;
@@ -1483,6 +1573,8 @@ bool BuildMode::press(simd_float2 p) {
                     selectFoundationTool(it.product);
                 else if (it.tool == Tool::Pool)
                     selectPoolTool();
+                else if (it.stairs)
+                    selectStairsTool(*it.stairs);
                 else if (it.roofPattern)
                     applied(editor_->setRoofPattern(it.roofPattern->guid));
                 else if (it.tool == Tool::Roof)
@@ -1716,6 +1808,19 @@ void BuildMode::runSteps(const std::vector<std::string>& args) {
                     else if (std::sscanf(f[k].c_str(), "%d:%d", &row, &option) == 2)
                         design_->choose(row, size_t(option));
                 }
+        } else if (a == "--stairs" && f.size() >= 5) { // product,x,y,level,dir[,endx,endy[,whole]]
+            const BuildStairs* b = patterns_.stairsById(n(0));
+            if (!b)
+                throw std::runtime_error("--stairs: no modular stairs " + f[0]);
+            selectStairsTool(*b);
+            std::optional<std::array<float, 2>> end;
+            if (f.size() >= 7)
+                end = std::array<float, 2>{std::stof(f[5]), std::stof(f[6])};
+            r = ed.placeStairs(*b, {n(1), n(2), n(3)}, n(4), end, f.size() > 7 && f[7] == "whole");
+            releaseSound(Tool::Stairs, false, *r);
+        } else if (a == "--delete-stairs" && !f.empty()) {
+            r = ed.deleteStairs(vm::ObjectId(n(0)));
+            releaseSound(Tool::Stairs, true, *r);
         } else if (a == "--auto-roof") { // tool 1-5, 0 removes the roofs; ",keep" preserves
             preserveRoofs_ = f.size() > 1 && f[1] == "keep";
             autoRoof(n(0));

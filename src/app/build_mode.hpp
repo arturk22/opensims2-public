@@ -80,7 +80,7 @@ public:
     bool design(vm::ObjectId id, simd_float2 at);
     DesignTool& designTool() { return *design_; }
 
-    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design };
+    enum class Tool { None, Wall, Room, Floor, Wallpaper, Object, Fence, Foundation, Terrain, Roof, Pool, Design, Stairs };
     Tool tool() const { return tool_; }
     vm::BuildEditor& editor() { return *editor_; }
     const BuildCatalog& patterns() const { return patterns_; }
@@ -95,6 +95,11 @@ public:
     // deckfoundations.txt product: 0 foundation, 1 lattice deck, 2 deck on columns.
     void selectFoundationTool(int product = 0);
     void selectPoolTool();
+    // Modular stairs (B640, modularstairs.txt): click a floor tile's edge
+    // (the flight goes down off the side of the tile the click is on, its
+    // end found by itself) or drag from it to where the last step goes;
+    // Ctrl deletes the flight under the mouse.
+    void selectStairsTool(const BuildStairs& product);
     // Terrain: a sculpt brush (raise, lower, flatten, smooth) or a paint
     // (the paint's texture); `size` 0-2 small/medium/large.
     void selectTerrainTool(vm::BuildEditor::TerrainOp op, const BuildTerrainPaint* paint = nullptr);
@@ -182,6 +187,7 @@ private:
         int terrainOp = -1;
         uint32_t roofType = 0;
         int product = 0; // deckfoundations.txt product (foundation tool)
+        const BuildStairs* stairs = nullptr;
         std::string name, description;
         int price = 0;
         const RgbaImage* image = nullptr;
@@ -191,6 +197,8 @@ private:
     const RgbaImage* fenceThumbnail(const BuildFence& f);
     const RgbaImage* materialThumbnail(uint32_t key, const std::string& material);
     const RgbaImage* textureThumbnail(uint32_t key, const std::string& texture);
+    // A modular staircase's swatch: its step's thumbnail in the game's cache (when there is one).
+    const RgbaImage* stairsThumbnail(const BuildStairs& b);
     std::optional<simd_float2> groundPoint(simd_float3 eye, simd_float3 dir) const;
     void applied(const vm::BuildEditor::Result& r);
     void say(const std::string& m);
@@ -239,6 +247,15 @@ private:
     int brushSize_ = 1;
     uint32_t roofType_ = 0;
     int deckProduct_ = 0;
+    const BuildStairs* stairs_ = nullptr;
+    // The flight the stairs tool would lay from the drag (or the pointer):
+    // top tile, direction and the dragged end (none: found by itself).
+    struct StairsDrag {
+        vm::TilePos top;
+        int direction = 0;
+        std::optional<std::array<float, 2>> end;
+    };
+    StairsDrag stairsDrag(simd_float2 from, simd_float2 to) const;
     bool stroking_ = false;
     uint32_t brushLoop_ = 0;
     size_t dragSections_ = 0;   // sections (or tiles) the drag covers, for the section sounds

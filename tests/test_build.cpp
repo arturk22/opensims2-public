@@ -394,6 +394,53 @@ static void testPool() {
           "undo takes the level away again");
 }
 
+// Modular stairs (§7.12): how many steps a flight gets, and the refusals.
+// (The objects need the game's OBJDs: lot-save --stairs checks those.)
+static void testStairs() {
+    Lot lot = flatLot();
+    lot.levelCount = 3;
+    lot.elevations.resize(13 * 11 * 3);
+    for (size_t i = 0; i < 13 * 11 * 3; ++i)
+        lot.elevations[i] = 3.0f * float(i / (13 * 11));
+    lot.floors.resize(12 * 10 * 3);
+    lot.rooms.resize(12 * 10 * 3);
+    for (auto& [k, l] : lot.roomLayers)
+        l.resize(12 * 10 * 3);
+    lot.floorPatterns[2] = "ccc26098";
+    for (int x = 2; x <= 4; ++x)
+        for (int y = 2; y <= 3; ++y)
+            for (int q = 0; q < 4; ++q)
+                setFloor(lot, 1, x, y, q, 2);
+    CodeLibrary code;
+    VM vm(code);
+    vm.globals[global::BudgetMod10000] = 5000;
+    vm.world = World::fromLot(lot);
+    BuildEditor ed(vm, lot);
+    int error = 0;
+    check(ed.stairsSteps({4, 2, 2}, 4, std::nullopt, false, &error) == 16 && error == 0,
+          "a story down to the ground in 16 steps, the end found by itself");
+    check(ed.stairsSteps({4, 2, 2}, 4, std::array<float, 2>{9.0f, 2.5f}, false) == 16, "dragged to where the last step goes");
+    check(ed.stairsSteps({4, 2, 2}, 4, std::array<float, 2>{6.2f, 2.5f}, true) == 8, "whole tiles round up to 4 a tile");
+    // A short flight: the tile past its last step is brought to it (the
+    // binary sets that tile's corners to the last step's height).
+    check(ed.stairsSteps({4, 2, 2}, 4, std::array<float, 2>{6.2f, 2.5f}, false, &error) == 5 && error == 0,
+          "a short drag makes a short flight");
+    ed.stairsSteps({4, 2, 2}, 4, std::array<float, 2>{4.6f, 2.5f}, false, &error);
+    check(error == 0x78, "no steps on the top tile itself (0x78)");
+    ed.stairsSteps({4, 2, 2}, 4, std::array<float, 2>{7.5f, 5.5f}, false, &error);
+    check(error == 0x71, "the end off the line of the flight (0x71)");
+    ed.stairsSteps({7, 7, 2}, 4, std::nullopt, false, &error);
+    check(error == 0x6C, "no floor on the top tile (0x6C)");
+    // A hill under the flight: the ground over the steps is lowered.
+    for (int x = 6; x <= 7; ++x)
+        for (int y = 0; y <= 10; ++y)
+            lot.elevations[size_t(x) * 11 + size_t(y)] = 0.5f;
+    check(ed.stairsSteps({4, 2, 2}, 4, std::nullopt, false, &error) > 0 && error == 0, "a flight down a slope");
+    ed.drawWalls(1, 7, 1, 7, 4);
+    ed.stairsSteps({4, 2, 2}, 4, std::array<float, 2>{9.0f, 2.5f}, false, &error);
+    check(error == 0x76 || error == 0x6F, "a wall across the flight stops it");
+}
+
 // The Design tool's choices (MMAT property sets): the model's first two
 // subsets with choices, clean materials only, the default first.
 static void testDesignCatalog() {
@@ -429,6 +476,7 @@ static void testWalkOver() {
 }
 
 int main() {
+    testStairs();
     testDesignCatalog();
     testWalkOver();
     testPool();

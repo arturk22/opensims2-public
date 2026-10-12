@@ -9,6 +9,7 @@
 // 129). Doors, windows and the other build objects are OBJDs with a "build
 // mode type" (Catalog::load(index, true), catalog.hpp).
 
+#include <array>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -64,6 +65,33 @@ struct BuildRoofPattern {
     std::string name, description, texture;
 };
 
+// A modular staircase (modularstairs.txt "modularStairs N", cTSProductModularStairs):
+// its five objects by selector GUID, in the order of the product's object
+// slots (cITSProductModularStairs::tObjectType): 0 landing, 1 placeholder
+// (keeps the space over the steps), 2 step, 3 top step, 4 bottom step (0:
+// the step). Name, description and price (per step: CalculatePreviewCost
+// multiplies the steps by it) are the catalog text "build" 139 entries 3i+1,
+// 3i+2 and 3i of its catalogTextIndex i.
+struct BuildStairs {
+    int id = 0;
+    std::array<uint32_t, 5> objects{};
+    std::string name, description;
+    int price = 0;
+};
+
+// A roof product of roofs.txt (cTSProductRoof): "roof 0-5" are the roof types
+// (Lot::RoofType 1-6), "roof 6-11" the dormers (cTSWinProcCatalog::LoadDormers:
+// one, two and three tiles wide, gable then hip), priced unlike the roofs.
+// Name, description and price from catalog text "build" 140 at the
+// catalogTextIndex.
+struct BuildRoofProduct {
+    int id = 0;
+    std::string defaultPattern; // "roof-ui-hipped", "dormerpreview-2wide", ...
+    std::string name, description;
+    int price = 0;
+    uint32_t thumbnail = 0; // thumbnailResource instance (group 0x499DB772), 0 if none
+};
+
 // Build-mode prices that are not in the data (docs/buy-build-mac.md §7).
 // A wall costs §70 a section (the game's catalog text; the binary's wall
 // cost path is not traced: inferred), and selling back what was built in
@@ -105,6 +133,12 @@ public:
     const BuildFence* findFence(const std::string& key) const;
     const BuildFence* fenceByGuid(uint32_t guid) const;
     const std::vector<BuildPattern>& walls() const { return walls_; }
+    // modularstairs.txt's products in catalog order (empty when the script is missing).
+    const std::vector<BuildStairs>& stairs() const { return stairs_; }
+    const BuildStairs* stairsById(int id) const;
+    // roofs.txt's products (roof 0-11).
+    const std::vector<BuildRoofProduct>& roofProducts() const { return roofProducts_; }
+    const BuildRoofProduct* roofProduct(int id) const;
     // A pattern by GUID ("0x...") or (part of) its name or material.
     const BuildPattern* find(const std::string& key, bool floor) const;
     const BuildPattern* byGuid(uint32_t guid) const;
@@ -118,6 +152,8 @@ private:
     std::vector<BuildTerrainPaint> paints_;
     std::vector<BuildRoofPattern> roofs_;
     std::vector<uint8_t> raise_, lower_;
+    std::vector<BuildStairs> stairs_;
+    std::vector<BuildRoofProduct> roofProducts_;
 };
 
 } // namespace os2

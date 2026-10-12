@@ -132,7 +132,7 @@ bool isBuildEdit(const std::string& flag) {
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
            flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
-           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--build-undo" || flag == "--build-redo";
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--delete-stairs" || flag == "--build-undo" || flag == "--build-redo";
 }
 
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
@@ -180,6 +180,23 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                                      (o->definition ? o->definition->fileName : std::string("?")) + " at (" +
                                      std::to_string(part.tile.x) + "," + std::to_string(part.tile.y) + "," +
                                      std::to_string(part.tile.level) + ")";
+            if (r.ok && vm.world)
+                r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
+        } else if (flag == "--stairs") { // product,x,y,level,direction[,endx,endy[,whole]]
+            if (f.size() < 5)
+                throw std::runtime_error("--stairs: expected product,x,y,level,direction[,endx,endy[,whole]]");
+            const BuildStairs* product = catalog.stairsById(num(f, 0, 0));
+            if (!product)
+                throw std::runtime_error("--stairs: no modular stairs " + f[0]);
+            std::optional<std::array<float, 2>> end;
+            if (f.size() >= 7)
+                end = std::array<float, 2>{std::stof(f[5]), std::stof(f[6])};
+            r = editor.placeStairs(*product, {num(f, 1, 0), num(f, 2, 0), num(f, 3, 2)}, num(f, 4, 0), end,
+                                   f.size() > 7 && f[7] == "whole");
+            if (r.ok && vm.world)
+                r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
+        } else if (flag == "--delete-stairs") { // object id of any part
+            r = editor.deleteStairs(vm::ObjectId(num(f, 0, 0)));
             if (r.ok && vm.world)
                 r.message += "; the world has " + std::to_string(vm.world->stairs().size()) + " stairs";
         } else if (flag == "--auto-roof") { // tool 1-5 (0: remove the roofs)[,keep]
@@ -432,6 +449,11 @@ int cmdBuildCatalog(const std::string& res, bool verbose) {
                     std::printf("      %08x §%-3d %s (%s)\n", p->guid, p->price, p->name.c_str(), p->material.c_str());
         }
     }
+    for (const auto& b : patterns.stairs())
+        std::printf("modular stairs %d: %s, §%d a step (landing %08x, placeholder %08x, steps %08x %08x %08x)\n", b.id,
+                    b.name.c_str(), b.price, b.objects[0], b.objects[1], b.objects[2], b.objects[3], b.objects[4]);
+    for (const auto& r : patterns.roofProducts())
+        std::printf("roof %d: %s, §%d (%s)\n", r.id, r.name.c_str(), r.price, r.defaultPattern.c_str());
     const Catalog objects = Catalog::load(index, true);
     std::map<std::pair<int, int>, std::vector<const CatalogEntry*>> by;
     for (const auto& e : objects.entries())

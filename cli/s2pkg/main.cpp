@@ -36,6 +36,7 @@
 #include "vm/vm.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -380,6 +381,13 @@ int cmdLot(const std::filesystem::path& root, const std::vector<std::filesystem:
             std::printf("  %zu objects: %zu with a model in the world, %zu Sims; %zu wall faces with a door or window mask\n",
                         lot.objects.size(), placed, people,
                         size_t(std::count_if(model.parts.begin(), model.parts.end(), [](const ObjectModel::Part& p) { return p.mask >= 0; })));
+            // OS2_LOT_OBJECTS=<part of a name>: those objects, where they stand and their heading.
+            if (const char* filter = std::getenv("OS2_LOT_OBJECTS"))
+                for (const auto& o : lot.objects)
+                    if (o.definition.find(filter) != std::string::npos)
+                        std::printf("    %u %s at (%.4g, %.4g, %.4g) yaw %.0f\n", o.instance, o.definition.c_str(),
+                                    o.position[0], o.position[1], o.position[2],
+                                    2 * std::atan2(o.rotation[2], o.rotation[3]) * 180 / 3.14159265);
             size_t wet = 0;
             for (uint32_t x = 0; x <= lot.width; ++x)
                 for (uint32_t y = 0; y <= lot.height; ++y)

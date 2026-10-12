@@ -183,6 +183,33 @@ public:
     // face's pattern.
     Result paintFlood(int level, int ax, int ay, int bx, int by, int side, const BuildPattern* pattern);
 
+    // Modular stairs tool (cTSUserToolModularStairs, UserPlaceModularStairs,
+    // docs/buy-build-mac.md §7.12): a flight of `product` going down from
+    // the floor tile `top` (VM level) the way of `direction` (0, 2, 4, 6:
+    // the steps face it). `end` is the point the drag reached (the last step
+    // goes there: n = ceil((distance from the top tile's centre - 0.5) x 4)
+    // steps of a quarter tile, rounded up to a multiple of 4 with
+    // `wholeTiles`); without it the end is found by walking down until the
+    // last step meets the ground (UserPlaceModularStairsFindEnd). Each step
+    // drops 3/16 (a story in 16 steps). On the terrain the ground over a step
+    // is lowered under it and the tile past the last step levelled to it.
+    // Objects: a landing on the top tile, the top step, the steps, the bottom
+    // step, a landing half a tile past the last step turned 180°, and a
+    // placeholder over every tile of steps on each level the flight crosses;
+    // the steps are linked (object data 80 the next, 81 the previous: -1 at
+    // the ends) as LinkObjects does. The price is the product's per step.
+    // Refusals give the game's codes 0x6C-0x78 (0x16 without the money).
+    Result placeStairs(const BuildStairs& product, TilePos top, int direction,
+                       std::optional<std::array<float, 2>> end = std::nullopt, bool wholeTiles = false);
+    // The steps placeStairs would lay (0 when refused) and their cost, for the
+    // cursor's preview (CalculatePreviewCost).
+    int stairsSteps(TilePos top, int direction, std::optional<std::array<float, 2>> end, bool wholeTiles,
+                    int* error = nullptr) const;
+    // The sledgehammer on a modular staircase (DeleteModularStairs ->
+    // RemoveFlight): every object of the flight that `part` belongs to is
+    // sold (each part's current value back) as one undoable change.
+    Result deleteStairs(ObjectId part);
+
     // A staircase object just put down (its parts' IDs): the floor of the
     // level above goes from over its steps, free, as one undoable change (the
     // stairwell; inferred from the modular stairs' placeholders that reserve
@@ -286,10 +313,21 @@ private:
         int changed = 0;
     };
     std::optional<Stroke> stroke_;
+    // The flight a modular stair object belongs to: its objects (steps first,
+    // top to bottom).
+    std::vector<ObjectId> flightOf(ObjectId part) const;
+    struct StairsPlan;
+    int planStairs(StairsPlan& plan, TilePos top, int direction, std::optional<std::array<float, 2>> end,
+                   bool wholeTiles) const;
     // A ground grid point no floor, wall or foundation holds.
     bool terrainFree(int x, int y) const;
     uint32_t revision_ = 0;
 };
+
+// The modular stairs among the VM's objects: each "Stair Modular - ... -
+// Portal - A" top step followed down its links (object data 80) to the
+// "... - End" (flights between two adjacent levels only).
+std::vector<Stair> modularStairs(const VM& vm, const Lot& lot);
 
 // The stairs of the staircase objects in the world (their "Lo ... Pad"
 // and "Hi ... Pad" parts are the landings).

@@ -263,7 +263,7 @@ void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
         if (!o)
             continue;
         o->data[objdata::Direction] = int16_t(p.direction);
-        o->position = {float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level};
+        o->position = part.at ? *part.at : Position{float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, part.tile.level};
         if (p.container) {
             o->data[objdata::ContainerId] = p.container;
             o->data[objdata::SlotNumber] = int16_t(p.slot);

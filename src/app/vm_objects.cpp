@@ -339,7 +339,8 @@ std::optional<Xform> VmObjectView::compute(int16_t id, int depth) {
     }
     if (!o->position.inWorld())
         return frame_[id] = out;
-    const float z = sim_.floorHeight(o->position.level, o->position.x, o->position.y);
+    const float z = o->position.hasHeight() ? o->position.height
+                                            : sim_.floorHeight(o->position.level, o->position.x, o->position.y);
     if (drawn != drawn_.end() && drawn->second.saved) {
         const Drawn& d = drawn->second;
         const Baseline& b = d.base;

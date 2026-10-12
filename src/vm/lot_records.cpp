@@ -442,7 +442,10 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
             if (auto d = withDesign(bytes, *o->design))
                 bytes = std::move(*d);
         const auto l = sceneLayout(bytes);
-        writePose(bytes, *l, poseOf(world, s, nullptr, nullptr));
+        auto pose = poseOf(world, s, nullptr, nullptr);
+        if (o->position.hasHeight()) // Build mode's stair steps: at their own height
+            pose[2] = o->position.height;
+        writePose(bytes, *l, pose);
         addRecord(kTypeSceneObject, 0xFFFFFFFF, instance, std::move(bytes));
         ++out.sceneNew;
     }

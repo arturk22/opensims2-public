@@ -396,7 +396,15 @@ struct Person {
 struct Position {
     float x = -1, y = -1;
     int level = 0;
+    // Set by Build mode for what it puts off the floor (the modular stairs'
+    // steps, docs/buy-build-mac.md §7.12): the height of the object in the
+    // lot (tiles, as the elevations) and the saved state's "elevation";
+    // kNoHeight leaves both to the floor (and the state as it was read).
+    static constexpr float kNoHeight = -1000.0f;
+    float height = kNoHeight;
+    float elevation = 0;
     bool inWorld() const { return x >= 0 && y >= 0; }
+    bool hasHeight() const { return height > kNoHeight; }
 };
 
 // A timer On Timer (0x7A) set on an object (cTSObject::AddTimer; the saved

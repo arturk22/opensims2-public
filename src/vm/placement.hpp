@@ -88,6 +88,9 @@ struct Placement {
     struct Part {
         ObjectId id = 0;
         TilePos tile;
+        // Off the tile's centre (Build mode's modular stairs: a step every
+        // quarter tile, at its own height): where the part goes instead.
+        std::optional<Position> at;
     };
     std::vector<Part> parts;
     // Into a container slot of an object (counters, tables): the container
