@@ -647,6 +647,30 @@ estado sobre o chão (terreno e pisos de fora) é puxada para o cinza quando é
 fria, na proporção (B − R)/B: à noite E ≈ (0,32; 0,32; 0,8) virava calçada
 lavanda forte com o `2·textura·light map`; de dia (luz quente) nada muda.
 
+### 5.5 Sombra do sol de dia, conferida (rodada 16, QA ao vivo passada 13)
+
+A QA viu a sombra da casa "quase invisível" com a casa à mostra e "inteira,
+escura, em degraus de tile" no nível −1 (N001_Lot68). Conferido sem tela
+(`OS2_LIGHTMAP_DUMP=<png>` grava o atlas também no caminho sem a VM):
+
+- O atlas é o mesmo com a casa à mostra ou cortada (o height map usa o lote
+  inteiro, não a vista). No estado `day` (sol (1,5, 1,2, 2), ~46°) a sombra da
+  casa do Lot11 é uma faixa de 4–6 tiles para −x/−y, texel 78 contra 169 ao
+  sol; na tela o gramado na sombra fica ~0,5 do gramado ao sol (63 contra 122).
+  A fórmula é a do binário (`FUN_007047e4`, BV `0x7047e4`, decompilada de
+  novo: o peso do sol × `max(0, 1 − d·hmSunLightTransitionZone)`, e o
+  `(1 − Σw)·skylight` cresce quando o sol sai, como no nosso `illum`).
+  `hmLotShadowStrength` (1,5) vai para o `cHeightMapShadow +0x4c` e a
+  varredura (`0xd76254`) não o lê; quem lê não foi achado.
+- A sombra cai do lado oposto ao sol: na orientação da captura da QA ela
+  fica atrás da casa e da árvore; nas orientações 2/3 aparece inteira
+  (`docs/screenshots/r16-sombra-dia.jpg`). O light map já é amostrado com
+  filtro bilinear (`maskSampler_`), 8 texels por tile.
+- Os "degraus de tile" escuros do nível −1 eram o terreno **debaixo** da casa
+  (sem sol, dentro da fundação), à mostra porque a vista caía para o nível
+  −1 quando o Sim mergulhava; a vista não desce mais para o andar da piscina
+  (`docs/camera-ui-mac.md` §1.3).
+
 ## 9. Sombras projetadas: `nTSSG::cShadow` (binário, rodada 15)
 
 Dentro de casa **não há sombra de luz de cômodo, de lâmpada, de portal nem

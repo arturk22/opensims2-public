@@ -2776,6 +2776,8 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
         const os2::LightingConfig lighting = os2::loadLightingConfig(gameDir() / kLightingConfig);
         if (const auto* state = lighting.state(argument(@"--lighting").value_or("day"))) {
             const os2::RgbaImage lm = os2::computeLotLightMap(*gLightMapLayout, *state, {}, os2::LightMapGlobals::from(lighting)).image;
+            if (const char* d = std::getenv("OS2_LIGHTMAP_DUMP")) // the atlas, as LotLighting writes it
+                os2::writePng(d, lm);
             renderer.setLightMap(0, lm);
             renderer.setLightMap(1, lm);
             auto global = [&](const char* name, float fallback) {
