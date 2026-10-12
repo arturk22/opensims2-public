@@ -211,10 +211,16 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
     for (const auto& f : h.families) {
         const int32_t funds = familyFunds(vm, int16_t(f.id));
         const bool firstDay = lotFamily && f.id == uint32_t(lotFamily) && (f.record.flags & 0x04);
-        if (funds == f.record.funds && !firstDay)
+        // A family the VM evicted (VM::evictFamily) has no lot now.
+        const auto vf = vm.families.find(int16_t(f.id));
+        const bool evicted = f.record.lot && (vf == vm.families.end() || vf->second.house == 0) &&
+                             vm.evictedLots.count(int16_t(f.record.lot));
+        if (funds == f.record.funds && !firstDay && !evicted)
             continue;
         hood::FamilyRecord r = f.record;
         r.funds = funds;
+        if (evicted)
+            r.lot = 0;
         if (firstDay)
             r.flags &= ~0x04u;
         replaced[{hoodtype::FAMI, f.id}] = r.write();
@@ -223,6 +229,12 @@ HoodSaveResult saveNeighborhood(VM& vm, const hood::Neighborhood& h, const std::
     // The lot info of the lot saved (cTSSaveLotController::SaveLot, BV
     // 0x884ec4): flag 1 set ("saved"), 4 (first day) and 8 (evicted family,
     // whose things the load cleaned up) cleared.
+    for (const int16_t lotId : vm.evictedLots)
+        if (const hood::Lot* lot = h.lot(uint32_t(lotId)); lot && lotId != vm.globals[global::CurrentHouse]) {
+            hood::LotInfo info = lot->info;
+            info.flags |= hood::LotInfo::kFlagEvicted;
+            replaced[{hoodtype::LotInfo, uint32_t(lotId)}] = info.write();
+        }
     if (const int16_t lotId = vm.globals[global::CurrentHouse]; lotId > 0)
         if (const hood::Lot* lot = h.lot(uint32_t(lotId))) {
             hood::LotInfo info = lot->info;

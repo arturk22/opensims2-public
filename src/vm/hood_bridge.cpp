@@ -3,6 +3,9 @@
 
 #include "formats/binreader.hpp"
 #include "formats/neighborhood.hpp"
+#include "formats/hood_moves.hpp"
+
+#include <memory>
 
 #include <algorithm>
 #include <cmath>
@@ -78,6 +81,27 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
                                       .wardrobe = f.wardrobe};
         ++out.families;
     }
+
+    // Message 0xEC1AAC03 (cTSGameStateController::EvictFamily, BV 0x139740;
+    // formats/hood_moves.hpp): the family gets its lot's price back (not
+    // for lot types 2 and 3), its lot becomes 0 and the lot is flagged
+    // evicted when the neighborhood is saved.
+    vm.evictedLots.clear();
+    vm.evictFamily = [&vm, lots = std::make_shared<std::vector<hood::Lot>>(h.lots)](int16_t family) {
+        auto f = vm.families.find(family);
+        if (f == vm.families.end() || !f->second.house)
+            return;
+        for (const auto& l : *lots)
+            if (int16_t(l.id) == f->second.house) {
+                if (l.info.type != 2 && l.info.type != 3)
+                    setFamilyFunds(vm, family, int32_t(int64_t(familyFunds(vm, family)) + hood::lotFileInfo(l).price));
+                vm.evictedLots.insert(f->second.house);
+            }
+        for (auto& [id, n] : vm.neighbors)
+            if (n.house == f->second.house)
+                n.house = 0;
+        f->second.house = 0;
+    };
 
     vm.lots.clear();
     for (const auto& l : h.lots) {

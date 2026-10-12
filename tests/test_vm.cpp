@@ -941,6 +941,29 @@ static void testGenericSimsCall() {
     t = fx.run(0x1001);
     check(t.status == Thread::Status::Failed && t.error.find("Missing neighbor") != std::string::npos,
           "Generic Sims Call 4 without the neighbor is error 0x37");
+
+    // The last member of a family with a house: the family is evicted
+    // (message 0xEC1AAC03) and the call waits a tick, then temp 0 := its
+    // funds (TryGenericSimCall BV 0xe36834).
+    fx.vm.neighbors[7] = {};
+    fx.vm.neighbors[7].personData[persondata::FamilyNumber] = 4;
+    fx.vm.families[4] = {.funds = 1234, .house = 20};
+    fx.vm.lots[20] = {};
+    int evictions = 0;
+    fx.vm.evictFamily = [&](int16_t family) {
+        ++evictions;
+        fx.vm.families[family].funds += 5000;
+        fx.vm.families[family].house = 0;
+    };
+    fx.code.add(kObjGroup, 0x1002, tree({expr(StackId, 0, Assign, Lit, 7, go(1), E), expr(Temp, 0, Assign, Lit, 3, go(2), E),
+                                          call(4, T)}));
+    t = fx.vm.start(1, 0x1002, {});
+    fx.vm.run(t);
+    const bool waited = t.status == Thread::Status::Running && evictions == 1;
+    fx.vm.run(t);
+    check(waited && t.status == Thread::Status::Finished && t.temps[0] == 6234 && evictions == 1 &&
+              fx.vm.neighbors[7].personData[persondata::FamilyNumber] == 3 && !fx.vm.families.count(4),
+          "Generic Sims Call 4 waits for the old family's move out and passes its funds");
 }
 
 static void testDefinitionOwners() {

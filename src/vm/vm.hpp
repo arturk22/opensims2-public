@@ -760,6 +760,10 @@ struct Frame {
     // A route callback tree (pre/post-route, goal check, along route,
     // portal) the routing pushed: routes inside it are not base routes.
     bool routeCallback = false;
+    // The running primitive's own state across ticks (the stack element's
+    // primitive state in the game, cITSTreeStackElem vtable 0x48/0x4C);
+    // cleared when the frame moves to another node.
+    int32_t primitiveState = 0;
 };
 
 // Temps belong to the thread, so subroutines can return values in them;
@@ -1125,6 +1129,12 @@ public:
     // left as they are.
     std::function<std::vector<Tgi>(int16_t neighbor)> memberClothing;
     std::function<bool(int16_t neighbor, const Tgi& item)> clothingFits;
+    // The game's message 0xEC1AAC03 (evict the family from its lot,
+    // cTSGameStateController::EvictFamily): the hood bridge refunds the
+    // lot's price and records the lot (evictedLots, for the save); without
+    // it the family only loses its house.
+    std::function<void(int16_t family)> evictFamily;
+    std::set<int16_t> evictedLots;
     struct LotRecord {
         int16_t zoning = 0; // 0 residential, 1 community
         float x = 0, y = 0; // neighborhood position

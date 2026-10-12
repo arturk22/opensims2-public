@@ -1248,6 +1248,7 @@ bool VM::branch(Thread& t, Behavior::Target target) {
         switch (target.kind) {
         case Behavior::TargetKind::Instruction:
             t.stack.back().pc = target.index;
+            t.stack.back().primitiveState = 0;
             return true;
         case Behavior::TargetKind::Error:
             fail(t, "error branch taken");

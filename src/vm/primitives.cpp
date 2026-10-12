@@ -1519,9 +1519,11 @@ static size_t familyMembers(VM& vm, int16_t family) {
 // object (none: error 0x37) joins the family in temp 0: 0 = the lot's
 // family, one the neighborhood does not have is made (MakeNewFamily, BV
 // 0x4ffd28: below 0x7FD9 it takes the lowest free number from 1, above it
-// that number). Temp 0 becomes 0, or the old family's funds when the Sim
-// was the last member of a family with a house (the binary first has the
-// family moved out of its lot and waits for it: not done here). The Sim
+// that number); the primitive keeps it in its state. When the Sim is the
+// last member of a family with a house, the game sends message 0xEC1AAC03
+// (the family is evicted from its lot: VM::evictFamily) and waits (2)
+// until the family has no house, then temp 0 := the old family's funds
+// (with the lot's price back); else temp 0 := 0 at once. The Sim
 // leaves its old family (false when the neighborhood does not have it),
 // gets person data 61 := the family and 67 := 0, brings its clothes to the
 // family's bin (AddMemberClothing) and, between two real families, the
@@ -1537,21 +1539,37 @@ Exit addToFamily(Context& c) {
     Neighbor* n = vm.neighbor(id);
     if (!n)
         throw gameError(err::MissingNeighbor, "Generic Sims Call 4: neighbor " + std::to_string(id));
-    int16_t family = temps[0] ? temps[0] : vm.globals[global::CurrentFamily];
-    if (!vm.families.count(family)) {
-        if (family < kReservedFamilies) {
-            family = 1;
-            while (vm.families.count(family))
-                ++family;
-        }
-        vm.families[family];
-    }
     auto& data = neighborData(vm, id, *n);
     const int16_t old = data[persondata::FamilyNumber];
     auto oldIt = old ? vm.families.find(old) : vm.families.end();
-    temps[0] = 0;
-    if (oldIt != vm.families.end() && familyMembers(vm, old) <= 1 && oldIt->second.house != 0)
-        temps[0] = int16_t(oldIt->second.funds); // after the move out (inferred: not waited for)
+    int16_t family = int16_t(c.frame.primitiveState & 0xFFFF);
+    if (!c.frame.primitiveState) { // the first pass
+        family = temps[0] ? temps[0] : vm.globals[global::CurrentFamily];
+        if (!vm.families.count(family)) {
+            if (family < kReservedFamilies) {
+                family = 1;
+                while (vm.families.count(family))
+                    ++family;
+            }
+            vm.families[family];
+        }
+        c.frame.primitiveState = 0x10000 | uint16_t(family);
+        temps[0] = 0;
+        if (oldIt != vm.families.end() && familyMembers(vm, old) <= 1 && oldIt->second.house != 0) {
+            if (vm.lots.count(oldIt->second.house)) {
+                if (vm.evictFamily)
+                    vm.evictFamily(old);
+                else
+                    oldIt->second.house = 0;
+                return Exit::Yield; // the game waits for the move out
+            }
+            temps[0] = int16_t(familyFunds(vm, old)); // no such lot: at once
+        }
+    } else { // waiting for the old family to leave its lot
+        if (oldIt != vm.families.end() && oldIt->second.house != 0)
+            return Exit::Yield;
+        temps[0] = int16_t(familyFunds(vm, old));
+    }
     if (old != 0) {
         if (oldIt == vm.families.end())
             return Exit::False; // RemoveFromFamily fails
