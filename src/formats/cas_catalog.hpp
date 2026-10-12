@@ -67,6 +67,15 @@ constexpr uint32_t Everyday = 0x001, Swimwear = 0x008, Pajamas = 0x010, Formal =
                    Naked = 0x080, Maternity = 0x100, Athletic = 0x200, TryOn = 0x400;
 }
 
+// The "flags" bits of a skin entry (XML entries and GZPS alike), named as
+// nTSUICAS::PrintSkinEntryFlagsInfo (Mac BV 0x984000) prints them: 0x1
+// "hidden" (not offered in CAS), 0x2 "hat", 0x4 "default", 0x8 "no_random"
+// (never drawn at random). The alien and "eelf" archetypes of every age have
+// 9 (hidden + no_random).
+namespace flag {
+constexpr uint32_t Hidden = 0x1, Hat = 0x2, Default = 0x4, NoRandom = 0x8;
+}
+
 // textureoverlay subtypes.
 namespace overlay {
 constexpr uint32_t FacialHair = 0, Brows = 1, Lipstick = 2, Eyes = 3, Costume = 4, Mask = 5, Blush = 6,
@@ -93,8 +102,10 @@ struct CasCatalog {
 
     static CasCatalog load(ResourceIndex& index);
 
-    // The entries that fit an age and gender, sorted by name.
-    std::vector<const SimPart*> archetypesFor(uint32_t ageBit, uint32_t genderBit) const;
+    // The entries that fit an age and gender, sorted by name. `excludeFlags`
+    // drops the archetypes with any of those flag bits (flag::Hidden for the
+    // CAS grid, flag::Hidden | flag::NoRandom for a random face).
+    std::vector<const SimPart*> archetypesFor(uint32_t ageBit, uint32_t genderBit, uint32_t excludeFlags = 0) const;
     std::vector<const SimPart*> modifiersFor(uint32_t ageBit, uint32_t genderBit) const;
     const SimPart* neutralFor(uint32_t ageBit, uint32_t genderBit) const;
     std::vector<const SimPart*> overlaysFor(uint32_t subtype, uint32_t ageBit, uint32_t genderBit) const;

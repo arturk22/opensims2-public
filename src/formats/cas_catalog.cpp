@@ -161,7 +161,12 @@ CasCatalog CasCatalog::load(ResourceIndex& index) {
     return c;
 }
 
-std::vector<const SimPart*> CasCatalog::archetypesFor(uint32_t a, uint32_t g) const { return filter(archetypes, a, g); }
+std::vector<const SimPart*> CasCatalog::archetypesFor(uint32_t a, uint32_t g, uint32_t excludeFlags) const {
+    auto out = filter(archetypes, a, g);
+    if (excludeFlags)
+        std::erase_if(out, [&](const SimPart* e) { return (e->number("flags") & excludeFlags) != 0; });
+    return out;
+}
 std::vector<const SimPart*> CasCatalog::modifiersFor(uint32_t a, uint32_t g) const { return filter(modifiers, a, g); }
 std::vector<const SimPart*> CasCatalog::meshOverlaysFor(uint32_t a, uint32_t g) const { return filter(meshOverlays, a, g); }
 

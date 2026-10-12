@@ -60,7 +60,7 @@ std::string nextCharacterStem(const fs::path& a, const fs::path& b, const fs::pa
 // and hair tones, eyes (not the alien ones), then hair, brows and clothes
 // (completeSpec with a seed).
 void randomLook(const cas::CasCatalog& catalog, cas::CharacterSpec& s, std::mt19937& rng) {
-    const auto arch = catalog.archetypesFor(s.age, s.gender);
+    const auto arch = catalog.archetypesFor(s.age, s.gender, cas::flag::Hidden | cas::flag::NoRandom);
     if (!arch.empty())
         s.face.archetype = cas::family(*arch[rng() % arch.size()]);
     s.hairTone = int(rng() % 4) + 1;

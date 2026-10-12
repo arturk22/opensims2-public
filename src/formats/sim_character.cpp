@@ -52,26 +52,6 @@ std::string bareName(std::string name) {
 
 constexpr uint32_t kTypeTxtr = 0x1C4A276C;
 
-// Characters saved by our Create-a-Sim before the face-material fix name the
-// face skin "<prefix>face-s<n>" (e.g. "tfface-s2"), a texture the game does
-// not have for every age and gender (teen girls use "afface-s<n>", the one
-// their "tfface_s<n>_txmt" names). Such a name is read through the game's
-// face material of that prefix and tone, as a freshly saved face would be.
-std::string migrateFaceSkin(ResourceIndex& index, const std::string& texture) {
-    const std::string t = lower(texture);
-    if (t.size() < 9 || t.compare(2, 6, "face-s") != 0 || index.findByName(t + "_txtr", kTypeTxtr))
-        return texture;
-    int tone = 0;
-    try {
-        tone = std::stoi(t.substr(8));
-    } catch (const std::logic_error&) {
-        return texture;
-    }
-    if (std::to_string(tone) != t.substr(8))
-        return texture;
-    return cas::faceSkinTexture(index, t.substr(0, 2), tone);
-}
-
 bool sameKey(const Tgi& a, const Tgi& b) { return a.type == b.type && a.group == b.group && a.instance == b.instance; }
 
 } // namespace
@@ -136,7 +116,10 @@ Character readCharacter(DbpfPackage& pkg, ResourceIndex& index) {
     c.gender = number(p, "gender", 2);
     if (auto it = p.find("skincolor"); it != p.end() && !it->second.empty())
         if (int t = cas::skinToneNumber(it->second))
+        {
             c.skinTone = t;
+            c.skinToneSaved = true;
+        }
     if (p.count("skeletonkeyidx")) {
         const uint32_t i = number(p, "skeletonkeyidx");
         if (i < c.references.size()) {
@@ -161,6 +144,39 @@ Character readCharacter(DbpfPackage& pkg, ResourceIndex& index) {
         }
     }
     return c;
+}
+
+// Characters saved by our Create-a-Sim before the face-material fix (round
+// 11) name the face skin "<prefix>face-s<n>" (e.g. "tfface-s2"), a texture
+// the game does not have for every age and gender (teen girls use
+// "afface-s<n>", the one their "tfface_s<n>_txmt" names). Such a name is read
+// through the game's face material of that prefix and tone, as a freshly
+// saved face would be. Characters saved before the round 16 fix may name a
+// face skin of another tone than the body's (the adult woman of tone 1 got
+// CASFace.package's stray "afface-s3"): the face takes the body's tone, the
+// texture cas::faceSkinTexture gives for that prefix and tone today. Our own
+// migration (the game has no such files; inferred).
+std::string migrateFaceSkin(ResourceIndex& index, const std::string& texture, int skinTone) {
+    const std::string t = lower(texture);
+    if (t.size() < 9 || t.compare(2, 6, "face-s") != 0)
+        return texture;
+    int tone = 0;
+    try {
+        tone = std::stoi(t.substr(8));
+    } catch (const std::logic_error&) {
+        return texture;
+    }
+    if (std::to_string(tone) != t.substr(8))
+        return texture;
+    const std::string prefix = t.substr(0, 2);
+    if (skinTone > 0 && tone != skinTone) {
+        const std::string want = cas::faceSkinTexture(index, prefix, skinTone);
+        if (want != t && index.findByName(want + "_txtr", kTypeTxtr))
+            return want;
+    }
+    if (index.findByName(t + "_txtr", kTypeTxtr))
+        return texture;
+    return cas::faceSkinTexture(index, prefix, tone);
 }
 
 SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& parts,
@@ -215,9 +231,9 @@ SkinnedModel loadCharacterSim(ResourceIndex& base, const std::vector<SimPart>& p
         for (auto& [name, mat] : m.materials) {
             for (auto& [k, v] : mat.properties)
                 if (k == "stdMatBaseTextureName" || k == "baseTexture0")
-                    v = migrateFaceSkin(index, v);
+                    v = migrateFaceSkin(index, v, ch.skinToneSaved ? ch.skinTone : 0);
             for (auto& v : mat.textureNames)
-                v = migrateFaceSkin(index, v);
+                v = migrateFaceSkin(index, v, ch.skinToneSaved ? ch.skinTone : 0);
         }
         for (auto& p : m.parts) {
             auto it = m.materials.find(p.material);

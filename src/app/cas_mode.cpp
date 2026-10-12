@@ -379,7 +379,7 @@ void CasMode::newSim() {
 void CasMode::randomize(uint32_t seed) {
     std::mt19937 rng(seed ? seed : std::random_device{}());
     cas::CharacterSpec& s = edit_.spec;
-    const auto arch = catalog_->archetypesFor(s.age, s.gender);
+    const auto arch = catalog_->archetypesFor(s.age, s.gender, cas::flag::Hidden | cas::flag::NoRandom);
     if (!arch.empty())
         s.face.archetype = cas::family(*arch[rng() % arch.size()]);
     s.face.modifiers.clear();
@@ -463,7 +463,7 @@ constexpr int kThumbnailSkinTone = 2;
 void CasMode::ensureArchetypeShots() {
     if (editing_ < 0 || step_ != 1 || !thumbs_ || !catalog_)
         return;
-    for (const SimPart* a : catalog_->archetypesFor(edit_.spec.age, edit_.spec.gender)) {
+    for (const SimPart* a : catalog_->archetypesFor(edit_.spec.age, edit_.spec.gender, cas::flag::Hidden)) {
         const std::string fam = cas::family(*a);
         if (thumbs_->image(cas::archetypeThumbnailId(edit_.spec.age, edit_.spec.gender, fam, "")))
             continue;
@@ -1956,7 +1956,9 @@ UiScreen CasMode::screen(int width, int height) {
     };
     auto archetypeItems = [&](const std::string& maskList, const std::string& region) {
         std::vector<Item> items;
-        for (const SimPart* a : catalog_->archetypesFor(s.age, s.gender)) {
+        // Not the hidden ones (flag 0x1: the alien and "eelf" heads), as the
+        // game's grid leaves them out.
+        for (const SimPart* a : catalog_->archetypesFor(s.age, s.gender, cas::flag::Hidden)) {
             const std::string fam = cas::family(*a);
             bool sel;
             if (maskList.empty())

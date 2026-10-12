@@ -938,9 +938,21 @@ botão sai vazia sem conteúdo baixado (Body Shop/Downloads); não feito.
   normal) com a barra entre elas, e um clique numa ponta anda 0,1 para aquele
   lado (inferido). O `name` só aparece se faltarem as imagens.
   `docs/screenshots/r16-cas-ptbr.jpg`.
-- O arquétipo "alien" de adulto aparece sem miniatura (nome em inglês);
-  `flags` 9 nos outros alien/eelf, 0 no de adulto: não conferido se o jogo o
-  esconde.
+- O arquétipo "alien" de adulto aparecia sem miniatura (nome em inglês).
+  **Rodada 17:** o jogo o esconde. Todos os arquétipos `*archalien_alien` e
+  `*archeelf_eelf` (toda idade e sexo) têm `flags` 9 (o 0 de antes era um
+  engano), e os bits do `flags` de uma entrada da pele são, pelos nomes que o
+  `nTSUICAS::PrintSkinEntryFlagsInfo` (BV `0x984000`) imprime: 0x1 `hidden`,
+  0x2 `hat`, 0x4 `default`, 0x8 `no_random`. O `cTSSkinBaseFilter::CheckSkin`
+  (BV `0xab64d8`) tem máscaras de flags exigidas/excluídas. No BV a grade de
+  cabeças (`cTSUICASComponentArchetypes::Activate`, `0x4437fc`) vem de um bin
+  (itens BINX, `kCAFArchetypeBinName`) filtrado por idade/sexo/espécie; o base
+  não tem BINX de arquétipos, então que o base filtra pelo bit `hidden` é
+  inferido pelo nome do bit. No app: `CasCatalog::archetypesFor(idade, sexo,
+  excluir)`; a grade e as miniaturas feitas no CAS excluem `cas::flag::Hidden`,
+  o sorteio (botão do dado, `randomLook` dos NPCs/bebês) exclui `Hidden |
+  NoRandom`. `s2pkg cas-catalog ... face` mostra `[flags N]`.
+  `docs/screenshots/r17-cas-heads-no-alien.jpg` (a grade começa na cabeça base).
 - **Tom do rosto (rodada 16).** O rosto da mulher adulta de pele s1 saía um
   tom mais escuro que o corpo: há dois `afface_s1_txmt`, o do
   `Sims02.package` (textura `afface-s1`) e uma cópia solta no
@@ -952,3 +964,13 @@ botão sai vazia sem conteúdo baixado (Body Shop/Downloads); não feito.
   que o jogo não traz (feitas no CAS) usam o tom das miniaturas do jogo
   (s2, a olho; inferido) para não destoar da grade.
   `docs/screenshots/r16-cas-face-tone.jpg` (antes e depois).
+- **Personagens gravados antes dessa correção (rodada 17).** O
+  `loadCharacterSim` passa o nome da textura de pele do rosto
+  (`stdMatBaseTextureName`/`baseTexture0`) por `migrateFaceSkin(índice, nome,
+  tom do corpo)`: um `<p>face-s<m>` de tom diferente do `skincolor` do AGED
+  (só quando o arquivo tem um tom) vira o que o `cas::faceSkinTexture` dá hoje
+  para o mesmo prefixo e o tom do corpo (o `afface-s3` de uma mulher s1 vira
+  `afface-s1`), se a textura existe. O arquivo não é regravado. Conferido: nos
+  561 personagens do jogo (todos os bairros) nenhum nome muda (antes = depois
+  do `s2pkg sim-model`). Migração nossa (o jogo não tem esses arquivos;
+  inferido). Teste: `testFaceSkinMigration` (`test_formats`, com `OS2_DATA`).

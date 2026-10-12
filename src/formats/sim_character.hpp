@@ -27,6 +27,7 @@ struct Character {
     std::filesystem::path file;
     uint32_t age = 8, gender = 2;
     int skinTone = 1;
+    bool skinToneSaved = false; // skincolor named a tone (1-4, 5 the alien), not the default
     std::string skeleton = "auskel";               // CRES name without "_cres"
     std::map<uint32_t, std::vector<Tgi>> outfits;  // lk key -> GZPS TGIs
     std::vector<Tgi> references;
@@ -48,6 +49,14 @@ struct Character {
 };
 
 Character readCharacter(DbpfPackage& package, ResourceIndex& index);
+
+// The face skin texture name a character file's face material gives
+// ("stdMatBaseTextureName"/"baseTexture0"), migrated for files our CAS saved
+// before its face fixes: a "<p>face-s<n>" the game does not have (round 12),
+// and a face of another tone than the body's (`skinTone`, 0 = unknown): the
+// stray "afface-s3" CASFace.package's afface_s1_txmt names (round 16).
+// Anything else is returned as it is.
+std::string migrateFaceSkin(ResourceIndex& index, const std::string& texture, int skinTone = 0);
 
 // Assembles a Sim from its character file over the game's resources `index`:
 // the outfit of `category` (Character::wear; with the skin tone under SimSkin

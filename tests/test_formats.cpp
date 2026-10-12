@@ -1,5 +1,7 @@
 #include <cmath>
 #include "formats/bhav.hpp"
+#include "formats/cas_catalog.hpp"
+#include "formats/sim_character.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/camera_config.hpp"
 #include "formats/lighting_config.hpp"
@@ -755,6 +757,44 @@ end
           "floor colour in the room irradiance");
 }
 
+// With the game's data (OS2_DATA): character files our CAS saved before the
+// face fixes. A face of another tone than the body's (the stray "afface-s3"
+// CASFace.package's afface_s1_txmt names, round 16) takes the body's tone; a
+// "<p>face-s<n>" the game does not have (round 12) goes through the face
+// material; a face of the body's tone, or of an unknown tone, stays.
+static void testFaceSkinMigration() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    check(migrateFaceSkin(index, "afface-s3", 1) == "afface-s1", "stray afface-s3 face of a tone-1 Sim -> afface-s1");
+    check(migrateFaceSkin(index, "afface-s1", 3) == "afface-s3", "tone-3 Sim with a tone-1 face -> afface-s3");
+    check(migrateFaceSkin(index, "afface-s1", 1) == "afface-s1", "a face of the body's tone stays");
+    check(migrateFaceSkin(index, "afface-s3", 0) == "afface-s3", "unknown body tone: the face stays");
+    check(migrateFaceSkin(index, "afface-s5", 5) == "afface-s5", "the alien tone stays");
+    check(migrateFaceSkin(index, "tfface-s2", 2) == "afface-s2", "tfface-s2 (no such texture) -> afface-s2");
+    check(migrateFaceSkin(index, "tfface-s2", 1) == "afface-s1", "tfface-s2 of a tone-1 teen -> afface-s1");
+    check(migrateFaceSkin(index, "amhairshort", 1) == "amhairshort", "not a face skin: unchanged");
+
+    // The CAS archetype grid leaves the hidden heads out (flag 0x1, "hidden"
+    // in PrintSkinEntryFlagsInfo): the alien and "eelf" ones.
+    const cas::CasCatalog catalog = cas::CasCatalog::load(index);
+    for (uint32_t a : {cas::age::Child, cas::age::Teen, cas::age::Adult, cas::age::Elder})
+        for (uint32_t g : {cas::gender::Female, cas::gender::Male}) {
+            bool alienAll = false, alienGrid = false, base = false;
+            for (const SimPart* e : catalog.archetypesFor(a, g))
+                alienAll = alienAll || e->name().find("alien") != std::string::npos;
+            for (const SimPart* e : catalog.archetypesFor(a, g, cas::flag::Hidden)) {
+                alienGrid = alienGrid || e->name().find("alien") != std::string::npos ||
+                            e->name().find("eelf") != std::string::npos;
+                base = base || e->name().find("archbase") != std::string::npos;
+            }
+            check(alienAll, "the catalog has the alien head of every age");
+            check(!alienGrid, "the CAS grid has no alien/eelf head");
+            check(base, "the CAS grid keeps the base head");
+        }
+}
+
 // With the game's data (OS2_DATA): N001_Lot82's front arch (door 455, "Door -
 // 2 Tile - French Empty Arch" at (30.5, 38.5) facing -y, its +x along -x:
 // tiles x 30..31 ("0") and 29..30 ("1e") of the wall y = 39) is cut open up
@@ -823,6 +863,7 @@ int main() {
     testLotModel();
     testLotLightMap();
     testTwoTileArchMask();
+    testFaceSkinMigration();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

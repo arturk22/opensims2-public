@@ -75,8 +75,11 @@ int cmdCasCatalog(const std::string& res, uint32_t ageBit, uint32_t genderBit, c
             std::printf("neutral face: %s\n", n->name().c_str());
         const auto arch = c.archetypesFor(ageBit, genderBit);
         std::printf("archetypes (%zu):", arch.size());
-        for (const auto* e : arch)
+        for (const auto* e : arch) { // flags: 1 hidden, 2 hat, 4 default, 8 no_random
             std::printf(" %s", e->name().c_str());
+            if (uint32_t f = e->number("flags"))
+                std::printf("[flags %u]", f);
+        }
         std::printf("\n");
         const auto mods = c.modifiersFor(ageBit, genderBit);
         std::printf("modifiers (%zu):\n", mods.size());
