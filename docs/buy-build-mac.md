@@ -250,6 +250,13 @@ pela direção. O raio do mouse anda até o primeiro ponto no piso do nível (a 
 deixa o mesmo nível a 0,75 sobre ela e a 3,0 fora dela). "Keep Buying": a cópia nova
 já fica no mesmo tile, com a mesma direção.
 
+**A mão** (rodada 21, r21-cursor): pegar um objeto do lote já mostra o contorno
+no tile onde ele está (antes só aparecia depois que o mouse andava, e nada aparecia
+enquanto o botão que o pegou seguia apertado: playtest do tutorial, passo 20).
+Com o botão ainda apertado, arrastar leva o objeto junto e soltar o põe no tile
+do mouse; apertar e soltar sem sair do tile o deixa na mão (inferido: `TryGrab`
+e depois `OnRelease` → `TryDrop`). Cursores: camera-ui-mac §2.7.
+
 **TryPlace(loc)**, em ordem:
 1. Ajusta a posição (vtable `0x168`; meio tile), escolhe o nível e alinha à
    calçada/estrada se o objeto pede (`OrientPerpendicularToRoad`,

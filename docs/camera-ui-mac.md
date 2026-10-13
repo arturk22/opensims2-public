@@ -377,6 +377,48 @@ folga para o que está deitado no piso). Antes os Sims vinham antes de tudo
 e o raio atravessava o piso: clicar no piso de cima pegava o Sim de baixo.
 Inferido: o "tipo `0x12`" como piso/chão e o `0x13` como parede (pelos usos).
 
+## 2.7 Cursores do mouse (dados + strings do binário; rodada 21, r21-cursor)
+
+**Arquivos:** `TSData/Res/UI/Cursors`, cursores do Windows (`.cur`; a ampulheta
+`Hourglass_8.ani` é animada). Quase todos têm 32×32; os `_8` usam 8 bits com
+paleta e os `_1` e os sem sufixo são preto e branco.
+
+**Tabela de nomes:** os dois executáveis têm a mesma lista, logo depois de
+`Cursor`, `_1 _8 .ani .cur` (`cTSUIServiceManager::SetupCursors`, BV PPC
+`0x11f8258`): arrow, hourglass, edit, finger, simsdelete, simslevel, simslower,
+simsmove, simsplace, simsraise, simsrotate, simsrotatenw/ne/sw/se, left, right,
+down, up, upright, upleft, downright, downleft, explore, deadexpl, pan,
+liveperson, livenothing, liveobjectavail, liveobjectunavail, addpts, movein,
+bulldoze, evictFamily, moveLotToCatalog, taxi, simsflip, removepts,
+eyedropperTool, designTool, railingtool. O arquivo de cada nome é
+`<nome>_8.cur`; se não existir, `<nome>_1.cur`; se não, `<nome>.cur`
+(inferido pelos sufixos). Os ids de cursor dos docs batem com
+**id = índice + 18** (inferido): designTool `0x39` e railingtool `0x3A`
+(buy-build-mac §7), e no mover de lote (neighborhood-mac §15.1) simsmove `0x19`
+sobre um lote que pode ser movido e simsplace `0x1A` quando o botão desce.
+`hand_8`, `closedhandgreen/red_8`, `worldgreen/red_8`, `rotateview`, `selectsim`
+e `walkhere` existem na pasta, mas não estão na tabela (o jogo base não os usa).
+
+**No app** (`app/game_cursors.*`: leitor de `.cur` e escolha; `main.mm`
+cria os `NSCursor` com o hotspot do arquivo e troca o cursor a cada evento
+do mouse):
+
+| Estado | Cursor |
+|---|---|
+| Sobre a UI (painéis, puck, janela do tutorial, pie, diálogo), modo Viver, Construir, menus | `arrow_8` (a seta azul do jogo) |
+| Carregando | `HOURGLASS.cur` (o `.ani` não é lido) |
+| Comprar, mão sobre um objeto que ela pega | `simsmove_8` (mão aberta) |
+| Comprar, segurando um objeto | `simsmove_8` (a figura do passo 20 do tutorial) |
+| Comprar, botão apertado sobre o que segura (arrastar gira ou leva) | `simsplace_8` (mão fechada) |
+| Comprar, o arrasto já girou o objeto | `simsrotate_8` |
+| Conta-gotas / Ferramenta Design | `eyedroppertool_8` / `designtool_8` |
+| Comprar, mão sobre o vazio | `arrow_8` (o mover de lote põe o cursor 0) |
+
+Os estados de Comprar seguem o mover de lote, por analogia (inferido). Pixels
+mascarados ficam transparentes; nos de 1 bit, os pixels que invertem a tela
+viram preto (o Mac não tem cursor que inverte). Teste: `test_cursors`;
+folha de contato `docs/screenshots/r21-cursor-folha.jpg`.
+
 ## 3. O que falta
 
 - O nome do modificador `0x01000000` dos códigos de botão.
