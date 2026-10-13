@@ -6,3 +6,5 @@ data/iso/
 data/disc*/
 decode_errors.txt
 out/
+build-release/
+__pycache__/
