@@ -495,7 +495,9 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             // (ax, ay)) and heights cut out of both faces.
             const float segLen = std::sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
             std::vector<Cut> cuts;
-            if (w.type == Lot::Normal && !fence)
+            // Attic walls too: the sawtooth roofs of N002_Lot31 have their
+            // row of windows in the attic walls between the roofs.
+            if ((w.type == Lot::Normal || attic) && !fence)
                 cuts = wallCuts(holes, ax, ay, dx, dy, segLen, std::min(za0, zb0), std::max(za1, zb1));
             // A door or window with a wall mask for this stretch cuts its
             // own shape: the faces get the mask (alpha tested in the wall
@@ -579,6 +581,17 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 face.top = std::max(full[seg], full[seg + 1]);
                 face.level = level;
                 face.room = roomBeside(lot, level, (ax + bx) / 2, (ay + by) / 2, n[0], n[1], true);
+                // An attic wall standing over the roof on its side (the tall
+                // face of a sawtooth roof, N002_Lot31) is outside there,
+                // though the room map puts the attic under that roof beside
+                // it: lit as outside (inferred; it was drawn dark).
+                if (attic && face.room) {
+                    const float mx = (ax + bx) / 2 + n[0] * 0.05f, my = (ay + by) / 2 + n[1] * 0.05f;
+                    const float under = roofs.heightAt(std::clamp(mx, 0.0f, float(lot.width)),
+                                                       std::clamp(my, 0.0f, float(lot.height)), level, -1e9f);
+                    if (under > -1e8f && under < face.top - 0.5f)
+                        face.room = 0;
+                }
                 face.material = lm.materialIndex(it->second);
                 const size_t cell = lm.addWall(face);
                 auto lmAt = [&](const Vec3f& p) {

@@ -870,6 +870,59 @@ static void testTwoTileArchMask() {
     check(outer0 > 128 && outer1 > 128, "lot 82: the two-tile arch keeps the wall at its outer edges");
 }
 
+// With the game's data: N002_Lot31's sawtooth roofs (shed roofs on level 1,
+// each rising to x = 23, 27, ...) have a row of windows in the attic walls
+// between them. Those walls are cut for the windows (they were not: only
+// normal walls were, so the glass hid behind the wall) and their face over
+// the next, lower roof is lit as outside (the room map puts the attic there:
+// it was drawn dark).
+static void testSawtoothAtticWindows() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data)
+        return;
+    const std::filesystem::path lotPath =
+        std::filesystem::path(data) / "TSData/Res/UserData/Neighborhoods/N002/Lots/N002_Lot31.package";
+    if (!std::filesystem::exists(lotPath))
+        return;
+    ResourceIndex index(data);
+    const PatternCatalog patterns(index, data);
+    DbpfPackage pkg(lotPath);
+    const Lot lot = Lot::load(pkg);
+    LotLightMapLayout layout;
+    const ObjectModel m = buildLotModel(lot, index, patterns, {}, &layout);
+    // Wall faces on x = 23, level 1: no wall triangle covers the middle of
+    // the window at (23, 29.5..30.5, 4) (a box cut or a mask).
+    bool covered = false, masked = false;
+    for (const auto& part : m.parts) {
+        if (part.node.rfind("wall:", 0) != 0)
+            continue;
+        const auto& p = part.mesh.positions;
+        const auto& t = part.mesh.triangles;
+        for (size_t i = 0; i + 2 < t.size(); i += 3) {
+            const auto &a = p[t[i]], &b = p[t[i + 1]], &c = p[t[i + 2]];
+            if (std::abs(a[0] - 23) > 0.15f || std::abs(b[0] - 23) > 0.15f || std::abs(c[0] - 23) > 0.15f)
+                continue;
+            // In the (y, z) plane: is (30, 4) inside the triangle?
+            auto side = [](const auto& u, const auto& v, float y, float z) {
+                return (v[1] - u[1]) * (z - u[2]) - (v[2] - u[2]) * (y - u[1]);
+            };
+            const float d1 = side(a, b, 30, 4), d2 = side(b, c, 30, 4), d3 = side(c, a, 30, 4);
+            const bool inside = (d1 >= 0 && d2 >= 0 && d3 >= 0) || (d1 <= 0 && d2 <= 0 && d3 <= 0);
+            if (inside)
+                (part.mask >= 0 ? masked : covered) = true;
+        }
+    }
+    check(!covered || masked, "lot 31: the sawtooth's attic wall is cut for its window");
+    bool outside = false, found = false;
+    for (const auto& w : layout.walls)
+        if (w.level == 1 && w.normal[0] > 0.9f && std::abs(w.origin[0] - 23) < 0.2f && w.origin[1] >= 29 &&
+            w.origin[1] <= 37) {
+            found = true;
+            outside = outside || w.room == 0;
+        }
+    check(found && outside, "lot 31: the attic wall's face over the lower roof is lit as outside");
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
@@ -887,6 +940,7 @@ int main() {
     testLotModel();
     testLotLightMap();
     testTwoTileArchMask();
+    testSawtoothAtticWindows();
     testFaceSkinMigration();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

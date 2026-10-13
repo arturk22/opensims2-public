@@ -5890,6 +5890,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     }
                     if (st.text == "space")
                         selectNextFamilySim();
+                    if (st.text.rfind("walls-", 0) == 0) // --key walls-<0..3>: the puck's wall fan (down, cutaway, up, roof)
+                        setWallMode(std::atoi(st.text.c_str() + 6));
                     if (st.text == "pageup" || st.text == "pagedown") { // as keyDown: the floor shown
                         changeFloor(st.text == "pageup" ? 1 : -1);
                         if (gCamera) // the camera on that floor now, as the frames before a click would leave it
