@@ -685,6 +685,32 @@ passadas 8, do ini `[SmoothingUnderNewLot] SmoothingTalusAngle` /
 comunitário), nome, posição; pinta a saia (`SetLotSkirtPaint`) e entra no
 bairro (vtable `0xf4`).
 
+**O arquivo do lote novo** (rodada 21, playtest 33: "lot 83 has no lot
+file" ao entrar num lote recém-criado em N001). O jogo não grava arquivo no
+`PlaceLot`: o `cTSLoadLotController::LoadLot` (§7.2 do
+`game-flow-mac.md`, passos 0xB–0x11) abre o **modelo**
+`TSData/Res/LotTemplates/%s%dx%d` (`LotTemplate`/`CommunityLotTemplate`,
+`<através da rua × 10>x<ao longo × 10>`, girado como o lote) e o arquivo só
+nasce no save. Os 10 modelos de cada tipo são exatamente os 10 tamanhos com
+a faixa de rua (2×3 → 30x30 … 5×5 → 60x50) e todos têm a faixa (10 tiles
+travados, 3ARY `0x03`), os portais de carro/pedestre, caixa de correio e
+lixeira (orelhão no comunitário) na **borda 0** (x baixo), chão plano de
+`lottexture-test-01` (o de todo lote do jogo e da saia do bairro) e o valor
+do lote (SIMI +0xA4 = `nTSWorld::LotValue` do tamanho sem a rua). No
+opensims2 o arquivo é escrito já ao pôr o lote (`hood::makeLotFile`, e na
+entrada para lotes sem arquivo): cópia do modelo com os globais 10/41 e o
+lot info base (`0x6C589723`) do lote. **Diferença de registro** (não de
+comportamento): em vez de girar o conteúdo do modelo, o arquivo fica no
+quadro do modelo e o lot info vira o de um lote criado de frente para a
+borda 0 e girado até a sua frente (frente de criação 0, tamanho base
+através×ao longo, bordas com rua nesse quadro), como os lotes do jogo
+girados depois de criados (`GetCurrentSize`, `RotateLotImposter`).
+**Inferido**: a faixa do lote vazio tem de dar para uma rua
+(`hood::checkEmptyLot`; frente = borda da faixa), senão não há modelo que
+sirva (o lote 83, 4×3 com a faixa em x baixo e a rua em y baixo, pediria um
+30x40). O lote 83 da playtest, posto antes disso, recebe na entrada o modelo
+do seu tamanho sem girar (faixa e portais na borda sem rua).
+
 **Da caixa** (`PlaceLotInternal`, BV `0x3fe320`): tira o lote provisório,
 cria o lot info pelo catálogo (`+0x10c` vtable `0x1c`), marca-o, nomeia,
 posiciona, ajusta as ruas, grava a frente, tipos 4/6 (BV) ganham a flag
