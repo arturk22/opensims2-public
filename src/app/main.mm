@@ -59,6 +59,7 @@
 #include "app/cinematic_player.hpp"
 #include "app/ui_panel_util.hpp"
 #include "app/loading_screen.hpp"
+#include "app/glide_detector.hpp"
 #include "app/jump_detector.hpp"
 #include "formats/catalog.hpp"
 #include "formats/config_text.hpp"
@@ -3722,6 +3723,87 @@ void sampleDrawnPlaces(double scene) {
                             o->route ? " walking" : "", x.container, x.animation.c_str());
             for (const auto& e : detector.add(x))
                 std::printf("opensims2: %s\n", os2::JumpDetector::describe(e).c_str());
+        }
+    }
+    // OS2_DEBUG_GLIDE=1 (test aid, app/glide_detector.hpp): Sims whose drawn
+    // pelvis moves on while their legs hold still (gliding with no walk),
+    // printed as each episode starts with what the Sim was doing (route,
+    // locomotion clip, Animate Sim, overlays, the layers that play, the
+    // interaction and the tree), and counted at exit by what played.
+    static const bool glide = std::getenv("OS2_DEBUG_GLIDE") != nullptr;
+    if (glide) {
+        static os2::GlideDetector detector;
+        static std::map<std::string, int> byKind;
+        static bool registered = false;
+        if (!registered) {
+            registered = true;
+            if (const char* r = std::getenv("OS2_GLIDE_LEGS")) // the feet's range threshold (tiles)
+                detector.legRange = float(std::atof(r));
+            std::atexit([] {
+                std::printf("opensims2: glides: %d episodes of Sims gliding without moving their legs, %.1f s in all\n",
+                            detector.episodes(), detector.seconds());
+                for (const auto& [k, n] : byKind)
+                    std::printf("opensims2: glides:   %3d  %s\n", n, k.c_str());
+                std::fflush(stdout);
+            });
+        }
+        for (const auto& s : gLotSims) {
+            const os2::vm::Object* o = m.object(s.id);
+            if (!o || !o->person)
+                continue;
+            os2::SimActor& a = *s.actor;
+            const os2::Skeleton& sk = a.skin.skeleton;
+            const int pb = sk.find("pelvis"), lb = sk.find("l_foot"), rb = sk.find("r_foot");
+            if (pb < 0 || lb < 0 || rb < 0 || a.bones.size() != sk.bones.size())
+                continue;
+            os2::GlideDetector::Sample x;
+            x.id = s.id, x.time = scene, x.tick = m.ticks;
+            const os2::Vec3 p = a.bones[size_t(pb)].t;
+            x.pelvis[0] = p[0], x.pelvis[1] = p[1];
+            const os2::Xform toModel = a.placement().inverse();
+            const os2::Vec3 pm = toModel.apply(p), lf = toModel.apply(a.bones[size_t(lb)].t),
+                            rf = toModel.apply(a.bones[size_t(rb)].t);
+            for (int i = 0; i < 3; ++i)
+                x.lfoot[i] = lf[i] - pm[i], x.rfoot[i] = rf[i] - pm[i];
+            const int16_t c = o->data[os2::vm::objdata::ContainerId];
+            x.inWorld = simInTheWorld(s.id) && !gCarriedSims.count(s.actor) && (c == 0 || c == s.id);
+            for (const auto& e : detector.add(x)) {
+                std::string overlays;
+                for (const auto& ov : o->animation.overlays)
+                    overlays += (overlays.empty() ? "" : ", ") + ov.name + " L" + std::to_string(ov.level);
+                std::string route = "no route";
+                std::string kind = "no route";
+                if (o->route) {
+                    const auto& L = o->route->loco;
+                    static const char* kinds[] = {"none", "start", "walk", "stop"};
+                    char buf[300];
+                    std::snprintf(buf, sizeof buf, "route%s%s loco %s%s '%s' climb '%s' points %zu tree '%s'",
+                                  o->route->waiting ? " waiting" : "", o->route->inPortal ? " in portal" : "",
+                                  kinds[std::min<int>(L.kind, 3)], L.moving ? " moving" : "", L.animation.c_str(),
+                                  o->route->climb.animation.c_str(), o->route->points.size(),
+                                  o->route->tree ? o->route->tree->fileName.c_str() : "");
+                    route = buf;
+                    kind = std::string("route, loco ") + kinds[std::min<int>(L.kind, 3)] +
+                           (L.moving ? " moving" : "") + (o->route->waiting ? " waiting" : "") +
+                           (L.animation.empty() ? ", no clip" : "");
+                }
+                if (!o->animation.name.empty())
+                    kind += ", Animate Sim " + o->animation.name;
+                const auto th = m.threads.find(s.id);
+                std::string tree = th != m.threads.end() && !th->second.stack.empty() && th->second.stack.back().behavior
+                                       ? th->second.stack.back().behavior->fileName
+                                       : "";
+                std::string interaction;
+                if (o->activeInteraction >= 0 && size_t(o->activeInteraction) < o->queue.size())
+                    interaction = o->queue[size_t(o->activeInteraction)].name;
+                std::printf("opensims2: glide: tick %llu %.2f s Sim %d (%s, age %d) moved %.2f tiles in %.1f s, feet range %.3f at "
+                            "(%.2f %.2f); %s; Animate Sim '%s' L%d; overlays [%s]; interaction '%s'; tree '%s'; layers %s\n",
+                            (unsigned long long)e.tick, e.time, e.id, s.character.filename().string().c_str(),
+                            o->person->data[os2::vm::persondata::PersonAge], e.distance, detector.window, e.legs, x.pelvis[0],
+                            x.pelvis[1], route.c_str(), o->animation.name.c_str(), o->animation.level, overlays.c_str(),
+                            interaction.c_str(), tree.c_str(), a.player.describe(scene).c_str());
+                ++byKind[kind];
+            }
         }
     }
     // OS2_DEBUG_POSES=1 (test aid): poses that look broken, as they start

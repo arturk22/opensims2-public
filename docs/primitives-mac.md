@@ -1583,6 +1583,26 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   criança lendo; `test_jump_detector`. Censo de 15000 ticks em `N001_Lot68`,
   `N001_Lot11`, `N002_Lot10`, `N001_Lot36`: 0 saltos sem razão da VM, 0 Snaps
   repetidos.
+  - **Sims deslizando sem andar** (rodada 20, ramo `r20-slide`, relato do
+    jogador em Estranhópolis; do app, não do binário). Detector
+    `OS2_DEBUG_GLIDE=1` (`app/glide_detector`): a pélvis desenhada anda mais
+    de 0,4 tile/s por 1 s enquanto os pés, medidos da pélvis no quadro do
+    corpo, mexem menos de 0,06 (`OS2_GLIDE_LEGS` muda o limite); cada
+    episódio sai com rota, clipe da locomoção, Animate Sim, overlays da VM,
+    camadas do `AnimPlayer`, interação e árvore. Causa: o `LotSimulation`
+    punha o começo de cada overlay na fila do ator (`SimActor::cue`, tocada
+    no quadro seguinte) mas tirava os que a VM tirou **na hora**
+    (`player.stop`). Com vários ticks num quadro (velocidade 3 ou 4) um
+    overlay que entrou e saiu nesse meio tempo era parado antes de começar e
+    começava depois, em laço, para sempre: o idle "breatheLoop" de nível 1
+    por cima do andar (nível 0), as pernas paradas com a VM sem overlay
+    nenhum. Agora todas as paradas vão pela mesma fila (`cueStop`). Sem
+    tela, 8 h de jogo: velocidade 3, 370 episódios → 1 (5 lotes); velocidade
+    4, 151 → 1 (4 lotes); velocidade 1, 1 → 1. Os que sobram: o beijo
+    (`a2a-soc-kissPeck`, o corpo se inclina com os pés parados: certo) e, no
+    começo do `N001_Lot11`, 0,3 s da criança com o breathe da VM ainda ligado
+    na rota retomada do save. Fantasmas (`*-walk-ghost`) flutuam de propósito.
+    Teste `glides` (com `OS2_DATA`), `test_glide_detector`.
 - **Alvos de IK de tipo 2: o objeto de IK do pedido** (rodada 15, front
   anim3, decifrado). Os alvos de IK (`cIKTarget::TargetType`) têm 3 tipos
   nos dados (`s2pkg anim-sweep`): 0 sem osso de quadro (20.859, o alvo no

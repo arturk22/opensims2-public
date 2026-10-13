@@ -204,7 +204,7 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
         if (x != o.animation.overlays.end()) {
             if (x->blendOutSent && !it->second.blendingOut) {
                 it->second.blendingOut = true;
-                b.actor->player.stop(at, kFade, it->second.priority);
+                b.actor->cueStop(at, it->second.priority, kFade);
             }
             ++it;
             continue;
@@ -216,7 +216,7 @@ void LotSimulation::playOverlays(Bound& b, const vm::Object& o, double at) {
         if (std::getenv("OS2_DEBUG_VM"))
             std::fprintf(stderr, "tick %llu sim %d overlay off: %s (fade %.3f)\n", (unsigned long long)vm_->ticks, b.id,
                          it->second.name.c_str(), fade);
-        b.actor->player.stop(at, fade, it->second.priority);
+        b.actor->cueStop(at, it->second.priority, fade);
         b.stoppedOverlays[it->second.name] = {at, it->second.start};
         it = b.overlays.erase(it);
     }
@@ -371,7 +371,7 @@ void LotSimulation::sampleAll(double at) {
             // face's "a-noExpression") plays over what the body does instead
             // of replacing it (the Sim in a chair kept its seat; inferred).
             if (b.partial >= 0)
-                b.actor->player.stop(at, fade, b.partial), b.partial = -1;
+                b.actor->cueStop(at, b.partial, fade), b.partial = -1;
             // So does one that only adds to the bones (delta channels: the
             // talking "SWAT" shifts are full-body by their flag).
             const bool partial = animated && (!(anim.flags & 1) || anim.additive());
@@ -406,7 +406,7 @@ void LotSimulation::sampleAll(double at) {
                                         .ikObjectBone = animated ? ikObjectBones(*b.actor, s.animIkObject) : IkObjectBone{}});
             }
             for (int j = extras + 1; j <= b.walkExtras; ++j)
-                b.actor->player.stop(at, fade, kWalkBlend + j);
+                b.actor->cueStop(at, kWalkBlend + j, fade);
             b.walkExtras = extras;
             if (onSimAnimation)
                 onSimAnimation(b.id, *b.actor, s.climb.empty() && !(s.walking && !s.walk.empty()) && !s.animation.empty() ? &anim : nullptr, at);
