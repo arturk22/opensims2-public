@@ -537,3 +537,15 @@ Relato do jogador (Estranhópolis): "entrei numa casa e não tinha Sim dentro; a
 | O plumbob | **corrigido**: reproduzido sem tela (`--lot N002_Lot23 --vm --ui live --screenshot`). Os dois `PlumbBob` do lote estão fora do mundo (salvos em (0, 0) sem slot, a vista de objetos não os desenha), mas o Main deles toca `o-plumbob-spin` e o app criava um ator de objeto para ele na posição salva, (0, 0, 0): o canto do lote, sem ninguém para escondê-lo. Agora um objeto que a vista não desenha não ganha ator (`r20-strangesim-antes.jpg`, `-depois.jpg`) |
 | Outros lotes | o mesmo plumbob em 44 lotes desocupados de N001–N003 (86 `PlumbBob`, nenhum outro objeto; os outros 4 sem família não os têm); nos 14 habitados todos os Sims carregam e aparecem (Sims postos pelo app = Sims da VM; capturas de N002 e N003_Lot52 com os Sims e o plumbob na cabeça) |
 | Na janela | não conferido ao vivo (a correção é só do desenho; o caminho sem tela é o mesmo `startSimulation`) |
+
+# Rodada 20, a rodovia Nowhere (r20-nowhere)
+
+Relato do jogador (27.png contra o jogo, 28.png): "atenção no telhado da casa cheia de telhado". Lote `N002_Lot31` (Estranhópolis, comunitário).
+
+| Item | Resultado |
+|------|-----------|
+| Telhado em serra (5 telhados de uma água no nível 1) | **corrigido**: as faces altas são paredes de sótão (tipo 3) com 2 janelas "2 Tile - Loft" cada; o recorte de portas/janelas só valia para paredes normais (o vidro ficava atrás da parede) e a face sobre o telhado de baixo era luz do sótão (escura). Agora recortadas e iluminadas como fora (inferido). `r20-nowhere-antes.jpg`, `-depois.jpg` |
+| Janelas dos outros prédios, plumbobs, "papéis" fora do lote | não reproduzido com o `main` atual (`--lot`, `--hood N002 --hood-lot 31 --ui live`, 12000 ticks rodando, e na janela com `OS2_LIVE_SHOT`, `r20-nowhere-janela.jpg`): janelas no prédio branco, lanchonete e banheiros, nenhum plumbob. A captura do jogador (20:48) é anterior ao `r20-strangesim` (20:50) |
+| Regressões | N001_Lot68, N001_Lot11, N002_Lot10: iguais ao `main` sem tela (só o balanço das árvores muda) |
+| Ferramenta | `--key walls-<0..3>` (modo de paredes sem tela) |
+| Sobras | sem terreno do bairro em volta; topo da serra marrom (no jogo, claro); vidro mais transparente |
