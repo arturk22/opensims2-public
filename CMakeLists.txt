@@ -406,4 +406,8 @@ set_tests_properties(buy_place PROPERTIES PASS_REGULAR_EXPRESSION "buy place: ok
 # rolled and open papers, never two at once, and the open one plays its own animations (tests/newspaper_read.sh).
 add_test(NAME newspaper_read COMMAND sh ${CMAKE_SOURCE_DIR}/tests/newspaper_read.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/newspaper_read)
 set_tests_properties(newspaper_read PROPERTIES PASS_REGULAR_EXPRESSION "newspaper read: ok" TIMEOUT 300)
+# With the game's data: the invited visitor walks up and rings, is greeted and comes in (N001_Lot68);
+# every door leaf of N001_Lot11 is drawn closed again (tests/front_door.sh).
+add_test(NAME front_door COMMAND sh ${CMAKE_SOURCE_DIR}/tests/front_door.sh $<TARGET_FILE:s2pkg> $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/front_door)
+set_tests_properties(front_door PROPERTIES PASS_REGULAR_EXPRESSION "front door: ok" TIMEOUT 300)
 set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "usage: opensims2")

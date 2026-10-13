@@ -34,6 +34,8 @@
 #include "vm.hpp"
 
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -132,6 +134,13 @@ Exit message(Context& c) {
         }
         if (passFilter(vm, x, filter, room, level))
             receivers.push_back(id);
+    }
+    if (std::getenv("OS2_DEBUG_MESSAGES")) {
+        std::fprintf(stderr, "t%llu message %d from %d set %d filter %d room %d level %d:", (unsigned long long)vm.ticks,
+                     msg[0], me.id, set, filter, room, level);
+        for (ObjectId id : receivers)
+            std::fprintf(stderr, " %d", id);
+        std::fprintf(stderr, "\n");
     }
     for (ObjectId id : receivers)
         deliver(c, id, msg);

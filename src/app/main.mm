@@ -7069,8 +7069,21 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                             const int r = actor->skin.skeleton.find("r_door_rot"), l = actor->skin.skeleton.find("l_door_rot");
                             if (r < 0)
                                 continue;
-                            actor->startCues(scene);
-                            const auto pose = actor->player.pose(scene);
+                            // OS2_DEBUG_DOORS=2: as drawn (the last update()'s bones, the
+                            // leaf's turn from its parent), without starting the cues here.
+                            static const bool drawn = std::string(std::getenv("OS2_DEBUG_DOORS")) == "2";
+                            std::vector<os2::Xform> pose;
+                            if (drawn) {
+                                if (actor->bones.size() != actor->skin.skeleton.bones.size())
+                                    continue;
+                                pose = actor->bones;
+                                for (size_t b = 0; b < pose.size(); ++b)
+                                    if (const int parent = actor->skin.skeleton.bones[b].parent; parent >= 0)
+                                        pose[b] = actor->bones[size_t(parent)].inverse().then(actor->bones[b]);
+                            } else {
+                                actor->startCues(scene);
+                                pose = actor->player.pose(scene);
+                            }
                             auto ang = [&](int b) { return b < 0 ? 0.0f : 2 * std::atan2(pose[size_t(b)].q.z, pose[size_t(b)].q.w) * 57.2958f; };
                             const std::pair<float, float> a{ang(r), ang(l)};
                             auto& prev = last[id];

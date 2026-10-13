@@ -1014,6 +1014,7 @@ void shapeWalk(VM& vm, Object& me, Object::Route& r, bool moving) {
     const bool floorFirst = !r.points.empty() && r.points.front().ticks == 0 && !r.points.front().portal &&
                             !r.points.front().viaPortal && r.points.front().level == level;
     int steps = 0;
+    float skip = 0; // the cut points the moved first point is past (inferred: not walked back to)
     if (floorFirst) {
         const auto& first = r.points.front();
         const float dx = first.x - at[0], dy = first.y - at[1], d = std::hypot(dx, dy);
@@ -1034,7 +1035,21 @@ void shapeWalk(VM& vm, Object& me, Object::Route& r, bool moving) {
                     clear = false;
             if (clear) {
                 out.push_back(walkPoint(q[0], q[1], level));
-                at = q;
+                // The first leg is cut from the moved point when that leg is
+                // as clear as the planned one; else (inferred) from where the
+                // Sim stands, so that the walk comes back onto the way the
+                // planner kept clear of objects: N001_Lot68's invited visitor
+                // turned and walked a leg beside her planned one into the
+                // mailbox's footprint, and her knock on the door failed with
+                // "blocked by object".
+                bool legClear = true;
+                const float qd = std::hypot(first.x - q[0], first.y - q[1]);
+                for (float u = 0; legClear && u < qd; u += 0.1f)
+                    legClear = plannerOf(vm).free(level, {q[0] + (first.x - q[0]) * u / qd, q[1] + (first.y - q[1]) * u / qd});
+                if (legClear)
+                    at = q;
+                else
+                    skip = lead;
             }
         }
     }
@@ -1045,12 +1060,15 @@ void shapeWalk(VM& vm, Object& me, Object::Route& r, bool moving) {
             const int n = int(std::floor(len / 0.2f));
             for (int k = 1; k < n; ++k) {
                 const float u = float(k) / float(n);
+                if (u * len < skip)
+                    continue;
                 out.push_back(walkPoint(at[0] + (p.x - at[0]) * u, at[1] + (p.y - at[1]) * u, level));
             }
         }
         out.push_back(p);
         at = {p.x, p.y};
         level = p.level;
+        skip = 0;
     }
     r.points = std::move(out);
     if (!floorFirst || moving || steps == 0 || locoClip(vm, me, "turnAndGo", steps))

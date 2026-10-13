@@ -341,6 +341,18 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             std::printf("\n");
     };
     std::map<vm::ObjectId, std::string> lastAnim, lastOverlays;
+    // S2PKG_FBA=text: each Find Best Interaction of anyone, its pick and the
+    // candidates whose name has the text (static score, check, score).
+    if (const char* fba = std::getenv("S2PKG_FBA"))
+        vm::autonomyObserver() = [&machine, want = std::string(fba)](const vm::AutonomyDecision& d) {
+            std::printf("  tick %llu: %d Find Best Interaction: %s", static_cast<unsigned long long>(machine.ticks), d.sim,
+                        d.best.empty() ? "nothing" : d.best.front().name.c_str());
+            for (const auto& c : d.considered)
+                if (c.name.find(want) != std::string::npos)
+                    std::printf("; %s on %d %.3e %s %.3e", c.name.c_str(), c.object, c.staticScore,
+                                !c.checked ? "unchecked" : c.passed ? "pass" : "FAIL", c.score);
+            std::printf("\n");
+        };
     std::map<vm::ObjectId, int16_t> lastAge;
     // S2PKG_PIE_ALSO="sim,object,entry,tick[;sim,object,entry,tick...]": at
     // that tick another Sim also picks that entry (the available ones,
@@ -378,10 +390,14 @@ int cmdPie(const std::filesystem::path& lotFile, const std::string& simQuery, co
             if (watch)
                 for (const auto& [oid, ob] : machine.objects())
                     if (nameOf(ob).find(watch) != std::string::npos) {
-                        char buf[96];
-                        std::snprintf(buf, sizeof buf, "(%.2f, %.2f, %d) dir %d in %d/%d", ob.position.x, ob.position.y, int(ob.position.level),
+                        char buf[128];
+                        // A Sim's room and person data 34 "Greet Status" too (a visitor: -1 not
+                        // to be greeted, 0 waiting at the door, > 0 greeted).
+                        std::snprintf(buf, sizeof buf, "(%.2f, %.2f, %d) dir %d in %d/%d%s", ob.position.x, ob.position.y, int(ob.position.level),
                                       int(ob.data[vm::objdata::Direction]), int(ob.data[vm::objdata::ContainerId]),
-                                      int(ob.data[vm::objdata::SlotNumber]));
+                                      int(ob.data[vm::objdata::SlotNumber]),
+                                      ob.person ? (" room " + std::to_string(ob.data[vm::objdata::Room]) + " greet " +
+                                                   std::to_string(ob.person->data[34])).c_str() : "");
                         if (lastAt[oid] != buf) {
                             lastAt[oid] = buf;
                             std::printf("  tick %d: %d \"%s\" at %s\n", i, oid, nameOf(ob).c_str(), buf);
