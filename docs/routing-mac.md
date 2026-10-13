@@ -464,6 +464,24 @@ rodada 13 "walking" corrigiu a leitura antiga, "velocidade v, só andando":
 ver "A saída" abaixo). A direção final é arredondada para **múltiplos de 45°**
 (`⌊h / (π/4) + 0,5⌋ · π/4`, em `+0x1c4`).
 
+**Rodada 22 (`r22-door`, inferido):** o trecho cortado a 0,2 sai do ponto
+deslocado só quando a reta dele até o primeiro ponto da rota está livre no
+planejador (fora das inflações); senão sai de onde o Sim está (os pontos de
+corte antes do deslocamento são pulados), e o andar volta para a reta que o
+planejador deixou livre. Antes, a visita convidada do N001_Lot68 virava com
+"turnAndGo-135", andava paralela ao caminho planejado 0,13 tile para o lado e
+entrava na pegada da caixa de correio (falha 15 na batida à porta).
+
+**Quem atende a porta (rodada 22, dados):** ninguém da família por conta
+própria. A visita bate ("CT - Knock on Door" da porta: campainha, mensagem 55
+aos Sims dos cômodos dos atributos 3/4 da porta, que só fazem "Look At") e
+fica com o dado de pessoa 34 "Greet Status" = 0 esperando; "Cumprimentar" (TTAB
+da pessoa, `0x2066`/`0x2067`) não tem anúncio de motivo e nunca entra no Find
+Best Interaction; o "Emitter - Be Greeted" (awareness) de quem chega a pé nasce
+com a relação 0 = 1 para todos ("já visto"), só a volta do trabalho/escola, o
+carro e o jornal o fazem com 0. O jogador cumprimenta; com o status > 0 o
+portal da porta deixa a visita passar.
+
 **Viradas** (`ComputeTurn`): o ângulo entre a direção atual e a desejada,
 normalizado em [−π, π], vira um número de passos de **45°**: enquanto
 < −40°, −1 e soma 45°; enquanto > 40°, +1 e tira 45°. Ou seja, até ±40° não
