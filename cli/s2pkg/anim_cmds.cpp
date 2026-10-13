@@ -57,6 +57,8 @@ int cmdSkeleton(const char* res, const std::string& cresName) {
         std::printf("%3zu %*s%-*s joint=%-3s local t=(%.4f %.4f %.4f) q=(%.4f %.4f %.4f %.4f)  world t=(%.4f %.4f %.4f)\n",
                     i, depth * 2, "", 28 - depth * 2, b.name.c_str(), joint, b.rest.t[0], b.rest.t[1], b.rest.t[2],
                     b.rest.q.x, b.rest.q.y, b.rest.q.z, b.rest.q.w, world[i].t[0], world[i].t[1], world[i].t[2]);
+        if (b.orient.w < 0.99999f)
+            std::printf("    joint orientation q=(%.4f %.4f %.4f %.4f)\n", b.orient.x, b.orient.y, b.orient.z, b.orient.w);
     }
     // Skinned parts: bone ids used, their bones, and how well the GMDC bind
     // poses match the skeleton's rest pose.

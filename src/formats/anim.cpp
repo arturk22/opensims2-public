@@ -290,8 +290,10 @@ std::vector<Xform> samplePose(const Animation::Target& target, const Skeleton& s
         if (c.isDelta())
             continue;
         Xform& x = pose[size_t(bone)];
+        // The key turned by the joint's orientation (the clavicles' twist):
+        // the rest pose is orient * the bind key (inferred from the data).
         if (c.attribute() == Animation::Rotation && c.type() == Animation::EulerRotation)
-            x.q = quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
+            x.q = skeleton.bones[size_t(bone)].orient * quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
         else if (c.attribute() == Animation::Translation && c.type() == Animation::TransformXYZ)
             x.t = {v[0], v[1], v[2]};
     }

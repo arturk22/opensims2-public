@@ -1130,7 +1130,36 @@ static void testCarryOverlaysKeepWalkUpright() {
     check(worst < 0.01f, "carry overlays leave the walking body upright (pelvis, spine, head and feet as the walk's)");
 }
 
+// With the game's data (OS2_DATA): the clavicles' joint orientation (their
+// cBoneDataExtension, a 14 degree twist) turns the animations' keys: in the
+// bare standing idle the arms hang straight with the hands beside the
+// thighs, a little ahead of the shoulders (playtest 30.png), not 8 cm
+// behind them as with the raw keys.
+static void testIdleArmsHangForward() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    const ObjectModel adult = loadObjectModel(index, "auskel_cres");
+    const int lc = adult.skeleton.find("l_clavicle"), lu = adult.skeleton.find("l_upperarm"),
+              lh = adult.skeleton.find("l_hand"), ru = adult.skeleton.find("r_upperarm"), rh = adult.skeleton.find("r_hand"),
+              pelvis = adult.skeleton.find("pelvis");
+    if (lc < 0 || lu < 0 || lh < 0 || ru < 0 || rh < 0 || pelvis < 0)
+        return;
+    check(std::abs(adult.skeleton.bones[size_t(lc)].orient.x + 0.1219f) < 0.001f, "clavicle joint orientation read");
+    SimActor sim{SkinnedModel(adult.skeleton)};
+    sim.player.play(sim.animation(index, "a-idle-neutral-armsSide-wtC-breatheLoop"), 0, {.fade = 0, .loop = true});
+    sim.update(0.1);
+    for (auto [u, h] : {std::pair{lu, lh}, std::pair{ru, rh}}) {
+        const float ahead = sim.bones[size_t(h)].t[1] - sim.bones[size_t(u)].t[1];
+        const float down = sim.bones[size_t(u)].t[2] - sim.bones[size_t(h)].t[2];
+        check(ahead > 0.02f && ahead < 0.12f && down > 0.5f, "idle hand hangs a little ahead of the shoulder");
+        check(sim.bones[size_t(h)].t[1] > sim.bones[size_t(pelvis)].t[1] - 0.02f, "idle hand not behind the hips");
+    }
+}
+
 int main() {
+    testIdleArmsHangForward();
     testCarryOverlaysKeepWalkUpright();
     testDiningChairCycle();
     testHeldLayersCollapse();

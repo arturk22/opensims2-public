@@ -1,5 +1,7 @@
 #include "skeleton.hpp"
 
+#include "scenegraph.hpp"
+
 #include <cctype>
 #include <optional>
 
@@ -51,6 +53,15 @@ Skeleton Skeleton::fromCres(const Rcol& cres, bool withShapes) {
         bone.rest = Xform{t.rotation, t.translation};
         bone.joint = t.jointReference == 0x7FFFFFFF ? -1 : t.jointReference;
         bone.block = block;
+        for (const auto& e : t.tree.graph.extensions)
+            if (e.index < n && cres.blocks[e.index].className == "cBoneDataExtension") {
+                try {
+                    const BoneDataExtension x = BoneDataExtension::parse(cres.blocks[e.index].body);
+                    if (x.version >= 4)
+                        bone.orient = normalized(x.rotation);
+                } catch (const FormatError&) {
+                }
+            }
         const int self_index = int(s.bones.size());
         s.bones.push_back(std::move(bone));
         for (const auto& c : t.children)

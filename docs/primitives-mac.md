@@ -1413,6 +1413,22 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   camada lê para o IK recebem os deltas que o outlet tomou (as quicadas no
   sofá, `*_handcontrol1`/`*_ikctr` delta, mexem nas mãos e pés do sentado).
   Testes: `test_anim` "testDeltaChannels", "testDeltaIk".
+- **Orientação de junta do osso** (rodada 20, ramo `r20-arms`; regra tirada
+  dos dados, inferida, não lida no binário): o `cBoneDataExtension` v4 de um
+  nó do CRES traz uma rotação (`cBoneDataExtension::JointOrientation`). No
+  `auskel` e no `puskel` só as clavículas (−14° em X, uma torção ao longo do
+  osso) e a base dos polegares (45°) têm uma; no `cuskel` as clavículas
+  (−10°), no `buskel` o pescoço. A pose de repouso do CRES é `orientação ×
+  chave` (clavícula: `qx(−14°) · qz(∓90°)`, e as animações chaveiam só
+  `z = ∓90`, `x ≈ 0`), então a chave de rotação de um canal-base vira
+  `local = orientação × Euler XYZ` (`samplePose`). Sem isso os braços de
+  todas as poses ficavam 14° para trás (no idle em pé a mão 8 cm atrás do
+  ombro, atrás da coxa; "mãos nas costas" no balcão, playtests 16/30.png);
+  com ela a mão fica ao lado da coxa, 6 cm à frente do ombro, como no jogo.
+  `OS2_DEBUG_POSES`, 15000 ticks: N001_Lot68 1318 → 632 quadros com a mão
+  atrás das costas (sobram golpes do tapa, danças, pegar do chão e da mesa de
+  centro), N002_Lot4 95 → 17. `s2pkg skeleton` mostra as orientações. Teste
+  `test_anim` "testIdleArmsHangForward". `docs/screenshots/r20-arms-antes-depois.jpg`.
 - **Onde fica o quadro da animação**: na fila de coreografia. A posição e a
   direção "globais" do objeto animado são as do osso raiz da fila
   (`GlobalRootTransPosition`, `GlobalRootRotHeading`: o vetor +Y do osso

@@ -21,6 +21,11 @@ struct Skeleton {
         Xform rest;       // local transform in the rest (bind) pose
         int joint = -1;   // jointReference, -1 if none
         size_t block = 0; // CRES block index
+        // The joint orientation of the node's cBoneDataExtension (identity
+        // if none): an animation's rotation key is turned by it, local =
+        // orient * key. Only the clavicles (a 14 degree twist on auskel,
+        // 10 on cuskel), the thumbs' base (45) and the baby's neck carry one.
+        Quat orient;
     };
 
     std::string name; // CRES resource name
