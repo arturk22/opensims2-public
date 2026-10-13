@@ -246,3 +246,40 @@ std::optional<std::array<float, 4>> DrawnWindows::find(uint32_t window, uint32_t
 }
 
 } // namespace os2
+
+namespace os2 {
+
+AgeMeter ageMeter(int stage, int daysLeft, int duration) {
+    AgeMeter m;
+    uint32_t base = 0;
+    switch (stage) {
+    case 0x02: base = 46; break; // toddler
+    case 0x03: base = 45; break; // child
+    case 0x10: base = 44; break; // teen
+    case 0x13: base = 43; break; // adult
+    case 0x33: base = 51; break; // elder
+    default: return m;           // baby (or nothing): no meter
+    }
+    m.shown = true;
+    const int total = std::max(duration, 0), lived = std::clamp(total - std::max(daysLeft, 0), 0, total);
+    m.fraction = total > 0 ? float(lived) / float(total) : 0.0f;
+    if (stage == 0x33) {
+        m.days = lived;
+        m.string = base + 1;
+    } else {
+        m.days = std::max(daysLeft, 0);
+        m.string = m.days == 1 ? base + 4 : base;
+    }
+    return m;
+}
+
+RgbaImage progressFill(const RgbaImage& full, float fraction) {
+    RgbaImage out = full;
+    const uint32_t keep = uint32_t(std::lround(std::clamp(fraction, 0.0f, 1.0f) * float(full.width)));
+    for (uint32_t y = 0; y < out.height; ++y)
+        for (uint32_t x = keep; x < out.width; ++x)
+            out.pixels[(size_t(y) * out.width + x) * 4 + 3] = 0;
+    return out;
+}
+
+} // namespace os2

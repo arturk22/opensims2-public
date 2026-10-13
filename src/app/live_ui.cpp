@@ -35,6 +35,9 @@ constexpr std::array<uint32_t, 5> kSubButtons = {0x0D8AB291, 0x17DEFBF5, 0x57DEF
 // Person data: aspiration (46, a bit: 1 romance, 2 family, 4 fortune, 16
 // popularity, 32 knowledge, 64 grow up; SimPE's names) and its score (160).
 constexpr int kPdAspiration = 46, kPdAspirationScore = 160;
+// Age days left (91) and age duration (156): the age meter's data.
+constexpr int kPdAgeDaysLeft = 91, kPdAgeDuration = 156;
+constexpr uint32_t kAgesTooltip = 0xAD8A9F10; // the meter's tooltip button
 // Live panel placements (inferred): the mood meter group after the front
 // cap (316 + 13), the needs panel's background after the group (its mood
 // box ends at +87), 347 px wide.
@@ -365,6 +368,7 @@ UiScreen LiveUi::screen(int width, int height) {
     frameImages_.clear();
     callbacks_.clear();
     tips_.clear();
+    ageMeter_ = {};
     if (!ok_)
         return out;
     const vm::Object* sim = vm_->object(sim_);
@@ -463,6 +467,16 @@ UiScreen LiveUi::screen(int width, int height) {
             for (const auto& [prefix, id] : ages)
                 if (const UiElement* e = findIn(live, id))
                     (prefix == age ? hk.show : hk.hide).insert(e);
+            // Its progress bar: the fill cut at the share of the stage lived.
+            ageMeter_ = ageMeter(sim->person->data[vm::persondata::PersonAge],
+                                 sim->person->data[kPdAgeDaysLeft], sim->person->data[kPdAgeDuration]);
+            if (ageMeter_.shown)
+                if (const UiElement* e = findIn(live, ages.at(age)))
+                    if (const UiElement* bar = e->child(1))
+                        if (const UiElement* fillWin = bar->child(3))
+                            if (auto ref = uiResourceRef(fillWin->get("image")))
+                                if (const RgbaImage* full = res_->image(*ref))
+                                    hk.images[fillWin] = keep(progressFill(*full, ageMeter_.fraction));
             // The mood meter (motive 3, docs/ui-live-mac.md §4.1).
             if (const UiElement* m = findIn(live, 0x49064803))
                 fill(*m, float(sim->person->motives[vm::motive::Mood]), hk);
@@ -491,6 +505,15 @@ UiScreen LiveUi::screen(int width, int height) {
                 if (panels_ && (i == 0 || panels_->ok(LivePanels::Panel(i))))
                     target(holder->child(kSubButtons[i]), Action::SubPanel, int(i));
         target(findIn(live, 0x4BDEFFA4), Action::Centre, sim_);
+        // The age meter's tooltip: "Teenager (Becomes an Adult in %d days)".
+        if (ageMeter_.shown && sim && sim->person)
+            if (auto r = rectOf(findIn(live, kAgesTooltip)))
+                if (auto fmt = res_->string({0x7F96C284, 0x83, ageMeter_.string}); fmt && !fmt->empty()) {
+                    std::string text = *fmt;
+                    if (auto at = text.find("%d"); at != std::string::npos)
+                        text.replace(at, 2, std::to_string(ageMeter_.days));
+                    tips_.push_back({*r, text});
+                }
         // Clicking the mood meter shows the mood popup 500 ms later, on the
         // anchor window 0x4906480D of the collapsed variant (§4.1).
         if (const UiElement* mb = findIn(live, 0x49064809))

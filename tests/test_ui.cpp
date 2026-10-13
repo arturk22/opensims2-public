@@ -583,7 +583,29 @@ static void testPanelUtil() {
     check(gradientFill(grad, mask, 0, -100, 100, false).pixels[0] == 7, "gradient fill: row round(3 * 0.5) = 2");
 }
 
+static void testAgeMeter() {
+    // A teen with 10 of 20 days left: half the bar, string 44 with 10 days.
+    auto m = ageMeter(0x10, 10, 20);
+    check(m.shown && m.string == 44 && m.days == 10 && std::fabs(m.fraction - 0.5f) < 1e-6f, "teen mid-stage");
+    m = ageMeter(0x13, 1, 25); // adult, one day left: the "1 day" string
+    check(m.string == 47 && m.days == 1 && m.fraction > 0.95f, "adult one day left");
+    check(ageMeter(0x02, 25, 25).string == 46 && ageMeter(0x02, 25, 25).fraction == 0, "toddler just started");
+    check(ageMeter(0x02, 1, 25).string == 50 && ageMeter(0x03, 3, 25).string == 45, "toddler/child strings");
+    m = ageMeter(0x33, 10, 40); // elder: days lived in the stage
+    check(m.string == 52 && m.days == 30, "elder days lived");
+    check(!ageMeter(0x01, 5, 5).shown, "baby has no meter");
+    m = ageMeter(0x13, 50, 25); // days left above the duration: clamped
+    check(m.fraction == 0 && m.days == 50, "clamped");
+    m = ageMeter(0x13, -3, 0);
+    check(m.fraction == 0 && m.days == 0, "zero duration");
+    RgbaImage img;
+    img.width = 4, img.height = 1, img.pixels.assign(16, 255);
+    const RgbaImage cut = progressFill(img, 0.5f);
+    check(cut.pixels[3] == 255 && cut.pixels[7] == 255 && cut.pixels[11] == 0 && cut.pixels[15] == 0, "progress cut");
+}
+
 int main() {
+    testAgeMeter();
     testPanelUtil();
     testConstants();
     testScript();

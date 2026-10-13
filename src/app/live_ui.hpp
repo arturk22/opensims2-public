@@ -232,6 +232,7 @@ private:
     std::unique_ptr<LivePanels> panels_;
     int subPanel_ = 0;
     std::vector<std::function<void()>> callbacks_;          // Action::Callback targets of the current screen
+    AgeMeter ageMeter_; // the selected Sim's age meter (this frame)
     std::vector<std::pair<std::array<float, 4>, std::string>> tips_; // tooltips of the current screen
     int tip_ = -1;                                          // the one under the mouse
     // Tooltip timing (cGZWinToolTipMgr, docs/ui-live-mac.md §7.6): shown

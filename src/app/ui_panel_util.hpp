@@ -66,6 +66,24 @@ RgbaImage gradientFill(const RgbaImage& gradient, const RgbaImage& mask, float v
 // its divisions (equal widths), the rest transparent.
 RgbaImage segmentFill(const RgbaImage& full, float value, float max, int divisions);
 
+// The age meter of the live panel (script 0x49060005, "Ages" container):
+// the Sim's person data 91 (Age Days Left) and 156 (Age Duration) give the
+// progress bar's fill (the share of the stage already lived) and the text
+// of the tooltip (STR# 0x83 of Live.package, string numbers from 0: 43 adult,
+// 44 teen, 45 child, 46 toddler "... in %d days", 47-50 the same for 1 day,
+// 51 elder "is %d days old", 52 elder "has been an Elder for %d days").
+// Baby has no meter. Inferred: the elder's days = duration - days left.
+struct AgeMeter {
+    bool shown = false;
+    float fraction = 0;  // 0..1, the progress bar's fill
+    int days = 0;        // the number in the tooltip's text
+    uint32_t string = 0; // STR# 0x83 string number (0-based, valid if shown)
+};
+// stage: person data 58 (0x02 toddler, 0x03 child, 0x10 teen, 0x13 adult, 0x33 elder).
+AgeMeter ageMeter(int stage, int daysLeft, int duration);
+// The picture cut at fraction of its width (the rest transparent).
+RgbaImage progressFill(const RgbaImage& full, float fraction);
+
 // The UI sound a button's script names: btnclicksnd={0,0xFFxxxxxx} keeps
 // the CRC24 of the name (as the resource index keys sounds); the name from
 // the executable's ui_* names (docs/ui-live-mac.md §7.7). Empty if none.
