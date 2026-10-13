@@ -549,3 +549,16 @@ Relato do jogador (27.png contra o jogo, 28.png): "atenção no telhado da casa 
 | Regressões | N001_Lot68, N001_Lot11, N002_Lot10: iguais ao `main` sem tela (só o balanço das árvores muda) |
 | Ferramenta | `--key walls-<0..3>` (modo de paredes sem tela) |
 | Sobras | sem terreno do bairro em volta; topo da serra marrom (no jogo, claro); vidro mais transparente |
+
+# Rodada 20, o fosso da piscina (r20-pit)
+
+Relato do jogador (29.png, `N002_Lot31` dentro do prédio em serra): "Essa piscina é assim mesmo?" e "No jogo original esse subir um andar e descer um andar vai em tantas camadas assim? Ou só em andar andável?"
+
+| Item | Resultado |
+|------|-----------|
+| Fosso de terra em volta da piscina | **é do lote**: o terreno do nível 0 está rebaixado a −1,875 (pontos x 22–36, y 32–34), os tiles x 21–36, y 31–34 não têm piso, e a pintura `terrain-cliff` está gravada no lote nesses lados (não é a saia nem o corte do chão do `r20-underground`); a piscina (6x2, nível −1, paredes de −4,875 a −1,875) fica no fundo, com grades e a escada descendo. O jogo desenha o mesmo terreno pintado |
+| Vigas claras/escuras atravessando a sala | **corrigido**: eram as paredes de sótão da serra (nível 1, z 3–6) cortadas (ambos os lados no sótão). Como os outros prédios do lote estão em fundação, o térreo é mostrado com o nível 1 (`WallView::shownLevel`) e todo o nível 1 vinha junto. Agora essa vista só deixa as partes do nível 1 que não são um andar sobre o chão (piso exatamente 3 acima do nível de baixo nos 4 cantos do tile; paredes de sótão também sobre o fosso; inferido). `r20-pit-antes.jpg`, `-depois.jpg`, na janela `r20-pit-janela.jpg` |
+| Page Down | **corrigido**: do térreo ia ao nível −1 (o da piscina) e mostrava só o terreno (`r20-pit-andar-abaixo-antes.jpg`, `-depois.jpg`); agora para no térreo (vivo, Construir e Comprar) |
+| A pergunta dos andares | no N002_Lot31 o nosso passa por: térreo (com o nível 1 das fundações), 2, 3 e 4. Os níveis 2–4 têm piso de verdade (154, 40 e 6 tiles: 2º andar e terraço do prédio rosa, torre da igreja com o campanário), então são andares andáveis; o único nível vazio era o −1, agora pulado. As camadas da imagem não eram andares: eram as paredes do sótão de um andar só, que o jogo não mostra no térreo. O limite exato do jogo (`cTSMainToolbar::SetCurrentLevel`) não foi lido no binário |
+| Regressões | N001_Lot68, N001_Lot11, N003_Lot183, N001_Lot82, N002_Lot3: idênticos byte a byte ao `main` sem tela; N001_Lot79: o banheiro do parque perde as empenas soltas no ar (`r20-pit-lot79-antes.jpg`, `-depois.jpg`); dos lotes de N001–N003 só o 79 e o 31 mudam |
+| Não conferido | teclas Page Up/Down na janela (o caminho sem tela é o mesmo `changeFloor`) |
