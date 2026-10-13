@@ -1045,5 +1045,29 @@ Teste `censor` (caixas por flag, homem/mulher, cabelo fora, retângulo na
 tela; com `OS2_DATA` o Joe nu tem uma caixa nos quadris e vestido nenhuma).
 Capturas: `docs/screenshots/r21-censor-antes.jpg` e `-depois.jpg` (Joe no
 chuveiro do tutorial), `-banheira.jpg` (Mary-Sue em `N001_Lot68`, na
-banheira e já vestida). Falta: a censura no reflexo do espelho
-(`kRenderTypeCensorInMirror`).
+banheira e já vestida).
+
+**No espelho** (rodada 22, `r22-leftovers`). O `Materials.package`
+(`mirrors.matShad` e `config.matShad`) diz como o jogo faz: o render type
+`kRenderTypeCensorInMirror` (10) existe, as camadas ±99998 do material do
+espelho "são referenciadas pelo código C++ para o render da censura no
+espelho", e o `CensorInMirrorStencilPrepMaterial` (`SetStencilOnCensorRTT`:
+um retângulo em tela cheia que põe o stencil em 1 no alvo da censura)
+prepara o alvo da censura vista pelo espelho, cujo teste de stencil é
+`acceptIfEqual 1` (o `defaultState kRenderTypeMirror`). Ou seja, a mesma
+estratégia de censura roda também com a câmera refletida: as caixas do Sim
+são projetadas pela vista do espelho, o retângulo é desenhado de novo em
+8 × 8 texels e copiado de volta por cima do reflexo. No app (`Renderer::
+encodeFrame`): depois do passe do reflexo, `censorRects(rf->viewProj)` acha os
+retângulos das mesmas caixas na vista refletida (enrolamento invertido, plano
+de corte do espelho), `censorTiles` os refaz em 8 × 8 e `censorComposite`
+desenha os quadrados no alvo `ScreenReflection` com teste de profundidade
+contra a profundidade do próprio reflexo (que agora é guardada); o quad do
+espelho no passe normal mostra então o reflexo já censurado. Os ladrilhos
+da vista refletida usam os quadros `2 + kMaxCensorBoxes ...` do buffer de
+quadros. `OS2_NO_MIRROR_CENSOR=1` desliga só a do espelho e
+`OS2_FORCE_CENSOR=<flags>` põe essas flags em todos os Sims (auxílios de
+teste; a captura usa o piso do espelho do `N001_Lot68`, o Daniel em
+"Praticar Discurso"). Captura antes/depois: `docs/screenshots/
+r22-censor-espelho.jpg` (a faixa pixelada sob o casaco do reflexo, à direita).
+Teste `censor` ("the reflected view's rectangle is the mirrored one").

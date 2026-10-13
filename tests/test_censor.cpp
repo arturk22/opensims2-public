@@ -125,6 +125,17 @@ static void testScreenRect() {
     simd_float4x4 behind = matrix_identity_float4x4;
     behind.columns[3][3] = -1; // w < 0
     check(!Renderer::censorRect(box, behind, 100, 100), "a box behind the eye has none");
+    // In a mirror (kRenderTypeCensorInMirror): the same box seen by the
+    // reflected camera (view * R, R = I - 2 n n^T for the plane x = 0) is
+    // projected to the mirrored rectangle.
+    simd_float4x4 refl = matrix_identity_float4x4;
+    refl.columns[0][0] = -1;
+    Renderer::CensorBox side{simd_make_float3(0.1f, -0.5f, 0.2f), simd_make_float3(0.5f, 0.25f, 0.4f)};
+    auto direct = Renderer::censorRect(side, vp, 100, 100);
+    auto mirrored = Renderer::censorRect(side, simd_mul(vp, refl), 100, 100);
+    check(direct && mirrored && direct->x0 == 55 && direct->x1 == 75 && mirrored->x0 == 25 && mirrored->x1 == 45 &&
+              mirrored->y0 == direct->y0 && mirrored->y1 == direct->y1,
+          "the reflected view's rectangle is the mirrored one");
 }
 
 // With the game's data (OS2_DATA): the tutorial's Joe, naked, gets one box

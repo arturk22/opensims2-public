@@ -3145,7 +3145,8 @@ void choosePlumbob(os2::Renderer& renderer) {
 // follow the posed body and go when the flags are cleared (the shower's and
 // the tub's trees set and clear them around the naked outfit).
 // OS2_DEBUG_CENSOR=1 prints each Sim's flags and boxes when they change;
-// OS2_NO_CENSOR=1 draws none (test aid: before/after shots).
+// OS2_NO_CENSOR=1 draws none and OS2_FORCE_CENSOR=<flags> sets the flags of
+// every Sim (test aids: before/after shots).
 void updateCensor(os2::Renderer& renderer) {
     std::vector<os2::Renderer::CensorBox> boxes;
     static std::map<int16_t, std::string> lastReport;
@@ -3157,7 +3158,9 @@ void updateCensor(os2::Renderer& renderer) {
             const os2::vm::Object* o = m.object(id);
             if (!actor || !o || !o->person || !gObjectView->shown(id))
                 continue;
-            const uint16_t flags = uint16_t(o->person->data[size_t(os2::censor::kPersonData)]);
+            static const char* forced = std::getenv("OS2_FORCE_CENSOR"); // test aid: these flags for every Sim
+            const uint16_t flags = forced ? uint16_t(std::strtoul(forced, nullptr, 0))
+                                          : uint16_t(o->person->data[size_t(os2::censor::kPersonData)]);
             const bool female = o->person->data[65] == 1; // Gender (STR# 0xC8)
             const auto found = os2::censorBoxes(*actor, flags, female);
             for (const auto& b : found)

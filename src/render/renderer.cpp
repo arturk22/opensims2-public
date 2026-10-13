@@ -419,7 +419,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     whiteCube_ = whiteCubeTexture(device_);
     grey_ = rgbaTexture(RgbaImage{1, 1, {128, 128, 128, 255}});
     for (auto& f : frames_)
-        f = device_->newBuffer((2 + kMaxCensorBoxes) * kFrameStride, MTL::ResourceStorageModeShared);
+        f = device_->newBuffer((2 + 2 * kMaxCensorBoxes) * kFrameStride, MTL::ResourceStorageModeShared);
     for (auto& b : lightBuffers_)
         b = device_->newBuffer(sizeof(GpuLightSet) * kMaxLightSets, MTL::ResourceStorageModeShared);
 
@@ -1219,6 +1219,88 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         }
     };
 
+    // The censor: each box's rectangle rendered again into its tile of
+    // kCensorBlocks x kCensorBlocks texels (RenderPartPtrs ->
+    // SelectAndClearSurfaces, RenderGeometryForCensor). Run for the view and,
+    // when a mirror reflects, for the reflected view too (kRenderTypeCensorInMirror:
+    // the mirror's reflection of a nude Sim is pixelated the same way).
+    using Censored = std::vector<std::pair<CensorRect, int>>;
+    auto censorRects = [&](const simd_float4x4& viewProj) {
+        Censored out;
+        if (target)
+            for (const CensorBox& box : censorBoxes_) {
+                if (out.size() >= size_t(kMaxCensorBoxes))
+                    break;
+                if (auto r = censorRect(box, viewProj, targetW, targetH))
+                    out.push_back({*r, int(out.size())});
+            }
+        return out;
+    };
+    // `src`: the Frame of the view (0 or 1); the tiles use frame slots from `firstSlot`.
+    auto censorTiles = [&](const Censored& list, const Frame& src, size_t firstSlot, MTL::Winding winding) {
+        if (list.empty())
+            return;
+        if (!censorColor_) {
+            MTL::TextureDescriptor* cd = MTL::TextureDescriptor::texture2DDescriptor(
+                MTL::PixelFormat(colorFormat_), kCensorBlocks * kMaxCensorBoxes, kCensorBlocks, false);
+            cd->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+            cd->setStorageMode(MTL::StorageModePrivate);
+            censorColor_ = device_->newTexture(cd);
+            MTL::TextureDescriptor* dd = MTL::TextureDescriptor::texture2DDescriptor(
+                MTL::PixelFormat(depthFormat_), kCensorBlocks * kMaxCensorBoxes, kCensorBlocks, false);
+            dd->setUsage(MTL::TextureUsageRenderTarget);
+            dd->setStorageMode(MTL::StorageModePrivate);
+            censorDepth_ = device_->newTexture(dd);
+        }
+        MTL::RenderPassDescriptor* cp = MTL::RenderPassDescriptor::renderPassDescriptor();
+        auto* ca = cp->colorAttachments()->object(0);
+        ca->setTexture(censorColor_);
+        ca->setLoadAction(MTL::LoadActionClear);
+        ca->setStoreAction(MTL::StoreActionStore);
+        ca->setClearColor(pass->colorAttachments()->object(0)->clearColor());
+        cp->depthAttachment()->setTexture(censorDepth_);
+        cp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+        cp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+        cp->depthAttachment()->setClearDepth(1.0);
+        MTL::RenderCommandEncoder* cenc = cmd->renderCommandEncoder(cp);
+        cenc->setFrontFacingWinding(winding);
+        for (const auto& [r, i] : list) {
+            // Clip space of the view -> the rectangle filling the tile.
+            const float sx = 2 / (r.nx1 - r.nx0), sy = 2 / (r.ny1 - r.ny0);
+            simd_float4x4 crop = matrix_identity_float4x4;
+            crop.columns[0][0] = sx;
+            crop.columns[1][1] = sy;
+            crop.columns[3][0] = -(r.nx1 + r.nx0) / (r.nx1 - r.nx0);
+            crop.columns[3][1] = -(r.ny1 + r.ny0) / (r.ny1 - r.ny0);
+            auto* cf = reinterpret_cast<Frame*>(static_cast<char*>(frames_[frame_]->contents()) + (firstSlot + size_t(i)) * kFrameStride);
+            *cf = src;
+            cf->viewProj = simd_mul(crop, src.viewProj);
+            cf->viewport = simd_make_float4(kCensorBlocks, kCensorBlocks, src.viewport.z, src.viewport.w);
+            cenc->setViewport(MTL::Viewport{double(i * kCensorBlocks), 0.0, double(kCensorBlocks), double(kCensorBlocks), 0.0, 1.0});
+            drawItems(cenc, src.viewport.z > 0.5f, cf->viewProj, firstSlot + size_t(i));
+        }
+        cenc->endEncoding();
+    };
+    // The compositing quads (CensorMaterial, after the transparent parts;
+    // layer -1 keeps it out of its own render).
+    auto censorComposite = [&](MTL::RenderCommandEncoder* e, const Censored& list) {
+        e->setRenderPipelineState(censor_);
+        e->setDepthStencilState(depthRead_);
+        e->setCullMode(MTL::CullModeNone);
+        e->setFragmentTexture(censorColor_, 0);
+        e->setFragmentSamplerState(pointSampler_, 0);
+        const float tile = 1.0f / float(kMaxCensorBoxes);
+        for (const auto& [r, i] : list) {
+            struct {
+                simd_float4 rect, uvRect, target;
+            } q{simd_make_float4(float(r.x0), float(r.y0), float(r.x1), float(r.y1)),
+                simd_make_float4(float(i) * tile, 0, float(i + 1) * tile, 1),
+                simd_make_float4(float(targetW), float(targetH), r.depth, 0)};
+            e->setVertexBytes(&q, sizeof q, 0);
+            e->drawPrimitives(MTL::PrimitiveTypeTriangleStrip, NS::UInteger(0), NS::UInteger(4));
+        }
+    };
+
     if (mirror) {
         // The reflected frame: world -> mirrored world -> the camera.
         const simd_float3 n = simd_make_float3(plane);
@@ -1259,90 +1341,38 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         ca->setClearColor(pass->colorAttachments()->object(0)->clearColor());
         rp->depthAttachment()->setTexture(reflectionDepth_);
         rp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
-        rp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+        rp->depthAttachment()->setStoreAction(censorBoxes_.empty() ? MTL::StoreActionDontCare : MTL::StoreActionStore);
         rp->depthAttachment()->setClearDepth(1.0);
         MTL::RenderCommandEncoder* renc = cmd->renderCommandEncoder(rp);
         renc->setFrontFacingWinding(MTL::WindingClockwise); // the reflection turns the windings around
         drawItems(renc, true, rf->viewProj, 1);
         renc->endEncoding();
+        // The reflection of a nude Sim is censored in the reflected view.
+        const Censored inMirror = std::getenv("OS2_NO_MIRROR_CENSOR") ? Censored{} : censorRects(rf->viewProj);
+        if (!inMirror.empty()) {
+            censorTiles(inMirror, *rf, size_t(2 + kMaxCensorBoxes), MTL::WindingClockwise);
+            MTL::RenderPassDescriptor* mp = MTL::RenderPassDescriptor::renderPassDescriptor();
+            auto* mc = mp->colorAttachments()->object(0);
+            mc->setTexture(reflectionColor_);
+            mc->setLoadAction(MTL::LoadActionLoad);
+            mc->setStoreAction(MTL::StoreActionStore);
+            mp->depthAttachment()->setTexture(reflectionDepth_);
+            mp->depthAttachment()->setLoadAction(MTL::LoadActionLoad);
+            mp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+            MTL::RenderCommandEncoder* menc = cmd->renderCommandEncoder(mp);
+            censorComposite(menc, inMirror);
+            menc->endEncoding();
+        }
     }
 
-    // The censor: each box's rectangle rendered again into its tile of
-    // kCensorBlocks x kCensorBlocks texels (RenderPartPtrs ->
-    // SelectAndClearSurfaces, RenderGeometryForCensor).
-    std::vector<std::pair<CensorRect, int>> censored;
-    if (target)
-        for (const CensorBox& box : censorBoxes_) {
-            if (censored.size() >= size_t(kMaxCensorBoxes))
-                break;
-            if (auto r = censorRect(box, f->viewProj, targetW, targetH))
-                censored.push_back({*r, int(censored.size())});
-        }
-    if (!censored.empty()) {
-        if (!censorColor_) {
-            MTL::TextureDescriptor* cd = MTL::TextureDescriptor::texture2DDescriptor(
-                MTL::PixelFormat(colorFormat_), kCensorBlocks * kMaxCensorBoxes, kCensorBlocks, false);
-            cd->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
-            cd->setStorageMode(MTL::StorageModePrivate);
-            censorColor_ = device_->newTexture(cd);
-            MTL::TextureDescriptor* dd = MTL::TextureDescriptor::texture2DDescriptor(
-                MTL::PixelFormat(depthFormat_), kCensorBlocks * kMaxCensorBoxes, kCensorBlocks, false);
-            dd->setUsage(MTL::TextureUsageRenderTarget);
-            dd->setStorageMode(MTL::StorageModePrivate);
-            censorDepth_ = device_->newTexture(dd);
-        }
-        MTL::RenderPassDescriptor* cp = MTL::RenderPassDescriptor::renderPassDescriptor();
-        auto* ca = cp->colorAttachments()->object(0);
-        ca->setTexture(censorColor_);
-        ca->setLoadAction(MTL::LoadActionClear);
-        ca->setStoreAction(MTL::StoreActionStore);
-        ca->setClearColor(pass->colorAttachments()->object(0)->clearColor());
-        cp->depthAttachment()->setTexture(censorDepth_);
-        cp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
-        cp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
-        cp->depthAttachment()->setClearDepth(1.0);
-        MTL::RenderCommandEncoder* cenc = cmd->renderCommandEncoder(cp);
-        cenc->setFrontFacingWinding(MTL::WindingCounterClockwise);
-        for (const auto& [r, i] : censored) {
-            // Clip space of the view -> the rectangle filling the tile.
-            const float sx = 2 / (r.nx1 - r.nx0), sy = 2 / (r.ny1 - r.ny0);
-            simd_float4x4 crop = matrix_identity_float4x4;
-            crop.columns[0][0] = sx;
-            crop.columns[1][1] = sy;
-            crop.columns[3][0] = -(r.nx1 + r.nx0) / (r.nx1 - r.nx0);
-            crop.columns[3][1] = -(r.ny1 + r.ny0) / (r.ny1 - r.ny0);
-            auto* cf = reinterpret_cast<Frame*>(static_cast<char*>(frames_[frame_]->contents()) + size_t(2 + i) * kFrameStride);
-            *cf = *f;
-            cf->viewProj = simd_mul(crop, f->viewProj);
-            cf->viewport = simd_make_float4(kCensorBlocks, kCensorBlocks, 0, f->viewport.w);
-            cenc->setViewport(MTL::Viewport{double(i * kCensorBlocks), 0.0, double(kCensorBlocks), double(kCensorBlocks), 0.0, 1.0});
-            drawItems(cenc, false, cf->viewProj, size_t(2 + i));
-        }
-        cenc->endEncoding();
-    }
+    const Censored censored = censorRects(f->viewProj);
+    censorTiles(censored, *f, 2, MTL::WindingCounterClockwise);
 
     MTL::RenderCommandEncoder* enc = cmd->renderCommandEncoder(pass);
     enc->setFrontFacingWinding(MTL::WindingCounterClockwise);
     drawItems(enc, false, f->viewProj, 0);
-    // The censor's compositing quads (CensorMaterial, after the transparent
-    // parts; layer -1 keeps it out of its own render).
-    if (!censored.empty()) {
-        enc->setRenderPipelineState(censor_);
-        enc->setDepthStencilState(depthRead_);
-        enc->setCullMode(MTL::CullModeNone);
-        enc->setFragmentTexture(censorColor_, 0);
-        enc->setFragmentSamplerState(pointSampler_, 0);
-        const float tile = 1.0f / float(kMaxCensorBoxes);
-        for (const auto& [r, i] : censored) {
-            struct {
-                simd_float4 rect, uvRect, target;
-            } q{simd_make_float4(float(r.x0), float(r.y0), float(r.x1), float(r.y1)),
-                simd_make_float4(float(i) * tile, 0, float(i + 1) * tile, 1),
-                simd_make_float4(float(targetW), float(targetH), r.depth, 0)};
-            enc->setVertexBytes(&q, sizeof q, 0);
-            enc->drawPrimitives(MTL::PrimitiveTypeTriangleStrip, NS::UInteger(0), NS::UInteger(4));
-        }
-    }
+    if (!censored.empty())
+        censorComposite(enc, censored);
     if (sceneHook_)
         sceneHook_(enc, view.view, f->viewProj);
     if (overlay_ && target)
