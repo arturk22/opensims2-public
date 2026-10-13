@@ -392,6 +392,14 @@ UiScreen LiveUi::screen(int width, int height) {
             return it->second;
         return std::nullopt;
     };
+    // Windows laid out from a local copy (the family column, the popup) leave
+    // the rectangles before the copy goes: the tooltips below read every
+    // window in them (the popup's stayed and crashed in UiElement::attr).
+    std::function<void(const UiElement&)> forget = [&](const UiElement& e) {
+        rects.erase(&e);
+        for (const auto& k : e.children)
+            forget(k);
+    };
     auto target = [&](const UiElement* e, Action a, int value) {
         if (auto r = rectOf(e))
             targets_.push_back({*r, a, value, e});
@@ -737,11 +745,6 @@ UiScreen LiveUi::screen(int width, int height) {
             place(column.roots.front(), puckX + float(ca[0]), puckY + float(ca[1]), ch);
             // The column is a local copy: drop its windows from the rectangles
             // (the tooltips read them after this block).
-            std::function<void(const UiElement&)> forget = [&](const UiElement& e) {
-                rects.erase(&e);
-                for (const auto& k : e.children)
-                    forget(k);
-            };
             forget(column.roots.front());
             // The thumbnails, centred on the column's middle piece.
             const RgbaImage* moodGradient = image(kMoodGradient);
@@ -1035,6 +1038,7 @@ UiScreen LiveUi::screen(int width, int height) {
             if (!popup_.texts.empty()) // the picture under the box takes clicks too
                 if (auto r = rectOf(root.child(2)))
                     solid_.push_back(*r);
+            forget(rootCopy); // a local copy, like the family column
         }
     }
 
