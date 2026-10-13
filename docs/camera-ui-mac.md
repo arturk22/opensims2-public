@@ -336,9 +336,21 @@ modificadores nos bits 24–25; botão 1 esquerdo, 2 direito, 4 do meio):
 | — | `cTSUserToolCameraHandDrag` (`0x69518882`) | pan 1:1 pelo deslocamento em pixels entre movimentos (mesmo evento `0x9B66110A`); usada quando outra parte da UI a ativa |
 | roda | `cCameraLive::FillDeviceMap` (BV `0x6a4474`): eixo da roda × 1/120 por "clique" (`0xBC17E412`, `0x9C17E415`) | zoom (§1.4) |
 
-O modificador 1 não foi identificado (o mais provável é Shift ou a tecla
-de opção do Mac, para o botão direito virar giro num mouse de dois
-botões). Num mouse de um botão o Mac manda Ctrl-clique como botão direito.
+O modificador 1 não foi identificado no binário; o tutorial ("O Básico -
+Parte Um", passo 8: "inclinar e rotacionar a câmera usando CTRL + botão
+DIREITO do mouse") diz que é o **Ctrl** (inferido do texto).
+
+**No app (rodada 21, `r21-camtilt`, `CameraMouseInput::rotatePress`):** a
+ferramenta de girar/inclinar é o botão do meio, o direito com Ctrl (ou
+Option, nosso, mantido) e o esquerdo com Ctrl sobre o lote (nosso: no
+trackpad ou num mouse de um botão o Ctrl-clique faz o papel do direito; o
+AppKit o entrega como `mouseDown` com Ctrl). O arrasto manda (dx, dy) ao
+pedido de girar (§1.4: só o eixo dominante; horizontal gira, vertical
+inclina dentro da faixa de pitch do nível). O Ctrl + esquerdo que não se
+mexe (≤ 3 pontos) é repetido como clique comum ao soltar (menu de pie); a
+UI (puck, painel do tutorial) e as ferramentas com Ctrl do modo Construir
+pegam o clique antes. Antes só o Option + direito girava: Ctrl + direito
+fazia o pan.
 
 ## 2.6 O que o clique pega (binário, `cTSWinSceneGraph::ObjectAtGameWindowPoint`, BV `0x1f876c`; rodada 14)
 
