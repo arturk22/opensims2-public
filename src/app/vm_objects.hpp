@@ -107,6 +107,10 @@ public:
     // The object whose slots hold `id`, through containers in containers
     // (itself when it is in no slot).
     int16_t outermostContainer(int16_t id) const;
+    // The Sim whose hands hold `id`: the first person up its containers
+    // (0: none). Not the outermost container: a seated Sim is itself in the
+    // chair's slot, and the paper read in the chair is still his.
+    int16_t holder(int16_t id) const;
 
     // Every object drawn here: its ID, renderer instance (-1 if none) and
     // actor (null unless the VM animates it).

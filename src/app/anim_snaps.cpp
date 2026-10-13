@@ -19,14 +19,23 @@ std::string lower(std::string s) {
     return s;
 }
 const Xform kHidden{{}, {0, 0, -1000}};
+// OS2_DEBUG_SNAPS=1 (test aid, tests/newspaper_read.sh): per drawn frame,
+// the snapped models shown in each Sim's hands and the held objects hidden.
+const bool kDebug = std::getenv("OS2_DEBUG_SNAPS") != nullptr;
 
 // A snap applied: the object's model is where it says, and nowhere else
 // (the bottle the fridge's get put in the hand as "babyBottle" is the one
-// the feeder's start snaps there again as "o2a", the a2o object).
+// the feeder's start snaps there again as "o2a", the a2o object). Sending
+// a copy to Oblivion leaves the others where they are: a2o-newspaper-read-
+// start puts the rolled paper ("newspaper") in the right hand and, at the
+// same tick, its second copy ("newspaperRoll_02", the same model) away,
+// which took the first out of the hand too: nothing was held for 2 s.
 void applySnap(std::map<std::string, AnimSnap>& state, const AnimSnap& snap) {
     const std::string model = lower(snap.model);
+    const bool away = snap.bone.empty();
     for (auto it = state.begin(); it != state.end();)
-        it = it->first != snap.object && !model.empty() && lower(it->second.model) == model ? state.erase(it) : std::next(it);
+        it = !away && it->first != snap.object && !model.empty() && lower(it->second.model) == model ? state.erase(it)
+                                                                                                    : std::next(it);
     state[snap.object] = snap;
 }
 } // namespace
@@ -122,8 +131,11 @@ void AnimSnapView::update(double now) {
             if (!m.actor)
                 continue;
             const int b = snap.bone.empty() ? -1 : s.actor->skin.skeleton.find(snap.bone);
-            if (b < 0 || size_t(b) >= s.actor->bones.size())
+            if (b < 0 || size_t(b) >= s.actor->bones.size()) {
+                if (kDebug && !snap.bone.empty())
+                    std::fprintf(stderr, "opensims2: snaps: %s:%s: no bone %s\n", object.c_str(), snap.model.c_str(), snap.bone.c_str());
                 continue;
+            }
             m.actor->transform = s.actor->bones[size_t(b)];
             shown.insert(snap.object + ":" + snap.model);
             // The snap's pose of the model in the slot (snapObjectPose).
@@ -142,9 +154,16 @@ void AnimSnapView::update(double now) {
         for (auto& [key, m] : s.models)
             if (m.actor && !shown.count(key))
                 m.actor->transform = kHidden;
+        if (kDebug) {
+            std::string line;
+            for (const auto& k : shown)
+                line += " " + k;
+            std::fprintf(stderr, "opensims2: snaps %.2f sim %d (%zu snaps, %.2f s in) shown [%s ]\n", now, sim,
+                         s.snaps.size(), now - s.start, line.c_str());
+        }
         // The held objects the snaps stand in for, and their animations.
         for (const auto& [id, o] : vm_.objects()) {
-            if (o.person || id == sim || objects_.outermostContainer(id) != sim)
+            if (o.person || id == sim || objects_.holder(id) != sim)
                 continue;
             const std::string cres = lower(objects_.cresOf(id));
 
@@ -154,8 +173,12 @@ void AnimSnapView::update(double now) {
                         (!snap.model.empty() && cres.rfind(lower(snap.model), 0) == 0); // "o2a": the a2o object
             if (!named)
                 continue;
-            if (s.hidden.insert(id).second)
+            if (s.hidden.insert(id).second) {
                 objects_.setHidden(id, true);
+                if (kDebug)
+                    std::fprintf(stderr, "opensims2: snaps: object %d (%s) hidden, held by %d in %d\n", id, cres.c_str(), sim,
+                                 objects_.outermostContainer(id));
+            }
             const auto anim = objectAnims_.find(id);
             if (anim == objectAnims_.end())
                 continue;

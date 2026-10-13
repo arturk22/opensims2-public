@@ -104,6 +104,21 @@ int16_t VmObjectView::outermostContainer(int16_t id) const {
     return o ? o->id : 0;
 }
 
+int16_t VmObjectView::holder(int16_t id) const {
+    const vm::VM& m = sim_.machine();
+    auto find = [&](int16_t i) -> const vm::Object* { return m.objects().count(i) ? &m.objects().at(i) : nullptr; };
+    const vm::Object* o = find(id);
+    for (int depth = 0; o && depth < 8; ++depth) {
+        const int16_t c = o->data[vm::objdata::ContainerId];
+        if (!c || c == o->id)
+            return 0;
+        o = find(c);
+        if (o && o->person)
+            return o->id;
+    }
+    return 0;
+}
+
 void VmObjectView::setActor(int16_t id, SimActor* actor) {
     auto it = drawn_.find(id);
     if (it == drawn_.end())
@@ -282,9 +297,8 @@ std::optional<Xform> VmObjectView::boneByHash(int16_t id, uint32_t crc) {
         return std::nullopt;
     // (Not one held by a Sim: it is placed from the hands' bones of the last
     // frame, and a goal on it would chase the hand that holds it.)
-    if (outermostContainer(id) != id)
-        if (const vm::Object* c = sim_.machine().object(outermostContainer(id)); c && c->person)
-            return std::nullopt;
+    if (holder(id))
+        return std::nullopt;
     const int16_t frameId = modelFrame(id);
     const Skeleton* s = skeleton(cresFor(frameId));
     if (!s)
