@@ -217,6 +217,25 @@ The Sims 1; Snap Into tem um u16 nos bytes 7–8; Reach/Put tem u16 em 1–2 e
 
 ### 0x74 Reach/Put (`try_new_reach`, `NewReachParam`)
 
+**A animação do corpo vem das listas "Reach Animations" (STR# 0x92)**
+(rodada 21, headless Ghidra: `try_new_reach` BV `0x69111c`,
+`ComputeReachAnimIndex` BV `0x68ba50`). O índice é a faixa de altura
+(< 0,4 chão 0; < 0,7 mesa de centro 1; < 0,9 mesa 2; senão balcão 3; os
+`float` 0,4/0,7/0,9 lidos no `__literal4` do binário) + 4 se mais longe que
+0,8 + 8 para pôr; a lista global (16 entradas
+`a2o-<floor|tableCoffee|table|counter>-<get|put>`) é a última. Os objetos têm
+as próprias: o semi-global do xadrez (`7FA1DF44`) tem
+`a2o-chessBoard-get/put-<NE|NW|SE|SW>` (alcances **sentados**), a bandeja e o
+copo do bar `a2o-barstool-seated-get/put`, o livro `a2o-table/counter-book-*`.
+O opensims2 sempre tocava a genérica: no xadrez, "a2o-table-get" em pé com o
+Sim contido na cadeira de jantar (o Sim em pé atravessando a cadeira,
+`N001_Lot11`). Agora `reachListAnimation`: o objeto alcançado, a superfície e
+os semi-globais deles, depois a genérica. **Inferido**: a ordem objeto →
+superfície, a faixa pela classe de altura do SLOT (não pela altura em
+metros), a distância do Sim ao objeto da superfície, e uma entrada "longe"
+vazia caindo na "perto" (a lista do xadrez só tem as perto). Teste: caso
+`chess` da bateria de assento. `OS2_DEBUG_REACH` mostra a escolha.
+
 **Pôr tira as poses de carregar que a entrada "grasp" do próprio pôr nomeia**
 (rodada 18, inferido: o `try_new_reach` passa os nomes da entrada ao
 `AddToAnimList`, cuja operação remove ao pôr): além das que o pegar pôs,
@@ -1461,7 +1480,7 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   `o2a-chairDining-getIn-SE`); o "leaveOut" move e gira esse osso
   (−0,087; 0,048; −15,6°). O Sim sentado é desenhado no osso como o ator da
   cadeira o posa no instante dos Sims (`SimActor::bonePlacement`,
-  `VmObjectView::seatPlacement(sim, now)`; antes usava os ossos do quadro
+  `VmObjectView::slotPlacement(sim, now)`; antes usava os ossos do quadro
   anterior, ou a pose de repouso enquanto o ator não tinha sido posado). O
   levantar ("Chair - Animate - Get Out", `0x7F0B61F3 0x2045`) faz Snap ao
   osso de canto `route_chairdining_2_se` (temp 0) e "Snap - Away" vira o
@@ -1517,13 +1536,15 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
   entra ou sai de um assento, o que já toca fica onde estava no mundo
   (`AnimPlayer::reframe`, chamado por `LotSimulation` na troca entre o
   lugar da VM e o osso do assento); o que começa depois toca no quadro
-  novo. `OS2_NO_SEAT_REFRAME=1` desenha como antes, para comparar. Teste
+  novo (rodada 21: `AnimPlayer::stayInWorld`, regra 3 do módulo de assento;
+  `OS2_NO_STAY_IN_WORLD=1` desliga). Teste
   `testDiningChairCycle` (com `OS2_DATA`): cadeiras do lote carregam
   empurradas; ciclos getIn/getOut e leaveOut/fromOut terminam empurrados; o
   get-in leaveOut do canto acaba no assento puxado e fica lá depois do
   reframe. `r18-chairs-lot68-antes-depois.jpg`,
   `r18-chairs-lot68-levantar.jpg`, `r18-chairs-n002-lot3-antes-depois.jpg`.
 - **Camadas mantidas de objeto juntadas** (rodada 19, ramo `r19-chairlayers`;
+  **rodada 21: substituído** — quando todas acabam, a pose vira a base;
   regra do app, **inferida**: a VM fica igual). A VM nunca tira os overlays
   de uma cadeira de jantar: cada sentar e levantar põe duas camadas de uma vez
   só (nível e prioridade 1 + id do overlay, `main.mm onObjectOverlay`), que
@@ -1603,6 +1624,62 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
     começo do `N001_Lot11`, 0,3 s da criança com o breathe da VM ainda ligado
     na rota retomada do save. Fantasmas (`*-walk-ghost`) flutuam de propósito.
     Teste `glides` (com `OS2_DATA`), `test_glide_detector`.
+- **Módulo único de assento** (rodada 21, ramo `r21-seat`; `app/seat_module`,
+  substitui os remendos das rodadas 11–19; o que é do app é inferido salvo
+  onde o binário é citado). Uma regra para ficar em pé, andar, sentar, ficar
+  sentado, trocar de assento e levantar (e deitar na cama/banheira, vaso,
+  escada, piscina):
+  1. **Raiz**: onde a VM põe o Sim (posição e direção, interpoladas entre
+     ticks ao andar, direto depois de um Snap); **contido** no slot de um
+     objeto (dados 2/3), preso ao slot: o osso do slot no quadro do modelo do
+     contêiner (líder do multi-tile), como o ator do contêiner está posado
+     **naquele instante** (`VmObjectView::slotPlacement`, a mesma conta dos
+     objetos dentro de objetos: `slotFrame`).
+  2. **Corpo**: as animações a partir dessa raiz, com o movimento de raiz, o
+     heading do cabeçalho e o do pedido, misturadas por níveis (§4); nenhum
+     outro ajuste do lugar do Sim.
+  3. **Pulo da raiz** (contido/solto, Snap, fim da escada): o que toca uma vez
+     (o último quadro mantido ou ainda tocando) e o que está saindo por fade
+     fica onde estava no mundo (`AnimPlayer::stayInWorld`, o `PostSnap` do
+     jogo que põe o objeto onde a animação o deixou); camada em loop ainda
+     tocando segue a raiz nova. Substitui o `reframe` (e o `onlyOnce`) das
+     rodadas 18/19, agora a mesma regra para assento e salto.
+  4. **Sentado** sem nada tocando no corpo: segura a pose (não volta ao idle
+     em pé entre as idles da cadeira).
+  5. **IK no mesmo quadro**: objetos animados posados antes dos Sims; um Sim
+     que alcança ossos de outro Sim (beijo, abraço) é posado de novo depois
+     dos dois.
+  Mudanças de semântica que vieram junto:
+  - **Pedido que acaba expira**: camada tocada uma vez, ao terminar, vai para
+    o nível −1 (abaixo de tudo): os ossos guardam o último valor só onde
+    nenhum outro canal escreve, como o `cChannelUberOutlet` (osso sem canal
+    não é escrito); um pedido novo da mesma prioridade ainda faz crossfade
+    dela. Antes o get-in mantido (nível 2) cobria as idles da cadeira
+    (nível 1), que não apareciam nunca; e o "a2o-table-get" em pé ficava por
+    cima da idle do xadrez depois do alcance. As fases da locomoção não
+    expiram (`Options::expires`; a seguinte toma o lugar).
+  - **Objetos**: quando todas as camadas acabaram, a pose do momento vira a
+    pose-base e as camadas saem (ossos mantêm o valor); substitui a junção em
+    camada mantida do r19-chairlayers (`OS2_NO_LAYER_MERGE` saiu).
+  - **IK pela parte do nível**: cada cadeia pesa pela parte que a camada tem
+    do osso da ponta da cadeia (mão, pé), inteira; as camadas resolvem em
+    ordem de nível, cada uma a partir do corpo como já está, e as soluções de
+    um osso entram numa média corrida a partir da parte que a mistura deixa a
+    ele. Antes o IK de uma idle de nível 1 (`a2o-chairDining-idle-breathe`)
+    forçava as mãos por cima do braço que come (nível 2): mãos a 0,17–0,31 do
+    alvo.
+  - **Ossos do assento estático como alvo de IK**: o assento que contém o
+    Sim, desenhado sem ator (namoradeira), dá os ossos do próprio modelo aos
+    alvos de tipo 2 (a mão na braçadeira; antes ficava de fora e caía no
+    alvo no espaço do modelo, 0,51 longe). Outros objetos estáticos continuam
+    de fora (inferido; não conferidos).
+  Mantidos (do binário): espelho do Animate Sim/Object/Overlay (flip),
+  mistura por níveis, os vários alvos por canal de contato, o giro na hora
+  do Animate Sim (`SimMotion::turn`). Bateria `tests/seat_battery.sh`
+  (`OS2_DEBUG_SEATS`, `app/seat_check`, `OS2_THEN_AT`): pélvis sentada sobre o
+  slot, mãos ao alcance dos alvos de IK, nada atravessando mesa/cadeira em
+  repouso, sem carregar com a mão vazia, sem pulo > 1 tile. Fotos
+  `docs/screenshots/r21-seat-*.jpg`.
 - **Alvos de IK de tipo 2: o objeto de IK do pedido** (rodada 15, front
   anim3, decifrado). Os alvos de IK (`cIKTarget::TargetType`) têm 3 tipos
   nos dados (`s2pkg anim-sweep`): 0 sem osso de quadro (20.859, o alvo no

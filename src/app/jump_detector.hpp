@@ -2,7 +2,7 @@
 
 // Test aid (OS2_DEBUG_JUMPS=1, headless and live): flags Sims whose DRAWN
 // place (the pelvis as the renderer poses it: LotSimulation's actor
-// placement, seat bones, route interpolation, reframes) jumps more than a
+// placement, seat bones, route interpolation, the seat module's stay-in-world) jumps more than a
 // tile between two frames while the VM gave no reason (no Snap, no move of
 // more than a walk step, no seat in or out, not just back in the world),
 // jumps that go back and forth, and Sims the VM itself snaps over and over
