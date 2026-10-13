@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Minimal DBPF/QFS/STR# reader for throwaway data sweeps (docs/data-findings.md).
 Game data root: $OS2_GAME (default: the main checkout's data/game)."""
-import struct, os, glob
-GAME=os.environ.get('OS2_GAME', '~/Documents/the sims/opensims2/data/game')
+import struct, os, glob, subprocess
+def _main_checkout():
+    here=os.path.dirname(os.path.abspath(__file__))
+    common=subprocess.run(['git','-C',here,'rev-parse','--path-format=absolute','--git-common-dir'],
+                          capture_output=True,text=True).stdout.strip()
+    return os.path.dirname(common) if common else os.path.join(here,'..','..')
+GAME=os.environ.get('OS2_GAME') or os.path.join(_main_checkout(),'data','game')
 RES=GAME+'/TSData/Res'
 def qfs(d):
     # d starts with compressed header: u32 csize, 0x10FB, 3-byte BE usize
