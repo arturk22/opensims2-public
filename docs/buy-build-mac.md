@@ -240,6 +240,16 @@ pegar no lote     → TryGrab (BV 0x20fe08): o undoable passa a ser tipo 3 (movi
 Delete/arrastar à lixeira → DeleteCurrentObject (BV 0x2083c8) / TryDelete (BV 0x211e40)
 ```
 
+**No app** (rodada 21, `app/buy_mode`): `mouseDown` segura o objeto no tile sob o
+mouse, `mouseDrag` o gira para o lado do mouse (a partir de meio tile do centro, em
+passos de 2 = 90°; inferido), `mouseUp` coloca (`placeAt`); Esc (`cancel`) solta. A
+pegada são os nós de contorno do jogo, `objectPlacementIconGood`/`objectPlacementIconBad`
+(CRES em `Sims3D/Objects05.package`, nomes do binário perto de `CreateTileOutlines`):
+moldura do tile com um chevron na borda +Y do modelo (a frente dos objetos), girada
+pela direção. O raio do mouse anda até o primeiro ponto no piso do nível (a fundação
+deixa o mesmo nível a 0,75 sobre ela e a 3,0 fora dela). "Keep Buying": a cópia nova
+já fica no mesmo tile, com a mesma direção.
+
 **TryPlace(loc)**, em ordem:
 1. Ajusta a posição (vtable `0x168`; meio tile), escolhe o nível e alinha à
    calçada/estrada se o objeto pede (`OrientPerpendicularToRoad`,
