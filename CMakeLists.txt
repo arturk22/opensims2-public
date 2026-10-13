@@ -385,6 +385,10 @@ add_test(NAME scene_switch COMMAND sh ${CMAKE_SOURCE_DIR}/tests/scene_switch.sh 
 set_tests_properties(scene_switch PROPERTIES PASS_REGULAR_EXPRESSION "scene switch: ok" TIMEOUT 600)
 # With the game's data: the seat battery (tests/seat_battery.sh): sitting,
 # lying, standing at things and swimming drawn where they should be.
+# An unoccupied lot opens in Buy mode with Live off (tests/empty_lot.sh).
+add_test(NAME empty_lot COMMAND sh ${CMAKE_SOURCE_DIR}/tests/empty_lot.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/empty_lot)
+set_tests_properties(empty_lot PROPERTIES PASS_REGULAR_EXPRESSION "empty lot: ok" TIMEOUT 600)
+
 add_test(NAME seat_battery COMMAND sh ${CMAKE_SOURCE_DIR}/tests/seat_battery.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/seat_battery)
 set_tests_properties(seat_battery PROPERTIES PASS_REGULAR_EXPRESSION "seat battery: ok" TIMEOUT 900)
 # With the game's data: no Sim glides with still legs (tests/glides.sh).

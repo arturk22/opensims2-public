@@ -354,7 +354,7 @@ uint64_t LiveUi::stamp() const {
             mix(uint64_t(uint16_t(o->person->motives[vm::motive::Mood])));
     }
     mix(uint64_t(hoverIcon_ + 1));
-    mix(uint64_t(mode_ + 1));
+    mix(uint64_t(mode_ + 1) | uint64_t(liveEnabled_) << 8);
     mix(uint64_t(uint16_t(g[vm::global::BudgetDiv10000])) << 16 | uint16_t(g[vm::global::BudgetMod10000]));
     return h;
 }
@@ -675,7 +675,7 @@ UiScreen LiveUi::screen(int width, int height) {
         UiDrawHooks hk;
         for (size_t i = 0; i < kModes.size(); ++i)
             if (const UiElement* b = puck.child(kModes[i]))
-                hk.buttonState[b] = optionsOpen_ ? (i == 4 ? 2 : 1) : (int(i) == mode_ ? 2 : 1); // the options panel lights only its button
+                hk.buttonState[b] = (i == 0 && !liveEnabled_) ? 0 : optionsOpen_ ? (i == 4 ? 2 : 1) : (int(i) == mode_ ? 2 : 1); // the options panel lights only its button
         if (const UiElement* f = puck.child(kFunds)) {
             const int16_t fam = g[vm::global::CurrentFamily];
             const auto it = vm_->families.find(fam);
@@ -1284,6 +1284,11 @@ bool LiveUi::press(simd_float2 p, bool right) {
         }
         if (right && t.action != Action::Cancel) // the queue cancels with either button
             return true;
+        if (t.action == Action::Mode && t.value == 0 && !liveEnabled_) { // HandleLiveModeButton: no Sims, no Live
+            std::printf("opensims2: live UI: live button disabled (no Sims on the lot)\n");
+            std::fflush(stdout);
+            return true;
+        }
         switch (t.action) {
         case Action::Speed:
         case Action::Pause:

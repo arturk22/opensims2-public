@@ -80,6 +80,13 @@ std::vector<std::string> sceneArguments(const std::vector<std::string>& args, co
 std::optional<std::string> argValue(const std::vector<std::string>& args, const std::string& flag);
 bool hasArg(const std::vector<std::string>& args, const std::string& flag);
 
+// The mode a lot opens in (docs/game-flow-mac.md §7.5, cTSMainToolbar::
+// ApplySavedUIState, BV 0x1ac250): a lot with Sims opens in Live mode (""), one
+// without opens in Buy ("buy"), and Live stays unavailable there (the UCP's
+// Live button works only with a selectable Sim). `requested` (--mode) wins.
+// A lot is occupied when a family lives on it.
+std::string lotStartMode(bool occupied, const std::optional<std::string>& requested);
+
 // <shot>-<n>.<ext> for --flow-shots.
 std::string numberedShot(const std::string& shot, int n);
 

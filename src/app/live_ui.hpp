@@ -123,6 +123,13 @@ public:
     void setMode(int mode) { mode_ = mode, dirty_ = true; }
     int mode() const { return mode_; }
     std::function<void(int)> onMode;
+    // The Live button (mode 0) only works with Sims on the lot: the UCP's
+    // `this[0x80]` is "the lot has a selectable Sim" and `HandleLiveModeButton`
+    // does nothing without it, and `onSelectedPersonChanged` disables the
+    // button (0x37D97B25) the same way (BV 0x1a0654 / 0x1a131c). A lot
+    // without Sims (no family moved in) opens in Buy mode and stays out of Live.
+    void setLiveEnabled(bool on) { liveEnabled_ = on, dirty_ = true; }
+    bool liveEnabled() const { return liveEnabled_; }
     // The options panel (puck button 4, script 0x49060001: the lot's
     // cTSWinProcPanelOptions): "Vizinhança" leaves the lot for the
     // neighborhood (only shown when setCanLeave(true): the lot came from
@@ -224,7 +231,7 @@ private:
     std::unique_ptr<DbpfPackage> thumbnails_;
     bool ok_ = false;
     UiScript puck_, live_, motives_, bar_, member_, icon_, options_;
-    bool optionsOpen_ = false, canLeave_ = false;
+    bool optionsOpen_ = false, canLeave_ = false, liveEnabled_ = true;
     int wallMode_ = 2;
     bool wallFan_ = false;
     std::map<std::string, std::string> queueConstants_;

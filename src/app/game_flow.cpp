@@ -178,6 +178,12 @@ std::vector<std::string> sceneArguments(const std::vector<std::string>& args, co
     return out;
 }
 
+std::string lotStartMode(bool occupied, const std::optional<std::string>& requested) {
+    if (requested)
+        return *requested;
+    return occupied ? std::string() : std::string("buy");
+}
+
 std::string numberedShot(const std::string& shot, int n) {
     const auto dot = shot.rfind('.');
     const auto slash = shot.rfind('/');

@@ -192,6 +192,7 @@ std::unique_ptr<os2::LiveUi> gLive;
 std::unique_ptr<os2::TutorialOverlay> gTutorial; // over a lot of the Tutorial neighborhood (app/tutorial.hpp)
 size_t gTutorialRequestsSeen = 0;
 bool liveUiRequested();
+std::optional<std::string> startMode();
 // Buy mode (app/buy_mode.hpp): the puck's Buy button, or --mode buy.
 std::unique_ptr<os2::BuyMode> gBuy;
 void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index); // below setupLiveUi
@@ -262,6 +263,8 @@ std::optional<os2::LotCamera::Pose> gHoodReloadPose; // the camera across a neig
 std::unique_ptr<os2::CasMode> gCas; // --cas: Create-a-Sim (app/cas_mode.hpp)
 // --hood <N> --hood-lot <id>: that lot's package, shown as --lot is.
 std::optional<std::string> gHoodLot;
+// That lot has no family: it opens in Buy mode and Live stays off (lotStartMode).
+bool gLotVacant = false;
 std::vector<std::string> processArguments();
 // The game flow (app/game_flow.hpp): the user's folder, the main menu, the
 // puck's options, the scene asked for next and the steps used so far.
@@ -1189,7 +1192,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     if (liveUiRequested())
         setupLiveUi(index);
     perfLap("  live UI");
-    if (liveUiRequested() || argument(@"--mode")) {
+    if (liveUiRequested() || startMode()) {
         setupBuyMode(renderer, index);
         perfLap("  Buy mode");
         setupBuildMode(renderer, index);
@@ -1374,6 +1377,13 @@ void setupPieMenu(os2::ResourceIndex& index) {
 
 bool liveUiRequested() {
     return argument(@"--ui").value_or("") == "live";
+}
+
+// The mode flag the lot opens with: --mode, else Buy for a lot without a
+// family (app/game_flow.hpp lotStartMode), else none (Live).
+std::optional<std::string> startMode() {
+    const std::string m = os2::lotStartMode(!gLotVacant, argument(@"--mode"));
+    return m.empty() ? std::nullopt : std::optional<std::string>(m);
 }
 
 // A Sim's portrait: its character file's IMG 0x10.
@@ -2101,6 +2111,7 @@ void setupLiveUi(os2::ResourceIndex& index) {
         gLive->setCanLeave(true);
         gLive->onNeighborhood = [] { leaveLot(); };
     }
+    gLive->setLiveEnabled(!gLotVacant); // no Sims: the Live button is off (HandleLiveModeButton)
     gLive->onQuit = [] { quitFromLot(); };
     gLive->onSave = [] { saveGameNow(); };
     gLive->onOptionWindow = [](int window) {
@@ -2305,7 +2316,7 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
             o.group = os2::SoundGroup::Ui;
             gAudio->sound().play(name, o);
         };
-    if (argument(@"--mode").value_or("") == "buy") {
+    if (startMode().value_or("") == "buy") {
         gBuy->enter();
         if (gLive)
             gLive->setMode(1);
@@ -2807,7 +2818,7 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
                 previous(mode);
         };
     }
-    if (argument(@"--mode").value_or("") == "build") {
+    if (startMode().value_or("") == "build") {
         gBuild->enter();
         if (gLive)
             gLive->setMode(2);
@@ -2952,7 +2963,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     // level with walls up and the roof. --walls down|cutaway|up|roof picks
     // the game's wall mode 0-3 (up shows the roof too unless --roof off;
     // roof is mode 3, the only one with the roofs).
-    gLevelsHidden = liveUiRequested() || argument(@"--mode").has_value();
+    gLevelsHidden = liveUiRequested() || startMode().has_value();
     const std::string walls = argument(@"--walls").value_or(gLevelsHidden ? "cutaway" : "up");
     const bool roofOff = argument(@"--roof").value_or("on") == "off";
     if (walls == "cutaway")
@@ -5084,6 +5095,7 @@ void unloadScene() {
     gLotModel = -1;
     gLotCache = {};
     gHoodLot.reset();
+    gLotVacant = false;
     gLotFile.clear();
     gStepsUsed = 0;
     gHeadlessClock = 0;
@@ -6172,6 +6184,13 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
     case os2::Scene::Kind::Neighborhood: [self prepareHood:_view query:hoodFolder(_scene.hood).string()]; break;
     case os2::Scene::Kind::Lot:
         gHoodLot = os2::hoodLotPackage(gameDir() / "TSData/Res", hoodFolder(_scene.hood).string(), _scene.lot).string();
+        gLotVacant = false;
+        try {
+            const auto hood = os2::hood::Neighborhood::load(hoodFolder(_scene.hood), false);
+            if (const auto* l = hood.lot(_scene.lot))
+                gLotVacant = l->families.empty();
+        } catch (const std::exception&) {
+        }
         [self prepareLot];
         break;
     case os2::Scene::Kind::Other: [self prepareLot]; break;

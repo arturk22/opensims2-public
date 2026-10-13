@@ -320,3 +320,34 @@ Month" +1, global 34 "Day Of Week" = dias % 7 (mensagem `0x89`); dia > 30
 "Maximum Day Number" fica em 30. **Confirma o inferido: 30 ticks por
 minuto, meses de 30 dias, 12 meses.** O período do dia (global 4) é
 recalculado pela hora (`SetTimeOfDay`, §7.2).
+
+### 7.5 Lote sem Sims: abre em Comprar, sem Viver (rodada 22, Ghidra headless)
+
+**`cTSMainToolbar::ApplySavedUIState`** (BV `0x1ac250`, chamado depois da carga
+do lote, só nos estados do jogo `0x0BEA28C2` / `0x2C1805B0`) escolhe o modo
+inicial: com Sims selecionáveis (a verificação de `game→0x3c→0x24`) chama
+`SetMode(2 = vivo)`; **sem eles** chama `SetMode(3 = comprar)`, ou
+`SetMode(4 = construir)` num caso secundário (o estado `→0x24→0x7c == 2` e uma
+propriedade booleana do estado, nome em `DAT_027a89f0`; **não identificado**:
+o app usa sempre Comprar). Depois lê `startPaused`/`startUnpaused` do
+estado e chama `SetSimulatorPaused`; o relógio não tem outro tratamento (o
+`SimulateOneTick` de §7.4 não olha se há Sims).
+
+**O botão Viver**: no `cTSWinProcUCP`, `this[0x80]` = "o lote tem Sim
+selecionável" (`onSelectedPersonChanged`, BV `0x1a131c`: `!lote→0x94()`; sem
+Sims também zera `this[0x84]`, o tipo de painel). O mesmo método chama
+`SetEnabled(0x37D97B25, this[0x80])`: **o botão Viver fica desabilitado
+(desenhado apagado, não escondido)**, e o `HandleLiveModeButton` (BV `0x1a0654`,
+o clique) **não faz nada** sem `this[0x80]`. O `onModeChanged` só acende o Viver
+no modo 2/11 com `this[0x80]`. Comprar e Construir seguem normais; a janela de
+valor do lote sem Sims (`cTSWinProcSimlessLotValueUI`, `SetInBuyMode/BuildMode/
+SetUCPVisible`) aparece nesses modos. Lote comunitário sem família: a mesma
+regra (não há exceção por tipo no `ApplySavedUIState`).
+
+No app: `os2::lotStartMode` (`app/game_flow.*`) dá `"buy"` para o lote do bairro
+sem família (`hood::Lot::families` vazio) e `--mode` ganha; o `main.mm` usa isso
+no lugar de `--mode` ao entrar (Enter do bairro ou `--hood-lot`) e
+`LiveUi::setLiveEnabled(false)` apaga o botão Viver (estado 0) e ignora o clique.
+Mudar uma família para o lote antes de entrar o deixa ocupado (abre em Viver).
+**Inferido**: os nomes de `game→0x3c→0x24` (lido como "há Sim selecionável") e do
+caso Construir.

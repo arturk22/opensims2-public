@@ -133,6 +133,12 @@ int main() {
     }
     fs::remove_all(tmp);
 
+    // A lot without a family opens in Buy mode; an occupied one in Live; --mode wins.
+    check(lotStartMode(false, std::nullopt) == "buy", "an unoccupied lot opens in Buy mode");
+    check(lotStartMode(true, std::nullopt).empty(), "an occupied lot opens in Live mode");
+    check(lotStartMode(false, std::string("build")) == "build", "--mode build on an unoccupied lot");
+    check(lotStartMode(true, std::string("buy")) == "buy", "--mode buy on an occupied lot");
+
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     return failures ? 1 : 0;
