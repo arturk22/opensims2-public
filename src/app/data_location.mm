@@ -22,6 +22,24 @@ std::optional<fs::path> gameFolderIn(const fs::path& dir, const char* check) {
     return std::nullopt;
 }
 
+// A folder picked by hand may hold the data deeper down: a game install with
+// TSData a few levels in, or a Mac release's .app bundle (Contents/...).
+std::optional<fs::path> gameFolderUnder(const fs::path& dir, const char* check) {
+    if (auto found = gameFolderIn(dir, check))
+        return found;
+    std::error_code ec;
+    fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+    for (; !ec && it != end; it.increment(ec)) {
+        if (it.depth() >= 5 || !it->is_directory(ec) || it->is_symlink(ec)) {
+            it.disable_recursion_pending();
+            continue;
+        }
+        if (fs::exists(it->path() / check, ec))
+            return it->path();
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::optional<fs::path> locateGameData(const fs::path& executable, const char* check) {
@@ -49,16 +67,17 @@ std::optional<fs::path> askForGameData(const char* check) {
     for (;;) {
         NSOpenPanel* panel = [NSOpenPanel openPanel];
         panel.title = @"opensims2: locate the game data";
-        panel.message = @"Choose the extracted game folder (the one that contains TSData), "
-                        @"or the folder that contains data/game.";
+        panel.message = @"Choose your The Sims 2 folder (the one that contains TSData, or any "
+                        @"folder above it), or the game's Mac app.";
         panel.prompt = @"Use this folder";
         panel.canChooseDirectories = YES;
         panel.canChooseFiles = NO;
+        panel.treatsFilePackagesAsDirectories = YES; // a Mac release's .app can be picked
         panel.allowsMultipleSelection = NO;
         if ([panel runModal] != NSModalResponseOK || panel.URL == nil)
             return std::nullopt;
         const fs::path chosen = panel.URL.path.UTF8String;
-        if (auto found = gameFolderIn(chosen, check)) {
+        if (auto found = gameFolderUnder(chosen, check)) {
             [NSUserDefaults.standardUserDefaults setObject:[NSString stringWithUTF8String:found->c_str()]
                                                     forKey:kDefaultsKey];
             return found;
