@@ -43,7 +43,7 @@ run stool    "1300:here:21,22,2" N001_Lot68 Angela 1700 --pie Stool --pie-select
 run armchair "1100:Sofa:Sit" N001_Lot11 Alexander 2200 --pie "Chair - Living" --pie-select 0
 # Sofa and loveseat.
 run sofa     "" N001_Lot11 Alexander 1500 --pie Sofa --pie-select 0
-run loveseat "" N001_Lot68 Angela 1500 --pie Loveseat --pie-select 0
+run loveseat "" N002_Lot3 Circe 560 --pie Loveseat --pie-select 0
 # Bed (relax), toilet, bathtub.
 run bed      "" N001_Lot11 Alexander 1500 --pie Bed --pie-select 0
 run toilet   "" N001_Lot68 Angela 2000 --pie Toilet --pie-select 0

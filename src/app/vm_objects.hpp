@@ -121,11 +121,19 @@ public:
     // the node of the object's model (rest pose) at its placement; nothing
     // if the object or the node is missing (effect slots).
     std::optional<Xform> nodePlacement(int16_t id, const std::string& node);
-    // Where a Sim in a containment slot of an object (not a Sim) sits: the
-    // container's placement with its slot's bone (as its actor poses it at
-    // `now`, if the VM animates it and now >= 0; else the rest pose), else
-    // its origin; nothing when the Sim is in no such slot.
-    std::optional<Xform> seatPlacement(int16_t sim, double now = -1);
+    // Where the slot that holds a Sim is drawn (the seat module's root for
+    // a contained Sim, app/seat_module.hpp): its container's slot bone in
+    // the container's model frame (a multi-tile object's lead), as the
+    // container's actor poses it at `now` (now >= 0: posed for that moment;
+    // else as last posed) if the VM animates it, else in the model's saved
+    // or rest pose; the container's origin for a slot without a bone.
+    // Nothing when the Sim is in no slot of an object (not a Sim).
+    std::optional<Xform> slotPlacement(int16_t sim, double now = -1);
+    // Where the bone of an object's model whose name CRC (nameInstanceHiHash)
+    // is `crc` is drawn (world): its actor's bone if the VM animates it, else
+    // the model's (saved or rest pose) at its placement; a multi-tile part's
+    // bones are its lead's model's. Nothing for a Sim or a missing bone.
+    std::optional<Xform> boneByHash(int16_t id, uint32_t crc);
     // The bone of an object's containment slot `slot` (empty if none).
     std::string containerSlotBone(int16_t id, int slot) { return slotBone(id, slot); }
     // The bone of the object's slot `slot` among its SLOT entries of `type`
@@ -156,6 +164,9 @@ private:
     std::string cresFor(int16_t id); // drawn, else from the object's OBJD
     std::string slotBone(int16_t container, int slot, int type = 0);
     std::optional<Xform> compute(int16_t id, int depth);
+    // Where bone `bone` of a container's model is drawn (slotPlacement; the
+    // objects in objects' slots too, with now < 0).
+    std::optional<Xform> slotFrame(int16_t containerId, const std::string& bone, double now, int depth);
     // The object whose model frame holds `id`'s slot bones: the lead tile of
     // a multi-tile object whose part is not drawn itself (its model is the
     // lead's), else `id`.

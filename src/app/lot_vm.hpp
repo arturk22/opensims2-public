@@ -5,6 +5,7 @@
 // Plain C++ (no AppKit), driven from main.mm.
 
 #include "app/look_at.hpp"
+#include "app/seat_module.hpp"
 #include "formats/lot.hpp"
 #include "formats/sim_actor.hpp"
 #include "vm/sim_motion.hpp"
@@ -94,15 +95,17 @@ public:
     // it walks, climbs or idles instead), cued at `at` seconds.
     std::function<void(int16_t id, SimActor& actor, const Animation* animation, double at)> onSimAnimation;
 
-    // Where a Sim in another object's containment slot sits (a chair's,
-    // a bed's: the container's slot bone, app/vm_objects.hpp), nothing when
-    // it is in none; the host's. Such a Sim is drawn there, facing the
-    // slot's way: its animations (the chair's get-in, which starts from the
-    // routing slot beside it) are made in the slot's frame.
-    std::function<std::optional<Xform>(int16_t id, double now)> seat;
+    // Where the attached Sims are drawn: the VM's place, or the slot of the
+    // object holding them (app/seat_module.hpp); the host sets its `slot`.
+    SeatModule seats;
     // The actor drawing a VM object other than a bound Sim (an object the VM
     // animates), for the IK targets on its bones; null: none.
     std::function<const SimActor*(int16_t id)> actorOf;
+    // Else a bone of an object's model (by name CRC) where it is drawn
+    // (world), for an object drawn static: a loveseat's arm for the seated
+    // idles' hands (the game reads the IK object's scene graph, animated or
+    // not: AddChoreoAnimRequest, Mac BV 0x696644).
+    std::function<std::optional<Xform>(int16_t id, uint32_t boneCrc)> objectBone;
 
     // Runs the VM up to `seconds` (whole ticks) and places and animates the
     // attached actors for that moment (one tick behind the VM, so that
@@ -145,11 +148,6 @@ private:
         int16_t age = 0;    // person data 58 the actor was built for
         int partial = -1;   // the priority of a part-body Animate Sim animation playing over the base, -1 none
         float zOffset = 0; // the cObject's height over the floor the VM's level gives
-        // Drawn at a seat (LotSimulation::seat) last frame, and where: the
-        // layers playing go on where they were in the world as the Sim is
-        // put in or taken out of it (AnimPlayer::reframe).
-        bool seated = false;
-        std::optional<Xform> lastPlacement;
         struct PlayingOverlay {
             std::string name;
             int priority = 0; // its layer in the actor's player
@@ -171,6 +169,8 @@ private:
     // (AnimPlayer::Options::ikObjectBone): the object's actor (actorOf, else
     // a bound Sim's) as posed last, in `self`'s model space. Empty for none.
     IkObjectBone ikObjectBones(const SimActor& self, int16_t object) const;
+    // The object whose slot holds the Sim drawn by `actor` (0 if none).
+    int16_t seatOf(const SimActor* actor) const;
     void playOverlays(Bound& b, const vm::Object& o, double at);
     void sampleAll(double at);
     void updateScene(double seconds);

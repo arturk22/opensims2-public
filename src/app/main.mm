@@ -746,7 +746,10 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         std::fprintf(stderr, "opensims2: tv: %s\n", e.what());
     }
     gSnaps = std::make_unique<os2::AnimSnapView>(renderer, index, *gObjectView, gSimulation->machine());
-    gSimulation->seat = [](int16_t id, double now) { return gObjectView ? gObjectView->seatPlacement(id, now) : std::nullopt; };
+    gSimulation->seats.slot = [](int16_t id, double now) { return gObjectView ? gObjectView->slotPlacement(id, now) : std::nullopt; };
+    gSimulation->objectBone = [](int16_t id, uint32_t crc) -> std::optional<os2::Xform> {
+        return gObjectView ? gObjectView->boneByHash(id, crc) : std::nullopt;
+    };
     gSimulation->actorOf = [](int16_t id) -> const os2::SimActor* {
         const auto it = gObjectActors.find(id);
         return it != gObjectActors.end() ? it->second : nullptr;
@@ -884,9 +887,6 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
                 if (p.pose.size() == actor->skin.skeleton.bones.size())
                     actor->player.setBasePose(p.pose);
                 actor->player.setHoldPose(true);
-                // OS2_NO_LAYER_MERGE=1: the finished layers kept apart (to compare).
-                if (std::getenv("OS2_NO_LAYER_MERGE"))
-                    actor->player.setCollapseHeld(false);
                 actor->position = {p.position[0], p.position[1], p.position[2]};
                 actor->heading = 2 * std::atan2(p.rotation[2], p.rotation[3]);
                 actor->model = renderer.addObject(actor->skin.model, index, true);
@@ -3793,7 +3793,7 @@ void sampleDrawnPlaces(double scene) {
                 x.holder[0] = h->position.x, x.holder[1] = h->position.y;
             x.seat[0] = x.holder[0], x.seat[1] = x.holder[1];
             if (x.container && gObjectView)
-                if (const auto at = gObjectView->seatPlacement(s.id, scene))
+                if (const auto at = gObjectView->slotPlacement(s.id, scene))
                     x.seat[0] = at->t[0], x.seat[1] = at->t[1];
             x.inWorld = simInTheWorld(s.id) && !gCarriedSims.count(s.actor) && !isVehicle(m.object(x.container));
             x.animation = o->animation.name;
@@ -3965,7 +3965,7 @@ void sampleDrawnPlaces(double scene) {
             const bool ownMotion = co && co->definition && (co->definition->fileName.find("Stair") != std::string::npos ||
                                                             isVehicle(co));
             if (co && !co->person && !moving && !ownMotion)
-                if (const auto seatAt = gObjectView->seatPlacement(s.id, scene)) {
+                if (const auto seatAt = gObjectView->slotPlacement(s.id, scene)) {
                     const double d = std::hypot((*pelvis)[0] - seatAt->t[0], (*pelvis)[1] - seatAt->t[1]);
                     c.seatMax = std::max(c.seatMax, d);
                     c.seat += d > 0.35;
@@ -4083,8 +4083,9 @@ void sampleDrawnPlaces(double scene) {
             const int16_t c = o->data[os2::vm::objdata::ContainerId];
             const os2::vm::Object* co = c && c != s.id ? m.object(c) : nullptr;
             if (co && !co->person && co->definition && co->definition->fileName.find("Stair") == std::string::npos && !isVehicle(co))
-                if (const auto at = gObjectView->seatPlacement(s.id, scene)) {
+                if (const auto at = gObjectView->slotPlacement(s.id, scene)) {
                     x.container = c, x.containerName = co->definition->fileName, x.seat = *at;
+                    x.lying = x.containerName.find("Tub") != std::string::npos || x.containerName.find("Bed") != std::string::npos;
                     // (Some trees walk a contained Sim: the bed's, the bath's.)
                 }
             // (The hands: the standing idle's foot goals under a dance are not a seat's business.)
@@ -4271,6 +4272,33 @@ void writePoseSheets(os2::Renderer& renderer, const std::string& stem) {
     }
 }
 
+// The Sims whose hands reach another Sim's bones (a kiss, a hug, a slow
+// dance: the IK object of their Animate Sim or overlays) posed after them:
+// posed again once all are, their goals are of the same frame (the seat
+// module's rule 5; a frame late, the hands were 6-10 cm off).
+std::vector<os2::SimActor*> simsReachingLaterSims() {
+    std::vector<os2::SimActor*> out;
+    if (!gSimulation)
+        return out;
+    std::map<int16_t, size_t> order;
+    for (size_t i = 0; i < gLotSims.size(); ++i)
+        order[gLotSims[i].id] = i;
+    for (size_t i = 0; i < gLotSims.size(); ++i) {
+        const os2::vm::Object* o = gSimulation->machine().object(gLotSims[i].id);
+        if (!o || !o->person)
+            continue;
+        std::vector<int16_t> targets{o->animation.eventObject};
+        for (const auto& ov : o->animation.overlays)
+            targets.push_back(ov.ikObject);
+        for (int16_t t : targets)
+            if (const auto it = order.find(t); t && it != order.end() && it->second > i) {
+                out.push_back(gLotSims[i].actor);
+                break;
+            }
+    }
+    return out;
+}
+
 void poseActors(os2::Renderer& renderer, double seconds) {
     pollTutorial(seconds); // (the real clock)
     if (gSimulation)
@@ -4358,6 +4386,8 @@ void poseActors(os2::Renderer& renderer, double seconds) {
         std::set<const os2::SimActor*> again;
         for (const auto& [a, by] : carried)
             again.insert(by.first);
+        for (os2::SimActor* a : simsReachingLaterSims())
+            again.insert(a);
         for (auto& a : gActors)
             if (again.count(a.get()) && !carried.count(a.get()))
                 a->update(seconds);
@@ -6698,6 +6728,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     // effects on their bones follow the animations between shots.
                     for (auto& sim : gLotSims)
                         sim.actor->update(scene);
+                    for (os2::SimActor* a : simsReachingLaterSims())
+                        a->update(scene);
                     // The objects too, as a live frame does (poseActors): a car
                     // driving in, a chair pulled out, placed where the VM view
                     // puts them, so that the seats on them are not left where

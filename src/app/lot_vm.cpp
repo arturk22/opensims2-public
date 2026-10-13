@@ -169,6 +169,7 @@ std::vector<int16_t> LotSimulation::goneSims() const {
 
 void LotSimulation::detach(int16_t id) {
     std::erase_if(bound_, [&](const Bound& b) { return b.id == id; });
+    seats.forget(id);
 }
 
 void LotSimulation::walk(int16_t sim, int16_t target, std::optional<uint16_t> animation) {
@@ -337,8 +338,8 @@ void LotSimulation::sampleAll(double at) {
             want = s.animation, loop = false, level = s.animLevel, weight = s.animWeight;
             // (Snapped as it starts, a chair's get-out from the corner the
             // trees snap the Sim to: what played before stays where it was in
-            // the world, updateScene's reframe, so the blend starts from the
-            // body as it was; r17 cut the blend instead.)
+            // the world, SeatModule's rule 3, so the blend starts from the
+            // body as it was.)
         }
         // OS2_DEBUG_VM=1: each Sim's state after each tick.
         if (std::getenv("OS2_DEBUG_VM")) {
@@ -356,11 +357,11 @@ void LotSimulation::sampleAll(double at) {
         b.walkSerial = s.walkSerial;
         if (want == b.playing && !restart)
             continue;
-        // Seated (in a chair's or a bed's slot) with nothing to play: the
-        // body holds the last pose (the get-in's end, under the chair's
-        // idles) instead of standing up in the standing idle between two of
-        // them, or while the trees stop the idles before the get-out.
-        if (want == b.idle && seat && seat(b.id, -1))
+        // Seated with nothing to play: the body holds its pose (SeatModule's
+        // rule 4: the get-in's end under the chair's idles) instead of
+        // standing up in the standing idle between two of them, or while the
+        // trees stop the idles before the get-out.
+        if (want == b.idle && seats.seated(b.id))
             continue;
         try {
             const Animation& anim = b.actor->animation(index_, want);
@@ -388,13 +389,13 @@ void LotSimulation::sampleAll(double at) {
                 const auto& base = s.walkLayers.front();
                 b.actor->cue(at, anim, {.fade = fade, .loop = loop, .mirror = base.mirror,
                                         .phase = double(s.walkPortion) * anim.duration / 1000.0, .level = level,
-                                        .weight = base.weight, .rate = base.rate});
+                                        .weight = base.weight, .rate = base.rate, .expires = false});
                 for (size_t i = 1; i < s.walkLayers.size() && i < 8; ++i) {
                     const auto& l = s.walkLayers[i];
                     const Animation& more = b.actor->animation(index_, l.animation);
                     b.actor->cue(at, more, {.fade = l.fade >= 0 ? l.fade : fade, .loop = loop, .priority = kWalkBlend + int(i), .mirror = l.mirror,
                                             .phase = double(s.walkPortion) * more.duration / 1000.0, .level = level,
-                                            .weight = l.weight, .rate = l.rate});
+                                            .weight = l.weight, .rate = l.rate, .expires = false});
                     extras = int(i);
                 }
             } else {
@@ -403,7 +404,8 @@ void LotSimulation::sampleAll(double at) {
                                         .phase = walkClip ? double(s.walkPhase) : animated ? double(s.animPlayed) / 1000.0 : 0.0,
                                         .level = level,
                                         .weight = weight,
-                                        .ikObjectBone = animated ? ikObjectBones(*b.actor, s.animIkObject) : IkObjectBone{}});
+                                        .ikObjectBone = animated ? ikObjectBones(*b.actor, s.animIkObject) : IkObjectBone{},
+                                        .expires = animated});
             }
             for (int j = extras + 1; j <= b.walkExtras; ++j)
                 b.actor->cueStop(at, kWalkBlend + j, fade);
@@ -416,6 +418,14 @@ void LotSimulation::sampleAll(double at) {
         b.playing = want;
         b.serial = s.serial;
     }
+}
+
+int16_t LotSimulation::seatOf(const SimActor* actor) const {
+    for (const auto& b : bound_)
+        if (b.actor == actor)
+            if (const vm::Object* o = vm_->object(b.id); o && seats.seated(b.id))
+                return o->data[vm::objdata::ContainerId];
+    return 0;
 }
 
 IkObjectBone LotSimulation::ikObjectBones(const SimActor& self, int16_t object) const {
@@ -431,6 +441,13 @@ IkObjectBone LotSimulation::ikObjectBones(const SimActor& self, int16_t object) 
                 other = b.actor;
         if (!other && actorOf)
             other = actorOf(object);
+        // The seat holding the Sim, drawn static (a loveseat): its model's
+        // bone where it stands (the seated idles' hands on its arm). Other
+        // static objects stay out, as before (inferred: their goals were
+        // not checked against the game).
+        if (!other && objectBone && seatOf(self) == object)
+            if (const auto w = objectBone(object, crc))
+                return self->placement().inverse().then(*w);
         if (!other || other == self || other->bones.size() != other->skin.skeleton.bones.size())
             return std::nullopt;
         const Skeleton* sk = &other->skin.skeleton;
@@ -535,48 +552,8 @@ void LotSimulation::updateScene(double seconds) {
     const float dt = float(std::clamp(seconds - last_, 0.0, 0.1));
     last_ = seconds;
     for (auto& b : bound_) {
-        const float x = b.motion.x(t), y = b.motion.y(t);
         const float z = b.motion.z(t, [this](int level, float fx, float fy) { return floorHeight(level, fx, fy); });
-        b.actor->position = {x, y, z + b.zOffset};
-        b.actor->heading = b.motion.turn(dt);
-        bool seated = false;
-        if (seat && !b.motion.current().onStep)
-            if (const auto at = seat(b.id, seconds)) {
-                const Vec3 f = at->rotate({0, 1, 0});
-                b.actor->position = at->t;
-                b.actor->heading = std::atan2(-f[0], f[1]);
-                b.motion.setHeading(b.actor->heading);
-                seated = true;
-            }
-        // Put in a seat or taken out of it, the Sim's drawn place jumps
-        // between where the VM has it (the routing slot it played its
-        // get-in from) and the slot bone: what plays already stays where it
-        // was in the world (its held last frame: a get-in that leaves the
-        // chair out ends seated 0.67 from where it began, and placed again
-        // at the seat it sat beside the chair, between two; user QA,
-        // N001_Lot68), what starts now plays in the new frame (inferred).
-        // The same whenever the drawn place jumps, farther than any walk
-        // moves it in a frame or turned more than any turn does (a Snap, a
-        // stair's end putting the climber at the top): the layers playing
-        // stay where they were, the next one blends from there (the stair's
-        // last frame, its root 4.4 tiles up the steps, was drawn from the top
-        // for the walk's blend, the Sim flashing a tile and a half off;
-        // OS2_DEBUG_JUMPS, N001_Lot68).
-        const Xform placement = b.actor->placement();
-        static const bool noReframe = std::getenv("OS2_NO_SEAT_REFRAME") != nullptr; // the old drawing, to compare
-        bool jumped = false;
-        if (b.lastPlacement) {
-            const Xform d = b.lastPlacement->inverse().then(placement);
-            const float moved = std::hypot(d.t[0], d.t[1], d.t[2]);
-            const float turned = 2 * std::acos(std::min(1.0f, std::fabs(d.q.w)));
-            jumped = moved > vm::SimMotion::kMaxStep || turned > 1.0f;
-        }
-        // (On a jump only what plays once: a looping idle goes on in the new place.)
-        if ((seated != b.seated || jumped) && b.lastPlacement && !noReframe)
-            b.actor->player.reframe(placement.inverse().then(*b.lastPlacement), seated == b.seated);
-        b.seated = seated;
-        b.lastPlacement = placement;
-        b.actor->rootMotion = false;
+        seats.place(b.id, *b.actor, b.motion, seconds, t, dt, z, b.zOffset);
         if (const vm::Object* o = vm_->object(b.id)) {
             const auto target = lookTarget(*o);
             if (std::getenv("OS2_DEBUG_LOOK") && target.has_value() != b.look->target().has_value())

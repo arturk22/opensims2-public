@@ -65,11 +65,11 @@ public:
     // them so: a chair pushed in stays in): stop() then freezes the pose
     // of the moment as the base pose instead of fading back to it.
     void setHoldPose(bool hold) { hold_ = hold; }
-    // With the hold pose, layers that have all finished (played once, held
-    // on their last frame, nothing fading) are merged into one held layer
-    // that mixes as they did (the game's VM never takes a dining chair's
-    // overlays off: each sit and get-up adds two). Off: they pile up (tests).
-    void setCollapseHeld(bool collapse) { collapse_ = collapse; }
+    // With the hold pose, once every layer has finished (played once, held
+    // on its last frame, nothing fading) the pose of that moment becomes the
+    // base pose and the layers go: the game's requests expire and the bones
+    // keep the values they last got (a dining chair's overlays, which the VM
+    // never takes off, do not pile up).
     void setSkeleton(const Skeleton* skeleton) {
         skeleton_ = skeleton;
         twins_.clear();
@@ -102,6 +102,10 @@ public:
         // the IK targets of type 2 (applyIk): the baby a2b-babybottle-feeder's
         // hands reach. Empty: none.
         IkObjectBone ikObjectBone;
+        // Whether, played once, it gives way to every other layer when it
+        // ends (pose(): the game's request expiring); false for the
+        // locomotion's clips, which the next clip takes over from.
+        bool expires = true;
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.
@@ -109,16 +113,16 @@ public:
     void play(const Animation& anim, double now) { play(anim, now, Options{}); }
     // Fades out the layers of `priority` (all if -1).
     void stop(double now, float fade = 0.25f, int priority = -1);
-    // The model moved by `delta` (new model space <- old) while the layers
-    // started so far go on where they were in the world: each is moved back
-    // by it (the bones under the top node), and the layers started after
-    // play in the new frame. A Sim placed in a chair's seat as it is
-    // contained: the get-in that brought it there was played from where it
-    // stood (a2o-chairDining-getIn-*-leaveOut-SE ends seated 0.67 from its
-    // start, in the chair pulled out), and its last frame, held under the
-    // chair's idles, went to sit that far beside the seat.
-    // With `onlyOnce`, only the layers that play once (a held last frame).
-    void reframe(const Xform& delta, bool onlyOnce = false);
+    // The model moved by `delta` (new model space <- old), a jump of the
+    // place the body is drawn from (a Snap, put in or taken out of a seat, a
+    // stair's end): the layers started so far that play once (a held last
+    // frame, or one still under way) or fade out go on where they were in
+    // the world, each moved back by it (the bones under the top node); a
+    // looping layer still playing goes on in the new place, and the layers
+    // started after play in it. It is the game's PostSnap: the object is put
+    // where the animation left it (GlobalRootTransPosition) and the body
+    // does not move with the jump (app/seat_module.hpp).
+    void stayInWorld(const Xform& delta, double now);
 
     // Local bone transforms at `now` (drops the layers that have faded out).
     std::vector<Xform> pose(double now);
@@ -155,6 +159,8 @@ public:
     std::vector<FiredEvent> eventsBetween(double from, double to) const;
 
 private:
+    // The level a layer that played once takes when it ends (below the walk's 0).
+    static constexpr int kExpiredLevel = -1;
     struct Layer {
         const Animation* anim = nullptr;
         const Animation::Target* target = nullptr;
@@ -169,22 +175,22 @@ private:
         std::vector<bool> keyed;
         bool mirror = false;
         float turn = 0;
-        Xform frame; // reframe()'s, after the turn (and the mirror)
+        Xform frame; // stayInWorld()'s, after the turn (and the mirror)
         bool framed = false;
         int level = 0;
         float scale = 1; // Options::weight
         float rate = 1;  // Options::rate
         bool delta = false; // has delta (additive) channels
         IkObjectBone ikObjectBone; // Options::ikObjectBone
-        // A merged held layer (collapse_): its pose and per-bone weight, no animation.
-        std::vector<Xform> held;
-        std::vector<float> heldWeight;
+        bool expires = true;       // Options::expires
     };
-    // Every layer finished and constant at `now` (collapse_).
-    bool allHeld(double now) const;
+    // Every layer finished and constant at `now` (the hold pose settles).
+    bool allFinished(double now) const;
+    // Whether a layer is still playing at `now` (looping, or before its end, not fading out).
+    bool playsOn(const Layer& l, double now) const;
     // The layer's pose at `ticks`, turned by its frame (Options::turn).
     std::vector<Xform> layerPose(const Layer& l, float ticks) const;
-    // The bones under the skeleton's top node moved by the layer's frame (reframe()).
+    // The bones under the skeleton's top node moved by the layer's frame (stayInWorld()).
     void applyFrame(const Layer& l, std::vector<Xform>& pose) const;
     void prepareMirror();
     // A layer's deltas mirrored left to right (and their per-bone weights with them).
@@ -199,7 +205,6 @@ private:
     std::vector<Layer> layers_;
     std::vector<Xform> base_; // setBasePose's, empty: the skeleton's rest pose
     bool hold_ = false;
-    bool collapse_ = true;
     double lastAdvance_ = 0;
     std::vector<IkMiss> ikMisses_;
 };

@@ -503,21 +503,26 @@ static void testPlayer() {
     check(near(angle(both[3].q), 30, 1e-2f) && near(angle(both[1].q), 0, 1e-2f) && p.layerCount() == 2,
           "overlay of a higher priority on its own bones");
 
-    // reframe(): the layers playing are moved back by the model's move (the
-    // bones under the top node), the ones started after are not.
+    // stayInWorld(): a layer that plays once is moved back by the model's
+    // move (the bones under the top node), the ones started after are not.
     AnimPlayer r(&s);
     r.play(walk, 0, {.fade = 0, .loop = false});
-    r.reframe(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}});
+    r.stayInWorld(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}}, 0.05);
     const auto moved = r.pose(0.1);
-    check(near(angle(moved[1].q), 130, 1e-2f) && near(moved[1].t[0], 1, 1e-4f), "reframe moves the layers playing");
+    check(near(angle(moved[1].q), 130, 1e-2f) && near(moved[1].t[0], 1, 1e-4f), "stayInWorld moves a layer that plays once");
     r.play(idle, 0.2, {.fade = 0, .loop = false});
-    check(near(angle(r.pose(0.3)[1].q), 0, 1e-2f), "a layer started after the reframe plays in the new frame");
+    check(near(angle(r.pose(0.3)[1].q), 0, 1e-2f), "a layer started after the jump plays in the new frame");
 
-    // reframe(onlyOnce): a looping layer goes on in the new frame.
+    // A looping layer still playing goes on in the new frame; one fading out stays.
     AnimPlayer once(&s);
     once.play(walk, 0, {.fade = 0, .loop = true});
-    once.reframe(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}}, true);
-    check(near(angle(once.pose(0.1)[1].q), 40, 1e-2f), "reframe(onlyOnce) leaves a looping layer");
+    once.stayInWorld(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}}, 0.05);
+    check(near(angle(once.pose(0.1)[1].q), 40, 1e-2f), "stayInWorld leaves a looping layer");
+    AnimPlayer fading(&s);
+    fading.play(walk, 0, {.fade = 0, .loop = true});
+    fading.play(idle, 0.1, {.fade = 0.5f, .loop = true}); // replaces it: the walk fades out
+    fading.stayInWorld(Xform{quatFromEulerXYZ(0, 0, float(M_PI / 2)), {1, 0, 0}}, 0.1);
+    check(near(fading.pose(0.1)[1].t[0], 1, 1e-3f), "stayInWorld moves a looping layer fading out");
 
     // An object's animation (target "book") binds nothing on a Sim's skeleton.
     {
@@ -869,7 +874,7 @@ static void testDiningChairSeat() {
 // out is played from where it stood (the corner bone "route_chairdining_2_sw",
 // heading 0 in its header) and ends seated 0.67 from there, in the chair as
 // it is pulled out; once in the seat the Sim is placed at the seat bone, and
-// the held last frame must stay where it was (AnimPlayer::reframe): placed
+// the held last frame must stay where it was (AnimPlayer::stayInWorld): placed
 // again at the seat, it sat 0.67 beside the chair, between two (user QA).
 static void testDiningChairCycle() {
     const char* data = std::getenv("OS2_DATA");
@@ -965,11 +970,12 @@ static void testDiningChairCycle() {
     const auto seated = sim.bonePlacement("root_trans", 5);
     check(seated && std::hypot(seated->t[0] - out->t[0], seated->t[1] - out->t[1]) < 0.06f,
           "chair cycle: the leaveOut get-in ends seated in the pulled-out chair");
-    // Contained: placed at the seat, the held frame reframed, it stays there.
+    // Contained: placed at the seat, the held frame stays in the world (the
+    // seat module's rule 3), seated in the chair.
     const Xform before = sim.placement();
     sim.position = out->t;
     sim.heading = yaw(*out) * float(M_PI) / 180;
-    sim.player.reframe(sim.placement().inverse().then(before));
+    sim.player.stayInWorld(sim.placement().inverse().then(before), 5.5);
     const auto still = sim.bonePlacement("root_trans", 6);
     check(seated && still && std::hypot(still->t[0] - seated->t[0], still->t[1] - seated->t[1]) < 0.01f,
           "chair cycle: placed at the seat, the held get-in stays seated in the chair");
@@ -977,10 +983,11 @@ static void testDiningChairCycle() {
 
 // An object's overlays the VM never takes off (a dining chair: each sit and
 // get-up adds a play-once layer at level 1 + its id, held on its last
-// frame): with the hold pose the finished ones merge into one held layer,
-// so the list stays bounded, and the pose is the one they gave, during the
-// next layer's blend-in too.
-static void testHeldLayersCollapse() {
+// frame): with the hold pose, once every layer has finished, the pose of
+// that moment becomes the base and the layers go (the game's requests
+// expire, the bones keep their values), so the list stays bounded and the
+// object stays as it was left, a bone only one old layer keyed included.
+static void testHeldLayersSettle() {
     Skeleton s;
     s.name = "chairdining";
     s.bones.push_back({"root_trans", -1, Xform{}, 0, 0});
@@ -988,47 +995,38 @@ static void testHeldLayersCollapse() {
     s.bones.push_back({"spine0", 1, Xform{}, 2, 2});
     const Animation pull = constantAnim("pelvis", 30, 0, 0), push = constantAnim("pelvis", 0, 0, 0),
                     tilt = constantAnim("spine0", 15, 0, 0);
-    AnimPlayer merged(&s), piled(&s);
-    piled.setCollapseHeld(false);
+    auto angle = [](const Quat& q) { return 2 * std::atan2(q.z, q.w) * 180 / 3.14159265f; };
+    AnimPlayer p(&s);
+    p.setHoldPose(true);
     size_t most = 0;
-    float worst = 0;
+    bool pulled = true, pushed = true, tilted = true;
     int id = 0;
-    auto compare = [&](double at) {
-        for (size_t bone : {size_t(1), size_t(2)}) {
-            const Quat x = merged.pose(at)[bone].q, y = piled.pose(at)[bone].q;
-            worst = std::max(worst, 1 - std::abs(x.x * y.x + x.y * y.y + x.z * y.z + x.w * y.w));
-        }
-        most = std::max(most, merged.layerCount());
-    };
-    for (AnimPlayer* p : {&merged, &piled})
-        p->setHoldPose(true);
     for (int cycle = 0; cycle < 200; ++cycle) {
         const double t = cycle * 10.0;
         const int a = 1 + id, b = 2 + id;
         id += 2;
-        // As the actor's cues start them: in time order.
-        for (AnimPlayer* p : {&merged, &piled}) {
-            p->play(pull, t, {.fade = 0.1f, .loop = false, .priority = a, .mirror = cycle % 2 == 1, .level = a});
-            if (cycle == 3) // a bone only one layer ever keys
-                p->play(tilt, t, {.fade = 0.1f, .loop = false, .priority = 1000, .level = a});
-        }
-        compare(t + 0.05);
-        compare(t + 2.0);
-        for (AnimPlayer* p : {&merged, &piled})
-            p->play(push, t + 5, {.fade = 0.1f, .loop = false, .priority = b, .level = b});
-        compare(t + 5.05);
-        compare(t + 8.0);
+        p.play(pull, t, {.fade = 0.1f, .loop = false, .priority = a, .level = a});
+        if (cycle == 3) // a bone only one layer ever keys
+            p.play(tilt, t, {.fade = 0.1f, .loop = false, .priority = 1000, .level = a});
+        pulled = pulled && near(angle(p.pose(t + 2.0)[1].q), 30, 0.1f);
+        most = std::max(most, p.layerCount());
+        p.play(push, t + 5, {.fade = 0.1f, .loop = false, .priority = b, .level = b});
+        const auto x = p.pose(t + 8.0);
+        pushed = pushed && near(angle(x[1].q), 0, 0.1f);
+        if (cycle >= 3)
+            tilted = tilted && near(angle(x[2].q), 15, 0.1f);
+        most = std::max(most, p.layerCount());
     }
-    check(most <= 3, "held layers: the list stays bounded over 200 sit/stand cycles");
-    check(piled.layerCount() > 300, "held layers: without the merge they pile up");
-    check(worst < 1e-6f, "held layers: the merged pose is the piled one (blend-ins too)");
+    check(most <= 2, "held layers: the list stays bounded over 200 sit/stand cycles");
+    check(pulled && pushed, "held layers: each settles where its last frame left the object");
+    check(tilted, "held layers: a bone only an old layer keyed keeps its value");
 }
 
 // With the game's data (OS2_DATA): N001_Lot68's dining chair through 60
 // sits and get-ups as main.mm cues them (level and priority 1 + the overlay
-// id, flipped, never taken off), plain and "leaveOut" in turn: the merged
-// layers stay few and the chair is posed as with all of them piled up
-// (pulled out and turned while seated, pushed in after).
+// id, flipped, never taken off), plain and "leaveOut" in turn: the layers
+// stay few, the chair is pulled out and turned while seated after a
+// leaveOut get-in and pushed in square after every get-out.
 static void testDiningChairLayersBounded() {
     const char* data = std::getenv("OS2_DATA");
     if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
@@ -1053,37 +1051,38 @@ static void testDiningChairLayersBounded() {
         return;
     std::vector<Xform> saved = chairModel.skeleton.restPose();
     saved[size_t(trans)].t[1] = 0.373f;
-    SimActor merged{SkinnedModel(chairModel.skeleton)}, piled{SkinnedModel(chairModel.skeleton)};
-    for (SimActor* c : {&merged, &piled}) {
-        c->player.setBasePose(saved);
-        c->player.setHoldPose(true);
-        c->position = {17.5f, 25.5f, 0.75f};
-        c->heading = float(M_PI / 2);
-    }
-    piled.player.setCollapseHeld(false);
+    SimActor chair{SkinnedModel(chairModel.skeleton)};
+    chair.player.setBasePose(saved);
+    chair.player.setHoldPose(true);
+    chair.position = {17.5f, 25.5f, 0.75f};
+    chair.heading = float(M_PI / 2);
+    const Vec3 pushedIn{17.5f - 0.373f, 25.5f, 0.75f};
+    auto yaw = [](const Xform& x) {
+        const Vec3 f = x.rotate({0, 1, 0});
+        return std::atan2(-f[0], f[1]) * 180 / float(M_PI);
+    };
     size_t most = 0;
-    float worst = 0;
+    bool outSeated = true, backIn = true;
     uint32_t id = 40;
     for (int cycle = 0; cycle < 60; ++cycle) {
         const double t = cycle * 20.0;
         const bool out = cycle % 2 == 1;
-        for (SimActor* c : {&merged, &piled}) {
-            const int a = 1 + int(id), b = 2 + int(id);
-            c->cue(t, out ? *inOut : *getIn, {.fade = 0.1f, .loop = false, .priority = a, .mirror = true, .level = a});
-            c->cue(t + 10, out ? *outIn : *getOut, {.fade = 0.1f, .loop = false, .priority = b, .mirror = true, .level = b});
-        }
+        const int a = 1 + int(id), b = 2 + int(id);
+        chair.cue(t, out ? *inOut : *getIn, {.fade = 0.1f, .loop = false, .priority = a, .mirror = true, .level = a});
+        chair.cue(t + 10, out ? *outIn : *getOut, {.fade = 0.1f, .loop = false, .priority = b, .mirror = true, .level = b});
         id += 2;
-        for (double at : {t + 0.05, t + 1.0, t + 9.0, t + 10.05, t + 11.0, t + 19.0}) {
-            const auto x = merged.bonePlacement("slot_chairDining_0", at), y = piled.bonePlacement("slot_chairDining_0", at);
-            if (x && y)
-                worst = std::max(worst, std::hypot(x->t[0] - y->t[0], x->t[1] - y->t[1]) +
-                                            (1 - std::abs(x->q.x * y->q.x + x->q.y * y->q.y + x->q.z * y->q.z + x->q.w * y->q.w)));
-            most = std::max(most, merged.player.layerCount());
-        }
+        if (const auto seat = chair.bonePlacement("slot_chairDining_0", t + 9.0); seat && out)
+            outSeated = outSeated && std::hypot(seat->t[0] - pushedIn[0], seat->t[1] - pushedIn[1]) > 0.3f &&
+                        near(std::abs(yaw(*seat) - 90), 15.6f, 0.5f);
+        most = std::max(most, chair.player.layerCount());
+        if (const auto seat = chair.bonePlacement("slot_chairDining_0", t + 19.0))
+            backIn = backIn && near(seat->t[0], pushedIn[0], 0.01f) && near(seat->t[1], pushedIn[1], 0.01f) &&
+                     near(yaw(*seat), 90, 0.5f);
+        most = std::max(most, chair.player.layerCount());
     }
-    check(most <= 3, "chair layers: bounded over 60 sit/stand cycles");
-    check(piled.player.layerCount() >= 100, "chair layers: piled up without the merge");
-    check(worst < 1e-4f, "chair layers: the chair is posed as with every layer kept");
+    check(most <= 2, "chair layers: bounded over 60 sit/stand cycles");
+    check(outSeated, "chair layers: pulled out and turned while seated after a leaveOut get-in");
+    check(backIn, "chair layers: pushed in square after every get-out");
 }
 
 // With the game's data (OS2_DATA): the carry poses a Sim walks with (and
@@ -1162,7 +1161,7 @@ int main() {
     testIdleArmsHangForward();
     testCarryOverlaysKeepWalkUpright();
     testDiningChairCycle();
-    testHeldLayersCollapse();
+    testHeldLayersSettle();
     testDiningChairLayersBounded();
     testDiningChairSeat();
     testDoorLeaves();

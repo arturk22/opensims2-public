@@ -7,8 +7,9 @@
 //     a while), the pelvis far from the slot in the slot's frame (sideways
 //     more than seatXY, or below/above the slot by more than the seated
 //     height range);
-//   - "ik": a hand or foot whose IK goal is fully on (contact 1) ending
-//     farther than ikReach from it (AnimPlayer::lastIkMiss);
+//   - "ik": a hand whose IK goal is fully on (contact 1) ending farther
+//     than ikReach from it (AnimPlayer::lastIkMisses; ikReachMoving while
+//     getting in or out; goals on another Sim left out);
 //   - "table": a body point (pelvis, spine, knees) inside the top slab of a
 //     table or counter (passing through it), at rest;
 //   - "chair": a body point inside a chair or stool the Sim is not in, at rest;
@@ -43,6 +44,7 @@ public:
         bool transitional = false; // a get-in, get-out, start or stop plays
         int16_t container = 0;     // the non-Sim object whose slot holds it (0 none)
         std::string containerName;
+        bool lying = false;        // a bed or a tub: the pelvis lies away from the slot
         Xform seat;                // that slot, drawn (world)
         Vec3 pelvis{0, 0, 0};
         std::vector<std::pair<std::string, Vec3>> body; // other points (knees, spine)
@@ -52,9 +54,11 @@ public:
     };
 
     float seatXY = 0.25f;           // tiles
+    float lyingXY = 1.0f;           // in a bed or a tub
     float seatBelow = 0.05f;        // the pelvis this far under the slot at most
     float seatAbove = 1.05f;        // and this far over it (a bar stool's slot is on the floor)
     float ikReach = 0.06f;          // tiles
+    float ikReachMoving = 0.12f;    // getting in or out
     float slab = 0.06f;             // a table top's thickness that counts
     float shrink = 0.05f;           // chairs' boxes shrunk by this
     double settle = 0.6;            // seconds at rest before the seat and contacts count

@@ -59,7 +59,7 @@ std::vector<std::string> SeatCheck::add(const Sample& s, const std::vector<Box>&
                 r.lo[size_t(k)] = std::min(r.lo[size_t(k)], l[size_t(k)]), r.hi[size_t(k)] = std::max(r.hi[size_t(k)], l[size_t(k)]);
             ++r.frames;
             const float side = std::hypot(l[0], l[1]);
-            bad = side > seatXY || l[2] < -seatBelow || l[2] > seatAbove;
+            bad = side > (s.lying ? lyingXY : seatXY) || l[2] < -seatBelow || l[2] > seatAbove;
             value = std::max({side, -l[2], l[2] - seatAbove, 0.0f});
             char buf[200];
             std::snprintf(buf, sizeof buf, "pelvis (%.2f %.2f %.2f) in the slot of %d %s", l[0], l[1], l[2], s.container,
@@ -68,8 +68,13 @@ std::vector<std::string> SeatCheck::add(const Sample& s, const std::vector<Box>&
         }
         flag(t, s, "seat", bad, value, detail, out);
     }
-    // A hand or foot short of its IK goal.
-    flag(t, s, "ik", !s.walking && s.ikMiss > ikReach, s.ikMiss, "from the goal of " + s.ikChain, out);
+    // A hand short of its IK goal (more slack while getting in or out, the
+    // goals on a chair that moves with it; a goal on another Sim is out:
+    // the VM's social distances are not this module's).
+    const bool onSim = s.ikChain.find(" of a2a-") != std::string::npos || s.ikChain.find(" of a2c-") != std::string::npos ||
+                       s.ikChain.find(" of c2a-") != std::string::npos || s.ikChain.find(" of c2c-") != std::string::npos;
+    const float reach = s.transitional ? ikReachMoving : ikReach;
+    flag(t, s, "ik", !s.walking && !onSim && s.ikMiss > reach, s.ikMiss, "from the goal of " + s.ikChain, out);
     // Through a table's top, or a chair the Sim is not in.
     {
         bool table = false, chair = false;

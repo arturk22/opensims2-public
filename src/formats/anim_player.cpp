@@ -166,9 +166,9 @@ void blendPose(std::vector<Xform>& from, const std::vector<Xform>& to, float wei
 }
 
 void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
-    // The held layers merged before a new one (pose() merges them), so that
-    // they do not pile up on an object nobody draws.
-    if (hold_ && collapse_ && skeleton_ && layers_.size() > 1 && allHeld(now))
+    // An object whose layers have all finished keeps their pose as its base
+    // before a new one (pose() does it too), also when nobody draws it.
+    if (hold_ && skeleton_ && !layers_.empty() && allFinished(now))
         pose(now);
     Layer l;
     l.anim = &anim;
@@ -205,6 +205,7 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.level = o.level >= 0 ? o.level : l.priority;
     l.scale = std::clamp(o.weight, 0.0f, 1.0f);
     l.ikObjectBone = o.ikObjectBone;
+    l.expires = o.expires;
     if (l.mirror)
         prepareMirror();
     if (skeleton_ && l.target) {
@@ -249,9 +250,19 @@ void AnimPlayer::stop(double now, float fade, int priority) {
         }
 }
 
-void AnimPlayer::reframe(const Xform& delta, bool onlyOnce) {
+bool AnimPlayer::playsOn(const Layer& l, double now) const {
+    if (l.fadeOutStart >= 0)
+        return false;
+    if (l.loop)
+        return true;
+    return now < l.start + (l.anim ? l.anim->duration / 1000.0 / l.rate : 0.0);
+}
+
+void AnimPlayer::stayInWorld(const Xform& delta, double now) {
     for (auto& l : layers_) {
-        if (onlyOnce && l.loop)
+        // A looping layer still playing goes on in the new place; one that
+        // plays once (held or not yet ended) or fades out stays.
+        if (l.loop && playsOn(l, now))
             continue;
         l.frame = delta.then(l.frame);
         l.framed = true;
@@ -311,6 +322,25 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         return {};
     std::vector<Xform> out = base_.size() == skeleton_->bones.size() ? base_ : skeleton_->restPose();
     std::erase_if(layers_, [&](const Layer& l) { return l.fadeOutStart >= 0 && weight(l, now) <= 0; });
+    // A layer that played once and ended gives way to every other: the
+    // game's request expires at its end and its bones keep the values it
+    // left only where no other channel writes them (cChannelUberOutlet
+    // writes no bone without a channel). Held at the bottom level, its last
+    // frame shows only there, and what plays at any level takes the bones it
+    // keys (a seated Sim's get-in, level 2, under the chair's idles at
+    // level 1: they showed nowhere), while a new layer of its priority
+    // still crossfades from it. (Inferred: the expiry as a level.)
+    bool expired = false;
+    for (auto& l : layers_)
+        if (!l.loop && l.expires && l.level != kExpiredLevel && l.fadeOutStart < 0 && l.anim &&
+            now >= l.start + l.anim->duration / 1000.0 / l.rate) {
+            l.level = kExpiredLevel;
+            expired = true;
+        }
+    if (expired)
+        std::stable_sort(layers_.begin(), layers_.end(), [](const Layer& a, const Layer& b) {
+            return a.level != b.level ? a.level < b.level : a.priority < b.priority;
+        });
     const size_t n = skeleton_->bones.size();
     // Each layer's pose and per-bone weight (fade x request weight x keyed x mask).
     struct Posed {
@@ -322,16 +352,11 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     };
     std::vector<Posed> posed;
     posed.reserve(layers_.size());
-    // Every layer done and constant: merged below into one held layer.
-    const bool collapse = hold_ && collapse_ && layers_.size() > 1 && allHeld(now);
+    // Every layer done and constant: the pose becomes the base below.
+    const bool settle = hold_ && !layers_.empty() && allFinished(now);
     std::vector<int> posedOf(layers_.size(), -1); // a layer's entry in `posed`
     for (size_t li = 0; li < layers_.size(); ++li) {
         const Layer& l = layers_[li];
-        if (!l.held.empty()) {
-            if (l.held.size() == n && l.heldWeight.size() == n)
-                posed.push_back({l.held, l.heldWeight, l.level, {}, {}});
-            continue;
-        }
         if (!l.target)
             continue;
         const float w = weight(l, now);
@@ -395,9 +420,6 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     // The deltas each bone took (for the IK goals below).
     std::vector<Xform> applied;
     std::vector<uint8_t> appliedHas;
-    std::vector<float> heldWeight;
-    if (collapse)
-        heldWeight.assign(n, 0.0f);
     if (anyDelta) {
         applied.assign(n, Xform{});
         appliedHas.assign(n, 0);
@@ -443,8 +465,6 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         }
         if (cum > 0)
             out[b] = acc;
-        if (collapse && cum > 0)
-            heldWeight[b] = 1 - remaining;
         // The delta channels over the base mix (cChannelUberOutletQ::
         // ChannelData, BV 0xd5e1c4): from the highest priority down, each
         // rotation raised to its weight (q^w: the angle times w about its
@@ -474,19 +494,52 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         }
     }
     std::vector<std::pair<IkReach, const Animation*>> reaches;
-    // IK over the blend: each layer's chains reach its goals from the
-    // blended body (an a2o animation's hands find the object even under a
-    // carry pose of higher priority, which the trees leave on while reading
-    // the paper).
+    // IK over the blend: each layer's chains reach its goals from the body
+    // as blended so far (an a2o animation's hands find the object even under
+    // a carry pose of higher priority, which the trees leave on while
+    // reading the paper; the drink's left hand reaches the mug where the
+    // carry's IK put the right hand). Each chain counts by its layer's share
+    // of the chain's end bone (the hand's, the foot's), whole (one chain
+    // mixed by several shares bends off its goal), and the layers' solutions
+    // of a bone are a running weighted average from what the blend leaves to
+    // it: a level-1 idle's hands give way to a level-2 eating arm as its
+    // channels do, and two layers fading across mix as their channels.
+    struct IkLayer {
+        size_t layer;
+        std::vector<float> mask;
+    };
+    std::vector<IkLayer> ikLayers;
+    std::vector<float> ikTotal(n, 0.0f);
     for (size_t li = 0; li < layers_.size(); ++li) {
         const Layer& l = layers_[li];
         // (A delta-only target's chains have delta goals: nothing to reach.)
         if (!l.target || l.target->ikChains.empty() || l.mirror || !l.target->hasBaseChannels() || posedOf[li] < 0)
             continue;
-        const float w = std::min(weight(l, now), 1.0f);
-        if (w <= 0)
-            continue;
         const std::vector<float>& own = owns[size_t(posedOf[li])];
+        std::vector<float> mask(n, 0.0f);
+        for (const auto& chain : l.target->ikChains) {
+            int end = -1;
+            for (size_t b = 0; b < n && end < 0; ++b)
+                if (nameInstanceHiHash(skeleton_->bones[b].name) == chain.crcs[2])
+                    end = int(b);
+            if (end < 0)
+                continue;
+            for (int b = end; b >= 0; b = skeleton_->bones[size_t(b)].parent) {
+                mask[size_t(b)] = own[size_t(end)];
+                if (nameInstanceHiHash(skeleton_->bones[size_t(b)].name) == chain.crcs[0])
+                    break;
+            }
+        }
+        for (size_t b = 0; b < n; ++b)
+            ikTotal[b] += mask[b];
+        ikLayers.push_back({li, std::move(mask)});
+    }
+    std::vector<float> ikCum(n);
+    for (size_t b = 0; b < n; ++b)
+        ikCum[b] = std::max(0.0f, 1 - ikTotal[b]); // the blend's own share
+    for (const IkLayer& k : ikLayers) {
+        const Layer& l = layers_[k.layer];
+        const std::vector<float>& own = owns[size_t(posedOf[k.layer])];
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
         std::vector<Xform> goals = layerPose(l, ticks);
         applyFrame(l, goals);
@@ -506,7 +559,12 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         std::vector<IkReach> reach;
         applyIk(*l.target, *skeleton_, ticks, solved, &goals, l.frame.then(Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}}),
                 &l.ikObjectBone, false, &reach);
-        blendPose(out, solved, w, l.mask);
+        for (size_t b = 0; b < n; ++b) {
+            if (k.mask[b] <= 0)
+                continue;
+            ikCum[b] += k.mask[b];
+            out[b].q = nlerp(out[b].q, solved[b].q, ikCum[b] > 0 ? std::min(1.0f, k.mask[b] / ikCum[b]) : 1.0f);
+        }
         for (auto& r : reach)
             if (r.endBone >= 0 && size_t(r.endBone) < n && r.weight * own[size_t(r.endBone)] >= 0.99f)
                 reaches.push_back({r, l.anim});
@@ -523,27 +581,22 @@ std::vector<Xform> AnimPlayer::pose(double now) {
                                  std::hypot(e[0] - r.goal[0], e[1] - r.goal[1], e[2] - r.goal[2])});
         }
     }
-    if (collapse) {
-        // One layer at the top level, weighing on each bone what the layers
-        // took of it: what plays over it later mixes as it did with them.
-        Layer merged;
-        merged.loop = false;
-        merged.priority = std::numeric_limits<int>::min();
-        merged.level = layers_.back().level;
-        merged.held = out;
-        merged.heldWeight = std::move(heldWeight);
+    if (settle) {
+        // The game's requests expire when they end and the bones they wrote
+        // keep their values (cChannelUberOutlet writes no bone that no channel
+        // feeds): the object stays as it was left, and what plays later
+        // starts over that pose (the VM never takes a dining chair's
+        // overlays off: each sit and get-up adds two).
+        base_ = out;
         layers_.clear();
-        layers_.push_back(std::move(merged));
     }
     return out;
 }
 
-bool AnimPlayer::allHeld(double now) const {
+bool AnimPlayer::allFinished(double now) const {
     // A second past the end, so that no event of theirs is still to fire.
     constexpr double kSettle = 1.0;
     for (const auto& l : layers_) {
-        if (!l.held.empty())
-            continue;
         if (l.loop || l.fadeOutStart >= 0 || l.delta)
             return false;
         if (l.target && !l.target->ikChains.empty())

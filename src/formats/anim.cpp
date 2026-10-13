@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <cstdio>
 // Layout after OpenTS2's AnimResourceConstBlock.cs (MPL-2.0).
 #include "anim.hpp"
 
