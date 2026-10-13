@@ -365,7 +365,9 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                             objectName(machine, oid).c_str(), o.position.x, o.position.y, o.position.level, o.data[vm::objdata::Direction],
                             o.data[vm::objdata::LeadTileObjectId], o.data[vm::objdata::ContainerId], uint16_t(o.data[vm::objdata::Flags]),
                             uint16_t(o.data[42]), uint16_t(o.data[4]), vm::VM::blocksRouting(o) ? " blocks" : ""),
-                std::printf("    attributes:"), [&] { for (int16_t a : o.attributes) std::printf(" %d", a); }(), std::printf("\n");
+                std::printf("    attributes:"), [&] { for (int16_t a : o.attributes) std::printf(" %d", a); }(),
+                std::printf(o.person ? " person type %d greet status %d\n" : "\n", o.person ? o.person->data[32] : 0,
+                            o.person ? o.person->data[34] : 0);
     if (const char* want = std::getenv("S2PKG_OBJECTS"); want && std::getenv("S2PKG_FOOTPRINTS")) // and their routing footprints
         for (const auto& [oid, o] : machine.objects())
             if (objectName(machine, oid).find(want) != std::string::npos && o.position.inWorld() && !o.person) {
