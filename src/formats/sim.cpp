@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <exception>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include <unordered_map>
@@ -88,21 +90,38 @@ std::optional<Tgi> SimPart::reference(const std::string& indexKey) const {
 namespace {
 
 // Runs body(i) for i in [0, n) on up to 8 threads (index reads through
-// ResourceIndex::readConcurrent only).
+// ResourceIndex::readConcurrent only). An exception in any thread stops the
+// others taking more work; every thread is joined and the first exception is
+// rethrown here (thrown in a worker it called std::terminate, and one thrown
+// on this thread destroyed the joinable workers, which terminates too).
 template <class F>
 void parallelFor(size_t n, F body) {
     const size_t threads = n < 64 ? 1 : std::min<size_t>(8, std::max(1u, std::thread::hardware_concurrency()));
     std::atomic<size_t> next{0};
+    std::mutex errorLock;
+    std::exception_ptr error;
     auto run = [&] {
-        for (size_t i; (i = next.fetch_add(1)) < n;)
-            body(i);
+        try {
+            for (size_t i; (i = next.fetch_add(1)) < n;)
+                body(i);
+        } catch (...) {
+            next.store(n); // the others stop at their next item
+            std::lock_guard lock(errorLock);
+            if (!error)
+                error = std::current_exception();
+        }
     };
     std::vector<std::thread> pool;
-    for (size_t t = 1; t < threads; ++t)
-        pool.emplace_back(run);
+    try {
+        for (size_t t = 1; t < threads; ++t)
+            pool.emplace_back(run);
+    } catch (...) { // no thread to be had: this one does the rest
+    }
     run();
     for (auto& t : pool)
         t.join();
+    if (error)
+        std::rethrow_exception(error);
 }
 
 } // namespace

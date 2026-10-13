@@ -1,5 +1,7 @@
 #include "formats/dbpf.hpp"
 #include "formats/qfs.hpp"
+#include "formats/resindex.hpp"
+#include "formats/sim.hpp"
 
 #include <cstdio>
 #include <filesystem>
@@ -93,9 +95,35 @@ static void testRoundTrip() {
     std::filesystem::remove(path);
 }
 
+// The Sim parts are read on several threads (loadSimParts' parallelFor): a
+// package that cannot be reopened (it went, or the process ran out of open
+// files, as an app opened from the Finder did with its 256) throws in the
+// workers. That called std::terminate; now the caller gets the exception.
+static void testParallelReadError() {
+    const auto dir = std::filesystem::temp_directory_path() / "os2_test_parallel_read";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    DbpfWriter w;
+    for (uint32_t i = 0; i < 200; ++i) { // over parallelFor's 64: several threads
+        w.add({0xEBCF3E27, 0x1C0532FA, i, 0}, text(3)); // GZPS
+        w.add({0xAC506764, 0x1C0532FA, i, 0}, text(3)); // its 3IDR
+    }
+    w.save(dir / "parts.package");
+    ResourceIndex index(dir);
+    std::filesystem::remove_all(dir); // the index's packages are closed after indexing
+    bool threw = false;
+    try {
+        loadSimParts(index);
+    } catch (const DbpfError&) {
+        threw = true;
+    }
+    check(threw, "a read error in the parallel Sim-part read reaches the caller");
+}
+
 int main() {
     testEmpty();
     testRoundTrip();
+    testParallelReadError();
     if (failures == 0)
         std::printf("dbpf: all tests passed\n");
     return failures ? 1 : 0;
