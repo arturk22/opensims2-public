@@ -343,6 +343,76 @@ std::string reachAnimation(VM& vm, const Object& sim, const std::string& surface
     return "a" + rest;
 }
 
+// The body's reach animation from the surface object's "Reach Animations"
+// (STR# 0x92), as try_new_reach looks it up (Mac BV 0x69111c; round 21):
+// the reached object's and the surface's own lists (where the object is
+// picked up from, or the target put into) and their semi-globals', then
+// the global one, whose
+// sixteen entries are "a2o-<floor|tableCoffee|table|counter>-<get|put>"
+// close and far. The entry is ComputeReachAnimIndex's (BV 0x68ba50): the
+// height band (under 0.4 floor 0, 0.7 coffee table 1, 0.9 table 2, else
+// counter 3) + 4 when farther than 0.8 + 8 for a put. Objects keep their
+// own lists: the chessboard's "a2o-chessBoard-get-northEast/.../southWest"
+// (seated reaches: played as the generic standing "a2o-table-get", the Sim
+// in the dining chair stood up through it), the bar stools'
+// "a2o-barstool-seated-get/put", the books', the phones', the urns'.
+// Inferred: the lists of the object reached first (the book's, the bar
+// tumbler's; the chess piece's semi-global is the board's), the band from
+// the slot's height class (the SLOT's The Sims 1 enumeration, surfaceFor)
+// rather than its height in metres, the distance from the Sim to the
+// surface object, and "." or empty entries passing on to the next list.
+// Empty when no list has one (the generic name then).
+std::string reachListAnimation(VM& vm, const Object& sim, const Object* object, const Object* surface, int height, bool get) {
+    if (surface && surface->person)
+        surface = nullptr;
+    int band = 0;
+    switch (height) {
+    case 2: band = 1; break;
+    case 3:
+    case 8: band = 2; break;
+    case 4:
+    case 5:
+    case 9:
+    case 10:
+    case 11: band = 3; break;
+    default: band = 0;
+    }
+    const bool far = surface && sim.position.inWorld() && surface->position.inWorld() &&
+                     std::hypot(sim.position.x - surface->position.x, sim.position.y - surface->position.y) > 0.8f;
+    const size_t close = size_t(band + (get ? 0 : 8));
+    std::vector<uint32_t> groups;
+    for (const Object* o : {object, surface})
+        if (o)
+            groups.push_back(o->group), groups.push_back(o->semiGroup);
+    for (uint32_t g : groups) {
+        const StringTable* t = g ? vm.code().strings(g, 0x92) : nullptr;
+        if (!t)
+            continue;
+        auto entry = [&](size_t i) {
+            std::string name = i < t->count(lang::EnglishUS) ? t->get(i, lang::EnglishUS) : std::string();
+            while (!name.empty() && (name.back() == ' ' || name.back() == '\t'))
+                name.pop_back();
+            return name == "." ? std::string() : name;
+        };
+        // (A far entry left empty: the close one; inferred. The chessboard's
+        // list has only close reaches, and the Sim sits a tile from its centre.)
+        std::string name = far ? entry(close + 4) : std::string();
+        if (name.empty())
+            name = entry(close);
+        if (name.empty())
+            continue;
+        // A child's own version when there is one ("c2o-...").
+        if (name.size() > 1 && name[0] == 'a') {
+            const std::string own = agePrefix(sim) + name.substr(1);
+            if (library(vm).exists(own))
+                return own;
+        }
+        if (library(vm).exists(name))
+            return name;
+    }
+    return {};
+}
+
 // Tick of the animation's event 0 ("transfer object to hand" / "... to
 // slot"), the moment the object changes hands, in VM ticks; nothing if the
 // animation has none.
@@ -514,7 +584,7 @@ Exit reachPut(Context& c) {
     r.mode = mode;
     r.depth = depth, r.tree = c.frame.behavior, r.node = c.frame.pc;
     auto held = [&](int hand) { return c.vm.containedIn(me.id, int16_t(hand)); };
-    std::string surface;
+    std::string surface, listed; // listed: the surface's Reach Animations entry (reachListAnimation)
     if (mode == 0) {
         Object* x = c.vm.object(c.get(o[3], int16_t(le16(&o[4]))));
         if (!x)
@@ -536,6 +606,10 @@ Exit reachPut(Context& c) {
         if (r.hand < 0)
             return Exit::False;
         surface = surfaceOf(c.vm, *x);
+        if (const Object* on = c.vm.object(x->data[objdata::ContainerId]); on && !on->person) {
+            const Slots::Slot* s = containmentSlot(c.vm, *on, x->data[objdata::SlotNumber]);
+            listed = reachListAnimation(c.vm, me, x, on, s ? s->height : 1, true);
+        }
         if (const uint16_t grasp = le16(&o[11]); grasp != 0xFFFF)
             if (const std::string entry = adultListEntry(c, grasp); !entry.empty())
                 r.overlays = carryOverlays(c.vm, me, entry);
@@ -568,6 +642,7 @@ Exit reachPut(Context& c) {
                 return Exit::False;
             const Slots::Slot* s = containmentSlot(c.vm, *to, r.slot);
             surface = surfaceFor(s ? s->height : 1);
+            listed = reachListAnimation(c.vm, me, c.vm.object(x), to, s ? s->height : 1, false);
         } else {
             if (!me.position.inWorld())
                 throw VMError("Reach/Put: dropping onto the floor while out of world");
@@ -580,7 +655,15 @@ Exit reachPut(Context& c) {
         }
     }
 
-    r.animation = reachAnimation(c.vm, me, surface, mode == 0);
+    r.animation = listed.empty() ? reachAnimation(c.vm, me, surface, mode == 0) : listed;
+    if (std::getenv("OS2_DEBUG_REACH")) {
+        const Object* x = c.vm.object(r.object);
+        const Object* on = x ? c.vm.object(x->data[objdata::ContainerId]) : nullptr;
+        std::fprintf(stderr, "reach: Sim %d mode %d object %d (%s, %08X/%08X) in %d (%s, %08X/%08X) target %d: %s\n", me.id, mode,
+                     r.object, x && x->definition ? x->definition->fileName.c_str() : "?", x ? x->group : 0, x ? x->semiGroup : 0,
+                     on ? on->id : 0, on && on->definition ? on->definition->fileName.c_str() : "", on ? on->group : 0,
+                     on ? on->semiGroup : 0, r.target, r.animation.c_str());
+    }
     const auto seconds = library(c.vm).seconds(r.animation);
     if (!seconds)
         throw gameError(err::MissingReachAnimation, r.animation);

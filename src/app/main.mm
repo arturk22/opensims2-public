@@ -4051,9 +4051,11 @@ void sampleDrawnPlaces(double scene) {
             x.lo = {b.lo.x, b.lo.y, b.lo.z}, x.hi = {b.hi.x, b.hi.y, b.hi.z};
             boxes.push_back(std::move(x));
         }
+        // OS2_DEBUG_SEATS=<Sim id> (over 1): that Sim only.
+        static const int only = std::atoi(std::getenv("OS2_DEBUG_SEATS"));
         for (const auto& s : gLotSims) {
             const os2::vm::Object* o = m.object(s.id);
-            if (!o || !o->person || !simInTheWorld(s.id) || gCarriedSims.count(s.actor))
+            if (!o || !o->person || !simInTheWorld(s.id) || gCarriedSims.count(s.actor) || (only > 1 && s.id != only))
                 continue;
             const os2::SimActor& a = *s.actor;
             auto bone = [&](const char* n) -> std::optional<os2::Vec3> {

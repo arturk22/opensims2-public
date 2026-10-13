@@ -22,7 +22,7 @@ run() {
     if [ -n "$only" ] && ! echo " $only " | grep -q " $name "; then return; fi
     frames=""
     [ -n "$SEAT_SHOTS" ] && frames="--frames 6 --track-sim --zoom 3"
-    OS2_THEN_AT="$then" OS2_DEBUG_SEATS=1 OS2_DEBUG_JUMPS=1 OS2_LOG_ANIMS=1 "$app" --data "$OS2_DATA" --vm --walls down \
+    OS2_THEN_AT="$then" OS2_DEBUG_SEATS=${SEATS_SIM:-1} OS2_DEBUG_JUMPS=1 OS2_LOG_ANIMS=1 "$app" --data "$OS2_DATA" --vm --walls down \
         --lot "$lot" --sim-id "$sim" --run-vm "$ticks" $frames --screenshot "$out/$name.png" "$@" \
         -ApplePersistenceIgnoreState YES > "$out/$name.log" 2>&1
     seats=$(grep 'seats: .* problems' "$out/$name.log" | sed 's/opensims2: seats: //')
@@ -51,6 +51,10 @@ run tub      "" N001_Lot68 Angela 2500 --pie Tub --pie-select 0
 # Standing at the counter (a drink at the sink) and at the coffee maker.
 run sink     "" N001_Lot11 Alexander 1200 --pie Counter --pie-select 0
 run coffee   "" N001_Lot68 Angela 1500 --pie "Coffee Machine" --pie-select 0
+# Chess at the dining chairs (N001_Lot11, Don by himself after the party):
+# the pieces' reaches are the board's seated ones (its Reach Animations),
+# not the standing "a2o-table-get" that stood him up through the chair.
+SEATS_SIM=49 run chess "" N001_Lot11 Don 8960
 # Pool: dive in, swim, climb out by the ladder.
 run pool     "1500:here:9,14,1" N001_Lot68 Daniel 3000 --pie Pool --pie-select 0
 [ $fail = 0 ] && echo "seat battery: ok"
