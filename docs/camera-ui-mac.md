@@ -200,6 +200,12 @@ duração em ticks de 30 Hz.
   o setter do andar, vtable `0x68` de outro serviço, não foi lido; o cômodo
   do fundo da piscina não é 0, então só a regra do binário trocava para −1 e
   sumia a casa, QA ao vivo passada 13).
+  Rodada 20 (`r20-pit`): os botões de andar (Page Up/Down) também param no
+  térreo, nunca no −1 (inferido; antes mostravam só o terreno). O térreo de
+  um lote com casas em fundação é mostrado com o nível 1, mas só as partes
+  do nível 1 que não são um andar sobre o chão (`storyOverGround`: piso 3
+  acima do nível de baixo nos 4 cantos do tile; inferido): as paredes de
+  sótão do prédio em serra do N002_Lot31 não aparecem mais no térreo.
 - `constraintwidth` (−10, `+0x494`): o pivô fica preso ao retângulo do
   mundo do lote (`WorldDB` vtable `0x10c`/`0x110`/`0x114`/`0x118` = x/y
   mínimos e máximos) **encolhido** dessa largura (BV `FUN_006a456c`:
