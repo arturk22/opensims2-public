@@ -995,5 +995,55 @@ lista nunca aparece. No app: `Character::partSourceCategory`/`wear`/
 `faceExtras` (sem traje de banho: a roupa do dia a dia). Teste
 `testNakedOutfitKeepsHair` (`test_formats`; com `OS2_DATA`, o Joe e o
 dedetizador do tutorial). Capturas `docs/screenshots/r21-nudehair-*.jpg`.
-Falta a censura (`nTSSG::cDisplayListCensorRenderStrategy`, caixas
-pixeladas sobre o corpo nu): não desenhamos.
+A censura veio depois (rodada 21, `r21-censor`): seção "Censura" abaixo.
+
+## Rodada 21: Censura (caixas pixeladas sobre o Sim nu)
+
+Pedido do usuário: no banho o jogo original cobre o Sim nu com caixas
+pixeladas. Lido no binário (headless Ghidra, BV 1.10 ppc, só leitura) e nos
+`.matShad` de `Materials.package`.
+
+**Quando liga.** `nTSSG::cPerson::OncePerFrameUpdate` (`0x66ebec`) chama a
+cada quadro `cPerson::UpdateCensor` (`0x66d318`), que lê o dado de pessoa
+**30** (`GetPersonData(0x1e)`, as "censorship flags" do TS1): 1 pélvis, 2
+peito se mulher, 4 cabeça, 8 mão esquerda, 0x10 direita, 0x20 pé esquerdo,
+0x40 direito, 0x80 corpo todo. Quem liga e desliga são as árvores dos
+objetos: no chuveiro do tutorial e na banheira a flag vira 0x03 em volta da
+roupa nu (0x080) e volta a 0 quando o Sim se veste (visto na VM com
+`OS2_DEBUG_CENSOR=1`). Nada vem da animação nem da roupa.
+
+**As caixas.** Para cada parte, `GetBoundingBoxOfGeometryBoundToBone`: a caixa
+(mundo) dos vértices das peles do corpo (`NextSkin` 3, 7, 8, 4) ligados ao
+osso, na pose do quadro (então segue a animação). Pélvis e peito vão numa
+caixa só; cabeça, mãos e pés numa cada; com 0x80 tudo numa caixa. Ajustes:
+se `pessoa->vtable+0x90` (lido como `IsMale`, inferido) a pélvis vira
+centro ± 0,8 × tamanho em x e y (z igual); o peito só entra se
+`vtable+0x94` (`IsFemale`, inferido: `cTSPerson::IsMale`/`IsFemale` estão
+declaradas lado a lado, `0xfa02f4`/`0xfa0304`) e fica com 0,7 da altura,
+centro 0,05 acima. Os ossos vêm por hash de nome que não resolvemos; usamos
+`pelvis`, `spine1` (onde estão os seios nas peças `aftopnaked`; inferido),
+`head`, `l_hand`, `r_hand`, `l_foot`, `r_foot`. No app: `formats/sim_censor`
+(vértice conta para o osso de maior peso; o cabelo fica de fora).
+
+**O desenho** (`nTSSG::cDisplayListCensorRenderStrategy`): as caixas vão a
+`AddBoundingBox`; `AddCompositingPassGeometries` projeta cada uma na tela,
+arredonda o retângulo para fora em pixels, recorta na viewport e descarta
+se tiver menos de 0,01 pixel; `RenderPartPtrs` desenha de novo a geometria
+que cai no retângulo numa textura "CensorTexture" de **8 × 8** e o
+`CensorMaterial` (`CensorCompositingMaterial`, camada -1 para não entrar no
+próprio desenho) copia de volta com `textureFilterHint point point`: cada
+texel vira um bloco do mosaico (8 × 8 blocos por caixa, qualquer zoom). O
+quad vai na profundidade do ponto mais perto da caixa (campo +0x7c do
+material), depois das partes transparentes (o espelho diz "before
+transparent objects and the censor compositing pass"): o que está na
+frente da caixa (parede, planta) cobre o mosaico; o vidro do box, que não
+grava profundidade, não. No app: `Renderer::setCensorBoxes`/`censorRect`
+(um passe extra numa textura de 16 blocos 8 × 8 lado a lado, a cena com a
+matriz recortada para o retângulo; o quad com `pointSampler_` e
+`depthRead_`). `OS2_NO_CENSOR=1` desliga (para capturas antes/depois).
+Teste `censor` (caixas por flag, homem/mulher, cabelo fora, retângulo na
+tela; com `OS2_DATA` o Joe nu tem uma caixa nos quadris e vestido nenhuma).
+Capturas: `docs/screenshots/r21-censor-antes.jpg` e `-depois.jpg` (Joe no
+chuveiro do tutorial), `-banheira.jpg` (Mary-Sue em `N001_Lot68`, na
+banheira e já vestida). Falta: a censura no reflexo do espelho
+(`kRenderTypeCensorInMirror`).
