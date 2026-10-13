@@ -170,9 +170,12 @@ MeshGroup terrainMesh(const Lot& lot, const LotLightMapLayout& lm, Keep&& keep) 
 
 // Quarter-tile triangles (west, north, east, south) of each floor tile, with
 // the tile's own texture coordinates, one mesh per material.
-// Levels above `maxLevel` are not drawn (their light-map materials are still set).
+// Levels above `maxLevel` are not drawn (their light-map materials are still set);
+// nor, with `lowestCut` below it, the tiles of `maxLevel` a story over the
+// ground (storyOverGround).
 void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout& lm,
-               std::map<std::string, MeshBuilder>& drawn, std::vector<std::string>& warnings, int maxLevel) {
+               std::map<std::string, MeshBuilder>& drawn, std::vector<std::string>& warnings, int maxLevel,
+               int lowestCut) {
     std::map<std::string, MeshBuilder> hidden;
     std::map<uint16_t, std::string> materials;
     for (const auto& [ref, pattern] : lot.floorPatterns) {
@@ -183,12 +186,15 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
     }
     for (int level = lot.minLevel; level < lot.minLevel + lot.levelCount; ++level) {
         const float lift = level == 0 ? kGroundFloorLift : 0.0f;
-        auto& out = level > maxLevel ? hidden : drawn;
+        const bool withBelow = level == maxLevel && lowestCut < maxLevel;
         for (uint32_t x = 0; x < lot.width; ++x)
             for (uint32_t y = 0; y < lot.height; ++y) {
                 const auto& quarters = lot.floor(level, x, y);
                 if (quarters == std::array<uint16_t, 4>{})
                     continue;
+                auto& out = level > maxLevel || (withBelow && storyOverGround(lot, level, int(x), int(y)))
+                                ? hidden
+                                : drawn;
                 const int ix = int(x), iy = int(y);
                 const float z00 = lot.elevation(level, ix, iy) + lift, z10 = lot.elevation(level, ix + 1, iy) + lift,
                             z11 = lot.elevation(level, ix + 1, iy + 1) + lift,
@@ -392,14 +398,31 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         dx /= len, dy /= len;
         const int level = w.a.level;
         const bool attic = w.type == Lot::Attic;
+        const float nx = dy, ny = -dx; // right of a -> b
         // Attic walls (the gables) stand on the level over the roof's walls
         // and show with the roof, from the top floor.
-        const bool shown = level <= view.level || (attic && roofShown && level == view.level + 1);
+        // A view showing its level with the one below (a house on
+        // foundations) leaves out that level's walls of the next story of a
+        // building on the ground (storyOverGround; attic walls also over a
+        // dip: the sawtooth gables across N002_Lot31's pool pit). Not the
+        // fences: railings stand on decks over any ground.
+        bool offFoundation = false;
+        if (level == view.level && view.lowestCut < view.level && !fence && !(attic && roofShown)) {
+            const float mx = std::clamp((w.a.x + w.b.x) / 2, 0.0f, float(lot.width)),
+                        my = std::clamp((w.a.y + w.b.y) / 2, 0.0f, float(lot.height));
+            // The tiles on its two sides.
+            auto side = [&](float s) {
+                return storyOverGround(lot, level, int(std::floor((w.a.x + w.b.x) / 2 + s * nx * 0.5f)),
+                                       int(std::floor((w.a.y + w.b.y) / 2 + s * ny * 0.5f)));
+            };
+            offFoundation = (side(1) && side(-1)) ||
+                            (attic && lot.elevationAt(level, mx, my) - lot.elevationAt(level - 1, mx, my) > kStoryHeight);
+        }
+        const bool shown = (level <= view.level && !offFoundation) || (attic && roofShown && level == view.level + 1);
         auto& out = shown ? drawn : hidden;
         // The wall mode applies to the view's level (lower levels keep their walls up).
         const bool current = view.level == LotViewOptions::kAllLevels || level == view.level ||
                              (level >= view.lowestCut && level < view.level);
-        const float nx = dy, ny = -dx; // right of a -> b
         // Wall modes cut down the walls whose partition style allows it
         // (walls.txt mayCutAway: normal and attic walls; foundations, pool
         // sides and deck skirts say false, and fences default to false as
@@ -444,7 +467,8 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 }
             }
         }
-        if (lowered && cut && level <= view.level)
+        // (A wall of the next story left out too: what hangs on it goes with it.)
+        if ((lowered || offFoundation) && cut && level <= view.level)
             cut->push_back({w.a.x, w.a.y, w.b.x, w.b.y, float(level)});
         // Bottom and top of the wall at a point along it (grid points or the middle).
         auto bottom = [&](float x, float y) { return lot.elevationAt(level, x, y); };
@@ -927,6 +951,18 @@ std::string PatternCatalog::material(const std::map<std::string, std::string>& s
     return pattern;
 }
 
+bool storyOverGround(const Lot& lot, int level, int x, int y) {
+    if (!lot.hasLevel(level) || !lot.hasLevel(level - 1))
+        return false;
+    if (x < 0 || y < 0 || x >= int(lot.width) || y >= int(lot.height))
+        return true;
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j)
+            if (std::abs(lot.elevation(level, x + i, y + j) - lot.elevation(level - 1, x + i, y + j) - kStoryHeight) >= 0.05f)
+                return false;
+    return true;
+}
+
 int lotTopLevel(const Lot& lot) {
     int top = lot.minLevel;
     // Not the attic walls: the gables belong to the roof over the level
@@ -1104,7 +1140,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     const LotRoofs roofs(lot);
     model.warnings.insert(model.warnings.end(), roofs.warnings.begin(), roofs.warnings.end());
     std::map<std::string, MeshBuilder> built;
-    addFloors(lot, patterns, lm, built, model.warnings, view.level);
+    addFloors(lot, patterns, lm, built, model.warnings, view.level, view.lowestCut);
     std::vector<WallHole> holes;
     if (cache && cache->holes) {
         for (const auto& c : *cache->holes) {

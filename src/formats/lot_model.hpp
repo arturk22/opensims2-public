@@ -103,6 +103,18 @@ struct LotViewOptions {
 // The highest level with walls (not attic walls: the gables go with the
 // roof over the level below) or floors (lowest level if none).
 int lotTopLevel(const Lot& lot);
+// Whether tile (x, y) of `level` is the next story of a building on the
+// ground: its floor a story (3) over the level below's at its four corners,
+// where foundation and deck tops sit at their own height (0.75, 0.5625...)
+// whatever the ground under them (a deck over a pond, railings over a dip,
+// the edge of N002_Lot3's sunken room: not exactly 3 all round). Outside
+// the lot: true.
+// A view showing a level with the one below (LotViewOptions::lowestCut, the
+// raised ground floors app/wall_view.hpp finds) leaves these parts of the
+// level out (N002_Lot31: the sawtooth building's attic walls on level 1, 3
+// up, beside the lot's buildings on foundations); the floor up shows them.
+// Inferred from the lots' data.
+bool storyOverGround(const Lot& lot, int level, int x, int y);
 //
 // Walls, floors, wall tops and the terrain get light-map coordinates
 // (MeshGroup::uvs2) into the atlas that `lightMap`, when given, describes

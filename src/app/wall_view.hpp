@@ -43,6 +43,9 @@ public:
     // The highest level with walls or floors (lotTopLevel): the floor
     // buttons go no higher, and there the roof shows.
     int topLevel() const { return topLevel_; }
+    // The lowest level whose walls take the mode with `level` (one below it
+    // when that one is shown with it, LotViewOptions::lowestCut), else kAllLevels.
+    int lowestCut(int level) const;
 
     // The view for a camera looking along `look` (horizontal, into the
     // scene) at `level` (the lot's numbering).
@@ -52,8 +55,11 @@ public:
     // and diagonals) facing the camera.
     static bool sameCut(const LotViewOptions& a, const LotViewOptions& b);
     // Whether a point (an object's or a Sim's placement) is drawn when the
-    // camera shows `level`: below the floor of the next level up.
-    static bool visible(const Lot& lot, int level, float x, float y, float z);
+    // camera shows `level`: below the floor of the next level up; with
+    // `lowestCut` (lowestCut()) below `level`, also not over the level's
+    // floor a story over the ground (storyOverGround).
+    static bool visible(const Lot& lot, int level, float x, float y, float z,
+                        int lowestCut = LotViewOptions::kAllLevels);
 
 private:
     int mode_ = 1;

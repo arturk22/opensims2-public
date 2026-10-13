@@ -36,5 +36,12 @@ n=$(grep -c "(PlumbBob_objt) out of the world: not animated" "$out/emptylot.log"
 if [ "$n" != 2 ] || grep -q "object [0-9]* plays o-plumbob-spin" "$out/emptylot.log"; then
     echo "FAIL emptylot: $n out-of-world PlumbBobs left unanimated (want 2)"; fail=1
 fi
+# The floor buttons stop at the ground: N002_Lot31's pool makes a level -1,
+# which Page Down showed with nothing but the terrain (live QA, round 20).
+"$app" --data "$OS2_DATA" --vm --ui live --lot N002_Lot31 --key pagedown --screenshot "$out/floordown.png" \
+    -ApplePersistenceIgnoreState YES > "$out/floordown.log" 2>&1
+if ! grep -q "key pagedown: level shown [01]$" "$out/floordown.log"; then
+    echo "FAIL floordown: $(grep 'key pagedown' "$out/floordown.log" || echo 'no level shown')"; fail=1
+fi
 [ $fail = 0 ] && echo "drawn places: ok"
 exit $fail

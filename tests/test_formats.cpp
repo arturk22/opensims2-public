@@ -923,6 +923,65 @@ static void testSawtoothAtticWindows() {
     check(found && outside, "lot 31: the attic wall's face over the lower roof is lit as outside");
 }
 
+// A level shown with the one below (a raised ground floor on foundations)
+// leaves out the next story of a building on the ground: its floor exactly a
+// story over the level below at a tile's four corners (decks and foundation
+// tops sit at their own height whatever the ground). With the game's data:
+// N002_Lot31's sawtooth building has attic walls on level 1, 3 up, while the
+// lot's other buildings stand on foundations (level 1 at 0.75); the camera
+// on the ground showed those walls cut down as long beams across the room.
+static void testNextStoryOverGround() {
+    Lot s;
+    s.width = 3, s.height = 1, s.minLevel = 0, s.levelCount = 2;
+    s.elevations.assign(2 * 4 * 2, 0.0f);
+    s.floors.assign(2 * 3, {});
+    for (int x = 0; x <= 3; ++x)
+        for (int y = 0; y <= 1; ++y)
+            s.elevations[size_t((4 + x) * 2 + y)] = x <= 1 ? 0.75f : 3.0f;
+    check(!storyOverGround(s, 1, 0, 0) && !storyOverGround(s, 1, 1, 0) && storyOverGround(s, 1, 2, 0),
+          "a story over the ground: the level's floor 3 over the one below at the tile's four corners");
+    s.floors[size_t(3 + 2)] = {1, 1, 1, 1};
+    s.floors[size_t(3 + 0)] = {1, 1, 1, 1};
+    check(!WallView::visible(s, 1, 2.5f, 0.5f, 3.0f, 0) && WallView::visible(s, 1, 2.5f, 0.5f, 3.0f) &&
+              WallView::visible(s, 1, 0.5f, 0.5f, 0.75f, 0),
+          "shown with the level below: what stands on the next story's floor is hidden, not on the foundation's");
+
+    const char* data = std::getenv("OS2_DATA");
+    if (!data)
+        return;
+    const std::filesystem::path lotPath =
+        std::filesystem::path(data) / "TSData/Res/UserData/Neighborhoods/N002/Lots/N002_Lot31.package";
+    if (!std::filesystem::exists(lotPath))
+        return;
+    ResourceIndex index(data);
+    const PatternCatalog patterns(index, data);
+    DbpfPackage pkg(lotPath);
+    const Lot lot = Lot::load(pkg);
+    WallView view;
+    view.study(lot);
+    check(view.shownLevel(0) == 1 && view.lowestCut(1) == 0, "lot 31: the ground is shown with level 1 (foundations)");
+    LotModelCache cache;
+    const ObjectModel m = buildLotModel(lot, index, patterns, view.options({0.6f, 0.8f}, 1), nullptr, &cache);
+    // Wall triangles on the sawtooth's attic lines x = 27 and 31 (level 1,
+    // from z 3 up), across the building (y 28..38); and the level-1 walls
+    // of the buildings on foundations (z under 3.75 elsewhere).
+    bool sawtooth = false, foundation = false;
+    for (const auto& part : m.parts) {
+        if (part.node.rfind("wall:", 0) != 0)
+            continue;
+        const auto& p = part.mesh.positions;
+        for (const auto& v : p) {
+            const bool onLine = std::abs(v[0] - 27) < 0.15f || std::abs(v[0] - 31) < 0.15f;
+            if (onLine && v[1] > 28.5f && v[1] < 37.5f && v[2] > 3.01f)
+                sawtooth = true;
+            if (v[0] < 18 && v[2] > 1 && v[2] < 3.7f)
+                foundation = true;
+        }
+    }
+    check(!sawtooth, "lot 31: the sawtooth's attic walls are not drawn with the ground floor");
+    check(foundation, "lot 31: the buildings on foundations keep their floor's walls");
+}
+
 int main() {
     testDxt1();
     testDxt3And5();
@@ -941,6 +1000,7 @@ int main() {
     testLotLightMap();
     testTwoTileArchMask();
     testSawtoothAtticWindows();
+    testNextStoryOverGround();
     testFaceSkinMigration();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

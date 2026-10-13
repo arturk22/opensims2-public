@@ -254,7 +254,9 @@ void BuyMode::preview(const vm::Placement& p) {
 bool BuyMode::changeLevel(int delta) {
     if (!active_ || !vm_.world)
         return false;
-    const int lo = vm_.world->firstLevel(), hi = lo + std::max(1, vm_.world->levelCount()) - 1;
+    // Not the pool's level (0, under the ground): the floors stop at the ground.
+    const int first = vm_.world->firstLevel(), hi = first + std::max(1, vm_.world->levelCount()) - 1;
+    const int lo = std::min(std::max(first, 1), hi);
     const int level = std::clamp(level_ + delta, lo, hi);
     if (level == level_)
         return false;

@@ -609,16 +609,20 @@ void changeFloor(int delta) {
         if (gBuy->changeLevel(delta) && gCameraFollow)
             gCameraFollow->setLevel(gBuy->level() - 1);
     } else if (gBuild && gBuild->active() && gCameraFollow) {
-        if (gCameraFollow->setLevel(gBuild->level() - 1 + delta))
+        if (gBuild->level() - 1 + delta >= std::min(0, gBuild->level() - 1) && gCameraFollow->setLevel(gBuild->level() - 1 + delta))
             gBuild->setLevel(gCameraFollow->level() + 1);
     } else if (gCameraFollow) {
         // A level shown together with the one below (a foundation's top,
         // WallView::shownLevel) is stepped over.
+        // The pool's level (-1) is no floor of the lot: the buttons stop at
+        // the ground (base game: no basements; LotCameraFollow::follow keeps
+        // a swimming Sim's view there too). Inferred, live QA round 20.
         const int now = gCameraFollow->level(), shown = gWallView.shownLevel(now);
+        const int lowest = std::max(gCameraFollow->lowestLevel(), std::min(0, now));
         int to = delta > 0 ? std::min(std::max(now + delta, shown + 1), std::max(gWallView.topLevel(), now)) : now + delta;
-        while (delta < 0 && to > gCameraFollow->lowestLevel() && gWallView.shownLevel(to) == shown)
+        while (delta < 0 && to > lowest && gWallView.shownLevel(to) == shown)
             --to;
-        gCameraFollow->setLevel(to);
+        gCameraFollow->setLevel(std::max(to, std::min(lowest, now)));
     }
 }
 
@@ -1147,7 +1151,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     gPie->floorHit = [](simd_float3 eye, simd_float3 dir) { return floorUnderRay(eye, dir); };
     // The levels above the camera's are not drawn: their objects are not picked.
     gPie->pickable = [](simd_float3 lo, simd_float3) {
-        return !gLotShape || os2::WallView::visible(*gLotShape, viewLevel(), lo.x, lo.y, lo.z);
+        return !gLotShape || os2::WallView::visible(*gLotShape, viewLevel(), lo.x, lo.y, lo.z, gWallView.lowestCut(viewLevel()));
     };
     // Windows, doors, curtains and what hangs on walls (the model's bottom
     // over the floor): hidden with the wall they are on when it is cut down.
@@ -1159,7 +1163,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     gObjectView->visible = [](int16_t id, const os2::Xform& at) {
         if (!gLotShape)
             return true;
-        if (!os2::WallView::visible(*gLotShape, viewLevel(), at.t[0], at.t[1], at.t[2]))
+        if (!os2::WallView::visible(*gLotShape, viewLevel(), at.t[0], at.t[1], at.t[2], gWallView.lowestCut(viewLevel())))
             return false;
         auto it = gWallHung.find(id);
         if (it == gWallHung.end()) {
@@ -2313,6 +2317,8 @@ size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, cons
     const auto pieces = os2::lotFencePieces(lot, patterns, warnings);
     size_t used = 0;
     for (const auto& piece : pieces) {
+        // (Not the next-story rule of a level shown with the one below:
+        // railings stand on decks over any ground, buildLotModel keeps them.)
         if (!os2::WallView::visible(lot, level, piece.transform[12], piece.transform[13], piece.transform[14]))
             continue;
         auto it = models.find(piece.model);
@@ -2362,6 +2368,13 @@ int viewLevel() {
     return gCameraFollow ? gWallView.shownLevel(gCameraFollow->level()) : os2::LotViewOptions::kAllLevels;
 }
 
+// Whether the floor of `lotLevel` at `at` is drawn when the camera shows
+// `top`: not, in a level shown with the one below, the parts a story over
+// the ground (os2::storyOverGround), which the next floor up shows.
+bool drawnFloor(int top, int lotLevel, simd_float3 at) {
+    return lotLevel != top || gWallView.lowestCut(top) >= top || !os2::storyOverGround(*gLotShape, lotLevel, int(std::floor(at.x)), int(std::floor(at.y)));
+}
+
 // The ground or floor under the mouse ray, as Go Here takes it
 // (cTSUserToolStandardAction::GroundOrWallButNotPondAtGameWindowPoint): the
 // first level, from the one the camera shows down, whose floor the ray
@@ -2386,7 +2399,7 @@ std::optional<std::pair<simd_float2, int>> groundUnderRay(simd_float3 eye, simd_
             z = gSimulation->floorHeight(level, hit.x, hit.y);
         }
         const os2::vm::TilePos tile{int(std::floor(hit.x)), int(std::floor(hit.y)), level};
-        if (ok && w.contains(tile) && (w.walkable(tile) || w.pool(tile)))
+        if (ok && w.contains(tile) && (w.walkable(tile) || w.pool(tile)) && drawnFloor(top, lotLevel, hit))
             return std::make_pair(simd_make_float2(hit.x, hit.y), level);
     }
     return std::nullopt;
@@ -2416,7 +2429,7 @@ std::optional<float> floorUnderRay(simd_float3 eye, simd_float3 dir) {
             z = gSimulation->floorHeight(level, hit.x, hit.y);
         }
         const os2::vm::TilePos tile{int(std::floor(hit.x)), int(std::floor(hit.y)), level};
-        if (ok && w.contains(tile) && w.hasFloor(tile))
+        if (ok && w.contains(tile) && w.hasFloor(tile) && drawnFloor(top, lotLevel, hit))
             return t;
     }
     return std::nullopt;
@@ -2603,7 +2616,7 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
                             : s.actor->transform ? os2::Vec3{s.actor->transform->t[0], s.actor->transform->t[1],
                                                              s.actor->transform->t[2]}
                                                  : s.actor->position;
-        bool shown = os2::WallView::visible(*gLotShape, want.level, p[0], p[1], p[2]);
+        bool shown = os2::WallView::visible(*gLotShape, want.level, p[0], p[1], p[2], want.lowestCut);
         // A Sim the VM removed (a carpool or bus driver whose vehicle left)
         // or sent out of the world (at work, gone home) is not drawn: its
         // actor kept its last pose where it was (live QA 15: the drivers
