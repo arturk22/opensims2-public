@@ -146,6 +146,14 @@ opensims2 --user-dir /tmp/u --no-audio --flow-shots \
 
 O lote volta às 17:22 com 628 objetos (abriu às 17:02 com 627).
 
+Rodada 20 (`r20-wallcarry`): cada troca de cena cria um renderizador novo, então
+nada guardado entre cenas pode ter ID de modelo ou de instância dele. As peças de
+cerca guardavam os do lote anterior e no segundo lote tomavam 336 instâncias de
+objetos do lote novo (Sims, grades e muretas sumiam; o relógio de pêndulo do
+`N002_Lot3` virava um bloco de chaminé no lugar de uma grade). Os caches por
+cena ficam em globais que `unloadScene` limpa; teste `scene_switch`
+(`N002_Lot10` → bairro → `N002_Lot3`, `docs/screenshots/r20-wallcarry-*.jpg`).
+
 ## 6. Jogar o bairro (rodada 9)
 
 O puck do bairro abre Famílias e Lotes & Casas (`app/hood_bins.*`,

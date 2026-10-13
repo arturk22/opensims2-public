@@ -860,6 +860,10 @@ simd_float4x4 Renderer::instanceTransform(int instance) const {
     return instance >= 0 && size_t(instance) < instances_.size() ? instances_[size_t(instance)].transform : identity();
 }
 
+int Renderer::instanceModel(int instance) const {
+    return instance >= 0 && size_t(instance) < instances_.size() ? instances_[size_t(instance)].model : -1;
+}
+
 void Renderer::setInstanceModel(int instance, int model) {
     if (instance >= 0 && size_t(instance) < instances_.size() && model >= 0 && size_t(model) < models_.size())
         instances_[size_t(instance)].model = model;

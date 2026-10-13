@@ -364,4 +364,8 @@ add_test(NAME cli_help COMMAND opensims2 --help)
 # reason for, seats and slots where their objects are (tests/drawn_places.sh).
 add_test(NAME drawn_places COMMAND sh ${CMAKE_SOURCE_DIR}/tests/drawn_places.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/drawn_places)
 set_tests_properties(drawn_places PROPERTIES PASS_REGULAR_EXPRESSION "drawn places: ok" TIMEOUT 600)
+# With the game's data: a second lot in one session draws its own objects
+# (renderer ids cached per scene; tests/scene_switch.sh).
+add_test(NAME scene_switch COMMAND sh ${CMAKE_SOURCE_DIR}/tests/scene_switch.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/scene_switch)
+set_tests_properties(scene_switch PROPERTIES PASS_REGULAR_EXPRESSION "scene switch: ok" TIMEOUT 600)
 set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "usage: opensims2")

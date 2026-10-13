@@ -180,6 +180,7 @@ public:
     void setShadowCasters(std::vector<ShadowCaster> casters) { casters_ = std::move(casters); }
     // The transform an instance is drawn with.
     simd_float4x4 instanceTransform(int instance) const;
+    int instanceModel(int instance) const; // -1: no such instance
 
     // Clock for texture coordinate animations, in seconds; until it is set
     // (or after setting it negative) the renderer uses its own running time.

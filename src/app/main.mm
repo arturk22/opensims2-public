@@ -229,6 +229,18 @@ struct PlacedObject {
     std::vector<os2::Xform> pose; // its model's local pose as saved (a chair pushed in), empty: the rest pose
 };
 std::map<int16_t, PlacedObject> gPlacedObjects;
+// Caches of the scene's renderer ids, cleared by unloadScene: the renderer is
+// replaced with each scene, and a model or instance id of the old one names
+// another model or instance in the new one. They were function statics: on
+// the second lot of a session the fence pieces took over the instances of
+// 336 of the new lot's objects (N002_Lot3 after N002_Lot10: the grandfather
+// clock drawn as a brick chimney piece where a railing stands, in front of
+// the Sims: "a menina está carregando um pedaço de parede").
+std::map<std::string, int> gFenceModels; // fence CRES -> model id (-1: failed)
+std::vector<int> gFenceInstances;        // instances placeFencePieces places, reused when it runs again
+std::map<const os2::SimActor*, int> gSimInstances; // a Sim's actor -> its instance (hidden above the level shown)
+std::map<std::pair<int16_t, int16_t>, std::unique_ptr<os2::RgbaImage>> gDialogThumbnails; // (object, neighbor) -> picture
+std::map<int16_t, std::string> gMadePickBoxes; // objects made in play: id -> CRES their pick box was made for
 // Skinned models posed every frame by their animation players.
 std::vector<std::unique_ptr<os2::SimActor>> gActors;
 std::map<int16_t, os2::SimActor*> gObjectActors; // objects the VM has animated (in gActors)
@@ -1412,7 +1424,7 @@ std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId) {
 // (on the lot, else the neighborhood's character file), an object's
 // catalog thumbnail (ObjectThumbnails.package, keyed as the live UI keys it).
 const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor) {
-    static std::map<std::pair<int16_t, int16_t>, std::unique_ptr<os2::RgbaImage>> cache;
+    auto& cache = gDialogThumbnails; // (the lot's object IDs: per scene)
     static std::unique_ptr<os2::DbpfPackage> thumbs;
     static std::map<uint32_t, const os2::DbpfEntry*> thumbIndex;
     if (!gSimulation)
@@ -2295,8 +2307,8 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
 size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot,
                         const os2::PatternCatalog& patterns, std::vector<std::string>* warnings,
                         int level = os2::LotViewOptions::kAllLevels) {
-    static std::map<std::string, int> models;
-    static std::vector<int> instances;
+    auto& models = gFenceModels;
+    auto& instances = gFenceInstances;
     const auto pieces = os2::lotFencePieces(lot, patterns, warnings);
     size_t used = 0;
     for (const auto& piece : pieces) {
@@ -2317,8 +2329,14 @@ size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, cons
             continue;
         simd_float4x4 at;
         std::memcpy(&at, piece.transform.data(), sizeof at);
-        if (used < instances.size())
+        if (used < instances.size()) {
+            // An instance this placed holds a fence's model; anything else is
+            // another thing's instance (the ids of an earlier scene's renderer).
+            const int held = renderer.instanceModel(instances[used]);
+            if (std::none_of(models.begin(), models.end(), [&](const auto& m) { return m.second == held; }))
+                std::fprintf(stderr, "opensims2: fence piece instance %d holds model %d, not a fence's\n", instances[used], held);
             renderer.setInstanceModel(instances[used], it->second), renderer.setInstanceTransform(instances[used], at);
+        }
         else
             instances.push_back(renderer.addInstance(it->second, at));
         ++used;
@@ -2570,7 +2588,7 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
     if (!sims)
         return;
     // Sims above the level shown: out of sight, and not picked.
-    static std::map<const os2::SimActor*, int> instances;
+    auto& instances = gSimInstances;
     simd_float4x4 away = matrix_identity_float4x4;
     away.columns[3] = simd_make_float4(0, 0, -1000, 1);
     for (const auto& s : gLotSims) {
@@ -2618,11 +2636,8 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
     // where the VM view draws them, as the lot's own objects are (they had no
     // pick box, so a click on the bills found nothing: live QA 15).
     if (gPie && gObjectView && gIndex) {
-        static std::map<int16_t, std::string> made;                           // id -> CRES its box was made for
+        auto& made = gMadePickBoxes; // (a new lot: none made yet; a new host can reuse the old one's address)
         static std::map<std::string, std::shared_ptr<const os2::PickMesh>> meshes; // by CRES (null: none)
-        static const os2::PieMenuHost* host = nullptr;
-        if (host != gPie.get())
-            host = gPie.get(), made.clear(); // a new lot: no boxes made yet
         std::set<int16_t> drawnNow;
         gObjectView->forEachDrawn([&](int16_t id, int, os2::SimActor*) { drawnNow.insert(id); });
         for (auto it = made.begin(); it != made.end();) {
@@ -4566,6 +4581,11 @@ void unloadScene() {
     gLotSims.clear();
     gActors.clear();
     gPlacedObjects.clear();
+    gFenceModels.clear();
+    gFenceInstances.clear();
+    gSimInstances.clear();
+    gDialogThumbnails.clear();
+    gMadePickBoxes.clear();
     gPickBoxes.clear();
     gPlumbob = -1;
     gPlumbobBottom = 0;
