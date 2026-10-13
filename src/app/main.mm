@@ -94,6 +94,7 @@
 #include "formats/sim.hpp"
 #include "formats/sim_actor.hpp"
 #include "formats/sim_character.hpp"
+#include "formats/sim_censor.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/skinning.hpp"
 #include "formats/font.hpp"
@@ -3121,6 +3122,44 @@ void choosePlumbob(os2::Renderer& renderer) {
     gPlumbobMaterial = material;
 }
 
+// The censor over nude Sims (cPerson::UpdateCensor every frame,
+// formats/sim_censor.hpp): person data 30 picks the body parts, the boxes
+// follow the posed body and go when the flags are cleared (the shower's and
+// the tub's trees set and clear them around the naked outfit).
+// OS2_DEBUG_CENSOR=1 prints each Sim's flags and boxes when they change;
+// OS2_NO_CENSOR=1 draws none (test aid: before/after shots).
+void updateCensor(os2::Renderer& renderer) {
+    std::vector<os2::Renderer::CensorBox> boxes;
+    static std::map<int16_t, std::string> lastReport;
+    if (gSimulation && gObjectView && !std::getenv("OS2_NO_CENSOR")) {
+        auto& m = gSimulation->machine();
+        for (const LotSim& sim : gLotSims) {
+            const int16_t id = sim.id;
+            os2::SimActor* actor = sim.actor;
+            const os2::vm::Object* o = m.object(id);
+            if (!actor || !o || !o->person || !gObjectView->shown(id))
+                continue;
+            const uint16_t flags = uint16_t(o->person->data[size_t(os2::censor::kPersonData)]);
+            const bool female = o->person->data[65] == 1; // Gender (STR# 0xC8)
+            const auto found = os2::censorBoxes(*actor, flags, female);
+            for (const auto& b : found)
+                boxes.push_back({simd_make_float3(b.lo[0], b.lo[1], b.lo[2]), simd_make_float3(b.hi[0], b.hi[1], b.hi[2])});
+            if (std::getenv("OS2_DEBUG_CENSOR")) {
+                char line[256];
+                std::snprintf(line, sizeof line, "flags 0x%02x, %zu box(es)", flags, found.size());
+                if (lastReport[id] != line) {
+                    lastReport[id] = line;
+                    std::fprintf(stderr, "opensims2: censor of %d: %s\n", id, line);
+                    for (const auto& b : found)
+                        std::fprintf(stderr, "opensims2:   (%.2f %.2f %.2f) - (%.2f %.2f %.2f)\n", b.lo[0], b.lo[1], b.lo[2], b.hi[0],
+                                     b.hi[1], b.hi[2]);
+                }
+            }
+        }
+    }
+    renderer.setCensorBoxes(std::move(boxes));
+}
+
 // The lot's particle effects (app/lot_effects.hpp): what the VM starts, and
 // --effect <name>[@<object id>[:<bone index>] | @x,y,z] (repeatable) by hand.
 std::unique_ptr<os2::LotEffects> gEffects;
@@ -4450,6 +4489,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     if (gTv)
         gTv->update(seconds);
     updateEffects(renderer, seconds);
+    updateCensor(renderer);
     updateAudio(seconds);
 }
 

@@ -317,6 +317,27 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     }
     MTL::Function* vs = library->newFunction(str("vertex_main"));
     MTL::Function* fs = library->newFunction(str("fragment_main"));
+    {
+        MTL::Function* cvs = library->newFunction(str("censor_vs"));
+        MTL::Function* cfs = library->newFunction(str("censor_fs"));
+        MTL::RenderPipelineDescriptor* desc = MTL::RenderPipelineDescriptor::alloc()->init();
+        desc->setVertexFunction(cvs);
+        desc->setFragmentFunction(cfs);
+        desc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat(colorFormat));
+        desc->setDepthAttachmentPixelFormat(MTL::PixelFormat(depthFormat));
+        censor_ = device_->newRenderPipelineState(desc, &error);
+        desc->release();
+        cvs->release();
+        cfs->release();
+        if (!censor_) {
+            std::string msg = "censor pipeline creation failed: " + errorText(error);
+            vs->release();
+            fs->release();
+            library->release();
+            pool->release();
+            throw std::runtime_error(msg);
+        }
+    }
 
     auto pipeline = [&](StandardMaterial::Blend blend) {
         MTL::RenderPipelineDescriptor* desc = MTL::RenderPipelineDescriptor::alloc()->init();
@@ -398,7 +419,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     whiteCube_ = whiteCubeTexture(device_);
     grey_ = rgbaTexture(RgbaImage{1, 1, {128, 128, 128, 255}});
     for (auto& f : frames_)
-        f = device_->newBuffer(2 * kFrameStride, MTL::ResourceStorageModeShared);
+        f = device_->newBuffer((2 + kMaxCensorBoxes) * kFrameStride, MTL::ResourceStorageModeShared);
     for (auto& b : lightBuffers_)
         b = device_->newBuffer(sizeof(GpuLightSet) * kMaxLightSets, MTL::ResourceStorageModeShared);
 
@@ -435,6 +456,11 @@ Renderer::~Renderer() {
         reflectionColor_->release();
     if (reflectionDepth_)
         reflectionDepth_->release();
+    if (censorColor_)
+        censorColor_->release();
+    if (censorDepth_)
+        censorDepth_->release();
+    censor_->release();
     for (auto& [name, tex] : textures_)
         if (tex)
             tex->release();
@@ -1139,9 +1165,11 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
 
     const double t = time_ >= 0 ? time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
     // `reflected`: the pass into the reflection texture (mirrors left out).
-    auto drawItems = [&](MTL::RenderCommandEncoder* enc, bool reflected, const simd_float4x4& passViewProj) {
-        enc->setVertexBuffer(frames_[frame_], reflected ? kFrameStride : 0, 2);
-        enc->setFragmentBuffer(frames_[frame_], reflected ? kFrameStride : 0, 2);
+    // `frameSlot`: the Frame used (0 the view, 1 the reflected view, 2 + i
+    // the censor's box i); off the view (slot > 0) no mirror reflects.
+    auto drawItems = [&](MTL::RenderCommandEncoder* enc, bool reflected, const simd_float4x4& passViewProj, size_t frameSlot) {
+        enc->setVertexBuffer(frames_[frame_], frameSlot * kFrameStride, 2);
+        enc->setFragmentBuffer(frames_[frame_], frameSlot * kFrameStride, 2);
         enc->setFragmentBuffer(lightBuffers_[size_t(frame_)], 0, 3);
         enc->setFragmentSamplerState(sampler_, 0);
         enc->setFragmentSamplerState(maskSampler_, 1);
@@ -1170,7 +1198,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             auto [uv0, uv1] = uvTransform(m.anim, t);
             uv0 *= m.uvScale, uv1 *= m.uvScale;
             const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
-            const uint32_t flags = m.flags | (!reflected && &item == mirror ? uint32_t(kMirror) : 0u);
+            const uint32_t flags = m.flags | (frameSlot == 0 && &item == mirror ? uint32_t(kMirror) : 0u);
             Draw d{item.inst->transform, m.color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
                    m.maskV, m.alphaRef, flags, uint32_t(set)};
             enc->setVertexBytes(&d, sizeof d, 1);
@@ -1235,19 +1263,119 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         rp->depthAttachment()->setClearDepth(1.0);
         MTL::RenderCommandEncoder* renc = cmd->renderCommandEncoder(rp);
         renc->setFrontFacingWinding(MTL::WindingClockwise); // the reflection turns the windings around
-        drawItems(renc, true, rf->viewProj);
+        drawItems(renc, true, rf->viewProj, 1);
         renc->endEncoding();
+    }
+
+    // The censor: each box's rectangle rendered again into its tile of
+    // kCensorBlocks x kCensorBlocks texels (RenderPartPtrs ->
+    // SelectAndClearSurfaces, RenderGeometryForCensor).
+    std::vector<std::pair<CensorRect, int>> censored;
+    if (target)
+        for (const CensorBox& box : censorBoxes_) {
+            if (censored.size() >= size_t(kMaxCensorBoxes))
+                break;
+            if (auto r = censorRect(box, f->viewProj, targetW, targetH))
+                censored.push_back({*r, int(censored.size())});
+        }
+    if (!censored.empty()) {
+        if (!censorColor_) {
+            MTL::TextureDescriptor* cd = MTL::TextureDescriptor::texture2DDescriptor(
+                MTL::PixelFormat(colorFormat_), kCensorBlocks * kMaxCensorBoxes, kCensorBlocks, false);
+            cd->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+            cd->setStorageMode(MTL::StorageModePrivate);
+            censorColor_ = device_->newTexture(cd);
+            MTL::TextureDescriptor* dd = MTL::TextureDescriptor::texture2DDescriptor(
+                MTL::PixelFormat(depthFormat_), kCensorBlocks * kMaxCensorBoxes, kCensorBlocks, false);
+            dd->setUsage(MTL::TextureUsageRenderTarget);
+            dd->setStorageMode(MTL::StorageModePrivate);
+            censorDepth_ = device_->newTexture(dd);
+        }
+        MTL::RenderPassDescriptor* cp = MTL::RenderPassDescriptor::renderPassDescriptor();
+        auto* ca = cp->colorAttachments()->object(0);
+        ca->setTexture(censorColor_);
+        ca->setLoadAction(MTL::LoadActionClear);
+        ca->setStoreAction(MTL::StoreActionStore);
+        ca->setClearColor(pass->colorAttachments()->object(0)->clearColor());
+        cp->depthAttachment()->setTexture(censorDepth_);
+        cp->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+        cp->depthAttachment()->setStoreAction(MTL::StoreActionDontCare);
+        cp->depthAttachment()->setClearDepth(1.0);
+        MTL::RenderCommandEncoder* cenc = cmd->renderCommandEncoder(cp);
+        cenc->setFrontFacingWinding(MTL::WindingCounterClockwise);
+        for (const auto& [r, i] : censored) {
+            // Clip space of the view -> the rectangle filling the tile.
+            const float sx = 2 / (r.nx1 - r.nx0), sy = 2 / (r.ny1 - r.ny0);
+            simd_float4x4 crop = matrix_identity_float4x4;
+            crop.columns[0][0] = sx;
+            crop.columns[1][1] = sy;
+            crop.columns[3][0] = -(r.nx1 + r.nx0) / (r.nx1 - r.nx0);
+            crop.columns[3][1] = -(r.ny1 + r.ny0) / (r.ny1 - r.ny0);
+            auto* cf = reinterpret_cast<Frame*>(static_cast<char*>(frames_[frame_]->contents()) + size_t(2 + i) * kFrameStride);
+            *cf = *f;
+            cf->viewProj = simd_mul(crop, f->viewProj);
+            cf->viewport = simd_make_float4(kCensorBlocks, kCensorBlocks, 0, f->viewport.w);
+            cenc->setViewport(MTL::Viewport{double(i * kCensorBlocks), 0.0, double(kCensorBlocks), double(kCensorBlocks), 0.0, 1.0});
+            drawItems(cenc, false, cf->viewProj, size_t(2 + i));
+        }
+        cenc->endEncoding();
     }
 
     MTL::RenderCommandEncoder* enc = cmd->renderCommandEncoder(pass);
     enc->setFrontFacingWinding(MTL::WindingCounterClockwise);
-    drawItems(enc, false, f->viewProj);
+    drawItems(enc, false, f->viewProj, 0);
+    // The censor's compositing quads (CensorMaterial, after the transparent
+    // parts; layer -1 keeps it out of its own render).
+    if (!censored.empty()) {
+        enc->setRenderPipelineState(censor_);
+        enc->setDepthStencilState(depthRead_);
+        enc->setCullMode(MTL::CullModeNone);
+        enc->setFragmentTexture(censorColor_, 0);
+        enc->setFragmentSamplerState(pointSampler_, 0);
+        const float tile = 1.0f / float(kMaxCensorBoxes);
+        for (const auto& [r, i] : censored) {
+            struct {
+                simd_float4 rect, uvRect, target;
+            } q{simd_make_float4(float(r.x0), float(r.y0), float(r.x1), float(r.y1)),
+                simd_make_float4(float(i) * tile, 0, float(i + 1) * tile, 1),
+                simd_make_float4(float(targetW), float(targetH), r.depth, 0)};
+            enc->setVertexBytes(&q, sizeof q, 0);
+            enc->drawPrimitives(MTL::PrimitiveTypeTriangleStrip, NS::UInteger(0), NS::UInteger(4));
+        }
+    }
     if (sceneHook_)
         sceneHook_(enc, view.view, f->viewProj);
     if (overlay_ && target)
         overlay_(enc, targetW, targetH);
     enc->endEncoding();
     return cmd;
+}
+
+std::optional<Renderer::CensorRect> Renderer::censorRect(const CensorBox& box, const simd_float4x4& viewProj, uint32_t width,
+                                                        uint32_t height) {
+    if (!(box.lo.x <= box.hi.x && box.lo.y <= box.hi.y && box.lo.z <= box.hi.z) || width == 0 || height == 0)
+        return std::nullopt;
+    float x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY, z0 = INFINITY;
+    for (int k = 0; k < 8; ++k) {
+        const simd_float4 c = simd_mul(viewProj, simd_make_float4(k & 1 ? box.hi.x : box.lo.x, k & 2 ? box.hi.y : box.lo.y,
+                                                                   k & 4 ? box.hi.z : box.lo.z, 1));
+        if (c.w <= 1e-4f)
+            return std::nullopt; // reaches behind the eye (inferred: the game projects it anyway)
+        const float px = (c.x / c.w * 0.5f + 0.5f) * float(width), py = (0.5f - c.y / c.w * 0.5f) * float(height);
+        x0 = std::min(x0, px), x1 = std::max(x1, px), y0 = std::min(y0, py), y1 = std::max(y1, py);
+        z0 = std::min(z0, c.z / c.w);
+    }
+    // AddCompositingPassGeometries: rounded outwards to pixels, clipped to
+    // the viewport, dropped when under 0.01 pixel either way.
+    CensorRect r;
+    r.x0 = std::max(0, int(std::floor(x0))), r.y0 = std::max(0, int(std::floor(y0)));
+    r.x1 = std::min(int(width), int(std::ceil(x1))), r.y1 = std::min(int(height), int(std::ceil(y1)));
+    if (r.x1 - r.x0 < 1 || r.y1 - r.y0 < 1)
+        return std::nullopt;
+    r.depth = std::clamp(z0, 0.0f, 1.0f);
+    r.nx0 = float(r.x0) / float(width) * 2 - 1, r.nx1 = float(r.x1) / float(width) * 2 - 1;
+    r.ny0 = 1 - float(r.y1) / float(height) * 2, r.ny1 = 1 - float(r.y0) / float(height) * 2;
+    return r;
 }
 
 void Renderer::draw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable, const FrameView& view) {

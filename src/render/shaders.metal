@@ -379,3 +379,32 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
     }
     return color;
 }
+
+// The censor's compositing quad (CensorCompositingMaterial: the censor
+// texture copied over the view target with point filtering): a screen
+// rectangle at the depth of its box's nearest point, showing its tile of
+// the low-resolution censor render, so each texel is a mosaic block.
+struct CensorQuad {
+    float4 rect;   // pixels: x0, y0, x1, y1 (y down)
+    float4 uvRect; // the tile in the censor texture: u0, v0, u1, v1
+    float4 target; // xy: the target's size in pixels, z: depth
+};
+
+struct CensorOut {
+    float4 position [[position]];
+    float2 uv;
+};
+
+vertex CensorOut censor_vs(uint vid [[vertex_id]], constant CensorQuad& q [[buffer(0)]]) {
+    const float2 corner = float2(vid & 1, vid >> 1);
+    const float2 px = mix(q.rect.xy, q.rect.zw, corner);
+    CensorOut out;
+    out.position = float4(px.x / q.target.x * 2.0 - 1.0, 1.0 - px.y / q.target.y * 2.0, q.target.z, 1.0);
+    out.uv = mix(q.uvRect.xy, q.uvRect.zw, corner);
+    return out;
+}
+
+fragment float4 censor_fs(CensorOut in [[stage_in]], texture2d<float> censorTexture [[texture(0)]],
+                          sampler pointSmp [[sampler(0)]]) {
+    return float4(censorTexture.sample(pointSmp, in.uv).rgb, 1.0);
+}

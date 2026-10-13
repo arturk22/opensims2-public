@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -178,6 +179,30 @@ public:
         simd_float3 color{0.5f, 0.5f, 0.55f}; // outside: the overlay's shadow colour
     };
     void setShadowCasters(std::vector<ShadowCaster> casters) { casters_ = std::move(casters); }
+    // The censor (nTSSG::cDisplayListCensorRenderStrategy, docs/cas-mac.md
+    // "Censura"): world boxes (the nude Sims' UpdateCensor boxes) whose
+    // screen rectangles are drawn as a mosaic. The scene inside each
+    // rectangle is rendered again into kCensorBlocks x kCensorBlocks texels
+    // (AddCompositingPassGeometries: the rectangle snapped to pixels, the
+    // texture 8 x 8) and copied back with point filtering, after the
+    // transparent parts, depth tested at the box's nearest point (a wall in
+    // front hides it, the shower's glass does not). Up to kMaxCensorBoxes.
+    struct CensorBox {
+        simd_float3 lo, hi;
+    };
+    static constexpr int kCensorBlocks = 8;
+    static constexpr int kMaxCensorBoxes = 16;
+    void setCensorBoxes(std::vector<CensorBox> boxes) { censorBoxes_ = std::move(boxes); }
+    // A box's screen rectangle in a target of `width` x `height` pixels
+    // (x0, y0, x1, y1, y down, snapped outwards to pixels and clamped) and
+    // its nearest depth (0..1); nothing when it is off screen, empty or
+    // reaches behind the eye.
+    struct CensorRect {
+        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        float depth = 0;
+        float nx0 = 0, ny0 = 0, nx1 = 0, ny1 = 0; // the rectangle in clip space (y up)
+    };
+    static std::optional<CensorRect> censorRect(const CensorBox& box, const simd_float4x4& viewProj, uint32_t width, uint32_t height);
     // The transform an instance is drawn with.
     simd_float4x4 instanceTransform(int instance) const;
     int instanceModel(int instance) const; // -1: no such instance
@@ -271,6 +296,10 @@ private:
     MTL::Texture* shadowAtlas_ = nullptr; // owned: 8 x 8 tiles of 128 x 128 silhouettes
     MTL::Texture* shadowDepth_ = nullptr;
     std::array<MTL::Buffer*, kFramesInFlight> shadowBuffers_{}; // the casters as the floors see them
+    std::vector<CensorBox> censorBoxes_;
+    MTL::RenderPipelineState* censor_ = nullptr; // the compositing quad
+    MTL::Texture* censorColor_ = nullptr;        // owned: kMaxCensorBoxes tiles of kCensorBlocks^2 texels in a row
+    MTL::Texture* censorDepth_ = nullptr;
     MTL::Texture* reflectionColor_ = nullptr; // owned, the size of the last target
     MTL::Texture* reflectionDepth_ = nullptr;
 };

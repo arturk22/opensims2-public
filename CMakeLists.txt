@@ -75,6 +75,7 @@ add_library(os2_formats
   src/formats/scenegraph.cpp
   src/formats/sim.cpp
   src/formats/sim_actor.cpp
+  src/formats/sim_censor.cpp
   src/formats/sim_character.cpp
   src/formats/simantics.cpp
   src/formats/skeleton.cpp
@@ -305,6 +306,10 @@ if(APPLE)
   add_executable(test_render tests/test_render.cpp)
   target_link_libraries(test_render PRIVATE os2_render)
   add_test(NAME render COMMAND test_render)
+
+  add_executable(test_censor tests/test_censor.cpp)
+  target_link_libraries(test_censor PRIVATE os2_render)
+  add_test(NAME censor COMMAND test_censor)
 endif()
 
 add_executable(test_anim tests/test_anim.cpp)
