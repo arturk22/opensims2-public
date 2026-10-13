@@ -5019,8 +5019,9 @@ void pressMainMenu(simd_float2 p, float w, float h) {
     std::fflush(stdout);
 }
 
-// Runs the lot's VM `ticks` ticks headless (a --wait step).
-void runTicksHeadless(long ticks) {
+// Runs the lot's VM `ticks` ticks headless (a --wait step), with the
+// particle effects the VM starts and stops as the drawn frames run them.
+void runTicksHeadless(long ticks, os2::Renderer* renderer = nullptr) {
     if (!gSimulation || ticks <= 0)
         return;
     const uint64_t target = gSimulation->ticks() + uint64_t(ticks);
@@ -5035,6 +5036,8 @@ void runTicksHeadless(long ticks) {
             gLighting->update(scene);
         if (gLive)
             gLive->tick(gHeadlessClock);
+        if (renderer)
+            updateEffects(*renderer, scene);
         pollTutorial(gHeadlessClock);
         if (gAudio) {
             updateAudio(gHeadlessClock);
@@ -5073,6 +5076,11 @@ void unloadScene() {
     gSnaps.reset();
     gObjectView.reset();
     gTv.reset();
+    // The effects draw through the scene's renderer (its scene hook), which
+    // the next scene replaces: kept, they hooked into the freed renderer and
+    // crashed on the exit after a scene switch (~LotEffects, SIGBUS/SIGSEGV).
+    gEffects.reset();
+    gEffectsFailed = false;
     gSimulation.reset();
     gAudio.reset();
     gCameraFollow.reset();
@@ -6578,7 +6586,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 gStepsUsed = k + 1;
                 const os2::FlowStep& st = steps[k];
                 if (st.kind == os2::FlowStep::Kind::Wait) {
-                    runTicksHeadless(st.ticks);
+                    runTicksHeadless(st.ticks, _viewDelegate.renderer);
                     pollFlowDialog();
                     continue;
                 }
