@@ -383,6 +383,11 @@ set_tests_properties(drawn_places PROPERTIES PASS_REGULAR_EXPRESSION "drawn plac
 # (renderer ids cached per scene; tests/scene_switch.sh).
 add_test(NAME scene_switch COMMAND sh ${CMAKE_SOURCE_DIR}/tests/scene_switch.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/scene_switch)
 set_tests_properties(scene_switch PROPERTIES PASS_REGULAR_EXPRESSION "scene switch: ok" TIMEOUT 600)
+# With the game's data: lot, neighborhood, another lot, neighborhood, the first
+# lot again, with the 256 open files of an app opened from the Finder; exit 0
+# (tests/scene_cycle.sh; also run it with an AddressSanitizer build).
+add_test(NAME scene_cycle COMMAND sh ${CMAKE_SOURCE_DIR}/tests/scene_cycle.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/scene_cycle)
+set_tests_properties(scene_cycle PROPERTIES PASS_REGULAR_EXPRESSION "scene cycle: ok" TIMEOUT 600)
 # With the game's data: the seat battery (tests/seat_battery.sh): sitting,
 # lying, standing at things and swimming drawn where they should be.
 # An unoccupied lot opens in Buy mode with Live off (tests/empty_lot.sh).
