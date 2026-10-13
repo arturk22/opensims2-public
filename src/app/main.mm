@@ -140,6 +140,7 @@
 #include <algorithm>
 #include <functional>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <thread>
 #include <cmath>
@@ -159,6 +160,8 @@
 #include <set>
 #include <sstream>
 #include <strings.h>
+#include <sys/resource.h>
+#include <sys/syslimits.h>
 #include <string>
 #include <vector>
 
@@ -7411,7 +7414,27 @@ static void printUsage() {
         "  -h, --help               this text\n");
 }
 
+// An app opened from the Finder or the Dock starts with 256 open files
+// (launchd's soft limit; a terminal gives far more). The resource index keeps
+// up to 128 packages open, the Sim parts' parallel read a descriptor per
+// package it reads (the base game's and every neighborhood's character
+// files), plus the scene's own files, Metal and audio: past 256 a package
+// could not be reopened (DbpfError on the loading worker, std::terminate) on
+// the first lot entered. Raised to the hard limit (at most OPEN_MAX).
+void raiseOpenFileLimit() {
+    rlimit rl{};
+    if (getrlimit(RLIMIT_NOFILE, &rl) != 0)
+        return;
+    const rlim_t want = std::min<rlim_t>(rl.rlim_max, OPEN_MAX);
+    if (rl.rlim_cur >= want)
+        return;
+    rl.rlim_cur = want;
+    if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
+        std::fprintf(stderr, "opensims2: could not raise the open file limit (%s)\n", std::strerror(errno));
+}
+
 int main() {
+    raiseOpenFileLimit();
     liveShotFile(); // (installs its SIGUSR1 handler before anything can send one)
     @autoreleasepool {
         for (NSString* a in NSProcessInfo.processInfo.arguments)
