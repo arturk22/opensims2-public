@@ -3351,9 +3351,18 @@ que as strings do `Sims2.exe`, mas agora com o byte de cada campo) e o
   1 overlays, 2 corpo inteiro, 3 todas, 4 poses de carregar, 5 idle, 6
   gestos, 7 reações, 8 normais, 9 faciais, 10 faciais idle, 11
   receptividade); objeto (dono 3, dado u16 4); flags byte 2 (0x01 espelhada,
-  0x02 com blend, 0x20 blend curto, 0x08 espelhamento no temp 3, 0x40 para as
-  normais e as espelhadas); prioridade s8 8 (0 qualquer, 1 baixa, 2 média, 3
-  alta).
+  0x02 com blend, 0x04 o índice do modo 0 está no parâmetro u16 0 ("anim id
+  in s.v.", como no Animate Sim/Overlay), 0x20 blend curto, 0x08
+  espelhamento no temp 3, 0x40 para as normais e as espelhadas); prioridade
+  s8 8 (0 qualquer, 1 baixa, 2 média, 3 alta). A 0x04 vem dos dados (rodada
+  20, r20-stand): "Breathe - Overlay - Stop All" (`0x7F074B38`/`0x205A`) põe
+  o parâmetro 1 = 0x44, 0x6A, 0x7E, 0x96 antes de cada Animate Stop
+  `[01 00 54 …]`, e "Stance - Stop" (`0x201B`) para a pose de conversa do
+  parâmetro 0; lida como índice literal, o "breatheLoop50" de pé (overlay
+  de prioridade 1, nível 3) e as poses "…Pose-SWAT" (deltas na coluna)
+  ficavam depois da conversa por cima de andar, assentos e Animate Sim
+  (Sim inclinado, andando de pernas retas, "em pé" na poltrona).
+  `docs/screenshots/r20-stand-antes-depois.jpg`.
 - **0x6D Change Material**: material u16 0; byte 2: 0x08 o material é
   procurado no objeto (dono 8, dado u16 9) em vez de em mim, 0x10 índice do
   material no temp 0, 0x02 tabela do grupo global, 0x04 do semi-global

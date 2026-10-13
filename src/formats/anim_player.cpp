@@ -1,5 +1,7 @@
 #include "anim_player.hpp"
 
+#include <cstdio>
+
 #include "resindex.hpp"
 
 #include <algorithm>
@@ -290,6 +292,18 @@ std::vector<Xform> AnimPlayer::layerPose(const Layer& l, float ticks) const {
         }
     }
     return p;
+}
+
+std::string AnimPlayer::describe(double now) const {
+    std::string out;
+    char buf[256];
+    for (const auto& l : layers_) {
+        std::snprintf(buf, sizeof buf, "%s[%s L%d P%d w%.2f%s%s%s]", out.empty() ? "" : " ",
+                      l.anim ? l.anim->resource.fileName.c_str() : "(held)", l.level, l.priority, l.anim ? weight(l, now) : 1.0f,
+                      l.loop ? " loop" : "", l.mask.empty() ? "" : " masked", l.target && !l.target->ikChains.empty() ? " ik" : "");
+        out += buf;
+    }
+    return out;
 }
 
 std::vector<Xform> AnimPlayer::pose(double now) {

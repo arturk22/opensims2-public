@@ -305,6 +305,19 @@ static void testOverlayLifetime() {
     t = vm.start(s.id, 0x100B, {}, s.id);
     vm.run(t);
     check(s.animation.overlays.empty(), "Animate Stop mode 0 stops every overlay of the name");
+    // With flag 0x04 of byte 2 the entry is in the parameter u16 0 names
+    // ("Breathe - Overlay - Stop All" sets parameter 1 to each breathing
+    // overlay's entry before each stop): read as the entry itself, the
+    // standing "breatheLoop50" stayed on over every animation after a talk.
+    t = vm.start(s.id, 0x1007, {}, s.id);
+    vm.run(t);
+    code.add(kGroup, 0x100C, tree({instr(0x6C, T, E, {1, 0, 0x04, 0x0A, 0, 0, 0x80, 0})}));
+    t = vm.start(s.id, 0x100C, std::vector<int16_t>{4, 4}, s.id);
+    vm.run(t);
+    check(s.animation.overlays.size() == 1, "Animate Stop with the entry in a parameter: another entry stops nothing");
+    t = vm.start(s.id, 0x100C, std::vector<int16_t>{0, 3}, s.id);
+    vm.run(t);
+    check(s.animation.overlays.empty(), "Animate Stop with the entry in a parameter stops that entry");
     for (int i = 0; i < 2; ++i) {
         t = vm.start(s.id, 0x1007, {}, s.id);
         vm.run(t);

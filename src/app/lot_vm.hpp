@@ -162,8 +162,11 @@ private:
         std::map<std::string, std::pair<double, double>> stoppedOverlays;
         std::shared_ptr<HeadLook> look;    // the head turning towards Object::lookAt
     };
+public:
     // Where a Sim's Look At points its head now (world space), if anywhere.
     std::optional<Vec3> lookTarget(const vm::Object& o) const;
+
+private:
     // The bones of a request's IK object for `self`'s IK targets of type 2
     // (AnimPlayer::Options::ikObjectBone): the object's actor (actorOf, else
     // a bound Sim's) as posed last, in `self`'s model space. Empty for none.

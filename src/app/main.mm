@@ -3879,6 +3879,131 @@ void sampleDrawnPlaces(double scene) {
     }
 }
 
+// OS2_POSE_SHOT=<stem> (test aid): with --screenshot, each Sim (or the
+// --character / --sim actor) also drawn alone from its front and its left
+// side at eye level, as <stem>-<id>.png, with its posture measured: the
+// lean of the pelvis-to-head line from upright (+ forward), the head's
+// pitch (+ up) and each arm's angle out from hanging straight down.
+void writePoseSheets(os2::Renderer& renderer, const std::string& stem) {
+    std::vector<std::pair<int, os2::SimActor*>> sims;
+    for (const auto& s : gLotSims)
+        sims.push_back({s.id, s.actor});
+    if (sims.empty())
+        for (auto& a : gActors)
+            if (a && a->skin.skeleton.find("pelvis") >= 0)
+                sims.push_back({int(sims.size()), a.get()});
+    for (auto [id, actor] : sims) {
+        const os2::Skeleton& sk = actor->skin.skeleton;
+        if (actor->bones.size() != sk.bones.size() || actor->model < 0)
+            continue;
+        const os2::Xform toModel = actor->placement().inverse();
+        auto at = [&](const char* n) -> std::optional<os2::Vec3> {
+            const int b = sk.find(n);
+            return b < 0 ? std::nullopt : std::optional(toModel.apply(actor->bones[size_t(b)].t));
+        };
+        constexpr float kDeg = 180.0f / float(M_PI);
+        std::string metrics;
+        const auto pelvis = at("pelvis"), head = at("head");
+        char buf[160];
+        if (pelvis && head) {
+            const float dy = (*head)[1] - (*pelvis)[1], dz = (*head)[2] - (*pelvis)[2], dx = (*head)[0] - (*pelvis)[0];
+            std::snprintf(buf, sizeof buf, "lean %+.0f fwd %+.0f side", std::atan2(dy, dz) * kDeg, std::atan2(-dx, dz) * kDeg);
+            metrics += buf;
+        }
+        if (const auto lf = at("l_foot"), rf = at("r_foot"); lf && rf && head) { // the whole body's tilt (feet to head)
+            const float dx = (*head)[0] - ((*lf)[0] + (*rf)[0]) / 2, dy = (*head)[1] - ((*lf)[1] + (*rf)[1]) / 2,
+                        dz = (*head)[2] - ((*lf)[2] + (*rf)[2]) / 2;
+            std::snprintf(buf, sizeof buf, ", tilt %+.0f fwd %+.0f side", std::atan2(dy, dz) * kDeg, std::atan2(-dx, dz) * kDeg);
+            metrics += buf;
+        }
+        if (const int hb = sk.find("head"); hb >= 0) {
+            const auto rest = sk.world(sk.restPose());
+            const os2::Vec3 fwd = os2::Xform{conjugate(rest[size_t(hb)].q), {0, 0, 0}}.rotate({0, 1, 0});
+            const os2::Vec3 face = toModel.rotate(actor->bones[size_t(hb)].rotate(fwd));
+            std::snprintf(buf, sizeof buf, ", head pitch %+.0f", std::asin(std::clamp(face[2], -1.0f, 1.0f)) * kDeg);
+            metrics += buf;
+        }
+        for (const char* side : {"l", "r"}) {
+            const auto sh = at((std::string(side) + "_upperarm").c_str()), hand = at((std::string(side) + "_hand").c_str());
+            if (!sh || !hand)
+                continue;
+            const os2::Vec3 d{(*hand)[0] - (*sh)[0], (*hand)[1] - (*sh)[1], (*hand)[2] - (*sh)[2]};
+            const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            std::snprintf(buf, sizeof buf, ", %s arm %.0f (fwd %+.2f out %+.2f)", side, std::acos(std::clamp(-d[2] / len, -1.0f, 1.0f)) * kDeg,
+                          d[1], side[0] == 'l' ? d[0] : -d[0]);
+            metrics += buf;
+        }
+        for (const char* side : {"l", "r"}) { // each knee's bend (0: straight)
+            const auto th = at((std::string(side) + "_thigh").c_str()), ca = at((std::string(side) + "_calf").c_str()),
+                       ft = at((std::string(side) + "_foot").c_str());
+            if (!th || !ca || !ft)
+                continue;
+            const os2::Vec3 u{(*ca)[0] - (*th)[0], (*ca)[1] - (*th)[1], (*ca)[2] - (*th)[2]};
+            const os2::Vec3 v{(*ft)[0] - (*ca)[0], (*ft)[1] - (*ca)[1], (*ft)[2] - (*ca)[2]};
+            const float c = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) /
+                            std::max(1e-6f, std::sqrt((u[0] * u[0] + u[1] * u[1] + u[2] * u[2]) * (v[0] * v[0] + v[1] * v[1] + v[2] * v[2])));
+            std::snprintf(buf, sizeof buf, ", %s knee %.0f", side, std::acos(std::clamp(c, -1.0f, 1.0f)) * kDeg);
+            metrics += buf;
+        }
+        std::string playing;
+        if (gSimulation)
+            if (const os2::vm::Object* o = gSimulation->machine().object(int16_t(id))) {
+                playing = o->animation.name.empty() ? (o->route ? "(walking)" : "(idle)") : o->animation.name;
+                for (const auto& ov : o->animation.overlays)
+                    playing += " + " + ov.name;
+                if (const auto target = gSimulation->lookTarget(*o)) {
+                    char look[96];
+                    std::snprintf(look, sizeof look, "; looks at %d (%.1f %.1f %.2f)", o->lookAt->target, (*target)[0], (*target)[1],
+                                  (*target)[2]);
+                    playing += look;
+                }
+            }
+        std::printf("opensims2: pose shot: %s-%d: Sim %d %s; %s; layers %s\n", fs::path(stem).filename().c_str(), id, id, metrics.c_str(), playing.c_str(),
+                    actor->player.describe(gSceneNow).c_str());
+        // The Sim alone, far from the lot: its instance moved there for the shot.
+        const int inst = renderer.instanceOf(actor->model);
+        if (inst < 0)
+            continue;
+        const simd_float4x4 was = renderer.instanceTransform(inst);
+        const simd_float3 away = simd_make_float3(-5000, -5000, 0);
+        const simd_float3 p = simd_make_float3(actor->position[0], actor->position[1], actor->position[2]);
+        simd_float4x4 moved = matrix_identity_float4x4;
+        moved.columns[3] = simd_make_float4(away - p, 1);
+        renderer.setInstanceTransform(inst, moved);
+        const uint32_t w = 320, h = 560;
+        os2::RgbaImage sheet;
+        sheet.width = w * 2, sheet.height = h;
+        sheet.pixels.assign(size_t(sheet.width) * h * 4, 0);
+        const float heading = actor->transform ? 0.0f : actor->heading;
+        for (int view = 0; view < 2; ++view) {
+            // The Sim faces +Y turned by its heading; front, then its left side.
+            const float a = heading + (view ? float(M_PI) / 2 : 0);
+            const simd_float3 dir = simd_make_float3(-std::sin(a), std::cos(a), 0);
+            const simd_float3 target = away + simd_make_float3(0, 0, 0.85f);
+            const float fov = 30.0f * float(M_PI) / 180.0f, dist = 4.6f;
+            const simd_float3 e = target + dir * dist;
+            const simd_float3 f = simd_normalize(target - e);
+            const simd_float3 sv = simd_normalize(simd_cross(f, simd_make_float3(0, 0, 1)));
+            const simd_float3 u = simd_cross(sv, f);
+            os2::FrameView fv;
+            fv.view = simd_matrix(simd_make_float4(sv.x, u.x, -f.x, 0), simd_make_float4(sv.y, u.y, -f.y, 0),
+                                  simd_make_float4(sv.z, u.z, -f.z, 0),
+                                  simd_make_float4(-simd_dot(sv, e), -simd_dot(u, e), simd_dot(f, e), 1));
+            const float n = 1, fa = 20, ys = 1.0f / std::tan(fov * 0.5f), zs = fa / (n - fa);
+            fv.projection = simd_matrix(simd_make_float4(ys * float(h) / float(w), 0, 0, 0), simd_make_float4(0, ys, 0, 0),
+                                        simd_make_float4(0, 0, zs, -1), simd_make_float4(0, 0, zs * n, 0));
+            const os2::Renderer::Overlay overlay = renderer.overlay();
+            renderer.setOverlay({});
+            const os2::RgbaImage img = renderer.capture(w, h, fv, simd_make_float4(0.55f, 0.62f, 0.68f, 1));
+            renderer.setOverlay(overlay);
+            for (uint32_t y = 0; y < h && img.pixels.size() >= size_t(w) * h * 4; ++y)
+                std::memcpy(&sheet.pixels[(size_t(y) * sheet.width + view * w) * 4], &img.pixels[size_t(y) * w * 4], w * 4);
+        }
+        renderer.setInstanceTransform(inst, was);
+        os2::writePng(stem + "-" + std::to_string(id) + ".png", sheet);
+    }
+}
+
 void poseActors(os2::Renderer& renderer, double seconds) {
     pollTutorial(seconds); // (the real clock)
     if (gSimulation)
@@ -6422,6 +6547,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                 }
                 const CFTimeInterval captured = CACurrentMediaTime();
                 os2::writePng(file, img);
+                if (const char* poseShot = std::getenv("OS2_POSE_SHOT"))
+                    writePoseSheets(*_viewDelegate.renderer, frames > 1 ? poseShot + ("-f" + std::to_string(f)) : poseShot);
                 perfSim += simmed - frameStart, perfCapture += captured - simmed;
                 perfWorst = std::max(perfWorst, captured - frameStart);
                 std::printf("opensims2: wrote %s (%.2f s%s)\n", file.c_str(), at,

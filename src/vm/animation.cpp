@@ -771,7 +771,15 @@ Exit animateStop(Context& c) {
     const int mode = int8_t(o[7]);
     std::string byName;
     if (mode == 0) {
-        const std::string entry = listEntry(c, target, o[6], int16_t(le16(&o[0])));
+        // Flag 0x04 of byte 2: the index is in that parameter ("anim id in
+        // s.v.", as Animate Sim's and Overlay's): "Breathe - Overlay - Stop
+        // All" sets parameter 1 to each breathing overlay's entry before each
+        // stop, and "Stance - Stop" its talk stance's in parameter 0; read
+        // as the entry itself they stopped another animation or nothing,
+        // and the standing "breatheLoop50" overlay (level 3: over talk,
+        // walk and seats) and the talk stances' lean ("...Pose-SWAT")
+        // stayed on after a conversation (user playtests, r20-stand).
+        const std::string entry = listEntry(c, target, o[6], animationIndex(c, 0, o[2] & 0x04));
         const std::string first = trim(split(entry, ',')[0]);
         if (first.empty() || first == ".")
             return Exit::True;

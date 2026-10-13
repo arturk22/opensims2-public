@@ -134,6 +134,8 @@ public:
     float advance(double now);
 
     size_t layerCount() const { return layers_.size(); }
+    // The layers at `now`, for test aids: name, level, priority, weight.
+    std::string describe(double now) const;
 
     // Events (ANIM "events": sounds, type 1014 "sound_name=...") of the
     // layers not fading out whose time falls in (from, to] seconds, looping
