@@ -192,7 +192,7 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats os2_fx
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/jump_detector.cpp src/app/glide_detector.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/cinematic_player.cpp src/app/lot_effects.cpp src/app/tv_broadcast.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/jump_detector.cpp src/app/glide_detector.cpp src/app/seat_check.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/cinematic_player.cpp src/app/lot_effects.cpp src/app/tv_broadcast.cpp)
   # The game flow: main menu, user folder, in-game save, options (app/game_flow.hpp).
   target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/tutorial.cpp src/app/options_panel.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp)
   # Scenes loaded off the main thread behind the loading screens (docs/loading-mac.md).
@@ -321,6 +321,9 @@ add_test(NAME ui COMMAND test_ui)
 add_executable(test_jump_detector tests/test_jump_detector.cpp src/app/jump_detector.cpp)
 target_include_directories(test_jump_detector PRIVATE src)
 add_test(NAME jump_detector COMMAND test_jump_detector)
+add_executable(test_seat_check tests/test_seat_check.cpp src/app/seat_check.cpp)
+target_include_directories(test_seat_check PRIVATE src)
+add_test(NAME seat_check COMMAND test_seat_check)
 add_executable(test_glide_detector tests/test_glide_detector.cpp src/app/glide_detector.cpp)
 target_include_directories(test_glide_detector PRIVATE src)
 add_test(NAME glide_detector COMMAND test_glide_detector)
@@ -371,6 +374,10 @@ set_tests_properties(drawn_places PROPERTIES PASS_REGULAR_EXPRESSION "drawn plac
 # (renderer ids cached per scene; tests/scene_switch.sh).
 add_test(NAME scene_switch COMMAND sh ${CMAKE_SOURCE_DIR}/tests/scene_switch.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/scene_switch)
 set_tests_properties(scene_switch PROPERTIES PASS_REGULAR_EXPRESSION "scene switch: ok" TIMEOUT 600)
+# With the game's data: the seat battery (tests/seat_battery.sh): sitting,
+# lying, standing at things and swimming drawn where they should be.
+add_test(NAME seat_battery COMMAND sh ${CMAKE_SOURCE_DIR}/tests/seat_battery.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/seat_battery)
+set_tests_properties(seat_battery PROPERTIES PASS_REGULAR_EXPRESSION "seat battery: ok" TIMEOUT 900)
 # With the game's data: no Sim glides with still legs (tests/glides.sh).
 add_test(NAME glides COMMAND sh ${CMAKE_SOURCE_DIR}/tests/glides.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/glides)
 set_tests_properties(glides PROPERTIES PASS_REGULAR_EXPRESSION "glides: ok" TIMEOUT 600)

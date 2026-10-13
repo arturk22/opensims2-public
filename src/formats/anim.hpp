@@ -207,9 +207,18 @@ float animationTime(const Animation& a, float seconds, bool loop);
 // skeleton's model space; without it, or when the IK object lacks the
 // bone, the goal is taken in model space (inferred).
 using IkObjectBone = std::function<std::optional<Xform>(uint32_t boneCrc)>;
+// What a chain was asked to reach (test aid: AnimPlayer::lastIkMiss): its
+// end bone, the goal point in model space and how firmly (the chain's IK
+// weight times its targets' contact, 1 = fully on).
+struct IkReach {
+    int endBone = -1;
+    Vec3 goal{0, 0, 0};
+    float weight = 0;
+    uint32_t chain = 0; // the chain's begin bone CRC (for reports)
+};
 void applyIk(const Animation::Target& target, const Skeleton& skeleton, float ticks, std::vector<Xform>& local,
              const std::vector<Xform>* goals = nullptr, const Xform& modelFrame = Xform{},
-             const IkObjectBone* ikObjectBone = nullptr, bool mirrored = false);
+             const IkObjectBone* ikObjectBone = nullptr, bool mirrored = false, std::vector<IkReach>* reach = nullptr);
 
 // Snap events (ANIM event type 1005): "snapObjectRoot=<object>:__<model>__"
 // and "snapTargetSlot=<skeleton>:__<bone>__" or "Oblivion". They move a

@@ -61,6 +61,7 @@
 #include "app/loading_screen.hpp"
 #include "app/glide_detector.hpp"
 #include "app/jump_detector.hpp"
+#include "app/seat_check.hpp"
 #include "formats/catalog.hpp"
 #include "formats/config_text.hpp"
 #include "formats/graphics_options.hpp"
@@ -3692,6 +3693,75 @@ void sampleDrawnPlaces(double scene) {
     static const bool jumps = std::getenv("OS2_DEBUG_JUMPS") != nullptr;
     static const char* watch = std::getenv("OS2_WATCH_OBJECT");
     os2::vm::VM& m = gSimulation->machine();
+    // OS2_THEN_AT="<tick>:<object>:<entry>[;<tick>:...]" (test aid, the seat
+    // battery): at that VM tick the selected Sim queues the English pie entry
+    // of an object found by ID or name (as --vm-queue), or with the object
+    // "here" a Go Here to <entry> = x,y[,level] (to get up, change seats,
+    // climb out of the pool).
+    if (static const char* then = std::getenv("OS2_THEN_AT"); then && gPie) {
+        static size_t done = 0;
+        std::vector<std::string> items;
+        for (std::string rest = then; !rest.empty();) {
+            const size_t semi = rest.find(';');
+            items.push_back(rest.substr(0, semi));
+            rest = semi == std::string::npos ? "" : rest.substr(semi + 1);
+        }
+        while (done < items.size()) {
+            const std::string& it = items[done];
+            const size_t c1 = it.find(':'), c2 = c1 == std::string::npos ? c1 : it.find(':', c1 + 1);
+            if (c2 == std::string::npos || gSimulation->machine().ticks < std::stoull(it.substr(0, c1)))
+                break;
+            ++done;
+            os2::vm::VM& vm = gSimulation->machine();
+            const std::string what = it.substr(c1 + 1, c2 - c1 - 1), entry = it.substr(c2 + 1);
+            const os2::vm::ObjectId sim = gPie->sim();
+            bool queued = false;
+            if (what == "here") {
+                float x = 0, y = 0;
+                int level = 1;
+                std::sscanf(entry.c_str(), "%f,%f,%d", &x, &y, &level);
+                const os2::vm::ObjectId dest = sim ? os2::vm::createGoHereDestination(vm, sim, x, y, level) : 0;
+                if (dest)
+                    for (const auto& e : os2::vm::pieMenu(vm, sim, dest))
+                        if (!queued && e.available() && !e.debug)
+                            if (auto q = os2::vm::interactionFromPie(vm, e)) {
+                                q->pushedBy = sim;
+                                os2::vm::enqueue(vm, *vm.object(sim), *q);
+                                queued = true;
+                            }
+                if (dest)
+                    os2::vm::releaseDestination(vm, dest);
+            } else {
+                os2::vm::ObjectId target = 0;
+                for (const auto& [id, o] : vm.objects())
+                    if (!target && !o.person && o.definition &&
+                        (what == std::to_string(id) || strcasestr(o.definition->fileName.c_str(), what.c_str())))
+                        target = id;
+                os2::vm::PieOptions opt;
+                opt.language = os2::lang::EnglishUS;
+                if (target && sim)
+                    for (const auto& e : os2::vm::pieMenu(vm, sim, target, opt))
+                        if (!queued && strcasecmp(e.name.c_str(), entry.c_str()) == 0)
+                            if (auto q = os2::vm::interactionFromPie(vm, e)) {
+                                os2::vm::addAction(vm, *vm.object(sim), *q);
+                                queued = true;
+                            }
+            }
+            std::string offered;
+            if (!queued && what != "here")
+                for (const auto& [id, o] : vm.objects())
+                    if (!o.person && o.definition && strcasestr(o.definition->fileName.c_str(), what.c_str()) && offered.empty()) {
+                        os2::vm::PieOptions opt;
+                        opt.language = os2::lang::EnglishUS;
+                        offered = " (object " + std::to_string(id) + " offers:";
+                        for (const auto& e : os2::vm::pieMenu(vm, sim, id, opt))
+                            offered += " '" + e.name + "'";
+                        offered += ")";
+                    }
+            std::printf("opensims2: tick %llu: then %s:%s %s%s\n", (unsigned long long)vm.ticks, what.c_str(), entry.c_str(),
+                        queued ? "queued" : "not queued", offered.c_str());
+        }
+    }
     if (jumps) {
         static os2::JumpDetector detector;
         static bool registered = false;
@@ -3936,6 +4006,108 @@ void sampleDrawnPlaces(double scene) {
                 c.behind += bad;
                 flag("hand behind the back", bad, b);
             }
+        }
+    }
+    // OS2_DEBUG_SEATS=1 (test aid, app/seat_check.hpp; tests/seat_battery.sh):
+    // each Sim's drawn body against its seat, its IK goals, the tables and
+    // chairs around it, and its carry; problems printed as they start and
+    // summed up at exit.
+    static const bool seats = std::getenv("OS2_DEBUG_SEATS") != nullptr;
+    if (seats && gObjectView) {
+        static os2::SeatCheck check;
+        static bool registered = false;
+        if (!registered) {
+            registered = true;
+            std::atexit([] {
+                std::printf("opensims2: seats: %d problems: %s\n", check.episodes(), check.summary().c_str());
+                for (const auto& [k, c] : check.counts())
+                    if (c.episodes)
+                        std::printf("opensims2: seats:   worst %s\n", c.example.c_str());
+                for (const auto& [name, r] : check.seats())
+                    std::printf("opensims2: seats:   pelvis in the slot of %s: x %.2f..%.2f y %.2f..%.2f z %.2f..%.2f (%d frames)\n",
+                                name.c_str(), r.lo[0], r.hi[0], r.lo[1], r.hi[1], r.lo[2], r.hi[2], r.frames);
+                std::fflush(stdout);
+            });
+        }
+        // The tables, counters and seats (their models' boxes where they are drawn now).
+        std::vector<os2::SeatCheck::Box> boxes;
+        for (const auto& b : gPickBoxes) {
+            const int16_t id = int16_t(b.instance & 0xFFFF);
+            const os2::vm::Object* ob = m.object(id);
+            if (!ob || ob->person || !ob->definition)
+                continue;
+            const std::string& n = ob->definition->fileName;
+            const bool table = n.find("Table") != std::string::npos || n.find("Counter") != std::string::npos;
+            const bool seat = n.find("Chair") != std::string::npos || n.find("Stool") != std::string::npos ||
+                              n.find("Sofa") != std::string::npos || n.find("Loveseat") != std::string::npos ||
+                              n.find("Bench") != std::string::npos;
+            if (!table && !seat)
+                continue;
+            const auto at = gObjectView->placement(id);
+            if (!at || !gObjectView->shown(id))
+                continue;
+            os2::SeatCheck::Box x;
+            x.id = id, x.name = n, x.at = *at, x.table = table && !seat;
+            x.lo = {b.lo.x, b.lo.y, b.lo.z}, x.hi = {b.hi.x, b.hi.y, b.hi.z};
+            boxes.push_back(std::move(x));
+        }
+        for (const auto& s : gLotSims) {
+            const os2::vm::Object* o = m.object(s.id);
+            if (!o || !o->person || !simInTheWorld(s.id) || gCarriedSims.count(s.actor))
+                continue;
+            const os2::SimActor& a = *s.actor;
+            auto bone = [&](const char* n) -> std::optional<os2::Vec3> {
+                const int b = a.skin.skeleton.find(n);
+                if (b < 0 || size_t(b) >= a.bones.size())
+                    return std::nullopt;
+                return a.bones[size_t(b)].t;
+            };
+            const auto pelvis = bone("pelvis");
+            if (!pelvis)
+                continue;
+            os2::SeatCheck::Sample x;
+            x.id = s.id, x.time = scene, x.tick = m.ticks;
+            x.pelvis = *pelvis;
+            for (const char* n : {"spine1", "l_calf", "r_calf"})
+                if (const auto p = bone(n))
+                    x.body.push_back({n, *p});
+            x.what = o->animation.name;
+            if (x.what.empty())
+                for (const auto& ov : o->animation.overlays)
+                    if (ov.name.find("blink") == std::string::npos)
+                        x.what = ov.name;
+            x.walking = o->route.has_value();
+            const std::string& an = o->animation.name;
+            for (const char* k : {"getIn", "getOut", "GetIn", "GetOut", "-start", "-stop", "-in-", "-out-", "standUp", "sitDown", "Transition", "trans-"})
+                x.transitional = x.transitional || an.find(k) != std::string::npos;
+            const int16_t c = o->data[os2::vm::objdata::ContainerId];
+            const os2::vm::Object* co = c && c != s.id ? m.object(c) : nullptr;
+            if (co && !co->person && co->definition && co->definition->fileName.find("Stair") == std::string::npos && !isVehicle(co))
+                if (const auto at = gObjectView->seatPlacement(s.id, scene)) {
+                    x.container = c, x.containerName = co->definition->fileName, x.seat = *at;
+                    // (Some trees walk a contained Sim: the bed's, the bath's.)
+                }
+            // (The hands: the standing idle's foot goals under a dance are not a seat's business.)
+            for (const auto& k : a.player.lastIkMisses())
+                if (k.bone.find("hand") != std::string::npos && k.distance > x.ikMiss)
+                    x.ikMiss = k.distance, x.ikChain = k.bone + " of " + k.animation;
+            for (const auto& ov : o->animation.overlays)
+                if (ov.name.find("carry") != std::string::npos || ov.name.find("grasp") != std::string::npos) {
+                    bool holds = false;
+                    for (const auto& [oid, ob] : m.objects())
+                        holds = holds || (oid != s.id && ob.data[os2::vm::objdata::ContainerId] == s.id);
+                    x.carryEmpty = !holds;
+                }
+            // (The other parts of a multi-tile seat are the same seat.)
+            const int16_t seatGroup = co ? int16_t(os2::vm::multiTileGroup(*co)) : 0;
+            std::vector<os2::SeatCheck::Box> near;
+            for (const auto& b : boxes)
+                if (const os2::vm::Object* bo = m.object(b.id); seatGroup && bo && int16_t(os2::vm::multiTileGroup(*bo)) == seatGroup)
+                    continue;
+                else if (std::hypot(b.at.t[0] - x.pelvis[0], b.at.t[1] - x.pelvis[1]) < 3 && std::fabs(b.at.t[2] - a.position[2]) < 1.5f)
+                    near.push_back(b);
+            for (const auto& e : check.add(x, near))
+                std::printf("opensims2: seat check: %s\n", e.c_str());
         }
     }
     // OS2_WATCH_BONE=<object id>:<bone>: that object's actor bone (world) each frame.

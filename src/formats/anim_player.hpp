@@ -134,6 +134,13 @@ public:
     float advance(double now);
 
     size_t layerCount() const { return layers_.size(); }
+    // Test aid: after pose(), how far each IK end (hand, foot) whose goal is
+    // fully on was drawn from it (model units).
+    struct IkMiss {
+        std::string bone, animation;
+        float distance = 0;
+    };
+    const std::vector<IkMiss>& lastIkMisses() const { return ikMisses_; }
     // The layers at `now`, for test aids: name, level, priority, weight.
     std::string describe(double now) const;
 
@@ -194,6 +201,7 @@ private:
     bool hold_ = false;
     bool collapse_ = true;
     double lastAdvance_ = 0;
+    std::vector<IkMiss> ikMisses_;
 };
 
 } // namespace os2

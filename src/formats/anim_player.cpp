@@ -324,7 +324,9 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     posed.reserve(layers_.size());
     // Every layer done and constant: merged below into one held layer.
     const bool collapse = hold_ && collapse_ && layers_.size() > 1 && allHeld(now);
-    for (const auto& l : layers_) {
+    std::vector<int> posedOf(layers_.size(), -1); // a layer's entry in `posed`
+    for (size_t li = 0; li < layers_.size(); ++li) {
+        const Layer& l = layers_[li];
         if (!l.held.empty()) {
             if (l.held.size() == n && l.heldWeight.size() == n)
                 posed.push_back({l.held, l.heldWeight, l.level, {}, {}});
@@ -367,6 +369,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         applyFrame(l, p);
         if (p.size() < n)
             continue;
+        posedOf[li] = int(posed.size());
         posed.push_back({std::move(p), std::move(mask), l.level, std::move(deltas), std::move(dw)});
     }
     bool anyDelta = false;
@@ -385,6 +388,10 @@ std::vector<Xform> AnimPlayer::pose(double now) {
     // is sorted by level), the remaining weight shared out, then a running
     // weighted average of the poses in that order, normalized.
     std::vector<float> share(posed.size());
+    // What each layer ends up with on each bone (its share of the blend):
+    // its IK chains weigh by it, so that an idle's hands under a higher
+    // level's eating arm give way as its channels do.
+    std::vector<std::vector<float>> owns(posed.size(), std::vector<float>(n, 0.0f));
     // The deltas each bone took (for the IK goals below).
     std::vector<Xform> applied;
     std::vector<uint8_t> appliedHas;
@@ -413,6 +420,11 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         }
         float cum = 0;
         Xform acc = out[b];
+        float total = 0;
+        for (size_t k = 0; k < posed.size(); ++k)
+            total += share[k];
+        for (size_t k = 0; k < posed.size() && total > 0; ++k)
+            owns[k][b] = share[k] / total;
         for (size_t k = posed.size(); k-- > 0;) {
             const float a = share[k];
             share[k] = 0;
@@ -461,17 +473,20 @@ std::vector<Xform> AnimPlayer::pose(double now) {
             appliedHas[b] = 1 | (cum > 0 ? 2 : 0);
         }
     }
+    std::vector<std::pair<IkReach, const Animation*>> reaches;
     // IK over the blend: each layer's chains reach its goals from the
     // blended body (an a2o animation's hands find the object even under a
     // carry pose of higher priority, which the trees leave on while reading
     // the paper).
-    for (const auto& l : layers_) {
+    for (size_t li = 0; li < layers_.size(); ++li) {
+        const Layer& l = layers_[li];
         // (A delta-only target's chains have delta goals: nothing to reach.)
-        if (!l.target || l.target->ikChains.empty() || l.mirror || !l.target->hasBaseChannels())
+        if (!l.target || l.target->ikChains.empty() || l.mirror || !l.target->hasBaseChannels() || posedOf[li] < 0)
             continue;
         const float w = std::min(weight(l, now), 1.0f);
         if (w <= 0)
             continue;
+        const std::vector<float>& own = owns[size_t(posedOf[li])];
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
         std::vector<Xform> goals = layerPose(l, ticks);
         applyFrame(l, goals);
@@ -488,9 +503,25 @@ std::vector<Xform> AnimPlayer::pose(double now) {
                         goals[b].t[size_t(c)] += applied[b].t[size_t(c)];
             }
         std::vector<Xform> solved = out;
+        std::vector<IkReach> reach;
         applyIk(*l.target, *skeleton_, ticks, solved, &goals, l.frame.then(Xform{quatFromEulerXYZ(0, 0, l.turn), {0, 0, 0}}),
-                &l.ikObjectBone);
+                &l.ikObjectBone, false, &reach);
         blendPose(out, solved, w, l.mask);
+        for (auto& r : reach)
+            if (r.endBone >= 0 && size_t(r.endBone) < n && r.weight * own[size_t(r.endBone)] >= 0.99f)
+                reaches.push_back({r, l.anim});
+    }
+    // How far the drawn ends are from the goals fully on (test aid).
+    ikMisses_.clear();
+    if (!reaches.empty()) {
+        const std::vector<Xform> world = skeleton_->world(out);
+        for (const auto& [r, anim] : reaches) {
+            if (r.endBone < 0 || size_t(r.endBone) >= world.size())
+                continue;
+            const Vec3& e = world[size_t(r.endBone)].t;
+            ikMisses_.push_back({skeleton_->bones[size_t(r.endBone)].name, anim->resource.fileName,
+                                 std::hypot(e[0] - r.goal[0], e[1] - r.goal[1], e[2] - r.goal[2])});
+        }
     }
     if (collapse) {
         // One layer at the top level, weighing on each bone what the layers

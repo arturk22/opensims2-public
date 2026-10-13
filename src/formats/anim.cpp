@@ -371,7 +371,7 @@ Xform parentWorld(const Skeleton& s, const std::vector<Xform>& world, int bone) 
 
 void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, std::vector<Xform>& local,
              const std::vector<Xform>* goals, const Xform& modelFrame, const IkObjectBone* ikObjectBone,
-             bool mirrored) {
+             bool mirrored, std::vector<IkReach>* reach) {
     if (target.ikChains.empty())
         return;
     std::unordered_map<uint32_t, int> byCrc;
@@ -552,12 +552,16 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
             if (g->q)
                 endRotation = endRotation ? nlerp(*endRotation, *g->q, k) : *g->q;
         }
+        float contact = std::min(total, 1.0f);
         if (total <= 0) {
             const auto g = targetGoal(chain.targets[0], true);
             if (!g)
                 continue;
             T = g->t, endRotation = g->q;
+            contact = chain.targets.size() > 1 ? 0.0f : 1.0f;
         }
+        if (reach)
+            reach->push_back({b2, T, weight * contact, chain.crcs[0]});
         objectFrame.reset();
         const Vec3 A = world[size_t(b0)].t, B = world[size_t(b1)].t, C = world[size_t(b2)].t;
         const float a = length(sub(B, A)), b = length(sub(C, B));
