@@ -383,41 +383,97 @@ Inferido: o "tipo `0x12`" como piso/chão e o `0x13` como parede (pelos usos).
 `Hourglass_8.ani` é animada). Quase todos têm 32×32; os `_8` usam 8 bits com
 paleta e os `_1` e os sem sufixo são preto e branco.
 
-**Tabela de nomes:** os dois executáveis têm a mesma lista, logo depois de
-`Cursor`, `_1 _8 .ani .cur` (`cTSUIServiceManager::SetupCursors`, BV PPC
-`0x11f8258`): arrow, hourglass, edit, finger, simsdelete, simslevel, simslower,
-simsmove, simsplace, simsraise, simsrotate, simsrotatenw/ne/sw/se, left, right,
-down, up, upright, upleft, downright, downleft, explore, deadexpl, pan,
-liveperson, livenothing, liveobjectavail, liveobjectunavail, addpts, movein,
-bulldoze, evictFamily, moveLotToCatalog, taxi, simsflip, removepts,
-eyedropperTool, designTool, railingtool. O arquivo de cada nome é
+**Tabela de nomes e ids (rodada 22, lida no binário):** a
+`cTSUIServiceManager::SetupCursors` (BV PPC `0x253260`) registra cada nome
+com um **id explícito** (a regra "id = índice + 18" da rodada 21 era um chute
+e estava errada, só coincidia para alguns): 1 arrow, `0xF` hourglass (`_7`,
+a ampulheta animada), 3 edit, `0x12` finger, `0x15` simsdelete, `0x16`
+simslevel, `0x17` simslower, `0x18` simsraise, `0x19` simsmove, `0x1A`
+simsplace, `0x1B` simsrotate, `0x1C`-`0x1F` simsrotate nw/ne/sw/se,
+`0x20`-`0x27` left, right, up, down, upright, upleft, downright, downleft,
+`0x28` explore, `0x29` deadexpl, `0x2A` pan, `0x2B` livenothing, `0x2C`
+liveperson, `0x2D` liveobjectavail, `0x2E` liveobjectunavail, `0x2F` addpts,
+`0x30` movein, `0x31` bulldoze, `0x32` evictFamily, `0x33`
+Cursor_EvictStudents, `0x34` moveLotToCatalog, `0x35` taxi, `0x36` simsflip,
+`0x37` removepts, `0x38` eyedropperTool, `0x39` designTool, `0x3A`
+railingtool e, só no Bon Voyage, `0x3B` forsale e `0x3C` Sledgehammer (a pasta
+do jogo base não tem arquivo para esses dois). O arquivo de cada nome é
 `<nome>_8.cur`; se não existir, `<nome>_1.cur`; se não, `<nome>.cur`
-(inferido pelos sufixos). Os ids de cursor dos docs batem com
-**id = índice + 18** (inferido): designTool `0x39` e railingtool `0x3A`
-(buy-build-mac §7), e no mover de lote (neighborhood-mac §15.1) simsmove `0x19`
-sobre um lote que pode ser movido e simsplace `0x1A` quando o botão desce.
-`hand_8`, `closedhandgreen/red_8`, `worldgreen/red_8`, `rotateview`, `selectsim`
-e `walkhere` existem na pasta, mas não estão na tabela (o jogo base não os usa).
+(inferido pelos sufixos, "_8"/"_1" vêm do bit de cor do monitor). O hotspot
+de cada um está no `.cur` (os de rotação do lote e do mover ficam em (0, 0), os
+das setas de borda no meio). `hand_8`, `closedhandgreen/red_8`,
+`worldgreen/red_8`, `rotateview`, `selectsim` e `walkhere` existem na pasta,
+mas não estão na tabela (o jogo base não os usa). `simsdelete` é um sinal de
+"proibido" (círculo cortado), não a marreta.
+
+**Como as ferramentas escolhem (binário, rodada 22).** A ferramenta troca o
+cursor com `Set2DCursor(id)` (`cTSUserToolBase`, slot virtual `0x60`; por
+dentro `+4` do gerenciador, slot `0x44` = `cTSWinSceneGraph::GZSetCursor` /
+`SetCursorAtPriority`); `OnButtonUp` do martelo repõe `Set2DCursor(slot 0xE4)`,
+que devolve o id da ferramenta (`li r3,0x3c`). Ids literais achados no código
+das ferramentas (varredura de todos os `li r4,id` antes da chamada):
+
+| Ferramenta (BV) | id | Onde |
+|---|---|---|
+| `cTSUserToolObjectDesign::Activate` e `cTSUserToolFloorPattern::OnAnyMouseEvent` | `0x39` designTool | a mesma família de ferramentas Design (a de piso usa o mesmo cursor) |
+| `cTSUserToolStairsRailing::Init` | `0x3A` railingtool | ferramenta de corrimão |
+| `cTSUserToolSledgeHammer` (slot `0xE4`, `OnButtonUp`) | `0x3C` Sledgehammer | só no BV |
+| `cTSUserToolEyedropper`/`cTSUserToolNHoodEyedropper` | `0x38` eyedropperTool | conta-gotas (Comprar e Decorações do bairro) |
+| `cTSUserToolRoof::OnMove` | `0x1B` simsrotate | enquanto o arrasto passa de 16 pixels (escolhe a direção do telhado) |
+| `cTSUserToolObject::Activate`/`TryGrab`, `cTSUserToolFireplace` | `0x1A` simsplace | mais o cursor guardado no campo `+0xC8` da ferramenta de objeto |
+| `cTSUserToolPlopNeighborhoodObject` | `0x19` ao mover, `0x1A` ao apertar | ferramenta de Decorações do bairro |
+| `cTSUserToolMoveLot` (neighborhood-mac §15.1) | `0x19`, `0x1A`, depois `0x1C`/`0x1E`/`0x1F`/`0x1D` para a frente 0/1/2/3 | nw, sw, se, ne |
+| `cTSUserToolCameraHandDrag::Activate` | `0x2A` pan (1 = arrow ao sair) | a ferramenta "mão" da câmera |
+| `cTSUserToolCameraMiddleClick::ShowRotateCursor` | nenhum cursor | cria uma janela de interface (recursos `0xCF092010/11`, `0x20732180`) e a move com o mouse |
+
+Os cursores de parede, piso, telhado (sem arrasto), cerca, fundação, piscina e
+escada não aparecem: essas ferramentas desenham um marcador 3D no chão
+(`cTSUserToolGroundCursor`, `wallDrawCreate`, `halfWallDrawCreate`,
+`fenceDrawCreate`, `glassWallDrawCreate`... `SetupCursorsByStyle`), então o
+cursor do mouse fica a seta. Não achei no binário quem escolhe `liveperson`,
+`liveobjectavail` e companhia (nenhum `li` literal; o id vem de dado) nem as
+setas de borda (`left`...`downleft`; `DoWindowEdgeScrolling` não os põe por
+literal): esses mapeamentos abaixo são **inferidos** pelos nomes.
 
 **No app** (`app/game_cursors.*`: leitor de `.cur` e escolha; `main.mm`
 cria os `NSCursor` com o hotspot do arquivo e troca o cursor a cada evento
-do mouse):
+do mouse; os ids de `gameCursorId` são os da tabela acima):
 
-| Estado | Cursor |
-|---|---|
-| Sobre a UI (painéis, puck, janela do tutorial, pie, diálogo), modo Viver, Construir, menus | `arrow_8` (a seta azul do jogo) |
-| Carregando | `HOURGLASS.cur` (o `.ani` não é lido) |
-| Comprar, mão sobre um objeto que ela pega | `simsmove_8` (mão aberta) |
-| Comprar, segurando um objeto | `simsmove_8` (a figura do passo 20 do tutorial) |
-| Comprar, botão apertado sobre o que segura (arrastar gira ou leva) | `simsplace_8` (mão fechada) |
-| Comprar, o arrasto já girou o objeto | `simsrotate_8` |
-| Conta-gotas / Ferramenta Design | `eyedroppertool_8` / `designtool_8` |
-| Comprar, mão sobre o vazio | `arrow_8` (o mover de lote põe o cursor 0) |
+| Estado | Cursor | Fonte |
+|---|---|---|
+| Sobre a UI (painéis, puck, janela do tutorial, pie, diálogo, painel de Construir, painéis do bairro), menus | `arrow_8` (a seta azul do jogo) | |
+| Carregando | `HOURGLASS.cur` (o `.ani` não é lido) | id `0xF` |
+| Comprar, mão sobre um objeto que ela pega | `simsmove_8` (mão aberta) | analogia ao mover (inferido) |
+| Comprar, segurando um objeto | `simsmove_8` (a figura do passo 20 do tutorial) | tutorial |
+| Comprar, botão apertado sobre o que segura | `simsplace_8` (mão fechada) | `0x1A` na ferramenta de objeto |
+| Comprar, o arrasto já girou o objeto | `simsrotate_8` | inferido |
+| Conta-gotas / Ferramenta Design (Comprar) | `eyedroppertool_8` / `designtool_8` | `0x38` / `0x39` |
+| Comprar, mão sobre o vazio | `arrow_8` | o mover de lote põe o cursor 0 |
+| Construir, ferramenta Design | `designtool_8` | `0x39` |
+| Construir, ferramenta de corrimão | `railingtool_8` | `0x3A` |
+| Construir, telhado, enquanto arrasta | `simsrotate_8` | `0x1B` (`cTSUserToolRoof::OnMove`) |
+| Construir, terreno: levantar / baixar / nivelar | `simsraise` / `simslower` / `simslevel` | **inferido** pelos nomes (o pincel 3D do jogo também aparece) |
+| Construir, porta ou janela na mão | `simsmove_8`, como em Comprar | inferido |
+| Construir, o resto (parede, quarto, piso, cerca, fundação, piscina, escada, tinta) | `arrow_8` | o jogo usa um marcador 3D |
+| Ctrl em Construir (apagar) | continua `arrow_8` | a marreta do jogo (`0x3C`) é do BV; `simsdelete` é "proibido" |
+| Viver, mouse sobre uma pessoa / um objeto com ações / um objeto sem ações / o resto do mundo | `liveperson_8` / `liveobjectavail_8` / `LiveObjectUnavail` / `livenothing_8` | **inferido** pelos nomes (um conjunto de setas com um selo) |
+| Borda da janela (câmera rola, qualquer modo com câmera, fora da UI) | `left`/`right`/`up`/`down`/`upleft`/`upright`/`downleft`/`downright` | **inferido** pelos nomes |
+| Botão direito arrastando a câmera (sem Ctrl/Opção) | `Pan` | `0x2A` é o da mão da câmera (`CameraHandDrag`); aplicar ao arrasto do botão direito é **inferido** |
+| Girar a câmera (Ctrl + direito, botão do meio) | `arrow_8` (o cursor fica preso) | o jogo mostra uma janela, não um `.cur` |
+| Bairro, ferramenta Mover Lote, mouse sobre um lote | `simsmove_8` | `0x19` (§15.1) |
+| ... botão apertado no lote | `simsplace_8` | `0x1A` (nosso lote já fica na mão no clique) |
+| ... com o lote na mão (ou lote novo / da caixa), botão solto | `arrow_8` | cursor 0 |
+| ... botão apertado, antes do arrasto girar | `simsrotate_8` | `Set2DCursor` sem id lido: **inferido** |
+| ... botão apertado, frente 0 / 1 / 2 / 3 | `SimsRotateNW_8` / `SW_8` / `SE_8` / `NE_8` | `0x1C` / `0x1E` / `0x1F` / `0x1D` |
+| Bairro, Decorações | `simsmove_8` (conta-gotas: `eyedroppertool_8`) | `0x19` / `0x38` |
+| Bairro, Mudar-se / Despejar / Demolir / Mandar para a caixa, sobre um lote | `MOVEIN` / `EvictFamily_8` / `bulldoze_8` / `MoveLotToCatalog_8` | **inferido** pelos nomes |
 
-Os estados de Comprar seguem o mover de lote, por analogia (inferido). Pixels
-mascarados ficam transparentes; nos de 1 bit, os pixels que invertem a tela
-viram preto (o Mac não tem cursor que inverte). Teste: `test_cursors`;
-folha de contato `docs/screenshots/r21-cursor-folha.jpg`.
+Pixels mascarados ficam transparentes; nos de 1 bit, os pixels que invertem a
+tela viram preto (o Mac não tem cursor que inverte). Teste: `test_cursors`
+(a escolha por estado, os ids, e com `OS2_DATA` todos os arquivos: tamanho
+32 × 32, hotspot, forma); folha de contato com os 33 cursores usados
+`OS2_CURSOR_SHEET=<png> test_cursors`, em
+`docs/screenshots/r22-cursor-folha.jpg` (a de rodada 21 tinha 7).
 
 ## 3. O que falta
 

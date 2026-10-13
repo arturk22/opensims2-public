@@ -142,6 +142,13 @@ public:
     bool redo();
     const std::string& message() const { return message_; }
     std::optional<simd_float2> pointer() const { return pointer_; } // the lot point under the mouse
+    // For the mouse cursor (app/game_cursors.hpp): the terrain brush's
+    // operation, the object tool holding a door or window, a drag in
+    // progress and whether the mouse is on the panel or the Design dialog.
+    vm::BuildEditor::TerrainOp terrainOp() const { return terrainOp_; }
+    bool holdingObject() const { return tool_ == Tool::Object && held_ != 0; }
+    bool dragging() const { return dragFrom_.has_value(); }
+    bool overPanel(simd_float2 p) const;
 
     // --- The panel -----------------------------------------------------------
     // The tutorial (app/tutorial.hpp): allowPress before a click on a

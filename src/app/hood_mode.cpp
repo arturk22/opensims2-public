@@ -275,6 +275,31 @@ bool HoodMode::placingLot() const {
     return t == HoodBins::Tool::Decorate || t == HoodBins::Tool::PlaceEmpty || t == HoodBins::Tool::PlaceBin || (t == HoodBins::Tool::MoveLot && movingLot_);
 }
 
+void HoodMode::fillCursor(CursorContext& c, const LotCamera& camera, simd_float2 p, float w, float h) const {
+    using Ctx = CursorContext;
+    c.mode = Ctx::Mode::Hood;
+    if (ui_->covers(p) || ui_->dialogLot() || ui_->bins().modal()) {
+        c.overUi = true;
+        return;
+    }
+    switch (ui_->bins().tool()) {
+    case HoodBins::Tool::MoveIn: c.hoodTool = Ctx::HoodTool::MoveIn; break;
+    case HoodBins::Tool::Evict: c.hoodTool = Ctx::HoodTool::Evict; break;
+    case HoodBins::Tool::Bulldoze: c.hoodTool = Ctx::HoodTool::Bulldoze; break;
+    case HoodBins::Tool::MoveLot: c.hoodTool = Ctx::HoodTool::MoveLot; break;
+    case HoodBins::Tool::ToBin: c.hoodTool = Ctx::HoodTool::ToBin; break;
+    case HoodBins::Tool::Decorate: c.hoodTool = Ctx::HoodTool::Decorate; break;
+    case HoodBins::Tool::DecorPick: c.hoodTool = Ctx::HoodTool::Eyedropper; break;
+    default: break;
+    }
+    const bool decor = decorating();
+    c.lotInHand = placingLot() && !decor;
+    c.lotPressed = pressGround_.has_value();
+    c.lotFront = turn_;
+    if (!c.lotInHand)
+        c.overLot = lotAt(camera, p, w, h) != nullptr;
+}
+
 void HoodMode::turnLot(int direction) {
     if (!placingLot())
         return;

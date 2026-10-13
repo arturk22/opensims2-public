@@ -671,8 +671,8 @@ bairro nas alturas dos vértices do lote (giradas, + a altura da rua da
 borda da frente): um vértice fora da faixa da rua cuja altura muda mais de
 **0,01** não pode ser de outro lote nem estar sob uma rua que não acompanha;
 senão falha. O giro do mover (`RotateLot`, BV `0x222b2c`) segue a direção
-do arrasto a partir do ponto do clique (§15.1), muda o cursor (0x1C/0x1E/0x1F/0x1D para frente
-0/1/2/3), reavalia e gira o imposter (`RotateLotImposter`).
+do arrasto a partir do ponto do clique (§15.1), muda o cursor (0x1C/0x1E/0x1F/0x1D = simsrotate nw/sw/se/ne para a frente
+0/1/2/3, ids da tabela do `SetupCursors`: camera-ui-mac §2.7), reavalia e gira o imposter (`RotateLotImposter`).
 
 **Lote vazio** (`cTSUserToolPlaceNewLot::PlaceLot`, BV `0x2c7344`): marca as
 bordas com rua no lot info; a **frente é a primeira borda com rua**

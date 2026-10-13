@@ -138,6 +138,7 @@
 #include "vm/baby_character.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <cctype>
 #include <chrono>
 #include <thread>
@@ -5142,10 +5143,42 @@ NSCursor* gameCursor(os2::GameCursor which) {
     return c ? c : [NSCursor arrowCursor];
 }
 
+// What the view knows of the mouse for the cursor (the camera's state).
+struct CursorExtras {
+    bool inside = false;
+    bool lotScene = false;       // a lot or neighborhood scene (the camera scrolls at the edges)
+    int scrollX = 0, scrollY = 0; // the window's edge scrolling
+    bool panning = false;        // the right button drags the camera
+    os2::vm::ObjectId liveHover = 0; // the object under the mouse in Live mode (0: none)
+    std::function<void(os2::CursorContext&)> hood; // fills the neighborhood's part
+};
+
+// Whether the selected Sim has something to do with an object (the pie
+// menu's entries), for the Live cursor; kept for half a second per object so
+// a mouse move does not run the check trees each time.
+bool objectHasInteractions(os2::vm::ObjectId id) {
+    static os2::vm::ObjectId lastId = 0;
+    static double lastAt = -1;
+    static bool lastResult = false;
+    const double now = CACurrentMediaTime();
+    if (id == lastId && now - lastAt < 0.5)
+        return lastResult;
+    lastId = id, lastAt = now, lastResult = false;
+    if (!gPie || !gPie->sim())
+        return false;
+    for (const auto& e : os2::vm::pieMenu(gPie->vm(), gPie->sim(), id))
+        if (e.available() && !e.debug) {
+            lastResult = true;
+            break;
+        }
+    return lastResult;
+}
+
 // The cursor for what is under canvas point p (the game's arrow over the UI,
-// Buy mode's hands over the lot).
-void refreshGameCursor(simd_float2 p, bool inside) {
-    if (!inside) {
+// Buy mode's hands over the lot, the Build tools', the neighborhood mover's,
+// the camera's edge scrolling: docs/camera-ui-mac.md 2.7).
+void refreshGameCursor(simd_float2 p, const CursorExtras& x) {
+    if (!x.inside) {
         [[NSCursor arrowCursor] set];
         return;
     }
@@ -5153,7 +5186,7 @@ void refreshGameCursor(simd_float2 p, bool inside) {
     Ctx c;
     c.loading = gSceneLoading;
     c.mode = gBuy && gBuy->active() ? Ctx::Mode::Buy : gBuild && gBuild->active() ? Ctx::Mode::Build
-             : gLive                ? Ctx::Mode::Live : Ctx::Mode::Other;
+             : gHood               ? Ctx::Mode::Hood : gLive ? Ctx::Mode::Live : Ctx::Mode::Other;
     if (!gSceneLoading) {
         if (gTutorial) {
             const auto r = gTutorial->panelRect();
@@ -5168,6 +5201,34 @@ void refreshGameCursor(simd_float2 p, bool inside) {
             c.pressing = gBuy->pressing();
             c.turned = gBuy->turned();
             c.overObject = gBuy->overObject();
+        } else if (gBuild && gBuild->active()) {
+            using Tool = os2::BuildMode::Tool;
+            using Op = os2::vm::BuildEditor::TerrainOp;
+            c.overUi |= gBuild->overPanel(p);
+            switch (gBuild->tool()) {
+            case Tool::Design: c.buildTool = Ctx::BuildTool::Design; break;
+            case Tool::Railing: c.buildTool = Ctx::BuildTool::Railing; break;
+            case Tool::Roof: c.buildTool = Ctx::BuildTool::Roof; break;
+            case Tool::Object: c.buildTool = Ctx::BuildTool::Object; break;
+            case Tool::Terrain:
+                c.buildTool = gBuild->terrainOp() == Op::Raise   ? Ctx::BuildTool::Raise
+                              : gBuild->terrainOp() == Op::Lower ? Ctx::BuildTool::Lower
+                              : gBuild->terrainOp() == Op::Flatten ? Ctx::BuildTool::Level : Ctx::BuildTool::Other;
+                break;
+            default: break;
+            }
+            c.holding = gBuild->holdingObject();
+            c.buildDragging = gBuild->dragging();
+        } else if (gHood && x.hood) {
+            x.hood(c);
+        } else if (gLive && !c.overUi && x.liveHover) {
+            using Hover = Ctx::LiveHover;
+            const bool sim = std::any_of(gLotSims.begin(), gLotSims.end(), [&](const LotSim& s) { return s.id == x.liveHover; });
+            c.liveHover = sim ? Hover::Person : objectHasInteractions(x.liveHover) ? Hover::Object : Hover::ObjectUnavailable;
+        }
+        if (x.lotScene && !c.overUi) {
+            c.scrollX = x.scrollX, c.scrollY = x.scrollY;
+            c.panning = x.panning;
         }
     }
     [gameCursor(os2::chooseCursor(c)) set];
@@ -5443,7 +5504,7 @@ void refreshGameCursor(simd_float2 p, bool inside) {
 - (void)mouseExited:(NSEvent*)e {
     [self trackMouse:e];
     _mouse.mouseAt(-1, -1, false);
-    refreshGameCursor({}, false);
+    refreshGameCursor({}, CursorExtras{});
 }
 
 - (void)cursorUpdate:(NSEvent*)e {
@@ -5453,7 +5514,24 @@ void refreshGameCursor(simd_float2 p, bool inside) {
 // The game's cursor for the state after this event.
 - (void)refreshCursor:(NSEvent*)e {
     const NSPoint q = [self convertPoint:e.locationInWindow fromView:nil];
-    refreshGameCursor([self canvasPoint:e], NSPointInRect(q, self.bounds));
+    const simd_float2 p = [self canvasPoint:e];
+    CursorExtras x;
+    x.inside = NSPointInRect(q, self.bounds);
+    x.lotScene = _camera && !gCas && (gLive || gBuy || gBuild || gHood);
+    if (x.inside && x.lotScene) {
+        const float w = float(self.bounds.size.width), h = float(self.bounds.size.height);
+        if (self.window.isKeyWindow && !gSceneLoading) {
+            _mouse.config().edgeScroll = !argument(@"--no-edge-scroll") && gSettings.edgeScrolling;
+            const auto [mr, mf] = _mouse.panAxes(w, h);
+            x.scrollX = int(mr), x.scrollY = int(mf);
+        }
+        x.panning = _mouse.anchored() && !_rotating;
+        if (gPie && gLive && !(gBuy && gBuy->active()) && !(gBuild && gBuild->active()) && !gHood && !gSceneLoading)
+            x.liveHover = gPie->pick(_camera->eye(), [self rayAt:p]);
+        if (gHood)
+            x.hood = [&](os2::CursorContext& c) { gHood->fillCursor(c, *_camera, p, w, h); };
+    }
+    refreshGameCursor(p, x);
 }
 
 - (void)rightMouseDown:(NSEvent*)e {

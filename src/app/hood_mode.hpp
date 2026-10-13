@@ -19,6 +19,7 @@
 // user's copy; never data/game) through formats/hood_moves.hpp; moving in
 // then enters the lot, as cTSUserToolNeighborhoodMoveIn does.
 
+#include "app/game_cursors.hpp"
 #include "app/hood_ui.hpp"
 #include "app/hood_view.hpp"
 
@@ -111,6 +112,11 @@ public:
     // A key for the place-lot dialog (HoodBins::typeKey); Return places the lot.
     void typeKey(int keyCode, const std::string& typed);
     bool placingLot() const;
+    // The mouse cursor's state (app/game_cursors.hpp; the mover's, docs/
+    // neighborhood-mac.md 15.1): the tool, a lot in hand, the button down
+    // and the front the drag chose, a lot under the mouse (for the mover,
+    // one that can be moved).
+    void fillCursor(CursorContext& c, const LotCamera& camera, simd_float2 p, float w, float h) const;
 
 private:
     std::optional<simd_int2> tileAt(const LotCamera& camera, simd_float2 p, float w, float h) const;

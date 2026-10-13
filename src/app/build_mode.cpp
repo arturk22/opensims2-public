@@ -1700,6 +1700,20 @@ void BuildMode::layoutIfNeeded() {
         screen(canvasW_, canvasH_);
 }
 
+bool BuildMode::overPanel(simd_float2 p) const {
+    if (!active_)
+        return false;
+    if (design_->isOpen())
+        return true;
+    for (const auto& t : targets_)
+        if (inside(t.rect, p))
+            return true;
+    for (const auto& r : solid_)
+        if (inside(r, p))
+            return true;
+    return false;
+}
+
 bool BuildMode::press(simd_float2 p) {
     if (!ok_ || !active_)
         return false;

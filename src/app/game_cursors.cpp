@@ -106,19 +106,31 @@ std::optional<CursorImage> decodeCursor(std::span<const uint8_t> d) {
     return img;
 }
 
+namespace {
+struct CursorEntry {
+    const char* name;
+    int id;
+};
+// The order of GameCursor: the name of the file and the id in SetupCursors.
+constexpr CursorEntry kCursors[] = {
+    {"arrow", 1},           {"hourglass", 0xF},        {"simsmove", 0x19},         {"simsplace", 0x1A},
+    {"simsrotate", 0x1B},   {"eyedropperTool", 0x38},  {"designTool", 0x39},       {"railingtool", 0x3A},
+    {"simsdelete", 0x15},   {"simslevel", 0x16},       {"simslower", 0x17},        {"simsraise", 0x18},
+    {"simsrotatenw", 0x1C}, {"simsrotatene", 0x1D},    {"simsrotatesw", 0x1E},     {"simsrotatese", 0x1F},
+    {"left", 0x20},         {"right", 0x21},           {"up", 0x22},               {"down", 0x23},
+    {"upright", 0x24},      {"upleft", 0x25},          {"downright", 0x26},        {"downleft", 0x27},
+    {"pan", 0x2A},          {"livenothing", 0x2B},     {"liveperson", 0x2C},       {"liveobjectavail", 0x2D},
+    {"liveobjectunavail", 0x2E}, {"movein", 0x30},     {"bulldoze", 0x31},         {"evictFamily", 0x32},
+    {"moveLotToCatalog", 0x34},
+};
+static_assert(sizeof(kCursors) / sizeof(kCursors[0]) == size_t(GameCursor::Count), "one entry per GameCursor");
+} // namespace
+
 const char* gameCursorName(GameCursor c) {
-    switch (c) {
-    case GameCursor::Arrow: return "arrow";
-    case GameCursor::Hourglass: return "hourglass";
-    case GameCursor::Move: return "simsmove";
-    case GameCursor::Place: return "simsplace";
-    case GameCursor::Rotate: return "simsrotate";
-    case GameCursor::Eyedropper: return "eyedropperTool";
-    case GameCursor::Design: return "designTool";
-    case GameCursor::Count: break;
-    }
-    return "arrow";
+    return size_t(c) < size_t(GameCursor::Count) ? kCursors[size_t(c)].name : "arrow";
 }
+
+int gameCursorId(GameCursor c) { return size_t(c) < size_t(GameCursor::Count) ? kCursors[size_t(c)].id : 1; }
 
 std::filesystem::path findCursorFile(const std::filesystem::path& dir, const std::string& name) {
     std::error_code ec;
@@ -134,19 +146,81 @@ std::filesystem::path findCursorFile(const std::filesystem::path& dir, const std
     return {};
 }
 
+namespace {
+GameCursor edgeCursor(int x, int y) {
+    if (x < 0)
+        return y > 0 ? GameCursor::ScrollUpLeft : y < 0 ? GameCursor::ScrollDownLeft : GameCursor::ScrollLeft;
+    if (x > 0)
+        return y > 0 ? GameCursor::ScrollUpRight : y < 0 ? GameCursor::ScrollDownRight : GameCursor::ScrollRight;
+    return y > 0 ? GameCursor::ScrollUp : GameCursor::ScrollDown;
+}
+GameCursor frontCursor(int front) {
+    switch (front) {
+    case 0: return GameCursor::RotateNW;
+    case 1: return GameCursor::RotateSW;
+    case 2: return GameCursor::RotateSE;
+    case 3: return GameCursor::RotateNE;
+    }
+    return GameCursor::Rotate;
+}
+} // namespace
+
 GameCursor chooseCursor(const CursorContext& c) {
+    using Ctx = CursorContext;
     if (c.loading)
         return GameCursor::Hourglass;
     if (c.overUi)
         return GameCursor::Arrow;
-    if (c.mode == CursorContext::Mode::Buy) {
+    if (c.panning)
+        return GameCursor::Pan;
+    if (c.scrollX || c.scrollY)
+        return edgeCursor(c.scrollX, c.scrollY);
+    switch (c.mode) {
+    case Ctx::Mode::Buy:
         if (c.holding) // the tutorial's picture (step 20): the open hand over the held chair
             return !c.pressing ? GameCursor::Move : c.turned ? GameCursor::Rotate : GameCursor::Place;
         switch (c.buyTool) {
-        case CursorContext::BuyTool::Eyedropper: return GameCursor::Eyedropper;
-        case CursorContext::BuyTool::Design: return GameCursor::Design;
-        case CursorContext::BuyTool::Hand: return c.overObject ? GameCursor::Move : GameCursor::Arrow;
+        case Ctx::BuyTool::Eyedropper: return GameCursor::Eyedropper;
+        case Ctx::BuyTool::Design: return GameCursor::Design;
+        case Ctx::BuyTool::Hand: return c.overObject ? GameCursor::Move : GameCursor::Arrow;
         }
+        break;
+    case Ctx::Mode::Build:
+        switch (c.buildTool) {
+        case Ctx::BuildTool::Design: return GameCursor::Design;
+        case Ctx::BuildTool::Railing: return GameCursor::Railing;
+        case Ctx::BuildTool::Raise: return GameCursor::Raise;
+        case Ctx::BuildTool::Lower: return GameCursor::Lower;
+        case Ctx::BuildTool::Level: return GameCursor::Level;
+        case Ctx::BuildTool::Roof: return c.buildDragging ? GameCursor::Rotate : GameCursor::Arrow;
+        case Ctx::BuildTool::Object: return c.holding ? GameCursor::Move : GameCursor::Arrow;
+        case Ctx::BuildTool::Other: break;
+        }
+        break;
+    case Ctx::Mode::Live:
+        switch (c.liveHover) {
+        case Ctx::LiveHover::Person: return GameCursor::LivePerson;
+        case Ctx::LiveHover::Object: return GameCursor::LiveObjectAvail;
+        case Ctx::LiveHover::ObjectUnavailable: return GameCursor::LiveObjectUnavail;
+        case Ctx::LiveHover::None: return GameCursor::LiveNothing;
+        }
+        break;
+    case Ctx::Mode::Hood:
+        if (c.lotInHand) // RotateLot: the front the drag chose
+            return c.lotPressed ? frontCursor(c.lotFront) : GameCursor::Arrow;
+        switch (c.hoodTool) {
+        case Ctx::HoodTool::MoveLot:
+            return !c.overLot ? GameCursor::Arrow : c.lotPressed ? GameCursor::Place : GameCursor::Move;
+        case Ctx::HoodTool::Decorate: return GameCursor::Move;
+        case Ctx::HoodTool::Eyedropper: return GameCursor::Eyedropper;
+        case Ctx::HoodTool::MoveIn: return c.overLot ? GameCursor::MoveIn : GameCursor::Arrow;
+        case Ctx::HoodTool::Evict: return c.overLot ? GameCursor::EvictFamily : GameCursor::Arrow;
+        case Ctx::HoodTool::Bulldoze: return c.overLot ? GameCursor::Bulldoze : GameCursor::Arrow;
+        case Ctx::HoodTool::ToBin: return c.overLot ? GameCursor::MoveLotToCatalog : GameCursor::Arrow;
+        case Ctx::HoodTool::None: break;
+        }
+        break;
+    case Ctx::Mode::Other: break;
     }
     return GameCursor::Arrow;
 }
