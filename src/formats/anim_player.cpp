@@ -382,7 +382,7 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         if (l.mirror && twins_.size() == n) {
             // IK first (the chains name their own side), then the whole pose flipped.
             if (!l.target->ikChains.empty() && l.target->hasBaseChannels()) {
-                const std::vector<Xform> goals = p;
+                const std::vector<Xform> goals = samplePose(*l.target, *skeleton_, ticks); // unturned: applyIk turns them
                 applyIk(*l.target, *skeleton_, ticks, p, &goals, frame, &l.ikObjectBone, true);
             }
             p = mirrorPose(*skeleton_, twins_, restWorld_, p);
@@ -541,8 +541,14 @@ std::vector<Xform> AnimPlayer::pose(double now) {
         const Layer& l = layers_[k.layer];
         const std::vector<float>& own = owns[size_t(posedOf[k.layer])];
         const float ticks = animationTime(*l.anim, float(std::max(now - l.start, 0.0) * l.rate), l.loop);
-        std::vector<Xform> goals = layerPose(l, ticks);
-        applyFrame(l, goals);
+        // The goal and pole nodes as the animation keys them: applyIk turns
+        // them by the layer's frame and turn (its modelFrame). Taken from the
+        // turned pose, the nodes under the skeleton's top node (the feet's
+        // *_foot_ikctr and *_foot_ikpole) were turned twice: a child's seated
+        // c2o-chairDining clips, made facing their header heading of 180
+        // degrees, put the feet behind the seat (the child kneeling in the
+        // chair, shins through its back).
+        std::vector<Xform> goals = samplePose(*l.target, *skeleton_, ticks);
         // The goal and pole nodes with the deltas their outlets took (the
         // sofa bounces' *_handcontrol1 and *_ikctr deltas move the hands and
         // feet the sitting animation's chains hold): the IK reads the

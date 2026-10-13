@@ -13,7 +13,10 @@
 //   - "table": a body point (pelvis, spine, knees) inside the top slab of a
 //     table or counter (passing through it), at rest;
 //   - "chair": a body point inside a chair or stool the Sim is not in, at rest;
-//   - "carry": a carry pose with nothing in the hands.
+//   - "carry": a carry pose with nothing in the hands;
+//   - "legs": sitting (not lying) in a slot at rest, a foot more than
+//     feetBehind behind the pelvis along the slot's forward (+Y): the legs
+//     folded back through the seat (a child's foot IK turned the wrong way).
 // Pure bookkeeping on world-space samples; the app feeds it.
 
 #include "formats/xform.hpp"
@@ -51,6 +54,7 @@ public:
         float ikMiss = 0;          // AnimPlayer::lastIkMiss (tiles)
         std::string ikChain;
         bool carryEmpty = false;
+        std::vector<Vec3> feet;    // the feet (world), for "legs"
     };
 
     float seatXY = 0.25f;           // tiles
@@ -61,6 +65,7 @@ public:
     float ikReachMoving = 0.12f;    // getting in or out
     float slab = 0.06f;             // a table top's thickness that counts
     float shrink = 0.05f;           // chairs' boxes shrunk by this
+    float feetBehind = 0.1f;        // a seated foot this far behind the pelvis at most
     double settle = 0.6;            // seconds at rest before the seat and contacts count
 
     // Feeds one Sim's sample with the boxes near it; returns the problems

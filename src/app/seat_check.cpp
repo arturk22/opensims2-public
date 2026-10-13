@@ -68,6 +68,16 @@ std::vector<std::string> SeatCheck::add(const Sample& s, const std::vector<Box>&
         }
         flag(t, s, "seat", bad, value, detail, out);
     }
+    // Sitting, the feet ahead of (or under) the pelvis, never behind the seat.
+    {
+        float behind = 0;
+        if (s.container && !s.lying && settled && s.time - t.containedSince >= settle) {
+            const float py = s.seat.inverse().apply(s.pelvis)[1];
+            for (const Vec3& f : s.feet)
+                behind = std::max(behind, py - s.seat.inverse().apply(f)[1]);
+        }
+        flag(t, s, "legs", behind > feetBehind, behind, "foot behind the pelvis in " + s.containerName, out);
+    }
     // A hand short of its IK goal (more slack while getting in or out, the
     // goals on a chair that moves with it; a goal on another Sim is out:
     // the VM's social distances are not this module's).
@@ -111,7 +121,7 @@ int SeatCheck::episodes() const {
 std::string SeatCheck::summary() const {
     std::string s;
     char buf[160];
-    for (const char* k : {"seat", "ik", "table", "chair", "carry"}) {
+    for (const char* k : {"seat", "ik", "table", "chair", "carry", "legs"}) {
         const auto it = counts_.find(k);
         std::snprintf(buf, sizeof buf, "%s%s %d (%d frames)", s.empty() ? "" : ", ", k, it == counts_.end() ? 0 : it->second.episodes,
                       it == counts_.end() ? 0 : it->second.frames);

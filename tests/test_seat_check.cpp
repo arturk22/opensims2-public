@@ -66,6 +66,23 @@ int main() {
         check(c.counts().at("table").episodes == 1, "standing through the table");
     }
     {
+        // Seated with the feet ahead of the pelvis: fine; folded back behind it
+        // (the child kneeling through the chair's back): one "legs" episode.
+        SeatCheck c;
+        for (int i = 0; i < 40; ++i) {
+            auto s = seated(i / 24.0, 10.0f, 10.0f, 0.6f);
+            s.feet = {{9.93f, 10.3f, 0.05f}, {10.07f, 10.3f, 0.05f}};
+            c.add(s, {});
+        }
+        check(c.episodes() == 0, "feet ahead of the seat");
+        for (int i = 40; i < 80; ++i) {
+            auto s = seated(i / 24.0, 10.0f, 10.0f, 0.6f);
+            s.feet = {{9.93f, 9.6f, 0.3f}, {10.07f, 9.6f, 0.3f}};
+            c.add(s, {});
+        }
+        check(c.counts().count("legs") && c.counts().at("legs").episodes == 1, "feet behind the seat");
+    }
+    {
         // A hand short of a goal fully on.
         SeatCheck c;
         SeatCheck::Sample s;

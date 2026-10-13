@@ -4073,6 +4073,9 @@ void sampleDrawnPlaces(double scene) {
             for (const char* n : {"spine1", "l_calf", "r_calf"})
                 if (const auto p = bone(n))
                     x.body.push_back({n, *p});
+            for (const char* n : {"l_foot", "r_foot"})
+                if (const auto p = bone(n))
+                    x.feet.push_back(*p);
             x.what = o->animation.name;
             if (x.what.empty())
                 for (const auto& ov : o->animation.overlays)

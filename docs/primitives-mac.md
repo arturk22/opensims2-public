@@ -1673,6 +1673,18 @@ de começar (não bloqueiam); repetições no temp 1 com 0x20 (0 ou < −1 → e
     alvos de tipo 2 (a mão na braçadeira; antes ficava de fora e caía no
     alvo no espaço do modelo, 0,51 longe). Outros objetos estáticos continuam
     de fora (inferido; não conferidos).
+  - **Alvos de IK girados uma vez só** (rodada 21, ramo `r21-childseat`):
+    os nós de alvo e de polo (`*_foot_ikctr`, `*_foot_ikpole`, `*_hand_ikpole`,
+    filhos diretos do nó do topo do esqueleto) entram no `applyIk` como a
+    animação os grava, e o `applyIk` os gira pelo quadro da camada (heading
+    do cabeçalho + do pedido + `stayInWorld`). Antes vinham da pose já girada
+    e eram girados de novo: as `c2o-chairDining-SitFwd-*` da criança são
+    feitas de frente para 180° (heading do cabeçalho π, `root_rot` com 180°
+    em Z) e seguram as pernas só por IK do pé; giradas duas vezes (360°), os
+    pés iam para trás do assento (criança "ajoelhada" na cadeira com as
+    canelas atravessando o encosto, playtest 32.png). As idles sentadas do
+    adulto têm heading 0 e não mostravam. Checagem nova `legs` na bateria
+    (pé sentado mais de 0,1 atrás da pélvis no quadro do slot).
   Mantidos (do binário): espelho do Animate Sim/Object/Overlay (flip),
   mistura por níveis, os vários alvos por canal de contato, o giro na hora
   do Animate Sim (`SimMotion::turn`). Bateria `tests/seat_battery.sh`
