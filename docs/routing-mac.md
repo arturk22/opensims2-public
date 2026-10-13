@@ -306,6 +306,24 @@ achou e está a menos de 2 passos (ou no fim do caminho): estado
 "bloqueado" (0x438(2)) e o ID fica para o DoBlocked (vtable 0x1A8)
 ```
 
+**Rodada 22, o teste entre duas pessoas** (`EstimateWhenPathWillBeBlocked`,
+BV `0x6b3574`, caso humano; o teste varrido é a vtable `0x474`, BV
+`0x6b00c8`: a primeira raiz de |(p − q)(t)| = r em [0, 1], ou já dentro):
+um primeiro teste a 0,633 (0,283 + 0,35) entre os centros; depois, entre
+dois humanos (vtable `0x98` dos dois), **bloqueia se os centros chegam a
+menos de 0,283, ou se o ponto 0,35 à frente de quem anda (na direção do
+movimento, `0x468`) chega a menos de 0,283 do centro do outro**; a idade
+não entra (só a espécie: animais têm outros números). Antes o VM usava
+0,5 em toda volta (inferido): um Sim ao lado ou atrás bloqueava, e dois
+Sims parados a ~0,52 um do outro nunca saíam do lugar (o pedido para sair
+e o que esperava, cada passo "bloqueado": N001_Lot68). Com as paredes
+infladas 0,125 o centro anda até 0,375 fora do meio de um corredor de 1
+tile: um Sim parado sozinho no corredor é ultrapassado.
+Também (inferido): quem começa a rota dentro da inflação de um objeto sai
+para o ponto mais perto da célula livre mais perto, não para o meio dela
+(o meio podia ficar na direção do outro Sim, e esse primeiro passo era
+"bloqueado" para sempre).
+
 Ou seja, o "bloqueado" do locomotor é **previsto** (até ~10 passos à
 frente), não um contato: o Sim para antes de encostar. **Corrigido na rodada
 14** (front "walking2", vtable do `cLocomotable` lida: `0x41c`
@@ -383,6 +401,21 @@ mandados juntos para a mesma cama (N002_Lot10). E o `DoContinueAfterPause`
 andar continua no tick seguinte (no mesmo tick o mesmo bloqueador contava a
 2ª tentativa na hora e a rota falhava; "Route To Can" com "CT - Route
 Failure Feedback" dava centenas de voltas num tick no N001_Lot68).
+
+**Rodada 22, o ramo "bloqueado por mim" lido de novo** (BV `0x57a8d4`):
+depois do `TryGetSelfOutOfWay` (só com `0xd8` da rota == 0, a contagem de
+"sair do caminho" que ele incrementa, e contador < 3), se a rota corrente
+do bloqueador (`0x68`) tem `0xd0` ligado, **o contador volta um e pausa**
+(`DoPause`). `0xd0`/`0xd4` é a marca da rota de "sair do caminho" (o
+`TryGetSelfOutOfWay` chama `0xd4(1)` na rota nova) e `0x140` põe nela o
+bloqueador = quem ele deixa passar (`0x13c` é o que o outro lê como "o
+bloqueador dele"). Ou seja: quem já saiu do caminho uma vez e encontra o
+outro saindo do caminho por ele espera sem gastar tentativa. E a rota de
+sair do caminho é empurrada sobre a rota (pilha > 1): bloqueada, falha só
+ela (14) e a rota volta (o VM planeja de novo; o que a rota de baixo faz
+nesse retorno não foi lido, inferido). Dois Sims mandados para a mesma
+cama no mesmo tick saíam os dois do caminho, se encontravam de novo e
+pausavam igual até a 5ª tentativa; agora deitam os dois (`test_hood_vm`).
 
 `TryGetSelfOutOfWay` (BV `0x57e9ac`): os dois no mundo e a ≤ 4 tiles →
 `CreateMoveOutOfWayDestination(eu, bloqueador, 0)` e uma rota empurrada
