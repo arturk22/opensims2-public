@@ -309,7 +309,14 @@ bool PathPlanner::escape(int level, Point2 start, Point2& out) const {
         open.pop_front();
         const uint8_t bits = cellAt(level, cx, cy);
         if (bits == 0) {
-            out = {(float(cx) + 0.5f) / K, (float(cy) + 0.5f) / K};
+            // The nearest point of that cell, a little inside it (inferred):
+            // its middle could lie toward a Sim beside the walker, a step
+            // the walk's collision check then refuses for good (N001_Lot68:
+            // Lilith asked to step aside in a gap between two cabinets
+            // stepped first toward Angela, who waited for her, ~1400 ticks).
+            constexpr float kIn = 0.125f / K;
+            out = {std::clamp(start[0], float(cx) / K + kIn, float(cx + 1) / K - kIn),
+                   std::clamp(start[1], float(cy) / K + kIn, float(cy + 1) / K - kIn)};
             return true;
         }
         static constexpr int kD[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};

@@ -677,8 +677,13 @@ static void testBlockedBySim() {
     lamp.position = {11.5f, 1.5f, 1};
     Object& walker = vm.instantiate(kGroup, 0x81);
     walker.position = {0.5f, 1.5f, 1};
+    // Two Sims across the corridor: one Sim alone in a one-tile corridor is
+    // passed (the centres only have to stay 0.283 apart and the walls let a
+    // centre 0.375 off the middle).
     Object& other = vm.instantiate(kGroup, 0x81);
-    other.position = {6.5f, 1.5f, 1};
+    other.position = {6.5f, 1.6f, 1};
+    Object& wallSim = vm.instantiate(kGroup, 0x81);
+    wallSim.position = {6.5f, 1.15f, 1};
     code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
     Thread t = vm.start(walker.id, 0x1000, {}, lamp.id);
     int ticks = 0, waited = 0;
@@ -924,6 +929,12 @@ static void testMoveOutOfWay() {
         other.data[objdata::Direction] = 0; // facing the walker
         other.person->data[33] = lowPriority ? 0 : 50;
         vm.startMain(other.id);
+        // A Sim of high priority against the far wall: with it the way past
+        // the other is too narrow (0.283 between centres).
+        Object& wallSim = vm.instantiate(kGroup, 0x81);
+        wallSim.position = {6.5f, 1.15f, 1};
+        wallSim.person->data[33] = 100;
+        other.position.y = 1.6f;
         code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0xFF, 0xFE, 0, 0, 0x02})})); // anywhere near: goals
         vm.threads.insert_or_assign(walker.id, vm.start(walker.id, 0x1000, {}, lamp.id));
         for (int i = 0; i < 3000 && vm.threads.at(walker.id).status == Thread::Status::Running; ++i)
@@ -938,9 +949,9 @@ static void testMoveOutOfWay() {
             check(t.status == Thread::Status::Finished && t.result && walker.position.x > 9 && other.position.y > 2,
                   "a Sim in the way is asked to move: it steps into the alcove and the walker gets through");
         if (lowPriority)
-            check(vm.objects().size() == 3, "the move-out-of-way destination is gone once its interaction is");
-        else
-            check(t.status == Thread::Status::Finished && !t.result && other.position.y < 2 && other.queue.empty(),
+            check(vm.objects().size() == 4, "the move-out-of-way destination is gone once its interaction is");
+        else // not asked: the walker goes round it through the alcove
+            check(t.status == Thread::Status::Finished && other.position.y < 2 && other.queue.empty(),
                   "a Sim of the same priority is not asked to move");
     }
 }
@@ -1372,10 +1383,13 @@ static void testLocoHalt() {
         walker.position = {1.5f, 1.5f, 1};
         walker.person->data[58] = 27;
         walker.data[objdata::Direction] = 4;
-        if (!object) {
+        if (!object) { // two Sims across the corridor (one alone is passed)
             Object& other = vm.instantiate(kGroup, 0x81);
-            other.position = {8.5f, 1.5f, 1};
+            other.position = {8.5f, 1.6f, 1};
             other.person->data[58] = 27;
+            Object& wallSim = vm.instantiate(kGroup, 0x81);
+            wallSim.position = {8.5f, 1.15f, 1};
+            wallSim.person->data[58] = 27;
         }
         code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
         Thread t = vm.start(walker.id, 0x1000, {}, lamp.id);
@@ -1435,9 +1449,12 @@ static void testRunnerStep() {
     Object& runner = vm.instantiate(kGroup, 0x81);
     runner.position = {1.5f, 1.5f, 1};
     runner.person->data[58] = 27;
-    Object& other = vm.instantiate(kGroup, 0x81);
-    other.position = {6.5f, 1.5f, 1};
+    Object& other = vm.instantiate(kGroup, 0x81); // two across the corridor (one alone is passed)
+    other.position = {6.5f, 1.6f, 1};
     other.person->data[58] = 27;
+    Object& wallSim = vm.instantiate(kGroup, 0x81);
+    wallSim.position = {6.5f, 1.15f, 1};
+    wallSim.person->data[58] = 27;
     code.add(kGroup, 0x1000, tree({instr(0x1B, T, F, {0, 0, 0, 0xFE, 0, 0, 0})}));
     Thread t = vm.start(runner.id, 0x1000, {}, lamp.id);
     float closest = 99;
