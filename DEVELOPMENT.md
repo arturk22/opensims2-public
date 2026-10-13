@@ -2,12 +2,10 @@
 
 A native reimplementation (C++ + Metal) of The Sims 2 (2004) engine for macOS, using the original CD assets. If you only want to try the game, see the [README](README.md).
 
-## Getting the code
-The game data in `data/` is about 2.8 GB of Git LFS. To skip it, clone without LFS and use the data zips from the [latest release](https://github.com/opensims2/opensims2/releases/latest) instead (unzip them and point the app at `opensims2-data` with `--data` or the folder picker):
-```
-GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/opensims2/opensims2.git
-```
-Requirements: Command Line Tools (`xcode-select --install`), `cmake` and `ninja` (`brew install cmake ninja`).
+## Requirements and game data
+Command Line Tools (`xcode-select --install`), `cmake` and `ninja` (`brew install cmake ninja`).
+
+The app and the tools need a The Sims 2 folder containing `TSData/`. They look for it at `data/game` above the executable, or take it from `--data <dir>`, `OS2_DATA` or the app's folder picker (see [App](#app)). `tools/setup_data.sh` builds `data/game` from CloneCD images of the original discs.
 
 ## Layout
 - `tools/` – extraction scripts (CCD/IMG → ISO, etc.)
