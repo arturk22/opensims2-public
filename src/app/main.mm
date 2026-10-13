@@ -2838,6 +2838,14 @@ void runBuySteps() {
                 gBuy->holdAt(x, y, dir);
             else
                 gBuy->placeAt(x, y, dir);
+        } else if (float fx = 0, fy = 0; a == "--buy-drag" && std::sscanf(v.c_str(), "%d,%d,%f,%f", &x, &y, &fx, &fy) == 4) {
+            // --buy-drag x,y,fx,fy: the press on tile x,y, a drag to the ground point fx,fy, the release.
+            if (gBuy->pressAt(x, y)) {
+                gBuy->aimAt(simd_make_float2(fx, fy));
+                gBuy->mouseUp();
+            }
+        } else if (a == "--buy-cancel") { // Esc
+            gBuy->cancel();
         } else if (a == "--grab") {
             gBuy->grab(os2::vm::ObjectId(std::stoi(v)));
         } else if (a == "--eyedrop") {
@@ -5420,8 +5428,8 @@ void unloadScene() {
     const simd_float4x4 m = simd_mul(_camera->projection(w / h), _camera->view());
     simd_float4 q = simd_mul(simd_inverse(m), simd_make_float4(2 * p.x / w - 1, 1 - 2 * p.y / h, 0.5f, 1));
     const simd_float3 eye = _camera->eye();
-    if (gBuy && gBuy->active()) { // the object tool, not the pie menu
-        gBuy->click(eye, simd_normalize(q.xyz / q.w - eye), p);
+    if (gBuy && gBuy->active()) { // the object tool, not the pie menu (a drag turns what is held, the release drops it)
+        gBuy->mouseDown(eye, simd_normalize(q.xyz / q.w - eye), p);
         return;
     }
     if (gBuild && gBuild->active()) { // Build mode's tools
@@ -5468,6 +5476,8 @@ void unloadScene() {
         gPie->release([self canvasPoint:e]);
     if (gBuild && gBuild->active())
         gBuild->mouseUp(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
+    if (gBuy && gBuy->active())
+        gBuy->mouseUp();
     if (gHood)
         gHood->mouseUp(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
 }
@@ -5520,6 +5530,8 @@ void unloadScene() {
         gPie->hover([self canvasPoint:e]);
     if (gBuild && gBuild->active())
         gBuild->mouseDrag(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
+    if (gBuy && gBuy->active())
+        gBuy->mouseDrag(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
     if (gHood)
         gHood->mouseDragged(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
 }

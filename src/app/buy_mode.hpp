@@ -5,8 +5,10 @@
 // (by function and subsort, by room and function), the catalog description
 // (0x49063004) of the item under the mouse, and the object tool
 // (cTSUserToolObject): the picked object, created at once, follows the
-// mouse on the lot grid with its footprint green or red, turns in 90°
-// steps, is bought on the click; the hand picks up placed objects to move
+// mouse on the lot grid with the game's footprint outline (green or red,
+// a chevron at the front), turns in 90°
+// steps (keys, or a drag while the button is down), is bought on the
+// release; the hand picks up placed objects to move
 // or sell them; undo and redo. What the game does is docs/buy-build-mac.md;
 // the placement rules are vm/placement.hpp. While Buy mode is on the
 // simulation is paused, as in the game.
@@ -95,6 +97,16 @@ public:
     // up the object under the mouse with the hand. Returns whether it did.
     // `at` is the canvas point (where the design dialog opens).
     bool click(simd_float3 eye, simd_float3 dir, std::optional<simd_float2> at = std::nullopt);
+    // The same in three steps, as the mouse does it: the press keeps what is
+    // held on the tile under the mouse, a drag turns it to face the mouse
+    // (aimAt: a ground point), the release places it.
+    bool mouseDown(simd_float3 eye, simd_float3 dir, std::optional<simd_float2> at = std::nullopt);
+    void mouseDrag(simd_float3 eye, simd_float3 dir);
+    void aimAt(simd_float2 ground);
+    bool mouseUp();
+    bool pressAt(int x, int y); // headless: the press on a tile
+    bool pressing() const { return pressing_; }
+    int direction() const { return direction_; }
     // Headless: holds at a tile / places there.
     void holdAt(int x, int y, int direction);
     bool placeAt(int x, int y, int direction);
@@ -146,6 +158,8 @@ private:
     };
     std::vector<const CatalogEntry*> items() const;
     std::optional<vm::TilePos> tileUnder(simd_float3 eye, simd_float3 dir) const;
+    std::optional<simd_float3> rayHit(simd_float3 eye, simd_float3 dir) const;
+    std::optional<simd_float2> groundUnder(simd_float3 eye, simd_float3 dir) const;
     void preview(const vm::Placement& p);
     vm::Placement current(vm::ObjectId id);
     void layoutIfNeeded();
@@ -187,12 +201,15 @@ private:
     vm::Placement heldFrom_; // where a grabbed object was
     vm::Placement last_;     // its last test
     int direction_ = 2;
+    bool pressing_ = false; // the button is down on what is held (a drag turns it)
+    vm::TilePos pressTile_{};
     int level_ = 1;
     std::vector<Op> undo_, redo_;
     std::string message_;
 
     // Footprint tiles: models (green, red) and instances.
     std::array<int, 2> tileModels_{-1, -1};
+    bool outlines_ = false; // the game's outlines (with the facing chevron), not plain tiles
     std::vector<int> tileInstances_;
 
     std::vector<Target> targets_;

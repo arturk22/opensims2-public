@@ -381,4 +381,7 @@ set_tests_properties(seat_battery PROPERTIES PASS_REGULAR_EXPRESSION "seat batte
 # With the game's data: no Sim glides with still legs (tests/glides.sh).
 add_test(NAME glides COMMAND sh ${CMAKE_SOURCE_DIR}/tests/glides.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/glides)
 set_tests_properties(glides PROPERTIES PASS_REGULAR_EXPRESSION "glides: ok" TIMEOUT 600)
+# With the game's data: Buy mode places, charges, holds another chair and turns by a drag (tests/buy_place.sh).
+add_test(NAME buy_place COMMAND sh ${CMAKE_SOURCE_DIR}/tests/buy_place.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/buy_place)
+set_tests_properties(buy_place PROPERTIES PASS_REGULAR_EXPRESSION "buy place: ok" TIMEOUT 300)
 set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "usage: opensims2")

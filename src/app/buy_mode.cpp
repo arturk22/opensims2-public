@@ -10,6 +10,7 @@
 #include "formats/ui_resources.hpp"
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#include "vm/sim_motion.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -148,12 +149,29 @@ BuyMode::BuyMode(LotSimulation& simulation, VmObjectView& view, Renderer& render
         redo_.clear();
         dirty_ = true;
     };
-    try {
-        tileModels_[0] = renderer_.addObject(tileModel("os2_buy_ok", "0.2,1,0.2"), index_);
-        tileModels_[1] = renderer_.addObject(tileModel("os2_buy_no", "1,0.15,0.1"), index_);
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "opensims2: buy mode: %s\n", e.what());
-    }
+    // The footprint: the game's tile outlines (cTSUserToolObject::
+    // CreateAndAttachTileOutlineNode with "objectPlacementIconGood" /
+    // "objectPlacementIconBad", Sims3D/Objects05.package): a tile frame whose
+    // front edge has the chevron that shows where the object faces (+Y of
+    // the model, turned as the object). Without them, plain tiles.
+    for (int i = 0; i < 2; ++i)
+        try {
+            const ObjectModel m = loadObjectModel(index_, i ? "objectPlacementIconBad" : "objectPlacementIconGood");
+            if (!m.parts.empty())
+                tileModels_[size_t(i)] = renderer_.addObject(m, index_), outlines_ = true;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: buy mode: %s\n", e.what());
+        }
+    if (outlines_ && tileModels_[0] >= 0 && tileModels_[1] >= 0)
+        std::printf("opensims2: buy mode: footprint from objectPlacementIconGood/Bad (with the facing chevron)\n");
+    if (tileModels_[0] < 0 || tileModels_[1] < 0)
+        try {
+            outlines_ = false;
+            tileModels_[0] = renderer_.addObject(tileModel("os2_buy_ok", "0.2,1,0.2"), index_);
+            tileModels_[1] = renderer_.addObject(tileModel("os2_buy_no", "1,0.15,0.1"), index_);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: buy mode: %s\n", e.what());
+        }
 }
 
 BuyMode::~BuyMode() = default;
@@ -287,21 +305,44 @@ const char* BuyMode::dropSound(vm::ObjectId id) const {
     return "ui_object_plop";
 }
 
-std::optional<vm::TilePos> BuyMode::tileUnder(simd_float3 eye, simd_float3 dir) const {
-    if (!vm_.world || std::fabs(dir.z) < 1e-5f)
+// Where the mouse ray meets the floor of the current level: the first
+// point along the ray at or under that floor's height there. The floor is
+// not one plane (a foundation's top is 0.75 up, the same level off the
+// foundation is a storey up), and a ray met with one plane, then another,
+// landed tiles away from the mouse, back and forth (the held object did not
+// follow the mouse on the tutorial lot, round 21).
+std::optional<simd_float3> BuyMode::rayHit(simd_float3 eye, simd_float3 dir) const {
+    if (!vm_.world || dir.z > -1e-4f)
         return std::nullopt;
-    // The ray against the floor of the current level, twice (the floor's
-    // height where the first guess lands).
-    float z = sim_.floorHeight(level_, float(vm_.world->width()) / 2, float(vm_.world->height()) / 2);
-    simd_float3 hit{};
-    for (int i = 0; i < 3; ++i) {
-        const float t = (z - eye.z) / dir.z;
-        if (t <= 0)
-            return std::nullopt;
-        hit = eye + dir * t;
-        z = sim_.floorHeight(level_, hit.x, hit.y);
-    }
-    return vm::TilePos{int(std::floor(hit.x)), int(std::floor(hit.y)), level_};
+    auto above = [&](float t) {
+        const simd_float3 p = eye + dir * t;
+        return p.z > sim_.floorHeight(level_, p.x, p.y);
+    };
+    if (!above(0))
+        return std::nullopt;
+    const float far = (eye.z + 20) / -dir.z; // 20 under the ground at most
+    const float step = 0.05f;
+    for (float t = step; t < far; t += step)
+        if (!above(t)) {
+            float lo = t - step, hi = t;
+            for (int i = 0; i < 12; ++i) {
+                const float mid = (lo + hi) / 2;
+                (above(mid) ? lo : hi) = mid;
+            }
+            const simd_float3 hit = eye + dir * hi;
+            if (std::getenv("OS2_DEBUG_BUY"))
+                std::fprintf(stderr, "buy: ray eye (%.2f %.2f %.2f) dir (%.3f %.3f %.3f) -> (%.2f %.2f %.2f) level %d\n", eye.x,
+                             eye.y, eye.z, dir.x, dir.y, dir.z, hit.x, hit.y, hit.z, level_);
+            return hit;
+        }
+    return std::nullopt;
+}
+
+std::optional<vm::TilePos> BuyMode::tileUnder(simd_float3 eye, simd_float3 dir) const {
+    const auto hit = rayHit(eye, dir);
+    if (!hit)
+        return std::nullopt;
+    return vm::TilePos{int(std::floor(hit->x)), int(std::floor(hit->y)), level_};
 }
 
 void BuyMode::holdAt(int x, int y, int direction) {
@@ -314,7 +355,7 @@ void BuyMode::holdAt(int x, int y, int direction) {
 }
 
 void BuyMode::pointAt(simd_float3 eye, simd_float3 dir) {
-    if (!active_ || !held_)
+    if (!active_ || !held_ || pressing_)
         return;
     if (auto t = tileUnder(eye, dir))
         holdAt(t->x, t->y, direction_);
@@ -352,14 +393,19 @@ bool BuyMode::placeAt(int x, int y, int direction) {
         }
         undo_.push_back({Op::Kind::Created, id, p, price});
         sound(dropSound(id));
-        say("bought " + (selected_ ? selected_->name : std::string("?")) + " as object " + std::to_string(id) +
-            " for " + money(price) + "; funds " + money(vm::funds(vm_)));
+        say("bought " + (selected_ ? selected_->name : std::string("?")) + " as object " + std::to_string(id) + " at (" +
+            std::to_string(x) + ", " + std::to_string(y) + ") facing " + std::to_string(p.direction) + " for " +
+            money(price) + "; funds " + money(vm::funds(vm_)));
         held_ = 0;
         redo_.clear();
         // "Keep Buying" (OBJD field 96): another one is held at once.
         if (selected_ && vm_.object(id) && vm_.object(id)->definition &&
-            vm_.object(id)->definition->field(objd::KeepBuying))
-            select(*selected_);
+            vm_.object(id)->definition->field(objd::KeepBuying)) {
+            // At the mouse at once, facing the same way (over the one just
+            // placed, so red until the mouse moves on).
+            if (select(*selected_))
+                holdAt(x, y, direction);
+        }
     } else {
         vm::applyPlacement(vm_, id, p);
         vm::runUserPlacement(vm_, id);
@@ -479,13 +525,36 @@ bool BuyMode::design(vm::ObjectId id, simd_float2 at) {
 bool BuyMode::click(simd_float3 eye, simd_float3 dir, std::optional<simd_float2> at) {
     if (!active_)
         return false;
+    if (held_) {
+        if (!mouseDown(eye, dir, at))
+            return false;
+        return mouseUp();
+    }
+    return mouseDown(eye, dir, at);
+}
+
+std::optional<simd_float2> BuyMode::groundUnder(simd_float3 eye, simd_float3 dir) const {
+    if (const auto hit = rayHit(eye, dir))
+        return simd_make_float2(hit->x, hit->y);
+    return std::nullopt;
+}
+
+// The object tool's press (cTSUserToolObject): what is held stays on its
+// tile while the button is down, and a drag turns it toward the mouse; the
+// release drops it (OnRelease -> TryDrop, docs/buy-build-mac.md §3.1).
+bool BuyMode::mouseDown(simd_float3 eye, simd_float3 dir, std::optional<simd_float2> at) {
+    if (!active_)
+        return false;
     if (design_->isOpen()) // a click off the dialog closes it, as Cancel
         design_->cancel(), dirty_ = true;
     const auto t = tileUnder(eye, dir);
     if (held_) {
         if (!t)
             return false;
-        return placeAt(t->x, t->y, direction_);
+        holdAt(t->x, t->y, direction_);
+        pressing_ = true;
+        pressTile_ = *t;
+        return true;
     }
     const vm::ObjectId id = objectAt(eye, dir, t);
     if (!id)
@@ -499,6 +568,53 @@ bool BuyMode::click(simd_float3 eye, simd_float3 dir, std::optional<simd_float2>
     return false;
 }
 
+bool BuyMode::pressAt(int x, int y) {
+    if (!active_ || !held_)
+        return false;
+    holdAt(x, y, direction_);
+    pressing_ = true;
+    pressTile_ = {x, y, level_};
+    return true;
+}
+
+void BuyMode::mouseDrag(simd_float3 eye, simd_float3 dir) {
+    if (!pressing_ || !held_)
+        return;
+    if (auto g = groundUnder(eye, dir))
+        aimAt(*g);
+}
+
+void BuyMode::aimAt(simd_float2 ground) {
+    if (!pressing_ || !held_)
+        return;
+    // Half a tile away from the tile's centre at least, so a shaky click
+    // does not turn it. Facing the mouse, in 90° steps (TryTurn's steps of
+    // 2: the diagonal selector is BV only, §3.5).
+    const float dx = ground.x - (float(pressTile_.x) + 0.5f), dy = ground.y - (float(pressTile_.y) + 0.5f);
+    if (dx * dx + dy * dy < 0.25f)
+        return;
+    const float heading = vm::headingOfMotion(dx, dy);
+    int d = direction_;
+    float best = 10;
+    for (int k = 0; k < 8; k += 2)
+        if (const float off = std::fabs(std::remainder(heading - vm::headingOfDirection(k), float(2 * M_PI))); off < best)
+            best = off, d = k;
+    if (d == direction_)
+        return;
+    direction_ = d;
+    sound("ui_object_rotate");
+    holdAt(pressTile_.x, pressTile_.y, direction_);
+}
+
+bool BuyMode::mouseUp() {
+    if (!pressing_)
+        return false;
+    pressing_ = false;
+    if (!held_)
+        return false;
+    return placeAt(pressTile_.x, pressTile_.y, direction_);
+}
+
 void BuyMode::rotate(int steps) {
     direction_ = ((direction_ + steps) % 8 + 8) % 8;
     if (held_)
@@ -510,8 +626,10 @@ void BuyMode::rotate(int steps) {
 }
 
 void BuyMode::cancel() {
+    pressing_ = false;
     if (!held_)
         return;
+    say(heldNew_ ? "dropped what was held" : "put back object " + std::to_string(held_));
     if (heldNew_) {
         for (vm::ObjectId part : vm::groupOf(vm_, held_))
             view_.forget(part);
@@ -637,7 +755,13 @@ void BuyMode::update() {
             const int model = tileModels_[last_.ok ? 0 : 1];
             const float z = sim_.floorHeight(part.tile.level, float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f) +
                             0.02f;
-            const simd_float4x4 m = at(float(part.tile.x), float(part.tile.y), z);
+            simd_float4x4 m = at(float(part.tile.x), float(part.tile.y), z);
+            if (outlines_) { // centred on the tile, turned to the object's direction
+                const float h = vm::headingOfDirection(last_.direction), c = std::cos(h), s = std::sin(h);
+                m.columns[0] = simd_make_float4(c, s, 0, 0);
+                m.columns[1] = simd_make_float4(-s, c, 0, 0);
+                m.columns[3] = simd_make_float4(float(part.tile.x) + 0.5f, float(part.tile.y) + 0.5f, z, 1);
+            }
             if (used == tileInstances_.size())
                 tileInstances_.push_back(renderer_.addInstance(model, m));
             else
@@ -1022,8 +1146,11 @@ bool BuyMode::press(simd_float2 p) {
         return true;
     }
     for (const auto& r : solid_)
-        if (inside(r, p))
+        if (inside(r, p)) {
+            if (std::getenv("OS2_DEBUG_BUY"))
+                std::fprintf(stderr, "buy: press (%.0f, %.0f) taken by panel rect (%.0f %.0f %.0f %.0f)\n", p.x, p.y, r[0], r[1], r[2], r[3]);
             return true;
+        }
     return false;
 }
 
