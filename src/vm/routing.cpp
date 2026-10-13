@@ -2470,12 +2470,6 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                              (unsigned long long)vm.ticks, me.id, b, blocker.route ? "routing" : "standing",
                              blocker.route ? blocker.route->blocker : 0, counter, me.position.x, me.position.y,
                              blocker.position.x, blocker.position.y);
-            // An object in the way (the per-step test): not a person, so
-            // "blocked by object" (DoBlockedGoalStillAvailable, §6).
-            if (!blocker.person) {
-                why = RouteFail::BlockedByObject;
-                return Step::Failed;
-            }
             const bool base = c.thread.stack.size() == r.depth; // the route stack holds only this route
             const TilePos blockerTile = VM::tileOf(blocker);
             const bool offRecordedTile = int(std::floor(r.blockerX)) != blockerTile.x ||
@@ -2483,7 +2477,25 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             // Out of tries: "CT - Route Blocked" on the base route, then
             // "blocked by person" (what the tree's result changes is not
             // decoded; the game's returns true).
+            // A step-aside route (pushed on the route's own, stack > 1) that
+            // is blocked fails by itself (14) and the route goes on: plan it
+            // again, as when the step aside ends (inferred: what the route
+            // does when the pushed one fails is not read).
+            auto endAside = [&]() {
+                r.aside = false, r.asideFrom = 0;
+                r.blocker = 0, r.blockedTicks = 0;
+                Object::Route next = r;
+                RouteFail w;
+                if (!planRoute(vm, me, next, w)) {
+                    why = w;
+                    return Step::Failed;
+                }
+                r.points = std::move(next.points);
+                return Step::Walking;
+            };
             auto routeBlocked = [&]() {
+                if (r.aside)
+                    return endAside();
                 if (base && runWalkTree(c, "CT - Route Blocked", {b, 0, 0, 0})) {
                     r.blockedTree = true;
                     return Step::Call;
@@ -2539,10 +2551,19 @@ Step advance(Context& c, Object& me, RouteFail& why) {
                     return false;
                 r.points = std::move(aside.points);
                 r.aside = r.asideTried = true;
+                r.asideFrom = blocker.id;
                 r.blocker = 0, r.blockedTicks = 0;
                 r.waiting = false;
                 return true;
             };
+            // An object in the way (the per-step test): not a person, so
+            // "blocked by object" (DoBlockedGoalStillAvailable, §6).
+            if (!blocker.person) {
+                if (r.aside)
+                    return endAside();
+                why = RouteFail::BlockedByObject;
+                return Step::Failed;
+            }
             if (!blocker.route) { // the blocker stands (it is not routing)
                 // Inferred: never asleep here (cTSPerson::IsSleeping: then
                 // plan again once, else "blocked by object").
@@ -2568,14 +2589,26 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             const auto& br = *blocker.route;
             // (Not once it walks out of the way: that is a route of its own,
             // pushed on top, with no blocker, TryGetSelfOutOfWay.)
+            // A step-aside route's blocker is the Sim it gives way to
+            // (TryGetSelfOutOfWay sets it, route vtable 0x140).
             const ObjectId itsBlocker = br.blocker                                         ? br.blocker
-                                        : !br.aside && (br.loco.halting || br.loco.haltDone) ? br.loco.halted
+                                        : br.aside                                         ? br.asideFrom
+                                        : (br.loco.halting || br.loco.haltDone) ? br.loco.halted
                                                                                              : 0;
             if (itsBlocker == me.id) { // it routes and I block it: the two block each other
-                if (!base)
+                if (!base || r.aside)
                     return routeBlocked();
                 if (!r.asideTried && counter < 3 && selfOutOfWay())
                     return Step::Walking;
+                // It is stepping aside (its route is a step-aside one, route
+                // vtable 0xd0, set by TryGetSelfOutOfWay through 0xd4): pause
+                // for it without counting the try (the counter goes back
+                // one). Two Sims sent to one bed in the same tick both
+                // stepped aside, met again and paused alike to the 5th try.
+                if (br.aside) {
+                    --r.replans;
+                    return pause();
+                }
                 if (counter > 4)
                     return routeBlocked();
                 if (offRecordedTile)
@@ -2669,6 +2702,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         }
     }
     if (std::exchange(r.aside, false)) { // stepped aside: the route itself again
+        r.asideFrom = 0;
         Object::Route next = r;
         RouteFail w;
         if (!planRoute(vm, me, next, w)) {

@@ -590,6 +590,10 @@ struct Object {
         // plans its route again; a pause ("CT - Route Blocked Animation")
         // or "CT - Route Blocked" tree runs; the pauses so far.
         bool aside = false, asideTried = false, pausing = false, blockedTree = false;
+        // The Sim the step-aside route gives way to (the binary sets it as
+        // that route's blocker, route vtable 0x140, when TryGetSelfOutOfWay
+        // pushes it).
+        ObjectId asideFrom = 0;
         int pauses = 0;
         bool inPortal = false;    // a portal tree runs (routing.cpp)
         // The goal check / along route trees (routing.cpp): which one runs

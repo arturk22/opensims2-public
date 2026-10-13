@@ -13,7 +13,13 @@ namespace os2::vm {
 
 namespace {
 
-constexpr uint32_t kVersion = 1;
+// 2: a route's asideFrom (the Sim a step-aside route gives way to).
+constexpr uint32_t kVersion = 2;
+uint32_t readingVersion = kVersion; // of the state being read
+bool knownVersion(uint32_t v) {
+    readingVersion = v;
+    return v == 1 || v == kVersion;
+}
 
 enum FrameFlag : uint8_t {
     RerunCaller = 0x01,
@@ -68,6 +74,7 @@ void writeRoute(BinWriter& w, const Object::Route& r, size_t frame) {
     w.i32(r.blockedTicks), w.i32(r.replans), w.f32(r.blockerX), w.f32(r.blockerY);
     w.u8(r.waiting), w.u8(r.failureTrees), w.i16(r.blocker);
     w.u8(r.aside), w.u8(r.asideTried), w.u8(r.pausing), w.u8(r.blockedTree);
+    w.i16(r.asideFrom);
     w.i32(r.pauses), w.u8(r.inPortal), w.i32(r.check);
     w.u32(uint32_t(r.lastCheck)), w.u32(uint32_t(r.lastCheck >> 32));
     const auto& c = r.climb;
@@ -124,6 +131,8 @@ Object::Route readRoute(BinReader& r, size_t& frame) {
     x.blockedTicks = r.i32(), x.replans = r.i32(), x.blockerX = r.f32(), x.blockerY = r.f32();
     x.waiting = r.u8(), x.failureTrees = r.u8(), x.blocker = r.i16();
     x.aside = r.u8(), x.asideTried = r.u8(), x.pausing = r.u8(), x.blockedTree = r.u8();
+    if (readingVersion >= 2)
+        x.asideFrom = r.i16();
     x.pauses = r.i32(), x.inPortal = r.u8(), x.check = r.i32();
     x.lastCheck = r.u32();
     x.lastCheck |= uint64_t(r.u32()) << 32;
@@ -204,7 +213,7 @@ bool applyThreadState(VM& vm, Object& o, std::span<const uint8_t> bytes) {
     auto t = vm.threads.find(o.id);
     try {
         BinReader r(bytes);
-        if (r.u32() != kVersion)
+        if (!knownVersion(r.u32()))
             return false;
         const uint8_t parts = r.u8();
         struct Saved {
@@ -287,7 +296,7 @@ std::vector<uint8_t> writeLotState(VM& vm) {
 void applyLotState(VM& vm, std::span<const uint8_t> bytes) {
     try {
         BinReader r(bytes);
-        if (r.u32() != kVersion)
+        if (!knownVersion(r.u32()))
             return;
         restorePlannerNoise(vm, r.u32());
         uint64_t ticks = r.u32();

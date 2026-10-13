@@ -333,7 +333,7 @@ static void testLotObjectsValue() {
 // failing 14), and the player's pick on the partner lying in it ("*Object
 // Menu Subqueue" of the person, the bed's "CT - Object Menu Subqueue")
 // offers WooHoo, which pushes the bed's pair onto both.
-static void testBedTogether() {
+static void testBedTogether(bool sameTick) {
     const char* data = std::getenv("OS2_DATA");
     if (!data)
         return;
@@ -369,10 +369,11 @@ static void testBedTogether() {
     check(vm.object(jenny) && vm.object(tech) && vm.object(bed), "bed together: N002_Lot10's Jenny, Pollination Tech and bed");
     if (!vm.object(jenny) || !vm.object(tech) || !vm.object(bed))
         return;
-    // A tick apart, as two clicks are (the same tick, both pause alike and
-    // give up together: TODO).
+    // A tick apart, as two clicks are, and in the same tick (both paused
+    // alike and gave up together).
     const bool first = pick(jenny, bed, "Relaxar");
-    vm.tick();
+    if (!sameTick)
+        vm.tick();
     check(first && pick(tech, bed, "Relaxar"), "bed together: both pick Relaxar");
     auto inBed = [&](ObjectId sim) {
         const ObjectId c = vm.object(sim)->data[objdata::ContainerId];
@@ -380,7 +381,9 @@ static void testBedTogether() {
     };
     for (int i = 0; i < 1300 && !(inBed(jenny) && inBed(tech)); ++i)
         vm.tick();
-    check(inBed(jenny) && inBed(tech), "bed together: both get in");
+    check(inBed(jenny) && inBed(tech), sameTick ? "bed together: both get in (sent in the same tick)" : "bed together: both get in");
+    if (sameTick)
+        return;
     bool offered = false;
     for (const auto& e : pieMenu(vm, jenny, tech))
         offered = offered || (e.available() && !e.debug && e.name == "Oba-Oba");
@@ -545,7 +548,8 @@ static void testNewLot() {
 int main() {
     testNewLot();
     testLotObjectsValue();
-    testBedTogether();
+    testBedTogether(false);
+    testBedTogether(true);
     testLoad();
     testPrimitives();
     if (failures)
