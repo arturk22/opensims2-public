@@ -193,7 +193,7 @@ if(APPLE)
   target_link_libraries(os2_render PUBLIC os2_formats os2_fx
     "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 
-  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/jump_detector.cpp src/app/glide_detector.cpp src/app/seat_check.cpp src/app/seat_module.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/cinematic_player.cpp src/app/lot_effects.cpp src/app/tv_broadcast.cpp)
+  add_executable(opensims2 MACOSX_BUNDLE src/app/main.mm src/app/lot_vm.cpp src/app/jump_detector.cpp src/app/glide_detector.cpp src/app/seat_check.cpp src/app/seat_module.cpp src/app/vm_objects.cpp src/app/look_at.cpp src/app/lot_lighting.cpp src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/live_ui.cpp src/app/live_panels.cpp src/app/wants_panel.cpp src/app/ui_panel_util.cpp src/app/lot_audio.cpp src/app/camera_input.cpp src/app/camera_follow.cpp src/app/wall_view.cpp src/app/anim_snaps.cpp src/app/data_location.mm src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/buy_mode.cpp src/app/game_cursors.cpp src/app/design_tool.cpp src/app/build_mode.cpp src/app/movie_host.cpp src/app/cinematic_camera.cpp src/app/cinematic_player.cpp src/app/lot_effects.cpp src/app/tv_broadcast.cpp)
   # The game flow: main menu, user folder, in-game save, options (app/game_flow.hpp).
   target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/tutorial.cpp src/app/options_panel.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp)
   # Scenes loaded off the main thread behind the loading screens (docs/loading-mac.md).
@@ -320,6 +320,10 @@ add_executable(test_audio tests/test_audio.cpp)
 target_link_libraries(test_audio PRIVATE os2_audio)
 target_include_directories(test_audio PRIVATE third_party/speex/include) # the test encodes with libspeex
 add_test(NAME audio COMMAND test_audio)
+add_executable(test_cursors tests/test_cursors.cpp src/app/game_cursors.cpp)
+target_include_directories(test_cursors PRIVATE src)
+target_link_libraries(test_cursors PRIVATE os2_formats)
+add_test(NAME cursors COMMAND test_cursors)
 add_executable(test_ui tests/test_ui.cpp src/app/ui_panel_util.cpp)
 target_link_libraries(test_ui PRIVATE os2_formats)
 add_test(NAME ui COMMAND test_ui)

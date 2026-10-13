@@ -1209,6 +1209,19 @@ bool LiveUi::overModeButton(simd_float2 p) {
     return false;
 }
 
+bool LiveUi::overPanel(simd_float2 p) {
+    if (!ok_)
+        return false;
+    layoutIfNeeded();
+    for (const Target& t : targets_)
+        if (inside(t.rect, p))
+            return true;
+    for (const auto& r : solid_)
+        if (inside(r, p))
+            return true;
+    return false;
+}
+
 bool LiveUi::press(simd_float2 p, bool right) {
     if (!ok_)
         return false;

@@ -355,6 +355,8 @@ void BuyMode::holdAt(int x, int y, int direction) {
 }
 
 void BuyMode::pointAt(simd_float3 eye, simd_float3 dir) {
+    if (active_ && !held_) // the hand's cursor over what it can pick up
+        overObject_ = objectAt(eye, dir, tileUnder(eye, dir)) != 0;
     if (!active_ || !held_ || pressing_)
         return;
     if (auto t = tileUnder(eye, dir))
@@ -436,10 +438,35 @@ bool BuyMode::grab(vm::ObjectId id) {
     held_ = lead;
     heldNew_ = false;
     direction_ = heldFrom_.direction;
+    overObject_ = false;
+    // The outline at once, on the tile it stands on (it showed only after
+    // the mouse moved: none while the button that picked it up was down).
+    if (!heldFrom_.parts.empty()) {
+        const vm::TilePos at = heldFrom_.parts.front().tile;
+        last_ = vm::checkPlacement(vm_, held_, {at.x, at.y, at.level}, direction_);
+        if (!heldFrom_.ok)
+            last_.parts.clear();
+    }
     sound("ui_object_pickup");
+    std::string outline;
+    if (!last_.parts.empty())
+        outline = "; outline on (" + std::to_string(last_.parts.front().tile.x) + ", " +
+                  std::to_string(last_.parts.front().tile.y) + ")";
     say("picked up object " + std::to_string(lead) + " (" + vm_.object(lead)->definition->fileName + ", worth " +
-        money(vm::saleValue(vm_, lead)) + ")");
+        money(vm::saleValue(vm_, lead)) + ")" + outline);
+    dirty_ = true;
     return true;
+}
+
+bool BuyMode::grabDrag(vm::ObjectId id, int x, int y) {
+    if (!active_ || !grab(id))
+        return false;
+    grabPress_ = true;
+    const vm::TilePos from = last_.parts.empty() ? vm::TilePos{x, y, level_} : last_.parts.front().tile;
+    grabMoved_ = x != from.x || y != from.y;
+    pressTile_ = {x, y, level_};
+    holdAt(x, y, direction_);
+    return mouseUp();
 }
 
 // What the tools act on: the object under the mouse ray, else (and for a
@@ -553,6 +580,7 @@ bool BuyMode::mouseDown(simd_float3 eye, simd_float3 dir, std::optional<simd_flo
             return false;
         holdAt(t->x, t->y, direction_);
         pressing_ = true;
+        turned_ = false;
         pressTile_ = *t;
         return true;
     }
@@ -563,7 +591,17 @@ bool BuyMode::mouseDown(simd_float3 eye, simd_float3 dir, std::optional<simd_flo
     case Tool::Eyedropper: return eyedrop(id);
     case Tool::Design:
         return design(id, at.value_or(mouse_.value_or(simd_make_float2(float(canvasW_) / 2, float(canvasH_) / 2))));
-    case Tool::Hand: return grab(id);
+    case Tool::Hand:
+        if (!grab(id))
+            return false;
+        // Still down: a drag carries it, the release drops it (inferred:
+        // TryGrab then OnRelease -> TryDrop, docs/buy-build-mac.md §3.1).
+        grabPress_ = true, grabMoved_ = false;
+        if (!last_.parts.empty())
+            pressTile_ = last_.parts.front().tile;
+        else if (t)
+            pressTile_ = *t;
+        return true;
     }
     return false;
 }
@@ -573,11 +611,20 @@ bool BuyMode::pressAt(int x, int y) {
         return false;
     holdAt(x, y, direction_);
     pressing_ = true;
+    turned_ = false;
     pressTile_ = {x, y, level_};
     return true;
 }
 
 void BuyMode::mouseDrag(simd_float3 eye, simd_float3 dir) {
+    if (grabPress_ && held_ && !pressing_) { // carrying what the press picked up
+        if (auto t = tileUnder(eye, dir)) {
+            grabMoved_ |= t->x != pressTile_.x || t->y != pressTile_.y;
+            pressTile_ = *t;
+            holdAt(t->x, t->y, direction_);
+        }
+        return;
+    }
     if (!pressing_ || !held_)
         return;
     if (auto g = groundUnder(eye, dir))
@@ -602,14 +649,22 @@ void BuyMode::aimAt(simd_float2 ground) {
     if (d == direction_)
         return;
     direction_ = d;
+    turned_ = true;
     sound("ui_object_rotate");
     holdAt(pressTile_.x, pressTile_.y, direction_);
 }
 
 bool BuyMode::mouseUp() {
+    if (grabPress_) {
+        grabPress_ = false;
+        // Dragged elsewhere: dropped there; a click without a drag keeps it in the hand.
+        if (held_ && !pressing_ && grabMoved_)
+            return placeAt(pressTile_.x, pressTile_.y, direction_);
+    }
     if (!pressing_)
         return false;
     pressing_ = false;
+    turned_ = false;
     if (!held_)
         return false;
     return placeAt(pressTile_.x, pressTile_.y, direction_);
@@ -626,7 +681,7 @@ void BuyMode::rotate(int steps) {
 }
 
 void BuyMode::cancel() {
-    pressing_ = false;
+    pressing_ = turned_ = grabPress_ = grabMoved_ = false;
     if (!held_)
         return;
     say(heldNew_ ? "dropped what was held" : "put back object " + std::to_string(held_));
@@ -1151,6 +1206,20 @@ bool BuyMode::press(simd_float2 p) {
                 std::fprintf(stderr, "buy: press (%.0f, %.0f) taken by panel rect (%.0f %.0f %.0f %.0f)\n", p.x, p.y, r[0], r[1], r[2], r[3]);
             return true;
         }
+    return false;
+}
+
+bool BuyMode::overPanel(simd_float2 p) const {
+    if (!active_)
+        return false;
+    if (design_->isOpen())
+        return true;
+    for (const auto& t : targets_)
+        if (inside(t.rect, p))
+            return true;
+    for (const auto& r : solid_)
+        if (inside(r, p))
+            return true;
     return false;
 }
 

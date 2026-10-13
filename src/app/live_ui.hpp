@@ -176,6 +176,8 @@ public:
     // They stay clickable over Buy and Build mode's panels, whose backdrops
     // would otherwise take the click.
     bool overModeButton(simd_float2 p);
+    // A control or a panel's body is under p (the game's arrow cursor there).
+    bool overPanel(simd_float2 p);
     void hover(simd_float2 p);
     // The tutorial (app/tutorial.hpp): allowPress is asked before a left
     // click on a control (false: the tutorial turned it off, the click does

@@ -105,13 +105,21 @@ public:
     void aimAt(simd_float2 ground);
     bool mouseUp();
     bool pressAt(int x, int y); // headless: the press on a tile
-    bool pressing() const { return pressing_; }
+    bool pressing() const { return pressing_ || grabPress_; }
+    // The press's drag turned what is held (the cursor turns to simsrotate).
+    bool turned() const { return turned_; }
+    // Nothing held: the object the tool acts on is under the mouse (pointAt).
+    bool overObject() const { return overObject_; }
+    // A panel (or the design dialog) is under canvas point p.
+    bool overPanel(simd_float2 p) const;
     int direction() const { return direction_; }
     // Headless: holds at a tile / places there.
     void holdAt(int x, int y, int direction);
     bool placeAt(int x, int y, int direction);
     // Picks up a placed object (the hand) by ID.
     bool grab(vm::ObjectId id);
+    // Headless: the hand's press on a placed object, a drag to tile x,y, the release.
+    bool grabDrag(vm::ObjectId id, int x, int y);
     // , and . turn by 90° (2 direction steps); Esc drops what is held;
     // Delete sells it.
     void rotate(int steps);
@@ -202,6 +210,10 @@ private:
     vm::Placement last_;     // its last test
     int direction_ = 2;
     bool pressing_ = false; // the button is down on what is held (a drag turns it)
+    bool turned_ = false;   // that drag turned it
+    bool grabPress_ = false; // the button that picked it up is still down (a drag moves it, the release drops it)
+    bool grabMoved_ = false; // that drag left the tile it was picked up from
+    bool overObject_ = false;
     vm::TilePos pressTile_{};
     int level_ = 1;
     std::vector<Op> undo_, redo_;

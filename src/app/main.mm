@@ -107,6 +107,7 @@
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
 #include "app/buy_mode.hpp"
+#include "app/game_cursors.hpp"
 #include "app/design_tool.hpp"
 #include "app/build_mode.hpp"
 #include "app/data_location.hpp"
@@ -145,6 +146,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <array>
+#include <cstring>
+#include <fstream>
+#include <iterator>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -2849,6 +2854,8 @@ void runBuySteps() {
             gBuy->cancel();
         } else if (a == "--grab") {
             gBuy->grab(os2::vm::ObjectId(std::stoi(v)));
+        } else if (int id = 0; a == "--grab-drag" && std::sscanf(v.c_str(), "%d,%d,%d", &id, &x, &y) == 3) {
+            gBuy->grabDrag(os2::vm::ObjectId(id), x, y); // --grab-drag id,x,y: press on it, drag to x,y, release
         } else if (a == "--eyedrop") {
             gBuy->eyedrop(os2::vm::ObjectId(std::stoi(v)));
         } else if (a == "--design") {
@@ -5083,6 +5090,74 @@ void unloadScene() {
     gCamera = nullptr;
 }
 
+// --- The game's mouse cursors (app/game_cursors.hpp) -------------------------
+
+std::array<NSCursor*, size_t(os2::GameCursor::Count)> gCursors{};
+bool gCursorsLoaded = false;
+
+NSCursor* gameCursor(os2::GameCursor which) {
+    if (!gCursorsLoaded) {
+        gCursorsLoaded = true;
+        const fs::path dir = gameDir() / "TSData/Res/UI/Cursors";
+        for (size_t i = 0; i < gCursors.size(); ++i) {
+            const fs::path f = os2::findCursorFile(dir, os2::gameCursorName(os2::GameCursor(i)));
+            std::ifstream in(f, std::ios::binary);
+            const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const auto img = os2::decodeCursor(bytes);
+            if (!img)
+                continue;
+            NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nullptr
+                                                                            pixelsWide:img->width
+                                                                            pixelsHigh:img->height
+                                                                         bitsPerSample:8
+                                                                       samplesPerPixel:4
+                                                                              hasAlpha:YES
+                                                                              isPlanar:NO
+                                                                        colorSpaceName:NSDeviceRGBColorSpace
+                                                                          bitmapFormat:NSBitmapFormatAlphaNonpremultiplied
+                                                                           bytesPerRow:img->width * 4
+                                                                          bitsPerPixel:32];
+            std::memcpy(rep.bitmapData, img->rgba.data(), img->rgba.size());
+            NSImage* image = [[NSImage alloc] initWithSize:NSMakeSize(img->width, img->height)];
+            [image addRepresentation:rep];
+            gCursors[i] = [[NSCursor alloc] initWithImage:image hotSpot:NSMakePoint(img->hotX, img->hotY)];
+        }
+    }
+    NSCursor* c = gCursors[size_t(which)];
+    return c ? c : [NSCursor arrowCursor];
+}
+
+// The cursor for what is under canvas point p (the game's arrow over the UI,
+// Buy mode's hands over the lot).
+void refreshGameCursor(simd_float2 p, bool inside) {
+    if (!inside) {
+        [[NSCursor arrowCursor] set];
+        return;
+    }
+    using Ctx = os2::CursorContext;
+    Ctx c;
+    c.loading = gSceneLoading;
+    c.mode = gBuy && gBuy->active() ? Ctx::Mode::Buy : gBuild && gBuild->active() ? Ctx::Mode::Build
+             : gLive                ? Ctx::Mode::Live : Ctx::Mode::Other;
+    if (!gSceneLoading) {
+        if (gTutorial) {
+            const auto r = gTutorial->panelRect();
+            c.overUi |= p.x >= r[0] && p.x < r[2] && p.y >= r[1] && p.y < r[3];
+        }
+        c.overUi |= gPie && (gPie->isOpen() || gPie->dialogOpen());
+        c.overUi |= gLive && gLive->overPanel(p);
+        if (gBuy && gBuy->active()) {
+            c.overUi |= gBuy->overPanel(p);
+            c.buyTool = Ctx::BuyTool(int(gBuy->tool()));
+            c.holding = gBuy->held() != 0;
+            c.pressing = gBuy->pressing();
+            c.turned = gBuy->turned();
+            c.overObject = gBuy->overObject();
+        }
+    }
+    [gameCursor(os2::chooseCursor(c)) set];
+}
+
 } // namespace
 
 // MTKView that keeps the camera and the keys held down.
@@ -5091,6 +5166,7 @@ void unloadScene() {
 - (void)setCamera:(std::unique_ptr<os2::LotCamera>)camera;
 - (void)applyHeldKeys:(double)dt;
 - (void)holdKey:(unsigned short)key seconds:(double)seconds;
+- (void)refreshCursor:(NSEvent*)e;
 @end
 
 @implementation OS2View {
@@ -5343,7 +5419,7 @@ void unloadScene() {
         [self removeTrackingArea:a];
     [self addTrackingArea:[[NSTrackingArea alloc]
                               initWithRect:NSZeroRect
-                                   options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved |
+                                   options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingCursorUpdate |
                                            NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
                                      owner:self
                                   userInfo:nil]];
@@ -5352,6 +5428,17 @@ void unloadScene() {
 - (void)mouseExited:(NSEvent*)e {
     [self trackMouse:e];
     _mouse.mouseAt(-1, -1, false);
+    refreshGameCursor({}, false);
+}
+
+- (void)cursorUpdate:(NSEvent*)e {
+    [self refreshCursor:e];
+}
+
+// The game's cursor for the state after this event.
+- (void)refreshCursor:(NSEvent*)e {
+    const NSPoint q = [self convertPoint:e.locationInWindow fromView:nil];
+    refreshGameCursor([self canvasPoint:e], NSPointInRect(q, self.bounds));
 }
 
 - (void)rightMouseDown:(NSEvent*)e {
@@ -5408,6 +5495,10 @@ void unloadScene() {
 // else casts a ray from the camera through the mouse and opens the menu of
 // the object hit.
 - (void)mouseDown:(NSEvent*)e {
+    struct Refresh { // the cursor after the press, whichever way it returns
+        OS2View* view; NSEvent* event;
+        ~Refresh() { [view refreshCursor:event]; }
+    } refresh{self, e};
     if (gSceneLoading) { // a click skips the intro, not the loading screen
         if (os2::moviePlaying() && !os2::loadingScreenPlaying()) {
             os2::skipMovie();
@@ -5518,6 +5609,7 @@ void unloadScene() {
         gBuild->mouseUp(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
     if (gBuy && gBuy->active())
         gBuy->mouseUp();
+    [self refreshCursor:e];
     if (gHood)
         gHood->mouseUp(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
 }
@@ -5532,8 +5624,10 @@ void unloadScene() {
 
 - (void)mouseMoved:(NSEvent*)e {
     [self trackMouse:e];
-    if (gSceneLoading)
+    if (gSceneLoading) {
+        [self refreshCursor:e];
         return;
+    }
     if (gHood)
         gHood->mouseMoved(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
     if (gPie)
@@ -5552,6 +5646,7 @@ void unloadScene() {
         gBuild->hover([self canvasPoint:e]);
         gBuild->pointAt(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
     }
+    [self refreshCursor:e];
 }
 
 - (void)mouseDragged:(NSEvent*)e {
@@ -5572,6 +5667,7 @@ void unloadScene() {
         gBuild->mouseDrag(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
     if (gBuy && gBuy->active())
         gBuy->mouseDrag(_camera->eye(), [self rayAt:[self canvasPoint:e]]);
+    [self refreshCursor:e];
     if (gHood)
         gHood->mouseDragged(*_camera, [self canvasPoint:e], float(self.bounds.size.width), float(self.bounds.size.height));
 }
