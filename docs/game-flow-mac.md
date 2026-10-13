@@ -154,6 +154,15 @@ objetos do lote novo (Sims, grades e muretas sumiam; o relógio de pêndulo do
 cena ficam em globais que `unloadScene` limpa; teste `scene_switch`
 (`N002_Lot10` → bairro → `N002_Lot3`, `docs/screenshots/r20-wallcarry-*.jpg`).
 
+Rodada 22 (`r22-crash`): os efeitos do lote (`gEffects`) também são da cena
+(desenham pelo gancho do renderizador) e saem no `unloadScene`; uma janela
+desenhada de cópia local (o popup do painel vivo, a coluna da família) sai dos
+retângulos antes da cópia sumir; o app sobe o limite de arquivos abertos (256
+quando aberto pelo Finder) e a leitura paralela das partes de Sim relança erros
+no chamador. Teste `scene_cycle` (`N002_Lot10` → bairro → `N002_Lot3` → bairro →
+`N002_Lot10`, popup de humor aberto, `ulimit -S -n 256`), que deve sair com 0
+também num build com AddressSanitizer.
+
 ## 6. Jogar o bairro (rodada 9)
 
 O puck do bairro abre Famílias e Lotes & Casas (`app/hood_bins.*`,
