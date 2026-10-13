@@ -39,8 +39,13 @@ struct Character {
     // underwear, 0x080 naked, 0x200 athletic, ...): that category's parts,
     // with the hair and face of everyday wear when it has none of its own
     // (the "naked" lists name only hair, top and bottom); everyday wear when
-    // the Sim has no such outfit.
+    // the Sim has no such outfit. Naked (0x080) takes its hair and face from
+    // swimwear (or everyday wear), as SetupShapesPrivate does: the naked
+    // list's bald hair is never worn.
     std::map<uint32_t, Tgi> wear(uint32_t category) const;
+    // The category a part (`partBits`) of outfit `category` is taken from:
+    // 0x008 for the naked category's hair and face, else `category`.
+    static uint32_t partSourceCategory(uint32_t category, uint32_t partBits);
     // The face list's other entries in that category (or everyday wear):
     // the mesh overlays (glasses, beards with a mesh) as their own GZPS.
     std::vector<Tgi> faceExtras(uint32_t category) const;

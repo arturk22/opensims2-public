@@ -65,10 +65,32 @@ std::map<uint32_t, Tgi> Character::outfit(uint32_t category) const {
     return out;
 }
 
+// cTSSimOutfitData::SetupShapesPrivate (BV 0x82e28c): in the naked
+// category (0x080), a part whose cTSSkinCatalog::GetOutfitFlags has bit 0x1
+// is taken from swimwear (0x008) instead. CheckInit (BV 0x7e4c34) gives that
+// flag to parts 1 (hair) and 2 (face) only. The naked lists name a bald
+// "<p>hairbald_skin_s<N>" hair, which is never shown: the Sim showers with
+// the swimwear hair (the hat-less one of a Sim with a hat). The vtable slot
+// (+0x14 of the catalog service) read as GetOutfitFlags is inferred from
+// its argument and the map's keys.
+uint32_t Character::partSourceCategory(uint32_t category, uint32_t partBits) {
+    return category == 0x080 && (partBits == 1 || partBits == 2) ? 0x008 : category;
+}
+
 std::map<uint32_t, Tgi> Character::wear(uint32_t category) const {
     std::map<uint32_t, Tgi> out = outfit(category);
     if (out.empty())
         return outfit(1);
+    for (uint32_t bits : {1u, 2u}) { // hair, face
+        const uint32_t from = partSourceCategory(category, bits);
+        if (from == category)
+            continue;
+        std::map<uint32_t, Tgi> source = outfit(from);
+        if (!source.count(bits))
+            source = outfit(1);
+        if (auto it = source.find(bits); it != source.end())
+            out[bits] = it->second;
+    }
     if (category != 1)
         for (const auto& [bits, tgi] : outfit(1))
             if (bits == 1 || bits == 2) // hair, face
@@ -77,7 +99,7 @@ std::map<uint32_t, Tgi> Character::wear(uint32_t category) const {
 }
 
 std::vector<Tgi> Character::faceExtras(uint32_t category) const {
-    for (uint32_t cat : {category, 1u})
+    for (uint32_t cat : {partSourceCategory(category, 2), 1u})
         for (const auto& [key, tgis] : outfits)
             if (((key >> 16) & cat) && (key & 0xFFFF) == 2 && tgis.size() > 1)
                 return std::vector<Tgi>(tgis.begin() + 1, tgis.end());

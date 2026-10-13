@@ -819,6 +819,49 @@ static void testFaceSkinMigration() {
         }
 }
 
+// The naked outfit (shower, bath, getting changed) keeps the Sim's hair and
+// face: SetupShapesPrivate takes the naked category's hair and face from
+// swimwear, never the bald "<p>hairbald_skin" its list names (playtest 35:
+// the tutorial's adult man lost his hair in the shower). With OS2_DATA, the
+// tutorial's man and its exterminator (ball cap: the swimwear hair is the
+// hat-less one).
+static void testNakedOutfitKeepsHair() {
+    const Tgi bald{0, 0, 1}, swimHair{0, 0, 2}, nakedTop{0, 0, 3}, face{0, 0, 4}, everydayHair{0, 0, 5};
+    Character ch;
+    ch.outfits[(0x080u << 16) | 1] = {bald};
+    ch.outfits[(0x080u << 16) | 4] = {nakedTop};
+    ch.outfits[(0x008u << 16) | 1] = {swimHair};
+    ch.outfits[(0x001u << 16) | 1] = {everydayHair};
+    ch.outfits[(0x001u << 16) | 2] = {face};
+    auto naked = ch.wear(0x080);
+    check(naked.at(1).instance == 2, "naked: the swimwear hair, not the bald one");
+    check(naked.at(4).instance == 3, "naked: its own top");
+    check(naked.count(2) && naked.at(2).instance == 4, "naked: the everyday face");
+    ch.outfits.erase((0x008u << 16) | 1);
+    check(ch.wear(0x080).at(1).instance == 5, "naked without swimwear hair: the everyday hair");
+    check(ch.wear(0x001).at(1).instance == 5, "everyday: its own hair");
+
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    const auto dir = std::filesystem::path(data) / "TSData/Res/UserData/Neighborhoods/Tutorial/Characters";
+    for (const char* file : {"Tutorial_User00000.package", "Tutorial_User00003.package"}) {
+        if (!std::filesystem::exists(dir / file))
+            continue;
+        DbpfPackage pkg(dir / file);
+        const Character c = readCharacter(pkg, index);
+        const auto w = c.wear(0x080);
+        const std::string what = std::string(file) + ": ";
+        check(w.count(1) && c.outfit(0x080).count(1) && w.at(1).instance != c.outfit(0x080).at(1).instance,
+              (what + "the naked outfit does not wear its bald hair").c_str());
+        check(w.count(1) && c.outfit(0x008).count(1) && w.at(1).instance == c.outfit(0x008).at(1).instance,
+              (what + "the naked outfit wears the swimwear hair").c_str());
+        check(w.count(4) && w.at(4).instance == c.outfit(0x080).at(4).instance, (what + "the naked top stays").c_str());
+        check(w.count(2), (what + "the naked outfit keeps the face").c_str());
+    }
+}
+
 // With the game's data (OS2_DATA): N001_Lot82's front arch (door 455, "Door -
 // 2 Tile - French Empty Arch" at (30.5, 38.5) facing -y, its +x along -x:
 // tiles x 30..31 ("0") and 29..30 ("1e") of the wall y = 39) is cut open up
@@ -1002,6 +1045,7 @@ int main() {
     testSawtoothAtticWindows();
     testNextStoryOverGround();
     testFaceSkinMigration();
+    testNakedOutfitKeepsHair();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

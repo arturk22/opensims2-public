@@ -974,3 +974,26 @@ botão sai vazia sem conteúdo baixado (Body Shop/Downloads); não feito.
   561 personagens do jogo (todos os bairros) nenhum nome muda (antes = depois
   do `s2pkg sim-model`). Migração nossa (o jogo não tem esses arquivos;
   inferido). Teste: `testFaceSkinMigration` (`test_formats`, com `OS2_DATA`).
+
+## Rodada 21: a roupa "nu" (0x080) usa o cabelo e o rosto do traje de banho
+
+Playtest 35: no banho o Joe do tutorial perdia o cabelo. As listas da
+categoria nu (0x080) de todos os personagens do jogo dão um cabelo careca
+`<p>hairbald_skin_s<N>` (mais o `topnaked_nude`/`bottomnaked_nude`), e o
+`Character::wear` usava a lista como estava. No binário (headless Ghidra, BV
+1.10 ppc), `cTSSimOutfitData::SetupShapesPrivate` (`0x82e28c`) faz, antes de
+buscar as chaves de uma parte: se a categoria é 0x080 e
+`catálogo->vtable+0x14(parte) & 1`, a categoria vira 0x008 (traje de banho).
+O serviço é o `cTSSkinCatalog` (`GetSystemService(0x4bcf1bb0, 0x0bcf1b58)`);
+o `CheckInit` (`0x7e4c34`) enche o mapa do `GetOutfitFlags` com
+`{1 (cabelo): 1, 2 (rosto): 1}` e o do `GetCategoryFlags` com
+`{8, 0x10, 0x40, 0x80, 0x200: 1; 0x400: 2; 0x800: 3}`. Que a entrada +0x14
+é o `GetOutfitFlags` é inferido (o argumento é a parte e o mapa tem as
+chaves das partes). Então o Sim nu tem o cabelo do traje de banho (o sem
+chapéu de quem usa boné: o dedetizador do tutorial) e o cabelo careca da
+lista nunca aparece. No app: `Character::partSourceCategory`/`wear`/
+`faceExtras` (sem traje de banho: a roupa do dia a dia). Teste
+`testNakedOutfitKeepsHair` (`test_formats`; com `OS2_DATA`, o Joe e o
+dedetizador do tutorial). Capturas `docs/screenshots/r21-nudehair-*.jpg`.
+Falta a censura (`nTSSG::cDisplayListCensorRenderStrategy`, caixas
+pixeladas sobre o corpo nu): não desenhamos.
