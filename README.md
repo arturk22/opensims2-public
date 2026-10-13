@@ -41,4 +41,7 @@ Other languages: the folder names in `TSData/Res/Locale` (`French`, `German`, `S
 ## Contributing
 Bug reports and pull requests are welcome. Project layout, command-line tools and reverse-engineering notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
+## License
+The code is licensed under the [Mozilla Public License 2.0](LICENSE). Some files are based on [OpenTS2](https://github.com/LazyDuchess/OpenTS2) and [FreeSO](https://github.com/RHY3756547/FreeSO), also MPL-2.0. `third_party/` keeps its own licenses (metal-cpp: Apache 2.0, Speex: BSD).
+
 This project isn't affiliated with or endorsed by Electronic Arts or Maxis. The Sims is a trademark of Electronic Arts Inc.
