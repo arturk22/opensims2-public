@@ -6,8 +6,9 @@
 // at the mouse's offset from the anchor shown where the button went down,
 // x 0.25 (DragCamera: a move request of that many pixels, taken here per
 // 50 ms frame as the keyboard's); cTSUserToolCameraMiddleClick: the middle
-// button (or right + a modifier, Option here) rotates and tilts by the
-// pixels dragged, the cursor held where it was clicked;
+// button (or the right + modifier 1, code 0x81000002: Control, as the
+// tutorial says "CTRL + botão DIREITO"; Option too) rotates (x) and tilts
+// (y) by the pixels dragged, the cursor held where it was clicked;
 // cTSWinSceneGraph::DoWindowEdgeScrolling: the mouse at the window's edge
 // scrolls (its rates, horzedgescrollrate / vertedgescrollrate, are named in
 // Sims2.exe only, so chosen here); the wheel zooms by notches (the binary's
@@ -20,6 +21,23 @@ namespace os2 {
 
 class CameraMouseInput {
 public:
+    enum class Button { Left, Right, Middle };
+    // Whether a press starts the rotate/tilt tool (cTSUserToolCameraMiddleClick)
+    // instead of the button's own: the middle button always; the right
+    // with Control (the binary's modifier 1, the tutorial's "CTRL + botão
+    // DIREITO") or Option (ours, kept); the left with Control (ours: a Mac
+    // trackpad or one-button mouse, where Ctrl-click stands for the right
+    // button; the host only asks for presses on the lot, not on the UI or
+    // in Build mode's Ctrl tools).
+    static bool rotatePress(Button b, bool control, bool option) {
+        switch (b) {
+        case Button::Middle: return true;
+        case Button::Right: return control || option;
+        case Button::Left: return control;
+        }
+        return false;
+    }
+
     struct Config {
         float dragFactor = 0.25f; // move request per point of offset from the anchor (DragCamera)
         float edgeMargin = 4;     // points from the window edge that scroll

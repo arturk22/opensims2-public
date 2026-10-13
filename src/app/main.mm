@@ -5049,7 +5049,11 @@ void unloadScene() {
     std::unique_ptr<os2::LotCamera> _camera;
     std::set<unsigned short> _held;
     os2::CameraMouseInput _mouse;
-    bool _rotating; // right button with Option: rotate instead of scroll
+    bool _rotating; // right button with Control or Option: rotate/tilt instead of scroll
+    bool _leftRotating; // Control + left on the lot (trackpads): rotate/tilt
+    bool _leftRotated;  // ... and it moved (else the release is a plain click)
+    float _leftMoved;   // points dragged since that press
+    NSEvent* _leftPress; // that press, replayed as a click if it never moved
 }
 
 - (os2::LotCamera*)camera {
@@ -5312,9 +5316,12 @@ void unloadScene() {
     }
     if (gLive && gLive->press([self canvasPoint:e], true))
         return;
-    if (gPie && !(gBuy && gBuy->active()) && !(gBuild && gBuild->active())) // a right click on a Sim of the family selects it
+    // Control (the game's "CTRL + botão DIREITO") or Option: rotate and tilt.
+    _rotating = os2::CameraMouseInput::rotatePress(os2::CameraMouseInput::Button::Right,
+                                                   e.modifierFlags & NSEventModifierFlagControl,
+                                                   e.modifierFlags & NSEventModifierFlagOption);
+    if (!_rotating && gPie && !(gBuy && gBuy->active()) && !(gBuild && gBuild->active())) // a right click on a Sim of the family selects it
         selectFamilySim(gPie->pick(_camera->eye(), [self rayAt:[self canvasPoint:e]]));
-    _rotating = (e.modifierFlags & NSEventModifierFlagOption) != 0;
     if (_rotating)
         [self holdCursor:YES];
     else
@@ -5422,6 +5429,18 @@ void unloadScene() {
                           e.modifierFlags & NSEventModifierFlagShift);
         return;
     }
+    // Control + left on the lot: the rotate/tilt tool (a trackpad's or a
+    // one-button mouse's Ctrl-click is the right button); a press that
+    // never moves is still a click, replayed on release.
+    if (!_leftPress && os2::CameraMouseInput::rotatePress(os2::CameraMouseInput::Button::Left,
+                                                          e.modifierFlags & NSEventModifierFlagControl, false)) {
+        _leftRotating = true;
+        _leftRotated = false;
+        _leftMoved = 0;
+        _leftPress = e;
+        [self holdCursor:YES];
+        return;
+    }
     const os2::vm::ObjectId id = gPie->pick(eye, simd_normalize(q.xyz / q.w - eye));
     if (id)
         openClicked(id, eye, simd_normalize(q.xyz / q.w - eye), p);
@@ -5432,6 +5451,15 @@ void unloadScene() {
 
 // The pie menu picks on release (a drag from the opening press is a gesture).
 - (void)mouseUp:(NSEvent*)e {
+    if (_leftRotating) {
+        _leftRotating = false;
+        [self holdCursor:NO];
+        NSEvent* press = _leftPress;
+        if (!_leftRotated && !gSceneLoading)
+            [self mouseDown:press]; // _leftPress set: a plain click now
+        _leftPress = nil;
+        return;
+    }
     if (gSceneLoading)
         return;
     if (gCas)
@@ -5480,6 +5508,12 @@ void unloadScene() {
     [self trackMouse:e];
     if (gSceneLoading)
         return;
+    if (_leftRotating) {
+        _leftMoved += std::fabs(float(e.deltaX)) + std::fabs(float(e.deltaY));
+        _leftRotated = _leftMoved > 3; // a click's jitter is still a click
+        [self dragRotate:e];
+        return;
+    }
     if (gCas)
         gCas->mouseDragged([self canvasPoint:e]);
     if (gPie)

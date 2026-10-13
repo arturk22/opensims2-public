@@ -1,4 +1,5 @@
 #include "app/camera_follow.hpp"
+#include "app/camera_input.hpp"
 #include "render/camera.hpp"
 #include "render/cas_camera.hpp"
 
@@ -128,6 +129,45 @@ int main() {
     // Pitch stays inside the range.
     cam.tilt(1000);
     check(near(cam.pitch(), 45), "tilt clamps to max");
+
+    // The rotate/tilt tool (playtest 34, tutorial "O Básico - Parte Um" step
+    // 8): the middle button, Ctrl (or Option) + right, Ctrl + left on the
+    // lot; plain right and left keep their own tools. Dragged, the vertical
+    // motion tilts within the zoom level's pitch range and the horizontal
+    // one turns the heading.
+    {
+        using B = CameraMouseInput::Button;
+        check(CameraMouseInput::rotatePress(B::Middle, false, false), "middle button rotates");
+        check(CameraMouseInput::rotatePress(B::Right, true, false), "Ctrl + right rotates");
+        check(CameraMouseInput::rotatePress(B::Right, false, true), "Option + right rotates");
+        check(!CameraMouseInput::rotatePress(B::Right, false, false), "plain right pans");
+        check(CameraMouseInput::rotatePress(B::Left, true, false), "Ctrl + left rotates (trackpad)");
+        check(!CameraMouseInput::rotatePress(B::Left, false, true), "plain left picks");
+        for (int level = 0; level < 6; ++level) {
+            LotCamera c(liveCamera());
+            c.zoomBy(level - 1); // from level 1
+            settle(c);
+            const float lo = c.definition().pitchMin[size_t(level)], hi = c.definition().pitchMax[size_t(level)];
+            // A drag as AppKit sends it: many small events (y down on the screen).
+            auto drag = [&](float dx, float dy, int n) {
+                for (int i = 0; i < n; ++i) {
+                    c.rotateRequest(dx, dy);
+                    c.update(1.0 / 60.0);
+                }
+                settle(c);
+            };
+            const float p0 = c.pitch(), y0 = c.yaw();
+            drag(0.5f, -4, 10); // up 40 px: steeper
+            check(c.pitch() > p0 + 1 && near(c.yaw(), y0), "drag up tilts, no turn");
+            drag(0.5f, -4, 200); // far up: held at the level's top
+            check(near(c.pitch(), hi, 1e-2f), "tilt held at the level's max");
+            drag(-0.5f, 4, 400); // far down: held at its bottom
+            check(near(c.pitch(), lo, 1e-2f), "tilt held at the level's min");
+            const float p1 = c.pitch();
+            drag(5, 1, 20); // right 100 px: turns, no tilt
+            check(near(c.yaw(), y0 - 100 * 0.003f / rad, 0.05f) && near(c.pitch(), p1), "drag right turns");
+        }
+    }
 
     // Moving forward moves the pivot along the view direction on the floor.
     cam.reset();
