@@ -194,13 +194,51 @@ struct LotResult {
     std::vector<std::string> lines;
 };
 
-// cTSUserToolPlaceNewLot::PlaceLot: a new residential lot info (no lot file
-// yet: its price is the world value). `forbidden` is the game's data.
-// `name` and `zone` come from the place-lot dialog (cTSWinProcPlaceLotDialog:
-// 0 residential, 1 community).
+// cTSUserToolPlaceNewLot: an empty lot of `size` at (x, y) turned `rotation`
+// (its road strip on edge `rotation`): checkPlacement, and the strip must
+// face a road; the front is the strip's edge. Inferred from the lot
+// templates (each has its 10-tile road strip, the car portals and the
+// mailbox on the template's front): a lot whose strip faces no road has no
+// template that fits it (playtest 33: N001 lot 83, 4x3 with the strip on
+// x low and the road on y low, would need a 30x40 template).
+Placement checkEmptyLot(const PlacementWorld& world, EmptyLotSize size, int x, int y, int rotation);
+
+// cTSUserToolPlaceNewLot::PlaceLot: a new lot info of `size` (checkEmptyLot),
+// then its lot file made from the game's lot template (makeLotFile; the
+// game makes it when the lot first loads, cTSLoadLotController::LoadLot
+// steps 0xB-0x11, with the same content). `templatesDir` is the game's
+// TSData/Res/LotTemplates (empty: no lot file yet, the price is then the
+// world value); `forbidden` is the game's data. `name` and `zone` come from
+// the place-lot dialog (cTSWinProcPlaceLotDialog: 0 residential, 1 community).
 LotResult placeEmptyLot(const std::filesystem::path& folder, const PlacementWorld& world, EmptyLotSize size, int x,
                         int y, int rotation, const std::filesystem::path& forbidden = {}, const std::string& name = {},
-                        uint8_t zone = 0);
+                        uint8_t zone = 0, const std::filesystem::path& templatesDir = {});
+
+// The game's lot template for a lot `across` x `along` neighborhood tiles
+// (across the road, with the road strip; along the road): TSData/Res/
+// LotTemplates/LotTemplate<across x 10>x<along x 10>.package, or
+// CommunityLotTemplate... for zone 1 (LoadLot's "%s%dx%d"). The templates
+// hold the road strip on their edge 0 (x low, locked), the car and
+// pedestrian portals, a mailbox and a trash can (a phone booth on a
+// community lot), flat ground of "lottexture-test-01" (every shipped lot's
+// and the neighborhood's lot skirt) and the lot value of their size.
+// Empty if the game has none of that size.
+std::filesystem::path lotTemplate(const std::filesystem::path& templatesDir, uint8_t zone, int across, int along);
+
+// LoadLot's new lot (steps 0xB-0x11, "open the template by size and type,
+// turned as the lot is"): the lot file of lot `lot`, which has none, written
+// from its template, so the lot loads as an empty, unoccupied lot. The file
+// keeps the template's frame, road strip on edge 0: when the lot's front
+// is another edge, its lot info becomes that of a lot made facing edge 0
+// and turned to its front (creation front edge 0, base size across x
+// along, road edges in that frame), which the neighborhood draws and moves
+// the same (GetCurrentSize, RotateLotImposter). Not the game's own record
+// (it turns the template's content and keeps the creation front = front),
+// the same lot. A lot whose road strip faces no road (lot 83 of playtest
+// 33, placed before checkEmptyLot) gets the template of its size unturned.
+// Nothing is done when the lot already has its file.
+LotResult makeLotFile(const std::filesystem::path& folder, uint32_t lot, const std::filesystem::path& templatesDir,
+                      const std::filesystem::path& forbidden = {});
 // PlaceLotFromInventory: the bin's lot file copied as the new lot's and its
 // lot info made from the base, at (x, y) with `front`.
 LotResult placeBinLot(const std::filesystem::path& folder, const PlacementWorld& world, const BinLot& bin, int x, int y,

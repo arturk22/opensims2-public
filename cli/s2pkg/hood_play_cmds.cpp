@@ -168,8 +168,8 @@ int cmdLotSpots(const char* path, const std::string& spec) {
             if (empty >= 0) {
                 for (int r = 0; r < 4; ++r) {
                     const TileRect R = emptyLotRect(emptyLotSize(empty), x, y, r);
-                    const Placement p = checkPlacement(w->place, R);
-                    if (p.ok && p.front == r) {
+                    const Placement p = checkEmptyLot(w->place, emptyLotSize(empty), x, y, r);
+                    if (p.ok) {
                         std::printf("  (%d, %d) rotation %d: rect (%d, %d)-(%d, %d), height %.2f\n", x, y, r, R.x0,
                                     R.y0, R.x1, R.y1, p.roadHeight);
                         ++n;
@@ -197,12 +197,12 @@ int cmdPlaceLot(int argc, char** argv) {
         int r = argc > 6 ? std::stoi(argv[6]) : -1;
         if (r < 0)
             for (int k = 0; k < 4 && r < 0; ++k) {
-                const Placement p = checkPlacement(w->place, emptyLotRect(emptyLotSize(empty), x, y, k));
-                if (p.ok && p.front == k)
+                if (checkEmptyLot(w->place, emptyLotSize(empty), x, y, k).ok)
                     r = k;
             }
         return reportLot(placeEmptyLot(argv[2], w->place, emptyLotSize(empty), x, y, std::max(r, 0),
-                                       forbidden ? forbidden : ""));
+                                       forbidden ? forbidden : "", {}, 0,
+                                       w->gameRes.empty() ? std::filesystem::path{} : w->gameRes / "LotTemplates"));
     }
     int front = argc > 6 ? std::stoi(argv[6]) : -1;
     if (front < 0)

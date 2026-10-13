@@ -1,6 +1,9 @@
 // The neighborhood in the VM (vm/hood_bridge): loading a hand-built
 // hood::Neighborhood and the primitives and data owners that read it.
 #include "formats/neighborhood.hpp"
+#include "formats/hood_lots.hpp"
+#include "formats/hood_moves.hpp"
+#include "formats/hood_terrain.hpp"
 #include "vm/hood_bridge.hpp"
 #include "formats/dbpf.hpp"
 #include "formats/lot.hpp"
@@ -13,6 +16,8 @@
 #include "vm/placement.hpp"
 
 #include <cstdlib>
+#include <memory>
+#include <optional>
 #include <filesystem>
 
 #include <cstdio>
@@ -394,7 +399,151 @@ static void testBedTogether() {
     check(pushed, "bed together: WooHoo's pair is pushed");
 }
 
+// With the game's data (OS2_DATA), on a copy of N001's neighborhood
+// package: an empty lot placed in the neighborhood gets its lot file from
+// the game's lot template (playtest 33: "lot 83 has no lot file" on
+// entering a new lot), of its size and turned to its road, and loads as an
+// empty, unoccupied lot; a lot placed without its file (as before) gets it
+// on entry (makeLotFile).
+static void testNewLot() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data)
+        return;
+    namespace fs = std::filesystem;
+    const fs::path res = fs::path(data) / "TSData/Res";
+    const fs::path source = res / "UserData/Neighborhoods/N001/N001_Neighborhood.package";
+    const fs::path templates = res / "LotTemplates";
+    if (!fs::exists(source) || !fs::exists(templates))
+        return;
+    const fs::path dir = fs::temp_directory_path() / "os2_test_new_lot" / "N001";
+    fs::remove_all(dir.parent_path());
+    fs::create_directories(dir / "Lots");
+    fs::create_directories(dir / "Characters");
+    fs::copy_file(source, dir / "N001_Neighborhood.package");
+    ResourceIndex index(res);
+    const auto flags = hood::loadOccupantFlags(index);
+    const auto settings = hood::TerrainSettings::load(fs::path(data) / "TSData/Sys");
+    struct World {
+        hood::Neighborhood hood;
+        hood::Terrain terrain;
+        hood::Occupants occupants;
+        hood::PlacementWorld place;
+    };
+    auto load = [&] {
+        auto w = std::make_unique<World>();
+        w->hood = hood::Neighborhood::load(dir, false);
+        DbpfPackage pkg(w->hood.package);
+        for (const auto& e : pkg.entries())
+            if (e.tgi.type == hoodtype::Terrain)
+                w->terrain = hood::Terrain::parse(pkg.read(e));
+            else if (e.tgi.type == hoodtype::Occupants)
+                w->occupants = hood::Occupants::parse(pkg.read(e));
+        w->place.objects = flags;
+        hood::applyTunables(w->place, settings);
+        w->place.hood = &w->hood, w->place.terrain = &w->terrain, w->place.occupants = &w->occupants;
+        return w;
+    };
+    const hood::EmptyLotSize size = hood::emptyLotSize(1); // 3 x 3 (4 x 3 with the road)
+    // A spot for each turn parity (the road on an x edge, on a y edge).
+    std::optional<std::tuple<int, int, int>> spot[2];
+    {
+        const auto w = load();
+        for (int y = 0; y < int(w->terrain.height) && !(spot[0] && spot[1]); ++y)
+            for (int x = 0; x < int(w->terrain.width); ++x)
+                for (int r = 0; r < 4; ++r)
+                    if (!spot[r & 1] && hood::checkEmptyLot(w->place, size, x, y, r).ok)
+                        spot[r & 1] = std::tuple{x, y, r};
+    }
+    check(spot[0] && spot[1], "new lot: N001 has room for an empty lot facing an x edge and a y edge");
+    std::vector<uint32_t> placed;
+    for (int k = 0; k < 2; ++k) {
+        if (!spot[k])
+            continue;
+        const auto [x, y, r] = *spot[k];
+        const auto w = load();
+        if (!hood::checkEmptyLot(w->place, size, x, y, r).ok)
+            continue; // taken by the first lot
+        const hood::LotResult placedLot =
+            hood::placeEmptyLot(dir, w->place, size, x, y, r, data, "Lote Novo", 0, templates);
+        check(placedLot.ok, "new lot: placed with its lot file");
+        if (!placedLot.ok) {
+            std::fprintf(stderr, "  %s\n", placedLot.error.c_str());
+            continue;
+        }
+        placed.push_back(placedLot.lot);
+        const hood::Neighborhood h = hood::Neighborhood::load(dir, false);
+        const hood::Lot* l = h.lot(placedLot.lot);
+        check(l && !l->package.empty() && fs::exists(l->package), "new lot: the lot file exists");
+        if (!l || l->package.empty())
+            continue;
+        const hood::TileRect want = hood::emptyLotRect(size, x, y, r), got = hood::lotRect(l->info);
+        check(got.x0 == want.x0 && got.y0 == want.y0 && got.x1 == want.x1 && got.y1 == want.y1,
+              "new lot: the lot info keeps the placed rectangle");
+        check(l->info.frontEdge == r && l->info.creationFrontEdge == 0 && (l->info.roads & 1),
+              "new lot: made facing edge 0 (the template's road), turned to its road");
+        check(l->info.name == "Lote Novo" || l->name == "Lote Novo", "new lot: its name");
+        DbpfPackage pkg(l->package);
+        const Lot lot = Lot::load(pkg);
+        const LotObjects saved = LotObjects::load(pkg);
+        check(lot.width == l->info.width * 10 && lot.height == l->info.depth * 10, "new lot: the template of its size");
+        check(lot.tileLocked(0, 0, 0) && lot.tileLocked(0, 9, int(lot.height) - 1) && !lot.tileLocked(0, 10, 0),
+              "new lot: the road strip locked on the file's edge 0");
+        check(lot.terrainBase == "lottexture-test-01", "new lot: the neighborhood's lot ground");
+        hood::Lot noFile = *l;
+        noFile.package.clear();
+        check(hood::lotFileInfo(*l).fromFile && hood::lotFileInfo(*l).price == hood::lotFileInfo(noFile).price &&
+                  !hood::lotFileInfo(*l).hasHouse,
+              "new lot: priced as before its file (the world value), no house");
+        CodeLibrary code(&index);
+        VM vm(code);
+        vm.initCreatedObjects = true;
+        vm.setClockGlobals();
+        const bool hoodOk = loadLotNeighborhood(vm, l->package);
+        const LotLoad loaded = loadLot(vm, lot, saved, charactersDirOf(l->package));
+        if (hoodOk)
+            bindLotSims(vm);
+        startSavedLot(vm, loaded, saved, false);
+        runLotLoaded(vm);
+        for (int i = 0; i < 60; ++i)
+            vm.tick();
+        size_t sims = 0;
+        for (const auto& [id, o] : vm.objects())
+            sims += o.person.has_value();
+        check(hoodOk && loaded.created >= 8 && sims == 0, "new lot: loads with the template's objects and no Sims");
+    }
+    // A lot placed without its file (as lot 83 was) gets it on entry.
+    {
+        const auto w = load();
+        std::optional<std::tuple<int, int, int>> free;
+        for (int y = 0; y < int(w->terrain.height) && !free; ++y)
+            for (int x = 0; x < int(w->terrain.width) && !free; ++x)
+                for (int r = 0; r < 4 && !free; ++r)
+                    if (hood::checkEmptyLot(w->place, size, x, y, r).ok)
+                        free = std::tuple{x, y, r};
+        if (free) {
+            const auto [x, y, r] = *free;
+            const hood::LotResult bare = hood::placeEmptyLot(dir, w->place, size, x, y, r, data);
+            const hood::Neighborhood h = hood::Neighborhood::load(dir, false);
+            check(bare.ok && h.lot(bare.lot) && h.lot(bare.lot)->package.empty(), "new lot: placed without a file");
+            const hood::LotResult made = hood::makeLotFile(dir, bare.lot, templates, data);
+            const hood::Neighborhood after = hood::Neighborhood::load(dir, false);
+            const hood::Lot* l = after.lot(bare.lot);
+            check(made.ok && l && !l->package.empty(), "new lot: makeLotFile writes the missing file");
+            if (l && !l->package.empty()) {
+                const hood::TileRect want = hood::emptyLotRect(size, x, y, r), got = hood::lotRect(l->info);
+                check(got.x0 == want.x0 && got.y1 == want.y1 && got.x1 == want.x1 && got.y0 == want.y0,
+                      "new lot: the late file keeps the rectangle");
+            }
+            const hood::LotResult again = hood::makeLotFile(dir, bare.lot, templates, data);
+            check(again.ok && again.lines.empty(), "new lot: makeLotFile again does nothing");
+        }
+    }
+    std::printf("new lot: %zu lots placed with their files and loaded\n", placed.size());
+    fs::remove_all(dir.parent_path());
+}
+
 int main() {
+    testNewLot();
     testLotObjectsValue();
     testBedTogether();
     testLoad();

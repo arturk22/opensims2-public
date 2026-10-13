@@ -76,12 +76,12 @@ HoodMode::LotPlacement HoodMode::placementAt(int x, int y) const {
         if (turn_ >= 0) {
             out.rect = hood::emptyLotRect(size, x, y, turn_);
             out.turn = turn_;
-            finish(hood::checkPlacement(world, out.rect));
+            finish(hood::checkEmptyLot(world, size, x, y, turn_));
             return out;
         }
         for (int k = 0; k < 4; ++k) {
             const hood::TileRect r = hood::emptyLotRect(size, x, y, k);
-            const hood::Placement p = hood::checkPlacement(world, r);
+            const hood::Placement p = hood::checkEmptyLot(world, size, x, y, k);
             if (k == 0 || p.ok)
                 out.rect = r, out.turn = k, last = p;
             if (p.ok)
@@ -337,7 +337,7 @@ bool HoodMode::placeNamed(const LotPlacement& p, const std::string& name, uint8_
     hood::LotResult r;
     if (bins.tool() == HoodBins::Tool::PlaceEmpty)
         r = hood::placeEmptyLot(folder, view_->placementWorld(), hood::emptyLotSize(bins.emptySize()), p.x, p.y,
-                                p.turn, gameDir_, name, zone);
+                                p.turn, gameDir_, name, zone, gameDir_ / "TSData/Res/LotTemplates");
     else if (bins.tool() == HoodBins::Tool::PlaceBin)
         r = hood::placeBinLot(folder, view_->placementWorld(), bins.lotBin()[size_t(bins.binLot())], p.x, p.y, p.turn,
                               gameDir_);
@@ -911,9 +911,21 @@ fs::path hoodLotPackage(const fs::path& resDir, const std::string& hood, uint32_
     const hood::Lot* l = h.lot(lot);
     if (!l)
         throw std::runtime_error("--hood-lot: neighborhood " + h.prefix + " has no lot " + std::to_string(lot));
-    if (l->package.empty() || !fs::exists(l->package))
+    if (!l->package.empty() && fs::exists(l->package))
+        return l->package;
+    // A new lot (LoadLot steps 0xB-0x11): its file from the lot template.
+    // Lots placed before placeEmptyLot wrote it (playtest 33: N001 lot 83).
+    const auto r = hood::makeLotFile(dir, lot, resDir / "LotTemplates", resDir.parent_path().parent_path());
+    for (const auto& line : r.lines)
+        std::printf("opensims2: %s\n", line.c_str());
+    std::fflush(stdout);
+    if (!r.ok)
+        throw std::runtime_error("--hood-lot: lot " + std::to_string(lot) + " has no lot file: " + r.error);
+    const auto again = hood::Neighborhood::load(dir, false);
+    const hood::Lot* made = again.lot(lot);
+    if (!made || made->package.empty() || !fs::exists(made->package))
         throw std::runtime_error("--hood-lot: lot " + std::to_string(lot) + " has no lot file");
-    return l->package;
+    return made->package;
 }
 
 } // namespace os2

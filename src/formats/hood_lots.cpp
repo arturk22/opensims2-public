@@ -4,6 +4,7 @@
 
 #include "dbpf.hpp"
 #include "hood_moves.hpp"
+#include "lot_objects.hpp"
 #include "property_set.hpp"
 #include "resindex.hpp"
 #include "strings.hpp"
@@ -1030,13 +1031,26 @@ RoadFlatten flattenAbuttingRoads(const PlacementWorld& world, const TileRect& R,
     return out;
 }
 
+Placement checkEmptyLot(const PlacementWorld& world, EmptyLotSize size, int x, int y, int rotation) {
+    Placement p = checkPlacement(world, emptyLotRect(size, x, y, rotation));
+    const int f = rotation & 3;
+    if (p.ok && !p.roads[size_t(f)]) {
+        p.ok = false;
+        p.why = "no road along the lot's front";
+    }
+    if (p.ok)
+        p.front = f, p.roadHeight = p.edgeHeight[size_t(f)];
+    return p;
+}
+
 LotResult placeEmptyLot(const fs::path& folder, const PlacementWorld& world, EmptyLotSize size, int x, int y,
-                        int rotation, const fs::path& forbidden, const std::string& name, uint8_t zone) {
+                        int rotation, const fs::path& forbidden, const std::string& name, uint8_t zone,
+                        const fs::path& templatesDir) {
     LotResult out;
     try {
         checkFolder(folder, forbidden);
         const TileRect R = emptyLotRect(size, x, y, rotation);
-        const Placement p = checkPlacement(world, R);
+        const Placement p = checkEmptyLot(world, size, x, y, rotation);
         if (!p.ok)
             throw std::runtime_error("cannot place the lot here: " + p.why);
         const Neighborhood& hood = *world.hood;
@@ -1070,6 +1084,110 @@ LotResult placeEmptyLot(const fs::path& folder, const PlacementWorld& world, Emp
         out.lines.push_back("empty lot " + std::to_string(out.lot) + " (" + std::to_string(R.width()) + "x" +
                             std::to_string(R.depth()) + " with the road) placed at (" + std::to_string(R.x0) + ", " +
                             std::to_string(R.y0) + "), front " + std::to_string(p.front));
+        if (!templatesDir.empty()) {
+            const LotResult file = makeLotFile(folder, out.lot, templatesDir, forbidden);
+            for (const auto& l : file.lines)
+                out.lines.push_back(l);
+            if (!file.ok)
+                throw std::runtime_error(file.error);
+        }
+        out.ok = true;
+    } catch (const std::exception& e) {
+        out.error = e.what();
+    }
+    return out;
+}
+
+fs::path lotTemplate(const fs::path& templatesDir, uint8_t zone, int across, int along) {
+    if (templatesDir.empty() || across < 1 || along < 1)
+        return {};
+    const fs::path f = templatesDir / ((zone == 1 ? "CommunityLotTemplate" : "LotTemplate") + std::to_string(across * 10) +
+                                       "x" + std::to_string(along * 10) + ".package");
+    return fs::exists(f) ? f : fs::path{};
+}
+
+LotResult makeLotFile(const fs::path& folder, uint32_t lotId, const fs::path& templatesDir, const fs::path& forbidden) {
+    LotResult out;
+    out.lot = lotId;
+    try {
+        checkFolder(folder, forbidden);
+        const Neighborhood hood = Neighborhood::load(folder, false);
+        const Lot* lot = hood.lot(lotId);
+        if (!lot)
+            throw std::runtime_error("no lot " + std::to_string(lotId));
+        if (!lot->package.empty() && fs::exists(lot->package)) {
+            out.ok = true;
+            return out;
+        }
+        LotInfo info = lot->info;
+        const int f = info.frontEdge & 3;
+        // The template that turns to the lot's front: across the road is
+        // the current width for fronts 0/2 (x edges), the depth for 1/3.
+        const int across = int((f & 1) ? info.currentDepth() : info.currentWidth());
+        const int along = int((f & 1) ? info.currentWidth() : info.currentDepth());
+        bool flat = std::all_of(info.heights.begin(), info.heights.end(), [](float h) { return h == 0.0f; });
+        fs::path tmpl = flat ? lotTemplate(templatesDir, info.type, across, along) : fs::path{};
+        bool rewriteInfo = false;
+        if (!tmpl.empty()) {
+            if (info.creationFrontEdge != 0 || int(info.width) != across || int(info.depth) != along) {
+                // As made facing edge 0 and turned to `f`: base edge i is
+                // the neighborhood's edge (i + f) mod 4.
+                std::array<bool, 4> place{};
+                for (int i = 0; i < 4; ++i)
+                    if (info.roads & (1 << i))
+                        place[size_t((i + f - int(info.creationFrontEdge) + 8) & 3)] = true;
+                info.roads = 0;
+                for (int i = 0; i < 4; ++i)
+                    if (place[size_t((i + f) & 3)])
+                        info.roads |= uint8_t(1 << i);
+                info.creationFrontEdge = 0;
+                info.width = uint32_t(across), info.depth = uint32_t(along);
+                info.heights.assign(size_t(across + 1) * size_t(along + 1), 0.0f);
+                rewriteInfo = true;
+            }
+        } else {
+            // The road strip faces no road (or a template is missing): the
+            // template of the lot's own base size, as it is.
+            tmpl = lotTemplate(templatesDir, info.type, int(info.width), int(info.depth));
+            if (tmpl.empty())
+                throw std::runtime_error("no lot template for lot " + std::to_string(lotId) + " (" +
+                                         std::to_string(info.width) + "x" + std::to_string(info.depth) + ", front " +
+                                         std::to_string(f) + ") in " + templatesDir.string());
+            out.lines.push_back("lot " + std::to_string(lotId) + ": its road strip faces no road; " +
+                                tmpl.filename().string() + " unturned");
+        }
+        const fs::path file = folder / "Lots" / (hood.prefix + "_Lot" + std::to_string(lotId) + ".package");
+        fs::create_directories(file.parent_path());
+        const std::string saving = file.string() + ".saving";
+        {
+            DbpfPackage src(tmpl);
+            LotObjects objects = LotObjects::load(src);
+            // SetCommonSimulatorGlobals: 10 Current House = the lot, 41 Lot
+            // Zoning = its type (the lot load sets them again).
+            if (objects.globals.size() > 41)
+                objects.globals[10] = int16_t(lotId), objects.globals[41] = int16_t(info.type);
+            // The lot value (SIMI +0xA4) the neighborhood shows: the world
+            // value of the size off the road, what GetLotFileInfo gave
+            // without the file (the templates already hold it).
+            Lot noFile = *lot;
+            noFile.package.clear();
+            noFile.info = info;
+            objects.simulator.fA4 = uint32_t(lotFileInfo(noFile).price);
+            objects.save(src, saving);
+        }
+        // The base lot info the lot file keeps (SaveLot writes it; the bin reads it).
+        std::vector<uint8_t> base(64, 0);
+        const auto b = info.writeBase(true);
+        base.insert(base.end(), b.begin(), b.end());
+        rewritePackage(saving, {{{kTypeBaseLotInfo, 0}, base}}, {});
+        if (rewriteInfo) {
+            rewritePackage(hood.package, {{{hoodtype::LotInfo, lotId}, info.write()}}, {});
+            out.lines.push_back("lot " + std::to_string(lotId) + " info: made facing edge 0, " + std::to_string(across) +
+                                "x" + std::to_string(along) + ", turned to front " + std::to_string(f));
+        }
+        fs::rename(saving, file);
+        out.lines.push_back("lot " + std::to_string(lotId) + " file " + file.filename().string() + " from " +
+                            tmpl.filename().string());
         out.ok = true;
     } catch (const std::exception& e) {
         out.error = e.what();
