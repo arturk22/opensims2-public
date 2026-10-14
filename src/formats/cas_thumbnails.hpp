@@ -78,6 +78,11 @@ public:
     bool has(uint32_t instance) const { return byInstance_.count(instance) != 0; }
     // The decoded image (cached), null if the package has none.
     const RgbaImage* image(uint32_t instance);
+    // The decoded images kept (count and pixel bytes), and dropping them:
+    // the pointers image() returned go with them.
+    size_t cachedCount() const { return cache_.size(); }
+    size_t cachedBytes() const;
+    void clearCache() { cache_.clear(); }
 
 private:
     std::unique_ptr<DbpfPackage> pkg_;

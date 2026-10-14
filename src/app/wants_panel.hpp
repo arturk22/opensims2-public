@@ -28,6 +28,7 @@ struct MemoryEntry {
     bool bad = false;
 };
 std::vector<MemoryEntry> simMemories(PanelContext& c, int16_t neighborId);
+std::vector<MemoryEntry> simMemories(vm::VM& machine, int16_t neighborId);
 // The memories tab of the Simology panel: the icons in rows over `area`,
 // with their texts as tooltips (our look).
 void layoutMemories(PanelContext& c, vm::ObjectId sim, std::array<float, 4> area);

@@ -2,6 +2,7 @@
 
 #include "app/wants_panel.hpp"
 
+#include "app/game_data_caches.hpp"
 #include "app/ui_panel_util.hpp"
 #include "formats/resindex.hpp"
 #include "formats/strings.hpp"
@@ -124,20 +125,20 @@ float layoutWantsPanel(PanelContext& c, vm::ObjectId simId, float x, float y, fl
     return kHeight;
 }
 
-std::vector<MemoryEntry> simMemories(PanelContext& c, int16_t id) {
+std::vector<MemoryEntry> simMemories(vm::VM& machine, int16_t id) {
     std::vector<MemoryEntry> out;
-    const auto it = c.vm.inventories.find({vm::InventoryKind::Neighbor, id});
-    ResourceIndex* index = c.vm.code().index();
-    if (it == c.vm.inventories.end() || !index)
+    const auto it = machine.inventories.find({vm::InventoryKind::Neighbor, id});
+    ResourceIndex* index = machine.code().index();
+    if (it == machine.inventories.end() || !index)
         return out;
-    const vm::Neighbor* me = c.vm.neighbor(id);
+    const vm::Neighbor* me = machine.neighbor(id);
     const bool female = me && me->personData[65] == 1;
-    static std::map<uint32_t, std::unique_ptr<RgbaImage>> icons; // by GUID, for the life of the app
+    auto& icons = gameDataCaches().memoryIcons; // by GUID, for the life of the app (app/game_data_caches.hpp)
     for (auto t = it->second.singular.rbegin(); t != it->second.singular.rend(); ++t) {
         if (t->flags != 3)
             continue;
         MemoryEntry m;
-        const auto def = c.vm.code().definitionByGuid(t->guid);
+        const auto def = machine.code().definitionByGuid(t->guid);
         if (!def)
             continue;
         const uint32_t group = def->first;
@@ -153,13 +154,13 @@ std::vector<MemoryEntry> simMemories(PanelContext& c, int16_t id) {
                     break;
             }
         if (m.text.empty())
-            if (const ObjectDefinition* od = c.vm.code().definition(def->first, def->second))
+            if (const ObjectDefinition* od = machine.code().definition(def->first, def->second))
                 m.text = od->fileName;
         const auto& p = t->properties;
         std::string subject = "?";
         if (p.size() > 6) {
             const uint32_t guid = uint16_t(p[5]) | uint32_t(uint16_t(p[6])) << 16;
-            for (const auto& [nid, n] : c.vm.neighbors)
+            for (const auto& [nid, n] : machine.neighbors)
                 if (n.guid == guid && guid) {
                     subject = n.firstName;
                     break;
@@ -178,6 +179,8 @@ std::vector<MemoryEntry> simMemories(PanelContext& c, int16_t id) {
     }
     return out;
 }
+
+std::vector<MemoryEntry> simMemories(PanelContext& c, int16_t id) { return simMemories(c.vm, id); }
 
 void layoutMemories(PanelContext& c, vm::ObjectId simId, std::array<float, 4> a) {
     const vm::Object* sim = c.vm.object(simId);

@@ -112,6 +112,8 @@
 #include "app/build_mode.hpp"
 #include "app/data_location.hpp"
 #include "app/game_flow.hpp"
+#include "app/game_data_caches.hpp"
+#include "app/wants_panel.hpp"
 #include "app/head_shot.hpp"
 #include "app/game_save.hpp"
 #include "app/hood_mode.hpp"
@@ -183,8 +185,10 @@ namespace {
 // hold, the effects before the renderer's next scene: round 22's crash).
 // The globals the rest of this file uses (gBuild, gLotSims, ...) are
 // references into it. What outlives scenes (the resource index, the game's
-// audio, the user's settings, caches keyed by the game's read-only data:
-// GUIDs, resource names, file paths of TSData) stays outside.
+// audio, the user's settings) stays outside, and the caches keyed by the
+// game's read-only data (GUIDs, resource names, file paths of TSData) are
+// in gGameData (app/game_data_caches.hpp). On quit releaseAppState() frees
+// both, the scene first.
 // A new per-scene global or function static goes in here, never beside it
 // (DEBITOS-TECNICOS.md 1.3/1.4; OS2_DEBUG_SCENE_STATE=1 prints its sizes
 // around each unload).
@@ -264,6 +268,7 @@ struct SceneState {
     std::unique_ptr<os2::LotCameraFollow> cameraFollow;
     std::unique_ptr<os2::UiLayer> ui;
     std::map<int16_t, os2::SimActor*> objectActors;
+    std::function<os2::SimActor*(int16_t)> objectActor; // the actor animating an object (made on first use; captures the scene's renderer)
     std::vector<LotSim> lotSims;
     std::vector<std::unique_ptr<os2::SimActor>> actors;
     std::map<int16_t, PlacedObject> placedObjects;
@@ -379,6 +384,10 @@ void resetSceneState() {
     gScene = SceneState{};
     ++gSceneGeneration;
 }
+
+// The app's caches of the game's read-only data (CAS catalog, thumbnails,
+// pick meshes, Sim parts, ...): app/game_data_caches.hpp.
+os2::GameDataCaches& gGameData = os2::gameDataCaches();
 
 // The arguments of the scene being shown (app/game_flow.hpp): the process's
 // at start-up, replaced when the game flow switches scenes in place.
@@ -752,18 +761,10 @@ bool spawnSimActor(os2::Renderer& renderer, os2::ResourceIndex& index, const fs:
 std::unique_ptr<os2::ResourceIndex> gIndex;
 
 // Every Sim part of the game (GZPS with a 3IDR), read once for the app's
-// life: every lot entry and outfit change uses them. On the loading thread
-// or the main thread, never both at once (the main thread reads it only
-// between loads).
-const std::vector<os2::SimPart>& simParts(os2::ResourceIndex& index) {
-    static std::vector<os2::SimPart> parts;
-    static const os2::ResourceIndex* of = nullptr;
-    if (of != &index) {
-        parts = os2::loadSimParts(index);
-        of = &index;
-    }
-    return parts;
-}
+// life (gGameData): every lot entry and outfit change uses them. On the
+// loading thread or the main thread, never both at once (the main thread
+// reads it only between loads).
+const std::vector<os2::SimPart>& simParts(os2::ResourceIndex& index) { return gGameData.simPartsFor(index); }
 
 // The lot's objects in the VM (--vm, --run-vm), driving the lot's Sims.
 std::unique_ptr<os2::LotSimulation>& gSimulation = gScene.simulation;
@@ -1031,19 +1032,16 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (it == gLotSims.end())
             return;
         try {
-            static std::unique_ptr<os2::cas::CasCatalog> catalog; // (the game's data: for the app's life)
-            static std::unique_ptr<os2::cas::FaceBaker> baker;
-            if (!catalog) {
-                catalog = std::make_unique<os2::cas::CasCatalog>(os2::cas::CasCatalog::load(index));
-                baker = std::make_unique<os2::cas::FaceBaker>(index, *catalog);
-            }
+            auto& cas = gGameData.casCatalog(index); // (the game's data: for the app's life)
+            const os2::cas::CasCatalog& catalog = *cas.catalog;
+            os2::cas::FaceBaker& baker = *cas.baker;
             // The save copies it to the neighborhood; an NPC made in play
             // stays in the session's NPCs folder (vm/baby_character.hpp).
             const fs::path session = os2::sessionCharactersDir();
             const fs::path dir = it->character.parent_path() == session / "NPCs" ? session / "NPCs" : session;
             const fs::path out = dir / (it->character.stem().string() + ".package");
             const fs::path tmp = dir / (it->character.stem().string() + ".new.package");
-            os2::cas::writeAgedCharacter(index, *catalog, *baker, it->character, ageBit, tmp, uint32_t(id) * 7919u + ageBit);
+            os2::cas::writeAgedCharacter(index, catalog, baker, it->character, ageBit, tmp, uint32_t(id) * 7919u + ageBit);
             fs::rename(tmp, out);
             it->character = out;
             actor.skin = os2::loadCharacterSim(index, simParts(index), it->character, 1);
@@ -1058,7 +1056,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     };
     // Objects the VM animates (doors, fridges, phones, ...) swap their static
     // model for a skinned one of the same CRES, posed by the animation.
-    static std::function<os2::SimActor*(int16_t)> objectActor;
+    auto& objectActor = gScene.objectActor; // (the scene's renderer: per scene)
     objectActor = [&renderer, &index](int16_t id) -> os2::SimActor* {
         auto it = gObjectActors.find(id);
         if (it == gObjectActors.end()) {
@@ -1102,7 +1100,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         return it->second;
     };
     if (const char* f = std::getenv("OS2_FORCE_OBJECT_ACTOR")) // test aid: this object animated from the start
-        objectActor(int16_t(std::atoi(f)));
+        gScene.objectActor(int16_t(std::atoi(f)));
     // Once per name: the base game's trees ask for some the data lacks (the
     // double bed's "-", o2a-bookcase-get-middle: only the child's o2c-
     // exists) and the game shows nothing for them.
@@ -1117,7 +1115,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (std::getenv("OS2_DEBUG_VM"))
             std::fprintf(stderr, "opensims2: object %d starts %s (%s)\n", id, name.c_str(),
                          gPlacedObjects.count(id) ? "placed" : "not placed");
-        os2::SimActor* actor = objectActor(id);
+        os2::SimActor* actor = gScene.objectActor(id);
         if (!actor)
             return;
         try {
@@ -1146,7 +1144,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (std::getenv("OS2_DEBUG_VM"))
             std::fprintf(stderr, "opensims2: object %d starts %s%s (overlay %u, %s) at %.2f\n", id, name.c_str(),
                          flipped ? " flipped" : "", overlay, gPlacedObjects.count(id) ? "placed" : "not placed", at);
-        os2::SimActor* actor = objectActor(id);
+        os2::SimActor* actor = gScene.objectActor(id);
         if (!actor)
             return;
         try {
@@ -1637,8 +1635,8 @@ std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId) {
 // catalog thumbnail (ObjectThumbnails.package, keyed as the live UI keys it).
 const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor) {
     auto& cache = gDialogThumbnails; // (the lot's object IDs: per scene)
-    static std::unique_ptr<os2::DbpfPackage> thumbs; // (the game's ObjectThumbnails.package: for the app's life)
-    static std::map<uint32_t, const os2::DbpfEntry*> thumbIndex;
+    auto& thumbs = gGameData.objectThumbs; // (the game's ObjectThumbnails.package: for the app's life)
+    auto& thumbIndex = gGameData.objectThumbIndex;
     if (!gSimulation)
         return nullptr;
     const auto key = std::make_pair(object, neighbor);
@@ -1742,7 +1740,7 @@ bool inBin(const std::vector<os2::Tgi>& bin, const os2::Tgi& k) {
 void setupAspirationWants(os2::ResourceIndex& index) {
     gPie->dialogWindow().lifetimeWants = [&index](uint32_t aspiration) {
         std::vector<os2::DialogWindow::LifetimeWant> out;
-        static std::shared_ptr<const os2::wants::Library> own; // (the game's WantTuning: for the app's life)
+        auto& own = gGameData.wants; // (the game's WantTuning: for the app's life)
         std::shared_ptr<const os2::wants::Library> lib;
         if (gSimulation)
             if (os2::vm::WantSystem* ws = os2::vm::wantSystem(gSimulation->machine()))
@@ -1781,28 +1779,9 @@ void setupAspirationWants(os2::ResourceIndex& index) {
 // session's files, as a grown-up Sim's) and re-dresses it if it wears that
 // category.
 void setupWardrobe(os2::ResourceIndex& index) {
-    struct Cas {
-        std::unique_ptr<os2::cas::CasCatalog> catalog;
-        std::unique_ptr<os2::cas::FaceBaker> baker;
-        std::unique_ptr<os2::cas::CasThumbnails> thumbs;
-        std::map<std::pair<uint32_t, uint32_t>, const os2::SimPart*> byKey; // (group, instance) -> GZPS
-        const os2::SimPart* part(const os2::Tgi& k) {
-            if (byKey.empty())
-                for (const auto& p : catalog->parts)
-                    byKey.emplace(std::make_pair(p.tgi.group, p.tgi.instance), &p);
-            auto it = byKey.find({k.group, k.instance});
-            return it == byKey.end() ? nullptr : it->second;
-        }
-    };
-    static Cas cas; // (the game's CAS catalog and thumbnails: for the app's life)
-    auto load = [&index]() -> Cas& {
-        if (!cas.catalog) {
-            cas.catalog = std::make_unique<os2::cas::CasCatalog>(os2::cas::CasCatalog::load(index));
-            cas.baker = std::make_unique<os2::cas::FaceBaker>(index, *cas.catalog);
-            cas.thumbs = std::make_unique<os2::cas::CasThumbnails>(gameDir() / "TSData/Res/UserData/Thumbnails/CASThumbnails.package");
-        }
-        return cas;
-    };
+    using Cas = os2::GameDataCaches::Cas;
+    // (the game's CAS catalog and thumbnails: for the app's life, gGameData)
+    auto load = [&index]() -> Cas& { return gGameData.casWithThumbnails(index, gameDir() / "TSData/Res"); };
     auto simFile = [](int16_t id) -> LotSim* {
         for (auto& s : gLotSims)
             if (s.id == id)
@@ -2015,8 +1994,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
     // writing the character file and dressing the Sim again in what it
     // wears (OnOk: person data 8, 119, 120).
     // (edits: by Sim ID, gScene.mirrorEdits; previews: by the game's face and
-    // texture names, for the app's life.)
-    static std::map<std::string, std::unique_ptr<os2::RgbaImage>> previews;
+    // texture names, for the app's life, gGameData.casPreviews.)
     struct Choice {
         const os2::RgbaImage* thumb = nullptr;
         bool selected = false;
@@ -2037,6 +2015,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
                 return t;
             const std::string face = cas::faceSkinTexture(index, cas::agePrefix(s.age, s.gender, true), s.skinTone);
             const std::string tex = cas::overlayTexture(index, o);
+            auto& previews = gGameData.casPreviews;
             auto it = previews.find(face + "|" + tex);
             if (it == previews.end()) {
                 auto img = cas::overlayPreview(index, face, tex, o.number("subtype"));
@@ -2286,6 +2265,29 @@ void setupWardrobe(os2::ResourceIndex& index) {
             w.vanityItems(sim, 0);
         std::printf("opensims2: scene caches probe: Sim %d: mirrorEdits %zu -> %zu, wardrobeFilled %zu -> %zu\n", sim, edits,
                     gScene.mirrorEdits.size(), filled, gScene.wardrobeFilled.size());
+        std::fflush(stdout);
+    }
+    // OS2_PROBE_APP_CACHES=1 (test aid, tests/scene_cycle.sh): every lot Sim's
+    // wardrobe in every category and vanity in every group, as a player who
+    // opens all of them (and the memories tab) on every lot: what the app's
+    // decoded pictures (gGameData: CAS thumbnails, overlay previews, memory
+    // icons) grow to.
+    if (std::getenv("OS2_PROBE_APP_CACHES")) {
+        namespace cat = os2::cas::category;
+        const size_t before = gGameData.imageBytes();
+        for (const auto& ls : gLotSims) {
+            if (w.outfits)
+                for (uint32_t c : {cat::Everyday, cat::Swimwear, cat::Pajamas, cat::Formal, cat::Underwear, cat::Athletic})
+                    w.outfits(ls.id, c);
+            if (w.vanityItems)
+                for (int g = 0; g < os2::DialogWindow::VanityGroups; ++g)
+                    w.vanityItems(ls.id, g);
+            if (const os2::vm::Object* o = machine.object(ls.id); o && o->person) // the memories tab
+                os2::simMemories(machine, os2::vm::neighborIdOf(*o));
+        }
+        std::printf("opensims2: app caches probe: %zu Sims: pictures %zu KB -> %zu KB (%s) residentMB=%zu\n",
+                    gLotSims.size(), before >> 10, gGameData.imageBytes() >> 10, gGameData.sizes().c_str(),
+                    os2::residentBytes() >> 20);
         std::fflush(stdout);
     }
 }
@@ -2881,7 +2883,7 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
     // pick box, so a click on the bills found nothing: live QA 15).
     if (gPie && gObjectView && gIndex) {
         auto& made = gMadePickBoxes; // (a new lot: none made yet; a new host can reuse the old one's address)
-        static std::map<std::string, std::shared_ptr<const os2::PickMesh>> meshes; // by CRES (null: none; the game's models: for the app's life)
+        auto& meshes = gGameData.pickMeshes; // by CRES (null: none; the game's models: for the app's life)
         std::set<int16_t> drawnNow;
         gObjectView->forEachDrawn([&](int16_t id, int, os2::SimActor*) { drawnNow.insert(id); });
         for (auto it = made.begin(); it != made.end();) {
@@ -5254,9 +5256,12 @@ void runTicksHeadless(long ticks, os2::Renderer* renderer = nullptr) {
 }
 
 // Everything a scene loaded, so that the next one starts clean (the
-// renderer is replaced by the caller).
+// renderer is replaced by the caller). Then the app's decoded pictures go if
+// they are past their cap (GameDataCaches::trim: nothing points at them
+// once the scene is gone).
 // OS2_DEBUG_SCENE_STATE=1 prints the scene state's sizes before and after
-// (tests/scene_cycle.sh: all empty after).
+// (tests/scene_cycle.sh: all empty after), and the app's caches with the
+// process's resident memory after.
 void unloadScene() {
     static const bool debug = std::getenv("OS2_DEBUG_SCENE_STATE") != nullptr;
     if (debug)
@@ -5264,8 +5269,43 @@ void unloadScene() {
     if (gGameAudio)
         gGameAudio->setDipping(false);
     resetSceneState();
+    static const size_t cap = [] {
+        const char* mb = std::getenv("OS2_PICTURE_CAP_MB"); // (tests, measurements)
+        return mb ? size_t(std::strtoull(mb, nullptr, 10)) << 20 : os2::GameDataCaches::kImageCap;
+    }();
+    const size_t pictures = gGameData.imageBytes();
+    const bool trimmed = gGameData.trim(cap);
     if (debug) {
         std::printf("opensims2: scene state after unload: %s\n", gScene.sizes().c_str());
+        std::printf("opensims2: app caches after unload: %s residentMB=%zu%s\n", gGameData.sizes().c_str(),
+                    os2::residentBytes() >> 20,
+                    trimmed ? (" (pictures dropped: " + std::to_string(pictures >> 10) + " KB past the cap)").c_str() : "");
+        std::fflush(stdout);
+    }
+}
+
+// Quitting (Cmd-Q, the window closed, the game flow's Quit, the end of a
+// headless run): the scene, then the app's caches of the game's data, each
+// in its own order (SceneState's members, GameDataCaches::clear), while the
+// resource index, the game's audio and the window's Metal device are still
+// alive. With a window it runs from applicationWillTerminate:, before exit()
+// destroys any static; the atexit handler main() registers first runs it
+// again (then a no-op) and is the one a headless run's std::exit uses: by
+// then the function statics made during the run are gone (none of them is
+// used by the teardown: the log-once sets, the debug detectors, the movie
+// host, the VM's caches of the game's data).
+// OS2_DEBUG_SCENE_STATE=1 prints what was freed (tests/scene_cycle.sh).
+void releaseAppState() {
+    static const bool debug = std::getenv("OS2_DEBUG_SCENE_STATE") != nullptr;
+    const bool had = gGameData.simPartsOf || gGameData.cas.catalog || gGameData.imageBytes() || gScene.simulation ||
+                     gScene.hood || gScene.cas || gScene.menu;
+    resetSceneState();
+    if (debug && had)
+        std::printf("opensims2: quit: app caches before release: %s\n", gGameData.sizes().c_str());
+    gGameData.clear();
+    if (debug && had) {
+        std::printf("opensims2: quit: scene state after release: %s\n", gScene.sizes().c_str());
+        std::printf("opensims2: quit: app caches after release: %s\n", gGameData.sizes().c_str());
         std::fflush(stdout);
     }
 }
@@ -7552,6 +7592,13 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)app {
     return YES;
 }
+
+// Cmd-Q, the window closed or the game flow's Quit (not while a scene loads:
+// applicationShouldTerminate ends the process then): the scene and the
+// app's caches go here, before exit() runs any static's destructor.
+- (void)applicationWillTerminate:(NSNotification*)note {
+    releaseAppState();
+}
 @end
 
 static void buildMenu() {
@@ -7611,9 +7658,10 @@ int main() {
     raiseOpenFileLimit();
     liveShotFile(); // (installs its SIGUSR1 handler before anything can send one)
     // Quitting tears the scene down as a scene switch does (in gScene's
-    // order, while the app's globals it uses are still there), before the
-    // statics go: registered after them, it runs first.
-    std::atexit([] { resetSceneState(); });
+    // order, while the app's globals it uses are still there), then frees
+    // the app's caches of the game's data, before the namespace-scope
+    // statics go: registered after them, it runs first (releaseAppState).
+    std::atexit([] { releaseAppState(); });
     @autoreleasepool {
         for (NSString* a in NSProcessInfo.processInfo.arguments)
             if ([a isEqualToString:@"--help"] || [a isEqualToString:@"-h"]) {

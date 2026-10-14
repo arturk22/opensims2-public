@@ -152,6 +152,14 @@ CasThumbnails::CasThumbnails(const std::filesystem::path& package) {
 
 CasThumbnails::~CasThumbnails() = default;
 
+size_t CasThumbnails::cachedBytes() const {
+    size_t n = 0;
+    for (const auto& [instance, img] : cache_)
+        if (img)
+            n += img->pixels.size();
+    return n;
+}
+
 const RgbaImage* CasThumbnails::image(uint32_t instance) {
     if (auto it = cache_.find(instance); it != cache_.end())
         return it->second.get();

@@ -1,4 +1,5 @@
 #include "pie_menu.hpp"
+#include "app/game_data_caches.hpp"
 
 #include "formats/font.hpp"
 #include "formats/image.hpp"
@@ -129,7 +130,7 @@ std::optional<PickMesh::Mask> alphaMask(const ObjectModel& model, const std::str
     const std::string texture = baseTextureName(it->second);
     if (texture.empty())
         return std::nullopt;
-    static std::map<std::string, std::optional<PickMesh::Mask>> cache;
+    auto& cache = gameDataCaches().pickMasks; // (the game's textures: for the app's life, app/game_data_caches.hpp)
     const std::string key = texture + "@" + std::to_string(int(sm.alphaRef * 255));
     if (auto c = cache.find(key); c != cache.end())
         return c->second;
