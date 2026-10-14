@@ -1029,7 +1029,7 @@ static void testNextStoryOverGround() {
     check(foundation, "lot 31: the buildings on foundations keep their floor's walls");
 }
 
-// os2::logOnce (DEBITOS-TECNICOS.md 1.5): an error a caller recovers from is
+// os2::logOnce (round 24, docs/game-flow-mac.md §5): an error a caller recovers from is
 // on stderr once per (where, key), at most kLogOnceKeys keys per `where`,
 // then one "not shown" line.
 static void testLogOnce() {

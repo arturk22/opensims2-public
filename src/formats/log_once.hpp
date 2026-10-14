@@ -2,7 +2,7 @@
 
 // Errors a caller recovers from (a missing or unreadable piece of the game's
 // data, a fallback taken) on stderr, so that they do not vanish
-// (DEBITOS-TECNICOS.md 1.5): "opensims2: <where> (<key>): <what>", once per
+// (round 24, docs/game-flow-mac.md §5): "opensims2: <where> (<key>): <what>", once per
 // (where, key), so that a block that runs every frame or tick prints its
 // error once; at most kLogOnceKeys keys per `where`, then one line saying
 // the rest are not shown. Thread-safe, and safe while the process exits

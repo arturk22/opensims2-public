@@ -191,7 +191,7 @@ namespace {
 // in gGameData (app/game_data_caches.hpp). On quit releaseAppState() frees
 // both, the scene first.
 // A new per-scene global or function static goes in here, never beside it
-// (DEBITOS-TECNICOS.md 1.3/1.4; OS2_DEBUG_SCENE_STATE=1 prints its sizes
+// (round 23, docs/game-flow-mac.md §5; OS2_DEBUG_SCENE_STATE=1 prints its sizes
 // around each unload).
 
 struct PickBox {

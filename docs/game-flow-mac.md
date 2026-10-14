@@ -163,7 +163,7 @@ no chamador. Teste `scene_cycle` (`N002_Lot10` → bairro → `N002_Lot3` → ba
 `N002_Lot10`, popup de humor aberto, `ulimit -S -n 256`), que deve sair com 0
 também num build com AddressSanitizer.
 
-Rodada 23 (`r23-scenestate`, `DEBITOS-TECNICOS.md` 1.3/1.4): todo o estado
+Rodada 23 (`r23-scenestate`): todo o estado
 da cena fica num objeto só, `SceneState gScene` (topo do `app/main.mm`); os
 globais de antes (`gBuild`, `gLotSims`, `gEffects`...) são referências para
 os membros dele. `resetSceneState()` troca o objeto por um novo (atribuição
@@ -192,7 +192,7 @@ entradas em lote (incluindo a segunda no `N002_Lot10`) começam com 0 edições
 de espelho e 0 guarda-roupas preenchidos (antes, na segunda visita, o
 guarda-roupa da família não era preenchido).
 
-Rodada 24 (`r24-appcaches`, `DEBITOS-TECNICOS.md` 1.3/1.5): os caches do
+Rodada 24 (`r24-appcaches`): os caches do
 jogo que ficaram `static` de função (partes de Sim, catálogo + face +
 miniaturas do CAS, prévias do espelho, miniaturas de objetos dos diálogos,
 biblioteca de vontades, ícones de memória, malhas e máscaras de pick)

@@ -9,7 +9,7 @@
 #   exit (~LotEffects) or on the next lot;
 # - the open mood popup's windows were read after their copy went
 #   (UiElement::attr in LiveUi::screen).
-# - per-scene state that outlived its scene (DEBITOS-TECNICOS.md 1.3/1.4):
+# - per-scene state that outlived its scene (round 23, docs/game-flow-mac.md §5):
 #   with OS2_DEBUG_SCENE_STATE every unload must leave gScene empty, and with
 #   OS2_PROBE_SCENE_CACHES each lot's vanity edit and filled wardrobe must
 #   start from nothing (the mirror edits by Sim ID and the wardrobes filled

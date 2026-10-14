@@ -1,6 +1,6 @@
 #pragma once
 
-// The app's caches of the game's read-only data (DEBITOS-TECNICOS.md 1.3,
+// The app's caches of the game's read-only data (docs/game-flow-mac.md §5,
 // round 24): what is read or decoded from TSData once and kept for the
 // app's life because it means the same thing in every scene (keyed by GUID,
 // resource or texture name, CRES, or a file of TSData). They were function
