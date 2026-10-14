@@ -1394,8 +1394,7 @@ std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& 
 // once no Sim has their interaction queued or running any more
 // (flushDestinations, go_here.hpp). Once a tick.
 void flushMoveOutOfWayDestinations(VM& vm) {
-    static std::map<const VM*, uint64_t> lastTick;
-    auto& last = lastTick[&vm];
+    auto& last = vm.moveOutOfWayFlushedAt;
     if (last == vm.ticks + 1)
         return;
     last = vm.ticks + 1;

@@ -534,7 +534,7 @@ void LotSimulation::updateScene(double seconds) {
         sampleAll(double(vm_->ticks - 1) / rate + slip_); // in the caller's clock, as the actors play
         // OS2_LOG_ANIMS=1: each Sim's Animate Sim and overlays as they change (as s2pkg pie --anims).
         if (static const bool log = std::getenv("OS2_LOG_ANIMS") != nullptr; log) {
-            static std::map<vm::ObjectId, std::string> last;
+            auto& last = loggedAnimations_; // (by object ID: this lot's)
             for (const auto& [oid, ob] : vm_->objects())
                 if (ob.person) {
                     std::string s = ob.animation.name + "@" + std::to_string(ob.animation.level) + " [";

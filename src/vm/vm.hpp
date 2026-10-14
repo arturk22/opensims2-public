@@ -1116,6 +1116,9 @@ public:
     } clock;
     void setClockGlobals(); // also Time Of Day (global 4) from the hour
     uint64_t ticks = 0;
+    // The tick (+ 1) flushMoveOutOfWayDestinations last ran in (once a tick;
+    // it was a static map by VM address, which a later VM can reuse).
+    uint64_t moveOutOfWayFlushedAt = 0;
     // The animation request counter (the game's DAT_02779c34): each Animate
     // Sim takes the next for its request ID; saved in the Sims' animation
     // queues.

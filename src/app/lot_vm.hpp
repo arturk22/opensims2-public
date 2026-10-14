@@ -187,6 +187,7 @@ private:
     double last_ = 0;
     double scene_ = 0, caller_ = 0; // scene clock, caller's clock at the last update
     double slip_ = 0; // seconds the VM has fallen behind the caller's clock
+    std::map<vm::ObjectId, std::string> loggedAnimations_; // OS2_LOG_ANIMS: each Sim's last line
 };
 
 } // namespace os2
