@@ -192,6 +192,35 @@ entradas em lote (incluindo a segunda no `N002_Lot10`) começam com 0 edições
 de espelho e 0 guarda-roupas preenchidos (antes, na segunda visita, o
 guarda-roupa da família não era preenchido).
 
+Rodada 24 (`r24-appcaches`, `DEBITOS-TECNICOS.md` 1.3/1.5): os caches do
+jogo que ficaram `static` de função (partes de Sim, catálogo + face +
+miniaturas do CAS, prévias do espelho, miniaturas de objetos dos diálogos,
+biblioteca de vontades, ícones de memória, malhas e máscaras de pick)
+estão num objeto só, `GameDataCaches gGameData` (`app/game_data_caches.hpp`),
+ao lado do `gScene`. Ele é construído antes do `main` (não é `static` de
+função), então o runtime só o destrói depois do handler de saída, e
+`releaseAppState()` o esvazia na ordem do `clear()` logo depois de
+`resetSceneState()`: com janela no `applicationWillTerminate:` (antes de o
+`exit()` destruir qualquer estático), sem tela no `atexit` que o `main`
+registra primeiro. Antes, um `static` de função criado durante o jogo era
+destruído **antes** desse `atexit`, ou seja, antes da desmontagem da cena.
+Sair durante uma carga continua terminando o processo na hora
+(`applicationShouldTerminate`). Ninguém usa esses caches de duas threads ao
+mesmo tempo: só a thread dona da cena (a de carga enquanto carrega, a
+principal no resto; o `BackgroundJob` cria e junta a thread); as leituras
+paralelas de dentro da carga só enchem vetores locais. A cada troca de cena
+`trim()` solta as imagens decodificadas que passam de 64 MB (nada aponta
+para elas depois da cena; `OS2_PICTURE_CAP_MB` muda o teto): as miniaturas
+do CAS têm 256 KB cada, ~13 MB por guarda-roupa aberto, e com
+`OS2_PROBE_APP_CACHES=1` (todos os guarda-roupas, grupos do espelho e abas
+de memória dos Sims de cada lote) chegaram a 227 MB nas 5 famílias de N002.
+`OS2_DEBUG_SCENE_STATE=1` imprime também os caches (entradas e KB) e a
+memória residente depois de cada descarga, e o que foi liberado ao sair. O
+`scene_cycle` (com `OS2_PICTURE_CAP_MB=120`) confere que as imagens
+atravessam uma troca abaixo do teto, somem acima dele, e que ao sair os
+caches estavam cheios e ficaram vazios; limpo também num build ASan, como
+o `scene_switch` e as saídas do bairro, do CAS e do menu.
+
 ## 6. Jogar o bairro (rodada 9)
 
 O puck do bairro abre Famílias e Lotes & Casas (`app/hood_bins.*`,
