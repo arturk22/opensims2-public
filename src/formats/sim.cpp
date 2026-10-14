@@ -105,7 +105,7 @@ void parallelFor(size_t n, F body) {
         try {
             for (size_t i; (i = next.fetch_add(1)) < n;)
                 body(i);
-        } catch (...) {
+        } catch (...) { // any type: rethrown below on the calling thread (one escaping a worker terminates)
             next.store(n); // the others stop at their next item
             std::lock_guard lock(errorLock);
             if (!error)

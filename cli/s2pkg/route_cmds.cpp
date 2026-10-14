@@ -95,7 +95,7 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
     try { // a Sim by object ID too (the lots have two Dons)
         if (const vm::Object* x = machine.object(vm::ObjectId(std::stoi(simQuery))); x && x->person)
             sim = x->id;
-    } catch (...) {
+    } catch (const std::logic_error&) { // not a number (std::stoi: invalid_argument, out_of_range): a name
     }
     if (!sim)
         sim = vm::findSim(machine, simQuery);
@@ -104,7 +104,7 @@ int cmdRoute(const std::filesystem::path& lotFile, const std::string& simQuery, 
     vm::ObjectId object = 0;
     try {
         object = vm::ObjectId(std::stoi(objectQuery));
-    } catch (...) {
+    } catch (const std::logic_error&) { // not a number (std::stoi: invalid_argument, out_of_range): a name
     }
     if (!machine.object(object))
         object = vm::findInteractionObject(machine, objectQuery);

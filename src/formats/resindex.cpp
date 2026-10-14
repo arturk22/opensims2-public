@@ -125,7 +125,7 @@ void ResourceIndex::addPackages(std::vector<std::filesystem::path> paths) {
             try {
                 built[i] = std::make_unique<DbpfPackage>(paths[i]);
                 built[i]->closeFile();
-            } catch (...) {
+            } catch (...) { // any type: rethrown below on the calling thread (one escaping a worker terminates)
                 failed[i] = std::current_exception();
             }
         }

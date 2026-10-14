@@ -164,7 +164,7 @@ bool runOneTickTree(VM& vm, std::array<int16_t, kTempCount>& temps, ObjectId me,
         ++messageDepth;
         try {
             vm.run(t, vm.instructionsPerTurn);
-        } catch (...) {
+        } catch (...) { // any type: the depth is put back, then it goes on (throw;)
             --messageDepth;
             throw;
         }

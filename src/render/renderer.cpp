@@ -374,7 +374,7 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
         addOne_ = pipeline(StandardMaterial::Blend::AddNoSrcAlpha);
         premultiplied_ = pipeline(StandardMaterial::Blend::Premultiplied);
         multiply_ = pipeline(StandardMaterial::Blend::Multiply);
-    } catch (...) {
+    } catch (...) { // any type: the Metal objects are released, then it goes on (throw;)
         vs->release();
         fs->release();
         library->release();

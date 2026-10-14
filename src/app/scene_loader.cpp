@@ -26,7 +26,7 @@ void* runJob(void* arg) {
     auto* state = static_cast<BackgroundJob::State*>(arg);
     try {
         state->work();
-    } catch (...) {
+    } catch (...) { // any type: carried to the main thread (collect), not swallowed; one escaping a thread terminates
         state->error = std::current_exception();
     }
     state->work = nullptr;
