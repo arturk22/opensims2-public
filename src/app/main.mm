@@ -169,6 +169,217 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// --- The scene's state ---------------------------------------------------------
+//
+// Everything that belongs to the scene being shown (a lot, a neighborhood,
+// Create-a-Sim, the main menu) lives in one object, gScene: the modes and
+// views over the scene's VM and renderer, the renderer ids, and every cache
+// keyed by what only means something in one scene (object IDs, Sim IDs,
+// family numbers, the lot's files). resetSceneState() replaces it with a
+// fresh one in ONE place: unloadScene on every switch (lot to neighborhood,
+// neighborhood to neighborhood, lot to lot) and an atexit handler on quit.
+// The defaulted move assignment resets the members in their order here, so
+// that order is the teardown order (the modes and views before the VM they
+// hold, the effects before the renderer's next scene: round 22's crash).
+// The globals the rest of this file uses (gBuild, gLotSims, ...) are
+// references into it. What outlives scenes (the resource index, the game's
+// audio, the user's settings, caches keyed by the game's read-only data:
+// GUIDs, resource names, file paths of TSData) stays outside.
+// A new per-scene global or function static goes in here, never beside it
+// (DEBITOS-TECNICOS.md 1.3/1.4; OS2_DEBUG_SCENE_STATE=1 prints its sizes
+// around each unload).
+
+struct PickBox {
+    bool contained = false; // saved in a slot: the box follows where the VM draws it
+    uint32_t instance;
+    simd_float3 lo, hi;
+    simd_float4x4 at;
+    std::shared_ptr<const os2::PickMesh> mesh; // its model's triangles (app/pie_menu.hpp)
+};
+// The lot's placed objects by object ID (the cObject instance's low 16
+// bits): what is needed to pose one when the VM animates it.
+struct PlacedObject {
+    std::string cres;
+    std::map<std::string, std::string> materials;
+    std::array<float, 3> position;
+    std::array<float, 4> rotation;
+    std::string definition; // the cObject's OBJD file name ("Newspaper_objt")
+    int instance = -1; // renderer instance of its static model
+    bool contained = false; // saved in a slot (at (0, 0)): hidden until the VM places it
+    std::vector<os2::Xform> pose; // its model's local pose as saved (a chair pushed in), empty: the rest pose
+};
+struct LotSim {
+    os2::SimActor* actor;
+    int16_t id; // object ID (the cObject's instance)
+    fs::path character;
+    std::string idle;
+};
+// The "Salvar?" questions put up by the game flow (see uiText's caller).
+enum class FlowDialog { None, Leave, Quit };
+// What a scene forces while it plays (the binary's Start/Stop,
+// docs/cinematics-mac.md §6): the game speed (here normal and unpaused,
+// inferred: a paused game would freeze the scene) and, with "Show Entire
+// House" (flag 0x08; movein_cine always), the walls up and the top floor.
+// Put back when the scene ends.
+struct CinematicForced {
+    bool active = false;
+    int16_t speed = 0, paused = 0;
+    std::optional<int> walls; // the wall mode before, if the walls were not up
+    std::optional<int> level;                       // the camera's floor before
+};
+
+struct SceneState {
+    // (The order is the teardown order: see above.)
+    FlowDialog flowDialog = FlowDialog::None;
+    // (The VM's cinematic request list stays counted: gCinematicSerialSeen is the app's.)
+    std::unique_ptr<os2::CinematicPlayer> cinematic;
+    std::optional<double> cinematicStartAt;
+    CinematicForced cinematicForced;
+    std::map<int16_t, double> simAnimationAt;
+    std::map<int16_t, fs::path> bornCharacters;
+    std::set<int16_t> simsLookedAt;
+    os2::ScreenFxLayer::Params screenFxParams;
+    double crossfadeAt = -1e9;
+    std::unique_ptr<os2::BuildMode> build;
+    std::unique_ptr<os2::BuyMode> buy;
+    std::unique_ptr<os2::TutorialOverlay> tutorial;
+    std::unique_ptr<os2::LiveUi> live;
+    std::unique_ptr<os2::PieMenuHost> pie;
+    std::unique_ptr<os2::OptionsPanel> options;
+    std::unique_ptr<os2::MainMenu> menu;
+    std::unique_ptr<os2::HoodMode> hood;
+    std::unique_ptr<os2::CasMode> cas;
+    std::unique_ptr<os2::DoorPortals> doors;
+    std::unique_ptr<os2::LotLighting> lighting;
+    std::unique_ptr<os2::AnimSnapView> snaps;
+    std::unique_ptr<os2::VmObjectView> objectView;
+    std::unique_ptr<os2::TvBroadcast> tv;
+    // The effects draw through the scene's renderer (its scene hook), which
+    // the next scene replaces: kept, they hooked into the freed renderer and
+    // crashed on the exit after a scene switch (~LotEffects, SIGBUS/SIGSEGV).
+    std::unique_ptr<os2::LotEffects> effects;
+    bool effectsFailed = false;
+    std::unique_ptr<os2::LotSimulation> simulation;
+    std::unique_ptr<os2::LotAudio> audio;
+    std::unique_ptr<os2::LotCameraFollow> cameraFollow;
+    std::unique_ptr<os2::UiLayer> ui;
+    std::map<int16_t, os2::SimActor*> objectActors;
+    std::vector<LotSim> lotSims;
+    std::vector<std::unique_ptr<os2::SimActor>> actors;
+    std::map<int16_t, PlacedObject> placedObjects;
+    // The renderer's ids (round 20: kept across scenes, they named the next
+    // scene's models and instances).
+    std::map<std::string, int> fenceModels;
+    std::vector<int> fenceInstances;
+    std::map<const os2::SimActor*, int> simInstances;
+    std::map<std::pair<int16_t, int16_t>, std::unique_ptr<os2::RgbaImage>> dialogThumbnails;
+    std::map<int16_t, std::string> madePickBoxes;
+    std::vector<PickBox> pickBoxes;
+    int plumbob = -1;
+    float plumbobBottom = 0;
+    bool vmPlumbob = false;
+    std::set<int16_t> hiddenPlumbobs;
+    std::optional<os2::Xform> appPlumbobAt;
+    std::string plumbobMaterial;
+    std::map<std::string, int> plumbobModels;
+    std::optional<os2::LotLightMapLayout> lightMapLayout;
+    std::unique_ptr<os2::Lot> lotShape;
+    std::unique_ptr<os2::PatternCatalog> lotPatterns;
+    os2::LotViewOptions lotView;
+    int lotInstance = -1;
+    int lotModel = -1;
+    os2::LotModelCache lotCache;
+    std::optional<std::string> hoodLot;
+    bool lotVacant = false;
+    fs::path lotFile;
+    size_t stepsUsed = 0;
+    double headlessClock = 0;
+    os2::LotCamera* camera = nullptr;
+
+    // Globals that unloadScene did not reset (they leaked into the next scene).
+    size_t tutorialRequestsSeen = 0;
+    bool levelsHidden = false;
+    std::map<int16_t, bool> wallHung;
+    std::optional<os2::SimShadowLight> staticShadowLight;
+    std::set<const os2::SimActor*> carriedSims;
+    std::map<const os2::SimActor*, const os2::SimActor*> carriers;
+    fs::path lotCharactersDir;
+    double cinematicPrepared = -1;
+    double cinematicLast = 0;
+    bool cinematicWholeHouse = false;
+    double sceneNow = 0;
+    std::optional<os2::FrameView> lastFrameView;
+
+    // Caches that were function statics (keyed by Sim ID, object ID, family
+    // number or the neighborhood's files, so they meant something else, or
+    // were stale, in the next scene: round 20's leftovers).
+    std::map<int16_t, os2::cas::CharacterSpec> mirrorEdits; // the vanity's look being edited, per Sim ID
+    std::set<int16_t> wardrobeFilled; // families whose missing clothing bin familyBin filled
+    std::map<uint32_t, fs::path> portraitFiles; // neighborPortrait: character file by OBJD GUID
+    fs::path portraitFilesDir;                  // ... of this Characters folder
+    std::map<fs::path, std::map<uint32_t, fs::path>> characterFiles; // characterFileOf: folder -> GUID -> file
+    std::map<uint32_t, std::optional<fs::path>> embeddedCharacters;  // unique NPCs' characters written, by GUID
+    std::map<int16_t, std::string> censorReports; // OS2_DEBUG_CENSOR: the last report per Sim
+    size_t thenAtDone = 0;                         // OS2_THEN_AT: the items done
+    std::map<std::pair<int, std::string>, bool> posesFlagged; // OS2_DEBUG_POSES: (Sim, kind) currently flagged
+    std::map<int, std::string> watchedObjects;     // OS2_WATCH_OBJECT: the last line per object
+    uint64_t layersReportedAt = ~0ull;             // OS2_DEBUG_LAYERS: the tick last reported
+    std::map<int, std::pair<float, float>> doorLeaves; // OS2_DEBUG_DOORS: the leaves' last angles per object
+    struct InteractionsAsked {                     // objectHasInteractions' last answer
+        os2::vm::ObjectId id = 0;
+        double at = -1;
+        bool result = false;
+    } interactionsAsked;
+
+    // The sizes of the scene's containers (OS2_DEBUG_SCENE_STATE).
+    std::string sizes() const;
+};
+SceneState gScene;
+// Counts the scenes torn down: run-long tools (the debug detectors) forget
+// the last scene's Sims when it changes.
+uint64_t gSceneGeneration = 0;
+
+std::string SceneState::sizes() const {
+    std::string out;
+    auto add = [&out](const char* name, size_t n) {
+        out += (out.empty() ? "" : " ") + std::string(name) + "=" + std::to_string(n);
+    };
+    add("actors", actors.size());
+    add("lotSims", lotSims.size());
+    add("objectActors", objectActors.size());
+    add("placedObjects", placedObjects.size());
+    add("pickBoxes", pickBoxes.size());
+    add("fenceModels", fenceModels.size());
+    add("simInstances", simInstances.size());
+    add("dialogThumbnails", dialogThumbnails.size());
+    add("madePickBoxes", madePickBoxes.size());
+    add("simAnimationAt", simAnimationAt.size());
+    add("bornCharacters", bornCharacters.size());
+    add("simsLookedAt", simsLookedAt.size());
+    add("wallHung", wallHung.size());
+    add("mirrorEdits", mirrorEdits.size());
+    add("wardrobeFilled", wardrobeFilled.size());
+    add("portraitFiles", portraitFiles.size());
+    add("characterFiles", characterFiles.size());
+    add("embeddedCharacters", embeddedCharacters.size());
+    add("censorReports", censorReports.size());
+    add("posesFlagged", posesFlagged.size());
+    add("watchedObjects", watchedObjects.size());
+    add("doorLeaves", doorLeaves.size());
+    add("simulation", simulation != nullptr);
+    add("objectView", objectView != nullptr);
+    add("effects", effects != nullptr);
+    add("pie", pie != nullptr);
+    add("hood", hood != nullptr);
+    return out;
+}
+
+// Replaces the scene's state with a fresh one (see above).
+void resetSceneState() {
+    gScene = SceneState{};
+    ++gSceneGeneration;
+}
+
 // The arguments of the scene being shown (app/game_flow.hpp): the process's
 // at start-up, replaced when the game flow switches scenes in place.
 NSArray<NSString*>* gSceneArgs = nil;
@@ -190,58 +401,39 @@ constexpr uint32_t kTypeCres = 0xE519C933, kTypeObjd = 0x4F424A44;
 
 // The pie menu over the lot's VM (app/pie_menu.hpp), with the pick boxes of
 // the drawn lot objects (collected before the VM exists).
-std::unique_ptr<os2::PieMenuHost> gPie;
+std::unique_ptr<os2::PieMenuHost>& gPie = gScene.pie;
 // --ui live: the game's live-mode panel over the same VM (app/live_ui.hpp).
-std::unique_ptr<os2::LiveUi> gLive;
-std::unique_ptr<os2::TutorialOverlay> gTutorial; // over a lot of the Tutorial neighborhood (app/tutorial.hpp)
-size_t gTutorialRequestsSeen = 0;
+std::unique_ptr<os2::LiveUi>& gLive = gScene.live;
+std::unique_ptr<os2::TutorialOverlay>& gTutorial = gScene.tutorial; // over a lot of the Tutorial neighborhood (app/tutorial.hpp)
+size_t& gTutorialRequestsSeen = gScene.tutorialRequestsSeen;
 bool liveUiRequested();
 std::optional<std::string> startMode();
 // Buy mode (app/buy_mode.hpp): the puck's Buy button, or --mode buy.
-std::unique_ptr<os2::BuyMode> gBuy;
+std::unique_ptr<os2::BuyMode>& gBuy = gScene.buy;
 void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index); // below setupLiveUi
 void toggleDayNight();  // Buy/Build's day/night button, below setupBuyMode
 void releaseDayNight(); // leaving Buy/Build mode
 // Build mode (app/build_mode.hpp): the puck's Build button, or --mode build.
 // It changes gLotShape (the lot as drawn); rebuildLotModel redraws it.
-std::unique_ptr<os2::BuildMode> gBuild;
-std::unique_ptr<os2::Lot> gLotShape;
-std::unique_ptr<os2::PatternCatalog> gLotPatterns;
-os2::LotViewOptions gLotView; // the view the lot model was last built for
-int gLotInstance = -1;
-int gLotModel = -1;           // the renderer model of gLotInstance (replaced on rebuilds)
+std::unique_ptr<os2::BuildMode>& gBuild = gScene.build;
+std::unique_ptr<os2::Lot>& gLotShape = gScene.lotShape;
+std::unique_ptr<os2::PatternCatalog>& gLotPatterns = gScene.lotPatterns;
+os2::LotViewOptions& gLotView = gScene.lotView; // the view the lot model was last built for
+int& gLotInstance = gScene.lotInstance;
+int& gLotModel = gScene.lotModel;           // the renderer model of gLotInstance (replaced on rebuilds)
 // The wall and roof view (app/wall_view.hpp): the puck's wall fan, Home/End;
 // updateLotView rebuilds the lot model when it changes what is cut.
 os2::WallView gWallView;
-os2::LotModelCache gLotCache;
-bool gLevelsHidden = false; // levels above the camera's are hidden (in the game: --ui live, --mode)
+os2::LotModelCache& gLotCache = gScene.lotCache;
+bool& gLevelsHidden = gScene.levelsHidden; // levels above the camera's are hidden (in the game: --ui live, --mode)
 int viewLevel();                            // below loadLot's helpers
 std::optional<float> floorUnderRay(simd_float3 eye, simd_float3 dir); // below viewLevel
-std::map<int16_t, bool> gWallHung;          // objects that hang on walls (hidden with a wall cut down)
+std::map<int16_t, bool>& gWallHung = gScene.wallHung;          // objects that hang on walls (hidden with a wall cut down)
 bool onCutWall(const os2::Xform& at);       // below viewLevel
 void setWallMode(int mode); // likewise
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index);
-struct PickBox {
-    bool contained = false; // saved in a slot: the box follows where the VM draws it
-    uint32_t instance;
-    simd_float3 lo, hi;
-    simd_float4x4 at;
-    std::shared_ptr<const os2::PickMesh> mesh; // its model's triangles (app/pie_menu.hpp)
-};
-std::vector<PickBox> gPickBoxes;
-// The lot's placed objects by object ID (the cObject instance's low 16
-// bits): what is needed to pose one when the VM animates it.
-struct PlacedObject {
-    std::string cres;
-    std::map<std::string, std::string> materials;
-    std::array<float, 3> position;
-    std::array<float, 4> rotation;
-    std::string definition; // the cObject's OBJD file name ("Newspaper_objt")
-    int instance = -1; // renderer instance of its static model
-    bool contained = false; // saved in a slot (at (0, 0)): hidden until the VM places it
-    std::vector<os2::Xform> pose; // its model's local pose as saved (a chair pushed in), empty: the rest pose
-};
-std::map<int16_t, PlacedObject> gPlacedObjects;
+std::vector<PickBox>& gPickBoxes = gScene.pickBoxes;
+std::map<int16_t, PlacedObject>& gPlacedObjects = gScene.placedObjects;
 // Caches of the scene's renderer ids, cleared by unloadScene: the renderer is
 // replaced with each scene, and a model or instance id of the old one names
 // another model or instance in the new one. They were function statics: on
@@ -249,32 +441,32 @@ std::map<int16_t, PlacedObject> gPlacedObjects;
 // 336 of the new lot's objects (N002_Lot3 after N002_Lot10: the grandfather
 // clock drawn as a brick chimney piece where a railing stands, in front of
 // the Sims: "a menina está carregando um pedaço de parede").
-std::map<std::string, int> gFenceModels; // fence CRES -> model id (-1: failed)
-std::vector<int> gFenceInstances;        // instances placeFencePieces places, reused when it runs again
-std::map<const os2::SimActor*, int> gSimInstances; // a Sim's actor -> its instance (hidden above the level shown)
-std::map<std::pair<int16_t, int16_t>, std::unique_ptr<os2::RgbaImage>> gDialogThumbnails; // (object, neighbor) -> picture
-std::map<int16_t, std::string> gMadePickBoxes; // objects made in play: id -> CRES their pick box was made for
+std::map<std::string, int>& gFenceModels = gScene.fenceModels; // fence CRES -> model id (-1: failed)
+std::vector<int>& gFenceInstances = gScene.fenceInstances;        // instances placeFencePieces places, reused when it runs again
+std::map<const os2::SimActor*, int>& gSimInstances = gScene.simInstances; // a Sim's actor -> its instance (hidden above the level shown)
+std::map<std::pair<int16_t, int16_t>, std::unique_ptr<os2::RgbaImage>>& gDialogThumbnails = gScene.dialogThumbnails; // (object, neighbor) -> picture
+std::map<int16_t, std::string>& gMadePickBoxes = gScene.madePickBoxes; // objects made in play: id -> CRES their pick box was made for
 // Skinned models posed every frame by their animation players.
-std::vector<std::unique_ptr<os2::SimActor>> gActors;
-std::map<int16_t, os2::SimActor*> gObjectActors; // objects the VM has animated (in gActors)
-std::unique_ptr<os2::CinematicPlayer> gCinematic; // the cinematic prepared or playing (see updateCinematic)
-std::unique_ptr<os2::TvBroadcast> gTv;             // TV channels on the lot's screens
+std::vector<std::unique_ptr<os2::SimActor>>& gActors = gScene.actors;
+std::map<int16_t, os2::SimActor*>& gObjectActors = gScene.objectActors; // objects the VM has animated (in gActors)
+std::unique_ptr<os2::CinematicPlayer>& gCinematic = gScene.cinematic; // the cinematic prepared or playing (see updateCinematic)
+std::unique_ptr<os2::TvBroadcast>& gTv = gScene.tv;             // TV channels on the lot's screens
 void cinematicActorAnimates(int16_t id, double at);
 float gUiScale = 1; // drawable pixels per view point
 // --hood: the neighborhood view (app/hood_mode.hpp) in place of a lot.
-std::unique_ptr<os2::HoodMode> gHood;
+std::unique_ptr<os2::HoodMode>& gHood = gScene.hood;
 std::optional<os2::LotCamera::Pose> gHoodReloadPose; // the camera across a neighborhood reload
-std::unique_ptr<os2::CasMode> gCas; // --cas: Create-a-Sim (app/cas_mode.hpp)
+std::unique_ptr<os2::CasMode>& gCas = gScene.cas; // --cas: Create-a-Sim (app/cas_mode.hpp)
 // --hood <N> --hood-lot <id>: that lot's package, shown as --lot is.
-std::optional<std::string> gHoodLot;
+std::optional<std::string>& gHoodLot = gScene.hoodLot;
 // That lot has no family: it opens in Buy mode and Live stays off (lotStartMode).
-bool gLotVacant = false;
+bool& gLotVacant = gScene.lotVacant;
 std::vector<std::string> processArguments();
 // The game flow (app/game_flow.hpp): the user's folder, the main menu, the
 // puck's options, the scene asked for next and the steps used so far.
 std::unique_ptr<os2::UserData> gUser;
-std::unique_ptr<os2::MainMenu> gMenu;
-std::unique_ptr<os2::OptionsPanel> gOptions;
+std::unique_ptr<os2::MainMenu>& gMenu = gScene.menu;
+std::unique_ptr<os2::OptionsPanel>& gOptions = gScene.options;
 os2::GameSettings gSettings;
 
 std::optional<os2::Scene> gPendingScene;
@@ -282,9 +474,9 @@ std::optional<os2::Scene> gPendingScene;
 // family bin once the neighborhood is back (HoodMode::familyCreated).
 std::optional<uint32_t> gCreatedFamily;
 bool gQuitRequested = false;
-size_t gStepsUsed = 0;    // --click/--wait steps this scene has taken (headless)
-double gHeadlessClock = 0; // the caller's clock of headless VM runs (--wait, --run-vm)
-fs::path gLotFile;        // the package the running lot came from (saved back to)
+size_t& gStepsUsed = gScene.stepsUsed;    // --click/--wait steps this scene has taken (headless)
+double& gHeadlessClock = gScene.headlessClock; // the caller's clock of headless VM runs (--wait, --run-vm)
+fs::path& gLotFile = gScene.lotFile;        // the package the running lot came from (saved back to)
 std::function<void()> gOnSceneRequest; // the app delegate's switch (interactive)
 // Hook for the intro movies (the video agent): called once, before the
 // first main menu is shown; null plays nothing.
@@ -574,34 +766,28 @@ const std::vector<os2::SimPart>& simParts(os2::ResourceIndex& index) {
 }
 
 // The lot's objects in the VM (--vm, --run-vm), driving the lot's Sims.
-std::unique_ptr<os2::LotSimulation> gSimulation;
+std::unique_ptr<os2::LotSimulation>& gSimulation = gScene.simulation;
 // The lot's objects drawn where the VM puts them (app/vm_objects.hpp).
-std::unique_ptr<os2::VmObjectView> gObjectView;
-std::unique_ptr<os2::AnimSnapView> gSnaps; // models the animations' snap events put in the Sims' hands
+std::unique_ptr<os2::VmObjectView>& gObjectView = gScene.objectView;
+std::unique_ptr<os2::AnimSnapView>& gSnaps = gScene.snaps; // models the animations' snap events put in the Sims' hands
 // The lot's lights from the VM: the clock's day/night, rooms, lamps (app/lot_lighting.hpp).
-std::unique_ptr<os2::LotLighting> gLighting;
-std::optional<os2::LotLightMapLayout> gLightMapLayout; // the lot's light-map atlas
+std::unique_ptr<os2::LotLighting>& gLighting = gScene.lighting;
+std::optional<os2::LotLightMapLayout>& gLightMapLayout = gScene.lightMapLayout; // the lot's light-map atlas
 // Without the VM: the Sims' shadow light of the --lighting state (with the VM, LotLighting's).
-std::optional<os2::SimShadowLight> gStaticShadowLight;
+std::optional<os2::SimShadowLight>& gStaticShadowLight = gScene.staticShadowLight;
 // Doors opening as the Sims walk through (app/door_portals.hpp).
-std::unique_ptr<os2::DoorPortals> gDoors;
-struct LotSim {
-    os2::SimActor* actor;
-    int16_t id; // object ID (the cObject's instance)
-    fs::path character;
-    std::string idle;
-};
-std::vector<LotSim> gLotSims;
+std::unique_ptr<os2::DoorPortals>& gDoors = gScene.doors;
+std::vector<LotSim>& gLotSims = gScene.lotSims;
 // Sims drawn in another Sim's slot (a carried baby), and who carries each.
-std::set<const os2::SimActor*> gCarriedSims;
-std::map<const os2::SimActor*, const os2::SimActor*> gCarriers;
+std::set<const os2::SimActor*>& gCarriedSims = gScene.carriedSims;
+std::map<const os2::SimActor*, const os2::SimActor*>& gCarriers = gScene.carriers;
 std::unique_ptr<os2::UiResources> gTexts; // Text/*.package's strings (uiText, the VM's textTables)
 // Sims the VM adds while the lot plays (adoptVmSims):
-std::map<int16_t, fs::path> gBornCharacters; // neighbor ID -> character file written in this session
-std::set<int16_t> gSimsLookedAt;              // person objects already adopted or given up on
-fs::path gLotCharactersDir;                   // the lot's neighborhood Characters folder
-int gPlumbob = -1; // renderer instance of the plumbob over the selected Sim (placePlumbob)
-float gPlumbobBottom = 0; // lowest point of its mesh (modelled about 1.24 over the origin)
+std::map<int16_t, fs::path>& gBornCharacters = gScene.bornCharacters; // neighbor ID -> character file written in this session
+std::set<int16_t>& gSimsLookedAt = gScene.simsLookedAt;              // person objects already adopted or given up on
+fs::path& gLotCharactersDir = gScene.lotCharactersDir;                   // the lot's neighborhood Characters folder
+int& gPlumbob = gScene.plumbob; // renderer instance of the plumbob over the selected Sim (placePlumbob)
+float& gPlumbobBottom = gScene.plumbobBottom; // lowest point of its mesh (modelled about 1.24 over the origin)
 
 // Sound (app/lot_audio.hpp): gGameAudio lives across scenes (the mixer on
 // the device, the mode music: NHood, CAS, Buy, Build); gAudio is the lot's.
@@ -611,9 +797,9 @@ float gPlumbobBottom = 0; // lowest point of its mesh (modelled about 1.24 over 
 // default). --music <category> plays music in live mode ("Build", "Nhood",
 // or a radio station: "pop", "rnb", ...).
 std::unique_ptr<os2::GameAudio> gGameAudio;
-std::unique_ptr<os2::LotAudio> gAudio;
-os2::LotCamera* gCamera = nullptr;
-std::unique_ptr<os2::LotCameraFollow> gCameraFollow; // --lot: pivot held to the lot, on the Sim's floor
+std::unique_ptr<os2::LotAudio>& gAudio = gScene.audio;
+os2::LotCamera*& gCamera = gScene.camera;
+std::unique_ptr<os2::LotCameraFollow>& gCameraFollow = gScene.cameraFollow; // --lot: pivot held to the lot, on the Sim's floor
 
 // Page Up / Page Down and the puck's floor buttons ("Subir um Andar (Page
 // Up)", "Descer um Andar (Page Down)"): in Buy mode the floor objects go on
@@ -845,7 +1031,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         if (it == gLotSims.end())
             return;
         try {
-            static std::unique_ptr<os2::cas::CasCatalog> catalog;
+            static std::unique_ptr<os2::cas::CasCatalog> catalog; // (the game's data: for the app's life)
             static std::unique_ptr<os2::cas::FaceBaker> baker;
             if (!catalog) {
                 catalog = std::make_unique<os2::cas::CasCatalog>(os2::cas::CasCatalog::load(index));
@@ -921,7 +1107,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     // double bed's "-", o2a-bookcase-get-middle: only the child's o2c-
     // exists) and the game shows nothing for them.
     static auto reportMissing = [](int16_t id, const std::string& name, const std::exception& e) {
-        static std::set<std::string> reported;
+        static std::set<std::string> reported; // (animation names: for the app's life)
         if (reported.insert(name).second)
             std::fprintf(stderr, "opensims2: object %d: %s: %s\n", id, name.c_str(), e.what());
     };
@@ -1413,8 +1599,8 @@ std::optional<os2::RgbaImage> simPortrait(int16_t id) {
 // the character file in the lot's neighborhood whose OBJD GUID is the
 // neighbor's (the files are read once, for their GUIDs).
 std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId) {
-    static std::map<uint32_t, fs::path> byGuid;
-    static fs::path scanned;
+    auto& byGuid = gScene.portraitFiles; // (the neighborhood's files: per scene)
+    auto& scanned = gScene.portraitFilesDir;
     if (!gSimulation || gLotSims.empty())
         return std::nullopt;
     const auto& nbs = gSimulation->machine().neighbors;
@@ -1451,7 +1637,7 @@ std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId) {
 // catalog thumbnail (ObjectThumbnails.package, keyed as the live UI keys it).
 const os2::RgbaImage* dialogThumbnail(int16_t object, int16_t neighbor) {
     auto& cache = gDialogThumbnails; // (the lot's object IDs: per scene)
-    static std::unique_ptr<os2::DbpfPackage> thumbs;
+    static std::unique_ptr<os2::DbpfPackage> thumbs; // (the game's ObjectThumbnails.package: for the app's life)
     static std::map<uint32_t, const os2::DbpfEntry*> thumbIndex;
     if (!gSimulation)
         return nullptr;
@@ -1522,7 +1708,7 @@ const std::vector<os2::Tgi>* familyBin(int16_t sim, const os2::cas::CasCatalog* 
     auto f = m.families.find(family);
     if (f == m.families.end())
         return nullptr;
-    static std::set<int16_t> filled;
+    auto& filled = gScene.wardrobeFilled; // (family numbers: per scene; round 20)
     // Only real families (1..0x7FD9) have a bin, as cTSFamily::AddMemberClothing
     // (BV 0x47ec68) checks; the NPC family 0x7FFF never gets one.
     if (f->second.wardrobe.empty() && catalog && family > 0 && family < 0x7FDA && filled.insert(family).second)
@@ -1556,7 +1742,7 @@ bool inBin(const std::vector<os2::Tgi>& bin, const os2::Tgi& k) {
 void setupAspirationWants(os2::ResourceIndex& index) {
     gPie->dialogWindow().lifetimeWants = [&index](uint32_t aspiration) {
         std::vector<os2::DialogWindow::LifetimeWant> out;
-        static std::shared_ptr<const os2::wants::Library> own;
+        static std::shared_ptr<const os2::wants::Library> own; // (the game's WantTuning: for the app's life)
         std::shared_ptr<const os2::wants::Library> lib;
         if (gSimulation)
             if (os2::vm::WantSystem* ws = os2::vm::wantSystem(gSimulation->machine()))
@@ -1608,7 +1794,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
             return it == byKey.end() ? nullptr : it->second;
         }
     };
-    static Cas cas;
+    static Cas cas; // (the game's CAS catalog and thumbnails: for the app's life)
     auto load = [&index]() -> Cas& {
         if (!cas.catalog) {
             cas.catalog = std::make_unique<os2::cas::CasCatalog>(os2::cas::CasCatalog::load(index));
@@ -1828,7 +2014,8 @@ void setupWardrobe(os2::ResourceIndex& index) {
     // the choices of each group as CAS offers them (cas_mode.cpp), OK
     // writing the character file and dressing the Sim again in what it
     // wears (OnOk: person data 8, 119, 120).
-    static std::map<int16_t, os2::cas::CharacterSpec> edits;
+    // (edits: by Sim ID, gScene.mirrorEdits; previews: by the game's face and
+    // texture names, for the app's life.)
     static std::map<std::string, std::unique_ptr<os2::RgbaImage>> previews;
     struct Choice {
         const os2::RgbaImage* thumb = nullptr;
@@ -2004,6 +2191,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
         return items;
     };
     auto editOf = [readSpec](int16_t sim) -> os2::cas::CharacterSpec* {
+        auto& edits = gScene.mirrorEdits;
         auto it = edits.find(sim);
         if (it == edits.end()) {
             auto spec = readSpec(sim);
@@ -2028,6 +2216,7 @@ void setupWardrobe(os2::ResourceIndex& index) {
         }
     };
     w.vanityDone = [writeSpec](int16_t sim, bool ok) {
+        auto& edits = gScene.mirrorEdits;
         auto it = edits.find(sim);
         if (it == edits.end())
             return;
@@ -2080,6 +2269,25 @@ void setupWardrobe(os2::ResourceIndex& index) {
         const os2::SimPart* part = load().part(k);
         return spec && part && os2::cas::fits(*part, spec->age, spec->gender);
     };
+    // OS2_PROBE_SCENE_CACHES=1 (test aid, tests/scene_cycle.sh): the first
+    // lot Sim's family loses its clothing bin (as one an older build of our
+    // CAS made) and the wardrobe and the vanity are asked for it, so the
+    // per-scene caches (gScene.wardrobeFilled, gScene.mirrorEdits) hold
+    // something the switch must clear.
+    if (std::getenv("OS2_PROBE_SCENE_CACHES") && !gLotSims.empty()) {
+        const int16_t sim = gLotSims.front().id;
+        const size_t edits = gScene.mirrorEdits.size(), filled = gScene.wardrobeFilled.size();
+        if (const os2::vm::Object* o = machine.object(sim); o && o->person)
+            if (auto f = machine.families.find(o->person->data[os2::vm::persondata::FamilyNumber]); f != machine.families.end())
+                f->second.wardrobe.clear();
+        if (w.outfits)
+            w.outfits(sim, 0x001);
+        if (w.vanityItems)
+            w.vanityItems(sim, 0);
+        std::printf("opensims2: scene caches probe: Sim %d: mirrorEdits %zu -> %zu, wardrobeFilled %zu -> %zu\n", sim, edits,
+                    gScene.mirrorEdits.size(), filled, gScene.wardrobeFilled.size());
+        std::fflush(stdout);
+    }
 }
 
 // --ui live: the live-mode panel (app/live_ui.hpp) in place of the pie
@@ -2673,7 +2881,7 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
     // pick box, so a click on the bills found nothing: live QA 15).
     if (gPie && gObjectView && gIndex) {
         auto& made = gMadePickBoxes; // (a new lot: none made yet; a new host can reuse the old one's address)
-        static std::map<std::string, std::shared_ptr<const os2::PickMesh>> meshes; // by CRES (null: none)
+        static std::map<std::string, std::shared_ptr<const os2::PickMesh>> meshes; // by CRES (null: none; the game's models: for the app's life)
         std::set<int16_t> drawnNow;
         gObjectView->forEachDrawn([&](int16_t id, int, os2::SimActor*) { drawnNow.insert(id); });
         for (auto it = made.begin(); it != made.end();) {
@@ -3096,11 +3304,11 @@ os2::Skeleton loadSkeleton(os2::ResourceIndex& index, const std::string& cres) {
 // the colour the game's one has, and the game's is hidden, so that there is
 // one plumbob.
 constexpr float kPlumbobGap = 0.2f, kPlumbobSpinSeconds = 2.316f;
-bool gVmPlumbob = false;           // the VM's PlumbBob is over the selected Sim
-std::set<int16_t> gHiddenPlumbobs; // the game's PlumbBobs the app hides (its own stands in)
-std::optional<os2::Xform> gAppPlumbobAt; // where the app's plumbob is drawn, if it is
-std::map<std::string, int> gPlumbobModels; // plumbob model per core material (renderer ids)
-std::string gPlumbobMaterial;      // the app plumbob's core material ("" = the model's)
+bool& gVmPlumbob = gScene.vmPlumbob;           // the VM's PlumbBob is over the selected Sim
+std::set<int16_t>& gHiddenPlumbobs = gScene.hiddenPlumbobs; // the game's PlumbBobs the app hides (its own stands in)
+std::optional<os2::Xform>& gAppPlumbobAt = gScene.appPlumbobAt; // where the app's plumbob is drawn, if it is
+std::map<std::string, int>& gPlumbobModels = gScene.plumbobModels; // plumbob model per core material (renderer ids)
+std::string& gPlumbobMaterial = gScene.plumbobMaterial;      // the app plumbob's core material ("" = the model's)
 void choosePlumbob(os2::Renderer& renderer) {
     if (!gSimulation || !gObjectView || !gPie)
         return;
@@ -3153,7 +3361,7 @@ void choosePlumbob(os2::Renderer& renderer) {
 // every Sim (test aids: before/after shots).
 void updateCensor(os2::Renderer& renderer) {
     std::vector<os2::Renderer::CensorBox> boxes;
-    static std::map<int16_t, std::string> lastReport;
+    auto& lastReport = gScene.censorReports; // (by Sim ID: per scene)
     if (gSimulation && gObjectView && !std::getenv("OS2_NO_CENSOR")) {
         auto& m = gSimulation->machine();
         for (const LotSim& sim : gLotSims) {
@@ -3187,8 +3395,8 @@ void updateCensor(os2::Renderer& renderer) {
 
 // The lot's particle effects (app/lot_effects.hpp): what the VM starts, and
 // --effect <name>[@<object id>[:<bone index>] | @x,y,z] (repeatable) by hand.
-std::unique_ptr<os2::LotEffects> gEffects;
-bool gEffectsFailed = false;
+std::unique_ptr<os2::LotEffects>& gEffects = gScene.effects;
+bool& gEffectsFailed = gScene.effectsFailed;
 void updateEffects(os2::Renderer& renderer, double seconds) {
     if (!gEffects && !gEffectsFailed && gIndex) {
         try {
@@ -3316,32 +3524,21 @@ void placePlumbob(os2::Renderer& renderer, double seconds) {
 // <scene>[@id[,id...]] (the actors in the CINE's order; default: the lot's
 // Sims for the Sim actors) to try one. Everything runs on the scene clock.
 std::unique_ptr<os2::ScreenFxLayer> gScreenFx;
-os2::ScreenFxLayer::Params gScreenFxParams;
+os2::ScreenFxLayer::Params& gScreenFxParams = gScene.screenFxParams;
 uint64_t gCinematicSerialSeen = 0;          // the last VM request taken (CinematicRequest::serial)
-std::optional<double> gCinematicStartAt;    // when the prepared scene starts (scene clock; may be past)
-double gCinematicPrepared = -1;             // scene clock when it was prepared (waits for an actor's animation)
-double gCinematicLast = 0;                  // scene clock of the last update
-bool gCinematicWholeHouse = false;          // the scene shows the whole house (flag 0x08, moveIn)
-std::map<int16_t, double> gSimAnimationAt;  // each Sim's last Animate Sim start (scene clock)
-double gCrossfadeAt = -1e9;        // scene clock of the last snapshot
-double gSceneNow = 0;              // the scene clock of the last poseActors
-std::optional<os2::FrameView> gLastFrameView; // what was drawn last (snapshots)
+std::optional<double>& gCinematicStartAt = gScene.cinematicStartAt;    // when the prepared scene starts (scene clock; may be past)
+double& gCinematicPrepared = gScene.cinematicPrepared;             // scene clock when it was prepared (waits for an actor's animation)
+double& gCinematicLast = gScene.cinematicLast;                  // scene clock of the last update
+bool& gCinematicWholeHouse = gScene.cinematicWholeHouse;          // the scene shows the whole house (flag 0x08, moveIn)
+std::map<int16_t, double>& gSimAnimationAt = gScene.simAnimationAt;  // each Sim's last Animate Sim start (scene clock)
+double& gCrossfadeAt = gScene.crossfadeAt;        // scene clock of the last snapshot
+double& gSceneNow = gScene.sceneNow;              // the scene clock of the last poseActors
+std::optional<os2::FrameView>& gLastFrameView = gScene.lastFrameView; // what was drawn last (snapshots)
 uint32_t gLastFrameW = 1280, gLastFrameH = 720;
 constexpr double kCrossfadeSeconds = 2.0; // crossfadeshort/standard: screen mode 4, length 2, strength 1 -> 0
 constexpr double kCinematicWait = 1.0;    // without "Start Animations Now": the longest wait for an actor
 
-// What a scene forces while it plays (the binary's Start/Stop,
-// docs/cinematics-mac.md §6): the game speed (here normal and unpaused,
-// inferred: a paused game would freeze the scene) and, with "Show Entire
-// House" (flag 0x08; movein_cine always), the walls up and the top floor.
-// Put back when the scene ends.
-struct CinematicForced {
-    bool active = false;
-    int16_t speed = 0, paused = 0;
-    std::optional<int> walls; // the wall mode before, if the walls were not up
-    std::optional<int> level;                       // the camera's floor before
-};
-CinematicForced gCinematicForced;
+CinematicForced& gCinematicForced = gScene.cinematicForced;
 
 void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
     if (!gCinematicForced.active) {
@@ -3620,7 +3817,7 @@ void attachLetterbox(os2::Renderer& renderer, MTL::Device* device, uint32_t colo
 // NPCs not written yet) stay undrawn.
 
 std::optional<fs::path> characterFileOf(uint32_t guid) {
-    static std::map<fs::path, std::map<uint32_t, fs::path>> byDir;
+    auto& byDir = gScene.characterFiles; // (the neighborhood's and session's files: per scene)
     for (const fs::path& dir : {os2::sessionCharactersDir(), gLotCharactersDir}) {
         if (dir.empty())
             continue;
@@ -3696,7 +3893,7 @@ void adoptVmSims(os2::Renderer& renderer) {
         // The game's unique NPCs (the Grim Reaper, the Pollination
         // Technician) keep their character in their object's group.
         if (const os2::vm::Neighbor* n = m.neighbor(neighbor); !file && n && n->guid) {
-            static std::map<uint32_t, std::optional<fs::path>> embedded;
+            auto& embedded = gScene.embeddedCharacters; // (written in the session's folder: per scene)
             auto [it, fresh] = embedded.try_emplace(n->guid);
             if (fresh)
                 try {
@@ -3771,7 +3968,7 @@ void sampleDrawnPlaces(double scene) {
     // "here" a Go Here to <entry> = x,y[,level] (to get up, change seats,
     // climb out of the pool).
     if (static const char* then = std::getenv("OS2_THEN_AT"); then && gPie) {
-        static size_t done = 0;
+        size_t& done = gScene.thenAtDone; // (ticks of this scene's VM)
         std::vector<std::string> items;
         for (std::string rest = then; !rest.empty();) {
             const size_t semi = rest.find(';');
@@ -3845,6 +4042,9 @@ void sampleDrawnPlaces(double scene) {
                 std::fflush(stdout);
             });
         }
+        static uint64_t generation = gSceneGeneration; // (a new scene: forget the last one's Sims)
+        if (generation != gSceneGeneration)
+            generation = gSceneGeneration, detector.forgetSims();
         for (const auto& s : gLotSims) {
             const os2::vm::Object* o = m.object(s.id);
             if (!o || !o->person)
@@ -3902,6 +4102,9 @@ void sampleDrawnPlaces(double scene) {
                 std::fflush(stdout);
             });
         }
+        static uint64_t generation = gSceneGeneration; // (a new scene: forget the last one's Sims)
+        if (generation != gSceneGeneration)
+            generation = gSceneGeneration, detector.forgetSims();
         for (const auto& s : gLotSims) {
             const os2::vm::Object* o = m.object(s.id);
             if (!o || !o->person)
@@ -3971,7 +4174,7 @@ void sampleDrawnPlaces(double scene) {
             double seatMax = 0, behindMax = 0;
         };
         static std::map<std::string, Count> counts;
-        static std::map<std::pair<int, std::string>, bool> flagged; // (Sim, kind) currently flagged
+        auto& flagged = gScene.posesFlagged; // (Sim, kind) currently flagged (counts: the whole run, at exit)
         static bool registered = false;
         if (!registered) {
             registered = true;
@@ -4101,6 +4304,9 @@ void sampleDrawnPlaces(double scene) {
                 std::fflush(stdout);
             });
         }
+        static uint64_t generation = gSceneGeneration; // (a new scene: forget the last one's Sims)
+        if (generation != gSceneGeneration)
+            generation = gSceneGeneration, check.forgetSims();
         // The tables, counters and seats (their models' boxes where they are drawn now).
         std::vector<os2::SeatCheck::Box> boxes;
         for (const auto& b : gPickBoxes) {
@@ -4203,7 +4409,7 @@ void sampleDrawnPlaces(double scene) {
             }
     }
     if (watch && gObjectView) {
-        static std::map<int, std::string> last;
+        auto& last = gScene.watchedObjects; // (by object ID: per scene)
         for (const auto& [id, o] : m.objects()) {
             if (o.person || !o.definition ||
                 (std::to_string(id) != watch && o.definition->fileName.find(watch) == std::string::npos))
@@ -4680,7 +4886,7 @@ std::optional<simd_float3> loadSkinned(os2::Renderer& renderer, os2::ResourceInd
     return simd_make_float3(2.5f, -2.5f, 0.9f);
 }
 
-std::unique_ptr<os2::UiLayer> gUi;
+std::unique_ptr<os2::UiLayer>& gUi = gScene.ui;
 
 // --ui <instance-hex>: lays out that UI script and hands it to the renderer as
 // an overlay. Returns the canvas size, for the screenshot.
@@ -4853,8 +5059,7 @@ bool saveGameNow() {
 // STR# 0x8E), put up as a dialog of no object that the pie menu draws and
 // that pauses the lot like the trees' dialogs.
 constexpr os2::vm::ObjectId kFlowDialog = -2;
-enum class FlowDialog { None, Leave, Quit };
-FlowDialog gFlowDialog = FlowDialog::None;
+FlowDialog& gFlowDialog = gScene.flowDialog;
 
 std::string uiText(uint32_t instance, uint32_t index, const char* fallback) {
     try {
@@ -5050,71 +5255,19 @@ void runTicksHeadless(long ticks, os2::Renderer* renderer = nullptr) {
 
 // Everything a scene loaded, so that the next one starts clean (the
 // renderer is replaced by the caller).
+// OS2_DEBUG_SCENE_STATE=1 prints the scene state's sizes before and after
+// (tests/scene_cycle.sh: all empty after).
 void unloadScene() {
-    gFlowDialog = FlowDialog::None;
-    gCinematic.reset(); // (the VM's request list stays counted: gCinematicSerialSeen)
-    gCinematicStartAt.reset();
-    gCinematicForced = {};
+    static const bool debug = std::getenv("OS2_DEBUG_SCENE_STATE") != nullptr;
+    if (debug)
+        std::printf("opensims2: scene state before unload: %s\n", gScene.sizes().c_str());
     if (gGameAudio)
         gGameAudio->setDipping(false);
-    gSimAnimationAt.clear();
-    gBornCharacters.clear();
-    gSimsLookedAt.clear();
-    gScreenFxParams = {};
-    gCrossfadeAt = -1e9;
-    gBuild.reset();
-    gBuy.reset();
-    gTutorial.reset();
-    gLive.reset();
-    gPie.reset();
-    gOptions.reset();
-    gMenu.reset();
-    gHood.reset();
-    gCas.reset();
-    gDoors.reset();
-    gLighting.reset();
-    gSnaps.reset();
-    gObjectView.reset();
-    gTv.reset();
-    // The effects draw through the scene's renderer (its scene hook), which
-    // the next scene replaces: kept, they hooked into the freed renderer and
-    // crashed on the exit after a scene switch (~LotEffects, SIGBUS/SIGSEGV).
-    gEffects.reset();
-    gEffectsFailed = false;
-    gSimulation.reset();
-    gAudio.reset();
-    gCameraFollow.reset();
-    gUi.reset();
-    gObjectActors.clear();
-    gLotSims.clear();
-    gActors.clear();
-    gPlacedObjects.clear();
-    gFenceModels.clear();
-    gFenceInstances.clear();
-    gSimInstances.clear();
-    gDialogThumbnails.clear();
-    gMadePickBoxes.clear();
-    gPickBoxes.clear();
-    gPlumbob = -1;
-    gPlumbobBottom = 0;
-    gVmPlumbob = false;
-    gHiddenPlumbobs.clear();
-    gAppPlumbobAt.reset();
-    gPlumbobMaterial.clear();
-    gPlumbobModels.clear();
-    gLightMapLayout.reset();
-    gLotShape.reset();
-    gLotPatterns.reset();
-    gLotView = {};
-    gLotInstance = -1;
-    gLotModel = -1;
-    gLotCache = {};
-    gHoodLot.reset();
-    gLotVacant = false;
-    gLotFile.clear();
-    gStepsUsed = 0;
-    gHeadlessClock = 0;
-    gCamera = nullptr;
+    resetSceneState();
+    if (debug) {
+        std::printf("opensims2: scene state after unload: %s\n", gScene.sizes().c_str());
+        std::fflush(stdout);
+    }
 }
 
 // --- The game's mouse cursors (app/game_cursors.hpp) -------------------------
@@ -5168,9 +5321,9 @@ struct CursorExtras {
 // menu's entries), for the Live cursor; kept for half a second per object so
 // a mouse move does not run the check trees each time.
 bool objectHasInteractions(os2::vm::ObjectId id) {
-    static os2::vm::ObjectId lastId = 0;
-    static double lastAt = -1;
-    static bool lastResult = false;
+    os2::vm::ObjectId& lastId = gScene.interactionsAsked.id; // (an object ID: per scene)
+    double& lastAt = gScene.interactionsAsked.at;
+    bool& lastResult = gScene.interactionsAsked.result;
     const double now = CACurrentMediaTime();
     if (id == lastId && now - lastAt < 0.5)
         return lastResult;
@@ -7039,7 +7192,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     // OS2_DEBUG_LAYERS=1: each game hour, the object actor with
                     // the most animation layers (the held ones merge: AnimPlayer).
                     if (std::getenv("OS2_DEBUG_LAYERS") && gSimulation && gSimulation->ticks() % 1800 == 0) {
-                        static uint64_t lastHour = ~0ull;
+                        uint64_t& lastHour = gScene.layersReportedAt;
                         if (gSimulation->ticks() != lastHour) {
                             lastHour = gSimulation->ticks();
                             int most = -1;
@@ -7062,7 +7215,7 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     // OS2_DEBUG_DOORS=1: the doors' leaves (r_door_rot, l_door_rot
                     // about Z, degrees) as they turn by 10 degrees or come back closed.
                     if (std::getenv("OS2_DEBUG_DOORS")) {
-                        static std::map<int, std::pair<float, float>> last;
+                        auto& last = gScene.doorLeaves; // (by object ID: per scene)
                         for (auto& [id, actor] : gObjectActors) {
                             if (!actor)
                                 continue;
@@ -7457,6 +7610,10 @@ void raiseOpenFileLimit() {
 int main() {
     raiseOpenFileLimit();
     liveShotFile(); // (installs its SIGUSR1 handler before anything can send one)
+    // Quitting tears the scene down as a scene switch does (in gScene's
+    // order, while the app's globals it uses are still there), before the
+    // statics go: registered after them, it runs first.
+    std::atexit([] { resetSceneState(); });
     @autoreleasepool {
         for (NSString* a in NSProcessInfo.processInfo.arguments)
             if ([a isEqualToString:@"--help"] || [a isEqualToString:@"-h"]) {

@@ -18,6 +18,9 @@ namespace os2 {
 
 class JumpDetector {
 public:
+    // Forgets the Sims followed (a new scene: its object IDs name other Sims);
+    // the totals stay.
+    void forgetSims() { tracks_.clear(); }
     struct Sample {
         int16_t id = 0;
         double time = 0;           // scene seconds

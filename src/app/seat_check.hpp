@@ -30,6 +30,9 @@ namespace os2 {
 
 class SeatCheck {
 public:
+    // Forgets the Sims followed (a new scene: its object IDs name other Sims);
+    // the totals stay.
+    void forgetSims() { tracks_.clear(); }
     // An object's box (its model's bounds) where it is drawn.
     struct Box {
         int16_t id = 0;

@@ -9,6 +9,12 @@
 #   exit (~LotEffects) or on the next lot;
 # - the open mood popup's windows were read after their copy went
 #   (UiElement::attr in LiveUi::screen).
+# - per-scene state that outlived its scene (DEBITOS-TECNICOS.md 1.3/1.4):
+#   with OS2_DEBUG_SCENE_STATE every unload must leave gScene empty, and with
+#   OS2_PROBE_SCENE_CACHES each lot's vanity edit and filled wardrobe must
+#   start from nothing (the mirror edits by Sim ID and the wardrobes filled
+#   by family number of round 20 kept the last lot's: on N002_Lot10's second
+#   visit its family's bin stayed unfilled).
 # Run it with an AddressSanitizer build of the app too (cmake -B build-asan
 # -DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_OBJCXX_FLAGS=-fsanitize=address
 # -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address): any report fails it.
@@ -19,6 +25,7 @@ rm -rf "$out"; mkdir -p "$out/user"
 leave="--click 139,690 --click 236,628 --click 528,398 --wait 2" # Options, Neighborhood, Yes (save)
 (
     ulimit -S -n 256 # the soft limit only, as launchd sets it
+    OS2_DEBUG_SCENE_STATE=1 OS2_PROBE_SCENE_CACHES=1 \
     ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 "$app" --data "$OS2_DATA" --user-dir "$out/user" --no-audio --hood N002 \
         --hood-lot-click 10 --click 595,592 --wait 30 --click 409,640 --wait 30 $leave \
         --click 807,104 --click 595,592 --wait 60 $leave \
@@ -32,6 +39,15 @@ switches=$(grep -c "scene switch" "$out/run.log")
 if [ "$switches" -lt 5 ]; then echo "FAIL: $switches scene switches (lot, hood, lot, hood, lot expected)"; fail=1; fi
 if [ "$(grep -c 'entering lot 10\|hood-lot 10 ' "$out/run.log")" -lt 2 ]; then echo "FAIL: N002_Lot10 not entered twice"; fail=1; fi
 if ! grep -q "N002_Lot3" "$out/run.log"; then echo "FAIL: N002_Lot3 not loaded"; fail=1; fi
+after=$(grep -c "scene state after unload" "$out/run.log")
+if [ "$after" -lt 5 ]; then echo "FAIL: $after scene state reports after an unload (5 expected)"; fail=1; fi
+if grep "scene state after unload" "$out/run.log" | grep -q '=[1-9]'; then
+    echo "FAIL: scene state not empty after an unload"; grep "scene state after unload" "$out/run.log" | grep '=[1-9]' | head -3; fail=1
+fi
+probes=$(grep -c "scene caches probe: .*mirrorEdits 0 -> 1, wardrobeFilled 0 -> 1" "$out/run.log")
+if [ "$probes" -lt 3 ]; then
+    echo "FAIL: $probes of 3 lots started with empty mirror edits and wardrobes filled"; grep "scene caches probe" "$out/run.log"; fail=1
+fi
 if grep -q "AddressSanitizer" "$out/run.log"; then echo "FAIL: AddressSanitizer report"; grep -A8 "ERROR: AddressSanitizer" "$out/run.log"; fail=1; fi
 [ $fail = 0 ] && echo "scene cycle: ok"
 rm -rf "$out/user"
