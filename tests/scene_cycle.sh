@@ -15,6 +15,13 @@
 #   start from nothing (the mirror edits by Sim ID and the wardrobes filled
 #   by family number of round 20 kept the last lot's: on N002_Lot10's second
 #   visit its family's bin stayed unfilled).
+# - the app's caches of the game's data (app/game_data_caches.hpp, round 24):
+#   on quit they are freed after the scene and before the statics go (with
+#   OS2_DEBUG_SCENE_STATE the quit lines show them full, then empty), and
+#   with OS2_PROBE_APP_CACHES (every wardrobe and vanity group of every lot
+#   Sim) the decoded pictures stay across a scene switch under the cap
+#   (OS2_PICTURE_CAP_MB=120: N002_Lot10's ~97 MB) and are dropped at the
+#   unload past it (with N002_Lot3's ~70 MB more).
 # Run it with an AddressSanitizer build of the app too (cmake -B build-asan
 # -DCMAKE_CXX_FLAGS=-fsanitize=address -DCMAKE_OBJCXX_FLAGS=-fsanitize=address
 # -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address): any report fails it.
@@ -25,7 +32,7 @@ rm -rf "$out"; mkdir -p "$out/user"
 leave="--click 139,690 --click 236,628 --click 528,398 --wait 2" # Options, Neighborhood, Yes (save)
 (
     ulimit -S -n 256 # the soft limit only, as launchd sets it
-    OS2_DEBUG_SCENE_STATE=1 OS2_PROBE_SCENE_CACHES=1 \
+    OS2_DEBUG_SCENE_STATE=1 OS2_PROBE_SCENE_CACHES=1 OS2_PROBE_APP_CACHES=1 OS2_PICTURE_CAP_MB=120 \
     ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 "$app" --data "$OS2_DATA" --user-dir "$out/user" --no-audio --hood N002 \
         --hood-lot-click 10 --click 595,592 --wait 30 --click 409,640 --wait 30 $leave \
         --click 807,104 --click 595,592 --wait 60 $leave \
@@ -47,6 +54,22 @@ fi
 probes=$(grep -c "scene caches probe: .*mirrorEdits 0 -> 1, wardrobeFilled 0 -> 1" "$out/run.log")
 if [ "$probes" -lt 3 ]; then
     echo "FAIL: $probes of 3 lots started with empty mirror edits and wardrobes filled"; grep "scene caches probe" "$out/run.log"; fail=1
+fi
+# The pictures: kept across a switch under the cap, dropped (all) past it.
+kept=$(grep "app caches after unload" "$out/run.log" | grep -v "pictures dropped" | grep -c "imagesKB=[1-9]")
+dropped=$(grep "app caches after unload" "$out/run.log" | grep "pictures dropped" | grep -c "imagesKB=0 ")
+if [ "$kept" -lt 1 ]; then echo "FAIL: the app's pictures were not kept across a scene switch under the cap"; fail=1; fi
+if [ "$dropped" -lt 1 ]; then echo "FAIL: the app's pictures were not dropped past the cap"; grep "app caches after unload" "$out/run.log" | head -5; fail=1; fi
+over=$(grep "app caches after unload" "$out/run.log" | grep -v "pictures dropped" | sed -n 's/.*imagesKB=\([0-9]*\).*/\1/p' | awk '$1 > 120 * 1024' | wc -l)
+if [ "$over" -gt 0 ]; then echo "FAIL: pictures past the cap kept"; fail=1; fi
+reused=$(grep -c "app caches probe: .*pictures [1-9][0-9]* KB ->" "$out/run.log")
+if [ "$reused" -lt 1 ]; then echo "FAIL: no lot started with the last scene's pictures"; grep "app caches probe" "$out/run.log" | cut -c1-120; fail=1; fi
+# Quitting frees the app's caches after the scene (releaseAppState).
+if ! grep "quit: app caches before release" "$out/run.log" | grep -q "casCatalog=1 .*simParts=[1-9]"; then
+    echo "FAIL: no app caches to release on quit"; fail=1
+fi
+if ! grep -q "quit: app caches after release" "$out/run.log" || grep "quit: \(app caches\|scene state\) after release" "$out/run.log" | grep -q '=[1-9]'; then
+    echo "FAIL: app caches or scene state not empty after the quit release"; grep "after release" "$out/run.log" | cut -c1-300; fail=1
 fi
 if grep -q "AddressSanitizer" "$out/run.log"; then echo "FAIL: AddressSanitizer report"; grep -A8 "ERROR: AddressSanitizer" "$out/run.log"; fail=1; fi
 [ $fail = 0 ] && echo "scene cycle: ok"
