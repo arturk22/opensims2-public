@@ -47,6 +47,7 @@ add_library(os2_formats
   src/formats/jpeg.cpp
   src/formats/lighting_config.cpp
   src/formats/locale.cpp
+  src/formats/log_once.cpp
   src/formats/hood_lot_terrain.cpp
   src/formats/hood_moves.cpp
   src/formats/lot_arrivals.cpp
@@ -348,7 +349,7 @@ add_test(NAME sound COMMAND test_sound)
 add_executable(test_camera_input tests/test_camera_input.cpp src/app/camera_input.cpp)
 target_include_directories(test_camera_input PRIVATE src)
 add_test(NAME camera_input COMMAND test_camera_input)
-add_executable(test_game_flow tests/test_game_flow.cpp src/app/game_flow.cpp src/app/user_data.cpp)
+add_executable(test_game_flow tests/test_game_flow.cpp src/app/game_flow.cpp src/app/user_data.cpp src/formats/log_once.cpp)
 target_include_directories(test_game_flow PRIVATE src)
 add_test(NAME game_flow COMMAND test_game_flow)
 add_executable(test_hood_terrain tests/test_hood_terrain.cpp)

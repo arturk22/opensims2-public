@@ -7,6 +7,7 @@
 #include "formats/lighting_config.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_model.hpp"
+#include "formats/log_once.hpp"
 #include "app/wall_view.hpp"
 #include "formats/image.hpp"
 #include "formats/model.hpp"
@@ -19,6 +20,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
+#include <unistd.h>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -1025,7 +1029,46 @@ static void testNextStoryOverGround() {
     check(foundation, "lot 31: the buildings on foundations keep their floor's walls");
 }
 
+// os2::logOnce (DEBITOS-TECNICOS.md 1.5): an error a caller recovers from is
+// on stderr once per (where, key), at most kLogOnceKeys keys per `where`,
+// then one "not shown" line.
+static void testLogOnce() {
+    std::fflush(stderr);
+    const int saved = dup(2);
+    FILE* tmp = std::tmpfile();
+    if (saved < 0 || !tmp) {
+        check(false, "logOnce: stderr redirect");
+        return;
+    }
+    dup2(fileno(tmp), 2);
+    const std::runtime_error e("unreadable");
+    for (int frame = 0; frame < 3; ++frame) // a block that runs every frame
+        os2::logOnce("test site", "key A", e);
+    os2::logOnce("test site", "key B", e);
+    for (int k = 0; k < os2::kLogOnceKeys + 5; ++k)
+        os2::logOnce("test flood", std::to_string(k), "bad");
+    std::fflush(stderr);
+    dup2(saved, 2);
+    close(saved);
+    std::rewind(tmp);
+    std::string out;
+    for (int c; (c = std::fgetc(tmp)) != EOF;)
+        out += char(c);
+    std::fclose(tmp);
+    auto count = [&](const std::string& needle) {
+        size_t n = 0;
+        for (size_t at = out.find(needle); at != std::string::npos; at = out.find(needle, at + 1))
+            ++n;
+        return n;
+    };
+    check(count("opensims2: test site (key A): unreadable\n") == 1, "logOnce: once per key");
+    check(count("opensims2: test site (key B): unreadable\n") == 1, "logOnce: another key");
+    check(count("opensims2: test flood (") == size_t(os2::kLogOnceKeys), "logOnce: keys per site capped");
+    check(count("opensims2: test flood: more errors like these are not shown\n") == 1, "logOnce: one line past the cap");
+}
+
 int main() {
+    testLogOnce();
     testDxt1();
     testDxt3And5();
     testRaw();
