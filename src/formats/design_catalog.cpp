@@ -37,6 +37,16 @@ std::string text(const std::map<std::string, std::string>& p, const char* k) {
     return it == p.end() ? std::string() : it->second;
 }
 
+// A bool property (readPropertySet writes "true"/"false"); a number too.
+bool flag(const std::map<std::string, std::string>& p, const char* k) {
+    const std::string v = lower(text(p, k));
+    if (v == "true")
+        return true;
+    if (v == "false")
+        return false;
+    return number(p, k) != 0;
+}
+
 } // namespace
 
 std::string DesignCatalog::key(std::string name) {
@@ -56,7 +66,7 @@ void DesignCatalog::add(const std::map<std::string, std::string>& p) {
     m.family = text(p, "family");
     m.objectGuid = number(p, "objectGUID");
     m.stateFlags = number(p, "materialStateFlags");
-    m.isDefault = number(p, "defaultMaterial") != 0;
+    m.isDefault = flag(p, "defaultMaterial");
     if (m.model.empty() || m.subset.empty() || m.material.empty())
         return;
     byModel_[m.model].push_back(all_.size());

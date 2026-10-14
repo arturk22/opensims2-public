@@ -727,9 +727,10 @@ static void testStairs() {
 // subsets with choices, clean materials only, the default first.
 static void testDesignCatalog() {
     DesignCatalog c;
+    // (defaultMaterial is a bool property: readPropertySet writes "true"/"false".)
     auto mmat = [&](const char* subset, const char* name, int def, int state) {
         c.add({{"type", "modelMaterial"}, {"modelName", "sofaTest_cres"}, {"subsetName", subset}, {"name", name},
-               {"defaultMaterial", std::to_string(def)}, {"materialStateFlags", std::to_string(state)}, {"family", name}});
+               {"defaultMaterial", def ? "true" : "false"}, {"materialStateFlags", std::to_string(state)}, {"family", name}});
     };
     mmat("wood", "sofatest_wood_dark", 0, 0);
     mmat("cushion", "sofatest_cushion_red", 1, 0);
