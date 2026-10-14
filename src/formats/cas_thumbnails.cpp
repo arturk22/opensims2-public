@@ -1,4 +1,5 @@
 #include "cas_thumbnails.hpp"
+#include "formats/log_once.hpp"
 
 #include "cas_catalog.hpp"
 #include "dbpf.hpp"
@@ -85,7 +86,8 @@ std::optional<RgbaImage> loadNamedTexture(ResourceIndex& index, const std::strin
             if (img.width && img.height)
                 return img;
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("CAS texture", name, err);
     }
     return std::nullopt;
 }
@@ -140,7 +142,8 @@ std::optional<RgbaImage> overlayPreview(ResourceIndex& index, const std::string&
 CasThumbnails::CasThumbnails(const std::filesystem::path& package) {
     try {
         pkg_ = std::make_unique<DbpfPackage>(package);
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("CAS thumbnails", package.string(), err);
         pkg_.reset();
         return;
     }

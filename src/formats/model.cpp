@@ -1,4 +1,5 @@
 #include "model.hpp"
+#include "formats/log_once.hpp"
 
 #include "graphics_options.hpp"
 
@@ -130,7 +131,8 @@ std::string cresByRootNode(ResourceIndex& index, std::string_view node) {
                 if (lower(name).ends_with("_cres"))
                     name.resize(name.size() - 5);
                 it->second.try_emplace(lower(sk.bones[0].name), name);
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("CRES skeletons", std::to_string(loc.entry->tgi.instance), err);
             }
         }
     const auto f = it->second.find(lower(std::string(node)));

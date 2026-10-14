@@ -1,4 +1,5 @@
 #include "cas_studio.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/pie_menu.hpp"
 #include "formats/dbpf.hpp"
@@ -224,7 +225,8 @@ bool CasStudio::load(simd_float2 viewDirection) {
                         lamps_.push_back(lamp);
                     }
                 }
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("CAS studio lamps", o.model, err);
             }
         }
 

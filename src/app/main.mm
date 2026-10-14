@@ -113,6 +113,7 @@
 #include "app/data_location.hpp"
 #include "app/game_flow.hpp"
 #include "app/game_data_caches.hpp"
+#include "formats/log_once.hpp"
 #include "app/wants_panel.hpp"
 #include "app/head_shot.hpp"
 #include "app/game_save.hpp"
@@ -1010,7 +1011,8 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             if (!gTexts && gIndex)
                 gTexts = std::make_unique<os2::UiResources>(*gIndex, gameDir() / "TSData/Res");
             return gTexts ? gTexts->table(group, instance) : nullptr;
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("text tables", std::to_string(group) + ":" + std::to_string(instance), err);
             return nullptr;
         }
     };
@@ -1614,7 +1616,8 @@ std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId) {
             if (f.path().extension() == ".package")
                 try {
                     byGuid[os2::hood::Character::load(f.path()).guid] = f.path();
-                } catch (const std::exception&) {
+                } catch (const std::exception& err) {
+                    os2::logOnce("neighbor portraits", f.path().filename().string(), err);
                 }
     }
     const auto it = byGuid.find(n->second.guid);
@@ -1625,7 +1628,8 @@ std::optional<os2::RgbaImage> neighborPortrait(int16_t neighborId) {
         for (const auto& e : character.entries())
             if (e.tgi.type == os2::kTypeUiImage && e.tgi.instance < 0x100)
                 return os2::decodeUiImage(character.read(e));
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("neighbor portrait", it->second.filename().string(), err);
     }
     return std::nullopt;
 }
@@ -1720,7 +1724,8 @@ const std::vector<os2::Tgi>* familyBin(int16_t sim, const os2::cas::CasCatalog* 
                 for (const os2::Tgi& k : os2::cas::familyBinClothing(*catalog, spec))
                     if (std::find(f->second.wardrobe.begin(), f->second.wardrobe.end(), k) == f->second.wardrobe.end())
                         f->second.wardrobe.push_back(k);
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("family bin", ls.character.filename().string(), err);
             }
         }
     return &f->second.wardrobe;
@@ -2233,7 +2238,8 @@ void setupWardrobe(os2::ResourceIndex& index) {
         try {
             os2::DbpfPackage pkg(*file);
             return os2::cas::readCharacterSpec(pkg, 0xFFFFFFFF, *load().catalog);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("family clothing", file->filename().string(), err);
             return std::nullopt;
         }
     };
@@ -2359,7 +2365,8 @@ void setupLiveUi(os2::ResourceIndex& index) {
                                 byGuid->emplace(os2::ObjectDefinition::parse(p.read(e)).guid(), de.path());
                                 break;
                             }
-                    } catch (const std::exception&) {
+                    } catch (const std::exception& err) {
+                        os2::logOnce("neighbor portraits", de.path().filename().string(), err);
                     }
             const auto it = byGuid->find(guid);
             if (it == byGuid->end())
@@ -2369,7 +2376,8 @@ void setupLiveUi(os2::ResourceIndex& index) {
                 for (const auto& e : character.entries())
                     if (e.tgi.type == os2::kTypeUiImage && e.tgi.instance < 0x100)
                         return os2::decodeUiImage(character.read(e));
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("neighbor portrait", it->second.filename().string(), err);
             }
             return std::nullopt;
         };
@@ -2561,6 +2569,8 @@ size_t placeFencePieces(os2::Renderer& renderer, os2::ResourceIndex& index, cons
             } catch (const std::exception& e) {
                 if (warnings)
                     warnings->push_back(piece.model + ": " + e.what());
+                else // (a rebuild after Build mode: nobody prints the warnings)
+                    os2::logOnce("fence piece", piece.model, e);
             }
             it = models.emplace(piece.model, id).first;
         }
@@ -2906,7 +2916,8 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
                 std::shared_ptr<const os2::PickMesh> mesh;
                 try {
                     mesh = os2::makePickMesh(os2::loadObjectModel(*gIndex, cres, {}), gIndex.get());
-                } catch (const std::exception&) {
+                } catch (const std::exception& err) {
+                    os2::logOnce("pick mesh", cres, err);
                 }
                 m = meshes.emplace(cres, std::move(mesh)).first;
             }
@@ -3149,7 +3160,8 @@ void offerCommunityLotImage(os2::ResourceIndex& index, const os2::Lot& lot) {
                 return;
             }
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("loading screen icon", "catalog", err);
     }
 }
 
@@ -3837,7 +3849,8 @@ std::optional<fs::path> characterFileOf(uint32_t guid) {
                         files[os2::ObjectDefinition::parse(pkg.read(x)).guid()] = e.path();
                         break;
                     }
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("character files", e.path().filename().string(), err);
             }
         }
         if (auto it = files.find(guid); it != files.end())
@@ -5070,7 +5083,8 @@ std::string uiText(uint32_t instance, uint32_t index, const char* fallback) {
         if (gTexts)
             if (auto t = gTexts->string(os2::UiStringRef{0x7fa7dc7c, instance, index}); t && !t->empty())
                 return *t;
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("UI text", std::to_string(instance) + ":" + std::to_string(index), err);
     }
     return fallback;
 }
@@ -6272,7 +6286,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                     gLotEntry.familyThumbs =
                         hood.package.parent_path() / "Thumbnails" / (hood.prefix + "_FamilyThumbnails.package");
                 }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("loading screen", scene.hood, err);
         }
         return;
     }
@@ -6291,7 +6306,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             if (const auto* f = hood.family(gLotEntry.familyId))
                 gLotEntry.familyName = f->name;
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("loading screen", scene.hood, err);
     }
 }
 
@@ -6474,7 +6490,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
             const auto hood = os2::hood::Neighborhood::load(hoodFolder(_scene.hood), false);
             if (const auto* l = hood.lot(_scene.lot))
                 gLotVacant = l->families.empty();
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("lot vacancy", _scene.hood, err);
         }
         [self prepareLot];
         break;
@@ -7148,7 +7165,8 @@ static void fillLotEntryFromFlags(const os2::Scene& scene) {
                         }
                         actors.push_back(id);
                     }
-                } catch (const std::exception&) {
+                } catch (const std::exception& err) {
+                    os2::logOnce("cinematic actors", scene, err);
                 }
             }
             startCinematic(*_viewDelegate.renderer, scene, actors, gLotSims.empty() ? 0 : gLotSims.front().id, mirror, true,

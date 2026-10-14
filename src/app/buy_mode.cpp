@@ -1,4 +1,5 @@
 #include "app/buy_mode.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/design_tool.hpp"
 
@@ -433,7 +434,8 @@ bool BuyMode::grab(vm::ObjectId id) {
     if (vm::groupOf(vm_, lead).size() == 1)
         try {
             vm_.runFunction(lead, vm::entry::UserPickup);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("Buy mode: the pickup tree", o->definition->fileName, err);
         }
     held_ = lead;
     heldNew_ = false;

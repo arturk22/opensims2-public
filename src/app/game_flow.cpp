@@ -1,4 +1,5 @@
 #include "app/game_flow.hpp"
+#include "formats/log_once.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -78,7 +79,8 @@ std::vector<FlowStep> flowSteps(const std::vector<std::string>& args) {
             st.kind = FlowStep::Kind::Wait;
             try {
                 st.ticks = std::stol(args[i + 1]);
-            } catch (const std::exception&) {
+            } catch (const std::logic_error& err) { // not a number (std::stol): the step is skipped
+                os2::logOnce("--wait", args[i + 1], err);
                 continue;
             }
         } else if (args[i] == "--pie-step") {
@@ -89,7 +91,7 @@ std::vector<FlowStep> flowSteps(const std::vector<std::string>& args) {
             st.text = colon == std::string::npos ? std::string() : v.substr(colon + 1);
             try {
                 st.entry = colon == std::string::npos ? 0 : std::stoi(st.text);
-            } catch (const std::exception&) {
+            } catch (const std::logic_error&) { // (std::stoi: invalid_argument, out_of_range)
                 st.entry = -1; // not a number: the entry whose name holds the text
             }
         } else if (args[i] == "--click" || args[i] == "--right-click") {
@@ -114,7 +116,8 @@ std::vector<FlowStep> flowSteps(const std::vector<std::string>& args) {
                 // <turns>:<step>: stop once that step is shown (a shot of it).
                 if (const auto colon = args[i + 1].find(':'); colon != std::string::npos)
                     st.entry = std::stoi(args[i + 1].substr(colon + 1));
-            } catch (const std::exception&) {
+            } catch (const std::logic_error& err) { // not a number (std::stol, std::stoi): the step is skipped
+                os2::logOnce("--tutorial-auto", args[i + 1], err);
                 continue;
             }
         } else if (args[i] == "--key") {

@@ -1,4 +1,5 @@
 #include "lot_model.hpp"
+#include "formats/log_once.hpp"
 #include "lot_edit.hpp"
 
 #include "binreader.hpp"
@@ -356,7 +357,8 @@ std::optional<ObjectModel::AlphaMask> wallMaskValues(ResourceIndex& index, const
                 m.values[i] = img.pixels[i * 4 + 3];
             out = std::move(m);
             break;
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("wall mask", mid, err);
         }
     }
     if (cache)

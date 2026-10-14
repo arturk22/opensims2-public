@@ -1,4 +1,5 @@
 #include "sound_system.hpp"
+#include "formats/log_once.hpp"
 
 #include "audio/decode.hpp"
 #include "formats/property_set.hpp"
@@ -151,7 +152,8 @@ SoundSystem::SoundSystem(const std::filesystem::path& resDir, AudioMixer& mixer,
         std::map<std::string, std::string> props;
         try {
             props = readPropertySet(bank_.read(loc));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("sound properties", std::to_string(loc.entry->tgi.instance), err);
             continue;
         }
         const SoundBank::Key k{loc.entry->tgi.instance, loc.entry->tgi.instanceHi};
@@ -310,7 +312,8 @@ std::shared_ptr<const Pcm> SoundSystem::decodeSample(const SoundBank::Location& 
     std::shared_ptr<const Pcm> pcm;
     try {
         pcm = std::make_shared<const Pcm>(bank_.decode(loc));
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("sound", std::to_string(key.second) + ":" + std::to_string(key.first), err);
         pcm = nullptr;
     }
     cache_[key] = pcm;
@@ -679,7 +682,8 @@ void MusicPlayer::prefetch() {
         d.name = buf;
         try {
             d.pcm = std::make_shared<const Pcm>(decodeSound(loc.package->readConcurrent(*loc.entry)));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("music", d.name, err);
         }
         return d;
     };

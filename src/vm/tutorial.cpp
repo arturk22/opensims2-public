@@ -1,6 +1,7 @@
 // The tutorial's primitives and controllers: tutorial.hpp, docs/tutorial-mac.md.
 
 #include "tutorial.hpp"
+#include "formats/log_once.hpp"
 
 #include "engine.hpp"
 #include "go_here.hpp"
@@ -179,7 +180,8 @@ int ensureTutorialControllers(VM& vm) {
             o->data[objdata::SlotNumber] = -1;
             vm.initialize(o->id, before);
             ++created;
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("tutorial controller", std::to_string(guid), err);
             // A controller that does not start leaves the lot as it was.
         }
     }
@@ -217,7 +219,8 @@ bool runTutorialEventTree(VM& vm, ObjectId object, uint16_t tree) {
     std::array<int16_t, kTempCount> temps{};
     try {
         runOneTickTree(vm, temps, object, object, 0, tree, {});
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("tutorial event tree", std::to_string(tree), err);
         return false;
     }
     return true;
@@ -455,7 +458,8 @@ std::string tutorialBuyCategory(VM& m, ResourceIndex& index, int category) {
         ObjectId ghost = 0;
         try {
             ghost = createGhost(m, e->group, e->instance);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("tutorial ghost", e->name, err);
             continue;
         }
         const Object* g = m.object(ghost);

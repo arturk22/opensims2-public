@@ -1,4 +1,5 @@
 #include "vm_objects.hpp"
+#include "formats/log_once.hpp"
 
 #include "lot_vm.hpp"
 
@@ -181,7 +182,8 @@ std::string VmObjectView::cresFor(int16_t id) {
     if (const vm::Object* o = sim_.machine().object(id); o && o->definition && !o->person) {
         try {
             cres = objectCresName(index_, Tgi{kTypeObjd, o->group, o->definitionInstance, 0});
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("object CRES", std::to_string(o->group) + ":" + std::to_string(o->definitionInstance), err);
         }
     }
     return cres_[id] = cres;

@@ -61,6 +61,7 @@
 // neighbor, new ones too.
 
 #include "characters.hpp"
+#include "formats/log_once.hpp"
 
 #include "baby_character.hpp"
 #include "dialog.hpp"
@@ -129,7 +130,8 @@ void nameNewSim(VM& vm, const ObjectDefinition& t, uint32_t group, Neighbor& n) 
                     parsed = std::make_unique<StringTable>(StringTable::parse(*data));
                     own = parsed.get();
                 }
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("new Sim names", std::to_string(group), err);
             }
     std::string fallback = t.title.empty() ? t.fileName : t.title;
     if (const auto dash = fallback.rfind(" - "); t.title.empty() && dash != std::string::npos)

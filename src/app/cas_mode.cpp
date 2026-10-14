@@ -1,4 +1,5 @@
 #include "cas_mode.hpp"
+#include "formats/log_once.hpp"
 #include "app/scene_loader.hpp"
 
 #include "app/cas_studio.hpp"
@@ -446,8 +447,9 @@ const Animation* findIdle(SimActor& actor, ResourceIndex& index, const std::stri
     for (const char* n : names)
         try {
             return &actor.animation(index, n);
-        } catch (const std::exception&) {
+        } catch (const std::exception&) { // (the next one is tried)
         }
+    os2::logOnce("CAS idle", sk, "none of the age's idles loads");
     return nullptr;
 }
 } // namespace
@@ -545,6 +547,7 @@ void CasMode::rebuild() {
             s.actor = std::move(actor);
             next.push_back(std::move(s));
         } catch (const std::exception& e) {
+            os2::logOnce("CAS: rebuild", "", e);
             warnings_.push_back(std::string("rebuild: ") + e.what());
         }
         std::error_code ec;
@@ -675,6 +678,7 @@ std::shared_ptr<RgbaImage> CasMode::portrait(const Member& m, uint32_t size, flo
         ObjectModel empty;
         renderer_.setInstanceModel(portraitInstance_, renderer_.addObject(empty, index_, true));
     } catch (const std::exception& e) {
+        os2::logOnce("CAS: portrait", "", e);
         capturing_ = false;
         warnings_.push_back(std::string("portrait: ") + e.what());
     }
@@ -808,6 +812,7 @@ void CasMode::loadBin() {
         }
         std::stable_sort(bin_.begin(), bin_.end(), [](const BinSim& a, const BinSim& b) { return a.sort < b.sort; });
     } catch (const std::exception& e) {
+        os2::logOnce("CAS: sim bin", "", e);
         warnings_.push_back(std::string("sim bin: ") + e.what());
     }
 }

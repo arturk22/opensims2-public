@@ -1,4 +1,5 @@
 #include "hood_ui.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/hood_view.hpp"
 #include "app/ui_panel_util.hpp"
@@ -76,7 +77,8 @@ const RgbaImage* HoodUi::familySnapshot(uint32_t family) {
                     if (auto d = decodeUiImage(pkg.read(e)))
                         img = std::make_unique<RgbaImage>(std::move(*d));
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("family picture", std::to_string(family), err);
     }
     return (snapshots_[family] = std::move(img)).get();
 }
@@ -94,7 +96,8 @@ const RgbaImage* HoodUi::lotPicture(const HoodLot& lot) {
                     if (auto d = decodeUiImage(pkg.read(e)))
                         img = std::make_unique<RgbaImage>(std::move(*d));
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("lot picture", lot.package.filename().string(), err);
     }
     return (pictures_[lot.id] = std::move(img)).get();
 }
@@ -141,7 +144,8 @@ const HoodUi::LotValues& HoodUi::lotValues(const HoodLot& lot) {
                     break;
                 }
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("lot value", std::to_string(lot.id), err);
     }
     return values_[lot.id] = v;
 }
@@ -201,7 +205,8 @@ const RgbaImage* HoodUi::memberThumb(const std::filesystem::path& character) {
         if (!img && renderHeads_ && renderHead && !character.empty())
             if (auto d = renderHead(character))
                 img = std::make_unique<RgbaImage>(std::move(*d));
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("Sim picture", character.filename().string(), err);
     }
     if (!img && !renderHeads_ && renderHead)
         return nullptr; // not rendered yet: do not cache the miss
@@ -212,7 +217,8 @@ std::string HoodUi::text(uint32_t table, uint32_t index, const char* fallback) c
     try {
         if (auto t = res_->string(UiStringRef{0x7f3a262a, table, index}); t && !t->empty())
             return *t;
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("neighborhood text", std::to_string(table) + ":" + std::to_string(index), err);
     }
     return fallback;
 }
@@ -239,7 +245,8 @@ void HoodUi::prefetchDecorations() {
             if (!img && renderDecorThumb)
                 if (auto d = renderDecorThumb(*it))
                     img = std::make_unique<RgbaImage>(std::move(*d));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("decoration picture", std::to_string(guid), err);
         }
         decorThumbs_[guid] = std::move(img);
     }

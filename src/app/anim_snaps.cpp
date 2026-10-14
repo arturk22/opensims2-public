@@ -1,4 +1,5 @@
 #include "anim_snaps.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/vm_objects.hpp"
 #include "formats/model.hpp"
@@ -91,7 +92,7 @@ AnimSnapView::Model& AnimSnapView::model(SimSnaps& s, const AnimSnap& snap) {
                 if (cut != std::string::npos)
                     try {
                         return loadObjectModel(index_, snap.model.substr(0, cut) + "_" + snap.model.substr(cut + 2));
-                    } catch (const std::exception&) {
+                    } catch (const std::exception&) { // (the next spelling is tried; the first error goes on if none loads)
                     }
                 const std::string byRoot = cresByRootNode(index_, snap.model.substr(0, cut));
                 if (byRoot.empty())
@@ -147,7 +148,8 @@ void AnimSnapView::update(double now) {
                     m.actor->cue(at, a, {.fade = 0.0f, .loop = true});
                     m.playing = snap.pose;
                     m.poseAt = at;
-                } catch (const std::exception&) {
+                } catch (const std::exception& err) {
+                    os2::logOnce("snapped pose", snap.pose, err);
                 }
             }
         }

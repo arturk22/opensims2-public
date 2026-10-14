@@ -15,7 +15,11 @@ namespace os2 {
 
 class ResourceIndex;
 
-// ANIM resource by name ("a-idle-..." with or without "_anim").
+// ANIM resource by name ("a-idle-..." with or without "_anim"). Throws
+// AnimationNotFound (a FormatError) when the game has none of that name.
+struct AnimationNotFound : FormatError {
+    using FormatError::FormatError;
+};
 Animation loadAnimation(ResourceIndex& index, std::string name);
 
 // A skinned Sim (or any skinned model) placed in the lot, animated by an

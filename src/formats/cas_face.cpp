@@ -1,4 +1,5 @@
 #include "cas_face.hpp"
+#include "formats/log_once.hpp"
 
 #include "config_text.hpp"
 #include "rcol.hpp"
@@ -151,7 +152,8 @@ const FaceBaker::Mesh* FaceBaker::meshOfEntry(const SimPart& entry, bool lowDeta
                             return nullptr;
                         try {
                             return &meshByName(n.substr(0, n.size() - tail.size()) + "LOD15" + tail);
-                        } catch (const std::exception&) {
+                        } catch (const std::exception& err) {
+                            os2::logOnce("face mesh (low detail)", n, err);
                             return nullptr;
                         }
                     }
@@ -564,7 +566,8 @@ FaceStructure FaceBaker::structureOf(const FaceSpec& spec, uint32_t genderBit) {
                     }
                     if (!b.structure.empty())
                         fs.set(FaceStructure::key(a, g, low), std::move(b.structure));
-                } catch (const std::exception&) {
+                } catch (const std::exception& err) {
+                    os2::logOnce("face structure", std::to_string(a) + ":" + std::to_string(g), err);
                 }
             }
         }

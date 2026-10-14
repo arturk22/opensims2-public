@@ -252,7 +252,7 @@ const ParticleLayer::Mesh* ParticleLayer::mesh(const std::string& name) {
                 m->texture = white_;
             if (!m->positions.empty())
                 out = std::move(m);
-        } catch (const std::exception&) {
+        } catch (const std::exception&) { // (the next, shorter name is tried; "not found" below if none loads)
         }
     }
     if (!out)

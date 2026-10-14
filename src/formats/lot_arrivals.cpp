@@ -1,6 +1,7 @@
 // Sims of a newly moved-in family put on the lot (lot_arrivals.hpp).
 
 #include "lot_arrivals.hpp"
+#include "formats/log_once.hpp"
 
 #include "hood_moves.hpp"
 #include "lot_evict.hpp"
@@ -34,7 +35,8 @@ int16_t newFamilyStartHour(ResourceIndex* index) {
         if (auto data = index->read(Tgi{kTypeFcns, kGlobalGroup, kNeighborhoodConstants, 0}))
             try {
                 hour = FloatConstants::parse(*data).value("new family start hour", hour);
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("new family start hour", "", err);
             }
     return int16_t(hour);
 }
@@ -58,7 +60,8 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
     hood::Neighborhood h;
     try {
         h = hood::Neighborhood::load(package, true);
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("arrivals: neighborhood", package.filename().string(), err);
         return out;
     }
     const hood::Lot* lot = nullptr;
@@ -85,7 +88,8 @@ LotArrivals addArrivingSims(LotObjects& saved, const Lot& world, const fs::path&
                     masterBuildType.emplace(std::pair{group, d.masterId()}, d.field(0xCA));
                 else if (d.masterId())
                     parts.emplace_back(group, d.masterId(), d.guid());
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("OBJD", std::to_string(loc.entry->tgi.group) + ":" + std::to_string(loc.entry->tgi.instance), err);
             }
         }
         for (const auto& [group, master, guid] : parts)

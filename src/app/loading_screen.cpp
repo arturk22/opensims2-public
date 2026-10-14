@@ -1,4 +1,5 @@
 #include "app/loading_screen.hpp"
+#include "formats/log_once.hpp"
 
 #include "formats/dbpf.hpp"
 #include "formats/font.hpp"
@@ -28,7 +29,8 @@ std::string uiText(const std::filesystem::path& resDir, uint32_t instance, uint3
         if (const DbpfEntry* e = pkg.find(Tgi{kTypeStr, 0xFFFFFFFF, instance, 0}))
             if (std::string t = StringTable::parse(pkg.read(*e)).get(number - 1); !t.empty())
                 return t;
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("loading screen text", std::to_string(instance) + ":" + std::to_string(number), err);
     }
     return fallback;
 }
@@ -68,7 +70,8 @@ std::optional<RgbaImage> renderTitle(const std::filesystem::path& resDir, const 
             drawText(img, *font, us, sx, sb, spx, white);
         }
         return img;
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("loading screen title", "", err);
         return std::nullopt;
     }
 }
@@ -86,7 +89,8 @@ std::optional<RgbaImage> readFamilyPhoto(const LotEntry& lot) {
         for (const auto& e : pkg.entries())
             if (e.tgi.type == kTypeFamilyThumb && e.tgi.instance == lot.familyId)
                 return decodeUiImage(pkg.read(e));
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("loading screen family picture", lot.familyThumbs.filename().string(), err);
     }
     return std::nullopt;
 }
@@ -114,7 +118,8 @@ std::optional<RgbaImage> readUiIcon(const std::filesystem::path& resDir, uint32_
             if (const DbpfEntry* e = pkg.find(Tgi{kTypeUiImage, kReiaGroup, instance, 0}))
                 if (auto img = decodeUiImage(pkg.read(*e)))
                     return img;
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("loading screen icon", p.string(), err);
         }
     }
     return std::nullopt;

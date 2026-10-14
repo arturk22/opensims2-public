@@ -19,6 +19,7 @@
 //   the objects of my interaction queue, inferred).
 
 #include "engine.hpp"
+#include "formats/log_once.hpp"
 #include "errors.hpp"
 #include "formats/binreader.hpp"
 #include "vm.hpp"
@@ -70,7 +71,8 @@ Exit cinematic(Context& c) {
             if (!holder->arrays.empty())
                 for (int16_t v : holder->arrays[0].values)
                     r.actors.push_back(ObjectId(v));
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("cinematic request", "", err);
         // An unreadable variable: the request goes out without what it names.
     }
     if (cinematics.size() >= 32)

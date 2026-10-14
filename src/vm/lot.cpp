@@ -1,4 +1,5 @@
 #include "lot.hpp"
+#include "formats/log_once.hpp"
 
 #include "formats/build_catalog.hpp"
 
@@ -167,7 +168,8 @@ std::function<std::filesystem::path(uint32_t)> useCharacterFiles(CodeLibrary& co
                             const auto bytes = pkg.read(e);
                             characterByGuid->emplace(ObjectDefinition::parse(bytes).guid(), f.path());
                         }
-                } catch (const std::exception&) {
+                } catch (const std::exception& err) {
+                    os2::logOnce("character files", f.path().filename().string(), err);
                 }
             }
         auto it = characterByGuid->find(guid);
@@ -184,7 +186,8 @@ std::function<std::filesystem::path(uint32_t)> useCharacterFiles(CodeLibrary& co
                 for (uint16_t instance : lib.addPackage(pkg, group))
                     if (const ObjectDefinition* d = lib.definition(group, instance); d && d->guid() == guid)
                         return std::pair{group, instance};
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("character file", file.filename().string(), err);
             }
             return std::nullopt;
         });

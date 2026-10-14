@@ -1,4 +1,5 @@
 #include "design_catalog.hpp"
+#include "formats/log_once.hpp"
 
 #include "property_set.hpp"
 #include "resindex.hpp"
@@ -25,7 +26,8 @@ uint32_t number(const std::map<std::string, std::string>& p, const char* k) {
         return 0;
     try {
         return uint32_t(std::stoul(it->second, nullptr, 0));
-    } catch (const std::exception&) {
+    } catch (const std::logic_error& err) { // not a number (std::stoul): 0
+        os2::logOnce("design catalog number", std::string(k) + "=" + it->second, err);
         return 0;
     }
 }
@@ -67,7 +69,8 @@ DesignCatalog DesignCatalog::load(ResourceIndex& index) {
         try {
             const auto bytes = index.read(loc);
             c.add(readPropertySet(bytes));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("design catalog", std::to_string(loc.entry->tgi.instance), err);
         }
     }
     return c;

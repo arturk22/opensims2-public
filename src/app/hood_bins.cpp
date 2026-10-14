@@ -1,4 +1,5 @@
 #include "hood_bins.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/ui_panel_util.hpp"
 #include "formats/dbpf.hpp"
@@ -74,7 +75,8 @@ std::string HoodBins::text(uint32_t table, uint32_t index, const char* fallback)
     try {
         if (auto t = res_->string(UiStringRef{kTextGroup, table, index}); t && !t->empty())
             return *t;
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("neighborhood bins text", std::to_string(table) + ":" + std::to_string(index), err);
     }
     return fallback;
 }
@@ -231,7 +233,8 @@ const RgbaImage* HoodBins::binPicture(size_t index) {
                 if (e.tgi.type == 0x856DDBAC && e.tgi.instance == 0x35CA0000)
                     if (auto d = decodeUiImage(pkg.read(e)))
                         img = std::make_unique<RgbaImage>(std::move(*d));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("lot bin picture", binLots_[index].file.filename().string(), err);
         }
     return (binPictures_[index] = std::move(img)).get();
 }
@@ -341,7 +344,8 @@ const RgbaImage* HoodBins::familySnapshot(uint32_t family) {
                         if (auto d = decodeUiImage(pkg.read(e)))
                             img = std::make_unique<RgbaImage>(std::move(*d));
             }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("family picture", std::to_string(family), err);
         }
     return (snapshots_[family] = std::move(img)).get();
 }

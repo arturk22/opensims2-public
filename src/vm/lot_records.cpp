@@ -1,6 +1,7 @@
 // The records of a lot save outside the object module (lot_records.hpp).
 
 #include "lot_records.hpp"
+#include "formats/log_once.hpp"
 
 #include "formats/binreader.hpp"
 #include "formats/binwriter.hpp"
@@ -444,7 +445,8 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
                         if (auto l = sceneLayout(bytes); l && !l->definition.empty())
                             templates.emplace(l->definition, std::move(bytes));
                     }
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("person templates", path.filename().string(), err);
             }
         }
     };
@@ -670,7 +672,8 @@ RecordsResult captureLotRecords(VM& vm, const Lot& world, DbpfPackage& source, c
             }
             instancesOf[k].push_back(instance);
             read.emplace(instance, std::move(rel));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("lot relationships", std::to_string(instance), err);
         }
     }
     auto objectIdOf = [&](const VM::RelationshipKey& k) -> int16_t {

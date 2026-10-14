@@ -1,6 +1,7 @@
 // The Buy-mode catalog (catalog.hpp).
 
 #include "catalog.hpp"
+#include "formats/log_once.hpp"
 
 #include "dbpf.hpp"
 #include "resindex.hpp"
@@ -94,7 +95,8 @@ std::array<Catalog, 2> Catalog::loadBoth(ResourceIndex& index) {
         ObjectDefinition d;
         try {
             d = ObjectDefinition::parse(index.read(loc));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("catalog OBJD", std::to_string(tgi.group) + ":" + std::to_string(tgi.instance), err);
             continue;
         }
         const uint16_t function = d.field(objd::FunctionSort), room = d.field(objd::RoomSort);
@@ -125,7 +127,8 @@ std::array<Catalog, 2> Catalog::loadBoth(ResourceIndex& index) {
         if (auto bytes = index.read(Tgi{kTypeStr, tgi.group, kModelNames, 0})) {
             try {
                 e.model = StringTable::parse(*bytes).get(d.field(kModelIndex), lang::EnglishUS);
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("catalog model names", std::to_string(tgi.group), err);
             }
         }
         e.price = price;
@@ -154,7 +157,8 @@ std::array<Catalog, 2> Catalog::loadBoth(ResourceIndex& index) {
                 const StringTable t = StringTable::parse(*bytes);
                 e.name = t.get(0);
                 e.description = t.get(1);
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("catalog strings", std::to_string(tgi.group), err);
             }
         }
         if (e.name.empty())
@@ -225,7 +229,8 @@ void Catalog::setThumbnailPackage(const std::filesystem::path& path) {
     thumbCache_.clear();
     try {
         thumbs_ = std::make_unique<DbpfPackage>(path);
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("catalog thumbnails", path.string(), err);
         return;
     }
     const auto& entries = thumbs_->entries();

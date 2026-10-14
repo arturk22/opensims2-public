@@ -1,4 +1,5 @@
 #include "app/lot_effects.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/ui_panel_util.hpp"
 #include "app/vm_objects.hpp"
@@ -48,7 +49,8 @@ LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::file
         thumbnails_ = std::make_unique<DbpfPackage>(resDir / "UserData/Thumbnails/ObjectThumbnails.package");
         for (const auto& e : thumbnails_->entries())
             thumbIndex_.emplace(e.tgi.instance, &e);
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("balloon icons (ObjectThumbnails.package)", "", err);
         thumbnails_.reset(); // balloons keep their default icons
     }
     std::optional<std::vector<uint8_t>> data;

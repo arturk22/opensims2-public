@@ -1,4 +1,5 @@
 #include "app/head_shot.hpp"
+#include "formats/log_once.hpp"
 
 #include "formats/model.hpp"
 #include "formats/sim_actor.hpp"
@@ -53,7 +54,8 @@ std::vector<RigLight> headLightRig(ResourceIndex& index, const LightOverrides& o
                 for (const auto& c : l.renderable.transform.children)
                     parent[c.index] = i;
             }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("head shot light rig", b.className, err);
         }
     }
     for (size_t i = 0; i < rc.blocks.size(); ++i) {
@@ -62,7 +64,8 @@ std::vector<RigLight> headLightRig(ResourceIndex& index, const LightOverrides& o
         LightRefNode node;
         try {
             node = LightRefNode::parse(rc.blocks[i].body);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("head shot light rig", "light " + std::to_string(i), err);
             continue;
         }
         if (node.lightLink < 0 || size_t(node.lightLink) >= rc.links.size())
@@ -127,8 +130,9 @@ const Animation* poseOf(SimActor& actor, ResourceIndex& index, char age, bool fe
     for (const auto& n : names)
         try {
             return &actor.animation(index, n);
-        } catch (const std::exception&) {
+        } catch (const std::exception&) { // (the next one is tried)
         }
+    os2::logOnce("head shot pose", std::string(1, age) + (female ? "F" : "M"), "none of the poses loads");
     return nullptr;
 }
 
@@ -154,7 +158,8 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         try {
             DbpfPackage pkg(characterFile);
             female = readCharacter(pkg, index).gender == 1;
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("head shot: gender", characterFile.filename().string(), err);
         }
         const char age = char(std::tolower(static_cast<unsigned char>(
             actor.skin.skeleton.name.empty() ? 'a' : actor.skin.skeleton.name[0])));
@@ -234,7 +239,8 @@ std::optional<RgbaImage> renderHeadShot(Renderer& renderer, ResourceIndex& index
         ObjectModel empty; // the instance stays, showing nothing
         renderer.setInstanceModel(inst, renderer.addObject(empty, index, true));
         return out;
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("head shot", characterFile.filename().string(), err);
         return std::nullopt;
     }
 }
@@ -279,7 +285,8 @@ std::optional<RgbaImage> renderPartsThumbnail(Renderer& renderer, ResourceIndex&
         ObjectModel m;
         try {
             m = loadObjectModel(index, tp.cres);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("parts thumbnail", tp.cres, err);
             continue;
         }
         const int maskBase = int(all.masks.size());

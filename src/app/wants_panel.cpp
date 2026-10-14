@@ -1,6 +1,7 @@
 // The Wants & Fears strip (wants_panel.hpp).
 
 #include "app/wants_panel.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/game_data_caches.hpp"
 #include "app/ui_panel_util.hpp"
@@ -148,7 +149,8 @@ std::vector<MemoryEntry> simMemories(vm::VM& machine, int16_t id) {
                     const auto table = StringTable::parse(*bytes);
                     m.text = table.get(0);
                     m.description = table.get(1);
-                } catch (const std::exception&) {
+                } catch (const std::exception& err) {
+                    os2::logOnce("memory text", std::to_string(group), err);
                 }
                 if (!m.text.empty())
                     break;

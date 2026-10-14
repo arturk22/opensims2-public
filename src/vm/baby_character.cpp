@@ -1,4 +1,5 @@
 #include "baby_character.hpp"
+#include "formats/log_once.hpp"
 
 #include "genetics.hpp"
 #include "formats/cas_catalog.hpp"
@@ -112,7 +113,8 @@ void installBabyCharacterWriter(ResourceIndex& index, const fs::path& characters
                                 st->byGuid[ObjectDefinition::parse(pkg.read(x)).guid()] = e.path();
                                 break;
                             }
-                    } catch (const std::exception&) {
+                    } catch (const std::exception& err) {
+                        os2::logOnce("character files", e.path().filename().string(), err);
                     }
         const Neighbor* a = vm.neighbor(r.parentA);
         const Neighbor* b = vm.neighbor(r.parentB);
@@ -207,7 +209,8 @@ void installBabyCharacterWriter(ResourceIndex& index, const fs::path& characters
                             cas::readCharacterSpec(*loc.package, r.outfitGroup, *st->catalog, loc.entry->tgi.instance);
                         if ((o.age & s.age) && o.gender == s.gender)
                             fitting.push_back({loc.package, loc.entry->tgi.instance});
-                    } catch (const std::exception&) {
+                    } catch (const std::exception& err) {
+                        os2::logOnce("baby outfit", std::to_string(loc.entry->tgi.instance), err);
                     }
                 }
                 if (!fitting.empty()) {

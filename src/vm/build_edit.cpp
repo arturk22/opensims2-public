@@ -1,6 +1,7 @@
 // Build mode's tools over a lot in the VM (build_edit.hpp).
 
 #include "build_edit.hpp"
+#include "formats/log_once.hpp"
 
 #include "formats/lot_edit.hpp"
 #include "lot.hpp"
@@ -1154,7 +1155,8 @@ BuildEditor::Result BuildEditor::drawFoundation(int x0, int y0, int x1, int y1, 
                         continue;
                     }
                     created.push_back({id, p});
-                } catch (const std::exception&) {
+                } catch (const std::exception& err) {
+                    os2::logOnce("deck columns", std::to_string(kDeckColumnGuid), err);
                 }
             }
     r.changed = int(tiles.size());
@@ -3131,7 +3133,8 @@ BuildEditor::Result BuildEditor::placeStairs(const BuildStairs& product, TilePos
         ObjectId id = 0;
         try {
             id = createGhost(vm_, def->first, def->second);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("stairs piece", std::to_string(guid), err);
             return 0;
         }
         Placement p;
@@ -3464,7 +3467,7 @@ int BuildEditor::priceOf(const std::string& lotName, bool floor) const {
         try {
             if (const BuildPattern* p = catalog_->byGuid(uint32_t(std::stoul(lotName, nullptr, 16))); p && p->floor == floor)
                 return p->price;
-        } catch (const std::exception&) {
+        } catch (const std::logic_error&) { // not a GUID in hex (std::stoul): no catalog price
         }
     return 0;
 }

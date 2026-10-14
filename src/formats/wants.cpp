@@ -1,6 +1,7 @@
 // Want definitions, trees, tuning and the SWAF resource (wants.hpp).
 
 #include "wants.hpp"
+#include "formats/log_once.hpp"
 
 #include "binreader.hpp"
 #include "binwriter.hpp"
@@ -533,6 +534,7 @@ Library Library::load(ResourceIndex& index) {
                 lib.definitions[d.guid] = std::move(d);
         } catch (const std::exception& e) {
             lib.errors.push_back(std::string("want definition: ") + e.what());
+            os2::logOnce("want definition", std::to_string(loc.entry->tgi.instance), e); // (the app does not print lib.errors)
         }
     }
     for (const auto& loc : index.ofType(kTypeWantTree)) {
@@ -541,6 +543,7 @@ Library Library::load(ResourceIndex& index) {
             readTree(lib, {reinterpret_cast<const char*>(bytes.data()), bytes.size()});
         } catch (const std::exception& e) {
             lib.errors.push_back(std::string("want tree: ") + e.what());
+            os2::logOnce("want tree", std::to_string(loc.entry->tgi.instance), e); // (the app does not print lib.errors)
         }
     }
     if (auto bytes = index.read(Tgi{0, kTuningGroup, kTuningInstance, 0})) {
@@ -548,6 +551,7 @@ Library Library::load(ResourceIndex& index) {
             lib.tuning = parseTuning({reinterpret_cast<const char*>(bytes->data()), bytes->size()});
         } catch (const std::exception& e) {
             lib.errors.push_back(std::string("want tuning: ") + e.what());
+            os2::logOnce("want tuning", "", e); // (the app does not print lib.errors)
         }
     }
     // The texts: the STR# of Text/Wants.package (their TGIs, group
@@ -558,7 +562,8 @@ Library Library::load(ResourceIndex& index) {
             continue;
         try {
             lib.texts[uint16_t(loc.entry->tgi.instance)] = StringTable::parse(index.read(loc));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("want texts", std::to_string(loc.entry->tgi.instance), err);
         }
     }
     return lib;

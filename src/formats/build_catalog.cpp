@@ -1,4 +1,5 @@
 #include "build_catalog.hpp"
+#include "formats/log_once.hpp"
 
 #include "property_set.hpp"
 #include "resindex.hpp"
@@ -66,7 +67,8 @@ std::optional<StringTable> buildText(ResourceIndex& index, uint32_t instance) {
         if (loc.entry->tgi.instance == instance && buildTextPackage(loc))
             try {
                 return StringTable::parse(index.read(loc));
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("build text", std::to_string(instance), err);
             }
     return std::nullopt;
 }
@@ -177,7 +179,8 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
                     b.name = n;
                 if (const std::string d = t.get(1); !d.empty())
                     b.description = d;
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("build catalog strings", b.name, err);
             }
         }
         if (!b.guid || b.material.empty())
@@ -203,7 +206,8 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
                     f.name = n;
                 if (const std::string d = t.get(1); !d.empty())
                     f.description = d;
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("build catalog strings", f.name, err);
             }
         }
         if (f.guid && !f.rail.empty())
@@ -226,7 +230,8 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
                     t.name = n;
                 if (const std::string d = st.get(1); !d.empty())
                     t.description = d;
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("build catalog strings", t.name, err);
             }
         }
         if (!t.texture.empty())
@@ -249,7 +254,8 @@ BuildCatalog BuildCatalog::loadUncached(ResourceIndex& index) {
                     t.name = n;
                 if (const std::string d = st.get(1); !d.empty())
                     t.description = d;
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("build catalog strings", t.name, err);
             }
         }
         if (t.guid)

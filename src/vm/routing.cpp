@@ -1,5 +1,6 @@
 // Positions in the world: occupancy of the lot's tiles.
 #include "vm.hpp"
+#include "formats/log_once.hpp"
 
 #include "errors.hpp"
 #include "go_here.hpp"
@@ -3610,7 +3611,8 @@ const ModelFootprints* modelFootprints(VM& vm, const Object& o) {
                 }
             }
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("footprint", std::to_string(o.group) + ":" + std::to_string(o.definitionInstance), err);
         fp.reset();
     }
     return cache.emplace(key, fp).first->second.get();

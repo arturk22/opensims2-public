@@ -1,4 +1,5 @@
 #include "app/build_mode.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/design_tool.hpp"
 
@@ -1070,7 +1071,8 @@ const RgbaImage* BuildMode::fenceThumbnail(const BuildFence& f) {
                 material = part.material;
                 break;
             }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("fence thumbnail", f.rail, err);
     }
     if (material.empty())
         return thumbs_.emplace(f.guid, nullptr).first->second.get();
@@ -1151,7 +1153,8 @@ const RgbaImage* BuildMode::stairsThumbnail(const BuildStairs& b) {
             return {};
         try {
             return objectCresName(index_, Tgi{vm::kTypeObjd, def->first, def->second, 0});
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("stairs thumbnail", std::to_string(guid), err);
             return {};
         }
     };

@@ -1,4 +1,5 @@
 #include "engine.hpp"
+#include "formats/log_once.hpp"
 #include "errors.hpp"
 #include "vm.hpp"
 #include "placement.hpp"
@@ -132,7 +133,8 @@ const Slots* CodeLibrary::slots(uint32_t group, uint16_t instance) {
 const InteractionTable* CodeLibrary::interactions(uint32_t group, uint16_t instance) {
     try {
         return loadCached(interactions_, index_, kTypeTtab, group, instance);
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("interactions (TTAB)", std::to_string(group) + ":" + std::to_string(instance), err);
         // A few TTABs carry bytes the parser does not explain: no interactions.
         return interactions_.emplace(key(group, instance), nullptr).first->second.get();
     }
@@ -918,7 +920,7 @@ void VM::initialize(ObjectId id, const std::vector<ObjectId>& existing) {
         for (ObjectId p : parts)
             if (auto t = runFunction(p, 0))
                 createdInits.push_back(std::move(*t));
-    } catch (...) {
+    } catch (...) { // any type: the depth is put back, then it goes on (throw;)
         --initDepth_;
         throw;
     }
@@ -1044,6 +1046,18 @@ void VM::tick() {
 // The game also writes an ObjectError log. The Main starts from its first
 // node the next tick.
 void VM::resetAfterError(ObjectId id, Thread& t) {
+    // On stderr once per error and tree (the game writes its ObjectError log;
+    // s2pkg prints errorResets, the app did not).
+    {
+        std::string where = t.error.substr(0, t.error.find('\n', t.error.find('\n') + 1));
+        if (const size_t nl = where.find("\n  at "); nl != std::string::npos)
+            where.replace(nl, 6, " at ");
+        const Object* o = object(id);
+        os2::logOnce("SimAntics error", where,
+                     "object " + std::to_string(id) +
+                         (o && o->definition && !o->definition->fileName.empty() ? " (" + o->definition->fileName + ")" : "") +
+                         " reset");
+    }
     ErrorReset& r = errorResets[id];
     if (r.count++ == 0)
         r.first = t.error;

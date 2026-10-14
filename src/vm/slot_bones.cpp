@@ -1,6 +1,7 @@
 // Routing slots at the bones of an object's model (cTSRoute::
 // GetPossibleSlotsFromModelRoutingSlot in the Mac binary, BV 0x475b98).
 #include "vm.hpp"
+#include "formats/log_once.hpp"
 
 #include "formats/anim.hpp"
 #include "formats/anim_player.hpp"
@@ -33,7 +34,8 @@ const Skeleton* skeletonOf(CodeLibrary& code, const Object& target) {
             const std::string cres = objectCresName(index, Tgi{kTypeObjdId, target.group, target.definitionInstance, 0});
             if (auto loc = index.findByName(cres + "_cres", kTypeCresId))
                 sk = std::make_shared<Skeleton>(Skeleton::fromCres(Rcol(index.read(*loc))));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("slot skeleton", std::to_string(target.group) + ":" + std::to_string(target.definitionInstance), err);
         }
         it = skeletons.emplace(key, sk).first;
     }

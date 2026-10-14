@@ -1,4 +1,5 @@
 #include "character_write.hpp"
+#include "formats/log_once.hpp"
 
 #include "binreader.hpp"
 #include "binwriter.hpp"
@@ -259,7 +260,8 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
                 }
                 break;
             }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("mesh overlay materials", std::to_string(group), err);
             return {};
         }
         if (mats.empty())
@@ -358,13 +360,15 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
                     spec.overlays.push_back(f);
             }
             break;
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("character face overlays", std::to_string(e.tgi.instance), err);
         }
     }
     if (auto lx = read(kTypeLxnr, 1)) {
         try {
             spec.face.structure = std::make_shared<FaceStructure>(FaceStructure::parse(*lx));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("character face structure (LxNR)", "", err);
         }
     }
     if (auto ctss = read(kTypeCtss, 0x7D0)) {
@@ -373,7 +377,8 @@ CharacterSpec readCharacterSpec(DbpfPackage& pkg, uint32_t group, const CasCatal
             spec.firstName = st.get(0);
             spec.description = st.get(1);
             spec.lastName = st.get(2);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("character names (CTSS)", "", err);
         }
     }
     return spec;
@@ -424,7 +429,8 @@ bool writeEmbeddedCharacter(ResourceIndex& index, uint32_t objdGuid, const std::
                 objd = loc;
                 break;
             }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("OBJD", std::to_string(loc.entry->tgi.group) + ":" + std::to_string(loc.entry->tgi.instance), err);
         }
     if (!objd)
         return false;
@@ -819,6 +825,7 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
                 ++k;
             } catch (const std::exception& e) {
                 res.warnings.push_back(std::string("mesh overlay: ") + e.what());
+                os2::logOnce("mesh overlay", fam, e); // (growing up in play does not print res.warnings)
             }
         }
         faces.push_back({a, cresT, std::move(meshes)});
@@ -952,7 +959,8 @@ CharacterWriteResult writeCharacter(ResourceIndex& index, const CasCatalog& cata
                 templateObjd = loc.entry->tgi;
                 break;
             }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("OBJD", std::to_string(loc.entry->tgi.group) + ":" + std::to_string(loc.entry->tgi.instance), err);
         }
     }
     if (templateObjd) {

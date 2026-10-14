@@ -1,6 +1,7 @@
 // Families moving in and out, bulldozing (hood_moves.hpp).
 
 #include "hood_moves.hpp"
+#include "formats/log_once.hpp"
 
 #include "binwriter.hpp"
 #include "dbpf.hpp"
@@ -99,7 +100,8 @@ LotFileInfo lotFileInfo(const Lot& lot) {
                     out.canMoveIn = !(g.size() > kGlobalInhibitMoveIn && g[kGlobalInhibitMoveIn] != 0);
                     return out;
                 }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("lot file", lot.package.filename().string(), err);
         }
     }
     // The lot's rectangle without its road (lot info vtable 0x34: neighborhood

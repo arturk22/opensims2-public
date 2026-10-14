@@ -1,4 +1,5 @@
 #include "app/design_tool.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/vm_objects.hpp"
 #include "formats/font.hpp"
@@ -79,7 +80,8 @@ int DesignTool::price() {
     if (const StringTable* t = res_.table(packageGroupHash("Build"), 0x92))
         try {
             price_ = std::stoi(t->get(0));
-        } catch (const std::exception&) {
+        } catch (const std::logic_error& err) { // not a number (std::stoi): the default price
+            os2::logOnce("design tool price", t->get(0), err);
         }
     return price_;
 }
@@ -108,7 +110,8 @@ bool DesignTool::open(vm::ObjectId id, simd_float2 at, const std::string& name) 
                 order.push_back(part.mesh.name);
                 spelled.emplace(lower(part.mesh.name), part.mesh.name);
             }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("design tool model", model, err);
         }
     Open o;
     o.id = owner, o.model = model, o.name = name, o.at = at;

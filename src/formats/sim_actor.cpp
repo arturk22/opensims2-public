@@ -13,7 +13,7 @@ Animation loadAnimation(ResourceIndex& index, std::string name) {
         name += "_anim";
     auto loc = index.findByName(name, kTypeAnim);
     if (!loc)
-        throw FormatError("animation not found: " + name);
+        throw AnimationNotFound("animation not found: " + name);
     const auto bytes = index.read(*loc);
     Rcol rc(bytes);
     const auto* b = rc.find("cAnimResourceConst");

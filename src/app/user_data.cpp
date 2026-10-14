@@ -1,4 +1,5 @@
 #include "app/user_data.hpp"
+#include "formats/log_once.hpp"
 
 #include "formats/graphics_options.hpp"
 
@@ -134,7 +135,8 @@ float UserData::optionFloat(const std::string& key, float fallback) const {
         return fallback;
     try {
         return std::stof(*v);
-    } catch (const std::exception&) {
+    } catch (const std::logic_error& err) { // not a number (std::stof): the fallback
+        os2::logOnce("option", key, err);
         return fallback;
     }
 }

@@ -3,6 +3,7 @@
 // the rest is inferred.
 
 #include "app/dialog_window.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/ui_panel_util.hpp"
 #include "formats/font.hpp"
@@ -100,7 +101,8 @@ const UiScript* DialogWindow::script(uint32_t id) {
         std::optional<UiScript> s;
         try {
             s = res_->script(id);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("dialog script", std::to_string(id), err);
         }
         if (s && s->roots.empty())
             s.reset();

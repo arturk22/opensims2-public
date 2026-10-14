@@ -1,4 +1,5 @@
 #include "neighborhood.hpp"
+#include "formats/log_once.hpp"
 
 #include "binreader.hpp"
 #include "property_set.hpp"
@@ -63,7 +64,8 @@ uint32_t propertyNumber(const std::map<std::string, std::string>& m, const std::
         return def;
     try {
         return uint32_t(std::stoul(it->second, nullptr, 0));
-    } catch (const std::exception&) {
+    } catch (const std::logic_error& err) { // not a number (std::stoul): the default
+        os2::logOnce("neighborhood property", key + "=" + it->second, err);
         return def;
     }
 }
@@ -77,7 +79,7 @@ long lotNumber(const std::string& stem) {
         size_t used = 0;
         const long n = std::stol(stem.substr(p + 4), &used);
         return used == stem.size() - p - 4 ? n : -1;
-    } catch (const std::exception&) {
+    } catch (const std::logic_error&) { // not a number (std::stol): not a lot file name
         return -1;
     }
 }
@@ -434,6 +436,7 @@ Neighborhood Neighborhood::load(const std::filesystem::path& path, bool loadChar
         } catch (const std::exception& e) {
             ++c.failed;
             const std::string msg = std::string(what) + ": " + e.what();
+            os2::logOnce("neighborhood", what, e); // (once a kind of record; the app does not print h.errors)
             if (c.firstError.empty())
                 c.firstError = msg;
             h.errors.push_back(msg);

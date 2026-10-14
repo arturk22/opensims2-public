@@ -23,6 +23,7 @@
 // (tutorial.hpp): they never wait.
 
 #include "dialog.hpp"
+#include "formats/log_once.hpp"
 
 #include "vm.hpp"
 #include "hood_bridge.hpp"
@@ -77,7 +78,8 @@ const StringTable* catalogStrings(VM& vm, const Object& o) {
         try {
             if (auto data = index->read(Tgi{kTypeCtss, o.group, instance, 0}))
                 t = std::make_unique<StringTable>(StringTable::parse(*data));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("catalog strings", std::to_string(o.group), err);
         }
         it = cache.emplace(key, std::move(t)).first;
     }

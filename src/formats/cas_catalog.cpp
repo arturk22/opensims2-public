@@ -1,4 +1,5 @@
 #include "cas_catalog.hpp"
+#include "formats/log_once.hpp"
 
 #include "property_set.hpp"
 #include "rcol.hpp"
@@ -276,7 +277,8 @@ std::string faceSkinTexture(ResourceIndex& index, const std::string& prefix, int
                     if (t.size() >= want.size() && t.compare(t.size() - want.size(), want.size(), want) == 0)
                         return t;
                 }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("CAS face texture", p + "face_s" + n, err);
         }
     }
     return p + "face-s" + n;
@@ -297,7 +299,8 @@ std::string overlayTexture(ResourceIndex& index, const SimPart& o) {
                 if (const auto* b = rc.find("cMaterialDefinition"))
                     if (auto tex = MaterialDefinition::parse(b->body).property("stdMatBaseTextureName"); !tex.empty())
                         return tex;
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("CAS overlay texture", o.name(), err);
             }
         }
     }

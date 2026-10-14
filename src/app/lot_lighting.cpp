@@ -1,4 +1,5 @@
 #include "lot_lighting.hpp"
+#include "formats/log_once.hpp"
 
 #include "lot_vm.hpp"
 #include "vm_objects.hpp"
@@ -234,7 +235,8 @@ float LotLighting::global(const std::string& group, const std::string& name, flo
         if (auto it = config_.globals.find(key); it != config_.globals.end())
             try {
                 return std::stof(it->second);
-            } catch (const std::exception&) {
+            } catch (const std::logic_error& err) { // not a number (std::stof): the next key, else the fallback
+                os2::logOnce("lighting value", key, err);
             }
     return fallback;
 }

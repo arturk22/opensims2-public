@@ -1,4 +1,5 @@
 #include "lot_audio.hpp"
+#include "formats/log_once.hpp"
 
 #include "formats/config_text.hpp"
 #include "formats/property_set.hpp"
@@ -58,7 +59,8 @@ SurfaceMap::SurfaceMap(const Lot& lot, ResourceIndex& index, const std::filesyst
             auto g = props.find("guid"), st = props.find("surfacetype");
             if (g != props.end() && st != props.end() && !st->second.empty())
                 byGuid[uint32_t(std::stoul(g->second))] = st->second;
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("floor sounds", std::to_string(loc.entry->tgi.instance), err);
         }
     }
     for (const auto& [ref, name] : lot.floorPatterns) {
@@ -176,7 +178,8 @@ std::string characterShoe(ResourceIndex& index, const Character& character, cons
             auto it = props.find("shoe");
             if (it != props.end() && std::atoi(it->second.c_str()) > 0)
                 return sound.shoeName(uint32_t(std::atoi(it->second.c_str())));
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("shoe sound", std::to_string(tgi.instance), err);
         }
     }
     return {};

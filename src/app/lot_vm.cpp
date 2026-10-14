@@ -48,6 +48,24 @@ LotSimulation::LotSimulation(ResourceIndex& index, const Lot& lot, DbpfPackage& 
         std::fprintf(stderr, "opensims2: family %d moved in: charged %lld\n", f, (long long)arrivals.charge);
     }
     const vm::LotLoad load = vm::loadLot(m, lot, saved, vm::charactersDirOf(lotFile));
+    // What the lot's file had that could not be read and the objects the VM
+    // could not create (s2pkg's lot commands print them; the app did not):
+    // the first 10 of each load.
+    {
+        const std::string file = lotFile.filename().string();
+        size_t lines = 0;
+        auto line = [&](const std::string& s) {
+            if (lines++ < 10)
+                std::fprintf(stderr, "opensims2: %s: %s\n", file.c_str(), s.c_str());
+        };
+        for (const auto& w : saved.warnings)
+            line(w);
+        for (const auto& e : load.objects)
+            if (!e.error.empty())
+                line("object " + std::to_string(e.id) + " (" + e.name + ") not created: " + e.error);
+        if (lines > 10)
+            std::fprintf(stderr, "opensims2: %s: %zu more\n", file.c_str(), lines - 10);
+    }
     if (hood)
         vm::bindLotSims(m);
     const vm::ResumeResult r = vm::startSavedLot(m, load, saved, fromInit);

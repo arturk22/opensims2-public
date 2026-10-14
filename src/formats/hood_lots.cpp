@@ -1,6 +1,7 @@
 // Placing, moving and binning lots (hood_lots.hpp).
 
 #include "hood_lots.hpp"
+#include "formats/log_once.hpp"
 
 #include "dbpf.hpp"
 #include "hood_moves.hpp"
@@ -570,7 +571,8 @@ std::map<uint32_t, OccupantFlags> loadOccupantFlags(ResourceIndex& index) {
             f.removeOnLotPlop = it->second == "1" || it->second == "true";
         try {
             out[uint32_t(std::stoul(g->second))] = f;
-        } catch (const std::exception&) {
+        } catch (const std::logic_error& err) { // not a number (std::stoul): the entry is skipped
+            os2::logOnce("occupant GUID", g->second, err);
         }
     }
     return out;

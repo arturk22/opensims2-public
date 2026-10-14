@@ -1,6 +1,7 @@
 // The want simulator (wants.hpp). Addresses are of the BV 1.10 ppc binary.
 
 #include "wants.hpp"
+#include "formats/log_once.hpp"
 
 #include "engine.hpp"
 #include "errors.hpp"
@@ -516,6 +517,7 @@ std::optional<bool> runWantTree(VM& vm, WantSystem& ws, Object& ctl, const std::
         result = runOneTickTree(vm, temps, ctl.id, ctl.id, ctl.id, *tree, params);
     } catch (const std::exception& e) {
         warn(ws, name + ": " + e.what());
+        os2::logOnce("want check tree", name, e); // (once a name: it runs every check; the app does not print ws.warnings)
         result = false;
     }
     if (Object* again = vm.object(ctl.id)) {
@@ -918,6 +920,7 @@ void loadWants(VM& vm, const hood::Neighborhood& h) {
                 ws->sims[id] = std::move(s);
             } catch (const std::exception& ex) {
                 warn(*ws, "SWAF " + std::to_string(id) + ": " + ex.what());
+                os2::logOnce("SWAF", std::to_string(id), ex); // (the app does not print ws.warnings)
             }
         }
     }

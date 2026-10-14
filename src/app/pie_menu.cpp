@@ -1,4 +1,5 @@
 #include "pie_menu.hpp"
+#include "formats/log_once.hpp"
 #include "app/game_data_caches.hpp"
 
 #include "formats/font.hpp"
@@ -158,7 +159,8 @@ std::optional<PickMesh::Mask> alphaMask(const ObjectModel& model, const std::str
                 out = std::move(m);
             }
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& err) {
+        os2::logOnce("pick mask", texture, err);
     }
     return cache[key] = out;
 }
@@ -396,7 +398,8 @@ PieMenuStyle PieMenuStyle::fromConstants(const std::map<std::string, std::string
         if (auto it = c.find(key); it != c.end())
             try {
                 out = std::stof(it->second); // "1.6f" reads as 1.6
-            } catch (const std::exception&) {
+            } catch (const std::logic_error& err) { // not a number (std::stof): the default stays
+                os2::logOnce("pie menu constant", key, err);
             }
     };
     auto color = [&](const char* key, std::array<float, 4>& out) {

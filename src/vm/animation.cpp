@@ -4,6 +4,7 @@
 // SimAntics editor's disassembler left in Sims2.exe; see TODO.md (M5) for
 // what is inferred.
 #include "engine.hpp"
+#include "formats/log_once.hpp"
 #include "animation.hpp"
 
 #include "errors.hpp"
@@ -36,7 +37,9 @@ std::optional<float> AnimationLibrary::seconds(const std::string& name) {
             const Animation a = loadAnimation(*index_, name);
             out = float(a.duration) / Animation::kTicksPerSecond;
             fullBody_[name] = a.flags & 1;
-        } catch (const std::exception&) {
+        } catch (const AnimationNotFound&) { // (an answer: the routes ask for variants the game may not have)
+        } catch (const std::exception& err) {
+            os2::logOnce("animation", name, err);
         }
     }
     cache_[name] = out;
@@ -51,7 +54,9 @@ std::shared_ptr<const Animation> AnimationLibrary::animation(const std::string& 
     std::shared_ptr<const Animation> a;
     try {
         a = std::make_shared<const Animation>(loadAnimation(*index_, name));
-    } catch (const std::exception&) {
+    } catch (const AnimationNotFound&) { // (an answer: the routes ask for variants the game may not have)
+    } catch (const std::exception& err) {
+        os2::logOnce("animation", name, err);
     }
     anims_[name] = a;
     return a;
@@ -70,7 +75,9 @@ float AnimationLibrary::rootTravel(const std::string& name, float restY) {
                     for (const auto& ch : t.channels)
                         if (ch.name == "root_trans" && ch.components.size() >= 2 && !ch.components[1].keys.empty())
                             end = ch.components[1].sample(float(ch.duration()), ch.duration());
-            } catch (const std::exception&) {
+            } catch (const AnimationNotFound&) { // (an answer: the routes ask for variants the game may not have)
+            } catch (const std::exception& err) {
+                os2::logOnce("animation", name, err);
             }
         it = rootEnd_.emplace(name, end).first;
     }
@@ -89,7 +96,9 @@ float AnimationLibrary::tilesPerSecond(const std::string& name) {
     {
         try {
             v = loadAnimation(*index_, name).velocity * Animation::kTicksPerSecond;
-        } catch (const std::exception&) {
+        } catch (const AnimationNotFound&) { // (an answer: the routes ask for variants the game may not have)
+        } catch (const std::exception& err) {
+            os2::logOnce("animation", name, err);
         }
     }
     speeds_[name] = v;
@@ -147,7 +156,9 @@ const LocoClip* AnimationLibrary::loco(const std::string& name, int ticksPerSeco
             c.root.push_back(r);
         }
         out = std::move(c);
-    } catch (const std::exception&) {
+    } catch (const AnimationNotFound&) { // (an answer: the routes ask for variants the game may not have)
+    } catch (const std::exception& err) {
+        os2::logOnce("animation", name, err);
     }
     auto& slot = loco_[name];
     slot = std::move(out);
@@ -170,7 +181,9 @@ std::optional<int> AnimationLibrary::eventTicks(const std::string& name, const s
                     break;
                 }
             }
-        } catch (const std::exception&) {
+        } catch (const AnimationNotFound&) { // (an answer: the routes ask for variants the game may not have)
+        } catch (const std::exception& err) {
+            os2::logOnce("animation", name, err);
         }
     }
     events_[key] = out;
@@ -189,10 +202,13 @@ const std::vector<std::pair<int, int16_t>>& AnimationLibrary::treeEvents(const s
                 const auto end = e.data.find_first_of("|\r\n");
                 try {
                     out.push_back({e.ticks, int16_t(std::stoi(e.data.substr(6, end == std::string::npos ? end : end - 6)))});
-                } catch (const std::exception&) {
+                } catch (const std::logic_error& err) { // not a number (std::stoi): the event is left out
+                    os2::logOnce("animation tree event", name + ": " + e.data, err);
                 }
             }
-        } catch (const std::exception&) {
+        } catch (const AnimationNotFound&) { // (an answer: the routes ask for variants the game may not have)
+        } catch (const std::exception& err) {
+            os2::logOnce("animation", name, err);
         }
     }
     std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });

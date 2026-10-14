@@ -1,4 +1,5 @@
 #include "hood_view.hpp"
+#include "formats/log_once.hpp"
 #include "app/scene_loader.hpp"
 #include "formats/graphics_options.hpp"
 
@@ -73,7 +74,8 @@ RgbaImage readTexture(ResourceIndex& index, const std::string& name) {
     if (auto loc = index.findByName(name, kTypeTxtr))
         try {
             return loadTexture(index.read(*loc), &index);
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("neighborhood texture", name, err);
         }
     return {};
 }

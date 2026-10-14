@@ -1,6 +1,7 @@
 // The tutorial in the app: tutorial.hpp, docs/tutorial-mac.md.
 
 #include "app/tutorial.hpp"
+#include "formats/log_once.hpp"
 
 #include "app/ui_panel_util.hpp"
 #include "app/user_data.hpp"
@@ -128,7 +129,8 @@ std::vector<TutorialEpisode> loadTutorialEpisodes(const fs::path& resDir, const 
                         out[i].description = table.get(size_t(t.description - 1));
                 }
             }
-        } catch (const std::exception&) {
+        } catch (const std::exception& err) {
+            os2::logOnce("tutorial titles", t.package + " " + std::to_string(t.table), err);
         }
         if (out[i].title.empty())
             out[i].title = "Tutorial " + std::to_string(out[i].number);
@@ -141,7 +143,8 @@ std::vector<TutorialEpisode> loadTutorialEpisodes(const fs::path& resDir, const 
                 const LotObjects saved = LotObjects::load(pkg);
                 if (saved.globals.size() > size_t(kTutorialStateGlobal))
                     out[i].state = saved.globals[size_t(kTutorialStateGlobal)];
-            } catch (const std::exception&) {
+            } catch (const std::exception& err) {
+                os2::logOnce("tutorial state", lot.filename().string(), err);
             }
     }
     return out;
