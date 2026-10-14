@@ -163,6 +163,35 @@ no chamador. Teste `scene_cycle` (`N002_Lot10` → bairro → `N002_Lot3` → ba
 `N002_Lot10`, popup de humor aberto, `ulimit -S -n 256`), que deve sair com 0
 também num build com AddressSanitizer.
 
+Rodada 23 (`r23-scenestate`, `DEBITOS-TECNICOS.md` 1.3/1.4): todo o estado
+da cena fica num objeto só, `SceneState gScene` (topo do `app/main.mm`); os
+globais de antes (`gBuild`, `gLotSims`, `gEffects`...) são referências para
+os membros dele. `resetSceneState()` troca o objeto por um novo (atribuição
+por movimento: os membros são zerados **na ordem em que estão declarados**,
+que é a ordem de desmontagem: modos e vistas antes da VM, efeitos antes do
+renderizador da cena seguinte). Ela roda num lugar só: no `unloadScene` a
+cada troca (lote → bairro, bairro → bairro, lote → lote) e num `atexit` ao
+sair (antes dos estáticos, com o índice e o áudio do jogo ainda vivos).
+Entraram também os globais que o `unloadScene` esquecia (`gWallHung`,
+`gCarriers`, `gLotCharactersDir`, `gStaticShadowLight`, o relógio da
+cinemática...) e os caches `static` de função que eram por cena: as edições
+do espelho (por ID de Sim), os guarda-roupas preenchidos (por número de
+família), os arquivos de personagem do bairro, os relatórios de depuração por
+objeto/Sim e a última resposta do cursor ("tem interações?"). Os caches
+`static` que ficam são do jogo (por GUID, nome de recurso ou arquivo de
+`TSData`) e dizem isso num comentário. Os detectores de depuração (pulos,
+deslizes, assentos) somam a sessão inteira mas esquecem os Sims a cada cena
+(`gSceneGeneration`). Na VM, o "uma vez por tick" do
+`flushMoveOutOfWayDestinations` saiu de um mapa por endereço de VM para um
+campo da VM. Global novo de cena vai no `SceneState`.
+`OS2_DEBUG_SCENE_STATE=1` imprime os tamanhos antes e depois de cada
+descarga; `OS2_PROBE_SCENE_CACHES=1` (ajuda de teste) esvazia o guarda-roupa
+da família do primeiro Sim e abre guarda-roupa e espelho dele. O
+`scene_cycle` usa os dois: depois de cada descarga tudo vazio, e as três
+entradas em lote (incluindo a segunda no `N002_Lot10`) começam com 0 edições
+de espelho e 0 guarda-roupas preenchidos (antes, na segunda visita, o
+guarda-roupa da família não era preenchido).
+
 ## 6. Jogar o bairro (rodada 9)
 
 O puck do bairro abre Famílias e Lotes & Casas (`app/hood_bins.*`,
