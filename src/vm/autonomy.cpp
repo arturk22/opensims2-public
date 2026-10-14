@@ -631,7 +631,8 @@ std::string describeOperands(VM& vm, const Thread& th, const Frame& f, const Beh
     auto val = [&](uint8_t owner, int16_t data) {
         try {
             return std::to_string(cx.get(owner, data));
-        } catch (...) {
+        } catch (const std::exception& e) { // (a trace's text: the operand shows as "?")
+            std::fprintf(stderr, "opensims2: trace: operand %u:%d unreadable: %s\n", unsigned(owner), int(data), e.what());
             return std::string("?");
         }
     };

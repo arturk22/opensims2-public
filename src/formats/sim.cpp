@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstdio>
 #include <exception>
 #include <mutex>
 #include <optional>
@@ -115,7 +116,8 @@ void parallelFor(size_t n, F body) {
     try {
         for (size_t t = 1; t < threads; ++t)
             pool.emplace_back(run);
-    } catch (...) { // no thread to be had: this one does the rest
+    } catch (const std::exception& e) { // no thread to be had: this one does the rest
+        std::fprintf(stderr, "opensims2: Sim parts: %zu of %zu threads started (%s)\n", pool.size() + 1, threads, e.what());
     }
     run();
     for (auto& t : pool)

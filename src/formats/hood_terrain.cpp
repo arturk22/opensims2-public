@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 #include <sstream>
 
 namespace os2::hood {
@@ -109,7 +110,7 @@ float number(const std::string& s, float fallback) {
         size_t used = 0;
         const float v = std::stof(s, &used);
         return used ? v : fallback;
-    } catch (...) {
+    } catch (const std::logic_error&) { // not a number (std::stof throws only invalid_argument, out_of_range)
         return fallback;
     }
 }
@@ -117,7 +118,7 @@ float number(const std::string& s, float fallback) {
 uint32_t hexOrDec(const std::string& s) {
     try {
         return uint32_t(std::stoul(s, nullptr, 0));
-    } catch (...) {
+    } catch (const std::logic_error&) { // not a number (std::stoul throws only invalid_argument, out_of_range)
         return 0;
     }
 }
