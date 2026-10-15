@@ -63,12 +63,20 @@ LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::file
     library_ = std::make_unique<fx::EffectsLibrary>(fx::EffectsLibrary::parse(*data));
     system_ = std::make_unique<fx::EffectSystem>(*library_);
     layer_ = std::make_unique<ParticleLayer>(renderer.device(), renderer.colorFormat(), renderer.depthFormat(), &index);
+    // The particle groups sort among the blended parts (layer 7 and up), as
+    // the game's display list sorts them.
     ParticleLayer* layer = layer_.get();
-    renderer.setSceneHook([layer](MTL::RenderCommandEncoder* enc, const simd_float4x4& view,
-                                  const simd_float4x4& viewProj) { layer->encode(enc, view, viewProj); });
+    renderer.setExternalBlended(
+        [layer](const simd_float4x4& view, const simd_float4x4& viewProj, std::vector<Renderer::ExternalItem>& out) {
+            std::vector<ParticleLayer::Group> groups;
+            layer->prepare(view, viewProj, groups);
+            for (const auto& g : groups)
+                out.push_back({g.layer, g.depth, g.id});
+        },
+        [layer](MTL::RenderCommandEncoder* enc, int id) { layer->drawGroup(enc, id); });
 }
 
-LotEffects::~LotEffects() { renderer_.setSceneHook(nullptr); }
+LotEffects::~LotEffects() { renderer_.setExternalBlended(nullptr, nullptr); }
 
 std::string LotEffects::thumbnail(vm::VM& vm, uint32_t guid) {
     if (auto it = thumbNames_.find(guid); it != thumbNames_.end())

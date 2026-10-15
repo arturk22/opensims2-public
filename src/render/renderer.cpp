@@ -772,12 +772,21 @@ void Renderer::updateObject(int model, const ObjectModel& posed) {
         if (p.pending.size() != n)
             p.pending.assign(static_cast<const Vertex*>(p.vertices->contents()),
                              static_cast<const Vertex*>(p.vertices->contents()) + n);
+        simd_float3 lo = simd_make_float3(INFINITY, INFINITY, INFINITY), hi = -lo;
         for (size_t i = 0; i < n; ++i) {
             for (int k = 0; k < 3; ++k)
                 p.pending[i].position[k] = mesh.positions[i][size_t(k)];
             if (i < mesh.normals.size())
                 for (int k = 0; k < 3; ++k)
                     p.pending[i].normal[k] = mesh.normals[i][size_t(k)];
+            const simd_float3 q = simd_make_float3(mesh.positions[i][0], mesh.positions[i][1], mesh.positions[i][2]);
+            lo = simd_min(lo, q), hi = simd_max(hi, q);
+        }
+        // The posed box: the blended parts sort by it (an animated
+        // object's, the PlumbBob's, was its bind pose's).
+        if (n) {
+            p.lo = lo, p.hi = hi;
+            p.center = (lo + hi) * 0.5f;
         }
         p.stale.fill(true);
     }
@@ -1006,42 +1015,60 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     dispatch_semaphore_t sem = sema(inFlight_);
     cmd->addCompletedHandler([sem](MTL::CommandBuffer*) { dispatch_semaphore_signal(sem); });
 
-    // Draw order: by material layer (stdMatLayer x 8, +7 for blended
-    // parts), opaque parts in submission order, blended ones back to front
-    // by the distance of their bounding box centre from the eye.
+    // Draw order (cDisplayList::AddGeometry BV 0xca8598, cLessGeomPartInfo):
+    // by key (stdMatLayer x 8, +7 for blended parts), opaque parts in
+    // submission order, blended ones by depth, the farthest first: a part's
+    // depth is the z / w of the nearest corner of its box (BV 0x86d4c), a
+    // particle group's that of its box's centre (0x86ed4; external items).
     struct Item {
         int layer;
         bool blended;
-        float distance;
+        float depth;
         int alphaOrder;
         const Instance* inst;
         const Part* part;
+        int external = -1;
     };
     std::vector<Item> items;
-    const simd_float3 eye = simd_make_float3(f->eye);
+    const simd_float3 eye = simd_make_float3(f->eye); // (the mirror below)
+    auto ndcDepth = [&](simd_float4 p) { return p.w > 1e-5f ? p.z / p.w : 0.0f; };
     for (const auto& inst : instances_)
         for (const auto& part : models_[size_t(inst.model)]->parts) {
             if (part.shadowPlane && !graphicsOptions().guob)
                 continue;
             const Material& m = part.material;
             const bool blended = m.blend != StandardMaterial::Blend::None || inst.alpha < 1;
-            float distance = 0;
+            float depth = 0;
             if (blended) {
-                // A hairdo's layers sort together, by the instance's origin,
-                // then in their alpha order.
-                const simd_float4 c = m.alphaOrder ? inst.transform.columns[3]
-                                                   : simd_mul(inst.transform, simd_make_float4(part.center, 1));
-                distance = simd_length_squared(simd_make_float3(c) - eye);
+                if (m.alphaOrder) {
+                    // A hairdo's layers sort together, by the instance's
+                    // origin, then in their alpha order (the game keeps one
+                    // geometry's parts in order with a 1e-5 step; inferred here).
+                    depth = ndcDepth(simd_mul(f->viewProj, inst.transform.columns[3]));
+                } else {
+                    const simd_float4x4 mvp = simd_mul(f->viewProj, inst.transform);
+                    depth = 1e6f;
+                    for (int c = 0; c < 8; ++c)
+                        depth = std::min(depth, ndcDepth(simd_mul(mvp, simd_make_float4(c & 1 ? part.hi[0] : part.lo[0],
+                                                                                         c & 2 ? part.hi[1] : part.lo[1],
+                                                                                         c & 4 ? part.hi[2] : part.lo[2], 1))));
+                }
             }
-            items.push_back({m.layer, blended, distance, m.alphaOrder, &inst, &part});
+            items.push_back({m.layer, blended, depth, m.alphaOrder, &inst, &part});
         }
+    if (externalItems_) {
+        std::vector<ExternalItem> external;
+        externalItems_(view.view, f->viewProj, external);
+        for (const auto& e : external)
+            items.push_back({e.layer, true, e.depth, 0, nullptr, nullptr, e.id});
+    }
     std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
         if (a.layer != b.layer)
             return a.layer < b.layer;
         if (a.blended != b.blended)
             return !a.blended;
-        if (a.blended && a.distance != b.distance)
-            return a.distance > b.distance;
+        if (a.blended && a.depth != b.depth)
+            return a.depth > b.depth;
         return a.blended && a.alphaOrder < b.alphaOrder;
     });
 
@@ -1059,7 +1086,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
     if (reflections_ && target) {
         float best = INFINITY;
         for (const auto& item : items) {
-            if (!item.part->material.mirror)
+            if (!item.part || !item.part->material.mirror)
                 continue;
             const simd_float4x4& m = item.inst->transform;
             const simd_float3 c = simd_make_float3(simd_mul(m, simd_make_float4(item.part->center, 1)));
@@ -1210,6 +1237,13 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentTexture(shadowCount ? shadowAtlas_ : white_, 19);
         enc->setFragmentBuffer(shadowCount ? shadowBuffers_[size_t(frame_)] : lightBuffers_[size_t(frame_)], 0, 4);
         for (const auto& item : items) {
+            if (item.external >= 0) {
+                // A particle group: only in the view itself (not the mirror's
+                // nor the censor's renders).
+                if (frameSlot == 0 && externalDraw_)
+                    externalDraw_(enc, item.external);
+                continue;
+            }
             const Part& part = *item.part;
             const Material& m = part.material;
             if (reflected && m.mirror)

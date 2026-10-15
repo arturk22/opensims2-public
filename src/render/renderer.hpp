@@ -227,6 +227,22 @@ public:
     // and view-projection matrices: 3D extras such as particle effects.
     using SceneHook = std::function<void(MTL::RenderCommandEncoder*, const simd_float4x4& view, const simd_float4x4& viewProj)>;
     void setSceneHook(SceneHook hook) { sceneHook_ = std::move(hook); }
+    // Blended geometry drawn by someone else (the particles' groups), sorted
+    // in the main view with the parts by key and depth, as the game's
+    // display list does (cLessGeomPartInfo: by key, and with an odd key, the
+    // blended ones, by the depth z / w, the largest first). `items` lists them
+    // for the frame; `draw` encodes one in its turn.
+    struct ExternalItem {
+        int layer = 7;
+        float depth = 0;
+        int id = 0;
+    };
+    using ExternalItems = std::function<void(const simd_float4x4& view, const simd_float4x4& viewProj, std::vector<ExternalItem>& out)>;
+    using ExternalDraw = std::function<void(MTL::RenderCommandEncoder*, int id)>;
+    void setExternalBlended(ExternalItems items, ExternalDraw draw) {
+        externalItems_ = std::move(items);
+        externalDraw_ = std::move(draw);
+    }
     MTL::Device* device() const { return device_; }
     uint32_t colorFormat() const { return colorFormat_; }
     uint32_t depthFormat() const { return depthFormat_; }
@@ -299,6 +315,8 @@ private:
     std::chrono::steady_clock::time_point start_ = std::chrono::steady_clock::now();
     Overlay overlay_;
     SceneHook sceneHook_;
+    ExternalItems externalItems_;
+    ExternalDraw externalDraw_;
     bool reflections_ = false;
     float groundClip_ = -INFINITY;
     std::vector<ShadowCaster> casters_;

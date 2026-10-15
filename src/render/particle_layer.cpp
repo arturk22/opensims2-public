@@ -284,7 +284,11 @@ void ParticleLayer::setQuads(const std::vector<fx::ParticleQuad>& quads) {
         quads_.push_back({q, q.texture ? *q.texture : std::string()});
 }
 
-void ParticleLayer::encode(MTL::RenderCommandEncoder* enc, const simd_float4x4& view, const simd_float4x4& viewProj) {
+void ParticleLayer::prepare(const simd_float4x4& view, const simd_float4x4& viewProj, std::vector<Group>& out) {
+    batches_.clear();
+    groupBatches_.clear();
+    frameBuffer_ = nullptr;
+    viewProj_ = viewProj;
     if (quads_.empty())
         return;
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
@@ -292,32 +296,19 @@ void ParticleLayer::encode(MTL::RenderCommandEncoder* enc, const simd_float4x4& 
     const simd_float3 right = simd_make_float3(view.columns[0].x, view.columns[1].x, view.columns[2].x);
     const simd_float3 up = simd_make_float3(view.columns[0].y, view.columns[1].y, view.columns[2].y);
     const simd_float3 back = simd_make_float3(view.columns[0].z, view.columns[1].z, view.columns[2].z);
-    const simd_float3 eye = simd_make_float3(simd_inverse(view).columns[3]);
-
-    // Back to front (by layer first), so blended particles composite.
-    std::vector<std::pair<float, const Quad*>> order;
-    order.reserve(quads_.size());
-    for (const auto& q : quads_) {
-        const auto& sp = q.q.sortPosition;
-        const simd_float3 p = simd_make_float3(sp[0], sp[1], sp[2]);
-        order.push_back({simd_length_squared(p - eye) - q.q.layer * 1e-3f, &q});
-    }
-    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) {
-        if (a.first != b.first)
-            return a.first > b.first;
-        return a.second->q.sortOrder < b.second->q.sortOrder;
-    });
 
     std::vector<Vertex> verts;
-    verts.reserve(order.size() * 6);
-    struct Batch {
-        MTL::Texture* tex;
-        int pipeline, depth;
-        uint32_t first, count;
-    };
-    std::vector<Batch> batches;
-    for (const auto& [d, qp] : order) {
-        const fx::ParticleQuad& q = qp->q;
+    verts.reserve(quads_.size() * 6);
+    int currentGroup = -1;
+    for (const auto& qp : quads_) {
+        const fx::ParticleQuad& q = qp.q;
+        if (q.group != currentGroup) {
+            // A new group (an emitter): its sort key and depth.
+            currentGroup = q.group;
+            groupBatches_.push_back({batches_.size(), 0});
+            const simd_float4 c = simd_mul(viewProj, simd_make_float4(q.groupCenter[0], q.groupCenter[1], q.groupCenter[2], 1));
+            out.push_back({q.layerKey, c.w > 1e-5f ? c.z / c.w : 0.0f, int(groupBatches_.size() - 1)});
+        }
         const simd_float3 c = simd_make_float3(q.position[0], q.position[1], q.position[2]);
         simd_float3 ax = right, ay = up;
         if (q.alignment == 1) { // flat on the ground
@@ -342,11 +333,14 @@ void ParticleLayer::encode(MTL::RenderCommandEncoder* enc, const simd_float4x4& 
             ax = rx, ay = ry;
         }
         const simd_float3 hx = ax * (q.width * 0.5f), hy = ay * (q.height * 0.5f);
-        const Mesh* shape = mesh(qp->texture);
-        MTL::Texture* tex = shape ? shape->texture : texture(qp->texture);
+        const Mesh* shape = mesh(qp.texture);
+        MTL::Texture* tex = shape ? shape->texture : texture(qp.texture);
         const int pipe = pipelineFor(q.draw), dep = depthFor(q.draw);
-        if (batches.empty() || batches.back().tex != tex || batches.back().pipeline != pipe || batches.back().depth != dep)
-            batches.push_back({tex, pipe, dep, uint32_t(verts.size()), 0});
+        auto& range = groupBatches_.back();
+        if (range.second == 0 || batches_.back().tex != tex || batches_.back().pipeline != pipe || batches_.back().depth != dep) {
+            batches_.push_back({tex, pipe, dep, uint32_t(verts.size()), 0});
+            ++range.second;
+        }
         if (shape) {
             // The mesh at the particle: its size as the scale, its rotation
             // about the vertical (inferred), the model's axes otherwise.
@@ -358,7 +352,7 @@ void ParticleLayer::encode(MTL::RenderCommandEncoder* enc, const simd_float4x4& 
                 const simd_float3 p = c + simd_make_float3(m.x * cs - m.y * sn, m.x * sn + m.y * cs, m.z);
                 verts.push_back({{p.x, p.y, p.z}, {shape->uvs[i].x, shape->uvs[i].y}, {col[0], col[1], col[2], col[3]}});
             }
-            batches.back().count += uint32_t(shape->positions.size());
+            batches_.back().count += uint32_t(shape->positions.size());
             continue;
         }
         auto v = [&](simd_float3 p, float u, float t) {
@@ -371,7 +365,7 @@ void ParticleLayer::encode(MTL::RenderCommandEncoder* enc, const simd_float4x4& 
         v(c - hx - hy, uv[0], uv[3]);
         v(c + hx + hy, uv[2], uv[1]);
         v(c - hx + hy, uv[0], uv[1]);
-        batches.back().count += 6;
+        batches_.back().count += 6;
     }
     ring_ = (ring_ + 1) % kRing;
     MTL::Buffer*& buf = buffers_[size_t(ring_)];
@@ -382,17 +376,25 @@ void ParticleLayer::encode(MTL::RenderCommandEncoder* enc, const simd_float4x4& 
         buf = device_->newBuffer(std::max<size_t>(bytes * 2, 64 * 1024), MTL::ResourceStorageModeShared);
     }
     std::memcpy(buf->contents(), verts.data(), bytes);
+    frameBuffer_ = buf;
+    pool->release();
+}
+
+void ParticleLayer::drawGroup(MTL::RenderCommandEncoder* enc, int id) {
+    if (!frameBuffer_ || id < 0 || size_t(id) >= groupBatches_.size())
+        return;
     enc->setCullMode(MTL::CullModeNone);
-    enc->setVertexBuffer(buf, 0, 0);
-    enc->setVertexBytes(&viewProj, sizeof viewProj, 1);
+    enc->setVertexBuffer(frameBuffer_, 0, 0);
+    enc->setVertexBytes(&viewProj_, sizeof viewProj_, 1);
     enc->setFragmentSamplerState(sampler_, 0);
-    for (const auto& b : batches) {
+    const auto [first, count] = groupBatches_[size_t(id)];
+    for (size_t i = first; i < first + count; ++i) {
+        const Batch& b = batches_[i];
         enc->setRenderPipelineState(pipelines_[size_t(b.pipeline)]);
         enc->setDepthStencilState(depth_[size_t(b.depth)]);
         enc->setFragmentTexture(b.tex, 0);
         enc->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(b.first), NS::UInteger(b.count));
     }
-    pool->release();
 }
 
 } // namespace os2

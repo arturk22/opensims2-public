@@ -154,6 +154,16 @@ static void testSimulation() {
     }
     check(rising, "particles rise");
     check(placed, "particles start at the component offset from the effect");
+    // One emitter, one drawing group, sorted by the centre of its particles' box.
+    V3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+    bool oneGroup = true;
+    for (const auto& p : q) {
+        oneGroup = oneGroup && p.group == q[0].group && p.layerKey == 7;
+        for (int k = 0; k < 3; ++k)
+            lo[k] = std::min(lo[k], p.position[k]), hi[k] = std::max(hi[k], p.position[k]);
+    }
+    check(oneGroup, "an emitter's particles are one group, key 7");
+    check(!q.empty() && std::fabs(q[0].groupCenter[2] - (lo[2] + hi[2]) / 2) < 1e-4f, "the group sorts by its box's centre");
     sys.stop(h);
     for (int i = 0; i < 90; ++i)
         sys.update(1.0f / 30);

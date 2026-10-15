@@ -41,10 +41,14 @@ struct ParticleQuad {
     uint8_t alignment = 0;
     float layer = 0;
     V3 velocity{}; // world units per second (velocity-aligned particles)
-    // Sorting: particles that move with their effect (balloons) sort by the
-    // effect's position, then in component order (later ones on top).
-    V3 sortPosition{};
-    int sortOrder = 0;
+    // Drawing order (cTSParticlesRenderable::AddElementsToDisplayList): an
+    // emitter's particles are one group, drawn together in their birth
+    // order; the group sorts among the blended parts by its key (layer x 8
+    // + 7, or the layer itself with -directLayer) and the depth of the
+    // centre of its particles' box.
+    int group = 0;
+    V3 groupCenter{};
+    int layerKey = 7;
 };
 
 // A model an effect shows (Block::Model: a CRES, e.g. the chessboard's FX
@@ -228,7 +232,7 @@ private:
     void enterStep(MetaChain& m, MetaParticle& p, size_t step, int depth);
     void placeMeta(const Instance& inst, const MetaChain& m, MetaParticle& p) const;
     static bool busy(const Instance& inst);
-    void collectInstance(const Instance& inst, const V3& sortRoot, int orderBase, std::vector<ParticleQuad>& out) const;
+    void collectInstance(const Instance& inst, int& group, std::vector<ParticleQuad>& out) const;
     void collectModelsOf(int handle, const Instance& inst, std::vector<EffectModel>& out) const;
     void collectSoundsOf(int handle, const Instance& inst, std::vector<EffectSound>& out) const;
     // cTSParticlesEffect, BV addresses in docs/effects-mac.md §4e.

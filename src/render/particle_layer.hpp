@@ -1,9 +1,10 @@
 #pragma once
 
-// Draws EffectSystem particles (render/particle_system.hpp) in the 3D pass,
-// after the scene: textured quads with the effect's blending (alpha,
-// additive, modulate) and depth mode, blended ones back to front. Shaders
-// are compiled at runtime. The renderer calls encode from its scene hook.
+// Draws EffectSystem particles (render/particle_system.hpp) in the 3D pass:
+// textured quads with the effect's blending (alpha, additive, modulate) and
+// depth mode. Each emitter's particles are a group the renderer sorts among
+// its blended parts (by key and depth, as the game's display list does) and
+// draws with drawGroup. Shaders are compiled at runtime.
 
 #include "render/particle_system.hpp"
 
@@ -41,8 +42,19 @@ public:
 
     // The particles to draw from the next frame on (copied).
     void setQuads(const std::vector<fx::ParticleQuad>& quads);
-    // Encodes them; `view` is the camera's view matrix (billboards face it).
-    void encode(MTL::RenderCommandEncoder* enc, const simd_float4x4& view, const simd_float4x4& viewProj);
+    // A group to sort: its key (layer x 8 + 7) and depth, the z / w of the
+    // centre of its particles' box (cDisplayList::AddGeometry with the flag
+    // 0x40, BV 0x86ed4).
+    struct Group {
+        int layer = 7;
+        float depth = 0;
+        int id = 0;
+    };
+    // Builds this frame's vertices (`view`: the camera's view matrix, the
+    // billboards face it) and lists the groups.
+    void prepare(const simd_float4x4& view, const simd_float4x4& viewProj, std::vector<Group>& out);
+    // Encodes one prepared group.
+    void drawGroup(MTL::RenderCommandEncoder* enc, int id);
 
     // A texture by effect name, cached (white when it cannot be loaded).
     MTL::Texture* texture(const std::string& name);
@@ -79,6 +91,16 @@ private:
     std::map<std::string, MTL::Texture*> textures_;
     std::map<std::string, std::unique_ptr<Mesh>> meshes_;
     std::vector<Quad> quads_;
+    // This frame's batches, by group.
+    struct Batch {
+        MTL::Texture* tex;
+        int pipeline, depth;
+        uint32_t first, count;
+    };
+    std::vector<Batch> batches_;
+    std::vector<std::pair<size_t, size_t>> groupBatches_; // first, count in batches_
+    MTL::Buffer* frameBuffer_ = nullptr;
+    simd_float4x4 viewProj_{};
 };
 
 } // namespace os2

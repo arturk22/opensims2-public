@@ -898,12 +898,12 @@ void EffectSystem::collectModels(std::vector<EffectModel>& out) const {
 }
 
 void EffectSystem::collect(std::vector<ParticleQuad>& out) const {
+    int group = 0;
     for (const auto& [h, inst] : instances_)
-        collectInstance(inst, inst.where.position, 0, out);
+        collectInstance(inst, group, out);
 }
 
-void EffectSystem::collectInstance(const Instance& inst, const V3& sortRoot, int orderBase,
-                                   std::vector<ParticleQuad>& out) const {
+void EffectSystem::collectInstance(const Instance& inst, int& group, std::vector<ParticleQuad>& out) const {
     for (const auto& dp : inst.decals) {
             const Decal& d = *dp.desc;
             const float age = dp.age - dp.delay;
@@ -914,7 +914,8 @@ void EffectSystem::collectInstance(const Instance& inst, const V3& sortRoot, int
             ParticleQuad q;
             q.position = w.position;
             q.position[2] += 0.01f; // over the floor
-            q.sortPosition = q.position;
+            q.group = group++;
+            q.groupCenter = q.position; // (decals: cTSDecalEffect not read; its key taken as 7)
             const float size = sampleCurve(d.sizeCurve, t, 1) * dp.sizeScale * w.scale;
             q.width = size;
             q.height = size * sampleCurve(d.aspectCurve, t, 1);
@@ -937,14 +938,24 @@ void EffectSystem::collectInstance(const Instance& inst, const V3& sortRoot, int
         // (the vertex fill, BV 0xeb8dbc).
         const Placement frame = particleFrame(inst, e);
         const int cells = std::max(1, int(d.tileU) * int(d.tileV));
+        // The box of the particles (TSTriggerCollisionEffect extends it by each
+        // one; the stretch along the velocity is left out).
+        V3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+        for (const auto& p : e.particles) {
+            const V3 w = transformPoint(frame, p.position);
+            for (size_t k = 0; k < 3; ++k)
+                lo[k] = std::min(lo[k], w[k]), hi[k] = std::max(hi[k], w[k]);
+        }
+        const V3 center = mul(add(lo, hi), 0.5f);
+        const int key = (d.flags & pflag::DirectLayer) ? int(d.layer) : int(d.layer) * 8 + 7;
+        const int g = group++;
         for (const auto& p : e.particles) {
             const float t = p.age / p.life;
             ParticleQuad q;
             q.position = transformPoint(frame, p.position);
-            // Particles that move with the effect (balloons) sort by the
-            // effect's root position, then in component order.
-            q.sortPosition = e.rigid ? sortRoot : q.position;
-            q.sortOrder = e.rigid ? orderBase + e.order : 0;
+            q.group = g;
+            q.groupCenter = center;
+            q.layerKey = key;
             q.velocity = rotate(frame, p.velocity);
             const float size = p.sizeScale * sampleCurve(d.sizeCurve, t, 1) * frame.scale;
             q.width = size;
@@ -978,7 +989,7 @@ void EffectSystem::collectInstance(const Instance& inst, const V3& sortRoot, int
     for (const auto& mc : inst.metas)
         for (const auto& p : mc.particles)
             if (p.child)
-                collectInstance(*p.child, sortRoot, orderBase + mc.orderBase, out);
+                collectInstance(*p.child, group, out);
 }
 
 } // namespace os2::fx
