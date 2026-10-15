@@ -221,6 +221,7 @@ struct SceneState {
     std::map<int16_t, double> simAnimationAt;
     std::map<int16_t, fs::path> bornCharacters;
     std::set<int16_t> simsLookedAt;
+    std::set<int> fadedInstances; // the renderer instances drawn see-through by updateObjectFade
     os2::ScreenFxLayer::Params screenFxParams;
     double crossfadeAt = -1e9;
     std::unique_ptr<os2::BuildMode> build;
@@ -553,6 +554,8 @@ std::optional<fs::path> characterFileOf(uint32_t guid);
 void adoptVmSims(os2::Renderer& renderer);
 std::vector<os2::SimActor*> simsReachingLaterSims();
 void poseActors(os2::Renderer& renderer, double seconds);
+// Objects that obstruct the view fade near the camera (object_fade.hpp).
+void updateObjectFade(os2::Renderer& renderer);
 
 // debug_probes.cpp: the test aids that watch the drawn Sims (OS2_DEBUG_*,
 // OS2_THEN_AT, OS2_WATCH_*) and OS2_POSE_SHOT's sheets.

@@ -317,7 +317,8 @@ as suas posições de câmera salvas (`SaveCameraPosition`, `0x6a3a08`).
 No app: `LotCamera::setDefinition`, `applyCameraSelection` (`live_setup.mm`),
 a tecla T (`app_view.mm`), os botões de vista de cima dos painéis de Comprar
 e Construir (pressionados enquanto a vista está ligada) e o passo
-headless `--key t`.
+headless `--key t` (captura: `docs/screenshots/n11-camera-vista-de-cima.jpg`,
+Tutorial_Lot14 em Construir, nível de zoom 1 do Build: 40 de distância, pitch 84°).
 
 ### 1.8 Seguir o Sim (autotrack) e centrar (binário, rodada n11)
 
@@ -380,6 +381,60 @@ andar. A comparação usa o ponto do piso do Sim no andar dele
 velocidade do teclado (`0x3b6c780f`: `sqrt(largura·30) · eixo · distância ·
 constante · aceleração por repetição`) é outra fórmula que a do app
 (§1.4/TODO), não tocada nesta rodada.
+
+### 1.10 Fade de objetos perto da câmera (`objectFade*`; binário, rodada n11)
+
+**Parâmetros** (`LiveCamera.txt`): `objectFadeDistance 10`, `objectFadeFalloff
+4`, `objectFadeAllObjects 0`, `objectFadeCineCam 0`; a câmera "Animated" das
+cinemáticas (`CineCamCamera.txt`) tem 1, 2, 0 e 1; as câmeras Build, CameraMan
+e as outras não têm nenhum. Quando o controlador atual ganha o seu
+`cTSCameraSpec`, o `cTSSGSystem` (função em `0x7bee00`, dentro do que o
+Ghidra não definiu como função) lê os quatro: `+0x364` distância, `+0x368`
+queda, `+0x36c` = (allObjects > 0), `+0x36d` = (cineCam > 0 e a flag `+0x165`
+do sistema), e `+0x360` = se `objectFadeDistance` existe.
+`cTSSGSystem::ObjectFadeParams` (BV `0x7b35c4`) devolve os cinco campos a
+quem pergunta (0 sem `+0x360`) **só no estado de lote** (`0xbea28c2`).
+
+**Quem usa.** `cObject::UpdateVisibilityAndRendering` (BV `0x661e5c`, uma vez
+por quadro e objeto): sem a câmera de cinema (`+0x36d` = 0), o objeto só entra
+na conta se `allObjects` ou se o dado de objeto 40 ("Flag Field 2", STR#
+`0xD6` do `objects.package`) tem o **bit 3, "Obstructs View"** (`0x8`). O ponto
+é o **centro da caixa envolvente em mundo** (`vtable 0x118` do objeto,
+`FUN_000e7468`), levado ao espaço do viewer (`cIViewerRefNode` `vtable
+0x230`: posição e quaternion): a profundidade é o `y` desse ponto, a
+distância ao longo do eixo de visão (o viewer olha para o +Y local).
+
+```
+alpha = (profundidade / distância) ^ queda      se 0 < profundidade < distância
+alpha = 1                                        senão
+```
+
+(com 10 e 4: a 5 tiles do olho 6%, a 8 tiles 41%, de 10 em diante inteiro).
+Depois `ParentFadeAlpha` (`0x662c30`) pode baixar o alfa ao do objeto pai
+(só para quem passou pelo teste acima). Com alfa < 1 o objeto vai para o
+estilo de renderização 4 (`SetRenderStyle`, `0x65e7ec`: mistura por alfa) e a
+cor ARGB do objeto (`SetRenderARGB`, `0x65edd4`) recebe o alfa vezes o
+original. No jogo base os objetos com "Obstructs View" são, por exemplo, as
+árvores (`Tree - Birch`) e as luminárias de teto (`Lamp - Ceiling`): na
+`Tutorial_Lot14`, 4 objetos, e no zoom mais perto duas luminárias de teto ficam
+a 66% e 3%.
+
+**Câmera de cinema** (`+0x36d`): `FUN_0065deb0` (BV `0x65deb0`) dá o alfa de
+outra forma: um raio do olho da câmera (`vtable 0x140`) na direção de visão
+(`0x144`) contra a caixa de cada objeto, com `distância + 4`, e o alfa depende de
+quanto a caixa está dentro de um volume em volta do raio (`falloff ×
+distância`, mínimo 0,5); **não feita** (a leitura do raio contra a caixa
+e os limites é longa e precisa de cinemáticas para testar: rodada própria;
+durante uma cinemática o app não faz fade).
+
+No app: `object_fade.hpp` (a regra, sem Metal, testada em `test_camera`),
+`Renderer::setInstanceAlpha`/`instanceBounds` (alfa por instância: mistura
+por alfa, sem escrever a profundidade, o alfa dos materiais vezes o fade) e
+`updateObjectFade` (`lot_actors.cpp`, a cada `poseActors`; a linha `object fade:
+...` do log e `OS2_FADE_LOG=1` mostram o que desbota). **Inferido:** que o
+eixo de profundidade do viewer é o `y` local (o código usa o segundo
+componente do ponto no espaço do viewer; o viewer olha para +Y como o resto do
+jogo), e o `ParentFadeAlpha` (objetos dentro de objetos) não foi feito.
 
 ---
 

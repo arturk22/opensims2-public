@@ -1,6 +1,7 @@
 #include "app/camera_follow.hpp"
 #include "app/camera_input.hpp"
 #include "app/camera_mode.hpp"
+#include "app/object_fade.hpp"
 #include "render/camera.hpp"
 #include "render/cas_camera.hpp"
 
@@ -398,6 +399,42 @@ int main() {
         c.moveTo(simd_make_float3(10, 10, 0)); // Return: centre on the active Sim
         f.follow(machine, other.id);
         check(f.tracked() == 0, "centring (Return) stops it");
+    }
+    {
+        // The objects that obstruct the view fade near the camera (cObject::
+        // UpdateVisibilityAndRendering): alpha = (depth / distance) ^ falloff
+        // under the distance, from the camera's objectFade* params.
+        const auto cams = parseCameraConfig(R"(
+camera "Live" Live
+zoom 1 (70 40 25 15 8 3)
+setparam objectFadeDistance    10
+setparam objectFadeFalloff     4
+setparam objectFadeAllObjects  0
+setparam objectFadeCineCam     0
+camera "Build" Build
+zoom 1 (75 32)
+camera "Animated"
+   type Animated
+   setparam objectFadeDistance    1
+   setparam objectFadeFalloff     2
+   setparam objectFadeAllObjects  0
+   setparam objectFadeCineCam     1
+end
+)");
+        const auto live = objectFadeParams(*findCamera(cams, "Live"));
+        check(live && near(live->distance, 10) && near(live->falloff, 4) && !live->allObjects && !live->cineCam,
+              "the Live camera's fade params");
+        check(!objectFadeParams(*findCamera(cams, "Build")), "the top-down camera fades nothing");
+        const CameraDef* cine = findCamera(cams, "Animated");
+        check(cine && objectFadeParams(*cine) && objectFadeParams(*cine)->cineCam, "the cinematic camera has its own fade (not done)");
+        check(live && near(objectFadeAlpha(*live, 5), 0.0625f) && near(objectFadeAlpha(*live, 8), 0.4096f, 1e-3f),
+              "alpha = (depth / 10) ^ 4: 5 tiles away 6%, 8 tiles 41%");
+        check(live && near(objectFadeAlpha(*live, 10), 1) && near(objectFadeAlpha(*live, 25), 1), "fully drawn from the distance on");
+        check(live && near(objectFadeAlpha(*live, 0), 1) && near(objectFadeAlpha(*live, -3), 1), "behind the eye: not faded");
+        check(live && objectFades(*live, 1 << 3) && !objectFades(*live, 0x200 | 1), "only Flag Field 2 bit 3 (Obstructs View) fades");
+        ObjectFadeParams all = live ? *live : ObjectFadeParams{};
+        all.allObjects = true;
+        check(objectFades(all, 0), "objectFadeAllObjects fades every object");
     }
     {
         // The top-down view: "Build" takes over "Live" with the pivot, the

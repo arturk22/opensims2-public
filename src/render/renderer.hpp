@@ -121,6 +121,14 @@ public:
     void setLightSets(std::vector<LightSet> sets);
     const std::vector<LightSet>& lightSets() const { return lightSets_; }
     void setInstanceLightSet(int instance, int set);
+    // An instance drawn see-through (an object faded near the camera: cObject::
+    // UpdateVisibilityAndRendering, render style 4): its materials' alpha times
+    // `alpha`, alpha blended and not written to the depth buffer while it is
+    // under 1.
+    void setInstanceAlpha(int instance, float alpha);
+    // The instance's bounding box in the world (the model's parts' boxes
+    // carried by its transform: what an object's world bound is), if it has a model.
+    std::optional<std::pair<simd_float3, simd_float3>> instanceBounds(int instance) const;
     // The first instance of a model, or -1 (a Sim's actor has one).
     int instanceOf(int model) const;
 
@@ -270,6 +278,7 @@ private:
         int model;
         simd_float4x4 transform;
         int lightSet = 0;
+        float alpha = 1;
     };
     std::vector<Instance> instances_;
     size_t testInstances_ = 0; // the first instances_ are the test scene

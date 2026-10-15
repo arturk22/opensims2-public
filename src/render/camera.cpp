@@ -358,6 +358,12 @@ simd_float3 LotCamera::eye() const {
     return raisedPivot() + simd_make_float3(std::cos(h) * horiz, std::sin(h) * horiz, s * horiz);
 }
 
+simd_float3 LotCamera::forward() const {
+    if (firstPerson_)
+        return simd_normalize(firstPerson_->forward);
+    return simd_normalize(raisedPivot() - eye());
+}
+
 simd_float4x4 LotCamera::view() const {
     simd_float3 e = eye();
     simd_float3 f, s, u;

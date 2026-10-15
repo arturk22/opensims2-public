@@ -868,6 +868,27 @@ void Renderer::setInstanceLightSet(int instance, int set) {
         instances_[size_t(instance)].lightSet = std::max(0, set);
 }
 
+void Renderer::setInstanceAlpha(int instance, float alpha) {
+    if (instance >= 0 && size_t(instance) < instances_.size())
+        instances_[size_t(instance)].alpha = std::clamp(alpha, 0.0f, 1.0f);
+}
+
+std::optional<std::pair<simd_float3, simd_float3>> Renderer::instanceBounds(int instance) const {
+    if (instance < 0 || size_t(instance) >= instances_.size())
+        return std::nullopt;
+    const Instance& inst = instances_[size_t(instance)];
+    if (inst.model < 0 || size_t(inst.model) >= models_.size() || models_[size_t(inst.model)]->parts.empty())
+        return std::nullopt;
+    simd_float3 lo{INFINITY, INFINITY, INFINITY}, hi{-INFINITY, -INFINITY, -INFINITY};
+    for (const Part& p : models_[size_t(inst.model)]->parts)
+        for (int k = 0; k < 8; ++k) {
+            const simd_float3 corner = simd_make_float3(k & 1 ? p.hi.x : p.lo.x, k & 2 ? p.hi.y : p.lo.y, k & 4 ? p.hi.z : p.lo.z);
+            const simd_float3 w = simd_make_float3(simd_mul(inst.transform, simd_make_float4(corner, 1)));
+            lo = simd_min(lo, w), hi = simd_max(hi, w);
+        }
+    return std::pair{lo, hi};
+}
+
 int Renderer::instanceOf(int model) const {
     for (size_t i = 0; i < instances_.size(); ++i)
         if (instances_[i].model == model)
@@ -1000,7 +1021,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             if (part.shadowPlane && !graphicsOptions().guob)
                 continue;
             const Material& m = part.material;
-            const bool blended = m.blend != StandardMaterial::Blend::None;
+            const bool blended = m.blend != StandardMaterial::Blend::None || inst.alpha < 1;
             float distance = 0;
             if (blended) {
                 // A hairdo's layers sort together, by the instance's origin,
@@ -1192,8 +1213,10 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                 continue;
             if (part.cullable && outsideFrustum(passViewProj, item.inst->transform, part.lo, part.hi))
                 continue;
-            enc->setDepthStencilState(m.blend == StandardMaterial::Blend::None || m.depthWrite ? depthWrite_ : depthRead_);
-            enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha      ? alphaBlend_
+            const bool faded = item.inst->alpha < 1;
+            enc->setDepthStencilState((m.blend == StandardMaterial::Blend::None && !faded) || m.depthWrite ? depthWrite_ : depthRead_);
+            enc->setRenderPipelineState(m.blend == StandardMaterial::Blend::Alpha || (faded && m.blend == StandardMaterial::Blend::None)
+                                            ? alphaBlend_
                                         : m.blend == StandardMaterial::Blend::Additive ? additive_
                                         : m.blend == StandardMaterial::Blend::AddNoSrcAlpha ? addOne_
                                         : m.blend == StandardMaterial::Blend::Premultiplied ? premultiplied_
@@ -1204,7 +1227,9 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
             uv0 *= m.uvScale, uv1 *= m.uvScale;
             const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
             const uint32_t flags = m.flags | (frameSlot == 0 && &item == mirror ? uint32_t(kMirror) : 0u);
-            Draw d{item.inst->transform, m.color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
+            simd_float4 color = m.color;
+            color.w *= item.inst->alpha;
+            Draw d{item.inst->transform, color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
                    m.maskV, m.alphaRef, flags, uint32_t(set)};
             enc->setVertexBytes(&d, sizeof d, 1);
             enc->setFragmentBytes(&d, sizeof d, 1);

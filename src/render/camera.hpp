@@ -143,6 +143,7 @@ public:
     simd_float4x4 view() const;
     simd_float4x4 projection(float aspect) const;
     simd_float3 eye() const;
+    simd_float3 forward() const;                       // the view axis, unit (towards what the camera looks at)
     simd_float3 pivot() const { return pivot_; }       // on the floor
     simd_float3 pivotTarget() const { return pivotTarget_; }
     float zoom() const;                                // fractional zoom level of the distance
