@@ -553,6 +553,21 @@ static void testNewLot() {
     fs::remove_all(dir.parent_path());
 }
 
+// cTSGameStateController::EvictFamily(family, lot) (BV 0x1434cc) does not
+// evict the family of the lot being played: message 0xEC1AAC03 for the
+// Goths on lot 11 (entered) changes nothing; family 5 on lot 18 leaves
+// its house and the lot is flagged.
+static void testEvictPlayedLot() {
+    Fixture fx;
+    VM& vm = fx.vm;
+    const int32_t gothFunds = vm.families[1].funds;
+    vm.evictFamily(1);
+    check(vm.families[1].house == 11 && vm.families[1].funds == gothFunds && !vm.evictedLots.count(11),
+          "evict: not the family of the lot being played");
+    vm.evictFamily(5);
+    check(vm.families[5].house == 0 && vm.evictedLots.count(18), "evict: another lot's family leaves");
+}
+
 int main() {
     testNewLot();
     testLotObjectsValue();
@@ -560,6 +575,7 @@ int main() {
     testBedTogether(true);
     testLoad();
     testPrimitives();
+    testEvictPlayedLot();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

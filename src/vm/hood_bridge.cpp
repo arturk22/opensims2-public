@@ -86,12 +86,17 @@ NeighborhoodLoad loadNeighborhood(VM& vm, const hood::Neighborhood& h) {
     // Message 0xEC1AAC03 (cTSGameStateController::EvictFamily, BV 0x139740;
     // formats/hood_moves.hpp): the family gets its lot's price back (not
     // for lot types 2 and 3), its lot becomes 0 and the lot is flagged
-    // evicted when the neighborhood is saved.
+    // evicted when the neighborhood is saved. EvictFamily(family, lot)
+    // (BV 0x1434cc) does nothing for the lot being played (in the lot state
+    // it only takes another lot; docs/neighborhood-mac.md §6.1): the family
+    // keeps its house, and Generic Sims Call 4 goes on waiting for it.
     vm.evictedLots.clear();
     vm.removedFamilies.clear();
     vm.evictFamily = [&vm, lots = std::make_shared<std::vector<hood::Lot>>(h.lots)](int16_t family) {
         auto f = vm.families.find(family);
         if (f == vm.families.end() || !f->second.house)
+            return;
+        if (f->second.house == vm.globals[global::CurrentHouse])
             return;
         for (const auto& l : *lots)
             if (int16_t(l.id) == f->second.house) {
