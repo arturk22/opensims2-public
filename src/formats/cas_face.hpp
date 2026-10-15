@@ -47,8 +47,9 @@ struct FaceSpec {
     // A region taken from another archetype (the "Change Eyes", "Change
     // Nose", ... bins): the bin's region mask list ("eyes;cheekbones", the
     // panel's kCAFArchetypeRegionMask) -> archetype family. The faceregion
-    // masks are partial heads whose vertex colours weigh the blend (inferred:
-    // the largest colour channel / 255).
+    // masks are partial heads whose vertex colours weigh the blend (the
+    // colour's top byte / 255, BuildRegionMask); "hairneck" vertices never
+    // move (BlendArchetype).
     std::map<std::string, std::string> regions;
     // A saved face (the character file's LxNR): its deltas for the age and
     // gender replace the archetype head (regions and modifiers still apply

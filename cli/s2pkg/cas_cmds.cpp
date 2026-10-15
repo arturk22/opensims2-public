@@ -212,6 +212,12 @@ int cmdCasMake(int argc, char** argv) {
             const SimPart* e = entryNamed(catalog.modifiers, v.substr(0, eq));
             if (!e) throw std::runtime_error("no modifier " + v.substr(0, eq));
             spec.face.modifiers[cas::family(*e)] = std::stof(v.substr(eq + 1));
+        } else if (a == "--region") { // masks=archetype, e.g. nose=afarchcmas_cmas (the masks ';'-separated)
+            const auto eq = v.rfind('=');
+            if (eq == std::string::npos) throw std::runtime_error("--region masks=archetype");
+            const SimPart* e = entryNamed(catalog.archetypes, v.substr(eq + 1));
+            if (!e) throw std::runtime_error("no archetype " + v.substr(eq + 1));
+            spec.face.regions[v.substr(0, eq)] = cas::family(*e);
         } else if (a == "--eyes") {
             const SimPart* e = entryNamed(catalog.textureOverlays, v);
             if (!e) throw std::runtime_error("no eye overlay " + v);
@@ -418,7 +424,7 @@ int cmdCasLxnr(const char* resDir, const char* file) {
 const char* casUsage() {
     return "       s2pkg cas-catalog <Res-dir> [--age adult] [--gender f|m] [tones|face|overlays|hair|clothes]\n"
            "       s2pkg cas-make <Res-dir> <out.package> [--age adult] [--gender f|m] [--skin 1-4] [--hair-tone 1-5]\n"
-           "              [--hair|--top|--bottom|--body|--formal part] [--archetype name] [--mod name=weight]...\n"
+           "              [--hair|--top|--bottom|--body|--formal part] [--archetype name] [--mod name=weight]... [--region masks=archetype]...\n"
            "              [--eyes overlay] [--overlay overlay]... [--first name] [--last name] [--object N001_User00100] [--seed N]\n"
            "              [--hood <neighborhood dir> --hood-out <dir> [--family name] [--member first:age:gender:spouse|child|sibling|roommate]...]  (adds the family to a copy)\n"
            "       s2pkg cas-lxnr <Res-dir> <character.package>  (the LxNR face structure, checked against the face meshes)\n"

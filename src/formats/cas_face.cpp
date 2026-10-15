@@ -97,11 +97,14 @@ const FaceBaker::Mesh& FaceBaker::meshByName(const std::string& name) {
             m->byUv.emplace(uvKey(uv[0], uv[1]), m->positions.size());
             m->positions.push_back(g.positions[i]);
             m->uvs.push_back(uv);
-            float w = 1;
-            if (i < g.colors.size()) {
-                const uint32_t c = g.colors[i];
-                w = float(std::max({(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF})) / 255.0f;
-            }
+            // A region mask's weight: one byte of the vertex colour / 255
+            // (cTSCASBodyPartSystem::BuildRegionMask, Mac BV 0x804d0c ->
+            // 0x7f9368, element 0xDB830795), the top byte as we read the
+            // u32 (the masks' colours are 0x00000000, 0x3f000000,
+            // 0x7f000000, 0xc0000000, 0xff000000); 0 without colours.
+            float w = 0;
+            if (i < g.colors.size())
+                w = float((g.colors[i] >> 24) & 0xFF) / 255.0f;
             m->weights.push_back(w);
         }
     }
@@ -231,6 +234,21 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
     out.vertices = slots.size();
     std::vector<Vec3> disp(slots.size(), Vec3{0, 0, 0});
     std::vector<bool> covered(slots.size(), false);
+    // cTSCASBodyPartSystem::BlendArchetype (Mac BV 0x80a380) leaves the
+    // vertices of the "hairneck" region mask where they are (the seam with
+    // the hair and the neck): no archetype or region blend moves them.
+    std::vector<bool> hairneck(slots.size(), false);
+    for (const auto& e : catalog_.regions)
+        if (e.name() == "hairneck" && fits(e, ageBit, genderBit)) {
+            const Mesh* mm = meshOfEntry(e, lowDetail);
+            if (!mm && lowDetail)
+                mm = meshOfEntry(e);
+            if (mm)
+                for (size_t i = 0; i < slots.size(); ++i)
+                    if (long j = mm->match(slots[i].uv[0], slots[i].uv[1], slots[i].pos); j >= 0)
+                        hairneck[i] = mm->weights[size_t(j)] > 0;
+            break;
+        }
 
     if (spec.structure) {
         const auto* sv = spec.structure->find(ageBit, genderBit, lowDetail);
@@ -266,7 +284,9 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
             out.warnings.push_back("archetype " + spec.archetype + " has no " + ageName(ageBit) + " head");
         else
             for (size_t i = 0; i < slots.size(); ++i)
-                if (long j = am->match(slots[i].uv[0], slots[i].uv[1], slots[i].pos); j >= 0) {
+                if (hairneck[i])
+                    covered[i] = true;
+                else if (long j = am->match(slots[i].uv[0], slots[i].uv[1], slots[i].pos); j >= 0) {
                     disp[i] = sub(am->positions[size_t(j)], slots[i].pos);
                     covered[i] = true;
                 }
@@ -300,7 +320,7 @@ FaceBaker::Baked FaceBaker::bake(const FaceSpec& spec, uint32_t ageBit, uint32_t
                     w[i] = std::max(w[i], mm->weights[size_t(j)]);
         }
         for (size_t i = 0; i < slots.size(); ++i) {
-            if (w[i] <= 0)
+            if (w[i] <= 0 || hairneck[i])
                 continue;
             if (long j = am->match(slots[i].uv[0], slots[i].uv[1], slots[i].pos); j >= 0) {
                 const Vec3 target = sub(am->positions[size_t(j)], slots[i].pos);

@@ -1,6 +1,7 @@
 #include <cmath>
 #include "formats/bhav.hpp"
 #include "formats/cas_catalog.hpp"
+#include "formats/cas_face.hpp"
 #include "formats/character_write.hpp"
 #include "formats/sim_character.hpp"
 #include "formats/dbpf.hpp"
@@ -980,6 +981,46 @@ static void testCasRandomize() {
     check(hats, "randomize: no hat in swimwear, pajamas, underwear, athletic");
 }
 
+// A region taken from another archetype moves the face (the mask weight is
+// the colour's top byte, BuildRegionMask: with the old largest-RGB rule the
+// nose mask weighed almost nothing), only where its mask is, and never the
+// "hairneck" vertices (BlendArchetype), not even for a whole archetype.
+static void testFaceRegionMasks() {
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    const cas::CasCatalog catalog = cas::CasCatalog::load(index);
+    cas::FaceBaker baker(index, catalog);
+    auto fam = [&](const char* name) {
+        for (const auto& e : catalog.archetypes)
+            if (e.name() == name)
+                return cas::family(e);
+        return std::string();
+    };
+    cas::FaceSpec base;
+    base.archetype = fam("amarchbase_base");
+    cas::FaceSpec nose = base;
+    nose.regions["nose"] = fam("amarcheafr_eafr");
+    const auto a = baker.bake(base, cas::age::Adult, cas::gender::Male);
+    const auto b = baker.bake(nose, cas::age::Adult, cas::gender::Male);
+    size_t moved = 0;
+    float most = 0;
+    for (size_t i = 0; i < a.displacements.size() && i < b.displacements.size(); ++i) {
+        float d = 0;
+        for (int c = 0; c < 3; ++c)
+            d += std::fabs(a.displacements[i][c] - b.displacements[i][c]);
+        moved += d > 1e-4f;
+        most = std::max(most, d);
+    }
+    check(moved >= 30 && most > 0.005f, "a nose region from another archetype moves the nose");
+    check(moved < a.displacements.size() / 2, "the nose region leaves most of the face alone");
+    cas::FaceSpec whole;
+    whole.archetype = fam("amarcheafr_eafr");
+    const auto w = baker.bake(whole, cas::age::Adult, cas::gender::Male);
+    check(w.moved > 0 && w.moved < w.vertices, "a whole archetype leaves the hairneck vertices in place");
+}
+
 // The naked outfit (shower, bath, getting changed) keeps the Sim's hair and
 // face: SetupShapesPrivate takes the naked category's hair and face from
 // swimwear, never the bald "<p>hairbald_skin" its list names (playtest 35:
@@ -1278,6 +1319,7 @@ int main() {
     testNextStoryOverGround();
     testFaceSkinMigration();
     testCasRandomize();
+    testFaceRegionMasks();
     testNakedOutfitKeepsHair();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
