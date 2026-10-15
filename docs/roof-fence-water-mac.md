@@ -364,6 +364,116 @@ nomes trocados (o symxfer põe `cWallManager::…` e
 dividido por √2 no diagonal dá 1) e o poste também. Fica de fora o +0,75
 (condição não resolvida). Nada mudou no código das cercas nesta rodada.
 
+### 2.1 Lido inteiro (rodada n25)
+
+Rodada n25 (2026-10-15), linha 25 do `docs/inventario-binario.md` §6.
+Modo: **Ghidra MCP**, só leitura (decompilar, ler memória,
+`disassemble_bytes` com `dry_run` para o que não é função no projeto); os
+nomes do `cFenceManager` vêm do symxfer ("exact" nesta área) e os do
+`cFenceGeometryNode` da ordem das funções no `baserom.sym` (o outro build ppc
+com símbolos, `0xc69364..0xc71ba4`) e do que cada uma faz. Corrige a
+rodada n06 em um ponto: o `FUN_0075a350` com a parte 3 é o **poste do arco**
+(o teste antes dele, que o symxfer chama `Sims1AbsoluteDirectionToSims2Angle`,
+é o `PartitionStyleIsFenceArch`), não um poste de meia parede.
+
+**O gerente e os nós** (`nTSSG::cFenceManager`, vtable primária
+`0x27e1c78`). Cada andar tem uma forma (`cIShapeRefNode`) com **13 nós
+de geometria** (`CreateFenceNodesOnLevel` `0x6ccf60`):
+
+| nó | o que vai | quem escolhe |
+|---|---|---|
+| 0–4 | trilhos de cerca | `Hash32(x0 + y0, x1 + y1) mod 5` das pontas (`0x6c9380`, só para repartir) |
+| 5 | postes de cerca | `DoMessage` (`0x6cf578`): estilo de cerca → 5 |
+| 6 | arcos (`AddArchCenter`, vtable `0x34` do nó) | estilo de arco |
+| 7–11 | trilhos de meia parede (`PartitionStyleIsHalfWall`, `PartitionType` 3) | o mesmo hash + 7 |
+| 12 | postes de meia parede | estilo de meia parede → 12 |
+
+`AddFence` (`0x6cc134`) só aceita um localizador que existe no gerente de
+partições (`0xac`), com um dos dois tiles ao lado **no lote** (`IsOnLot`,
+`0xf8`) e estilo de cerca (`PartitionStyleIsFence`: `PartitionType` 1 ou
+3); aí `AddRail` (`0x6caa20`) põe o trilho no nó do hash. Os postes vêm da
+**camada de postes** do mundo (o FPL do lote): ao carregar (`DoMessage`,
+mensagem `0xcc350cdd`) o gerente refaz todas as cercas (`0x18`), os arcos e,
+para cada poste da lista do gerente de partições (`0xf4`, estilo pela
+`0x104`), `AddPost(estilo, local, 0)` no nó 5 ou 12, salvo onde um portão
+esconde o poste (`FUN_006c9448`). O app já desenha os postes do FPL.
+
+**Modelos** (`FenceGeometryResource`, vtable `0x164` do nó, BV `0x754000`,
+não é função no projeto): a entrada de cerca do estilo (catálogo `0x68`),
+senão o produto do estilo (`0x7c`), senão **o produto de cerca padrão**
+(`0x6c`, o `default` do `fences.txt`: a cerca 2, `fencePicketRail`); trilho
+→ `Rail` (`0x174`) ou `DiagRail` (`0x178`) conforme o bit diagonal, poste →
+`Post` (`0x17c`); depois pelo nome (`0x753ea0`). Um modelo vazio não desenha
+nada (o "Ancient Guardian Rock Wall" e o "FauxStone Wall" não têm poste; o
+diagonal **não** cai para o trilho reto). Arcos (`0x754130`): parte 0
+`archCenterModel`, 1 `archEastModel`, 2 `archWestModel`, 3 `archPostModel`.
+
+**Trilho** (`AddRailImpl` `0x759e38`, chamado por `AddRail` `0x75a240` e por
+`UpdateRailsAndPosts` `0x75a8d0`): o que a n06 leu (translação na ponta `a`,
+rotação `atan2(Δy, Δx)`, cisalhamento `z += (Δz / comprimento horizontal) ·
+x`, escala 1; a matriz é de vetor-coluna, `FUN_000eac50` põe a translação na
+coluna 3, e o cisalhamento vai no elemento [2][0]), o diagonal pelos bits
+`0x30` do localizador. O **+0,75** vai na translação quando
+`FUN_00166414` diz que as **duas pontas** tocam um quarto "4":
+
+- `FUN_00164a7c(vértice)`: os quatro tiles em volta do vértice, no andar do
+  vértice (tabela `0x27324e0`: tiles `(x−1, y−1)`, `(x, y−1)`, `(x, y)`,
+  `(x−1, y)` com os quartos que tocam o vértice, máscaras `6` = norte e
+  leste, `3` = oeste e norte, `9` = oeste e sul, `12` = leste e sul, na
+  ordem oeste/norte/leste/sul dos pisos), cada tile **no lote** (`0xf8`), e
+  algum desses quartos com **`DeckFoundationStyle` = 4** (`cIWorldDB`
+  `0xc8`, thunk `0x1511944` → `cWorldDB::DeckFoundationStyle` `0xd2d08`: o
+  marcador do quarto no 3ARY `0x14`, `u32` por quarto, −1 nenhum).
+- É o **estilo cru** (o ID do produto do `deckfoundations.txt`) igual a 4,
+  não o tipo: o `nTSWorld::HasDeck` (`0x168400`) é que pergunta o tipo
+  (`IsDeckFoundationOfType(estilo, 4)`, `0x163250`: produto do estilo,
+  vtable `0xdc`). O `deckfoundations.txt` do jogo base só tem os produtos
+  0 (fundação), 1 e 2 (decks) e 3 (piscina), e os 3ARY `0x14` dos 69 lotes
+  só têm 0, 1, 2 e 3 (31 888, 1 542, 374 e 2 656 quartos): **no jogo base
+  nenhuma cerca ganha o +0,75**. O parser do BV conhece uma quarta palavra,
+  `stage` (`0x1046dac`, ao lado de `deck`/`foundation`/`pool`): o estilo 4
+  deve ser o palco de uma expansão (o nó de parede 4, "parede de palco",
+  tem o topo no chão + 0,75; inferido).
+
+**Poste** (`AddPostImpl` `0x75a4c0`): estilo de cerca → o `Post` do estilo;
+estilo de arco → a parte 3 do arco (`0x75a350`), **sem** +0,75. No vértice,
+`SampledFloorElevation`, sem rotação, escala 1, mais **0,75** quando
+`FUN_00164a7c(vértice)` (**um** vértice, não dois) e, se o estilo é de meia
+parede, `FUN_00a7098c(vértice, estilo)` (o symxfer diz
+`cAlbumEntry::~cAlbumEntry`): alguma parede do grafo `0xb` do gerente de
+partições naquele vértice tem o mesmo estilo.
+
+**Arco** (`AddArchCenterImpl` `0x75b8a8`, chamado por
+`AddRemoveFenceSegments` `0x75bed4`): o centro (parte 0) na ponta `a`
+(`SampledFloorElevation`), girado por `atan2(Δy, Δx)`, **sem
+cisalhamento**; a parte oeste (2, `AddArchWest` `0x75ae78`) no vértice `a`
+**só se não há arco** no segmento `a → a − d` (o gerente de partições,
+vtable `0x118` = `cPartitionManager::FenceArchExists` `0xc2f360`, o grafo
+de arcos `+0x58`), senão tira a peça dali (`FUN_00756bac`); a parte leste
+(1, `AddArchEast` `0x75b0c8`) em `b` só se não há arco em `b → b + d`. As
+duas com a rotação do arco, sem +0,75. Arcos em fila juntam-se sem as
+pontas do meio.
+
+**Modos de parede** (`SetLevelUpDownState` `0x6cf32c`, da mensagem
+`0xcb46c21d` por andar): com as paredes baixadas o andar **tira os nós
+7–12** (trilhos e postes de meia parede) e solta o nó dos modelos presos às
+meias paredes (`+0xa0` do andar); erguidas, põe de volta. Os nós 0–6
+(cercas, postes e arcos) **não mudam** em modo nenhum. `ActivateWallsUpSubsets`
+(`0x6cee10`) troca o material de todo subconjunto com `togglewalls` no nome
+entre `…wallsup` e `…wallsdown`: nenhum SHPE/TXMT do `Sims3D` do jogo base
+tem essas palavras. O gerente não ouve as mensagens do corte (cutaway):
+**cerca nenhuma é cortada**, como o app já fazia. Portões
+(`cObject::HideFenceAtPortalLocation` `0x653e6c` → `AddGate`, vtable
+`0x24` do gerente) escondem o trilho e o poste onde ficam; o base não tem
+portões.
+
+**Nos dados do jogo base:** 5 549 postes no FPL, todos de cercas do
+catálogo; nenhum segmento de cerca com estilo desconhecido; nenhuma cerca
+com revestimento (meia parede: o catálogo base não tem produto de cerca do
+tipo 3); nenhum arco nos lotes; 3ARY `0x14` sem o estilo 4. Ou seja, as
+regras acima dão nos lotes do jogo **a mesma imagem** que o código já
+desenhava; elas só mudam lotes com conteúdo de expansão ou feitos à mão.
+
 ## 3. Água do terreno e piscinas
 
 ### 3.1 Água do terreno (`nTSSG::cWaterGeometryBuilder`)
