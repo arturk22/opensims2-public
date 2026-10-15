@@ -31,7 +31,7 @@ cada função faz e por quem a chama.
   | 2 | `floorToRoof`: sótão (3) | 0,15 | −0,01 | 2 | segue |
   | 3 | meia parede (`PartitionStyleIsHalfWall`) | 0,15 | −0,01 | 0 | segue |
   | 4 | parede de palco (só expansão) | 0,1 | −0,01 | 5 | ignora |
-  | 5 | meia parede com as duas pontas num piso "tipo 4" (`FUN_00166414`) | 0,1 | **+0,75** | 0 | segue |
+  | 5 | meia parede com as duas pontas num quarto de marcador 4 (`FUN_00166414`; rodada n25: o estilo de deck/fundação cru 4, nenhum no jogo base) | 0,1 | **+0,75** | 0 | segue |
 
   Os padrões do construtor do nó (`0x74ab40`): espessura 0,15 (`+0x1c4`),
   altura baixada 0,2 (`+0x1c8`), deslocamento −0,01 (`+0x1cc`), span 1
@@ -216,8 +216,12 @@ inclinada:
 - a máscara de portas e janelas segue a projeção plana da rodada 16 (o `u`
   ao longo do −x do objeto); o jogo usa o UV1 de cada vértice e o
   `wallMaskMirrorFlag` do `CombinedWallMaterial`, não lidos por inteiro;
-- o nó 5 (meia parede a +0,75 e 0,1 de espessura sobre piso "tipo 4") não
-  é separado do 3, como o +0,75 das cercas;
+- ~~o nó 5 (meia parede a +0,75 e 0,1 de espessura sobre piso "tipo 4") não
+  é separado do 3, como o +0,75 das cercas~~ (rodada n25,
+  `roof-fence-water-mac.md` §2.1: o "tipo 4" é o marcador cru 4 do 3ARY
+  `0x14`, que nenhum produto do jogo base tem; feito: a cerca coberta com as
+  duas pontas nele vai para o nó 5); a meia parede segue sendo "cerca com
+  revestimento" (inferido: o jogo pergunta o `PartitionType` 3 do estilo);
 - no modo baixo, fundações e paredes de piscina (nó 0) ficam erguidas (quem
   chama o `SetLevelUpDownState` para quais andares não foi lido); as meias
   paredes não entram no corte (o valor do serviço `0xe92db716`);

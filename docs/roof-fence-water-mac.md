@@ -474,6 +474,47 @@ tipo 3); nenhum arco nos lotes; 3ARY `0x14` sem o estilo 4. Ou seja, as
 regras acima dão nos lotes do jogo **a mesma imagem** que o código já
 desenhava; elas só mudam lotes com conteúdo de expansão ou feitos à mão.
 
+**No código (rodada n25):**
+
+| Peça | Antes | Agora (binário) |
+|---|---|---|
+| Marcadores de deck/fundação | não lidos | `Lot::deckFoundationStyles` (3ARY `0x14`, do andar mais baixo até o de baixo do topo: os lotes guardam um plano a menos que as alturas) |
+| +0,75 | de fora (condição não resolvida) | trilho com as duas pontas, poste com o ponto tocando o estilo 4 (`touchesRaisingStyle` = `FUN_00164a7c`) |
+| Estilo sem cerca no catálogo | não desenhado | a cerca padrão do `fences.txt` (`PatternCatalog::fenceOrDefault`) |
+| Diagonal sem modelo diagonal | o trilho reto esticado √2 | nada; escala sempre 1 |
+| Postes | do FPL, os de estilo de arco contados como "desconhecidos" | do FPL, os de estilo de arco deixados para o arco |
+| Arcos | as duas peças das pontas sempre; postes girados com o arco | a peça da ponta só onde nenhum arco continua a linha; postes sem giro |
+| Meia parede (cerca coberta) no estilo 4 | nó 3 | nó 5 (0,1 de espessura, +0,75), baixada com as paredes |
+
+Teste: `testFencePieces` (catálogo de mentira com o `fences.txt` e o
+`fencearches.txt`: rampa, diagonal, sem diagonal, +0,75 nas duas pontas e
+num só ponto, poste de arco, arcos em fila, meia parede no nó 5) e
+`testDeckFoundationMarkers` (com os dados: os marcadores do `N001_Lot68`).
+Antes/depois (antes à esquerda), `--lot` sem tela: das 12 capturas, 10 saem
+com **os mesmos bytes**; as outras duas (`N001_Lot77`, `N001_Lot68` com as
+paredes baixas) diferem em 2 e 65 pixels de árvores, e o mesmo binário rodado
+duas vezes também difere ali (não é das cercas):
+
+- `docs/screenshots/n25-cercas-antes-depois.jpg`: grade de ferro e alpendre
+  sobre a fundação (`N001_Lot11`), muro de tijolo subindo ao lado da escada
+  (`N001_Lot77`), canteiro em zigue-zague diagonal (`N003_Lot48`), ferro com
+  diagonais e o muro de pedra sem postes (`N001_Lot79`), cerca de estacas no
+  morro (`N002_Lot10`);
+- `docs/screenshots/n25-cercas-modos-antes-depois.jpg`: o parapeito de
+  tijolo no telhado (`N002_Lot31`), o muro de tijolo na borda do lote
+  (`N003_Lot52`) e `N001_Lot68` com as paredes erguidas, baixas e em corte
+  (as cercas e o guarda-corpo do alpendre não mudam).
+
+**Inferido ou de fora:** o estilo 4 como palco (só o nome `stage` no
+parser); a meia parede como "cerca com revestimento" (o jogo pergunta o
+`PartitionType` 3 do estilo; o catálogo base não tem nenhuma) e, por isso,
+a segunda condição do poste de meia parede (`FUN_00a7098c`) e os nós 7–12
+escondidos no modo baixo; os postes dos arcos (o jogo os tira do FPL com o
+estilo do arco; o modo Construção do app não grava esses postes, então o
+desenho põe um em cada ponta); portões (`AddGate`) e os subconjuntos
+`togglewalls` (nada disso no jogo base); o modo Construção não grava o 3ARY
+`0x14` (decks, fundações e piscinas novos ficam sem marcador).
+
 ## 3. Água do terreno e piscinas
 
 ### 3.1 Água do terreno (`nTSSG::cWaterGeometryBuilder`)
