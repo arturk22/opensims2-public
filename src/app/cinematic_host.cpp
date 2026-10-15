@@ -39,14 +39,37 @@ void forceCinematicState(os2::Renderer& renderer, bool wholeHouse) {
             gCinematicForced.speed = g[os2::vm::global::Speed];
             gCinematicForced.paused = g[os2::vm::global::Paused];
         }
+        // cTSSGSystem's Start (BV FUN_007c3898, docs/ui-live-mac.md 8d):
+        // the floor and the wall mode are kept for Stop; the floor goes to
+        // the first actor's (the top one for the whole house) and the walls
+        // to cutaway (up with the roof for the whole house); the actors where
+        // they stand become the cutaway's targets (AddTargetLocation) and the
+        // cutaway exposes them (SetCinematicsCutaway; cinematicLotView).
+        // (The game skips the floor, the mode and the targets with a flag
+        // read from a property, +0x194, off by default: not done here.)
         // (the wall view: updateLotView rebuilds the lot model for it)
-        if (wholeHouse && gWallView.walls() != os2::LotViewOptions::Walls::Up) {
-            gCinematicForced.walls = gWallView.mode();
-            gWallView.setMode(3);
+        gCinematicForced.walls = gWallView.mode();
+        gWallView.setMode(wholeHouse ? 3 : 1);
+        std::optional<int> firstLevel;
+        if (gSimulation && gCinematic) {
+            const os2::vm::VM& m = gSimulation->machine();
+            for (const int16_t id : gCinematic->actors()) {
+                const auto it = id > 0 ? m.objects().find(os2::vm::ObjectId(id)) : m.objects().end();
+                if (it == m.objects().end() || !it->second.position.inWorld())
+                    continue;
+                const auto& p = it->second.position;
+                const int level = std::max(p.level - 1, 0); // the VM counts from 1
+                if (!firstLevel && id == gCinematic->actors().front())
+                    firstLevel = level;
+                gCinematicForced.targets.push_back({p.x, p.y, float(level)});
+            }
         }
-        if (wholeHouse && gCameraFollow) {
+        if (gCameraFollow) {
             gCinematicForced.level = gCameraFollow->level();
-            gCameraFollow->setLevel(gCameraFollow->highestLevel());
+            if (wholeHouse)
+                gCameraFollow->setLevel(gCameraFollow->highestLevel());
+            else if (firstLevel)
+                gCameraFollow->setLevel(*firstLevel);
         }
         (void)renderer;
     }
@@ -129,6 +152,29 @@ os2::LotViewOptions cinematicLotView() {
         look = {shot.up.x, shot.up.y};
     os2::LotViewOptions v = gWallView.options(look, viewLevel());
     v.camera = std::array<float, 3>{shot.eye.x, shot.eye.y, shot.eye.z}; // the scene camera's position
+    // Expose (cWallCutawayManager, docs/ui-live-mac.md 8d): the targets on
+    // the level shown; one outdoors exposes its near half circle, one
+    // indoors puts its room in the memory of the last 3 rooms
+    // (cutawayMemorySize), whose walls facing the camera are cut.
+    if (gCinematicForced.active && gLotShape && v.walls == os2::LotViewOptions::Walls::Cutaway &&
+        v.level != os2::LotViewOptions::kAllLevels) {
+        v.cinematics = true;
+        constexpr size_t kCutawayMemorySize = 3;
+        auto& memory = gScene.cutawayRooms;
+        for (const auto& t : gCinematicForced.targets) {
+            if (int(t[2]) != v.level)
+                continue;
+            const uint16_t room = os2::lotRoomAt(*gLotShape, v.level, t[0], t[1]);
+            if (!room) {
+                v.exposeOutside.push_back({t[0], t[1], gLotShape->elevationAt(v.level, t[0], t[1])});
+            } else if (std::find(memory.begin(), memory.end(), room) == memory.end()) {
+                if (memory.size() >= kCutawayMemorySize)
+                    memory.erase(memory.begin());
+                memory.push_back(room);
+            }
+        }
+        v.exposeRooms = memory;
+    }
     return v;
 }
 

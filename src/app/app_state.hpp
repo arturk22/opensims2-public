@@ -203,8 +203,11 @@ enum class FlowDialog { None, Leave, Quit };
 struct CinematicForced {
     bool active = false;
     int16_t speed = 0, paused = 0;
-    std::optional<int> walls; // the wall mode before, if the walls were not up
+    std::optional<int> walls; // the wall mode before
     std::optional<int> level;                       // the camera's floor before
+    // The scene's targets for the cutaway (AddTargetLocation): its actors
+    // where they stood when it started, x, y and the lot's level.
+    std::vector<std::array<float, 3>> targets;
 };
 
 struct SceneState {
@@ -279,6 +282,11 @@ struct SceneState {
         std::array<float, 6> camera{};
         int mode = -1, viewLevel = 0;
     } cutawaySim;
+    // cWallCutawayManager's room memory (cutawayMemorySize, 3): the last
+    // rooms with a cinematic's target, oldest first (Expose). Kept from one
+    // scene to the next (only the message 0x2B4D18FB clears it in the game;
+    // here a new lot, inferred).
+    std::vector<uint16_t> cutawayRooms;
     int lotInstance = -1;
     int lotModel = -1;
     os2::LotModelCache lotCache;

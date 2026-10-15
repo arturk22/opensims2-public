@@ -105,6 +105,18 @@ struct LotViewOptions {
     // floor's height) and `camera`: the walls of `level` between the two
     // (lotWallsBetweenPointsAndCamera) are cut too.
     std::optional<std::array<float, 3>> simPoint;
+    // SetCinematicsCutaway (a cinematic playing, docs/ui-live-mac.md 8d): the
+    // cutaway exposes the scene's targets on `level` instead
+    // (cWallCutawayManager::Expose, with `camera` the scene's): around those
+    // outdoors (x, y and the floor's height) the walls blocking the near
+    // half circle (SelectNearSemicircleBlockers, radius 2), and for each
+    // room of the room memory (`exposeRooms`, the cutawayMemorySize last
+    // rooms with a target) the room's walls facing the camera and what
+    // blocks them (SelectRoomBlockers). No KeepOnlyFrontFacingOutsideWalls
+    // and no selected Sim then.
+    bool cinematics = false;
+    std::vector<std::array<float, 3>> exposeOutside;
+    std::vector<uint16_t> exposeRooms;
 };
 // Which of lot.walls the view's cutaway cuts down
 // (cWallCutawayManager::KeepOnlyFrontFacingOutsideWalls and the walls

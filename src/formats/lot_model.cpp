@@ -939,6 +939,9 @@ std::vector<bool> lotCutawayWalls(const Lot& lot, const LotViewOptions& view) {
     std::vector<bool> cut(lot.walls.size(), false);
     if (view.walls != LotViewOptions::Walls::Cutaway)
         return cut;
+    // The eligible walls (the manager's whole set, +0x3c) and those not cut
+    // yet (its working set, +0x84, which SelectRoomBlockers goes through).
+    std::vector<bool> eligible(lot.walls.size(), false);
     for (size_t i = 0; i < lot.walls.size(); ++i) {
         const auto& w = lot.walls[i];
         const int level = w.a.level;
@@ -966,6 +969,9 @@ std::vector<bool> lotCutawayWalls(const Lot& lot, const LotViewOptions& view) {
         const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
         const bool right = roomBeside(lot, level, mx, my, nx, ny, true) != 0;
         const bool left = roomBeside(lot, level, mx, my, -nx, -ny, true) != 0;
+        eligible[i] = true;
+        if (view.cinematics)
+            continue; // Expose instead (below)
         if (right && left) {
             cut[i] = true;
         } else if (right != left) {
@@ -976,13 +982,15 @@ std::vector<bool> lotCutawayWalls(const Lot& lot, const LotViewOptions& view) {
                 cut[i] = s * (nx * view.viewDirection[0] + ny * view.viewDirection[1]) < -1e-3f;
         }
     }
-    // usarSim (KeepOnlyFrontFacingOutsideWalls with cutawayForSelectedSim):
-    // the eligible walls of the Sim's level between it and the camera.
-    if (view.simPoint && view.camera && view.level != LotViewOptions::kAllLevels) {
-        const auto edges = lotWallsBetweenPointsAndCamera(lot, {*view.simPoint}, *view.camera);
+    // SelectWallsBlockingPoints: the eligible walls of the view's level
+    // between `points` and the camera (the locator or its opposite face).
+    auto cutBlocking = [&](const std::vector<std::array<float, 3>>& points) {
+        if (points.empty() || !view.camera || view.level == LotViewOptions::kAllLevels)
+            return;
+        const auto edges = lotWallsBetweenPointsAndCamera(lot, points, *view.camera);
         for (size_t i = 0; i < lot.walls.size(); ++i) {
             const auto& w = lot.walls[i];
-            if (cut[i] || w.a.level != view.level || (w.type != Lot::Normal && w.type != Lot::Attic))
+            if (cut[i] || !eligible[i] || w.a.level != view.level)
                 continue;
             // The wall's tile edges (walls run along whole tiles, straight or diagonal).
             int x = int(std::lround(w.a.x)), y = int(std::lround(w.a.y));
@@ -996,6 +1004,83 @@ std::vector<bool> lotCutawayWalls(const Lot& lot, const LotViewOptions& view) {
                 x += sx, y += sy;
             }
         }
+    };
+    if (!view.cinematics) {
+        // usarSim (KeepOnlyFrontFacingOutsideWalls with cutawayForSelectedSim).
+        if (view.simPoint)
+            cutBlocking({*view.simPoint});
+        return cut;
+    }
+    if (!view.camera || view.level == LotViewOptions::kAllLevels)
+        return cut;
+    const std::array<float, 3> cam = *view.camera;
+    // Expose (BV 0xc8de78). Targets outdoors (cutawayOutside, true in
+    // globalProps.xml): SelectNearSemicircleBlockers(2.0) (BV 0xc8c300).
+    constexpr float kSemicircle = 2.0f;
+    for (const auto& t : view.exposeOutside) {
+        const float vx = t[0] - cam[0], vy = t[1] - cam[1], vz = t[2] - cam[2];
+        const float dist = std::sqrt(vx * vx + vy * vy + vz * vz);
+        if (dist <= 0)
+            continue;
+        const float dirx = vx / dist, diry = vy / dist, dirz = vz / dist;
+        const int tx = int(std::floor(t[0])), ty = int(std::floor(t[1]));
+        const int r = int(std::ceil(kSemicircle));
+        const int x0 = std::clamp(tx - r, 0, int(lot.width)), x1 = std::clamp(tx + r, 0, int(lot.width));
+        const int y0 = std::clamp(ty - r, 0, int(lot.height)), y1 = std::clamp(ty + r, 0, int(lot.height));
+        std::vector<std::array<float, 3>> points;
+        for (int x = x0; x <= x1; ++x)
+            for (int y = y0; y <= y1; ++y) {
+                // Only vertices touching no room (the tiles around it, inferred).
+                bool room = false;
+                for (int ax = x - 1; ax <= x && !room; ++ax)
+                    for (int ay = y - 1; ay <= y && !room; ++ay)
+                        if (ax >= 0 && ay >= 0 && ax < int(lot.width) && ay < int(lot.height))
+                            for (const float qx : {0.25f, 0.75f})
+                                for (const float qy : {0.25f, 0.75f})
+                                    room = room || lotRoomAt(lot, view.level, float(ax) + qx, float(ay) + qy) != 0;
+                if (room)
+                    continue;
+                const float pz = lot.elevationAt(view.level, float(x), float(y));
+                const float ox = float(x) - t[0], oy = float(y) - t[1], oz = pz - t[2];
+                if (std::sqrt(ox * ox + oy * oy + oz * oz) > kSemicircle)
+                    continue;
+                // The near half: not farther than the target along the view to it.
+                if ((float(x) - cam[0]) * dirx + (float(y) - cam[1]) * diry + (pz - cam[2]) * dirz > dist)
+                    continue;
+                points.push_back({float(x), float(y), pz});
+            }
+        cutBlocking(points);
+    }
+    // SelectRoomBlockers (BV 0xc8bf10) for each remembered room: its walls
+    // with the other face to the camera (and those with the room on both
+    // faces), then what blocks them from the camera (their ends).
+    for (const uint16_t room : view.exposeRooms) {
+        std::vector<std::array<float, 3>> ends;
+        for (size_t i = 0; i < lot.walls.size(); ++i) {
+            const auto& w = lot.walls[i];
+            if (!eligible[i] || cut[i] || w.a.level != view.level)
+                continue;
+            float dx = w.b.x - w.a.x, dy = w.b.y - w.a.y;
+            const float len = std::sqrt(dx * dx + dy * dy);
+            if (len == 0)
+                continue;
+            dx /= len, dy /= len;
+            const float nx = dy, ny = -dx;
+            const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
+            const bool right = roomBeside(lot, w.a.level, mx, my, nx, ny, true) == room;
+            const bool left = roomBeside(lot, w.a.level, mx, my, -nx, -ny, true) == room;
+            bool take = right && left;
+            if (right != left) {
+                const float s = right ? -1.0f : 1.0f; // the face out of the room
+                take = s * (nx * (cam[0] - w.a.x) + ny * (cam[1] - w.a.y)) > 0;
+            }
+            if (!take)
+                continue;
+            cut[i] = true;
+            ends.push_back({w.a.x, w.a.y, lot.elevationAt(w.a.level, w.a.x, w.a.y)});
+            ends.push_back({w.b.x, w.b.y, lot.elevationAt(w.a.level, w.b.x, w.b.y)});
+        }
+        cutBlocking(ends);
     }
     return cut;
 }

@@ -690,6 +690,33 @@ static void testLotModel() {
         check(cutAt({1, 0}, std::array<float, 3>{3.5f, 0.5f, 0}, std::array<float, 3>{-40, 0.5f, 20}) ==
                   std::vector<float>{1, 2},
               "a Sim behind the house: the back wall between it and the camera is cut");
+        // Cinematics (Expose, docs/ui-live-mac.md 8d): no front-facing rule;
+        // a remembered room's walls facing the camera and what blocks them.
+        auto exposed = [&](std::array<float, 3> camera, std::vector<uint16_t> rooms,
+                           std::vector<std::array<float, 3>> outside = {}) {
+            LotViewOptions v;
+            v.walls = LotViewOptions::Walls::Cutaway;
+            v.level = 0;
+            v.camera = camera;
+            v.cinematics = true;
+            v.exposeRooms = std::move(rooms);
+            v.exposeOutside = std::move(outside);
+            v.simPoint = std::array<float, 3>{3.5f, 0.5f, 0}; // no selected Sim in a scene
+            std::vector<float> xs;
+            const auto set = lotCutawayWalls(c, v);
+            for (size_t i = 0; i < set.size(); ++i)
+                if (set[i])
+                    xs.push_back(c.walls[i].a.x);
+            std::sort(xs.begin(), xs.end());
+            return xs;
+        };
+        check(exposed({40, 0.5f, 20}, {}).empty(), "a scene with no target cuts nothing (not even inside walls)");
+        check(exposed({40, 0.5f, 20}, {2}) == std::vector<float>{2, 3},
+              "room 2 seen from +X: its wall facing the camera, and the yard wall blocking that wall's ends");
+        check(exposed({-40, 0.5f, 20}, {2}) == std::vector<float>{1},
+              "room 2 seen from -X: its wall to room 1 (the room's other face toward the camera)");
+        check(exposed({-40, 0.5f, 20}, {}, {{3.5f, 0.5f, 0}}) == std::vector<float>{1, 2},
+              "a target in the yard: the walls blocking the near half circle around it");
         // A camera high above: the ray reaches 3.0 up within the Sim's own
         // tile plus a little: only the next tile is marked.
         check(cutAt({1, 0}, std::array<float, 3>{0.5f, 0.5f, 0}, std::array<float, 3>{1.6f, 0.5f, 3}) ==
