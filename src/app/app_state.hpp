@@ -346,7 +346,7 @@ extern int& gLotModel;           // the renderer model of gLotInstance (replaced
 extern os2::WallView gWallView;
 extern os2::LotModelCache& gLotCache;
 extern bool& gLevelsHidden; // levels above the camera's are hidden (in the game: --ui live, --mode)
-extern std::map<int16_t, bool>& gWallHung;          // objects that hang on walls (hidden with a wall cut down)
+extern std::map<int16_t, bool>& gWallHung;          // lot objects lifted off the floor (wall-hung: hidden with a cut wall, inferred)
 extern std::vector<PickBox>& gPickBoxes;
 extern std::map<int16_t, PlacedObject>& gPlacedObjects;
 extern std::map<std::string, int>& gFenceModels; // fence CRES -> model id (-1: failed)

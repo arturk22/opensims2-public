@@ -77,7 +77,7 @@ int& gLotModel = gScene.lotModel;           // the renderer model of gLotInstanc
 os2::WallView gWallView;
 os2::LotModelCache& gLotCache = gScene.lotCache;
 bool& gLevelsHidden = gScene.levelsHidden; // levels above the camera's are hidden (in the game: --ui live, --mode)
-std::map<int16_t, bool>& gWallHung = gScene.wallHung;          // objects that hang on walls (hidden with a wall cut down)
+std::map<int16_t, bool>& gWallHung = gScene.wallHung;          // lot objects lifted off the floor (wall-hung: hidden with a cut wall, inferred)
 std::vector<PickBox>& gPickBoxes = gScene.pickBoxes;
 std::map<int16_t, PlacedObject>& gPlacedObjects = gScene.placedObjects;
 // Caches of the scene's renderer ids, cleared by unloadScene: the renderer is

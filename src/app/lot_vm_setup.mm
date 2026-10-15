@@ -490,9 +490,22 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     gPie->pickable = [](simd_float3 lo, simd_float3) {
         return !gLotShape || os2::WallView::visible(*gLotShape, viewLevel(), lo.x, lo.y, lo.z, gWallView.lowestCut(viewLevel()));
     };
-    // Windows, doors, curtains and what hangs on walls (the model's bottom
-    // over the floor): hidden with the wall they are on when it is cut down.
-    // Decided once per object (bought ones by their OBJD name only).
+    // What is hidden with the wall it is on when that wall is cut down:
+    // nTSSG::cWallManager::HideShowAttachedObjects (Mac BV 0x6c2ee4) hides an
+    // object attached to the wall when cTSObject::HideWhenWallDown (BV
+    // 0xaff050: a window, OBJD type 9, or object data 8 "flags" bit 0x400,
+    // FreeSO's HideForCutaway, which the object's own trees set: windows,
+    // doors, gates, wall lamps, paintings, ceiling lamps...), unless its
+    // wall placement flags (od 13) have 0x1000 (on a fence), and, in Build
+    // mode (play mode 4), not doors and windows (IsWallPortal): there they
+    // stay, the wall cut down round them. What the hand holds is not hidden
+    // (cTSUserToolUndoableObject clears the flag while held,
+    // Suppress/RestoreHideWhenWallDownFlag, BV 0x35ceb0). Which wall an
+    // object hangs on is onCutWall's geometry (inferred).
+    // Inferred (visual): a lot object lifted off the floor (its model's
+    // bottom 0.5 over it: mirrors, whose saved flags lack 0x400) that needs a
+    // wall goes with its cut wall too, as the shell did before; a mirror
+    // floating over a cut wall looked broken.
     gWallHung.clear();
     for (const auto& b : gPickBoxes)
         if (b.lo.z > 0.5f)
@@ -502,16 +515,40 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
             return true;
         if (!os2::WallView::visible(*gLotShape, viewLevel(), at.t[0], at.t[1], at.t[2], gWallView.lowestCut(viewLevel())))
             return false;
-        auto it = gWallHung.find(id);
-        if (it == gWallHung.end()) {
-            const os2::vm::Object* o = gSimulation ? gSimulation->machine().object(id) : nullptr;
-            std::string def = o && o->definition ? o->definition->fileName : "";
-            std::transform(def.begin(), def.end(), def.begin(), [](unsigned char c) { return std::tolower(c); });
-            const bool hung = def.starts_with("window") || def.starts_with("door") || def.starts_with("curtain") ||
-                              def.starts_with("blinds") || def.starts_with("drapes");
-            it = gWallHung.emplace(id, hung).first;
+        const os2::vm::Object* o = gSimulation ? gSimulation->machine().object(id) : nullptr;
+        if (!o || !o->definition)
+            return true;
+        if ((gBuy && gBuy->held() == os2::vm::ObjectId(id)) || (gBuild && gBuild->held() == os2::vm::ObjectId(id)))
+            return true;
+        const uint16_t type = o->definition->objectType();
+        if (static const bool debug = std::getenv("OS2_DEBUG_WALL_HIDE") != nullptr; debug) {
+            static std::set<int16_t> told; // OS2_DEBUG_WALL_HIDE=1: each object's HideWhenWallDown inputs, once
+            if (told.insert(id).second)
+                std::printf("opensims2: wall hide: object %d (%s) type %u flags 0x%04X wall flags 0x%04X\n", id,
+                            o->definition->fileName.c_str(), unsigned(type), unsigned(uint16_t(o->data[os2::vm::objdata::Flags])),
+                            unsigned(uint16_t(o->data[os2::vm::objdata::WallPlacementFlags])));
         }
-        return !it->second || !onCutWall(at);
+        if (type != os2::vm::kObjectTypeWindow && !(o->data[os2::vm::objdata::Flags] & 0x400) && !gWallHung.count(id))
+            return true;
+        // Attached to no wall: the walls an object hangs on come from its
+        // wall placement flags (cTSObject vtable 0x274/0x284 from 0x25c, read
+        // by 0x26c in HideShowAttachedObjects); none asked for (0x5F) -> never
+        // hidden (the ceiling lamps carry the flag too). On a fence: 0x1000.
+        const int16_t wallFlags = o->data[os2::vm::objdata::WallPlacementFlags];
+        if (!(wallFlags & 0x5F) || (wallFlags & 0x1000))
+            return true;
+        if (gBuild && gBuild->active() && (type == os2::vm::kObjectTypeDoor || type == os2::vm::kObjectTypeWindow))
+            return true;
+        const bool cut = onCutWall(at);
+        if (static const bool debug = std::getenv("OS2_DEBUG_WALL_HIDE") != nullptr; debug) {
+            static std::map<int16_t, bool> told;
+            if (auto [it, fresh] = told.emplace(id, cut); fresh || it->second != cut) {
+                it->second = cut;
+                std::printf("opensims2: wall hide: object %d at (%.2f, %.2f, %.2f) %s\n", id, at.t[0], at.t[1], at.t[2],
+                            cut ? "hidden (its wall is cut down)" : "shown");
+            }
+        }
+        return !cut;
     };
     perfLap("  VM hooks");
     setupPieMenu(index);
