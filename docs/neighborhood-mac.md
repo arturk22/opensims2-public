@@ -455,11 +455,12 @@ que um bairro base não precisa (os 4 bairros não têm pintura salva).
 
 ## 9. Aberto
 
-- Como o `nhoodLightMap` é gerado (classe e resolução).
-- Preenchimento do mapa alfa (peso → alfa) e a semente das variantes.
+- ~~Como o `nhoodLightMap` é gerado~~ (§20.3), ~~mapa alfa e semente das
+  variantes~~ (§20.1–20.2), ~~desbotamento dos imposters~~ (§20.4): rodada n12.
 - `0xEC44BDDC` (bairro e lote) e `0xCC2A6A34` (14 bytes, `cTSNeighborManager`).
-- Desbotamento dos imposters pela câmera.
 - Significado das peças de rua (nomes SC4) e dos 2 bytes `+0x85/+0x86`.
+- A cor `+0xd8` do estado de luz (branca, inferido) e quem usa a segunda
+  textura do `CreateNeighborhoodLightMap` (com os blobs).
 
 ---
 
@@ -1613,3 +1614,35 @@ Confirmado: sai logo com `+0x6d` ligado. O `ConstructLotImposters` (BV
 desliga `+0x6d`; a vista do bairro o liga. Só a saia do lote desbota: alfa
 `(d / neighborhoodPropFadeDistance)²` (`+0x78`). O app não desenha a saia,
 então não há o que desbotar.
+
+### 20.5 No código (rodada n12)
+
+- `formats/hood_scene.*`: `terrainNormals` (as 6 faces), `computePaintWeights`
+  com os pesos `u16` e os bytes do `NormalizePaintWeights`;
+  `buildHoodTerrainModel` faz o canvas preto e uma parte por pintura e
+  variante (`"paint v n"`), somada (`additive`, que no "Terrain" mantém o
+  light map: dá a mesma soma × luz), máscara 129×129 com o valor no meio do
+  tile (origem 5, passo 10); `TerrainVariants` (o LCG do jogo e a semente do
+  relógio; `OS2_HOOD_VARIANT_SEED` fixa, para capturas comparáveis); o
+  `buildHoodTerrainPatch` põe cada triângulo na variante do seu tile.
+  Antes: mistura "over" com alfa = peso/soma corrente, máscara de 2,5
+  unidades e um hash por quadrado de 13 **unidades** (não tiles), que
+  desenhava um labirinto de linhas brancas na grama.
+- `computeHoodLightMap` segue o §20.3 (128 texels, varredura da sombra,
+  normal desviada, leitura sem filtro, × 256); `floraBlob` e o
+  `HoodView::computeLightMap` passam os blobs das árvores (altura = z da
+  caixa do modelo) e os `hm*` do `Lighting.txt`. Antes: 512 texels, raio por
+  texel até o sol e × 0,53 na sombra. Inferido: o gradiente sob a água (o
+  jogo recorta o passe de luz ali).
+- **Os lotes brancos** das capturas (desde a rodada 9): o passe
+  `terrainLmap` do `ImposterTerrainMaterial` (`destColor + invSrcAlpha`)
+  levava também o alfa do alvo a 0 sob o lote, e a captura RGBA mostrava
+  branco. O modo `multiply` do renderizador agora mantém o alfa do alvo
+  (`render/renderer.cpp`). Na janela isso pode não ter aparecido (camada
+  opaca); conferir no `TESTAR.md`.
+- Testes: `test_hood_terrain` (sequência do LCG, células, normais, bytes
+  alfa, partes do modelo, mapa de luz com uma parede ao sol baixo, blobs).
+- Capturas: `docs/screenshots/n12-bairro-n001-antes-depois.jpg`, `-n002-`,
+  `-n003-` (em cima longe, `--zoom -2`; embaixo perto) e
+  `n12-bairro-nhoodlightmap-antes-depois.jpg` (N001; os blobs das florestas
+  aparecem como manchas).

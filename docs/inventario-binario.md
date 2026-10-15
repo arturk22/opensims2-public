@@ -82,11 +82,11 @@ palavra.
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
 | Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% | 4 / 5 = **80%** | 12 / 6 |
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% (não recontado na n09) | 6 / 7 = **86%** | 10 / 2 |
-| Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% | 5 / 7 = **71%** | 40 / 45 |
+| Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% (não recontado na n12) | 5,5 / 7 = **79%** | 41 / 45 |
 | CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
 | Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **80,5 / 109 = 74%** | **517 em src** |
+| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **81 / 109 = 74%** | **518 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -270,9 +270,9 @@ Código: `src/formats/neighborhood*.{hpp,cpp}`, `hood_*.{hpp,cpp}`,
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
-| Terreno: `cTSNHoodTerrain` (66, 16), `nTSSG::cNHoodTerrain` (58, 8) | `formats/hood_terrain.*`, `app/hood_view.cpp` | inferido | Mapa alfa, semente das variantes e o `nhoodLightMap` abertos. |
+| Terreno: `cTSNHoodTerrain` (66, 16), `nTSSG::cNHoodTerrain` (58, 8) | `formats/hood_terrain.*`, `formats/hood_scene.*`, `app/hood_view.cpp` | fiel | Rodada n12: pesos e mapa alfa (`NormalizePaintWeights`, texel no meio do tile, soma sobre o canvas preto), normais de 6 faces, variantes (byte por célula de 13 tiles, semente do relógio) e o `nhoodLightMap` (`CreateNeighborhoodLightMap`: sombra por varredura, blobs das árvores, normal desviada) do binário; inferidos só o gradiente sob a água e a cor `+0xd8` do estado (`neighborhood-mac.md` §20). |
 | Ruas, flora, enfeites: `cTSNHoodOccupantManager` (61, 6) | `formats/hood_scene.*` | fiel | Alisar e nivelar ruas (rodadas 13–14). |
-| Imposters: `cLotImposterManager` (38, 2), `cLotImposterDisplay` (31, 12) | `formats/hood_lots.cpp` | inferido | O desbotamento pela câmera falta; 7 marcadores. |
+| Imposters: `cLotImposterManager` (38, 2), `cLotImposterDisplay` (31, 12) | `formats/hood_lots.cpp`, `formats/hood_scene.cpp` | inferido | Desbotamento lido (n12): só na saia do lote, que o app não desenha; os lotes brancos das capturas eram o alfa do `multiply` (corrigido). Falta: a cor do `cTerrainShadeLight` (`terrainShade` inferido); 7 marcadores. |
 | Lotes: `cTSUserToolPlaceLotBase` (35, 16), `cTSUserToolMoveLot`, `cTSLotInfo`, entrar e sair | `app/hood_mode.cpp`, `formats/hood_lots.cpp` | fiel | |
 | Famílias e vizinhos: `cTSFamily` (82, 10), `cTSNeighbor` (61, 3), `cTSNeighborManager`, `cTSFamilyManager` | `vm/hood_bridge.cpp`, `formats/neighborhood.*` | inferido | Despejar a família do próprio lote não é tratado; 7 marcadores no `hood_bridge`. |
 | Mudar, despejar, valor do lote: `cTSUserToolNeighborhoodMoveIn`, `cTSUserToolEvictFamily`, `GetLotValue` | `formats/lot_evict.*`, `app/hood_*` | inferido | O jogo soma os 3 CDs de videogame ao valor; nós não. |
@@ -370,7 +370,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | 9 | **Salvar: campos sem nome** (token, timers, XMTO) e inventários do bairro — **feita** (n09): cabeçalho, token temporário (campos 4–7 como cópias), iteradores dos arrays, timers (ID, quem pôs, repetir), XMTO (deslocamentos) e NGBH (dados do bairro) com nome e pelo sentido (`docs/save-mac.md` §8); `lot-save --check` byte a byte igual nos 69 lotes, `hood-save --check` 68 de 68. | Hoje o save já volta igual; é limpeza. | 1 Opus | sim |
 | 10 | **CAS: corpo gordo, `BlendDeltas`, roupa aleatória** — **feita** (n10): corpo gordo como morph `fattop`/`fatbot` (não há roupa gorda nos dados), botão aleatório como o `RandomizeForHumans` (cabelo sem chapéu por categoria, 49 % roupa inteira, flags 1\|8 fora, "default" de reserva), peso das máscaras de região e `hairneck` do `BlendArchetype` (`docs/cas-mac.md`, fim). | O corpo gordo é um bug visível no CAS. | 1 Opus | sim |
 | 11 | **Câmera: seguir o Sim, Tab, fade, vista de cima** — **feita** (n11): vista de cima (T, a câmera Build e o flag do `SetMode`), seguir o Sim (zona morta do alvo, movimentos do jogador, centrar), fade de objetos "Obstructs View" e a câmera livre do Tab (`camera-ui-mac.md` §1.7–1.10); órbita, "CameraManNH" e fade da câmera de cinema ficam no `TODO.md`. | Conforto; os valores já estão nos dados. | 1 Sonnet | não |
-| 12 | **Bairro: imposters e terreno** (desbotar, mapa alfa, `nhoodLightMap`) | Pouco visível. | 1 Opus | sim |
+| 12 | **Bairro: imposters e terreno** (desbotar, mapa alfa, `nhoodLightMap`) — **feita** (n12): mapa alfa, variantes, normais e `nhoodLightMap` do binário (`neighborhood-mac.md` §20); o desbotamento só existe na saia do lote; os lotes brancos das capturas eram o alfa do `multiply`. | Pouco visível. | 1 Opus | sim |
 
 Total: 14 agentes Opus e 3 Sonnet, em 12 rodadas. As rodadas 1 e 2 tocam
 os mesmos arquivos (`anim_player.cpp`, `seat_module.*`): rodar em sequência,
