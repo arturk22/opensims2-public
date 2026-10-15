@@ -636,7 +636,8 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         for (const auto& src : sources)
             std::fprintf(stderr, "lightmap source level %d room %d colour %.2f %.2f %.2f falloff %.2f%s\n", src.level, int(src.room),
                          src.rgb[0], src.rgb[1], src.rgb[2], src.falloff, src.directional ? " directional" : "");
-    const auto wallTexels = diffuseWalls(layout, sources, params, floors, pages);
+    std::vector<std::array<float, 3>> wallLookups;
+    const auto wallTexels = diffuseWalls(layout, sources, params, floors, pages, &wallLookups);
 
     auto put = [&](uint32_t x, uint32_t y, V3 e) {
         if (x >= out.width || y >= out.height)
@@ -697,9 +698,10 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
             }
     }
 
-    // Room irradiance (GatherFloorLighting): per sample half of a room,
-    // I[4] += 0.25 c x mix(white, floor colour, roomSaturation), I[5] +=
-    // 0.25 c x roomCeilingStrength.
+    // Room irradiance (GatherFloorLighting, Mac BV 0x714258): per floored
+    // quarter of a room's tiles, c = LookupFloorDiffusion there (2 x the
+    // sample), I[4] += 0.25 c x mix(white, floor colour, roomSaturation),
+    // I[5] += 0.25 c x roomCeilingStrength (here per sample half).
     auto albedo = [&](const std::array<float, 3>& c) {
         const float s = globals.roomSaturation;
         return V3{1 - s + c[0] * s, 1 - s + c[1] * s, 1 - s + c[2] * s};
@@ -713,7 +715,9 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
                         continue;
                     const float x = (float(sx) + 0.5f) / 2, y = (float(sy) + 0.5f) / 2;
                     auto& gr = gather[{g.level, h.room}];
-                    const V3 c{h.c[0], h.c[1], h.c[2]};
+                    if (!layout.hasFloorAt(g.level, x, y))
+                        continue;
+                    const V3 c = V3{h.c[0], h.c[1], h.c[2]} * 2.0f;
                     gr.first[4] = gr.first[4] + c * albedo(layout.floorColorAt(g.level, x, y)) * 0.25f, gr.second[4] += 1;
                     gr.first[5] = gr.first[5] + c * (0.25f * globals.roomCeilingStrength), gr.second[5] += 1;
                 }
@@ -760,12 +764,13 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
                 put(f.x + i, f.y + j, e);
                 sum = sum + e, ++count;
             }
-        // GatherWallLighting: c = 0.5 x the wall's light x mix(white,
-        // wallpaper colour, roomSaturation), by its inward normal.
+        // GatherWallLighting (Mac BV 0x713ca0): c = 0.5 x LookupWallDiffusion
+        // x mix(white, wallpaper colour, roomSaturation), by its inward normal.
         if (!out_ && count) {
             const auto& wc = f.material < layout.materialColors.size() ? layout.materialColors[f.material]
                                                                        : std::array<float, 3>{1, 1, 1};
-            addSide(gather[{f.level, f.room}], n[0], n[1], sum * (0.5f / float(count)) * albedo(wc));
+            const auto& c = wallLookups[fi];
+            addSide(gather[{f.level, f.room}], n[0], n[1], V3{c[0], c[1], c[2]} * 0.5f * albedo(wc));
         }
     }
 

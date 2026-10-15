@@ -83,9 +83,13 @@ std::vector<FloorColorGrid> diffuseFloors(const LotLightMapLayout& layout, const
 // at the top as the atlas keeps them), light-map bytes (0.5 x (colour -
 // ambient), the outside ambient for walls facing out). `floorTexel(level,
 // x, y)` gives the floor page's diffusion (its byte / 255 x 2) at a point.
+// `lookup`, when given, gets each face's LookupWallDiffusion (Mac BV
+// 0xeef45c): its segment's sample of column 1, row 3, less the outside
+// ambient on walls facing out.
 std::vector<std::vector<std::array<uint8_t, 3>>> diffuseWalls(
     const LotLightMapLayout& layout, const std::vector<DiffusionSource>& sources, const DiffusionParams& params,
-    const std::vector<FloorColorGrid>& floors, const std::vector<std::vector<uint8_t>>& floorPages);
+    const std::vector<FloorColorGrid>& floors, const std::vector<std::vector<uint8_t>>& floorPages,
+    std::vector<std::array<float, 3>>* lookup = nullptr);
 
 // The light-room key of a room on a level: 0 outdoors; and of the point
 // (x, y) of a level (the game's quarter of the point's tile).

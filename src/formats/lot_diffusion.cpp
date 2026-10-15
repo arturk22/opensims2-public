@@ -578,6 +578,20 @@ public:
     WallDiffusion(const LotLightMapLayout& layout, const DiffusionParams& params, const std::vector<std::vector<uint8_t>>& floorPages)
         : l_(layout), p_(params), floorPages_(floorPages) {}
 
+    // LookupWallDiffusion (BV 0xeef45c) of each face.
+    std::vector<V3> lookups() const {
+        std::vector<V3> out(l_.walls.size(), V3{0, 0, 0});
+        for (size_t fi = 0; fi < l_.walls.size(); ++fi) {
+            if (faceSeg_[fi] < 0)
+                continue;
+            const Seg& s = segs_[size_t(faceSeg_[fi])];
+            const bool outside = runs_[size_t(s.run)].room == 0;
+            for (size_t ch = 0; ch < 3; ++ch)
+                out[fi][ch] = s.S[1][3][ch] / 255.0f - (outside ? p_.outsideWall[ch] : 0.0f);
+        }
+        return out;
+    }
+
     std::vector<std::vector<std::array<uint8_t, 3>>> run(const std::vector<DiffusionSource>& sources) {
         build();
         for (auto& r : runs_)
@@ -1154,9 +1168,13 @@ std::vector<std::vector<std::array<uint8_t, 3>>> diffuseWalls(const LotLightMapL
                                                                const std::vector<DiffusionSource>& sources,
                                                                const DiffusionParams& params,
                                                                const std::vector<FloorColorGrid>&,
-                                                               const std::vector<std::vector<uint8_t>>& floorPages) {
+                                                               const std::vector<std::vector<uint8_t>>& floorPages,
+                                                               std::vector<std::array<float, 3>>* lookup) {
     WallDiffusion w(layout, params, floorPages);
-    return w.run(sources);
+    auto cells = w.run(sources);
+    if (lookup)
+        *lookup = w.lookups();
+    return cells;
 }
 
 } // namespace os2
