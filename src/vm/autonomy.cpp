@@ -188,26 +188,32 @@ Ads adsOf(const Object& sim, const InteractionTable::Interaction& e) {
     return a;
 }
 
-// The motives a human's interaction score sums (FUN_01be21b4 in the Mac
-// binary: every motive but 1, 2, 4, 10, 11 and 12).
-constexpr std::array<int16_t, 10> kScoredMotives = {0, 3, 5, 6, 7, 8, 9, 13, 14, 15};
+// The motives the base game's interaction score sums (cTSMotiveEffects,
+// base 0xb92a68/0xb92b80: every motive but 0, 1, 2, 4, 10, 11 and 12; the
+// BV's FUN_01be21b4 also keeps 0 for humans; docs/motives-mac.md §6).
+constexpr std::array<int16_t, 9> kScoredMotives = {3, 5, 6, 7, 8, 9, 13, 14, 15};
 
-// cTSMotiveEffects::GetInteractionScore - GetCurrentScore (Mac binary):
-// the sum over the scored motives of curve(motive + ad / 1000) -
-// curve(motive), divided by 10 (the motive count, 16, minus 6). The mask
-// only chooses the candidates.
+// cTSMotiveEffects::GetInteractionScore - GetCurrentScore (base 0xb92b80,
+// 0xb92a68): each the sum over the scored motives of curve(motive + ad x
+// 0.001) or of curve(motive), the motives as the engine's floats, times
+// 1 / (16 - 6) as a float. The mask only chooses the candidates.
 float scoreAds(VM& vm, const Object& sim, const Ads& a) {
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
     const auto& curves = scoreCurves(vm, sim);
-    float score = 0;
+    float withAds = 0, now = 0;
     for (int16_t m : kScoredMotives) {
         const auto k = size_t(m);
-        if (!a.min[k] && !a.range[k])
-            continue;
+        const float v = motiveNow(sim, m);
         const float ad = adValue(sim, a.min[k], a.range[k], uint16_t(a.personality[k])) * 0.001f;
-        const float v = sim.person->motives[k];
-        score += curves[k].at(v + ad) - curves[k].at(v);
+        const float at = v + ad;
+        withAds = withAds + curves[k].at(at);
+        now = now + curves[k].at(v);
     }
-    return score / 10.0f;
+    const float scale = 1.0f / float(kMotiveCount - 6);
+    const float interaction = withAds * scale, current = now * scale;
+    return interaction - current;
 }
 
 // The score is multiplied by 1 / (1 + attenuation x distance)
@@ -657,24 +663,28 @@ std::function<void(const AutonomyDecision&)>& autonomyObserver() {
 }
 
 float adValue(const Object& sim, int16_t min, int16_t range, uint16_t personality) {
-    // The Mac binary's table at 0x02734540 (FUN_0049ee38): STR# 0xE8
-    // "personality ads" type -> person data, inverted: 1/2 nice (2),
-    // 3/4 active (3), 5/6 generous (none: 0), 7/8 playful (5), 9/10 outgoing
-    // (6), 11/12 neat (7) (the even ones inverted: 1000 - value), 13
-    // cleaning (9), 14 cooking (10), 15 social (11), 16 repair (12), 17
+    // The base game's table at 0x0114c4e8 (cTSMotiveEffects, base
+    // 0xb92b80): STR# 0xE8 "personality ads" type -> person data, inverted:
+    // 1/2 nice (2), 3/4 active (3), 5/6 generous (4), 7/8 playful (5), 9/10
+    // outgoing (6), 11/12 neat (7) (the even ones inverted: 1000 - value),
+    // 13 cleaning (9), 14 cooking (10), 15 social (11), 16 repair (12), 17
     // gardening (13), 18 music (14), 19 creative (15), 20 literacy (16), 21
-    // physical (17), 22 logic (18). Type 0: min + range.
-    static constexpr int16_t kData[23] = {-1, 2, 2, 3, 3, -1, -1, 5, 5, 6, 6, 7, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+    // physical (17), 22 logic (18). Type 0: (short)(min + range). Past the
+    // table the game reads past it; here 0.
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
+    static constexpr int16_t kData[23] = {-1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
     if (personality == 0)
-        return float(min) + float(range);
+        return float(int16_t(min + range));
     if (personality >= std::size(kData))
         return 0;
-    float p = 0;
-    if (kData[personality] >= 0 && sim.person)
-        p = float(sim.person->data[size_t(kData[personality])]);
+    int p = sim.person ? sim.person->data[size_t(kData[personality])] : 0;
     if (personality < 13 && personality % 2 == 0)
-        p = 1000.0f - p;
-    return float(min) + float(range) * p * 0.001f;
+        p = 1000 - p;
+    // fmuls, then fmadds 0.001 x that + min.
+    const float pr = float(p) * float(range);
+    return std::fmaf(0.001f, pr, float(min));
 }
 
 std::optional<Exit> idleSimsCall(Context& c, uint8_t call) {

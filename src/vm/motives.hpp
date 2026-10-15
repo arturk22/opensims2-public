@@ -102,6 +102,7 @@ float moodFrom(const MotiveCurveSet& happy, const std::array<float, kMotiveCount
 // Motives as the engine keeps them (floats), picking up what the trees
 // wrote since; what the trees see of a float.
 float exactMotive(Object& sim, int16_t m);
+float motiveNow(const Object& sim, int16_t m); // the same without picking up
 void setExactMotive(Object& sim, int16_t m, float value);
 int16_t motiveView(float value);
 

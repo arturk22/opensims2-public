@@ -248,6 +248,14 @@ float exactMotive(Object& sim, int16_t m) {
     return p.exactMotives[k];
 }
 
+float motiveNow(const Object& sim, int16_t m) {
+    const Person& p = *sim.person;
+    const auto k = size_t(m);
+    if (!p.exactMotivesValid || p.motives[k] != p.writtenMotives[k])
+        return p.motives[k];
+    return p.exactMotives[k];
+}
+
 void setExactMotive(Object& sim, int16_t m, float value) {
     exactMotive(sim, m);
     Person& p = *sim.person;

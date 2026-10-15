@@ -27,12 +27,14 @@
 //   threshold" is at most the Sim's person data 36 "autonomy level", and
 //   that advertise a motive of the mask in the ad table of the Sim's age.
 //   Objects in use (object data 62 "use count") are skipped.
-// - score = sum over motives 0, 3, 5-9, 13-15 of InteractionScoreCurve(motive
-//   + ad / 1000) - InteractionScoreCurve(motive), / 10, times 1 / (1 +
+// - score = (sum over motives 3, 5-9, 13-15 of InteractionScoreCurve(motive
+//   + ad / 1000)) / 10 - (the sum of InteractionScoreCurve(motive)) / 10
+//   (the base game's cTSMotiveEffects, docs/motives-mac.md §6), times 1 / (1 +
 //   attenuation x distance): attenuation from the entry (custom value, none,
 //   low 0.1, moderate 0.3, high 0.6, FCNS 2), distance in tiles plus 10 per
 //   level ("autonomy floor to floor distance cost"). ad = min + range x
-//   personality / 1000 (type 0: min + range), x 0.001. Times the biases of
+//   personality / 1000 (type 0: min + range; types 5/6 read person data 4),
+//   x 0.001; the motives are the engine's floats. Times the biases of
 //   FBA_ScoreInteraction: ownership (1 + "autonomy ownership bias" x the
 //   object's relationship variable 1 towards the Sim: the FCNS says 0);
 //   memory, relationship, weather and temperature are 1 in the base game
