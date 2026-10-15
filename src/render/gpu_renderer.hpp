@@ -31,6 +31,8 @@ public:
     void updateObject(int model, const ObjectModel& posed);
     int addInstance(int model, const simd_float4x4& transform);
     void setInstanceTransform(int instance, const simd_float4x4& transform);
+    void setInstanceModel(int instance, int model);
+    int instanceModel(int instance) const;
     void setLightMap(const RgbaImage& image);
     void setGroundClip(float z);
     // The game's outdoor lights (Renderer::outdoorLights): set 0 for objects,
@@ -80,6 +82,12 @@ private:
     struct Gpu;
 
     Gpu* gpu_ = nullptr;
+};
+
+// The name the shared app modules (VmObjectView, BuyMode) take the renderer by.
+class Renderer final : public GpuRenderer {
+public:
+    using GpuRenderer::GpuRenderer;
 };
 
 } // namespace os2

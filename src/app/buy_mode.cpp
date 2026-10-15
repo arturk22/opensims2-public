@@ -9,8 +9,12 @@
 #include "formats/model.hpp"
 #include "formats/resindex.hpp"
 #include "formats/ui_resources.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
 #include "render/ui_layer.hpp"
+#endif
 #include "vm/sim_motion.hpp"
 
 #include <algorithm>
@@ -1274,6 +1278,7 @@ void BuyMode::hover(simd_float2 p) {
         dirty_ = true;
 }
 
+#ifndef _WIN32
 void BuyMode::attach(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat) {
     for (auto& l : layers_)
         l = std::make_unique<UiLayer>(device, colorFormat, depthFormat);
@@ -1294,6 +1299,7 @@ void BuyMode::encode(MTL::RenderCommandEncoder* enc, uint32_t width, uint32_t he
     }
     layers_[layer_]->encode(enc, width, height);
 }
+#endif
 
 std::optional<std::array<float, 4>> BuyMode::controlRect(uint32_t window, uint32_t control) {
     if (!active_)

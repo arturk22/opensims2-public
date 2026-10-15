@@ -19,6 +19,10 @@
 #include "formats/skinning.hpp"
 #include "vm/lot.hpp"
 #include "formats/effects.hpp"
+#include "app/live_ui.hpp"
+#include "app/game_save.hpp"
+#include "app/buy_mode.hpp"
+#include "app/vm_objects.hpp"
 #include "formats/ui_resources.hpp"
 #include "render/particle_system.hpp"
 #include "formats/ui_script.hpp"
@@ -36,6 +40,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -277,7 +282,7 @@ int main(int argc, char** argv) {
         std::printf("opensims2: house has %zu parts, uploading\n", house.parts.size());
         std::fflush(stdout);
         const auto exe = std::filesystem::path(modulePath).parent_path();
-        os2::GpuRenderer renderer(exe / "shaders", 1280, 720);
+        os2::Renderer renderer(exe / "shaders", 1280, 720);
         std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
         renderer.setGroundClip(os2::lotSkirtBottom(lot));
         const int houseModel = renderer.addObject(house, index);
@@ -313,6 +318,15 @@ int main(int argc, char** argv) {
         std::map<std::string, os2::Tgi> definitions;
         std::map<std::string, int> models;
         std::map<std::string, os2::Skeleton> skeletons;
+        struct PlacedObject {
+            std::string cres;
+            std::map<std::string, std::string> materials;
+            std::optional<os2::Xform> saved; // nothing: saved in a slot
+            std::string definition;
+            int instance = -1;
+            std::vector<os2::Xform> pose;
+        };
+        std::map<int16_t, PlacedObject> placed;
         size_t objects = 0;
         for (const auto& object : lot.objects) {
             if (object.model.empty() || object.person || object.model == "nullModel" || object.model == "noModel" ||
@@ -333,6 +347,7 @@ int main(int argc, char** argv) {
                 }
             }
             int model = models[key];
+            std::vector<os2::Xform> savedPose;
             if (!object.nodes.empty() && skeletons.count(key)) {
                 if (auto pose = os2::savedPose(skeletons[key], object.nodes)) {
                     const std::string posedKey = key + "@posed";
@@ -345,8 +360,10 @@ int main(int argc, char** argv) {
                             models[posedKey] = -1;
                         }
                     }
-                    if (models[posedKey] >= 0)
+                    if (models[posedKey] >= 0) {
                         model = models[posedKey];
+                        savedPose = std::move(*pose);
+                    }
                 }
             }
             if (model < 0)
@@ -356,7 +373,18 @@ int main(int argc, char** argv) {
                 at.columns[3] = simd_make_float4(0, 0, -1000, 1);
             else
                 ++objects;
-            renderer.addInstance(model, at);
+            const int instance = renderer.addInstance(model, at);
+            // Stale cObjects share IDs with live ones: the first (or one in the
+            // world) keeps the ID; app/vm_objects.cpp checks it against the VM.
+            const int16_t id = int16_t(object.instance & 0xFFFF);
+            if (!placed.count(id) || (!placed[id].saved && !contained)) {
+                PlacedObject p{cresOf(index, object, definitions), object.materials, std::nullopt, object.definition,
+                               instance, std::move(savedPose)};
+                if (!contained)
+                    p.saved = os2::Xform{os2::Quat{object.rotation[0], object.rotation[1], object.rotation[2], object.rotation[3]},
+                                         {object.position[0], object.position[1], object.position[2]}};
+                placed[id] = std::move(p);
+            }
         }
 
         std::fprintf(stderr, "opensims2: placed %zu objects, starting SimAntics\n", objects);
@@ -404,6 +432,16 @@ int main(int argc, char** argv) {
         }
         if (sims.empty())
             throw std::runtime_error("no Sim could be drawn");
+
+        os2::VmObjectView objectView(renderer, index, simulation);
+        simulation.seats.slot = [&](int16_t id, double now) { return objectView.slotPlacement(id, now); };
+        simulation.objectBone = [&](int16_t id, uint32_t crc) { return objectView.boneByHash(id, crc); };
+        int following = 0;
+        for (const auto& [id, p] : placed)
+            following += objectView.addPlaced(id, p.definition, p.cres, p.instance, p.saved, p.materials, p.pose) ? 1 : 0;
+        for (auto& sim : sims)
+            objectView.addSim(sim.id, sim.actor.get());
+        std::printf("opensims2: object view %zu placed, %d follow the VM\n", placed.size(), following);
 
         os2::GameAudio gameAudio(res, {});
         os2::LotAudio lotAudio(gameAudio, index, lot, {});
@@ -456,14 +494,47 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "opensims2: movie: %s\n", e.what());
         }
 
-        os2::UiResources ui(index, res);
-        float ux = 16, uy = 16, uw = 128, uh = 128;
-        if (const os2::RgbaImage* image = firstUiImage(ui, index, ux, uy, uw, uh)) {
-            const float scale = 1280.f / 1024.f;
-            renderer.setUiImage(*image, ux * scale, uy * scale, std::max(uw * scale, 64.f), std::max(uh * scale, 64.f));
-            std::printf("opensims2: UI image %ux%u\n", image->width, image->height);
-        } else {
-            std::fprintf(stderr, "opensims2: no UI image found\n");
+        std::unique_ptr<os2::LiveUi> liveUi;
+        std::unique_ptr<os2::BuyMode> buy;
+        int liveWindows = 0, liveDrawn = 0, buyWindows = 0, buyDrawn = 0;
+        auto showLiveUi = [&] {
+            if (!liveUi || !liveUi->ok())
+                return false;
+            if (!sims.empty())
+                liveUi->setSim(sims.front().id);
+            os2::UiScreen screen = liveUi->screen(1280, 720);
+            liveWindows = int(screen.windows);
+            liveDrawn = int(screen.drawn);
+            os2::UiScreen buyScreen;
+            if (buy && buy->active()) {
+                buy->update();
+                buyScreen = buy->screen(1280, 720);
+                buyWindows = int(buyScreen.windows);
+                buyDrawn = int(buyScreen.drawn);
+                screen.quads.insert(screen.quads.end(), buyScreen.quads.begin(), buyScreen.quads.end());
+            }
+            renderer.setUiImage(os2::composeUi(screen, {0, 0, 0, 0}), 0, 0, 1280, 720);
+            return true;
+        };
+        try {
+            liveUi = std::make_unique<os2::LiveUi>(simulation.machine(), index, res);
+            if (showLiveUi())
+                std::printf("opensims2: live UI %d windows, %d drawn\n", liveWindows, liveDrawn);
+            else
+                std::fprintf(stderr, "opensims2: live UI scripts missing\n");
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: live UI: %s\n", e.what());
+        }
+        if (!liveUi || !liveUi->ok()) {
+            os2::UiResources ui(index, res);
+            float ux = 16, uy = 16, uw = 128, uh = 128;
+            if (const os2::RgbaImage* image = firstUiImage(ui, index, ux, uy, uw, uh)) {
+                const float scale = 1280.f / 1024.f;
+                renderer.setUiImage(*image, ux * scale, uy * scale, std::max(uw * scale, 64.f), std::max(uh * scale, 64.f));
+                std::printf("opensims2: UI image %ux%u\n", image->width, image->height);
+            } else {
+                std::fprintf(stderr, "opensims2: no UI image found\n");
+            }
         }
 
         std::unique_ptr<os2::fx::EffectsLibrary> effectLibrary;
@@ -530,6 +601,37 @@ int main(int argc, char** argv) {
         else
             camera.pivot = simd_make_float3(float(lot.width) / 2, float(lot.height) / 2, 0);
         camera.distance = 12.f;
+        if (liveUi && liveUi->ok()) {
+            liveUi->setCanvas(1280, 720);
+            liveUi->playSound = [&](const std::string& name) { gameAudio.playUi(name); };
+            liveUi->onZoom = [&](int step) { camera.distance = std::clamp(camera.distance - float(step) * 2.f, 6.f, 80.f); };
+            liveUi->onRotate = [&](int step) { camera.yaw += float(step) * 0.4f; };
+            liveUi->onCentreSim = [&](os2::vm::ObjectId id) {
+                for (const auto& sim : sims)
+                    if (sim.id == id)
+                        camera.pivot = simd_make_float3(sim.actor->position[0], sim.actor->position[1], 1.f);
+            };
+            liveUi->onWallMode = [&](int mode) { liveUi->setWallMode(mode); };
+            try {
+                buy = std::make_unique<os2::BuyMode>(simulation, objectView, renderer, index, res);
+                buy->setCanvas(1280, 720);
+                buy->playSound = [&](const std::string& name) { gameAudio.playUi(name); };
+                liveUi->onMode = [&](int mode) {
+                    if (mode == 1 && buy->ok()) {
+                        buy->enter();
+                        liveUi->setMode(1);
+                    } else if (mode == 0) {
+                        buy->exit();
+                        liveUi->setMode(0);
+                    }
+                };
+                std::printf("opensims2: buy mode %s, %zu catalog entries\n", buy->ok() ? "ready" : "unavailable",
+                            buy->catalog().entries().size());
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: buy mode: %s\n", e.what());
+                buy.reset();
+            }
+        }
         const auto start = std::chrono::steady_clock::now();
         auto seconds = [&] {
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -537,11 +639,14 @@ int main(int argc, char** argv) {
         bool keys[4]{};
         auto frame = [&] {
             const double now = seconds();
+            if (liveUi)
+                liveUi->tick(now);
             const double scene = simulation.update(now);
             for (auto& sim : sims) {
                 sim.actor->update(scene);
                 renderer.updateObject(sim.model, sim.actor->posed);
             }
+            objectView.update();
             os2::LotAudio::Listener listener;
             listener.x = camera.pivot.x;
             listener.y = camera.pivot.y;
@@ -618,10 +723,19 @@ int main(int argc, char** argv) {
         // A few ticks so the capture shows the VM's animation, not the rest pose.
         for (int i = 0; i < 30; ++i)
             frame();
+        bool pauseClick = false;
+        if (liveUi && liveUi->ok()) {
+            if (const auto rect = liveUi->controlRect(os2::LiveUi::kMainWindow, 0x27D7258F)) {
+                const simd_float2 at{((*rect)[0] + (*rect)[2]) * 0.5f, ((*rect)[1] + (*rect)[3]) * 0.5f};
+                pauseClick = liveUi->press(at);
+            }
+        }
+        showLiveUi();
         renderer.setEye(camera.eye());
         if (!renderer.capture(shot, camera.viewProj(1280.f / 720.f)))
             throw std::runtime_error("screenshot failed");
         const int censorOnFrame = renderer.censorCount();
+        const Camera homeCamera = camera;
         simd_float3 mirrorCenter, mirrorNormal;
         if (renderer.mirrorAnchor(mirrorCenter, mirrorNormal)) {
             camera.pivot = mirrorCenter;
@@ -644,6 +758,110 @@ int main(int argc, char** argv) {
         log << "ticks " << simulation.ticks() << "\n";
         log << "shadows " << renderer.shadowCount() << "\n";
         log << "censor " << censorOnFrame << "\n";
+        log << "live-ui " << liveWindows << " windows " << liveDrawn << " drawn\n";
+        log << "ui-pause " << (pauseClick ? "clicked" : "miss") << " vm "
+            << simulation.machine().globals[os2::vm::global::Paused] << "\n";
+        std::string saveLine = "save skipped";
+        try {
+            const auto originalStamp = std::filesystem::last_write_time(lotFile);
+            const auto hoodDir = lotFile.parent_path().parent_path();
+            const auto hoodName = hoodDir.filename().string() + "_Neighborhood.package";
+            const auto originalHood = hoodDir / hoodName;
+            const bool haveHood = std::filesystem::is_regular_file(originalHood);
+            const auto hoodStamp = haveHood ? std::filesystem::last_write_time(originalHood) : std::filesystem::file_time_type{};
+            const auto saveDir = shot.parent_path().empty() ? std::filesystem::path("save-test")
+                                                            : shot.parent_path() / "save-test";
+            const auto saveLot = saveDir / hoodDir.filename() / "Lots" / lotFile.filename();
+            std::filesystem::create_directories(saveLot.parent_path());
+            std::filesystem::copy_file(lotFile, saveLot, std::filesystem::copy_options::overwrite_existing);
+            if (haveHood)
+                std::filesystem::copy_file(originalHood, saveLot.parent_path().parent_path() / hoodName,
+                                           std::filesystem::copy_options::overwrite_existing);
+            os2::LotObjects before;
+            {
+                os2::DbpfPackage beforePackage(saveLot);
+                before = os2::LotObjects::load(beforePackage);
+            }
+            const os2::GameSaveResult written =
+                os2::saveGame(simulation.machine(), saveLot, res.parent_path().parent_path(), os2::sessionCharactersDir());
+            const bool untouched = std::filesystem::last_write_time(lotFile) == originalStamp;
+            if (!written.ok) {
+                saveLine = "save failed: " + written.error;
+            } else {
+                os2::LotObjects after;
+                {
+                    os2::DbpfPackage afterPackage(saveLot);
+                    after = os2::LotObjects::load(afterPackage);
+                }
+                int moved = 0;
+                for (const auto& now : after.objects) {
+                    if (!now.person || now.x < 0)
+                        continue;
+                    for (const auto& was : before.objects)
+                        if (was.id == now.id && (std::fabs(now.x - was.x) > 0.01f || std::fabs(now.y - was.y) > 0.01f))
+                            ++moved;
+                }
+                std::string hoodLine;
+                for (const auto& line : written.lines)
+                    if (line.rfind("neighborhood ", 0) == 0)
+                        hoodLine = line;
+                const bool hoodUntouched = !haveHood || std::filesystem::last_write_time(originalHood) == hoodStamp;
+                saveLine = (written.lines.empty() ? "save ok" : written.lines.front()) + "; sims moved " + std::to_string(moved) +
+                           (hoodLine.empty() ? "; no neighborhood" : "; " + hoodLine) +
+                           (untouched ? "; original untouched" : "; ORIGINAL CHANGED") +
+                           (hoodUntouched ? "; hood original untouched" : "; HOOD ORIGINAL CHANGED");
+            }
+            std::printf("opensims2: %s\n", saveLine.c_str());
+        } catch (const std::exception& e) {
+            saveLine = std::string("save failed: ") + e.what();
+            std::fprintf(stderr, "opensims2: %s\n", saveLine.c_str());
+        }
+        log << "save " << saveLine << "\n";
+        std::string buyLine = "buy skipped";
+        if (buy && buy->ok() && liveUi && liveUi->ok()) {
+            camera = homeCamera;
+            bool buyClick = false;
+            if (const auto rect = liveUi->controlRect(os2::LiveUi::kMainWindow, 0x67D97B2A)) {
+                const simd_float2 at{((*rect)[0] + (*rect)[2]) * 0.5f, ((*rect)[1] + (*rect)[3]) * 0.5f};
+                buyClick = liveUi->press(at);
+            }
+            std::string placedLine = "nothing placed";
+            if (buy->active()) {
+                const size_t before = simulation.machine().objects().size();
+                int tried = 0;
+                bool bought = false;
+                for (const auto& entry : buy->catalog().entries()) {
+                    if (bought || tried >= 8)
+                        break;
+                    if (entry.multiTile || entry.price <= 0 || entry.price > 400 || !buy->select(entry))
+                        continue;
+                    ++tried;
+                    const int cx = int(camera.pivot.x), cy = int(camera.pivot.y);
+                    for (int r = 1; r < 10 && !bought; ++r)
+                        for (int dx = -r; dx <= r && !bought; ++dx)
+                            for (int dy = -r; dy <= r && !bought; ++dy)
+                                if ((std::abs(dx) == r || std::abs(dy) == r) && buy->placeAt(cx + dx, cy + dy, 2)) {
+                                    bought = true;
+                                    camera.pivot = simd_make_float3(float(cx + dx) + 0.5f, float(cy + dy) + 0.5f, 0.5f);
+                                }
+                    if (!bought)
+                        buy->cancel();
+                }
+                placedLine = buy->message() + "; vm objects " + std::to_string(before) + " -> " +
+                             std::to_string(simulation.machine().objects().size());
+                for (int i = 0; i < 5; ++i)
+                    frame();
+                showLiveUi();
+                renderer.setEye(camera.eye());
+                const auto buyShot = shot.parent_path() / "frame_buy.png";
+                renderer.capture(buyShot, camera.viewProj(1280.f / 720.f));
+            }
+            buyLine = std::string(buyClick ? "clicked" : "miss") + (buy->active() ? " active" : " inactive") + " panel " +
+                      std::to_string(buyWindows) + " windows " + std::to_string(buyDrawn) + " drawn; catalog " +
+                      std::to_string(buy->catalog().entries().size()) + "; " + placedLine;
+            std::printf("opensims2: buy %s\n", buyLine.c_str());
+        }
+        log << "buy " << buyLine << "\n";
         log << "movie " << movieLabel << " " << movieW << "x" << movieH << " frame " << movieFrame << "\n";
         log << "particles " << renderer.particleCount() << " effect " << effectName << "\n";
         log << "audio " << (gameAudio.hasDevice() ? "on" : "off") << " frames " << gameAudio.mixer().framesRendered()
@@ -707,7 +925,13 @@ int main(int argc, char** argv) {
                 }
                 if (event.type == SDL_EVENT_MOUSE_WHEEL)
                     camera.distance = std::clamp(camera.distance - event.wheel.y * 1.5f, 6.f, 80.f);
+                if (liveUi && event.type == SDL_EVENT_MOUSE_MOTION)
+                    liveUi->hover(simd_make_float2(event.motion.x, event.motion.y));
+                if (liveUi && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                    (event.button.button == SDL_BUTTON_LEFT || event.button.button == SDL_BUTTON_RIGHT))
+                    liveUi->press(simd_make_float2(event.button.x, event.button.y), event.button.button == SDL_BUTTON_RIGHT);
             }
+            showLiveUi();
             if (!frame())
                 running = false;
         }

@@ -1413,6 +1413,17 @@ void GpuRenderer::setInstanceTransform(int instance, const simd_float4x4& transf
         storeMatrix(transform, gpu_->instances[size_t(instance)].transform);
 }
 
+void GpuRenderer::setInstanceModel(int instance, int model) {
+    if (instance >= 0 && size_t(instance) < gpu_->instances.size())
+        gpu_->instances[size_t(instance)].model = model;
+}
+
+int GpuRenderer::instanceModel(int instance) const {
+    if (instance >= 0 && size_t(instance) < gpu_->instances.size())
+        return gpu_->instances[size_t(instance)].model;
+    return -1;
+}
+
 void GpuRenderer::setLightMap(const RgbaImage& image) {
     if (gpu_->lightMap && gpu_->lightMap != gpu_->white)
         SDL_ReleaseGPUTexture(gpu_->device, gpu_->lightMap);
