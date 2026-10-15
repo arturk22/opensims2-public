@@ -508,8 +508,10 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     // * |lateral| (a tie-break) + 10 per routing cost of its floor above 1.
     // Not done: the router's own radius added to the distances (vtable 0xB4
     // of the router: its "slot displacement", 0 for the base game's Sims),
-    // and the +25 for a direction off the object's walls and +20 for the
-    // Sim's room (world queries not decoded). With a sitting weight the
+    // and the +25 for a goal whose direction is off the walls around the
+    // target (unless RS flag 0x80000; the world's wall mask, world vtable
+    // 0x148 on the target's place and direction, spread one direction each
+    // way, is not decoded). The +20 is HasStationaryBonus (below). With a sitting weight the
     // chairs in the cone give sitting goals too (scanSitting below).
     const float minD = slot.minDistance, optimal = slot.optimalDistance;
     const float maxD = std::min(slot.maxDistance, 32.0f);
@@ -545,6 +547,9 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
         // so far at the start), and a goal's score gets a random 20 x [0, 1) - 10
         // (the standing callback; here its cost, lower is better: + 10 - 20 x).
         const bool randomScoring = slot.flags & 0x2000;
+        const Object* stationary = slot.flags & 0x40000 ? nullptr : object(router);
+        if (stationary && (stationary->data[objdata::ContainerId] != 0 || stationary->position.level != out.level))
+            stationary = nullptr;
         int total = 0;
         if (randomScoring)
             for (int i = 0; i <= rows; ++i)
@@ -579,6 +584,13 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                                      0.001f * weight * std::fabs(lateral) - float(standWeight);
                         if (randomScoring)
                             cost += 10 - 20 * std::uniform_real_distribution<float>(0, 1)(random);
+                        // HasStationaryBonus (round n03; BV 0x478518, the
+                        // slot's vtable 0x80: RS flag 0x40000 off): +20 for
+                        // the goal right where the router stands, unless it
+                        // is contained (vtable 0x11c IsContained).
+                        if (stationary && std::fabs(px - stationary->position.x) < 1e-3f &&
+                            std::fabs(py - stationary->position.y) < 1e-3f)
+                            cost -= 20;
                         if (!evaluate) {
                             const TilePos t{int(std::floor(px)), int(std::floor(py)), out.level};
                             if (!world->contains(t) || (t.x == centre.x && t.y == centre.y))
