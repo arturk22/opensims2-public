@@ -74,9 +74,9 @@ palavra.
 | Sistema | Classes (estudadas) | Cobertura de nomes | Índice de fidelidade | "inferido" em src / docs |
 |---|---|---|---|---|
 | VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 9,5 / 11 = **86%** | 125 / 80 |
-| Rotas | 27 (13) | 113 / 622 = 18,2% | 7 / 8 = **88%** | 59 / 38 |
+| Rotas | 27 (13) | 113 / 622 = 18,2% (não recontado na n18) | 7,5 / 8 = **94%** | 59 / 38 |
 | Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 6 / 9 = **67%** | 39 / 14 |
-| Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 7,5 / 10 = **75%** | 10 / 8 |
+| Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 8 / 10 = **80%** | 10 / 8 |
 | Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 8 / 11 = **73%** | 63 / 50 |
 | Corte de paredes | 11 (5) | 32 / 159 = 20,1% (não recontado na n19) | 6 / 6 = **100%** | 4 / (na ui-live §8c–8d) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
@@ -86,7 +86,7 @@ palavra.
 | CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
 | Desenho | 211 (35) | 129 / 2.309 = 5,6% (não recontado na n13, n16 nem n19) | 6,5 / 10 = **65%** | 55 / 41 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **85,5 / 110 = 77,7%** | **510 em src** |
+| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **86,5 / 110 = 78,6%** | **510 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -131,12 +131,12 @@ Código: `src/vm/routing*.cpp`, `path_planner.*`, `locomotion.*`,
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
 | Planejador: `nPathPlanner::cPathPlanner` (48, 14), `cQuadTree`, `cAStarSearch`, `CreateResultPath` | `vm/path_planner.*` | fiel | Célula 1/8 de tile, A* com ruído. |
-| Obstáculos: `cTSRouteManager` (70, 12), `WorkOutTileCostAndPassability` | `vm/path_planner.cpp`, `routing_plan.cpp` | inferido | O custo exato de cada `ePassabilityState` falta; tile da parte de multi-tile e caixa sem lista são inferidos. |
+| Obstáculos: `cTSRouteManager` (70, 12), `WorkOutTileCostAndPassability` | `vm/path_planner.cpp`, `routing_plan.cpp`, `world.cpp` | inferido | Rodada n18 (`routing-mac.md` §9.1): o estado de cada célula (o maior; > 1 bloqueia) conferido, o custo do piso por quarto de tile (`routingcost` do padrão, 2 sem piso) e o corte de quinas do binário feitos. Seguem inferidos: tile da parte de multi-tile, a caixa do modelo sem lista (a flag 4 do nó), o `+10` do `WorldOutsideSupport` e o estado 7. |
 | Objetivos: `cTSRoute::EvalTileForGoal`, gerador de pontos | `vm/routing.cpp` | fiel | A tabela da §9 do `routing-mac.md` ainda diz "aproximação": está velha. |
 | Máquina do roteador: `cTSRoutingObjectAggregate` (95, 48): pós-rota, goal check, portais, `AskBlockerToMove`/`MoveOutOfWay` | `vm/routing*.cpp` | fiel | O mais estudado da rota. |
-| Locomotor: `nTSSG::cLocomotable` (57, 14): `FollowOneStep`, `ComputeTurn`, `CollisionCheck` | `vm/routing_loco.cpp`, `routing_walk.cpp` | inferido | Rodada n03: o `CollisionCheck` e as exclusões do `EstimateWhenPathWillBeBlocked` lidos (quem se afasta sai da varredura, feito); as exceções do alvo da rota e de "já sobrepostos" não estão no binário e seguem inferidas (`routing-mac.md` §6.1). |
-| Slots de rota: `cTSRoutingSlot` (58, 3), `cTSSlotDescriptor` (39, 0), `cTSSlotLoader` (19, 0) | `vm/routing.cpp`, `formats/` (SLOT) | inferido | Rodada n03: `Init`, `Read`/`Write` do descritor e os bits das RS flags (par `0x200000`, aleatório `0x2000`, parado `0x40000`, paredes `0x80000`, continuação `0x400000`/`0x800000`) lidos; o nome de osso exige `0x20000` (`routing-mac.md` §8.6); o +20 "parado" feito. Falta: a escala 1/16 do `Read` por versão e o +25 das paredes. |
-| Portais de objeto e escadas: `cPathPlanner::AddDoorPortal`, pares de slots | `vm/routing_plan.cpp` | fiel | Rodada n03: escadas pelos slots das peças, duas faixas de mão única (sobe/desce), flag `0x200000` e mão única conferidas (`routing-mac.md` §8.6). Falta: retângulos de custo junto das pontas da escada. |
+| Locomotor: `nTSSG::cLocomotable` (57, 14): `FollowOneStep`, `ComputeTurn`, `CollisionCheck` | `vm/routing_loco.cpp`, `routing_walk.cpp` | fiel | Rodada n18: o `CollisionCheck` lido de novo e feito (a primeira colisão no horizonte, só se larga quem já toca e se afasta, parada com clipe só se acaba 2 passos antes, senão `EndFollow`); as duas exceções nossas saíram; o contador do `DoBlockedGoalStillAvailable` guarda o bloqueador (`routing-mac.md` §9.1). A trajetória prevista segue a dos pontos da rota. |
+| Slots de rota: `cTSRoutingSlot` (58, 3), `cTSSlotDescriptor` (39, 0), `cTSSlotLoader` (19, 0) | `vm/routing.cpp`, `formats/` (SLOT) | inferido | Rodada n03: `Init`, `Read`/`Write` do descritor e os bits das RS flags (par `0x200000`, aleatório `0x2000`, parado `0x40000`, paredes `0x80000`, continuação `0x400000`/`0x800000`) lidos; o nome de osso exige `0x20000` (`routing-mac.md` §8.6); o +20 "parado" feito; o +25 das paredes lido e feito na rodada n18 (`GetWallBlockFlagsAtTile`, a direção da última origem). Falta: a escala 1/16 do `Read` por versão. |
+| Portais de objeto e escadas: `cPathPlanner::AddDoorPortal`, pares de slots | `vm/routing_plan.cpp` | fiel | Rodada n03: escadas pelos slots das peças, duas faixas de mão única (sobe/desce), flag `0x200000` e mão única conferidas (`routing-mac.md` §8.6). Falta: retângulos de custo 10 junto das pontas da escada (lidos na rodada n18, `routing-mac.md` §9.1; não feitos). |
 | Rota salva: `cTSRoute::SaveToStream` | `vm/lot_save.cpp` | fiel | `save-mac.md` §7c. |
 
 ### 3.3 Animação e IK
@@ -176,7 +176,7 @@ Docs: `docs/seat-mac.md` (leitura do binário, rodada n01), `docs/issues/001-sen
 | E. Sentado e parado (idles da cadeira, fila vazia) | `app/lot_vm.cpp`, `formats/anim_player.cpp` | fiel | Rodada n02: o motor não tem idle; osso sem canal fica como estava (`anim-mac.md` §6). A idle em pé do app segue nossa. |
 | F. Animação de entrar/sair (STR# 0x92) | `vm/reach.cpp` | inferido | Ordem das listas fiel (só a superfície); a faixa pela altura em metros falta. |
 | G. IK das mãos e pés: `cChoreoHandlerIK::HandleChoreoRequest`, `FindIKTargetBone` | `formats/anim.cpp` | fiel | Rodada n02: o solucionador do binário (`anim-mac.md` §4). |
-| H. Levantar: `TrySnap`, `RemoveFromWorld`, `DoesPathStartFromContainment` | `vm/reach.cpp`, `app/seat_module.*` | inferido | Direção fiel; o ponto único do Snap (sem o anel nosso) falta. |
+| H. Levantar: `TrySnap`, `RemoveFromWorld`, `DoesPathStartFromContainment` | `vm/reach.cpp`, `app/seat_module.*` | fiel | Rodada n18: o Snap num ponto só (o primeiro osso ou o deslocamento do slot) com os testes do binário; o anel nosso saiu também das rotas (`seat-mac.md` §H). Inferido: a sala do teste como a do tile. |
 
 ### 3.5 Colocação e construção
 
@@ -392,7 +392,7 @@ no jogo base.
 | 15 | **Partículas**: `cTSEffectsManager`, `cTSParticlesEffect`, `cTSMetaParticlesEffect` (os 7 marcadores) e a ordem dentro da camada 7 — **feita** (n15): emissão, física, meta-partículas e a ordem na camada 7 lidas e seguidas (`effects-mac.md` §4e); sobras no `TODO.md` | 3.12 efeitos | efeitos |
 | 16 | **Luz e light maps**: `cLightingManager`, `cLightMapManager`, `cDiffusion*` (lista M4 do `TODO.md`) — **feita** (n16): a grade de piso e as paredes do `cDiffusionManager` lidas inteiras e feitas (`formats/lot_diffusion.*`), cômodos sem luz, fontes só com extensão de difusão, irradiância dos cômodos e o `L` dos portais pelos `Lookup*Diffusion`, portais como o construtor do jogo os monta (`lighting-mac.md` §10); a sala da fonte de um portal segue inferida | 3.12 luz | luz |
 | 17 | **Motivos e desejos**: `cTSMotiveCurve*`, `cTSPiecewiseFunction`, `UpdateMood` (dado 163), `cTSWantSimulator` (ordem, empates, check tree) — **feita** (n17): curvas e conjuntos do jogo, motor de 60 ticks (decaimento, trava, conjunto antigo), humor do base com o dado 163 (bate com os 55 Sims salvos), pontuação da autonomia do base, desejos pela ordem do mapa de árvores e o `std::sort` da libstdc++ (`motives-mac.md`, `wants-mac.md` §9) | 3.8 curvas, desejos | motivos |
-| 18 | **Rotas, resto**: custo por `ePassabilityState`, `FollowOneStep`/`ComputeTurn`, Snap num ponto só, bônus +25 longe da parede, retângulos de custo 10 da escada | 3.2 obstáculos, locomotor, slots; 3.4 H | rotas |
+| 18 | **Rotas, resto**: custo por `ePassabilityState`, `FollowOneStep`/`ComputeTurn`, Snap num ponto só, bônus +25 longe da parede, retângulos de custo 10 da escada — **feita** (n18): `CollisionCheck` e contador do bloqueio do binário (o laço de "entradas" de dois Sims da n14 acabou; sem regressão em 14 sementes), Snap num ponto só e sem o anel (o café pelo lado), custo do piso por padrão (2 no terreno) com o corte de quinas do binário, o +25 (`routing-mac.md` §9.1); os retângulos da escada lidos e não feitos | 3.2 obstáculos, locomotor, slots; 3.4 H | rotas |
 | 19 | **Paredes e pisos**: `cFloorGeometryNode`, `cFloorManager`, `cWallGeometryNode`, `cSimplifiedWall` (UV dos pisos e do topo) — **feita** (n19): paredes como o `cWallGeometryNode` (nós, chanfros, 3 colunas, UVs do papel, topo sem luz com UV do mundo, tampas, encontros, corte pelas pontas com rampas) e a rotação dos pisos; UV dos pisos e do topo conferidos (`walls-floors-mac.md`) | 3.12 paredes e pisos, 3.6 geometria | lote |
 | 20 | **Colocação de objetos e salas**: `cTSUserToolObject`/`TestPlacement*` com `HasSupport`, `FUN_009a7dd8` (cômodo), desfazer peça por peça, +0,75 da escada | 3.5 colocação, salas, desfazer, escadas | construção |
 | 21 | **Pele e CAS, resto**: `cTSSkinTextureCompositor`, câmera do CAS, compensação do arquétipo, `BlendFaces`, biografia da família | 3.11 pele, câmera, rosto, telas | CAS |

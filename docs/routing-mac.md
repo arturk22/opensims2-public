@@ -182,7 +182,7 @@ as pegadas no ponto, não o tile inteiro.
 ```
 custo = custo do material do piso (FloorTileRoutingCost), preso em [0,5, 10];
         sem custo no material → o padrão do gerenciador (+0x34)
-água (tile parcial ou todo): passagem 7 (parcial) / 15 (impassável), custo FLT_MAX
+água (IsPartWater): passagem 15; folga baixa até o andar de cima (FUN_00165c88): 7; custo FLT_MAX (§9.1)
 desnível do tile ≥ 1 → impassável (15); entre 0,5 e 1 → custo = (h − 0,5)·10·2 se for maior
 +10 quando as duas checagens finais do mundo derem verdadeiro (inferido: tile
     descoberto/fora de sala; não decifrado)
@@ -306,6 +306,10 @@ achou e está a menos de 2 passos (ou no fim do caminho): estado
 "bloqueado" (0x438(2)) e o ID fica para o DoBlocked (vtable 0x1A8)
 ```
 
+(**Corrigido na rodada n18**, §9.1: qualquer colisão no horizonte bloqueia e
+chama o `InterruptActiveLocoState(2)`; os 2 passos decidem só se a parada
+cabe antes da colisão ou se o andar acaba na hora com o `EndFollow`.)
+
 **Rodada 22, o teste entre duas pessoas** (`EstimateWhenPathWillBeBlocked`,
 BV `0x6b3574`, caso humano; o teste varrido é a vtable `0x474`, BV
 `0x6b00c8`: a primeira raiz de |(p − q)(t)| = r em [0, 1], ou já dentro):
@@ -329,8 +333,9 @@ janela não é menor que no começo), o `CollisionCheck` passa esse ID como o
 "ignorar" das janelas seguintes, e a varredura segue sem ele (o VM agora
 faz assim; antes voltava a testá-lo na janela seguinte). Não há no binário
 a exceção do Sim que é o alvo da rota nem a de "já sobrepostos (< 0,3)":
-as duas seguem no VM como inferidas (sem elas dois Sims numa conversa ou
-encostados ficavam "bloqueados" para sempre).
+as duas seguiam no VM como inferidas (sem elas dois Sims numa conversa ou
+encostados ficavam "bloqueados" para sempre); **saíram na rodada n18** (§9.1),
+com a regra do binário (só se larga quem já toca e se afasta).
 
 Também (inferido): quem começa a rota dentro da inflação de um objeto sai
 para o ponto mais perto da célula livre mais perto, não para o meio dela
@@ -1315,8 +1320,9 @@ flag `0x2000`) `+ 20·sorteio − 10`; **+25** se a direção do objetivo
 (`+0x20`) não está na máscara de paredes em volta do alvo (só quando o slot
 não tem a RS flag `0x80000`, vtable `0x4c`; a máscara vem do mundo, vtable
 `0x148`, com o lugar e a direção do alvo, e cada bit marcado espalha para
-as duas direções vizinhas; a função do mundo não foi decifrada: **não
-feito**); **+20** (`HasStationaryBonus`, vtable `0x80` = RS flag `0x40000`
+as duas direções vizinhas; **lida e feita na rodada n18**, §9.1: é o
+`GetWallBlockFlagsAtTile` e a direção é a da última origem varrida, não a
+do objetivo); **+20** (`HasStationaryBonus`, vtable `0x80` = RS flag `0x40000`
 desligada) para o objetivo **exatamente onde o roteador está** (compara os
 8 primeiros bytes do lugar, `FUN_01655330`, com o do roteador) se ele não
 está contido (`IsContained`, vtable `0x11c`): feito; e com o byte `+0x24`
@@ -1648,14 +1654,73 @@ foi conferida contra os dados (não feito).
   limites (`0x180`), descendo nos filhos sem a flag pedida; o que é a flag 4
   do nó não foi lido (segue inferido: as malhas sem os planos de sombra).
 - O `+10` do `WorldOutsideSupport` e o estado 7 (`FUN_00165c88`) no piso.
+- O ponto de colisão do `CollisionCheck` vem da trajetória que o motor prevê
+  (vtable `0x478`); aqui a dos pontos da rota em linha reta (`alongRoute`).
+
+### O que mudou no código (rodada n18) e as medidas
+
+Um commit por parte, `ctest -j2` verde em cada um (53 testes):
+
+1. **O contador do bloqueio** (`routing_walk.cpp`, `Route::lastBlocker`,
+   estado salvo versão 4): a rota guarda o último bloqueador e o contador
+   sobe com ele mesmo depois de o caminho ficar livre.
+2. **O `CollisionCheck`** (`routing_loco.cpp` `simAhead`,
+   `routing_walk.cpp`): a primeira colisão no horizonte (cortado no fim da
+   rota) bloqueia; só se larga quem já toca e se afasta; saíram as duas
+   exceções nossas (o alvo da rota, "já sobrepostos < 0,3"); a parada com
+   clipe só quando acaba 2 passos antes da colisão, senão para na hora (no
+   jogo base quase sempre: a parada não cabe em meio tile). Saiu o espaço
+   inferido de 2 passos da rodada n14.
+3. **Snap num ponto só** (`reach.cpp`): o primeiro osso ou o deslocamento do
+   slot, "na frente" o tile adiante; os testes do binário na ordem (parede a
+   0,3 só do tile do ponto, lote e sala sem `0x800`, parede no meio sem
+   `0x80000`, pegadas e Sims a 0,283, sem exceção do alvo); objeto no
+   caminho dá od 52 = `0x0E`. `OS2_SNAP_SCAN=1` volta à varredura antiga.
+   **O anel** de 0,5/0,75 em volta dos ossos saiu também das rotas
+   (`OS2_BONE_RING=1` o põe de volta): o café servido pelo lado do balcão
+   (0,75 do osso `route_counter_std_0_N`, a mão a 0,13 da cafeteira) era um
+   ponto dele.
+4. **O custo do piso** (`world.cpp`, `formats/build_catalog` `floorRoutingCosts`,
+   `path_planner.cpp`): por quarto de tile, o `routingcost` do padrão (preso
+   em [0,5; 10]), 2 sem piso ou com padrão que o catálogo não conhece, o
+   desnível como antes; as células do planejador pelo quarto do seu meio; o
+   corte de quinas do binário (`CornerCuttingFilter`: tira um ponto só se a
+   reta até o seguinte custa menos que o caminho + 0,5); o placar dos
+   objetivos em pé −10 por unidade acima de 1 pelo quarto do ponto.
+5. **O +25** (`routing.cpp` `scanStanding`): a máscara de paredes do tile do
+   alvo girada e espalhada, contra a direção da última origem varrida.
+
+Não feitos: os retângulos de custo 10 das escadas (a ordem dos eixos e a
+árvore 0x30 do tipo de modelo), o `+10` do `WorldOutsideSupport`, o estado 7,
+a sala do Snap como o gerente de partições a dá (aqui a sala do tile).
+
+**A "regressão" da rodada n14** (`N001_Lot68` 19 → 28 falhas de rota, 2 → 7
+paradas, 12.000 ticks, uma semente): com 14 sementes (0–13, `OS2_SEED`,
+`s2pkg autonomy`) não há regressão — antes da n14 262 falhas no Lot68 e 262
+no Lot11, com a n14 277 e 201 (a semente padrão vai de 13 para 21, as outras
+sobem e descem). O que a n14 mudou e importa: o teste por passo bloqueia na
+hora, e com o contador zerado a cada caminho livre e a exceção dos 0,3 (a
+previsão não via dois Sims a 0,285) dois Sims se "entravam" para sempre
+(`N001_Lot11`, semente 12: 1.303 bloqueios por passo). Com as partes 1 e 2
+o laço acaba (as rotas falham com 14); a causa de fundo é o topo da escada
+reta do Lot11 (§10). Medidas finais (14 sementes × 12.000 ticks, main da
+rodada 17 → esta rodada): Lot68 258 → 337 falhas (mais 13/11 do "Route -
+Dynamic w/Lead in", os Sims seguindo alvos que andam, com os desvios pelos
+pisos), Lot11 177 → 650 (456 numa só semente, o topo da escada; as outras
+13: 163 → 194); paradas com clipe 80 → 16, bloqueios por passo 1.321 → 255.
 
 ## 10. O que falta
 
-- O custo exato de cada `ePassabilityState`.
 - Os retângulos de custo 10 junto das pontas das escadas reta e modular
-  (`TSObjectGetModelType` 2–4, ±0,32499, §8.6) e os portais dinâmicos dos
-  dados de objeto `0x58`–`0x61` (só no BV).
-- O +25 dos objetivos em pé (a máscara de paredes do mundo, vtable `0x148`).
+  (§9.1: `TSObjectGetModelType` = árvore 0x30, a ordem dos eixos) e os
+  portais dinâmicos dos dados de objeto `0x58`–`0x61` (só no BV).
+- O `+10` do `WorldOutsideSupport` e o estado 7 no custo do piso (§9.1).
+- O impasse no topo da escada reta do `N001_Lot11` (8,67; 12,19; 2): um Sim
+  chega pelo portal (Snap no osso de cima de uma faixa) e outro, indo para a
+  outra faixa (0,33 ao lado), passa a 0,28 dele; os dois se bloqueiam e
+  falham rotas sem fim (rodada n18, `OS2_SEED=2`/`12`). Ver como o jogo
+  ocupa o portal das duas faixas (od `0x3E` das peças) e a continuação no
+  fim do portal (RS `0x400000`/`0x800000`).
 - A escala de x,y por 1/16 do `cTSSlotDescriptor::Read` até a "versão"
   `0x46` (os SLOT `0x43`–`0x46` do jogo base já estão em tiles: qual versão
   ele compara?).

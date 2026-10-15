@@ -233,12 +233,16 @@ mesmo andar → erro 8; `TSObjectCanSetPositionAndOrientation`; passou →
 −1, o slot antigo fica livre**) e `Orient`. Falha: od 52 = erro + 2 (ou 1
 quando pediu a um Sim para sair, flag 0x02).
 
-**Diferença**: o nosso `snap` (`vm/reach.cpp`) usa a lista de objetivos da
-varredura e o anel de 0,5/0,75 em volta dos ossos (nosso) quando o ponto
-está ocupado; o jogo usa um ponto só e falha. Mantido (a falta do footprint
-dos modelos ainda faz o ponto cair dentro da cadeira empurrada sob a mesa);
-fica no `TODO.md`. **A direção agora é a do binário**: só muda com a flag
-0x1000; antes o Sim virava para o objeto também nos slots sem ela.
+**Rodada n18 (`routing-mac.md` §9.1): feito.** O `snap` vai a um ponto só (o
+primeiro osso; sem osso, o deslocamento do slot girado; "na frente", o tile
+adiante) e faz os testes do binário na ordem (parede a 0,3 no tile do
+ponto, lote e sala sem a RS `0x800`, parede no meio sem a `0x80000`,
+pegadas e Sims a 0,283, sem exceção do alvo); a varredura e o anel saíram
+(também das rotas: `OS2_BONE_RING=1`/`OS2_SNAP_SCAN=1` para comparar).
+Inferido: a sala como a do tile (o binário pergunta ao gerente de
+partições, `0x13c`) e o erro dela como 2; paredes com porta não contam aqui
+(o binário as conta só pelas pontas). **A direção é a do binário**: só muda
+com a flag 0x1000.
 
 ## I. Sustos e expressões sentado
 
@@ -266,8 +270,8 @@ Feito (rodada n01, cada parte um commit, testes verdes):
 5. **C** e **D**: confirmados sem mudança (o app prende ao osso, como o
    grafo de cena; os od 108–111 nunca são escritos).
 
-Sobras (no `TODO.md`): o Snap de um ponto só (o primeiro osso; sem o anel
-nosso nem a varredura para slots sem osso), a parede entre o lugar velho e o
-novo (erro 8), a árvore 0x34 "allow in slot", o +25 dos objetivos em pé (o +20 é o "parado", feito na rodada n03, `routing-mac.md` §8.2),
+Sobras (no `TODO.md`): ~~o Snap de um ponto só, a parede entre o lugar velho e o
+novo (erro 8)~~ e ~~o +25 dos objetivos em pé~~ (feitos na rodada n18,
+`routing-mac.md` §9.1), a árvore 0x34 "allow in slot",
 a altura em metros do alcance e o índice explícito do Reach (flag 0x08). As
 partes E, G e I foram feitas na rodada n02 (`docs/anim-mac.md`).

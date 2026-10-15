@@ -470,10 +470,12 @@ Inferido / sobrou (no `TODO.md`):
 - a troca centrada (±b/2 em volta da fronteira): aqui começa na fronteira;
 - a rampa de velocidade do pedido (`FUN_00a47144`, também a da parada
   forte) e o fim do ciclo na parada fraca (1/6 ou 2/3);
-- o espaço da parada ao bloquear continua limitado aos 2 passos da previsão
-  (inferido: andando o meio ciclo e a parada inteiros o Sim chegava a 0,283
-  do outro e o tratamento de bloqueio não achava saída), com o pé mais perto
-  quando o espaço corta o meio ciclo;
+- ~~o espaço da parada ao bloquear continua limitado aos 2 passos da previsão
+  (inferido)~~ — **rodada n18** (`routing-mac.md` §9.1): o `CollisionCheck`
+  bloqueia na primeira colisão do horizonte e a parada (meio ciclo e clipe)
+  só toca quando acaba 2 passos antes dela; senão o andar acaba na hora
+  (`EndFollow`). No jogo base quase sempre na hora (paradas com clipe nas
+  medidas: 80 → 16 em 14 sementes);
 - o começo 5/100 ms adiantado de um pedido seguinte (a virada do fim depois
   de uma parada não acontece aqui: a parada já vira para a direção final);
 - um novo pedido ao replanejar andando (o `BeginFollow` de novo) não entra

@@ -112,6 +112,7 @@ SimAhead simAhead(VM& vm, const Object& me, const Object::Route& r) {
         const bool walking = o.route && !o.route->waiting;
         const float ratio = walking ? walkTilesPerTick(vm, o) / mySpeed : 0;
         const float reach = kCentres + kAhead;
+        // OS2_DEBUG_AHEAD=<Sim id>: the Sims that Sim's prediction looks at (test aid).
         static const char* dbg = std::getenv("OS2_DEBUG_AHEAD");
         if (dbg && std::atoi(dbg) == me.id)
             std::fprintf(stderr, "t%llu ahead %d: %d at %.2f (walking %d, left %.2f, points %zu)\n", (unsigned long long)vm.ticks, me.id, id,
