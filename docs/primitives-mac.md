@@ -878,10 +878,11 @@ pessoa "Decay … per Day" do motivo (5→96, 6→94, 7→93, 8→97, 9→95, 14
 ("tick counter") += 1; se o dado 29 ("Motives Static?") < 2, aplica cada
 delta da lista ao motivo (float): delta ≥ 0 sobe até o limite, < 0 desce até
 o limite (sem passar); a cada 60 ticks, com o dado 29 = 0, atualiza as
-memórias; zera o dado 1 ("Money Amount over Head"). **O decaimento em si não
-está no código**: os "Decay … per Day" são lidos pelas árvores (inferido:
-elas chamam Set Motive Change com esses valores), então a VM só precisa da
-lista de deltas e deste laço.
+memórias; zera o dado 1 ("Money Amount over Head"). ~~O decaimento em si não
+está no código~~ (corrigido na rodada n17, `docs/motives-mac.md` §3: a cada
+60 ticks, antes das memórias, o `cTSMotives` vtable 0x10 soma
+`dado / 24 / 30` dos "Decay … per Day", calcula o ambiente, prende os
+motivos em ±100, copia o conjunto antigo, e o humor é refeito).
 
 ### 0x24 Dialog (`TryDialog`)
 

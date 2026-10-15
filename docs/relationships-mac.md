@@ -160,7 +160,10 @@ cuja prop 11 & `asp` ≠ 0 (1 nas outras):
 `UpdateMood` (`0x486b78`) = média ponderada das curvas (motivos 2, 10, 11,
 12 e os de `dado 118` excluídos) **+ dado de pessoa 163**, entre −100 e 100;
 `UpdateMetaMood` (`0x485e68`): **Humor+Memória (motivo 4) = Humor**, entre
-−100 e 100. A pontuação de memória não entra no motivo 4.
+−100 e 100. A pontuação de memória não entra no motivo 4. No **jogo base**
+(rodada n17, `docs/motives-mac.md` §4) o humor é do `cTSPerson`
+(`0xb76208`), pula também 0 e 1 e **não é preso** (o Mortimer salvo tem
+232,1).
 
 **Para o painel** (`cTSMemorySimulator::GetMemories`, `0x5372b0`): a lista
 `cMemoryInfo` do Sim (vtable 0x238) é percorrida **de trás para a frente**

@@ -295,3 +295,36 @@ Implementado em `src/formats/wants.*` e `src/vm/wants.*`; painel em
   **0x2F** do OBJD (offset 0x9E), 10000..10052 em 689 definições.
 - `NormalizedAspirationScore` arredonda ao par mais próximo (truque do float
   1,5·2²³): o Sim 17 de N001 tem cru 1050 → −12,5 → **−12**, como no SDSC.
+
+## 9. Rodada n17: ordem, empates e o nível (Ghidra headless, BV)
+
+- **Ordem dos candidatos**: as raízes ficam num `std::map<unsigned long,
+  cITSWantNode>` do `cTSWantTreeManager` (vtable BV `0x2812c40`, mapa em
+  `+0x34`, vtable `0x18`) **pela id da árvore** (a `id` do property set do
+  `<tree>`, guardada pelo leitor `0x19c59b4` e usada por `0x00aece14`:
+  insere só se a chave ainda não existe). O `WorkOnFindingGoals` anda nesse
+  mapa, então os candidatos saem em ordem crescente de id de árvore (sem
+  sinal), cada raiz seguida dos filhos abertos pelas conquistas dela (na
+  ordem do histórico, em largura). A ordem do pacote não conta.
+- **Empates**: `PrioritizeGoals` usa `std::sort` (libstdc++ do GCC, BV
+  `0x16b5024`) com o predicado `0x5042fc` (`a.prioridade > b.prioridade`,
+  vtable `0x64` da instância): introsort com limite `2·⌊log2 n⌋`, pivô
+  mediana de (primeiro, meio, último − 1), partição sem guarda, heap
+  (`partial_sort`) quando o limite acaba, e inserção final (16 primeiros
+  com guarda, o resto sem). Empates saem na ordem que esse algoritmo
+  deixa, não na de busca.
+- **Operadores inteiros** (leitor `0xe4eaec`): `Equals` 1, `Less_Then` 2,
+  `Greater_Then` 3, `Less_Then_Or_Equals` 4, `Greater_Then_Or_Equals` 5
+  (texto sem diferença de maiúsculas); a comparação (`0xae8ab8`) é
+  conquista contra o slot: 1 `a = s`, 2 `a < s`, 3 `s < a`, 4 `a ≤ s`,
+  5 `s ≤ a`, 0 sempre verdadeiro. Era o que o código já fazia.
+- **Nível** (definição vtable `0x24`, `0xe4e1e0`, campo `+0x24`): o leitor
+  grava `Power` → **2**, `Memorable` → **1**, o resto 0. É o parâmetro 10
+  da feedback tree.
+- **Check tree** (`GoalPassesEdithCheck` `0x50d174`): os 8 parâmetros do
+  §8 conferidos (dono; GUID baixo/alto; vtable `0x3c` da instância;
+  vtable `0x40` baixo/alto; `+4` e `+8` do assunto); não roda (passa)
+  sem controlador, sem árvore de checagem no grupo ou com o nome vazio;
+  resultado guardado por instância no mapa `+0x188` durante a seleção.
+- **Humor** no fator de humor: o motivo 3 em float **truncado** (§5 de
+  `docs/motives-mac.md`).

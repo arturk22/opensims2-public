@@ -525,9 +525,9 @@ motivos salvos nos PERS de `N001_Lot11`.
   energia −205 a −255, bexiga −300, higiene −100 a −300 pela arrumação,
   diversão e social −120 a −220) e multiplicam por (semi-atributo 27 + 100) / 100 (inteiro).
   Nenhuma árvore os lê nem os passa ao Set Motive Change, e o Set Motive
-  Change com o bit 0x02 os zera: **quem aplica é o motor** (inferido; o
-  `OnSimulatorTick` do binário não aplica, então deve ser outra função, p.
-  ex. `PersonalTimeMinutePassed`). Unidade tomada como pontos por dia de 24 h
+  Change com o bit 0x02 os zera: **quem aplica é o motor** (confirmado na
+  rodada n17, `docs/motives-mac.md` §3: o `OnSimulatorTick` chama a cada 60
+  ticks o `cTSMotives` vtable 0x10, que soma `dado / 24 / 30`). Unidade tomada como pontos por dia de 24 h
   de jogo (fome −224/dia: de 100 a −100 em ~21 h). Os PERS de `N001_Lot11`
   já trazem os valores (−224, −140, −300, −215, −280, −190, −170).
 - **Constantes de autonomia: FCNS 2 do grupo global** (`0x46434E53`,
@@ -597,11 +597,13 @@ motivos salvos nos PERS de `N001_Lot11`.
   - a mínima struct do anúncio: +4 tipo de personalidade, +6 mín, +8 faixa
     (`GetPersonalityVarRef/MinRef/RangeRef`), lidos do arquivo nessa ordem:
     mín, faixa, tipo.
-  - `OnSimulatorTick`, `PersonalTimeMinutePassed` e `PersonalTimeHourPassed`
-    **não aplicam o decaimento diário** (os dois últimos só contam dados de
-    pessoa 189 e 172 do BV): segue inferido.
+  - `PersonalTimeMinutePassed` e `PersonalTimeHourPassed` não aplicam o
+    decaimento diário (só contam dados de pessoa 189 e 172 do BV); o
+    `OnSimulatorTick` aplica, a cada 60 ticks, pelo `cTSMotives` vtable
+    0x10 (rodada n17, `docs/motives-mac.md` §3).
 
 **Conclusão.** Implementado em `src/vm/motives.*` e `src/vm/autonomy.*`
-(ver docs/TODO-HISTORICO.md M6, "Motor de motivos" e "Autonomia"). Inferido: o
-decaimento no motor e a unidade por dia; os vieses do `FBA_ScoreInteraction`
+(ver docs/TODO-HISTORICO.md M6, "Motor de motivos" e "Autonomia"). O decaimento no
+motor e a unidade por dia foram confirmados na rodada n17
+(`docs/motives-mac.md`); os vieses do `FBA_ScoreInteraction`
 (posse, memória, relacionamento, clima) ficam em 1.
