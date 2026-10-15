@@ -309,6 +309,13 @@ static void testYieldAndErrors() {
     Thread loop = fx.vm.start(1, 0x1004);
     fx.vm.run(loop, 1000);
     check(loop.status == Thread::Status::Failed && loop.instructions == 1000, "instruction budget");
+    // One limit for the app and every s2pkg command: the binary's 100000 nodes a
+    // turn (cTSTreeSim::DoNodeAction); the old s2pkg 20000 cut a loop of 22798 nodes
+    // (Relationship Decay, N003_Lot192) short.
+    check(kNodeLimitPerTurn == 100000 && fx.vm.instructionsPerTurn == kNodeLimitPerTurn, "the binary's node limit per turn");
+    Thread longLoop = fx.vm.start(1, 0x1004);
+    fx.vm.run(longLoop, fx.vm.instructionsPerTurn);
+    check(longLoop.status == Thread::Status::Failed && longLoop.instructions == 100000, "a loop is cut at 100000 nodes");
 
     fx.code.add(kObjGroup, 0x1005, tree({instr(0x1005, T, F)}));
     t = fx.run(0x1005);

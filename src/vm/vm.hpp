@@ -77,6 +77,12 @@ constexpr size_t kGlobalCount = 54;
 constexpr size_t kPersonDataCount = 170;
 constexpr size_t kMotiveCount = 16;
 constexpr size_t kMaxStackDepth = 1000; // frames past it: "Max stack depth exceeded" (cTSTreeSim::Gosub BV 0xe1a428)
+// The nodes a thread may run in one turn before it fails as an infinite loop:
+// the one value for the app (LotVM), the VM's own default and every s2pkg
+// command (cli/s2pkg/budget.hpp). The binary's limit: cTSTreeSim::DoNodeAction
+// (BV 0xe1b18c) raises 0x44D "Too many iterations" past DAT_0277ea94 = 100000
+// (docs/routing-mac.md §7.1, docs/primitives-mac.md §4g).
+constexpr size_t kNodeLimitPerTurn = 100000;
 // Attributes and semi-attributes have a fixed count (Mac binary, the
 // cTSObject constructor BV 0xb0c7a8): the OBJD's "num attributes" (field
 // 0x3A, byte 0xB4) but at least 8, and the number of the semi-global's
@@ -1178,7 +1184,7 @@ public:
     // infinite loop: the game's "Too many iterations" (0x44D) after 100000
     // nodes a tick (cTSTreeSim::DoNodeAction BV 0xe1b18c; 300000 when the
     // tree simulator's flag 0x33 is set, not understood).
-    size_t instructionsPerTurn = 100000;
+    size_t instructionsPerTurn = kNodeLimitPerTurn;
     // Create New Object Instance initializes the new object (runs its Init
     // and, with the scheduler running, starts its Main), as FreeSO does; off
     // for single trees (bhav-sweep), where nothing else would run.
@@ -1442,7 +1448,7 @@ public:
                  ObjectId codeOwner = 0);
     // Runs until the thread yields, finishes or fails. Exceeding the budget
     // fails the thread (an infinite loop, as far as the game is concerned).
-    void run(Thread& thread, size_t maxInstructions = 100000);
+    void run(Thread& thread, size_t maxInstructions = kNodeLimitPerTurn);
 
     // Called before each instruction executes.
     std::function<void(const Thread&, const Frame&, const Behavior::Instruction&)> trace;

@@ -604,7 +604,7 @@ int cmdPlayLoop(const std::vector<std::string>& args) {
     const hood::Neighborhood hood = hood::Neighborhood::load(hoodOut, true);
     LoadedLot a = loadInto(code, lotFile, lotFile, &hood, characters);
     vm::VM& m = *a.vm;
-    m.instructionsPerTurn = 100000; // as autonomy (the binary's limit)
+    m.instructionsPerTurn = s2pkgBudget(); // as autonomy (the binary's limit)
     m.dialogTimeouts = true;
     if (std::string err; !vm::runLotLoaded(m, &err) && !err.empty())
         std::printf("CT - Lot Loaded: %s\n", err.c_str());
