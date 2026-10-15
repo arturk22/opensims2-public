@@ -336,6 +336,19 @@ int main() {
             c.update(50);
         p = c.pose();
         check(p.eye.y > -3.5f && p.eye.z > 2.5f && near(p.forward.y, 1), "zoom moves the eye forward and up, the view unturned");
+        // A zoom button held (Update, BV 0x7a9d68): keyboardzoomspeed x 50 /
+        // dt per update, so a 25 ms update moves twice as far as a 50 ms one.
+        c.setZoom(1);
+        c.zoomHeld(-1);
+        c.update(50);
+        check(near(c.zoomTarget(), 0.95f), "held zoom: keyboardzoomspeed per 50 ms update");
+        c.update(25);
+        check(near(c.zoomTarget(), 0.85f), "held zoom: x 50 / dt (twice the step at 25 ms)");
+        c.zoomHeld(0);
+        c.update(50);
+        check(near(c.zoomTarget(), 0.85f), "released: the zoom stays");
+        c.wheel(0.1f);
+        check(near(c.zoomTarget(), 0.95f), "the wheel: notches x mousewheelsensitivity (1 without the parameter)");
         c.setActive(spec, simd_make_float3(0, 5, 1), simd_quaternion(float(M_PI) / 2, simd_make_float3(0, 0, 1)));
         check(c.transition() == 0, "a new camera glides");
         c.update(50);

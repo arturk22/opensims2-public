@@ -106,13 +106,20 @@ void CasCamera::wheel(float notches) {
                              std::max(spec_.minZoom, spec_.maxZoom));
 }
 
+void CasCamera::setZoom(float zoom) {
+    zoomTarget_ = zoomValue_ = std::clamp(zoom, spec_.minZoom, std::max(spec_.minZoom, spec_.maxZoom));
+}
+
 void CasCamera::update(double ms) {
     if (!active_ || ms <= 0)
         return;
     const float dt = float(ms);
     if (t_ >= 1) {
+        // The held zoom (Update 0x7a9d68): target += held x 50 / dt per
+        // update, dt in ms (sic: the step per update grows as updates come
+        // closer together).
         if (held_)
-            zoomTarget_ = std::clamp(zoomTarget_ + float(held_) * spec_.keyboardZoomSpeed * dt / kFrameMs, spec_.minZoom,
+            zoomTarget_ = std::clamp(zoomTarget_ + float(held_) * spec_.keyboardZoomSpeed * kFrameMs / dt, spec_.minZoom,
                                      std::max(spec_.minZoom, spec_.maxZoom));
         // FUN_008c77d4: a tenth of the way per 50 ms, no minimum change.
         const float r = zoomTarget_ - zoomValue_;

@@ -261,7 +261,8 @@ private:
     };
     std::vector<Shown> shown_;
     float heading_ = 0; // the edited Sim's turn (radians)
-    int turning_ = 0;   // , and . held
+    int turning_ = 0;   // , and . held, or the puck's turn buttons
+    int heldButton_ = 0; // 1 a zoom button, 2 a turn button: released on mouse up
     bool dragging_ = false;
     simd_float2 dragFrom_{0, 0};
     double lastUpdate_ = 0;

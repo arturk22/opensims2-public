@@ -613,7 +613,14 @@ void CasMode::mouseDragged(simd_float2 p) {
     dragFrom_ = p;
 }
 
-void CasMode::mouseUp(simd_float2) { dragging_ = false; }
+void CasMode::mouseUp(simd_float2) {
+    dragging_ = false;
+    if (heldButton_ == 1)
+        casCam_.zoomHeld(0);
+    else if (heldButton_ == 2)
+        turning_ = 0;
+    heldButton_ = 0;
+}
 
 void CasMode::keyDown(unsigned short keyCode, const std::string& chars, bool control) {
     constexpr unsigned short kZ = 6, kY = 16, kComma = 43, kPeriod = 47, kBackspace = 51, kReturn = 36;
@@ -786,7 +793,20 @@ void CasMode::runScripted(const std::vector<std::string>& args) {
                 makeChild();
             dirty_ = true;
         }
-        else if (a == "--cas-turn")
+        else if (a == "--cas-zoom") { // the CAS camera's zoom set at once (metres along the zoom direction)
+            applyCamera(false);
+            casCam_.setZoom(std::stof(v));
+            applyCamera(true);
+        } else if (a == "--cas-zoom-hold") { // a zoom button held for N updates of 33 ms (negative: zoom out)
+            const int n = std::stoi(v);
+            applyCamera(false);
+            casCam_.zoomHeld(n > 0 ? 1 : -1);
+            for (int i = 0; i < std::abs(n); ++i)
+                casCam_.update(33);
+            casCam_.zoomHeld(0);
+            casCam_.snap();
+            applyCamera(true);
+        } else if (a == "--cas-turn")
             heading_ = std::stof(v) * 3.14159265f / 180;
         else if (a == "--click") {
             float x, y;
@@ -916,11 +936,15 @@ UiScreen CasMode::screen(int width, int height) {
         else
             status_ = "Sair do CAS";
     });
+    // The zoom buttons zoom while held (cTSUISimEditor::DoMessage, Mac BV
+    // 0x1ca3f8: a message to the camera on press and another on release),
+    // the turn buttons turn the Sim while held (simulator messages 0xC/0xD
+    // on press, 0xE on release: the podium turns; the speed is the keys'
+    // inferred one).
     target(find(frame, kZoomIn), [this](simd_float2) {
         if (camera_ && camera_->firstPerson()) {
-            // A click: ten keyboardzoomspeed steps (half a second held; inferred).
-            for (int i = 0; i < 10; ++i)
-                casCam_.zoomStep(1);
+            casCam_.zoomHeld(1);
+            heldButton_ = 1;
             return;
         }
         zoom_ = std::min(zoom_ + 1, 2);
@@ -930,8 +954,8 @@ UiScreen CasMode::screen(int width, int height) {
     });
     target(find(frame, kZoomOut), [this](simd_float2) {
         if (camera_ && camera_->firstPerson()) {
-            for (int i = 0; i < 10; ++i)
-                casCam_.zoomStep(-1);
+            casCam_.zoomHeld(-1);
+            heldButton_ = 1;
             return;
         }
         zoom_ = std::max(zoom_ - 1, 0);
@@ -939,8 +963,8 @@ UiScreen CasMode::screen(int width, int height) {
             camera_->zoomBy(-1);
         applyCamera(true);
     });
-    target(find(frame, kTurnRight), [this](simd_float2) { heading_ -= 0.4f; });
-    target(find(frame, kTurnLeft), [this](simd_float2) { heading_ += 0.4f; });
+    target(find(frame, kTurnRight), [this](simd_float2) { turning_ = -1, heldButton_ = 2; });
+    target(find(frame, kTurnLeft), [this](simd_float2) { turning_ = 1, heldButton_ = 2; });
     if (const UiElement* gen = find(frame, kFamilyNameGen))
         target(gen, [this](simd_float2) { focus_ = Focus::FamilyName; });
 

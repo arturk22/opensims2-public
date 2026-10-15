@@ -13,7 +13,10 @@
 // along the camera's forward (local +Y, DAT_02c2fbf8) turned by
 // zoomheading about Z and -zoomelevation about X (0x7aa284), clamped to
 // [minzoom, maxzoom] (DoMessage 0x7aa0f8: keyboardzoomspeed a step), and
-// smoothed (FUN_008c77d4, 10 steps). Plain C++.
+// smoothed (FUN_008c77d4, 10 steps). Which spec stands at which locator is
+// the CAS - Backdrop object's SimAntics: camera effects CASCam_<spec>_Effect
+// started on the studio's camera bones (docs/cas-mac.md, round n21). Plain
+// C++.
 
 #include "formats/camera_config.hpp"
 
@@ -46,12 +49,18 @@ public:
     // or `cut`, is taken at once with the zoom at minzoom; later ones glide
     // from where the camera is, the zoom going back to 0 on arrival.
     void setActive(const CasCameraSpec& spec, simd_float3 position, simd_quatf orientation, bool cut = false);
-    // A zoom step (+1 in, -1 out): keyboardzoomspeed, kept in [minzoom, maxzoom].
+    // A zoom step (+1 in, -1 out; messages 0xCCA298C4 / 0x2CA298E9):
+    // keyboardzoomspeed, kept in [minzoom, maxzoom].
     void zoomStep(int direction);
-    // The mouse wheel: notches x mousewheelsensitivity (inferred).
+    // The mouse wheel (HandleRequest 0x9C17E415, the wheel's travel / 120):
+    // notches x mousewheelsensitivity, kept in [minzoom, maxzoom].
     void wheel(float notches);
-    // + / - held: keyboardzoomspeed per 50 ms (0 stops).
+    // The puck's zoom buttons held (DoMessage: 0x6D41F7AB / 0xAD41F8D8 on
+    // press, 0xED409660 / 0xED40965A on release): +-keyboardzoomspeed
+    // until released (0); Update adds it x 50 / dt each update.
     void zoomHeld(int direction) { held_ = direction; }
+    // Sets the zoom at once (a headless aid), kept in [minzoom, maxzoom].
+    void setZoom(float zoom);
 
     void update(double ms);
     void snap(); // ends the glide and the zoom smoothing
