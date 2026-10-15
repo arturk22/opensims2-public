@@ -139,7 +139,7 @@ struct LightMapLight {
     std::array<float, 3> position{};
     std::array<float, 3> color{}; // diffusionSourceIntensity x diffusionSourceColor x level (0-1)
     float falloff = 1;            // diffusionSourceFalloff
-    float floorScale = 0.65f;     // diffusionSourceFloorIntensityScale
+    float floorScale = 1;         // diffusionSourceFloorIntensityScale
     float wallScale = 1;          // diffusionSourceWallIntensityScale
     int level = 0;                // the object's level
     bool portal = false;

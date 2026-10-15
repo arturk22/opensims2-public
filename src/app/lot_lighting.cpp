@@ -123,7 +123,8 @@ const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::
                     const StandardLight l = StandardLight::parse(blk.className, blk.body);
                     if (l.values.size() < 6)
                         continue;
-                    // Point light values: intensity, (unknown), RGB, falloff rate, range (inferred).
+                    // cStandardLightBase::ReadFrom (Mac BV 0xca2fb4): DiffuseScale (the
+                    // intensity), RelSpecularScale, RGB; a point light then FalloffRate, range.
                     ModelLight m;
                     m.name = lower(l.name.empty() ? node.renderable.transform.name() : l.name);
                     m.intensity = l.values[0];
@@ -142,13 +143,22 @@ const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::
                                 at = world[b].then(at);
                     m.position = at.t;
                     m.direction = at.rotate({0, 0, -1});
-                    // LotLights.txt's overrides, by light name.
-                    m.diffusionIntensity = -1;
+                    // LotLights.txt's overrides, by light name. A light is a
+                    // diffusion source only with a cDiffusionLightExtension
+                    // (BuildLightFromObjectLight, Mac BV 0xd7d404: no
+                    // extension, black, no source), which the game's lights
+                    // get from their diffusionSource* overrides (the models
+                    // have none); its fields default to the extension's
+                    // (constructor 0x79f024): intensity 0, colour white,
+                    // falloff 1, wall and floor scales 1.
+                    bool diffuses = false;
                     if (auto o = overrides_.find(m.name); o != overrides_.end()) {
                         auto one = [&](const char* name, float& v) {
                             if (auto it = o->second.find(name); it != o->second.end() && !it->second.empty())
                                 v = it->second[0];
                         };
+                        for (const auto& [key, value] : o->second)
+                            diffuses = diffuses || key.starts_with("diffusionsource");
                         one("diffusionsourceintensity", m.diffusionIntensity);
                         one("diffusionsourcefalloff", m.diffusionFalloff);
                         one("diffusionsourcefloorintensityscale", m.floorScale);
@@ -162,12 +172,8 @@ const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::
                         if (auto v = o->second.find("color"); v != o->second.end() && v->second.size() >= 3)
                             m.color = {v->second[0], v->second[1], v->second[2]};
                     }
-                    // Without a diffusion intensity or colour of its own, the
-                    // light's (inferred: the model's light extension is not read).
-                    if (m.diffusionIntensity < 0)
-                        m.diffusionIntensity = m.intensity;
-                    if (!m.hasDiffusionColor())
-                        m.diffusionColor = m.color;
+                    if (!diffuses)
+                        m.diffusionIntensity = 0;
                     out.push_back(m);
                 }
             }

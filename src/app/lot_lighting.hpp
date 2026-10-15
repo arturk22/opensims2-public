@@ -25,14 +25,14 @@
 //   (formats/lot_lightmap: the game's diffusion as far as it is decoded),
 //   made for the lamps at their levels and the state, crossfading with it.
 //
+// A light feeds the light maps only with diffusionSource* overrides (the
+// game's cDiffusionLightExtension, docs/lighting-mac.md 10.3).
+//
 // Inferred: the outdoors = room 0 or, with the light maps, a room mostly
 // without floor (LotLightMapLayout::outdoor), else a room of the ground
 // level's tiles along the lot's edge (the lots keep the outdoors as rooms of
-// their own); a
-// light without diffusionSource* overrides diffuses with its own intensity
-// and colour (the model's cDiffusionLightExtension is not read). The
-// lamps' practical lights light the objects and Sims of their room
-// directly (point lights, docs/lighting-mac.md 6).
+// their own). The lamps' practical lights light the objects and Sims of
+// their room directly (point lights, docs/lighting-mac.md 6).
 
 #include "formats/lighting_config.hpp"
 #include "formats/lot_lightmap.hpp"
@@ -106,7 +106,7 @@ public:
         int objectLevel = 0; // the object's level, as the lot numbers them (VM level - 1)
         // Its diffusion source (diffusionSource* attributes): colour x intensity, falloff, scales.
         Vec3 diffusionColor{};
-        float diffusionFalloff = 1, floorScale = 0.65f, wallScale = 1;
+        float diffusionFalloff = 1, floorScale = 1, wallScale = 1;
         bool portal = false; // a window's or door's light (outside light coming in)
     };
     const std::vector<Lamp>& lamps() const { return lamps_; }
@@ -137,9 +137,9 @@ private:
         bool spot = false;
         float cone = 0, penumbra = 0;
         Vec3 direction{0, 0, -1};
-        Vec3 diffusionColor{-1, -1, -1};
-        float diffusionIntensity = -1, diffusionFalloff = 1, floorScale = 0.65f, wallScale = 1;
-        bool hasDiffusionColor() const { return diffusionColor[0] >= 0; }
+        // Its cDiffusionLightExtension (the extension's defaults).
+        Vec3 diffusionColor{1, 1, 1};
+        float diffusionIntensity = 0, diffusionFalloff = 1, floorScale = 1, wallScale = 1;
     };
     const std::vector<ModelLight>& modelLights(const std::string& cres);
     LightingState blended() const;
