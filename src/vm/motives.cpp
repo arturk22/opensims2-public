@@ -360,7 +360,8 @@ namespace {
 // Set Motive Change (0x1D), docs/primitives-mac.md: delta per hour (owner u8
 // at 0, data u16 at 4), limit (owner u8 at 1, data u16 at 6), motive u8 at 2,
 // flags u8 at 3: 0x01 clears every change, 0x02 zeroes the motive's daily
-// decay. A new change of a motive replaces the one running (inferred).
+// decay. A new change is added to the list even when one of that motive is
+// there: both run (cTSPerson::TrySetMotiveDelta, BV 0xad24e8, push_back).
 Exit setMotiveChange(Context& c) {
     const auto& o = c.instruction.operands;
     Object& me = c.me();
@@ -377,15 +378,10 @@ Exit setMotiveChange(Context& c) {
     const float perHour = c.get(o[0], int16_t(le16(&o[4])));
     const float limit = c.get(o[1], int16_t(le16(&o[6])));
     MotiveChange ch{m, perHour / 60.0f / float(c.vm.clock.ticksPerMinute), limit};
-    auto it = std::find_if(p.motiveChanges.begin(), p.motiveChanges.end(),
-                           [&](const MotiveChange& x) { return x.motive == m; });
-    if (it != p.motiveChanges.end())
-        *it = ch;
-    else
-        p.motiveChanges.push_back(ch);
     if (o[3] & 0x02)
         if (const int16_t d = decayDataOf(m); d >= 0)
             p.data[size_t(d)] = 0;
+    p.motiveChanges.push_back(ch);
     return Exit::True;
 }
 

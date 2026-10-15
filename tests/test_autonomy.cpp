@@ -167,6 +167,15 @@ static void testMotiveChangeAndDecay() {
         fx.vm.tick();
     check(fx.p().motives[7] == 50, "and stop at it");
     check(fx.p().data[persondata::TickCounter] == 1800, "person data 27 counts the ticks");
+    // A second change of the same motive is added, not swapped in: both run.
+    Fixture fz;
+    fz.code.add(kSimGroup, 0x1100, tree({instr(0x1D, go(1), E, {Lit, Lit, 7, 0, 60, 0, 50, 0}),
+                                         instr(0x1D, T, E, {Lit, Lit, 7, 0, 30, 0, 100, 0})}));
+    Thread z = fz.vm.start(fz.sim, 0x1100);
+    fz.vm.run(z);
+    for (int i = 0; i < 900; ++i)
+        fz.vm.tick();
+    check(fz.p().motiveChanges.size() == 2 && fz.p().motives[7] == 45, "two changes of one motive add up");
 
     // Decay per day: -1440 a day is -1 a game minute, applied as -2 every
     // 60 ticks (cTSMotives vtable 0x10: data / 24 / 30).

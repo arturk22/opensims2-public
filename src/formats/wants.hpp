@@ -42,7 +42,8 @@ const char* subjectTypeName(SubjectType t);
 
 // Integer comparison of wants with a number (integerOperator), as the
 // achievement tests use it: the achieved value against the want's.
-// The names are the editor's; the order is inferred from the compares.
+// The names are the editor's; the values as the definition's reader gives
+// them (BV 0xe4eaec: Equals 1 ... Greater_Then_Or_Equals 5).
 enum class IntegerOperator : uint8_t { None = 0, Equals, LessThan, GreaterThan, LessOrEquals, GreaterOrEquals };
 IntegerOperator integerOperatorFromName(const std::string& name);
 
