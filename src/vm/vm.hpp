@@ -659,6 +659,9 @@ struct Object {
         uint32_t plans = 0, checkPlans = 0;
         int checkRoom = -1, checkLevel = -999;
         float checkWalked = 0;
+        // Blocked, the goal check has run and said go on (DoBlocked ->
+        // DoBlockedWaitingForGoalCheckTree -> DoBlockedGoalStillAvailable).
+        bool blockCheckDone = false;
         struct Climb {
             std::string animation; // empty between phases
             uint32_t serial = 0;   // bumped as each phase starts

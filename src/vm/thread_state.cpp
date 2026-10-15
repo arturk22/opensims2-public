@@ -107,6 +107,7 @@ void writeRoute(BinWriter& w, const Object::Route& r, size_t frame) {
     w.u8(l.stopOtherFoot), w.u8(l.shortWay), w.f32(l.fade), w.f32(l.haltWalk), w.u8(l.haltOtherFoot), w.u8(l.crossover), w.f32(l.haltRoom), w.i32(l.requestTicks), w.f32(l.requestLength);
     w.i16(r.lastBlocker);
     w.u32(r.plans), w.u32(r.checkPlans), w.i32(r.checkRoom), w.i32(r.checkLevel), w.f32(r.checkWalked);
+    w.u8(r.blockCheckDone);
 }
 
 Object::Route readRoute(BinReader& r, size_t& frame) {
@@ -173,7 +174,8 @@ Object::Route readRoute(BinReader& r, size_t& frame) {
     if (readingVersion >= 4)
         x.lastBlocker = r.i16();
     if (readingVersion >= 5)
-        x.plans = r.u32(), x.checkPlans = r.u32(), x.checkRoom = r.i32(), x.checkLevel = r.i32(), x.checkWalked = r.f32();
+        x.plans = r.u32(), x.checkPlans = r.u32(), x.checkRoom = r.i32(), x.checkLevel = r.i32(), x.checkWalked = r.f32(),
+        x.blockCheckDone = r.u8();
     return x;
 }
 

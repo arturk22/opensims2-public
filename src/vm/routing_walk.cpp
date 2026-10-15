@@ -277,10 +277,12 @@ Step advance(Context& c, Object& me, RouteFail& why) {
         const bool ok = treeResult.value_or(true);
         treeResult.reset();
         if (!ok) {
-            why = which == 1 ? RouteFail::GoalNotAvailable : RouteFail::InterruptedByCallback;
+            why = which == 2 ? RouteFail::InterruptedByCallback : RouteFail::GoalNotAvailable;
             return Step::Failed;
         }
-        if (which == 1 && startAlongRoute(c, me, r))
+        if (which == 3) // blocked: DoBlockedWaitingForGoalCheckTree -> DoBlockedGoalStillAvailable
+            r.blockCheckDone = true;
+        else if (which == 1 && startAlongRoute(c, me, r))
             return Step::Call;
     }
     if (std::exchange(r.resumed, false) &&
@@ -524,6 +526,23 @@ Step advance(Context& c, Object& me, RouteFail& why) {
             r.lastBlocker = b, r.replans = 0;
             r.blockerX = blocker.position.x, r.blockerY = blocker.position.y;
         }
+        if (r.blockedTicks == 0 && !std::exchange(r.blockCheckDone, false) && !r.aside) {
+            // DoBlocked (BV 0x5762a4), a blocker found: DoAlongRouteCheckTest
+            // forced (its last argument 1) and the goal check tree first
+            // (DoBlockedWaitingForGoalCheckTree, state 0x19): its false fails
+            // the route with 13 (a social's "Goal Check - Continue?" within 3
+            // tiles of the other: the lead-in starts where the walker stands,
+            // instead of the two blocking each other on a stoop), its true
+            // goes on to DoBlockedGoalStillAvailable (0x1A). Not during a step
+            // aside (inferred, as for the walk's checks).
+            const auto& L = r.loco;
+            r.checkPlans = r.plans, r.checkRoom = me.data[objdata::Room], r.checkLevel = me.position.level;
+            r.checkWalked = L.moving && L.onCurve && L.curve ? L.curve->total() - L.curve->remaining(L.segment, L.arc) : 0;
+            if (startGoalCheck(c, me, r)) {
+                r.check = 3;
+                return Step::Call;
+            }
+        }
         if (r.blockedTicks == 0) {
             // DoBlocked -> DoBlockedGoalStillAvailable (BV 0x57a8d4,
             // docs/routing-mac.md §6): the try counter (1 for a new blocker
@@ -720,6 +739,7 @@ Step advance(Context& c, Object& me, RouteFail& why) {
     if (r.blocker) { // the way is free again
         r.blocker = 0, r.blockedTicks = 0;
     }
+    r.blockCheckDone = false;
     r.waiting = false;
     if (!r.points.empty() && floorPoint(r.points.front())) {
         applyLocoStep(vm, me, r, pending ? *pending : locoStep(vm, me, r));
