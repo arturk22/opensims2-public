@@ -82,6 +82,33 @@ struct LightingConfig {
 LightingConfig parseLightingConfig(std::string_view text);
 LightingConfig loadLightingConfig(const std::filesystem::path& path);
 
+// A room light set's tuning (cTSRoomLightTuning, the "object:"/"sim:"/
+// "wall:" room* globals of Lighting.txt; docs/lighting-mac.md 4).
+struct RoomLightTuning {
+    int type = 4; // roomLightingType: 2-8 = that many directional "Delta" lights
+    float overall = 0.4f, bounce = 0.25f, bounceCrossover = 1, side = 1.2f, sideCrossover = 1, sideSlope = 0.75f;
+    float specular = 0.8f, directionalBoost = 1;
+};
+// A room's lights from its irradiance (+X, -X, +Y, -Y travelling, +Z up from
+// the floor, -Z down from the ceiling), as the lighting manager's
+// FUN_0070daa8 (Mac BV) builds them: an ambient (the mean of the six
+// colours) and `type` directionals, each the direction whose colour less the
+// ambient has the largest max(|r|, |g|, |b|) (the four sides only when type
+// < 3), signed: a direction darker than the mean is a negative light. A
+// Delta's `towardLight` is the unit vector to the light (the table's
+// travel direction, less sideSlope x Z on the sides, negated) and its colour
+// is times directionalBoost.
+struct RoomLights {
+    std::array<float, 3> ambient{};
+    struct Delta {
+        std::array<float, 3> towardLight{0, 0, 1};
+        std::array<float, 3> color{};
+        float specular = 1;
+    };
+    std::vector<Delta> deltas;
+};
+RoomLights roomLights(const std::array<std::array<float, 3>, 6>& irradiance, const RoomLightTuning& tuning);
+
 // Per-light overrides of the lights in the objects' models
 // (Res/Lights/LotLights.txt and the files it `sinclude`s, mostly
 // objects/lightObjects.txt and objects/colors.txt): macros

@@ -28,11 +28,15 @@
 // A light feeds the light maps only with diffusionSource* overrides (the
 // game's cDiffusionLightExtension, docs/lighting-mac.md 10.3).
 //
-// Inferred: the outdoors = room 0 or, with the light maps, a room mostly
-// without floor (LotLightMapLayout::outdoor), else a room of the ground
-// level's tiles along the lot's edge (the lots keep the outdoors as rooms of
-// their own). The lamps' practical lights light the objects and Sims of
-// their room directly (point lights, docs/lighting-mac.md 6).
+// With the light maps, objects and Sims are lit as the light room (3ARY
+// 0x0B) under them, 0 outdoors: the room light sets are the lighting
+// manager's per light room (docs/lighting-mac.md 11.1; inferred that an
+// object's render group is that room). The Deltas are signed: a direction
+// darker than the room's mean is a negative light (FUN_0070daa8).
+// Inferred: without the light maps, the outdoors = room 0 or a room of the
+// ground level's tiles along the lot's edge (the lots keep the outdoors as
+// rooms of their own). The lamps' practical lights light the objects and
+// Sims of their room directly (point lights, docs/lighting-mac.md 6).
 
 #include "formats/lighting_config.hpp"
 #include "formats/lot_lightmap.hpp"
@@ -149,8 +153,12 @@ private:
     LightingState blended() const;
     float global(const std::string& group, const std::string& name, float fallback) const;
     std::optional<Vec3> roomCentre(int16_t room, int level);
-    // Room 0, or a room of the ground level's tiles along the lot's edge
-    // (the lots keep the outdoors as rooms of their own; inferred).
+    // The room objects at (x, y) on a VM level are lit as: the light room
+    // with the light maps (0 outdoors), else the VM's room.
+    int16_t lightingRoom(int vmLevel, float x, float y);
+    // Room 0, or without the light maps a room of the ground level's tiles
+    // along the lot's edge (the lots keep the outdoors as rooms of their own;
+    // inferred).
     bool outside(int16_t room);
     std::shared_ptr<const LotLightMap> lightMap(const std::string& state);
     void updateLightMaps(double seconds);

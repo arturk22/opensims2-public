@@ -6,6 +6,7 @@
 
 #include "formats/graphics_options.hpp"
 #include "formats/image.hpp"
+#include "formats/lot_diffusion.hpp"
 #include "formats/rcol.hpp"
 #include "formats/resindex.hpp"
 #include "formats/scenegraph.hpp"
@@ -273,11 +274,23 @@ std::optional<Vec3> LotLighting::roomCentre(int16_t room, int level) {
     return centres_[key] = out;
 }
 
+int16_t LotLighting::lightingRoom(int vmLevel, float x, float y) {
+    // With the light maps, the light's room (3ARY 0x0B, room definition 0)
+    // of the quarter tile under the point: the rooms the lighting manager
+    // gathers and gives lights to (cRoomLightingDesc, docs/lighting-mac.md
+    // 4.1, 11.1); outdoors is 0. The VM's rooms (0x09) are split by fences
+    // and number the rooms their own way.
+    if (layout_)
+        return int16_t(lightRoomAt(*layout_, vmLevel - 1, x, y));
+    const auto& w = sim_.machine().world;
+    return w ? w->room(vm::TilePos{int(std::floor(x)), int(std::floor(y)), vmLevel}) : int16_t(0);
+}
+
 bool LotLighting::outside(int16_t room) {
     if (!room)
         return true;
     if (layout_)
-        return layout_->outdoorPlacementRoom(uint16_t(room)); // a VM room (3ARY 0x09)
+        return false; // a light room (lightingRoom): outdoors is 0
     if (!outdoorRooms_) {
         outdoorRooms_.emplace();
         if (const auto& w = sim_.machine().world) {
@@ -409,10 +422,7 @@ void LotLighting::update(double seconds) {
             lamp.wallScale = l.wallScale;
             lamp.interFloor = l.interFloor;
             lamp.directional = l.directional, lamp.directionalFalloff = l.directionalFalloff;
-            if (m.world) {
-                const vm::TilePos t{int(std::floor(lamp.position[0])), int(std::floor(lamp.position[1])), o->position.level};
-                lamp.room = m.world->room(t);
-            }
+            lamp.room = lightingRoom(o->position.level, lamp.position[0], lamp.position[1]);
             lamps_.push_back(lamp);
         }
     });
@@ -508,46 +518,35 @@ void LotLighting::update(double seconds) {
             return roomSets[key] = 0; // a room the light maps do not know (no floor on that level)
         }
         const int first = int(sets.size());
+        std::array<std::array<float, 3>, 6> irradiance{};
+        for (size_t d = 0; d < 6; ++d)
+            irradiance[d] = {irr[d].x, irr[d].y, irr[d].z};
         for (const char* group : {"object", "sim"}) {
-            const float overall = global(group, "roomOverallStrength", 0.4f);
-            const float side = global(group, "roomSideStrength", 1.2f), sideX = global(group, "roomSideCrossover", 1);
-            const float bounce = global(group, "roomBounceStrength", 0.25f), bounceX = global(group, "roomBounceCrossover", 1);
-            const float slope = global(group, "roomSideSlope", 0.75f), boost = global(group, "roomDirectionalBoost", 1);
-            const simd_float3 sum = irr[0] + irr[1] + irr[2] + irr[3];
-            std::array<simd_float3, 6> L{};
-            for (int i = 0; i < 4; ++i)
-                L[size_t(i)] = (irr[size_t(i)] + sideX * irr[4]) * side * overall;
-            for (int j = 4; j < 6; ++j)
-                L[size_t(j)] = (irr[size_t(j)] + bounceX * sum) * bounce * overall;
-            simd_float3 a = 0;
-            for (const auto& v : L)
-                a += v;
-            a /= 6;
-            // (Dark rooms' irradiance is already brightened with the light maps.)
-            Renderer::LightSet set;
-            set.ambient = a;
-            for (auto& v : L)
-                v -= a;
-            // The direction table (+X, -X, +Y, -Y, +Z, -Z) is where the
-            // light travels; the side Deltas also go down by roomSideSlope.
-            // The shader wants the direction towards the light: the opposite.
-            static const simd_float3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-            for (int k = 0; k < 4; ++k) {
-                int best = -1;
-                float bestValue = 0;
-                for (int d = 0; d < 6; ++d) {
-                    const float v = std::max({L[size_t(d)].x, L[size_t(d)].y, L[size_t(d)].z});
-                    if (v > bestValue)
-                        best = d, bestValue = v;
-                }
-                if (best < 0)
-                    break;
-                simd_float3 travel = dirs[best];
-                if (best < 4)
-                    travel -= simd_make_float3(0, 0, slope);
-                set.lights.push_back({simd_normalize(-travel), L[size_t(best)] * boost, global(group, "roomSpecular", 0.8f)});
-                L[size_t(best)] = 0;
+            RoomLightTuning t;
+            t.type = int(global(group, "roomLightingType", 4));
+            t.overall = global(group, "roomOverallStrength", 0.4f);
+            t.side = global(group, "roomSideStrength", 1.2f), t.sideCrossover = global(group, "roomSideCrossover", 1);
+            t.bounce = global(group, "roomBounceStrength", 0.25f), t.bounceCrossover = global(group, "roomBounceCrossover", 1);
+            t.sideSlope = global(group, "roomSideSlope", 0.75f), t.directionalBoost = global(group, "roomDirectionalBoost", 1);
+            t.specular = global(group, "roomSpecular", 0.8f);
+            // The ambient and the "Delta" directionals (FUN_0070daa8, signed;
+            // dark rooms' irradiance is already brightened with the light maps).
+            const RoomLights rl = roomLights(irradiance, t);
+            if (std::getenv("OS2_DEBUG_LIGHTS") && std::string(group) == "object") {
+                std::fprintf(stderr, "opensims2: room %d level %d irradiance", room, level);
+                for (const auto& v : irradiance)
+                    std::fprintf(stderr, " (%.3f %.3f %.3f)", v[0], v[1], v[2]);
+                std::fprintf(stderr, "; ambient (%.3f %.3f %.3f), Deltas", rl.ambient[0], rl.ambient[1], rl.ambient[2]);
+                for (const auto& d : rl.deltas)
+                    std::fprintf(stderr, " [to (%.2f %.2f %.2f) (%.3f %.3f %.3f)]", d.towardLight[0], d.towardLight[1],
+                                 d.towardLight[2], d.color[0], d.color[1], d.color[2]);
+                std::fprintf(stderr, "\n");
             }
+            Renderer::LightSet set;
+            set.ambient = simd_make_float3(rl.ambient[0], rl.ambient[1], rl.ambient[2]);
+            for (const auto& d : rl.deltas)
+                set.lights.push_back({simd_make_float3(d.towardLight[0], d.towardLight[1], d.towardLight[2]),
+                                      simd_make_float3(d.color[0], d.color[1], d.color[2]), d.specular});
             if (auto it = practical.find(key); it != practical.end())
                 set.points = it->second;
             sets.push_back(set);
@@ -557,9 +556,9 @@ void LotLighting::update(double seconds) {
 
     // Each object and Sim gets the set of the room it is in.
     auto roomOf = [&](const vm::Object& o) -> int16_t {
-        if (!m.world || !o.position.inWorld())
+        if (!o.position.inWorld())
             return 0;
-        return m.world->room(vm::VM::tileOf(o));
+        return lightingRoom(o.position.level, o.position.x, o.position.y);
     };
     // A copy of a set with an object's extra lights after its own.
     auto withExtras = [&](int16_t id, int set) {

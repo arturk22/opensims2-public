@@ -2,6 +2,8 @@
 
 #include "config_text.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace os2 {
@@ -237,6 +239,49 @@ LightOverrides parseLightOverrides(std::string_view text, const std::filesystem:
 
 LightOverrides loadLightOverrides(const std::filesystem::path& lotLightsFile) {
     return parseLightOverrides(readTextFile(lotLightsFile), lotLightsFile.parent_path());
+}
+
+// FUN_0070daa8 (Mac BV), roomLightingType 2-8 (docs/lighting-mac.md 4, 11.1).
+RoomLights roomLights(const std::array<std::array<float, 3>, 6>& I, const RoomLightTuning& t) {
+    using V = std::array<float, 3>;
+    auto add = [](V a, V b) { return V{a[0] + b[0], a[1] + b[1], a[2] + b[2]}; };
+    auto mul = [](V a, float k) { return V{a[0] * k, a[1] * k, a[2] * k}; };
+    const V sides = add(add(I[0], I[1]), add(I[2], I[3]));
+    std::array<V, 6> L{};
+    for (size_t i = 0; i < 4; ++i)
+        L[i] = mul(add(I[i], mul(I[4], t.sideCrossover)), t.side * t.overall);
+    for (size_t j = 4; j < 6; ++j)
+        L[j] = mul(add(I[j], mul(sides, t.bounceCrossover)), t.bounce * t.overall);
+    RoomLights out;
+    for (const V& v : L) // FUN_00700710: the sum of the six / 6
+        out.ambient = add(out.ambient, v);
+    out.ambient = mul(out.ambient, 1.0f / 6.0f);
+    for (V& v : L)
+        v = add(v, mul(out.ambient, -1));
+    // MaxAbsElement (0x1808d8c): max(|r|, |g|, |b|); FUN_00700590 / 0x700610
+    // take the largest over the six (the four sides) directions, the first
+    // of equals.
+    auto maxAbs = [](const V& c) { return std::max({std::fabs(c[0]), std::fabs(c[1]), std::fabs(c[2])}); };
+    static const V travel[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    const int n = std::clamp(t.type, 0, 8), choices = n < 3 ? 4 : 6;
+    for (int k = 0; k < n; ++k) {
+        size_t best = 0;
+        float bestValue = maxAbs(L[0]);
+        for (size_t d = 1; d < size_t(choices); ++d)
+            if (const float v = maxAbs(L[d]); bestValue < v)
+                best = d, bestValue = v;
+        V dir = travel[best];
+        if (best < 4)
+            dir[2] -= t.sideSlope; // the table's vector less sideSlope x (0, 0, 1)
+        const float len = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+        RoomLights::Delta delta;
+        delta.towardLight = {-dir[0] / len, -dir[1] / len, -dir[2] / len};
+        delta.color = mul(L[best], t.directionalBoost);
+        delta.specular = t.specular;
+        out.deltas.push_back(delta);
+        L[best] = V{0, 0, 0};
+    }
+    return out;
 }
 
 } // namespace os2

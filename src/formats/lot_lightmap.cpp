@@ -795,6 +795,10 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         if (!p.toOutside)
             addSide(gather[{p.level, p.room}], p.dir[0], p.dir[1], p.color * globals.roomPortalStrength);
     for (const auto& [key, g] : gather) {
+        if (std::getenv("OS2_DEBUG_LIGHTMAP"))
+            std::fprintf(stderr, "lightmap room %d on level %d: floor weight %.0f, wall weights %.1f %.1f %.1f %.1f\n", int(key.second),
+                         key.first, double(g.second[4]), double(g.second[0]), double(g.second[1]), double(g.second[2]),
+                         double(g.second[3]));
         auto& r = result.rooms[key];
         for (size_t d = 0; d < 6; ++d)
             r[d] = g.second[d] > 0 ? g.first[d] * (1 / g.second[d]) : V3{0, 0, 0};

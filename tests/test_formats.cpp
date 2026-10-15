@@ -344,6 +344,35 @@ lightAttribOverride gardenUplight coneAngle 35
     check(np && np->parent == "day" && np->skyStrength == 0.5f && np->lights.size() == 3 &&
               np->lights[0].intensity == 1 && np->lights[0].direction[2] == 1,
           "inherited state overrides a light by name");
+
+    // A room's lights (FUN_0070daa8): an unlit room at night (unlitRoomColor
+    // (0.345, 0.345, 0.42) on the four sides and the floor, nothing from the
+    // ceiling), objects' tuning: ambient = the mean of the six, and the four
+    // Deltas by |colour - ambient|: the ceiling and floor ones (darker than
+    // the mean) come first and are negative, then two sides.
+    {
+        RoomLightTuning t;
+        t.overall = 0.5f, t.directionalBoost = 4;
+        const std::array<float, 3> u{0.345f, 0.345f, 0.42f};
+        const RoomLights rl = roomLights({u, u, u, u, u, std::array<float, 3>{0, 0, 0}}, t);
+        const float side = (0.345f + 0.345f) * 1.2f * 0.5f, up = (0.345f + 4 * 0.345f) * 0.25f * 0.5f,
+                    down = 4 * 0.345f * 0.25f * 0.5f, mean = (4 * side + up + down) / 6;
+        check(std::fabs(rl.ambient[0] - mean) < 1e-5f, "room lights: ambient is the mean");
+        check(rl.deltas.size() == 4, "room lights: four Deltas");
+        if (rl.deltas.size() == 4) {
+            check(std::fabs(rl.deltas[0].color[0] - (down - mean) * 4) < 1e-5f && rl.deltas[0].color[0] < 0 &&
+                      rl.deltas[0].towardLight[2] == 1,
+                  "room lights: the ceiling's Delta is first and negative (towards the light: up)");
+            check(rl.deltas[1].color[0] < 0 && rl.deltas[1].towardLight[2] == -1, "room lights: then the floor's, negative");
+            check(rl.deltas[2].color[0] > 0 && rl.deltas[2].towardLight[0] < 0 && rl.deltas[2].towardLight[2] > 0,
+                  "room lights: then +X travelling (from -X, sloped down), positive");
+            check(rl.deltas[3].towardLight[0] > 0, "room lights: then -X");
+        }
+        t.type = 2; // fewer than 3: the sides only
+        const RoomLights two = roomLights({u, u, u, u, u, std::array<float, 3>{0, 0, 0}}, t);
+        check(two.deltas.size() == 2 && two.deltas[0].towardLight[2] > 0 && two.deltas[0].towardLight[0] < 0,
+              "room lights: type 2 picks among the sides");
+    }
 }
 
 static void testStandardMaterial() {
