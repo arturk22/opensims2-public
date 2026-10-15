@@ -65,8 +65,8 @@ timers (WriteTimers): u32 n; por timer u32(+0x10), u32(+4), u16(+0x14),
            u32(+0xC), u32(+8), u32(+0), 8 × u16 parâmetros
 ```
 
-Isso bate com a ordem que `parseTail` já lê; os nomes de cada campo do
-timer não foram decifrados.
+Isso bate com a ordem que `parseTail` já lê; os nomes de cada campo (do
+cabeçalho, do token, dos timers e do XMTO) estão na §8.
 
 ## 3. PERS (`cTSPerson::Write`, BV)
 
@@ -385,7 +385,7 @@ não mudaram (por exemplo sem `0x3053CF74` para objetos que nunca tiveram).
 
 ## 7. O que falta
 
-- Os campos do token, da tabela de relacionamentos e dos timers; o
+- ~~Os campos do token, da tabela de relacionamentos e dos timers~~ (§8 e `relationships-mac.md`); o
   `cTSRoute::SaveToStream` (rota em andamento).
 - Quem responde à mensagem `0xBC` além do módulo de objetos e do simulador
   (a ordem exata). ~~O gravador das `SREL` do lote~~: é a tabela de cada
@@ -558,3 +558,90 @@ registros de rota do jogo continuam como lidos (o VM não grava a sua rota no
 flags de empurrar da fila (dado de pessoa 72 "continue as current") ainda
 não vão no save (N001_Lot36: o Beau volta com 72 diferente).
 
+
+## 8. Rodada n09: os campos sem nome **[binário]**
+
+Lidos no binário de Mac pelo Ghidra MCP (só leitura), conferidos contra os
+69 lotes do jogo (programa de levantamento sobre `LotObjects::load`).
+
+**Cabeçalho do XOBJ** (`cTSObject::WriteHeader` BV `0xb07790`, `ReadHeader`
+`0xb13dd4`): os 4 f32 do começo são **sempre 0** ao gravar e descartados ao
+ler (versões ≥ 0x67; antes eram 5 f32 com a posição em 1/16); o u16 depois do
+nível é **sempre 1** ao gravar e descartado ao ler; o nível só é aplicado se
+não for `0xDEADBEEF` (vtable 0x94). O u16 do fim (+0x298, > 0x85) é o **ID do
+objeto portal de passar por cima** (`cTSObject::UpdateStepOverPortal`
+`0xe1f4a0`, `PortalOnRoomChanged`, `PlaceInSlot`, `Cleanup`, `PostLoad`): 43
+objetos dos lotes do jogo têm um.
+
+**Token temporário** (`cTSObject::Write` `0xb0bbcc`, `Read` `0xb14cb0`,
+`InterpValue` `0xb15f2c` dono 0x27): os 8 i16 são os campos 0–7 do dono 0x27,
+que o jogo indexa **direto na memória do objeto** a partir de +0x1A0 (10
+campos: os 8 gravados e, em 8–9, o ponteiro do token em +0x1B0): 0 tipo do
+inventário, 1 ID do inventário, 2 contado, 3 índice, 4–5 GUID (baixo, alto),
+6 flags, 7 número de propriedades. Nos lotes, quando 4–7 não são zero
+eles são a cópia do token gravado logo depois em 97 de 98 objetos (no outro
+as flags do token mudaram depois: 3 no token, 2 na cópia); 27 têm 4–7
+zerados, vários deles com um token (posto sem passar por um Manage Inventory
+de leitura). Depois vem o token (vtable 0x0C do objeto em +0x1B0).
+
+**Arrays e iteradores**: depois dos arrays (+0x188) vem a lista de u16 de
++0x194: é **o índice do iterador de cada array** (dono 0x29 lê +0x194[i];
+o dono 0x2B lê `array[i][+0x194[i]]`, erro 0x6D se < 0). Uma entrada por
+array; nos lotes, todo array nunca percorrido tem −1 (7.006 objetos).
+
+**Pilha de árvores** (`cTSTreeStack::Write` `0xe17e58`, `Read` `0xe19fa4`):
+u32 número de quadros e um u32 que o jogo **grava 0 e descarta ao ler**.
+
+**Timers** (`cTSObject::WriteTimers` `0xb042b8`, `AddTimer` `0xb05448` vtable
+0x4A4, `ModifyTimer` 0x4A8 (`0xb02a94`), `DeleteTimer` 0x4AC (`0xb04474`), o
+passo do relógio `0xb02b8c`, `TryOnTimer` `0xe26308`). O registro em
+memória (`cTSObject::cObjectTimerDetail`, 0x28 bytes, em +0x2C0):
+
+| offset | gravado | o que é |
+|---|---|---|
+| +0x10 | 1º u32 | ID do timer: vem do **contador de GUIDs do simulador** (`cTSSimulator` vtable 0xAC → `0x4989e0`, o global 36, o mesmo das interações). Nos lotes os IDs ficam logo abaixo do global 36 salvo (N002_Lot3: 29988–30000 com o global 30039) |
+| +0x04 | 2º u32 | a árvore de evento (u16 de baixo) |
+| +0x14 | u16 | o objeto que pôs o timer (vtable 0xB8 de quem roda o On Timer); a árvore de evento roda com ele como **stack object** |
+| +0x0C | 3º u32 | flags: bit 0 repetir (o bit 0x02 do operando); no Modify, o bit 1 = "reset ticks" (0x04 do operando) |
+| +0x08 | i32 | período (os ticks do operando) |
+| +0x00 | i32 | ticks que faltam (começa no período, sem mínimo) |
+| +0x16 | 8 × u16 | parâmetros da árvore de evento |
+
+O passo do relógio, por objeto, na ordem da lista (o número de timers é
+lido antes do laço; timers novos esperam o próximo tick): `ticks -= 1`; se
+ainda > 0, segue; senão roda a árvore de evento **na hora**
+(`cTSObject::RunTree` `0xb02278`: o código do próprio objeto, stack object =
++0x14, a árvore, os parâmetros) e, **só se a árvore devolveu verdadeiro e o
+timer repete**, `ticks = período`; senão o timer é apagado pelo ID. Modify e
+Delete procuram o ID só nos timers do objeto dono do código do quadro (erro
+0x17 sem gerenciador). Nos lotes: 23 timers, todos de período 30, flags 0,
+objeto = o próprio dono.
+
+**XMTO** (`cEdithMTObject::Read` `0xaf2b8c`): os 6 u32 são dois trios
+(x, y, nível): o primeiro é o **deslocamento** da parte (`SetOffset`, +0x2F8;
+o 3º só se ≥ 0x3A) e o segundo o **deslocamento normalizado**
+(`SetNormalizedOffset`, +0x2EC), lido se ≥ 0x28; depois o u16 do líder
+(`AddToList(líder, true)`, vtable 0x5A8). Nos lotes: o líder tem os dois
+zero (3.580), as partes ±1 no deslocamento.
+
+**NGBH e inventários** (`cTSNeighborhood::Write` `0x4dc43c`, `Read`
+`0x4e0d38` (sem função no Ghidra; lido pela listagem), `cTSInventory::Read`
+`0x497040`, `Write` `0x4949a0`): tag, versão, u32 0; se > 0x6A dois u32
+(+0x34, +0x38: 0x80, 0x80 nos bairros do jogo, sentido não lido); se > 0x6D
+uma string (+0x3C, o tipo de região); **16 i16 de dados do bairro** (+0x14;
+≤ 0x13 só um): é o "bloco de 32 bytes" que o leitor tratava como uma segunda
+string; se > 0x65 o inventário global e os mapas de lote (+0x84, tipo 1),
+família (+0x9C, tipo 2) e vizinho (+0xB4, tipo 3), cada um u32 n + n × (u32
+ID, inventário); por fim um u8 (+0xFD) e, só no BV, um u32 (+0xDC). Cada
+inventário: (só se a versão > 0xBD, o BV: u32 0xBE) u32 n + n tokens
+**contados** (+0x20, `CountedTokenCount`/`ClearCountedTokens`), depois u32 n +
+n tokens **singulares** (+0x14, `ClearSingularTokens`): a ordem que o leitor
+supunha está confirmada. O nosso save já grava os inventários no NGBH desde a
+rodada 16 (`vm/hood_save.cpp`): a linha "faltando" do inventário estava
+desatualizada.
+
+O que continua sem nome: os dois u32 +0x34/+0x38 e o u8 +0xFD do NGBH, o
+`cTSObject::Read` que, para um objeto com a flag +0x180 bit 0 no lote dele,
+lê e descarta 6 u32 + u16 depois dos timers (nunca acontece nos lotes do
+jogo), e o que o jogo faz com os campos 4–7 do token temporário fora da
+leitura de um token (só cópias; escrever neles não muda o token).
