@@ -1500,6 +1500,155 @@ Clique com um objeto sob o mouse (rodada 13):
 | escadas: portais dos slots das peças (nomes `_top`/`_bottom`), duas faixas de mão única a 0,33 tile (§8.6) | desde a rodada n03 (antes um portal só, de patamar a patamar, nos dois sentidos; `OS2_STAIR_ONE_PORTAL=1` volta ao antigo); o portal geométrico fica para escadas sem objetos |
 | escadas (tipos 10, 11) no planejador pelas pegadas; exceção do campo `0x4b` = `0x93`; penalidade de rota com escala 0 (custo 1) | desde a rodada 15 (§2) |
 
+## 9.1 Rodada n18 (rotas, resto): o que foi lido no binário
+
+Leitura de 2026-10-15, **Ghidra MCP** (só leitura; as funções que o
+projeto não tem como função foram lidas na listagem, `disassemble_bytes`
+com `dry_run`, nada gravado). Endereços BV.
+
+### O custo e a passagem de uma célula (`ePassabilityState`)
+
+`cQuadTreeCell::UpdateTraversalCostAndPassability` (BV `0xba802c`): o
+estado da célula é o **maior** estado dos retângulos que a cobrem e o custo
+o **maior** custo (partindo de 1,0). Os retângulos com callback (`+0x24`,
+os de "allow intersection" e de porta) são avaliados uma vez por contexto e
+guardados (`+0x2c`/`+0x30`/`+0x34`); os do tipo 1 (`+0x1c`, uma forma com
+interface `0xabfb0f11`) só contam se o meio da célula cai dentro da forma.
+Uma célula **sem nenhum retângulo de piso** (flag `+0x1e & 1`) fica no
+estado `0x11` (17, "sem piso"). Com um retângulo de tipo 0 a soma recomeça
+ignorando os de estado > 1 (não identificado quem põe esse tipo). No fim:
+**estado > 1 → custo `FLT_MAX`** (a célula bloqueia); 0 e 1 passam com o
+maior custo. O A* (`IsSegmentPassableAndConstantCost`, BV `0xba6d94`) só
+pergunta "estado > 1 ou custo > `FLT_MAX`/2". Os números são máscaras: bit 0
+bloqueia, `2` pode-se passar por cima (3 = árvore "allow intersection", 9 =
+`IsOKToFlyOver`), `4` deixa com a árvore (5), `8` objeto (11), 7 e 15 do
+piso, 17 sem piso; **para o planejador do jogo base todos os > 1 são
+iguais**. Ou seja: o "custo exato de cada estado" é este, e o VM já o tinha
+(bloqueado = bits, livre = custo).
+
+### O custo do piso (`WorkOutTileCostAndPassability`, BV `0x4f3d84`; lido de novo)
+
+```
+estado = 0; custo = 1
+se FloorTileRoutingCost(tile): custo = "routingcost" do padrão do piso, preso em [0,5; 10]
+senão:                          custo = +0x34 do gerenciador = 2,0 (construtor BV 0x4f9294)
+só no nível 0 (cFloorTile +8 = 0):
+    IsPartWater(tile)             → estado 15, custo FLT_MAX
+    senão FUN_00165c88(tile, 1)   → estado 7,  custo FLT_MAX  (folga até o andar de cima menor que
+                                    WorldDB 0x15c; não é "água parcial" como §2 dizia)
+    estado ≤ 12: desnível h ≥ 1 → estado 15, FLT_MAX; 0,5 ≤ h < 1 → custo = (h − 0,5)·20 se maior
+    +10 se WorldOutsideSupport (WorldDB vtable 0x170) 0x24(tile, 0) e 0x2c(tile) (não decifrado)
+```
+
+`FloorTileRoutingCost` (BV `0x1674e0`): o padrão do piso do tile (WorldDB
+`0x9c`) no catálogo (`cTSGlobals` `0x40` → `0xa8(1, id, 1)`) e o
+`RoutingCost` da entrada (`cTSProductPatternEntry +0x68`, interface `+0x50`,
+vtable `0xd4`), lido do CPF do padrão (`ReadProperties`, BV `0x84fed8`,
+propriedade **`routingcost`**; 0 se faltar, construtor BV `0x849f28`). Nos
+dados (`Catalog/Patterns/catpatterns.bundle.package`): **136+2 pisos com 1**,
+**8 com 4** (terra, cascalho, areia, cobertura de casca, asfalto e as duas
+faixas de rua), as paredes 0. **Um tile sem piso (o terreno) custa 2,0**:
+os Sims preferem pisos ao gramado e evitam areia, terra e asfalto. O
+`+0x34` só é escrito no construtor (o comando de trapaça "routingCost" tem
+classe própria, não seguido). O mesmo custo entra no placar dos objetivos
+em pé (callback BV `0x4740d8`, pelo `0x58` do gerenciador): `placar −=
+10·(custo − 1)` se custo > 1 (`0x274b470` = 1,0): um objetivo no gramado
+perde 10 contra um no piso.
+
+### O Snap num ponto só (`cTSObject::TrySnap`, BV `0xe43624` e `0xe43084`)
+
+Modos 0/3 (slot de rota do alvo) e 4 (slot do SLOT global): **um ponto**,
+`posição do alvo + TotalRoutingSlotOffsetFromContainer(slot, raio)` girado
+pela orientação do alvo; o andar é o do alvo. O deslocamento
+(`TotalRoutingSlotOffsetFromContainer` BV `0xaf7d90` →
+`SlotOffsetFromContainer` BV `0xafa28c`): slot **com** `0x20000` (osso) →
+a posição do **primeiro osso** do nome do slot (índice 0, `0x144`/`0x4dc`;
+sem osso no modelo, um valor fixo); **sem** → o vetor do slot (x, y, z do
+SLOT) mais o raio do Sim girado pela direção do slot. O raio é o `+0x210`
+do Sim (o "slot displacement", 0 no jogo base), zerado com a RS flag
+`0x20000000` e de sinal trocado com `0x10000000`. Sem varredura e sem
+anel. Modo 2 ("na frente"): o tile vizinho na direção do alvo
+(`FUN_01703bc0`). Direção: com `0xE4` (RS `0x1000`) a do alvo + a do slot
+(osso: `SlotDirectionFromContainer`; senão `0xE8`), senão a do Sim.
+
+O teste (`TrySnap` interno, BV `0xe43084`), na ordem:
+1. pessoa sem o bit `0x04` do dado de pessoa 68: um círculo de **0,3** em
+   volta do ponto novo toca parede (`FUN_008a6c84`, o mesmo teste do código
+   4 do `EvalTileForGoal`) → erro **8**;
+2. slot sem a RS flag `0x800` (vtable `0x44`, "ignorar salas"): o ponto
+   fora do lote → erro 2; a sala do ponto novo diferente da do velho
+   (gerente de partições `0x13c`, inferido que é a sala) → falha;
+3. slot sem a RS flag `0x80000` (vtable `0x4c`), mesmo andar: parede entre o
+   lugar velho e o novo (gerente `0xa0(5)` `0x4c`), não porta, que bloqueia
+   → erro **8**;
+4. `TSObjectCanSetPositionAndOrientation` no ponto (com contêiner,
+   `TSObjectCanPlaceInSlot`): **sem lista de exceções** (o alvo conta como
+   qualquer objeto).
+Falha: od 52 = o primeiro erro + 2 (1 quando pediu a um Sim para sair).
+
+### O +25 dos objetivos em pé (`FUN_00478518`)
+
+A máscara é `cEdithObjectModule::GetWallBlockFlagsAtTile(tile do alvo,
+direção do alvo)` (BV `0x524880` → `FUN_00af634c`; o "mundo" do §8.2 é o
+`ObjectManager` do `cTSGlobals`, vtable `0x68`): para os segmentos de parede
+do tile (`FUN_0156003c` + partições `0xb0`), segmento 2 → bit 0, 4 → bit 2,
+8 → bit 4, 1 → bit 6 (as diagonais não entram), o que no VM é **o bit 2k =
+parede na aresta da direção 2k** (como `tileWallSegments`); depois girada
+para o sentido do alvo (bit `a` → `a − dir`). Cada bit marcado espalha para
+`±1`. O teste é com o `+0x20` do **contexto** da varredura (r30, não o
+objetivo): a varredura (`FUN_004778b4`) escreve ali a direção de cada
+origem que percorre, então vale a **última** origem varrida (a direção
+absoluta: `k` + a do alvo, `+0x20` = `0xac(r1)` no `0x479788`); **todos** os
+objetivos em pé do slot ganham +25 se essa direção não está na máscara (a
+mistura de sentidos, absoluto contra relativo, é do binário). Os objetivos
+de osso (`GetPossibleSlotsFromModelRoutingSlot`) recebem a máscara absoluta
+(direção 0) por outro caminho (`0x479260`). Sem a RS flag `0x80000`.
+
+### O teste previsto (`cLocomotable::CollisionCheck`, BV `0x6b49e8`, lido de novo)
+
+O ID ignorado começa em **0**: não há exceção para o alvo da rota. Para cada
+janela, `EstimateWhenPathWillBeBlocked` (`0x478`) dá o bloqueador e o
+instante; o bloqueador só é **ignorado** (passa a ser o "ignorar" das
+janelas seguintes) quando a colisão é **no instante atual** (o começo da
+varredura, os dois já se tocam) **e** a distância (`0x47c`) no fim da janela
+é maior que no começo (estão se afastando); qualquer outra colisão no
+horizonte é bloqueio. Ou seja, as duas exceções do VM ("já sobrepostos <
+0,3" e "o alvo da rota") não existem: quem já toca o outro só segue se se
+afasta. Achado um bloqueador: `SetBlockingObjectID`,
+`InterruptActiveLocoState(2)` e, se o pedido expirou ou a colisão é antes
+de `0xa0(0)` + 2 passos, `EndFollow`.
+
+### A contagem do bloqueio (`DoBlockedGoalStillAvailable`, BV `0x57a8d4`)
+
+O contador `+0x3c` sobe a cada entrada e volta a 1 só quando o bloqueador
+difere do **último** guardado (`+0x3e`, que fica no estado da rota e não é
+apagado quando o caminho fica livre) ou quando ele se afastou ≥ 0,25 do lugar
+anotado (mapa da rota `0x1d8`/`0x1d4`, ID → lugar). O VM apagava o
+bloqueador quando o caminho ficava livre, e a contagem recomeçava: dois
+Sims a 0,285 um do outro, cada um "entrando" no outro pelo teste por passo
+(0,283) mas fora da previsão (a exceção dos 0,3), pausavam e replanejavam
+para sempre com o contador em 1 (`N001_Lot11`, `OS2_SEED=12`: 1.303 "step
+into" em 12.000 ticks).
+
+### Os retângulos de custo 10 das escadas (`PortalAddToPathPlannerImpl`)
+
+Nos tipos 10 e 12, com `TSObjectGetModelType` ≠ 1 (BV `0xe1ec30`: roda a
+árvore da entrada **0x30** do OBJf e lê o temp 0; 1 = nenhum), as duas
+pontas (o objeto e `0x590`, a outra ponta; a de andar maior primeiro) põem
+`AddObjectRectangle` de custo **10** junto da caixa da pegada (`0x100`): tipo
+2 ou 4, um retângulo de `min − 0,32499` a `min` num eixo e de `min −
+0,32499` a `min + 0,12499` no outro; tipo 3 ou 4, o mesmo do lado de `max`
+(`max − 0,12499` a `max + 0,32499`). A ordem dos eixos nos argumentos não
+foi conferida contra os dados (não feito).
+
+### Sobras desta leitura
+
+- A caixa do modelo sem lista "footprint" (`FUN_00a45e54`): a união das
+  caixas dos nós com a flag 4 (`0xa4(4)`), não escondidos (`0x114`) e com
+  limites (`0x180`), descendo nos filhos sem a flag pedida; o que é a flag 4
+  do nó não foi lido (segue inferido: as malhas sem os planos de sombra).
+- O `+10` do `WorldOutsideSupport` e o estado 7 (`FUN_00165c88`) no piso.
+
 ## 10. O que falta
 
 - O custo exato de cada `ePassabilityState`.
