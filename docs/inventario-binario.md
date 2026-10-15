@@ -143,9 +143,9 @@ Código: `src/vm/routing*.cpp`, `path_planner.*`, `locomotion.*`,
 
 Código: `src/vm/animation.*`, `src/formats/anim*.{hpp,cpp}`,
 `scene_anim.*`, `skeleton.*`, `skinning.*`, `src/app/anim_snaps.*`,
-`look_at.*`, `cinematic_*`, `lot_actors.cpp`. Docs: `primitives-mac.md`
-(Animate, deltas), `cas-mac.md` §17.4b, `cinematics-mac.md`. Não há um
-`anim-mac.md`.
+`look_at.*`, `cinematic_*`, `lot_actors.cpp`. Docs: `anim-mac.md` (fila de
+coreografia, expiração, peso dos canais, solucionador de IK; rodada n02),
+`primitives-mac.md` (Animate, deltas), `cas-mac.md` §17.4b, `cinematics-mac.md`.
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
