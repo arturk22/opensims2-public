@@ -997,6 +997,69 @@ Animation`, `CT - Route Ask To Move Animation`, `CT - Route Blocked` e
 `CT - Route Failure Feedback` são chamadas pelo nome (strings no binário,
 BV `0x0102366c..`).
 
+### 7.1 Orçamento de nós por turno das árvores da rota (binário, rodada n29)
+
+O orçamento que importa para as rotas é o das **árvores** que o roteador
+chama no meio do plano ou do passo: o guarda do portal, a "allow
+intersection" (entrada 5), as checagens do objetivo, a pós-rota e as globais
+"CT - Route ...". O A* do §4 não roda árvore e não usa esse contador (se o A*
+do binário tem um teto próprio de nós abertos, não foi lido). Cada árvore roda
+no `cTSTreeSim` de quem anda, e o `cTSTreeSim::DoNodeAction` (BV `0xe1b18c`,
+lido na rodada 16) sobe o contador `+0xc` a cada nó e, passando de
+`DAT_0277ea94` = **100000**, lança o erro `0x44D` "Too many iterations"
+(`docs/primitives-mac.md` §4g "Limite de nós por turno"; com uma flag de
+depuração, bit 0 do valor `0x33`, não entendida, o limite é 300000; a pilha de
+1000 quadros é o `DAT_0277ea90`, vizinho dele). É o mesmo valor em qualquer
+árvore, no jogo e na ferramenta.
+
+No código o valor é um só: `vm::kNodeLimitPerTurn` (`src/vm/vm.hpp`).
+`VM::instructionsPerTurn` e o padrão de `VM::run` partem dele (as árvores das
+rotas rodam com `vm.run(t, vm.instructionsPerTurn)`: `portalLockedFor` em
+`routing_plan.cpp`, `allowsIntersection` em `routing.cpp`), o app (`LotVM`) o
+usa, e todo comando do `s2pkg` que roda o VM o pega por `s2pkgBudget()`
+(`cli/s2pkg/budget.hpp`; `S2PKG_BUDGET=n` muda, para experimentar). Na rodada
+15 o `autonomy` passou de 20000 aos 100000 e na 16 (commit `bd77823f`)
+`lot-run`, `pie`, `route`, `buy`, `tutorial`, `wants`, `lot-save`, `bhav` e
+`bhav-sweep` também; a rodada n29 tirou o último 100000 escrito à mão
+(`lot-save`) e deu a todos a mesma constante, com um teste (`test_vm`: o valor
+e um laço cortado em 100000 nós).
+
+**Medida** (build da rodada n29, 68 dos 69 lotes: o `N002_Lot32` não é lote;
+`lot-run` com `S2PKG_BUDGET=20000` ("antes") e o padrão 100000 ("depois"), o
+mesmo binário, `OS2_ROUTE_FAILS=1` para contar as rotas que falharam):
+
+| | 1800 ticks, antes (20000) | 1800 ticks, depois (100000) | 20000 ticks, antes | 20000 ticks, depois |
+|---|---|---|---|---|
+| rotas que falharam (todos os lotes) | 57 | 57 | 513 | 513 |
+| lotes com a saída ou a lista de falhas diferente | | 0 de 68 | | 0 de 68 |
+| falhas "instruction budget exhausted" | 0 | 0 | 0 | 0 |
+| ciclos (soma) | 132,8 G | 133,0 G | 422,3 G | 416,9 G |
+| instruções retiradas (soma) | 382,2 G | 381,8 G | 1079,4 G | 1078,9 G |
+| tempo de parede (soma; a máquina estava carregada) | 57,6 s | 57,4 s | 226,6 s | 219,1 s |
+
+Repetido depois de rebasear sobre a main com a rodada n18b (`8fad03dd`), 1800
+ticks: 133 rotas que falharam nas duas colunas (o total mudou com as rotas do
+n18b, não com o limite), saída idêntica nos 68 lotes, ciclos 136,9 G e
+137,5 G.
+
+Nenhum "sem rota" some e nenhum aparece: a saída do `lot-run` é idêntica nos
+68 lotes e a lista das rotas que falharam (tick, Sim, código, árvore) também.
+Os códigos são os mesmos nas duas colunas (1800 ticks: 2 = caminho não achado
+29, 13 = objetivo indisponível 15, 11 = pré-rota 6, 14 = bloqueado por pessoa 4,
+7 = destino ocupado 2, 9 = parede 1). O custo é ruído: o limite é só o valor inicial de
+um contador do `VM::run`; repetindo o mesmo comando 6 vezes com o mesmo limite
+(N001_Lot36 e N003_Lot192, 1800 ticks), os ciclos variam até 14% de uma
+repetição a outra e as instruções 1%, mais que a diferença entre os dois
+limites. Mais longe: `lot-run` do `N003_Lot192` por 80000 ticks (344 rotas
+que falharam nas duas) e `autonomy` com `OS2_SEED=2` até o tick 78000 (2702
+rotas que falharam nas duas) também não estouram o 20000 em turno nenhum; o
+"Controller - Relationship Decay" de 22.798 nós (tick 77371, semente 2) que a
+rodada 16 achou não reapareceu com o código de hoje (inferido: o estado
+daquele tick mudou com as rodadas seguintes). Ou seja: o 20000 das
+ferramentas era um erro latente (podia dar um falso "Too many iterations"
+e reiniciar a Main, como deu uma vez), não um que escondesse rotas nos lotes
+dos dados de hoje.
+
 ## 8. Portas e portais (binário)
 
 Cada portal (porta, arco, escada) é um par de pontos de entrada com uma
