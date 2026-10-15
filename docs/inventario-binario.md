@@ -78,7 +78,7 @@ palavra.
 | Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 6 / 9 = **67%** | 39 / 14 |
 | Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 7,5 / 10 = **75%** | 10 / 8 |
 | Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 7,5 / 11 = **68%** | 63 / 50 |
-| Corte de paredes | 11 (4) | 18 / 159 = 11,3% | 3,5 / 6 = **58%** | 4 / (na ui-live §8c) |
+| Corte de paredes | 11 (5) | 32 / 159 = 20,1% | 5,5 / 6 = **92%** | 4 / (na ui-live §8c–8d) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
 | Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% | 3 / 5 = **60%** | 12 / 6 |
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% | 4,5 / 7 = **64%** | 12 / 2 |
@@ -86,7 +86,7 @@ palavra.
 | CAS | 89 (23) | 87 / 1.534 = 5,7% | 5,5 / 8 = **69%** | 36 / 27 |
 | Desenho | 211 (31) | 129 / 2.309 = 5,6% | 4 / 9 = **44%** | 54 / 36 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% | 6,5 / 9 = **72%** | 43 / 52 |
-| **Total** | **816 (245)** | **1.357 / 13.977 = 9,7%** (só src: 699 = 5,0%) | **71 / 105 = 68%** | **519 em src** |
+| **Total** | **816 (246)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **73 / 105 = 70%** | **519 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -203,14 +203,14 @@ Código: `src/vm/placement.*`, `build_edit*.{hpp,cpp}`, `rooms.*`,
 
 Código: `src/app/wall_view.*`, `src/formats/lot_model.cpp` (regra do
 corte), `src/app/lot_view.mm`, `live_ui.cpp` (botões). Docs:
-`ui-live-mac.md` §8b–8c, `buy-build-mac.md` §7.6.1, issue 002.
+`ui-live-mac.md` §8b–8d, `buy-build-mac.md` §7.6.1, issue 002.
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
 | Modos: `cTSMainToolbar::SetWallMode`, `cITSMainToolbar::eWallMode`, `cTSWinProcUCP::onWallChanged` | `app/wall_view.*`, `live_ui.cpp` | fiel | 4 modos; telhado só no modo 3. |
-| Regra: `cWallCutawayManager::KeepOnlyFrontFacingOutsideWalls`, `CollectWallsEligibleForCutaway`, `nTSWorld::PartitionStyleSupportsCutaway` | `formats/lot_model.cpp` | inferido | Usamos a direção da vista no lugar da posição da câmera. O `TODO.md` (M4, "Cortada") ainda diz que a regra "não foi lida": está velho. |
-| Corte pelo Sim: `cutawayForSelectedSim`, `SetSelectedSimLocation` | `app/lot_view.mm`, `formats/lot_model.cpp` | inferido | Linha no plano, não a consulta de raio do jogo. |
-| Memória e alvos: `cutawayMemorySize` (3), `AddTargetLocation`, `Expose`, `SetCinematicsCutaway`, `SelectWallsBlockingPoints` | — | faltando | Sem memória de cômodos; cinemáticas sem corte próprio. |
+| Regra: `cWallCutawayManager::KeepOnlyFrontFacingOutsideWalls`, `CollectWallsEligibleForCutaway`, `nTSWorld::PartitionStyleSupportsCutaway`, `UpdateSceneGraph` | `formats/lot_model.cpp` (`lotCutawayWalls`), `app/lot_view.mm` | fiel | Rodada n05: pela posição da câmera; refeito só quando o conjunto cortado muda (`ui-live-mac.md` §8d). Inferido: o mapa de cômodos das faces (o de luz). |
+| Corte pelo Sim: `cutawayForSelectedSim`, `SetSelectedSimLocation`, `CutawayLocationChanged`, `nTSWorld::cWallGraph::WallsBetweenPointSetAndPoint` | `app/lot_view.mm`, `formats/lot_model.cpp` | fiel | Rodada n05: raio do Sim até 3,0 de altura, passo de tiles e regra das arestas do jogo (`lotWallsBetweenPointsAndCamera`). |
+| Memória e alvos: `cutawayMemorySize` (3), `AddTargetLocation`, `Expose`, `SetCinematicsCutaway`, `SelectWallsBlockingPoints`, `SelectRoomBlockers`, `SelectNearSemicircleBlockers` | `formats/lot_model.cpp`, `app/cinematic_host.cpp` | fiel | Rodada n05. Inferidos: os vértices do meio círculo, o cômodo de um ponto, o flag +0x194 do Start (desligado) e quando a memória zera (troca de lote). |
 | Geometria cortada: `nTSSG::cWallManager` (59, 5), `cWallGeometryNode` (60, 1), `cSimplifiedWall` (10, 0) | `formats/lot_model.cpp` | inferido | UV do topo (`wall_top`) é chute. |
 | Objetos com a parede baixa: `cTSObject::HideWhenWallDown`, `SuppressHideWhenWallDownFlag` | `app/build_mode*.cpp`, `vm/placement.cpp` | fiel | Issue 002. |
 
@@ -359,7 +359,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 | 2 | **Corpo do Sim: coreografia, mistura e IK** (`cChoreoQueue`, `cChannelUber*`, `cActiveAnimIK`, `cIKChain`, transições de locomoção) — **feita** (n02): ordem da fila, expiração, peso dos canais e o solucionador de IK do binário; memória do osso; E, G, I da issue 001 (`docs/anim-mac.md`); transições de locomoção ficam no `TODO.md`. | Todo Sim, todo quadro. Junta com a parte G do sentar se rodar junto. | 2 Opus (1 leitura + 1 código) | sim |
 | 3 | **Rotas: slots e escadas** (`cTSRoutingSlot`, `cTSSlotDescriptor`, `CollisionCheck`, portal do degrau) — **feita** (n03): escadas como portais dos slots (duas faixas de mão única, os Sims não se travam no patamar), bits do `cTSRoutingSlot`, `CollisionCheck` e o +20 "parado" do binário (`routing-mac.md` §6.1, §8.2, §8.6). | Sims presos (a escada do N001_Lot11) quebram o jogo. | 1 Opus | sim |
 | 4 | **VM: o que o motor mantém** (object data "room", pontos de entrada load/cleanup/roomChanged, sub-fila e aninhadas) — **feita** (n04): `OnRoomChanged` (entrada 7, portas com as duas salas), `UpdateObjectsInRoom`, load em todo objeto carregado (`PostLoad`), `UpdateWallAdjacency` (od 5 e entrada 6, 319/321 bancadas batem), `SetCurrentAction` (`primitives-mac.md` §4i). | Sims travados no soak; afeta luzes e salas. | 1 Opus | sim |
-| 5 | **Corte de paredes: memória e alvos** (`cutawayMemorySize`, `AddTargetLocation`, `Expose`, posição da câmera, raio do Sim) | Visível em todo lote; rodada pequena. | 1 Opus | sim |
+| 5 | **Corte de paredes: memória e alvos** (`cutawayMemorySize`, `AddTargetLocation`, `Expose`, posição da câmera, raio do Sim) — **feita** (n05): posição da câmera, `WallsBetweenPointSetAndPoint` (raio até 3,0 de altura), `Expose` com memória de 3 cômodos e o Start das cinemáticas (`ui-live-mac.md` §8d). | Visível em todo lote; rodada pequena. | 1 Opus | sim |
 | 6 | **Desenho: telhados, cercas e água** (`cWorldRoof`, `cFenceGeometryNode`, `cWaterGeometryBuilder`) e sombras de objetos | Muito visível, mas a regra é "bom o bastante". | 1 Opus (geometria) + 1 Sonnet (água e espelho, sem binário) | Opus sim |
 | 7 | **Construção: suporte, telhado e terreno** (`HasSupport`, `SupportedUnderneath`, leveler, `cTSUserToolRoof`, piscinas) | Erros de colocação no modo Construção. | 1 Opus | sim |
 | 8 | **Relacionamentos e memórias** (`cTSRelationshipTable`, gravador das `SREL`, `cTSMemory*`) + painel de memórias | Afeta histórias e o painel; não quebra o jogo. | 1 Opus + 1 Sonnet (painel) | Opus sim |

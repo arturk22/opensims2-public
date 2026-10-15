@@ -617,7 +617,7 @@ No app (rodada 12, `app/wall_view`, `formats/lot_model`): os quatro modos
 como no jogo (o telhado só no modo 3; o leque acende um dos quatro; Home/End
 andam em ciclo pelos quatro, inferido); no modo 1 as paredes internas do
 andar são todas cortadas, as externas só com a face de fora virada para a
-câmera (pela direção da câmera, que está longe, em vez da posição), as soltas
+câmera (rodada 12: pela direção da câmera; desde a n05, pela posição, §8d), as soltas
 no quintal nunca, e só as de estilo `mayCutAway` (paredes normais e de sótão;
 cercas — padrão falso, inferido do `fencearches.txt` —, fundação, piscina e
 saias de deck não); os cômodos das faces vêm do mapa de luz (3ARY `0x0B`),
@@ -625,9 +625,8 @@ em que quintais cercados são fora. Recalcula quando a câmera passa de um
 lado de uma direção de parede, o andar ou o modo mudam, ou as paredes mudam;
 o Sim selecionado entra desde a rodada 13 (`LotViewOptions::simLine`): com o
 Sim selecionado no andar mostrado, as paredes elegíveis que cruzam, na planta,
-o segmento da câmera (posição) ao Sim também são cortadas (inferido: o jogo
-usa uma consulta de raio do mundo, aqui a interseção 2D); o modelo é refeito
-quando o Sim ou a câmera muda de tile.
+o segmento da câmera (posição) ao Sim também eram cortadas (a interseção 2D;
+trocada na n05 pela consulta do jogo, §8d).
 
 ### 8d. Corte: posição da câmera, raio do Sim, alvos e memória (binário, rodada n05)
 
@@ -717,6 +716,31 @@ posição de cada ator como alvo (`AddTargetLocation`, x, y e andar) e liga
   virada para a câmera, são cortadas (as com as duas faces no cômodo
   também), e as pontas delas viram pontos de `SelectWallsBlockingPoints`
   (corta o que tapa essas paredes).
+
+No app (rodada n05, `formats/lot_model` `lotCutawayWalls`,
+`lotWallsBetweenPointsAndCamera`, `lotRoomAt`; `app/lot_view.mm`,
+`app/cinematic_host.cpp`): o corte testa as paredes contra a **posição** da
+câmera (`LotViewOptions::camera`; sem câmera, no CAS e antes dela existir, a
+direção); é calculado a cada quadro e o modelo do lote só é refeito quando o
+conjunto de paredes cortadas muda (como o `UpdateSceneGraph`, que só mexe
+nas diferenças). O Sim selecionado usa a consulta do jogo (`simPoint`: x, y e
+a altura do piso; o ponto só é tomado de novo quando o Sim muda de cômodo,
+de tile fora de casa, ou a câmera/vista muda). Nas cinemáticas
+(`cinematics`, `exposeOutside`, `exposeRooms`): o Start leva ao andar do
+primeiro ator e ao modo 1 (3 com a casa inteira), os atores viram alvos e o
+corte é o `Expose` com a câmera da cena; a memória de 3 cômodos fica no
+`gScene` (zerada ao trocar de lote). Inferidos: o mapa de cômodos (o de luz,
+3ARY `0x0B`, para faces, Sim e alvos; o jogo consulta o serviço do mundo
+`0x13c`), o cômodo de um ponto (o quarto de tile para onde o ponto pende),
+os vértices do meio círculo (o quadrado inclusive, um vértice "toca cômodo"
+se um dos 4 tiles em volta tem cômodo), a altura do piso (a do lote, não a
+amostra do jogo) e o flag +0x194 (tratado como desligado). Capturas:
+`docs/screenshots/n05-corte-antes-depois.jpg` (antes à esquerda, depois à
+direita; `--lot N001_Lot11 --ui live --run-vm 30`: em cima `--orientation
+1`, recortado: a parede de fora a leste não desce mais pela linha câmera–Sim
+no plano, que ia longe demais; no meio `--orientation 2 --zoom 3 --pivot
+8,20`, igual; embaixo `--cinematic firstKiss --time 1.3`, a cena pelo
+`Expose`).
 
 ## 9. O que falta
 
