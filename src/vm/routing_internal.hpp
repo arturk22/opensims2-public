@@ -29,6 +29,15 @@ constexpr int kHorizonSteps = 10;    // 10.02 steps
 
 // routing.cpp: either one's "allow intersection" tree lets the two overlap.
 bool intersectionAllowed(VM& vm, const Object& a, const Object& b);
+// Between two people TSObjectCanSetPosition(AndOrientation) refuses a place
+// whose centre is within this of the other's (TestPlacementWithRespectToObject,
+// BV 0x8ac158, 0x274b968), whatever their ages: the per-step test and
+// EvalTileForGoal's "a person on it" (code 6).
+constexpr float kPeopleApart = 0.283f;
+// routing_loco.cpp: two people may overlap all the same (either one's object
+// data 8 "flags" 0x04 | 0x10, a ghost's person data 68 bit 0x08, or either
+// one's "allow intersection" tree).
+bool peopleMayOverlap(VM& vm, const Object& a, const Object& b);
 // How far a point is from the nearest wall edge around it (EvalTileForGoal's
 // 0.3 circle, TrySnap's wall test).
 float nearestWallEdge(const World& w, float px, float py, int level);

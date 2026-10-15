@@ -839,15 +839,17 @@ static void testBlockedBySim() {
     // pauses, "CT - Route Blocked Animation" here a 30-tick wait, and plans
     // round the other: the blocked walk's try counter goes on with the same
     // Sim since round n18, so without the pause's time the second block
-    // gave up).
+    // gave up). Each starts a tile short of the other's goal: on it, its
+    // slot's only point there (the scan's cone, round n30, leaves out the
+    // row's ends, a tile to either side) would be taken from the start.
     Behavior pauseTree = tree({expr(0x09, 2, Assign, Lit, 30, go(1), E), instr(0x00, T, E, {2, 0})}, 4);
     pauseTree.fileName = "CT - Route Blocked Animation";
     code.add(kGlobalGroup, 0x1BB, pauseTree);
     vm.world = World(12, 12);
     Object& a = walker;
     Object& b = other;
-    a.position = {1.5f, 6.5f, 1};
-    b.position = {10.5f, 6.5f, 1};
+    a.position = {2.5f, 6.5f, 1};
+    b.position = {9.5f, 6.5f, 1};
     Object& lampB = vm.instantiate(kGroup, 0x80);
     lamp.position = {11.5f, 6.5f, 1};
     lampB.position = {0.5f, 6.5f, 1};

@@ -234,9 +234,11 @@ namespace {
 // within 0.4 tile, +10 for another room when the slot ignores rooms, +5 for
 // a door on its tile. Occupied, from TSObjectCanSetPositionAndOrientation's
 // errors in the binary: 1 for an object in the way (a blocking object's
-// footprint under the Sim's box at the point, not a part of the target) and 6 for a person (object type 2;
-// here: another Sim, not the router, whose centre is within half a tile, two
-// bodies' radii: inferred). Not done: the pushable objects (+10 instead of
+// footprint under the Sim's box at the point, not a part of the target) and 6 for a person (object type 2,
+// vtable 0x184: another Sim, not the router, whose centre is within 0.283 of
+// the point, TSObjectCanSetPositionAndOrientation's test between people,
+// unless the two may overlap; round n30, read in BV 0x475074: was half a
+// tile, inferred). Not done: the pushable objects (+10 instead of
 // 1: an object of type 8 when the route may push), the water/terrain query
 // (+5), and the slot flags that allow 2/3 with +10.
 int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float px, float py, int level,
@@ -277,10 +279,13 @@ int evalGoal(VM& vm, const World& w, const Object& target, TilePos centre, float
                 if (overlaps && !(walker && intersectionAllowed(vm, *o, *walker)))
                     return 1;
             }
-    for (const auto& [id, o] : vm.eachObject())
-        if (o.person && id != router && id != target.id && o.position.inWorld() && o.position.level == level &&
-            o.data[objdata::ContainerId] == 0 && std::hypot(o.position.x - px, o.position.y - py) < 0.5f)
+    for (const ObjectId id : vm.people()) { // by ID, as objects() is
+        const Object* o = vm.object(id);
+        if (o && o->person && id != router && id != target.id && o->position.inWorld() && o->position.level == level &&
+            o->data[objdata::ContainerId] == 0 && std::hypot(o->position.x - px, o->position.y - py) < kPeopleApart &&
+            !(walker && peopleMayOverlap(vm, *walker, *o)))
             return 6;
+    }
     for (const World::Door& d : w.doors())
         if (d.tile == t)
             penalty += 5;
@@ -538,7 +543,8 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
     if (minD < 0 || maxD < 0 || maxD < minD || optimal < minD || maxD < optimal)
         return out;
     const float res = std::max(slot.resolutionTiles, 0.0625f);
-    const float spread = std::tan(0.7853982f * 0.5f);
+    constexpr float kScanCone = 0.7853982f; // the scan context's +0x40 (BV 0x274b59c)
+    const float spread = std::tan(kScanCone * 0.5f);
     const float weight = slot.gradient;
     const int rows = int(std::ceil(std::max(maxD - optimal, optimal - minD)));
     std::vector<int> entries; // absolute directions
@@ -595,6 +601,13 @@ VM::RouteGoals VM::routingGoals(const Slots::Slot& slot, const Object& target, b
                             return;
                         lastEntry = d; // the scan's context direction (+0x20)
                         if (total > 100 && std::uniform_int_distribution<int>(0, total - 1)(random) > 100)
+                            continue;
+                        // The cone (FUN_01655af0, before EvalTileForGoal; round n30):
+                        // 2 atan2(|lateral| - width, forward) within the scan's
+                        // 45 degrees (+0x40; the width +0x44 is 0 for standing
+                        // goals). The row's ends, a step past r tan 22.5
+                        // degrees, are left out.
+                        if (2.0 * std::atan2(double(std::fabs(lateral)), double(r)) > double(kScanCone))
                             continue;
                         ++candidates;
                         const auto [sx, sy] = directionStep(d);

@@ -1161,7 +1161,17 @@ namespace routing_internal {
 // (footprintBlocker). Inferred: a walker already standing in the other (or
 // in an object's footprint) may walk on (LocoPlace puts it where it is stuck
 // when its own place does not pass either).
-constexpr float kPeopleApart = 0.283f;
+bool peopleMayOverlap(VM& vm, const Object& a, const Object& b) {
+    // Either one may intersect people (object data 8 "flags" 0x04 | 0x10:
+    // zero extent, allow person intersection), or either one's "allow
+    // intersection" tree (OBJf 5) lets the two overlap. A person's
+    // CanIntersectPeople is also bit 0x08 of its +0x72a field (inferred:
+    // person data 68, as bit 0x02 there).
+    auto ghostly = [](const Object& p) { return p.person && p.person->data.size() > 68 && (p.person->data[68] & 0x08); };
+    return (a.data[objdata::Flags] & 0x14) || (b.data[objdata::Flags] & 0x14) || ghostly(a) || ghostly(b) ||
+           intersectionAllowed(vm, b, a);
+}
+
 ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, float y, int level) {
     if (me.person && me.person->data.size() > 68 && (me.person->data[68] & 0x02))
         return 0;
@@ -1178,14 +1188,7 @@ ObjectId stepBlocker(VM& vm, const Object& me, const Object::Route& r, float x, 
         const float then = std::hypot(o.position.x - x, o.position.y - y);
         if (!(then < reach && now >= reach))
             continue;
-        // Either one may intersect people (object data 8 "flags" 0x04 |
-        // 0x10: zero extent, allow person intersection), or either one's
-        // "allow intersection" tree (OBJf 5) lets the two overlap.
-        // A person's CanIntersectPeople is also bit 0x08 of its +0x72a field
-        // (inferred: person data 68, as bit 0x02 there).
-        auto ghostly = [](const Object& p) { return p.person && p.person->data.size() > 68 && (p.person->data[68] & 0x08); };
-        if ((me.data[objdata::Flags] & 0x14) || (o.data[objdata::Flags] & 0x14) || ghostly(me) || ghostly(o) ||
-            intersectionAllowed(vm, o, me))
+        if (peopleMayOverlap(vm, me, o))
             continue;
         return id;
     }
