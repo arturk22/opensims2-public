@@ -1063,15 +1063,15 @@ está no andar −1 e anda nesse piso. Sai por um **portal de objeto**:
   **par de portal** (`cTSRoutingSlot::IsPortalPair`): o nome do slot (osso,
   `vtable 0x144` índice 0) e o nome da outra ponta (índice 1). Nos dados os
   dois nomes são a entrada do STR# 0x90 ("Model - Bones") do slot,
-  **"meu,outro"**. Inferido: o par é a flag **`0x200000`** do SLOT. Nos
+  **"meu,outro"**. O par é a flag **`0x200000`** do SLOT (confirmado na rodada n03, §8.6). Nos
   2.991 slots de rota do `objects.package` ela só aparece em 4 grupos: a
   escada da piscina, o trampolim, o "Route - Step Over" (o portal de passar
   por cima, `UpdateStepOverPortal`) e dois slots de uma poltrona (nomes sem
   vírgula: nenhum par); a `0x80000`, que as duas também têm, está em 72
   grupos. A escada tem ainda `0x400000`/`0x800000` (os
   `DisableLocomotionContinuationAt{Start,End}OfPortalPair`). No
-  `cTSRoutingSlot` o par é o bit `0x100000` de `+0x30` (vtable `0xa8`, BV
-  `0x4aed08`, e o setter `0xac`); como o SLOT vira esses bits não foi lido.
+  `cTSRoutingSlot` o par é o bit `0x200000` das RS flags (rodada n03,
+  §8.6: confirmado; o `0x100000` de antes era a vtable errada).
 - `PortalConnectSlotInformation` (BV `0xe1f878`) liga cada par ao slot cujo
   nome é o "outro"; `PortalAddToPathPlannerImpl` (BV `0xe22a44`) chama o
   `AddPortal` do gerente (`cTSRouteManager::AddPortal` → `cPathPlanner::
@@ -1101,6 +1101,98 @@ fome). Rodada 16: o modo compra também refaz os portais (pôr, mover, pegar,
 vender ou apagar um objeto: `applyPlacement`, `pickUp`, `deleteGroup` em
 `vm/placement.cpp`); `N001_Lot68`: a escada movida para (3, 12) liga
 (3,5; 13) e (3,5; 11,25), e vendida some o portal dela.
+
+### 8.6 Escadas como portais de slot: duas faixas de mão única (rodada n03, binário, Ghidra MCP)
+
+O jogo **não** faz o portal da escada pela geometria dos degraus: ele vem
+dos **slots de rota** das peças, como o da escada da piscina (§8.5). O VM
+fazia um portal só por escada, do meio do patamar de baixo ao meio do de
+cima, nos dois sentidos; dois Sims em sentidos opostos se encontravam no
+mesmo ponto do patamar e um esperava o outro para sempre (`N001_Lot11`, o
+Mortimer subindo a escada da varanda e o Alexander descendo:
+"blocked by 142" e falhas 14/9 até o fim).
+
+**Os bits do `cTSRoutingSlot`** (vtables lidas nesta rodada; o objeto tem
+duas: a primária, `cITSSlot`, e a de `cITSRoutingSlot` em `+0x20`, cujas
+entradas são thunks `this -= 0x20`):
+- `Init` (BV `0x4ae920`, depois do `cTSSlot::Init` `0x4ae7e0`): `+0x30` =
+  as **RS flags** do descritor **sem conversão** (`cTSSlotDescriptor` vtable
+  `0x64` = `+0x38`, a 4ª u32 depois do x,y,z no SLOT: o nosso
+  `Slots::Slot::flags`); `+0x24/+0x28/+0x2c` os multiplicadores (em pé,
+  sentado, chão), `+0x34` o snap target, `+0x38..+0x44` mín/máx/ótimo e o
+  gradiente.
+- `cITSRoutingSlot` vtable `0xa8` `IsPortalPair` = flags & **`0x200000`**
+  (BV `0x4aede4` pelo thunk `0x16732c0`); `0xac` = `0x400000`
+  (`DisableLocomotionContinuationAtStartOfPortalPair`), `0xb0` = `0x800000`
+  (`...AtEnd...`), `0xb4` `IsAssociatedWithAContainmentSlot` = `0x200000`
+  **e** `0x2000000`. **Confirmado** o `0x200000` que a rodada 15 inferiu
+  (a leitura de `+0x30 >> 20` de antes era a vtable primária, que não é a
+  que o `PortalGatherSlotInformation` chama).
+- `cITSSlot` vtable `0x20` = `+0x18` = o u32 do descritor em `+0x24` (no
+  SLOT, o que vem depois do "max size": o nosso `unknown10`), e `0x24` =
+  `+0x1c` = o índice do nome (`ts2Extra[0]`). `cTSObject::ModelBoneName`
+  (BV `0xafbb30`) só dá nome a slot com **`0x20000`** nesse campo; o nome é
+  a entrada do STR# `0x90` do slot, partida por vírgulas (índice 0 = o
+  próprio, 1 = o outro).
+- `cTSSlotDescriptor::Read` (BV `0x4b08a4`): a ordem é a do nosso parser
+  (tipo, x, y, z, 3 multiplicadores, RS flags, snap, mín/máx/ótimo,
+  `+0x20`, `+0x24`, gradiente, altura, facing, resolução, os 2 u32 do TS2).
+  Ele escala x,y por 1/16 até a "versão" `0x46` e as proximidades inteiras
+  por 1/16 entre 9 e `0x42`; os SLOT `0x43`–`0x46` do jogo base já têm x,y
+  em tiles (0,7, 0,495…), então a versão comparada ali não é a do
+  cabeçalho que o nosso parser lê (não conferido; o parser fica como está).
+
+**Quem entra** (`PortalFillInSlotInfoList`, BV `0xe21a18`, e o do
+multi-tile `0xaf17f4`, que percorre as partes no líder):
+- objeto de tipo `0xc` (o "Portal - A" da escada modular): os slots dele e
+  os do **outro extremo** (`PortalGetOtherEndOfStairs`, BV `0xe21144`: o
+  último objeto do mesmo grupo de objetos, fora ele, de tipo 11 ou 12, na
+  prática o "... - End"); os "Bridge" do meio não entram;
+- os outros: os slots do próprio objeto (no multi-tile, de todas as
+  partes, na lista do líder);
+- depois `PortalGatherDynamicSlotInfo` (BV `0xe213b4`) junta dois portais
+  dinâmicos dos dados de objeto `0x58`–`0x61` (objeto, slot, GUID), que só
+  o BV usa (o jogo base tem 88 dados de objeto, até o 87).
+
+`PortalGatherSlotInformation` (BV `0xe1ff3c`), para cada slot de rota com
+nome (`ModelBoneName`; nomes repetidos ficam com o primeiro):
+- par de portal (`0x200000`): a ligação "meu nome → outro nome" (§8.5);
+- senão, só nos tipos **8, 10, 11, 12** (porta, escada reta, escada
+  modular, portal da modular): o outro nome sai de
+  `TSObjectAutoPortalConnectionNameGenerator` (BV `0xe1fa5c`), que troca o
+  sufixo: `_n`↔`_s`, `_e`↔`_w`, `_nw`↔`_se`, `_ne`↔`_sw`,
+  **`_top`↔`_bottom`** (strings em BV `0x1045eb4`). Cada slot gera uma
+  ligação; `PortalConnectSlotInformation` (BV `0xe1f878`) acha o slot com o
+  outro nome e descarta as ligações sem par.
+
+Cada peça das escadas do jogo base tem **dois** slots de rota (flags `0x800`
+ou `0x1000` no slot 0, `0x1800` no slot 1; `0x20000` no campo do nome):
+- escada reta: o pad de baixo ("Lo 0,5 Pad") tem `route_staircasestraight_1_bottom`
+  (slot 0) e `_0_bottom` (slot 1); o de cima ("Hi 0,0 Pad") tem `_0_top`
+  (slot 0) e `_1_top` (slot 1);
+- escada modular: o "Portal - A" tem `route_modularStair_0_top` (slot 0) e
+  `_1_top` (slot 1); o "End", `_1_bottom` (slot 0) e `_0_bottom` (slot 1).
+
+São **duas faixas** lado a lado, a 0,33 tile uma da outra: `_0_*` e `_1_*`.
+
+**A direção** (`PortalAddToPathPlannerImpl`, BV `0xe22a44`): para cada
+ligação A → B, o objeto do slot A precisa ter a entrada 15 (senão a ligação
+não vira portal); nos tipos 10, 11 e 12 o portal sai da ponta cujo slot é o
+**de número 0**: A é slot 0 → A → B; senão, B é slot 0 → B → A; nenhum dos
+dois é 0 → A → B de mão dupla. Com slot 0 o portal é de **mão única**: o
+segundo bool do `cTSRouteManager::AddPortal` (BV `0x4f26f4`) vai ao `+0x61`
+do `cPortal` (construtor BV `0xba3448`), que é o `IsOneWay` (BV `0xba2f04`,
+`lbz +0x61`), e `MakeNodesForPortal` (BV `0x604584`) só liga B → A sem ele.
+Resultado nas duas escadas: a faixa `_0` é a de **descer** (do slot 0 de
+cima ao de baixo) e a `_1` a de **subir** (do slot 0 de baixo ao de cima);
+quem sobe e quem desce não se cruzam (cada um pela sua direita). A
+posição de cada ponta (`PortalGetLocationOfSlot`, BV `0xe21b6c`) é a do
+objeto mais o deslocamento do slot girado pela direção dele, no andar do
+objeto; a direção (`PortalGetDirectionOfSlot`) é a do objeto mais a do
+slot. Portas (tipo 8) usam o mesmo par de nomes mas vão pelo
+`AddDoorPortal`; as escadas reta e modular (tipos 10 e 12) põem ainda
+retângulos de custo 10 junto das pontas conforme o tipo de modelo
+(`TSObjectGetModelType` 2–4, ±0,32499; não feito).
 
 ## 8.1 Pedir para sair: `AskBlockerToMove` / `MoveOutOfWay` (binário)
 
