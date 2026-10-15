@@ -138,6 +138,12 @@ int main() {
     check(lotStartMode(true, std::nullopt).empty(), "an occupied lot opens in Live mode");
     check(lotStartMode(false, std::string("build")) == "build", "--mode build on an unoccupied lot");
     check(lotStartMode(true, std::string("buy")) == "buy", "--mode buy on an occupied lot");
+    // ApplySavedUIState: the saved floor (1 the ground) held to the world's
+    // floors, in the app's numbering (0 the ground).
+    check(savedUiLevel(1, -1, 6) == 0, "saved floor 1: the ground");
+    check(savedUiLevel(0, -1, 6) == -1, "saved floor 0: the level under the ground of a lot that has one");
+    check(savedUiLevel(0, 0, 4) == 0, "saved floor 0 on a lot from the ground: the ground");
+    check(savedUiLevel(9, 0, 4) == 3, "saved floor past the top: the top");
 
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

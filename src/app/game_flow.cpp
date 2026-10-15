@@ -187,6 +187,13 @@ std::string lotStartMode(bool occupied, const std::optional<std::string>& reques
     return occupied ? std::string() : std::string("buy");
 }
 
+int savedUiLevel(int savedLevel, int minLevel, int levelCount) {
+    // WorldDB vtables 0x140/0x144 (base 0x110/0x114): the lowest and the
+    // highest floor; the game counts from 1 at the ground, the app from 0.
+    const int lowest = minLevel + 1, highest = minLevel + std::max(levelCount, 1);
+    return std::clamp(savedLevel, lowest, highest) - 1;
+}
+
 std::string numberedShot(const std::string& shot, int n) {
     const auto dot = shot.rfind('.');
     const auto slash = shot.rfind('/');

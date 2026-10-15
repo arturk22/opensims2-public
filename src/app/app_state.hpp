@@ -42,6 +42,7 @@
 #include "app/scene_loader.hpp"
 #include "app/tv_broadcast.hpp"
 #include "formats/neighborhood.hpp"
+#include "formats/lot_ui_state.hpp"
 #include "formats/ui_script.hpp"
 #include "vm/tutorial.hpp"
 #include "vm/wants.hpp"
@@ -298,6 +299,9 @@ struct SceneState {
     os2::LotModelCache lotCache;
     std::optional<std::string> hoodLot;
     bool lotVacant = false;
+    // The UI state saved with the lot (cTSMainToolbar::Read, resource
+    // 0x8B0C79D6), as read when it was entered.
+    std::optional<os2::LotUiState> lotUi;
     fs::path lotFile;
     size_t stepsUsed = 0;
     double headlessClock = 0;

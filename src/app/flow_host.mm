@@ -120,7 +120,20 @@ bool saveGameNow() {
     if (gBuild && gBuild->active())
         gBuild->cancel();
     const CFTimeInterval start = CACurrentMediaTime();
-    const os2::GameSaveResult r = os2::saveGame(gSimulation->machine(), gLotFile, gameDir(), os2::sessionCharactersDir());
+    // cTSMainToolbar::Write: the pause, the floor and the wall mode. In Buy
+    // or Build mode the pause is the one the lot had (inferred: the modes
+    // keep the Live pause to themselves).
+    os2::LotUiState ui;
+    const bool tool = (gBuy && gBuy->active()) || (gBuild && gBuild->active());
+    const bool livePaused = gSimulation->machine().globals[os2::vm::global::Paused] != 0;
+    ui.paused = tool ? (gScene.lotUi ? gScene.lotUi->paused : livePaused) : livePaused;
+    ui.level = gBuy && gBuy->active()       ? gBuy->level()
+               : gBuild && gBuild->active() ? gBuild->level()
+               : gCameraFollow              ? gCameraFollow->level() + 1
+                                            : 1;
+    ui.wallMode = gWallView.mode();
+    const os2::GameSaveResult r =
+        os2::saveGame(gSimulation->machine(), gLotFile, gameDir(), os2::sessionCharactersDir(), ui);
     for (const auto& l : r.lines)
         std::printf("opensims2: save: %s\n", l.c_str());
     if (r.ok)

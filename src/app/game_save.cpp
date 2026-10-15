@@ -5,6 +5,7 @@
 #include "formats/simantics.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
+#include "formats/lot_ui_state.hpp"
 #include "formats/neighborhood.hpp"
 #include "vm/hood_bridge.hpp"
 #include "vm/hood_save.hpp"
@@ -82,7 +83,8 @@ std::vector<std::string> copySessionCharacters(vm::VM& vm, const fs::path& sessi
     return lines;
 }
 
-GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gameDir, const fs::path& sessionDir) {
+GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gameDir, const fs::path& sessionDir,
+                        const std::optional<LotUiState>& ui) {
     GameSaveResult out;
     try {
         if (under(lotFile, gameDir))
@@ -113,6 +115,21 @@ GameSaveResult saveGame(vm::VM& vm, const fs::path& lotFile, const fs::path& gam
             vm::CaptureResult captured = vm::captureLot(vm, saved, &more);
             const Lot world = Lot::load(pkg);
             const vm::RecordsResult records = vm::captureLotRecords(vm, world, pkg, saved, captured.lot, templates);
+            if (ui) {
+                // cTSMainToolbar::Write's state over the lot's own (its name
+                // field kept), or a new one at instance 2 as the game's lots.
+                LotObjects::Record r{kTypeLotUiState, 0xFFFFFFFF, 2, {}};
+                std::vector<uint8_t> name;
+                for (const auto& e : pkg.entries())
+                    if (e.tgi.type == kTypeLotUiState) {
+                        r.group = e.tgi.group, r.instance = e.tgi.instance;
+                        const auto old = pkg.read(e);
+                        name.assign(old.begin(), old.begin() + std::min<size_t>(old.size(), 64));
+                        break;
+                    }
+                r.bytes = writeLotUiState(*ui, name);
+                captured.lot.otherRecords.push_back(std::move(r));
+            }
             captured.lot.save(pkg, tmpLot);
             char buf[512];
             std::snprintf(buf, sizeof buf,

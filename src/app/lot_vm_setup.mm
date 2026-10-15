@@ -54,6 +54,25 @@ void updateAudio(double seconds) {
     }
 }
 
+// cTSMainToolbar::ApplySavedUIState (docs/game-flow-mac.md §7.6): the pause,
+// the wall mode and the floor saved with the lot (cTSMainToolbar::Read,
+// resource 0x8B0C79D6) put back after it loads, over the first day's Resume
+// too; done before Buy or Build mode is entered, as they keep the pause they
+// find for Live mode. A lot without the resource keeps what it had.
+static void applySavedUiState(os2::DbpfPackage& pkg, const os2::Lot& lot) {
+    gScene.lotUi = os2::readLotUiState(pkg);
+    if (!gScene.lotUi || !gSimulation)
+        return;
+    const os2::LotUiState& ui = *gScene.lotUi;
+    gSimulation->machine().globals[os2::vm::global::Paused] = ui.paused ? 1 : 0;
+    setWallMode(ui.wallMode);
+    const int level = os2::savedUiLevel(ui.level, lot.minLevel, int(lot.levelCount));
+    if (gCameraFollow)
+        gCameraFollow->setLevel(level);
+    std::printf("opensims2: saved UI state: %s, floor %d (app %d), walls %d\n", ui.paused ? "paused" : "running",
+                int(ui.level), level, int(ui.wallMode));
+}
+
 // --vm / --run-vm: the lot's objects in the VM, with its Sims attached to
 // their actors; --vm-walk <sim>,<object>[,<anim>] starts a scripted walk.
 void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const os2::Lot& lot, os2::DbpfPackage& pkg,
@@ -564,6 +583,7 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
         return !cut;
     };
     perfLap("  VM hooks");
+    applySavedUiState(pkg, lot);
     setupPieMenu(index);
     perfLap("  pie menu");
     if (liveUiRequested())

@@ -455,3 +455,28 @@ Depois de escolher o modo, `ApplySavedUIState`:
 O andar do jogo começa em 1 no chão (o `FUN_008b6374` tira 1 do andar da
 posição); o do app em 0. **Antes desta rodada** o app abria o lote no andar
 do primeiro Sim, com as paredes cortadas e a pausa do global 17 do SIMI.
+
+O pausado salvo bate com o global 17 em 65 dos 68 lotes; os três que não
+batem são os lotes 14, 18 e 19 do Tutorial (global 17 = 1, barra = 0): o
+"o tutorial começa rodando" que o app já fazia (inferido) é o estado salvo
+do jogo nesses três. Os lotes 1 e 4 do Tutorial têm a barra pausada; o app
+os mantém rodando (inferido: sem isso a primeira janela do episódio só
+viria depois de o jogador soltar a pausa; o começo de um episódio no jogo
+não foi lido). O `ApplySavedUIState` é chamado na mensagem `0xCC` (o
+tratador de mensagens do `cTSMainToolbar`, BV `0x1af104`), que nenhum passo
+do `LoadLot` manda (inferido: vem com a UI do lote, depois da carga e do
+`Resume` do primeiro dia): uma família que se muda para um lote salvo
+pausado começa pausada.
+
+**No app (rodada n27):** `formats/lot_ui_state.*` lê e escreve o recurso;
+`applySavedUiState` (`app/lot_vm_setup.mm`) põe o global 17, o modo de
+parede e o andar da câmera (`savedUiLevel`, `app/game_flow.*`: preso entre o
+menor e o maior andar do lote) antes de entrar em Comprar/Construir (que
+guardam a pausa que acham para o Viver); Comprar e Construir de partida
+começam no andar salvo; no Viver a câmera segue o andar do Sim selecionado
+como já fazia. Salvar (`saveGameNow`) grava pausado, andar e modo de parede
+(versão 2, como os lotes do jogo; em Comprar/Construir a pausa é a que o
+lote tinha, inferido). Sem tela: `opensims2 ... --hood N001 --hood-lot 11
+--vm --ui live --key walls-2 --click 139,690 --click 208,678` salva paredes
+2 e a volta ao lote imprime `saved UI state: running, floor 1 (app 0),
+walls 2`.

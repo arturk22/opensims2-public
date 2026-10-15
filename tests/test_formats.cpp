@@ -14,6 +14,7 @@
 #include "formats/lot_diffusion.hpp"
 #include "formats/lot_roof.hpp"
 #include "formats/lot_water.hpp"
+#include "formats/lot_ui_state.hpp"
 #include "formats/log_once.hpp"
 #include "app/wall_view.hpp"
 #include "formats/image.hpp"
@@ -2075,8 +2076,35 @@ static void testGameRoofs() {
     }
 }
 
+// The lot's saved UI state (cTSMainToolbar::Write/Read, resource
+// 0x8B0C79D6): version 2 as the base game's lots (paused, floor, wall mode
+// and a fifth u32), version 0 paused with one more u32; written back as
+// read. With OS2_DATA: N001_Lot11's (running, floor 1, cutaway).
+static void testLotUiState() {
+    os2::LotUiState s;
+    s.paused = true, s.level = 2, s.wallMode = 3;
+    const auto bytes = os2::writeLotUiState(s);
+    const auto back = os2::parseLotUiState(bytes);
+    check(bytes.size() == 64 + 20 && back && back->version == 2 && back->paused && back->level == 2 && back->wallMode == 3,
+          "lot UI state: written and read back");
+    std::vector<uint8_t> v0(64, 0);
+    for (uint32_t w : {0u, 0u, 7u, 1u, 2u})
+        for (int k = 0; k < 4; ++k)
+            v0.push_back(uint8_t(w >> (8 * k)));
+    const auto old = os2::parseLotUiState(v0);
+    check(old && old->paused && old->level == 1 && old->wallMode == 2, "lot UI state: version 0 is paused, one u32 more");
+    check(!os2::parseLotUiState(std::vector<uint8_t>(70, 0)), "lot UI state: too short");
+    if (const char* data = std::getenv("OS2_DATA")) {
+        os2::DbpfPackage pkg(std::filesystem::path(data) / "TSData/Res/UserData/Neighborhoods/N001/Lots/N001_Lot11.package");
+        const auto ui = os2::readLotUiState(pkg);
+        check(ui && ui->version == 2 && !ui->paused && ui->level == 1 && ui->wallMode == 1,
+              "lot UI state: N001_Lot11 running, on the ground, cutaway");
+    }
+}
+
 int main() {
     testLogOnce();
+    testLotUiState();
     testDxt1();
     testDxt3And5();
     testRaw();

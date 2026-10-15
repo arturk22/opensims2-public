@@ -87,6 +87,12 @@ bool hasArg(const std::vector<std::string>& args, const std::string& flag);
 // A lot is occupied when a family lives on it.
 std::string lotStartMode(bool occupied, const std::optional<std::string>& requested);
 
+// The floor cTSMainToolbar::ApplySavedUIState puts back (docs/game-flow-
+// mac.md §7.6): the floor saved with the lot (the game's, 1 the ground) held
+// between the world's lowest and highest floors, in the app's numbering
+// (0 the ground) for a lot of `levelCount` floors from `minLevel`.
+int savedUiLevel(int savedLevel, int minLevel, int levelCount);
+
 // <shot>-<n>.<ext> for --flow-shots.
 std::string numberedShot(const std::string& shot, int n);
 

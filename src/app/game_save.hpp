@@ -1,5 +1,9 @@
 #pragma once
 
+#include "formats/lot_ui_state.hpp"
+
+#include <optional>
+
 // The in-game save (the options panel's "Salvar", and "Salvar?" when leaving
 // a lot): the lot the VM is running written back to its own package, and what
 // the lot changes in the neighborhood (FAMI, SDSC, SREL, NGBH) to the
@@ -31,8 +35,10 @@ struct GameSaveResult {
 // `gameDir` is data/game (refused as a destination; its shipped lots give
 // the cObjects of objects created during play).
 // `sessionDir` holds the character files written in play (sessionCharactersDir()).
+// `ui`, when given, is the UI state written with the lot (cTSMainToolbar::
+// Write: resource 0x8B0C79D6, formats/lot_ui_state.hpp).
 GameSaveResult saveGame(vm::VM& vm, const std::filesystem::path& lotFile, const std::filesystem::path& gameDir,
-                        const std::filesystem::path& sessionDir);
+                        const std::filesystem::path& sessionDir, const std::optional<LotUiState>& ui = std::nullopt);
 
 // Copies the character files of `sessionDir` (and its NPCs folder) that
 // belong in the neighborhood `charactersDir` (<prefix>_User files, and
