@@ -2169,6 +2169,56 @@ RgbaImage GpuRenderer::capture(uint32_t width, uint32_t height, const FrameView&
     return image;
 }
 
+bool GpuRenderer::drawMovie(const RgbaImage& frame) {
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(gpu_->device);
+    if (!cmd)
+        return false;
+    SDL_GPUTexture* swap = nullptr;
+    uint32_t width = 0, height = 0;
+    if (!SDL_WaitAndAcquireGPUSwapchainTexture(cmd, gpu_->window, &swap, &width, &height) || !swap) {
+        SDL_SubmitGPUCommandBuffer(cmd);
+        return false;
+    }
+    SDL_GPUTexture* picture = frame.width && frame.height ? gpu_->uploadImage(frame, true) : nullptr;
+    SDL_GPUBuffer* vertices = nullptr;
+    if (picture) {
+        const float fit = std::min(float(width) / float(frame.width), float(height) / float(frame.height));
+        const float w = float(frame.width) * fit, h = float(frame.height) * fit;
+        const float x = (float(width) - w) * 0.5f, y = (float(height) - h) * 0.5f;
+        const SpriteVertex quad[6] = {
+            {{x, y}, {0, 0}, {1, 1, 1, 1}},         {{x + w, y}, {1, 0}, {1, 1, 1, 1}},
+            {{x + w, y + h}, {1, 1}, {1, 1, 1, 1}}, {{x, y}, {0, 0}, {1, 1, 1, 1}},
+            {{x + w, y + h}, {1, 1}, {1, 1, 1, 1}}, {{x, y + h}, {0, 1}, {1, 1, 1, 1}},
+        };
+        vertices = gpu_->uploadBuffer(quad, sizeof quad, SDL_GPU_BUFFERUSAGE_VERTEX);
+    }
+    SDL_GPUColorTargetInfo color{};
+    color.texture = swap;
+    color.clear_color = {0, 0, 0, 1};
+    color.load_op = SDL_GPU_LOADOP_CLEAR;
+    color.store_op = SDL_GPU_STOREOP_STORE;
+    if (SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &color, 1, nullptr)) {
+        if (picture && vertices) {
+            float screen[4] = {float(width), float(height), 0, 0};
+            SDL_BindGPUGraphicsPipeline(pass, gpu_->ui);
+            SDL_PushGPUVertexUniformData(cmd, 0, screen, sizeof screen);
+            SDL_GPUTextureSamplerBinding binding{picture, gpu_->clampSampler};
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            SDL_GPUBufferBinding bindingVertices{vertices, 0};
+            SDL_BindGPUVertexBuffers(pass, 0, &bindingVertices, 1);
+            SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
+        }
+        SDL_EndGPURenderPass(pass);
+    }
+    SDL_SubmitGPUCommandBuffer(cmd);
+    // (Released once the GPU is done with them.)
+    if (vertices)
+        SDL_ReleaseGPUBuffer(gpu_->device, vertices);
+    if (picture && picture != gpu_->white)
+        SDL_ReleaseGPUTexture(gpu_->device, picture);
+    return true;
+}
+
 bool GpuRenderer::captureMovie(const std::filesystem::path& path, const RgbaImage& frame) {
     int width = 0, height = 0;
     SDL_GetWindowSize(gpu_->window, &width, &height);

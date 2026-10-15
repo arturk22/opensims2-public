@@ -149,6 +149,8 @@ public:
     RgbaImage capture(uint32_t width, uint32_t height, const FrameView& view, simd_float4 clearColor);
     // A .movie frame the way MovieLayer draws it: black, fitted, centred.
     bool captureMovie(const std::filesystem::path& path, const RgbaImage& frame);
+    // The same into the window, instead of the scene (movie_host's picture).
+    bool drawMovie(const RgbaImage& frame);
 
     std::string backend() const;
 

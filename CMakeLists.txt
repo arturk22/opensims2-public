@@ -310,8 +310,9 @@ if(WIN32)
       src/app/door_portals.cpp src/app/pie_menu.cpp src/app/dialog_window.cpp src/app/scene_loader.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp
       src/render/camera.cpp src/render/cas_camera.cpp
       src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/main_menu.cpp
-      src/app/options_panel.cpp src/app/tutorial.cpp src/app/game_flow.cpp src/app/user_data.cpp src/app/head_shot.cpp)
-    target_link_libraries(opensims2_win PRIVATE os2_vm os2_formats os2_audio os2_fx os2_port SDL3::SDL3 dbghelp)
+      src/app/options_panel.cpp src/app/tutorial.cpp src/app/game_flow.cpp src/app/user_data.cpp src/app/head_shot.cpp
+      src/app/movie_host.cpp src/app/loading_screen.cpp)
+    target_link_libraries(opensims2_win PRIVATE os2_vm os2_formats os2_audio os2_media os2_fx os2_port SDL3::SDL3 dbghelp)
     os2_warnings(opensims2_win)
     add_dependencies(opensims2_win os2_shaders)
     target_link_options(opensims2_win PRIVATE /STACK:67108864)

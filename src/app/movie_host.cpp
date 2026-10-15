@@ -4,9 +4,11 @@
 #include "formats/audio.hpp"
 #include "formats/reia.hpp"
 #include "media/movie_player.hpp"
+#ifndef _WIN32
 #include "render/movie_layer.hpp"
 
 #include <Metal/Metal.hpp>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -233,8 +235,53 @@ std::unique_ptr<Clip> openClip(const std::filesystem::path& resDir, const std::s
     return std::make_unique<MovieClip>(path, o);
 }
 
+#ifdef _WIN32
+// MovieLayer's picture on the CPU: black, the frame scaled to fit (bilinear)
+// and centred. The window draws the frame itself (GpuRenderer::drawMovie).
+struct MovieLayer {
+    const RgbaImage* frame = nullptr; // the clip's, alive while it plays
+    void setFrame(const RgbaImage& img) { frame = &img; }
+    RgbaImage capture(uint32_t width, uint32_t height) const {
+        RgbaImage out;
+        out.width = width, out.height = height;
+        out.pixels.assign(size_t(width) * height * 4, 0);
+        for (size_t i = 3; i < out.pixels.size(); i += 4)
+            out.pixels[i] = 255;
+        if (!frame || !frame->width || !frame->height)
+            return out;
+        const RgbaImage& src = *frame;
+        const float fit = std::min(float(width) / float(src.width), float(height) / float(src.height));
+        const int w = int(std::lround(float(src.width) * fit)), h = int(std::lround(float(src.height) * fit));
+        const int left = (int(width) - w) / 2, top = (int(height) - h) / 2;
+        for (int y = 0; y < h; ++y) {
+            const float sy = std::clamp((float(y) + 0.5f) / fit - 0.5f, 0.0f, float(src.height - 1));
+            const uint32_t y0 = uint32_t(sy), y1 = std::min(y0 + 1, src.height - 1);
+            const float fy = sy - float(y0);
+            for (int x = 0; x < w; ++x) {
+                const float sx = std::clamp((float(x) + 0.5f) / fit - 0.5f, 0.0f, float(src.width - 1));
+                const uint32_t x0 = uint32_t(sx), x1 = std::min(x0 + 1, src.width - 1);
+                const float fx = sx - float(x0);
+                const uint8_t* a = &src.pixels[(size_t(y0) * src.width + x0) * 4];
+                const uint8_t* b = &src.pixels[(size_t(y0) * src.width + x1) * 4];
+                const uint8_t* c = &src.pixels[(size_t(y1) * src.width + x0) * 4];
+                const uint8_t* d = &src.pixels[(size_t(y1) * src.width + x1) * 4];
+                uint8_t* o = &out.pixels[(size_t(top + y) * width + size_t(left + x)) * 4];
+                for (int k = 0; k < 3; ++k) {
+                    const float upper = float(a[k]) + (float(b[k]) - float(a[k])) * fx;
+                    const float lower = float(c[k]) + (float(d[k]) - float(c[k])) * fx;
+                    o[k] = uint8_t(std::lround(upper + (lower - upper) * fy));
+                }
+            }
+        }
+        return out;
+    }
+};
+#endif
+
 struct Host {
+#ifndef _WIN32
     MTL::Device* device = nullptr;
+#endif
     std::unique_ptr<MovieLayer> layer;
     MovieHostOptions options;
     std::unique_ptr<AudioMixer> mixer;
@@ -362,11 +409,18 @@ std::vector<std::string> introMovies() {
     return {"ealogo_audio", "intro_eng_audio"};
 }
 
+#ifdef _WIN32
+void movieHostInit(const MovieHostOptions& options) {
+    Host& h = host();
+    h.options = options;
+    h.layer = std::make_unique<MovieLayer>();
+#else
 void movieHostInit(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat, const MovieHostOptions& options) {
     Host& h = host();
     h.device = device;
     h.options = options;
     h.layer = std::make_unique<MovieLayer>(device, colorFormat, depthFormat);
+#endif
     if (options.sound && !h.mixer) {
         h.mixer = std::make_unique<AudioMixer>(44100);
         h.output = std::make_unique<AudioOutput>(*h.mixer);
@@ -375,6 +429,24 @@ void movieHostInit(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
     }
 }
 
+#ifdef _WIN32
+const RgbaImage* movieHostFrame() {
+    Host& h = host();
+    if (!h.player)
+        return nullptr;
+    h.player->update(since(h.start));
+    if (h.player->finished()) {
+        std::printf("opensims2: movie ended: clock %.3f s, sound mixed %.3f s, wall %.3f s, frame %ld\n",
+                    h.player->time(), h.player->audioTime(), since(h.start), h.player->frame());
+        std::fflush(stdout);
+        finish();
+        if (!h.player)
+            return nullptr;
+    }
+    h.layer->setFrame(h.player->picture());
+    return &h.player->picture();
+}
+#else
 bool movieHostDraw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable) {
     Host& h = host();
     if (!h.player || !h.layer)
@@ -393,6 +465,7 @@ bool movieHostDraw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable)
     h.layer->draw(pass, drawable);
     return true;
 }
+#endif
 
 int movieScreenshots(const std::filesystem::path& resDir, const std::string& name, const std::string& out,
                      int frames, double seconds, uint32_t width, uint32_t height, const std::string& wavOut) {
@@ -407,12 +480,16 @@ int movieScreenshots(const std::filesystem::path& resDir, const std::string& nam
         std::fprintf(stderr, "opensims2: movie \"%s\": %s\n", name.c_str(), e.what());
         return 1;
     }
+#ifdef _WIN32
+    MovieLayer layer;
+#else
     MTL::Device* device = MTL::CreateSystemDefaultDevice();
     if (!device) {
         std::fprintf(stderr, "opensims2: no Metal device\n");
         return 1;
     }
     MovieLayer layer(device, uint32_t(MTL::PixelFormatBGRA8Unorm), uint32_t(MTL::PixelFormatDepth32Float));
+#endif
     std::printf("opensims2: movie %s: %s\n", name.c_str(), clip->describe().c_str());
     const auto* movie = dynamic_cast<MovieClip*>(clip.get());
     if (seconds <= 0)
@@ -460,7 +537,9 @@ int movieScreenshots(const std::filesystem::path& resDir, const std::string& nam
     }
     std::fflush(stdout);
     clip.reset();
+#ifndef _WIN32
     device->release();
+#endif
     return 0;
 }
 

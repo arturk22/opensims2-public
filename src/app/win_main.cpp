@@ -8,6 +8,7 @@
 #include "formats/lighting_config.hpp"
 #include "formats/lot.hpp"
 #include "formats/movie.hpp"
+#include "formats/neighborhood.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/lot_lightmap.hpp"
 #include "formats/lot_model.hpp"
@@ -28,7 +29,10 @@
 #include "app/head_shot.hpp"
 #include "app/hood_mode.hpp"
 #include "app/game_cursors.hpp"
+#include "app/loading_screen.hpp"
 #include "app/main_menu.hpp"
+#include "app/movie_host.hpp"
+#include "app/scene_loader.hpp"
 #include "app/options_panel.hpp"
 #include "app/tutorial.hpp"
 #include "app/user_data.hpp"
@@ -291,6 +295,7 @@ struct App {
     SDL_Window* window = nullptr;
     std::optional<uint32_t> createdFamily;     // CAS -> the neighborhood that opened it
     std::optional<os2::LotCamera::Pose> hoodPose; // the neighborhood's camera across a reload
+    bool introPlayed = false;                     // the start-up movies, before the first main menu
 
     os2::ResourceIndex& resources() {
         if (!index) {
@@ -354,6 +359,134 @@ void setGameCursor(const std::filesystem::path& res, os2::GameCursor which) {
     }
 }
 
+// Plays what app/movie_host.hpp has started, in the window, until it ends
+// (Esc, Space, Return or a click skip a movie). False: the window was closed.
+bool playMoviesInWindow(os2::Renderer& renderer) {
+    while (os2::moviePlaying()) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT) {
+                while (os2::moviePlaying()) {
+                    os2::skipMovie();
+                    os2::movieHostFrame();
+                }
+                return false;
+            }
+            const bool key = event.type == SDL_EVENT_KEY_DOWN &&
+                             (event.key.key == SDLK_ESCAPE || event.key.key == SDLK_SPACE || event.key.key == SDLK_RETURN);
+            if (key || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+                os2::skipMovie();
+        }
+        if (const os2::RgbaImage* picture = os2::movieHostFrame())
+            renderer.drawMovie(*picture);
+    }
+    return true;
+}
+
+// A frame of the scene, or of the movie over it (the end of its loading screen).
+bool drawFrame(os2::Renderer& renderer, const simd_float4x4& viewProj) {
+    if (const os2::RgbaImage* picture = os2::movieHostFrame())
+        return renderer.drawMovie(*picture), true;
+    return renderer.draw(viewProj);
+}
+
+// The loading screen's case from the neighborhood's lot info (the Mac host's
+// fillLotEntryFromFlags): the lot's family or name, the neighborhood's name,
+// or the family made in Create-a-Sim.
+os2::LotEntry lotEntryOf(const App& app, const os2::Scene& scene) {
+    os2::LotEntry entry;
+    if (scene.hood.empty() || (scene.kind != os2::Scene::Kind::Lot && scene.kind != os2::Scene::Kind::Neighborhood))
+        return entry;
+    try {
+        const os2::hood::Neighborhood hood = os2::hood::Neighborhood::load(app.hoodFolder(scene.hood), false);
+        const auto thumbs = hood.package.parent_path() / "Thumbnails" / (hood.prefix + "_FamilyThumbnails.package");
+        if (scene.kind == os2::Scene::Kind::Neighborhood) {
+            entry.hoodName = hood.name;
+            entry.tutorial = hood.prefix == "Tutorial";
+            if (app.createdFamily)
+                if (const auto* f = hood.family(*app.createdFamily)) {
+                    entry.withFamily = true, entry.familyId = f->id, entry.familyName = f->name;
+                    entry.familyThumbs = thumbs;
+                }
+            return entry;
+        }
+        const os2::hood::Lot* lot = hood.lot(scene.lot);
+        if (!lot)
+            return entry;
+        entry.known = true;
+        entry.type = lot->info.type;
+        entry.family = !lot->families.empty();
+        entry.name = lot->name;
+        entry.familyThumbs = thumbs;
+        if (entry.family) {
+            entry.familyId = lot->families.front();
+            if (const auto* f = hood.family(entry.familyId))
+                entry.familyName = f->name;
+        }
+    } catch (const std::exception&) {
+    }
+    return entry;
+}
+
+// A scene's loading screen (app/loading_screen.hpp). The Mac loads the scene
+// on a worker while the main thread draws it; here the scene loads on this
+// thread (SDL draws to the window from the thread that made it), so the
+// screen is drawn at the load's steps, at most 30 times a second. Headless
+// only with --loading-shot <file.png> [--loading-at <fraction>]: the screen
+// saved once the load reaches that far (default 0.5).
+class SceneLoading {
+public:
+    SceneLoading(App& app, os2::Renderer& renderer, const os2::Scene& scene, bool cas)
+        : renderer_(renderer), start_(std::chrono::steady_clock::now()) {
+        if (auto shot = app.argument("--loading-shot"))
+            shot_ = *shot, shotAt_ = std::stof(app.argument("--loading-at").value_or("0.5"));
+        else if (app.shot)
+            return;
+        os2::loading::begin();
+        active_ = os2::playLoadingScreen(os2::loadingScreenFor(app.res, scene, cas, lotEntryOf(app, scene)),
+                                         [] { return os2::loading::shown(); });
+        step(0);
+    }
+    ~SceneLoading() { finish(); }
+
+    void step(float progress) {
+        if (!active_)
+            return;
+        os2::loading::set(progress);
+        if (!shot_.empty() && progress >= shotAt_) {
+            const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+            os2::writePng(shot_, os2::movieHostCapture(1280, 720, elapsed));
+            std::printf("opensims2: wrote loading screen %s (%.2f s into the load, progress %.0f%%)\n",
+                        shot_.string().c_str(), elapsed, os2::loading::shown() * 100);
+            std::fflush(stdout);
+            shot_.clear();
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastDrawn_ < std::chrono::milliseconds(33))
+            return;
+        lastDrawn_ = now;
+        SDL_PumpEvents();
+        SDL_FlushEvents(SDL_EVENT_KEY_DOWN, SDL_EVENT_MOUSE_REMOVED); // the scene's input waits for the scene
+        if (const os2::RgbaImage* picture = os2::movieHostFrame())
+            renderer_.drawMovie(*picture);
+    }
+    // The load is done: the rest plays out quickly over the scene's first frames.
+    void finish() {
+        if (!active_)
+            return;
+        active_ = false;
+        os2::loading::end();
+        os2::finishLoadingScreen();
+    }
+
+private:
+    os2::Renderer& renderer_;
+    std::chrono::steady_clock::time_point start_, lastDrawn_{};
+    std::filesystem::path shot_;
+    float shotAt_ = 0.5f;
+    bool active_ = false;
+};
+
 // Where a scene goes when it ends: the next scene (none: quit), and how many
 // scripted steps it used (the next scene gets the rest).
 struct SceneExit {
@@ -377,9 +510,11 @@ SceneExit runCas(App& app, const os2::Scene& scene) {
     uint32_t w = 1280, h = 720;
     if (auto size = argument("--cas-size"))
         std::sscanf(size->c_str(), "%ux%u", &w, &h);
-    os2::ResourceIndex& index = app.resources();
     os2::Renderer renderer(app.exe / "shaders", int(w), int(h), app.window);
     std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
+    SceneLoading loading(app, renderer, scene, true);
+    os2::ResourceIndex& index = app.resources();
+    loading.step(0.3f);
     const os2::LightingConfig lighting = os2::loadLightingConfig(res / "Lights" / "Lighting.txt");
     if (const auto* state = lighting.state(argument("--lighting").value_or("CAS"))) {
         renderer.setLighting(*state);
@@ -394,6 +529,7 @@ SceneExit runCas(App& app, const os2::Scene& scene) {
     os2::GameAudio gameAudio(res, {});
     applyAudioSettings(gameAudio, app.settings);
     os2::CasMode cas(renderer, index, app.gameDir, args);
+    loading.step(0.9f);
     bool running = true;
     SceneExit exit;
     // Opened from a neighborhood: Accept saves the family there and goes back
@@ -460,6 +596,7 @@ SceneExit runCas(App& app, const os2::Scene& scene) {
     bool dragging = false;
     const auto start = std::chrono::steady_clock::now();
     auto last = start;
+    loading.finish();
     setGameCursor(app.res, os2::GameCursor::Arrow);
     while (running) {
         SDL_Event event;
@@ -501,7 +638,7 @@ SceneExit runCas(App& app, const os2::Scene& scene) {
         cas.update(std::chrono::duration<double>(now - start).count());
         showUi();
         renderer.setEye(camera->eye());
-        if (!renderer.draw(viewProj()))
+        if (!drawFrame(renderer, viewProj()))
             running = false;
     }
     SDL_StopTextInput(renderer.window());
@@ -527,13 +664,16 @@ unsigned short macFunctionKey(SDL_Scancode code) {
 // first; a step that leaves the scene hands the shot to the next one.
 SceneExit runHood(App& app, const os2::Scene& scene) {
     const uint32_t w = 1280, h = 720;
-    os2::ResourceIndex& index = app.resources();
-    const std::filesystem::path folder = app.hoodFolder(scene.hood);
     os2::Renderer renderer(app.exe / "shaders", int(w), int(h), app.window);
     std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
+    SceneLoading loading(app, renderer, scene, false);
+    os2::ResourceIndex& index = app.resources();
+    const std::filesystem::path folder = app.hoodFolder(scene.hood);
+    loading.step(0.3f);
     os2::HoodMode hood(renderer, index, app.gameDir, folder.string(), app.args);
     for (const auto& line : hood.view().report())
         std::printf("opensims2: %s\n", line.c_str());
+    loading.step(0.9f);
 
     SceneExit exit;
     bool running = true;
@@ -660,6 +800,7 @@ SceneExit runHood(App& app, const os2::Scene& scene) {
     bool dragging = false;
     bool keys[4] = {}; // left, right, back, forward
     auto last = std::chrono::steady_clock::now();
+    loading.finish();
     setGameCursor(app.res, os2::GameCursor::Arrow);
     while (running) {
         SDL_Event event;
@@ -754,7 +895,7 @@ SceneExit runHood(App& app, const os2::Scene& scene) {
         camera->update(dt);
         showUi();
         renderer.setEye(camera->eye());
-        if (!renderer.draw(viewProj()))
+        if (!drawFrame(renderer, viewProj()))
             running = false;
     }
     SDL_StopTextInput(app.window);
@@ -765,9 +906,18 @@ SceneExit runHood(App& app, const os2::Scene& scene) {
 // (app/main_menu.hpp), as the Mac host's prepareMainMenu/finishMainMenu.
 SceneExit runMenu(App& app, const os2::Scene& scene) {
     const uint32_t w = 1280, h = 720;
-    os2::ResourceIndex& index = app.resources();
     os2::Renderer renderer(app.exe / "shaders", int(w), int(h), app.window);
     std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
+    // The start-up movies before the first main menu (EA logo, then the intro; skippable).
+    if (!app.introPlayed && !app.shot) {
+        app.introPlayed = true;
+        os2::playMovies(os2::introMovies());
+        if (!playMoviesInWindow(renderer))
+            return {};
+    }
+    SceneLoading loading(app, renderer, scene, false);
+    os2::ResourceIndex& index = app.resources();
+    loading.step(0.6f);
     std::vector<std::filesystem::path> dirs;
     for (const auto& prefix : app.user->shipped())
         if (prefix != "Tutorial")
@@ -858,6 +1008,7 @@ SceneExit runMenu(App& app, const os2::Scene& scene) {
         return exit;
     }
 
+    loading.finish();
     setGameCursor(app.res, os2::GameCursor::Arrow);
     while (running) {
         SDL_Event event;
@@ -873,7 +1024,7 @@ SceneExit runMenu(App& app, const os2::Scene& scene) {
             }
         }
         showUi();
-        if (!renderer.draw(viewProj))
+        if (!drawFrame(renderer, viewProj))
             running = false;
     }
     return exit;
@@ -921,6 +1072,10 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             std::fflush(stdout);
             return {};
         }
+        os2::Renderer renderer(app.exe / "shaders", 1280, 720, app.window);
+        SDL_SetWindowTitle(app.window, ("opensims2 - " + lotFile.stem().string()).c_str());
+        std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
+        SceneLoading loading(app, renderer, scene, false);
         // The live camera of the game's camera configuration, held to the lot
         // and on the selected Sim's floor (app/camera_follow.hpp); the lot is
         // entered with the walls cut away and the levels above it hidden.
@@ -948,9 +1103,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
 
         std::printf("opensims2: house has %zu parts, uploading\n", house.parts.size());
         std::fflush(stdout);
-        os2::Renderer renderer(app.exe / "shaders", 1280, 720, app.window);
-        SDL_SetWindowTitle(app.window, ("opensims2 - " + lotFile.stem().string()).c_str());
-        std::printf("opensims2: GPU %s\n", renderer.backend().c_str());
+        loading.step(0.2f);
         renderer.setGroundClip(os2::lotSkirtBottom(lot));
         const int houseModel = renderer.addObject(house, index);
         renderer.addInstance(houseModel, matrix_identity_float4x4);
@@ -1023,6 +1176,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             std::printf("opensims2: light map %ux%u, lights %d objects / %d Sims\n", lightMap.width, lightMap.height,
                         renderer.objectLightCount(), renderer.simLightCount());
         }
+        loading.step(0.3f);
         simd_float3 shadowTravel{0, 0, -1};
         simd_float3 shadowColor{0.55f, 0.55f, 0.62f};
         if (const auto* state = lighting.state("day")) {
@@ -1144,6 +1298,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         }
         os2::LotSimulation simulation(index, lot, package, lotFile);
         std::printf("opensims2: %s\n", simulation.summary().c_str());
+        loading.step(0.5f);
         const auto parts = os2::loadSimParts(index);
         struct DrawnSim {
             std::unique_ptr<os2::SimActor> actor;
@@ -1392,6 +1547,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         for (const auto& [id, p] : placed)
             if (p.definition.rfind("Door", 0) == 0 && p.saved)
                 doors.addDoor(id);
+        loading.step(0.7f);
         try {
             lotLighting = std::make_unique<os2::LotLighting>(renderer, index, simulation, objectView, lighting,
                                                              os2::loadLightOverrides(res / "Lights" / "LotLights.txt"));
@@ -1514,6 +1670,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             renderer.setUiImage(os2::composeUi(screen, {0, 0, 0, 0}), 0, 0, 1280, 720);
             return true;
         };
+        loading.step(0.8f);
         try {
             liveUi = std::make_unique<os2::LiveUi>(simulation.machine(), index, res);
             if (showLiveUi())
@@ -1539,6 +1696,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         // and --effect <name>[@<object id>[:<bone index>] | @x,y,z] (repeatable) by hand.
         std::unique_ptr<os2::LotEffects> lotEffects;
         std::string effectName;
+        loading.step(0.85f);
         try {
             lotEffects = std::make_unique<os2::LotEffects>(renderer, index, res);
             for (size_t i = 1; i + 1 < app.args.size(); ++i) {
@@ -1737,6 +1895,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 liveUi->setWallMode(wallView.mode());
             };
             liveUi->setWallMode(wallView.mode());
+            loading.step(0.9f);
             try {
                 buy = std::make_unique<os2::BuyMode>(simulation, objectView, renderer, index, res);
                 buy->setCanvas(1280, 720);
@@ -1781,6 +1940,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         bool running = true;
 
         // Pie menus over the lot's VM (app/pie_menu.hpp), picked as the Mac host picks.
+        loading.step(0.95f);
         try {
             pie = std::make_unique<os2::PieMenuHost>(simulation.machine(), res / "UI" / "Fonts");
         } catch (const std::exception& e) {
@@ -2747,7 +2907,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             }
             renderer.setEye(camera.eye());
             renderer.setView(camera.view());
-            return renderer.draw(viewProj());
+            return drawFrame(renderer, viewProj());
         };
 
         // A few ticks so the capture shows the VM's animation, not the rest pose.
@@ -2755,6 +2915,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             frame();
         camera.snap();
         updateLotView();
+        loading.finish();
         // A lot reached through the game flow runs the script's remaining
         // steps (--click, --right-click, --wait, --key escape; app/game_flow.hpp);
         // a step that leaves the lot leaves the rest to the next scene.
@@ -3200,6 +3361,12 @@ int main(int argc, char** argv) {
     }
     if (auto shot = app.argument("--screenshot"))
         app.shot = *shot;
+    // --movie <name> --screenshot out.png [--frames n] [--time s] [--sound-wav mix.wav]: the movie's
+    // frames headless (app/movie_host.hpp); without --screenshot it plays in the window.
+    if (auto movie = app.argument("--movie"); movie && app.shot)
+        return os2::movieScreenshots(app.res, *movie, app.shot->string(), std::stoi(app.argument("--frames").value_or("1")),
+                                     std::stod(app.argument("--time").value_or("0")), 1280, 720,
+                                     app.argument("--sound-wav").value_or(""));
     try {
         // The user's folder (app/user_data.hpp): --user-dir, %OS2_USER_DIR%, else %LOCALAPPDATA%\opensims2.
         std::filesystem::path user = os2::defaultUserDir();
@@ -3219,6 +3386,15 @@ int main(int argc, char** argv) {
         if (!app.window) {
             std::fprintf(stderr, "opensims2: window: %s\n", SDL_GetError());
             return 1;
+        }
+        os2::movieHostInit({app.res, std::find(app.args.begin(), app.args.end(), "--no-audio") == app.args.end()});
+        if (auto movie = app.argument("--movie")) {
+            os2::Renderer renderer(app.exe / "shaders", 1280, 720, app.window);
+            os2::playMovie(*movie);
+            playMoviesInWindow(renderer);
+            SDL_DestroyWindow(app.window);
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 0;
         }
         int code = 0;
         if (lotFile) {

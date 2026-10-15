@@ -68,10 +68,17 @@ struct MovieHostOptions {
     std::filesystem::path resDir; // TSData/Res
     bool sound = true;            // open an output device for the sound
 };
+#ifdef _WIN32
+void movieHostInit(const MovieHostOptions& options);
+// Each frame: when a movie is playing, its picture (the host draws it fitted
+// on black, instead of its scene), else null; runs onDone when it ends.
+const RgbaImage* movieHostFrame();
+#else
 void movieHostInit(MTL::Device* device, uint32_t colorFormat, uint32_t depthFormat, const MovieHostOptions& options);
 // Each frame: when a movie is playing, draws it into the drawable and
 // returns true (the caller then draws nothing else); runs onDone when it ends.
 bool movieHostDraw(MTL::RenderPassDescriptor* pass, CA::MetalDrawable* drawable);
+#endif
 
 // Headless: moves the playing movie `seconds` on in steps of 1/30 s from its
 // start and renders it at width x height (empty when nothing plays).
