@@ -770,3 +770,84 @@ caixa de 5 × 5 amostras bilineares; projetar nas superfícies em vez de
 num quad plano (o quad do jogo flutua sobre um chão mais baixo, ex. o Sim
 na escada); os estilos 3 e 4 nos lotes ainda faltam. Captura:
 `docs/screenshots/r15-fov-sombras-sims.jpg`.
+
+## 10. Rodada n16 (luz e light maps): o que foi lido
+
+Ghidra MCP (BV, só leitura). Nomes do `baserom.sym` (o BV de dezembro de
+2007 do `sims2_mac_decomp`) casados pela ordem e pelo tamanho das funções;
+endereços do BV do Ghidra.
+
+### 10.1 A ordem de uma atualização da luz (BV `0x7167d0`)
+
+O `cLightingManager` atualiza tudo numa passada (sem atualização
+incremental, `DAT_02c1bed4` = 0 ou o `+0x93` do gerenciador ligado):
+
+1. limpa as luzes de cada sala (`0x713140`), põe os `diffParam` do estado na
+   difusão (vtable `0x20` do `+0x34`, a partir do `+0x188` do estado);
+2. `AddOutdoorLights` (`0x70cd3c`, §3);
+3. monta a lista de fontes de difusão dos objetos (`+0x28`, vtable `0x24`,
+   `BuildLightSourceList`) e, com portais (`DAT_02c1bf1c`),
+   `SetAndAddPortalLights` (`0x70ae3c`, §5.4) acrescenta as dos portais;
+4. `DoDiffusionPass` (vtable `0x38` do `+0x28`, `0xd7dd80`): grades de
+   piso, cópia para as páginas, paredes (§10.4);
+5. `UpdateHeightMapShadows` (`0x6fea68`, §5.3);
+6. `AddDirectFloorLighting` e `AddDirectWallLighting` (vtable `0x9c` e
+   `0xa0` do gerenciador: `0x708ebc`, `0x708590`; as versões só de tiles
+   sujos são `0xa4`/`0xa8`), **somadas** aos texels que a difusão deixou;
+7. `GatherRoomLighting` (`0x7147c8`, §4.1), que lê os light maps já com a
+   luz direta;
+8. `BrightenUnlitRooms(fontes, n)` (vtable `0xac`, `0x707820`; `0xb0` =
+   `BrightenUnlitRoomsDirtyTiles` `0x707f50`; `0xb4` =
+   `BrightenUnlitRoomsNEW` `0x701d98`, que esse caminho não chama);
+9. `AddRoomLights` (`0x710a3c`, §4).
+
+O vtable de `cLightingManager` com esses slots está em `0x27e37fc..`
+(`…, 0x708ebc, 0x708590, 0x7095f0, 0x708a88, 0x707820, 0x707f50,
+0x701d98`). O `cDiffusionManager::BrightenRoom` (`0xd7d028`, 0,5 ×
+`unlitRoomColor` nas amostras) não tem quem o chame por esse caminho.
+
+### 10.2 Cômodos sem luz, conferido (`FindUnlitRooms` `0x701a28`)
+
+Confirma o §6.1: o estado guarda **uma** cor (`+0x144..0x14c`) e **um**
+limiar (`+0x150`); o `day` do `Lighting.txt` tem duas linhas
+`unlitRoomColor` e vale a segunda (`(.45, .425, .4) -threshold .4`). Para
+cada sala ≠ 0 do vetor de `cRoomLightingDesc` (`+0x1ac`): `L` = média das 6
+cores (`0x700710`), `m = MaxAbsElement(L)`, `f = 1 − m/t` se `m < t`; as
+salas com `f > 0` ganham `cor · f` nas cores 0 a 4 da descrição (as cinco
+primeiras; a sexta, a do teto, não). Depois o `BrightenUnlitRooms` soma
+`cor · f · 0,5` nos texels de piso e de parede da sala (§6.1). Como vem
+depois do `GatherRoomLighting`, a média usa a irradiância já com a luz
+direta, e o clareamento não volta para a irradiância por outro caminho
+além das cinco cores.
+
+### 10.3 As fontes de difusão dos objetos (`BuildLightFromObjectLight` `0xd7d404`)
+
+`AddLightsFromObject` (`0xd7ef30`) percorre os `cLightRefNode` do objeto
+(interface `0x53d200a`) e, para cada um, `BuildLightFromObjectLight`:
+
+- a fonte começa com a cor `DAT_02d59b98` (preto) e lê a extensão
+  `cDiffusionLightExtension` da luz (`GetDataFromLightRef` `0xd82498`,
+  interface `0x8a561e23`). **Sem a extensão a cor fica preta e a luz não
+  vira fonte de difusão** (a função devolve 0). Com ela: mínimo e máximo do
+  retângulo (`+0x48..+0x54`), cor = intensidade × cor da extensão (`+0..+8`),
+  direcional (`+0x24`), queda (`+0x38`), queda direcional (`+0x34`),
+  escalas de parede (`+0x3c`) e de piso (`+0x40`), queda entre andares
+  (`+0x44`). Padrões da fonte (`0xd82248`): queda 1, escalas 1, entre
+  andares 0,5, retângulo ±0,5. O comentário do `LotLights.txt` dá os
+  padrões da extensão: intensidade 10, cor branca, retângulo ±0,5, não
+  direcional.
+- as extensões não estão nos recursos do jogo (nenhum pacote tem a string
+  `cDiffusionLightExtension`; os `LGHT` são `cPointLight`/`cSpotLight`
+  sem extensão): vêm dos `lightAttribOverride … diffusionSource*`, que o
+  comando `cLightAttribOverrideCommand` (vtable `0x2aa3bc0`, execução
+  `0x1809b38`) guarda numa tabela de sobrescritas (`+0x378` do gerenciador)
+  por nome de luz, com os atributos como propriedades (`diffusionSource*`
+  = IDs `0x8a561f18..`, tabela de nomes em `0x283fff0`). Quem aplica a
+  tabela e cria a extensão não foi achado.
+- posição: a da luz no mundo (o tile tem de estar no lote, vtable `0xf8`
+  do mundo); direção = o −Z da luz no mundo, ou a do objeto quando a luz
+  aponta para cima ou para baixo (|z| > 0,99); `+0x28/+0x2c` a direção no
+  plano, `+0x30` o rumo (`atan2`); a sala (`+0x68`) é a do ponto
+  `posição + max(0, mínimo.y) · direção/|direção|²` (o mínimo do retângulo
+  à frente da luz; com o padrão −0,5, a da própria luz). `FUN_00d82334`
+  monta o retângulo girado pelo rumo.
