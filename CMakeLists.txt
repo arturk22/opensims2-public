@@ -206,7 +206,7 @@ if(APPLE)
   # Scenes loaded off the main thread behind the loading screens (docs/loading-mac.md).
   target_sources(opensims2 PRIVATE src/app/scene_loader.cpp src/app/loading_screen.cpp src/app/head_shot.cpp)
   # The app shell, split out of main.mm by area (src/app/app_state.hpp).
-  target_sources(opensims2 PRIVATE src/app/app_state.cpp src/app/app_args.mm src/app/cinematic_host.cpp)
+  target_sources(opensims2 PRIVATE src/app/app_state.cpp src/app/app_args.mm src/app/cinematic_host.cpp src/app/plumbob_effects.mm)
   set_target_properties(opensims2 PROPERTIES
     OBJCXX_STANDARD 20
     MACOSX_BUNDLE_BUNDLE_NAME opensims2
