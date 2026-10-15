@@ -190,6 +190,12 @@ private:
     void redo();
     void changed(); // after an edit: undo state and rebuild
     UiScreen screen(int width, int height);
+    // screen()'s parts, over what it laid out (cas_mode_internal.hpp): the
+    // family view and its panels (cas_mode_family.cpp; true when the Make a
+    // Child panel covers the screen) and the step panel (cas_mode_panels.cpp).
+    struct LayoutContext;
+    bool familyScreen(LayoutContext& L);
+    void stepScreen(LayoutContext& L);
     void applyCamera(bool smooth);
     bool applyCasCamera(bool smooth); // the CreateASim camera; false without the studio
     float simHeight() const;

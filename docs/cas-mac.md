@@ -477,7 +477,8 @@ achado (a fábrica usa uma vtable importada).
 - Personalidade/signo/aspiração: `src/formats/cas_personality.*` (§6).
 - Família no bairro: `src/vm/family_write.*` (SDSC 0x20, SDNA, FAMI 0x4E com
   `kDefaultFamilyFunds` 20000, STR# do nome, inventários no NGBH).
-- Telas: `src/app/cas_mode.*` (`--cas`); os painéis ficam presos à âncora
+- Telas: `src/app/cas_mode.*` (`--cas`; a família e os painéis dela em
+  `cas_mode_family.cpp`, os painéis dos passos em `cas_mode_panels.cpp`); os painéis ficam presos à âncora
   que a janela oculta `0xAAAA` de cada um nomeia ("2d050914:bl").
 
 ## 12. Miniaturas do CAS (rodada 9)

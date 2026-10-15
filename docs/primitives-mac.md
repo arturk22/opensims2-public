@@ -1207,7 +1207,7 @@ sobrancelhas `0x4CEDF130`, fios de barba `0x4CEDF131` e barbas
 `0x2D4F258C`). `OnOk` (`0x2f2448`): o penteado em todas as categorias (menos
 nu, provar e 0x800), grava o personagem (CAS vtable 0x20) e veste o Sim de
 novo no que ele usa (dados de pessoa 8, 119, 120). No app as escolhas são as
-do nosso CAS (`cas_mode.cpp`: sobreposições por subtipo e bin, óculos e
+do nosso CAS (`cas_mode_panels.cpp`: sobreposições por subtipo e bin, óculos e
 barbas de malha), o OK grava o personagem e veste de novo; a vista 3D do Sim
 é a cabeça (inferido). **Rodada 15:** o `HandleTabSelect` (BV `0x2f50b0`)
 mostra a fileira de cores da barba `0x2D4F258C` (`FUN_0093fed8(painel,
