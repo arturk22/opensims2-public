@@ -212,6 +212,20 @@ Captura: `docs/screenshots/r8-effects-balloon.jpg` (`--lot N001_Lot11
   definição (nenhum uso no jogo base). 0x1000: miniatura pelo ID no temp 6
   ("CT - Handle Feedback - Score" dos desejos; guardado, não desenhado).
   0x04 com 0x100: a miniatura do próprio objeto.
+- Rodada n15, as tiras no balão (relato do usuário): a partícula da foto
+  (`*objectthumbnailprimitive`, atlas 1×1, bit 24) tem como textura própria
+  um atlas de 16 ícones (`conversationshared01`, `motives-thought-02`); o
+  `TryChangeEffect` (0x04) pede a foto ao serviço de miniaturas, que no jogo
+  sempre devolve uma (ele renderiza a que falta) e a troca
+  (`SetUnknownParam(0, nome)`). Aqui, quando o `ObjectThumbnails.package`
+  não tinha a foto (o GUID de um Sim, de uma memória), ficava a textura
+  própria: o atlas inteiro espremido. Agora: a foto do catálogo, senão o
+  ícone da memória (UI image 1 do grupo, como o painel), senão o retrato do
+  Sim (personagem com esse GUID); sem nenhuma, o ícone não é desenhado
+  (inferido). A célula do atlas dos `*icon16primitive` (16×1) vem do
+  `SetFloatParams(0xD)` → +0x16c, o quadro inicial (lido, `0xeb62f0`), que
+  o app já seguia. `--effect <nome>#<guid>` dá a foto de um GUID ao balão.
+  Captura: `docs/screenshots/n15-balao-icones.jpg`.
 - Slot tipo 0 = `GetObjectSlot` (vtable 0x3E8), tipo 1 = `GetTargetSlot`
   (0x3DC), tipo 2 = osso (0x10C) **[bin]**. O PlumbBob só tem uma entrada
   SLOT de tipo 4 (`slot_plumbob_0_fx`) e as flores `slot_flowers_0` para os

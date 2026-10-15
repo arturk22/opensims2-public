@@ -101,6 +101,7 @@ private:
         int handle = -1;
         int slot = -1;
         int state = 0;
+        uint32_t thumbnailGuid = 0; // "<name>#<guid>": the balloon's picture, as flag 0x04 with 0x400
     };
     std::optional<fx::Placement> placementOf(int16_t id, int8_t slotType, uint8_t slot, VmObjectView* view,
                                              const SimLookup& sims, vm::VM* vm, const std::string& named = {}) const;

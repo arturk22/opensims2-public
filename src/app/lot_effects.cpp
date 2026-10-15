@@ -76,39 +76,75 @@ LotEffects::LotEffects(Renderer& renderer, ResourceIndex& index, const std::file
 
 LotEffects::~LotEffects() { renderer_.setExternalBlended(nullptr, nullptr); }
 
+// The picture of what a balloon names by GUID (TryChangeEffect flag 0x04 BV
+// 0xe44a6c: the object or GUID handed to the thumbnail service, whose
+// texture replaces the balloon's "objectthumbnail" particle). The game
+// renders one when it has none; here: the object's catalog thumbnail, a
+// memory's icon (its UI image 1), a Sim's portrait (a character's GUID);
+// "" when none of them exists (inferred: the service not followed).
 std::string LotEffects::thumbnail(vm::VM& vm, uint32_t guid) {
     if (auto it = thumbNames_.find(guid); it != thumbNames_.end())
         return it->second;
     std::string name;
-    // As the live UI keys them (app/ui_panel_util.hpp objectThumbnailInstance).
-    if (thumbnails_)
-        if (auto def = vm.code().definitionByGuid(guid))
-            if (const ObjectDefinition* d = vm.code().definition(def->first, def->second))
-                if (const StringTable* names = vm.code().strings(def->first, 0x85)) {
-                    const std::string model = names->get(d->modelIndex(), lang::EnglishUS);
-                    if (auto e = thumbIndex_.find(objectThumbnailInstance(def->first, model)); e != thumbIndex_.end())
-                        if (auto img = decodeUiImage(thumbnails_->read(*e->second))) {
-                            char buf[32];
-                            std::snprintf(buf, sizeof buf, "thumbnail:%08X", guid);
-                            name = buf;
-                            layer_->setImage(name, *img);
-                        }
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "thumbnail:%08X", guid);
+    std::string what = "no definition";
+    if (auto def = vm.code().definitionByGuid(guid))
+        if (const ObjectDefinition* d = vm.code().definition(def->first, def->second)) {
+            what = d->fileName;
+            // As the live UI keys them (app/ui_panel_util.hpp objectThumbnailInstance).
+            if (const StringTable* names = vm.code().strings(def->first, 0x85); names && thumbnails_) {
+                const std::string model = names->get(d->modelIndex(), lang::EnglishUS);
+                if (auto e = thumbIndex_.find(objectThumbnailInstance(def->first, model)); e != thumbIndex_.end())
+                    if (auto img = decodeUiImage(thumbnails_->read(*e->second))) {
+                        name = buf;
+                        layer_->setImage(name, *img);
+                    }
+            }
+            // A memory: its icon (as the memories panel draws it).
+            if (name.empty() && d->objectType() == 15)
+                if (auto bytes = index_.read(Tgi{kTypeUiImage, def->first, 1, 0}))
+                    if (auto img = decodeUiImage(*bytes)) {
+                        name = buf;
+                        layer_->setImage(name, *img);
+                    }
+        }
+    // A Sim (its character's GUID): the portrait.
+    if (name.empty() && iconImage)
+        for (const auto& [nid, n] : vm.neighbors)
+            if (n.guid == guid) {
+                vm::ActiveEffect e;
+                e.iconSim = nid;
+                if (auto img = iconImage(e)) {
+                    name = buf;
+                    layer_->setImage(name, *img);
                 }
+                break;
+            }
+    if (std::getenv("OS2_DEBUG_FX"))
+        std::fprintf(stderr, "opensims2: balloon thumbnail %08X (%s): %s\n", guid, what.c_str(),
+                     name.empty() ? "none" : name.c_str());
     thumbNames_[guid] = name;
     return name;
 }
 
 bool LotEffects::addManual(const std::string& spec, int16_t object, fx::V3 at, int slot) {
-    // "<name>~<state>": in that state (Effect Stop/Start modes 10-13).
+    // "<name>~<state>": in that state (Effect Stop/Start modes 10-13);
+    // "<name>#<guid hex>": a balloon showing that GUID's picture.
     std::string name = spec;
     int state = 0;
-    if (const size_t tilde = spec.rfind('~'); tilde != std::string::npos) {
-        name = spec.substr(0, tilde);
-        state = std::atoi(spec.c_str() + tilde + 1);
+    uint32_t guid = 0;
+    if (const size_t hash = name.rfind('#'); hash != std::string::npos) {
+        guid = uint32_t(std::stoul(name.substr(hash + 1), nullptr, 16));
+        name.resize(hash);
+    }
+    if (const size_t tilde = name.rfind('~'); tilde != std::string::npos) {
+        state = std::atoi(name.c_str() + tilde + 1);
+        name.resize(tilde);
     }
     if (!library_->find(name))
         return false;
-    manual_.push_back({name, object, at, -1, slot, state});
+    manual_.push_back({name, object, at, -1, slot, state, guid});
     return true;
 }
 
@@ -207,9 +243,12 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                         if (!guid && e.iconObject)
                             if (const vm::Object* o = vm->object(e.iconObject))
                                 guid = o->guid();
-                        if (r.handle >= 0 && guid)
+                        if (r.handle >= 0 && guid) {
                             if (auto t = thumbnail(*vm, guid); !t.empty())
                                 system_->setIcon(r.handle, t);
+                            else // no picture: no icon, not the particle's own atlas squeezed (inferred)
+                                system_->hideIcon(r.handle);
+                        }
                         if (r.handle >= 0 && iconImage && (e.iconSim || e.iconId || e.wantSim)) {
                             // Portraits are kept by Sim; want icons change, one texture each time.
                             const std::string t = e.iconSim ? "portrait:" + std::to_string(e.iconSim)
@@ -222,6 +261,8 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                                 layer_->setImage(t, *img);
                                 iconNames_.insert(t);
                                 system_->setIcon(r.handle, t);
+                            } else {
+                                system_->hideIcon(r.handle); // (no picture: not the particle's own atlas)
                             }
                         }
                     }
@@ -277,8 +318,15 @@ void LotEffects::update(double seconds, vm::VM* vm, VmObjectView* view, const Si
                     p.position[size_t(k)] += m.at[size_t(k)];
             }
         // (Started soft, as the VM's mode 0: a burst plays, no pre-roll.)
-        if (m.handle < 0 || !system_->alive(m.handle))
+        if (m.handle < 0 || !system_->alive(m.handle)) {
             m.handle = system_->start(m.name, p, false);
+            if (m.handle >= 0 && m.thumbnailGuid && vm) {
+                if (auto t = thumbnail(*vm, m.thumbnailGuid); !t.empty())
+                    system_->setIcon(m.handle, t);
+                else
+                    system_->hideIcon(m.handle);
+            }
+        }
         else
             system_->move(m.handle, p);
         system_->setState(m.handle, m.state);

@@ -101,6 +101,9 @@ public:
     // (balloon icons: "...thumbnailprimitive" components).
     // `frame` picks the cell of an icon atlas (-1: the effect's own cell).
     void setIcon(int handle, std::string texture, int frame = -1);
+    // No icon: the particles whose texture is replaceable are not drawn
+    // (a balloon whose thumbnail cannot be found).
+    void hideIcon(int handle);
     // The effect's state (Effect Stop/Start modes 10-13: float parameter
     // 0xF = 0..3): the meta particles of a behaviour chain go to that step
     // (the aquarium's fish: 0 swimming, 1 feeding, 2 dead).
@@ -237,6 +240,7 @@ private:
         bool stopped = false;
         std::string icon;
         int iconFrame = -1;
+        bool iconHidden = false;
         int state = 0;
         float alpha = 1;  // a meta particle's alpha over its carried effect
         int orderNext = 0;

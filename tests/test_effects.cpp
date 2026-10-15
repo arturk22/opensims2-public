@@ -197,6 +197,27 @@ static void testMaintainedCount() {
 // Where particles live (cTSVisualEffect::SetTransforms): in the world, so
 // they stay when the effect moves, unless the effect is rigid. A hard start
 // leaves bursts out; a soft one plays them, after the trigger's wait.
+// A balloon whose picture cannot be found shows no icon, not the icon
+// particle's own texture (an atlas of 16 icons squeezed into one).
+static void testHiddenIcon() {
+    const auto data = buildLibrary();
+    EffectsLibrary lib = EffectsLibrary::parse(data);
+    lib.particles[0].flags |= pflag::AcceptOverride;
+    EffectSystem sys(lib, 3);
+    const int h = sys.start("Smoke", {});
+    std::vector<ParticleQuad> q;
+    sys.collect(q);
+    check(!q.empty(), "the icon particle shows its own texture by default");
+    sys.setIcon(h, "thumbnail:1");
+    q.clear();
+    sys.collect(q);
+    check(!q.empty() && *q[0].texture == "thumbnail:1", "an icon replaces the texture");
+    sys.hideIcon(h);
+    q.clear();
+    sys.collect(q);
+    check(q.empty(), "a hidden icon draws nothing");
+}
+
 static void testFramesAndStarts() {
     const auto data = buildLibrary();
     EffectsLibrary lib = EffectsLibrary::parse(data);
@@ -395,6 +416,7 @@ int main() {
         testSimulation();
         testMaintainedCount();
         testFramesAndStarts();
+        testHiddenIcon();
         testMetaParticles();
         testCurves();
     } catch (const std::exception& e) {

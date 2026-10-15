@@ -284,6 +284,11 @@ void EffectSystem::setIcon(int handle, std::string texture, int frame) {
     }
 }
 
+void EffectSystem::hideIcon(int handle) {
+    if (auto it = instances_.find(handle); it != instances_.end())
+        it->second.iconHidden = true;
+}
+
 bool EffectSystem::alive(int handle) const { return instances_.count(handle) != 0; }
 
 Placement EffectSystem::particleFrame(const Instance& inst, const Emitter& e) {
@@ -1052,6 +1057,7 @@ void EffectSystem::placeMeta(const Instance& inst, const MetaChain& m, MetaParti
         p.child->alpha = inst.alpha * std::clamp(sampleCurve(d.alphaCurve, t, 1), 0.0f, 1.0f) * m.alphaScale;
         p.child->icon = inst.icon;
         p.child->iconFrame = inst.iconFrame;
+        p.child->iconHidden = inst.iconHidden;
         p.child->stopped = inst.stopped;
     }
 }
@@ -1257,6 +1263,8 @@ void EffectSystem::collectInstance(const Instance& inst, int& group, std::vector
     for (size_t ei = 0; ei < inst.emitters.size(); ++ei) {
         const Emitter& e = inst.emitters[ei];
         const Particles& d = *e.desc;
+        if (e.icon && inst.iconHidden)
+            continue;
         const std::string* tex = e.icon && !inst.icon.empty() ? &inst.icon : &d.material;
         // The particles' frame (t2) in the world: its scale scales them
         // (the vertex fill, BV 0xeb8dbc).
