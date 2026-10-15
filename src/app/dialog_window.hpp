@@ -221,6 +221,9 @@ private:
     float lineHeight(const std::string& style) const;
     std::string fitText(const std::string& style, const std::string& text, float width) const;
     std::vector<std::string> wrap(const std::string& style, const std::string& text, float width) const;
+    // How many bytes of `text` its first `lines` wrapped lines take (with the
+    // space or line break after the last one): where the rest starts.
+    size_t wrapPrefix(const std::string& style, const std::string& text, float width, size_t lines) const;
 
     UiResources* res_;
     FontLibrary* fonts_;

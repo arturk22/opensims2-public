@@ -25,9 +25,6 @@ namespace {
 constexpr uint32_t kFrameImage = 0xA9500615, kButtonImage = 0xA9500630;
 // cTSObjectDialog's icon (FUN_001d206c, binary): background, frame, alpha mask.
 constexpr uint32_t kIconBack = 0xE9000005, kIconFrame = 0xE9000006, kIconMask = 0xE9000007;
-// The close box's image 0x11110002 is not in ui.package: the phone books'
-// cancel button (an X, 40x40 strip of four) stands in for it (inferred).
-constexpr uint32_t kCloseImage = 0xAC76E000;
 constexpr const char* kTitleFont = "GenHeader";    // 0x4A809916 (SetTitle)
 constexpr const char* kTextFont = "GenDialogBody"; // 0x8D2A495C (DoLayout)
 constexpr const char* kButtonFont = "GenButton";   // 0x4A809919 (AddButton)
@@ -142,6 +139,40 @@ std::vector<std::string> DialogWindow::wrap(const std::string& style, const std:
     while (!lines.empty() && lines.back().empty())
         lines.pop_back();
     return lines;
+}
+
+// The same wrap, counting: the offset in `text` where line `lines` + 1 starts.
+size_t DialogWindow::wrapPrefix(const std::string& style, const std::string& text, float width, size_t lines) const {
+    size_t done = 0;
+    for (size_t p = 0; p <= text.size() && lines > 0;) {
+        size_t e = text.find('\n', p);
+        if (e == std::string::npos)
+            e = text.size();
+        std::string para;
+        std::vector<size_t> at; // where each character of the paragraph is in `text`
+        for (size_t k = p; k < e; ++k)
+            if (text[k] != '\r')
+                para += text[k], at.push_back(k);
+        at.push_back(e);
+        std::string line;
+        for (size_t i = 0; i <= para.size();) {
+            const size_t sp = std::min(para.find(' ', i), para.size());
+            const std::string word = para.substr(i, sp - i);
+            const std::string next = line.empty() ? word : line + " " + word;
+            if (!line.empty() && textWidth(style, next) > width) {
+                if (++done == lines)
+                    return at[i];
+                line = word;
+            } else {
+                line = next;
+            }
+            i = sp + 1;
+        }
+        if (++done == lines)
+            return std::min(e + 1, text.size());
+        p = e + 1;
+    }
+    return text.size();
 }
 
 bool DialogWindow::hasTextBox(const vm::Dialog& d) {
@@ -286,34 +317,40 @@ DialogWindow::Layout DialogWindow::pictureDialog(const vm::Dialog& d, int width,
     float w = 128;
     if (hasTitle)
         w = std::max(w, tw + 52);
-    // FUN_0025b1fc: the buttons as wide as their text + 16, at least 82,
-    // the ones within 20 px of a wider one made as wide; 12 px apart.
+    // SetupDialog: with "continue" (byte 7 bit 7) button 1 is a close box
+    // (AddCloseBox, BV 0x25d444), a window of its own outside the row of
+    // buttons that FUN_0025b1fc sizes and DoLayout lines up.
     const bool closeBox = d.continueOthers;
-    std::vector<float> bw;
+    std::vector<size_t> row; // the AddButton buttons, in order
     for (size_t i = 0; i < d.buttons.size(); ++i)
-        bw.push_back(closeBox && i == 0 ? 40.0f : textWidth(kButtonFont, d.buttons[i]) + 16);
-    {
-        float prev = 1e9f;
-        for (;;) {
-            float widest = 0;
-            for (float b : bw)
-                if (b > widest && b < prev)
-                    widest = b;
-            if (widest == 0)
-                break;
-            float low = widest - 20;
-            if (widest < 82)
-                widest = 82, low = 0;
-            for (size_t i = 0; i < bw.size(); ++i)
-                if (!(closeBox && i == 0) && bw[i] < widest && bw[i] > low)
-                    bw[i] = widest;
-            prev = widest;
-        }
+        if (!(closeBox && i == 0))
+            row.push_back(i);
+    // FUN_0025b1fc: each button as wide as its text + 16; then, from the
+    // widest down, the widest under the last pass (at least 82, with every
+    // button above 0 raised; else every button within 20 px under it)
+    // makes the ones in its range as wide; 12 px apart.
+    std::vector<float> bw;
+    for (size_t i : row)
+        bw.push_back(std::round(textWidth(kButtonFont, d.buttons[i])) + 16);
+    for (float prev = 1e9f;;) {
+        float widest = 0;
+        for (float b : bw)
+            if (b > widest && b < prev)
+                widest = b;
+        if (widest == 0)
+            break;
+        float low = widest - 20;
+        if (widest < 82)
+            widest = 82, low = 0;
+        for (float& b : bw)
+            if (b < widest && b > low)
+                b = widest;
+        prev = widest;
     }
     float bTotal = 0;
-    for (size_t i = 0; i < bw.size(); ++i)
-        bTotal += bw[i] + (i ? 12 : 0);
-    const float bh = 34;
+    for (size_t k = 0; k < bw.size(); ++k)
+        bTotal += bw[k] + (k ? 12 : 0);
+    const float bh = row.empty() ? 0.0f : 34.0f; // AddButton's height (0x22); no buttons, none
     w = std::max(w, bTotal + 52);
     // The text: at least the title's or the buttons' width and its widest
     // word + 8, then widened 32 px at a time while it is taller than the
@@ -346,10 +383,35 @@ DialogWindow::Layout DialogWindow::pictureDialog(const vm::Dialog& d, int width,
     }
     if (lines.size() < 2)
         textW = (lines.empty() ? 0 : textWidth(kTextFont, lines[0])) + 1;
-    const float textH = float(std::max<size_t>(lines.size(), d.message.empty() ? 0 : 1)) * lh;
+    float textH = float(std::max<size_t>(lines.size(), d.message.empty() ? 0 : 1)) * lh;
     const float tx = img ? iw + 34 : 26;
     const float ty = hasTitle ? th + 26 : 18;
     w = std::max(w, img ? iw + textW + 60 : textW + 52);
+    // DoLayout with an icon: the text block is at least as tall as the icon,
+    // and the text goes around it: the first (icon height + 4) / line + 1
+    // lines beside it and, when the text is more than two lines longer, the
+    // rest in a second window under them from x = 21 to the width - 21,
+    // wrapped at the width - 57.
+    std::string beside = d.message, under;
+    std::vector<std::string> underLines;
+    float besideH = textH;
+    if (img) {
+        const size_t side = size_t(int(ih + 4) / int(std::max(1.0f, lh))) + 1;
+        if (lines.size() > side + 2) {
+            const size_t cut = wrapPrefix(kTextFont, d.message, textW, side);
+            beside = d.message.substr(0, cut);
+            while (!beside.empty() && (beside.back() == ' ' || beside.back() == '\n' || beside.back() == '\r'))
+                beside.pop_back();
+            under = d.message.substr(cut);
+            underLines = wrap(kTextFont, under, std::round(w) - 57);
+            besideH = float(side) * lh;
+            textH = besideH + float(underLines.size()) * lh;
+            lines.resize(side);
+            lines.insert(lines.end(), underLines.begin(), underLines.end());
+        } else {
+            textH = std::max(ih, textH);
+        }
+    }
     // The edit box between the text and the buttons; the buttons 12 px under
     // the text, not higher than 118 - their height.
     float by = std::max(ty + textH + 12, 118 - bh);
@@ -360,7 +422,8 @@ DialogWindow::Layout DialogWindow::pictureDialog(const vm::Dialog& d, int width,
         by += eh + 8;
     const float H = by + bh + 14;
     w = std::round(w);
-    L.x0 = std::round((float(width) - w) / 2), L.y0 = std::round((float(height) - H) / 2);
+    // Centred on the screen, rounded down (DoLayout's >> 1).
+    L.x0 = std::floor((float(width) - w) / 2), L.y0 = std::floor((float(height) - H) / 2);
     L.x1 = L.x0 + w, L.y1 = L.y0 + H;
     L.lines = lines;
 
@@ -389,8 +452,13 @@ DialogWindow::Layout DialogWindow::pictureDialog(const vm::Dialog& d, int width,
         root.children.push_back(p);
         L.images[3] = img;
     }
-    root.children.push_back(text(2, kTextFont, tx - 5, ty - 5, tx + textW + 6, ty + textH + 5));
-    L.captions[2] = d.message;
+    root.children.push_back(text(2, kTextFont, tx - 5, ty - 5, tx + textW + 6, ty + besideH + 5));
+    L.captions[2] = beside;
+    if (!underLines.empty()) {
+        const float uy = ty + besideH;
+        root.children.push_back(text(5, kTextFont, 21, uy - 5, w - 21, uy + float(underLines.size()) * lh + 5));
+        L.captions[5] = under;
+    }
     if (edit) {
         UiElement box = element("GZWinFlatRect", "IGZWinFlatRect", editRect[0], editRect[1], editRect[2], editRect[3]);
         box.set("fillcolor", "(204,214,255)");
@@ -407,28 +475,31 @@ DialogWindow::Layout DialogWindow::pictureDialog(const vm::Dialog& d, int width,
         L.caretText = d.text;
         L.caretFont = kTextFont;
     }
-    float bx = std::round((w - bTotal) / 2);
-    for (size_t i = 0; i < d.buttons.size(); ++i) {
+    // The close box (AddCloseBox, BV 0x25d444) is a button of its own that
+    // nothing places: neither DoLayout nor the window's SetArea (BV
+    // 0x25aae4) moves it, and a new window has an empty area (cGZWin's
+    // constructor, BV 0x8a2980), so it is not drawn and takes no click; its
+    // picture 0x11110002 is not in the base game's ui.package either
+    // (inferred: the button's SetBuffer was not read). The dialog closes
+    // by Return (button 1), Esc or its time out, as SetupDialog's keys say.
+    // DoLayout: the row centred ((width - row) / 2, rounded down), 12 px apart.
+    float bx = std::floor((w - bTotal) / 2);
+    for (size_t k = 0; k < row.size(); ++k) {
+        const size_t i = row[k];
         const uint32_t id = 0x10 + uint32_t(i);
-        UiElement b = element("GZWinBtn", "IGZWinBtn", bx, by, bx + bw[i], by + bh);
+        UiElement b = element("GZWinBtn", "IGZWinBtn", bx, by, bx + bw[k], by + bh);
         b.set("id", hex(id));
-        if (closeBox && i == 0) {
-            b.set("image", imageRef(kCloseImage));
-            b.set("showcaption", "no");
-        } else {
-            b.set("image", imageRef(kButtonImage));
-            b.set("showcaption", "yes");
-            b.set("font", kButtonFont);
-            b.set("colorfontnormal", "(5,6,113)");
-            b.set("colorfonthilited", "(5,6,113)");
-            b.set("align", "center");
-            L.captions[id] = d.buttons[i];
-        }
+        b.set("image", imageRef(kButtonImage));
+        b.set("showcaption", "yes");
+        b.set("font", kButtonFont);
+        b.set("colorfontnormal", "(5,6,113)");
+        b.set("colorfonthilited", "(5,6,113)");
+        b.set("align", "center");
+        L.captions[id] = d.buttons[i];
         root.children.push_back(b);
         L.buttonIds.push_back(id);
-        L.regions.push_back({{L.x0 + bx, L.y0 + by, L.x0 + bx + bw[i], L.y0 + by + bh},
-                             closeBox && i == 0 ? Hit::Close : Hit::Button, int(i)});
-        bx += bw[i] + 12;
+        L.regions.push_back({{L.x0 + bx, L.y0 + by, L.x0 + bx + bw[k], L.y0 + by + bh}, Hit::Button, int(i)});
+        bx += bw[k] + 12;
     }
     L.root = std::move(root);
     return L;

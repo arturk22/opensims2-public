@@ -193,6 +193,50 @@ int main() {
         check(L.x1 - L.x0 >= 128 && std::abs((L.x0 + L.x1) / 2 - 512) <= 1, "layout: at least 128 wide, centred");
     }
     {
+        // "Continue" (byte 7 bit 7): button 1 is SetupDialog's close box, a
+        // window outside the row FUN_0025b1fc sizes (the app looped forever
+        // here: the 40 px box in the row was never widened); nothing places
+        // it, so it is not drawn and takes no click; no row, no row height.
+        CodeLibrary code;
+        VM vm{code};
+        DialogWindow w(vm, nullptr, nullptr);
+        Dialog d;
+        d.type = dialogtype::Message;
+        d.cls = dialogClass(d.type);
+        d.message = "A message that continues.";
+        d.buttons = {"OK"};
+        d.continueOthers = true;
+        const auto L = w.layout(d, 1024, 768);
+        size_t buttons = 0;
+        for (const auto& r : L.regions)
+            buttons += r.kind == DialogWindow::Hit::Button || r.kind == DialogWindow::Hit::Close;
+        check(buttons == 0, "continue: no button drawn");
+        check(L.y1 - L.y0 == 118 + 14, "continue: no row (118 - 0 + 14 high)");
+        // Yes/no with "continue": only "No" in the row, at least 82 wide.
+        d.type = dialogtype::YesNo;
+        d.cls = dialogClass(d.type);
+        d.buttons = {"Yes", "No"};
+        const auto L2 = w.layout(d, 1024, 768);
+        std::vector<DialogWindow::Region> row;
+        for (const auto& r : L2.regions)
+            if (r.kind == DialogWindow::Hit::Button)
+                row.push_back(r);
+        check(row.size() == 1 && row[0].value == 1 && row[0].rect[2] - row[0].rect[0] == 82,
+              "continue: the second button alone in the row, 82 wide");
+        // FUN_0025b1fc: 100 and 90 (within 20) both 100, then 50 raised to 82.
+        d.type = dialogtype::YesNoCancel;
+        d.cls = dialogClass(d.type);
+        d.continueOthers = false;
+        d.buttons = {std::string(12, 'W'), std::string(11, 'W'), "X"}; // 7 px a letter without fonts: 100, 93, 23
+        const auto L3 = w.layout(d, 1024, 768);
+        std::vector<float> widths;
+        for (const auto& r : L3.regions)
+            if (r.kind == DialogWindow::Hit::Button)
+                widths.push_back(r.rect[2] - r.rect[0]);
+        check(widths.size() == 3 && widths[0] == 100 && widths[1] == 100 && widths[2] == 82,
+              "buttons: within 20 of a wider one made as wide, the rest at least 82");
+    }
+    {
         // Names: twins, Tab between the boxes, the first key replaces the
         // default, OK off while a box is empty.
         Fixture f(dialogtype::BabyName);
@@ -236,6 +280,40 @@ int main() {
         const std::filesystem::path res = std::filesystem::path(data) / "TSData/Res";
         ResourceIndex index(res);
         UiResources ui(index, res);
+        {
+            // DoLayout with an icon: the text block at least as tall as the icon
+            // (the row overlapped a titled dialog's icon), and a
+            // long text goes on under the icon in a second window (id 5).
+            CodeLibrary code;
+            VM vm{code};
+            DialogWindow iw(vm, &ui, nullptr);
+            Dialog m;
+            m.type = dialogtype::Message;
+            m.cls = dialogClass(m.type);
+            m.id = 1;
+            m.title = "A title";
+            m.message = "Short.";
+            m.buttons = {"OK"};
+            m.iconImage = 0xE9000005;
+            const auto L = iw.layout(m, 1280, 720);
+            std::optional<float> iconBottom, rowTop;
+            const auto* icon = L.root.child(3);
+            if (icon)
+                iconBottom = float(icon->area()[3]) + L.y0;
+            for (const auto& r : L.regions)
+                if (r.kind == DialogWindow::Hit::Button)
+                    rowTop = r.rect[1];
+            // The text starts 2 px over the icon (title + 26 against + 28) and
+            // the row is 12 px under the text block: 10 under the icon.
+            check(iconBottom && rowTop && *rowTop == *iconBottom + 10, "icon: the buttons 10 px under the icon");
+            m.id = 2;
+            m.message.clear();
+            for (int k = 0; k < 40; ++k)
+                m.message += "word ";
+            const auto L2 = iw.layout(m, 1280, 720);
+            check(L2.captions.count(5) && !L2.captions.at(5).empty() && L2.captions.at(2).size() < m.message.size(),
+                  "icon: a long text goes on under the icon");
+        }
         Fixture f(dialogtype::ClothingPurchase);
         Dialog& d = f.vm.dialogs.at(f.me->id);
         d.outfitSeparates = true, d.pricePerItem = 100, d.fillFunds = 250;
