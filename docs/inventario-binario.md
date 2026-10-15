@@ -80,13 +80,13 @@ palavra.
 | Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 8 / 11 = **73%** | 63 / 50 |
 | Corte de paredes | 11 (5) | 32 / 159 = 20,1% | 5,5 / 6 = **92%** | 4 / (na ui-live §8c–8d) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
-| Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% | 4 / 5 = **80%** | 12 / 6 |
+| Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% (não recontado na n17) | 5 / 5 = **100%** | 3 / 7 |
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% (não recontado na n09) | 6 / 7 = **86%** | 10 / 2 |
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% (não recontado na n12) | 5,5 / 7 = **79%** | 41 / 45 |
 | CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
 | Desenho | 211 (35) | 129 / 2.309 = 5,6% (não recontado na n13 nem na n16) | 5,5 / 10 = **55%** | 55 / 40 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **83 / 110 = 75,5%** | **519 em src** |
+| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **84 / 110 = 76,4%** | **510 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 520 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -238,9 +238,9 @@ Código: `src/vm/motives.*`, `wants.*`, `src/formats/wants.*`,
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
-| `cTSMotives` (17, 4): `GetMotiveRef`, `GetOldMotiveRef`, `UpdateMood` | `vm/motives.cpp` | fiel | O decaimento vem das árvores. |
-| Curvas: `cTSMotiveCurve`, `cTSMotiveCurveSet`, `cTSPiecewiseFunction` (15, 0) | `vm/autonomy.cpp` | inferido | Só `InteractionScoreCurve` foi lida. |
-| Desejos e medos: `cTSWantSimulator` (92, 28), `cTSWantNode`, `cTSWantInstance` (41, 0), `cTSWantTreeManager` | `vm/wants.cpp` | inferido | Ordem dos operadores, empates e parâmetros da check tree inferidos. |
+| `cTSMotives` (17, 4): `GetMotiveRef`, `GetOldMotiveRef`, `UpdateMood`, a atualização de 60 ticks (vtable 0x10) | `vm/motives.cpp` | fiel | Rodada n17 (`motives-mac.md` §3–§5): decaimento `dado/24/30` a cada 60 ticks, trava ±100, conjunto antigo, humor do base com o dado 163 sem trava, leitura arredondada sem trava, Set Motive Change acumula. Falta: o ambiente (`cTSEnvironmentScoreManager`, fica o salvo). |
+| Curvas: `cTSMotiveCurve`, `cTSMotiveCurveSet`, `cTSPiecewiseFunction` (15, 0), `cTSMotiveEffects` | `vm/motives.cpp`, `vm/autonomy.cpp` | fiel | Rodada n17 (`motives-mac.md` §1–§2, §6): leitura, inserção, valor em float, conjuntos e a pontuação do base (motivos 3, 5–9, 13–15). |
+| Desejos e medos: `cTSWantSimulator` (92, 28), `cTSWantNode`, `cTSWantInstance` (41, 0), `cTSWantTreeManager` | `vm/wants.cpp`, `vm/gnu_sort.hpp` | fiel | Rodada n17 (`wants-mac.md` §9): raízes por id de árvore, `std::sort` da libstdc++, operadores e check tree conferidos, nível, `RawAspirationScore`. Inferido: NPCs com neighbor ID; ordenação lida só no BV. |
 | Memórias: `cTSMemoryDefinition`, `cTSMemoryInstance` (18, 0), `cTSMemorySimulator`, `cTSPerson::UpdateMemories`/`PruneMemories` | `vm/memories.*`, `app/wants_panel.cpp` | fiel | Rodada n08 (`relationships-mac.md` §4): tokens de memória, decaimento diário, poda, a pontuação (dado 54; bate nos 50 Sims dos lotes) e Humor+Memória = Humor. Inferido: o `$Constant` dos textos. |
 | Relacionamentos: `TryNewRelationship` (fiel), `cTSRelationshipTable` (18, 0), `cTSRelationshipEntry`, `cTSFamilyRelationship` (21, 0), gravador das `SREL` | `vm/primitives.cpp`, `vm/lot.cpp`, `vm/lot_records.cpp`, `vm/hood_*.cpp`, `vm/ownership.cpp` | fiel | Rodada n08 (`relationships-mac.md` §1–3, §6): a tabela de cada objeto (no XOBJ) e de cada vizinho (no SDSC) lista as SREL que valem, chave crua (dono e objeto juntos), ordem do `GUIDHash`, SREL versão 2 sem os bytes velhos, a morte de objeto. Inferido: ordem num mesmo balde, apagar as SREL de quem morreu. |
 
@@ -391,7 +391,7 @@ no jogo base.
 | 14 | **Locomoção**: `PushTurnBlendCycles`, `StopLocomotion`, `cLocoCycle`, encadeamento das fases e o primeiro pé da parada — **feita** (n14): relógio das fases e entrega na saída do pedido (a rota acaba 233 ms antes do fim da parada), trocas por `BlendDistance` com cosseno, pé da parada pelo `0x178`, rotas curtas, parada ao bloquear (`anim-mac.md` §8) | 3.3 locomoção | animação |
 | 15 | **Partículas**: `cTSEffectsManager`, `cTSParticlesEffect`, `cTSMetaParticlesEffect` (os 7 marcadores) e a ordem dentro da camada 7 | 3.12 efeitos | efeitos |
 | 16 | **Luz e light maps**: `cLightingManager`, `cLightMapManager`, `cDiffusion*` (lista M4 do `TODO.md`) — **feita** (n16): a grade de piso e as paredes do `cDiffusionManager` lidas inteiras e feitas (`formats/lot_diffusion.*`), cômodos sem luz, fontes só com extensão de difusão, irradiância dos cômodos e o `L` dos portais pelos `Lookup*Diffusion`, portais como o construtor do jogo os monta (`lighting-mac.md` §10); a sala da fonte de um portal segue inferida | 3.12 luz | luz |
-| 17 | **Motivos e desejos**: `cTSMotiveCurve*`, `cTSPiecewiseFunction`, `UpdateMood` (dado 163), `cTSWantSimulator` (ordem, empates, check tree) | 3.8 curvas, desejos | motivos |
+| 17 | **Motivos e desejos**: `cTSMotiveCurve*`, `cTSPiecewiseFunction`, `UpdateMood` (dado 163), `cTSWantSimulator` (ordem, empates, check tree) — **feita** (n17): curvas e conjuntos do jogo, motor de 60 ticks (decaimento, trava, conjunto antigo), humor do base com o dado 163 (bate com os 55 Sims salvos), pontuação da autonomia do base, desejos pela ordem do mapa de árvores e o `std::sort` da libstdc++ (`motives-mac.md`, `wants-mac.md` §9) | 3.8 curvas, desejos | motivos |
 | 18 | **Rotas, resto**: custo por `ePassabilityState`, `FollowOneStep`/`ComputeTurn`, Snap num ponto só, bônus +25 longe da parede, retângulos de custo 10 da escada | 3.2 obstáculos, locomotor, slots; 3.4 H | rotas |
 | 19 | **Paredes e pisos**: `cFloorGeometryNode`, `cFloorManager`, `cWallGeometryNode`, `cSimplifiedWall` (UV dos pisos e do topo) | 3.12 paredes e pisos, 3.6 geometria | lote |
 | 20 | **Colocação de objetos e salas**: `cTSUserToolObject`/`TestPlacement*` com `HasSupport`, `FUN_009a7dd8` (cômodo), desfazer peça por peça, +0,75 da escada | 3.5 colocação, salas, desfazer, escadas | construção |

@@ -185,6 +185,9 @@ lê o motivo 3 em float e **trunca** para inteiro (`(int)`), não arredonda.
   caminho do jogo em float (sem `fma` implícito: `#pragma clang fp
   contract(off)`); STR# com menos de 16 textos (ou sem STR#) = constante 1;
   texto vazio = 0; idade negativa = adulto; curvas próprias pelo campo 0x33.
+- **Set Motive Change**: cada pedido entra no fim da lista, mesmo com outro
+  do mesmo motivo (`TrySetMotiveDelta` BV `0xad24e8` faz `push_back`): os
+  dois correm (antes o novo trocava o velho, inferido).
 - **Motor** (`tickMotives`): a cada 60 ticks (o relógio das memórias,
   `Person::memoriesTick`), com o dado 29 = 0: `updateMotives` (decaimento
   `dado/24/30` na ordem do base, trava ±100, conjunto antigo
