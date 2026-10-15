@@ -552,6 +552,14 @@ static void testPlayer() {
     p.play(idle, 1.0, {.fade = 0.5f});
     check(near(angle(p.pose(1.25)[1].q), 20, 0.5f), "crossfade halfway");
     check(near(angle(p.pose(1.6)[1].q), 0, 1e-2f) && p.layerCount() == 1, "crossfade done, old layer dropped");
+    // The locomotion's crossover (cLocoCycle::AnimUpdate): cosine, counted
+    // from the cue even for a clip started far in (its phase).
+    AnimPlayer e(&s);
+    e.play(walk, 0);
+    e.play(idle, 1.0, {.fade = 0.5f, .phase = 2.0, .ease = true});
+    check(near(angle(e.pose(1.125)[1].q), 40 * (0.5f + 0.5f * std::cos(float(M_PI) / 4)), 0.5f),
+          "ease: a cosine crossover from the cue");
+    check(near(angle(e.pose(1.25)[1].q), 20, 0.5f) && near(angle(e.pose(1.6)[1].q), 0, 1e-2f), "ease: halfway, then done");
 
     const Animation wave = constantAnim("spine1", 30, 5, 0);
     p.play(wave, 2.0, {.fade = 0, .mask = boneMask(s, "spine0")});

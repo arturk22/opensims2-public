@@ -192,6 +192,8 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
     l.rate = o.rate > 0 ? o.rate : 1.0f;
     l.start = now - std::max(o.phase, 0.0) / l.rate;
     l.fadeIn = std::max(o.fade, 0.0f);
+    l.ease = o.ease;
+    l.fadeStart = o.ease ? now : l.start;
     l.loop = o.loop;
     // Without a bone mask the animation is the Sim's main one: it takes the
     // base layer (0) whatever its header priority, so that a walk (0)
@@ -222,6 +224,7 @@ void AnimPlayer::play(const Animation& anim, double now, const Options& o) {
         if (other.priority == l.priority && other.fadeOutStart < 0) {
             other.fadeOutStart = now;
             other.fadeOut = l.fadeIn;
+            other.easeOut = l.ease;
             other.replaced = true;
         }
     // The first base layer has nothing to fade from (fading in from the
@@ -289,12 +292,20 @@ void AnimPlayer::applyFrame(const Layer& l, std::vector<Xform>& p) const {
 float AnimPlayer::weight(const Layer& l, double now) const {
     if (now < l.start)
         return 0;
+    auto cosine = [](float x) { return 0.5f - 0.5f * std::cos(float(M_PI) * x); };
     float w = 1;
-    if (l.fadeIn > 0)
-        w = std::clamp(float((now - l.start) / l.fadeIn), 0.0f, 1.0f);
-    if (l.fadeOutStart >= 0)
-        w *= l.fadeOut > 0 ? std::clamp(1.0f - float((now - l.fadeOutStart) / l.fadeOut), 0.0f, 1.0f)
-                           : (now >= l.fadeOutStart ? 0.0f : 1.0f);
+    if (l.fadeIn > 0) {
+        w = std::clamp(float((now - l.fadeStart) / l.fadeIn), 0.0f, 1.0f);
+        if (l.ease)
+            w = cosine(w);
+    }
+    if (l.fadeOutStart >= 0) {
+        float x = l.fadeOut > 0 ? std::clamp(1.0f - float((now - l.fadeOutStart) / l.fadeOut), 0.0f, 1.0f)
+                                : (now >= l.fadeOutStart ? 0.0f : 1.0f);
+        if (l.easeOut)
+            x = cosine(x);
+        w *= x;
+    }
     return w * l.scale;
 }
 

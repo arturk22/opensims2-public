@@ -111,6 +111,11 @@ public:
         // ends (pose(): the game's request expiring); false for the
         // locomotion's clips, which the next clip takes over from.
         bool expires = true;
+        // A cosine crossover (0.5 - 0.5 cos(pi x)) measured from the cue
+        // instead of a linear one from the clip's frame 0, for it and the
+        // layers it replaces: the locomotion's clips of one request
+        // (cLocoCycle::AnimUpdate, docs/anim-mac.md §8.4).
+        bool ease = false;
     };
     // Starts `anim` (kept by pointer: it must outlive the player) at `now`
     // seconds; layers of the same priority fade out over the fade time.
@@ -171,8 +176,10 @@ private:
         const Animation::Target* target = nullptr;
         double start = 0;
         float fadeIn = 0;
+        double fadeStart = 0;     // when the fade in counts from (the clip's frame 0, or the cue: ease)
         double fadeOutStart = -1; // < 0: not fading out
         float fadeOut = 0;
+        bool ease = false, easeOut = false; // cosine fades in and out
         bool replaced = false; // fading out under a layer of the same priority
         bool loop = true;
         int priority = 0;
