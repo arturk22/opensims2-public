@@ -127,6 +127,9 @@ void printEffect(const fx::EffectsLibrary& lib, uint32_t index, int depth) {
                             m.walkPreferDirection[0], m.walkPreferDirection[1], m.walkPreferDirection[2], m.alignDamp,
                             m.alignBankWind, m.alignBank, m.attractor[0], m.attractor[1], m.attractor[2],
                             curveText(m.attractorStrength).c_str(), m.attractorRange, m.path.size());
+                for (const auto& pt : m.path)
+                    std::printf("%s  path point [%g %g %g] v [%g %g %g] at %g\n", in.c_str(), pt.position[0], pt.position[1],
+                                pt.position[2], pt.velocity[0], pt.velocity[1], pt.velocity[2], pt.time);
                 if (auto i = lib.indexOf(m.baseEffect))
                     printEffect(lib, *i, depth + 2);
             }

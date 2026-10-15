@@ -22,11 +22,9 @@ namespace os2 {
 
 namespace {
 
-// Sims' balloon slot (Effect Stop/Start slot type 2, slot 4 = hat_grip: the
-// binary checks the ShowHeadlines option for it). The balloons' own offsets
-// are a few centimetres, so they would sit on the head: lifted a little
-// (inferred, by eye).
-constexpr float kBalloonLift = 0.2f;
+// Sims' balloon slot: Effect Stop/Start slot type 2, slot 4 = hat_grip (the
+// binary checks the ShowHeadlines option for it). The balloons rise from it
+// along their meta particles' paths (0.15 to 0.35 above it, SnapParticleToPath).
 constexpr uint32_t kTemplatePersonGroup = 0x7FEDFE16; // TemplatePerson: Sims' SLOT and bone names
 // Fire-and-forget effects (mode 6) are stopped after this long.
 constexpr double kOneShotSeconds = 4.0;
@@ -176,8 +174,6 @@ std::optional<fx::Placement> LotEffects::placementOf(int16_t id, int8_t slotType
             if (sim)
                 np.rotation = p.rotation;
             p = np;
-            if (sim && slotType == 2)
-                p.position[2] += kBalloonLift;
         }
     return p;
 }
