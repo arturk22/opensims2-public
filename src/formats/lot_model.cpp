@@ -576,6 +576,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
                 face.base = std::min(za0, zb0);
                 face.top = std::max(full[seg], full[seg + 1]);
                 face.level = level;
+                face.wallA = {w.a.x, w.a.y}, face.wallB = {w.b.x, w.b.y};
                 face.room = roomBeside(lot, level, (ax + bx) / 2, (ay + by) / 2, n[0], n[1], true);
                 // An attic wall standing over the roof on its side (the tall
                 // face of a sawtooth roof, N002_Lot31) is outside there,

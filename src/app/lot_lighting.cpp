@@ -163,6 +163,11 @@ const std::vector<LotLighting::ModelLight>& LotLighting::modelLights(const std::
                         one("diffusionsourcefalloff", m.diffusionFalloff);
                         one("diffusionsourcefloorintensityscale", m.floorScale);
                         one("diffusionsourcewallintensityscale", m.wallScale);
+                        one("diffusionsourceinterfloorfalloff", m.interFloor);
+                        one("diffusionsourcedirectionalfalloff", m.directionalFalloff);
+                        float directional = 0;
+                        one("diffusionsourceisdirectional", directional);
+                        m.directional = directional != 0;
                         if (auto v = o->second.find("diffusionsourcecolor"); v != o->second.end() && v->second.size() >= 3)
                             m.diffusionColor = {v->second[0], v->second[1], v->second[2]};
                         if (auto v = o->second.find("intensity"); v != o->second.end() && !v->second.empty())
@@ -307,6 +312,9 @@ std::shared_ptr<const LotLightMap> LotLighting::lightMap(const std::string& stat
         m.falloff = l.diffusionFalloff;
         m.floorScale = l.floorScale;
         m.wallScale = l.wallScale;
+        m.interFloor = l.interFloor;
+        m.directional = l.directional, m.directionalFalloff = l.directionalFalloff;
+        m.direction = {l.direction[0], l.direction[1], l.direction[2]};
         m.level = l.objectLevel;
         m.portal = l.portal;
         lights.push_back(m);
@@ -399,6 +407,8 @@ void LotLighting::update(double seconds) {
             lamp.diffusionFalloff = l.diffusionFalloff;
             lamp.floorScale = l.floorScale;
             lamp.wallScale = l.wallScale;
+            lamp.interFloor = l.interFloor;
+            lamp.directional = l.directional, lamp.directionalFalloff = l.directionalFalloff;
             if (m.world) {
                 const vm::TilePos t{int(std::floor(lamp.position[0])), int(std::floor(lamp.position[1])), o->position.level};
                 lamp.room = m.world->room(t);

@@ -914,6 +914,42 @@ end
         const LotLightMap litPlain = computeLotLightMap(layout, day, {bright});
         check(std::fabs(texel(litRoom.image, 14, 14) - texel(litPlain.image, 14, 14)) < 0.01f, "a lit room is not brightened");
     }
+    // The floor diffusion (cFloorColorGrid) stops at light-blocking walls,
+    // not at fences or room borders; the walls (cWallDiffusionManager) are
+    // lit on the side facing the lamp and keep 0.5 x their colour.
+    {
+        Lot walled;
+        walled.width = 4, walled.height = 2, walled.levelCount = 1;
+        walled.elevations.assign(5 * 3, 0.0f);
+        walled.floors.assign(8, {1, 1, 1, 1});
+        walled.rooms.assign(8, {2, 2, 2, 2});
+        for (int y = 0; y < 2; ++y) {
+            Lot::Wall w;
+            w.a = {2, float(y), 0}, w.b = {2, float(y + 1), 0}, w.type = Lot::Normal;
+            walled.walls.push_back(w);
+            Lot::Wall f = w;
+            f.a = {1, float(y), 0}, f.b = {1, float(y + 1), 0}, f.type = 0x12345678; // a fence
+            walled.walls.push_back(f);
+        }
+        LotLightMapLayout wl;
+        wl.init(walled);
+        check(wl.lightWalls.size() == 2, "fences do not block light");
+        LotLightMapLayout::WallFace lampSide, backSide;
+        lampSide.origin = {2, 0}, lampSide.along = {0, 1}, lampSide.normal = {-1, 0}, lampSide.length = 1, lampSide.top = 3;
+        lampSide.room = 2, lampSide.wallA = {2, 0}, lampSide.wallB = {2, 1};
+        backSide = lampSide;
+        backSide.normal = {1, 0};
+        const size_t front = wl.addWall(lampSide), back = wl.addWall(backSide);
+        LightMapLight bulb;
+        bulb.position = {0.5f, 0.5f, 1.5f};
+        bulb.color = {1, 1, 1};
+        const LotLightMap m = computeLotLightMap(wl, day, {bulb});
+        check(texel(m.image, 12, 4) > 0.2f, "floor light passes a fence");
+        check(std::fabs(texel(m.image, 20, 4) - 0.1f) < 0.01f, "floor light stops at a wall");
+        const auto& fc = wl.walls[front];
+        const auto& bc = wl.walls[back];
+        check(texel(m.image, fc.x + 4, fc.y + 12) > texel(m.image, bc.x + 4, bc.y + 12) + 0.1f, "wall lit on the lamp's side only");
+    }
 }
 
 // With the game's data (OS2_DATA): character files our CAS saved before the

@@ -62,6 +62,7 @@ add_library(os2_formats
   src/formats/lot_write.cpp
   src/formats/lot_model.cpp
   src/formats/lot_lightmap.cpp
+  src/formats/lot_diffusion.cpp
   src/formats/lot_roof.cpp
   src/formats/lot_roof_game.cpp
   src/formats/lot_water.cpp

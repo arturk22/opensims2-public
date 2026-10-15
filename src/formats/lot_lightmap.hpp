@@ -70,8 +70,20 @@ struct LotLightMapLayout {
         uint16_t material = 0; // index into materialColors (the wallpaper)
         uint32_t x = 0, y = 0; // the cell's corner in the atlas (border included)
         uint32_t w = 0, h = 0; // cell size with the border
+        // The wall's tile on the grid (its ends a -> b, as `along` runs; both
+        // zero: from origin and length), the wall diffusion's segment.
+        std::array<float, 2> wallA{}, wallB{};
     };
     std::vector<WallFace> walls;
+    // The partitions that block light (walls.txt blocksLight: walls,
+    // attic and foundation walls, pool walls; not fences, deck skirts and
+    // the other thin partitions), on grid points: the floor diffusion's
+    // neighbour bits (docs/lighting-mac.md 10.4).
+    struct LightWall {
+        int level = 0;
+        int ax = 0, ay = 0, bx = 0, by = 0;
+    };
+    std::vector<LightWall> lightWalls;
 
     // The sun's height map (cHeightMapShadow, docs/lighting-mac.md 5.3):
     // what stands over the lot at every ground texel (8 per tile, rows of
@@ -132,6 +144,7 @@ struct LightMapGlobals {
     float sunTransitionZone = 1;
     float roomSaturation = 0.5f, roomCeilingStrength = 1, roomPortalStrength = 0.75f;
     float brightWallFloor = 1, darkWallFloor = 0.5f; // bright/darkWallFloorContribution
+    int propagationSteps = 50;                       // wallPropagationSteps (both grids)
     static LightMapGlobals from(const LightingConfig& config);
 };
 
@@ -141,6 +154,10 @@ struct LightMapLight {
     float falloff = 1;            // diffusionSourceFalloff
     float floorScale = 1;         // diffusionSourceFloorIntensityScale
     float wallScale = 1;          // diffusionSourceWallIntensityScale
+    float interFloor = 0.5f;      // diffusionSourceInterFloorFalloff
+    bool directional = false;     // diffusionSourceIsDirectional
+    float directionalFalloff = 0; // diffusionSourceDirectionalFalloff
+    std::array<float, 3> direction{0, 0, -1}; // where the light points (its -Z)
     int level = 0;                // the object's level
     bool portal = false;
 };

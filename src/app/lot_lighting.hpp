@@ -106,7 +106,9 @@ public:
         int objectLevel = 0; // the object's level, as the lot numbers them (VM level - 1)
         // Its diffusion source (diffusionSource* attributes): colour x intensity, falloff, scales.
         Vec3 diffusionColor{};
-        float diffusionFalloff = 1, floorScale = 1, wallScale = 1;
+        float diffusionFalloff = 1, floorScale = 1, wallScale = 1, interFloor = 0.5f;
+        bool directional = false;
+        float directionalFalloff = 0;
         bool portal = false; // a window's or door's light (outside light coming in)
     };
     const std::vector<Lamp>& lamps() const { return lamps_; }
@@ -139,7 +141,9 @@ private:
         Vec3 direction{0, 0, -1};
         // Its cDiffusionLightExtension (the extension's defaults).
         Vec3 diffusionColor{1, 1, 1};
-        float diffusionIntensity = 0, diffusionFalloff = 1, floorScale = 1, wallScale = 1;
+        float diffusionIntensity = 0, diffusionFalloff = 1, floorScale = 1, wallScale = 1, interFloor = 0.5f;
+        bool directional = false;
+        float directionalFalloff = 0;
     };
     const std::vector<ModelLight>& modelLights(const std::string& cres);
     LightingState blended() const;
