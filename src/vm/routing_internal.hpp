@@ -14,17 +14,18 @@
 namespace os2::vm::routing_internal {
 
 // The locomotor's predicted blocking (cLocomotable::CollisionCheck, BV
-// 0x6b49e8; docs/routing-mac.md §6): it looks 10.02 steps of 50 ms each
-// ahead (a step is 50 / speed ms, so the horizon is half a tile whatever
-// the speed), window by window, at where the others will be; a window in
-// which another router collides blocks the walk if the two are getting
-// closer (else the scan goes on), when it starts within 2 steps plus the
-// stopping time (5 ms) of travel. Inferred: the collision test (vtable
-// 0x478, not decoded) as two bodies' radii (0.25 tile for an adult, 0.1875
-// for a child, as AddBlockerToPathPlanner sizes them).
+// 0x6b49e8; docs/routing-mac.md §6, §9.1): it looks 10.02 steps of 50 ms
+// each ahead (a step is 50 / speed ms, so the horizon is half a tile
+// whatever the speed), window by window, at where the others will be
+// (EstimateWhenPathWillBeBlocked: between people, the centres within 0.283
+// or the point 0.35 ahead of the walker within 0.283 of the other's
+// centre). The first collision in the horizon blocks the walk; a Sim is
+// let go (the scan goes on without it) only when the two touch already and
+// are getting apart. The walk then halts with a stop clip if the stop ends
+// 2 steps before the collision, else at once (InterruptActiveLocoState(2),
+// then EndFollow).
 constexpr float kStepTiles = 0.05f;  // 50 ms of a walk at 1 tile per second, times the speed: 0.05 / speed s
 constexpr int kHorizonSteps = 10;    // 10.02 steps
-constexpr float kBlockedWithin = 2 * kStepTiles + 0.005f;
 
 // routing.cpp: either one's "allow intersection" tree lets the two overlap.
 bool intersectionAllowed(VM& vm, const Object& a, const Object& b);
@@ -46,8 +47,13 @@ bool planRoute(VM& vm, Object& me, Object::Route& r, RouteFail& why);
 // routing_loco.cpp
 // Where a walker will be `tiles` further along its route points.
 Point2 alongRoute(const Object& o, float tiles);
-// Another Sim the walker is predicted to run into (CollisionCheck), or 0.
-ObjectId simAhead(VM& vm, const Object& me, const Object::Route& r);
+// Another Sim the walker is predicted to run into (CollisionCheck), and
+// how far along its way the collision comes (tiles), or {0, 0}.
+struct SimAhead {
+    ObjectId id = 0;
+    float at = 0;
+};
+SimAhead simAhead(VM& vm, const Object& me, const Object::Route& r);
 // Where a blocker steps aside to (CreateMoveOutOfWayDestination).
 std::optional<Point2> moveOutOfWayPoint(VM& vm, const Object& me, const Object& blocker, int type);
 // flushDestinations, once a tick.
@@ -66,6 +72,9 @@ struct LocoStep {
     // The walk ends here as its last clip starts to fade out (FollowOneStep's
     // hand-off): the clip plays on in the world.
     bool handOff = false;
+    // Asked to halt: the way ends (the planned stop) within the room given,
+    // so the walk goes on.
+    bool walkOn = false;
 };
 
 // One tick of the locomotion along the floor (FollowOneStep).

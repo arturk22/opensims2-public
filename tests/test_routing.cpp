@@ -1464,8 +1464,13 @@ static void testLocoHalt() {
             check(t.status == Thread::Status::Finished && !t.result && walker.person->data[62] == 15,
                   "loco halt: an object put in the way fails the route (blocked by object)");
         } else {
-            check(halts >= 1 && firstHalt >= 14 && firstHalt <= 16, "loco halt: a blocked walker plays a stop clip first (0.5 s)");
-            check(closest >= 0.4f, "loco halt: the stop keeps it out of the other Sim's way");
+            // CollisionCheck: the first collision in the horizon (half a tile
+            // of travel, the point 0.35 ahead): the stop (the half cycle and
+            // the clip) does not end 2 steps before it, so the walk ends at
+            // once (EndFollow), well short of the Sims (round n18).
+            check(halts == 0 && closest >= 0.9f, "loco halt: a walker blocked ahead stops at once, short of the Sims");
+            check(t.status == Thread::Status::Finished && !t.result && walker.person->data[62] == 14,
+                  "loco halt: and fails blocked by person");
         }
     }
 }

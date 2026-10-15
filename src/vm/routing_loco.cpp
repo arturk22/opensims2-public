@@ -47,41 +47,60 @@ Point2 alongRoute(const Object& o, float tiles) {
 
 namespace {
 
-// Whether two points moving straight over a window, p0 -> p1 and q0 -> q1,
-// come within r of each other in it (the locomotor's swept test, vtable
-// 0x474, BV 0x6b00c8: the first root of |(p - q)(t)| = r in [0, 1], or
-// already within r).
-bool sweptWithin(Point2 p0, Point2 p1, Point2 q0, Point2 q1, float r) {
+// When in a window two points moving straight over it, p0 -> p1 and
+// q0 -> q1, first come within r of each other: the fraction of the window
+// (0 when within already), or -1 (the locomotor's swept test, vtable 0x474,
+// BV 0x6b00c8: the first root of |(p - q)(t)| = r in [0, 1], or already
+// within r).
+float sweptWithin(Point2 p0, Point2 p1, Point2 q0, Point2 q1, float r) {
     const float rx = p0[0] - q0[0], ry = p0[1] - q0[1];
+    if (rx * rx + ry * ry <= r * r)
+        return 0;
     const float vx = (p1[0] - q1[0]) - rx, vy = (p1[1] - q1[1]) - ry;
     const float a = vx * vx + vy * vy;
     if (a < 1e-12f)
-        return rx * rx + ry * ry <= r * r;
+        return -1;
     const float b = 2 * (rx * vx + ry * vy);
     const float disc = b * b - 4 * a * (rx * rx + ry * ry - r * r);
     if (disc < 0)
-        return false;
-    const float t1 = (-b - std::sqrt(disc)) / (2 * a), t2 = (-b + std::sqrt(disc)) / (2 * a);
-    return t1 <= 1 && (t1 >= 0 || t2 >= 0);
+        return -1;
+    const float t1 = (-b - std::sqrt(disc)) / (2 * a);
+    return t1 >= 0 && t1 <= 1 ? t1 : -1;
 }
 
 } // namespace
 
 namespace routing_internal {
 
-// Another Sim the walker is predicted to run into (CollisionCheck), or 0.
-// Between two people (EstimateWhenPathWillBeBlocked, BV 0x6b3574, the human
-// case, whatever their ages): the two centres come within 0.283, or the
-// point 0.35 ahead of the walker along its way comes within 0.283 of the
-// other's centre (after a first test at 0.283 + 0.35). A Sim beside or
-// behind the walker does not block it: a 0.5 tile reach every way (inferred
-// before) kept two Sims half a tile apart from ever stepping off (N001_Lot68:
-// the one asked to move and the one waiting for it, each step "blocked").
-ObjectId simAhead(VM& vm, const Object& me, const Object::Route& r) {
+// Another Sim the walker is predicted to run into (CollisionCheck, BV
+// 0x6b49e8), and how far along its way: the first collision within the
+// horizon (10 steps of 0.05 tile at the walker's speed). Between two people
+// (EstimateWhenPathWillBeBlocked, BV 0x6b3574, the human case, whatever
+// their ages): the two centres come within 0.283, or the point 0.35 ahead
+// of the walker along its way comes within 0.283 of the other's centre. A
+// Sim is let go (CollisionCheck passes it on as the one to ignore) only when
+// the two touch already (the collision is now) and are getting apart; there
+// is no exception for the Sim walked to, nor for two Sims already on one
+// spot (round n18: both were ours, inferred; with the second, two Sims
+// 0.285 apart were never predicted and blocked each other step by step).
+SimAhead simAhead(VM& vm, const Object& me, const Object::Route& r) {
     if (r.points.empty() || r.points.front().ticks > 0 || r.points.front().portal)
-        return 0;
+        return {};
     constexpr float kCentres = 0.283f, kAhead = 0.35f;
     const float mySpeed = std::max(walkTilesPerTick(vm, me), 1e-4f);
+    // The horizon ends with the way (the request's end: CollisionCheck
+    // limits it to the request's remaining ticks).
+    float left = 0;
+    {
+        Point2 at{me.position.x, me.position.y};
+        for (const auto& p : r.points) {
+            if (p.ticks > 0 || p.portal || p.level != me.position.level)
+                break;
+            left += std::hypot(p.x - at[0], p.y - at[1]);
+            at = {p.x, p.y};
+        }
+    }
+    SimAhead best;
     for (const ObjectId id : vm.people()) {
         const Object* po = vm.object(id);
         if (!po)
@@ -90,42 +109,42 @@ ObjectId simAhead(VM& vm, const Object& me, const Object::Route& r) {
         if (id == me.id || !o.person || !o.position.inWorld() || o.data[objdata::ContainerId] != 0 ||
             o.position.level != me.position.level)
             continue;
-        // Overlapping already (both on one spot): walking off is the way out.
-        if (std::hypot(o.position.x - me.position.x, o.position.y - me.position.y) < 0.3f)
-            continue;
-        // The Sim walked to (a social's partner) is met, not run into (inferred).
-        if (id == r.target)
-            continue;
         const bool walking = o.route && !o.route->waiting;
         const float ratio = walking ? walkTilesPerTick(vm, o) / mySpeed : 0;
         const float reach = kCentres + kAhead;
-        // Out of reach within the horizon whatever the two do.
+        // Out of reach within the horizon whatever the two do (the binary's
+        // first test, at 0.283 + 0.35 between the centres).
         if (std::hypot(o.position.x - me.position.x, o.position.y - me.position.y) >
             reach + kStepTiles * float(kHorizonSteps) * (1 + ratio) + 0.01f)
             continue;
         for (int k = 0; k < kHorizonSteps; ++k) {
             const float t0 = kStepTiles * float(k), t1 = kStepTiles * float(k + 1);
+            if ((best.id && t0 >= best.at) || (k > 0 && t0 >= left))
+                break;
             const Point2 a0 = alongRoute(me, t0), a1 = alongRoute(me, t1);
             const Point2 b0 = walking ? alongRoute(o, t0 * ratio) : Point2{o.position.x, o.position.y};
             const Point2 b1 = walking ? alongRoute(o, t1 * ratio) : b0;
             const float ux = a1[0] - a0[0], uy = a1[1] - a0[1], ul = std::hypot(ux, uy);
             const Point2 f0 = ul > 0 ? Point2{a0[0] + ux / ul * kAhead, a0[1] + uy / ul * kAhead} : a0;
             const Point2 f1 = ul > 0 ? Point2{a1[0] + ux / ul * kAhead, a1[1] + uy / ul * kAhead} : a1;
-            if (!sweptWithin(a0, a1, b0, b1, kCentres) && !sweptWithin(f0, f1, b0, b1, kCentres))
+            const float hc = sweptWithin(a0, a1, b0, b1, kCentres), ha = sweptWithin(f0, f1, b0, b1, kCentres);
+            if (hc < 0 && ha < 0)
                 continue;
-            const float d0 = std::hypot(a0[0] - b0[0], a0[1] - b0[1]);
-            const float d1 = std::hypot(a1[0] - b1[0], a1[1] - b1[1]);
-            // Moving apart: CollisionCheck (BV 0x6b49e8) passes it to the
-            // windows after as the one to ignore (round n03), so the scan
-            // goes on without it.
-            if (d1 > d0)
-                break;
-            if (t0 <= kBlockedWithin)
-                return id;
+            const float hit = hc < 0 ? ha : ha < 0 ? hc : std::min(hc, ha);
+            if (k == 0 && hit == 0) {
+                // Touching now: let it go if the two are getting apart.
+                const float d0 = std::hypot(a0[0] - b0[0], a0[1] - b0[1]);
+                const float d1 = std::hypot(a1[0] - b1[0], a1[1] - b1[1]);
+                if (d1 > d0)
+                    break;
+            }
+            const float at = t0 + hit * (t1 - t0);
+            if (!best.id || at < best.at)
+                best = {id, at};
             break;
         }
     }
-    return 0;
+    return best;
 }
 
 } // namespace routing_internal
@@ -813,13 +832,10 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
         // foot; a walk goes on to the end of its half cycle (portion 0.5 or
         // 1) and the stop of that foot follows. Unless the planned stop is
         // within that half cycle: then it is the stop (nothing changes).
-        // Inferred, as before: the frame goes on at most `haltRoom` (the 2
-        // steps the prediction looks at; walked on in full, the walker came
-        // within the per-step test's 0.283 of the blocker and the blocked
-        // handling found no way round it: test_routing's corridor); when
-        // the room does not reach the end of the half cycle (or of the
-        // start) the stop starts at once, of the foot nearest the cycle
-        // ("R" in its first and last quarters), from where the body is.
+        // CollisionCheck then ends the walk at once (EndFollow) unless the
+        // request, so stopped, ends 2 steps before the collision: `haltRoom`
+        // is that room (round n18; before, the stop was squeezed into the 2
+        // steps, inferred).
         const float p = L.kind == Loco::Walk ? L.cycle : L.cycleStart;
         float h = 0, stride = 0, rest = 0;
         if (L.kind == Loco::Walk) {
@@ -831,25 +847,20 @@ LocoStep locoStep(VM& vm, const Object& me, const Object::Route& r, ObjectId hal
             rest = L.distance * std::max(0.0f, 1 - (float(L.tick) + L.lead) / float(std::max(L.ticks, 1)));
         }
         const BlendedClip planned = final ? plannedStop(lastHeading()) : BlendedClip{};
-        const bool cut = rest > haltRoom + 1e-4f;
-        const bool foot = cut ? (p < 0.25f || p >= 0.75f) : stopFootOther(p);
+        const bool foot = stopFootOther(p);
         if (L.kind == Loco::Walk && planned && stretch <= planned.distance() + h * stride + 1e-4f) {
-            // the planned stop is the stop
-        } else if (stopClip(L.heading, false, L.strideWeight, foot) && me.person) {
+            // The planned stop is the stop: the walk goes on if its way ends
+            // in the room.
+            out.walkOn = stretch <= haltRoom + 1e-4f;
+        } else if (const BlendedClip halt = stopClip(L.heading, false, L.strideWeight, foot); halt && me.person &&
+                   rest + halt.distance() <= haltRoom + 1e-4f) {
             L.halting = true;
             L.halted = haltFor;
             L.haltOtherFoot = foot;
-            L.haltRoom = std::max(0.0f, haltRoom);
-            L.haltWalk = cut ? 0 : rest;
-            if (cut) {
-                // The stop's frame starts where the body is (a start's root
-                // lags behind its frame), the curve going on from there.
-                L.fx = me.position.x, L.fy = me.position.y;
-                L.onCurve = false;
+            L.haltRoom = rest + halt.distance();
+            L.haltWalk = rest;
+            if (L.kind == Loco::Walk && L.haltWalk <= 1e-4f)
                 beginHalt();
-            } else if (L.kind == Loco::Walk && L.haltWalk <= 1e-4f) {
-                beginHalt();
-            }
         }
     }
     std::optional<Gait> gait;
