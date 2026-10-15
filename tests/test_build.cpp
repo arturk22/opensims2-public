@@ -459,6 +459,21 @@ static void testRoof() {
     vm.removeObject(chair.id);
     r = ed.drawRoof(1, 2, 2, 8, 5, Lot::LongGable);
     check(r.ok, "with the object gone the roof goes on");
+    // RoofIntersectWithObjects walks the roof's box with the eaves, and the
+    // tool's cWorldRoof pre-test (IsAnyRoofAtLocation + clearance) frees a
+    // tile under a roof already there (docs/buy-build-mac.md §7.22).
+    r = ed.removeRoofs();
+    Object& eaveChair = vm.createObject(0x7F000001);
+    eaveChair.position = {2.5f, 1.5f, 2};
+    r = ed.drawRoof(1, 2, 2, 8, 5, Lot::LongGable);
+    check(!r.ok && r.error == 0x7F, "an object under the new roof's eave, outside the walls (0x7F)");
+    vm.removeObject(eaveChair.id);
+    r = ed.drawRoof(1, 2, 2, 8, 5, Lot::LongGable);
+    Object& eaveChair2 = vm.createObject(0x7F000001);
+    eaveChair2.position = {2.5f, 1.5f, 2};
+    r = ed.drawRoof(1, 2, 2, 8, 5, Lot::Hip);
+    check(r.ok && lot.roofs.size() == 2, "the eave of a roof already there clears that tile for another roof");
+    vm.removeObject(eaveChair2.id);
 }
 
 // The editable area: a road along an edge takes its 10-tile strip out.

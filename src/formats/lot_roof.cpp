@@ -755,6 +755,8 @@ LotRoofs::LotRoofs(const Lot& lot) {
         pattern_ = r.pattern;
         const float h = lot.elevationAt(r.level, std::clamp(r.x0, 0.0f, float(lot.width)),
                                         std::clamp(r.y0, 0.0f, float(lot.height)));
+        if (roofgame::Roof::supported(r.type))
+            world_.add(roofgame::Roof(r, h));
         auto roof = std::make_unique<Roof>();
         roof->level = r.level;
         switch (r.type) {

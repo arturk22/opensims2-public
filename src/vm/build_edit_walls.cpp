@@ -15,6 +15,7 @@
 #include <limits>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -868,16 +869,29 @@ int BuildEditor::roofError(const Lot::Roof& roof) const {
     }
     // RoofIntersectWithObjects (BV 0x1d9908) -> DoesTileHasObjectIntersectingRoof
     // (0x1d4354): on each tile of the roof's box whose centre the roof
-    // covers, an object of the roof's level (od 0x22 zero, od 42 without
-    // the roof bit 0x8000) refuses it (0x7F) where the roof at the centre is
-    // lower than the floor there plus StandardLevelHeight (3). Not done: the
-    // test before it through the tool's member +0x6c (cWorldRoof vtable 0x7c
-    // IsAnyRoofAtLocation, then 0xa0 with StandardLevelHeight: a roof
-    // already there lets the tile pass), inferred from the slots only.
+    // covers, the first object of the roof's level (od 0x22 zero, od 42
+    // without the roof bit 0x8000) decides the tile: free when a roof
+    // already in the world stands over the centre (the tool's member +0x6c,
+    // cIWorldRoof slot 0x7c IsAnyRoofAtLocation) and leaves the clearance
+    // (slot 0xa0 DoesLocationHasClearanceHeight with StandardLevelHeight 3:
+    // the highest roof of levels L-1..L+2 there at least 3 over the floor,
+    // or at most 0.1); else refused (0x7F) where the new roof at the centre
+    // is lower than the floor there plus 3 (docs/buy-build-mac.md §7.22).
     {
         Lot one = lot_;
         one.roofs = {roof};
         const LotRoofs shape(one);
+        const LotRoofs existing(lot_);
+        const roofgame::World& world = existing.world();
+        auto clear = [&](float cx, float cy) {
+            const int level = roof.level;
+            if (!world.anyRoofAt(cx, cy, level))
+                return false;
+            if (!world.anyRoofAtOrBelow(cx, cy, level))
+                return true;
+            const float floor = lot_.elevationAt(level, cx, cy), top = world.clearanceTop(cx, cy, level);
+            return floor + 3.0f <= top || top <= floor + 0.1f;
+        };
         const int W = int(lot_.width), H = int(lot_.height);
         int tx0 = int(std::floor(std::min(ax, bx))), tx1 = int(std::ceil(std::max(ax, bx)));
         int ty0 = int(std::floor(std::min(ay, by))), ty1 = int(std::ceil(std::max(ay, by)));
@@ -889,18 +903,33 @@ int BuildEditor::roofError(const Lot::Roof& roof) const {
             ty0 = int(std::floor(std::min({ay, ay + dx, by, ay + yD})));
             ty1 = int(std::ceil(std::max({ay, ay + dx, by, ay + yD})));
         }
+        // The game's own roof types: the box is the roof's bounds with the
+        // eaves, int(min) to int(max - 1) (RoofIntersectWithObjects), the
+        // centre covered by Contains and the height its GetElevation(x, y, 0).
+        std::optional<roofgame::Roof> game;
+        if (roofgame::Roof::supported(roof.type)) {
+            game.emplace(roof, lot_.elevationAt(roof.level, std::clamp(roof.x0, 0.0f, float(W)),
+                                                std::clamp(roof.y0, 0.0f, float(H))));
+            tx0 = int(game->minX), tx1 = int(game->maxX - 1) + 1;
+            ty0 = int(game->minY), ty1 = int(game->maxY - 1) + 1;
+        }
         for (int tx = std::max(0, tx0); tx < std::min(W, tx1); ++tx)
             for (int ty = std::max(0, ty0); ty < std::min(H, ty1); ++ty) {
                 const float cx = float(tx) + 0.5f, cy = float(ty) + 0.5f;
-                const float top = shape.heightAt(cx, cy, roof.level, std::numeric_limits<float>::infinity());
+                float top = std::numeric_limits<float>::infinity();
+                if (game)
+                    top = game->contains(cx, cy) ? game->elevation(cx, cy, 0.0f) : top;
+                else
+                    top = shape.heightAt(cx, cy, roof.level, top);
                 if (top == std::numeric_limits<float>::infinity())
-                    continue;
-                if (top >= lot_.elevationAt(roof.level, cx, cy) + 3.0f)
                     continue;
                 for (ObjectId id : vm_.objectsOnTile({tx, ty, roof.level + 1}))
                     if (const Object* o = vm_.object(id);
-                        o && !o->data[0x22] && o->data[objdata::PlacementFlags] >= 0)
+                        o && !o->data[0x22] && o->data[objdata::PlacementFlags] >= 0) {
+                        if (clear(cx, cy) || top >= lot_.elevationAt(roof.level, cx, cy) + 3.0f)
+                            break; // the first such object decides the tile
                         return 0x7F;
+                    }
             }
     }
     // The start corner's level below the ground, or its tile over a pool

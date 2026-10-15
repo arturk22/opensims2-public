@@ -2257,7 +2257,16 @@ está no mundo nessa hora (o `RoofIntersectWithObjects` o cria à parte). No
 app (`BuildEditor::roofError`) o pré-teste usa os outros telhados do lote; a
 contagem dos telhados do jogo aceitos (`s2pkg lot-save <lote> <saída>
 --check-build 1`) testa cada telhado salvo com o lote como está, ele próprio
-incluído entre os telhados já postos.
+incluído entre os telhados já postos. A caixa de tiles é a do jogo: os limites
+do telhado **com o beiral**, de `int(mín)` a `int(máx − 1)` (antes o app
+olhava só os tiles dentro das paredes). Resultado nos 63 lotes: **245 de 275**
+aceitos (antes 243). O pré-teste só libera tiles onde o telhado que já está lá
+passa a ≥ 3 do piso ou a ≤ 0,1 dele (o beiral do lado de fora); os 30 que
+sobram têm todos uma **janela** no andar do próprio telhado num tile de dentro
+das paredes onde ele está a 0,58 do piso (a primeira fileira sob a parte
+baixa): o jogo também os recusaria se fossem refeitos, porque o teste só roda
+ao pôr o telhado e as janelas foram postas depois (N001_Lot59, 64, 68, 77, 82;
+N002_Lot10, 22, 25, 29, 31; N003_Lot133, 157, 166, 171, 179, 181).
 
 `FUN_001648ac` (tile de cima de piscina) também dá o `0x46` das paredes (os
 dois lados sobre piscina) e o teste 9 do `FUN_009e9550`.

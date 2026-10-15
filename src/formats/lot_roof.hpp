@@ -7,6 +7,7 @@
 #pragma once
 
 #include "gmdc.hpp"
+#include "lot_roof_game.hpp"
 
 #include <memory>
 #include <string>
@@ -45,10 +46,15 @@ public:
     size_t count() const { return roofs_.size(); }
     std::vector<std::string> warnings;
 
+    // The lot's roofs of types 1-6 as the game's nTSWorld::cWorldRoof holds
+    // them (docs/roof-fence-water-mac.md §1.5).
+    const roofgame::World& world() const { return world_; }
+
     struct Roof;
 
 private:
-    std::vector<std::unique_ptr<Roof>> roofs_;
+    std::vector<std::unique_ptr<Roof>> roofs_; // OpenTS2 port: the diagonal and pagoda types
+    roofgame::World world_;
     uint32_t pattern_ = 0;
 };
 
