@@ -127,7 +127,9 @@ os2::LotViewOptions cinematicLotView() {
     std::array<float, 2> look{shot.forward.x, shot.forward.y};
     if (std::hypot(look[0], look[1]) < 1e-3f) // looking straight down: the camera's up is "into the scene"
         look = {shot.up.x, shot.up.y};
-    return gWallView.options(look, viewLevel());
+    os2::LotViewOptions v = gWallView.options(look, viewLevel());
+    v.camera = std::array<float, 3>{shot.eye.x, shot.eye.y, shot.eye.z}; // the scene camera's position
+    return v;
 }
 
 // Prepares a scene at `preparedAt` (scene clock: when the VM asked for it,

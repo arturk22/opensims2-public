@@ -251,11 +251,15 @@ os2::LotViewOptions wantedLotView() {
     if (cinematicPlaying())
         return cinematicLotView();
     std::array<float, 2> look{gLotView.viewDirection};
+    std::optional<std::array<float, 3>> eye;
     if (gCamera) {
         const simd_float3 d = gCamera->pivot() - gCamera->eye();
         look = {d.x, d.y};
+        const simd_float3 e = gCamera->eye();
+        eye = std::array<float, 3>{e.x, e.y, e.z};
     }
     os2::LotViewOptions v = gWallView.options(look, viewLevel());
+    v.camera = eye; // cutaway tests the walls against the camera's position
     // cutawayForSelectedSim: the selected Sim on the level shown.
     if (v.walls == os2::LotViewOptions::Walls::Cutaway && gCamera && gSimulation && gLive &&
         v.level != os2::LotViewOptions::kAllLevels) {
@@ -303,7 +307,13 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
     if (!gLotShape || gLotInstance < 0 || gLotModel < 0 || !gLotPatterns || !gIndex)
         return;
     const os2::LotViewOptions want = wantedLotView();
-    if (!sims && !os2::WallView::sameCut(gLotView, want)) {
+    // The cutaway is worked out every frame (the game does it at each
+    // camera move) and the model rebuilt only when what is cut changed
+    // (UpdateSceneGraph touches only the differences).
+    std::vector<bool> cutaway;
+    if (!sims)
+        cutaway = os2::lotCutawayWalls(*gLotShape, want);
+    if (!sims && (!os2::WallView::sameCut(gLotView, want) || cutaway != gScene.lotCutaway)) {
         const CFTimeInterval start = CACurrentMediaTime();
         os2::LotLightMapLayout layout;
         const os2::ObjectModel model = os2::buildLotModel(*gLotShape, *gIndex, *gLotPatterns, want, &layout, &gLotCache);
@@ -319,6 +329,7 @@ void updateLotView(os2::Renderer& renderer, bool sims) {
                 gLighting->setLightMapLayout(*gLightMapLayout);
         }
         gLotView = want;
+        gScene.lotCutaway = std::move(cutaway);
         static const bool perf = std::getenv("OS2_PERF") != nullptr;
         if (perf || !gCamera)
             std::printf("opensims2: lot view: walls %s, level %d, roof %s (%.1f ms build, %.1f ms upload)\n",

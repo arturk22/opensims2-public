@@ -589,11 +589,12 @@ static void testLotModel() {
         check(lotTopLevel(gabled) == 0, "top level: not the gables (attic walls) over the roof's floor");
     }
 
-    // WallView: cutaway rebuilds only when the camera passes a wall direction.
+    // WallView: the model is rebuilt for another mode, roof or level (what
+    // the cutaway cuts is compared apart: lotCutawayWalls).
     WallView wv;
     check(wv.walls() == LotViewOptions::Walls::Cutaway, "lots start in cutaway");
-    const LotViewOptions a = wv.options({1, 0.2f}, 0), b = wv.options({1, 0.4f}, 0), c = wv.options({1, -0.2f}, 0);
-    check(WallView::sameCut(a, b) && !WallView::sameCut(a, c), "cutaway follows the camera's side of the walls");
+    const LotViewOptions a = wv.options({1, 0.2f}, 0), b = wv.options({1, -0.4f}, 0);
+    check(WallView::sameCut(a, b), "the camera alone does not change the model's mode");
     check(!WallView::sameCut(a, wv.options({1, 0.2f}, 1)), "another level rebuilds");
     check(wv.mode() == 1 && !wv.roof() && !wv.options({1, 0}, 0).roof, "cutaway shows no roof");
     wv.cycle(1);
@@ -636,23 +637,41 @@ static void testLotModel() {
         add(2, Lot::Normal);    // room 2 | yard: outside, its outside face +X
         add(3, Lot::Normal);    // yard | yard: alone
         add(0, Lot::Foundation); // a style without cutaway
-        auto cutAt = [&](std::array<float, 2> look, std::optional<std::array<float, 4>> simLine = std::nullopt) {
+        auto cutAt = [&](std::array<float, 2> look, std::optional<std::array<float, 4>> simLine = std::nullopt,
+                         std::optional<std::array<float, 3>> camera = std::nullopt) {
             LotViewOptions v;
             v.walls = LotViewOptions::Walls::Cutaway;
             v.level = 0;
             v.viewDirection = look;
             v.simLine = simLine;
+            v.camera = camera;
+            std::vector<float> fromSet;
+            const auto set = lotCutawayWalls(c, v);
+            for (size_t i = 0; i < set.size(); ++i)
+                if (set[i])
+                    fromSet.push_back(c.walls[i].a.x);
+            std::sort(fromSet.begin(), fromSet.end());
             LotModelCache k;
             buildLotModel(c, index, patterns, v, nullptr, &k);
             std::vector<float> xs;
             for (const auto& w : k.cut)
                 xs.push_back(w[0]);
             std::sort(xs.begin(), xs.end());
+            check(xs == fromSet, "the model cuts what lotCutawayWalls says");
             return xs;
         };
         check(cutAt({-1, 0.2f}) == std::vector<float>{1, 2}, "cutaway from +X: the inside wall and the outside wall facing the camera");
         check(cutAt({1, 0.2f}) == std::vector<float>{1}, "cutaway from -X: the inside wall only (the outside wall's face looks away)");
         check(cutAt({0.0f, 1}) == std::vector<float>{1}, "an inside wall is cut even edge-on");
+        // The camera's position (KeepOnlyFrontFacingOutsideWalls, docs/ui-live-mac.md
+        // 8d): the outside wall at x = 2 is cut while the camera is past x = 2,
+        // wherever it looks.
+        check(cutAt({1, 0}, std::nullopt, std::array<float, 3>{2.5f, -20, 15}) == std::vector<float>{1, 2},
+              "a camera on the outside of the wall's line cuts it, even looking the other way");
+        check(cutAt({-1, 0}, std::nullopt, std::array<float, 3>{1.5f, -20, 15}) == std::vector<float>{1},
+              "a camera on the inside of the wall's line does not cut it");
+        check(cutAt({-1, 0}, std::nullopt, std::array<float, 3>{2.0f, -20, 15}) == std::vector<float>{1},
+              "a camera on the wall's line does not cut it (the game's test is strict)");
         // cutawayForSelectedSim: a Sim at x = 3.5 seen from a camera at -X
         // cuts the walls across the line, the outside wall facing away and
         // the one alone in the yard too (fences and foundations never).

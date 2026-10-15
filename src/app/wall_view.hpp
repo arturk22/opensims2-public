@@ -4,7 +4,7 @@
 // the floor the camera shows): which walls are cut down and which levels are
 // drawn. The app rebuilds the lot model (buildLotModel with a LotModelCache)
 // only when the view changes what is cut: the wall mode (with or without the
-// roof), the level, or, in cutaway, the camera turning past a wall direction. Plain C++.
+// roof), the level, or, in cutaway, the walls cut (lotCutawayWalls). Plain C++.
 
 #include "formats/lot_model.hpp"
 
@@ -50,9 +50,9 @@ public:
     // The view for a camera looking along `look` (horizontal, into the
     // scene) at `level` (the lot's numbering).
     LotViewOptions options(std::array<float, 2> look, int level) const;
-    // Whether a lot model built for `a` also shows `b`: the same mode, roof
-    // and level, and in cutaway the same side of every wall direction (axes
-    // and diagonals) facing the camera.
+    // Whether a lot model built for `a` also shows `b` but for what the
+    // cutaway cuts (lotCutawayWalls, compared apart): the same mode, roof and
+    // levels.
     static bool sameCut(const LotViewOptions& a, const LotViewOptions& b);
     // Whether a point (an object's or a Sim's placement) is drawn when the
     // camera shows `level`: below the floor of the next level up; with

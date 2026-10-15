@@ -266,6 +266,7 @@ struct SceneState {
     std::unique_ptr<os2::Lot> lotShape;
     std::unique_ptr<os2::PatternCatalog> lotPatterns;
     os2::LotViewOptions lotView;
+    std::vector<bool> lotCutaway; // the walls lotView's cutaway cut (os2::lotCutawayWalls)
     int lotInstance = -1;
     int lotModel = -1;
     os2::LotModelCache lotCache;

@@ -366,6 +366,14 @@ std::optional<ObjectModel::AlphaMask> wallMaskValues(ResourceIndex& index, const
     return out;
 }
 
+// The levels whose walls take the view's wall mode: the view's level
+// (all with kAllLevels) and those from lowestCut up to it.
+bool wallModeLevel(const LotViewOptions& view, int level) {
+    return view.level == LotViewOptions::kAllLevels || level == view.level ||
+           (level >= view.lowestCut && level < view.level);
+}
+
+
 // Walls as slabs: one face per side with that side's covering, plus a top.
 // Each slab is stretched by its half thickness at both ends to close corners;
 // texture coordinates follow world position, so overlaps line up. Attic walls
@@ -382,6 +390,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
     for (const auto& [ref, pattern] : lot.wallPatterns)
         materials[ref] = patterns.wallMaterial(pattern);
     size_t unknownFences = 0;
+    const std::vector<bool> cutaway = lotCutawayWalls(lot, view);
     for (const auto& w : lot.walls) {
         // The column deck's skirt (walls.txt "wall 4": notRendered) is not drawn.
         if (w.type == Lot::DeckSkirt)
@@ -422,53 +431,14 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         }
         const bool shown = (level <= view.level && !offFoundation) || (attic && roofShown && level == view.level + 1);
         auto& out = shown ? drawn : hidden;
-        // The wall mode applies to the view's level (lower levels keep their walls up).
-        const bool current = view.level == LotViewOptions::kAllLevels || level == view.level ||
-                             (level >= view.lowestCut && level < view.level);
-        // Wall modes cut down the walls whose partition style allows it
-        // (walls.txt mayCutAway: normal and attic walls; foundations, pool
-        // sides and deck skirts say false, and fences default to false as
-        // fencearches.txt documents; inferred for fences.txt, which has no
-        // key), nTSWorld::PartitionStyleSupportsCutaway.
+        // The wall mode applies to the view's level (lower levels keep their
+        // walls up), to the walls whose partition style allows it (lotCutawayWalls).
+        const bool current = wallModeLevel(view, level);
         bool lowered = false;
-        if (current && view.walls != LotViewOptions::Walls::Up && (w.type == Lot::Normal || attic)) {
-            if (view.walls == LotViewOptions::Walls::Down) {
-                lowered = true;
-            } else {
-                // cWallCutawayManager::KeepOnlyFrontFacingOutsideWalls
-                // (docs/ui-live-mac.md 8c) with the room of each face from
-                // the light's room map (3ARY 0x0B), the one nTSSG::cWallManager
-                // follows (docs/buy-build-mac.md 7.3: fenced yards are outside
-                // there): both faces inside (an inside wall) always cut; one
-                // face outside (an outside wall) cut when that face looks at
-                // the camera; both outside (a wall alone in the yard) never.
-                // The game tests the face against the camera's position; the
-                // camera is far, so its view direction stands in for it.
-                const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
-                const bool right = roomBeside(lot, level, mx, my, nx, ny, true) != 0;
-                const bool left = roomBeside(lot, level, mx, my, -nx, -ny, true) != 0;
-                if (right && left) {
-                    lowered = true;
-                } else if (right != left) {
-                    // The outside face's normal against the view (into the scene): < 0 looks at the camera.
-                    const float s = right ? -1.0f : 1.0f;
-                    lowered = s * (nx * view.viewDirection[0] + ny * view.viewDirection[1]) < -1e-3f;
-                }
-                // usarSim: a wall across the camera-to-Sim line (the world's
-                // ray query; here the line in the plan, inferred).
-                if (!lowered && view.simLine) {
-                    const auto& l = *view.simLine;
-                    auto orient = [](float ax, float ay, float bx, float by, float cx, float cy) {
-                        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-                    };
-                    const float d1 = orient(l[0], l[1], l[2], l[3], w.a.x, w.a.y);
-                    const float d2 = orient(l[0], l[1], l[2], l[3], w.b.x, w.b.y);
-                    const float d3 = orient(w.a.x, w.a.y, w.b.x, w.b.y, l[0], l[1]);
-                    const float d4 = orient(w.a.x, w.a.y, w.b.x, w.b.y, l[2], l[3]);
-                    lowered = ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
-                }
-            }
-        }
+        if (view.walls == LotViewOptions::Walls::Down)
+            lowered = current && (w.type == Lot::Normal || attic);
+        else if (view.walls == LotViewOptions::Walls::Cutaway)
+            lowered = cutaway[size_t(&w - lot.walls.data())];
         // (A wall of the next story left out too: what hangs on it goes with it.)
         if ((lowered || offFoundation) && cut && level <= view.level)
             cut->push_back({w.a.x, w.a.y, w.b.x, w.b.y, float(level)});
@@ -963,6 +933,63 @@ bool storyOverGround(const Lot& lot, int level, int x, int y) {
             if (std::abs(lot.elevation(level, x + i, y + j) - lot.elevation(level - 1, x + i, y + j) - kStoryHeight) >= 0.05f)
                 return false;
     return true;
+}
+
+std::vector<bool> lotCutawayWalls(const Lot& lot, const LotViewOptions& view) {
+    std::vector<bool> cut(lot.walls.size(), false);
+    if (view.walls != LotViewOptions::Walls::Cutaway)
+        return cut;
+    for (size_t i = 0; i < lot.walls.size(); ++i) {
+        const auto& w = lot.walls[i];
+        const int level = w.a.level;
+        // CollectWallsEligibleForCutaway: the level's walls whose partition
+        // style allows cutaway (walls.txt mayCutAway: normal and attic
+        // walls; foundations, pool sides and deck skirts say false, and
+        // fences default to false as fencearches.txt documents; inferred for
+        // fences.txt, which has no key), nTSWorld::PartitionStyleSupportsCutaway.
+        if (!wallModeLevel(view, level) || (w.type != Lot::Normal && w.type != Lot::Attic))
+            continue;
+        float dx = w.b.x - w.a.x, dy = w.b.y - w.a.y;
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len == 0)
+            continue;
+        dx /= len, dy /= len;
+        const float nx = dy, ny = -dx; // right of a -> b
+        // KeepOnlyFrontFacingOutsideWalls (BV 0xc8c868, docs/ui-live-mac.md
+        // 8c-8d) with the room of each face from the light's room map (3ARY
+        // 0x0B), the one nTSSG::cWallManager follows (docs/buy-build-mac.md
+        // 7.3: fenced yards are outside there): both faces inside (an inside
+        // wall) always cut; one face outside (an outside wall) cut when that
+        // face looks at the camera's position (the camera on the outside of
+        // the wall's line: the game's 2D cross product < 0, strict); both
+        // outside (a wall alone in the yard) never.
+        const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
+        const bool right = roomBeside(lot, level, mx, my, nx, ny, true) != 0;
+        const bool left = roomBeside(lot, level, mx, my, -nx, -ny, true) != 0;
+        if (right && left) {
+            cut[i] = true;
+        } else if (right != left) {
+            const float s = right ? -1.0f : 1.0f; // the outside face's normal is s * (nx, ny)
+            if (view.camera)
+                cut[i] = s * (nx * ((*view.camera)[0] - w.a.x) + ny * ((*view.camera)[1] - w.a.y)) > 0;
+            else // no camera: along the view direction (into the scene)
+                cut[i] = s * (nx * view.viewDirection[0] + ny * view.viewDirection[1]) < -1e-3f;
+        }
+        // usarSim: a wall across the camera-to-Sim line (the world's ray
+        // query; here the line in the plan, inferred).
+        if (!cut[i] && view.simLine) {
+            const auto& l = *view.simLine;
+            auto orient = [](float ax, float ay, float bx, float by, float cx, float cy) {
+                return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+            };
+            const float d1 = orient(l[0], l[1], l[2], l[3], w.a.x, w.a.y);
+            const float d2 = orient(l[0], l[1], l[2], l[3], w.b.x, w.b.y);
+            const float d3 = orient(w.a.x, w.a.y, w.b.x, w.b.y, l[0], l[1]);
+            const float d4 = orient(w.a.x, w.a.y, w.b.x, w.b.y, l[2], l[3]);
+            cut[i] = ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
+        }
+    }
+    return cut;
 }
 
 int lotTopLevel(const Lot& lot) {

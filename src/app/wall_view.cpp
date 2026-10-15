@@ -55,29 +55,9 @@ LotViewOptions WallView::options(std::array<float, 2> look, int level) const {
 }
 
 bool WallView::sameCut(const LotViewOptions& a, const LotViewOptions& b) {
-    if (a.walls != b.walls || a.roof != b.roof || a.level != b.level)
-        return false;
-    if (a.walls != Walls::Cutaway)
-        return true;
-    // The camera-to-Sim line: again when the Sim or the camera changes tile.
-    if (a.simLine.has_value() != b.simLine.has_value())
-        return false;
-    if (a.simLine)
-        for (int k = 0; k < 4; ++k)
-            if (std::floor((*a.simLine)[size_t(k)]) != std::floor((*b.simLine)[size_t(k)]))
-                return false;
-    // buildLotModel cuts a wall by the sign of its normal along the view
-    // (|dot| > 1e-3): walls run along the axes and the diagonals.
-    static const float kNormals[4][2] = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};
-    auto side = [](const float n[2], const std::array<float, 2>& d) {
-        const float len = std::hypot(n[0], n[1]);
-        const float f = (n[0] * d[0] + n[1] * d[1]) / len;
-        return std::abs(f) <= 1e-3f ? 0 : f > 0 ? 1 : -1;
-    };
-    for (const auto& n : kNormals)
-        if (side(n, a.viewDirection) != side(n, b.viewDirection))
-            return false;
-    return true;
+    // In cutaway the app also compares what is cut (lotCutawayWalls), which
+    // follows the camera and the selected Sim.
+    return a.walls == b.walls && a.roof == b.roof && a.level == b.level && a.lowestCut == b.lowestCut;
 }
 
 bool WallView::visible(const Lot& lot, int level, float x, float y, float z, int lowestCut) {

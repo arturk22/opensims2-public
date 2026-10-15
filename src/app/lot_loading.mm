@@ -195,6 +195,7 @@ std::optional<simd_float3> loadLot(os2::Renderer& renderer, os2::ResourceIndex& 
     renderer.setGroundClip(os2::lotSkirtBottom(lot));
     gLotPatterns = std::make_unique<os2::PatternCatalog>(patterns);
     gLotView = view;
+    gScene.lotCutaway = os2::lotCutawayWalls(lot, view);
     perfLap("lot model to the GPU");
     for (const auto& w : lot.warnings)
         std::fprintf(stderr, "opensims2: %s: %s\n", query->c_str(), w.c_str());

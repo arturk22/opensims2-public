@@ -72,9 +72,10 @@ private:
 //
 // Walls are drawn as in the game's wall modes (docs/ui-live-mac.md 8c): up,
 // cutaway (every inside wall of the level cut down, outside walls only when
-// their outside face looks at the camera, seen along `viewDirection`, a
-// horizontal vector from the camera into the scene; walls alone in the yard
-// stay up) or down (all walls cut down). Only partition styles that allow
+// their outside face looks at the camera's position, `camera`, or without
+// it along `viewDirection`, a horizontal vector from the camera into the
+// scene; walls alone in the yard stay up: lotCutawayWalls) or down (all
+// walls cut down). Only partition styles that allow
 // cutaway are cut (normal and attic walls; not fences, foundations, pool
 // sides or deck skirts).
 //
@@ -88,6 +89,10 @@ struct LotViewOptions {
     static constexpr int kAllLevels = std::numeric_limits<int>::max();
     Walls walls = Walls::Up;
     std::array<float, 2> viewDirection{1, 0};
+    // The camera's position (lot space): cutaway tests the walls against it
+    // as cWallCutawayManager does (docs/ui-live-mac.md 8d); without it (Create
+    // a Sim, before the camera exists) `viewDirection` stands in.
+    std::optional<std::array<float, 3>> camera;
     int level = kAllLevels;
     // The wall mode also cuts the walls of the levels from this one up to
     // `level` (a yard under a house on foundations is shown with its floor:
@@ -100,6 +105,14 @@ struct LotViewOptions {
     // from the camera (x, y) to the Sim (x, y) are cut too.
     std::optional<std::array<float, 4>> simLine;
 };
+// Which of lot.walls the view's cutaway cuts down
+// (cWallCutawayManager::KeepOnlyFrontFacingOutsideWalls and the walls
+// blocking the selected Sim, docs/ui-live-mac.md 8c-8d): the walls of the
+// levels the wall mode applies to whose partition style allows cutaway;
+// empty (all false) unless view.walls is Cutaway. The app rebuilds the lot
+// model only when this changes, as UpdateSceneGraph only touches the
+// differences.
+std::vector<bool> lotCutawayWalls(const Lot& lot, const LotViewOptions& view);
 // The highest level with walls (not attic walls: the gables go with the
 // roof over the level below) or floors (lowest level if none).
 int lotTopLevel(const Lot& lot);
