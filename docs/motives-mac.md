@@ -177,12 +177,53 @@ lê o motivo 3 em float e **trunca** para inteiro (`(int)`), não arredonda.
 
 ## 7. No código (rodada n17)
 
-Ver `src/vm/motives.*` e `src/vm/autonomy.cpp`; o que ficou fora está no
-`TODO.md`:
+`src/vm/motives.*`, `src/vm/autonomy.cpp`, `src/vm/lot_resume.cpp`,
+`src/vm/lot_save.cpp`:
+
+- **Curvas** (`MotiveCurve`): leitura por `sscanf`, ponto inserido no
+  lugar com o primeiro x valendo, até 32, inversos guardados, valor pelo
+  caminho do jogo em float (sem `fma` implícito: `#pragma clang fp
+  contract(off)`); STR# com menos de 16 textos (ou sem STR#) = constante 1;
+  texto vazio = 0; idade negativa = adulto; curvas próprias pelo campo 0x33.
+- **Motor** (`tickMotives`): a cada 60 ticks (o relógio das memórias,
+  `Person::memoriesTick`), com o dado 29 = 0: `updateMotives` (decaimento
+  `dado/24/30` na ordem do base, trava ±100, conjunto antigo
+  `Person::oldMotives`), humor, memórias, Humor+Memória; depois dado 27,
+  Set Motive Change (sem trava) e dado 1. As árvores leem o float
+  arredondado (metade para longe do zero) e sem trava (`motiveView`); o que
+  escrevem vale como está até a próxima atualização. O lote carrega e grava
+  os dois conjuntos sem prender.
+- **Humor** (`computeMood`/`moodFrom`): a conta do base (§4) com `fmaf` e o
+  dado 163, sem trava.
+- **Autonomia** (`scoreAds`, `adValue`): motivos 3, 5–9, 13–15 em float, as
+  duas somas × `1.0f/10` e depois a diferença, anúncio por `fmaf`, tipos
+  5/6 no dado 4.
+
+**Provas** (`s2pkg mood-sweep`, ctest `mood_sweep` com `OS2_DATA`): nos 69
+lotes que vêm com o jogo há 55 Sims; o humor salvo sai do conjunto antigo
+salvo + dado 163 **exatamente** (mesmo float) em 47 e com diferença de no
+máximo 3,05·10⁻⁵ nos outros 8 (os bairros foram salvos pela versão de PC,
+que arredonda diferente); 5 têm dado 163 = 200 e humor acima de 100
+(N001_Lot11 #197, N002_Lot10 #160, N003_Lot46 #135, Tutorial_Lot19 #146 e
+#148); Humor+Memória = Humor nos 55. Pelo conjunto atual só 44 batem: o
+humor é do antigo.
+
+`s2pkg autonomy … --ticks 14400` antes/depois (N001_Lot11, Lot68, Lot49):
+o Mortimer (#197) começa com humor 232 (antes caía para 33 em uma hora
+porque o 163 não entrava) e fica acima de 220 até as 19:42; às 20:02 o
+dado 163 já voltou a 0 (pelas árvores do "Mood Boost") e o humor é 24; o
+decaimento por dia é o mesmo (Lot49 termina igual, ±2 nos
+motivos); os desejos empatados mudam de slot (Lot68: os dois empregos do
+Adriano Jonas trocam de lugar; Lot49: o medo "Cobrador!" do Duque vai do
+slot 2 para o 3); as escolhas de autonomia mudam onde os empates e as
+frações mudam (Lot11, Lot68 depois da 1ª hora).
+
+Fica fora (no `TODO.md`):
 
 - o **ambiente** (motivo 13): `cTSEnvironmentScoreManager` (BV `0x5805a0`,
   `GetEnvironmentRoomID` `0x57ffa8`, constantes no construtor) não foi
   lido; o motivo fica com o valor salvo;
 - o tique em que o primeiro passo de 60 cai depois de carregar (se o
   `+0x264` volta do arquivo e qual relógio o simulador passa não foi
-  conferido); aqui é o mesmo relógio das memórias, que começa em 0.
+  conferido); aqui é o mesmo relógio das memórias, que começa em 0;
+- com pesos somando 0 o jogo divide por 0; aqui o humor fica só o dado 163.
