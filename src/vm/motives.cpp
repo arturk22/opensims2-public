@@ -1,9 +1,11 @@
-// The motive engine (motives.hpp): the per-tick motive changes and decay,
-// mood, Set Motive Change (0x1D) and Find 5 Worst Motives (0x21).
+// The motive engine (motives.hpp): the per-tick motive changes, the
+// 60-tick update (decay, clamp, the old set, mood), Set Motive Change
+// (0x1D) and Find 5 Worst Motives (0x21). docs/motives-mac.md.
 
 #include "motives.hpp"
 
 #include "animation.hpp"
+#include "memories.hpp"
 #include "formats/binreader.hpp"
 #include "formats/strings.hpp"
 
@@ -32,6 +34,7 @@ namespace {
 constexpr uint16_t kHappyCurveStrings = 0x226;
 constexpr uint16_t kScoreCurveStrings = 0x28A;
 constexpr int kCurvePoints = 32; // the sets give each curve room for 32 points
+constexpr uint64_t kUpdateTicks = 60; // OnSimulatorTick: the motives and the memories every 60 ticks
 
 // cTSMotiveCurveSet::LoadFromFile (base 0xb910dc, BV 0x51cadc): text i of
 // the STR# is curve i; the curves past the texts are constant 1.
@@ -179,7 +182,7 @@ const MotiveCurveSet& scoreCurves(VM& vm, const Object& sim) {
     return curvesFrom(vm, kGlobalGroup, uint16_t(kScoreCurveStrings + curveAgeIndex(sim)));
 }
 
-float computeMood(VM& vm, const Object& sim) {
+float computeMood(VM& vm, Object& sim) {
     if (!sim.person)
         return 0;
     const auto& curves = happyCurves(vm, sim);
@@ -188,12 +191,21 @@ float computeMood(VM& vm, const Object& sim) {
     for (int16_t m = motive::Energy; m < int16_t(kMotiveCount); ++m) {
         if (excluded & (1 << m))
             continue;
-        const float v = sim.person->motives[size_t(m)];
+        const float v = exactMotive(sim, m);
         const float w = curves[size_t(m)].at(v);
         sum += w * v;
         weights += w;
     }
     return weights > 0 ? std::clamp(sum / weights, -100.0f, 100.0f) : 0.0f;
+}
+
+int16_t motiveView(float v) {
+    // cTSObject::InterpValue (BV 0xb15f2c): (int)(v + 0.5), or - 0.5 below
+    // 0, as a short; not clamped.
+    const double r = v >= 0.0f ? double(v) + 0.5 : double(v) - 0.5;
+    if (!(r > -2147483648.0 && r < 2147483648.0))
+        return 0;
+    return int16_t(int32_t(r));
 }
 
 float exactMotive(Object& sim, int16_t m) {
@@ -203,12 +215,13 @@ float exactMotive(Object& sim, int16_t m) {
             p.exactMotives[k] = p.writtenMotives[k] = p.motives[k];
         p.exactMotivesValid = true;
     }
-    const auto k = size_t(m);
-    if (p.motives[k] != p.writtenMotives[k]) { // a tree wrote it: kept within -100..100 (inferred; a
-        // Sim's social reached 2050 from "Motive Increment" timers without it)
-        p.motives[k] = int16_t(std::clamp<int>(p.motives[k], -100, 100));
-        p.exactMotives[k] = p.writtenMotives[k] = p.motives[k];
+    if (!p.oldMotivesValid) {
+        p.oldMotives = p.exactMotives;
+        p.oldMotivesValid = true;
     }
+    const auto k = size_t(m);
+    if (p.motives[k] != p.writtenMotives[k]) // a tree wrote it: the game's float takes the value as it is
+        p.exactMotives[k] = p.writtenMotives[k] = p.motives[k];
     return p.exactMotives[k];
 }
 
@@ -216,8 +229,8 @@ void setExactMotive(Object& sim, int16_t m, float value) {
     exactMotive(sim, m);
     Person& p = *sim.person;
     const auto k = size_t(m);
-    p.exactMotives[k] = std::clamp(value, -100.0f, 100.0f);
-    p.motives[k] = p.writtenMotives[k] = int16_t(std::lround(p.exactMotives[k]));
+    p.exactMotives[k] = value;
+    p.motives[k] = p.writtenMotives[k] = motiveView(value);
 }
 
 int16_t decayDataOf(int16_t m) {
@@ -234,50 +247,80 @@ int16_t decayDataOf(int16_t m) {
     }
 }
 
+void updateMotives(Object& sim) {
+    Person& p = *sim.person;
+    // The daily decays, a 720th each (2 game minutes of 24 h), in the
+    // base game's order and single precision: (float(data) / 24) / 30.
+    static constexpr std::pair<int16_t, int16_t> kDecay[] = {
+        {motive::Fun, 101},   {motive::Hygiene, 97}, {motive::Bladder, 95}, {motive::Social, 99},
+        {motive::Hunger, 93}, {motive::Energy, 96},  {motive::Comfort, 94}};
+    for (size_t k = 0; k < kMotiveCount; ++k)
+        exactMotive(sim, int16_t(k));
+    if (gMotiveDecay)
+        for (const auto& [m, d] : kDecay) {
+            const float perDay = float(p.data[size_t(d)]);
+            const float perHour = perDay / 24.0f;
+            const float step = perHour / 30.0f;
+            p.exactMotives[size_t(m)] = p.exactMotives[size_t(m)] + step;
+        }
+    // The environment (13) would come from the environment score manager
+    // (not modelled: it keeps its value). Every motive within -100..100,
+    // and the old set takes them.
+    for (size_t k = 0; k < kMotiveCount; ++k) {
+        float& v = p.exactMotives[k];
+        if (v > 100.0f)
+            v = 100.0f;
+        else if (v < -100.0f)
+            v = -100.0f;
+        p.oldMotives[k] = v;
+        p.motives[k] = p.writtenMotives[k] = motiveView(v);
+    }
+}
+
 void tickMotives(VM& vm) {
-    const float ticksPerDay = 24.0f * 60.0f * float(vm.clock.ticksPerMinute);
     for (Object* po : vm.objectTable()) {
         if (!po || !po->person)
             continue;
         Object& sim = *po;
         Person& p = *sim.person;
-        // cTSPerson::OnSimulatorTick: person data 27 "tick counter" counts
-        // the ticks (the Main's "Divide Tick Counts" reads and resets it) and
-        // 1 "Money Amount over Head" is cleared.
-        p.data[persondata::TickCounter] = int16_t(p.data[persondata::TickCounter] + 1);
-        p.data[persondata::MoneyOverHead] = 0;
-        const int16_t isStatic = p.data[persondata::MotivesStatic];
-        if (isStatic >= 2)
-            continue;
-        // Set Motive Change: up (or down) to the limit, without passing it.
-        for (const MotiveChange& ch : p.motiveChanges) {
-            const float v = exactMotive(sim, ch.motive);
-            float next = v + ch.perTick;
-            if (ch.perTick >= 0)
-                next = v >= ch.limit ? v : std::min(next, ch.limit);
-            else
-                next = v <= ch.limit ? v : std::max(next, ch.limit);
-            if (next != v)
-                setExactMotive(sim, ch.motive, next);
-        }
-        // What the trees wrote since the last tick, within range.
-        for (int16_t m : motive::kPhysicalAndMental)
-            exactMotive(sim, m);
-        // Daily decay (inferred: engine side, see motives.hpp).
-        if (gMotiveDecay && isStatic == 0)
-            for (int16_t m : motive::kPhysicalAndMental) {
-                const int16_t d = decayDataOf(m);
-                if (d < 0 || p.data[size_t(d)] == 0)
-                    continue;
-                setExactMotive(sim, m, exactMotive(sim, m) + float(p.data[size_t(d)]) / ticksPerDay);
+        // cTSPerson::OnSimulatorTick (base 0xb876bc, BV 0xad1040).
+        if (p.memoriesTick + kUpdateTicks <= vm.ticks) {
+            p.memoriesTick = vm.ticks;
+            if (p.data[persondata::MotivesStatic] == 0) {
+                updateMotives(sim);
+                // UpdateMood; Mood+Mem is the mood (the memories do not
+                // enter it; their score is person data 54, memories.cpp;
+                // docs/relationships-mac.md §4).
+                setExactMotive(sim, motive::Mood, computeMood(vm, sim));
+                updateMemories(vm, sim, false);
+                setExactMotive(sim, motive::MoodMem, exactMotive(sim, motive::Mood));
             }
-        // Mood (cTSMotives::UpdateMood); Mood+Mem is the mood, within
-        // -100..100 (cTSMotives::UpdateMetaMood, Mac BV 0x485e68: the
-        // memories do not enter it; their score is person data 54,
-        // memories.cpp; docs/relationships-mac.md §4).
-        const float mood = computeMood(vm, sim);
-        setExactMotive(sim, motive::Mood, mood);
-        setExactMotive(sim, motive::MoodMem, mood);
+        }
+        // Person data 27 "tick counter" counts the ticks (the Main's
+        // "Divide Tick Counts" reads and resets it).
+        p.data[persondata::TickCounter] = int16_t(p.data[persondata::TickCounter] + 1);
+        // Set Motive Change: up (or down) to the limit, without passing it.
+        if (p.data[persondata::MotivesStatic] < 2)
+            for (const MotiveChange& ch : p.motiveChanges) {
+                const float v = exactMotive(sim, ch.motive);
+                float next = v;
+                if (ch.perTick >= 0) {
+                    if (v < ch.limit) {
+                        next = v + ch.perTick;
+                        if (ch.limit < next)
+                            next = ch.limit;
+                    }
+                } else if (ch.limit < v) {
+                    next = v + ch.perTick;
+                    if (next < ch.limit)
+                        next = ch.limit;
+                }
+                if (next != v)
+                    setExactMotive(sim, ch.motive, next);
+            }
+        // Person data 1 "Money Amount over Head" is cleared.
+        if (p.data[persondata::MoneyOverHead] != 0)
+            p.data[persondata::MoneyOverHead] = 0;
     }
 }
 

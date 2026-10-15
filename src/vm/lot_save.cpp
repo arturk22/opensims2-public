@@ -3,6 +3,7 @@
 #include <set>
 #include "lot_save.hpp"
 
+#include "motives.hpp"
 #include "placement.hpp"
 
 #include "formats/lot_objects.hpp"
@@ -29,7 +30,7 @@ float savedMotive(const Object& o, size_t k, float before, bool known) {
     // float read.
     if (p.exactMotivesValid && p.writtenMotives[k] == p.motives[k])
         return p.exactMotives[k];
-    if (known && std::lround(std::clamp(before, -100.0f, 100.0f)) == p.motives[k])
+    if (known && motiveView(before) == p.motives[k])
         return before;
     return float(p.motives[k]);
 }
@@ -112,10 +113,13 @@ void capturePerson(VM& vm, const Object& o, LotObjects::State& s, bool known) {
         s.personRead = true;
         s.slotA.ttabEntry = s.slotB.ttabEntry = 0xFFFFFFFF;
     }
+    // Both sets of the motive engine (cTSMotives +0x08 and +0x48).
     const auto motivesBefore = s.motives;
     for (size_t k = 0; k < kMotiveCount && k < s.motives.size(); ++k) {
         s.motives[k] = savedMotive(o, k, motivesBefore[k], known);
-        if (std::lround(std::clamp(s.motives2[k], -100.0f, 100.0f)) != std::lround(std::clamp(s.motives[k], -100.0f, 100.0f)))
+        if (p.oldMotivesValid)
+            s.motives2[k] = p.oldMotives[k];
+        else if (motiveView(s.motives2[k]) != motiveView(s.motives[k]))
             s.motives2[k] = std::clamp(s.motives[k], -100.0f, 100.0f);
     }
     // The Set Motive Changes running (cTSPerson +0x618, cMotiveInc::Write:

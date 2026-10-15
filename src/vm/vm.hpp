@@ -448,11 +448,15 @@ struct Person {
     std::array<int16_t, kPersonDataCount> data{};
     std::array<int16_t, kMotiveCount> motives{};
     // The motive engine (motives.cpp): the changes running, and the motives
-    // with their fractions (the game keeps them as floats) as last written.
+    // with their fractions (the game keeps them as floats) as last written;
+    // the old set (cTSMotives +0x48: the current one as the last 60-tick
+    // update left it, saved in the PERS).
     std::vector<MotiveChange> motiveChanges;
     std::array<float, kMotiveCount> exactMotives{};
     std::array<int16_t, kMotiveCount> writtenMotives{};
     bool exactMotivesValid = false;
+    std::array<float, kMotiveCount> oldMotives{};
+    bool oldMotivesValid = false;
     // The last Find Best Interaction's choice, for Gosub Found Action
     // (autonomy.cpp); its object and entry are also in person data 53 and
     // object data 20.
@@ -468,7 +472,8 @@ struct Person {
     };
     std::vector<AutonomyMemory> autonomyMemory;
     // The memories as last read (cTSPerson +0x8F4, memories.hpp), whether
-    // they were, and the tick of the last 60-tick look (+0x2E4).
+    // they were, and the tick of the last 60-tick update of the motives and
+    // memories (+0x2E4, motives.cpp).
     std::vector<MemoryInfo> memories;
     bool memoriesRead = false;
     uint64_t memoriesTick = 0;

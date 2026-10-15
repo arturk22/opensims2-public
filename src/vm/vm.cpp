@@ -989,8 +989,7 @@ void VM::tick() {
     ++ticks;
     if (dialogClockIsTicks) // dialog.hpp: headless, game time at speed 1 is the clock
         autoTimeOutDialogs(*this, double(ticks) / clock.ticksPerSecond);
-    tickMotives(*this); // motives.cpp
-    tickMemories(*this); // memories.cpp
+    tickMotives(*this); // motives.cpp (and the memories every 60 ticks)
     tickWants(*this);   // wants.cpp
     handleTimers();
     // Objects created or removed during the tick: the IDs are read first;

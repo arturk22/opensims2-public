@@ -46,8 +46,7 @@ int16_t memoryScore(const std::vector<MemoryInfo>& memories, int16_t aspiration)
 // read again and its Memory Score (person data 54) written.
 void updateMemories(VM& vm, Object& sim, bool decay);
 
-// Every tick for each Sim (cTSPerson::OnSimulatorTick): every 60 ticks, if
-// its motives are not static (person data 29), updateMemories(no decay).
-void tickMemories(VM& vm);
+// (Every 60 ticks, with the motives not static, cTSPerson::OnSimulatorTick
+// calls updateMemories(no decay): motives.cpp, tickMotives.)
 
 } // namespace os2::vm

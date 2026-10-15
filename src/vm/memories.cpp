@@ -14,7 +14,6 @@ namespace {
 constexpr size_t kMemoryProperties = 12; // more than 11 (TokenIsMemory)
 constexpr size_t kPruneAbove = 1000;     // UpdateMemories: PruneMemories past this many tokens
 constexpr size_t kPruneKeep = 100;       // PruneMemories looks at all but the last 100
-constexpr uint64_t kRefreshTicks = 60;   // OnSimulatorTick
 
 int32_t prop(const InventoryToken& t, size_t i) { return i < t.properties.size() ? t.properties[i] : 0; }
 
@@ -132,19 +131,6 @@ void updateMemories(VM& vm, Object& sim, bool decay) {
     p.memoriesRead = true;
     p.memories = std::move(memories);
     p.data[kPersonDataMemoryScore] = memoryScore(p.memories, p.data[kPersonDataAspiration]);
-}
-
-void tickMemories(VM& vm) {
-    for (Object* o : vm.objectTable()) {
-        if (!o || !o->person)
-            continue;
-        Person& p = *o->person;
-        if (p.memoriesTick + kRefreshTicks > vm.ticks)
-            continue;
-        p.memoriesTick = vm.ticks;
-        if (p.data[persondata::MotivesStatic] == 0)
-            updateMemories(vm, *o, false);
-    }
 }
 
 } // namespace os2::vm

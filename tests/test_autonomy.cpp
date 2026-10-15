@@ -168,12 +168,25 @@ static void testMotiveChangeAndDecay() {
     check(fx.p().motives[7] == 50, "and stop at it");
     check(fx.p().data[persondata::TickCounter] == 1800, "person data 27 counts the ticks");
 
-    // Decay per day: -1440 a day is -1 a game minute.
+    // Decay per day: -1440 a day is -1 a game minute, applied as -2 every
+    // 60 ticks (cTSMotives vtable 0x10: data / 24 / 30).
     Fixture fy;
     fy.p().data[93] = -1440;
-    for (int i = 0; i < 600; ++i)
+    for (int i = 0; i < 59; ++i)
+        fy.vm.tick();
+    check(fy.p().motives[7] == 0, "no decay before the 60-tick update");
+    fy.vm.tick();
+    check(fy.p().motives[7] == -2 && exactMotive(*fy.vm.object(fy.sim), 7) == -2.0f, "a 720th of the day's decay");
+    for (int i = 0; i < 540; ++i)
         fy.vm.tick();
     check(fy.p().motives[7] == -20, "the daily decay of person data 93 lowers hunger");
+    // The update clamps what the trees wrote, and the old set takes it.
+    fy.p().motives[14] = 150;
+    check(exactMotive(*fy.vm.object(fy.sim), 14) == 150.0f, "a motive a tree writes is taken as it is");
+    for (int i = 0; i < 60; ++i)
+        fy.vm.tick();
+    check(fy.p().motives[14] == 100 && fy.p().oldMotives[14] == 100.0f && fy.p().oldMotives[7] == -22.0f,
+          "the 60-tick update clamps to 100 and copies the old set");
     // Set Motive Change with flag 0x02 zeroes it; flag 0x01 clears every change.
     fy.code.add(kSimGroup, 0x1100, tree({instr(0x1D, go(1), E, {Lit, Lit, 7, 2, 0, 0, 0, 0}),
                                          instr(0x1D, T, E, {Lit, Lit, 0, 1, 0, 0, 0, 0})}));
@@ -183,7 +196,7 @@ static void testMotiveChangeAndDecay() {
     fy.p().data[persondata::MotivesStatic] = 2;
     fy.p().motives[7] = 0;
     fy.vm.tick();
-    check(fy.p().data[persondata::TickCounter] == 601 && fy.p().motives[7] == 0, "static motives (person data 29 >= 2) do not move");
+    check(fy.p().data[persondata::TickCounter] == 661 && fy.p().motives[7] == 0, "static motives (person data 29 >= 2) do not move");
 }
 
 static void testMood() {
@@ -195,8 +208,11 @@ static void testMood() {
     fx.p().data[persondata::MotivesNotInMood] = 1 << 9;
     check(std::abs(computeMood(fx.vm, *fx.vm.object(fx.sim)) + 50.0f) < 1e-3f, "person data 118 leaves motives out");
     fx.p().data[persondata::MotivesNotInMood] = 0;
+    for (int i = 0; i < 59; ++i)
+        fx.vm.tick();
+    check(fx.p().motives[3] == 0, "the mood waits for the 60-tick update");
     fx.vm.tick();
-    check(fx.p().motives[3] == -17 && fx.p().motives[4] == -17, "the tick writes Mood and Mood+Mem");
+    check(fx.p().motives[3] == -17 && fx.p().motives[4] == -17, "the 60-tick update writes Mood and Mood+Mem");
 }
 
 static void testFindBestInteraction() {

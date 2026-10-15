@@ -1,6 +1,7 @@
 // Starting a lot's objects from their saved state (lot_resume.hpp).
 
 #include "lot_resume.hpp"
+#include "motives.hpp"
 #include "rooms.hpp"
 
 #include <cstdio>
@@ -25,19 +26,21 @@ namespace {
 // "object version" (STR# 0x8D).
 constexpr size_t kLoadFunction = 2;
 
-int16_t motiveValue(float v) { return int16_t(std::lround(std::clamp(v, -100.0f, 100.0f))); }
-
-// The saved floats are the motive engine's (cTSPerson vtable 0x5CC): the
-// trees see them rounded, the engine goes on from the fractions.
+// The saved floats are the motive engine's (cTSMotives, current and old
+// sets; docs/motives-mac.md §3): the trees see them rounded, the engine
+// goes on from the fractions. Not clamped (a mood booster keeps the mood
+// above 100: Mortimer's 232.1 in N001_Lot11).
 void restoreMotives(Object& o, const LotObjects::State& s) {
     if (!o.person || !s.personRead)
         return;
     Person& p = *o.person;
     for (size_t k = 0; k < kMotiveCount && k < s.motives.size(); ++k) {
-        p.motives[k] = p.writtenMotives[k] = motiveValue(s.motives[k]);
-        p.exactMotives[k] = std::clamp(s.motives[k], -100.0f, 100.0f);
+        p.exactMotives[k] = s.motives[k];
+        p.motives[k] = p.writtenMotives[k] = motiveView(s.motives[k]);
+        p.oldMotives[k] = k < s.motives2.size() ? s.motives2[k] : s.motives[k];
     }
     p.exactMotivesValid = true;
+    p.oldMotivesValid = true;
 }
 
 // The Set Motive Changes that were running (cTSPerson +0x618,

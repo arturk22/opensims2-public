@@ -1420,9 +1420,9 @@ static void testResumeSavedLot() {
               fx.vm.globals[vm::global::CurrentFamily] == 1,
           "saved globals and clock");
     check(sim.attributes[0] == 5 && sim.attributes[1] == 7, "saved attributes, no Init");
-    check(sim.person->motives[3] == 100 && sim.person->motives[7] == 37 && sim.person->motives[15] == -100 &&
+    check(sim.person->motives[3] == 232 && sim.person->motives[7] == 37 && sim.person->motives[15] == -150 &&
               sim.person->data[31] == 12,
-          "saved motives (clamped) and person data");
+          "saved motives as they are (the game clamps them in its 60-tick update) and person data");
     check(sim.person->exactMotivesValid && sim.person->exactMotives[7] == 36.6f,
           "the motive engine goes on from the saved fractions");
     check(sim.person->motiveChanges.size() == 1 && sim.person->motiveChanges[0].motive == 7 &&

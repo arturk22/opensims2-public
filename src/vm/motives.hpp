@@ -9,15 +9,19 @@
 // - Motives are numbered as the editor's STR# 0x86: 3 Mood, 4 Mood+Mem,
 //   5 Energy, 6 Comfort, 7 Hunger, 8 Hygiene, 9 Bladder, 13 Environment,
 //   14 Social, 15 Fun (0-2, 10-12 unused in the base game), from -100 to 100.
+// - The game keeps the motives as floats (cTSMotives, docs/motives-mac.md
+//   §3), a current set and an old one; the trees see the current ones
+//   rounded half away from zero, not clamped, and write them as they are.
 // - Set Motive Change (0x1D) puts {motive, delta per hour / 60 / 30 per
 //   tick, limit} on a list the engine applies every tick
 //   (cTSPerson::OnSimulatorTick), unless person data 29 "Motives Static?"
 //   is 2 or more. Interactions use it for what they give while they run.
-// - The everyday decay is person data 93-101 "Decay <motive> per Day",
-//   which the trees set ("Motives - Set Home Awake/Asleep" by age, from the
-//   personality) and Set Motive Change can zero; no tree reads them, so the
-//   engine applies them: per day = 24 game hours (inferred: the binary's
-//   OnSimulatorTick does not; it may be in PersonalTimeMinutePassed).
+// - Every 60 ticks, when person data 29 is 0, the motives are updated
+//   (cTSMotives vtable 0x10): the everyday decay, person data 93-101 "Decay
+//   <motive> per Day" (the trees set them: "Motives - Set Home
+//   Awake/Asleep" by age, from the personality), a 720th of it each time
+//   (per 24 game hours), every motive clamped to -100..100 and copied to
+//   the old set; then the mood, and the memories (memories.hpp).
 // - Mood is the average of the motives weighted by the "Happy Curve Data"
 //   (global STR# 0x226-0x22D, one per age: weight as a function of the
 //   motive's value), leaving out the motives whose bit is set in person
@@ -85,12 +89,17 @@ const MotiveCurveSet& happyCurves(VM& vm, const Object& sim);
 const MotiveCurveSet& scoreCurves(VM& vm, const Object& sim);
 
 // The mood the motives give (weighted average, see above), -100..100.
-float computeMood(VM& vm, const Object& sim);
+float computeMood(VM& vm, Object& sim);
 
-// Motives as the engine keeps them: with their fractions, picking up what
-// the trees wrote since.
+// Motives as the engine keeps them (floats), picking up what the trees
+// wrote since; what the trees see of a float.
 float exactMotive(Object& sim, int16_t m);
 void setExactMotive(Object& sim, int16_t m, float value);
+int16_t motiveView(float value);
+
+// The 60-tick update of a Sim's motives (cTSMotives vtable 0x10, base
+// 0xb945f0): decay, clamp, the old set.
+void updateMotives(Object& sim);
 
 // The person data that holds the daily decay of a motive, or -1.
 int16_t decayDataOf(int16_t motive);
