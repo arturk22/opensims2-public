@@ -102,6 +102,10 @@ public:
             // (spotCosines); cosOuter < -1: a point light.
             simd_float3 spotDirection{0, 0, -1};
             float cosOuter = -2, cosInner = -1;
+            // A half-space light (the windows' "LM_PortalSpill", a cPointLight
+            // with a plane, Mac BV 0xd80cd0): it lights only where
+            // dot(plane.xyz, p) + plane.w >= 0; all zero: everywhere.
+            simd_float4 plane{0, 0, 0, 0};
         };
         simd_float3 ambient{0, 0, 0};
         std::vector<Directional> lights;

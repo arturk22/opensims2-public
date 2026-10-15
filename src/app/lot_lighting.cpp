@@ -330,6 +330,9 @@ std::shared_ptr<const LotLightMap> LotLighting::lightMap(const std::string& stat
         m.direction = {l.direction[0], l.direction[1], l.direction[2]};
         m.level = l.objectLevel;
         m.portal = l.portal;
+        m.doorOrArch = l.doorOrArch;
+        m.object = l.id;
+        m.name = l.light;
         lights.push_back(m);
         key += "|" + std::to_string(l.id) + ":" + l.light + ":" + std::to_string(l.level);
     }
@@ -398,6 +401,8 @@ void LotLighting::update(double seconds) {
             return;
         const std::string objd = o->definition ? lower(o->definition->fileName) : std::string();
         const bool portal = objd.starts_with("window") || objd.starts_with("door");
+        // Doors and arches are OBJD type 8 (the portal builder's +0x3c, docs/lighting-mac.md 11.4).
+        const bool doorOrArch = o->definition && o->definition->objectType() == 8;
         for (const auto& l : lights) {
             int level = vm::lightLevel(m, *o, l.name);
             if (portal)
@@ -414,6 +419,7 @@ void LotLighting::update(double seconds) {
             lamp.direction = at->rotate(l.direction);
             lamp.level = std::clamp(level, 0, 100);
             lamp.portal = portal;
+            lamp.doorOrArch = portal && doorOrArch;
             lamp.objectLevel = o->position.level - 1; // the VM numbers levels from 1 (lot level + 1)
             for (int c = 0; c < 3; ++c)
                 lamp.diffusionColor[size_t(c)] = l.diffusionColor[size_t(c)] * l.diffusionIntensity;
@@ -431,9 +437,10 @@ void LotLighting::update(double seconds) {
         static size_t printed = 0;
         if (printed++ < 1)
             for (const auto& l : lamps_)
-                std::fprintf(stderr, "opensims2: lamp %d %s at (%.2f, %.2f, %.2f) floor %d room %d level %d colour (%.2f %.2f %.2f) falloff %.2f; state %s\n",
+                std::fprintf(stderr, "opensims2: lamp %d %s at (%.2f, %.2f, %.2f) floor %d room %d level %d colour (%.2f %.2f %.2f) falloff %.2f%s cone %.3f penumbra %.3f dir (%.2f %.2f %.2f); state %s\n",
                              l.id, l.light.c_str(), l.position[0], l.position[1], l.position[2], l.objectLevel, l.room, l.level,
-                             l.color[0], l.color[1], l.color[2], l.falloff, current_.c_str());
+                             l.color[0], l.color[1], l.color[2], l.falloff, l.spot ? " spot" : "", l.cone, l.penumbra,
+                             l.direction[0], l.direction[1], l.direction[2], current_.c_str());
     }
     updateLightMaps(seconds);
 
@@ -471,6 +478,36 @@ void LotLighting::update(double seconds) {
             p.range = p.falloff <= 0 ? 10000.0f : std::sqrt((I / cutoff - 1) / p.falloff);
             practical[out ? std::make_pair(0, int16_t(0)) : std::make_pair(l.objectLevel + 1, l.room)].push_back(p);
         }
+        // The windows' and doors' practical lights (SetAndAddPortalLights,
+        // docs/lighting-mac.md 11.4), from the light map's portals: the
+        // portal's own spot ("LM_PortalDirect", spots only) and a point light
+        // in front of the portal's plane ("LM_PortalSpill"), for the room it
+        // shines into.
+        if (shownTo_)
+            for (const auto& pl : shownTo_->portalLights) {
+                const Lamp* lamp = nullptr;
+                for (const auto& l : lamps_)
+                    if (l.portal && l.id == pl.object && l.light == pl.name)
+                        lamp = &l;
+                if (!lamp || (!pl.spill && !lamp->spot))
+                    continue;
+                Renderer::LightSet::Point p;
+                p.position = f3(lamp->position);
+                p.color = f3(lamp->color) * simd_make_float3(pl.scale[0], pl.scale[1], pl.scale[2]);
+                p.falloff = lamp->falloff * pl.falloffScale;
+                if (pl.spill) {
+                    const simd_float3 n = simd_make_float3(pl.planeNormal[0], pl.planeNormal[1], pl.planeNormal[2]);
+                    p.plane = simd_make_float4(n, -simd_dot(n, simd_make_float3(pl.planePoint[0], pl.planePoint[1], 0)));
+                } else {
+                    const simd_float2 c = Renderer::spotCosines(lamp->cone, lamp->penumbra);
+                    p.spotDirection = f3(lamp->direction), p.cosOuter = c.x, p.cosInner = c.y;
+                }
+                const float I = simd_length(p.color);
+                if (cutoff <= 0 || I / cutoff <= 1)
+                    continue;
+                p.range = p.falloff <= 0 ? 10000.0f : std::sqrt((I / cutoff - 1) / p.falloff);
+                practical[pl.room ? std::make_pair(pl.level + 1, int16_t(pl.room)) : std::make_pair(0, int16_t(0))].push_back(p);
+            }
         for (auto& [key, points] : practical) {
             // The brightest first, as many as a light set holds next to the 4 Deltas.
             std::stable_sort(points.begin(), points.end(), [](const auto& a, const auto& b) {

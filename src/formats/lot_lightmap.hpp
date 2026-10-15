@@ -146,6 +146,14 @@ struct LightMapGlobals {
     float brightWallFloor = 1, darkWallFloor = 0.5f; // bright/darkWallFloorContribution
     int propagationSteps = 50;                       // wallPropagationSteps (both grids)
     float spillPlaneOffset = 0.1f;                   // a portal's place in front of its wall
+    // Portals (cLightingManager +0x64, +0x194..+0x1a0; docs/lighting-mac.md
+    // 11.4): a door's or arch's direct light factor (the constructor's 0;
+    // Lighting.txt does not set it) and FindPortalSuppression's radius and
+    // amounts (the constructor's 1 and 0, Lighting.txt's 4 and 0.2; the
+    // corner amount is the amount when not given).
+    float doorOrArchDirectMultiplier = 0;
+    float portalSuppressionRadius = 1, portalSuppressionAmount = 0, portalCornerSuppressionAmount = 0;
+    bool portalSuppressionAffectsRoomLighting = true;
     static LightMapGlobals from(const LightingConfig& config);
 };
 
@@ -161,6 +169,9 @@ struct LightMapLight {
     std::array<float, 3> direction{0, 0, -1}; // where the light points (its -Z)
     int level = 0;                // the object's level
     bool portal = false;
+    bool doorOrArch = false;      // a portal of a door or arch (OBJD type 8)
+    int object = -1;              // the light's object (a portal's lights are its object's)
+    std::string name;             // the light's name in its object's model
 };
 
 struct LotLightMap {
@@ -170,6 +181,27 @@ struct LotLightMap {
     // (up from the floor), -Z (down from the ceiling), weighted means of its
     // floor, walls and portals; by (level, room).
     std::map<std::pair<int, uint16_t>, std::array<std::array<float, 3>, 6>> rooms;
+    // The windows' and doors' practical lights (SetAndAddPortalLights, Mac
+    // BV 0x70ae3c; docs/lighting-mac.md 11.4), for the room each portal
+    // shines into (`room` 0: outdoors) on `level`: "LM_PortalDirect", the
+    // portal light itself (`spill` false), and "LM_PortalSpill", a point
+    // light at the portal light lighting only what is in front of the plane
+    // through `planePoint` with normal `planeNormal`. `light` indexes the
+    // lights given to computeLotLightMap (`object` and `name` are that
+    // light's); the light's own colour x intensity times `scale` and its
+    // FalloffRate times `falloffScale` give the light.
+    struct PortalLight {
+        size_t light = 0;
+        int object = -1;
+        std::string name;
+        int level = 0;
+        uint16_t room = 0;
+        bool spill = false;
+        std::array<float, 3> scale{};
+        float falloffScale = 1;
+        std::array<float, 3> planePoint{}, planeNormal{};
+    };
+    std::vector<PortalLight> portalLights;
 };
 
 // The sun's height-map shadow tops over the lot's ground texels (rows of
@@ -196,7 +228,13 @@ std::vector<float> sunShadowTops(const LotLightMapLayout& layout, std::array<flo
 // map's scale), n the terrain's normal (up on floors). Portals:
 // FindPortalLightValues (outside light coming in: sun x max(0, sun . out) +
 // skylight + the light outside, + half of it as spill; a room's light going
-// out or to another room: its light map). Room irradiance:
+// out or to another room: its light map); each portal's diffusion sources
+// are its own light's (at the light, in the room there: the window's tile
+// side), a door's or arch's direct light x doorOrArchDirectMultiplier (0),
+// FindPortalSuppression between the portals of a room into the same room
+// (the practical lights and, with portalSuppressionAffectsRoomLighting, the
+// room irradiance), and the windows' practical lights exported in
+// LotLightMap::portalLights (docs/lighting-mac.md 11.4). Room irradiance:
 // GatherRoomLighting, floor and wallpaper colours mixed with white by
 // roomSaturation, ceiling x roomCeilingStrength, portals x roomPortalStrength.
 // Inferred (not decoded):
@@ -205,8 +243,10 @@ std::vector<float> sunShadowTops(const LotLightMapLayout& layout, std::array<flo
 // - Light passes between samples of the same room (or both outdoors): the
 //   game's neighbour bits block it at walls.
 // - A portal is a window's or door's light with a room on each side (found
-//   across it); its light map value is the sample on the side it comes from,
-//   taken after the lamps have diffused (the portals then diffuse too).
+//   across the nearest light-blocking wall; the game walks the wall pieces
+//   holding a portal object, each light once per piece); its light map
+//   value is the sample on the side it comes from, taken after the lamps
+//   have diffused (the portals then diffuse too).
 // - Walls: no grid of their own; each texel takes the max of its ambient,
 //   each same-room light's seed divided by 1 + k (k from wallThreshold) per
 //   half tile of distance, and the floor under it (x brightWallFloor on walls

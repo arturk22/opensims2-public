@@ -65,6 +65,7 @@ struct Light {
     float4 color;     // rgb: colour times intensity, w: relative specular scale
     float4 params;    // a point light: x: FalloffRate C (I / (1 + C d^2)), y: range, z: 1, w: a spot's inner cone cosine
     float4 spot;      // a spot: xyz where it shines, w the outer cone cosine (< -1: a point light)
+    float4 plane;     // a half-space light: only where dot(xyz, world) + w >= 0 (all zero: everywhere)
 };
 
 // Unit vector towards a light and its attenuation at `world` (directional
@@ -83,6 +84,9 @@ float3 lightVector(constant Light& light, float3 world, thread float& att) {
         const float rho = dot(-d / dist, light.spot.xyz);
         att *= saturate((rho - light.spot.w) / max(light.params.w - light.spot.w, 1e-4));
     }
+    // A half-space point light (the windows' spill): nothing behind its plane.
+    if (dot(light.plane.xyz, world) + light.plane.w < 0.0)
+        att = 0.0;
     return d / dist;
 }
 

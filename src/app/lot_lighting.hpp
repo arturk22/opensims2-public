@@ -114,6 +114,7 @@ public:
         bool directional = false;
         float directionalFalloff = 0;
         bool portal = false; // a window's or door's light (outside light coming in)
+        bool doorOrArch = false; // of a door or arch (OBJD type 8)
     };
     const std::vector<Lamp>& lamps() const { return lamps_; }
 

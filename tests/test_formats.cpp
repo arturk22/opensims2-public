@@ -988,6 +988,85 @@ end
         const auto& bc = wl.walls[back];
         check(texel(m.image, fc.x + 4, fc.y + 12) > texel(m.image, bc.x + 4, bc.y + 12) + 0.1f, "wall lit on the lamp's side only");
     }
+    {
+        // Portals (docs/lighting-mac.md 11.4): a 4 x 2 lot, a room with
+        // floor west of a wall at x = 2, terrain east; the sun low in +X.
+        Lot pl;
+        pl.width = 4, pl.height = 2, pl.levelCount = 1;
+        pl.elevations.assign(5 * 3, 0.0f);
+        pl.floors.assign(8, {});
+        pl.rooms.assign(8, {1, 1, 1, 1});
+        for (uint32_t x = 0; x < 2; ++x)
+            for (uint32_t y = 0; y < 2; ++y)
+                pl.floors[x * 2 + y] = {1, 1, 1, 1}, pl.rooms[x * 2 + y] = {2, 2, 2, 2};
+        for (int y = 0; y < 2; ++y) {
+            Lot::Wall w;
+            w.a = {2, float(y), 0}, w.b = {2, float(y + 1), 0}, w.type = Lot::Normal;
+            pl.walls.push_back(w);
+        }
+        LotLightMapLayout ly;
+        ly.init(pl);
+        const auto pcfg = parseLightingConfig(R"(
+set portalSuppressionRadius 4
+set portalSuppressionAmount .2
+lightingState day
+   skylight (1,1,1) 0.5
+   light sun (1, 0, 1) (1, 1, 1) 1
+   diffParam insideAmbientColor (1, 1, 1)
+   diffParam insideFloorAmbient 0.1
+   diffParam floorThreshold 0.5
+   modifiers insidePortals 1 1 1 1
+   modifiers insidePortalSpills 1 0 1 1
+end
+)");
+        const LightingState& pday = *pcfg.state("day");
+        const LightMapGlobals pg = LightMapGlobals::from(pcfg);
+        check(pg.doorOrArchDirectMultiplier == 0 && pg.portalSuppressionRadius == 4 && pg.portalCornerSuppressionAmount == 0.2f,
+              "portal globals: doorOrArchDirectMultiplier 0 by default, the corner amount is the amount");
+        // A window's light pointing west into the room, from the window's
+        // tile: east of the wall (outdoors) or west of it (in the room).
+        auto window = [](float x, float y, int object) {
+            LightMapLight w;
+            w.position = {x, y, 1.5f};
+            w.color = {1, 1, 1};
+            w.direction = {-0.85f, 0, -0.53f};
+            w.portal = true, w.object = object, w.name = "window_light";
+            return w;
+        };
+        const LotLightMap outTile = computeLotLightMap(ly, pday, {window(2.45f, 0.5f, 1)}, pg);
+        const LotLightMap inTile = computeLotLightMap(ly, pday, {window(1.55f, 0.5f, 1)}, pg);
+        // Texel (12, 4): the tile west of the wall, where the light enters.
+        check(texel(inTile.image, 12, 4) > texel(outTile.image, 12, 4) + 0.2f,
+              "a portal's diffusion source is in the room at its light: a window put from outside seeds outdoors");
+        check(outTile.rooms.count({0, 2}) && outTile.rooms.at({0, 2})[1][0] > 0.3f,
+              "the portal still lights the room's irradiance (travelling -X)");
+        LightMapLight doorLight = window(1.55f, 0.5f, 1);
+        doorLight.doorOrArch = true;
+        const LotLightMap door = computeLotLightMap(ly, pday, {doorLight}, pg);
+        check(texel(door.image, 12, 4) + 0.2f < texel(inTile.image, 12, 4),
+              "a door's or arch's direct light is x doorOrArchDirectMultiplier (0)");
+        check(std::fabs(door.rooms.at({0, 2})[1][0] - inTile.rooms.at({0, 2})[1][0]) < 1e-5f,
+              "a door's portal colour in the room's irradiance is kept");
+        // Practical lights: the direct one (the light itself) and the spill
+        // in front of a plane spillPlaneOffset into the room.
+        bool direct = false, spill = false;
+        for (const auto& p : inTile.portalLights) {
+            direct = direct || (!p.spill && p.room == 2 && p.scale[0] > 0.5f && p.name == "window_light");
+            spill = spill || (p.spill && std::fabs(p.planeNormal[0] + 1) < 1e-5f && std::fabs(p.planePoint[0] - 1.9f) < 1e-5f);
+        }
+        check(direct && spill, "a window's direct and spill practical lights");
+        // Two windows side by side suppress each other: 1 - (1 - 1/4) x 0.2.
+        const LotLightMap two = computeLotLightMap(ly, pday, {window(1.55f, 0.5f, 1), window(1.55f, 1.5f, 2)}, pg);
+        float d1 = 0;
+        for (const auto& p : two.portalLights)
+            if (!p.spill && p.object == 1)
+                d1 = p.scale[0];
+        float d0 = 0;
+        for (const auto& p : inTile.portalLights)
+            if (!p.spill)
+                d0 = p.scale[0];
+        check(d0 > 0 && std::fabs(d1 / d0 - 0.85f) < 1e-4f, "FindPortalSuppression: windows a tile apart");
+    }
 }
 
 // With the game's data (OS2_DATA): character files our CAS saved before the

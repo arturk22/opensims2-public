@@ -250,6 +250,16 @@ LightMapGlobals LightMapGlobals::from(const LightingConfig& config) {
     one("darkWallFloorContribution", g.darkWallFloor);
     one("hmSunLightTransitionZone", g.sunTransitionZone);
     one("spillPlaneOffset", g.spillPlaneOffset);
+    one("doorOrArchDirectMultiplier", g.doorOrArchDirectMultiplier);
+    one("portalSuppressionRadius", g.portalSuppressionRadius);
+    one("portalSuppressionAmount", g.portalSuppressionAmount);
+    g.portalCornerSuppressionAmount = g.portalSuppressionAmount;
+    one("portalCornerSuppressionAmount", g.portalCornerSuppressionAmount);
+    float affects = g.portalSuppressionAffectsRoomLighting ? 1.0f : 0.0f;
+    if (auto it = config.globals.find("portalsuppressionaffectsroomlighting"); it != config.globals.end())
+        affects = it->second == "true" ? 1.0f : it->second == "false" ? 0.0f : affects;
+    one("portalSuppressionAffectsRoomLighting", affects);
+    g.portalSuppressionAffectsRoomLighting = affects != 0;
     float steps = float(g.propagationSteps);
     one("wallPropagationSteps", steps);
     g.propagationSteps = std::max(0, int(steps));
@@ -493,21 +503,28 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         diffuseWalls(layout, sources, params, floors, pages, &lampWallLookups);
 
     // Portals (windows and doors), shining into the side their light points
-    // to (FindPortalLightValues, docs/lighting-mac.md 5.4), from the lamps'
-    // light maps (the game reads the previous frame's).
+    // to (the portal builder, Mac BV 0x7149fc; FindPortalLightValues
+    // 0x70a884; docs/lighting-mac.md 5.4, 10.6, 11.4), from the lamps' light
+    // maps (the game reads the previous frame's).
     struct Portal {
-        uint16_t room = 0; // the room it shines into
-        bool toOutside = false;
-        V3 dir{};          // the way the light travels
-        V3 color{};        // direct x f + spill x f_spill (room irradiance)
+        size_t light = 0;
         int level = 0;
+        uint16_t from = 0, room = 0; // the room whose list keeps it (the light comes from there), the one it shines into
+        V3 dir{};                    // the way the light travels (the destination side's normal)
+        V3 color{};                  // +0x30: direct x f + spill x f_spill (room irradiance)
+        V3 direct{}, spill{};
+        float f = 1, fs = 0, suppression = 1;
+        std::array<float, 2> centre{}; // the wall piece's centre (WallCentre)
+        std::array<float, 2> place{};  // +0x54: the centre + normal x spillPlaneOffset
+        int copies = 1;                // one portal light per wall piece of its object and light
+        std::array<long, 4> piece{};   // level, axis, line, tile along the wall
     };
     std::vector<Portal> portals;
     const auto insidePortals = modifier("insideportals"), insidePortalSpills = modifier("insideportalspills"),
                outsidePortals = modifier("outsideportals"), outsidePortalSpills = modifier("outsideportalspills");
-    std::vector<std::array<int, 5>> portalSides; // li, from x/y, to x/y
     const size_t lampSources = sources.size();
-    for (const auto& l : lights) {
+    for (size_t li_ = 0; li_ < lights.size(); ++li_) {
+        const auto& l = lights[li_];
         if (!l.portal || levels == 0)
             continue;
         const int li = levelOf(l);
@@ -515,7 +532,8 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         const FloorColorGrid& g = floors[size_t(li)];
         // The wall it sits in: the nearest light-blocking wall along x or y
         // whose span the light is over, across the way the light points
-        // when it leans (inferred: the game keeps the portals in its rooms).
+        // when it leans (inferred: the game walks the wall pieces with a
+        // portal object, PortalInWall, and projects each light on the piece).
         const float lx = l.position[0], ly = l.position[1];
         const float hx = l.direction[0], hy = l.direction[1], hl = std::sqrt(hx * hx + hy * hy);
         int ax = -1;
@@ -541,108 +559,153 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         // The side its light points to (the light's -Z; one light per side).
         const float lean = l.direction[size_t(ax)];
         const bool toPlus = std::fabs(lean) > 1e-3f ? lean > 0 : (ax == 0 ? lx : ly) < line;
-        auto sideSample = [&](float sgn) {
+        auto sideRoom = [&](float sgn) {
             const float x = ax == 0 ? line + 0.25f * sgn : lx, y = ax == 1 ? line + 0.25f * sgn : ly;
-            return std::array<int, 2>{std::clamp(int(std::floor(x * 2)), 0, 2 * g.width - 1),
-                                      std::clamp(int(std::floor(y * 2)), 0, 2 * g.height - 1)};
+            const int sx = std::clamp(int(std::floor(x * 2)), 0, 2 * g.width - 1), sy = std::clamp(int(std::floor(y * 2)), 0, 2 * g.height - 1);
+            return lightRoomAt(layout, level, (float(sx) + 0.5f) / 2, (float(sy) + 0.5f) / 2);
         };
-        const auto fromS = sideSample(toPlus ? -1.0f : 1.0f), toS = sideSample(toPlus ? 1.0f : -1.0f);
-        const int* from = fromS.data();
-        const int* to = toS.data();
-        if (std::any_of(portalSides.begin(), portalSides.end(), [&](const std::array<int, 5>& p) {
-                return p[0] == li && p[1] == from[0] && p[2] == from[1] && p[3] == to[0] && p[4] == to[1];
-            }))
+        // The rooms on the two sides (RoomForTilePart of each locator: the
+        // light rooms, with or without floor there).
+        const uint16_t fromRoom = sideRoom(toPlus ? -1.0f : 1.0f), toRoom = sideRoom(toPlus ? 1.0f : -1.0f);
+        if (fromRoom == toRoom)
             continue;
-        portalSides.push_back({li, from[0], from[1], to[0], to[1]});
-        const bool toB = toPlus;
-        // The rooms on the two sides (the light rooms, with or without floor there).
-        struct SideRoom {
-            uint16_t room;
-            bool outside;
-        };
-        auto sideRoom = [&](const int* smp) {
-            const uint16_t r = lightRoomAt(layout, level, (float(smp[0]) + 0.5f) / 2, (float(smp[1]) + 0.5f) / 2);
-            return SideRoom{r, r == 0};
-        };
-        const SideRoom fromHalf = sideRoom(from), toHalf = sideRoom(to);
-        if (fromHalf.room == toHalf.room)
-            continue;
-        const float sgn = toB ? 1.0f : -1.0f;
+        const float sgn = toPlus ? 1.0f : -1.0f;
         const V3 dir{ax == 0 ? sgn : 0, ax == 1 ? sgn : 0, 0};
         const V3 outward = dir * -1.0f; // the side the light comes from
+        const float tile = std::floor(ax == 0 ? ly : lx);
         // L: the wall's diffusion where the portal is (LookupWallDiffusion,
         // the diffusion manager's vtable 0x60), on the side the light comes
-        // from (inferred: the side the portal keeps was not read).
+        // from (the +0x18 locator).
         V3 L{0, 0, 0};
-        {
-            const float along = ax == 0 ? ly : lx, t0 = std::floor(along);
-            for (size_t fi = 0; fi < layout.walls.size() && fi < lampWallLookups.size(); ++fi) {
-                const auto& f = layout.walls[fi];
-                if (f.level != level || dot(V3{f.normal[0], f.normal[1], 0}, outward) < 0.5f)
-                    continue;
-                const float a0 = ax == 0 ? f.wallA[1] : f.wallA[0], b0 = ax == 0 ? f.wallB[1] : f.wallB[0];
-                const float c0 = ax == 0 ? f.wallA[0] : f.wallA[1], c1 = ax == 0 ? f.wallB[0] : f.wallB[1];
-                if (std::fabs(c0 - line) > 0.01f || std::fabs(c1 - line) > 0.01f ||
-                    std::fabs(std::min(a0, b0) - t0) > 0.01f || std::fabs(std::max(a0, b0) - t0 - 1) > 0.01f)
-                    continue;
-                L = V3{lampWallLookups[fi][0], lampWallLookups[fi][1], lampWallLookups[fi][2]};
-                break;
-            }
+        for (size_t fi = 0; fi < layout.walls.size() && fi < lampWallLookups.size(); ++fi) {
+            const auto& f = layout.walls[fi];
+            if (f.level != level || dot(V3{f.normal[0], f.normal[1], 0}, outward) < 0.5f)
+                continue;
+            const float a0 = ax == 0 ? f.wallA[1] : f.wallA[0], b0 = ax == 0 ? f.wallB[1] : f.wallB[0];
+            const float c0 = ax == 0 ? f.wallA[0] : f.wallA[1], c1 = ax == 0 ? f.wallB[0] : f.wallB[1];
+            if (std::fabs(c0 - line) > 0.01f || std::fabs(c1 - line) > 0.01f ||
+                std::fabs(std::min(a0, b0) - tile) > 0.01f || std::fabs(std::max(a0, b0) - tile - 1) > 0.01f)
+                continue;
+            L = V3{lampWallLookups[fi][0], lampWallLookups[fi][1], lampWallLookups[fi][2]};
+            break;
         }
-        V3 dl{0, 0, 0}, spill{0, 0, 0};
-        float f = 1, fs = 0;
+        Portal p;
+        p.light = li_, p.level = level, p.from = fromRoom, p.room = toRoom, p.dir = dir;
+        p.fs = 0;
         const bool hasSky = state.skyStrength > 0;
-        if (fromHalf.outside && !toHalf.outside) {
+        if (fromRoom == 0) { // the list of the outside: its light coming into a room
             if (!hasSky || !sun) {
-                dl = illum(outward);
+                p.direct = illum(outward);
             } else {
-                f = std::max(0.0f, dot(sun->d, outward));
-                dl = sun->color * sun->intensity;
-                spill = sky, fs = 1;
+                p.f = std::max(0.0f, dot(sun->d, outward));
+                p.direct = sun->color * sun->intensity;
+                p.spill = sky;
             }
-            dl = dl + L, spill = spill + L * 0.5f;
-            fs = 1;
+            p.direct = p.direct + L, p.spill = p.spill + L * 0.5f;
+            p.fs = 1;
         } else {
-            dl = L * 0.5f;
+            p.direct = L * 0.5f;
             if (hasSky)
-                spill = dl, fs = 1;
+                p.spill = p.direct, p.fs = 1;
         }
-        const bool toOut = toHalf.outside;
+        p.color = p.direct * p.f + p.spill * p.fs;
+        // A door's or arch's direct light: x doorOrArchDirectMultiplier,
+        // after the portal's colour is kept.
+        if (l.doorOrArch)
+            p.f *= globals.doorOrArchDirectMultiplier;
+        p.centre = {ax == 0 ? line : tile + 0.5f, ax == 1 ? line : tile + 0.5f};
+        p.place = {p.centre[0] + dir[0] * globals.spillPlaneOffset, p.centre[1] + dir[1] * globals.spillPlaneOffset};
+        p.piece = {level, ax, long(line), long(tile)};
+        portals.push_back(p);
+    }
+    // Each wall piece holding a portal object gives a portal light for every
+    // light of the object (0x715cb0 -> 0x7149fc, each light placed on its own
+    // piece): an object over k pieces has each of its lights k times.
+    {
+        std::map<int, std::vector<std::array<long, 4>>> pieces;
+        for (const auto& p : portals)
+            if (const int o = lights[p.light].object; o >= 0) {
+                auto& v = pieces[o];
+                if (std::find(v.begin(), v.end(), p.piece) == v.end())
+                    v.push_back(p.piece);
+            }
+        for (auto& p : portals)
+            if (const int o = lights[p.light].object; o >= 0)
+                p.copies = std::max<int>(1, int(pieces[o].size()));
+    }
+    // FindPortalSuppression (Mac BV 0x6ff9b0), per room list: a portal into
+    // a room loses (1 - |d|/R) x ((dirA . dirB)^2 (amount - corner) +
+    // corner) for each other portal of the list into the same room whose
+    // piece's centre is d away, 0.1 <= |d| <= R, in front of it and behind
+    // the other, down to 0.
+    if (globals.portalSuppressionAmount > 0)
+        for (auto& a : portals) {
+            a.suppression = 1;
+            if (!a.room)
+                continue;
+            for (const auto& b : portals) {
+                if (&b == &a || b.level != a.level || b.from != a.from || b.room != a.room)
+                    continue;
+                const float dx = b.centre[0] - a.centre[0], dy = b.centre[1] - a.centre[1];
+                if (dx * a.dir[0] + dy * a.dir[1] < -0.001f || -(dx * b.dir[0] + dy * b.dir[1]) < -0.001f)
+                    continue;
+                const float r = std::sqrt(dx * dx + dy * dy);
+                if (r > globals.portalSuppressionRadius || r < 0.1f)
+                    continue;
+                const float c = a.dir[0] * b.dir[0] + a.dir[1] * b.dir[1];
+                const float amount = (1 - r / globals.portalSuppressionRadius) *
+                                     (c * c * (globals.portalSuppressionAmount - globals.portalCornerSuppressionAmount) +
+                                      globals.portalCornerSuppressionAmount);
+                for (int k = 0; k < b.copies; ++k)
+                    a.suppression = a.suppression <= amount ? 0.0f : a.suppression - amount;
+            }
+        }
+    for (const auto& p : portals) {
+        const auto& l = lights[p.light];
+        const bool toOut = p.room == 0;
         const auto& mod = toOut ? outsidePortals : insidePortals;
         const auto& smod = toOut ? outsidePortalSpills : insidePortalSpills;
-        Portal p;
-        p.room = toHalf.room, p.toOutside = toOut, p.dir = dir, p.level = layout.minLevel + li;
-        p.color = dl * f + spill * fs;
-        portals.push_back(p);
+        // The diffusion sources (BuildLightFromObjectLight on the portal's
+        // own light, the cPortalLight's +0x60): at the light, in the room
+        // there, its colour x the direct (spill) colour x diffusion x f
+        // (f_spill), falloff x diffusion falloff; not suppressed.
         const V3 lc{l.color[0], l.color[1], l.color[2]};
-        // The portal's place (the portal builder, Mac BV 0x7149fc): the
-        // middle of the wall's tile, spillPlaneOffset into the side the light
-        // goes to.
-        const float tileMid = std::floor(ax == 0 ? ly : lx) + 0.5f;
-        const float cx = ax == 0 ? line + sgn * globals.spillPlaneOffset : tileMid;
-        const float cy = ax == 1 ? line + sgn * globals.spillPlaneOffset : tileMid;
-        // A window over a level without floor on its inner side (the attic
-        // windows over a tall room) lights the floor below, as that room's
-        // (inferred: the game's portal list, which gives the source its
-        // room, was not read).
-        int seedLevel = level;
-        while (seedLevel > layout.minLevel && !groundAt(layout, seedLevel, cx, cy))
-            --seedLevel;
-        const uint16_t seedRoom = seedLevel == level ? toHalf.room : lightRoomAt(layout, seedLevel, cx, cy);
         for (int part = 0; part < 2; ++part) {
             DiffusionSource s;
-            s.level = seedLevel;
-            s.position = {cx, cy};
-            s.rect = {cx - 0.5f, cy - 0.5f, cx + 0.5f, cy + 0.5f};
-            s.room = seedRoom;
+            s.level = p.level;
+            s.position = {l.position[0], l.position[1]};
+            s.rect = {l.position[0] - 0.5f, l.position[1] - 0.5f, l.position[0] + 0.5f, l.position[1] + 0.5f};
+            s.room = lightRoomAt(layout, p.level, l.position[0], l.position[1]);
             const auto& m = part ? smod : mod;
-            s.rgb = lc * (part ? spill * fs : dl * f) * m.diffusion;
+            s.rgb = lc * (part ? p.spill * p.fs : p.direct * p.f) * m.diffusion;
             s.falloff = std::max(0.0f, l.falloff * m.diffusionFalloff);
             s.floorScale = l.floorScale, s.wallScale = l.wallScale, s.interFloor = l.interFloor;
-            s.directional = l.directional, s.directionalFalloff = l.directionalFalloff, s.facing = facingOf(dir);
+            s.directional = l.directional, s.directionalFalloff = l.directionalFalloff, s.facing = facingOf(l.direction);
             if (anyLight(s.rgb))
                 sources.push_back(s);
         }
+        // The practical lights: intensity x practical x f (f_spill) x
+        // suppression, colour x the direct (spill) colour, falloff x
+        // practical falloff; the direct one is the light itself, kept once
+        // per light; the spill one is added for every copy.
+        LotLightMap::PortalLight d;
+        d.light = p.light, d.object = l.object, d.name = l.name, d.level = p.level, d.room = p.room;
+        const V3 ds = p.direct * (mod.practical * p.f * p.suppression);
+        d.scale = {ds[0], ds[1], ds[2]};
+        d.falloffScale = mod.practicalFalloff;
+        if (anyLight(d.scale) && std::none_of(result.portalLights.begin(), result.portalLights.end(), [&](const auto& o) {
+                return !o.spill && o.light == d.light;
+            }))
+            result.portalLights.push_back(d);
+        LotLightMap::PortalLight sp = d;
+        sp.spill = true;
+        const V3 ss = p.spill * (smod.practical * p.fs * p.suppression * float(p.copies));
+        sp.scale = {ss[0], ss[1], ss[2]};
+        sp.falloffScale = smod.practicalFalloff;
+        sp.planePoint = {p.place[0], p.place[1], 0};
+        sp.planeNormal = {p.dir[0], p.dir[1], 0};
+        if (anyLight(sp.scale))
+            result.portalLights.push_back(sp);
     }
     if (sources.size() > lampSources) {
         floors = diffuseFloors(layout, sources, params);
@@ -790,10 +853,16 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         }
     }
 
-    // Portals into a room: colour x roomPortalStrength, by the way the light travels.
+    // Portals into a room (GatherPortalLighting, FUN_0070010c): colour x
+    // roomPortalStrength (x the suppression with
+    // portalSuppressionAffectsRoomLighting), by the way the light travels,
+    // once for each of a portal light's copies.
     for (const auto& p : portals)
-        if (!p.toOutside)
-            addSide(gather[{p.level, p.room}], p.dir[0], p.dir[1], p.color * globals.roomPortalStrength);
+        if (p.room)
+            for (int k = 0; k < p.copies; ++k)
+                addSide(gather[{p.level, p.room}], p.dir[0], p.dir[1],
+                        p.color * (globals.roomPortalStrength *
+                                   (globals.portalSuppressionAffectsRoomLighting ? p.suppression : 1.0f)));
     for (const auto& [key, g] : gather) {
         if (std::getenv("OS2_DEBUG_LIGHTMAP"))
             std::fprintf(stderr, "lightmap room %d on level %d: floor weight %.0f, wall weights %.1f %.1f %.1f %.1f\n", int(key.second),
