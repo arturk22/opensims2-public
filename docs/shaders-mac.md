@@ -572,3 +572,133 @@ Com `useHWShader1Path`, `SimSkin`, `SimStandardMaterial` e `SimHair` vão
   `0xccd254`, §1 de `camera-ui-mac.md`) tem `m[14] = 1`, ou seja w = +z da
   câmera. No espaço de visão do app (mão direita, olhando para −z) a luz
   é (1, 0, −0,5), o que o shader já usa: conferido.
+
+## 13. Rodada n22: espelhos, normal map, recorte e CelShaded (Ghidra MCP)
+
+Lido com o Ghidra MCP no BV (`sims2_bv.ppc`, só leitura) e no texto dos
+`.matShad` (`mirrors.matShad`, `standardMaterialDX8.matShad`,
+`vslightfragments`/`pixelLightingFragments`, `celShading.matShad`,
+`Graphics Rules.sgr`).
+
+### 13.1 Espelhos: um observador por espelho, um alvo, o stencil
+
+- **Cada espelho tem o seu observador.** O quad do espelho vem com um nó
+  `cViewerRefNodeRecursive` no CRES. Quando a lista de desenho da vista
+  principal chega nele, `cViewerRefNodeRecursiveImpl::
+  ImplAddElementsToDisplayList` (BV `0xcfa60c`; o nome no `baserom.sym` é
+  `0x574e08`) faz, uma vez por quadro (contador `+0x7c`): se a flag 1 do nó
+  está ligada, só segue com `reflectionWithExtraViewer` verdadeiro (a opção
+  Reflection); monta a câmera refletida pelo plano do nó
+  (`RightHandedReflectionTransform`, BV `0xcf9cd4`) e, com a flag 2, o
+  retângulo do espelho na tela (a caixa projetada, presa a [−1, 1]): a
+  projeção é recortada para esse retângulo (escala `2/(x1−x0)`, deslocamento)
+  e a viewport é o mesmo retângulo em [0, 1]. Com menos de 1 pixel de largura
+  ou altura não desenha; senão põe o observador na lista (vtable `0x5c` da
+  lista) com o alvo de render do nó (`ImplRenderTargetDef`). Não há limite de
+  um espelho: **todo espelho em vista reflete, cada um no seu retângulo do
+  mesmo alvo `ScreenReflection`**.
+- **O desenho de um espelho** (`cDisplayListDynamicRenderStrategy::
+  RenderMirror`, BV `0x633e0`; `RenderGeometryForMirror` BV `0x5d5e4`), no
+  modo sem retângulos sujos: limpa profundidade e stencil do alvo (`Clear`
+  da vtable `0x34` com 6 = z + stencil, z = 1; a cor não é limpa), põe a
+  viewport inteira e desenha **só as partes da camada −9998** (os quads de
+  todos os espelhos, `MirrorReflectionMaterial` 1º shader) com as matrizes
+  da vista principal (`geomToClipFromParentView`, x de clip negado porque a
+  câmera do espelho é a de mão igual com o x virado), z testado e gravado,
+  sem cor; volta a viewport do retângulo, limpa só a profundidade (2) e
+  desenha o resto (partes de camada ≠ −9998) com a câmera refletida e o
+  `defaultState kRenderTypeMirror`: stencil `acceptIfEqual 1`, sem escrita.
+- **O stencil dos quads** (`cApplyStencilStateForOverlappingReflections::
+  ApplyDynamicState`, BV `0xcc7de8`, sem função definida no Ghidra, lido em
+  assembly): stencil ligado; se o alvo do observador (vtable `0x1d8` do
+  observador do contexto `+0xc`) é o próprio renderable da parte (`+0x2c` da
+  info da parte), função `7` com ref **1**, senão ref **0**, máscara −1;
+  operação (keep, keep, replace). Ou seja, onde o quad do espelho deste
+  observador é o mais perto (z), o stencil vira 1; onde outro espelho está na
+  frente, 0. Espelhos que se sobrepõem na tela ficam cada um com os seus
+  pixels.
+- **No passo normal** o quad (camada 6, depois dos opacos e antes dos
+  transparentes e da censura) lê o `ScreenReflection` no próprio pixel
+  (`oT0 = clip · (−0,5, −0,5) + 0,5·w`, dividido no estágio), sem luz.
+- O filtro de visibilidade do observador do espelho
+  (`cReflectionViewerVisibilityQueryFilter::TestNode`, BV `0x17c0ae0`)
+  descarta nós pela máscara `0x07440100` e pelos grupos de render (bits não
+  resolvidos). O app segue deixando de fora os espelhos e as partículas.
+- Censura no espelho: §"Censura" do `cas-mac.md` (rodada 22).
+
+### 13.2 Normal map no caminho DX8
+
+`StandardMaterialPassesDX8` liga o bump (`localBumpMapFlag`) com
+`bumpMapping` (MaterialDetail Alto), `stdMatNormalMapTextureEnabled` e sem
+`ShapeColor`; aí o env cube sai do passe difuso e vai para o
+`BumpyShinyPass`. `DX8DiffusePassLightFragments`:
+
+- **Luzes por pixel**: só a 1ª direcional e a 1ª ponto/spot; as outras
+  ficam no vértice. O vértice (`CompleteVertexDiffuseAddAmbientForPixelLighting`)
+  dá `v0 = sat(0,5·(Σ luzes do vértice + ambiente + emissiva))`, **sem** a
+  difusa do material.
+- **Pixel** (`DX8StandardMaterialDiffuseBumpPixelShader`, ps_1_1):
+  `r = (sat(n·L1)·c1 + sat(n·L2)·c3 + v0) · difusa; cor = sat(2·r·tex)`,
+  alfa `tex.a · stdMatAlphaMultiplier`; `c1..c3` = cores das luzes 0–2 pela
+  metade (`allStandardLightColorsHalf`); `n` = normal map ×2−1.
+- **L em espaço tangente**: `(L·T, L·(T×N), L·N)` no vértice, com T do
+  elemento `tangent` do vértice; L1 vai em `oD1` (×0,5 + 0,5). A 2ª luz é
+  escrita em `oT3` (`WriteLightVectorToTex3`) mas o pixel a lê de `t2`
+  (`texcoord t2`, o `t3` está comentado): `t2` não é escrito nesse passe,
+  vale o padrão (0, 0, 0, 1) → `t2_bx2` = (−1, −1, −1), e a 2ª luz soma
+  `sat(−(nx+ny+nz))·c3` (inferido pelo padrão do registrador). A 1ª
+  ponto/spot de um objeto com bump quase não ilumina.
+- **Sem tangentes no Mac**: o `Graphics Rules.sgr` faz
+  `skipTangentsInVertexData true` quando `maxPixelProgramVersionMajor < 2`
+  ("since we don't do bumpmapping on less ps2.0-capable hardware") — no Mac
+  sempre (§1.1). O binário lê a propriedade (`SkipTangentsInVertexData`,
+  BV `0x1d90a0` no gerador dos telhados, `0x1b093b8` no arquivo do
+  `cGeometryNode`). Sem o elemento, `v_TANGENT` lê o atributo genérico
+  padrão do GL, (0, 0, 0) (inferido) → L em espaço tangente = (0, 0, N·L)
+  e o pixel vira `sat(n_z · N·L1)`: o relevo só escurece onde o normal map
+  se inclina, sem direção de luz.
+- **Altura → normal**: o `-bump` é um mapa de altura cinza
+  (`fireplacehearthvalue-bump`: branco com rebites pretos). A conversão
+  (`ConvertHeightMapToNormalMapFast`/`GenerateBumpMap_L8_to_A8R8G8B8` com o
+  bump scale 10 do TXTR) não está no BV (o `_D3DXComputeNormalMap` da Aspyr
+  no `baserom.sym` tem 12 bytes, um stub); a fórmula segue inferida.
+
+### 13.3 Passe de recorte (`stdMatCutoutTextureName`)
+
+Nenhum TXMT do jogo traz `stdMatCutoutTextureName` (padrão `"0"` = sem
+recorte). Quem o põe é o código: `nTSSG::cObject::AddObjectCutout` (BV
+`0x667894`) pega o nome `objectCutout` da extensão de lista de dados do
+objeto (a pia: `ObjectCutoutTextureName`, BV `0x65a5c8`) e
+`ChangeObjectCutoutBinding` (BV `0x667484`) acha no balcão embaixo o subconjunto
+nomeado pela extensão `cutoutSubset` e chama `ApplyCutoutMaterial`
+(BV `0x659d0c`) → `CreateAndRegisterObjectCutoutMaterial` (BV `0x6591f8`):
+clona o material do subconjunto com o nome `<material>-cutout-<textura>` e
+`stdMatCutoutTextureName = <textura>`; `RemoveObjectCutout` (BV `0x667828`)
+faz o mesmo com `"0"`. Os lotes salvos guardam esse nome
+(`..._clean-cutout-sink...`, `..._clean-cutout-0`). No DX8: o 1º passe lê a
+textura de recorte com o UV 0 (`Copy2DTexcoordsToTexTwo`, `clamp`), troca o
+alfa pelo dela (`mov r0.a, t2.a`) e faz alpha test `≥ 127`; os passes
+seguintes (2ª leva de luzes, especular) não recortam.
+
+### 13.4 CelShaded (`celShading.matShad`)
+
+Todos os 182 TXMTs `CelShadedMaterial` do jogo base são os ícones 3D de
+memórias e desejos (`leftatthealtar_ring`, `firstbestfriendgold`...). Script:
+
+- camada `csMatLayer · 8` (23 em 179 deles);
+- rampa (`csRampTexture`, ponto, `clamp`) em `u = max(N·L, 0)` com a luz
+  presa à câmera `csCameraLightDir` (1, 0, 0,5) sem normalizar e `v` = alfa
+  da cor do vértice (`csRouteColorFromAlpha`, quando há cor no vértice),
+  senão o `v` do UV 1 (com textura base e UV 1) ou do UV 0;
+- cor `rampa · difusa` (com textura base: `· 0,25`, e o estágio da textura
+  faz `multiplyScale4`, ou seja `4·tex·rampa·difusa·0,25`);
+- borda (`csAddEdge`, 1 TXMT): rampa em `u = N·E + csEdgeOffset (+
+  csEdgeLightDamping·N·L)`, `v = 0`; `csEdgeRampTextureAlphaInvert` escolhe
+  `lerp(rampa, cor, rampa.a)` ou `lerp(cor, rampa, rampa.a)`;
+- especular (`csAddSpecular`, 1 TXMT): rampa `csSpecRampTexture` em
+  `u = (N·H)^csShininess` (via `lit`), por cima pelo alfa dela;
+- **contorno** (`csAddOutline`, 178): um passe antes, com as faces de trás
+  (`cullCounterClockwise`), a posição empurrada `csOutlineWidth` ao longo da
+  normal em espaço de câmera e `z += 0,005·w`, cor `csOutlineColor`, alfa
+  `csOutlineAlpha` (blend só se < 1), z `<`; o passe principal usa `≤`;
+- o env map (`csAddEnvironmentMap`) é 0 em todos.
