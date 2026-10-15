@@ -486,14 +486,10 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
             floors[size_t(li)].copy(pages[size_t(li)], written[size_t(li)]);
     };
     copyPages();
-    // The floor diffusion at a sample of a level (its page texel, x 2 x 0.5).
-    auto sampleLight = [&](int li, int sx, int sy) -> V3 {
-        const uint32_t i = uint32_t(sx * k8 / 2 + k8 / 4), j = uint32_t(sy * k8 / 2 + k8 / 4);
-        if (li < 0 || li >= levels || i >= pw || j >= ph)
-            return {0, 0, 0};
-        const uint8_t* px = &pages[size_t(li)][(size_t(j) * pw + i) * 3];
-        return {px[0] / 255.0f, px[1] / 255.0f, px[2] / 255.0f};
-    };
+    // The lamps' walls, for the portals' LookupWallDiffusion.
+    std::vector<std::array<float, 3>> lampWallLookups;
+    if (std::any_of(lights.begin(), lights.end(), [](const LightMapLight& l) { return l.portal; }))
+        diffuseWalls(layout, sources, params, floors, pages, &lampWallLookups);
 
     // Portals (windows and doors), shining into the side their light points
     // to (FindPortalLightValues, docs/lighting-mac.md 5.4), from the lamps'
@@ -573,11 +569,25 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         const float sgn = toB ? 1.0f : -1.0f;
         const V3 dir{ax == 0 ? sgn : 0, ax == 1 ? sgn : 0, 0};
         const V3 outward = dir * -1.0f; // the side the light comes from
-        // L: the light on the side it comes from (inferred: the floor's, plus
-        // the state's direct light outdoors, where the game reads the wall's).
-        V3 L = sampleLight(li, from[0], from[1]) * 2.0f * globals.floorLightMapScale;
-        if (fromHalf.outside)
-            L = L + illum(outward) * directScale;
+        // L: the wall's diffusion where the portal is (LookupWallDiffusion,
+        // the diffusion manager's vtable 0x60), on the side the light comes
+        // from (inferred: the side the portal keeps was not read).
+        V3 L{0, 0, 0};
+        {
+            const float along = ax == 0 ? ly : lx, t0 = std::floor(along);
+            for (size_t fi = 0; fi < layout.walls.size() && fi < lampWallLookups.size(); ++fi) {
+                const auto& f = layout.walls[fi];
+                if (f.level != level || dot(V3{f.normal[0], f.normal[1], 0}, outward) < 0.5f)
+                    continue;
+                const float a0 = ax == 0 ? f.wallA[1] : f.wallA[0], b0 = ax == 0 ? f.wallB[1] : f.wallB[0];
+                const float c0 = ax == 0 ? f.wallA[0] : f.wallA[1], c1 = ax == 0 ? f.wallB[0] : f.wallB[1];
+                if (std::fabs(c0 - line) > 0.01f || std::fabs(c1 - line) > 0.01f ||
+                    std::fabs(std::min(a0, b0) - t0) > 0.01f || std::fabs(std::max(a0, b0) - t0 - 1) > 0.01f)
+                    continue;
+                L = V3{lampWallLookups[fi][0], lampWallLookups[fi][1], lampWallLookups[fi][2]};
+                break;
+            }
+        }
         V3 dl{0, 0, 0}, spill{0, 0, 0};
         float f = 1, fs = 0;
         const bool hasSky = state.skyStrength > 0;
