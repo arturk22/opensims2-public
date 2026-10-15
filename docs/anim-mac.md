@@ -681,3 +681,53 @@ overlay em laço (o `AnimUpdateDefault` manda uma chave a cada volta; aqui só
 no fim); o `NumLoops` de um overlay que segura a pose (aqui 1); o tempo do
 evento que o `RunTree` recebe (o 5º argumento) não é usado; o erro de uma
 árvore de overlay é descartado (no jogo vai para a tree sim do objeto).
+
+## 11. Look At no corpo (rodada n23)
+
+### 11.1 `nTSSG::cAnimatable::try_look_at` (BV `0x6a19f8`)
+
+O `XPrimParam` tem os operandos a partir do byte 4 (byte 0 = `param_2[4]`).
+O que faltava ler além do que o `vm/view.cpp` já fazia:
+
+- **O ponto do alvo, tipo 0 ("default 3/4 height", byte 14 = 0):**
+  `FUN_00a45e54(&caixa, 0xF, nó, nó)` junta as caixas de todas as formas
+  do nó raiz do alvo (o nó achado pelo `0xFA1C39F7`), no **quadro desse
+  nó** (a transformação da raiz invertida), e o alvo é o centro da caixa em
+  x e y e **`0,75 · (zmin + zmax)`** em z (`local_148 = c·0,5 + c`, com
+  `c` o centro): três quartos de uma caixa que começa no chão. O pedido de
+  olhar guarda o nó e esse deslocamento (`CreateChoreoLookAtRequest`, e o
+  `SetTargetOffset` do `cAnimRequest`). Era inferido como o osso da cabeça
+  (Sim) ou 0,75 acima do piso (objeto).
+- **Slots** (byte 14 = 1 slot de mira — vtables `0x3e4`/`1000`/`0x13c` —,
+  2 de rota — `0x3d8`/`0x3dc`/`0x138` —, 3 de contenção — `0x104`/`0x10c`/
+  `0x134`): o slot do byte 8 (passou do número, erro 0x1B), o osso do slot
+  pelo nome (vtable `0x16c` do pedido) e a posição do slot como
+  deslocamento. Byte 0 `0x80`: a câmera (o nó da câmera, sem deslocamento).
+- **Velocidades:** byte 4 × 2 (ou temp 1 com a flag 0x08) e byte 5 × 2 (ou
+  temp 1/2 pelas flags 0x02/0x01 do byte 15), × π/180
+  (`DAT_02c0e68c`, escrito do `0x274b4f8` pelo inicializador em
+  `0x20b2fc4`): **radianos por segundo** ("TurnTowardsRateRPS",
+  "TurnAwayRateRPS" do `cChoreoRequestLookAt`). O STOP (`0x01`) aplica a
+  velocidade de volta do próprio STOP aos olhares que para (estado <
+  `0x26B0` → `0x26B2`/`0x26B0` pela fila).
+- Duração: s16 em 6 (ou temp 0 com 0x10), −1 = `DAT_02c0e324` (sem fim).
+  A sala (sem 0x20, tem de ser a mesma, `0x204`), o "frustum" (sem 0x40,
+  `FUN_00c49c44`: a cabeça alcança o alvo), o pedido `cAnimRequest` (ID
+  `0x80000000`, "lat", tipo 7, árvore de eventos u16 9, `TargetID` o
+  objeto, `SlotID` = slot | tipo << 12) e os dados de pessoa 41–44 (alvo,
+  slot, estado `0x26AD`, duração).
+
+### 11.2 O que o `cActiveAnimLookAt::AnimUpdate` faz (BV `0xd41e04`, não portado)
+
+É uma função de ~11 KB: a cadeia de IK de olhar (estratégia `0x09F9E87E`,
+`cIKStrategyLookAt`) vira a cabeça e, com o "spine twist" ligado, 0,6 do
+giro passa à coluna; o giro é limitado (`DAT_02d44e1c`, calculado no
+inicializador, e 10° de folga, `DAT_02d44e20` = 0,1745; 30°, `DAT_02d44e24`;
+200°, `DAT_02d44e18`) e segue um perfil de velocidade com rampas (fator
+0,3–1 pela distância angular, rampa de 25–300 ticks, 0,7 da velocidade na
+frenagem). Os estados do olhar são `0x26AD` (virando), `0x26AE` (segurando,
+`HoldTicks`), `0x26AF`, `0x26B0` (voltando), `0x26B2` (acabou); cada troca
+dispara o `TriggerLookStateEvent` (a árvore de eventos recebe o
+"look_state", tipo 4 no `HandleEvents`). **Continua inferido** no
+`app/look_at.cpp`: a divisão pescoço 40 % / cabeça 60 %, os limites de 75° e
+30° e a velocidade constante (agora a do primitivo).
