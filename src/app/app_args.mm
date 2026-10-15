@@ -48,13 +48,21 @@ fs::path gameDir() {
     return *game;
 }
 
-os2::CameraDef loadLiveCamera() {
+os2::CameraDef loadLiveCamera() { return loadLotCamera("Live"); }
+
+// A lot camera of cameras.txt by name ("Live", or "Build" for the top-down
+// view), its zoom distances times --camera-scale.
+os2::CameraDef loadLotCamera(const char* name) {
     const fs::path game = gameDir();
     auto cameras = os2::loadCameraConfig(game / kCameraConfig);
-    const os2::CameraDef* live = os2::findCamera(cameras, "Live");
-    if (!live)
-        throw std::runtime_error("no \"Live\" camera in " + (game / kCameraConfig).string());
-    return *live;
+    const os2::CameraDef* found = os2::findCamera(cameras, name);
+    if (!found)
+        throw std::runtime_error(std::string("no \"") + name + "\" camera in " + (game / kCameraConfig).string());
+    os2::CameraDef def = *found;
+    if (auto k = argument(@"--camera-scale"))
+        for (float& d : def.distances)
+            d *= std::stof(*k);
+    return def;
 }
 
 // The arguments, the executable's full path first (for a restart).

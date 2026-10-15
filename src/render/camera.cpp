@@ -289,6 +289,20 @@ void LotCamera::setPose(const Pose& p) {
     snap();
 }
 
+void LotCamera::setDefinition(CameraDef def) {
+    const Pose p = pose();
+    savedByCamera_[def_.name] = saved_;
+    def_ = std::move(def);
+    pivotHeight_ = def_.param("pivotheightabovefloor", 1.0f);
+    minChange_ = def_.param("defaultminchange", 0.02f);
+    if (auto it = savedByCamera_.find(def_.name); it != savedByCamera_.end())
+        saved_ = it->second;
+    else
+        saved_ = {};
+    lift_ = 0;
+    setPose(p); // the targets (with the pivot held by the new camera's constraint) and the snap
+}
+
 simd_float3 LotCamera::raisedPivot() const { return pivot_ + simd_make_float3(0, 0, pivotHeight_ + lift_); }
 
 void LotCamera::update(double dt) {

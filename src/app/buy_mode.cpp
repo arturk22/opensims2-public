@@ -33,7 +33,7 @@ constexpr uint32_t kFunctionSort = 0x0A00, kFunctionButtons = 0xA000, kRoomSort 
                    kRoomFunctions = 0xD000, kRoomBack = 0xDA00, kCollections = 0x0E00;
 constexpr uint32_t kCatalog = 0x898F42CD, kCollapsed = 0x1000, kPrev = 0x1004, kNext = 0x1005;
 constexpr uint32_t kToolHand = 0xCC607031, kToolEyedropper = 0xCC607032, kToolDesign = 0xCC607030, kUndo = 0xCC607033,
-                   kRedo = 0xCC607034, kDayNight = 0xCC607035;
+                   kRedo = 0xCC607034, kDayNight = 0xCC607035, kTopDown = 0xCC607036;
 // The collapsed grid (window 0x1006 of 0x1000: 176 x 100). The columns,
 // rows and margins are the collections window's constants on the same
 // panel (kCollapsedColumns=3, kCollapsedRows=2, margins 2 and 6;
@@ -959,6 +959,8 @@ UiScreen BuyMode::screen(int width, int height) {
         hk.buttonState[e] = tool_ == Tool::Eyedropper ? 2 : 1;
     if (const UiElement* e = root.child(kToolDesign))
         hk.buttonState[e] = tool_ == Tool::Design ? 2 : 1;
+    if (const UiElement* e = root.child(kTopDown))
+        hk.buttonState[e] = topDown && topDown() ? 2 : 1;
     if (const UiElement* e = root.child(kUndo))
         hk.buttonState[e] = undo_.empty() ? 0 : 1;
     if (const UiElement* e = root.child(kRedo))
@@ -1052,6 +1054,7 @@ UiScreen BuyMode::screen(int width, int height) {
     target(root.child(kToolEyedropper), Action::Tool, 1);
     target(root.child(kToolDesign), Action::Tool, 2);
     target(root.child(kDayNight), Action::DayNight, 0);
+    target(root.child(kTopDown), Action::TopDown, 0);
     target(root.child(kUndo), Action::Undo, 0);
     target(root.child(kRedo), Action::Redo, 0);
     if (collapsed) {
@@ -1179,6 +1182,10 @@ bool BuyMode::press(simd_float2 p) {
         case Action::DayNight:
             if (onDayNight)
                 onDayNight();
+            break;
+        case Action::TopDown:
+            if (onTopDown)
+                onTopDown();
             break;
         case Action::Tab:
             sort_ = t.value == 0 ? Sort::Function : Sort::Room;

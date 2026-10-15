@@ -1,5 +1,6 @@
 #include "app/camera_follow.hpp"
 #include "app/camera_input.hpp"
+#include "app/camera_mode.hpp"
 #include "render/camera.hpp"
 #include "render/cas_camera.hpp"
 
@@ -38,6 +39,26 @@ static CameraDef liveCamera() {
     c.params["keyboardtranslationspeed"] = 50;
     c.params["defaultminchange"] = 0.02f;
     c.params["constraintwidth"] = -10;
+    c.wheel = 5;
+    return c;
+}
+
+// Values from the game's BuildCamera.txt (the top-down view).
+static CameraDef buildCamera() {
+    CameraDef c;
+    c.name = c.controller = "Build";
+    c.defaultZoom = 1;
+    c.distances = {75, 32, 24, 16, 8};
+    c.fov = {33.2f, 28.6f, 24.1f, 23.0f, 21.8f};
+    c.pitchMin = {84, 84, 84, 84, 84};
+    c.pitchMax = {84, 84, 84, 84, 84};
+    c.nearClip = {1, 1, 0.8f, 0.5f, 0.3f};
+    c.farClip = {2000, 2000, 2000, 2000, 2000};
+    c.defaultOrientation = 1;
+    c.yaws = {0, 45, 90, 135, 180, 225, 270, 315};
+    c.zoomSmoothing = 5;
+    c.spinSmoothing = 8;
+    c.params["defaultminchange"] = 0.02f;
     c.wheel = 5;
     return c;
 }
@@ -323,6 +344,68 @@ int main() {
         p = c.pose();
         check(t1 > 0 && frames > 10 && frames < 10000 && near(p.eye.y, 5) && near(p.eye.z, 1) && near(c.zoom(), 0),
               "the glide arrives, zoom back to 0");
+    }
+    {
+        // The top-down view: "Build" takes over "Live" with the pivot, the
+        // heading, the 3D distance and the pitch fraction as numbers
+        // (cCameraLive::SetActive, BV 0x6a56e0), the tables of BuildCamera.txt.
+        LotCamera c(liveCamera());
+        c.setBounds(simd_make_float2(0, 0), simd_make_float2(64, 64));
+        c.setPivot(simd_make_float3(20, 30, 0));
+        c.rotateBy(2);
+        c.zoomBy(2);
+        c.savePosition(1);
+        settle(c);
+        const float yaw = c.yaw(), dist = c.distance();
+        const LotCamera::Pose before = c.pose();
+        c.setDefinition(buildCamera());
+        check(c.definition().name == "Build", "the Build camera is current");
+        check(near(c.pivot().x, 20) && near(c.pivot().y, 30), "top-down keeps the pivot");
+        check(near(c.yaw(), yaw) && near(c.distance(), dist), "top-down keeps the heading and the 3D distance as numbers");
+        check(near(c.pitch(), 84), "the Build camera looks almost straight down");
+        check(near(c.pose().pitchT, before.pitchT), "the pitch fraction is carried over");
+        check(near(c.zoom(), 3.125f) && near(c.fov(), 23.0f + (21.8f - 23.0f) * 0.125f), "the fov follows the Build table (15 is between its levels 3 and 4)");
+        c.rotateBy(1);
+        settle(c);
+        check(near(std::remainder(c.yaw() - 180, 360.0f), 0), "the Build camera has its own orientations (145 -> 135 -> 180)");
+        c.setDefinition(liveCamera());
+        check(c.definition().name == "Live" && near(c.pivot().x, 20) && near(c.pivot().y, 30), "back to the Live camera");
+        check(c.pitch() > 10 && c.pitch() < 56, "the Live pitch range again");
+        // Each camera keeps its own saved positions.
+        check(c.restorePosition(1, false), "the Live camera's saved position survives the round trip");
+        c.setDefinition(buildCamera());
+        check(!c.restorePosition(1, false), "the Build camera has no position saved yet");
+        c.savePosition(1);
+        c.setDefinition(liveCamera());
+        check(c.restorePosition(1, false), "positions per camera");
+        // Build holds the pivot to the lot rectangle (constraintwidth 0), Live lets it 10 tiles out.
+        c.setPivot(simd_make_float3(-8, 70, 0));
+        check(near(c.pivot().x, -8) && near(c.pivot().y, 70), "Live: pivot 10 tiles out");
+        c.setDefinition(buildCamera());
+        check(near(c.pivot().x, 0) && near(c.pivot().y, 64), "top-down: pivot held to the lot");
+    }
+    {
+        // cTSMainToolbar::SetMode / SetTopDown (BV 0x1ade24 / 0x1a9674) and the
+        // key T of the Buy and Build panels.
+        using S = CameraSelector;
+        S s;
+        check(s.controller() == S::Controller::Live && !s.topDown(), "starts in Live");
+        check(!s.toggleTopDown(), "T does nothing in Live mode");
+        s.setMode(S::Mode::Build);
+        check(s.controller() == S::Controller::Live, "Build mode with the flag off: the Live camera");
+        check(s.toggleTopDown() && s.controller() == S::Controller::Build && s.topDown(), "T in Build mode: top-down");
+        s.setMode(S::Mode::Buy);
+        check(s.controller() == S::Controller::Build, "Buy mode keeps the top-down view");
+        s.setMode(S::Mode::Live);
+        check(s.controller() == S::Controller::Live && s.topDown(), "Live mode shows the Live camera but remembers the flag");
+        check(!s.toggleTopDown() && s.topDown(), "T in Live mode changes nothing");
+        s.setMode(S::Mode::Build);
+        check(s.controller() == S::Controller::Build, "back in Build mode: top-down again");
+        check(s.toggleTopDown() && s.controller() == S::Controller::Live && !s.topDown(), "T again: the Live camera, flag off");
+        s.setMode(S::Mode::Buy);
+        s.setMode(S::Mode::Live);
+        s.setMode(S::Mode::Buy);
+        check(s.controller() == S::Controller::Live && !s.topDown(), "the flag off stays off across modes");
     }
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

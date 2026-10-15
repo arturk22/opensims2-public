@@ -14,11 +14,8 @@ using namespace os2app;
 // A lot (--lot, or --hood <N> --hood-lot <id>), or the test objects and Sims.
 - (void)prepareLot {
     OS2View* view = _view;
+    // (--camera-scale <k>: every zoom distance times k, close-ups of Sims below the closest level.)
     os2::CameraDef liveCamera = loadLiveCamera();
-    // --camera-scale <k>: every zoom distance times k (close-ups of Sims below the closest level).
-    if (auto k = argument(@"--camera-scale"))
-        for (float& d : liveCamera.distances)
-            d *= std::stof(*k);
     [view setCamera:std::make_unique<os2::LotCamera>(liveCamera)];
     gCamera = view.camera;
     os2::ResourceIndex& index = *gIndex;
@@ -174,6 +171,14 @@ using namespace os2app;
             }
             if (st.text == "space")
                 selectNextFamilySim();
+            if (st.text == "t") { // as keyDown: the top-down view (Buy and Build only)
+                toggleTopDownView();
+                if (gCamera)
+                    gCamera->snap();
+                std::printf("opensims2: key t: camera %s, pitch %.1f, distance %.1f\n",
+                            gCamera ? gCamera->definition().name.c_str() : "-", gCamera ? gCamera->pitch() : 0.0f,
+                            gCamera ? gCamera->distance() : 0.0f);
+            }
             if (st.text.rfind("walls-", 0) == 0) // --key walls-<0..3>: the puck's wall fan (down, cutaway, up, roof)
                 setWallMode(std::atoi(st.text.c_str() + 6));
             if (st.text == "pageup" || st.text == "pagedown") { // as keyDown: the floor shown

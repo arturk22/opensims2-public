@@ -174,6 +174,7 @@ std::unique_ptr<os2::GameAudio> gGameAudio;
 std::unique_ptr<os2::LotAudio>& gAudio = gScene.audio;
 os2::LotCamera*& gCamera = gScene.camera;
 std::unique_ptr<os2::LotCameraFollow>& gCameraFollow = gScene.cameraFollow; // --lot: pivot held to the lot, on the Sim's floor
+os2::CameraSelector& gCameraSelector = gScene.cameraSelector;
 
 // Everything a scene loaded, so that the next one starts clean (the
 // renderer is replaced by the caller). Then the app's decoded pictures go if

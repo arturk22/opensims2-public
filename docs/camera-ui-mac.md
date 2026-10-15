@@ -262,6 +262,66 @@ Pedidos internos (`HandleRequest`, binário):
 | limitar ao lote | lote encolhido de `constraintwidth` (−10 = até 10 tiles para fora) |
 | seguir altura do piso/Sim | sim: andar do Sim e amostra de altura do piso |
 
+### 1.7 Vista de cima (T), a câmera "Build" (binário, rodada n11)
+
+**Teclas** (`ui.package` `0xA2E3D533`, grupo `0x8CA033A2`): `T` = "Top down view"
+(`0x2CEE0269`), `Tab` e `Y` = "Cycle Camera Controller" (`0x0CA8D3F3`, §1.8),
+`Space` e `N` = "Select Next Sim" (`0x4CA29B60`), `Return` = "Center on active
+Sim" (`0xACECA4EE`). Só o arquivo `0x6A9362F5` (o do modo vivo e de construção)
+tem `T` e `Y`; o de bairro (`...F3`) e os de CAS não têm.
+
+**Quem trata o T.** Só os painéis de Comprar e de Construir: `cTSWinProcBuildPanel::
+DoMessage` (BV `0x286f80`) e o de Comprar (`0x22bc8c`) respondem a `0x2CEE0269`
+trocando o estado do botão "vista de cima" (Construir `0xA3`, Comprar
+`0xCC607036`) para o contrário de `cITSMainToolbar::GetTopDown`; o
+`onBtnToggledID` do painel (`0x27fd94` e `0x223ca4`) chama `SetTopDown(estado)`
+da barra principal (vtable `0x10c`). No modo Viver nenhum painel trata a tecla:
+**T não faz nada no Viver**.
+
+**`cTSMainToolbar::SetTopDown(bool)`** (BV `0x1a9674`; o slot `0x138` da
+vtable primária é o mesmo código): chama o gerente de câmeras
+(`cTSCameraControllerManager::SetCurrentController(char*)`, vtable `0x54`)
+com a string em `0x101a328` ("Build") se ligar, ou `0x101a330` ("Live") se
+desligar; ao ligar pela primeira vez no jogo roda uma vez
+`Update(-1)` do gerente e um método da barra (vtable `0xc0`); por fim guarda o
+bool em `+0xa8`.
+
+**`cTSMainToolbar::SetMode(modo, bool)`** (BV `0x1ade24`), para os modos 2
+(Viver), 3 (Comprar) e 4 (Construir): com o flag `+0xa8` desligado chama
+`SetTopDown(0)` (e, em Comprar e Construir, anota `+0x11a`, a visita; ao
+voltar ao Viver ela dispara uma atualização no `WorldDB`, não de câmera);
+com o flag ligado, Comprar e Construir chamam `SetTopDown(1)`, e Viver chama
+`SetTopDown(0)` **e põe o flag de volta em 1**: o Viver mostra a câmera "Live",
+mas o próximo Comprar ou Construir volta à vista de cima. Código:
+`CameraSelector` (`app/camera_mode.hpp`; teste `test_camera`).
+
+**A câmera "Build".** `cTSCameraParserState::Init` (BV `0x85a3cc`) registra
+`SmoothSims1`, `Neighborhood`, `Live` e `Build` com o mesmo tipo (`0xaf75334`):
+"Build" é um `cCameraLive` com a configuração do `BuildCamera.txt`
+(`zoom 1 (75 32 24 16 8)`, `fov (33.2 28.6 24.1 23.0 21.8)`, pitch fixo de
+84° em todos os níveis, orientações de 45 em 45 graus a partir de 0, sem
+`pivotheightabovefloor`, `constraintwidth` nem `defaultcamerapitch`: valem os
+padrões do construtor `0x6a5154`, `constraintwidth 0` (o pivô fica dentro do
+retângulo do lote, sem os 10 tiles de folga do Live) e `defaultcamerapitch`
+0,15). **Inferido:** `pivotheightabovefloor` do Build; o construtor do
+`cCameraLive` não o inicializa (`+0x490`), o app usa 1 como no Live (a 84°
+a diferença é de décimos de tile).
+
+**A troca.** `cCameraLive::SetActive` (BV `0x6a56e0`), quando o controlador
+anterior é "Build" ou "Live" (nome pelo vtable `0x6c`), chama a cópia de
+estado `FUN_0086bcd4` (vtable `0x114`): copia do anterior, como números, o
+rumo (`+0xcc/+0xd0`), a distância 3D (`+0xe8/+0xec`), o FOV, os cortes, a
+fração de pitch (`+0x158/+0x15c`) e o vetor do pivô, e em seguida faz o
+"snap" (`FUN_0086b7f8`: cada atual recebe o alvo). A distância **não** é
+movida para a tabela de zoom da nova câmera (do Live no zoom mais perto, 3,
+o Build mostra a 3 unidades); as tabelas de fov, perto/longe e pitch passam a
+ser as do Build pelo nível de zoom da distância. Cada controlador guarda
+as suas posições de câmera salvas (`SaveCameraPosition`, `0x6a3a08`).
+No app: `LotCamera::setDefinition`, `applyCameraSelection` (`live_setup.mm`),
+a tecla T (`app_view.mm`), os botões de vista de cima dos painéis de Comprar
+e Construir (pressionados enquanto a vista está ligada) e o passo
+headless `--key t`.
+
 ---
 
 ## 2. Menu de pie (`cTSWinPieMenu`)

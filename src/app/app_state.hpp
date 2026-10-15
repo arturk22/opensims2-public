@@ -104,6 +104,7 @@
 #include "lot_audio.hpp"
 #include "anim_snaps.hpp"
 #include "camera_follow.hpp"
+#include "camera_mode.hpp"
 #include "wall_view.hpp"
 #include "camera_input.hpp"
 #include "lot_vm.hpp"
@@ -244,6 +245,7 @@ struct SceneState {
     std::unique_ptr<os2::LotSimulation> simulation;
     std::unique_ptr<os2::LotAudio> audio;
     std::unique_ptr<os2::LotCameraFollow> cameraFollow;
+    os2::CameraSelector cameraSelector; // Live / top-down camera by play mode and the T key
     std::unique_ptr<os2::UiLayer> ui;
     std::map<int16_t, os2::SimActor*> objectActors;
     std::function<os2::SimActor*(int16_t)> objectActor; // the actor animating an object (made on first use; captures the scene's renderer)
@@ -421,6 +423,7 @@ extern std::unique_ptr<os2::GameAudio> gGameAudio;
 extern std::unique_ptr<os2::LotAudio>& gAudio;
 extern os2::LotCamera*& gCamera;
 extern std::unique_ptr<os2::LotCameraFollow>& gCameraFollow; // --lot: pivot held to the lot, on the Sim's floor
+extern os2::CameraSelector& gCameraSelector;
 
 // --- The shell's functions, by file -----------------------------------------
 
@@ -436,6 +439,7 @@ void setSceneArguments(const std::vector<std::string>& args);
 std::optional<fs::path> findGameDir();
 fs::path gameDir();
 os2::CameraDef loadLiveCamera();
+os2::CameraDef loadLotCamera(const char* name);
 std::vector<std::string> processArguments();
 bool reflectionsOn();
 bool perfOn();
@@ -505,6 +509,11 @@ void pollTutorial(double seconds);
 void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index);
 void toggleDayNight();
 void releaseDayNight();
+// The camera by play mode and the top-down view (camera_mode.hpp): the lot camera shows the
+// controller the selector chose (T, the panels' top-down button, a mode change).
+void applyCameraSelection();
+void enterPlayMode(os2::CameraSelector::Mode mode);
+void toggleTopDownView();
 void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index);
 void runBuildSteps();
 void runBuySteps();

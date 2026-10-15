@@ -352,6 +352,11 @@ using namespace os2app;
         break;
     // The speed buttons' accelerators (their tips: "Pausa - P", "Velocidade Normal - 1", ...).
     case kP: if (gLive) gLive->togglePause(); break;
+    // "Top down view" (T): the Buy and Build panels' toggle, nothing in Live mode.
+    case kT:
+        if (!(e.modifierFlags & (NSEventModifierFlagControl | NSEventModifierFlagCommand)))
+            toggleTopDownView();
+        break;
     case k1: case k2: case k3: if (gLive) gLive->setSpeed(e.keyCode - k1 + 2); break;
     default: break;
     }

@@ -89,6 +89,11 @@ public:
     DesignTool& designTool() { return *design_; }
     // "Alternar Dia/Noite" (0xCC607035): the host flips the lighting.
     std::function<void()> onDayNight;
+    // "Vista de cima" (0xCC607036, a toggle button; onBtnToggledID calls
+    // cTSMainToolbar::SetTopDown): the host switches the camera; topDown
+    // says whether the view is on (the button is pressed).
+    std::function<void()> onTopDown;
+    std::function<bool()> topDown;
 
     // --- The lot -------------------------------------------------------------
     // The mouse ray over the lot (world space): what is held follows it.
@@ -152,7 +157,7 @@ private:
     enum class Sort { Function, Room };
     Tool tool_ = Tool::Hand;
     vm::ObjectId objectAt(simd_float3 eye, simd_float3 dir, const std::optional<vm::TilePos>& tile) const;
-    enum class Action { None, Tab, Function, SubSort, Room, RoomFunction, Back, Prev, Next, Expand, Item, Tool, Undo, Redo, DayNight };
+    enum class Action { None, Tab, Function, SubSort, Room, RoomFunction, Back, Prev, Next, Expand, Item, Tool, Undo, Redo, DayNight, TopDown };
     struct Target {
         std::array<float, 4> rect;
         Action action = Action::None;

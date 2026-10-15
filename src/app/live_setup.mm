@@ -267,6 +267,32 @@ void pollTutorial(double seconds) {
         }
 }
 
+// The lot camera shows the controller the selector chose (camera_mode.hpp):
+// "Live", or "Build", the top-down view of BuildCamera.txt. The new camera
+// takes over the old one's pivot, heading, distance and pitch.
+void applyCameraSelection() {
+    if (!gCamera)
+        return;
+    const char* want = gCameraSelector.controller() == os2::CameraSelector::Controller::Build ? "Build" : "Live";
+    if (gCamera->definition().name == want)
+        return;
+    gCamera->setDefinition(loadLotCamera(want));
+    std::printf("opensims2: camera: %s%s\n", want, gCameraSelector.topDown() ? " (top-down view on)" : "");
+}
+
+// The play mode changed (cTSMainToolbar::SetMode): Live keeps the Live camera, Buy and
+// Build show the top-down one if the player left it on.
+void enterPlayMode(os2::CameraSelector::Mode mode) {
+    gCameraSelector.setMode(mode);
+    applyCameraSelection();
+}
+
+// "Vista de cima": the key T or the Buy / Build panel's button (Live has none).
+void toggleTopDownView() {
+    if (gCameraSelector.toggleTopDown())
+        applyCameraSelection();
+}
+
 // Buy mode over the lot's VM: the puck's mode buttons switch it (the live
 // panel gives way to the Buy panel); --mode buy starts in it; headless,
 // --buy <guid|name> picks a catalog item, --hold x,y[,dir[,level]] holds it
@@ -280,14 +306,18 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
             if (mode == 1) {
                 gBuy->enter();
                 gLive->setMode(1);
+                enterPlayMode(os2::CameraSelector::Mode::Buy);
             } else if (mode == 0) {
                 gBuy->exit();
                 releaseDayNight();
                 gLive->setMode(0);
+                enterPlayMode(os2::CameraSelector::Mode::Live);
             }
         };
     gBuy->pickObject = [](simd_float3 eye, simd_float3 dir) { return gPie ? gPie->pick(eye, dir) : os2::vm::ObjectId(0); };
     gBuy->onDayNight = [] { toggleDayNight(); };
+    gBuy->onTopDown = [] { toggleTopDownView(); };
+    gBuy->topDown = [] { return gCameraSelector.topDown(); };
     if (gAudio)
         gBuy->playSound = [](const std::string& name) {
             os2::SoundSystem::PlayOptions o;
@@ -298,6 +328,7 @@ void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
         gBuy->enter();
         if (gLive)
             gLive->setMode(1);
+        enterPlayMode(os2::CameraSelector::Mode::Buy);
     }
 }
 
@@ -327,6 +358,8 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
     gBuild->onGeometryChanged = [&renderer, &index]() { rebuildLotModel(renderer, index); };
     gBuild->pickObject = [](simd_float3 eye, simd_float3 dir) { return gPie ? gPie->pick(eye, dir) : os2::vm::ObjectId(0); };
     gBuild->onDayNight = [] { toggleDayNight(); };
+    gBuild->onTopDown = [] { toggleTopDownView(); };
+    gBuild->topDown = [] { return gCameraSelector.topDown(); };
     gBuild->renderThumb = [&renderer, &index](const std::vector<os2::ThumbnailPart>& parts) {
         return os2::renderPartsThumbnail(renderer, index, parts, 94);
     };
@@ -352,6 +385,7 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
                     gBuy->exit();
                 gBuild->enter();
                 gLive->setMode(2);
+                enterPlayMode(os2::CameraSelector::Mode::Build);
                 return;
             }
             gBuild->exit();
@@ -363,6 +397,7 @@ void setupBuildMode(os2::Renderer& renderer, os2::ResourceIndex& index) {
         gBuild->enter();
         if (gLive)
             gLive->setMode(2);
+        enterPlayMode(os2::CameraSelector::Mode::Build);
     }
 }
 

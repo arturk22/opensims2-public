@@ -76,6 +76,11 @@ public:
     std::function<vm::ObjectId(simd_float3 eye, simd_float3 dir)> pickObject;
     // "Alternar Dia/Noite" (0xAA): the host flips the lighting.
     std::function<void()> onDayNight;
+    // "Vista de cima" (0xA3, a toggle button; onBtnToggledID calls
+    // cTSMainToolbar::SetTopDown): the host switches the camera; topDown
+    // says whether the view is on (the button is pressed).
+    std::function<void()> onTopDown;
+    std::function<bool()> topDown;
     // Renders models for a catalog tile (the host's renderer:
     // renderPartsThumbnail); the modular stairs and dormers have no cached
     // thumbnail, the game renders theirs.
@@ -178,7 +183,7 @@ public:
     void openCategory(int category, int subsort = 0);
 
 private:
-    enum class Action { None, Category, Subsort, Back, Prev, Next, Item, Hand, Undo, Redo, Design, DayNight, AutoRoof };
+    enum class Action { None, Category, Subsort, Back, Prev, Next, Item, Hand, Undo, Redo, Design, DayNight, TopDown, AutoRoof };
     bool preserveRoofs_ = false; // C400 "Preservar Telhados Existentes"
     // One step of Build mode's history (cTSUserToolUndoManager): a change of
     // the editor's (walls, floors, ...: its own undo), an object the object

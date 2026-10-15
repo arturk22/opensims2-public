@@ -35,7 +35,7 @@ constexpr uint32_t kTypeTxmt = 0x49596978, kTypeTxtr = 0x1C4A276C;
 // Build panel windows (0x49060003, docs/buy-build-mac.md §7).
 constexpr uint32_t kSortArea = 0x000000A8, kCategories = 0xA000, kCatalogArea = 0xAD502BBF, kCollapsed = 0x1000,
                    kExpanded = 0x2000, kPrev = 0x1004, kNext = 0x1005, kInfoText = 0x4000;
-constexpr uint32_t kDesignBtn = 0xAB, kDayNightBtn = 0xAA;
+constexpr uint32_t kDesignBtn = 0xAB, kDayNightBtn = 0xAA, kTopDownBtn = 0xA3;
 constexpr uint32_t kCategoriesBtn = 0xA6, kHand = 0xA5, kUndo = 0xA1, kRedo = 0xA2, kCollectionsBtn = 0xA7, kCollectionsWin = 0xA9,
                    kAutoRoof = 0xAC, kBgFunctions = 0xB1, kBgNoSubsort = 0xB2, kBgCollections = 0xB3, kBgTile = 0xB4,
                    kBgEndCap = 0xB5;
@@ -573,6 +573,8 @@ UiScreen BuildMode::screen(int width, int height) {
         hk.buttonState[e] = tool_ == Tool::None ? 2 : 1;
     if (const UiElement* e = root.child(kDesignBtn))
         hk.buttonState[e] = tool_ == Tool::Design ? 2 : 1;
+    if (const UiElement* e = root.child(kTopDownBtn))
+        hk.buttonState[e] = topDown && topDown() ? 2 : 1;
     if (const UiElement* e = root.child(kUndo))
         hk.buttonState[e] = !undo_.empty() || editor_->undoDepth() > editorDepth_ ? 1 : 0;
     if (const UiElement* e = root.child(kRedo))
@@ -642,6 +644,7 @@ UiScreen BuildMode::screen(int width, int height) {
     }
     target(root.child(kDesignBtn), Action::Design, 0);
     target(root.child(kDayNightBtn), Action::DayNight, 0);
+    target(root.child(kTopDownBtn), Action::TopDown, 0);
     target(root.child(kCategoriesBtn), Action::Back, 0);
     target(root.child(kUndo), Action::Undo, 0);
     target(root.child(kRedo), Action::Redo, 0);
@@ -816,6 +819,10 @@ bool BuildMode::press(simd_float2 p) {
         case Action::DayNight:
             if (onDayNight)
                 onDayNight();
+            break;
+        case Action::TopDown:
+            if (onTopDown)
+                onTopDown();
             break;
         case Action::Undo: undo(); break;
         case Action::Redo: redo(); break;

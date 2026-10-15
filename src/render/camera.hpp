@@ -8,7 +8,9 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <map>
 #include <optional>
+#include <string>
 
 namespace os2 {
 
@@ -96,6 +98,15 @@ public:
     };
     Pose pose() const { return {pivotTarget_, dist_.target, heading_.target, pitchT_.target}; }
     void setPose(const Pose& p); // immediate
+    // Another camera of the same kind takes over (the top-down view: "Live"
+    // <-> "Build", BuildCamera.txt). The new cCameraLive copies the old one's
+    // smoothed values and snaps to them (cCameraLive::SetActive, BV 0x6a56e0:
+    // FUN_0086bcd4 then the snap at vtable 0x104, FUN_0086b7f8): the pivot, the
+    // heading, the 3D distance and the pitch fraction are kept as numbers
+    // (the distance is not moved onto the new zoom table), the tables, the
+    // pitch range and the params are the new camera's. Each camera keeps its
+    // own saved positions (cCameraLive::SaveCameraPosition).
+    void setDefinition(CameraDef def);
 
     // --- Environment -------------------------------------------------------
     void setViewport(float width, float height) { viewW_ = width, viewH_ = height; }
@@ -165,6 +176,7 @@ private:
         float dist, heading, pitchT;
     };
     std::array<std::optional<Saved>, 6> saved_;
+    std::map<std::string, std::array<std::optional<Saved>, 6>> savedByCamera_; // the other cameras' positions
     std::optional<FirstPerson> firstPerson_;
 };
 
