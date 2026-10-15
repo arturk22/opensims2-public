@@ -2,6 +2,7 @@
 // hand-built resources: terrain, occupants, the ini, paint weights.
 #include "formats/hood_scene.hpp"
 #include "formats/hood_terrain.hpp"
+#include "formats/lighting_config.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -107,7 +108,58 @@ static void testSettings() {
     t.seaLevel = 0;
     const PaintWeights pw = computePaintWeights(t, Occupants{}, s);
     check(pw.paints.size() == 1 && pw.paints[0] == 1, "one paint");
-    check(std::abs(pw.weights[0][4] - 1) < 1e-5f, "normalised weight");
+    // NormalizePaintWeights: weight x 250 / sum, so one paint alone is 250.
+    check(pw.alpha[0][4] == 250, "alpha byte of a lone paint");
+
+    // The terrain model: a black canvas, then the paint's part, added, with
+    // its alpha map one value per vertex at the tile's middle.
+    const TerrainVariants variants = TerrainVariants::make(t, s, 7);
+    const ObjectModel m = buildHoodTerrainModel(t, Occupants{}, s, variants);
+    check(m.parts.size() >= 2 && m.parts[0].shape == "canvas" && m.parts[0].mesh.triangles.size() == 4 * 6,
+          "canvas part over the 4 tiles");
+    size_t paintTris = 0;
+    for (size_t i = 1; i < m.parts.size(); ++i)
+        paintTris += m.parts[i].mesh.triangles.size();
+    check(paintTris == 4 * 6, "each tile drawn once per paint (one variant each)");
+    check(m.masks.size() == 1 && m.masks[0].width == 3 && m.masks[0].spacing == 10 && m.masks[0].originX == 5,
+          "alpha map: a value per vertex, at the tile's middle");
+    check(m.materials.at(m.parts[1].material).property("stdMatAlphaBlendMode") == "additive",
+          "the paint is added over the canvas (srcAlpha + one)");
+}
+
+// The game's random numbers and the texture variant cells (InitPaintVariants).
+static void testVariants() {
+    GameRandom r{12345};
+    const uint32_t a = r.next(256), b = r.next(256), c = r.next(256), d = r.next(256);
+    check(a == 12 && b == 254 && c == 110 && d == 192, "FUN_00171674 sequence");
+    check(GameRandom{1}.next(0) == 0, "next(0) is 0");
+    Terrain t;
+    t.width = t.height = 128;
+    t.gridWidth = t.gridHeight = 129;
+    TerrainSettings s;
+    s.textureVariantGridSize = 13;
+    const TerrainVariants v = TerrainVariants::make(t, s, 12345);
+    check(v.cellsX == 10 && v.cellsY == 10 && v.bytes.size() == 100 && v.bytes[0] == 12 && v.bytes[1] == 254,
+          "a byte per 13-tile cell, row by row");
+    check(v.variant(12, 0, 2) == 0 && v.variant(13, 0, 2) == 0 && v.variant(13, 0, 3) == 254 % 3,
+          "a tile's variant is its cell's byte mod the variants");
+    check(v.variant(0, 0, 1) == 0, "one texture: variant 0");
+    check(TerrainSettings{}.textureVariantGridSize == 4, "grid 4 without the ini key");
+}
+
+// cTSNHoodTerrain's normals: the six faces round a vertex.
+static void testNormals() {
+    Terrain t = Terrain::parse(terrain(true));
+    t.heights.assign(9, 3.0f);
+    auto n = terrainNormals(t);
+    check(n.size() == 9 && std::abs(n[4][2] - 1) < 1e-6f, "flat: straight up");
+    // A slope along x: 1 unit up per tile.
+    for (size_t j = 0; j < 3; ++j)
+        for (size_t i = 0; i < 3; ++i)
+            t.heights[j * 3 + i] = float(i);
+    n = terrainNormals(t);
+    const float e = 1 / std::sqrt(1.0f + 100.0f);
+    check(std::abs(n[4][0] + e) < 1e-5f && std::abs(n[4][1]) < 1e-5f, "slope: tilted against x");
 }
 
 // The "Ver Amigos" arch: a tube round a Bezier from one lot to the other,
@@ -131,6 +183,8 @@ int main() {
     testTerrain();
     testOccupants();
     testSettings();
+    testVariants();
+    testNormals();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

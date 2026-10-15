@@ -150,6 +150,10 @@ private:
     hood::Terrain terrain_, rawTerrain_;
     std::optional<LightingState> lightState_;     // for refreshLightMap
     RgbaImage lightLookup_, lightGradient_;
+    float nhoodShadowStrength_ = 0.47f, blobHeightModifier_ = 0.09f, blobWidthModifier_ = 0.05f; // Lighting.txt hm*
+    std::map<uint32_t, std::string> objectModels_; // neighborhood objects: GUID -> CRES
+    // The terrain's light map now (CreateNeighborhoodLightMap), with the trees' blobs.
+    RgbaImage computeLightMap();
     hood::PlacementWorld place_;
     int plopOk_ = -1, plopBad_ = -1;
     hood::Occupants occupants_;

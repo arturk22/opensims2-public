@@ -196,17 +196,31 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     if (!lookup.width)
         report_.push_back("no neighborhood light map image (IMG 0x0BE702EF)");
     const RgbaImage gradient = readTexture(index, "neighborhood-underwater-gradient_txtr");
-    RgbaImage lightMap; // (the imposters take its shade, below)
-    if (state) {
+    // The height-map shadow's tunables (cLightingManager's config reader, BV
+    // FUN_007175b8: Lighting.txt's globals).
+    auto global = [&](const char* name, float fallback) {
+        auto it = lighting.globals.find(name);
+        if (it == lighting.globals.end())
+            return fallback;
+        try {
+            return std::stof(it->second);
+        } catch (...) {
+            return fallback;
+        }
+    };
+    nhoodShadowStrength_ = global("hmnhoodshadowstrength", kNHoodShadowStrength);
+    blobHeightModifier_ = global("hmblobheightmodifier", 0.09f);
+    blobWidthModifier_ = global("hmblobwidthmodifier", 0.05f);
+    if (state)
         lightState_ = *state, lightLookup_ = lookup, lightGradient_ = gradient;
-        const RgbaImage& lm = lightMap = hood::computeHoodLightMap(terrain_, *state, lookup, gradient,
-                                                                      graphicsOptions().heightMapShadows ? kNHoodShadowStrength : 0.0f);
-        renderer.setLightMap(0, lm);
-        renderer.setLightMap(1, lm);
-        if (const char* dump = std::getenv("OS2_HOOD_LIGHTMAP_DUMP"))
-            writePng(dump, lm);
-    }
     renderer.hideTestScene();
+    // The texture variants: a byte per cell drawn once per load from the
+    // clock, as the game does (OS2_HOOD_VARIANT_SEED fixes it, for
+    // comparable screenshots).
+    uint32_t seed = hood::clockSeed();
+    if (const char* fixed = std::getenv("OS2_HOOD_VARIANT_SEED"))
+        seed = uint32_t(std::strtoul(fixed, nullptr, 0));
+    const hood::TerrainVariants variants = hood::TerrainVariants::make(terrain_, settings, seed);
 
     // Ground, roads and water.
     // The lots first: which tiles their imposter terrains hide.
@@ -293,10 +307,10 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
     }
     {
         const ObjectModel terrainModel =
-            hood::buildHoodTerrainModel(terrain_, occupants_, settings, &report_, &hidden);
+            hood::buildHoodTerrainModel(terrain_, occupants_, settings, variants, &report_, &hidden);
         renderer.addInstance(renderer.addObject(terrainModel, index), matrix_identity_float4x4);
         for (const auto& mesh : patches)
-            renderer.addInstance(renderer.addObject(hood::buildHoodTerrainPatch(terrainModel, terrain_, mesh), index),
+            renderer.addInstance(renderer.addObject(hood::buildHoodTerrainPatch(terrainModel, terrain_, mesh, variants), index),
                                  matrix_identity_float4x4);
         if (!patches.empty())
             report_.push_back(std::to_string(patches.size()) + " lots hide the terrain under their imposter terrain");
@@ -307,7 +321,7 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
 
     loading::phase("hood: lots");
     // Trees, props and bridges: one model per CRES.
-    const auto objects = hood::loadNeighborhoodObjects(index);
+    const auto& objects = objectModels_ = hood::loadNeighborhoodObjects(index);
     auto model = [&](const std::string& cres) { return modelId(cres); };
     size_t placed = 0, missing = 0;
     auto place = [&](uint32_t guid, const hood::OccupantPosition& at, float rotation) {
@@ -335,6 +349,16 @@ HoodView::HoodView(Renderer& renderer, ResourceIndex& index, const fs::path& res
         const simd_float3 at = simd_make_float3(p[0] + b.offset[0], p[1] + b.offset[1], p[2] + b.offset[2]);
         renderer.addInstance(id, simd_mul(translation(at), rotationQuat(b.orientation)));
         ++placed;
+    }
+
+    // The light map, with the trees' blobs (their models are loaded now).
+    RgbaImage lightMap; // (the imposters take its shade, below)
+    if (lightState_) {
+        lightMap = computeLightMap();
+        renderer.setLightMap(0, lightMap);
+        renderer.setLightMap(1, lightMap);
+        if (const char* dump = std::getenv("OS2_HOOD_LIGHTMAP_DUMP"))
+            writePng(dump, lightMap);
     }
 
     // The lots' imposters.
@@ -723,11 +747,15 @@ std::optional<simd_float2> HoodView::groundAt(simd_float3 origin, simd_float3 di
     return std::nullopt;
 }
 
+RgbaImage HoodView::computeLightMap() {
+    return hood::computeHoodLightMap(terrain_, *lightState_, lightLookup_, lightGradient_,
+                                     graphicsOptions().heightMapShadows ? nhoodShadowStrength_ : 0.0f);
+}
+
 void HoodView::refreshLightMap() {
     if (!lightState_ || !renderer_)
         return;
-    const RgbaImage lm = hood::computeHoodLightMap(terrain_, *lightState_, lightLookup_, lightGradient_,
-                                                   graphicsOptions().heightMapShadows ? kNHoodShadowStrength : 0.0f);
+    const RgbaImage lm = computeLightMap();
     renderer_->setLightMap(0, lm);
     renderer_->setLightMap(1, lm);
     // The imposters' ImposterColorScalar is the terrain's shade under the

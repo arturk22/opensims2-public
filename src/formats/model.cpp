@@ -471,7 +471,12 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
     // DetermineLightingMode: "additive" materials are never lit; neither are
     // those whose diffuse and specular coefficients are all 0 (unlit, the
     // texture times a black diffuse: the same colour as lit).
-    if (out.blend == StandardMaterial::Blend::Additive && out.shading == StandardMaterial::Shading::Standard)
+    // (The neighborhood terrain's paints are added over the black canvas and
+    // the sum is then multiplied by the light map, NHoodTerrainLighting:
+    // light-mapped additive "Terrain" parts keep the light map, which gives
+    // the same sum.)
+    if (out.blend == StandardMaterial::Blend::Additive && out.shading == StandardMaterial::Shading::Standard &&
+        type != "Terrain")
         out.lighting = false;
     out.diffuse = {diffuse[0], diffuse[1], diffuse[2]};
     if (baseEnabled)

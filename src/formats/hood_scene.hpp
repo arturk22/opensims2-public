@@ -7,21 +7,20 @@
 //
 // - Terrain (NeighborhoodCanvas + NeighborhoodTerrainPaint +
 //   NHoodTerrainLighting): the canvas is black and every paint is added
-//   over it, its texture repeating every `nhoodPaintTextureScale` (13) tiles
-//   and scaled by its alpha map; the result is multiplied by the
-//   neighborhood light map ("nhoodLightMap", one texel run over the 128
-//   cells). Here the paints' weights are normalised and drawn as an opaque
-//   first paint with the others blended over it ("over" with alpha =
-//   weight / running sum, which adds up to the same), all light-mapped.
-//   The paints are decided at load time as cTSNHoodTerrain::DecideSurfaceCover
-//   does (docs/neighborhood-mac.md 2.3): per vertex the cliff paint where
-//   |n.z| < cos(CliffAngleMin) (only on that vertex), the beach paint within
-//   MaxBeachWidthInCells of water and at most MaxBeachAltitude above it, else
-//   [PaintMapTable_<type>] at row 31 - (h - sea) x 31 / HeightRange and the
-//   road proximity column; beach and table paints spread by their curves;
-//   each vertex keeps its 3 heaviest paints, normalised. Inferred: alpha =
-//   weight, the variant hash (the game draws a random byte per cell of
-//   TextureVariantGridSize tiles).
+//   over it (srcAlpha + one), its texture repeating every
+//   `nhoodPaintTextureScale` (13) tiles and scaled by its 8-bit alpha map;
+//   the result is multiplied by the neighborhood light map
+//   ("nhoodLightMap"). The paints are decided at load time as
+//   cTSNHoodTerrain::DecideSurfaceCover does (docs/neighborhood-mac.md 2.3):
+//   per vertex the cliff paint where |n.z| < cos(CliffAngleMin) (only on
+//   that vertex), the beach paint within MaxBeachWidthInCells of water and at
+//   most MaxBeachAltitude above it, else [PaintMapTable_<type>] at row
+//   31 - (h - sea) x 31 / HeightRange and the road proximity column; beach
+//   and table paints spread by their curves; each vertex keeps its 3 heaviest
+//   paints (AddLandTypeAtVertex) and NormalizePaintWeights turns them into
+//   the alpha bytes (docs/neighborhood-mac.md 20.1). Each tile is drawn with
+//   one texture variant per paint, from a byte drawn per cell of
+//   TextureVariantGridSize tiles (InitPaintVariants, 20.2).
 // - Roads (neighborhoodroads.matShad): each road tile's saved quad and UVs
 //   with "<type>_roads_<piece | 4>" clamped, alpha blended, x the light map.
 // - Water (NeighborhoodWater's fallback without reflections): a plane at the
@@ -36,6 +35,7 @@
 
 #include <array>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -45,14 +45,43 @@ struct LightingState;
 
 namespace hood {
 
-// Paint weights per terrain vertex (gridWidth x gridHeight each), by paint
-// ID, normalised to add up to 1.
+// The terrain's vertex normals as cTSNHoodTerrain keeps them (BV
+// FUN_004d1e00, docs/neighborhood-mac.md 20.1): two normalised faces per
+// tile, split along its (0,0)-(1,1) diagonal, and per vertex the normalised
+// sum of the six faces that touch it. gridWidth x gridHeight, x fastest.
+std::vector<std::array<float, 3>> terrainNormals(const Terrain& t);
+
+// The paints per terrain vertex (gridWidth x gridHeight each), by paint ID:
+// NormalizePaintWeights' alpha byte, floor(weight x 250 / sum) of the
+// vertex's (at most 3) quantised weights; 0 where the paint is not.
 struct PaintWeights {
     std::vector<uint32_t> paints;              // paint IDs
-    std::vector<std::vector<float>> weights;   // per paint, per vertex
+    std::vector<std::vector<uint8_t>> alpha;   // per paint, per vertex
     std::vector<uint32_t> assigned;            // per vertex: the paint it took
 };
 PaintWeights computePaintWeights(const Terrain& t, const Occupants& o, const TerrainSettings& s);
+
+// The game's random numbers (FUN_00171674): s = s x 0x41c64e6d + 0x3039,
+// next(n) = n x bits 16..47 of that 64-bit product >> 32.
+struct GameRandom {
+    uint32_t state = 0;
+    uint32_t next(uint32_t n);
+};
+// The seed the game gives it when asked for -1 (FUN_00171508):
+// time(0) ^ (clock() << 16 | clock()).
+uint32_t clockSeed();
+
+// The texture variants (nTSSG::cNHoodTerrain::InitPaintVariants, BV
+// 0x6d8d50): the tiles in cells of `grid` (TextureVariantGridSize, an
+// integer), one random byte (next(256)) per cell drawn once per load; a
+// tile's variant of a paint with n textures is its cell's byte mod n
+// (AddToPaintSurf, BV 0x6da3b8).
+struct TerrainVariants {
+    uint32_t grid = 4, cellsX = 0, cellsY = 0;
+    std::vector<uint8_t> bytes;
+    static TerrainVariants make(const Terrain& t, const TerrainSettings& s, uint32_t seed);
+    int variant(uint32_t tileX, uint32_t tileY, int variants) const;
+};
 
 // Per vertex, ComputeRoadProximityValues: tiles to the nearest road tile by
 // flooding, as a paint map column (x 16 / MaxRoadProximityValue, at most 15).
@@ -68,15 +97,23 @@ inline std::array<float, 2> hoodLightMapUv(const Terrain& t, float x, float y) {
 
 // `hiddenTiles` (width x height, x fastest; may be null): tiles whose two
 // triangles are left out (cLotImposterDisplay::HideOrShowTerrainUnderImposter).
+// The model: a black canvas part, then one part per paint and variant
+// (shape "paint <variant> <variants>") with that paint's alpha map (one
+// value per vertex, at the tile's middle: the game samples its texture at
+// vertex / 256 on texel borders) and the tiles of that variant where the
+// paint is at a vertex of [x - 1, x + 2] x [y - 1, y + 2] (GetPaintsInArea),
+// added over the canvas.
 ObjectModel buildHoodTerrainModel(const Terrain& t, const Occupants& o, const TerrainSettings& s,
-                                  std::vector<std::string>* report = nullptr,
+                                  const TerrainVariants& variants, std::vector<std::string>* report = nullptr,
                                   const std::vector<uint8_t>* hiddenTiles = nullptr);
 // A lot's imposter terrain (cLotImposterDisplay::TryCreateLotImposterTerrain /
 // CreateLotImposterTerrainGeometry, BV 0x7692b8 / 0x7686cc): the imposter's
 // "terrain" geometry (`mesh`, in world coordinates) drawn with the
 // neighborhood terrain's paints of `terrain` (its layers and alpha masks,
-// cropped to the mesh), where the neighborhood terrain is hidden.
-ObjectModel buildHoodTerrainPatch(const ObjectModel& terrain, const Terrain& t, const MeshGroup& mesh);
+// cropped to the mesh; each triangle with the variant of the tile it is in),
+// where the neighborhood terrain is hidden.
+ObjectModel buildHoodTerrainPatch(const ObjectModel& terrain, const Terrain& t, const MeshGroup& mesh,
+                                  const TerrainVariants& variants);
 // The game makes a lot's imposter terrain only when the imposter's ground has
 // neither 4 vertices (flat) nor one per vertex of the lot's rectangle
 // ((w + 1) x (d + 1)); for the others the neighborhood terrain stays.

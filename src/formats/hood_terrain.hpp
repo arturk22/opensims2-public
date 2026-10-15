@@ -168,7 +168,10 @@ struct TerrainSettings {
     float cliffAngleMin = 52, cliffAngleMax = 56;
     float waterDepthThresholdForPaint = 50;
     float maxRoadProximity = 20;
-    float textureVariantGridSize = 13;
+    // [NHoodTerrainRenderTunables] TextureVariantGridSize, in tiles: an
+    // integer, 4 without the key (nTSSG::cNHoodTerrain::ReadIniFile, BV
+    // 0x6d85c8); the base game's ini says 13.
+    float textureVariantGridSize = 4;
     // Neighborhood.ini
     float imposterZOffset = 0.5f;
     // [LotPlopTunables] and [SmoothingUnderNewLot] (the lot tools; the

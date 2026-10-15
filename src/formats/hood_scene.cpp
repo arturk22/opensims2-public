@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <map>
 
 namespace os2::hood {
@@ -14,7 +15,6 @@ namespace {
 using Vec3 = std::array<float, 3>;
 
 constexpr float kPaintTextureScale = 13.0f; // neighborhood.matShad nhoodPaintTextureScale (tiles)
-constexpr float kMaskSpacing = 2.5f;        // alpha mask resolution (units per value)
 constexpr int kTerrainLayer = -8;           // nhoodCanvasLayer
 constexpr int kRoadLayer = -1;              // nhoodRoadLayer
 constexpr int kWaterLayer = 1;              // nhoodWaterLayer
@@ -36,12 +36,6 @@ Vec3 normalize(Vec3 v) {
 }
 
 
-Vec3 vertexNormal(const Terrain& t, int i, int j) {
-    const float dx = t.vertex(i + 1, j) - t.vertex(i - 1, j);
-    const float dy = t.vertex(i, j + 1) - t.vertex(i, j - 1);
-    return normalize({-dx, -dy, 2 * kHoodCellSize});
-}
-
 Vec3 normalAt(const Terrain& t, float x, float y) {
     const float e = kHoodCellSize * 0.5f;
     const float dx = t.heightAt(x + e, y) - t.heightAt(x - e, y);
@@ -49,18 +43,8 @@ Vec3 normalAt(const Terrain& t, float x, float y) {
     return normalize({-dx, -dy, 2 * e});
 }
 
-// Variant of a paint in the grid square holding (x, y) (a fixed hash: the
-// game's choice is not decoded).
-int variantAt(float x, float y, float grid, int variants, uint32_t paint) {
-    if (variants <= 1)
-        return 0;
-    const int gx = int(std::floor(x / grid)), gy = int(std::floor(y / grid));
-    uint32_t h = uint32_t(gx) * 73856093u ^ uint32_t(gy) * 19349663u ^ paint * 83492791u;
-    h ^= h >> 13, h *= 0x5bd1e995u, h ^= h >> 15;
-    return int(h % uint32_t(variants));
-}
-
-MaterialDefinition terrainMaterial(const std::string& texture, bool blended, int layer, float scale, bool clamp) {
+MaterialDefinition terrainMaterial(const std::string& texture, bool blended, int layer, float scale, bool clamp,
+                                   const char* blendMode = "blend") {
     MaterialDefinition m;
     m.materialType = "Terrain";
     // The shader draws light-mapped surfaces as 2 x texture x light map x diffuse.
@@ -70,7 +54,7 @@ MaterialDefinition terrainMaterial(const std::string& texture, bool blended, int
                     {"stdMatLayer", std::to_string(layer)},
                     {"stdMatCullMode", "none"}};
     if (blended)
-        m.properties.insert(m.properties.end(), {{"stdMatAlphaBlendMode", "blend"}, {"osMaskAlphaOnly", "true"}});
+        m.properties.insert(m.properties.end(), {{"stdMatAlphaBlendMode", blendMode}, {"osMaskAlphaOnly", "true"}});
     if (clamp)
         m.properties.insert(m.properties.end(), {{"stdMatBaseTextureAddressingU", "clamp"},
                                                  {"stdMatBaseTextureAddressingV", "clamp"}});
@@ -126,6 +110,85 @@ void flood(std::vector<float>& v, size_t w, size_t h) {
 
 } // namespace
 
+std::vector<std::array<float, 3>> terrainNormals(const Terrain& t) {
+    const int tw = int(t.width), th = int(t.height), w = int(t.gridWidth);
+    std::vector<std::array<float, 3>> out(size_t(t.gridWidth) * t.gridHeight, std::array<float, 3>{0, 0, 1});
+    if (tw <= 0 || th <= 0 || t.heights.size() != out.size())
+        return out;
+    auto cross = [](Vec3 a, Vec3 b) {
+        return Vec3{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    };
+    // Per tile: [0] the upper face (0,0)-(1,1)-(0,1) = D x A, [1] the lower
+    // face (0,0)-(1,0)-(1,1) = B x D (BV FUN_004d1e00).
+    std::vector<std::array<Vec3, 2>> faces(size_t(tw) * size_t(th));
+    const float c = kHoodCellSize;
+    for (int j = 0; j < th; ++j)
+        for (int i = 0; i < tw; ++i) {
+            auto h = [&](int x, int y) { return t.heights[size_t(y) * size_t(w) + size_t(x)]; };
+            const float h00 = h(i, j);
+            const Vec3 A{0, c, h(i, j + 1) - h00}, D{c, c, h(i + 1, j + 1) - h00}, B{c, 0, h(i + 1, j) - h00};
+            faces[size_t(j) * size_t(tw) + size_t(i)] = {normalize(cross(D, A)), normalize(cross(B, D))};
+        }
+    for (int y = 0; y <= th; ++y)
+        for (int x = 0; x <= tw; ++x) {
+            Vec3 sum{0, 0, 0};
+            auto add = [&](int tx, int ty, int face) {
+                const Vec3& f = faces[size_t(ty) * size_t(tw) + size_t(tx)][size_t(face)];
+                for (size_t k = 0; k < 3; ++k)
+                    sum[k] += f[k];
+            };
+            if (x > 0) {
+                if (y < th)
+                    add(x - 1, y, 1);
+                if (y > 0)
+                    add(x - 1, y - 1, 1), add(x - 1, y - 1, 0);
+            }
+            if (x < tw) {
+                if (y < th)
+                    add(x, y, 0), add(x, y, 1);
+                if (y > 0)
+                    add(x, y - 1, 0);
+            }
+            if (sum[0] == 0 && sum[1] == 0 && sum[2] == 0)
+                sum = {1, 1, 1};
+            out[size_t(y) * size_t(w) + size_t(x)] = normalize(sum);
+        }
+    return out;
+}
+
+uint32_t GameRandom::next(uint32_t n) {
+    if (n == 0)
+        return 0;
+    const uint64_t product = uint64_t(state) * 0x41c64e6dull + 0x3039ull;
+    state = uint32_t(product);
+    const uint32_t r = uint32_t(product >> 16);
+    return uint32_t((uint64_t(n) * r) >> 32);
+}
+
+uint32_t clockSeed() {
+    const uint32_t c = uint32_t(std::clock());
+    return uint32_t(std::time(nullptr)) ^ (c << 16 | c);
+}
+
+TerrainVariants TerrainVariants::make(const Terrain& t, const TerrainSettings& s, uint32_t seed) {
+    TerrainVariants v;
+    v.grid = uint32_t(std::max(1, int(s.textureVariantGridSize)));
+    v.cellsX = (t.width + v.grid - 1) / v.grid;
+    v.cellsY = (t.height + v.grid - 1) / v.grid;
+    GameRandom rng{seed};
+    v.bytes.resize(size_t(v.cellsX) * v.cellsY);
+    for (auto& b : v.bytes)
+        b = uint8_t(rng.next(256));
+    return v;
+}
+
+int TerrainVariants::variant(uint32_t tileX, uint32_t tileY, int variants) const {
+    if (variants <= 1 || bytes.empty())
+        return 0;
+    const uint32_t cx = std::min(tileX / grid, cellsX - 1), cy = std::min(tileY / grid, cellsY - 1);
+    return int(bytes[size_t(cy) * cellsX + cx]) % variants;
+}
+
 std::vector<float> waterProximity(const Terrain& t, const TerrainSettings& s) {
     const size_t w = t.gridWidth, h = t.gridHeight;
     std::vector<float> v(w * h);
@@ -175,27 +238,41 @@ PaintWeights computePaintWeights(const Terrain& t, const Occupants& o, const Ter
     const std::vector<float> water = waterProximity(t, s);
     const float cosMin = std::cos(s.cliffAngleMin * float(M_PI) / 180), cosMax = std::cos(s.cliffAngleMax * float(M_PI) / 180);
     const float k = 1 / std::max(cosMin - cosMax, 1e-6f);
+    const std::vector<std::array<float, 3>> normals = terrainNormals(t);
     auto depth = [&](size_t v) { return t.seaLevel - t.heights[v]; };
     auto isBeach = [&](size_t v) {
         return t.heights[v] <= t.seaLevel + s.maxBeachAltitude && water[v] <= s.maxBeachWidthInCells;
     };
 
-    // AddLandTypeAtVertex: up to 3 (paint, weight) pairs per vertex.
+    // AddLandTypeAtVertex (BV 0x4d0d20): up to 3 (paint, weight) pairs per
+    // vertex, filled in order, the weight kept as u16(w x 255 + 1); the same
+    // paint keeps the larger weight, a full vertex trades its first lightest
+    // pair for a heavier one.
     struct Pair {
         uint32_t paint;
-        float weight;
+        uint16_t weight;
     };
     std::vector<std::array<Pair, 3>> pairs(n, {Pair{0, 0}, Pair{0, 0}, Pair{0, 0}});
     auto add = [&](size_t v, uint32_t p, float wgt) {
+        const uint16_t q = uint16_t(uint32_t(double(wgt) * 255.0 + 1.0));
         auto& ps = pairs[v];
-        for (auto& q : ps)
-            if (q.weight > 0 && q.paint == p) {
-                q.weight = std::max(q.weight, wgt);
+        for (auto& pr : ps) {
+            if (pr.paint == 0) {
+                pr = {p, q};
                 return;
             }
-        auto low = std::min_element(ps.begin(), ps.end(), [](const Pair& a, const Pair& b) { return a.weight < b.weight; });
-        if (wgt > low->weight)
-            *low = {p, wgt};
+            if (pr.paint == p) {
+                if (q > pr.weight)
+                    pr.weight = q;
+                return;
+            }
+        }
+        size_t low = 0;
+        for (size_t k = 1; k < 3; ++k)
+            if (ps[k].weight < ps[low].weight)
+                low = k;
+        if (ps[low].weight < q)
+            ps[low] = {p, q};
     };
     auto spread = [&](size_t v, uint32_t p, bool normal) {
         auto it = s.paints.find(p);
@@ -228,7 +305,7 @@ PaintWeights computePaintWeights(const Terrain& t, const Occupants& o, const Ter
             const size_t v = j * w + i;
             if (depth(v) > s.waterDepthThresholdForPaint)
                 continue;
-            const float nz = std::abs(vertexNormal(t, int(i), int(j))[2]);
+            const float nz = std::abs(normals[v][2]);
             if (nz < cosMin) {
                 float wgt = nz <= cosMax ? 1.0f : (cosMin - nz) * k;
                 auto it = s.paints.find(type.cliff);
@@ -253,119 +330,148 @@ PaintWeights computePaintWeights(const Terrain& t, const Occupants& o, const Ter
             }
         }
 
-    // NormalizePaintWeights.
+    // NormalizePaintWeights (BV 0x4d3478): each weight x 250 / the vertex's
+    // sum, truncated, is the paint's alpha byte there (SetPaintValue).
     std::map<uint32_t, size_t> slot;
     auto slotOf = [&](uint32_t p) {
         auto it = slot.find(p);
         if (it != slot.end())
             return it->second;
         out.paints.push_back(p);
-        out.weights.emplace_back(n, 0.0f);
+        out.alpha.emplace_back(n, uint8_t(0));
         return slot[p] = out.paints.size() - 1;
     };
     for (size_t v = 0; v < n; ++v) {
-        float sum = 0;
-        for (const auto& q : pairs[v])
+        uint32_t sum = 0;
+        for (const auto& q : pairs[v]) {
+            if (q.paint == 0)
+                break;
             sum += q.weight;
-        if (sum <= 0)
+        }
+        if (sum == 0)
             continue; // deep water: no paint (the canvas is black)
-        for (const auto& q : pairs[v])
-            if (q.weight > 0)
-                out.weights[slotOf(q.paint)][v] = q.weight / sum;
+        for (const auto& q : pairs[v]) {
+            if (q.paint == 0)
+                break;
+            out.alpha[slotOf(q.paint)][v] = uint8_t(uint32_t(q.weight) * 250u / sum);
+        }
     }
     return out;
 }
 
+namespace {
+
+// The black canvas under the paints (NeighborhoodCanvas: z only, black).
+MaterialDefinition canvasMaterial() {
+    MaterialDefinition m;
+    m.materialType = "StandardMaterial";
+    m.properties = {{"stdMatDiffCoef", "0,0,0,1"},
+                    {"stdMatLightingEnabled", "false"},
+                    {"stdMatCullMode", "none"},
+                    {"stdMatLayer", std::to_string(kTerrainLayer)}};
+    return m;
+}
+
+constexpr const char* kCanvas = "nhood-canvas";
+
+// A paint part's variant and variant count, from its shape "paint v n".
+bool paintVariant(const std::string& shape, int& variant, int& variants) {
+    return std::sscanf(shape.c_str(), "paint %d %d", &variant, &variants) == 2;
+}
+
+} // namespace
+
 ObjectModel buildHoodTerrainModel(const Terrain& t, const Occupants& o, const TerrainSettings& s,
-                                  std::vector<std::string>* report, const std::vector<uint8_t>* hiddenTiles) {
+                                  const TerrainVariants& variants, std::vector<std::string>* report,
+                                  const std::vector<uint8_t>* hiddenTiles) {
     ObjectModel model;
     model.name = "neighborhood terrain";
     const size_t w = t.gridWidth, h = t.gridHeight;
+    const std::vector<std::array<float, 3>> normals = terrainNormals(t);
     MeshGroup mesh;
     for (size_t j = 0; j < h; ++j)
         for (size_t i = 0; i < w; ++i) {
             const float x = float(i) * kHoodCellSize, y = float(j) * kHoodCellSize;
             mesh.positions.push_back({x, y, t.heights[j * w + i]});
-            mesh.normals.push_back(vertexNormal(t, int(i), int(j)));
+            mesh.normals.push_back(normals[j * w + i]);
             mesh.uvs.push_back({x, y});
             mesh.uvs2.push_back(hoodLightMapUv(t, x, y));
         }
-    for (size_t j = 0; j + 1 < h; ++j)
-        for (size_t i = 0; i + 1 < w; ++i) {
-            if (hiddenTiles && j * (w - 1) + i < hiddenTiles->size() && (*hiddenTiles)[j * (w - 1) + i])
-                continue;
-            const uint32_t a = uint32_t(j * w + i), b = a + 1, c = a + uint32_t(w) + 1, d = a + uint32_t(w);
-            mesh.triangles.insert(mesh.triangles.end(), {a, b, c, a, c, d});
-        }
+    auto hidden = [&](size_t i, size_t j) {
+        return hiddenTiles && j * (w - 1) + i < hiddenTiles->size() && (*hiddenTiles)[j * (w - 1) + i];
+    };
+    auto tile = [&](size_t i, size_t j, std::vector<uint32_t>& tris) {
+        const uint32_t a = uint32_t(j * w + i), b = a + 1, c = a + uint32_t(w) + 1, d = a + uint32_t(w);
+        tris.insert(tris.end(), {a, b, c, a, c, d});
+    };
+
+    // The canvas: every shown tile, black, writing depth.
+    {
+        ObjectModel::Part part;
+        part.node = "terrain";
+        part.shape = "canvas";
+        part.material = kCanvas;
+        part.mesh = mesh;
+        for (size_t j = 0; j + 1 < h; ++j)
+            for (size_t i = 0; i + 1 < w; ++i)
+                if (!hidden(i, j))
+                    tile(i, j, part.mesh.triangles);
+        model.materials[kCanvas] = canvasMaterial();
+        model.parts.push_back(std::move(part));
+    }
 
     const PaintWeights pw = computePaintWeights(t, o, s);
-    // One layer per (paint, variant), in paint order.
-    struct Layer {
-        uint32_t paint;
-        int variant;
-        std::string texture;
-        int variants;
-    };
-    std::vector<Layer> layers;
-    for (uint32_t id : pw.paints) {
+    for (size_t slot = 0; slot < pw.paints.size(); ++slot) {
+        const uint32_t id = pw.paints[slot];
         auto it = s.paints.find(id);
         if (it == s.paints.end()) {
             if (report)
                 report->push_back("paint " + fmt("0x%02X", id) + " is not in [PaintInfos]");
             continue;
         }
-        for (int v = 0; v < it->second.variants; ++v)
-            layers.push_back({id, v, it->second.variantTexture(v), it->second.variants});
-    }
-    if (layers.empty())
-        throw std::runtime_error("neighborhood terrain: no paints");
-
-    const uint32_t mw = uint32_t(std::lround(t.worldWidth() / kMaskSpacing)) + 1;
-    const uint32_t mh = uint32_t(std::lround(t.worldHeight() / kMaskSpacing)) + 1;
-    std::vector<float> running(size_t(mw) * mh, 0.0f);
-    auto weightAt = [&](size_t paintSlot, float x, float y) {
-        const float fx = x / kHoodCellSize, fy = y / kHoodCellSize;
-        const int i = std::clamp(int(fx), 0, int(w) - 2), j = std::clamp(int(fy), 0, int(h) - 2);
-        const float a = std::clamp(fx - float(i), 0.0f, 1.0f), b = std::clamp(fy - float(j), 0.0f, 1.0f);
-        const auto& wk = pw.weights[paintSlot];
-        auto at = [&](int x, int y) { return wk[size_t(y) * w + size_t(x)]; };
-        return (at(i, j) * (1 - a) + at(i + 1, j) * a) * (1 - b) + (at(i, j + 1) * (1 - a) + at(i + 1, j + 1) * a) * b;
-    };
-    for (size_t li = 0; li < layers.size(); ++li) {
-        const Layer& L = layers[li];
-        const size_t paintSlot = size_t(std::find(pw.paints.begin(), pw.paints.end(), L.paint) - pw.paints.begin());
+        const auto& alpha = pw.alpha[slot];
+        // The paint's alpha map: one value per vertex, at the tile's middle.
         ObjectModel::AlphaMask mask;
-        mask.width = mw, mask.height = mh, mask.spacing = kMaskSpacing;
-        mask.values.resize(size_t(mw) * mh);
-        size_t covered = 0;
-        for (uint32_t y = 0; y < mh; ++y)
-            for (uint32_t x = 0; x < mw; ++x) {
-                const float wx = float(x) * kMaskSpacing, wy = float(y) * kMaskSpacing;
-                float wgt = weightAt(paintSlot, wx, wy);
-                if (variantAt(wx, wy, s.textureVariantGridSize, L.variants, L.paint) != L.variant)
-                    wgt = 0;
-                float& sum = running[size_t(y) * mw + x];
-                sum += wgt;
-                const float alpha = sum > 0 ? wgt / sum : 0.0f;
-                mask.values[size_t(y) * mw + x] = uint8_t(std::lround(std::clamp(alpha, 0.0f, 1.0f) * 255));
-                covered += wgt > 0;
-            }
-        const std::string name = "nhood-paint-" + stripTxtr(L.texture);
-        const bool first = li == 0;
-        model.materials[name] = terrainMaterial(stripTxtr(L.texture), !first, kTerrainLayer, 1 / kPaintTextureScale, false);
-        ObjectModel::Part part;
-        part.node = part.shape = "terrain";
-        part.material = name;
-        part.mesh = mesh;
-        if (!first) {
-            part.mask = int(model.masks.size());
-            model.masks.push_back(std::move(mask));
+        mask.width = uint32_t(w), mask.height = uint32_t(h), mask.spacing = kHoodCellSize;
+        mask.originX = mask.originY = kHoodCellSize / 2;
+        mask.values = alpha;
+        // GetPaintsInArea over [x - 1, x + 2] x [y - 1, y + 2]: the tiles the paint reaches.
+        auto present = [&](size_t i, size_t j) {
+            const size_t x0 = i > 0 ? i - 1 : 0, y0 = j > 0 ? j - 1 : 0;
+            const size_t x1 = std::min(i + 2, w - 1), y1 = std::min(j + 2, h - 1);
+            for (size_t y = y0; y <= y1; ++y)
+                for (size_t x = x0; x <= x1; ++x)
+                    if (alpha[y * w + x])
+                        return true;
+            return false;
+        };
+        const int count = std::max(1, it->second.variants);
+        const int maskIndex = int(model.masks.size());
+        model.masks.push_back(std::move(mask));
+        for (int v = 0; v < count; ++v) {
+            ObjectModel::Part part;
+            part.node = "terrain";
+            part.shape = "paint " + std::to_string(v) + " " + std::to_string(count);
+            const std::string texture = stripTxtr(it->second.variantTexture(v));
+            part.material = "nhood-paint-" + texture;
+            part.mesh = mesh;
+            part.mask = maskIndex;
+            size_t tiles = 0;
+            for (size_t j = 0; j + 1 < h; ++j)
+                for (size_t i = 0; i + 1 < w; ++i)
+                    if (!hidden(i, j) && variants.variant(uint32_t(i), uint32_t(j), count) == v && present(i, j))
+                        tile(i, j, part.mesh.triangles), ++tiles;
+            if (report)
+                report->push_back(texture + ": " + std::to_string(tiles) + " tiles");
+            if (part.mesh.triangles.empty())
+                continue;
+            model.materials[part.material] =
+                terrainMaterial(texture, true, kTerrainLayer, 1 / kPaintTextureScale, false, "additive");
+            model.parts.push_back(std::move(part));
         }
-        model.parts.push_back(std::move(part));
-        if (report)
-            report->push_back(L.texture + ": " + std::to_string(covered) + " of " + std::to_string(size_t(mw) * mh) +
-                              " mask values");
     }
+    if (model.parts.size() < 2)
+        throw std::runtime_error("neighborhood terrain: no paints");
     return model;
 }
 
@@ -373,35 +479,57 @@ bool needsImposterTerrain(size_t groundVertices, uint32_t widthTiles, uint32_t d
     return groundVertices != 4 && groundVertices != size_t(widthTiles + 1) * size_t(depthTiles + 1);
 }
 
-ObjectModel buildHoodTerrainPatch(const ObjectModel& terrain, const Terrain& t, const MeshGroup& world) {
+ObjectModel buildHoodTerrainPatch(const ObjectModel& terrain, const Terrain& t, const MeshGroup& world,
+                                  const TerrainVariants& variants) {
     ObjectModel model;
     model.name = "lot imposter terrain";
     MeshGroup mesh = world;
     mesh.uvs.clear(), mesh.uvs2.clear(), mesh.normals.clear();
+    const std::vector<std::array<float, 3>> normals = terrainNormals(t);
     float x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
     for (const auto& p : mesh.positions) {
         mesh.uvs.push_back({p[0], p[1]});
         mesh.uvs2.push_back(hoodLightMapUv(t, p[0], p[1]));
-        const float fx = p[0] / kHoodCellSize, fy = p[1] / kHoodCellSize;
-        mesh.normals.push_back(vertexNormal(t, int(std::lround(fx)), int(std::lround(fy))));
+        const int i = std::clamp(int(std::lround(p[0] / kHoodCellSize)), 0, int(t.gridWidth) - 1);
+        const int j = std::clamp(int(std::lround(p[1] / kHoodCellSize)), 0, int(t.gridHeight) - 1);
+        mesh.normals.push_back(normals[size_t(j) * t.gridWidth + size_t(i)]);
         x0 = std::min(x0, p[0]), y0 = std::min(y0, p[1]), x1 = std::max(x1, p[0]), y1 = std::max(y1, p[1]);
     }
     if (mesh.positions.empty())
         return model;
+    // The tile each triangle is in (by its centre), for its variant.
+    std::vector<std::array<uint32_t, 2>> tiles;
+    for (size_t k = 0; k + 2 < mesh.triangles.size(); k += 3) {
+        float cx = 0, cy = 0;
+        for (size_t c = 0; c < 3; ++c)
+            cx += mesh.positions[mesh.triangles[k + c]][0] / 3, cy += mesh.positions[mesh.triangles[k + c]][1] / 3;
+        tiles.push_back({uint32_t(std::clamp(int(cx / kHoodCellSize), 0, int(t.width) - 1)),
+                         uint32_t(std::clamp(int(cy / kHoodCellSize), 0, int(t.height) - 1))});
+    }
     for (const auto& part : terrain.parts) {
         ObjectModel::Part p = part;
         p.mesh = mesh;
+        int variant = 0, count = 1;
+        if (paintVariant(part.shape, variant, count)) {
+            p.mesh.triangles.clear();
+            for (size_t k = 0; k < tiles.size(); ++k)
+                if (variants.variant(tiles[k][0], tiles[k][1], count) == variant)
+                    p.mesh.triangles.insert(p.mesh.triangles.end(), mesh.triangles.begin() + std::ptrdiff_t(k * 3),
+                                            mesh.triangles.begin() + std::ptrdiff_t(k * 3 + 3));
+            if (p.mesh.triangles.empty())
+                continue;
+        }
         if (part.mask >= 0 && size_t(part.mask) < terrain.masks.size()) {
             // The mask over the patch only (and a value round it).
             const auto& m = terrain.masks[size_t(part.mask)];
-            const int mx0 = std::max(0, int(std::floor(x0 / m.spacing)) - 1);
-            const int my0 = std::max(0, int(std::floor(y0 / m.spacing)) - 1);
-            const int mx1 = std::min(int(m.width) - 1, int(std::ceil(x1 / m.spacing)) + 1);
-            const int my1 = std::min(int(m.height) - 1, int(std::ceil(y1 / m.spacing)) + 1);
+            const int mx0 = std::max(0, int(std::floor((x0 - m.originX) / m.spacing)) - 1);
+            const int my0 = std::max(0, int(std::floor((y0 - m.originY) / m.spacing)) - 1);
+            const int mx1 = std::min(int(m.width) - 1, int(std::ceil((x1 - m.originX) / m.spacing)) + 1);
+            const int my1 = std::min(int(m.height) - 1, int(std::ceil((y1 - m.originY) / m.spacing)) + 1);
             ObjectModel::AlphaMask c;
             c.width = uint32_t(std::max(1, mx1 - mx0 + 1)), c.height = uint32_t(std::max(1, my1 - my0 + 1));
             c.spacing = m.spacing;
-            c.originX = float(mx0) * m.spacing, c.originY = float(my0) * m.spacing;
+            c.originX = m.originX + float(mx0) * m.spacing, c.originY = m.originY + float(my0) * m.spacing;
             c.values.resize(size_t(c.width) * c.height);
             for (uint32_t y = 0; y < c.height; ++y)
                 for (uint32_t x = 0; x < c.width; ++x)
@@ -495,7 +623,7 @@ RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, cons
                 c = gradient.width ? sample(gradient, 0.5f, (t.seaLevel - z) / kWaterGradientZoneSize)
                                    : std::array<float, 3>{0.2f, 0.3f, 0.4f};
             } else {
-                const Vec3 n = normalAt(t, x, y);
+                const Vec3 n = normalAt(t, x, y); // (central differences)
                 // Height-map shadow: walk towards the sun over the terrain.
                 bool shadow = false;
                 for (float d = step; d < 800 && !shadow; d += step) {
