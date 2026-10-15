@@ -841,6 +841,11 @@ static void testLookAt() {
     t = run(look(0x20, 45, 45, T, F));
     check(t.status == Thread::Status::Finished && t.result && me.lookAt && me.lookAt->target == 2 && me.lookAt->ticks == 30,
           "Look At ignoring the room records the look (1000 ms)");
+    check(me.lookAt->towards == 90 && me.lookAt->away == 90 && me.lookAwayRate == 90,
+          "the turn rates: byte 4 and 5 x 2 degrees a second (try_look_at)");
+    t = run(look(0x21, 45, 30, T, F));
+    check(t.status == Thread::Status::Finished && t.result && !me.lookAt && me.lookAwayRate == 60,
+          "STOP turns back at its own rate");
     t = run(look(0x21, 0, 0, T, F));
     check(t.status == Thread::Status::Failed && t.error.find("Turn rate must be positive") != std::string::npos,
           "Look At STOP with no turn speed is error 0x51");

@@ -795,8 +795,15 @@ struct Object {
         ObjectId target = 0;
         uint64_t since = 0;
         int32_t ticks = 0;
+        // The turn rates in degrees a second (try_look_at, BV 0x6a19f8:
+        // byte 4 x 2 or temp 1 towards, byte 5 x 2 or temp 1/2 away; the
+        // choreo request takes them x pi/180 as radians a second).
+        int16_t towards = 0, away = 0;
     };
     std::optional<LookAt> lookAt;
+    // The rate the head turns back at, degrees a second: the last Look At's
+    // (STOP's own included: try_look_at sets it on the looks it stops).
+    int16_t lookAwayRate = 0;
     // Look At requests this tick (the game allows 25 a Sim a simulator turn).
     uint64_t lookAtTick = 0;
     int lookAtRequests = 0;

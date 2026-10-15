@@ -120,6 +120,7 @@ Exit lookAt(Context& c) {
     away = flags15 & 0x02 ? c.thread.temps[1] : flags15 & 0x01 ? c.thread.temps[2] : away * 2;
     if (towards <= 0 || away <= 0)
         throw gameError(0x51, "Look At: " + std::to_string(towards) + ", " + std::to_string(away) + " degrees a second");
+    me.lookAwayRate = int16_t(away);
     if (flags & 0x01) {
         me.lookAt.reset();
         return Exit::True;
@@ -134,7 +135,7 @@ Exit lookAt(Context& c) {
     if (!(flags & 0x20) && x->data[objdata::Room] != me.data[objdata::Room])
         return Exit::False;
     const int ms = flags & 0x10 ? int(c.thread.temps[0]) : int(int16_t(le16(&o[6])));
-    me.lookAt = Object::LookAt{*target, c.vm.ticks, ms < 0 ? 0 : ms * 30 / 1000};
+    me.lookAt = Object::LookAt{*target, c.vm.ticks, ms < 0 ? 0 : ms * 30 / 1000, int16_t(towards), int16_t(away)};
     return Exit::True;
 }
 

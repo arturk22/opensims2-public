@@ -66,8 +66,9 @@ void HeadLook::apply(std::vector<Xform>& local, double now) {
     if (std::getenv("OS2_DEBUG_LOOK") && target_)
         std::fprintf(stderr, "look: face yaw %.0f pitch %.0f, want %.0f %.0f, now %.0f %.0f\n", faceYaw / kDeg,
                      facePitch / kDeg, wantYaw / kDeg, wantPitch / kDeg, yaw_ / kDeg, pitch_ / kDeg);
-    yaw_ = approach(yaw_, wantYaw, kSpeed * dt);
-    pitch_ = approach(pitch_, wantPitch, kSpeed * dt);
+    const float rate = (target_ ? towards_ : away_) > 0 ? (target_ ? towards_ : away_) * kDeg : kSpeed;
+    yaw_ = approach(yaw_, wantYaw, rate * dt);
+    pitch_ = approach(pitch_, wantPitch, rate * dt);
     if (std::fabs(yaw_) < 1e-4f && std::fabs(pitch_) < 1e-4f)
         return;
     // A model-space turn of a bone about its own origin: its local rotation

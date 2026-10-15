@@ -75,6 +75,19 @@ void startSimulation(os2::Renderer& renderer, os2::ResourceIndex& index, const o
     }
     perfLap("  LotSimulation");
     gObjectView = std::make_unique<os2::VmObjectView>(renderer, index, *gSimulation);
+    // Look At's "default 3/4 height" of an object: its model's box where it
+    // is drawn (LotSimulation::lookTarget).
+    gSimulation->objectLookPoint = [](int16_t id) -> std::optional<os2::Vec3> {
+        if (!gObjectView)
+            return std::nullopt;
+        const auto at = gObjectView->placement(id);
+        if (!at)
+            return std::nullopt;
+        for (const auto& b : gPickBoxes)
+            if (int16_t(b.instance & 0xFFFF) == id)
+                return at->apply(os2::Vec3{(b.lo.x + b.hi.x) * 0.5f, (b.lo.y + b.hi.y) * 0.5f, 0.75f * (b.lo.z + b.hi.z)});
+        return std::nullopt;
+    };
     // TV channels and arcade screens (app/tv_broadcast.hpp): a broadcast's material shows its movies.
     try {
         gTv = std::make_unique<os2::TvBroadcast>(renderer, gameDir() / "TSData/Res");

@@ -731,3 +731,19 @@ dispara o `TriggerLookStateEvent` (a árvore de eventos recebe o
 "look_state", tipo 4 no `HandleEvents`). **Continua inferido** no
 `app/look_at.cpp`: a divisão pescoço 40 % / cabeça 60 %, os limites de 75° e
 30° e a velocidade constante (agora a do primitivo).
+
+### 11.3 O que mudou no código (rodada n23)
+
+`app/lot_vm.cpp` (`lookTarget`): o alvo é o ponto de 3/4 da caixa do alvo
+— de um Sim, a caixa da pose de repouso das partes (inferido: a caixa das
+formas de um modelo com pele); de um objeto, a caixa do modelo onde ele é
+desenhado (`objectLookPoint`, pelas caixas de clique e o `VmObjectView`),
+0,75 acima do piso só sem modelo. `vm/view.cpp` guarda as velocidades
+(`LookAt::towards`, `Object::lookAwayRate`, também a do STOP) e o
+`HeadLook` vira a essa velocidade (era 120°/s). `OS2_LOOK_AT_HEAD=1` volta
+ao osso da cabeça para comparar. Captura:
+`docs/screenshots/n23-olhar-cabeca.jpg` (`--lot N001_Lot68 --sim-id
+Angela --run-vm 262 --pivot 15.1,22.1,1.9 --zoom 6 --orientation 1`,
+dois Sims dançando que se olham: antes o rosto do outro, agora o queixo, a
+3/4 da altura dele). Faltam os slots (tipos 1–3), a câmera, os estados e
+eventos do olhar e o `AnimUpdate` inteiro (`TODO.md`).

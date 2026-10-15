@@ -4,12 +4,14 @@
 // (vm::Object::lookAt), on top of whatever animation plays: a procedural
 // turn of the neck and head bones (SimActor::adjust), limited and eased.
 //
-// Inferred (the game's look-at code is not read): the turn is split between
-// the neck (40%) and the head (60%), at most 75 degrees to either side and
-// 30 degrees up or down from where the animation has the head face, turning
-// at 120 degrees a second (the trees ask for 45-90 degrees a second turning
-// towards and away; the speeds are not passed on yet) and easing back to
-// the animation when the look ends.
+// The turn rates are the primitive's (setRates: degrees a second towards
+// the target and back, try_look_at BV 0x6a19f8; 120 when none). Inferred
+// (cActiveAnimLookAt::AnimUpdate, BV 0xd41e04, is not ported: it turns an IK
+// chain of the look-at strategy with an accelerating rate profile and
+// joint limits): the turn is split between the neck (40%) and the head
+// (60%), at most 75 degrees to either side and 30 degrees up or down from
+// where the animation has the head face, at a constant rate, easing back to
+// the animation when the look ends. docs/anim-mac.md §11.
 
 #include "formats/xform.hpp"
 
@@ -25,6 +27,8 @@ public:
 
     // Where to look, in world space (nothing: back to the animation).
     void setTarget(std::optional<Vec3> target) { target_ = target; }
+    // Degrees a second towards the target and back to the animation (0: 120).
+    void setRates(float towards, float away) { towards_ = towards, away_ = away; }
     const std::optional<Vec3>& target() const { return target_; }
     // The turn now (radians, for tests and debugging).
     float yaw() const { return yaw_; }
@@ -39,6 +43,7 @@ private:
     Vec3 forward_{0, 0, 1}; // the face's direction in the head bone's frame
     std::optional<Vec3> target_;
     float yaw_ = 0, pitch_ = 0;
+    float towards_ = 0, away_ = 0;
     double last_ = -1;
 };
 

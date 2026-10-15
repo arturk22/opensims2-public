@@ -495,22 +495,49 @@ IkObjectBone LotSimulation::ikObjectBones(const SimActor& self, int16_t object) 
     };
 }
 
-// Look At's target: a Sim's head (its actor's bone), else the object's
-// position at 0.75 over its floor, about a table's or a counter's height
-// (inferred: the editor's strings name a "default 3/4 height").
+// Look At's target, "default 3/4 height" (the editor's string; target type
+// 0, byte 14): try_look_at (BV 0x6a19f8) takes the bounding box of the
+// target's shapes in its root node's frame (FUN_00a45e54) and aims at its
+// centre in x and y and at 0.75 x (bottom + top) in z, from the root:
+// three quarters up a box standing on the floor (a Sim's chin, a table's
+// top). A Sim's box is its rest pose's (the shapes' bounds of a skinned
+// model: inferred). Objects: objectLookPoint, else 0.75 over the floor
+// (inferred). Not done: the slots of types 1-3 (byte 14) and the camera.
 std::optional<Vec3> LotSimulation::lookTarget(const vm::Object& o) const {
     if (!o.lookAt || (o.lookAt->ticks > 0 && vm_->ticks >= o.lookAt->since + uint64_t(o.lookAt->ticks)))
         return std::nullopt;
     const vm::Object* x = vm_->object(o.lookAt->target);
     if (!x || x->id == o.id)
         return std::nullopt;
+    // OS2_LOOK_AT_HEAD=1: the old inferred target (the head bone), to compare.
+    static const bool atHead = std::getenv("OS2_LOOK_AT_HEAD") != nullptr;
     for (const auto& b : bound_)
-        if (b.id == x->id) {
+        if (b.id == x->id && atHead) {
             const int head = b.actor->skin.skeleton.find("head");
             if (head >= 0 && size_t(head) < b.actor->bones.size())
                 return b.actor->bones[size_t(head)].t;
-            return Vec3{b.actor->position[0], b.actor->position[1], b.actor->position[2] + 1.6f};
         }
+    for (const auto& b : bound_)
+        if (b.id == x->id) {
+            auto it = actorBoxes_.find(b.actor);
+            if (it == actorBoxes_.end()) {
+                Vec3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+                for (const auto& part : b.actor->skin.model.parts)
+                    if (!part.shadowPlane)
+                        for (const auto& p : part.mesh.positions)
+                            for (int k = 0; k < 3; ++k)
+                                lo[k] = std::min(lo[k], p[k]), hi[k] = std::max(hi[k], p[k]);
+                if (lo[0] > hi[0])
+                    lo = hi = Vec3{0, 0, 1.6f / 1.5f};
+                it = actorBoxes_.emplace(b.actor, std::make_pair(lo, hi)).first;
+            }
+            const auto& [lo, hi] = it->second;
+            return b.actor->placement().apply(
+                Vec3{(lo[0] + hi[0]) * 0.5f, (lo[1] + hi[1]) * 0.5f, 0.75f * (lo[2] + hi[2])});
+        }
+    if (objectLookPoint)
+        if (const auto p = objectLookPoint(x->id))
+            return p;
     if (!x->position.inWorld())
         return std::nullopt;
     return Vec3{x->position.x, x->position.y, floorHeight(x->position.level, x->position.x, x->position.y) + 0.75f};
@@ -592,6 +619,7 @@ void LotSimulation::updateScene(double seconds) {
                 std::fprintf(stderr, "tick %llu sim %d %s %d\n", (unsigned long long)vm_->ticks, b.id,
                              target ? "looks at" : "stops looking at", o->lookAt ? o->lookAt->target : 0);
             b.look->setTarget(target);
+            b.look->setRates(o->lookAt ? float(o->lookAt->towards) : 0.0f, float(o->lookAwayRate));
         }
     }
 }

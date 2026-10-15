@@ -165,6 +165,11 @@ private:
 public:
     // Where a Sim's Look At points its head now (world space), if anywhere.
     std::optional<Vec3> lookTarget(const vm::Object& o) const;
+    // An object's "default 3/4 height" point (world space) as the host
+    // draws it: its model's box centre in x and y, 0.75 x (bottom + top) in
+    // z, in the model's frame (try_look_at, BV 0x6a19f8). Unset or nothing:
+    // 0.75 over its floor.
+    std::function<std::optional<Vec3>(int16_t id)> objectLookPoint;
 
 private:
     // The bones of a request's IK object for `self`'s IK targets of type 2
@@ -187,6 +192,8 @@ private:
     std::string summary_;
     std::vector<std::pair<int16_t, std::filesystem::path>> arrived_;
     double last_ = 0;
+    // The rest pose's box of each Sim actor (model space), for lookTarget.
+    mutable std::map<const SimActor*, std::pair<Vec3, Vec3>> actorBoxes_;
     double scene_ = 0, caller_ = 0; // scene clock, caller's clock at the last update
     double slip_ = 0; // seconds the VM has fallen behind the caller's clock (below 0: a saved lot's ticks before it)
     std::map<vm::ObjectId, std::string> loggedAnimations_; // OS2_LOG_ANIMS: each Sim's last line
