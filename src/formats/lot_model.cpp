@@ -271,18 +271,27 @@ void addFloors(const Lot& lot, const PatternCatalog& patterns, LotLightMapLayout
                     const Vec3f& a = edges[q][1];
                     const Vec3f& e = edges[q][0];
                     const Vec3f n = normalOf(a, e, c);
-                    // Texture top = west edge, right = north: the road tiles' edge
-                    // lines (road_sidelines_01 at the west curb, _03 at the east
-                    // one) only run along a north-south road this way. The
-                    // coordinates run on across tiles, so that materials spanning
-                    // several tiles (floorMaterialScaleU/V) continue.
-                    // The pattern's rotation (Lot::floorRotations: 1, 2, 4, 8 =
-                    // 0, 90, 180, 270 degrees) turns the texture about the
-                    // tile's centre.
+                    // cFloorGeometryNode::SetTileQuadrantSubset (Mac BV
+                    // 0x75fa6c, docs/walls-floors-mac.md §4): one triangle a
+                    // quarter, its edge's corners and the centre, normal by
+                    // their cross product; the texture coordinates are (y, x)
+                    // in the world of the corners of the quarter turned by the
+                    // tile's saved rotation (WorldLocationsForPatternRotation,
+                    // 0x75d004: 2 -> the quarter + 3, 4 -> + 2, 8 -> + 1, any
+                    // other value: the quarter itself). So the texture's top
+                    // is the west edge and its right the north (the road
+                    // tiles' edge lines, road_sidelines_01 at the west curb,
+                    // run along a north-south road), they run on across tiles
+                    // (floorMaterialScaleU/V spans several), and a turn of
+                    // the quarters is one of the texture about the centre.
                     int turns = 0;
                     if (at < lot.floorRotations.size())
-                        for (uint8_t r = lot.floorRotations[at][q]; r > 1 && turns < 3; r >>= 1)
-                            ++turns;
+                        switch (lot.floorRotations[at][q]) {
+                        case 2: turns = 1; break;
+                        case 4: turns = 2; break;
+                        case 8: turns = 3; break;
+                        default: break;
+                        }
                     auto v = [&](const Vec3f& p) {
                         float lu = p[1] - fy - 0.5f, lv = p[0] - fx - 0.5f;
                         for (int k = 0; k < turns; ++k)

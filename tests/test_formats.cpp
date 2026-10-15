@@ -1227,6 +1227,36 @@ static void testWallGeometry() {
         check(paper, "wallpaper: u 0/0.5/1 per wall, v a story from the top");
     }
     {
+        // Floors (SetTileQuadrantSubset, WorldLocationsForPatternRotation):
+        // a quarter's texture coordinates are (y, x) of its corners, turned
+        // by the saved rotation 2 / 4 / 8 (the quarter + 3 / 2 / 1); any
+        // other value leaves them.
+        auto northUvs = [&](uint8_t rotation) {
+            Lot f = lot;
+            f.walls.clear();
+            f.floors[0] = {0, 1, 0, 0}; // tile (0, 0): the north quarter
+            f.floorPatterns[1] = "tile";
+            f.floorRotations.assign(f.floors.size(), {1, 1, 1, 1});
+            f.floorRotations[0][1] = rotation;
+            const ObjectModel m = buildLotModel(f, index, patterns);
+            std::vector<std::array<float, 2>> uvs;
+            if (const auto* fl = part(m, "floor:tile"))
+                for (uint32_t t : fl->mesh.triangles)
+                    uvs.push_back(fl->mesh.uvs[t]);
+            return uvs;
+        };
+        const auto plain = northUvs(1);
+        // North quarter: (1, 1), (0, 1), centre -> uv (y, x).
+        check(plain.size() == 3 && plain[0] == std::array<float, 2>{1, 1} && plain[1] == std::array<float, 2>{1, 0} &&
+                  plain[2] == std::array<float, 2>{0.5f, 0.5f},
+              "floor quarter: texture by (y, x) of its corners");
+        // Rotation 2: the west quarter's corners (0, 1), (0, 0).
+        const auto turned = northUvs(2);
+        check(turned.size() == 3 && turned[0] == std::array<float, 2>{1, 0} && turned[1] == std::array<float, 2>{0, 0},
+              "floor rotation 2 takes the quarter before");
+        check(northUvs(3) == plain && northUvs(8) != plain, "floor rotations other than 2, 4, 8 leave the texture");
+    }
+    {
         // A T: the junction polygon over (1, 1).
         Lot t = lot;
         add(t, 1, 1, 0, 1); // west
