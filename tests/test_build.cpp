@@ -206,15 +206,25 @@ static void testRound9() {
     two.rooms.resize(12 * 10 * 2);
     for (auto& [k, l] : two.roomLayers)
         l.resize(12 * 10 * 2);
+    // A load-bearing room (3ARY 0x0A) under tiles 2-4: what holds a floor
+    // above (SupportedUnderneath), not the ground floor itself.
     for (int x = 2; x < 5; ++x)
         for (int y = 2; y < 5; ++y)
             two.floors[size_t(x) * 10 + size_t(y)] = {1, 1, 1, 1};
+    for (const auto& s : std::array<std::array<int, 4>, 4>{{{2, 2, 5, 2}, {5, 2, 5, 5}, {5, 5, 2, 5}, {2, 5, 2, 2}}})
+        for (const auto& t : wallSections(s[0], s[1], s[2], s[3]))
+            addWall(two, 0, t[0], t[1], t[2], t[3], 1, {0xFFFF, 0xFFFF});
+    for (auto* m : {&two.rooms, &two.roomLayers[0x0A], &two.roomLayers[0x0B]})
+        m->assign(12 * 10 * 2, {0, 0, 0, 0}); // outdoors 0
+    updateRooms(two);
+    two.floors[size_t(9) * 10 + 2] = {1, 1, 1, 1}; // a ground floor outdoors holds nothing
     VM vm2(code);
     vm2.globals[global::BudgetMod10000] = 5000;
     vm2.families[1], vm2.globals[global::CurrentFamily] = 1; // a family's lot: buy and build charge
     vm2.world = World::fromLot(two);
     BuildEditor ed2(vm2, two);
-    check(ed2.floorable(2, 3, 3), "a tile over a floor is floorable");
+    check(ed2.floorable(2, 3, 3), "a tile over a load-bearing room is floorable");
+    check(!ed2.floorable(2, 9, 2), "a tile over an outdoor floor is not");
     check(!ed2.floorable(2, 9, 9), "a tile over nothing is not");
     r = ed2.paintFloor(2, 9, 9, 9, 9, &tile);
     check(!r.ok && r.error == 0x52, "flooring in the air is refused (0x52)");
@@ -234,11 +244,11 @@ static void testRound9() {
     check(r.ok && !ed2.floorable(2, 10, 8), "two tiles from the wall nothing holds it");
     check(ed2.supportedUnderneath(2, 3, 3, 0x1) && !ed2.supportedUnderneath(2, 8, 8, 0xF) &&
               ed2.supportedUnderneath(1, 9, 9, 0),
-          "SupportedUnderneath: a floor below in the quarters; the ground always");
+          "SupportedUnderneath: a load-bearing room below in the quarters; the ground always");
     // Walls upstairs (FUN_0016b740): over the floor below, over a wall
     // below, but not in the air (0x48).
     r = ed2.drawWalls(2, 3, 3, 3, 4);
-    check(r.ok, "a wall over the floor of the level below stands");
+    check(r.ok, "a wall over a room of the level below stands");
     r = ed2.drawWalls(2, 5, 6, 5, 7);
     check(!r.ok && r.error == 0x48, "a wall in the air needs something to support it (0x48)");
     r = ed2.drawWalls(2, 8, 6, 8, 7);
@@ -434,6 +444,21 @@ static void testRoof() {
     r = ed.placeDormer(9, 2, 5, 2, 0);
     check(!r.ok && r.error == 0x08, "a dormer on another's walls (0x08)");
     check(ed.undo() && lot.levelCount == 2 && lot.roofs.size() == roofs && funds(vm) == before, "undo takes the dormer back");
+
+    // cTSUserToolRoof::IsRoofValid (BV 0x1d9fd4).
+    r = ed.removeRoofs();
+    r = ed.drawRoof(1, 0, 2, 4, 5, Lot::Hip);
+    check(!r.ok && r.error == 0x7E && lot.roofs.empty(), "a roof corner on the lot's edge (0x7E)");
+    Object& chair = vm.createObject(0x7F000001);
+    chair.position = {2.5f, 2.5f, 2};
+    r = ed.drawRoof(1, 2, 2, 8, 5, Lot::LongGable);
+    check(!r.ok && r.error == 0x7F && lot.roofs.empty(), "a roof low over an object of its level (0x7F)");
+    chair.position = {5.5f, 3.5f, 2};
+    r = ed.drawRoof(1, 2, 2, 8, 5, Lot::Hip);
+    check(!r.ok && r.error == 0x7F, "the hip's ridge is still under a level's height");
+    vm.removeObject(chair.id);
+    r = ed.drawRoof(1, 2, 2, 8, 5, Lot::LongGable);
+    check(r.ok, "with the object gone the roof goes on");
 }
 
 // The editable area: a road along an edge takes its 10-tile strip out.

@@ -6,10 +6,13 @@
 #include "build_edit_internal.hpp"
 
 #include "formats/lot_edit.hpp"
+#include "formats/lot_roof.hpp"
 #include "lot.hpp"
 #include "placement.hpp"
 
 #include <algorithm>
+#include <array>
+#include <limits>
 #include <cmath>
 #include <map>
 #include <set>
@@ -171,7 +174,8 @@ std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by, 
     }
     // requiresSupportUnderneath (FUN_0016b740, docs/buy-build-mac.md §7.21):
     // above the ground one side of the wall holds it, its quarters facing
-    // the wall SupportedUnderneath or floored on this level, or a wall of
+    // the wall SupportedUnderneath or floored on this level or on a
+    // mansard's top (DoesTileHasRoofSupport), or a wall of
     // styles 1, 3, 5-10, 0x0F, 0x16, 0x17 (walls, attic, foundation; not
     // decks, pools or fences) on the same edge below.
     if (li > 0) {
@@ -190,7 +194,7 @@ std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by, 
         for (const auto& [t, mask] : sides) {
             if (t.x < 0 || t.y < 0 || t.x >= W || t.y >= H)
                 continue;
-            if (supportedUnderneath(level, t.x, t.y, mask))
+            if (supportedUnderneath(level, t.x, t.y, mask) || roofSupported(level, t.x, t.y))
                 held = true;
             const auto& f = lot_.floor(li, uint32_t(t.x), uint32_t(t.y));
             for (int q = 0; q < 4; ++q)
@@ -846,6 +850,68 @@ void BuildEditor::syncAtticWalls(int lotLevel, const std::vector<std::array<int,
             addWall(lot_, lotLevel, s[0], s[1], s[2], s[3], Lot::Attic, {blank, blank});
 }
 
+int BuildEditor::roofError(const Lot::Roof& roof) const {
+    // cTSUserToolRoof::IsRoofValid (BV 0x1d9fd4; docs/buy-build-mac.md
+    // §7.22). The drag's two corners: start (x0, y0), end (x1, y1).
+    const float ax = roof.x0, ay = roof.y0, bx = roof.x1, by = roof.y1;
+    // FUN_0099545c: |dx| x |dy| under 1840, else 0x10 "Can't support the size".
+    if (std::fabs(ax - bx) * std::fabs(ay - by) >= 1840.0f)
+        return 0x10;
+    // cAutoRoofData::ApplyFloorPattern (the symxfer's name; BV 0x9992d0):
+    // the tiles round each corner on the lot and not locked, else 0x7E.
+    for (const auto& [cx, cy] : std::array<std::array<float, 2>, 2>{{{ax, ay}, {bx, by}}}) {
+        const int vx = int(cx), vy = int(cy);
+        for (int tx = vx - 1; tx <= vx; ++tx)
+            for (int ty = vy - 1; ty <= vy; ++ty)
+                if (!editableTile(tx, ty))
+                    return 0x7E;
+    }
+    // RoofIntersectWithObjects (BV 0x1d9908) -> DoesTileHasObjectIntersectingRoof
+    // (0x1d4354): on each tile of the roof's box whose centre the roof
+    // covers, an object of the roof's level (od 0x22 zero, od 42 without
+    // the roof bit 0x8000) refuses it (0x7F) where the roof at the centre is
+    // lower than the floor there plus StandardLevelHeight (3). Not done: the
+    // test before it through the tool's member +0x6c (cWorldRoof vtable 0x7c
+    // IsAnyRoofAtLocation, then 0xa0 with StandardLevelHeight: a roof
+    // already there lets the tile pass), inferred from the slots only.
+    {
+        Lot one = lot_;
+        one.roofs = {roof};
+        const LotRoofs shape(one);
+        const int W = int(lot_.width), H = int(lot_.height);
+        int tx0 = int(std::floor(std::min(ax, bx))), tx1 = int(std::ceil(std::max(ax, bx)));
+        int ty0 = int(std::floor(std::min(ay, by))), ty1 = int(std::ceil(std::max(ay, by)));
+        if (roof.type >= Lot::DiagonalLongGable && roof.type <= Lot::DiagonalShedHip) {
+            // GetMinMaxForDiagonals: the diamond's box.
+            const float vx = bx - ax, vy = by - ay, yD = (vy - vx) / 2, dx = vy - yD;
+            tx0 = int(std::floor(std::min({ax, ax + dx, bx, ax - yD})));
+            tx1 = int(std::ceil(std::max({ax, ax + dx, bx, ax - yD})));
+            ty0 = int(std::floor(std::min({ay, ay + dx, by, ay + yD})));
+            ty1 = int(std::ceil(std::max({ay, ay + dx, by, ay + yD})));
+        }
+        for (int tx = std::max(0, tx0); tx < std::min(W, tx1); ++tx)
+            for (int ty = std::max(0, ty0); ty < std::min(H, ty1); ++ty) {
+                const float cx = float(tx) + 0.5f, cy = float(ty) + 0.5f;
+                const float top = shape.heightAt(cx, cy, roof.level, std::numeric_limits<float>::infinity());
+                if (top == std::numeric_limits<float>::infinity())
+                    continue;
+                if (top >= lot_.elevationAt(roof.level, cx, cy) + 3.0f)
+                    continue;
+                for (ObjectId id : vm_.objectsOnTile({tx, ty, roof.level + 1}))
+                    if (const Object* o = vm_.object(id);
+                        o && !o->data[0x22] && o->data[objdata::PlacementFlags] >= 0)
+                        return 0x7F;
+            }
+    }
+    // The start corner's level below the ground, or its tile over a pool
+    // (FUN_001648ac: the tile a level down is a pool), 0x1C.
+    if (roof.level < 0)
+        return 0x1C;
+    if (roof.level == 1 && poolTile(int(std::floor(ax)), int(std::floor(ay))))
+        return 0x1C;
+    return 0;
+}
+
 BuildEditor::Result BuildEditor::drawRoof(int level, int x0, int y0, int x1, int y1, uint32_t type) {
     Result r;
     const int li = level - 1 + 1; // the roof's base: the floor of the VM level above the walls
@@ -883,7 +949,6 @@ BuildEditor::Result BuildEditor::drawRoof(int level, int x0, int y0, int x1, int
                 return r;
             }
     }
-    Geometry before = capture();
     Lot::Roof roof;
     for (const auto& o : lot_.roofs)
         roof.id = std::max(roof.id, o.id + 1);
@@ -893,6 +958,15 @@ BuildEditor::Result BuildEditor::drawRoof(int level, int x0, int y0, int x1, int
     roof.type = type;
     roof.pattern = lot_.roofs.empty() ? 0 : lot_.roofs.back().pattern;
     roof.angle = 0.5f;
+    if (const int e = roofError(roof); e) {
+        r.error = e;
+        r.message = e == 0x10   ? "cannot put a roof there: too big"
+                    : e == 0x7E ? "cannot put a roof there: a corner is off the editable lot"
+                    : e == 0x7F ? "cannot put a roof there: it would cut an object"
+                                : "cannot put a roof there: over a pool";
+        return r;
+    }
+    Geometry before = capture();
     const auto attic = atticWalls(li);
     lot_.roofs.push_back(roof);
     syncAtticWalls(li, attic);

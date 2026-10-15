@@ -141,6 +141,11 @@ public:
     // of the 905 attic walls of the 62 saved lots, and 74 they lack). Ctrl deletes the roof under a point with its attic
     // walls (attic walls go with deleteTool roof).
     Result drawRoof(int level, int x0, int y0, int x1, int y1, uint32_t type);
+    // Why a roof cannot go there (cTSUserToolRoof::IsRoofValid, BV
+    // 0x1d9fd4): 0x10 too big (|dx| x |dy| >= 1840), 0x7E a corner's tiles
+    // off the lot or locked, 0x7F it would come down through an object on
+    // its level, 0x1C below the ground or started over a pool; 0 fits.
+    int roofError(const Lot::Roof& roof) const;
     Result deleteRoof(int level, float x, float y);
     // Dormers (roofs.txt "roof 6-11", cTSUserToolRoof MakeDormer, BV
     // 0x1d5d20): a box of normal walls `width` (1-3: (product - 6) % 3 + 1)
@@ -237,11 +242,16 @@ public:
     // level below on one of the tile's diagonals or on the edge of one of
     // its `quarters`.
     bool wallSupported(int level, int x, int y, int quarters) const;
-    // nTSWorld::HasSupport (BV 0x16a640): SupportedUnderneath or a
-    // load-bearing wall below (the third test, a WorldDB manager's vtable
-    // 0xa4, is not identified).
+    // cWorldRoof::DoesTileHasRoofSupport (BV 0xc245d4): a mansard roof of
+    // the level below whose rectangle, less StandardLevelHeight (3) tiles
+    // on every side, holds the tile (its flat top).
+    bool roofSupported(int level, int x, int y) const;
+    // nTSWorld::HasSupport (BV 0x16a640): SupportedUnderneath, a
+    // load-bearing wall below, or the roof under it (WorldDB::Roof(),
+    // vtable 0xa4 = DoesTileHasRoofSupport).
     bool hasSupport(int level, int x, int y, int quarters, ObjectId ignore = 0) const {
-        return supportedUnderneath(level, x, y, quarters, ignore) || wallSupported(level, x, y, quarters);
+        return supportedUnderneath(level, x, y, quarters, ignore) || wallSupported(level, x, y, quarters) ||
+               roofSupported(level, x, y);
     }
 
     // Wallpaper tool: the faces of the walls along a run, on its right

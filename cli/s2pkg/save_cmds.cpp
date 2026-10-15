@@ -824,6 +824,7 @@ const char* saveUsage() {
            "              [--railing part-id,side 0|1[,delete]] (the Railing Tool: 1 = left of the steps' facing; Ctrl deletes)\n"
            "              [--dormer product 6-11,x,y,dir[,level]] (dormers)\n"
            "              [--fence-arch|--delete-fence-arch x0,y0,x1,y1[,level]] [--build-funds n]\n"
+           "              [--check-build 1] (each roof and upper floor tile against IsRoofValid / IsFloorable)\n"
            "       s2pkg hood-save <neighborhood dir> <out dir> [--ticks N] [--check] [--buy|--sell|--move ...]\n"
            "       s2pkg play-loop <neighborhood dir> <lot id> <out dir> [--ticks N] [--birth mother,father] [--npc GUID[:outfit GUID]]\n"
            "              (out dir/<P>: play, save as the app does, read the neighborhood back, reload the lot and compare)\n"

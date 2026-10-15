@@ -132,7 +132,7 @@ bool isBuildEdit(const std::string& flag) {
            flag == "--floor-click" || flag == "--foundation" || flag == "--delete-foundation" ||
            flag == "--terrain" || flag == "--terrain-paint" || flag == "--roof" || flag == "--delete-roof" ||
            flag == "--roof-pattern" || flag == "--pool" || flag == "--delete-pool" || flag == "--erase-pool" || flag == "--room" || flag == "--delete-wall" || flag == "--floor" ||
-           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--fence-arch" || flag == "--delete-fence-arch" || flag == "--delete-stairs" || flag == "--railing" || flag == "--build-undo" || flag == "--build-redo";
+           flag == "--wallpaper" || flag == "--wallpaper-room" || flag == "--wallpaper-flood" || flag == "--design" || flag == "--auto-roof" || flag == "--stairs" || flag == "--dormer" || flag == "--build-funds" || flag == "--fence-arch" || flag == "--delete-fence-arch" || flag == "--delete-stairs" || flag == "--railing" || flag == "--build-undo" || flag == "--build-redo" || flag == "--check-build";
 }
 
 bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
@@ -308,6 +308,34 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             if (f.size() < 2)
                 throw std::runtime_error("--delete-pool: expected x,y");
             r = editor.deletePool(num(f, 0, 0), num(f, 1, 0));
+        } else if (flag == "--check-build") {
+            // The lot as saved against the build rules read from the binary
+            // (docs/buy-build-mac.md §7.21-7.22): each roof (IsRoofValid) and
+            // each floored tile above the ground (IsFloorable).
+            int roofsBad = 0, floorsBad = 0, floors = 0;
+            for (const auto& roof : lot.roofs)
+                if (const int e = editor.roofError(roof)) {
+                    ++roofsBad;
+                    std::printf("check-build: roof %u (%g,%g)-(%g,%g) level %d: 0x%02X\n", roof.id, roof.x0, roof.y0,
+                                roof.x1, roof.y1, roof.level, e);
+                }
+            for (int li = 1; lot.hasLevel(li); ++li)
+                for (uint32_t x = 0; x < lot.width; ++x)
+                    for (uint32_t y = 0; y < lot.height; ++y) {
+                        bool any = false;
+                        for (uint16_t q : lot.floor(li, x, y))
+                            any |= q != 0;
+                        if (!any)
+                            continue;
+                        ++floors;
+                        if (!editor.floorable(li + 1, int(x), int(y))) {
+                            ++floorsBad;
+                            std::printf("check-build: floor (%u,%u) level %d not floorable%s\n", x, y, li + 1, li == 1 && editor.foundationTile(int(x), int(y)) ? " (raised ground)" : "");
+                        }
+                    }
+            std::printf("check-build: %zu roofs, %d refused; %d upper floor tiles, %d not floorable\n",
+                        lot.roofs.size(), roofsBad, floors, floorsBad);
+            continue;
         } else if (flag == "--roof") {
             if (f.size() < 4)
                 throw std::runtime_error("--roof: expected x0,y0,x1,y1[,type[,level]]");

@@ -238,11 +238,17 @@ bool BuildEditor::supportedUnderneath(int level, int x, int y, int quarters, Obj
         return true;
     if (x < 0 || y < 0 || x >= int(lot_.width) || y >= int(lot_.height) || !lot_.hasLevel(li - 1))
         return false;
-    // FUN_00164d30: the floor below, quarter by quarter.
-    const auto& below = lot_.floor(li - 1, uint32_t(x), uint32_t(y));
-    for (int q = 0; q < 4; ++q)
-        if ((quarters & (1 << q)) && below[size_t(q)])
-            return true;
+    // FUN_00164d30: a quarter inside a room of the level below in the
+    // load-bearing room map (cPartitionManager vtable 0x13c on the
+    // quarter's centre, room definition 1 = 3ARY 0x0A): walls that bear load
+    // all round it, not just a floor.
+    if (auto it = lot_.roomLayers.find(0x0A); it != lot_.roomLayers.end() && !it->second.empty()) {
+        const size_t i = (size_t(li - 1 - lot_.minLevel) * lot_.width + uint32_t(x)) * lot_.height + uint32_t(y);
+        if (i < it->second.size())
+            for (int q = 0; q < 4; ++q)
+                if ((quarters & (1 << q)) && it->second[i][size_t(q)])
+                    return true;
+    }
     // HasObjectSupport: a "support" object (OBJD type 5) on the tile below.
     for (ObjectId id : vm_.objectsOnTile({x, y, level - 1}))
         if (const Object* o = vm_.object(id); o && id != ignore && o->definition &&
@@ -263,6 +269,21 @@ bool BuildEditor::wallSupported(int level, int x, int y, int quarters) const {
         return true;
     return ((quarters & 1) && bears(x, y, x, y + 1)) || ((quarters & 2) && bears(x, y + 1, x + 1, y + 1)) ||
            ((quarters & 4) && bears(x + 1, y + 1, x + 1, y)) || ((quarters & 8) && bears(x + 1, y, x, y));
+}
+
+bool BuildEditor::roofSupported(int level, int x, int y) const {
+    const int li = level - 1;
+    constexpr int kInset = 3; // int(StandardLevelHeight), WorldDB vtable 0x15c
+    for (const auto& r : lot_.roofs) {
+        // GetRoofIDs(level - 1, 6): the mansards (tRoofType 6) of the level below.
+        if (r.level != li - 1 || r.type != Lot::Mansard)
+            continue;
+        const int x0 = int(std::min(r.x0, r.x1)), x1 = int(std::max(r.x0, r.x1));
+        const int y0 = int(std::min(r.y0, r.y1)), y1 = int(std::max(r.y0, r.y1));
+        if (x0 + kInset <= x && y0 + kInset <= y && x < x1 - kInset && y < y1 - kInset)
+            return true;
+    }
+    return false;
 }
 
 bool BuildEditor::floorable(int level, int x, int y) const {

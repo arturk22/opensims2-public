@@ -2147,9 +2147,13 @@ mesmos bits (1 → −x, 2 → +y, 4 → +x, 8 → −y) e `FUN_0015d3e8` dá o 
 oposto (1↔4, 2↔8, 3↔0xC, 6↔9). O nível é o do lote: 0 = térreo.
 
 - **`SupportedUnderneath`** (`0x16a5b8`): nível ≤ 0 → sim. Senão, sim se
-  (a) `FUN_00164d30`: algum quarto da máscara tem piso no nível de baixo (a
-  consulta é o `PartitionManager` vtable `0x13c` no centro do quarto,
-  x + 0,5 ± 1/3; o nome da consulta é inferido) ou (b) **`HasObjectSupport`**
+  (a) `FUN_00164d30`: algum quarto da máscara, no nível de baixo, está
+  **dentro de uma sala do mapa de carga** (`PartitionManager` vtable `0x13c`
+  = `FUN_00c30948`, sem nome: escolhe o gerenciador de salas da definição
+  pedida, aqui **1 = `bearsLoad`, o 3ARY 0x0A**, converte o centro do quarto,
+  x + 0,5 ± 1/3, em tile e pergunta a sala; ≠ 0 = dentro). Ou seja, um piso
+  embaixo não segura nada: o que segura são as paredes de carga em volta
+  (fundações inclusive). Ou (b) **`HasObjectSupport`**
   (`0x16a328`): um objeto no tile de baixo (`NumObjectsOnTile`/vtable `0xec`)
   com `cTSObject::IsSupport` (`0xaff018`, vtable `0x1cc`: `GetType` = campo
   9 do OBJD **== 5**; no jogo base, as 12 colunas), que não seja o objeto
@@ -2159,9 +2163,13 @@ oposto (1↔4, 2↔8, 3↔0xC, 6↔9). O nível é o do lote: 0 = térreo.
   = sim) numa das **duas diagonais** do tile ou na **aresta de um quarto da
   máscara** (1 oeste x, 2 norte y+1, 4 leste x+1, 8 sul y).
 - **`HasSupport`** (`0x16a640`) = `SupportedUnderneath` ou `FUN_001654b4` ou
-  um terceiro teste: o gerenciador em `cWorldDB +0x7c` (WorldDB vtable `0x88`),
-  vtable `0xa4`(tile). **Não identificado** (não é o `cWorldRoof`: o
-  `DoesTileHasRoofSupport` está na vtable `0xb4` dele); fica de fora.
+  `WorldDB::Roof()` (vtable `0x88` → `cWorldDB +0x7c`; os acessores `+0x78..+0x84`
+  são `Loaded`, `Roof`, `Pool`, `CurvedPool`, pela ordem do base) vtable `0xa4`
+  = **`cWorldRoof::DoesTileHasRoofSupport`** (`0xc245d4`, pela vtable
+  secundária `-8` do `cWorldRoof`): os telhados do nível de baixo de tipo 6
+  (**mansarda**; o 6 do `GetRoofIDs` lido como o tipo) cujo retângulo, menos
+  `int(StandardLevelHeight)` = 3 tiles de cada lado, contém o tile (o topo
+  plano da mansarda).
 - **`IsFloorable`** (`0x16a990`), usado pelo piso (`0x52`), `PlaceTileOutlines`,
   `RemoveFloorTile` e o raio do mouse:
   1. nível ≠ 0: o tile precisa ser plano (`IsFlat`) e `IsInBounds` (WorldDB
@@ -2174,23 +2182,94 @@ oposto (1↔4, 2↔8, 3↔0xC, 6↔9). O nível é o do lote: 0 = térreo.
      (dx, dy em −2..2) `SupportedUnderneath` (inteiro) → sim; senão algum tile
      do 3×3 em volta com `FUN_001654b4` (inteiro) → sim; senão não.
 
-  Antes (inferido) o app contava qualquer parede (pelo meio do trecho) no
-  tile e nos vizinhos até 2 tiles, e qualquer quarto. Agora é o do binário:
-  as paredes só valem no próprio tile ou a 1 tile (e só junto de piso), as de
-  sótão e as cercas não seguram, e as colunas seguram.
+  Antes (inferido) o app contava o piso de baixo e qualquer parede (pelo
+  meio do trecho) no tile e nos vizinhos até 2 tiles. Agora é o do binário:
+  segura a sala de carga de baixo, a coluna, a mansarda, e a parede de carga
+  só no próprio tile ou a 1 tile (junto de piso); sótão e cerca não seguram.
+  **Conferido nos 63 lotes de N001–N003** (`s2pkg lot-save <lote> <saída>
+  --check-build 1`): de 14.098 tiles com piso acima do térreo, 14.071 passam
+  no `IsFloorable` (antes da sala de carga, 2.515 falhavam, quase todos em
+  fundações); os 27 que sobram (N001_Lot11, Lot82, N002_Lot4, N003_Lot183,
+  Lot192) não foram explicados.
 - **Paredes no alto** (`FUN_0016b740`, chamado pelo teste comum das
   partições `0x9a7384` quando o estilo pede `requiresSupportUnderneath`,
   erro `0x48`): para cada lado da parede (`FUN_008b4e9c` e o
   `OppositeWallLocator`: o tile e os quartos voltados para a parede; na
   diagonal, as duas metades do mesmo tile: "/" 0x3 e 0xC, "\\" 0x6 e 0x9)
   que está no lote: todos os quartos `SupportedUnderneath` → sim; ou piso
-  nesses quartos neste nível (`0xb0`) ou o teste desconhecido `0xa4` → sim;
+  nesses quartos neste nível (`0xb0`) ou o topo de mansarda
+  (`DoesTileHasRoofSupport`) → sim;
   ou, nível > 0, uma parede no mesmo trecho um nível abaixo com estilo 1, 3,
   5–10, 0x0F, 0x16 ou 0x17 (parede, sótão, fundação; não deck 0x10, piscina
   0x1D, saia 4 nem cerca) → sim. Senão `0x48`. O app (inferido antes:
-  "parede embaixo ou piso de um lado") passou a aceitar uma parede sobre o
-  piso do andar de baixo sem piso no andar dela, e a recusar sobre deck,
-  piscina ou cerca.
+  "parede embaixo ou piso de um lado") passou a aceitar uma parede sobre a
+  sala de carga do andar de baixo sem piso no andar dela, e a recusar sobre
+  deck, piscina ou cerca.
+
+### 7.22 A ferramenta de telhado: `cTSUserToolRoof::IsRoofValid` (rodada n07, Ghidra MCP)
+
+`IsRoofValid(bool testaObjetos)` (BV `0x1d9fd4`, nome "near" do symxfer; o
+`TryAddRoof`/`UserMayAddRoof` só repassam para o undoable). Os dois cantos do
+arraste (`+0x98` início, `+0xa4` fim, cada um x, y, nível). Os erros são
+juntados numa lista; o primeiro aparece:
+
+1. `FUN_0099545c`: |Δx| × |Δy| **≥ 1840** → `0x10` "Can't support the size"
+   (nos dois cantos).
+2. Cada canto (`ApplyFloorPattern`, nome errado do symxfer, `0x9992d0`): os
+   tiles em volta do vértice precisam estar no lote (`IsOnLot`) e destravados
+   (WorldDB `0xc4`), senão `0x7E` (sem texto próprio: "Location out of bounds").
+3. (BV) cruzar telhado de vidro → `0x0C`.
+4. Área < 1 (e não diagonal) → inválido, sem erro.
+5. Com `testaObjetos`: `RoofIntersectWithObjects` (`0x1d9908`) monta o
+   telhado (`RoofFromType`/`DiagonalRoofFromType`) e, para cada tile da caixa
+   (a do losango nos diagonais), `DoesTileHasObjectIntersectingRoof`
+   (`0x1d4354`): se o telhado cobre o centro do tile, cada objeto do tile com
+   od 0x22 = 0 e od 42 sem o bit 0x8000 (telhado) — salvo quando um teste antes
+   (membro `+0x6c` da ferramenta, `cWorldRoof` `0x7c` `IsAnyRoofAtLocation` e
+   `0xa0` com `StandardLevelHeight`; não feito) libera o tile — recusa com
+   `0x7F` ("Can't intersect other objects") se a altura do telhado no centro
+   é menor que o piso ali + `StandardLevelHeight` (3).
+6. Nível do início < 0, ou o tile do início sobre piscina (`FUN_001648ac` = o
+   tile um nível abaixo é piscina, `IsPool` do `DeckFoundationStyle`) → `0x1C`.
+7. Se valeu, `AreWallsLegalToBePlaced` (as paredes de sótão).
+
+No app: `BuildEditor::roofError` faz 1, 2, 5 e 6 antes do `drawRoof`. Nos 63
+lotes de N001–N003, 32 dos 275 telhados seriam recusados hoje pelo 5: todos
+têm janelas (e uma escada e uma cadeira) no nível do telhado, embaixo da
+beirada, postas depois do telhado (o teste só roda ao pôr o telhado).
+
+`FUN_001648ac` (tile de cima de piscina) também dá o `0x46` das paredes (os
+dois lados sobre piscina) e o teste 9 do `FUN_009e9550`.
+
+### 7.23 Terreno: o teste de vértice `FUN_009e9550` (rodada n07, Ghidra MCP)
+
+`FUN_009e9550(altura, vértice, flags, erros)` (o "pode mudar este vértice"
+de terreno, piso e escadas) tem um pré-teste (vértice no mundo, `0xfc`; senão
+`0x59`) e testes ligados por bit de `flags`:
+
+| bit | função | recusa |
+|---|---|---|
+| 0 | `0x9e8780` | vértice na borda do lote (nível 0) ou tile em volta fora do lote/travado → `0x62` |
+| 1 | `0x9e7700` | altura < `MinTerrainElevation` → `0x65`; > `MaxTerrainElevation` → `0x66` |
+| — | sim system vtable `0xd0` | desligado (cheat): pula o resto |
+| 3 | `0x9e8378` | um tile em volta `IsFloorable` → `0x6B` |
+| 2 | `0x9e856c` | um tile em volta com piso (`0xb4`, inteiro) → `0x5A` "Covered by floor tile" |
+| 7 | `0x9e8e0c` | objetos: `HasGroundPinningObjects` → `0x61`; subindo perto do nível de cima, `HasNonCeilingConformingObjects` → `0x60`; od 42 bit 0x80 (escadas 11/12 pelos cantos) acima do novo piso → `0x68` |
+| 4 / 5 | `0x9e9c98` / `0x9e9a78` | o vértice do nível de cima / de baixo teria de andar junto e não pode → `0x69` / `0x6A` |
+| 8 | `0x9e8048` | parede presa ao vértice (`0x9e7d08`, neste nível e no de baixo) |
+| 9 | `0x9e8268` | um tile em volta sobre piscina |
+| 10 | `0x9e7890` | partição no vértice que não é `submersible` → `0x1E` |
+| 11 | `0x9e8ad0` | cerca ficaria com inclinação > √3 → `0x31` |
+| 13 | `0x9e8124` | tile em volta com deck/fundação (`0xcc` ≠ −1) |
+
+O pincel de terreno chama com `flags` = a global `0x02bafd10`, que **nenhuma
+instrução escreve** (BSS, só lida em `ChangeTerrainElevation` `0x4010e0`):
+pelo que se lê, o pincel passa só o pré-teste. E o `0x8B` "Only exposed
+terrain can be edited" do `ApplyTerrainSculptBrush` (`0x32a214`) é só quando
+o ponto do mouse não está no nível 0. O app segue com a regra inferida
+(`terrainFree`: piso, fundação ou ponta de parede em volta não deixam mexer);
+não foi trocada porque a global pode ser escrita por um caminho que o Ghidra
+não liga.
 
 ---
 
