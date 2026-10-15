@@ -1,0 +1,185 @@
+# Paredes e pisos no binário de Mac
+
+Rodada n19 (2026-10-15), linha 19 do `docs/inventario-binario.md` §6.
+Binário: Bon Voyage 1.10 (`sims2_bv.ppc`), endereços BV. Modo: **Ghidra
+MCP**, só leitura (decompilar, ler memória e `disassemble_bytes` com
+`dry_run`, sem criar função nem renomear). Os nomes vêm do `symxfer` (mapa
+regerado na rodada, fora do repositório) e das vtables; nesta área ele erra
+bastante: `0x749f98` sai como `cWaterGeometryBuilder::SetWaterDepth`,
+`0x745cfc` como `cTSObjectAssetCollector::Init`, `0x6d1558` como
+`cFloorGeometryNode::WorldLocationsForPatternRotation` (é o
+`cFenceManager::SetLevelRange`). Os nomes abaixo foram conferidos pelo que
+cada função faz e por quem a chama.
+
+## 1. As classes
+
+- `nTSSG::cWallManager`: uma lista de níveis (`cWallLevel`, `0x34c` bytes),
+  cada um com **seis nós de geometria** (`cWallGeometryNode`), um por
+  `tWallTypeIndex`, e um grafo de paredes por índice (`+0x5c + 4·i`).
+  `CreateWallNodesOnLevel` (`0x6c2744`) cria os seis e regula cada um
+  (vtable da interface: `0x18` espessura, `0x1c` altura baixada, `0x20`
+  deslocamento de altura, `0x24` "vertical span", `0x28` ignora o modo de
+  parede, `0x2c` nome do subconjunto dos vértices, `0x30` `AddWallSide`,
+  `0x3c` `AddWallTop`, `0x48` `RefreshWallVertex`, `0x4c`
+  `SetVertexUpDownState`, `0x50` `SetSegmentUpDownState`, `0x54`
+  `SetUpDownState`):
+
+  | índice | quem vai (`AddWallImpl` `0x6c64c8`) | espessura | desloc. | span | modo de parede |
+  |---|---|---|---|---|---|
+  | 0 | `floorToFloor`: paredes, fundação (23), piscina (29) | 0,15 | −0,01 | 1 | segue |
+  | 1 | `floorToFloorBasedCeiling`: saias de deck (16, 24) | 0 | 0 | 4 | ignora |
+  | 2 | `floorToRoof`: sótão (3) | 0,15 | −0,01 | 2 | segue |
+  | 3 | meia parede (`PartitionStyleIsHalfWall`) | 0,15 | −0,01 | 0 | segue |
+  | 4 | parede de palco (só expansão) | 0,1 | −0,01 | 5 | ignora |
+  | 5 | meia parede com as duas pontas num piso "tipo 4" (`FUN_00166414`) | 0,1 | **+0,75** | 0 | segue |
+
+  Os padrões do construtor do nó (`0x74ab40`): espessura 0,15 (`+0x1c4`),
+  altura baixada 0,2 (`+0x1c8`), deslocamento −0,01 (`+0x1cc`), span 1
+  (`+0x1d0`). O "span" é o `verticalSpan` dos `walls.txt`/`fences.txt`
+  (tabela `0x28660e0`: `fixedHeight` 0, `floorToFloor` 1, `floorToRoof` 2,
+  `floorToStairs` 3, `floorToFloorBasedCeiling` 4).
+- `cWallGeometryNode`: as peças de parede. Cada **face** é um
+  `cWallSide` (6 vértices + a tampa da ponta, `cWallSide::InsertVertices`
+  `0x745ec4`), cada **topo** um `cWallTop` (6 vértices,
+  `cWallTop::InsertVertices` `0x745cfc`), os dois `cWallSegmentPiece`;
+  cada vértice do grafo com 3 ou mais paredes ganha um `cWallVertexPiece`
+  (`BuildVertices` `0x74a40c`), o polígono do encontro.
+- `cWallManager::AddWallToGeometry` (`0x6c642c` → `0x6c6340`) põe em cada
+  parede: a face do localizador, a face do localizador oposto
+  (`OppositeWallLocator`) e um topo (subconjunto `"wall_top"`).
+- `cFloorManager` / `cFloorGeometryNode`: um nó por andar; cada **quarto
+  de tile** é um triângulo (§4). `cFloorThicknessGeometryNode` (a borda dos
+  pisos, existe também no 1.0 base) não foi lida nesta rodada.
+- `cSimplifiedWall` só serve ao `cLotImposterManager` (as paredes
+  simplificadas dos lotes vistos do bairro): não entra no lote.
+
+## 2. Uma face e um topo (`cWallPiece::ComputeMetaData` `0x749138`, `ComputeSegmentVertices` `0x744520`)
+
+`cWallSegmentPiece::BuildVertices` (`0x749f98`; quem chama:
+`AddWallSide` `0x74a258`, `AddWallTop` `0x74a0a4`) recebe a parede
+vizinha a ignorar, `+0x34` = "textura presa no topo" (é o
+`PartitionStyleRequiresFlatTop` do estilo, `RefreshAdjacentWalls`
+`0x6c3738`), `0x61` = `WallsUp()` do nó, a espessura, o deslocamento, a
+altura baixada e o span.
+
+**Metadados** (por localizador `a → b`):
+
+- `P0`, `P1` = as pontas no chão (`SampledFloorElevation`), `d = P1 − P0`,
+  `N = normalize(cross(normalize(d), cima))` = a **direita** de `a → b`
+  (a face A; a B é a esquerda). `h` = espessura / 2.
+- Os quatro cantos começam em `±h·N` e são **chanfrados** pelos vizinhos do
+  mesmo nó (mesmo grafo) em cada ponta: na ponta, para a face com normal
+  `n_f`, a parede vizinha que fica daquele lado (a primeira girando de `d`
+  para o lado da face; na ponta `b`, de `−d`) tem a face `n_g` virada para
+  o mesmo ângulo, e o canto vira `h·m / (m·n_f)` com `m =
+  normalize(n_f + n_g)` (início A: `N − N₁`; início B: `−N + N₂`; fim B:
+  `−N − N₃`; fim A: `N + N₄`, com `Nᵢ` a direita da vizinha saindo da
+  ponta). Sem vizinha (ponta solta) fica `±h·N` e o flag `+0x60` liga a
+  tampa (§2.3).
+- Os 6 pontos: `Q0 = P0 + A₀`, `Q1 = meio + h·N` (no chão do meio, sem
+  chanfro), `Q2 = P1 + A₁`, `Q3 = P1 + B₁`, `Q4 = meio − h·N`, `Q5 = P0 + B₀`.
+
+**Alturas** (`WallTopElevation` `0x743ab0`, em `P0`, no meio e em `P1`):
+span 0 → chão + **1,025**; 1 → o chão do andar de cima (no último andar,
+o chão + a altura do andar); 2 → `max(RoofHeightAtLocation − 0,25, chão)`
+(`cWorldRoof` `0xc23f8c`: o maior `GetSampledElevationByRoofID` dos
+telhados do andar sobre o ponto; sem telhado, o chão de cima); 4 → o chão
+de cima − 0,15; 5 → chão + 0,75. Cada coluna sobe `H` = topo − chão
+(paredes erguidas) ou a altura baixada (0,2); todos os z ganham o
+deslocamento (−0,01).
+
+### 2.1 Face (`cWallSide`, 6 vértices: baixo `Q0 Q1 Q2`, alto `Q2 Q1 Q0`; índices `0x2735d00`: 0 1 4, 4 5 0, 1 2 3, 3 4 1)
+
+Normal `N`. Três UVs por vértice (`cWallRenderVertex`, 48 bytes: posição,
+normal, UV0, UV1, UV2), que o `WallpaperAndMask` usa como papel, máscara e
+light map (`docs/shaders-mac.md` §5):
+
+- **UV0, papel:** `u` = **0, 0,5, 1** no início, meio e fim (um papel por
+  trecho de parede, também na diagonal, que estica √2; o chanfro não mexe
+  no `u`). `v` embaixo = `D/3` com a textura presa no topo
+  (`requiresFlatTop`: paredes, fundação, piscina, saias) ou **1** sem
+  (sótão, meia parede); +0,05 no span 4. `v` em cima = `v` embaixo − `H/3`.
+  `D` é a altura cheia (topo − chão), mesmo com a parede baixada: **a
+  parede cortada mostra o pé do papel** (o rodapé), não o alto.
+- **UV1, máscara:** `u` = `(d̂·A₀)/L`, 0,5, `1 + (d̂·A₁)/L` (segue o
+  chanfro), `v` = 1 embaixo e `1 − H/3` em cima.
+- **UV2, light map:** a célula da face no light map
+  (`cLightMapManager`, `TSSGSystem` vtable `0xc0`, `0x50`), `v` escalado
+  por `3 / ceil(H máx)` (1 nos spans 0 e 5).
+
+### 2.2 Topo (`cWallTop`, 6 vértices `Q0..Q5` no alto; índices os mesmos)
+
+- Normal fixa **para cima** (o vetor global `0x2c20610`), não a da
+  inclinação.
+- **UV0 = (x, y) do ponto no mundo** (o "chute" do nosso `wall_top` era
+  isso mesmo); UV1 = `(u chanfrado, 1 − H/3 + 0,01)` no lado A e
+  `(…, 1 − H/3)` no B; UV2 = um canto fixo (0,999–1, 0,999–1).
+- O subconjunto é `"wall_top"` com a máscara `"wallSolid_mask"` e **página
+  de light map −1** (`AddWallPieceToSubsetIDMaps` `0x6c60a8`: só as faces,
+  tipo 0, pegam a página do `cLightMapManager`; `cWallSubsetID` começa com
+  −1, `0x17c7a04`). `CombinedWallMaterial` (`0x6c1738`, sem função no
+  projeto) só põe a página se ela for ≥ 0, e o `WallpaperAndMask` sem página
+  desenha `2·papel`: o topo é **`2 × wall-top`, sem luz** (a textura é um
+  marrom escuro, média (49, 34, 24)).
+
+### 2.3 Tampa da ponta solta (na mesma peça da face)
+
+Só no início do localizador (a outra ponta é o início do localizador
+oposto): `Q5 Q0` embaixo e em cima, normal `−d̂`, papel `u` de `1 − espessura`
+a 1 com o `v` da face, máscara `u = 0`.
+
+### 2.4 Encontro de 3 ou mais paredes (`cWallVertexPiece`)
+
+Em volta do vértice, para cada parede (menos a que sai), o canto do alto
+do lado direito de quem sai do vértice (`Q0` se a parede começa ali, `Q3`
+se termina): um leque `0, i, i+1`. UV0 = (x, y), normal para cima,
+material o do topo (`InitRenderStatesForVertexSubset` `0x6c1f4c`:
+`CombinedWallMaterial("wall_top", "wallSolid_mask", 0, −1, …)`). Com 2
+paredes os chanfros já fecham o canto.
+
+## 3. Paredes baixadas
+
+- **Modo baixo:** `cWallManager::SetLevelUpDownState` (`0x6c4e10`) baixa
+  todas as peças dos nós 0, 2, 3 e 5 do andar (`SetUpDownState` `0x748a64`).
+- **Corte (cutaway):** o `cWallCutawayManager::UpdateSceneGraph`
+  (`0xc8cd90`) troca o conjunto de paredes cortadas pelo **conjunto das
+  pontas** delas. Cada ponta nova: `SetVertexUpDownState(ponta, baixo)`
+  (`0x7487d8`: em toda parede que toca a ponta, os vértices de cima
+  daquela ponta, nas duas faces e no topo, e o polígono do encontro) e,
+  em toda parede que toca a ponta, `SetSegmentUpDownState(baixo)`
+  (`0x748668`: os vértices do **meio**). Ao erguer uma ponta, o meio só
+  volta se a outra ponta da parede não estiver baixada. Resultado: uma
+  parede inteira fica baixa se as duas pontas estão baixadas (cortada ou
+  não), e uma parede que toca uma só ponta baixada **desce em rampa**: cheia
+  na ponta erguida, 0,2 do meio até a ponta baixada.
+- `SetRenderVertexUpDownState` (`0x747f1c`): o vértice de cima vai ao chão
+  + `H` (+ desloc.), com `H` = altura baixada; o `v` do papel e o da
+  máscara viram (`D/3` ou 1) − `H/3`.
+- Os nós ligados pelo corte: 0 e 2 (as meias paredes 3 e 5 dependem de um
+  valor de um serviço `0xe92db716` não identificado, inferido "não").
+
+## 4. Pisos (`cFloorGeometryNode::SetTileQuadrantSubset` `0x75fa6c`)
+
+- `cFloorManager::InitializePatternsAndElevationsOnLevel` (`0x6d277c`)
+  passa, para cada tile do andar, o padrão, o material
+  (`FloorMaterialName` `0x6d1e24`, o nome do produto) e a **rotação salva**
+  (WorldDB vtable `0xa0`) ao `SetFloorTileSubset` (`0x7607ec`), que chama o
+  `SetTileQuadrantSubset` para cada quarto presente (máscara `+0xc`).
+- **Um triângulo por quarto**: os dois cantos da aresta do quarto e o
+  centro, na ordem 0 oeste `(x, y+1), (x, y)`; 1 norte `(x+1, y+1),
+  (x, y+1)`; 2 leste `(x+1, y), (x+1, y+1)`; 3 sul `(x, y), (x+1, y)`;
+  posição pelo `SampledFloorElevation` (o centro é a média bilinear), normal
+  `normalize(cross(v1 − v0, v2 − v0))`. Meio tile diagonal = dois quartos.
+- **UV0** (`WorldLocationsForPatternRotation`, `FUN_0075d004`): os cantos
+  do quarto `q'` = `q` girado pela rotação (2 → `q+3`, 4 → `q+2`, 8 →
+  `q+1`, qualquer outro valor → `q`), e o UV de cada vértice é **(y, x)**
+  desse canto no mundo (o centro, `(y + 0,5, x + 0,5)`). É o que o código
+  já fazia (o topo da textura no oeste, a direita no norte; a rotação gira
+  em volta do centro): agora conferido. A escala
+  `floorMaterialScaleU/V` fica no `floor.matShad` (§6 do shaders-mac).
+- **UV1**: o retângulo do tile no light map (`cLightMapManager` vtable
+  `0x48`), cantos e centro.
+
+## 5. O que o código fazia e o que muda
+
+(Ver o §5.1 no fim da rodada.)
