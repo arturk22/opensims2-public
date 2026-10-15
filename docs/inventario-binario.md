@@ -76,7 +76,7 @@ palavra.
 | VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 8,5 / 11 = **77%** | 125 / 80 |
 | Rotas | 27 (12) | 113 / 622 = 18,2% | 6 / 8 = **75%** | 59 / 38 |
 | Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 4,5 / 9 = **50%** | 39 / 14 |
-| Sentar | (usa rotas, slots, IK) | 9 / 34 funções-chave = 26% | 5,5 / 10 = **55%** | 10 / 8 |
+| Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 6,5 / 10 = **65%** | 10 / 8 |
 | Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 7,5 / 11 = **68%** | 63 / 50 |
 | Corte de paredes | 11 (4) | 18 / 159 = 11,3% | 3,5 / 6 = **58%** | 4 / (na ui-live §8c) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
@@ -163,20 +163,20 @@ Código: `src/vm/animation.*`, `src/formats/anim*.{hpp,cpp}`,
 
 Código: `src/vm/reach.cpp`, `slot_bones.cpp`, `routing.cpp`,
 `src/app/seat_module.*`, `seat_check.*`, `vm_objects.cpp`, `lot_vm.cpp`.
-Docs: `docs/issues/001-sentar-fiel-ao-binario.md` (plano, ainda aberto).
+Docs: `docs/seat-mac.md` (leitura do binário, rodada n01), `docs/issues/001-sentar-fiel-ao-binario.md` (parcialmente feita).
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
 | Achar a cadeira: `TryFindFunctionalObject` (função 26) | `vm/reach.cpp` | fiel | |
 | Snap: `cTSObject::TrySnap` | `vm/reach.cpp` | fiel | |
-| A. Objetivos de sentar: `cTSRoute::ScanConeForSittingGoals`, `GetPossibleSittingSlotsFromModel`, `IsPersonSittingOnChairGoal`, `CreateContainmentGoalPoint` | `vm/routing.cpp` | faltando | A rota usa a varredura genérica de slots. |
-| B. Snap Into e slot: `TrySnapInto`, `PlaceInSlot`, `AggregateOnPlaceInSlot`, `TestPlaceInSlot` | `vm/placement.cpp`, `reach.cpp` | inferido | Ordem dos passos e slot ocupado inferidos. |
-| C. Corpo no slot: `cEdithMTObject::SlotOffsetFromContainer`, `cTSPerson::UpdateSlotDisplacement`, `GetSlotHeight` | `app/seat_module.*` | inferido | O app prende a raiz ao osso; a VM não sabe. |
-| D. Salto da raiz: `PostSnap`, `cObject::ApplyAnimationOffsets`, `GlobalRootTransPosition` | `formats/anim_player.*` (`stayInWorld`) | inferido | Object data 108–111 não aplicados. |
+| A. Objetivos de sentar: `cTSRoute::ScanConeForSittingGoals` (BV `0x4788cc`), `GetPossibleSittingSlotsFromModel`, `IsPersonSittingOnChairGoal`, `CreateContainmentGoalPoint` | `vm/routing.cpp`, `routing_walk.cpp` | fiel | Cadeira na pós-rota; o objetivo de contenção não roda no jogo base. |
+| B. Snap Into e slot: `TrySnapInto`, `PlaceInSlot`, `AggregateOnPlaceInSlot`, `TestPlaceInSlot` | `vm/placement.cpp`, `routing_walk.cpp` | fiel | Falta a árvore 0x34 "allow in slot". |
+| C. Corpo no slot: `cObject::OnPlaceInSlot`, `ObjectSlotOffset`, `cTSPerson::UpdateSlotDisplacement` | `app/seat_module.*` | fiel | O grafo de cena prende ao osso do slot, como o app; a VM só tem a posição do contêiner. |
+| D. Salto da raiz: `PostSnap`, `cObject::ApplyAnimationOffsets`, `GlobalRootTransPosition` | `formats/anim_player.*` (`stayInWorld`) | inferido | Os od 108–111 nunca são escritos pelas árvores (zero); o `stayInWorld` segue inferido (rodada 2). |
 | E. Sentado e parado (idles da cadeira, fila vazia) | `app/lot_vm.cpp` | inferido | Regra nossa: segura a pose. |
-| F. Animação de entrar/sair (STR# 0x92) | `vm/animation.cpp` | inferido | Escolha da entrada em parte inferida. |
+| F. Animação de entrar/sair (STR# 0x92) | `vm/reach.cpp` | inferido | Ordem das listas fiel (só a superfície); a faixa pela altura em metros falta. |
 | G. IK das mãos e pés: `cChoreoHandlerIK::HandleChoreoRequest`, `FindIKTargetBone` | `formats/anim_player.cpp` | inferido | Mãos 6–10 cm curtas nos sociais. |
-| H. Levantar: `DoesPathStartFromContainment` | `app/seat_module.*` | inferido | Um tick de deslize no `getOut`. |
+| H. Levantar: `TrySnap`, `RemoveFromWorld`, `DoesPathStartFromContainment` | `vm/reach.cpp`, `app/seat_module.*` | inferido | Direção fiel; o ponto único do Snap (sem o anel nosso) falta. |
 
 ### 3.5 Colocação e construção
 
@@ -355,7 +355,7 @@ Ghidra: pedir ao usuário para abrir antes; senão, headless e só leitura.
 
 | # | Rodada | Por que vem antes | Agentes | Ghidra |
 |---|---|---|---|---|
-| 1 | **Sentar** (issue 001, linhas A–H) | Sentar aparece em toda refeição, sofá e privada; 7 de 10 partes inferidas. | 3 Opus (1 leitura + 2 código) | sim |
+| 1 | **Sentar** (issue 001, linhas A–H) — **feita** (n01): objetivos de sentar, Snap Into/PlaceInSlot, direção do Snap e lista 0x92 do binário; E, G, I ficam para a rodada 2 (`docs/seat-mac.md`). | Sentar aparece em toda refeição, sofá e privada; 7 de 10 partes inferidas. | 3 Opus (1 leitura + 2 código) | sim |
 | 2 | **Corpo do Sim: coreografia, mistura e IK** (`cChoreoQueue`, `cChannelUber*`, `cActiveAnimIK`, `cIKChain`, transições de locomoção) | Todo Sim, todo quadro. Junta com a parte G do sentar se rodar junto. | 2 Opus (1 leitura + 1 código) | sim |
 | 3 | **Rotas: slots e escadas** (`cTSRoutingSlot`, `cTSSlotDescriptor`, `CollisionCheck`, portal do degrau) | Sims presos (a escada do N001_Lot11) quebram o jogo. | 1 Opus | sim |
 | 4 | **VM: o que o motor mantém** (object data "room", pontos de entrada load/cleanup/roomChanged, sub-fila e aninhadas) | Sims travados no soak; afeta luzes e salas. | 1 Opus | sim |

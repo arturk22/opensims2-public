@@ -151,10 +151,13 @@ od 2 = contêiner, od 3 = slot, **posição = a do contêiner**, **direção =
 `RemoveFromWorld` (`0xafc508`) zera o ocupante do slot antigo, od 2 = 0,
 od 3 = −1.
 
-**Diferença**: o nosso `snapInto` não punha a direção, dava erro de VM com
-slot inexistente (o jogo dá falso com od 52 = 16), não escrevia od 52, e não
-tinha os testes de peso, de cadeia e de altura. O teste por árvore 0x34 fica
-de fora (inferido: não achamos objeto base que a use; não conferido).
+**Diferença** (corrigida nesta rodada, `vm/routing_walk.cpp` `snapInto`,
+`vm/placement.cpp` `slotPlacementError`/`placeInSlot`): o `snapInto` não
+punha a direção, dava erro de VM com slot inexistente (o jogo dá falso com
+od 52 = 16), não escrevia od 52, e não tinha os testes de peso, de cadeia e
+de altura. O teste por árvore 0x34 fica de fora (não conferido se algum
+objeto base a usa). O teste de multi-tile (0x11) é aproximado: uma parte
+cujo líder é outro objeto.
 
 ## C. Onde fica o corpo no slot
 
@@ -191,11 +194,23 @@ inferida.
 
 `ComputeReachAnimIndex` (`0x68ba50`) confirmado: faixa pela altura
 (< 0,4 / 0,7 / 0,9) + 4 se a distância > 0,8 + 8 para pôr. No
-`try_new_reach` (`0x6926c0`): com a flag 0x08 do byte 0x0D do pedido o
-índice vem do byte 0x0F (não calculado); a STR# 0x92 é lida do grupo global
-(`0x7FD46CD0`) ou do objeto, num laço de 5 casos (`0x692610`, tabela de
-saltos) que não foi lido. A ordem das fontes e a altura usada continuam
-inferidas (rodada 2).
+`try_new_reach` (`0x69111c`):
+
+- a **superfície** é o contêiner do objeto pego (modo 0) ou o alvo onde se
+  põe (modo 1); no chão (modo 2) não há superfície;
+- o ponto do alcance: o osso do slot (slot de osso), o deslocamento do slot,
+  ou 0,7 à frente do Sim no chão; a **altura** é a desse ponto no quadro da
+  raiz do Sim (metros) e a **distância** a horizontal até ele;
+- com a flag 0x08 do byte 0x0D do pedido o índice vem do byte 0x0F (não
+  calculado; não feito: o operando não foi casado com o nosso layout);
+- a STR# 0x92 (laço de 5 casos em `0x692610`, caso 1): **a lista da
+  superfície, depois a do semi-global dela, depois a global**. A lista do
+  objeto pego não entra (dele vem só a animação do objeto, STR# 0x86).
+
+**Mudado**: o `reachListAnimation` olhava primeiro a lista do objeto pego
+(inferido); agora só a superfície, como o binário. **Continua inferido**: a
+faixa pela classe de altura do SLOT (e não a altura em metros no quadro da
+raiz) e a distância até o centro da superfície (e não até o ponto).
 
 ## G. IK
 
@@ -214,25 +229,38 @@ mesmo andar → erro 8; `TSObjectCanSetPositionAndOrientation`; passou →
 −1, o slot antigo fica livre**) e `Orient`. Falha: od 52 = erro + 2 (ou 1
 quando pediu a um Sim para sair, flag 0x02).
 
-**Diferença**: o nosso `snap` usa a lista de objetivos da varredura e o
-anel de 0,5/0,75 em volta dos ossos (nosso) quando o ponto está ocupado; o
-jogo falha. Mantido (a falta do footprint dos modelos ainda faz o ponto cair
-dentro da cadeira empurrada sob a mesa); fica no `TODO.md`.
+**Diferença**: o nosso `snap` (`vm/reach.cpp`) usa a lista de objetivos da
+varredura e o anel de 0,5/0,75 em volta dos ossos (nosso) quando o ponto
+está ocupado; o jogo usa um ponto só e falha. Mantido (a falta do footprint
+dos modelos ainda faz o ponto cair dentro da cadeira empurrada sob a mesa);
+fica no `TODO.md`. **A direção agora é a do binário**: só muda com a flag
+0x1000; antes o Sim virava para o objeto também nos slots sem ela.
 
 ## I. Sustos e expressões sentado
 
 Não lido (rodada 2).
 
-## Ordem do que mudar e risco
+## O que esta rodada mudou e o que sobrou
 
-1. **A**: objetivos de sentar nas varreduras com peso de
-   sentar; a cadeira no parâmetro 0 da pós-rota; chegada na hora quando o Sim
-   já está na cadeira do objetivo. Risco: Sims que antes ficavam em pé
-   diante da TV/lareira agora andam até o sofá — muda a autonomia; a
-   bateria de assento não usa TV.
-2. **B**: Snap Into com od 52, direção do contêiner e os testes do
-   `TestPlaceInSlot`. Risco: o teste de altura (od 4) recusar um Sim que
-   antes sentava.
-3. **H**: Snap de um ponto só (sem o anel). Risco alto (Sims presos na
-   cadeira); não feito.
-4. **D–G, I**: rodada 2.
+Feito (rodada n01, cada parte um commit, testes verdes):
+
+1. **A**: objetivos de sentar nas varreduras com peso de sentar, os pesos
+   no custo, a cadeira no parâmetro 0 da pós-rota, chegada na hora com o Sim
+   já na cadeira do objetivo, e a cadeira dos slots de osso que pesam sentar
+   (cadeirão). Teste `sit_goals` (N001_Lot49: TV → namoradeira). Autonomia de
+   14400 ticks em N001_Lot11/68/49: igual (nenhum Sim escolheu a TV).
+2. **B**: Snap Into com od 52 = erro + 2, slot inexistente = falso (não erro
+   de VM), os testes do `TestPlaceInSlot` (ocupado, peso, cadeia, altura) e a
+   direção do contêiner no `PlaceInSlot` (também no Reach/Put e no Snap para
+   o slot 0). `test_routing`.
+3. **H**: o Snap só muda a direção com slot que "snapa a direção" (0x1000).
+   `test_reach`.
+4. **F**: a lista 0x92 só da superfície.
+5. **C** e **D**: confirmados sem mudança (o app prende ao osso, como o
+   grafo de cena; os od 108–111 nunca são escritos).
+
+Sobras (no `TODO.md`): o Snap de um ponto só (o primeiro osso; sem o anel
+nosso nem a varredura para slots sem osso), a parede entre o lugar velho e o
+novo (erro 8), a árvore 0x34 "allow in slot", o +25/+20 dos objetivos em pé,
+a altura em metros do alcance, o índice explícito do Reach (flag 0x08), e as
+partes E, G e I (corpo: rodada 2).

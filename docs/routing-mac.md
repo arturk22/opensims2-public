@@ -1188,8 +1188,8 @@ A varredura (BV `0x4778b4`, chamada com um callback por candidato):
 Custo de um objetivo aceito (BV `0x4790xx`): penalidades de §8.2 +
 `|distância − distância preferida (+0x30)| · 16 · peso (+0x34)` − `peso ·
 0,01 · |desvio lateral|` (desempate); o A* depois escolhe pelo custo total
-(caminho + objetivo). Para cadeiras, `ScanConeForSittingGoals` usa o mesmo
-laço com o callback de slots de cadeira. O `cTSRoute::ScanCone` que o
+(caminho + objetivo). Para cadeiras, `ScanConeForSittingGoals` (BV `0x4788cc`;
+`docs/seat-mac.md` §A) usa o mesmo laço com o callback de slots de cadeira. O `cTSRoute::ScanCone` que o
 symxfer nomeou no BV é outra função (um dump de desejos).
 
 ## 8.3 Árvores da rota: pós-rota, goal check e along route (binário, rodada 7)
@@ -1205,7 +1205,7 @@ a `DoNeedFailureFeedback` (0x14) com o código abaixo.
 
 | árvore | quem roda, em que objeto | quando | parâmetros | falso → |
 |---|---|---|---|---|
-| **post route 0x26** (`TriggerPostRouteTree`, BV `0x577cf4`) | a árvore **do próprio Sim** que anda, stack object = ele | em `DoFailedOrSucceeded` (BV `0x577ea0`, estados 9/10), uma vez: só se a pilha de rotas tem **uma** rota, a rota tem o flag `+0xac` ligado e o `+0xad` desligado (o `+0xad` é ligado ao rodar), e o estado não pede para pular (`+0x4c`) | 0 = código de resultado da rota (`+0x64`), 1 = o `+0x10` do objetivo atual se houver objetivo (senão 0), 2–3 = 0 | código 12 "post-route failed" (estado 7/8 → `DoWaitingForPostRouteTree`, BV `0x56ddac`) |
+| **post route 0x26** (`TriggerPostRouteTree`, BV `0x577cf4`) | a árvore **do próprio Sim** que anda, stack object = ele | em `DoFailedOrSucceeded` (BV `0x577ea0`, estados 9/10), uma vez: só se a pilha de rotas tem **uma** rota, a rota tem o flag `+0xac` ligado e o `+0xad` desligado (o `+0xad` é ligado ao rodar), e o estado não pede para pular (`+0x4c`) | 0 = o `+0x10` do objetivo atual (a cadeira de um objetivo de sentar; 0 sem objetivo), 1 = código de resultado da rota (`+0x64`), 2–3 = 0 (corrigido na rodada n01: o u32 big-endian põe o `+0x10` primeiro; `docs/seat-mac.md` §A) | código 12 "post-route failed" (estado 7/8 → `DoWaitingForPostRouteTree`, BV `0x56ddac`) |
 | **goal check 0x27** (`TriggerGoalCheckTree`, BV `0x575e34`) | a árvore 39 **do objeto dono do código do frame que chamou o Go To** (o frame logo abaixo do topo da pilha do Sim: o OBJf do seletor desse frame), rodada no Sim com stack object = o stack object desse frame (sem ele, o alvo da rota) | em `DoWalking` (BV `0x576acc`) **a cada tile cruzado** (o avanço da rota, vtable `0x60`, indica que mudou de célula e o temporizador de callbacks deixa); antes chama `AlongRouteUpdate` | 0 = índice do slot de rota (`WorkOutSlotIndex`), 1 = `+0x14` do objetivo, 2 = `+0x10` do objetivo, 3 = distância restante (vtable `0x3c`) × 100 | código 13 "goal not available" (estado 4; bloqueado: estado 0x19 → 9) |
 | **along route 0x29** (`TriggerAlongRouteTree`, BV `0x5766a0`) | a árvore **do próprio Sim**, stack object = ele | logo depois de um goal check que passou (`DoWalkingWaitingForGoalCheckTree`, BV `0x576970`), no mesmo tile, se o temporizador ainda permite; ou direto quando não há goal check | 0 = ID do alvo, 1 = índice do slot, 2 = `+0x14` do objetivo, 3/4 = dois valores da rota (vtable `0xf0`, padrão 0 e −1), 5 = vtable `0x1d0` da rota, 6 = distância restante × 100 | código 16 "interrupted by callback" (estado 0x1E → `DoWaitingForAlongRouteTree`, BV `0x56db30`) |
 
