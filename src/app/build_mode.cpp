@@ -296,6 +296,12 @@ void BuildMode::holdObjectAt(int x, int y, int direction, bool autoRotate) {
         direction_ = turned.direction;
     }
     last_ = vm::checkPlacement(vm_, held_, {x, y, level_}, direction_);
+    // TestPlacementCommon's staircase test (CeilingTooHighForObject, 0x30),
+    // which reads the lot's support and heights.
+    if (const int e = editor_->stairCeilingError(last_)) {
+        last_.ok = false, last_.error = e;
+        last_.reason = "the ceiling above is too high";
+    }
     // Turning green: ui_build_door_green / ui_build_stair_green.
     if (last_.ok && !lastOk_) {
         const std::string plop = objectSound(held_);

@@ -5,6 +5,7 @@
 #include "hood_bridge.hpp"
 #include "rooms.hpp"
 #include "formats/build_catalog.hpp"
+#include "formats/lot.hpp"
 #include "formats/log_once.hpp"
 #include "formats/resindex.hpp"
 
@@ -46,6 +47,30 @@ int16_t layers(const Object& o) {
 }
 
 int normDir(int d) { return ((d % 8) + 8) % 8; }
+
+// HasFloorTest(tile, 0xF, all): every quarter of the tile (VM level) has a
+// floor pattern.
+bool floorWhole(const Lot& lot, TilePos t) {
+    if (t.x < 0 || t.y < 0 || !lot.hasLevel(t.level - 1))
+        return false;
+    for (uint16_t q : lot.floor(t.level - 1, uint32_t(t.x), uint32_t(t.y)))
+        if (!q)
+            return false;
+    return true;
+}
+
+// nTSWorld::IsFlat (BV 0x165af8): the tile's four grid points (on its lot
+// level) at exactly the same height. A level the lot does not keep counts as
+// flat.
+bool flatTile(const Lot& lot, TilePos t) {
+    const int li = t.level - 1;
+    if (!lot.hasLevel(li) || lot.elevations.empty() || t.x < 0 || t.y < 0 || t.x >= int(lot.width) ||
+        t.y >= int(lot.height))
+        return true;
+    const float z = lot.elevation(li, t.x, t.y);
+    return lot.elevation(li, t.x + 1, t.y) == z && lot.elevation(li, t.x, t.y + 1) == z &&
+           lot.elevation(li, t.x + 1, t.y + 1) == z;
+}
 
 std::vector<const Slots::Slot*> containerSlots(VM& vm, const Object& o);
 
@@ -246,15 +271,25 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
             return fail(placementerror::OutOfBounds, "on a locked tile (the road strip)");
         if (!w.contains(t))
             return fail(placementerror::LevelOutOfBounds, "level out of the lot");
-        // (The ground, VM level 1, is terrain even when a pool gives the lot
-        // a level under it.)
-        if (t.level != 1 && t.level > w.firstLevel() && !w.hasFloor(t) && !(pf & 0x200) && !(pf2 & 0x04))
+        // 3: a floor under it, unless in the air (p & 0x200) or p2 & 4:
+        // FUN_0016d518 -> WorldDB 0xb8, the ground always (VM level 1, even
+        // when a pool gives the lot a level under it), above it all four
+        // quarters of the tile floored (HasFloorTest; the floors' visibility
+        // layer is not kept here). Without the lot's geometry (no
+        // VM::placementLot), a floor in some quarter (the world's).
+        if (t.level != 1 && t.level > w.firstLevel() && !(pf & 0x200) && !(pf2 & 0x04) &&
+            !(vm.placementLot ? floorWhole(*vm.placementLot, t) : w.hasFloor(t)))
             return fail(placementerror::NoFloor, "no floor");
         // 5 a pool tile needs p & 0x800 (0x8F); pool objects need no floor there.
         const bool inPool = w.pool(t);
         // (Parts in the air, p & 0x200, or on the water, 0x4000, may hang over it: inferred.)
         if (inPool && !(pf & (0x800 | 0x200 | 0x4000)))
             return fail(0x8F, "not in a pool");
+        // 6: the tile flat (nTSWorld::IsFlat, BV 0x165af8: its four grid
+        // points at exactly one height), unless p & 0x100 -> 0x12 "Can't
+        // place on slope".
+        if (vm.placementLot && !(pf & 0x100) && !flatTile(*vm.placementLot, t))
+            return fail(0x12, "on a slope");
         if (pf && !(pf & 0x03) && !(pf & 0x200) && !(inPool && (pf & 0x800)))
             return fail(placementerror::NoFloor, inPool || !(pf & 0x800) ? "not allowed on the floor" : "only in a pool");
         // TestPlacementWithRespectToWalls (§3.3): the wall flags (od 13) on

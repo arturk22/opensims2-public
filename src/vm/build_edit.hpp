@@ -256,6 +256,14 @@ public:
                roofSupported(level, x, y);
     }
 
+    // FUN_008a7164 -> nTSWorld::CeilingTooHighForObject (BV 0x16a6f8), the
+    // one place object placement asks HasSupport (TestPlacementCommon,
+    // docs/buy-build-mac.md §7.24): a staircase part (OBJD type 10) whose
+    // tile's story above is on the lot, HasSupport, and has a grid point more
+    // than StandardLevelHeight (3) + 0.001 over the same point of the tile's
+    // own story: 0x30 (unless placement flags 2, od 82, have 0x20). 0 fits.
+    int stairCeilingError(const Placement& p) const;
+
     // Wallpaper tool: the faces of the walls along a run, on its right
     // (side +1, seen from (x0, y0) to (x1, y1)), left (-1) or both (0), at
     // the pattern's price per side.

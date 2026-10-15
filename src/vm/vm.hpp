@@ -32,6 +32,7 @@
 
 namespace os2 {
 class DbpfPackage;
+struct Lot;
 class ResourceIndex;
 }
 
@@ -948,6 +949,11 @@ public:
     // (single trees, tests) positions mean nothing to the primitives that
     // need them, which then fail with the reason.
     std::optional<World> world;
+    // The lot's geometry for the placement tests that read heights and
+    // floor quarters (TestPlacementCommon's IsFlat and floor test,
+    // vm/placement.cpp): whoever keeps the lot for the VM's lifetime sets it
+    // (the app's LotSimulation, s2pkg's lot commands); null skips those tests.
+    const Lot* placementLot = nullptr;
     // The path planner of `world` (path_planner.hpp), built on first use
     // (routing_plan.cpp); reset it after changing the world.
     std::shared_ptr<PathPlanner> planner;

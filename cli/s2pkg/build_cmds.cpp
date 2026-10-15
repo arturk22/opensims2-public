@@ -142,6 +142,7 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
     const BuildCatalog catalog = BuildCatalog::load(index);
     std::optional<Catalog> objects;
     vm::BuildEditor editor(vm, lot, &catalog);
+    vm.placementLot = &lot; // the edited lot: the placement tests' heights and floors
     bool ok = true;
     for (const auto& [flag, value] : edits) {
         const auto f = fields(value);
@@ -183,7 +184,9 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
                 std::printf("--door: turned to direction %d (%s)\n", dir,
                             held && held->definition ? held->definition->fileName.c_str() : "?");
             }
-            const vm::Placement p = vm::checkPlacement(vm, id, tile, dir);
+            vm::Placement p = vm::checkPlacement(vm, id, tile, dir);
+            if (const int e = editor.stairCeilingError(p)) // CeilingTooHighForObject (0x30)
+                p.ok = false, p.error = e, p.reason = "the ceiling above is too high (0x30)";
             std::string why = p.reason;
             r.ok = p.ok && vm::buy(vm, id, p, e->price, &why);
             if (!r.ok)

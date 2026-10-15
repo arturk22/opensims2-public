@@ -61,6 +61,8 @@ fs::path resRootOfLot(const fs::path& pkg) {
 // character files come from `charactersDir`.
 struct LoadedLot {
     std::unique_ptr<vm::VM> vm;
+    // The lot as read: the placement tests' geometry (VM::placementLot).
+    std::unique_ptr<Lot> lot;
     LotObjects saved;
     vm::LotLoad load;
     vm::ResumeResult resumed;
@@ -73,7 +75,8 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
                    bool loadEntries = true) {
     LoadedLot out;
     DbpfPackage pkg(package);
-    const Lot lot = Lot::load(pkg);
+    out.lot = std::make_unique<Lot>(Lot::load(pkg));
+    const Lot& lot = *out.lot;
     out.saved = LotObjects::load(pkg);
     // As the app's lot load (app/lot_vm.cpp): a family that just moved in
     // arrives and pays the lot's price, and its first day starts
@@ -103,6 +106,7 @@ LoadedLot loadInto(vm::CodeLibrary& code, const fs::path& package, const fs::pat
         }
     }
     out.vm = std::make_unique<vm::VM>(code);
+    out.vm->placementLot = out.lot.get();
     vm::VM& m = *out.vm;
     m.initCreatedObjects = true;
     m.runLoadEntries = loadEntries;

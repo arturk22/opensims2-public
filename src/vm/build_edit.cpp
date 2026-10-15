@@ -232,6 +232,28 @@ void BuildEditor::commit(Geometry before, int cost, std::vector<Sold> sold, std:
 // do; attic walls (3) and fences do not (docs/buy-build-mac.md §7.3).
 static bool bearsLoad(uint32_t type) { return !Lot::isFence(type) && type != Lot::Attic; }
 
+int BuildEditor::stairCeilingError(const Placement& p) const {
+    if (!p.ok || p.container)
+        return 0;
+    const int W = int(lot_.width), H = int(lot_.height);
+    for (const auto& part : p.parts) {
+        const Object* o = vm_.object(part.id);
+        if (!o || !o->definition || o->definition->objectType() != 10 ||
+            (o->data[objdata::PlacementFlags2] & 0x20))
+            continue;
+        const TilePos t = part.tile;
+        const int li = t.level - 1;
+        if (t.x < 0 || t.y < 0 || t.x >= W || t.y >= H || !lot_.hasLevel(li) || !lot_.hasLevel(li + 1) ||
+            !hasSupport(t.level + 1, t.x, t.y, 0xF))
+            continue;
+        for (int cx = t.x; cx <= t.x + 1; ++cx)
+            for (int cy = t.y; cy <= t.y + 1; ++cy)
+                if (lot_.elevation(li + 1, cx, cy) - lot_.elevation(li, cx, cy) > 3.0f + 0.001f)
+                    return 0x30;
+    }
+    return 0;
+}
+
 bool BuildEditor::supportedUnderneath(int level, int x, int y, int quarters, ObjectId ignore) const {
     const int li = level - 1;
     if (li <= 0)

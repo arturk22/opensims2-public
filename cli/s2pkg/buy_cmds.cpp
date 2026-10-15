@@ -9,6 +9,7 @@
 #include "formats/lot.hpp"
 #include "formats/lot_objects.hpp"
 #include "formats/resindex.hpp"
+#include "vm/build_edit.hpp"
 #include "vm/hood_bridge.hpp"
 #include "vm/lot.hpp"
 #include "vm/lot_neighborhood.hpp"
@@ -16,6 +17,8 @@
 #include "vm/placement.hpp"
 
 #include <cstdio>
+#include <cstdlib>
+#include <map>
 #include <memory>
 #include <filesystem>
 #include <stdexcept>
@@ -163,6 +166,7 @@ int cmdBuy(const std::vector<std::string>& args) {
     const Lot lot = Lot::load(pkg);
     const LotObjects saved = LotObjects::load(pkg);
     vm::VM machine(code);
+    machine.placementLot = &lot; // the placement tests' heights and floors
     machine.initCreatedObjects = true;
     machine.instructionsPerTurn = s2pkgBudget();
     machine.setClockGlobals();
@@ -173,6 +177,84 @@ int cmdBuy(const std::vector<std::string>& args) {
     vm::startSavedLot(machine, load, saved);
     std::printf("%s: funds §%d\n", lotFile.filename().string().c_str(), vm::funds(machine));
     return applyBuyEdits(machine, index, edits) ? 0 : 1;
+}
+
+// Every object the lot keeps where it stands, tested where it stands
+// (checkPlacement with footprints, no slot): without the lot's geometry and
+// with it (VM::placementLot: TestPlacementCommon's IsFlat 0x12 and the floor
+// of all four quarters 0x8E, docs/buy-build-mac.md §7.24). The game placed
+// them, so what the geometry alone refuses is a test that does not match.
+int cmdPlacementSweep(const std::vector<std::string>& args) {
+    if (args.empty())
+        throw std::runtime_error("usage: s2pkg placement-sweep <lot.package>...");
+    std::map<int, int> before, after;
+    int objects = 0, lots = 0, stairs = 0;
+    for (const auto& a : args) {
+        const fs::path lotFile = a;
+        ResourceIndex index(resRootOf(lotFile));
+        vm::CodeLibrary code(&index);
+        DbpfPackage pkg(lotFile);
+        Lot lot;
+        try {
+            lot = Lot::load(pkg);
+        } catch (const std::exception& ex) {
+            std::printf("%s: skipped (%s)\n", lotFile.filename().string().c_str(), ex.what());
+            continue;
+        }
+        const LotObjects saved = LotObjects::load(pkg);
+        vm::VM machine(code);
+        machine.initCreatedObjects = true;
+        machine.instructionsPerTurn = s2pkgBudget();
+        machine.setClockGlobals();
+        const bool hood = vm::loadLotNeighborhood(machine, lotFile);
+        const vm::LotLoad load = vm::loadLot(machine, lot, saved, vm::charactersDirOf(lotFile));
+        if (hood)
+            vm::bindLotSims(machine);
+        vm::startSavedLot(machine, load, saved); // the saved object data (placement flags, ...)
+        ++lots;
+        Lot edited = lot;
+        vm::BuildEditor editor(machine, edited);
+        std::vector<vm::ObjectId> leads;
+        for (const auto& [id, o] : machine.eachObject())
+            if (!o.person && o.definition && o.position.inWorld() && !o.data[vm::objdata::ContainerId] &&
+                vm::multiTileGroup(o) == id)
+                leads.push_back(id);
+        for (vm::ObjectId id : leads) {
+            const vm::Object& o = *machine.object(id);
+            const vm::TilePos t = vm::VM::tileOf(o);
+            machine.placementLot = nullptr;
+            const vm::Placement p0 = vm::checkPlacement(machine, id, t, o.data[vm::objdata::Direction], false, true);
+            machine.placementLot = &lot;
+            const vm::Placement p1 = vm::checkPlacement(machine, id, t, o.data[vm::objdata::Direction], false, true);
+            ++objects;
+            ++before[p0.ok ? 0 : p0.error];
+            ++after[p1.ok ? 0 : p1.error];
+            static std::map<int, int> shown;
+            if (std::getenv("S2PKG_SWEEP_WHY") && !p0.ok && shown[p0.error]++ < 3)
+                std::printf("  %d \"%s\" od4 %04X od42 %04X at (%d,%d,%d) dir %d: 0x%02X %s\n", id, o.definition->fileName.c_str(), uint16_t(o.data[vm::objdata::AllowedHeightFlags]), uint16_t(o.data[vm::objdata::PlacementFlags]), t.x, t.y,
+                            t.level, o.data[vm::objdata::Direction], p0.error, p0.reason.c_str());
+            // The staircases' CeilingTooHighForObject (0x30), which reads
+            // the lot's support (the build editor's HasSupport).
+            if (p1.ok && o.definition->objectType() == 10) {
+                ++stairs;
+                if (const int e = editor.stairCeilingError(p1))
+                    std::printf("%s: %d \"%s\" at (%d,%d,%d): refused 0x%02X (the ceiling above)\n",
+                                lotFile.filename().string().c_str(), id, o.definition->fileName.c_str(), t.x, t.y,
+                                t.level, e);
+            }
+            if (p0.ok && !p1.ok)
+                std::printf("%s: %d \"%s\" at (%d,%d,%d): refused 0x%02X (%s)\n", lotFile.filename().string().c_str(),
+                            id, o.definition->fileName.c_str(), t.x, t.y, t.level, p1.error, p1.reason.c_str());
+        }
+    }
+    std::printf("placement-sweep: %d lots, %d objects where they stand (%d staircases fitting)\n", lots, objects, stairs);
+    for (const auto* m : {&before, &after}) {
+        std::printf("  %s:", m == &before ? "without the lot's geometry" : "with it");
+        for (const auto& [code, n] : *m)
+            code ? std::printf(" 0x%02X %d", code, n) : std::printf(" fit %d", n);
+        std::printf("\n");
+    }
+    return 0;
 }
 
 } // namespace
@@ -244,13 +326,16 @@ int buyCommand(const std::string& cmd, int argc, char** argv) {
         return cmdCatalog({argv + 2, argv + argc});
     if (cmd == "buy")
         return cmdBuy({argv + 2, argv + argc});
+    if (cmd == "placement-sweep")
+        return cmdPlacementSweep({argv + 2, argv + argc});
     return -1;
 }
 
 const char* buyUsage() {
     return "       s2pkg catalog <Res-dir> [--function bit [--sub bit] | --room bit [--sub function-bit]] [-v]\n"
            "       s2pkg catalog <Res-dir> --thumb <guid|name> <out.png>\n"
-           "       s2pkg buy <lot.package> [--buy|--check <guid|name>@x,y[,dir[,level]]] [--sell id] [--move id@x,y[,dir[,level]]]...\n";
+           "       s2pkg buy <lot.package> [--buy|--check <guid|name>@x,y[,dir[,level]]] [--sell id] [--move id@x,y[,dir[,level]]]...\n"
+           "       s2pkg placement-sweep <lot.package>...   (each saved object tested where it stands, with and without the lot's heights)\n";
 }
 
 } // namespace os2
