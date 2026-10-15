@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <simd/simd.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -35,10 +37,48 @@ public:
     void setInstanceTransform(int instance, const simd_float4x4& transform);
     void setInstanceModel(int instance, int model);
     int instanceModel(int instance) const;
+    // One light map in slot 0 (no crossfade).
     void setLightMap(const RgbaImage& image);
+    // The lot's two light-map slots, drawn as mix(slot 0, slot 1, mix) (Renderer::setLightMap).
+    void setLightMap(int slot, const RgbaImage& image);
+    void setLightMapMix(float mix);
+    void setEnvironmentLight(simd_float3 rgb);
     void setGroundClip(float z);
-    // The game's outdoor lights (Renderer::outdoorLights): set 0 for objects,
-    // set 1 for Sims. Directions point toward the light.
+    // No test scene is drawn here (Renderer::hideTestScene).
+    void hideTestScene() {}
+
+    // Lights for groups of instances, as Renderer::LightSet: an ambient and
+    // up to 16 directional, point and spot lights; set 0 is the default.
+    struct LightSet {
+        struct Directional {
+            simd_float3 direction; // unit, towards the light
+            simd_float3 color;     // times intensity
+            float specular = 1;
+        };
+        struct Point {
+            simd_float3 position;
+            simd_float3 color;
+            float falloff = 1, range = 0;
+            float specular = 1;
+            simd_float3 spotDirection{0, 0, -1};
+            float cosOuter = -2, cosInner = -1; // cosOuter < -1: a point light
+        };
+        simd_float3 ambient{0, 0, 0};
+        std::vector<Directional> lights;
+        std::vector<Point> points;
+    };
+    static constexpr size_t kMaxLightSets = 256;
+    static simd_float2 spotCosines(float angle, float penumbra) {
+        angle = std::fabs(angle), penumbra = std::fabs(penumbra);
+        const float outer = std::min(angle + penumbra, 3.14159265f);
+        return simd_make_float2(std::cos(outer / 2), std::cos(std::min(angle, outer) / 2));
+    }
+    void setLightSets(std::vector<LightSet> sets);
+    const std::vector<LightSet>& lightSets() const;
+    static LightSet outdoorLights(const LightingState& state, bool sims);
+    int instanceOf(int model) const;
+    // The game's outdoor lights (outdoorLights): set 0 for objects, set 1
+    // for Sims. Directions point toward the light.
     void setLighting(const LightingState& state);
     int objectLightCount() const;
     int simLightCount() const;

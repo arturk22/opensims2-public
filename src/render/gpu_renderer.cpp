@@ -74,6 +74,7 @@ struct FragmentUniforms {
     float shadowCount = 0;
     float viewportX = 1, viewportY = 1, clipOn = 0;
     float clipPlane[4]{};
+    float lightMapMix[4]{};
 };
 
 struct GpuShadow {
@@ -93,8 +94,17 @@ struct GpuLight {
 
 static_assert(sizeof(Vertex) == 44, "vertex pitch");
 static_assert(sizeof(DrawUniforms) % 16 == 0, "vertex uniform alignment");
-static_assert(sizeof(FragmentUniforms) == sizeof(DrawUniforms) + 96, "fragment uniform layout");
+static_assert(sizeof(FragmentUniforms) == sizeof(DrawUniforms) + 112, "fragment uniform layout");
 static_assert(sizeof(GpuLight) == 64, "light layout");
+
+constexpr size_t kMaxLights = 16;
+
+// A light set as the lot shader reads it: the ambient (w: light count) and
+// the directional lights, then the point and spot lights.
+struct GpuLightSet {
+    float ambient[4]{};
+    GpuLight lights[kMaxLights]{};
+};
 static_assert(sizeof(GpuShadow) == 80, "shadow layout");
 
 std::runtime_error sdlError(const char* what) {
@@ -135,7 +145,10 @@ struct GpuRenderer::Gpu {
     SDL_GPUSampler* clampSampler = nullptr;
     SDL_GPUSampler* pointSampler = nullptr;
     SDL_GPUTexture* white = nullptr;
-    SDL_GPUTexture* lightMap = nullptr;
+    SDL_GPUTexture* lightMap = nullptr;     // slot 0
+    SDL_GPUTexture* lightMapNext = nullptr; // slot 1
+    float lightMapMix = 0;
+    simd_float3 environment{1, 1, 1};
     SDL_GPUTexture* depth = nullptr;
     SDL_GPUTexture* shadowAtlas = nullptr;
     SDL_GPUTexture* shadowDepth = nullptr;
@@ -193,10 +206,11 @@ struct GpuRenderer::Gpu {
     std::vector<Model> models;
     std::vector<Instance> instances;
     std::unordered_map<std::string, SDL_GPUTexture*> textures;
-    GpuLight objectLights[16]{};
-    GpuLight simLights[16]{};
-    float objectAmbient[4]{};
-    float simAmbient[4]{};
+    std::vector<LightSet> lightSets;
+    std::vector<GpuLightSet> packedSets{2};
+    const GpuLightSet& lightSetOf(int set) const {
+        return set >= 0 && size_t(set) < packedSets.size() ? packedSets[size_t(set)] : packedSets[0];
+    }
     float eye[4]{};
     struct Caster {
         int instance = -1;
@@ -653,16 +667,17 @@ void GpuRenderer::Gpu::renderShadows(SDL_GPUCommandBuffer* cmd) {
             fragment.draw = draw;
             SDL_PushGPUVertexUniformData(cmd, 0, &draw, sizeof draw);
             SDL_PushGPUFragmentUniformData(cmd, 0, &fragment, sizeof fragment);
-            SDL_PushGPUFragmentUniformData(cmd, 1, objectLights, sizeof objectLights);
+            SDL_PushGPUFragmentUniformData(cmd, 1, lightSetOf(0).lights, sizeof GpuLightSet::lights);
             SDL_PushGPUFragmentUniformData(cmd, 2, shadowRecords, sizeof shadowRecords);
-            SDL_GPUTextureSamplerBinding bindings[5] = {
+            SDL_GPUTextureSamplerBinding bindings[6] = {
                 {part.texture ? part.texture : white, sampler},
                 {white, sampler},
                 {part.mask ? part.mask : white, clampSampler},
                 {white, clampSampler},
                 {white, clampSampler},
+                {white, sampler},
             };
-            SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
+            SDL_BindGPUFragmentSamplers(pass, 0, bindings, 6);
             SDL_GPUBufferBinding vertices{part.vertices, 0};
             SDL_BindGPUVertexBuffers(pass, 0, &vertices, 1);
             SDL_GPUBufferBinding indices{part.indices, 0};
@@ -904,8 +919,9 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
                     std::memcpy(fragment.eye, passEye, sizeof fragment.eye);
                     std::memcpy(fragment.specular, part.specular, sizeof fragment.specular);
                     std::memcpy(fragment.emissive, part.emissive, sizeof fragment.emissive);
-                    const bool sims = instance.lightSet == 1;
-                    std::memcpy(fragment.ambient, sims ? simAmbient : objectAmbient, sizeof fragment.ambient);
+                    const GpuLightSet& lights = lightSetOf(instance.lightSet);
+                    std::memcpy(fragment.ambient, lights.ambient, sizeof fragment.ambient);
+                    fragment.lightMapMix[0] = lightMapNext ? std::clamp(lightMapMix, 0.f, 1.f) : 0.f;
                     fragment.shadowCount = float(shadowCount);
                     fragment.viewportX = float(width);
                     fragment.viewportY = float(height);
@@ -916,16 +932,17 @@ bool GpuRenderer::Gpu::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target,
                                                                                                  : pipeline(part.blend, part.twoSided, reflected));
                     SDL_PushGPUVertexUniformData(cmd, 0, &u, sizeof u);
                     SDL_PushGPUFragmentUniformData(cmd, 0, &fragment, sizeof fragment);
-                    SDL_PushGPUFragmentUniformData(cmd, 1, sims ? simLights : objectLights, sizeof objectLights);
+                    SDL_PushGPUFragmentUniformData(cmd, 1, lights.lights, sizeof lights.lights);
                     SDL_PushGPUFragmentUniformData(cmd, 2, shadowRecords, sizeof shadowRecords);
-                    SDL_GPUTextureSamplerBinding bindings[5] = {
+                    SDL_GPUTextureSamplerBinding bindings[6] = {
                         {part.texture ? part.texture : white, sampler},
                         {lightMap ? lightMap : white, sampler},
                         {part.mask ? part.mask : white, clampSampler},
                         {shadowCount && shadowAtlas ? shadowAtlas : white, clampSampler},
                         {reflectionTex ? reflectionTex : white, clampSampler},
+                        {lightMapNext ? lightMapNext : white, sampler},
                     };
-                    SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
+                    SDL_BindGPUFragmentSamplers(pass, 0, bindings, 6);
                     SDL_GPUBufferBinding vertices{part.vertices, 0};
                     SDL_BindGPUVertexBuffers(pass, 0, &vertices, 1);
                     SDL_GPUBufferBinding indices{part.indices, 0};
@@ -1182,7 +1199,7 @@ GpuRenderer::GpuRenderer(const std::filesystem::path& shaderFolder, int width, i
 
     const SDL_GPUTextureFormat swap = SDL_GetGPUSwapchainTextureFormat(gpu_->device, gpu_->window);
     SDL_GPUShader* vertex = loadShader(gpu_->device, shaderFolder / "lot.vert.dxil", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
-    SDL_GPUShader* fragment = loadShader(gpu_->device, shaderFolder / "lot.frag.dxil", SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 3);
+    SDL_GPUShader* fragment = loadShader(gpu_->device, shaderFolder / "lot.frag.dxil", SDL_GPU_SHADERSTAGE_FRAGMENT, 6, 3);
     SDL_GPUShader* uiVertex = loadShader(gpu_->device, shaderFolder / "ui.vert.dxil", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     SDL_GPUShader* uiFragment = loadShader(gpu_->device, shaderFolder / "ui.frag.dxil", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
     gpu_->opaqueBack = makePipeline(gpu_->device, swap, vertex, fragment, false, false);
@@ -1318,6 +1335,8 @@ GpuRenderer::~GpuRenderer() {
         SDL_ReleaseGPUTexture(gpu_->device, gpu_->uiTexture);
     if (gpu_->lightMap && gpu_->lightMap != gpu_->white)
         SDL_ReleaseGPUTexture(gpu_->device, gpu_->lightMap);
+    if (gpu_->lightMapNext && gpu_->lightMapNext != gpu_->white)
+        SDL_ReleaseGPUTexture(gpu_->device, gpu_->lightMapNext);
     if (gpu_->depth)
         SDL_ReleaseGPUTexture(gpu_->device, gpu_->depth);
     if (gpu_->shadowAtlas)
@@ -1450,9 +1469,88 @@ int GpuRenderer::instanceModel(int instance) const {
 }
 
 void GpuRenderer::setLightMap(const RgbaImage& image) {
-    if (gpu_->lightMap && gpu_->lightMap != gpu_->white)
-        SDL_ReleaseGPUTexture(gpu_->device, gpu_->lightMap);
-    gpu_->lightMap = gpu_->uploadImage(image, true);
+    setLightMap(0, image);
+    if (gpu_->lightMapNext && gpu_->lightMapNext != gpu_->white)
+        SDL_ReleaseGPUTexture(gpu_->device, gpu_->lightMapNext);
+    gpu_->lightMapNext = nullptr;
+}
+
+void GpuRenderer::setLightMap(int slot, const RgbaImage& image) {
+    if (slot < 0 || slot > 1 || !image.width || !image.height || image.pixels.size() < size_t(image.width) * image.height * 4)
+        return;
+    SDL_GPUTexture*& target = slot == 0 ? gpu_->lightMap : gpu_->lightMapNext;
+    if (target && target != gpu_->white)
+        SDL_ReleaseGPUTexture(gpu_->device, target);
+    target = gpu_->uploadImage(image, true);
+}
+
+void GpuRenderer::setLightMapMix(float mix) { gpu_->lightMapMix = mix; }
+
+void GpuRenderer::setEnvironmentLight(simd_float3 rgb) { gpu_->environment = rgb; }
+
+GpuRenderer::LightSet GpuRenderer::outdoorLights(const LightingState& state, bool sims) {
+    auto lower = [](std::string s) {
+        for (char& c : s)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    LightSet set;
+    const simd_float3 sky = simd_make_float3(state.skyColor[0], state.skyColor[1], state.skyColor[2]) * state.skyStrength;
+    set.ambient = sky;
+    bool simFill = false;
+    for (const auto& l : state.lights)
+        simFill = simFill || lower(l.name).starts_with("simfill");
+    for (const auto& l : state.lights) {
+        const std::string name = lower(l.name);
+        if (name.starts_with("simfill") ? !sims : sims && simFill && (name == "fill1" || name == "fill2"))
+            continue;
+        const simd_float3 dir = simd_make_float3(l.direction[0], l.direction[1], l.direction[2]);
+        if (simd_length(dir) == 0)
+            continue;
+        const simd_float3 color = simd_max(simd_make_float3(l.color[0], l.color[1], l.color[2]) - sky, simd_make_float3(0, 0, 0));
+        set.lights.push_back({simd_normalize(dir), color * l.intensity});
+    }
+    return set;
+}
+
+void GpuRenderer::setLightSets(std::vector<LightSet> sets) {
+    if (sets.size() > kMaxLightSets)
+        sets.resize(kMaxLightSets);
+    gpu_->lightSets = std::move(sets);
+    gpu_->packedSets.assign(std::max<size_t>(gpu_->lightSets.size(), 1), GpuLightSet{});
+    for (size_t i = 0; i < gpu_->lightSets.size(); ++i) {
+        const LightSet& ls = gpu_->lightSets[i];
+        GpuLightSet& out = gpu_->packedSets[i];
+        const size_t n = std::min(ls.lights.size(), kMaxLights);
+        const size_t np = std::min(ls.points.size(), kMaxLights - n);
+        out.ambient[0] = ls.ambient.x, out.ambient[1] = ls.ambient.y, out.ambient[2] = ls.ambient.z;
+        out.ambient[3] = float(n + np);
+        for (size_t k = 0; k < n; ++k) {
+            const auto& d = ls.lights[k];
+            GpuLight& g = out.lights[k];
+            g = {};
+            g.direction[0] = d.direction.x, g.direction[1] = d.direction.y, g.direction[2] = d.direction.z;
+            g.color[0] = d.color.x, g.color[1] = d.color.y, g.color[2] = d.color.z, g.color[3] = d.specular;
+        }
+        for (size_t k = 0; k < np; ++k) {
+            const auto& p = ls.points[k];
+            GpuLight& g = out.lights[n + k];
+            const simd_float3 spot = simd_length(p.spotDirection) > 0 ? simd_normalize(p.spotDirection) : simd_make_float3(0, 0, -1);
+            g.direction[0] = p.position.x, g.direction[1] = p.position.y, g.direction[2] = p.position.z, g.direction[3] = 1;
+            g.color[0] = p.color.x, g.color[1] = p.color.y, g.color[2] = p.color.z, g.color[3] = p.specular;
+            g.params[0] = p.falloff, g.params[1] = p.range, g.params[2] = 1, g.params[3] = p.cosInner;
+            g.spot[0] = spot.x, g.spot[1] = spot.y, g.spot[2] = spot.z, g.spot[3] = p.cosOuter;
+        }
+    }
+}
+
+const std::vector<GpuRenderer::LightSet>& GpuRenderer::lightSets() const { return gpu_->lightSets; }
+
+int GpuRenderer::instanceOf(int model) const {
+    for (size_t i = 0; i < gpu_->instances.size(); ++i)
+        if (gpu_->instances[i].model == model)
+            return int(i);
+    return -1;
 }
 
 void GpuRenderer::setGroundClip(float z) { gpu_->groundClip = z; }
@@ -1466,57 +1564,22 @@ void GpuRenderer::setEye(simd_float3 eye) {
 
 void GpuRenderer::setInstanceLightSet(int instance, int set) {
     if (instance >= 0 && size_t(instance) < gpu_->instances.size())
-        gpu_->instances[size_t(instance)].lightSet = set == 1 ? 1 : 0;
+        gpu_->instances[size_t(instance)].lightSet = std::max(0, set);
 }
 
 void GpuRenderer::setLighting(const LightingState& state) {
-    auto lower = [](std::string s) {
-        for (char& c : s)
-            c = char(std::tolower(static_cast<unsigned char>(c)));
-        return s;
-    };
-    auto build = [&](bool sims, float* ambient, GpuLight* lights) {
-        const float sky[3] = {state.skyColor[0] * state.skyStrength, state.skyColor[1] * state.skyStrength,
-                              state.skyColor[2] * state.skyStrength};
-        ambient[0] = sky[0];
-        ambient[1] = sky[1];
-        ambient[2] = sky[2];
-        bool simFill = false;
-        for (const auto& light : state.lights)
-            simFill = simFill || lower(light.name).starts_with("simfill");
-        int count = 0;
-        for (const auto& light : state.lights) {
-            if (count >= 16)
-                break;
-            const std::string name = lower(light.name);
-            if (name.starts_with("simfill") ? !sims : sims && simFill && (name == "fill1" || name == "fill2"))
-                continue;
-            const float len = std::sqrt(light.direction[0] * light.direction[0] + light.direction[1] * light.direction[1] +
-                                        light.direction[2] * light.direction[2]);
-            if (len == 0)
-                continue;
-            GpuLight& out = lights[count];
-            out = {};
-            out.direction[0] = light.direction[0] / len;
-            out.direction[1] = light.direction[1] / len;
-            out.direction[2] = light.direction[2] / len;
-            out.color[0] = std::max(0.f, light.color[0] - sky[0]) * light.intensity;
-            out.color[1] = std::max(0.f, light.color[1] - sky[1]) * light.intensity;
-            out.color[2] = std::max(0.f, light.color[2] - sky[2]) * light.intensity;
-            out.color[3] = 1;
-            out.spot[2] = -1;
-            out.spot[3] = -2;
-            ++count;
-        }
-        ambient[3] = float(count);
-    };
-    build(false, gpu_->objectAmbient, gpu_->objectLights);
-    build(true, gpu_->simAmbient, gpu_->simLights);
+    gpu_->environment = simd_make_float3(state.environment[0], state.environment[1], state.environment[2]);
+    std::vector<LightSet> sets = gpu_->lightSets;
+    if (sets.size() < 2)
+        sets.resize(2);
+    sets[0] = outdoorLights(state, false);
+    sets[1] = outdoorLights(state, true);
+    setLightSets(std::move(sets));
 }
 
-int GpuRenderer::objectLightCount() const { return int(gpu_->objectAmbient[3]); }
+int GpuRenderer::objectLightCount() const { return int(gpu_->lightSetOf(0).ambient[3]); }
 
-int GpuRenderer::simLightCount() const { return int(gpu_->simAmbient[3]); }
+int GpuRenderer::simLightCount() const { return gpu_->packedSets.size() > 1 ? int(gpu_->packedSets[1].ambient[3]) : 0; }
 
 void GpuRenderer::setShadowCasters(const std::vector<ShadowCaster>& casters) {
     gpu_->casters.clear();

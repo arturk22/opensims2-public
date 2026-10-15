@@ -23,6 +23,7 @@
 #include "app/game_save.hpp"
 #include "app/build_mode.hpp"
 #include "app/buy_mode.hpp"
+#include "app/lot_lighting.hpp"
 #include "app/vm_objects.hpp"
 #include "formats/ui_resources.hpp"
 #include "render/particle_system.hpp"
@@ -330,6 +331,7 @@ int main(int argc, char** argv) {
         const os2::LightingConfig lighting = os2::loadLightingConfig(res / "Lights" / "Lighting.txt");
         // Redraws the lot after Build mode changed it: the model, the fences and the light map.
         int lotRebuilds = 0;
+        std::unique_ptr<os2::LotLighting> lotLighting;
         auto rebuildLot = [&] {
             cache.geometryChanged();
             layout = os2::LotLightMapLayout{};
@@ -337,7 +339,9 @@ int main(int argc, char** argv) {
             renderer.replaceObject(houseModel, model, index);
             renderer.setGroundClip(os2::lotSkirtBottom(lot));
             placeFences();
-            if (const auto* state = lighting.state("day"))
+            if (lotLighting)
+                lotLighting->setLightMapLayout(layout);
+            else if (const auto* state = lighting.state("day"))
                 renderer.setLightMap(os2::computeLotLightMap(layout, *state, {}, os2::LightMapGlobals::from(lighting)).image);
             ++lotRebuilds;
         };
@@ -469,6 +473,7 @@ int main(int argc, char** argv) {
                 actor->cue(0, actor->animation(index, idle));
                 actor->update(0.05);
                 const int model = renderer.addObject(actor->skin.model, index, true);
+                actor->model = model;
                 const int instance = renderer.addInstance(model, matrix_identity_float4x4);
                 renderer.setInstanceLightSet(instance, 1);
                 renderer.updateObject(model, actor->posed);
@@ -494,6 +499,21 @@ int main(int argc, char** argv) {
         for (auto& sim : sims)
             objectView.addSim(sim.id, sim.actor.get());
         std::printf("opensims2: object view %zu placed, %d follow the VM\n", placed.size(), following);
+        try {
+            lotLighting = std::make_unique<os2::LotLighting>(renderer, index, simulation, objectView, lighting,
+                                                             os2::loadLightOverrides(res / "Lights" / "LotLights.txt"));
+            for (auto& sim : sims)
+                lotLighting->addSim(sim.id, sim.actor.get());
+            lotLighting->setLightMapLayout(layout);
+            if (const char* state = std::getenv("OS2_LIGHTING"))
+                lotLighting->forceState(state);
+            // Test aid (main.mm --lamps): lamps the VM has not switched shine at this level.
+            if (const char* lamps = std::getenv("OS2_LAMPS"))
+                lotLighting->setDefaultLampLevel(std::atoi(lamps));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: lighting: %s\n", e.what());
+            lotLighting.reset();
+        }
 
         os2::GameAudio gameAudio(res, {});
         os2::LotAudio lotAudio(gameAudio, index, lot, {});
@@ -728,6 +748,8 @@ int main(int argc, char** argv) {
                 renderer.updateObject(sim.model, sim.actor->posed);
             }
             objectView.update();
+            if (lotLighting)
+                lotLighting->update(scene);
             os2::LotAudio::Listener listener;
             listener.x = camera.pivot.x;
             listener.y = camera.pivot.y;
@@ -747,6 +769,8 @@ int main(int argc, char** argv) {
                 camera.pivot.y += speed;
             std::vector<os2::GpuRenderer::ShadowCaster> casters;
             for (const auto& sim : sims) {
+                if (lotLighting)
+                    break; // LotLighting casts the Sims' shadows
                 os2::GpuRenderer::ShadowCaster caster;
                 caster.instance = sim.instance;
                 caster.feet = simd_make_float3(sim.actor->position[0], sim.actor->position[1], sim.actor->position[2]);
@@ -761,7 +785,8 @@ int main(int argc, char** argv) {
                 caster.color = shadowColor;
                 casters.push_back(caster);
             }
-            renderer.setShadowCasters(casters);
+            if (!lotLighting)
+                renderer.setShadowCasters(casters);
             std::vector<os2::GpuRenderer::CensorBox> censor;
             const char* censorOff = std::getenv("OS2_NO_CENSOR");
             const char* censorForce = std::getenv("OS2_CENSOR");
@@ -838,6 +863,15 @@ int main(int argc, char** argv) {
         log << simulation.summary() << "\n";
         log << "ticks " << simulation.ticks() << "\n";
         log << "shadows " << renderer.shadowCount() << "\n";
+        if (lotLighting) {
+            size_t points = 0;
+            for (const auto& set : renderer.lightSets())
+                points += set.points.size();
+            log << "lighting " << lotLighting->stateName() << "; light sets " << renderer.lightSets().size() << "; lamps "
+                << lotLighting->lamps().size() << "; point lights " << points << "\n";
+        } else {
+            log << "lighting static day\n";
+        }
         log << "censor " << censorOnFrame << "\n";
         log << "live-ui " << liveWindows << " windows " << liveDrawn << " drawn\n";
         log << "ui-pause " << (pauseClick ? "clicked" : "miss") << " vm "

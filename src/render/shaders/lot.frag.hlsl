@@ -21,6 +21,7 @@ cbuffer Frame : register(b0, space3) {
     float viewportY;
     float clipOn;
     float4 clipPlane;
+    float4 lightMapMix; // x: mix(slot 0, slot 1, x)
 };
 
 struct Light {
@@ -58,6 +59,8 @@ Texture2D shadowAtlas : register(t3, space2);
 SamplerState shadowSampler : register(s3, space2);
 Texture2D reflectionTex : register(t4, space2);
 SamplerState reflectionSampler : register(s4, space2);
+Texture2D lightMapNext : register(t5, space2);
+SamplerState lightMapNextSampler : register(s5, space2);
 
 struct Input {
     float4 position : SV_Position;
@@ -162,7 +165,8 @@ float4 main(Input input, bool front : SV_IsFrontFace) : SV_Target {
     const float3 n = normalize(front ? input.normal : -input.normal);
     const bool receive = shadowCount > 0.5 && n.z > 0.35;
     if ((flags & kLightMapped) != 0) {
-        const float3 lit = lightMapTexture.Sample(lightMapSampler, input.lightUv).rgb;
+        const float3 lit = lerp(lightMapTexture.Sample(lightMapSampler, input.lightUv).rgb,
+                                lightMapNext.Sample(lightMapNextSampler, input.lightUv).rgb, saturate(lightMapMix.x));
         float3 rgb = saturate(tex.rgb * color.rgb * lit * lightGain);
         if (receive) {
             rgb *= simShadows(input.world, false);

@@ -11,7 +11,11 @@
 #include "formats/scenegraph.hpp"
 #include "formats/sim_actor.hpp"
 #include "formats/skeleton.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
+#endif
 #include "vm/dialog.hpp"
 #include "vm/vm.hpp"
 

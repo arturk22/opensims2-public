@@ -21,7 +21,7 @@ struct simd_float4;
 struct simd_float2 {
     float x = 0, y = 0;
     simd_float2() = default;
-    explicit simd_float2(float s) : x(s), y(s) {}
+    simd_float2(float s) : x(s), y(s) {} // a scalar fills every lane, as Clang's vectors
     simd_float2(float x_, float y_) : x(x_), y(y_) {}
     float& operator[](int i) { return (&x)[i]; }
     float operator[](int i) const { return (&x)[i]; }
@@ -53,7 +53,7 @@ struct alignas(16) simd_float3 {
         float v[4];
     };
     simd_float3() : x(0), y(0), z(0), _pad(0) {}
-    explicit simd_float3(float s) : x(s), y(s), z(s), _pad(0) {}
+    simd_float3(float s) : x(s), y(s), z(s), _pad(0) {}
     simd_float3(float x_, float y_, float z_) : x(x_), y(y_), z(z_), _pad(0) {}
     float& operator[](int i) { return v[i]; }
     float operator[](int i) const { return v[i]; }
@@ -75,6 +75,12 @@ struct alignas(16) simd_float3 {
         z *= s;
         return *this;
     }
+    simd_float3& operator/=(float s) {
+        x /= s;
+        y /= s;
+        z /= s;
+        return *this;
+    }
 };
 
 struct alignas(16) simd_float4 {
@@ -87,7 +93,7 @@ struct alignas(16) simd_float4 {
         float v[4];
     };
     simd_float4() : x(0), y(0), z(0), w(0) {}
-    explicit simd_float4(float s) : x(s), y(s), z(s), w(s) {}
+    simd_float4(float s) : x(s), y(s), z(s), w(s) {}
     simd_float4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
     float& operator[](int i) { return v[i]; }
     float operator[](int i) const { return v[i]; }
@@ -110,6 +116,13 @@ struct alignas(16) simd_float4 {
         y *= s;
         z *= s;
         w *= s;
+        return *this;
+    }
+    simd_float4& operator/=(float s) {
+        x /= s;
+        y /= s;
+        z /= s;
+        w /= s;
         return *this;
     }
 };
