@@ -769,24 +769,27 @@ MaterialDefinition poolWaterMaterial() {
     return m;
 }
 
-// Terrain water: TerrainWaterShader (waterOnTerrain) reflects
-// "reflectionoutdoorwater-envcube", its alpha from the vertex colour (not in
-// the data: colour and 0.8 here are guesses), with a moving bump map left out.
+// Terrain water: TerrainWaterShader (waterOnTerrain, docs/shaders-mac.md 9):
+// the reflection of "reflectionoutdoorwater-envcube" x colorScalar (1, 1, 1),
+// alpha from the vertex colour (cWaterGeometryBuilder sets it from the
+// depth, docs/roof-fence-water-mac.md 3).
 MaterialDefinition terrainWaterMaterial() {
     MaterialDefinition m;
     m.materialType = "TerrainWater";
-    m.properties = {{"stdMatDiffCoef", "0.1,0.2,0.55,0.8"},
-                    {"stdMatUntexturedDiffAlpha", "0.8"},
-                    {"stdMatEnvCubeMode", "reflection"},
-                    {"stdMatEnvCubeCoef", "0.35,0.35,0.35"},
+    m.properties = {{"stdMatEnvCubeMode", "reflection"},
+                    {"stdMatEnvCubeCoef", "1,1,1"},
                     {"stdMatEnvCubeTextureName", "reflectionoutdoorwater-envcube"},
                     {"stdMatCullMode", "none"}};
     return m;
 }
 
 // Terrain water over every tile whose water level is above the terrain at a
-// corner (as OpenTS2 does), and pool water over each pool's floor tiles.
-void addWater(const Lot& lot, std::map<std::string, MeshBuilder>& out) {
+// corner (as OpenTS2 does; the game shows each quarter triangle of a tile
+// with a corner or the centre under water, IsWaterTilePartUnderTerrain
+// FUN_00c41488), each vertex white with the alpha of its depth
+// (FUN_00c41644: Terrain.ini AlphaVsDepthCurve); and pool water over each
+// pool's floor tiles.
+void addWater(const Lot& lot, const LotWaterParams& params, std::map<std::string, MeshBuilder>& out) {
     MeshBuilder* terrain = nullptr;
     for (uint32_t x = 0; x < lot.width; ++x)
         for (uint32_t y = 0; y < lot.height; ++y) {
@@ -804,8 +807,14 @@ void addWater(const Lot& lot, std::map<std::string, MeshBuilder>& out) {
             if (!terrain)
                 terrain = &out["water:terrain"];
             const Vec3f up{0, 0, 1};
-            auto v = [&](const Vec3f& q) { return terrain->vertex(q, up, q[0] / 4, q[1] / 4); };
-            terrain->quad(v(p[0]), v(p[1]), v(p[2]), v(p[3]));
+            auto v = [&](size_t i) {
+                const uint32_t k = terrain->vertex(p[i], up, p[i][0] / 4, p[i][1] / 4);
+                const float a = params.alpha(lotWaterDepth(lot, c[i][0], c[i][1]));
+                terrain->mesh.colors.resize(terrain->mesh.positions.size(), 0xFFFFFFFFu);
+                terrain->mesh.colors[k] = (uint32_t(std::clamp(a, 0.0f, 255.0f) + 0.5f) << 24) | 0xFFFFFFu;
+                return k;
+            };
+            terrain->quad(v(0), v(1), v(2), v(3));
         }
     for (const auto& pool : lot.pools) {
         MeshBuilder& b = out["water:pool"];
@@ -833,6 +842,12 @@ void addWater(const Lot& lot, std::map<std::string, MeshBuilder>& out) {
 
 PatternCatalog::PatternCatalog(ResourceIndex& index, const std::filesystem::path& resRoot) {
     const auto scripts = resRoot / "Catalog/Scripts";
+    {
+        std::ifstream in(resRoot.parent_path() / "Sys" / "Terrain.ini");
+        std::stringstream text;
+        text << in.rdbuf();
+        water_ = LotWaterParams::parse(text.str());
+    }
     floors_ = loadPatternScript(scripts / "floorPatterns.txt", "floorPattern");
     walls_ = loadPatternScript(scripts / "wallPatterns.txt", "wallPattern");
     {
@@ -1301,9 +1316,21 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
             model.parts.push_back(std::move(skirt));
         }
     }
-    const uint32_t mw = lot.maskWidth, mh = lot.maskHeight;
+    // A lot without paints has no paint grid: four points a tile (inferred).
+    const uint32_t mw = lot.maskWidth ? lot.maskWidth : lot.width * 4 + 1,
+                   mh = lot.maskWidth ? lot.maskHeight : lot.height * 4 + 1;
     const float spacing = lot.width ? float(lot.width) / float(std::max(mw, 2u) - 1) : 1.0f;
-    for (const auto& paint : lot.paints) {
+    // The water's paints (lake bed and beach), after the lot's own (their
+    // order among the terrain's paint layers is inferred).
+    std::vector<Lot::TerrainPaint> paints = lot.paints;
+    {
+        LotWaterPaints wp = lotWaterPaints(lot, patterns.water(), mw, mh, spacing);
+        for (auto& [texture, mask] : {std::pair{LotWaterPaints::kShallow, &wp.shallow},
+                                      std::pair{LotWaterPaints::kDeep, &wp.deep},
+                                      std::pair{LotWaterPaints::kBeach, &wp.beach}})
+            paints.push_back({texture, std::move(*mask)});
+    }
+    for (const auto& paint : paints) {
         if (std::none_of(paint.mask.begin(), paint.mask.end(), [](uint8_t v) { return v != 0; }))
             continue;
         ObjectModel::AlphaMask mask;
@@ -1355,7 +1382,7 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     std::map<std::string, int> maskedParts; // "wall:<material>#mask<n>" -> index into model.masks
     addWalls(lot, patterns, roofs, view, roofShown, holes, lm, built, model.warnings, cache ? &cache->cut : nullptr,
              index, cache, model.masks, maskedParts);
-    addWater(lot, built);
+    addWater(lot, patterns.water(), built);
     model.materials["water:terrain"] = terrainWaterMaterial();
     model.materials["water:pool"] = poolWaterMaterial();
     for (auto& [key, b] : built)

@@ -595,7 +595,7 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     mat.cull = sm.cull == StandardMaterial::Cull::None             ? MTL::CullModeNone
                : sm.cull == StandardMaterial::Cull::CounterClockwise ? MTL::CullModeFront
                                                                      : MTL::CullModeBack;
-    if (sm.shading == StandardMaterial::Shading::VertexColor)
+    if (sm.shading == StandardMaterial::Shading::VertexColor || sm.shading == StandardMaterial::Shading::TerrainWater)
         mat.flags |= kVertexColor;
     if (sm.hair)
         mat.flags |= kTwoSidedLight;

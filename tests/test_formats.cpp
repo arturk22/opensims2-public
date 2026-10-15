@@ -7,6 +7,7 @@
 #include "formats/lighting_config.hpp"
 #include "formats/lot.hpp"
 #include "formats/lot_model.hpp"
+#include "formats/lot_water.hpp"
 #include "formats/log_once.hpp"
 #include "app/wall_view.hpp"
 #include "formats/image.hpp"
@@ -1156,6 +1157,37 @@ static void testLogOnce() {
     check(count("opensims2: test flood: more errors like these are not shown\n") == 1, "logOnce: one line past the cap");
 }
 
+// Terrain water (docs/roof-fence-water-mac.md 3): Terrain.ini's curve and
+// the lake bed / beach paints of cWaterGeometryBuilder::PaintUnderWaterTerrain.
+static void testLotWater() {
+    const LotWaterParams p = LotWaterParams::parse("[WaterRepresentationParameters]\nWaterToTerrainSurfaceOffset=.5\n"
+                                                   "[WaterRenderParameters]\nAlphaVsDepthCurve= .25,62,  10,110\n"
+                                                   ";AlphaVsDepthCurve= 0,128,  0.5,255\nShallowPaintDepthMin=0\n"
+                                                   "DeepPaintDepthMin=0.5\nShallowPaintDepthMax=5\nDeepPaintDepthMax=2\n"
+                                                   "BeachPaintStartDepth=-0.35\nBeachPaintPeakDepth=-0.1\n"
+                                                   "BeachPaintEndDepth=0.3\nMaxBeachWidth=1.5\nBeachIntensityFactor=3.2\n");
+    check(p.alphaVsDepth.size() == 2 && p.alpha(0.1f) == 62 && p.alpha(20) == 110, "water alpha curve ends");
+    check(std::abs(p.alpha(1) - (62 + 0.75f * 48 / 9.75f)) < 1e-3f, "water alpha curve between");
+    check(p.deepMax == 2 && p.beachEnd == 0.3f && p.beachIntensity == 3.2f, "water paint parameters");
+    check(LotWaterParams::parse("").alpha(4) == 255 && LotWaterParams::parse("").deepMin == 0.4f, "water defaults");
+
+    // 2x1 lot sloping down to x = 2 (0, -1, -3) under a water level of 0.
+    Lot lot;
+    lot.width = 2, lot.height = 1, lot.levelCount = 1;
+    lot.elevations = {0, 0, -1, -1, -3, -3};
+    lot.water.assign(6, 0.0f);
+    const LotWaterPaints w = lotWaterPaints(lot, p, 5, 3, 0.5f);
+    check(w.shallow.size() == 15 && w.beach[0] == 191 && w.shallow[0] == 0 && w.deep[0] == 0, "water paint at the shore");
+    check(w.shallow[1] == 255 && w.deep[1] == 0, "shallow lake bed peaks at DeepPaintDepthMin");
+    check(w.shallow[2] == 227 && w.deep[2] == 84, "lake bed at depth 1");
+    check(w.shallow[4] == 114 && w.deep[4] == 255 && w.beach[4] == 0, "lake bed at depth 3");
+    // Dry land 0.2 above the water next to it: beach scaled by the distance.
+    lot.elevations = {0.2f, 0.2f, -1, -1, -3, -3};
+    const LotWaterPaints d = lotWaterPaints(lot, p, 5, 3, 0.5f);
+    const float b = (0.15f) * 255 / 0.25f * (1 - 1 / 1.5f) * 3.2f;
+    check(d.beach[0] == uint8_t(int(b)), "beach above the water fades with the distance to it");
+}
+
 int main() {
     testLogOnce();
     testDxt1();
@@ -1173,6 +1205,7 @@ int main() {
     testPropertySet();
     testLotModel();
     testLotLightMap();
+    testLotWater();
     testTwoTileArchMask();
     testSawtoothAtticWindows();
     testNextStoryOverGround();

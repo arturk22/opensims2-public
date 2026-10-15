@@ -435,6 +435,15 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         normalEnabled = false;
         out.texAnim = StandardMaterial::TexAnim::None;
         out.waterSpeed = number("waterSpeed", 0.3f);
+    } else if (type == "TerrainWater") {
+        // TerrainWaterShader (terrain.matShad, docs/shaders-mac.md 9): the
+        // reflection of the env cube x colorScalar (1, 1, 1) x the lights,
+        // alpha from the vertex colour; no diffuse, no specular.
+        out.shading = StandardMaterial::Shading::TerrainWater;
+        out.blend = StandardMaterial::Blend::Alpha;
+        out.specularPower = 0;
+        diffuse = {0, 0, 0, 1};
+        out.untexturedAlpha = 1;
     } else if (contains(type, "Water")) {
         // water.matShad: alpha blended over the water layer (5).
         out.blend = StandardMaterial::Blend::Alpha;

@@ -63,6 +63,7 @@ add_library(os2_formats
   src/formats/lot_model.cpp
   src/formats/lot_lightmap.cpp
   src/formats/lot_roof.cpp
+  src/formats/lot_water.cpp
   src/formats/model.cpp
   src/formats/movie.cpp
   src/formats/neighborhood.cpp

@@ -108,7 +108,8 @@ struct StandardMaterial {
         Sim,        // Sim materials: no specular, lights scaled by simMaterialLightingScale (0.8)
         CelShaded,  // two-tone ramp from a camera-relative light, white rim
         VertexColor, // VertexAlpha: vertex colour and alpha, unlit
-        Water        // WaterAnimatingTextures (LowEndWater): two animated scales of the texture, lit x1
+        Water,       // WaterAnimatingTextures (LowEndWater): two animated scales of the texture, lit x1
+        TerrainWater // TerrainWaterShader: the env cube reflection only, alpha from the vertex colour
     };
     enum class TexAnim { None, Transform, Tile };
     enum class Waveform { Sawtooth, Triangular, Sine };
