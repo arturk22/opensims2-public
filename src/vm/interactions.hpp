@@ -135,6 +135,13 @@ void cancelInteractionsWith(VM& vm, ObjectId object);
 // cTSPerson::ClearSubActions: empties the sub-queue and drops the current
 // sub-action (person data 26, 75-78 and 157 go to 0).
 void clearSubActions(Object& sim);
+// cTSPerson::SetCurrentAction (Mac BV 0xadc6d8), once the Sim's running
+// interaction is set (Idle for Input's next entry, Gosub Found Action):
+// besides the queue's person data (syncQueueData) it zeroes person data 39,
+// 71 (non-interruptible), 73 (the footprint's trim) and 110 (the "notified"
+// flag "Wait For Notify" reads) and clears the sub-actions. Not done: 164
+// (a flag of the interaction's object, not read).
+void setCurrentAction(Object& sim);
 
 // Whether the interaction a Sim is running was cancelled (for primitives
 // that wait, like animations).

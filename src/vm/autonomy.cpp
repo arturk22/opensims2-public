@@ -8,6 +8,7 @@
 #include "formats/binreader.hpp"
 #include "interactions.hpp"
 #include "motives.hpp"
+#include "ownership.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -597,7 +598,11 @@ Exit gosubFoundAction(Context& c) {
     sim.queue.insert(sim.queue.begin() + std::ptrdiff_t(std::min(at, sim.queue.size())), std::move(*q));
     sim.activeInteraction = int(std::min(at, sim.queue.size() - 1));
     sim.person->data[persondata::Priority] = kPriorityAutonomous;
-    syncQueueData(sim);
+    // try_gosub_action_found (BV 0xade17c): SetCurrentAction, then
+    // UpdateObjectOwnership.
+    setCurrentAction(sim);
+    const ObjectId me = sim.id;
+    updateObjectOwnership(c.vm, me, item.object);
     c.vm.call(c.thread, item.object, item.action, item.args);
     Frame& f = c.thread.stack.back();
     f.stackObject = item.object;

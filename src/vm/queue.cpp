@@ -839,8 +839,12 @@ bool attemptPush(VM& vm, Thread& t, bool nested) {
             sim->queue.insert(sim->queue.begin() + std::ptrdiff_t(next), std::move(moved));
         }
         sim->activeInteraction = int(next);
-        updateObjectOwnership(vm, t.me, item.object);
         setPriority(*sim, item.priority);
+        setCurrentAction(*sim);
+        updateObjectOwnership(vm, t.me, item.object);
+        sim = vm.object(t.me);
+        if (!sim)
+            return true;
         evaluatePriorities(vm, *sim);
         syncQueueData(*sim);
         return true;
@@ -871,6 +875,18 @@ void endInteraction(VM& vm, Thread& t) {
     setPriority(*sim, sim->activeInteraction >= 0 ? q[size_t(sim->activeInteraction)].priority : kPriorityIdle);
     evaluatePriorities(vm, *sim);
     syncQueueData(*sim);
+}
+
+void setCurrentAction(Object& sim) {
+    if (sim.person) {
+        auto& d = sim.person->data;
+        for (size_t k : {size_t(39), size_t(persondata::NonInterruptible), size_t(73), size_t(110)})
+            if (k < d.size())
+                d[k] = 0;
+    }
+    sim.subQueue.clear(); // ClearSubActions
+    sim.subAction.reset();
+    syncQueueData(sim);
 }
 
 void clearSubActions(Object& sim) {
