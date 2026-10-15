@@ -46,12 +46,20 @@ public:
         std::string rail, diagonalRail, post;
     };
     const Fence* fence(uint32_t guid) const;
+    // The fence the game draws for a style: its own, else the catalog's
+    // default fence product (fences.txt's `default` entry, the picket fence
+    // 2), as cFenceGeometryNode::FenceGeometryResource does (Mac BV 0x754000,
+    // docs/roof-fence-water-mac.md §2.1); null without either.
+    const Fence* fenceOrDefault(uint32_t style) const;
 
-    // Fence arches (fencearches.txt): the CRES names of the part over the
-    // edge, the parts hanging east and west of the posts, and the post.
+    // Fence arches (fencearches.txt): the partition style (the `fenceArch`
+    // ID), the CRES names of the part over the edge, the parts hanging east
+    // and west of the posts, and the post.
     struct FenceArch {
+        uint32_t style = 0;
         std::string center, east, west, post;
     };
+    bool isFenceArchStyle(uint32_t style) const;
     // The base game's one arch (the lot keeps no style per arch: inferred).
     const FenceArch* fenceArch() const { return arches_.empty() ? nullptr : &arches_.front(); }
 
@@ -63,6 +71,7 @@ private:
     std::map<uint32_t, std::string> byGuid_;
     std::map<uint32_t, Roof> roofs_;
     std::map<uint32_t, Fence> fences_;
+    std::optional<Fence> defaultFence_;
     std::vector<FenceArch> arches_;
     LotWaterParams water_;
 

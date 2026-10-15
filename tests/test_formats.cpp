@@ -9,6 +9,7 @@
 #include "formats/camera_config.hpp"
 #include "formats/lighting_config.hpp"
 #include "formats/lot.hpp"
+#include "formats/lot_edit.hpp"
 #include "formats/lot_model.hpp"
 #include "formats/lot_roof.hpp"
 #include "formats/lot_water.hpp"
@@ -29,6 +30,7 @@
 #include <string>
 #include <unistd.h>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <fstream>
 #include <iterator>
@@ -1493,6 +1495,128 @@ static void testWallGeometry() {
     }
 }
 
+// Fences as cFenceGeometryNode places them (docs/roof-fence-water-mac.md
+// §2.1): rails turned and sheared to the floor at the far end, scale 1; the
+// catalog's default fence for a style it lacks; the diagonal model on a
+// diagonal edge and no rail there without one; the +0.75 of the raising
+// deck/foundation style (marker 4: both ends for a rail, the point for a
+// post); posts not turned; arch end parts only where no arch goes on.
+static void testFencePieces() {
+    auto catalogAt = [](const char* name, bool diagonal) {
+        const auto res = std::filesystem::temp_directory_path() / name;
+        std::filesystem::create_directories(res / "Catalog/Scripts");
+        std::ofstream f(res / "Catalog/Scripts/fences.txt");
+        f << "version 1\nfence 3\nrailModel \"other\"\npostModel \"otherPost\"\n"
+          << "fence 2\nrailModel \"rail\"\n" << (diagonal ? "diagRailModel \"diag\"\n" : "")
+          << "postModel \"post\"\nnotInCatalog\ndefault\n";
+        std::ofstream a(res / "Catalog/Scripts/fencearches.txt");
+        a << "version 1\nfenceArch 26\narchCenterModel \"center\"\narchEastModel \"east\"\n"
+          << "archWestModel \"west\"\narchPostModel \"apost\"\n";
+        return res;
+    };
+    auto near = [](float a, float b) { return std::abs(a - b) < 1e-4f; };
+    const auto res = catalogAt("os2_test_fence_res", true);
+    ResourceIndex index(res);
+    const PatternCatalog patterns(index, res);
+    check(patterns.fenceOrDefault(0x12345678) && patterns.fenceOrDefault(0x12345678)->rail == "rail",
+          "fences: a style with no catalog fence takes the default fence (fences.txt's default)");
+
+    constexpr uint32_t kStyle = 0x12345678; // no fence of its own
+    Lot lot;
+    lot.width = 4, lot.height = 4, lot.levelCount = 1;
+    lot.elevations.assign(5 * 5, 0.0f);
+    lot.elevations[2 * 5 + 1] = 0.5f; // grid point (2, 1)
+    lot.deckFoundationStyles.assign(4 * 4, {-1, -1, -1, -1});
+    lot.deckFoundationStyles[2 * 4 + 3][3] = 4; // tile (2, 3), south quarter: touches (2, 3) and (3, 3)
+    auto add = [&](float ax, float ay, float bx, float by) {
+        Lot::Wall w;
+        w.a = {ax, ay, 0}, w.b = {bx, by, 0};
+        w.type = kStyle;
+        lot.walls.push_back(w);
+    };
+    add(1, 1, 2, 1); // sloped: (2, 1) is 0.5 up
+    add(1, 1, 2, 2); // diagonal
+    add(2, 3, 3, 3); // both ends on the raising style
+    add(3, 3, 4, 3); // one end only
+    lot.fencePosts = {{0, 3, 3, kStyle}, {0, 4, 3, kStyle}, {0, 1, 2, 26}};
+    Lot::WallGraph arches;
+    arches.instance = 0x13;
+    lot.wallGraphs.push_back(arches);
+    addFenceArch(lot, 0, 0, 0, 1, 0);
+    addFenceArch(lot, 0, 1, 0, 2, 0); // in line with the first
+    addFenceArch(lot, 0, 0, 4, 0, 3); // alone, going -y
+
+    const auto pieces = lotFencePieces(lot, patterns);
+    auto find = [&](const std::string& model, float x, float y) -> const LotFencePiece* {
+        for (const auto& p : pieces)
+            if (p.model == model && std::abs(p.transform[12] - x) < 1e-4f && std::abs(p.transform[13] - y) < 1e-4f)
+                return &p;
+        return nullptr;
+    };
+    auto count = [&](const std::string& model) {
+        return std::count_if(pieces.begin(), pieces.end(), [&](const LotFencePiece& p) { return p.model == model; });
+    };
+    const auto* slope = find("rail", 1, 1);
+    check(slope && near(slope->transform[0], 1) && near(slope->transform[1], 0) && near(slope->transform[2], 0.5f) &&
+              near(slope->transform[4], 0) && near(slope->transform[5], 1) && near(slope->transform[14], 0),
+          "fences: a rail is sheared up to the floor at its far end, scale 1");
+    const auto* diag = find("diag", 1, 1);
+    const float r = std::sqrt(0.5f);
+    check(diag && near(diag->transform[0], r) && near(diag->transform[1], r) && near(diag->transform[2], 0) &&
+              near(diag->transform[4], -r) && near(diag->transform[5], r),
+          "fences: a diagonal edge takes the diagonal rail, turned 45 degrees, not stretched");
+    const auto* raisedRail = find("rail", 2, 3);
+    const auto* oneEnd = find("rail", 3, 3);
+    check(raisedRail && near(raisedRail->transform[14], 0.75f) && oneEnd && near(oneEnd->transform[14], 0),
+          "fences: a rail is raised 0.75 when both ends touch deck/foundation style 4, not one");
+    const auto* post = find("post", 3, 3);
+    const auto* plainPost = find("post", 4, 3);
+    check(post && near(post->transform[14], 0.75f) && plainPost && near(plainPost->transform[14], 0) &&
+              near(post->transform[0], 1) && near(post->transform[1], 0),
+          "fences: a post on a point touching style 4 is raised 0.75, not turned");
+    check(!find("post", 1, 2) && !find("otherPost", 1, 2), "fences: an arch-style post is left to the arch");
+    check(count("center") == 3 && count("apost") == 6, "fences: every arch has its centre and two posts");
+    check(find("west", 0, 0) && !find("west", 1, 0) && find("east", 2, 0) && !find("east", 1, 0),
+          "fences: arches in a line keep only the outer end parts");
+    const auto* turned = find("west", 0, 4);
+    check(turned && near(turned->transform[0], 0) && near(turned->transform[1], -1) && find("east", 0, 3),
+          "fences: a lone arch has both end parts, turned with it");
+    const auto* archPost = find("apost", 0, 4);
+    check(archPost && near(archPost->transform[0], 1) && near(archPost->transform[1], 0),
+          "fences: arch posts are not turned");
+
+    // Without a diagonal model the diagonal edge draws nothing (no straight
+    // rail in its place).
+    const auto res2 = catalogAt("os2_test_fence_res_nodiag", false);
+    ResourceIndex index2(res2);
+    const PatternCatalog plain(index2, res2);
+    const auto noDiag = lotFencePieces(lot, plain);
+    const bool straightOnDiagonal = std::any_of(noDiag.begin(), noDiag.end(), [&](const LotFencePiece& p) {
+        return p.model == "rail" && std::abs(p.transform[0] - p.transform[1]) < 1e-4f;
+    });
+    check(!straightOnDiagonal, "fences: no straight rail on a diagonal edge without a diagonal model");
+
+    // A half wall (a covered fence) on the raising style: wall node 5,
+    // raised 0.75 (inferred half walls: the base catalog has none).
+    lot.wallPatterns[1] = "paper";
+    Lot half;
+    half = lot;
+    half.walls.clear();
+    half.fencePosts.clear();
+    Lot::Wall hw;
+    hw.a = {2, 3, 0}, hw.b = {3, 3, 0};
+    hw.type = kStyle;
+    hw.patterns = {1, 1};
+    half.walls.push_back(hw);
+    const ObjectModel m = buildLotModel(half, index, patterns);
+    float bottom = 1e9f, top = -1e9f;
+    for (const auto& part : m.parts)
+        if (part.node == "wall:paper")
+            for (const auto& v : part.mesh.positions)
+                bottom = std::min(bottom, v[2]), top = std::max(top, v[2]);
+    check(near(bottom, 0.75f) && near(top, 0.75f + 1.025f), "half walls: node 5 raised 0.75 on deck/foundation style 4");
+}
+
 // With the game's data: N001_Lot68's deck/foundation markers (3ARY 0x14):
 // the pool's 3 under the ground (level -1), the foundation's 0 and the
 // deck's 1 under the raised floor (level 0).
@@ -1832,6 +1956,7 @@ int main() {
     testPropertySet();
     testLotModel();
     testWallGeometry();
+    testFencePieces();
     testDeckFoundationMarkers();
     testLotLightMap();
     testLotWater();

@@ -62,12 +62,43 @@ struct WallNode {
 // Deck skirts (walls.txt walls 16 and 24, "wallThickness none",
 // floorToFloorBasedCeiling).
 constexpr uint32_t kDeckSkirtRedwood = 16, kDeckSkirtMinimal = 24;
-WallNode wallNode(const Lot::Wall& w) {
-    // A fence with a covering is a half wall: node 3 (fixedHeight, not
-    // flat-topped; node 5, raised 0.75 and 0.1 thick on a "type 4" floor,
-    // is not told apart: inferred, as the fences' +0.75).
+
+// The deck/foundation style that raises fences, half walls and their posts
+// 0.75 (docs/roof-fence-water-mac.md §2.1): the raw marker 4, not a product
+// type. No base-game product has that ID (deckfoundations.txt: 0-3; the BV
+// parser's fourth keyword is "stage": an expansion's stage, inferred).
+constexpr int32_t kRaisingDeckFoundationStyle = 4;
+constexpr float kRaisedByStyle = 0.75f;
+// FUN_00164a7c (Mac BV): whether grid point (x, y) of `level` touches a
+// quarter tile marked kRaisingDeckFoundationStyle (cWorldDB::
+// DeckFoundationStyle, cIWorldDB slot 0xc8): the four tiles round the point
+// on the lot, each with the two quarters that touch it (table 0x27324e0).
+bool touchesRaisingStyle(const Lot& lot, int level, int x, int y) {
+    struct Round {
+        int dx, dy, quarters; // bits: 1 west, 2 north, 4 east, 8 south
+    };
+    static constexpr Round kRound[] = {{-1, -1, 6}, {0, -1, 3}, {0, 0, 9}, {-1, 0, 12}};
+    for (const auto& t : kRound)
+        for (int q = 0; q < 4; ++q)
+            if ((t.quarters >> q & 1) && lot.deckFoundationStyle(level, x + t.dx, y + t.dy, q) == kRaisingDeckFoundationStyle)
+                return true;
+    return false;
+}
+// FUN_00166414: both ends of a partition touch it.
+bool bothEndsRaised(const Lot& lot, const Lot::Wall& w) {
+    return touchesRaisingStyle(lot, w.a.level, int(std::lround(w.a.x)), int(std::lround(w.a.y))) &&
+           touchesRaisingStyle(lot, w.b.level, int(std::lround(w.b.x)), int(std::lround(w.b.y)));
+}
+
+WallNode wallNode(const Lot& lot, const Lot::Wall& w) {
+    // A fence with a covering is a half wall (inferred: the game asks the
+    // style's PartitionType, 3; the base catalog has no such fence): node 3
+    // (fixedHeight, not flat-topped), or node 5, 0.1 thick and raised 0.75,
+    // when both ends touch the raising deck/foundation style (AddWallImpl
+    // with FUN_00166414, docs/walls-floors-mac.md §1).
     if (Lot::isFence(w.type))
-        return {3, 0.15f, -0.01f, kSpanFixedHeight, false, true};
+        return bothEndsRaised(lot, w) ? WallNode{5, 0.1f, kRaisedByStyle, kSpanFixedHeight, false, true}
+                                      : WallNode{3, 0.15f, -0.01f, kSpanFixedHeight, false, true};
     if (w.type == Lot::Attic)
         return {2, 0.15f, -0.01f, kSpanFloorToRoof, false, true};
     if (w.type == kDeckSkirtRedwood || w.type == kDeckSkirtMinimal)
@@ -499,7 +530,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             continue;
         W r;
         r.wall = &w;
-        r.node = wallNode(w);
+        r.node = wallNode(lot, w);
         ws.push_back(r);
     }
 
@@ -525,7 +556,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
         if (!r.node.followsMode || !wallModeLevel(view, level))
             continue;
         if (view.walls == LotViewOptions::Walls::Down) {
-            const bool lowers = r.node.index == 2 || r.node.index == 3 || (r.node.index == 0 && w.type == Lot::Normal);
+            const bool lowers = r.node.index == 2 || r.node.index == 3 || r.node.index == 5 || (r.node.index == 0 && w.type == Lot::Normal);
             r.down = {lowers, lowers, lowers};
         } else if (view.walls == LotViewOptions::Walls::Cutaway && (r.node.index == 0 || r.node.index == 2)) {
             const bool da = downPoints.count(keyOf(level, w.a.x, w.a.y)) > 0;
@@ -960,7 +991,7 @@ void addWalls(const Lot& lot, const PatternCatalog& patterns, const LotRoofs& ro
             poly.triangle(id[0], id[k], id[k + 1]);
     }
     if (unknownFences)
-        warnings.push_back(std::to_string(unknownFences) + " fence segments of unknown fences");
+        warnings.push_back(std::to_string(unknownFences) + " fence segments of unknown fences (drawn as the default fence)");
 }
 
 // Doors and windows cut holes in the walls they stand in. The game draws the
@@ -1188,6 +1219,7 @@ PatternCatalog::PatternCatalog(ResourceIndex& index, const std::filesystem::path
             ss >> key;
             if (key == "fenceArch") {
                 arches_.emplace_back();
+                ss >> arches_.back().style;
                 continue;
             }
             if (arches_.empty())
@@ -1205,6 +1237,44 @@ PatternCatalog::PatternCatalog(ResourceIndex& index, const std::filesystem::path
             else if (key == "archPostModel")
                 arches_.back().post = value;
         }
+    }
+    {
+        // fences.txt: the product flagged `default` (the picket fence 2) is
+        // the one cTSCatalog::DefaultFenceProduct gives for a style with no
+        // fence of its own.
+        std::ifstream in(scripts / "fences.txt");
+        std::optional<Fence> block;
+        bool isDefault = false;
+        auto close = [&] {
+            if (block && isDefault)
+                defaultFence_ = block;
+            block.reset(), isDefault = false;
+        };
+        for (std::string line; std::getline(in, line);) {
+            std::istringstream ss(line.substr(0, line.find('#')));
+            std::string key, value;
+            ss >> key;
+            if (key == "fence") {
+                close();
+                block.emplace();
+                continue;
+            }
+            if (!block)
+                continue;
+            std::getline(ss >> std::ws, value);
+            std::erase(value, '"');
+            while (!value.empty() && std::isspace(uint8_t(value.back())))
+                value.pop_back();
+            if (key == "railModel")
+                block->rail = value;
+            else if (key == "diagRailModel")
+                block->diagonalRail = value;
+            else if (key == "postModel")
+                block->post = value;
+            else if (key == "default")
+                isDefault = true;
+        }
+        close();
     }
     auto text = [&](const ResourceIndex::Location& loc) {
         const auto bytes = index.read(loc);
@@ -1256,6 +1326,16 @@ const PatternCatalog::Roof* PatternCatalog::roof(uint32_t guid) const {
 const PatternCatalog::Fence* PatternCatalog::fence(uint32_t guid) const {
     auto it = fences_.find(guid);
     return it == fences_.end() ? nullptr : &it->second;
+}
+
+const PatternCatalog::Fence* PatternCatalog::fenceOrDefault(uint32_t style) const {
+    if (const Fence* f = fence(style))
+        return f;
+    return defaultFence_ ? &*defaultFence_ : nullptr;
+}
+
+bool PatternCatalog::isFenceArchStyle(uint32_t style) const {
+    return std::any_of(arches_.begin(), arches_.end(), [&](const FenceArch& a) { return a.style == style; });
 }
 
 std::string PatternCatalog::material(const std::map<std::string, std::string>& scripts,
@@ -1545,7 +1625,7 @@ void fillSunOccluders(const Lot& lot, const LotRoofs& roofs, LotLightMapLayout& 
         if (wl.a.x == wl.b.x && wl.a.y == wl.b.y)
             continue;
         // The wall's top as drawn (WallTopElevation, the node's span).
-        const int span = wallNode(wl).span;
+        const int span = wallNode(lot, wl).span;
         auto topAt = [&](float x, float y) { return wallTopElevation(lot, roofs, level, x, y, span); };
         LotLightMapLayout::SunWall sw;
         sw.a = {wl.a.x, wl.a.y};
@@ -1889,61 +1969,95 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
 std::vector<LotFencePiece> lotFencePieces(const Lot& lot, const PatternCatalog& patterns,
                                           std::vector<std::string>* warnings) {
     std::vector<LotFencePiece> out;
+    // SampledFloorElevation of a grid point (the ends, posts and arches all
+    // stand on one).
     auto ground = [&](int level, float x, float y) {
         return lot.elevation(level, int(std::lround(x)), int(std::lround(y)));
     };
-    // As OpenTS2's FenceCollection: a rail model runs one tile along its +X
-    // (a diagonal rail one diagonal), placed at the start, turned towards the
-    // end and sheared so its far end sits on the ground there.
+    auto raised = [&](int level, float x, float y) {
+        return touchesRaisingStyle(lot, level, int(std::lround(x)), int(std::lround(y)));
+    };
+    // Rails (cFenceGeometryNode::AddRailImpl, Mac BV 0x759e38;
+    // docs/roof-fence-water-mac.md §2.1): the rail model (a diagonal edge's
+    // DiagRail, no straight one in its place) runs one edge along its +X,
+    // translated to the start, turned by atan2(dy, dx) and sheared so its far
+    // end sits on the floor there (z += dz / horizontal length * x), scale 1;
+    // 0.75 higher when both ends touch the raising deck/foundation style. A
+    // style without a fence of its own takes the default fence's models.
     for (const auto& w : lot.walls) {
         if (!Lot::isFence(w.type))
             continue;
-        const auto* fence = patterns.fence(w.type);
+        const auto* fence = patterns.fenceOrDefault(w.type);
         if (!fence)
             continue;
         const float dx = w.b.x - w.a.x, dy = w.b.y - w.a.y, len = std::sqrt(dx * dx + dy * dy);
         if (len == 0)
             continue;
-        const bool diagonal = len > 1.1f && !fence->diagonalRail.empty();
+        const bool diagonal = std::abs(dx) > 0.5f && std::abs(dy) > 0.5f; // the locator's direction bits 0x30
         const std::string& model = diagonal ? fence->diagonalRail : fence->rail;
         if (model.empty())
             continue;
-        const float scale = diagonal ? len / std::sqrt(2.0f) : len;
         const float z0 = ground(w.a.level, w.a.x, w.a.y), z1 = ground(w.b.level, w.b.x, w.b.y);
         const float c = dx / len, s = dy / len, shear = (z1 - z0) / len;
-        out.push_back({model, {c * scale, s * scale, shear * scale, 0, -s, c, 0, 0, 0, 0, 1, 0, w.a.x, w.a.y, z0, 1}});
+        const float lift = bothEndsRaised(lot, w) ? kRaisedByStyle : 0.0f;
+        out.push_back({model, {c, s, shear, 0, -s, c, 0, 0, 0, 0, 1, 0, w.a.x, w.a.y, z0 + lift, 1}});
     }
+    // Posts (AddPostImpl, 0x75a4c0), from the lot's post layer: the style's
+    // post at the grid point, not turned, scale 1, 0.75 higher when that one
+    // point touches the raising style (for a half wall the game also wants a
+    // half wall of the style at the point, graph 0xb: not told apart here,
+    // the base game has none). An arch's posts are drawn with the arch below.
     size_t unknown = 0;
     for (const auto& p : lot.fencePosts) {
-        const auto* fence = patterns.fence(p.fence);
-        if (!fence || fence->post.empty()) {
-            ++unknown;
+        if (patterns.isFenceArchStyle(p.fence))
             continue;
-        }
-        out.push_back({fence->post, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, ground(p.level, p.x, p.y), 1}});
+        if (!patterns.fence(p.fence))
+            ++unknown;
+        const auto* fence = patterns.fenceOrDefault(p.fence);
+        if (!fence || fence->post.empty())
+            continue; // (the rock walls have no post)
+        const float lift = raised(p.level, p.x, p.y) ? kRaisedByStyle : 0.0f;
+        out.push_back({fence->post, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, ground(p.level, p.x, p.y) + lift, 1}});
     }
     if (unknown && warnings)
-        warnings->push_back(std::to_string(unknown) + " fence posts of unknown fences");
-    // Fence arches (graph 0x13): the centre over the edge like a rail, a
-    // post at each end with the west part on the start's and the east part
-    // on the end's (placement inferred from the parts' names).
-    if (const auto* arch = patterns.fenceArch())
-        for (const auto& f : fenceArches(lot)) {
+        warnings->push_back(std::to_string(unknown) + " fence posts of unknown fences (drawn as the default fence)");
+    // Fence arches (graph 0x13; AddArchCenterImpl, 0x75b8a8): the centre at
+    // the start, turned toward the end, not sheared; the west part at the
+    // start unless another arch goes on from there along the line (a - d,
+    // cPartitionManager::FenceArchExists), the east part at the end unless
+    // one goes on past it (b + d); both turned with the arch; no +0.75. The
+    // posts: the game takes them from the post layer (an arch-style post,
+    // part 3, not turned); here one at each end (inferred: the app's Build
+    // mode writes no arch posts).
+    if (const auto* arch = patterns.fenceArch()) {
+        const auto arches = fenceArches(lot);
+        auto archAt = [&](int level, int ax, int ay, int bx, int by) {
+            return std::any_of(arches.begin(), arches.end(), [&](const auto& f) {
+                return f.level == level && ((f.ax == ax && f.ay == ay && f.bx == bx && f.by == by) ||
+                                            (f.ax == bx && f.ay == by && f.bx == ax && f.by == ay));
+            });
+        };
+        for (const auto& f : arches) {
             const float ax = float(f.ax), ay = float(f.ay), bx = float(f.bx), by = float(f.by);
             const float dx = bx - ax, dy = by - ay, len = std::sqrt(dx * dx + dy * dy);
             if (len == 0)
                 continue;
             const float c = dx / len, s = dy / len, za = ground(f.level, ax, ay), zb = ground(f.level, bx, by);
-            auto put = [&](const std::string& model, float x, float y, float z) {
+            auto put = [&](const std::string& model, float x, float y, float z, bool turned = true) {
                 if (!model.empty())
-                    out.push_back({model, {c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, x, y, z, 1}});
+                    out.push_back({model, turned ? std::array<float, 16>{c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, x, y, z, 1}
+                                                 : std::array<float, 16>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1}});
             };
+            const int ddx = f.bx - f.ax, ddy = f.by - f.ay;
             put(arch->center, ax, ay, za);
-            put(arch->post, ax, ay, za);
-            put(arch->post, bx, by, zb);
-            put(arch->west, ax, ay, za);
-            put(arch->east, bx, by, zb);
+            put(arch->post, ax, ay, za, false);
+            put(arch->post, bx, by, zb, false);
+            if (!archAt(f.level, f.ax, f.ay, f.ax - ddx, f.ay - ddy))
+                put(arch->west, ax, ay, za);
+            if (!archAt(f.level, f.bx, f.by, f.bx + ddx, f.by + ddy))
+                put(arch->east, bx, by, zb);
         }
+    }
     return out;
 }
 
