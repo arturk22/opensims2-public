@@ -169,14 +169,40 @@ std::string BuildEditor::wallBlocked(int level, int ax, int ay, int bx, int by, 
         // the wall must be level.
         return fail(0x49, "the ground must be flat");
     }
-    // Above the ground a wall stands on a wall or next to a floor (inferred
-    // from requiresSupportUnderneath; the game's exact support test is not read).
-    if (li > 0 && !findWall(lot_, li - 1, ax, ay, bx, by)) {
-        bool floor = false;
-        for (const TilePos& t : tiles)
-            for (uint16_t q : lot_.floor(li, uint32_t(t.x), uint32_t(t.y)))
-                floor |= q != 0;
-        if (!floor)
+    // requiresSupportUnderneath (FUN_0016b740, docs/buy-build-mac.md §7.21):
+    // above the ground one side of the wall holds it, its quarters facing
+    // the wall SupportedUnderneath or floored on this level, or a wall of
+    // styles 1, 3, 5-10, 0x0F, 0x16, 0x17 (walls, attic, foundation; not
+    // decks, pools or fences) on the same edge below.
+    if (li > 0) {
+        // The side tiles with their facing quarters (bits 1 west, 2 north,
+        // 4 east, 8 south): FUN_008b4e9c / OppositeWallLocator.
+        std::vector<std::pair<TilePos, int>> sides;
+        if (ax != bx && ay != by) {
+            const bool slash = (bx - ax) * (by - ay) > 0; // (x, y)-(x+1, y+1)
+            sides = {{tiles[0], slash ? 0x3 : 0x6}, {tiles[0], slash ? 0xC : 0x9}};
+        } else if (ay == by) {
+            sides = {{tiles[0], 0x2}, {tiles[1], 0x8}};
+        } else {
+            sides = {{tiles[0], 0x4}, {tiles[1], 0x1}};
+        }
+        bool held = false;
+        for (const auto& [t, mask] : sides) {
+            if (t.x < 0 || t.y < 0 || t.x >= W || t.y >= H)
+                continue;
+            if (supportedUnderneath(level, t.x, t.y, mask))
+                held = true;
+            const auto& f = lot_.floor(li, uint32_t(t.x), uint32_t(t.y));
+            for (int q = 0; q < 4; ++q)
+                held |= (mask & (1 << q)) && f[size_t(q)];
+        }
+        if (!held)
+            if (const Lot::Wall* below = findWall(lot_, li - 1, ax, ay, bx, by)) {
+                const uint32_t s = below->type;
+                held = s == 1 || s == 3 || s == 5 || s == 6 || (s >= 7 && s <= 10) || s == 0x0F || s == 0x16 ||
+                       s == 0x17;
+            }
+        if (!held)
             return fail(0x48, "nothing holds it up");
     }
     // Objects: a wall does not cut a multi-tile object in two, and a

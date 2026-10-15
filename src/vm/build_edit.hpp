@@ -220,8 +220,29 @@ public:
     // (FUN_003000cc): the whole tile, or the half on the point's side when
     // a diagonal wall splits it.
     int clickQuarters(int level, float px, float py) const;
-    // A floor tile could go there above the ground (IsFloorable).
+    // A floor tile could go there above the ground (nTSWorld::IsFloorable,
+    // BV 0x16a990; docs/buy-build-mac.md §7.21): flat, and held by
+    // HasSupport, by a neighbour SupportedUnderneath on its facing quarter,
+    // or, next to a floor of the level, by a tile SupportedUnderneath within
+    // two (|dx| + |dy| < 4) or a load-bearing wall below within one.
     bool floorable(int level, int x, int y) const;
+    // nTSWorld::SupportedUnderneath (BV 0x16a5b8): the ground (level 1 and
+    // below) always; above it, a floor on the level below in one of the
+    // tile's `quarters` (bits 1 west, 2 north, 4 east, 8 south), or an
+    // object of OBJD type 5 ("support", cTSObject::IsSupport) on the tile
+    // below (HasObjectSupport, BV 0x16a328; `ignore` is the object being
+    // tested, which does not hold itself).
+    bool supportedUnderneath(int level, int x, int y, int quarters, ObjectId ignore = 0) const;
+    // FUN_001654b4: a load-bearing wall (PartitionStyleBearsLoad) on the
+    // level below on one of the tile's diagonals or on the edge of one of
+    // its `quarters`.
+    bool wallSupported(int level, int x, int y, int quarters) const;
+    // nTSWorld::HasSupport (BV 0x16a640): SupportedUnderneath or a
+    // load-bearing wall below (the third test, a WorldDB manager's vtable
+    // 0xa4, is not identified).
+    bool hasSupport(int level, int x, int y, int quarters, ObjectId ignore = 0) const {
+        return supportedUnderneath(level, x, y, quarters, ignore) || wallSupported(level, x, y, quarters);
+    }
 
     // Wallpaper tool: the faces of the walls along a run, on its right
     // (side +1, seen from (x0, y0) to (x1, y1)), left (-1) or both (0), at

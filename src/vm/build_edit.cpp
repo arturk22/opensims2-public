@@ -227,47 +227,83 @@ void BuildEditor::commit(Geometry before, int cost, std::vector<Sold> sold, std:
     redo_.clear();
 }
 
-bool BuildEditor::floorable(int level, int x, int y) const {
+// PartitionStyleBearsLoad (BV 0x8b5bf0): the style's product says
+// (walls.txt / fences.txt "bearsLoad"): walls, foundations, decks and pools
+// do; attic walls (3) and fences do not (docs/buy-build-mac.md §7.3).
+static bool bearsLoad(uint32_t type) { return !Lot::isFence(type) && type != Lot::Attic; }
+
+bool BuildEditor::supportedUnderneath(int level, int x, int y, int quarters, ObjectId ignore) const {
     const int li = level - 1;
     if (li <= 0)
         return true;
-    const int W = int(lot_.width), H = int(lot_.height);
-    // Inferred from IsFloorable (BV 0x16a990): HasSupport and
-    // SupportedUnderneath are taken as a floor on the tile below or a
-    // load-bearing wall under one of its edges.
-    auto supported = [&](int tx, int ty) {
-        if (tx < 0 || ty < 0 || tx >= W || ty >= H)
-            return false;
-        for (uint16_t q : lot_.floor(li - 1, uint32_t(tx), uint32_t(ty)))
-            if (q)
-                return true;
-        for (const auto& w : lot_.walls) {
-            if (w.a.level != li - 1 || Lot::isFence(w.type) || w.type == Lot::Attic)
-                continue;
-            const float mx = (w.a.x + w.b.x) / 2, my = (w.a.y + w.b.y) / 2;
-            if (mx >= float(tx) - 0.01f && mx <= float(tx + 1) + 0.01f && my >= float(ty) - 0.01f &&
-                my <= float(ty + 1) + 0.01f)
-                return true;
-        }
+    if (x < 0 || y < 0 || x >= int(lot_.width) || y >= int(lot_.height) || !lot_.hasLevel(li - 1))
         return false;
-    };
-    if (supported(x, y))
-        return true;
-    // A neighbour supported from below, or, next to a floor, a supported
-    // tile within two (not on the far corners: |dx| + |dy| < 4).
-    bool nextToFloor = false;
-    for (const auto& [dx, dy] : std::array<std::array<int, 2>, 4>{{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}}) {
-        if (supported(x + dx, y + dy))
+    // FUN_00164d30: the floor below, quarter by quarter.
+    const auto& below = lot_.floor(li - 1, uint32_t(x), uint32_t(y));
+    for (int q = 0; q < 4; ++q)
+        if ((quarters & (1 << q)) && below[size_t(q)])
             return true;
-        if (x + dx >= 0 && y + dy >= 0 && x + dx < W && y + dy < H)
-            for (uint16_t q : lot_.floor(li, uint32_t(x + dx), uint32_t(y + dy)))
-                nextToFloor |= q != 0;
+    // HasObjectSupport: a "support" object (OBJD type 5) on the tile below.
+    for (ObjectId id : vm_.objectsOnTile({x, y, level - 1}))
+        if (const Object* o = vm_.object(id); o && id != ignore && o->definition &&
+                                              o->definition->objectType() == kObjectTypeSupport)
+            return true;
+    return false;
+}
+
+bool BuildEditor::wallSupported(int level, int x, int y, int quarters) const {
+    const int li = level - 1;
+    auto bears = [&](int ax, int ay, int bx, int by) {
+        const Lot::Wall* w = findWall(lot_, li - 1, ax, ay, bx, by);
+        return w && bearsLoad(w->type);
+    };
+    // The two diagonals, then the edge of each quarter (1 west, 2 north,
+    // 4 east, 8 south).
+    if (bears(x, y, x + 1, y + 1) || bears(x + 1, y, x, y + 1))
+        return true;
+    return ((quarters & 1) && bears(x, y, x, y + 1)) || ((quarters & 2) && bears(x, y + 1, x + 1, y + 1)) ||
+           ((quarters & 4) && bears(x + 1, y + 1, x + 1, y)) || ((quarters & 8) && bears(x + 1, y, x, y));
+}
+
+bool BuildEditor::floorable(int level, int x, int y) const {
+    const int li = level - 1;
+    if (li <= 0)
+        return true; // HasSupport: SupportedUnderneath holds the ground
+    const int W = int(lot_.width), H = int(lot_.height);
+    auto onLot = [&](int tx, int ty) { return tx >= 0 && ty >= 0 && tx < W && ty < H; };
+    // Above the ground the tile must be flat and in bounds.
+    if (!onLot(x, y) || !lot_.hasLevel(li))
+        return false;
+    const float e = lot_.elevation(li, x, y);
+    if (std::fabs(lot_.elevation(li, x + 1, y) - e) > 1e-4f || std::fabs(lot_.elevation(li, x, y + 1) - e) > 1e-4f ||
+        std::fabs(lot_.elevation(li, x + 1, y + 1) - e) > 1e-4f)
+        return false;
+    if (hasSupport(level, x, y, 0xF))
+        return true;
+    // The four neighbours (directions 1 -x, 2 +y, 4 +x, 8 -y): the quarter
+    // of each that faces this tile supported from below, or floored on
+    // this level.
+    bool nextToFloor = false;
+    for (const auto& [dx, dy, facing] : std::array<std::array<int, 3>, 4>{{{-1, 0, 4}, {0, 1, 8}, {1, 0, 1}, {0, -1, 2}}}) {
+        const int nx = x + dx, ny = y + dy;
+        if (!onLot(nx, ny))
+            continue;
+        if (supportedUnderneath(level, nx, ny, facing))
+            return true;
+        for (int q = 0; q < 4; ++q)
+            if ((facing & (1 << q)) && lot_.floor(li, uint32_t(nx), uint32_t(ny))[size_t(q)])
+                nextToFloor = true;
     }
     if (!nextToFloor)
         return false;
     for (int dx = -2; dx <= 2; ++dx)
         for (int dy = -2; dy <= 2; ++dy)
-            if (std::abs(dx) + std::abs(dy) < 4 && supported(x + dx, y + dy))
+            if (std::abs(dx) + std::abs(dy) < 4 && onLot(x + dx, y + dy) &&
+                supportedUnderneath(level, x + dx, y + dy, 0xF))
+                return true;
+    for (int dx = -1; dx <= 1; ++dx)
+        for (int dy = -1; dy <= 1; ++dy)
+            if (onLot(x + dx, y + dy) && wallSupported(level, x + dx, y + dy, 0xF))
                 return true;
     return false;
 }

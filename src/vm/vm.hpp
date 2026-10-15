@@ -182,6 +182,7 @@ constexpr size_t kMaxRelationshipVars = 32;
 
 // Object types (OBJD "type", STR# 0xF6).
 constexpr uint16_t kObjectTypePerson = 2;
+constexpr uint16_t kObjectTypeSupport = 5; // cTSObject::IsSupport (BV 0xaff018): columns
 constexpr uint16_t kObjectTypeDoor = 8;
 constexpr uint16_t kObjectTypeWindow = 9;
 constexpr uint16_t kObjectTypeStairs = 10;

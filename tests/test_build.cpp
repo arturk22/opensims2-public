@@ -220,6 +220,29 @@ static void testRound9() {
     check(!r.ok && r.error == 0x52, "flooring in the air is refused (0x52)");
     r = ed2.paintFloor(2, 2, 2, 5, 2, &tile);
     check(r.ok && ed2.floorable(2, 6, 2) && !ed2.floorable(2, 8, 8), "a floor reaches out next to a supported tile");
+    // IsFloorable (BV 0x16a990): a load-bearing wall below holds the tiles
+    // on its edge (HasSupport) and, next to a floor, the tiles one away;
+    // two away it no longer does. An attic wall bears no load.
+    addWall(two, 0, 8, 6, 8, 7, Lot::Attic, {0xFFFF, 0xFFFF});
+    check(!ed2.floorable(2, 8, 6), "an attic wall holds nothing up");
+    addWall(two, 0, 8, 8, 8, 9, Lot::Normal, {0xFFFF, 0xFFFF});
+    check(ed2.floorable(2, 8, 8) && ed2.floorable(2, 7, 8) && !ed2.floorable(2, 9, 8),
+          "a wall below holds the tiles on both sides of it");
+    r = ed2.paintFloor(2, 8, 8, 8, 8, &tile);
+    check(r.ok && ed2.floorable(2, 9, 8), "next to a floor, a wall within one tile holds it");
+    r = ed2.paintFloor(2, 9, 8, 9, 8, &tile);
+    check(r.ok && !ed2.floorable(2, 10, 8), "two tiles from the wall nothing holds it");
+    check(ed2.supportedUnderneath(2, 3, 3, 0x1) && !ed2.supportedUnderneath(2, 8, 8, 0xF) &&
+              ed2.supportedUnderneath(1, 9, 9, 0),
+          "SupportedUnderneath: a floor below in the quarters; the ground always");
+    // Walls upstairs (FUN_0016b740): over the floor below, over a wall
+    // below, but not in the air (0x48).
+    r = ed2.drawWalls(2, 3, 3, 3, 4);
+    check(r.ok, "a wall over the floor of the level below stands");
+    r = ed2.drawWalls(2, 5, 6, 5, 7);
+    check(!r.ok && r.error == 0x48, "a wall in the air needs something to support it (0x48)");
+    r = ed2.drawWalls(2, 8, 6, 8, 7);
+    check(r.ok, "a wall over an attic wall stands");
 }
 
 // Room IDs as cWallGraph makes them: outdoors 0, a new room the smallest

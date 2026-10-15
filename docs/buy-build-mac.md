@@ -2138,6 +2138,60 @@ dentro).
   regra inferida antiga (`inferredRoadStripArea`, faixa com piso "road_*").
   Saiu o teste inferido de piso de rua das paredes.
 
+### 7.21 Suporte: `HasSupport`, `SupportedUnderneath`, `IsFloorable` e paredes no alto (rodada n07, Ghidra MCP)
+
+Tudo em `nTSWorld` (BV). O tile é um `cFloorTile` = (x, y, nível, máscara
+de quartos); os bits da máscara são os do app: 1 oeste (−x), 2 norte (+y),
+4 leste (+x), 8 sul (−y). As direções dos vizinhos (`FUN_0015d680`) usam os
+mesmos bits (1 → −x, 2 → +y, 4 → +x, 8 → −y) e `FUN_0015d3e8` dá o quarto
+oposto (1↔4, 2↔8, 3↔0xC, 6↔9). O nível é o do lote: 0 = térreo.
+
+- **`SupportedUnderneath`** (`0x16a5b8`): nível ≤ 0 → sim. Senão, sim se
+  (a) `FUN_00164d30`: algum quarto da máscara tem piso no nível de baixo (a
+  consulta é o `PartitionManager` vtable `0x13c` no centro do quarto,
+  x + 0,5 ± 1/3; o nome da consulta é inferido) ou (b) **`HasObjectSupport`**
+  (`0x16a328`): um objeto no tile de baixo (`NumObjectsOnTile`/vtable `0xec`)
+  com `cTSObject::IsSupport` (`0xaff018`, vtable `0x1cc`: `GetType` = campo
+  9 do OBJD **== 5**; no jogo base, as 12 colunas), que não seja o objeto
+  testado (vtable `0x2b0`) e cuja posição não seja exatamente o canto do tile.
+- **`FUN_001654b4`** (apoio de parede): no nível de baixo, uma parede com
+  `PartitionStyleBearsLoad` (`0x8b5bf0`, o `bearsLoad` do produto; sem produto
+  = sim) numa das **duas diagonais** do tile ou na **aresta de um quarto da
+  máscara** (1 oeste x, 2 norte y+1, 4 leste x+1, 8 sul y).
+- **`HasSupport`** (`0x16a640`) = `SupportedUnderneath` ou `FUN_001654b4` ou
+  um terceiro teste: o gerenciador em `cWorldDB +0x7c` (WorldDB vtable `0x88`),
+  vtable `0xa4`(tile). **Não identificado** (não é o `cWorldRoof`: o
+  `DoesTileHasRoofSupport` está na vtable `0xb4` dele); fica de fora.
+- **`IsFloorable`** (`0x16a990`), usado pelo piso (`0x52`), `PlaceTileOutlines`,
+  `RemoveFloorTile` e o raio do mouse:
+  1. nível ≠ 0: o tile precisa ser plano (`IsFlat`) e `IsInBounds` (WorldDB
+     `0x108`), senão não;
+  2. `HasSupport(tile inteiro)` → sim;
+  3. para cada vizinho (1, 2, 4, 8) que está no lote (`IsOnLot`, `0xf8`):
+     `SupportedUnderneath(vizinho, quarto voltado para o tile)` → sim; se o
+     vizinho tem piso nesse quarto neste nível (`0xb4`) → "junto de piso";
+  4. sem piso junto → não. Com piso junto: algum tile a |dx| + |dy| < 4
+     (dx, dy em −2..2) `SupportedUnderneath` (inteiro) → sim; senão algum tile
+     do 3×3 em volta com `FUN_001654b4` (inteiro) → sim; senão não.
+
+  Antes (inferido) o app contava qualquer parede (pelo meio do trecho) no
+  tile e nos vizinhos até 2 tiles, e qualquer quarto. Agora é o do binário:
+  as paredes só valem no próprio tile ou a 1 tile (e só junto de piso), as de
+  sótão e as cercas não seguram, e as colunas seguram.
+- **Paredes no alto** (`FUN_0016b740`, chamado pelo teste comum das
+  partições `0x9a7384` quando o estilo pede `requiresSupportUnderneath`,
+  erro `0x48`): para cada lado da parede (`FUN_008b4e9c` e o
+  `OppositeWallLocator`: o tile e os quartos voltados para a parede; na
+  diagonal, as duas metades do mesmo tile: "/" 0x3 e 0xC, "\\" 0x6 e 0x9)
+  que está no lote: todos os quartos `SupportedUnderneath` → sim; ou piso
+  nesses quartos neste nível (`0xb0`) ou o teste desconhecido `0xa4` → sim;
+  ou, nível > 0, uma parede no mesmo trecho um nível abaixo com estilo 1, 3,
+  5–10, 0x0F, 0x16 ou 0x17 (parede, sótão, fundação; não deck 0x10, piscina
+  0x1D, saia 4 nem cerca) → sim. Senão `0x48`. O app (inferido antes:
+  "parede embaixo ou piso de um lado") passou a aceitar uma parede sobre o
+  piso do andar de baixo sem piso no andar dela, e a recusar sobre deck,
+  piscina ou cerca.
+
 ---
 
 ## 8. Base vs BV
