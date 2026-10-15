@@ -833,9 +833,12 @@ além das cinco cores.
   direcional (`+0x24`), queda (`+0x38`), queda direcional (`+0x34`),
   escalas de parede (`+0x3c`) e de piso (`+0x40`), queda entre andares
   (`+0x44`). Padrões da fonte (`0xd82248`): queda 1, escalas 1, entre
-  andares 0,5, retângulo ±0,5. O comentário do `LotLights.txt` dá os
-  padrões da extensão: intensidade 10, cor branca, retângulo ±0,5, não
-  direcional.
+  andares 0,5, retângulo ±0,5. Padrões da extensão (construtor BV
+  `0x79f024`, que o symxfer chamou de `cAwningGeometryNode::InsertIndices`;
+  vtable `0x27ef6ac`): mínimo (−0,5, −0,5), máximo (0,5, 0,5),
+  **intensidade 0**, cor (1, 1, 1), não direcional, queda 1, queda
+  direcional 0, escalas de parede e piso 1, entre andares 0,5 (o comentário
+  do `LotLights.txt` diz intensidade 10: não é o que o construtor põe).
 - as extensões não estão nos recursos do jogo (nenhum pacote tem a string
   `cDiffusionLightExtension`; os `LGHT` são `cPointLight`/`cSpotLight`
   sem extensão): vêm dos `lightAttribOverride … diffusionSource*`, que o
