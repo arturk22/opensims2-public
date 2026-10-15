@@ -33,6 +33,7 @@
 #include "app/main_menu.hpp"
 #include "app/movie_host.hpp"
 #include "app/scene_loader.hpp"
+#include "app/tv_broadcast.hpp"
 #include "app/options_panel.hpp"
 #include "app/tutorial.hpp"
 #include "app/user_data.hpp"
@@ -1360,6 +1361,16 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             std::printf("opensims2: no Sims on the lot\n");
 
         os2::VmObjectView objectView(renderer, index, simulation);
+        // TV channels and arcade screens (app/tv_broadcast.hpp): a broadcast's material shows its movies.
+        std::unique_ptr<os2::TvBroadcast> tv;
+        try {
+            tv = std::make_unique<os2::TvBroadcast>(renderer, res);
+            objectView.adjustModel = [&](os2::ObjectModel& m, const std::map<std::string, std::string>& materials) {
+                tv->adjust(m, materials);
+            };
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "opensims2: tv: %s\n", e.what());
+        }
         simulation.seats.slot = [&](int16_t id, double now) { return objectView.slotPlacement(id, now); };
         simulation.objectBone = [&](int16_t id, uint32_t crc) { return objectView.boneByHash(id, crc); };
         int following = 0;
@@ -1945,6 +1956,41 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             pie = std::make_unique<os2::PieMenuHost>(simulation.machine(), res / "UI" / "Fonts");
         } catch (const std::exception& e) {
             std::fprintf(stderr, "opensims2: pie menu: %s\n", e.what());
+        }
+        // --vm-queue <object>:<entry>: test aid, the selected Sim's (--sim-id)
+        // pie entry on the first object whose id or file name matches, queued.
+        if (auto spec = app.argument("--vm-queue")) {
+            os2::vm::VM& m = simulation.machine();
+            auto lower = [](std::string s) {
+                for (char& c : s)
+                    c = char(std::tolower(static_cast<unsigned char>(c)));
+                return s;
+            };
+            const auto colon = spec->find(':');
+            const std::string what = lower(spec->substr(0, colon));
+            const std::string entry = colon == std::string::npos ? "" : lower(spec->substr(colon + 1));
+            os2::vm::ObjectId target = 0;
+            for (const auto& [id, o] : m.objects())
+                if (!target && !o.person && o.definition &&
+                    (what == std::to_string(id) || lower(o.definition->fileName).find(what) != std::string::npos))
+                    target = id;
+            const os2::vm::ObjectId sim = os2::vm::findSim(m, app.argument("--sim-id").value_or(""));
+            os2::vm::PieOptions opt;
+            opt.language = os2::lang::EnglishUS;
+            bool queued = false;
+            std::string offered;
+            if (target && sim)
+                for (const auto& e : os2::vm::pieMenu(m, sim, target, opt)) {
+                    offered += (offered.empty() ? "" : ", ") + e.name;
+                    if (!queued && lower(e.name) == entry)
+                        if (auto q = os2::vm::interactionFromPie(m, e)) {
+                            os2::vm::addAction(m, *m.object(sim), *q);
+                            queued = true;
+                        }
+                }
+            std::printf("opensims2: --vm-queue %s: %s (object %d %s, Sim %d; entries: %s)\n", spec->c_str(),
+                        queued ? "queued" : "no such entry", target,
+                        target ? m.object(target)->definition->fileName.c_str() : "-", sim, offered.c_str());
         }
         // Whether a Sim is in the lot's world: it, or what holds it (a carried
         // baby, a passenger in a car), stands in it.
@@ -2858,6 +2904,21 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 listener.zoom = std::clamp(camera.zoom() / 5.0f, 0.0f, 1.0f);
             }
             lotAudio.update(&simulation.machine(), scene, listener);
+            if (tv) {
+                tv->update(scene);
+                // A channel's sound comes out of its first receiver (the lowest
+                // object ID showing it), as the Mac host does; the other TVs on it are silent.
+                std::vector<os2::LotAudio::TvSource> on;
+                std::set<std::string> heard;
+                for (const auto& [id, o] : simulation.machine().objects()) // (by ID)
+                    for (const auto& [group, material] : o.materials)
+                        if (const auto* s = tv->isChannel(material) ? tv->sound(material) : nullptr) {
+                            if (heard.insert(material).second)
+                                on.push_back({id, s->serial, s->pcm, std::max(0.0, tv->now() - s->started)});
+                            break;
+                        }
+                lotAudio.tvSounds(simulation.machine(), on);
+            }
             std::vector<os2::GpuRenderer::ShadowCaster> casters;
             for (const auto& sim : sims) {
                 if (lotLighting)
@@ -2954,10 +3015,11 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (!renderer.capture(shot, viewProj()))
                 exit.code = 1;
             else
-                std::printf("opensims2: wrote %s (%llu ticks, %zu Sims, %zu objects animated, %zu doors open)\n",
+                std::printf("opensims2: wrote %s (%llu ticks, %zu Sims, %zu objects animated, %zu doors open, %zu TV channels)\n",
                             shot.string().c_str(), (unsigned long long)simulation.ticks(), sims.size(),
                             size_t(std::count_if(objectActors.begin(), objectActors.end(), [](const auto& a) { return a.second != nullptr; })),
-                            doors.openCount());
+                            doors.openCount(), tv ? tv->channelsInUse() : size_t(0));
+            std::printf("opensims2: sound: %s\n", lotAudio.summary().c_str());
             return exit;
         }
         bool pauseClick = false;

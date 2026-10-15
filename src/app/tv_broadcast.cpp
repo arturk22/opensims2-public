@@ -1,7 +1,11 @@
 #include "app/tv_broadcast.hpp"
 
 #include "formats/movie.hpp"
+#ifdef _WIN32
+#include "render/gpu_renderer.hpp"
+#else
 #include "render/renderer.hpp"
+#endif
 
 #include <algorithm>
 #include <cctype>

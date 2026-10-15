@@ -151,6 +151,10 @@ public:
     bool captureMovie(const std::filesystem::path& path, const RgbaImage& frame);
     // The same into the window, instead of the scene (movie_host's picture).
     bool drawMovie(const RgbaImage& frame);
+    // A texture the app draws itself (a TV channel's picture), found by
+    // materials as if it were the TXTR `name`: set it before the models that
+    // use it are added; later calls of the same size replace its pixels.
+    void setDynamicTexture(const std::string& name, const RgbaImage& image);
 
     std::string backend() const;
 

@@ -311,7 +311,7 @@ if(WIN32)
       src/render/camera.cpp src/render/cas_camera.cpp
       src/app/hood_view.cpp src/app/hood_ui.cpp src/app/hood_bins.cpp src/app/hood_mode.cpp src/app/main_menu.cpp
       src/app/options_panel.cpp src/app/tutorial.cpp src/app/game_flow.cpp src/app/user_data.cpp src/app/head_shot.cpp
-      src/app/movie_host.cpp src/app/loading_screen.cpp)
+      src/app/movie_host.cpp src/app/loading_screen.cpp src/app/tv_broadcast.cpp)
     target_link_libraries(opensims2_win PRIVATE os2_vm os2_formats os2_audio os2_media os2_fx os2_port SDL3::SDL3 dbghelp)
     os2_warnings(opensims2_win)
     add_dependencies(opensims2_win os2_shaders)

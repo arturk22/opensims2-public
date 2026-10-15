@@ -215,6 +215,8 @@ struct GpuRenderer::Gpu {
     std::vector<Model> models;
     std::vector<Instance> instances;
     std::unordered_map<std::string, SDL_GPUTexture*> textures;
+    std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> dynamicSizes; // setDynamicTexture's, by name
+    std::vector<SDL_GPUTexture*> retiredTextures; // replaced by another size; parts may still hold them
     std::vector<LightSet> lightSets;
     std::vector<GpuLightSet> packedSets{2};
     const GpuLightSet& lightSetOf(int set) const {
@@ -275,6 +277,7 @@ struct GpuRenderer::Gpu {
 
     SDL_GPUBuffer* uploadBuffer(const void* data, size_t bytes, SDL_GPUBufferUsageFlags usage);
     SDL_GPUTexture* uploadImage(const RgbaImage& image, bool clamp);
+    void uploadPixels(SDL_GPUTexture* texture, const RgbaImage& image);
     SDL_GPUTexture* textureNamed(const std::string& name, ResourceIndex& index);
     void fillPart(Part& part, const ObjectModel::Part& source, const ObjectModel& model, ResourceIndex& index, bool dynamic);
     void flushDynamic();
@@ -330,6 +333,12 @@ SDL_GPUTexture* GpuRenderer::Gpu::uploadImage(const RgbaImage& image, bool clamp
     SDL_GPUTexture* texture = SDL_CreateGPUTexture(device, &info);
     if (!texture)
         throw sdlError("GPU texture");
+    uploadPixels(texture, image);
+    (void)clamp;
+    return texture;
+}
+
+void GpuRenderer::Gpu::uploadPixels(SDL_GPUTexture* texture, const RgbaImage& image) {
     SDL_GPUTransferBufferCreateInfo transferInfo{};
     transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     transferInfo.size = static_cast<Uint32>(image.pixels.size());
@@ -354,8 +363,6 @@ SDL_GPUTexture* GpuRenderer::Gpu::uploadImage(const RgbaImage& image, bool clamp
         SDL_ReleaseGPUFence(device, fence);
     }
     SDL_ReleaseGPUTransferBuffer(device, transfer);
-    (void)clamp;
-    return texture;
 }
 
 SDL_GPUTexture* GpuRenderer::Gpu::textureNamed(const std::string& name, ResourceIndex& index) {
@@ -1423,6 +1430,8 @@ GpuRenderer::~GpuRenderer() {
     for (auto& [name, texture] : gpu_->textures)
         if (texture && texture != gpu_->white)
             SDL_ReleaseGPUTexture(gpu_->device, texture);
+    for (SDL_GPUTexture* texture : gpu_->retiredTextures)
+        SDL_ReleaseGPUTexture(gpu_->device, texture);
     if (gpu_->uiTexture && gpu_->uiTexture != gpu_->white)
         SDL_ReleaseGPUTexture(gpu_->device, gpu_->uiTexture);
     if (gpu_->lightMap && gpu_->lightMap != gpu_->white)
@@ -2167,6 +2176,23 @@ RgbaImage GpuRenderer::capture(uint32_t width, uint32_t height, const FrameView&
     }
     release();
     return image;
+}
+
+void GpuRenderer::setDynamicTexture(const std::string& name, const RgbaImage& image) {
+    if (image.width == 0 || image.height == 0 || image.pixels.size() != size_t(image.width) * image.height * 4)
+        return;
+    const std::pair<uint32_t, uint32_t> size{image.width, image.height};
+    auto known = gpu_->dynamicSizes.find(name);
+    auto texture = gpu_->textures.find(name);
+    if (known != gpu_->dynamicSizes.end() && known->second == size && texture != gpu_->textures.end() &&
+        texture->second && texture->second != gpu_->white) {
+        gpu_->uploadPixels(texture->second, image);
+        return;
+    }
+    if (texture != gpu_->textures.end() && texture->second && texture->second != gpu_->white)
+        gpu_->retiredTextures.push_back(texture->second);
+    gpu_->textures[name] = gpu_->uploadImage(image, false);
+    gpu_->dynamicSizes[name] = size;
 }
 
 bool GpuRenderer::drawMovie(const RgbaImage& frame) {
