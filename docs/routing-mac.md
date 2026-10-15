@@ -898,7 +898,7 @@ acima; `locomotion.cpp` `LocoCurve`/`blendGaits`/`strideWeight`,
   aqui), `v` limitado a [0, 1] e o ramo das rotas curtas (`0,9·(começo +
   parada) ≥ d`, com `(d − 0,9·s)/(4 − 0,9·s)`) como antes. Teste:
   `test_routing` "fit stride".
-- **Os 5/100 ms, lidos de novo** (`FollowOneStep`, BV `0x6b80e8`): não são
+- **(Corrigido na rodada n14, `docs/anim-mac.md` §8.2–8.3: a vtable `0x41c` é o `LocoPlaceFromSceneGraph`, não o `BeginFollow`; a primeira fase não começa adiantada, os 5/100 ms são o começo da fase seguinte em EndTicks − 5/100 quando o pedido anterior começa a sair, e o `DAT_02c11c04` vale 140.)** Os 5/100 ms, lidos de novo (`FollowOneStep`, BV `0x6b80e8`): não são
   um adiantamento de cada fase. Quando o `BeginFollow` (vtable `0x41c`)
   monta o caminho, a **primeira** fase é criada com o início em
   `agora − 5` (ou `− 100` com `+0x24c > 0,25`, em ticks de animação = ms):

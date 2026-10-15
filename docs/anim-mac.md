@@ -246,3 +246,177 @@ Sobras (no `TODO.md`): a forma dos intervalos de blend
 solução de IK guardada quando o contato é 0, o alvo misturado do outlet (e
 não o da camada), a velocidade pelo dado de pessoa 85, e as transições de
 locomoção (`cActiveAnimLoco::PushTurnBlendCycles`, `StopLocomotion`).
+
+## 8. Locomoção: o relógio das fases, as transições e as paradas (rodada n14)
+
+Leitura da rodada n14 (`docs/inventario-binario.md` §6, linha 14),
+2026-10-15. Modo: **Ghidra MCP** (só leitura); as funções que o projeto não
+tem como função (o `PushLocoCycle`, BV `0xd3144c`) foram lidas na listagem
+(desmontagem sem gravar nada). Endereços BV. Complementa o
+`docs/routing-mac.md` §6.1 (o locomotor) e **corrige** a leitura da rodada
+15 ("anim3") sobre os 5/100 ms.
+
+### 8.1 As tabelas virtuais usadas
+
+- `cLocomotable` (vptr `0x27d367c`): `0x2f0`/`0x2f4`/`0x2f8`
+  `SetEndTicks`/`SetEndActionTicks`/`SetFinalCyclePortionCompleted`
+  `OfPreviousBlockingPrimitive` (do `cAnimatable`), `0x340`/`0x344`/`0x348`
+  os três getters, `0x41c` `LocoPlaceFromSceneGraph`, `0x420`
+  `KillLocomotion`, `0x42c` `CreateLocoRequest`, `0x430` `FollowOneStep`,
+  `0x43c` `CopyActiveLocoStateToEndingLocoState`, `0x440`
+  `MarkActiveLocoStateAsCompleted`, `0x44c`/`0x450`/`0x454`
+  `BeginShortStepPath`/`BeginCachedForwardPath`/`BeginCachedEndTurnPath`,
+  `0x458` `IsFollowActive(estado)`, `0x478` `EstimateWhenPathWillBeBlocked`,
+  `0x480` `ComputeLocoStartTicks`, `0x484` `CreateEventsForActiveLocoState`.
+- `cChoreoRequestLoco`, vtable primária (`0x2837568`): `0x11c`
+  `SetLocoSequence` (6 normal, 5 começo e parada sem ciclos, 1 virar no
+  lugar), `0x158` `StartHeading`, `0x15c` `EndHeading`, `0x164`
+  `LocoSequence`, `0x168` `VelocityMPS`, `0x16c` `VelocityMPT`, `0x174`
+  `CycleWeight`, **`0x178` `CyclePortionCompleted`**, `0x184`
+  `EndCycleWeight`, `0x188` `FinalCyclePortionCompleted`, `0x198`
+  `CurrentPathLocation`, `0x19c` `CurrentLocoHeading`, `0x1a0`
+  `CurrentPlacementHeading`. Base virtual `cIChoreoRequest` (vtable
+  `0x28378c8`): `0x14` `AnimUpdate`, `0x9c` `EndTicks(bool)`, `0xa8`
+  `CurrentTicks`, `0xec` `HasStartTicksPassed`, **`0xf0`
+  `HasFadeOutStartTicksPassed`**, `0xf4` `ActualFadeOutStart`, `0xfc`
+  `IsExpired`.
+- O relógio é o de animação do scene graph, em ms (`TSSGSystem` → `0xd0` →
+  `0x38`); `+0x1ac` do locomotor é o **início** da fase (o `Begin*Path(t)`
+  e o `ComputeLocoStartTicks` o escrevem; o `DistanceCompletedEstimate`
+  mede a distância desde ele).
+
+### 8.2 O começo da primeira fase (`ComputeLocoStartTicks`, BV `0x6ad69c`)
+
+O `BeginFollow` põe o estado 1 e chama `ComputeLocoStartTicks(curto)`
+(`curto` = a rota começa por um passo curto). **Não há 5/100 ms na primeira
+fase**: a rodada 15 leu a vtable `0x41c` do `FollowOneStep` como o
+`BeginFollow`, mas ela é o `LocoPlaceFromSceneGraph`; os 5/100 ms são da
+troca de fase (§8.3). O que a função faz:
+
+```
+início = agora
+eA = EndActionTicks da primitiva bloqueante anterior (NENHUM: fica agora)
+se o Sim segue andando (+0x1b4 = CycleWeight ≥ 0): fica agora
+se o estado "terminando" (+0x25c) ainda toca:      (um andar acabando)
+    início = max(início, EndTicks desse pedido, ou o EndTicks guardado)
+senão se não curto e |agora − eA| < 140:  início = eA + 70
+senão, com e = EndTicks guardado e W = 40 (curto) ou 140:
+    |agora − e| < W e agora < e:  início = e − W/2   (senão agora)
+nesses casos a porção do ciclo (+0x1bc) = FinalCyclePortionCompleted guardado
+por fim os três valores "da primitiva anterior" voltam a NENHUM
+```
+
+O **140** é o global `DAT_02c11c04`, escrito uma vez no inicializador
+estático (`li r0,0x8c` / `stw r0,0x1c04(r2)` em `0x20c22b4`; antes dado
+como "sem escrita achada"). É 0,6 × 233,3 ms, o fade de saída de um pedido
+de locomoção sem parada (§8.3).
+
+### 8.3 A troca de fase (`FollowOneStep`, BV `0x6b80e8`)
+
+A cada tick, no estado ativo (`+0x188`) com o pedido já começado
+(`HasStartTicksPassed`): o corpo vai para a raiz do pedido
+(`LocoPlaceFromSceneGraph`; se falha, `EndFollow(1)` e o passo devolve 0:
+**o teste por passo bloqueia na hora, sem clipe de parada**); guarda
+`CycleWeight` (`+0x1b8`), `CyclePortionCompleted` (`+0x1bc`),
+`VelocityMPS` (`+0x1d4`) e `CurrentLocoHeading` (`+0x1d0`). Quando o
+**fade de saída do pedido começou** (`HasFadeOutStartTicksPassed`):
+
+1. guarda `SetEndTicks(max(EndTicks(false), +0x254))`,
+   `SetEndActionTicks(ActualFadeOutStart)` e
+   `SetFinalCyclePortionCompleted(FinalCyclePortionCompleted)`;
+2. se não foi interrompido (estado < 5) — e, fora da sequência 1 (virar
+   no lugar), se o caminho passa de 0,5 ou faltam menos de 40 ms e o
+   `EstimateWhenPathWillBeBlocked` não vê bloqueio —, **põe o Sim no fim
+   do caminho com a direção final** (`+0x1c4`); passou:
+3. `CopyActiveLocoStateToEndingLocoState`: o pedido velho segue tocando no
+   estado "terminando" (`+0x25c`, que o `FollowOneStep` também roda, mas sem
+   pôr o corpo);
+4. sem mais fases: `MarkActiveLocoStateAsCompleted` e devolve 1 —
+   **a rota acaba quando o último pedido começa a sair**, não quando o
+   clipe de parada termina;
+5. com fase seguinte (passo curto `+0x190` → caminho para a frente
+   `+0x19c` → virada do fim `+0x1a0`): ela começa em **EndTicks − 5 ms**
+   (ou − 100 ms com o começo da rota `+0x24c` > 0,25), estado 1, e os
+   EndTicks guardados voltam a NENHUM.
+
+Os fades do pedido (`InitChannelNetwork` → `FUN_00a46ea8`): entrada
+**233,3 ms** (`DAT_02d3ee9c`, escrito em `0x24db194` do valor de
+`0x274b6c0`), saída 233,3 ms com clipe de parada e **0,6 × = 140 ms sem**;
+os dois encolhem na proporção quando o pedido dura menos que a soma
+(× 0,9999 · duração / (entrada + saída)).
+
+**Estado 3** (o pedido expirou sem a troca acima: bloqueio previsto,
+caminho curto, lugar final tomado): a fase seguinte começa no **início da
+fase que acabou** (`+0x1ac`) se ele foi há menos de N ms (N = 25 com
+`+0x24c` ≤ 0,25, senão 140/2 = **70**), senão agora. Ou seja: uma fase que
+acabou quase no mesmo instante em que começou não gasta tempo. No estado 1
+o pedido é criado (`CreateLocoRequest`) e recebe um `AnimUpdate(min(agora,
+início) − 1)`.
+
+### 8.4 Dentro de um pedido: o `cLocoCycle` (mistura por distância)
+
+- O `PushLocoCycle` (BV `0xd3144c`) dá a **cada** ciclo do pedido (o clipe
+  de começo, os ciclos de andar, o de parada) a `BlendDistance` = `+0xec`
+  do `cActiveAnimLoco` (`lfs f1,0xec(r24)` e a vtable `0x28` do ciclo,
+  `SetBlendDistance`), além de início e fim (em distância), porções,
+  laços e pesos. O `+0xec` é o 0,2 (≤ 0,95 × a distância do começo e da
+  parada) já lido para as poses: **é a mesma mistura para todas as trocas
+  dentro do pedido**.
+- `cLocoCycle::AnimUpdate` (BV `0xd1190c`), com `D` a distância do pedido
+  no caminho e `b` a `BlendDistance`: entrada `(D − início + b/2)/b`,
+  saída `(fim − D + b/2)/b`, `w = clamp(min(entrada, saída), 0, 1)` e
+  **`w = 0,5 − 0,5·cos(π·w)`**: a troca é centrada em cada fronteira
+  (±b/2) com rampa cossenoidal. `b ≤ 0`: troca seca. Virar no lugar
+  (sequência 1): por tempo, `(t − início + 55)/110` e `(fim − t + 55)/110`.
+- A reprodução também é por distância: os ciclos de andar (tipos 100–199)
+  na fração de `(D − origem)/distância do ciclo`; os outros (começo, parada,
+  passo) em `(D − início)/(fim − início)` limitado a [0, 1] — o clipe anda
+  junto com o quadro e fica no primeiro (antes) ou no último quadro
+  (depois) enquanto mistura.
+- O peso walk/walkShort de cada ciclo sai da distância dele:
+  `(escala·d₁ − D_ciclo)/(escala·(d₁ − d₀))`.
+
+### 8.5 O pé da parada (getter `0x178`)
+
+No `InitChannelNetwork`, `p` = `CyclePortionCompleted` do pedido (`0x178`):
+a porção em que o andar começa (`+0x1bc`: 0,5 parado, no `BeginFollow`; a
+porção atual quando segue andando; 0 depois de um `Begin*Path`; a final da
+primitiva anterior na janela do §8.2). O começo (tipo 6) e a parada (tipo 7)
+pedem o clipe da porção **0,5 se 0 < p ≤ 0,5, senão 0** (0,5 = os clipes
+normais, 0 = os "R"); a parada troca de pé a cada `n` ímpar do ajuste da
+passada, até duas vezes.
+
+### 8.6 Rotas curtas (`InitChannelNetwork`, `0xd2dc58`–`0xd2de0c`)
+
+Com clipe de começo e `d ≤ 0,9·(começo_l + parada_l)` (`0x274b6d0`):
+sequência 5 (sem ciclos); `S_l`/`S_s` = começo + parada longos/curtos;
+peso curto `w = (S_l − d)/(S_l − S_s)`, no máximo 1, igual no começo e na
+parada (cada um a sua mistura). Com `d ≥ S_s` os pesos "para a frente" dos
+dois (`ComputeForwardWeightFromTurnDistance`) entram pela média; com
+`d < S_s` os clipes curtos são **espremidos**: começo `d·s/(s + p)`,
+parada `d − começo`. Entre 0,9·`S_l` e `S_l` o ramo geral dá o mesmo `w`
+(`c = 0`).
+
+### 8.7 A parada (`StopLocomotion`)
+
+`InterruptActiveLocoState(t)` (BV `0x6b4fa0`): com velocidade > 0 chama o
+`cChoreoRequestLoco::StopLocomotion(agora, forte = t == 2, 0)` (BV
+`0xd53e20`) → `cActiveAnimLoco::StopLocomotion(forte, …)` (BV `0xd2f9b4`);
+parado, o pedido expira (regra 3). Estado → 6. A parada:
+
+- não faz nada se a sequência não é 5/6 e o pedido já começou (um passo de
+  lado ou um virar no lugar tocam até o fim), se o ciclo atual é o clipe de
+  parada (tipo 7), ou (forte) se é um ciclo de andar já na última metade de
+  ciclo antes do fim dele;
+- o ciclo atual é o último começado que contém `D`; os seguintes saem;
+- **fraca** (outros tipos de fim): sem clipe; o ciclo de andar acaba no
+  próximo apoio, na porção **1/6 ou 2/3** (`DAT_02d3ee98` = 0,6667), e a
+  porção final fica 0,5 (em 1/6) ou 0 (em 2/3);
+- **forte** (bloqueado): de um clipe de começo, a porção dele; senão o
+  ciclo de andar **segue até o fim da meia passada atual** (`h = 0,5 − p`
+  ou `1 − p`; 0 com `p = 0`), mais 5% de uma passada de sobreposição, e
+  então o clipe de parada de 0° do pé da porção (0,5 quando `0 < p ≤ 0,5`
+  bate com o espelho do ciclo, senão 0), longo/curto pela passada
+  (`ComputeTurnWeight`); o caminho termina depois da parada; a função de
+  velocidade é refeita (`FUN_00a47144`, a velocidade até agora e uma rampa
+  de 25 ms), fades de 233,3 ms e regra de expiração 4.
