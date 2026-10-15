@@ -75,7 +75,7 @@ palavra.
 |---|---|---|---|---|
 | VM e primitivas | 54 (19) | 233 / 1.610 = 14,5% | 9,5 / 11 = **86%** | 125 / 80 |
 | Rotas | 27 (13) | 113 / 622 = 18,2% (não recontado na n18) | 7,5 / 8 = **94%** | 59 / 38 |
-| Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 6 / 9 = **67%** | 39 / 14 |
+| Animação e IK | 78 (22) | 88 / 1.364 = 6,5% (não recontado na n23) | 6,5 / 9 = **72%** | 36 / 14 |
 | Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 8 / 10 = **80%** | 10 / 8 |
 | Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% (não recontado na n20) | 9 / 11 = **82%** | 64 / 50 |
 | Corte de paredes | 11 (5) | 32 / 159 = 20,1% (não recontado na n19) | 6 / 6 = **100%** | 4 / (na ui-live §8c–8d) |
@@ -86,7 +86,7 @@ palavra.
 | CAS | 89 (25) | 87 / 1.534 = 5,7% (não recontado na n10 nem na n21) | 7 / 8 = **88%** | 33 / 28 |
 | Desenho | 211 (35) | 129 / 2.309 = 5,6% (não recontado na n13, n16, n19 nem n22) | 8 / 10 = **80%** | 55 / 41 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (252)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **90 / 110 = 81,8%** | **508 em src** |
+| **Total** | **816 (252)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **90,5 / 110 = 82,3%** (com a n23) | **505 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -149,15 +149,15 @@ coreografia, expiração, peso dos canais, solucionador de IK; rodada n02),
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
-| Arquivo ANIM: `cAnimResourceConst::ReadFrom` (67, 7) | `formats/anim.*` | inferido | Preenchimento das strings, unidade das tangentes e ordem de Euler são inferidos (`TODO.md` M3). |
+| Arquivo ANIM: `cAnimResourceConst::ReadFrom` (67, 7) | `formats/anim.*` | fiel | Rodada n23 (`anim-mac.md` §9): `ReadFrom`/`WriteTo` lidos (os 11.757 ANIM regravados byte a byte), tangentes `±m·2^(e−31)` por tick, chaves assadas a cada 33,333 ticks, Euler XYZ em graus e as rotações amostradas por quadro com slerp (`cChannelStrategyQ`). |
 | Canais e deltas: `cActiveAnimSkeletal::SetupChannel`, `SetApplyDeltaDataToIK` | `formats/anim_player.cpp` | fiel | Rodada 15. |
 | Mistura por níveis: `cChannelUberOutlet`, `cChannelUber`, `cBlendFunction2` (29, 0) | `formats/anim_player.cpp` | inferido | Rodada n02: o peso do canal (`cChannelUber::Weight`: peso do pedido × peso de IK) e a memória do osso (osso sem canal fica como estava) lidos e feitos (`anim-mac.md` §2–3); a forma dos intervalos de blend (`cBlendInterval::Value`) não foi lida. |
 | Fila de coreografia: `cChoreoQueue` (81, 0), `cChoreoRequest` (62, 3), `cChoreoHandler*` | `formats/anim_player.cpp` | inferido | Rodada n02: ordem do quadro (pedidos → tratadores → outlets, IK no segundo passo), regras de expiração e a saída dos expirados lidas (`anim-mac.md` §1–2); o `AnimPlayer` segue isso, mas a sobreposição no fim de um pedido (nível −1) continua nossa. |
 | Locomoção: `cActiveAnimLoco::CreateStepCycle`, `PushTurnBlendCycles`, `StopLocomotion`, `cLocoCycle` (63, 0) | `vm/locomotion.*`, `vm/routing_loco.cpp`, `formats/anim_player.cpp` | inferido | Rodada n14 (`anim-mac.md` §8): relógio das fases (`ComputeLocoStartTicks`, entrega do `FollowOneStep` na saída do pedido, N = 25/70), trocas do `cLocoCycle` (`+0xec`, cosseno), pé da parada (`0x178`), rotas curtas e `StopLocomotion` lidos e feitos; seguem inferidos a janela do fim da primitiva anterior, a troca centrada (±b/2), a rampa de velocidade e o espaço da parada ao bloquear. |
 | IK: `cActiveAnimIK` (28, 5), `cIKChain` (47, 0), `cIKStrategy7DOF`, `ComputeIKRotationSolution` | `formats/anim.cpp` (`applyIk`) | fiel | Rodada n02: o solucionador de duas juntas do binário (dobradiça em X, giro pelo polo, 65 %/75 % da torção) e a mistura de alvos pelo contato conferida (`anim-mac.md` §4–5). Sobras: ordem de Euler da torção, contato 0. |
-| Olhar: `cActiveAnimLookAt` (29, 1), `cIKStrategyLookAt` | `app/look_at.*` | inferido | A primitiva Look At é fiel; a cabeça no corpo não (o alvo a 0,75 do chão é inferido). |
-| Eventos: `cEventChannel`, `cActiveAnimEvent`, árvores de evento | `vm/animation.cpp` | inferido | As árvores de evento recebem só (evento, objeto IK); 20 marcadores em `animation.cpp`. |
-| Cinemáticas: `cCinematicScene::ReadFrom` (23, 9), `TryCinematic` | `formats/cinematic.*`, `app/cinematic_*` | inferido | Spots, velocidade forçada e "ObjectHiding" abertos. |
+| Olhar: `cActiveAnimLookAt` (29, 1), `cIKStrategyLookAt` | `app/look_at.*` | inferido | Rodada n23 (`anim-mac.md` §11): o alvo a 3/4 da caixa do alvo e as velocidades do primitivo seguem o `try_look_at`; o `cActiveAnimLookAt::AnimUpdate` (cadeia de IK, limites, perfil de velocidade, estados) não foi portado, nem os slots. |
+| Eventos: `cEventChannel`, `cActiveAnimEvent`, árvores de evento | `vm/animation.cpp` | inferido | Rodada n23 (`anim-mac.md` §10): os 5 parâmetros do `cCustomEventHandler2::HandleEvents` (evento, stack object, porção %, voltas, abortado), os temps postos de volta e o 9997/9998/9999 também no Animate Sim seguem o binário; inferidos: qual chave do motor é a 6 e a 3, a chave de cada volta de um laço; 16 marcadores em `animation.cpp`. |
+| Cinemáticas: `cCinematicScene::ReadFrom` (23, 9), `TryCinematic` | `formats/cinematic.*`, `app/cinematic_*` | inferido | Rodada n23 (`cinematics-mac.md` §8): o andar do ator de origem, o "ObjectHiding" (a opção gráfica, 1 nas cenas da casa inteira) e o espelho pelo temp 3 lidos; o Start não muda a velocidade do jogo (a normal forçada é nossa); spots como pontos e quem começa a cena sem 0x04 abertos. |
 
 ### 3.4 Sentar
 
@@ -397,7 +397,7 @@ no jogo base.
 | 20 | **Colocação de objetos e salas**: `cTSUserToolObject`/`TestPlacement*` com `HasSupport`, `FUN_009a7dd8` (cômodo), desfazer peça por peça, +0,75 da escada — **feita** (n20): teste de vértice `FUN_009e9550` com as flags dos inicializadores estáticos (`0x2BB7`), nivelador e cômodo que aplaina o retângulo, arrastes tudo ou nada, `IsFlat`/piso inteiro/`CeilingTooHighForObject` na colocação, desfazer numa pilha só até o Vivo e byte a byte, escadas com elevation absoluta (`buy-build-mac.md` §7.24) | 3.5 colocação, salas, desfazer, escadas | construção |
 | 21 | **Pele e CAS, resto**: `cTSSkinTextureCompositor`, câmera do CAS, compensação do arquétipo, `BlendFaces`, biografia da família — **feita** (n21): compositor e camadas lidos (um overlay por bin, `cafOverlay` com a vírgula do jogo: editar um Sim salvo não perde a maquiagem), `BlendFaces` com os dados do `FaceInfo.package`, câmera (pares pelo SimAntics, botões segurados, roda), compensação só de animais, biografia da família inexistente no base (`cas-mac.md`, fim); a direção do zoom segue inferida | 3.11 pele, câmera, rosto, telas | CAS |
 | 22 | **Shaders e espelhos**: normal map, passe de recorte, CelShaded, `MirrorReflectionMaterial` com stencil — **feita** (n22): todo espelho em vista reflete com o stencil do jogo e a censura da vista mostra o reflexo; o recorte da pia (a cuba aparece, o balcão mantém o design); o bump do DX8 sem tangentes do Mac; o `celShading.matShad` inteiro (`shaders-mac.md` §13) | 3.12 materiais, espelhos | shaders |
-| 23 | **Animação, resto**: arquivo ANIM (strings, tangentes, Euler), canal de eventos, Look At na cabeça, cinemáticas (spots, ObjectHiding) | 3.3 ANIM, eventos, olhar, cinemáticas | animação |
+| 23 | **Animação, resto**: arquivo ANIM (strings, tangentes, Euler), canal de eventos, Look At na cabeça, cinemáticas (spots, ObjectHiding) — **feita** (n23): ANIM lido e regravado byte a byte (tangentes por tick, chaves a 30/s, rotações por quadro com slerp), árvores de evento com os 5 parâmetros e os temps postos de volta (o Animate Sim recebe 9997–9999), Look At a 3/4 da caixa do alvo com as velocidades do primitivo, cinemáticas no andar da origem (`anim-mac.md` §9–11, `cinematics-mac.md` §8); o `AnimUpdate` do olhar e os spots ficam no `TODO.md` | 3.3 ANIM, eventos, olhar, cinemáticas | animação |
 | 24 | **VM, resto**: `cTSGlobals`, `cTSDataTables`, `TryPlaySound`, `cTSInteraction`, registros de objetos da pessoa (`+0x60c`, faltando) | 3.1 fila, dados, som; 3.7 registros | VM |
 | 25 | **Cercas**: `cFenceGeometryNode`, `cFenceManager`, o +0,75 por tipo de piso | 3.12 cercas | lote |
 | 26 | **Salvar, resto**: salvar do bairro (`cTSSaveNeighborhoodController`), `cTSPersistSystem` | 3.9 controladores, persist | salvar |

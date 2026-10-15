@@ -460,3 +460,7 @@ como funções no projeto). Endereços BV.
   slerp, as tangentes por tick e as chaves assadas a cada 33,3 ticks — o
   que muda o caminho da câmera nas curvas assadas com menos chaves que a
   duração do canal.
+- Capturas (antes = o main da rodada, depois = n23; `--lot N001_Lot11
+  --cinematic <cena> --time 8 --frames 4`): `docs/screenshots/
+  n23-cinematic-movein.jpg` (o táxi e os enquadramentos mudam pouco: até
+  2,4 % dos pixels) e `n23-cinematic-firstkiss.jpg` (quase igual).
