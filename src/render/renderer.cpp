@@ -66,6 +66,7 @@ enum : uint32_t {
     kWallMask = 1u << 27,      // walls: alpha test against a mask over the face (planes mask / maskV)
     kMirror = 1u << 28,        // the mirror reflecting this frame: the reflection texture (18) at the pixel
     kShadowCaster = 1u << 29,  // a shadow silhouette: the draw's colour (alpha-tested by the texture)
+    kPoolWater = 1u << 30,     // RegularWavesHLSL: waves (misc), env cube x (1 - N.V) x 0.5 + highlight, added
     kShadowDecal = 1u << 30,   // a Sim's shadow on the floor: the silhouette (texture 19) at mask/maskV
 };
 
@@ -585,6 +586,10 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
     if (sm.shading == StandardMaterial::Shading::Water) {
         mat.flags |= kWater;
         mat.misc.w = sm.waterSpeed;
+    }
+    if (sm.shading == StandardMaterial::Shading::PoolWater) {
+        mat.flags |= kPoolWater;
+        mat.misc = simd_make_float4(sm.poolWaves[0], sm.poolWaves[1], sm.poolWaves[2], sm.poolWaves[3]);
     }
     if (!sm.detailTexture.empty())
         if (MTL::Texture* t = texture(sm.detailTexture, index)) {

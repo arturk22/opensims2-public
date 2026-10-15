@@ -109,7 +109,8 @@ struct StandardMaterial {
         CelShaded,  // two-tone ramp from a camera-relative light, white rim
         VertexColor, // VertexAlpha: vertex colour and alpha, unlit
         Water,       // WaterAnimatingTextures (LowEndWater): two animated scales of the texture, lit x1
-        TerrainWater // TerrainWaterShader: the env cube reflection only, alpha from the vertex colour
+        TerrainWater, // TerrainWaterShader: the env cube reflection only, alpha from the vertex colour
+        PoolWater     // RegularWavesHLSL (poolWater-1): additive rippled reflection with a fresnel term and a highlight
     };
     enum class TexAnim { None, Transform, Tile };
     enum class Waveform { Sawtooth, Triangular, Sine };
@@ -186,6 +187,9 @@ struct StandardMaterial {
     std::string celRamp, celEdgeRamp;
     float celEdgeOffset = 0.3f;
     float waterSpeed = 0.3f; // Water: texture animation speed
+    // PoolWater: water.matShad's wave constants (wmXRepeat, wmYRepeat,
+    // wmXWaveHeight, wmXSpeed; the Y height and speed are the X ones here).
+    std::array<float, 4> poolWaves{1, 1.8f, 0.1f, 3};
 };
 StandardMaterial standardMaterial(const MaterialDefinition& m);
 

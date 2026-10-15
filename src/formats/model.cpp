@@ -444,6 +444,18 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         out.specularPower = 0;
         diffuse = {0, 0, 0, 1};
         out.untexturedAlpha = 1;
+    } else if (type == "PoolWaterSurface") {
+        // water.matShad poolWater-1 (PoolWaterSurfaceMaterial): the Mac's DX8
+        // path is RegularWavesHLSL (docs/shaders-mac.md 1.2): one + one, the
+        // env cube along the reflection of the rippled normal x (1 - N.V) x
+        // the texture lights x 0.5, plus the highlight (R.L + 0.1)^15.
+        out.shading = StandardMaterial::Shading::PoolWater;
+        out.blend = StandardMaterial::Blend::AddNoSrcAlpha;
+        out.specularPower = 0;
+        envReflection = true;
+        out.envCubeCoef = {1, 1, 1};
+        out.poolWaves = {number("wmXRepeat", 1), number("wmYRepeat", 1.8f), number("wmXWaveHeight", 0.1f),
+                         number("wmXSpeed", 3)};
     } else if (contains(type, "Water")) {
         // water.matShad: alpha blended over the water layer (5).
         out.blend = StandardMaterial::Blend::Alpha;

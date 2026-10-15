@@ -757,14 +757,31 @@ MaterialDefinition roofMaterial(const std::string& texture, const std::string& b
     return m;
 }
 
-// Pools: SimplifiedWaterSurface of PoolWaterSurfaceMaterial (water.matShad),
-// colour (0.2, 0.3, 1.0) at 0.4 alpha, unlit, on the pool water layer (5).
+// Pools (cPoolGeometryNode::CreatePoolWater, docs/roof-fence-water-mac.md
+// 3.2): the surface "poolwater-1" (water.matShad poolWater-1: on the Mac's
+// DX8 path RegularWavesHLSL, with swimming_pool-envcube and its waves), and
+// three depth layers "poolwaterlayer-1..3" 0.75 apart below it
+// (PoolDepthLayerMaterial: swimming_pool_deeplayer x poolLayerColour (0,
+// 0.5, 1), alpha x 0.9, blended, unlit), on the pool water layer (5).
 MaterialDefinition poolWaterMaterial() {
     MaterialDefinition m;
-    m.materialType = "PoolWaterSurfaceMaterial";
-    m.properties = {{"stdMatDiffCoef", "0.2,0.3,1.0,0.4"},
-                    {"stdMatUntexturedDiffAlpha", "0.4"},
-                    {"stdMatLightingEnabled", "0"},
+    m.materialType = "PoolWaterSurface";
+    m.properties = {{"stdMatEnvCubeTextureName", "swimming_pool-envcube"},
+                    {"wmXSpeed", "3"},
+                    {"wmXRepeat", "5"},
+                    {"wmXWaveHeight", "0.01"},
+                    {"wmYRepeat", "6"},
+                    {"stdMatCullMode", "none"}};
+    return m;
+}
+MaterialDefinition poolLayerMaterial() {
+    MaterialDefinition m;
+    m.materialType = "PoolWaterLayer";
+    m.properties = {{"stdMatBaseTextureName", "swimming_pool_deeplayer"},
+                    {"stdMatDiffCoef", "0,0.5,1,1"},
+                    {"stdMatAlphaMultiplier", "0.9"},
+                    {"stdMatAlphaBlendMode", "blend"},
+                    {"stdMatLightingEnabled", "false"},
                     {"stdMatCullMode", "none"}};
     return m;
 }
@@ -816,24 +833,51 @@ void addWater(const Lot& lot, const LotWaterParams& params, std::map<std::string
             };
             terrain->quad(v(0), v(1), v(2), v(3));
         }
+    // Each pool tile: corners, edge midpoints and centre (the game's quarter
+    // triangles split at their midpoints, AddFloorTileGeometry). The depth
+    // layers fade out at the pool's walls: AddPoolDepthLayerColors gives the
+    // vertices on the walls other texture coordinates than the rest (their
+    // values are set at run time, not read: here the texture's transparent
+    // corner and its centre, inferred).
     for (const auto& pool : lot.pools) {
-        MeshBuilder& b = out["water:pool"];
         const int x0 = int(std::lround(pool.x)), y0 = int(std::lround(pool.y));
+        auto isPool = [&](int x, int y) {
+            if (x < x0 || y < y0 || x >= x0 + int(pool.width) || y >= y0 + int(pool.height) || x < 0 || y < 0 ||
+                x >= int(lot.width) || y >= int(lot.height))
+                return false;
+            // Pool tiles have a floor one level down (the pool's bottom) and none at the surface.
+            return lot.floor(pool.level - 1, uint32_t(x), uint32_t(y)) != std::array<uint16_t, 4>{} &&
+                   lot.floor(pool.level, uint32_t(x), uint32_t(y)) == std::array<uint16_t, 4>{};
+        };
+        // A point (in half tiles) is on the wall when a tile it touches is not pool.
+        auto onWall = [&](int hx, int hy) {
+            for (int tx = (hx - 1) / 2 - 1; tx <= hx / 2; ++tx)
+                for (int ty = (hy - 1) / 2 - 1; ty <= hy / 2; ++ty)
+                    if (2 * tx <= hx && hx <= 2 * tx + 2 && 2 * ty <= hy && hy <= 2 * ty + 2 && !isPool(tx, ty))
+                        return true;
+            return false;
+        };
         for (int x = x0; x < x0 + int(pool.width); ++x)
             for (int y = y0; y < y0 + int(pool.height); ++y) {
-                if (x < 0 || y < 0 || x >= int(lot.width) || y >= int(lot.height))
-                    continue;
-                // Pool tiles have a floor one level down (the pool's bottom) and none at the surface.
-                const auto& bottomTile = lot.floor(pool.level - 1, uint32_t(x), uint32_t(y));
-                if (bottomTile == std::array<uint16_t, 4>{} ||
-                    lot.floor(pool.level, uint32_t(x), uint32_t(y)) != std::array<uint16_t, 4>{})
+                if (!isPool(x, y))
                     continue;
                 const Vec3f up{0, 0, 1};
-                auto v = [&](int px, int py) {
-                    const Vec3f q{float(px), float(py), lot.elevation(pool.level, px, py) - pool.depth};
-                    return b.vertex(q, up, q[0], q[1]);
-                };
-                b.quad(v(x, y), v(x + 1, y), v(x + 1, y + 1), v(x, y + 1));
+                for (int layer = 0; layer <= 3; ++layer) {
+                    MeshBuilder& b = out[layer == 0 ? std::string("water:pool") : "water:poollayer" + std::to_string(layer)];
+                    std::array<uint32_t, 9> k{};
+                    for (int i = 0; i < 3; ++i)
+                        for (int j = 0; j < 3; ++j) {
+                            const float px = float(x) + 0.5f * float(i), py = float(y) + 0.5f * float(j);
+                            const Vec3f q{px, py, lot.elevationAt(pool.level, px, py) - pool.depth - 0.75f * float(layer)};
+                            const bool wall = layer > 0 && onWall(2 * x + i, 2 * y + j);
+                            k[size_t(i * 3 + j)] = layer == 0 ? b.vertex(q, up, px, py)
+                                                              : b.vertex(q, up, wall ? 0.0f : 0.5f, wall ? 0.0f : 0.5f);
+                        }
+                    for (int i = 0; i < 2; ++i)
+                        for (int j = 0; j < 2; ++j)
+                            b.quad(k[size_t(i * 3 + j)], k[size_t((i + 1) * 3 + j)], k[size_t((i + 1) * 3 + j + 1)],
+                                   k[size_t(i * 3 + j + 1)]);
+                }
             }
     }
 }
@@ -1385,6 +1429,8 @@ ObjectModel buildLotModel(const Lot& lot, ResourceIndex& index, const PatternCat
     addWater(lot, patterns.water(), built);
     model.materials["water:terrain"] = terrainWaterMaterial();
     model.materials["water:pool"] = poolWaterMaterial();
+    for (int layer = 1; layer <= 3; ++layer)
+        model.materials["water:poollayer" + std::to_string(layer)] = poolLayerMaterial();
     for (auto& [key, b] : built)
         if (key.rfind("water:", 0) == 0) {
             ObjectModel::Part part;

@@ -38,6 +38,7 @@ enum : uint {
     kWallMask = 1u << 27,      // walls with a door or window: alpha test against the mask (texture 1)
     kMirror = 1u << 28,        // the reflecting mirror: the reflection texture (18) at this pixel
     kShadowCaster = 1u << 29,  // a shadow silhouette: the draw's colour, alpha-tested by the texture
+    kPoolWater = 1u << 30,     // RegularWavesHLSL: waves (misc), env cube x (1 - N.V) x 0.5 + highlight, added
 };
 
 struct Draw {
@@ -315,6 +316,30 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         return color;
     }
 
+    if (draw.flags & kPoolWater) {
+        // water.matShad RegularWavesHLSL (poolWater-1): two sine waves along
+        // x and y (misc: x/y repeat, height, speed; the phase takes the
+        // position, z x height and time x speed) tilt the normal; one + one:
+        // the env cube along R x (1 - N.V) x the texture lights x 0.5, plus
+        // the highlight (saturate(R.L) + 0.1)^15 of the first light.
+        const float t = frame.params.y;
+        const float tx = in.world.x * draw.misc.x + in.world.z * draw.misc.z + t * draw.misc.w;
+        const float ty = in.world.y * draw.misc.y + in.world.z * draw.misc.z + t * draw.misc.w;
+        const float3 wn = normalize(float3(cos(tx) * -draw.misc.x * draw.misc.z + n.x,
+                                           cos(ty) * -draw.misc.y * draw.misc.z + n.y, n.z));
+        const float3 v = normalize(frame.eye.xyz - in.world);
+        const float3 r = reflect(-v, wn);
+        const float fresnel = dot(v, wn);
+        constant LightSet& set = lightSets[draw.lightSet];
+        float hi = 0.0;
+        if (set.ambient.w > 0.0) {
+            float att;
+            const float3 l = lightVector(set.lights[0], in.world, att);
+            hi = pow(saturate(dot(r, l)) + 0.1, 15.0);
+        }
+        const float3 refl = envCube.sample(cubeSmp, r, bias(draw.env.w)).rgb * draw.env.rgb;
+        return float4(saturate(refl * (1.0 - fresnel) * frame.environment.rgb * 0.5 + hi), 1.0);
+    }
     if ((draw.flags & kLighting) && (draw.flags & kLightMapped)) {
         // Walls, floors and terrain (docs/shaders-mac.md 5-7): no lights,
         // 2 x texture x light map (x the floor's diffuse, the terrain's 0.9;
