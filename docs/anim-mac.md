@@ -480,3 +480,92 @@ Inferido / sobrou (no `TODO.md`):
   de uma parada não acontece aqui: a parada já vira para a direção final);
 - um novo pedido ao replanejar andando (o `BeginFollow` de novo) não entra
   pelo fade de entrada.
+
+## 9. O arquivo ANIM e a leitura das curvas (rodada n23)
+
+Leitura da rodada n23 (`docs/inventario-binario.md` §6, linha 23),
+2026-10-15. Modo: **Ghidra MCP** (só leitura) e, para as funções que o
+projeto não tem como função, **Ghidra sem janela** num clone APFS do
+projeto (`-readOnly -noanalysis`, `DecompileList.java`). Endereços BV.
+
+### 9.1 `cAnimResourceConst::ReadFrom` (BV `0xd491a8`) e `WriteTo` (`0xd4a20c`)
+
+O `ReadFrom` lê o bloco inteiro num buffer e só acerta ponteiros nele
+(`Swizzle*Record`): o layout é o que o `opensims2` já lia (OpenTS2), e o
+`WriteTo` mostra o que vai em cada campo que pulávamos:
+
+- **Os "ponteiros de execução"** (16 bytes do cabeçalho; 8 + 12 de cada
+  alvo; 8 + 4 + 4 de cada canal; o u32 de cada componente; 8 + 4 de cada
+  cadeia de IK; 8 de cada alvo de IK; 4 + 4 de cada evento) são escritos
+  como o marcador **`0x11BA05F0`**; o byte depois do formato de cada
+  componente é 0; cada CRC das cadeias e dos alvos de IK é seguido de um
+  byte 0. Antes de gravar, o `WriteTo` põe 7 na versão dos dados (`+7`); os
+  11.757 ANIM do jogo base têm 6 (gravados por outra versão da ferramenta)
+  e bloco versão 6.
+- **O preenchimento depois das strings** (as duas do cabeçalho, as etiquetas
+  dos alvos, os nomes dos canais) é de `comprimento % 4` bytes — o
+  `ReadFrom` pula `(soma + 2) & 3` / `soma & 3` bytes **sem olhar o valor**
+  e o `WriteTo` escreve 0, 1, 2. Não alinha a 4 (o que era a regra do
+  OpenTS2, agora confirmada). Não há preenchimento depois das chaves nem
+  dos eventos.
+- Para blocos de versão 3–5 o `ReadFrom` usa proxies antigos
+  (`cSharedChannelCubicKeysConstProxy1/2/3`, registros de 0x3C bytes); os
+  do jogo base são todos versão 6 (o `Proxy4`, registros de 0x18). Versão
+  < 7 troca os nibbles dos bytes `+9`/`+10` do cabeçalho (prioridade e
+  tipo de locomoção) — o que lemos como `priority`/`locomotionType`.
+
+### 9.2 As chaves (`cSharedChannelCubicKeysConstProxy4`, BV `0x1c65e00`, `0x1c65388`)
+
+O decodificador das chaves (`FUN_01c65e00`, chamado pelo
+`HermiteCubicInterpolation` do proxy, BV `0xee4cb0`) trata o formato
+(`& 0x1f`) caso a caso:
+
+| formato | chave | valor |
+|---|---|---|
+| 0, 4, 0xC | 2 bytes (assada) | s16 × 1/128, 1/1024, 1/4096 |
+| 1, 5, 0xD | 6 (tempo, valor, tangente) | 17 bits (o bit baixo no bit 15 do tempo) × 1/128, 1/2048, 1/8192 |
+| 2, 6, 0xE | 8 (tempo, valor, tangente de entrada, de saída) | idem |
+| 0x10 | 4 (assada) | float |
+| 0x11 | 8 (u16 tempo, float, tangente) | float |
+| 0x12 | 10 (u16 tempo, float, entrada, saída) | float |
+| outros | 0 | 0 |
+
+- **Tangentes.** Não são half floats: bit 15 o sinal, bits 10–14 o expoente
+  `e`, bits 0–9 a mantissa `m`, **sem bit implícito**: `±m · 2^(e − 31)`
+  (o código faz `(1 << e) · 4,7683716e-7 · m · (1/1024)`), em **valor por
+  tick**. A interpolação é a Hermite cúbica com `m0` = tangente de saída da
+  chave `a` × `Δt` e `m1` = de entrada da chave `b` × `Δt` (`Δt` em ticks).
+  Era inferido como half float "por ~154 ticks"; nos dados (`s2pkg
+  anim-sweep`, 1.045.374 chaves contínuas): tangente / inclinação central =
+  **0,999** de mediana (5 %–95 %: 0,85–1,01).
+- **Chaves assadas.** A chave `k` fica em `int(k · 33,333332 + 1/6)` ticks
+  (o global `DAT_02dbc030`, escrito pelo inicializador estático em
+  `0x2694630` do float `0x274b518` = 33,333332: **30 por segundo**),
+  **qualquer que seja a duração do canal**; entre duas, a Hermite com as
+  tangentes = diferença dos valores (linear). Líamos `duração · k / (n − 1)`:
+  em 76.960 das 115.232 curvas assadas isso erra mais de um tick (até 3.163;
+  o `eyedirection` do `t2o-mirror-applyZitCream`, 148 chaves num canal de
+  4.700 ticks: a última chave fica em 4.900, a duração da animação).
+- Antes da primeira chave vale a primeira; da última em diante, a última
+  (`FUN_01c65388` acha a chave e o `HermiteCubicInterpolation` decide).
+
+### 9.3 Rotações: Euler e amostragem por quadro (`cChannelStrategyQ`, BV `0xd451e8`)
+
+- **Ordem de Euler:** `nGZSceneDBAnim::EulerToQuaternion` (BV `0x1b95508`;
+  o `TemporalCoherentEulerToQuaternion`, `0x1b90288`, faz a mesma conta
+  guardando senos e cossenos) dá `q = qz · qy · qx`: gira em X, depois Y,
+  depois Z — **termo a termo o nosso `quatFromEulerXYZ`**. Graus: o canal é
+  multiplicado pelo double `0x3f91df46a0000000` (π/180). Confirmado.
+- **Amostragem por quadro.** O `ChannelDataFromCubicKeys` da estratégia de
+  rotação (vtable `+0x24` da `cChannelStrategyQ`, vtable `0x28348b0`) não
+  avalia a curva no tempo pedido: com o "frame sampling" desligado (o
+  padrão: a variável `animationFrameSampling`, propriedade `0x0C7BFEA6`,
+  registrada com `false` em `0x7bd990`, liga
+  `cSceneDBAnimSystem::SetFrameSamplingEnabled`), pega o quadro
+  `f = int(t · 30 / 1000)` (−1 se `t < 0`), avalia os ângulos em
+  `t0 = int(f · 33,333 + 1/6)` e `t1 = int((f + 1) · 33,333 + 1/6)`, faz os
+  dois quatérnios e devolve o **slerp** por `(int(t) − t0) / (t1 − t0)`
+  (limitado a 0–1; `FUN_00dc75a0`: linear normalizado com |cos| ≥ 0,95, e
+  pelo arco menor). Ligado, arredonda para o quadro mais próximo. As
+  translações (`cChannelStrategyXYZ`) e os canais de 1 a 4 floats avaliam
+  no tempo pedido.
