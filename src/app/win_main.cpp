@@ -1635,6 +1635,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         std::unique_ptr<os2::BuyMode> buy;
         std::unique_ptr<os2::BuildMode> build;
         std::unique_ptr<os2::PieMenuHost> pie;
+        std::unique_ptr<os2::TutorialOverlay> tutorial; // over a lot of the Tutorial neighborhood
         int liveWindows = 0, liveDrawn = 0, buyWindows = 0, buyDrawn = 0, buildWindows = 0, buildDrawn = 0;
         auto showLiveUi = [&] {
             if (!liveUi || !liveUi->ok())
@@ -1643,6 +1644,13 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 liveUi->setSim(pie->sim());
             else if (!sims.empty())
                 liveUi->setSim(sims.front().id);
+            // The tutorial's arrow finds its control in the panels' layout, which
+            // may lay them out again: before their screens are taken.
+            os2::UiScreen tutorialScreen;
+            if (tutorial) {
+                tutorial->setCanvas(1280, 720);
+                tutorialScreen = tutorial->screen(1280, 720);
+            }
             os2::UiScreen liveScreen = liveUi->screen(1280, 720);
             liveWindows = int(liveScreen.windows);
             liveDrawn = int(liveScreen.drawn);
@@ -1672,6 +1680,8 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 buildDrawn = int(buildScreen.drawn);
                 screen.quads.insert(screen.quads.end(), buildScreen.quads.begin(), buildScreen.quads.end());
             }
+            // The tutorial's window and arrow over the panels.
+            screen.quads.insert(screen.quads.end(), tutorialScreen.quads.begin(), tutorialScreen.quads.end());
             // The pie menu and the dialogs over everything.
             os2::UiScreen pieScreen;
             if (pie) {
@@ -1991,6 +2001,59 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             std::printf("opensims2: --vm-queue %s: %s (object %d %s, Sim %d; entries: %s)\n", spec->c_str(),
                         queued ? "queued" : "no such entry", target,
                         target ? m.object(target)->definition->fileName.c_str() : "-", sim, offered.c_str());
+        }
+        // A lot of the Tutorial neighborhood: its tutorial controllers (created if
+        // the lot has none) and the tutorial manager's UI over the live panel.
+        size_t tutorialRequestsSeen = 0;
+        if (scene.hood == "Tutorial" && liveUi && liveUi->ok()) {
+            try {
+                os2::vm::VM& vm = simulation.machine();
+                const int created = os2::vm::ensureTutorialControllers(vm);
+                // The tutorial lots are saved paused; the episode plays in time, so it
+                // starts unpaused and the controller's first press of Buy mode pauses it.
+                vm.globals[os2::vm::global::Paused] = 0;
+                tutorialRequestsSeen = vm.engineRequests.size();
+                tutorial = std::make_unique<os2::TutorialOverlay>(vm, index, res);
+                tutorial->setCanvas(1280, 720);
+                // The controls: Buy's and Build's panels while they are up, the live panel and the puck.
+                tutorial->locate = [&](uint32_t window, uint32_t control) -> std::optional<std::array<float, 4>> {
+                    // The main window's controls are the puck's (the panels reuse small ids).
+                    if (window == os2::LiveUi::kMainWindow)
+                        if (auto r = liveUi->controlRect(window, control))
+                            return r;
+                    if (buy && buy->active())
+                        if (auto r = buy->controlRect(window, control))
+                            return r;
+                    if (build && build->active())
+                        if (auto r = build->controlRect(window, control))
+                            return r;
+                    return liveUi->controlRect(window, control);
+                };
+                tutorial->pressControl = [&](uint32_t window, uint32_t control) {
+                    const auto r = tutorial->locate(window, control);
+                    if (!r)
+                        return;
+                    const simd_float2 p = simd_make_float2(((*r)[0] + (*r)[2]) / 2, ((*r)[1] + (*r)[3]) / 2);
+                    tutorial->clicked(p); // as a click: the control's listeners, then the control
+                    if (liveUi->overModeButton(p) && liveUi->press(p))
+                        return;
+                    if (buy && buy->active() && buy->press(p))
+                        return;
+                    if (build && build->active() && build->press(p))
+                        return;
+                    liveUi->press(p);
+                };
+                auto allows = [&](simd_float2 p) { return !tutorial || tutorial->allows(p); };
+                liveUi->allowPress = allows;
+                if (buy)
+                    buy->allowPress = allows;
+                if (build)
+                    build->allowPress = allows;
+                std::printf("opensims2: tutorial: %d controller(s) created\n", created);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "opensims2: tutorial: %s\n", e.what());
+                tutorial.reset();
+            }
         }
         // Whether a Sim is in the lot's world: it, or what holds it (a carried
         // baby, a passenger in a car), stands in it.
@@ -2433,6 +2496,32 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             else
                 leaveLot();
         };
+        // The tutorial each frame: its UI Effects, and the end of an episode
+        // (Generic Sims Call 0 "Exit Lot", from "Simulation - Exit Tutorial"):
+        // back to the main menu it was played from.
+        auto pollTutorial = [&](double now) {
+            if (!tutorial)
+                return;
+            tutorial->update(now);
+            auto& requests = simulation.machine().engineRequests;
+            if (tutorialRequestsSeen > requests.size())
+                tutorialRequestsSeen = 0;
+            for (; tutorialRequestsSeen < requests.size(); ++tutorialRequestsSeen)
+                if (requests[tutorialRequestsSeen].call == 0 && !exit.next) {
+                    const auto& t = requests[tutorialRequestsSeen].temps;
+                    std::printf("opensims2: tutorial: episode over (state %d), exit lot%s\n",
+                                simulation.machine().globals[26], t[2] ? ", saving" : "");
+                    std::fflush(stdout);
+                    // Exit Lot's temp 2: save the lot first (its SIMI keeps global 26
+                    // "Tutorial State", which the episode list reads).
+                    if (t[2])
+                        saveGameNow();
+                    os2::Scene next;
+                    next.kind = os2::Scene::Kind::MainMenu;
+                    exit.next = next;
+                    running = false;
+                }
+        };
 
         // The mouse ray (world space) through a canvas point.
         auto viewProj = [&] { return simd_mul(camera.projection(1280.f / 720.f), camera.view()); };
@@ -2450,6 +2539,12 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
             if (pie && pie->dialogOpen() && pie->click(p)) {
                 pollFlowDialog();
                 return;
+            }
+            if (tutorial && !right) { // the tutorial's window (top right)
+                tutorial->setCanvas(1280, 720);
+                liveUi->setCanvas(1280, 720); // (its click trees find the controls laid out)
+                if (tutorial->press(p))
+                    return;
             }
             if (pie && pie->isOpen() && pie->press(p))
                 return;
@@ -2775,13 +2870,18 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         // Runs the lot's VM `ticks` ticks headless (a --wait step).
         auto runTicks = [&](long ticks) {
             const uint64_t target = simulation.ticks() + uint64_t(std::max(0L, ticks));
-            for (long guard = 0; simulation.ticks() < target && guard < ticks * 40 + 100; ++guard) {
+            // Paused with a tutorial running: its controller goes on (pollTutorial),
+            // so a wait is that many ticks of real time.
+            const bool pausedTutorial = tutorial && simulation.machine().globals[os2::vm::global::Paused];
+            for (long guard = 0; simulation.ticks() < target && guard < (pausedTutorial ? ticks * 30 / 23 + 1 : ticks * 40 + 100);
+                 ++guard) {
                 headlessClock += 1.0 / 30;
                 const double sceneTime = simulation.update(headlessClock);
                 if (lotLighting && simulation.ticks() % 30 == 0)
                     lotLighting->update(sceneTime);
                 if (liveUi)
                     liveUi->tick(headlessClock);
+                pollTutorial(headlessClock);
             }
             adoptVmSims();
             std::printf("opensims2: waited to VM tick %llu\n", (unsigned long long)simulation.ticks());
@@ -2797,6 +2897,7 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
                 liveUi->tick(now);
             const double scene = simulation.update(now);
             sceneNow = scene;
+            pollTutorial(now);
             // The animated objects first: the Sims' hands reach for their bones.
             for (auto& [id, a] : objectActors)
                 if (a)
@@ -2982,12 +3083,45 @@ SceneExit runLot(App& app, const std::filesystem::path& lotFile, const os2::Scen
         // a step that leaves the lot leaves the rest to the next scene.
         if (exitAfterShot && !diagnostics) {
             headlessClock = seconds();
+            if (tutorial) { // the tutorial presses and points at controls laid out at the shot's size
+                showLiveUi();
+                pollTutorial(headlessClock);
+            }
             const auto steps = os2::flowSteps(app.args);
             for (size_t k = 0; k < steps.size() && running; ++k) {
                 exit.stepsUsed = k + 1;
                 const os2::FlowStep& st = steps[k];
                 if (st.kind == os2::FlowStep::Kind::Wait) {
                     runTicks(st.ticks);
+                } else if (st.kind == os2::FlowStep::Kind::TutorialAuto) { // --tutorial-auto <turns>[:<step>]
+                    // Each turn: a click on what the arrow points at or Next;
+                    // else what a step waiting on the Sim waits for (a Go
+                    // Here, an object bought, a job: vm::tutorialAutoAct);
+                    // else time passes. Stops after ~3000 idle ticks.
+                    int idle = 0;
+                    // The trees' own dialogs (the job offers) get their first button.
+                    int& autoAnswer = simulation.machine().autoDialogAnswer;
+                    const int answerBefore = autoAnswer;
+                    if (autoAnswer < 0)
+                        autoAnswer = 0;
+                    for (long turn = 0; tutorial && turn < st.ticks && running && idle < 50; ++turn) {
+                        const auto& progress = simulation.machine().tutorial.progress;
+                        if (st.entry > 0 && progress.visible && progress.step >= st.entry)
+                            break;
+                        showLiveUi();
+                        pollTutorial(headlessClock);
+                        if (tutorial->autoClick()) {
+                            idle = 0;
+                            runTicks(40);
+                            continue;
+                        }
+                        if (idle % 10 == 1)
+                            if (const std::string done = os2::vm::tutorialAutoAct(simulation.machine(), &index); !done.empty())
+                                std::printf("opensims2: tutorial: %s\n", done.c_str());
+                        ++idle;
+                        runTicks(60);
+                    }
+                    autoAnswer = answerBefore;
                 } else if (st.kind == os2::FlowStep::Kind::Click || st.kind == os2::FlowStep::Kind::RightClick) {
                     const simd_float2 p = simd_make_float2(st.x, st.y);
                     const bool right = st.kind == os2::FlowStep::Kind::RightClick;
