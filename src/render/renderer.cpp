@@ -359,7 +359,10 @@ Renderer::Renderer(MTL::Device* device, uint32_t colorFormat, uint32_t depthForm
                                  ? MTL::BlendFactorOneMinusSourceAlpha
                                  : MTL::BlendFactorOne;
             color->setDestinationRGBBlendFactor(dst);
-            color->setDestinationAlphaBlendFactor(dst);
+            // Multiply (destColor + invSrcAlpha: the lot imposters' terrainLmap)
+            // leaves the target's alpha as it is: with invSrcAlpha it went to 0
+            // under every lot, which a screenshot (RGBA) shows as white.
+            color->setDestinationAlphaBlendFactor(blend == StandardMaterial::Blend::Multiply ? MTL::BlendFactorOne : dst);
         }
         desc->setDepthAttachmentPixelFormat(MTL::PixelFormat(depthFormat));
         MTL::RenderPipelineState* state = device_->newRenderPipelineState(desc, &error);
