@@ -1091,3 +1091,168 @@ luz) e por tile (a guarda da cópia); as paredes de cima brancas do N003 à
 noite deixam de brilhar; o salão dente de serra do N002 e as faces de
 dentro de cômodos sem piso (a torre da igreja) escurecem; os tiles sem
 piso dos andares de cima ficam pretos na página (não são desenhados).
+
+## 11. Rodada n35 (luz, resto): o que foi lido
+
+Ghidra MCP (BV, só leitura). Endereços do BV do Ghidra; nomes do
+`baserom.sym` casados pela ordem quando o BV não os tem.
+
+### 11.1 As "Delta" têm sinal; o cômodo dos objetos é o da luz
+
+`FUN_0070daa8` (o construtor de `roomLightingType` 2–8, §4) escolhe cada
+Delta com `FUN_00700590` (as seis direções; `FUN_00700610`, só os quatro
+lados, com N < 3), que compara `MaxAbsElement` (BV `0x1808d8c`:
+`max(|r|, |g|, |b|)`, positivo) e fica com a primeira das iguais. A luz
+recebe a cor `L_d` **como está, com sinal**: depois de `L_k −= A` (a média
+das seis), uma direção mais escura que a média é uma luz **negativa**, que
+o vertex shader do DX8 soma como as outras (`difusa = Σ max(N·L, 0)·cor`,
+§4.2 do `shaders-mac.md`) e que escurece as faces viradas para ela. O nome
+"Delta" é isso: diferenças em torno do ambiente. Num cômodo escuro à noite
+(`unlitRoomColor` somado só às cinco primeiras cores, `FindUnlitRooms`
+`0x701a28` conferido de novo: o laço vai de 0 a 4), o teto (`I[5]`) fica
+bem abaixo da média e a primeira Delta é a do teto, negativa: o topo dos
+objetos escurece (balcões e camas quase pretos por cima), os lados
+claros. O código antes só pegava as positivas: quatro luzes que só
+clareavam, e a geladeira ficava quase branca.
+
+Os conjuntos de luz dos cômodos são por **sala de luz** (o vetor de
+`cRoomLightingDesc`, `+0x1ac`, indexado pelo ID da definição de sala 0 =
+3ARY `0x0B`; o grupo de render das luzes é `FUN_00bfdd60(ID)`). O app dava
+a cada objeto o conjunto do seu cômodo da VM (3ARY `0x09`), que as cercas
+dividem e que numera as salas de outro jeito: no `N001_Lot11` a cozinha é
+a sala de luz 4 e a VM a chama de 6, que na luz é um armário de 2 tiles;
+os objetos da cozinha recebiam a luz do armário. Inferido: que o grupo de
+render de um objeto é a sala de luz do quarto de tile onde ele está (o
+`cObject` não foi lido nessa parte; é o único que casa com as luzes).
+
+### 11.2 As chaves de luz: o jogo roda o caminho otimizado
+
+As bandeiras globais que a passada lê (`DAT_02c1bf28`, `bf1c`, `bef8`,
+`bed4`, ...) não têm escrita no código: são o `bool` (`+4`) de objetos de
+12 bytes construídos no inicializador estático (`0x20e6c74..0x20e6ec4`,
+`FUN_014bbbbc(obj, padrão)`; destruídos em `0x702878..`), com o nome no
+`+−4` vindo da tabela `0x27e3fdc` — são as `boolProp` do `Graphics
+Rules.sgr`:
+
+| objeto | `bool` | nome | padrão | `Graphics Rules` |
+|---|---|---|---|---|
+| `0x2c1bf24` | `bf28` | `lightingEnabled` | 1 | — |
+| `0x2c1bf18` | `bf1c` | `portalLighting` | 1 | — |
+| `0x2c1bf0c` | `bf10` | `heightMapShadows` | 1 | — |
+| `0x2c1bf00` | `bf04` | `floorAndWallNormalMapping` | 1 | — |
+| `0x2c1bef4` | `bef8` | `lerpLights` | 0 | **true** |
+| `0x2c1bee8` | `beec` | `testLightingUpdates` | 0 | — |
+| `0x2c1bedc` | `bee0` | `incrementalLighting` | 0 | **true** |
+| `0x2c1bed0` | `bed4` | `useDirtyTiles` | 0 | **true** |
+| `0x2c1bec4` | `bec8` | `debugDirtyTiles` | 0 | — |
+| `0x2c1beb8` | `bebc` | `allObjectLightsOn` | 0 | — |
+| `0x2c1beac` | `beb0` | `integratedShadows` | 0 | — |
+
+O `Graphics Rules.sgr` faz sempre `setOption LightingOptimizations $High`
+(`optimizedDiffusion`, `incrementalLighting`, `lerpLights`, `useDirtyTiles`
+verdadeiros). Então no jogo: as luzes dos cômodos e dos portais vão pelos
+`cLerpLightSet` (`FUN_00d78f78`/`FUN_00d79738`, `SetAndAddPortalLights`
+`0x70ae3c` — o `0x70b5a8` sem lerp não roda); a primeira atualização (o
+`+0x93` do gerenciador, 1 no construtor) faz a passada completa e as
+seguintes a otimizada (§11.3), a luz direta só nos tiles sujos (vtable
+`0xa4`/`0xa8`) e o `BrightenUnlitRoomsDirtyTiles` (`0xb0`).
+
+### 11.3 `DoDiffusionPassOptimized` (BV `0xd7d9f0`)
+
+Comparada com `DoDiffusionPass` (`0xd7dd80`, §10.4–10.5): as mesmas grades
+(`UpdateFromWorldDB` quando sujas, `CalculateGrid` em todas), a mesma
+sequência das paredes (`Clear`, `AddDirectLight`, propagação, moldura,
+cantos), mas **sem** copiar as grades para as páginas dentro da passada (o
+`CopyDiffusionToLightMapsDirtyOnly` faz isso depois, só nos tiles sujos), e
+o piso trazido para as paredes vem das **grades**: `FUN_00ef0a48` →
+`FUN_00ef07d0` usa o `LookupFloorDiffusion` do gerenciador de difusão
+(vtable `0x5c`: 2 × a amostra de meio tile mais perto, menos o ambiente de
+fora nas metades de fora) onde a completa (`FUN_00ef0e68` →
+`FUN_00ef0b58`) lê o texel do light map de piso (`LookupFloorLightMap`,
+vtable `0x40`). O resto (pontos a 1/8 de tile na frente do meio de cada
+coluna, `max(amostra, piso · c · 0,5)` nas 6 linhas) é igual. Fora isso o
+resultado é o da passada completa: no regime (depois da primeira
+atualização) o jogo mostra as paredes com o piso da grade.
+
+### 11.4 Portais
+
+- **`doorOrArchDirectMultiplier`** é o `+0x64` do gerenciador
+  (`UpdateFromConfigFile` `0x7175b8`), que o construtor (`0x7127d8`) põe em
+  **0**, e o `Lighting.txt` não o define. No fim do `FindPortalLightValues`
+  (`0x70a884`), num portal de porta/arco (`+0x3c`) o `f_direta` é
+  multiplicado por ele **depois** de a cor do portal (`+0x30`) ser
+  gravada: portas e arcos não têm luz direta (nem a prática
+  "LM_PortalDirect" nem a fonte de difusão direta); só o spill, e a cor do
+  portal na irradiância do cômodo fica.
+- **Supressão** (`FindPortalSuppression`, BV `0x6ff9b0`), por lista de
+  portais de um cômodo, quando `portalSuppressionAmount` (`+0x198`) > 0:
+  todos começam com 1 (`+0x14`); para cada portal A com destino (`+8`) ≠ 0
+  e cada outro B da mesma lista com o mesmo destino e o mesmo `+0x20` (do
+  localizador da parede; inferido: o andar), `d` = centro da parede de B −
+  centro da de A (`WallCentre`); se `d · dirA ≥ −0,001` e `d · dirB ≤
+  0,001` e `0,1 ≤ |d| ≤ R` (`portalSuppressionRadius`, `+0x194`):
+  `A −= (1 − |d|/R)·((dirA·dirB)²·(amount − corner) + corner)`, preso em
+  0. Padrões do construtor: R = 1, amount = 0, `portalCornerSuppressionAmount`
+  = amount quando não dado, `portalSuppressionAffectsRoomLighting` = 1;
+  o `Lighting.txt` dá R = 4, amount = 0,2. A supressão multiplica as forças
+  práticas (direta e spill) e, com `...AffectsRoomLighting`, a cor do
+  portal na irradiância; **não** as fontes de difusão.
+- **A sala da fonte de difusão de um portal**: o construtor (`0x7149fc`,
+  ramo `lerpLights`) chama `BuildLightFromObjectLight` (vtable `0x2c` da
+  difusão) com a própria luz da janela no `+0x60` do `cPortalLight`, e nada
+  depois mexe nela: a fonte fica **na posição da luz** (no meio do tile da
+  janela, ±0,05 da linha central do tile) com a **sala desse ponto** (com o
+  mínimo padrão −0,5 não há empurrão para a frente). A posição `+0x54`
+  (meio do quarto de parede + normal · `spillPlaneOffset`, altura no meio
+  dos pisos) é só a do spill. As duas luzes de uma janela (`_n_light` e
+  `_s_light`) ficam no tile da janela: a fonte das duas semeia a sala do
+  lado onde a janela foi posta.
+- **As luzes diretas das janelas** (`SetAndAddPortalLights` `0x70ae3c`):
+  para cada portal com destino válido, "LM_PortalDirect" é a própria spot
+  da janela no `cLerpLightSet` da sala de destino (`FUN_00d7a648`): cor =
+  cor da luz ⊙ cor direta, intensidade × jitter (1) × *practical* ×
+  `f_direta` (× supressão), queda × *practical falloff*; só para spots
+  (vtable `0x178` da luz). O spill (`FUN_00d78aa4`) é uma luz pontual de
+  meio-espaço (`FUN_00d80cd0`: `cPointLight` com um plano de normal = a
+  direção do portal passando pelo `+0x54`) na posição da luz da janela, cor
+  = cor da luz ⊙ cor do spill, intensidade × *spill practical* × `f_spill`,
+  queda × *spill practical falloff*. Máscara: objetos, Sims e paredes.
+
+### 11.5 Os grafos de parede da difusão
+
+`SetupWalls` (BV `0xef0324`) monta as retas de parede a partir dos grafos
+`{3, 8, 10, 11}` (tabela `0x2747d40`, vtable `0xa0` do gerenciador de
+partições: os índices do `WallTopology`, `buy-build-mac.md`): **3 = as
+paredes que bloqueiam a luz** (`blocksLight`, WGRA 7), 8 e 11 = meias
+paredes e 10 = parede de palco (só BV); e, do grafo 0, só as **paredes de
+piscina** (estilo `0x1d`). No jogo base: paredes, sótão, fundação e
+piscina. Cercas, saias de deck (4), deck (16) e o estilo 24 não entram na
+difusão das paredes.
+
+### 11.6 "LM_sunHM" e `AddBlobToHeightMap`
+
+- Num lote (modo `+0x50` = 1) com sombras de height map (`+0x6c`, a opção) e
+  `+0x6e`, `AddOutdoorLights` (`0x70cd3c`) troca a luz do `sun` por uma
+  `cHeightMapShadowLight` (`FUN_00d81a10`, 0x78 bytes: `cDirectionalLight`
+  com o gerenciador em `+0x64`, `hmObjectShadowingBias` em `+0x68` — que a
+  conta abaixo não lê — e os grupos `NoHMShadow`, `Portals`), com a cor e a
+  escala da luz do sol. O seu `RadianceInfo` (BV `0xd80dac`, sem função no
+  Ghidra) dá a cada parte desenhada a cor do sol × `f`, com `f` = vtable
+  `0x80` do gerenciador (`0x6ff4a8`): 1 se o `+0x79` (= as sombras de
+  height map calculadas, `UpdateHeightMapShadows` `0x6fea68`) está
+  desligado ou o ponto está fora do height map; senão `d` = topo da sombra
+  − altura do ponto (`0x1807ad4`) e `f = max(0, 1 − d·hmSunLightTransitionZone)`
+  para `d > 0`. O ponto é o centro da caixa da parte no mundo; com a flag
+  `0x17` do desenhável, o centro em x, y e o topo + 0,1 em z; grupo
+  `NoHMShadow`: `f = 1`; grupo `Portals`: a origem do objeto. Ou seja,
+  objetos de fora na sombra da casa perdem o sol (por parte, não por
+  vértice). Inferido: que a flag `0x17` é a dos Sims.
+- `FUN_00706920` (a textura por vértice com os blobs do `+0x278`,
+  `AddBlobToHeightMap`) só roda no modo 2 (o bairro, `0x7167d0` e
+  `0x715fe0`) e só com um estado que tem `lightMap` (o do bairro): no lote
+  não há blobs nem essa textura. Quem chama o `AddBlobToHeightMap` segue
+  sem achar (as árvores do bairro, provavelmente).
+- `RepresentativeIrradiance` (vtable da luz, `0xd7ff7c`/`0xd7fff0`) de uma
+  direcional é `|DiffuseScale·cor|·0,25`: o peso da luz na escolha das
+  luzes de cada objeto (o contexto do DX8 leva no máximo 8, §4.2 do
+  `shaders-mac.md`); quem ordena e corta não foi lido.
