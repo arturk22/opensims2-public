@@ -360,8 +360,14 @@ HoodUi::Action HoodUi::press(simd_float2 p) {
             }
             return t.action;
         }
-    if (!dialog_)
+    // The Families / Lots panels stay usable while the Lot Info Dialog is
+    // open (their page arrows, a family to move in): a click on them closes
+    // the dialog first (inferred: in the app the dialog only blocked them,
+    // and the bin's arrows looked broken, playtest hood-slow).
+    if (!dialog_ || !dialogRect_ || !inside(*dialogRect_, p))
         if (auto r = bins_->press(p); r.kind != HoodBins::Request::Kind::None) {
+            if (dialog_)
+                openLot(nullptr);
             if (r.kind == HoodBins::Request::Kind::OptionWindow) {
                 options_->toggleWindow(int(r.lot));
                 dirty_ = true;
@@ -398,6 +404,7 @@ UiScreen HoodUi::screen(int width, int height) {
     laidW_ = width, laidH_ = height;
     targets_.clear();
     solid_.clear();
+    dialogRect_.reset();
     if (!ok_)
         return out;
     std::map<const UiElement*, std::array<float, 4>> rects;
@@ -659,7 +666,7 @@ UiScreen HoodUi::screen(int width, int height) {
         solid_.pop_back();
         if (pe)
             if (auto r = rects.find(pe); r != rects.end())
-                solid_.push_back(r->second);
+                solid_.push_back(r->second), dialogRect_ = r->second;
     }
     // The story panel, centred (F4).
     if (story_ && !storyScript_.roots.empty()) {

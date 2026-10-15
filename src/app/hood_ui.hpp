@@ -151,6 +151,7 @@ private:
     std::optional<int64_t> lotPrice(uint32_t lot);
     std::map<uint32_t, LotValues> values_; // by lot
     std::map<uint32_t, std::optional<int64_t>> prices_; // by lot
+    std::optional<std::array<float, 4>> dialogRect_; // the Lot Info Dialog's panel, when open
 
     const HoodView* view_;
     std::unique_ptr<HoodBins> bins_;

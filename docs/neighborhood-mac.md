@@ -1441,3 +1441,31 @@ só são feitas do arquivo de personagem (o painel do lote no bairro), então a
 cópia dos objetos dos ossos não se aplica (não há foto do Sim vivo no lote).
 `docs/screenshots/r14-bairro-cabeca-fov20.jpg`.
 
+
+## 18. Playtest hood-slow: clique lento no bairro e a bandeja de famílias
+
+(`docs/screenshots/hood-slow-1.jpg`, `hood-slow-2.jpg`; sem binário para as
+correções, só a confirmação de que o `cTSWinProcLotInfoDialog` existe.)
+
+- **Lentidão** (`app/hood_ui.cpp`): o preço do lote do popup de passar o mouse
+  (e o patrimônio/valor do diálogo) chamava `hood::lotFileInfo` a cada novo
+  layout da UI, e esse lê e descomprime o pacote inteiro do lote
+  (`LotObjects::load`). A UI é refeita a cada movimento do mouse (até 3 vezes:
+  `covers` do `mouseMoved`, `covers` do cursor e o quadro), então com o mouse
+  sobre uma casa o thread principal ficava ocupado e o clique demorava a
+  aparecer. `sample` de 1500 movimentos sobre o lote 11 (save do usuário):
+  ~80% do thread principal em `lotFileInfo`. Agora `HoodUi::lotPrice` guarda o
+  preço por lote (limpo em `refresh()`, que toda mudança de lote chama). Por
+  movimento (sem tela, `OS2_PERF=1 --hover`): `mouseMoved` 5,5–6,5 ms → 0,7 ms,
+  novo layout 5,5–6 ms → 0,75 ms. Não depende da família nova: um N001 novo
+  mede o mesmo.
+- **Setas da bandeja** (`HoodUi::press`): a paginação já funcionava (2 por
+  página, 4 expandida); o que travava era o Diálogo de Informações do Lote
+  aberto: o app só passava cliques para a bandeja sem diálogo, e o usuário,
+  que tinha clicado numa casa, via as setas mortas. Agora um clique na bandeja
+  (setas, família, criar, mudar) fecha o diálogo e age (**inferido**; o
+  diálogo continua tomando os cliques sobre o painel dele). O ícone do canto de
+  baixo à direita da bandeja é o "Excluir" (`0x100A`/`0x0C`, família), ainda
+  sem ação nas famílias. Mudar uma família: escolher na bandeja e clicar num
+  lote vazio (pergunta "Mudar família ... para este lote?").
+  Teste: `tests/hood_family_bin.sh`.

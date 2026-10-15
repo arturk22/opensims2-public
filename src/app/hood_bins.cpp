@@ -836,13 +836,23 @@ HoodBins::Request HoodBins::press(simd_float2 p) {
             return r.kind == Request::Kind::None ? Request{Request::Kind::Consumed} : r;
         }
         case Hit::Cancel: dialog_.reset(); return {Request::Kind::Consumed};
-        case Hit::Family: selectFamily(t.value == selected_ ? 0 : t.value); return {Request::Kind::Consumed};
+        case Hit::Family:
+            selectFamily(t.value == selected_ ? 0 : t.value);
+            std::printf("opensims2: family bin: family %u %s\n", t.value, selected_ ? "selected" : "deselected");
+            std::fflush(stdout);
+            return {Request::Kind::Consumed};
         case Hit::Expand: expanded_ = !expanded_; return {Request::Kind::Consumed};
         case Hit::Prev:
-            if (page_ > 0)
-                --page_;
+        case Hit::Next: {
+            // Clamped here (the layout clamps too) so that the page shown is the one printed.
+            const size_t per = expanded_ ? 4 : 2;
+            const size_t n = hood_ ? hood::homelessFamilies(*hood_).size() : 0;
+            const size_t pages = std::max<size_t>(1, (n + per - 1) / per);
+            page_ = t.hit == Hit::Prev ? (page_ > 0 ? page_ - 1 : 0) : std::min(page_ + 1, pages - 1);
+            std::printf("opensims2: family bin: page %zu of %zu\n", page_ + 1, pages);
+            std::fflush(stdout);
             return {Request::Kind::Consumed};
-        case Hit::Next: ++page_; return {Request::Kind::Consumed};
+        }
         case Hit::Create: cancelTool(); return {Request::Kind::CreateFamily};
         case Hit::Evict:
             selected_ = 0;

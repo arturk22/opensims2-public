@@ -403,6 +403,9 @@ set_tests_properties(scene_cycle PROPERTIES PASS_REGULAR_EXPRESSION "scene cycle
 # An unoccupied lot opens in Buy mode with Live off (tests/empty_lot.sh).
 add_test(NAME empty_lot COMMAND sh ${CMAKE_SOURCE_DIR}/tests/empty_lot.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/empty_lot)
 set_tests_properties(empty_lot PROPERTIES PASS_REGULAR_EXPRESSION "empty lot: ok" TIMEOUT 600)
+# The Families bin pages and picks a family with the lot dialog open (tests/hood_family_bin.sh).
+add_test(NAME hood_family_bin COMMAND sh ${CMAKE_SOURCE_DIR}/tests/hood_family_bin.sh $<TARGET_FILE:opensims2> $<TARGET_FILE:s2pkg> ${CMAKE_BINARY_DIR}/hood_family_bin)
+set_tests_properties(hood_family_bin PROPERTIES PASS_REGULAR_EXPRESSION "hood family bin: ok" TIMEOUT 300)
 
 add_test(NAME seat_battery COMMAND sh ${CMAKE_SOURCE_DIR}/tests/seat_battery.sh $<TARGET_FILE:opensims2> ${CMAKE_BINARY_DIR}/seat_battery)
 set_tests_properties(seat_battery PROPERTIES PASS_REGULAR_EXPRESSION "seat battery: ok" TIMEOUT 900)
