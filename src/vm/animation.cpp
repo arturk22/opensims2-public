@@ -136,7 +136,6 @@ const LocoClip* AnimationLibrary::loco(const std::string& name, int ticksPerSeco
                          ch.type() == Animation::EulerRotation)
                     rot = &ch;
             }
-        constexpr float kDegrees = 3.14159265358979f / 180.0f;
         const Xform rest{{0, 0.70710678f, 0.70710678f, 0}, {0, 0, 0}};
         const float step = Animation::kTicksPerSecond / float(std::max(ticksPerSecond, 1));
         const int n = int(std::ceil(float(a.duration) / step));
@@ -148,9 +147,7 @@ const LocoClip* AnimationLibrary::loco(const std::string& name, int ticksPerSeco
                 r[1] = trans->components[1].sample(t, trans->duration());
             Quat q = rest.q;
             if (rot)
-                q = q * quatFromEulerXYZ(rot->components[0].sample(t, rot->duration()) * kDegrees,
-                                         rot->components[1].sample(t, rot->duration()) * kDegrees,
-                                         rot->components[2].sample(t, rot->duration()) * kDegrees);
+                q = q * rot->rotation(t);
             const Vec3 f = Xform{q, {0, 0, 0}}.rotate({0, 0, 1});
             r[2] = std::atan2(-f[0], f[1]);
             c.root.push_back(r);

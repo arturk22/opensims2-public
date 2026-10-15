@@ -3,6 +3,7 @@
 // Layout after OpenTS2's AnimResourceConstBlock.cs (MPL-2.0).
 #include "anim.hpp"
 
+#include "binwriter.hpp"
 #include "resindex.hpp"
 
 #include <algorithm>
@@ -16,16 +17,14 @@ namespace os2 {
 
 namespace {
 
-// String sections are followed by (length % 4) padding bytes 0, 1, 2 (OpenTS2's
-// rule; it fits all 11,757 ANIM resources of the base game, though it does not
-// align the section to 4 bytes).
-void readPadding(BinReader& r, size_t start, const char* what) {
-    const size_t len = r.pos() - start;
-    const size_t pad = len % 4;
-    const auto bytes = r.bytes(pad);
-    for (size_t i = 0; i < pad; ++i)
-        if (bytes[i] != i)
-            throw FormatError(std::string("cAnimResourceConst: unexpected padding after ") + what);
+// A string section is followed by (its length % 4) padding bytes, which
+// ReadFrom skips without looking at them (Mac BV 0xd491a8: the next record
+// starts at the end of the strings plus length & 3; it does not align to 4)
+// and WriteTo writes as 0, 1, 2 (BV 0xd4a20c).
+void readPadding(BinReader& r, size_t start) { r.bytes((r.pos() - start) % 4); }
+void writePadding(BinWriter& w, size_t length) {
+    for (size_t i = 0; i < length % 4; ++i)
+        w.u8(uint8_t(i));
 }
 
 bool sixteenBits(Animation::Value v) {
@@ -59,7 +58,47 @@ float readValue(BinReader& r, Animation::Value type, uint16_t* preceding) {
     return animFixedToFloat(type, r.i16());
 }
 
-float tangent(BinReader& r) { return halfToFloat(r.u16()); }
+uint16_t tangent(BinReader& r) { return r.u16(); }
+
+// The value's scale of a fixed-point type (the decoder's constants, BV
+// 0x1c65e00: 1/128, 1/1024, 1/2048, 1/4096, 1/8192).
+float fixedScale(Animation::Value type) {
+    switch (type) {
+    case Animation::Value::Fixed8_7:
+    case Animation::Value::Fixed9_7: return 128.0f;
+    case Animation::Value::Fixed5_10: return 1024.0f;
+    case Animation::Value::Fixed5_11: return 2048.0f;
+    case Animation::Value::Fixed3_12: return 4096.0f;
+    case Animation::Value::Fixed3_13: return 8192.0f;
+    case Animation::Value::Float: break;
+    }
+    return 1.0f;
+}
+
+// Writes a key's time (unless baked) and value, as readValue reads them.
+void writeTimeAndValue(BinWriter& w, const Animation::Component& c, const Animation::Key& k) {
+    const bool baked = c.curve == Animation::Curve::Baked;
+    if (c.value == Animation::Value::Float) {
+        if (!baked)
+            w.u16(k.time);
+        w.f32(k.value);
+        return;
+    }
+    const int32_t raw = int32_t(std::lround(double(k.value) * fixedScale(c.value)));
+    if (sixteenBits(c.value)) { // 17 bits: the lowest goes in the time's top bit
+        w.u16(uint16_t(k.time | ((raw & 1) << 15)));
+        w.i16(int16_t(raw >> 1));
+    } else {
+        if (!baked)
+            w.u16(k.time);
+        w.i16(int16_t(raw));
+    }
+}
+
+void writeCrc(BinWriter& w, uint32_t v) {
+    w.u32(v);
+    w.u8(0);
+}
 
 uint32_t readCrc(BinReader& r) {
     const uint32_t v = r.u32();
@@ -79,6 +118,11 @@ float halfToFloat(uint16_t h) {
     else
         v = std::ldexp(float(1024 + mantissa), exponent - 25);
     return (h & 0x8000) ? -v : v;
+}
+
+float animTangentToFloat(uint16_t raw) {
+    const float v = std::ldexp(float(raw & 0x3FF), int((raw >> 10) & 0x1F) - 31);
+    return (raw & 0x8000) ? -v : v;
 }
 
 float animFixedToFloat(Animation::Value type, int32_t raw) {
@@ -106,16 +150,38 @@ float Animation::Component::sample(float ticks, uint32_t duration) const {
     const Key& b = *it;
     const Key& a = *(it - 1);
     (void)duration;
-    if (b.time == a.time)
-        return b.value;
+    if (b.time <= a.time)
+        return a.value;
     const float dt = float(b.time - a.time);
     const float u = (ticks - a.time) / dt;
     if (curve == Curve::Baked)
         return a.value + (b.value - a.value) * u;
-    // Cubic Hermite: tangents are slopes per kTangentTicks ticks.
-    const float m0 = a.tangentOut * dt / kTangentTicks, m1 = b.tangentIn * dt / kTangentTicks;
+    // Cubic Hermite: the tangents are slopes per tick, times the span.
+    const float m0 = a.tangentOut * dt, m1 = b.tangentIn * dt;
     const float u2 = u * u, u3 = u2 * u;
     return (2 * u3 - 3 * u2 + 1) * a.value + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * b.value + (u3 - u2) * m1;
+}
+
+std::array<float, 3> Animation::Channel::euler(float ticks) const {
+    std::array<float, 3> v{0, 0, 0};
+    for (size_t k = 0; k < 3 && k < components.size(); ++k)
+        v[k] = components[k].sample(ticks, duration());
+    return v;
+}
+
+Quat Animation::Channel::rotation(float ticks) const {
+    constexpr float kDegrees = 0.017453292f; // the double 0x3f91df46a0000000 the strategy multiplies by
+    auto at = [&](float t) {
+        const auto v = euler(t);
+        return quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
+    };
+    int frame = int(float(ticks * 30.0f) / 1000.0f);
+    if (ticks < 0)
+        --frame;
+    const float t0 = float(int(float(frame) * kFrameTicks + 0.16666667f));
+    const float t1 = float(int(float(frame + 1) * kFrameTicks + 0.16666667f));
+    const float u = t1 > t0 ? std::clamp((float(int(ticks)) - t0) / (t1 - t0), 0.0f, 1.0f) : 0.0f;
+    return slerp(at(t0), at(t1), u);
 }
 
 Animation Animation::parse(std::span<const uint8_t> body) {
@@ -155,7 +221,7 @@ Animation Animation::read(BinReader& r) {
     a.dataString = r.cstr();
     if (a.skeletonTag.size() != skeletonTagLength || a.dataString.size() != dataStringLength)
         throw FormatError("cAnimResourceConst: string lengths do not match the header");
-    readPadding(r, start, "the header strings");
+    readPadding(r, start);
 
     a.targets.resize(targetCount);
     std::vector<uint16_t> channelCounts(targetCount);
@@ -174,7 +240,7 @@ Animation Animation::read(BinReader& r) {
     start = r.pos();
     for (auto& t : a.targets)
         t.tag = r.cstr();
-    readPadding(r, start, "the target tags");
+    readPadding(r, start);
 
     for (auto& t : a.targets)
         for (auto& c : t.channels) {
@@ -188,7 +254,7 @@ Animation Animation::read(BinReader& r) {
     for (auto& t : a.targets)
         for (auto& c : t.channels)
             c.name = r.cstr();
-    readPadding(r, start, "the channel names");
+    readPadding(r, start);
 
     for (auto& t : a.targets)
         for (auto& c : t.channels) {
@@ -214,20 +280,22 @@ Animation Animation::read(BinReader& r) {
                     switch (comp.curve) {
                     case Curve::Baked:
                         key.value = readValue(r, comp.value, nullptr);
-                        key.time = n > 1 ? uint16_t(uint32_t(c.duration()) * k / (n - 1)) : 0;
+                        key.time = uint16_t(int(float(k) * kFrameTicks + 0.16666667f));
                         break;
                     case Curve::Continuous:
                         key.time = r.u16();
                         key.value = readValue(r, comp.value, &key.time);
-                        key.tangentIn = key.tangentOut = tangent(r);
+                        key.rawIn = key.rawOut = tangent(r);
                         break;
                     case Curve::Discontinuous:
                         key.time = r.u16();
                         key.value = readValue(r, comp.value, &key.time);
-                        key.tangentIn = tangent(r);
-                        key.tangentOut = tangent(r);
+                        key.rawIn = tangent(r);
+                        key.rawOut = tangent(r);
                         break;
                     }
+                    key.tangentIn = animTangentToFloat(key.rawIn);
+                    key.tangentOut = animTangentToFloat(key.rawOut);
                 }
             }
 
@@ -270,6 +338,113 @@ Animation Animation::read(BinReader& r) {
     return a;
 }
 
+std::vector<uint8_t> Animation::write() const {
+    BinWriter w;
+    constexpr uint32_t m = kRuntimeMarker;
+    w.u32(version);
+    w.str7("cSGResource");
+    w.u32(0);
+    w.u32(resource.version);
+    w.str7(resource.fileName);
+    w.u32(serializedSize);
+    w.u16(duration);
+    w.u16(uint16_t(targets.size()));
+    w.u16(uint16_t(events.size()));
+    w.u8(uint8_t(dataString.size()));
+    w.u8(dataVersion);
+    w.u8(flags);
+    w.u8(priority);
+    w.u8(locomotionType);
+    w.u8(uint8_t(skeletonTag.size()));
+    for (int i = 0; i < 4; ++i)
+        w.u32(m);
+    for (float f : {headingOffset, locomotionDistance, cyclePortionCompleted, strideLength, strideVelocity, velocity,
+                    turnRotation, preStretchFactor, rootStretchDisplacement})
+        w.f32(f);
+    auto cstr = [&](const std::string& t) {
+        w.raw({reinterpret_cast<const uint8_t*>(t.data()), t.size()});
+        w.u8(0);
+        return t.size() + 1;
+    };
+    writePadding(w, cstr(skeletonTag) + cstr(dataString));
+    for (const auto& t : targets) {
+        w.u32(m), w.u32(m);
+        w.u16(t.animType);
+        w.u16(uint16_t(t.channels.size()));
+        w.u8(uint8_t(t.ikChains.size()));
+        w.u8(t.channelType);
+        w.u16(t.tagLength);
+        w.u32(m), w.u32(m), w.u32(m);
+    }
+    size_t len = 0;
+    for (const auto& t : targets)
+        len += cstr(t.tag);
+    writePadding(w, len);
+    for (const auto& t : targets)
+        for (const auto& c : t.channels) {
+            w.u32(m), w.u32(m);
+            w.u32(c.nameHash);
+            w.u32(m);
+            w.u32(c.flags);
+            w.u32(m);
+        }
+    len = 0;
+    for (const auto& t : targets)
+        for (const auto& c : t.channels)
+            len += cstr(c.name);
+    writePadding(w, len);
+    for (const auto& t : targets)
+        for (const auto& c : t.channels)
+            for (const auto& comp : c.components) {
+                w.u16(uint16_t(comp.keys.size()));
+                w.u8(comp.format);
+                w.u8(comp.unknown);
+                w.u32(comp.unknown2);
+            }
+    for (const auto& t : targets)
+        for (const auto& c : t.channels)
+            for (const auto& comp : c.components)
+                for (const auto& k : comp.keys) {
+                    writeTimeAndValue(w, comp, k);
+                    if (comp.curve == Curve::Continuous)
+                        w.u16(k.rawIn);
+                    else if (comp.curve == Curve::Discontinuous)
+                        w.u16(k.rawIn), w.u16(k.rawOut);
+                }
+    for (const auto& t : targets)
+        for (const auto& ch : t.ikChains) {
+            w.u32(m), w.u32(m);
+            w.u16(ch.targetIndex);
+            w.u16(uint16_t(ch.targets.size()));
+            writeCrc(w, ch.nameCrc);
+            writeCrc(w, ch.mirrorCrc);
+            w.u32(ch.strategy);
+            for (uint32_t crc : ch.crcs)
+                writeCrc(w, crc);
+            w.u32(m);
+        }
+    for (const auto& t : targets)
+        for (const auto& ch : t.ikChains)
+            for (const auto& g : ch.targets) {
+                w.u32(m), w.u32(m);
+                w.u16(g.targetIndex);
+                w.u16(g.chainIndex);
+                w.u8(g.type);
+                for (uint32_t crc : g.crcs)
+                    writeCrc(w, crc);
+            }
+    for (const auto& e : events) {
+        w.u32(m);
+        w.u16(e.ticks);
+        w.i16(e.type);
+        w.u16(uint16_t(e.data.size()));
+        w.u32(m);
+    }
+    for (const auto& e : events)
+        cstr(e.data);
+    return std::move(w.bytes());
+}
+
 float animationTime(const Animation& a, float seconds, bool loop) {
     float ticks = seconds * Animation::kTicksPerSecond;
     if (a.duration == 0)
@@ -280,24 +455,20 @@ float animationTime(const Animation& a, float seconds, bool loop) {
 }
 
 std::vector<Xform> samplePose(const Animation::Target& target, const Skeleton& skeleton, float ticks) {
-    constexpr float kDegrees = 3.14159265358979f / 180.0f;
     std::vector<Xform> pose = skeleton.restPose();
     for (const auto& c : target.channels) {
         const int bone = skeleton.find(c.name);
-        if (bone < 0 || c.components.size() < 3)
-            continue;
-        float v[3];
-        for (int k = 0; k < 3; ++k)
-            v[k] = c.components[size_t(k)].sample(ticks, c.duration());
-        if (c.isDelta())
+        if (bone < 0 || c.components.size() < 3 || c.isDelta())
             continue;
         Xform& x = pose[size_t(bone)];
         // The key turned by the joint's orientation (the clavicles' twist):
         // the rest pose is orient * the bind key (inferred from the data).
         if (c.attribute() == Animation::Rotation && c.type() == Animation::EulerRotation)
-            x.q = skeleton.bones[size_t(bone)].orient * quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
-        else if (c.attribute() == Animation::Translation && c.type() == Animation::TransformXYZ)
+            x.q = skeleton.bones[size_t(bone)].orient * c.rotation(ticks);
+        else if (c.attribute() == Animation::Translation && c.type() == Animation::TransformXYZ) {
+            const auto v = c.euler(ticks);
             x.t = {v[0], v[1], v[2]};
+        }
     }
     return pose;
 }
@@ -310,7 +481,6 @@ bool DeltaPose::empty() const {
 }
 
 DeltaPose sampleDeltas(const Animation::Target& target, const Skeleton& skeleton, float ticks) {
-    constexpr float kDegrees = 3.14159265358979f / 180.0f;
     DeltaPose d;
     d.delta.assign(skeleton.bones.size(), Xform{});
     d.has.assign(skeleton.bones.size(), 0);
@@ -320,12 +490,10 @@ DeltaPose sampleDeltas(const Animation::Target& target, const Skeleton& skeleton
         const int bone = skeleton.find(c.name);
         if (bone < 0)
             continue;
-        float v[3];
-        for (int k = 0; k < 3; ++k)
-            v[k] = c.components[size_t(k)].sample(ticks, c.duration());
+        const auto v = c.euler(ticks);
         Xform& x = d.delta[size_t(bone)];
         if (c.attribute() == Animation::Rotation && c.type() == Animation::EulerRotation) {
-            x.q = quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
+            x.q = c.rotation(ticks);
             d.has[size_t(bone)] |= 1;
         } else if (c.attribute() == Animation::Translation && c.type() == Animation::TransformXYZ) {
             x.t = {v[0], v[1], v[2]};
@@ -408,21 +576,18 @@ void applyIk(const Animation::Target& target, const Skeleton& s, float ticks, st
     auto virtualNode = [&](uint32_t crc) -> std::optional<Xform> {
         if (!crc)
             return std::nullopt;
-        constexpr float kDegrees = 3.14159265358979f / 180.0f;
         std::optional<Xform> x;
         for (const auto& c : target.channels) {
             if (c.nameHash != crc || c.components.size() < 3)
                 continue;
-            float v[3];
-            for (int k = 0; k < 3; ++k)
-                v[k] = c.components[size_t(k)].sample(ticks, c.duration());
             if (c.attribute() == Animation::Rotation && c.type() == Animation::EulerRotation) {
                 if (!x)
                     x = Xform{};
-                x->q = quatFromEulerXYZ(v[0] * kDegrees, v[1] * kDegrees, v[2] * kDegrees);
+                x->q = c.rotation(ticks);
             } else if (c.attribute() == Animation::Translation && c.type() == Animation::TransformXYZ) {
                 if (!x)
                     x = Xform{};
+                const auto v = c.euler(ticks);
                 x->t = {v[0], v[1], v[2]};
             }
         }

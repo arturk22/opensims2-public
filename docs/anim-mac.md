@@ -569,3 +569,15 @@ O decodificador das chaves (`FUN_01c65e00`, chamado pelo
   pelo arco menor). Ligado, arredonda para o quadro mais próximo. As
   translações (`cChannelStrategyXYZ`) e os canais de 1 a 4 floats avaliam
   no tempo pedido.
+
+### 9.4 O que mudou no código (rodada n23)
+
+`formats/anim.*`: tangentes pelo `animTangentToFloat` (valor por tick ×
+`Δt`), chaves assadas a cada 33,333 ticks, `Channel::rotation` (os dois
+quadros e o slerp, usada pela pose, pelos deltas, pelos nós virtuais do IK,
+pela câmera das cinemáticas e pela raiz da locomoção na VM),
+`Animation::write` (o `WriteTo`), o preenchimento pulado sem conferir.
+`s2pkg anim-sweep`: **os 11.757 ANIM regravados byte a byte** como o
+`WriteTo` os grava, a razão das tangentes e as chaves assadas. Testes
+`test_anim` ("tangent decoding", "baked keys a frame apart", "rotation
+slerped between frames", "written back byte for byte").

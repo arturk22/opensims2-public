@@ -1,7 +1,10 @@
 #pragma once
 
 // cAnimResourceConst (ANIM, 0xFB00791E). Layout after OpenTS2's
-// AnimResourceConstBlock.cs (MPL-2.0, https://github.com/LazyDuchess/OpenTS2).
+// AnimResourceConstBlock.cs (MPL-2.0, https://github.com/LazyDuchess/OpenTS2),
+// checked against the game's cAnimResourceConst::ReadFrom/WriteTo (Mac BV
+// 0xd491a8/0xd4a20c) and the key decoding of cSharedChannelCubicKeysConstProxy4
+// (BV 0x1c65e00): docs/anim-mac.md §9.
 
 #include "rcol.hpp"
 #include "skeleton.hpp"
@@ -29,11 +32,13 @@ namespace os2 {
 // 0.70 m); 1.37 m/s is the elders' and the Grim Reaper's walk.
 struct Animation {
     static constexpr float kTicksPerSecond = 1000.0f;
-    // Tangents are half floats in value per ~154 ticks: over the 150,325 keys
-    // of smooth continuous curves of the base game, tangent / central slope
-    // has a median of 154 ticks (128-189 for 90% of them) whatever the key
-    // spacing or the channel length (inferred; the unit's origin is unknown).
-    static constexpr float kTangentTicks = 154.0f;
+    // A baked curve's key k is at int(k x 33.333332 + 1/6) ticks (30 a
+    // second, the global the static initializer at BV 0x2694630 writes),
+    // whatever the channel's duration.
+    static constexpr float kFrameTicks = 33.333332f;
+    // The marker the game writes in every runtime slot of the records
+    // (pointers it fills in when reading): WriteTo's 0x11BA05F0.
+    static constexpr uint32_t kRuntimeMarker = 0x11BA05F0;
 
     enum class Curve : uint8_t {
         Baked = 0,         // values only, evenly spaced over the channel's duration
@@ -56,21 +61,25 @@ struct Animation {
     enum ChannelType : uint8_t { Float1 = 0, Float3 = 1, Float4 = 2, EulerRotation = 3, TransformXYZ = 4, Float2 = 5 };
 
     struct Key {
-        uint16_t time = 0; // ticks; for baked curves the key's index scaled over the duration
+        uint16_t time = 0; // ticks; baked curves: int(index x kFrameTicks + 1/6)
         float value = 0;
-        float tangentIn = 0, tangentOut = 0; // continuous keys: both the same
+        // Slopes in value per tick (animTangentToFloat); continuous keys:
+        // both the same. The interpolation multiplies them by the span.
+        float tangentIn = 0, tangentOut = 0;
+        uint16_t rawIn = 0, rawOut = 0; // as stored (sign, 5-bit exponent, 10-bit mantissa)
     };
 
     struct Component {
         uint8_t format = 0; // raw byte: curve type in bits 0-1, value type above
         Curve curve = Curve::Baked;
         Value value = Value::Float;
-        uint8_t unknown = 0;
-        uint32_t unknown2 = 0;
+        uint8_t unknown = 0;   // the game writes 0
+        uint32_t unknown2 = 0; // the runtime slot of the key data (kRuntimeMarker in the files)
         std::vector<Key> keys;
 
         // Value at `ticks` (clamped to the keys; linear between baked keys,
-        // cubic Hermite with the keys' tangents otherwise).
+        // cubic Hermite with the keys' tangents times the span otherwise:
+        // the game's interpolation, BV 0x1c65e00).
         float sample(float ticks, uint32_t duration) const;
     };
 
@@ -91,6 +100,15 @@ struct Animation {
         // 0xd5b8d4) adds to the bone's outlet with AddDeltaChannel instead
         // of AddBaseChannel: docs/primitives-mac.md §4.
         bool isDelta() const { return (flags & 0x8000) == 0; }
+
+        // An Euler rotation channel (degrees) as the game samples it
+        // (cChannelStrategyQ, BV 0xd451e8, with "animationFrameSampling"
+        // off, its default): the angles at the two 30-a-second frames
+        // around `ticks` become quaternions (X, then Y, then Z), and the
+        // rotation is their slerp by (int(ticks) - t0) / (t1 - t0).
+        Quat rotation(float ticks) const;
+        // The angles (degrees) at `ticks`, unsampled.
+        std::array<float, 3> euler(float ticks) const;
     };
 
     struct IkTarget {
@@ -151,6 +169,10 @@ struct Animation {
 
     static Animation read(BinReader& r);
     static Animation parse(std::span<const uint8_t> body);
+    // The block as cAnimResourceConst::WriteTo writes it (the version u32
+    // first, as `parse` takes it): the runtime slots as kRuntimeMarker, the
+    // string sections padded with bytes 0, 1, 2 to a multiple of 4.
+    std::vector<uint8_t> write() const;
 
     const Target* findTarget(std::string_view tag) const; // case-insensitive
     // The skeleton's target only adds to the bones (delta channels and no
@@ -244,8 +266,12 @@ std::vector<AnimSnap> animSnaps(const Animation& a);
 // in order): its model and slot (empty bone: out of sight).
 std::map<std::string, AnimSnap> snapStateAt(const std::vector<AnimSnap>& snaps, float ticks);
 
-// IEEE 754 half float (the curves' tangents).
+// IEEE 754 half float.
 float halfToFloat(uint16_t h);
+// A key's tangent as the game decodes it (BV 0x1c65e00): sign bit 15,
+// exponent e in bits 10-14 and mantissa m in bits 0-9, no implicit leading
+// bit: +-m x 2^(e - 31), in value per tick.
+float animTangentToFloat(uint16_t raw);
 
 // Decodes one fixed-point value (sign-extended `bits`-bit integer over 2^fraction).
 float animFixedToFloat(Animation::Value type, int32_t raw);

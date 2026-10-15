@@ -336,11 +336,67 @@ int cmdAnimSweep(const char* res) {
         }
     std::map<std::string, size_t> ikKinds;
     std::map<std::string, std::string> ikExamples;
+    // cAnimResourceConst::WriteTo's bytes against the shipped block; the
+    // tangents (per tick, BV 0x1c65e00) against the curves' central slopes;
+    // the baked keys' times (frames of 33.333 ticks) against the old reading
+    // (the channel's duration over the keys).
+    size_t sameBytes = 0, tangents = 0;
+    std::map<std::string, size_t> firstDiff;
+    std::vector<float> ratios;
+    size_t bakedCurves = 0, bakedDiffer = 0;
+    int bakedWorst = 0;
+    std::map<uint32_t, size_t> blockVersions, dataVersions;
     for (const auto& loc : index.ofType(kTypeAnim)) {
         ++total;
         try {
-            const Animation a = parseAnim(index.read(loc));
+            const auto bytes = index.read(loc);
+            Rcol rc(bytes);
+            const auto* block = rc.find("cAnimResourceConst");
+            if (!block)
+                throw FormatError("ANIM has no cAnimResourceConst");
+            const Animation a = Animation::parse(block->body);
             ++ok;
+            ++blockVersions[a.version];
+            ++dataVersions[a.dataVersion];
+            const auto again = a.write();
+            const std::span<const uint8_t> body = block->body;
+            if (again.size() == body.size() && std::equal(again.begin(), again.end(), body.begin())) {
+                ++sameBytes;
+            } else {
+                size_t at = 0;
+                while (at < again.size() && at < body.size() && again[at] == body[at])
+                    ++at;
+                if (++firstDiff["size " + std::to_string(body.size()) + " vs " + std::to_string(again.size())] <= 1)
+                    std::printf("re-encoded differs: %s at byte %zu of %zu\n", a.resource.fileName.c_str(), at,
+                                body.size());
+            }
+            for (const auto& t : a.targets)
+                for (const auto& c : t.channels)
+                    for (const auto& comp : c.components) {
+                        if (comp.curve == Animation::Curve::Baked && comp.keys.size() > 1) {
+                            ++bakedCurves;
+                            const size_t n = comp.keys.size();
+                            int worst = 0;
+                            for (size_t k = 0; k < n; ++k)
+                                worst = std::max(worst, std::abs(int(comp.keys[k].time) -
+                                                                 int(uint32_t(c.duration()) * k / (n - 1))));
+                            if (worst > 1 && ++bakedDiffer <= 3)
+                                std::printf("baked: %s %s keys %zu channel ticks %u animation %u, last key at %u\n",
+                                            a.resource.fileName.c_str(), c.name.c_str(), n, c.duration(), a.duration,
+                                            comp.keys.back().time);
+                            bakedWorst = std::max(bakedWorst, worst);
+                        }
+                        if (comp.curve != Animation::Curve::Continuous)
+                            continue;
+                        for (size_t k = 1; k + 1 < comp.keys.size(); ++k) {
+                            const auto &p = comp.keys[k - 1], &q = comp.keys[k], &n = comp.keys[k + 1];
+                            const float slope = (n.value - p.value) / float(n.time - p.time);
+                            if (n.time <= p.time || std::fabs(slope) < 1e-4f || q.tangentOut == 0)
+                                continue;
+                            ++tangents;
+                            ratios.push_back(q.tangentOut / slope);
+                        }
+                    }
             size_t deltas = 0, bases = 0;
             for (const auto& t : a.targets)
                 for (const auto& c : t.channels)
@@ -394,6 +450,19 @@ int cmdAnimSweep(const char* res) {
         }
     }
     std::printf("%zu of %zu ANIM resources decoded; %zu channels, %zu keys\n", ok, total, channels, keys);
+    std::printf("%zu of %zu re-encoded byte for byte as cAnimResourceConst::WriteTo writes them\n", sameBytes, ok);
+    for (const auto& [v, n] : blockVersions)
+        std::printf("  block version %u: %zu\n", v, n);
+    for (const auto& [v, n] : dataVersions)
+        std::printf("  data version %u: %zu\n", v, n);
+    if (!ratios.empty()) {
+        std::sort(ratios.begin(), ratios.end());
+        auto q = [&](double f) { return ratios[size_t(f * double(ratios.size() - 1))]; };
+        std::printf("tangent per tick / central slope over %zu keys: median %.3f, 5%% %.3f, 95%% %.3f\n", tangents,
+                    q(0.5), q(0.05), q(0.95));
+    }
+    std::printf("baked curves: %zu, %zu with a key more than a tick off duration x k / (n - 1) (at most %d)\n",
+                bakedCurves, bakedDiffer, bakedWorst);
     auto dump = [](const char* what, const std::map<std::string, size_t>& m, size_t limit) {
         std::printf("%s:\n", what);
         std::vector<std::pair<size_t, std::string>> v;

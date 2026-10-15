@@ -51,7 +51,12 @@ struct Writer {
         u8(0);
     }
     void zeros(size_t n) { b.insert(b.end(), n, 0); }
-    // OpenTS2's padding: (length % 4) bytes 0, 1, 2 after a string section.
+    // The runtime slots cAnimResourceConst::WriteTo fills with 0x11BA05F0.
+    void markers(size_t n) {
+        for (size_t i = 0; i < n; ++i)
+            u32(Animation::kRuntimeMarker);
+    }
+    // The string sections' padding: (length % 4) bytes 0, 1, 2 (WriteTo).
     void pad(size_t start) {
         const size_t len = b.size() - start;
         for (size_t i = 0; i < len % 4; ++i)
@@ -78,7 +83,7 @@ static std::vector<uint8_t> buildAnim() {
     w.u8(2);       // priority
     w.u8(0);       // locomotion
     w.u8(6);       // skeleton tag length
-    w.zeros(16);
+    w.markers(4);
     for (int i = 0; i < 9; ++i)
         w.f32(float(i));
     size_t start = w.b.size();
@@ -86,13 +91,13 @@ static std::vector<uint8_t> buildAnim() {
     w.cstr("");
     w.pad(start);
     // target
-    w.zeros(8);
+    w.markers(2);
     w.u16(1); // anim type
     w.u16(2); // channels
     w.u8(0);  // IK chains
     w.u8(0);
     w.u16(6);
-    w.zeros(12);
+    w.markers(3);
     start = w.b.size();
     w.cstr("auskel");
     w.pad(start);
@@ -101,34 +106,34 @@ static std::vector<uint8_t> buildAnim() {
         return 1000u | 0x8000u | attr << 17 | type << 22 | 0xFu << 25 | 3u << 29;
     };
     for (uint32_t f : {flags(0, 3), flags(1, 4)}) {
-        w.zeros(8);
+        w.markers(2);
         w.u32(0x1234);
-        w.zeros(4);
+        w.markers(1);
         w.u32(f);
-        w.zeros(4);
+        w.markers(1);
     }
     start = w.b.size();
     w.cstr("spine0");
     w.cstr("root_trans");
     w.pad(start);
     // component headers: key count, format
-    w.u16(2), w.u8(0x01), w.u8(0), w.u32(0); // continuous, 9.7
-    w.u16(1), w.u8(0x00), w.u8(0), w.u32(0); // baked, 8.7
-    w.u16(2), w.u8(0x10), w.u8(0), w.u32(0); // baked, float
+    w.u16(2), w.u8(0x01), w.u8(0), w.markers(1); // continuous, 9.7
+    w.u16(1), w.u8(0x00), w.u8(0), w.markers(1); // baked, 8.7
+    w.u16(2), w.u8(0x10), w.u8(0), w.markers(1); // baked, float
     for (int k = 0; k < 3; ++k)
-        w.u16(1), w.u8(0x10), w.u8(0), w.u32(0); // translation: baked floats
+        w.u16(1), w.u8(0x10), w.u8(0), w.markers(1); // translation: baked floats
     // spine0 X: t=0 value 90 (raw 11520 = 5760*2), t=1000 value -45.0078125 (raw -5761, odd: low bit in time's top bit)
-    w.u16(0), w.u16(5760), w.u16(0x3C00);     // tangent 1.0 (half float)
+    w.u16(0), w.u16(5760), w.u16(0x5A00);     // tangent 1.0 a tick: 512 x 2^(22 - 31)
     w.u16(1000 | 0x8000), w.u16(uint16_t(int16_t(-2881))), w.u16(0);
     w.u16(uint16_t(int16_t(-128)));           // Y: -1.0
     w.f32(10), w.f32(30);                     // Z: 10 -> 30
     w.f32(1), w.f32(2), w.f32(3);             // root_trans
     // event
-    w.zeros(4);
+    w.markers(1);
     w.u16(500);
     w.u16(3);
     w.u16(5);
-    w.zeros(4);
+    w.markers(1);
     w.cstr("sound");
     return w.b;
 }
@@ -165,17 +170,26 @@ static void testDecode() {
     check(x.keys.size() == 2 && x.keys[0].time == 0 && near(x.keys[0].value, 90.0f) && near(x.keys[0].tangentIn, 1.0f),
           "first key");
     check(x.keys[1].time == 1000 && near(x.keys[1].value, -5761.0f / 128.0f), "16-bit value borrows the time's top bit");
-    // Hermite at u = 0.5: the mean plus (m0 - m1) / 8, m0 = 1 * 1000 / kTangentTicks.
-    check(near(x.sample(500, 1000), (90.0f - 5761.0f / 128.0f) / 2 + 1000.0f / Animation::kTangentTicks / 8),
-          "Hermite sample");
+    // Hermite at u = 0.5: the mean plus (m0 - m1) / 8, m0 = 1 a tick x the
+    // span of 1000 ticks (the game's interpolation, BV 0x1c65e00).
+    check(near(x.sample(500, 1000), (90.0f - 5761.0f / 128.0f) / 2 + 1000.0f / 8), "Hermite sample");
+    // Tangents: +-m x 2^(e - 31), no implicit leading bit.
+    check(animTangentToFloat(0x5A00) == 1.0f && animTangentToFloat(0xDA00) == -1.0f &&
+              animTangentToFloat(0x7C00) == 0.0f && animTangentToFloat(0x0001) == std::ldexp(1.0f, -31) &&
+              animTangentToFloat(0x7FFF) == std::ldexp(1023.0f, -0),
+          "tangent decoding");
     check(near(halfToFloat(0x3C00), 1) && near(halfToFloat(0xC000), -2) && halfToFloat(0x8000) == 0 &&
               near(halfToFloat(0x0001), 5.96e-8f, 1e-9f),
           "half floats");
     check(near(x.sample(-5, 1000), 90.0f) && near(x.sample(2000, 1000), -5761.0f / 128.0f), "clamped sample");
     check(rot.components[1].keys.size() == 1 && near(rot.components[1].keys[0].value, -1.0f), "baked 8.7");
     const auto& z = rot.components[2];
-    check(z.keys.size() == 2 && z.keys[1].time == 1000 && near(z.sample(250, 1000), 15.0f), "baked keys span the duration");
+    // Baked keys are 30 a second whatever the duration: k x 33.333 + 1/6.
+    check(z.keys.size() == 2 && z.keys[1].time == 33 && near(z.sample(16.5f, 1000), 20.0f) &&
+              near(z.sample(250, 1000), 30.0f),
+          "baked keys a frame apart");
     check(a.events.size() == 1 && a.events[0].ticks == 500 && a.events[0].data == "sound", "event");
+    check(a.write() == bytes, "written back byte for byte as cAnimResourceConst::WriteTo");
 
     // Pose: two-bone skeleton root_trans -> spine0.
     Skeleton s;
@@ -185,6 +199,23 @@ static void testDecode() {
     check(near(pose[0].t[0], 1) && near(pose[0].t[1], 2) && near(pose[0].t[2], 3), "translation channel");
     const Quat expect = quatFromEulerXYZ(90 * 3.14159265f / 180, -1 * 3.14159265f / 180, 10 * 3.14159265f / 180);
     check(near(pose[1].q.x, expect.x) && near(pose[1].q.w, expect.w), "rotation channel in degrees");
+    // Rotations are sampled at the frames around the time (0 and 33 ticks)
+    // and slerped by (int(t) - t0) / (t1 - t0) (cChannelStrategyQ).
+    {
+        auto euler = [&](float t) {
+            const auto v = rot.euler(t);
+            constexpr float d = 3.14159265f / 180;
+            return quatFromEulerXYZ(v[0] * d, v[1] * d, v[2] * d);
+        };
+        const Quat want = slerp(euler(0), euler(33), 16.0f / 33.0f), got = rot.rotation(16.7f);
+        check(near(got.x, want.x) && near(got.y, want.y) && near(got.z, want.z) && near(got.w, want.w),
+              "rotation slerped between frames");
+        const Quat at33 = rot.rotation(33), e33 = euler(33);
+        check(near(at33.x, e33.x) && near(at33.w, e33.w), "rotation at a frame is its Euler angles");
+        const Quat q0 = euler(0), q1 = euler(33);
+        check(!(near(got.x, slerp(q0, q1, 16.7f / 33.0f).x, 1e-6f) && near(got.w, slerp(q0, q1, 16.7f / 33.0f).w, 1e-6f)),
+              "the blend uses the whole ticks");
+    }
     check(near(pose[1].t[2], 0.5f), "untouched translation keeps the rest");
     check(near(animationTime(a, 1.25f, true), 250.0f) && near(animationTime(a, 1.25f, false), 1000.0f),
           "animation time");

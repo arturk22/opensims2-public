@@ -27,7 +27,25 @@ inline Quat nlerp(const Quat& a, Quat b, float t) {
     return normalized({a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t});
 }
 
-// Rotation about X, then Y, then Z (q = qz * qy * qx), angles in radians.
+// Spherical interpolation along the shorter arc, as the game's quaternion
+// interpolation (Mac BV 0xdc75a0): normalized linear when the two are within
+// |cos| >= 0.95 of each other.
+inline Quat slerp(const Quat& a, Quat b, float t) {
+    float d = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+    if (d < 0)
+        b = {-b.x, -b.y, -b.z, -b.w}, d = -d;
+    if (d >= 0.95f)
+        return nlerp(a, b, t);
+    const float theta = std::atan2(std::sqrt(1 - d * d), d);
+    // The part of b orthogonal to a, normalized.
+    const Quat v = normalized({b.x - a.x * d, b.y - a.y * d, b.z - a.z * d, b.w - a.w * d});
+    const float c = std::cos(theta * t), s = std::sin(theta * t);
+    return {a.x * c + v.x * s, a.y * c + v.y * s, a.z * c + v.z * s, a.w * c + v.w * s};
+}
+
+// Rotation about X, then Y, then Z (q = qz * qy * qx), angles in radians:
+// the game's nGZSceneDBAnim::EulerToQuaternion (Mac BV 0x1b95508), the same
+// formula term for term.
 inline Quat quatFromEulerXYZ(float x, float y, float z) {
     const float sx = std::sin(x * 0.5f), cx = std::cos(x * 0.5f);
     const float sy = std::sin(y * 0.5f), cy = std::cos(y * 0.5f);
