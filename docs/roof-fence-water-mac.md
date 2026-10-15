@@ -231,11 +231,37 @@ quando o lote não tem pintura (4 pontos por tile). **Falta**: a passada 2
 
 ### 3.2 Piscina (`nTSSG::cPoolGeometryNode`)
 
-Nomes contíguos em `0x73f5ac..0x742ff0` (`CreatePoolWater`,
-`CreatePoolLayers` com `poolWaterLayer-0`, `AddPoolDepthLayerColors`,
-`UpdateGomezWaterSingleStep` das ondas). Não foi lido a fundo nesta
-rodada; a piscina segue a `SimplifiedWaterSurface` (§9 do
-`shaders-mac.md`) e fica no `TODO.md`.
+Nomes contíguos em `0x73f5ac..0x742ff0`. `CreatePoolWater` (BV `0x741eb0`,
+chamado pelo `BuildGeometry` `0x742b38`) monta, para cada tile de piscina
+(`AddFloorTileGeometry` `0x7415b8`: os quartos do tile partidos nos pontos
+médios, na altura do `SampledFloorElevation`):
+
+- a **superfície** `poolwater-1`: o material `poolWater-1` do
+  `water.matShad` (`PoolWaterSurfaceMaterial`), que no caminho DX8 do Mac
+  é o **`RegularWavesHLSL`**: `one + one`; duas ondas senoidais (fase =
+  posição · (repeat, 0, altura) + tempo · velocidade; no `poolWater-1`
+  repeat 5 e 6, altura 0,01, velocidade 3) inclinam a normal; cor =
+  `swimming_pool-envcube` ao longo do reflexo × (1 − N·V) × as luzes de
+  textura × 0,5, mais o brilho `(saturate(R·L) + 0,1)^15` da primeira luz
+  (sem a cor da luz);
+- **três camadas de fundo** `poolwaterlayer-1..3`
+  (`AddFloorTileGeometryForPoolLayer` `0x740ab4`): a mesma malha 0,75 ×
+  k abaixo da superfície, com `PoolDepthLayerMaterial`:
+  `swimming_pool_deeplayer` × `poolLayerColour` (0, 0,5, 1), alfa × 0,9,
+  misturadas, sem luz; `AddPoolDepthLayerColors` (`0x740fa0`) dá aos
+  vértices nas paredes da piscina outra coordenada de textura (a textura é
+  branca com alfa 68 no meio e 0 na borda: as camadas somem junto às
+  paredes); os três valores ficam em dados preenchidos em tempo de
+  execução (`0x2c1f584..0x2c1f594`), não lidos;
+- a camada 0 (`poolWaterLayer-0`) só gera as cáusticas.
+
+**No código** (`addWater`, materiais `PoolWaterSurface`/`PoolWaterLayer`,
+modo `kPoolWater` do shader): superfície e camadas como acima (grade 3 × 3
+por tile). **Inferido**: as coordenadas das camadas (parede = canto
+transparente, resto = centro), o tempo das ondas em segundos, a "primeira
+luz" = a primeira luz do estado (o `sun`); à noite o brilho do `sun` da
+noite fica grande e branco nesta vista, como a conta manda. **Falta**: as
+cáusticas. Antes e depois: `docs/screenshots/n06-piscina-antes-depois.jpg`.
 
 ## 4. Sombras de objetos
 
