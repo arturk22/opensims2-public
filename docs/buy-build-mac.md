@@ -1396,7 +1396,7 @@ on non-designable object"). Soltar sobre o mesmo objeto abre o
   (`ResetChanges`). O objeto com o override salva o material escolhido
   (lista de overrides do objeto; ver `docs/save-mac.md`).
 
-### 7.13 Escadas modulares no código (rodada 12, `vm/build_edit` `placeStairs`)
+### 7.13 Escadas modulares no código (rodada 12, `vm/build_edit_stairs.cpp` `placeStairs`)
 
 Lido de `UserPlaceModularStairs` (BV `0x9edcf8`), `FindEnd` (`0x9ece38`),
 `CalculatePreviewCost`, `AddObject`, `LinkObjects` e `RemoveFlight`, e
