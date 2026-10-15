@@ -192,6 +192,7 @@ void BuildEditor::syncWorld() {
             if (w.contains(t) && changedRooms.count(w.room(t)))
                 moved.push_back({id, w.room(t)});
         }
+    std::optional<World> before = std::move(vm_.world);
     vm_.world = std::move(w);
     vm_.planner.reset();
     vm_.refreshObjectPortals();
@@ -203,6 +204,9 @@ void BuildEditor::syncWorld() {
     for (const auto& [id, room] : moved)
         if (vm_.object(id))
             finishMove(vm_, id);
+    // The wall messages (0x0B4CF313, 0x2B4CF319): UpdateObjectsAdjacentToWall.
+    if (before)
+        updateObjectsAdjacentToWalls(vm_, *before);
     ++revision_;
 }
 

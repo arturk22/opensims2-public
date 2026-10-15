@@ -457,6 +457,82 @@ Placement currentPlacement(VM& vm, ObjectId id) {
     return p;
 }
 
+namespace {
+
+// nTSWorld::WallSegmentRotate (BV 0x1563540): a quarter turn takes the
+// edges 1 -> 2 -> 4 -> 8 -> 1 and swaps the diagonals.
+int wallSegmentRotate(int s, int quarters) {
+    for (int k = 0; k < (quarters & 3); ++k)
+        s = ((s << 1) & 0x0E) | ((s >> 3) & 1) | ((s & 0x10) << 1) | ((s & 0x20) >> 1);
+    return s;
+}
+
+// FUN_001645b0: the six wall segments of a tile, world-aligned.
+int tileWallSegments(const World& w, TilePos t) {
+    if (!w.contains(t))
+        return 0;
+    int s = 0;
+    for (int k = 0; k < 4; ++k) { // segment 1 << k: the edge toward direction 2k - 2
+        const auto d = directionStep(2 * k + 6);
+        if (w.wallBetween(t, d[0], d[1], true))
+            s |= 1 << k;
+    }
+    const int diagonals = w.diagonalSides(t);
+    if (diagonals & 0x10)
+        s |= 0x10;
+    if (diagonals & 0x20)
+        s |= 0x20;
+    return s;
+}
+
+} // namespace
+
+int16_t wallAdjacencyFlags(const VM& vm, const Object& o) {
+    int flags = uint16_t(o.data[objdata::WallAdjacencyFlags]) & 0xFF00;
+    if (!vm.world || !o.position.inWorld())
+        return int16_t(flags);
+    const TilePos t = VM::tileOf(o);
+    const int turn = (-int(o.data[objdata::Direction]) / 2) & 3;
+    const int s = wallSegmentRotate(tileWallSegments(*vm.world, t), turn);
+    if (s & 0x01) flags |= 0x01;
+    if (s & 0x02) flags |= 0x04;
+    if (s & 0x04) flags |= 0x02;
+    if (s & 0x08) flags |= 0x08;
+    if (s & 0x10) flags |= 0x40;
+    if (s & 0x20) flags |= 0x80;
+    if (t.level == 0) {
+        const int above = wallSegmentRotate(tileWallSegments(*vm.world, {t.x, t.y, t.level + 1}), turn);
+        if (above & 0x01) flags |= 0x10;
+        if (above & 0x04) flags |= 0x20;
+    }
+    return int16_t(flags);
+}
+
+void updateWallAdjacency(VM& vm, ObjectId id, bool force) {
+    Object* o = vm.object(id);
+    if (!o || (!force && !vm.functionTree(*o, 6)))
+        return;
+    const int16_t flags = wallAdjacencyFlags(vm, *o);
+    if (flags == o->data[objdata::WallAdjacencyFlags])
+        return;
+    o->data[objdata::WallAdjacencyFlags] = flags;
+    constexpr std::array<int16_t, 4> kNoParams{};
+    vm.runFunction(id, 6, 1000, kNoParams);
+}
+
+void updateObjectsAdjacentToWalls(VM& vm, const World& before) {
+    if (!vm.world)
+        return;
+    const World& w = *vm.world;
+    auto changed = [&](TilePos t) { return tileWallSegments(before, t) != tileWallSegments(w, t); };
+    std::vector<ObjectId> touched;
+    for (const auto& [id, o] : vm.eachObject())
+        if (o.position.inWorld() && !o.data[objdata::ContainerId] && changed(VM::tileOf(o)))
+            touched.push_back(id);
+    for (ObjectId id : touched)
+        updateWallAdjacency(vm, id);
+}
+
 void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
     for (const auto& part : p.parts) {
         Object* o = vm.object(part.id);
@@ -483,8 +559,12 @@ void applyPlacement(VM& vm, ObjectId id, const Placement& p) {
     // does the same, build_edit.cpp).
     vm.refreshObjectPortals();
     vm.planner.reset();
-    // SetPosition (BV 0xafd048): OnPlacement (entry 9), then FinishEditing
-    // tells the room (OnRoomChanged, entry 7).
+    // SetPosition (BV 0xafd048): UpdateWallAdjacency (entry 6 when od 5
+    // changes), OnPlacement (entry 9), then FinishEditing tells the room
+    // (OnRoomChanged, entry 7).
+    // (UpdateWallAdjacency(false) comes first.)
+    for (const auto& part : p.parts)
+        updateWallAdjacency(vm, part.id);
     for (const auto& part : p.parts)
         runEntry(vm, part.id, entry::Placement);
     for (const auto& part : p.parts)

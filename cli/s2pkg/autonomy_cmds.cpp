@@ -20,6 +20,7 @@
 #include "vm/lot_neighborhood.hpp"
 #include "vm/lot_resume.hpp"
 #include "vm/motives.hpp"
+#include "vm/placement.hpp"
 #include "vm/engine.hpp"
 #include "vm/wants.hpp"
 #include "wants_cmds.hpp"
@@ -376,6 +377,23 @@ int cmdAutonomy(const std::filesystem::path& lotFile, long ticks, long every, co
                     std::printf(" [%.2f,%.2f-%.2f,%.2f]", r[0], r[1], r[2], r[3]);
                 std::printf("\n");
             }
+    // S2PKG_WALLADJ=<name text>: the saved wall adjacency (object data 5,
+    // low byte) of the objects with a "wall adjacency" entry whose name has
+    // the text, against what vm::wallAdjacencyFlags computes.
+    if (const char* want = std::getenv("S2PKG_WALLADJ")) {
+        size_t agree = 0, all = 0;
+        for (const auto& [oid, o] : machine.objects())
+            if (o.position.inWorld() && !o.data[vm::objdata::ContainerId] && machine.functionTree(o, 6) &&
+                objectName(machine, oid).find(want) != std::string::npos) {
+                const int saved = o.data[5] & 0xFF, computed = vm::wallAdjacencyFlags(machine, o) & 0xFF;
+                ++all;
+                agree += saved == computed;
+                if (saved != computed)
+                    std::printf("  wall adjacency of %d %s: saved 0x%02x, computed 0x%02x\n", oid, objectName(machine, oid).c_str(),
+                                saved, computed);
+            }
+        std::printf("  wall adjacency: %zu of %zu agree\n", agree, all);
+    }
     if (std::getenv("S2PKG_DOORS"))
         for (const auto& [oid, o] : machine.objects())
             if (o.definition && o.definition->objectType() == vm::kObjectTypeDoor && o.position.inWorld())

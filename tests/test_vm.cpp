@@ -8,6 +8,7 @@
 #include "vm/lot_resume.hpp"
 #include "vm/lot_save.hpp"
 #include "vm/vm.hpp"
+#include "vm/placement.hpp"
 #include "vm/interactions.hpp"
 
 #include <cstdio>
@@ -2029,7 +2030,35 @@ static void testRoomChanged() {
     check(toy.attributes[3] == 2 && toy.attributes[5] == 2, "room changed runs again when the object's room changes");
 }
 
+// cTSObject::UpdateWallAdjacency (BV 0xaf7104): object data 5 from the walls
+// round the tile, turned to the facing (0x08 behind, 0x04 in front); the
+// "wall adjacency" entry (OBJf 6) runs when it changes.
+static void testWallAdjacency() {
+    Fixture fx;
+    fx.code.add(kObjGroup, 0x80, definition(0x0C0C0C0C));
+    ObjectFunctions f;
+    f.functions.resize(7);
+    f.functions[6] = {0, 0x1000};
+    fx.code.add(kObjGroup, 0x80, f);
+    fx.code.add(kObjGroup, 0x1000, tree({expr(Attr, 0, Add, Lit, 1, T, E)}));
+    fx.vm.world = World(10, 10);
+    fx.vm.world->addWall(1, 3, 2, 3, 3); // between tiles (2,2) and (3,2)
+    Object& counter = fx.vm.instantiate(kObjGroup, 0x80);
+    counter.attributes.assign(2, 0);
+    counter.position = {2.5f, 2.5f, 1};
+    counter.data[objdata::Direction] = 0; // facing -X: the wall is behind
+    counter.data[5] = 0x0100;
+    updateWallAdjacency(fx.vm, counter.id);
+    check(counter.data[5] == 0x0108 && counter.attributes[0] == 1, "wall adjacency: the wall behind is 0x08, the high byte stays");
+    updateWallAdjacency(fx.vm, counter.id);
+    check(counter.attributes[0] == 1, "wall adjacency: the entry runs only when it changes");
+    counter.data[objdata::Direction] = 4; // facing +X: the wall is in front
+    updateWallAdjacency(fx.vm, counter.id);
+    check(counter.data[5] == 0x0104 && counter.attributes[0] == 2, "wall adjacency: the wall in front is 0x04");
+}
+
 int main() {
+    testWallAdjacency();
     testRoomChanged();
     testRemovedTargetResetsPerson();
     testLoopWithLocalsAndParams();

@@ -65,6 +65,26 @@ constexpr size_t Delete = 49;
 constexpr size_t UserDelete = 50;
 } // namespace entry
 
+// cTSObject::UpdateWallAdjacency (BV 0xaf7104; docs/primitives-mac.md
+// §4i): the walls round the object's tile as object data 5 ("wall
+// adjacency"), turned to its facing: 0x01 the wall on the side
+// counter-clockwise of its front (sideStep side 3), 0x04 in front, 0x02 on
+// the clockwise side, 0x08 behind, 0x40/0x80 the diagonals across the tile,
+// and for an object on level 0 (a pool's bottom) 0x10/0x20 two walls of the
+// tile above; the high byte is kept. The edges' order is the world's
+// segments 1, 2, 4, 8 = the walls toward -Y, -X, +Y, +X (from the saved
+// counters: 319 of the 321 of N001-N003 agree), turned by
+// WallSegmentRotate(segments, (-direction / 2) & 3); which diagonal is 0x10
+// is inferred.
+int16_t wallAdjacencyFlags(const VM& vm, const Object& o);
+// Sets object data 5 to wallAdjacencyFlags and, when it changed, runs the
+// "wall adjacency" entry (OBJf 6); without `force` only for objects that
+// have that entry (RequiresWallAdjacencyUpdate).
+void updateWallAdjacency(VM& vm, ObjectId id, bool force = false);
+// cEdithObjectModule::UpdateObjectsAdjacentToWall (BV 0x52e468): every
+// object on a tile whose walls differ between `before` and the VM's world.
+void updateObjectsAdjacentToWalls(VM& vm, const World& before);
+
 // The tile offset of a multi-tile part (sub index) facing `direction`.
 std::array<int, 2> partOffset(uint16_t subIndex, int direction);
 
