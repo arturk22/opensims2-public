@@ -29,6 +29,7 @@ std::string& gPlumbobMaterial = gScene.plumbobMaterial;      // the app plumbob'
 void choosePlumbob(os2::Renderer& renderer) {
     if (!gSimulation || !gObjectView || !gPie)
         return;
+    const bool wasVm = gVmPlumbob;
     gVmPlumbob = false;
     std::string material;
     for (const auto& [id, o] : gSimulation->machine().objects()) {
@@ -51,6 +52,9 @@ void choosePlumbob(os2::Renderer& renderer) {
                 material = o.materials.begin()->second;
         }
     }
+    if (gVmPlumbob != wasVm && std::getenv("OS2_DEBUG_VM"))
+        std::fprintf(stderr, "opensims2: the game's PlumbBob is %sover the selected Sim %d\n", gVmPlumbob ? "" : "not ",
+                     int(gPie->sim()));
     if (gVmPlumbob || material == gPlumbobMaterial || gPlumbob < 0 || !gIndex)
         return;
     auto& models = gPlumbobModels;

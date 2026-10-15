@@ -263,6 +263,7 @@ void poseActors(os2::Renderer& renderer, double seconds) {
     }
     if (gSnaps)
         gSnaps->update(seconds);
+    followVmSelection();
     choosePlumbob(renderer);
     if (gObjectView)
         gObjectView->update();

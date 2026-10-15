@@ -261,6 +261,7 @@ struct SceneState {
     int plumbob = -1;
     float plumbobBottom = 0;
     bool vmPlumbob = false;
+    int16_t vmSelected = 0; // the VM's selected person (global 3) as followVmSelection last saw it
     std::set<int16_t> hiddenPlumbobs;
     std::optional<os2::Xform> appPlumbobAt;
     std::string plumbobMaterial;
@@ -499,6 +500,7 @@ void setupTutorial(os2::ResourceIndex& index);
 bool selectFamilySim(os2::vm::ObjectId id);
 void selectNextFamilySim();
 void keepSelectedSimHome();
+void followVmSelection();
 void pollTutorial(double seconds);
 void setupBuyMode(os2::Renderer& renderer, os2::ResourceIndex& index);
 void toggleDayNight();

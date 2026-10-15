@@ -192,6 +192,33 @@ bool selectFamilySim(os2::vm::ObjectId id) {
     return true;
 }
 
+// The game selecting a Sim itself (Generic Sims Call 25: TryGenericSimCall
+// BV 0xe36834 hands the person to SetSelectedPerson, BV 0x52a55c, which
+// tells the UI): the app's Sim (pie menu, live panel, plumbob, camera)
+// follows when the VM's global 3 changes. "Script - Pleasantville - Goth"
+// selects Cassandra at tick 27 of N001_Lot11; the app kept the Sim it had,
+// and the game's PlumbBob (whose "Main - Update My Owner" goes to global
+// 3) stayed over her while the app drew its own over the other Sim.
+void followVmSelection() {
+    if (!gSimulation || !gPie)
+        return;
+    const int16_t id = gSimulation->machine().globals[os2::vm::global::SelectedPersonId];
+    if (id == gScene.vmSelected)
+        return;
+    gScene.vmSelected = id;
+    const os2::vm::Object* sim = gSimulation->machine().object(os2::vm::ObjectId(id));
+    if (id <= 0 || id == gPie->sim() || !sim || !sim->person)
+        return;
+    std::printf("opensims2: the game selects Sim %d\n", id);
+    gPie->close();
+    gPie->setSim(id);
+    if (auto p = simPortrait(id))
+        gPie->setPortrait(std::move(*p));
+    if (gLive)
+        gLive->setSim(os2::vm::ObjectId(id));
+    std::fflush(stdout);
+}
+
 void selectNextFamilySim() {
     if (!gLive)
         return;

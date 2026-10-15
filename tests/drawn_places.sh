@@ -38,11 +38,17 @@ if [ "$n" != 2 ] || grep -q "object [0-9]* plays o-plumbob-spin" "$out/emptylot.
 fi
 # The selected Sim's PlumbBob in N001_Lot11 spins on: its saved Animate
 # Object request has loops 0xFFFFFFFF (temp 1 = -1), played looping; it
-# held its last frame after one turn.
-OS2_DEBUG_VM=1 "$app" --data "$OS2_DATA" --vm --lot N001_Lot11 --run-vm 30 --screenshot "$out/plumbob.png" \
+# held its last frame after one turn. Mortimer picked, the lot's story
+# script selects Cassandra (179) at tick 27 (Generic Sims Call 25): the app
+# follows, and the PlumbBob is over the Sim selected.
+OS2_DEBUG_VM=1 "$app" --data "$OS2_DATA" --vm --lot N001_Lot11 --sim-id Mortimer --run-vm 60 --screenshot "$out/plumbob.png" \
     -ApplePersistenceIgnoreState YES > "$out/plumbob.log" 2>&1
 if ! grep -q "starts o-plumbob-spin (overlay [0-9]*, placed, looping)" "$out/plumbob.log"; then
     echo "FAIL plumbob: $(grep 'o-plumbob-spin' "$out/plumbob.log" || echo 'no spin started')"; fail=1
+fi
+if ! grep -q "the game selects Sim 179" "$out/plumbob.log" ||
+    [ "$(grep "PlumbBob is .*over the selected Sim" "$out/plumbob.log" | tail -1)" != "opensims2: the game's PlumbBob is over the selected Sim 179" ]; then
+    echo "FAIL plumbob: the selection or the PlumbBob did not follow the game ($(grep 'selects\|PlumbBob is' "$out/plumbob.log" | tr '\n' ' '))"; fail=1
 fi
 # The floor buttons stop at the ground: N002_Lot31's pool makes a level -1,
 # which Page Down showed with nothing but the terrain (live QA, round 20).

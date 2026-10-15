@@ -1768,7 +1768,21 @@ Exit genericSimsCall(Context& c) {
         else
             vm.removeTies(temps[0], temps[1]);
         return Exit::True;
-    case 25: vm.globals[global::SelectedPersonId] = temps[0]; return Exit::True;
+    case 25: {
+        // Select a Sim (TryGenericSimCall BV 0xe36834): temp 0 = 0 selects
+        // nobody; else it must be a person (error 0x1C), handed to
+        // SetSelectedPerson (BV 0x52a55c), whose message the UI follows
+        // (the app: followVmSelection).
+        if (temps[0]) {
+            const Object* p = vm.object(temps[0]);
+            if (!p)
+                throw gameError(err::NoObject, "Generic Sims Call 25");
+            if (!p->person)
+                throw gameError(err::NotAPerson, "Generic Sims Call 25");
+        }
+        vm.globals[global::SelectedPersonId] = temps[0];
+        return Exit::True;
+    }
     case 40: vm.gameStateTransitionsEnabled = temps[0] != 0; return Exit::True;
     case 13: // abort the interactions of the stack object: waiting ones are removed, running ones cancelled
         cancelInteractionsWith(vm, c.frame.stackObject);
