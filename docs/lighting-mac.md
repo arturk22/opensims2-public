@@ -1299,3 +1299,14 @@ cômodo sem luz; a cozinha do `N001_Lot11` recebe a luz da sua sala (antes a
 de um armário); as poças das janelas postas de fora caem do lado de fora (as
 de dentro continuam); os objetos de fora na sombra da casa perdem o sol
 (janelas do lado da sombra mais escuras).
+
+**As poças "por tile" das janelas** (a outra queixa da QA da n16): é o
+modelo do jogo. A fonte de um portal semeia o retângulo ±0,5 em volta da
+luz (o mínimo e o máximo padrão da extensão), isto é, as quatro amostras de
+meio tile do tile da janela por igual; a propagação divide por `1 + k` a
+cada meio tile (`k = queda · floorThreshold`, 0,4 de dia); a cópia para a
+página interpola bilinear entre as amostras pela guarda 4×4 (§10.4), 8
+texels por tile; e os materiais que leem o `floorLightMap_0` (pisos,
+terreno, sobreposições) não dão `textureFilterHint` ao estágio do light map
+(o filtro padrão, bilinear, como o app amostra). Não há outra resolução nem
+outro filtro a seguir.
