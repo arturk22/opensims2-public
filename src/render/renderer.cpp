@@ -68,6 +68,7 @@ enum : uint32_t {
     kShadowCaster = 1u << 29,  // a shadow silhouette: the draw's colour (alpha-tested by the texture)
     kPoolWater = 1u << 30,     // RegularWavesHLSL: waves (misc), env cube x (1 - N.V) x 0.5 + highlight, added
     kShadowDecal = 1u << 30,   // a Sim's shadow on the floor: the silhouette (texture 19) at mask/maskV
+    kCutout = 1u << 31,        // stdMatCutoutTextureName: alpha from texture 20 (uv 0), dropped under 127
 };
 
 // Sims' shadows (nTSSG::cShadow, docs/lighting-mac.md 9): the shadow
@@ -250,6 +251,7 @@ struct Renderer::Material {
     MTL::Texture* ramp = nullptr;     // cel shading ramps (not owned, null if unused)
     MTL::Texture* edgeRamp = nullptr;
     MTL::Texture* detail = nullptr;   // terrain detail texture (not owned, null if unused)
+    MTL::Texture* cutout = nullptr;   // stdMatCutoutTextureName (not owned, null if unused)
     float uvScale = 1;                // base texture coordinates scale (terrain)
     simd_float4 color{1, 1, 1, 1};
     simd_float4 specular{0, 0, 0, 0}; // power in w
@@ -657,6 +659,11 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
             mat.envCube = t;
             mat.env = simd_make_float4(sm.envCubeCoef[0], sm.envCubeCoef[1], sm.envCubeCoef[2], sm.envCubeBlur);
             mat.flags |= kEnvCube | (sm.envCubeLockedToCamera ? kEnvLocked : 0);
+        }
+    if (!sm.cutoutTexture.empty())
+        if (MTL::Texture* t = texture(sm.cutoutTexture, index)) {
+            mat.cutout = t;
+            mat.flags |= kCutout;
         }
     if (!sm.normalMap.empty())
         if (MTL::Texture* t = texture(sm.normalMap, index)) {
@@ -1223,7 +1230,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         senc->setFragmentSamplerState(maskSampler_, 1);
         senc->setFragmentSamplerState(cubeSampler_, 2);
         senc->setFragmentSamplerState(pointSampler_, 3);
-        for (NS::UInteger k = 1; k <= 19; ++k)
+        for (NS::UInteger k = 1; k <= 20; ++k)
             if (k != 6)
                 senc->setFragmentTexture(white_, k);
         senc->setFragmentTexture(whiteCube_, 6);
@@ -1343,6 +1350,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentTexture(m.ramp ? m.ramp : white_, 7);
         enc->setFragmentTexture(m.edgeRamp ? m.edgeRamp : white_, 8);
         enc->setFragmentTexture(m.detail ? m.detail : white_, 12);
+        enc->setFragmentTexture(m.cutout ? m.cutout : white_, 20);
         enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
                                    part.indices, NS::UInteger(0));
     };

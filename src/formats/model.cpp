@@ -262,6 +262,8 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
              : cull == "cullCounterClockwise" ? StandardMaterial::Cull::CounterClockwise
                                               : StandardMaterial::Cull::Clockwise;
     out.lighting = flag("stdMatLightingEnabled", true);
+    if (auto cut = m.property("stdMatCutoutTextureName"); !cut.empty() && cut != "0")
+        out.cutoutTexture = withSuffix(cut, "_txtr");
     const int stdLayer = int(number("stdMatLayer", 0));
     out.alphaReplicate = flag("stdMatBaseTextureAlphaReplicate", false);
     out.clampU = m.property("stdMatBaseTextureAddressingU") == "clamp";
@@ -602,9 +604,15 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
                         part.material = p.material;
                 // A design choice naming a material the game no longer ships
                 // keeps the shape's own.
-                if (auto it = materials.find(mesh.name); it != materials.end())
-                    if (it->second == kShadowOff || index.findByName(withSuffix(it->second, "_txmt"), kTypeTxmt))
+                // A counter top's "<material>-cutout-<texture>" is made by the game
+                // at run time from <material> (CreateAndRegisterObjectCutoutMaterial).
+                if (auto it = materials.find(mesh.name); it != materials.end()) {
+                    const auto cut = it->second.find("-cutout-");
+                    if (it->second == kShadowOff || index.findByName(withSuffix(it->second, "_txmt"), kTypeTxmt) ||
+                        (cut != std::string::npos &&
+                         index.findByName(withSuffix(std::string_view(it->second).substr(0, cut), "_txmt"), kTypeTxmt)))
                         part.material = it->second;
+                }
                 // Kept whatever the Shadows option: the renderer skips these parts
                 // while the option has no guob, so changing it needs no reload.
                 part.shadowPlane = shadowPlane(mesh.name, part.material);
@@ -629,18 +637,27 @@ ObjectModel loadObjectModel(ResourceIndex& index, std::string_view cresName,
             continue;
         }
         auto loc = index.findByName(withSuffix(part.material, "_txmt"), kTypeTxmt);
-        // Counter tops cut out for a sink ("..._clean-cutout-0") are made by
-        // the game at run time from the plain top.
-        if (auto cut = part.material.find("-cutout"); !loc && cut != std::string::npos)
+        // Counter tops under a sink: the game clones the top's material as
+        // "<material>-cutout-<texture>" with stdMatCutoutTextureName =
+        // <texture> ("0": none; nTSSG::cObject::ApplyCutoutMaterial ->
+        // CreateAndRegisterObjectCutoutMaterial, BV 0x6591f8).
+        std::string cutout;
+        if (auto cut = part.material.find("-cutout-"); !loc && cut != std::string::npos) {
             loc = index.findByName(part.material.substr(0, cut) + "_txmt", kTypeTxmt);
+            cutout = part.material.substr(cut + 8);
+        }
         if (!loc) {
             model.warnings.push_back("TXMT not found: " + part.material);
             continue;
         }
         const auto bytes = index.read(*loc);
         Rcol rc(bytes);
-        model.materials.emplace(part.material,
-                                MaterialDefinition::parse(firstBlock(rc, "cMaterialDefinition", "TXMT").body));
+        auto def = MaterialDefinition::parse(firstBlock(rc, "cMaterialDefinition", "TXMT").body);
+        if (!cutout.empty()) {
+            std::erase_if(def.properties, [](const auto& p) { return p.first == "stdMatCutoutTextureName"; });
+            def.properties.push_back({"stdMatCutoutTextureName", cutout});
+        }
+        model.materials.emplace(part.material, std::move(def));
     }
     return model;
 }

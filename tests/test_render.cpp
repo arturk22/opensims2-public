@@ -223,6 +223,39 @@ int main() {
         check(q[0] > 200 && q[1] < 40 && q[2] < 40, "right mirror reflects the red ground too");
     }
 
+    // The cutout (docs/shaders-mac.md 13.3): a lit top whose cutout texture
+    // is transparent in the middle shows what is under it there, and stays
+    // where the cutout is opaque; unlit materials have no cutout pass.
+    {
+        Renderer cr(device, uint32_t(MTL::PixelFormatBGRA8Unorm), uint32_t(MTL::PixelFormatDepth32Float));
+        cr.hideTestScene();
+        RgbaImage hole{8, 8, std::vector<uint8_t>(8 * 8 * 4, 255)};
+        for (int y = 2; y < 6; ++y)
+            for (int x = 2; x < 6; ++x)
+                hole.pixels[size_t(y * 8 + x) * 4 + 3] = 0;
+        cr.setDynamicTexture("hole_txtr", hole);
+        ObjectModel under;
+        under.name = "under";
+        under.parts.push_back({"n", "s", "red", quad(1)});
+        under.materials["red"] = material("1,0,0", "none", "1");
+        cr.addInstance(cr.addObject(under, index), matrix_identity_float4x4);
+        ObjectModel top;
+        top.name = "top";
+        top.parts.push_back({"n", "s", "green", quad(2)});
+        MaterialDefinition g = material("0,1,0", "none", "1");
+        for (auto& [k, v] : g.properties)
+            if (k == "stdMatLightingEnabled")
+                v = "1";
+        g.properties.push_back({"stdMatCutoutTextureName", "hole"});
+        top.materials["green"] = g;
+        cr.addInstance(cr.addObject(top, index), matrix_identity_float4x4);
+        img = cr.capture(64, 64, view, clear);
+        p = center(img);
+        check(p[0] == 255 && p[1] == 0, "the cutout shows what is under the hole");
+        const uint8_t* edge = &img.pixels[(size_t(img.height / 2) * img.width + 2) * 4];
+        check(edge[0] == 0 && edge[1] > 0, "the top stays where the cutout is opaque");
+    }
+
     device->release();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

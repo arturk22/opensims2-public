@@ -702,6 +702,28 @@ textura de recorte com o UV 0 (`Copy2DTexcoordsToTexTwo`, `clamp`), troca o
 alfa pelo dela (`mov r0.a, t2.a`) e faz alpha test `≥ 127`; os passes
 seguintes (2ª leva de luzes, especular) não recortam.
 
+Ao carregar (`nTSSG::cObject::LoadFromStream`, BV `0x65fae8`), cada
+material salvo passa por `HasObjectCutoutTexture` (BV `0x65c0c8`): um
+`<base>-cutout-<textura>` guarda `subconjunto → textura` no mapa do
+`cObject` (`+0xe8`) e o subconjunto recebe `<base>` pela vtable `0x19c`, que
+aplica o recorte de novo; por isso o recorte sobrevive às trocas de
+material. As texturas dos lotes do jogo são `sinkcountervalue-mask`,
+`sinkcountercolonial-mask`, `sinkcounter-quaint-mask`, `sinkcounter-club-mask`
+e `sinkcounter-loft-mask`: o alfa branco na metade de cima do UV (onde fica
+o tampo dos balcões, `v` 0,005–0,495) com o buraco da cuba, preto embaixo.
+
+**No app** (rodada n22): `loadObjectModel` aceita o `<material>-cutout-<textura>`
+salvo quando `<material>` existe (antes caía no material do próprio
+modelo: o balcão perdia o design, ex. o `beechspeckle` do `N001_Lot68`, e
+cobria a cuba) e põe `stdMatCutoutTextureName = <textura>` no clone
+(`"0"`: sem recorte); `StandardMaterial::cutoutTexture`, `kCutout` e a
+textura 20 do shader fazem o recorte só com luz (o `UnlitPixelShader` não
+recorta). O `VmObjectView` mantém o sufixo quando a VM troca o material do
+subconjunto (o `Change Material` dos balcões no init), como o mapa `+0xe8`.
+Teste `render` (o buraco mostra o que está embaixo, a borda fica).
+`docs/screenshots/n22-shaders-pia-recorte.jpg` (`N001_Lot68`, `--vm`: antes
+o tampo verde tampava a cuba, depois a cuba aparece).
+
 ### 13.4 CelShaded (`celShading.matShad`)
 
 Todos os 182 TXMTs `CelShadedMaterial` do jogo base são os ícones 3D de

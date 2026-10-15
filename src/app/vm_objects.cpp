@@ -509,12 +509,23 @@ std::map<std::string, std::string> VmObjectView::materialsOf(int16_t id) {
     if (!subsets_.count(d.cres))
         model(d.cres, d.design); // learns the subset names
     std::map<std::string, std::string> materials = d.design;
+    // A subset cut out by a sink keeps its cutout under the VM's material
+    // (nTSSG::cObject keeps subset -> cutout texture, +0xe8, and applies it
+    // to whatever material the subset gets: LoadFromStream's
+    // HasObjectCutoutTexture, docs/shaders-mac.md 13.3).
+    auto set = [&](const std::string& subset, const std::string& material) {
+        std::string cutout;
+        if (auto it = d.design.find(subset); it != d.design.end())
+            if (auto at = it->second.find("-cutout-"); at != std::string::npos)
+                cutout = it->second.substr(at);
+        materials[subset] = material.find("-cutout-") == std::string::npos ? material + cutout : material;
+    };
     for (const auto& [group, material] : d.vmMaterials) {
         if (group.empty()) {
             for (const auto& subset : subsets_[d.cres])
-                materials[subset] = material;
+                set(subset, material);
         } else {
-            materials[group] = material;
+            set(group, material);
         }
     }
     return materials;

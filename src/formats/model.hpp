@@ -176,6 +176,11 @@ struct StandardMaterial {
     // stdMatNormalMapTextureName: a grey height map ("-bump") the game turns
     // into a normal map.
     std::string normalMap; // TXTR name, empty if off
+    // stdMatCutoutTextureName (docs/shaders-mac.md 13.3): set by the game on
+    // a counter top under a sink ("<material>-cutout-<texture>",
+    // CreateAndRegisterObjectCutoutMaterial); the DX8 path's first lit pass
+    // takes its alpha from this texture (UV 0) and drops what is under 127.
+    std::string cutoutTexture; // TXTR name, empty if off ("0")
 
     TexAnim texAnim = TexAnim::None;
     float tileSpeed = 0;                 // tiles per second

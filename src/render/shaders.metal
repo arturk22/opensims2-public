@@ -39,6 +39,7 @@ enum : uint {
     kMirror = 1u << 28,        // the reflecting mirror: the reflection texture (18) at this pixel
     kShadowCaster = 1u << 29,  // a shadow silhouette: the draw's colour, alpha-tested by the texture
     kPoolWater = 1u << 30,     // RegularWavesHLSL: waves (misc), env cube x (1 - N.V) x 0.5 + highlight, added
+    kCutout = 1u << 31,        // stdMatCutoutTextureName: alpha from texture 20 (uv 0), dropped under 127
 };
 
 struct Draw {
@@ -230,6 +231,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               array<texture2d<float>, 5> moreOverlays [[texture(13)]],
                               texture2d<float> reflection [[texture(18)]],
                               texture2d<float> shadowAtlas [[texture(19)]],
+                              texture2d<float> cutout [[texture(20)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
@@ -287,7 +289,14 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
         tex *= in.color;
     if (draw.flags & kMasked)
         tex.a *= mask.sample(maskSmp, in.local * draw.mask.xy + draw.mask.zw).r;
-    if ((draw.flags & kAlphaTest) && tex.a < draw.alphaRef)
+    // The cutout (StandardMaterialDiffusePassDX8, lit only): "mov r0.a,
+    // t2.a" with t2 the cutout texture at uv 0, then alphaTest 127
+    // acceptIfGreaterOrEqual, which takes the place of the material's own.
+    const bool cut = (draw.flags & kCutout) && (draw.flags & kLighting);
+    const float cutAlpha = cut ? cutout.sample(maskSmp, in.uv).a : 1.0;
+    if (cut && cutAlpha < 127.0 / 255.0)
+        discard_fragment();
+    if (!cut && (draw.flags & kAlphaTest) && tex.a < draw.alphaRef)
         discard_fragment();
     if (draw.flags & kShadowCaster)
         return float4(draw.color.rgb, 1.0);
@@ -406,6 +415,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                 r = (frame.view * float4(r, 0)).xyz;
             color.rgb += envCube.sample(cubeSmp, r, bias(draw.env.w)).rgb * draw.env.rgb * frame.environment.rgb;
         }
+        if (cut)
+            color.a = cutAlpha;
     }
     return color;
 }
