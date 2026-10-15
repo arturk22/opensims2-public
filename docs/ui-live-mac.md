@@ -629,6 +629,95 @@ o segmento da câmera (posição) ao Sim também são cortadas (inferido: o jogo
 usa uma consulta de raio do mundo, aqui a interseção 2D); o modelo é refeito
 quando o Sim ou a câmera muda de tile.
 
+### 8d. Corte: posição da câmera, raio do Sim, alvos e memória (binário, rodada n05)
+
+Lido pelo Ghidra MCP no `sims2_bv.ppc` (nomes pelo `baserom.sym`, casados
+pela ordem das funções do `cWallCutawayManager`; vtable BV `0x0281f4f0`).
+Endereços BV:
+
+| Função (baserom) | BV |
+|---|---|
+| `OncePerFrameUpdate` (slot 0x34) | `0xc8e1cc` |
+| `SetSelectedSimLocation` | `0xc8af40` |
+| `CutawayLocationChanged` | `0xc8aca8` |
+| `SetCameraTransform` | `0xc8ade4` |
+| `CollectWallsEligibleForCutaway` | `0xc8b778` |
+| `SelectWallsBlockingPoints` | `0xc8bc0c` |
+| `SelectRoomBlockers` | `0xc8bf10` |
+| `SelectNearSemicircleBlockers` | `0xc8c300` |
+| `KeepOnlyFrontFacingOutsideWalls` | `0xc8c868` |
+| `UpdateSceneGraph` | `0xc8cd90` |
+| `Expose` | `0xc8de78` |
+| `AddTargetLocation` (slot 0x24) / `RemoveAllTargetLocations` (0x28) / `SetCinematicsCutaway` (0x2C) | `0xc8b94c` / `0xc8b244` / `0xc8abd8` |
+| construtor | `0xc8dbf8` |
+| `nTSWorld::cWallGraph::WallsBetweenPointSetAndPoint` (vtable `0x0281b6d8`, slot 0x58) | `0xc1d6ec` |
+
+**Posição da câmera.** `KeepOnlyFrontFacingOutsideWalls` e as outras
+seleções pegam a posição da câmera (`viewer→0x230`, x, y, z) e testam cada
+parede contra ela, não a direção da vista: com a direção `d` da parede
+orientada a partir da face de dentro, corta se `d.y·(a.x − c.x) − d.x·(a.y −
+c.y) < 0` (`a` = início da parede, `c` = câmera). É o mesmo que "a câmera
+está do lado de fora da reta da parede". `SetCameraTransform` marca
+"mudou" a cada mudança da matriz da câmera, então o corte é refeito a cada
+movimento da câmera (o `UpdateSceneGraph` só mexe nas diferenças).
+
+**O Sim.** `SetSelectedSimLocation` (só sem cinemática) pega a posição do
+Sim selecionado (x, y exatos e `NearestLevel`), e só se ele está no andar
+mostrado (`toolbar→0x64`) guarda a posição; "mudou" (`CutawayLocationChanged`)
+= dentro de casa mudou de cômodo, fora (cômodo 0) mudou de tile. O corte só
+é refeito quando algo mudou, e então usa a posição guardada naquele quadro.
+Com `cutawayForSelectedSim` (+0x133, padrão 1), o Sim guardado (+0xd8) e no
+andar atual (+0xd4), a posição vira um ponto com a altura do piso
+(`SampledFloorElevation`) e vai para `WallsBetweenPointSetAndPoint(pontos,
+câmera, andar)`:
+
+- para cada ponto P, o raio vai de P para a câmera, **cortado na altura de
+  3,0 acima de P** (`0x0274b48c`): se `câmera.z − P.z > 3`, o fim E é `P +
+  (câmera − P)·3/(câmera.z − P.z)`; senão E = câmera. É esse o "raio do
+  Sim": o alcance no plano é 3 × (distância horizontal / altura) da câmera;
+- os tiles do caminho de P a E, num passo de eixos (DDA) próprio: começa no
+  tile de P (`floor`), **menos 1 em cada eixo em que a câmera está no lado
+  negativo**; o eixo maior é o de |dx| ou |dy| maior; o erro começa em
+  |menor|; a cada passo, se |maior| > erro anda no eixo maior e soma |menor|
+  ao erro, senão anda no menor e tira |maior|; marca o tile atual enquanto
+  o eixo maior não chegou ao tile de E (o tile de E não entra); fora do lote
+  não marca;
+- depois, para cada tile marcado, entram as paredes do tile no andar: as
+  diagonais (máscaras 4, (x,y)–(x+1,y+1), e 8, (x,y+1)–(x+1,y)) sempre; a do
+  lado x (máscara 1, (x,y)–(x,y+1)) só se o tile x−1 também está marcado
+  (ou x é a borda do lote); a do lado y (máscara 2, (x,y)–(x+1,y)) só se o
+  tile y−1 também está marcado (ou y é a borda);
+- o resultado só corta paredes elegíveis (a própria ou a face oposta).
+
+Do jeito que está, com a câmera no lado negativo de um eixo a parede colada
+ao Sim desse lado não entra (o tile do Sim não é marcado): é o que o código
+faz, e o app copia.
+
+**Cinemáticas.** `cTSSGSystem` Start (`FUN_007c3898`, `0x7c4b18–0x7c4e24`):
+guarda o andar (`toolbar→0x64`) e o modo das paredes (`→0x6c`); salvo se o
+flag +0x194 está ligado (lido de uma propriedade em `0x7c17c4`, padrão 0;
+não identificado), leva o andar ao do primeiro ator (ou ao mais alto com
+"mostrar a casa inteira") e o modo a 1 (ou 3 com a casa inteira); com o
+flag desligado também zera os alvos (`RemoveAllTargetLocations`), põe a
+posição de cada ator como alvo (`AddTargetLocation`, x, y e andar) e liga
+`SetCinematicsCutaway(true)`; Stop (`FUN_007c56b4`) devolve andar e modo e desliga a cinemática e os alvos (`SetCinematicsCutaway(false)`, `RemoveAllTargetLocations`). Com cinemática, o `OncePerFrameUpdate` troca o passo 5 por
+`Expose(alvos do andar atual)` com a posição da câmera da cena:
+
+- alvo **fora** (cômodo 0): se `cutawayOutside` (padrão true),
+  `SelectNearSemicircleBlockers(2,0, câmera, alvo)`: os vértices do lote num
+  quadrado de raio 2 (arredondado) em volta do tile do alvo, só os que não
+  tocam nenhum cômodo, a até 2,0 do alvo e não mais longe que ele na direção
+  da câmera ((v − c)·(alvo − c)/|alvo − c| ≤ |alvo − c|), viram pontos de
+  `SelectWallsBlockingPoints` (a consulta acima);
+- alvo **dentro**: o cômodo entra na memória (uma fila; se não está nela e
+  ela tem `cutawayMemorySize` = 3, sai o mais antigo) — a memória só é
+  zerada pela mensagem `0x2B4D18FB`, então vale entre cenas;
+- para cada cômodo da memória, `SelectRoomBlockers`: as paredes elegíveis
+  com uma face nesse cômodo e a outra não, com a face de fora do cômodo
+  virada para a câmera, são cortadas (as com as duas faces no cômodo
+  também), e as pontas delas viram pontos de `SelectWallsBlockingPoints`
+  (corta o que tapa essas paredes).
+
 ## 9. O que falta
 
 - O nome da função de desaturação (o símbolo transferido diz `LotFamilyAccessor::GetDataStr`, errado).
