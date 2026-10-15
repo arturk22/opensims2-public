@@ -1331,7 +1331,7 @@ usa `tipo = valor >> 1`, "manter os telhados" = bit 0 (valor 0 →
 (quatro águas onde altura ≤ largura, senão empena), C600 → 4 (empena curta
 ROOF 3 onde altura < largura, senão empena longa ROOF 4), C700 → 5 (laje:
 só o piso de telhado), C300 → 0 (remover)**, C400 = a caixa "preservar".
-É o mapeamento que o `build_mode.cpp` já usa.
+É o mapeamento que o `build_mode_panel.cpp` já usa.
 
 **Tipos do ROOF** (`nTSSG::cRoofManager::AddRoof(id, mín, máx, tipo)`, BV
 `0x6bf488`; classes conferidas pelo `ComputeGridElevation` que cada

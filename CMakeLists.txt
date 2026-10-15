@@ -201,7 +201,8 @@ if(APPLE)
   target_sources(opensims2 PRIVATE src/app/game_flow.cpp src/app/user_data.cpp src/app/game_save.cpp src/app/main_menu.cpp src/app/tutorial.cpp src/app/options_panel.cpp src/app/cas_mode.cpp src/app/cas_studio.cpp)
   # Create-a-Sim, the dialogs' windows and Build mode split by area (app/cas_mode.hpp,
   # app/dialog_window.hpp, app/build_mode.hpp).
-  target_sources(opensims2 PRIVATE src/app/cas_mode_family.cpp src/app/cas_mode_panels.cpp src/app/dialog_window_pickers.cpp src/app/dialog_window_clothes.cpp)
+  target_sources(opensims2 PRIVATE src/app/cas_mode_family.cpp src/app/cas_mode_panels.cpp src/app/dialog_window_pickers.cpp src/app/dialog_window_clothes.cpp
+                                   src/app/build_mode_lot.cpp src/app/build_mode_panel.cpp)
   # Scenes loaded off the main thread behind the loading screens (docs/loading-mac.md).
   target_sources(opensims2 PRIVATE src/app/scene_loader.cpp src/app/loading_screen.cpp src/app/head_shot.cpp)
   set_target_properties(opensims2 PROPERTIES
