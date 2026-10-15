@@ -33,6 +33,25 @@ std::string lower(std::string s) {
 
 } // namespace
 
+CatalogEntry catalogTwin(const CatalogEntry& e, ResourceIndex& index, uint32_t group, uint16_t instance) {
+    CatalogEntry twin = e;
+    const auto bytes = index.read(Tgi{kTypeObjd, group, instance, 0});
+    if (!bytes)
+        return twin;
+    try {
+        const ObjectDefinition d = ObjectDefinition::parse(*bytes);
+        twin.group = group, twin.instance = instance;
+        twin.guid = d.guid();
+        twin.fileName = d.fileName;
+        twin.model.clear();
+        if (auto names = index.read(Tgi{kTypeStr, group, kModelNames, 0}))
+            twin.model = StringTable::parse(*names).get(d.field(kModelIndex), lang::EnglishUS);
+    } catch (const std::exception& err) {
+        os2::logOnce("the catalog twin of", e.fileName, err);
+    }
+    return twin;
+}
+
 uint32_t thumbnailKey(uint32_t group, const std::string& model) {
     return nameInstanceHiHash(std::to_string(group) + model);
 }

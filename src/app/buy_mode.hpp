@@ -207,6 +207,12 @@ private:
     // The object tool.
     vm::ObjectId held_ = 0;
     bool heldNew_ = false; // created from the catalog (not bought yet)
+    // A new object's grid-aligned / diagonal twin, out of the world, which
+    // the auto-turn swaps in on a diagonal wall (vm::createDiagonalTwin,
+    // SwapDiagonalObject). Not made for a grabbed object (inferred scope:
+    // the binary's TryGrab makes one for those too).
+    vm::ObjectId twin_ = 0;
+    void dropTwin();
     vm::Placement heldFrom_; // where a grabbed object was
     vm::Placement last_;     // its last test
     int direction_ = 2;

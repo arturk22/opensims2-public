@@ -41,6 +41,12 @@ struct ObjectDefinition {
     uint32_t guid() const { return field32(0x5C); }
     uint16_t price() const { return field(0x64); }
     uint16_t slotId() const { return field(0x68); }
+    // The grid-aligned / diagonal pair of a door, window or curtain (labels
+    // 21-24, OpenTS2's DiagonalSelectorGUID / GridAlignedSelectorGUID; the
+    // binary reads them as properties 0xCE / 0xCF): the diagonal one has no
+    // diagonal selector (docs/buy-build-mac.md §7.6.1).
+    uint32_t diagonalSelector() const { return field32(0x6A); }
+    uint32_t gridAlignedSelector() const { return field32(0x6E); }
     uint32_t proxyGuid() const { return field32(0x7A); }
     uint16_t numAttributes() const { return field(0xB4); } // 0 in most objects that have attributes
     uint32_t originalGuid() const { return field32(0xCC); }

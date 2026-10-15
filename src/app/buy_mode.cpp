@@ -233,6 +233,7 @@ bool BuyMode::select(const CatalogEntry& entry) {
     heldNew_ = true;
     selected_ = &entry;
     last_ = {};
+    twin_ = vm::createDiagonalTwin(vm_, held_);
     say("holding " + entry.name + " (" + money(entry.price) + ")");
     return true;
 }
@@ -351,8 +352,19 @@ void BuyMode::holdAt(int x, int y, int direction, bool autoRotate) {
     if (!held_)
         return;
     // TryPlace step 2: what needs a wall turns to it (docs/buy-build-mac.md §7.6.1).
-    if (autoRotate && vm::shouldAutoRotate(vm_, held_))
-        direction_ = vm::autoRotate(vm_, held_, {x, y, level_}, direction_);
+    // On a diagonal wall the twin turns instead (SwapDiagonalObject).
+    if (autoRotate && vm::shouldAutoRotate(vm_, held_)) {
+        const vm::AutoRotation turned = vm::autoRotate(vm_, held_, twin_, {x, y, level_}, direction_);
+        if (turned.held != held_) {
+            for (vm::ObjectId part : vm::groupOf(vm_, held_)) {
+                view_.forget(part);
+                if (vm::Object* o = vm_.object(part))
+                    o->position = vm::Position{};
+            }
+            std::swap(held_, twin_);
+        }
+        direction_ = turned.direction;
+    }
     last_ = vm::checkPlacement(vm_, held_, {x, y, level_}, direction_);
     preview(last_);
     dirty_ = true;
@@ -397,6 +409,7 @@ bool BuyMode::placeAt(int x, int y, int direction) {
             sound("ui_error");
             return false;
         }
+        dropTwin();
         undo_.push_back({Op::Kind::Created, id, p, price});
         sound(dropSound(id));
         say("bought " + (selected_ ? selected_->name : std::string("?")) + " as object " + std::to_string(id) + " at (" +
@@ -685,8 +698,18 @@ void BuyMode::rotate(int steps) {
     }
 }
 
+void BuyMode::dropTwin() {
+    if (!twin_)
+        return;
+    for (vm::ObjectId part : vm::groupOf(vm_, twin_))
+        view_.forget(part);
+    vm::deleteGroup(vm_, twin_);
+    twin_ = 0;
+}
+
 void BuyMode::cancel() {
     pressing_ = turned_ = grabPress_ = grabMoved_ = false;
+    dropTwin();
     if (!held_)
         return;
     say(heldNew_ ? "dropped what was held" : "put back object " + std::to_string(held_));

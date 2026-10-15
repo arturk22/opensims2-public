@@ -377,7 +377,7 @@ A falha dá o erro 0x0C "Can't intersect other objects".
   `TryOrient`, que testa `TSObjectCanOrient` (BV `0x8ae2fc`, o mesmo teste
   completo com a nova direção). Objetos que não aceitam diagonal só usam
   valores pares (`SwapDiagonalObject` troca o objeto pelo "diagonal
-  selector" do OBJD, campos 21–24, que é só BV).
+  selector" do OBJD, campos 21–24; o 1.0 base também tem, §7.6.1).
 - O auto-giro só acontece com `ShouldAutoRotate`, encostando o objeto na parede.
 
 ### 3.6 Níveis
@@ -1001,7 +1001,33 @@ salas (só partições dividem).
   `TSObjectCanSetPositionAndOrientation`; sem procurar slot). A primeira que
   passa vira a direção do objeto (vtable `0x2b4`). Nenhuma passando: troca
   pelo objeto do "diagonal selector" (`SwapDiagonalObject`) e tenta mais 4;
-  ainda nada, troca de volta e a direção fica a mesma.
+  ainda nada, troca de volta e a direção fica a mesma. **O 1.0 base tem o
+  mesmo** (`/mac/sims2_base_1.0.ppc`, sem nomes, achado pelo vtable de
+  `cTSUserToolObject` em `0x15e3288`: `TryPlace` `0xd8da48` → auto-giro
+  `0xd904a4`, troca `0xd9068c`, os mesmos campos `+0xc8`–`+0xca` que o BV
+  guarda em `+0x104`–`+0x106`).
+- **O par grade/diagonal** (`TryGrab`, BV `0x20fe08`;
+  `SetGridAlignedProductID` `0x2038b8`): ao pegar um objeto a ferramenta
+  guarda o GUID do produto (`+0xac`) e o do par (`+0xb0`) e cria o par num
+  segundo undoable (`+0x60`, ou `+0x5c` se o pego é o diagonal), escondido.
+  `ObjectIsDiagonal` (BV `0x202bbc`): a propriedade `0xCE` do OBJD
+  (`DiagonalSelector`, `0x202b04`) é 0; o par de um diagonal é a `0xCF`
+  (`GridAlignedSelector`, `0x202b60`). Nos dados são os campos 21–22 e 23–24
+  do OBJD (offset `0x6A`/`0x6E`, `DiagonalSelectorGUID`/`GridAlignedSelectorGUID`
+  da OpenTS2): no `objects.package` base, 121 OBJDs apontam para o par — portas de 1
+  e 2 tiles, arcos, janelas e cortinas ("Door - 1 Tile - Value" ↔ "Door - 1
+  Tile - Diagonal - Value", "Window - Privacy" ↔ "Window - Privacy -
+  Diagonal", "Curtains - Value" ↔ "Curtains - Value - Diagonal"). Os
+  diagonais não estão no catálogo: só se chega a eles pela troca.
+  `SwapDiagonalObject` (BV `0x203df4`) só troca se os dois existem
+  (`+0x105`/`+0x106`), alterna `+0x104` e esconde o que sai (vtable `0x2ac`).
+- **Paredes diagonais na colocação** (`FUN_008a7a60`, as 6 direções; a
+  parede de cada lado é o wall locator entre dois cantos do tile,
+  `FUN_0016530c`): os bits `0x10`/`0x40` exigem a diagonal que cruza o tile,
+  e uma diagonal ali dá erro 8 salvo `0x20`/`0x80` (teste invertido).
+  `PortalDiagonalWallPlacement` (BV `0xe1edd8`): portal com flags `& 0x50`. As
+  janelas diagonais salvas têm flags `0xC0`, as portas diagonais `0xFC0`; as
+  comuns, `0x4`/`0x1`.
 - Girar com `,`/`.` (`TryTurn` → `TryOrient`) não passa por aqui; o próximo
   movimento do mouse sim.
 
@@ -1048,7 +1074,28 @@ gira como um clique. O gancho de visibilidade (`app/lot_vm_setup.mm`) segue
 `HideWhenWallDown` + as exceções acima, no lugar da lista de prefixos de nome
 ("door", "window", "curtain"...). Inferidos: qual parede o objeto ocupa é a
 geometria de `onCutWall` (`app/lot_view.mm`: parede cortada a até 0,6 tile, de
-frente para o objeto), não os wall locators; o `SwapDiagonalObject` do auto-giro não existe (só BV).
+frente para o objeto), não os wall locators.
+
+**Troca diagonal no app** (rodada i002-rest): `vm::diagonalTwin`/
+`createDiagonalTwin` acham e criam o par (o OBJD do produto: o mestre do
+multi-tile, senão o do objeto); `vm::autoRotate(vm, id, twin, ...)` faz as 4
+direções com cada um e diz qual segurar. O `BuildMode` e o `BuyMode` criam o
+par ao escolher no catálogo e trocam o objeto segurado (o que sai sai do
+mundo); o comprado com o par usa o nome e o preço do produto do catálogo e o
+OBJD/modelo do par (`catalogTwin`, inferido: o binário compra o produto do
+undoable). `s2pkg lot-save --door` também troca. O `checkPlacement` agora lê
+os lados diagonais: em nossas direções a diagonal de `0x40` corre ao longo de
+direção + 1 e a de `0x10` ao longo de direção + 7 (conferido nas janelas
+diagonais salvas de `N002_Lot3`: cada uma cabe onde está, as outras direções
+não); um portal com `0x50` não leva o erro "parede diagonal no tile"
+(inferido: o `IntersectsWalls` do jogo testa a pegada contra os segmentos).
+Não feito: o par de um objeto já colocado e pego com a mão (o `TryGrab` do
+jogo cria um para ele também; trocar o objeto exigiria vender um e comprar
+outro), copiar as escolhas de design para o par (`+0x108`, vtable `0x478`).
+Teste `tests/door_cut_wall.sh` (porta e janela comuns numa parede diagonal
+viram as diagonais, no `s2pkg` e no app; as janelas de `N002_Lot3` cabem);
+`docs/screenshots/i002-porta-parede-diagonal.jpg` (duas portas e uma janela
+numa parede diagonal, Construção).
 Teste `tests/door_cut_wall.sh`; `docs/screenshots/
 i002-porta-parede-cortada-antes-depois.jpg` (antes: vermelho, "Deve estar
 contra a parede"; depois: porta fantasma verde virada para a parede,

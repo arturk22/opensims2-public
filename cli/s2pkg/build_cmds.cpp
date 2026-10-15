@@ -162,15 +162,26 @@ bool applyBuildEdits(vm::VM& vm, Lot& lot, ResourceIndex& index,
             if (!e || at == std::string::npos)
                 throw std::runtime_error("--door: expected <guid|name>@x,y[,dir|auto][,level]");
             const auto g = fields(value.substr(at + 1));
-            const vm::ObjectId id = vm::createGhost(vm, e->group, e->instance);
+            vm::ObjectId id = vm::createGhost(vm, e->group, e->instance);
             const vm::TilePos tile{num(g, 0, 0), num(g, 1, 0), num(g, 3, 1)};
             // No direction (or "auto"): turned to its wall as the object
-            // tool's TryPlace does (vm::autoRotate, AutoRotateObjectToMatchWalls).
+            // tool's TryPlace does (vm::autoRotate, AutoRotateObjectToMatchWalls),
+            // swapped for its diagonal twin when only that fits.
             const bool turn = g.size() < 3 || g[2].empty() || g[2] == "auto";
             int dir = turn ? 2 : num(g, 2, 2);
             if (turn) {
-                dir = vm::shouldAutoRotate(vm, id) ? vm::autoRotate(vm, id, tile, 2) : 2;
-                std::printf("--door: turned to direction %d\n", dir);
+                if (vm::shouldAutoRotate(vm, id)) {
+                    vm::ObjectId twin = vm::createDiagonalTwin(vm, id);
+                    const vm::AutoRotation rot = vm::autoRotate(vm, id, twin, tile, 2);
+                    if (rot.held != id)
+                        std::swap(id, twin);
+                    if (twin)
+                        vm::deleteGroup(vm, twin);
+                    dir = rot.direction;
+                }
+                const vm::Object* held = vm.object(id);
+                std::printf("--door: turned to direction %d (%s)\n", dir,
+                            held && held->definition ? held->definition->fileName.c_str() : "?");
             }
             const vm::Placement p = vm::checkPlacement(vm, id, tile, dir);
             std::string why = p.reason;

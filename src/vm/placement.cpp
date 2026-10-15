@@ -4,6 +4,7 @@
 
 #include "hood_bridge.hpp"
 #include "formats/build_catalog.hpp"
+#include "formats/log_once.hpp"
 #include "formats/resindex.hpp"
 
 #include <algorithm>
@@ -210,19 +211,23 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
             return fail(placementerror::NoFloor, inPool || !(pf & 0x800) ? "not allowed on the floor" : "only in a pool");
         // TestPlacementWithRespectToWalls (§3.3): the wall flags (od 13) on
         // the four sides, and no wall through the object (unless p & 0x400).
-        if (w.diagonalWall(t) && !(pf & 0x400))
-            return fail(placementerror::WallIntersect, "diagonal wall");
         // Doors and windows are wall portals (IsWallPortal, §3.3): the wall
         // runs between their parts.
         const bool portal = o.definition && (o.definition->objectType() == kObjectTypeDoor ||
                                              o.definition->objectType() == kObjectTypeWindow);
+        const int16_t wp = o.data[objdata::WallPlacementFlags];
+        // A diagonal portal (cTSObject::PortalDiagonalWallPlacement, BV
+        // 0xe1edd8: wall flags & 0x50) stands in the diagonal wall across its
+        // tile; the sides below say which diagonal (inferred: the binary's
+        // IntersectsWalls tests the footprint against the wall segments).
+        if (w.diagonalWall(t) && !(pf & 0x400) && !(portal && (wp & 0x50)))
+            return fail(placementerror::WallIntersect, "diagonal wall");
         if (!(pf & 0x400) && !portal)
             for (int k = 0; k < 4; ++k) {
                 const auto s = directionStep(k * 2);
                 if (tiles.count({t.x + s[0], t.y + s[1], t.level}) && w.wallBetween(t, s[0], s[1], true))
                     return fail(placementerror::WallIntersect, "a wall cuts the object");
             }
-        const int16_t wp = o.data[objdata::WallPlacementFlags];
         static const char* const sides[4] = {"in front", "on the right", "behind", "on the left"};
         for (int side = 0; side < 4; ++side) {
             const auto s = sideStep(p.direction, side);
@@ -234,6 +239,22 @@ Placement checkPlacement(VM& vm, ObjectId id, TilePos tile, int direction, bool 
                 return fail(placementerror::NeedsWall, std::string("needs a wall ") + sides[side]);
             if ((wp & (0x100 << side)) && wall)
                 return fail(placementerror::WallIntersect, std::string("no wall allowed ") + sides[side]);
+        }
+        // The two diagonals (FUN_008a7a60's sides 5 and 6, the wall locator
+        // between two corners of the tile, FUN_0016530c; only for objects
+        // with wall flags): 0x10 / 0x40 need that diagonal wall across the
+        // tile, and one there is error 8 unless 0x20 / 0x80 allows it. In
+        // our directions the 0x40 diagonal runs along direction + 1 and the
+        // 0x10 one along direction + 7 (from the diagonal windows saved in
+        // N002_Lot3, wall flags 0xC0: each passes where it stands).
+        for (int k = 0; k < 2 && wp; ++k) {
+            const int need = k ? 0x40 : 0x10, allow = k ? 0x80 : 0x20;
+            const auto c = directionStep(p.direction + (k ? 1 : 7));
+            const bool wall = w.diagonalSides(t) & (c[0] == c[1] ? 0x20 : 0x10);
+            if ((wp & need) && !wall)
+                return fail(placementerror::NeedsWall, "needs a diagonal wall");
+            if (!(wp & allow) && wall)
+                return fail(placementerror::WallIntersect, "no diagonal wall allowed");
         }
         // TestPlacementWithRespectToObjects / TestPlacementWithRespectToObject
         // (BV 0x8ace04, 0x8ac158) by footprints: each object on the tiles
@@ -328,6 +349,48 @@ int autoRotate(VM& vm, ObjectId id, TilePos tile, int direction, bool footprints
         if (checkPlacement(vm, id, tile, d, false, footprints).ok)
             return d;
     return normDir(direction);
+}
+
+std::optional<std::pair<uint32_t, uint16_t>> diagonalTwin(VM& vm, ObjectId id) {
+    const Object* lead = vm.object(id);
+    if (!lead || !lead->definition)
+        return std::nullopt;
+    // The product: the multi-tile master's OBJD (the parts of a 2-tile door
+    // carry no selectors), else the object's own.
+    const ObjectDefinition* product = lead->definition;
+    if (product->masterId())
+        if (const auto master = vm.code().masterDefinition(lead->group, product->masterId()))
+            if (const ObjectDefinition* d = vm.code().definition(lead->group, *master))
+                product = d;
+    const uint32_t diagonal = product->diagonalSelector();
+    const uint32_t twin = diagonal ? diagonal : product->gridAlignedSelector();
+    if (!twin)
+        return std::nullopt;
+    return vm.code().definitionByGuid(twin);
+}
+
+ObjectId createDiagonalTwin(VM& vm, ObjectId id) {
+    const auto twin = diagonalTwin(vm, id);
+    if (!twin)
+        return 0;
+    try {
+        return createGhost(vm, twin->first, twin->second);
+    } catch (const std::exception& err) {
+        os2::logOnce("the diagonal twin of a held object", std::to_string(id), err.what());
+        return 0;
+    }
+}
+
+AutoRotation autoRotate(VM& vm, ObjectId id, ObjectId twin, TilePos tile, int direction, bool footprints) {
+    const int d = normDir(direction);
+    for (const ObjectId held : {id, twin}) {
+        if (!held || !vm.object(held))
+            continue;
+        for (int k = 0, at = d; k < 4; ++k, at = normDir(at + 2))
+            if (checkPlacement(vm, held, tile, at, false, footprints).ok)
+                return {held, at};
+    }
+    return {id, d};
 }
 
 Placement currentPlacement(VM& vm, ObjectId id) {

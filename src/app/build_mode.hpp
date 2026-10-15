@@ -308,6 +308,15 @@ private:
     std::optional<simd_float2> dragFrom_, pointer_;
     // The object tool (doors and windows), as Buy mode's.
     vm::ObjectId held_ = 0;
+    // The grid-aligned / diagonal twin held next to it, out of the world
+    // (vm::createDiagonalTwin), and its catalog entry; `swapped_`: the
+    // twin's product is the one held (SwapDiagonalObject).
+    vm::ObjectId twin_ = 0;
+    CatalogEntry twinEntry_;
+    bool swapped_ = false;
+    // Swaps what is held with its twin (the one let go leaves the world).
+    void swapTwin();
+    const CatalogEntry* heldEntry() const { return swapped_ ? &twinEntry_ : object_; }
     vm::Placement last_;
     int direction_ = 2;
     std::string message_;

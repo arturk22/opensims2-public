@@ -255,17 +255,25 @@ bool BuildMode::selectObject(const CatalogEntry& e) {
     object_ = &e;
     pattern_ = nullptr, fence_ = nullptr;
     last_ = {};
+    // TryGrab: the twin of a door or window, for the diagonal walls.
+    swapped_ = false;
+    if (const auto twin = vm::diagonalTwin(vm_, held_); twin && vm_.code().index()) {
+        twin_ = vm::createDiagonalTwin(vm_, held_);
+        twinEntry_ = catalogTwin(e, *vm_.code().index(), twin->first, twin->second);
+    }
     say("holding " + e.name + " (" + money(e.price) + ")");
     return true;
 }
 
 void BuildMode::cancel() {
-    if (held_) {
-        for (vm::ObjectId part : vm::groupOf(vm_, held_))
-            view_.forget(part);
-        vm::deleteGroup(vm_, held_);
-        held_ = 0;
-    }
+    for (vm::ObjectId* id : {&held_, &twin_})
+        if (*id) {
+            for (vm::ObjectId part : vm::groupOf(vm_, *id))
+                view_.forget(part);
+            vm::deleteGroup(vm_, *id);
+            *id = 0;
+        }
+    swapped_ = false;
     last_ = {};
     lastOk_ = false;
     dragFrom_.reset();
@@ -280,8 +288,13 @@ void BuildMode::holdObjectAt(int x, int y, int direction, bool autoRotate) {
         return;
     // TryPlace step 2 (docs/buy-build-mac.md §7.6.1): a door or window turns
     // to the side its wall is on.
-    if (autoRotate && vm::shouldAutoRotate(vm_, held_))
-        direction_ = vm::autoRotate(vm_, held_, {x, y, level_}, direction_);
+    // On a diagonal wall the twin turns instead (SwapDiagonalObject).
+    if (autoRotate && vm::shouldAutoRotate(vm_, held_)) {
+        const vm::AutoRotation turned = vm::autoRotate(vm_, held_, twin_, {x, y, level_}, direction_);
+        if (turned.held != held_)
+            swapTwin();
+        direction_ = turned.direction;
+    }
     last_ = vm::checkPlacement(vm_, held_, {x, y, level_}, direction_);
     // Turning green: ui_build_door_green / ui_build_stair_green.
     if (last_.ok && !lastOk_) {
@@ -301,6 +314,18 @@ void BuildMode::holdObjectAt(int x, int y, int direction, bool autoRotate) {
     dirty_ = true;
 }
 
+void BuildMode::swapTwin() {
+    for (vm::ObjectId part : vm::groupOf(vm_, held_)) {
+        view_.forget(part);
+        if (vm::Object* o = vm_.object(part))
+            o->position = vm::Position{};
+    }
+    std::swap(held_, twin_);
+    swapped_ = !swapped_;
+    if (const vm::Object* o = vm_.object(held_); o && o->definition)
+        say("holding " + o->definition->fileName + " (the " + (swapped_ ? "twin" : "catalog object") + ")");
+}
+
 bool BuildMode::placeObjectAt(int x, int y, int direction, bool autoRotate) {
     if (!held_ || !object_)
         return false;
@@ -316,8 +341,9 @@ bool BuildMode::placeObjectAt(int x, int y, int direction, bool autoRotate) {
         return false;
     }
     const vm::ObjectId id = held_;
+    const CatalogEntry& bought = *heldEntry();
     std::string why;
-    if (!vm::buy(vm_, id, last_, object_->price, &why)) {
+    if (!vm::buy(vm_, id, last_, bought.price, &why)) {
         say("not bought: " + why);
         sound("ui_error");
         return false;
@@ -330,15 +356,15 @@ bool BuildMode::placeObjectAt(int x, int y, int direction, bool autoRotate) {
             say(opened.message);
     syncHistory();
     Entry entry;
-    entry.kind = Entry::Kind::Object, entry.id = id, entry.cost = object_->price;
+    entry.kind = Entry::Kind::Object, entry.id = id, entry.cost = bought.price;
     held_ = 0;
     // A door or window cuts its hole in the wall it stands in (the lot
     // model finds the holes from the lot's cObjects, lot_model.cpp).
     if (const vm::Object* o = vm_.object(id)) {
         Lot::Object c;
         c.instance = uint32_t(id);
-        c.definition = object_->fileName + "_objt";
-        c.model = object_->model;
+        c.definition = bought.fileName + "_objt";
+        c.model = bought.model;
         if (c.model.size() > 5 && c.model.ends_with("_cres"))
             c.model.resize(c.model.size() - 5);
         c.position = {o->position.x, o->position.y, sim_.floorHeight(o->position.level, o->position.x, o->position.y)};
@@ -351,7 +377,7 @@ bool BuildMode::placeObjectAt(int x, int y, int direction, bool autoRotate) {
     undo_.push_back(std::move(entry));
     redo_.clear();
     syncAfterObject();
-    say("bought " + object_->name + " as object " + std::to_string(id) + " for " + money(object_->price) + "; funds " +
+    say("bought " + bought.name + " as object " + std::to_string(id) + " (" + bought.fileName + ") for " + money(bought.price) + "; funds " +
         money(vm::funds(vm_)));
     selectObject(*object_); // another of the same (doors and windows keep buying)
     return true;

@@ -132,9 +132,32 @@ bool shouldAutoRotate(VM& vm, ObjectId id);
 // `direction`, +2, +4, +6 (90-degree steps, wrapping in 0..7) whose position
 // test passes on `tile` (FUN_009eb96c: TSObjectIsInLockedArea, then
 // TSObjectCanSetPositionAndOrientation; no slot is looked for). None passing:
-// `direction` is kept (the binary then tries the same four with the
-// diagonal selector's object, SwapDiagonalObject, BV only: not done here).
+// `direction` is kept (the overload below goes on with the twin).
 int autoRotate(VM& vm, ObjectId id, TilePos tile, int direction, bool footprints = false);
+
+// The other OBJD of a grid-aligned / diagonal pair (doors, windows, arches,
+// curtains), which the object tool holds next to the one picked
+// (cTSUserToolObject::TryGrab, BV 0x20fe08, and SetGridAlignedProductID,
+// 0x2038b8; the base 1.0 binary has the same): the product (the multi-tile
+// master's OBJD, else the object's) is diagonal when its diagonal selector
+// is 0 (ObjectIsDiagonal, BV 0x202bbc), and then the twin is its
+// grid-aligned selector, else its diagonal selector; none when that GUID has
+// no OBJD (ObjectDefinitionForSelector, 0x202990).
+std::optional<std::pair<uint32_t, uint16_t>> diagonalTwin(VM& vm, ObjectId id);
+// A ghost of that twin (createGhost), out of the world; 0 when none.
+ObjectId createDiagonalTwin(VM& vm, ObjectId id);
+
+// AutoRotateObjectToMatchWalls whole (BV 0x209e14; base 1.0 0xd904a4): the
+// four directions with `id`; none passing and a `twin` (createDiagonalTwin),
+// SwapDiagonalObject (BV 0x203df4, base 0xd9068c: the tool's other object
+// becomes the held one) and the same four directions with it. The first
+// passing gives the object to hold and its direction; none, `id` and
+// `direction` (swapped back).
+struct AutoRotation {
+    ObjectId held = 0;
+    int direction = 0;
+};
+AutoRotation autoRotate(VM& vm, ObjectId id, ObjectId twin, TilePos tile, int direction, bool footprints = false);
 
 // Where the group of `id` is now (its lead's direction, level, container
 // slot and each part's tile), for putting it back with applyPlacement.

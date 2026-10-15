@@ -103,6 +103,13 @@ struct CatalogEntry {
     bool inRoom(int bit) const { return roomSort & (1u << bit); }
 };
 
+// The same product with another OBJD of the index: the grid-aligned /
+// diagonal twin the object tool swaps in (vm::diagonalTwin), whose OBJD,
+// file name and model ("3D Object Names") replace `e`'s; the name, price and
+// sorts stay `e`'s (the binary's product; inferred: the twin's own catalog
+// data is not read). `e` unchanged when that OBJD is missing.
+CatalogEntry catalogTwin(const CatalogEntry& e, ResourceIndex& index, uint32_t group, uint16_t instance);
+
 // The key of an object's thumbnail: the scenegraph CRC32 (nameInstanceHiHash)
 // of the OBJD's group in decimal followed by its model name (1,201 of the
 // game's OBJDs hit the 531 thumbnails this way; found by trying, as SimPE
