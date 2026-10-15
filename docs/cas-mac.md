@@ -1452,3 +1452,31 @@ a chama, `0x8CB7B638` ("Biografia da Família"), está escondido nos dois
 família o texto da caixa sem espaços nas pontas: no jogo base a família nova
 sai sempre sem descrição, que é o que o opensims2 já grava
 (`writeNewFamily(..., "", ...)`). Não há tela a fazer.
+
+### O que mudou no código (rodada n21)
+
+- **Rosto do filho**: `FaceBaker::descendant` (`formats/cas_face.*`) é o
+  `BlendFaces`: começa no neutro, mistura as regiões na ordem dos passos do
+  `FaceInfo.package` (`FaceBlendData`), mede as alturas e corrige com as
+  máscaras `…Up`/`…Down` pelos limites; o CAS (Fazer um Filho) e o bebê
+  nascido no lote usam o mesmo caminho. `DescendantFace::script` escreve o
+  `1` do jogo para o primeiro pai. As medidas de um filho de dois arquétipos
+  adultos caem na faixa dos limites (brow/eyes 0,025, eyes/nose 0,042 …),
+  o que confirma a escala e o eixo z. Captura `n21-cas-filho-blendfaces.jpg`
+  (pai, mãe, filhas com `--cas-baby-seed` 7 e 21, antes e depois).
+- **Camadas do rosto**: `writeCharacter` deixa um overlay por bin, ordena
+  por layer e grava `cafOverlay` na ordem de escolha; `readCharacterSpec`
+  tira a vírgula final do `cafOverlay` do jogo (`"<família>,"`): antes,
+  abrir um Sim salvo no CAS perdia maquiagem, sobrancelhas e barba de
+  textura (`n21-cas-editar-maquiagem.jpg`, a Cassandra). Os tons 1–4 com
+  blush, sombra, delineador e batom saem iguais no main e na n21
+  (`n21-cas-tons-maquiagem.jpg`): a conta do compositor é a do shader.
+- **Câmera**: botões de zoom e de girar enquanto seguram; zoom segurado ×
+  50 / Δt; roda e pareamento conferidos; `--cas-zoom`, `--cas-zoom-hold`
+  (`n21-cas-camera-zoom.jpg`: roupas em 0, segurado 10 × 33 ms e 2,3; rosto
+  em −0,13, 0 e 0,15).
+- Testes: `test_formats` (`testBlendFaces`, `testFaceOverlayLayers`),
+  `test_genetics` (o script), `test_camera` (zoom segurado, soltar, roda).
+- Segue inferido: a direção do zoom (convenção do quaternion), as normais
+  do rosto refeito; não feitos: máscaras/quantidades de camada (sem uso nos
+  dados), os overlays que o jogo põe sozinho (envelhecer, chupões).

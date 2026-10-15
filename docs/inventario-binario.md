@@ -83,10 +83,10 @@ palavra.
 | Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% (não recontado na n17) | 5 / 5 = **100%** | 3 / 7 |
 | Salvar e carregar | 32 (4) | 78 / 936 = 8,3% (não recontado na n09) | 6 / 7 = **86%** | 10 / 2 |
 | Bairro e famílias | 64 (29) | 105 / 1.250 = 8,4% (não recontado na n12) | 5,5 / 7 = **79%** | 41 / 45 |
-| CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
+| CAS | 89 (25) | 87 / 1.534 = 5,7% (não recontado na n10 nem na n21) | 7 / 8 = **88%** | 33 / 28 |
 | Desenho | 211 (35) | 129 / 2.309 = 5,6% (não recontado na n13, n16 nem n19) | 6,5 / 10 = **65%** | 55 / 41 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **87,5 / 110 = 79,5%** | **511 em src** |
+| **Total** | **816 (252)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **88,5 / 110 = 80,5%** | **508 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -288,14 +288,14 @@ Código: `src/app/cas_*.{hpp,cpp}`, `src/formats/cas_*.{hpp,cpp}`,
 
 | Classes e funções do jogo | Onde está | Estado | Notas |
 |---|---|---|---|
-| Telas: `cTSUISimEditor` (105, 8), `nTSUICAS::cTSUICASComponent*` | `app/cas_mode*.cpp` | inferido | Falta a biografia da família. |
+| Telas: `cTSUISimEditor` (105, 8), `nTSUICAS::cTSUICASComponent*` | `app/cas_mode*.cpp` | inferido | Rodada n21: a biografia da família não existe no CAS do jogo base (o botão `0x8CB7B638` está escondido no `CB980E50` e nada o mostra; `SaveFamily` grava a caixa vazia), como o app já fazia; zoom e girar enquanto seguram o botão; o passo → câmera do rosto conferido (`EditSimFace` dos painéis de cabeças, rosto e maquiagem). Seguem inferidos: qual aba abre qual painel de rosto, a pose dos traços, a aspiração sugerida. |
 | Corpo e roupas: `nTSCASCore::cTSSimOutfitData` (133, 12), `cTSCASBodyPartSystem` (141, 7), `cTSBinCatalog` | `formats/cas_catalog.*`, `formats/character_write.*`, `app/cas_mode*.cpp` | fiel | Rodada n10: corpo gordo = morph `fattop`/`fatbot` do fitness 2 (`0x8141c4`, `SetFitnessLevel`), botão aleatório (`HandleButtonGlobalRandomize`, `SetDefaultClothing`, `RandomizeForHumans`) e flags das categorias (`CheckInit`). Inferidos: o gerador de números, os tons 1–4, o cabelo de bebê; `MatchHairStyle`… do pedido de NPC não lido. |
-| Rosto: arquétipos, modificadores, LxNR, `BlendDeltas` | `formats/cas_face.*` | inferido | Rodada n10: peso das máscaras (`BuildRegionMask`: byte de cima da cor) e `hairneck` parado (`BlendArchetype`). Faltam a compensação do modificador do arquétipo e o `BlendFaces` da genética. |
-| Pele, maquiagem, overlays: `cTSSkinTextureCompositor` (27, 0) | `formats/cas_face.*`, `sim_character.*` | inferido | O compositor do jogo não foi lido. |
+| Rosto: arquétipos, modificadores, LxNR, `BlendDeltas` | `formats/cas_face.*` | fiel | Rodada n10: peso das máscaras (`BuildRegionMask`: byte de cima da cor) e `hairneck` parado (`BlendArchetype`). Rodada n21: a compensação do modificador no `BlendArchetype` só existe para animais (espécie ≠ 0); `ApplyModifier` (BV `0x809fc4`) = valor × escala do lado, como já era; o rosto do filho é o `BlendFaces` (neutro, regiões na ordem dos passos do `FaceInfo.package`, limites de altura). Inferido: as normais refeitas. |
+| Pele, maquiagem, overlays: `cTSSkinTextureCompositor` (27, 0) | `formats/cas_face.*`, `sim_character.*`, `formats/character_write.*` | fiel | Rodada n21: camadas do `GetMaterialLayersToBeComposited` (um overlay por bin, ordem estável por layer, `cafOverlay` na ordem de escolha) e a mistura do compositor (`dst += (src − dst)·α` nos quatro canais, no tamanho da pele); máscaras e quantidades não aparecem nos dados do base. O shader faz a mesma conta em ponto flutuante, sem o reempacotamento DXT1. |
 | Genética: `nTSGenetics`, `cTSSimDNA` | `vm/genetics.*` | fiel | |
 | Personalidade, signo, aspiração | `formats/cas_personality.*` | fiel | Tabelas não conferidas no base 1.0. |
 | Gravar o personagem | `formats/character_write.*` | fiel | |
-| Câmera do CAS: `cCameraCreateASimController` | `render/cas_camera.*` | inferido | Pares spec ↔ localizador, rotação do zoom e roda inferidos. |
+| Câmera do CAS: `cCameraCreateASimController` | `render/cas_camera.*` | inferido | Rodada n21: pares spec ↔ localizador (efeitos de câmera do SimAntics do "CAS - Backdrop"), roda, botões segurados e o passo do zoom segurado (× 50 / Δt) lidos. Inferido: a direção do zoom (a ordem Q·Rx·Rz foi lida; a convenção do quaternion da GZ não). |
 
 ### 3.12 Desenho
 
@@ -395,7 +395,7 @@ no jogo base.
 | 18 | **Rotas, resto**: custo por `ePassabilityState`, `FollowOneStep`/`ComputeTurn`, Snap num ponto só, bônus +25 longe da parede, retângulos de custo 10 da escada — **feita** (n18): `CollisionCheck` e contador do bloqueio do binário (o laço de "entradas" de dois Sims da n14 acabou; sem regressão em 14 sementes), Snap num ponto só e sem o anel (o café pelo lado), custo do piso por padrão (2 no terreno) com o corte de quinas do binário, o +25 (`routing-mac.md` §9.1); os retângulos da escada lidos e não feitos | 3.2 obstáculos, locomotor, slots; 3.4 H | rotas |
 | 19 | **Paredes e pisos**: `cFloorGeometryNode`, `cFloorManager`, `cWallGeometryNode`, `cSimplifiedWall` (UV dos pisos e do topo) — **feita** (n19): paredes como o `cWallGeometryNode` (nós, chanfros, 3 colunas, UVs do papel, topo sem luz com UV do mundo, tampas, encontros, corte pelas pontas com rampas) e a rotação dos pisos; UV dos pisos e do topo conferidos (`walls-floors-mac.md`) | 3.12 paredes e pisos, 3.6 geometria | lote |
 | 20 | **Colocação de objetos e salas**: `cTSUserToolObject`/`TestPlacement*` com `HasSupport`, `FUN_009a7dd8` (cômodo), desfazer peça por peça, +0,75 da escada — **feita** (n20): teste de vértice `FUN_009e9550` com as flags dos inicializadores estáticos (`0x2BB7`), nivelador e cômodo que aplaina o retângulo, arrastes tudo ou nada, `IsFlat`/piso inteiro/`CeilingTooHighForObject` na colocação, desfazer numa pilha só até o Vivo e byte a byte, escadas com elevation absoluta (`buy-build-mac.md` §7.24) | 3.5 colocação, salas, desfazer, escadas | construção |
-| 21 | **Pele e CAS, resto**: `cTSSkinTextureCompositor`, câmera do CAS, compensação do arquétipo, `BlendFaces`, biografia da família | 3.11 pele, câmera, rosto, telas | CAS |
+| 21 | **Pele e CAS, resto**: `cTSSkinTextureCompositor`, câmera do CAS, compensação do arquétipo, `BlendFaces`, biografia da família — **feita** (n21): compositor e camadas lidos (um overlay por bin, `cafOverlay` com a vírgula do jogo: editar um Sim salvo não perde a maquiagem), `BlendFaces` com os dados do `FaceInfo.package`, câmera (pares pelo SimAntics, botões segurados, roda), compensação só de animais, biografia da família inexistente no base (`cas-mac.md`, fim); a direção do zoom segue inferida | 3.11 pele, câmera, rosto, telas | CAS |
 | 22 | **Shaders e espelhos**: normal map, passe de recorte, CelShaded, `MirrorReflectionMaterial` com stencil | 3.12 materiais, espelhos | shaders |
 | 23 | **Animação, resto**: arquivo ANIM (strings, tangentes, Euler), canal de eventos, Look At na cabeça, cinemáticas (spots, ObjectHiding) | 3.3 ANIM, eventos, olhar, cinemáticas | animação |
 | 24 | **VM, resto**: `cTSGlobals`, `cTSDataTables`, `TryPlaySound`, `cTSInteraction`, registros de objetos da pessoa (`+0x60c`, faltando) | 3.1 fila, dados, som; 3.7 registros | VM |
