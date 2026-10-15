@@ -495,63 +495,187 @@ std::vector<uint8_t> FaceBaker::deformToFace(const std::vector<uint8_t>& bytes, 
     return out;
 }
 
+FaceBlendData FaceBlendData::parse(std::span<const uint8_t> bytes) {
+    BinReader r(bytes);
+    auto str = [&] {
+        const uint32_t n = r.u32();
+        const auto b = r.bytes(n);
+        return std::string(b.begin(), b.end());
+    };
+    FaceBlendData d;
+    r.u32(); // version (1)
+    const uint32_t steps = r.u32();
+    for (uint32_t i = 0; i < steps; ++i) {
+        Step st;
+        st.a = str();
+        st.b = str();
+        st.up = str();
+        st.down = str();
+        d.steps.push_back(std::move(st));
+    }
+    const uint32_t limits = r.u32();
+    for (uint32_t i = 0; i < limits; ++i) {
+        Limit l;
+        l.age = r.u32();
+        l.gender = r.u32();
+        l.a = str();
+        l.b = str();
+        l.min = r.f32();
+        l.max = r.f32();
+        d.limits.push_back(std::move(l));
+    }
+    return d;
+}
+
+std::pair<float, float> FaceBlendData::limitsFor(uint32_t ageIndex, uint32_t gender, const std::string& a,
+                                                 const std::string& b) const {
+    // GetBlendLimits: a map of the first region (case-insensitive), the
+    // second, then the key species << 8 | age << 1 | gender (species 0 for
+    // humans); a later SetBlendLimits for the same key replaces.
+    std::pair<float, float> out{-9999.0f, 9999.0f};
+    for (const auto& l : limits)
+        if (l.age == ageIndex && l.gender == (gender & 1) && lowerAscii(l.a) == lowerAscii(a) &&
+            lowerAscii(l.b) == lowerAscii(b))
+            out = {l.min, l.max};
+    return out;
+}
+
+const FaceBlendData& FaceBaker::blendData() {
+    if (!blendData_) {
+        blendData_ = std::make_unique<FaceBlendData>();
+        if (auto loc = index_.find(Tgi{FaceBlendData::kType, 0xFFFFFFFF, 1, 0})) {
+            try {
+                *blendData_ = FaceBlendData::parse(index_.read(*loc));
+            } catch (const std::exception& err) {
+                os2::logOnce("face blend data", "FaceInfo.package", err);
+            }
+        }
+    }
+    return *blendData_;
+}
+
 FaceStructure FaceBaker::descendant(const FaceStructure& a, const FaceStructure& b,
                                     const std::vector<std::pair<std::string, int>>& regions) {
+    const FaceBlendData& data = blendData();
+    // The script as BlendFaces reads it: region -> "1" (the first parent)
+    // or "0"; the map is case-insensitive.
+    std::map<std::string, bool> fromA;
+    for (const auto& [region, parent] : regions)
+        fromA[lowerAscii(region)] = parent == 0;
     FaceStructure out;
     out.version = 3;
     for (uint32_t key : a.keys) {
         auto ia = a.data.find(key);
         auto ib = b.data.find(key);
-        if (ia == a.data.end() || ib == b.data.end() || ia->second.empty())
+        if (ia == a.data.end() || ib == b.data.end() || ia->second.empty() || ib->second.empty())
             continue;
-        const int ageIdx = int(key & 0xFF);
+        const uint32_t ageIdx = key & 0xFF;
         static const uint32_t kAges[6] = {age::Toddler, age::Child, age::Teen, age::Adult, age::Elder, age::Baby};
         const uint32_t ageBit = ageIdx < 6 ? kAges[ageIdx] : age::Adult;
-        const uint32_t genderBit = (key & 0x100) ? gender::Male : gender::Female;
+        const uint32_t gender = (key >> 8) & 1; // the editor's gender: 0x100 = male
+        const uint32_t genderBit = gender ? gender::Male : gender::Female;
         const bool low = (key & 0xF0000) != 0;
-        // b's deltas by texture coordinate.
-        std::unordered_multimap<int64_t, size_t> byUv;
+        const std::vector<FaceStructure::Vertex>& va = ia->second;
+        const size_t n = va.size();
+
+        // The parents' deltas laid on this list's corners by texture
+        // coordinate (ConvertFacialDataToPositionsUVs: the first pair with
+        // the same UV).
+        std::unordered_map<int64_t, size_t> byUvB; // emplace keeps the first
         for (size_t k = 0; k < ib->second.size(); ++k)
-            byUv.emplace(uvKey(ib->second[k].u, ib->second[k].v), k);
-        std::vector<FaceStructure::Vertex> verts = ia->second;
-        std::vector<Vec3> fromB(verts.size(), Vec3{0, 0, 0});
-        std::vector<bool> hasB(verts.size(), false);
-        for (size_t k = 0; k < verts.size(); ++k) {
-            auto it = byUv.find(uvKey(verts[k].u, verts[k].v));
-            if (it != byUv.end())
-                fromB[k] = ib->second[it->second].delta, hasB[k] = true;
+            byUvB.emplace(uvKey(ib->second[k].u, ib->second[k].v), k);
+        std::vector<Vec3> parentA(n), parentB(n, Vec3{0, 0, 0});
+        for (size_t k = 0; k < n; ++k) {
+            parentA[k] = va[k].delta;
+            if (auto it = byUvB.find(uvKey(va[k].u, va[k].v)); it != byUvB.end())
+                parentB[k] = ib->second[it->second].delta;
         }
-        for (size_t k = 0; k < verts.size(); ++k)
-            if (hasB[k])
-                verts[k].delta = scale(add(verts[k].delta, fromB[k]), 0.5f);
-        for (const auto& [region, parent] : regions) {
-            std::vector<std::string> masks{region};
-            if (region == "eyes")
-                masks.push_back("cheekbones");
-            if (region == "mouth")
-                masks.push_back("cheek");
-            for (const auto& m : masks) {
-                const SimPart* maskEntry = nullptr;
-                for (const auto& e : catalog_.regions)
-                    if (e.name() == m && fits(e, ageBit, genderBit))
-                        maskEntry = &e;
-                const Mesh* mm = maskEntry ? meshOfEntry(*maskEntry, low) : nullptr;
-                if (!mm && maskEntry)
-                    mm = meshOfEntry(*maskEntry);
-                if (!mm)
-                    continue;
-                for (size_t k = 0; k < verts.size(); ++k) {
-                    const long j = mm->match(verts[k].u, verts[k].v, Vec3{0, 0, 0});
-                    if (j < 0)
-                        continue;
-                    const float w = mm->weights[size_t(j)];
-                    if (w <= 0)
-                        continue;
-                    const Vec3 target = parent == 0 ? ia->second[k].delta : (hasB[k] ? fromB[k] : ia->second[k].delta);
-                    verts[k].delta = add(scale(verts[k].delta, 1 - w), scale(target, w));
-                }
+        // The neutral face under each corner (the measures are of absolute
+        // heights).
+        std::vector<Vec3> neutral(n, Vec3{0, 0, 0});
+        if (const SimPart* ne = catalog_.neutralFor(ageBit, genderBit)) {
+            const Mesh* nm = meshOfEntry(*ne, low);
+            if (!nm && low)
+                nm = meshOfEntry(*ne);
+            if (nm)
+                for (size_t k = 0; k < n; ++k)
+                    if (long j = nm->match(va[k].u, va[k].v, Vec3{0, 0, 0}); j >= 0)
+                        neutral[k] = nm->positions[size_t(j)];
+        }
+        // A region mask's weight under each corner (GetRegionMask; empty
+        // when the catalog has no such mask for the age and gender).
+        std::map<std::string, std::vector<float>> masks;
+        auto mask = [&](const std::string& name) -> const std::vector<float>& {
+            auto it = masks.find(name);
+            if (it != masks.end())
+                return it->second;
+            std::vector<float> w;
+            const SimPart* entry = nullptr;
+            for (const auto& e : catalog_.regions)
+                if (lowerAscii(e.name()) == lowerAscii(name) && fits(e, ageBit, genderBit))
+                    entry = &e;
+            // The masks are matched by texture coordinate, so the full
+            // mesh serves the low detail too (most masks have no LOD15).
+            const Mesh* mm = entry ? meshOfEntry(*entry) : nullptr;
+            if (mm) {
+                w.assign(n, 0.0f);
+                for (size_t k = 0; k < n; ++k)
+                    if (long j = mm->match(va[k].u, va[k].v, neutral[k]); j >= 0)
+                        w[k] = mm->weights[size_t(j)];
             }
+            return masks.emplace(name, std::move(w)).first->second;
+        };
+
+        // BuildBaseMesh: the neutral face.
+        std::vector<Vec3> d(n, Vec3{0, 0, 0});
+        std::map<std::string, bool> blended;
+        auto blendRegion = [&](const std::string& region, const std::vector<float>& w) {
+            // BlendMeshInRegionWithBodyPartData (BV 0x7f3748).
+            auto f = fromA.find(lowerAscii(region));
+            const std::vector<Vec3>& parent = f == fromA.end() || f->second ? parentA : parentB;
+            for (size_t k = 0; k < n && k < w.size(); ++k)
+                if (w[k] >= 0.001f)
+                    d[k] = add(scale(d[k], 1 - w[k]), scale(parent[k], w[k]));
+            blended[lowerAscii(region)] = true;
+        };
+        auto height = [&](const std::vector<float>& w) {
+            // ComputeAveragePositionInRegion (BV 0x7f44b4) at 0.9: the
+            // mean z of the corners at least that heavy; 0 without any.
+            float sum = 0;
+            int count = 0;
+            for (size_t k = 0; k < n && k < w.size(); ++k)
+                if (w[k] >= 0.9f) {
+                    sum += neutral[k][2] + d[k][2];
+                    ++count;
+                }
+            return count ? sum * (1.0f / float(count)) : 0.0f;
+        };
+        auto shift = [&](const std::string& name, float amount) {
+            // ApplyRegionMaskToMeshAsZShift (BV 0x7f33d4).
+            const std::vector<float>& w = mask(name);
+            for (size_t k = 0; k < n && k < w.size(); ++k)
+                if (w[k] >= 0.0001f)
+                    d[k][2] += w[k] * amount;
+        };
+        for (const auto& step : data.steps) {
+            const std::vector<float>& ma = mask(step.a);
+            const std::vector<float>& mb = mask(step.b);
+            if (ma.empty() || mb.empty())
+                continue;
+            if (!blended.count(lowerAscii(step.a)))
+                blendRegion(step.a, ma);
+            if (!blended.count(lowerAscii(step.b)))
+                blendRegion(step.b, mb);
+            const float diff = height(ma) - height(mb);
+            const auto [lo, hi] = data.limitsFor(ageIdx, gender, step.a, step.b);
+            if (diff < lo)
+                shift(step.down, diff - lo);
+            else if (diff > hi)
+                shift(step.up, diff - hi);
         }
+        std::vector<FaceStructure::Vertex> verts = va;
+        for (size_t k = 0; k < n; ++k)
+            verts[k].delta = d[k];
         out.set(key, std::move(verts));
     }
     return out;

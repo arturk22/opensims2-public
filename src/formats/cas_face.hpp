@@ -32,6 +32,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,32 @@ namespace os2 {
 class ResourceIndex;
 
 namespace cas {
+
+// The human face blend data (cTSCASBodyPartSystem::LoadHumanFaceBlendData,
+// Mac BV 0x7fd514): resource FACE 0x46414345, group 0xFFFFFFFF, instance 1
+// of Catalog/Skins/FaceInfo.package. u32 version; u32 n, n steps of four
+// strings (u32 length + text: region a, region b, the mask applied when a
+// is too far above b, the one when it is too close); u32 m, m limits (u32
+// editor age index, u32 gender, string a, string b, f32 min, f32 max) of
+// z(a) - z(b).
+struct FaceBlendData {
+    static constexpr uint32_t kType = 0x46414345;
+    struct Step {
+        std::string a, b, up, down;
+    };
+    struct Limit {
+        uint32_t age = 0, gender = 0;
+        std::string a, b;
+        float min = -9999, max = 9999;
+    };
+    std::vector<Step> steps;
+    std::vector<Limit> limits;
+    static FaceBlendData parse(std::span<const uint8_t> bytes);
+    // The limits of a pair at an age index and gender (0/1); +-9999 without
+    // an entry (GetBlendLimits' default).
+    std::pair<float, float> limitsFor(uint32_t ageIndex, uint32_t gender, const std::string& a,
+                                      const std::string& b) const;
+};
 
 struct FaceSpec {
     std::string archetype;                  // facearchetype family (lowercase GUID); empty = the neutral face
@@ -89,11 +116,17 @@ public:
     // its own deformed copy, "age<n>_1_gmdc"). Positions only.
     static std::vector<uint8_t> deformToFace(const std::vector<uint8_t>& gmdc, const Baked& face);
 
-    // A child's face (DetermineDescendantFace's script played on the two
-    // parents' LxNR): for every key both have, each vertex starts at the
-    // parents' mean and the region masks (faceregion, the vertex colour as
-    // weight) pull it to the region's parent; "eyes" brings "cheekbones",
-    // "mouth" "cheek" (inferred: how the editor mixes is not decoded).
+    // A child's face, as cTSCASBodyPartSystem::BlendFaces (Mac BV 0x80748c)
+    // plays DetermineDescendantFace's script on the two parents' LxNR
+    // (docs/cas-mac.md, round n21): for every key both have, the mesh starts
+    // at the neutral face; the blend steps of FaceInfo.package take, in
+    // order, each step's two regions from their parent (the region masks'
+    // weights, w >= 0.001: pos = (1 - w) pos + w parent) and then compare
+    // the regions' heights (the mean z of the vertices weighing >= 0.9):
+    // below the limits of the step for the age and gender, the step's
+    // "down" mask shifts z by the shortfall, above them the "up" mask by
+    // the excess. `regions`: region -> parent (0 = a, 1 = b); a region the
+    // script leaves out comes from a.
     FaceStructure descendant(const FaceStructure& a, const FaceStructure& b,
                              const std::vector<std::pair<std::string, int>>& regions);
 
@@ -105,8 +138,11 @@ private:
     const Mesh& meshByName(const std::string& gmdcName);
     const Mesh* meshOfEntry(const SimPart& entry, bool lowDetail = false); // its SHPE's LOD 0 (or other) GMDC
 
+    const FaceBlendData& blendData();
+
     ResourceIndex& index_;
     const CasCatalog& catalog_;
+    std::unique_ptr<FaceBlendData> blendData_;
     std::map<std::string, std::unique_ptr<Mesh>> meshes_;
 };
 

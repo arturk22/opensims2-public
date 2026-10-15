@@ -1,3 +1,4 @@
+#include <bit>
 #include <cmath>
 #include "formats/bhav.hpp"
 #include "formats/cas_catalog.hpp"
@@ -1101,6 +1102,93 @@ static void testFaceRegionMasks() {
     check(w.moved > 0 && w.moved < w.vertices, "a whole archetype leaves the hairneck vertices in place");
 }
 
+// BlendFaces (Mac BV 0x80748c, docs/cas-mac.md round n21): the blend data
+// of FaceInfo.package, and a child's face from the neutral face, its
+// regions taken from the parent the script names, the heights kept in the
+// limits. With OS2_DATA, two archetypes' faces.
+static void testBlendFaces() {
+    {
+        std::vector<uint8_t> b;
+        auto u32 = [&](uint32_t v) {
+            for (int i = 0; i < 4; ++i)
+                b.push_back(uint8_t(v >> (8 * i)));
+        };
+        auto str = [&](const std::string& t) {
+            u32(uint32_t(t.size()));
+            b.insert(b.end(), t.begin(), t.end());
+        };
+        u32(1);
+        u32(1);
+        for (const char* t : {"brow", "eyes", "eyesUp", "eyesDown"})
+            str(t);
+        u32(1);
+        u32(3);
+        u32(1);
+        str("brow");
+        str("eyes");
+        u32(std::bit_cast<uint32_t>(0.023f));
+        u32(std::bit_cast<uint32_t>(0.028f));
+        const cas::FaceBlendData d = cas::FaceBlendData::parse(b);
+        check(d.steps.size() == 1 && d.steps[0].a == "brow" && d.steps[0].down == "eyesDown" && d.limits.size() == 1,
+              "face blend data: steps and limits");
+        check(d.limitsFor(3, 1, "Brow", "eyes") == std::pair<float, float>{0.023f, 0.028f} &&
+                  d.limitsFor(3, 0, "brow", "eyes") == std::pair<float, float>{-9999.0f, 9999.0f},
+              "face blend limits by age, gender and pair (+-9999 without one)");
+    }
+    const char* data = std::getenv("OS2_DATA");
+    if (!data || !std::filesystem::exists(std::filesystem::path(data) / "TSData/Res"))
+        return;
+    ResourceIndex index(data);
+    if (auto loc = index.find(Tgi{cas::FaceBlendData::kType, 0xFFFFFFFF, 1, 0})) {
+        const cas::FaceBlendData d = cas::FaceBlendData::parse(index.read(*loc));
+        check(d.steps.size() == 8 && d.limits.size() == 70 && d.steps[1].a == "brow" && d.steps[1].up == "eyesUp",
+              "FaceInfo.package: 8 blend steps and 70 limits");
+    } else {
+        check(false, "FaceInfo.package's FACE resource");
+    }
+    const cas::CasCatalog catalog = cas::CasCatalog::load(index);
+    cas::FaceBaker baker(index, catalog);
+    auto fam = [&](const char* name) {
+        for (const auto& e : catalog.archetypes)
+            if (e.name() == name)
+                return cas::family(e);
+        return std::string();
+    };
+    cas::FaceSpec sa, sb;
+    sa.archetype = fam("amarchcara_cara");
+    sb.archetype = fam("amarcheafr_eafr");
+    const cas::FaceStructure fa = baker.structureOf(sa, cas::gender::Male);
+    const cas::FaceStructure fb = baker.structureOf(sb, cas::gender::Male);
+    const uint32_t key = cas::FaceStructure::key(cas::age::Adult, cas::gender::Male);
+    std::vector<std::pair<std::string, int>> allA, allB;
+    for (const char* r : {"nose", "brow", "mouth", "cheek", "eyes", "cheekbones", "jaw", "ears"}) {
+        allA.emplace_back(r, 0);
+        allB.emplace_back(r, 1);
+    }
+    const cas::FaceStructure ca = baker.descendant(fa, fb, allA), cb = baker.descendant(fa, fb, allB);
+    const auto* va = ca.find(cas::age::Adult, cas::gender::Male);
+    const auto* vb = cb.find(cas::age::Adult, cas::gender::Male);
+    const auto& pa = fa.data.at(key);
+    check(va && vb && va->size() == pa.size(), "a child's face has the parents' adult key");
+    if (!va || !vb)
+        return;
+    size_t likeA = 0, neutral = 0, differ = 0;
+    for (size_t k = 0; k < va->size(); ++k) {
+        float dA = 0, dN = 0, dAB = 0;
+        for (int c = 0; c < 3; ++c) {
+            dA += std::fabs((*va)[k].delta[c] - pa[k].delta[c]);
+            dN += std::fabs((*va)[k].delta[c]);
+            dAB += std::fabs((*va)[k].delta[c] - (*vb)[k].delta[c]);
+        }
+        likeA += dA < 1e-4f;
+        neutral += dN == 0;
+        differ += dAB > 1e-4f;
+    }
+    check(likeA > va->size() / 3, "every region from the first parent: much of the face is that parent's");
+    check(neutral > 0, "corners outside every region mask keep the neutral face");
+    check(differ > va->size() / 3, "the second parent's regions give another face");
+}
+
 // The naked outfit (shower, bath, getting changed) keeps the Sim's hair and
 // face: SetupShapesPrivate takes the naked category's hair and face from
 // swimwear, never the bald "<p>hairbald_skin" its list names (playtest 35:
@@ -1664,6 +1752,7 @@ int main() {
     testFaceSkinMigration();
     testCasRandomize();
     testFaceRegionMasks();
+    testBlendFaces();
     testNakedOutfitKeepsHair();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);

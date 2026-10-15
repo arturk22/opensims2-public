@@ -89,7 +89,7 @@ Dna determineGenetics(const Dna& a, const Dna& b, const GeneticValue& value, con
 struct DescendantFace {
     std::vector<std::pair<std::string, int>> regions; // region -> parent index
     std::string dominant;                             // the child's gene 5
-    std::string script() const;                       // "nose,0;brow,1;..."
+    std::string script() const;                       // the game's: "nose,1;brow,0;..." (1 = a)
 };
 DescendantFace determineDescendantFace(const Dna& a, const Dna& b, const Random& random);
 

@@ -55,7 +55,8 @@ int main() {
     b.alleles[gene::DominantRegions] = {"brow,eyes,", ""};
     // Rolls: nose 10 (50/50 -> a), brow 60 (only in b: <= 66 -> b), mouth 70 (-> b), eyes 80 (only in b, > 66 -> a), jaw 0, ears 99.
     const DescendantFace f = determineDescendantFace(a, b, scripted({10, 60, 70, 80, 0, 99}));
-    check(f.script() == "nose,0;brow,1;mouth,1;cheek,1;eyes,0;cheekbones,0;jaw,0;ears,1;" && f.dominant == "nose,brow,",
+    check(f.regions[0] == std::pair<std::string, int>{"nose", 0} && f.regions[1].second == 1 &&
+              f.script() == "nose,1;brow,0;mouth,0;cheek,0;eyes,1;cheekbones,1;jaw,1;ears,0;" && f.dominant == "nose,brow,",
           "descendant face: a parent per region (eyes bring cheekbones, mouth brings cheek) and the dominant ones");
 
     Dna d = Dna::fromProperties({{"1", kBlack}, {"268435457", kBlond}, {"5", "nose,"}});

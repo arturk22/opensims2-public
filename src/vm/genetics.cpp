@@ -145,8 +145,10 @@ Dna determineGenetics(const Dna& ma, const Dna& pa, const GeneticValue& value, c
 
 std::string DescendantFace::script() const {
     std::string s;
+    // DetermineDescendantFace (BV 0x548404) writes "%s,%d" with 1 for the
+    // first parent and 0 for the second.
     for (const auto& [r, i] : regions)
-        s += r + "," + std::to_string(i) + ";";
+        s += r + "," + (i == 0 ? "1" : "0") + ";";
     return s;
 }
 
