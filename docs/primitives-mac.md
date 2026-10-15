@@ -3507,6 +3507,16 @@ chama `UpdateObjectsInRoom` e `UpdateObjectsAdjacentToWall`
 em todo objeto carregado (`lot_resume.cpp`; `VM::runLoadEntries` desliga só
 nas conferências de salvar do `s2pkg`).
 
+**Soak (antes → depois, `tools/soak.sh` sem o app).** 8 horas de jogo
+(14.400 ticks) em `N001_Lot11`/`Lot68`/`Lot49`: interações autônomas que
+terminam verdadeiro 88 → 94, falso 1 → 0, "done with" 93 → 105; Sims presos
+3 → 3 (os mesmos: piano e xadrez no `Lot11` por 6–7 h, e a escola no
+`Lot49`, que é normal); nenhum erro, reset ou diferença de salvar. Os 62
+lotes de N001–N003 por 4 horas: nenhum crash, travamento, erro de Main,
+preso ou diferença de salvar, antes e depois (os lotes divergem cedo, porque
+o load roda agora: o controlador de doenças, por exemplo, liga a flag de
+"acabou de carregar").
+
 ### `cTSPerson::SetCurrentAction` (BV `0xadc6d8`)
 
 Chamado pelo Idle for Input (próxima entrada da fila) e pelo Gosub Found
