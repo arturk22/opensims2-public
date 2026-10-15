@@ -748,8 +748,23 @@ std::optional<simd_float2> HoodView::groundAt(simd_float3 origin, simd_float3 di
 }
 
 RgbaImage HoodView::computeLightMap() {
-    return hood::computeHoodLightMap(terrain_, *lightState_, lightLookup_, lightGradient_,
-                                     graphicsOptions().heightMapShadows ? nhoodShadowStrength_ : 0.0f);
+    hood::HoodLightMapParams params;
+    params.shadowStrength = graphicsOptions().heightMapShadows ? nhoodShadowStrength_ : 0.0f;
+    params.blobHeightModifier = blobHeightModifier_;
+    params.blobWidthModifier = blobWidthModifier_;
+    // SetupFloraLighting: each big enough tree raises the height map by its
+    // model's height (ComputeModelHeight: the model's z extent).
+    for (const auto& f : occupants_.flora) {
+        auto it = objectModels_.find(f.guid);
+        if (it == objectModels_.end())
+            continue;
+        auto box = modelBox_.find(it->second);
+        if (box == modelBox_.end() || !std::isfinite(box->second[2]))
+            continue;
+        if (auto b = hood::floraBlob(f, box->second[5] - box->second[2]))
+            params.blobs.push_back(*b);
+    }
+    return hood::computeHoodLightMap(terrain_, *lightState_, lightLookup_, lightGradient_, params);
 }
 
 void HoodView::refreshLightMap() {

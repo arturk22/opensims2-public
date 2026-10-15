@@ -162,6 +162,53 @@ static void testNormals() {
     check(std::abs(n[4][0] + e) < 1e-5f && std::abs(n[4][1]) < 1e-5f, "slope: tilted against x");
 }
 
+// CreateNeighborhoodLightMap: a texel per vertex, the normal's texel of the
+// lighting state's map, bent away from the sun in a hill's shadow.
+static void testLightMap() {
+    Terrain t;
+    t.width = t.height = 4;
+    t.gridWidth = t.gridHeight = 5;
+    t.seaLevel = -100;
+    t.heights.assign(25, 0.0f);
+    LightingState state;
+    LightingState::Light sun;
+    sun.name = "sun";
+    sun.direction = {0, -1, 0.2f}; // low in the -y
+    state.lights.push_back(sun);
+    // The state's map: 4x4, red where n.y < 0 (texel rows 0-1), green in row 2, blue in row 3.
+    RgbaImage lookup;
+    lookup.width = lookup.height = 4;
+    lookup.pixels.assign(64, 0);
+    for (uint32_t y = 0; y < 4; ++y)
+        for (uint32_t x = 0; x < 4; ++x) {
+            uint8_t* p = &lookup.pixels[(y * 4 + x) * 4];
+            p[y < 2 ? 0 : y == 2 ? 1 : 2] = 128, p[3] = 255;
+        }
+    HoodLightMapParams params;
+    params.shadowStrength = 0.47f;
+    RgbaImage lm = computeHoodLightMap(t, state, lookup, RgbaImage{}, params);
+    check(lm.width == 4 && lm.height == 4, "a side of the power of 2 >= vertices - 2");
+    check(lm.pixels[(2 * 4 + 2) * 4 + 1] == 129 && lm.pixels[(2 * 4 + 2) * 4 + 0] == 0,
+          "flat open ground: the map's texel at (0.5, 0.5), x 256 / 255 rounded");
+    // A wall at y = 0 (row 0 raised) shades the rows behind it (+y): the
+    // normal bends away from the sun (+y), into the green.
+    for (size_t i = 0; i < 5; ++i)
+        t.heights[i] = 50;
+    lm = computeHoodLightMap(t, state, lookup, RgbaImage{}, params);
+    check(lm.pixels[(3 * 4 + 2) * 4 + 2] == 129, "in the wall's shadow: bent towards +y, the map's last row");
+    // With the sun from +y the wall's shadow falls on nothing (row 0 is the edge).
+    params.blobs.push_back({20, 20, 30, 30, 100});
+    lm = computeHoodLightMap(t, state, lookup, RgbaImage{}, params);
+    check(lm.width == 4, "blobs raise the shadow's heights");
+    Flora f;
+    f.at.boundsMin = {0, 0};
+    f.at.boundsMax = {20, 20};
+    const auto blob = floraBlob(f, 30);
+    check(blob && blob->x0 == 3 && blob->x1 == 17 && blob->height == 30, "a tree's blob: 0.7 of its rectangle");
+    f.at.boundsMax = {10, 10};
+    check(!floraBlob(f, 30), "small trees add no blob");
+}
+
 // The "Ver Amigos" arch: a tube round a Bezier from one lot to the other,
 // rising at 45 degrees (c3DUIManager::AddArch).
 static void testRelationshipArch() {
@@ -185,6 +232,7 @@ int main() {
     testSettings();
     testVariants();
     testNormals();
+    testLightMap();
     if (failures)
         std::fprintf(stderr, "%d failure(s)\n", failures);
     else

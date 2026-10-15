@@ -121,17 +121,39 @@ bool needsImposterTerrain(size_t groundVertices, uint32_t widthTiles, uint32_t d
 ObjectModel buildHoodRoadModel(const Terrain& t, const Occupants& o);
 ObjectModel buildHoodWaterModel(const Terrain& t);
 
-// The neighborhood light map, `size` x `size` texels over the terrain
-// (inferred: its generation is not decoded, docs/neighborhood-mac.md 2.4):
-// the lighting state's "lightMap" image (0x0BE702EF in lighting.package)
-// read at ((n.x + 1) / 2, (n.y + 1) / 2) of the terrain normal (its bright
-// corner faces the neighbourhood sun), times 1 - hmNHoodShadowStrength where
-// the height map shades the point from the sun, and under the sea the
+// A tree's raised patch in the light map's height map
+// (cLightingManager::AddBlobToHeightMap, BV 0x7010d4): a rectangle in world
+// units and the tree model's height.
+struct LightMapBlob {
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    float height = 0;
+};
+// SetupFloraLighting (BV 0x785020): the tree's saved bounding rectangle,
+// its half sizes x 0.7 round the centre, truncated; only when 10 or more
+// across in x or y. `modelHeight`: the model's z extent (ComputeModelHeight).
+std::optional<LightMapBlob> floraBlob(const Flora& f, float modelHeight);
+
+struct HoodLightMapParams {
+    float shadowStrength = 0.47f;    // Lighting.txt hmNHoodShadowStrength (0: no height-map shadows)
+    float blobHeightModifier = 0.09f; // hmBlobHeightModifier
+    float blobWidthModifier = 0.05f;  // hmBlobWidthModifier
+    std::vector<LightMapBlob> blobs;
+};
+
+// The neighborhood light map as cLightingManager::CreateNeighborhoodLightMap
+// makes it (BV 0x706920, docs/neighborhood-mac.md 20.3): one texel per
+// terrain vertex (the power of 2 >= vertices - 2 a side: 128, the last
+// vertex left out), the vertex normal (terrainNormals) bent away from the
+// sun by (shadow height - height) x shadowStrength where the height-map
+// shadow (cHeightMapShadow over the heights with the trees' blobs) passes
+// it, and the lighting state's "lightMap" image (0x0BE702EF) read without
+// filtering at (floor((n.x / 2 + 0.5) w) & (w - 1), likewise y), x 256
+// rounded, at most 255. Inferred (not in the game's map): under the sea the
 // underwater gradient (neighborhood-underwater-gradient: depth /
-// waterGradientZoneSize down the texture) in place of light. `gradient` may
-// be empty.
+// waterGradientZoneSize down the texture) in place of light, the lighting
+// pass being clipped there. `gradient` may be empty.
 RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, const RgbaImage& lookup,
-                              const RgbaImage& gradient, float shadowStrength, uint32_t size = 512);
+                              const RgbaImage& gradient, const HoodLightMapParams& params);
 
 // imposter.matShad's materials, rewritten as materials the renderer draws:
 // walls (ImposterWallMaterial: "walls_<page>", alpha test 64), slices

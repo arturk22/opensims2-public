@@ -36,13 +36,6 @@ Vec3 normalize(Vec3 v) {
 }
 
 
-Vec3 normalAt(const Terrain& t, float x, float y) {
-    const float e = kHoodCellSize * 0.5f;
-    const float dx = t.heightAt(x + e, y) - t.heightAt(x - e, y);
-    const float dy = t.heightAt(x, y + e) - t.heightAt(x, y - e);
-    return normalize({-dx, -dy, 2 * e});
-}
-
 MaterialDefinition terrainMaterial(const std::string& texture, bool blended, int layer, float scale, bool clamp,
                                    const char* blendMode = "blend") {
     MaterialDefinition m;
@@ -599,47 +592,134 @@ ObjectModel buildHoodWaterModel(const Terrain& t) {
     return model;
 }
 
+std::optional<LightMapBlob> floraBlob(const Flora& f, float modelHeight) {
+    const auto& lo = f.at.boundsMin;
+    const auto& hi = f.at.boundsMax;
+    const float cx = (lo[0] + hi[0]) * 0.5f, cy = (lo[1] + hi[1]) * 0.5f;
+    const float hx = (hi[0] - lo[0]) * 0.5f * 0.7f, hy = (hi[1] - lo[1]) * 0.5f * 0.7f;
+    LightMapBlob b;
+    b.x0 = int(cx - hx), b.y0 = int(cy - hy), b.x1 = int(cx + hx), b.y1 = int(cy + hy);
+    b.height = modelHeight;
+    if (b.x1 - b.x0 > 9 || b.y1 - b.y0 > 9)
+        return b;
+    return std::nullopt;
+}
+
+namespace {
+
+// cHeightMapShadow::FindHeightMapShadows (BV 0xd76e68): a front swept over
+// the grid from the sun's side, by columns (FUN_00d76254) when |sun.x| >=
+// |sun.y|, else by rows (FUN_00d76b74); each step the front takes the
+// heights it meets, leaves them as the shadow height, sinks by the sun's
+// slope and slides sideways by the sun's other component.
+std::vector<float> heightMapShadow(const std::vector<float>& heights, int w, int h, Vec3 sun) {
+    std::vector<float> shadow(heights.size(), -1000.0f);
+    if (sun[2] <= 0 || (std::abs(sun[0]) < 0.001f && std::abs(sun[1]) < 0.001f))
+        return heights; // ClearShadowMap: nothing above the ground
+    const bool rows = std::abs(sun[0]) < std::abs(sun[1]);
+    // Along the sweep: n lines of `len` values; at(line, k) the grid index.
+    const int lines = rows ? h : w, len = rows ? w : h;
+    auto at = [&](int line, int k) { return rows ? size_t(line) * size_t(w) + size_t(k) : size_t(k) * size_t(w) + size_t(line); };
+    const float along = rows ? sun[1] : sun[0], across = rows ? sun[0] : sun[1];
+    double sink = double(kHoodCellSize * sun[2] / along);
+    double slide = double(-across / along);
+    int line = 0, end = lines, step = 1;
+    if (sink >= 0)
+        sink = -sink, slide = -slide, line = lines - 1, end = -1, step = -1;
+    std::vector<float> front(size_t(len), -1000.0f);
+    for (; line != end; line += step) {
+        for (int k = 0; k < len; ++k) {
+            float& f = front[size_t(k)];
+            f = std::max(f, heights[at(line, k)]);
+            shadow[at(line, k)] = f;
+            f = float(sink + double(f));
+        }
+        if (slide > 0) {
+            for (int k = 0; k + 1 < len; ++k) {
+                float& f = front[size_t(k)];
+                f = float(slide * double(float(double(front[size_t(k + 1)]) - double(f))) + double(f));
+            }
+        } else {
+            for (int k = len - 1; k > 0; --k) {
+                float& f = front[size_t(k)];
+                f = float(-slide * double(float(double(front[size_t(k - 1)]) - double(f))) + double(f));
+            }
+        }
+    }
+    return shadow;
+}
+
+} // namespace
+
 RgbaImage computeHoodLightMap(const Terrain& t, const LightingState& state, const RgbaImage& lookup,
-                              const RgbaImage& gradient, float shadowStrength, uint32_t size) {
+                              const RgbaImage& gradient, const HoodLightMapParams& params) {
     Vec3 sun{1.75f, -2, 1.5f};
     for (const auto& l : state.lights)
         if (l.name == "sun")
             sun = l.direction;
-    const Vec3 L = normalize(sun);
-    const Vec3 flat = normalize({L[0], L[1], 0});
+    sun = normalize(sun); // the parser's cLightCommand normalises it
+    const int w = int(t.gridWidth), h = int(t.gridHeight);
+    // The power of 2 >= vertices - 2 a side (the last vertex is left out).
+    auto pow2 = [](int n) {
+        int p = 1;
+        while (p < n)
+            p <<= 1;
+        return p;
+    };
+    const int mw = pow2(std::max(1, w - 2)), mh = pow2(std::max(1, h - 2));
     RgbaImage img;
-    img.width = img.height = size;
-    img.pixels.resize(size_t(size) * size * 4);
-    const float W = t.worldWidth(), H = t.worldHeight();
-    const float step = kHoodCellSize * 0.5f;
-    const float rise = L[2] / std::max(std::sqrt(L[0] * L[0] + L[1] * L[1]), 1e-3f); // per unit across
-    for (uint32_t py = 0; py < size; ++py)
-        for (uint32_t px = 0; px < size; ++px) {
-            const float x = (float(px) + 0.5f) / float(size) * W, y = (float(py) + 0.5f) / float(size) * H;
-            const float z = t.heightAt(x, y);
-            std::array<float, 3> c;
-            if (z < t.seaLevel - 0.5f) {
-                // NeighborhoodWaterTerrain: the underwater gradient by depth.
-                c = gradient.width ? sample(gradient, 0.5f, (t.seaLevel - z) / kWaterGradientZoneSize)
-                                   : std::array<float, 3>{0.2f, 0.3f, 0.4f};
-            } else {
-                const Vec3 n = normalAt(t, x, y); // (central differences)
-                // Height-map shadow: walk towards the sun over the terrain.
-                bool shadow = false;
-                for (float d = step; d < 800 && !shadow; d += step) {
-                    const float sx = x + flat[0] * d, sy = y + flat[1] * d;
-                    if (sx < 0 || sy < 0 || sx > W || sy > H)
-                        break;
-                    shadow = t.heightAt(sx, sy) > z + 0.5f + d * rise;
-                }
-                c = sample(lookup, (n[0] + 1) / 2, (n[1] + 1) / 2);
-                if (shadow)
-                    for (auto& x : c)
-                        x *= 1 - shadowStrength;
+    img.width = uint32_t(mw), img.height = uint32_t(mh);
+    img.pixels.assign(size_t(mw) * size_t(mh) * 4, 0);
+    if (w < 2 || h < 2 || t.heights.size() != size_t(w) * size_t(h))
+        return img;
+    // The heights with the trees' blobs (AddBlobToHeightMap): from
+    // floor((x0 - width modifier) / 10) to ceil((x1 + width modifier) / 10),
+    // exclusive, raised to the terrain + height x the height modifier.
+    std::vector<float> raised = t.heights;
+    const float inv = 1.0f / kHoodCellSize, e = params.blobWidthModifier;
+    for (const auto& b : params.blobs) {
+        const int x0 = std::clamp(int(std::floor((float(b.x0) - e) * inv)), 0, w - 1);
+        const int x1 = std::clamp(int(std::ceil((float(b.x1) + e) * inv)), 0, w - 1);
+        const int y0 = std::clamp(int(std::floor((float(b.y0) - e) * inv)), 0, h - 1);
+        const int y1 = std::clamp(int(std::ceil((float(b.y1) + e) * inv)), 0, h - 1);
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x) {
+                const size_t v = size_t(y) * size_t(w) + size_t(x);
+                raised[v] = std::max(raised[v], b.height * params.blobHeightModifier + t.heights[v]);
             }
-            uint8_t* p = &img.pixels[(size_t(py) * size + px) * 4];
-            for (int k = 0; k < 3; ++k)
-                p[k] = uint8_t(std::lround(std::clamp(c[size_t(k)], 0.0f, 1.0f) * 255));
+    }
+    const std::vector<float> shadow = params.shadowStrength > 0 ? heightMapShadow(raised, w, h, sun) : raised;
+    const std::vector<std::array<float, 3>> normals = terrainNormals(t);
+    const Vec3 away{-sun[0], -sun[1], sun[2]};
+    for (int y = 0; y < mh && y < h - 1; ++y)
+        for (int x = 0; x < mw && x < w - 1; ++x) {
+            const size_t v = size_t(y) * size_t(w) + size_t(x);
+            std::array<float, 3> c{1, 1, 1};
+            if (t.heights[v] < t.seaLevel - 0.5f) {
+                // Inferred: under the sea the underwater gradient by depth.
+                c = gradient.width ? sample(gradient, 0.5f, (t.seaLevel - t.heights[v]) / kWaterGradientZoneSize)
+                                   : std::array<float, 3>{0.2f, 0.3f, 0.4f};
+            } else if (lookup.width && lookup.height) {
+                Vec3 n = normals[v];
+                const float d = shadow[v] - t.heights[v];
+                if (d > 0) { // FUN_01809070: bent away from the sun
+                    const float k = d * params.shadowStrength;
+                    n = normalize({n[0] + k * away[0], n[1] + k * away[1], n[2] + k * away[2]});
+                }
+                const int lw = int(lookup.width), lh = int(lookup.height);
+                // The game's map is a power of 2 and wraps (& (size - 1)).
+                auto wrap = [](int i, int size) {
+                    return (size & (size - 1)) == 0 ? i & (size - 1) : std::clamp(i, 0, size - 1);
+                };
+                const int u = wrap(int(std::floor((n[0] * 0.5f + 0.5f) * float(lw))), lw);
+                const int vv = wrap(int(std::floor((n[1] * 0.5f + 0.5f) * float(lh))), lh);
+                const uint8_t* px = &lookup.pixels[(size_t(vv) * lookup.width + size_t(u)) * 4];
+                for (size_t k = 0; k < 3; ++k)
+                    c[k] = float(px[k]) / 255.0f; // x the state's light map colour: white (inferred)
+            }
+            uint8_t* p = &img.pixels[(size_t(y) * size_t(mw) + size_t(x)) * 4];
+            for (size_t k = 0; k < 3; ++k)
+                p[k] = uint8_t(std::min(255L, std::max(0L, std::lround(c[k] * 256.0f))));
             p[3] = 255;
         }
     return img;
