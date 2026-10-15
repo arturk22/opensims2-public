@@ -851,3 +851,179 @@ além das cinco cores.
   `posição + max(0, mínimo.y) · direção/|direção|²` (o mínimo do retângulo
   à frente da luz; com o padrão −0,5, a da própria luz). `FUN_00d82334`
   monta o retângulo girado pelo rumo.
+
+### 10.4 A grade de difusão do piso (`cFloorColorGrid`, lida inteira)
+
+Correções ao §5.1 em negrito. Uma grade por andar; amostras em meio tile
+(`2L × 2A`), a amostra `S(x, y)` = par de metades `h0`/`h1` (0x24 bytes
+cada: cor RGB `+0`, `nb` `+0x18` = bit `d` a luz sai nessa direção, `sel`
+`+0x19` = bit `d` o vizinho é alcançado na metade 1, fora `+0x1a`, existe
+`+0x1b`, suja `+0x1c`, mudou nesta passada `+0x1d`, sala `+0x20`). O tile
+`(tx, ty)` tem as amostras `(2tx|2tx+1, 2ty|2ty+1)`. Direções `d` (tabela
+`0x2747cb8`): 0 (0,−1), 1 (−1,−1), 2 (−1,0), 3 (−1,1), 4 (0,1), 5 (1,1),
+6 (1,0), 7 (1,−1).
+
+**Montagem** (`UpdateFromWorldDB` `0xeeb614` → `SetupTileGridFromWorldInfo`
+`0xee8400`, `SetupColorGridFromWorldInfo` `0xeeaaec`):
+
+- o tile existe se está no lote e **tem chão** (`HasAnyGround`, vtable `0xbc`
+  do mundo: no andar 0 sempre; acima, algum quarto com piso); as quatro
+  amostras ganham `h0` existente, `h1` não;
+- **as paredes que bloqueiam a luz** (estilo de partição com `blocksLight`,
+  vtable `0x144` do produto, ou estilo 29, parede de piscina; **cercas e
+  muros sem `blocksLight` não bloqueiam**) tiram bits de `nb` das amostras
+  do lado: borda −y: `s00`, `s10` `&= 0x7C`; −x: `s00`, `s01` `&= 0xF1`; +y:
+  `s01`, `s11` `&= 0xC7`; +x: `s10`, `s11` `&= 0x1F`. **Portas e arcos não
+  deixam passar** (a máscara vale com porta). Diagonal `x + y = 1` (bit
+  `0x10`): `h1 ← h0` nas 4 amostras e `s01.h0 &= 0xCF`, `s01.h1 &= 0xF9`,
+  `s11.h0 &= 0x07`, `s00.h1 &= 0x70`, `s10.h0 &= 0x9F`, `s10.h1 &= 0xFC`
+  (tile diagonal 1); diagonal `x = y` (`0x20`): `s00.h0 &= 0xF3`,
+  `s00.h1 &= 0x7E`, `s01.h0 &= 0xC1`, `s10.h1 &= 0x1C`, `s11.h0 &= 0xE7`,
+  `s11.h1 &= 0x3F` (tile diagonal 2);
+- a sala: `R(px, py)` = sala de luz (3ARY `0x0B`, definição 0) no ponto do
+  tile; tile normal `R(.5, .5)` em todas as `h0`; diagonal 1: `R(.25, .25)`
+  nas `h0` e `R(.75, .75)` nas `h1`; diagonal 2: `R(.75, .25)` / `R(.25,
+  .75)`. **Fora = sala 0**. As salas **não** entram na ligação: só paredes e
+  metades que faltam bloqueiam;
+- ligações (`SetupConnection` `0xee78e0` para cada vizinho; vizinho fora da
+  grade = bit apagado): `h0↔h0` se as duas deixam, senão a metade que
+  deixa liga à metade do vizinho que deixa (`sel`), senão o bit cai;
+  diagonais (`SetupDiagonalConnection` `0xeea7f8`): só ficam se um dos dois
+  caminhos em L estiver aberto e chegar à mesma metade.
+
+**Ambiente e fontes.** `InitGridColors` (`0xeeb8a4`): fora `outsideColor ·
+outsideFloorAmbient`, dentro `insideColor · insideFloorAmbient`.
+`DoesLightSeedThisFloor` (`0xeeba10`) e `InitGridColorsForLight`
+(`0xeebdec`), sobre o retângulo da fonte em amostras (`sx0 = ⌊2·minX +
+.5⌋`, `sx1 = ⌊2·maxX − .5⌋`, idem y; o retângulo = posição + os cantos
+mínimo e máximo girados por `rumo − π/2`, `0xd82334`): só as metades da
+**sala da fonte**; fonte acima do andar: para cada andar entre os dois, se
+há piso no quarto do canto mínimo da amostra a amostra é pulada, senão
+`k ·= 1 − interFloorFalloff` (com `interFloorFalloff ≥ 1` nada); cor =
+`max(c, rgb · floorIntensityScale · k)`.
+
+**Propagação** (`CalculateGrid` `0xeeccc0`, `RelaxGridColors` `0xeec3a4`):
+as fontes que semeiam o andar ordenadas pela queda, **as de menor queda
+primeiro**, em grupos com `|Δ| < 0,01`; cada grupo semeia e relaxa com
+`k = queda · floorThreshold` (a grade não é limpa entre grupos). Cada
+passada (até `wallPropagationSteps`, `+0x70` do gerenciador, 50; o
+`floorPropagationSteps` não chega às grades) varre o retângulo ativo em 4
+sentidos: por linha, x crescente puxando das direções 1, 2, 3 e x
+decrescente de 5, 6, 7; por coluna, y crescente de 7, 0, 1 (sem exigir
+vizinho sujo) e y decrescente de 3, 4, 5; só puxa de vizinho **sujo**
+(mudou nesta passada ou na anterior), e o retângulo cresce quando muda
+na borda. Regra (`0xee7c6c`): `k ·= 1,4` nas diagonais; por canal, se
+`n − c > k·c`: `c = n/(1 + k) + 0,01`. Para quando uma passada não muda
+nada. No fim da passada a sujeira é a do que mudou (a última linha e
+coluna do retângulo ficam de fora, peculiaridade).
+
+**Cópia para a página** (`CopyToTexturePages` `0xeea560`,
+`FillInGuardTilePair` `0xee9874`, `cGuardTile::FillTileTexels` `0xee8c88`,
+`FillHalfTileTexels` `0xee9120`, `cGuardTilePair::FillTileTexels`
+`0xee95d0`): por tile, uma guarda 4×4 de cores: o miolo 2×2 são as 4
+amostras do tile (metade que falta = o ambiente de fora/dentro), o anel
+de 12 são os vizinhos **pela ligação** (`GetNeighborSample` `0xee9798`);
+um vizinho diagonal que falta = a média dos dois vizinhos retos, e um que
+não se alcança = a amostra do próprio tile mais perto. Com a flag `+0x40`
+(ligada no construtor, **em todos os andares**) as amostras de fora perdem
+`outsideColor · outsideFloorAmbient`. Texel da coluna `u` e linha `v` (v =
+1 no lado +y do tile, a primeira linha da página): no andar 0
+`u = (i + .5)/8`, `v = 1 − (j + .5)/8`; nos outros `u = i/7`, `v = 1 − j/7`
+(as bordas sobre a borda do tile); `gx = 2u + .5`, `gy = 2v + .5`, bilinear
+entre as 4 entradas da guarda em volta, × `2 · escala` (0,5 → ×1),
+`PackToARGB32` (`round(256·c)` preso em 0..255), escrito por cima. Tiles
+diagonais: cada metade com a sua guarda, só os texels do seu lado
+(`u·s + v < off` contra a metade; diagonal 1: `s = 1`, `off = 0,99`;
+diagonal 2: `s = −1`, `off = −0,01`; a versão de meio tile começa em
+`u = 0` também no andar 0).
+
+`BrightenRoom` (`0xee86c8`) soma `cor · 0,5` às metades da sala (só salas
+de dentro); `DarkenCorners` (`0xeed11c`) puxa para o ambiente as amostras
+perto dos cantos de `GetDarkCorners` (pesos 4×4 de `0x2747c40` ou 2×2 de
+`0x2747cf8`), mas roda **depois** da cópia do piso: na passada completa
+não aparece. `LookupFloorDiffusion` (`0xee88c4`): 2 × a cor da amostra no
+ponto (menos o ambiente de fora).
+
+### 10.5 A difusão nas paredes (`cWallDiffusionManager`, lida inteira)
+
+Substitui o §5.2. Nomes de BV corrigidos: `0xeee278` =
+`ClearFinalColorColumn`, `0xeee464` = `ClearColumn`; `0xeeeb54` dá o elo de
+**cima** (`+0x15c`) e `0xeeeb88` o de baixo (`+0x168`).
+
+**Estrutura.** Uma `cDiffusionWall` (0x1c) é uma reta de peças de parede de
+um lado, mesmo rumo (|Δ| < 0,0942) e mesma sala (`0xa70834`), em volta do
+laço do lado (`SetupWallSection` `0xeefcf4`, lados 0 e 2 de cada seção;
+`SetupWalls` `0xef0324` nos grafos de parede 3, 8, 10, 11 e nas paredes de
+piscina, tipo 0x1D); as retas de um laço ficam ligadas (`+0xc` anterior,
+`+0x10` seguinte, em anel). Cada segmento (0x178) é um tile de parede:
+início e fim, o quarto de tile, **2 colunas × 6 linhas de amostras (meio
+tile; linha 0 no alto)** em bytes ARGB, uma moldura 4 × 8 de cores finais,
+e os elos para o segmento do mesmo quarto de tile no andar de cima (se lá
+não há piso) e no de baixo (se no próprio andar não há piso)
+(`ConnectFloors` `0xeef624`). Comprimento da reta = n (× 1,4142 diagonal);
+o lado da frente é a normal `(dir.y, −dir.x)`.
+
+**Uma passada** (`DoDiffusionPass`, depois da cópia do piso):
+
+1. `Clear` (`0xeee87c`): amostras = `pack(ambiente)` (dentro
+   `insideColor · insideWallAmbient`, fora `outsideColor ·
+   outsideWallAmbient`), `aceso = 0`.
+2. `AddDirectLight` (`0xef28ac`), para cada fonte e cada reta: só se o
+   andar da reta ≤ o da fonte e a sala da reta = a da fonte; `c` = centro
+   do retângulo da fonte, `s` = `wallIntensityScale`; descendo da fonte até
+   o andar da reta, piso em `c` interrompe (sem atenuar), senão `s ·= 1 −
+   interFloorFalloff`. `k = wallThreshold · queda`. Na reta
+   (`0xef2594`, `ClosestColumn` `0xeeddac`): `t` = projeção de `c` /
+   comprimento; dentro, `dist` = distância perpendicular (com sinal) e a
+   coluna `⌊t·2n⌋`; antes do início ou depois do fim, `dist = ±|c − início|`
+   e a primeira ou a última coluna; `dist ≤ 0` (atrás) não acende. Fonte
+   direcional (`co` = cos entre o rumo da fonte e a direção até a parede):
+   `f = (6 − 2co)/(6 + 2co)`, `s ·= ((co + 1)/2)·fd + 1 − fd` com `fd` =
+   queda direcional; `passos = max(1, f·2·dist)`; cor = `rgb · s ·
+   (1/(1+k))^passos`; direcional: `k += max(co, 0)·(2k/passos − k)`. Daí
+   `SetAndPropagateColumnLeft/Right` (`0xef2210`, `0xef1e70`), com `k' =
+   1,4k` em parede diagonal e divisão em ponto fixo `M(k) =
+   round(4096/(1+k))`, `v·M >> 12`: para a esquerda a partir da coluna, para
+   a direita a partir da seguinte (já dividida); em cada coluna as linhas
+   1–4 = `max`; se nada mudou, para; divide; **as linhas 0 e 5 são
+   sobrescritas** com o valor já dividido. A reta acesa fica `aceso = 1`,
+   e as de cima dela também (`SetIlluminatedVertical` `0xeef078`).
+3. `FillWallsFromFloors` (`0xef0e68` → `FillFromFloorTexture` `0xef0b58`):
+   `c = aceso ? brightWallFloorContribution : darkWallFloorContribution`;
+   em cada segmento sem elo de baixo, cada coluna pega o texel do light map
+   de piso (o mais perto, × 2) a 1/8 de tile na frente do meio da coluna e
+   põe `max(amostra, piso · c · 0,5)` nas **6 linhas** (`0xef062c`).
+4. `DoPropagationPass` (`0xef1d84`), só nas retas acesas ou mudadas pelo
+   piso, até `wallPropagationSteps` (50) passos ou nada mudar; `k =
+   wallThreshold` só (sem a queda da fonte); dentro do segmento, as 8
+   vizinhas (diagonal `1,4k`); entre segmentos da mesma reta, pela borda;
+   entre andares, pelos elos (linha 0 ↔ linha 5 do de cima). **Não passa de
+   uma reta para outra** (canto). Regra: `v = max(v, viz · M(k) >> 12)`.
+5. `FillInFinalColors` (`0xeeef34`): moldura 4 × 8 = as amostras e, na
+   borda, as dos segmentos vizinhos (lado, cima, baixo, cantos).
+6. `DarkenCornersNextToDarkWalls` (`0xef4000`): numa reta acesa ao lado de
+   uma apagada que vira 90° (a de antes: rumo da reta = anterior − π/2; a
+   seguinte: seguinte = reta − π/2), as colunas finais junto ao canto
+   viram `0,8·ambiente + 0,2·antigo` (as duas primeiras) e `0,4·amb +
+   0,6·ant` (as duas seguintes).
+7. `CopyToTexturePages` (`0xef3bfc` → `0xef2c9c`): célula de 8 × 24 texels
+   por segmento (linha 0 da célula = pé da parede): `u = 0,5 + i·2/7`,
+   `v = 6,5 − j·6/23` na moldura, bilinear, texel = `pack(0,5 · (cor −
+   amb))`, `amb` = o ambiente de fora nas paredes de fora (flag `+0x38`),
+   preto nas de dentro; célula mais alta: cada linha acima de 24 = a de
+   baixo dividida por `M(0,4·wallThreshold)`.
+
+`BrightenRoom` da parede (`0xeee134`) soma nas cores finais; só o
+`cDiffusionManager::BrightenRoom` o chama (sem uso no caminho da
+passada completa). `LookupWallDiffusion` (`0xeef45c`, objetos) = a amostra
+da coluna 1, linha 3. Configuração (`UpdateFromConfig` `0xd7f764`): o
+`diffParam wallThreshold` do estado vai para o `+0x4c` (dia 0,4, noite
+0,2), `insideWallAmbient` para o `+0x40`; `outsideWallAmbient`,
+`outsideDiffusionAmbientColor`, `bright/darkWallFloorContribution` e
+`wallPropagationSteps` vêm dos `set` do `Lighting.txt`.
+
+Não confirmado: o que são os grafos de parede 3, 8, 10, 11 (aqui: todas as
+faces com papel, cercas inclusive); se o jogo usa o `DoDiffusionPass` ou o
+`DoDiffusionPassOptimized` (os dois estão na vtable); o sinal da
+convenção de rumo (os cantos escuros usam a virada à direita, com a sala à
+direita, tomada como a do canto de dentro do cômodo).
