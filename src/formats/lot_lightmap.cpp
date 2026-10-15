@@ -605,12 +605,20 @@ LotLightMap computeLotLightMap(const LotLightMapLayout& layout, const LightingSt
         portals.push_back(p);
         const V3 lc{l.color[0], l.color[1], l.color[2]};
         const float cx = (float(to[0]) + 0.5f) / 2, cy = (float(to[1]) + 0.5f) / 2;
+        // A window over a level without floor on its inner side (the attic
+        // windows over a tall room) lights the floor below, as that room's
+        // (inferred: the game's portal list, which gives the source its
+        // room, was not read).
+        int seedLevel = level;
+        while (seedLevel > layout.minLevel && !groundAt(layout, seedLevel, cx, cy))
+            --seedLevel;
+        const uint16_t seedRoom = seedLevel == level ? toHalf.room : lightRoomAt(layout, seedLevel, cx, cy);
         for (int part = 0; part < 2; ++part) {
             DiffusionSource s;
-            s.level = layout.minLevel + li;
+            s.level = seedLevel;
             s.position = {cx, cy};
             s.rect = {cx - 0.5f, cy - 0.5f, cx + 0.5f, cy + 0.5f};
-            s.room = toHalf.room;
+            s.room = seedRoom;
             const auto& m = part ? smod : mod;
             s.rgb = lc * (part ? spill * fs : dl * f) * m.diffusion;
             s.falloff = std::max(0.0f, l.falloff * m.diffusionFalloff);
