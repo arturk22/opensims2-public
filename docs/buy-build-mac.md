@@ -428,8 +428,9 @@ motor passa a `RunEntryPoint` (vtable `0x3b4`); a tabela é a mesma da TTAB/OBJf
   "criado". O movido troca a posição atual pela gravada.
 - Um objeto **apagado não é destruído na hora**: ele sai do mundo
   (`RemoveImpl` = `RemoveFromWorld` + `OnUserDelete`). Ele só morre quando o
-  histórico é zerado (`ResetSelf`, BV `0x35f4dc`, tipo 2 → `KillObject`), ao sair
-  do modo compra. Por isso é possível desfazer uma venda.
+  histórico é zerado (`ResetSelf`, BV `0x35f4dc`, tipo 2 → `KillObject`), ao
+  entrar no modo Vivo (rodada n20, §7.24: não ao trocar de Compra para
+  Construção). Por isso é possível desfazer uma venda.
 - Comprar e apagar um objeto criado na mesma sessão o destrói na hora
   (custo 0).
 - Recompensas: confirmar marca a recompensa de carreira como usada ou cobra
@@ -2413,7 +2414,10 @@ quatro alturas do tile **exatamente iguais**, salvo p&`0x100` → `0x12`
 `FUN_008a7164`: objeto de **tipo 10** (escadaria) → `CeilingTooHighForObject`
 (`0x16a6f8`): o tile de cima (nível + 1, no lote) com `HasSupport` e algum
 vértice dele mais de `StandardLevelHeight` + 0,001 acima do vértice de baixo
-→ `0x30` (salvo p2&`0x20`). O teste de altura do fim do `TestPlaceInWorld`
+→ `0x30` (salvo p2&`0x20`). Fora da colocação comum, a ferramenta de lareira
+(`cTSUserToolFireplace::TryPlace`, BV `0x27a38c`, que chama a do objeto antes)
+sobe a chaminé andar por andar enquanto o tile de cima tem `HasSupport` (não
+feito: aqui a lareira é um objeto comum). O teste de altura do fim do `TestPlaceInWorld`
 (`0x8ad754`) é `od 4 & m` com `m` = vtable `0x2c(1)` de um objeto
 `0xFBA4DA53` criado na hora (o mesmo que o `ReadSlots` cria para as alturas
 dos slots): `0x19` sem o bit.
@@ -2442,7 +2446,25 @@ como o `CommitIt` com `0x60`. Cada um termina com a vtable `0x68(±0x30)`
 estatística de gastos de construção da família). Quem cobra é
 `cTSUserToolBuyBuild::SubmitUndoable` (`0x9b3b94`): sem "não cobrar", fundos
 −= `TotalCost` antes de submeter. Nem o gerente nem `RedoIt` testam o
-dinheiro (não achado quem testa no refazer).
+dinheiro (não achado quem testa no refazer). O `0x30` é o custo do próprio
+undoable (o `float +0x58` arredondado; 0 sem cobrança) e o `TotalCost` (`0x34`,
+`0x9b5568`) soma o dele e o de cada pré/pós-operação.
+
+**Um gerente só, esvaziado ao entrar no modo Vivo.** Toda ferramenta de compra
+e construção pega o mesmo gerente (`cTSUserToolBuyBuild +0x44` = sim system
+vtable `0xb8`, no `0x9b36e0`; as escadas modulares também, no `AddObject`). O
+`cTSMainToolbar::SetMode` (`0x1ade24`) cria o objeto do modo novo: o do modo
+**2 (Vivo)** (`0x159ff64`) manda a mensagem `0x8B` (o lote mudou: valor do lote)
+e chama `FlushCommandQueues`; os dos modos 8/9 (`0x159b7a8`) e 11 (`0x159c05c`)
+também esvaziam. Os de Compra (3, `0x159ebc4`) e Construção (4, `0x159e9dc`) e
+seus destrutores (`0x159726c`…) não mexem no histórico: **trocar entre Compra e
+Construção mantém uma pilha só**, e um Ctrl-Z na Construção desfaz a compra
+feita antes. No app (rodada n20): `app/undo_order.hpp` guarda de quem é a
+última mudança (cada modo desfaz as suas), uma mudança nova em um solta o
+refazer dos dois, e só a entrada no modo Vivo esvazia (antes: duas pilhas,
+zeradas ao sair de cada modo).
+Os objetos vendidos só morrem (`ResetSelf`) quando o histórico é solto, ou seja
+ao voltar ao modo Vivo.
 
 **Escadas modulares: o +0,75 e a "elevation".** `UserPlaceModularStairs`
 (`0x9edcf8`) soma 0,75 à altura de cima quando `FUN_0016854c(tile de cima)`:
@@ -2464,6 +2486,40 @@ recebe: para os degraus, **a altura absoluta** que o lance calcula
 com o texto do STR# `0x85` vazio **não há recorte nenhum**; senão, para cada
 parte e lado, o nome da máscara vai ao `SetCutoutMaterial` (`0x6c5d6c`), sem
 caixa retangular: o jogo só abre a parede pela máscara.
+
+**No código (rodada n20).**
+
+- `BuildEditor::vertexMoveError` (`vm/build_edit_ground.cpp`) é o
+  `FUN_009e9550` com as máscaras do jogo (`vertextest::kWalls` = `0x2BB7`):
+  borda/travado `0x62`, limites, piso em volta `0x5A`, o andar de cima/baixo a
+  menos de 0,75 (`0x69`/`0x6A`), parede com fundo/topo plano no vértice
+  (`0x5B`/`0x5C`), piscina, fundação ou deck em volta (sem código), cerca
+  íngreme `0x31`. Falta o bit 7 (objetos que prendem o chão). Usam: o
+  nivelador das paredes e do cômodo (`levelForWall`: água `0x47`, os andares de
+  cima juntos) e as escadas modulares. O pincel de terreno (`0x2BF7`, os mesmos
+  testes) e as fundações/piscinas (`MayPlaceQuadrilateral`, não lido) seguem
+  com a regra antiga (`terrainFree`/`levelPoints`): fora desta rodada.
+- Paredes, cercas e demolição arrastadas: tudo ou nada; o cômodo aplaina o
+  retângulo inteiro; a altura é a do vértice de início no nível dele.
+- Colocação: `IsFlat` (`0x12`) e os quatro quartos com piso, pelo
+  `VM::placementLot`; escadarias com o `CeilingTooHighForObject` (`0x30`,
+  `BuildEditor::stairCeilingError`, no modo Construção e no `s2pkg`).
+  `s2pkg placement-sweep`: dos 12.930 objetos dos 62 lotes testados onde estão,
+  o relevo recusa 14 que cabiam (13 oleandros e uma escada de piscina em
+  rampa: inferido, terreno mexido depois deles) e nenhuma escadaria; o teste de
+  altura do od 4 (bit 0 no chão) não recusa nenhum (o `0x2c(1)` do objeto
+  `0xFBA4DA53` segue não lido).
+- Escadas modulares: a "elevation" salva é a altura absoluta; sem o +0,75
+  (deck no próprio nível do tile de cima: o editor só aceita topo acima do
+  térreo).
+- Desfazer: uma pilha para Compra e Construção (`app/undo_order.hpp`),
+  esvaziada ao entrar no Vivo; soltar o refazer mata o que as mudanças
+  desfeitas tinham tirado do mundo. Prova: `tests/build_undo.sh` (desfazer e
+  refazer gravam o lote byte a byte igual: 9 edições no `N001_Lot11`, parede
+  com porta no `N002_Lot23`, o lance do `N001_Lot38`).
+- Portas e janelas sem máscara: o app segue com a caixa retangular quando não
+  acha o TXMT (`formats/lot_model.cpp`, área da rodada 19); no jogo não haveria
+  buraco (TODO).
 
 ---
 

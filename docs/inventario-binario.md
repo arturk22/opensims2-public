@@ -77,7 +77,7 @@ palavra.
 | Rotas | 27 (13) | 113 / 622 = 18,2% (não recontado na n18) | 7,5 / 8 = **94%** | 59 / 38 |
 | Animação e IK | 78 (22) | 88 / 1.364 = 6,5% | 6 / 9 = **67%** | 39 / 14 |
 | Sentar | (usa rotas, slots, IK) | 22 / 34 funções-chave = 65% | 8 / 10 = **80%** | 10 / 8 |
-| Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% | 8 / 11 = **73%** | 63 / 50 |
+| Colocação e construção | 180 (71) | 311 / 2.556 = 12,2% (não recontado na n20) | 9 / 11 = **82%** | 64 / 50 |
 | Corte de paredes | 11 (5) | 32 / 159 = 20,1% (não recontado na n19) | 6 / 6 = **100%** | 4 / (na ui-live §8c–8d) |
 | Autonomia | 11 (2) | 64 / 251 = 25,5% | 4 / 5 = **80%** | 9 / (em primitives) |
 | Motivos, desejos, memórias, relacionamentos | 21 (7) | 41 / 355 = 11,5% (não recontado na n17) | 5 / 5 = **100%** | 3 / 7 |
@@ -86,7 +86,7 @@ palavra.
 | CAS | 89 (23) | 87 / 1.534 = 5,7% (não recontado na n10) | 6 / 8 = **75%** | 36 / 27 |
 | Desenho | 211 (35) | 129 / 2.309 = 5,6% (não recontado na n13, n16 nem n19) | 6,5 / 10 = **65%** | 55 / 41 |
 | Câmera e UI de jogo | 59 (21) | 90 / 1.031 = 8,7% (não recontado na n11) | 11 / 13 = **85%** | 43 / 52 |
-| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **86,5 / 110 = 78,6%** | **510 em src** |
+| **Total** | **816 (250)** | **1.371 / 13.977 = 9,8%** (só src: 699 = 5,0%) | **87,5 / 110 = 79,5%** | **511 em src** |
 
 "Estudadas" = classes com pelo menos um método nomeado. Os 519 marcadores
 de src incluem 15 de áudio, fora dos sistemas. Os 4 do corte são 2 do `wall_view` e 2 do `lot_model.cpp`, que também contam no desenho. "Sentar" não tem classes
@@ -189,15 +189,15 @@ Código: `src/vm/placement.*`, `build_edit*.{hpp,cpp}`, `rooms.*`,
 |---|---|---|---|
 | Catálogo: `cTSCatalog` (106, 4), `cTSWinProcCatalog`, `cTSWinProcBuyPanel` | `formats/catalog.*`, `app/buy_mode.cpp` | fiel | Ordem entre preços iguais inferida. |
 | Preço, venda, depreciação (`DayPassed`) | `app/buy_mode.cpp`, `vm/` | fiel | |
-| Colocação: `cTSUserToolObject` (93, 17), `TestPlacementCommon`, `TestPlacementWithRespectToWalls/Objects`, `AutoRotateObjectToMatchWalls` | `vm/placement.*`, `app/buy_mode.cpp` | inferido | Rodada n07: `HasSupport`/`SupportedUnderneath`/`IsFloorable` lidos e usados no piso e nas paredes (`buy-build-mac.md` §7.21), não na colocação de objetos; falta o teste de altura do od 4; 10 marcadores em `buy_mode.cpp`. |
-| Desfazer: `cTSUserToolUndoable*`, `cTSUserToolUndoManager` | `app/build_mode*.cpp` | inferido | Lido (§5, §7.7), mas não conferido peça por peça. |
+| Colocação: `cTSUserToolObject` (93, 17), `TestPlacementCommon`, `TestPlacementWithRespectToWalls/Objects`, `AutoRotateObjectToMatchWalls` | `vm/placement.*`, `app/buy_mode.cpp` | inferido | Rodada n20 (§7.24): a colocação não usa `HasSupport` (só a escadaria, `CeilingTooHighForObject` `0x30`, feito); feitos `IsFlat` (`0x12`) e os quatro quartos com piso pelo relevo do lote (`VM::placementLot`), conferidos em 12.930 objetos dos lotes (`s2pkg placement-sweep`); o od 4 (bit 0 no chão) não recusa nenhum, mas o `0x2c(1)` do objeto `0xFBA4DA53` segue não lido; faltam a camada de visibilidade do piso, a piscina sob o térreo, a árvore "allow intersection" e as pegadas dentro do tile. |
+| Desfazer: `cTSUserToolUndoable*`, `cTSUserToolUndoManager` | `app/build_mode*.cpp`, `app/undo_order.hpp` | fiel | Rodada n20 (§7.24): gerente (`0x2807200`: submeter, desfazer, refazer, soltar), estados do undoable e ordem das operações lidos; uma pilha só para Compra e Construção, esvaziada ao entrar no Vivo (feito); desfazer e refazer gravam o lote byte a byte igual (`tests/build_undo.sh`). Inferido: quem devolve o dinheiro no desfazer (vtable `0x68` → sim system `0xb0(6, ±custo)`). |
 | Paredes: `cTSUserToolWall`, `nTSWorld::cWallGraph`, `cPartitionManager` (92, 13) | `vm/build_edit_walls.cpp` | fiel | |
-| Salas: `cRoomManager::FloodRoomRecurse` | `vm/rooms.*` | inferido | O fechamento do cômodo retangular (`FUN_009a7dd8`) não foi lido. |
+| Salas: `cRoomManager::FloodRoomRecurse` | `vm/rooms.*`, `formats/lot_edit.cpp` | inferido | Rodada n20: o `FUN_009a7dd8` não fecha o cômodo, aplaina o retângulo (feito); os IDs novos ainda vêm da inundação por componentes com o ID antigo da maioria, não do `SetRoomsPostAttach` (§7.3). |
 | Pisos e revestimentos: `cTSUserToolFloorPattern`, `cTSUserToolWallpaper` | `vm/build_edit.cpp` | fiel | |
 | Terreno, lagos, piscinas: `cTSUserToolTerrain*`, `cTSUserToolWater`, `cTSUserToolUndoablePool` | `vm/build_edit_ground.cpp` | inferido | Rodada n07: o teste de vértice `FUN_009e9550` lido (§7.23), mas as flags do pincel vêm de uma global que nada escreve: o pincel segue inferido; piscinas: `0x8A`/`0x81`/`0x86` do binário. |
-| Escadas modulares: `cTSUserToolModularStairs`, `FindEnd` | `vm/build_edit_stairs.cpp` | inferido | `FindEnd` fiel; o +0,75 de fundação e a "elevation" do degrau não. |
+| Escadas modulares: `cTSUserToolModularStairs`, `FindEnd` | `vm/build_edit_stairs.cpp` | fiel | `FindEnd` fiel; rodada n20 (§7.24): o +0,75 é de deck no nível do próprio tile de cima (os lances de piso levantado não o ganham, como os salvos), a "elevation" é a altura absoluta (`+0x20c`) e a escavação usa o teste de vértice do jogo (`0x2BB7`). |
 | Telhados: `cTSUserToolRoof` (48, 8), `cAutoRoofData`, `nTSWorld::cWorldRoof` (47, 10) | `formats/lot_roof*.cpp`, `vm/build_edit_walls.cpp` | fiel | Retângulos do auto-telhado lidos; rodada n07: `IsRoofValid` (tamanho, cantos, objetos, piscina) lido e usado (§7.22); rodada n13: o pré-teste (`IsAnyRoofAtLocation`, `DoesLocationHasClearanceHeight`) e a caixa com o beiral; 245 dos 275 telhados do jogo aceitos (os 30 têm janelas postas depois, que o jogo também recusaria). |
-| Portas e janelas: máscaras `_wallmask`, `HideWhenWallDown`, auto-giro | `formats/lot_model.cpp`, `vm/placement.cpp` | inferido | Objetos sem máscara usam um recorte retangular. |
+| Portas e janelas: máscaras `_wallmask`, `HideWhenWallDown`, auto-giro | `formats/lot_model.cpp`, `vm/placement.cpp` | inferido | Objetos sem máscara usam um recorte retangular; rodada n20: no jogo não há caixa (`ComputeWallCutoutLocators`: STR# `0x85` vazio = sem recorte), trocar fica para a área do `lot_model` (TODO). |
 
 ### 3.6 Corte de paredes
 
@@ -394,7 +394,7 @@ no jogo base.
 | 17 | **Motivos e desejos**: `cTSMotiveCurve*`, `cTSPiecewiseFunction`, `UpdateMood` (dado 163), `cTSWantSimulator` (ordem, empates, check tree) — **feita** (n17): curvas e conjuntos do jogo, motor de 60 ticks (decaimento, trava, conjunto antigo), humor do base com o dado 163 (bate com os 55 Sims salvos), pontuação da autonomia do base, desejos pela ordem do mapa de árvores e o `std::sort` da libstdc++ (`motives-mac.md`, `wants-mac.md` §9) | 3.8 curvas, desejos | motivos |
 | 18 | **Rotas, resto**: custo por `ePassabilityState`, `FollowOneStep`/`ComputeTurn`, Snap num ponto só, bônus +25 longe da parede, retângulos de custo 10 da escada — **feita** (n18): `CollisionCheck` e contador do bloqueio do binário (o laço de "entradas" de dois Sims da n14 acabou; sem regressão em 14 sementes), Snap num ponto só e sem o anel (o café pelo lado), custo do piso por padrão (2 no terreno) com o corte de quinas do binário, o +25 (`routing-mac.md` §9.1); os retângulos da escada lidos e não feitos | 3.2 obstáculos, locomotor, slots; 3.4 H | rotas |
 | 19 | **Paredes e pisos**: `cFloorGeometryNode`, `cFloorManager`, `cWallGeometryNode`, `cSimplifiedWall` (UV dos pisos e do topo) — **feita** (n19): paredes como o `cWallGeometryNode` (nós, chanfros, 3 colunas, UVs do papel, topo sem luz com UV do mundo, tampas, encontros, corte pelas pontas com rampas) e a rotação dos pisos; UV dos pisos e do topo conferidos (`walls-floors-mac.md`) | 3.12 paredes e pisos, 3.6 geometria | lote |
-| 20 | **Colocação de objetos e salas**: `cTSUserToolObject`/`TestPlacement*` com `HasSupport`, `FUN_009a7dd8` (cômodo), desfazer peça por peça, +0,75 da escada | 3.5 colocação, salas, desfazer, escadas | construção |
+| 20 | **Colocação de objetos e salas**: `cTSUserToolObject`/`TestPlacement*` com `HasSupport`, `FUN_009a7dd8` (cômodo), desfazer peça por peça, +0,75 da escada — **feita** (n20): teste de vértice `FUN_009e9550` com as flags dos inicializadores estáticos (`0x2BB7`), nivelador e cômodo que aplaina o retângulo, arrastes tudo ou nada, `IsFlat`/piso inteiro/`CeilingTooHighForObject` na colocação, desfazer numa pilha só até o Vivo e byte a byte, escadas com elevation absoluta (`buy-build-mac.md` §7.24) | 3.5 colocação, salas, desfazer, escadas | construção |
 | 21 | **Pele e CAS, resto**: `cTSSkinTextureCompositor`, câmera do CAS, compensação do arquétipo, `BlendFaces`, biografia da família | 3.11 pele, câmera, rosto, telas | CAS |
 | 22 | **Shaders e espelhos**: normal map, passe de recorte, CelShaded, `MirrorReflectionMaterial` com stencil | 3.12 materiais, espelhos | shaders |
 | 23 | **Animação, resto**: arquivo ANIM (strings, tangentes, Euler), canal de eventos, Look At na cabeça, cinemáticas (spots, ObjectHiding) | 3.3 ANIM, eventos, olhar, cinemáticas | animação |

@@ -27,11 +27,17 @@
 // saved lots: a double bed facing 0 has B at +y and C at +x, a loveseat
 // facing 2 has (1,0) at +x).
 //
-// Inferred or left out (TODO.md): od 4 compared with the slot's height
-// bit (FreeSO's rule for The Sims 1) and the weight against the support
-// strength; Sims block placement; slopes, water, pools, ceilings, room
-// placement (od 30), diagonal wall flags, the footprints inside a tile and
-// the "allow intersection" tree (entry 5) are not tested.
+// With the lot's geometry (VM::placementLot) TestPlacementCommon's IsFlat
+// (0x12 unless od 42 has 0x100) and the floor of all four quarters above
+// the ground (HasFloorTest) are tested (docs/buy-build-mac.md §7.24; the
+// staircases' CeilingTooHighForObject, 0x30, is BuildEditor::
+// stairCeilingError). Inferred or left out (TODO.md): od 4 compared with the
+// slot's height bit (FreeSO's rule for The Sims 1; on the floor, bit 0, the
+// 12,930 saved objects of the shipped lots all pass) and the weight against
+// the support strength; the floors' visibility layer, the pool under a
+// ground tile and floors that objects give (TileHasFloorFromObject); water,
+// ceilings, room placement (od 30), the footprints inside a tile and the
+// "allow intersection" tree (entry 5).
 
 #include "vm.hpp"
 
