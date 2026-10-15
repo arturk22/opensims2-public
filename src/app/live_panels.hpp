@@ -25,6 +25,7 @@
 #include <array>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -33,6 +34,24 @@
 namespace os2 {
 
 class FontLibrary;
+
+// A Sim's memories as cTSMemorySimulator::GetMemories gives them to the
+// panel (docs/relationships-mac.md §4): the visible memory tokens of the
+// neighbor's inventory (vm/memories.hpp), newest first. From the memory
+// object (cTSMemoryDefinition::Load, BV 0xb19bb0): its catalog strings, CTSS
+// instance = OBJD field 41 (0x7D0 in the base game), or the next one when
+// the subject is a female Sim (person data 65; cTSMemoryInstance::
+// SetDefinition BV 0xb18ec8), entry 0 the title and 1 the description,
+// "$Subject" the subject's name (ReplaceVariables BV 0xb18ab0: its catalog
+// name; for a Sim the first name); its icon, the UI image of its group,
+// instance 1. Good or bad by the kind (property 0).
+struct MemoryEntry {
+    uint32_t guid = 0;
+    std::string text, description, subject;
+    const RgbaImage* icon = nullptr; // unmasked, cached for the app's life
+    bool good = true;
+};
+
 class UiResources;
 
 // What a subpanel needs from the panel that draws it.
@@ -48,9 +67,12 @@ struct PanelContext {
     std::function<const RgbaImage*(int16_t neighborId)> portrait;          // null if none
     std::function<void(const std::string&)> sound;                         // UI sound by name
     std::function<void(std::array<float, 4>, std::string)> tip;           // a tooltip over a rectangle
-    // A popup script (e.g. 0x4906502B) with the texts of its child windows
-    // (by id), its tail on the top centre of the anchor rectangle.
-    std::function<void(uint32_t script, std::array<float, 4> anchor, std::vector<std::pair<uint32_t, std::string>>)> popup;
+    // A popup script (e.g. 0x4906502B) with the texts and pictures of its
+    // child windows (by id; the pictures must outlive the popup), its tail
+    // on the top centre of the anchor rectangle.
+    std::function<void(uint32_t script, std::array<float, 4> anchor, std::vector<std::pair<uint32_t, std::string>>,
+                       std::vector<std::pair<uint32_t, const RgbaImage*>>)>
+        popup;
 };
 
 // Lays a window out with its area's top-left corner at (x, y).
@@ -84,13 +106,14 @@ public:
     };
     static std::vector<RelationshipRow> relationshipsOf(vm::VM& vm, vm::ObjectId sim, Filter f);
 
-    void resetPages() { relPage_ = 0; }
+    void resetPages() { relPage_ = 0, memPage_ = 0, memSelected_ = -1; }
 
 private:
     float relationships(PanelContext& c, vm::ObjectId sim, float x, float bottom);
     float job(PanelContext& c, vm::ObjectId sim, float x, float bottom);
     float simology(PanelContext& c, vm::ObjectId sim, float x, float bottom);
     float rewards(PanelContext& c, vm::ObjectId sim, float x, float bottom);
+    void memories(PanelContext& c, vm::ObjectId sim, const UiElement& tab);
 
     UiResources* res_;
     std::array<std::optional<UiScript>, Count> scripts_;
@@ -98,6 +121,13 @@ private:
     Filter filter_ = Filter::All;
     int relPage_ = 0;
     int simologyTab_ = 0; // personality, interests, memories
+    // The memories tab (cTSWinProcPanelMemories): its thumbnail script, page,
+    // the selected memory (whose description is open) and the icons with
+    // the thumbnail's alpha mask applied, by GUID.
+    std::optional<UiScript> memThumb_;
+    int memPage_ = 0, memSelected_ = -1;
+    std::map<uint32_t, std::unique_ptr<RgbaImage>> maskedIcons_;
+    std::vector<MemoryEntry> memList_;
 };
 
 } // namespace os2

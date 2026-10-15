@@ -269,6 +269,7 @@ private:
         std::vector<std::pair<uint32_t, std::string>> texts; // caption of the child window by id
         double since = 0, delay = 0;
         int kind = 0;
+        std::vector<std::pair<uint32_t, const RgbaImage*>> images; // picture of the child window by id
     } popup_;
     std::map<uint32_t, UiScript> popupScripts_;
     std::array<float, 4> popupRect_{};

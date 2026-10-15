@@ -5,6 +5,7 @@
 #include "formats/simantics.hpp"
 #include "formats/ui_resources.hpp"
 #include "vm/animation.hpp"
+#include "vm/wants.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,8 @@ namespace {
 constexpr std::array<uint32_t, LivePanels::Count> kScripts = {0x49064905, 0x49065002, 0x49065003, 0x49064820,
                                                               0x49064800};
 constexpr uint32_t kRelThumbScript = 0x49065005;
+constexpr uint32_t kMemThumbScript = 0x4906500A;       // a memory thumbnail (cTSWinProcMemoryThumbnail)
+constexpr uint32_t kMemDescriptionScript = 0x4906500C; // its description (cTSWinProcMemoryDescription)
 constexpr uint32_t kLive = 0x7F96C284; // Live.package's string group
 
 // Person data (objects.package STR# 0x7FE59FD0/0xC8 "Person Data Labels").
@@ -172,6 +175,7 @@ LivePanels::LivePanels(UiResources& res) : res_(&res) {
     for (size_t i = 1; i < kScripts.size(); ++i)
         scripts_[i] = res.script(kScripts[i]);
     relThumb_ = res.script(kRelThumbScript);
+    memThumb_ = res.script(kMemThumbScript);
 }
 
 bool LivePanels::ok(Panel p) const { return p > Needs && p < Count && scripts_[p] && !scripts_[p]->roots.empty(); }
@@ -339,7 +343,7 @@ float LivePanels::relationships(PanelContext& c, vm::ObjectId sim, float x, floa
                     if (auto bar = desc.find('|'); bar != std::string::npos)
                         desc.resize(bar);
                     c.click(*rr, [popup = c.popup, anchor = *rr, name, desc, type = str(c, 0x84, rt.type)] {
-                        popup(0x4906502B, anchor, {{0xA1, name}, {0xA2, desc}, {0xA3, type}});
+                        popup(0x4906502B, anchor, {{0xA1, name}, {0xA2, desc}, {0xA3, type}}, {});
                     });
                 }
         }
@@ -523,14 +527,26 @@ float LivePanels::simology(PanelContext& c, vm::ObjectId simId, float x, float b
             if (const UiElement* e = findWindow(*stat, id))
                 hk.hide.insert(e);
     }
-    // Interests and memories: their thumbnails are not drawn yet; the
-    // collapsed variants only.
+    // Interests and memories: the collapsed variants only (the interests'
+    // thumbnails are not drawn yet).
     for (uint32_t tab : {0x20000000u, 0x30000000u})
         if (const UiElement* t = root.child(tab)) {
             if (const UiElement* e = t->child(0x2000))
                 hk.hide.insert(e);
             if (const UiElement* e = t->child(0x1000))
                 hk.show.insert(e);
+        }
+    // The memories' page arrows: off at the ends.
+    const UiElement* memTab = simologyTab_ == 2 ? root.child(0x30000000) : nullptr;
+    if (memTab)
+        if (const UiElement* collapsed = memTab->child(0x1000)) {
+            memList_ = simMemories(c, vm::neighborIdOf(*sim));
+            const int pages = std::max(1, int((memList_.size() + 5) / 6));
+            memPage_ = std::clamp(memPage_, 0, pages - 1);
+            if (const UiElement* b = collapsed->child(0x1004))
+                hk.buttonState[b] = memPage_ > 0 ? 1 : 0;
+            if (const UiElement* b = collapsed->child(0x1005))
+                hk.buttonState[b] = memPage_ + 1 < pages ? 1 : 0;
         }
     // The background's left (window 0xA001 at 8 + 2 in the stats tab) at x,
     // the panel's bottom at `bottom`.
@@ -542,14 +558,90 @@ float LivePanels::simology(PanelContext& c, vm::ObjectId simId, float x, float b
         if (auto r = rectOf(c, stat->child(0x1006)); r && sign >= 0)
             c.tip(*r, str(c, 0x90, uint32_t(sign + 1)));
     }
-    if (simologyTab_ == 2) // the memories (app/wants_panel.hpp)
-        if (const UiElement* t = root.child(0x30000000))
-            if (auto r = rectOf(c, t->child(0x1000)))
-                layoutMemories(c, simId, *r);
+    if (memTab)
+        memories(c, simId, *memTab);
     for (int i = 0; i < 3; ++i)
         if (auto r = rectOf(c, root.child(buttons[size_t(i)])))
             c.click(*r, [this, i, snd = c.sound] { simologyTab_ = i, snd("ui_secondary_button"); });
     return x + 489;
+}
+
+// The memories tab (cTSWinProcPanelMemories, docs/relationships-mac.md §5):
+// a grid of thumbnails (script 0x4906500A) in window 0x1006 of the
+// collapsed group, its "Constants Table" 6 columns x 1 row with 2 pixels
+// between them, paged with 0x1004/0x1005 (the binary scrolls with 0x1008;
+// paging here, as the relationships). A thumbnail (SetMemory, BV
+// 0xa759e8): the green background 0x0B for a good memory, the red 0x0A for
+// a bad one; the icon in 0x0C through that window's alpha mask
+// (ApplyAlphaMask); the frame button 0x0D, pressed for the selected one,
+// with the title as its caption (shown as the tooltip). A click selects it
+// and opens the description (ShowMemoryDescription, script 0x4906500C:
+// 0xA1 title, 0xA3 description, 0xA4 the icon; which window shows what is
+// from their captions, inferred).
+void LivePanels::memories(PanelContext& c, vm::ObjectId simId, const UiElement& tab) {
+    const vm::Object* sim = c.vm.object(simId);
+    const UiElement* collapsed = tab.child(0x1000);
+    if (!sim || !collapsed || !memThumb_ || memThumb_->roots.empty())
+        return;
+    const auto& list = memList_; // simology() read them
+    constexpr int kPerPage = 6, kMarginX = 2; // kCollapsedColumns x kCollapsedRows, kCollapsedThumbMarginX
+    const int pages = std::max(1, int((list.size() + kPerPage - 1) / kPerPage));
+    if (memSelected_ >= int(list.size()))
+        memSelected_ = -1;
+    if (auto r = rectOf(c, collapsed->child(0x1004)); r && memPage_ > 0)
+        c.click(*r, [this, snd = c.sound] { --memPage_, snd("ui_secondary_button"); });
+    if (auto r = rectOf(c, collapsed->child(0x1005)); r && memPage_ + 1 < pages)
+        c.click(*r, [this, snd = c.sound] { ++memPage_, snd("ui_secondary_button"); });
+    const auto grid = rectOf(c, collapsed->child(0x1006));
+    if (!grid)
+        return;
+    const UiElement& t = memThumb_->roots.front();
+    const float tw = float(t.area()[2] - t.area()[0]);
+    const UiElement* iconWin = t.child(0x0C);
+    const RgbaImage* mask = iconWin ? imageOf(c, iconWin) : nullptr;
+    for (int k = 0; k < kPerPage && memPage_ * kPerPage + k < int(list.size()); ++k) {
+        const int index = memPage_ * kPerPage + k;
+        const MemoryEntry& m = list[size_t(index)];
+        UiDrawHooks th;
+        if (const UiElement* e = t.child(0x0B))
+            (m.good ? th.show : th.hide).insert(e);
+        if (const UiElement* e = t.child(0x0A))
+            (m.good ? th.hide : th.show).insert(e);
+        const RgbaImage* icon = nullptr;
+        if (m.icon && mask) {
+            auto& masked = maskedIcons_[m.guid];
+            if (!masked) {
+                masked = std::make_unique<RgbaImage>(scaledImage(*m.icon, mask->width, mask->height));
+                for (size_t i = 0; i < masked->pixels.size(); i += 4)
+                    masked->pixels[i + 3] = uint8_t(unsigned(masked->pixels[i + 3]) * mask->pixels[i + 3] / 255);
+            }
+            icon = masked.get();
+        }
+        if (iconWin) {
+            if (icon)
+                th.images[iconWin] = icon;
+            else
+                th.hide.insert(iconWin);
+        }
+        const UiElement* frame = t.child(0x0D);
+        if (frame)
+            th.buttonState[frame] = index == memSelected_ ? 2 : 1;
+        placeWindow(c, t, (*grid)[0] + float(k) * (tw + kMarginX), (*grid)[1], th);
+        if (auto r = rectOf(c, frame)) {
+            c.tip(*r, m.text);
+            c.click(*r, [this, index, popup = c.popup, anchor = *r, m, snd = c.sound] {
+                memSelected_ = index;
+                snd("ui_secondary_button");
+                std::vector<std::pair<uint32_t, const RgbaImage*>> images;
+                if (m.icon)
+                    images.push_back({0xA4, m.icon});
+                // 0xA2 "Memory Subject Name" lies over the icon: left empty
+                // (the title names the subject; inferred).
+                popup(kMemDescriptionScript, anchor, {{0xA1, m.text}, {0xA2, ""}, {0xA3, m.description}},
+                      std::move(images));
+            });
+        }
+    }
 }
 
 // --- Rewards -------------------------------------------------------------------

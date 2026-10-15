@@ -32,10 +32,16 @@ bool tokenIsMemory(const InventoryToken& t) {
 }
 
 std::vector<MemoryInfo> memoryInfo(const VM& vm, const Object& sim) {
+    if (!sim.person)
+        return {};
+    return memoryInfo(vm, sim.person->data[persondata::NeighborId]);
+}
+
+std::vector<MemoryInfo> memoryInfo(const VM& vm, int16_t neighborId) {
     std::vector<MemoryInfo> out;
-    if (!sim.person || sim.person->data[persondata::NeighborId] == 0)
+    if (neighborId == 0)
         return out;
-    auto it = vm.inventories.find({InventoryKind::Neighbor, sim.person->data[persondata::NeighborId]});
+    auto it = vm.inventories.find({InventoryKind::Neighbor, neighborId});
     if (it == vm.inventories.end())
         return out;
     for (const auto& t : it->second.singular)

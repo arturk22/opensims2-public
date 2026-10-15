@@ -10,6 +10,7 @@
 #include "formats/ui_image.hpp"
 #include "formats/ui_resources.hpp"
 #include "formats/ui_script.hpp"
+#include "vm/memories.hpp"
 #include "vm/wants.hpp"
 
 #include <algorithm>
@@ -128,84 +129,76 @@ float layoutWantsPanel(PanelContext& c, vm::ObjectId simId, float x, float y, fl
 
 std::vector<MemoryEntry> simMemories(vm::VM& machine, int16_t id) {
     std::vector<MemoryEntry> out;
-    const auto it = machine.inventories.find({vm::InventoryKind::Neighbor, id});
     ResourceIndex* index = machine.code().index();
-    if (it == machine.inventories.end() || !index)
+    if (!index)
         return out;
-    const vm::Neighbor* me = machine.neighbor(id);
-    const bool female = me && me->personData[65] == 1;
     auto& icons = gameDataCaches().memoryIcons; // by GUID, for the life of the app (app/game_data_caches.hpp)
-    for (auto t = it->second.singular.rbegin(); t != it->second.singular.rend(); ++t) {
-        if (t->flags != 3)
+    const auto memories = vm::memoryInfo(machine, id);
+    for (auto m = memories.rbegin(); m != memories.rend(); ++m) {
+        const auto def = machine.code().definitionByGuid(m->guid);
+        const ObjectDefinition* od = def ? machine.code().definition(def->first, def->second) : nullptr;
+        if (!od || od->objectType() != 15) // only memory objects have a definition
             continue;
-        MemoryEntry m;
-        const auto def = machine.code().definitionByGuid(t->guid);
-        if (!def)
-            continue;
+        MemoryEntry e;
+        e.guid = m->guid;
+        e.good = vm::memoryIsGood(m->kind);
         const uint32_t group = def->first;
-        for (uint32_t inst : {female ? 0x7D1u : 0x7D0u, 0x7D0u})
-            if (auto bytes = index->read(Tgi{0x43545353, group, inst, 0})) {
+        // The subject: a Sim (its neighbor, by the character's GUID) or an object.
+        const vm::Neighbor* subjectSim = nullptr;
+        if (m->subject)
+            for (const auto& [nid, n] : machine.neighbors)
+                if (n.guid == m->subject) {
+                    subjectSim = &n;
+                    break;
+                }
+        if (subjectSim) {
+            e.subject = subjectSim->firstName;
+        } else if (m->subject) {
+            if (auto sd = machine.code().definitionByGuid(m->subject))
+                if (const ObjectDefinition* so = machine.code().definition(sd->first, sd->second))
+                    if (auto bytes = index->read(Tgi{0x43545353, sd->first, so->field(0x40 + 2 * 41), 0}))
+                        try {
+                            e.subject = StringTable::parse(*bytes).get(0);
+                        } catch (const std::exception&) {
+                        }
+        }
+        const uint32_t strings = od->field(0x40 + 2 * 41);
+        const bool female = subjectSim && subjectSim->personData[65] == 1;
+        auto load = [&](uint32_t inst, std::string& title, std::string& desc) {
+            if (auto bytes = index->read(Tgi{0x43545353, group, inst, 0}))
                 try {
                     const auto table = StringTable::parse(*bytes);
-                    m.text = table.get(0);
-                    m.description = table.get(1);
+                    title = table.get(0);
+                    desc = table.get(1);
                 } catch (const std::exception& err) {
                     os2::logOnce("memory text", std::to_string(group), err);
                 }
-                if (!m.text.empty())
-                    break;
-            }
-        if (m.text.empty())
-            if (const ObjectDefinition* od = machine.code().definition(def->first, def->second))
-                m.text = od->fileName;
-        const auto& p = t->properties;
-        std::string subject = "?";
-        if (p.size() > 6) {
-            const uint32_t guid = uint16_t(p[5]) | uint32_t(uint16_t(p[6])) << 16;
-            for (const auto& [nid, n] : machine.neighbors)
-                if (n.guid == guid && guid) {
-                    subject = n.firstName;
-                    break;
-                }
-        }
-        for (size_t k; (k = m.text.find("$Subject")) != std::string::npos;)
-            m.text.replace(k, 8, subject);
-        m.bad = !p.empty() && (p[0] & 4);
-        auto& icon = icons[t->guid];
+        };
+        std::string t0, d0, t1, d1;
+        load(strings, t0, d0);
+        load(strings + 1, t1, d1);
+        if (t0.empty()) t0 = t1;
+        if (t1.empty()) t1 = t0;
+        if (d0.empty()) d0 = d1;
+        if (d1.empty()) d1 = d0;
+        e.text = female ? t1 : t0;
+        e.description = female ? d1 : d0;
+        if (e.text.empty())
+            e.text = od->fileName;
+        for (std::string* s : {&e.text, &e.description})
+            for (size_t k = 0; (k = s->find("$Subject", k)) != std::string::npos; k += e.subject.size())
+                s->replace(k, 8, e.subject);
+        auto& icon = icons[m->guid];
         if (!icon)
             if (auto bytes = index->read(Tgi{kTypeUiImage, group, 1, 0}))
                 if (auto img = decodeUiImage(*bytes))
                     icon = std::make_unique<RgbaImage>(std::move(*img));
-        m.icon = icon.get();
-        out.push_back(std::move(m));
+        e.icon = icon.get();
+        out.push_back(std::move(e));
     }
     return out;
 }
 
 std::vector<MemoryEntry> simMemories(PanelContext& c, int16_t id) { return simMemories(c.vm, id); }
-
-void layoutMemories(PanelContext& c, vm::ObjectId simId, std::array<float, 4> a) {
-    const vm::Object* sim = c.vm.object(simId);
-    if (!sim)
-        return;
-    const auto memories = simMemories(c, vm::neighborIdOf(*sim));
-    constexpr float kIcon = 30, kGap = 5;
-    // Right of the tab buttons, left of the script's page arrows.
-    const float x0 = a[0] + 72, y0 = a[1] + 10;
-    const int cols = std::max(1, int((a[2] - a[0] - 72 - 56 + kGap) / (kIcon + kGap)));
-    const int rows = std::max(1, int((a[3] - a[1] - 20 + kGap) / (kIcon + kGap)));
-    if (memories.empty()) {
-        text(c, x0, y0, a[2] - a[0] - 20, 16, "Nenhuma lembrança ainda", {5, 6, 113}, "lefttop");
-        return;
-    }
-    for (size_t i = 0; i < memories.size() && int(i) < cols * rows; ++i) {
-        const float x = x0 + float(int(i) % cols) * (kIcon + kGap), y = y0 + float(int(i) / cols) * (kIcon + kGap);
-        const auto& m = memories[i];
-        rect(c, x - 1, y - 1, x + kIcon + 1, y + kIcon + 1, m.bad ? Color{200, 80, 70} : Color{70, 90, 190});
-        rect(c, x, y, x + kIcon, y + kIcon, {36, 44, 116});
-        image(c, m.icon, x, y, x + kIcon, y + kIcon);
-        c.tip({x, y, x + kIcon, y + kIcon}, m.text + (m.description.empty() ? "" : "|" + m.description));
-    }
-}
 
 } // namespace os2

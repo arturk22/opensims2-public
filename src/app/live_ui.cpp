@@ -561,9 +561,14 @@ UiScreen LiveUi::screen(int width, int height) {
                        [&](int16_t id) { return portraitOfNeighbor(id); },
                        [&](const std::string& name) { sound(name); },
                        [&](std::array<float, 4> r, std::string t) { tips_.push_back({r, std::move(t)}); },
-                       [this](uint32_t script, std::array<float, 4> anchor, std::vector<std::pair<uint32_t, std::string>> texts) {
-                           if (closedPopupKind_ != 2)
-                               openPopup(script, anchor, std::move(texts), 0, 2);
+                       [this](uint32_t script, std::array<float, 4> anchor, std::vector<std::pair<uint32_t, std::string>> texts,
+                              std::vector<std::pair<uint32_t, const RgbaImage*>> images) {
+                           // 2: the relationship description (its box grows to the text), 3 another
+                           const int kind = script == 0x4906502B ? 2 : 3;
+                           if (closedPopupKind_ != kind) {
+                               openPopup(script, anchor, std::move(texts), 0, kind);
+                               popup_.images = std::move(images);
+                           }
                        }};
         panels_->layout(LivePanels::Panel(subPanel_), c, sim_, liveX + float(kSubPanelX), liveY + 140 + 138);
     }
@@ -1030,6 +1035,9 @@ UiScreen LiveUi::screen(int width, int height) {
             for (const auto& [id, text] : popup_.texts)
                 if (const UiElement* e = findWindow(root, id))
                     hk.captions[e] = text;
+            for (const auto& [id, img] : popup_.images)
+                if (const UiElement* e = findWindow(root, id); e && img)
+                    hk.images[e] = img;
             hk.rects = &rects;
             const UiElement* box = root.child(1);
             layoutUiElement(root, px - float(ra[0]), py - float(ra[1]), *res_, *fonts_, out, hk);

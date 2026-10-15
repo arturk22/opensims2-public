@@ -23,6 +23,10 @@ bool tokenIsMemory(const InventoryToken& t);
 // The Sim's visible memories in inventory order (the panel shows them newest
 // first: the list backwards, cTSMemorySimulator::GetMemories BV 0x5372b0).
 std::vector<MemoryInfo> memoryInfo(const VM& vm, const Object& sim);
+std::vector<MemoryInfo> memoryInfo(const VM& vm, int16_t neighborId);
+// The kind's side (cTSMemoryInstance::Initialize, BV 0xb18538): 4, 5 and 6
+// are bad memories (the thumbnail's red background), every other good.
+inline bool memoryIsGood(int32_t kind) { return kind != 4 && kind != 5 && kind != 6; }
 
 // The Memory Score of these memories for a Sim of aspiration `aspiration`
 // (BV 0xad05c8): the three highest and the three lowest values now (the
