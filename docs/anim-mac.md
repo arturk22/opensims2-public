@@ -245,7 +245,8 @@ Sobras (no `TODO.md`): a forma dos intervalos de blend
 (`cBlendInterval::Value`), a ordem de Euler da partilha de torção, a última
 solução de IK guardada quando o contato é 0, o alvo misturado do outlet (e
 não o da camada), a velocidade pelo dado de pessoa 85, e as transições de
-locomoção (`cActiveAnimLoco::PushTurnBlendCycles`, `StopLocomotion`).
+locomoção (`cActiveAnimLoco::PushTurnBlendCycles`, `StopLocomotion`; lidas e
+feitas em parte na rodada n14, §8).
 
 ## 8. Locomoção: o relógio das fases, as transições e as paradas (rodada n14)
 
@@ -420,3 +421,60 @@ parado, o pedido expira (regra 3). Estado → 6. A parada:
   (`ComputeTurnWeight`); o caminho termina depois da parada; a função de
   velocidade é refeita (`FUN_00a47144`, a velocidade até agora e uma rampa
   de 25 ms), fades de 233,3 ms e regra de expiração 4.
+
+### 8.8 O que mudou no código (rodada n14) e o que sobrou
+
+Feito (um commit por parte, `ctest -j2` verde com os dados do jogo):
+
+1. **O começo** (`routing_loco.cpp` `locoStep`): a primeira fase começa
+   agora, parada no início do clipe no tick em que a rota começa (`lead`
+   −1 tick: o `FollowOneStep` cria o pedido e o atualiza até agora, 0 ms) e
+   entra pelo fade de entrada do pedido (233,3 ms, encolhido num pedido
+   curto). Os 5/100 ms da primeira fase saíram.
+2. **As trocas dentro do pedido**: começo → andar → parada cruzam pela
+   `BlendDistance` (`+0xec`, a mesma das poses) na velocidade do andar, com
+   rampa cossenoidal (`AnimPlayer::Options::ease`, contada desde a deixa).
+3. **O pé da parada**: o do ajuste da passada a partir da porção do pedido
+   (0,5 parado; a do andar quando segue), `stopFootOther`, trocando a cada
+   meio ciclo ímpar (`fitStride`, `Loco::stopOtherFoot`).
+4. **Rotas curtas** (`fitStride`): o ramo do binário (0,9, peso pelo
+   comprimento, espremido abaixo dos clipes curtos), sem ciclos: a parada
+   segue o começo direto (`Loco::shortWay`).
+5. **A parada ao bloquear**: o começo toca até o fim e o andar termina o
+   meio ciclo antes do clipe de parada do pé certo; o teste por passo
+   (próximo lugar tomado) bloqueia na hora, sem clipe.
+6. **O fim da rota**: a rota acaba quando o último clipe começa a sair
+   (233,3 ms antes do fim da parada, 140 de um passo de lado; regra dos
+   0,5/40 ms); o Sim vai ao fim do caminho e a próxima primitiva começa
+   enquanto o clipe termina onde estava no mundo (`Object::locoHandOff`,
+   regra 3 do `SeatModule`).
+
+Medido (`OS2_DEBUG_GLIDE`, que agora mede também o pé apoiado desenhado, e
+`OS2_DEBUG_LOCO`; 4.000 ticks headless, antes → depois): N001_Lot11 pé
+apoiado 0,485 → 0,461 tile/s (começo 0,366 → 0,328, andar 0,538 → 0,537,
+parada 0,467 → 0,376), fases começo/parada 54/25 → 48/47 (as rotas curtas
+já não tocam um tick de andar entre as duas, e cada começo tem a sua
+parada); N001_Lot68 0,539 → 0,490 (começo 0,386 → 0,357, parada 0,426 →
+0,471), 37/17 → 47/48, paradas ao bloquear 2 → 7. Deslizes sem pernas: 1 e
+0 episódios, como antes. No VM, o "slide" da parada (quadro contra o
+clipe) sobe porque o quadro vai ao fim do caminho no tick da entrega; o
+desenho fica onde estava (regra 3). Em 12.000 ticks, falhas de rota
+(`OS2_ROUTE_FAILS`) main → n14: Lot68 19 → 28, Lot11 17 → 4 (os mesmos
+tipos, 11/13 do "Route - Dynamic w/Lead in").
+
+Inferido / sobrou (no `TODO.md`):
+
+- a janela do `ComputeLocoStartTicks` com o fim da primitiva anterior
+  (`EndTicks`/`EndActionTicks`/porção final de um Animate: começar em
+  `eA + 70` ou `e − 70`) — o VM não guarda esses tempos;
+- a troca centrada (±b/2 em volta da fronteira): aqui começa na fronteira;
+- a rampa de velocidade do pedido (`FUN_00a47144`, também a da parada
+  forte) e o fim do ciclo na parada fraca (1/6 ou 2/3);
+- o espaço da parada ao bloquear continua limitado aos 2 passos da previsão
+  (inferido: andando o meio ciclo e a parada inteiros o Sim chegava a 0,283
+  do outro e o tratamento de bloqueio não achava saída), com o pé mais perto
+  quando o espaço corta o meio ciclo;
+- o começo 5/100 ms adiantado de um pedido seguinte (a virada do fim depois
+  de uma parada não acontece aqui: a parada já vira para a direção final);
+- um novo pedido ao replanejar andando (o `BeginFollow` de novo) não entra
+  pelo fade de entrada.

@@ -934,6 +934,17 @@ acima; `locomotion.cpp` `LocoCurve`/`blendGaits`/`strideWeight`,
   `docs/screenshots/r14-locomotor-bspline.jpg` (Isabella, idosa, em
   N003_Lot46, ciclos walk/walkShort misturados).
 
+**Rodada n14 (locomoção, `docs/anim-mac.md` §8):** lidos e feitos o relógio
+das fases (`ComputeLocoStartTicks`, a entrega do `FollowOneStep` quando o
+pedido começa a sair, o N = 25/70 do estado 3, `DAT_02c11c04` = 140), as
+trocas dentro do pedido (`cLocoCycle`: `BlendDistance` `+0xec`, rampa
+cossenoidal), o pé da parada (getter `0x178` = `CyclePortionCompleted`), o
+ramo das rotas curtas do ajuste (0,9, espremido) e o `StopLocomotion` (meio
+ciclo e parada; o teste por passo bloqueia sem clipe). A rota acaba quando
+a parada começa a sair (233,3 ms antes do fim). Os "Inferido" acima sobre o
+`walkShort` "por porção" e o primeiro pé saem; os que ficam estão no §8.8
+de lá.
+
 ## 7. Códigos de falha (binário + `STR#` 0xF1 "route results")
 
 `DoPostFailedOrSucceeded` grava o código no **dado de pessoa 62
