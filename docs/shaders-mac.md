@@ -15,6 +15,7 @@ Resumo para quem implementa o renderer Metal:
    isso `DetermineHardwareSupport()` liga `useHWShader1Path`, e os materiais
    seguem `DX8HardwarePath()`, `PS1WallRendering()`, `PixelShaderFloors()` e,
    para os Sims, o caminho de função fixa (`CreateSimStandardMaterialFixedFunction`).
+   (Rodada n22, §13: espelhos, normal map, recorte e CelShaded.)
    Tudo o que o código atual tirou de `DX9HardwarePath`/`PS2WallRendering`/
    `DX9SimMaterials` não é o que o jogo de Mac desenha.
 2. **Iluminação por vértice com escala "HDR" ×2** (§4): a cor difusa sai do
@@ -762,3 +763,13 @@ memórias e desejos (`leftatthealtar_ring`, `firstbestfriendgold`...). Script:
   normal em espaço de câmera e `z += 0,005·w`, cor `csOutlineColor`, alfa
   `csOutlineAlpha` (blend só se < 1), z `<`; o passe principal usa `≤`;
 - o env map (`csAddEnvironmentMap`) é 0 em todos.
+
+**No app** (rodada n22): o shader segue o script — a linha da rampa pelo
+alfa do vértice (só com cor no vértice) ou pelo `v` do UV 1/UV 0 (antes
+`v = 0,5` fixo), `sat(4·tex·sat(0,25·difusa·rampa))`, a borda com
+`csEdgeLightDamping` e o alfa invertido ou não, a rampa especular
+(`csSpecRampTexture`, `csShininess`, textura 21) e o contorno como um item a
+mais antes da parte (faces de trás, posição empurrada `csOutlineWidth` ao
+longo da normal, `z += 0,005·w`, cor e alfa do contorno). O app ainda não
+desenha esses ícones 3D (os painéis de desejos e memórias usam as imagens
+2D), então a prova é o teste `render` (a linha e a coluna da rampa).

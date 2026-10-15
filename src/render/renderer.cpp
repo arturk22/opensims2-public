@@ -105,6 +105,15 @@ struct Draw {
     uint32_t lightSet;
 };
 
+// CelShaded's options, a bit field in misc.w (must match shaders.metal).
+enum : uint32_t {
+    kCelEdgeInvert = 1,  // csEdgeRampTextureAlphaInvert
+    kCelSpecular = 2,    // csAddSpecular (ramp at texture 21)
+    kCelRouteAlpha = 4,  // the ramp's row from the vertex alpha
+    kCelRouteUv1 = 8,    // ...else from texture coordinate 1's v (with a base texture), else 0's
+    kCelOutlinePass = 16 // the outline: back faces pushed out along the normal, its colour
+};
+
 // Height map to normal: height difference per texel times this (inferred:
 // the game's ConvertHeightMapToNormalMapFast, with the TXTR's bump scale 10,
 // is not in the Mac binary; docs/shaders-mac.md 13.2).
@@ -253,6 +262,11 @@ struct Renderer::Material {
     MTL::Texture* edgeRamp = nullptr;
     MTL::Texture* detail = nullptr;   // terrain detail texture (not owned, null if unused)
     MTL::Texture* cutout = nullptr;   // stdMatCutoutTextureName (not owned, null if unused)
+    MTL::Texture* specRamp = nullptr; // CelShaded specular ramp (not owned, null if unused)
+    // CelShaded's outline pass (csAddOutline): colour and alpha, width.
+    bool celOutline = false;
+    simd_float4 outlineColor{0, 0, 0, 1};
+    float outlineWidth = 0;
     float uvScale = 1;                // base texture coordinates scale (terrain)
     simd_float4 color{1, 1, 1, 1};
     simd_float4 specular{0, 0, 0, 0}; // power in w
@@ -674,15 +688,31 @@ Renderer::Material Renderer::material(const StandardMaterial& sm, ResourceIndex&
             mat.flags |= kNormalMap;
         }
     if (sm.shading == StandardMaterial::Shading::CelShaded) {
+        // celShading.matShad (docs/shaders-mac.md 13.4): misc = (edge
+        // offset, edge light damping, shininess, options).
         if (MTL::Texture* t = texture(sm.celRamp, index)) {
             mat.ramp = t;
             mat.flags |= kCelShaded;
+            uint32_t options = sm.celRouteFromAlpha ? kCelRouteAlpha : 0;
             if (!sm.celEdgeRamp.empty())
                 if (MTL::Texture* e = texture(sm.celEdgeRamp, index)) {
                     mat.edgeRamp = e;
                     mat.misc.x = sm.celEdgeOffset;
+                    mat.misc.y = sm.celEdgeDamping;
                     mat.flags |= kCelEdge;
+                    options |= sm.celEdgeInvert ? kCelEdgeInvert : 0;
                 }
+            if (!sm.celSpecRamp.empty())
+                if (MTL::Texture* sp = texture(sm.celSpecRamp, index)) {
+                    mat.specRamp = sp;
+                    mat.misc.z = sm.celShininess;
+                    options |= kCelSpecular;
+                }
+            mat.misc.w = float(options);
+            mat.celOutline = sm.celOutline;
+            mat.outlineColor = simd_make_float4(sm.celOutlineColor[0], sm.celOutlineColor[1], sm.celOutlineColor[2],
+                                                sm.celOutlineAlpha);
+            mat.outlineWidth = sm.celOutlineWidth;
         }
     }
     mat.anim.texAnim = sm.texAnim;
@@ -792,6 +822,16 @@ int Renderer::addObject(const ObjectModel& model, ResourceIndex& index, bool dyn
         p.center = (lo + hi) * 0.5f;
         p.lo = lo, p.hi = hi;
         p.cullable = !dynamic && !v.empty();
+        if (mat.flags & kCelShaded) {
+            // csRouteColorFromAlpha only with vertex colours; else the v of
+            // texture coordinate 1 with a base texture, else of 0.
+            uint32_t options = uint32_t(mat.misc.w);
+            if (mesh.colors.empty())
+                options &= ~uint32_t(kCelRouteAlpha);
+            if (!(options & kCelRouteAlpha) && mat.texture != white_ && mesh.uvs2.size() == mesh.positions.size())
+                options |= kCelRouteUv1;
+            mat.misc.w = float(options);
+        }
         if (mat.mirror) {
             simd_float3 n = 0;
             for (const auto& vn : mesh.normals)
@@ -1084,6 +1124,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         const Part* part;
         int external = -1;
         bool reflects = false; // a mirror reflecting this frame (kMirror in the view)
+        bool outline = false;  // CelShaded's outline pass of the part (drawn before it)
     };
     std::vector<Item> items;
     const simd_float3 eye = simd_make_float3(f->eye); // (the mirror below)
@@ -1110,6 +1151,8 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                                                                                          c & 4 ? part.hi[2] : part.lo[2], 1))));
                 }
             }
+            if (m.celOutline) // celShading.matShad: the outline pass first, blended when its alpha is under 1
+                items.push_back({m.layer, m.outlineColor.w < 1, depth, m.alphaOrder, &inst, &part, -1, false, true});
             items.push_back({m.layer, blended, depth, m.alphaOrder, &inst, &part});
         }
     if (externalItems_) {
@@ -1232,7 +1275,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         senc->setFragmentSamplerState(maskSampler_, 1);
         senc->setFragmentSamplerState(cubeSampler_, 2);
         senc->setFragmentSamplerState(pointSampler_, 3);
-        for (NS::UInteger k = 1; k <= 20; ++k)
+        for (NS::UInteger k = 1; k <= 21; ++k)
             if (k != 6)
                 senc->setFragmentTexture(white_, k);
         senc->setFragmentTexture(whiteCube_, 6);
@@ -1335,9 +1378,10 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         auto [uv0, uv1] = uvTransform(m.anim, t);
         uv0 *= m.uvScale, uv1 *= m.uvScale;
         const int set = item.inst->lightSet < int(std::min(lightSets_.size(), kMaxLightSets)) ? item.inst->lightSet : 0;
-        simd_float4 color = m.color;
+        simd_float4 color = item.outline ? m.outlineColor : m.color;
         color.w *= item.inst->alpha;
-        Draw d{item.inst->transform, color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, m.misc,
+        const simd_float4 misc = item.outline ? simd_make_float4(m.outlineWidth, 0, 0, float(kCelOutlinePass)) : m.misc;
+        Draw d{item.inst->transform, color, m.specular, m.emissive, m.maskTransform, m.env, uv0, uv1, misc,
                m.maskV, m.alphaRef, flags, uint32_t(set)};
         enc->setVertexBytes(&d, sizeof d, 1);
         enc->setFragmentBytes(&d, sizeof d, 1);
@@ -1353,6 +1397,7 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
         enc->setFragmentTexture(m.edgeRamp ? m.edgeRamp : white_, 8);
         enc->setFragmentTexture(m.detail ? m.detail : white_, 12);
         enc->setFragmentTexture(m.cutout ? m.cutout : white_, 20);
+        enc->setFragmentTexture(m.specRamp ? m.specRamp : white_, 21);
         enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(part.indexCount), MTL::IndexTypeUInt32,
                                    part.indices, NS::UInteger(0));
     };
@@ -1380,6 +1425,16 @@ MTL::CommandBuffer* Renderer::encodeFrame(MTL::RenderPassDescriptor* pass, const
                 continue;
             if (part.cullable && outsideFrustum(passViewProj, item.inst->transform, part.lo, part.hi))
                 continue;
+            if (item.outline) {
+                // The outline: back faces (cullCounterClockwise), z written,
+                // its colour; srcAlpha/invSrcAlpha under alpha 1.
+                const auto ob = m.outlineColor.w < 1 ? StandardMaterial::Blend::Alpha : StandardMaterial::Blend::None;
+                enc->setDepthStencilState(stencil ? mirrorDepthWrite_ : depthWrite_);
+                enc->setRenderPipelineState(stencil ? mirrorPipelines_[size_t(ob)] : ob == StandardMaterial::Blend::Alpha ? alphaBlend_ : opaque_);
+                enc->setCullMode(MTL::CullModeFront);
+                drawItem(enc, item, uint32_t(kCelShaded));
+                continue;
+            }
             const bool faded = item.inst->alpha < 1;
             const bool write = (m.blend == StandardMaterial::Blend::None && !faded) || m.depthWrite;
             enc->setDepthStencilState(stencil ? (write ? mirrorDepthWrite_ : mirrorDepthRead_) : write ? depthWrite_ : depthRead_);

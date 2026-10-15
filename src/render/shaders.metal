@@ -131,8 +131,16 @@ vertex VertexOutClip vertex_main(uint vid [[vertex_id]],
                              constant Frame& frame [[buffer(2)]]) {
     const Vertex v = vertices[vid];
     float4 world = draw.model * float4(float3(v.position), 1.0);
+    // CelShaded's outline (celShading.matShad): the position pushed
+    // csOutlineWidth along the normal (camera space; the view is rigid, so
+    // the same in the world) and its depth back by 0.005 x w.
+    const bool outline = (draw.flags & kCelShaded) && (uint(draw.misc.w) & 16u);
+    if (outline)
+        world.xyz += (draw.model * float4(float3(v.normal), 0.0)).xyz * draw.misc.x;
     VertexOutClip out;
     out.position = frame.viewProj * world;
+    if (outline)
+        out.position.z += 0.005 * out.position.w;
     out.clipDistance[0] = frame.viewport.z > 0.5 ? dot(float4(world.xyz, 1.0), frame.clip) : 1.0;
     out.clipDistance[1] = world.z - frame.viewport.w;
     out.world = world.xyz;
@@ -222,6 +230,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
                               texture2d<float> reflection [[texture(18)]],
                               texture2d<float> shadowAtlas [[texture(19)]],
                               texture2d<float> cutout [[texture(20)]],
+                              texture2d<float> specRamp [[texture(21)]],
                               sampler smp [[sampler(0)]],
                               sampler maskSmp [[sampler(1)]],
                               sampler cubeSmp [[sampler(2)]],
@@ -306,18 +315,35 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], bool front [[front_faci
     float3 n = normalize(front ? in.normal : -in.normal);
 
     if (draw.flags & kCelShaded) {
-        // celShading.matShad: two-tone ramp of N.L for a light fixed to the
-        // camera ((1, 0, 0.5) in Direct3D's left-handed camera space), then a
-        // rim from the edge ramp at N.E + offset.
+        // celShading.matShad (docs/shaders-mac.md 13.4), misc = (edge offset,
+        // edge light damping, shininess, options: 1 edge alpha inverted, 2
+        // specular, 4 ramp row from the vertex alpha, 8 from uv 1's v, 16
+        // the outline pass). The light is fixed to the camera ((1, 0, 0.5)
+        // unnormalized in Direct3D's left-handed camera space); lit gives
+        // u = max(N.L, 0) for the ramp and (N.H)^shininess for the specular.
+        const uint opts = uint(draw.misc.w);
+        if (opts & 16u) // the outline pass: its colour
+            return draw.color;
         const float3 nc = normalize((frame.view * float4(n, 0)).xyz);
-        const float ndl = saturate(dot(nc, float3(1, 0, -0.5)));
-        color.rgb *= ramp.sample(pointSmp, float2(ndl, 0.5)).rgb;
+        const float3 l = float3(1, 0, -0.5);
+        const float3 e = normalize(-(frame.view * float4(in.world, 1)).xyz);
+        const float ndl = dot(nc, l), diffuseU = max(ndl, 0.0);
+        const float row = (opts & 4u) ? in.color.a : (opts & 8u) ? in.lightUv.y : in.uv.y;
+        const float4 shade = ramp.sample(pointSmp, float2(diffuseU, row));
+        // multiply(texture colorScalar) with the diffuse (x 0.25 with a base
+        // texture, whose stage is multiplyScale4); each stage saturates.
+        color.rgb = saturate(4.0 * albedo * saturate(0.25 * draw.color.rgb * shade.rgb));
         if (draw.flags & kCelEdge) {
-            const float3 e = normalize(-(frame.view * float4(in.world, 1)).xyz);
-            const float4 edge = edgeRamp.sample(pointSmp, float2(saturate(dot(nc, e) + draw.misc.x), 0.5));
-            color.rgb = mix(edge.rgb, color.rgb, edge.a);
+            const float4 edge = edgeRamp.sample(pointSmp, float2(dot(nc, e) + draw.misc.y * diffuseU + draw.misc.x, 0.0));
+            color.rgb = (opts & 1u) ? mix(edge.rgb, color.rgb, edge.a) : mix(color.rgb, edge.rgb, edge.a);
         }
-        return color;
+        if (opts & 2u) {
+            const float ndh = dot(nc, normalize(l + e));
+            const float s = ndl > 0.0 && ndh > 0.0 ? pow(ndh, draw.misc.z) : 0.0;
+            const float4 sp = specRamp.sample(maskSmp, float2(s, 0.0));
+            color.rgb = mix(color.rgb, sp.rgb, sp.a);
+        }
+        return float4(color.rgb, 1.0);
     }
 
     if (draw.flags & kPoolWater) {

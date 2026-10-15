@@ -238,6 +238,36 @@ int main() {
         check(q[0] > 200 && q[1] < 40 && q[2] < 40, "right mirror reflects the red ground too");
     }
 
+    // CelShaded (docs/shaders-mac.md 13.4): the ramp at u = max(N.L, 0) for
+    // the light fixed to the camera, its row from the texture coordinate's v
+    // (no vertex colours), times the diffuse.
+    {
+        Renderer cel(device, uint32_t(MTL::PixelFormatBGRA8Unorm), uint32_t(MTL::PixelFormatDepth32Float));
+        cel.hideTestScene();
+        // rows: v < 0.5 blue | red, v > 0.5 green | white
+        RgbaImage rampImg{2, 2, {0, 0, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255, 255, 255, 255, 255}};
+        cel.setDynamicTexture("testramp_txtr", rampImg);
+        ObjectModel icon;
+        icon.name = "icon";
+        MeshGroup g = quad(2);
+        for (auto& uv : g.uvs)
+            uv = {0.5f, 0.25f};
+        icon.parts.push_back({"n", "s", "cel", g});
+        MaterialDefinition m;
+        m.materialType = "CelShadedMaterial";
+        m.properties = {{"csRampTexture", "testramp"}, {"csAddEdge", "0"}, {"stdMatDiffCoef", "1,1,1"}};
+        icon.materials["cel"] = m;
+        cel.addInstance(cel.addObject(icon, index), matrix_identity_float4x4);
+        img = cel.capture(64, 64, view, clear);
+        p = center(img);
+        const simd_float4 nc4 = simd_mul(view.view, simd_make_float4(0, 0, 1, 0));
+        const simd_float3 nc = simd_normalize(simd_make_float3(nc4));
+        const float u = std::max(simd_dot(nc, simd_make_float3(1, 0, -0.5f)), 0.0f);
+        const bool right = u >= 0.5f;
+        check(right ? (p[0] == 255 && p[1] == 0 && p[2] == 0) : (p[0] == 0 && p[1] == 0 && p[2] == 255),
+              "CelShaded: the ramp's row from v, the column from N.L");
+    }
+
     // The cutout (docs/shaders-mac.md 13.3): a lit top whose cutout texture
     // is transparent in the middle shows what is under it there, and stays
     // where the cutout is opaque; unlit materials have no cutout pass.

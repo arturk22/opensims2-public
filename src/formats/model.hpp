@@ -188,9 +188,20 @@ struct StandardMaterial {
     std::array<float, 2> animOrigin{0.5f, 0.5f};
     Wave rotation, scale, translation;   // rotation in turns
 
-    // CelShadedMaterial ramps (TXTR names).
-    std::string celRamp, celEdgeRamp;
+    // CelShadedMaterial (celShading.matShad, docs/shaders-mac.md 13.4): the
+    // ramps (TXTR names), the edge's offset, light damping and alpha
+    // invert, the ramp's row from the vertex alpha (csRouteColorFromAlpha),
+    // the specular ramp and shininess, and the outline pass.
+    std::string celRamp, celEdgeRamp, celSpecRamp;
     float celEdgeOffset = 0.3f;
+    float celEdgeDamping = 0;
+    bool celEdgeInvert = true;
+    bool celRouteFromAlpha = true;
+    float celShininess = 100;
+    bool celOutline = false;
+    std::array<float, 3> celOutlineColor{1, 0.3f, 0};
+    float celOutlineAlpha = 1;
+    float celOutlineWidth = 0.01f;
     float waterSpeed = 0.3f; // Water: texture animation speed
     // PoolWater: water.matShad's wave constants (wmXRepeat, wmYRepeat,
     // wmXWaveHeight, wmXSpeed; the Y height and speed are the X ones here).

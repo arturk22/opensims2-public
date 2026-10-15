@@ -415,13 +415,27 @@ StandardMaterial standardMaterial(const MaterialDefinition& m) {
         out.blend = StandardMaterial::Blend::Alpha;
         baseEnabled = false;
     } else if (type == "CelShadedMaterial") {
+        // celShading.matShad (its defaults; csUseCameraLight is on in every
+        // TXMT of the game, csAddEnvironmentMap off).
         out.shading = StandardMaterial::Shading::CelShaded;
         out.celRamp = withSuffix(m.property("csRampTexture").empty() ? "64shade" : m.property("csRampTexture"), "_txtr");
         if (flag("csAddEdge", true)) {
             const auto edge = m.property("csEdgeRampTexture");
             out.celEdgeRamp = withSuffix(edge.empty() ? "blackwhite" : edge, "_txtr");
             out.celEdgeOffset = number("csEdgeOffset", 0.3f);
+            out.celEdgeDamping = number("csEdgeLightDamping", 0);
+            out.celEdgeInvert = flag("csEdgeRampTextureAlphaInvert", true);
         }
+        if (flag("csAddSpecular", false)) {
+            const auto spec = m.property("csSpecRampTexture");
+            out.celSpecRamp = withSuffix(spec.empty() ? "blackwhite" : spec, "_txtr");
+            out.celShininess = number("csShininess", 100);
+        }
+        out.celRouteFromAlpha = flag("csRouteColorFromAlpha", true);
+        out.celOutline = flag("csAddOutline", false);
+        vec("csOutlineColor", out.celOutlineColor);
+        out.celOutlineAlpha = number("csOutlineAlpha", 1);
+        out.celOutlineWidth = number("csOutlineWidth", 0.01f);
         envReflection = false;
         out.specularPower = 0;
     } else if (type == "WaterAnimatingTextures" || type == "WaterMorphAnimatingTextures") {
