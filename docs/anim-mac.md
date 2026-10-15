@@ -229,6 +229,18 @@ Continua nosso: sem nó de polo, o polo é a junta como está.
 
 ## 7. O que mudou no código e o que sobrou
 
+Feito (rodada n02, um commit por parte, testes verdes, bateria de assento
+sem problemas):
+
+1. **IK** (`formats/anim.cpp`, `applyIk`): o solucionador do `cIKStrategy7DOF`
+   (§4). Testes `test_anim` "arm IK: the joint turns about its X only",
+   "twist split".
+2. **Memória do osso** (`formats/anim_player.*`, `held_`): osso que nenhuma
+   camada escreve fica com o último valor (§2). Teste `test_anim` "held
+   bones".
+3. **E, G, I** da issue 001 (§6): E e I confirmados (sem mudança de regra), G
+   pelo item 1.
+
 Sobras (no `TODO.md`): a forma dos intervalos de blend
 (`cBlendInterval::Value`), a ordem de Euler da partilha de torção, a última
 solução de IK guardada quando o contato é 0, o alvo misturado do outlet (e
